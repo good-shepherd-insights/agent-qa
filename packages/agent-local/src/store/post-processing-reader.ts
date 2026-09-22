@@ -139,6 +139,7 @@ function toRow(row: Record<string, unknown> | undefined): PostProcessingJobRow |
     createdAt: String(row.created_at),
     updatedAt: String(row.updated_at),
     ...(row.claimed_at === null ? {} : { claimedAt: String(row.claimed_at) }),
+    ...(row.started_at === null ? {} : { startedAt: String(row.started_at) }),
     ...(conclusionKind === undefined ? {} : { conclusionKind }),
     ...(row.last_failure_kind === null ? {} : { lastFailureKind: String(row.last_failure_kind) }),
     ...(row.last_failure_reason === null ? {} : { lastFailureReason: String(row.last_failure_reason) }),
@@ -186,7 +187,7 @@ export function createPostProcessingReader(
         }
 
         const selectJob = db.prepare(`
-          SELECT kind, status, attempts, created_at, claimed_at, updated_at,
+          SELECT kind, status, attempts, created_at, claimed_at, started_at, updated_at,
                  last_failure_kind, last_failure_reason
           FROM jobs WHERE id = ?
         `)

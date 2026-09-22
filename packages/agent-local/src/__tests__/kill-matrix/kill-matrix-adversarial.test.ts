@@ -993,7 +993,7 @@ describe('a retired-kind row at the head of the FIFO (D-16, ADV-03)', () => {
     // (d) NO SILENT WIDENING. The store is still the version this build reads, and the retired
     //     kind is still not a Job — the quarantine records an outcome, it does not admit a kind.
     expect(stampedVersion(paths.agentQaRoot)).toBe(AGENT_JOB_STORE_USER_VERSION)
-    expect(AGENT_JOB_STORE_USER_VERSION).toBe(3)
+    expect(AGENT_JOB_STORE_USER_VERSION).toBe(4)
     const parsable = {
       id: validJobId,
       kind,

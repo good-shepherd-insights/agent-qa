@@ -69,6 +69,7 @@ describe('C423-STAGES-EXACT', () => {
       'attempts',
       'createdAt',
       'claimedAt',
+      'startedAt',
       'updatedAt',
       'conclusionKind',
       'lastFailureKind',

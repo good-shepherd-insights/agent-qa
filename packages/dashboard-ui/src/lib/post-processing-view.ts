@@ -405,6 +405,11 @@ function spanText(from: number | undefined, to: number | undefined): string | un
  * figure would be this page's arithmetic against the present moment rather than something the store
  * said — which is how a card starts claiming a chain is stuck (404 D-17's rule, applied to time).
  * This module reads no current time by any spelling, and a grep for one is an acceptance criterion.
+ *
+ * TIMED FROM THE START, NEVER FROM THE LEASE (425-13). Both durations read `startedAt`, the instant
+ * the work first began. The claim lease is released by every terminal transition, so a card that
+ * timed from `claimedAt` could never say how long a settled stage took — which was the whole of
+ * the SC3 gap. A row carrying only a lease times nothing: a lease is not a measurement.
  */
 export function stageTimingLine(
   detail: PostProcessingStageDetail | undefined,
@@ -413,11 +418,11 @@ export function stageTimingLine(
   if (detail === undefined) return undefined
 
   const created = instantOf(detail.createdAt)
-  const claimed = instantOf(detail.claimedAt)
+  const started = instantOf(detail.startedAt)
   const updated = instantOf(detail.updatedAt)
   const queuedAt = detail.createdAt === undefined ? undefined : formatClockTime(detail.createdAt)
-  const startedAfter = spanText(created, claimed)
-  const finishedIn = state === 'running' ? undefined : spanText(claimed, updated)
+  const startedAfter = spanText(created, started)
+  const finishedIn = state === 'running' ? undefined : spanText(started, updated)
 
   const clauses = [
     ...(queuedAt === undefined ? [] : [`Queued ${queuedAt}`]),

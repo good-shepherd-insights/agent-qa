@@ -457,11 +457,19 @@ describe('423 cold stage facts', () => {
         const row = before.rows.find(row => row.id === id)!
         expect(row.status).toBe(lifecycle === 'retried' ? 'queued' : lifecycle === 'complete' ? 'done' : lifecycle)
         expect(Number(row.attempts)).toBe(lifecycle === 'retried' ? 2 : lifecycle === 'complete' || lifecycle === 'failed' ? 1 : 0)
+        // THE SETTLED SHAPE, asserted rather than assumed: a terminal transition releases the lease
+        // and keeps the start, and a row nobody claimed has no start at all.
+        if (lifecycle === 'complete' || lifecycle === 'failed') {
+          expect(row.claimed_at).toBeNull()
+          expect(row.started_at).not.toBeNull()
+        }
+        if (lifecycle === 'queued') expect(row.started_at).toBeNull()
         return [stage, {
           attempts: Number(row.attempts),
           createdAt: row.created_at,
           updatedAt: row.updated_at,
           ...(row.claimed_at === null ? {} : { claimedAt: row.claimed_at }),
+          ...(row.started_at === null ? {} : { startedAt: row.started_at }),
           ...(row.last_failure_kind === null ? {} : { lastFailureKind: row.last_failure_kind }),
           ...(row.last_failure_reason === null ? {} : { lastFailureReason: row.last_failure_reason }),
         }]

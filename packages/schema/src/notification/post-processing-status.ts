@@ -62,11 +62,16 @@ export const POST_PROCESSING_DETAIL_STAGES = [
 /**
  * Recorded job facts only. Producers omit missing facts and mask failure text before
  * publishing; absence never asserts a zero attempt count or an unrecorded timestamp.
+ *
+ * Two instants, two different facts: `claimedAt` is the lease a drainer holds right now and is
+ * absent on every settled row, because a terminal transition releases it; `startedAt` is when the
+ * work first began, and it survives the lease.
  */
 export interface PostProcessingStageDetail {
   attempts?: number
   createdAt?: string
   claimedAt?: string
+  startedAt?: string
   updatedAt?: string
   conclusionKind?: JobConclusionKind
   lastFailureKind?: string
@@ -77,6 +82,7 @@ export const PostProcessingStageDetailSchema = z.object({
   attempts: z.number().int().nonnegative().optional(),
   createdAt: z.string().min(1).optional(),
   claimedAt: z.string().min(1).optional(),
+  startedAt: z.string().min(1).optional(),
   updatedAt: z.string().min(1).optional(),
   conclusionKind: z.enum(jobConclusionKindValues).optional(),
   lastFailureKind: z.string().optional(),

@@ -174,8 +174,11 @@ describe('agent job store: schema version (D-04)', () => {
       // table existed is refused by name rather than silently widened — and for THIS addition
       // the silent widening would be worse than a missing column, because an empty
       // notifications table answers "this run was never notified" indistinguishably from a
-      // chain that really never terminated.
-      expect(AGENT_JOB_STORE_USER_VERSION).toBe(3)
+      // chain that really never terminated. 4 is 425's durable start instant: a database written
+      // before the column existed is refused by name rather than silently widened — and for THIS
+      // addition the silent widening would print a duration measured from a column that was never
+      // written.
+      expect(AGENT_JOB_STORE_USER_VERSION).toBe(4)
     } finally {
       store.close()
     }
@@ -230,7 +233,7 @@ describe('agent job store: schema version (D-04)', () => {
     before.exec('PRAGMA user_version=7')
     before.exec(
       "INSERT INTO jobs VALUES ('job_x','analyze-run','k','queued','s','{}',0,NULL,'t','t'," +
-        'NULL,NULL,NULL)',
+        'NULL,NULL,NULL,NULL)',
     )
     before.close()
 

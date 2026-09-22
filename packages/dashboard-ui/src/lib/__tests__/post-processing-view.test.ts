@@ -552,7 +552,7 @@ describe('the projection is pure and total (PXH-RUN-03)', () => {
 // TIMING IS THE JOB ROW'S OWN, CLAUSE BY CLAUSE (425-08 · D-12, T-425-08-03).
 //
 // THE MODULE HAS NO CLOCK AND MUST NOT GROW ONE. Every value below is a stored string the reader
-// stringified out of the job row — `created_at` / `claimed_at` / `updated_at`, written from the
+// stringified out of the job row — `created_at` / `started_at` / `updated_at`, written from the
 // injected clock as `new Date().toISOString()`, and the SQLite `CURRENT_TIMESTAMP` space form that
 // `normalizeTimestamp` exists for. Nothing here compares against "now", so nothing here can say a
 // stage is stuck; elapsed-time judgements are the state the read publishes, not one a card infers.
@@ -561,11 +561,15 @@ describe('the projection is pure and total (PXH-RUN-03)', () => {
 // local zone varies between a laptop and CI, and a cell pinned to `10:41:02` would measure the
 // machine it ran on instead of the sentence the reader gets.
 describe('a card times the stage from the job row, and never from a clock of its own (D-12)', () => {
+  // The production SETTLED shape: created, started, updated — and no lease, because every terminal
+  // transition releases the claim. `LEASE` is the same middle instant spelled as a claim, for the
+  // cells that prove a lease alone is not a measurement.
   const STORED = {
     createdAt: '2026-09-22T10:41:02.000Z',
-    claimedAt: '2026-09-22T10:41:04.500Z',
+    startedAt: '2026-09-22T10:41:04.500Z',
     updatedAt: '2026-09-22T10:41:09.500Z',
   }
+  const LEASE = '2026-09-22T10:41:04.500Z'
   const clock = (): string => {
     const at = formatClockTime(STORED.createdAt)
     return at ?? 'UNPARSED'
@@ -592,15 +596,17 @@ describe('a card times the stage from the job row, and never from a clock of its
 
   it('STAGE-TIMING-LINE: no row at all renders no line; an absent field renders no clause', () => {
     expect(stageTimingLine(undefined, 'complete')).toBeUndefined()
-    expect(stageTimingLine({ claimedAt: STORED.claimedAt, updatedAt: STORED.updatedAt }, 'complete'))
-      .toBe('finished in 5s')
+    expect(
+      stageTimingLine({ claimedAt: LEASE, updatedAt: STORED.updatedAt }, 'complete'),
+      'a lease and an update time nothing: the lease is who holds the row, not when the work began',
+    ).toBeUndefined()
     expect(stageTimingLine({ createdAt: STORED.createdAt, updatedAt: STORED.updatedAt }, 'complete'))
       .toBe(`Queued ${clock()}`)
   })
 
   it('STAGE-TIMING-LINE: an unparseable timestamp drops its own clause and never renders NaN', () => {
     const line = stageTimingLine(
-      { createdAt: 'whenever', claimedAt: STORED.claimedAt, updatedAt: STORED.updatedAt },
+      { createdAt: 'whenever', startedAt: STORED.startedAt, updatedAt: STORED.updatedAt },
       'complete',
     )
     expect(line).toBe('finished in 5s')

@@ -67,11 +67,12 @@ describe('C423-STAGES-EXACT', () => {
     >()
   })
 
-  test('carries only the seven optional recorded facts through both barrels', () => {
+  test('carries only the eight optional recorded facts through both barrels', () => {
     expectTypeOf<PostProcessingStageDetail>().toEqualTypeOf<{
       attempts?: number
       createdAt?: string
       claimedAt?: string
+      startedAt?: string
       updatedAt?: string
       conclusionKind?: JobConclusionKind
       lastFailureKind?: string

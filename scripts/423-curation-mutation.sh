@@ -133,7 +133,7 @@ const legs = [
     allowed: [stgD('keeps each stage optional on the DTO and inferred result')],
     greens: [stg('keeps exactly two required chips with exactly four statuses'),
       stgD('pins exactly two chip keys and four statuses independently'),
-      stgD('carries only the seven optional recorded facts through both barrels'),
+      stgD('carries only the eight optional recorded facts through both barrels'),
       cell('schema-stages', STG, 'STAGE-DETAIL-OPTIONAL > parses all three recorded stage details through the public result schema')],
   },
   {

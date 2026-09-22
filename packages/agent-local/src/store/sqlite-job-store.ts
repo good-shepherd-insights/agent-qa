@@ -80,8 +80,13 @@ import { JobStoreSchemaVersionError, UnknownJobRowError } from './store-errors.j
  * run was never notified" from a table that would have been created empty underneath it —
  * which is indistinguishable from a chain that really never terminated, and is exactly the
  * silent widening the gate exists to refuse.
+ *
+ * 4 (425 gap closure): the jobs table gained `started_at`, the instant a row was first claimed,
+ * kept after the lease is released. A v3 database has no such column, so rather than being
+ * widened on open — and then timing every settled stage from a column nothing ever wrote — it
+ * is refused by name with the remedy in the message. The bump is the refusal.
  */
-export const AGENT_JOB_STORE_USER_VERSION = 3
+export const AGENT_JOB_STORE_USER_VERSION = 4
 
 /**
  * Busy timeout for every connection to the job database.
@@ -173,7 +178,11 @@ const SCHEMA_STATEMENTS = [
      -- and "still queued, but asked to stop" is a fact about a request, not a stage.
      -- Appended LAST deliberately - a column inserted in the middle would move every
      -- positional read of this table for no gain.
-     cancel_requested_at TEXT
+     cancel_requested_at TEXT,
+     -- The instant this row was FIRST claimed, kept after the lease is released (425). The
+     -- claim column answers who holds the row now; no column answered how long the work took.
+     -- Written once by the claim, cleared only by the operator requeue. Appended last, as above.
+     started_at TEXT
    )`,
   // D-08's dedupe is THIS line. Making it a store-level constraint rather than a check the
   // caller performs is what turns "two enqueues of the same work produce one job" from a
@@ -268,10 +277,10 @@ function isUnreadableKindRow(row: Record<string, unknown>): boolean {
 /**
  * The conclusion a quarantined row is READ back with — derived, never a column (422 D-16).
  *
- * Derived because there is nowhere to put it: `AGENT_JOB_STORE_USER_VERSION` stays 3, and D-04
- * says stamp and hard-fail rather than migrate, so adding a column would either break every v3
- * database on disk or smuggle in the migration machinery this queue deliberately has none of. The
- * durable record IS the three facts this reads — an unreadable kind, a permanent landing, and the
+ * Derived because it is derivable: the three facts below are already on the row, which is why 422
+ * declined a column for it under D-04's stamp-and-hard-fail rule. The version later moved to 4 for
+ * `started_at`, a fact nothing on the row can supply — that bump is not a reason to store a fact
+ * that can be named from what is already there. The durable record IS the three facts this reads — an unreadable kind, a permanent landing, and the
  * fixed reason above — and the conclusion is their name rather than a fourth fact that could
  * disagree with them. It is deliberately NOT "any row whose kind is unreadable": a retired-kind
  * row still sitting queued has not been quarantined yet, and saying it had would be a receipt for
@@ -337,8 +346,8 @@ export function createSqliteJobStore(options: CreateSqliteJobStoreOptions): Sqli
     `INSERT INTO jobs
        (id, kind, idempotency_key, status, summary, payload, attempts, claimed_at,
         created_at, updated_at, last_failure_kind, last_failure_reason,
-        cancel_requested_at)
-     VALUES (?, ?, ?, 'queued', ?, ?, 0, NULL, ?, ?, NULL, NULL, NULL)
+        cancel_requested_at, started_at)
+     VALUES (?, ?, ?, 'queued', ?, ?, 0, NULL, ?, ?, NULL, NULL, NULL, NULL)
      ON CONFLICT (kind, idempotency_key) DO NOTHING`,
   )
   const selectByKey = db.prepare('SELECT * FROM jobs WHERE kind = ? AND idempotency_key = ?')
@@ -369,8 +378,13 @@ export function createSqliteJobStore(options: CreateSqliteJobStoreOptions): Sqli
     selectClaimableExcluding.set(excludedCount, prepared)
     return prepared
   }
+  // COALESCE because the first claim IS the start: a later claim after a retryable failure is a
+  // second attempt at work that already began, and overwriting the start would time only it.
   const markClaimed = db.prepare(
-    'UPDATE jobs SET claimed_at = ?, attempts = attempts + 1, updated_at = ? WHERE id = ?',
+    `UPDATE jobs
+     SET claimed_at = ?, started_at = COALESCE(started_at, ?), attempts = attempts + 1,
+         updated_at = ?
+     WHERE id = ?`,
   )
   const markDone = db.prepare(
     "UPDATE jobs SET status = 'done', claimed_at = NULL, updated_at = ? WHERE id = ?",
@@ -422,11 +436,13 @@ export function createSqliteJobStore(options: CreateSqliteJobStoreOptions): Sqli
   // The operator requeue's three statements (413-13). The UPDATE clears every column that
   // recorded HOW the row finished as well as the status itself — a requeued job that kept its
   // failure reason or its cancel request would be a queued row still carrying the verdict of
-  // an attempt that no longer exists, and the next drainer would read it as its own.
+  // an attempt that no longer exists, and the next drainer would read it as its own. The start
+  // goes with them: a requeued row that kept it would time a queue life that no longer exists.
   const markRequeued = db.prepare(
     `UPDATE jobs
-     SET status = 'queued', claimed_at = NULL, attempts = 0, last_failure_kind = NULL,
-         last_failure_reason = NULL, cancel_requested_at = NULL, updated_at = ?
+     SET status = 'queued', claimed_at = NULL, started_at = NULL, attempts = 0,
+         last_failure_kind = NULL, last_failure_reason = NULL, cancel_requested_at = NULL,
+         updated_at = ?
      WHERE id = ?`,
   )
   // DISTINCT because the checkpoint key carries the attempt: one checkpoint id published
@@ -648,7 +664,7 @@ export function createSqliteJobStore(options: CreateSqliteJobStoreOptions): Sqli
           // D-18: the attempt is counted HERE, at the claim, not when a failure is recorded.
           // A job that kills its host on every attempt records no failures at all, so a
           // failure-time counter would let it retry forever.
-          markClaimed.run(now, now, String(row.id))
+          markClaimed.run(now, now, now, String(row.id))
           const claimed = requireRow(String(row.id))
           // 422 D-16: asked of the RAW row, BEFORE `rowToJob`. The landing joins the claim's own
           // transaction, so the attempt this claim just spent commits with it instead of being

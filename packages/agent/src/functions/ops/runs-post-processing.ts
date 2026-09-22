@@ -141,6 +141,7 @@ function projectStageDetails(
       ...(row.attempts === undefined ? {} : { attempts: row.attempts }),
       ...(row.createdAt === undefined ? {} : { createdAt: row.createdAt }),
       ...(row.claimedAt === undefined ? {} : { claimedAt: row.claimedAt }),
+      ...(row.startedAt === undefined ? {} : { startedAt: row.startedAt }),
       ...(row.updatedAt === undefined ? {} : { updatedAt: row.updatedAt }),
       ...(row.conclusionKind === undefined ? {} : { conclusionKind: row.conclusionKind }),
       ...(row.lastFailureKind === undefined ? {} : { lastFailureKind: mask(row.lastFailureKind) }),
