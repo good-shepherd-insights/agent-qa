@@ -68,8 +68,12 @@ const {
   // not change — so the probes record rather than assert.
   stepTreeProps: [] as Array<{ playhead: unknown; selection: unknown }>,
   tabPanelProps: [] as Array<{ activeTab: unknown }>,
-  /** How many verdict blocks and collapsed member groups the mocked tree mounts this render. */
-  treeScene: { blocks: 0, collapsedGroups: 0 },
+  /**
+   * How many verdict blocks and collapsed member groups the mocked tree mounts this render, and
+   * whether the two OTHER `aria-expanded` emitters of the real scroll container (the member-filter
+   * trigger and the Error Details disclosure) are mounted ahead of the groups (425-14 · WR-01).
+   */
+  treeScene: { blocks: 0, collapsedGroups: 0, trap: false },
 }))
 
 vi.mock("@/lib/api", async () => {
@@ -130,8 +134,14 @@ vi.mock("@/components/run-detail/step-tree", () => ({
     stepTreeProps.push({ playhead: props.playhead, selection: props.selection })
     return (
       <div>
+        {treeScene.trap ? (
+          <>
+            <button type="button" aria-expanded="false" data-probe-filter />
+            <button type="button" aria-expanded="false" data-probe-error-details />
+          </>
+        ) : null}
         {Array.from({ length: treeScene.collapsedGroups }, (_, index) => (
-          <button key={`group-${String(index)}`} type="button" aria-expanded="false" data-probe-group={String(index)} />
+          <button key={`group-${String(index)}`} type="button" aria-expanded="false" data-member-toggle data-probe-group={String(index)} />
         ))}
         {Array.from({ length: treeScene.blocks }, (_, index) => (
           <div key={`block-${String(index)}`} data-verdict-block data-probe-block={String(index)} tabIndex={-1} />
@@ -286,6 +296,7 @@ beforeEach(() => {
   tabPanelProps.length = 0
   treeScene.blocks = 0
   treeScene.collapsedGroups = 0
+  treeScene.trap = false
   navigateTo = undefined
   fetchRunMock.mockReset()
   fetchRunArtifactMock.mockReset()
@@ -623,6 +634,37 @@ describe("the failed run's analysis indicator is the door to its verdict (D-11)"
       expect(scrolled).toHaveLength(1)
       expect(scrolled[0]!.el).toBe(toggle)
       expect(document.activeElement).toBe(toggle)
+    } finally {
+      restore()
+    }
+  })
+
+  // WR-01 (425-14). The run the door is enabled for is a FAILED run, and a failed run with an error
+  // log mounts the Error Details disclosure — and, on a suite, the member-filter trigger — above the
+  // groups in this same container. Both emit `aria-expanded`, so a fallback that named that state
+  // landed on whichever of them rendered first. The probes stand in for exactly those two controls.
+  it("PAGE-OPENS-VERDICT-FALLBACK-IS-SCOPED: lands on the group's own toggle, never on the controls above it", async () => {
+    const restore = pinReducedMotion(false)
+    try {
+      fetchRunMock.mockImplementation(async (id: string) => ({ run: runRow(id, "failed") }))
+      fetchRunAnalysisMock.mockResolvedValue(analysisWithVerdict())
+      treeScene.blocks = 0
+      treeScene.collapsedGroups = 2
+      treeScene.trap = true
+      await renderPage()
+      const scrolled = recordScrolls()
+
+      await invokeDoor()
+
+      const toggle = container!.querySelector<HTMLElement>('[data-probe-group="0"]')!
+      const filter = container!.querySelector<HTMLElement>("[data-probe-filter]")!
+      const errorDetails = container!.querySelector<HTMLElement>("[data-probe-error-details]")!
+      const failure =
+        "the reader pressing a failed run's analysis indicator was sent to a control nobody asked for"
+      expect(document.activeElement, failure).not.toBe(filter)
+      expect(document.activeElement, failure).not.toBe(errorDetails)
+      expect(document.activeElement, failure).toBe(toggle)
+      expect(scrolled.map(entry => entry.el), failure).toEqual([toggle])
     } finally {
       restore()
     }
