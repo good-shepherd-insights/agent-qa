@@ -28,9 +28,10 @@ import {
   ANALYSIS_COMPLETE_NO_ISSUES_TEXT,
   CHIPS_UNAVAILABLE_TEXT,
   COUNTS_NOT_RECORDED_TEXT,
-  CURATION_CHIP_TITLE,
   FAILED_REASON_ABSENT_TEXT,
   PENDING_POSTURE_TEXT,
+  POST_PROCESSING_LOADING_LABEL,
+  POST_PROCESSING_UNAVAILABLE_WORD,
   STAGE_INDICATOR_WORDS,
   curationChipAccessibleName,
   type PostProcessingView,
@@ -195,13 +196,14 @@ describe("the curation chip is a click-through into the Knowledge tab (D-01)", (
     )
   }
 
-  it("renders the curation chip root as a button carrying the hover title and the accessible name", () => {
+  it("renders the curation chip root as a button carrying the accessible name, and no native title", () => {
     const host = renderWithClick(vi.fn())
     const root = chip(host, "curation")
 
     expect(root.tagName).toBe("BUTTON")
     expect(root.getAttribute("type")).toBe("button")
-    expect(root.getAttribute("title")).toBe(CURATION_CHIP_TITLE)
+    // A native tooltip beside a Radix one is two treatments of one concept (UI-SPEC S3).
+    expect(root.getAttribute("title")).toBeNull()
     expect(root.getAttribute("aria-label")).toBe(curationChipAccessibleName("done"))
   })
 
@@ -281,15 +283,96 @@ describe("a refusal is its own state, and it is not a chip (D-23)", () => {
     const host = render({ kind: "unavailable", error: "job_store_schema_version", reason: "stamped by another build" })
     const state = host.querySelectorAll('[data-chips-state="unavailable"]')
     expect(state).toHaveLength(1)
-    expect(state[0]!.textContent).toContain(CHIPS_UNAVAILABLE_TEXT)
-    expect(state[0]!.textContent).toContain("job_store_schema_version")
+    expect(state[0]!.textContent).toContain(POST_PROCESSING_UNAVAILABLE_WORD)
+    expect(state[0]!.getAttribute("data-stage-state")).toBe("unavailable")
+    expect(state[0]!.getAttribute("tabindex")).toBe("0")
+    expect(state[0]!.getAttribute("title")).toBeNull()
+    // The detail LEAVES header chrome (D-09): the root names the refusal, the card carries why.
+    expect(state[0]!.textContent).not.toContain("job_store_schema_version")
     expect(host.querySelectorAll("[data-chip]")).toHaveLength(0)
+  })
+
+  it("moves the refusal's error and reason into its card, each on its own line (D-09)", async () => {
+    const host = render({ kind: "unavailable", error: "job_store_schema_version", reason: "stamped by another build" })
+    const root = host.querySelector<HTMLElement>('[data-chips-state="unavailable"]')!
+
+    await act(async () => { root.focus() })
+    const card = document.querySelector('[data-stage-card="unavailable"]')
+    expect(card).not.toBeNull()
+    expect(card!.querySelector('[data-stage-card-line="outcome"]')?.textContent).toBe(CHIPS_UNAVAILABLE_TEXT)
+    expect(card!.querySelector('[data-stage-card-line="error"]')?.textContent).toBe("job_store_schema_version")
+    expect(card!.querySelector('[data-stage-card-line="reason"]')?.textContent).toBe("stamped by another build")
   })
 
   it("a view that has not arrived yet is `loading`, which is not `pending` and not blank", () => {
     const host = render(undefined)
-    expect(host.querySelectorAll('[data-chips-state="loading"]')).toHaveLength(1)
+    const loading = host.querySelectorAll('[data-chips-state="loading"]')
+    expect(loading).toHaveLength(1)
+    // An ellipsis is nothing at all to a screen reader; the wait is announced (UI-SPEC S3).
+    expect(loading[0]!.getAttribute("role")).toBe("status")
+    expect(loading[0]!.querySelector(".sr-only")?.textContent).toBe(POST_PROCESSING_LOADING_LABEL)
     expect(host.querySelectorAll("[data-chip]")).toHaveLength(0)
+  })
+})
+
+// COLOUR IS NEVER ALONE (425 D-06, roadmap SC2). Six states, six distinguishable pairs of shape and
+// word — the claim a grayscale render makes good on. `excluded` and `unavailable` share the dash
+// glyph ON PURPOSE, so their words are what separate them, which this cell measures rather than
+// asserts by eye.
+describe("every indicator state is readable with the colour stripped out (D-06, SC2)", () => {
+  /** Mount one view, read the analysis root's shape-and-word pair, unmount before the next. */
+  function lookOf(loose: Record<string, unknown>): { glyph: string; words: string } {
+    const host = render(chipsView(loose, loose))
+    const el = chip(host, "analysis")
+    const pair = {
+      glyph: [...el.querySelector("svg")!.classList].find((c) => c.startsWith("lucide-")) ?? "",
+      words: el.textContent ?? "",
+    }
+    act(() => { root?.unmount() })
+    container?.remove()
+    root = undefined
+    container = undefined
+    return pair
+  }
+
+  it("STAGE-INDICATOR-COLOUR-FREE: each state pairs a distinct glyph with a distinct word", () => {
+    const pairs = new Map<string, { glyph: string; words: string }>()
+    for (const state of ["complete", "running", "pending", "failed", "excluded"] as const) {
+      pairs.set(state, lookOf({ status: "pending", state }))
+    }
+
+    const host = render({ kind: "unavailable", error: "e" })
+    const refusal = host.querySelector<HTMLElement>('[data-chips-state="unavailable"]')!
+    pairs.set("unavailable", {
+      glyph: [...refusal.querySelector("svg")!.classList].find((c) => c.startsWith("lucide-")) ?? "",
+      words: refusal.textContent ?? "",
+    })
+
+    expect([...pairs].map(([state, pair]) => [state, pair.glyph])).toEqual([
+      ["complete", "lucide-circle-check"],
+      ["running", "lucide-circle-dashed"],
+      ["pending", "lucide-circle"],
+      ["failed", "lucide-circle-x"],
+      ["excluded", "lucide-circle-minus"],
+      ["unavailable", "lucide-circle-minus"],
+    ])
+
+    // No two states share BOTH halves — the dash pair is separated by its word.
+    const both = [...pairs.values()].map((pair) => `${pair.glyph}|${pair.words}`)
+    expect(new Set(both).size).toBe(both.length)
+  })
+
+  it("the running glyph is the header's one piece of motion, and it respects reduced motion", () => {
+    for (const state of ["complete", "running", "pending", "failed", "excluded"] as const) {
+      const host = render(chipsView({ status: "pending", state }, { status: "pending", state }))
+      const glyph = chip(host, "analysis").querySelector("svg")!
+      expect(glyph.classList.contains("motion-safe:animate-pulse")).toBe(state === "running")
+      expect(glyph.classList.contains("animate-pulse")).toBe(false)
+      act(() => { root?.unmount() })
+      container?.remove()
+      root = undefined
+      container = undefined
+    }
   })
 })
 

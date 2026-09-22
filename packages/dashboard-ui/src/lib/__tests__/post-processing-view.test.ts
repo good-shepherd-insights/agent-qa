@@ -23,7 +23,10 @@ import {
   CURATION_CHIP_TITLE,
   FAILED_REASON_ABSENT_TEXT,
   PENDING_POSTURE_TEXT,
+  POST_PROCESSING_LOADING_LABEL,
+  POST_PROCESSING_UNAVAILABLE_WORD,
   STAGE_INDICATOR_WORDS,
+  STAGE_PRESENTATION_STATES,
   curationChipAccessibleName,
   curationFactsText,
   projectPostProcessingView,
@@ -253,5 +256,39 @@ describe('a settled analysis with nothing to report says so in one sentence (D-1
     expect(view.analysis.card?.outcome).toBe(ANALYSIS_COMPLETE_NO_ISSUES_TEXT)
     expect(stageIndicatorAccessibleName('analysis', 'complete', ANALYSIS_COMPLETE_NO_ISSUES_TEXT))
       .toBe('Analysis: complete, no issues found')
+  })
+})
+
+// THE VISIBLE WORD (425-01 · D-07). A settled stage is quiet — the name alone. Every other state
+// says itself, because those are the states a person can act on. The set is six and the order is
+// the one the never-bar pins; a cell that only walked the reachable ones would not see a gap.
+describe('an indicator says the stage, and says the state when it needs attention (D-07)', () => {
+  it('STAGE-INDICATOR-WORDS: the stage name alone for complete, name plus state word otherwise', () => {
+    expect(STAGE_PRESENTATION_STATES).toEqual([
+      'complete',
+      'running',
+      'pending',
+      'failed',
+      'excluded',
+      'unavailable',
+    ])
+    expect(STAGE_PRESENTATION_STATES).toHaveLength(6)
+
+    expect(STAGE_INDICATOR_WORDS.analysis).toEqual({
+      complete: 'Analysis',
+      running: 'Analysis running',
+      pending: 'Analysis pending',
+      failed: 'Analysis failed',
+      excluded: 'Analysis excluded',
+    })
+    expect(STAGE_INDICATOR_WORDS.curation).toEqual({
+      complete: 'Curation',
+      running: 'Curation running',
+      pending: 'Curation pending',
+      failed: 'Curation failed',
+      excluded: 'Curation excluded',
+    })
+    expect(POST_PROCESSING_UNAVAILABLE_WORD).toBe('Post-processing unavailable')
+    expect(POST_PROCESSING_LOADING_LABEL).toBe('Post-processing status loading')
   })
 })
