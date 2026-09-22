@@ -8,6 +8,7 @@ import { afterEach, describe, expect, it, vi } from "vitest"
 import { RunNavbar } from "@/components/run-detail/run-navbar"
 import { triggerRun } from "@/lib/api"
 import { TOKENS_NOT_MEASURED_LABEL } from "@/lib/run-detail-view"
+import { formatDuration } from "@/lib/utils"
 
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
@@ -113,6 +114,56 @@ const baseRun = {
   retryCount: 0,
   maxRetries: 0,
   createdAt: "2026-04-18T00:00:00.000Z",
+}
+
+// THE HEADER BLOCK IS ADDRESSED BY POSITION, ON PURPOSE (425-04 · D-03).
+//
+// What these two helpers pin is LAYOUT, and layout has no `data-*` of its own to hang off — the
+// header is "the component's root" and "the row container inside it", and a cell that invented an
+// attribute to name them would be pinning the attribute rather than the structure. Everything
+// INSIDE the rows is still addressed by its contract attribute, as the house rule requires.
+function headerBlock(): HTMLElement {
+  return container.firstElementChild as HTMLElement
+}
+
+function headerRow(): HTMLElement {
+  return headerBlock().firstElementChild as HTMLElement
+}
+
+/**
+ * The header's present items, in DOM order, labelled by what each one IS (425-04 · PXH-RUN-07).
+ *
+ * The order cell has to hold whichever optional items a run happens to carry, so it cannot be a
+ * fixed list of selectors: it walks the header once and names what it meets. First matcher wins
+ * per element, and each label is taken once.
+ */
+const HEADER_ITEM_MATCHERS: ReadonlyArray<readonly [string, (el: Element) => boolean]> = [
+  ["breadcrumb", el => el.tagName === "BUTTON" && el.textContent === "Runs"],
+  ["name", el => el.tagName === "SPAN" && el.hasAttribute("title")],
+  ["source", el => el.tagName === "A" && (el.getAttribute("aria-label") ?? "").startsWith("Open ")],
+  ["verdict", el => el.hasAttribute("data-verdict-badge")],
+  ["indicators", el => el.hasAttribute("data-chips-state")],
+  ["tokens", el => el.hasAttribute("data-run-token-summary")],
+  ["duration", el => el.hasAttribute("data-run-duration")],
+  ["separator", el => el.tagName === "DIV" && el.className === "h-4 w-px bg-border"],
+  ["artifacts", el => el.getAttribute("aria-label") === "Open run artifacts"],
+  ["shortcuts", el => el.getAttribute("aria-label") === "Keyboard shortcuts"],
+  ["rerun", el => el.getAttribute("aria-label") === "Re-run"],
+  ["browserstack", el => el.tagName === "A" && el.getAttribute("title") === "BrowserStack"],
+]
+
+function headerOrder(root: HTMLElement): string[] {
+  const seen: string[] = []
+  for (const el of Array.from(root.querySelectorAll("*"))) {
+    for (const [label, matches] of HEADER_ITEM_MATCHERS) {
+      if (seen.includes(label)) continue
+      if (matches(el)) {
+        seen.push(label)
+        break
+      }
+    }
+  }
+  return seen
 }
 
 describe("RunNavbar", () => {
@@ -295,6 +346,165 @@ describe("RunNavbar", () => {
     const badge = container.querySelector("[data-verdict-badge]")
     expect(badge?.getAttribute("data-verdict-badge")).toBe("timeout")
     expect(badge?.textContent).toBe("Timed out")
+  })
+
+  // ONE RULE COVERS ~400px AND 1280px AT 200% ZOOM (425-04 · D-03, PXH-RUN-07, WINDOWS #459).
+  //
+  // The breakpoint is a CONTAINER query, not a viewport one: a 1280px viewport at 200% zoom is a
+  // 640px container and a ~400px viewport is a ~400px container, so both take the stacked path
+  // without a second rule, and any narrower future shell inherits it. The fixed `h-14` is gone —
+  // 56px is the header's minimum now, not its ceiling, which is what lets it grow a second row
+  // instead of overlapping. The page needs no height plumbing: its panel group is already
+  // `min-h-0 flex-1` inside a flex column, so flex measures whatever the header becomes.
+  it("HEADER-STACKS: the header is a container-query block that stacks into two rows and keeps every action", () => {
+    mount(
+      <RunNavbar
+        run={{ ...baseRun, metadata: { farmSessionUrl: "https://farm.example/session" } }}
+        shortcutsOpen={false}
+        onToggleShortcuts={() => {}}
+      />,
+    )
+
+    expect(headerBlock().className.split(/\s+/)).toContain("@container")
+
+    const row = headerRow().className.split(/\s+/)
+    expect(row).toContain("min-h-14")
+    expect(row).toContain("flex-col")
+    expect(row).toContain("@3xl:flex-row")
+    expect(row).toContain("@3xl:items-center")
+    expect(row).toContain("@3xl:justify-between")
+    expect(row).not.toContain("h-14")
+
+    const cluster = container.querySelector(".ml-auto") as HTMLElement | null
+    expect(cluster).not.toBeNull()
+    expect(cluster?.querySelector('button[aria-label="Open run artifacts"]')).not.toBeNull()
+    expect(cluster?.querySelector('button[aria-label="Keyboard shortcuts"]')).not.toBeNull()
+    expect(cluster?.querySelector('button[aria-label="Re-run"]')).not.toBeNull()
+    expect(cluster?.querySelector('a[title="BrowserStack"]')).not.toBeNull()
+  })
+
+  // THE NAME YIELDS FIRST, AND NOTHING ELSE DOES (425-04 · D-04).
+  //
+  // The run name is the header's only flexible item, so a 200-character name spends its own width
+  // and then truncates — the verdict stays in the DOM after it rather than being pushed out. The
+  // full name is not lost: it is in the element's `title`, and the page title already carries it.
+  it("HEADER-NAME-TRUNCATES: the name is the one flexible item and keeps its full text in title", () => {
+    const longName = "L".repeat(200)
+    mount(
+      <RunNavbar
+        run={{ ...baseRun, name: longName }}
+        shortcutsOpen={false}
+        onToggleShortcuts={() => {}}
+      />,
+    )
+
+    const name = container.querySelector("span[title]") as HTMLElement | null
+    expect(name).not.toBeNull()
+    expect(name?.getAttribute("title")).toBe(longName)
+    expect(name?.textContent).toBe(longName)
+
+    const classes = name!.className.split(/\s+/)
+    expect(classes).toContain("truncate")
+    expect(classes).toContain("min-w-[96px]")
+
+    const badge = container.querySelector("[data-verdict-badge]")
+    expect(badge).not.toBeNull()
+    expect(
+      name!.compareDocumentPosition(badge!) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy()
+  })
+
+  it("HEADER-DURATION-HOOK: the duration span is addressable and reads the shipped formatter", () => {
+    mount(
+      <RunNavbar run={baseRun} shortcutsOpen={false} onToggleShortcuts={() => {}} />,
+    )
+
+    const duration = container.querySelector("[data-run-duration]")
+    expect(duration).not.toBeNull()
+    expect(duration?.textContent).toContain(formatDuration(baseRun.duration))
+  })
+
+  // WHICHEVER ITEMS ARE PRESENT, THEY ARE IN THIS ORDER (425-04 · PXH-RUN-07).
+  //
+  // Stacking is a reflow, and a reflow that re-orders is a different header. The cell reads the
+  // order over two prop sets — everything optional present, then nothing optional present — so a
+  // future change that drops an item cannot silently permute the rest.
+  it("HEADER-ORDER-FIXED: the DOM order of the present header items is fixed across prop sets", () => {
+    mount(
+      <RunNavbar
+        run={{
+          ...baseRun,
+          testId: "t_login",
+          metadata: { farmSessionUrl: "https://farm.example/session" },
+        }}
+        tokens={{ measuredSteps: 2, unmeasuredSteps: 0, promptTokens: 900, completionTokens: 100, totalTokens: 1000 }}
+        hasPostProcessing
+        shortcutsOpen={false}
+        onToggleShortcuts={() => {}}
+      />,
+    )
+
+    expect(headerOrder(headerBlock())).toEqual([
+      "breadcrumb",
+      "name",
+      "source",
+      "verdict",
+      "indicators",
+      "tokens",
+      "duration",
+      "separator",
+      "artifacts",
+      "shortcuts",
+      "rerun",
+      "browserstack",
+    ])
+
+    act(() => {
+      root.unmount()
+    })
+    container.remove()
+
+    mount(
+      <RunNavbar run={baseRun} shortcutsOpen={false} onToggleShortcuts={() => {}} />,
+    )
+
+    expect(headerOrder(headerBlock())).toEqual([
+      "breadcrumb",
+      "name",
+      "verdict",
+      "duration",
+      "separator",
+      "artifacts",
+      "shortcuts",
+      "rerun",
+    ])
+  })
+
+  // AN ABSENT FACT LEAVES NO GAP (425-04 · PXH-RUN-07).
+  //
+  // A header that painted an empty span where the token line would have been would read as a
+  // layout bug at ~400px, where every pixel of row 2 is spoken for. The cell asserts the strongest
+  // form of "no gap": the only empty HTML leaf in the header is the deliberate rule between the
+  // meta and the actions. Icons are SVG and are excluded by namespace, not by name.
+  it("HEADER-EMPTY-META: an unmeasured, unwired, un-farmed run renders no empty element", () => {
+    mount(
+      <RunNavbar run={baseRun} shortcutsOpen={false} onToggleShortcuts={() => {}} />,
+    )
+
+    expect(container.querySelector("[data-verdict-badge]")).not.toBeNull()
+    expect(container.querySelector("[data-run-duration]")).not.toBeNull()
+    expect(container.querySelectorAll("button[aria-label]")).toHaveLength(3)
+    expect(container.querySelector("[data-run-token-summary]")).toBeNull()
+    expect(container.querySelector("[data-chips-state]")).toBeNull()
+    expect(container.querySelector('a[title="BrowserStack"]')).toBeNull()
+
+    const emptyLeaves = Array.from(headerBlock().querySelectorAll("*")).filter(
+      el =>
+        el.namespaceURI === "http://www.w3.org/1999/xhtml" &&
+        el.children.length === 0 &&
+        (el.textContent ?? "").trim() === "",
+    )
+    expect(emptyLeaves.map(el => el.className)).toEqual(["h-4 w-px bg-border"])
   })
 
   it("opens run details on the Test tab from the navbar action", () => {
