@@ -158,9 +158,9 @@ describe("an unmeasured run still says what it knows (425-05 · UI-SPEC E5 empty
   it("USAGE-CARD-UNMEASURED: the totals line reads the label and the model line survives", async () => {
     const card = await openCard({ measuredSteps: 0, unmeasuredSteps: 3 }, ONE_MODEL)
 
+    // No coverage line (425-14 · WR-02): a run nobody measured has no total to be an undercount of.
     expect(lines(card)).toEqual([
       ["totals", TOKENS_NOT_MEASURED_LABEL],
-      ["coverage", "measured 0 of 3 steps — totals are an undercount"],
       ["model", "Model gpt-5.6-terra (openai)"],
     ])
     expect(usageTotalsLine({ measuredSteps: 0, unmeasuredSteps: 3 })).toBe(TOKENS_NOT_MEASURED_LABEL)
@@ -169,7 +169,7 @@ describe("an unmeasured run still says what it knows (425-05 · UI-SPEC E5 empty
   it("USAGE-CARD-UNMEASURED: a pre-423 run renders the label and no model line at all", async () => {
     const card = await openCard({ measuredSteps: 0, unmeasuredSteps: 3 })
 
-    expect(lines(card).map(([kind]) => kind)).toEqual(["totals", "coverage"])
+    expect(lines(card).map(([kind]) => kind)).toEqual(["totals"])
     expect(card.querySelector('[data-usage-line="model"]')).toBeNull()
     expect(card.querySelector('[data-usage-line="models"]')).toBeNull()
   })

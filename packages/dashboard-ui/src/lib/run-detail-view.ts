@@ -320,7 +320,10 @@ export function usageTotalsLine(tokens: RunTokenTotals): string {
  */
 export function usageCoverageLine(tokens: RunTokenTotals): string | undefined {
   const { measuredSteps, unmeasuredSteps } = tokens
-  if (unmeasuredSteps === 0) return undefined
+  // Nothing measured is not an undercount of a total: there is no total. The totals line has
+  // already said nobody measured this run, and a second sentence claiming those totals exist and
+  // are low is the absent-vs-zero collapse this file's header rule refuses (425-14 · WR-02).
+  if (unmeasuredSteps === 0 || measuredSteps === 0) return undefined
   const allSteps = measuredSteps + unmeasuredSteps
   return `measured ${String(measuredSteps)} of ${String(allSteps)} steps — totals are an undercount`
 }
