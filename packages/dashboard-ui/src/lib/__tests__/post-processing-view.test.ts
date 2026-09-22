@@ -13,7 +13,7 @@
 // daemon" and a lie. Blank is a lie by omission; `pending` is a lie outright.
 
 import { describe, expect, it } from 'vitest'
-import { POST_PROCESSING_EXCLUSION_REASONS } from '@vostride/agent-qa-schema'
+import { POST_PROCESSING_EXCLUSION_REASONS, VERDICT_CLASSES } from '@vostride/agent-qa-schema'
 import type { CurationBreakdown, PostProcessingStatus } from '@vostride/agent-qa-schema'
 
 import type { PostProcessingRead } from '@/lib/api'
@@ -32,17 +32,24 @@ import {
   PENDING_POSTURE_TEXT,
   POST_PROCESSING_LOADING_LABEL,
   POST_PROCESSING_UNAVAILABLE_WORD,
+  PROPOSALS_REASON_ABSENT_TEXT,
   STAGE_EXCLUDED_TEXT,
   STAGE_INDICATOR_WORDS,
   STAGE_PRESENTATION_STATES,
   WILL_RETRY_TEXT,
+  analysisCompleteWithVerdictsText,
   curationBreakdownLine,
   curationChipAccessibleName,
+  formatClockTime,
   legacyCurationPairText,
   projectPostProcessingView,
+  proposalsFailedText,
+  proposalsStagedText,
   stageFailedText,
   stageIndicatorAccessibleName,
   stageQueuedText,
+  stageTimingLine,
+  verdictClassLabel,
 } from '@/lib/post-processing-view'
 
 const RUN_ID = 'run_view'
@@ -68,13 +75,19 @@ function breakdown(counts: Partial<CurationBreakdown> = {}): CurationBreakdown {
 function notification(
   curation: Record<string, unknown>,
   verdictSummary: unknown = { total: 1, byClass: {} },
+  proposals?: Record<string, unknown>,
 ): unknown {
   return {
     schemaVersion: 2,
     runId: RUN_ID,
     outcome: 'done',
     verdictSummary,
-    stages: { analysis: { status: 'done' }, curation },
+    stages: {
+      analysis: { status: 'done' },
+      curation,
+      // ABSENT MEANS NOT RECORDED (422 D-13) — the member is omitted rather than zero-filled.
+      ...(proposals === undefined ? {} : { proposals }),
+    },
   }
 }
 
@@ -199,13 +212,23 @@ describe('a terminal curation card says what it committed (D-21, D-17/D-18 wordi
     expect(view.curation.card?.outcome).toBe(`Curation complete — ${NO_MEMORY_CHANGES_TEXT}`)
   })
 
+  // RE-SPELLED 425-08. The claim is unchanged — curation's counts never reach the analysis card —
+  // but the analysis card is no longer absent on a verdict-bearing run (D-13), so the cell now
+  // measures what that card SAYS rather than that it does not exist.
   it('never invents a card for the analysis chip from curation counts', () => {
     const view = chips(projectPostProcessingView(read({
-      status: status('done', 'done', notification({ status: 'done' }), {
+      status: status('done', 'done', notification({ status: 'done' }, { total: 1, byClass: { app_bug: 1 } }), {
         curationSnapshot: { schemaVersion: 1, rows: [], breakdown: breakdown({ added: 4 }) },
       }),
     })))
-    expect(view.analysis)
+    expect(view.analysis.state).toBe('complete')
+    expect(view.analysis.word).toBe(STAGE_INDICATOR_WORDS.analysis.complete)
+    expect(view.analysis.card?.outcome).not.toContain('added')
+    expect(view.analysis.card?.outcome).not.toContain('curated')
+
+    // A run whose chain recorded NO terminal row has nothing to say about either stage.
+    const bare = chips(projectPostProcessingView(read({ status: status('done', 'done') })))
+    expect(bare.analysis)
       .toEqual({ status: 'done', state: 'complete', word: STAGE_INDICATOR_WORDS.analysis.complete })
   })
 })
@@ -523,5 +546,190 @@ describe('the projection is pure and total (PXH-RUN-03)', () => {
       expect(second).toEqual(first)
       expect(JSON.stringify(subject)).toBe(before)
     }
+  })
+})
+
+// TIMING IS THE JOB ROW'S OWN, CLAUSE BY CLAUSE (425-08 · D-12, T-425-08-03).
+//
+// THE MODULE HAS NO CLOCK AND MUST NOT GROW ONE. Every value below is a stored string the reader
+// stringified out of the job row — `created_at` / `claimed_at` / `updated_at`, written from the
+// injected clock as `new Date().toISOString()`, and the SQLite `CURRENT_TIMESTAMP` space form that
+// `normalizeTimestamp` exists for. Nothing here compares against "now", so nothing here can say a
+// stage is stuck; elapsed-time judgements are the state the read publishes, not one a card infers.
+//
+// THE CELLS ASSERT THROUGH THE SAME FORMATTER rather than against a literal wall-clock string: the
+// local zone varies between a laptop and CI, and a cell pinned to `10:41:02` would measure the
+// machine it ran on instead of the sentence the reader gets.
+describe('a card times the stage from the job row, and never from a clock of its own (D-12)', () => {
+  const STORED = {
+    createdAt: '2026-09-22T10:41:02.000Z',
+    claimedAt: '2026-09-22T10:41:04.500Z',
+    updatedAt: '2026-09-22T10:41:09.500Z',
+  }
+  const clock = (): string => {
+    const at = formatClockTime(STORED.createdAt)
+    return at ?? 'UNPARSED'
+  }
+
+  it('STAGE-TIMING-LINE: clock, then the two durations, and attempts only past one', () => {
+    expect(formatClockTime(STORED.createdAt)).toMatch(/^\d{2}:\d{2}:\d{2}$/)
+    expect(stageTimingLine({ ...STORED, attempts: 1 }, 'complete'))
+      .toBe(`Queued ${clock()} · started after 2.5s · finished in 5s`)
+    expect(stageTimingLine({ ...STORED, attempts: 2 }, 'complete'))
+      .toBe(`Queued ${clock()} · started after 2.5s · finished in 5s · 2 attempts`)
+  })
+
+  it('STAGE-TIMING-LINE: a running stage ends at `running` and claims no finish', () => {
+    const line = stageTimingLine({ ...STORED, attempts: 1 }, 'running')
+    expect(line).toBe(`Queued ${clock()} · started after 2.5s · running`)
+    expect(line).not.toContain('finished in')
+  })
+
+  it('STAGE-TIMING-LINE: a pending stage with only a queue moment says exactly that', () => {
+    expect(stageTimingLine({ createdAt: STORED.createdAt, attempts: 0 }, 'pending'))
+      .toBe(`Queued ${clock()}`)
+  })
+
+  it('STAGE-TIMING-LINE: no row at all renders no line; an absent field renders no clause', () => {
+    expect(stageTimingLine(undefined, 'complete')).toBeUndefined()
+    expect(stageTimingLine({ claimedAt: STORED.claimedAt, updatedAt: STORED.updatedAt }, 'complete'))
+      .toBe('finished in 5s')
+    expect(stageTimingLine({ createdAt: STORED.createdAt, updatedAt: STORED.updatedAt }, 'complete'))
+      .toBe(`Queued ${clock()}`)
+  })
+
+  it('STAGE-TIMING-LINE: an unparseable timestamp drops its own clause and never renders NaN', () => {
+    const line = stageTimingLine(
+      { createdAt: 'whenever', claimedAt: STORED.claimedAt, updatedAt: STORED.updatedAt },
+      'complete',
+    )
+    expect(line).toBe('finished in 5s')
+    expect(line).not.toContain('NaN')
+    expect(formatClockTime('whenever')).toBeUndefined()
+  })
+
+  it('STAGE-TIMING-LINE: reads both shapes the store actually writes — ISO with Z and the SQLite space form', () => {
+    expect(formatClockTime('2026-09-22 10:41:02')).toBe(formatClockTime('2026-09-22T10:41:02.000Z'))
+  })
+
+  it('STAGE-TIMING-LINE: folds onto the stage that HAS a row, and onto neither when none does', () => {
+    const view = chips(projectPostProcessingView(read({
+      status: status('done', 'done', notification({ status: 'done' }, { total: 0, byClass: {} }), {
+        stageDetails: { analysis: { ...STORED, attempts: 1 } },
+      }),
+      disposition: 'drained',
+    })))
+    expect(view.analysis.card?.timing)
+      .toBe(`Queued ${clock()} · started after 2.5s · finished in 5s`)
+    expect(view.curation.card?.timing).toBeUndefined()
+  })
+
+  it('STAGE-TIMING-LINE: an excluded run is never timed — nothing was ever enqueued to time', () => {
+    const view = chips(projectPostProcessingView(read({
+      status: status('pending', 'pending', undefined, {
+        exclusion: { reason: 'gate-run' },
+        stageDetails: { analysis: { ...STORED, attempts: 1 } },
+      }),
+    })))
+    expect(view.analysis.card?.timing).toBeUndefined()
+    expect(view.analysis.card?.outcome).toBe(STAGE_EXCLUDED_TEXT.analysis)
+  })
+})
+
+// THE ROOT CAUSE COMES FROM A COUNTED FIELD, NEVER FROM A SENTENCE (425-08 · D-13, UI-SPEC S4).
+//
+// `notification.verdictSummary` is on the same read the header already holds: counted, durable and
+// conformance-pinned. The alternative — reading a verdict's prose and looking for a class in it —
+// is the rule 406 closed: a surface that parses another surface's sentence is coupled to wording
+// that is free to change, and reports a class nobody stored.
+describe('a settled analysis with verdicts names its root cause from the summary (D-13)', () => {
+  const outcomeFor = (verdictSummary: unknown): string | undefined =>
+    chips(projectPostProcessingView(read({
+      status: status('done', 'done', notification({ status: 'done' }, verdictSummary)),
+      disposition: 'drained',
+    }))).analysis.card?.outcome
+
+  it('ANALYSIS-ROOT-CAUSE-FROM-SUMMARY: names the dominant class and agrees its count', () => {
+    expect(outcomeFor({ total: 2, byClass: { app_bug: 2 } }))
+      .toBe('Analysis complete — root cause: app bug (2 verdicts)')
+    expect(outcomeFor({ total: 1, byClass: { app_bug: 1 } }))
+      .toBe('Analysis complete — root cause: app bug (1 verdict)')
+    expect(outcomeFor({ total: 3, byClass: {} })).toBe('Analysis complete — 3 verdicts')
+    expect(outcomeFor({ total: 0, byClass: {} })).toBe(ANALYSIS_COMPLETE_NO_ISSUES_TEXT)
+  })
+
+  it('ANALYSIS-ROOT-CAUSE-FROM-SUMMARY: breaks a tie by the schema class order, not by insertion order', () => {
+    expect(VERDICT_CLASSES.indexOf('test_bug')).toBeLessThan(VERDICT_CLASSES.indexOf('app_bug'))
+    expect(outcomeFor({ total: 2, byClass: { app_bug: 1, test_bug: 1 } }))
+      .toBe('Analysis complete — root cause: test bug (2 verdicts)')
+    expect(outcomeFor({ total: 2, byClass: { test_bug: 1, app_bug: 1 } }))
+      .toBe('Analysis complete — root cause: test bug (2 verdicts)')
+  })
+
+  it('ANALYSIS-ROOT-CAUSE-FROM-SUMMARY: a zero-count key is not a class that occurred', () => {
+    expect(outcomeFor({ total: 2, byClass: { test_bug: 0, app_bug: 2 } }))
+      .toBe('Analysis complete — root cause: app bug (2 verdicts)')
+  })
+
+  it('ANALYSIS-ROOT-CAUSE-FROM-SUMMARY: the class is RE-SPELLED, never re-classified', () => {
+    expect(verdictClassLabel('app_bug')).toBe('app bug')
+    expect(verdictClassLabel('llm_error')).toBe('llm error')
+    expect(verdictClassLabel('config_error')).toBe('config error')
+    expect(verdictClassLabel('timeout')).toBe('timeout')
+    for (const cls of VERDICT_CLASSES) expect(verdictClassLabel(cls)).not.toContain('_')
+
+    expect(analysisCompleteWithVerdictsText(undefined, 1)).toBe('Analysis complete — 1 verdict')
+    expect(analysisCompleteWithVerdictsText('config_error', 4))
+      .toBe('Analysis complete — root cause: config error (4 verdicts)')
+  })
+})
+
+// THE CHIP-LESS STAGE SPEAKS ONLY WHEN IT HAS SOMETHING TO SAY (425-08 · D-14).
+//
+// v54 closed the chip set at two, so `proposals` has no indicator of its own. A line on every hover
+// would be text on every run; silence on a FAILED stage would make it invisible. The rule is the
+// spec's: surface a stage only when it has a user-relevant state or result.
+describe('the proposals stage appears in the curation card only when relevant (D-14)', () => {
+  const curationCardFor = (
+    proposals?: Record<string, unknown>,
+    detail?: Record<string, unknown>,
+  ) => chips(projectPostProcessingView(read({
+    status: status(
+      'done',
+      'done',
+      notification({ status: 'done' }, { total: 0, byClass: {} }, proposals),
+      detail === undefined ? {} : { stageDetails: { proposals: detail } },
+    ),
+    disposition: 'drained',
+  }))).curation.card
+
+  it('PROPOSALS-LINE-ONLY-WHEN-RELEVANT: a positive staged count is the only pass that speaks', () => {
+    expect(curationCardFor({ status: 'done', proposed: 2 })?.proposals)
+      .toBe('Proposals: 2 staged for review')
+    expect(curationCardFor({ status: 'done', proposed: 0 })?.proposals).toBeUndefined()
+    expect(curationCardFor({ status: 'done' })?.proposals).toBeUndefined()
+    expect(curationCardFor(undefined)?.proposals).toBeUndefined()
+    expect(proposalsStagedText(1)).toBe('Proposals: 1 staged for review')
+  })
+
+  it('PROPOSALS-LINE-ONLY-WHEN-RELEVANT: a failed stage names its masked reason, or says none was recorded', () => {
+    expect(curationCardFor({ status: 'failed' }, { lastFailureReason: 'the staging port refused' })?.proposals)
+      .toBe('Proposals failed — the staging port refused')
+    expect(curationCardFor({ status: 'failed' })?.proposals)
+      .toBe(`Proposals failed — ${PROPOSALS_REASON_ABSENT_TEXT}`)
+    expect(PROPOSALS_REASON_ABSENT_TEXT).toBe('reason not recorded')
+    expect(proposalsFailedText('nope')).toBe('Proposals failed — nope')
+  })
+
+  it('PROPOSALS-LINE-ONLY-WHEN-RELEVANT: the analysis card never carries one', () => {
+    const view = chips(projectPostProcessingView(read({
+      status: status('done', 'done', notification({ status: 'done' }, { total: 0, byClass: {} }, {
+        status: 'done',
+        proposed: 2,
+      })),
+      disposition: 'drained',
+    })))
+    expect(view.analysis.card?.proposals).toBeUndefined()
+    expect(view.curation.card?.proposals).toBe('Proposals: 2 staged for review')
   })
 })

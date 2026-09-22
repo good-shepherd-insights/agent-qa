@@ -26,6 +26,8 @@ import type {
   PostProcessingChipStatus,
   PostProcessingDisposition,
   PostProcessingExclusionReason,
+  PostProcessingStageDetail,
+  VerdictClass,
 } from '@vostride/agent-qa-schema'
 
 import type { PostProcessingRead } from './api'
@@ -341,6 +343,46 @@ export function curationBreakdownLine(breakdown: CurationBreakdown): string {
 /** A pre-423 row's pair, rendered as what it is: two coarse counts, not a breakdown (D-18). */
 export function legacyCurationPairText(curated: number, deprecated: number): string {
   return `${String(curated)} curated · ${String(deprecated)} deprecated`
+}
+
+/** What a failed proposals stage says when nobody recorded why (D-14, the D-21 idiom). */
+export const PROPOSALS_REASON_ABSENT_TEXT = 'reason not recorded'
+
+// INERT UNTIL THE GREEN COMMIT (425-08 Task 2). The signatures below are published so the RED cells
+// that name them LINK and fail on the value they assert, rather than on a missing export — a module
+// that does not import is not evidence about behaviour.
+
+/** The queue moment as a local wall clock, or nothing when the stored string does not parse. */
+export function formatClockTime(_iso: string): string | undefined {
+  return undefined
+}
+
+/** The job row's own timing, clause by clause — each one only when its field was recorded. */
+export function stageTimingLine(
+  _detail: PostProcessingStageDetail | undefined,
+  _state: StageIndicatorState,
+): string | undefined {
+  return undefined
+}
+
+/** A closed class key, re-spelled for reading. A re-spelling, never a second closed set. */
+export function verdictClassLabel(cls: VerdictClass): string {
+  return cls
+}
+
+/** `Analysis complete — root cause: {class} ({n} verdict|verdicts)`, or the classless form. */
+export function analysisCompleteWithVerdictsText(_cls: VerdictClass | undefined, _n: number): string {
+  return ''
+}
+
+/** `Proposals: {n} staged for review` — rendered only for a positive count (D-14). */
+export function proposalsStagedText(_n: number): string {
+  return ''
+}
+
+/** `Proposals failed — {reason}`. The reason is the producer's, masked and unsliced. */
+export function proposalsFailedText(_reason: string): string {
+  return ''
 }
 
 /** `{Stage} queued`, plus who is going to move it when the run recorded a disposition (D-12/D-13). */

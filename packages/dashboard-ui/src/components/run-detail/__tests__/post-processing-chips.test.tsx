@@ -469,6 +469,70 @@ describe("every indicator state is readable with the colour stripped out (D-06, 
   })
 })
 
+// THE CARD'S NEW LINES, IN READING ORDER (425-08 · D-12/D-14, UI-SPEC S4).
+//
+// The component composes NO prose: it paints the lines the projection built, keyed by kind, so the
+// reading order lives in one place and a cell can address a line without parsing a paragraph. The
+// proposals line carries a PRODUCER string, so it is measured as a text node for the same reason
+// the failure reason is (T-425-08-02, the T-404-01 idiom).
+describe("a card explains timing and the chip-less stage on their own lines (D-12/D-14)", () => {
+  function kindsOf(card: HTMLElement): (string | null)[] {
+    return [...card.querySelectorAll("[data-stage-card-line]")]
+      .map((el) => el.getAttribute("data-stage-card-line"))
+  }
+
+  it("STAGE-CARD-LINES: timing and proposals paint as their own lines, and only where they belong", async () => {
+    const host = render(chipsView(
+      {
+        status: "done",
+        card: { outcome: ANALYSIS_COMPLETE_NO_ISSUES_TEXT, timing: "Queued 10:41:02 · finished in 5s" },
+      },
+      {
+        status: "done",
+        card: {
+          outcome: "Curation complete — 2 added",
+          timing: "Queued 10:41:09 · finished in 2s",
+          proposals: "Proposals failed — <img src=x onerror=alert(1)>",
+        },
+      },
+    ))
+
+    const analysis = await cardOf(host, "analysis")
+    expect(kindsOf(analysis)).toEqual(["outcome", "timing"])
+    expect(lineOf(analysis, "timing")).toBe("Queued 10:41:02 · finished in 5s")
+
+    const curation = await cardOf(host, "curation")
+    expect(kindsOf(curation)).toEqual(["outcome", "timing", "proposals"])
+
+    const proposals = curation.querySelector('[data-stage-card-line="proposals"]')
+    expect(proposals?.textContent).toBe("Proposals failed — <img src=x onerror=alert(1)>")
+    expect(proposals?.querySelector("img")).toBeNull()
+  })
+
+  it("STAGE-CARD-LINES: they sit between the outcome and the retry and door lines", async () => {
+    const host = mount(
+      <PostProcessingChips
+        view={chipsView(
+          { status: "done" },
+          {
+            status: "failed",
+            card: {
+              outcome: "Curation failed — the bundle would not commit",
+              note: BREAKDOWN_NOT_RECORDED_TEXT,
+              timing: "Queued 10:41:02 · started after 1s · 2 attempts",
+              proposals: "Proposals: 2 staged for review",
+              retry: "Will retry",
+            },
+          },
+        )}
+        onCurationClick={vi.fn()}
+      />,
+    )
+    expect(kindsOf(await cardOf(host, "curation")))
+      .toEqual(["outcome", "note", "timing", "proposals", "retry", "door"])
+  })
+})
+
 // A SKIPPED CHAIN READS NEUTRAL, AND THE STORE'S OWN WORDS SURVIVE UNDERNEATH (425-08 · D-08, SC2).
 //
 // The reason rides the CONTAINER as its own attribute rather than being spelled into a sentence a
