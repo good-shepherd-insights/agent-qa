@@ -65,9 +65,8 @@ export type StageIndicatorState = Exclude<StagePresentationState, 'unavailable'>
  * The VISIBLE word per stage and state (D-07): the stage name alone when there is nothing to act on,
  * the name plus the state word when there is.
  *
- * 425-01: the tracer fills the `complete` column, which is the name alone by definition; the state
- * words arrive with the rest of the anatomy in 425-01 Task 2. The record is total from the start so
- * a seventh state cannot compile, and no state renders a blank word in the meantime.
+ * PROBLEMS LOUD, SETTLED THINGS QUIET. `analysis done` spent a word on the state a reader can do
+ * nothing with, every single run; the four states a reader CAN act on now spend it instead.
  */
 export const STAGE_INDICATOR_WORDS: Record<
   PostProcessingStage,
@@ -75,19 +74,33 @@ export const STAGE_INDICATOR_WORDS: Record<
 > = {
   analysis: {
     complete: 'Analysis',
-    running: 'Analysis',
-    pending: 'Analysis',
-    failed: 'Analysis',
-    excluded: 'Analysis',
+    running: 'Analysis running',
+    pending: 'Analysis pending',
+    failed: 'Analysis failed',
+    excluded: 'Analysis excluded',
   },
   curation: {
     complete: 'Curation',
-    running: 'Curation',
-    pending: 'Curation',
-    failed: 'Curation',
-    excluded: 'Curation',
+    running: 'Curation running',
+    pending: 'Curation pending',
+    failed: 'Curation failed',
+    excluded: 'Curation excluded',
   },
 }
+
+/**
+ * The refusal's own word (D-09). ONE root for both stages, because a store that could not be read
+ * has nothing to say about either stage separately — two roots would imply it did.
+ */
+export const POST_PROCESSING_UNAVAILABLE_WORD = 'Post-processing unavailable'
+
+/**
+ * What the ellipsis before the first read says out loud (UI-SPEC S3).
+ *
+ * `…` is nothing at all to a screen reader, and "the read has not landed" is genuinely different
+ * from `pending` — collapsing it into silence is the same lie as collapsing it into a chip word.
+ */
+export const POST_PROCESSING_LOADING_LABEL = 'Post-processing status loading'
 
 /**
  * Line 1 of a settled analysis card when the run has nothing to report (D-13, roadmap SC3).

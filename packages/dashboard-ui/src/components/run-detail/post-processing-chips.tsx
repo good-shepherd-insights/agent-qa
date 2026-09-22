@@ -20,57 +20,65 @@
 // visible text would be asserting on presentation, and a page that painted the right word into the
 // wrong element would still pass.
 
-import { Badge } from "@/components/ui/badge"
-import { Circle, CircleCheck, CircleDashed, CircleX, type LucideIcon } from "lucide-react"
+import { Circle, CircleCheck, CircleDashed, CircleMinus, CircleX, type LucideIcon } from "lucide-react"
 import type { ReactElement } from "react"
+import { MaskedText } from "@/components/run-detail/masked-text"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import {
   CHIPS_UNAVAILABLE_TEXT,
-  CURATION_CHIP_TITLE,
-  STAGE_INDICATOR_WORDS,
+  POST_PROCESSING_LOADING_LABEL,
+  POST_PROCESSING_UNAVAILABLE_WORD,
   curationChipAccessibleName,
   stageIndicatorAccessibleName,
   type PostProcessingChipView,
   type PostProcessingStage,
   type PostProcessingView,
   type StageCardView,
+  type StagePresentationState,
 } from "@/lib/post-processing-view"
-import type { PostProcessingChipStatus } from "@vostride/agent-qa-schema"
 
-/** The stage words, exported so cells name them rather than re-typing them. */
-export const CHIP_LABELS: Record<PostProcessingStage, string> = {
-  analysis: "analysis",
-  curation: "curation",
-}
-
-type ChipLook = { Glyph: LucideIcon; glyphClass: string }
+type IndicatorLook = { Glyph: LucideIcon; glyphClass: string; wordClass: string }
 
 /**
- * The four-word vocabulary as a closed switch onto a glyph.
+ * The six presentation states as a closed record onto one anatomy.
  *
  * SHAPE CARRIES THE STATE AND COLOUR ONLY REINFORCES IT (425 D-06, roadmap SC2): a check, a dashed
- * ring, an empty ring and a cross still separate four states with the colour stripped out, which a
- * tinted badge never did. The tint moves onto the glyph alone; the header's one filled element is
- * the verdict badge (UI-SPEC S2).
+ * ring, an empty ring, a cross and a dash still separate the states with the colour stripped out,
+ * which a tinted badge never did. The tint moves onto the glyph alone; the header's one filled
+ * element is the verdict badge (UI-SPEC S2). A `Record` with no default arm so a seventh state
+ * fails to compile rather than falling through to a look nobody chose.
+ *
+ * `excluded` and `unavailable` share the dash ON PURPOSE — their words are what separate them.
  */
-function chipLook(status: PostProcessingChipStatus): ChipLook {
-  switch (status) {
-    case "done":
-      return { Glyph: CircleCheck, glyphClass: "text-emerald-500" }
-    case "failed":
-      return { Glyph: CircleX, glyphClass: "text-destructive" }
-    case "running":
-      return { Glyph: CircleDashed, glyphClass: "text-amber-500 motion-safe:animate-pulse" }
-    case "pending":
-      return { Glyph: Circle, glyphClass: "text-muted-foreground" }
-  }
+const INDICATOR_LOOK: Record<StagePresentationState, IndicatorLook> = {
+  complete: { Glyph: CircleCheck, glyphClass: "text-emerald-500", wordClass: "text-muted-foreground" },
+  running: {
+    Glyph: CircleDashed,
+    glyphClass: "text-amber-500 motion-safe:animate-pulse",
+    wordClass: "text-muted-foreground",
+  },
+  pending: { Glyph: Circle, glyphClass: "text-muted-foreground", wordClass: "text-muted-foreground" },
+  failed: { Glyph: CircleX, glyphClass: "text-destructive", wordClass: "text-destructive" },
+  excluded: { Glyph: CircleMinus, glyphClass: "text-muted-foreground", wordClass: "text-muted-foreground" },
+  unavailable: {
+    Glyph: CircleMinus,
+    glyphClass: "text-muted-foreground",
+    wordClass: "text-muted-foreground",
+  },
 }
 
-/** The chip root's shipped layout, shared by both roots below so they cannot drift apart. */
+/** The chip root's shipped layout, shared by every root below so they cannot drift apart. */
 const CHIP_ROOT_CLASS = "inline-flex items-center gap-1 min-h-6 rounded-sm text-xs"
 
 /** The one accent use this phase adds (UI-SPEC Color 1) — the same ring the primitives draw. */
 const FOCUS_RING = "focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
+
+/** One line of a card. `masked` routes a PRODUCER string through the display-unmask seam. */
+type CardLine = { kind: string; text: string; masked?: boolean }
+
+function stageCardLines(card: StageCardView | undefined): CardLine[] {
+  return card === undefined ? [] : [{ kind: "outcome", text: card.outcome }]
+}
 
 /**
  * The card, hung off the root as a Radix tooltip that opens on hover AND on keyboard focus (D-10).
@@ -78,17 +86,20 @@ const FOCUS_RING = "focus-visible:outline-none focus-visible:ring-[3px] focus-vi
  * NO PROVIDER HERE. The page mounts the one tooltip provider (`run-detail.tsx`); a second one
  * inside the header would give this surface its own delay and its own open-state bookkeeping, which
  * is two answers to "is a card open right now" on one page.
+ *
+ * EVERY LINE IS A TEXT NODE (T-404-01). Producer strings go through `MaskedText`, which paints
+ * markers as chips and everything else as text; there is no `dangerouslySetInnerHTML` in this file.
  */
 function WithCard({
   stage,
-  card,
+  lines,
   children,
 }: {
   stage: PostProcessingStage | "unavailable"
-  card: StageCardView | undefined
+  lines: CardLine[]
   children: ReactElement
 }) {
-  if (card === undefined) return children
+  if (lines.length === 0) return children
   return (
     <Tooltip>
       <TooltipTrigger asChild>{children}</TooltipTrigger>
@@ -100,9 +111,15 @@ function WithCard({
         data-stage-card={stage}
       >
         <div className="space-y-1">
-          <p data-stage-card-line="outcome" className="font-medium">
-            {card.outcome}
-          </p>
+          {lines.map((line, index) => (
+            <p
+              key={line.kind}
+              data-stage-card-line={line.kind}
+              className={index === 0 ? "font-medium" : "text-muted-foreground"}
+            >
+              {line.masked === true ? <MaskedText text={line.text} /> : line.text}
+            </p>
+          ))}
         </div>
       </TooltipContent>
     </Tooltip>
@@ -132,12 +149,13 @@ function Chip({
   chip: PostProcessingChipView
   onCurationClick?: (() => void) | undefined
 }) {
-  const { Glyph, glyphClass } = chipLook(chip.status)
+  const { Glyph, glyphClass, wordClass } = INDICATOR_LOOK[chip.state]
   const name = stageIndicatorAccessibleName(stage, chip.state, chip.card?.outcome)
+  const lines = stageCardLines(chip.card)
   const body = (
     <>
       <Glyph aria-hidden="true" className={`h-3.5 w-3.5 ${glyphClass}`} />
-      <span className="text-muted-foreground">{chip.word}</span>
+      <span className={wordClass}>{chip.word}</span>
       {chip.posture === undefined ? null : (
         <span data-chip-posture className="text-xs text-muted-foreground truncate">
           ({chip.posture})
@@ -152,7 +170,6 @@ function Chip({
         <span
           data-chip-error
           {...(chip.willRetry === undefined ? {} : { "data-chip-will-retry": String(chip.willRetry) })}
-          title={chip.error}
           className="text-xs text-destructive truncate max-w-[24rem]"
         >
           {chip.error}
@@ -168,14 +185,13 @@ function Chip({
 
   if (stage === "curation" && onCurationClick !== undefined) {
     return (
-      <WithCard stage={stage} card={chip.card}>
+      <WithCard stage={stage} lines={lines}>
         <button
           type="button"
           data-chip={stage}
           data-chip-status={chip.status}
           data-stage-state={chip.state}
           onClick={onCurationClick}
-          title={CURATION_CHIP_TITLE}
           aria-label={curationChipAccessibleName(chip.status)}
           className={`${CHIP_ROOT_CLASS} ${FOCUS_RING} cursor-pointer transition-colors hover:text-foreground`}
         >
@@ -186,7 +202,7 @@ function Chip({
   }
 
   return (
-    <WithCard stage={stage} card={chip.card}>
+    <WithCard stage={stage} lines={lines}>
       <span
         data-chip={stage}
         data-chip-status={chip.status}
@@ -219,25 +235,40 @@ export function PostProcessingChips({
 }) {
   if (view === undefined) {
     return (
-      <span data-chips-state="loading" className="text-xs text-muted-foreground shrink-0">
+      <span
+        data-chips-state="loading"
+        role="status"
+        className="text-xs text-muted-foreground shrink-0"
+      >
         …
+        <span className="sr-only">{POST_PROCESSING_LOADING_LABEL}</span>
       </span>
     )
   }
 
   if (view.kind === "unavailable") {
-    const detail = view.reason === undefined ? view.error : `${view.error}: ${view.reason}`
+    const { Glyph, glyphClass, wordClass } = INDICATOR_LOOK.unavailable
     return (
-      <span
-        data-chips-state="unavailable"
-        title={detail}
-        className="inline-flex items-center gap-1 min-w-0"
+      <WithCard
+        stage="unavailable"
+        lines={[
+          { kind: "outcome", text: CHIPS_UNAVAILABLE_TEXT },
+          { kind: "error", text: view.error, masked: true },
+          ...(view.reason === undefined
+            ? []
+            : [{ kind: "reason", text: view.reason, masked: true }]),
+        ]}
       >
-        <Badge variant="outline" className="text-muted-foreground border-border">
-          {CHIPS_UNAVAILABLE_TEXT}
-        </Badge>
-        <span className="text-xs text-muted-foreground truncate">{detail}</span>
-      </span>
+        <span
+          data-chips-state="unavailable"
+          data-stage-state="unavailable"
+          tabIndex={0}
+          className={`${CHIP_ROOT_CLASS} ${FOCUS_RING} cursor-default ${wordClass}`}
+        >
+          <Glyph aria-hidden="true" className={`h-3.5 w-3.5 ${glyphClass}`} />
+          {POST_PROCESSING_UNAVAILABLE_WORD}
+        </span>
+      </WithCard>
     )
   }
 
