@@ -80,7 +80,7 @@ async function digestFor(document: CompletedRunHandoff): Promise<RunDigest> {
       listBundles: () => Promise.resolve([]),
       inspectRecords: () => Promise.resolve([]),
       diffSince: () => Promise.resolve([]),
-      showRecord: ({ recordId }) =>
+      showRecord: ({ recordId }: { recordId: string }) =>
         Promise.resolve({ kind: 'not-found', schemaVersion: 1, recordId } as const),
     },
     entities: {

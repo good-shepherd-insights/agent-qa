@@ -47,7 +47,11 @@ import { FunctionNotBoundError } from '../spec.js'
 import type { ClauseVerdict, FunctionDeps, FunctionSpec } from '../spec.js'
 import { analysisGetSpec } from './analysis-get.js'
 import { RunNotFoundError } from './runs-get.js'
-import { projectPostProcessingChips, runsPostProcessingSpec } from './runs-post-processing.js'
+import {
+  projectPostProcessingChips,
+  projectPostProcessingExclusion,
+  runsPostProcessingSpec,
+} from './runs-post-processing.js'
 
 /**
  * Lowercase dot taxonomy (384 D-15): the `runs` domain, one noun.
@@ -204,9 +208,15 @@ function renderDigestLines(digest: Omit<RunDigest, 'lines'>): string[] {
   })
   if (clusterBlock !== '') lines.push(clusterBlock)
 
+  // 425 D-08: an excluded run has no chain to report on, so the two chip words would read
+  // `pending` forever. The fact replaces them — in the same words the CLI exit line prints and
+  // the dashboard paints — while the outcome clause keeps its own behaviour, because a row that
+  // somehow carries both is still entitled to say what became of it.
+  const excluded = digest.chain.exclusion
   lines.push(`chain — ${[
-    `analysis: ${digest.chain.analysis}`,
-    `curation: ${digest.chain.curation}`,
+    ...(excluded === undefined
+      ? [`analysis: ${digest.chain.analysis}`, `curation: ${digest.chain.curation}`]
+      : [`analysis: excluded (${excluded.reason})`, `curation: excluded (${excluded.reason})`]),
     ...(digest.chain.outcome === undefined ? [] : [`chain ${digest.chain.outcome}`]),
   ].join(DIGEST_SEPARATOR)}`)
 
@@ -313,6 +323,10 @@ export const runsDigestSpec: FunctionSpec<RunsDigestInput, RunDigest> = {
       .filter((entry) => entry.envelope.status === 'pending').length
 
     const curation = status?.notification?.stages.curation
+    // ONE FOLD, TWO OPS (law 6). Minted from the SAME durable markers `runs.postprocessing`
+    // reads, over the handoff this op already loaded above for its own refusal — never from an
+    // empty chain, which is also what an in-flight run's chain looks like one poll too early.
+    const exclusion = projectPostProcessingExclusion(document)
 
     const sections: Omit<RunDigest, 'lines'> = {
       runId,
@@ -327,6 +341,7 @@ export const runsDigestSpec: FunctionSpec<RunsDigestInput, RunDigest> = {
         ...(status?.notification === undefined
           ? {}
           : { outcome: status.notification.outcome }),
+        ...(exclusion === undefined ? {} : { exclusion }),
       },
       proposalsMintedThisRun: mintedThisRun.map((entry) => proposalRow(entry.envelope)),
       pendingProposalCount,
