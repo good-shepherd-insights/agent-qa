@@ -176,6 +176,13 @@ export const CATALOG_DOC_PATHS: readonly (readonly [string, CatalogDocAdjudicati
       // rather than mentioning it.
       Object.freeze({ path: 'docs/queues.md', anchor: 'Reading stage outcomes' } as const),
     ] as const),
+    Object.freeze([
+      'runs.digest',
+      // 2026-09-23 (closing 425 WR-03): the section written this phase documents the digest
+      // capability directly — and names it before `analysis.get` — so the shared absent reason
+      // this row carried is now false, and this is where the link lands.
+      Object.freeze({ path: 'docs/queues.md', anchor: 'Reading stage outcomes' } as const),
+    ] as const),
 
     // …and the explicit absences, one per remaining op.
     Object.freeze(['agent.ask', Object.freeze({ absentReason: CATALOG_DOC_ABSENT_REASON })] as const),
@@ -239,7 +246,6 @@ export const CATALOG_DOC_PATHS: readonly (readonly [string, CatalogDocAdjudicati
     // absence its `runs.` read siblings carry.
     Object.freeze(['runs.artifact', Object.freeze({ absentReason: CATALOG_DOC_ABSENT_REASON })] as const),
     Object.freeze(['runs.detail', Object.freeze({ absentReason: CATALOG_DOC_ABSENT_REASON })] as const),
-    Object.freeze(['runs.digest', Object.freeze({ absentReason: CATALOG_DOC_ABSENT_REASON })] as const),
     Object.freeze(['runs.events', Object.freeze({ absentReason: CATALOG_DOC_ABSENT_REASON })] as const),
     // 2026-09-15 (423-21, D-04): in SORT position after `runs.events`. The typed evidence read has
     // no shipped documentation page; a person meets it through the run-detail evidence tabs.

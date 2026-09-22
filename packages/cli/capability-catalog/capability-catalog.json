@@ -227,8 +227,8 @@
     {
       "alias": "digest",
       "description": "Compose one run's digest: verdicts, chain, proposals awaiting a decision, counts.",
-      "docAbsentReason": "D-07 (dated 2026-08-16): no canonical doc ships for this capability yet. The explicit absence is the honest state — a guessed path would existence-check green and mislead a reader — and the abstention coverage log is the demand signal for writing one.",
-      "docPath": null,
+      "docAnchor": "Reading stage outcomes",
+      "docPath": "docs/queues.md",
       "kind": "alias",
       "targetOpId": "runs.digest"
     },
@@ -1964,8 +1964,8 @@
     },
     {
       "description": "Compose one run's digest: verdicts, chain, proposals awaiting a decision, counts.",
-      "docAbsentReason": "D-07 (dated 2026-08-16): no canonical doc ships for this capability yet. The explicit absence is the honest state — a guessed path would existence-check green and mislead a reader — and the abstention coverage log is the demand signal for writing one.",
-      "docPath": null,
+      "docAnchor": "Reading stage outcomes",
+      "docPath": "docs/queues.md",
       "exampleCall": {
         "arguments": {
           "runId": "<RUNID>"
@@ -2529,5 +2529,5 @@
       "shortDescription": "Triage agent-qa run failures"
     }
   ],
-  "rowsDigest": "ad0679adda77a5d7ac073c191fbd64cc6085dfe6dc356351e9b825eb37783618"
+  "rowsDigest": "30e79532ad4e3d8d602e0278410c58ad0ba0ebf06688b6e84c4d3ed1ca8c0303"
 }
