@@ -613,3 +613,42 @@ describe('422 circularity evidence in the block (D-17/D-19/D-20)', () => {
     expect(onMark).toHaveBeenCalledExactlyOnceWith(4, undefined, 'false-fail', undefined)
   })
 })
+
+// WHERE THE HEADER'S DOOR LANDS (425-09 · D-11, UI-SPEC S4 / Color 2).
+//
+// The block is the destination, so it has to be able to RECEIVE focus without joining the tab
+// order — a reader tabbing through a failed run should not stop on every verdict sentence on the
+// way to the controls. `-1` is exactly that: reachable programmatically, skipped by Tab.
+//
+// THE RING IS `:focus` AND NOT `:focus-visible` ON PURPOSE. The door is activated by pointer as
+// often as by keyboard, and a browser suppresses `:focus-visible` after a mouse click — which
+// would move a reader somewhere and then give them nothing to show where they landed.
+describe("the verdict block is the door's landing site (425-09 · D-11)", () => {
+  it("VERDICT-BLOCK-FOCUSABLE: carries tabindex -1 and a focus ring, and takes focus on demand", () => {
+    const host = render()
+    const block = host.querySelector<HTMLElement>("[data-verdict-block]")!
+
+    expect(block.getAttribute("tabindex")).toBe("-1")
+    expect(block.className).toContain("focus:ring-2")
+    expect(block.className).toContain("focus:outline-none")
+    expect(block.className).toContain("focus:ring-ring/50")
+
+    block.focus()
+    expect(document.activeElement).toBe(block)
+  })
+
+  it("changes nothing else about the block's markup", () => {
+    const host = render({ citedSteps: [0] })
+    const block = host.querySelector<HTMLElement>("[data-verdict-block]")!
+
+    // The three attributes 406-11's shipped-binary cells address are untouched by the new one.
+    expect(block.getAttribute("data-verdict-producer")).toBe("deterministic-classifier")
+    expect(block.getAttribute("data-verdict-confidence")).toBe("0")
+    expect(host.querySelector("[data-verdict-sentence]")).not.toBeNull()
+    expect(host.querySelector("[data-verdict-provenance]")).not.toBeNull()
+    expect(host.querySelector('[data-cited-step="0"]')).not.toBeNull()
+    // It is a focus TARGET, not a control: nothing about it became clickable.
+    expect(block.getAttribute("role")).toBeNull()
+    expect(block.tagName).toBe("DIV")
+  })
+})

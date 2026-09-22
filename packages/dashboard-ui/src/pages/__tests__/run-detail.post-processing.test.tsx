@@ -42,17 +42,34 @@ const {
   fetchRunDetailMock,
   fetchRunArtifactMock,
   fetchExecutionLogsMock,
+  fetchRunAnalysisMock,
   watchPostProcessingMock,
   disposeMock,
   navbarProps,
+  stepTreeProps,
+  tabPanelProps,
+  treeScene,
 } = vi.hoisted(() => ({
   fetchRunMock: vi.fn(),
   fetchRunDetailMock: vi.fn(),
   fetchRunArtifactMock: vi.fn(),
   fetchExecutionLogsMock: vi.fn(),
+  fetchRunAnalysisMock: vi.fn(),
   watchPostProcessingMock: vi.fn(),
   disposeMock: vi.fn(),
-  navbarProps: [] as Array<{ postProcessing: unknown; hasPostProcessing: unknown; models: unknown }>,
+  navbarProps: [] as Array<{
+    postProcessing: unknown
+    hasPostProcessing: unknown
+    models: unknown
+    onOpenVerdict: unknown
+  }>,
+  // WHAT THE TREE BELOW THE HEADER WAS HANDED, render by render (425-09). The door must move
+  // scroll and focus and NOTHING else, and "nothing else" is only observable as props that did
+  // not change — so the probes record rather than assert.
+  stepTreeProps: [] as Array<{ playhead: unknown; selection: unknown }>,
+  tabPanelProps: [] as Array<{ activeTab: unknown }>,
+  /** How many verdict blocks and collapsed member groups the mocked tree mounts this render. */
+  treeScene: { blocks: 0, collapsedGroups: 0 },
 }))
 
 vi.mock("@/lib/api", async () => {
@@ -66,7 +83,10 @@ vi.mock("@/lib/api", async () => {
     fetchRunDetail: fetchRunDetailMock,
     // 2026-08-29 (406-01, D-04): the page's third read, stubbed to RESOLVE for the same reason —
     // the real one would reach a `fetch` these cells do not provide.
-    fetchRunAnalysis: () => Promise.resolve({ runId: '', verdicts: [], sentences: [], clusters: [] }),
+    // 2026-09-22 (425-09): held rather than inlined, because the verdict door is gated on the
+    // page's own `analysisView` being non-empty — a fixed empty answer could only ever prove the
+    // closed half of that gate.
+    fetchRunAnalysis: fetchRunAnalysisMock,
     fetchRunKnowledge: () => Promise.resolve({ kind: 'evidence-incomplete', runId: '' }),
     fetchRunArtifact: fetchRunArtifactMock,
     fetchExecutionLogs: fetchExecutionLogsMock,
@@ -80,11 +100,17 @@ vi.mock("@/lib/api", async () => {
 // The navbar becomes a PROBE rather than a stub: what it was handed is the observable, so a page
 // that wired the client but forgot to pass the view down has somewhere to be caught.
 vi.mock("@/components/run-detail/run-navbar", () => ({
-  RunNavbar: (props: { postProcessing?: unknown; hasPostProcessing?: unknown; models?: unknown }) => {
+  RunNavbar: (props: {
+    postProcessing?: unknown
+    hasPostProcessing?: unknown
+    models?: unknown
+    onOpenVerdict?: unknown
+  }) => {
     navbarProps.push({
       postProcessing: props.postProcessing,
       hasPostProcessing: props.hasPostProcessing,
       models: props.models,
+      onOpenVerdict: props.onOpenVerdict,
     })
     return <div data-testid="run-navbar" />
   },
@@ -95,8 +121,31 @@ vi.mock("@/hooks/use-keyboard-shortcuts", () => ({ useKeyboardShortcuts: () => {
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }))
 vi.mock("@/components/page-skeleton", () => ({ DetailSkeleton: () => <div data-loading /> }))
 vi.mock("@/components/empty-state", () => ({ EmptyState: ({ title }: { title: string }) => <div>{title}</div> }))
-vi.mock("@/components/run-detail/step-tree", () => ({ StepTree: () => <div /> }))
-vi.mock("@/components/run-detail/tab-panels", () => ({ TabPanels: () => <div /> }))
+// THE TREE IS A PROBE THAT CAN ALSO MOUNT A TARGET (425-09 · D-11). The real `StepTree` would
+// drag the whole member/verdict projection into a file about the header's wiring; what the door
+// needs from it is a `[data-verdict-block]` at a known place inside `stepTreeScrollRef`, and what
+// idempotency needs from it is the props it was handed.
+vi.mock("@/components/run-detail/step-tree", () => ({
+  StepTree: (props: { playhead?: unknown; selection?: unknown }) => {
+    stepTreeProps.push({ playhead: props.playhead, selection: props.selection })
+    return (
+      <div>
+        {Array.from({ length: treeScene.collapsedGroups }, (_, index) => (
+          <button key={`group-${String(index)}`} type="button" aria-expanded="false" data-probe-group={String(index)} />
+        ))}
+        {Array.from({ length: treeScene.blocks }, (_, index) => (
+          <div key={`block-${String(index)}`} data-verdict-block data-probe-block={String(index)} tabIndex={-1} />
+        ))}
+      </div>
+    )
+  },
+}))
+vi.mock("@/components/run-detail/tab-panels", () => ({
+  TabPanels: (props: { activeTab?: unknown }) => {
+    tabPanelProps.push({ activeTab: props.activeTab })
+    return <div />
+  },
+}))
 vi.mock("@/components/run-detail/artifact-drawer", () => ({ ArtifactDrawer: () => <div /> }))
 vi.mock("@/components/run-detail/hook-detail-panel", () => ({ HookDetailPanel: () => <div /> }))
 vi.mock("@/components/ui/tooltip", () => ({
@@ -129,12 +178,12 @@ vi.mock("@/components/ui/button", () => ({
   Button: ({ children }: { children: ReactNode }) => <button type="button">{children}</button>,
 }))
 
-function runRow(id: string) {
+function runRow(id: string, status = "passed") {
   return {
     id,
     name: "a chip probe",
     filePath: "tests/probe.test.yaml",
-    status: "passed",
+    status,
     duration: 1000,
     attributes: {},
     environment: null,
@@ -233,13 +282,22 @@ function lastNavbarModels(): unknown {
 beforeEach(() => {
   Element.prototype.scrollIntoView = vi.fn()
   navbarProps.length = 0
+  stepTreeProps.length = 0
+  tabPanelProps.length = 0
+  treeScene.blocks = 0
+  treeScene.collapsedGroups = 0
   navigateTo = undefined
   fetchRunMock.mockReset()
   fetchRunArtifactMock.mockReset()
   fetchExecutionLogsMock.mockReset()
+  fetchRunAnalysisMock.mockReset()
   watchPostProcessingMock.mockReset()
   disposeMock.mockReset()
 
+  // The shipped default for every cell that is not about the door: the op answered, and answered
+  // that this run has no verdicts. `runId: ''` also fails the page's own run-join guard, which is
+  // exactly what the file has always exercised.
+  fetchRunAnalysisMock.mockResolvedValue({ runId: '', verdicts: [], sentences: [], clusters: [] })
   watchPostProcessingMock.mockReturnValue(disposeMock)
   fetchExecutionLogsMock.mockResolvedValue({ logs: [] })
   fetchRunArtifactMock.mockResolvedValue({ run: { id: RUN_ID }, artifact: null, children: [], missingSections: ["artifact"] })
@@ -408,5 +466,196 @@ describe("run detail owns the chip client, and hands the navbar its projection",
     expect(watchPostProcessingMock.mock.calls[1]![0]).toBe(OTHER_RUN_ID)
     // The previous run's chips must not survive the change — that would be another run's truth.
     expect(lastNavbarView()).toBeUndefined()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// THE VERDICT DOOR (425-09 · D-11, PXH-RUN-03, UI-SPEC S4)
+//
+// The header is presentational and the tree is below it, so the ONLY place the two can be joined
+// is here. What is pinned is the page's judgement — when a door exists at all — and its mechanics:
+// scroll the first mounted block into view honouring reduced motion, then put focus on it and stop.
+// Everything the door must NOT touch is observable only as props that did not move, which is why
+// the tree and the tab panels are probes rather than stubs.
+// ---------------------------------------------------------------------------
+
+/** The door the page handed the header on its last render, or `undefined` when it gave none. */
+function doorOf(): unknown {
+  const last = navbarProps.at(-1)
+  if (last === undefined) throw new Error("the navbar never rendered")
+  return last.onOpenVerdict
+}
+
+/** An op answer FOR THIS RUN carrying one verdict — the page's gate is `analysisView.size > 0`. */
+function analysisWithVerdict() {
+  return {
+    runId: RUN_ID,
+    verdicts: [{ perTest: 0, producer: "deterministic-classifier", confidence: 0 }],
+    sentences: [{ perTest: 0, sentence: 'observed (step 0): "Submit never became enabled"' }],
+    clusters: [],
+  }
+}
+
+/**
+ * Every `scrollIntoView` the page makes, with the element it was made ON.
+ *
+ * A bare `vi.fn()` on the prototype records the arguments but not the receiver, and "scrolled
+ * something, with the right options" is not the claim — the claim is that it scrolled THE BLOCK.
+ */
+function recordScrolls(): Array<{ el: Element; options: unknown }> {
+  const scrolled: Array<{ el: Element; options: unknown }> = []
+  Element.prototype.scrollIntoView = function (this: Element, options?: unknown) {
+    scrolled.push({ el: this, options })
+  } as typeof Element.prototype.scrollIntoView
+  return scrolled
+}
+
+/** Pin the one media query the door reads, and hand back the restore. */
+function pinReducedMotion(reduce: boolean): () => void {
+  const original = window.matchMedia
+  window.matchMedia = ((query: string) => ({
+    matches: reduce && query.includes("prefers-reduced-motion"),
+    media: query,
+    onchange: null,
+    addListener() {},
+    removeListener() {},
+    addEventListener() {},
+    removeEventListener() {},
+    dispatchEvent: () => true,
+  })) as unknown as typeof window.matchMedia
+  return () => { window.matchMedia = original }
+}
+
+function blockAt(index: number): HTMLElement {
+  const el = container?.querySelector<HTMLElement>(`[data-probe-block="${String(index)}"]`)
+  if (el == null) throw new Error(`no verdict block ${String(index)} mounted`)
+  return el
+}
+
+async function invokeDoor(): Promise<void> {
+  const door = doorOf()
+  if (typeof door !== "function") throw new Error("the page handed the header no door")
+  await act(async () => { (door as () => void)() })
+}
+
+describe("the failed run's analysis indicator is the door to its verdict (D-11)", () => {
+  async function renderFailedRunWithVerdict(): Promise<void> {
+    fetchRunMock.mockImplementation(async (id: string) => ({ run: runRow(id, "failed") }))
+    fetchRunAnalysisMock.mockResolvedValue(analysisWithVerdict())
+    treeScene.blocks = 2
+    await renderPage()
+  }
+
+  it("PAGE-OPENS-VERDICT: scrolls the FIRST mounted block into view and lands focus on it", async () => {
+    const restore = pinReducedMotion(false)
+    try {
+      await renderFailedRunWithVerdict()
+      const scrolled = recordScrolls()
+
+      // The gate first: a failed run whose op answered with a verdict HAS somewhere to go.
+      expect(typeof doorOf()).toBe("function")
+      await invokeDoor()
+
+      const first = blockAt(0)
+      expect(scrolled).toHaveLength(1)
+      expect(scrolled[0]!.el).toBe(first)
+      // `center` so the block is not pinned under the sticky header; `smooth` because this reader
+      // has not asked for less motion.
+      expect(scrolled[0]!.options).toEqual({ block: "center", behavior: "smooth" })
+      // FOCUS IS THE POINT, not the scroll: a reader sent somewhere must be able to read on from
+      // there with the keyboard, and the block's own `:focus` ring is what shows where they were
+      // sent after a POINTER activation.
+      expect(document.activeElement).toBe(first)
+      // Tree order decides "first failed member": a passed member mounts no block at all.
+      expect(document.activeElement).not.toBe(blockAt(1))
+    } finally {
+      restore()
+    }
+  })
+
+  it("PAGE-OPENS-VERDICT: asks for no motion when the reader asked for none", async () => {
+    const restore = pinReducedMotion(true)
+    try {
+      await renderFailedRunWithVerdict()
+      const scrolled = recordScrolls()
+
+      await invokeDoor()
+
+      expect(scrolled[0]!.options).toEqual({ block: "center", behavior: "auto" })
+      expect(document.activeElement).toBe(blockAt(0))
+    } finally {
+      restore()
+    }
+  })
+
+  it("PAGE-OPENS-VERDICT: no door on a passed run, and none on a failed run with no verdict", async () => {
+    // A passed run HAS no verdict to open, whatever the tree below happens to be showing.
+    fetchRunMock.mockImplementation(async (id: string) => ({ run: runRow(id, "passed") }))
+    fetchRunAnalysisMock.mockResolvedValue(analysisWithVerdict())
+    treeScene.blocks = 1
+    await renderPage()
+    expect(doorOf()).toBeUndefined()
+
+    // ...and a failed run the op has answered nothing about has nowhere to send anyone either.
+    // This is also the excluded run's reading: a chain that was never enqueued produces no
+    // verdicts, so the gate closes without the page having to know what a gate run is.
+    fetchRunMock.mockImplementation(async (id: string) => ({ run: runRow(id, "failed") }))
+    fetchRunAnalysisMock.mockResolvedValue({ runId: RUN_ID, verdicts: [], sentences: [], clusters: [] })
+    await renderPage()
+    expect(doorOf()).toBeUndefined()
+  })
+
+  // T-425-09-02: focus must not be lost when the reader has collapsed the groups. The toggle is
+  // inside the same scroll container, so the verdict stays one keypress away instead of nowhere.
+  it("PAGE-OPENS-VERDICT: falls back to the first member group's toggle when no block is mounted", async () => {
+    const restore = pinReducedMotion(false)
+    try {
+      fetchRunMock.mockImplementation(async (id: string) => ({ run: runRow(id, "failed") }))
+      fetchRunAnalysisMock.mockResolvedValue(analysisWithVerdict())
+      treeScene.blocks = 0
+      treeScene.collapsedGroups = 2
+      await renderPage()
+      const scrolled = recordScrolls()
+
+      await invokeDoor()
+
+      const toggle = container!.querySelector<HTMLElement>('[data-probe-group="0"]')!
+      expect(scrolled).toHaveLength(1)
+      expect(scrolled[0]!.el).toBe(toggle)
+      expect(document.activeElement).toBe(toggle)
+    } finally {
+      restore()
+    }
+  })
+
+  it("DOOR-IDEMPOTENT: opening it twice lands the same reader in the same place, and moves nothing else", async () => {
+    const restore = pinReducedMotion(false)
+    try {
+      await renderFailedRunWithVerdict()
+      const scrolled = recordScrolls()
+      const tabsBefore = [...tabPanelProps]
+      const treeBefore = [...stepTreeProps]
+
+      await invokeDoor()
+      const landed = document.activeElement
+      await invokeDoor()
+
+      expect(landed).toBe(blockAt(0))
+      expect(document.activeElement).toBe(landed)
+      expect(scrolled).toHaveLength(2)
+      expect(scrolled[1]!.el).toBe(scrolled[0]!.el)
+
+      // THE ELEVATION CLAIM (T-425-09-01). A header control that changed a tab, the playhead or
+      // the selection would be mutating page state it does not own — and because the page re-renders
+      // on any of those, "it changed nothing" is exactly "the tree and the tabs were not handed
+      // anything new". The declined option (drive the playhead) is measured here, not asserted.
+      expect(tabPanelProps).toEqual(tabsBefore)
+      expect(stepTreeProps).toEqual(treeBefore)
+      expect(tabPanelProps.at(-1)!.activeTab).toBe("overview")
+      expect(stepTreeProps.at(-1)!.playhead).toBeNull()
+      expect(stepTreeProps.at(-1)!.selection).toBeNull()
+    } finally {
+      restore()
+    }
   })
 })
