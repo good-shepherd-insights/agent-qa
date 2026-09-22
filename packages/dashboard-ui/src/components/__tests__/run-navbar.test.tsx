@@ -7,7 +7,13 @@ import { afterEach, describe, expect, it, vi } from "vitest"
 
 import { RunNavbar } from "@/components/run-detail/run-navbar"
 import { triggerRun } from "@/lib/api"
-import { TOKENS_NOT_MEASURED_LABEL } from "@/lib/run-detail-view"
+import {
+  TOKENS_NOT_MEASURED_LABEL,
+  TOKEN_USAGE_TRIGGER_LABEL,
+  tokenPairLine,
+  usageCoverageLine,
+  usageTotalsLine,
+} from "@/lib/run-detail-view"
 import { formatDuration } from "@/lib/utils"
 
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
@@ -152,6 +158,14 @@ const HEADER_ITEM_MATCHERS: ReadonlyArray<readonly [string, (el: Element) => boo
   ["browserstack", el => el.tagName === "A" && el.getAttribute("title") === "BrowserStack"],
 ]
 
+/** What a SIGHTED reader sees on a root — the `sr-only` name is a separate claim, asserted apart. */
+function visibleTextOf(el: HTMLElement): string {
+  return [...el.childNodes]
+    .filter(node => !(node instanceof HTMLElement && node.classList.contains("sr-only")))
+    .map(node => node.textContent ?? "")
+    .join("")
+}
+
 function headerOrder(root: HTMLElement): string[] {
   const seen: string[] = []
   for (const el of Array.from(root.querySelectorAll("*"))) {
@@ -280,25 +294,119 @@ describe("RunNavbar", () => {
     expect(line?.textContent).toContain(TOKENS_NOT_MEASURED_LABEL)
   })
 
-  it("reports the measured sum and how much of the run it covers", () => {
+  // COVERAGE LEAVES THE HEADER, AND THE CARD PICKS IT UP (425-05 · D-21/D-22, PXH-RUN-05).
+  //
+  // "2 of 3 steps" is a CAVEAT about the number, and the header is a glance; the owner declined
+  // the warning-toned header note outright. The caveat is not lost — it is one focus away, in the
+  // card — so the cell asserts both halves: the header says the pair and nothing else, and the
+  // card says the undercount. The file's tooltip mock is a passthrough, so the card's lines render
+  // inline here and are queryable off the container.
+  it("NO-HEADER-COVERAGE: the header says in and out, never how much of the run was measured", () => {
+    const tokens = {
+      measuredSteps: 2,
+      unmeasuredSteps: 1,
+      promptTokens: 103074,
+      completionTokens: 456,
+      totalTokens: 103530,
+    }
     mount(
       <RunNavbar
         run={baseRun}
-        tokens={{
-          measuredSteps: 2,
-          unmeasuredSteps: 1,
-          promptTokens: 900,
-          completionTokens: 100,
-          totalTokens: 1000,
-        }}
+        tokens={tokens}
         shortcutsOpen={false}
         onToggleShortcuts={() => {}}
       />,
     )
 
-    const line = container.querySelector('[data-run-token-summary]')
-    expect(line?.textContent).toContain("2 of 3 steps")
-    expect(line?.textContent).not.toContain(TOKENS_NOT_MEASURED_LABEL)
+    const line = container.querySelector("[data-run-token-summary]") as HTMLElement | null
+    expect(line).not.toBeNull()
+    expect(visibleTextOf(line!)).toBe(tokenPairLine(tokens))
+    expect(line!.textContent).not.toMatch(/of \d+ steps/)
+    expect(line!.textContent).not.toContain(TOKENS_NOT_MEASURED_LABEL)
+
+    expect(container.querySelector('[data-usage-line="coverage"]')?.textContent).toBe(
+      usageCoverageLine(tokens),
+    )
+  })
+
+  // THE LINE IS A DOOR TO A CARD, NOT A DOOR TO A PAGE (425-05 · D-21, UI-SPEC assumption 5).
+  //
+  // A button promises somewhere to go, and there is nowhere: the card behind this line is the
+  // whole of what there is to see. So the root stays a `span`, gains `tabIndex` so a keyboard
+  // reader reaches the card at all, and carries its name in an `sr-only` node rather than as an
+  // `aria-label` on a generic element.
+  it("TOKEN-USAGE-TRIGGER: the token line is a focusable span with an sr-only name, never a button", () => {
+    const tokens = {
+      measuredSteps: 3,
+      unmeasuredSteps: 0,
+      promptTokens: 103074,
+      completionTokens: 456,
+      totalTokens: 103530,
+    }
+    mount(
+      <RunNavbar
+        run={baseRun}
+        tokens={tokens}
+        shortcutsOpen={false}
+        onToggleShortcuts={() => {}}
+      />,
+    )
+
+    const line = container.querySelector("[data-run-token-summary]") as HTMLElement | null
+    expect(line?.tagName).toBe("SPAN")
+    expect(line?.getAttribute("tabindex")).toBe("0")
+    expect(line?.querySelector(".sr-only")?.textContent).toBe(TOKEN_USAGE_TRIGGER_LABEL)
+    expect(container.querySelector("button[data-run-token-summary]")).toBeNull()
+
+    expect(container.querySelector('[data-usage-line="totals"]')?.textContent).toBe(
+      usageTotalsLine(tokens),
+    )
+    // A fully measured run states no coverage anywhere, card included (D-22).
+    expect(container.querySelector('[data-usage-line="coverage"]')).toBeNull()
+  })
+
+  // THE MODEL SUMMARY REACHES THE CARD THROUGH THE PROP, AND ONLY THROUGH IT (425-05 · D-23).
+  it("TOKEN-USAGE-MODELS: the summary the page hands down is what names the model", () => {
+    const models = { declared: [{ provider: "openai", modelId: "gpt-5.6-terra", stepCount: 3 }] }
+    mount(
+      <RunNavbar
+        run={baseRun}
+        tokens={{
+          measuredSteps: 3,
+          unmeasuredSteps: 0,
+          promptTokens: 103074,
+          completionTokens: 456,
+          totalTokens: 103530,
+        }}
+        models={models}
+        shortcutsOpen={false}
+        onToggleShortcuts={() => {}}
+      />,
+    )
+
+    expect(container.querySelector('[data-usage-line="model"]')?.textContent).toBe(
+      "Model gpt-5.6-terra (openai)",
+    )
+  })
+
+  // THE LEGACY MODEL ITEM IS GONE, AND THAT IS THE ASSERTION (425-05 · D-23, PXH-RUN-05).
+  //
+  // `run.modelName` / `run.llmProvider` are row fields: they name what the host was configured
+  // with, not what answered THIS run. Identity now comes from `runs.detail`'s `models` summary or
+  // from nowhere, so a run row carrying the legacy pair must paint neither of them — and the Brain
+  // icon that announced them leaves with them, which is what keeps the header's icon set closed.
+  it("NO-HEADER-MODEL-ITEM: the run row's legacy model fields reach nothing in the header", () => {
+    mount(
+      <RunNavbar
+        run={{ ...baseRun, modelName: "gpt-5.6-terra", llmProvider: "openai" }}
+        shortcutsOpen={false}
+        onToggleShortcuts={() => {}}
+      />,
+    )
+
+    expect(container.textContent).not.toContain("gpt-5.6-terra")
+    expect(container.textContent).not.toContain("openai")
+    expect(container.querySelector("svg.lucide-brain")).toBeNull()
   })
 
   it("renders no token line at all while the durable read has not landed", () => {
