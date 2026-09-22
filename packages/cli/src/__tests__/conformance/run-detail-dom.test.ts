@@ -125,6 +125,9 @@ const RESPAWN_BUDGET_MS = 60_000
 /** How long the detached post-run tail is given before the dashboard is stopped for the scan. */
 const TAIL_GRACE_MS = 2_000
 
+/** How long a focused token line is given to open its usage card before the absence is taken as real. */
+const USAGE_CARD_OPEN_BUDGET_MS = 5_000
+
 /**
  * The artifact route a decision screenshot's `<img>` must be addressed through (D-12).
  *
@@ -243,6 +246,10 @@ interface PageObservation {
    * sentence composed here from this record is what turns it into a claim (425 D-21).
    */
   readonly runTokens?: import('@vostride/agent-qa-schema').RunTokenTotals
+  /** Whether focusing `[data-run-token-summary]` attached `[data-usage-card]` inside the budget. */
+  readonly usageCardOpened?: boolean
+  /** Every visible `[data-usage-line]` in the opened card, in document order, kind beside text. */
+  readonly usageCardLines?: readonly { readonly kind: string; readonly text: string }[]
   /** Recorded source fact, independent of its retired Overview chip. */
   readonly screenStateHash?: string
   readonly screenStateChip?: string
@@ -522,6 +529,37 @@ async function observeRunDetail(
       return (clone.textContent ?? '').trim()
     })
     const screenStateChip = await attributeOf('[data-screen-state]', 'data-screen-state')
+    // THE USAGE CARD IS OPENED FROM THE CONTROL A PERSON USES (425 D-21/D-24 · WR-05), with the
+    // stage-card idiom from `post-processing-dom.test.ts`: focus rather than hover, because the page
+    // mounts one `TooltipProvider` with `delayDuration = 0` and Radix opens on focus with no delay.
+    //
+    // THE CARD IS PORTALLED, so it is located on the document rather than under the trigger. Radix
+    // also paints the content's children a SECOND time inside a visually-hidden `role="tooltip"` node
+    // that lives INSIDE `[data-usage-card]`; those copies are dropped, or every line would read twice
+    // and "exactly one totals line" would be a claim about the screen-reader duplicate.
+    //
+    // This runs after every text and attribute read above, so opening a card cannot disturb what the
+    // harvest already recorded, and a card that never opens is a reading rather than a timeout.
+    let usageCardOpened: boolean | undefined
+    let usageCardLines: { kind: string; text: string }[] | undefined
+    const usageTrigger = page.locator('[data-run-token-summary]').first()
+    if ((await usageTrigger.count()) > 0) {
+      await usageTrigger.focus().catch(() => undefined)
+      usageCardOpened = await page.locator('[data-usage-card]').first()
+        .waitFor({ state: 'attached', timeout: USAGE_CARD_OPEN_BUDGET_MS })
+        .then(() => true)
+        .catch(() => false)
+      if (usageCardOpened) {
+        usageCardLines = await page.evaluate(() =>
+          Array.from(document.querySelectorAll('[data-usage-card] [data-usage-line]'))
+            .filter((line) => line.closest('[role="tooltip"]') === null)
+            .map((line) => ({
+              kind: line.getAttribute('data-usage-line') ?? '?',
+              text: (line as HTMLElement).innerText.trim(),
+            })),
+        )
+      }
+    }
     const detailResponse = await page.request.get(`${origin}/api/runs/${encodeURIComponent(runId)}/detail`)
     expect(detailResponse.status()).toBe(200)
     const detail = await detailResponse.json() as import('@vostride/agent-qa-schema').RunDetailProjection
@@ -544,6 +582,8 @@ async function observeRunDetail(
       ...(stepTokens === undefined ? {} : { stepTokens }),
       ...(runTokenSummary === undefined ? {} : { runTokenSummary }),
       ...(runTokens === undefined ? {} : { runTokens }),
+      ...(usageCardOpened === undefined ? {} : { usageCardOpened }),
+      ...(usageCardLines === undefined ? {} : { usageCardLines }),
       ...(screenStateHash === undefined ? {} : { screenStateHash }),
       ...(screenStateChip === undefined ? {} : { screenStateChip }),
       maskedCategories: harvested.maskedCategories,
@@ -807,6 +847,68 @@ describe('the shipped dashboard renders run detail populated and unmasked (405-1
     console.log(
       `[425-11] (1f) header token pair ${JSON.stringify(observed.runTokenSummary)} `
       + `from ${JSON.stringify(tokens)}`,
+    )
+  })
+
+  /**
+   * THE USAGE CARD, OPENED FROM ITS REAL TRIGGER ON THE SHIPPED BUNDLE (425 D-21/D-24 · WR-05).
+   *
+   * `run-usage-card.test.tsx` already mounts the real Radix primitives under a real provider and
+   * drives `focus()`, so what this cell adds is the one link nothing else holds: the header's actual
+   * `[data-run-token-summary]` trigger, on the built product, opening the portalled card. The totals
+   * sentence is composed here from the same `/detail` response the page rendered from, in `(1f)`'s
+   * idiom — compared rather than shared, because the cli package cannot import dashboard-ui.
+   */
+  it('(1g) usage card: the header trigger opens the portalled card and its lines carry the run\'s own totals', () => {
+    const observed = firstVisit()
+    const tokens = observed.runTokens
+    expect(tokens, `the detail read carries no run token totals at all.${context()}`).toBeDefined()
+    expect(
+      observed.usageCardOpened,
+      'focusing the header\'s token line never attached `[data-usage-card]`: the compact pair is a '
+      + 'door to the breakdown, and on the shipped bundle the door does not open, so the total, the '
+      + 'cached input, the coverage caveat and the model identity are unreachable. undefined here '
+      + `means the trigger itself was never painted.${context()}`,
+    ).toBe(true)
+    const lines = observed.usageCardLines ?? []
+    expect(
+      lines.length,
+      `the card opened and painted no \`[data-usage-line]\` at all — an empty box where the spend should be.${context()}`,
+    ).toBeGreaterThan(0)
+    const totals = lines.filter((line) => line.kind === 'totals')
+    expect(
+      totals.length,
+      'the card must carry exactly one totals line: none means the one sentence every run has is '
+      + 'missing, and two means the card is stating the spend twice or the harvest read the '
+      + `screen-reader duplicate. lines: ${JSON.stringify(lines)}${context()}`,
+    ).toBe(1)
+
+    const full = new Intl.NumberFormat('en-US')
+    const { measuredSteps, promptTokens, completionTokens, totalTokens } = tokens ?? { measuredSteps: 0 }
+    const expected =
+      measuredSteps > 0
+      && totalTokens !== undefined
+      && promptTokens !== undefined
+      && completionTokens !== undefined
+        ? `${full.format(totalTokens)} total · ${full.format(promptTokens)} in · ${full.format(completionTokens)} out`
+        : TOKENS_NOT_MEASURED_LABEL
+    expect(
+      totals[0]?.text,
+      'the card\'s totals line must spell the spend the detail read carries, in full digits — the '
+      + 'number the header\'s compact pair sends a reader here to check. A different number is the '
+      + 'card and the header disagreeing about one run, and a zero for an unmeasured run is a '
+      + `measurement nobody took. tokens: ${JSON.stringify(tokens)}${context()}`,
+    ).toBe(expected)
+    if (measuredSteps === 0) {
+      expect(
+        lines.filter((line) => line.kind === 'coverage'),
+        'the card said nobody measured this run and then followed it with a coverage caveat about '
+        + 'totals that do not exist (WR-02): an undercount of nothing is the absent-vs-zero collapse. '
+        + `lines: ${JSON.stringify(lines)}${context()}`,
+      ).toEqual([])
+    }
+    console.log(
+      `[425-15] (1g) usage card lines ${JSON.stringify(lines)} from ${JSON.stringify(tokens)}`,
     )
   })
 
