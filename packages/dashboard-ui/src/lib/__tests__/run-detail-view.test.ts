@@ -18,6 +18,7 @@ import type {
   RunDetailStep,
   RunDetailSubAction,
   RunModelSummary,
+  RunTokenTotals,
 } from '@vostride/agent-qa-schema'
 import { asRef } from '@vostride/agent-qa-schema'
 
@@ -273,6 +274,32 @@ describe('measurement coverage (425-05 · D-22)', () => {
     expect(usageCoverageLine({ measuredSteps: 2, unmeasuredSteps: 1 })).toBe(
       'measured 2 of 3 steps — totals are an undercount',
     )
+  })
+
+  // WR-02 (425-14). The two cells above are the negative control: the complete run and the genuinely
+  // partial run keep exactly the answers they had. This one is the run nobody measured at all.
+  it('USAGE-COVERAGE-ABSENT-IS-NOT-ZERO: says nothing about coverage when no step was measured', () => {
+    const failure =
+      'a card that says tokens were not measured and then reports how much of the total was missed ' +
+      'is describing a number nobody took'
+    const unmeasured: RunTokenTotals = { measuredSteps: 0, unmeasuredSteps: 3 }
+
+    expect(usageCoverageLine(unmeasured), failure).toBeUndefined()
+    expect(usageCoverageLine({ measuredSteps: 2, unmeasuredSteps: 1 }), failure).toContain('2 of 3')
+    expect(
+      usageCoverageLine({
+        measuredSteps: 3,
+        unmeasuredSteps: 0,
+        promptTokens: 1,
+        completionTokens: 1,
+        totalTokens: 2,
+      }),
+      failure,
+    ).toBeUndefined()
+
+    // The composition the card reads: the not-measured label is the whole of what it claims.
+    expect(usageTotalsLine(unmeasured), failure).toBe(TOKENS_NOT_MEASURED_LABEL)
+    expect(cachedInputLine(unmeasured), failure).toBeUndefined()
   })
 })
 
