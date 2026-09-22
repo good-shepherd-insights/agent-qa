@@ -21,7 +21,11 @@ import { createRoot, type Root } from "react-dom/client"
 import { MemoryRouter } from "react-router"
 import { afterEach, describe, expect, it, vi } from "vitest"
 
-import { PostProcessingChips } from "@/components/run-detail/post-processing-chips"
+import {
+  PostProcessingChips,
+  STAGE_CARD_LINE_SELECTORS,
+  type CardLineKind,
+} from "@/components/run-detail/post-processing-chips"
 import { RunNavbar } from "@/components/run-detail/run-navbar"
 import { TooltipProvider } from "@/components/ui/tooltip"
 import {
@@ -107,8 +111,15 @@ async function cardOf(host: HTMLElement, stage: "analysis" | "curation"): Promis
   return card
 }
 
-function lineOf(card: HTMLElement, kind: string): string | undefined {
-  return card.querySelector(`[data-stage-card-line="${kind}"]`)?.textContent ?? undefined
+/**
+ * One card line, addressed through the component's OWN published selector (425-08).
+ *
+ * The cells and the bundle-level Playwright legs must reach the same elements; importing the
+ * selector rather than re-spelling it is what stops a kind moving in the renderer and a hand-typed
+ * string here quietly matching nothing and reporting an absence as a pass.
+ */
+function lineOf(card: HTMLElement, kind: CardLineKind): string | undefined {
+  return card.querySelector(STAGE_CARD_LINE_SELECTORS[kind])?.textContent ?? undefined
 }
 
 /** What a SIGHTED reader sees on a root — the `sr-only` name is a separate claim, asserted apart. */
@@ -178,7 +189,7 @@ describe("a settled analysis indicator explains itself (D-13, roadmap SC3)", () 
     await act(async () => { root.focus() })
     const card = document.querySelector('[data-stage-card="analysis"]')
     expect(card).not.toBeNull()
-    expect(card!.querySelector('[data-stage-card-line="outcome"]')?.textContent)
+    expect(card!.querySelector(STAGE_CARD_LINE_SELECTORS.outcome)?.textContent)
       .toBe(ANALYSIS_COMPLETE_NO_ISSUES_TEXT)
   })
 })
@@ -365,7 +376,7 @@ describe("a failed chip is never blank (D-21 as narrowed)", () => {
       { status: "pending", card: { outcome: "Curation queued" } },
     ))
     const card = await cardOf(host, "analysis")
-    const outcome = card.querySelector('[data-stage-card-line="outcome"]')
+    const outcome = card.querySelector(STAGE_CARD_LINE_SELECTORS.outcome)
     expect(outcome?.textContent).toBe("Analysis failed — <img src=x onerror=alert(1)>")
     expect(outcome?.querySelector("img")).toBeNull()
   })
@@ -392,9 +403,9 @@ describe("a refusal is its own state, and it is not a chip (D-23)", () => {
     await act(async () => { root.focus() })
     const card = document.querySelector('[data-stage-card="unavailable"]')
     expect(card).not.toBeNull()
-    expect(card!.querySelector('[data-stage-card-line="outcome"]')?.textContent).toBe(CHIPS_UNAVAILABLE_TEXT)
-    expect(card!.querySelector('[data-stage-card-line="error"]')?.textContent).toBe("job_store_schema_version")
-    expect(card!.querySelector('[data-stage-card-line="reason"]')?.textContent).toBe("stamped by another build")
+    expect(card!.querySelector(STAGE_CARD_LINE_SELECTORS.outcome)?.textContent).toBe(CHIPS_UNAVAILABLE_TEXT)
+    expect(card!.querySelector(STAGE_CARD_LINE_SELECTORS.error)?.textContent).toBe("job_store_schema_version")
+    expect(card!.querySelector(STAGE_CARD_LINE_SELECTORS.reason)?.textContent).toBe("stamped by another build")
   })
 
   it("a view that has not arrived yet is `loading`, which is not `pending` and not blank", () => {
@@ -476,8 +487,12 @@ describe("every indicator state is readable with the colour stripped out (D-06, 
 // proposals line carries a PRODUCER string, so it is measured as a text node for the same reason
 // the failure reason is (T-425-08-02, the T-404-01 idiom).
 describe("a card explains timing and the chip-less stage on their own lines (D-12/D-14)", () => {
+  // Radix paints the content TWICE — once visibly, once inside a visually-hidden `role="tooltip"`
+  // node for announcement — so an unfiltered walk reports every line twice and an order claim built
+  // on it would pass for the wrong reason.
   function kindsOf(card: HTMLElement): (string | null)[] {
     return [...card.querySelectorAll("[data-stage-card-line]")]
+      .filter((el) => el.closest('[role="tooltip"]') === null)
       .map((el) => el.getAttribute("data-stage-card-line"))
   }
 
@@ -504,7 +519,7 @@ describe("a card explains timing and the chip-less stage on their own lines (D-1
     const curation = await cardOf(host, "curation")
     expect(kindsOf(curation)).toEqual(["outcome", "timing", "proposals"])
 
-    const proposals = curation.querySelector('[data-stage-card-line="proposals"]')
+    const proposals = curation.querySelector(STAGE_CARD_LINE_SELECTORS.proposals)
     expect(proposals?.textContent).toBe("Proposals failed — <img src=x onerror=alert(1)>")
     expect(proposals?.querySelector("img")).toBeNull()
   })

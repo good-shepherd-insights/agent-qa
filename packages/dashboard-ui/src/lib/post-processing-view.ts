@@ -19,7 +19,7 @@
 // constants, so copy moves in one place and the tests move with it; prose inlined in a component
 // is prose that drifts from prose inlined in a test, and both of them stay green.
 
-import { CURATION_BREAKDOWN_BUCKETS } from '@vostride/agent-qa-schema'
+import { CURATION_BREAKDOWN_BUCKETS, VERDICT_CLASSES } from '@vostride/agent-qa-schema'
 import type {
   CurationBreakdown,
   CurationSnapshotWithheldReason,
@@ -31,6 +31,7 @@ import type {
 } from '@vostride/agent-qa-schema'
 
 import type { PostProcessingRead } from './api'
+import { formatDuration, normalizeTimestamp } from './utils'
 
 /** The two stages the chain runs. Named rather than indexed — the set is closed (404 D-01). */
 export type PostProcessingStage = 'analysis' | 'curation'
@@ -348,41 +349,164 @@ export function legacyCurationPairText(curated: number, deprecated: number): str
 /** What a failed proposals stage says when nobody recorded why (D-14, the D-21 idiom). */
 export const PROPOSALS_REASON_ABSENT_TEXT = 'reason not recorded'
 
-// INERT UNTIL THE GREEN COMMIT (425-08 Task 2). The signatures below are published so the RED cells
-// that name them LINK and fail on the value they assert, rather than on a missing export — a module
-// that does not import is not evidence about behaviour.
+/**
+ * Seconds included because stage durations are seconds (UI-SPEC S4). `undefined` locale so the
+ * reader's own machine decides the wording, and `h23` so a 24-hour reader never sees `12:41:02 AM`
+ * where the log says `00:41:02`.
+ */
+const CLOCK_FORMAT = new Intl.DateTimeFormat(undefined, {
+  hour: '2-digit',
+  minute: '2-digit',
+  second: '2-digit',
+  hourCycle: 'h23',
+})
+
+/**
+ * A STORED string as an instant, or nothing at all (T-425-08-03, RESEARCH A6).
+ *
+ * Two shapes reach this module and both are the store's: the ISO-8601 instant the injected clock
+ * writes, and SQLite's `CURRENT_TIMESTAMP` space form, which JS would otherwise read as
+ * LOCAL time and silently shift by the reader's offset — `normalizeTimestamp` is what closes that.
+ * Anything that still does not parse yields `undefined` here, so its clause is OMITTED upstream.
+ * `NaN` rendered into a sentence is a number a reader would believe.
+ */
+function instantOf(stored: string | undefined): number | undefined {
+  if (stored === undefined) return undefined
+  const at = Date.parse(normalizeTimestamp(stored))
+  return Number.isNaN(at) ? undefined : at
+}
 
 /** The queue moment as a local wall clock, or nothing when the stored string does not parse. */
-export function formatClockTime(_iso: string): string | undefined {
-  return undefined
+export function formatClockTime(iso: string): string | undefined {
+  const at = instantOf(iso)
+  return at === undefined ? undefined : CLOCK_FORMAT.format(at)
 }
 
-/** The job row's own timing, clause by clause — each one only when its field was recorded. */
+/**
+ * A duration between two stored instants, or nothing when either is missing or unreadable.
+ *
+ * A NEGATIVE SPAN IS NOT A DURATION. Two columns written by different processes can land out of
+ * order under clock skew, and `-2.5s` is worse than silence: it describes a run that finished
+ * before it started. The clause is dropped, exactly as it is for an unparseable field.
+ */
+function spanText(from: number | undefined, to: number | undefined): string | undefined {
+  if (from === undefined || to === undefined || to < from) return undefined
+  return formatDuration(to - from)
+}
+
+/**
+ * THE JOB ROW'S OWN TIMING, CLAUSE BY CLAUSE (D-12).
+ *
+ * EVERY CLAUSE ONLY WHEN ITS FIELD EXISTS, and no line at all when the stage has no row. A stage
+ * that was never enqueued has no queue moment; printing `Queued 00:00:00 · started after 0ms` would
+ * be five facts nobody measured. Absent is not zero, one clause at a time.
+ *
+ * NO CLOCK. A running stage ends at `running` rather than at "running for 4m", because the elapsed
+ * figure would be this page's arithmetic against the present moment rather than something the store
+ * said — which is how a card starts claiming a chain is stuck (404 D-17's rule, applied to time).
+ * This module reads no current time by any spelling, and a grep for one is an acceptance criterion.
+ */
 export function stageTimingLine(
-  _detail: PostProcessingStageDetail | undefined,
-  _state: StageIndicatorState,
+  detail: PostProcessingStageDetail | undefined,
+  state: StageIndicatorState,
 ): string | undefined {
-  return undefined
+  if (detail === undefined) return undefined
+
+  const created = instantOf(detail.createdAt)
+  const claimed = instantOf(detail.claimedAt)
+  const updated = instantOf(detail.updatedAt)
+  const queuedAt = detail.createdAt === undefined ? undefined : formatClockTime(detail.createdAt)
+  const startedAfter = spanText(created, claimed)
+  const finishedIn = state === 'running' ? undefined : spanText(claimed, updated)
+
+  const clauses = [
+    ...(queuedAt === undefined ? [] : [`Queued ${queuedAt}`]),
+    ...(startedAfter === undefined ? [] : [`started after ${startedAfter}`]),
+    ...(state === 'running' ? ['running'] : finishedIn === undefined ? [] : [`finished in ${finishedIn}`]),
+    // ONLY PAST ONE (D-12). `1 attempts` on every settled stage is a number that never varies,
+    // which is the definition of a fact a reader learns to skip.
+    ...(detail.attempts !== undefined && detail.attempts > 1
+      ? [`${String(detail.attempts)} attempts`]
+      : []),
+  ]
+
+  return clauses.length === 0 ? undefined : clauses.join(' · ')
 }
 
-/** A closed class key, re-spelled for reading. A re-spelling, never a second closed set. */
+/**
+ * A closed class key, re-spelled for reading (UI-SPEC S4).
+ *
+ * A RE-SPELLING, NOT A SECOND CLOSED SET. A `Record<VerdictClass, string>` here would be a second
+ * place a new class has to be registered, and the one that fails silently — the schema's list is
+ * the vocabulary, and this is only how its underscores read out loud.
+ */
 export function verdictClassLabel(cls: VerdictClass): string {
-  return cls
+  return cls.replace(/_/g, ' ')
 }
 
 /** `Analysis complete — root cause: {class} ({n} verdict|verdicts)`, or the classless form. */
-export function analysisCompleteWithVerdictsText(_cls: VerdictClass | undefined, _n: number): string {
-  return ''
+export function analysisCompleteWithVerdictsText(cls: VerdictClass | undefined, n: number): string {
+  const complete = `${STAGE_INDICATOR_WORDS.analysis.complete} complete`
+  const counted = `${String(n)} ${n === 1 ? 'verdict' : 'verdicts'}`
+  return cls === undefined
+    ? `${complete} — ${counted}`
+    : `${complete} — root cause: ${verdictClassLabel(cls)} (${counted})`
+}
+
+/**
+ * The class the run's verdicts most often landed on, from COUNTS rather than from prose (D-13).
+ *
+ * `byClass` is partial on purpose (422): a class that did not occur is ABSENT, not zero — so a
+ * recorded zero is read the same way an absence is, and never named as this run's root cause. Ties
+ * break by the schema's own declaration order, so the answer does not depend on the order a
+ * producer happened to serialize its keys in.
+ */
+function dominantVerdictClass(byClass: Partial<Record<VerdictClass, number>>): VerdictClass | undefined {
+  let dominant: VerdictClass | undefined
+  let highest = 0
+  for (const cls of VERDICT_CLASSES) {
+    const count = byClass[cls]
+    if (count !== undefined && count > highest) {
+      dominant = cls
+      highest = count
+    }
+  }
+  return dominant
 }
 
 /** `Proposals: {n} staged for review` — rendered only for a positive count (D-14). */
-export function proposalsStagedText(_n: number): string {
-  return ''
+export function proposalsStagedText(n: number): string {
+  return `Proposals: ${String(n)} staged for review`
 }
 
 /** `Proposals failed — {reason}`. The reason is the producer's, masked and unsliced. */
-export function proposalsFailedText(_reason: string): string {
-  return ''
+export function proposalsFailedText(reason: string): string {
+  return `Proposals failed — ${reason}`
+}
+
+/**
+ * THE CHIP-LESS STAGE, SURFACED ONLY WHEN IT HAS SOMETHING TO SAY (D-14).
+ *
+ * v54 closed the chip set at two, so `proposals` has no indicator of its own. Two readings are
+ * user-relevant: a stage that FAILED (otherwise invisible) and one that staged something (there is
+ * now work waiting). A zero-output pass and an absent stage say nothing — an absent stage is the
+ * not-recorded fact of every pre-v3 row, and a line about it would be this build inventing work.
+ *
+ * The chain's terminal row is what says `failed`; the JOB row is where the masked reason lives
+ * (the same split D-21 draws for the two chip stages).
+ */
+function proposalsLine(read: ReadBody): string | undefined {
+  const stage = read.status.notification?.stages.proposals
+  if (stage === undefined) return undefined
+
+  if (stage.status === 'failed') {
+    const recorded = read.status.stageDetails?.proposals?.lastFailureReason
+    return proposalsFailedText(recorded ?? PROPOSALS_REASON_ABSENT_TEXT)
+  }
+
+  return stage.proposed !== undefined && stage.proposed > 0
+    ? proposalsStagedText(stage.proposed)
+    : undefined
 }
 
 /** `{Stage} queued`, plus who is going to move it when the run recorded a disposition (D-12/D-13). */
@@ -499,8 +623,18 @@ function stageCard(
 
   if (state === 'complete' && stage === 'curation') return curationCompleteText(read)
 
-  if (state === 'complete' && read.status.notification?.verdictSummary.total === 0) {
-    return { outcome: ANALYSIS_COMPLETE_NO_ISSUES_TEXT }
+  if (state === 'complete') {
+    // THE SUMMARY IS THE SOURCE, AND THE ONLY ONE (D-13, UI-SPEC S4 recommendation 4). It is on the
+    // read the header already holds — no second fetch from a presentational surface — and it is
+    // counted rather than written, so the sentence never parses another surface's prose (406).
+    const summary = read.status.notification?.verdictSummary
+    if (summary === undefined) return undefined
+    return {
+      outcome:
+        summary.total === 0
+          ? ANALYSIS_COMPLETE_NO_ISSUES_TEXT
+          : analysisCompleteWithVerdictsText(dominantVerdictClass(summary.byClass), summary.total),
+    }
   }
 
   return undefined
@@ -526,9 +660,34 @@ function excludedChipView(stage: PostProcessingStage, read: ReadBody): PostProce
   }
 }
 
+/**
+ * The recorded lines that hang beneath an outcome — timing on every stage, proposals on curation.
+ *
+ * FOLDED ONTO AN EXISTING CARD, never used to conjure one. `outcome` is the card's mandatory line,
+ * so a stage with a job row but nothing to say about its outcome has no card to hang timing from —
+ * and a card whose only content was a clock would be a hover that explains nothing.
+ */
+function withRecordedLines(
+  card: StageCardView,
+  stage: PostProcessingStage,
+  state: StageIndicatorState,
+  read: ReadBody,
+): StageCardView {
+  const timing = stageTimingLine(read.status.stageDetails?.[stage], state)
+  // THE ANALYSIS CARD NEVER CARRIES ONE (D-14): proposals is curation's neighbouring stage, and a
+  // line about it on the analysis card would attribute one stage's work to another.
+  const proposals = stage === 'curation' ? proposalsLine(read) : undefined
+  return {
+    ...card,
+    ...(timing === undefined ? {} : { timing }),
+    ...(proposals === undefined ? {} : { proposals }),
+  }
+}
+
 function chipView(stage: PostProcessingStage, read: ReadBody): PostProcessingChipView {
   const state = stagePresentationState(read, stage)
-  const card = stageCard(stage, state, read)
+  const outcome = stageCard(stage, state, read)
+  const card = outcome === undefined ? undefined : withRecordedLines(outcome, stage, state, read)
   return {
     status: read.status.chips[stage],
     state,
