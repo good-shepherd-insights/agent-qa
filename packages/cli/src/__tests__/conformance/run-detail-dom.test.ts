@@ -152,6 +152,7 @@ function publishedConstant(relativePath: string, name: string): string {
 }
 
 const MASKED_EMAIL_LABEL = publishedConstant('lib/run-detail-view.ts', 'MASKED_EMAIL_LABEL')
+const TOKENS_NOT_MEASURED_LABEL = publishedConstant('lib/run-detail-view.ts', 'TOKENS_NOT_MEASURED_LABEL')
 
 /**
  * The accessible name of one overview reasoning section, read out of the panel that names it.
@@ -235,6 +236,13 @@ interface PageObservation {
   readonly stepTokens?: number
   /** The `[data-run-token-summary]` sentence from the navbar, as painted. */
   readonly runTokenSummary?: string
+  /**
+   * The run's token totals off the SAME `/detail` response the page rendered from.
+   *
+   * The sentence above has been captured since 405 and asserted by nobody; comparing it to a
+   * sentence composed here from this record is what turns it into a claim (425 D-21).
+   */
+  readonly runTokens?: import('@vostride/agent-qa-schema').RunTokenTotals
   /** Recorded source fact, independent of its retired Overview chip. */
   readonly screenStateHash?: string
   readonly screenStateChip?: string
@@ -502,12 +510,23 @@ async function observeRunDetail(
     const treeActionFamily = await attributeOf('[data-sub-action] [data-action-family]', 'data-action-family')
     const treePlanCount = await page.locator('[data-sub-action] [data-sub-action-plan]').count()
     const tokenSummary = await textOf('[data-token-summary]')
-    const runTokenSummary = await textOf('[data-run-token-summary]')
+    // THE TOKEN ROOT CARRIES ITS OWN ACCESSIBLE NAME (425-05 · D-21). The header's token line is a
+    // focusable tooltip trigger with an `sr-only` sibling naming it, so the root's `textContent` is
+    // the sentence AND that name run together. `(1f)` is a claim about the sentence a person reads,
+    // so the name is dropped here rather than pattern-matched around downstream.
+    const runTokenSummary = await page.evaluate(() => {
+      const root = document.querySelector('[data-run-token-summary]')
+      if (root === null) return undefined
+      const clone = root.cloneNode(true) as HTMLElement
+      for (const hidden of Array.from(clone.querySelectorAll('.sr-only'))) hidden.remove()
+      return (clone.textContent ?? '').trim()
+    })
     const screenStateChip = await attributeOf('[data-screen-state]', 'data-screen-state')
     const detailResponse = await page.request.get(`${origin}/api/runs/${encodeURIComponent(runId)}/detail`)
     expect(detailResponse.status()).toBe(200)
     const detail = await detailResponse.json() as import('@vostride/agent-qa-schema').RunDetailProjection
     const stepTokens = detail.steps[0]?.tokenUsage?.totalTokens
+    const runTokens = detail.tokens
     const screenStateHash = detail.subActions[0]?.screenStateHash
 
     return {
@@ -524,6 +543,7 @@ async function observeRunDetail(
       ...(tokenSummary === undefined ? {} : { tokenSummary }),
       ...(stepTokens === undefined ? {} : { stepTokens }),
       ...(runTokenSummary === undefined ? {} : { runTokenSummary }),
+      ...(runTokens === undefined ? {} : { runTokens }),
       ...(screenStateHash === undefined ? {} : { screenStateHash }),
       ...(screenStateChip === undefined ? {} : { screenStateChip }),
       maskedCategories: harvested.maskedCategories,
@@ -740,6 +760,54 @@ describe('the shipped dashboard renders run detail populated and unmasked (405-1
       + `this cell alone.${context()}`,
     ).toBeGreaterThan(0)
     expect(observed.tokenSummary).toBeUndefined()
+  })
+
+  /**
+   * THE HEADER PAIR, ON THE SHIPPED BUNDLE (425 D-21, as corrected by 425 RESEARCH pitfall 2).
+   *
+   * `[data-run-token-summary]` has been captured into this observation since 405 and asserted by
+   * NOBODY, which is why the `405-run-detail-mutation.sh` M2/M2L legs stayed green straight through
+   * the header's rewrite — M2's required cell is `(1d)`, over `[data-token-summary]`, a different
+   * root carrying a different number. This cell is additive and leaves both legs exactly as they
+   * were; it is the first thing in the repository to hold the header's own sentence to account.
+   *
+   * THE EXPECTED SENTENCE IS COMPOSED HERE, from the same `/detail` response the page rendered
+   * from, with the same `Intl` formatter `format.ts` constructs. The cli package cannot import
+   * dashboard-ui, so the two spellings are compared rather than shared — which is the stronger
+   * arrangement anyway: a page that quietly started rounding differently reds here.
+   */
+  it("(1f) header token pair: the navbar spells the run's in/out pair from the detail read", () => {
+    const observed = firstVisit()
+    const tokens = observed.runTokens
+    expect(tokens, `the detail read carries no run token totals at all.${context()}`).toBeDefined()
+    expect(
+      observed.runTokenSummary,
+      'the header painted no `[data-run-token-summary]` root. The run\'s spend is the one accounting '
+      + `number on this page; an absent root is the number going missing.${context()}`,
+    ).toBeDefined()
+
+    const compact = new Intl.NumberFormat('en-US', { notation: 'compact', maximumFractionDigits: 1 })
+    const { measuredSteps, promptTokens, completionTokens } = tokens ?? { measuredSteps: 0 }
+    const expected =
+      measuredSteps > 0 && promptTokens !== undefined && completionTokens !== undefined
+        ? `${compact.format(promptTokens)} in · ${compact.format(completionTokens)} out`
+        : TOKENS_NOT_MEASURED_LABEL
+    expect(
+      observed.runTokenSummary,
+      'the header must spell the run\'s spend as the labelled in/out pair the detail read carries — '
+      + 'and an unmeasured run must say so rather than reading zero, which is a measurement nobody '
+      + `took. tokens: ${JSON.stringify(tokens)}${context()}`,
+    ).toBe(expected)
+    expect(
+      observed.runTokenSummary ?? '',
+      'and the coverage caveat stays OUT of the header sentence (D-22). "of N steps" is a caveat '
+      + 'about the number rather than the number, and the header is a glance; it belongs in the '
+      + `usage card, where a reader who wants it is already looking.${context()}`,
+    ).not.toMatch(/of \d+ steps/u)
+    console.log(
+      `[425-11] (1f) header token pair ${JSON.stringify(observed.runTokenSummary)} `
+      + `from ${JSON.stringify(tokens)}`,
+    )
   })
 
   it('(1e) screen context: recorded hash survives removal of the redundant Overview chip', () => {
