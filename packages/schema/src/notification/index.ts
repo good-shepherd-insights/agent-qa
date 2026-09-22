@@ -15,6 +15,8 @@ export {
   CurationSnapshotWithheldSchema,
   POST_PROCESSING_CHIP_STATUSES,
   POST_PROCESSING_DETAIL_STAGES,
+  POST_PROCESSING_EXCLUSION_REASONS,
+  PostProcessingExclusionSchema,
   PostProcessingStageDetailSchema,
   isPostProcessingChipStatus,
 } from './post-processing-status'
@@ -41,6 +43,7 @@ export type {
   PostProcessingChipStatus,
   PostProcessingChips,
   PostProcessingDetailStage,
+  PostProcessingExclusionReason,
   PostProcessingStageDetail,
   PostProcessingStatus,
 } from './post-processing-status'

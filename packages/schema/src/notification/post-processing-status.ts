@@ -98,6 +98,24 @@ export const CurationSnapshotWithheldSchema = z.object({
   reason: z.enum(CURATION_SNAPSHOT_WITHHELD_REASONS),
 }).strict() satisfies z.ZodType<{ reason: CurationSnapshotWithheldReason }>
 
+/**
+ * Why a run's post-run chain was never enqueued (425 D-08). A gate run and an
+ * outcome-excluded run both skip the whole chain (404 D-08), so their chips would otherwise
+ * read `pending` forever. The fact is a SIBLING of the chip words, never a fifth word: the
+ * four-word vocabulary above stays closed, and a surface that knows about the exclusion
+ * renders it beside the chips rather than instead of a status it invented.
+ */
+export type PostProcessingExclusionReason = 'gate-run' | 'outcome-excluded'
+
+export const POST_PROCESSING_EXCLUSION_REASONS = [
+  'gate-run',
+  'outcome-excluded',
+] as const satisfies readonly PostProcessingExclusionReason[]
+
+export const PostProcessingExclusionSchema = z.object({
+  reason: z.enum(POST_PROCESSING_EXCLUSION_REASONS),
+}).strict() satisfies z.ZodType<{ reason: PostProcessingExclusionReason }>
+
 export interface PostProcessingStatus {
   runId: string
   chips: PostProcessingChips
@@ -110,6 +128,11 @@ export interface PostProcessingStatus {
    * curationSnapshot. One flag governs both the checkpoint copy and the notification's nested copy.
    */
   curationSnapshotWithheld?: { reason: CurationSnapshotWithheldReason }
+  /**
+   * Present iff the run's durable record carries a gate-run or outcome-excluded marker; never
+   * derived from missing job rows, from the run's status or from a pushed frame.
+   */
+  exclusion?: { reason: PostProcessingExclusionReason }
   /**
    * Present only once the chain reached its terminal and wrote its one row (D-09). Absent is
    * the ordinary state of a chain still in flight — never rendered as a failure.

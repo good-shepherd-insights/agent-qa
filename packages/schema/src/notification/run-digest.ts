@@ -29,8 +29,8 @@ import { z } from 'zod'
 import { AnalysisClusterViewSchema } from '../functions/analysis-get'
 import type { AnalysisClusterView } from '../functions/analysis-get'
 import { runIdSchema } from '../run/run-id'
-import { POST_PROCESSING_CHIP_STATUSES } from './post-processing-status'
-import type { PostProcessingChipStatus } from './post-processing-status'
+import { POST_PROCESSING_CHIP_STATUSES, PostProcessingExclusionSchema } from './post-processing-status'
+import type { PostProcessingChipStatus, PostProcessingExclusionReason } from './post-processing-status'
 import type { RunNotificationOutcome } from './run-notification'
 
 /** `runs.digest` addresses exactly one run by id — the `runs.postprocessing` shape. */
@@ -76,6 +76,12 @@ export interface RunDigestChainOutcomes {
   analysis: PostProcessingChipStatus
   curation: PostProcessingChipStatus
   outcome?: RunNotificationOutcome
+  /**
+   * The `runs.postprocessing` exclusion fact verbatim (425 D-08), so a machine reader of the
+   * digest never re-derives from `pending` chips what the read op already knows. A sibling of
+   * the two chip arms rather than a fifth word on either of them.
+   */
+  exclusion?: { reason: PostProcessingExclusionReason }
 }
 
 /**
@@ -169,6 +175,7 @@ export const RunDigestChainOutcomesSchema = z.object({
   analysis: z.enum(POST_PROCESSING_CHIP_STATUSES),
   curation: z.enum(POST_PROCESSING_CHIP_STATUSES),
   outcome: z.enum(['done', 'failed']).optional(),
+  exclusion: PostProcessingExclusionSchema.optional(),
 }).strict() satisfies z.ZodType<RunDigestChainOutcomes>
 
 export const RunDigestCandidateReportSchema = z.object({
