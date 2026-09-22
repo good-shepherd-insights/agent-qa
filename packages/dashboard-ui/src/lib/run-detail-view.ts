@@ -15,9 +15,10 @@
 //
 // ABSENT IS NOT ZERO, AND IT IS THE LOAD-BEARING RULE OF THIS FILE. `RunTokenTotals` omits its three
 // sums entirely when nothing was measured (D-06), because "no step reported usage" and "every step
-// reported zero" are different facts about a run. There is deliberately no `?? 0` anywhere below:
-// a default would convert "nobody measured this" into "this was free" at the exact layer a person
-// reads, which is the one place that lie is unrecoverable.
+// reported zero" are different facts about a run. No sum below is ever defaulted to zero when it is
+// absent: a default would convert "nobody measured this" into "this was free" at the exact layer a
+// person reads, which is the one place that lie is unrecoverable. 425-05 greps this file for the
+// nullish-default spelling and requires ZERO matches, so the rule is stated without writing it.
 
 import type {
   RunDetailArtifactRef,
@@ -25,6 +26,7 @@ import type {
   RunDetailProjection,
   RunDetailStep,
   RunDetailSubAction,
+  RunModelSummary,
   RunTokenTotals,
 } from '@vostride/agent-qa-schema'
 
@@ -44,6 +46,19 @@ export const DID_NOT_RUN_LABEL: string = DID_NOT_RUN_NOTE
 
 /** What the token line says when the run carries no measurement at all (D-06). */
 export const TOKENS_NOT_MEASURED_LABEL = 'tokens not measured'
+
+/** The usage card's heading over a run that spoke to more than one model identity (D-23). */
+export const MODELS_HEADING = 'Models'
+
+/**
+ * The accessible name of the header's token line, which is a TRIGGER and not a destination (D-21).
+ *
+ * The line is a focusable `span`, never a button: a button promises somewhere to go and the card
+ * behind this one is the whole of what there is to see. The name says what focusing it opens,
+ * because the visible text — `103.1K in · 456 out` — says what the numbers are and nothing about
+ * there being more.
+ */
+export const TOKEN_USAGE_TRIGGER_LABEL = 'Token usage — details'
 
 /** The chip for a `SECRET` placeholder this host's current config cannot restore (D-10). */
 export const MASKED_SECRET_LABEL = "masked secret — not in this host's config"
@@ -246,21 +261,168 @@ export function reranLabel(attempts: number): string | undefined {
   return attempts > 1 ? `re-ran after failure ×${String(attempts - 1)}` : undefined
 }
 
-// ------------------------------- token line -------------------------------
+// -------------------------- token line and usage --------------------------
 
 /**
- * The run's model spend, in one honest sentence (D-06).
+ * Full digits, grouped — the CARD's number format (425-05 · D-24).
  *
- * The sums are ABSENT rather than zero when nothing was measured, so the absence — not a count — is
- * what selects {@link TOKENS_NOT_MEASURED_LABEL}. A step that genuinely spent zero IS a measurement
- * and reads as `0 tokens across 1 of 1 steps`; a run nobody measured reads as "tokens not measured".
- * Those two sentences must never collapse into each other, which is why there is no `?? 0` here.
+ * The header stays compact (`103.1K`) because it is a glance and a glance wants a shape; the card
+ * is where someone checks a number against an invoice, and `103.1K` cannot be checked against
+ * anything. One formatter, module-level, because `Intl.NumberFormat` construction is the expensive
+ * half and every line below wants the same grouping.
  */
-export function tokenSummaryLine(tokens: RunTokenTotals): string {
-  const { measuredSteps, unmeasuredSteps, totalTokens } = tokens
-  if (measuredSteps === 0 || totalTokens === undefined) return TOKENS_NOT_MEASURED_LABEL
+const fullTokens = new Intl.NumberFormat('en-US')
+
+/**
+ * What the header says a measured run spent, as a labelled pair (425-05 · D-21).
+ *
+ * THE PAIR IS AS CAPABLE OF LYING AS THE SUM IT REPLACES, so it is guarded the same way: absent
+ * sums select {@link TOKENS_NOT_MEASURED_LABEL}, and a genuinely measured zero reads `0 in · 0 out`
+ * — a measurement, not an absence. No absent sum is defaulted to zero here, and none can be.
+ *
+ * COVERAGE IS NOT IN THIS SENTENCE (D-22). "2 of 3 steps" is a caveat about the number, and the
+ * header is a glance; the caveat lives in the card, where a reader who wants it is already looking.
+ */
+export function tokenPairLine(tokens: RunTokenTotals): string {
+  const { measuredSteps, promptTokens, completionTokens } = tokens
+  if (measuredSteps === 0 || promptTokens === undefined || completionTokens === undefined) {
+    return TOKENS_NOT_MEASURED_LABEL
+  }
+  return `${formatTokens(promptTokens)} in · ${formatTokens(completionTokens)} out`
+}
+
+/**
+ * The card's first line: the same spend, spelled out (425-05 · D-24).
+ *
+ * It states the total AND the pair rather than only the total, because the header's compact pair
+ * is what a reader is checking when they open the card — a card that answered a different question
+ * would send them somewhere else to add two numbers up.
+ */
+export function usageTotalsLine(tokens: RunTokenTotals): string {
+  const { measuredSteps, promptTokens, completionTokens, totalTokens } = tokens
+  if (
+    measuredSteps === 0 ||
+    totalTokens === undefined ||
+    promptTokens === undefined ||
+    completionTokens === undefined
+  ) {
+    return TOKENS_NOT_MEASURED_LABEL
+  }
+  return `${fullTokens.format(totalTokens)} total · ${fullTokens.format(promptTokens)} in · ${fullTokens.format(completionTokens)} out`
+}
+
+/**
+ * How much of the run the totals actually cover — only when that is less than all of it (D-22).
+ *
+ * A fully measured run renders NOTHING: "3 of 3 steps" is a sentence that adds no fact and costs a
+ * line in a card whose whole discipline is that every line is a fact someone reported. The owner
+ * declined this clause in the header; it is the card's, or it is nowhere.
+ */
+export function usageCoverageLine(tokens: RunTokenTotals): string | undefined {
+  const { measuredSteps, unmeasuredSteps } = tokens
+  if (unmeasuredSteps === 0) return undefined
   const allSteps = measuredSteps + unmeasuredSteps
-  return `${formatTokens(totalTokens)} tokens across ${String(measuredSteps)} of ${String(allSteps)} steps`
+  return `measured ${String(measuredSteps)} of ${String(allSteps)} steps — totals are an undercount`
+}
+
+/**
+ * The provider's cached-input report, and NOTHING ELSE (425-05 · D-24, RESEARCH reconciliation 4).
+ *
+ * `cachedInputTokens` is the only input. A step's execution cache verdict — hit, miss or bypass —
+ * is a fact about THIS product replaying a step without a model call at all, and rendering it here
+ * would attribute a discount to the provider that the provider never reported, on the line a person
+ * reads as a bill. The absence of the field is the absence of the claim, and this file is grepped
+ * for that step field by name with ZERO matches required.
+ *
+ * THE NARROWER CLAUSE NAMES ITS OWN DENOMINATOR. When the cache report covers fewer steps than were
+ * measured, `cachedInputTokens` is a fraction of `cachedInputMeasuredTokens` — the input over
+ * precisely those steps — and not of the run's whole input. Printing it against the run total would
+ * be a ratio nobody computed.
+ */
+export function cachedInputLine(tokens: RunTokenTotals): string | undefined {
+  const { measuredSteps, cachedInputTokens, cachedMeasuredSteps, cachedInputMeasuredTokens } = tokens
+  if (cachedInputTokens === undefined) return undefined
+  const cached = fullTokens.format(cachedInputTokens)
+  if (
+    cachedMeasuredSteps === undefined ||
+    cachedMeasuredSteps >= measuredSteps ||
+    cachedInputMeasuredTokens === undefined
+  ) {
+    return `cached input ${cached} (provider-reported)`
+  }
+  return `cached input ${cached} of ${fullTokens.format(cachedInputMeasuredTokens)} (provider-reported) over ${String(cachedMeasuredSteps)} of ${String(measuredSteps)} measured steps`
+}
+
+/**
+ * One line of the usage card's model section, and what the card must do with it.
+ *
+ * `masked` marks the lines that carry a PRODUCER string — a model or provider id the read served
+ * masked — so the card routes exactly those through `MaskedText`. The heading is product copy and
+ * is not routed: a constant this file owns has no marker in it and never will.
+ */
+export interface UsageLine {
+  readonly kind: 'model' | 'models' | 'responded' | 'heading'
+  readonly text: string
+  readonly masked?: boolean
+}
+
+/** One identity, as the card names it — the parenthesis only when a provider was recorded. */
+function identityText(entry: { provider?: string; modelId: string }): string {
+  return entry.provider === undefined ? entry.modelId : `${entry.modelId} (${entry.provider})`
+}
+
+/**
+ * Who answered this run, from the durable summary and from nowhere else (425-05 · D-23).
+ *
+ * NO SUMMARY IS NO LINE. A pre-423 run recorded no model identity, and the run row's legacy
+ * `modelName` / `llmProvider` are NOT a fallback: they name what the host was configured with at
+ * some point, not what answered this run, and a page that quietly substituted one for the other
+ * would be making a claim about a run out of a fact about a machine.
+ *
+ * ZERO, ONE, MANY. One declared identity is one `Model` line; more than one — or a responding id
+ * the declared list does not contain — turns the section into a heading with a line per identity,
+ * because a mixed run's spend cannot be attributed to a single name. A responding id is said ONLY
+ * when it differs from what was asked for: "responded as" is a correction, and a correction that
+ * repeats the original is noise.
+ */
+export function usageModelLines(models: RunModelSummary | undefined): readonly UsageLine[] {
+  if (models === undefined) return []
+  const { declared, responding } = models
+  if (declared === undefined && responding === undefined) return []
+
+  const declaredIds = new Set((declared ?? []).map((entry) => entry.modelId))
+  const differing = (responding ?? []).filter((entry) => !declaredIds.has(entry.modelId))
+
+  if (declared?.length === 1 && (responding === undefined || responding.length <= 1)) {
+    return [
+      { kind: 'model', text: `Model ${identityText(declared[0])}`, masked: true },
+      ...differing.map(
+        (entry): UsageLine => ({
+          kind: 'responded',
+          text: `responded as ${entry.modelId}`,
+          masked: true,
+        }),
+      ),
+    ]
+  }
+
+  return [
+    { kind: 'heading', text: MODELS_HEADING },
+    ...(declared ?? []).map(
+      (entry): UsageLine => ({
+        kind: 'models',
+        text: `${identityText(entry)} × ${String(entry.stepCount)} steps`,
+        masked: true,
+      }),
+    ),
+    ...differing.map(
+      (entry): UsageLine => ({
+        kind: 'responded',
+        text: `responded as ${entry.modelId} × ${String(entry.stepCount)} steps`,
+        masked: true,
+      }),
+    ),
+  ]
 }
 
 // ----------------------------- screen context -----------------------------
@@ -336,13 +498,14 @@ export function decisionScreenshotRef(
 }
 
 /**
- * One step's spend, in the shape {@link tokenSummaryLine} reads (D-06).
+ * One step's spend, in the shape {@link tokenPairLine} reads (D-06).
  *
  * ABSENT STAYS ABSENT. A step that reported no usage becomes one UNMEASURED step and carries no
  * sums at all, so the line says "tokens not measured" rather than `0 tokens across 0 of 1 steps`.
  * A step that genuinely reported zero becomes one MEASURED step whose sums are zero, and reads as
- * the measurement it is. There is no `?? 0` on this path and none can be added without reddening a
- * cell — which is the entire reason the run-level totals were given this shape upstream.
+ * the measurement it is. Nothing on this path defaults an absent sum to zero, and nothing can be
+ * added that does without reddening a cell — which is the entire reason the run-level totals were
+ * given this shape upstream.
  */
 export function stepTokenTotals(step: Pick<RunDetailStep, 'tokenUsage'>): RunTokenTotals {
   const usage = step.tokenUsage
