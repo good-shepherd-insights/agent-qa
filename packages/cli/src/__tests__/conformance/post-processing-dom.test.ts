@@ -233,6 +233,27 @@ for (const [kind, selector] of Object.entries(STAGE_CARD_LINES)) {
 /** How long a focused indicator is given to open its card before the absence is taken as real. */
 const CARD_OPEN_BUDGET_MS = 5_000
 
+/**
+ * A harvested timing line, split on the separator `stageTimingLine` composes with (425 D-12).
+ *
+ * The view joins its clauses with space, middle dot, space; splitting on anything looser would
+ * read a clause that happened to contain a dot as two, and the assertions below name clauses.
+ */
+function timingClauses(line: string): string[] {
+  return line.split(' · ').map((clause) => clause.trim())
+}
+
+/**
+ * Every spelling `formatDuration` emits — `450ms`, `2s`, `2.5s`, `1m`, `1m 30s`, `1h`, `1h 5m`.
+ *
+ * Anchored and value-free: it says a clause CARRIES a duration without saying which one, because
+ * the drain's real durations vary between a laptop and CI and a pinned value measures the machine.
+ */
+const DURATION_TEXT = String.raw`(?:\d+ms|\d+(?:\.\d+)?s|\d+m(?: \d+s)?|\d+h(?: \d+m)?)`
+const QUEUED_CLAUSE = /^Queued \d{2}:\d{2}:\d{2}$/u
+const STARTED_AFTER_CLAUSE = new RegExp(`^started after ${DURATION_TEXT}$`, 'u')
+const FINISHED_IN_CLAUSE = new RegExp(`^finished in ${DURATION_TEXT}$`, 'u')
+
 
 interface ChipTransition {
   readonly at: number
@@ -1480,6 +1501,42 @@ describePosix('D-19 on the built bundle behind the shipped dashboard (LIFE-03 / 
       handed!.html.includes('pending'),
       'and the settled chip never reads `pending` — the other lie the absent-reason line replaces',
     ).toBe(false)
+    // THE TIMING LINE IS A CLAIM, NOT A LOG LINE (425-13 · SC3). This run was drained by a real
+    // daemon to a failed analysis stage, so its row is terminal: the lease released, `started_at`
+    // kept. It is the only place in the repository where that production settled shape reaches a
+    // cell, and it used to be printed here and asserted nowhere — which is how a card that could
+    // never say how long a stage took passed a full sweep. Clause VALUES are not asserted: the
+    // drain's real durations and the host's local zone both vary. A trailing attempts clause is
+    // neither required nor refused, because a stage that retried legitimately appends one.
+    expect(
+      handed!.analysisTiming,
+      'a settled stage card that renders no timing line at all is the SC3 gap returning: the reader '
+      + 'of a finished run is told the stage failed and nothing about when or for how long. '
+      + `outcome: ${JSON.stringify(handed!.analysisOutcome)}, painted: ${handed!.html.slice(0, 400)}`,
+    ).toBeDefined()
+    const timing = handed!.analysisTiming!
+    expect(
+      timingClauses(handed!.analysisTiming!)[0],
+      'the line no longer opens on the queue moment as a two-digit wall clock, so the one instant a '
+      + `reader can match against a log is gone or unreadable. line: ${JSON.stringify(timing)}`,
+    ).toMatch(QUEUED_CLAUSE)
+    expect(
+      timingClauses(handed!.analysisTiming!).some((clause) => STARTED_AFTER_CLAUSE.test(clause)),
+      'no clause says how long the stage waited before it started: the durable start instant is no '
+      + 'longer reaching the card, or it arrives unreadable, and the queue wait a reader came for is '
+      + `missing. line: ${JSON.stringify(timing)}`,
+    ).toBe(true)
+    expect(
+      timingClauses(handed!.analysisTiming!).some((clause) => FINISHED_IN_CLAUSE.test(clause)),
+      'no clause says how long the stage ran: the durable start instant is no longer reaching the '
+      + 'card on a settled row, so a reader of a finished run learns only when it was queued — the '
+      + `SC3 gap exactly. line: ${JSON.stringify(timing)}`,
+    ).toBe(true)
+    expect(
+      handed!.analysisTiming,
+      'the line printed a broken number or an unset field as if it were a measurement; an '
+      + `unparseable instant must drop its clause, never render it. line: ${JSON.stringify(timing)}`,
+    ).not.toMatch(/NaN|Invalid|undefined/u)
     console.log(
       `[404-08] (3b) absent-reason outcome line: ${JSON.stringify(handed!.analysisOutcome)}, `
       + `timing ${JSON.stringify(handed!.analysisTiming)}, retry ${JSON.stringify(handed!.analysisRetry)}`,
