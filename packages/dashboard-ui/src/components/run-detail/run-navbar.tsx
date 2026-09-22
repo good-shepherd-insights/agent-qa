@@ -141,13 +141,25 @@ export function RunNavbar({
   }
 
   return (
-    // TWO ROWS, ONE HEADER BLOCK. The banner is a second full-width row inside this `shrink-0`
-    // wrapper rather than a sibling of the page's panel group, so the header stays one block the
-    // layout can measure — 56px, or 56 + 28 when a run says its retrieval was degraded (D-14).
+    // A MIN-HEIGHT BLOCK, NOT A FIXED ONE (2026-09-22, Phase 425 · D-03, PXH-RUN-07, WINDOWS #459).
+    //
+    // The banner is a second full-width row inside this wrapper rather than a sibling of the
+    // page's panel group, so the header stays ONE block the layout can measure. What it measures
+    // is no longer a number anyone wrote down: 56px is the header row's MINIMUM, the page's panel
+    // group is already `min-h-0 flex-1` inside a flex column, and flex takes whatever the header
+    // turns out to be. That is what lets the header grow a second row instead of overlapping when
+    // the width runs out — the old fixed-height class and the "56, or 56 + 28" arithmetic that
+    // went with it could only clip.
+    //
+    // THE BREAKPOINT IS A CONTAINER QUERY, and deliberately not a viewport one. A 1280px viewport
+    // at 200% zoom is a 640px container and a ~400px viewport is a ~400px container: one rule
+    // sends both down the stacked path, and any narrower shell this header is ever dropped into
+    // inherits it without a second breakpoint being invented.
+    //
     // It is NOT a third pane and NOT a toast: 403's two-pane rule holds on the live page and the
     // same discipline holds here.
-    <div className="shrink-0">
-    <div className="flex h-14 items-center justify-between border-b px-4 min-w-0">
+    <div className="shrink-0 @container">
+    <div className="flex flex-col gap-y-2 min-h-14 border-b px-4 py-2 min-w-0 @3xl:flex-row @3xl:items-center @3xl:justify-between @3xl:gap-y-0 @3xl:py-0">
       <div className="flex items-center gap-2 min-w-0">
         <button
           onClick={() => navigate(routes.runs)}
@@ -156,7 +168,15 @@ export function RunNavbar({
           Runs
         </button>
         <ChevronRight className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
-        <span className="text-sm font-medium truncate">{run.name}</span>
+        {/*
+          THE ONE FLEXIBLE ITEM (D-04). Everything else on this row is `shrink-0`, so a long name
+          spends its own width and then truncates rather than pushing the verdict out of view. The
+          floor keeps it from truncating to nothing. The full name is still reachable — here in
+          `title`, and in the page title, which already carries it (423 D-24).
+        */}
+        <span className="text-sm font-medium truncate min-w-[96px]" title={run.name}>
+          {run.name}
+        </span>
         {sourceHref ? (
           <a
             href={sourceHref}
@@ -168,14 +188,20 @@ export function RunNavbar({
             <ArrowUpRight className="h-3.5 w-3.5" />
           </a>
         ) : null}
+        {/* Last child on purpose: Phase 426's feedback entry takes the slot after the verdict. */}
         <StatusBadge status={run.status} />
+      </div>
+
+      {/*
+        ROW 2 WHEN STACKED, THE RIGHT CLUSTER WHEN NOT. The meta wraps before the actions do, and
+        the actions sit in an `ml-auto` cluster that is always this row's last child — so at ~400px
+        nothing hides, nothing folds into an overflow menu and nothing overlaps (D-05).
+      */}
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-2 shrink-0">
         {/* D-20: the lifecycle story on one line — execution truth, then post-processing truth. */}
         {hasPostProcessing ? (
           <PostProcessingChips view={postProcessing} onCurationClick={onCurationClick} />
         ) : null}
-      </div>
-
-      <div className="flex items-center gap-3 shrink-0">
         {run.modelName && (
           <span className="text-xs text-muted-foreground flex items-center gap-1">
             <Brain className="h-3.5 w-3.5" />
@@ -191,11 +217,12 @@ export function RunNavbar({
             {tokenSummaryLine(tokens)}
           </span>
         )}
-        <span className="text-xs text-muted-foreground flex items-center gap-1">
+        <span data-run-duration className="text-xs text-muted-foreground flex items-center gap-1">
           <Clock className="h-3.5 w-3.5" />
           {formatDuration(run.duration)}
         </span>
 
+        <div className="ml-auto flex items-center gap-3">
         <div className="h-4 w-px bg-border" />
 
         <Button
@@ -292,6 +319,7 @@ export function RunNavbar({
             </Button>
           </a>
         )}
+        </div>
       </div>
     </div>
     <RetrievalRungBanner rung={retrievalRung?.rung} reason={retrievalRung?.reason} />
