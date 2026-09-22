@@ -334,8 +334,8 @@
     },
     {
       "description": "Read one run's resolved verdicts, rendered sentences and failure clusters.",
-      "docAbsentReason": "D-07 (dated 2026-08-16): no canonical doc ships for this capability yet. The explicit absence is the honest state — a guessed path would existence-check green and mislead a reader — and the abstention coverage log is the demand signal for writing one.",
-      "docPath": null,
+      "docAnchor": "Reading stage outcomes",
+      "docPath": "docs/queues.md",
       "exampleCall": {
         "arguments": {
           "runId": "<RUNID>"
@@ -2529,5 +2529,5 @@
       "shortDescription": "Triage agent-qa run failures"
     }
   ],
-  "rowsDigest": "40e61738d57b3622890bba457a7d6318e0c27ec92c4c9aa75fee0c61b501de89"
+  "rowsDigest": "ad0679adda77a5d7ac073c191fbd64cc6085dfe6dc356351e9b825eb37783618"
 }
