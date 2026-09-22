@@ -20,7 +20,7 @@
 // The never-wait prohibition (388 D-03 / 386 D-15) and the C13 print-not-publish posture are
 // pinned as source and behavioral assertions at the bottom.
 
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -29,14 +29,24 @@ import { completedRunDir, CURATION_TAIL_RECEIPT_FILE } from '../curation-tail.js
 import type { Mock } from 'vitest'
 
 import { chainJobIdsForRun, renderVerdictSentence } from '@vostride/agent-qa-agent'
-import { DIGEST_JOB_ID_SOURCE } from '@vostride/agent-qa-agent-local'
-import type { AuditSink } from '@vostride/agent-qa-safety'
+import type { ConfigReaderPort, JobModelCapability } from '@vostride/agent-qa-agent'
+import { composeLocalAgent, DIGEST_JOB_ID_SOURCE } from '@vostride/agent-qa-agent-local'
+import { HANDOFF_FILE, RUNS_SUBDIR, slugBranch } from '@vostride/agent-qa-runner-local'
+import { createMaskingContext, type AuditSink } from '@vostride/agent-qa-safety'
+import { runSafetyScope } from '@vostride/agent-qa-safety-local'
+import {
+  asRunId,
+  CURRENT_HANDOFF_SCHEMA_VERSION,
+  CurationSnapshotSchema,
+} from '@vostride/agent-qa-schema'
 import type {
   AnalysisGetOutput,
+  CompletedRunHandoff,
   GuardrailPolicy,
   MaskingContext,
   PostProcessingStatus,
   RunDigest,
+  RunEventEnvelope,
   RunNotification,
   Verdict,
   VerdictSentenceParts,
@@ -54,6 +64,7 @@ import {
   releaseUntakenPostVerdictLease,
   type PostVerdictStepOperations,
 } from '../post-verdict-step.js'
+import { enqueueThroughTheStep } from '../../__tests__/post-run-step-harness.js'
 
 const agentQaRoot = '/workspace/project/.agent-qa'
 const configDir = '/workspace/project'
@@ -70,6 +81,76 @@ const handoff = {
   schemaVersion: 5,
   executionContext: 'local-headless',
 } as unknown as ReturnType<PostRunTailOperations['loadCompletedRunHandoff']>
+
+// ------------------------------------------------------------------------------------------
+// The 425 D-20 chain fixture: a REAL run directory, a real queue and the real handler bodies.
+// Separate from the mocked harness above on purpose — everything this observation is about
+// lives in the seams that harness stubs out.
+// ------------------------------------------------------------------------------------------
+
+const CHAIN_RUN_ID = 'run-425-07-snapshot-branch'
+const chainRoots: string[] = []
+
+afterEach(() => {
+  for (const root of chainRoots.splice(0)) rmSync(root, { recursive: true, force: true })
+})
+
+/** Unparseable text degrades the author to its deterministic floor; the chain mechanics stand. */
+const CHAIN_MODEL: JobModelCapability = {
+  modelId: 'test:425-07-snapshot-branch',
+  generate: async () => ({ text: 'not an author payload' }),
+}
+
+const CHAIN_CONFIG: ConfigReaderPort = {
+  getMasked: () => Promise.resolve({
+    schemaVersion: 1,
+    configPath: '/tmp/425-07.config.yaml',
+    entries: [],
+  }),
+}
+
+function chainHandoff(): CompletedRunHandoff {
+  return {
+    schemaVersion: CURRENT_HANDOFF_SCHEMA_VERSION,
+    runId: asRunId(CHAIN_RUN_ID),
+    scope: { tier: 'product', key: 'snapshot-branch-storefront' },
+    buildOrdinal: 7,
+    executionContext: 'local-headless',
+    aggregateVerdict: 'failed',
+    configDigests: { suiteConfigDigest: 'suite-digest', testConfigDigest: 'test-digest' },
+    startedAt: 1,
+    endedAt: 2,
+    tests: [{
+      testId: 't_timeout',
+      testName: 'member the classifier reached',
+      filePath: 'tests/checkout.yaml',
+      testIndex: 0,
+      outcome: 'timeout',
+      steps: [],
+      rootCause: {
+        class: 'timeout',
+        producer: 'deterministic-classifier',
+        confidence: 1,
+        evidence: {
+          citedSteps: [0], citedAnchors: [], citedArtifacts: [],
+          rationale: 'member outcome timeout',
+        },
+        memoryMisdirectionRuledOut: true,
+        perTest: 0,
+      },
+    }],
+  }
+}
+
+/** The run's own log as the runner left it — `runFinished` last, carrying its own `finalSeq`. */
+const CHAIN_EVENT_LINES = [
+  { seq: 1, ts: 10, runId: CHAIN_RUN_ID, type: 'runStarted', payload: { busSchemaVersion: 1 } },
+  { seq: 2, ts: 20, runId: CHAIN_RUN_ID, type: 'verdict', payload: { verdict: 'failed' } },
+  {
+    seq: 3, ts: 30, runId: CHAIN_RUN_ID, type: 'runFinished',
+    payload: { aggregateVerdict: 'failed', disposition: 'detached', finalSeq: 3 },
+  },
+] as unknown as RunEventEnvelope[]
 
 // ------------------------------------------------------------------------------------------
 // The op-rendered fixture: sentences composed through the REAL barrel renderer, so the
@@ -642,6 +723,143 @@ describe('the pure renderers (exported for exactly these pins)', () => {
     expect(digestFetchCommand(runId)).toBe(FETCH_COMMAND)
     // JSON-quoted, so a runId needing escaping cannot silently produce a broken command.
     expect(digestFetchCommand('run"x')).toBe('agent-qa digest "run\\"x"')
+  })
+})
+
+// ══════════════════════════════════════════════════════════════════════════════════════════
+// CHAIN-LINE-SNAPSHOT-BRANCH (425 D-20) — WHICH BRANCH A REAL SNAPSHOT-BEARING CHAIN PRINTS.
+//
+// `renderChainTerminalLine` has two curation sentences and never prints both: the five fixed
+// buckets when the terminal row carries `stages.curation.curationSnapshot`, and the legacy
+// `N curated, M deprecated` pair when it does not. REQUIREMENTS reconciliation 13 records the
+// legacy pair as what still prints. Which sentence a REAL run reaches is not a renderer
+// question at all — it is a question about what the chain WROTE and what the read op is able
+// to SERVE, and nothing on this tree had ever observed it end to end.
+//
+// So this cell observes rather than restates. It drives the shipped tail against a real sqlite
+// queue, the real handoff reader, the real handler bodies and the real `runs.postprocessing`
+// op, with a curation whose fold committed records and therefore returned a snapshot — and it
+// reads the branch off the line the tail actually logged. The renderer is not touched.
+//
+// THE SAFETY SCOPE IS PART OF THE SUBJECT, not test scaffolding. `runs.postprocessing` serves
+// the nested snapshot only through an ACTIVE masking context (423 D-15, Gap 2: with no masker
+// every identity would collapse to one marker, so projection is not attempted and both copies
+// are withheld). Production reaches the tail from inside `runSafetyScope` — the invocation
+// core calls `options.postRunTail(verdictContext)` within its own scope — so a cell that drove
+// the tail outside one would be observing a scope this file forgot to open rather than a fact
+// about the product.
+// ══════════════════════════════════════════════════════════════════════════════════════════
+
+/** A committed fold's snapshot: one record in each bucket, so no bucket's count is a default. */
+const COMMITTED_SNAPSHOT = CurationSnapshotSchema.parse({
+  schemaVersion: 1,
+  rows: [{
+    recordId: 'record-added',
+    bucket: 'added',
+    changes: [{
+      bucket: 'added',
+      change: {
+        schemaVersion: 1,
+        recordId: 'record-added',
+        change: 'added',
+        atOrdinal: 7,
+        sourceRunId: CHAIN_RUN_ID,
+        observationId: 'observation-added',
+      },
+    }],
+  }],
+  breakdown: { added: 1, confirmed: 0, superseded: 0, deprecated: 0, proposed: 0 },
+})
+
+describe('425 D-20 — the chain-terminal line a real snapshot-bearing run prints', () => {
+  it('CHAIN-LINE-SNAPSHOT-BRANCH lists the five buckets in order, zeros included', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'agent-qa-425-07-'))
+    chainRoots.push(root)
+    const knowledge = join(root, 'knowledge')
+    mkdirSync(knowledge, { recursive: true })
+    const runDir = join(root, RUNS_SUBDIR, slugBranch(CHAIN_RUN_ID))
+    mkdirSync(runDir, { recursive: true })
+    writeFileSync(join(runDir, HANDOFF_FILE), `${JSON.stringify(chainHandoff())}\n`, 'utf8')
+    writeFileSync(join(runDir, 'events.jsonl'), `${CHAIN_EVENT_LINES
+      .map((line) => JSON.stringify(line)).join('\n')}\n`, 'utf8')
+
+    const info = vi.fn<(message: string) => void>()
+    const warn = vi.fn<(message: string) => void>()
+    const composeChainHost = (): never => composeLocalAgent({
+      mintQuarantineIdentityPath: (filePath: string) => filePath,
+      agentQaRoot: root,
+      config: CHAIN_CONFIG,
+      knowledgeRoot: () => knowledge,
+      model: () => CHAIN_MODEL,
+      idSource: DIGEST_JOB_ID_SOURCE,
+      postRun: {
+        // What the REAL tail adapter hands back once the drain committed bundles — 423's own
+        // `CURATE-CAPABILITY-SNAPSHOT terminal` cell pins that `curateRun`'s return carries the
+        // receipt's snapshot verbatim, so this is the shipped shape and not an invented one.
+        curateRun: async () => ({
+          curated: 1,
+          deprecated: 0,
+          complete: true,
+          snapshot: COMMITTED_SNAPSHOT,
+        }),
+        candidateProse: 'masker-active',
+      },
+    }) as never
+    const hostsOpened: { close: () => Promise<void> }[] = []
+    const openChainHost = (): never => {
+      const host = composeChainHost()
+      hostsOpened.push(host as unknown as { close: () => Promise<void> })
+      return host
+    }
+
+    const report = await runSafetyScope(
+      { maskingContext: createMaskingContext(), executionContext: 'local-headless' },
+      async () => {
+        await enqueueThroughTheStep({
+          runId: CHAIN_RUN_ID,
+          agentQaRoot: root,
+          configPath: join(root, 'agent-qa.config.yaml'),
+          composeHost: openChainHost,
+        })
+        const tail = runPostRunTail({
+          runId: CHAIN_RUN_ID,
+          agentQaRoot: root,
+          configPath: join(root, 'agent-qa.config.yaml'),
+          knowledgeConfig: { dir: 'knowledge' },
+          configDir: root,
+          auditSink: {} as AuditSink,
+          policy: {} as GuardrailPolicy,
+          log: { warn: (m: string) => warn(m), info: (m: string) => info(m) },
+          operations: {
+            resolveKnowledgeRoot: () => knowledge,
+            runCurationTail: async () => undefined,
+            composeHost: openChainHost,
+          } as unknown as PostRunTailOperations,
+        })
+        await tail.drain()
+        await tail.finish()
+        return tail.report()
+      },
+    )
+    for (const host of hostsOpened) await host.close()
+
+    // The chain really did run to its terminal in this process — the branch under observation
+    // is reachable only from a drained pump, so a `handed-off` or `budget-exhausted` report
+    // would make everything below vacuous.
+    expect(report.drain).toBe('drained')
+
+    const lines = info.mock.calls.map(([message]) => String(message))
+    const terminal = lines.find((message) => message.startsWith('post-processing done for'))
+    expect(terminal, `no chain-terminal line in:\n${lines.join('\n')}`).toBeDefined()
+
+    // THE BRANCH. The five buckets in CURATION_BREAKDOWN_BUCKETS order, every one printed —
+    // a recorded snapshot measured all five, so a zero here is a measurement and not an
+    // absence, and the CLI line keeps it (D-20: a log line is a record, not a glance).
+    expect(terminal).toContain(
+      'curation: done (added 1, confirmed 0, superseded 0, deprecated 0, proposed 0')
+    // …and neither spelling of the legacy sentence survives beside it.
+    expect(terminal).not.toContain(' curated')
+    expect(terminal).not.toContain(' deprecated)')
   })
 })
 
