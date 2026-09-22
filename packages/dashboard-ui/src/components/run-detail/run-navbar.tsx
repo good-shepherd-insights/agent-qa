@@ -3,7 +3,7 @@ import { useNavigate } from "react-router"
 import { routes } from "@/lib/routes"
 import { toast } from "sonner"
 import {
-  ArrowUpRight, Clock, Brain, Cpu, ExternalLink,
+  ArrowUpRight, Clock, Cpu, ExternalLink,
   RotateCcw, ChevronRight, Keyboard, PanelRightOpen,
 } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
@@ -11,13 +11,15 @@ import { Button } from "@/components/ui/button"
 import { ShortcutLegend } from "@/components/shortcut-hints"
 import { PostProcessingChips } from "@/components/run-detail/post-processing-chips"
 import { RetrievalRungBanner } from "@/components/run-detail/retrieval-rung-banner"
+import { RunUsageCard } from "@/components/run-detail/run-usage-card"
+import { Tooltip, TooltipTrigger } from "@/components/ui/tooltip"
 import type { PostProcessingView } from "@/lib/post-processing-view"
 import type { RunRow } from "@/lib/api"
 import { triggerRun } from "@/lib/api"
-import { tokenSummaryLine } from "@/lib/run-detail-view"
+import { TOKEN_USAGE_TRIGGER_LABEL, tokenPairLine } from "@/lib/run-detail-view"
 import { statusBadgeLook } from "@/lib/status"
 import { cn, formatDuration } from "@/lib/utils"
-import type { RecordedRetrievalRung, RunTokenTotals } from "@vostride/agent-qa-schema"
+import type { RecordedRetrievalRung, RunModelSummary, RunTokenTotals } from "@vostride/agent-qa-schema"
 
 /**
  * THE HEADER'S VERDICT BADGE, ADDRESSABLE (2026-08-26, Phase 404 · LIFE-01, D-13/D-15).
@@ -64,6 +66,17 @@ interface RunNavbarProps {
    * "zero" identically — the exact collapse D-06 exists to prevent.
    */
   tokens?: RunTokenTotals
+  /**
+   * Who answered this run, as `runs.detail` summarised it (425-05 · D-23).
+   *
+   * UNDEFINED IS TWO FACTS THIS HEADER CANNOT TELL APART, and both render no model line: the read
+   * has not landed, or the run is a pre-423 one that recorded no model identity at all. Neither is
+   * a licence to fall back to the legacy model fields on the run row — those name what the host
+   * was configured with, not what answered THIS run, and substituting one for the other would make
+   * a claim about a run out of a fact about a machine. Those fields, and the icon item that
+   * announced them, left this file in 425-05 and a grep gate keeps them out.
+   */
+  models?: RunModelSummary
   shortcutsOpen: boolean
   onToggleShortcuts: () => void
   /**
@@ -111,6 +124,7 @@ interface RunNavbarProps {
 export function RunNavbar({
   run,
   tokens,
+  models,
   shortcutsOpen,
   onToggleShortcuts,
   onOpenArtifacts,
@@ -202,20 +216,29 @@ export function RunNavbar({
         {hasPostProcessing ? (
           <PostProcessingChips view={postProcessing} onCurationClick={onCurationClick} />
         ) : null}
-        {run.modelName && (
-          <span className="text-xs text-muted-foreground flex items-center gap-1">
-            <Brain className="h-3.5 w-3.5" />
-            {run.modelName}
-          </span>
-        )}
+        {/*
+          THE TOKEN LINE IS A GLANCE AND A DOOR (425-05 · D-21/D-22, UI-SPEC S6). It says the pair
+          and nothing else — the total, the provider's cached input, the coverage caveat and the
+          model identity are all one focus away, in the card. The root is a `span` with `tabIndex`
+          rather than a `button` because there is nowhere to go: the card IS the destination, and a
+          button would promise a page that does not exist. Rendered only when `tokens` is not
+          undefined, which is the shipped rule — no read yet, no element.
+        */}
         {tokens === undefined ? null : (
-          <span
-            data-run-token-summary
-            className="text-xs text-muted-foreground flex items-center gap-1 cursor-default"
-          >
-            <Cpu className="h-3.5 w-3.5" />
-            {tokenSummaryLine(tokens)}
-          </span>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <span
+                data-run-token-summary
+                tabIndex={0}
+                className="text-xs text-muted-foreground flex items-center gap-1 tabular-nums cursor-default rounded-sm focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
+              >
+                <Cpu className="h-3.5 w-3.5" />
+                {tokenPairLine(tokens)}
+                <span className="sr-only">{TOKEN_USAGE_TRIGGER_LABEL}</span>
+              </span>
+            </TooltipTrigger>
+            <RunUsageCard tokens={tokens} models={models} />
+          </Tooltip>
         )}
         <span data-run-duration className="text-xs text-muted-foreground flex items-center gap-1">
           <Clock className="h-3.5 w-3.5" />
