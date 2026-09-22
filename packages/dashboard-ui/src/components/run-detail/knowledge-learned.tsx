@@ -163,7 +163,10 @@ export function KnowledgeLearned({
           >
             {view.curationSnapshot.reconciliation.count}
           </p>
-          <p data-learned-reconciliation-cause className="text-xs text-muted-foreground">
+          <p
+            data-learned-reconciliation-cause
+            className="text-xs text-muted-foreground tabular-nums"
+          >
             {view.curationSnapshot.reconciliation.cause}
           </p>
         </div>

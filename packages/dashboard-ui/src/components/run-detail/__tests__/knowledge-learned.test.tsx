@@ -369,6 +369,10 @@ describe("a mismatch is explained beneath the heading, and only when there is on
     expect(cause?.tagName).toBe("P")
     expect(cause?.textContent).toBe(RECONCILIATION_UNATTRIBUTED_TEXT)
     expect(cause?.className).toContain("text-muted-foreground")
+    // UI-SPEC S5 puts `tabular-nums` on BOTH paragraphs. The cause carries no digit today, and
+    // that is exactly why the class is pinned here: a cause sentence that later names a count
+    // must line up with the one above it rather than acquiring the rule after the fact.
+    expect(cause?.className).toContain("tabular-nums")
   })
 
   it("RECONCILIATION-ONLY-ON-MISMATCH: renders NO element at all when the numbers agree", () => {
