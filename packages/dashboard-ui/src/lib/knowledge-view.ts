@@ -874,6 +874,15 @@ export interface LearnedView {
   readonly state: LearnedState
   /** The chip's own count line, from the chip's own function — one number, one wording (D-09). */
   readonly countLine?: string
+  /**
+   * What the count line above could NOT record, labelled (425-06 · D-18).
+   *
+   * A SECOND ELEMENT, NOT A SECOND CLAUSE. `2 curated · 0 deprecated` is a measurement; `Breakdown
+   * not recorded for this run` is a fact about the measurement, and a reader scanning counts should
+   * not have to parse the second out of the first. Present only beside a coarser or withheld
+   * record; absent beside a recorded breakdown, which needs no apology.
+   */
+  readonly countNote?: string
   /** The state sentence. Absent exactly when {@link LearnedView.rows} is non-empty. */
   readonly sentence?: string
   readonly rows: readonly LearnedRowView[]

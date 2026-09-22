@@ -18,6 +18,7 @@
 import { describe, expect, it } from 'vitest'
 import { TRACE_TRUNCATION_TOP_K, formatEntityUri } from '@vostride/agent-qa-schema'
 import type {
+  CurationBreakdown,
   RecordChange,
   RunKnowledgeCanaryAttribution,
   RunKnowledgeProjection,
@@ -27,7 +28,14 @@ import type {
 import { RETRIEVAL_RUNGS, RETRIEVAL_RUNG_REASONS } from '@vostride/agent-qa-schema'
 
 import type { KnowledgeRead } from '@/lib/api'
-import { curationFactsText } from '@/lib/post-processing-view'
+import {
+  BREAKDOWN_NOT_RECORDED_TEXT,
+  BREAKDOWN_WITHHELD_TEXT,
+  COUNTS_NOT_RECORDED_TEXT,
+  NO_MEMORY_CHANGES_TEXT,
+  curationBreakdownLine,
+  legacyCurationPairText,
+} from '@/lib/post-processing-view'
 import {
   ATTRIBUTION_PENDING_TEXT,
   ATTRIBUTION_UNKNOWN_TEXT,
@@ -888,6 +896,21 @@ function change(
   return { schemaVersion: 1, recordId, change: kind, atOrdinal: 7, ...overrides }
 }
 
+/**
+ * A recorded snapshot carrying only the member the heading reads (423 D-15).
+ *
+ * `rows: []` beside a non-zero breakdown is a shape the op never serves — and that is exactly what
+ * makes it the right fixture here: `learnedView` reads `breakdown` and nothing else, so a cell that
+ * supplied rows would be pinning a coupling the projection does not have.
+ */
+function snapshotOf(breakdown: Partial<CurationBreakdown> = {}) {
+  return {
+    schemaVersion: 1 as const,
+    rows: [],
+    breakdown: { added: 0, confirmed: 0, superseded: 0, deprecated: 0, proposed: 0, ...breakdown },
+  }
+}
+
 /** The projection body the Learned half projects from; every cell varies one member of it. */
 function learnedFrom(
   overrides: Partial<Extract<RunKnowledgeProjection, { kind: 'ready' }>> = {},
@@ -959,7 +982,8 @@ describe('the Learned half mirrors the curation word and NEVER renders blank (D-
     const view = learnedFrom({ curation: { status: 'done' } })
     expect(view.state).toBe('counts-absent')
     expect(view.sentence).toBe(COUNTS_NOT_RECORDED_SENTENCE)
-    expect(view.countLine).toBe('counts not recorded for this run')
+    expect(view.countLine).toBe(COUNTS_NOT_RECORDED_TEXT)
+    expect(view.countNote).toBeUndefined()
     expect(JSON.stringify(view)).not.toContain('0')
   })
 
@@ -970,10 +994,13 @@ describe('the Learned half mirrors the curation word and NEVER renders blank (D-
 })
 
 describe('a settled curation says what it changed, in the chip\'s own words (D-09)', () => {
-  it('collapses a both-zero run to one phrase and one sentence, with no rows', () => {
+  it('collapses a both-zero legacy pair to the pair itself, with the changed-nothing sentence', () => {
+    // RE-SPELLED 425-06 (D-16/D-18). The pair is now rendered AS a pair rather than folded into a
+    // phrase, because folding it was the step that let two coarse counts read as a breakdown.
     const view = learnedFrom({ curation: { status: 'done', counts: { curated: 0, deprecated: 0 } } })
     expect(view.state).toBe('done')
-    expect(view.countLine).toBe('nothing curated')
+    expect(view.countLine).toBe(legacyCurationPairText(0, 0))
+    expect(view.countNote).toBe(BREAKDOWN_NOT_RECORDED_TEXT)
     expect(view.sentence).toBe(CHANGED_NOTHING_TEXT)
     expect(view.rows).toEqual([])
   })
@@ -984,14 +1011,129 @@ describe('a settled curation says what it changed, in the chip\'s own words (D-0
       learned: { changes: [], canaryAttributions: [] },
     })
     expect(view.state).toBe('done')
-    expect(view.countLine).toBe('curated 3 facts, deprecated 1')
+    expect(view.countLine).toBe(legacyCurationPairText(3, 1))
     expect(view.sentence).toBe(CHANGES_NOT_AVAILABLE_TEXT)
     expect(view.rows).toEqual([])
   })
 
   it('reads the count line from the SAME function the chip does — one number, one wording', () => {
-    const view = learnedFrom({ curation: { status: 'done', counts: { curated: 1, deprecated: 0 } } })
-    expect(view.countLine).toBe(curationFactsText(1, 0))
+    const view = learnedFrom({
+      curation: { status: 'done', counts: { curated: 1, deprecated: 0 } },
+      learned: {
+        changes: [],
+        canaryAttributions: [],
+        curationSnapshot: snapshotOf({ added: 1 }),
+      },
+    })
+    expect(view.countLine).toBe(curationBreakdownLine(snapshotOf({ added: 1 }).breakdown))
+  })
+
+  /**
+   * LEARNED-BREAKDOWN-LINE (425-06 · D-16/D-17, roadmap SC4).
+   *
+   * ONE FUNCTION, TWO SURFACES — the 407 LERN-02 rule, now spanning the header and the tab. The
+   * curation card and this heading both call `curationBreakdownLine` on the SAME persisted
+   * snapshot (423 D-15), so the two cannot disagree about a run a person is reading twice.
+   */
+  it('LEARNED-BREAKDOWN-LINE: spells the five buckets in the curation card\'s own words', () => {
+    const view = learnedFrom({
+      curation: { status: 'done', counts: { curated: 4, deprecated: 1 } },
+      learned: {
+        changes: [],
+        canaryAttributions: [],
+        curationSnapshot: snapshotOf({ added: 1, confirmed: 1, superseded: 1, deprecated: 1, proposed: 1 }),
+      },
+    })
+
+    expect(view.countLine).toBe('1 added · 1 confirmed · 1 superseded · 1 deprecated · 1 proposed')
+    expect(view.countNote).toBeUndefined()
+  })
+
+  it('LEARNED-BREAKDOWN-LINE: omits a zero bucket rather than printing a count nobody took', () => {
+    const view = learnedFrom({
+      curation: { status: 'done', counts: { curated: 2, deprecated: 1 } },
+      learned: {
+        changes: [],
+        canaryAttributions: [],
+        curationSnapshot: snapshotOf({ added: 2, deprecated: 1, proposed: 1 }),
+      },
+    })
+
+    expect(view.countLine).toBe('2 added · 1 deprecated · 1 proposed')
+    expect(view.countLine).not.toContain('confirmed')
+    expect(view.countLine).not.toContain('superseded')
+  })
+
+  it('LEARNED-BREAKDOWN-LINE: reads five zeros as no memory changes, and still states the outcome', () => {
+    const view = learnedFrom({
+      curation: { status: 'done' },
+      learned: { changes: [], canaryAttributions: [], curationSnapshot: snapshotOf() },
+    })
+
+    expect(view.countLine).toBe(NO_MEMORY_CHANGES_TEXT)
+    expect(view.countNote).toBeUndefined()
+    expect(view.sentence).toBe(CHANGED_NOTHING_TEXT)
+  })
+
+  /**
+   * LEARNED-LEGACY-NOTE (425-06 · D-18).
+   *
+   * FIVE BUCKETS ARE NEVER SYNTHESIZED FROM TWO. A pre-423 pair is a coarser measurement, not a
+   * breakdown with three buckets missing, so the heading prints the pair and says on its own line
+   * that no breakdown exists — the reader who sees two numbers where five usually live is told why.
+   */
+  it('LEARNED-LEGACY-NOTE: prints a pre-423 pair as a pair, with the not-recorded note beneath', () => {
+    const view = learnedFrom({ curation: { status: 'done', counts: { curated: 2, deprecated: 0 } } })
+
+    expect(view.countLine).toBe(legacyCurationPairText(2, 0))
+    expect(view.countLine).toBe('2 curated · 0 deprecated')
+    expect(view.countNote).toBe(BREAKDOWN_NOT_RECORDED_TEXT)
+  })
+
+  it('LEARNED-LEGACY-NOTE: a settled row with no counts at all keeps its own fragment and no note', () => {
+    const view = learnedFrom({ curation: { status: 'done' } })
+
+    expect(view.countLine).toBe(COUNTS_NOT_RECORDED_TEXT)
+    expect(view.countNote).toBeUndefined()
+  })
+
+  it('LEARNED-LEGACY-NOTE: names the withheld category when the READ ITSELF withheld the snapshot', () => {
+    const view = learnedFrom({
+      curation: { status: 'done' },
+      learned: {
+        changes: [],
+        canaryAttributions: [],
+        curationSnapshotWithheld: { reason: 'masking-unavailable' },
+      },
+    })
+
+    expect(view.countLine).toBe(COUNTS_NOT_RECORDED_TEXT)
+    expect(view.countNote).toBe(BREAKDOWN_WITHHELD_TEXT['masking-unavailable'])
+  })
+
+  it('LEARNED-LEGACY-NOTE: the snapshot outranks the pair — a recorded breakdown carries no note', () => {
+    const view = learnedFrom({
+      curation: { status: 'done', counts: { curated: 2, deprecated: 0 } },
+      learned: {
+        changes: [],
+        canaryAttributions: [],
+        curationSnapshot: snapshotOf({ added: 2 }),
+      },
+    })
+
+    expect(view.countLine).toBe('2 added')
+    expect(view.countNote).toBeUndefined()
+  })
+
+  it('LEARNED-LEGACY-NOTE: leaves the unsettled ladder alone — no line and no note before it settles', () => {
+    for (const status of ['pending', 'running', 'failed'] as const) {
+      const view = learnedFrom({
+        curation: { status, counts: { curated: 2, deprecated: 0 } },
+        learned: { changes: [], canaryAttributions: [], curationSnapshot: snapshotOf({ added: 2 }) },
+      })
+      expect(view.countLine).toBeUndefined()
+      expect(view.countNote).toBeUndefined()
+    }
   })
 
   it('drops the state sentence once there are rows — the rows ARE the answer', () => {
@@ -1077,7 +1219,7 @@ describe('a curated NEW fact is what the run learned (CR-04, D-10)', () => {
    * THE VERIFIER'S REPRODUCTION, INVERTED.
    *
    * Gap 2 drove a real curation that added one fact and deprecated nothing — the commonest
-   * curation outcome there is — and the half printed `curated 1 fact, deprecated 0` beside
+   * curation outcome there is — and the half printed the legacy pair beside
    * `Change records for this run are not available yet.` The record WAS on the wire, stamped with
    * this run's id by `diffSince`, and the view discarded it. This cell is that projection with the
    * answer it should have had.
@@ -1092,7 +1234,7 @@ describe('a curated NEW fact is what the run learned (CR-04, D-10)', () => {
     })
 
     expect(view.state).toBe('done')
-    expect(view.countLine).toBe('curated 1 fact, deprecated 0')
+    expect(view.countLine).toBe(legacyCurationPairText(1, 0))
     expect(view.rows.length).toBe(1)
     expect(view.rows[0]?.kind).toBe('added')
     expect(view.rows[0]?.recordId).toBe('fact-el-textbox-password-9a05ce')
@@ -1104,7 +1246,7 @@ describe('a curated NEW fact is what the run learned (CR-04, D-10)', () => {
    *
    * A settled row saying both counts are zero, beside a change record the store really attributed
    * to this run, is two producers disagreeing. The old arm order consulted the counts first and so
-   * suppressed the record; the person then read `nothing curated` with no way to learn otherwise.
+   * suppressed the record; the person then read a both-zero pair with no way to learn otherwise.
    */
   it('paints rows even when the frozen counts say nothing moved — a served record is never denied', () => {
     const view = learnedFrom({
@@ -1113,7 +1255,7 @@ describe('a curated NEW fact is what the run learned (CR-04, D-10)', () => {
     })
 
     expect(view.state).toBe('done')
-    expect(view.countLine).toBe('nothing curated')
+    expect(view.countLine).toBe(legacyCurationPairText(0, 0))
     expect(view.rows.length).toBe(1)
     expect(view.sentence).toBeUndefined()
   })
@@ -1125,7 +1267,7 @@ describe('a curated NEW fact is what the run learned (CR-04, D-10)', () => {
     })
 
     expect(view.state).toBe('counts-absent')
-    expect(view.countLine).toBe('counts not recorded for this run')
+    expect(view.countLine).toBe(COUNTS_NOT_RECORDED_TEXT)
     expect(view.rows.length).toBe(1)
     expect(view.sentence).toBeUndefined()
   })
@@ -1349,7 +1491,7 @@ describe('an unreadable store is named, never called "not available yet" (407-14
     })
 
     expect(view.state).toBe('done')
-    expect(view.countLine).toBe('curated 3 facts, deprecated 1')
+    expect(view.countLine).toBe(legacyCurationPairText(3, 1))
     expect(view.sentence).toBe(CHANGES_UNREADABLE_TEXT)
     expect(view.scanIncomplete).toBe(true)
     expect(view.rows).toEqual([])
@@ -1393,7 +1535,7 @@ describe('a partial read decorates the answer, it never replaces it (REVIEW CR-0
     })
 
     expect(view.state).toBe('done')
-    expect(view.countLine).toBe('curated 1 fact, deprecated 0')
+    expect(view.countLine).toBe(legacyCurationPairText(1, 0))
     expect(view.rows.length).toBe(1)
     expect(view.rows[0]?.recordId).toBe('rec-mine')
     expect(view.sentence).toBeUndefined()
@@ -1494,7 +1636,7 @@ describe('a partial read decorates the answer, it never replaces it (REVIEW CR-0
     })
 
     expect(view.state).toBe('counts-absent')
-    expect(view.countLine).toBe('counts not recorded for this run')
+    expect(view.countLine).toBe(COUNTS_NOT_RECORDED_TEXT)
     expect(view.rows.length).toBe(1)
     expect(view.sentence).toBeUndefined()
     expect(view.scanIncomplete).toBe(true)

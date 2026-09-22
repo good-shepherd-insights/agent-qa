@@ -36,7 +36,6 @@ import {
   WILL_RETRY_TEXT,
   curationBreakdownLine,
   curationChipAccessibleName,
-  curationFactsText,
   legacyCurationPairText,
   projectPostProcessingView,
   stageFailedText,
@@ -364,17 +363,11 @@ describe('a failed chip says why, or says honestly that nobody recorded why (D-2
   })
 })
 
+// RETIRED 425-06 (D-16). The two cells that stood here pinned the legacy pair's folded sentence,
+// whose last reader — the Knowledge tab's Learned heading — now calls `curationBreakdownLine` and
+// `legacyCurationPairText` instead. Both of those are pinned in this file's breakdown cells, so
+// retiring the function retired its cells rather than leaving them asserting over nothing.
 describe('the count line is the wording of record, in one place (D-09)', () => {
-  it('pluralises the curated noun and leaves the deprecated count bare', () => {
-    expect(curationFactsText(3, 1)).toBe('curated 3 facts, deprecated 1')
-    expect(curationFactsText(1, 0)).toBe('curated 1 fact, deprecated 0')
-    expect(curationFactsText(0, 2)).toBe('curated 0 facts, deprecated 2')
-  })
-
-  it('collapses the both-zero pair to one phrase — two zeros read as a measurement nobody made', () => {
-    expect(curationFactsText(0, 0)).toBe('nothing curated')
-  })
-
   it('publishes the curation door name as a thin call into the one accessible-name function', () => {
     const settled = { status: 'done', state: 'complete', word: STAGE_INDICATOR_WORDS.curation.complete } as const
     expect(curationChipAccessibleName(settled)).toBe('Curation: complete — open Knowledge tab')

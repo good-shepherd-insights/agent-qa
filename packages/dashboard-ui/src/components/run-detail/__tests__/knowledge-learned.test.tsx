@@ -29,6 +29,12 @@ import {
 
 import { KnowledgeLearned } from "@/components/run-detail/knowledge-learned"
 import {
+  BREAKDOWN_NOT_RECORDED_TEXT,
+  COUNTS_NOT_RECORDED_TEXT,
+  curationBreakdownLine,
+  legacyCurationPairText,
+} from "@/lib/post-processing-view"
+import {
   CHANGED_NOTHING_TEXT,
   CHANGES_NOT_AVAILABLE_TEXT,
   CHANGES_UNREADABLE_TEXT,
@@ -241,7 +247,7 @@ describe("a settled curation with no counts says so — never a zero (D-12)", ()
   it("carries the counts-absent word, the sentence and the fragment, with no digit anywhere", () => {
     const host = render({
       state: "counts-absent",
-      countLine: "counts not recorded for this run",
+      countLine: COUNTS_NOT_RECORDED_TEXT,
       sentence: COUNTS_NOT_RECORDED_SENTENCE,
       rows: [],
     })
@@ -249,7 +255,7 @@ describe("a settled curation with no counts says so — never a zero (D-12)", ()
     expect(stateOf(host)).toBe("counts-absent")
     expect(host.textContent).toContain(COUNTS_NOT_RECORDED_SENTENCE)
     expect(host.querySelector("[data-learned-count-line]")?.textContent)
-      .toBe("counts not recorded for this run")
+      .toBe(COUNTS_NOT_RECORDED_TEXT)
     expect(host.textContent).not.toContain("0")
   })
 })
@@ -258,13 +264,13 @@ describe("a settled curation that changed nothing says that, and lists nothing (
   it("renders the both-zero phrase beside the heading and the changed-nothing sentence", () => {
     const host = render({
       state: "done",
-      countLine: "nothing curated",
+      countLine: legacyCurationPairText(0, 0),
       sentence: CHANGED_NOTHING_TEXT,
       rows: [],
     })
 
     expect(stateOf(host)).toBe("done")
-    expect(host.querySelector("[data-learned-count-line]")?.textContent).toBe("nothing curated")
+    expect(host.querySelector("[data-learned-count-line]")?.textContent).toBe(legacyCurationPairText(0, 0))
     expect(host.textContent).toContain(CHANGED_NOTHING_TEXT)
     expect(rowsOf(host).length).toBe(0)
   })
@@ -272,22 +278,63 @@ describe("a settled curation that changed nothing says that, and lists nothing (
   it("keeps the counts on screen when they moved but no change record reached this run", () => {
     const host = render({
       state: "done",
-      countLine: "curated 3 facts, deprecated 1",
+      countLine: legacyCurationPairText(3, 1),
       sentence: CHANGES_NOT_AVAILABLE_TEXT,
       rows: [],
     })
 
     expect(host.querySelector("[data-learned-count-line]")?.textContent)
-      .toBe("curated 3 facts, deprecated 1")
+      .toBe(legacyCurationPairText(3, 1))
     expect(host.textContent).toContain(CHANGES_NOT_AVAILABLE_TEXT)
     expect(rowsOf(host).length).toBe(0)
+  })
+})
+
+/**
+ * LEARNED-BREAKDOWN-LINE AND LEARNED-LEGACY-NOTE, AT THE MOUNT (425-06 · D-16/D-17/D-18).
+ *
+ * The heading's line is now the curation card's own breakdown string, and the note beneath it is
+ * what a pre-423 or withheld row says about the breakdown it never recorded. The note is a SECOND
+ * element rather than a second clause on the count line: a reader scanning the counts should not
+ * have to parse a sentence out of them, and a cell should be able to assert the absence.
+ */
+describe("the heading spells one number one way, and labels a coarser one (425-06)", () => {
+  it("LEARNED-BREAKDOWN-LINE: renders the five-bucket line in the heading's own count slot", () => {
+    const breakdown = { added: 1, confirmed: 1, superseded: 1, deprecated: 1, proposed: 1 }
+    const host = render({ state: "done", countLine: curationBreakdownLine(breakdown), rows: [] })
+
+    expect(host.querySelector("[data-learned-count-line]")?.textContent)
+      .toBe("1 added · 1 confirmed · 1 superseded · 1 deprecated · 1 proposed")
+    expect(host.querySelector("[data-learned-count-note]")).toBeNull()
+  })
+
+  it("LEARNED-LEGACY-NOTE: renders the note as its own muted paragraph beneath the heading row", () => {
+    const host = render({
+      state: "done",
+      countLine: legacyCurationPairText(2, 0),
+      countNote: BREAKDOWN_NOT_RECORDED_TEXT,
+      rows: [],
+    })
+
+    const note = host.querySelector("[data-learned-count-note]")
+    expect(note?.tagName).toBe("P")
+    expect(note?.textContent).toBe(BREAKDOWN_NOT_RECORDED_TEXT)
+    expect(note?.className).toContain("text-xs")
+    expect(note?.className).toContain("text-muted-foreground")
+    expect(host.querySelector("[data-learned-count-line]")?.textContent).toBe("2 curated · 0 deprecated")
+  })
+
+  it("LEARNED-LEGACY-NOTE: omits the note element ENTIRELY when there is no absence to label", () => {
+    const host = render({ state: "done", countLine: legacyCurationPairText(3, 1), rows: [] })
+
+    expect(host.querySelector("[data-learned-count-note]")).toBeNull()
   })
 })
 
 describe("the record list is one addressable row per change (D-10)", () => {
   const populated: LearnedView = {
     state: "done",
-    countLine: "curated 3 facts, deprecated 1",
+    countLine: legacyCurationPairText(3, 1),
     rows: [
       row({ kind: "promoted", recordId: "MEM-001", ref: "agentqa://memory/MEM-001" }),
       row({ kind: "deprecated", recordId: "fact-page-https-example-com-0f9a" }),
@@ -299,7 +346,7 @@ describe("the record list is one addressable row per change (D-10)", () => {
 
     expect(host.querySelector("h4")?.textContent).toBe(LEARNED_HEADING)
     expect(host.querySelector("[data-learned-count-line]")?.textContent)
-      .toBe("curated 3 facts, deprecated 1")
+      .toBe(legacyCurationPairText(3, 1))
     expect(rowsOf(host).map((el) => el.getAttribute("data-record-change")))
       .toEqual(["promoted", "deprecated"])
     expect(rowsOf(host).map((el) => el.getAttribute("data-record-id")))
@@ -345,7 +392,7 @@ describe("the record list is one addressable row per change (D-10)", () => {
   it("renders a ROUTED reference as an accent anchor with the truncation rule the SPEC states", () => {
     const host = render({
       state: "done",
-      countLine: "curated 1 fact, deprecated 0",
+      countLine: legacyCurationPairText(1, 0),
       rows: [row({ kind: "confirmed", recordId: "TST-001", ref: "agentqa://test/TST-001", href: "/test/t_1" })],
     })
 
@@ -361,7 +408,7 @@ describe("the record list is one addressable row per change (D-10)", () => {
   it("renders an UNROUTED reference as text — this build says what, not where to click", () => {
     const host = render({
       state: "done",
-      countLine: "curated 1 fact, deprecated 0",
+      countLine: legacyCurationPairText(1, 0),
       rows: [row({ kind: "confirmed", recordId: "MEM-001", ref: "agentqa://memory/MEM-001" })],
     })
 
@@ -374,7 +421,7 @@ describe("the record list is one addressable row per change (D-10)", () => {
   it("renders no reference element at all for a record that has no canonical address", () => {
     const host = render({
       state: "done",
-      countLine: "curated 1 fact, deprecated 0",
+      countLine: legacyCurationPairText(1, 0),
       rows: [row({ recordId: "fact-page-https-example-com-0f9a" })],
     })
 
@@ -395,7 +442,7 @@ describe("a curated NEW fact is painted, not denied (CR-04, R-407-15-01)", () =>
   it("renders one li per kind for all FIVE Learned kinds, in the view's order", () => {
     const host = render({
       state: "done",
-      countLine: "curated 3 facts, deprecated 1",
+      countLine: legacyCurationPairText(3, 1),
       rows: everyKind.map((kind, index) => row({ kind, recordId: `rec_${String(index)}` })),
     })
 
@@ -405,7 +452,7 @@ describe("a curated NEW fact is painted, not denied (CR-04, R-407-15-01)", () =>
   it("gives `added` the emerald a promotion wears — the SPEC allows no new colour for it", () => {
     const host = render({
       state: "done",
-      countLine: "curated 1 fact, deprecated 0",
+      countLine: legacyCurationPairText(1, 0),
       rows: [row({ kind: "added", recordId: "fact-el-textbox-password-9a05ce" })],
     })
 
@@ -420,7 +467,7 @@ describe("a curated NEW fact is painted, not denied (CR-04, R-407-15-01)", () =>
   it("paints the added record's row and no sentence at all", () => {
     const host = render({
       state: "done",
-      countLine: "curated 1 fact, deprecated 0",
+      countLine: legacyCurationPairText(1, 0),
       rows: [row({ kind: "added", recordId: "fact-el-textbox-password-9a05ce" })],
     })
 
@@ -439,7 +486,7 @@ describe("a curated NEW fact is painted, not denied (CR-04, R-407-15-01)", () =>
     try {
       const host = render({
         state: "done",
-        countLine: "curated 1 fact, deprecated 0",
+        countLine: legacyCurationPairText(1, 0),
         rows: [
           row({ key: "r:confirmed:12", kind: "confirmed", recordId: "r" }),
           row({ key: "r:superseded:13", kind: "superseded", recordId: "r" }),
@@ -460,7 +507,7 @@ describe("a curated NEW fact is painted, not denied (CR-04, R-407-15-01)", () =>
 describe("an unreadable store is stamped on the root, never inferred from an empty list (407-14)", () => {
   const unreadable: LearnedView = {
     state: "done",
-    countLine: "curated 3 facts, deprecated 1",
+    countLine: legacyCurationPairText(3, 1),
     sentence: CHANGES_UNREADABLE_TEXT,
     rows: [],
     scanIncomplete: true,
@@ -472,7 +519,7 @@ describe("an unreadable store is stamped on the root, never inferred from an emp
     expect(host.querySelector("[data-learned-state]")?.getAttribute("data-learned-read"))
       .toBe("incomplete")
     expect(host.querySelector("[data-learned-count-line]")?.textContent)
-      .toBe("curated 3 facts, deprecated 1")
+      .toBe(legacyCurationPairText(3, 1))
     expect(host.querySelector("[data-learned-sentence]")?.textContent)
       .toBe(CHANGES_UNREADABLE_TEXT)
     expect(rowsOf(host).length).toBe(0)
@@ -481,7 +528,7 @@ describe("an unreadable store is stamped on the root, never inferred from an emp
   it("omits the attribute ENTIRELY on a clean read — absent, never an empty string", () => {
     const host = render({
       state: "done",
-      countLine: "curated 3 facts, deprecated 1",
+      countLine: legacyCurationPairText(3, 1),
       sentence: CHANGES_NOT_AVAILABLE_TEXT,
       rows: [],
     })
@@ -499,7 +546,7 @@ describe("a partial read is painted beside the rows, and beneath an unsettled se
   it("paints the row, the incomplete stamp and the read note — and NO sentence", () => {
     const host = render({
       state: "done",
-      countLine: "curated 1 fact, deprecated 0",
+      countLine: legacyCurationPairText(1, 0),
       rows: [row()],
       scanIncomplete: true,
       readNote: STORE_READ_INCOMPLETE_TEXT,
@@ -543,7 +590,7 @@ describe("a partial read is painted beside the rows, and beneath an unsettled se
     try {
       const host = render({
         state: "done",
-        countLine: "curated 2 facts, deprecated 0",
+        countLine: legacyCurationPairText(2, 0),
         rows: [
           row({ key: "r:confirmed:12:tok-a:", kind: "confirmed", recordId: "r" }),
           row({ key: "r:confirmed:12:tok-b:", kind: "confirmed", recordId: "r" }),
@@ -573,7 +620,7 @@ describe("the proposals line is a count and a door (D-11, T-407-22)", () => {
   }
 
   it("stamps the count on the line and renders the single CTA as the runnable review command (423 D-19)", async () => {
-    const host = render({ state: "done", countLine: "nothing curated", sentence: CHANGED_NOTHING_TEXT, rows: [] }, proposals)
+    const host = render({ state: "done", countLine: legacyCurationPairText(0, 0), sentence: CHANGED_NOTHING_TEXT, rows: [] }, proposals)
 
     const line = host.querySelector("[data-pending-proposals]")
     expect(line?.getAttribute("data-pending-proposals")).toBe("3")
@@ -597,7 +644,7 @@ describe("the proposals line is a count and a door (D-11, T-407-22)", () => {
 
   it("says so when the clipboard is unavailable, and keeps the command readable on the control", async () => {
     Object.defineProperty(navigator, "clipboard", { configurable: true, value: undefined })
-    const host = render({ state: "done", countLine: "nothing curated", sentence: CHANGED_NOTHING_TEXT, rows: [] }, proposals)
+    const host = render({ state: "done", countLine: legacyCurationPairText(0, 0), sentence: CHANGED_NOTHING_TEXT, rows: [] }, proposals)
     const cta = host.querySelector<HTMLButtonElement>("button[data-review-proposals]")
     await act(async () => { cta?.click() })
     expect(cta?.getAttribute("data-copy-status")).toBe("failed")
@@ -607,7 +654,7 @@ describe("the proposals line is a count and a door (D-11, T-407-22)", () => {
   })
 
   it("renders NO line and NO attribute when the page passed no proposals — a zero is not news", () => {
-    const host = render({ state: "done", countLine: "nothing curated", sentence: CHANGED_NOTHING_TEXT, rows: [] })
+    const host = render({ state: "done", countLine: legacyCurationPairText(0, 0), sentence: CHANGED_NOTHING_TEXT, rows: [] })
 
     expect(host.querySelector("[data-pending-proposals]")).toBeNull()
     expect(host.querySelector("[data-review-proposals]")).toBeNull()
@@ -626,7 +673,7 @@ describe("projection text reaches the DOM as TEXT, never as markup (T-407-21)", 
     const hostile = '<img src=x onerror=alert(1)>'
     const host = render({
       state: "done",
-      countLine: "curated 1 fact, deprecated 0",
+      countLine: legacyCurationPairText(1, 0),
       rows: [row({ recordId: hostile })],
     })
 
@@ -639,7 +686,7 @@ describe("projection text reaches the DOM as TEXT, never as markup (T-407-21)", 
     const hostile = 'javascript:alert(1)'
     const host = render({
       state: "done",
-      countLine: "curated 1 fact, deprecated 0",
+      countLine: legacyCurationPairText(1, 0),
       rows: [row({ recordId: "MEM-001", ref: hostile })],
     })
 
@@ -755,7 +802,7 @@ describe("423 D-15: a failed chain keeps its learned rows beside the snapshot se
     const host = render(learnedView(projection))
 
     expect(sectionOf(host).getAttribute("data-learned-snapshot")).toBe("absent")
-    expect(host.querySelector("[data-learned-count-line]")?.textContent).toBe("curated 1 fact, deprecated 0")
+    expect(host.querySelector("[data-learned-count-line]")?.textContent).toBe(legacyCurationPairText(1, 0))
     expect(rowsOf(host).length).toBe(1)
   })
 
