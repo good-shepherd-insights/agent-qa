@@ -77,9 +77,10 @@ convenience for a socket that happens to be open; the row is what a person who c
 and came back is owed, and both have to say the same thing.
 
 Beside the two words the read carries what the rows actually recorded. `stageDetails` holds, per
-stage and only where the row recorded it, `attempts`, `createdAt`, `claimedAt`, `updatedAt`,
-`conclusionKind` and the masked `lastFailureKind` / `lastFailureReason`; the chip-less proposals
-stage appears there too. The persisted curation snapshot travels with its five buckets — `added`,
+stage and only where the row recorded it, `attempts`, `createdAt`, `claimedAt`, `startedAt`,
+`updatedAt`, `conclusionKind` and the masked `lastFailureKind` / `lastFailureReason`; the chip-less
+proposals stage appears there too. The claim is the lease a drainer holds now and is gone from every
+settled row; the start is when the work first began, and it outlives the lease. The persisted curation snapshot travels with its five buckets — `added`,
 `confirmed`, `superseded`, `deprecated`, `proposed` — and the chain's terminal notification appears
 once the chain wrote its one row, not before.
 
