@@ -148,6 +148,27 @@ export function KnowledgeLearned({
         </p>
       )}
 
+      {/*
+        THE GAP, AND THEN ITS CAUSE (425-06 · D-19). Two paragraphs rather than one sentence: the
+        first is arithmetic a reader can check against the rows below it, the second is an account
+        of that arithmetic the read had to justify. The block sits directly under the counts it
+        reconciles — a mismatch explained at the bottom of a long list is a mismatch a reader
+        scrolls past — and it is ABSENT, never blank, on every run whose numbers agree.
+      */}
+      {view.curationSnapshot?.reconciliation === undefined ? null : (
+        <div data-learned-reconciliation className="space-y-1">
+          <p
+            data-learned-reconciliation-count
+            className="text-xs text-muted-foreground tabular-nums"
+          >
+            {view.curationSnapshot.reconciliation.count}
+          </p>
+          <p data-learned-reconciliation-cause className="text-xs text-muted-foreground">
+            {view.curationSnapshot.reconciliation.cause}
+          </p>
+        </div>
+      )}
+
       {view.sentence === undefined ? null : (
         <p data-learned-sentence className="text-sm text-muted-foreground">
           {view.sentence}

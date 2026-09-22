@@ -1207,14 +1207,42 @@ export function learnedView(
   const rows = projection.learned.changes
     .filter(row => LEARNED_CHANGE_KIND_SET.has(row.change))
     .map((row, index) => learnedRow(row, index, sectionOf(row)))
-  const snapshot = curationSnapshot === undefined
-    ? {}
+  const snapshotView: LearnedSnapshotView | undefined = curationSnapshot === undefined
+    ? undefined
     : {
-        curationSnapshot: {
-          breakdown: curationSnapshot.breakdown,
-          ...(sinceThen === undefined ? {} : { sinceThenCount: sinceThen.count }),
-        },
+        breakdown: curationSnapshot.breakdown,
+        ...(sinceThen === undefined ? {} : { sinceThenCount: sinceThen.count }),
       }
+  const snapshot = snapshotView === undefined ? {} : { curationSnapshot: snapshotView }
+
+  // THE TWO NUMBERS THE HEADING PUTS SIDE BY SIDE (425-06 · D-19).
+  //
+  // `counted` IS THE SNAPSHOT'S, NEVER RE-DERIVED. The breakdown is curation's own fixed record
+  // (423 D-15); re-counting it from rows would replace the producer's measurement with this
+  // module's, and then there would be no disagreement left to report.
+  //
+  // `shown` IS THE CURATION SECTION ONLY. 423 D-15 gives since-then rows their own counted line,
+  // so folding them in here would let a later promotion quietly close a gap it had nothing to do
+  // with — the exact silence D-19 was written against.
+  const counted = snapshotView === undefined
+    ? 0
+    : CURATION_BREAKDOWN_BUCKETS.reduce((total, bucket) => total + snapshotView.breakdown[bucket], 0)
+  const shown = rows.filter(row => row.section === 'curation').length
+
+  /**
+   * The snapshot spread, with the gap stated when there is one and the member absent when there
+   * is not. The CAUSE is passed in by the arm, because only the arm knows which fact the read
+   * already proved — this function never picks one.
+   */
+  const reconciled = (cause: string) =>
+    snapshotView === undefined || counted === shown
+      ? snapshot
+      : {
+          curationSnapshot: {
+            ...snapshotView,
+            reconciliation: { count: reconciliationCountText(counted, shown), cause },
+          },
+        }
 
   if (status === 'pending' || status === 'running') {
     // `rows: []` here is now a STATEMENT, not a consequence of ordering: the rows are in scope and
@@ -1225,12 +1253,30 @@ export function learnedView(
   if (status === 'failed') {
     // A SETTLED chain that fell over cannot un-commit what it already wrote. With records to list,
     // the failure is a note BESIDE them; with none, the arm is the object that shipped before.
+    // THE CAUSE THE READ ALREADY PROVED (425-06 · D-19). A chain that stopped mid-commit is the
+    // plainest account there is of a snapshot that counted more than the half can list, and it is
+    // the same fact `chainNote` already states beneath the rows — so the reconciliation borrows it
+    // rather than falling to the sentence for a gap nobody could explain.
     return rows.length > 0
-      ? { state: 'failed', rows, chainNote: CURATION_FAILED_PARTIAL_TEXT, ...degraded, ...readNote, ...snapshot }
+      ? {
+          state: 'failed',
+          rows,
+          chainNote: CURATION_FAILED_PARTIAL_TEXT,
+          ...degraded,
+          ...readNote,
+          ...reconciled(CURATION_FAILED_PARTIAL_TEXT),
+        }
       : { state: 'failed', sentence: CURATION_FAILED_TEXT, rows: [], ...degraded, ...readNote, ...snapshot }
   }
 
   const state: LearnedState = counts === undefined ? 'counts-absent' : 'done'
+
+  // A SETTLED ARM'S CAUSE, IN THE ORDER THE READ JUSTIFIES THEM (425-06 · D-19). An incomplete
+  // store scan is a proven reason rows are missing; with a clean read there is no proven reason at
+  // all, and the half says exactly that rather than picking one.
+  const settledCause = projection.learned.scanIncomplete === true
+    ? CHANGES_UNREADABLE_TEXT
+    : RECONCILIATION_UNATTRIBUTED_TEXT
 
   // THE HEADING AND THE CURATION CARD SPELL ONE NUMBER ONE WAY (425-06 · D-16/D-17). The line is
   // `curationBreakdownLine` over the SAME persisted snapshot the card reads (423 D-15), so the two
@@ -1261,7 +1307,7 @@ export function learnedView(
   // ROWS BEFORE SENTENCES, AND BEFORE THE FLAG (REVIEW CR-01). A record the store served is the
   // answer; the partial read is a note beside it.
   if (rows.length > 0) {
-    return { state, countLine, ...countNote, rows, ...degraded, ...readNote, ...snapshot }
+    return { state, countLine, ...countNote, rows, ...degraded, ...readNote, ...reconciled(settledCause) }
   }
 
   // NOTHING TO LIST AND NOBODY COULD LOOK — the one arm where the sentence IS the answer, so it
@@ -1274,7 +1320,7 @@ export function learnedView(
       sentence: CHANGES_UNREADABLE_TEXT,
       rows: [],
       scanIncomplete: true,
-      ...snapshot,
+      ...reconciled(CHANGES_UNREADABLE_TEXT),
     }
   }
 
@@ -1286,9 +1332,9 @@ export function learnedView(
   // pair was also written — so it reads its own sentence rather than falling to the counts-absent
   // one, which describes a row that recorded no measurement at all.
   if (breakdown !== undefined) {
-    return CURATION_BREAKDOWN_BUCKETS.every(bucket => breakdown[bucket] === 0)
-      ? { state, countLine, ...countNote, sentence: CHANGED_NOTHING_TEXT, rows: [], ...snapshot }
-      : { state, countLine, ...countNote, sentence: CHANGES_NOT_AVAILABLE_TEXT, rows: [], ...snapshot }
+    return counted === 0
+      ? { state, countLine, ...countNote, sentence: CHANGED_NOTHING_TEXT, rows: [], ...reconciled(settledCause) }
+      : { state, countLine, ...countNote, sentence: CHANGES_NOT_AVAILABLE_TEXT, rows: [], ...reconciled(settledCause) }
   }
 
   if (counts === undefined) {

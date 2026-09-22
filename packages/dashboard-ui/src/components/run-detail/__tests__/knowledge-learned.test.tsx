@@ -895,7 +895,17 @@ describe("423 D-15: a failed chain keeps its learned rows beside the snapshot se
     const host = render(view)
     const section = sectionOf(host)
 
-    expect(view.curationSnapshot).toEqual({ breakdown: snapshot.breakdown, sinceThenCount: 0 })
+    // RE-SPELLED 425-06 (D-19). The breakdown counts five AFFECTED UNITS while the half paints six
+    // CHANGES — the supersession row carries its replacement's `added` change as well as its own —
+    // so this fixture is itself a counted-versus-shown disagreement, and the heading now says so
+    // instead of leaving a reader to notice that five and six are different numbers. The exact
+    // equality that stood here would have hidden the new member rather than pinned it.
+    expect(view.curationSnapshot?.breakdown).toEqual(snapshot.breakdown)
+    expect(view.curationSnapshot?.sinceThenCount).toBe(0)
+    expect(view.curationSnapshot?.reconciliation)
+      .toEqual({ count: "5 changes counted · 6 shown", cause: RECONCILIATION_UNATTRIBUTED_TEXT })
+    expect(host.querySelector("[data-learned-reconciliation-count]")?.textContent)
+      .toBe("5 changes counted · 6 shown")
     expect(section.getAttribute("data-learned-snapshot")).toBe("recorded")
     expect(section.getAttribute("data-learned-since-then")).toBe("0")
     expect(rowsOf(host).map(el => el.getAttribute("data-record-id"))).toEqual(changes.map(row => row.recordId))
