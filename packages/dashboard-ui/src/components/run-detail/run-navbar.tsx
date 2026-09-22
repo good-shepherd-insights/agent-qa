@@ -142,6 +142,7 @@ export function RunNavbar({
   postProcessing,
   hasPostProcessing = false,
   onCurationClick,
+  onOpenVerdict,
   retrievalRung,
 }: RunNavbarProps) {
   const navigate = useNavigate()
@@ -225,7 +226,11 @@ export function RunNavbar({
       <div className="flex flex-wrap items-center gap-x-4 gap-y-2 shrink-0">
         {/* D-20: the lifecycle story on one line — execution truth, then post-processing truth. */}
         {hasPostProcessing ? (
-          <PostProcessingChips view={postProcessing} onCurationClick={onCurationClick} />
+          <PostProcessingChips
+            view={postProcessing}
+            onCurationClick={onCurationClick}
+            onOpenVerdict={onOpenVerdict}
+          />
         ) : null}
         {/*
           THE TOKEN LINE IS A GLANCE AND A DOOR (425-05 · D-21/D-22, UI-SPEC S6). It says the pair

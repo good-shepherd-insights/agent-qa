@@ -260,11 +260,19 @@ function Chip({
 export function PostProcessingChips({
   view,
   onCurationClick,
+  onOpenVerdict,
 }: {
   view: PostProcessingView | undefined
   /** What pressing the `curation` chip should do. Absent → the chip is not a control (D-01). */
   onCurationClick?: (() => void) | undefined
-  /** What pressing the `analysis` chip should do. Absent → the chip is not a control (D-11). */
+  /**
+   * What pressing the `analysis` chip should do (425-09 · D-11). Absent → not a control.
+   *
+   * ASYMMETRIC WITH CURATION ON PURPOSE. The Knowledge tab always exists, so the page hands
+   * `onCurationClick` down unconditionally; a verdict exists only on a run that produced one, and
+   * whether a block is mounted is a fact about the tree below this header. Both are the page's to
+   * know, and this component decides neither — it paints a door exactly where it was given one.
+   */
   onOpenVerdict?: (() => void) | undefined
 }) {
   if (view === undefined) {
@@ -316,7 +324,7 @@ export function PostProcessingChips({
         : { "data-postprocessing-excluded": view.excluded.reason })}
       className="inline-flex items-center gap-2 min-w-0"
     >
-      <Chip stage="analysis" chip={view.analysis} />
+      <Chip stage="analysis" chip={view.analysis} onActivate={onOpenVerdict} door="verdict" />
       <Chip stage="curation" chip={view.curation} onActivate={onCurationClick} door="knowledge" />
     </span>
   )
