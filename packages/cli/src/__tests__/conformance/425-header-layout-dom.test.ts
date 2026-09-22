@@ -227,6 +227,15 @@ describe('run header layout on the shipped bundle (425-10)', () => {
 
   afterAll(async () => { await zoomContext?.close(); await reader?.stop(); await fixture?.close(); cleanupTempRoots() })
 
+  // WR-06: the precondition the poll above computes, asserted before any geometry reads it.
+  it('HEADER-FIXTURE-SETTLED', () => {
+    expect(settled,
+      'the post-run chain never reached a terminal answer inside the 30s budget, so the 400px geometry, '
+      + 'the grayscale capture, the 1280px geometry and the zoom geometry were each measured against '
+      + 'indicator words that were still changing width — every claim below is about a different header. '
+      + JSON.stringify(failures)).toBe(true)
+  })
+
   it('HEADER-NO-OVERLAP', () => {
     expect(geometries.map(geometry => geometry.label), JSON.stringify(failures)).toEqual(['400x800', '1280x800', 'zoom2-from-1280x800'])
     for (const geometry of geometries) {
