@@ -158,7 +158,7 @@ export type CatalogDocAdjudication =
  */
 export const CATALOG_DOC_PATHS: readonly (readonly [string, CatalogDocAdjudication])[] =
   Object.freeze([
-    // The two real links. Both are pages that document the CAPABILITY, not pages that mention it.
+    // The three real links. Each documents the CAPABILITY, rather than mentioning it in passing.
     Object.freeze([
       'runs.start',
       // The README's CLI section is the one shipped page that shows a person starting a run.
@@ -169,6 +169,12 @@ export const CATALOG_DOC_PATHS: readonly (readonly [string, CatalogDocAdjudicati
       // The op reads chip statuses out of durable job state; `docs/queues.md` is where that
       // substrate — the agent job queue — is the subject rather than an aside.
       Object.freeze({ path: 'docs/queues.md', anchor: 'agent job queue' } as const),
+    ] as const),
+    Object.freeze([
+      'analysis.get',
+      // 2026-09-22 (425 D-15): the op now has a shipped page that documents the capability
+      // rather than mentioning it.
+      Object.freeze({ path: 'docs/queues.md', anchor: 'Reading stage outcomes' } as const),
     ] as const),
 
     // …and the explicit absences, one per remaining op.
@@ -188,7 +194,6 @@ export const CATALOG_DOC_PATHS: readonly (readonly [string, CatalogDocAdjudicati
           + 'would be the invention the whole feature refuses.',
       }),
     ] as const),
-    Object.freeze(['analysis.get', Object.freeze({ absentReason: CATALOG_DOC_ABSENT_REASON })] as const),
     Object.freeze(['authoring.draft.edit', Object.freeze({ absentReason: CATALOG_DOC_ABSENT_REASON })] as const),
     Object.freeze(['authoring.draft.verify', Object.freeze({ absentReason: CATALOG_DOC_ABSENT_REASON })] as const),
     Object.freeze(['authoring.draft.write', Object.freeze({ absentReason: CATALOG_DOC_ABSENT_REASON })] as const),
