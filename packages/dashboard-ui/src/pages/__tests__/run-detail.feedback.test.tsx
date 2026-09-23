@@ -25,6 +25,9 @@ import {
   feedbackEntryLabel,
   feedbackRecordedText,
   markGlyphLabel,
+  pinnedTargetText,
+  switchTargetLabel,
+  unsentDraftLabel,
 } from '@/lib/feedback-view'
 import { memberDisplayName, memberHandleLabel } from '@/lib/run-detail-view'
 
@@ -666,5 +669,130 @@ describe('426-04 the passive trace on a member header', () => {
     await renderAt(`/runs/${RUN_ID}`)
     expect(q('[data-feedback-entry="test"]')!.getAttribute('data-feedback-marked')).toBe('true')
     expect(container!.querySelectorAll('[data-feedback-mark-glyph="test"]')).toHaveLength(0)
+  })
+})
+
+// THE COMPOSER IS A DOCKED COMPANION (426-05 · D-08, D-09). The target is pinned to what the person
+// opened it for; the selection moves freely, and only an explicit act re-addresses the draft. Every
+// address keeps its own draft for the page session, in page state only.
+const fourSteps = projection({
+  members: [member(0, { testId: TEST_ID, outcome: 'failed', marks: [] })],
+  steps: [step(0, 0, 'Open cart'), step(0, 1, 'Apply coupon'), step(0, 2, 'Pay'), step(0, 3, 'See receipt')],
+})
+const composerTarget = () => q('[data-feedback-composer]')?.getAttribute('data-feedback-target') ?? null
+const noteField = () => q<HTMLTextAreaElement>('[data-feedback-note]')
+
+async function selectStep(address: string) {
+  await click(`[data-step-id="${address}"] > button`)
+}
+
+async function typeNote(value: string) {
+  const field = noteField()
+  expect(field, 'no note field in the composer').not.toBeNull()
+  const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!
+  await act(async () => {
+    setter.call(field, value)
+    field!.dispatchEvent(new Event('input', { bubbles: true }))
+  })
+  await flushRender()
+}
+
+async function openStep(address: string) {
+  await selectStep(address)
+  await click('[data-feedback-entry="step"]')
+  expect(composerTarget()).toBe(address)
+}
+
+describe('426-05 the pinned target and per-address drafts', () => {
+  beforeEach(() => {
+    fetchRunDetailMock.mockResolvedValue(fourSteps)
+    fetchMarkPreviewMock.mockResolvedValue({ kind: 'read', result: CONSEQUENCES })
+  })
+
+  it('TARGET-PINNED: selecting another step pins the target and names both; only the switch moves it', async () => {
+    fetchExecutionLogsMock.mockResolvedValue({ logs: [SETUP_HOOK] })
+    await renderAt(`/runs/${RUN_ID}`)
+    await openStep('0:1')
+    expect(q('[data-feedback-pinned]')).toBeNull()
+
+    await selectStep('0:3')
+    expect(composerTarget()).toBe('0:1')
+    const pinned = q('[data-feedback-pinned]')
+    expect(pinned, 'no pinned line after selecting another step').not.toBeNull()
+    expect(pinned!.getAttribute('role')).toBe('note')
+    expect(pinned!.textContent).toContain(pinnedTargetText({ stepIndex: 3 }, { stepIndex: 1 }))
+    const switcher = pinned!.querySelector('[data-feedback-switch]')
+    expect(switcher?.textContent).toBe(switchTargetLabel({ stepIndex: 3 }))
+
+    await click('[data-feedback-switch]')
+    expect(composerTarget()).toBe('0:3')
+    expect(q('[data-feedback-pinned]')).toBeNull()
+
+    const hook = [...container!.querySelectorAll<HTMLButtonElement>('li[role="treeitem"] > button')]
+      .find(button => button.textContent?.includes(SETUP_HOOK.name))
+    await act(async () => { hook!.click() })
+    await flushRender()
+    expect(hook!.closest('li')!.getAttribute('aria-selected')).toBe('true')
+    expect(composerTarget()).toBe('0:3')
+    expect(q('[data-feedback-pinned]')).toBeNull()
+  })
+
+  it('DRAFT-PER-ADDRESS-ROUNDTRIP: each address keeps its own choice and note', async () => {
+    await renderAt(`/runs/${RUN_ID}`)
+    await openStep('0:1')
+    await click('[data-feedback-choice="confirmed-bug"] [role="radio"]')
+    await typeNote('the coupon field vanished')
+
+    await selectStep('0:3')
+    await click('[data-feedback-switch]')
+    expect(composerTarget()).toBe('0:3')
+    expect(container!.querySelectorAll('[data-feedback-choice] [role="radio"][aria-checked="true"]')).toHaveLength(0)
+    expect(noteField()!.value).toBe('')
+    await typeNote('receipt is fine')
+
+    await selectStep('0:1')
+    await click('[data-feedback-switch]')
+    expect(composerTarget()).toBe('0:1')
+    expect(q('[data-feedback-choice="confirmed-bug"] [role="radio"]')!.getAttribute('aria-checked')).toBe('true')
+    expect(noteField()!.value).toBe('the coupon field vanished')
+  })
+
+  it('UNSENT-DRAFT-LINK: a waiting draft elsewhere is one link away; an empty draft has none', async () => {
+    await renderAt(`/runs/${RUN_ID}`)
+    await openStep('0:1')
+    await typeNote('coupon rejected')
+    await selectStep('0:3')
+    await click('[data-feedback-switch]')
+
+    const links = container!.querySelectorAll('[data-feedback-unsent-draft]')
+    expect(links).toHaveLength(1)
+    expect(links[0]!.getAttribute('data-feedback-unsent-draft')).toBe('0:1')
+    expect(links[0]!.textContent).toBe(unsentDraftLabel({ stepIndex: 1 }))
+
+    await click('[data-feedback-unsent-draft="0:1"]')
+    expect(composerTarget()).toBe('0:1')
+    expect(noteField()!.value).toBe('coupon rejected')
+    expect(container!.querySelectorAll('[data-feedback-unsent-draft]')).toHaveLength(0)
+  })
+
+  it('DRAFTS-NOT-PERSISTED: a typed draft reaches neither storage nor the URL', async () => {
+    localStorage.clear()
+    sessionStorage.clear()
+    await renderAt(`/runs/${RUN_ID}`)
+    const location = () => q('[data-location]')!.getAttribute('data-location')!
+    await openStep('0:1')
+    const before = location()
+    const searchBefore = window.location.search
+    await typeNote('draft text only in memory')
+
+    const stored = (storage: Storage) =>
+      Array.from({ length: storage.length }, (_, index) => storage.key(index)!)
+        .filter(key => key.includes('draft text only in memory') || (storage.getItem(key) ?? '').includes('draft text only in memory'))
+    expect(stored(localStorage)).toEqual([])
+    expect(stored(sessionStorage)).toEqual([])
+    expect(location()).toBe(before)
+    expect(location()).not.toContain('draft')
+    expect(window.location.search).toBe(searchBefore)
+    expect(noteField()!.value).toBe('draft text only in memory')
   })
 })

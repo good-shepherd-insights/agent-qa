@@ -32,12 +32,16 @@ import {
   feedbackPartsText,
   feedbackTargetView,
   hasUniqueAddress,
+  isDraftEmpty,
   markGlyphLabel,
   memberOutcomeClass,
+  pinnedTargetText,
   resolveHeaderFeedbackTarget,
   scopeLine,
   stepTriggerTooltip,
   submitBlockedReason,
+  switchTargetLabel,
+  unsentDraftLabel,
 } from '@/lib/feedback-view'
 import { memberDisplayName, memberHandleLabel } from '@/lib/run-detail-view'
 
@@ -270,5 +274,40 @@ describe('426-04 the step door and the passive trace name themselves', () => {
     for (const kind of MARKS) expect(markGlyphLabel(kind)).toBe(`Marked: ${CHOICE_LABELS[kind]}`)
     expect(stepTriggerTooltip(3, false)).toBe('Give feedback on step 3')
     expect(stepTriggerTooltip(3, true)).toBe('Step 3 is already marked — review or change')
+  })
+})
+
+describe('426-05 the pinned target names both places', () => {
+  const checkout = { testIndex: 1, name: 'checkout' }
+  const login = { testIndex: 0, name: 'login' }
+  const test = (entry: { testIndex: number; name: string }) => `${memberDisplayName(entry)} ${memberHandleLabel(entry.testIndex)}`
+
+  it('PINNED-COPY: a step target names the viewed and the targeted step by number', () => {
+    expect(pinnedTargetText({ stepIndex: 3 }, { stepIndex: 1 })).toBe("You're viewing step 4 — this feedback is about step 2.")
+    expect(switchTargetLabel({ stepIndex: 3 })).toBe('Switch to step 4')
+  })
+
+  it('PINNED-COPY: in a suite, different tests are named by name and handle; the same test is not', () => {
+    expect(pinnedTargetText({ stepIndex: 0, member: checkout }, { member: login }))
+      .toBe(`You're viewing step 1 of ${test(checkout)} — this feedback is about ${test(login)}.`)
+    expect(pinnedTargetText({ stepIndex: 0, member: checkout }, { stepIndex: 2, member: login }))
+      .toBe(`You're viewing step 1 of ${test(checkout)} — this feedback is about step 3 of ${test(login)}.`)
+    expect(pinnedTargetText({ stepIndex: 4, member: login }, { stepIndex: 2, member: login }))
+      .toBe("You're viewing step 5 — this feedback is about step 3.")
+    expect(switchTargetLabel({ member: checkout })).toBe(`Switch to ${test(checkout)}`)
+  })
+
+  it('PINNED-COPY: an unsent draft is named as a step, a suite test, or this test', () => {
+    expect(unsentDraftLabel({ stepIndex: 1 })).toBe('Unsent draft: step 2')
+    expect(unsentDraftLabel({ member: checkout })).toBe(`Unsent draft: ${test(checkout)}`)
+    expect(unsentDraftLabel({})).toBe('Unsent draft: this test')
+  })
+
+  it('PINNED-COPY: a draft is empty with no choice and all three texts empty', () => {
+    expect(isDraftEmpty({ note: '', expectation: '', actionText: '' })).toBe(true)
+    expect(isDraftEmpty({ kind: 'false-fail', note: '', expectation: '', actionText: '' })).toBe(false)
+    expect(isDraftEmpty({ note: 'x', expectation: '', actionText: '' })).toBe(false)
+    expect(isDraftEmpty({ note: '', expectation: 'x', actionText: '' })).toBe(false)
+    expect(isDraftEmpty({ note: '', expectation: '', actionText: '{' })).toBe(false)
   })
 })
