@@ -12,6 +12,7 @@ import { ShortcutLegend } from "@/components/shortcut-hints"
 import { PostProcessingChips } from "@/components/run-detail/post-processing-chips"
 import { RetrievalRungBanner } from "@/components/run-detail/retrieval-rung-banner"
 import { RunUsageCard } from "@/components/run-detail/run-usage-card"
+import { FeedbackEntryButton, type FeedbackEntryButtonProps } from "@/components/run-detail/feedback-entry"
 import { Tooltip, TooltipTrigger } from "@/components/ui/tooltip"
 import type { PostProcessingView } from "@/lib/post-processing-view"
 import type { RunRow } from "@/lib/api"
@@ -130,6 +131,11 @@ interface RunNavbarProps {
    * `bannerRung`, which is where the "no store bound is not a rung" judgement lives.
    */
   retrievalRung?: RecordedRetrievalRung
+  /**
+   * The test-level feedback door beside the verdict (426 D-02). Absent means the element is absent,
+   * never disabled: the page passes it only when the target member can be marked at all.
+   */
+  feedbackEntry?: Omit<FeedbackEntryButtonProps, "scope">
 }
 
 export function RunNavbar({
@@ -144,6 +150,7 @@ export function RunNavbar({
   onCurationClick,
   onOpenVerdict,
   retrievalRung,
+  feedbackEntry,
 }: RunNavbarProps) {
   const navigate = useNavigate()
   const isSuiteParent = run.suiteId != null && run.parentRunId == null
@@ -214,8 +221,11 @@ export function RunNavbar({
             <ArrowUpRight className="h-3.5 w-3.5" />
           </a>
         ) : null}
-        {/* Last child on purpose: Phase 426's feedback entry takes the slot after the verdict. */}
+        {/* The verdict, then the slot after it, filled by Phase 426's feedback entry. */}
         <StatusBadge status={run.status} />
+        {feedbackEntry === undefined ? null : (
+          <FeedbackEntryButton scope="test" {...feedbackEntry} />
+        )}
       </div>
 
       {/*

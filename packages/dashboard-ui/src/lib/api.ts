@@ -1,4 +1,4 @@
-import { RUN_EVENT_TYPES, GATE_REMEDY_KINDS } from '@vostride/agent-qa-schema'
+import { RUN_EVENT_TYPES, GATE_REMEDY_KINDS, RunsMarkPreviewResultSchema } from '@vostride/agent-qa-schema'
 import type {
   AgentAskResult,
   AnalysisGetOutput,
@@ -17,6 +17,7 @@ import type {
   RunsMarkInput,
   GateRemedy,
   RunsMarkOutcome,
+  RunsMarkPreviewResult,
 } from '@vostride/agent-qa-schema'
 
 export interface RunRow {
@@ -412,6 +413,31 @@ export async function markRun(
       })
     }
     throw error
+  }
+}
+
+export type FeedbackReadFailure = 'network' | 'ledger-corrupt' | 'ledger-unavailable' | 'refused' | 'shape'
+
+export type MarkPreviewRead =
+  | { kind: 'read'; result: RunsMarkPreviewResult }
+  | { kind: 'failed'; reason: FeedbackReadFailure }
+
+/**
+ * `POST /api/runs/:id/mark-preview` — runs.mark's plan for this exact input (426 D-16, 423 D-18).
+ *
+ * The route parses the body with the strict `RunsMarkInputSchema`, so the body carries `runId` and
+ * never `confirmScope`: this is a read, and markRun's body builder is deliberately not reused.
+ */
+export async function fetchMarkPreview(
+  runId: string,
+  input: Omit<RunsMarkInput, 'runId' | 'note'>,
+): Promise<MarkPreviewRead> {
+  try {
+    const raw = await postJson<unknown>(`/api/runs/${encodeURIComponent(runId)}/mark-preview`, { runId, ...input })
+    const parsed = RunsMarkPreviewResultSchema.safeParse(raw)
+    return parsed.success ? { kind: 'read', result: parsed.data } : { kind: 'failed', reason: 'shape' }
+  } catch {
+    return { kind: 'failed', reason: 'network' }
   }
 }
 

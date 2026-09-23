@@ -21,6 +21,9 @@ import { ArtifactDrawer, type ArtifactDrawerTab } from "@/components/run-detail/
 import { StepTree } from "@/components/run-detail/step-tree"
 import { FailureBanner } from "@/components/run-detail/failure-banner"
 import { TabPanels } from "@/components/run-detail/tab-panels"
+import { FeedbackComposer } from "@/components/run-detail/feedback-composer"
+import { useRunFeedback } from "@/hooks/use-run-feedback"
+import { FEEDBACK_ENTRY_TEST_LABEL, FEEDBACK_PANEL_IDS, feedbackAddress, feedbackPanelLayout, type FeedbackTarget } from "@/lib/feedback-view"
 import { initialPlayerSource, storePlayerSource } from "@/lib/player-view"
 import { PlayerLightbox } from '@/components/run-detail/player-lightbox'
 import { buildSuiteTimeline, suiteSeek, suiteProgress, suiteClock } from '@/lib/suite-timeline'
@@ -229,6 +232,26 @@ export default function RunDetailPage() {
       }
     }
   }, [id, detail, reloadDetail])
+
+  // THE FEEDBACK COMPOSER'S STATE IS PAGE STATE (426 D-09), held by a hook so `onMark` above stays
+  // the one writer. Opening measures the panel group once, because numeric panel sizes are pixels
+  // in react-resizable-panels 4 and the third panel is seeded in percent (RESEARCH Pattern 3).
+  const feedback = useRunFeedback({ runId: id, runStatus: run?.status, detail, onMark, markPending })
+  const panelGroupRef = useRef<HTMLDivElement | null>(null)
+  const [feedbackLayout, setFeedbackLayout] = useState<Record<string, number>>()
+  const openFeedbackAt = (target: FeedbackTarget, opener: HTMLElement) => {
+    setFeedbackLayout(feedbackPanelLayout(panelGroupRef.current?.getBoundingClientRect().width ?? 0))
+    feedback.openFeedback(target, opener)
+  }
+  const feedbackMember = detail?.members.length === 1 ? detail.members[0] : undefined
+  const feedbackEntry = feedbackMember?.marks === undefined ? undefined : {
+    label: FEEDBACK_ENTRY_TEST_LABEL,
+    target: feedbackAddress({ testIndex: feedbackMember.testIndex }),
+    marked: feedbackMember.marks.some(mark => mark.stepIndex === undefined),
+    expanded: feedback.open && feedback.target?.stepIndex === undefined,
+    controls: feedback.composerId,
+    onOpen: (opener: HTMLElement) => openFeedbackAt({ testIndex: feedbackMember.testIndex }, opener),
+  }
   const [isLoading, setIsLoading] = useState(true)
   const [notFound, setNotFound] = useState(false)
   const pipelineRef = useRef<ReasoningPipelineHandle | null>(null)
@@ -1063,6 +1086,7 @@ export default function RunDetailPage() {
           // growing a control that would do nothing.
           onOpenVerdict={run.status === 'failed' && analysisView.size > 0 ? openVerdict : undefined}
           retrievalRung={bannerRung(knowledgeRead)}
+          feedbackEntry={feedbackEntry}
           hasPostProcessing
           postProcessing={
             postProcessingRead === undefined ? undefined : projectPostProcessingView(postProcessingRead)
@@ -1074,8 +1098,10 @@ export default function RunDetailPage() {
         <ResizablePanelGroup
           orientation="horizontal"
           className="min-h-0 flex-1 overflow-hidden"
+          elementRef={panelGroupRef}
+          defaultLayout={feedback.composer === undefined ? undefined : feedbackLayout}
         >
-          <ResizablePanel defaultSize={35} minSize={20}>
+          <ResizablePanel id={FEEDBACK_PANEL_IDS.tree} defaultSize={35} minSize={20}>
             <div ref={stepTreeScrollRef} className="flex h-full min-h-0 min-w-0 flex-col overflow-y-auto">
               {/*
                 THE MEMBER FILTER (D-16). What stood here was a picker over CHILD RUNS that
@@ -1157,7 +1183,7 @@ export default function RunDetailPage() {
 
           <ResizableHandle withHandle />
 
-          <ResizablePanel defaultSize={65} minSize={30} data-tour-id="tour-run-detail-reasoning">
+          <ResizablePanel id={FEEDBACK_PANEL_IDS.evidence} defaultSize={65} minSize={30} data-tour-id="tour-run-detail-reasoning">
             <div className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden">
               {detail === null ? (
                 <div data-run-detail-error className='flex flex-1 items-center justify-center px-4 text-center text-sm text-muted-foreground'>
@@ -1201,6 +1227,15 @@ export default function RunDetailPage() {
               </>}
             </div>
           </ResizablePanel>
+
+          {feedback.composer === undefined ? null : (
+            <>
+              <ResizableHandle withHandle />
+              <ResizablePanel id={FEEDBACK_PANEL_IDS.feedback} minSize="320px" maxSize="50%">
+                <FeedbackComposer {...feedback.composer} />
+              </ResizablePanel>
+            </>
+          )}
         </ResizablePanelGroup>
 
         {artifactDrawerOpen ? (
