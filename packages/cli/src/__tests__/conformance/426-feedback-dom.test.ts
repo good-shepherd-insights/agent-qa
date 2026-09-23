@@ -1,13 +1,14 @@
 /// <reference lib="dom" />
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { RUNS_SUBDIR, slugBranch } from '@vostride/agent-qa-runner-local'
 import { MARKS, MarkReceiptSchema, RunsMarkOutcomeSchema, RunsMarkPreviewResultSchema } from '@vostride/agent-qa-schema'
-import type { Page } from 'playwright-core'
+import { chromium, type Browser, type BrowserContext, type Page } from 'playwright-core'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { recordingFixture, type RecordingFixture } from './recording-dom-fixture.js'
 import { populatedRunSpawnEnv, POPULATED_SECRET_ENV_VAR } from './populated-run-fixture.js'
-import { cleanupTempRoots, reserveEphemeralPort, spawnDashboard } from './spawned-chat.js'
+import { cleanupTempRoots, reserveEphemeralPort, spawnDashboard, trackTempRoot } from './spawned-chat.js'
 
 // Real producer + shipped bundle: the run is recorded by the shipped runner and every door, draft
 // and copy below is the built dashboard's own. Nothing is mocked or skipped. Captures go only where
@@ -58,11 +59,16 @@ const pills: Pills[] = []
 let inspecting: Inspecting | undefined
 let markPath: MarkPath | undefined
 
-async function captureTo(page: Page, name: string) {
+async function captureTo(page: Page, name: string, zoomed = false) {
   const directory = process.env.AGENT_QA_426_CAPTURE_DIR
   if (!directory) return
   mkdirSync(directory, { recursive: true })
-  await page.screenshot({ path: join(directory, `${name}.png`), fullPage: true, animations: 'disabled' })
+  // Under real browser zoom a clip is in surface pixels, not page pixels (425's first 200% capture
+  // cropped to the top-left quadrant), so the zoomed capture is the viewport scaled by devicePixelRatio.
+  const clip = zoomed
+    ? await page.evaluate(() => ({ x: 0, y: 0, width: innerWidth * devicePixelRatio, height: innerHeight * devicePixelRatio }))
+    : undefined
+  await page.screenshot({ path: join(directory, `${name}.png`), ...(clip ? { clip } : { fullPage: true }), animations: 'disabled' })
 }
 
 async function frames(page: Page) {
@@ -105,7 +111,392 @@ async function copyFromNetwork(page: Page) {
   return false
 }
 
-describe('contextual feedback on the shipped bundle (426-16)', () => {
+// 425-header-layout-dom's geometry vocabulary, reused as-is.
+type Box = { x: number; y: number; right: number; bottom: number; width: number; height: number }
+const overlaps = (a: Box, b: Box) => a.x < b.right - 0.5 && b.x < a.right - 0.5 && a.y < b.bottom - 0.5 && b.y < a.bottom - 0.5
+const inside = (a: Box, b: Box) => a.x >= b.x - 0.5 && a.right <= b.right + 0.5 && a.y >= b.y - 0.5 && a.bottom <= b.bottom + 0.5
+const insideX = (a: Box, b: Box) => a.x >= b.x - 0.5 && a.right <= b.right + 0.5
+
+type Item = { key: string; box: Box; clip: Box; contains: number[] }
+type Text = { key: string; kind: 'badge' | 'indicator' | 'token' | 'duration' | 'other'; text: string; box: Box; fontSize: number; fontWeight: number }
+type HeaderGeometry = {
+  label: string
+  innerWidth: number
+  dpr: number
+  header: Box
+  entryCount: number
+  rowEntryCount: number
+  entry: number
+  items: Item[]
+  texts: Text[]
+}
+// `scrolls` marks an element whose nearest clip is a vertical scroller: scrolling out of view is not
+// clipping, so only its horizontal extent is held to the clip. `scope` names that clip, so content
+// scrolled under the footer is compared by what the scroller actually shows.
+type ComposerItem = Item & { scrolls: boolean; scope: number }
+const visible = (item: ComposerItem): Box | undefined => {
+  if (!item.scrolls) return item.box
+  const x = Math.max(item.box.x, item.clip.x)
+  const y = Math.max(item.box.y, item.clip.y)
+  const right = Math.min(item.box.right, item.clip.right)
+  const bottom = Math.min(item.box.bottom, item.clip.bottom)
+  return right > x && bottom > y ? { x, y, right, bottom, width: right - x, height: bottom - y } : undefined
+}
+type ComposerGeometry = {
+  label: string
+  innerWidth: number
+  dpr: number
+  layout: string | null
+  viewport: Box
+  group: Box
+  tree: Box
+  evidence: Box
+  panel: Box
+  composer: Box
+  header: Box
+  body: Box
+  footer: Box
+  shrink: { header: string; footer: string }
+  bodyOverflowY: string
+  regions: number
+  scrollers: string[]
+  horizontalScrollers: string[]
+  items: ComposerItem[]
+}
+type Zoom = { factor: number; beforeWidth: number; afterWidth: number; beforeDpr: number; afterDpr: number }
+type Remount = {
+  layouts: { opened: string | null; narrow: string | null; restored: string | null }
+  panes: { before: number[]; after: number[] }
+  composer: boolean
+  player: { present: boolean; section: boolean; video: boolean; sameVideo: boolean; before?: number; after?: number; elapsedBefore?: string | null; elapsedAfter?: string | null }
+  network: { tree: boolean; panel: boolean; selectedBefore: string | null; selectedAfter: string | null; layouts: { narrow: string | null; restored: string | null } }
+}
+type StepRow = { label: string; stepId: string | null; width: number; name: Box; duration: Box; door: Box; flexWrap: string }
+
+const DESKTOP_LABEL = '1280x800'
+const NARROW_LABEL = '400x800'
+const ZOOM_LABEL = 'zoom2-from-1280x800'
+const GEOMETRY_LABELS = [DESKTOP_LABEL, NARROW_LABEL, ZOOM_LABEL]
+const DOCKED_NARROW_LABEL = '1000x800-docked'
+const ROW_WRAP_BELOW_PX = 224
+const headerGeometries: HeaderGeometry[] = []
+const composerGeometries: ComposerGeometry[] = []
+let zoom: Zoom | undefined
+let remount: Remount | undefined
+const stepRows: StepRow[] = []
+let zoomContext: BrowserContext | undefined
+
+async function settleHeader(page: Page) {
+  await page.locator('[data-verdict-badge]').waitFor()
+  await page.locator('[data-feedback-entry="test"]').waitFor({ timeout: 15_000 })
+  await page.evaluate(() => document.fonts.ready.then(() => undefined))
+  await frames(page)
+}
+
+/** 425's header measurement, on this file's own feedback-bound host, with the entry named. */
+async function measureHeader(page: Page, label: string) {
+  await settleHeader(page)
+  const geometry = await page.evaluate(() => {
+    const box = (element: Element): Box => {
+      const r = element.getBoundingClientRect()
+      return { x: r.x, y: r.y, right: r.right, bottom: r.bottom, width: r.width, height: r.height }
+    }
+    const badge = document.querySelector('[data-verdict-badge]')!
+    const row = badge.parentElement!
+    let header = row
+    while (header && !header.classList.contains('@container')) header = header.parentElement!
+    if (!header) throw new Error('No @container header block above the verdict badge')
+    const named = (element: Element) => {
+      for (const attribute of ['data-feedback-entry', 'data-verdict-badge', 'data-chip', 'data-chips-state', 'data-run-token-summary', 'data-run-duration']) {
+        if (element.hasAttribute(attribute)) return `${attribute}=${element.getAttribute(attribute) || ''}`
+      }
+      return `${element.tagName.toLowerCase()}[${element.getAttribute('aria-label') ?? (element.textContent ?? '').trim().slice(0, 24)}]`
+    }
+    const clipOf = (element: Element) => {
+      for (let node = element.parentElement; node && node !== header; node = node.parentElement) {
+        const style = getComputedStyle(node)
+        if (style.overflowX === 'hidden' || style.overflowY === 'hidden') return box(node)
+      }
+      return box(header)
+    }
+    const collected = [...header.querySelectorAll('[data-feedback-entry], [data-verdict-badge], [data-chip], [data-chips-state="unavailable"], [data-run-token-summary], [data-run-duration], button, a')]
+      .filter(element => { const r = element.getBoundingClientRect(); return r.width > 0 && r.height > 0 })
+    const items = collected.map(element => ({
+      key: named(element), box: box(element), clip: clipOf(element),
+      contains: collected.flatMap((other, index) => other !== element && element.contains(other) ? [index] : []),
+    }))
+    const texts = [...header.querySelectorAll('*')]
+      .filter(element => [...element.childNodes].some(node => node.nodeType === 3 && (node.textContent ?? '').trim()))
+      .filter(element => { const r = element.getBoundingClientRect(); return r.width > 0 && r.height > 0 })
+      .map(element => {
+        const style = getComputedStyle(element)
+        const kind = element.hasAttribute('data-verdict-badge') ? 'badge'
+          : element.closest('[data-run-token-summary]') ? 'token'
+          : element.closest('[data-run-duration]') ? 'duration'
+          : element.closest('[data-chip], [data-chips-state]') ? 'indicator'
+          : 'other'
+        return { key: named(element), kind, text: (element.textContent ?? '').trim().slice(0, 48),
+          box: box(element), fontSize: parseFloat(style.fontSize), fontWeight: Number(style.fontWeight) }
+      })
+    const entry = collected.findIndex(element => element.getAttribute('data-feedback-entry') === 'test')
+    return {
+      innerWidth, dpr: devicePixelRatio, header: box(header), items, texts, entry,
+      entryCount: document.querySelectorAll('[data-feedback-entry="test"]').length,
+      rowEntryCount: row.querySelectorAll(':scope > [data-feedback-entry="test"]').length,
+    }
+  })
+  headerGeometries.push({ label, ...geometry } as HeaderGeometry)
+}
+
+async function openComposerWithPreview(page: Page) {
+  await page.locator('[data-feedback-entry="test"]').click()
+  const composer = page.locator('[data-feedback-composer]')
+  await composer.waitFor()
+  await composer.locator('[data-feedback-choice] [role="radio"]').first().click()
+  await composer.locator('[data-feedback-preview][data-preview-current="true"]').waitFor({ timeout: 15_000 })
+  await frames(page)
+  return composer
+}
+
+async function measureComposer(page: Page, label: string) {
+  await page.evaluate(() => document.fonts.ready.then(() => undefined))
+  await frames(page)
+  const geometry = await page.evaluate(() => {
+    const box = (element: Element): Box => {
+      const r = element.getBoundingClientRect()
+      return { x: r.x, y: r.y, right: r.right, bottom: r.bottom, width: r.width, height: r.height }
+    }
+    const composer = document.querySelector('[data-feedback-composer]')!
+    const panel = composer.closest('[data-panel]')!
+    const group = panel.closest('[data-group]')!
+    const evidence = document.querySelector('[data-tour-id="tour-run-detail-reasoning"]')!.closest('[data-panel]')!
+    const tree = document.querySelector('ul[role="tree"]')!.closest('[data-panel]')!
+    const parts = [...composer.children]
+    const header = parts[0]!
+    const footer = parts[parts.length - 1]!
+    const middle = parts.slice(1, -1)
+    if (middle.length !== 1) throw new Error(`The composer has ${String(middle.length)} body regions`)
+    const body = middle[0]!
+    const hidden = (element: Element) => element.closest('[aria-hidden="true"], .sr-only') !== null
+    const named = (element: Element) => {
+      const data = [...element.attributes].find(attribute => attribute.name.startsWith('data-feedback') || attribute.name.startsWith('data-preview') || attribute.name.startsWith('data-history'))
+      const text = (element.getAttribute('aria-label') ?? (element.textContent ?? '').trim()).slice(0, 32)
+      return `${element.tagName.toLowerCase()}${element.getAttribute('role') ? `[role=${element.getAttribute('role')}]` : ''}${data ? `[${data.name}]` : ''}[${text}]`
+    }
+    const scopes: Element[] = []
+    const scopeOf = (node: Element) => {
+      if (!scopes.includes(node)) scopes.push(node)
+      return scopes.indexOf(node)
+    }
+    const clipOf = (element: Element) => {
+      for (let node = element.parentElement; node && node !== panel; node = node.parentElement) {
+        const style = getComputedStyle(node)
+        if (style.overflowX !== 'visible' || style.overflowY !== 'visible') {
+          const scrolls = (style.overflowY === 'auto' || style.overflowY === 'scroll') && node.scrollHeight > node.clientHeight + 1
+          return { clip: box(node), scrolls, scope: scopeOf(node) }
+        }
+      }
+      return { clip: box(composer), scrolls: false, scope: -1 }
+    }
+    const textBearing = (element: Element) => [...element.childNodes].some(node => node.nodeType === 3 && (node.textContent ?? '').trim())
+    const control = (element: Element) => element.matches('button, textarea, input, select, a, [role="radio"], [role="combobox"], [role="checkbox"]')
+    const collected = [...composer.querySelectorAll('*')]
+      .filter(element => textBearing(element) || control(element))
+      .filter(element => !hidden(element))
+      .filter(element => { const r = element.getBoundingClientRect(); return r.width > 1 && r.height > 1 && getComputedStyle(element).visibility === 'visible' })
+    const items = collected.map(element => ({
+      key: named(element), box: box(element), ...clipOf(element),
+      contains: collected.flatMap((other, index) => other !== element && element.contains(other) ? [index] : []),
+    }))
+    const all = [composer, ...composer.querySelectorAll('*')]
+    const scrollers = all.filter(element => {
+      const style = getComputedStyle(element)
+      return (style.overflowY === 'auto' || style.overflowY === 'scroll') && element.scrollHeight > element.clientHeight + 1
+    }).map(element => element === body ? 'body' : named(element))
+    const horizontalScrollers = all.filter(element => {
+      const style = getComputedStyle(element)
+      return (style.overflowX === 'auto' || style.overflowX === 'scroll') && element.scrollWidth > element.clientWidth + 1
+    }).map(named)
+    return {
+      innerWidth, dpr: devicePixelRatio, layout: composer.getAttribute('data-feedback-layout'),
+      viewport: { x: 0, y: 0, right: innerWidth, bottom: innerHeight, width: innerWidth, height: innerHeight },
+      group: box(group), tree: box(tree), evidence: box(evidence), panel: box(panel), composer: box(composer),
+      header: box(header), body: box(body), footer: box(footer),
+      shrink: { header: getComputedStyle(header).flexShrink, footer: getComputedStyle(footer).flexShrink },
+      bodyOverflowY: getComputedStyle(body).overflowY,
+      regions: document.querySelectorAll('[data-feedback-composer]').length,
+      scrollers, horizontalScrollers, items,
+    }
+  })
+  composerGeometries.push({ label, ...geometry } as ComposerGeometry)
+}
+
+/** The tree row that carries the step door: name, duration and door, and whether the row wrapped. */
+async function measureStepRow(page: Page, label: string) {
+  await frames(page)
+  const row = await page.evaluate(() => {
+    const box = (element: Element): Box => {
+      const r = element.getBoundingClientRect()
+      return { x: r.x, y: r.y, right: r.right, bottom: r.bottom, width: r.width, height: r.height }
+    }
+    const door = document.querySelector('li[data-step-id] [data-feedback-entry="step"]')
+    if (!door) throw new Error('No tree row carries the step door')
+    const row = door.closest('li[data-step-id]')!
+    const button = row.querySelector(':scope > button')!
+    return { stepId: row.getAttribute('data-step-id'), width: row.clientWidth,
+      name: box(button.querySelector(':scope > div.min-w-0')!), duration: box(button.querySelector(':scope > span:last-child')!),
+      door: box(door), flexWrap: getComputedStyle(button).flexWrap }
+  })
+  stepRows.push({ label, ...row })
+}
+
+async function resizeTo(page: Page, width: number, layout: 'docked' | 'stacked') {
+  await page.setViewportSize({ width, height: DESKTOP.height })
+  await page.locator(`[data-feedback-composer][data-feedback-layout="${layout}"]`).waitFor({ timeout: 10_000 })
+  await frames(page)
+  return await page.locator('[data-feedback-composer]').getAttribute('data-feedback-layout')
+}
+
+/**
+ * RESEARCH A4 on the shipped bundle: react-resizable-panels is assumed to keep a panel's children
+ * mounted when the arrangement's panel ids change. Stored nodes are compared across a round trip.
+ */
+async function paneWidths(page: Page) {
+  return await page.evaluate(() => ['run-tree', 'run-evidence', 'run-feedback']
+    .map(id => Math.round(document.getElementById(id)?.getBoundingClientRect().width ?? -1)))
+}
+
+async function observeRemount(page: Page): Promise<Remount> {
+  const opened = await page.locator('[data-feedback-composer]').getAttribute('data-feedback-layout')
+  const panesBefore = await paneWidths(page)
+  await page.getByRole('tab', { name: /^Overview/ }).click()
+  const present = await page.locator('[data-player]').first().waitFor({ timeout: 10_000 }).then(() => true, () => false)
+  const before = await page.evaluate(async () => {
+    const held = window as unknown as Record<string, Element | null>
+    held.heldComposer = document.querySelector('[data-feedback-composer]')
+    held.heldPlayer = document.querySelector('[data-player]')
+    const video = document.querySelector('[data-player] video')
+    held.heldVideo = video
+    if (video instanceof HTMLVideoElement) {
+      if (video.readyState < 1) await new Promise(resolve => { video.addEventListener('loadedmetadata', resolve, { once: true }); setTimeout(resolve, 5_000) })
+      if (Number.isFinite(video.duration) && video.duration > 0) {
+        const seeked = new Promise(resolve => { video.addEventListener('seeked', resolve, { once: true }); setTimeout(resolve, 5_000) })
+        video.pause()
+        video.currentTime = video.duration / 2
+        await seeked
+      }
+    }
+    return { time: video instanceof HTMLVideoElement ? video.currentTime : undefined,
+      elapsed: document.querySelector('[data-player-time]')?.getAttribute('data-player-elapsed-ms') ?? null }
+  })
+  const narrow = await resizeTo(page, 400, 'stacked')
+  const restored = await resizeTo(page, DESKTOP.width, 'docked')
+  const playerAfter = await page.evaluate(() => {
+    const held = window as unknown as Record<string, Element | null>
+    const video = document.querySelector('[data-player] video')
+    return { composer: held.heldComposer === document.querySelector('[data-feedback-composer]'),
+      section: held.heldPlayer !== null && held.heldPlayer === document.querySelector('[data-player]'),
+      video: video !== null, sameVideo: held.heldVideo !== null && held.heldVideo === video,
+      time: video instanceof HTMLVideoElement ? video.currentTime : undefined,
+      elapsed: document.querySelector('[data-player-time]')?.getAttribute('data-player-elapsed-ms') ?? null }
+  })
+
+  const network = page.getByRole('tab', { name: /^Network/ })
+  await network.click()
+  await page.locator('[role="tabpanel"][data-state="active"]').waitFor()
+  const selectedBefore = await network.getAttribute('aria-selected')
+  await page.evaluate(() => {
+    const held = window as unknown as Record<string, Element | null>
+    held.heldTree = document.querySelector('ul[role="tree"]')
+    held.heldPanel = document.querySelector('[role="tabpanel"][data-state="active"]')
+  })
+  const networkNarrow = await resizeTo(page, 400, 'stacked')
+  const networkRestored = await resizeTo(page, DESKTOP.width, 'docked')
+  const held = await page.evaluate(() => {
+    const held = window as unknown as Record<string, Element | null>
+    return { tree: held.heldTree !== null && held.heldTree === document.querySelector('ul[role="tree"]'),
+      panel: held.heldPanel !== null && held.heldPanel === document.querySelector('[role="tabpanel"][data-state="active"]') }
+  })
+  return {
+    layouts: { opened, narrow, restored },
+    panes: { before: panesBefore, after: await paneWidths(page) },
+    composer: playerAfter.composer,
+    player: { present, section: playerAfter.section, video: playerAfter.video, sameVideo: playerAfter.sameVideo,
+      before: before.time, after: playerAfter.time, elapsedBefore: before.elapsed, elapsedAfter: playerAfter.elapsed },
+    network: { ...held, selectedBefore, selectedAfter: await network.getAttribute('aria-selected'),
+      layouts: { narrow: networkNarrow, restored: networkRestored } },
+  }
+}
+
+async function driveLayout(browser: Browser, url: string) {
+  const context = await browser.newContext({ viewport: DESKTOP })
+  const page = await context.newPage()
+  await page.goto(url)
+  await measureHeader(page, DESKTOP_LABEL)
+  await openComposerWithPreview(page)
+  await measureComposer(page, DESKTOP_LABEL)
+  await measureStepRow(page, DESKTOP_LABEL)
+  await captureTo(page, 'composer-1280')
+  remount = await observeRemount(page)
+  // 426-04's container query: a docked page this narrow leaves the tree's door row under 14rem.
+  await resizeTo(page, 1000, 'docked')
+  await measureStepRow(page, DOCKED_NARROW_LABEL)
+  await page.close()
+
+  const narrow = await context.newPage()
+  await narrow.setViewportSize({ width: 400, height: DESKTOP.height })
+  await narrow.goto(url)
+  await measureHeader(narrow, NARROW_LABEL)
+  await openComposerWithPreview(narrow)
+  await measureComposer(narrow, NARROW_LABEL)
+  await measureStepRow(narrow, NARROW_LABEL)
+  await captureTo(narrow, 'composer-400')
+  await context.close()
+
+  // Real browser zoom, not device density: 425's isolated MV3 extension calls Chrome's own
+  // setZoom/getZoom on the fixture tab.
+  // https://developer.chrome.com/docs/extensions/reference/api/tabs#method-setZoom
+  const zoomRoot = trackTempRoot(mkdtempSync(join(tmpdir(), 'agent-qa-426-zoom-')))
+  const extension = join(zoomRoot, 'extension')
+  mkdirSync(extension)
+  writeFileSync(join(extension, 'manifest.json'), JSON.stringify({ manifest_version: 3,
+    name: 'Local composer zoom probe', version: '1.0',
+    host_permissions: ['http://127.0.0.1/*'], background: { service_worker: 'background.js' } }))
+  writeFileSync(join(extension, 'background.js'), 'chrome.runtime.onInstalled.addListener(() => {})')
+  zoomContext = await chromium.launchPersistentContext(join(zoomRoot, 'profile'), {
+    channel: 'chromium', headless: true, viewport: DESKTOP,
+    args: [`--disable-extensions-except=${extension}`, `--load-extension=${extension}`],
+  })
+  const worker = zoomContext.serviceWorkers()[0] ?? await zoomContext.waitForEvent('serviceworker')
+  const zoomPage = await zoomContext.newPage()
+  await zoomPage.goto(url)
+  await settleHeader(zoomPage)
+  const before = await zoomPage.evaluate(() => ({ width: innerWidth, dpr: devicePixelRatio }))
+  // The page rewrites its own URL once a step is selected, so the tab is found by origin.
+  const factor = await worker.evaluate(async origin => {
+    const tabs = (globalThis as unknown as { chrome: { tabs: {
+      query(query: object): Promise<Array<{ id?: number; url?: string }>>
+      setZoom(id: number, factor: number): Promise<void>
+      getZoom(id: number): Promise<number>
+    } } }).chrome.tabs
+    const [tab, ...others] = (await tabs.query({})).filter(candidate => candidate.url?.startsWith(`${origin}/runs/`))
+    if (tab?.id === undefined || others.length > 0) throw new Error(`The isolated extension found ${String(others.length + (tab ? 1 : 0))} fixture tabs`)
+    await tabs.setZoom(tab.id, 2)
+    return await tabs.getZoom(tab.id)
+  }, new URL(url).origin)
+  await zoomPage.waitForFunction(dpr => devicePixelRatio >= dpr * 1.99, before.dpr)
+  const after = await zoomPage.evaluate(() => ({ width: innerWidth, dpr: devicePixelRatio }))
+  zoom = { factor, beforeWidth: before.width, afterWidth: after.width, beforeDpr: before.dpr, afterDpr: after.dpr }
+  await measureHeader(zoomPage, ZOOM_LABEL)
+  await openComposerWithPreview(zoomPage)
+  await measureComposer(zoomPage, ZOOM_LABEL)
+  await measureStepRow(zoomPage, ZOOM_LABEL)
+  await captureTo(zoomPage, 'composer-browser-200-percent', true)
+  await zoomContext.close()
+  zoomContext = undefined
+}
+
+describe('contextual feedback on the shipped bundle (426-16, 426-17)', () => {
   beforeAll(async () => {
     try {
       // The layout recipe records six steps for member 0, so a second step exists to select while
@@ -220,6 +611,10 @@ describe('contextual feedback on the shipped bundle (426-16)', () => {
         copied, composerOpen, note, modalCounts }
       await context.close()
 
+      // D-10 and WR-UI-08 (426-17), driven before any mark exists so the composer opens idle. Its own
+      // failure key keeps the approval drive below independent of it.
+      try { await driveLayout(fixture.browser, url) } catch (error) { failures.layout = String(error) }
+
       // SC4 through approval (D-20): a real mark from the header entry, approved inline.
       const ledger = join(fixture.project.agentQaRoot, RUNS_SUBDIR, slugBranch(runId), 'marks.jsonl')
       const rows = () => existsSync(ledger)
@@ -277,13 +672,16 @@ describe('contextual feedback on the shipped bundle (426-16)', () => {
 
       if (process.env.AGENT_QA_426_CAPTURE_DIR) {
         writeFileSync(join(process.env.AGENT_QA_426_CAPTURE_DIR, 'feedback-observation.json'),
-          JSON.stringify({ runId, settled, triggers, pills, inspecting, markPath }, null, 2))
+          JSON.stringify({ runId, settled, triggers, pills, inspecting, markPath,
+            layout: { zoom, headerGeometries, composerGeometries, stepRows, remount } }, null, 2))
       }
     } catch (error) { failures.drive = String(error) }
     process.stderr.write(`426-16 feedback drive: ${JSON.stringify({ failures, settled, triggers, pills, inspecting, markPath })}\n`)
+    process.stderr.write(`426-17 layout drive: ${JSON.stringify({ zoom, remount, stepRows,
+      composer: composerGeometries.map(({ items, ...rest }) => rest) })}\n`)
   }, 360_000)
 
-  afterAll(async () => { await reader?.stop(); await fixture?.close(); cleanupTempRoots() })
+  afterAll(async () => { await zoomContext?.close(); await reader?.stop(); await fixture?.close(); cleanupTempRoots() })
 
   it('FEEDBACK-FIXTURE-SETTLED', () => {
     expect(failures.drive, 'the drive threw before every observation was recorded').toBeUndefined()
@@ -346,5 +744,128 @@ describe('contextual feedback on the shipped bundle (426-16)', () => {
     expect(markPath!.newEntryMarkId, where).toBe(markPath!.outcome!.markId)
     expect(markPath!.newEntryFirst, where).toBe(true)
     expect(markPath!.dialogsAfter, where).toBe(0)
+  })
+
+  it('HEADER-ENTRY-GEOMETRY', () => {
+    expect(headerGeometries.map(geometry => geometry.label), JSON.stringify(failures)).toEqual(GEOMETRY_LABELS)
+    for (const geometry of headerGeometries) {
+      const where = `${geometry.label} innerWidth=${geometry.innerWidth} dpr=${geometry.dpr}`
+      expect(geometry.entryCount, `${where}: header entries on the page`).toBe(1)
+      expect(geometry.rowEntryCount, `${where}: header entries in the verdict row`).toBe(1)
+      const entry = geometry.items[geometry.entry]
+      expect(entry, `${where}: the header entry was not measured`).toBeDefined()
+      expect(inside(entry!.box, entry!.clip), `${where}: entry ${JSON.stringify(entry!.box)} escapes its clip ${JSON.stringify(entry!.clip)}`).toBe(true)
+      expect(inside(entry!.box, geometry.header), `${where}: entry ${JSON.stringify(entry!.box)} escapes the header ${JSON.stringify(geometry.header)}`).toBe(true)
+      for (const [index, item] of geometry.items.entries()) {
+        if (index === geometry.entry || item.contains.includes(geometry.entry) || entry!.contains.includes(index)) continue
+        expect(overlaps(entry!.box, item.box), `${where}: entry ${JSON.stringify(entry!.box)} overlaps ${item.key} ${JSON.stringify(item.box)}`).toBe(false)
+      }
+      // 425's BADGE-DOMINANT-GEOMETRY measurement, unchanged.
+      const badge = geometry.texts.find(text => text.kind === 'badge')
+      expect(badge, `${where}: no text-bearing verdict badge`).toBeDefined()
+      expect(badge!.fontSize, `${where}: badge font-size`).toBe(14)
+      expect(badge!.fontWeight, `${where}: badge font-weight`).toBe(500)
+      for (const text of geometry.texts) {
+        if (text === badge) continue
+        expect(badge!.box.height >= text.box.height - 0.5,
+          `${where}: badge height ${badge!.box.height} is not at least ${text.key} height ${text.box.height}`).toBe(true)
+        if (text.kind === 'indicator' || text.kind === 'token' || text.kind === 'duration') {
+          expect(text.fontSize, `${where}: ${text.kind} ${text.key} font-size`).toBe(12)
+        }
+      }
+    }
+  })
+
+  it('COMPOSER-STACKS-NARROW', () => {
+    expect(composerGeometries.map(geometry => geometry.label), JSON.stringify(failures)).toEqual(GEOMETRY_LABELS)
+    expect(zoom?.factor, JSON.stringify(zoom)).toBe(2)
+    expect(zoom!.afterWidth).toBe(zoom!.beforeWidth / 2)
+    expect(zoom!.afterDpr).toBe(zoom!.beforeDpr * 2)
+    for (const geometry of composerGeometries) {
+      const where = `${geometry.label} innerWidth=${geometry.innerWidth} composer=${JSON.stringify(geometry.composer)} evidence=${JSON.stringify(geometry.evidence)} group=${JSON.stringify(geometry.group)}`
+      expect(geometry.regions, where).toBe(1)
+      if (geometry.label === DESKTOP_LABEL) {
+        expect(geometry.layout, where).toBe('docked')
+        expect(geometry.composer.x >= geometry.evidence.right - 1, `${where}: the docked composer is not right of the evidence`).toBe(true)
+        expect(geometry.composer.y < geometry.evidence.bottom && geometry.evidence.y < geometry.composer.bottom, `${where}: docked panes do not share a row`).toBe(true)
+        continue
+      }
+      expect(geometry.layout, where).toBe('stacked')
+      expect(geometry.innerWidth, where).toBeLessThan(768)
+      expect(geometry.evidence.y >= geometry.tree.bottom - 1, `${where}: the evidence is not below the tree ${JSON.stringify(geometry.tree)}`).toBe(true)
+      expect(geometry.composer.y >= geometry.evidence.bottom - 1, `${where}: the stacked composer is not below the evidence`).toBe(true)
+      expect(geometry.composer.width >= geometry.group.width - 2, `${where}: the stacked composer does not span the group`).toBe(true)
+      expect(geometry.panel.bottom <= geometry.viewport.bottom + 0.5, `${where}: the composer panel runs past the viewport`).toBe(true)
+    }
+  })
+
+  it('COMPOSER-NO-OVERLAP', () => {
+    expect(composerGeometries.map(geometry => geometry.label), JSON.stringify(failures)).toEqual(GEOMETRY_LABELS)
+    for (const geometry of composerGeometries) {
+      const where = `${geometry.label} innerWidth=${geometry.innerWidth} dpr=${geometry.dpr}`
+      expect(geometry.items.length, where).toBeGreaterThan(10)
+      for (const part of ['header', 'footer'] as const) {
+        expect(inside(geometry[part], geometry.composer), `${where}: ${part} ${JSON.stringify(geometry[part])} escapes the composer ${JSON.stringify(geometry.composer)}`).toBe(true)
+        expect(inside(geometry[part], geometry.viewport), `${where}: ${part} ${JSON.stringify(geometry[part])} is outside the viewport`).toBe(true)
+        expect(geometry.shrink[part], `${where}: ${part} flex-shrink`).toBe('0')
+      }
+      expect(geometry.bodyOverflowY, where).toBe('auto')
+      expect(geometry.scrollers, `${where}: scrolling elements inside the composer`).toEqual(['body'])
+      expect(geometry.horizontalScrollers, `${where}: horizontal scrollers inside the composer`).toEqual([])
+      for (const [index, item] of geometry.items.entries()) {
+        const held = item.scrolls ? insideX(item.box, item.clip) : inside(item.box, item.clip)
+        expect(held, `${where}: ${item.key} ${JSON.stringify(item.box)} is clipped by ${JSON.stringify(item.clip)}`).toBe(true)
+        for (const [other, candidate] of geometry.items.entries()) {
+          if (other <= index || item.contains.includes(other) || candidate.contains.includes(index)) continue
+          const [a, b] = item.scope === candidate.scope ? [item.box, candidate.box] : [visible(item), visible(candidate)]
+          if (a === undefined || b === undefined) continue
+          expect(overlaps(a, b), `${where}: ${item.key} ${JSON.stringify(a)} overlaps ${candidate.key} ${JSON.stringify(b)}`).toBe(false)
+        }
+      }
+    }
+  })
+
+  it('LAYOUT-SWITCH-NO-REMOUNT', () => {
+    expect(remount, JSON.stringify(failures)).toBeDefined()
+    const where = JSON.stringify(remount)
+    expect(remount!.layouts, where).toEqual({ opened: 'docked', narrow: 'stacked', restored: 'docked' })
+    expect(remount!.composer, where).toBe(true)
+    // Back at the same width after two round trips, the docked panes are where they started: the
+    // tree is not squeezed and the composer is not pinned at its cap.
+    expect(remount!.panes.before.every(width => width > 200), where).toBe(true)
+    for (const [index, width] of remount!.panes.after.entries()) {
+      expect(Math.abs(width - remount!.panes.before[index]!), `${where}: pane ${String(index)}`).toBeLessThanOrEqual(1)
+    }
+    // 426-11's handed-over A4 check: the player itself survives the switch, and with it its position.
+    expect(remount!.player.present, where).toBe(true)
+    expect(remount!.player.section, where).toBe(true)
+    if (remount!.player.video) {
+      expect(remount!.player.sameVideo, where).toBe(true)
+      expect(remount!.player.after, where).toBeCloseTo(remount!.player.before!, 2)
+    }
+    expect(remount!.player.elapsedAfter, where).toBe(remount!.player.elapsedBefore)
+    expect(remount!.network.layouts, where).toEqual({ narrow: 'stacked', restored: 'docked' })
+    expect(remount!.network.tree, where).toBe(true)
+    expect(remount!.network.panel, where).toBe(true)
+    expect(remount!.network.selectedBefore, where).toBe('true')
+    expect(remount!.network.selectedAfter, where).toBe('true')
+  })
+
+  // 426-04's container query, which jsdom cannot run: the door row moves its duration onto its own
+  // line below 14rem and keeps it beside the name above, and name, duration and door never meet.
+  it('STEP-ROW-DOOR-WRAP', () => {
+    expect(stepRows.map(row => row.label), JSON.stringify(failures)).toEqual([DESKTOP_LABEL, DOCKED_NARROW_LABEL, NARROW_LABEL, ZOOM_LABEL])
+    expect(stepRows.some(row => row.width < ROW_WRAP_BELOW_PX), JSON.stringify(stepRows)).toBe(true)
+    expect(stepRows.some(row => row.width >= ROW_WRAP_BELOW_PX), JSON.stringify(stepRows)).toBe(true)
+    for (const row of stepRows) {
+      const where = `${row.label} row ${row.stepId} width=${row.width}: ${JSON.stringify(row)}`
+      const narrow = row.width < ROW_WRAP_BELOW_PX
+      expect(row.flexWrap, where).toBe(narrow ? 'wrap' : 'nowrap')
+      expect(row.duration.y >= row.name.bottom - 1, `${where}: duration on its own line`).toBe(narrow)
+      expect(row.name.width, `${where}: the name column collapsed`).toBeGreaterThan(40)
+      expect(overlaps(row.name, row.duration), `${where}: name meets duration`).toBe(false)
+      expect(overlaps(row.name, row.door), `${where}: name meets door`).toBe(false)
+      expect(overlaps(row.duration, row.door), `${where}: duration meets door`).toBe(false)
+    }
   })
 })
