@@ -11,10 +11,12 @@ import {
   FEEDBACK_CHOICE_ORDER,
   FEEDBACK_COMPOSER_STATES,
   FEEDBACK_ENTRY_SCOPES,
+  FEEDBACK_HISTORY_STATES,
   FEEDBACK_OUTCOME_CLASSES,
   FEEDBACK_PREVIEW_STATES,
   type FeedbackComposerState,
   type FeedbackEntryScope,
+  type FeedbackHistoryState,
   type FeedbackOutcomeClass,
   type FeedbackPreviewState,
 } from '../feedback-view'
@@ -58,4 +60,12 @@ test('C426-PREVIEW-STATES-EXACT', () => {
   expectTypeOf<(typeof FEEDBACK_PREVIEW_STATES)[number]>().toEqualTypeOf<Expected>()
   expectTypeOf<Exclude<FeedbackPreviewState, (typeof FEEDBACK_PREVIEW_STATES)[number]>>().toEqualTypeOf<never>()
   expectTypeOf<Exclude<(typeof FEEDBACK_PREVIEW_STATES)[number], FeedbackPreviewState>>().toEqualTypeOf<never>()
+})
+
+test('C426-HISTORY-STATES-EXACT', () => {
+  type Expected = 'loading' | 'history' | 'empty' | 'run-not-found' | 'ledger-corrupt' | 'ledger-unavailable' | 'failed'
+  expectTypeOf<FeedbackHistoryState>().toEqualTypeOf<Expected>()
+  expectTypeOf<(typeof FEEDBACK_HISTORY_STATES)[number]>().toEqualTypeOf<Expected>()
+  expectTypeOf<Exclude<FeedbackHistoryState, (typeof FEEDBACK_HISTORY_STATES)[number]>>().toEqualTypeOf<never>()
+  expectTypeOf<Exclude<(typeof FEEDBACK_HISTORY_STATES)[number], FeedbackHistoryState>>().toEqualTypeOf<never>()
 })

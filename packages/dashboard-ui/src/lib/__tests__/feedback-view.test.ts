@@ -16,7 +16,12 @@ import type {
   RunDetailStep,
   RunsMarkPreviewResult,
 } from '@vostride/agent-qa-schema'
-import { MARK_PREVIEW_REFUSALS, RunsMarkPreviewResultSchema } from '@vostride/agent-qa-schema'
+import {
+  MARK_PREVIEW_REFUSALS,
+  MARK_PROPOSAL_STATES,
+  RunsMarkPreviewResultSchema,
+  RunsMarksHistoryResultSchema,
+} from '@vostride/agent-qa-schema'
 import { generateRunId } from '@vostride/agent-qa-ids'
 import type { FeedbackReadFailure } from '@/lib/api'
 
@@ -97,6 +102,22 @@ import {
   submitBlockedReason,
   switchTargetLabel,
   unsentDraftLabel,
+  ACTIVE_TEXT,
+  FEEDBACK_HISTORY_STATES,
+  HISTORY_EMPTY_TEXT,
+  HISTORY_READ_FAILED_TEXT,
+  HISTORY_RETRY_ACCESSIBLE_NAME,
+  PROPOSAL_STATE_TEXT,
+  REPLACEMENT_EXPLANATION,
+  correctedPresenceText,
+  feedbackHistoryState,
+  formatMarkTime,
+  historyStateText,
+  historyTargetLabel,
+  historyTitle,
+  proposalStateText,
+  replacedByText,
+  runHistoryLabel,
 } from '@/lib/feedback-view'
 import { memberDisplayName, memberHandleLabel } from '@/lib/run-detail-view'
 
@@ -693,5 +714,95 @@ describe('426-08 Technical details copy', () => {
     expect(labelDetailText({ decisionOrdinal: 4, stepIndex: 2, channel: 'overturned-verdict' })).toBe('decision 4 · step 3 · overturned-verdict')
     expect(basisDetailText({ ledgerOrdinal: 7 })).toBe('ledger ordinal 7')
     expect(basisDetailText({ ledgerOrdinal: 7, priorMarkOrdinal: 4 })).toBe('ledger ordinal 7 · prior mark #4')
+  })
+})
+
+// 426-09 · D-22: the history reads as plain sentences; a time is always the browser's own format of
+// the entry's markedAt, so cells compute it through formatMarkTime and never spell a clock.
+describe('426-09 the history copy', () => {
+  const RUN_ID = generateRunId()
+
+  it('MARK-TIME-FORMAT: the month, day and 24-hour time of markedAt in the browser locale; a non-finite time has none', () => {
+    const format = new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' })
+    for (const ms of [0, Date.UTC(2026, 8, 23, 10, 41), Date.UTC(2026, 0, 1, 23, 5)]) {
+      expect(formatMarkTime(ms)).toBe(format.format(new Date(ms)))
+    }
+    expect(formatMarkTime(Number.NaN)).toBeUndefined()
+    expect(formatMarkTime(Number.POSITIVE_INFINITY)).toBeUndefined()
+    expect(formatMarkTime(undefined)).toBeUndefined()
+  })
+
+  it('C426-HISTORY-STATES-EXACT (runtime): the history states are exactly the published set, and each read maps to its own', () => {
+    expect(FEEDBACK_HISTORY_STATES).toEqual(['loading', 'history', 'empty', 'run-not-found', 'ledger-corrupt', 'ledger-unavailable', 'failed'])
+    const read = (value: Record<string, unknown>) => ({ kind: 'read' as const, result: RunsMarksHistoryResultSchema.parse({ runId: RUN_ID, ...value }) })
+    expect(feedbackHistoryState(undefined)).toBe('loading')
+    expect(feedbackHistoryState({ kind: 'failed', reason: 'network' })).toBe('failed')
+    expect(feedbackHistoryState(read({ kind: 'run-not-found' }))).toBe('run-not-found')
+    expect(feedbackHistoryState(read({ kind: 'ledger-corrupt', line: 7 }))).toBe('ledger-corrupt')
+    expect(feedbackHistoryState(read({ kind: 'ledger-unavailable' }))).toBe('ledger-unavailable')
+    expect(feedbackHistoryState(read({ kind: 'history', entries: [] }))).toBe('empty')
+    expect(feedbackHistoryState(read({
+      kind: 'history',
+      entries: [{
+        markId: 'mark_0123456789ab', runId: RUN_ID, testIndex: 0, kind: 'false-fail', origin: 'user', ordinal: 1, markedAt: 0,
+        disposition: { kind: 'no-draftable-fix', checked: { servedRecords: 0, procedureReads: 0, assertionDrift: false } },
+        gold: [], evidence: { confirmed: 0, overturned: 0 }, corrected: { expectation: false, action: false }, active: true,
+      }],
+    }))).toBe('history')
+  })
+
+  it('HISTORY-COPY: titles and counts, active and replaced, the one explanation, correction presence and each state sentence', () => {
+    expect(historyTitle('step', 2)).toBe('Feedback on this step (2)')
+    expect(historyTitle('test', 0)).toBe('Feedback on this test (0)')
+    expect(runHistoryLabel(3)).toBe('All feedback on this run (3)')
+    expect(ACTIVE_TEXT).toBe('Active')
+    expect(replacedByText('Sep 23, 10:41')).toBe('Replaced by your later mark at Sep 23, 10:41')
+    expect(replacedByText()).toBe('Replaced by your later mark')
+    expect(REPLACEMENT_EXPLANATION).toBe('Only your latest mark on a test or step counts.')
+    expect(correctedPresenceText({ expectation: false, action: false })).toBeUndefined()
+    expect(correctedPresenceText({ expectation: true, action: false })).toBe('With a corrected expectation')
+    expect(correctedPresenceText({ expectation: false, action: true })).toBe('With a corrected action')
+    expect(correctedPresenceText({ expectation: true, action: true })).toBe('With a corrected expectation and action')
+    expect(HISTORY_EMPTY_TEXT).toEqual({
+      step: 'No feedback on this step yet.',
+      test: 'No feedback on this test yet.',
+      run: 'No feedback on this run yet.',
+    })
+    expect(historyStateText('run-not-found')).toBe("This run's feedback history can't be found.")
+    expect(historyStateText('ledger-corrupt', 7)).toBe("This run's feedback history is damaged at line 7, so it can't be shown.")
+    expect(historyStateText('ledger-unavailable')).toBe("This run's feedback history can't be read right now.")
+    expect(HISTORY_READ_FAILED_TEXT(feedbackReadFailureReason('network')))
+      .toBe(`Couldn't load this run's feedback history — ${feedbackReadFailureReason('network')}.`)
+    expect(HISTORY_RETRY_ACCESSIBLE_NAME).toBe('Retry loading feedback history')
+    expect(HISTORY_RETRY_ACCESSIBLE_NAME.startsWith(RETRY_LABEL)).toBe(true)
+  })
+
+  it('HISTORY-PROPOSAL-COPY: each proposal state reads its phrase after Proposal:, and an apply in flight reads being applied', () => {
+    expect(PROPOSAL_STATE_TEXT).toEqual({
+      pending: 'waiting for review',
+      expired: 'expired',
+      applied: 'applied',
+      rejected: 'rejected',
+      missing: 'not found',
+      corrupt: 'unreadable',
+    })
+    expect(Object.keys(PROPOSAL_STATE_TEXT).sort()).toEqual([...MARK_PROPOSAL_STATES].sort())
+    expect(proposalStateText({ state: 'pending', applyInFlight: false })).toBe('Proposal: waiting for review')
+    expect(proposalStateText({ state: 'pending', applyInFlight: true })).toBe('Proposal: being applied')
+    expect(proposalStateText({ state: 'expired', applyInFlight: true })).toBe('Proposal: being applied')
+    expect(proposalStateText({ state: 'missing' })).toBe('Proposal: not found')
+    expect(proposalStateText({ state: 'corrupt' })).toBe('Proposal: unreadable')
+  })
+
+  it('HISTORY-TARGET-LABEL: a step entry names its number, total and step; a whole-test entry names its test and handle', () => {
+    const detail = {
+      members: [{ testIndex: 1, attempts: 1, name: 'checkout', totalSteps: 5 }],
+      steps: [{ testIndex: 1, stepIndex: 1, stepText: 'apply coupon', cacheStatus: 'miss', verifierVerdict: { pass: true, reasoning: '' }, selfHealOccurred: false, briefDigest: 'd' } as const],
+    }
+    expect(historyTargetLabel({ testIndex: 1, stepIndex: 1 }, detail)).toEqual({ prefix: 'Step 2 of 5 · ', name: 'apply coupon' })
+    expect(feedbackPartsText(historyTargetLabel({ testIndex: 1 }, detail))).toBe(`checkout ${memberHandleLabel(1)} · whole test`)
+    expect(historyTargetLabel({ testIndex: 1 }, detail).name).toBe('checkout')
+    expect(historyTargetLabel({ testIndex: 1, stepIndex: 3 }, detail)).toEqual({ prefix: 'Step 4 of 5 · ', name: UNNAMED_STEP_LABEL })
+    expect(feedbackPartsText(historyTargetLabel({ testIndex: 0 }, null))).toBe(`${memberDisplayName({ testIndex: 0 })} ${memberHandleLabel(0)} · whole test`)
   })
 })
