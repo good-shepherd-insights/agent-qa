@@ -4,15 +4,21 @@
 // exported constant or a pure function here, so cells assert against the constant and copy moves in
 // one place.
 
-import { markAddressKey } from '@vostride/agent-qa-schema'
+import { MARK_PREVIEW_REFUSALS, markAddressKey } from '@vostride/agent-qa-schema'
 import type {
   Mark,
   MarkDisposition,
   MarkFixKind,
+  MarkPreviewDraft,
+  MarkPreviewEvidenceEffect,
+  MarkPreviewGroundTruth,
+  MarkPreviewKnowledge,
+  MarkPreviewKnowledgeRecord,
   MemberTestOutcome,
   RunDetailMember,
   RunDetailProjection,
   RunDetailStep,
+  RunKnowledgeContentAbsence,
   RunsMarkInput,
   RunsMarkPreviewResult,
 } from '@vostride/agent-qa-schema'
@@ -494,4 +500,184 @@ export function dispositionText(disposition: MarkDisposition): string {
 
 export function feedbackRecordedText(disposition: MarkDisposition): string {
   return `Feedback recorded — ${dispositionText(disposition).replace(/^Recorded — /, '')}.`
+}
+
+// 426 D-16..D-19: the consequence preview. Every line is one runs.mark.preview field in plain words.
+
+export type FeedbackPreviewState =
+  | 'idle'
+  | 'loading'
+  | 'consequences'
+  | 'quarantined'
+  | 'already-marked'
+  | 'refused'
+  | 'failed'
+
+// prettier-ignore
+export const FEEDBACK_PREVIEW_STATES = [
+  'idle',
+  'loading',
+  'consequences',
+  'quarantined',
+  'already-marked',
+  'refused',
+  'failed',
+] as const satisfies readonly FeedbackPreviewState[]
+
+export interface FeedbackPreviewStateInput {
+  kind: Mark | undefined
+  /** The read on screen; its currency is the caller's (previewRequestKey). */
+  landed: { kind: 'read'; result: RunsMarkPreviewResult } | { kind: 'failed'; reason: string } | undefined
+}
+
+const PREVIEW_REFUSAL_KINDS: ReadonlySet<string> = new Set(MARK_PREVIEW_REFUSALS)
+
+/** Nothing landed is loading whether the request is still debounced or already in flight. */
+export function feedbackPreviewState({ kind, landed }: FeedbackPreviewStateInput): FeedbackPreviewState {
+  if (kind === undefined) return 'idle'
+  if (landed === undefined) return 'loading'
+  if (landed.kind === 'failed') return 'failed'
+  const arm = landed.result.kind
+  if (PREVIEW_REFUSAL_KINDS.has(arm)) return 'refused'
+  return arm === 'consequences' || arm === 'quarantined' ? arm : 'already-marked'
+}
+
+export const PREVIEW_UPDATING_TEXT = 'Updating…'
+export const PREVIEW_IDLE_TEXT = 'Choose an option above to see what this will do.'
+
+export const PREVIEW_LINE_LABELS = {
+  result: 'Result',
+  labels: 'Eval labels',
+  knowledge: 'Knowledge',
+  proposals: 'Proposals',
+} as const
+
+const VERDICT_WORD = { pass: 'passed', fail: 'failed' } as const
+
+/** D-17: n is stepIndex + 1; the reasoning is the producer part and is dropped with its quote when empty. */
+export function groundTruthLine(entry: MarkPreviewGroundTruth): FeedbackTextParts {
+  const head = `Step ${String(entry.stepIndex + 1)} will count as ${VERDICT_WORD[entry.verdict]} (recorded: ${
+    VERDICT_WORD[entry.recordedVerdict.pass ? 'pass' : 'fail']
+  }`
+  const { reasoning } = entry.recordedVerdict
+  return reasoning === '' ? { prefix: `${head})` } : { prefix: `${head} — "`, name: reasoning, suffix: '")' }
+}
+
+export function correctedGroundTruthText(entry: MarkPreviewGroundTruth): string | undefined {
+  const expectation = entry.correctedExpectation !== undefined
+  if (expectation && entry.correctedAction) return 'with your corrected expectation and action'
+  if (expectation) return 'with your corrected expectation'
+  if (entry.correctedAction) return 'with your corrected action'
+  return undefined
+}
+
+export const NO_GROUND_TRUTH_TEXT = 'No step verdict changes.'
+
+export function labelsLine(count: number): string {
+  if (count === 0) return 'No eval labels change'
+  return count === 1 ? '1 decision becomes a held-out eval label' : `${String(count)} decisions become held-out eval labels`
+}
+
+/**
+ * Zero-count clauses are omitted. Records reached with no effect at all are all unreadable (a record
+ * with effects carries at least one), so that line says so instead of printing nothing.
+ */
+export function knowledgeLine(evidence: MarkPreviewKnowledge['evidence'], recordCount: number): string {
+  if (recordCount === 0) return 'No knowledge records are reached'
+  const clauses = [
+    evidence.confirmed === 0 ? undefined : `${String(evidence.confirmed)} ${evidence.confirmed === 1 ? 'record' : 'records'} confirmed`,
+    evidence.overturned === 0 ? undefined : `${String(evidence.overturned)} counted against`,
+  ].filter((clause) => clause !== undefined)
+  if (clauses.length > 0) return clauses.join(' · ')
+  return recordCount === 1 ? "1 record reached — it can't be read" : `${String(recordCount)} records reached — none can be read`
+}
+
+export function showRecordsLabel(count: number): string {
+  return `Show records (${String(count)})`
+}
+
+export const RECORD_EFFECT_TEXT = {
+  confirm: 'confirms',
+  overturn: 'counts against',
+} satisfies Record<MarkPreviewEvidenceEffect['direction'], string>
+
+export const UNREADABLE_RECORD_TEXT = "This record can't be read — it keeps its place, and nothing is applied to it."
+
+/** The muted line under a reached record: its planned effects, or why none can apply. */
+export function recordEffectLine(record: MarkPreviewKnowledgeRecord): string {
+  if (record.evidence.kind === 'unreadable') return UNREADABLE_RECORD_TEXT
+  const { effects } = record.evidence
+  const overturns = effects.filter((effect) => effect.direction === 'overturn').length
+  return [
+    effects.some((effect) => effect.direction === 'confirm') ? RECORD_EFFECT_TEXT.confirm : undefined,
+    overturns === 0 ? undefined : overturns === 1 ? RECORD_EFFECT_TEXT.overturn : `${RECORD_EFFECT_TEXT.overturn} × ${String(overturns)}`,
+  ]
+    .filter((part) => part !== undefined)
+    .join(' · ')
+}
+
+export const CONTENT_ABSENCE_TEXT = {
+  'not-found': 'Record content not found',
+  'scan-incomplete': 'Record content could not be fully read',
+  'not-bound': "Record content isn't available on this host",
+} satisfies Record<RunKnowledgeContentAbsence['reason'], string>
+
+export const PROPOSAL_DRAFT_TEXT = {
+  knowledge: {
+    fact: 'A knowledge fact will be drafted for your review',
+    caution: 'A caution will be drafted for your review',
+    'procedure-hint': 'A procedure hint will be drafted for your review',
+  } satisfies Record<Extract<MarkPreviewDraft, { kind: 'knowledge' }>['fix'], string>,
+  'test-edit': 'A test edit will be drafted for your review',
+  'no-draftable-fix': 'No fix can be drafted from this run',
+  'confirmed-bug': 'Nothing is drafted — a real product bug needs a product fix, not a test or knowledge change',
+} as const
+
+export function proposalDraftText(draft: MarkPreviewDraft): string {
+  switch (draft.kind) {
+    case 'knowledge':
+      return PROPOSAL_DRAFT_TEXT.knowledge[draft.fix]
+    case 'test-edit':
+      return PROPOSAL_DRAFT_TEXT['test-edit']
+    case 'no-draftable-fix':
+      return PROPOSAL_DRAFT_TEXT['no-draftable-fix']
+    case 'confirmed-bug':
+      return PROPOSAL_DRAFT_TEXT['confirmed-bug']
+    default:
+      return draft satisfies never
+  }
+}
+
+/** The preview never calls the model, so a drafted fix is named but its wording is not shown. */
+export const DRAFT_WORDING_NOT_SHOWN_TEXT = "The drafted wording isn't shown here — it's written after you send."
+
+export function draftHasWording(draft: MarkPreviewDraft): boolean {
+  return draft.kind === 'knowledge' || draft.kind === 'test-edit'
+}
+
+/** The time is the history entry's own; without history the clause drops rather than guessing. */
+export function replacesLine(ordinal: number, time: string | undefined, withdraws: boolean): string {
+  const at = time === undefined ? `#${String(ordinal)}` : `#${String(ordinal)}, ${time}`
+  return `Replaces your earlier mark (${at})${withdraws ? ' and withdraws its proposal' : ''}`
+}
+
+export type MarkTargetReason = Extract<RunsMarkPreviewResult, { kind: 'consequences' }>['resolvedStep']['reason']
+
+/** D-14: keyed on the read's reason and the kind, never re-derived; a step mark needs no line. */
+export function resolvedStepText(reason: MarkTargetReason, kind: Mark, stepNumber: number, total: number): string | undefined {
+  const lead = `This marks step ${String(stepNumber)} of ${String(total)} — `
+  switch (reason) {
+    case 'failing-step':
+      return `${lead}the first step that failed.`
+    case 'passing-verdict':
+      return kind === 'false-pass' ? `${lead}the last step, where the test finished.` : `${lead}the last step, because no step failed.`
+    case 'step-mark':
+      return undefined
+    default:
+      return reason satisfies never
+  }
+}
+
+export function showStepLabel(stepNumber: number): string {
+  return `Show step ${String(stepNumber)}`
 }

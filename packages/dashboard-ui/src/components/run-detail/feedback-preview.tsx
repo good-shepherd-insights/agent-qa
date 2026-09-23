@@ -1,18 +1,169 @@
-import type { RunsMarkPreviewResult } from '@vostride/agent-qa-schema'
-import { PREVIEW_TITLE } from '@/lib/feedback-view'
+import { useId } from 'react'
+import { ChevronRight } from 'lucide-react'
+import type { MarkPreviewKnowledgeRecord, RunsMarkPreviewResult } from '@vostride/agent-qa-schema'
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible'
+import { Skeleton } from '@/components/ui/skeleton'
+import { MaskedText } from '@/components/run-detail/masked-text'
+import {
+  CONTENT_ABSENCE_TEXT,
+  DRAFT_WORDING_NOT_SHOWN_TEXT,
+  NO_GROUND_TRUTH_TEXT,
+  PREVIEW_IDLE_TEXT,
+  PREVIEW_LINE_LABELS,
+  PREVIEW_TITLE,
+  PREVIEW_UPDATING_TEXT,
+  correctedGroundTruthText,
+  draftHasWording,
+  groundTruthLine,
+  knowledgeLine,
+  labelsLine,
+  proposalDraftText,
+  recordEffectLine,
+  replacesLine,
+  showRecordsLabel,
+  type FeedbackPreviewState,
+  type FeedbackTextParts,
+} from '@/lib/feedback-view'
+import { cn } from '@/lib/utils'
+
+type Consequences = Extract<RunsMarkPreviewResult, { kind: 'consequences' }>
 
 export interface FeedbackPreviewProps {
-  state: string
+  state: FeedbackPreviewState
+  /** The displayed read was computed for the form's current request key (D-16). */
   current: boolean
+  /** The read on screen, kept while a re-fetch is in flight so nothing blanks. */
   read?: RunsMarkPreviewResult
   updating?: boolean
+  /** When the superseded mark was made, from history; absent until history is read. */
   replacesTime?: string
 }
 
-export function FeedbackPreview({ state, current }: FeedbackPreviewProps) {
+const SKELETON_WIDTHS = ['w-full', 'w-5/6', 'w-2/3', 'w-3/4'] as const
+
+function TextParts({ parts }: { parts: FeedbackTextParts }) {
   return (
-    <section data-feedback-preview data-preview-state={state} data-preview-current={String(current)}>
-      <h3 className="text-xs font-medium text-muted-foreground">{PREVIEW_TITLE}</h3>
+    <>
+      {parts.prefix}
+      {parts.name === undefined ? null : <MaskedText text={parts.name} />}
+      {parts.suffix}
+    </>
+  )
+}
+
+/**
+ * "What this will do" (426 D-16, D-17). Presentational: every word comes from the preview read the
+ * composer hands it, producer strings paint as text through MaskedText, and ids stay out of view.
+ * Not a live region; outcomes announce through the composer's footer status.
+ */
+export function FeedbackPreview({ state, current, read, updating = false, replacesTime }: FeedbackPreviewProps) {
+  const titleId = useId()
+  return (
+    <section
+      data-feedback-preview
+      data-preview-state={state}
+      data-preview-current={String(current)}
+      aria-labelledby={titleId}
+      aria-busy={state === 'loading' || updating}
+      className="space-y-2"
+    >
+      <div className="flex flex-wrap items-baseline gap-2">
+        <h3 id={titleId} className="text-sm font-medium">
+          {PREVIEW_TITLE}
+        </h3>
+        {updating ? <span className="text-xs text-muted-foreground">{PREVIEW_UPDATING_TEXT}</span> : null}
+      </div>
+      {state === 'idle' ? (
+        <p className="text-xs text-muted-foreground">{PREVIEW_IDLE_TEXT}</p>
+      ) : state === 'loading' ? (
+        <div className="space-y-2">
+          {SKELETON_WIDTHS.map((width) => (
+            <Skeleton key={width} className={cn('h-4 motion-reduce:animate-none', width)} />
+          ))}
+        </div>
+      ) : state === 'consequences' && read?.kind === 'consequences' ? (
+        <div className={cn(updating && 'opacity-60')}>
+          <ConsequenceLines read={read} replacesTime={replacesTime} />
+        </div>
+      ) : null}
     </section>
+  )
+}
+
+function ConsequenceLines({ read, replacesTime }: { read: Consequences; replacesTime: string | undefined }) {
+  const { groundTruth, labels, knowledge, draft, latest, withdraws } = read
+  return (
+    <div className="space-y-2">
+      <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-2 text-xs">
+        <dt className="font-medium text-muted-foreground">{PREVIEW_LINE_LABELS.result}</dt>
+        <dd data-preview-line="result" className="space-y-1 break-words text-foreground">
+          {groundTruth.length === 0
+            ? NO_GROUND_TRUTH_TEXT
+            : groundTruth.map((entry) => {
+                const corrected = correctedGroundTruthText(entry)
+                return (
+                  <div key={`${String(entry.testIndex)}:${String(entry.stepIndex)}`}>
+                    <p>
+                      <TextParts parts={groundTruthLine(entry)} />
+                    </p>
+                    {corrected === undefined ? null : <p className="text-muted-foreground">{corrected}</p>}
+                  </div>
+                )
+              })}
+        </dd>
+
+        <dt className="font-medium text-muted-foreground">{PREVIEW_LINE_LABELS.labels}</dt>
+        <dd data-preview-line="labels" className="break-words text-foreground">
+          {labelsLine(labels.length)}
+        </dd>
+
+        <dt className="font-medium text-muted-foreground">{PREVIEW_LINE_LABELS.knowledge}</dt>
+        <dd data-preview-line="knowledge" className="space-y-1 break-words text-foreground">
+          <p>{knowledgeLine(knowledge.evidence, knowledge.records.length)}</p>
+          {knowledge.records.length === 0 ? null : (
+            <Collapsible>
+              <CollapsibleTrigger className="group flex items-center gap-1.5 text-left text-xs font-medium text-muted-foreground hover:text-foreground">
+                <ChevronRight className="h-3 w-3 transition-transform group-data-[state=open]:rotate-90" />
+                {showRecordsLabel(knowledge.records.length)}
+              </CollapsibleTrigger>
+              <CollapsibleContent>
+                <ul className="mt-2 space-y-2">
+                  {knowledge.records.map((record) => (
+                    <RecordItem key={record.recordId} record={record} />
+                  ))}
+                </ul>
+              </CollapsibleContent>
+            </Collapsible>
+          )}
+        </dd>
+
+        <dt className="font-medium text-muted-foreground">{PREVIEW_LINE_LABELS.proposals}</dt>
+        <dd data-preview-line="proposals" className="space-y-1 break-words text-foreground">
+          <p>{proposalDraftText(draft)}</p>
+          {draftHasWording(draft) ? <p className="text-muted-foreground">{DRAFT_WORDING_NOT_SHOWN_TEXT}</p> : null}
+        </dd>
+      </dl>
+      {latest.kind === 'supersedes' ? (
+        <p data-preview-line="replaces" className="text-xs text-foreground">
+          {replacesLine(latest.ordinal, replacesTime, withdraws !== undefined)}
+        </p>
+      ) : null}
+    </div>
+  )
+}
+
+function RecordItem({ record }: { record: MarkPreviewKnowledgeRecord }) {
+  const place = record.evidence.kind === 'unreadable' ? 'unreadable' : record.served ? 'served' : 'unserved'
+  return (
+    <li data-preview-record={place} className="space-y-0.5 break-words">
+      <p className="text-foreground">
+        {record.recordContent !== undefined ? (
+          <MaskedText text={record.recordContent.content} />
+        ) : record.contentAbsence !== undefined ? (
+          CONTENT_ABSENCE_TEXT[record.contentAbsence.reason]
+        ) : null}
+      </p>
+      <p className="text-muted-foreground">{recordEffectLine(record)}</p>
+    </li>
   )
 }
