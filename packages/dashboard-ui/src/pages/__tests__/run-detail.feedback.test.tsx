@@ -64,6 +64,7 @@ import {
   formatMarkTime,
   replacesLine,
   approvalWaitingLabel,
+  feedbackDefaultLayout,
 } from '@/lib/feedback-view'
 import { markConfirmClaim } from '@/lib/mark-confirm-route'
 import { RESOLUTION_TEXT } from '@/components/run-confirm-dialog'
@@ -120,14 +121,34 @@ vi.mock('@/components/page-skeleton', () => ({ DetailSkeleton: () => <div>Loadin
 vi.mock('@/components/empty-state', () => ({
   EmptyState: ({ title }: { title: string }) => <div>{title}</div>,
 }))
+// Module-level mount counters: a layout change that remounts the tree or the evidence resets what
+// the person was inspecting (426-11 NO-REMOUNT-ON-LAYOUT-CHANGE).
+const mounts = vi.hoisted(() => ({ tabPanels: 0, stepTree: 0 }))
 // The tab double renders the evidence strip's active tab, the composer's last focus fallback (D-07).
-vi.mock('@/components/run-detail/tab-panels', () => ({
-  TabPanels: ({ step, activeTab }: { step: { id: string } | null; activeTab?: string }) => (
-    <div data-testid="tab-panels" data-step-id={step?.id ?? ''}>
-      <button type="button" role="tab" aria-selected="true" data-active-tab={activeTab}>{activeTab}</button>
-    </div>
-  ),
-}))
+vi.mock('@/components/run-detail/tab-panels', async () => {
+  const React = await vi.importActual<typeof import('react')>('react')
+  return {
+    TabPanels: ({ step, activeTab }: { step: { id: string } | null; activeTab?: string }) => {
+      React.useEffect(() => { mounts.tabPanels += 1 }, [])
+      return (
+        <div data-testid="tab-panels" data-step-id={step?.id ?? ''}>
+          <button type="button" role="tab" aria-selected="true" data-active-tab={activeTab}>{activeTab}</button>
+        </div>
+      )
+    },
+  }
+})
+vi.mock('@/components/run-detail/step-tree', async (importOriginal) => {
+  const React = await vi.importActual<typeof import('react')>('react')
+  const actual = await importOriginal<typeof import('@/components/run-detail/step-tree')>()
+  return {
+    ...actual,
+    StepTree: (props: Parameters<typeof actual.StepTree>[0]) => {
+      React.useEffect(() => { mounts.stepTree += 1 }, [])
+      return <actual.StepTree {...props} />
+    },
+  }
+})
 vi.mock('@/components/ui/tooltip', () => ({
   TooltipProvider: ({ children }: { children: ReactNode }) => <>{children}</>,
   Tooltip: ({ children }: { children: ReactNode }) => <>{children}</>,
@@ -157,9 +178,14 @@ vi.mock('@/components/ui/select', async () => {
 // Pitfall 7: the panel double renders the props the layout cells read, JSON-encoded so a numeric
 // size and a string size stay distinguishable.
 vi.mock('@/components/ui/resizable', () => ({
-  ResizablePanelGroup: ({ children, defaultLayout }: { children: ReactNode; defaultLayout?: unknown }) => (
+  ResizablePanelGroup: ({ children, defaultLayout, orientation }: {
+    children: ReactNode
+    defaultLayout?: unknown
+    orientation?: string
+  }) => (
     <div
       data-resizable-group
+      data-orientation={orientation}
       data-default-layout={defaultLayout === undefined ? undefined : JSON.stringify(defaultLayout)}
     >
       {children}
@@ -1977,5 +2003,142 @@ describe('426-10 the mark approval is answered in the composer', () => {
     await act(async () => { navigateTo!(`/runs/${RUN_B}`) })
     await flushRender()
     expect(markConfirmClaim(), 'the claim outlived the run it was registered for').toBeUndefined()
+  })
+})
+
+// A controllable ResizeObserver: it records what each observer watches and reports a width only when
+// a cell asks, so an observer that is never called back is the unmeasured page.
+class StubResizeObserver {
+  static live = new Set<StubResizeObserver>()
+  readonly targets = new Set<Element>()
+  constructor(readonly callback: ResizeObserverCallback) { StubResizeObserver.live.add(this) }
+  observe(target: Element) { this.targets.add(target) }
+  unobserve(target: Element) { this.targets.delete(target) }
+  disconnect() {
+    this.targets.clear()
+    StubResizeObserver.live.delete(this)
+  }
+}
+
+function pageRoot(): Element {
+  return q('[data-resizable-group]')!.parentElement!
+}
+
+function pageRootObservers(): StubResizeObserver[] {
+  const root = pageRoot()
+  return [...StubResizeObserver.live].filter(observer => observer.targets.has(root))
+}
+
+async function resizePage(width: number) {
+  const root = pageRoot()
+  const watching = pageRootObservers()
+  expect(watching, 'the page root is not observed').not.toHaveLength(0)
+  const entry = {
+    target: root,
+    contentRect: { width, height: 900 },
+    contentBoxSize: [{ inlineSize: width, blockSize: 900 }],
+    borderBoxSize: [{ inlineSize: width, blockSize: 900 }],
+    devicePixelContentBoxSize: [],
+  } as unknown as ResizeObserverEntry
+  await act(async () => {
+    for (const observer of watching) observer.callback([entry], observer as unknown as ResizeObserver)
+  })
+  await flushRender()
+}
+
+describe('426-11 the open composer stacks under the evidence below 768px', () => {
+  const group = () => q('[data-resizable-group]')!
+  const panels = () => [...container!.querySelectorAll('[data-resizable-panel]')]
+  const panelIds = () => panels().map(panel => panel.getAttribute('data-panel-id'))
+  const composer = () => q('[data-feedback-composer]')
+
+  beforeEach(() => {
+    StubResizeObserver.live.clear()
+    vi.stubGlobal('ResizeObserver', StubResizeObserver)
+    mounts.tabPanels = 0
+    mounts.stepTree = 0
+  })
+
+  it('STACKS-BELOW-768: at 400px the open composer is a third panel under the evidence, seeded 30/30/40, min 240px', async () => {
+    await renderAt(`/runs/${RUN_ID}`)
+    await resizePage(400)
+    await click('[data-feedback-entry="test"]')
+
+    expect(group().getAttribute('data-orientation')).toBe('vertical')
+    expect(panelIds()).toEqual(['run-tree-stacked', 'run-evidence-stacked', 'run-feedback-stacked'])
+    expect(JSON.parse(group().getAttribute('data-default-layout')!)).toEqual({
+      'run-tree-stacked': 30,
+      'run-evidence-stacked': 30,
+      'run-feedback-stacked': 40,
+    })
+    expect(q('[data-panel-id="run-feedback-stacked"]')!.getAttribute('data-min-size')).toBe('"240px"')
+    expect(container!.querySelectorAll('[data-resizable-handle]')).toHaveLength(2)
+    expect(q('[data-panel-id="run-feedback-stacked"] [data-feedback-composer]')).not.toBeNull()
+    expect(composer()!.getAttribute('data-feedback-layout')).toBe('stacked')
+    expect(document.querySelectorAll('[role="dialog"],[aria-modal]')).toHaveLength(0)
+  })
+
+  it('DOCKED-AT-DESKTOP: at 1280px the open composer docks beside the evidence, seeded from the measured width', async () => {
+    await renderAt(`/runs/${RUN_ID}`)
+    await resizePage(1280)
+    await click('[data-feedback-entry="test"]')
+
+    expect(group().getAttribute('data-orientation')).toBe('horizontal')
+    expect(panelIds()).toEqual(['run-tree', 'run-evidence', 'run-feedback'])
+    expect(q('[data-panel-id="run-feedback"]')!.getAttribute('data-min-size')).toBe('"320px"')
+    expect(q('[data-panel-id="run-feedback"]')!.getAttribute('data-max-size')).toBe('"50%"')
+    expect(composer()!.getAttribute('data-feedback-layout')).toBe('docked')
+
+    await resizePage(1024)
+    expect(JSON.parse(group().getAttribute('data-default-layout')!)).toEqual(feedbackDefaultLayout('docked', 1024))
+    expect(group().getAttribute('data-orientation')).toBe('horizontal')
+  })
+
+  it('UNMEASURED-IS-DOCKED: an observed page that never reports a width keeps the open composer docked', async () => {
+    await renderAt(`/runs/${RUN_ID}`)
+    expect(pageRootObservers(), 'the page root is not observed').not.toHaveLength(0)
+    await click('[data-feedback-entry="test"]')
+
+    expect(group().getAttribute('data-orientation')).toBe('horizontal')
+    expect(panelIds()).toEqual(['run-tree', 'run-evidence', 'run-feedback'])
+    expect(JSON.parse(group().getAttribute('data-default-layout')!)).toEqual(feedbackDefaultLayout('docked', 0))
+    expect(composer()!.getAttribute('data-feedback-layout')).toBe('docked')
+  })
+
+  it('CLOSED-NEVER-STACKS: at 400px the closed page keeps the shipped two horizontal panels', async () => {
+    await renderAt(`/runs/${RUN_ID}`)
+    await resizePage(400)
+
+    expect(group().getAttribute('data-orientation')).toBe('horizontal')
+    expect(panelIds()).toEqual(['run-tree', 'run-evidence'])
+    expect(panels().map(panel => [panel.getAttribute('data-default-size'), panel.getAttribute('data-min-size')]))
+      .toEqual([['35', '20'], ['65', '30']])
+    expect(group().hasAttribute('data-default-layout')).toBe(false)
+    expect(container!.querySelectorAll('[data-resizable-handle]')).toHaveLength(1)
+
+    await click('[data-feedback-entry="test"]')
+    await click('[data-feedback-close]')
+    expect(group().getAttribute('data-orientation')).toBe('horizontal')
+    expect(panelIds()).toEqual(['run-tree', 'run-evidence'])
+    expect(group().hasAttribute('data-default-layout')).toBe(false)
+  })
+
+  it('NO-REMOUNT-ON-LAYOUT-CHANGE: open, stack, dock and close mount the tree and the evidence exactly once', async () => {
+    await renderAt(`/runs/${RUN_ID}`)
+    await resizePage(1280)
+    await click('[data-feedback-entry="test"]')
+    expect(group().getAttribute('data-orientation')).toBe('horizontal')
+
+    await resizePage(400)
+    expect(group().getAttribute('data-orientation')).toBe('vertical')
+    expect(panelIds()).toEqual(['run-tree-stacked', 'run-evidence-stacked', 'run-feedback-stacked'])
+
+    await resizePage(1280)
+    expect(group().getAttribute('data-orientation')).toBe('horizontal')
+    await click('[data-feedback-close]')
+    expect(panelIds()).toEqual(['run-tree', 'run-evidence'])
+
+    expect(mounts.tabPanels).toBe(1)
+    expect(mounts.stepTree).toBe(1)
   })
 })
