@@ -16,12 +16,19 @@ import { createRoot, type Root } from "react-dom/client"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 
 import {
+  ALWAYS_MARK_HINT,
+  MARK_CONFIRM_HINTS,
+  MARK_CONFIRM_TITLE,
   MAX_QUEUED_CONFIRMS,
+  RESOLUTION_TEXT,
   RESOLVED_DIALOG_LINGER_MS,
+  RUN_CONFIRM_ANSWERS,
   RunConfirmDialog,
   RunConfirmHost,
+  markConfirmAnswers,
 } from "@/components/run-confirm-dialog"
 import { CONFIRM_ANSWER_VOCABULARY } from "@/lib/api"
+import { claimMarkConfirms, type MarkConfirmClaim } from "@/lib/mark-confirm-route"
 
 // THE CHANNEL, CAPTURED — the seam the SHIPPED host reads (401-14, CR-05).
 //
@@ -44,6 +51,7 @@ const channel = vi.hoisted(() => ({
   // socket — both read by the cleanup cell, which is the only one that can see either.
   scopeWrites: [] as (string | undefined)[],
   closes: 0,
+  answers: [] as { scopeId: string; confirmId: string; answer: string }[],
 }))
 
 vi.mock("@/lib/api", async (importOriginal) => {
@@ -57,7 +65,10 @@ vi.mock("@/lib/api", async (importOriginal) => {
       return { close: () => { channel.closes += 1 } } as unknown as EventSource
     },
     setRunConfirmScope: (scopeId?: string) => { channel.scopeWrites.push(scopeId) },
-    answerRunConfirm: async () => ({ ok: true }),
+    answerRunConfirm: async (input: { scopeId: string; confirmId: string; answer: string }) => {
+      channel.answers.push(input)
+      return { ok: true }
+    },
   }
 })
 
@@ -79,6 +90,7 @@ beforeEach(() => {
   channel.callbacks = undefined
   channel.scopeWrites = []
   channel.closes = 0
+  channel.answers = []
   // A CONSTRUCTOR THAT DOES NOTHING, only so the host's `typeof EventSource === "undefined"` guard
   // is not the thing under test. The mocked `openRunConfirmChannel` never constructs one.
   ;(globalThis as { EventSource?: unknown }).EventSource = class {}
@@ -103,7 +115,7 @@ describe("the run trigger's confirm dialog", () => {
     expect(host.textContent).toContain(title)
     expect(host.querySelector('[data-confirm-answer="accept"]')?.getAttribute('title')).toBe(marking ? 'allow this one mark' : 'allow this one run')
     expect(host.querySelector('[data-confirm-answer="deny"]')?.getAttribute('title')).toBe(marking ? 'refuse — the mark is not recorded' : 'refuse — the run does not start')
-    expect(host.querySelector('[data-confirm-answer="accept-always"]')?.getAttribute('title')).toBe('record a standing approval for this action class')
+    expect(host.querySelector('[data-confirm-answer="accept-always"]')?.getAttribute('title')).toBe(marking ? "don't ask again for marks — records a standing approval for fn:runs.mark" : 'record a standing approval for this action class')
     for (const answer of CONFIRM_ANSWER_VOCABULARY) {
       act(() => host.querySelector<HTMLButtonElement>(`[data-confirm-answer="${answer}"]`)!.click())
       expect(onAnswer).toHaveBeenLastCalledWith('operation-copy', answer)
@@ -502,5 +514,134 @@ describe("the run confirm host QUEUES an arriving question behind an unresolved 
       .toMatch(/queue\w*Ref\s*=\s*useRef/)
     expect(source, "401-14's keyed resolution guard was weakened or removed")
       .toContain("frame.confirmId !== pendingConfirmIdRef.current")
+  })
+})
+
+describe("a mark confirm this page's composer claimed is routed to the page (426-10, D-20)", () => {
+  let release: (() => void) | undefined
+
+  afterEach(() => {
+    release?.()
+    release = undefined
+  })
+
+  const markFrame = {
+    confirmId: "mark-confirm-1",
+    actionClass: "fn:runs.mark",
+    preview: "Record a mark on test 1 step 2 of this run.",
+  }
+
+  function mountHost(): HTMLDivElement {
+    const host = mount(<RunConfirmHost />)
+    expect(channel.callbacks, "the host opened no channel — nothing below measures anything")
+      .toBeDefined()
+    return host
+  }
+
+  function claim(): {
+    requests: Parameters<MarkConfirmClaim["onRequest"]>[]
+    resolutions: Parameters<MarkConfirmClaim["onResolved"]>[0][]
+  } {
+    const requests: Parameters<MarkConfirmClaim["onRequest"]>[] = []
+    const resolutions: Parameters<MarkConfirmClaim["onResolved"]>[0][] = []
+    release = claimMarkConfirms({
+      onRequest: (frame, answer) => { requests.push([frame, answer]) },
+      onResolved: (frame) => { resolutions.push(frame) },
+    })
+    return { requests, resolutions }
+  }
+
+  it("CLAIMED-MARK-FRAME-RENDERS-NO-DIALOG", () => {
+    mountHost()
+    const claimed = claim()
+    act(() => { channel.callbacks!.onScope!({ scopeId: "scope-host" }) })
+    act(() => { channel.callbacks!.onConfirmRequest!(markFrame) })
+
+    expect(claimed.requests, "the claim was never handed the question").toHaveLength(1)
+    expect(claimed.requests[0]![0]).toEqual(markFrame)
+    expect(document.querySelectorAll('[role="dialog"]')).toHaveLength(0)
+    expect(document.querySelectorAll("[data-run-confirm-dialog]")).toHaveLength(0)
+  })
+
+  it("ROUTED-ANSWER-USES-HOST-SCOPE", async () => {
+    mountHost()
+    const claimed = claim()
+    act(() => { channel.callbacks!.onScope!({ scopeId: "scope-host" }) })
+    act(() => { channel.callbacks!.onConfirmRequest!(markFrame) })
+
+    const answer = claimed.requests[0]?.[1]
+    expect(answer, "the claim was never handed an answer").toBeTypeOf("function")
+    await act(async () => { answer!("accept") })
+    expect(channel.answers).toEqual([
+      { scopeId: "scope-host", confirmId: "mark-confirm-1", answer: "accept" },
+    ])
+  })
+
+  it("ROUTED-RESOLUTION-FORWARDED", () => {
+    const host = mountHost()
+    const claimed = claim()
+    act(() => { channel.callbacks!.onScope!({ scopeId: "scope-host" }) })
+    act(() => { channel.callbacks!.onConfirmRequest!(markFrame) })
+    expect(claimed.requests).toHaveLength(1)
+
+    const resolved = { confirmId: "mark-confirm-1", answer: "deny", by: "timeout" }
+    act(() => { channel.callbacks!.onConfirmResolved!(resolved) })
+    expect(claimed.resolutions, "the routed resolution never reached the claim").toEqual([resolved])
+    expect(document.querySelectorAll("[data-run-confirm-dialog]")).toHaveLength(0)
+
+    act(() => {
+      channel.callbacks!.onConfirmRequest!({ confirmId: "run-confirm-1", actionClass: "run:start" })
+    })
+    const dialog = host.querySelector("[data-run-confirm-dialog]")
+    expect(dialog?.getAttribute("data-confirm-id"), "a routed mark blocked the next run start")
+      .toBe("run-confirm-1")
+    expect(dialog?.querySelectorAll("[data-confirm-answer]")).toHaveLength(3)
+    expect(claimed.requests, "a run start was routed to the mark claim").toHaveLength(1)
+  })
+
+  it("UNCLAIMED-MARK-FRAME-STILL-RENDERS", () => {
+    const host = mountHost()
+    const claimed = claim()
+    release!()
+    release = undefined
+    act(() => { channel.callbacks!.onConfirmRequest!(markFrame) })
+
+    expect(claimed.requests, "a released claim was still handed the question").toHaveLength(0)
+    const dialog = host.querySelector("[data-run-confirm-dialog]")
+    expect(dialog?.getAttribute("data-confirm-id")).toBe("mark-confirm-1")
+    expect(dialog?.getAttribute("aria-label")).toBe("Approval needed to record this mark")
+  })
+
+  it("RUN-START-NEVER-ROUTED", () => {
+    const host = mountHost()
+    const claimed = claim()
+    act(() => {
+      channel.callbacks!.onConfirmRequest!({ confirmId: "run-confirm-2", actionClass: "run:start" })
+    })
+    expect(claimed.requests, "a run start was routed to the mark claim").toHaveLength(0)
+    expect(host.querySelector("[data-run-confirm-dialog]")?.getAttribute("data-confirm-id"))
+      .toBe("run-confirm-2")
+  })
+
+  it("APPROVAL-USES-SHIPPED-VOCABULARY", () => {
+    expect(RUN_CONFIRM_ANSWERS.map((entry) => entry.answer)).toEqual([...CONFIRM_ANSWER_VOCABULARY])
+    expect(RUN_CONFIRM_ANSWERS.map((entry) => entry.label)).toEqual(["Yes", "Always", "No"])
+    expect(MARK_CONFIRM_TITLE).toBe("Approval needed to record this mark")
+    expect(MARK_CONFIRM_HINTS).toEqual({
+      accept: "allow this one mark",
+      deny: "refuse — the mark is not recorded",
+    })
+    expect(ALWAYS_MARK_HINT)
+      .toBe("don't ask again for marks — records a standing approval for fn:runs.mark")
+    expect(markConfirmAnswers()).toEqual([
+      { answer: "accept", label: "Yes", hint: MARK_CONFIRM_HINTS.accept },
+      { answer: "accept-always", label: "Always", hint: ALWAYS_MARK_HINT },
+      { answer: "deny", label: "No", hint: MARK_CONFIRM_HINTS.deny },
+    ])
+    expect(RESOLUTION_TEXT).toEqual({
+      answer: "answered",
+      timeout: "denied — nobody answered before the window closed",
+      "channel-closed": "denied — this page stopped watching",
+    })
   })
 })
