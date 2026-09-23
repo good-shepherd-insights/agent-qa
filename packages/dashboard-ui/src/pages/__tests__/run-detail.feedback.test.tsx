@@ -10,11 +10,11 @@ import type {
   RunDetailStep,
   RunsMarkPreviewResult,
 } from '@vostride/agent-qa-schema'
-import { RunsMarkPreviewResultSchema } from '@vostride/agent-qa-schema'
+import { MARK_PREVIEW_REFUSALS, RunsMarkPreviewResultSchema } from '@vostride/agent-qa-schema'
 import { generateRunId, generateTestId } from '@vostride/agent-qa-ids'
 
 import RunDetailPage from '@/pages/run-detail'
-import { MarkDeniedError, setRunConfirmScope, type MarkPreviewRead } from '@/lib/api'
+import { MarkDeniedError, setRunConfirmScope, type FeedbackReadFailure, type MarkPreviewRead } from '@/lib/api'
 import {
   CHOICE_LABELS,
   CHOICE_MEANINGS,
@@ -24,8 +24,20 @@ import {
   NO_UNIQUE_ADDRESS_TEXT,
   PREVIEW_DEBOUNCE_MS,
   PREVIEW_UPDATING_TEXT,
+  PREVIEW_READ_FAILED_TEXT,
+  PREVIEW_RETRY_ACCESSIBLE_NAME,
+  SENDING_STATUS,
+  SUBMIT_REASON_ALREADY_MARKED,
   SUBMIT_REASON_CHECKING,
+  SUBMIT_REASON_NO_CHOICE,
   SUBMIT_REASON_NO_UNIQUE_ADDRESS,
+  SUBMIT_REASON_PREVIEW_FAILED,
+  SUBMIT_REASON_REFUSED,
+  SUBMIT_REASON_SENDING,
+  alreadyMarkedText,
+  feedbackReadFailureReason,
+  previewRefusalText,
+  quarantinedText,
   TEST_SWITCHER_LABEL,
   feedbackEntryLabel,
   feedbackRecordedText,
@@ -1201,5 +1213,216 @@ describe('426-06 the preview on screen is exact', () => {
     expect(previewSection().getAttribute('data-preview-current')).toBe('true')
     expect(q('[data-feedback-submit]')!.getAttribute('aria-disabled')).toBe('false')
     expect(previewSection().querySelector('.opacity-60')).toBeNull()
+  })
+})
+
+// NO BLIND SUBMIT (426-07 · D-18, D-19). A quarantined mark still records; an identical repeat, a
+// refusal and a failed read leave Send feedback aria-disabled with its reason on the page, so the
+// button stays reachable and says why. Recording happens only on an explicit Send feedback — never
+// when a preview lands, on Enter in the note, or on Retry.
+const PAGE_REFUSALS: Record<(typeof MARK_PREVIEW_REFUSALS)[number], RunsMarkPreviewResult> = {
+  'run-not-found': RUN_NOT_FOUND,
+  'member-not-found': RunsMarkPreviewResultSchema.parse({ kind: 'member-not-found', runId: RUN_ID, testId: TEST_ID }),
+  'step-not-found': RunsMarkPreviewResultSchema.parse({ kind: 'step-not-found', runId: RUN_ID, testIndex: 0, stepIndex: 4, stepCount: 4 }),
+  'ambiguous-address': RunsMarkPreviewResultSchema.parse({
+    kind: 'ambiguous-address', runId: RUN_ID, candidates: [{ testIndex: 0, testId: TEST_ID }, { testIndex: 1, testId: TEST_ID }],
+  }),
+  'ambiguous-correction': RunsMarkPreviewResultSchema.parse({ kind: 'ambiguous-correction', runId: RUN_ID, testIndex: 0, decisionCount: 2 }),
+}
+const PAGE_READ_FAILURES = ['network', 'ledger-corrupt', 'ledger-unavailable', 'refused', 'shape'] as const satisfies readonly FeedbackReadFailure[]
+
+const submitButton = () => q<HTMLButtonElement>('[data-feedback-submit]')!
+const submitReason = () => q('[data-feedback-submit-reason]')!.textContent
+
+function unmountPage() {
+  act(() => root!.unmount())
+  container!.remove()
+  root = null
+  container = null
+}
+
+async function openAndLand(read: MarkPreviewRead) {
+  fetchMarkPreviewMock.mockResolvedValue(read)
+  await renderAt(`/runs/${RUN_ID}`)
+  await click('[data-feedback-entry="test"]')
+  await pickAndAdvance(FEEDBACK_CHOICE_ORDER.failed[0])
+  expect(previewSection().getAttribute('data-preview-current')).toBe('true')
+}
+
+async function pressEnter(element: HTMLElement) {
+  await act(async () => {
+    element.focus()
+    element.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }))
+    element.dispatchEvent(new KeyboardEvent('keyup', { key: 'Enter', bubbles: true, cancelable: true }))
+  })
+  await flushRender()
+}
+
+/** A native button turns Enter into a click; jsdom does not, so the activation is dispatched too. */
+async function activateWithEnter(button: HTMLButtonElement) {
+  await pressEnter(button)
+  await act(async () => { button.click() })
+  await flushRender()
+}
+
+describe('426-07 each preview arm decides Send feedback on the page', () => {
+  beforeEach(() => {
+    fetchRunDetailMock.mockResolvedValue(fourSteps)
+  })
+
+  it('QUARANTINED-SUBMITS: a quarantined read still records, but only on an explicit Send feedback', async () => {
+    markRunMock.mockResolvedValue({ kind: 'marked', receipt })
+    await openAndLand({ kind: 'read', result: QUARANTINED_STEP_3 })
+    expect(previewSection().getAttribute('data-preview-state')).toBe('quarantined')
+    const block = q('[data-preview-line="quarantined"]')
+    expect(block, 'no quarantined block on the page').not.toBeNull()
+    expect(block!.textContent).toBe(quarantinedText('timeout'))
+    expect(submitButton().getAttribute('aria-disabled')).toBe('false')
+    expect(submitReason()).toBe('')
+    expect(markRunMock).not.toHaveBeenCalled()
+
+    await pressEnter(q<HTMLTextAreaElement>('[data-feedback-note]')!)
+    expect(markRunMock).not.toHaveBeenCalled()
+
+    await click('[data-feedback-submit]')
+    expect(markRunMock).toHaveBeenCalledTimes(1)
+    expect(markRunMock.mock.calls[0]![1]).toMatchObject({ kind: FEEDBACK_CHOICE_ORDER.failed[0], testId: TEST_ID })
+  })
+
+  it('ALREADY-MARKED-BLOCKS: an identical repeat says so and leaves Send feedback blocked with its reason', async () => {
+    await openAndLand({ kind: 'read', result: ALREADY_MARKED })
+    expect(previewSection().getAttribute('data-preview-state')).toBe('already-marked')
+    expect(q('[data-preview-line="already-marked"]')?.textContent).toBe(alreadyMarkedText())
+    expect(resolvedLine()).toBeNull()
+    expect(submitButton().getAttribute('aria-disabled')).toBe('true')
+    expect(submitReason()).toBe(SUBMIT_REASON_ALREADY_MARKED)
+    await click('[data-feedback-submit]')
+    expect(markRunMock).not.toHaveBeenCalled()
+  })
+
+  it('REFUSAL-BLOCKS: each refusal arm reads its sentence, keeps the three choices, and leaves Send feedback blocked', async () => {
+    for (const kind of MARK_PREVIEW_REFUSALS) {
+      const read = PAGE_REFUSALS[kind]
+      await openAndLand({ kind: 'read', result: read })
+      expect(previewSection().getAttribute('data-preview-state'), kind).toBe('refused')
+      const refusal = q(`[data-preview-refusal="${kind}"]`)
+      expect(refusal, `no ${kind} refusal on the page`).not.toBeNull()
+      expect(refusal!.textContent).toBe(previewRefusalText(read as never))
+      expect(resolvedLine()).toBeNull()
+      expect(container!.querySelectorAll('[data-feedback-choice] [role="radio"]')).toHaveLength(3)
+      expect(submitButton().getAttribute('aria-disabled'), kind).toBe('true')
+      expect(submitReason(), kind).toBe(SUBMIT_REASON_REFUSED)
+      await click('[data-feedback-submit]')
+      expect(markRunMock, kind).not.toHaveBeenCalled()
+      unmountPage()
+      fetchMarkPreviewMock.mockReset()
+    }
+  })
+
+  it('FAILED-READ-BLOCKS: each failed read names its reason with Retry and the CLI line, and leaves Send feedback blocked', async () => {
+    for (const failure of PAGE_READ_FAILURES) {
+      await openAndLand({ kind: 'failed', reason: failure })
+      expect(previewSection().getAttribute('data-preview-state'), failure).toBe('failed')
+      const denial = previewSection().querySelector('[data-entry="denial"]')
+      expect(denial, `no ${failure} failure block on the page`).not.toBeNull()
+      expect(denial!.textContent).toBe(PREVIEW_READ_FAILED_TEXT(feedbackReadFailureReason(failure)))
+      expect(q('[data-feedback-preview-retry]')?.getAttribute('aria-label')).toBe(PREVIEW_RETRY_ACCESSIBLE_NAME)
+      expect(resolvedLine()).toBeNull()
+      expect(container!.querySelectorAll('[data-feedback-choice] [role="radio"]')).toHaveLength(3)
+      expect(submitButton().getAttribute('aria-disabled'), failure).toBe('true')
+      expect(submitReason(), failure).toBe(SUBMIT_REASON_PREVIEW_FAILED)
+      await click('[data-feedback-submit]')
+      expect(markRunMock, failure).not.toHaveBeenCalled()
+      unmountPage()
+      fetchMarkPreviewMock.mockReset()
+    }
+  })
+
+  it('PREVIEW-FAILED-RETRY: Retry asks again with the identical body, records nothing, and a consequences answer enables Send feedback', async () => {
+    const again = deferred<MarkPreviewRead>()
+    fetchMarkPreviewMock.mockResolvedValueOnce({ kind: 'failed', reason: 'network' }).mockReturnValueOnce(again.promise)
+    await renderAt(`/runs/${RUN_ID}`)
+    await click('[data-feedback-entry="test"]')
+    await pickAndAdvance(FEEDBACK_CHOICE_ORDER.failed[0])
+    expect(fetchMarkPreviewMock).toHaveBeenCalledTimes(1)
+    const retry = q<HTMLButtonElement>('[data-feedback-preview-retry]')
+    expect(retry, 'no Retry on the page').not.toBeNull()
+
+    await click('[data-feedback-preview-retry]')
+    expect(fetchMarkPreviewMock).toHaveBeenCalledTimes(2)
+    expect(fetchMarkPreviewMock.mock.calls[1]).toEqual(fetchMarkPreviewMock.mock.calls[0])
+    expect(previewSection().getAttribute('aria-busy')).toBe('true')
+    expect(submitButton().getAttribute('aria-disabled')).toBe('true')
+
+    await act(async () => again.resolve({ kind: 'read', result: CONSEQUENCES_STEP_3 }))
+    await flushRender()
+    expect(previewSection().getAttribute('data-preview-state')).toBe('consequences')
+    expect(previewSection().getAttribute('data-preview-current')).toBe('true')
+    expect(previewSection().getAttribute('aria-busy')).toBe('false')
+    expect(submitButton().getAttribute('aria-disabled')).toBe('false')
+    expect(markRunMock).not.toHaveBeenCalled()
+  })
+
+  it('SUBMIT-ARIA-DISABLED-FOCUSABLE: the blocked button is never disabled, takes focus, names its reason, and Enter records nothing', async () => {
+    await renderAt(`/runs/${RUN_ID}`)
+    await click('[data-feedback-entry="test"]')
+    const submit = submitButton()
+    expect(submit.hasAttribute('disabled')).toBe(false)
+    expect(submit.getAttribute('aria-disabled')).toBe('true')
+    expect(submit.className).toContain('aria-disabled:opacity-50')
+    expect(submit.className).toContain('aria-disabled:cursor-not-allowed')
+    expect(submitReason()).toBe(SUBMIT_REASON_NO_CHOICE)
+    const describedBy = submit.getAttribute('aria-describedby')
+    expect(describedBy).not.toBeNull()
+    expect(document.getElementById(describedBy!)).toBe(q('[data-feedback-submit-reason]'))
+
+    act(() => submit.focus())
+    expect(document.activeElement).toBe(submit)
+    await activateWithEnter(submit)
+    expect(markRunMock).not.toHaveBeenCalled()
+
+    fetchMarkPreviewMock.mockResolvedValue({ kind: 'read', result: ALREADY_MARKED })
+    await pickAndAdvance(FEEDBACK_CHOICE_ORDER.failed[0])
+    const blocked = submitButton()
+    expect(blocked.hasAttribute('disabled')).toBe(false)
+    expect(submitReason()).toBe(SUBMIT_REASON_ALREADY_MARKED)
+    await activateWithEnter(blocked)
+    expect(document.activeElement).toBe(blocked)
+    expect(markRunMock).not.toHaveBeenCalled()
+  })
+
+  it('SUBMIT-SENDING-BLOCKS: while a mark is in flight the status says so and Send feedback is blocked as Sending…', async () => {
+    const sent = deferred<unknown>()
+    markRunMock.mockReturnValue(sent.promise)
+    await openAndLand({ kind: 'read', result: CONSEQUENCES_STEP_3 })
+    await click('[data-feedback-submit]')
+    expect(markRunMock).toHaveBeenCalledTimes(1)
+    expect(q('[data-feedback-status]')!.textContent).toBe(SENDING_STATUS)
+    expect(submitButton().getAttribute('aria-disabled')).toBe('true')
+    expect(submitReason()).toBe(SUBMIT_REASON_SENDING)
+    await click('[data-feedback-submit]')
+    expect(markRunMock).toHaveBeenCalledTimes(1)
+    await act(async () => sent.resolve({ kind: 'marked', receipt }))
+    await flushRender()
+  })
+
+  it('NO-STEPS-REFUSAL: a test that recorded no steps keeps its entry, and the preview refuses in plain words with Send feedback blocked', async () => {
+    fetchRunDetailMock.mockResolvedValue(projection({
+      members: [member(0, { testId: TEST_ID, outcome: 'failed', marks: [] })],
+      steps: [],
+    }))
+    const noSteps = RunsMarkPreviewResultSchema.parse({ kind: 'step-not-found', runId: RUN_ID, testIndex: 0, stepIndex: 0, stepCount: 0 })
+    fetchMarkPreviewMock.mockResolvedValue({ kind: 'read', result: noSteps })
+    await renderAt(`/runs/${RUN_ID}`)
+    expect(container!.querySelectorAll('[data-feedback-entry="test"]')).toHaveLength(1)
+    await click('[data-feedback-entry="test"]')
+    await pickAndAdvance(FEEDBACK_CHOICE_ORDER.failed[0])
+    const refusal = q('[data-preview-refusal="step-not-found"]')
+    expect(refusal, 'no step-not-found refusal on the page').not.toBeNull()
+    expect(refusal!.textContent).toBe('This test recorded no steps, so there is nothing to mark.')
+    expect(submitButton().getAttribute('aria-disabled')).toBe('true')
+    expect(submitReason()).toBe(SUBMIT_REASON_REFUSED)
+    await click('[data-feedback-submit]')
+    expect(markRunMock).not.toHaveBeenCalled()
   })
 })
