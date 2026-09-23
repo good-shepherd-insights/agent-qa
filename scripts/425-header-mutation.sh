@@ -220,8 +220,8 @@ const legs = [
     operation: 'restore the fixed h-14 row and drop the container query that stacks it',
     edits: [
       { from: '    <div className="shrink-0 @container">\n', to: '    <div className="shrink-0">\n' },
-      { from: '    <div className="flex flex-col gap-y-2 min-h-14 border-b px-4 py-2 min-w-0 @3xl:flex-row',
-        to: '    <div className="flex flex-col gap-y-2 h-14 border-b px-4 py-2 min-w-0 @3xl:flex-row' },
+      { from: '    <div className="flex flex-col gap-y-2 min-h-14 border-b px-4 py-2 min-w-0 @5xl:flex-row',
+        to: '    <div className="flex flex-col gap-y-2 h-14 border-b px-4 py-2 min-w-0 @5xl:flex-row' },
     ],
     reds: [navbar('HEADER-STACKS')],
     allowed: [],
