@@ -20,6 +20,8 @@ import {
   FEEDBACK_ENTRY_SCOPES,
   FEEDBACK_ENTRY_TEST_LABEL,
   FEEDBACK_OUTCOME_CLASSES,
+  SUBMIT_REASON_NO_CHOICE,
+  SUBMIT_REASON_NO_UNIQUE_ADDRESS,
   NO_STEP_VERDICT_TEXT,
   ONE_STEP_SCOPE_TEXT,
   RECORDED_RESULT_TEXT,
@@ -29,9 +31,11 @@ import {
   feedbackOutcomeClass,
   feedbackPartsText,
   feedbackTargetView,
+  hasUniqueAddress,
   memberOutcomeClass,
   resolveHeaderFeedbackTarget,
   scopeLine,
+  submitBlockedReason,
 } from '@/lib/feedback-view'
 import { memberDisplayName, memberHandleLabel } from '@/lib/run-detail-view'
 
@@ -234,5 +238,26 @@ describe('426-03 which test the header entry means', () => {
   it('HEADER-TARGET-ORDER: no projection resolves no target', () => {
     expect(resolveHeaderFeedbackTarget({ detail: undefined, selectedStep: null, memberFilter: undefined, runStatus: 'failed' })).toBeUndefined()
     expect(resolveHeaderFeedbackTarget({ detail: null, selectedStep: null, memberFilter: undefined, runStatus: 'failed' })).toBeUndefined()
+  })
+})
+
+describe('426-03 a test the dashboard cannot address', () => {
+  const members = (...testIds: (string | undefined)[]) => ({
+    members: testIds.map((testId, testIndex) => ({ testIndex, attempts: 1, ...(testId === undefined ? {} : { testId }) })),
+  })
+
+  it('HAS-UNIQUE-ADDRESS: mirrors onMark — a suite member needs a testId no other member holds; a single test always has one', () => {
+    expect(hasUniqueAddress(members(undefined), 0)).toBe(true)
+    expect(hasUniqueAddress(members('t_a', 't_b'), 1)).toBe(true)
+    expect(hasUniqueAddress(members('t_a', 't_a'), 0)).toBe(false)
+    expect(hasUniqueAddress(members(undefined, 't_b'), 0)).toBe(false)
+    expect(hasUniqueAddress(members('', 't_b'), 0)).toBe(false)
+    expect(hasUniqueAddress(members('t_a', 't_b'), 5)).toBe(false)
+  })
+
+  it('HAS-UNIQUE-ADDRESS: no unique address is the first reason Send feedback is unavailable', () => {
+    const base = { kind: undefined, currentKey: '', landedKey: undefined, landedOutcome: undefined, inFlight: false }
+    expect(submitBlockedReason({ ...base, noUniqueAddress: true })).toBe(SUBMIT_REASON_NO_UNIQUE_ADDRESS)
+    expect(submitBlockedReason({ ...base, noUniqueAddress: false })).toBe(SUBMIT_REASON_NO_CHOICE)
   })
 })

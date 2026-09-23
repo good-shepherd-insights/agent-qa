@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { act, type ReactNode } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
-import { MemoryRouter, Route, Routes } from 'react-router'
+import { MemoryRouter, Route, Routes, useLocation } from 'react-router'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type {
   RunDetailMember,
@@ -18,7 +18,10 @@ import {
   CHOICE_LABELS,
   CHOICE_MEANINGS,
   FEEDBACK_CHOICE_ORDER,
+  NO_UNIQUE_ADDRESS_TEXT,
   PREVIEW_DEBOUNCE_MS,
+  SUBMIT_REASON_NO_UNIQUE_ADDRESS,
+  TEST_SWITCHER_LABEL,
   feedbackEntryLabel,
   feedbackRecordedText,
 } from '@/lib/feedback-view'
@@ -84,13 +87,26 @@ vi.mock('@/components/ui/tooltip', () => ({
   TooltipTrigger: ({ children }: { children: ReactNode }) => <>{children}</>,
   TooltipContent: ({ children }: { children: ReactNode }) => <>{children}</>,
 }))
-vi.mock('@/components/ui/select', () => ({
-  Select: ({ children }: { children: ReactNode }) => <div>{children}</div>,
-  SelectTrigger: ({ children }: { children: ReactNode }) => <div>{children}</div>,
-  SelectValue: () => <span>member filter</span>,
-  SelectContent: ({ children }: { children: ReactNode }) => <div>{children}</div>,
-  SelectItem: ({ children }: { children: ReactNode }) => <div>{children}</div>,
-}))
+// The select double keeps the root's value and onValueChange reachable: each item is a button that
+// calls the enclosing root's handler, so a cell can pick an option without Radix's pointer model.
+vi.mock('@/components/ui/select', async () => {
+  const React = await vi.importActual<typeof import('react')>('react')
+  const Root = React.createContext<((value: string) => void) | undefined>(undefined)
+  return {
+    Select: ({ children, value, onValueChange }: { children: ReactNode; value?: string; onValueChange?: (value: string) => void }) => (
+      <Root.Provider value={onValueChange}>
+        <div data-select-value={value}>{children}</div>
+      </Root.Provider>
+    ),
+    SelectTrigger: ({ children, className: _className, ...rest }: { children: ReactNode; className?: string }) => <div {...rest}>{children}</div>,
+    SelectValue: () => <span>member filter</span>,
+    SelectContent: ({ children }: { children: ReactNode }) => <div>{children}</div>,
+    SelectItem: ({ children, value }: { children: ReactNode; value: string }) => {
+      const onValueChange = React.useContext(Root)
+      return <button type="button" data-select-item={value} onClick={() => onValueChange?.(value)}>{children}</button>
+    },
+  }
+})
 // Pitfall 7: the panel double renders the props the layout cells read, JSON-encoded so a numeric
 // size and a string size stay distinguishable.
 vi.mock('@/components/ui/resizable', () => ({
@@ -240,6 +256,11 @@ async function flushRender() {
   })
 }
 
+function LocationProbe() {
+  const location = useLocation()
+  return <output data-location={`${location.pathname}${location.search}`} />
+}
+
 async function renderAt(url: string) {
   container = document.createElement('div')
   document.body.appendChild(container)
@@ -247,6 +268,7 @@ async function renderAt(url: string) {
   await act(async () => {
     root!.render(
       <MemoryRouter initialEntries={[url]}>
+        <LocationProbe />
         <Routes>
           <Route path="/runs/:id" element={<RunDetailPage />} />
         </Routes>
@@ -480,5 +502,66 @@ describe('426-03 the header entry in a suite', () => {
     await renderAt(`/runs/${RUN_ID}`)
     expect(q('[data-verdict-badge]')).not.toBeNull()
     expect(container!.querySelectorAll('[data-feedback-entry]')).toHaveLength(0)
+  })
+})
+
+describe('426-03 the composer names, switches and refuses its test', () => {
+  it('SWITCHER-RETARGETS: choosing another test re-targets the composer and leaves the filter and selection alone', async () => {
+    fetchRunDetailMock.mockResolvedValue(suiteDetail())
+    await renderAt(`/runs/${RUN_ID}?member=0`)
+    const location = () => q('[data-location]')!.getAttribute('data-location')
+    const selectedRow = () => container!.querySelector('[aria-selected="true"]')?.textContent ?? null
+    const locationBefore = location()
+    const selectedBefore = selectedRow()
+    expect(selectedBefore).not.toBeNull()
+
+    await click('[data-feedback-entry="test"]')
+    const composer = () => q('[data-feedback-composer]')!
+    const switcher = composer().querySelector<HTMLElement>('[data-feedback-test-switcher]')!
+    expect(switcher).not.toBeNull()
+    const label = composer().querySelector(`label[for="${switcher.id}"]`)
+    expect(label?.textContent).toBe(TEST_SWITCHER_LABEL)
+    expect([...composer().querySelectorAll('[data-select-item]')].map(item => item.textContent)).toEqual([
+      `${memberDisplayName({ testIndex: 0, name: 'Browse catalog' })} ${memberHandleLabel(0)}`,
+      `${memberDisplayName({ testIndex: 1, name: 'Pay for order' })} ${memberHandleLabel(1)}`,
+    ])
+
+    await act(async () => { composer().querySelector<HTMLElement>('[data-select-item="1"]')!.click() })
+    await flushRender()
+    expect(composer().getAttribute('data-feedback-target')).toBe('1:run')
+    const heading = document.getElementById(composer().getAttribute('aria-labelledby')!)!
+    expect(heading.textContent).toBe(`Feedback on Pay for order ${memberHandleLabel(1)}`)
+    expect(location()).toBe(locationBefore)
+    expect(selectedRow()).toBe(selectedBefore)
+  })
+
+  it('SWITCHER-RETARGETS: a single-test run renders no switcher', async () => {
+    await renderAt(`/runs/${RUN_ID}`)
+    await click('[data-feedback-entry="test"]')
+    expect(q('[data-feedback-composer]')).not.toBeNull()
+    expect(q('[data-feedback-test-switcher]')).toBeNull()
+  })
+
+  it('NO-UNIQUE-ADDRESS-REFUSAL: a member sharing its testId is refused in the composer without a request', async () => {
+    const shared = suiteDetail()
+    fetchRunDetailMock.mockResolvedValue({
+      ...shared,
+      members: shared.members.map(entry => ({ ...entry, testId: SUITE_TEST_IDS[0] })),
+    })
+    await renderAt(`/runs/${RUN_ID}`)
+    await click('[data-feedback-entry="test"]')
+    const refusal = q('[data-feedback-no-address]')
+    expect(refusal, 'no refusal block at the top of the composer body').not.toBeNull()
+    expect(refusal!.textContent).toContain(NO_UNIQUE_ADDRESS_TEXT)
+    expect(container!.querySelectorAll('[data-feedback-choice]')).toHaveLength(3)
+
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    await click('[data-feedback-choice] [role="radio"]')
+    await act(async () => { vi.advanceTimersByTime(PREVIEW_DEBOUNCE_MS) })
+    vi.useRealTimers()
+    await flushRender()
+    expect(fetchMarkPreviewMock).not.toHaveBeenCalled()
+    expect(q('[data-feedback-submit-reason]')!.textContent).toBe(SUBMIT_REASON_NO_UNIQUE_ADDRESS)
+    expect(q('[data-feedback-submit]')!.getAttribute('aria-disabled')).toBe('true')
   })
 })
