@@ -21,9 +21,24 @@ const { scratchHome } = await vi.hoisted(async () => {
 })
 vi.mock('node:os', async original => ({ ...await original<typeof import('node:os')>(), homedir: () => scratchHome }))
 const RECHECK_DIR = process.env.AGENT_QA_MARK_UI_RECHECK_DIR
-const MEMBER = '[data-member-mark]'
-const STEP = '[data-step-id="0:0"] [data-step-mark]'
+// 426 D-02/D-04: the two doors into the one composer.
+const TEST_ENTRY = '[data-feedback-entry="test"]'
+const STEP_ENTRY = '[data-step-id="0:0"] [data-feedback-entry="step"]'
+const COMPOSER = '[data-feedback-composer]'
+type Door = 'test' | 'step'
+const DOORS: Record<Door, { entry: string; address: string }> = {
+  test: { entry: TEST_ENTRY, address: '0:run' },
+  step: { entry: STEP_ENTRY, address: '0:0' },
+}
 const ACTION = '{"type":"click","ref":"e-continue"}'
+// Literals equal to dashboard-ui's view constants (it publishes no library entry).
+const APPROVAL_TITLE = 'Approval needed to record this mark'
+const EXPECTATION_LABEL = 'Corrected expectation (optional)'
+const ACTION_LABEL = 'Corrected action JSON (optional)'
+const SENDING_STATUS = 'Sending feedback…'
+const DRAFT_KEPT_STATUS = 'Draft kept. Check the message above before sending again.'
+const CHOICE_LABELS = { 'false-fail': 'This should have passed', 'false-pass': 'This should have failed',
+  'confirmed-bug': 'This is a real product bug' } as const
 async function retainCapture(page: Page, name: string) {
   if (!RECHECK_DIR) return
   mkdirSync(RECHECK_DIR, { recursive: true })
@@ -104,7 +119,7 @@ async function scene(noChannel = false) {
   const pageErrors: string[] = []
   page.on('pageerror', error => pageErrors.push(error.message))
   await page.goto(`http://127.0.0.1:${address.port}/runs/${handoff.runId}`)
-  await page.locator('[data-verdict-block] [data-mark-kind="confirmed-bug"]').waitFor()
+  await page.locator(TEST_ENTRY).waitFor()
   const ledger = join(fixture.runDir, 'marks.jsonl')
   const rows = () => existsSync(ledger) ? readFileSync(ledger, 'utf8').trim().split('\n').filter(Boolean).map(line => JSON.parse(line)) : []
   return { page, pageErrors, rows, confirms, outsideLoopback, runId: handoff.runId }
@@ -113,23 +128,65 @@ async function scene(noChannel = false) {
 async function waitChannel(page: Page) {
   await page.waitForFunction(() => (window as unknown as { markWire: Wire[] }).markWire.some(frame => frame.event === 'confirm_scope'))
 }
-async function fillDraft(page: Page, scope: string, kind = 'confirmed-bug') {
-  const form = page.locator(scope)
-  await form.locator(`[data-mark-kind="${kind}"]`).click()
-  await form.locator('[data-mark-note]').fill('Retain this review note')
-  await form.locator('[data-mark-correction] summary').click()
-  await form.getByRole('textbox', { name: 'Corrected expectation', exact: true }).fill('Expected the intended target')
-  await form.getByRole('textbox', { name: 'Corrected action JSON', exact: true }).fill(ACTION)
-  return form
+/** The step door lives on the selected row only (D-04), so the row is selected first. */
+async function revealStepEntry(page: Page) {
+  const row = page.locator('[data-step-id="0:0"]')
+  if (await row.getAttribute('aria-selected') !== 'true') await row.locator(':scope > button').click()
+  await page.locator(STEP_ENTRY).waitFor()
 }
-async function expectDraft(form: Locator) {
-  expect(await form.locator('[data-mark-note]').inputValue()).toBe('Retain this review note')
-  expect(await form.getByRole('textbox', { name: 'Corrected expectation', exact: true }).inputValue()).toBe('Expected the intended target')
-  expect(await form.getByRole('textbox', { name: 'Corrected action JSON', exact: true }).inputValue()).toBe(ACTION)
-  expect(await form.locator('[data-mark-kind="confirmed-bug"]').getAttribute('aria-pressed')).toBe('true')
+async function openComposer(page: Page, door: Door): Promise<Locator> {
+  const composer = page.locator(COMPOSER)
+  if (await composer.count() > 0 && await composer.getAttribute('data-feedback-target') === DOORS[door].address) return composer
+  if (door === 'step') await revealStepEntry(page)
+  await page.locator(DOORS[door].entry).click()
+  await page.locator(`${COMPOSER}[data-feedback-target="${DOORS[door].address}"]`).waitFor()
+  return composer
 }
-async function settled(form: Locator, text: string) {
-  await form.locator('[data-mark-status]').filter({ hasText: text }).waitFor()
+const choice = (composer: Locator, kind: string) => composer.locator(`[data-feedback-choice="${kind}"] [role="radio"]`)
+async function previewCurrent(composer: Locator) {
+  await composer.locator('[data-feedback-preview][data-preview-current="true"]').waitFor()
+}
+async function openCorrection(composer: Locator) {
+  const trigger = composer.locator('[data-feedback-correction]')
+  if (await trigger.getAttribute('aria-expanded') !== 'true') await trigger.click()
+}
+async function fillDraft(page: Page, door: Door, kind = 'confirmed-bug') {
+  const composer = await openComposer(page, door)
+  await choice(composer, kind).click()
+  await composer.locator('[data-feedback-note]').fill('Retain this review note')
+  await openCorrection(composer)
+  await composer.getByLabel(EXPECTATION_LABEL, { exact: true }).fill('Expected the intended target')
+  await composer.getByLabel(ACTION_LABEL, { exact: true }).fill(ACTION)
+  await previewCurrent(composer)
+  return composer
+}
+async function expectDraft(composer: Locator) {
+  expect(await composer.locator('[data-feedback-note]').inputValue()).toBe('Retain this review note')
+  expect(await composer.getByLabel(EXPECTATION_LABEL, { exact: true }).inputValue()).toBe('Expected the intended target')
+  expect(await composer.getByLabel(ACTION_LABEL, { exact: true }).inputValue()).toBe(ACTION)
+  expect(await choice(composer, 'confirmed-bug').getAttribute('aria-checked')).toBe('true')
+}
+function status(composer: Locator) {
+  return composer.locator('[data-feedback-status]')
+}
+async function settled(composer: Locator, text: string) {
+  await status(composer).filter({ hasText: text }).waitFor()
+}
+/** The recorded sentence, composed as feedbackRecordedText composes it from the history's disposition line. */
+async function recordedSentence(composer: Locator) {
+  const entry = composer.locator('[data-feedback-history="target"] [data-history-entry][data-history-new]')
+  await entry.waitFor()
+  const disposition = await entry.locator('[data-history-disposition]').textContent() ?? ''
+  return `Feedback recorded — ${disposition.replace(/^Recorded — /, '')}.`
+}
+function targetEntries(composer: Locator) {
+  return composer.locator('[data-feedback-history="target"] [data-history-entry]')
+}
+async function entryChoice(entry: Locator) {
+  return await entry.locator(':scope > div:first-child .font-medium').textContent()
+}
+function approval(page: Page) {
+  return page.getByRole('group', { name: APPROVAL_TITLE, exact: true })
 }
 async function tabTo(page: Page, selector: string) {
   for (let index = 0; index < 100; index++) {
@@ -144,24 +201,33 @@ function healthy(s: Awaited<ReturnType<typeof scene>>) {
   expect(new URL(s.page.url()).pathname).toBe(`/runs/${s.runId}`)
 }
 
-async function submit(page: Page) {
-  await page.locator('[data-verdict-block] [data-mark-kind="confirmed-bug"]').click()
-  await page.locator('[data-verdict-block] [data-mark-submit]').click()
+async function submit(page: Page, door: Door = 'test', kind = 'confirmed-bug') {
+  const composer = await openComposer(page, door)
+  await choice(composer, kind).click()
+  await previewCurrent(composer)
+  await composer.locator('[data-feedback-submit]').click()
+  return composer
 }
 
 describe('419 real browser mark confirmation', () => {
-  it('asks on /api/run-confirm/channel; accept appends one receipt and refetches its chip', async () => {
+  it('asks on /api/run-confirm/channel; accept appends one receipt and refetches its history', async () => {
     const s = await scene()
     await s.page.waitForFunction(() => (window as unknown as { markWire: Wire[] }).markWire.some(frame => frame.event === 'confirm_scope' && frame.url === '/api/run-confirm/channel'))
     expect(s.rows()).toHaveLength(0)
-    await submit(s.page)
-    await s.page.locator('[data-run-confirm-dialog]').waitFor()
-    expect(await s.page.locator('[data-run-confirm-dialog]').textContent()).toContain('runs.mark')
+    const composer = await submit(s.page)
+    await approval(s.page).waitFor()
+    expect(await composer.locator('[data-feedback-approval]').textContent()).toContain('runs.mark')
+    expect(await s.page.locator('[role="dialog"], [aria-modal]').count()).toBe(0)
     expect(s.rows()).toHaveLength(0)
     expect(await s.page.evaluate(() => (window as unknown as { markWire: Wire[] }).markWire.some(frame => frame.event === 'confirm_request' && frame.data.includes('fn:runs.mark')))).toBe(true)
-    await s.page.locator('[data-confirm-answer="accept"]').click()
-    await s.page.locator('[data-verdict-block] [data-mark-chip]').waitFor()
-    expect(await s.page.locator('[data-verdict-block] [data-mark-chip]').textContent()).toBe('marked confirmed-bug by user · 1')
+    await composer.locator('[data-feedback-approval] [data-confirm-answer="accept"]').click()
+    const recorded = await recordedSentence(composer)
+    await settled(composer, recorded)
+    expect(await status(composer).textContent()).toBe(recorded)
+    expect(await targetEntries(composer).count()).toBe(1)
+    expect(await entryChoice(targetEntries(composer).first())).toBe(CHOICE_LABELS['confirmed-bug'])
+    expect(await targetEntries(composer).first().getAttribute('data-history-active')).toBe('true')
+    await s.page.locator(`${TEST_ENTRY}[data-feedback-marked="true"]`).waitFor()
     expect(s.rows()).toHaveLength(1)
     expect(s.rows()[0]).toMatchObject({ kind: 'confirmed-bug', origin: 'user', ordinal: 1 })
     expect(s.pageErrors).toEqual([])
@@ -170,11 +236,12 @@ describe('419 real browser mark confirmation', () => {
   it('without a confirm channel renders answer-confirm and appends no ledger line', async () => {
     const s = await scene(true)
     const response = s.page.waitForResponse(response => response.url().endsWith('/mark') && response.request().method() === 'POST')
-    await submit(s.page)
+    const composer = await submit(s.page)
     expect((await response).status()).toBe(403)
-    await s.page.locator('[data-mark-denied]').waitFor()
-    expect(await s.page.locator('[data-mark-denied]').textContent()).toContain('an ask-tier op raises a confirm here that you can answer')
-    expect(await s.page.locator('[data-mark-chip]').count()).toBe(0)
+    await composer.locator('[data-feedback-denied]').waitFor()
+    expect(await composer.locator('[data-feedback-denied]').textContent()).toContain('an ask-tier op raises a confirm here that you can answer')
+    expect(await targetEntries(composer).count()).toBe(0)
+    expect(await s.page.locator(TEST_ENTRY).getAttribute('data-feedback-marked')).toBe('false')
     expect(s.rows()).toHaveLength(0)
     expect(s.confirms.pendingCount()).toBe(0)
     expect(s.pageErrors).toEqual([])
@@ -183,22 +250,23 @@ describe('419 real browser mark confirmation', () => {
   it('deny renders the typed denial and appends no ledger line', async () => {
     const s = await scene()
     await s.page.waitForFunction(() => (window as unknown as { markWire: Wire[] }).markWire.some(frame => frame.event === 'confirm_scope'))
-    await submit(s.page)
-    await s.page.locator('[data-run-confirm-dialog]').waitFor()
-    await s.page.locator('[data-confirm-answer="deny"]').click()
-    await s.page.locator('[data-mark-denied]').waitFor()
-    expect(await s.page.locator('[data-mark-denied]').textContent()).toContain('The safety gate denied this mark.')
-    expect(await s.page.locator('[data-mark-chip]').count()).toBe(0)
+    const composer = await submit(s.page)
+    await approval(s.page).waitFor()
+    await composer.locator('[data-feedback-approval] [data-confirm-answer="deny"]').click()
+    await composer.locator('[data-feedback-denied]').waitFor()
+    expect(await composer.locator('[data-feedback-denied]').textContent()).toContain('The safety gate denied this mark.')
+    expect(await targetEntries(composer).count()).toBe(0)
+    expect(await s.page.locator(TEST_ENTRY).getAttribute('data-feedback-marked')).toBe('false')
     expect(s.rows()).toHaveLength(0)
     expect(s.confirms.pendingCount()).toBe(0)
     expect(s.pageErrors).toEqual([])
   }, 45_000)
 
-  for (const scope of [MEMBER, STEP]) {
-    it.each(['deny', 'no-channel', 'transport', 'refetch'])('retains ' + scope + ' draft after %s with actual ledger accounting', async failure => {
+  for (const door of ['test', 'step'] as const) {
+    it.each(['deny', 'no-channel', 'transport', 'refetch'])('retains the ' + door + ' draft after %s with actual ledger accounting', async failure => {
       const s = await scene(failure === 'no-channel')
       if (failure !== 'no-channel') await waitChannel(s.page)
-      const form = await fillDraft(s.page, scope)
+      const composer = await fillDraft(s.page, door)
       expect(s.rows()).toHaveLength(0)
       let accepted = false
       if (failure === 'transport') await s.page.route('**/mark', route => route.abort('failed'))
@@ -206,34 +274,36 @@ describe('419 real browser mark confirmation', () => {
         s.page.on('response', response => { if (response.url().endsWith('/mark') && response.status() === 200) accepted = true })
         await s.page.route('**/detail', route => accepted ? route.abort('failed') : route.continue())
       }
-      await tabTo(s.page, `${scope} [data-mark-submit]`)
+      await tabTo(s.page, `${COMPOSER} [data-feedback-submit]`)
       await s.page.keyboard.press('Enter')
       if (failure === 'deny' || failure === 'refetch') {
-        await s.page.locator('[data-run-confirm-dialog]').waitFor()
-        await expectDraft(form)
-        expect(await form.locator('[data-mark-status]').textContent()).toBe('Mark submission pending.')
-        await tabTo(s.page, `[data-confirm-answer="${failure === 'deny' ? 'deny' : 'accept'}"]`)
+        await approval(s.page).waitFor()
+        await expectDraft(composer)
+        expect(await status(composer).textContent()).toBe(SENDING_STATUS)
+        await tabTo(s.page, `[data-feedback-approval] [data-confirm-answer="${failure === 'deny' ? 'deny' : 'accept'}"]`)
         await s.page.keyboard.press('Enter')
       }
-      await settled(form, 'Draft retained.')
-      await expectDraft(form)
-      expect(await form.locator('[data-mark-denied]').getAttribute('role')).toBe('alert')
-      expect(await form.locator('[data-mark-status]').textContent()).not.toContain('Mark saved.')
+      await settled(composer, DRAFT_KEPT_STATUS)
+      await expectDraft(composer)
+      expect(await composer.locator('[data-feedback-denied]').getAttribute('role')).toBe('alert')
+      expect(await status(composer).textContent()).toBe(DRAFT_KEPT_STATUS)
       expect(s.rows()).toHaveLength(failure === 'refetch' ? 1 : 0)
       if (failure === 'refetch') {
-        expect(await form.locator('[data-mark-denied]').textContent()).toContain('Reload this run')
-        expect(await form.locator('[data-mark-chip]').count()).toBe(0)
+        expect(await composer.locator('[data-feedback-denied]').textContent()).toContain('Reload this run')
+        expect(await s.page.locator(DOORS[door].entry).getAttribute('data-feedback-marked')).toBe('false')
       }
       healthy(s)
       if (failure === 'transport' || failure === 'refetch') {
         await s.page.unroute(failure === 'transport' ? '**/mark' : '**/detail')
         // Explicit retry traverses real confirmation; already-marked remains one ledger row.
-        await form.locator('[data-mark-submit]').click()
-        await s.page.locator('[data-confirm-answer="accept"]').waitFor()
-        await s.page.locator('[data-confirm-answer="accept"]').click()
-        await settled(form, 'Mark saved. Receipt refreshed.')
+        await composer.locator('[data-feedback-submit]').click()
+        await approval(s.page).waitFor()
+        await composer.locator('[data-feedback-approval] [data-confirm-answer="accept"]').click()
+        const recorded = await recordedSentence(composer)
+        await settled(composer, recorded)
         expect(s.rows()).toHaveLength(1)
-        expect(await form.locator('[data-mark-note]').count()).toBe(0)
+        expect(await composer.locator('[data-feedback-note]').inputValue()).toBe('')
+        expect(await s.page.locator(DOORS[door].entry).getAttribute('data-feedback-marked')).toBe('true')
         healthy(s)
       }
     }, 45_000)
@@ -247,26 +317,31 @@ describe('419 real browser mark confirmation', () => {
       await s.page.evaluate(theme => localStorage.setItem('vite-ui-theme', theme), theme)
       await s.page.reload()
       await waitChannel(s.page)
-      for (const scope of [MEMBER, STEP]) {
-        await tabTo(s.page, `${scope} [data-mark-kind="confirmed-bug"]`)
+      for (const door of ['test', 'step'] as const) {
+        if (door === 'step') await revealStepEntry(s.page)
+        await tabTo(s.page, DOORS[door].entry)
         await s.page.keyboard.press('Enter')
-        const form = s.page.locator(scope)
+        await s.page.locator(`${COMPOSER}[data-feedback-target="${DOORS[door].address}"]`).waitFor()
+        const composer = s.page.locator(COMPOSER)
         for (const kind of ['false-fail', 'false-pass', 'confirmed-bug']) {
-          await form.locator(`[data-mark-kind="${kind}"]`).click()
-          expect(await form.locator(`[data-mark-kind="${kind}"]`).getAttribute('aria-pressed')).toBe('true')
-          expect(await form.locator('[aria-pressed="true"]').count()).toBe(1)
-          expect(await form.locator('[data-mark-submit]').textContent()).toBe(`Record ${kind} mark`)
+          await choice(composer, kind).click()
+          expect(await choice(composer, kind).getAttribute('aria-checked')).toBe('true')
+          expect(await composer.locator('[role="radio"][aria-checked="true"]').count()).toBe(1)
+          expect(await composer.locator('[data-feedback-submit]').textContent()).toBe('Send feedback')
         }
-        await form.locator('[data-mark-correction] summary').click()
-        for (const label of ['Corrected expectation (optional)', 'Corrected action JSON (optional)']) {
-          expect(await form.locator('label').filter({ hasText: label }).isVisible()).toBe(true)
+        await previewCurrent(composer)
+        await openCorrection(composer)
+        for (const label of [EXPECTATION_LABEL, ACTION_LABEL]) {
+          await composer.locator('label').filter({ hasText: label }).waitFor({ state: 'visible', timeout: 5_000 })
+          expect(await composer.locator('label').filter({ hasText: label }).isVisible()).toBe(true)
         }
-        expect(await form.locator('code').textContent()).toBe('{"type":"click","ref":"e1"}')
+        expect(await composer.locator('code').textContent()).toBe('{"type":"click","ref":"e1"}')
         await s.page.mouse.move(1400, 100)
-        await form.evaluate(async element => { await Promise.all(element.getAnimations({ subtree: true }).map(animation => animation.finished.catch(() => {}))) })
-        const measures = await form.locator('[data-mark-kind], [data-mark-submit], [data-mark-cancel]').evaluateAll(elements => elements.map(element => {
+        await composer.evaluate(async element => { await Promise.all(element.getAnimations({ subtree: true }).map(animation => animation.finished.catch(() => {}))) })
+        const measures = await composer.locator('[data-feedback-choice], [data-feedback-submit], [data-feedback-close]').evaluateAll(elements => elements.map(element => {
           const style = getComputedStyle(element), bounds = element.getBoundingClientRect()
-          return { text: element.textContent, font: parseFloat(style.fontSize), width: bounds.width, height: bounds.height, pressed: element.getAttribute('aria-pressed'), border: style.borderColor, background: style.backgroundColor }
+          const radio = element.querySelector('[role="radio"]')
+          return { text: element.textContent, font: parseFloat(style.fontSize), width: bounds.width, height: bounds.height, pressed: radio?.getAttribute('aria-checked') ?? null, border: style.borderColor, background: style.backgroundColor }
         }))
         expect(measures).toHaveLength(5)
         for (const measure of measures) {
@@ -275,46 +350,48 @@ describe('419 real browser mark confirmation', () => {
           expect(measure.height).toBeGreaterThanOrEqual(32)
         }
         expect(measures.find(m => m.pressed === 'true')?.border).not.toBe(measures.find(m => m.pressed === 'false')?.border)
-        measurements.push({ theme, scope, measures })
+        measurements.push({ theme, door, measures })
       }
       // Explicit output opt-in must retain this browser scene, without touching prior evidence.
       await retainCapture(s.page, `marks-${theme}.png`)
       if (RECHECK_DIR) expect(existsSync(join(RECHECK_DIR, `marks-${theme}.png`))).toBe(true)
     }
     expect(s.rows()).toHaveLength(0)
-    const member = s.page.locator(MEMBER)
-    const step = s.page.locator(STEP)
-    await member.locator('[data-mark-kind="false-fail"]').click()
-    await member.locator('[data-mark-submit]').click()
-    await s.page.getByRole('dialog', { name: 'Approval needed to record this mark', exact: true }).waitFor()
-    expect(await s.page.locator('[data-run-confirm-dialog]').textContent()).toContain('Approval needed to record this mark')
+    const composer = await submit(s.page, 'test', 'false-fail')
+    await approval(s.page).waitFor()
+    expect(await composer.locator('[data-feedback-approval]').textContent()).toContain(APPROVAL_TITLE)
+    expect(await s.page.locator('[role="dialog"], [aria-modal]').count()).toBe(0)
     await retainCapture(s.page, 'mark-confirmation.png')
     if (RECHECK_DIR) expect(existsSync(join(RECHECK_DIR, 'mark-confirmation.png'))).toBe(true)
-    await tabTo(s.page, '[data-confirm-answer="accept"]')
+    await tabTo(s.page, '[data-feedback-approval] [data-confirm-answer="accept"]')
     await s.page.keyboard.press('Enter')
-    await settled(member, 'Mark saved. Receipt refreshed.')
+    await settled(composer, await recordedSentence(composer))
     expect(s.rows()).toHaveLength(1)
-    expect(await member.locator('[data-mark-note]').count()).toBe(0)
-    expect(await step.locator('[data-mark-note]').count()).toBe(1)
-    expect(await step.locator('[data-mark-status]').textContent()).toBe('')
+    expect(await composer.locator('[data-feedback-note]').inputValue()).toBe('')
     // 423 D-19: the drafted receipt's review control copies a runnable CLI command, never a chat route.
-    const link = member.locator('[data-mark-review]')
+    const link = targetEntries(composer).first().locator('[data-history-review]')
     expect(await link.getAttribute('href')).toBeNull()
     expect(await link.getAttribute('data-review-command')).toMatch(/^agent-qa proposals (show prop_[a-z0-9-]+|list --status pending)$/)
-    const linkSize = await link.boundingBox()
-    expect(linkSize!.height).toBeGreaterThanOrEqual(32)
-    await step.locator('[data-mark-submit]').click()
-    await s.page.locator('[data-confirm-answer="accept"]').waitFor()
-    await s.page.locator('[data-confirm-answer="accept"]').click()
-    await settled(step, 'Mark saved. Receipt refreshed.')
+    expect(await link.isVisible()).toBe(true)
+    await openComposer(s.page, 'step')
+    expect(await status(composer).textContent()).toBe('')
+    expect(await choice(composer, 'confirmed-bug').getAttribute('aria-checked')).toBe('true')
+    await composer.locator('[data-feedback-submit]').click()
+    await approval(s.page).waitFor()
+    await composer.locator('[data-feedback-approval] [data-confirm-answer="accept"]').click()
+    await settled(composer, await recordedSentence(composer))
     expect(s.rows()).toHaveLength(2)
     expect(s.rows().map(row => row.stepIndex)).toEqual([undefined, 0])
-    expect(await member.locator('[data-mark-chip]').textContent()).toContain('· 1')
-    expect(await step.locator('[data-mark-chip]').textContent()).toContain('· 2')
+    expect(await targetEntries(composer).count()).toBe(1)
+    expect(await entryChoice(targetEntries(composer).first())).toBe(CHOICE_LABELS['confirmed-bug'])
+    expect(await s.page.locator(STEP_ENTRY).getAttribute('data-feedback-marked')).toBe('true')
+    expect(await s.page.locator(TEST_ENTRY).getAttribute('data-feedback-marked')).toBe('true')
     healthy(s)
+    await openComposer(s.page, 'test')
+    expect(await entryChoice(targetEntries(composer).first())).toBe(CHOICE_LABELS['false-fail'])
     const detailUrl = s.page.url()
     await link.click()
-    await s.page.waitForFunction(() => document.querySelector('[data-member-mark] [data-mark-review]')?.getAttribute('data-copy-status') !== 'idle')
+    await s.page.waitForFunction(() => document.querySelector('[data-feedback-history="target"] [data-history-review]')?.getAttribute('data-copy-status') !== 'idle')
     expect(s.page.url()).toBe(detailUrl)
     expect(s.pageErrors).toEqual([])
     expect(s.outsideLoopback).toEqual([])
@@ -323,7 +400,7 @@ describe('419 real browser mark confirmation', () => {
       chromium: browser.version(), executable: chromium.executablePath(),
       freshness: buildFreshness(DASHBOARD_ANCHORED_BUILDS), measurements,
       pageErrors: s.pageErrors, outsideLoopback: s.outsideLoopback,
-      keyboard: 'Tab and Enter reached both scopes and real accept/deny controls',
+      keyboard: 'Tab and Enter reached both doors and the inline accept/deny controls',
       finalMarks: s.rows().map(({ kind, ordinal, stepIndex }) => ({ kind, ordinal, stepIndex })),
       ownerPersonallyTested: false, assistiveTechnology: 'unverified',
     }, null, 2))
