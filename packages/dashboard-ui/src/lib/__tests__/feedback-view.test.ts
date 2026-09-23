@@ -58,6 +58,9 @@ import {
   feedbackReadFailureReason,
   previewRefusalText,
   quarantinedText,
+  ADD_CORRECTION_LABEL,
+  correctedActionGate,
+  correctedActionUnavailableText,
   type SubmitBlockInput,
   NO_STEP_VERDICT_TEXT,
   ONE_STEP_SCOPE_TEXT,
@@ -597,5 +600,76 @@ describe('426-07 one first-match rule decides Send feedback', () => {
       input = { ...input, ...lift }
       expect(submitBlockedReason(input), JSON.stringify(lift)).toBe(reason)
     }
+  })
+})
+
+// THE CORRECTED-ACTION GATE (426-08 · D-15, UI-SPEC S4 / U7). A corrected action is scored against
+// exactly one recorded decision, so its field shows only while the landed consequences read for this
+// target and kind covers exactly one; every other state names why in its own sentence.
+describe('426-08 the corrected-action gate', () => {
+  const RUN_ID = generateRunId()
+  const read = (value: Record<string, unknown>) =>
+    ({ kind: 'read', result: RunsMarkPreviewResultSchema.parse({ runId: RUN_ID, ...value }) }) as const
+  const consequences = (markedDecisionCount: number) =>
+    read({
+      kind: 'consequences',
+      prospective: true,
+      markKind: 'false-fail',
+      member: { testIndex: 0 },
+      resolvedStep: { stepIndex: 0, reason: 'failing-step' },
+      latest: { kind: 'first' },
+      basis: { ledgerOrdinal: 0 },
+      markedDecisionCount,
+      groundTruth: [],
+      labels: [],
+      knowledge: { servedRecordIds: [], appendsEvidence: false, records: [], evidence: { confirmed: 0, overturned: 0 } },
+      draft: { kind: 'no-draftable-fix', checked: { servedRecords: 0, procedureReads: 0, assertionDrift: false } },
+    })
+
+  it('ACTION-GATE-STATES: each hidden state reads its own sentence, and a count names how many decisions', () => {
+    expect(ADD_CORRECTION_LABEL).toBe('Add a correction')
+    expect(correctedActionUnavailableText('no-choice')).toBe(
+      'Pick a choice first — a corrected action is only possible when the mark covers exactly one recorded decision.',
+    )
+    expect(correctedActionUnavailableText('loading')).toBe('Checking whether a corrected action is possible…')
+    expect(correctedActionUnavailableText('count', 0)).toBe(
+      "A corrected action isn't possible here — this mark covers no recorded decision.",
+    )
+    expect(correctedActionUnavailableText('count', 3)).toBe(
+      "A corrected action isn't possible here — this mark covers 3 recorded decisions, and a correction needs exactly one.",
+    )
+    expect(correctedActionUnavailableText('quarantined')).toBe("A corrected action isn't used — this mark is quarantined.")
+    expect(correctedActionUnavailableText('unavailable')).toBe(
+      "A corrected action can't be checked until the preview above answers.",
+    )
+  })
+
+  it('ACTION-GATE-STATES: the field shows only for a landed consequences read covering exactly one decision', () => {
+    expect(correctedActionGate({ kind: undefined, landedForTargetAndKind: consequences(1) })).toEqual({ shown: false, state: 'no-choice' })
+    expect(correctedActionGate({ kind: 'false-fail', landedForTargetAndKind: undefined })).toEqual({ shown: false, state: 'loading' })
+    expect(correctedActionGate({ kind: 'false-fail', landedForTargetAndKind: consequences(1) })).toEqual({ shown: true })
+    expect(correctedActionGate({ kind: 'false-fail', landedForTargetAndKind: consequences(0) })).toEqual({ shown: false, state: 'count', count: 0 })
+    expect(correctedActionGate({ kind: 'false-fail', landedForTargetAndKind: consequences(2) })).toEqual({ shown: false, state: 'count', count: 2 })
+    expect(correctedActionGate({
+      kind: 'false-fail',
+      landedForTargetAndKind: read({
+        kind: 'quarantined', prospective: true, markKind: 'false-fail', member: { testIndex: 0 },
+        resolvedStep: { stepIndex: 0, reason: 'failing-step' }, latest: { kind: 'first' }, basis: { ledgerOrdinal: 0 }, class: 'flake',
+      }),
+    })).toEqual({ shown: false, state: 'quarantined' })
+    expect(correctedActionGate({
+      kind: 'false-fail',
+      landedForTargetAndKind: read({
+        kind: 'already-marked',
+        prior: { markId: 'mark_0123456789ab', kind: 'false-fail', ordinal: 1, disposition: { kind: 'confirmed-bug', confirmedRecords: 0 }, testIndex: 0 },
+        basis: { ledgerOrdinal: 1, priorMarkOrdinal: 1 },
+      }),
+    })).toEqual({ shown: false, state: 'unavailable' })
+    expect(correctedActionGate({ kind: 'false-fail', landedForTargetAndKind: read({ kind: 'ambiguous-correction', testIndex: 0, decisionCount: 2 }) }))
+      .toEqual({ shown: false, state: 'unavailable' })
+    expect(correctedActionGate({ kind: 'false-fail', landedForTargetAndKind: read({ kind: 'run-not-found' }) }))
+      .toEqual({ shown: false, state: 'unavailable' })
+    expect(correctedActionGate({ kind: 'false-fail', landedForTargetAndKind: { kind: 'failed', reason: 'network' } }))
+      .toEqual({ shown: false, state: 'unavailable' })
   })
 })
