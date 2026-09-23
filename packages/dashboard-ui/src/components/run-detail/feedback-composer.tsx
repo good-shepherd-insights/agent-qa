@@ -12,6 +12,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import { Skeleton } from '@/components/ui/skeleton'
 import { DenialBlock } from '@/chat/chat-transcript'
 import { FeedbackPreview } from '@/components/run-detail/feedback-preview'
+import { FeedbackTechnicalDetails } from '@/components/run-detail/feedback-technical-details'
 import { MaskedText } from '@/components/run-detail/masked-text'
 import { CorrectionFields, type CorrectedActionField } from '@/components/run-detail/mark-correction-fields'
 import {
@@ -75,6 +76,8 @@ export interface FeedbackComposerProps {
   onPreviewRetry?: () => void
   /** The target member's step count, for the resolved-step sentence. */
   stepCount?: number
+  /** D-13: the target member's testId, shown only under Technical details. */
+  testId?: string
   /** D-14: select the resolved step on the page without re-targeting the composer. */
   onShowStep?: (stepIndex: number) => void
   submitReason: string
@@ -149,6 +152,7 @@ export function FeedbackComposer({
   previewFailure,
   onPreviewRetry,
   stepCount = 0,
+  testId,
   onShowStep,
   submitReason,
   onSubmit,
@@ -171,6 +175,9 @@ export function FeedbackComposer({
     (previewRead?.kind === 'consequences' || previewRead?.kind === 'quarantined')
       ? previewRead.resolvedStep
       : undefined
+  // Technical details state only what the current read computed.
+  const technicalRead =
+    previewCurrent && (previewRead?.kind === 'consequences' || previewRead?.kind === 'quarantined') ? previewRead : undefined
   const resolvedText =
     resolved === undefined || selected === undefined
       ? undefined
@@ -348,6 +355,15 @@ export function FeedbackComposer({
           alreadyMarkedTime={previewAlreadyMarkedTime}
           failure={previewFailure}
           onRetry={onPreviewRetry}
+        />
+
+        <FeedbackTechnicalDetails
+          kind={selected}
+          address={target}
+          testId={testId}
+          recordIds={technicalRead?.kind === 'consequences' ? technicalRead.knowledge.records.map((record) => record.recordId) : undefined}
+          labels={technicalRead?.kind === 'consequences' ? technicalRead.labels : undefined}
+          basis={technicalRead?.basis}
         />
       </div>
 

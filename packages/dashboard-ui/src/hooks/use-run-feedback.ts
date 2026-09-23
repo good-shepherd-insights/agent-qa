@@ -425,6 +425,7 @@ export function useRunFeedback({
         previewFailure,
         onPreviewRetry: retryPreview,
         stepCount: view.stepCount,
+        testId: members.find((entry) => entry.testIndex === target.testIndex)?.testId,
         onShowStep: (stepIndex: number) => {
           setSelection?.({ type: 'step', stepId: runDetailStepKey(target.testIndex, stepIndex) })
         },

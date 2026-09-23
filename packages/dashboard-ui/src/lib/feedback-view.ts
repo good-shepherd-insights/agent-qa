@@ -9,11 +9,13 @@ import type {
   Mark,
   MarkDisposition,
   MarkFixKind,
+  MarkPreviewBasis,
   MarkPreviewDraft,
   MarkPreviewEvidenceEffect,
   MarkPreviewGroundTruth,
   MarkPreviewKnowledge,
   MarkPreviewKnowledgeRecord,
+  MarkPreviewLabel,
   MarkQuarantineClass,
   MemberTestOutcome,
   RunDetailMember,
@@ -856,3 +858,27 @@ export const CLI_ESCAPE_TEXT = feedbackPartsText(CLI_ESCAPE_PARTS)
 export const RETRY_LABEL = 'Retry'
 /** Label-in-name: the accessible name starts with the visible word and says what it retries. */
 export const PREVIEW_RETRY_ACCESSIBLE_NAME = `${RETRY_LABEL} checking what this will do`
+
+// D-13: the one place the internal mark words and the ids appear as text.
+
+export const TECHNICAL_DETAILS_LABEL = 'Technical details'
+
+export const TECHNICAL_DETAILS_ROW_LABELS = {
+  kind: 'Mark kind',
+  address: 'Address',
+  testId: 'Test id',
+  records: 'Reached records',
+  labels: 'Labels',
+  basis: 'Basis',
+} as const
+
+export type TechnicalDetailsRow = keyof typeof TECHNICAL_DETAILS_ROW_LABELS
+
+export function labelDetailText(label: Pick<MarkPreviewLabel, 'decisionOrdinal' | 'stepIndex' | 'channel'>): string {
+  return `decision ${String(label.decisionOrdinal)} · step ${String(label.stepIndex + 1)} · ${label.channel}`
+}
+
+export function basisDetailText(basis: MarkPreviewBasis): string {
+  const prior = basis.priorMarkOrdinal === undefined ? '' : ` · prior mark #${String(basis.priorMarkOrdinal)}`
+  return `ledger ordinal ${String(basis.ledgerOrdinal)}${prior}`
+}
