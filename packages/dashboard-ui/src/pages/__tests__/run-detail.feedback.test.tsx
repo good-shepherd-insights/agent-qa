@@ -10,11 +10,17 @@ import type {
   RunDetailStep,
   RunsMarkPreviewResult,
 } from '@vostride/agent-qa-schema'
-import { MARK_PREVIEW_REFUSALS, RunsMarkPreviewResultSchema } from '@vostride/agent-qa-schema'
+import { MARK_PREVIEW_REFUSALS, RunsMarkPreviewResultSchema, RunsMarksHistoryResultSchema } from '@vostride/agent-qa-schema'
 import { generateRunId, generateTestId } from '@vostride/agent-qa-ids'
 
 import RunDetailPage from '@/pages/run-detail'
-import { MarkDeniedError, setRunConfirmScope, type FeedbackReadFailure, type MarkPreviewRead } from '@/lib/api'
+import {
+  MarkDeniedError,
+  setRunConfirmScope,
+  type FeedbackReadFailure,
+  type MarkPreviewRead,
+  type MarksHistoryRead,
+} from '@/lib/api'
 import {
   CHOICE_LABELS,
   CHOICE_MEANINGS,
@@ -54,6 +60,9 @@ import {
   showStepLabel,
   switchTargetLabel,
   unsentDraftLabel,
+  TECHNICAL_DETAILS_LABEL,
+  formatMarkTime,
+  replacesLine,
 } from '@/lib/feedback-view'
 import { memberDisplayName, memberHandleLabel } from '@/lib/run-detail-view'
 import { CORRECTED_ACTION_EXAMPLE, CORRECTED_ACTION_LABEL } from '@/components/run-detail/mark-correction-fields'
@@ -1623,5 +1632,216 @@ describe('426-08 the note and the correction in the composer', () => {
     expect(submitReason()).toBe(SUBMIT_REASON_INVALID_CORRECTION)
     await click('[data-feedback-submit]')
     expect(markRunMock).not.toHaveBeenCalled()
+  })
+})
+
+// AFTERWARDS (426-09 · D-21, D-22). History is read when the composer opens, on every re-target and
+// after a matched receipt — never on mount — and an older read landing late is dropped. After a
+// matched receipt the composer stays open with the new mark first in the target's history. The
+// preview's replaced and already-said times come from that history, and nothing but the review
+// command ever reaches the clipboard.
+const T_MARK = Date.UTC(2026, 8, 23, 10, 41)
+const historyMarkId = (n: number) => `mark_${n.toString(16).padStart(12, '0')}`
+
+function historyOf(entries: readonly (Record<string, unknown> & { n: number })[]): MarksHistoryRead {
+  return {
+    kind: 'read',
+    result: RunsMarksHistoryResultSchema.parse({
+      kind: 'history',
+      runId: RUN_ID,
+      entries: entries.map(({ n, ...entry }) => ({
+        markId: historyMarkId(n),
+        runId: RUN_ID,
+        testIndex: 0,
+        kind: 'false-fail',
+        origin: 'user',
+        ordinal: n,
+        markedAt: T_MARK + n * 60_000,
+        disposition: { kind: 'no-draftable-fix', checked: { servedRecords: 0, procedureReads: 0, assertionDrift: false } },
+        gold: [],
+        evidence: { confirmed: 0, overturned: 0 },
+        corrected: { expectation: false, action: false },
+        active: true,
+        ...entry,
+      })),
+    }),
+  }
+}
+
+const historyEntryIds = (selector: string) =>
+  [...(q(selector)?.querySelectorAll('[data-history-entry]') ?? [])].map(entry => entry.getAttribute('data-mark-id'))
+
+describe('426-09 the history read', () => {
+  beforeEach(() => {
+    fetchRunDetailMock.mockResolvedValue(fourSteps)
+    fetchMarkPreviewMock.mockResolvedValue({ kind: 'read', result: CONSEQUENCES_STEP_3 })
+  })
+
+  it('HISTORY-READ-ON-OPEN: none on mount, one on open, one more on re-target, one more after a matched receipt', async () => {
+    const stepReceipt: RunDetailMemberMark = { markId: historyMarkId(1), kind: FEEDBACK_CHOICE_ORDER.failed[0], ordinal: 1, stepIndex: 3,
+      disposition: { kind: 'no-draftable-fix', checked: { servedRecords: 0, procedureReads: 0, assertionDrift: false } } }
+    const marked = projection({ ...fourSteps, members: [{ ...fourSteps.members[0]!, marks: [stepReceipt] }] })
+    fetchRunDetailMock.mockImplementation(async () => markRunMock.mock.calls.length > 0 ? marked : fourSteps)
+    markRunMock.mockResolvedValue({ kind: 'marked', receipt: stepReceipt })
+    fetchMarksHistoryMock.mockResolvedValue(historyOf([]))
+    await renderAt(`/runs/${RUN_ID}`)
+    await flushRender()
+    expect(fetchMarksHistoryMock).not.toHaveBeenCalled()
+
+    await openStep('0:1')
+    expect(fetchMarksHistoryMock).toHaveBeenCalledTimes(1)
+    expect(fetchMarksHistoryMock).toHaveBeenLastCalledWith(RUN_ID)
+
+    await selectStep('0:3')
+    await click('[data-feedback-switch]')
+    expect(composerTarget()).toBe('0:3')
+    expect(fetchMarksHistoryMock).toHaveBeenCalledTimes(2)
+
+    await pickAndAdvance(FEEDBACK_CHOICE_ORDER.failed[0])
+    expect(fetchMarksHistoryMock).toHaveBeenCalledTimes(2)
+    await click('[data-feedback-submit]')
+    await flushRender()
+    expect(markRunMock).toHaveBeenCalledTimes(1)
+    expect(q('[data-feedback-composer]')!.getAttribute('data-feedback-state')).toBe('recorded')
+    expect(fetchMarksHistoryMock).toHaveBeenCalledTimes(3)
+  })
+
+  it('HISTORY-STALE-DROPPED: a read for the previous target landing after the current one is dropped', async () => {
+    const first = deferred<MarksHistoryRead>()
+    const second = deferred<MarksHistoryRead>()
+    fetchMarksHistoryMock.mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise)
+    await renderAt(`/runs/${RUN_ID}`)
+    await openStep('0:1')
+    await selectStep('0:3')
+    await click('[data-feedback-switch]')
+    expect(fetchMarksHistoryMock).toHaveBeenCalledTimes(2)
+    expect(q('[data-feedback-history="target"]')?.getAttribute('data-history-state')).toBe('loading')
+
+    await act(async () => second.resolve(historyOf([{ n: 1, stepIndex: 3 }])))
+    await flushRender()
+    await act(async () => first.resolve(historyOf([{ n: 1, stepIndex: 1 }, { n: 2, stepIndex: 1, kind: 'false-pass' }])))
+    await flushRender()
+    expect(historyEntryIds('[data-feedback-history="target"]')).toEqual([historyMarkId(1)])
+    expect(q('[data-feedback-history="target"]')!.getAttribute('data-history-state')).toBe('history')
+    expect(container!.querySelectorAll(`[data-history-entry][data-mark-id="${historyMarkId(2)}"]`)).toHaveLength(0)
+  })
+})
+
+describe('426-09 the receipt shows in history', () => {
+  const PRIOR = historyMarkId(1)
+  const RECEIPT: RunDetailMemberMark = {
+    markId: historyMarkId(2),
+    kind: FEEDBACK_CHOICE_ORDER.failed[0],
+    ordinal: 2,
+    disposition: { kind: 'drafted', fix: 'caution', proposalId: 'prop_0123456789ab', proposalKind: 'knowledge' },
+  }
+  const before = historyOf([{ n: 1, kind: 'confirmed-bug', disposition: { kind: 'confirmed-bug', confirmedRecords: 0 } }])
+  const after = historyOf([
+    { n: 1, kind: 'confirmed-bug', disposition: { kind: 'confirmed-bug', confirmedRecords: 0 }, active: false, supersededBy: RECEIPT.markId },
+    { n: 2, kind: RECEIPT.kind, supersedes: PRIOR, disposition: RECEIPT.disposition, proposal: { state: 'pending', applyInFlight: false } },
+  ])
+
+  it('RECEIPT-SHOWS-IN-HISTORY: the composer stays open, the form resets, and the new mark leads the target list, scrolled into view', async () => {
+    const recorded = projection({ ...initial, members: [{ ...initial.members[0]!, marks: [RECEIPT] }] })
+    fetchRunDetailMock.mockImplementation(async () => markRunMock.mock.calls.length > 0 ? recorded : initial)
+    fetchMarksHistoryMock.mockImplementation(async () => markRunMock.mock.calls.length > 0 ? after : before)
+    markRunMock.mockResolvedValue({ kind: 'marked', receipt: RECEIPT })
+    await renderAt(`/runs/${RUN_ID}`)
+    await click('[data-feedback-entry="test"]')
+    expect(historyEntryIds('[data-feedback-history="target"]')).toEqual([PRIOR])
+    await pickFirstChoiceAndLandPreview(Promise.resolve({ kind: 'read', result: CONSEQUENCES }))
+    expect(q('[data-feedback-submit]')!.getAttribute('aria-disabled')).toBe('false')
+    const scroll = vi.mocked(Element.prototype.scrollIntoView)
+    scroll.mockClear()
+    const focusedBefore = document.activeElement
+
+    await click('[data-feedback-submit]')
+    await flushRender()
+    const composer = q('[data-feedback-composer]')
+    expect(composer, 'the composer closed after a matched receipt').not.toBeNull()
+    expect(composer!.getAttribute('data-feedback-state')).toBe('recorded')
+    expect(container!.querySelectorAll('[data-feedback-choice] [role="radio"][aria-checked="true"]')).toHaveLength(0)
+    expect(q('[data-feedback-preview]')!.getAttribute('data-preview-state')).toBe('idle')
+    expect(historyEntryIds('[data-feedback-history="target"]')).toEqual([RECEIPT.markId, PRIOR])
+    const fresh = container!.querySelectorAll<HTMLElement>('[data-history-new]')
+    expect(fresh).toHaveLength(1)
+    expect(fresh[0]!.getAttribute('data-mark-id')).toBe(RECEIPT.markId)
+    expect(q('[data-feedback-history="target"] [data-history-entry]')).toBe(fresh[0])
+    expect(q('[data-feedback-status]')!.textContent).toBe(feedbackRecordedText(RECEIPT.disposition))
+    expect(q('[data-feedback-entry="test"]')!.getAttribute('data-feedback-marked')).toBe('true')
+    expect(scroll.mock.contexts).toContain(fresh[0])
+    expect(scroll.mock.calls.at(-1)?.[0]).toMatchObject({ block: 'nearest' })
+    expect(document.activeElement).toBe(focusedBefore)
+
+    await click(`[data-feedback-choice="${FEEDBACK_CHOICE_ORDER.failed[1]}"] [role="radio"]`)
+    expect(q('[data-feedback-composer]')!.getAttribute('data-feedback-state')).toBe('composing')
+    expect(container!.querySelectorAll('[data-history-new]')).toHaveLength(0)
+  })
+})
+
+describe('426-09 the preview names its times from history', () => {
+  const PRIOR = 'mark_0123456789ab'
+  const SUPERSEDES = previewOf({ latest: { kind: 'supersedes', markId: PRIOR, ordinal: 1 }, basis: { ledgerOrdinal: 1, priorMarkOrdinal: 1 } })
+  const loaded = historyOf([{ n: 1, markId: PRIOR, markedAt: T_MARK, disposition: receipt.disposition, proposal: { state: 'pending', applyInFlight: false } }])
+
+  beforeEach(() => {
+    fetchRunDetailMock.mockResolvedValue(fourSteps)
+  })
+
+  it('ARM-TIMES-FROM-HISTORY: with history loaded, the replaces and already-said lines name the earlier mark\'s time', async () => {
+    fetchMarksHistoryMock.mockResolvedValue(loaded)
+    await openAndLand({ kind: 'read', result: SUPERSEDES })
+    expect(q('[data-preview-line="replaces"]')?.textContent).toBe(replacesLine(1, formatMarkTime(T_MARK), false))
+    unmountPage()
+
+    await openAndLand({ kind: 'read', result: ALREADY_MARKED })
+    expect(q('[data-preview-line="already-marked"]')?.textContent).toBe(alreadyMarkedText(formatMarkTime(T_MARK)))
+  })
+
+  it('ARM-TIMES-FROM-HISTORY: before history loads, or when the earlier mark is not in it, both lines drop the time', async () => {
+    fetchMarksHistoryMock.mockReturnValue(new Promise(() => {}))
+    await openAndLand({ kind: 'read', result: SUPERSEDES })
+    expect(q('[data-preview-line="replaces"]')?.textContent).toBe(replacesLine(1, undefined, false))
+    unmountPage()
+
+    await openAndLand({ kind: 'read', result: ALREADY_MARKED })
+    expect(q('[data-preview-line="already-marked"]')?.textContent).toBe(alreadyMarkedText())
+    unmountPage()
+
+    fetchMarksHistoryMock.mockResolvedValue(historyOf([{ n: 1, stepIndex: 2 }]))
+    await openAndLand({ kind: 'read', result: SUPERSEDES })
+    expect(q('[data-preview-line="replaces"]')?.textContent).toBe(replacesLine(1, undefined, false))
+  })
+})
+
+describe('426-09 only the review command reaches the clipboard', () => {
+  it('HISTORY-COPIES-ONLY-COMMAND: the review control copies exactly its command; typing a note or opening details writes nothing', async () => {
+    const writeText = vi.fn(async () => undefined)
+    Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true })
+    try {
+      fetchRunDetailMock.mockResolvedValue(fourSteps)
+      fetchMarksHistoryMock.mockResolvedValue(
+        historyOf([{ n: 1, note: 'the coupon field vanished', disposition: receipt.disposition, proposal: { state: 'pending', applyInFlight: false } }]),
+      )
+      await renderAt(`/runs/${RUN_ID}`)
+      const title = document.title
+      await click('[data-feedback-entry="test"]')
+      await typeNote('a private observation about the checkout')
+      for (const button of [...q('[data-feedback-composer]')!.querySelectorAll<HTMLButtonElement>('button')]) {
+        if (button.textContent === TECHNICAL_DETAILS_LABEL) await act(async () => { button.click() })
+      }
+      await flushRender()
+      expect(writeText).not.toHaveBeenCalled()
+      expect(document.title).toBe(title)
+
+      const review = q<HTMLButtonElement>('[data-feedback-history="target"] [data-history-review]')
+      expect(review, 'no review command in the target history').not.toBeNull()
+      await act(async () => { review!.click() })
+      await flushRender()
+      expect(writeText.mock.calls).toEqual([['agent-qa proposals show prop_0123456789ab']])
+      expect(document.title).toBe(title)
+    } finally {
+      delete (navigator as { clipboard?: unknown }).clipboard
+    }
   })
 })
