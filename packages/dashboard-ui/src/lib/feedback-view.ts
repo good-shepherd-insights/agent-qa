@@ -415,6 +415,17 @@ export function feedbackEntryLabel({ scope, stepNumber, memberName, handle, mark
   return markedChoice === undefined ? base : `${base} — already marked: ${CHOICE_LABELS[markedChoice]}`
 }
 
+export function stepTriggerTooltip(stepNumber: number, marked: boolean): string {
+  return marked
+    ? `Step ${String(stepNumber)} is already marked — review or change`
+    : `Give feedback on step ${String(stepNumber)}`
+}
+
+/** D-06: a passive trace names the plain choice, never the internal word. */
+export function markGlyphLabel(kind: Mark): string {
+  return `Marked: ${CHOICE_LABELS[kind]}`
+}
+
 export const DISPOSITION_TEXT = {
   drafted: {
     fact: 'Recorded — a knowledge fact was drafted for review',

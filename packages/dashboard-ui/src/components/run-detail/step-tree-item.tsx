@@ -11,6 +11,8 @@ import { SubActionTreeItem } from "./sub-action-tree-item"
 import { ExecutionTreeItem } from "./execution-tree-item"
 import { StepNameWithPills } from "./step-name-pills"
 import { CacheStatusIconWrapper } from "./cache-status-marker"
+import { FeedbackEntryButton, MarkGlyph } from "./feedback-entry"
+import { feedbackAddress, feedbackEntryLabel, stepTriggerTooltip } from "@/lib/feedback-view"
 import type { ExecutionLogEntry } from "@/lib/api"
 import type { DisplayStep } from "@/lib/display-step"
 import type { Selection } from "@/lib/selection"
@@ -46,9 +48,12 @@ interface StepTreeItemProps {
   onSelect: (sel: Selection | null) => void
   inlineLogs?: ExecutionLogEntry[]
   embedded?: boolean
+  onOpenFeedback?: (opener: HTMLElement) => void
+  feedbackExpanded?: boolean
+  composerId?: string
 }
 
-export function StepTreeItem({ step, isSelected, isExpanded, selection, playhead, onSelect, inlineLogs = [], embedded = false, onMark, marks, markDenial, markPending = false }: StepTreeItemProps) {
+export function StepTreeItem({ step, isSelected, isExpanded, selection, playhead, onSelect, inlineLogs = [], embedded = false, onMark, marks, markDenial, markPending = false, onOpenFeedback, feedbackExpanded = false, composerId = '' }: StepTreeItemProps) {
   const [kind, setKind] = useState<Mark>()
   const [note, setNote] = useState('')
   const [correction, setCorrection] = useState<MarkCorrection>()
@@ -92,6 +97,13 @@ export function StepTreeItem({ step, isSelected, isExpanded, selection, playhead
   const denial = markDenial ?? lastDenial
   const disabled = markPending || submitting
   const mark = marks?.find(entry => entry.stepIndex === step.stepIndex)
+  const address = step.testIndex === undefined || step.stepIndex === undefined
+    ? undefined
+    : feedbackAddress({ testIndex: step.testIndex, stepIndex: step.stepIndex })
+  // D-04: the door sits on the row that owns the selection only; a marked row elsewhere keeps a
+  // passive trace instead, so one row never shows two bubbles (D-06).
+  const showTrigger = isSelected && onOpenFeedback !== undefined && marks !== undefined && address !== undefined
+  const stepNumber = (step.stepIndex ?? 0) + 1
   // THE DURABLE SUB-ACTIONS, NOT THE v1 BLOB (405-08/405-11). The v1 sub-action array this row
   // used to read had no producer on this page, and 405-11 deleted it with the overview's readers.
   const subActions = step.subActions ?? []
@@ -127,9 +139,9 @@ export function StepTreeItem({ step, isSelected, isExpanded, selection, playhead
       aria-level={1}
       data-step-id={step.id}
       className={cn(
+        "relative",
         !embedded && "mx-2 mb-1.5 rounded-[2px]",
-        hasChildren && isExpanded && !embedded && "border border-border/70 bg-muted/15 relative",
-        hasChildren && isExpanded && embedded && "relative"
+        hasChildren && isExpanded && !embedded && "border border-border/70 bg-muted/15"
       )}
     >
       <button
@@ -137,7 +149,8 @@ export function StepTreeItem({ step, isSelected, isExpanded, selection, playhead
           "flex w-full items-start gap-2 py-2 px-3 text-left rounded-[2px]",
           "hover:bg-muted/50 transition-colors",
           isSelected && "rounded-md ring-1 ring-inset ring-border",
-          isSelected && selection?.type === 'step' && "bg-muted/30"
+          isSelected && selection?.type === 'step' && "bg-muted/30",
+          showTrigger && "pr-9"
         )}
         onClick={() => onSelect({ type: 'step', stepId: step.id })}
       >
@@ -150,10 +163,27 @@ export function StepTreeItem({ step, isSelected, isExpanded, selection, playhead
           ) : null}
           <StepNameWithPills step={step} />
         </div>
+        {mark !== undefined && address !== undefined && !showTrigger ? (
+          <MarkGlyph scope="step" target={address} kind={mark.kind} />
+        ) : null}
         <span className="text-xs text-muted-foreground shrink-0 pt-0.5">
           {formatDuration(step.duration)}
         </span>
       </button>
+      {showTrigger ? (
+        <span className="absolute right-1 top-1">
+          <FeedbackEntryButton
+            scope="step"
+            label={feedbackEntryLabel({ scope: 'step', stepNumber, markedChoice: mark?.kind })}
+            tooltip={stepTriggerTooltip(stepNumber, mark !== undefined)}
+            target={address}
+            marked={mark !== undefined}
+            expanded={feedbackExpanded}
+            controls={composerId}
+            onOpen={onOpenFeedback}
+          />
+        </span>
+      ) : null}
 
       {marks !== undefined && onMark && step.testIndex !== undefined && step.stepIndex !== undefined ? (
         <div data-step-mark aria-busy={submitting} className="mx-3 mb-1.5 flex flex-wrap items-center gap-1 text-xs text-muted-foreground">

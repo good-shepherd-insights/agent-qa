@@ -1,9 +1,11 @@
 import { MessageSquare, MessageSquarePlus } from 'lucide-react'
+import type { Mark } from '@vostride/agent-qa-schema'
 import { Button } from '@/components/ui/button'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import {
   FEEDBACK_ENTRY_MARKED_TOOLTIP,
   FEEDBACK_ENTRY_TOOLTIP,
+  markGlyphLabel,
   type FeedbackEntryScope,
 } from '@/lib/feedback-view'
 import { cn } from '@/lib/utils'
@@ -16,13 +18,14 @@ export interface FeedbackEntryButtonProps {
   expanded: boolean
   controls: string
   onOpen: (opener: HTMLElement) => void
+  tooltip?: string
 }
 
 /**
  * A door to the composer: it opens it and never records a mark by itself (426 D-02). The tooltip
- * opens on focus as well as hover; its provider is the page's.
+ * opens on focus as well as hover; its provider is the page's. The step door is 28px (D-04).
  */
-export function FeedbackEntryButton({ scope, label, target, marked, expanded, controls, onOpen }: FeedbackEntryButtonProps) {
+export function FeedbackEntryButton({ scope, label, target, marked, expanded, controls, onOpen, tooltip }: FeedbackEntryButtonProps) {
   const Glyph = marked ? MessageSquare : MessageSquarePlus
   return (
     <Tooltip>
@@ -30,7 +33,7 @@ export function FeedbackEntryButton({ scope, label, target, marked, expanded, co
         <Button
           variant="ghost"
           size="icon-sm"
-          className={cn('shrink-0', marked ? 'text-foreground' : 'text-muted-foreground hover:text-foreground')}
+          className={cn('shrink-0', scope === 'step' && 'size-7', marked ? 'text-foreground' : 'text-muted-foreground hover:text-foreground')}
           data-feedback-entry={scope}
           data-feedback-target={target}
           data-feedback-marked={String(marked)}
@@ -42,7 +45,30 @@ export function FeedbackEntryButton({ scope, label, target, marked, expanded, co
           <Glyph className={cn('h-3.5 w-3.5', marked && 'fill-current')} aria-hidden="true" />
         </Button>
       </TooltipTrigger>
-      <TooltipContent side="bottom">{marked ? FEEDBACK_ENTRY_MARKED_TOOLTIP : FEEDBACK_ENTRY_TOOLTIP}</TooltipContent>
+      <TooltipContent side={scope === 'step' ? 'left' : 'bottom'}>
+        {tooltip ?? (marked ? FEEDBACK_ENTRY_MARKED_TOOLTIP : FEEDBACK_ENTRY_TOOLTIP)}
+      </TooltipContent>
     </Tooltip>
+  )
+}
+
+export interface MarkGlyphProps {
+  scope: FeedbackEntryScope
+  target: string
+  kind: Mark
+}
+
+/** The passive trace of a recorded mark (D-06): named, never interactive, never a second door. */
+export function MarkGlyph({ scope, target, kind }: MarkGlyphProps) {
+  return (
+    <span
+      role="img"
+      aria-label={markGlyphLabel(kind)}
+      data-feedback-mark-glyph={scope}
+      data-feedback-target={target}
+      className="inline-flex size-4 shrink-0 items-center justify-center text-muted-foreground"
+    >
+      <MessageSquare className="size-3 fill-current" aria-hidden="true" />
+    </span>
   )
 }
