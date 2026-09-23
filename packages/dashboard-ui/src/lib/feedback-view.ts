@@ -433,7 +433,7 @@ export const FEEDBACK_LAYOUTS = [
   'stacked',
 ] as const satisfies readonly FeedbackLayout[]
 
-/** 425's @3xl container step (48rem): below it the open composer stacks under the evidence (D-10). */
+/** 48rem, 425's first header step (the header moved to 64rem for #480): below it the open composer stacks under the evidence (D-10). */
 export const FEEDBACK_STACK_BELOW_PX = 768
 
 /** An unmeasured page (width 0) and a closed composer are always docked, so the closed layout never moves. */

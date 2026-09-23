@@ -478,9 +478,9 @@ describe("RunNavbar", () => {
     const row = headerRow().className.split(/\s+/)
     expect(row).toContain("min-h-14")
     expect(row).toContain("flex-col")
-    expect(row).toContain("@3xl:flex-row")
-    expect(row).toContain("@3xl:items-center")
-    expect(row).toContain("@3xl:justify-between")
+    expect(row).toContain("@5xl:flex-row")
+    expect(row).toContain("@5xl:items-center")
+    expect(row).toContain("@5xl:justify-between")
     expect(row).not.toContain("h-14")
 
     const cluster = container.querySelector(".ml-auto") as HTMLElement | null

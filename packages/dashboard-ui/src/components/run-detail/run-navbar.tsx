@@ -189,10 +189,15 @@ export function RunNavbar({
     // sends both down the stacked path, and any narrower shell this header is ever dropped into
     // inherits it without a second breakpoint being invented.
     //
+    // THE STEP IS 64rem, NOT 48rem (WINDOWS #480). One row needs about 890px once 426's entry sits
+    // beside the verdict, so beside the 192px sidebar a ~1000px page stayed one row at 48rem and the
+    // analysis chip painted over the badge and the entry. A 1280px page is a 1088px container and
+    // keeps its single row.
+    //
     // It is NOT a third pane and NOT a toast: 403's two-pane rule holds on the live page and the
     // same discipline holds here.
     <div className="shrink-0 @container">
-    <div className="flex flex-col gap-y-2 min-h-14 border-b px-4 py-2 min-w-0 @3xl:flex-row @3xl:items-center @3xl:justify-between @3xl:gap-y-0 @3xl:py-0">
+    <div className="flex flex-col gap-y-2 min-h-14 border-b px-4 py-2 min-w-0 @5xl:flex-row @5xl:items-center @5xl:justify-between @5xl:gap-y-0 @5xl:py-0">
       <div className="flex items-center gap-2 min-w-0">
         <button
           onClick={() => navigate(routes.runs)}
