@@ -23,7 +23,7 @@ import { FailureBanner } from "@/components/run-detail/failure-banner"
 import { TabPanels } from "@/components/run-detail/tab-panels"
 import { FeedbackComposer } from "@/components/run-detail/feedback-composer"
 import { useRunFeedback } from "@/hooks/use-run-feedback"
-import { FEEDBACK_PANEL_IDS, feedbackPanelLayout } from "@/lib/feedback-view"
+import { FEEDBACK_PANEL_IDS, feedbackDefaultLayout } from "@/lib/feedback-view"
 import { initialPlayerSource, storePlayerSource } from "@/lib/player-view"
 import { PlayerLightbox } from '@/components/run-detail/player-lightbox'
 import { buildSuiteTimeline, suiteSeek, suiteProgress, suiteClock } from '@/lib/suite-timeline'
@@ -617,7 +617,7 @@ export default function RunDetailPage() {
     markDenial,
     reloadDetail,
     setSelection,
-    beforeOpen: () => setFeedbackLayout(feedbackPanelLayout(panelGroupRef.current?.getBoundingClientRect().width ?? 0)),
+    beforeOpen: () => setFeedbackLayout(feedbackDefaultLayout("docked", panelGroupRef.current?.getBoundingClientRect().width ?? 0)),
   })
 
   const playhead = useMemo<Playhead | null>(() => {

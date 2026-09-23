@@ -425,46 +425,63 @@ export const FEEDBACK_COMPOSER_STATES = [
 
 export const PREVIEW_DEBOUNCE_MS = 300
 
-export const FEEDBACK_PANEL_IDS = {
-  tree: 'run-tree',
-  evidence: 'run-evidence',
-  feedback: 'run-feedback',
-} as const
-
-/**
- * The open three-panel layout, in percent (RESEARCH Pattern 3). Numeric panel sizes are pixels in
- * react-resizable-panels 4, so the composer's 384px target is converted against the measured group
- * width; tree and evidence split the rest in the shipped 35:65 ratio.
- */
-export function feedbackPanelLayout(groupWidth: number): Record<string, number> {
-  const feedback = groupWidth > 0 ? Math.min(Math.max((384 / groupWidth) * 100, (320 / groupWidth) * 100), 50) : 30
-  const tree = (100 - feedback) * 0.35
-  return {
-    [FEEDBACK_PANEL_IDS.tree]: tree,
-    [FEEDBACK_PANEL_IDS.evidence]: 100 - feedback - tree,
-    [FEEDBACK_PANEL_IDS.feedback]: feedback,
-  }
-}
-
-export type FeedbackLayout = 'docked'
+export type FeedbackLayout = 'docked' | 'stacked'
 
 // prettier-ignore
 export const FEEDBACK_LAYOUTS = [
   'docked',
+  'stacked',
 ] as const satisfies readonly FeedbackLayout[]
 
+/** 425's @3xl container step (48rem): below it the open composer stacks under the evidence (D-10). */
 export const FEEDBACK_STACK_BELOW_PX = 768
 
-export function feedbackLayout(_width: number, _open: boolean): FeedbackLayout {
-  return 'docked'
+/** An unmeasured page (width 0) and a closed composer are always docked, so the closed layout never moves. */
+export function feedbackLayout(width: number, open: boolean): FeedbackLayout {
+  return open && width > 0 && width < FEEDBACK_STACK_BELOW_PX ? 'stacked' : 'docked'
 }
 
-export function feedbackPanelIds(_layout: FeedbackLayout): { tree: string; evidence: string; feedback: string } {
-  return FEEDBACK_PANEL_IDS
+export interface FeedbackPanelIds {
+  tree: string
+  evidence: string
+  feedback: string
 }
 
-export function feedbackDefaultLayout(_layout: FeedbackLayout, width: number): Record<string, number> {
-  return feedbackPanelLayout(width)
+export const FEEDBACK_PANEL_IDS = {
+  tree: 'run-tree',
+  evidence: 'run-evidence',
+  feedback: 'run-feedback',
+} as const satisfies FeedbackPanelIds
+
+const FEEDBACK_STACKED_PANEL_IDS = {
+  tree: 'run-tree-stacked',
+  evidence: 'run-evidence-stacked',
+  feedback: 'run-feedback-stacked',
+} as const satisfies FeedbackPanelIds
+
+/**
+ * Each arrangement has its own panel ids (RESEARCH Pattern 3), so react-resizable-panels keeps a
+ * remembered layout per orientation and the Group never needs a key change to reset.
+ */
+export function feedbackPanelIds(layout: FeedbackLayout): FeedbackPanelIds {
+  return layout === 'stacked' ? FEEDBACK_STACKED_PANEL_IDS : FEEDBACK_PANEL_IDS
+}
+
+/**
+ * The open three-panel seed, in percent. Numeric panel sizes are pixels in react-resizable-panels 4,
+ * so docked converts the composer's 384px target against the measured width and tree and evidence
+ * split the rest in the shipped 35:65 ratio; stacked is 30/30/40 at any width.
+ */
+export function feedbackDefaultLayout(layout: FeedbackLayout, width: number): Record<string, number> {
+  const ids = feedbackPanelIds(layout)
+  if (layout === 'stacked') return { [ids.tree]: 30, [ids.evidence]: 30, [ids.feedback]: 40 }
+  const feedback = width > 0 ? Math.min(Math.max((384 / width) * 100, (320 / width) * 100), 50) : 30
+  const tree = (100 - feedback) * 0.35
+  return {
+    [ids.tree]: tree,
+    [ids.evidence]: 100 - feedback - tree,
+    [ids.feedback]: feedback,
+  }
 }
 
 export type FeedbackCorrection = Pick<RunsMarkInput, 'correctedExpectation' | 'correctedAction'>
