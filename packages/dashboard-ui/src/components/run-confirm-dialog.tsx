@@ -38,6 +38,7 @@ import {
   type ChatConfirmAnswer,
   type ChatConfirmRequestFrame,
 } from "@/lib/api"
+import { markConfirmClaim } from "@/lib/mark-confirm-route"
 
 export interface RunConfirmDialogProps {
   confirmId: string
@@ -57,7 +58,7 @@ export interface RunConfirmDialogProps {
  * THE LITERALS ARE THE CONTRACT and the labels are what a person reads; they are written out rather
  * than derived from one another because those two must be free to differ.
  */
-const RUN_CONFIRM_ANSWERS: readonly { answer: ChatConfirmAnswer; label: string; hint: string }[] = [
+export const RUN_CONFIRM_ANSWERS: readonly { answer: ChatConfirmAnswer; label: string; hint: string }[] = [
   { answer: "accept", label: "Yes", hint: "allow this one run" },
   { answer: "accept-always", label: "Always", hint: "record a standing approval for this action class" },
   { answer: "deny", label: "No", hint: "refuse — the run does not start" },
@@ -72,10 +73,30 @@ const RUN_CONFIRM_ANSWERS: readonly { answer: ChatConfirmAnswer; label: string; 
 // `run-confirm-dialog.test.ts` reads the rendered buttons back and compares them to the wire's own
 // enum, so a fourth answer added here still reds, and it reds in the file that added it.
 
-const RESOLUTION_TEXT: Record<"answer" | "timeout" | "channel-closed", string> = {
+export const RESOLUTION_TEXT: Record<"answer" | "timeout" | "channel-closed", string> = {
   answer: "answered",
   timeout: "denied — nobody answered before the window closed",
   "channel-closed": "denied — this page stopped watching",
+}
+
+// The mark's own copy, shared by this dialog's fallback and the composer's inline region (426-10).
+export const MARK_CONFIRM_TITLE = "Approval needed to record this mark"
+
+export const MARK_CONFIRM_HINTS = {
+  accept: "allow this one mark",
+  deny: "refuse — the mark is not recorded",
+} as const
+
+export const ALWAYS_MARK_HINT =
+  "don't ask again for marks — records a standing approval for fn:runs.mark"
+
+export function markConfirmAnswers(): { answer: ChatConfirmAnswer; label: string; hint: string }[] {
+  return RUN_CONFIRM_ANSWERS.map((entry) => ({
+    ...entry,
+    hint: entry.answer === "accept" ? MARK_CONFIRM_HINTS.accept
+      : entry.answer === "deny" ? MARK_CONFIRM_HINTS.deny
+        : entry.answer === "accept-always" ? ALWAYS_MARK_HINT : entry.hint,
+  }))
 }
 
 export function RunConfirmDialog({
@@ -86,12 +107,8 @@ export function RunConfirmDialog({
   onAnswer,
 }: RunConfirmDialogProps) {
   const marking = actionClass === 'fn:runs.mark'
-  const title = marking ? 'Approval needed to record this mark' : 'Approval needed to start this run'
-  const answers = marking ? RUN_CONFIRM_ANSWERS.map(entry => ({
-    ...entry,
-    hint: entry.answer === 'accept' ? 'allow this one mark'
-      : entry.answer === 'deny' ? 'refuse — the mark is not recorded' : entry.hint,
-  })) : RUN_CONFIRM_ANSWERS
+  const title = marking ? MARK_CONFIRM_TITLE : 'Approval needed to start this run'
+  const answers = marking ? markConfirmAnswers() : RUN_CONFIRM_ANSWERS
   return (
     <div
       role="dialog"
@@ -181,6 +198,8 @@ export function RunConfirmHost() {
   // mount, so a queue in `useState` would be read as `[]` by every arrival after the first and the
   // third question would vanish while the second still worked.
   const queuedConfirmsRef = useRef<ChatConfirmRequestFrame[]>([])
+  // Mark questions handed to the page's claim (426-10, D-20); a ref for the same reason as above.
+  const routedIdsRef = useRef(new Set<string>())
 
   /**
    * Raise the next question that is still worth asking.
@@ -214,6 +233,19 @@ export function RunConfirmHost() {
           setRunConfirmScope(frame.scopeId)
         },
         onConfirmRequest: (frame) => {
+          // A MARK THIS PAGE STARTED IS ANSWERED IN ITS COMPOSER, through this channel and scope.
+          // Checked before the queue: the routed question never occupies this host's dialog.
+          const claim = frame.actionClass === "fn:runs.mark" ? markConfirmClaim() : undefined
+          if (claim !== undefined) {
+            routedIdsRef.current.add(frame.confirmId)
+            claim.onRequest(frame, (answer) => {
+              const scopeId = scopeRef.current
+              if (scopeId === undefined) return
+              void answerRunConfirm({ scopeId, confirmId: frame.confirmId, answer })
+                .catch(() => undefined)
+            })
+            return
+          }
           // AN ARRIVING QUESTION WAITS FOR THE ONE ON SCREEN (401-16, G-401-15; ruled at UAT
           // test 1). This assignment used to be unconditional, so a second Run click replaced the
           // first question inside a second — not disabled, not marked superseded, not stacked;
@@ -236,6 +268,10 @@ export function RunConfirmHost() {
           setPending(frame)
         },
         onConfirmResolved: (frame) => {
+          if (routedIdsRef.current.delete(frame.confirmId)) {
+            markConfirmClaim()?.onResolved(frame)
+            return
+          }
           // ONLY THIS QUESTION'S OWN RESOLUTION (401-14, CR-05) — the keyed semantic the chat
           // sibling has always applied at its reducer (`use-chat-turn.ts` matches on `confirmId`
           // before it writes a resolution onto an entry). Without it a stale or overlapping frame
@@ -268,6 +304,7 @@ export function RunConfirmHost() {
       // EMPTIED WITH THE CHANNEL THAT RAISED IT. A queue outliving its socket would raise a
       // question addressed to a scope that no longer exists — answerable-looking, unanswerable.
       queuedConfirmsRef.current = []
+      routedIdsRef.current.clear()
       // CLEARED ON THE WAY OUT. A stale scope on a closed channel would make every later trigger
       // name a browser that is no longer there — the run would still deny fail-closed, but it would
       // deny after claiming somebody was reachable, which is the dishonest half.

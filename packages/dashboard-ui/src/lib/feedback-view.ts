@@ -1015,3 +1015,8 @@ export function historyTargetLabel(
   const member = detail?.members.find((candidate) => candidate.testIndex === entry.testIndex) ?? { testIndex: entry.testIndex }
   return { prefix: '', name: memberDisplayName(member), suffix: ` ${memberHandleLabel(entry.testIndex)} · whole test` }
 }
+
+/** The composer's link back to an address whose mark approval is still waiting (426-10, D-20). */
+export function approvalWaitingLabel(targetLabel: string): string {
+  return `Approval waiting: ${targetLabel}`
+}
