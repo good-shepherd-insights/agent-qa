@@ -151,6 +151,8 @@ export function useRunFeedback({
   const requestedKey = useRef<string | undefined>(undefined)
   const [retrying, setRetrying] = useState(false)
   const [outcomes, setOutcomes] = useState<ReadonlyMap<string, AddressOutcome>>(() => new Map())
+  // 419-15: each retained address keeps its own denial; the page holds only the latest one.
+  const [denials, setDenials] = useState<ReadonlyMap<string, MarkDenial>>(() => new Map())
   const [focusRequest, setFocusRequest] = useState(0)
   const headingRef = useRef<HTMLHeadingElement>(null)
   const opener = useRef<HTMLElement | null>(null)
@@ -165,6 +167,12 @@ export function useRunFeedback({
   const detailRef = useRef(detail)
   useEffect(() => { detailRef.current = detail }, [detail])
   useEffect(() => { if (focusRequest > 0) headingRef.current?.focus() }, [focusRequest])
+  useEffect(() => {
+    if (markDenial === undefined) return
+    setDenials((previous) =>
+      new Map(previous).set(feedbackAddress(markDenial), { reason: markDenial.reason, remedies: markDenial.remedies }),
+    )
+  }, [markDenial])
 
   useEffect(() => {
     runRef.current = runId
@@ -185,6 +193,7 @@ export function useRunFeedback({
     requestedKey.current = undefined
     setRetrying(false)
     setOutcomes(new Map())
+    setDenials(new Map())
     return () => {
       previewGeneration.current += 1
       historyGeneration.current += 1
@@ -373,6 +382,11 @@ export function useRunFeedback({
     const submitted = target
     submission.current = request
     setOutcome(address, { state: 'submitting', status: SENDING_STATUS })
+    setDenials((previous) => {
+      const next = new Map(previous)
+      next.delete(address)
+      return next
+    })
     setApproval((previous) => (previous?.address === address ? undefined : previous))
     // D-20 / RESEARCH A1: one mark in flight per page, so a mark question on the one channel while
     // this submission waits is this submission's.
@@ -493,9 +507,7 @@ export function useRunFeedback({
       return { address: key, label: unsentDraftLabel(placeOf(other)), onOpen: () => retarget(other) }
     })
 
-  const denial = state === 'retained' && markDenial !== undefined && feedbackAddress(markDenial) === address
-    ? { reason: markDenial.reason, remedies: markDenial.remedies }
-    : undefined
+  const denial = state === 'retained' && address !== undefined ? denials.get(address) : undefined
 
   const composer: FeedbackComposerProps | undefined = !open || target === null || address === undefined || view === undefined
     ? undefined
