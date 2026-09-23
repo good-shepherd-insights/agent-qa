@@ -23,7 +23,8 @@ import { FailureBanner } from "@/components/run-detail/failure-banner"
 import { TabPanels } from "@/components/run-detail/tab-panels"
 import { FeedbackComposer } from "@/components/run-detail/feedback-composer"
 import { useRunFeedback } from "@/hooks/use-run-feedback"
-import { feedbackDefaultLayout, feedbackLayout, feedbackPanelIds } from "@/lib/feedback-view"
+import { feedbackDefaultLayout, feedbackLayout, feedbackPanelIds, type FeedbackLayout } from "@/lib/feedback-view"
+import { useGroupRef } from "react-resizable-panels"
 import { initialPlayerSource, storePlayerSource } from "@/lib/player-view"
 import { PlayerLightbox } from '@/components/run-detail/player-lightbox'
 import { buildSuiteTimeline, suiteSeek, suiteProgress, suiteClock } from '@/lib/suite-timeline'
@@ -633,6 +634,21 @@ export default function RunDetailPage() {
   const feedbackOpen = feedback.composer !== undefined
   const layout = feedbackLayout(pageWidth, feedbackOpen)
   const panelIds = feedbackPanelIds(layout)
+  // `defaultLayout` seeds only the Group's first open arrangement. Coming back to docked from stacked,
+  // the library restored the docked panes with the composer at its 50% cap and the tree squeezed to a
+  // sliver (426-17 LAYOUT-SWITCH-NO-REMOUNT), so every later switch re-seeds its own arrangement.
+  const panelGroup = useGroupRef()
+  const seededLayout = useRef<FeedbackLayout | undefined>(undefined)
+  useEffect(() => {
+    if (!feedbackOpen) {
+      seededLayout.current = undefined
+      return
+    }
+    if (seededLayout.current === layout) return
+    const first = seededLayout.current === undefined
+    seededLayout.current = layout
+    if (!first) panelGroup.current?.setLayout(feedbackDefaultLayout(layout, pageWidth))
+  }, [feedbackOpen, layout, pageWidth, panelGroup])
 
   const playhead = useMemo<Playhead | null>(() => {
     const address = playheadFromSelection(selection)
@@ -1113,6 +1129,7 @@ export default function RunDetailPage() {
         {detail && isPreMilestoneRun(detail) && <RunNotice key={run.id} runId={run.id} />}
 
         <ResizablePanelGroup
+          groupRef={panelGroup}
           orientation={layout === "stacked" ? "vertical" : "horizontal"}
           className="min-h-0 flex-1 overflow-hidden"
           defaultLayout={feedbackOpen ? feedbackDefaultLayout(layout, pageWidth) : undefined}
