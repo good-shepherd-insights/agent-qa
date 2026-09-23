@@ -328,7 +328,8 @@ describe('423 rendered run-detail sinks', () => {
 // 423 D-19 · SC5: run detail's review controls re-homed off `routes.chat`. The three controls that
 // used to navigate to Chat (member mark, step mark, Knowledge proposals CTA) are driven on the
 // built bundle over real registry reads, by keyboard, and what they copy is parsed by the shipped
-// `agent-qa proposals` command tree. Scoped to the routed page's own `<main>` (inside the sidebar
+// `agent-qa proposals` command tree. Since 426 D-22 the two mark pointers are the composer history's
+// review controls, opened from the header entry and the step trigger. Scoped to the routed page's own `<main>` (inside the sidebar
 // inset): the global sidebar's
 // Chat entry is 430's removal, not this plan's.
 const MEMBER_PROPOSAL = 'prop_member-423-24'
@@ -349,6 +350,13 @@ function reviewDeps(runId: string): Partial<FunctionDeps> {
     feedback: {
       marksFor: async () => [draftedReceipt(runId, 1, MEMBER_PROPOSAL), draftedReceipt(runId, 2, STEP_PROPOSAL, 0)],
       mark: async () => { throw new Error('read-only review fixture') },
+    },
+    // A drafted receipt carries its proposal's current state (the MarkHistoryEntry join).
+    feedbackReads: {
+      history: async () => ({ kind: 'history', entries: [
+        { receipt: draftedReceipt(runId, 1, MEMBER_PROPOSAL), proposal: { state: 'pending', applyInFlight: false } },
+        { receipt: draftedReceipt(runId, 2, STEP_PROPOSAL, 0), proposal: { state: 'pending', applyInFlight: false } },
+      ] }),
     },
     runs: {
       get: async (id: unknown) => String(id) === runId
@@ -408,8 +416,7 @@ describe('423 run-detail review pointers', () => {
     })
     page.on('framenavigated', frame => { if (frame === page.mainFrame()) navigations.push(frame.url()) })
     await page.goto(`${fixture.origin}/runs/${fixture.runId}`)
-    await page.waitForSelector('[data-member-mark] [data-mark-triage]', { timeout: 15_000 })
-    await page.waitForSelector('[data-step-mark] [data-mark-triage]', { timeout: 15_000 })
+    await page.waitForSelector('[data-feedback-entry="test"]', { timeout: 15_000 })
   }, 30_000)
   afterAll(async () => {
     await browser?.close()
@@ -422,24 +429,26 @@ describe('423 run-detail review pointers', () => {
     const detailPath = pathOf(page.url())
     const navigatedBefore = navigations.length
 
-    const controls = [
-      { selector: '[data-member-mark] [data-mark-review]', expected: `agent-qa proposals show ${MEMBER_PROPOSAL}`, target: MEMBER_PROPOSAL, key: 'Enter' },
-      { selector: '[data-step-mark] [data-mark-review]', expected: `agent-qa proposals show ${STEP_PROPOSAL}`, target: STEP_PROPOSAL, key: 'Space' },
+    // The drafted receipts' review pointers live in the composer's history for the open target (426 D-22).
+    type Control = { open?: { selector: string; address: string }; selector: string; expected: string; target: string; key: string }
+    const review = '[data-feedback-history="target"] [data-history-review]'
+    const controls: Control[] = [
+      { open: { selector: '[data-feedback-entry="test"]', address: '0:run' }, selector: review, expected: `agent-qa proposals show ${MEMBER_PROPOSAL}`, target: MEMBER_PROPOSAL, key: 'Enter' },
+      { open: { selector: '[data-step-id="0:0"] [data-feedback-entry="step"]', address: '0:0' }, selector: review, expected: `agent-qa proposals show ${STEP_PROPOSAL}`, target: STEP_PROPOSAL, key: 'Space' },
     ]
     expect((await regionTargets(page)).map(pathOf)).not.toContain(chatPath)
-    expect(await page.locator('[data-member-mark] [data-mark-triage]').textContent()).toContain(MEMBER_PROPOSAL)
-    expect(await page.locator('[data-step-mark] [data-mark-triage]').textContent()).toContain(STEP_PROPOSAL)
 
-    await page.keyboard.press('m')
-    await page.waitForSelector('[data-review-proposals]')
-    expect(await page.locator('[data-pending-proposals]').getAttribute('data-pending-proposals')).toBe('1')
-    expect((await regionTargets(page)).map(pathOf)).not.toContain(chatPath)
-    controls.push({ selector: '[data-review-proposals]', expected: 'agent-qa proposals list --status pending', target: 'pending', key: 'Enter' })
-
-    for (const control of controls) {
+    const drive = async (control: Control) => {
+      if (control.open !== undefined) {
+        await tabTo(page, control.open.selector)
+        await page.keyboard.press('Enter')
+        await page.waitForSelector(`[data-feedback-composer][data-feedback-target="${control.open.address}"] ${control.selector}`)
+        expect((await regionTargets(page)).map(pathOf)).not.toContain(chatPath)
+      }
       const element = page.locator(control.selector)
       expect(await element.evaluate(node => node.tagName)).toBe('BUTTON')
       expect(await element.getAttribute('href')).toBeNull()
+      expect(await element.getAttribute('data-review-command')).toContain(control.target)
       expect(await element.getAttribute('data-review-command')).toBe(control.expected)
       expect(await element.getAttribute('aria-label')).toContain(control.expected)
       expect(await element.textContent()).toContain(control.expected)
@@ -461,6 +470,15 @@ describe('423 run-detail review pointers', () => {
         expect(ProposalsShowInputSchema.parse({ proposalId: parsed.args[0] })).toEqual({ proposalId: control.target })
       }
     }
+    for (const control of controls) await drive(control)
+
+    // The composer stops key propagation by design, so the page shortcut is pressed from the tree.
+    await page.locator('[role="treeitem"][aria-selected="true"] > button').focus()
+    await page.keyboard.press('m')
+    await page.waitForSelector('[data-review-proposals]')
+    expect(await page.locator('[data-pending-proposals]').getAttribute('data-pending-proposals')).toBe('1')
+    expect((await regionTargets(page)).map(pathOf)).not.toContain(chatPath)
+    await drive({ selector: '[data-review-proposals]', expected: 'agent-qa proposals list --status pending', target: 'pending', key: 'Enter' })
 
     // Viewer state (`?tab=knowledge` from the `m` shortcut) may change; the page never leaves run detail.
     expect(pathOf(page.url())).toBe(detailPath)
