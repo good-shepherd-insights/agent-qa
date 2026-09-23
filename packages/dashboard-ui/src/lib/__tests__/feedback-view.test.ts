@@ -10,6 +10,7 @@
 import { describe, expect, it } from 'vitest'
 import type { Mark, RunDetailMember, RunDetailStep } from '@vostride/agent-qa-schema'
 
+import { UNNAMED_STEP_LABEL } from '@/lib/display-step'
 import {
   CHOICE_LABELS,
   CHOICE_LEGEND,
@@ -17,9 +18,18 @@ import {
   FEEDBACK_CHOICE_ORDER,
   FEEDBACK_COMPOSER_STATES,
   FEEDBACK_OUTCOME_CLASSES,
+  NO_STEP_VERDICT_TEXT,
+  ONE_STEP_SCOPE_TEXT,
+  RECORDED_RESULT_TEXT,
+  WHOLE_TEST_SCOPE_TEXT,
+  composerHeading,
   feedbackOutcomeClass,
+  feedbackPartsText,
+  feedbackTargetView,
   memberOutcomeClass,
+  scopeLine,
 } from '@/lib/feedback-view'
+import { memberDisplayName, memberHandleLabel } from '@/lib/run-detail-view'
 
 const MARKS: readonly Mark[] = ['false-fail', 'false-pass', 'confirmed-bug']
 
@@ -104,5 +114,81 @@ describe('426-02 choice order and meaning', () => {
     for (const cls of FEEDBACK_OUTCOME_CLASSES) {
       expect([...FEEDBACK_CHOICE_ORDER[cls]].sort()).toEqual([...MARKS].sort())
     }
+  })
+})
+
+describe('426-02 the composer names its target', () => {
+  const checkout = { testIndex: 1, name: 'checkout', outcome: 'failed' } as const
+  const coupon = { stepIndex: 2, stepText: 'apply coupon', verifierVerdict: { pass: true, reasoning: '' } }
+
+  it('COMPOSER-HEADING: a step, a test in a suite and a single-test run each get their own heading parts', () => {
+    expect(composerHeading({ member: checkout, step: coupon, stepCount: 5, suite: true })).toEqual({
+      prefix: 'Feedback on step 3 of 5 · ',
+      name: 'apply coupon',
+    })
+    expect(composerHeading({ member: checkout, step: coupon, stepCount: 5, suite: false })).toEqual({
+      prefix: 'Feedback on step 3 of 5 · ',
+      name: 'apply coupon',
+    })
+    expect(composerHeading({ member: checkout, stepCount: 5, suite: true })).toEqual({
+      prefix: 'Feedback on ',
+      name: memberDisplayName(checkout),
+      suffix: ` ${memberHandleLabel(1)}`,
+    })
+    expect(composerHeading({ member: checkout, stepCount: 5, suite: false })).toEqual({
+      prefix: 'Feedback on ',
+      name: memberDisplayName(checkout),
+    })
+    expect(composerHeading({ member: checkout, step: { stepIndex: 0 }, stepCount: 1, suite: false }).name).toBe(UNNAMED_STEP_LABEL)
+    expect(feedbackPartsText({ prefix: 'a', name: 'b', suffix: 'c' })).toBe('abc')
+    expect(feedbackPartsText({ prefix: 'a' })).toBe('a')
+
+    const detail = {
+      members: [{ testIndex: 0, attempts: 1 }, { testIndex: 1, attempts: 1, totalSteps: 7 }],
+      steps: [0, 1, 2].map((stepIndex) => ({ testIndex: 0, stepIndex, cacheStatus: 'miss', verifierVerdict: { pass: true, reasoning: '' }, selfHealOccurred: false, briefDigest: 'd' }) as const),
+    }
+    expect(feedbackPartsText(feedbackTargetView({ detail, target: { testIndex: 0, stepIndex: 1 }, runStatus: 'passed' }).heading))
+      .toBe(`Feedback on step 2 of 3 · ${UNNAMED_STEP_LABEL}`)
+    expect(feedbackPartsText(feedbackTargetView({ detail, target: { testIndex: 1, stepIndex: 0 }, runStatus: 'passed' }).heading))
+      .toBe(`Feedback on step 1 of 7 · ${UNNAMED_STEP_LABEL}`)
+  })
+
+  it('SCOPE-LINE: whole test or one step, the suite step naming its test, then the target recorded result', () => {
+    const passedStep = { ...coupon, status: 'passed' as const }
+    expect(feedbackPartsText(scopeLine({ member: checkout, suite: true, runStatus: 'failed' })))
+      .toBe(`${WHOLE_TEST_SCOPE_TEXT} · ${RECORDED_RESULT_TEXT.failed}`)
+    expect(scopeLine({ member: checkout, step: passedStep, suite: true, runStatus: 'failed' })).toEqual({
+      prefix: `${ONE_STEP_SCOPE_TEXT} in `,
+      name: memberDisplayName(checkout),
+      suffix: ` ${memberHandleLabel(1)} · ${RECORDED_RESULT_TEXT.passed}`,
+    })
+    expect(feedbackPartsText(scopeLine({ member: checkout, step: passedStep, suite: false, runStatus: 'failed' })))
+      .toBe(`${ONE_STEP_SCOPE_TEXT} · ${RECORDED_RESULT_TEXT.passed}`)
+    expect(feedbackPartsText(scopeLine({ member: checkout, step: { ...coupon, status: 'healed' }, suite: false, runStatus: 'failed' })))
+      .toBe(`${ONE_STEP_SCOPE_TEXT} · ${RECORDED_RESULT_TEXT.healed}`)
+    expect(feedbackPartsText(scopeLine({ member: checkout, step: { ...coupon, status: 'failed' }, suite: false, runStatus: 'failed' })))
+      .toBe(`${ONE_STEP_SCOPE_TEXT} · ${RECORDED_RESULT_TEXT.passed}`)
+    expect(feedbackPartsText(scopeLine({ member: { ...checkout, outcome: 'timeout' }, step: { stepIndex: 2 }, suite: false, runStatus: 'failed' })))
+      .toBe(`${ONE_STEP_SCOPE_TEXT} · ${NO_STEP_VERDICT_TEXT(RECORDED_RESULT_TEXT.timeout)}`)
+    expect(feedbackPartsText(scopeLine({ member: { testIndex: 0 }, suite: false, runStatus: 'healed' })))
+      .toBe(`${WHOLE_TEST_SCOPE_TEXT} · ${RECORDED_RESULT_TEXT.healed}`)
+    expect(feedbackPartsText(scopeLine({ member: { testIndex: 0 }, suite: false, runStatus: 'running' })))
+      .toBe(`${WHOLE_TEST_SCOPE_TEXT} · ${RECORDED_RESULT_TEXT.failed}`)
+  })
+
+  it('RECORDED-RESULT-ROWS: one row per member outcome, each counting as the class the order uses', () => {
+    expect(RECORDED_RESULT_TEXT).toEqual({
+      passed: 'recorded: passed',
+      healed: 'recorded: healed — counts as passed',
+      failed: 'recorded: failed',
+      timeout: 'recorded: timed out — counts as failed',
+      cancelled: 'recorded: cancelled — counts as failed',
+      skipped: 'recorded: skipped — counts as failed',
+    })
+    for (const [outcome, text] of Object.entries(RECORDED_RESULT_TEXT)) {
+      expect(text.endsWith(memberOutcomeClass(outcome as keyof typeof RECORDED_RESULT_TEXT))).toBe(true)
+    }
+    expect(NO_STEP_VERDICT_TEXT(RECORDED_RESULT_TEXT.failed))
+      .toBe("no step verdict recorded — using the test's result (recorded: failed)")
   })
 })
