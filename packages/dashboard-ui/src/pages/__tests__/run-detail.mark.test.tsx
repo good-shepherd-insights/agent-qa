@@ -4,20 +4,36 @@ import { createRoot, type Root } from "react-dom/client"
 import { MemoryRouter, Route, Routes, useLocation, useNavigate } from "react-router"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import type {
+  Mark,
   RunDetailMember,
   RunDetailProjection,
   RunDetailStep,
   RunDetailSubAction,
+  RunsMarkPreviewResult,
 } from "@vostride/agent-qa-schema"
-import { asRef } from "@vostride/agent-qa-schema"
+import { RunsMarkPreviewResultSchema, RunsMarksHistoryResultSchema, asRef } from "@vostride/agent-qa-schema"
 
 import RunDetailPage from "@/pages/run-detail"
-import { MarkDeniedError } from "@/lib/api"
+import { MarkDeniedError, type MarksHistoryRead } from "@/lib/api"
 import { generateRunId, generateTestId } from "@vostride/agent-qa-ids"
 const RUN_ID = generateRunId()
 const TEST_ID = generateTestId()
 import type { RunDetailMemberMark } from "@vostride/agent-qa-schema"
 import { DID_NOT_RUN_LABEL, RUN_DETAIL_UNAVAILABLE_LABEL } from "@/lib/run-detail-view"
+import {
+  DRAFT_KEPT_STATUS,
+  FEEDBACK_CHOICE_ORDER,
+  NO_UNIQUE_ADDRESS_TEXT,
+  PREVIEW_DEBOUNCE_MS,
+  SENDING_STATUS,
+  SUBMIT_REASON_INVALID_CORRECTION,
+  SUBMIT_REASON_NO_UNIQUE_ADDRESS,
+  SUBMIT_REASON_SENDING,
+  feedbackEntryLabel,
+  feedbackRecordedText,
+} from "@/lib/feedback-view"
+import { CORRECTED_ACTION_LABEL, CORRECTED_EXPECTATION_LABEL } from "@/components/run-detail/mark-correction-fields"
+import type { FeedbackEntryButtonProps } from "@/components/run-detail/feedback-entry"
 
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
@@ -28,6 +44,8 @@ const {
   fetchRunDetailMock,
   fetchRunArtifactMock,
   fetchExecutionLogsMock,
+  fetchMarkPreviewMock,
+  fetchMarksHistoryMock,
 } = vi.hoisted(() => ({
   markRunMock: vi.fn(),
   fetchRunAnalysisMock: vi.fn(),
@@ -35,6 +53,8 @@ const {
   fetchRunDetailMock: vi.fn(),
   fetchRunArtifactMock: vi.fn(),
   fetchExecutionLogsMock: vi.fn(),
+  fetchMarkPreviewMock: vi.fn(),
+  fetchMarksHistoryMock: vi.fn(),
 }))
 
 vi.mock("@/lib/api", async (importOriginal) => ({
@@ -50,6 +70,9 @@ vi.mock("@/lib/api", async (importOriginal) => ({
   fetchRunArtifact: fetchRunArtifactMock,
   fetchExecutionLogs: fetchExecutionLogsMock,
   fetchRunEvidence: () => Promise.resolve({ kind: 'failed', error: 'Evidence read not configured in this fixture' }),
+  // The composer's two reads (426 Pitfall 7): without them the real helpers would fetch.
+  fetchMarkPreview: fetchMarkPreviewMock,
+  fetchMarksHistory: fetchMarksHistoryMock,
   triggerRun: vi.fn(),
   // This whole-module mock REPLACES `@/lib/api`, so an omitted export is `undefined` at the call
   // site and every cell here dies before it asserts. The real `watchPostProcessing` constructs an
@@ -69,9 +92,18 @@ vi.mock("@/components/page-skeleton", () => ({ DetailSkeleton: () => <div>Loadin
 vi.mock("@/components/empty-state", () => ({
   EmptyState: ({ title }: { title: string }) => <div>{title}</div>,
 }))
-vi.mock("@/components/run-detail/run-navbar", () => ({
-  RunNavbar: () => <div data-testid="run-navbar">navbar</div>,
-}))
+// The navbar double renders the real header entry, so the test-level door is the shipped contract.
+vi.mock("@/components/run-detail/run-navbar", async () => {
+  const { FeedbackEntryButton } = await import("@/components/run-detail/feedback-entry")
+  return {
+    RunNavbar: ({ feedbackEntry }: { feedbackEntry?: Omit<FeedbackEntryButtonProps, "scope"> }) => (
+      <div data-testid="run-navbar">
+        navbar
+        {feedbackEntry === undefined ? null : <FeedbackEntryButton scope="test" {...feedbackEntry} />}
+      </div>
+    ),
+  }
+})
 vi.mock("@/components/run-detail/tab-panels", () => ({
   TabPanels: ({ step }: { step: { id: string } | null }) => (
     <div data-testid="tab-panels" data-step-id={step?.id ?? ""} />
@@ -83,36 +115,41 @@ vi.mock("@/components/ui/tooltip", () => ({
   TooltipTrigger: ({ children }: { children: ReactNode }) => <>{children}</>,
   TooltipContent: ({ children }: { children: ReactNode }) => <>{children}</>,
 }))
-// The Select double keeps the OPTIONS addressable and the change handler real, so the cell that
-// asserts the filter writes the URL exercises the page's own handler rather than a stand-in.
-vi.mock("@/components/ui/select", () => ({
-  Select: ({ children, value, onValueChange }: {
-    children: ReactNode
-    value: string
-    onValueChange: (next: string) => void
-  }) => (
-    <div data-testid="member-select" data-value={value}>
-      <button type="button" data-select-change onClick={(e) => {
-        onValueChange((e.currentTarget as HTMLButtonElement).getAttribute("data-next") ?? "")
-      }} />
-      {children}
-    </div>
-  ),
-  SelectTrigger: ({ children }: { children: ReactNode }) => <div>{children}</div>,
-  SelectValue: () => <span>member filter</span>,
-  SelectContent: ({ children }: { children: ReactNode }) => <div>{children}</div>,
-  SelectItem: ({ children, value }: { children: ReactNode; value: string }) => (
-    <div data-select-item={value}>{children}</div>
-  ),
-}))
+// The select double keeps the root's value and onValueChange reachable: each item is a button that
+// calls the enclosing root's handler, so a cell can move the composer's test switcher.
+vi.mock("@/components/ui/select", async () => {
+  const React = await vi.importActual<typeof import("react")>("react")
+  const SelectRoot = React.createContext<((value: string) => void) | undefined>(undefined)
+  return {
+    Select: ({ children, value, onValueChange }: { children: ReactNode; value?: string; onValueChange?: (value: string) => void }) => (
+      <SelectRoot.Provider value={onValueChange}>
+        <div data-testid="member-select" data-value={value}>{children}</div>
+      </SelectRoot.Provider>
+    ),
+    SelectTrigger: ({ children, className: _className, ...rest }: { children: ReactNode; className?: string }) => <div {...rest}>{children}</div>,
+    SelectValue: () => <span>member filter</span>,
+    SelectContent: ({ children }: { children: ReactNode }) => <div>{children}</div>,
+    SelectItem: ({ children, value }: { children: ReactNode; value: string }) => {
+      const onValueChange = React.useContext(SelectRoot)
+      return <button type="button" data-select-item={value} onClick={() => onValueChange?.(value)}>{children}</button>
+    },
+  }
+})
+function dataAttributes(props: Record<string, unknown>) {
+  return Object.fromEntries(Object.entries(props).filter(([key]) => key.startsWith("data-")))
+}
 vi.mock("@/components/ui/resizable", () => ({
-  ResizablePanelGroup: ({ children }: { children: ReactNode }) => <div>{children}</div>,
-  ResizablePanel: ({ children }: { children: ReactNode }) => <div>{children}</div>,
+  ResizablePanelGroup: ({ children, ...rest }: { children: ReactNode }) => <div {...dataAttributes(rest)}>{children}</div>,
+  ResizablePanel: ({ children, id, ...rest }: { children: ReactNode; id?: string }) => (
+    <div data-panel-id={id} {...dataAttributes(rest)}>{children}</div>
+  ),
   ResizableHandle: () => <div />,
 }))
 vi.mock("@/components/ui/collapsible", () => ({
   Collapsible: ({ children }: { children: ReactNode }) => <div>{children}</div>,
-  CollapsibleTrigger: ({ children }: { children: ReactNode }) => <button type="button">{children}</button>,
+  CollapsibleTrigger: ({ children, asChild: _asChild, ...rest }: { children: ReactNode; asChild?: boolean }) => (
+    <button type="button" {...rest}>{children}</button>
+  ),
   CollapsibleContent: ({ children }: { children: ReactNode }) => <div>{children}</div>,
 }))
 vi.mock("@/components/ui/scroll-area", () => ({
@@ -121,8 +158,14 @@ vi.mock("@/components/ui/scroll-area", () => ({
 vi.mock("@/components/ui/badge", () => ({
   Badge: ({ children, ...rest }: { children: ReactNode }) => <span {...rest}>{children}</span>,
 }))
+// Every prop but the variant styling passes through, so data-*, aria-* and onClick reach the DOM.
 vi.mock("@/components/ui/button", () => ({
-  Button: ({ children }: { children: ReactNode }) => <button type="button">{children}</button>,
+  Button: ({ children, variant: _variant, size: _size, asChild: _asChild, ...rest }: {
+    children: ReactNode
+    variant?: string
+    size?: string
+    asChild?: boolean
+  }) => <button type="button" {...rest}>{children}</button>,
 }))
 
 function member(testIndex: number, extra: Partial<RunDetailMember> = {}): RunDetailMember {
@@ -249,6 +292,51 @@ async function renderAt(url: string) {
   return container
 }
 
+/** A consequences read covering exactly one recorded decision, so the corrected-action field shows. */
+function previewFor(input: { kind: Mark; testId?: string; stepIndex?: number }): RunsMarkPreviewResult {
+  return RunsMarkPreviewResultSchema.parse({
+    kind: 'consequences',
+    runId: RUN_ID,
+    prospective: true,
+    markKind: input.kind,
+    member: { testIndex: 7, ...(input.testId === undefined ? {} : { testId: input.testId }) },
+    resolvedStep: { stepIndex: input.stepIndex ?? 2, reason: input.stepIndex === undefined ? 'failing-step' : 'step-mark' },
+    latest: { kind: 'first' },
+    basis: { ledgerOrdinal: 0 },
+    markedDecisionCount: 1,
+    groundTruth: [],
+    labels: [],
+    knowledge: { servedRecordIds: [], appendsEvidence: false, records: [], evidence: { confirmed: 0, overturned: 0 } },
+    draft: input.kind === 'confirmed-bug'
+      ? { kind: 'confirmed-bug' }
+      : { kind: 'no-draftable-fix', checked: { servedRecords: 0, procedureReads: 0, assertionDrift: false } },
+  })
+}
+
+function historyOf(entries: readonly (Record<string, unknown> & { markId: string })[]): MarksHistoryRead {
+  return {
+    kind: 'read',
+    result: RunsMarksHistoryResultSchema.parse({
+      kind: 'history',
+      runId: RUN_ID,
+      entries: entries.map((entry, index) => ({
+        runId: RUN_ID,
+        testIndex: 7,
+        kind: 'false-fail',
+        origin: 'user',
+        ordinal: index + 1,
+        markedAt: Date.UTC(2026, 8, 23, 10, index),
+        disposition: { kind: 'no-draftable-fix', checked: { servedRecords: 0, procedureReads: 0, assertionDrift: false } },
+        gold: [],
+        evidence: { confirmed: 0, overturned: 0 },
+        corrected: { expectation: false, action: false },
+        active: true,
+        ...entry,
+      })),
+    }),
+  }
+}
+
 beforeEach(() => {
   document.title = ""
   Element.prototype.scrollIntoView = vi.fn()
@@ -259,11 +347,15 @@ beforeEach(() => {
   fetchRunDetailMock.mockReset()
   fetchRunArtifactMock.mockReset()
   fetchExecutionLogsMock.mockReset()
+  fetchMarkPreviewMock.mockReset()
+  fetchMarksHistoryMock.mockReset()
 
   fetchExecutionLogsMock.mockResolvedValue({ logs: [] })
   fetchRunArtifactMock.mockResolvedValue({ run: { id: RUN_ID }, artifact: null, children: [], missingSections: ["artifact"] })
   fetchRunMock.mockImplementation(async (id: string) => ({ run: runRow(id) }))
   fetchRunDetailMock.mockResolvedValue(TWO_MEMBERS)
+  fetchMarkPreviewMock.mockImplementation(async (_runId: string, input: { kind: Mark; testId?: string; stepIndex?: number }) => ({ kind: 'read', result: previewFor(input) }))
+  fetchMarksHistoryMock.mockResolvedValue(historyOf([]))
 })
 
 function deferred<T>() {
@@ -272,29 +364,101 @@ function deferred<T>() {
   const promise = new Promise<T>((yes, no) => { resolve = yes; reject = no })
   return { promise, resolve, reject }
 }
-const MEMBER_SCOPE = '[data-member-mark]'
-const STEP_SCOPE = '[data-step-id="7:2"]'
+
+// 426-12: the pill forms' scopes, re-addressed to the one composer. A target is the composer address
+// it opens and the explicit act that opens it there.
+interface ComposerTarget {
+  address: string
+  open: () => Promise<void>
+}
+const TEST_TARGET: ComposerTarget = {
+  address: '7:run',
+  open: () => click('[data-feedback-entry="test"]'),
+}
+const STEP_TARGET: ComposerTarget = {
+  address: '7:2',
+  open: async () => {
+    if (container!.querySelector('[data-step-id="7:2"]')?.getAttribute('aria-selected') !== 'true') await click('[data-step-id="7:2"] > button')
+    await click('[data-step-id="7:2"] [data-feedback-entry="step"]')
+  },
+}
+/** A suite member's whole test, reached through the composer's test switcher. */
+function memberTarget(testIndex: number): ComposerTarget {
+  return {
+    address: `${String(testIndex)}:run`,
+    open: async () => {
+      if (composerTarget()?.endsWith(':run') !== true) await click('[data-feedback-entry="test"]')
+      if (composerTarget() !== `${String(testIndex)}:run`) await click(`[data-feedback-composer] [data-select-item="${String(testIndex)}"]`)
+    },
+  }
+}
 const ACTION_TEXT = '{"type":"click","ref":"e1"}'
-async function input(selector: string, value: string) {
+const composer = () => container!.querySelector<HTMLElement>('[data-feedback-composer]')
+const composerTarget = () => composer()?.getAttribute('data-feedback-target') ?? null
+function inComposer<T extends Element = HTMLElement>(selector: string) {
+  return composer()?.querySelector<T>(selector) ?? null
+}
+function labelled(text: string) {
+  const label = [...(composer()?.querySelectorAll('label') ?? [])].find(entry => entry.textContent === text)
+  return label === undefined ? null : document.getElementById(label.htmlFor) as HTMLTextAreaElement | null
+}
+const statusText = () => inComposer('[data-feedback-status]')?.textContent
+const submitButton = () => inComposer('[data-feedback-submit]')!
+const submitReason = () => inComposer('[data-feedback-submit-reason]')?.textContent
+const choice = (kind: Mark) => `[data-feedback-composer] [data-feedback-choice="${kind}"] [role="radio"]`
+const headerEntry = () => container!.querySelector('[data-feedback-entry="test"]')
+const stepEntry = () => container!.querySelector('[data-step-id="7:2"] [data-feedback-entry="step"]')
+const entryOf = (target: ComposerTarget) => target === STEP_TARGET ? stepEntry() : headerEntry()
+async function type(field: HTMLTextAreaElement | null, value: string) {
+  expect(field, 'no field to type into').not.toBeNull()
   await act(async () => {
-    const field = container!.querySelector<HTMLTextAreaElement>(selector)!
     Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(field, value)
-    field.dispatchEvent(new Event('input', { bubbles: true }))
+    field!.dispatchEvent(new Event('input', { bubbles: true }))
   })
+  await flushRender()
 }
-async function draft(scope: string) {
-  await click(`${scope} [data-mark-kind="false-fail"]`)
-  await input(`${scope} [data-mark-note]`, 'Keep this note')
-  await input(`${scope} [aria-label="Corrected expectation"]`, 'Keep this expectation')
-  await input(`${scope} [aria-label="Corrected action JSON"]`, ACTION_TEXT)
+/** Lets a debounced preview fire and land, so the read on screen is the current one. */
+async function settle() {
+  await act(async () => { vi.advanceTimersByTime(PREVIEW_DEBOUNCE_MS) })
+  await flushRender()
 }
-function expectDraft(scope: string, action = ACTION_TEXT) {
-  expect(container!.querySelector<HTMLTextAreaElement>(`${scope} [data-mark-note]`)?.value).toBe('Keep this note')
-  expect(container!.querySelector<HTMLTextAreaElement>(`${scope} [aria-label="Corrected expectation"]`)?.value).toBe('Keep this expectation')
-  expect(container!.querySelector<HTMLTextAreaElement>(`${scope} [aria-label="Corrected action JSON"]`)?.value).toBe(action)
+async function openComposer(target: ComposerTarget) {
+  if (composerTarget() !== target.address) await target.open()
+  await settle()
+  expect(composerTarget()).toBe(target.address)
 }
-function refreshed(scope: string, receipt = marked): RunDetailProjection {
-  return { ...initial, members: [{ ...initial.members[0], marks: [{ ...receipt, ...(scope === STEP_SCOPE ? { stepIndex: 2 } : {}) }] }] }
+async function draft(target: ComposerTarget, action: string | null = ACTION_TEXT) {
+  await openComposer(target)
+  await click(choice('false-fail'))
+  await settle()
+  await type(inComposer('[data-feedback-note]'), 'Keep this note')
+  await click('[data-feedback-composer] [data-feedback-correction]')
+  await type(labelled(CORRECTED_EXPECTATION_LABEL), 'Keep this expectation')
+  if (action !== null) await type(labelled(CORRECTED_ACTION_LABEL), action)
+  await settle()
+}
+async function expectDraft(target: ComposerTarget, action: string | null = ACTION_TEXT) {
+  await openComposer(target)
+  expect(inComposer<HTMLTextAreaElement>('[data-feedback-note]')?.value).toBe('Keep this note')
+  expect(labelled(CORRECTED_EXPECTATION_LABEL)?.value).toBe('Keep this expectation')
+  if (action === null) expect(labelled(CORRECTED_ACTION_LABEL)).toBeNull()
+  else expect(labelled(CORRECTED_ACTION_LABEL)?.value).toBe(action)
+}
+async function submitFeedback() {
+  await click('[data-feedback-composer] [data-feedback-submit]')
+}
+async function send(target: ComposerTarget, kind: Mark) {
+  await openComposer(target)
+  await click(choice(kind))
+  await settle()
+  await submitFeedback()
+}
+function refreshed(target: ComposerTarget, receipt = marked): RunDetailProjection {
+  return { ...initial, members: [{ ...initial.members[0], marks: [{ ...receipt, ...(target === STEP_TARGET ? { stepIndex: 2 } : {}) }] }] }
+}
+/** runs.detail answers `before` until a mark has been sent, then `after` (426 re-reads it on every open). */
+function detailAcrossMark(before: RunDetailProjection, after: () => RunDetailProjection | Promise<RunDetailProjection>) {
+  fetchRunDetailMock.mockImplementation(async () => markRunMock.mock.calls.length > 0 ? after() : before)
 }
 async function navigateTo(id: string) {
   container!.querySelector<HTMLButtonElement>('[data-navigate]')!.dataset.to = `/runs/${id}`
@@ -302,31 +466,41 @@ async function navigateTo(id: string) {
 }
 
 describe('419-15 scoped draft lifecycle', () => {
-  beforeEach(() => { fetchRunDetailMock.mockResolvedValue(initial) })
-  it.each([MEMBER_SCOPE, STEP_SCOPE])('retains the full %s draft through POST and authoritative refresh', async scope => {
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    fetchRunDetailMock.mockResolvedValue(initial)
+  })
+  it.each([['test', TEST_TARGET], ['step', STEP_TARGET]] as const)('retains the full %s draft through POST and authoritative refresh', async (_name, target) => {
     const post = deferred<unknown>()
     const refresh = deferred<RunDetailProjection>()
     markRunMock.mockReturnValue(post.promise)
-    fetchRunDetailMock.mockResolvedValueOnce(initial).mockReturnValueOnce(refresh.promise)
+    detailAcrossMark(initial, () => refresh.promise)
     await renderAt(`/runs/${RUN_ID}`)
-    await draft(scope)
-    await click(`${scope} [data-mark-submit]`)
-    expectDraft(scope)
-    expect(container!.querySelector(`${scope} [data-mark-status]`)?.textContent).toBe('Mark submission pending.')
-    expect(container!.querySelector(`${scope} [data-mark-status]`)?.getAttribute('aria-live')).toBe('polite')
-    expect(container!.querySelector(`${scope} [data-mark-status]`)?.getAttribute('aria-atomic')).toBe('true')
-    await click(`${scope} [data-mark-submit]`)
+    await draft(target)
+    await submitFeedback()
+    await expectDraft(target)
+    const status = inComposer('[data-feedback-status]')!
+    expect(status.textContent).toBe(SENDING_STATUS)
+    expect(status.getAttribute('role')).toBe('status')
+    expect(status.getAttribute('aria-live')).toBe('polite')
+    expect(status.getAttribute('aria-atomic')).toBe('true')
+    expect(submitButton().getAttribute('aria-disabled')).toBe('true')
+    await submitFeedback()
     expect(markRunMock).toHaveBeenCalledTimes(1)
+    const historyReads = fetchMarksHistoryMock.mock.calls.length
     await act(async () => post.resolve({ kind: 'marked', receipt: marked }))
-    expectDraft(scope)
-    expect(container!.textContent).not.toContain('Mark saved.')
-    await act(async () => refresh.resolve(refreshed(scope)))
-    expect(container!.querySelector(`${scope} [data-mark-note]`)).toBeNull()
-    expect(container!.querySelector(`${scope} [data-mark-status]`)?.textContent).toBe('Mark saved. Receipt refreshed.')
-    expect(container!.querySelector(`${scope} [data-mark-chip]`)?.textContent).toContain('· 2')
+    await flushRender()
+    await expectDraft(target)
+    expect(container!.textContent).not.toContain(feedbackRecordedText(marked.disposition))
+    await act(async () => refresh.resolve(refreshed(target)))
+    await flushRender()
+    expect(inComposer<HTMLTextAreaElement>('[data-feedback-note]')?.value).toBe('')
+    expect(statusText()).toBe(feedbackRecordedText(marked.disposition))
+    expect(entryOf(target)?.getAttribute('data-feedback-marked')).toBe('true')
+    expect(fetchMarksHistoryMock.mock.calls.length).toBeGreaterThan(historyReads)
   })
-  for (const scope of [MEMBER_SCOPE, STEP_SCOPE]) {
-    it.each(['denied', 'no-channel', 'ambiguous-correction', 'run-not-found', 'transport', 'refetch', 'wrong-run', 'missing', 'wrong-member', 'wrong-step', 'wrong-id', 'wrong-ordinal', 'wrong-kind'])('retains %s on ' + scope, async failure => {
+  for (const [name, target] of [['test', TEST_TARGET], ['step', STEP_TARGET]] as const) {
+    it.each(['denied', 'no-channel', 'ambiguous-correction', 'run-not-found', 'transport', 'refetch', 'wrong-run', 'missing', 'wrong-member', 'wrong-step', 'wrong-id', 'wrong-ordinal', 'wrong-kind'])('retains %s on the ' + name + ' target', async failure => {
       const base = failure === 'wrong-member'
         ? { ...initial, members: [...initial.members, member(8, { testId: generateTestId(), marks: [] })] }
         : initial
@@ -335,56 +509,63 @@ describe('419-15 scoped draft lifecycle', () => {
       else if (failure === 'ambiguous-correction' || failure === 'run-not-found') markRunMock.mockResolvedValue({ kind: failure })
       else {
         markRunMock.mockResolvedValue({ kind: 'marked', receipt: marked })
-        let next = refreshed(scope)
+        let next = refreshed(target)
         if (failure === 'wrong-run') next = { ...next, runId: generateRunId() }
         if (failure === 'missing') next = initial
         if (failure === 'wrong-member') next = { ...base, members: [base.members[0], { ...base.members[1], marks: next.members[0].marks }] }
         if (failure === 'wrong-step') next = { ...next, members: [{ ...next.members[0], marks: [{ ...marked, stepIndex: 3 }] }] }
-        if (failure === 'wrong-id') next = refreshed(scope, { ...marked, markId: 'mark_1123456789ab' })
-        if (failure === 'wrong-ordinal') next = refreshed(scope, { ...marked, ordinal: 3 })
-        if (failure === 'wrong-kind') next = refreshed(scope, { ...marked, kind: 'false-pass' })
-        fetchRunDetailMock.mockResolvedValueOnce(base)
-        if (failure === 'refetch') fetchRunDetailMock.mockRejectedValueOnce(new Error('refresh failed'))
-        else fetchRunDetailMock.mockResolvedValueOnce(next)
+        if (failure === 'wrong-id') next = refreshed(target, { ...marked, markId: 'mark_1123456789ab' })
+        if (failure === 'wrong-ordinal') next = refreshed(target, { ...marked, ordinal: 3 })
+        if (failure === 'wrong-kind') next = refreshed(target, { ...marked, kind: 'false-pass' })
+        detailAcrossMark(base, () => failure === 'refetch' ? Promise.reject(new Error('refresh failed')) : next)
       }
       await renderAt(`/runs/${RUN_ID}`)
-      await draft(scope)
-      await click(`${scope} [data-mark-submit]`)
+      await draft(target)
+      await submitFeedback()
       {
-        expectDraft(scope)
-        expect(container!.querySelector<HTMLButtonElement>(`${scope} [data-mark-submit]`)?.disabled).toBe(false)
-        expect(container!.querySelector(`${scope} [data-mark-status]`)?.textContent).toContain('Draft retained.')
-        expect(container!.querySelector(`${scope} [data-mark-denied]`)?.getAttribute('role')).toBe('alert')
+        await expectDraft(target)
+        expect(submitButton().getAttribute('aria-disabled')).toBe('false')
+        expect(statusText()).toBe(DRAFT_KEPT_STATUS)
+        expect(inComposer('[data-feedback-denied]')?.getAttribute('role')).toBe('alert')
       }
-      expect(container!.textContent).not.toContain('Mark saved.')
+      expect(container!.textContent).not.toContain(feedbackRecordedText(marked.disposition))
     })
-    it('keeps selection, invalid text and component identity until explicit cancel at ' + scope, async () => {
+    it('keeps the choice, invalid text and field identity across a choice change and a close on the ' + name + ' target', async () => {
       await renderAt(`/runs/${RUN_ID}`)
-      await draft(scope)
-      await input(`${scope} [aria-label="Corrected action JSON"]`, '{')
-      const field = container!.querySelector(`${scope} [aria-label="Corrected action JSON"]`)
-      await click(`${scope} [data-mark-kind="false-fail"]`)
-      await click(`${scope} [data-mark-kind="false-pass"]`)
-      expectDraft(scope, '{')
-      expect(container!.querySelector(`${scope} [aria-label="Corrected action JSON"]`)).toBe(field)
-      expect(container!.querySelector(`${scope} [data-mark-kind="false-pass"]`)?.getAttribute('aria-pressed')).toBe('true')
-      expect(container!.querySelector(`${scope} [data-mark-submit]`)?.textContent).toBe('Record false-pass mark')
-      expect(container!.querySelector<HTMLButtonElement>(`${scope} [data-mark-submit]`)?.disabled).toBe(true)
-      await click(`${scope} [data-mark-cancel]`)
-      await click(`${scope} [data-mark-kind="false-fail"]`)
-      expect(container!.querySelector<HTMLTextAreaElement>(`${scope} [data-mark-note]`)?.value).toBe('')
-      expect(container!.querySelector<HTMLTextAreaElement>(`${scope} [aria-label="Corrected action JSON"]`)?.value).toBe('')
+      await draft(target)
+      await type(labelled(CORRECTED_ACTION_LABEL), '{')
+      await settle()
+      const note = inComposer('[data-feedback-note]')
+      const expectation = labelled(CORRECTED_EXPECTATION_LABEL)
+      const field = labelled(CORRECTED_ACTION_LABEL)
+      await click(choice('false-fail'))
+      await settle()
+      expect(labelled(CORRECTED_ACTION_LABEL)).toBe(field)
+      await click(choice('false-pass'))
+      await settle()
+      await expectDraft(target, '{')
+      expect(inComposer('[data-feedback-note]')).toBe(note)
+      expect(labelled(CORRECTED_EXPECTATION_LABEL)).toBe(expectation)
+      expect(container!.querySelector(choice('false-pass'))?.getAttribute('aria-checked')).toBe('true')
+      expect(labelled(CORRECTED_ACTION_LABEL)?.getAttribute('aria-invalid')).toBe('true')
+      expect(submitButton().getAttribute('aria-disabled')).toBe('true')
+      expect(submitReason()).toBe(SUBMIT_REASON_INVALID_CORRECTION)
+      await submitFeedback()
+      await click('[data-feedback-composer] [data-feedback-close]')
+      expect(composer()).toBeNull()
+      await expectDraft(target, '{')
+      expect(container!.querySelector(choice('false-pass'))?.getAttribute('aria-checked')).toBe('true')
       expect(markRunMock).not.toHaveBeenCalled()
     })
   }
   it('clears an already-marked draft only after the matching receipt refresh', async () => {
     markRunMock.mockResolvedValue({ kind: 'already-marked', receipt: marked })
-    fetchRunDetailMock.mockResolvedValueOnce(initial).mockResolvedValueOnce(refreshed(MEMBER_SCOPE))
+    detailAcrossMark(initial, () => refreshed(TEST_TARGET))
     await renderAt(`/runs/${RUN_ID}`)
-    await draft(MEMBER_SCOPE)
-    await click(`${MEMBER_SCOPE} [data-mark-submit]`)
-    expect(container!.querySelector(`${MEMBER_SCOPE} [data-mark-note]`)).toBeNull()
-    expect(container!.textContent).toContain('Mark saved. Receipt refreshed.')
+    await draft(TEST_TARGET)
+    await submitFeedback()
+    expect(inComposer<HTMLTextAreaElement>('[data-feedback-note]')?.value).toBe('')
+    expect(statusText()).toBe(feedbackRecordedText(marked.disposition))
   })
   it('keeps a second member draft and denial isolated across subsequent submissions', async () => {
     const secondId = generateTestId()
@@ -392,45 +573,60 @@ describe('419-15 scoped draft lifecycle', () => {
     markRunMock.mockRejectedValueOnce(new MarkDeniedError({ reason: 'First member denied', remedies: [] }))
       .mockRejectedValueOnce(new MarkDeniedError({ reason: 'Second member denied', remedies: [] }))
     await renderAt(`/runs/${RUN_ID}`)
-    const first = '[data-member="7"] [data-member-mark]'
-    const second = '[data-member="8"] [data-member-mark]'
+    const first = memberTarget(7)
+    const second = memberTarget(8)
     await draft(first)
     await draft(second)
-    await click(`${first} [data-mark-submit]`)
-    expect(container!.querySelector(`${second} [data-mark-denied]`)).toBeNull()
-    await click(`${second} [data-mark-submit]`)
-    expectDraft(first)
-    expectDraft(second)
-    expect(container!.querySelector(`${first} [data-mark-denied]`)?.textContent).toContain('First member denied')
-    expect(container!.querySelector(`${second} [data-mark-denied]`)?.textContent).toContain('Second member denied')
+    await openComposer(first)
+    await submitFeedback()
+    expect(inComposer('[data-feedback-denied]')?.textContent).toContain('First member denied')
+    await openComposer(second)
+    expect(inComposer('[data-feedback-denied]')).toBeNull()
+    await submitFeedback()
+    await expectDraft(second)
+    expect(inComposer('[data-feedback-denied]')?.textContent).toContain('Second member denied')
+    await expectDraft(first)
+    expect(statusText()).toBe(DRAFT_KEPT_STATUS)
+    expect(inComposer('[data-feedback-denied]')?.textContent).toContain('First member denied')
+    expect(inComposer('[data-feedback-denied]')?.textContent).not.toContain('Second member denied')
+    expect(markRunMock.mock.calls[0][1].testId).toBe(TEST_ID)
     expect(markRunMock.mock.calls[1][1].testId).toBe(secondId)
   })
   it('refuses an ambiguous testId without a POST and retains the selected member draft', async () => {
     fetchRunDetailMock.mockResolvedValue({ ...initial, members: [...initial.members, member(8, { testId: TEST_ID, marks: [] })] })
     await renderAt(`/runs/${RUN_ID}`)
-    const scope = '[data-member="7"] [data-member-mark]'
-    await draft(scope)
-    await click(`${scope} [data-mark-submit]`)
-    expectDraft(scope)
+    const target = memberTarget(7)
+    await draft(target, null)
+    expect(submitButton().getAttribute('aria-disabled')).toBe('true')
+    expect(submitReason()).toBe(SUBMIT_REASON_NO_UNIQUE_ADDRESS)
+    await submitFeedback()
+    await expectDraft(target, null)
     expect(markRunMock).not.toHaveBeenCalled()
-    expect(container!.querySelector(`${scope} [data-mark-denied]`)?.textContent).toContain('no unique mark address')
+    expect(fetchMarkPreviewMock).not.toHaveBeenCalled()
+    expect(inComposer('[data-feedback-no-address]')?.textContent).toContain(NO_UNIQUE_ADDRESS_TEXT)
   })
   it('keeps pending and result announcements local while retaining the other draft', async () => {
     const post = deferred<unknown>()
     markRunMock.mockReturnValue(post.promise)
     await renderAt(`/runs/${RUN_ID}`)
-    await draft(MEMBER_SCOPE)
-    await draft(STEP_SCOPE)
-    await click(`${MEMBER_SCOPE} [data-mark-submit]`)
-    expect(container!.querySelector(`${STEP_SCOPE} [data-mark-status]`)?.textContent).toBe('')
-    expectDraft(STEP_SCOPE)
+    await draft(TEST_TARGET)
+    await draft(STEP_TARGET)
+    await openComposer(TEST_TARGET)
+    await submitFeedback()
+    expect(statusText()).toBe(SENDING_STATUS)
+    await openComposer(STEP_TARGET)
+    expect(statusText()).toBe('')
+    await expectDraft(STEP_TARGET)
     await act(async () => post.reject(new MarkDeniedError({ reason: 'Denied here', remedies: [] })))
-    expect(container!.querySelector(`${STEP_SCOPE} [data-mark-denied]`)).toBeNull()
-    expect(container!.querySelector(`${STEP_SCOPE} [data-mark-status]`)?.textContent).toBe('')
-    expectDraft(MEMBER_SCOPE)
-    await input(`${MEMBER_SCOPE} [data-mark-note]`, 'Edited')
-    expect(container!.querySelector(`${MEMBER_SCOPE} [data-mark-status]`)?.textContent).toBe('')
-    expect(container!.querySelector(`${MEMBER_SCOPE} [data-mark-denied]`)).toBeNull()
+    await flushRender()
+    expect(inComposer('[data-feedback-denied]')).toBeNull()
+    expect(statusText()).toBe('')
+    await expectDraft(TEST_TARGET)
+    expect(statusText()).toBe(DRAFT_KEPT_STATUS)
+    expect(inComposer('[data-feedback-denied]')?.textContent).toContain('Denied here')
+    await type(inComposer('[data-feedback-note]'), 'Edited')
+    expect(statusText()).toBe('')
+    expect(inComposer('[data-feedback-denied]')).toBeNull()
   })
   it.each(['post', 'refresh'])('ignores stale %s after A-to-B-to-A and does not release the newer guard', async boundary => {
     const oldPost = deferred<unknown>()
@@ -440,30 +636,33 @@ describe('419-15 scoped draft lifecycle', () => {
     markRunMock.mockReturnValueOnce(oldPost.promise).mockReturnValueOnce(newPost.promise)
     fetchRunDetailMock.mockImplementation(async (id: string) => ({ ...initial, runId: id }))
     await renderAt(`/runs/${RUN_ID}`)
-    await draft(MEMBER_SCOPE)
+    await draft(TEST_TARGET)
     if (boundary === 'refresh') fetchRunDetailMock.mockReturnValueOnce(oldRefresh.promise)
-    await click(`${MEMBER_SCOPE} [data-mark-submit]`)
+    await submitFeedback()
     if (boundary === 'refresh') await act(async () => oldPost.resolve({ kind: 'marked', receipt: marked }))
     await navigateTo(other)
     await navigateTo(RUN_ID)
-    await draft(MEMBER_SCOPE)
-    await click(`${MEMBER_SCOPE} [data-mark-submit]`)
+    await draft(TEST_TARGET)
+    await submitFeedback()
     expect(markRunMock).toHaveBeenCalledTimes(2)
     await act(async () => {
       if (boundary === 'post') oldPost.resolve({ kind: 'marked', receipt: marked })
-      else oldRefresh.resolve(refreshed(MEMBER_SCOPE))
+      else oldRefresh.resolve(refreshed(TEST_TARGET))
     })
-    expectDraft(MEMBER_SCOPE)
-    expect(container!.querySelector(`${MEMBER_SCOPE} [data-mark-status]`)?.textContent).toBe('Mark submission pending.')
-    expect(container!.querySelector('[data-mark-chip]')).toBeNull()
-    await click(`${MEMBER_SCOPE} [data-mark-submit]`)
+    await flushRender()
+    await expectDraft(TEST_TARGET)
+    expect(statusText()).toBe(SENDING_STATUS)
+    expect(headerEntry()?.getAttribute('data-feedback-marked')).toBe('false')
+    await submitFeedback()
     expect(markRunMock).toHaveBeenCalledTimes(2)
     await act(async () => newPost.resolve({ kind: 'run-not-found' }))
-    expectDraft(MEMBER_SCOPE)
+    await flushRender()
+    await expectDraft(TEST_TARGET)
   })
 })
 
 afterEach(() => {
+  vi.useRealTimers()
   if (root) {
     act(() => root!.unmount())
   }
