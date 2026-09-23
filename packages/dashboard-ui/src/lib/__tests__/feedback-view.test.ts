@@ -32,9 +32,11 @@ import {
   feedbackPartsText,
   feedbackTargetView,
   hasUniqueAddress,
+  markGlyphLabel,
   memberOutcomeClass,
   resolveHeaderFeedbackTarget,
   scopeLine,
+  stepTriggerTooltip,
   submitBlockedReason,
 } from '@/lib/feedback-view'
 import { memberDisplayName, memberHandleLabel } from '@/lib/run-detail-view'
@@ -259,5 +261,14 @@ describe('426-03 a test the dashboard cannot address', () => {
     const base = { kind: undefined, currentKey: '', landedKey: undefined, landedOutcome: undefined, inFlight: false }
     expect(submitBlockedReason({ ...base, noUniqueAddress: true })).toBe(SUBMIT_REASON_NO_UNIQUE_ADDRESS)
     expect(submitBlockedReason({ ...base, noUniqueAddress: false })).toBe(SUBMIT_REASON_NO_CHOICE)
+  })
+})
+
+describe('426-04 the step door and the passive trace name themselves', () => {
+  it('MARK-GLYPH-LABEL: a passive glyph reads the plain choice; the step tooltip names the step, or says it is already marked', () => {
+    expect(markGlyphLabel('false-fail')).toBe('Marked: This should have passed')
+    for (const kind of MARKS) expect(markGlyphLabel(kind)).toBe(`Marked: ${CHOICE_LABELS[kind]}`)
+    expect(stepTriggerTooltip(3, false)).toBe('Give feedback on step 3')
+    expect(stepTriggerTooltip(3, true)).toBe('Step 3 is already marked — review or change')
   })
 })
