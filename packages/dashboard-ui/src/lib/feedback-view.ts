@@ -336,6 +336,36 @@ export const SENDING_STATUS = 'Sending feedback…'
 export const FEEDBACK_ENTRY_TEST_LABEL = 'Give feedback on this test'
 export const CLOSE_FEEDBACK_LABEL = 'Close feedback'
 
+export type FeedbackEntryScope = 'test' | 'step'
+
+// prettier-ignore
+export const FEEDBACK_ENTRY_SCOPES = [
+  'test',
+  'step',
+] as const satisfies readonly FeedbackEntryScope[]
+
+export const FEEDBACK_ENTRY_TOOLTIP = 'Give feedback'
+export const FEEDBACK_ENTRY_MARKED_TOOLTIP = 'Already marked — review or change'
+
+export interface FeedbackEntryLabelInput {
+  scope: FeedbackEntryScope
+  stepNumber?: number
+  memberName?: string
+  handle?: string
+  markedChoice?: Mark
+}
+
+/** A step is named by number, a suite test by name and handle; a marked target says how, in plain words. */
+export function feedbackEntryLabel({ scope, stepNumber, memberName, handle, markedChoice }: FeedbackEntryLabelInput): string {
+  const base =
+    scope === 'step'
+      ? `Give feedback on step ${String(stepNumber)}`
+      : handle === undefined
+        ? FEEDBACK_ENTRY_TEST_LABEL
+        : `Give feedback on ${memberName ?? ''} ${handle}`
+  return markedChoice === undefined ? base : `${base} — already marked: ${CHOICE_LABELS[markedChoice]}`
+}
+
 export const DISPOSITION_TEXT = {
   drafted: {
     fact: 'Recorded — a knowledge fact was drafted for review',
