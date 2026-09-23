@@ -10,8 +10,10 @@ import type { Mark } from '@vostride/agent-qa-schema'
 import {
   FEEDBACK_CHOICE_ORDER,
   FEEDBACK_COMPOSER_STATES,
+  FEEDBACK_ENTRY_SCOPES,
   FEEDBACK_OUTCOME_CLASSES,
   type FeedbackComposerState,
+  type FeedbackEntryScope,
   type FeedbackOutcomeClass,
 } from '../feedback-view'
 
@@ -38,4 +40,12 @@ test('C426-COMPOSER-STATES-EXACT', () => {
   expectTypeOf<(typeof FEEDBACK_COMPOSER_STATES)[number]>().toEqualTypeOf<Expected>()
   expectTypeOf<Exclude<FeedbackComposerState, (typeof FEEDBACK_COMPOSER_STATES)[number]>>().toEqualTypeOf<never>()
   expectTypeOf<Exclude<(typeof FEEDBACK_COMPOSER_STATES)[number], FeedbackComposerState>>().toEqualTypeOf<never>()
+})
+
+test('C426-ENTRY-SCOPES-EXACT', () => {
+  type Expected = 'test' | 'step'
+  expectTypeOf<FeedbackEntryScope>().toEqualTypeOf<Expected>()
+  expectTypeOf<(typeof FEEDBACK_ENTRY_SCOPES)[number]>().toEqualTypeOf<Expected>()
+  expectTypeOf<Exclude<FeedbackEntryScope, (typeof FEEDBACK_ENTRY_SCOPES)[number]>>().toEqualTypeOf<never>()
+  expectTypeOf<Exclude<(typeof FEEDBACK_ENTRY_SCOPES)[number], FeedbackEntryScope>>().toEqualTypeOf<never>()
 })

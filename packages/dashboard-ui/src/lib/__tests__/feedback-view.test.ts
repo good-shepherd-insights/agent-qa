@@ -17,12 +17,15 @@ import {
   CHOICE_MEANINGS,
   FEEDBACK_CHOICE_ORDER,
   FEEDBACK_COMPOSER_STATES,
+  FEEDBACK_ENTRY_SCOPES,
+  FEEDBACK_ENTRY_TEST_LABEL,
   FEEDBACK_OUTCOME_CLASSES,
   NO_STEP_VERDICT_TEXT,
   ONE_STEP_SCOPE_TEXT,
   RECORDED_RESULT_TEXT,
   WHOLE_TEST_SCOPE_TEXT,
   composerHeading,
+  feedbackEntryLabel,
   feedbackOutcomeClass,
   feedbackPartsText,
   feedbackTargetView,
@@ -190,5 +193,23 @@ describe('426-02 the composer names its target', () => {
     }
     expect(NO_STEP_VERDICT_TEXT(RECORDED_RESULT_TEXT.failed))
       .toBe("no step verdict recorded — using the test's result (recorded: failed)")
+  })
+})
+
+describe('426-03 the header entry names itself', () => {
+  it('ENTRY-SCOPES-RUNTIME: the entry scopes are exactly test and step', () => {
+    expect([...FEEDBACK_ENTRY_SCOPES]).toEqual(['test', 'step'])
+  })
+
+  it('ENTRY-LABEL: a step, a single test and a suite test each name their target, with the plain marked suffix', () => {
+    expect(feedbackEntryLabel({ scope: 'step', stepNumber: 3 })).toBe('Give feedback on step 3')
+    expect(feedbackEntryLabel({ scope: 'test' })).toBe(FEEDBACK_ENTRY_TEST_LABEL)
+    expect(feedbackEntryLabel({ scope: 'test', memberName: 'Checkout', handle: '#2' })).toBe('Give feedback on Checkout #2')
+    expect(feedbackEntryLabel({ scope: 'test', markedChoice: 'false-fail' })).toBe(
+      `${FEEDBACK_ENTRY_TEST_LABEL} — already marked: ${CHOICE_LABELS['false-fail']}`,
+    )
+    expect(feedbackEntryLabel({ scope: 'step', stepNumber: 1, markedChoice: 'confirmed-bug' })).toBe(
+      `Give feedback on step 1 — already marked: ${CHOICE_LABELS['confirmed-bug']}`,
+    )
   })
 })
