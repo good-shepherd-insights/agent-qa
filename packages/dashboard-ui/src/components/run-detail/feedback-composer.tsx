@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/button'
 import { Label } from '@/components/ui/label'
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import { Textarea } from '@/components/ui/textarea'
 import { DenialBlock } from '@/chat/chat-transcript'
 import { MaskedText } from '@/components/run-detail/masked-text'
 import {
@@ -13,6 +14,7 @@ import {
   CHOICE_MEANINGS,
   CLOSE_FEEDBACK_LABEL,
   FEEDBACK_CHOICE_ORDER,
+  NOTE_LABEL,
   NO_UNIQUE_ADDRESS_TEXT,
   PREVIEW_TITLE,
   SEND_FEEDBACK_LABEL,
@@ -37,12 +39,30 @@ export interface FeedbackComposerProps {
   noUniqueAddress?: boolean
   /** D-03: a test-level target in a multi-member run can be moved to another test. */
   testSwitcher?: FeedbackTestSwitcher
+  /** D-08: the selection has moved to another place; the target stays until the person switches. */
+  pinned?: FeedbackPinned
+  /** D-09: other addresses holding a non-empty draft. */
+  unsentDrafts?: readonly FeedbackUnsentDraft[]
+  note?: string
+  onNoteChange?: (note: string) => void
   previewState: string
   previewCurrent: boolean
   submitReason: string
   onSubmit: () => void
   status: string
   onClose: () => void
+}
+
+export interface FeedbackPinned {
+  text: string
+  switchLabel: string
+  onSwitch: () => void
+}
+
+export interface FeedbackUnsentDraft {
+  address: string
+  label: string
+  onOpen: () => void
 }
 
 export interface FeedbackTestSwitcher {
@@ -79,6 +99,10 @@ export function FeedbackComposer({
   onChoose,
   noUniqueAddress = false,
   testSwitcher,
+  pinned,
+  unsentDrafts = [],
+  note = '',
+  onNoteChange,
   previewState,
   previewCurrent,
   submitReason,
@@ -89,6 +113,7 @@ export function FeedbackComposer({
   const baseId = useId()
   const reasonId = `${baseId}-submit-reason`
   const switcherId = `${baseId}-test-switcher`
+  const noteId = `${baseId}-note`
   const blocked = submitReason !== ''
   const choices = FEEDBACK_CHOICE_ORDER[outcomeClass]
   return (
@@ -142,6 +167,30 @@ export function FeedbackComposer({
       </div>
 
       <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-3 py-4">
+        {pinned === undefined && unsentDrafts.length === 0 ? null : (
+          <div className="space-y-1">
+            {pinned === undefined ? null : (
+              <div data-feedback-pinned role="note" className="rounded-md bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
+                <p>{pinned.text}</p>
+                <Button variant="ghost" size="xs" data-feedback-switch className="-ml-2 mt-1" onClick={pinned.onSwitch}>
+                  {pinned.switchLabel}
+                </Button>
+              </div>
+            )}
+            {unsentDrafts.map((entry) => (
+              <Button
+                key={entry.address}
+                variant="ghost"
+                size="xs"
+                data-feedback-unsent-draft={entry.address}
+                className="text-muted-foreground hover:text-foreground"
+                onClick={entry.onOpen}
+              >
+                {entry.label}
+              </Button>
+            ))}
+          </div>
+        )}
         {noUniqueAddress ? (
           <div data-feedback-no-address>
             <DenialBlock neutralReason={NO_UNIQUE_ADDRESS_TEXT} remedies={[]} />
@@ -182,6 +231,19 @@ export function FeedbackComposer({
             })}
           </RadioGroup>
         </fieldset>
+
+        <div className="space-y-1">
+          <Label htmlFor={noteId} className="text-xs font-medium">
+            {NOTE_LABEL}
+          </Label>
+          <Textarea
+            id={noteId}
+            data-feedback-note
+            value={note}
+            onChange={(event) => onNoteChange?.(event.target.value)}
+            className="max-h-40 overflow-y-auto"
+          />
+        </div>
 
         <section data-feedback-preview data-preview-state={previewState} data-preview-current={String(previewCurrent)}>
           <h3 className="text-xs font-medium text-muted-foreground">{PREVIEW_TITLE}</h3>

@@ -40,6 +40,44 @@ export function feedbackAddress(target: FeedbackTarget): string {
   return markAddressKey(target)
 }
 
+export function isDraftEmpty(draft: FeedbackDraft): boolean {
+  return draft.kind === undefined && draft.note === '' && draft.expectation === '' && draft.actionText === ''
+}
+
+/**
+ * A place the composer can name (D-08, D-09): a step by number, a test by name and handle. `member`
+ * is given only in a suite; without it a test is "this test".
+ */
+export interface FeedbackPlace {
+  stepIndex?: number
+  member?: Pick<RunDetailMember, 'testIndex' | 'name'>
+}
+
+function placeText({ stepIndex, member }: FeedbackPlace): string {
+  const test = member === undefined ? undefined : `${memberDisplayName(member)} ${memberHandleLabel(member.testIndex)}`
+  if (stepIndex === undefined) return test ?? 'this test'
+  return test === undefined ? `step ${String(stepIndex + 1)}` : `step ${String(stepIndex + 1)} of ${test}`
+}
+
+/** Tests are named only when the viewed and the targeted test differ. */
+export function pinnedTargetText(viewing: FeedbackPlace, target: FeedbackPlace): string {
+  const differ =
+    viewing.member !== undefined && target.member !== undefined && viewing.member.testIndex !== target.member.testIndex
+  const viewed = differ ? viewing : { stepIndex: viewing.stepIndex }
+  const about = target.stepIndex === undefined || differ ? target : { stepIndex: target.stepIndex }
+  return `You're viewing ${placeText(viewed)} — this feedback is about ${placeText(about)}.`
+}
+
+export function switchTargetLabel(to: FeedbackPlace): string {
+  return `Switch to ${placeText(to)}`
+}
+
+export function unsentDraftLabel(place: FeedbackPlace): string {
+  return `Unsent draft: ${placeText(place)}`
+}
+
+export const NOTE_LABEL = 'Note (optional)'
+
 export const CHOICE_LABELS = {
   'false-fail': 'This should have passed',
   'false-pass': 'This should have failed',

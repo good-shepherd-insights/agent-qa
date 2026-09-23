@@ -14,12 +14,17 @@ import {
   feedbackRecordedText,
   feedbackTargetView,
   hasUniqueAddress,
+  isDraftEmpty,
+  pinnedTargetText,
   previewInputFor,
   previewRequestKey,
   resolveHeaderFeedbackTarget,
   submitBlockedReason,
+  switchTargetLabel,
+  unsentDraftLabel,
   type FeedbackComposerState,
   type FeedbackDraft,
+  type FeedbackPlace,
   type FeedbackTarget,
 } from '@/lib/feedback-view'
 import { memberDisplayName, memberHandleLabel } from '@/lib/run-detail-view'
@@ -33,6 +38,11 @@ interface UseRunFeedbackInput {
   selectedStep: { testIndex: number; stepIndex: number } | null
   memberFilter: number | undefined
   beforeOpen?: () => void
+}
+
+function targetOfAddress(address: string): FeedbackTarget {
+  const [testIndex, stepIndex] = address.split(':')
+  return stepIndex === 'run' ? { testIndex: Number(testIndex) } : { testIndex: Number(testIndex), stepIndex: Number(stepIndex) }
 }
 
 interface LandedPreview {
@@ -161,6 +171,14 @@ export function useRunFeedback({
     if (opener.current?.isConnected) opener.current.focus()
   }
 
+  const editNote = (note: string) => {
+    if (address === undefined || state === 'submitting') return
+    setDrafts((previous) => new Map(previous).set(address, { ...(previous.get(address) ?? EMPTY_DRAFT), note }))
+    setState('composing')
+    setStatus('')
+    setRecorded(undefined)
+  }
+
   const choose = (kind: Mark) => {
     if (target === null || address === undefined || state === 'submitting') return
     setDrafts((previous) => new Map(previous).set(address, { ...(previous.get(address) ?? EMPTY_DRAFT), kind }))
@@ -219,6 +237,42 @@ export function useRunFeedback({
         onChange: (testIndex: number) => retarget({ testIndex }),
       }
 
+  // D-08: the target is set only by an explicit act; the selection it was opened from may move on.
+  // `selectedStep` is the step owning the selection, null for a hook or no selection.
+  const suite = (detail?.members.length ?? 0) > 1
+  const placeMember = (testIndex: number) =>
+    suite ? (members.find((entry) => entry.testIndex === testIndex) ?? { testIndex }) : undefined
+  const viewing = selectedStep
+  const showPinned = target !== null && viewing !== null && (
+    target.stepIndex === undefined ? viewing.testIndex !== target.testIndex : feedbackAddress(viewing) !== address
+  )
+  const pinned = !showPinned || target === null || viewing === null
+    ? undefined
+    : {
+        text: pinnedTargetText(
+          { stepIndex: viewing.stepIndex, member: placeMember(viewing.testIndex) },
+          { stepIndex: target.stepIndex, member: placeMember(target.testIndex) },
+        ),
+        switchLabel: switchTargetLabel(
+          target.stepIndex === undefined
+            ? { member: placeMember(viewing.testIndex) }
+            : { stepIndex: viewing.stepIndex, member: viewing.testIndex === target.testIndex ? undefined : placeMember(viewing.testIndex) },
+        ),
+        onSwitch: () => retarget(target.stepIndex === undefined ? { testIndex: viewing.testIndex } : viewing),
+      }
+
+  // D-09: every other address holding a non-empty draft is one link away.
+  const unsentDrafts = [...drafts]
+    .filter(([key, entry]) => key !== address && !isDraftEmpty(entry))
+    .map(([key]) => {
+      const other = targetOfAddress(key)
+      const place: FeedbackPlace = {
+        stepIndex: other.stepIndex,
+        member: other.stepIndex !== undefined && other.testIndex === target?.testIndex ? undefined : placeMember(other.testIndex),
+      }
+      return { address: key, label: unsentDraftLabel(place), onOpen: () => retarget(other) }
+    })
+
   const composer: FeedbackComposerProps | undefined = !open || target === null || address === undefined || view === undefined
     ? undefined
     : {
@@ -234,6 +288,10 @@ export function useRunFeedback({
         onChoose: choose,
         noUniqueAddress: !addressable,
         testSwitcher,
+        pinned,
+        unsentDrafts,
+        note: draft.note,
+        onNoteChange: editNote,
         previewState: draft.kind === undefined || !addressable ? 'idle' : previewCurrent && landedOutcome !== undefined ? landedOutcome : 'loading',
         previewCurrent,
         submitReason,
@@ -249,7 +307,6 @@ export function useRunFeedback({
     ? undefined
     : detail?.members.find((entry) => entry.testIndex === headerTarget.testIndex)
   const headerMark = headerMember?.marks?.find((entry) => entry.stepIndex === undefined)
-  const suite = (detail?.members.length ?? 0) > 1
   const headerEntry: Omit<FeedbackEntryButtonProps, 'scope'> | undefined =
     headerTarget === undefined || headerMember?.marks === undefined
       ? undefined
