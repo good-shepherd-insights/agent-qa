@@ -51,6 +51,8 @@ export interface FeedbackPreviewProps {
   replacesTime?: string
   /** When the identical prior mark was made, from history; absent until history is read. */
   alreadyMarkedTime?: string
+  /** Looks an earlier mark's time up in the loaded history; the explicit times above win. */
+  timeFor?: (markId: string) => string | undefined
   /** Why the read on screen failed (D-19). */
   failure?: FeedbackReadFailure
   /** Re-issues the failed read; never submits. */
@@ -81,6 +83,7 @@ export function FeedbackPreview({
   updating = false,
   replacesTime,
   alreadyMarkedTime,
+  timeFor,
   failure,
   onRetry,
 }: FeedbackPreviewProps) {
@@ -111,14 +114,17 @@ export function FeedbackPreview({
       ) : (
         <div className={cn(updating && 'opacity-60')}>
           {state === 'consequences' && read?.kind === 'consequences' ? (
-            <ConsequenceLines read={read} replacesTime={replacesTime} />
+            <ConsequenceLines
+              read={read}
+              replacesTime={replacesTime ?? (read.latest.kind === 'supersedes' ? timeFor?.(read.latest.markId) : undefined)}
+            />
           ) : state === 'quarantined' && read?.kind === 'quarantined' ? (
             <div data-preview-line="quarantined" className={ARM_BLOCK_CLASS}>
               {quarantinedText(read.class)}
             </div>
           ) : state === 'already-marked' && read?.kind === 'already-marked' ? (
             <div data-preview-line="already-marked" className={ARM_BLOCK_CLASS}>
-              {alreadyMarkedText(alreadyMarkedTime)}
+              {alreadyMarkedText(alreadyMarkedTime ?? timeFor?.(read.prior.markId))}
             </div>
           ) : state === 'refused' && read !== undefined && isPreviewRefusal(read) ? (
             <div data-preview-refusal={read.kind}>

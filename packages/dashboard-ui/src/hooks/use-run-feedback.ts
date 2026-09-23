@@ -4,7 +4,7 @@ import type { FeedbackComposerProps } from '@/components/run-detail/feedback-com
 import type { FeedbackEntryButtonProps } from '@/components/run-detail/feedback-entry'
 import type { StepTreeFeedback } from '@/components/run-detail/step-tree'
 import { parseCorrectedAction } from '@/components/run-detail/mark-correction-fields'
-import { fetchMarkPreview, type MarkPreviewRead } from '@/lib/api'
+import { fetchMarkPreview, fetchMarksHistory, type MarkPreviewRead, type MarksHistoryRead } from '@/lib/api'
 import type { MarkDenial, OnMark } from '@/lib/analysis-view'
 import {
   DRAFT_KEPT_STATUS,
@@ -19,6 +19,7 @@ import {
   feedbackPreviewState,
   feedbackRecordedText,
   feedbackTargetView,
+  formatMarkTime,
   hasUniqueAddress,
   isDraftEmpty,
   pinnedTargetText,
@@ -99,7 +100,8 @@ function draftCorrection(entry: FeedbackDraft, gate: CorrectedActionGate): { cor
 /**
  * The run-detail page's feedback state (426 D-09). It lives above the composer so drafts survive the
  * composer closing and a run change discards them; the page's own `onMark` is the only writer.
- * Nothing is fetched until a choice is picked in an open composer.
+ * Nothing is fetched on mount: history is read when the composer opens, re-targets or records a
+ * mark, and a preview once a choice is picked.
  */
 export function useRunFeedback({
   runId,
@@ -130,6 +132,8 @@ export function useRunFeedback({
   const headingRef = useRef<HTMLHeadingElement>(null)
   const opener = useRef<HTMLElement | null>(null)
   const previewGeneration = useRef(0)
+  const [history, setHistory] = useState<MarksHistoryRead>()
+  const historyGeneration = useRef(0)
   const previewTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
   const submission = useRef<object | undefined>(undefined)
   const runRef = useRef(runId)
@@ -140,6 +144,8 @@ export function useRunFeedback({
   useEffect(() => {
     runRef.current = runId
     previewGeneration.current += 1
+    historyGeneration.current += 1
+    setHistory(undefined)
     clearTimeout(previewTimer.current)
     submission.current = undefined
     opener.current = null
@@ -153,9 +159,22 @@ export function useRunFeedback({
     setOutcomes(new Map())
     return () => {
       previewGeneration.current += 1
+      historyGeneration.current += 1
       clearTimeout(previewTimer.current)
     }
   }, [runId])
+
+  // D-22: no live push; the last read stays on screen until a newer one lands, and a read for an
+  // earlier open or target is dropped (the page's reloadDetail idiom).
+  const readHistory = () => {
+    const requestRunId = runRef.current
+    if (requestRunId === undefined) return
+    const generation = ++historyGeneration.current
+    void fetchMarksHistory(requestRunId).then((read) => {
+      if (historyGeneration.current !== generation || runRef.current !== requestRunId) return
+      setHistory(read)
+    })
+  }
 
   const address = target === null ? undefined : feedbackAddress(target)
   const draft = (address === undefined ? undefined : drafts.get(address)) ?? EMPTY_DRAFT
@@ -251,6 +270,7 @@ export function useRunFeedback({
     beforeOpen?.()
     opener.current = openerElement
     void reloadDetail?.().catch(() => undefined)
+    readHistory()
     const nextAddress = feedbackAddress(next)
     if (address !== nextAddress) {
       previewGeneration.current += 1
@@ -271,6 +291,7 @@ export function useRunFeedback({
     previewGeneration.current += 1
     setTarget(next)
     setFocusRequest((count) => count + 1)
+    readHistory()
     const kind = drafts.get(nextAddress)?.kind
     if (kind === undefined) clearTimeout(previewTimer.current)
     else schedulePreview(next, kind, requestCorrection(nextAddress, kind))
@@ -325,6 +346,7 @@ export function useRunFeedback({
         })
         setLanded(undefined)
         setOutcome(address, { state: 'recorded', status: '' })
+        readHistory()
       } else if (result === 'retained') {
         setOutcome(address, { state: 'retained', status: DRAFT_KEPT_STATUS })
       } else {
@@ -341,6 +363,10 @@ export function useRunFeedback({
     : detail?.members.find((entry) => entry.testIndex === target.testIndex)
       ?.marks?.find((entry) => entry.stepIndex === target.stepIndex)
   const statusText = state === 'recorded' ? (recordedMark === undefined ? '' : feedbackRecordedText(recordedMark.disposition)) : status
+
+  // D-17/D-18: an earlier mark's time is its history entry's own, and absent until history holds it.
+  const historyEntries = history?.kind === 'read' && history.result.kind === 'history' ? history.result.entries : []
+  const timeFor = (markId: string) => formatMarkTime(historyEntries.find((entry) => entry.markId === markId)?.markedAt)
 
   const view = target === null ? undefined : feedbackTargetView({ detail, target, runStatus })
   const members = detail?.members ?? []
@@ -424,6 +450,13 @@ export function useRunFeedback({
         previewUpdating,
         previewFailure,
         onPreviewRetry: retryPreview,
+        timeFor,
+        history: {
+          read: history,
+          detail,
+          newMarkId: recordedMark?.markId,
+          onRetry: readHistory,
+        },
         stepCount: view.stepCount,
         testId: members.find((entry) => entry.testIndex === target.testIndex)?.testId,
         onShowStep: (stepIndex: number) => {

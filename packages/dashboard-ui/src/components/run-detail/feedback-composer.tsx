@@ -1,4 +1,4 @@
-import { useId, type Ref } from 'react'
+import { useEffect, useId, useRef, type Ref } from 'react'
 import { X } from 'lucide-react'
 import type { Mark, RunsMarkPreviewResult } from '@vostride/agent-qa-schema'
 import type { MarkDenial } from '@/lib/analysis-view'
@@ -11,6 +11,7 @@ import { Textarea } from '@/components/ui/textarea'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { Skeleton } from '@/components/ui/skeleton'
 import { DenialBlock } from '@/chat/chat-transcript'
+import { FeedbackHistory, type FeedbackHistoryProps } from '@/components/run-detail/feedback-history'
 import { FeedbackPreview } from '@/components/run-detail/feedback-preview'
 import { FeedbackTechnicalDetails } from '@/components/run-detail/feedback-technical-details'
 import { MaskedText } from '@/components/run-detail/masked-text'
@@ -71,6 +72,10 @@ export interface FeedbackComposerProps {
   previewUpdating?: boolean
   previewReplacesTime?: string
   previewAlreadyMarkedTime?: string
+  /** An earlier mark's time from the loaded history; undefined until history holds that mark. */
+  timeFor?: (markId: string) => string | undefined
+  /** D-22: the run's mark history, listed for this target and for the whole run. */
+  history?: Omit<FeedbackHistoryProps, 'scope' | 'address'>
   /** Why the read on screen failed; its Retry re-reads and never submits (D-19). */
   previewFailure?: FeedbackReadFailure
   onPreviewRetry?: () => void
@@ -149,6 +154,8 @@ export function FeedbackComposer({
   previewUpdating = false,
   previewReplacesTime,
   previewAlreadyMarkedTime,
+  timeFor,
+  history,
   previewFailure,
   onPreviewRetry,
   stepCount = 0,
@@ -165,6 +172,16 @@ export function FeedbackComposer({
   const reasonId = `${baseId}-submit-reason`
   const switcherId = `${baseId}-test-switcher`
   const noteId = `${baseId}-note`
+  const bodyRef = useRef<HTMLDivElement>(null)
+  const newMarkId = history?.newMarkId
+  const historyRead = history?.read
+  // D-21: the recorded mark is brought into view where it lands in history; focus stays put.
+  useEffect(() => {
+    if (newMarkId === undefined) return
+    const entry = bodyRef.current?.querySelector<HTMLElement>('[data-history-new]')
+    const reduced = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false
+    entry?.scrollIntoView({ block: 'nearest', behavior: reduced ? 'auto' : 'smooth' })
+  }, [newMarkId, historyRead])
   const blocked = submitReason !== ''
   const choices = FEEDBACK_CHOICE_ORDER[outcomeClass]
   // D-14: the step a test-level mark lands on is the read's own answer, shown only for the current
@@ -243,7 +260,7 @@ export function FeedbackComposer({
         )}
       </div>
 
-      <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-3 py-4">
+      <div ref={bodyRef} className="min-h-0 flex-1 space-y-4 overflow-y-auto px-3 py-4">
         {pinned === undefined && unsentDrafts.length === 0 ? null : (
           <div className="space-y-1">
             {pinned === undefined ? null : (
@@ -353,9 +370,16 @@ export function FeedbackComposer({
           updating={previewUpdating}
           replacesTime={previewReplacesTime}
           alreadyMarkedTime={previewAlreadyMarkedTime}
+          timeFor={timeFor}
           failure={previewFailure}
           onRetry={onPreviewRetry}
         />
+
+        {history === undefined ? null : (
+          <div className="mt-6 border-t pt-6">
+            <FeedbackHistory scope={scope} address={target} {...history} />
+          </div>
+        )}
 
         <FeedbackTechnicalDetails
           kind={selected}
