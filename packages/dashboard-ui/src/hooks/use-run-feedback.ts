@@ -94,6 +94,7 @@ export function useRunFeedback({
   const [target, setTarget] = useState<FeedbackTarget | null>(null)
   const [drafts, setDrafts] = useState<ReadonlyMap<string, FeedbackDraft>>(() => new Map())
   const [landed, setLanded] = useState<LandedPreview>()
+  const [retrying, setRetrying] = useState(false)
   const [outcomes, setOutcomes] = useState<ReadonlyMap<string, AddressOutcome>>(() => new Map())
   const [focusRequest, setFocusRequest] = useState(0)
   const headingRef = useRef<HTMLHeadingElement>(null)
@@ -116,6 +117,7 @@ export function useRunFeedback({
     setTarget(null)
     setDrafts(new Map())
     setLanded(undefined)
+    setRetrying(false)
     setOutcomes(new Map())
     return () => {
       previewGeneration.current += 1
@@ -135,7 +137,9 @@ export function useRunFeedback({
   const previewCurrent = shown !== undefined && currentKey !== '' && shown.key === currentKey
   const addressable = target === null || hasUniqueAddress(detail, target.testIndex)
   const previewState = !addressable ? 'idle' : feedbackPreviewState({ kind: draft.kind, landed: shown?.read })
-  const previewUpdating = previewState !== 'idle' && previewState !== 'loading' && !previewCurrent
+  const previewFailure = shown?.read.kind === 'failed' ? shown.read.reason : undefined
+  const previewUpdating =
+    (previewState !== 'idle' && previewState !== 'loading' && !previewCurrent) || (retrying && previewState === 'failed')
   const submitReason = submitBlockedReason({
     noUniqueAddress: !addressable,
     kind: draft.kind,
@@ -146,13 +150,15 @@ export function useRunFeedback({
   })
 
   // Every scheduled fetch takes a new generation, so an answer for anything scheduled earlier —
-  // in flight or still debounced — is dropped when it lands.
-  const schedulePreview = (next: FeedbackTarget, kind: Mark) => {
+  // in flight or still debounced — is dropped when it lands. A landing only ever shows a read;
+  // nothing here submits (D-19).
+  const schedulePreview = (next: FeedbackTarget, kind: Mark, delay: number = PREVIEW_DEBOUNCE_MS) => {
     clearTimeout(previewTimer.current)
+    setRetrying(false)
     const generation = ++previewGeneration.current
     // D-01: a test onMark would refuse is never previewed either.
     if (!hasUniqueAddress(detailRef.current, next.testIndex)) return
-    previewTimer.current = setTimeout(() => {
+    const fire = () => {
       if (previewGeneration.current !== generation) return
       const requestRunId = runRef.current
       const previewMember = detailRef.current?.members.find((entry) => entry.testIndex === next.testIndex)
@@ -161,9 +167,19 @@ export function useRunFeedback({
       const requestAddress = feedbackAddress(next)
       void fetchMarkPreview(requestRunId, previewInputFor(previewMember, next, kind)).then((read) => {
         if (previewGeneration.current !== generation || runRef.current !== requestRunId) return
+        setRetrying(false)
         setLanded({ key, address: requestAddress, read })
       })
-    }, PREVIEW_DEBOUNCE_MS)
+    }
+    if (delay === 0) fire()
+    else previewTimer.current = setTimeout(fire, delay)
+  }
+
+  // Retry asks again for the form as it is, at once; the failed block stays, busy, until it lands.
+  const retryPreview = () => {
+    if (target === null || draft.kind === undefined || state === 'submitting') return
+    schedulePreview(target, draft.kind, 0)
+    setRetrying(true)
   }
 
   // Re-activating the entry already open keeps it open and refocuses the heading (D-07).
@@ -330,6 +346,8 @@ export function useRunFeedback({
         previewCurrent,
         previewRead: shown?.read.kind === 'read' ? shown.read.result : undefined,
         previewUpdating,
+        previewFailure,
+        onPreviewRetry: retryPreview,
         stepCount: view.stepCount,
         onShowStep: (stepIndex: number) => {
           setSelection?.({ type: 'step', stepId: runDetailStepKey(target.testIndex, stepIndex) })

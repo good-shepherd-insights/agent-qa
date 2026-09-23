@@ -2,6 +2,7 @@ import { useId, type Ref } from 'react'
 import { X } from 'lucide-react'
 import type { Mark, RunsMarkPreviewResult } from '@vostride/agent-qa-schema'
 import type { MarkDenial } from '@/lib/analysis-view'
+import type { FeedbackReadFailure } from '@/lib/api'
 import { Button } from '@/components/ui/button'
 import { Label } from '@/components/ui/label'
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group'
@@ -58,6 +59,10 @@ export interface FeedbackComposerProps {
   previewRead?: RunsMarkPreviewResult
   previewUpdating?: boolean
   previewReplacesTime?: string
+  previewAlreadyMarkedTime?: string
+  /** Why the read on screen failed; its Retry re-reads and never submits (D-19). */
+  previewFailure?: FeedbackReadFailure
+  onPreviewRetry?: () => void
   /** The target member's step count, for the resolved-step sentence. */
   stepCount?: number
   /** D-14: select the resolved step on the page without re-targeting the composer. */
@@ -126,6 +131,9 @@ export function FeedbackComposer({
   previewRead,
   previewUpdating = false,
   previewReplacesTime,
+  previewAlreadyMarkedTime,
+  previewFailure,
+  onPreviewRetry,
   stepCount = 0,
   onShowStep,
   submitReason,
@@ -309,6 +317,9 @@ export function FeedbackComposer({
           read={previewRead}
           updating={previewUpdating}
           replacesTime={previewReplacesTime}
+          alreadyMarkedTime={previewAlreadyMarkedTime}
+          failure={previewFailure}
+          onRetry={onPreviewRetry}
         />
       </div>
 
