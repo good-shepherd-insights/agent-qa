@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { act, type ReactNode } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
-import { MemoryRouter, Route, Routes, useLocation } from 'react-router'
+import { MemoryRouter, Route, Routes, useLocation, useNavigate, type NavigateFunction } from 'react-router'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type {
   RunDetailMember,
@@ -13,10 +13,12 @@ import { RunsMarkPreviewResultSchema } from '@vostride/agent-qa-schema'
 import { generateRunId, generateTestId } from '@vostride/agent-qa-ids'
 
 import RunDetailPage from '@/pages/run-detail'
-import { setRunConfirmScope, type MarkPreviewRead } from '@/lib/api'
+import { MarkDeniedError, setRunConfirmScope, type MarkPreviewRead } from '@/lib/api'
 import {
   CHOICE_LABELS,
   CHOICE_MEANINGS,
+  CLOSE_FEEDBACK_LABEL,
+  DRAFT_KEPT_STATUS,
   FEEDBACK_CHOICE_ORDER,
   NO_UNIQUE_ADDRESS_TEXT,
   PREVIEW_DEBOUNCE_MS,
@@ -46,6 +48,7 @@ const {
   fetchExecutionLogsMock,
   fetchMarkPreviewMock,
   fetchMarksHistoryMock,
+  triggerRunMock,
 } = vi.hoisted(() => ({
   markRunMock: vi.fn(),
   fetchRunAnalysisMock: vi.fn(),
@@ -55,6 +58,7 @@ const {
   fetchExecutionLogsMock: vi.fn(),
   fetchMarkPreviewMock: vi.fn(),
   fetchMarksHistoryMock: vi.fn(),
+  triggerRunMock: vi.fn(),
 }))
 
 vi.mock('@/lib/api', async (importOriginal) => ({
@@ -69,7 +73,7 @@ vi.mock('@/lib/api', async (importOriginal) => ({
   fetchRunEvidence: () => Promise.resolve({ kind: 'failed', error: 'not configured' }),
   fetchMarkPreview: fetchMarkPreviewMock,
   fetchMarksHistory: fetchMarksHistoryMock,
-  triggerRun: vi.fn(),
+  triggerRun: triggerRunMock,
   watchPostProcessing: () => () => {},
 }))
 
@@ -79,9 +83,12 @@ vi.mock('@/components/page-skeleton', () => ({ DetailSkeleton: () => <div>Loadin
 vi.mock('@/components/empty-state', () => ({
   EmptyState: ({ title }: { title: string }) => <div>{title}</div>,
 }))
+// The tab double renders the evidence strip's active tab, the composer's last focus fallback (D-07).
 vi.mock('@/components/run-detail/tab-panels', () => ({
-  TabPanels: ({ step }: { step: { id: string } | null }) => (
-    <div data-testid="tab-panels" data-step-id={step?.id ?? ''} />
+  TabPanels: ({ step, activeTab }: { step: { id: string } | null; activeTab?: string }) => (
+    <div data-testid="tab-panels" data-step-id={step?.id ?? ''}>
+      <button type="button" role="tab" aria-selected="true" data-active-tab={activeTab}>{activeTab}</button>
+    </div>
   ),
 }))
 vi.mock('@/components/ui/tooltip', () => ({
@@ -259,8 +266,11 @@ async function flushRender() {
   })
 }
 
+let navigateTo: NavigateFunction | undefined
+
 function LocationProbe() {
   const location = useLocation()
+  navigateTo = useNavigate()
   return <output data-location={`${location.pathname}${location.search}`} />
 }
 
@@ -330,7 +340,7 @@ afterEach(() => {
 
 describe('426-01 contextual feedback tracer', () => {
   it('TRACER-HEADER-ENTRY-TO-RECORDED: header entry → current preview → Send feedback → announced receipt', async () => {
-    fetchRunDetailMock.mockResolvedValueOnce(initial).mockResolvedValueOnce(refreshed)
+    fetchRunDetailMock.mockImplementation(async () => markRunMock.mock.calls.length > 0 ? refreshed : initial)
     markRunMock.mockResolvedValue({ kind: 'marked', receipt })
     await renderAt(`/runs/${RUN_ID}`)
 
@@ -376,7 +386,7 @@ describe('426-01 contextual feedback tracer', () => {
     const actual = await vi.importActual<typeof import('@/lib/api')>('@/lib/api')
     markRunMock.mockImplementation(actual.markRun)
     fetchMarkPreviewMock.mockImplementation(actual.fetchMarkPreview)
-    fetchRunDetailMock.mockResolvedValueOnce(initial).mockResolvedValueOnce(refreshed)
+    fetchRunDetailMock.mockImplementation(async () => markRunMock.mock.calls.length > 0 ? refreshed : initial)
     const bodies = new Map<string, Record<string, unknown>>()
     vi.stubGlobal('fetch', vi.fn(async (url: string, init: { body: string }) => {
       const body = JSON.parse(init.body) as Record<string, unknown>
@@ -513,7 +523,7 @@ describe('426-03 the composer names, switches and refuses its test', () => {
     fetchRunDetailMock.mockResolvedValue(suiteDetail())
     await renderAt(`/runs/${RUN_ID}?member=0`)
     const location = () => q('[data-location]')!.getAttribute('data-location')
-    const selectedRow = () => container!.querySelector('[aria-selected="true"]')?.textContent ?? null
+    const selectedRow = () => container!.querySelector('[role="treeitem"][aria-selected="true"]')?.textContent ?? null
     const locationBefore = location()
     const selectedBefore = selectedRow()
     expect(selectedBefore).not.toBeNull()
@@ -592,7 +602,7 @@ describe('426-04 the step door on the page', () => {
 
     await act(async () => { document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })) })
     await flushRender()
-    expect(container!.querySelector('[aria-selected="true"]')).toBeNull()
+    expect(container!.querySelector('[role="treeitem"][aria-selected="true"]')).toBeNull()
     expect(doors()).toHaveLength(1)
     expect(q('[data-feedback-entry="test"]')).not.toBeNull()
 
@@ -794,5 +804,202 @@ describe('426-05 the pinned target and per-address drafts', () => {
     expect(location()).not.toContain('draft')
     expect(window.location.search).toBe(searchBefore)
     expect(noteField()!.value).toBe('draft text only in memory')
+  })
+})
+
+// FOCUS, KEYS AND THE RETAINED DRAFT (426-05 · D-07, D-09, 419-15). The composer takes focus when it
+// opens and gives it back when it closes; it never lets a key reach the page's shortcut map; and a
+// retained outcome keeps the draft with its status and denial on its own address only.
+const heading = () => {
+  const composer = q('[data-feedback-composer]')
+  return composer === null ? null : document.getElementById(composer.getAttribute('aria-labelledby')!)
+}
+const headerEntry = () => q<HTMLButtonElement>('[data-feedback-entry="test"]')
+const activeTab = () => q('[role="tab"][aria-selected="true"]')
+
+async function key(target: Element, init: KeyboardEventInit) {
+  await act(async () => { target.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, cancelable: true, ...init })) })
+  await flushRender()
+}
+
+function suiteHalfMarked(): RunDetailProjection {
+  const suite = suiteDetail()
+  return { ...suite, members: [suite.members[0]!, { ...suite.members[1]!, marks: undefined }] }
+}
+
+describe('426-05 focus in and out, and the page keys', () => {
+  beforeEach(() => {
+    fetchRunDetailMock.mockResolvedValue(fourSteps)
+    fetchMarkPreviewMock.mockResolvedValue({ kind: 'read', result: CONSEQUENCES })
+    triggerRunMock.mockReturnValue(new Promise(() => {}))
+  })
+
+  it('ESC-CLOSES-RETURNS-FOCUS: opening focuses the heading; Esc in the note closes and returns focus to the header entry', async () => {
+    await renderAt(`/runs/${RUN_ID}`)
+    await click('[data-feedback-entry="test"]')
+    expect(heading()).not.toBeNull()
+    expect(document.activeElement).toBe(heading())
+
+    const note = noteField()!
+    act(() => note.focus())
+    await key(note, { key: 'Escape' })
+    expect(q('[data-feedback-composer]')).toBeNull()
+    expect(document.activeElement).toBe(headerEntry())
+  })
+
+  it('ESC-CLOSES-RETURNS-FOCUS: ✕ after the opening step door unmounts returns focus to the header entry', async () => {
+    await renderAt(`/runs/${RUN_ID}`)
+    await openStep('0:1')
+    const door = q('[data-feedback-entry="step"]')!
+    await selectStep('0:3')
+    expect(door.isConnected).toBe(false)
+    const close = q('[data-feedback-close]')!
+    expect(close.getAttribute('aria-label')).toBe(CLOSE_FEEDBACK_LABEL)
+    await click('[data-feedback-close]')
+    expect(q('[data-feedback-composer]')).toBeNull()
+    expect(document.activeElement).toBe(headerEntry())
+  })
+
+  it('ESC-CLOSES-RETURNS-FOCUS: with no header entry left, focus goes to the active evidence tab', async () => {
+    fetchRunDetailMock.mockResolvedValue(suiteHalfMarked())
+    await renderAt(`/runs/${RUN_ID}`)
+    await click('[data-feedback-entry="test"]')
+    expect(composerTarget()).toBe('0:run')
+    await selectStep('1:0')
+    expect(headerEntry()).toBeNull()
+    await click('[data-feedback-close]')
+    expect(q('[data-feedback-composer]')).toBeNull()
+    expect(activeTab()).not.toBeNull()
+    expect(document.activeElement).toBe(activeTab())
+  })
+
+  it('CLOSE-KEEPS-DRAFTS: closing keeps the typed draft; re-activating the open entry keeps it open and refocuses the heading', async () => {
+    await renderAt(`/runs/${RUN_ID}`)
+    await click('[data-feedback-entry="test"]')
+    await typeNote('still here after closing')
+    await click('[data-feedback-close]')
+    expect(q('[data-feedback-composer]')).toBeNull()
+    await click('[data-feedback-entry="test"]')
+    expect(noteField()!.value).toBe('still here after closing')
+
+    act(() => noteField()!.focus())
+    await click('[data-feedback-entry="test"]')
+    expect(q('[data-feedback-composer]')).not.toBeNull()
+    expect(headerEntry()!.getAttribute('aria-expanded')).toBe('true')
+    expect(document.activeElement).toBe(heading())
+  })
+
+  it('DETAIL-REREAD-ON-OPEN: opening re-reads runs.detail once, so a mark written elsewhere shows on the entry', async () => {
+    const markedElsewhere = projection({ ...fourSteps, members: [{ ...fourSteps.members[0]!, marks: [receipt] }] })
+    fetchRunDetailMock.mockResolvedValueOnce(fourSteps).mockResolvedValue(markedElsewhere)
+    await renderAt(`/runs/${RUN_ID}`)
+    await flushRender()
+    expect(fetchRunDetailMock).toHaveBeenCalledTimes(1)
+    expect(headerEntry()!.getAttribute('data-feedback-marked')).toBe('false')
+
+    await click('[data-feedback-entry="test"]')
+    expect(fetchRunDetailMock).toHaveBeenCalledTimes(2)
+    expect(headerEntry()!.getAttribute('data-feedback-marked')).toBe('true')
+    expect(q('[data-feedback-composer]')).not.toBeNull()
+  })
+
+  it('SHORTCUTS-ISOLATED: r, ArrowDown and 3 on a composer radio reach no page shortcut; an Esc a Radix layer consumed does not close', async () => {
+    await renderAt(`/runs/${RUN_ID}`)
+    await selectStep('0:1')
+    await click('[data-feedback-entry="test"]')
+    const selectedRow = () => q('[role="treeitem"][aria-selected="true"]')?.getAttribute('data-step-id') ?? null
+    expect(selectedRow()).toBe('0:1')
+    const tabBefore = activeTab()!.getAttribute('data-active-tab')
+
+    const radio = q('[data-feedback-choice] [role="radio"]')!
+    act(() => radio.focus())
+    await key(radio, { key: 'r' })
+    expect(triggerRunMock).not.toHaveBeenCalled()
+    await key(document.activeElement!, { key: 'ArrowDown' })
+    expect(selectedRow()).toBe('0:1')
+    await key(document.activeElement!, { key: '3' })
+    expect(activeTab()!.getAttribute('data-active-tab')).toBe(tabBefore)
+
+    const consume = (event: KeyboardEvent) => { if (event.key === 'Escape') event.preventDefault() }
+    document.addEventListener('keydown', consume, { capture: true })
+    try {
+      await key(document.activeElement!, { key: 'Escape' })
+    } finally {
+      document.removeEventListener('keydown', consume, { capture: true })
+    }
+    expect(q('[data-feedback-composer]')).not.toBeNull()
+    expect(selectedRow()).toBe('0:1')
+    await key(q('[data-feedback-choice] [role="radio"]')!, { key: 'Escape' })
+    expect(q('[data-feedback-composer]')).toBeNull()
+    expect(selectedRow()).toBe('0:1')
+  })
+
+  it('RUN-CHANGE-DISCARDS-DRAFTS: another run id closes the composer and every draft is gone on return', async () => {
+    const RUN_B = generateRunId()
+    fetchRunDetailMock.mockImplementation(async (id: string) => ({ ...fourSteps, runId: id }))
+    await renderAt(`/runs/${RUN_ID}`)
+    await click('[data-feedback-entry="test"]')
+    await click('[data-feedback-choice="confirmed-bug"] [role="radio"]')
+    await typeNote('a draft on run A')
+
+    await act(async () => { navigateTo!(`/runs/${RUN_B}`) })
+    await flushRender()
+    expect(q('[data-location]')!.getAttribute('data-location')!.split('?')[0]).toBe(`/runs/${RUN_B}`)
+    expect(q('[data-feedback-composer]')).toBeNull()
+    await act(async () => { navigateTo!(`/runs/${RUN_ID}`) })
+    await flushRender()
+    expect(q('[data-feedback-composer]')).toBeNull()
+
+    await click('[data-feedback-entry="test"]')
+    expect(noteField()!.value).toBe('')
+    expect(container!.querySelectorAll('[data-feedback-choice] [role="radio"][aria-checked="true"]')).toHaveLength(0)
+    expect(container!.querySelectorAll('[data-feedback-unsent-draft]')).toHaveLength(0)
+  })
+})
+
+describe('426-05 the retained draft, per address', () => {
+  beforeEach(() => {
+    fetchRunDetailMock.mockResolvedValue(fourSteps)
+  })
+
+  async function retainOnHeader(reason: string) {
+    await click('[data-feedback-entry="test"]')
+    await pickFirstChoiceAndLandPreview(Promise.resolve({ kind: 'read', result: CONSEQUENCES }))
+    await typeNote('keep this note')
+    markRunMock.mockRejectedValue(new MarkDeniedError({ reason, remedies: [] }))
+    await click('[data-feedback-submit]')
+    await flushRender()
+    expect(markRunMock).toHaveBeenCalledTimes(1)
+  }
+
+  it('RETAINED-KEEPS-DRAFT: a refused mark keeps the draft, announces it and shows the denial as an alert', async () => {
+    await renderAt(`/runs/${RUN_ID}`)
+    await retainOnHeader('Confirmation was denied')
+    expect(q('[data-feedback-composer]')!.getAttribute('data-feedback-state')).toBe('retained')
+    expect(q('[data-feedback-status]')!.textContent).toBe(DRAFT_KEPT_STATUS)
+    const denied = q('[data-feedback-denied]')
+    expect(denied, 'no denial in the composer').not.toBeNull()
+    expect(denied!.getAttribute('role')).toBe('alert')
+    expect(denied!.textContent).toContain('Confirmation was denied')
+    expect(noteField()!.value).toBe('keep this note')
+    expect(q(`[data-feedback-choice="${FEEDBACK_CHOICE_ORDER.failed[0]}"] [role="radio"]`)!.getAttribute('aria-checked')).toBe('true')
+  })
+
+  it('STATUS-PER-ADDRESS: another address shows its own empty status and no denial; returning shows the retained one again', async () => {
+    fetchMarkPreviewMock.mockResolvedValue({ kind: 'read', result: CONSEQUENCES })
+    await renderAt(`/runs/${RUN_ID}`)
+    await retainOnHeader('Denied on the whole test')
+    expect(q('[data-feedback-status]')!.textContent).toBe(DRAFT_KEPT_STATUS)
+
+    await openStep('0:1')
+    expect(q('[data-feedback-composer]')!.getAttribute('data-feedback-state')).toBe('composing')
+    expect(q('[data-feedback-status]')!.textContent).toBe('')
+    expect(q('[data-feedback-denied]')).toBeNull()
+
+    await click('[data-feedback-entry="test"]')
+    expect(composerTarget()).toBe('0:run')
+    expect(q('[data-feedback-composer]')!.getAttribute('data-feedback-state')).toBe('retained')
+    expect(q('[data-feedback-status]')!.textContent).toBe(DRAFT_KEPT_STATUS)
+    expect(q('[data-feedback-denied]')!.textContent).toContain('Denied on the whole test')
   })
 })
