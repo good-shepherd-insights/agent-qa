@@ -8,6 +8,7 @@ import type {
   RunDetailMemberMark,
   RunDetailProjection,
   RunDetailStep,
+  RunsMarkPreviewResult,
 } from '@vostride/agent-qa-schema'
 import { RunsMarkPreviewResultSchema } from '@vostride/agent-qa-schema'
 import { generateRunId, generateTestId } from '@vostride/agent-qa-ids'
@@ -22,12 +23,17 @@ import {
   FEEDBACK_CHOICE_ORDER,
   NO_UNIQUE_ADDRESS_TEXT,
   PREVIEW_DEBOUNCE_MS,
+  PREVIEW_UPDATING_TEXT,
+  SUBMIT_REASON_CHECKING,
   SUBMIT_REASON_NO_UNIQUE_ADDRESS,
   TEST_SWITCHER_LABEL,
   feedbackEntryLabel,
   feedbackRecordedText,
   markGlyphLabel,
   pinnedTargetText,
+  proposalDraftText,
+  resolvedStepText,
+  showStepLabel,
   switchTargetLabel,
   unsentDraftLabel,
 } from '@/lib/feedback-view'
@@ -1001,5 +1007,199 @@ describe('426-05 the retained draft, per address', () => {
     expect(q('[data-feedback-composer]')!.getAttribute('data-feedback-state')).toBe('retained')
     expect(q('[data-feedback-status]')!.textContent).toBe(DRAFT_KEPT_STATUS)
     expect(q('[data-feedback-denied]')!.textContent).toContain('Denied on the whole test')
+  })
+})
+
+// WHERE A TEST-LEVEL MARK LANDS, AND WHICH PREVIEW MAY AUTHORISE IT (426-06 · D-14, D-16, D-19). The
+// resolved step is the read's own answer — its reason keys the sentence and nothing on the page scans
+// the steps. The preview on screen is exact: a note never re-fetches, an older answer never overwrites
+// a newer one, and Send feedback waits for the read computed for the form as it is now, while the last
+// read stays on screen, dimmed, instead of blanking.
+function previewOf(over: Record<string, unknown>): RunsMarkPreviewResult {
+  return RunsMarkPreviewResultSchema.parse({
+    kind: 'consequences',
+    runId: RUN_ID,
+    prospective: true,
+    markKind: 'false-fail',
+    member: { testIndex: 0, testId: TEST_ID },
+    resolvedStep: { stepIndex: 2, reason: 'failing-step' },
+    latest: { kind: 'first' },
+    basis: { ledgerOrdinal: 0 },
+    markedDecisionCount: 1,
+    groundTruth: [],
+    labels: [],
+    knowledge: { servedRecordIds: [], appendsEvidence: false, records: [], evidence: { confirmed: 0, overturned: 0 } },
+    draft: { kind: 'no-draftable-fix', checked: { servedRecords: 0, procedureReads: 0, assertionDrift: false } },
+    ...over,
+  })
+}
+
+const CONSEQUENCES_STEP_3 = previewOf({})
+const QUARANTINED_STEP_3 = RunsMarkPreviewResultSchema.parse({
+  kind: 'quarantined', runId: RUN_ID, prospective: true, markKind: 'false-fail', member: { testIndex: 0, testId: TEST_ID },
+  resolvedStep: { stepIndex: 2, reason: 'failing-step' }, latest: { kind: 'first' }, basis: { ledgerOrdinal: 0 }, class: 'timeout',
+})
+const ALREADY_MARKED = RunsMarkPreviewResultSchema.parse({
+  kind: 'already-marked', runId: RUN_ID,
+  prior: { ...receipt, testIndex: 0, testId: TEST_ID }, basis: { ledgerOrdinal: 1, priorMarkOrdinal: 1 },
+})
+const RUN_NOT_FOUND = RunsMarkPreviewResultSchema.parse({ kind: 'run-not-found', runId: RUN_ID })
+const CONFIRMED_BUG = previewOf({ markKind: 'confirmed-bug', draft: { kind: 'confirmed-bug' } })
+
+const resolvedLine = () => q('[data-feedback-resolved-step]')
+const previewSection = () => q('[data-feedback-preview]')!
+const selectedRowId = () => q('[role="treeitem"][aria-selected="true"]')?.getAttribute('data-step-id') ?? null
+
+async function pickAndAdvance(kind: string) {
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+  await click(`[data-feedback-choice="${kind}"] [role="radio"]`)
+  await act(async () => { vi.advanceTimersByTime(PREVIEW_DEBOUNCE_MS) })
+  vi.useRealTimers()
+  await flushRender()
+}
+
+describe('426-06 the resolved step and Show step', () => {
+  beforeEach(() => {
+    fetchRunDetailMock.mockResolvedValue(fourSteps)
+  })
+
+  it('RESOLVED-STEP-LINE-ARMS: a current consequences or quarantined read names the resolved step; other arms and step targets do not', async () => {
+    const kind = FEEDBACK_CHOICE_ORDER.failed[0]
+    const expected = resolvedStepText('failing-step', kind, 3, 4)!
+    for (const [read, shown] of [[CONSEQUENCES_STEP_3, true], [QUARANTINED_STEP_3, true], [ALREADY_MARKED, false], [RUN_NOT_FOUND, false]] as const) {
+      await renderAt(`/runs/${RUN_ID}`)
+      await click('[data-feedback-entry="test"]')
+      const answer = deferred<MarkPreviewRead>()
+      await pickFirstChoiceAndLandPreview(answer.promise)
+      expect(resolvedLine()).toBeNull()
+      const pending = q('[data-feedback-resolved-step-pending]')
+      expect(pending, 'no skeleton holds the resolved-step slot while the first preview loads').not.toBeNull()
+      expect(pending!.className).toContain('h-4')
+      expect(pending!.className).toContain('w-3/4')
+      expect(pending!.className).toContain('motion-reduce:animate-none')
+
+      await act(async () => answer.resolve({ kind: 'read', result: read }))
+      await flushRender()
+      expect(previewSection().getAttribute('data-preview-current')).toBe('true')
+      expect(q('[data-feedback-resolved-step-pending]')).toBeNull()
+      if (shown) {
+        const line = resolvedLine()
+        expect(line, `no resolved-step line for ${read.kind}`).not.toBeNull()
+        expect(line!.getAttribute('data-resolved-reason')).toBe('failing-step')
+        expect(line!.textContent).toContain(expected)
+        expect(line!.querySelector('[data-feedback-show-step]')?.textContent).toBe(showStepLabel(3))
+        const choices = q('[data-feedback-choices]')!.closest('fieldset')!
+        expect(choices.nextElementSibling).toBe(line)
+      } else {
+        expect(resolvedLine(), `a resolved-step line for ${read.kind}`).toBeNull()
+      }
+      act(() => root!.unmount())
+      container!.remove()
+      root = null
+      container = null
+      fetchMarkPreviewMock.mockReset()
+    }
+
+    fetchMarkPreviewMock.mockResolvedValue({ kind: 'read', result: CONSEQUENCES_STEP_3 })
+    await renderAt(`/runs/${RUN_ID}`)
+    await openStep('0:1')
+    await pickAndAdvance(kind)
+    expect(previewSection().getAttribute('data-preview-current')).toBe('true')
+    expect(resolvedLine()).toBeNull()
+    expect(q('[data-feedback-resolved-step-pending]')).toBeNull()
+  })
+
+  it('SHOW-STEP-SELECTS-WITHOUT-RETARGET: Show step selects that step and the composer keeps its test target with no pinned line', async () => {
+    fetchMarkPreviewMock.mockResolvedValue({ kind: 'read', result: CONSEQUENCES_STEP_3 })
+    await renderAt(`/runs/${RUN_ID}`)
+    await click('[data-feedback-entry="test"]')
+    await pickAndAdvance(FEEDBACK_CHOICE_ORDER.failed[0])
+    expect(selectedRowId()).toBe('0:0')
+    const show = q('[data-feedback-show-step]')
+    expect(show, 'no Show step button').not.toBeNull()
+
+    await click('[data-feedback-show-step]')
+    expect(selectedRowId()).toBe('0:2')
+    expect(composerTarget()).toBe('0:run')
+    expect(q('[data-feedback-pinned]')).toBeNull()
+    expect(fetchMarkPreviewMock).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('426-06 the preview on screen is exact', () => {
+  beforeEach(() => {
+    fetchRunDetailMock.mockResolvedValue(fourSteps)
+  })
+
+  it('NOTE-DOES-NOT-REFETCH: typing a note fetches nothing, and the landed preview stays current and undimmed', async () => {
+    fetchMarkPreviewMock.mockResolvedValue({ kind: 'read', result: CONSEQUENCES_STEP_3 })
+    await renderAt(`/runs/${RUN_ID}`)
+    await click('[data-feedback-entry="test"]')
+    await pickAndAdvance(FEEDBACK_CHOICE_ORDER.failed[0])
+    expect(fetchMarkPreviewMock).toHaveBeenCalledTimes(1)
+    expect(previewSection().querySelector('dl'), 'the landed preview shows no lines').not.toBeNull()
+
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    await typeNote('the coupon field vanished')
+    await act(async () => { vi.advanceTimersByTime(2 * PREVIEW_DEBOUNCE_MS) })
+    vi.useRealTimers()
+    await flushRender()
+    expect(fetchMarkPreviewMock).toHaveBeenCalledTimes(1)
+    expect(previewSection().getAttribute('data-preview-current')).toBe('true')
+    expect(previewSection().getAttribute('aria-busy')).toBe('false')
+    expect(previewSection().textContent).not.toContain(PREVIEW_UPDATING_TEXT)
+    expect(q('[data-feedback-submit]')!.getAttribute('aria-disabled')).toBe('false')
+  })
+
+  it('PREVIEW-STALE-DROPPED: an older answer landing after a newer one never replaces it', async () => {
+    const first = deferred<MarkPreviewRead>()
+    const second = deferred<MarkPreviewRead>()
+    fetchMarkPreviewMock.mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise)
+    await renderAt(`/runs/${RUN_ID}`)
+    await click('[data-feedback-entry="test"]')
+    const [a, b] = FEEDBACK_CHOICE_ORDER.failed
+    await pickAndAdvance(a)
+    await pickAndAdvance(b)
+    expect(fetchMarkPreviewMock).toHaveBeenCalledTimes(2)
+    expect((fetchMarkPreviewMock.mock.calls[1]![1] as { kind: string }).kind).toBe(b)
+
+    await act(async () => second.resolve({ kind: 'read', result: CONFIRMED_BUG }))
+    await flushRender()
+    await act(async () => first.resolve({ kind: 'read', result: CONSEQUENCES_STEP_3 }))
+    await flushRender()
+    expect(previewSection().getAttribute('data-preview-state')).toBe('consequences')
+    expect(previewSection().getAttribute('data-preview-current')).toBe('true')
+    const proposals = q('[data-preview-line="proposals"]')
+    expect(proposals, 'the preview lines are not on the page').not.toBeNull()
+    expect(proposals!.textContent).toBe(proposalDraftText({ kind: 'confirmed-bug' }))
+    expect(q('[data-feedback-submit]')!.getAttribute('aria-disabled')).toBe('false')
+  })
+
+  it('SUBMIT-NEEDS-CURRENT-PREVIEW: a new pick keeps the old read on screen, dimmed, and locks Send feedback until its own read lands', async () => {
+    const later = deferred<MarkPreviewRead>()
+    fetchMarkPreviewMock.mockResolvedValueOnce({ kind: 'read', result: CONSEQUENCES_STEP_3 }).mockReturnValueOnce(later.promise)
+    await renderAt(`/runs/${RUN_ID}`)
+    await click('[data-feedback-entry="test"]')
+    const [a, b] = FEEDBACK_CHOICE_ORDER.failed
+    await pickAndAdvance(a)
+    expect(previewSection().getAttribute('data-preview-current')).toBe('true')
+    expect(q('[data-feedback-submit]')!.getAttribute('aria-disabled')).toBe('false')
+
+    await pickAndAdvance(b)
+    expect(previewSection().getAttribute('data-preview-current')).toBe('false')
+    expect(q('[data-feedback-submit]')!.getAttribute('aria-disabled')).toBe('true')
+    expect(q('[data-feedback-submit-reason]')!.textContent).toBe(SUBMIT_REASON_CHECKING)
+    expect(previewSection().querySelector('dl'), 'the old read blanked while the new one loads').not.toBeNull()
+    expect(previewSection().querySelector('.opacity-60')).not.toBeNull()
+    expect(previewSection().textContent).toContain(PREVIEW_UPDATING_TEXT)
+    expect(previewSection().getAttribute('aria-busy')).toBe('true')
+    await click('[data-feedback-submit]')
+    expect(markRunMock).not.toHaveBeenCalled()
+
+    await act(async () => later.resolve({ kind: 'read', result: CONFIRMED_BUG }))
+    await flushRender()
+    expect(previewSection().getAttribute('data-preview-current')).toBe('true')
+    expect(q('[data-feedback-submit]')!.getAttribute('aria-disabled')).toBe('false')
+    expect(previewSection().querySelector('.opacity-60')).toBeNull()
   })
 })
