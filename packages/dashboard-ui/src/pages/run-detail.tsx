@@ -1176,6 +1176,7 @@ export default function RunDetailPage() {
                   setupHooks={setupHooks}
                   teardownHooks={teardownHooks}
                   inlineLogs={stepExecutionLogs}
+                  feedback={detail ? feedback.tree : undefined}
                 />
               )}
             </div>

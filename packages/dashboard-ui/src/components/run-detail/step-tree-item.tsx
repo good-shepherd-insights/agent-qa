@@ -140,6 +140,7 @@ export function StepTreeItem({ step, isSelected, isExpanded, selection, playhead
       data-step-id={step.id}
       className={cn(
         "relative",
+        showTrigger && "@container/row",
         !embedded && "mx-2 mb-1.5 rounded-[2px]",
         hasChildren && isExpanded && !embedded && "border border-border/70 bg-muted/15"
       )}
@@ -150,7 +151,9 @@ export function StepTreeItem({ step, isSelected, isExpanded, selection, playhead
           "hover:bg-muted/50 transition-colors",
           isSelected && "rounded-md ring-1 ring-inset ring-border",
           isSelected && selection?.type === 'step' && "bg-muted/30",
-          showTrigger && "pr-9"
+          // Below 14rem the name column would collapse beside the door, so the duration takes its
+          // own line under the name instead.
+          showTrigger && "pr-9 @max-[14rem]/row:flex-wrap"
         )}
         onClick={() => onSelect({ type: 'step', stepId: step.id })}
       >
@@ -166,7 +169,7 @@ export function StepTreeItem({ step, isSelected, isExpanded, selection, playhead
         {mark !== undefined && address !== undefined && !showTrigger ? (
           <MarkGlyph scope="step" target={address} kind={mark.kind} />
         ) : null}
-        <span className="text-xs text-muted-foreground shrink-0 pt-0.5">
+        <span className={cn("text-xs text-muted-foreground shrink-0 pt-0.5", showTrigger && "@max-[14rem]/row:basis-full @max-[14rem]/row:pl-6")}>
           {formatDuration(step.duration)}
         </span>
       </button>

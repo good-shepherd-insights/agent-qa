@@ -49,6 +49,8 @@ import { ChevronRight } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { MaskedText } from "@/components/run-detail/masked-text"
 import { MemberMarkControls, VerdictBlock } from "@/components/run-detail/verdict-block"
+import { MarkGlyph } from "@/components/run-detail/feedback-entry"
+import { feedbackAddress } from "@/lib/feedback-view"
 import type { MemberVerdictView, OnMark, MarkDenial } from "@/lib/analysis-view"
 import { statusBadgeLook } from "@/lib/status"
 import { cn } from "@/lib/utils"
@@ -129,6 +131,9 @@ export function MemberGroup({
   // recorded no outcome at all — an absent word is not a word to paint, and defaulting it would put
   // a confident badge on a member nobody graded.
   const outcomeLook = member.outcome === undefined ? undefined : statusBadgeLook(member.outcome)
+  // 426 D-06: the whole-test trace. The header door carries it on a single-test run, which has no
+  // member header.
+  const testMark = member.marks?.find((entry) => entry.stepIndex === undefined)
 
   const body = isThin ? <ThinMemberBody group={group} /> : <ul role="group">{children}</ul>
 
@@ -178,6 +183,9 @@ export function MemberGroup({
         <span data-member-handle className="shrink-0 font-mono text-[10px] text-muted-foreground/70">
           {memberHandleLabel(member.testIndex)}
         </span>
+        {testMark === undefined ? null : (
+          <MarkGlyph scope="test" target={feedbackAddress({ testIndex: member.testIndex })} kind={testMark.kind} />
+        )}
         {rerun ? (
           <span data-member-rerun className="shrink-0 text-[10px] text-amber-500">
             {rerun}

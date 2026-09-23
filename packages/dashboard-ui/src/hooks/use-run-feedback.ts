@@ -2,6 +2,7 @@ import { useEffect, useId, useRef, useState } from 'react'
 import type { Mark, RunDetailProjection } from '@vostride/agent-qa-schema'
 import type { FeedbackComposerProps } from '@/components/run-detail/feedback-composer'
 import type { FeedbackEntryButtonProps } from '@/components/run-detail/feedback-entry'
+import type { StepTreeFeedback } from '@/components/run-detail/step-tree'
 import { fetchMarkPreview, type MarkPreviewRead } from '@/lib/api'
 import type { OnMark } from '@/lib/analysis-view'
 import {
@@ -126,10 +127,15 @@ export function useRunFeedback({
   const openFeedback = (next: FeedbackTarget, openerElement: HTMLElement) => {
     beforeOpen?.()
     opener.current = openerElement
-    if (address !== feedbackAddress(next)) {
+    const nextAddress = feedbackAddress(next)
+    if (address !== nextAddress) {
+      previewGeneration.current += 1
       setState('composing')
       setStatus('')
       setRecorded(undefined)
+      const kind = drafts.get(nextAddress)?.kind
+      if (kind === undefined) clearTimeout(previewTimer.current)
+      else schedulePreview(next, kind)
     }
     setTarget(next)
     setOpen(true)
@@ -260,5 +266,15 @@ export function useRunFeedback({
           onOpen: (openerElement: HTMLElement) => openFeedback(headerTarget, openerElement),
         }
 
-  return { open, target, composerId, openFeedback, retarget, composer, headerEntry }
+  const openStepFeedback = (testIndex: number, stepIndex: number, openerElement: HTMLElement) =>
+    openFeedback({ testIndex, stepIndex }, openerElement)
+
+  // D-04: the step door on the row owning the selection opens the composer on that row's own step.
+  const tree: StepTreeFeedback = {
+    composerId,
+    expandedAddress: open && target?.stepIndex !== undefined ? address : undefined,
+    onOpenStep: openStepFeedback,
+  }
+
+  return { open, target, composerId, openFeedback, openStepFeedback, retarget, composer, headerEntry, tree }
 }

@@ -28,9 +28,18 @@ import { displayStepsForGroups, type DisplayStep } from "@/lib/display-step"
 import type { RunDetailGroup } from "@/lib/run-detail-view"
 import type { MemberVerdictView, OnMark, MarkDenial } from "@/lib/analysis-view"
 import { hasStepId, type Selection } from "@/lib/selection"
+import { feedbackAddress } from "@/lib/feedback-view"
 import type { Playhead } from '@/lib/playhead'
 
+/** The step door's wiring (426 D-04): the page's composer, which address it is open on, and how to open it. */
+export interface StepTreeFeedback {
+  composerId: string
+  expandedAddress?: string
+  onOpenStep: (testIndex: number, stepIndex: number, opener: HTMLElement) => void
+}
+
 interface StepTreeProps {
+  feedback?: StepTreeFeedback
   onMark?: OnMark
   markDenial?: MarkDenial & { testIndex: number; stepIndex?: number }
   markPending?: boolean
@@ -154,6 +163,7 @@ export function StepTree({
   setupHooks = [],
   teardownHooks = [],
   inlineLogs = [],
+  feedback,
 }: StepTreeProps) {
   const displayGroups = useMemo<DisplayGroup[]>(() => {
     const flat = displayStepsForGroups(groups)
@@ -223,10 +233,16 @@ export function StepTree({
               onSelectMember={onSelectMember}
               onCitedArtifact={onCitedArtifact}
             >
-              {steps.map((step) => (
+              {steps.map((step) => {
+                const { testIndex, stepIndex } = step
+                const addressed = feedback !== undefined && testIndex !== undefined && stepIndex !== undefined
+                return (
                 <StepTreeItem
                   key={step.id}
                   step={step}
+                  onOpenFeedback={addressed ? (opener) => feedback.onOpenStep(testIndex, stepIndex, opener) : undefined}
+                  feedbackExpanded={addressed && feedback.expandedAddress === feedbackAddress({ testIndex, stepIndex })}
+                  composerId={feedback?.composerId}
                   onMark={onMark}
                   marks={group.member.marks}
                   markPending={markPending}
@@ -238,7 +254,8 @@ export function StepTree({
                   onSelect={onSelect}
                   inlineLogs={logsByStep.get(step.id) ?? []}
                 />
-              ))}
+                )
+              })}
             </MemberGroup>
           ))}
         </ul>
