@@ -5,20 +5,18 @@ import { fetchMarkPreview, type MarkPreviewRead } from '@/lib/api'
 import type { OnMark } from '@/lib/analysis-view'
 import {
   EMPTY_DRAFT,
-  FEEDBACK_CHOICE_ORDER,
   PREVIEW_DEBOUNCE_MS,
   SENDING_STATUS,
   feedbackAddress,
   feedbackRecordedText,
+  feedbackTargetView,
   previewInputFor,
   previewRequestKey,
   submitBlockedReason,
   type FeedbackComposerState,
   type FeedbackDraft,
-  type FeedbackOutcomeClass,
   type FeedbackTarget,
 } from '@/lib/feedback-view'
-import { memberDisplayName } from '@/lib/run-detail-view'
 
 interface UseRunFeedbackInput {
   runId: string | undefined
@@ -76,7 +74,6 @@ export function useRunFeedback({ runId, runStatus, detail, onMark, markPending }
     }
   }, [runId])
 
-  const member = target === null ? undefined : detail?.members.find((entry) => entry.testIndex === target.testIndex)
   const address = target === null ? undefined : feedbackAddress(target)
   const draft = (address === undefined ? undefined : drafts.get(address)) ?? EMPTY_DRAFT
   const currentKey = target === null || draft.kind === undefined ? '' : previewRequestKey({ kind: draft.kind, ...target })
@@ -166,20 +163,19 @@ export function useRunFeedback({ runId, runStatus, detail, onMark, markPending }
       ?.marks?.find((entry) => entry.stepIndex === recorded.stepIndex)
   const statusText = state === 'recorded' ? (recordedMark === undefined ? '' : feedbackRecordedText(recordedMark.disposition)) : status
 
-  const outcomeClass: FeedbackOutcomeClass = (member?.outcome ?? runStatus) === 'passed' || member?.outcome === 'healed'
-    ? 'passed'
-    : 'failed'
+  const view = target === null ? undefined : feedbackTargetView({ detail, target, runStatus })
 
-  const composer: FeedbackComposerProps | undefined = !open || target === null || address === undefined
+  const composer: FeedbackComposerProps | undefined = !open || target === null || address === undefined || view === undefined
     ? undefined
     : {
         composerId,
         headingId,
-        heading: member === undefined ? '' : `Feedback on ${memberDisplayName(member)}`,
+        heading: view.heading,
+        scopeLine: view.scopeLine,
         state,
         scope: target.stepIndex === undefined ? 'test' : 'step',
         target: address,
-        choices: FEEDBACK_CHOICE_ORDER[outcomeClass],
+        outcomeClass: view.outcomeClass,
         selected: draft.kind,
         onChoose: choose,
         previewState: draft.kind === undefined ? 'idle' : previewCurrent && landedOutcome !== undefined ? landedOutcome : 'loading',

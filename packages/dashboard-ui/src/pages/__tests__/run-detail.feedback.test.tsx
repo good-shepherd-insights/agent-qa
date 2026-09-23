@@ -16,6 +16,7 @@ import RunDetailPage from '@/pages/run-detail'
 import { setRunConfirmScope, type MarkPreviewRead } from '@/lib/api'
 import {
   CHOICE_LABELS,
+  CHOICE_MEANINGS,
   FEEDBACK_CHOICE_ORDER,
   PREVIEW_DEBOUNCE_MS,
   feedbackRecordedText,
@@ -316,7 +317,7 @@ describe('426-01 contextual feedback tracer', () => {
     expect(composer!.getAttribute('data-feedback-target')).toBe('0:run')
     const rows = [...container!.querySelectorAll('[data-feedback-choice]')]
     expect(rows.map(row => row.getAttribute('data-feedback-choice'))).toEqual([...FEEDBACK_CHOICE_ORDER.failed])
-    expect(rows.map(row => row.textContent)).toEqual(FEEDBACK_CHOICE_ORDER.failed.map(kind => CHOICE_LABELS[kind]))
+    expect(rows.map(row => row.textContent)).toEqual(FEEDBACK_CHOICE_ORDER.failed.map(kind => CHOICE_LABELS[kind] + CHOICE_MEANINGS.failed[kind]))
 
     const preview = deferred<MarkPreviewRead>()
     await pickFirstChoiceAndLandPreview(preview.promise)

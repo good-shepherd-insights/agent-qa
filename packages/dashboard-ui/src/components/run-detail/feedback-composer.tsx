@@ -4,22 +4,29 @@ import type { Mark } from '@vostride/agent-qa-schema'
 import { Button } from '@/components/ui/button'
 import { Label } from '@/components/ui/label'
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group'
+import { MaskedText } from '@/components/run-detail/masked-text'
 import {
   CHOICE_LABELS,
+  CHOICE_LEGEND,
+  CHOICE_MEANINGS,
   CLOSE_FEEDBACK_LABEL,
+  FEEDBACK_CHOICE_ORDER,
   PREVIEW_TITLE,
   SEND_FEEDBACK_LABEL,
   type FeedbackComposerState,
+  type FeedbackOutcomeClass,
+  type FeedbackTextParts,
 } from '@/lib/feedback-view'
 
 export interface FeedbackComposerProps {
   composerId: string
   headingId: string
-  heading: string
+  heading: FeedbackTextParts
+  scopeLine: FeedbackTextParts
   state: FeedbackComposerState
   scope: 'test' | 'step'
   target: string
-  choices: readonly Mark[]
+  outcomeClass: FeedbackOutcomeClass
   selected: Mark | undefined
   onChoose: (kind: Mark) => void
   previewState: string
@@ -28,6 +35,16 @@ export interface FeedbackComposerProps {
   onSubmit: () => void
   status: string
   onClose: () => void
+}
+
+function TextParts({ parts }: { parts: FeedbackTextParts }) {
+  return (
+    <>
+      {parts.prefix}
+      {parts.name === undefined ? null : <MaskedText text={parts.name} />}
+      {parts.suffix}
+    </>
+  )
 }
 
 /**
@@ -39,10 +56,11 @@ export function FeedbackComposer({
   composerId,
   headingId,
   heading,
+  scopeLine,
   state,
   scope,
   target,
-  choices,
+  outcomeClass,
   selected,
   onChoose,
   previewState,
@@ -55,6 +73,7 @@ export function FeedbackComposer({
   const baseId = useId()
   const reasonId = `${baseId}-submit-reason`
   const blocked = submitReason !== ''
+  const choices = FEEDBACK_CHOICE_ORDER[outcomeClass]
   return (
     <section
       id={composerId}
@@ -66,39 +85,54 @@ export function FeedbackComposer({
       data-feedback-layout="docked"
       className="flex h-full min-h-0 flex-col"
     >
-      <div className="shrink-0 border-b px-3 py-2">
+      <div className="shrink-0 space-y-1 border-b px-3 py-2">
         <div className="flex items-start gap-2">
           <h2 id={headingId} tabIndex={-1} className="min-w-0 flex-1 break-words text-base font-medium leading-snug">
-            {heading}
+            <TextParts parts={heading} />
           </h2>
           <Button variant="ghost" size="icon-sm" data-feedback-close aria-label={CLOSE_FEEDBACK_LABEL} onClick={onClose}>
             <X className="h-3.5 w-3.5" aria-hidden="true" />
           </Button>
         </div>
+        <p data-feedback-scope-line className="break-words text-xs text-muted-foreground">
+          <TextParts parts={scopeLine} />
+        </p>
       </div>
 
       <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-3 py-4">
-        <fieldset>
+        <fieldset className="space-y-2">
+          <legend className="text-xs font-medium text-muted-foreground">{CHOICE_LEGEND}</legend>
           <RadioGroup
+            className="gap-2"
             data-feedback-choices
+            data-feedback-outcome-class={outcomeClass}
             value={selected ?? ''}
             onValueChange={(value) => {
               const kind = choices.find((choice) => choice === value)
               if (kind !== undefined) onChoose(kind)
             }}
           >
-            {choices.map((kind, index) => (
-              <Label
-                key={kind}
-                htmlFor={`${baseId}-${kind}`}
-                data-feedback-choice={kind}
-                data-choice-position={index + 1}
-                className="flex items-start gap-2 rounded-md border px-3 py-2 font-normal leading-normal cursor-pointer hover:bg-muted/40"
-              >
-                <RadioGroupItem id={`${baseId}-${kind}`} value={kind} className="mt-0.5" />
-                {CHOICE_LABELS[kind]}
-              </Label>
-            ))}
+            {choices.map((kind, index) => {
+              const itemId = `${baseId}-${kind}`
+              const meaningId = `${itemId}-meaning`
+              return (
+                <Label
+                  key={kind}
+                  htmlFor={itemId}
+                  data-feedback-choice={kind}
+                  data-choice-position={index + 1}
+                  className="flex items-start gap-2 rounded-md border px-3 py-2 font-normal leading-normal cursor-pointer hover:bg-muted/40 has-[[data-state=checked]]:border-primary/60 has-[[data-state=checked]]:bg-primary/5"
+                >
+                  <RadioGroupItem id={itemId} value={kind} aria-describedby={meaningId} className="mt-0.5" />
+                  <span className="min-w-0 space-y-1">
+                    <span className="block text-sm font-medium leading-normal">{CHOICE_LABELS[kind]}</span>
+                    <span id={meaningId} className="block text-xs text-muted-foreground">
+                      {CHOICE_MEANINGS[outcomeClass][kind]}
+                    </span>
+                  </span>
+                </Label>
+              )
+            })}
           </RadioGroup>
         </fieldset>
 

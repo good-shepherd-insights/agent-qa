@@ -11,10 +11,14 @@ import type {
   MarkFixKind,
   MemberTestOutcome,
   RunDetailMember,
+  RunDetailProjection,
   RunDetailStep,
   RunsMarkInput,
   RunsMarkPreviewResult,
 } from '@vostride/agent-qa-schema'
+
+import { UNNAMED_STEP_LABEL } from './display-step'
+import { memberDisplayName, memberHandleLabel } from './run-detail-view'
 
 /** A UI pointer to a mark address, never a new identity (419 D-11). */
 export interface FeedbackTarget {
@@ -96,16 +100,138 @@ export function memberOutcomeClass(
 
 export interface FeedbackOutcomeInput {
   member: Pick<RunDetailMember, 'outcome'> | undefined
-  step?: Pick<RunDetailStep, 'verifierVerdict'>
+  step?: Partial<Pick<RunDetailStep, 'verifierVerdict'>>
   runStatus: string | undefined
 }
 
 /** The target's own recorded result: a step reads its verifier verdict, a test its outcome (D-11). */
 export function feedbackOutcomeClass({ member, step, runStatus }: FeedbackOutcomeInput): FeedbackOutcomeClass {
   // verifierVerdict is required by the schema, but fetchRunDetail does not parse (UI-SPEC U9).
-  const verdict = step?.verifierVerdict as RunDetailStep['verifierVerdict'] | undefined
+  const verdict = step?.verifierVerdict
   if (verdict != null) return verdict.pass ? 'passed' : 'failed'
   return memberOutcomeClass(member?.outcome, runStatus)
+}
+
+/**
+ * A sentence with one producer string in it. The product words stay constants and `name` is painted
+ * through MaskedText as a text node, so a step or test name can never become markup.
+ */
+export interface FeedbackTextParts {
+  prefix: string
+  name?: string
+  suffix?: string
+}
+
+export function feedbackPartsText(parts: FeedbackTextParts): string {
+  return `${parts.prefix}${parts.name ?? ''}${parts.suffix ?? ''}`
+}
+
+export const WHOLE_TEST_SCOPE_TEXT = 'Whole test'
+export const ONE_STEP_SCOPE_TEXT = 'One step'
+
+export const RECORDED_RESULT_TEXT = {
+  passed: 'recorded: passed',
+  healed: 'recorded: healed — counts as passed',
+  failed: 'recorded: failed',
+  timeout: 'recorded: timed out — counts as failed',
+  cancelled: 'recorded: cancelled — counts as failed',
+  skipped: 'recorded: skipped — counts as failed',
+} satisfies Record<MemberTestOutcome, string>
+
+export function NO_STEP_VERDICT_TEXT(testRecordedText: string): string {
+  return `no step verdict recorded — using the test's result (${testRecordedText})`
+}
+
+function recordedKey(status: string | undefined): MemberTestOutcome | undefined {
+  return status !== undefined && Object.hasOwn(RECORDED_RESULT_TEXT, status) ? (status as MemberTestOutcome) : undefined
+}
+
+export type FeedbackScopeMember = Pick<RunDetailMember, 'testIndex' | 'name' | 'outcome'>
+export type FeedbackScopeStep = Pick<RunDetailStep, 'stepIndex'> &
+  Partial<Pick<RunDetailStep, 'stepText' | 'verifierVerdict' | 'status'>>
+
+export interface ComposerHeadingInput {
+  member: Pick<RunDetailMember, 'testIndex' | 'name'>
+  step?: Pick<FeedbackScopeStep, 'stepIndex' | 'stepText'>
+  stepCount: number
+  suite: boolean
+}
+
+/** D-14: the exact step or test the composer is about; step numbers are stepIndex + 1. */
+export function composerHeading({ member, step, stepCount, suite }: ComposerHeadingInput): FeedbackTextParts {
+  if (step !== undefined) {
+    return {
+      prefix: `Feedback on step ${String(step.stepIndex + 1)} of ${String(stepCount)} · `,
+      name: step.stepText ?? UNNAMED_STEP_LABEL,
+    }
+  }
+  return suite
+    ? { prefix: 'Feedback on ', name: memberDisplayName(member), suffix: ` ${memberHandleLabel(member.testIndex)}` }
+    : { prefix: 'Feedback on ', name: memberDisplayName(member) }
+}
+
+export interface ScopeLineInput {
+  member: FeedbackScopeMember
+  step?: FeedbackScopeStep
+  suite: boolean
+  runStatus: string | undefined
+}
+
+function memberRecordedText(member: Pick<RunDetailMember, 'outcome'>, runStatus: string | undefined): string {
+  return RECORDED_RESULT_TEXT[recordedKey(member.outcome ?? runStatus) ?? memberOutcomeClass(member.outcome, runStatus)]
+}
+
+/** The step's own word when it agrees with its verdict, else the verdict's class — never a contradiction. */
+function stepRecordedText(step: FeedbackScopeStep, member: FeedbackScopeMember, runStatus: string | undefined): string {
+  const verdict = step.verifierVerdict
+  if (verdict == null) return NO_STEP_VERDICT_TEXT(memberRecordedText(member, runStatus))
+  const cls: FeedbackOutcomeClass = verdict.pass ? 'passed' : 'failed'
+  const own = recordedKey(step.status)
+  return RECORDED_RESULT_TEXT[own !== undefined && memberOutcomeClass(own) === cls ? own : cls]
+}
+
+export function scopeLine({ member, step, suite, runStatus }: ScopeLineInput): FeedbackTextParts {
+  if (step === undefined) {
+    return { prefix: `${WHOLE_TEST_SCOPE_TEXT} · ${memberRecordedText(member, runStatus)}` }
+  }
+  const recorded = stepRecordedText(step, member, runStatus)
+  return suite
+    ? {
+        prefix: `${ONE_STEP_SCOPE_TEXT} in `,
+        name: memberDisplayName(member),
+        suffix: ` ${memberHandleLabel(member.testIndex)} · ${recorded}`,
+      }
+    : { prefix: `${ONE_STEP_SCOPE_TEXT} · ${recorded}` }
+}
+
+export interface FeedbackTargetViewInput {
+  detail: Pick<RunDetailProjection, 'members' | 'steps'> | null | undefined
+  target: FeedbackTarget
+  runStatus: string | undefined
+}
+
+export interface FeedbackTargetView {
+  outcomeClass: FeedbackOutcomeClass
+  heading: FeedbackTextParts
+  scopeLine: FeedbackTextParts
+}
+
+/** Everything the composer states about its target, read from the projection the page already holds. */
+export function feedbackTargetView({ detail, target, runStatus }: FeedbackTargetViewInput): FeedbackTargetView {
+  const found = detail?.members.find((entry) => entry.testIndex === target.testIndex)
+  const member: FeedbackScopeMember = found ?? { testIndex: target.testIndex }
+  const memberSteps = detail?.steps.filter((entry) => entry.testIndex === target.testIndex) ?? []
+  const step: FeedbackScopeStep | undefined =
+    target.stepIndex === undefined
+      ? undefined
+      : (memberSteps.find((entry) => entry.stepIndex === target.stepIndex) ?? { stepIndex: target.stepIndex })
+  const suite = (detail?.members.length ?? 0) > 1
+  const stepCount = Math.max(found?.totalSteps ?? memberSteps.length, step === undefined ? 0 : step.stepIndex + 1)
+  return {
+    outcomeClass: feedbackOutcomeClass({ member, step, runStatus }),
+    heading: composerHeading({ member, step, stepCount, suite }),
+    scopeLine: scopeLine({ member, step, suite, runStatus }),
+  }
 }
 
 export type FeedbackComposerState =
