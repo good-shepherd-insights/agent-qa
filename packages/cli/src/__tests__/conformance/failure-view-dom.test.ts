@@ -444,26 +444,29 @@ function harvestOf(which: 'before' | 'after' | 'greenHarvest'): PageHarvest {
 // ---- The instruments ----------------------------------------------------------------------------
 
 interface MarkHarvest {
-  markChip: string | null
-  markTriage: string | null
+  historyChoice: string | null
+  historyDisposition: string | null
   elapsedMs: number
   rows: unknown[]
   disposition?: unknown
   hostileElements: number
-  confirmationSeen: boolean
+  approvalSeen: boolean
+  dialogCountAtApproval?: number
   scopeSeen: boolean
+  previewStatus?: number
   responseStatus?: number
   responseBody?: unknown
   freezeAudit?: unknown[]
   confirmFrames: Array<{ event: string; data: string }>
+  markedAtWithinDrive: boolean
   failure?: string
 }
 
-/** Record independently: an absent mark control may red (4a), never abort the older ten cells. */
+/** Record independently: an absent feedback entry may red (4a), never abort the older ten cells. */
 async function observeMark(context_: BrowserContext, origin: string, runId: string, runDir: string): Promise<MarkHarvest> {
   const page = await context_.newPage()
-  const harvest: MarkHarvest = { markChip: null, markTriage: null, elapsedMs: 0, rows: [],
-    hostileElements: 0, confirmationSeen: false, scopeSeen: false, confirmFrames: [] }
+  const harvest: MarkHarvest = { historyChoice: null, historyDisposition: null, elapsedMs: 0, rows: [],
+    hostileElements: 0, approvalSeen: false, scopeSeen: false, confirmFrames: [], markedAtWithinDrive: false }
   const started = Date.now()
   try {
     await page.addInitScript(() => {
@@ -484,9 +487,9 @@ async function observeMark(context_: BrowserContext, origin: string, runId: stri
       window.EventSource = RecordedChannel
     })
     page.on('response', reply => {
-      if (reply.url().endsWith('/mark') && reply.request().method() === 'POST') {
-        harvest.responseStatus = reply.status()
-      }
+      if (reply.request().method() !== 'POST') return
+      if (reply.url().endsWith('/mark')) harvest.responseStatus = reply.status()
+      if (reply.url().endsWith('/mark-preview')) harvest.previewStatus = reply.status()
     })
     await page.goto(`${origin}/runs/${encodeURIComponent(runId)}`)
     // Presence is the actual app-wide SSE frame, not page load or a visible control.
@@ -494,15 +497,20 @@ async function observeMark(context_: BrowserContext, origin: string, runId: stri
       (window as unknown as { markFrames: Array<{ event: string }> }).markFrames
         .some(frame => frame.event === 'confirm_scope'), undefined, { timeout: 10_000 })
     harvest.scopeSeen = true
-    const block = page.locator('[data-verdict-block]').first()
-    await block.locator('[data-mark-kind="false-fail"]').click({ timeout: 10_000 })
-    await block.locator('[data-mark-note]').fill('<img data-agent-qa-hostile-mark src=x onerror=alert(1)>')
+    await page.locator('[data-feedback-entry="test"]').click({ timeout: 10_000 })
+    const composer = page.locator('[data-feedback-composer]')
+    await composer.locator('[data-feedback-choice="false-fail"] [role="radio"]').click({ timeout: 10_000 })
+    await composer.locator('[data-feedback-note]').fill('<img data-agent-qa-hostile-mark src=x onerror=alert(1)>')
+    await composer.locator('[data-feedback-preview][data-preview-current="true"]').waitFor({ timeout: 15_000 })
     const response = page.waitForResponse(reply => reply.url().endsWith('/mark') && reply.request().method() === 'POST')
       .catch(() => undefined)
-    await block.locator('[data-mark-submit]').click()
-    await page.locator('[data-run-confirm-dialog]').waitFor({ timeout: 10_000 })
-    harvest.confirmationSeen = true
-    await page.locator('[data-confirm-answer="accept"]').click()
+    await composer.locator('[data-feedback-submit]').click()
+    const approval = composer.locator('[data-feedback-approval]')
+    await approval.waitFor({ timeout: 10_000 })
+    harvest.approvalSeen = true
+    harvest.dialogCountAtApproval = await page.evaluate(() =>
+      document.querySelectorAll('[role="dialog"],[aria-modal]').length)
+    await approval.locator('[data-confirm-answer="accept"]').click()
     const reply = await response
     if (reply === undefined) throw new Error('mark route returned no response')
     harvest.responseBody = await reply.json()
@@ -518,16 +526,20 @@ async function observeMark(context_: BrowserContext, origin: string, runId: stri
     const result = RunsMarkOutcomeSchema.parse(harvest.responseBody)
     if (result.kind !== 'marked') throw new Error(`mark did not persist: ${result.kind}`)
     harvest.disposition = result.receipt.disposition
-    await block.locator('[data-mark-chip]').waitFor({ timeout: 15_000 })
-    harvest.markChip = await block.locator('[data-mark-chip]').textContent()
-    harvest.markTriage = await block.locator('[data-mark-triage]').textContent()
+    const entry = composer.locator('[data-feedback-history="target"] [data-history-entry][data-history-new]')
+    await entry.waitFor({ timeout: 15_000 })
+    harvest.historyChoice = await entry.locator(':scope > div:first-child .font-medium').textContent()
+    harvest.historyDisposition = await entry.locator('[data-history-disposition]').textContent()
     harvest.hostileElements = await page.locator('[data-agent-qa-hostile-mark]').count()
   } catch (error) {
     harvest.failure = error instanceof Error ? error.message : String(error)
   } finally {
-    harvest.elapsedMs = Date.now() - started
+    const ended = Date.now()
+    harvest.elapsedMs = ended - started
     const ledger = join(runDir, 'marks.jsonl')
     harvest.rows = existsSync(ledger) ? readFileSync(ledger, 'utf8').trim().split('\n').filter(Boolean).map(line => MarkReceiptSchema.parse(JSON.parse(line))) : []
+    const markedAt = (harvest.rows[0] as { markedAt?: number } | undefined)?.markedAt
+    harvest.markedAtWithinDrive = markedAt !== undefined && markedAt >= started && markedAt <= ended
     harvest.confirmFrames = await page.evaluate(() =>
       (window as unknown as { markFrames: Array<{ event: string; data: string }> }).markFrames ?? [])
       .catch(() => [])
@@ -1377,19 +1389,24 @@ describe('the shipped dashboard paints a RED run\'s authored verdict, its eviden
     ).toEqual(before.provenances)
   })
 
-  it('(4a) a click on false-fail, confirmed through the page channel, paints the standing chip and triage line', () => {
+  it('(4a) the header entry opens the composer; false-fail, previewed, sent and approved inline, lands in history', () => {
     driveOk()
     const mark = recorded.mark
     expect(mark, `the mark drive was never observed.${context()}`).toBeDefined()
     expect(mark!.failure, context()).toBeUndefined()
     expect(mark!.scopeSeen, context()).toBe(true)
-    expect(mark!.confirmationSeen, context()).toBe(true)
+    expect(mark!.previewStatus, context()).toBe(200)
+    expect(mark!.approvalSeen, context()).toBe(true)
+    // 426 D-20: the approval sits beside the evidence, never over it.
+    expect(mark!.dialogCountAtApproval, context()).toBe(0)
     expect(mark!.responseStatus, context()).toBe(200)
     expect(mark!.confirmFrames.some(frame => frame.event === 'confirm_request' && frame.data.includes('fn:runs.mark')), context()).toBe(true)
-    expect(mark!.markChip, context()).toBe('marked false-fail by user · 1')
+    // Literals, because dashboard-ui publishes no library entry: CHOICE_LABELS['false-fail'] and
+    // dispositionText's no-draftable-fix arm in lib/feedback-view.ts.
+    expect(mark!.historyChoice, context()).toBe('This should have passed')
     // Wave-0 measured this exact mechanical arm. app_bug belongs to analyze-run; the
     // persisted deterministic classifier says unknown, with no attributable served record.
-    expect(mark!.markTriage, context()).toBe('no draftable fix')
+    expect(mark!.historyDisposition, context()).toBe('Recorded — no fix could be drafted')
     expect(mark!.disposition, context()).toEqual({ kind: 'no-draftable-fix', checked: {
       servedRecords: 0, procedureReads: 0, assertionDrift: false, rootCause: 'unknown',
     } })
@@ -1398,6 +1415,8 @@ describe('the shipped dashboard paints a RED run\'s authored verdict, its eviden
     expect(receipt).toMatchObject({ runId: recorded.red!.runId, testIndex: 0,
       origin: 'user', kind: 'false-fail', ordinal: 1 })
     expect(receipt.gold.map(item => item.channel)).toEqual(['user-mark'])
+    // RESEARCH A5: markedAt is epoch milliseconds, taken during this drive.
+    expect(mark!.markedAtWithinDrive, context()).toBe(true)
     expect(mark!.hostileElements, context()).toBe(0)
   })
 })

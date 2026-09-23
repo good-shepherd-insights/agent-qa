@@ -30,7 +30,7 @@
 #   M3b  the failure view's absent ref rendered as a PLAIN CLICKABLE LINK — the `ref.incomplete ?`
 #        ternary collapses to its button branch, so an affordance that opens nothing is painted over
 #        bytes that are not there
-#   M4   the three-way sovereign mark control removed from the failure view; only (4a) reds
+#   M4   the feedback entry removed from the run header (426 D-01); only (4a) reds
 #
 # WHAT EACH LEG IS EXPECTED TO REACH IS STATED IN ADVANCE, AND SO IS WHAT IT MUST NOT.
 #
@@ -132,9 +132,9 @@
 #   M2   .../run-detail/verdict-block.tsx                  `ref.incomplete ? (` … `) : (`
 #   M3a  .../lib/playhead.ts                             `&& ref.present !== false`
 #   M3b  .../run-detail/verdict-block.tsx                  `ref.incomplete ? (` … `) : (`
-#   M4   .../run-detail/verdict-block.tsx                  `view.marks !== undefined && onMark`
+#   M4   .../run-detail/run-navbar.tsx                     `{feedbackEntry === undefined ? null : (`
 #
-# EVERY LEG CROSSES A `dist` BOUNDARY AND THE REBUILD IS PART OF THE MUTATION. All three subjects are
+# EVERY LEG CROSSES A `dist` BOUNDARY AND THE REBUILD IS PART OF THE MUTATION. All four subjects are
 # resolved by the spawned `agent-qa dashboard` as BUILT workspace dependencies — dashboard-ui's
 # bundle for M2/M3a/M3b/M4, the safety dist the CLI links for M1 — and the DOM file's own
 # `buildFreshness(POPULATED_RUN_ANCHORED_BUILDS)` guard compares mtimes against those artifacts, so a
@@ -196,8 +196,9 @@ esac
 SEAM_SUBJECT="packages/safety/src/guardrail/detectors.ts"
 VERDICT_SUBJECT="packages/dashboard-ui/src/components/run-detail/verdict-block.tsx"
 OVERVIEW_SUBJECT="packages/dashboard-ui/src/lib/playhead.ts"
+NAVBAR_SUBJECT="packages/dashboard-ui/src/components/run-detail/run-navbar.tsx"
 
-SUBJECT_PATHS=("$SEAM_SUBJECT" "$VERDICT_SUBJECT" "$OVERVIEW_SUBJECT")
+SUBJECT_PATHS=("$SEAM_SUBJECT" "$VERDICT_SUBJECT" "$OVERVIEW_SUBJECT" "$NAVBAR_SUBJECT")
 
 DOM_SUITE="src/__tests__/conformance/failure-view-dom.test.ts"
 
@@ -413,9 +414,9 @@ apply_mutation () {
       perl -0pi -e 's/            ref\.incomplete \? \(\n(?:.*\n)*?            \) : \(\n/            (\n/' \
         "$REPO_ROOT/$VERDICT_SUBJECT" ;;
     M4)
-      # Match the shared member-control return, also used when failure analysis is absent.
-      perl -0pi -e 's/  return view\.marks !== undefined && onMark \? \(\n(?:.*\n)*?      \) : null\n/  return null\n/' \
-        "$REPO_ROOT/$VERDICT_SUBJECT" ;;
+      # The test-level feedback entry after the verdict badge, the one door (4a) opens the composer by.
+      perl -0pi -e 's/        \{feedbackEntry === undefined \? null : \(\n(?:.*\n)*?        \)\}\n//' \
+        "$REPO_ROOT/$NAVBAR_SUBJECT" ;;
     *) echo "FATAL: unknown mutation $1" >&2; exit 1 ;;
   esac
 }
@@ -646,7 +647,7 @@ run_leg M1 "$SEAM_SUBJECT" "406-07's egress fix reverted — the analyze-run pro
 run_leg M2 "$VERDICT_SUBJECT" "the absent cited artifact dropped from the row" "$REQUIRED_M2" "$ALLOWED_M2" "$GREEN_M2"
 run_leg M3a "$OVERVIEW_SUBJECT" "the overview's absent ref rendered as a plain available pane" "$REQUIRED_M3A" "$ALLOWED_M3A" "$GREEN_M3A"
 run_leg M3b "$VERDICT_SUBJECT" "the absent cited artifact rendered as a plain clickable link" "$REQUIRED_M3B" "$ALLOWED_M3B" "$GREEN_M3B"
-run_leg M4 "$VERDICT_SUBJECT" "the three-way mark control deleted from the failure view" "$REQUIRED_M4" "$ALLOWED_M4" "$GREEN_M4"
+run_leg M4 "$NAVBAR_SUBJECT" "the feedback entry removed from the run header" "$REQUIRED_M4" "$ALLOWED_M4" "$GREEN_M4"
 
 if [ -n "${FAILURE_VIEW_MUTATION_ONLY:-}" ]; then
   echo "SAMPLE — one leg (${FAILURE_VIEW_MUTATION_ONLY}) ran. This is the per-commit sample, NOT the"
@@ -661,6 +662,7 @@ echo "       rendering the overview's absent ref as an available pane red exactl
 echo "       left ten standing, and rendering the failure view's absent ref as a plain link red the"
 echo "       same pair as the drop — while the wire's own answer, the verdict that was not re-graded"
 echo "       and the masking scan stayed green under every mutation that does not touch them."
-echo "       M4 red exactly (4a), while all ten prior cells stayed green: five live legs passed."
+echo "       M4 removed the feedback entry from the run header and red exactly (4a), while all ten"
+echo "       prior cells stayed green: five live legs passed."
 echo "       M1 also required (4a) red: the shared egress mutation refused the same opaque float"
 echo "       in the real gold freeze; its three original non-catchers stayed green."
