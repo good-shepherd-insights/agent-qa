@@ -1,4 +1,4 @@
-import { RUN_EVENT_TYPES, GATE_REMEDY_KINDS, RunsMarkPreviewResultSchema } from '@vostride/agent-qa-schema'
+import { RUN_EVENT_TYPES, GATE_REMEDY_KINDS, RunsMarkPreviewResultSchema, RunsMarksHistoryResultSchema } from '@vostride/agent-qa-schema'
 import type {
   AgentAskResult,
   AnalysisGetOutput,
@@ -18,6 +18,7 @@ import type {
   GateRemedy,
   RunsMarkOutcome,
   RunsMarkPreviewResult,
+  RunsMarksHistoryResult,
 } from '@vostride/agent-qa-schema'
 
 export interface RunRow {
@@ -422,6 +423,22 @@ export type MarkPreviewRead =
   | { kind: 'read'; result: RunsMarkPreviewResult }
   | { kind: 'failed'; reason: FeedbackReadFailure }
 
+export type MarksHistoryRead =
+  | { kind: 'read'; result: RunsMarksHistoryResult }
+  | { kind: 'failed'; reason: FeedbackReadFailure }
+
+/**
+ * The route answers an unclassified op throw as `500 { error: 'read_failed', reason: <error name> }`.
+ * A corrupt ledger is the one name that says which store failed; any other 500 read is taken as the
+ * ledger being unreadable (RESEARCH A3, a default). Every other refusal is the server saying no.
+ */
+function feedbackReadFailure(error: unknown): FeedbackReadFailure {
+  if (!(error instanceof ApiError)) return 'network'
+  if (error.payload?.error === 'read_failed' && error.payload.reason === 'MarkLedgerCorruptError') return 'ledger-corrupt'
+  if (error.status >= 500 && error.payload?.error === 'read_failed') return 'ledger-unavailable'
+  return 'refused'
+}
+
 /**
  * `POST /api/runs/:id/mark-preview` — runs.mark's plan for this exact input (426 D-16, 423 D-18).
  *
@@ -436,8 +453,23 @@ export async function fetchMarkPreview(
     const raw = await postJson<unknown>(`/api/runs/${encodeURIComponent(runId)}/mark-preview`, { runId, ...input })
     const parsed = RunsMarkPreviewResultSchema.safeParse(raw)
     return parsed.success ? { kind: 'read', result: parsed.data } : { kind: 'failed', reason: 'shape' }
-  } catch {
-    return { kind: 'failed', reason: 'network' }
+  } catch (error) {
+    return { kind: 'failed', reason: feedbackReadFailure(error) }
+  }
+}
+
+/**
+ * `GET /api/runs/:id/marks` — this run's mark ledger with each drafted proposal's current state
+ * (423 D-19). `run-not-found`, `ledger-corrupt` and `ledger-unavailable` arrive as 200 arms and stay
+ * reads; only a wire or shape failure is a failed read.
+ */
+export async function fetchMarksHistory(runId: string): Promise<MarksHistoryRead> {
+  try {
+    const raw = await request<unknown>(`/api/runs/${encodeURIComponent(runId)}/marks`)
+    const parsed = RunsMarksHistoryResultSchema.safeParse(raw)
+    return parsed.success ? { kind: 'read', result: parsed.data } : { kind: 'failed', reason: 'shape' }
+  } catch (error) {
+    return { kind: 'failed', reason: feedbackReadFailure(error) }
   }
 }
 
