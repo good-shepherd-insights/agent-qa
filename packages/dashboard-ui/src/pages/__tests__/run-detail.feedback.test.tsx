@@ -19,13 +19,16 @@ import {
   CHOICE_MEANINGS,
   FEEDBACK_CHOICE_ORDER,
   PREVIEW_DEBOUNCE_MS,
+  feedbackEntryLabel,
   feedbackRecordedText,
 } from '@/lib/feedback-view'
+import { memberDisplayName, memberHandleLabel } from '@/lib/run-detail-view'
 
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
 const RUN_ID = generateRunId()
 const TEST_ID = generateTestId()
+const SUITE_TEST_IDS = [generateTestId(), generateTestId()] as const
 
 const {
   markRunMock,
@@ -417,5 +420,65 @@ describe('426-01 contextual feedback tracer', () => {
     expect(q('[data-verdict-badge]')).not.toBeNull()
     expect(fetchMarkPreviewMock).not.toHaveBeenCalled()
     expect(fetchMarksHistoryMock).not.toHaveBeenCalled()
+  })
+})
+
+function suiteDetail(member0: Partial<RunDetailMember> = {}): RunDetailProjection {
+  return projection({
+    members: [
+      member(0, { name: 'Browse catalog', testId: SUITE_TEST_IDS[0], outcome: 'passed', marks: [], ...member0 }),
+      member(1, { name: 'Pay for order', testId: SUITE_TEST_IDS[1], outcome: 'failed', marks: [] }),
+    ],
+    steps: [
+      { ...step(0, 0, 'Open catalog'), status: 'passed', verifierVerdict: { pass: true, reasoning: '' } },
+      step(1, 0, 'Submit payment'),
+    ],
+  })
+}
+
+describe('426-03 the header entry in a suite', () => {
+  it('SUITE-HEADER-TARGET-ON-LOAD: the auto-selected first step makes member 0 the target though member 1 failed', async () => {
+    fetchRunDetailMock.mockResolvedValue(suiteDetail())
+    await renderAt(`/runs/${RUN_ID}`)
+    const entries = container!.querySelectorAll('[data-feedback-entry="test"]')
+    expect(entries).toHaveLength(1)
+    const entry = entries[0]!
+    expect(entry.getAttribute('data-feedback-target')).toBe('0:run')
+    expect(entry.getAttribute('data-feedback-marked')).toBe('false')
+    expect(entry.getAttribute('aria-label')).toBe(
+      feedbackEntryLabel({ scope: 'test', memberName: 'Browse catalog', handle: memberHandleLabel(0) }),
+    )
+
+    await click('[data-feedback-entry="test"]')
+    const composer = q('[data-feedback-composer]')!
+    expect(composer.getAttribute('data-feedback-target')).toBe('0:run')
+    const heading = document.getElementById(composer.getAttribute('aria-labelledby')!)!
+    expect(heading.textContent).toBe(`Feedback on ${memberDisplayName({ testIndex: 0, name: 'Browse catalog' })} ${memberHandleLabel(0)}`)
+  })
+
+  it('SUITE-HEADER-TARGET-ON-LOAD: a whole-test mark on the target member fills the entry', async () => {
+    fetchRunDetailMock.mockResolvedValue(suiteDetail({ marks: [receipt] }))
+    await renderAt(`/runs/${RUN_ID}`)
+    const entry = q('[data-feedback-entry="test"]')!
+    expect(entry.getAttribute('data-feedback-target')).toBe('0:run')
+    expect(entry.getAttribute('data-feedback-marked')).toBe('true')
+    expect(entry.getAttribute('aria-label')).toBe(
+      feedbackEntryLabel({ scope: 'test', memberName: 'Browse catalog', handle: memberHandleLabel(0), markedChoice: receipt.kind }),
+    )
+  })
+
+  it('ENTRY-ABSENT-WITHOUT-MARKS: a failed detail read or a target member without marks renders no entry', async () => {
+    fetchRunDetailMock.mockRejectedValue(new Error('offline'))
+    await renderAt(`/runs/${RUN_ID}`)
+    expect(q('[data-verdict-badge]')).not.toBeNull()
+    expect(container!.querySelectorAll('[data-feedback-entry]')).toHaveLength(0)
+    act(() => root!.unmount())
+    container!.remove()
+
+    fetchRunDetailMock.mockReset()
+    fetchRunDetailMock.mockResolvedValue(suiteDetail({ marks: undefined }))
+    await renderAt(`/runs/${RUN_ID}`)
+    expect(q('[data-verdict-badge]')).not.toBeNull()
+    expect(container!.querySelectorAll('[data-feedback-entry]')).toHaveLength(0)
   })
 })

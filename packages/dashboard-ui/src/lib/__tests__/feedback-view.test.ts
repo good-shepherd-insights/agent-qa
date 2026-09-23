@@ -30,6 +30,7 @@ import {
   feedbackPartsText,
   feedbackTargetView,
   memberOutcomeClass,
+  resolveHeaderFeedbackTarget,
   scopeLine,
 } from '@/lib/feedback-view'
 import { memberDisplayName, memberHandleLabel } from '@/lib/run-detail-view'
@@ -211,5 +212,27 @@ describe('426-03 the header entry names itself', () => {
     expect(feedbackEntryLabel({ scope: 'step', stepNumber: 1, markedChoice: 'confirmed-bug' })).toBe(
       `Give feedback on step 1 — already marked: ${CHOICE_LABELS['confirmed-bug']}`,
     )
+  })
+})
+
+describe('426-03 which test the header entry means', () => {
+  const suite = (...outcomes: RunDetailMember['outcome'][]) => ({
+    members: outcomes.map((outcome, testIndex) => ({ testIndex, attempts: 1, ...(outcome === undefined ? {} : { outcome }) })),
+  })
+
+  it.each([
+    ['a selected step wins', suite('passed', 'failed', 'failed'), { testIndex: 2, stepIndex: 0 }, undefined, 2],
+    ['then the member filter', suite('passed', 'failed', 'failed'), null, 0, 0],
+    ['then the first failed member, by handle order', suite('passed', 'failed', 'failed'), null, undefined, 1],
+    ['then the first member', suite('passed', 'healed', 'passed'), null, undefined, 0],
+    ['a filter naming no member falls through', suite('passed', 'passed', 'failed'), null, 7, 2],
+    ['a single-test run always targets its test', suite('failed'), { testIndex: 4, stepIndex: 1 }, 3, 0],
+  ] as const)('HEADER-TARGET-ORDER: %s', (_rung, detail, selectedStep, memberFilter, expected) => {
+    expect(resolveHeaderFeedbackTarget({ detail, selectedStep, memberFilter, runStatus: 'failed' })).toEqual({ testIndex: expected })
+  })
+
+  it('HEADER-TARGET-ORDER: no projection resolves no target', () => {
+    expect(resolveHeaderFeedbackTarget({ detail: undefined, selectedStep: null, memberFilter: undefined, runStatus: 'failed' })).toBeUndefined()
+    expect(resolveHeaderFeedbackTarget({ detail: null, selectedStep: null, memberFilter: undefined, runStatus: 'failed' })).toBeUndefined()
   })
 })
