@@ -226,9 +226,6 @@ export function StepTree({
               group={group}
               showChrome={showMemberChrome}
               verdict={analysisView?.get(group.member.testIndex)}
-              onMark={onMark}
-              markPending={markPending}
-              markDenial={markDenial?.testIndex === group.member.testIndex && markDenial.stepIndex === undefined ? markDenial : undefined}
               onCitedStep={onCitedStep}
               onSelectMember={onSelectMember}
               onCitedArtifact={onCitedArtifact}

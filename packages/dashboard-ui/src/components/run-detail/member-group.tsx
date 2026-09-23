@@ -48,10 +48,10 @@ import { ChevronRight } from "lucide-react"
 
 import { Badge } from "@/components/ui/badge"
 import { MaskedText } from "@/components/run-detail/masked-text"
-import { MemberMarkControls, VerdictBlock } from "@/components/run-detail/verdict-block"
+import { VerdictBlock } from "@/components/run-detail/verdict-block"
 import { MarkGlyph } from "@/components/run-detail/feedback-entry"
 import { feedbackAddress } from "@/lib/feedback-view"
-import type { MemberVerdictView, OnMark, MarkDenial } from "@/lib/analysis-view"
+import type { MemberVerdictView } from "@/lib/analysis-view"
 import { statusBadgeLook } from "@/lib/status"
 import { cn } from "@/lib/utils"
 import {
@@ -63,9 +63,6 @@ import {
 } from "@/lib/run-detail-view"
 
 interface MemberGroupProps {
-  onMark?: OnMark
-  markDenial?: MarkDenial
-  markPending?: boolean
   group: RunDetailGroup
   /** Whether this run has more than one member — a single-member run gets no grouping chrome. */
   showChrome: boolean
@@ -115,9 +112,6 @@ export function MemberGroup({
   group,
   showChrome,
   verdict,
-  onMark,
-  markDenial,
-  markPending,
   onCitedStep = NO_OP,
   onSelectMember = NO_OP,
   onCitedArtifact = NO_OP,
@@ -139,16 +133,9 @@ export function MemberGroup({
 
   // THE WHY, DIRECTLY UNDER THE HEADER AND ABOVE THE STEPS (D-05). The sentence sits beside the
   // steps it cites rather than in a panel of its own, so the member filter narrows both at once.
-  const verdictBlock = verdict === undefined ? (member.marks === undefined || !onMark ? null : (
-    <div className="mx-2 mb-1.5 px-3 py-2">
-      <MemberMarkControls view={member} onMark={onMark} markDenial={markDenial} markPending={markPending} />
-    </div>
-  )) : (
+  const verdictBlock = verdict === undefined ? null : (
     <VerdictBlock
-      view={{ ...verdict, marks: member.marks }}
-      onMark={onMark}
-      markDenial={markDenial}
-      markPending={markPending}
+      view={verdict}
       onCitedStep={onCitedStep}
       onSelectMember={onSelectMember}
       onCitedArtifact={onCitedArtifact}

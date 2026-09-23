@@ -25,6 +25,7 @@ import { afterEach, describe, expect, it, vi } from "vitest"
 import { MASKED_MARKER_DELIMITER, maskedMarker } from "@vostride/agent-qa-schema"
 
 import { VerdictBlock } from "@/components/run-detail/verdict-block"
+import { MemberGroup } from "@/components/run-detail/member-group"
 import {
   ANALYSIS_FAILED_FALLBACK_TEXT,
   ANALYSIS_PROVISIONAL_TEXT,
@@ -43,9 +44,6 @@ import {
   provenanceLabel,
   siblingLine,
   type MemberVerdictView,
-  MARK_LABELS,
-  type OnMark,
-  type MarkDenial,
 } from "@/lib/analysis-view"
 import { EVIDENCE_INCOMPLETE_LABEL } from "@/lib/run-detail-view"
 
@@ -87,8 +85,6 @@ function view(over: Partial<MemberVerdictView> = {}): MemberVerdictView {
 }
 
 function render(over: Partial<MemberVerdictView> = {}, handlers: {
-  onMark?: OnMark
-  markDenial?: MarkDenial
   onCitedStep?: (testIndex: number, stepIndex: number) => void
   onSelectMember?: (testIndex: number) => void
   onCitedArtifact?: (sha: string) => void
@@ -96,8 +92,6 @@ function render(over: Partial<MemberVerdictView> = {}, handlers: {
   return mount(
     <VerdictBlock
       view={view(over)}
-      onMark={handlers.onMark}
-      markDenial={handlers.markDenial}
       onCitedStep={handlers.onCitedStep ?? (() => {})}
       onSelectMember={handlers.onSelectMember ?? (() => {})}
       onCitedArtifact={handlers.onCitedArtifact ?? (() => {})}
@@ -109,94 +103,86 @@ function render(over: Partial<MemberVerdictView> = {}, handlers: {
 const SHA_PRESENT = "a".repeat(64)
 const SHA_GONE = "b".repeat(64)
 
+// THE MEMBER'S PILLS ARE GONE (426-15 · D-05). Every cell below used to drive the block's own mark
+// form; the behaviour now lives in the composer and its history, and each title names the cell that
+// proves it there. What stays here is the negative: the block renders no mark control at all.
 describe('419 member mark control', () => {
   const mark: RunDetailMemberMark = { markId: 'mark_0123456789ab', kind: 'false-fail', ordinal: 2,
     disposition: { kind: 'drafted', fix: 'fact', proposalId: 'prop_0123456789ab', proposalKind: 'knowledge' } }
-  const click = (selector: string) => act(() => { container.querySelector<HTMLButtonElement>(selector)!.click() })
+  const markAttributes = () => [...container.querySelectorAll('*')]
+    .flatMap(element => element.getAttributeNames().filter(name => name.startsWith('data-mark')))
+  const controls = () => container.querySelectorAll('button, textarea, input, select, a, [role="radio"]')
 
-  it('renders three text labels in canonical order and submits the optional note', () => {
-    const onMark = vi.fn()
-    render({ testIndex: 4, marks: [] }, { onMark })
-    const buttons = [...container.querySelectorAll('[data-mark-kind]')]
-    expect(buttons.map(button => button.getAttribute('data-mark-kind'))).toEqual(MARKS)
-    expect(buttons.map(button => button.textContent)).toEqual(MARKS.map(kind => MARK_LABELS[kind]))
-    click('[data-mark-kind="false-fail"]')
-    const note = container.querySelector<HTMLTextAreaElement>('[data-mark-note]')!
-    act(() => {
-      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(note, 'note text')
-      note.dispatchEvent(new Event('input', { bubbles: true }))
-    })
-    click('[data-mark-submit]')
-    expect(onMark).toHaveBeenCalledExactlyOnceWith(4, undefined, 'false-fail', 'note text')
+  it('renders no button, textarea or data-mark element with marks bound; choosing and noting moved to the composer (TRACER-HEADER-ENTRY-TO-RECORDED)', () => {
+    render({ testIndex: 4, marks: [] })
+    expect(controls()).toHaveLength(0)
+    expect(markAttributes()).toEqual([])
+    for (const kind of MARKS) expect(container.textContent).not.toContain(kind)
+    expect(container.querySelector('[data-verdict-sentence]')?.textContent)
+      .toBe('observed (step 0): "Submit never became enabled"')
   })
 
-  it('cancel submits nothing and unbound marks offer no controls', () => {
-    const onMark = vi.fn()
-    render({ marks: [] }, { onMark })
-    click('[data-mark-kind="false-pass"]')
-    click('[data-mark-cancel]')
-    expect(onMark).not.toHaveBeenCalled()
-    expect(container.querySelector('[data-mark-note]')).toBeNull()
-    act(() => root.render(<VerdictBlock view={view()} onMark={onMark} onCitedStep={() => {}} onSelectMember={() => {}} onCitedArtifact={() => {}} />))
-    expect(container.querySelector('[data-mark-kind]')).toBeNull()
-  })
-  it('validates and submits an optional executable correction through the existing mark callback', () => {
-    const onMark = vi.fn()
-    render({ testIndex: 4, marks: [] }, { onMark })
-    click('[data-mark-kind="false-pass"]')
-    const input = container.querySelector<HTMLTextAreaElement>('[aria-label="Corrected action JSON"]')!
-    const fill = (text: string) => act(() => {
-      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(input, text)
-      input.dispatchEvent(new Event('input', { bubbles: true }))
-    })
-    fill('{"type":"fill"}')
-    expect(container.querySelector<HTMLButtonElement>('[data-mark-submit]')!.disabled).toBe(true)
-    click('[data-mark-submit]'); expect(onMark).not.toHaveBeenCalled()
-    const correctedAction = { type: 'click', ref: 'e-correct' }
-    fill(JSON.stringify(correctedAction)); click('[data-mark-submit]')
-    expect(onMark).toHaveBeenCalledExactlyOnceWith(4, undefined, 'false-pass', undefined, { correctedAction })
+  it('paints the same block whether marks are bound or unbound; neither offers a control (TRACER-HEADER-ENTRY-TO-RECORDED)', () => {
+    render({ marks: [] })
+    const bound = container.innerHTML
+    act(() => root.render(<MemoryRouter><VerdictBlock view={view()} onCitedStep={() => {}} onSelectMember={() => {}} onCitedArtifact={() => {}} /></MemoryRouter>))
+    expect(container.innerHTML).toBe(bound)
+    expect(controls()).toHaveLength(0)
   })
 
-  it('copies the standing chip, drafted triage and a runnable review command for the recorded proposal (423 D-19)', async () => {
-    const writeText = vi.fn(async (_text: string) => undefined)
-    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } })
-    render({ marks: [mark] }, { onMark: vi.fn() })
-    expect(container.querySelector('[data-mark-chip]')?.textContent).toBe('marked false-fail by user · 2')
-    expect(container.querySelector('[data-mark-triage]')?.textContent).toBe('drafted: fact → proposal prop_0123456789ab')
+  it('holds no correction field; the correction is the composer\'s controlled pair (CORRECTION-FIELDS-CONTROLLED)', () => {
+    render({ testIndex: 4, marks: [] })
+    expect(container.querySelector('[aria-label="Corrected action JSON"]')).toBeNull()
+    expect(container.querySelector('textarea, input')).toBeNull()
+  })
+
+  it('paints no chip, triage line, review control or link for a drafted mark; the command lives in the composer history (HISTORY-REVIEW-COMMAND)', () => {
+    render({ marks: [mark] })
+    expect(markAttributes()).toEqual([])
+    expect(container.querySelector('[data-review-command]')).toBeNull()
     expect(container.querySelector('[data-verdict-block] a')).toBeNull()
-    const review = container.querySelector<HTMLButtonElement>('button[data-mark-review]')!
-    expect(review.getAttribute('data-review-command')).toBe('agent-qa proposals show prop_0123456789ab')
-    expect(review.getAttribute('aria-label')).toBe('Copy review command: agent-qa proposals show prop_0123456789ab')
-    await act(async () => { review.click() })
-    expect(writeText).toHaveBeenCalledExactlyOnceWith('agent-qa proposals show prop_0123456789ab')
-    expect(review.getAttribute('data-copy-status')).toBe('copied')
+    expect(container.textContent).not.toContain('prop_0123456789ab')
+    expect(container.textContent).not.toContain('false-fail')
   })
 
-  it('never puts a non-canonical proposal id into a copied command — it points at the pending list instead', () => {
-    render({ marks: [{ ...mark, disposition: { ...mark.disposition, proposalId: "prop_x'; rm -rf ~" } as RunDetailMemberMark['disposition'] }] }, { onMark: vi.fn() })
-    expect(container.querySelector('[data-mark-review]')?.getAttribute('data-review-command')).toBe('agent-qa proposals list --status pending')
+  it('puts no proposal id, canonical or not, into any command on the block (HISTORY-PROPOSAL-COPY)', () => {
+    render({ marks: [{ ...mark, disposition: { ...mark.disposition, proposalId: "prop_x'; rm -rf ~" } as RunDetailMemberMark['disposition'] }] })
+    expect(container.querySelector('[data-review-command]')).toBeNull()
+    expect(container.textContent).not.toContain('rm -rf')
   })
 
   it.each([
     [{ kind: 'quarantined', class: 'flake' }, 'quarantined: flake'],
     [{ kind: 'no-draftable-fix', checked: { servedRecords: 0, procedureReads: 0, assertionDrift: false } }, 'no draftable fix'],
     [{ kind: 'confirmed-bug', confirmedRecords: 0 }, 'confirmed-bug: no fix drafted'],
-  ] as const)('renders %s without a draft link', (disposition, text) => {
-    render({ marks: [{ ...mark, disposition }] }, { onMark: vi.fn() })
-    expect(container.querySelector('[data-mark-triage]')?.textContent).toBe(text)
-    expect(container.querySelector('[data-mark-review]')).toBeNull()
+  ] as const)('paints no triage line for %s; dispositions read in the composer history (HISTORY-PROPOSAL-STATES)', (disposition, text) => {
+    render({ marks: [{ ...mark, disposition }] })
+    expect(container.textContent).not.toContain(text)
+    expect(markAttributes()).toEqual([])
+    expect(controls()).toHaveLength(0)
   })
 
-  it('renders the existing denial and answer-confirm remedy', () => {
-    render({ marks: [] }, { onMark: vi.fn(), markDenial: { reason: 'The safety gate denied this mark.', remedies: [{ kind: 'answer-confirm' }] } })
-    expect(container.querySelector('[data-mark-denied]')?.textContent).toContain('The safety gate denied this mark.')
-    expect(container.querySelector('[data-remedy-kind="answer-confirm"]')?.textContent).toBe('keep this chat open and re-run it — an ask-tier op raises a confirm here that you can answer')
-    expect(container.querySelector('[data-mark-chip]')).toBeNull()
+  it('no longer accepts a mark callback or a denial; a refused mark is the composer\'s alert (RETAINED-KEEPS-DRAFT)', () => {
+    const onMark = vi.fn()
+    mount(
+      <VerdictBlock
+        view={view({ marks: [] })}
+        // @ts-expect-error the block takes no mark callback
+        onMark={onMark}
+        onCitedStep={() => {}}
+        onSelectMember={() => {}}
+        onCitedArtifact={() => {}}
+      />,
+    )
+    expect(container.querySelector('[role="alert"]')).toBeNull()
+    expect(controls()).toHaveLength(0)
+    expect(onMark).not.toHaveBeenCalled()
   })
 
-  it('does not render a step receipt as a member receipt or construct producer markup', () => {
-    render({ marks: [{ ...mark, stepIndex: 2 }] }, { onMark: vi.fn() })
-    expect(container.querySelector('[data-mark-chip]')).toBeNull()
+  it('shows neither a member nor a step mark on the block, the standing mark is the member header glyph (MEMBER-GLYPH), and constructs no producer markup', () => {
+    render({ marks: [mark, { ...mark, stepIndex: 2 }] })
+    expect(markAttributes()).toEqual([])
+    expect(container.querySelector('[data-feedback-mark-glyph]')).toBeNull()
     expect(readFileSync('src/components/run-detail/verdict-block.tsx', 'utf8')).not.toContain('dangerouslySetInnerHTML')
   })
 })
@@ -603,14 +589,27 @@ describe('422 circularity evidence in the block (D-17/D-19/D-20)', () => {
     expect(container.querySelector('[data-cited-step="0"]')).not.toBeNull()
   })
 
-  it('leaves the marking controls exactly where they were, evidence or not', () => {
-    const onMark = vi.fn()
-    render({ testIndex: 4, marks: [], misdirectionEvidence: flippedEvidence }, { onMark })
-    expect([...container.querySelectorAll('[data-mark-kind]')]
-      .map((button) => button.getAttribute('data-mark-kind'))).toEqual(MARKS)
-    act(() => { container.querySelector<HTMLButtonElement>('[data-mark-kind="false-fail"]')!.click() })
-    act(() => { container.querySelector<HTMLButtonElement>('[data-mark-submit]')!.click() })
-    expect(onMark).toHaveBeenCalledExactlyOnceWith(4, undefined, 'false-fail', undefined)
+  it('the block carries no mark control, evidence or not, and the passive trace sits on the member header', () => {
+    const standing: RunDetailMemberMark = { markId: 'mark_0123456789ab', kind: 'false-fail', ordinal: 1,
+      disposition: { kind: 'quarantined', class: 'flake' } }
+    mount(
+      <ul role="tree">
+        <MemberGroup
+          group={{ member: { testIndex: 4, attempts: 1, outcome: 'failed', marks: [standing] }, steps: [] }}
+          showChrome
+          verdict={view({ testIndex: 4, misdirectionEvidence: flippedEvidence })}
+        />
+      </ul>,
+    )
+    const block = container.querySelector('[data-verdict-block]')!
+    expect(block.querySelector('[data-misdirection="flipped"]'), 'the evidence still renders').not.toBeNull()
+    expect(block.querySelectorAll('[data-mark-kind], textarea, [data-feedback-mark-glyph]')).toHaveLength(0)
+    expect([...block.querySelectorAll('button')].every(button =>
+      button.hasAttribute('data-cited-step') || button.hasAttribute('data-cited-artifact')
+      || button.hasAttribute('data-cluster-sibling'))).toBe(true)
+    const glyph = container.querySelector('[data-member="4"] [data-feedback-mark-glyph="test"]')
+    expect(glyph, 'the member header carries the trace').not.toBeNull()
+    expect(block.contains(glyph)).toBe(false)
   })
 })
 
