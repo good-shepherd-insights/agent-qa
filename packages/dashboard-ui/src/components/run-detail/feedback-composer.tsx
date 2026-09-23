@@ -35,6 +35,7 @@ import {
   resolvedStepText,
   showStepLabel,
   type FeedbackComposerState,
+  type FeedbackLayout,
   type FeedbackOutcomeClass,
   type FeedbackPreviewState,
   type FeedbackTextParts,
@@ -97,6 +98,8 @@ export interface FeedbackComposerProps {
   denial?: MarkDenial
   headingRef?: Ref<HTMLHeadingElement>
   onClose: () => void
+  /** D-10: beside the evidence, or under it on a page narrower than 768px. */
+  layout?: FeedbackLayout
 }
 
 export interface FeedbackPinned {
@@ -133,9 +136,10 @@ function TextParts({ parts }: { parts: FeedbackTextParts }) {
 }
 
 /**
- * The docked feedback composer (426 D-07). Presentational (400 D-13): the page owns the target,
- * drafts, preview read and submission, and this paints them. A named section, never a dialog —
- * the tree, the evidence and every copy affordance stay usable while it is open.
+ * The feedback composer (426 D-07), docked beside the evidence or stacked under it (D-10).
+ * Presentational (400 D-13): the page owns the target, drafts, preview read and submission, and
+ * this paints them. A named section, never a dialog — the tree, the evidence and every copy
+ * affordance stay usable while it is open.
  */
 export function FeedbackComposer({
   composerId,
@@ -179,6 +183,7 @@ export function FeedbackComposer({
   denial,
   headingRef,
   onClose,
+  layout = 'docked',
 }: FeedbackComposerProps) {
   const baseId = useId()
   const reasonId = `${baseId}-submit-reason`
@@ -219,7 +224,7 @@ export function FeedbackComposer({
       data-feedback-state={state}
       data-feedback-scope={scope}
       data-feedback-target={target}
-      data-feedback-layout="docked"
+      data-feedback-layout={layout}
       className="flex h-full min-h-0 flex-col"
       onKeyDown={(event) => {
         // React delegates at the root container, so this stops the native event before the page's

@@ -23,7 +23,7 @@ import { FailureBanner } from "@/components/run-detail/failure-banner"
 import { TabPanels } from "@/components/run-detail/tab-panels"
 import { FeedbackComposer } from "@/components/run-detail/feedback-composer"
 import { useRunFeedback } from "@/hooks/use-run-feedback"
-import { FEEDBACK_PANEL_IDS, feedbackDefaultLayout } from "@/lib/feedback-view"
+import { feedbackDefaultLayout, feedbackLayout, feedbackPanelIds } from "@/lib/feedback-view"
 import { initialPlayerSource, storePlayerSource } from "@/lib/player-view"
 import { PlayerLightbox } from '@/components/run-detail/player-lightbox'
 import { buildSuiteTimeline, suiteSeek, suiteProgress, suiteClock } from '@/lib/suite-timeline'
@@ -233,8 +233,19 @@ export default function RunDetailPage() {
     }
   }, [id, detail, reloadDetail])
 
-  const panelGroupRef = useRef<HTMLDivElement | null>(null)
-  const [feedbackLayout, setFeedbackLayout] = useState<Record<string, number>>()
+  // D-10: the page's own inline size decides docked or stacked. 0 until the observer reports, and an
+  // unmeasured page is docked.
+  const [pageRoot, setPageRoot] = useState<HTMLDivElement | null>(null)
+  const [pageWidth, setPageWidth] = useState(0)
+  useEffect(() => {
+    if (!pageRoot) return
+    const observer = new ResizeObserver(entries => {
+      const entry = entries[entries.length - 1]
+      if (entry) setPageWidth(entry.contentRect.width)
+    })
+    observer.observe(pageRoot)
+    return () => observer.disconnect()
+  }, [pageRoot])
   const [isLoading, setIsLoading] = useState(true)
   const [notFound, setNotFound] = useState(false)
   const pipelineRef = useRef<ReasoningPipelineHandle | null>(null)
@@ -601,9 +612,7 @@ export default function RunDetailPage() {
   }, [selection, displaySteps])
 
   // THE FEEDBACK COMPOSER'S STATE IS PAGE STATE (426 D-09), held by a hook so `onMark` above stays
-  // the one writer. Opening measures the panel group once, because numeric panel sizes are pixels
-  // in react-resizable-panels 4 and the third panel is seeded in percent (RESEARCH Pattern 3). The
-  // header entry's target follows the selection and the member filter (D-03).
+  // the one writer. The header entry's target follows the selection and the member filter (D-03).
   const feedback = useRunFeedback({
     runId: id,
     runStatus: run?.status,
@@ -617,8 +626,13 @@ export default function RunDetailPage() {
     markDenial,
     reloadDetail,
     setSelection,
-    beforeOpen: () => setFeedbackLayout(feedbackDefaultLayout("docked", panelGroupRef.current?.getBoundingClientRect().width ?? 0)),
   })
+  // D-10 / RESEARCH Pattern 3: the orientation switch changes panel ids, never the Group's key, so the
+  // library keeps a layout per arrangement and the tree, the tabs and the player are never remounted.
+  // The open seed is in percent because numeric panel sizes are pixels in react-resizable-panels 4.
+  const feedbackOpen = feedback.composer !== undefined
+  const layout = feedbackLayout(pageWidth, feedbackOpen)
+  const panelIds = feedbackPanelIds(layout)
 
   const playhead = useMemo<Playhead | null>(() => {
     const address = playheadFromSelection(selection)
@@ -1068,7 +1082,7 @@ export default function RunDetailPage() {
   return (
     <TooltipProvider>
       {lightboxSha && <PlayerLightbox runId={run.id} sha={lightboxSha} open onOpenChange={open => { if (!open) setLightboxSha(null) }} returnFocus={citationOpener.current} />}
-      <div className="flex h-full min-h-0 flex-col overflow-hidden">
+      <div ref={setPageRoot} className="flex h-full min-h-0 flex-col overflow-hidden">
         {/*
           THE DURABLE RUNG RIDES THE READ THIS PAGE ALREADY MADE (407-10 · D-13). `bannerRung` is a
           pure read of `knowledgeRead` — no second fetch, no new effect, and no new dependency on
@@ -1099,12 +1113,11 @@ export default function RunDetailPage() {
         {detail && isPreMilestoneRun(detail) && <RunNotice key={run.id} runId={run.id} />}
 
         <ResizablePanelGroup
-          orientation="horizontal"
+          orientation={layout === "stacked" ? "vertical" : "horizontal"}
           className="min-h-0 flex-1 overflow-hidden"
-          elementRef={panelGroupRef}
-          defaultLayout={feedback.composer === undefined ? undefined : feedbackLayout}
+          defaultLayout={feedbackOpen ? feedbackDefaultLayout(layout, pageWidth) : undefined}
         >
-          <ResizablePanel id={FEEDBACK_PANEL_IDS.tree} defaultSize={35} minSize={20}>
+          <ResizablePanel key="tree" id={panelIds.tree} defaultSize={35} minSize={20}>
             <div ref={stepTreeScrollRef} className="flex h-full min-h-0 min-w-0 flex-col overflow-y-auto">
               {/*
                 THE MEMBER FILTER (D-16). What stood here was a picker over CHILD RUNS that
@@ -1187,7 +1200,7 @@ export default function RunDetailPage() {
 
           <ResizableHandle withHandle />
 
-          <ResizablePanel id={FEEDBACK_PANEL_IDS.evidence} defaultSize={65} minSize={30} data-tour-id="tour-run-detail-reasoning">
+          <ResizablePanel key="evidence" id={panelIds.evidence} defaultSize={65} minSize={30} data-tour-id="tour-run-detail-reasoning">
             <div className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden">
               {detail === null ? (
                 <div data-run-detail-error className='flex flex-1 items-center justify-center px-4 text-center text-sm text-muted-foreground'>
@@ -1235,8 +1248,13 @@ export default function RunDetailPage() {
           {feedback.composer === undefined ? null : (
             <>
               <ResizableHandle withHandle />
-              <ResizablePanel id={FEEDBACK_PANEL_IDS.feedback} minSize="320px" maxSize="50%">
-                <FeedbackComposer {...feedback.composer} />
+              <ResizablePanel
+                key="feedback"
+                id={panelIds.feedback}
+                minSize={layout === "stacked" ? "240px" : "320px"}
+                maxSize={layout === "stacked" ? undefined : "50%"}
+              >
+                <FeedbackComposer {...feedback.composer} layout={layout} />
               </ResizablePanel>
             </>
           )}
