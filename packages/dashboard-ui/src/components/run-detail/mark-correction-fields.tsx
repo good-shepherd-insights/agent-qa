@@ -1,12 +1,10 @@
-import { useId, useState } from 'react'
+import { useId } from 'react'
 import { ChevronRight } from 'lucide-react'
-import { actionWireSchema, type Action, type RunsMarkInput } from '@vostride/agent-qa-schema'
+import { actionWireSchema, type Action } from '@vostride/agent-qa-schema'
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible'
 import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
 import { ADD_CORRECTION_LABEL } from '@/lib/feedback-view'
-
-export type MarkCorrection = Pick<RunsMarkInput, 'correctedExpectation' | 'correctedAction'>
 
 export const CORRECTED_EXPECTATION_LABEL = 'Corrected expectation (optional)'
 export const CORRECTED_EXPECTATION_HELP = 'Prose is retained as evidence.'
@@ -19,7 +17,7 @@ export const CORRECTED_ACTION_ERROR =
 
 export type ParsedCorrectedAction = { kind: 'empty' } | { kind: 'valid'; action: Action } | { kind: 'invalid' }
 
-/** The one validation both correction forms share; the server's strict schema re-validates. */
+/** The one validation the fields and the submit share; the server's strict schema re-validates. */
 export function parseCorrectedAction(text: string): ParsedCorrectedAction {
   if (text.trim() === '') return { kind: 'empty' }
   try {
@@ -31,42 +29,6 @@ export function parseCorrectedAction(text: string): ParsedCorrectedAction {
 
 function ActionHelp() {
   return <>Example: <code>{CORRECTED_ACTION_EXAMPLE}</code>. {CORRECTED_ACTION_HELP}</>
-}
-
-/** Optional score evidence on the existing mark form. Empty fields preserve one-click marks. */
-export function MarkCorrectionFields({ disabled, onChange }: {
-  disabled: boolean
-  onChange: (value: MarkCorrection | undefined, valid: boolean) => void
-}) {
-  const id = useId()
-  const [expectation, setExpectation] = useState('')
-  const [action, setAction] = useState('')
-  const [invalid, setInvalid] = useState(false)
-  const change = (nextExpectation: string, nextAction: string) => {
-    setExpectation(nextExpectation); setAction(nextAction)
-    const parsed = parseCorrectedAction(nextAction)
-    if (parsed.kind === 'invalid') { setInvalid(true); onChange(undefined, false); return }
-    const correctedAction = parsed.kind === 'valid' ? parsed.action : undefined
-    setInvalid(false)
-    onChange(nextExpectation || correctedAction ? {
-      ...(nextExpectation ? { correctedExpectation: nextExpectation } : {}),
-      ...(correctedAction === undefined ? {} : { correctedAction }),
-    } : undefined, true)
-  }
-  return <details className="w-full text-xs" data-mark-correction>
-    <summary>Optional corrected expectation</summary>
-    <label htmlFor={`${id}-expectation`} className="mt-2 block">{CORRECTED_EXPECTATION_LABEL}</label>
-    <textarea id={`${id}-expectation`} aria-label="Corrected expectation" aria-describedby={`${id}-expectation-help`} maxLength={2000} disabled={disabled}
-      className="w-full border border-border bg-background p-1 text-xs" value={expectation}
-      onChange={event => change(event.target.value, action)} />
-    <p id={`${id}-expectation-help`}>{CORRECTED_EXPECTATION_HELP}</p>
-    <label htmlFor={`${id}-action`} className="mt-2 block">{CORRECTED_ACTION_LABEL}</label>
-    <textarea id={`${id}-action`} aria-label="Corrected action JSON" aria-invalid={invalid} aria-describedby={`${id}-action-help${invalid ? ` ${id}-action-error` : ''}`} disabled={disabled}
-      className="w-full border border-border bg-background p-1 font-mono text-xs" value={action}
-      onChange={event => change(expectation, event.target.value)} />
-    <p id={`${id}-action-help`}><ActionHelp /></p>
-    {invalid ? <p id={`${id}-action-error`} role="alert">{CORRECTED_ACTION_ERROR}</p> : null}
-  </details>
 }
 
 export type CorrectedActionField = { shown: true } | { shown: false; reason: string }

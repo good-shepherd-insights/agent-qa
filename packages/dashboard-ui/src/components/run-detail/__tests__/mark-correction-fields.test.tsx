@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { act } from 'react'
+import { act, useState } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { actionWireSchema } from '@vostride/agent-qa-schema'
@@ -11,27 +11,32 @@ import {
   CORRECTED_EXPECTATION_HELP,
   CORRECTED_EXPECTATION_LABEL,
   CorrectionFields,
-  MarkCorrectionFields,
   parseCorrectedAction,
 } from '../mark-correction-fields'
 
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 let root: Root
 let container: HTMLDivElement
+function Stateful({ onChange }: { onChange: (expectation: string, actionText: string) => void }) {
+  const [draft, setDraft] = useState({ expectation: '', actionText: '' })
+  return <CorrectionFields expectation={draft.expectation} actionText={draft.actionText} disabled={false} actionField={{ shown: true }}
+    onChange={(expectation, actionText) => { setDraft({ expectation, actionText }); onChange(expectation, actionText) }} />
+}
 function mount(two = false) {
   const onChange = vi.fn()
   container = document.createElement('div')
   document.body.append(container)
   root = createRoot(container)
   act(() => root.render(<>
-    <MarkCorrectionFields disabled={false} onChange={onChange} />
-    {two ? <MarkCorrectionFields disabled={false} onChange={() => {}} /> : null}
+    <Stateful onChange={onChange} />
+    {two ? <Stateful onChange={() => {}} /> : null}
   </>))
+  for (const trigger of container.querySelectorAll<HTMLButtonElement>('[data-feedback-correction]')) act(() => { trigger.click() })
   return onChange
 }
 function fill(label: string, value: string) {
   act(() => {
-    const field = container.querySelector<HTMLTextAreaElement>(`[aria-label="${label}"]`)!
+    const field = byLabel(label)!
     Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(field, value)
     field.dispatchEvent(new Event('input', { bubbles: true }))
   })
@@ -39,13 +44,14 @@ function fill(label: string, value: string) {
 afterEach(() => { act(() => root.unmount()); container.remove() })
 
 describe('419-15 optional correction guidance', () => {
-  it('visibly labels two concurrent forms with unique controls and help', () => {
+  it('CorrectionFields visibly labels two concurrent forms with unique controls and help', () => {
     mount(true)
     const fields = [...container.querySelectorAll<HTMLTextAreaElement>('textarea')]
     expect(new Set(fields.map(field => field.id)).size).toBe(4)
     for (const field of fields) {
       const label = [...container.querySelectorAll('label')].find(label => label.htmlFor === field.id)
-      expect(label?.textContent).toBe(`${field.getAttribute('aria-label')} (optional)`)
+      expect([CORRECTED_EXPECTATION_LABEL, CORRECTED_ACTION_LABEL]).toContain(label?.textContent)
+      expect(field.hasAttribute('aria-label')).toBe(false)
       expect(field.getAttribute('aria-describedby')).toBeTruthy()
       for (const id of field.getAttribute('aria-describedby')!.split(' ')) expect(document.getElementById(id)?.textContent).toBeTruthy()
     }
@@ -54,32 +60,38 @@ describe('419-15 optional correction guidance', () => {
     expect(actionWireSchema.safeParse(JSON.parse(example!)).success).toBe(true)
     expect(container.textContent).toContain('intended target in the recorded decision')
   })
-  it('keeps blank and prose-only corrections valid without supplying an example', () => {
+  it('CorrectionFields keeps blank and prose-only corrections valid without supplying an example', () => {
     const onChange = mount()
-    expect(container.querySelector<HTMLTextAreaElement>('[aria-label="Corrected action JSON"]')?.value).toBe('')
-    fill('Corrected expectation', 'Expected the cart')
-    expect(onChange).toHaveBeenLastCalledWith({ correctedExpectation: 'Expected the cart' }, true)
-    fill('Corrected expectation', '')
-    expect(onChange).toHaveBeenLastCalledWith(undefined, true)
+    expect(byLabel(CORRECTED_ACTION_LABEL)?.value).toBe('')
+    fill(CORRECTED_EXPECTATION_LABEL, 'Expected the cart')
+    expect(onChange).toHaveBeenLastCalledWith('Expected the cart', '')
+    expect(byLabel(CORRECTED_ACTION_LABEL)!.getAttribute('aria-invalid')).toBe('false')
+    expect(container.querySelector('[role="alert"]')).toBeNull()
+    fill(CORRECTED_EXPECTATION_LABEL, '')
+    expect(onChange).toHaveBeenLastCalledWith('', '')
+    expect(parseCorrectedAction('')).toEqual({ kind: 'empty' })
   })
-  it.each(['{', '{}', '{"type":"click"}'])('identifies invalid action %s and recovers without echoing it', raw => {
+  it.each(['{', '{}', '{"type":"click"}'])('CorrectionFields identifies invalid action %s and recovers without echoing it', raw => {
     const onChange = mount()
-    fill('Corrected action JSON', raw)
-    expect(onChange).toHaveBeenLastCalledWith(undefined, false)
-    const field = container.querySelector('[aria-label="Corrected action JSON"]')!
+    fill(CORRECTED_ACTION_LABEL, raw)
+    expect(onChange).toHaveBeenLastCalledWith('', raw)
+    const field = byLabel(CORRECTED_ACTION_LABEL)!
     expect(field.getAttribute('aria-invalid')).toBe('true')
-    expect(container.querySelector('[role="alert"]')?.textContent).toContain('Corrected action JSON')
-    expect(container.querySelector('[role="alert"]')?.textContent).not.toContain(raw)
-    fill('Corrected action JSON', '{"type":"click","ref":"e1"}')
+    const alert = container.querySelector('[role="alert"]')
+    expect(alert?.textContent).toBe(CORRECTED_ACTION_ERROR)
+    expect(alert?.textContent).toContain('Corrected action JSON')
+    expect(alert?.textContent).not.toContain(raw)
+    expect(field.getAttribute('aria-describedby')!.split(' ')).toContain(alert!.id)
+    fill(CORRECTED_ACTION_LABEL, '{"type":"click","ref":"e1"}')
     expect(field.getAttribute('aria-invalid')).toBe('false')
     expect(container.querySelector('[role="alert"]')).toBeNull()
-    expect(onChange).toHaveBeenLastCalledWith({ correctedAction: { type: 'click', ref: 'e1' } }, true)
+    expect(onChange).toHaveBeenLastCalledWith('', '{"type":"click","ref":"e1"}')
   })
 })
 
 // THE CONTROLLED CORRECTION FIELDS (426-08 · D-15, RESEARCH Pitfall 10). The composer's draft holds the
 // raw text, so these fields keep no value of their own: they paint what they are given and report every
-// keystroke. The shipped labels, help and error copy are shared with the pill form above.
+// keystroke.
 type Controlled = Parameters<typeof CorrectionFields>[0]
 function renderControlled(props: Controlled) {
   if (container === undefined || !container.isConnected) {
