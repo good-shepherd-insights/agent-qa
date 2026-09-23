@@ -1,11 +1,13 @@
-import { useId } from 'react'
+import { useId, type Ref } from 'react'
 import { X } from 'lucide-react'
 import type { Mark } from '@vostride/agent-qa-schema'
+import type { MarkDenial } from '@/lib/analysis-view'
 import { Button } from '@/components/ui/button'
 import { Label } from '@/components/ui/label'
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Textarea } from '@/components/ui/textarea'
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { DenialBlock } from '@/chat/chat-transcript'
 import { MaskedText } from '@/components/run-detail/masked-text'
 import {
@@ -13,6 +15,7 @@ import {
   CHOICE_LEGEND,
   CHOICE_MEANINGS,
   CLOSE_FEEDBACK_LABEL,
+  CLOSE_FEEDBACK_TOOLTIP,
   FEEDBACK_CHOICE_ORDER,
   NOTE_LABEL,
   NO_UNIQUE_ADDRESS_TEXT,
@@ -50,6 +53,9 @@ export interface FeedbackComposerProps {
   submitReason: string
   onSubmit: () => void
   status: string
+  /** 419-15: the page's denial for this address, shown while its draft is retained. */
+  denial?: MarkDenial
+  headingRef?: Ref<HTMLHeadingElement>
   onClose: () => void
 }
 
@@ -108,6 +114,8 @@ export function FeedbackComposer({
   submitReason,
   onSubmit,
   status,
+  denial,
+  headingRef,
   onClose,
 }: FeedbackComposerProps) {
   const baseId = useId()
@@ -126,15 +134,26 @@ export function FeedbackComposer({
       data-feedback-target={target}
       data-feedback-layout="docked"
       className="flex h-full min-h-0 flex-col"
+      onKeyDown={(event) => {
+        // React delegates at the root container, so this stops the native event before the page's
+        // document-level shortcut map; an Esc an open Radix layer consumed arrives defaultPrevented.
+        event.stopPropagation()
+        if (event.key === 'Escape' && !event.defaultPrevented) onClose()
+      }}
     >
       <div className="shrink-0 space-y-1 border-b px-3 py-2">
         <div className="flex items-start gap-2">
-          <h2 id={headingId} tabIndex={-1} className="min-w-0 flex-1 break-words text-base font-medium leading-snug">
+          <h2 id={headingId} ref={headingRef} tabIndex={-1} className="min-w-0 flex-1 break-words text-base font-medium leading-snug">
             <TextParts parts={heading} />
           </h2>
-          <Button variant="ghost" size="icon-sm" data-feedback-close aria-label={CLOSE_FEEDBACK_LABEL} onClick={onClose}>
-            <X className="h-3.5 w-3.5" aria-hidden="true" />
-          </Button>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button variant="ghost" size="icon-sm" data-feedback-close aria-label={CLOSE_FEEDBACK_LABEL} onClick={onClose}>
+                <X className="h-3.5 w-3.5" aria-hidden="true" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent side="bottom">{CLOSE_FEEDBACK_TOOLTIP}</TooltipContent>
+          </Tooltip>
         </div>
         <p data-feedback-scope-line className="break-words text-xs text-muted-foreground">
           <TextParts parts={scopeLine} />
@@ -251,6 +270,11 @@ export function FeedbackComposer({
       </div>
 
       <div className="shrink-0 space-y-2 border-t px-3 py-2">
+        {denial === undefined ? null : (
+          <div data-feedback-denied role="alert">
+            <DenialBlock neutralReason={denial.reason} remedies={denial.remedies} />
+          </div>
+        )}
         <div className="flex flex-wrap items-center gap-2">
           <Button
             size="sm"

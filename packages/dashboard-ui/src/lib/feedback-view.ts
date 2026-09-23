@@ -422,6 +422,8 @@ export const PREVIEW_TITLE = 'What this will do'
 export const SENDING_STATUS = 'Sending feedback…'
 export const FEEDBACK_ENTRY_TEST_LABEL = 'Give feedback on this test'
 export const CLOSE_FEEDBACK_LABEL = 'Close feedback'
+export const CLOSE_FEEDBACK_TOOLTIP = 'Close (Esc)'
+export const DRAFT_KEPT_STATUS = 'Draft kept. Check the message above before sending again.'
 
 export type FeedbackEntryScope = 'test' | 'step'
 

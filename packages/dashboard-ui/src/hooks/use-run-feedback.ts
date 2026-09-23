@@ -4,8 +4,9 @@ import type { FeedbackComposerProps } from '@/components/run-detail/feedback-com
 import type { FeedbackEntryButtonProps } from '@/components/run-detail/feedback-entry'
 import type { StepTreeFeedback } from '@/components/run-detail/step-tree'
 import { fetchMarkPreview, type MarkPreviewRead } from '@/lib/api'
-import type { OnMark } from '@/lib/analysis-view'
+import type { MarkDenial, OnMark } from '@/lib/analysis-view'
 import {
+  DRAFT_KEPT_STATUS,
   EMPTY_DRAFT,
   PREVIEW_DEBOUNCE_MS,
   SENDING_STATUS,
@@ -37,8 +38,20 @@ interface UseRunFeedbackInput {
   markPending: boolean
   selectedStep: { testIndex: number; stepIndex: number } | null
   memberFilter: number | undefined
+  /** The page's denial, addressed; shown only on the composer address it names. */
+  markDenial?: MarkDenial & FeedbackTarget
+  /** The page's guarded runs.detail re-read, called on every open (a mark written elsewhere shows). */
+  reloadDetail?: () => Promise<unknown>
   beforeOpen?: () => void
 }
+
+/** 419-15's local announcement, kept per address so re-targeting shows each address its own. */
+interface AddressOutcome {
+  state: FeedbackComposerState
+  status: string
+}
+
+const COMPOSING: AddressOutcome = { state: 'composing', status: '' }
 
 function targetOfAddress(address: string): FeedbackTarget {
   const [testIndex, stepIndex] = address.split(':')
@@ -63,6 +76,8 @@ export function useRunFeedback({
   markPending,
   selectedStep,
   memberFilter,
+  markDenial,
+  reloadDetail,
   beforeOpen,
 }: UseRunFeedbackInput) {
   const baseId = useId()
@@ -72,9 +87,9 @@ export function useRunFeedback({
   const [target, setTarget] = useState<FeedbackTarget | null>(null)
   const [drafts, setDrafts] = useState<ReadonlyMap<string, FeedbackDraft>>(() => new Map())
   const [landed, setLanded] = useState<LandedPreview>()
-  const [state, setState] = useState<FeedbackComposerState>('composing')
-  const [status, setStatus] = useState('')
-  const [recorded, setRecorded] = useState<FeedbackTarget>()
+  const [outcomes, setOutcomes] = useState<ReadonlyMap<string, AddressOutcome>>(() => new Map())
+  const [focusRequest, setFocusRequest] = useState(0)
+  const headingRef = useRef<HTMLHeadingElement>(null)
   const opener = useRef<HTMLElement | null>(null)
   const previewGeneration = useRef(0)
   const previewTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
@@ -82,6 +97,7 @@ export function useRunFeedback({
   const runRef = useRef(runId)
   const detailRef = useRef(detail)
   useEffect(() => { detailRef.current = detail }, [detail])
+  useEffect(() => { if (focusRequest > 0) headingRef.current?.focus() }, [focusRequest])
 
   useEffect(() => {
     runRef.current = runId
@@ -93,9 +109,7 @@ export function useRunFeedback({
     setTarget(null)
     setDrafts(new Map())
     setLanded(undefined)
-    setState('composing')
-    setStatus('')
-    setRecorded(undefined)
+    setOutcomes(new Map())
     return () => {
       previewGeneration.current += 1
       clearTimeout(previewTimer.current)
@@ -104,6 +118,8 @@ export function useRunFeedback({
 
   const address = target === null ? undefined : feedbackAddress(target)
   const draft = (address === undefined ? undefined : drafts.get(address)) ?? EMPTY_DRAFT
+  const { state, status } = (address === undefined ? undefined : outcomes.get(address)) ?? COMPOSING
+  const setOutcome = (key: string, next: AddressOutcome) => setOutcomes((previous) => new Map(previous).set(key, next))
   const currentKey = target === null || draft.kind === undefined ? '' : previewRequestKey({ kind: draft.kind, ...target })
   const landedOutcome = landed === undefined ? undefined : landed.read.kind === 'read' ? landed.read.result.kind : 'failed'
   const previewCurrent = landed !== undefined && currentKey !== '' && landed.key === currentKey
@@ -134,21 +150,21 @@ export function useRunFeedback({
     }, PREVIEW_DEBOUNCE_MS)
   }
 
+  // Re-activating the entry already open keeps it open and refocuses the heading (D-07).
   const openFeedback = (next: FeedbackTarget, openerElement: HTMLElement) => {
     beforeOpen?.()
     opener.current = openerElement
+    void reloadDetail?.().catch(() => undefined)
     const nextAddress = feedbackAddress(next)
     if (address !== nextAddress) {
       previewGeneration.current += 1
-      setState('composing')
-      setStatus('')
-      setRecorded(undefined)
       const kind = drafts.get(nextAddress)?.kind
       if (kind === undefined) clearTimeout(previewTimer.current)
       else schedulePreview(next, kind)
     }
     setTarget(next)
     setOpen(true)
+    setFocusRequest((count) => count + 1)
   }
 
   // D-03's switcher: the composer moves to another test's address and shows that address's draft.
@@ -157,34 +173,34 @@ export function useRunFeedback({
     const nextAddress = feedbackAddress(next)
     if (state === 'submitting' || nextAddress === address) return
     previewGeneration.current += 1
-    setState('composing')
-    setStatus('')
-    setRecorded(undefined)
     setTarget(next)
+    setFocusRequest((count) => count + 1)
     const kind = drafts.get(nextAddress)?.kind
     if (kind === undefined) clearTimeout(previewTimer.current)
     else schedulePreview(next, kind)
   }
 
+  // Closing keeps every draft; focus goes back to the opener, else the header entry, else the
+  // evidence strip's active tab (D-07).
   const close = () => {
     setOpen(false)
-    if (opener.current?.isConnected) opener.current.focus()
+    const back = opener.current?.isConnected
+      ? opener.current
+      : (document.querySelector<HTMLElement>('[data-feedback-entry="test"]') ??
+        document.querySelector<HTMLElement>('[role="tab"][aria-selected="true"]'))
+    back?.focus()
   }
 
   const editNote = (note: string) => {
     if (address === undefined || state === 'submitting') return
     setDrafts((previous) => new Map(previous).set(address, { ...(previous.get(address) ?? EMPTY_DRAFT), note }))
-    setState('composing')
-    setStatus('')
-    setRecorded(undefined)
+    setOutcome(address, COMPOSING)
   }
 
   const choose = (kind: Mark) => {
     if (target === null || address === undefined || state === 'submitting') return
     setDrafts((previous) => new Map(previous).set(address, { ...(previous.get(address) ?? EMPTY_DRAFT), kind }))
-    setState('composing')
-    setStatus('')
-    setRecorded(undefined)
+    setOutcome(address, COMPOSING)
     schedulePreview(target, kind)
   }
 
@@ -193,8 +209,7 @@ export function useRunFeedback({
     const request = {}
     const submitted = target
     submission.current = request
-    setState('submitting')
-    setStatus(SENDING_STATUS)
+    setOutcome(address, { state: 'submitting', status: SENDING_STATUS })
     try {
       const result = await onMark(submitted.testIndex, submitted.stepIndex, draft.kind, draft.note || undefined, undefined)
       if (submission.current !== request) return
@@ -205,12 +220,11 @@ export function useRunFeedback({
           return next
         })
         setLanded(undefined)
-        setRecorded(submitted)
-        setState('recorded')
-        setStatus('')
+        setOutcome(address, { state: 'recorded', status: '' })
+      } else if (result === 'retained') {
+        setOutcome(address, { state: 'retained', status: DRAFT_KEPT_STATUS })
       } else {
-        setState(result === 'retained' ? 'retained' : 'composing')
-        setStatus('')
+        setOutcome(address, COMPOSING)
       }
     } finally {
       if (submission.current === request) submission.current = undefined
@@ -218,10 +232,10 @@ export function useRunFeedback({
   }
 
   // The receipt is read from the refreshed projection, never from the POST's answer (419-15).
-  const recordedMark = recorded === undefined
+  const recordedMark = state !== 'recorded' || target === null
     ? undefined
-    : detail?.members.find((entry) => entry.testIndex === recorded.testIndex)
-      ?.marks?.find((entry) => entry.stepIndex === recorded.stepIndex)
+    : detail?.members.find((entry) => entry.testIndex === target.testIndex)
+      ?.marks?.find((entry) => entry.stepIndex === target.stepIndex)
   const statusText = state === 'recorded' ? (recordedMark === undefined ? '' : feedbackRecordedText(recordedMark.disposition)) : status
 
   const view = target === null ? undefined : feedbackTargetView({ detail, target, runStatus })
@@ -273,6 +287,10 @@ export function useRunFeedback({
       return { address: key, label: unsentDraftLabel(place), onOpen: () => retarget(other) }
     })
 
+  const denial = state === 'retained' && markDenial !== undefined && feedbackAddress(markDenial) === address
+    ? { reason: markDenial.reason, remedies: markDenial.remedies }
+    : undefined
+
   const composer: FeedbackComposerProps | undefined = !open || target === null || address === undefined || view === undefined
     ? undefined
     : {
@@ -297,6 +315,8 @@ export function useRunFeedback({
         submitReason,
         onSubmit: () => { void submit() },
         status: statusText,
+        denial,
+        headingRef,
         onClose: close,
       }
 

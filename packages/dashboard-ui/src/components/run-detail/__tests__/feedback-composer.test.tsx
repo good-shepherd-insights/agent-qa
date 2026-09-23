@@ -11,6 +11,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { RunDetailMember, RunDetailProjection, RunDetailStep } from '@vostride/agent-qa-schema'
 
 import { FeedbackComposer, type FeedbackComposerProps } from '../feedback-composer'
+import { TooltipProvider } from '@/components/ui/tooltip'
 import {
   CHOICE_LEGEND,
   CHOICE_MEANINGS,
@@ -87,7 +88,7 @@ function render(next: FeedbackComposerProps) {
     document.body.append(container)
     root = createRoot(container)
   }
-  act(() => root!.render(<FeedbackComposer {...next} />))
+  act(() => root!.render(<TooltipProvider><FeedbackComposer {...next} /></TooltipProvider>))
 }
 
 afterEach(() => {

@@ -614,6 +614,8 @@ export default function RunDetailPage() {
       ? { testIndex: selectedStep.testIndex, stepIndex: selectedStep.stepIndex }
       : null,
     memberFilter: memberFilter === MEMBER_FILTER_ALL ? undefined : memberFilter,
+    markDenial,
+    reloadDetail,
     beforeOpen: () => setFeedbackLayout(feedbackPanelLayout(panelGroupRef.current?.getBoundingClientRect().width ?? 0)),
   })
 
