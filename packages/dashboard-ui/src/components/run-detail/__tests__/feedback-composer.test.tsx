@@ -13,6 +13,8 @@ import { RunsMarkPreviewResultSchema } from '@vostride/agent-qa-schema'
 import { generateRunId } from '@vostride/agent-qa-ids'
 
 import { FeedbackComposer, type FeedbackComposerProps } from '../feedback-composer'
+import { FeedbackApproval, type FeedbackApprovalProps } from '../feedback-approval'
+import { MARK_CONFIRM_TITLE, RESOLUTION_TEXT, markConfirmAnswers } from '@/components/run-confirm-dialog'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import {
   CHOICE_LEGEND,
@@ -305,5 +307,83 @@ describe('426-08 Technical details', () => {
     const technical = container.querySelector('[data-feedback-technical]')
     expect(technical, 'no Technical details content').not.toBeNull()
     expect(textNodes(technical!).map(node => node.textContent)).toContain(kind)
+  })
+})
+
+// THE MARK'S APPROVAL, INLINE (426-10 · D-20, SC4). The question the policy gate asks before a mark is
+// recorded sits in the composer's footer as a labelled group — never a dialog, never modal — in the
+// shipped confirm vocabulary, with each hint visible rather than hover-only.
+function renderApproval(overrides: Partial<FeedbackApprovalProps> = {}) {
+  container = document.createElement('div')
+  document.body.append(container)
+  root = createRoot(container)
+  const next: FeedbackApprovalProps = {
+    confirmId: 'mark-confirm-7',
+    actionClass: 'fn:runs.mark',
+    preview: `Record this mark on step 3 ${HOSTILE}`,
+    onAnswer: vi.fn(),
+    ...overrides,
+  }
+  act(() => root!.render(<FeedbackApproval {...next} />))
+  return next
+}
+const approval = () => container.querySelector<HTMLElement>('[data-feedback-approval]')
+
+describe('426-10 the inline approval region', () => {
+  it('APPROVAL-IS-A-GROUP: a labelled group with the shipped title, the action class in mono and the preview as text', () => {
+    renderApproval()
+    const region = approval()
+    expect(region, 'no approval region').not.toBeNull()
+    expect(region!.getAttribute('role')).toBe('group')
+    expect(region!.getAttribute('data-confirm-id')).toBe('mark-confirm-7')
+    const titleId = region!.getAttribute('aria-labelledby')
+    expect(titleId).toBeTruthy()
+    expect(document.getElementById(titleId!)?.textContent).toBe(MARK_CONFIRM_TITLE)
+    const actionClass = [...region!.querySelectorAll('*')].find(node => node.textContent === 'fn:runs.mark' && node.children.length === 0)
+    expect(actionClass?.className).toContain('font-mono')
+    expect(region!.querySelector('[data-confirm-preview]')?.textContent).toBe(`Record this mark on step 3 ${HOSTILE}`)
+    expect(region!.querySelector('img')).toBeNull()
+    expect((globalThis as { __pwned?: boolean }).__pwned).toBeUndefined()
+    expect(document.querySelectorAll('[role="dialog"]')).toHaveLength(0)
+    expect(document.querySelectorAll('[aria-modal]')).toHaveLength(0)
+    expect(container.contains(region)).toBe(true)
+  })
+
+  it('APPROVAL-HINTS-VISIBLE: three rows, each an answer button described by its visible hint, none with a title', () => {
+    const next = renderApproval()
+    const buttons = [...container.querySelectorAll<HTMLButtonElement>('[data-confirm-answer]')]
+    const answers = markConfirmAnswers()
+    expect(buttons.map(button => button.getAttribute('data-confirm-answer'))).toEqual(answers.map(entry => entry.answer))
+    buttons.forEach((button, index) => {
+      expect(button.textContent).toBe(answers[index]!.label)
+      expect(button.hasAttribute('title')).toBe(false)
+      const hintId = button.getAttribute('aria-describedby')
+      expect(hintId).toBeTruthy()
+      const hint = document.getElementById(hintId!)
+      expect(hint?.textContent).toBe(answers[index]!.hint)
+      expect(hint?.parentElement).toBe(button.parentElement)
+      act(() => button.click())
+      expect(next.onAnswer).toHaveBeenLastCalledWith(answers[index]!.answer)
+    })
+  })
+
+  it('APPROVAL-FOCUS-YES: focus moves to Yes when the region appears', () => {
+    renderApproval()
+    expect(document.activeElement).toBe(container.querySelector('[data-confirm-answer="accept"]'))
+    expect(document.activeElement).not.toBeNull()
+  })
+
+  it('APPROVAL-OUTCOME-LINE: a resolved question shows the shipped outcome line and no answers', () => {
+    renderApproval({ resolution: { answer: 'deny', by: 'timeout' } })
+    expect(container.querySelector('[data-confirm-outcome]')?.textContent).toBe(RESOLUTION_TEXT.timeout)
+    expect(container.querySelectorAll('[data-confirm-answer]')).toHaveLength(0)
+    act(() => root!.unmount())
+    container.remove()
+    root = undefined
+
+    renderApproval({ resolution: { answer: 'accept', by: 'answer' } })
+    expect(container.querySelector('[data-confirm-outcome]')?.textContent).toBe(`approved — ${RESOLUTION_TEXT.answer}`)
+    expect(container.querySelectorAll('[data-confirm-answer]')).toHaveLength(0)
+    expect(approval()?.getAttribute('role')).toBe('group')
   })
 })
