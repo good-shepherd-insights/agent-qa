@@ -20,6 +20,7 @@ const UI = '@vostride/agent-qa-dashboard-ui'
 const DRAWER = 'packages/dashboard-ui/src/components/run-detail/artifact-attribute-rows.tsx'
 const ROUTES = 'packages/dashboard-server/src/run-service/run-detail-routes.ts'
 const VIEW = 'packages/dashboard-ui/src/lib/knowledge-view.ts'
+const HISTORY = 'packages/dashboard-ui/src/components/run-detail/feedback-history.tsx'
 const SINKS = 'src/__tests__/conformance/423-read-sinks.test.ts'
 const NO_CHAT = `${SINKS} > NO-CHAT-TARGET`
 
@@ -41,8 +42,8 @@ runSelftest({
       reds: [`${SINKS} > C423-HUMAN-DETAIL-SANITIZED: T-405-38 restores then sanitizes durable HTTP output`] },
     { id: 'S05', claim: 'HTTP-EVIDENCE-HUMAN', subject: ROUTES, crossing: '@vostride/agent-qa-dashboard',
       reds: [`${SINKS} > HTTP-EVIDENCE-HUMAN`] },
-    { id: 'S06', claim: 'NO-CHAT-TARGET', subject: 'packages/dashboard-ui/src/components/run-detail/verdict-block.tsx', crossing: UI, reds: [NO_CHAT] },
-    { id: 'S07', claim: 'NO-CHAT-TARGET', subject: 'packages/dashboard-ui/src/components/run-detail/step-tree-item.tsx', crossing: UI, reds: [NO_CHAT] },
+    { id: 'S06', claim: 'NO-CHAT-TARGET', subject: HISTORY, crossing: UI, reds: [NO_CHAT] },
+    { id: 'S07', claim: 'NO-CHAT-TARGET', subject: HISTORY, crossing: UI, reds: [NO_CHAT] },
     { id: 'S08', claim: 'NO-CHAT-TARGET', subject: 'packages/dashboard-ui/src/components/run-detail/knowledge-learned.tsx', crossing: UI, reds: [NO_CHAT] },
     { id: 'S09', claim: 'FAILED-CHAIN-ROWS-RETAINED', subject: VIEW, reds: [
       'src/components/run-detail/__tests__/knowledge-learned.test.tsx > FAILED-CHAIN-ROWS-RETAINED',

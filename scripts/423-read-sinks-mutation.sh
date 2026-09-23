@@ -22,8 +22,8 @@
 #   S03  the drawer paints an unconverted attribute key into the DOM           -> SINK-DOM
 #   S04  the human run-detail door restores without sanitizing auth state      -> C423-HUMAN-DETAIL-SANITIZED (T-405-38)
 #   S05  the human evidence door restores without sanitizing auth state        -> HTTP-EVIDENCE-HUMAN
-#   S06  the member mark review control becomes a link to /chat                -> NO-CHAT-TARGET
-#   S07  the step mark review control becomes a link to /chat                  -> NO-CHAT-TARGET
+#   S06  the composer history's review control becomes a link to /chat         -> NO-CHAT-TARGET
+#   S07  the composer history's review control copies a Chat route              -> NO-CHAT-TARGET
 #   S08  the Knowledge proposals CTA becomes a link to /chat                    -> NO-CHAT-TARGET
 #   S09  a failed chain's learned half returns the early-empty arm              -> FAILED-CHAIN-ROWS-RETAINED (view)
 #   S10  the same early-empty arm on the built page over a real failed chain    -> knowledge-tab-dom (c4)
@@ -58,8 +58,7 @@ const { runGate, cell } = require(path.join(process.cwd(), 'scripts/423-mutation
 const DRAWER = 'packages/dashboard-ui/src/components/run-detail/artifact-attribute-rows.tsx'
 const RUN_PAGE = 'packages/dashboard-ui/src/pages/run-detail.tsx'
 const ROUTES = 'packages/dashboard-server/src/run-service/run-detail-routes.ts'
-const MEMBER = 'packages/dashboard-ui/src/components/run-detail/verdict-block.tsx'
-const STEP = 'packages/dashboard-ui/src/components/run-detail/step-tree-item.tsx'
+const HISTORY = 'packages/dashboard-ui/src/components/run-detail/feedback-history.tsx'
 const LEARNED = 'packages/dashboard-ui/src/components/run-detail/knowledge-learned.tsx'
 const VIEW = 'packages/dashboard-ui/src/lib/knowledge-view.ts'
 
@@ -136,12 +135,15 @@ const legs = [
     reds: [EVIDENCE_HUMAN], allowed: [],
     greens: [DETAIL, EVIDENCE_MACHINE, MACHINE_MASKED, CROSS_SITE, CLIPBOARD],
   },
-  chatLeg(MEMBER, 'member mark review control', 'chat423member',
-    "                <ReviewCommandButton data-mark-review command={proposalReviewCommand(mark.disposition.proposalId)} label={COPY_REVIEW_COMMAND_LABEL} className={`${MARK_ACTION_CLASS} border-border bg-background`} />\n",
-    "                <a data-mark-review data-chat423=\"chat423member\" href=\"/chat\" className={`${MARK_ACTION_CLASS} border-border bg-background`}>review in chat</a>\n"),
-  chatLeg(STEP, 'step mark review control', 'chat423step',
-    "              {mark.disposition.kind === 'drafted' ? <ReviewCommandButton data-mark-review command={proposalReviewCommand(mark.disposition.proposalId)} label={COPY_REVIEW_COMMAND_LABEL} className={`${MARK_ACTION_CLASS} border-border bg-background`} /> : null}\n",
-    "              {mark.disposition.kind === 'drafted' ? <a data-mark-review data-chat423=\"chat423step\" href=\"/chat\" className={`${MARK_ACTION_CLASS} border-border bg-background`}>review in chat</a> : null}\n"),
+  chatLeg(HISTORY, 'history review control', 'chat423history',
+    '            <ReviewCommandButton\n              data-history-review\n              command={proposalReviewCommand(disposition.proposalId)}\n              label={COPY_REVIEW_COMMAND_LABEL}\n              className="font-mono text-xs text-muted-foreground hover:text-foreground"\n            />\n',
+    '            <a\n              data-history-review\n              data-chat423="chat423history"\n              href="/chat"\n              className="font-mono text-xs text-muted-foreground hover:text-foreground"\n            >{proposalReviewCommand(disposition.proposalId)}</a>\n'),
+  {
+    ...chatLeg(HISTORY, 'history review control', 'chat423route',
+      '              data-history-review\n              command={proposalReviewCommand(disposition.proposalId)}\n',
+      '              data-history-review\n              command={`/chat?proposal=${disposition.proposalId}&chat423=chat423route`}\n'),
+    operation: 'make the history review control copy a Chat route',
+  },
   chatLeg(LEARNED, 'Knowledge proposals CTA', 'chat423proposals',
     '          <ReviewCommandButton\n            data-review-proposals\n            command={proposals.command}\n            label={proposals.ctaText}\n            className="font-mono text-xs text-primary underline-offset-4 hover:underline"\n          />\n',
     '          <a\n            data-review-proposals\n            data-chat423="chat423proposals"\n            href="/chat"\n            className="font-mono text-xs text-primary underline-offset-4 hover:underline"\n          >{proposals.ctaText}</a>\n'),
