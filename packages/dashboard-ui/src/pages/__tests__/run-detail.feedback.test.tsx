@@ -10,7 +10,7 @@ import type {
   RunDetailStep,
   RunsMarkPreviewResult,
 } from '@vostride/agent-qa-schema'
-import { MARK_PREVIEW_REFUSALS, RunsMarkPreviewResultSchema, RunsMarksHistoryResultSchema } from '@vostride/agent-qa-schema'
+import { MARKS, MARK_PREVIEW_REFUSALS, RunsMarkPreviewResultSchema, RunsMarksHistoryResultSchema } from '@vostride/agent-qa-schema'
 import { generateRunId, generateTestId } from '@vostride/agent-qa-ids'
 
 import RunDetailPage from '@/pages/run-detail'
@@ -2139,5 +2139,39 @@ describe('426-11 the open composer stacks under the evidence below 768px', () =>
 
     expect(mounts.tabPanels).toBe(1)
     expect(mounts.stepTree).toBe(1)
+  })
+})
+
+// NO PILL ANYWHERE (426-15 · SC1, SC2, D-05). The two doors are the only way to leave feedback, and the
+// internal mark names appear only under Technical details. The page tests' stand-in for collapsible
+// sections always renders Technical details, so that subtree is skipped rather than opened.
+describe('426-15 the always-visible pills are gone', () => {
+  it('NO-PILL-ANYWHERE: a marked suite with the composer open and a preview landed renders no pill and no internal mark name', async () => {
+    const stepMark: RunDetailMemberMark = { markId: 'mark_0123456789ac', kind: 'confirmed-bug', ordinal: 2, stepIndex: 0,
+      disposition: { kind: 'confirmed-bug', confirmedRecords: 0 } }
+    const suite = suiteDetail({ marks: [stepMark] })
+    fetchRunDetailMock.mockResolvedValue({ ...suite, members: [suite.members[0]!, { ...suite.members[1]!, marks: [receipt] }] })
+    fetchRunAnalysisMock.mockResolvedValue({ runId: RUN_ID, verdicts: [{ perTest: 1, producer: 'deterministic-classifier', confidence: 0 }],
+      sentences: [{ perTest: 1, sentence: 'Payment was declined' }], clusters: [] })
+    fetchMarksHistoryMock.mockResolvedValue(historyOf([{ n: 1, kind: 'confirmed-bug', stepIndex: 0 }]))
+    await renderAt(`/runs/${RUN_ID}`)
+    expect(q('[data-verdict-block]'), 'the failed member\'s verdict block renders').not.toBeNull()
+
+    await click('[data-feedback-entry="test"]')
+    await pickFirstChoiceAndLandPreview(Promise.resolve({ kind: 'read', result: previewOf({
+      markKind: FEEDBACK_CHOICE_ORDER.passed[0], member: { testIndex: 0, testId: SUITE_TEST_IDS[0] },
+      resolvedStep: { stepIndex: 0, reason: 'failing-step' } }) }))
+    expect(q('[data-feedback-choice] [role="radio"][aria-checked="true"]'), 'a choice is picked').not.toBeNull()
+    expect(q('[data-feedback-preview]')!.getAttribute('data-preview-current')).toBe('true')
+
+    expect(document.querySelectorAll('[data-mark-kind]')).toHaveLength(0)
+    const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT)
+    const leaked: string[] = []
+    for (let node = walker.nextNode(); node !== null; node = walker.nextNode()) {
+      if (node.parentElement?.closest('[data-feedback-technical]')) continue
+      const text = node.textContent ?? ''
+      if (MARKS.some(kind => text.includes(kind))) leaked.push(text)
+    }
+    expect(leaked).toEqual([])
   })
 })
