@@ -86,6 +86,62 @@ export function unsentDraftLabel(place: FeedbackPlace): string {
 
 export const NOTE_LABEL = 'Note (optional)'
 
+export const ADD_CORRECTION_LABEL = 'Add a correction'
+
+/** Why the corrected-action field is hidden (UI-SPEC S4; quarantined and unavailable are U7's rows). */
+export type CorrectedActionGateState = 'no-choice' | 'loading' | 'count' | 'quarantined' | 'unavailable'
+
+export function correctedActionUnavailableText(state: CorrectedActionGateState, count = 0): string {
+  switch (state) {
+    case 'no-choice':
+      return 'Pick a choice first — a corrected action is only possible when the mark covers exactly one recorded decision.'
+    case 'loading':
+      return 'Checking whether a corrected action is possible…'
+    case 'count':
+      return count === 0
+        ? "A corrected action isn't possible here — this mark covers no recorded decision."
+        : `A corrected action isn't possible here — this mark covers ${String(count)} recorded decisions, and a correction needs exactly one.`
+    case 'quarantined':
+      return "A corrected action isn't used — this mark is quarantined."
+    case 'unavailable':
+      return "A corrected action can't be checked until the preview above answers."
+    default:
+      return state satisfies never
+  }
+}
+
+export type CorrectedActionGate =
+  | { shown: true }
+  | { shown: false; state: Exclude<CorrectedActionGateState, 'count'> }
+  | { shown: false; state: 'count'; count: number }
+
+export interface CorrectedActionGateInput {
+  kind: Mark | undefined
+  /**
+   * The last read that landed for this target and kind, current or not: a re-fetch in flight keeps
+   * the landed decision, so the field never disappears mid-typing.
+   */
+  landedForTargetAndKind:
+    | { kind: 'read'; result: RunsMarkPreviewResult }
+    | { kind: 'failed'; reason: string }
+    | undefined
+}
+
+/**
+ * D-15: a corrected action is scored against exactly one recorded decision, so the field shows only
+ * for a consequences read whose markedDecisionCount is 1 — runs.mark never receives
+ * ambiguous-correction from the dashboard.
+ */
+export function correctedActionGate({ kind, landedForTargetAndKind: landed }: CorrectedActionGateInput): CorrectedActionGate {
+  if (kind === undefined) return { shown: false, state: 'no-choice' }
+  if (landed === undefined) return { shown: false, state: 'loading' }
+  if (landed.kind === 'failed') return { shown: false, state: 'unavailable' }
+  const read = landed.result
+  if (read.kind === 'quarantined') return { shown: false, state: 'quarantined' }
+  if (read.kind !== 'consequences') return { shown: false, state: 'unavailable' }
+  return read.markedDecisionCount === 1 ? { shown: true } : { shown: false, state: 'count', count: read.markedDecisionCount }
+}
+
 export const CHOICE_LABELS = {
   'false-fail': 'This should have passed',
   'false-pass': 'This should have failed',
