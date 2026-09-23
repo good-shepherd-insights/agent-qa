@@ -118,6 +118,11 @@ import {
   proposalStateText,
   replacedByText,
   runHistoryLabel,
+  FEEDBACK_LAYOUTS,
+  FEEDBACK_STACK_BELOW_PX,
+  feedbackDefaultLayout,
+  feedbackLayout,
+  feedbackPanelIds,
 } from '@/lib/feedback-view'
 import { memberDisplayName, memberHandleLabel } from '@/lib/run-detail-view'
 
@@ -804,5 +809,45 @@ describe('426-09 the history copy', () => {
     expect(historyTargetLabel({ testIndex: 1 }, detail).name).toBe('checkout')
     expect(historyTargetLabel({ testIndex: 1, stepIndex: 3 }, detail)).toEqual({ prefix: 'Step 4 of 5 · ', name: UNNAMED_STEP_LABEL })
     expect(feedbackPartsText(historyTargetLabel({ testIndex: 0 }, null))).toBe(`${memberDisplayName({ testIndex: 0 })} ${memberHandleLabel(0)} · whole test`)
+  })
+})
+
+describe('426-11 docked or stacked is one rule', () => {
+  it('LAYOUT-RULE: the open composer stacks only on a measured page narrower than 768px; closed or unmeasured is docked', () => {
+    expect(FEEDBACK_STACK_BELOW_PX).toBe(768)
+    expect(feedbackLayout(0, true)).toBe('docked')
+    expect(feedbackLayout(400, true)).toBe('stacked')
+    expect(feedbackLayout(767, true)).toBe('stacked')
+    expect(feedbackLayout(768, true)).toBe('docked')
+    expect(feedbackLayout(1280, true)).toBe('docked')
+    expect(feedbackLayout(400, false)).toBe('docked')
+  })
+
+  it('LAYOUT-RULE: each arrangement has its own panel ids, so the library keeps a layout per orientation', () => {
+    expect(feedbackPanelIds('docked')).toEqual({ tree: 'run-tree', evidence: 'run-evidence', feedback: 'run-feedback' })
+    expect(feedbackPanelIds('stacked')).toEqual({
+      tree: 'run-tree-stacked',
+      evidence: 'run-evidence-stacked',
+      feedback: 'run-feedback-stacked',
+    })
+  })
+
+  it('LAYOUT-RULE: stacked seeds 30/30/40 at any width; docked converts the 384px composer against the width', () => {
+    const stacked = { 'run-tree-stacked': 30, 'run-evidence-stacked': 30, 'run-feedback-stacked': 40 }
+    expect(feedbackDefaultLayout('stacked', 400)).toEqual(stacked)
+    expect(feedbackDefaultLayout('stacked', 0)).toEqual(stacked)
+
+    const docked = feedbackDefaultLayout('docked', 1280)
+    expect(Object.keys(docked).sort()).toEqual(['run-evidence', 'run-feedback', 'run-tree'])
+    expect(Object.values(docked).reduce((sum, value) => sum + value, 0)).toBeCloseTo(100)
+    expect(docked['run-feedback']).toBeCloseTo(Math.min(Math.max((384 / 1280) * 100, (320 / 1280) * 100), 50))
+    expect(docked['run-tree']! / docked['run-evidence']!).toBeCloseTo(35 / 65)
+    expect(feedbackDefaultLayout('docked', 800)['run-feedback']).toBeCloseTo(48)
+    expect(feedbackDefaultLayout('docked', 700)['run-feedback']).toBe(50)
+    expect(feedbackDefaultLayout('docked', 0)['run-feedback']).toBe(30)
+  })
+
+  it('LAYOUTS-RUNTIME: the layouts are exactly docked and stacked', () => {
+    expect([...FEEDBACK_LAYOUTS]).toEqual(['docked', 'stacked'])
   })
 })

@@ -12,11 +12,13 @@ import {
   FEEDBACK_COMPOSER_STATES,
   FEEDBACK_ENTRY_SCOPES,
   FEEDBACK_HISTORY_STATES,
+  FEEDBACK_LAYOUTS,
   FEEDBACK_OUTCOME_CLASSES,
   FEEDBACK_PREVIEW_STATES,
   type FeedbackComposerState,
   type FeedbackEntryScope,
   type FeedbackHistoryState,
+  type FeedbackLayout,
   type FeedbackOutcomeClass,
   type FeedbackPreviewState,
 } from '../feedback-view'
@@ -68,4 +70,12 @@ test('C426-HISTORY-STATES-EXACT', () => {
   expectTypeOf<(typeof FEEDBACK_HISTORY_STATES)[number]>().toEqualTypeOf<Expected>()
   expectTypeOf<Exclude<FeedbackHistoryState, (typeof FEEDBACK_HISTORY_STATES)[number]>>().toEqualTypeOf<never>()
   expectTypeOf<Exclude<(typeof FEEDBACK_HISTORY_STATES)[number], FeedbackHistoryState>>().toEqualTypeOf<never>()
+})
+
+test('C426-LAYOUTS-EXACT', () => {
+  type Expected = 'docked' | 'stacked'
+  expectTypeOf<FeedbackLayout>().toEqualTypeOf<Expected>()
+  expectTypeOf<(typeof FEEDBACK_LAYOUTS)[number]>().toEqualTypeOf<Expected>()
+  expectTypeOf<Exclude<FeedbackLayout, (typeof FEEDBACK_LAYOUTS)[number]>>().toEqualTypeOf<never>()
+  expectTypeOf<Exclude<(typeof FEEDBACK_LAYOUTS)[number], FeedbackLayout>>().toEqualTypeOf<never>()
 })

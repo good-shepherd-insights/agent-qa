@@ -446,6 +446,27 @@ export function feedbackPanelLayout(groupWidth: number): Record<string, number> 
   }
 }
 
+export type FeedbackLayout = 'docked'
+
+// prettier-ignore
+export const FEEDBACK_LAYOUTS = [
+  'docked',
+] as const satisfies readonly FeedbackLayout[]
+
+export const FEEDBACK_STACK_BELOW_PX = 768
+
+export function feedbackLayout(_width: number, _open: boolean): FeedbackLayout {
+  return 'docked'
+}
+
+export function feedbackPanelIds(_layout: FeedbackLayout): { tree: string; evidence: string; feedback: string } {
+  return FEEDBACK_PANEL_IDS
+}
+
+export function feedbackDefaultLayout(_layout: FeedbackLayout, width: number): Record<string, number> {
+  return feedbackPanelLayout(width)
+}
+
 export type FeedbackCorrection = Pick<RunsMarkInput, 'correctedExpectation' | 'correctedAction'>
 
 /** The preview input, composed exactly as the page's onMark composes its markRun body (D-16). */
