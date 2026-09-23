@@ -1,7 +1,8 @@
 /// <reference lib="dom" />
-import { mkdirSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { MARKS, RunsMarkPreviewResultSchema } from '@vostride/agent-qa-schema'
+import { RUNS_SUBDIR, slugBranch } from '@vostride/agent-qa-runner-local'
+import { MARKS, MarkReceiptSchema, RunsMarkOutcomeSchema, RunsMarkPreviewResultSchema } from '@vostride/agent-qa-schema'
 import type { Page } from 'playwright-core'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { recordingFixture, type RecordingFixture } from './recording-dom-fixture.js'
@@ -14,6 +15,8 @@ import { cleanupTempRoots, reserveEphemeralPort, spawnDashboard } from './spawne
 const DESKTOP = { width: 1280, height: 800 }
 const MODAL = '[role="dialog"],[aria-modal]'
 const NOTE = 'The notice closed before the evidence settled'
+// Literal equal to dashboard-ui's approval title (it publishes no library entry).
+const APPROVAL_TITLE = 'Approval needed to record this mark'
 
 type Settled = { detailStatus: number; marks: unknown; stepCount: number; previewStatus: number; previewKind?: string; previewParsed: boolean }
 type Triggers = { loaded: number; kinds: string[]; afterEscape: number; selectedAfterEscape: number }
@@ -30,6 +33,21 @@ type Inspecting = {
   note: string
   modalCounts: Record<string, number>
 }
+type Frame = { event: string; data: string }
+type MarkPath = {
+  gate: { safety: unknown; trustModeRemoved: boolean }
+  frames: Frame[]
+  dialogs: number
+  hostDialogs: number
+  approvalInComposer: number
+  rowsAtApproval: number
+  status?: number
+  outcome?: { kind: string; markId?: string }
+  rows: Array<{ markId: string; kind: string; origin: string; testIndex: number; stepIndex?: number; disposition: string; gold: string[] }>
+  newEntryMarkId: string | null
+  newEntryFirst: boolean
+  dialogsAfter: number
+}
 
 const failures: Record<string, string> = {}
 let fixture: RecordingFixture | undefined
@@ -38,6 +56,7 @@ let settled: Settled | undefined
 let triggers: Triggers | undefined
 const pills: Pills[] = []
 let inspecting: Inspecting | undefined
+let markPath: MarkPath | undefined
 
 async function captureTo(page: Page, name: string) {
   const directory = process.env.AGENT_QA_426_CAPTURE_DIR
@@ -93,6 +112,15 @@ describe('contextual feedback on the shipped bundle (426-16)', () => {
       // composing, and the first step's page load leaves a response body to copy.
       fixture = await recordingFixture('feedback-layout', false, true)
       await fixture.dashboard.stop()
+      // The ask tier for fn:runs.mark is the default gate. failure-view-dom's fixture carries no
+      // safety block and asks; run-mark-browser's scene deletes safety.trustMode. Mirror both: the
+      // config must reach the cold reader with no trustMode, and what it held is recorded.
+      const config = JSON.parse(readFileSync(fixture.project.configPath, 'utf8')) as { safety?: { trustMode?: unknown } }
+      const gate = { safety: config.safety ?? null, trustModeRemoved: config.safety?.trustMode !== undefined }
+      if (gate.trustModeRemoved) {
+        delete config.safety!.trustMode
+        writeFileSync(fixture.project.configPath, JSON.stringify(config))
+      }
       const env = populatedRunSpawnEnv()
       // A cold reader without the planted credential environment: the fixture's synthetic values
       // stay masked, so the captures carry nothing this repository did not invent.
@@ -192,12 +220,67 @@ describe('contextual feedback on the shipped bundle (426-16)', () => {
         copied, composerOpen, note, modalCounts }
       await context.close()
 
+      // SC4 through approval (D-20): a real mark from the header entry, approved inline.
+      const ledger = join(fixture.project.agentQaRoot, RUNS_SUBDIR, slugBranch(runId), 'marks.jsonl')
+      const rows = () => existsSync(ledger)
+        ? readFileSync(ledger, 'utf8').trim().split('\n').filter(Boolean).map(line => MarkReceiptSchema.parse(JSON.parse(line)))
+        : []
+      const markContext = await fixture.browser.newContext({ viewport: DESKTOP })
+      await markContext.addInitScript(() => {
+        const frames: Array<{ event: string; data: string }> = []
+        ;(window as unknown as { markFrames: typeof frames }).markFrames = frames
+        const Native = window.EventSource
+        class RecordedChannel extends Native {
+          constructor(url: string | URL, init?: EventSourceInit) {
+            super(url, init)
+            if (String(url).includes('/api/run-confirm/channel')) {
+              for (const event of ['confirm_scope', 'confirm_request', 'confirm_resolved']) {
+                this.addEventListener(event, frame => frames.push({ event, data: (frame as MessageEvent<string>).data }))
+              }
+            }
+          }
+        }
+        window.EventSource = RecordedChannel
+      })
+      const markPage = await markContext.newPage()
+      const recordedFrames = async () => await markPage.evaluate(() =>
+        (window as unknown as { markFrames: Array<{ event: string; data: string }> }).markFrames)
+      await markPage.goto(url)
+      await markPage.waitForFunction(() => (window as unknown as { markFrames: Array<{ event: string }> }).markFrames
+        .some(frame => frame.event === 'confirm_scope'), undefined, { timeout: 10_000 })
+      await markPage.locator('[data-feedback-entry="test"]').click()
+      const markComposer = markPage.locator('[data-feedback-composer]')
+      await markComposer.locator('[data-feedback-choice] [role="radio"]').first().click()
+      await markComposer.locator('[data-feedback-preview][data-preview-current="true"]').waitFor({ timeout: 15_000 })
+      const response = markPage.waitForResponse(reply => reply.url().endsWith('/mark') && reply.request().method() === 'POST')
+      await markComposer.locator('[data-feedback-submit]').click()
+      const approval = markPage.getByRole('group', { name: APPROVAL_TITLE })
+      await approval.waitFor({ timeout: 10_000 })
+      const dialogs = await modalCount(markPage)
+      const hostDialogs = await markPage.evaluate(() => document.querySelectorAll('[data-run-confirm-dialog]').length)
+      const approvalInComposer = await markComposer.locator('[data-feedback-approval]').count()
+      const rowsAtApproval = rows().length
+      await markPage.locator('[data-feedback-approval] [data-confirm-answer="accept"]').click()
+      const reply = await response
+      const parsed = RunsMarkOutcomeSchema.parse(await reply.json())
+      const entries = markComposer.locator('[data-feedback-history="target"] [data-history-entry]')
+      await markComposer.locator('[data-feedback-history="target"] [data-history-entry][data-history-new]').waitFor({ timeout: 15_000 })
+      const newEntryMarkId = await markComposer.locator('[data-feedback-history="target"] [data-history-entry][data-history-new]').getAttribute('data-mark-id')
+      const newEntryFirst = await entries.first().getAttribute('data-history-new') === 'true'
+      markPath = { gate, frames: await recordedFrames(), dialogs, hostDialogs, approvalInComposer, rowsAtApproval,
+        status: reply.status(),
+        outcome: { kind: parsed.kind, ...('receipt' in parsed ? { markId: parsed.receipt.markId } : {}) },
+        rows: rows().map(({ markId, kind, origin, testIndex, stepIndex, disposition, gold }) =>
+          ({ markId, kind, origin, testIndex, stepIndex, disposition: disposition.kind, gold: gold.map(entry => entry.channel) })),
+        newEntryMarkId, newEntryFirst, dialogsAfter: await modalCount(markPage) }
+      await markContext.close()
+
       if (process.env.AGENT_QA_426_CAPTURE_DIR) {
         writeFileSync(join(process.env.AGENT_QA_426_CAPTURE_DIR, 'feedback-observation.json'),
-          JSON.stringify({ runId, settled, triggers, pills, inspecting }, null, 2))
+          JSON.stringify({ runId, settled, triggers, pills, inspecting, markPath }, null, 2))
       }
     } catch (error) { failures.drive = String(error) }
-    process.stderr.write(`426-16 feedback drive: ${JSON.stringify({ failures, settled, triggers, pills, inspecting })}\n`)
+    process.stderr.write(`426-16 feedback drive: ${JSON.stringify({ failures, settled, triggers, pills, inspecting, markPath })}\n`)
   }, 360_000)
 
   afterAll(async () => { await reader?.stop(); await fixture?.close(); cleanupTempRoots() })
@@ -242,5 +325,26 @@ describe('contextual feedback on the shipped bundle (426-16)', () => {
     expect(inspecting!.note, where).toBe(NOTE)
     expect(Object.keys(inspecting!.modalCounts), where).toEqual(['composerOpen', 'drafted', 'otherStepSelected', 'copied', 'captured'])
     for (const [moment, count] of Object.entries(inspecting!.modalCounts)) expect(count, `${moment}: ${where}`).toBe(0)
+  })
+
+  it('NO-DIALOG-ON-MARK-PATH', () => {
+    expect(markPath, JSON.stringify(failures)).toBeDefined()
+    const where = JSON.stringify(markPath)
+    expect(markPath!.gate.safety, `the fixture config must not pre-approve the mark: ${where}`).toBeNull()
+    expect(markPath!.frames.some(frame => frame.event === 'confirm_request' && frame.data.includes('fn:runs.mark')), where).toBe(true)
+    // T-426-16-01: the approval was asked before any ledger row existed.
+    expect(markPath!.rowsAtApproval, where).toBe(0)
+    expect(markPath!.dialogs, where).toBe(0)
+    // RESEARCH A1: the page's own mark confirm renders in the composer, never in the app-wide host.
+    expect(markPath!.hostDialogs, where).toBe(0)
+    expect(markPath!.approvalInComposer, where).toBe(1)
+    expect(markPath!.status, where).toBe(200)
+    expect(markPath!.outcome?.kind, where).toBe('marked')
+    expect(markPath!.rows, where).toHaveLength(1)
+    expect(markPath!.rows[0]!.markId, where).toBe(markPath!.outcome!.markId)
+    expect(markPath!.rows[0]!.origin, where).toBe('user')
+    expect(markPath!.newEntryMarkId, where).toBe(markPath!.outcome!.markId)
+    expect(markPath!.newEntryFirst, where).toBe(true)
+    expect(markPath!.dialogsAfter, where).toBe(0)
   })
 })
