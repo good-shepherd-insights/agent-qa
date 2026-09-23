@@ -234,6 +234,37 @@ export function feedbackTargetView({ detail, target, runStatus }: FeedbackTarget
   }
 }
 
+export interface HeaderFeedbackTargetInput {
+  detail: Pick<RunDetailProjection, 'members'> | null | undefined
+  selectedStep: { testIndex: number; stepIndex: number } | null
+  memberFilter: number | undefined
+  runStatus: string | undefined
+}
+
+/**
+ * D-03: the test the header entry means. A suite resolves, in order, to the selected step's test, the
+ * member filter's test, the first failed member, then the first member — "first" in handle order.
+ * The page auto-selects the first visible step, so on load rung 1 wins (RESEARCH Pitfall 5).
+ */
+export function resolveHeaderFeedbackTarget({
+  detail,
+  selectedStep,
+  memberFilter,
+  runStatus,
+}: HeaderFeedbackTargetInput): FeedbackTarget | undefined {
+  const members = detail?.members ?? []
+  const named = (testIndex: number | undefined) =>
+    testIndex === undefined ? undefined : members.find((entry) => entry.testIndex === testIndex)
+  const chosen =
+    members.length === 1
+      ? members[0]
+      : (named(selectedStep?.testIndex) ??
+        named(memberFilter) ??
+        members.find((entry) => memberOutcomeClass(entry.outcome, runStatus) === 'failed') ??
+        members[0])
+  return chosen === undefined ? undefined : { testIndex: chosen.testIndex }
+}
+
 export type FeedbackComposerState =
   | 'composing'
   | 'submitting'

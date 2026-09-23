@@ -23,7 +23,7 @@ import { FailureBanner } from "@/components/run-detail/failure-banner"
 import { TabPanels } from "@/components/run-detail/tab-panels"
 import { FeedbackComposer } from "@/components/run-detail/feedback-composer"
 import { useRunFeedback } from "@/hooks/use-run-feedback"
-import { FEEDBACK_ENTRY_TEST_LABEL, FEEDBACK_PANEL_IDS, feedbackAddress, feedbackPanelLayout, type FeedbackTarget } from "@/lib/feedback-view"
+import { FEEDBACK_PANEL_IDS, feedbackPanelLayout } from "@/lib/feedback-view"
 import { initialPlayerSource, storePlayerSource } from "@/lib/player-view"
 import { PlayerLightbox } from '@/components/run-detail/player-lightbox'
 import { buildSuiteTimeline, suiteSeek, suiteProgress, suiteClock } from '@/lib/suite-timeline'
@@ -233,25 +233,8 @@ export default function RunDetailPage() {
     }
   }, [id, detail, reloadDetail])
 
-  // THE FEEDBACK COMPOSER'S STATE IS PAGE STATE (426 D-09), held by a hook so `onMark` above stays
-  // the one writer. Opening measures the panel group once, because numeric panel sizes are pixels
-  // in react-resizable-panels 4 and the third panel is seeded in percent (RESEARCH Pattern 3).
-  const feedback = useRunFeedback({ runId: id, runStatus: run?.status, detail, onMark, markPending })
   const panelGroupRef = useRef<HTMLDivElement | null>(null)
   const [feedbackLayout, setFeedbackLayout] = useState<Record<string, number>>()
-  const openFeedbackAt = (target: FeedbackTarget, opener: HTMLElement) => {
-    setFeedbackLayout(feedbackPanelLayout(panelGroupRef.current?.getBoundingClientRect().width ?? 0))
-    feedback.openFeedback(target, opener)
-  }
-  const feedbackMember = detail?.members.length === 1 ? detail.members[0] : undefined
-  const feedbackEntry = feedbackMember?.marks === undefined ? undefined : {
-    label: FEEDBACK_ENTRY_TEST_LABEL,
-    target: feedbackAddress({ testIndex: feedbackMember.testIndex }),
-    marked: feedbackMember.marks.some(mark => mark.stepIndex === undefined),
-    expanded: feedback.open && feedback.target?.stepIndex === undefined,
-    controls: feedback.composerId,
-    onOpen: (opener: HTMLElement) => openFeedbackAt({ testIndex: feedbackMember.testIndex }, opener),
-  }
   const [isLoading, setIsLoading] = useState(true)
   const [notFound, setNotFound] = useState(false)
   const pipelineRef = useRef<ReasoningPipelineHandle | null>(null)
@@ -616,6 +599,23 @@ export default function RunDetailPage() {
     if (!hasStepId(selection)) return null
     return displaySteps.find(s => s.id === selection.stepId) ?? null
   }, [selection, displaySteps])
+
+  // THE FEEDBACK COMPOSER'S STATE IS PAGE STATE (426 D-09), held by a hook so `onMark` above stays
+  // the one writer. Opening measures the panel group once, because numeric panel sizes are pixels
+  // in react-resizable-panels 4 and the third panel is seeded in percent (RESEARCH Pattern 3). The
+  // header entry's target follows the selection and the member filter (D-03).
+  const feedback = useRunFeedback({
+    runId: id,
+    runStatus: run?.status,
+    detail,
+    onMark,
+    markPending,
+    selectedStep: selectedStep?.testIndex !== undefined && selectedStep.stepIndex !== undefined
+      ? { testIndex: selectedStep.testIndex, stepIndex: selectedStep.stepIndex }
+      : null,
+    memberFilter: memberFilter === MEMBER_FILTER_ALL ? undefined : memberFilter,
+    beforeOpen: () => setFeedbackLayout(feedbackPanelLayout(panelGroupRef.current?.getBoundingClientRect().width ?? 0)),
+  })
 
   const playhead = useMemo<Playhead | null>(() => {
     const address = playheadFromSelection(selection)
@@ -1086,7 +1086,7 @@ export default function RunDetailPage() {
           // growing a control that would do nothing.
           onOpenVerdict={run.status === 'failed' && analysisView.size > 0 ? openVerdict : undefined}
           retrievalRung={bannerRung(knowledgeRead)}
-          feedbackEntry={feedbackEntry}
+          feedbackEntry={feedback.headerEntry}
           hasPostProcessing
           postProcessing={
             postProcessingRead === undefined ? undefined : projectPostProcessingView(postProcessingRead)

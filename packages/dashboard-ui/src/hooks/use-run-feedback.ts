@@ -1,6 +1,7 @@
 import { useEffect, useId, useRef, useState } from 'react'
 import type { Mark, RunDetailProjection } from '@vostride/agent-qa-schema'
 import type { FeedbackComposerProps } from '@/components/run-detail/feedback-composer'
+import type { FeedbackEntryButtonProps } from '@/components/run-detail/feedback-entry'
 import { fetchMarkPreview, type MarkPreviewRead } from '@/lib/api'
 import type { OnMark } from '@/lib/analysis-view'
 import {
@@ -8,15 +9,18 @@ import {
   PREVIEW_DEBOUNCE_MS,
   SENDING_STATUS,
   feedbackAddress,
+  feedbackEntryLabel,
   feedbackRecordedText,
   feedbackTargetView,
   previewInputFor,
   previewRequestKey,
+  resolveHeaderFeedbackTarget,
   submitBlockedReason,
   type FeedbackComposerState,
   type FeedbackDraft,
   type FeedbackTarget,
 } from '@/lib/feedback-view'
+import { memberDisplayName, memberHandleLabel } from '@/lib/run-detail-view'
 
 interface UseRunFeedbackInput {
   runId: string | undefined
@@ -24,6 +28,9 @@ interface UseRunFeedbackInput {
   detail: RunDetailProjection | null | undefined
   onMark: OnMark
   markPending: boolean
+  selectedStep: { testIndex: number; stepIndex: number } | null
+  memberFilter: number | undefined
+  beforeOpen?: () => void
 }
 
 interface LandedPreview {
@@ -36,7 +43,16 @@ interface LandedPreview {
  * composer closing and a run change discards them; the page's own `onMark` is the only writer.
  * Nothing is fetched until a choice is picked in an open composer.
  */
-export function useRunFeedback({ runId, runStatus, detail, onMark, markPending }: UseRunFeedbackInput) {
+export function useRunFeedback({
+  runId,
+  runStatus,
+  detail,
+  onMark,
+  markPending,
+  selectedStep,
+  memberFilter,
+  beforeOpen,
+}: UseRunFeedbackInput) {
   const baseId = useId()
   const composerId = `${baseId}-feedback`
   const headingId = `${baseId}-feedback-heading`
@@ -103,6 +119,7 @@ export function useRunFeedback({ runId, runStatus, detail, onMark, markPending }
   }
 
   const openFeedback = (next: FeedbackTarget, openerElement: HTMLElement) => {
+    beforeOpen?.()
     opener.current = openerElement
     if (address !== feedbackAddress(next)) {
       setState('composing')
@@ -186,5 +203,29 @@ export function useRunFeedback({ runId, runStatus, detail, onMark, markPending }
         onClose: close,
       }
 
-  return { open, target, composerId, openFeedback, composer }
+  // D-03: one test-level door per page, whatever the suite shape. Absent until the target member's
+  // marks have landed, never a disabled placeholder.
+  const headerTarget = resolveHeaderFeedbackTarget({ detail, selectedStep, memberFilter, runStatus })
+  const headerMember = headerTarget === undefined
+    ? undefined
+    : detail?.members.find((entry) => entry.testIndex === headerTarget.testIndex)
+  const headerMark = headerMember?.marks?.find((entry) => entry.stepIndex === undefined)
+  const suite = (detail?.members.length ?? 0) > 1
+  const headerEntry: Omit<FeedbackEntryButtonProps, 'scope'> | undefined =
+    headerTarget === undefined || headerMember?.marks === undefined
+      ? undefined
+      : {
+          label: feedbackEntryLabel({
+            scope: 'test',
+            ...(suite ? { memberName: memberDisplayName(headerMember), handle: memberHandleLabel(headerMember.testIndex) } : {}),
+            ...(headerMark === undefined ? {} : { markedChoice: headerMark.kind }),
+          }),
+          target: feedbackAddress(headerTarget),
+          marked: headerMark !== undefined,
+          expanded: open && target?.stepIndex === undefined,
+          controls: composerId,
+          onOpen: (openerElement: HTMLElement) => openFeedback(headerTarget, openerElement),
+        }
+
+  return { open, target, composerId, openFeedback, composer, headerEntry }
 }
