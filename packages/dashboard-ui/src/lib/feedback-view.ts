@@ -14,6 +14,7 @@ import type {
   MarkPreviewGroundTruth,
   MarkPreviewKnowledge,
   MarkPreviewKnowledgeRecord,
+  MarkQuarantineClass,
   MemberTestOutcome,
   RunDetailMember,
   RunDetailProjection,
@@ -23,6 +24,7 @@ import type {
   RunsMarkPreviewResult,
 } from '@vostride/agent-qa-schema'
 
+import type { FeedbackReadFailure } from './api'
 import { UNNAMED_STEP_LABEL } from './display-step'
 import { memberDisplayName, memberHandleLabel } from './run-detail-view'
 
@@ -398,9 +400,15 @@ export function previewRequestKey(input: PreviewRequest): string {
   ])
 }
 
+const PREVIEW_REFUSAL_KINDS: ReadonlySet<string> = new Set(MARK_PREVIEW_REFUSALS)
+
 export const SUBMIT_REASON_NO_UNIQUE_ADDRESS = "This test can't be marked from the dashboard."
 export const SUBMIT_REASON_NO_CHOICE = 'Choose one of the three options.'
 export const SUBMIT_REASON_CHECKING = 'Checking what this will do…'
+export const SUBMIT_REASON_PREVIEW_FAILED = "Consequences couldn't be checked — retry above."
+export const SUBMIT_REASON_REFUSED = "This mark can't be recorded — see above."
+export const SUBMIT_REASON_ALREADY_MARKED = "You already said this — there's nothing new to record."
+export const SUBMIT_REASON_INVALID_CORRECTION = 'Fix the corrected action JSON first.'
 export const SUBMIT_REASON_SENDING = 'Sending…'
 
 export interface SubmitBlockInput {
@@ -410,18 +418,22 @@ export interface SubmitBlockInput {
   landedOutcome: RunsMarkPreviewResult['kind'] | 'failed' | undefined
   inFlight: boolean
   noUniqueAddress?: boolean
+  invalidCorrection?: boolean
 }
 
-/** First match wins; '' means Send feedback is available (D-19, UI-SPEC S6). */
+/**
+ * First match wins; '' means Send feedback is available (D-19, UI-SPEC S6). Only a current
+ * consequences or quarantined read gets past the preview rows: there is no blind submit.
+ */
 export function submitBlockedReason(input: SubmitBlockInput): string {
   if (input.noUniqueAddress === true) return SUBMIT_REASON_NO_UNIQUE_ADDRESS
   if (input.kind === undefined) return SUBMIT_REASON_NO_CHOICE
-  if (
-    input.landedKey !== input.currentKey ||
-    (input.landedOutcome !== 'consequences' && input.landedOutcome !== 'quarantined')
-  ) {
-    return SUBMIT_REASON_CHECKING
-  }
+  const outcome = input.landedOutcome
+  if (outcome === undefined || input.landedKey !== input.currentKey) return SUBMIT_REASON_CHECKING
+  if (outcome === 'failed') return SUBMIT_REASON_PREVIEW_FAILED
+  if (PREVIEW_REFUSAL_KINDS.has(outcome)) return SUBMIT_REASON_REFUSED
+  if (outcome !== 'consequences' && outcome !== 'quarantined') return SUBMIT_REASON_ALREADY_MARKED
+  if (input.invalidCorrection === true) return SUBMIT_REASON_INVALID_CORRECTION
   if (input.inFlight) return SUBMIT_REASON_SENDING
   return ''
 }
@@ -532,8 +544,6 @@ export interface FeedbackPreviewStateInput {
   /** The read on screen; its currency is the caller's (previewRequestKey). */
   landed: { kind: 'read'; result: RunsMarkPreviewResult } | { kind: 'failed'; reason: string } | undefined
 }
-
-const PREVIEW_REFUSAL_KINDS: ReadonlySet<string> = new Set(MARK_PREVIEW_REFUSALS)
 
 /** Nothing landed is loading whether the request is still debounced or already in flight. */
 export function feedbackPreviewState({ kind, landed }: FeedbackPreviewStateInput): FeedbackPreviewState {
@@ -684,3 +694,92 @@ export function resolvedStepText(reason: MarkTargetReason, kind: Mark, stepNumbe
 export function showStepLabel(stepNumber: number): string {
   return `Show step ${String(stepNumber)}`
 }
+
+// D-18: the two arms that are not consequences. A quarantined mark still records; an identical repeat
+// does not, because a note alone never changes what a mark does (isIdenticalRepeat).
+
+export const QUARANTINE_CAUSE_TEXT = {
+  timeout: 'a timeout',
+  flake: 'a flaky run',
+  environment: 'an environment problem',
+} satisfies Record<MarkQuarantineClass, string>
+
+export function quarantinedText(cls: MarkQuarantineClass): string {
+  return `This test failed from ${QUARANTINE_CAUSE_TEXT[cls]}, so your mark is recorded but quarantined — no labels, knowledge or proposals change.`
+}
+
+/** The time is the prior mark's history entry; without history the parenthetical drops. */
+export function alreadyMarkedText(time?: string): string {
+  return `You already said this${time === undefined ? '' : ` (${time})`}. A new note alone isn't recorded.`
+}
+
+// D-19: a refusal is runs.mark's own arm, read from its own fields; a failed read names why.
+
+export type PreviewRefusalKind = (typeof MARK_PREVIEW_REFUSALS)[number]
+export type PreviewRefusalArm<K extends PreviewRefusalKind = PreviewRefusalKind> = Extract<RunsMarkPreviewResult, { kind: K }>
+
+export const PREVIEW_REFUSAL_TEXT = {
+  'run-not-found': () => "This run is no longer in the run store, so feedback can't be recorded.",
+  'member-not-found': () => "This test can't be found in the run, so feedback can't be recorded.",
+  'step-not-found': (arm) =>
+    arm.stepCount === 0
+      ? 'This test recorded no steps, so there is nothing to mark.'
+      : `This test recorded ${String(arm.stepCount)} ${arm.stepCount === 1 ? 'step' : 'steps'}, so there is no step ${String(arm.stepIndex + 1)} to mark.`,
+  'ambiguous-address': (arm) =>
+    `${String(arm.candidates.length)} tests in this run share this address, so the mark can't be placed.`,
+  'ambiguous-correction': (arm) =>
+    `A corrected action needs exactly one recorded decision; this mark covers ${String(arm.decisionCount)}. Remove the corrected action to continue.`,
+} satisfies Record<(typeof MARK_PREVIEW_REFUSALS)[number], unknown> & {
+  [K in PreviewRefusalKind]: (arm: PreviewRefusalArm<K>) => string
+}
+
+export function isPreviewRefusal(read: RunsMarkPreviewResult): read is PreviewRefusalArm {
+  return PREVIEW_REFUSAL_KINDS.has(read.kind)
+}
+
+export function previewRefusalText(arm: PreviewRefusalArm): string {
+  switch (arm.kind) {
+    case 'run-not-found':
+      return PREVIEW_REFUSAL_TEXT[arm.kind]()
+    case 'member-not-found':
+      return PREVIEW_REFUSAL_TEXT[arm.kind]()
+    case 'step-not-found':
+      return PREVIEW_REFUSAL_TEXT[arm.kind](arm)
+    case 'ambiguous-address':
+      return PREVIEW_REFUSAL_TEXT[arm.kind](arm)
+    case 'ambiguous-correction':
+      return PREVIEW_REFUSAL_TEXT[arm.kind](arm)
+    default:
+      return arm satisfies never
+  }
+}
+
+export const FEEDBACK_READ_FAILURE_TEXT = {
+  network: "the dashboard server didn't answer",
+  'ledger-corrupt': "this run's feedback ledger is damaged",
+  'ledger-unavailable': "this run's feedback ledger can't be read right now",
+  refused: 'the server refused the request',
+  shape: "the server's answer didn't match the expected shape",
+} satisfies Record<FeedbackReadFailure, string>
+
+/** The error's name never reaches the page; each failure is one product sentence. */
+export function feedbackReadFailureReason(failure: FeedbackReadFailure): string {
+  return FEEDBACK_READ_FAILURE_TEXT[failure]
+}
+
+export function PREVIEW_READ_FAILED_TEXT(reason: string): string {
+  return `Couldn't check what this will do — ${reason}.`
+}
+
+/** The command is its own part so it paints in mono without splitting the sentence. */
+export const CLI_ESCAPE_PARTS = {
+  prefix: 'You can still record feedback from the CLI (',
+  name: 'agent-qa runs mark',
+  suffix: ') or over MCP.',
+} as const satisfies Required<FeedbackTextParts>
+
+export const CLI_ESCAPE_TEXT = feedbackPartsText(CLI_ESCAPE_PARTS)
+
+export const RETRY_LABEL = 'Retry'
+/** Label-in-name: the accessible name starts with the visible word and says what it retries. */
+export const PREVIEW_RETRY_ACCESSIBLE_NAME = `${RETRY_LABEL} checking what this will do`

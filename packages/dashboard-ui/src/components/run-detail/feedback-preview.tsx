@@ -1,18 +1,30 @@
 import { useId } from 'react'
 import { ChevronRight } from 'lucide-react'
 import type { MarkPreviewKnowledgeRecord, RunsMarkPreviewResult } from '@vostride/agent-qa-schema'
+import { DenialBlock } from '@/chat/chat-transcript'
+import { Button } from '@/components/ui/button'
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible'
 import { Skeleton } from '@/components/ui/skeleton'
 import { MaskedText } from '@/components/run-detail/masked-text'
+import type { FeedbackReadFailure } from '@/lib/api'
 import {
+  CLI_ESCAPE_PARTS,
   CONTENT_ABSENCE_TEXT,
   DRAFT_WORDING_NOT_SHOWN_TEXT,
   NO_GROUND_TRUTH_TEXT,
   PREVIEW_IDLE_TEXT,
   PREVIEW_LINE_LABELS,
+  PREVIEW_READ_FAILED_TEXT,
+  PREVIEW_RETRY_ACCESSIBLE_NAME,
   PREVIEW_TITLE,
   PREVIEW_UPDATING_TEXT,
+  RETRY_LABEL,
+  alreadyMarkedText,
   correctedGroundTruthText,
+  feedbackReadFailureReason,
+  isPreviewRefusal,
+  previewRefusalText,
+  quarantinedText,
   draftHasWording,
   groundTruthLine,
   knowledgeLine,
@@ -37,6 +49,12 @@ export interface FeedbackPreviewProps {
   updating?: boolean
   /** When the superseded mark was made, from history; absent until history is read. */
   replacesTime?: string
+  /** When the identical prior mark was made, from history; absent until history is read. */
+  alreadyMarkedTime?: string
+  /** Why the read on screen failed (D-19). */
+  failure?: FeedbackReadFailure
+  /** Re-issues the failed read; never submits. */
+  onRetry?: () => void
 }
 
 const SKELETON_WIDTHS = ['w-full', 'w-5/6', 'w-2/3', 'w-3/4'] as const
@@ -56,7 +74,16 @@ function TextParts({ parts }: { parts: FeedbackTextParts }) {
  * composer hands it, producer strings paint as text through MaskedText, and ids stay out of view.
  * Not a live region; outcomes announce through the composer's footer status.
  */
-export function FeedbackPreview({ state, current, read, updating = false, replacesTime }: FeedbackPreviewProps) {
+export function FeedbackPreview({
+  state,
+  current,
+  read,
+  updating = false,
+  replacesTime,
+  alreadyMarkedTime,
+  failure,
+  onRetry,
+}: FeedbackPreviewProps) {
   const titleId = useId()
   return (
     <section
@@ -81,12 +108,52 @@ export function FeedbackPreview({ state, current, read, updating = false, replac
             <Skeleton key={width} className={cn('h-4 motion-reduce:animate-none', width)} />
           ))}
         </div>
-      ) : state === 'consequences' && read?.kind === 'consequences' ? (
+      ) : (
         <div className={cn(updating && 'opacity-60')}>
-          <ConsequenceLines read={read} replacesTime={replacesTime} />
+          {state === 'consequences' && read?.kind === 'consequences' ? (
+            <ConsequenceLines read={read} replacesTime={replacesTime} />
+          ) : state === 'quarantined' && read?.kind === 'quarantined' ? (
+            <div data-preview-line="quarantined" className={ARM_BLOCK_CLASS}>
+              {quarantinedText(read.class)}
+            </div>
+          ) : state === 'already-marked' && read?.kind === 'already-marked' ? (
+            <div data-preview-line="already-marked" className={ARM_BLOCK_CLASS}>
+              {alreadyMarkedText(alreadyMarkedTime)}
+            </div>
+          ) : state === 'refused' && read !== undefined && isPreviewRefusal(read) ? (
+            <div data-preview-refusal={read.kind}>
+              <DenialBlock neutralReason={previewRefusalText(read)} remedies={[]} />
+            </div>
+          ) : state === 'failed' && failure !== undefined ? (
+            <FailedRead failure={failure} onRetry={onRetry} />
+          ) : null}
         </div>
-      ) : null}
+      )}
     </section>
+  )
+}
+
+const ARM_BLOCK_CLASS = 'rounded-md bg-muted/40 px-3 py-2 text-xs'
+
+function FailedRead({ failure, onRetry }: { failure: FeedbackReadFailure; onRetry: (() => void) | undefined }) {
+  return (
+    <div className="space-y-2">
+      <DenialBlock neutralReason={PREVIEW_READ_FAILED_TEXT(feedbackReadFailureReason(failure))} remedies={[]} />
+      <Button
+        variant="outline"
+        size="sm"
+        data-feedback-preview-retry
+        aria-label={PREVIEW_RETRY_ACCESSIBLE_NAME}
+        onClick={() => onRetry?.()}
+      >
+        {RETRY_LABEL}
+      </Button>
+      <p className="text-xs text-muted-foreground">
+        {CLI_ESCAPE_PARTS.prefix}
+        <span className="font-mono">{CLI_ESCAPE_PARTS.name}</span>
+        {CLI_ESCAPE_PARTS.suffix}
+      </p>
+    </div>
   )
 }
 
