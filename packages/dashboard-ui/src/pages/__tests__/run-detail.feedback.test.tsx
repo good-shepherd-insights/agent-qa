@@ -24,6 +24,7 @@ import {
   TEST_SWITCHER_LABEL,
   feedbackEntryLabel,
   feedbackRecordedText,
+  markGlyphLabel,
 } from '@/lib/feedback-view'
 import { memberDisplayName, memberHandleLabel } from '@/lib/run-detail-view'
 
@@ -70,7 +71,6 @@ vi.mock('@/lib/api', async (importOriginal) => ({
 }))
 
 vi.mock('@/hooks/use-page-title', () => ({ usePageTitle: () => {} }))
-vi.mock('@/hooks/use-keyboard-shortcuts', () => ({ useKeyboardShortcuts: () => {} }))
 vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn() } }))
 vi.mock('@/components/page-skeleton', () => ({ DetailSkeleton: () => <div>Loading...</div> }))
 vi.mock('@/components/empty-state', () => ({
@@ -563,5 +563,108 @@ describe('426-03 the composer names, switches and refuses its test', () => {
     expect(fetchMarkPreviewMock).not.toHaveBeenCalled()
     expect(q('[data-feedback-submit-reason]')!.textContent).toBe(SUBMIT_REASON_NO_UNIQUE_ADDRESS)
     expect(q('[data-feedback-submit]')!.getAttribute('aria-disabled')).toBe('true')
+  })
+})
+
+// THE STEP DOOR AND THE PAGE'S DOOR COUNT (426-04 · SC1, D-04, D-06). The page auto-selects the first
+// step, so on load there is the header door and the selected row's door; clearing the selection or
+// selecting a hook leaves the header door alone. The shipped pills are still present in this plan and
+// carry no data-feedback-entry, so they are not counted.
+const SETUP_HOOK = {
+  id: 'hook-setup-1', runId: RUN_ID, stepId: null, type: 'hook', name: 'Seed catalog', hookId: 'seed',
+  phase: 'setup', status: 'passed', duration: 120, stdout: null, stderr: null, returnData: null,
+  variables: null, createdAt: '2026-09-23T00:00:00.000Z',
+}
+const doors = () => container!.querySelectorAll('[data-feedback-entry]')
+
+describe('426-04 the step door on the page', () => {
+  it('TRIGGER-COUNT: two doors with a step selected, one with no selection, one with a hook selected', async () => {
+    fetchExecutionLogsMock.mockResolvedValue({ logs: [SETUP_HOOK] })
+    await renderAt(`/runs/${RUN_ID}`)
+    expect(container!.querySelectorAll('[data-mark-kind]').length).toBeGreaterThan(0)
+    expect(doors()).toHaveLength(2)
+    expect([...doors()].map(door => door.getAttribute('data-feedback-entry')).sort()).toEqual(['step', 'test'])
+    expect(q('[data-feedback-entry="test"]')!.getAttribute('data-feedback-target')).toBe('0:run')
+    expect(q('[data-feedback-entry="step"]')!.getAttribute('data-feedback-target')).toBe('0:0')
+
+    await act(async () => { document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })) })
+    await flushRender()
+    expect(container!.querySelector('[aria-selected="true"]')).toBeNull()
+    expect(doors()).toHaveLength(1)
+    expect(q('[data-feedback-entry="test"]')).not.toBeNull()
+
+    const hook = [...container!.querySelectorAll<HTMLButtonElement>('li[role="treeitem"] > button')]
+      .find(button => button.textContent?.includes(SETUP_HOOK.name))
+    expect(hook, 'no setup hook row').toBeDefined()
+    await act(async () => { hook!.click() })
+    await flushRender()
+    expect(hook!.closest('li')!.getAttribute('aria-selected')).toBe('true')
+    expect(doors()).toHaveLength(1)
+    expect(q('[data-feedback-entry="test"]')).not.toBeNull()
+  })
+
+  it('STEP-TRIGGER-OPENS-STEP-TARGET: the step door opens the composer on its own step and reports itself expanded', async () => {
+    await renderAt(`/runs/${RUN_ID}`)
+    const stepDoor = () => q('[data-feedback-entry="step"]')!
+    expect(stepDoor().getAttribute('aria-expanded')).toBe('false')
+    await click('[data-feedback-entry="step"]')
+    const composer = q('[data-feedback-composer]')!
+    expect(composer.getAttribute('data-feedback-scope')).toBe('step')
+    expect(composer.getAttribute('data-feedback-target')).toBe('0:0')
+    expect(stepDoor().getAttribute('data-feedback-target')).toBe('0:0')
+    expect(stepDoor().getAttribute('aria-controls')).toBe(composer.id)
+    expect(stepDoor().getAttribute('aria-expanded')).toBe('true')
+    expect(q('[data-feedback-entry="test"]')!.getAttribute('aria-expanded')).toBe('false')
+  })
+
+  it('REOPEN-DRAFT-REPREVIEWS: reopening onto an address whose draft holds a choice asks for its preview again', async () => {
+    fetchMarkPreviewMock.mockResolvedValue({ kind: 'read', result: CONSEQUENCES })
+    await renderAt(`/runs/${RUN_ID}`)
+    const land = async (open: string) => {
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+      await click(open)
+      await click('[data-feedback-choice] [role="radio"]')
+      await act(async () => { vi.advanceTimersByTime(PREVIEW_DEBOUNCE_MS) })
+      vi.useRealTimers()
+      await flushRender()
+    }
+    await land('[data-feedback-entry="step"]')
+    expect(q('[data-feedback-submit]')!.getAttribute('aria-disabled')).toBe('false')
+    await land('[data-feedback-entry="test"]')
+    expect(q('[data-feedback-composer]')!.getAttribute('data-feedback-target')).toBe('0:run')
+    expect(fetchMarkPreviewMock).toHaveBeenCalledTimes(2)
+
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    await click('[data-feedback-entry="step"]')
+    await act(async () => { vi.advanceTimersByTime(PREVIEW_DEBOUNCE_MS) })
+    vi.useRealTimers()
+    await flushRender()
+    expect(q('[data-feedback-composer]')!.getAttribute('data-feedback-target')).toBe('0:0')
+    expect(fetchMarkPreviewMock).toHaveBeenCalledTimes(3)
+    expect(q('[data-feedback-preview]')!.getAttribute('data-preview-current')).toBe('true')
+    expect(q('[data-feedback-submit]')!.getAttribute('aria-disabled')).toBe('false')
+  })
+})
+
+describe('426-04 the passive trace on a member header', () => {
+  it('MEMBER-GLYPH: a whole-test mark puts one named glyph after the member handle and before its outcome badge', async () => {
+    fetchRunDetailMock.mockResolvedValue(suiteDetail({ marks: [receipt] }))
+    await renderAt(`/runs/${RUN_ID}`)
+    const glyphs = container!.querySelectorAll<HTMLElement>('[data-feedback-mark-glyph="test"]')
+    expect(glyphs).toHaveLength(1)
+    const glyph = glyphs[0]!
+    expect(glyph.closest('[data-member]')!.getAttribute('data-member')).toBe('0')
+    expect(glyph.getAttribute('role')).toBe('img')
+    expect(glyph.getAttribute('aria-label')).toBe(markGlyphLabel(receipt.kind))
+    expect(glyph.getAttribute('data-feedback-target')).toBe('0:run')
+    expect(glyph.previousElementSibling?.hasAttribute('data-member-handle')).toBe(true)
+    expect(glyph.nextElementSibling?.getAttribute('data-member-outcome')).toBe('passed')
+  })
+
+  it('MEMBER-GLYPH: a single-test run has no member header, so no member glyph', async () => {
+    fetchRunDetailMock.mockResolvedValue(refreshed)
+    await renderAt(`/runs/${RUN_ID}`)
+    expect(q('[data-feedback-entry="test"]')!.getAttribute('data-feedback-marked')).toBe('true')
+    expect(container!.querySelectorAll('[data-feedback-mark-glyph="test"]')).toHaveLength(0)
   })
 })
