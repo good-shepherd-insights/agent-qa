@@ -171,7 +171,9 @@ type Remount = {
   player: { present: boolean; section: boolean; video: boolean; sameVideo: boolean; before?: number; after?: number; elapsedBefore?: string | null; elapsedAfter?: string | null }
   network: { tree: boolean; panel: boolean; selectedBefore: string | null; selectedAfter: string | null; layouts: { narrow: string | null; restored: string | null } }
 }
+type Contrast = { theme: 'dark' | 'light'; count: number; min: number; minKey: string; below: Array<{ key: string; ratio: number }>; samples: Array<{ key: string; ratio: number; fg: number[]; bg: number[] }> }
 type StepRow = { label: string; stepId: string | null; width: number; name: Box; duration: Box; door: Box; flexWrap: string }
+type Aria = { heading: string; snapshot: string; state: string | null; outcomeClass: string | null; scopeLine: string }
 
 const DESKTOP_LABEL = '1280x800'
 const NARROW_LABEL = '400x800'
@@ -179,10 +181,24 @@ const ZOOM_LABEL = 'zoom2-from-1280x800'
 const GEOMETRY_LABELS = [DESKTOP_LABEL, NARROW_LABEL, ZOOM_LABEL]
 const DOCKED_NARROW_LABEL = '1000x800-docked'
 const ROW_WRAP_BELOW_PX = 224
+// CHOICE_LABELS in FEEDBACK_CHOICE_ORDER, per the target's recorded outcome class.
+const CHOICE_ORDER: Record<string, string[]> = {
+  failed: ['This should have passed', 'This is a real product bug', 'This should have failed'],
+  passed: ['This should have failed', 'This is a real product bug', 'This should have passed'],
+}
+// ariaSnapshot() is YAML: a line whose name needs quoting arrives as `- 'role "name"':`.
+const unquoted = (line: string) => {
+  const trimmed = line.trim()
+  const quoted = /^- '(.*)'(:?)$/.exec(trimmed)
+  return quoted ? `- ${quoted[1]!.replace(/''/g, "'")}${quoted[2]}` : trimmed
+}
+
 const headerGeometries: HeaderGeometry[] = []
 const composerGeometries: ComposerGeometry[] = []
 let zoom: Zoom | undefined
 let remount: Remount | undefined
+const contrast: Contrast[] = []
+let aria: Aria | undefined
 const stepRows: StepRow[] = []
 let zoomContext: BrowserContext | undefined
 
@@ -331,6 +347,86 @@ async function measureComposer(page: Page, label: string) {
   composerGeometries.push({ label, ...geometry } as ComposerGeometry)
 }
 
+async function setTheme(page: Page, theme: 'dark' | 'light') {
+  await page.evaluate(theme => {
+    document.documentElement.classList.toggle('dark', theme === 'dark')
+    document.documentElement.classList.toggle('light', theme === 'light')
+  }, theme)
+  await frames(page)
+  // Controls carry transition-all, so an inherited colour is still animating from the old theme
+  // for 150ms after the class flips; read only once every transition has landed.
+  await page.evaluate(() => Promise.all(document.getAnimations()
+    .filter(animation => animation instanceof CSSTransition).map(animation => animation.finished.catch(() => undefined))))
+  await frames(page)
+}
+
+/** WCAG 2.x contrast of every 12px text element in the composer, colours resolved by the browser. */
+async function measureContrast(page: Page, theme: 'dark' | 'light') {
+  await setTheme(page, theme)
+  const measured = await page.evaluate(() => {
+    // oklch() and color-mix() reach getComputedStyle unconverted, so the canvas does the conversion.
+    const canvas = document.createElement('canvas')
+    canvas.width = 1
+    canvas.height = 1
+    const context = canvas.getContext('2d', { willReadFrequently: true })!
+    const rgba = (color: string) => {
+      context.fillStyle = '#010203'
+      context.fillStyle = color
+      if (context.fillStyle === '#010203' && color !== 'rgb(1, 2, 3)') throw new Error(`The canvas rejected ${color}`)
+      context.clearRect(0, 0, 1, 1)
+      context.fillRect(0, 0, 1, 1)
+      const [r, g, b, a] = context.getImageData(0, 0, 1, 1).data
+      return [r!, g!, b!, a! / 255]
+    }
+    const over = (top: number[], bottom: number[]) => [0, 1, 2].map(index => top[index]! * top[3]! + bottom[index]! * (1 - top[3]!)).concat(1)
+    const luminance = (color: number[]) => {
+      const [r, g, b] = color.slice(0, 3).map(channel => {
+        const value = channel / 255
+        return value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4
+      })
+      return 0.2126 * r! + 0.7152 * g! + 0.0722 * b!
+    }
+    const page = rgba(getComputedStyle(document.body).backgroundColor)
+    const base = page[3]! > 0 ? over(page, [255, 255, 255, 1]) : [255, 255, 255, 1]
+    const background = (element: Element) => {
+      const layers: number[][] = []
+      for (let node: Element | null = element; node; node = node.parentElement) {
+        const layer = rgba(getComputedStyle(node).backgroundColor)
+        if (layer[3]! > 0) layers.push(layer)
+        if (layer[3]! >= 1) break
+      }
+      return layers.reverse().reduce((below, layer) => over(layer, below), base)
+    }
+    const opacity = (element: Element) => {
+      let value = 1
+      for (let node: Element | null = element; node; node = node.parentElement) value *= Number(getComputedStyle(node).opacity)
+      return value
+    }
+    const composer = document.querySelector('[data-feedback-composer]')!
+    return [...composer.querySelectorAll('*')]
+      .filter(element => [...element.childNodes].some(node => node.nodeType === 3 && (node.textContent ?? '').trim()))
+      .filter(element => element.closest('.sr-only') === null)
+      .filter(element => {
+        const style = getComputedStyle(element)
+        const r = element.getBoundingClientRect()
+        return style.fontSize === '12px' && style.visibility === 'visible' && r.width > 1 && r.height > 1
+      })
+      .map(element => {
+        const text = rgba(getComputedStyle(element).color)
+        text[3] = text[3]! * opacity(element)
+        const bg = background(element)
+        const fg = over(text, bg)
+        const [light, dark] = [luminance(fg), luminance(bg)].sort((a, b) => b - a)
+        const data = [...element.attributes].find(attribute => attribute.name.startsWith('data-'))
+        return { key: `${element.tagName.toLowerCase()}${data ? `[${data.name}]` : ''}[${(element.textContent ?? '').trim().slice(0, 40)}]`,
+          ratio: Math.round(((light! + 0.05) / (dark! + 0.05)) * 100) / 100, fg: fg.slice(0, 3), bg: bg.slice(0, 3) }
+      })
+  })
+  const min = measured.reduce((lowest, sample) => sample.ratio < lowest.ratio ? sample : lowest, measured[0] ?? { key: 'none', ratio: 0 })
+  contrast.push({ theme, count: measured.length, min: min.ratio, minKey: min.key,
+    below: measured.filter(sample => sample.ratio < 4.5).map(({ key, ratio }) => ({ key, ratio })), samples: measured })
+}
+
 /** The tree row that carries the step door: name, duration and door, and whether the row wrapped. */
 async function measureStepRow(page: Page, label: string) {
   await frames(page)
@@ -433,10 +529,24 @@ async function driveLayout(browser: Browser, url: string) {
   const page = await context.newPage()
   await page.goto(url)
   await measureHeader(page, DESKTOP_LABEL)
-  await openComposerWithPreview(page)
+  await page.locator('[data-feedback-entry="test"]').click()
+  const composer = page.locator('[data-feedback-composer]')
+  await composer.waitFor()
+  await composer.locator('[data-feedback-choice]').first().waitFor()
+  await frames(page)
+  aria = { heading: (await composer.locator('h2').innerText()).replace(/\s+/g, ' ').trim(),
+    snapshot: await composer.ariaSnapshot(), state: await composer.getAttribute('data-feedback-state'),
+    outcomeClass: await composer.locator('[data-feedback-choices]').getAttribute('data-feedback-outcome-class'),
+    scopeLine: await composer.locator('[data-feedback-scope-line]').innerText() }
+  await composer.locator('[data-feedback-choice] [role="radio"]').first().click()
+  await composer.locator('[data-feedback-preview][data-preview-current="true"]').waitFor({ timeout: 15_000 })
+  await frames(page)
   await measureComposer(page, DESKTOP_LABEL)
   await measureStepRow(page, DESKTOP_LABEL)
   await captureTo(page, 'composer-1280')
+  await measureContrast(page, 'dark')
+  await measureContrast(page, 'light')
+  await setTheme(page, 'dark')
   remount = await observeRemount(page)
   // 426-04's container query: a docked page this narrow leaves the tree's door row under 14rem.
   await resizeTo(page, 1000, 'docked')
@@ -673,11 +783,11 @@ describe('contextual feedback on the shipped bundle (426-16, 426-17)', () => {
       if (process.env.AGENT_QA_426_CAPTURE_DIR) {
         writeFileSync(join(process.env.AGENT_QA_426_CAPTURE_DIR, 'feedback-observation.json'),
           JSON.stringify({ runId, settled, triggers, pills, inspecting, markPath,
-            layout: { zoom, headerGeometries, composerGeometries, stepRows, remount } }, null, 2))
+            layout: { zoom, headerGeometries, composerGeometries, stepRows, remount, contrast, aria } }, null, 2))
       }
     } catch (error) { failures.drive = String(error) }
     process.stderr.write(`426-16 feedback drive: ${JSON.stringify({ failures, settled, triggers, pills, inspecting, markPath })}\n`)
-    process.stderr.write(`426-17 layout drive: ${JSON.stringify({ zoom, remount, stepRows,
+    process.stderr.write(`426-17 layout drive: ${JSON.stringify({ zoom, remount, aria, stepRows, contrast: contrast.map(({ samples, ...rest }) => rest),
       composer: composerGeometries.map(({ items, ...rest }) => rest) })}\n`)
   }, 360_000)
 
@@ -867,5 +977,46 @@ describe('contextual feedback on the shipped bundle (426-16, 426-17)', () => {
       expect(overlaps(row.name, row.door), `${where}: name meets door`).toBe(false)
       expect(overlaps(row.duration, row.door), `${where}: duration meets door`).toBe(false)
     }
+  })
+
+  it('COMPOSER-CONTRAST', () => {
+    expect(contrast.map(entry => entry.theme), JSON.stringify(failures)).toEqual(['dark', 'light'])
+    for (const entry of contrast) {
+      const where = `${entry.theme}: ${JSON.stringify(entry.below)}`
+      expect(entry.count, `${entry.theme}: no 12px text was measured`).toBeGreaterThan(5)
+      expect(entry.below, where).toEqual([])
+      expect(entry.min, where).toBeGreaterThanOrEqual(4.5)
+    }
+  })
+
+  it('COMPOSER-ARIA-SNAPSHOT', () => {
+    expect(aria, JSON.stringify(failures)).toBeDefined()
+    const lines = aria!.snapshot.split('\n')
+    const flat = lines.map(unquoted)
+    const where = aria!.snapshot
+    expect(aria!.state, where).toBe('composing')
+    expect(aria!.heading.length, where).toBeGreaterThan(0)
+    expect(flat[0], where).toBe(`- region ${JSON.stringify(aria!.heading)}:`)
+    expect(flat.some(line => line.startsWith(`- heading ${JSON.stringify(aria!.heading)} [level=2]`)), where).toBe(true)
+    const group = lines.findIndex(line => /^\s*- radiogroup\b/.test(line))
+    expect(group, where).toBeGreaterThan(0)
+    const indent = lines[group]!.search(/\S/)
+    const children: string[] = []
+    for (const line of lines.slice(group + 1)) {
+      if (line.search(/\S/) <= indent) break
+      children.push(unquoted(line))
+    }
+    const radios = children.filter(line => line.startsWith('- radio '))
+    expect(radios, where).toHaveLength(3)
+    // This fixture's run passed, so the header door's target is a passed test: the passed order is
+    // what the page must present, and the scope line says so in words.
+    expect(aria!.outcomeClass, where).toBe('passed')
+    expect(aria!.scopeLine, where).toContain('recorded: passed')
+    for (const [index, label] of CHOICE_ORDER[aria!.outcomeClass!]!.entries()) {
+      expect(radios[index]!.startsWith(`- radio "${label} `), `${where}\nradio ${String(index + 1)} is not ${label}`).toBe(true)
+    }
+    expect(radios.every(line => !line.includes('[checked]')), where).toBe(true)
+    expect(flat.some(line => line.startsWith('- textbox "Note (optional)"')), where).toBe(true)
+    expect(flat.some(line => line.startsWith('- button "Send feedback"')), where).toBe(true)
   })
 })
