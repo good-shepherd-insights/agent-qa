@@ -59,6 +59,10 @@ import {
   previewRefusalText,
   quarantinedText,
   ADD_CORRECTION_LABEL,
+  TECHNICAL_DETAILS_LABEL,
+  TECHNICAL_DETAILS_ROW_LABELS,
+  basisDetailText,
+  labelDetailText,
   correctedActionGate,
   correctedActionUnavailableText,
   type SubmitBlockInput,
@@ -671,5 +675,23 @@ describe('426-08 the corrected-action gate', () => {
       .toEqual({ shown: false, state: 'unavailable' })
     expect(correctedActionGate({ kind: 'false-fail', landedForTargetAndKind: { kind: 'failed', reason: 'network' } }))
       .toEqual({ shown: false, state: 'unavailable' })
+  })
+})
+
+describe('426-08 Technical details copy', () => {
+  it('TECHNICAL-DETAILS-ROWS: the locked labels, one line per label, and the basis with its prior mark when there is one', () => {
+    expect(TECHNICAL_DETAILS_LABEL).toBe('Technical details')
+    expect(TECHNICAL_DETAILS_ROW_LABELS).toEqual({
+      kind: 'Mark kind',
+      address: 'Address',
+      testId: 'Test id',
+      records: 'Reached records',
+      labels: 'Labels',
+      basis: 'Basis',
+    })
+    expect(labelDetailText({ decisionOrdinal: 0, stepIndex: 0, channel: 'user-mark' })).toBe('decision 0 · step 1 · user-mark')
+    expect(labelDetailText({ decisionOrdinal: 4, stepIndex: 2, channel: 'overturned-verdict' })).toBe('decision 4 · step 3 · overturned-verdict')
+    expect(basisDetailText({ ledgerOrdinal: 7 })).toBe('ledger ordinal 7')
+    expect(basisDetailText({ ledgerOrdinal: 7, priorMarkOrdinal: 4 })).toBe('ledger ordinal 7 · prior mark #4')
   })
 })

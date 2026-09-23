@@ -8,7 +8,9 @@
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import type { RunDetailMember, RunDetailProjection, RunDetailStep } from '@vostride/agent-qa-schema'
+import type { Mark, RunDetailMember, RunDetailProjection, RunDetailStep, RunsMarkPreviewResult } from '@vostride/agent-qa-schema'
+import { RunsMarkPreviewResultSchema } from '@vostride/agent-qa-schema'
+import { generateRunId } from '@vostride/agent-qa-ids'
 
 import { FeedbackComposer, type FeedbackComposerProps } from '../feedback-composer'
 import { TooltipProvider } from '@/components/ui/tooltip'
@@ -18,6 +20,8 @@ import {
   FEEDBACK_CHOICE_ORDER,
   FEEDBACK_COMPOSER_STATES,
   SUBMIT_REASON_NO_CHOICE,
+  TECHNICAL_DETAILS_LABEL,
+  TECHNICAL_DETAILS_ROW_LABELS,
   feedbackAddress,
   feedbackPartsText,
   feedbackTargetView,
@@ -165,5 +169,141 @@ describe('426-02 feedback composer', () => {
     expect(container.querySelector('h2')?.textContent).toContain(HOSTILE)
     expect(container.querySelector('[data-feedback-scope-line]')?.textContent).toContain(HOSTILE)
     expect((globalThis as { __pwned?: boolean }).__pwned).toBeUndefined()
+  })
+})
+
+// MACHINERY IS ONE DISCLOSURE AWAY (426-08 · D-13, SC2). The internal mark words and every id live only
+// under a collapsed Technical details, each row present only when its fact exists; everything else in
+// the composer speaks in plain words.
+const RUN_ID = generateRunId()
+const MARKS: readonly Mark[] = ['false-fail', 'false-pass', 'confirmed-bug']
+const INTERNAL_WORD = new RegExp(`(^|[^\\w-])(${MARKS.join('|')})(?![\\w-])`)
+
+function consequencesFor(kind: Mark, over: Record<string, unknown> = {}): RunsMarkPreviewResult {
+  return RunsMarkPreviewResultSchema.parse({
+    kind: 'consequences',
+    runId: RUN_ID,
+    prospective: true,
+    markKind: kind,
+    member: { testIndex: 0, testId: 't_checkout' },
+    resolvedStep: { stepIndex: 2, reason: 'step-mark' },
+    latest: { kind: 'supersedes', markId: 'mark_0123456789ab', ordinal: 4 },
+    basis: { ledgerOrdinal: 7, priorMarkOrdinal: 4 },
+    markedDecisionCount: 1,
+    groundTruth: [],
+    labels: [{ testIndex: 0, stepIndex: 1, decisionOrdinal: 2, sourceCassetteId: 'cas_a', channel: 'user-mark' }],
+    knowledge: {
+      servedRecordIds: ['rec_alpha', 'rec_beta'],
+      appendsEvidence: true,
+      records: ['rec_alpha', 'rec_beta'].map(recordId => ({
+        recordId, served: true, contentAbsence: { reason: 'not-found' }, evidence: { kind: 'effects', effects: [{ direction: 'confirm' }] },
+      })),
+      evidence: { confirmed: 2, overturned: 0 },
+    },
+    draft: kind === 'confirmed-bug'
+      ? { kind: 'confirmed-bug' }
+      : { kind: 'no-draftable-fix', checked: { servedRecords: 2, procedureReads: 0, assertionDrift: false } },
+    ...over,
+  })
+}
+
+function technicalTrigger() {
+  return [...container.querySelectorAll<HTMLButtonElement>('button')].find(button => button.textContent === TECHNICAL_DETAILS_LABEL)
+}
+function openTechnical() {
+  const trigger = technicalTrigger()
+  expect(trigger, 'no Technical details trigger').not.toBeUndefined()
+  act(() => trigger!.click())
+}
+const technicalRows = () =>
+  [...container.querySelectorAll<HTMLElement>('[data-feedback-technical] [data-technical-row]')].map(dd => [
+    dd.getAttribute('data-technical-row'),
+    dd.previousElementSibling?.textContent,
+    [...dd.children].length > 0 ? [...dd.children].map(child => child.textContent) : dd.textContent,
+  ])
+function textNodes(root: Element): Text[] {
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT)
+  const nodes: Text[] = []
+  for (let node = walker.nextNode(); node !== null; node = walker.nextNode()) nodes.push(node as Text)
+  return nodes
+}
+
+describe('426-08 Technical details', () => {
+  it('TECHNICAL-DETAILS-ROWS: collapsed by default; opened, one row per fact the mark has, in the locked order and words', () => {
+    render(props(singleFailed, { testIndex: 0, stepIndex: 2 }, {
+      selected: 'false-pass',
+      previewState: 'consequences',
+      previewCurrent: true,
+      previewRead: consequencesFor('false-pass', {
+        labels: [
+          { testIndex: 0, stepIndex: 1, decisionOrdinal: 2, sourceCassetteId: 'cas_a', channel: 'user-mark' },
+          { testIndex: 0, stepIndex: 2, decisionOrdinal: 3, sourceCassetteId: 'cas_b', channel: 'overturned-verdict' },
+        ],
+      }),
+      testId: 't_checkout',
+    }))
+    expect(technicalTrigger()?.getAttribute('aria-expanded')).toBe('false')
+    expect(container.querySelector('[data-feedback-technical]')).toBeNull()
+
+    openTechnical()
+    const content = container.querySelector('[data-feedback-technical]')
+    expect(content, 'no Technical details content').not.toBeNull()
+    expect(content!.className).toContain('bg-muted/40')
+    expect(technicalRows()).toEqual([
+      ['kind', TECHNICAL_DETAILS_ROW_LABELS.kind, 'false-pass'],
+      ['address', TECHNICAL_DETAILS_ROW_LABELS.address, '0:2'],
+      ['testId', TECHNICAL_DETAILS_ROW_LABELS.testId, 't_checkout'],
+      ['records', TECHNICAL_DETAILS_ROW_LABELS.records, 'rec_alpha, rec_beta'],
+      ['labels', TECHNICAL_DETAILS_ROW_LABELS.labels, ['decision 2 · step 2 · user-mark', 'decision 3 · step 3 · overturned-verdict']],
+      ['basis', TECHNICAL_DETAILS_ROW_LABELS.basis, 'ledger ordinal 7 · prior mark #4'],
+    ])
+    for (const dd of content!.querySelectorAll('dd')) {
+      for (const cls of ['font-mono', 'break-all', 'select-text']) expect(dd.className).toContain(cls)
+      expect(dd.previousElementSibling?.tagName).toBe('DT')
+      expect(dd.previousElementSibling?.className).toContain('text-muted-foreground')
+    }
+  })
+
+  it('TECHNICAL-DETAILS-ROWS: an absent fact has no row — no choice, no read and no test id leave only the address', () => {
+    render(props(singleFailed, { testIndex: 0 }))
+    openTechnical()
+    expect(technicalRows()).toEqual([['address', TECHNICAL_DETAILS_ROW_LABELS.address, '0:run']])
+
+    const quarantined = RunsMarkPreviewResultSchema.parse({
+      kind: 'quarantined', runId: RUN_ID, prospective: true, markKind: 'false-fail', member: { testIndex: 0 },
+      resolvedStep: { stepIndex: 2, reason: 'failing-step' }, latest: { kind: 'first' }, basis: { ledgerOrdinal: 3 }, class: 'timeout',
+    })
+    render(props(singleFailed, { testIndex: 0 }, { selected: 'false-fail', previewState: 'quarantined', previewCurrent: true, previewRead: quarantined }))
+    expect(technicalRows()).toEqual([
+      ['kind', TECHNICAL_DETAILS_ROW_LABELS.kind, 'false-fail'],
+      ['address', TECHNICAL_DETAILS_ROW_LABELS.address, '0:run'],
+      ['basis', TECHNICAL_DETAILS_ROW_LABELS.basis, 'ledger ordinal 3'],
+    ])
+
+    render(props(singleFailed, { testIndex: 0 }, {
+      selected: 'false-fail', previewState: 'consequences', previewCurrent: false, previewRead: consequencesFor('false-fail'),
+    }))
+    expect(technicalRows().map(([row]) => row)).toEqual(['kind', 'address'])
+  })
+
+  it.each(MARKS)('NO-INTERNAL-NAME-IN-COPY: with %s picked and its preview on screen, no text outside Technical details names a mark kind', (kind) => {
+    render(props(singleFailed, { testIndex: 0 }, {
+      selected: kind,
+      previewState: 'consequences',
+      previewCurrent: true,
+      previewRead: consequencesFor(kind),
+      previewReplacesTime: 'Sep 23, 10:41',
+      testId: 't_checkout',
+      submitReason: '',
+    }))
+    openTechnical()
+    const composer = container.querySelector('[data-feedback-composer]')!
+    const outside = textNodes(composer).filter(node => node.parentElement?.closest('[data-feedback-technical]') == null)
+    expect(outside.length).toBeGreaterThan(0)
+    const leaked = outside.map(node => node.textContent ?? '').filter(text => INTERNAL_WORD.test(text))
+    expect(leaked, `internal mark names outside Technical details: ${leaked.join(' | ')}`).toEqual([])
+    const technical = container.querySelector('[data-feedback-technical]')
+    expect(technical, 'no Technical details content').not.toBeNull()
+    expect(textNodes(technical!).map(node => node.textContent)).toContain(kind)
   })
 })
