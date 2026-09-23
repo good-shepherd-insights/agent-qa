@@ -1,4 +1,4 @@
-// THE FEEDBACK COMPOSER'S COPY AND RULES (426 D-01, D-11, D-12, D-14, D-16, D-19, D-21).
+// THE FEEDBACK COMPOSER'S COPY AND RULES (426 D-01, D-11, D-12, D-14, D-16, D-19, D-21, D-22).
 //
 // Pure and total: no I/O, no clock, no React. Every sentence a person reads in the composer is an
 // exported constant or a pure function here, so cells assert against the constant and copy moves in
@@ -9,6 +9,7 @@ import type {
   Mark,
   MarkDisposition,
   MarkFixKind,
+  MarkHistoryEntry,
   MarkPreviewBasis,
   MarkPreviewDraft,
   MarkPreviewEvidenceEffect,
@@ -16,6 +17,8 @@ import type {
   MarkPreviewKnowledge,
   MarkPreviewKnowledgeRecord,
   MarkPreviewLabel,
+  MarkProposalCurrent,
+  MarkProposalState,
   MarkQuarantineClass,
   MemberTestOutcome,
   RunDetailMember,
@@ -26,7 +29,7 @@ import type {
   RunsMarkPreviewResult,
 } from '@vostride/agent-qa-schema'
 
-import type { FeedbackReadFailure } from './api'
+import type { FeedbackReadFailure, MarksHistoryRead } from './api'
 import { UNNAMED_STEP_LABEL } from './display-step'
 import { memberDisplayName, memberHandleLabel } from './run-detail-view'
 
@@ -881,4 +884,134 @@ export function labelDetailText(label: Pick<MarkPreviewLabel, 'decisionOrdinal' 
 export function basisDetailText(basis: MarkPreviewBasis): string {
   const prior = basis.priorMarkOrdinal === undefined ? '' : ` · prior mark #${String(basis.priorMarkOrdinal)}`
   return `ledger ordinal ${String(basis.ledgerOrdinal)}${prior}`
+}
+
+// D-22: the history. Each entry is one receipt; its disposition is what happened then, and its
+// proposal state is read now.
+
+export type FeedbackHistoryState =
+  | 'loading'
+  | 'history'
+  | 'empty'
+  | 'run-not-found'
+  | 'ledger-corrupt'
+  | 'ledger-unavailable'
+  | 'failed'
+
+// prettier-ignore
+export const FEEDBACK_HISTORY_STATES = [
+  'loading',
+  'history',
+  'empty',
+  'run-not-found',
+  'ledger-corrupt',
+  'ledger-unavailable',
+  'failed',
+] as const satisfies readonly FeedbackHistoryState[]
+
+/** Nothing read yet is loading; every absence keeps its own state, and only a readable empty ledger is empty. */
+export function feedbackHistoryState(read: MarksHistoryRead | undefined): FeedbackHistoryState {
+  if (read === undefined) return 'loading'
+  if (read.kind === 'failed') return 'failed'
+  const { result } = read
+  if (result.kind !== 'history') return result.kind
+  return result.entries.length === 0 ? 'empty' : 'history'
+}
+
+export const HISTORY_TITLE_TEXT = {
+  step: 'Feedback on this step',
+  test: 'Feedback on this test',
+} satisfies Record<FeedbackEntryScope, string>
+
+export function historyTitle(scope: FeedbackEntryScope, count: number): string {
+  return `${HISTORY_TITLE_TEXT[scope]} (${String(count)})`
+}
+
+export function runHistoryLabel(count: number): string {
+  return `All feedback on this run (${String(count)})`
+}
+
+export const ACTIVE_TEXT = 'Active'
+
+/** The time is the superseding entry's own; without it the clause drops rather than guessing. */
+export function replacedByText(time?: string): string {
+  return time === undefined ? 'Replaced by your later mark' : `Replaced by your later mark at ${time}`
+}
+
+export const REPLACEMENT_EXPLANATION = 'Only your latest mark on a test or step counts.'
+
+export function correctedPresenceText(corrected: MarkHistoryEntry['corrected']): string | undefined {
+  if (corrected.expectation && corrected.action) return 'With a corrected expectation and action'
+  if (corrected.expectation) return 'With a corrected expectation'
+  if (corrected.action) return 'With a corrected action'
+  return undefined
+}
+
+export const PROPOSAL_STATE_TEXT = {
+  pending: 'waiting for review',
+  expired: 'expired',
+  applied: 'applied',
+  rejected: 'rejected',
+  missing: 'not found',
+  corrupt: 'unreadable',
+} satisfies Record<MarkProposalState, string>
+
+export const PROPOSAL_APPLYING_TEXT = 'being applied'
+
+export function proposalStateText(proposal: MarkProposalCurrent): string {
+  const applying = (proposal.state === 'pending' || proposal.state === 'expired') && proposal.applyInFlight
+  return `Proposal: ${applying ? PROPOSAL_APPLYING_TEXT : PROPOSAL_STATE_TEXT[proposal.state]}`
+}
+
+export const HISTORY_EMPTY_TEXT = {
+  step: 'No feedback on this step yet.',
+  test: 'No feedback on this test yet.',
+  run: 'No feedback on this run yet.',
+} satisfies Record<FeedbackEntryScope | 'run', string>
+
+export function historyStateText(state: 'run-not-found' | 'ledger-corrupt' | 'ledger-unavailable', line?: number): string {
+  switch (state) {
+    case 'run-not-found':
+      return "This run's feedback history can't be found."
+    case 'ledger-corrupt':
+      return `This run's feedback history is damaged at line ${String(line)}, so it can't be shown.`
+    case 'ledger-unavailable':
+      return "This run's feedback history can't be read right now."
+    default:
+      return state satisfies never
+  }
+}
+
+export function HISTORY_READ_FAILED_TEXT(reason: string): string {
+  return `Couldn't load this run's feedback history — ${reason}.`
+}
+
+export const HISTORY_RETRY_ACCESSIBLE_NAME = `${RETRY_LABEL} loading feedback history`
+
+const MARK_TIME_FORMAT = new Intl.DateTimeFormat(undefined, {
+  month: 'short',
+  day: 'numeric',
+  hour: '2-digit',
+  minute: '2-digit',
+  hourCycle: 'h23',
+})
+
+/** The browser's own short date and 24-hour time; cells compare through this, never a clock literal. */
+export function formatMarkTime(markedAt: number | undefined): string | undefined {
+  return markedAt === undefined || !Number.isFinite(markedAt) ? undefined : MARK_TIME_FORMAT.format(new Date(markedAt))
+}
+
+/** Where a run-list entry landed: a step by number and name, a test by name and handle. */
+export function historyTargetLabel(
+  entry: Pick<MarkHistoryEntry, 'testIndex' | 'stepIndex'>,
+  detail: Pick<RunDetailProjection, 'members' | 'steps'> | null | undefined,
+): FeedbackTextParts {
+  const target: FeedbackTarget =
+    entry.stepIndex === undefined ? { testIndex: entry.testIndex } : { testIndex: entry.testIndex, stepIndex: entry.stepIndex }
+  const view = feedbackTargetView({ detail, target, runStatus: undefined })
+  if (entry.stepIndex !== undefined) {
+    return { prefix: `Step ${String(entry.stepIndex + 1)} of ${String(view.stepCount)} · `, name: view.heading.name }
+  }
+  const member = detail?.members.find((candidate) => candidate.testIndex === entry.testIndex) ?? { testIndex: entry.testIndex }
+  return { prefix: '', name: memberDisplayName(member), suffix: ` ${memberHandleLabel(entry.testIndex)} · whole test` }
 }
