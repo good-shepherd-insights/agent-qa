@@ -147,7 +147,7 @@ const legs = [
     '          <a\n            data-review-proposals\n            data-chat423="chat423proposals"\n            href="/chat"\n            className="font-mono text-xs text-primary underline-offset-4 hover:underline"\n          >{proposals.ctaText}</a>\n'),
   {
     subject: VIEW, instrument: 'knowledge-views', claim: 'FAILED-CHAIN-ROWS-RETAINED', operation: "return a failed chain's early-empty arm even when rows were committed",
-    edits: [{ from: "    return rows.length > 0\n      ? { state: 'failed', rows, chainNote", to: "    return rows.length < 0\n      ? { state: 'failed', rows, chainNote" }],
+    edits: [{ from: "    return rows.length > 0\n      ? {\n          state: 'failed',\n          rows,\n          chainNote", to: "    return rows.length < 0\n      ? {\n          state: 'failed',\n          rows,\n          chainNote" }],
     reds: [view(LEARNED_T, 'FAILED-CHAIN-ROWS-RETAINED'), view(TAB_T, 'FAILED-CHAIN-ROWS-RETAINED')],
     allowed: [view(LEARNED_T, 'FAILED-NO-SNAPSHOT: an absent snapshot is stated on the half, with no since-then count and no invented counts'),
       view(TAB_T, 'FAILED-NO-SNAPSHOT')],
@@ -159,7 +159,7 @@ const legs = [
     subject: VIEW, instrument: 'knowledge-tab-dom', claim: 'FAILED-CHAIN-ROWS-RETAINED', operation: "return the early-empty failed arm on the built page over a real failed chain",
     crossing: ui('failed423'),
     edits: [
-      { from: "    return rows.length > 0\n      ? { state: 'failed', rows, chainNote", to: "    return rows.length < 0\n      ? { state: 'failed', rows, chainNote" },
+      { from: "    return rows.length > 0\n      ? {\n          state: 'failed',\n          rows,\n          chainNote", to: "    return rows.length < 0\n      ? {\n          state: 'failed',\n          rows,\n          chainNote" },
       { from: "      : { state: 'failed', sentence: CURATION_FAILED_TEXT, rows: [],", to: "      : { state: 'failed', sentence: CURATION_FAILED_TEXT, rows: [], failed423: \"early-empty\"," },
     ],
     reds: [page('(c4)')], allowed: [],
