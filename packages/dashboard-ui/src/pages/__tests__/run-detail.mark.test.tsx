@@ -680,13 +680,14 @@ async function click(selector: string) {
   await act(async () => { container!.querySelector<HTMLButtonElement>(selector)!.click() })
   await flushRender()
 }
-async function submit() {
-  await click('[data-verdict-block] [data-mark-kind="false-fail"]')
-  await click('[data-verdict-block] [data-mark-submit]')
-}
+const targetHistory = () =>
+  [...(composer()?.querySelectorAll('[data-feedback-history="target"] [data-history-entry]') ?? [])].map(entry => entry.getAttribute('data-mark-id'))
 
 describe('419 page mark post/refetch', () => {
-  beforeEach(() => { fetchRunDetailMock.mockResolvedValue(initial) })
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    fetchRunDetailMock.mockResolvedValue(initial)
+  })
   it.each(['passed', 'analysis-absent'] as const)('allows a first member false-pass with %s analysis', async state => {
     if (state === 'passed') fetchRunAnalysisMock.mockResolvedValue({ runId: RUN_ID, verdicts: [], sentences: [], clusters: [] })
     else fetchRunAnalysisMock.mockRejectedValue(new Error('analysis unavailable'))
@@ -694,9 +695,10 @@ describe('419 page mark post/refetch', () => {
     markRunMock.mockResolvedValue({ kind: 'run-not-found' })
     await renderAt(`/runs/${RUN_ID}`)
     expect(container!.querySelector('[data-verdict-sentence]')).toBeNull()
-    expect(container!.querySelectorAll('[data-member-mark] [data-mark-kind]')).toHaveLength(3)
-    await click('[data-member-mark] [data-mark-kind="false-pass"]')
-    await click('[data-member-mark] [data-mark-submit]')
+    await openComposer(TEST_TARGET)
+    expect([...composer()!.querySelectorAll('[data-feedback-choice]')].map(row => row.getAttribute('data-feedback-choice')))
+      .toEqual([...FEEDBACK_CHOICE_ORDER.passed])
+    await send(TEST_TARGET, 'false-pass')
     expect(markRunMock).toHaveBeenCalledExactlyOnceWith(RUN_ID, { kind: 'false-pass', testId: TEST_ID })
     expect(container!.querySelector('[data-step-id="7:2"]')).not.toBeNull()
   })
@@ -705,75 +707,102 @@ describe('419 page mark post/refetch', () => {
     const standing = { ...marked, kind: 'false-pass' as const }
     const stepMark = { ...marked, markId: 'mark_1123456789ab', stepIndex: 2 }
     const replacement = { ...marked, markId: 'mark_2123456789ab', ordinal: 3, kind: 'confirmed-bug' as const }
-    fetchRunDetailMock.mockResolvedValueOnce({ ...initial, members: [{ ...initial.members[0], outcome: 'passed', marks: [standing, stepMark] }] })
-      .mockResolvedValueOnce({ ...initial, members: [{ ...initial.members[0], outcome: 'passed', marks: [replacement, stepMark] }] })
+    detailAcrossMark(
+      { ...initial, members: [{ ...initial.members[0], outcome: 'passed', marks: [standing, stepMark] }] },
+      () => ({ ...initial, members: [{ ...initial.members[0], outcome: 'passed', marks: [replacement, stepMark] }] }),
+    )
+    fetchMarksHistoryMock.mockResolvedValue(historyOf([
+      { markId: standing.markId, kind: standing.kind },
+      { markId: stepMark.markId, kind: stepMark.kind, stepIndex: 2 },
+    ]))
     markRunMock.mockResolvedValue({ kind: 'marked', receipt: replacement })
     await renderAt(`/runs/${RUN_ID}`)
-    expect(container!.querySelector('[data-member-mark] [data-mark-chip]')?.textContent).toBe('marked false-pass by user · 2')
-    await click('[data-member-mark] [data-mark-kind="confirmed-bug"]')
-    await click('[data-member-mark] [data-mark-submit]')
+    expect(headerEntry()?.getAttribute('data-feedback-marked')).toBe('true')
+    expect(headerEntry()?.getAttribute('aria-label')).toBe(feedbackEntryLabel({ scope: 'test', markedChoice: 'false-pass' }))
+    expect(stepEntry()?.getAttribute('data-feedback-marked')).toBe('true')
+    await openComposer(TEST_TARGET)
+    expect(targetHistory()).toEqual([standing.markId])
+    await openComposer(STEP_TARGET)
+    expect(targetHistory()).toEqual([stepMark.markId])
+    await send(TEST_TARGET, 'confirmed-bug')
     expect(markRunMock).toHaveBeenCalledExactlyOnceWith(RUN_ID, { kind: 'confirmed-bug', testId: TEST_ID })
-    expect(container!.querySelector('[data-member-mark] [data-mark-chip]')?.textContent).toBe('marked confirmed-bug by user · 3')
-    expect(container!.querySelector('[data-step-id="7:2"] [data-mark-chip]')?.textContent).toContain('false-fail')
+    expect(headerEntry()?.getAttribute('aria-label')).toBe(feedbackEntryLabel({ scope: 'test', markedChoice: 'confirmed-bug' }))
+    expect(statusText()).toBe(feedbackRecordedText(replacement.disposition))
+    expect(stepEntry()?.getAttribute('aria-label')).toBe(feedbackEntryLabel({ scope: 'step', stepNumber: 3, markedChoice: 'false-fail' }))
     expect(container!.querySelector('[data-verdict-sentence]')).toBeNull()
   })
   it('omits unbound passing-member controls without analysis', async () => {
     fetchRunAnalysisMock.mockResolvedValue({ runId: RUN_ID, verdicts: [], sentences: [], clusters: [] })
     fetchRunDetailMock.mockResolvedValue({ ...initial, members: [member(7, { outcome: 'passed', testId: TEST_ID })] })
     await renderAt(`/runs/${RUN_ID}`)
-    expect(container!.querySelector('[data-mark-kind]')).toBeNull()
+    expect(container!.querySelector('[data-feedback-entry]')).toBeNull()
+    expect(composer()).toBeNull()
   })
   it.each(['marked', 'already-marked'])('refetches %s and paints only the returned projection', async kind => {
     markRunMock.mockResolvedValue({ kind, receipt: { ...marked, ordinal: 99 } })
-    fetchRunDetailMock.mockResolvedValueOnce(initial).mockResolvedValueOnce({
-      ...initial, members: [{ ...initial.members[0], marks: [marked] }],
-    })
+    detailAcrossMark(initial, () => ({ ...initial, members: [{ ...initial.members[0], marks: [marked] }] }))
     await renderAt(`/runs/${RUN_ID}`)
-    await submit()
+    await openComposer(TEST_TARGET)
+    const reads = fetchRunDetailMock.mock.calls.length
+    await send(TEST_TARGET, 'false-fail')
     expect(markRunMock).toHaveBeenCalledExactlyOnceWith(RUN_ID, { kind: 'false-fail', testId: TEST_ID })
-    expect(fetchRunDetailMock).toHaveBeenCalledTimes(2)
-    expect(container!.querySelector('[data-mark-chip]')?.textContent).toBe('marked false-fail by user · 2')
-    expect(container!.querySelector('[data-member-mark] [data-mark-note]')).not.toBeNull()
-    expect(container!.textContent).not.toContain('Mark saved.')
+    expect(fetchRunDetailMock).toHaveBeenCalledTimes(reads + 1)
+    expect(headerEntry()?.getAttribute('data-feedback-marked')).toBe('true')
+    expect(headerEntry()?.getAttribute('aria-label')).toBe(feedbackEntryLabel({ scope: 'test', markedChoice: marked.kind }))
+    expect(container!.querySelector(choice('false-fail'))?.getAttribute('aria-checked')).toBe('true')
+    expect(statusText()).toBe(DRAFT_KEPT_STATUS)
+    expect(container!.textContent).not.toContain(feedbackRecordedText(marked.disposition))
   })
-  it('renders typed denial and remedy without a refetch or invented chip', async () => {
+  it('renders typed denial and remedy without a refetch or invented mark', async () => {
     markRunMock.mockRejectedValue(new MarkDeniedError({ reason: 'The safety gate denied this mark.', remedies: [{ kind: 'answer-confirm' }] }))
     await renderAt(`/runs/${RUN_ID}`)
-    await submit()
-    expect(container!.querySelector('[data-mark-denied]')?.textContent).toContain('The safety gate denied this mark.')
-    expect(container!.querySelector('[data-remedy-kind="answer-confirm"]')?.textContent).toContain('an ask-tier op raises a confirm here')
-    expect(fetchRunDetailMock).toHaveBeenCalledTimes(1)
-    expect(container!.querySelector('[data-mark-chip]')).toBeNull()
+    await openComposer(TEST_TARGET)
+    const reads = fetchRunDetailMock.mock.calls.length
+    await send(TEST_TARGET, 'false-fail')
+    const denied = inComposer('[data-feedback-denied]')
+    expect(denied?.textContent).toContain('The safety gate denied this mark.')
+    expect(denied?.querySelector('[data-remedy-kind="answer-confirm"]')?.textContent).toBeTruthy()
+    expect(fetchRunDetailMock).toHaveBeenCalledTimes(reads)
+    expect(headerEntry()?.getAttribute('data-feedback-marked')).toBe('false')
   })
   it.each(['run-not-found', 'member-not-found', 'step-not-found', 'ambiguous-address'])('does not report HTTP-success %s as marked', async kind => {
     markRunMock.mockResolvedValue({ kind })
     await renderAt(`/runs/${RUN_ID}`)
-    await submit()
-    expect(container!.querySelector('[data-mark-denied]')?.textContent).toBe(`Mark refused: ${kind}.`)
-    expect(fetchRunDetailMock).toHaveBeenCalledTimes(1)
-    expect(container!.querySelector('[data-mark-chip]')).toBeNull()
+    await openComposer(TEST_TARGET)
+    const reads = fetchRunDetailMock.mock.calls.length
+    await send(TEST_TARGET, 'false-fail')
+    expect(inComposer('[data-feedback-denied]')?.textContent).toContain(kind)
+    expect(statusText()).toBe(DRAFT_KEPT_STATUS)
+    expect(container!.querySelector(choice('false-fail'))?.getAttribute('aria-checked')).toBe('true')
+    expect(fetchRunDetailMock).toHaveBeenCalledTimes(reads)
+    expect(headerEntry()?.getAttribute('data-feedback-marked')).toBe('false')
   })
   it('sends the durable step address and renders denial only at that step', async () => {
     markRunMock.mockRejectedValue(new MarkDeniedError({ reason: 'Denied', remedies: [] }))
     await renderAt(`/runs/${RUN_ID}`)
-    await click('[data-mark-step="2"][data-mark-kind="confirmed-bug"]')
-    await click('[data-step-id="7:2"] [data-mark-submit]')
+    await send(STEP_TARGET, 'confirmed-bug')
     expect(markRunMock).toHaveBeenCalledExactlyOnceWith(RUN_ID, { kind: 'confirmed-bug', testId: TEST_ID, stepIndex: 2 })
-    expect(container!.querySelector('[data-step-id="7:2"] [data-mark-denied]')).not.toBeNull()
-    expect(container!.querySelector('[data-verdict-block] [data-mark-denied]')).toBeNull()
+    expect(composerTarget()).toBe(STEP_TARGET.address)
+    expect(inComposer('[data-feedback-denied]')).not.toBeNull()
+    await openComposer(TEST_TARGET)
+    expect(inComposer('[data-feedback-denied]')).toBeNull()
   })
   it('does not invent feedback availability for a host that omits marks', async () => {
     fetchRunDetailMock.mockResolvedValue({ ...initial, members: [member(7, { testId: TEST_ID })] })
     await renderAt(`/runs/${RUN_ID}`)
-    expect(container!.querySelector('[data-mark-kind]')).toBeNull()
+    expect(container!.querySelector('[data-feedback-entry]')).toBeNull()
   })
   it('disables repeated submissions until the in-flight request settles', async () => {
     let resolve!: (value: unknown) => void
     markRunMock.mockReturnValue(new Promise(value => { resolve = value }))
     await renderAt(`/runs/${RUN_ID}`)
-    await submit()
-    expect([...container!.querySelectorAll<HTMLButtonElement>('[data-mark-kind]')].every(button => button.disabled)).toBe(true)
+    await send(TEST_TARGET, 'false-fail')
+    expect(submitButton().getAttribute('aria-disabled')).toBe('true')
+    expect(submitReason()).toBe(SUBMIT_REASON_SENDING)
+    await submitFeedback()
+    expect(markRunMock).toHaveBeenCalledTimes(1)
     await act(async () => resolve({ kind: 'run-not-found' }))
+    await flushRender()
     expect(markRunMock).toHaveBeenCalledTimes(1)
   })
 })
