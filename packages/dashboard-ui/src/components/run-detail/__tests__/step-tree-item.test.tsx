@@ -4,7 +4,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import { MemoryRouter } from 'react-router'
 import { readFileSync } from 'node:fs'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { MARKS, type RunDetailMemberMark } from '@vostride/agent-qa-schema'
+import type { RunDetailMemberMark } from '@vostride/agent-qa-schema'
 import { StepTreeItem } from '../step-tree-item'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { fromRunDetailStep } from '@/lib/display-step'
@@ -16,54 +16,51 @@ let root: Root
 let container: HTMLDivElement
 const step = fromRunDetailStep({ testIndex: 7, stepIndex: 2, stepText: 'Check cart', cacheStatus: 'miss',
   verifierVerdict: { pass: false, reasoning: 'Cart differs' }, selfHealOccurred: false, briefDigest: 'digest' }, [])
-function mount(marks: readonly RunDetailMemberMark[] | undefined = []) {
-  const onMark = vi.fn()
-  container = document.createElement('div')
-  document.body.append(container)
-  root = createRoot(container)
-  act(() => root.render(<MemoryRouter><ul><StepTreeItem step={step} isSelected={false} isExpanded
-    selection={null} onSelect={() => {}} onMark={onMark} marks={marks} /></ul></MemoryRouter>))
-  return onMark
-}
-const click = (selector: string) => act(() => { container.querySelector<HTMLButtonElement>(selector)!.click() })
 afterEach(() => { act(() => root.unmount()); container.remove() })
 
+// THE STEP PILLS ARE GONE (426-15 · D-05). The row keeps the selected-row door and the passive
+// glyph; choosing, noting, submitting and reviewing all happen in the composer.
+const markAttributes = () => [...container.querySelectorAll('*')]
+  .flatMap(element => element.getAttributeNames().filter(name => name.startsWith('data-mark')))
+
 describe('419 step marking', () => {
-  it('uses durable member and step indexes, with the same explicit note/submit flow', () => {
-    const onMark = mount()
-    const buttons = [...container.querySelectorAll('[data-mark-kind]')]
-    expect(buttons.map(button => button.getAttribute('data-mark-kind'))).toEqual(MARKS)
-    expect(buttons.map(button => button.getAttribute('data-mark-step'))).toEqual(['2', '2', '2'])
-    click('[data-mark-kind="confirmed-bug"]')
-    expect(onMark).not.toHaveBeenCalled()
-    expect(container.querySelector('[data-mark-note]')).not.toBeNull()
-    click('[data-mark-submit]')
-    expect(onMark).toHaveBeenCalledExactlyOnceWith(7, 2, 'confirmed-bug', undefined)
+  it('uses the durable address: the row door opens feedback on 7:2 and the row submits nothing itself', () => {
+    const onOpen = mountRow({ isSelected: true, selection: { type: 'step', stepId: step.id } })
+    const trigger = triggers()[0]!
+    expect(trigger.getAttribute('data-feedback-target')).toBe('7:2')
+    act(() => { trigger.click() })
+    expect(onOpen).toHaveBeenCalledExactlyOnceWith(trigger)
+    expect(markAttributes()).toEqual([])
+    expect(container.querySelector('[data-step-mark]')).toBeNull()
   })
-  it('renders only the matching step receipt', () => {
-    mount([
+  it('renders only the matching step mark, as its named glyph', () => {
+    mountRow({ isSelected: false, marks: [
       { markId: 'mark_0123456789ab', kind: 'false-fail', ordinal: 1, disposition: { kind: 'quarantined', class: 'flake' } },
       { markId: 'mark_0123456789ac', kind: 'confirmed-bug', ordinal: 2, stepIndex: 2, disposition: { kind: 'confirmed-bug', confirmedRecords: 0 } },
       { markId: 'mark_0123456789ad', kind: 'false-pass', ordinal: 3, stepIndex: 3, disposition: { kind: 'quarantined', class: 'timeout' } },
-    ])
-    expect(container.querySelectorAll('[data-mark-chip]')).toHaveLength(1)
-    expect(container.querySelector('[data-mark-chip]')?.textContent).toBe('marked confirmed-bug by user · 2')
-    expect(container.querySelector('[data-mark-triage]')?.textContent).toBe('confirmed-bug: no fix drafted')
+    ] })
+    expect(glyphs()).toHaveLength(1)
+    expect(glyphs()[0]!.getAttribute('aria-label')).toBe(markGlyphLabel('confirmed-bug'))
+    expect(markAttributes()).toEqual([])
+    expect(row().textContent).not.toContain('confirmed-bug')
     expect(readFileSync('src/components/run-detail/step-tree-item.tsx', 'utf8')).not.toContain('dangerouslySetInnerHTML')
   })
-  it('offers a drafted step receipt a runnable review command, never a chat link (423 D-19)', () => {
-    mount([{ markId: 'mark_0123456789ae', kind: 'false-fail', ordinal: 4, stepIndex: 2,
-      disposition: { kind: 'drafted', fix: 'caution', proposalId: 'prop_step-review', proposalKind: 'knowledge' } }])
-    expect(container.querySelector('[data-step-mark] a')).toBeNull()
-    const review = container.querySelector<HTMLButtonElement>('[data-step-mark] button[data-mark-review]')
-    expect(review?.getAttribute('data-review-command')).toBe('agent-qa proposals show prop_step-review')
-    expect(review?.textContent).toContain('agent-qa proposals show prop_step-review')
+  it('renders no review control and no anchor for a drafted step mark; the command lives in the composer history (HISTORY-REVIEW-COMMAND)', () => {
+    mountRow({ isSelected: false, marks: [{ markId: 'mark_0123456789ae', kind: 'false-fail', ordinal: 4, stepIndex: 2,
+      disposition: { kind: 'drafted', fix: 'caution', proposalId: 'prop_step-review', proposalKind: 'knowledge' } }] })
+    expect(row().querySelector('a')).toBeNull()
+    expect(row().querySelector('[data-review-command]')).toBeNull()
+    expect(row().textContent).not.toContain('prop_step-review')
   })
-  it('cancel does not submit', () => {
-    const onMark = mount()
-    click('[data-mark-kind="false-pass"]')
-    click('[data-mark-cancel]')
-    expect(onMark).not.toHaveBeenCalled()
+  it('holds no textarea, submit or cancel control, selected or not', () => {
+    for (const isSelected of [false, true]) {
+      mountRow({ isSelected, selection: isSelected ? { type: 'step', stepId: step.id } : null, marks: [stepMark('false-pass')] })
+      expect(row().querySelector('textarea, input')).toBeNull()
+      const buttons = [...row().querySelectorAll('button')]
+      expect(buttons).toEqual(isSelected ? [row().querySelector(':scope > button'), triggers()[0]] : [row().querySelector(':scope > button')])
+      act(() => root.unmount()); container.remove()
+    }
+    mountRow({ isSelected: false })
   })
 })
 
@@ -81,7 +78,7 @@ function mountRow({ isSelected, marks = [], selection = null }: {
   document.body.append(container)
   root = createRoot(container)
   act(() => root.render(<MemoryRouter><TooltipProvider delayDuration={0}><ul><StepTreeItem step={step} isSelected={isSelected}
-    isExpanded selection={selection} onSelect={() => {}} onMark={vi.fn()} marks={marks}
+    isExpanded selection={selection} onSelect={() => {}} marks={marks}
     onOpenFeedback={onOpenFeedback} composerId="run-feedback-composer" /></ul></TooltipProvider></MemoryRouter>))
   return onOpenFeedback
 }

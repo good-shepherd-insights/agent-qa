@@ -26,7 +26,7 @@ import { StepTreeItem } from "./step-tree-item"
 import type { ExecutionLogEntry } from "@/lib/api"
 import { displayStepsForGroups, type DisplayStep } from "@/lib/display-step"
 import type { RunDetailGroup } from "@/lib/run-detail-view"
-import type { MemberVerdictView, OnMark, MarkDenial } from "@/lib/analysis-view"
+import type { MemberVerdictView } from "@/lib/analysis-view"
 import { hasStepId, type Selection } from "@/lib/selection"
 import { feedbackAddress } from "@/lib/feedback-view"
 import type { Playhead } from '@/lib/playhead'
@@ -40,9 +40,6 @@ export interface StepTreeFeedback {
 
 interface StepTreeProps {
   feedback?: StepTreeFeedback
-  onMark?: OnMark
-  markDenial?: MarkDenial & { testIndex: number; stepIndex?: number }
-  markPending?: boolean
   /** The member-grouped projection, already narrowed by the page's member filter (D-16). */
   groups: readonly RunDetailGroup[]
   /** Whether the RUN has more than one member — not whether the filter left more than one. */
@@ -151,9 +148,6 @@ export function StepTree({
   groups,
   showMemberChrome = false,
   analysisView,
-  onMark,
-  markDenial,
-  markPending,
   onCitedStep,
   onSelectMember,
   onCitedArtifact,
@@ -240,10 +234,7 @@ export function StepTree({
                   onOpenFeedback={addressed ? (opener) => feedback.onOpenStep(testIndex, stepIndex, opener) : undefined}
                   feedbackExpanded={addressed && feedback.expandedAddress === feedbackAddress({ testIndex, stepIndex })}
                   composerId={feedback?.composerId}
-                  onMark={onMark}
                   marks={group.member.marks}
-                  markPending={markPending}
-                  markDenial={markDenial?.testIndex === step.testIndex && markDenial?.stepIndex === step.stepIndex ? markDenial : undefined}
                   isSelected={hasStepId(selection) && selection.stepId === step.id}
                   isExpanded={true}
                   selection={selection}

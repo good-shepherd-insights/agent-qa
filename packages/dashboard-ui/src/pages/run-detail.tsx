@@ -1180,9 +1180,6 @@ export default function RunDetailPage() {
                   groups={visibleGroups}
                   showMemberChrome={hasMemberChrome}
                   analysisView={analysisView}
-                  onMark={onMark}
-                  markDenial={markDenial}
-                  markPending={markPending}
                   onCitedStep={onCitedStep}
                   onSelectMember={onSelectMember}
                   onCitedArtifact={handleCitedArtifact}

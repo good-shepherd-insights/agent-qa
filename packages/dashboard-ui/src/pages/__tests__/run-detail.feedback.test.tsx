@@ -644,8 +644,7 @@ describe('426-03 the composer names, switches and refuses its test', () => {
 
 // THE STEP DOOR AND THE PAGE'S DOOR COUNT (426-04 · SC1, D-04, D-06). The page auto-selects the first
 // step, so on load there is the header door and the selected row's door; clearing the selection or
-// selecting a hook leaves the header door alone. The shipped pills are still present in this plan and
-// carry no data-feedback-entry, so they are not counted.
+// selecting a hook leaves the header door alone. The pills are gone (426-15), so these are the only doors.
 const SETUP_HOOK = {
   id: 'hook-setup-1', runId: RUN_ID, stepId: null, type: 'hook', name: 'Seed catalog', hookId: 'seed',
   phase: 'setup', status: 'passed', duration: 120, stdout: null, stderr: null, returnData: null,
@@ -657,7 +656,7 @@ describe('426-04 the step door on the page', () => {
   it('TRIGGER-COUNT: two doors with a step selected, one with no selection, one with a hook selected', async () => {
     fetchExecutionLogsMock.mockResolvedValue({ logs: [SETUP_HOOK] })
     await renderAt(`/runs/${RUN_ID}`)
-    expect(container!.querySelectorAll('[data-mark-kind]').length).toBeGreaterThan(0)
+    expect(container!.querySelectorAll('[data-mark-kind]')).toHaveLength(0)
     expect(doors()).toHaveLength(2)
     expect([...doors()].map(door => door.getAttribute('data-feedback-entry')).sort()).toEqual(['step', 'test'])
     expect(q('[data-feedback-entry="test"]')!.getAttribute('data-feedback-target')).toBe('0:run')
