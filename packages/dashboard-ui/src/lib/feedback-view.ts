@@ -1,4 +1,4 @@
-// THE FEEDBACK COMPOSER'S COPY AND RULES (426 D-01, D-11, D-16, D-19, D-21).
+// THE FEEDBACK COMPOSER'S COPY AND RULES (426 D-01, D-11, D-12, D-14, D-16, D-19, D-21).
 //
 // Pure and total: no I/O, no clock, no React. Every sentence a person reads in the composer is an
 // exported constant or a pure function here, so cells assert against the constant and copy moves in
@@ -9,7 +9,9 @@ import type {
   Mark,
   MarkDisposition,
   MarkFixKind,
+  MemberTestOutcome,
   RunDetailMember,
+  RunDetailStep,
   RunsMarkInput,
   RunsMarkPreviewResult,
 } from '@vostride/agent-qa-schema'
@@ -61,6 +63,50 @@ export const FEEDBACK_CHOICE_ORDER = {
     'false-fail',
   ],
 } as const satisfies Record<FeedbackOutcomeClass, readonly [Mark, Mark, Mark]>
+
+export const CHOICE_LEGEND = 'Which is true?'
+
+export const CHOICE_MEANINGS = {
+  failed: {
+    'false-fail': 'The app behaved correctly; the test was wrong to fail.',
+    'confirmed-bug': 'The failure is real — the app is broken here.',
+    'false-pass': 'The test missed a problem it should have caught.',
+  },
+  passed: {
+    'false-fail': 'The pass is right; this confirms the test.',
+    'confirmed-bug': 'The app has a real bug here, even though the test passed.',
+    'false-pass': 'The app was broken here, but the test passed anyway.',
+  },
+} satisfies Record<FeedbackOutcomeClass, Record<Mark, string>>
+
+function statusClass(status: string | undefined): FeedbackOutcomeClass {
+  return status === 'passed' || status === 'healed' ? 'passed' : 'failed'
+}
+
+/**
+ * Healed counts as passed; anything that did not pass orders as failed. A member with no recorded
+ * outcome takes the run row's status the same way, and failed when that is not a verdict either.
+ */
+export function memberOutcomeClass(
+  outcome: MemberTestOutcome | undefined,
+  runStatus?: string,
+): FeedbackOutcomeClass {
+  return statusClass(outcome ?? runStatus)
+}
+
+export interface FeedbackOutcomeInput {
+  member: Pick<RunDetailMember, 'outcome'> | undefined
+  step?: Pick<RunDetailStep, 'verifierVerdict'>
+  runStatus: string | undefined
+}
+
+/** The target's own recorded result: a step reads its verifier verdict, a test its outcome (D-11). */
+export function feedbackOutcomeClass({ member, step, runStatus }: FeedbackOutcomeInput): FeedbackOutcomeClass {
+  // verifierVerdict is required by the schema, but fetchRunDetail does not parse (UI-SPEC U9).
+  const verdict = step?.verifierVerdict as RunDetailStep['verifierVerdict'] | undefined
+  if (verdict != null) return verdict.pass ? 'passed' : 'failed'
+  return memberOutcomeClass(member?.outcome, runStatus)
+}
 
 export type FeedbackComposerState =
   | 'composing'
