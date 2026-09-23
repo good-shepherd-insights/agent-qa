@@ -616,6 +616,7 @@ export default function RunDetailPage() {
     memberFilter: memberFilter === MEMBER_FILTER_ALL ? undefined : memberFilter,
     markDenial,
     reloadDetail,
+    setSelection,
     beforeOpen: () => setFeedbackLayout(feedbackPanelLayout(panelGroupRef.current?.getBoundingClientRect().width ?? 0)),
   })
 

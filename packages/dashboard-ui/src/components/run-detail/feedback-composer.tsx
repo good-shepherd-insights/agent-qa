@@ -1,6 +1,6 @@
 import { useId, type Ref } from 'react'
 import { X } from 'lucide-react'
-import type { Mark } from '@vostride/agent-qa-schema'
+import type { Mark, RunsMarkPreviewResult } from '@vostride/agent-qa-schema'
 import type { MarkDenial } from '@/lib/analysis-view'
 import { Button } from '@/components/ui/button'
 import { Label } from '@/components/ui/label'
@@ -8,7 +8,9 @@ import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Textarea } from '@/components/ui/textarea'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
+import { Skeleton } from '@/components/ui/skeleton'
 import { DenialBlock } from '@/chat/chat-transcript'
+import { FeedbackPreview } from '@/components/run-detail/feedback-preview'
 import { MaskedText } from '@/components/run-detail/masked-text'
 import {
   CHOICE_LABELS,
@@ -19,11 +21,13 @@ import {
   FEEDBACK_CHOICE_ORDER,
   NOTE_LABEL,
   NO_UNIQUE_ADDRESS_TEXT,
-  PREVIEW_TITLE,
   SEND_FEEDBACK_LABEL,
   TEST_SWITCHER_LABEL,
+  resolvedStepText,
+  showStepLabel,
   type FeedbackComposerState,
   type FeedbackOutcomeClass,
+  type FeedbackPreviewState,
   type FeedbackTextParts,
 } from '@/lib/feedback-view'
 
@@ -48,8 +52,16 @@ export interface FeedbackComposerProps {
   unsentDrafts?: readonly FeedbackUnsentDraft[]
   note?: string
   onNoteChange?: (note: string) => void
-  previewState: string
+  previewState: FeedbackPreviewState
   previewCurrent: boolean
+  /** The read on screen, which may be an older one still showing while a re-fetch is in flight. */
+  previewRead?: RunsMarkPreviewResult
+  previewUpdating?: boolean
+  previewReplacesTime?: string
+  /** The target member's step count, for the resolved-step sentence. */
+  stepCount?: number
+  /** D-14: select the resolved step on the page without re-targeting the composer. */
+  onShowStep?: (stepIndex: number) => void
   submitReason: string
   onSubmit: () => void
   status: string
@@ -111,6 +123,11 @@ export function FeedbackComposer({
   onNoteChange,
   previewState,
   previewCurrent,
+  previewRead,
+  previewUpdating = false,
+  previewReplacesTime,
+  stepCount = 0,
+  onShowStep,
   submitReason,
   onSubmit,
   status,
@@ -124,6 +141,18 @@ export function FeedbackComposer({
   const noteId = `${baseId}-note`
   const blocked = submitReason !== ''
   const choices = FEEDBACK_CHOICE_ORDER[outcomeClass]
+  // D-14: the step a test-level mark lands on is the read's own answer, shown only for the current
+  // read; already-marked and the refusals carry no resolved step (UI-SPEC U6).
+  const resolvedPending = scope === 'test' && selected !== undefined && previewState !== 'idle' && !previewCurrent
+  const resolved =
+    scope === 'test' && selected !== undefined && previewCurrent &&
+    (previewRead?.kind === 'consequences' || previewRead?.kind === 'quarantined')
+      ? previewRead.resolvedStep
+      : undefined
+  const resolvedText =
+    resolved === undefined || selected === undefined
+      ? undefined
+      : resolvedStepText(resolved.reason, selected, resolved.stepIndex + 1, stepCount)
   return (
     <section
       id={composerId}
@@ -250,6 +279,16 @@ export function FeedbackComposer({
             })}
           </RadioGroup>
         </fieldset>
+        {resolvedPending ? (
+          <Skeleton data-feedback-resolved-step-pending className="h-4 w-3/4 motion-reduce:animate-none" />
+        ) : resolved !== undefined && resolvedText !== undefined ? (
+          <div data-feedback-resolved-step data-resolved-reason={resolved.reason} className="flex flex-wrap items-center gap-x-2 text-xs">
+            <p className="break-words">{resolvedText}</p>
+            <Button variant="ghost" size="xs" data-feedback-show-step onClick={() => onShowStep?.(resolved.stepIndex)}>
+              {showStepLabel(resolved.stepIndex + 1)}
+            </Button>
+          </div>
+        ) : null}
 
         <div className="space-y-1">
           <Label htmlFor={noteId} className="text-xs font-medium">
@@ -264,9 +303,13 @@ export function FeedbackComposer({
           />
         </div>
 
-        <section data-feedback-preview data-preview-state={previewState} data-preview-current={String(previewCurrent)}>
-          <h3 className="text-xs font-medium text-muted-foreground">{PREVIEW_TITLE}</h3>
-        </section>
+        <FeedbackPreview
+          state={previewState}
+          current={previewCurrent}
+          read={previewRead}
+          updating={previewUpdating}
+          replacesTime={previewReplacesTime}
+        />
       </div>
 
       <div className="shrink-0 space-y-2 border-t px-3 py-2">

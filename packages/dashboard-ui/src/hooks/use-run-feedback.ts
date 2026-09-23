@@ -12,6 +12,7 @@ import {
   SENDING_STATUS,
   feedbackAddress,
   feedbackEntryLabel,
+  feedbackPreviewState,
   feedbackRecordedText,
   feedbackTargetView,
   hasUniqueAddress,
@@ -29,6 +30,7 @@ import {
   type FeedbackTarget,
 } from '@/lib/feedback-view'
 import { memberDisplayName, memberHandleLabel } from '@/lib/run-detail-view'
+import { runDetailStepKey, type Selection } from '@/lib/selection'
 
 interface UseRunFeedbackInput {
   runId: string | undefined
@@ -42,6 +44,8 @@ interface UseRunFeedbackInput {
   markDenial?: MarkDenial & FeedbackTarget
   /** The page's guarded runs.detail re-read, called on every open (a mark written elsewhere shows). */
   reloadDetail?: () => Promise<unknown>
+  /** The page's selection setter; Show step selects a step without re-targeting (D-14). */
+  setSelection?: (next: Selection | null) => void
   beforeOpen?: () => void
 }
 
@@ -58,8 +62,10 @@ function targetOfAddress(address: string): FeedbackTarget {
   return stepIndex === 'run' ? { testIndex: Number(testIndex) } : { testIndex: Number(testIndex), stepIndex: Number(stepIndex) }
 }
 
+/** The last read that landed, with the request key and address it was computed for (D-16). */
 interface LandedPreview {
   key: string
+  address: string
   read: MarkPreviewRead
 }
 
@@ -78,6 +84,7 @@ export function useRunFeedback({
   memberFilter,
   markDenial,
   reloadDetail,
+  setSelection,
   beforeOpen,
 }: UseRunFeedbackInput) {
   const baseId = useId()
@@ -121,31 +128,40 @@ export function useRunFeedback({
   const { state, status } = (address === undefined ? undefined : outcomes.get(address)) ?? COMPOSING
   const setOutcome = (key: string, next: AddressOutcome) => setOutcomes((previous) => new Map(previous).set(key, next))
   const currentKey = target === null || draft.kind === undefined ? '' : previewRequestKey({ kind: draft.kind, ...target })
-  const landedOutcome = landed === undefined ? undefined : landed.read.kind === 'read' ? landed.read.result.kind : 'failed'
-  const previewCurrent = landed !== undefined && currentKey !== '' && landed.key === currentKey
+  // Another address's read is never shown here; this address's last read stays on screen while its
+  // re-fetch is in flight, so the section never blanks (UI-SPEC S5).
+  const shown = landed !== undefined && landed.address === address ? landed : undefined
+  const landedOutcome = shown === undefined ? undefined : shown.read.kind === 'read' ? shown.read.result.kind : 'failed'
+  const previewCurrent = shown !== undefined && currentKey !== '' && shown.key === currentKey
   const addressable = target === null || hasUniqueAddress(detail, target.testIndex)
+  const previewState = !addressable ? 'idle' : feedbackPreviewState({ kind: draft.kind, landed: shown?.read })
+  const previewUpdating = previewState !== 'idle' && previewState !== 'loading' && !previewCurrent
   const submitReason = submitBlockedReason({
     noUniqueAddress: !addressable,
     kind: draft.kind,
     currentKey,
-    landedKey: landed?.key,
+    landedKey: shown?.key,
     landedOutcome,
     inFlight: markPending || state === 'submitting',
   })
 
+  // Every scheduled fetch takes a new generation, so an answer for anything scheduled earlier —
+  // in flight or still debounced — is dropped when it lands.
   const schedulePreview = (next: FeedbackTarget, kind: Mark) => {
     clearTimeout(previewTimer.current)
+    const generation = ++previewGeneration.current
     // D-01: a test onMark would refuse is never previewed either.
     if (!hasUniqueAddress(detailRef.current, next.testIndex)) return
     previewTimer.current = setTimeout(() => {
-      const generation = ++previewGeneration.current
+      if (previewGeneration.current !== generation) return
       const requestRunId = runRef.current
       const previewMember = detailRef.current?.members.find((entry) => entry.testIndex === next.testIndex)
       if (requestRunId === undefined || previewMember === undefined) return
       const key = previewRequestKey({ kind, ...next })
+      const requestAddress = feedbackAddress(next)
       void fetchMarkPreview(requestRunId, previewInputFor(previewMember, next, kind)).then((read) => {
         if (previewGeneration.current !== generation || runRef.current !== requestRunId) return
-        setLanded({ key, read })
+        setLanded({ key, address: requestAddress, read })
       })
     }, PREVIEW_DEBOUNCE_MS)
   }
@@ -310,8 +326,14 @@ export function useRunFeedback({
         unsentDrafts,
         note: draft.note,
         onNoteChange: editNote,
-        previewState: draft.kind === undefined || !addressable ? 'idle' : previewCurrent && landedOutcome !== undefined ? landedOutcome : 'loading',
+        previewState,
         previewCurrent,
+        previewRead: shown?.read.kind === 'read' ? shown.read.result : undefined,
+        previewUpdating,
+        stepCount: view.stepCount,
+        onShowStep: (stepIndex: number) => {
+          setSelection?.({ type: 'step', stepId: runDetailStepKey(target.testIndex, stepIndex) })
+        },
         submitReason,
         onSubmit: () => { void submit() },
         status: statusText,

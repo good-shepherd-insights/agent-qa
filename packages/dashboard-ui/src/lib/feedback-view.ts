@@ -258,6 +258,8 @@ export interface FeedbackTargetView {
   outcomeClass: FeedbackOutcomeClass
   heading: FeedbackTextParts
   scopeLine: FeedbackTextParts
+  /** The target member's step count from runs.detail. */
+  stepCount: number
 }
 
 /** Everything the composer states about its target, read from the projection the page already holds. */
@@ -275,6 +277,7 @@ export function feedbackTargetView({ detail, target, runStatus }: FeedbackTarget
     outcomeClass: feedbackOutcomeClass({ member, step, runStatus }),
     heading: composerHeading({ member, step, stepCount, suite }),
     scopeLine: scopeLine({ member, step, suite, runStatus }),
+    stepCount,
   }
 }
 
