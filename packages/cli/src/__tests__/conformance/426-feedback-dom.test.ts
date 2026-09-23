@@ -127,6 +127,8 @@ type HeaderGeometry = {
   entryCount: number
   rowEntryCount: number
   entry: number
+  entryOnTop: boolean
+  entryHit: string | null
   items: Item[]
   texts: Text[]
 }
@@ -179,6 +181,9 @@ const DESKTOP_LABEL = '1280x800'
 const NARROW_LABEL = '400x800'
 const ZOOM_LABEL = 'zoom2-from-1280x800'
 const GEOMETRY_LABELS = [DESKTOP_LABEL, NARROW_LABEL, ZOOM_LABEL]
+// WINDOWS #480's band, composer closed: 808px and 888px headers beside the 192px sidebar.
+const MID_WIDTHS = [1000, 1080]
+const HEADER_LABELS = [DESKTOP_LABEL, ...MID_WIDTHS.map(width => `${width}x800`), NARROW_LABEL, ZOOM_LABEL]
 const DOCKED_NARROW_LABEL = '1000x800-docked'
 const ROW_WRAP_BELOW_PX = 224
 // CHOICE_LABELS in FEEDBACK_CHOICE_ORDER, per the target's recorded outcome class.
@@ -255,8 +260,13 @@ async function measureHeader(page: Page, label: string) {
           box: box(element), fontSize: parseFloat(style.fontSize), fontWeight: Number(style.fontWeight) }
       })
     const entry = collected.findIndex(element => element.getAttribute('data-feedback-entry') === 'test')
+    // What a pointer at the entry's centre would hit: a sibling painted over it takes the click.
+    const target = collected[entry]?.getBoundingClientRect()
+    const hit = target ? document.elementFromPoint(target.x + target.width / 2, target.y + target.height / 2) : null
     return {
       innerWidth, dpr: devicePixelRatio, header: box(header), items, texts, entry,
+      entryOnTop: hit !== null && collected[entry]!.contains(hit),
+      entryHit: hit === null ? null : named(collected.filter(element => element.contains(hit)).at(-1) ?? hit),
       entryCount: document.querySelectorAll('[data-feedback-entry="test"]').length,
       rowEntryCount: row.querySelectorAll(':scope > [data-feedback-entry="test"]').length,
     }
@@ -552,6 +562,14 @@ async function driveLayout(browser: Browser, url: string) {
   await resizeTo(page, 1000, 'docked')
   await measureStepRow(page, DOCKED_NARROW_LABEL)
   await page.close()
+
+  const mid = await context.newPage()
+  for (const width of MID_WIDTHS) {
+    await mid.setViewportSize({ width, height: DESKTOP.height })
+    if (mid.url() === 'about:blank') await mid.goto(url)
+    await measureHeader(mid, `${width}x800`)
+  }
+  await mid.close()
 
   const narrow = await context.newPage()
   await narrow.setViewportSize({ width: 400, height: DESKTOP.height })
@@ -857,7 +875,7 @@ describe('contextual feedback on the shipped bundle (426-16, 426-17)', () => {
   })
 
   it('HEADER-ENTRY-GEOMETRY', () => {
-    expect(headerGeometries.map(geometry => geometry.label), JSON.stringify(failures)).toEqual(GEOMETRY_LABELS)
+    expect(headerGeometries.map(geometry => geometry.label), JSON.stringify(failures)).toEqual(HEADER_LABELS)
     for (const geometry of headerGeometries) {
       const where = `${geometry.label} innerWidth=${geometry.innerWidth} dpr=${geometry.dpr}`
       expect(geometry.entryCount, `${where}: header entries on the page`).toBe(1)
@@ -870,6 +888,7 @@ describe('contextual feedback on the shipped bundle (426-16, 426-17)', () => {
         if (index === geometry.entry || item.contains.includes(geometry.entry) || entry!.contains.includes(index)) continue
         expect(overlaps(entry!.box, item.box), `${where}: entry ${JSON.stringify(entry!.box)} overlaps ${item.key} ${JSON.stringify(item.box)}`).toBe(false)
       }
+      expect(geometry.entryOnTop, `${where}: a pointer at the entry's centre hits ${geometry.entryHit}`).toBe(true)
       // 425's BADGE-DOMINANT-GEOMETRY measurement, unchanged.
       const badge = geometry.texts.find(text => text.kind === 'badge')
       expect(badge, `${where}: no text-bearing verdict badge`).toBeDefined()

@@ -40,7 +40,12 @@ let zoom: { factor: number; beforeWidth: number; afterWidth: number; beforeDpr: 
 let settled = false
 
 const at = (label: string) => geometries.find(geometry => geometry.label === label)
-const STACKED = ['400x800', 'zoom2-from-1280x800']
+// WINDOWS #480's band: beside the 192px sidebar these pages leave the header 808px and 888px, past
+// the old 768px step but too narrow for one row, and the analysis chip painted over the verdict.
+const MID_WIDTHS = [1000, 1080]
+const MID = MID_WIDTHS.map(width => `${width}x800`)
+const LABELS = ['400x800', '1280x800', ...MID, 'zoom2-from-1280x800']
+const STACKED = ['400x800', ...MID, 'zoom2-from-1280x800']
 const DESKTOP = '1280x800'
 
 async function headerClip(page: Page) {
@@ -178,6 +183,11 @@ describe('run header layout on the shipped bundle (425-10)', () => {
       await page.setViewportSize({ width: 1280, height: 800 })
       await measure(page, '1280x800')
       await captureHeader(page, 'header-1280')
+      for (const width of MID_WIDTHS) {
+        await page.setViewportSize({ width, height: 800 })
+        await measure(page, `${width}x800`)
+        await captureHeader(page, `header-${width}`)
+      }
       await context.close()
 
       // Density and real browser zoom are separate checks. The temporary MV3 extension exists only
@@ -237,7 +247,7 @@ describe('run header layout on the shipped bundle (425-10)', () => {
   })
 
   it('HEADER-NO-OVERLAP', () => {
-    expect(geometries.map(geometry => geometry.label), JSON.stringify(failures)).toEqual(['400x800', '1280x800', 'zoom2-from-1280x800'])
+    expect(geometries.map(geometry => geometry.label), JSON.stringify(failures)).toEqual(LABELS)
     for (const geometry of geometries) {
       const where = `${geometry.label} innerWidth=${geometry.innerWidth} dpr=${geometry.dpr}`
       expect(geometry.items.length, where).toBeGreaterThan(4)
@@ -254,7 +264,7 @@ describe('run header layout on the shipped bundle (425-10)', () => {
   })
 
   it('BADGE-DOMINANT-GEOMETRY', () => {
-    expect(geometries.length, JSON.stringify(failures)).toBe(3)
+    expect(geometries.length, JSON.stringify(failures)).toBe(LABELS.length)
     for (const geometry of geometries) {
       const where = `${geometry.label} innerWidth=${geometry.innerWidth}`
       const badge = geometry.texts.find(text => text.kind === 'badge')
@@ -277,7 +287,7 @@ describe('run header layout on the shipped bundle (425-10)', () => {
   })
 
   it('HEADER-STACKS-WHERE-WIDTH-RUNS-OUT', () => {
-    expect(geometries.length, JSON.stringify(failures)).toBe(3)
+    expect(geometries.length, JSON.stringify(failures)).toBe(LABELS.length)
     expect(zoom?.factor, JSON.stringify(failures)).toBe(2)
     expect(zoom!.afterWidth).toBe(zoom!.beforeWidth / 2)
     expect(zoom!.afterDpr).toBe(zoom!.beforeDpr * 2)
