@@ -4,6 +4,8 @@ import type { Mark } from '@vostride/agent-qa-schema'
 import { Button } from '@/components/ui/button'
 import { Label } from '@/components/ui/label'
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import { DenialBlock } from '@/chat/chat-transcript'
 import { MaskedText } from '@/components/run-detail/masked-text'
 import {
   CHOICE_LABELS,
@@ -11,8 +13,10 @@ import {
   CHOICE_MEANINGS,
   CLOSE_FEEDBACK_LABEL,
   FEEDBACK_CHOICE_ORDER,
+  NO_UNIQUE_ADDRESS_TEXT,
   PREVIEW_TITLE,
   SEND_FEEDBACK_LABEL,
+  TEST_SWITCHER_LABEL,
   type FeedbackComposerState,
   type FeedbackOutcomeClass,
   type FeedbackTextParts,
@@ -29,12 +33,22 @@ export interface FeedbackComposerProps {
   outcomeClass: FeedbackOutcomeClass
   selected: Mark | undefined
   onChoose: (kind: Mark) => void
+  /** D-01: the target has no unique mark address; the choices stay, nothing can be sent. */
+  noUniqueAddress?: boolean
+  /** D-03: a test-level target in a multi-member run can be moved to another test. */
+  testSwitcher?: FeedbackTestSwitcher
   previewState: string
   previewCurrent: boolean
   submitReason: string
   onSubmit: () => void
   status: string
   onClose: () => void
+}
+
+export interface FeedbackTestSwitcher {
+  value: number
+  options: readonly { testIndex: number; label: string }[]
+  onChange: (testIndex: number) => void
 }
 
 function TextParts({ parts }: { parts: FeedbackTextParts }) {
@@ -63,6 +77,8 @@ export function FeedbackComposer({
   outcomeClass,
   selected,
   onChoose,
+  noUniqueAddress = false,
+  testSwitcher,
   previewState,
   previewCurrent,
   submitReason,
@@ -72,6 +88,7 @@ export function FeedbackComposer({
 }: FeedbackComposerProps) {
   const baseId = useId()
   const reasonId = `${baseId}-submit-reason`
+  const switcherId = `${baseId}-test-switcher`
   const blocked = submitReason !== ''
   const choices = FEEDBACK_CHOICE_ORDER[outcomeClass]
   return (
@@ -97,9 +114,39 @@ export function FeedbackComposer({
         <p data-feedback-scope-line className="break-words text-xs text-muted-foreground">
           <TextParts parts={scopeLine} />
         </p>
+        {testSwitcher === undefined ? null : (
+          <div className="space-y-1 pt-1">
+            <Label htmlFor={switcherId} className="text-xs font-medium">
+              {TEST_SWITCHER_LABEL}
+            </Label>
+            <Select
+              value={String(testSwitcher.value)}
+              onValueChange={(value) => {
+                const option = testSwitcher.options.find((entry) => String(entry.testIndex) === value)
+                if (option !== undefined) testSwitcher.onChange(option.testIndex)
+              }}
+            >
+              <SelectTrigger id={switcherId} className="w-full h-8 text-xs" data-feedback-test-switcher>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {testSwitcher.options.map((option) => (
+                  <SelectItem key={option.testIndex} value={String(option.testIndex)}>
+                    {option.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+        )}
       </div>
 
       <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-3 py-4">
+        {noUniqueAddress ? (
+          <div data-feedback-no-address>
+            <DenialBlock neutralReason={NO_UNIQUE_ADDRESS_TEXT} remedies={[]} />
+          </div>
+        ) : null}
         <fieldset className="space-y-2">
           <legend className="text-xs font-medium text-muted-foreground">{CHOICE_LEGEND}</legend>
           <RadioGroup

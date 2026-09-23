@@ -265,6 +265,21 @@ export function resolveHeaderFeedbackTarget({
   return chosen === undefined ? undefined : { testIndex: chosen.testIndex }
 }
 
+export const TEST_SWITCHER_LABEL = 'Test'
+export const NO_UNIQUE_ADDRESS_TEXT = "This test has no unique address in this run, so feedback can't be recorded for it."
+
+/**
+ * D-01, inherited from onMark's refusal: the wire addresses a suite member by testId, so a member
+ * needs a truthy testId no other member holds. A single-test run needs none.
+ */
+export function hasUniqueAddress(detail: Pick<RunDetailProjection, 'members'> | null | undefined, testIndex: number): boolean {
+  const members = detail?.members ?? []
+  const member = members.find((entry) => entry.testIndex === testIndex)
+  if (member === undefined) return false
+  if (members.length <= 1) return true
+  return Boolean(member.testId) && members.filter((entry) => entry.testId === member.testId).length === 1
+}
+
 export type FeedbackComposerState =
   | 'composing'
   | 'submitting'
@@ -336,6 +351,7 @@ export function previewRequestKey(input: PreviewRequest): string {
   ])
 }
 
+export const SUBMIT_REASON_NO_UNIQUE_ADDRESS = "This test can't be marked from the dashboard."
 export const SUBMIT_REASON_NO_CHOICE = 'Choose one of the three options.'
 export const SUBMIT_REASON_CHECKING = 'Checking what this will do…'
 export const SUBMIT_REASON_SENDING = 'Sending…'
@@ -346,10 +362,12 @@ export interface SubmitBlockInput {
   landedKey: string | undefined
   landedOutcome: RunsMarkPreviewResult['kind'] | 'failed' | undefined
   inFlight: boolean
+  noUniqueAddress?: boolean
 }
 
-/** First match wins; '' means Send feedback is available (D-19). */
+/** First match wins; '' means Send feedback is available (D-19, UI-SPEC S6). */
 export function submitBlockedReason(input: SubmitBlockInput): string {
+  if (input.noUniqueAddress === true) return SUBMIT_REASON_NO_UNIQUE_ADDRESS
   if (input.kind === undefined) return SUBMIT_REASON_NO_CHOICE
   if (
     input.landedKey !== input.currentKey ||

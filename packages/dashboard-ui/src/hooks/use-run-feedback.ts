@@ -12,6 +12,7 @@ import {
   feedbackEntryLabel,
   feedbackRecordedText,
   feedbackTargetView,
+  hasUniqueAddress,
   previewInputFor,
   previewRequestKey,
   resolveHeaderFeedbackTarget,
@@ -95,7 +96,9 @@ export function useRunFeedback({
   const currentKey = target === null || draft.kind === undefined ? '' : previewRequestKey({ kind: draft.kind, ...target })
   const landedOutcome = landed === undefined ? undefined : landed.read.kind === 'read' ? landed.read.result.kind : 'failed'
   const previewCurrent = landed !== undefined && currentKey !== '' && landed.key === currentKey
+  const addressable = target === null || hasUniqueAddress(detail, target.testIndex)
   const submitReason = submitBlockedReason({
+    noUniqueAddress: !addressable,
     kind: draft.kind,
     currentKey,
     landedKey: landed?.key,
@@ -105,6 +108,8 @@ export function useRunFeedback({
 
   const schedulePreview = (next: FeedbackTarget, kind: Mark) => {
     clearTimeout(previewTimer.current)
+    // D-01: a test onMark would refuse is never previewed either.
+    if (!hasUniqueAddress(detailRef.current, next.testIndex)) return
     previewTimer.current = setTimeout(() => {
       const generation = ++previewGeneration.current
       const requestRunId = runRef.current
@@ -128,6 +133,21 @@ export function useRunFeedback({
     }
     setTarget(next)
     setOpen(true)
+  }
+
+  // D-03's switcher: the composer moves to another test's address and shows that address's draft.
+  // The page's member filter and selection are not touched.
+  const retarget = (next: FeedbackTarget) => {
+    const nextAddress = feedbackAddress(next)
+    if (state === 'submitting' || nextAddress === address) return
+    previewGeneration.current += 1
+    setState('composing')
+    setStatus('')
+    setRecorded(undefined)
+    setTarget(next)
+    const kind = drafts.get(nextAddress)?.kind
+    if (kind === undefined) clearTimeout(previewTimer.current)
+    else schedulePreview(next, kind)
   }
 
   const close = () => {
@@ -181,6 +201,17 @@ export function useRunFeedback({
   const statusText = state === 'recorded' ? (recordedMark === undefined ? '' : feedbackRecordedText(recordedMark.disposition)) : status
 
   const view = target === null ? undefined : feedbackTargetView({ detail, target, runStatus })
+  const members = detail?.members ?? []
+  const testSwitcher = target === null || target.stepIndex !== undefined || members.length <= 1
+    ? undefined
+    : {
+        value: target.testIndex,
+        options: members.map((entry) => ({
+          testIndex: entry.testIndex,
+          label: `${memberDisplayName(entry)} ${memberHandleLabel(entry.testIndex)}`,
+        })),
+        onChange: (testIndex: number) => retarget({ testIndex }),
+      }
 
   const composer: FeedbackComposerProps | undefined = !open || target === null || address === undefined || view === undefined
     ? undefined
@@ -195,7 +226,9 @@ export function useRunFeedback({
         outcomeClass: view.outcomeClass,
         selected: draft.kind,
         onChoose: choose,
-        previewState: draft.kind === undefined ? 'idle' : previewCurrent && landedOutcome !== undefined ? landedOutcome : 'loading',
+        noUniqueAddress: !addressable,
+        testSwitcher,
+        previewState: draft.kind === undefined || !addressable ? 'idle' : previewCurrent && landedOutcome !== undefined ? landedOutcome : 'loading',
         previewCurrent,
         submitReason,
         onSubmit: () => { void submit() },
@@ -227,5 +260,5 @@ export function useRunFeedback({
           onOpen: (openerElement: HTMLElement) => openFeedback(headerTarget, openerElement),
         }
 
-  return { open, target, composerId, openFeedback, composer, headerEntry }
+  return { open, target, composerId, openFeedback, retarget, composer, headerEntry }
 }
