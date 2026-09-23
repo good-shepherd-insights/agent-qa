@@ -66,7 +66,7 @@ export interface FeedbackPlace {
   member?: Pick<RunDetailMember, 'testIndex' | 'name'>
 }
 
-function placeText({ stepIndex, member }: FeedbackPlace): string {
+export function placeText({ stepIndex, member }: FeedbackPlace): string {
   const test = member === undefined ? undefined : `${memberDisplayName(member)} ${memberHandleLabel(member.testIndex)}`
   if (stepIndex === undefined) return test ?? 'this test'
   return test === undefined ? `step ${String(stepIndex + 1)}` : `step ${String(stepIndex + 1)} of ${test}`

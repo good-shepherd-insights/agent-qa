@@ -11,6 +11,7 @@ import { Textarea } from '@/components/ui/textarea'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { Skeleton } from '@/components/ui/skeleton'
 import { DenialBlock } from '@/chat/chat-transcript'
+import { FeedbackApproval, type FeedbackApprovalProps } from '@/components/run-detail/feedback-approval'
 import { FeedbackHistory, type FeedbackHistoryProps } from '@/components/run-detail/feedback-history'
 import { FeedbackPreview } from '@/components/run-detail/feedback-preview'
 import { FeedbackTechnicalDetails } from '@/components/run-detail/feedback-technical-details'
@@ -58,6 +59,10 @@ export interface FeedbackComposerProps {
   pinned?: FeedbackPinned
   /** D-09: other addresses holding a non-empty draft. */
   unsentDrafts?: readonly FeedbackUnsentDraft[]
+  /** D-20: a mark question still waiting at another address, one link away. */
+  approvalWaiting?: FeedbackApprovalWaiting
+  /** D-20: this address's mark question; unsettled, it stands in for the submit row. */
+  approval?: FeedbackApprovalProps & { settled: boolean }
   note?: string
   onNoteChange?: (note: string) => void
   /** D-15: the draft's raw correction text; the action field shows only while the gate allows it. */
@@ -106,6 +111,11 @@ export interface FeedbackUnsentDraft {
   onOpen: () => void
 }
 
+export interface FeedbackApprovalWaiting {
+  label: string
+  onOpen: () => void
+}
+
 export interface FeedbackTestSwitcher {
   value: number
   options: readonly { testIndex: number; label: string }[]
@@ -142,6 +152,8 @@ export function FeedbackComposer({
   testSwitcher,
   pinned,
   unsentDrafts = [],
+  approvalWaiting,
+  approval,
   note = '',
   onNoteChange,
   expectation = '',
@@ -261,7 +273,7 @@ export function FeedbackComposer({
       </div>
 
       <div ref={bodyRef} className="min-h-0 flex-1 space-y-4 overflow-y-auto px-3 py-4">
-        {pinned === undefined && unsentDrafts.length === 0 ? null : (
+        {pinned === undefined && unsentDrafts.length === 0 && approvalWaiting === undefined ? null : (
           <div className="space-y-1">
             {pinned === undefined ? null : (
               <div data-feedback-pinned role="note" className="rounded-md bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
@@ -270,6 +282,17 @@ export function FeedbackComposer({
                   {pinned.switchLabel}
                 </Button>
               </div>
+            )}
+            {approvalWaiting === undefined ? null : (
+              <Button
+                variant="ghost"
+                size="xs"
+                data-feedback-approval-waiting
+                className="text-muted-foreground hover:text-foreground"
+                onClick={approvalWaiting.onOpen}
+              >
+                {approvalWaiting.label}
+              </Button>
             )}
             {unsentDrafts.map((entry) => (
               <Button
@@ -358,7 +381,7 @@ export function FeedbackComposer({
         <CorrectionFields
           expectation={expectation}
           actionText={actionText}
-          disabled={state === 'submitting'}
+          disabled={state === 'submitting' || state === 'awaiting-approval'}
           actionField={actionField ?? { shown: false, reason: correctedActionUnavailableText(selected === undefined ? 'no-choice' : 'loading') }}
           onChange={(nextExpectation, nextActionText) => onCorrectionChange?.(nextExpectation, nextActionText)}
         />
@@ -392,28 +415,39 @@ export function FeedbackComposer({
       </div>
 
       <div className="shrink-0 space-y-2 border-t px-3 py-2">
+        {approval === undefined ? null : (
+          <FeedbackApproval
+            confirmId={approval.confirmId}
+            actionClass={approval.actionClass}
+            preview={approval.preview}
+            resolution={approval.resolution}
+            onAnswer={approval.onAnswer}
+          />
+        )}
         {denial === undefined ? null : (
           <div data-feedback-denied role="alert">
             <DenialBlock neutralReason={denial.reason} remedies={denial.remedies} />
           </div>
         )}
-        <div className="flex flex-wrap items-center gap-2">
-          <Button
-            size="sm"
-            data-feedback-submit
-            aria-disabled={blocked}
-            aria-describedby={reasonId}
-            className="aria-disabled:cursor-not-allowed aria-disabled:opacity-50"
-            onClick={() => {
-              if (!blocked) onSubmit()
-            }}
-          >
-            {SEND_FEEDBACK_LABEL}
-          </Button>
-          <p id={reasonId} data-feedback-submit-reason className="text-xs text-muted-foreground">
-            {submitReason}
-          </p>
-        </div>
+        {approval !== undefined && !approval.settled ? null : (
+          <div className="flex flex-wrap items-center gap-2">
+            <Button
+              size="sm"
+              data-feedback-submit
+              aria-disabled={blocked}
+              aria-describedby={reasonId}
+              className="aria-disabled:cursor-not-allowed aria-disabled:opacity-50"
+              onClick={() => {
+                if (!blocked) onSubmit()
+              }}
+            >
+              {SEND_FEEDBACK_LABEL}
+            </Button>
+            <p id={reasonId} data-feedback-submit-reason className="text-xs text-muted-foreground">
+              {submitReason}
+            </p>
+          </div>
+        )}
         <p data-feedback-status role="status" aria-live="polite" aria-atomic="true" className="text-xs text-muted-foreground">
           {status}
         </p>

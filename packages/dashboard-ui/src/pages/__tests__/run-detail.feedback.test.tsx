@@ -1870,9 +1870,10 @@ describe('426-10 the mark approval is answered in the composer', () => {
   async function submitAwaitingApproval() {
     const sent = settleable()
     markRunMock.mockReturnValue(sent.promise)
+    const before = markRunMock.mock.calls.length
     await openAndLand({ kind: 'read', result: CONSEQUENCES_STEP_3 })
     await click('[data-feedback-submit]')
-    expect(markRunMock).toHaveBeenCalledTimes(1)
+    expect(markRunMock.mock.calls.length - before).toBe(1)
     const claim = markConfirmClaim()
     expect(claim, 'no claim while this page has a mark in flight').toBeDefined()
     const answer = vi.fn()
@@ -1885,6 +1886,8 @@ describe('426-10 the mark approval is answered in the composer', () => {
   const state = () => q('[data-feedback-composer]')!.getAttribute('data-feedback-state')
 
   it('APPROVAL-INLINE-END-TO-END: the question replaces Send feedback, is answered in place, and gives way to the outcome', async () => {
+    const marked = projection({ ...fourSteps, members: [{ ...fourSteps.members[0]!, marks: [receipt] }] })
+    fetchRunDetailMock.mockImplementation(async () => markRunMock.mock.calls.length > 0 ? marked : fourSteps)
     const { sent, answer, claim } = await submitAwaitingApproval()
     expect(q('[data-feedback-submit]'), 'Send feedback still shows beside the question').toBeNull()
     expect(region(), 'no approval region in the composer').not.toBeNull()
@@ -1905,6 +1908,7 @@ describe('426-10 the mark approval is answered in the composer', () => {
 
     await act(async () => sent.resolve({ kind: 'marked', receipt }))
     await flushRender()
+    expect(state()).toBe('recorded')
     expect(region(), 'the question outlived the mark it asked about').toBeNull()
     expect(q('[data-feedback-submit]')).not.toBeNull()
   })
