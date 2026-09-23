@@ -8,18 +8,36 @@
 // prose here is the locked label copy (SC2) and the S4 meaning table the spec fixes verbatim.
 
 import { describe, expect, it } from 'vitest'
-import type { Mark, RunDetailMember, RunDetailStep } from '@vostride/agent-qa-schema'
+import type {
+  Mark,
+  MarkPreviewGroundTruth,
+  MarkPreviewKnowledgeRecord,
+  RunDetailMember,
+  RunDetailStep,
+  RunsMarkPreviewResult,
+} from '@vostride/agent-qa-schema'
+import { MARK_PREVIEW_REFUSALS } from '@vostride/agent-qa-schema'
 
 import { UNNAMED_STEP_LABEL } from '@/lib/display-step'
 import {
   CHOICE_LABELS,
   CHOICE_LEGEND,
   CHOICE_MEANINGS,
+  CONTENT_ABSENCE_TEXT,
+  DRAFT_WORDING_NOT_SHOWN_TEXT,
   FEEDBACK_CHOICE_ORDER,
   FEEDBACK_COMPOSER_STATES,
   FEEDBACK_ENTRY_SCOPES,
   FEEDBACK_ENTRY_TEST_LABEL,
   FEEDBACK_OUTCOME_CLASSES,
+  FEEDBACK_PREVIEW_STATES,
+  NO_GROUND_TRUTH_TEXT,
+  PREVIEW_IDLE_TEXT,
+  PREVIEW_LINE_LABELS,
+  PREVIEW_UPDATING_TEXT,
+  PROPOSAL_DRAFT_TEXT,
+  RECORD_EFFECT_TEXT,
+  UNREADABLE_RECORD_TEXT,
   SUBMIT_REASON_NO_CHOICE,
   SUBMIT_REASON_NO_UNIQUE_ADDRESS,
   NO_STEP_VERDICT_TEXT,
@@ -27,9 +45,20 @@ import {
   RECORDED_RESULT_TEXT,
   WHOLE_TEST_SCOPE_TEXT,
   composerHeading,
+  correctedGroundTruthText,
   feedbackEntryLabel,
   feedbackOutcomeClass,
   feedbackPartsText,
+  feedbackPreviewState,
+  groundTruthLine,
+  knowledgeLine,
+  labelsLine,
+  proposalDraftText,
+  recordEffectLine,
+  replacesLine,
+  resolvedStepText,
+  showRecordsLabel,
+  showStepLabel,
   feedbackTargetView,
   hasUniqueAddress,
   isDraftEmpty,
@@ -309,5 +338,111 @@ describe('426-05 the pinned target names both places', () => {
     expect(isDraftEmpty({ note: 'x', expectation: '', actionText: '' })).toBe(false)
     expect(isDraftEmpty({ note: '', expectation: 'x', actionText: '' })).toBe(false)
     expect(isDraftEmpty({ note: '', expectation: '', actionText: '{' })).toBe(false)
+  })
+})
+
+// WHAT THE MARK WILL DO, IN THE READ'S OWN FACTS (426-06 · D-14, D-16, D-17). Every sentence below is
+// computed from one runs.mark.preview field and nothing else: the resolved step is keyed on the read's
+// reason, never re-derived from the steps, and a zero-count clause is dropped rather than printed as 0.
+describe('426-06 the preview names what the mark will do', () => {
+  it('RESOLVED-STEP-TEXT: the sentence is keyed on the read\'s reason and the kind, and a step mark has none', () => {
+    expect(resolvedStepText('failing-step', 'false-fail', 3, 5)).toBe('This marks step 3 of 5 — the first step that failed.')
+    for (const kind of MARKS) {
+      expect(resolvedStepText('failing-step', kind, 3, 5)).toBe('This marks step 3 of 5 — the first step that failed.')
+    }
+    expect(resolvedStepText('passing-verdict', 'false-pass', 5, 5)).toBe('This marks step 5 of 5 — the last step, where the test finished.')
+    expect(resolvedStepText('passing-verdict', 'confirmed-bug', 5, 5)).toBe('This marks step 5 of 5 — the last step, because no step failed.')
+    expect(resolvedStepText('passing-verdict', 'false-fail', 5, 5)).toBe('This marks step 5 of 5 — the last step, because no step failed.')
+    expect(resolvedStepText('step-mark', 'false-fail', 2, 5)).toBeUndefined()
+    expect(showStepLabel(3)).toBe('Show step 3')
+  })
+
+  it('PREVIEW-STATES-RUNTIME: the preview states are exactly the published set', () => {
+    expect([...FEEDBACK_PREVIEW_STATES]).toEqual(['idle', 'loading', 'consequences', 'quarantined', 'already-marked', 'refused', 'failed'])
+  })
+
+  it('PREVIEW-STATE-MAPPING: no choice is idle, nothing landed is loading, a failed read or a refusal names itself', () => {
+    const read = (result: Pick<RunsMarkPreviewResult, 'kind'>) => ({ kind: 'read' as const, result: result as RunsMarkPreviewResult })
+    expect(feedbackPreviewState({ kind: undefined, landed: undefined })).toBe('idle')
+    expect(feedbackPreviewState({ kind: undefined, landed: read({ kind: 'consequences' }) })).toBe('idle')
+    expect(feedbackPreviewState({ kind: 'false-fail', landed: undefined })).toBe('loading')
+    expect(feedbackPreviewState({ kind: 'false-fail', landed: { kind: 'failed', reason: 'network' } })).toBe('failed')
+    for (const refusal of MARK_PREVIEW_REFUSALS) {
+      expect(feedbackPreviewState({ kind: 'false-fail', landed: read({ kind: refusal }) })).toBe('refused')
+    }
+    for (const arm of ['consequences', 'quarantined', 'already-marked'] as const) {
+      expect(feedbackPreviewState({ kind: 'false-fail', landed: read({ kind: arm }) })).toBe(arm)
+    }
+    expect(PREVIEW_IDLE_TEXT).toBe('Choose an option above to see what this will do.')
+    expect(PREVIEW_UPDATING_TEXT).toBe('Updating…')
+    expect(PREVIEW_LINE_LABELS).toEqual({ result: 'Result', labels: 'Eval labels', knowledge: 'Knowledge', proposals: 'Proposals' })
+  })
+
+  it('PREVIEW-RESULT-LINE: the step number, both verdicts and the quoted reasoning; an empty reasoning drops the quote', () => {
+    const entry: MarkPreviewGroundTruth = {
+      testIndex: 0, stepIndex: 2, verdict: 'pass', recordedVerdict: { pass: false, reasoning: 'cart total differs' }, correctedAction: false,
+    }
+    const parts = groundTruthLine(entry)
+    expect(feedbackPartsText(parts)).toBe('Step 3 will count as passed (recorded: failed — "cart total differs")')
+    expect(parts.name).toBe('cart total differs')
+    const bare = groundTruthLine({ ...entry, verdict: 'fail', recordedVerdict: { pass: true, reasoning: '' } })
+    expect(feedbackPartsText(bare)).toBe('Step 3 will count as failed (recorded: passed)')
+    expect(bare.name).toBeUndefined()
+    expect(correctedGroundTruthText(entry)).toBeUndefined()
+    expect(correctedGroundTruthText({ ...entry, correctedExpectation: 'the total matches' })).toBe('with your corrected expectation')
+    expect(correctedGroundTruthText({ ...entry, correctedAction: true })).toBe('with your corrected action')
+    expect(correctedGroundTruthText({ ...entry, correctedExpectation: 'x', correctedAction: true })).toBe('with your corrected expectation and action')
+    expect(NO_GROUND_TRUTH_TEXT).toBe('No step verdict changes.')
+  })
+
+  it('PREVIEW-ZERO-ONE-MANY: one and many read differently, and a zero-count clause is omitted', () => {
+    expect(labelsLine(0)).toBe('No eval labels change')
+    expect(labelsLine(1)).toBe('1 decision becomes a held-out eval label')
+    expect(labelsLine(3)).toBe('3 decisions become held-out eval labels')
+    expect(knowledgeLine({ confirmed: 1, overturned: 0 }, 1)).toBe('1 record confirmed')
+    expect(knowledgeLine({ confirmed: 2, overturned: 0 }, 2)).toBe('2 records confirmed')
+    expect(knowledgeLine({ confirmed: 0, overturned: 0 }, 0)).toBe('No knowledge records are reached')
+    expect(knowledgeLine({ confirmed: 1, overturned: 3 }, 3)).toBe('1 record confirmed · 3 counted against')
+    expect(knowledgeLine({ confirmed: 0, overturned: 2 }, 1)).toBe('2 counted against')
+    expect(knowledgeLine({ confirmed: 0, overturned: 0 }, 1)).not.toBe('')
+    expect(showRecordsLabel(3)).toBe('Show records (3)')
+  })
+
+  it('PREVIEW-RECORD-EFFECT: confirms, counts against, both, a repeat count, and the unreadable sentence', () => {
+    const record = (served: boolean, evidence: MarkPreviewKnowledgeRecord['evidence']): MarkPreviewKnowledgeRecord =>
+      ({ recordId: 'r', served, contentAbsence: { reason: 'not-found' }, evidence })
+    const overturn = { direction: 'overturn' as const, overturnsEvidenceToken: 't', overturnsCurationJobId: 'job' }
+    expect(RECORD_EFFECT_TEXT).toEqual({ confirm: 'confirms', overturn: 'counts against' })
+    expect(recordEffectLine(record(true, { kind: 'effects', effects: [{ direction: 'confirm' }] }))).toBe('confirms')
+    expect(recordEffectLine(record(true, { kind: 'effects', effects: [{ direction: 'confirm' }, overturn] }))).toBe('confirms · counts against')
+    expect(recordEffectLine(record(false, { kind: 'effects', effects: [overturn, overturn] }))).toBe('counts against × 2')
+    expect(recordEffectLine(record(true, { kind: 'unreadable' }))).toBe(UNREADABLE_RECORD_TEXT)
+    expect(UNREADABLE_RECORD_TEXT).toBe("This record can't be read — it keeps its place, and nothing is applied to it.")
+    expect(CONTENT_ABSENCE_TEXT).toEqual({
+      'not-found': 'Record content not found',
+      'scan-incomplete': 'Record content could not be fully read',
+      'not-bound': "Record content isn't available on this host",
+    })
+  })
+
+  it('PREVIEW-PROPOSAL-LINE: each draft kind reads its sentence, and the drafted wording is never offered', () => {
+    const checked = { servedRecords: 0, procedureReads: 0, assertionDrift: false }
+    const target = { grain: 'record' as const, recordId: 'rec-1' }
+    expect(proposalDraftText({ kind: 'knowledge', fix: 'fact', target })).toBe('A knowledge fact will be drafted for your review')
+    expect(proposalDraftText({ kind: 'knowledge', fix: 'caution', target })).toBe('A caution will be drafted for your review')
+    expect(proposalDraftText({ kind: 'knowledge', fix: 'procedure-hint', target })).toBe('A procedure hint will be drafted for your review')
+    expect(proposalDraftText({ kind: 'test-edit', testRef: 'tests/checkout.yaml' })).toBe('A test edit will be drafted for your review')
+    expect(proposalDraftText({ kind: 'no-draftable-fix', checked })).toBe('No fix can be drafted from this run')
+    expect(proposalDraftText({ kind: 'confirmed-bug' }))
+      .toBe('Nothing is drafted — a real product bug needs a product fix, not a test or knowledge change')
+    expect(PROPOSAL_DRAFT_TEXT['test-edit']).toBe('A test edit will be drafted for your review')
+    expect(DRAFT_WORDING_NOT_SHOWN_TEXT).toBe("The drafted wording isn't shown here — it's written after you send.")
+  })
+
+  it('PREVIEW-REPLACES-LINE: the earlier mark by ordinal and time, the withdrawal clause, and no guessed time', () => {
+    expect(replacesLine(2, '14:05', true)).toBe('Replaces your earlier mark (#2, 14:05) and withdraws its proposal')
+    expect(replacesLine(2, '14:05', false)).toBe('Replaces your earlier mark (#2, 14:05)')
+    expect(replacesLine(2, undefined, false)).toBe('Replaces your earlier mark (#2)')
+    expect(replacesLine(2, undefined, true)).toBe('Replaces your earlier mark (#2) and withdraws its proposal')
   })
 })

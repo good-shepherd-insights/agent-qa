@@ -12,9 +12,11 @@ import {
   FEEDBACK_COMPOSER_STATES,
   FEEDBACK_ENTRY_SCOPES,
   FEEDBACK_OUTCOME_CLASSES,
+  FEEDBACK_PREVIEW_STATES,
   type FeedbackComposerState,
   type FeedbackEntryScope,
   type FeedbackOutcomeClass,
+  type FeedbackPreviewState,
 } from '../feedback-view'
 
 test('C426-OUTCOME-CLASSES-EXACT', () => {
@@ -48,4 +50,12 @@ test('C426-ENTRY-SCOPES-EXACT', () => {
   expectTypeOf<(typeof FEEDBACK_ENTRY_SCOPES)[number]>().toEqualTypeOf<Expected>()
   expectTypeOf<Exclude<FeedbackEntryScope, (typeof FEEDBACK_ENTRY_SCOPES)[number]>>().toEqualTypeOf<never>()
   expectTypeOf<Exclude<(typeof FEEDBACK_ENTRY_SCOPES)[number], FeedbackEntryScope>>().toEqualTypeOf<never>()
+})
+
+test('C426-PREVIEW-STATES-EXACT', () => {
+  type Expected = 'idle' | 'loading' | 'consequences' | 'quarantined' | 'already-marked' | 'refused' | 'failed'
+  expectTypeOf<FeedbackPreviewState>().toEqualTypeOf<Expected>()
+  expectTypeOf<(typeof FEEDBACK_PREVIEW_STATES)[number]>().toEqualTypeOf<Expected>()
+  expectTypeOf<Exclude<FeedbackPreviewState, (typeof FEEDBACK_PREVIEW_STATES)[number]>>().toEqualTypeOf<never>()
+  expectTypeOf<Exclude<(typeof FEEDBACK_PREVIEW_STATES)[number], FeedbackPreviewState>>().toEqualTypeOf<never>()
 })
