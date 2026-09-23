@@ -3,6 +3,7 @@ import type { Mark, RunDetailProjection } from '@vostride/agent-qa-schema'
 import type { FeedbackComposerProps } from '@/components/run-detail/feedback-composer'
 import type { FeedbackEntryButtonProps } from '@/components/run-detail/feedback-entry'
 import type { StepTreeFeedback } from '@/components/run-detail/step-tree'
+import { parseCorrectedAction } from '@/components/run-detail/mark-correction-fields'
 import { fetchMarkPreview, type MarkPreviewRead } from '@/lib/api'
 import type { MarkDenial, OnMark } from '@/lib/analysis-view'
 import {
@@ -10,6 +11,9 @@ import {
   EMPTY_DRAFT,
   PREVIEW_DEBOUNCE_MS,
   SENDING_STATUS,
+  correctedActionField,
+  correctedActionGate,
+  decidesCorrectedActionGate,
   feedbackAddress,
   feedbackEntryLabel,
   feedbackPreviewState,
@@ -24,7 +28,9 @@ import {
   submitBlockedReason,
   switchTargetLabel,
   unsentDraftLabel,
+  type CorrectedActionGate,
   type FeedbackComposerState,
+  type FeedbackCorrection,
   type FeedbackDraft,
   type FeedbackPlace,
   type FeedbackTarget,
@@ -62,11 +68,32 @@ function targetOfAddress(address: string): FeedbackTarget {
   return stepIndex === 'run' ? { testIndex: Number(testIndex) } : { testIndex: Number(testIndex), stepIndex: Number(stepIndex) }
 }
 
-/** The last read that landed, with the request key and address it was computed for (D-16). */
+/** The last read that landed, with the request key, address and kind it was computed for (D-16). */
 interface LandedPreview {
   key: string
   address: string
+  kind: Mark
   read: MarkPreviewRead
+}
+
+function decisionKey(address: string, kind: Mark): string {
+  return `${address}|${kind}`
+}
+
+/**
+ * D-15: the expectation whenever it has text; the action only while the gate shows and it parses. A
+ * hidden action stays in the draft but is never sent, so runs.mark never sees ambiguous-correction.
+ */
+function draftCorrection(entry: FeedbackDraft, gate: CorrectedActionGate): { correction?: FeedbackCorrection; invalid: boolean } {
+  const parsed = parseCorrectedAction(entry.actionText)
+  const correction: FeedbackCorrection = {
+    ...(entry.expectation === '' ? {} : { correctedExpectation: entry.expectation }),
+    ...(gate.shown && parsed.kind === 'valid' ? { correctedAction: parsed.action } : {}),
+  }
+  return {
+    ...(Object.keys(correction).length === 0 ? {} : { correction }),
+    invalid: gate.shown && parsed.kind === 'invalid',
+  }
 }
 
 /**
@@ -94,6 +121,9 @@ export function useRunFeedback({
   const [target, setTarget] = useState<FeedbackTarget | null>(null)
   const [drafts, setDrafts] = useState<ReadonlyMap<string, FeedbackDraft>>(() => new Map())
   const [landed, setLanded] = useState<LandedPreview>()
+  // The read that decides the corrected-action gate, per address and kind; a re-fetch keeps it.
+  const [decisions, setDecisions] = useState<ReadonlyMap<string, MarkPreviewRead>>(() => new Map())
+  const requestedKey = useRef<string | undefined>(undefined)
   const [retrying, setRetrying] = useState(false)
   const [outcomes, setOutcomes] = useState<ReadonlyMap<string, AddressOutcome>>(() => new Map())
   const [focusRequest, setFocusRequest] = useState(0)
@@ -117,6 +147,8 @@ export function useRunFeedback({
     setTarget(null)
     setDrafts(new Map())
     setLanded(undefined)
+    setDecisions(new Map())
+    requestedKey.current = undefined
     setRetrying(false)
     setOutcomes(new Map())
     return () => {
@@ -129,7 +161,14 @@ export function useRunFeedback({
   const draft = (address === undefined ? undefined : drafts.get(address)) ?? EMPTY_DRAFT
   const { state, status } = (address === undefined ? undefined : outcomes.get(address)) ?? COMPOSING
   const setOutcome = (key: string, next: AddressOutcome) => setOutcomes((previous) => new Map(previous).set(key, next))
-  const currentKey = target === null || draft.kind === undefined ? '' : previewRequestKey({ kind: draft.kind, ...target })
+  const gateFor = (forAddress: string | undefined, kind: Mark | undefined) =>
+    correctedActionGate({
+      kind,
+      landedForTargetAndKind: forAddress === undefined || kind === undefined ? undefined : decisions.get(decisionKey(forAddress, kind)),
+    })
+  const gate = gateFor(address, draft.kind)
+  const { correction, invalid: invalidCorrection } = draftCorrection(draft, gate)
+  const currentKey = target === null || draft.kind === undefined ? '' : previewRequestKey({ kind: draft.kind, ...target, ...correction })
   // Another address's read is never shown here; this address's last read stays on screen while its
   // re-fetch is in flight, so the section never blanks (UI-SPEC S5).
   const shown = landed !== undefined && landed.address === address ? landed : undefined
@@ -146,16 +185,24 @@ export function useRunFeedback({
     currentKey,
     landedKey: shown?.key,
     landedOutcome,
+    invalidCorrection,
     inFlight: markPending || state === 'submitting',
   })
 
   // Every scheduled fetch takes a new generation, so an answer for anything scheduled earlier —
   // in flight or still debounced — is dropped when it lands. A landing only ever shows a read;
   // nothing here submits (D-19).
-  const schedulePreview = (next: FeedbackTarget, kind: Mark, delay: number = PREVIEW_DEBOUNCE_MS) => {
+  const schedulePreview = (
+    next: FeedbackTarget,
+    kind: Mark,
+    nextCorrection: FeedbackCorrection | undefined,
+    delay: number = PREVIEW_DEBOUNCE_MS,
+  ) => {
     clearTimeout(previewTimer.current)
     setRetrying(false)
     const generation = ++previewGeneration.current
+    const key = previewRequestKey({ kind, ...next, ...nextCorrection })
+    requestedKey.current = key
     // D-01: a test onMark would refuse is never previewed either.
     if (!hasUniqueAddress(detailRef.current, next.testIndex)) return
     const fire = () => {
@@ -163,12 +210,15 @@ export function useRunFeedback({
       const requestRunId = runRef.current
       const previewMember = detailRef.current?.members.find((entry) => entry.testIndex === next.testIndex)
       if (requestRunId === undefined || previewMember === undefined) return
-      const key = previewRequestKey({ kind, ...next })
       const requestAddress = feedbackAddress(next)
-      void fetchMarkPreview(requestRunId, previewInputFor(previewMember, next, kind)).then((read) => {
+      void fetchMarkPreview(requestRunId, previewInputFor(previewMember, next, kind, nextCorrection)).then((read) => {
         if (previewGeneration.current !== generation || runRef.current !== requestRunId) return
         setRetrying(false)
-        setLanded({ key, address: requestAddress, read })
+        setLanded({ key, address: requestAddress, kind, read })
+        const decided = decisionKey(requestAddress, kind)
+        setDecisions((previous) =>
+          decidesCorrectedActionGate(read) || !previous.has(decided) ? new Map(previous).set(decided, read) : previous,
+        )
       })
     }
     if (delay === 0) fire()
@@ -178,9 +228,23 @@ export function useRunFeedback({
   // Retry asks again for the form as it is, at once; the failed block stays, busy, until it lands.
   const retryPreview = () => {
     if (target === null || draft.kind === undefined || state === 'submitting') return
-    schedulePreview(target, draft.kind, 0)
+    schedulePreview(target, draft.kind, correction, 0)
     setRetrying(true)
   }
+
+  // The preview input for an address's draft with a given kind, gated as the composer would show it.
+  const requestCorrection = (forAddress: string, kind: Mark) =>
+    draftCorrection(drafts.get(forAddress) ?? EMPTY_DRAFT, gateFor(forAddress, kind)).correction
+
+  // An edited correction, or a landed read that opens or closes the action gate, changes the request;
+  // a note never does (D-16).
+  useEffect(() => {
+    if (!open || target === null || draft.kind === undefined || state === 'submitting') return
+    if (requestedKey.current === currentKey) return
+    schedulePreview(target, draft.kind, correction)
+    // schedulePreview reads the latest render; the request key is the only trigger.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, currentKey])
 
   // Re-activating the entry already open keeps it open and refocuses the heading (D-07).
   const openFeedback = (next: FeedbackTarget, openerElement: HTMLElement) => {
@@ -192,7 +256,7 @@ export function useRunFeedback({
       previewGeneration.current += 1
       const kind = drafts.get(nextAddress)?.kind
       if (kind === undefined) clearTimeout(previewTimer.current)
-      else schedulePreview(next, kind)
+      else schedulePreview(next, kind, requestCorrection(nextAddress, kind))
     }
     setTarget(next)
     setOpen(true)
@@ -209,7 +273,7 @@ export function useRunFeedback({
     setFocusRequest((count) => count + 1)
     const kind = drafts.get(nextAddress)?.kind
     if (kind === undefined) clearTimeout(previewTimer.current)
-    else schedulePreview(next, kind)
+    else schedulePreview(next, kind, requestCorrection(nextAddress, kind))
   }
 
   // Closing keeps every draft; focus goes back to the opener, else the header entry, else the
@@ -233,7 +297,15 @@ export function useRunFeedback({
     if (target === null || address === undefined || state === 'submitting') return
     setDrafts((previous) => new Map(previous).set(address, { ...(previous.get(address) ?? EMPTY_DRAFT), kind }))
     setOutcome(address, COMPOSING)
-    schedulePreview(target, kind)
+    schedulePreview(target, kind, requestCorrection(address, kind))
+  }
+
+  const editCorrection = (expectation: string, actionText: string) => {
+    if (address === undefined || state === 'submitting') return
+    setDrafts((previous) =>
+      new Map(previous).set(address, { ...(previous.get(address) ?? EMPTY_DRAFT), expectation, actionText }),
+    )
+    setOutcome(address, COMPOSING)
   }
 
   const submit = async () => {
@@ -243,7 +315,7 @@ export function useRunFeedback({
     submission.current = request
     setOutcome(address, { state: 'submitting', status: SENDING_STATUS })
     try {
-      const result = await onMark(submitted.testIndex, submitted.stepIndex, draft.kind, draft.note || undefined, undefined)
+      const result = await onMark(submitted.testIndex, submitted.stepIndex, draft.kind, draft.note || undefined, correction)
       if (submission.current !== request) return
       if (result === 'refreshed') {
         setDrafts((previous) => {
@@ -342,6 +414,10 @@ export function useRunFeedback({
         unsentDrafts,
         note: draft.note,
         onNoteChange: editNote,
+        expectation: draft.expectation,
+        actionText: draft.actionText,
+        actionField: correctedActionField(gate),
+        onCorrectionChange: editCorrection,
         previewState,
         previewCurrent,
         previewRead: shown?.read.kind === 'read' ? shown.read.result : undefined,

@@ -85,6 +85,13 @@ export function unsentDraftLabel(place: FeedbackPlace): string {
 }
 
 export const NOTE_LABEL = 'Note (optional)'
+/** UTF-16 code units, the textarea's own maxLength rule. */
+export const NOTE_MAX_LENGTH = 2000
+export const NOTE_COUNTER_FROM = 1800
+
+export function noteCounterText(length: number): string {
+  return `${String(length)} / ${String(NOTE_MAX_LENGTH)}`
+}
 
 export const ADD_CORRECTION_LABEL = 'Add a correction'
 
@@ -140,6 +147,16 @@ export function correctedActionGate({ kind, landedForTargetAndKind: landed }: Co
   if (read.kind === 'quarantined') return { shown: false, state: 'quarantined' }
   if (read.kind !== 'consequences') return { shown: false, state: 'unavailable' }
   return read.markedDecisionCount === 1 ? { shown: true } : { shown: false, state: 'count', count: read.markedDecisionCount }
+}
+
+/** Only consequences and quarantined reads say how many decisions a mark covers; the rest keep what is known. */
+export function decidesCorrectedActionGate(read: CorrectedActionGateInput['landedForTargetAndKind']): boolean {
+  return read?.kind === 'read' && (read.result.kind === 'consequences' || read.result.kind === 'quarantined')
+}
+
+export function correctedActionField(gate: CorrectedActionGate): { shown: true } | { shown: false; reason: string } {
+  if (gate.shown) return gate
+  return { shown: false, reason: correctedActionUnavailableText(gate.state, gate.state === 'count' ? gate.count : undefined) }
 }
 
 export const CHOICE_LABELS = {

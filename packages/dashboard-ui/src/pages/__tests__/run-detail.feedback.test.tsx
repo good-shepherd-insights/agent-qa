@@ -1524,9 +1524,11 @@ describe('426-08 the note and the correction in the composer', () => {
 
   it('HIDDEN-ACTION-NOT-SENT: a typed action reaches neither the preview nor the mark while hidden, and is restored when it shows again', async () => {
     const [a, b] = FEEDBACK_CHOICE_ORDER.failed
+    const twoDecisions = previewOf({ markKind: 'confirmed-bug', draft: { kind: 'confirmed-bug' }, markedDecisionCount: 2 })
+    expect(b).toBe('confirmed-bug')
     fetchMarkPreviewMock.mockImplementation(async (_runId: string, input: { kind: string }) => ({
       kind: 'read',
-      result: input.kind === a ? CONSEQUENCES_STEP_3 : previewOf({ markKind: b, markedDecisionCount: 2 }),
+      result: input.kind === a ? CONSEQUENCES_STEP_3 : twoDecisions,
     }))
     markRunMock.mockResolvedValue({ kind: 'marked', receipt })
     await renderAt(`/runs/${RUN_ID}`)
@@ -1558,6 +1560,39 @@ describe('426-08 the note and the correction in the composer', () => {
     await pickAndAdvance(a)
     expect(actionField(), 'the action field did not come back').not.toBeNull()
     expect(actionField()!.value).toBe(CORRECTED_ACTION_EXAMPLE)
+  })
+
+  it('CORRECTION-IN-BOTH-BODIES: an edited expectation re-reads the preview, and the preview body is still the mark body', async () => {
+    const actual = await vi.importActual<typeof import('@/lib/api')>('@/lib/api')
+    markRunMock.mockImplementation(actual.markRun)
+    fetchMarkPreviewMock.mockImplementation(actual.fetchMarkPreview)
+    const bodies: [string, Record<string, unknown>][] = []
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init: { body: string }) => {
+      bodies.push([url, JSON.parse(init.body) as Record<string, unknown>])
+      return new Response(JSON.stringify(url.endsWith('/mark-preview') ? CONSEQUENCES_STEP_3 : { kind: 'marked', receipt }))
+    }))
+    await renderAt(`/runs/${RUN_ID}`)
+    await click('[data-feedback-entry="test"]')
+    await pickAndAdvance(FEEDBACK_CHOICE_ORDER.failed[0])
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    await typeInto(labelledField('Corrected expectation (optional)'), 'The cart shows 2 items')
+    await typeInto(actionField(), CORRECTED_ACTION_EXAMPLE)
+    await act(async () => { vi.advanceTimersByTime(PREVIEW_DEBOUNCE_MS) })
+    vi.useRealTimers()
+    await flushRender()
+    await typeNote('seen on staging')
+    await click('[data-feedback-submit]')
+    await flushRender()
+
+    const previews = bodies.filter(([url]) => url.endsWith('/mark-preview')).map(([, body]) => body)
+    const marks = bodies.filter(([url]) => url.endsWith('/mark')).map(([, body]) => body)
+    expect(previews).toHaveLength(2)
+    expect(marks).toHaveLength(1)
+    const { runId: _runId, ...previewRest } = previews[1]!
+    const { note, confirmScope: _scope, ...markRest } = marks[0]!
+    expect(note).toBe('seen on staging')
+    expect(previewRest).toEqual(markRest)
+    expect(previewRest).toMatchObject({ correctedExpectation: 'The cart shows 2 items', correctedAction: { type: 'click', ref: 'e1' } })
   })
 
   it('INVALID-JSON-SURVIVES-RETARGET: an unparseable action survives re-targeting and closing, stays invalid, and blocks Send feedback', async () => {
