@@ -16,7 +16,9 @@ import type {
   RunDetailStep,
   RunsMarkPreviewResult,
 } from '@vostride/agent-qa-schema'
-import { MARK_PREVIEW_REFUSALS } from '@vostride/agent-qa-schema'
+import { MARK_PREVIEW_REFUSALS, RunsMarkPreviewResultSchema } from '@vostride/agent-qa-schema'
+import { generateRunId } from '@vostride/agent-qa-ids'
+import type { FeedbackReadFailure } from '@/lib/api'
 
 import { UNNAMED_STEP_LABEL } from '@/lib/display-step'
 import {
@@ -38,8 +40,25 @@ import {
   PROPOSAL_DRAFT_TEXT,
   RECORD_EFFECT_TEXT,
   UNREADABLE_RECORD_TEXT,
+  SUBMIT_REASON_ALREADY_MARKED,
+  SUBMIT_REASON_CHECKING,
+  SUBMIT_REASON_INVALID_CORRECTION,
   SUBMIT_REASON_NO_CHOICE,
   SUBMIT_REASON_NO_UNIQUE_ADDRESS,
+  SUBMIT_REASON_PREVIEW_FAILED,
+  SUBMIT_REASON_REFUSED,
+  SUBMIT_REASON_SENDING,
+  CLI_ESCAPE_PARTS,
+  CLI_ESCAPE_TEXT,
+  PREVIEW_REFUSAL_TEXT,
+  PREVIEW_RETRY_ACCESSIBLE_NAME,
+  RETRY_LABEL,
+  PREVIEW_READ_FAILED_TEXT,
+  alreadyMarkedText,
+  feedbackReadFailureReason,
+  previewRefusalText,
+  quarantinedText,
+  type SubmitBlockInput,
   NO_STEP_VERDICT_TEXT,
   ONE_STEP_SCOPE_TEXT,
   RECORDED_RESULT_TEXT,
@@ -444,5 +463,139 @@ describe('426-06 the preview names what the mark will do', () => {
     expect(replacesLine(2, '14:05', false)).toBe('Replaces your earlier mark (#2, 14:05)')
     expect(replacesLine(2, undefined, false)).toBe('Replaces your earlier mark (#2)')
     expect(replacesLine(2, undefined, true)).toBe('Replaces your earlier mark (#2) and withdraws its proposal')
+  })
+})
+
+// EVERY OTHER PREVIEW OUTCOME IS ITS OWN PLAIN STATE, AND ONE RULE DECIDES SUBMIT (426-07 · D-18, D-19).
+// A quarantined mark still records; an identical repeat, a refusal in runs.mark's own terms and a read
+// that failed never do. The sentences are UI-SPEC S5/S6's strings of record, so they are literal here.
+describe('426-07 the special arms and the failed read', () => {
+  const RUN_ID = generateRunId()
+
+  it('PREVIEW-QUARANTINED: each quarantine class names its cause inside the locked sentence', () => {
+    expect(quarantinedText('timeout')).toBe(
+      'This test failed from a timeout, so your mark is recorded but quarantined — no labels, knowledge or proposals change.',
+    )
+    expect(quarantinedText('flake')).toBe(
+      'This test failed from a flaky run, so your mark is recorded but quarantined — no labels, knowledge or proposals change.',
+    )
+    expect(quarantinedText('environment')).toBe(
+      'This test failed from an environment problem, so your mark is recorded but quarantined — no labels, knowledge or proposals change.',
+    )
+  })
+
+  it('PREVIEW-ALREADY-MARKED: the repeat names when it was said, and drops the time it does not know', () => {
+    expect(alreadyMarkedText('Sep 23, 10:41')).toBe("You already said this (Sep 23, 10:41). A new note alone isn't recorded.")
+    expect(alreadyMarkedText()).toBe("You already said this. A new note alone isn't recorded.")
+  })
+
+  it('PREVIEW-REFUSAL-TEXT: each refusal arm reads its own sentence from its own fields', () => {
+    const arm = (value: Record<string, unknown>) => RunsMarkPreviewResultSchema.parse({ runId: RUN_ID, ...value })
+    expect(Object.keys(PREVIEW_REFUSAL_TEXT).sort()).toEqual([...MARK_PREVIEW_REFUSALS].sort())
+    expect(previewRefusalText(arm({ kind: 'run-not-found' }) as never)).toBe(
+      "This run is no longer in the run store, so feedback can't be recorded.",
+    )
+    expect(previewRefusalText(arm({ kind: 'member-not-found', testId: 't_x' }) as never)).toBe(
+      "This test can't be found in the run, so feedback can't be recorded.",
+    )
+    expect(previewRefusalText(arm({ kind: 'step-not-found', testIndex: 0, stepIndex: 4, stepCount: 3 }) as never)).toBe(
+      'This test recorded 3 steps, so there is no step 5 to mark.',
+    )
+    expect(previewRefusalText(arm({ kind: 'step-not-found', testIndex: 0, stepIndex: 1, stepCount: 1 }) as never)).toBe(
+      'This test recorded 1 step, so there is no step 2 to mark.',
+    )
+    expect(previewRefusalText(arm({ kind: 'step-not-found', testIndex: 0, stepIndex: 0, stepCount: 0 }) as never)).toBe(
+      'This test recorded no steps, so there is nothing to mark.',
+    )
+    expect(previewRefusalText(arm({
+      kind: 'ambiguous-address', candidates: [{ testIndex: 0, testId: 't_a' }, { testIndex: 1, testId: 't_a' }, { testIndex: 2 }],
+    }) as never)).toBe("3 tests in this run share this address, so the mark can't be placed.")
+    expect(previewRefusalText(arm({ kind: 'ambiguous-correction', testIndex: 0, decisionCount: 4 }) as never)).toBe(
+      'A corrected action needs exactly one recorded decision; this mark covers 4. Remove the corrected action to continue.',
+    )
+  })
+
+  it('PREVIEW-FAILED-TEXT: each read failure is one product sentence, then the CLI escape hatch and a named Retry', () => {
+    const reasons: Record<FeedbackReadFailure, string> = {
+      network: "the dashboard server didn't answer",
+      'ledger-corrupt': "this run's feedback ledger is damaged",
+      'ledger-unavailable': "this run's feedback ledger can't be read right now",
+      refused: 'the server refused the request',
+      shape: "the server's answer didn't match the expected shape",
+    }
+    for (const [failure, reason] of Object.entries(reasons) as [FeedbackReadFailure, string][]) {
+      expect(feedbackReadFailureReason(failure)).toBe(reason)
+    }
+    expect(PREVIEW_READ_FAILED_TEXT("the dashboard server didn't answer")).toBe(
+      "Couldn't check what this will do — the dashboard server didn't answer.",
+    )
+    expect(CLI_ESCAPE_TEXT).toBe('You can still record feedback from the CLI (agent-qa runs mark) or over MCP.')
+    expect(feedbackPartsText(CLI_ESCAPE_PARTS)).toBe(CLI_ESCAPE_TEXT)
+    expect(CLI_ESCAPE_PARTS.name).toBe('agent-qa runs mark')
+    expect(RETRY_LABEL).toBe('Retry')
+    expect(PREVIEW_RETRY_ACCESSIBLE_NAME).toBe('Retry checking what this will do')
+    expect(PREVIEW_RETRY_ACCESSIBLE_NAME.startsWith(RETRY_LABEL)).toBe(true)
+  })
+})
+
+describe('426-07 one first-match rule decides Send feedback', () => {
+  const enabled: SubmitBlockInput = {
+    noUniqueAddress: false,
+    kind: 'false-fail',
+    currentKey: 'k-now',
+    landedKey: 'k-now',
+    landedOutcome: 'consequences',
+    invalidCorrection: false,
+    inFlight: false,
+  }
+
+  it('SUBMIT-BLOCKED-REASON-ORDER: each condition alone yields its own reason, and a current consequences or quarantined read yields none', () => {
+    const rows: [string, Partial<SubmitBlockInput>, string][] = [
+      ['no unique address', { noUniqueAddress: true }, SUBMIT_REASON_NO_UNIQUE_ADDRESS],
+      ['no choice', { kind: undefined }, SUBMIT_REASON_NO_CHOICE],
+      ['nothing landed', { landedKey: undefined, landedOutcome: undefined }, SUBMIT_REASON_CHECKING],
+      ['not current', { landedKey: 'k-before' }, SUBMIT_REASON_CHECKING],
+      ['failed', { landedOutcome: 'failed' }, SUBMIT_REASON_PREVIEW_FAILED],
+      ...MARK_PREVIEW_REFUSALS.map((kind): [string, Partial<SubmitBlockInput>, string] => [kind, { landedOutcome: kind }, SUBMIT_REASON_REFUSED]),
+      ['already-marked', { landedOutcome: 'already-marked' }, SUBMIT_REASON_ALREADY_MARKED],
+      ['invalid correction', { invalidCorrection: true }, SUBMIT_REASON_INVALID_CORRECTION],
+      ['in flight', { inFlight: true }, SUBMIT_REASON_SENDING],
+      ['quarantined', { landedOutcome: 'quarantined' }, ''],
+      ['consequences', {}, ''],
+    ]
+    for (const [name, over, reason] of rows) {
+      expect(submitBlockedReason({ ...enabled, ...over }), name).toBe(reason)
+    }
+    expect(SUBMIT_REASON_PREVIEW_FAILED).toBe("Consequences couldn't be checked — retry above.")
+    expect(SUBMIT_REASON_REFUSED).toBe("This mark can't be recorded — see above.")
+    expect(SUBMIT_REASON_ALREADY_MARKED).toBe("You already said this — there's nothing new to record.")
+    expect(SUBMIT_REASON_INVALID_CORRECTION).toBe('Fix the corrected action JSON first.')
+  })
+
+  it('SUBMIT-BLOCKED-REASON-ORDER: with every blocking condition true the first row wins, and lifting each in turn hands over to the next', () => {
+    const cascade: [Partial<SubmitBlockInput>, string][] = [
+      [{}, SUBMIT_REASON_NO_UNIQUE_ADDRESS],
+      [{ noUniqueAddress: false }, SUBMIT_REASON_NO_CHOICE],
+      [{ kind: 'false-fail' }, SUBMIT_REASON_CHECKING],
+      [{ landedKey: 'k-now' }, SUBMIT_REASON_PREVIEW_FAILED],
+      [{ landedOutcome: 'run-not-found' }, SUBMIT_REASON_REFUSED],
+      [{ landedOutcome: 'already-marked' }, SUBMIT_REASON_ALREADY_MARKED],
+      [{ landedOutcome: 'consequences' }, SUBMIT_REASON_INVALID_CORRECTION],
+      [{ invalidCorrection: false }, SUBMIT_REASON_SENDING],
+      [{ inFlight: false }, ''],
+    ]
+    let input: SubmitBlockInput = {
+      noUniqueAddress: true,
+      kind: undefined,
+      currentKey: 'k-now',
+      landedKey: 'k-before',
+      landedOutcome: 'failed',
+      invalidCorrection: true,
+      inFlight: true,
+    }
+    for (const [lift, reason] of cascade) {
+      input = { ...input, ...lift }
+      expect(submitBlockedReason(input), JSON.stringify(lift)).toBe(reason)
+    }
   })
 })

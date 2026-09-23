@@ -8,12 +8,23 @@
 // text node a person reads.
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
-import { afterEach, describe, expect, it } from 'vitest'
-import { RunsMarkPreviewResultSchema, type RunsMarkPreviewResult } from '@vostride/agent-qa-schema'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { MARK_PREVIEW_REFUSALS, RunsMarkPreviewResultSchema, type RunsMarkPreviewResult } from '@vostride/agent-qa-schema'
 import { generateRunId, generateTestId } from '@vostride/agent-qa-ids'
 
 import { FeedbackPreview, type FeedbackPreviewProps } from '../feedback-preview'
+import type { FeedbackReadFailure } from '@/lib/api'
 import {
+  CLI_ESCAPE_PARTS,
+  CLI_ESCAPE_TEXT,
+  PREVIEW_READ_FAILED_TEXT,
+  PREVIEW_REFUSAL_TEXT,
+  PREVIEW_RETRY_ACCESSIBLE_NAME,
+  RETRY_LABEL,
+  alreadyMarkedText,
+  feedbackReadFailureReason,
+  previewRefusalText,
+  quarantinedText,
   CONTENT_ABSENCE_TEXT,
   DRAFT_WORDING_NOT_SHOWN_TEXT,
   PREVIEW_IDLE_TEXT,
@@ -304,5 +315,109 @@ describe('426-06 the What this will do section', () => {
     expect(section().querySelector('.opacity-60')).toBeNull()
     expect(section().textContent).not.toContain(PREVIEW_UPDATING_TEXT)
     expect(section().getAttribute('aria-busy')).toBe('false')
+  })
+})
+
+// THE OTHER ARMS, EACH IN ITS OWN PLAIN WORDS (426-07 · D-18, D-19, UI-SPEC S5). A quarantined mark and
+// an identical repeat are muted blocks; a refusal is runs.mark's own arm in a DenialBlock with nothing
+// to do; a failed read names why, offers a Retry that says what it retries, and the CLI escape hatch.
+const QUARANTINED = RunsMarkPreviewResultSchema.parse({
+  kind: 'quarantined', runId: RUN_ID, prospective: true, markKind: 'false-fail', member: { testIndex: 0, testId: TEST_ID },
+  resolvedStep: { stepIndex: 2, reason: 'failing-step' }, latest: { kind: 'first' }, basis: { ledgerOrdinal: 0 }, class: 'timeout',
+})
+const ALREADY_MARKED = RunsMarkPreviewResultSchema.parse({
+  kind: 'already-marked', runId: RUN_ID,
+  prior: {
+    markId: PRIOR_MARK_ID, kind: 'false-fail', ordinal: 1, testIndex: 0, testId: TEST_ID,
+    disposition: { kind: 'no-draftable-fix', checked: { servedRecords: 0, procedureReads: 0, assertionDrift: false } },
+  },
+  basis: { ledgerOrdinal: 1, priorMarkOrdinal: 1 },
+})
+const REFUSALS: Record<(typeof MARK_PREVIEW_REFUSALS)[number], RunsMarkPreviewResult> = {
+  'run-not-found': RunsMarkPreviewResultSchema.parse({ kind: 'run-not-found', runId: RUN_ID }),
+  'member-not-found': RunsMarkPreviewResultSchema.parse({ kind: 'member-not-found', runId: RUN_ID, testId: TEST_ID }),
+  'step-not-found': RunsMarkPreviewResultSchema.parse({ kind: 'step-not-found', runId: RUN_ID, testIndex: 0, stepIndex: 4, stepCount: 3 }),
+  'ambiguous-address': RunsMarkPreviewResultSchema.parse({
+    kind: 'ambiguous-address', runId: RUN_ID, candidates: [{ testIndex: 0, testId: TEST_ID }, { testIndex: 1, testId: TEST_ID }],
+  }),
+  'ambiguous-correction': RunsMarkPreviewResultSchema.parse({ kind: 'ambiguous-correction', runId: RUN_ID, testIndex: 0, decisionCount: 3 }),
+}
+const READ_FAILURES = ['network', 'ledger-corrupt', 'ledger-unavailable', 'refused', 'shape'] as const satisfies readonly FeedbackReadFailure[]
+
+describe('426-07 the special arms, the refusals and the failed read', () => {
+  it('PREVIEW-QUARANTINED: a quarantined read is one muted block naming its cause, with no consequence lines', () => {
+    render({ state: 'quarantined', current: true, read: QUARANTINED })
+    const block = line('quarantined')
+    expect(block, 'no quarantined block').not.toBeNull()
+    expect(block!.textContent).toBe(quarantinedText('timeout'))
+    for (const cls of ['rounded-md', 'bg-muted/40', 'px-3', 'py-2', 'text-xs']) expect(block!.className).toContain(cls)
+    expect(section().querySelector('dl')).toBeNull()
+    expect(section().querySelector('[data-entry="denial"]')).toBeNull()
+  })
+
+  it('PREVIEW-ALREADY-MARKED: an identical repeat reads when it was said, or no time when history has none', () => {
+    render({ state: 'already-marked', current: true, read: ALREADY_MARKED, alreadyMarkedTime: 'Sep 23, 10:41' })
+    const block = line('already-marked')
+    expect(block, 'no already-marked block').not.toBeNull()
+    expect(block!.textContent).toBe(alreadyMarkedText('Sep 23, 10:41'))
+    expect(block!.className).toContain('bg-muted/40')
+    expect(section().querySelector('dl')).toBeNull()
+
+    render({ state: 'already-marked', current: true, read: ALREADY_MARKED })
+    expect(line('already-marked')!.textContent).toBe(alreadyMarkedText())
+    expect(visibleText()).not.toContain(PRIOR_MARK_ID)
+  })
+
+  it.each([...MARK_PREVIEW_REFUSALS])('PREVIEW-REFUSALS: %s renders its own sentence in one DenialBlock with no remedies', (kind) => {
+    const read = REFUSALS[kind]
+    render({ state: 'refused', current: true, read })
+    const refusal = container.querySelector<HTMLElement>(`[data-preview-refusal="${kind}"]`)
+    expect(refusal, `no ${kind} refusal`).not.toBeNull()
+    const denials = section().querySelectorAll('[data-entry="denial"]')
+    expect(denials).toHaveLength(1)
+    expect(refusal!.contains(denials[0]!)).toBe(true)
+    const text = (PREVIEW_REFUSAL_TEXT[kind] as (arm: RunsMarkPreviewResult) => string)(read)
+    expect(text).toBe(previewRefusalText(read as never))
+    expect(denials[0]!.textContent).toBe(text)
+    expect(section().querySelector('[data-remedy-kind]')).toBeNull()
+    expect(section().querySelector('dl')).toBeNull()
+    expect(section().querySelector('[data-feedback-preview-retry]')).toBeNull()
+    for (const secret of [RUN_ID, TEST_ID]) expect(visibleText()).not.toContain(secret)
+  })
+
+  it('PREVIEW-REFUSALS: a test with no steps and an ambiguous correction read their own counts', () => {
+    const noSteps = RunsMarkPreviewResultSchema.parse({ kind: 'step-not-found', runId: RUN_ID, testIndex: 0, stepIndex: 0, stepCount: 0 })
+    render({ state: 'refused', current: true, read: noSteps })
+    expect(section().querySelector('[data-entry="denial"]'), 'no refusal block').not.toBeNull()
+    expect(section().querySelector('[data-entry="denial"]')!.textContent).toBe('This test recorded no steps, so there is nothing to mark.')
+
+    render({ state: 'refused', current: true, read: REFUSALS['ambiguous-correction'] })
+    expect(section().querySelector('[data-entry="denial"]')!.textContent).toContain('this mark covers 3.')
+  })
+
+  it.each([...READ_FAILURES])('PREVIEW-FAILED-RETRY: a %s failure names its reason, offers a named Retry and the CLI escape hatch', (failure) => {
+    const onRetry = vi.fn()
+    render({ state: 'failed', current: true, failure, onRetry })
+    const denial = section().querySelector('[data-entry="denial"]')
+    expect(denial, 'no failure block').not.toBeNull()
+    expect(denial!.textContent).toBe(PREVIEW_READ_FAILED_TEXT(feedbackReadFailureReason(failure)))
+    expect(section().querySelector('[data-remedy-kind]')).toBeNull()
+
+    const retry = container.querySelector<HTMLButtonElement>('[data-feedback-preview-retry]')
+    expect(retry, 'no Retry button').not.toBeNull()
+    expect(retry!.tagName).toBe('BUTTON')
+    expect(retry!.textContent).toBe(RETRY_LABEL)
+    expect(retry!.getAttribute('aria-label')).toBe(PREVIEW_RETRY_ACCESSIBLE_NAME)
+    expect(retry!.getAttribute('aria-label')!.startsWith(retry!.textContent!)).toBe(true)
+    expect(denial!.compareDocumentPosition(retry!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+
+    const escape = [...section().querySelectorAll('p')].find((p) => p.textContent === CLI_ESCAPE_TEXT)
+    expect(escape, 'no CLI escape line').toBeDefined()
+    expect(retry!.compareDocumentPosition(escape!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(escape!.querySelector('.font-mono')?.textContent).toBe(CLI_ESCAPE_PARTS.name)
+
+    expect(onRetry).not.toHaveBeenCalled()
+    act(() => retry!.click())
+    expect(onRetry).toHaveBeenCalledTimes(1)
   })
 })
