@@ -25,19 +25,13 @@
 // producer strings crossing the display seam, and the hostile-text cells assert that an
 // `<img onerror=…>` in either one creates no element.
 
-import { useId } from "react"
-
 import { Skeleton } from "@/components/ui/skeleton"
 import { EvidenceIncomplete } from "./evidence-incomplete"
+import { KnowledgeEffect } from "./knowledge-effect"
 import { KnowledgeLearned } from "./knowledge-learned"
 import { KnowledgeUsed } from "./knowledge-used"
 import { RetrievalDetails } from "./retrieval-details"
-import {
-  EFFECT_HEADING,
-  type EffectSectionView,
-  type KnowledgeView,
-  type StepRefContext,
-} from "@/lib/knowledge-view"
+import { type KnowledgeView, type StepRefContext } from "@/lib/knowledge-view"
 
 /** The tab body's own padding and rhythm (UI-SPEC: `TabsContent` → `ScrollArea` → this div). */
 const CONTENT_CLASS = "px-3 py-4 space-y-4"
@@ -96,19 +90,9 @@ export function TabKnowledge({ view, stepRefs }: { view: KnowledgeView | undefin
   return (
     <div data-knowledge-state="ready" className="px-3 py-4 space-y-6">
       <KnowledgeUsed view={view.used} stepRefs={stepRefs} />
-      <KnowledgeEffect view={view.effect} />
+      <KnowledgeEffect view={view.effect} stepRefs={stepRefs} testNames={stepRefs?.testNames} />
       <KnowledgeLearned view={view.learned} proposals={view.proposals} />
       <RetrievalDetails ledger={view.ledger} />
     </div>
-  )
-}
-
-function KnowledgeEffect({ view }: { view: EffectSectionView }) {
-  const headingId = useId()
-  return (
-    <section data-knowledge-section="effect" aria-labelledby={headingId} className="space-y-2">
-      <h4 id={headingId} className={HEADING_CLASS}>{EFFECT_HEADING}</h4>
-      <p data-section-absence className="text-sm text-muted-foreground">{view.absence}</p>
-    </section>
   )
 }
