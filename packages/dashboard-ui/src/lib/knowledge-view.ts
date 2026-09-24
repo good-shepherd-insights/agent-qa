@@ -633,6 +633,8 @@ export interface UsedSectionView {
   readonly records: readonly UsedRecordView[]
   readonly countLine?: string
   readonly absence?: string
+  /** How retrieval ran for this run, stated under the heading; absent at memidex or with no rung (D-20). */
+  readonly retrieval?: RetrievalStatementView
 }
 
 // 427 · D-11..D-14 — the Effect section: measured effects only. The two folds are the shipped
@@ -2382,9 +2384,14 @@ export function projectKnowledgeView(read: KnowledgeRead): KnowledgeView {
       })
 
   const records = usedRecordViews(projection)
-  const used: UsedSectionView = records.length > 0
-    ? { records, countLine: usedCountLine(records.length) }
-    : { records, absence: steps.length === 0 ? NO_BRIEF_SERVED_TEXT : NO_BRIEF_LINES_TEXT }
+  const rung = projection.retrievalRung === undefined ? undefined : rungView(projection.retrievalRung)
+  const retrieval = retrievalStatementView(rung)
+  const used: UsedSectionView = {
+    ...(records.length > 0
+      ? { records, countLine: usedCountLine(records.length) }
+      : { records, absence: steps.length === 0 ? NO_BRIEF_SERVED_TEXT : NO_BRIEF_LINES_TEXT }),
+    ...(retrieval === undefined ? {} : { retrieval }),
+  }
   const effect = effectSectionView(projection)
 
   const proposals = proposalsView(projection.pendingProposalCount)
@@ -2394,7 +2401,7 @@ export function projectKnowledgeView(read: KnowledgeRead): KnowledgeView {
     used,
     effect,
     ledger: { summary, steps, changes: changeLedgerViews(projection) },
-    ...(projection.retrievalRung === undefined ? {} : { rung: rungView(projection.retrievalRung) }),
+    ...(rung === undefined ? {} : { rung }),
     learned: learnedView(projection),
     ...(proposals === undefined ? {} : { proposals }),
   }
@@ -2485,23 +2492,130 @@ export const RUNG_CAUSE_LABELS: Record<RetrievalRungReason, string> = {
  */
 export const DOCTOR_HINT_TEXT = 'Run `agent-qa doctor`.'
 
+// 427 · D-20..D-23 — the recorded (rung, reason) as a presentation class, a tone and one sentence.
+// The class is derived from the recorded reason only; it is never stored and nothing probes for it.
+
+export type RetrievalClass =
+  | 'fresh-index'
+  | 'cause-not-recorded'
+  | 'index-problem'
+  | 'semantic-search-unavailable'
+  | 'by-configuration'
+
+// prettier-ignore
+export const RETRIEVAL_CLASSES = [
+  'fresh-index',
+  'cause-not-recorded',
+  'index-problem',
+  'semantic-search-unavailable',
+  'by-configuration',
+] as const satisfies readonly RetrievalClass[]
+
+export type RetrievalTone = 'info' | 'warning'
+
+// One `'key': 'value',` entry per line: the shipped-binary cells read both tables by that shape.
+// prettier-ignore
+export const RETRIEVAL_CLASS_BY_REASON = {
+  'index-not-built': 'fresh-index',
+  'index-unavailable': 'cause-not-recorded',
+  'index-locked': 'index-problem',
+  'index-corrupt': 'index-problem',
+  'native-runtime-unavailable': 'semantic-search-unavailable',
+  'model-not-downloaded': 'semantic-search-unavailable',
+  'embedder-load-failed': 'semantic-search-unavailable',
+  'low-ram-deferral': 'semantic-search-unavailable',
+  'profile-unresolved': 'semantic-search-unavailable',
+  'profile-static-configured': 'by-configuration',
+  'floor-disabled': 'by-configuration',
+} as const satisfies Record<RetrievalRungReason, RetrievalClass>
+
+// prettier-ignore
+export const RETRIEVAL_CLASS_TONES = {
+  'fresh-index': 'info',
+  'cause-not-recorded': 'info',
+  'index-problem': 'warning',
+  'semantic-search-unavailable': 'warning',
+  'by-configuration': 'info',
+} as const satisfies Record<RetrievalClass, RetrievalTone>
+
+/** Where a warning sends the reader. No backticks: `agent-qa doctor` renders in a code element. */
+export const DOCTOR_POINTER_TEXT =
+  "To check the store's health now, run agent-qa doctor. It reports current health and doesn't change what this run recorded."
+
+/** `undefined` at memidex; a lower rung with no recorded reason claims neither a fault nor health. */
+export function retrievalClassFor(rung: RungView): RetrievalClass | undefined {
+  return rung.rung === 'memidex' ? undefined : classOfReason(rung.reason)
+}
+
+function classOfReason(reason: RetrievalRungReason | undefined): RetrievalClass {
+  return reason === undefined ? 'cause-not-recorded' : RETRIEVAL_CLASS_BY_REASON[reason]
+}
+
+export function retrievalStatement(rung: Exclude<RetrievalRung, 'memidex'>, reason?: RetrievalRungReason): string {
+  const retrievalClass = classOfReason(reason)
+  switch (retrievalClass) {
+    case 'fresh-index':
+      return "The knowledge index hadn't been built yet, so this run read knowledge straight from the bundles. Nothing was missed. The index is built after the run finishes, and later runs use it."
+    case 'cause-not-recorded':
+      return `This run used ${RUNG_LABELS[rung]} instead of full knowledge retrieval. The reason wasn't recorded for this run.`
+    case 'index-problem':
+      return `This run couldn't use the knowledge index, so it read knowledge straight from the bundles — ${causeLabel(reason)}.`
+    case 'semantic-search-unavailable':
+      return rung === 'static-floor'
+        ? `This run's knowledge retrieval used the lightweight static-floor embeddings instead of the full model — ${causeLabel(reason)}.`
+        : `This run's knowledge retrieval ran without semantic search, on keyword and anchor matching only — ${causeLabel(reason)}.`
+    case 'by-configuration':
+      return reason === 'profile-static-configured'
+        ? "This run's knowledge retrieval used the static-floor embeddings, as this project is configured to."
+        : "This run's knowledge retrieval used keyword and anchor matching only, as this project is configured to."
+    default: {
+      const unreachable: never = retrievalClass
+      return unreachable
+    }
+  }
+}
+
+function causeLabel(reason: RetrievalRungReason | undefined): string {
+  return reason === undefined ? '' : RUNG_CAUSE_LABELS[reason]
+}
+
+/** The tab's retrieval statement; `pointer` is present on the two warning classes only (D-23). */
+export interface RetrievalStatementView {
+  readonly retrievalClass: RetrievalClass
+  readonly tone: RetrievalTone
+  readonly rung: Exclude<RetrievalRung, 'memidex'>
+  readonly reason?: RetrievalRungReason
+  readonly sentence: string
+  readonly pointer?: string
+}
+
+export function retrievalStatementView(rung: RungView | undefined): RetrievalStatementView | undefined {
+  if (rung === undefined || rung.rung === 'memidex') return undefined
+  const retrievalClass = classOfReason(rung.reason)
+  const tone = RETRIEVAL_CLASS_TONES[retrievalClass]
+  return {
+    retrievalClass,
+    tone,
+    rung: rung.rung,
+    ...(rung.reason === undefined ? {} : { reason: rung.reason }),
+    sentence: retrievalStatement(rung.rung, rung.reason),
+    ...(tone === 'warning' ? { pointer: DOCTOR_POINTER_TEXT } : {}),
+  }
+}
+
 /**
- * The whole banner sentence, or `undefined` when there is no banner to render.
+ * The header strip's sentence, or `undefined` when there is no strip to render (427 D-20).
  *
- * TWO ABSENCES, ONE ANSWER. `memidex` is not a degradation and `undefined` is "nobody has said
- * yet" — a live header before the first evidence-carrying frame, or a run whose evidence predates
- * 407. Both render no element, because an amber strip saying "retrieval is fine" and one saying
- * "unknown" are each a claim this surface has no business making.
- *
- * THE CAUSE CLAUSE IS DROPPED, NOT BLANKED, when a degraded rung carries no reason. The fold that
- * mints these values never does that — `reason` is absent IFF the rung is `memidex` — but the
- * schema types it optional on every arm so the shape is reachable from a historical handoff, and
- * an em dash with nothing after it is worse than a shorter sentence.
+ * ONLY THE WARNING CLASSES PAINT A STRIP. A fresh store's bootstrap, a cause that was never
+ * recorded and a level the project configured are information the tab states; putting them in an
+ * amber strip across the header would present each as a fault. `memidex` is not a degradation and
+ * `undefined` is "nobody has said yet" — both render no element. The sentence is the tab's own
+ * statement followed by the doctor pointer, so the strip and the tab never word one record twice.
  */
 export function rungBannerText(rung: RungView | undefined): string | undefined {
-  if (rung === undefined || rung.rung === 'memidex') return undefined
-  const cause = rung.reason === undefined ? '' : ` — ${RUNG_CAUSE_LABELS[rung.reason]}`
-  return `Retrieval degraded: ${RUNG_LABELS[rung.rung]}${cause}. ${DOCTOR_HINT_TEXT}`
+  const statement = retrievalStatementView(rung)
+  if (statement?.pointer === undefined) return undefined
+  return `${statement.sentence} ${statement.pointer}`
 }
 
 /**
