@@ -20,10 +20,12 @@ const CONTROL_CLASS =
 export function KnowledgeStepRef({
   address,
   stepRefs,
+  testName,
   children,
 }: {
   address: StepAddress
   stepRefs?: StepRefContext
+  testName?: string
   children: ReactNode
 }) {
   if (stepRefs === undefined || !stepRefs.resolvable(address)) {
@@ -35,7 +37,7 @@ export function KnowledgeStepRef({
       data-step-ref
       data-step-ref-test={String(address.testIndex)}
       data-step-ref-step={String(address.stepIndex)}
-      aria-label={stepRefAccessibleName(address)}
+      aria-label={stepRefAccessibleName(address, testName)}
       className={CONTROL_CLASS}
       onClick={() => { stepRefs.onSelect(address) }}
     >
@@ -47,10 +49,13 @@ export function KnowledgeStepRef({
 export function KnowledgeStepRefs({
   segments,
   stepRefs,
+  testNames = stepRefs?.testNames,
 }: {
   segments: readonly StepRefSegment[]
   stepRefs?: StepRefContext
+  testNames?: ReadonlyMap<number, string>
 }) {
+  // A suite's test name is a text segment rendered as masked text, never a control.
   return (
     <>
       {segments.map((segment, index) => (
@@ -58,7 +63,11 @@ export function KnowledgeStepRefs({
           {segment.kind === "text" ? (
             <MaskedText text={segment.text} />
           ) : (
-            <KnowledgeStepRef address={segment.address} stepRefs={stepRefs}>
+            <KnowledgeStepRef
+              address={segment.address}
+              stepRefs={stepRefs}
+              testName={testNames?.get(segment.address.testIndex)}
+            >
               {segment.label}
             </KnowledgeStepRef>
           )}

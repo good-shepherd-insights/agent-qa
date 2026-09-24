@@ -243,8 +243,9 @@ export interface StepRefContext {
   readonly testNames: ReadonlyMap<number, string>
 }
 
-export function stepRefAccessibleName(address: StepAddress): string {
-  return `Go to step ${String(address.stepIndex + 1)} · ${address.stepText}`
+export function stepRefAccessibleName(address: StepAddress, testName?: string): string {
+  const tail = `${String(address.stepIndex + 1)} · ${address.stepText}`
+  return testName === undefined ? `Go to step ${tail}` : `Go to ${testName} · step ${tail}`
 }
 
 export type StepRefSegment =
@@ -261,7 +262,30 @@ function stepSegment(address: StepAddress): StepRefSegment {
 
 // Every number is its own segment so a later plan can make it a control without re-parsing text.
 // Only a contiguous run of three or more compresses to a range; two neighbours read "1 and 2".
-export function formatStepRefs(addresses: readonly StepAddress[]): readonly StepRefSegment[] {
+// With test names (a suite) each member reads "{test} · {steps}", members joined by "; "; a
+// single-test run passes no names and never prints one.
+export function formatStepRefs(
+  addresses: readonly StepAddress[],
+  testNames?: ReadonlyMap<number, string>,
+): readonly StepRefSegment[] {
+  if (testNames === undefined || testNames.size === 0) return formatStepList(addresses)
+  const byTest = new Map<number, StepAddress[]>()
+  for (const address of [...addresses].sort(compareAddresses)) {
+    const group = byTest.get(address.testIndex)
+    if (group === undefined) byTest.set(address.testIndex, [address])
+    else group.push(address)
+  }
+  const segments: StepRefSegment[] = []
+  for (const [testIndex, group] of byTest) {
+    if (segments.length > 0) segments.push({ kind: 'text', text: '; ' })
+    segments.push({ kind: 'text', text: testNames.get(testIndex) ?? `Test ${String(testIndex + 1)}` })
+    segments.push({ kind: 'text', text: ' · ' })
+    segments.push(...formatStepList(group))
+  }
+  return segments
+}
+
+function formatStepList(addresses: readonly StepAddress[]): readonly StepRefSegment[] {
   const sorted = [...addresses]
     .sort(compareAddresses)
     .filter((address, index, all) => index === 0 || compareAddresses(all[index - 1]!, address) !== 0)

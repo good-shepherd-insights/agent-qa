@@ -55,7 +55,10 @@ function UsedRecordRow({ record, stepRefs }: { record: UsedRecordView; stepRefs?
           <Fragment key={use.verb}>
             {index > 0 ? " · " : null}
             {index === 0 ? USE_VERB_PHRASES[use.verb].lead : USE_VERB_PHRASES[use.verb].follow}{" "}
-            <KnowledgeStepRefs segments={formatStepRefs(use.addresses)} stepRefs={stepRefs} />
+            <KnowledgeStepRefs
+              segments={formatStepRefs(use.addresses, stepRefs?.testNames)}
+              stepRefs={stepRefs}
+            />
           </Fragment>
         ))}
       </p>

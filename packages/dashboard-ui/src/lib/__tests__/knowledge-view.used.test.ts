@@ -7,6 +7,7 @@ import {
   KNOWLEDGE_SECTIONS,
   USE_VERBS,
   formatStepRefs,
+  stepRefAccessibleName,
   usedCountLine,
   usedRecordViews,
   type StepAddress,
@@ -105,5 +106,29 @@ describe('step references read as a person counts them (UI-SPEC S3)', () => {
     expect(text(formatStepRefs([at(0), at(2), at(4)]))).toBe('steps 1, 3 and 5')
     expect(text(formatStepRefs([at(4), at(0), at(2), at(0), at(2)]))).toBe('steps 1, 3 and 5')
     expect(text(formatStepRefs([at(2), at(1), at(1), at(0)]))).toBe('steps 1–3')
+  })
+})
+
+describe('suite step references name their test; a single-test run never does (UI-SPEC S3 Formatting)', () => {
+  it('STEP-REF-SUITE-NAMES: groups by member in testIndex order as {test} · {steps}, joined by "; "', () => {
+    const names = new Map([[0, 'checkout'], [1, 'login']])
+    const addresses = [at(1, 1), at(2, 0), at(0, 0), at(1, 0)]
+
+    const suite = formatStepRefs(addresses, names)
+    expect(text(suite)).toBe('checkout · steps 1–3; login · step 2')
+    expect(suite.filter(segment => segment.kind === 'step').map(segment => segment.label)).toEqual(['1', '3', '2'])
+    expect(suite.filter(segment => segment.kind === 'text').map(segment => segment.text))
+      .toEqual(['checkout', ' · ', 'steps ', '–', '; ', 'login', ' · ', 'step '])
+
+    expect(text(formatStepRefs(addresses, new Map()))).toBe('steps 1–3 and 2')
+    expect(text(formatStepRefs(addresses))).toBe('steps 1–3 and 2')
+  })
+})
+
+describe('a step reference has a full accessible name (UI-SPEC S3)', () => {
+  it('STEP-REF-ACCESSIBLE-NAME: step number one-based, step text in its served form, test name in a suite', () => {
+    const address: StepAddress = { testIndex: 0, stepIndex: 1, stepText: 'Open cart' }
+    expect(stepRefAccessibleName(address)).toBe('Go to step 2 · Open cart')
+    expect(stepRefAccessibleName(address, 'checkout')).toBe('Go to checkout · step 2 · Open cart')
   })
 })

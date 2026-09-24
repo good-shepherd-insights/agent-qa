@@ -883,8 +883,10 @@ describe("427 D-03: a step reference in Knowledge used takes the reader to that 
     expect(knowledgeState(view)).toBe("ready")
     expect(view.querySelector('[data-step-id="1:0"]')).toBeNull()
 
+    expect(view.querySelector("[data-row-uses]")?.textContent).toBe("Given in checkout · step 2; login · step 1")
     const control = view.querySelector<HTMLElement>('button[data-step-ref][data-step-ref-test="1"][data-step-ref-step="0"]')
     expect(control).not.toBeNull()
+    expect(control?.getAttribute("aria-label")).toBe("Go to login · step 1 · step text 1:0")
     await activate(control!)
 
     expect(query(view).has("member")).toBe(false)
