@@ -226,19 +226,37 @@ describe('a procedure hint is a use, never an effect (D-11)', () => {
   })
 })
 
+// Runner-shaped: `total` counts this test step's attempted actions (1 per flow-covered step);
+// the procedure's own size is the sibling `flow.length`.
+function replay(procedureId: string, guard: Record<string, unknown>, flow?: { cursor: number; length: number }) {
+  return { kind: 'procedure-replay', procedureId, guard, ...(flow === undefined ? {} : { flow }) }
+}
+
+const PASSED = { checksPassed: 1, total: 1 }
+
 describe('a procedure replay is measured (D-11, D-12)', () => {
-  it('REPLAY-COMPLETE: a guard that passed 5 of 5 is a positive replay-complete entry', () => {
-    const view = effectSectionView(projection([
-      step(3, {
-        channel1: [line('rec_p', 'check out as a guest')],
-        planSource: { kind: 'procedure-replay', procedureId: 'rec_p', guard: { checksPassed: 5, total: 5 } },
-      }),
-    ]))
+  it('REPLAY-COMPLETE: a six-step procedure replayed step by step is one positive entry sized by its flow', () => {
+    const view = effectSectionView(projection([0, 1, 2, 3, 4, 5].map(index => step(index, {
+      ...(index === 0 ? { channel1: [line('rec_p', 'check out as a guest')] } : {}),
+      planSource: replay('rec_p', PASSED, { cursor: index, length: 6 }),
+    }))))
 
     expect(view.entries).toHaveLength(1)
     expect(view.entries[0]).toMatchObject({ outcome: 'replay-complete', tone: 'positive', record: 'check out as a guest' })
-    expect(view.entries[0]?.parts).toEqual(replayCompleteParts(5))
-    expect(steps(view, 0)).toEqual(['0:3'])
+    expect(steps(view, 0)).toEqual(['0:0', '0:1', '0:2', '0:3', '0:4', '0:5'])
+    expect(view.entries[0]?.parts).toEqual(replayCompleteParts(6, 6))
+    expect(effectSentenceText(view.entries[0]!.parts, 'steps 1–6')).toBe('Replayed all 6 of its steps in steps 1–6')
+  })
+
+  it('REPLAY-GROUPED-STEPS: a three-step procedure replayed across steps 0, 1 and 2 is one entry with three addresses', () => {
+    const view = effectSectionView(projection([0, 1, 2].map(index => step(index, {
+      planSource: replay('rec_t', PASSED, { cursor: index, length: 3 }),
+    }))))
+
+    expect(view.entries).toHaveLength(1)
+    expect(view.entries[0]?.outcome).toBe('replay-complete')
+    expect(steps(view, 0)).toEqual(['0:0', '0:1', '0:2'])
+    expect(view.entries[0]?.parts).toEqual(replayCompleteParts(3, 3))
   })
 
   it('REPLAY-STOPPED-IS-PROBLEM: a miss at procedure step index 2 stops the replay at its step 3 and names the cause', () => {
@@ -365,7 +383,11 @@ describe('each outcome reads as a plain sentence with its steps (D-12)', () => {
     expect(effectSentenceText(EFFECT_SENTENCES.helpful, at)).toBe('Helped in step 2')
     expect(effectSentenceText(EFFECT_SENTENCES.pending, at)).toBe('On trial in step 2 — waiting for post-run processing')
     expect(effectSentenceText(EFFECT_SENTENCES.unknown, at)).toBe("Couldn't be checked in step 2 — part of the knowledge store couldn't be read")
-    expect(effectSentenceText(replayCompleteParts(5), at)).toBe('Replayed all 5 of its steps in step 2')
+    expect(effectSentenceText(replayCompleteParts(6, 6), at)).toBe('Replayed all 6 of its steps in step 2')
+    expect(effectSentenceText(replayCompleteParts(2, 6), at)).toBe('Replayed 2 of its 6 steps in step 2')
+    expect(effectSentenceText(replayCompleteParts(1, 1), at)).toBe('Replayed its only step in step 2')
+    expect(effectSentenceText(replayCompleteParts(undefined, undefined), at))
+      .toBe('Replayed in step 2 — every replayed action was accepted')
     expect(effectSentenceText(replayStoppedParts(3, 6, 'descriptor-missing'), at))
       .toBe("Replay stopped at its step 3 of 6 in step 2: the element wasn't found")
     expect(effectSentenceText(replayStoppedParts(1, 2, 'verifier-rejection'), at))

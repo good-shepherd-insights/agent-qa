@@ -88,6 +88,13 @@ function projection(
   return parsed
 }
 
+// Runner-shaped: `total` counts this test step's attempted actions; the procedure's size is `flow.length`.
+function replay(procedureId: string, guard: Record<string, unknown>, flow?: { cursor: number; length: number }) {
+  return { kind: "procedure-replay", procedureId, guard, ...(flow === undefined ? {} : { flow }) }
+}
+
+const PASSED = { checksPassed: 1, total: 1 }
+
 // Seven outcomes from one settled, partially read run; the eighth (pending) from an unsettled one;
 // the uncounted line from a settled, clean-read run.
 function everyOutcome(): EffectSectionView {
@@ -95,8 +102,9 @@ function everyOutcome(): EffectSectionView {
     [
       step(0, [line("rec_c", "the coupon field accepts lowercase"), line("rec_h", "the sale banner is accurate")]),
       step(1, [line("rec_k", "the cart badge counts items"), line("rec_p", "search is instant")]),
-      step(2, [line("rec_u", "the filter panel remembers choices")], { kind: "procedure-replay", procedureId: "rec_r", guard: { checksPassed: 4, total: 4 } }),
-      step(3, [], {
+      step(2, [line("rec_u", "the filter panel remembers choices")], replay("rec_r", PASSED, { cursor: 0, length: 2 })),
+      step(3, [], replay("rec_r", PASSED, { cursor: 1, length: 2 })),
+      step(4, [], {
         kind: "procedure-replay",
         procedureId: "rec_s",
         guard: { checksPassed: 1, total: 3, miss: { procedureStepIndex: 1, reason: "descriptor-missing" } },
@@ -178,6 +186,21 @@ describe("every outcome has its own glyph and tone (D-12)", () => {
   })
 })
 
+describe("a procedure replayed step by step is one entry (D-11, D-12, UI-SPEC S4 grouping)", () => {
+  it("EFFECT-REPLAY-GROUPED: six replayed steps of one six-step procedure paint one sentence sized by its flow", () => {
+    const view = mount(<KnowledgeEffect view={effectSectionView(projection([0, 1, 2, 3, 4, 5].map(index => step(
+      index,
+      index === 0 ? [line("rec_p", "check out as a guest", false)] : [],
+      replay("rec_p", PASSED, { cursor: index, length: 6 }),
+    ))))} />)
+
+    const rendered = entries(view)
+    expect(rendered).toHaveLength(1)
+    expect(rendered[0]?.getAttribute("data-effect-outcome")).toBe("replay-complete")
+    expect(rendered[0]?.querySelector("[data-effect-sentence]")?.textContent).toBe("Replayed all 6 of its steps in steps 1–6")
+  })
+})
+
 describe("the store's words never reach the Effect section (D-12)", () => {
   it("EFFECT-NO-STORE-WORDS: every outcome, a replay and the uncounted line say none of them", async () => {
     const view = mount(<KnowledgeEffect view={everyOutcome()} />)
@@ -185,7 +208,7 @@ describe("the store's words never reach the Effect section (D-12)", () => {
     const trigger = view.querySelector<HTMLElement>("[data-effect-uncounted] span[tabindex='0']")
     await act(async () => { trigger?.focus() })
     const text = `${section(view).textContent ?? ""} ${document.querySelector('[role="tooltip"]')?.textContent ?? ""}`.toLowerCase()
-    expect(text).toContain("replayed all 4 of its steps")
+    expect(text).toContain("replayed all 2 of its steps")
     for (const word of ["canary", "confirmed", "contradicted", "helpful", "harmful", "attribution", "not attributed"]) {
       expect(text).not.toContain(word)
     }
