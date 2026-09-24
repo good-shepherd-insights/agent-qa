@@ -109,15 +109,16 @@ function buildProjection(runId: string, steps: RealStep[], world: World): Extrac
       c2: [{ id: ID.opened, detailLevel: 'full', bodyDigest: DIGESTS[0], recordContent: content(SUMMARIES[ID.opened]!, 'fact',
         'Confirmed twice on the local probe and contradicted once when the notice rendered late; trust recovered after the next confirmation.') }],
       c3: [], cut: true,
-      plan: { kind: 'procedure-replay', procedureId: ID.replayed, guard: { checksPassed: 4, total: 4 }, flow: { cursor: 0, length: 4 } } },
+      plan: { kind: 'procedure-replay', procedureId: ID.replayed, guard: { checksPassed: 1, total: 1 }, flow: { cursor: 0, length: 2 } } },
     1: { c1: [line(ID.harmful, true), line(ID.confirmed, true)], c2: [],
-      c3: [{ id: ID.caution, summary: SUMMARIES[ID.caution]!, recordContent: content(SUMMARIES[ID.caution]!, 'caution') }] },
+      c3: [{ id: ID.caution, summary: SUMMARIES[ID.caution]!, recordContent: content(SUMMARIES[ID.caution]!, 'caution') }],
+      plan: { kind: 'procedure-replay', procedureId: ID.replayed, guard: { checksPassed: 1, total: 1 }, flow: { cursor: 1, length: 2 } } },
     2: { c1: [line(ID.helpful, true), line(ID.contradicted, true)], c2: [], c3: [], plan: { kind: 'procedure-hint', procedureId: ID.hinted } },
     3: { c1: [line(ID.quietA, true), line(ID.quietB, true)], c2: [], c3: [] },
     4: { c1: [line(ID.selector, false)], c2: [{ id: ID.openedGone, detailLevel: 'summary', bodyDigest: DIGESTS[1], contentAbsence: { reason: 'not-found' } }], c3: [] },
     5: { c1: [], c2: [], c3: [],
       plan: { kind: 'procedure-replay', procedureId: ID.stopped,
-        guard: { checksPassed: 1, total: 3, miss: { procedureStepIndex: 1, reason: 'descriptor-missing' } } } },
+        guard: { checksPassed: 0, total: 1, miss: { procedureStepIndex: 0, reason: 'descriptor-missing' } }, flow: { cursor: 0, length: 3 } } },
   }
   const projectionSteps = [...member0, ...others].map(step => {
     const slot = step.testIndex === 0 ? served[step.stepIndex] : others[0] === step ? { c1: [line(ID.confirmed, true)], c2: [], c3: [] } : undefined
@@ -670,6 +671,27 @@ describe('the Knowledge tab on the shipped bundle at three geometries (427-13)',
     expect(new Set(glyphs).size, JSON.stringify(glyphs)).toBe(8)
     expect(new Set([...byOutcome.values()].map(entry => entry.sentence)).size).toBe(8)
     for (const entry of [...partial!.entries, ...pending!.entries]) expect(byOutcome.get(entry.outcome)!.glyph).toBe(entry.glyph)
+  })
+
+  it('EFFECT-REPLAY-SENTENCES', () => {
+    expect(effects.map(read => read.world), JSON.stringify(failures)).toEqual(['settled', 'scan-incomplete', 'pending'])
+    for (const read of effects) {
+      const where = `${read.world}: ${JSON.stringify(read.entries)}`
+      expect(read.entries.filter(entry => entry.outcome === 'replay-complete'), where).toHaveLength(1)
+      expect(read.entries.filter(entry => entry.outcome === 'replay-stopped'), where).toHaveLength(1)
+    }
+    const settled = effects[0]!
+    const complete = settled.entries.find(entry => entry.outcome === 'replay-complete')!.sentence
+    expect(complete.startsWith('Replayed all 2 of its steps in '), complete).toBe(true)
+    expect(complete.endsWith('steps 1 and 2'), complete).toBe(true)
+    const stopped = settled.entries.find(entry => entry.outcome === 'replay-stopped')!.sentence
+    expect(stopped.startsWith('Replay stopped at its step 1 of 3 in '), stopped).toBe(true)
+    expect(stopped.endsWith("step 6: the element wasn't found"), stopped).toBe(true)
+    for (const { sentence } of effects.flatMap(read => read.entries)) {
+      expect(sentence.includes('all 1 of'), sentence).toBe(false)
+      for (const [, k, n] of sentence.matchAll(/step (\d+) of (\d+)/g)) expect(Number(k), sentence).toBeLessThanOrEqual(Number(n))
+      for (const [, k, n] of sentence.matchAll(/Replayed (\d+) of its (\d+) steps/g)) expect(Number(k), sentence).toBeLessThanOrEqual(Number(n))
+    }
   })
 
   it('KNOWLEDGE-ACCESSIBLE-TREE', () => {
