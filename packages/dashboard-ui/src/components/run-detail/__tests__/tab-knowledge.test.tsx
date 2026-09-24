@@ -42,6 +42,7 @@ import {
   NO_STORE_BODY,
   NO_STORE_HEADING,
   READ_FAILED_HEADING,
+  RECORD_UNREADABLE_LEAD,
   STEP_NO_BRIEF_TEXT,
   USED_HEADING,
   CURATION_FAILED_PARTIAL_TEXT,
@@ -430,8 +431,10 @@ describe("423 D-15: the page path keeps failed-chain rows and states the snapsho
     })} />)
 
     expect(view.querySelector("[data-learned-state]")?.getAttribute("data-learned-state")).toBe("failed")
-    expect(learnedRows(view).map(row => row.getAttribute("data-record-id")))
-      .toEqual(["fact-before-failure", "fact-purged-since"])
+    expect(learnedRows(view).map(row => row.getAttribute("data-record-change"))).toEqual(["added", "confirmed"])
+    expect(learnedRows(view).map(row => row.querySelector("[data-row-primary]")?.textContent))
+      .toEqual(["summary fact-before-failure", RECORD_UNREADABLE_LEAD])
+    expect(learnedRows(view).some(row => row.hasAttribute("data-record-id"))).toBe(false)
     expect(view.querySelector("[data-learned-chain-note]")?.textContent).toBe(CURATION_FAILED_PARTIAL_TEXT)
     expect(view.querySelector("[data-learned-state]")?.getAttribute("data-learned-read")).toBe("incomplete")
     expect(view.textContent).not.toContain(CURATION_FAILED_TEXT)
@@ -458,8 +461,11 @@ describe("423 D-15: the page path keeps failed-chain rows and states the snapsho
 
     expect(section?.getAttribute("data-learned-snapshot")).toBe("recorded")
     expect(section?.getAttribute("data-learned-since-then")).toBe("1")
+    // 427 D-15/D-17: the curation rows are the snapshot's five records, and the later promotion
+    // reads Confirmed in its own open "Since this run" subsection.
     expect(learnedRows(view).map(row => row.getAttribute("data-learned-section")))
-      .toEqual([...curation.map(() => "curation"), "since-then"])
-    expect(learnedRows(view).at(-1)?.getAttribute("data-record-change")).toBe("promoted")
+      .toEqual([...recorded.rows.map(() => "curation"), "since-then"])
+    expect(learnedRows(view).at(-1)?.getAttribute("data-record-change")).toBe("confirmed")
+    expect(learnedRows(view).at(-1)?.closest("[data-since-this-run]")?.getAttribute("data-since-this-run")).toBe("1")
   })
 })

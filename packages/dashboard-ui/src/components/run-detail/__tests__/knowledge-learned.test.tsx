@@ -7,10 +7,11 @@
 // while the real mount path is broken, and the cell would never know.
 //
 // THE DOM CONTRACT IS THE SUBJECT, not the styling. `data-learned-state`, `data-learned-count-line`,
-// `data-record-change`, `data-record-id` and `data-pending-proposals` are what 407-11's Playwright
-// cells address on the built bundle, so every one of them is pinned here in the cheap medium first.
-// The two class assertions that DO appear (`text-primary` on a routed reference, `font-mono` on the
-// id) pin the UI-SPEC's accent reservation and its no-wrap rule — contracts, not looks.
+// `data-record-change` (the bucket word since 427 D-15) and `data-pending-proposals` are what the
+// Playwright cells address on the built bundle, so every one of them is pinned here in the cheap
+// medium first. Record ids no longer ride on a row: they read in Retrieval details'
+// `dl[data-ledger-changes]`, whose class assertions (`text-primary` on a routed reference,
+// `font-mono break-all` on the ids) pin the UI-SPEC's accent reservation and its wrap rule.
 //
 // THE ABSENCE CELLS ARE THE POINT. D-12's whole posture is that this half never renders blank and
 // never renders a `0` nobody measured, and both of those are claims about elements and text that
@@ -37,6 +38,7 @@ import {
   legacyCurationPairText,
 } from "@/lib/post-processing-view"
 import {
+  BUCKET_LABELS,
   CHANGED_NOTHING_TEXT,
   CHANGES_NOT_AVAILABLE_TEXT,
   CHANGES_UNREADABLE_TEXT,
@@ -45,13 +47,19 @@ import {
   CURATION_FAILED_TEXT,
   DELTAS_PENDING_TEXT,
   MEMORY_CHANGES_HEADING,
+  OPEN_QUESTION_NOTE,
+  PROPOSED_NOTE,
   RECONCILIATION_UNATTRIBUTED_TEXT,
+  RECORD_UNREADABLE_LEAD,
   REVIEW_PROPOSALS_CTA,
+  SHOW_FULL_RECORD_LABEL,
   STORE_READ_INCOMPLETE_TEXT,
+  WAS_PREFIX,
   learnedView,
   pendingProposalsLine,
   projectKnowledgeView,
   reconciliationCountText,
+  sinceThisRunHeading,
   type LearnedRowView,
   type LearnedView,
   type ProposalsView,
@@ -132,21 +140,19 @@ function rowsOf(host: HTMLElement): HTMLElement[] {
   return [...host.querySelectorAll<HTMLElement>("li[data-record-change]")]
 }
 
+// 427 D-15: a row is a bucket and what it leads with; its key is the index the view assigns.
 function row(overrides: Partial<LearnedRowView> = {}): LearnedRowView {
-  const base: LearnedRowView = {
-    key: "fact-cart-page-4ccac:confirmed:7::",
-    kind: "confirmed",
-    recordId: "fact-cart-page-4ccac",
-  }
-  // The default key tracks the default kind and id, so a cell that varies either still gets the
-  // composite `learnedRow` would have produced rather than a stale literal (WR-02, widened to the
-  // producer's own five-member identity tuple by REVIEW WR-01 — the two trailing segments are the
-  // empty spellings of an absent `evidenceToken` and `byRecordId`).
-  const merged = { ...base, ...overrides }
   return {
-    ...merged,
-    key: overrides.key ?? `${merged.recordId}:${merged.kind}:7::`,
+    key: "0",
+    bucket: "confirmed",
+    primary: "the cart page lives at /view_cart",
+    leadSource: "joined",
+    ...overrides,
   }
+}
+
+function primariesOf(host: HTMLElement): (string | null | undefined)[] {
+  return rowsOf(host).map(el => el.querySelector("[data-row-primary]")?.textContent)
 }
 
 // RE-TARGETED 427-08 (D-19 part 2): the receipt is a technical fact, so it reads in Retrieval details.
@@ -460,13 +466,13 @@ describe("a mismatch is explained beneath the heading, and only when there is on
   })
 })
 
-describe("the record list is one addressable row per change (D-10)", () => {
+describe("the record list is one row per affected record, in 425's words (D-10, 427 D-15)", () => {
   const populated: LearnedView = {
     state: "done",
     countLine: legacyCurationPairText(3, 1),
     rows: [
-      row({ kind: "promoted", recordId: "MEM-001", ref: "agentqa://memory/MEM-001" }),
-      row({ kind: "deprecated", recordId: "fact-page-https-example-com-0f9a" }),
+      row({ key: "0", bucket: "confirmed", primary: "a fact promoted to trusted" }),
+      row({ key: "1", bucket: "deprecated", primary: "a fact that no longer holds" }),
     ],
   }
 
@@ -477,16 +483,35 @@ describe("the record list is one addressable row per change (D-10)", () => {
     expect(host.querySelector("[data-learned-count-line]")?.textContent)
       .toBe(legacyCurationPairText(3, 1))
     expect(rowsOf(host).map((el) => el.getAttribute("data-record-change")))
-      .toEqual(["promoted", "deprecated"])
-    expect(rowsOf(host).map((el) => el.getAttribute("data-record-id")))
-      .toEqual(["MEM-001", "fact-page-https-example-com-0f9a"])
+      .toEqual(["confirmed", "deprecated"])
+    expect(primariesOf(host)).toEqual(["a fact promoted to trusted", "a fact that no longer holds"])
+    // E6 overflow: line 1 wraps and the summary breaks anywhere rather than truncating.
+    const line = rowsOf(host)[0]?.querySelector("[data-row-primary]")
+    expect(line?.className).toContain("wrap-anywhere")
+    expect(line?.parentElement?.className).toContain("flex-wrap")
+    expect(line?.className).not.toContain("truncate")
   })
 
-  it("renders the kind word in the row's badge as well as in its attribute", () => {
-    const host = render(populated)
+  // RE-SPELLED 427-08 from 'renders the kind word in the row's badge as well as in its attribute'.
+  it("BUCKET-LABEL-VOCABULARY: each row's label reads the 425 breakdown word it is stamped with", () => {
+    const snapshot = fiveBucketSnapshot()
+    const host = render(learnedView(readyProjection("done", {
+      changes: snapshotChanges(), curationSnapshot: snapshot, sinceThen: { changes: [], count: 0 },
+    }, { curated: 4, deprecated: 1 })))
+    const line = curationBreakdownLine(snapshot.breakdown)
 
-    expect(rowsOf(host)[0]?.textContent).toContain("promoted")
-    expect(rowsOf(host)[1]?.textContent).toContain("deprecated")
+    expect(rowsOf(host).length).toBe(5)
+    for (const el of rowsOf(host)) {
+      const label = el.querySelector<HTMLElement>("[data-bucket-label]")
+      const bucket = el.getAttribute("data-record-change")
+      const hidden = label?.querySelector(".sr-only")?.textContent ?? ""
+      const visible = (label?.textContent ?? "").replace(hidden, "").trim().toLowerCase()
+      expect(label?.getAttribute("data-bucket-label")).toBe(bucket)
+      expect(visible).toBe(bucket)
+      expect(line).toContain(`1 ${visible}`)
+      expect(label?.className).toContain("uppercase")
+    }
+    expect(Object.values(BUCKET_LABELS).map(word => word.toLowerCase())).toEqual(snapshot.rows.map(entry => entry.bucket))
   })
 
   // RE-SPELLED 427-08 from 'renders the record id in a mono element on every row — the address is
@@ -569,27 +594,46 @@ describe("the record list is one addressable row per change (D-10)", () => {
 })
 
 describe("a curated NEW fact is painted, not denied (CR-04, R-407-15-01)", () => {
-  const everyKind = ["added", "confirmed", "superseded", "deprecated", "promoted"] as const
-
-  it("renders one li per kind for all FIVE Learned kinds, in the view's order", () => {
+  // RE-SPELLED 427-08 from 'renders one li per kind for all FIVE Learned kinds, in the view's order'.
+  it("PROPOSED-HELD-FOR-REVIEW: a proposed row says it is held for review, and an open question says so", () => {
     const host = render({
       state: "done",
-      countLine: legacyCurationPairText(3, 1),
-      rows: everyKind.map((kind, index) => row({ kind, recordId: `rec_${String(index)}` })),
+      countLine: curationBreakdownLine({ added: 0, confirmed: 0, superseded: 0, deprecated: 0, proposed: 2 }),
+      rows: [
+        row({ key: "0", bucket: "proposed", primary: "the cart page lives at /view_cart", kind: "fact", note: PROPOSED_NOTE }),
+        row({ key: "1", bucket: "proposed", primary: "does checkout need a login?", kind: "unknown", note: OPEN_QUESTION_NOTE }),
+      ],
     })
 
-    expect(rowsOf(host).map((el) => el.getAttribute("data-record-change"))).toEqual([...everyKind])
+    const notes = rowsOf(host).map(el => el.querySelector<HTMLElement>("[data-proposed-note]"))
+    expect(notes.map(note => note?.textContent)).toEqual([`· ${PROPOSED_NOTE}`, `· ${OPEN_QUESTION_NOTE}`])
+    expect(notes[0]?.className).toContain("text-muted-foreground")
+    expect(rowsOf(host).map(el => el.getAttribute("data-record-change"))).toEqual(["proposed", "proposed"])
   })
 
-  it("gives `added` the emerald a promotion wears — the SPEC allows no new colour for it", () => {
-    const host = render({
-      state: "done",
-      countLine: legacyCurationPairText(1, 0),
-      rows: [row({ kind: "added", recordId: "fact-el-textbox-password-9a05ce" })],
-    })
+  // RE-SPELLED 427-08 from 'gives `added` the emerald a promotion wears — the SPEC allows no new colour for it'.
+  it("NO-ID-ON-CHANGE-ROWS: no row carries a record id in any attribute or text, and none is tinted", () => {
+    const snapshot = fiveBucketSnapshot()
+    const ids = ["fact-added", "fact-confirmed", "fact-victim", "fact-replacement", "fact-deprecated", "fact-proposed"]
+    const changes = snapshot.rows.flatMap(entry => entry.changes.map(({ change }, index) => ({
+      ...change,
+      recordContent: { ...joinedContent(change.recordId), summary: `a stored fact, number ${String(index)}`, content: "a body" },
+    })))
+    const host = render(learnedView(readyProjection("done", {
+      changes, curationSnapshot: snapshot, sinceThen: { changes: [], count: 0 },
+    }, { curated: 4, deprecated: 1 })))
 
-    const badge = rowsOf(host)[0]?.querySelector("span")
-    expect(badge?.className).toContain("text-emerald-500")
+    expect(rowsOf(host).length).toBe(5)
+    for (const el of rowsOf(host)) {
+      expect(el.hasAttribute("data-record-id")).toBe(false)
+      for (const node of [el, ...el.querySelectorAll("*")]) {
+        for (const attribute of [...node.attributes]) {
+          for (const id of ids) expect(attribute.value).not.toContain(id)
+        }
+        expect(String(node.getAttribute("class") ?? "")).not.toMatch(/emerald|destructive/)
+      }
+      for (const id of ids) expect(el.textContent).not.toContain(id)
+    }
   })
 
   /**
@@ -600,11 +644,11 @@ describe("a curated NEW fact is painted, not denied (CR-04, R-407-15-01)", () =>
     const host = render({
       state: "done",
       countLine: legacyCurationPairText(1, 0),
-      rows: [row({ kind: "added", recordId: "fact-el-textbox-password-9a05ce" })],
+      rows: [row({ bucket: "added", primary: "the password field is a textbox" })],
     })
 
     expect(rowsOf(host).length).toBe(1)
-    expect(rowsOf(host)[0]?.getAttribute("data-record-id")).toBe("fact-el-textbox-password-9a05ce")
+    expect(primariesOf(host)).toEqual(["the password field is a textbox"])
     expect(host.querySelector("[data-learned-sentence]")).toBeNull()
   })
 
@@ -613,21 +657,24 @@ describe("a curated NEW fact is painted, not denied (CR-04, R-407-15-01)", () =>
    * React warned; a cell that only counted `li` would have passed on the first render and lost a
    * row on the re-render that fires as curation settles. This one watches the console too.
    */
-  it("renders BOTH changes of one record, with no duplicate-key warning", () => {
+  it("renders BOTH changes of one record as one row, both events in its ledger block, with no duplicate-key warning", () => {
     const spy = vi.spyOn(console, "error").mockImplementation(() => undefined)
     try {
-      const host = render({
-        state: "done",
-        countLine: legacyCurationPairText(1, 0),
-        rows: [
-          row({ key: "r:confirmed:12", kind: "confirmed", recordId: "r" }),
-          row({ key: "r:superseded:13", kind: "superseded", recordId: "r" }),
-        ],
-      })
+      const projection = readyProjection("done", {
+        changes: [recorded("r", "confirmed", 12), recorded("r", "superseded", 13)],
+      }, { curated: 1, deprecated: 0 })
+      const view = projectKnowledgeView({ kind: "read", projection })
+      if (view.state !== "ready") throw new Error("expected ready")
+      const host = mount(<>
+        <KnowledgeLearned view={view.learned} />
+        <RetrievalDetails ledger={view.ledger} />
+      </>)
+      const trigger = host.querySelector<HTMLElement>('[data-knowledge-section="retrieval-details"] [data-slot="collapsible-trigger"]')
+      act(() => { trigger?.click() })
 
-      expect(rowsOf(host).length).toBe(2)
-      expect(rowsOf(host).map((el) => el.getAttribute("data-record-change")))
-        .toEqual(["confirmed", "superseded"])
+      expect(rowsOf(host).map((el) => el.getAttribute("data-record-change"))).toEqual(["superseded"])
+      expect([...host.querySelectorAll('[data-ledger-row="events"] span.block')].map(el => el.textContent))
+        .toEqual(["confirmed @ 12", "superseded @ 13"])
       const warned = spy.mock.calls.some((call) => String(call[0]).includes("same key"))
       expect(warned).toBe(false)
     } finally {
@@ -717,19 +764,17 @@ describe("a partial read is painted beside the rows, and beneath an unsettled se
    * identically and React warned and dropped one. The key now differs only in the token segment,
    * and the console is watched to prove the difference is enough.
    */
-  it("renders two confirmations that differ ONLY in the evidence token, with no duplicate-key warning", () => {
+  it("folds two confirmations that differ ONLY in the evidence token into one row, with no duplicate-key warning", () => {
     const spy = vi.spyOn(console, "error").mockImplementation(() => undefined)
     try {
-      const host = render({
-        state: "done",
-        countLine: legacyCurationPairText(2, 0),
-        rows: [
-          row({ key: "r:confirmed:12:tok-a:", kind: "confirmed", recordId: "r" }),
-          row({ key: "r:confirmed:12:tok-b:", kind: "confirmed", recordId: "r" }),
+      const host = render(learnedView(readyProjection("done", {
+        changes: [
+          recorded("r", "confirmed", 12, { evidenceToken: "tok-a" }),
+          recorded("r", "confirmed", 12, { evidenceToken: "tok-b" }),
         ],
-      })
+      }, { curated: 2, deprecated: 0 })))
 
-      expect(rowsOf(host).length).toBe(2)
+      expect(rowsOf(host).length).toBe(1)
       const warned = spy.mock.calls.some((call) => String(call[0]).includes("same key"))
       expect(warned).toBe(false)
     } finally {
@@ -737,9 +782,12 @@ describe("a partial read is painted beside the rows, and beneath an unsettled se
     }
   })
 
-  it("renders the row() default key in the producer's five-member form", () => {
-    expect(row().key).toBe("fact-cart-page-4ccac:confirmed:7::")
-    expect(row({ kind: "promoted", recordId: "r" }).key).toBe("r:promoted:7::")
+  it("renders the row() default key as the row index the view assigns", () => {
+    expect(row().key).toBe("0")
+    const view = learnedView(readyProjection("done", {
+      changes: [recorded("a", "added", 1), recorded("b", "confirmed", 2)],
+    }, { curated: 2, deprecated: 0 }))
+    expect(view.rows.map(entry => entry.key)).toEqual(["0", "1"])
   })
 })
 
@@ -899,9 +947,9 @@ describe("423 D-15: a failed chain keeps its learned rows beside the snapshot se
     const host = render(learnedView(projection))
 
     expect(stateOf(host)).toBe("failed")
-    expect(rowsOf(host).map(el => el.getAttribute("data-record-id")))
-      .toEqual(["fact-before-failure", "fact-purged-since"])
+    expect(primariesOf(host)).toEqual(["summary fact-before-failure", RECORD_UNREADABLE_LEAD])
     expect(rowsOf(host).map(el => el.getAttribute("data-record-change"))).toEqual(["added", "confirmed"])
+    expect(rowsOf(host).some(el => el.hasAttribute("data-record-id"))).toBe(false)
     expect(host.querySelector("[data-learned-chain-note]")?.textContent).toBe(CURATION_FAILED_PARTIAL_TEXT)
     expect(host.querySelector("[data-learned-sentence]")).toBeNull()
     expect(host.textContent).not.toContain(CURATION_FAILED_TEXT)
@@ -940,21 +988,29 @@ describe("423 D-15: a failed chain keeps its learned rows beside the snapshot se
     const host = render(view)
     const section = sectionOf(host)
 
-    // RE-SPELLED 425-06 (D-19). The breakdown counts five AFFECTED UNITS while the half paints six
-    // CHANGES — the supersession row carries its replacement's `added` change as well as its own —
-    // so this fixture is itself a counted-versus-shown disagreement, and the heading now says so
-    // instead of leaving a reader to notice that five and six are different numbers. The exact
-    // equality that stood here would have hidden the new member rather than pinned it.
+    // RE-SPELLED 427-08 (D-15). The rows are the snapshot's five affected records, not its six
+    // changes: the supersession is ONE row led by its replacement, so the counts and the rows agree
+    // and the "5 changes counted · 6 shown" block this cell used to pin cannot appear.
     expect(view.curationSnapshot?.breakdown).toEqual(snapshot.breakdown)
     expect(view.curationSnapshot?.sinceThenCount).toBe(0)
-    expect(view.curationSnapshot?.reconciliation)
-      .toEqual({ count: "5 changes counted · 6 shown", cause: RECONCILIATION_UNATTRIBUTED_TEXT })
-    expect(host.querySelector("[data-learned-reconciliation-count]")?.textContent)
-      .toBe("5 changes counted · 6 shown")
+    expect(view.curationSnapshot?.reconciliation).toBeUndefined()
+    expect(host.querySelector("[data-learned-reconciliation]")).toBeNull()
+    expect(host.querySelector("[data-learned-count-line]")?.textContent)
+      .toBe("1 added · 1 confirmed · 1 superseded · 1 deprecated · 1 proposed")
     expect(section.getAttribute("data-learned-snapshot")).toBe("recorded")
     expect(section.getAttribute("data-learned-since-then")).toBe("0")
-    expect(rowsOf(host).map(el => el.getAttribute("data-record-id"))).toEqual(changes.map(row => row.recordId))
-    expect(rowsOf(host).map(el => el.getAttribute("data-learned-section"))).toEqual(changes.map(() => "curation"))
+    expect(rowsOf(host).map(el => el.getAttribute("data-record-change"))).toEqual(snapshot.rows.map(entry => entry.bucket))
+    expect(rowsOf(host).map(el => el.getAttribute("data-learned-section"))).toEqual(snapshot.rows.map(() => "curation"))
+
+    const supersession = rowsOf(host)[2]
+    expect(supersession?.querySelector("[data-row-primary]")?.textContent).toBe("summary fact-replacement")
+    expect(supersession?.querySelector("[data-superseded-was]")?.textContent).toBe(`${WAS_PREFIX} summary fact-victim`)
+    expect(rowsOf(host).filter(el => el.querySelector("[data-superseded-was]") !== null).length).toBe(1)
+    for (const el of rowsOf(host)) {
+      expect(el.querySelector("[data-row-applicability]")).not.toBeNull()
+      expect([...el.querySelectorAll("button")].some(button => button.textContent === SHOW_FULL_RECORD_LABEL)).toBe(true)
+    }
+    expect(host.querySelector("[data-since-this-run]")).toBeNull()
   })
 
   it("LATER-LINKED-ROWS: a later promotion is painted as a since-then row beside the unchanged curation rows", () => {
@@ -966,13 +1022,19 @@ describe("423 D-15: a failed chain keeps its learned rows beside the snapshot se
     const view = learnedView(projection)
     const host = render(view)
     const rows = rowsOf(host)
+    const since = host.querySelector<HTMLElement>("[data-since-this-run]")
+    const laterRows = [...(since?.querySelectorAll<HTMLElement>("li[data-record-change]") ?? [])]
 
     expect(view.curationSnapshot?.sinceThenCount).toBe(1)
     expect(sectionOf(host).getAttribute("data-learned-since-then")).toBe("1")
-    expect(rows.length).toBe(snapshotChanges().length + 1)
-    expect(rows.at(-1)?.getAttribute("data-record-change")).toBe("promoted")
-    expect(rows.at(-1)?.getAttribute("data-record-id")).toBe("fact-added")
+    expect(host.querySelector("[data-learned-count-line]")?.textContent).toBe(curationBreakdownLine(snapshot.breakdown))
+    expect(rows.length).toBe(snapshot.rows.length + 1)
     expect(rows.map(el => el.getAttribute("data-learned-section")))
-      .toEqual([...snapshotChanges().map(() => "curation"), "since-then"])
+      .toEqual([...snapshot.rows.map(() => "curation"), "since-then"])
+    expect(since?.getAttribute("data-since-this-run")).toBe("1")
+    expect(since?.querySelector("h5")?.textContent).toBe(sinceThisRunHeading(1))
+    expect(laterRows.length).toBe(1)
+    expect(laterRows[0]?.getAttribute("data-record-change")).toBe("confirmed")
+    expect(laterRows[0]?.querySelector("[data-since-detail]")?.textContent).toBe("promoted to trusted, later")
   })
 })
