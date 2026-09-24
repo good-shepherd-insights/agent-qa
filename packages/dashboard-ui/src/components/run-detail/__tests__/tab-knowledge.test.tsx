@@ -30,8 +30,9 @@ import {
 } from "@vostride/agent-qa-schema"
 
 import { TabKnowledge } from "@/components/run-detail/tab-knowledge"
+import { TooltipProvider } from "@/components/ui/tooltip"
 import {
-  CHANGED_NOTHING_TEXT,
+  NO_MEMORY_CHANGES_SENTENCE,
   CHANNEL_EYEBROWS,
   EFFECT_HEADING,
   EFFECT_NOTHING_USED_TEXT,
@@ -71,7 +72,8 @@ function mount(element: ReactElement): HTMLElement {
   container = document.createElement("div")
   document.body.append(container)
   root = createRoot(container)
-  act(() => { root?.render(element) })
+  // `tab-panels.tsx` wraps the tab in this provider; bucket labels are tooltip triggers (427 D-16).
+  act(() => { root?.render(<TooltipProvider delayDuration={0}>{element}</TooltipProvider>) })
   return container
 }
 
@@ -93,7 +95,7 @@ function row(overrides: Partial<StepRowView> = {}): StepRowView {
 const LEARNED_NOTHING: LearnedView = {
   state: "done",
   countLine: legacyCurationPairText(0, 0),
-  sentence: CHANGED_NOTHING_TEXT,
+  sentence: NO_MEMORY_CHANGES_SENTENCE,
   rows: [],
 }
 
@@ -341,7 +343,7 @@ describe("the ready arm paints four sections in KNOWLEDGE_SECTIONS order (427 D-
     }
     expect(view.querySelector('[data-knowledge-section="used"] [data-section-absence]')?.textContent).toBe(NO_BRIEF_SERVED_TEXT)
     expect(view.querySelector('[data-knowledge-section="effect"] [data-section-absence]')?.textContent).toBe(EFFECT_NOTHING_USED_TEXT)
-    expect(view.querySelector('[data-knowledge-section="changes"] [data-section-absence]')?.textContent).toBe(CHANGED_NOTHING_TEXT)
+    expect(view.querySelector('[data-knowledge-section="changes"] [data-section-absence]')?.textContent).toBe(NO_MEMORY_CHANGES_SENTENCE)
   })
 
   it("the Memory changes section renders its heading on every ready run", () => {

@@ -9,10 +9,13 @@ import {
   type RunKnowledgeProjection,
 } from '@vostride/agent-qa-schema'
 
-import { BREAKDOWN_NOT_RECORDED_TEXT, curationBreakdownLine } from '@/lib/post-processing-view'
+import { BREAKDOWN_NOT_RECORDED_TEXT, NO_MEMORY_CHANGES_TEXT, curationBreakdownLine } from '@/lib/post-processing-view'
 import {
   BUCKET_LABELS,
+  BUCKET_MEANINGS,
+  CHANGES_PENDING_TEXT,
   LEDGER_ROW_LABELS,
+  NO_MEMORY_CHANGES_SENTENCE,
   OPEN_QUESTION_NOTE,
   PROPOSED_NOTE,
   RECORD_CONTENT_NOT_RECORDED_LEAD,
@@ -247,6 +250,35 @@ describe('Memory changes are one row per affected record, in 425 words (D-15)', 
     expect(sinceThisRunHeading(1)).toBe('Since this run · 1 change')
     expect(sinceThisRunHeading(3)).toBe('Since this run · 3 changes')
     expect(sinceThenDetail('promoted')).toBe('promoted to trusted, later')
+  })
+})
+
+describe('every bucket word explains itself, and the section speaks of memory changes (D-16)', () => {
+  it('BUCKET-LABEL-MEANINGS: each of the five buckets has one meaning, and Proposed says it changed nothing agents are given', () => {
+    expect(BUCKET_MEANINGS).toEqual({
+      added: 'New knowledge recorded from this run.',
+      confirmed: 'Existing knowledge this run backed up, including knowledge promoted to trusted.',
+      superseded: 'Replaced by a newer version; agents are given the new one.',
+      deprecated: 'Retired; agents are no longer given it.',
+      proposed: 'Recorded, but held for review instead of changing what agents are given.',
+    })
+    expect(Object.keys(BUCKET_MEANINGS)).toEqual(Object.keys(BUCKET_LABELS))
+    expect(new Set(Object.values(BUCKET_MEANINGS)).size).toBe(CURATION_BREAKDOWN_BUCKETS.length)
+
+    expect(CHANGES_PENDING_TEXT).toBe('Memory changes appear after post-run processing finishes.')
+    expect(NO_MEMORY_CHANGES_SENTENCE).toBe('Post-run processing finished and changed nothing in memory.')
+    for (const status of ['pending', 'running'] as const) {
+      const unsettled = learnedView(projection(status, {}))
+      expect(unsettled.sentence).toBe(CHANGES_PENDING_TEXT)
+      expect(unsettled.curationSnapshot?.reconciliation).toBeUndefined()
+    }
+    const zero = CurationSnapshotSchema.parse({
+      schemaVersion: 1, rows: [], breakdown: { added: 0, confirmed: 0, superseded: 0, deprecated: 0, proposed: 0 },
+    })
+    const nothing = learnedView(projection('done', { curationSnapshot: zero, sinceThen: { changes: [], count: 0 } }))
+    expect(nothing.countLine).toBe(NO_MEMORY_CHANGES_TEXT)
+    expect(nothing.sentence).toBe(NO_MEMORY_CHANGES_SENTENCE)
+    expect(nothing.rows).toEqual([])
   })
 })
 

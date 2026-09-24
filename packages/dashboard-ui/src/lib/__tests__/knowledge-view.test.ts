@@ -41,14 +41,14 @@ import {
   ATTRIBUTION_UNKNOWN_TEXT,
   BROKE_CAUSE_LABELS,
   CANARY_BADGE_TEXT,
-  CHANGED_NOTHING_TEXT,
+  NO_MEMORY_CHANGES_SENTENCE,
   CHANGES_NOT_AVAILABLE_TEXT,
   CHANGES_UNREADABLE_TEXT,
   CHANNEL_PAGE_SIZE,
   COUNTS_NOT_RECORDED_SENTENCE,
   CURATION_FAILED_PARTIAL_TEXT,
   CURATION_FAILED_TEXT,
-  DELTAS_PENDING_TEXT,
+  CHANGES_PENDING_TEXT,
   LEARNED_CHANGE_KINDS,
   MEMORY_CHANGES_HEADING,
   NOT_ATTRIBUTED_TEXT,
@@ -981,7 +981,7 @@ describe('the Learned half mirrors the curation word and NEVER renders blank (D-
   it('says deltas are still coming while curation is pending — a sentence, not a spinner', () => {
     const view = learnedFrom({ curation: { status: 'pending' } })
     expect(view.state).toBe('pending')
-    expect(view.sentence).toBe(DELTAS_PENDING_TEXT)
+    expect(view.sentence).toBe(CHANGES_PENDING_TEXT)
     expect(view.rows).toEqual([])
     expect(view.countLine).toBeUndefined()
   })
@@ -989,7 +989,7 @@ describe('the Learned half mirrors the curation word and NEVER renders blank (D-
   it('says the SAME sentence while curation is running — the reader waits on one fact, not two', () => {
     const view = learnedFrom({ curation: { status: 'running' } })
     expect(view.state).toBe('running')
-    expect(view.sentence).toBe(DELTAS_PENDING_TEXT)
+    expect(view.sentence).toBe(CHANGES_PENDING_TEXT)
   })
 
   it('states the failure outright rather than showing an empty list that reads as "nothing changed"', () => {
@@ -1028,7 +1028,7 @@ describe('a settled curation says what it changed, in the chip\'s own words (D-0
     expect(view.state).toBe('done')
     expect(view.countLine).toBe(legacyCurationPairText(0, 0))
     expect(view.countNote).toBe(BREAKDOWN_NOT_RECORDED_TEXT)
-    expect(view.sentence).toBe(CHANGED_NOTHING_TEXT)
+    expect(view.sentence).toBe(NO_MEMORY_CHANGES_SENTENCE)
     expect(view.rows).toEqual([])
   })
 
@@ -1099,7 +1099,7 @@ describe('a settled curation says what it changed, in the chip\'s own words (D-0
 
     expect(view.countLine).toBe(NO_MEMORY_CHANGES_TEXT)
     expect(view.countNote).toBeUndefined()
-    expect(view.sentence).toBe(CHANGED_NOTHING_TEXT)
+    expect(view.sentence).toBe(NO_MEMORY_CHANGES_SENTENCE)
   })
 
   /**
@@ -1449,7 +1449,7 @@ describe('a curated NEW fact is what the run learned (CR-04, D-10)', () => {
         learned: { changes: [change('added'), change('confirmed')], canaryAttributions: [] },
       })
       expect(view.rows).toEqual([])
-      expect(view.sentence).toBe(DELTAS_PENDING_TEXT)
+      expect(view.sentence).toBe(CHANGES_PENDING_TEXT)
       expect(view.chainNote).toBeUndefined()
     }
   })
@@ -1734,7 +1734,7 @@ describe('a partial read decorates the answer, it never replaces it (REVIEW CR-0
       })
 
       expect(view.state).toBe(status)
-      expect(view.sentence).toBe(DELTAS_PENDING_TEXT)
+      expect(view.sentence).toBe(CHANGES_PENDING_TEXT)
       expect(view.rows).toEqual([])
       expect(view.scanIncomplete).toBe(true)
       expect(view.readNote).toBe(STORE_READ_INCOMPLETE_TEXT)
@@ -1891,22 +1891,22 @@ describe('the ready arm carries the Learned half so the tab does not have to bui
 
 describe('the 407-09 copy is published as constants, like every sentence before it', () => {
   it('spells each Learned sentence exactly once, and no two the same', () => {
-    expect(DELTAS_PENDING_TEXT).toBe('Deltas land when curation settles.')
+    expect(CHANGES_PENDING_TEXT).toBe('Memory changes appear after post-run processing finishes.')
     expect(CURATION_FAILED_TEXT).toBe('Curation failed — nothing was learned from this run.')
     expect(CURATION_FAILED_PARTIAL_TEXT)
       .toBe('Curation failed — these records were committed before it stopped.')
     expect(COUNTS_NOT_RECORDED_SENTENCE).toBe('Counts not recorded for this run.')
     expect(CHANGES_NOT_AVAILABLE_TEXT).toBe('Change records for this run are not available yet.')
-    expect(CHANGED_NOTHING_TEXT).toBe('Curation ran and changed nothing.')
+    expect(NO_MEMORY_CHANGES_SENTENCE).toBe('Post-run processing finished and changed nothing in memory.')
     expect(REVIEW_PROPOSALS_CTA).toBe('Review proposals')
     expect(RECONCILIATION_UNATTRIBUTED_TEXT).toBe("The difference could not be attributed to this run's rows.")
     expect(new Set([
-      DELTAS_PENDING_TEXT,
+      CHANGES_PENDING_TEXT,
       CURATION_FAILED_TEXT,
       CURATION_FAILED_PARTIAL_TEXT,
       COUNTS_NOT_RECORDED_SENTENCE,
       CHANGES_NOT_AVAILABLE_TEXT,
-      CHANGED_NOTHING_TEXT,
+      NO_MEMORY_CHANGES_SENTENCE,
     ]).size).toBe(6)
   })
 

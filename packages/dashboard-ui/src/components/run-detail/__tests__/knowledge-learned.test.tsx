@@ -37,16 +37,18 @@ import {
   curationBreakdownLine,
   legacyCurationPairText,
 } from "@/lib/post-processing-view"
+import { TooltipProvider } from "@/components/ui/tooltip"
 import {
   BUCKET_LABELS,
-  CHANGED_NOTHING_TEXT,
+  BUCKET_MEANINGS,
   CHANGES_NOT_AVAILABLE_TEXT,
+  CHANGES_PENDING_TEXT,
   CHANGES_UNREADABLE_TEXT,
   COUNTS_NOT_RECORDED_SENTENCE,
   CURATION_FAILED_PARTIAL_TEXT,
   CURATION_FAILED_TEXT,
-  DELTAS_PENDING_TEXT,
   MEMORY_CHANGES_HEADING,
+  NO_MEMORY_CHANGES_SENTENCE,
   OPEN_QUESTION_NOTE,
   PROPOSED_NOTE,
   RECONCILIATION_UNATTRIBUTED_TEXT,
@@ -92,8 +94,9 @@ function mount(element: ReactElement): HTMLElement {
   root = createRoot(container)
   // A `MemoryRouter` because a routed reference renders a `<Link>`, and a `Link` outside a router
   // throws. The unrouted arm renders a span and would pass without one — which is exactly why both
-  // arms are mounted the same way here.
-  act(() => { root?.render(<MemoryRouter>{element}</MemoryRouter>) })
+  // arms are mounted the same way here. The provider is the one `tab-panels.tsx` wraps the tab in,
+  // because every bucket label is a tooltip trigger (427 D-16).
+  act(() => { root?.render(<MemoryRouter><TooltipProvider delayDuration={0}>{element}</TooltipProvider></MemoryRouter>) })
   return container
 }
 
@@ -186,23 +189,23 @@ describe('419 receipt-backed promotion attribution', () => {
 
 describe("an unsettled curation says so in words, never in a spinner (D-12)", () => {
   it("carries the pending word on the root and the one sentence a reader can act on", () => {
-    const host = render({ state: "pending", sentence: DELTAS_PENDING_TEXT, rows: [] })
+    const host = render({ state: "pending", sentence: CHANGES_PENDING_TEXT, rows: [] })
 
     expect(stateOf(host)).toBe("pending")
-    expect(host.textContent).toContain(DELTAS_PENDING_TEXT)
+    expect(host.textContent).toContain(CHANGES_PENDING_TEXT)
     expect(rowsOf(host).length).toBe(0)
     expect(host.querySelector('[data-slot="skeleton"]')).toBeNull()
   })
 
   it("carries the running word with the SAME sentence — one fact is being waited on, not two", () => {
-    const host = render({ state: "running", sentence: DELTAS_PENDING_TEXT, rows: [] })
+    const host = render({ state: "running", sentence: CHANGES_PENDING_TEXT, rows: [] })
 
     expect(stateOf(host)).toBe("running")
-    expect(host.textContent).toContain(DELTAS_PENDING_TEXT)
+    expect(host.textContent).toContain(CHANGES_PENDING_TEXT)
   })
 
   it("renders NO count line while curation is unsettled — counts come only from the frozen row", () => {
-    const host = render({ state: "pending", sentence: DELTAS_PENDING_TEXT, rows: [] })
+    const host = render({ state: "pending", sentence: CHANGES_PENDING_TEXT, rows: [] })
 
     expect(host.querySelector("[data-learned-count-line]")).toBeNull()
   })
@@ -319,13 +322,13 @@ describe("a settled curation that changed nothing says that, and lists nothing (
     const host = render({
       state: "done",
       countLine: legacyCurationPairText(0, 0),
-      sentence: CHANGED_NOTHING_TEXT,
+      sentence: NO_MEMORY_CHANGES_SENTENCE,
       rows: [],
     })
 
     expect(stateOf(host)).toBe("done")
     expect(host.querySelector("[data-learned-count-line]")?.textContent).toBe(legacyCurationPairText(0, 0))
-    expect(host.textContent).toContain(CHANGED_NOTHING_TEXT)
+    expect(host.textContent).toContain(NO_MEMORY_CHANGES_SENTENCE)
     expect(rowsOf(host).length).toBe(0)
   })
 
@@ -636,20 +639,31 @@ describe("a curated NEW fact is painted, not denied (CR-04, R-407-15-01)", () =>
     }
   })
 
-  /**
-   * THE VERIFIER'S REPRODUCTION, AT THE COMPONENT. Gap 2's projection painted a count line beside
-   * a sentence denying the record it had been handed; the fixed half paints the row instead.
-   */
-  it("paints the added record's row and no sentence at all", () => {
+  // RE-SPELLED 427-09 from "paints the added record's row and no sentence at all": the rows are
+  // still the answer with no sentence over them, and every bucket word now explains itself (D-16).
+  it("BUCKET-LABEL-MEANINGS: every bucket label is a focusable trigger whose tooltip and sr-only text are its meaning", async () => {
+    const buckets = ["added", "confirmed", "superseded", "deprecated", "proposed"] as const
     const host = render({
       state: "done",
-      countLine: legacyCurationPairText(1, 0),
-      rows: [row({ bucket: "added", primary: "the password field is a textbox" })],
+      countLine: curationBreakdownLine({ added: 1, confirmed: 1, superseded: 1, deprecated: 1, proposed: 1 }),
+      rows: buckets.map((bucket, index) => row({ key: String(index), bucket, primary: `a ${bucket} fact` })),
     })
 
-    expect(rowsOf(host).length).toBe(1)
-    expect(primariesOf(host)).toEqual(["the password field is a textbox"])
     expect(host.querySelector("[data-learned-sentence]")).toBeNull()
+    expect(rowsOf(host).map(el => el.getAttribute("data-record-change"))).toEqual([...buckets])
+    for (const el of rowsOf(host)) {
+      const bucket = el.getAttribute("data-record-change") as keyof typeof BUCKET_MEANINGS
+      const label = el.querySelector<HTMLElement>("[data-bucket-label]")
+      expect(label?.tagName).toBe("SPAN")
+      expect(label?.tabIndex).toBe(0)
+      expect(label?.className).toContain("cursor-help")
+      expect(label?.className).toContain("decoration-dotted")
+      expect(label?.querySelector(".sr-only")?.textContent).toBe(BUCKET_MEANINGS[bucket])
+      await act(async () => { label?.focus() })
+      expect(document.querySelector('[role="tooltip"]')?.textContent).toBe(BUCKET_MEANINGS[bucket])
+      await act(async () => { label?.blur() })
+    }
+    expect(BUCKET_MEANINGS.proposed).toBe("Recorded, but held for review instead of changing what agents are given.")
   })
 
   /**
@@ -742,7 +756,7 @@ describe("a partial read is painted beside the rows, and beneath an unsettled se
   it("paints the pending sentence AND the note when a chain has not settled over an unreadable store", () => {
     const host = render({
       state: "pending",
-      sentence: DELTAS_PENDING_TEXT,
+      sentence: CHANGES_PENDING_TEXT,
       rows: [],
       scanIncomplete: true,
       readNote: STORE_READ_INCOMPLETE_TEXT,
@@ -751,7 +765,7 @@ describe("a partial read is painted beside the rows, and beneath an unsettled se
     expect(stateOf(host)).toBe("pending")
     expect(host.querySelector("[data-learned-state]")?.getAttribute("data-learned-read"))
       .toBe("incomplete")
-    expect(host.querySelector("[data-learned-sentence]")?.textContent).toBe(DELTAS_PENDING_TEXT)
+    expect(host.querySelector("[data-learned-sentence]")?.textContent).toBe(CHANGES_PENDING_TEXT)
     expect(host.querySelector("[data-learned-read-note]")?.textContent)
       .toBe(STORE_READ_INCOMPLETE_TEXT)
     expect(host.querySelector("[data-learned-count-line]")).toBeNull()
@@ -800,7 +814,7 @@ describe("the proposals line is a count and a door (D-11, T-407-22)", () => {
   }
 
   it("stamps the count on the line and renders the single CTA as the runnable review command (423 D-19)", async () => {
-    const host = render({ state: "done", countLine: legacyCurationPairText(0, 0), sentence: CHANGED_NOTHING_TEXT, rows: [] }, proposals)
+    const host = render({ state: "done", countLine: legacyCurationPairText(0, 0), sentence: NO_MEMORY_CHANGES_SENTENCE, rows: [] }, proposals)
 
     const line = host.querySelector("[data-pending-proposals]")
     expect(line?.getAttribute("data-pending-proposals")).toBe("3")
@@ -824,7 +838,7 @@ describe("the proposals line is a count and a door (D-11, T-407-22)", () => {
 
   it("says so when the clipboard is unavailable, and keeps the command readable on the control", async () => {
     Object.defineProperty(navigator, "clipboard", { configurable: true, value: undefined })
-    const host = render({ state: "done", countLine: legacyCurationPairText(0, 0), sentence: CHANGED_NOTHING_TEXT, rows: [] }, proposals)
+    const host = render({ state: "done", countLine: legacyCurationPairText(0, 0), sentence: NO_MEMORY_CHANGES_SENTENCE, rows: [] }, proposals)
     const cta = host.querySelector<HTMLButtonElement>("button[data-review-proposals]")
     await act(async () => { cta?.click() })
     expect(cta?.getAttribute("data-copy-status")).toBe("failed")
@@ -834,14 +848,14 @@ describe("the proposals line is a count and a door (D-11, T-407-22)", () => {
   })
 
   it("renders NO line and NO attribute when the page passed no proposals — a zero is not news", () => {
-    const host = render({ state: "done", countLine: legacyCurationPairText(0, 0), sentence: CHANGED_NOTHING_TEXT, rows: [] })
+    const host = render({ state: "done", countLine: legacyCurationPairText(0, 0), sentence: NO_MEMORY_CHANGES_SENTENCE, rows: [] })
 
     expect(host.querySelector("[data-pending-proposals]")).toBeNull()
     expect(host.querySelector("[data-review-proposals]")).toBeNull()
   })
 
   it("shows the proposals line beside an unsettled half — the inbox is not this run's chain", () => {
-    const host = render({ state: "pending", sentence: DELTAS_PENDING_TEXT, rows: [] }, proposals)
+    const host = render({ state: "pending", sentence: CHANGES_PENDING_TEXT, rows: [] }, proposals)
 
     expect(stateOf(host)).toBe("pending")
     expect(host.querySelector("[data-pending-proposals]")).not.toBeNull()
