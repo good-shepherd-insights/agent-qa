@@ -1,16 +1,25 @@
 // 427 · D-19 — Retrieval details: the collapsed foot section holding the per-step ledger, moved
-// verbatim from tab-knowledge.tsx. It is the only section where storage vocabulary may appear.
+// verbatim from tab-knowledge.tsx, then every changed record's ids, events and provenance. It is
+// the only section where storage vocabulary and record ids may appear.
 
-import { useId } from "react"
+import { Fragment, useId, type ReactNode } from "react"
 import { ChevronRight } from "lucide-react"
 
 import { Badge } from "@/components/ui/badge"
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
 import { NESTED_TRIGGER_CLASS } from "./knowledge-brief-line"
 import { KnowledgeStepDetail } from "./knowledge-step-detail"
+import { MaskedText } from "./masked-text"
 import {
+  LEDGER_ROW_LABELS,
+  MEMORY_CHANGES_HEADING,
   RETRIEVAL_DETAILS_LABEL,
   STEP_NO_BRIEF_TEXT,
+  ledgerEventText,
+  ledgerValidityText,
+  promotionPathLabel,
+  type ChangeLedgerView,
+  type LedgerRow,
   type LedgerView,
   type StepRowView,
 } from "@/lib/knowledge-view"
@@ -33,6 +42,14 @@ export function RetrievalDetails({ ledger }: { ledger: LedgerView }) {
               ))}
             </ul>
           ) : null}
+          {ledger.changes.length === 0 ? null : (
+            <div className="space-y-3">
+              <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">{MEMORY_CHANGES_HEADING}</p>
+              {ledger.changes.map(entry => (
+                <ChangeLedgerEntry key={entry.key} entry={entry} />
+              ))}
+            </div>
+          )}
         </CollapsibleContent>
       </Collapsible>
     </section>
@@ -83,5 +100,59 @@ function StepRow({ row }: { row: StepRowView }) {
         </CollapsibleContent>
       </li>
     </Collapsible>
+  )
+}
+
+function lines(values: readonly string[]): ReactNode {
+  return values.map((value, index) => (
+    <span key={index} className="block">
+      <MaskedText text={value} />
+    </span>
+  ))
+}
+
+/**
+ * One changed record's technical facts (D-19 part 2), in the 424 Technical details `dl` idiom: a row
+ * is pushed only when its fact exists. The one link takes its href from the view, which built it
+ * with `entityRefRoute` over the schema codec — never from a projection string (T-407-21).
+ */
+function ChangeLedgerEntry({ entry }: { entry: ChangeLedgerView }) {
+  const rows: [LedgerRow, ReactNode][] = [
+    ["bucket", entry.bucket],
+    ["record", lines(entry.recordIds)],
+  ]
+  if (entry.events.length > 0) rows.push(["events", lines(entry.events.map(ledgerEventText))])
+  if (entry.promotionPath !== undefined) rows.push(["promotion", promotionPathLabel(entry.promotionPath)])
+  if (entry.promotionReceiptDigest !== undefined) rows.push(["receipt", entry.promotionReceiptDigest])
+  if (entry.evidenceTokens.length > 0) rows.push(["evidence", lines(entry.evidenceTokens)])
+  if (entry.observationIds.length > 0) rows.push(["observation", lines(entry.observationIds)])
+  if (entry.sourceRunIds.length > 0) rows.push(["sourceRun", lines(entry.sourceRunIds)])
+  if (entry.validity !== undefined) rows.push(["validity", ledgerValidityText(entry.validity)])
+  if (entry.ref !== undefined) {
+    rows.push([
+      "link",
+      entry.href === undefined ? (
+        <MaskedText text={entry.ref} />
+      ) : (
+        <a href={entry.href} className="text-primary underline-offset-4 hover:underline">
+          {entry.ref}
+        </a>
+      ),
+    ])
+  }
+  return (
+    <dl
+      data-ledger-changes
+      className="grid grid-cols-[auto_minmax(0,1fr)] items-start gap-x-4 gap-y-2 text-xs"
+    >
+      {rows.map(([row, value]) => (
+        <Fragment key={row}>
+          <dt className="text-muted-foreground">{LEDGER_ROW_LABELS[row]}</dt>
+          <dd data-ledger-row={row} className="font-mono break-all select-text">
+            {value}
+          </dd>
+        </Fragment>
+      ))}
+    </dl>
   )
 }
