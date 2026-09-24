@@ -2,14 +2,17 @@
 // added to the union alone compiles everywhere and is never painted; this bar catches that half.
 
 import { expectTypeOf, test } from 'vitest'
-import type { InspectRecordView, RunKnowledgeRecordContent } from '@vostride/agent-qa-schema'
+import type { BundleStatus as SchemaBundleStatus, InspectRecordView, RunKnowledgeRecordContent } from '@vostride/agent-qa-schema'
 import {
   ANCHOR_PHRASE_TYPES,
+  CURRENT_STATUS_WORDS,
   KNOWLEDGE_SECTIONS,
   RECORD_KIND_LABELS,
+  SINCE_STATUS_TAGS,
   USE_VERBS,
   USE_VERB_PHRASES,
   type AnchorPhraseType,
+  type BundleStatus,
   type KnowledgeSection,
   type RecordKind,
   type UseVerb,
@@ -46,4 +49,13 @@ test('C427-ANCHOR-PHRASE-TYPES-EXACT', () => {
   expectTypeOf<(typeof ANCHOR_PHRASE_TYPES)[number]>().toEqualTypeOf<Expected>()
   expectTypeOf<Exclude<AnchorPhraseType, (typeof ANCHOR_PHRASE_TYPES)[number]>>().toEqualTypeOf<never>()
   expectTypeOf<Exclude<(typeof ANCHOR_PHRASE_TYPES)[number], AnchorPhraseType>>().toEqualTypeOf<never>()
+})
+
+test('C427-STATUS-WORDS-SHAPE', () => {
+  type Expected = 'active' | 'candidate' | 'superseded' | 'deprecated'
+  expectTypeOf<BundleStatus>().toEqualTypeOf<Expected>()
+  expectTypeOf<BundleStatus>().toEqualTypeOf<SchemaBundleStatus>()
+  expectTypeOf<BundleStatus>().toEqualTypeOf<RunKnowledgeRecordContent['currentStatus']>()
+  expectTypeOf<keyof typeof SINCE_STATUS_TAGS>().toEqualTypeOf<BundleStatus>()
+  expectTypeOf<keyof typeof CURRENT_STATUS_WORDS>().toEqualTypeOf<BundleStatus>()
 })

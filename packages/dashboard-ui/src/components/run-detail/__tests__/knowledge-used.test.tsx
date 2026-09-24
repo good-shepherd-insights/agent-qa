@@ -11,9 +11,14 @@ import { RunKnowledgeProjectionSchema, maskedMarker } from "@vostride/agent-qa-s
 
 import { KnowledgeUsed } from "@/components/run-detail/knowledge-used"
 import { TabKnowledge } from "@/components/run-detail/tab-knowledge"
+import { TooltipProvider } from "@/components/ui/tooltip"
 import {
   CHANNEL_EYEBROWS,
   CONTENT_ABSENCE_REASON_TEXT,
+  ON_TRIAL_TAG,
+  ON_TRIAL_TOOLTIP,
+  SHOW_FULL_RECORD_LABEL,
+  SINCE_STATUS_TAGS,
   RECORD_KIND_LABELS,
   RECORD_UNREADABLE_LEAD,
   USED_PAGE_SIZE,
@@ -300,5 +305,96 @@ describe("a used row says where its record applies (D-08)", () => {
   it("APPLICABILITY-KNOWN-ANSWER: a row with no joined content has no applicability line", () => {
     const view = mount(<KnowledgeUsed view={usedOf([step(0, { channel1: [line("rec_a", "served only")] })])} />)
     expect(view.querySelector("[data-row-applicability]")).toBeNull()
+  })
+})
+
+function servedLine(id: string, summary: string, status: string, servedAsCanary: boolean, join: Join = {}) {
+  return { ...line(id, summary, "fact", join), status, servedAsCanary }
+}
+
+function withCurrent(summary: string, currentStatus: string) {
+  return { ...content(summary, "fact"), currentStatus }
+}
+
+describe("a record on trial says what that means, without the store's word for it (D-09, D-13)", () => {
+  it("ON-TRIAL-TAG: a focusable on-trial tag with its meaning as tooltip and sr-only text; no other row wears it", async () => {
+    container = document.createElement("div")
+    document.body.append(container)
+    root = createRoot(container)
+    const used = usedOf([
+      step(0, { channel1: [servedLine("rec_t", "the promo code field is optional", "candidate", false), servedLine("rec_n", "a proven line", "active", false)] }),
+      step(1, { channel1: [servedLine("rec_t", "the promo code field is optional", "candidate", true)] }),
+    ])
+    act(() => { root?.render(<TooltipProvider delayDuration={0}><KnowledgeUsed view={used} /></TooltipProvider>) })
+
+    const [trial, proven] = rows(container)
+    expect(trial?.getAttribute("data-on-trial")).toBe("true")
+    expect(proven?.hasAttribute("data-on-trial")).toBe(false)
+    expect(proven?.textContent).not.toContain(ON_TRIAL_TAG)
+
+    const trigger = trial?.querySelector<HTMLElement>('span[tabindex="0"]')
+    expect(trigger).not.toBeNull()
+    expect(trigger?.querySelector('[data-slot="badge"]')?.textContent).toBe(ON_TRIAL_TAG)
+    expect(trigger?.querySelector(".sr-only")?.textContent).toBe(ON_TRIAL_TOOLTIP)
+    expect(trigger?.querySelector("svg")?.getAttribute("aria-hidden")).toBe("true")
+
+    const section = container.querySelector('[data-knowledge-section="used"]')
+    expect(section?.textContent).not.toMatch(/canary/i)
+    await act(async () => { trigger?.focus() })
+    expect(document.querySelector('[role="tooltip"]')?.textContent).toBe(ON_TRIAL_TOOLTIP)
+    expect(section?.textContent).not.toMatch(/canary/i)
+  })
+})
+
+describe("a record that changed since the run says how (D-09)", () => {
+  it("SINCE-TAG-RULE: served on trial and now superseded or proven wears the tag; unchanged or opened-only rows do not", () => {
+    const view = mount(<KnowledgeUsed view={usedOf([
+      step(0, {
+        channel1: [
+          servedLine("rec_s", "superseded since", "candidate", false, { recordContent: withCurrent("superseded since", "superseded") }),
+          servedLine("rec_p", "proven since", "candidate", false, { recordContent: withCurrent("proven since", "active") }),
+          servedLine("rec_u", "unchanged", "active", false, { recordContent: withCurrent("unchanged", "active") }),
+        ],
+        channel2: [{ id: "rec_o", detailLevel: "full", bodyDigest: "d", recordContent: withCurrent("opened only", "deprecated") }],
+      }),
+    ])} />)
+
+    const [superseded, proven, unchanged, opened] = rows(view)
+    expect(superseded?.getAttribute("data-since-status")).toBe("superseded")
+    expect(superseded?.textContent).toContain("since superseded")
+    expect(proven?.getAttribute("data-since-status")).toBe("active")
+    expect(proven?.textContent).toContain(SINCE_STATUS_TAGS.active)
+    for (const row of [unchanged, opened]) {
+      expect(row?.hasAttribute("data-since-status")).toBe(false)
+      expect(row?.textContent).not.toMatch(/\bsince\b/)
+    }
+  })
+})
+
+describe("a used row opens to its whole record, counts before the curator's note (D-09, memory.md §7.5)", () => {
+  it("FULL-RECORD-ORDER: status, body, counts, note — and no numeric trust, tier or evidence token anywhere", () => {
+    const joined = {
+      ...content("the cart page lives at /view_cart", "fact"),
+      currentStatus: "candidate",
+      currentTrust: { confirmations: 3, contradictions: 1, evidenceTokens: ["evtok-7f3e"], lastEventOrdinal: 4, trustNarrative: "Seen on two runs." },
+    }
+    const view = mount(<KnowledgeUsed view={usedOf([
+      step(0, { channel1: [{ ...line("rec_a", "the cart page lives at /view_cart", "fact", { recordContent: joined }), trust: 0.8765, tier: "provisional" }] }),
+    ])} />)
+
+    const trigger = [...view.querySelectorAll<HTMLElement>('[data-slot="collapsible-trigger"]')]
+      .find(element => element.textContent === SHOW_FULL_RECORD_LABEL)
+    expect(trigger).toBeDefined()
+    act(() => { trigger?.click() })
+
+    const full = view.querySelector<HTMLElement>("[data-full-record]")
+    expect(full).not.toBeNull()
+    const order = [...(full?.children ?? [])].map(child =>
+      ["data-record-current-status", "data-record-content", "data-trust-counts", "data-evidence-note"].find(name => child.hasAttribute(name)))
+    expect(order).toEqual(["data-record-current-status", "data-record-content", "data-trust-counts", "data-evidence-note"])
+    expect(full?.querySelector("[data-trust-counts]")?.textContent).toBe("Confirmed 3 times · contradicted once")
+
+    const section = view.querySelector('[data-knowledge-section="used"]')?.textContent ?? ""
+    for (const hidden of ["0.8765", "0.88", "provisional", "evtok-7f3e"]) expect(section).not.toContain(hidden)
   })
 })

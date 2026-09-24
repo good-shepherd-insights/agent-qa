@@ -5,17 +5,21 @@ import { RunKnowledgeProjectionSchema, type RunKnowledgeProjection } from '@vost
 
 import {
   ANCHOR_PHRASE_TYPES,
+  CURRENT_STATUS_WORDS,
   KNOWLEDGE_SECTIONS,
   PROCEDURE_CONTENT_NOT_RECORDED_LEAD,
   RECORD_KIND_LABELS,
   RECORD_UNREADABLE_LEAD,
+  SINCE_STATUS_TAGS,
   USE_VERBS,
   applicabilityText,
   applicabilityView,
   contentById,
   formatStepRefs,
   parseAnchor,
+  sinceStatusFor,
   stepRefAccessibleName,
+  trustCountsLine,
   usedCountLine,
   usedRecordViews,
   type StepAddress,
@@ -117,6 +121,18 @@ describe('the 427 closed sets are exactly the published members', () => {
     expect(KNOWLEDGE_SECTIONS).toEqual(['used', 'effect', 'changes', 'retrieval-details'])
     expect(USE_VERBS).toEqual(['given', 'opened', 'caution', 'replayed', 'hint'])
     expect(ANCHOR_PHRASE_TYPES).toEqual(['platform', 'page', 'flow', 'el', 'selector', 'error', 'unparsed'])
+    expect(SINCE_STATUS_TAGS).toEqual({
+      active: 'since proven',
+      candidate: 'since put back on trial',
+      superseded: 'since superseded',
+      deprecated: 'since retired',
+    })
+    expect(CURRENT_STATUS_WORDS).toEqual({
+      active: 'in use',
+      candidate: 'on trial',
+      superseded: 'superseded',
+      deprecated: 'retired',
+    })
     expect(RECORD_KIND_LABELS).toEqual({
       fact: 'Fact',
       caution: 'Caution',
@@ -385,5 +401,58 @@ describe('where a record applies, in plain words (D-08)', () => {
       { type: 'unparsed', text: 'page:/cart' },
       { type: 'unparsed', text: '{"t":"page"}' },
     ])
+  })
+})
+
+function served(id: string, summary: string, status: string, servedAsCanary: boolean, join: Join = {}) {
+  return { ...line(id, summary, join), status, servedAsCanary }
+}
+
+function now(summary: string, currentStatus: string) {
+  return { ...content(summary), currentStatus }
+}
+
+describe('a record on trial says so, and a record that changed since says how (D-09)', () => {
+  it('ON-TRIAL-TAG: a record served once on trial is onTrial; one never served on trial carries no flag', () => {
+    const views = usedRecordViews(projection([
+      servedStep(0, { channel1: [served('rec_t', 'on trial once', 'candidate', false), served('rec_n', 'never on trial', 'active', false)] }),
+      servedStep(1, { channel1: [served('rec_t', 'on trial once', 'candidate', true)] }),
+    ]))
+    expect(views.map(view => view.onTrial)).toEqual([true, undefined])
+    expect('onTrial' in views[1]!).toBe(false)
+  })
+
+  it('SINCE-TAG-RULE: a tag only when a serve-time status exists and the current status differs from it', () => {
+    expect(sinceStatusFor).toBeTypeOf('function')
+    expect(sinceStatusFor('candidate', 'superseded')).toBe('superseded')
+    expect(sinceStatusFor('candidate', 'active')).toBe('active')
+    expect(sinceStatusFor('active', 'active')).toBeUndefined()
+    expect(sinceStatusFor(undefined, 'active')).toBeUndefined()
+    expect(sinceStatusFor('hunch', 'active')).toBeUndefined()
+    expect(sinceStatusFor('candidate', undefined)).toBeUndefined()
+
+    const views = usedRecordViews(projection([
+      servedStep(0, {
+        channel1: [
+          served('rec_s', 'superseded since', 'candidate', true, { recordContent: now('superseded since', 'superseded') }),
+          served('rec_p', 'proven since', 'candidate', false, { recordContent: now('proven since', 'active') }),
+          served('rec_same', 'unchanged', 'active', false, { recordContent: now('unchanged', 'active') }),
+          served('rec_odd', 'odd served status', 'hunch', false, { recordContent: now('odd served status', 'active') }),
+        ],
+        channel2: [opened('rec_o', { recordContent: now('opened only', 'deprecated') })],
+      }),
+    ]))
+    expect(views.map(view => view.sinceStatus)).toEqual(['superseded', 'active', undefined, undefined, undefined])
+    expect(SINCE_STATUS_TAGS[views[0]!.sinceStatus!]).toBe('since superseded')
+    expect(SINCE_STATUS_TAGS[views[1]!.sinceStatus!]).toBe('since proven')
+  })
+})
+
+describe('the track record is counted by code (memory.md §7.5)', () => {
+  it('TRUST-COUNTS-LINE: once for 1, {n} times otherwise, zero included', () => {
+    expect(trustCountsLine).toBeTypeOf('function')
+    expect(trustCountsLine(1, 0)).toBe('Confirmed once · contradicted 0 times')
+    expect(trustCountsLine(3, 1)).toBe('Confirmed 3 times · contradicted once')
+    expect(trustCountsLine(0, 0)).toBe('Confirmed 0 times · contradicted 0 times')
   })
 })
