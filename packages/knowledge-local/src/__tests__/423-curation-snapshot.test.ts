@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { asEvidenceToken, asRecordId, type BundleDraft, type Delta, type RecordChange } from '@vostride/agent-qa-schema'
+import { asEvidenceToken, asRecordId, CurationSnapshotSchema, type BundleDraft, type Delta, type RecordChange } from '@vostride/agent-qa-schema'
 import { diffSince } from '../diff-since.js'
 import { defaultGuardrailPolicyInput, loadGuardrailPolicy } from '@vostride/agent-qa-safety'
 import * as bundleAppend from '../bundle-append.js'
@@ -350,5 +350,78 @@ describe('423 curation snapshot', () => {
     expect(report.failures).toBe(0)
     expect(report.effects).toEqual([])
     expect(report).not.toHaveProperty('snapshot')
+  })
+
+  it('ZERO-EFFECT-SNAPSHOT records an all-zero snapshot for a clean drain that committed nothing for the run', async () => {
+    const f = commitFixture()
+    commitCurationDelta(f.deps, f.claimed, f.checkpoint(f.supersede))
+    const report = await drainQueue({ knowledgeRoot: f.root, auditBaseDir: f.deps.auditBaseDir, lease: f.authority,
+      author: async () => ({ kind: 'fallback-required', reason: 'no-model' }), executionContext: 'ci', policy: f.deps.policy,
+      maintenance: 'skip', sourceRunId: 'synthetic-run-zero' })
+    expect({ kind: report.kind, failures: report.failures, requeued: report.requeued, remaining: report.remaining })
+      .toEqual({ kind: 'drained', failures: 0, requeued: 0, remaining: 0 })
+    expect(report.effects).toEqual([])
+    const zero = { schemaVersion: 1, rows: [], breakdown: { added: 0, confirmed: 0, superseded: 0, deprecated: 0, proposed: 0 } }
+    expect(report.snapshot).toEqual(zero)
+    expect(CurationSnapshotSchema.parse(report.snapshot)).toEqual(zero)
+  })
+
+  it.each(['deprecation', 'confirmation'] as const)('RECEIPT-LOSS-CANARY-LINKED %s never reads lost receipts as nothing committed', async (kind) => {
+    const f = commitFixture()
+    const observationId = f.claimed.payload.attributingObservationId
+    const confirm: Delta = { kind: 'Confirm', origin: 'agent', scope: f.add.scope, citedIds: [f.victim.bundleId], targetId: f.victim.bundleId,
+      evidenceToken: asEvidenceToken(f.claimed.payload.evidenceToken) }
+    if (kind === 'deprecation') {
+      // No shipped commit stamps a canary id on a deprecation, so the confirmation belongs to another run
+      // and this run's only change is appended directly: the observation-id arm alone must refuse the zero.
+      f.claimed.payload.sourceRunId = 'synthetic-run-other'
+      f.claimed.payload.attributingObservationId = 'synthetic-observation-other'
+    }
+    expect(commitCurationDelta(f.deps, f.claimed, f.checkpoint(confirm)).kind).toBe('applied')
+    if (kind === 'deprecation') {
+      const config = { knowledgeRoot: f.root, productKey: 'storefront', auditBaseDir: f.deps.auditBaseDir,
+        commitArtifacts: 'none' as const, writerLeaseId: f.authority.leaseId, writerEpoch: f.authority.epoch }
+      expect(bundleAppend.appendOutcomeEvent(config, f.victim.bundleId, { type: 'deprecated', buildOrdinal: 44,
+        evidenceToken: asEvidenceToken('canary-deprecation'), curationJobId: 'canary-job', observationId, reason: 'synthetic canary retirement' }).kind).toBe('appended')
+    }
+    const linked = diffSince({ knowledgeRoot: f.root, sinceOrdinal: 0 })
+    // The run's only surviving change sits on an older bundle: no change carries its run id.
+    expect(linked.some(change => change.sourceRunId === 'synthetic-run-43')).toBe(false)
+    expect(linked.filter(change => change.observationId === observationId)).toHaveLength(1)
+    const receiptsDir = join(f.root, COMPLETED_EFFECTS_SUBDIR)
+    for (const name of readdirSync(receiptsDir)) rmSync(join(receiptsDir, name))
+    const report = await drainQueue({ knowledgeRoot: f.root, auditBaseDir: f.deps.auditBaseDir, lease: f.authority,
+      author: async () => ({ kind: 'fallback-required', reason: 'no-model' }), executionContext: 'ci', policy: f.deps.policy,
+      maintenance: 'skip', sourceRunId: 'synthetic-run-43', observationIds: [observationId] })
+    expect(report.failures).toBe(0)
+    if (kind === 'deprecation') {
+      expect(report.effects).toEqual([])
+      expect(report).not.toHaveProperty('snapshot')
+    } else {
+      // The canary-attributed confirmation is itself a surviving effect, so the record is never all-zero.
+      expect(report.effects?.map(effect => effect.bucket)).toEqual(['confirmed'])
+      expect(report.snapshot?.breakdown).toEqual({ added: 0, confirmed: 1, superseded: 0, deprecated: 0, proposed: 0 })
+    }
+  })
+
+  it.each(['failure', 'requeue'] as const)('INCOMPLETE-DRAIN-NO-ZERO %s never records a zero-effect drain that did not finish cleanly', async (mode) => {
+    const f = commitFixture('local-interactive')
+    let claimed = false
+    const report = await drainQueue({ knowledgeRoot: f.root, auditBaseDir: f.deps.auditBaseDir, lease: f.authority,
+      author: async () => { throw new Error('synthetic author failure') },
+      executionContext: 'local-interactive', policy: f.deps.policy, maintenance: 'skip', sourceRunId: 'synthetic-run-zero',
+      operations: {
+        claimNextJob: () => {
+          if (mode === 'failure') throw new Error('synthetic claim failure')
+          if (claimed) return undefined
+          claimed = true
+          return f.claimed
+        },
+      } })
+    expect(report.effects).toEqual([])
+    expect(report.failures + report.requeued + report.remaining, JSON.stringify(report)).toBeGreaterThan(0)
+    if (mode === 'requeue') expect(report.requeued + report.remaining, JSON.stringify(report)).toBeGreaterThan(0)
+    expect(report).not.toHaveProperty('snapshot')
+    expect(report).not.toHaveProperty('snapshotFoldFailed')
   })
 })
