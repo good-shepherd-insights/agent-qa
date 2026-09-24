@@ -1,12 +1,17 @@
-import { mkdtempSync, rmSync, readFileSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, rmSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { LOCAL_CURATION_CAPABILITIES, DIGEST_JOB_ID_SOURCE, type ComposeLocalAgentInput } from '@vostride/agent-qa-agent-local'
-import { asRecordId, asRunId, CurationSnapshotSchema } from '@vostride/agent-qa-schema'
+import { DatabaseSync } from 'node:sqlite'
+import { chainJobIdsForRun } from '@vostride/agent-qa-agent'
+import { composeLocalAgent, LOCAL_CURATION_CAPABILITIES, DIGEST_JOB_ID_SOURCE, type ComposeLocalAgentInput } from '@vostride/agent-qa-agent-local'
+import { createMaskingContext, type AuditSink } from '@vostride/agent-qa-safety'
+import { runSafetyScope } from '@vostride/agent-qa-safety-local'
+import { asRecordId, asRunId, CURRENT_HANDOFF_SCHEMA_VERSION, CurationSnapshotSchema, type CompletedRunHandoff } from '@vostride/agent-qa-schema'
 import * as tailModule from '../curation-tail.js'
 import { emptyCanaryCreditCounters } from '../canary-credit.js'
-import { runPostRunTail, type PostRunTailHostInput, type PostRunTailOperations } from '../post-run-tail.js'
+import { defaultPostRunTailOperations, runPostRunTail, type PostRunTailHostInput, type PostRunTailOperations } from '../post-run-tail.js'
+import { enqueueThroughTheStep } from '../../__tests__/post-run-step-harness.js'
 import { runDaemonHost, type DaemonHostOperations } from '../../daemon/host.js'
 import { createInProcessFixture } from '../../composition/__tests__/in-process-run-fixture.js'
 
@@ -20,6 +25,8 @@ const snapshot = CurationSnapshotSchema.parse({ schemaVersion: 1,
       sourceRunId: RUN_ID, observationId: `observation-${i}`,
       ...(bucket === 'superseded' ? { byRecordId: 'replacement' } : {}) } }],
   })), breakdown: { added: 1, confirmed: 1, superseded: 1, deprecated: 1, proposed: 1 } })
+const ZERO_SNAPSHOT = { schemaVersion: 1, rows: [],
+  breakdown: { added: 0, confirmed: 0, superseded: 0, deprecated: 0, proposed: 0 } }
 const malformedSnapshot = { ...snapshot, breakdown: { ...snapshot.breakdown, added: 20 } }
 function tempRoot() { const root = mkdtempSync(join(tmpdir(), '423-curation-tail-')); roots.push(root); return root }
 afterEach(() => { vi.restoreAllMocks(); for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }) })
@@ -69,6 +76,25 @@ describe('423 curation tail snapshot', () => {
     const second = await tailModule.curateCompletedRun(f.input)
     expect(second).toEqual({ curated: 3, deprecated: 1, complete: true, drainKind: 'drained', candidateIds: [], snapshot })
     expect(f.drainQueue).toHaveBeenCalledTimes(1)
+  })
+
+  it('TAIL-ZERO-EFFECT-SNAPSHOT records the all-zero snapshot from the real drain and short-circuits a rerun on it', async () => {
+    const f = fixture()
+    mkdirSync(f.input.knowledgeRoot, { recursive: true })
+    const drainQueue = vi.fn(LOCAL_CURATION_CAPABILITIES.drainQueue)
+    const { authority: _fake, ...unleased } = f.input
+    const input = { ...unleased, policy: tailModule.defaultPostRunGuardrailPolicy(),
+      operations: { ...f.input.operations, drainQueue } } as tailModule.CurateCompletedRunInput
+    const first = await tailModule.curateCompletedRun(input)
+    expect(first).toMatchObject({ complete: true, drainKind: 'drained', curated: 0, deprecated: 0 })
+    expect(first.snapshot).toEqual(ZERO_SNAPSHOT)
+    expect(tailModule.readCurationTailReceipt(f.root)?.snapshot).toEqual(ZERO_SNAPSHOT)
+    const before = readFileSync(join(f.root, tailModule.CURATION_TAIL_RECEIPT_FILE))
+    const second = await tailModule.curateCompletedRun(input)
+    expect(second.snapshot).toEqual(ZERO_SNAPSHOT)
+    expect(drainQueue).toHaveBeenCalledTimes(1)
+    expect(readFileSync(join(f.root, tailModule.CURATION_TAIL_RECEIPT_FILE)).equals(before)).toBe(true)
+    expect(f.info).toHaveBeenCalledWith('curation: added 0, confirmed 0, superseded 0, deprecated 0, proposed 0')
   })
 
   it('TAIL-LEGACY-READ retains historical counters without minting a snapshot', async () => {
@@ -150,6 +176,58 @@ describe('423 curation tail snapshot', () => {
     expect(bound!.resolveClaimAuthority?.()).toBeUndefined()
   })
 
+  it('CURATE-CAPABILITY-ZERO-EFFECT terminal checkpoints and serves the all-zero snapshot through the real tail adapter', async () => {
+    const root = tempRoot()
+    const zeroRun = 'run-427-04-zero-effect'
+    const knowledge = join(root, 'knowledge')
+    mkdirSync(knowledge, { recursive: true })
+    mkdirSync(tailModule.completedRunDir(root, zeroRun), { recursive: true })
+    writeFileSync(tailModule.completedRunHandoffPath(root, zeroRun), `${JSON.stringify(zeroEffectHandoff(zeroRun))}\n`, 'utf8')
+    writeFileSync(tailModule.completedRunEventsPath(root, zeroRun), `${zeroEffectEvents(zeroRun)
+      .map(line => JSON.stringify(line)).join('\n')}\n`, 'utf8')
+    const hosts: ReturnType<typeof composeLocalAgent>[] = []
+    // The tail's own `curateRun` is bound into the composition, so the fold is the shipped
+    // curateCompletedRun over the real drain; nothing here hands it a snapshot.
+    const composeHost = (input?: PostRunTailHostInput): never => {
+      const host = composeLocalAgent({
+        mintQuarantineIdentityPath: (filePath: string) => filePath,
+        agentQaRoot: root, config: TEST_CONFIG, knowledgeRoot: () => knowledge,
+        model: () => ({ modelId: 'test:427-04-zero-effect', generate: async () => ({ text: 'not an author payload' }) }),
+        idSource: DIGEST_JOB_ID_SOURCE,
+        postRun: { curateRun: input?.curateRun ?? (async () => { throw new Error('the enqueue host never folds') }),
+          candidateProse: 'masker-active' },
+      } as unknown as ComposeLocalAgentInput)
+      hosts.push(host)
+      return host as never
+    }
+    const configPath = join(root, 'agent-qa.config.yaml')
+    const served = await runSafetyScope({ maskingContext: createMaskingContext(), executionContext: 'local-headless' }, async () => {
+      await enqueueThroughTheStep({ runId: zeroRun, agentQaRoot: root, configPath, composeHost: () => composeHost() })
+      const tail = runPostRunTail({ runId: zeroRun, agentQaRoot: root, configPath,
+        knowledgeConfig: { dir: 'knowledge' }, configDir: root, auditSink: {} as AuditSink,
+        policy: tailModule.defaultPostRunGuardrailPolicy(), log: { warn: () => undefined, info: () => undefined },
+        operations: { resolveKnowledgeRoot: () => knowledge, runCurationTail: async () => undefined,
+          composeHost } as unknown as PostRunTailOperations } as never)
+      await tail.drain()
+      await tail.finish()
+      expect(tail.report().drain).toBe('drained')
+      return await defaultPostRunTailOperations().readPostProcessingStatus(composeHost(), zeroRun)
+    })
+    for (const host of hosts) await host.close()
+    expect(tailModule.readCurationTailReceipt(tailModule.completedRunDir(root, zeroRun))?.snapshot).toEqual(ZERO_SNAPSHOT)
+    const db = new DatabaseSync(join(root, 'agent-jobs.db'), { readOnly: true })
+    try {
+      const row = db.prepare(`SELECT payload_json FROM job_checkpoints WHERE job_id = ? AND checkpoint_id = ?
+        ORDER BY attempt DESC LIMIT 1`).get(String(chainJobIdsForRun(zeroRun, DIGEST_JOB_ID_SOURCE).curateMemory), 'bundle-committed')
+      expect(row, 'no bundle-committed checkpoint').toBeDefined()
+      expect(JSON.parse(String(row!.payload_json)).value).toEqual({ runId: zeroRun, curated: 0, deprecated: 0, curationSnapshot: ZERO_SNAPSHOT })
+    } finally { db.close() }
+    expect(served.chips.curation).toBe('done')
+    expect(served.curationSnapshot).toEqual(ZERO_SNAPSHOT)
+    expect(served).not.toHaveProperty('curationSnapshotWithheld')
+    expect(served.notification?.stages.curation.curationSnapshot).toEqual(ZERO_SNAPSHOT)
+  })
+
   it('CURATE-CAPABILITY-SNAPSHOT daemon preserves complete snapshot through its real bound capability', async () => {
     const defaultOperations = tailModule.defaultCurationTailOperations()
     vi.spyOn(tailModule, 'defaultCurationTailOperations').mockReturnValue({ ...defaultOperations,
@@ -164,6 +242,23 @@ describe('423 curation tail snapshot', () => {
     } finally { await daemon.stop() }
   })
 })
+
+/** A passing run with no step to learn from: its fold files no curation candidate. */
+function zeroEffectHandoff(runId: string): CompletedRunHandoff {
+  return { schemaVersion: CURRENT_HANDOFF_SCHEMA_VERSION, runId: asRunId(runId),
+    scope: { tier: 'product', key: 'zero-effect-storefront' }, buildOrdinal: 7, executionContext: 'local-headless',
+    aggregateVerdict: 'passed', configDigests: { suiteConfigDigest: 'suite-digest', testConfigDigest: 'test-digest' },
+    startedAt: 1, endedAt: 2,
+    tests: [{ testId: 't_passed', testName: 'checks out', filePath: 'tests/checkout.yaml', testIndex: 0, outcome: 'passed', steps: [] }],
+  } as unknown as CompletedRunHandoff
+}
+function zeroEffectEvents(runId: string) {
+  return [
+    { seq: 1, ts: 10, runId, type: 'runStarted', payload: { busSchemaVersion: 1 } },
+    { seq: 2, ts: 20, runId, type: 'verdict', payload: { verdict: 'passed' } },
+    { seq: 3, ts: 30, runId, type: 'runFinished', payload: { aggregateVerdict: 'passed', disposition: 'detached', finalSeq: 3 } },
+  ]
+}
 
 const DAEMON_LEASE = { leaseId: 'lease-daemon', epoch: 41 }
 const TEST_CONFIG = { getMasked: async () => ({ schemaVersion: 1, configPath: '/tmp/423.config.yaml', entries: [] }) }

@@ -25,7 +25,12 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { emptyCanaryCreditCounters } from '../canary-credit.js'
-import { completedRunDir, CURATION_TAIL_RECEIPT_FILE } from '../curation-tail.js'
+import {
+  completedRunDir,
+  CURATION_TAIL_RECEIPT_FILE,
+  defaultPostRunGuardrailPolicy,
+  readCurationTailReceipt,
+} from '../curation-tail.js'
 import type { Mock } from 'vitest'
 
 import { chainJobIdsForRun, renderVerdictSentence } from '@vostride/agent-qa-agent'
@@ -860,6 +865,107 @@ describe('425 D-20 — the chain-terminal line a real snapshot-bearing run print
     // …and neither spelling of the legacy sentence survives beside it.
     expect(terminal).not.toContain(' curated')
     expect(terminal).not.toContain(' deprecated)')
+  })
+
+  // 427 D-24. The same scene for a run whose fold committed nothing, with ONE seam changed: the
+  // host binds the tail's own `curateRun`, so the fold is the shipped curateCompletedRun over the
+  // real drain and no snapshot is handed in. The recorded all-zero measurement prints as five zero
+  // buckets (note 38: a log line is a record), never the legacy pair.
+  it('CHAIN-LINE-ZERO-EFFECT prints five zero buckets for a run whose curation changed nothing', async () => {
+    const zeroRun = 'run-427-04-chain-zero-effect'
+    const root = mkdtempSync(join(tmpdir(), 'agent-qa-427-04-'))
+    chainRoots.push(root)
+    const knowledge = join(root, 'knowledge')
+    mkdirSync(knowledge, { recursive: true })
+    const runDir = join(root, RUNS_SUBDIR, slugBranch(zeroRun))
+    mkdirSync(runDir, { recursive: true })
+    // A passing run with no step to learn from: its fold files no curation candidate.
+    const passed = {
+      ...chainHandoff(),
+      runId: asRunId(zeroRun),
+      scope: { tier: 'product', key: 'zero-effect-storefront' },
+      aggregateVerdict: 'passed',
+      tests: [{
+        testId: 't_passed', testName: 'checks out', filePath: 'tests/checkout.yaml',
+        testIndex: 0, outcome: 'passed', steps: [],
+      }],
+    }
+    writeFileSync(join(runDir, HANDOFF_FILE), `${JSON.stringify(passed)}\n`, 'utf8')
+    writeFileSync(join(runDir, 'events.jsonl'), `${CHAIN_EVENT_LINES
+      .map((line) => JSON.stringify({ ...line, runId: zeroRun, payload: line.type === 'runStarted'
+        ? line.payload
+        : line.type === 'verdict'
+          ? { verdict: 'passed' }
+          : { aggregateVerdict: 'passed', disposition: 'detached', finalSeq: 3 } }))
+      .join('\n')}\n`, 'utf8')
+
+    const info = vi.fn<(message: string) => void>()
+    const hostsOpened: { close: () => Promise<void> }[] = []
+    const openChainHost = (input?: { readonly curateRun?: unknown }): never => {
+      const host = composeLocalAgent({
+        mintQuarantineIdentityPath: (filePath: string) => filePath,
+        agentQaRoot: root,
+        config: CHAIN_CONFIG,
+        knowledgeRoot: () => knowledge,
+        model: () => CHAIN_MODEL,
+        idSource: DIGEST_JOB_ID_SOURCE,
+        postRun: {
+          curateRun: input?.curateRun ?? (async () => {
+            throw new Error('the enqueue host never folds')
+          }),
+          candidateProse: 'masker-active',
+        },
+      } as never)
+      hostsOpened.push(host as unknown as { close: () => Promise<void> })
+      return host as never
+    }
+
+    const report = await runSafetyScope(
+      { maskingContext: createMaskingContext(), executionContext: 'local-headless' },
+      async () => {
+        await enqueueThroughTheStep({
+          runId: zeroRun,
+          agentQaRoot: root,
+          configPath: join(root, 'agent-qa.config.yaml'),
+          composeHost: () => openChainHost(),
+        })
+        const tail = runPostRunTail({
+          runId: zeroRun,
+          agentQaRoot: root,
+          configPath: join(root, 'agent-qa.config.yaml'),
+          knowledgeConfig: { dir: 'knowledge' },
+          configDir: root,
+          auditSink: {} as AuditSink,
+          policy: defaultPostRunGuardrailPolicy(),
+          log: { warn: () => undefined, info: (m: string) => info(m) },
+          operations: {
+            resolveKnowledgeRoot: () => knowledge,
+            runCurationTail: async () => undefined,
+            composeHost: openChainHost,
+          } as unknown as PostRunTailOperations,
+        })
+        await tail.drain()
+        await tail.finish()
+        return tail.report()
+      },
+    )
+    for (const host of hostsOpened) await host.close()
+
+    expect(report.drain).toBe('drained')
+    // The real fold wrote the record the line is about.
+    expect(readCurationTailReceipt(runDir)?.snapshot).toEqual({
+      schemaVersion: 1,
+      rows: [],
+      breakdown: { added: 0, confirmed: 0, superseded: 0, deprecated: 0, proposed: 0 },
+    })
+    const lines = info.mock.calls.map(([message]) => String(message))
+    const terminal = lines.find((message) => message.startsWith('post-processing done for'))
+    expect(terminal, `no chain-terminal line in:\n${lines.join('\n')}`).toBeDefined()
+    // A real fold's receipt also carries its canary counters, which close the same parenthesis.
+    expect(terminal).toContain(
+      'curation: done (added 0, confirmed 0, superseded 0, deprecated 0, proposed 0; canary: credited 0, '
+      + 'ride-along 0, cap-exceeded 0, non-signal 0, rerun-excluded 0, staged 0) ·')
+    expect(terminal).not.toContain('curated')
   })
 })
 
