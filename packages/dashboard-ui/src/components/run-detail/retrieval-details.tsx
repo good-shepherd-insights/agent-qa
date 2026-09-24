@@ -87,7 +87,8 @@ function StepRow({ row }: { row: StepRowView }) {
           {row.noBrief === true ? (
             <span className="text-xs text-muted-foreground">{STEP_NO_BRIEF_TEXT}</span>
           ) : (
-            <span className="flex items-center gap-1">
+            // flex-wrap lets the badges shrink to their widest one, so the truncating title keeps room.
+            <span className="flex flex-wrap items-center gap-1">
               {row.facts.map(fact => (
                 <Badge key={fact} variant="outline" className="text-xs font-medium">{fact}</Badge>
               ))}
