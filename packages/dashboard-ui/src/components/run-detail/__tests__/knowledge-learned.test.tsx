@@ -24,10 +24,12 @@ import { afterEach, describe, expect, it, vi } from "vitest"
 import {
   CurationSnapshotSchema,
   RunKnowledgeProjectionSchema,
+  formatEntityUri,
   type RunKnowledgeProjection,
 } from "@vostride/agent-qa-schema"
 
 import { KnowledgeLearned } from "@/components/run-detail/knowledge-learned"
+import { RetrievalDetails } from "@/components/run-detail/retrieval-details"
 import {
   BREAKDOWN_NOT_RECORDED_TEXT,
   COUNTS_NOT_RECORDED_TEXT,
@@ -48,6 +50,7 @@ import {
   STORE_READ_INCOMPLETE_TEXT,
   learnedView,
   pendingProposalsLine,
+  projectKnowledgeView,
   reconciliationCountText,
   type LearnedRowView,
   type LearnedView,
@@ -55,6 +58,15 @@ import {
 } from "@/lib/knowledge-view"
 
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
+
+// A build whose entity routes resolve a memory reference. The shipped table routes none
+// (`ENTITY_KIND_ROUTES.MEM` is null), so the routed-link cell names the one reference it routes; the
+// href still reaches the ledger only through the view's `entityRefRoute` call.
+const routedRefs = vi.hoisted(() => new Map<string, string>())
+vi.mock("@/chat/entity-card", async importOriginal => {
+  const actual = await importOriginal<typeof import("@/chat/entity-card")>()
+  return { ...actual, entityRefRoute: (ref: string) => routedRefs.get(ref) ?? actual.entityRefRoute(ref) }
+})
 
 let root: Root | undefined
 let container: HTMLDivElement | undefined
@@ -79,6 +91,37 @@ function mount(element: ReactElement): HTMLElement {
 
 function render(view: LearnedView, proposals?: ProposalsView): HTMLElement {
   return mount(<KnowledgeLearned view={view} proposals={proposals} />)
+}
+
+type LedgerChange = Extract<RunKnowledgeProjection, { kind: "ready" }>["learned"]["changes"][number]
+
+function ledgerChange(recordId: string, change: LedgerChange["change"], atOrdinal: number, extra: Partial<LedgerChange> = {}): LedgerChange {
+  return { schemaVersion: 1, recordId, change, atOrdinal, ...extra }
+}
+
+// 427 D-19 part 2: the ledger a page actually paints — a schema-valid read folded by the real
+// `projectKnowledgeView`, mounted in Retrieval details and opened.
+function renderLedger(changes: LedgerChange[]): HTMLElement {
+  const projection = RunKnowledgeProjectionSchema.parse({
+    kind: "ready", runId: "run-427-08-ledger", buildOrdinal: 2, knowledgeStore: "bound", steps: [],
+    curation: { status: "done", counts: { curated: changes.length, deprecated: 0 } },
+    learned: { changes, canaryAttributions: [] },
+  })
+  const view = projectKnowledgeView({ kind: "read", projection })
+  if (view.state !== "ready") throw new Error("expected ready")
+  const host = mount(<RetrievalDetails ledger={view.ledger} />)
+  const trigger = host.querySelector<HTMLElement>('[data-knowledge-section="retrieval-details"] [data-slot="collapsible-trigger"]')
+  if (trigger === null) throw new Error("no Retrieval details trigger")
+  act(() => { trigger.click() })
+  return host
+}
+
+function ledgerBlocks(host: HTMLElement): HTMLElement[] {
+  return [...host.querySelectorAll<HTMLElement>("dl[data-ledger-changes]")]
+}
+
+function ledgerRow(block: Element | undefined, row: string): HTMLElement | null {
+  return block?.querySelector<HTMLElement>(`dd[data-ledger-row="${row}"]`) ?? null
 }
 
 function stateOf(host: HTMLElement): string | null {
@@ -106,29 +149,32 @@ function row(overrides: Partial<LearnedRowView> = {}): LearnedRowView {
   }
 }
 
+// RE-TARGETED 427-08 (D-19 part 2): the receipt is a technical fact, so it reads in Retrieval details.
 describe('419 receipt-backed promotion attribution', () => {
   it.each(['user-sovereign', 'gate1+gate2', 'gate1-lower-trust', 'deterministic-verdict-floor'] as const)(
     'renders the recorded %s path and receipt prefix', promotionPath => {
       const promotionReceiptDigest = '0123456789abcdef'.repeat(4)
-      const host = render({ state: 'done', rows: [row({ kind: 'promoted', promotionPath, promotionReceiptDigest })] })
-      const attribution = host.querySelector(`[data-promotion-path="${promotionPath}"]`)
-      expect(attribution?.textContent).toBe(`promoted via ${promotionPath} · 0123456789ab`)
-      expect(attribution?.getAttribute('data-promotion-receipt')).toBe(promotionReceiptDigest)
-      expect(rowsOf(host)[0]?.getAttribute('data-record-change')).toBe('promoted')
+      const host = renderLedger([ledgerChange('fact-promoted', 'promoted', 7, { promotionPath, promotionReceiptDigest })])
+      const block = ledgerBlocks(host)[0]
+      expect(ledgerRow(block, 'promotion')?.textContent).toBe(promotionPath)
+      expect(ledgerRow(block, 'receipt')?.textContent).toBe(promotionReceiptDigest)
+      expect(ledgerRow(block, 'receipt')?.textContent?.startsWith('0123456789ab')).toBe(true)
+      expect(ledgerRow(block, 'bucket')?.textContent).toBe('confirmed')
     },
   )
 
   it('renders a path without inventing a receipt', () => {
-    const host = render({ state: 'done', rows: [row({ kind: 'promoted', promotionPath: 'user-sovereign' })] })
-    const attribution = host.querySelector('[data-promotion-path="user-sovereign"]')
-    expect(attribution?.textContent).toBe('promoted via user-sovereign')
-    expect(attribution?.getAttribute('data-promotion-receipt')).toBe('')
+    const host = renderLedger([ledgerChange('fact-promoted', 'promoted', 7, { promotionPath: 'user-sovereign' })])
+    const block = ledgerBlocks(host)[0]
+    expect(ledgerRow(block, 'promotion')?.textContent).toBe('user-sovereign')
+    expect(ledgerRow(block, 'receipt')).toBeNull()
   })
 
   it('leaves historical promoted rows without an attribution element', () => {
-    const host = render({ state: 'done', rows: [row({ kind: 'promoted' })] })
-    expect(host.querySelector('[data-promotion-path]')).toBeNull()
-    expect(host.textContent).not.toContain('promoted via')
+    const host = renderLedger([ledgerChange('fact-promoted', 'promoted', 7)])
+    expect(ledgerBlocks(host).length).toBe(1)
+    expect(host.querySelector('[data-ledger-row="promotion"]')).toBeNull()
+    expect(host.querySelector('[data-ledger-row="receipt"]')).toBeNull()
   })
 })
 
@@ -443,73 +489,76 @@ describe("the record list is one addressable row per change (D-10)", () => {
     expect(rowsOf(host)[1]?.textContent).toContain("deprecated")
   })
 
-  it("renders the record id in a mono element on every row — the address is always readable", () => {
-    const host = render(populated)
+  // RE-SPELLED 427-08 from 'renders the record id in a mono element on every row — the address is
+  // always readable': ids now read only in Retrieval details, one block per changed record.
+  it("CHANGE-LEDGER-ENTRIES: one ledger block per changed record, with every id and raw event in mono", () => {
+    const host = renderLedger([
+      ledgerChange("fact-kept", "confirmed", 12),
+      ledgerChange("fact-old", "superseded", 13, { byRecordId: "fact-new" }),
+      ledgerChange("fact-new", "added", 13),
+    ])
+    const blocks = ledgerBlocks(host)
 
-    for (const el of rowsOf(host)) {
-      const id = el.querySelector("[data-record-id-text]")
-      expect(id?.className).toContain("font-mono")
-      expect(id?.textContent).toBe(el.getAttribute("data-record-id"))
+    expect(blocks.length).toBe(2)
+    for (const block of blocks) {
+      const ids = ledgerRow(block, "record")
+      expect(ids?.className).toContain("font-mono")
+      expect(ids?.className).toContain("break-all")
     }
+    expect([...(ledgerRow(blocks[0], "record")?.querySelectorAll("span.block") ?? [])].map(el => el.textContent))
+      .toEqual(["fact-kept"])
+    expect([...(ledgerRow(blocks[1], "record")?.querySelectorAll("span.block") ?? [])].map(el => el.textContent))
+      .toEqual(["fact-new", "fact-old"])
+    expect([...(ledgerRow(blocks[1], "events")?.querySelectorAll("span.block") ?? [])].map(el => el.textContent))
+      .toEqual(["superseded @ 13", "added @ 13"])
+    expect(ledgerRow(blocks[1], "bucket")?.textContent).toBe("superseded")
   })
 
   /**
-   * A CONTENT-DERIVED BUNDLE ID IS ONE UNBROKEN TOKEN (407-23 · G-407-2, LERN-02).
-   *
-   * `RecordRow`'s own docstring already argues that a change record's id is a content-derived
-   * bundle id far more often than an entity short-ID — `fact-page-https-example-com-0f9a` and its
-   * longer siblings carry no space to break at. `break-word` would let such a token overflow; only
-   * `overflow-wrap: anywhere` reduces its min-content width so the baseline row can SHRINK it.
-   * The reference beside it solves the same problem the other way (`truncate max-w-[32rem]`) and is
-   * deliberately not touched here.
+   * A CONTENT-DERIVED BUNDLE ID IS ONE UNBROKEN TOKEN (407-23 · G-407-2). In the ledger's grid the
+   * value column is `minmax(0,1fr)` and every value breaks anywhere, so a long id shrinks its own
+   * box rather than widening the section.
    */
   it("lets a content-derived record id shrink its own box rather than widen the row", () => {
-    const host = render(populated)
+    const host = renderLedger([ledgerChange("fact-page-https-example-com-0f9a-and-a-much-longer-tail", "confirmed", 12)])
+    const block = ledgerBlocks(host)[0]
 
-    for (const el of rowsOf(host)) {
-      const id = el.querySelector("[data-record-id-text]")
-      expect(id?.className).toContain("wrap-anywhere")
-    }
+    expect(block?.className).toContain("grid-cols-[auto_minmax(0,1fr)]")
+    expect(ledgerRow(block, "record")?.className).toContain("break-all")
   })
 
   it("renders a ROUTED reference as an accent anchor with the truncation rule the SPEC states", () => {
-    const host = render({
-      state: "done",
-      countLine: legacyCurationPairText(1, 0),
-      rows: [row({ kind: "confirmed", recordId: "TST-001", ref: "agentqa://test/TST-001", href: "/test/t_1" })],
-    })
+    const ref = formatEntityUri("MEM", "MEM-002")
+    routedRefs.set(ref, "/memory/MEM-002")
+    try {
+      const host = renderLedger([ledgerChange("MEM-002", "confirmed", 12)])
+      const link = ledgerRow(ledgerBlocks(host)[0], "link")
+      const anchor = link?.querySelector<HTMLAnchorElement>("a")
 
-    const anchor = host.querySelector<HTMLAnchorElement>("li[data-record-change] a[data-record-ref]")
-    expect(anchor).not.toBeNull()
-    expect(anchor?.getAttribute("href")).toBe("/test/t_1")
-    expect(anchor?.textContent).toBe("agentqa://test/TST-001")
-    expect(anchor?.className).toContain("text-primary")
-    expect(anchor?.className).toContain("truncate")
-    expect(anchor?.className).toContain("max-w-[32rem]")
+      expect(anchor).not.toBeNull()
+      expect(anchor?.getAttribute("href")).toBe("/memory/MEM-002")
+      expect(anchor?.textContent).toBe(ref)
+      expect(anchor?.className).toContain("text-primary")
+      // UI-SPEC S7: ledger values break anywhere rather than truncate, so nothing is hidden.
+      expect(link?.className).toContain("break-all")
+    } finally {
+      routedRefs.clear()
+    }
   })
 
   it("renders an UNROUTED reference as text — this build says what, not where to click", () => {
-    const host = render({
-      state: "done",
-      countLine: legacyCurationPairText(1, 0),
-      rows: [row({ kind: "confirmed", recordId: "MEM-001", ref: "agentqa://memory/MEM-001" })],
-    })
+    const host = renderLedger([ledgerChange("MEM-001", "confirmed", 12)])
+    const link = ledgerRow(ledgerBlocks(host)[0], "link")
 
-    const ref = host.querySelector("li[data-record-change] [data-record-ref]")
-    expect(ref?.tagName).toBe("SPAN")
-    expect(ref?.textContent).toBe("agentqa://memory/MEM-001")
-    expect(host.querySelector("li[data-record-change] a")).toBeNull()
+    expect(link?.textContent).toBe(formatEntityUri("MEM", "MEM-001"))
+    expect(host.querySelector("dl[data-ledger-changes] a")).toBeNull()
   })
 
   it("renders no reference element at all for a record that has no canonical address", () => {
-    const host = render({
-      state: "done",
-      countLine: legacyCurationPairText(1, 0),
-      rows: [row({ recordId: "fact-page-https-example-com-0f9a" })],
-    })
+    const host = renderLedger([ledgerChange("fact-page-https-example-com-0f9a", "confirmed", 12)])
 
-    expect(host.querySelector("[data-record-ref]")).toBeNull()
-    expect(rowsOf(host)[0]?.getAttribute("data-record-id")).toBe("fact-page-https-example-com-0f9a")
+    expect(host.querySelector('[data-ledger-row="link"]')).toBeNull()
+    expect(ledgerRow(ledgerBlocks(host)[0], "record")?.textContent).toBe("fact-page-https-example-com-0f9a")
   })
 
   it("drops the state sentence once rows are painted — the rows ARE the answer", () => {
@@ -754,27 +803,19 @@ describe("the proposals line is a count and a door (D-11, T-407-22)", () => {
 describe("projection text reaches the DOM as TEXT, never as markup (T-407-21)", () => {
   it("renders a hostile record id as a text node — no element is created from it", () => {
     const hostile = '<img src=x onerror=alert(1)>'
-    const host = render({
-      state: "done",
-      countLine: legacyCurationPairText(1, 0),
-      rows: [row({ recordId: hostile })],
-    })
+    const host = renderLedger([ledgerChange(hostile, "confirmed", 12)])
 
     expect(host.querySelector("img")).toBeNull()
-    expect(host.textContent).toContain(hostile)
-    expect(rowsOf(host)[0]?.getAttribute("data-record-id")).toBe(hostile)
+    expect(ledgerRow(ledgerBlocks(host)[0], "record")?.textContent).toBe(hostile)
   })
 
   it("renders a hostile reference string as a text node too — an href is never taken from one", () => {
     const hostile = 'javascript:alert(1)'
-    const host = render({
-      state: "done",
-      countLine: legacyCurationPairText(1, 0),
-      rows: [row({ recordId: "MEM-001", ref: hostile })],
-    })
+    const host = renderLedger([ledgerChange(hostile, "confirmed", 12)])
 
-    expect(host.querySelector("li[data-record-change] a")).toBeNull()
-    expect(host.querySelector("[data-record-ref]")?.textContent).toBe(hostile)
+    expect(host.querySelector("dl[data-ledger-changes] a")).toBeNull()
+    expect(host.querySelector('[data-ledger-row="link"]')).toBeNull()
+    expect(ledgerRow(ledgerBlocks(host)[0], "record")?.textContent).toBe(hostile)
   })
 })
 

@@ -105,7 +105,7 @@ function readyView(
     state: "ready",
     used: { records: [], absence: steps.length === 0 ? NO_BRIEF_SERVED_TEXT : NO_BRIEF_LINES_TEXT },
     effect: { entries: [], absence: EFFECT_NOTHING_USED_TEXT },
-    ledger: { summary, steps },
+    ledger: { summary, steps, changes: [] },
     learned,
   }
 }
