@@ -729,12 +729,14 @@ export function replayCompleteParts(replayed: number | undefined, length: number
   return { lead: `Replayed ${String(replayed)} of its ${String(length)} steps in`, tail: '' }
 }
 
-// `step` is one-based: the procedure's own step a person counts by.
-export function replayStoppedParts(step: number, total: number, cause: ReplayStopCause): EffectSentenceParts {
-  return {
-    lead: `Replay stopped at its step ${String(step)} of ${String(total)} in`,
-    tail: `: ${REPLAY_STOP_CAUSES[cause]}`,
+// `step` is one-based: the procedure's own step a person counts by. `length` is flow.length.
+export function replayStoppedParts(step: number, length: number | undefined, cause: ReplayStopCause): EffectSentenceParts {
+  const tail = `: ${REPLAY_STOP_CAUSES[cause]}`
+  if (length === 1 && step === 1) return { lead: 'Replay stopped at its only step in', tail }
+  if (length !== undefined && step <= length) {
+    return { lead: `Replay stopped at its step ${String(step)} of ${String(length)} in`, tail }
   }
+  return { lead: `Replay stopped at its step ${String(step)} in`, tail }
 }
 
 const BROKE_STOP_CAUSES = {
@@ -750,6 +752,11 @@ export function replayStop(guard: ReplayGuard): { readonly step: number; readonl
     step: broke.step + 1,
     cause: broke.cause === 'miss' ? broke.reason : BROKE_STOP_CAUSES[broke.cause],
   }
+}
+
+// A policy-denied replayed action is recorded with no break member and an unpassed check.
+export function isReplayComplete(guard: ReplayGuard): boolean {
+  return replayStop(guard) === undefined && guard.total > 0 && guard.checksPassed === guard.total
 }
 
 export function effectSentenceText(parts: EffectSentenceParts, stepsText: string): string {
@@ -799,9 +806,10 @@ interface EffectDraft {
   readonly addresses: StepAddress[]
 }
 
-interface ReplayCompleteDraft {
+interface ReplayDraft {
   readonly recordId: string
   readonly length: number | undefined
+  readonly stop: ReturnType<typeof replayStop>
   readonly addresses: StepAddress[]
   readonly cursors: Set<number>
 }
@@ -815,8 +823,7 @@ export function effectSectionView(
   const scanIncomplete = projection.learned.scanIncomplete === true
 
   const trials = new Map<string, EffectDraft>()
-  const completed = new Map<string, ReplayCompleteDraft>()
-  const replays: EffectDraft[] = []
+  const replays = new Map<string, ReplayDraft>()
   const uncountedIds = new Set<string>()
 
   for (const step of [...projection.steps].sort(compareAddresses)) {
@@ -842,41 +849,36 @@ export function effectSectionView(
     if (step.planSource?.kind === 'procedure-replay') {
       const { guard, procedureId, flow } = step.planSource
       const stop = replayStop(guard)
-      if (stop === undefined) {
+      if (stop !== undefined || isReplayComplete(guard)) {
         // The procedure's size is its recorded flow; the guard fold only counts this test step's actions.
-        const groupKey = `${procedureId}\u0000${String(flow?.length ?? '')}`
-        const draft = completed.get(groupKey) ?? {
+        const groupKey = [procedureId, flow?.length ?? '', stop?.step ?? '', stop?.cause ?? ''].join('\u0000')
+        const draft = replays.get(groupKey) ?? {
           recordId: procedureId,
           length: flow?.length,
+          stop,
           addresses: [],
           cursors: new Set<number>(),
         }
-        completed.set(groupKey, draft)
+        replays.set(groupKey, draft)
         const last = draft.addresses.at(-1)
         if (last === undefined || compareAddresses(last, address) !== 0) draft.addresses.push(address)
-        if (flow !== undefined && flow.cursor < flow.length) draft.cursors.add(flow.cursor)
-      } else {
-        replays.push({
-          recordId: procedureId,
-          outcome: 'replay-stopped',
-          parts: replayStoppedParts(stop.step, guard.total, stop.cause),
-          addresses: [address],
-        })
+        if (stop === undefined && flow !== undefined && flow.cursor < flow.length) draft.cursors.add(flow.cursor)
       }
     }
   }
 
-  for (const draft of completed.values()) {
-    replays.push({
-      recordId: draft.recordId,
-      outcome: 'replay-complete',
-      parts: replayCompleteParts(draft.cursors.size, draft.length),
-      addresses: draft.addresses,
-    })
-  }
+  const replayDrafts = [...replays.values()].map((draft): EffectDraft => ({
+    recordId: draft.recordId,
+    outcome: draft.stop === undefined ? 'replay-complete' : 'replay-stopped',
+    parts:
+      draft.stop === undefined
+        ? replayCompleteParts(draft.cursors.size, draft.length)
+        : replayStoppedParts(draft.stop.step, draft.length, draft.stop.cause),
+    addresses: draft.addresses,
+  }))
 
   const rank = (draft: EffectDraft) => EFFECT_TONES.indexOf(EFFECT_TONE_OF[draft.outcome])
-  const drafts = [...trials.values(), ...replays].sort(
+  const drafts = [...trials.values(), ...replayDrafts].sort(
     (a, b) =>
       rank(a) - rank(b) ||
       compareAddresses(a.addresses[0]!, b.addresses[0]!) ||
