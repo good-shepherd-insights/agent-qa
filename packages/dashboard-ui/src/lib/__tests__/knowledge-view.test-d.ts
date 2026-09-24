@@ -4,21 +4,25 @@
 import { expectTypeOf, test } from 'vitest'
 import type {
   BundleStatus as SchemaBundleStatus,
+  CurationBucket,
   InspectRecordView,
   RunKnowledgePlanSource,
   RunKnowledgeRecordContent,
 } from '@vostride/agent-qa-schema'
 import {
   ANCHOR_PHRASE_TYPES,
+  BUCKET_LABELS,
   CURRENT_STATUS_WORDS,
   EFFECT_OUTCOMES,
   EFFECT_SENTENCES,
   EFFECT_TONES,
   EFFECT_TONE_OF,
   KNOWLEDGE_SECTIONS,
+  LEDGER_ROW_LABELS,
   REPLAY_STOP_CAUSES,
   RECORD_KIND_LABELS,
   SINCE_STATUS_TAGS,
+  SINCE_THEN_DETAILS,
   USE_VERBS,
   USE_VERB_PHRASES,
   type AnchorPhraseType,
@@ -26,6 +30,8 @@ import {
   type EffectOutcome,
   type EffectTone,
   type KnowledgeSection,
+  type LearnedChangeKind,
+  type LedgerRow,
   type ReplayStopCause,
   type RecordKind,
   type UseVerb,
@@ -104,4 +110,12 @@ test('C427-REPLAY-STOP-CAUSES-EXACT', () => {
   type MissReason = NonNullable<Extract<RunKnowledgePlanSource, { kind: 'procedure-replay' }>['guard']['miss']>['reason']
   expectTypeOf<ReplayStopCause>().toEqualTypeOf<MissReason | 'execution-failure' | 'verifier-rejection'>()
   expectTypeOf<keyof typeof REPLAY_STOP_CAUSES>().toEqualTypeOf<ReplayStopCause>()
+})
+
+test('C427-BUCKET-LABELS-SHAPE', () => {
+  type Expected = 'added' | 'confirmed' | 'superseded' | 'deprecated' | 'proposed'
+  expectTypeOf<CurationBucket>().toEqualTypeOf<Expected>()
+  expectTypeOf<keyof typeof BUCKET_LABELS>().toEqualTypeOf<CurationBucket>()
+  expectTypeOf<keyof typeof SINCE_THEN_DETAILS>().toEqualTypeOf<LearnedChangeKind>()
+  expectTypeOf<keyof typeof LEDGER_ROW_LABELS>().toEqualTypeOf<LedgerRow>()
 })

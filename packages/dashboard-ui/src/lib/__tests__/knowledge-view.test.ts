@@ -16,7 +16,7 @@
 // Collapsing them would tell a reader the store is empty when in fact nothing asked it anything.
 
 import { describe, expect, it } from 'vitest'
-import { TRACE_TRUNCATION_TOP_K, formatEntityUri } from '@vostride/agent-qa-schema'
+import { CurationSnapshotSchema, TRACE_TRUNCATION_TOP_K, formatEntityUri } from '@vostride/agent-qa-schema'
 import type {
   CurationBreakdown,
   RecordChange,
@@ -61,6 +61,7 @@ import {
   PRE_TRACE_TEXT,
   READ_FAILED_HEADING,
   RECONCILIATION_UNATTRIBUTED_TEXT,
+  RECORD_CONTENT_NOT_RECORDED_LEAD,
   REPLAY_FACT,
   REVIEW_PROPOSALS_CTA,
   HINT_FACT,
@@ -79,6 +80,7 @@ import {
   brokeAtText,
   canaryFact,
   canaryOutcomeWord,
+  changeLedgerViews,
   channelPage,
   cutCandidates,
   cutCandidatesLabel,
@@ -901,9 +903,9 @@ function change(
 /**
  * A recorded snapshot carrying only the member the heading reads (423 D-15).
  *
- * `rows: []` beside a non-zero breakdown is a shape the op never serves — and that is exactly what
- * makes it the right fixture here: `learnedView` reads `breakdown` and nothing else, so a cell that
- * supplied rows would be pinning a coupling the projection does not have.
+ * `rows: []` beside a non-zero breakdown is a shape the op never serves. The count-line cells use it
+ * because the heading reads `breakdown` alone; since 427 D-15 the ROWS come from `rows`, so a cell
+ * about rows builds a schema-valid snapshot with {@link addedSnapshot} instead.
  */
 function snapshotOf(breakdown: Partial<CurationBreakdown> = {}) {
   return {
@@ -911,6 +913,26 @@ function snapshotOf(breakdown: Partial<CurationBreakdown> = {}) {
     rows: [],
     breakdown: { added: 0, confirmed: 0, superseded: 0, deprecated: 0, proposed: 0, ...breakdown },
   }
+}
+
+/** A schema-valid snapshot of `ids.length` added records, one row each (427 D-15: rows equal counts). */
+function addedSnapshot(ids: readonly string[]) {
+  return CurationSnapshotSchema.parse({
+    schemaVersion: 1,
+    rows: ids.map((id, index) => ({
+      recordId: id, bucket: 'added', changes: [{ bucket: 'added', change: change('added', id, { atOrdinal: 10 + index }) }],
+    })),
+    breakdown: { added: ids.length, confirmed: 0, superseded: 0, deprecated: 0, proposed: 0 },
+  })
+}
+
+/** The Retrieval details entries for the same projection body (427 D-19 part 2). */
+function ledgerFrom(
+  overrides: Partial<Extract<RunKnowledgeProjection, { kind: 'ready' }>> = {},
+) {
+  const read = ready(overrides)
+  if (read.kind !== 'read' || read.projection.kind !== 'ready') throw new Error('fixture is not ready')
+  return changeLedgerViews(read.projection)
 }
 
 /** The projection body the Learned half projects from; every cell varies one member of it. */
@@ -924,17 +946,20 @@ function learnedFrom(
 
 describe('419 promotion projection copies receipt attribution', () => {
   it('preserves the path and complete digest, and keeps historical keys absent', () => {
+    // RE-SPELLED 427-08 (D-19 part 2): the receipt now reaches Retrieval details, never the row.
     const promotionReceiptDigest = '0123456789abcdef'.repeat(4)
-    const view = learnedFrom({
-      curation: { status: 'done' },
+    const input = {
+      curation: { status: 'done' as const },
       learned: { canaryAttributions: [], changes: [
         change('promoted', 'fact-current', { promotionPath: 'user-sovereign', promotionReceiptDigest }),
         change('promoted', 'fact-historical'),
       ] },
-    })
-    expect(view.rows[0]).toMatchObject({ promotionPath: 'user-sovereign', promotionReceiptDigest })
-    expect(view.rows[1]).not.toHaveProperty('promotionPath')
-    expect(view.rows[1]).not.toHaveProperty('promotionReceiptDigest')
+    }
+    const entries = ledgerFrom(input)
+    expect(entries[0]).toMatchObject({ promotionPath: 'user-sovereign', promotionReceiptDigest })
+    expect(entries[1]).not.toHaveProperty('promotionPath')
+    expect(entries[1]).not.toHaveProperty('promotionReceiptDigest')
+    expect(learnedFrom(input).rows[0]).not.toHaveProperty('promotionPath')
   })
 })
 
@@ -1156,26 +1181,28 @@ describe('a settled curation says what it changed, in the chip\'s own words (D-0
  *
  * `counted` is the sum of the snapshot's five buckets; `shown` is the rows this half placed in the
  * CURATION section, because 423 D-15 gives since-then rows their own counted line and folding them
- * in here would hide a real gap behind a later promotion. The cause is never guessed: it is one of
- * the two the read already proved, or the sentence that says so.
+ * in here would hide a real gap behind a later promotion.
+ *
+ * RE-SPELLED 427-08 (D-15). The curation rows ARE the snapshot's rows now, one per affected record,
+ * so on a schema-valid snapshot `shown` equals `counted` by construction and the reconciliation
+ * cannot appear. The gate itself is kept as the structural guard; what a partial read or a failed
+ * chain costs is said by the notes beside the rows.
  */
 describe('a count that disagrees with the rows says so, and says why (425-06 · D-19)', () => {
-  it('RECONCILIATION-ONLY-ON-MISMATCH: states the gap when the buckets total more than the rows', () => {
+  it('RECONCILIATION-ONLY-ON-MISMATCH: a schema-valid snapshot shows one curation row per counted record', () => {
+    const snapshot = addedSnapshot(['rec-a', 'rec-b', 'rec-c'])
     const view = learnedFrom({
       curation: { status: 'done', counts: { curated: 3, deprecated: 0 } },
       learned: {
         changes: [change('added', 'rec-a'), change('added', 'rec-b')],
         canaryAttributions: [],
-        curationSnapshot: snapshotOf({ added: 3 }),
+        curationSnapshot: snapshot,
       },
     })
 
-    expect(view.rows.length).toBe(2)
-    expect(view.curationSnapshot?.reconciliation).toEqual({
-      count: '3 changes counted · 2 shown',
-      cause: RECONCILIATION_UNATTRIBUTED_TEXT,
-    })
-    expect(view.curationSnapshot?.reconciliation?.count).toBe(reconciliationCountText(3, 2))
+    expect(view.rows.map(row => row.bucket)).toEqual(['added', 'added', 'added'])
+    expect(view.rows.filter(row => row.section === 'curation').length).toBe(snapshot.breakdown.added)
+    expect(view.rows.map(row => row.leadSource)).toEqual(['not-recorded', 'not-recorded', 'not-recorded'])
   })
 
   it('RECONCILIATION-ONLY-ON-MISMATCH: carries NO reconciliation key when the two numbers agree', () => {
@@ -1184,7 +1211,7 @@ describe('a count that disagrees with the rows says so, and says why (425-06 · 
       learned: {
         changes: [change('added', 'rec-a'), change('added', 'rec-b')],
         canaryAttributions: [],
-        curationSnapshot: snapshotOf({ added: 2 }),
+        curationSnapshot: addedSnapshot(['rec-a', 'rec-b']),
       },
     })
 
@@ -1194,13 +1221,10 @@ describe('a count that disagrees with the rows says so, and says why (425-06 · 
     expect(JSON.stringify(view)).not.toContain('counted')
   })
 
-  it('RECONCILIATION-ONLY-ON-MISMATCH: agrees the noun with the count — one change, zero shown', () => {
-    const view = learnedFrom({
-      curation: { status: 'done', counts: { curated: 1, deprecated: 0 } },
-      learned: { changes: [], canaryAttributions: [], curationSnapshot: snapshotOf({ added: 1 }) },
-    })
-
-    expect(view.curationSnapshot?.reconciliation?.count).toBe('1 change counted · 0 shown')
+  it('RECONCILIATION-ONLY-ON-MISMATCH: the reconciliation text agrees its noun with the count', () => {
+    expect(reconciliationCountText(1, 0)).toBe('1 change counted · 0 shown')
+    expect(reconciliationCountText(3, 2)).toBe('3 changes counted · 2 shown')
+    expect(reconciliationCountText(0, 1)).toBe('0 changes counted · 1 shown')
   })
 
   it('RECONCILIATION-ONLY-ON-MISMATCH: a since-then row is not one of the rows shown (423 D-15)', () => {
@@ -1210,7 +1234,7 @@ describe('a count that disagrees with the rows says so, and says why (425-06 · 
       learned: {
         changes: [change('added', 'rec-a'), change('added', 'rec-b'), later],
         canaryAttributions: [],
-        curationSnapshot: snapshotOf({ added: 2 }),
+        curationSnapshot: addedSnapshot(['rec-a', 'rec-b']),
         sinceThen: { changes: [later], count: 1 },
       },
     })
@@ -1220,35 +1244,36 @@ describe('a count that disagrees with the rows says so, and says why (425-06 · 
     expect(view.curationSnapshot?.reconciliation).toBeUndefined()
   })
 
-  it('RECONCILIATION-CAUSE-FROM-READ: a failed chain with retained rows names the chain', () => {
+  it('RECONCILIATION-CAUSE-FROM-READ: a failed chain keeps its snapshot rows and names the chain beside them', () => {
     const view = learnedFrom({
       curation: { status: 'failed' },
       learned: {
         changes: [change('added', 'rec-a')],
         canaryAttributions: [],
-        curationSnapshot: snapshotOf({ added: 3 }),
+        curationSnapshot: addedSnapshot(['rec-a', 'rec-b', 'rec-c']),
       },
     })
 
     expect(view.state).toBe('failed')
-    expect(view.rows.length).toBe(1)
-    expect(view.curationSnapshot?.reconciliation)
-      .toEqual({ count: '3 changes counted · 1 shown', cause: CURATION_FAILED_PARTIAL_TEXT })
+    expect(view.rows.length).toBe(3)
+    expect(view.chainNote).toBe(CURATION_FAILED_PARTIAL_TEXT)
+    expect(view.sentence).toBeUndefined()
   })
 
-  it('RECONCILIATION-CAUSE-FROM-READ: an incomplete store scan names the store', () => {
+  it('RECONCILIATION-CAUSE-FROM-READ: an incomplete store scan keeps the rows and names the store beside them', () => {
     const view = learnedFrom({
       curation: { status: 'done', counts: { curated: 3, deprecated: 0 } },
       learned: {
         changes: [change('added', 'rec-a')],
         canaryAttributions: [],
-        curationSnapshot: snapshotOf({ added: 3 }),
+        curationSnapshot: addedSnapshot(['rec-a', 'rec-b', 'rec-c']),
         scanIncomplete: true,
       },
     })
 
-    expect(view.curationSnapshot?.reconciliation)
-      .toEqual({ count: '3 changes counted · 1 shown', cause: CHANGES_UNREADABLE_TEXT })
+    expect(view.rows.length).toBe(3)
+    expect(view.readNote).toBe(STORE_READ_INCOMPLETE_TEXT)
+    expect(view.scanIncomplete).toBe(true)
   })
 
   it('RECONCILIATION-CAUSE-FROM-READ: pending and running carry none, whatever the counts say', () => {
@@ -1300,15 +1325,23 @@ describe('the record list is the five LEARNED kinds and nothing else (D-10, wide
     }).rows
   }
 
-  it('keeps the five Learned kinds in the projection\'s own order', () => {
-    expect(rowsOfEveryKind().map(row => row.kind))
-      .toEqual(['added', 'confirmed', 'superseded', 'deprecated', 'promoted'])
+  // RE-SPELLED 427-08 (D-15): the rows carry 425's bucket words, so a promotion reads Confirmed.
+  it('maps the five Learned kinds onto 425\'s bucket words in the projection\'s own order', () => {
+    expect(rowsOfEveryKind().map(row => row.bucket))
+      .toEqual(['added', 'confirmed', 'superseded', 'deprecated', 'confirmed'])
   })
 
   it('drops ONLY `purged` — a deletion is maintenance, never what this run taught the store', () => {
-    const kinds = rowsOfEveryKind().map(row => row.kind) as readonly string[]
-    expect(kinds).toContain('added')
-    expect(kinds).not.toContain('purged')
+    const ids = ledgerFrom({
+      curation: { status: 'done', counts: { curated: 3, deprecated: 1 } },
+      learned: {
+        changes: everyKind.map((kind, index) => change(kind, `rec_${String(index)}`)),
+        canaryAttributions: [],
+      },
+    }).flatMap(entry => entry.recordIds)
+    expect(rowsOfEveryKind().length).toBe(5)
+    expect(ids).toContain('rec_0')
+    expect(ids).not.toContain('rec_5')
   })
 
   it('publishes the five kinds as one closed table the component and the cells both name', () => {
@@ -1316,32 +1349,34 @@ describe('the record list is the five LEARNED kinds and nothing else (D-10, wide
       .toEqual(['added', 'confirmed', 'superseded', 'deprecated', 'promoted'])
   })
 
-  it('carries the record id verbatim, however unlovely — the row addresses a record, not a title', () => {
-    const rows = learnedFrom({
-      curation: { status: 'done', counts: { curated: 1, deprecated: 0 } },
+  // RE-TARGETED 427-08 (D-19 part 2): ids and references live in the Retrieval details ledger.
+  it('carries the record id verbatim, however unlovely — in the ledger, never on the row', () => {
+    const input = {
+      curation: { status: 'done' as const, counts: { curated: 1, deprecated: 0 } },
       learned: { changes: [change('promoted', 'fact-page-https-example-com-0f9a')], canaryAttributions: [] },
-    }).rows
-    expect(rows[0]?.recordId).toBe('fact-page-https-example-com-0f9a')
+    }
+    expect(ledgerFrom(input)[0]?.recordIds).toEqual(['fact-page-https-example-com-0f9a'])
+    expect(JSON.stringify(learnedFrom(input).rows)).not.toContain('fact-page-https-example-com-0f9a')
   })
 
   it('mints NO href for a record id that is not an addressable entity — a guessed link is worse than none', () => {
-    const rows = learnedFrom({
+    const entries = ledgerFrom({
       curation: { status: 'done', counts: { curated: 1, deprecated: 0 } },
       learned: { changes: [change('confirmed', 'fact-page-https-example-com-0f9a')], canaryAttributions: [] },
-    }).rows
-    expect(rows[0]?.href).toBeUndefined()
-    expect(rows[0]?.ref).toBeUndefined()
+    })
+    expect(entries[0]?.href).toBeUndefined()
+    expect(entries[0]?.ref).toBeUndefined()
   })
 
   it('builds the canonical agentqa:// reference when the record IS addressed by a MEM short-ID', () => {
-    const rows = learnedFrom({
+    const entries = ledgerFrom({
       curation: { status: 'done', counts: { curated: 1, deprecated: 0 } },
       learned: { changes: [change('superseded', 'MEM-001')], canaryAttributions: [] },
-    }).rows
-    expect(rows[0]?.ref).toBe(formatEntityUri('MEM', 'MEM-001'))
+    })
+    expect(entries[0]?.ref).toBe(formatEntityUri('MEM', 'MEM-001'))
     // `ENTITY_KIND_ROUTES.MEM` is `null` under the DASH-03 contract: this build can say WHAT the
-    // row points at without being able to say where to click, and it says exactly that.
-    expect(rows[0]?.href).toBeUndefined()
+    // entry points at without being able to say where to click, and it says exactly that.
+    expect(entries[0]?.href).toBeUndefined()
   })
 })
 
@@ -1367,8 +1402,8 @@ describe('a curated NEW fact is what the run learned (CR-04, D-10)', () => {
     expect(view.state).toBe('done')
     expect(view.countLine).toBe(legacyCurationPairText(1, 0))
     expect(view.rows.length).toBe(1)
-    expect(view.rows[0]?.kind).toBe('added')
-    expect(view.rows[0]?.recordId).toBe('fact-el-textbox-password-9a05ce')
+    expect(view.rows[0]?.bucket).toBe('added')
+    expect(view.rows[0]?.primary).toBe(RECORD_CONTENT_NOT_RECORDED_LEAD)
     expect(view.sentence).toBeUndefined()
   })
 
@@ -1432,7 +1467,7 @@ describe('a curated NEW fact is what the run learned (CR-04, D-10)', () => {
   it('PAINTS records a failed chain already committed — a chain that fell over cannot un-commit them', () => {
     const view = learnedFrom({
       curation: { status: 'failed' },
-      learned: { changes: [change('added'), change('confirmed')], canaryAttributions: [] },
+      learned: { changes: [change('added', 'rec-a'), change('confirmed', 'rec-b')], canaryAttributions: [] },
     })
 
     expect(view.state).toBe('failed')
@@ -1467,37 +1502,29 @@ describe('a curated NEW fact is what the run learned (CR-04, D-10)', () => {
       },
     })
 
-    expect(view.rows.map(row => row.kind)).toEqual(['added'])
+    expect(view.rows.map(row => row.bucket)).toEqual(['added'])
     expect(view.chainNote).toBe(CURATION_FAILED_PARTIAL_TEXT)
   })
 
   /**
-   * WR-02 — ONE RECORD, TWO CHANGES, TWO KEYS.
+   * WR-02 → 427-08 D-15 — ONE RECORD, ONE ROW, ONE INDEX KEY.
    *
    * `diffSince` emits one `RecordChange` per surviving outcome event, so a bundle confirmed at
-   * ordinal 12 and superseded at 13 crosses the run filter twice. `LearnedRowView` drops
-   * `atOrdinal`, so keying by `recordId` alone collides and React drops or reorders a row on the
-   * re-render that fires as curation settles.
+   * ordinal 12 and superseded at 13 crosses the run filter twice. Since 427 D-15 those changes are
+   * one row in the record's strongest bucket, and every raw event behind it is listed in Retrieval
+   * details. The key is the row's index and never names the record: no id reaches a row.
    */
-  it('leads the key with the ROW INDEX, then names the record it belongs to', () => {
-    // RE-SPELLED 407-26 (REVIEW WR-04). The five-member form this replaces claimed to BE the
-    // producer's dedupe identity and could not be: `survivingOutcomeEvents` dedupes on
-    // `${evidenceToken}:${curationJobId}`, and `RecordChangeSchema` is `.strict()` and carries no
-    // `curationJobId` at all — so no projection of `RecordChange`'s own members can reproduce it.
-    // A key can therefore be TOTAL by construction or be a guess; this project chooses total.
+  it('keys a row by its ROW INDEX and never by the record it belongs to', () => {
     const view = learnedFrom({
       curation: { status: 'done', counts: { curated: 1, deprecated: 0 } },
       learned: { changes: [change('added', 'rec_a', { atOrdinal: 4 })], canaryAttributions: [] },
     })
 
-    expect(view.rows[0]?.key).toBe('0:rec_a:added:4')
+    expect(view.rows[0]?.key).toBe('0')
+    expect(view.rows[0]?.key).not.toContain('rec_a')
   })
 
   it('never spells the word undefined, and returns the same key for the same input twice', () => {
-    // The former sibling of this cell pinned an EMPTY SEGMENT for an absent optional. The new key
-    // has no optional segments, so what is left to pin is that the key is total and deterministic:
-    // it leads with the index, names only members every `RecordChange` carries, and a second
-    // projection of the same bytes produces the same string.
     const input = {
       curation: { status: 'done' as const, counts: { curated: 1, deprecated: 0 } },
       learned: {
@@ -1509,14 +1536,14 @@ describe('a curated NEW fact is what the run learned (CR-04, D-10)', () => {
     const first = learnedFrom(input)
     const second = learnedFrom(input)
 
-    expect(first.rows[0]?.key).toBe('0:rec:confirmed:12')
+    expect(first.rows[0]?.key).toBe('0')
     expect(first.rows[0]?.key).not.toContain('undefined')
     expect(second.rows[0]?.key).toBe(first.rows[0]?.key)
   })
 
-  it('gives two changes on ONE record two distinct keys, so neither row is reconciled away', () => {
-    const view = learnedFrom({
-      curation: { status: 'done', counts: { curated: 1, deprecated: 0 } },
+  it('folds two changes on ONE record into one row in its strongest bucket, both events in the ledger', () => {
+    const input = {
+      curation: { status: 'done' as const, counts: { curated: 1, deprecated: 0 } },
       learned: {
         changes: [
           change('confirmed', 'rec_same', { atOrdinal: 12 }),
@@ -1524,22 +1551,26 @@ describe('a curated NEW fact is what the run learned (CR-04, D-10)', () => {
         ],
         canaryAttributions: [],
       },
-    })
+    }
+    const view = learnedFrom(input)
 
-    expect(view.rows.map(row => row.key)).toEqual(['0:rec_same:confirmed:12', '1:rec_same:superseded:13'])
-    expect(new Set(view.rows.map(row => row.key)).size).toBe(2)
+    expect(view.rows.map(row => [row.key, row.bucket])).toEqual([['0', 'superseded']])
+    expect(ledgerFrom(input)[0]?.events).toEqual([
+      { change: 'confirmed', atOrdinal: 12 },
+      { change: 'superseded', atOrdinal: 13 },
+    ])
   })
 
   /**
-   * REVIEW WR-01 — TWO `confirmed` EVENTS AT ONE ORDINAL ARE TWO ROWS.
+   * REVIEW WR-01 — TWO `confirmed` EVENTS AT ONE ORDINAL, ONE RECORD.
    *
    * `survivingOutcomeEvents` dedupes on `evidenceToken:curationJobId`, NOT on type or ordinal, so
-   * one bundle can carry two confirmations at one `buildOrdinal` and `diffSince` emits both. The
-   * 407-15 triple collided on exactly that pair, and React reconciled one of the two rows away.
+   * one bundle can carry two confirmations at one `buildOrdinal` and `diffSince` emits both. They
+   * are one record, so one row; the ledger keeps both events and both tokens.
    */
-  it('gives two confirmations at ONE ordinal distinct keys, on the index that separates them', () => {
-    const view = learnedFrom({
-      curation: { status: 'done', counts: { curated: 2, deprecated: 0 } },
+  it('gives two confirmations at ONE ordinal one row, and keeps both tokens in the ledger', () => {
+    const input = {
+      curation: { status: 'done' as const, counts: { curated: 2, deprecated: 0 } },
       learned: {
         changes: [
           change('confirmed', 'rec_same', { atOrdinal: 12, evidenceToken: 'tok-a' }),
@@ -1547,29 +1578,22 @@ describe('a curated NEW fact is what the run learned (CR-04, D-10)', () => {
         ],
         canaryAttributions: [],
       },
-    })
+    }
 
-    expect(view.rows.length).toBe(2)
-    expect(view.rows.map(row => row.key))
-      .toEqual(['0:rec_same:confirmed:12', '1:rec_same:confirmed:12'])
-    expect(new Set(view.rows.map(row => row.key)).size).toBe(2)
+    expect(learnedFrom(input).rows.map(row => row.key)).toEqual(['0'])
+    expect(ledgerFrom(input)[0]?.evidenceTokens).toEqual(['tok-a', 'tok-b'])
+    expect(ledgerFrom(input)[0]?.events.length).toBe(2)
   })
 
   /**
-   * REVIEW WR-04 (round-2 WR-05, OPEN ACROSS THREE ROUNDS) — THE CASE THE OLD KEY COULD NOT SEE.
+   * REVIEW WR-04 (round-2 WR-05) — THE CASE NO MEMBER-BUILT KEY COULD SEE.
    *
-   * `deriveEvidenceToken` hashes `(attributingObservationId, anchor, buildOrdinal)` and
-   * deliberately EXCLUDES the candidate id, while `confirmedEvent` stamps
-   * `curationJobId: job.candidateId`. So one evidence token with two `curationJobId`s is
-   * reachable by construction, both events survive `survivingOutcomeEvents`' dedupe, and
-   * `diffSince` emits two `RecordChange`s identical in ALL FIVE members the old key spelled —
-   * `recordId`, `change`, `atOrdinal`, `evidenceToken` and `byRecordId`. React warned and
-   * reconciled one away on the re-render that fires as curation settles, which is exactly when
-   * the second row appears.
+   * Two `RecordChange`s identical in all five members the 407 key spelled are reachable by
+   * construction. They are one record's history, so they are one row, and both events stay listed.
    */
   it('separates two changes identical in all five previously-keyed members', () => {
-    const view = learnedFrom({
-      curation: { status: 'done', counts: { curated: 2, deprecated: 0 } },
+    const input = {
+      curation: { status: 'done' as const, counts: { curated: 2, deprecated: 0 } },
       learned: {
         changes: [
           change('confirmed', 'rec_same', { atOrdinal: 12, evidenceToken: 'tok-a', byRecordId: 'by-1' }),
@@ -1577,13 +1601,15 @@ describe('a curated NEW fact is what the run learned (CR-04, D-10)', () => {
         ],
         canaryAttributions: [],
       },
-    })
+    }
 
-    const keys = view.rows.map(row => row.key)
-    expect(view.rows.length).toBe(2)
-    expect(keys[0]).not.toBe(keys[1])
-    expect(new Set(keys).size).toBe(2)
-    expect(new Set(keys).size).toBe(view.rows.length)
+    const view = learnedFrom(input)
+    expect(view.rows.length).toBe(1)
+    expect(new Set(view.rows.map(row => row.key)).size).toBe(view.rows.length)
+    expect(ledgerFrom(input)[0]?.events).toEqual([
+      { change: 'confirmed', atOrdinal: 12 },
+      { change: 'confirmed', atOrdinal: 12 },
+    ])
   })
 
   it('assigns indices over the rows actually PAINTED, not over the changes served', () => {
@@ -1601,7 +1627,7 @@ describe('a curated NEW fact is what the run learned (CR-04, D-10)', () => {
       },
     })
 
-    expect(view.rows.map(row => row.key)).toEqual(['0:rec_a:added:1', '1:rec_b:promoted:2'])
+    expect(view.rows.map(row => [row.key, row.bucket])).toEqual([['0', 'added'], ['1', 'confirmed']])
   })
 })
 
@@ -1668,7 +1694,7 @@ describe('a partial read decorates the answer, it never replaces it (REVIEW CR-0
     expect(view.state).toBe('done')
     expect(view.countLine).toBe(legacyCurationPairText(1, 0))
     expect(view.rows.length).toBe(1)
-    expect(view.rows[0]?.recordId).toBe('rec-mine')
+    expect(view.rows[0]?.bucket).toBe('confirmed')
     expect(view.sentence).toBeUndefined()
     expect(view.scanIncomplete).toBe(true)
     expect(view.readNote).toBe(STORE_READ_INCOMPLETE_TEXT)
@@ -1873,6 +1899,7 @@ describe('the 407-09 copy is published as constants, like every sentence before 
     expect(CHANGES_NOT_AVAILABLE_TEXT).toBe('Change records for this run are not available yet.')
     expect(CHANGED_NOTHING_TEXT).toBe('Curation ran and changed nothing.')
     expect(REVIEW_PROPOSALS_CTA).toBe('Review proposals')
+    expect(RECONCILIATION_UNATTRIBUTED_TEXT).toBe("The difference could not be attributed to this run's rows.")
     expect(new Set([
       DELTAS_PENDING_TEXT,
       CURATION_FAILED_TEXT,
