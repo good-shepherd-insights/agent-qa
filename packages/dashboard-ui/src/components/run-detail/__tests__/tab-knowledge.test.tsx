@@ -241,7 +241,7 @@ describe("a ready panel paints the Used half from the view it was handed (D-03)"
     expect(badges.map(b => b.textContent)).toEqual(["2 brief lines", "1 canary", "hint"])
   })
 
-  it("fills the row's detail slot with the CHANNEL SECTIONS once it is expanded (407-06)", () => {
+  it("fills the row's detail slot with the channel sections it was served once it is expanded (407-06, 427 D-19)", () => {
     const view = mount(<TabKnowledge view={readyView([row({
       detail: {
         channel1: [{
@@ -270,8 +270,8 @@ describe("a ready panel paints the Used half from the view it was handed (D-03)"
     const slot = view.querySelector("[data-step-detail]")
     expect(slot).not.toBeNull()
     expect(slot?.textContent).toContain(CHANNEL_EYEBROWS[1])
-    expect(slot?.textContent).toContain(CHANNEL_EYEBROWS[2])
-    expect(slot?.textContent).toContain(CHANNEL_EYEBROWS[3])
+    expect(slot?.textContent).not.toContain(CHANNEL_EYEBROWS[2])
+    expect(slot?.textContent).not.toContain(CHANNEL_EYEBROWS[3])
     expect(view.querySelector('li[data-served-channel="1"][data-canary-outcome="confirmed"]')).not.toBeNull()
   })
 

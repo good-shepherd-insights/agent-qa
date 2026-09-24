@@ -712,16 +712,22 @@ describe('a replay states its guard outcome and a hint states its demotion (D-07
   it('tones the row ok, broke or hint — the three looks the UI-SPEC colours', () => {
     expect(planSourceView({
       kind: 'procedure-replay', procedureId: 'p', guard: { checksPassed: 2, total: 2 },
-    })).toEqual({ kind: 'procedure-replay', sentence: 'replayed 2/2', tone: 'ok' })
+    })).toEqual({ kind: 'procedure-replay', procedureId: 'p', sentence: 'replayed 2/2', tone: 'ok' })
 
     expect(planSourceView({
       kind: 'procedure-replay',
       procedureId: 'p',
       guard: { checksPassed: 0, total: 2, miss: { procedureStepIndex: 0, reason: 'gate-refused' } },
-    })).toEqual({ kind: 'procedure-replay', sentence: 'broke at step 1: miss', tone: 'broke' })
+    })).toEqual({
+      kind: 'procedure-replay',
+      procedureId: 'p',
+      sentence: 'broke at step 1: miss',
+      tone: 'broke',
+      missReason: 'gate-refused',
+    })
 
     expect(planSourceView({ kind: 'procedure-hint', procedureId: 'p' }))
-      .toEqual({ kind: 'procedure-hint', sentence: PROCEDURE_HINT_TEXT, tone: 'hint' })
+      .toEqual({ kind: 'procedure-hint', procedureId: 'p', sentence: PROCEDURE_HINT_TEXT, tone: 'hint' })
   })
 
   it('names the three broke causes exactly as the Copywriting Contract spells them', () => {
@@ -772,7 +778,7 @@ describe('the projection joins the trace, the ledger, the outcome and the plan s
     const detail = detailOf(view)
     expect(detail.channel1.map(l => l.id)).toEqual(['rec_a'])
     expect(detail.channel1[0].why).toEqual({ kind: 'answered', leg: 'lexical', rank: 2, score: 0.5 })
-    expect(detail.channel2).toEqual([{ id: 'rec_b', detailLevel: 'full' }])
+    expect(detail.channel2).toEqual([{ id: 'rec_b', detailLevel: 'full', bodyDigest: 'sha256:b' }])
     expect(detail.channel3).toEqual([{ id: 'rec_c', summary: 'this page is slow' }])
   })
 

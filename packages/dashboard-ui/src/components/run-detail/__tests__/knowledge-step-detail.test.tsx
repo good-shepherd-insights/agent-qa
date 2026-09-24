@@ -31,17 +31,19 @@ import { KnowledgeBriefLine } from "@/components/run-detail/knowledge-brief-line
 import {
   ATTRIBUTION_PENDING_TEXT,
   ATTRIBUTION_UNKNOWN_TEXT,
-  CANARY_BADGE_TEXT,
   CHANNEL_EYEBROWS,
+  LEDGER_ON_TRIAL_TEXT,
   NOT_ATTRIBUTED_TEXT,
   PRE_TRACE_TEXT,
   PROCEDURE_HINT_DEMOTED_TEXT,
   PROCEDURE_HINT_TEXT,
   STEP_NOT_FOUND_TEXT,
-  WHY_TRIGGER_TEXT,
+  attributionWordText,
+  copyRecordIdLabel,
   cutCandidatesLabel,
   showAllLinesLabel,
   traceLineText,
+  trustMetaLine,
   type BriefLineView,
   type StepDetailView,
 } from "@/lib/knowledge-view"
@@ -85,6 +87,12 @@ function line(overrides: Partial<BriefLineView> = {}): BriefLineView {
     ...overrides,
   }
 }
+
+/**
+ * The retired per-line disclosure's trigger copy (427 D-19). Spelled here as a literal because the
+ * constant is deleted once no surface paints it; the cells below prove no element carries it.
+ */
+const RETIRED_WHY_TRIGGER = "Why this line?"
 
 function detail(overrides: Partial<StepDetailView> = {}): StepDetailView {
   return { channel1: [], channel2: [], channel3: [], ...overrides }
@@ -149,21 +157,23 @@ describe("the painted node is the one no other match contains (407-28 · IN-05)"
 })
 
 describe("a served line carries the trace that explains it, inline (D-04)", () => {
-  it("marks the line answered and reveals its leg, rank and score behind the why trigger", () => {
+  // 427 D-19: Retrieval details is already a disclosure, so the trace reads on the line itself.
+  it("LEDGER-TRACE-INLINE: marks the line answered and prints its leg, rank and score inline, behind no trigger", () => {
     const view = mount(<KnowledgeBriefLine line={line()} />)
 
     const li = view.querySelector("li")
     expect(li?.getAttribute("data-served-channel")).toBe("1")
     expect(li?.getAttribute("data-trace-state")).toBe("answered")
 
-    // Closed: the answer is not on the page yet — the trigger is the whole affordance.
-    expect(view.textContent).toContain(WHY_TRIGGER_TEXT)
-    expect(view.textContent).not.toContain(traceLineText("anchor", 1, 1.48695))
-
-    click(view.querySelector('[data-slot="collapsible-trigger"]'))
-
     expect(view.textContent).toContain("leg anchor · rank 1 · score 1.487")
     expect(view.textContent).toContain(traceLineText("anchor", 1, 1.48695))
+    expect(view.querySelector('[data-slot="collapsible-trigger"]')).toBeNull()
+    expect(Array.from(view.querySelectorAll("*")).map(el => el.textContent)).not.toContain(RETIRED_WHY_TRIGGER)
+    expect(view.textContent).not.toContain(RETIRED_WHY_TRIGGER)
+
+    // The serve-time facts read as one mono meta line beside the trace.
+    expect(view.textContent).toContain("trust 0.90 · tier confirmed · status active")
+    expect(view.textContent).toContain(trustMetaLine(0.9, "confirmed", "active"))
   })
 
   it("renders the SHIPPED evidence-incomplete component when the artifact is gone", () => {
@@ -174,7 +184,7 @@ describe("a served line carries the trace that explains it, inline (D-04)", () =
     expect(view.querySelector("li")?.getAttribute("data-trace-state")).toBe("artifact-missing")
     expect(view.querySelector('[data-evidence-state="unavailable"][data-evidence-incomplete]')).not.toBeNull()
     // Nothing to expand: there is no answer behind a trigger that would open onto nothing.
-    expect(view.textContent).not.toContain(WHY_TRIGGER_TEXT)
+    expect(view.textContent).not.toContain(RETIRED_WHY_TRIGGER)
   })
 
   it("says a trace was never captured for a run that predates trace capture", () => {
@@ -256,7 +266,7 @@ describe("every unbroken token in the expanded row can shrink its own box, which
   function expandedRow(): HTMLElement {
     const view = mount(<KnowledgeStepDetail detail={detail({
       channel1: [line()],
-      channel2: [{ id: CHANNEL2_ID, detailLevel: "full" }],
+      channel2: [{ id: CHANNEL2_ID, detailLevel: "full", bodyDigest: "sha256:c2" }],
       channel3: [{ id: CHANNEL3_ID, summary: CHANNEL3_SUMMARY }],
       cut: {
         label: cutCandidatesLabel(1),
@@ -292,7 +302,17 @@ describe("every unbroken token in the expanded row can shrink its own box, which
 })
 
 describe("a canary line is marked ALWAYS, and its outcome is never blank (D-08)", () => {
-  it("wears the canary marker and the attributed outcome once curation settled", () => {
+  /** The painted node for `text`, which must be plain 12px text and never a tinted Badge. */
+  function plainWord(view: HTMLElement, text: string): HTMLElement {
+    const painted = deepestWithText(view, text)
+    expect(painted, `nothing paints ${JSON.stringify(text)}`).not.toBeNull()
+    expect(painted?.closest('[data-slot="badge"]')).toBeNull()
+    expect(painted?.className).toContain("text-xs")
+    return painted as HTMLElement
+  }
+
+  // 427 D-19: the marker reads "on trial (canary)" and the store's word reads as plain text.
+  it("wears the on-trial marker and the attributed outcome once curation settled", () => {
     const view = mount(
       <KnowledgeBriefLine line={line({ servedAsCanary: true, canaryOutcome: "confirmed" })} />,
     )
@@ -301,9 +321,11 @@ describe("a canary line is marked ALWAYS, and its outcome is never blank (D-08)"
     expect(li?.getAttribute("data-served-as-canary")).toBe("true")
     expect(li?.getAttribute("data-canary-outcome")).toBe("confirmed")
 
-    const badges = Array.from(view.querySelectorAll('[data-slot="badge"]')).map(b => b.textContent)
-    expect(badges).toContain(CANARY_BADGE_TEXT)
-    expect(badges).toContain("confirmed")
+    expect(view.querySelectorAll('[data-slot="badge"]').length).toBe(0)
+    plainWord(view, LEDGER_ON_TRIAL_TEXT)
+    plainWord(view, attributionWordText("confirmed"))
+    expect(LEDGER_ON_TRIAL_TEXT).toBe("on trial (canary)")
+    expect(attributionWordText("confirmed")).toBe("attribution: confirmed")
   })
 
   it("says ATTRIBUTION PENDING while curation has not settled — the marker stays either way", () => {
@@ -312,8 +334,9 @@ describe("a canary line is marked ALWAYS, and its outcome is never blank (D-08)"
     )
 
     expect(view.querySelector("li")?.getAttribute("data-canary-outcome")).toBe("pending")
-    const badges = Array.from(view.querySelectorAll('[data-slot="badge"]')).map(b => b.textContent)
-    expect(badges).toEqual([CANARY_BADGE_TEXT, ATTRIBUTION_PENDING_TEXT])
+    expect(view.querySelectorAll('[data-slot="badge"]').length).toBe(0)
+    plainWord(view, LEDGER_ON_TRIAL_TEXT)
+    plainWord(view, ATTRIBUTION_PENDING_TEXT)
   })
 
   it("says NOT ATTRIBUTED when the fold recorded nothing for it — never an empty slot", () => {
@@ -323,12 +346,13 @@ describe("a canary line is marked ALWAYS, and its outcome is never blank (D-08)"
 
     expect(view.querySelector("li")?.getAttribute("data-canary-outcome")).toBe("not-attributed")
     expect(view.textContent).toContain(NOT_ATTRIBUTED_TEXT)
+    plainWord(view, NOT_ATTRIBUTED_TEXT)
   })
 
   /**
    * REVIEW WR-02 AT THE MOUNT. `not attributed` claims the store answered; on a partial read
-   * nobody asked it. The look is the SAME muted outline — the degradation is explained by the
-   * Learned half's note, not by a second warning tint over here.
+   * nobody asked it. The look is the SAME muted text — the degradation is explained by the
+   * Memory changes read note, not by a warning tint over here.
    */
   it("says ATTRIBUTION UNKNOWN when the read that would have answered was partial", () => {
     const view = mount(
@@ -336,50 +360,64 @@ describe("a canary line is marked ALWAYS, and its outcome is never blank (D-08)"
     )
 
     expect(view.querySelector("li")?.getAttribute("data-canary-outcome")).toBe("unknown")
+    expect(view.querySelectorAll('[data-slot="badge"]').length).toBe(0)
+    plainWord(view, LEDGER_ON_TRIAL_TEXT)
 
-    const badges = Array.from(view.querySelectorAll('[data-slot="badge"]'))
-    expect(badges.map((b) => b.textContent)).toEqual([CANARY_BADGE_TEXT, ATTRIBUTION_UNKNOWN_TEXT])
-
-    const outcome = badges[1]?.className ?? ""
+    const outcome = plainWord(view, ATTRIBUTION_UNKNOWN_TEXT).className
     expect(outcome).toContain("text-muted-foreground")
     expect(outcome).not.toContain("text-amber-500")
     expect(outcome).not.toContain("text-emerald-500")
   })
 
-  it("leaves a non-canary line with no outcome attribute and no canary badge at all", () => {
+  it("leaves a non-canary line with no outcome attribute and no on-trial marker at all", () => {
     const view = mount(<KnowledgeBriefLine line={line()} />)
 
     const li = view.querySelector("li")
     expect(li?.getAttribute("data-served-as-canary")).toBe("false")
     expect(li?.hasAttribute("data-canary-outcome")).toBe(false)
-    expect(view.textContent).not.toContain(CANARY_BADGE_TEXT)
+    expect(view.textContent).not.toContain(LEDGER_ON_TRIAL_TEXT)
+    expect(view.textContent).not.toContain("canary")
   })
 })
 
-describe("the three channels are named, and an empty one says so by being empty (D-03)", () => {
-  it("renders exactly the three eyebrows the Copywriting Contract spells", () => {
-    const view = mount(<KnowledgeStepDetail detail={detail()} />)
+describe("each channel the step was served is named, and an empty one is left out (427 D-19)", () => {
+  it("LEDGER-OMITS-EMPTY-CHANNEL: a step served only channel 1 names channel 1 in a 12px eyebrow and nothing else", () => {
+    const view = mount(<KnowledgeStepDetail detail={detail({ channel1: [line()] })} />)
 
+    const sections = Array.from(view.querySelectorAll("[data-ledger-channel]"))
+    expect(sections.map(section => section.getAttribute("data-ledger-channel"))).toEqual(["1"])
+    const eyebrow = deepestWithText(view, CHANNEL_EYEBROWS[1])
+    expect(eyebrow?.className).toContain("text-xs")
+    expect(eyebrow?.className).not.toContain("text-[10px]")
     expect(view.textContent).toContain("CHANNEL 1 · BRIEF")
-    expect(view.textContent).toContain("CHANNEL 2 · READ TRACES")
-    expect(view.textContent).toContain("CHANNEL 3 · CAUTIONS")
+    expect(view.textContent).not.toContain(CHANNEL_EYEBROWS[2])
+    expect(view.textContent).not.toContain(CHANNEL_EYEBROWS[3])
+
+    // A step served nothing at all names no channel.
+    const empty = mount(<KnowledgeStepDetail detail={detail()} />)
+    expect(empty.querySelectorAll("[data-ledger-channel]").length).toBe(0)
     for (const eyebrow of Object.values(CHANNEL_EYEBROWS)) {
-      expect(view.textContent).toContain(eyebrow)
+      expect(empty.textContent).not.toContain(eyebrow)
     }
-    expect(view.querySelectorAll("li").length).toBe(0)
   })
 
   it("paints a read trace and a caution on their own channels", () => {
     const view = mount(<KnowledgeStepDetail detail={detail({
       channel1: [line()],
-      channel2: [{ id: "rec_b", detailLevel: "full" }],
+      channel2: [{ id: "rec_b", detailLevel: "full", bodyDigest: "sha256:body-b" }],
       channel3: [{ id: "rec_c", summary: "this page is slow to settle" }],
     })} />)
 
     expect(linesOf(view, "1").length).toBe(1)
     expect(linesOf(view, "2")[0].textContent).toContain("rec_b")
     expect(linesOf(view, "2")[0].textContent).toContain("full")
+    expect(linesOf(view, "2")[0].textContent).toContain("sha256:body-b")
     expect(linesOf(view, "3")[0].textContent).toContain("this page is slow to settle")
+    // Every served id is copyable, whichever channel served it.
+    for (const [channel, id] of [["1", "rec_1"], ["2", "rec_b"], ["3", "rec_c"]] as const) {
+      const button = linesOf(view, channel)[0].querySelector("[data-record-id-copy]")
+      expect(button?.getAttribute("aria-label")).toBe(copyRecordIdLabel(id))
+    }
   })
 })
 
@@ -413,32 +451,48 @@ describe("the cut ledger answers why it did NOT say something (D-04)", () => {
 })
 
 describe("a replay states its guard outcome and a hint states its demotion (D-07)", () => {
+  /** The plan-source row, which states its procedure and its sentence in plain text (427 D-19). */
+  function planSourceRow(view: HTMLElement, procedureId: string): Element | null {
+    const row = view.querySelector("[data-plan-source-outcome]")
+    expect(row?.querySelector('[data-slot="badge"]')).toBeNull()
+    expect(deepestWithText(view, procedureId)?.className).toContain("font-mono")
+    expect(row?.querySelector("[data-record-id-copy]")?.getAttribute("aria-label")).toBe(copyRecordIdLabel(procedureId))
+    return row
+  }
+
   it("names the step a replay broke at and the cause the guard recorded", () => {
     const view = mount(<KnowledgeStepDetail detail={detail({
-      planSource: { kind: "procedure-replay", sentence: "broke at step 3: verifier rejection", tone: "broke" },
+      planSource: {
+        kind: "procedure-replay",
+        procedureId: "procedure-flow-checkout-4be1",
+        sentence: "broke at step 1: miss",
+        tone: "broke",
+        missReason: "gate-refused",
+      },
     })} />)
 
-    const row = view.querySelector("[data-plan-source-outcome]")
+    const row = planSourceRow(view, "procedure-flow-checkout-4be1")
     expect(row?.getAttribute("data-plan-source-outcome")).toBe("broke")
-    expect(row?.textContent).toContain("broke at step 3: verifier rejection")
+    expect(row?.textContent).toContain("broke at step 1: miss")
+    expect(row?.textContent).toContain("gate-refused")
   })
 
   it("says replayed n/n when the guard passed", () => {
     const view = mount(<KnowledgeStepDetail detail={detail({
-      planSource: { kind: "procedure-replay", sentence: "replayed 5/5", tone: "ok" },
+      planSource: { kind: "procedure-replay", procedureId: "procedure-flow-login-77aa", sentence: "replayed 5/5", tone: "ok" },
     })} />)
 
-    const row = view.querySelector("[data-plan-source-outcome]")
+    const row = planSourceRow(view, "procedure-flow-login-77aa")
     expect(row?.getAttribute("data-plan-source-outcome")).toBe("ok")
     expect(row?.textContent).toContain("replayed 5/5")
   })
 
   it("keeps a demoted hint tellable apart from an ordinary one (G-381-4)", () => {
     const view = mount(<KnowledgeStepDetail detail={detail({
-      planSource: { kind: "procedure-hint", sentence: PROCEDURE_HINT_DEMOTED_TEXT, tone: "hint" },
+      planSource: { kind: "procedure-hint", procedureId: "procedure-flow-search-12cd", sentence: PROCEDURE_HINT_DEMOTED_TEXT, tone: "hint" },
     })} />)
 
-    const row = view.querySelector("[data-plan-source-outcome]")
+    const row = planSourceRow(view, "procedure-flow-search-12cd")
     expect(row?.getAttribute("data-plan-source-outcome")).toBe("hint")
     expect(row?.textContent).toContain(PROCEDURE_HINT_DEMOTED_TEXT)
     expect(PROCEDURE_HINT_DEMOTED_TEXT).not.toBe(PROCEDURE_HINT_TEXT)
