@@ -108,6 +108,10 @@ runSelftest({
       reds: [`${DOM} > (a2)`] },
     { id: 'K28', claim: 'REPLAY-INCOMPLETE-NOT-COMPLETE', subject: VIEW_SRC,
       reds: [`${EFFECT_V} > REPLAY-INCOMPLETE-NOT-COMPLETE (x2)`] },
+    { id: 'K29', claim: 'REPLAY-SIZE-FROM-FLOW', subject: VIEW_SRC,
+      reds: [`${EFFECT_V} > REPLAY-SIZE-FROM-FLOW: three completed body steps`] },
+    { id: 'K30', claim: 'REPLAY-GROUPED-STEPS', subject: VIEW_SRC,
+      reds: [`${EFFECT_V} > REPLAY-GROUPED-STEPS (x2)`] },
   ],
 })
 NODE

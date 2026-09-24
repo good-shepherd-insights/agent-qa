@@ -10,10 +10,11 @@
 # details, a ledger that leaves out empty channels, 425's bucket words, rows that equal the counts,
 # a header strip only for real problems, no doctor pointer on information, a zero-effect drain that
 # still records its snapshot, problems first in the Effect section, no uncounted trial and no hint
-# listed as an effect, and the curator's note after the counts. Every suite that pins those is green
-# today with nothing taken away, which is exactly what a green suite cannot tell you. So each leg
-# below plants the regression that would re-open one set or break one promise, and requires its
-# NAMED cell to red while the listed controls hold.
+# listed as an effect, a replay sized by its recorded flow, complete only when every attempted check
+# passed and one entry per procedure, and the curator's note after the counts. Every suite that pins
+# those is green today with nothing taken away, which is exactly what a green suite cannot tell you.
+# So each leg below plants the regression that would re-open one set or break one promise, and
+# requires its NAMED cell to red while the listed controls hold.
 #
 # THE LEGS
 #   K01  a fifth section joins KnowledgeSection and KNOWLEDGE_SECTIONS            -> C427-SECTIONS-EXACT
@@ -44,6 +45,8 @@
 #   K26  K11's id-as-primary, on the rebuilt bundle a spawned dashboard serves     -> (b7) (SC2, shipped)
 #   K27  the header strip paints a fresh store's bootstrap, on the rebuilt bundle  -> (a2) (SC5, shipped)
 #   K28  a replay with no break member counts as complete, checks passed or not    -> REPLAY-INCOMPLETE-NOT-COMPLETE (D-14)
+#   K29  a replay's size is the per-step guard total, not the recorded flow length -> REPLAY-SIZE-FROM-FLOW (D-12)
+#   K30  every replayed step is its own effect entry again                         -> REPLAY-GROUPED-STEPS (UI-SPEC S4)
 #
 # ALLOWED CO-REDS are listed on each leg with a one-line reason; nothing else may red. No leg names
 # the shipped-binary Learned-root curation-word cell as a red or a green: it is nondeterministic
@@ -65,7 +68,7 @@
 #   neutered  apply NO mutation; the run must FATAL with "<leg>: suite stayed green"
 #   fatal     mutate every subject, then throw; every subject must be restored
 #   SIGINT | SIGTERM | SIGHUP   the same, then deliver that signal to itself
-# AGENT_QA_427_KNOWLEDGE_MUTATION_LEG=K01..K28 runs one leg (normal or neutered runs only).
+# AGENT_QA_427_KNOWLEDGE_MUTATION_LEG=K01..K30 runs one leg (normal or neutered runs only).
 # AGENT_QA_427_KNOWLEDGE_MUTATION_LIST=1 prints the declared inventory and exits.
 #
 # Installed Node 24, workspace tools and the installed Playwright Chromium are required. No
@@ -461,7 +464,10 @@ const legs = [
     }],
     reds: [effect('EFFECT-ORDER: harmful and contradicted')],
     // A stopped replay after an earlier confirmation is the problems-first rule seen from the replay side.
-    allowed: [effect('REPLAY-STOPPED-IS-PROBLEM: a stopped replay sorts before')],
+    allowed: [effect('REPLAY-STOPPED-IS-PROBLEM: a stopped replay sorts before'),
+      // 427-15's runner-shaped cells put a stop after a completed replay in an earlier step and read the stop first.
+      effect('REPLAY-STOPPED-IS-PROBLEM: a miss at procedure step index 2'),
+      effect('REPLAY-SIZE-FROM-FLOW: three completed body steps'), effect('REPLAY-SIZE-FROM-FLOW: with no recorded flow')],
     greens: [effect('HINT-NOT-EFFECT'), effect('UNCOUNTED-NOT-EFFECTS', 3), effect('EFFECT-GROUPED-STEPS')],
   },
   {
@@ -542,10 +548,46 @@ const legs = [
     greens: [effect('REPLAY-COMPLETE'), effect('REPLAY-SIZE-FROM-FLOW', 3), effect('HINT-NOT-EFFECT'), effect('EFFECT-ORDER', 2),
       effect('EFFECT-GROUPED-STEPS')],
   },
+  {
+    subject: VIEW_SRC, instrument: 'ui-view', claim: 'REPLAY-SIZE-FROM-FLOW',
+    operation: "take a replay's size from the per-step guard total instead of the recorded flow length",
+    edits: [
+      {
+        from: "        const groupKey = [procedureId, flow?.length ?? '', stop?.step ?? '', stop?.cause ?? ''].join('\\u0000')\n",
+        to: "        const groupKey = [procedureId, guard.total, stop?.step ?? '', stop?.cause ?? ''].join('\\u0000')\n",
+      },
+      { from: '          length: flow?.length,\n', to: '          length: guard.total,\n' },
+    ],
+    reds: [effect('REPLAY-SIZE-FROM-FLOW: three completed body steps')],
+    // Each of these pins a runner-shaped replay's sentence to its flow length, and the runner records
+    // total 1 per step: six steps read "6 of its 1 steps", a three-step stop loses its "of 3", the
+    // partial replay beside a stop reads "2 of its 1 steps", and an unfinished third step "2 of its 1".
+    allowed: [effect('REPLAY-COMPLETE'), effect('REPLAY-GROUPED-STEPS'),
+      effect('REPLAY-STOPPED-IS-PROBLEM: a miss at procedure step index 2'),
+      effect('REPLAY-INCOMPLETE-NOT-COMPLETE: an unfinished third step')],
+    greens: [effect('HINT-NOT-EFFECT'), effect('EFFECT-ORDER', 2), effect('UNCOUNTED-NOT-EFFECTS', 3), effect('EFFECT-GROUPED-STEPS'),
+      effect('REPLAY-INCOMPLETE-NOT-COMPLETE: a policy-denied')],
+  },
+  {
+    subject: VIEW_SRC, instrument: 'ui-view', claim: 'REPLAY-GROUPED-STEPS',
+    operation: 'give every replayed step its own effect entry again',
+    edits: [{
+      from: "        const groupKey = [procedureId, flow?.length ?? '', stop?.step ?? '', stop?.cause ?? ''].join('\\u0000')\n",
+      to: "        const groupKey = [procedureId, step.testIndex, step.stepIndex, flow?.length ?? '', stop?.step ?? '', stop?.cause ?? ''].join('\\u0000')\n",
+    }],
+    reds: [effect('REPLAY-GROUPED-STEPS', 2)],
+    // Each of these replays one procedure across several steps and expects one entry for them: six
+    // entries for REPLAY-COMPLETE, and a partial replay beside a stop or an unfinished step splits too.
+    allowed: [effect('REPLAY-COMPLETE'), effect('REPLAY-STOPPED-IS-PROBLEM: a miss at procedure step index 2'),
+      effect('REPLAY-SIZE-FROM-FLOW: three completed body steps'),
+      effect('REPLAY-INCOMPLETE-NOT-COMPLETE: an unfinished third step')],
+    greens: [effect('EFFECT-GROUPED-STEPS'), effect('HINT-NOT-EFFECT'), effect('EFFECT-ORDER', 2), effect('UNCOUNTED-NOT-EFFECTS', 3),
+      effect('REPLAY-INCOMPLETE-NOT-COMPLETE: a policy-denied')],
+  },
 ]
 
 runGate({
   slug: '427-knowledge-mutation', envPrefix: 'AGENT_QA_427_KNOWLEDGE_MUTATION', idPrefix: 'K',
-  instruments, legs, expectedLegs: 28, banner: 'KNOWLEDGE_MUTATION_OK',
+  instruments, legs, expectedLegs: 30, banner: 'KNOWLEDGE_MUTATION_OK',
 })
 NODE
