@@ -33,7 +33,11 @@ import { TabKnowledge } from "@/components/run-detail/tab-knowledge"
 import {
   CHANGED_NOTHING_TEXT,
   CHANNEL_EYEBROWS,
-  LEARNED_HEADING,
+  EFFECT_HEADING,
+  EFFECT_NOTHING_USED_TEXT,
+  KNOWLEDGE_SECTIONS,
+  MEMORY_CHANGES_HEADING,
+  NO_BRIEF_LINES_TEXT,
   NO_BRIEF_SERVED_TEXT,
   NO_STORE_BODY,
   NO_STORE_HEADING,
@@ -85,8 +89,32 @@ function row(overrides: Partial<StepRowView> = {}): StepRowView {
   }
 }
 
-function readyView(steps: StepRowView[], summary = "1 step briefed · 1 canary line served"): KnowledgeView {
-  return { state: "ready", used: { summary, steps } }
+const LEARNED_NOTHING: LearnedView = {
+  state: "done",
+  countLine: legacyCurationPairText(0, 0),
+  sentence: CHANGED_NOTHING_TEXT,
+  rows: [],
+}
+
+function readyView(
+  steps: StepRowView[],
+  summary = "1 step briefed · 1 canary line served",
+  learned: LearnedView = LEARNED_NOTHING,
+): KnowledgeView {
+  return {
+    state: "ready",
+    used: { records: [], absence: steps.length === 0 ? NO_BRIEF_SERVED_TEXT : NO_BRIEF_LINES_TEXT },
+    effect: { absence: EFFECT_NOTHING_USED_TEXT },
+    ledger: { summary, steps },
+    learned,
+  }
+}
+
+// 427 D-19: the per-step ledger renders only once the collapsed Retrieval details is opened.
+function openRetrievalDetails(view: HTMLElement): void {
+  const trigger = view.querySelector('[data-knowledge-section="retrieval-details"] [data-slot="collapsible-trigger"]')
+  if (trigger === null) throw new Error("no Retrieval details trigger")
+  act(() => { (trigger as HTMLElement).click() })
 }
 
 function stateOf(view: HTMLElement): string | null {
@@ -156,6 +184,8 @@ describe("a ready panel paints the Used half from the view it was handed (D-03)"
     const heading = view.querySelector("h4")
     expect(heading?.textContent).toBe(USED_HEADING)
 
+    openRetrievalDetails(view)
+
     const summary = view.querySelector("[data-used-summary]")
     expect(summary?.textContent).toBe("2 steps briefed · 1 canary line served · 1 procedure replay")
 
@@ -172,16 +202,27 @@ describe("a ready panel paints the Used half from the view it was handed (D-03)"
     ])
   })
 
-  it("opens every row CLOSED — a 200-step run is 200 one-line rows, not 200 open panes", () => {
+  it("LEDGER-IN-RETRIEVAL-DETAILS: the step rows render only inside a closed Retrieval details, and each opens CLOSED", () => {
     const view = mount(<TabKnowledge view={readyView([row(), row({ stepIndex: 1, title: "Step 2 — pay" })])} />)
 
+    const details = view.querySelector('[data-knowledge-section="retrieval-details"]')
+    expect(details?.querySelector('[data-slot="collapsible"]')?.getAttribute("data-state")).toBe("closed")
+    expect(view.querySelectorAll("[data-step-index]").length).toBe(0)
+    expect(view.querySelector("[data-used-summary]")).toBeNull()
+
+    openRetrievalDetails(view)
+
+    expect(details?.querySelector('[data-slot="collapsible"]')?.getAttribute("data-state")).toBe("open")
     const rows = Array.from(view.querySelectorAll("[data-step-index]"))
+    expect(rows.map(r => r.getAttribute("data-step-index"))).toEqual(["0", "1"])
+    expect(rows.every(r => details?.contains(r) === true)).toBe(true)
     expect(rows.map(r => r.getAttribute("data-state"))).toEqual(["closed", "closed"])
     expect(rows.every(r => r.querySelector('[data-slot="collapsible-trigger"]') !== null)).toBe(true)
   })
 
   it("says a step served nothing in MUTED TEXT, never as a badge — an empty fact is not a fact", () => {
     const view = mount(<TabKnowledge view={readyView([row({ briefLines: 0, canaryLines: 0, facts: [], noBrief: true })])} />)
+    openRetrievalDetails(view)
 
     const rowEl = view.querySelector("[data-step-index]") as HTMLElement
     expect(rowEl.textContent).toContain(STEP_NO_BRIEF_TEXT)
@@ -191,6 +232,7 @@ describe("a ready panel paints the Used half from the view it was handed (D-03)"
 
   it("renders one outline badge per fact on a briefed row", () => {
     const view = mount(<TabKnowledge view={readyView([row({ facts: ["2 brief lines", "1 canary", "hint"], planSource: "procedure-hint" })])} />)
+    openRetrievalDetails(view)
 
     const badges = Array.from(view.querySelectorAll('[data-slot="badge"]'))
     expect(badges.map(b => b.textContent)).toEqual(["2 brief lines", "1 canary", "hint"])
@@ -218,7 +260,9 @@ describe("a ready panel paints the Used half from the view it was handed (D-03)"
     // Closed, the detail is not in the document at all — Radix mounts the content on open.
     expect(view.textContent).not.toContain(CHANNEL_EYEBROWS[1])
 
-    act(() => { (view.querySelector('[data-slot="collapsible-trigger"]') as HTMLElement).click() })
+    openRetrievalDetails(view)
+    expect(view.textContent).not.toContain(CHANNEL_EYEBROWS[1])
+    act(() => { (view.querySelector('[data-step-index] [data-slot="collapsible-trigger"]') as HTMLElement).click() })
 
     const slot = view.querySelector("[data-step-detail]")
     expect(slot).not.toBeNull()
@@ -232,7 +276,10 @@ describe("a ready panel paints the Used half from the view it was handed (D-03)"
     const view = mount(<TabKnowledge view={readyView([], NO_BRIEF_SERVED_TEXT)} />)
 
     expect(stateOf(view)).toBe("ready")
-    expect(view.querySelector("[data-used-summary]")?.textContent).toBe(NO_BRIEF_SERVED_TEXT)
+    const used = view.querySelector('[data-knowledge-section="used"]')
+    expect(used?.querySelector("[data-section-absence]")?.textContent).toBe(NO_BRIEF_SERVED_TEXT)
+    expect(used?.querySelectorAll("[data-used-record]").length).toBe(0)
+    openRetrievalDetails(view)
     expect(view.querySelectorAll("[data-step-index]").length).toBe(0)
   })
 })
@@ -241,6 +288,7 @@ describe("producer text reaches the DOM as TEXT, never as markup (T-407-06)", ()
   it("renders a hostile step title as a text node — no element is created from it", () => {
     const hostile = "Step 1 — <img src=x onerror=alert(1)>"
     const view = mount(<TabKnowledge view={readyView([row({ title: hostile })])} />)
+    openRetrievalDetails(view)
 
     expect(view.querySelector("img")).toBeNull()
     expect(view.textContent).toContain("<img src=x onerror=alert(1)>")
@@ -255,45 +303,63 @@ describe("producer text reaches the DOM as TEXT, never as markup (T-407-06)", ()
   })
 })
 
-// THE TWO HALVES, IN ORDER (407-09 · LERN-02). The Used half answers "what did this run READ" and
-// the Learned half answers "what did it WRITE BACK", and the second only makes sense after the
-// first — which is why the order is a cell and not a styling detail.
-describe("the Learned half sits below the Used half in the ready arm (D-01 layout order)", () => {
-  const learned: LearnedView = {
-    state: "done",
-    countLine: legacyCurationPairText(0, 0),
-    sentence: CHANGED_NOTHING_TEXT,
-    rows: [],
+// THE FOUR SECTIONS, IN ORDER (427 · D-02, SC1). Knowledge used, then its effect, then what the
+// run wrote back, then the collapsed ledger — and each of the first three states itself when empty.
+describe("the ready arm paints four sections in KNOWLEDGE_SECTIONS order (427 D-02)", () => {
+  function allZeroView(): KnowledgeView {
+    const projection = RunKnowledgeProjectionSchema.parse({
+      kind: "ready", runId: "run-427-01-absence", buildOrdinal: 2, knowledgeStore: "bound", steps: [],
+      curation: { status: "done", counts: { curated: 0, deprecated: 0 } },
+      learned: {
+        changes: [], canaryAttributions: [],
+        curationSnapshot: CurationSnapshotSchema.parse({
+          schemaVersion: 1, rows: [], breakdown: { added: 0, confirmed: 0, superseded: 0, deprecated: 0, proposed: 0 },
+        }),
+      },
+    })
+    return projectKnowledgeView({ kind: "read", projection })
   }
 
-  function readyWithLearned(steps: StepRowView[]): KnowledgeView {
-    return { state: "ready", used: { summary: "1 step briefed", steps }, learned }
-  }
+  it("SECTIONS-IN-ORDER: the ready arm's sections read in the published order", () => {
+    const view = mount(<TabKnowledge view={readyView([row(), row({ stepIndex: 1 })])} />)
 
-  it("renders the Learned section AFTER the last step row in document order", () => {
-    const view = mount(<TabKnowledge view={readyWithLearned([row(), row({ stepIndex: 1 })])} />)
-
-    const section = view.querySelector("[data-learned-state]")
-    const lastStep = [...view.querySelectorAll("[data-step-index]")].at(-1)
-    if (section === null || lastStep === undefined) throw new Error("expected a Learned section after step rows")
-    // `DOCUMENT_POSITION_FOLLOWING` — the Learned section comes after the last row, whatever the
-    // nesting. Comparing `innerHTML` indices would pass on a section nested INSIDE the last row.
-    expect(lastStep.compareDocumentPosition(section) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
-    expect(lastStep.contains(section)).toBe(false)
+    expect([...view.querySelectorAll("[data-knowledge-section]")].map(section => section.getAttribute("data-knowledge-section")))
+      .toEqual([...KNOWLEDGE_SECTIONS])
   })
 
-  it("paints the Learned heading and its sentence inside the ready shell, not a second pane", () => {
-    const view = mount(<TabKnowledge view={readyWithLearned([row()])} />)
+  it("SECTION-ABSENCE-NOT-EMPTY: a run that used and changed nothing states each absence in one sentence and paints no empty list", () => {
+    const view = mount(<TabKnowledge view={allZeroView()} />)
 
     expect(stateOf(view)).toBe("ready")
-    expect(view.textContent).toContain(LEARNED_HEADING)
-    expect(view.textContent).toContain(CHANGED_NOTHING_TEXT)
+    expect([...view.querySelectorAll("h4")].map(heading => heading.textContent))
+      .toEqual([USED_HEADING, EFFECT_HEADING, MEMORY_CHANGES_HEADING])
+    for (const name of ["used", "effect", "changes"]) {
+      const section = view.querySelector(`[data-knowledge-section="${name}"]`)
+      expect(section?.querySelectorAll("[data-section-absence]").length).toBe(1)
+      expect(section?.querySelectorAll("ul").length).toBe(0)
+    }
+    expect(view.querySelector('[data-knowledge-section="used"] [data-section-absence]')?.textContent).toBe(NO_BRIEF_SERVED_TEXT)
+    expect(view.querySelector('[data-knowledge-section="effect"] [data-section-absence]')?.textContent).toBe(EFFECT_NOTHING_USED_TEXT)
+    expect(view.querySelector('[data-knowledge-section="changes"] [data-section-absence]')?.textContent).toBe(CHANGED_NOTHING_TEXT)
   })
 
-  it("renders NO Learned section when the ready arm carried none — nothing is invented here", () => {
-    const view = mount(<TabKnowledge view={readyView([row()])} />)
-
-    expect(view.querySelector("[data-learned-state]")).toBeNull()
+  it("the Memory changes section renders its heading on every ready run", () => {
+    const views: KnowledgeView[] = [
+      readyView([row()]),
+      readyView([], NO_BRIEF_SERVED_TEXT),
+      pageView("pending", {}),
+      pageView("failed", {}),
+      allZeroView(),
+    ]
+    for (const knowledge of views) {
+      const view = mount(<TabKnowledge view={knowledge} />)
+      const changes = view.querySelector('[data-knowledge-section="changes"]')
+      expect(changes?.querySelector("h4")?.textContent).toBe(MEMORY_CHANGES_HEADING)
+      act(() => { root?.unmount() })
+      container?.remove()
+      root = undefined
+      container = undefined
+    }
   })
 })
 

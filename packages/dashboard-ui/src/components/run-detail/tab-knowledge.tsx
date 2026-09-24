@@ -25,15 +25,14 @@
 // producer strings crossing the display seam, and the hostile-text cells assert that an
 // `<img onerror=…>` in either one creates no element.
 
-import { ChevronRight } from "lucide-react"
+import { useId } from "react"
 
-import { Badge } from "@/components/ui/badge"
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
 import { Skeleton } from "@/components/ui/skeleton"
 import { EvidenceIncomplete } from "./evidence-incomplete"
 import { KnowledgeLearned } from "./knowledge-learned"
-import { KnowledgeStepDetail } from "./knowledge-step-detail"
-import { STEP_NO_BRIEF_TEXT, USED_HEADING, type KnowledgeView, type StepRowView } from "@/lib/knowledge-view"
+import { KnowledgeUsed } from "./knowledge-used"
+import { RetrievalDetails } from "./retrieval-details"
+import { EFFECT_HEADING, type EffectSectionView, type KnowledgeView } from "@/lib/knowledge-view"
 
 /** The tab body's own padding and rhythm (UI-SPEC: `TabsContent` → `ScrollArea` → this div). */
 const CONTENT_CLASS = "px-3 py-4 space-y-4"
@@ -87,76 +86,24 @@ export function TabKnowledge({ view }: { view: KnowledgeView | undefined }) {
     )
   }
 
+  // 427 D-02 / D-19: four sections in KNOWLEDGE_SECTIONS order; the per-step ledger sits collapsed
+  // at the foot, and Memory changes renders on every ready run so each heading always states itself.
   return (
-    <div data-knowledge-state="ready" className={CONTENT_CLASS}>
-      <div className="space-y-2">
-        <h4 className={HEADING_CLASS}>{USED_HEADING}</h4>
-        {/* The DERIVED line (D-03) — never a second read, and `tabular-nums` so it does not jitter. */}
-        <p data-used-summary className="text-sm tabular-nums">{view.used.summary}</p>
-        {view.used.steps.length > 0 ? (
-          <ul className="space-y-1">
-            {view.used.steps.map(row => (
-              <StepRow key={`${String(row.testIndex)}:${String(row.stepIndex)}`} row={row} />
-            ))}
-          </ul>
-        ) : null}
-      </div>
-      {/*
-        THE SECOND HALF, AFTER THE FIRST (407-09). "What did this run read" then "what did it write
-        back" — the order is the reading order, and the `space-y-4` on the wrapper is the one gap
-        between them. The section renders only when the projection carried one: a tab that invented
-        a Learned half for a view without one would be painting a state the op did not say.
-      */}
-      {view.learned === undefined ? null : (
-        <KnowledgeLearned view={view.learned} proposals={view.proposals} />
-      )}
+    <div data-knowledge-state="ready" className="px-3 py-4 space-y-6">
+      <KnowledgeUsed view={view.used} />
+      <KnowledgeEffect view={view.effect} />
+      <KnowledgeLearned view={view.learned} proposals={view.proposals} />
+      <RetrievalDetails ledger={view.ledger} />
     </div>
   )
 }
 
-/**
- * One collapsed step row.
- *
- * CLOSED BY DEFAULT, AND THAT IS THE OVERFLOW STRATEGY. A 200-step run is 200 one-line rows, so
- * the tab needs no virtualisation and the `ScrollArea` above stays the one scroll owner.
- *
- * THE ROW EXISTS EVEN WHEN IT SERVED NOTHING. `noBrief` renders a muted sentence instead of
- * badges rather than dropping the row: a run that looks shorter than it was is a worse answer
- * than a row that says nothing happened here.
- *
- * The expanded body holds ONE ANCHOR (407-02) that 407-06 filled with `KnowledgeStepDetail` — the
- * three channels, the per-line why-trace, the cut ledger and the procedure outcome. The anchor
- * stayed the same element and the row kept its shape, which is what made that plan an addition.
- */
-function StepRow({ row }: { row: StepRowView }) {
+function KnowledgeEffect({ view }: { view: EffectSectionView }) {
+  const headingId = useId()
   return (
-    <Collapsible asChild>
-      <li
-        data-step-index={String(row.stepIndex)}
-        data-test-index={String(row.testIndex)}
-        data-plan-source={row.planSource}
-        data-brief-lines={String(row.briefLines)}
-        data-canary-lines={String(row.canaryLines)}
-      >
-        <CollapsibleTrigger className="group flex w-full items-center gap-2 py-1 text-left text-sm hover:text-foreground">
-          <ChevronRight className="h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform group-data-[state=open]:rotate-90" />
-          <span className="truncate">{row.title}</span>
-          {row.noBrief === true ? (
-            <span className="text-xs text-muted-foreground">{STEP_NO_BRIEF_TEXT}</span>
-          ) : (
-            <span className="flex items-center gap-1">
-              {row.facts.map(fact => (
-                <Badge key={fact} variant="outline" className="text-xs font-medium">{fact}</Badge>
-              ))}
-            </span>
-          )}
-        </CollapsibleTrigger>
-        <CollapsibleContent className="bg-muted/40 rounded-[var(--radius)] px-3 py-2 space-y-2">
-          <div data-step-detail>
-            <KnowledgeStepDetail detail={row.detail} />
-          </div>
-        </CollapsibleContent>
-      </li>
-    </Collapsible>
+    <section data-knowledge-section="effect" aria-labelledby={headingId} className="space-y-2">
+      <h4 id={headingId} className={HEADING_CLASS}>{EFFECT_HEADING}</h4>
+      <p data-section-absence className="text-sm text-muted-foreground">{view.absence}</p>
+    </section>
   )
 }

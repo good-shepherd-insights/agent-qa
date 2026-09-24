@@ -55,12 +55,13 @@
 // this file — a grep for React's one is an acceptance criterion. Record ids are producer strings
 // crossing the display seam, and a hostile-id cell asserts an `<img onerror=…>` creates no element.
 
+import { useId } from "react"
 import { Link } from "react-router"
 
 import { ReviewCommandButton } from "@/components/id-badge"
 import { Badge } from "@/components/ui/badge"
 import {
-  LEARNED_HEADING,
+  MEMORY_CHANGES_HEADING,
   promotionPathLabel,
   type LearnedChangeKind,
   type LearnedRowView,
@@ -116,8 +117,11 @@ export function KnowledgeLearned({
   view: LearnedView
   proposals?: ProposalsView | undefined
 }) {
+  const headingId = useId()
   return (
     <section
+      data-knowledge-section="changes"
+      aria-labelledby={headingId}
       data-learned-state={view.state}
       {...(view.scanIncomplete === true ? { "data-learned-read": "incomplete" } : {})}
       data-learned-snapshot={view.curationSnapshot === undefined ? "absent" : "recorded"}
@@ -127,7 +131,7 @@ export function KnowledgeLearned({
       className="space-y-2"
     >
       <div className="flex flex-wrap items-baseline gap-2">
-        <h4 className={HEADING_CLASS}>{LEARNED_HEADING}</h4>
+        <h4 id={headingId} className={HEADING_CLASS}>{MEMORY_CHANGES_HEADING}</h4>
         {view.countLine === undefined ? null : (
           <span data-learned-count-line className="text-xs text-muted-foreground tabular-nums">
             {view.countLine}
@@ -173,7 +177,7 @@ export function KnowledgeLearned({
       )}
 
       {view.sentence === undefined ? null : (
-        <p data-learned-sentence className="text-sm text-muted-foreground">
+        <p data-learned-sentence data-section-absence className="text-sm text-muted-foreground">
           {view.sentence}
         </p>
       )}

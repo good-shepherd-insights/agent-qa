@@ -261,6 +261,13 @@ async function selectTab(view: HTMLElement, label: string): Promise<void> {
   await flushRender()
 }
 
+// 427 D-19: the per-step ledger sits behind the collapsed Retrieval details section.
+async function openRetrievalDetails(view: HTMLElement): Promise<void> {
+  const trigger = view.querySelector('[data-knowledge-section="retrieval-details"] [data-slot="collapsible-trigger"]')
+  if (trigger === null) throw new Error("no Retrieval details trigger")
+  await act(async () => { (trigger as HTMLElement).click() })
+}
+
 function knowledgeState(view: HTMLElement): string | null {
   return view.querySelector("[data-knowledge-state]")?.getAttribute("data-knowledge-state") ?? null
 }
@@ -363,6 +370,7 @@ describe("a rejected read is a STATE on the tab, never a skeleton that never res
 describe("a populated read paints the Used half, end to end (D-03 / D-04 / D-08)", () => {
   it("derives the summary line and gives the served step its row", async () => {
     const view = await renderAt(`/runs/${RUN_ID}?tab=knowledge`)
+    await openRetrievalDetails(view)
 
     expect(knowledgeState(view)).toBe("ready")
     expect(view.querySelector("[data-used-summary]")?.textContent)
@@ -376,6 +384,7 @@ describe("a populated read paints the Used half, end to end (D-03 / D-04 / D-08)
   it("expands the row onto the channels, the attributed canary and the replay outcome", async () => {
     const view = await renderAt(`/runs/${RUN_ID}?tab=knowledge`)
 
+    await openRetrievalDetails(view)
     const trigger = view.querySelector('[data-step-index] [data-slot="collapsible-trigger"]')
     await act(async () => { (trigger as HTMLElement).click() })
 
@@ -388,6 +397,41 @@ describe("a populated read paints the Used half, end to end (D-03 / D-04 / D-08)
 
     expect(view.querySelector("[data-cut-candidates]")?.getAttribute("data-cut-candidates")).toBe("1")
     expect(view.querySelector("[data-plan-source-outcome]")?.textContent).toContain("replayed 5/5")
+  })
+})
+
+describe("427 D-02 / D-04 / D-05: a record given in three steps reads as one content-led row in a four-part tab", () => {
+  const SERVED_LINE = POPULATED.kind === "ready" ? POPULATED.steps[0]!.served.channel1[0]! : undefined
+  const GROUPED: RunKnowledgeProjection = {
+    ...POPULATED,
+    steps: [0, 1, 2].map(stepIndex => ({
+      testId: "t_checkout",
+      testIndex: 0,
+      stepIndex,
+      stepText: `step text ${String(stepIndex)}`,
+      served: { channel1: [{ ...SERVED_LINE!, servedAsCanary: false }], channel2: [], channel3: [] },
+      trace: { kind: "no-trace" as const, reason: "pre-trace-run" as const },
+    })),
+    learned: { changes: [], canaryAttributions: [] },
+  }
+
+  it("TRACER-GROUPED-USE: the page paints the four sections in order and one grouped row with no record id", async () => {
+    fetchRunKnowledgeMock.mockResolvedValue(GROUPED)
+
+    const view = await renderAt(`/runs/${RUN_ID}`)
+    await selectTab(view, "Knowledge")
+
+    expect(knowledgeState(view)).toBe("ready")
+    expect([...view.querySelectorAll("[data-knowledge-section]")].map(section => section.getAttribute("data-knowledge-section")))
+      .toEqual(["used", "effect", "changes", "retrieval-details"])
+
+    const used = view.querySelector('[data-knowledge-section="used"]')
+    const records = used?.querySelectorAll("[data-used-record]") ?? []
+    expect(records.length).toBe(1)
+    expect(records[0]?.getAttribute("data-use-verbs")).toBe("given")
+    expect(records[0]?.querySelector("[data-row-primary]")?.textContent).toBe(SERVED_LINE?.summary)
+    expect(records[0]?.querySelector("[data-row-uses]")?.textContent).toBe("Given in steps 1–3")
+    expect(used?.outerHTML).not.toContain(SERVED_LINE?.id)
   })
 })
 
@@ -445,6 +489,7 @@ describe("a partial store read paints the rows it was handed AND says the read w
 
     const view = await renderAt(`/runs/${RUN_ID}?tab=knowledge`)
 
+    await openRetrievalDetails(view)
     const trigger = view.querySelector('[data-step-index] [data-slot="collapsible-trigger"]')
     await act(async () => { (trigger as HTMLElement).click() })
 
@@ -463,6 +508,7 @@ describe("a partial store read paints the rows it was handed AND says the read w
 
     const view = await renderAt(`/runs/${RUN_ID}?tab=knowledge`)
 
+    await openRetrievalDetails(view)
     const trigger = view.querySelector('[data-step-index] [data-slot="collapsible-trigger"]')
     await act(async () => { (trigger as HTMLElement).click() })
 
@@ -494,6 +540,7 @@ describe("a served attribution row beats a FAILED curation chain, at the page (4
   async function expandedLineOf(projection: RunKnowledgeProjection) {
     fetchRunKnowledgeMock.mockResolvedValue(projection)
     const view = await renderAt(`/runs/${RUN_ID}?tab=knowledge`)
+    await openRetrievalDetails(view)
     const trigger = view.querySelector('[data-step-index] [data-slot="collapsible-trigger"]')
     await act(async () => { (trigger as HTMLElement).click() })
     return { view, line: view.querySelector('li[data-served-channel="1"]') }

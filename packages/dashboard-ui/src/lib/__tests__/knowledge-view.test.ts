@@ -50,7 +50,7 @@ import {
   CURATION_FAILED_TEXT,
   DELTAS_PENDING_TEXT,
   LEARNED_CHANGE_KINDS,
-  LEARNED_HEADING,
+  MEMORY_CHANGES_HEADING,
   NOT_ATTRIBUTED_TEXT,
   NO_BRIEF_LINES_TEXT,
   NO_BRIEF_SERVED_TEXT,
@@ -141,10 +141,10 @@ function ready(overrides: Partial<Extract<RunKnowledgeProjection, { kind: 'ready
   }
 }
 
-/** The `ready` arm, narrowed — most cells below read a used half, and none of them may be a state. */
+/** The `ready` arm's per-step ledger (427 D-19 moved it into Retrieval details), narrowed. */
 function usedOf(view: ReturnType<typeof projectKnowledgeView>) {
   if (view.state !== 'ready') throw new Error(`expected ready, got ${view.state}`)
-  return view.used
+  return view.ledger
 }
 
 describe('a failed read is its own state, never an empty panel (D-06)', () => {
@@ -388,8 +388,8 @@ describe('the reserved copy the expansion plans consume is published NOW', () =>
     expect(PRE_TRACE_TEXT).toBe('no trace was captured for this run')
     expect(STEP_NOT_FOUND_TEXT).toBe('no evidence recorded for this step')
     expect(STEP_NO_BRIEF_TEXT).toBe('no brief served')
-    expect(USED_HEADING).toBe('Used')
-    expect(LEARNED_HEADING).toBe('Learned')
+    expect(USED_HEADING).toBe('Knowledge used')
+    expect(MEMORY_CHANGES_HEADING).toBe('Memory changes')
     expect(new Set([PRE_TRACE_TEXT, STEP_NOT_FOUND_TEXT, STEP_NO_BRIEF_TEXT]).size).toBe(3)
   })
 })
@@ -1883,8 +1883,8 @@ describe('the 407-09 copy is published as constants, like every sentence before 
     ]).size).toBe(6)
   })
 
-  it('keeps the Learned heading beside them, where 407-02 published it', () => {
-    expect(LEARNED_HEADING).toBe('Learned')
+  it('keeps the Memory changes heading beside them (427 D-02 renamed the Learned heading)', () => {
+    expect(MEMORY_CHANGES_HEADING).toBe('Memory changes')
   })
 })
 

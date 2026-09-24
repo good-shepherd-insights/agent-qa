@@ -102,17 +102,17 @@ export function readFailedBody(error: string): string {
  * briefed work in it, the other is an empty store or a failing retriever — two different things
  * to go and look at.
  */
-export const NO_BRIEF_SERVED_TEXT = 'No brief was served on this run.'
+export const NO_BRIEF_SERVED_TEXT = 'This run used no stored knowledge: no step asked for a brief.'
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Used half
 // ─────────────────────────────────────────────────────────────────────────────
 
-/** The Used half's heading — one `<h4>`, 16px/500 (UI-SPEC Typography). */
-export const USED_HEADING = 'Used'
+/** The Knowledge used section's heading — one `<h4>`, 16px/500 (UI-SPEC Typography). */
+export const USED_HEADING = 'Knowledge used'
 
 /** The summary line when every derived segment is zero. See {@link NO_BRIEF_SERVED_TEXT}. */
-export const NO_BRIEF_LINES_TEXT = 'No brief lines were served on this run.'
+export const NO_BRIEF_LINES_TEXT = 'This run used no stored knowledge: retrieval ran and found nothing that applied.'
 
 /** What a step row says instead of badges when that step served nothing (muted, not a Badge). */
 export const STEP_NO_BRIEF_TEXT = 'no brief served'
@@ -182,6 +182,150 @@ export function usedSummaryLine(counts: UsedCounts): string {
 
   if (segments.length === 0) return NO_BRIEF_LINES_TEXT
   return segments.join(' · ')
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// The four-section tab and its grouped used rows (427 · D-02, D-04, D-05, D-07, D-19)
+// ─────────────────────────────────────────────────────────────────────────────
+
+export type KnowledgeSection = 'used' | 'effect' | 'changes' | 'retrieval-details'
+
+// prettier-ignore
+export const KNOWLEDGE_SECTIONS = [
+  'used',
+  'effect',
+  'changes',
+  'retrieval-details',
+] as const satisfies readonly KnowledgeSection[]
+
+export type UseVerb = 'given' | 'opened' | 'caution' | 'replayed' | 'hint'
+
+// prettier-ignore
+export const USE_VERBS = [
+  'given',
+  'opened',
+  'caution',
+  'replayed',
+  'hint',
+] as const satisfies readonly UseVerb[]
+
+export const USE_VERB_PHRASES = {
+  given: { lead: 'Given in', follow: 'given in' },
+  opened: { lead: 'Opened by the agent in', follow: 'opened in' },
+  caution: { lead: 'Given as a caution in', follow: 'given as a caution in' },
+  replayed: { lead: 'Replayed in', follow: 'replayed in' },
+  hint: { lead: 'Used as a hint in', follow: 'used as a hint in' },
+} satisfies Record<UseVerb, { readonly lead: string; readonly follow: string }>
+
+export const EFFECT_HEADING = 'Effect on this run'
+
+export const RETRIEVAL_DETAILS_LABEL = 'Retrieval details'
+
+export const EFFECT_NOTHING_MEASURED_TEXT = 'Nothing was measured on this run. Only knowledge on trial and procedure replays are measured.'
+
+export const EFFECT_NOTHING_USED_TEXT = 'Nothing to measure: this run used no stored knowledge.'
+
+export function usedCountLine(count: number): string {
+  return count === 1 ? '1 record' : `${String(count)} records`
+}
+
+export interface StepAddress {
+  readonly testIndex: number
+  readonly stepIndex: number
+}
+
+export type StepRefSegment =
+  | { readonly kind: 'text'; readonly text: string }
+  | { readonly kind: 'step'; readonly address: StepAddress; readonly label: string }
+
+function compareAddresses(a: StepAddress, b: StepAddress): number {
+  return a.testIndex - b.testIndex || a.stepIndex - b.stepIndex
+}
+
+function stepSegment(address: StepAddress): StepRefSegment {
+  return { kind: 'step', address, label: String(address.stepIndex + 1) }
+}
+
+// Every number is its own segment so a later plan can make it a control without re-parsing text.
+// Only a contiguous run of three or more compresses to a range; two neighbours read "1 and 2".
+export function formatStepRefs(addresses: readonly StepAddress[]): readonly StepRefSegment[] {
+  const sorted = [...addresses]
+    .sort(compareAddresses)
+    .filter((address, index, all) => index === 0 || compareAddresses(all[index - 1]!, address) !== 0)
+  if (sorted.length === 0) return []
+
+  const runs: StepAddress[][] = []
+  for (const address of sorted) {
+    const run = runs.at(-1)
+    const last = run?.at(-1)
+    const continues =
+      last !== undefined &&
+      last.testIndex === address.testIndex &&
+      address.stepIndex === last.stepIndex + 1
+    if (run !== undefined && continues) {
+      run.push(address)
+    } else {
+      runs.push([address])
+    }
+  }
+  const items = runs.flatMap(run => (run.length >= 3 ? [run] : run.map(address => [address])))
+
+  const segments: StepRefSegment[] = [{ kind: 'text', text: sorted.length === 1 ? 'step ' : 'steps ' }]
+  items.forEach((item, index) => {
+    if (index > 0) segments.push({ kind: 'text', text: index === items.length - 1 ? ' and ' : ', ' })
+    segments.push(stepSegment(item[0]!))
+    if (item.length > 1) {
+      segments.push({ kind: 'text', text: '–' })
+      segments.push(stepSegment(item.at(-1)!))
+    }
+  })
+  return segments
+}
+
+export interface UseView {
+  readonly verb: UseVerb
+  readonly addresses: readonly StepAddress[]
+}
+
+// `key` is the record's first-use position, never its id: no id leaves the grouping map.
+export interface UsedRecordView {
+  readonly key: string
+  readonly primary: string
+  readonly uses: readonly UseView[]
+}
+
+// Steps are sorted explicitly rather than trusting wire order (RESEARCH A3); a Map keeps first-use order.
+export function usedRecordViews(
+  projection: Extract<RunKnowledgeProjection, { kind: 'ready' }>,
+): readonly UsedRecordView[] {
+  const steps = [...projection.steps].sort(compareAddresses)
+  const byId = new Map<string, { primary: string; addresses: StepAddress[] }>()
+  for (const step of steps) {
+    const address: StepAddress = { testIndex: step.testIndex, stepIndex: step.stepIndex }
+    for (const line of step.served.channel1) {
+      const entry = byId.get(line.id)
+      if (entry === undefined) {
+        byId.set(line.id, { primary: line.summary, addresses: [address] })
+      } else if (compareAddresses(entry.addresses.at(-1)!, address) !== 0) {
+        entry.addresses.push(address)
+      }
+    }
+  }
+  return [...byId.values()].map((entry, index) => ({
+    key: String(index),
+    primary: entry.primary,
+    uses: [{ verb: 'given', addresses: entry.addresses }],
+  }))
+}
+
+export interface UsedSectionView {
+  readonly records: readonly UsedRecordView[]
+  readonly countLine?: string
+  readonly absence?: string
+}
+
+export interface EffectSectionView {
+  readonly absence: string
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -318,8 +462,8 @@ export function showAllLinesLabel(total: number): string {
   return `Show all ${String(total)} lines`
 }
 
-/** The Learned half's heading — one `<h4>`, 16px/500 (407-09). */
-export const LEARNED_HEADING = 'Learned'
+/** The Memory changes section's heading — one `<h4>`, 16px/500 (427 D-02, was the Learned half). */
+export const MEMORY_CHANGES_HEADING = 'Memory changes'
 
 // ─────────────────────────────────────────────────────────────────────────────
 // The Learned half's copy (407-09 · LERN-02, D-09 / D-10 / D-11 / D-12)
@@ -995,11 +1139,19 @@ export type KnowledgeView =
   | { readonly state: 'empty-no-store'; readonly heading: string; readonly body: string }
   | {
       readonly state: 'ready'
-      readonly used: { readonly summary: string; readonly steps: readonly StepRowView[] }
+      readonly used: UsedSectionView
+      readonly effect: EffectSectionView
+      readonly ledger: LedgerView
       readonly rung?: RungView
-      readonly learned?: LearnedView
+      readonly learned: LearnedView
       readonly proposals?: ProposalsView
     }
+
+/** The per-step ledger Retrieval details holds — the shipped summary line and step rows, moved (D-19). */
+export interface LedgerView {
+  readonly summary: string
+  readonly steps: readonly StepRowView[]
+}
 
 /** Did this step get served anything at all, on any channel? The one fold "briefed" means. */
 function servedLineCount(step: RunKnowledgeStep): number {
@@ -1408,11 +1560,21 @@ export function projectKnowledgeView(read: KnowledgeRead): KnowledgeView {
         hints: steps.filter(row => row.planSource === 'procedure-hint').length,
       })
 
+  const records = usedRecordViews(projection)
+  const used: UsedSectionView = records.length > 0
+    ? { records, countLine: usedCountLine(records.length) }
+    : { records, absence: steps.length === 0 ? NO_BRIEF_SERVED_TEXT : NO_BRIEF_LINES_TEXT }
+  const effect: EffectSectionView = {
+    absence: records.length === 0 ? EFFECT_NOTHING_USED_TEXT : EFFECT_NOTHING_MEASURED_TEXT,
+  }
+
   const proposals = proposalsView(projection.pendingProposalCount)
 
   return {
     state: 'ready',
-    used: { summary, steps },
+    used,
+    effect,
+    ledger: { summary, steps },
     ...(projection.retrievalRung === undefined ? {} : { rung: rungView(projection.retrievalRung) }),
     learned: learnedView(projection),
     ...(proposals === undefined ? {} : { proposals }),

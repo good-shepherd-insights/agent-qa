@@ -42,7 +42,7 @@ import {
   CURATION_FAILED_PARTIAL_TEXT,
   CURATION_FAILED_TEXT,
   DELTAS_PENDING_TEXT,
-  LEARNED_HEADING,
+  MEMORY_CHANGES_HEADING,
   RECONCILIATION_UNATTRIBUTED_TEXT,
   REVIEW_PROPOSALS_CTA,
   STORE_READ_INCOMPLETE_TEXT,
@@ -427,7 +427,7 @@ describe("the record list is one addressable row per change (D-10)", () => {
   it("renders the heading, the count line and one li per change, in the projection's order", () => {
     const host = render(populated)
 
-    expect(host.querySelector("h4")?.textContent).toBe(LEARNED_HEADING)
+    expect(host.querySelector("h4")?.textContent).toBe(MEMORY_CHANGES_HEADING)
     expect(host.querySelector("[data-learned-count-line]")?.textContent)
       .toBe(legacyCurationPairText(3, 1))
     expect(rowsOf(host).map((el) => el.getAttribute("data-record-change")))
