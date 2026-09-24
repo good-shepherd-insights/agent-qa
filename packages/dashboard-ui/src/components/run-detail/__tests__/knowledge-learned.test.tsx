@@ -643,7 +643,7 @@ describe("a curated NEW fact is painted, not denied (CR-04, R-407-15-01)", () =>
 
   // RE-SPELLED 427-09 from "paints the added record's row and no sentence at all": the rows are
   // still the answer with no sentence over them, and every bucket word now explains itself (D-16).
-  it("BUCKET-LABEL-MEANINGS: every bucket label is a focusable trigger whose tooltip and sr-only text are its meaning", async () => {
+  it("BUCKET-LABEL-MEANINGS: every bucket label is a button named by its word, whose tooltip and one description are its meaning", async () => {
     const buckets = ["added", "confirmed", "superseded", "deprecated", "proposed"] as const
     const host = render({
       state: "done",
@@ -656,13 +656,22 @@ describe("a curated NEW fact is painted, not denied (CR-04, R-407-15-01)", () =>
     for (const el of rowsOf(host)) {
       const bucket = el.getAttribute("data-record-change") as keyof typeof BUCKET_MEANINGS
       const label = el.querySelector<HTMLElement>("[data-bucket-label]")
-      expect(label?.tagName).toBe("SPAN")
-      expect(label?.tabIndex).toBe(0)
+      expect(label?.tagName).toBe("BUTTON")
+      expect(label?.getAttribute("type")).toBe("button")
+      expect(label?.hasAttribute("aria-label")).toBe(false)
+      expect(label?.hasAttribute("title")).toBe(false)
       expect(label?.className).toContain("cursor-help")
       expect(label?.className).toContain("decoration-dotted")
-      expect(label?.querySelector(".sr-only")?.textContent).toBe(BUCKET_MEANINGS[bucket])
+      expect(label?.textContent?.trim()).toBe(BUCKET_LABELS[bucket])
+      const ids = (label?.getAttribute("aria-describedby") ?? "").split(/\s+/).filter(id => id.length > 0)
+      expect(ids).toHaveLength(1)
+      const description = document.getElementById(ids[0] ?? "")
+      expect(description?.hasAttribute("hidden")).toBe(true)
+      expect(label?.contains(description)).toBe(false)
+      expect(description?.textContent).toBe(BUCKET_MEANINGS[bucket])
       await act(async () => { label?.focus() })
       expect(document.querySelector('[role="tooltip"]')?.textContent).toBe(BUCKET_MEANINGS[bucket])
+      expect(label?.getAttribute("aria-describedby")).toBe(ids[0])
       await act(async () => { label?.blur() })
     }
     expect(BUCKET_MEANINGS.proposed).toBe("Recorded, but held for review instead of changing what agents are given.")
@@ -846,7 +855,8 @@ describe("the proposals line is a count and a door (D-11, T-407-22)", () => {
     expect(cta?.getAttribute("href")).toBeNull()
     expect(cta?.getAttribute("data-review-command")).toBe(PENDING_PROPOSALS_REVIEW_COMMAND)
     expect(cta?.getAttribute("aria-label")).toBe(`${COPY_REVIEW_COMMAND_LABEL}: ${PENDING_PROPOSALS_REVIEW_COMMAND}`)
-    expect(cta?.getAttribute("title")).toBe(COPY_REVIEW_COMMAND_LABEL)
+    // The name already leads with the label, so no title repeats it as a description (G-427-1).
+    for (const attribute of ["title", "aria-describedby", "aria-description"]) expect(cta?.hasAttribute(attribute), attribute).toBe(false)
     // Only the Copy glyph shows; the command rides as sr-only text, so the control's text still names it.
     const children = [...(cta?.children ?? [])]
     expect(children.map(child => child.tagName.toLowerCase())).toEqual(["span", "svg"])

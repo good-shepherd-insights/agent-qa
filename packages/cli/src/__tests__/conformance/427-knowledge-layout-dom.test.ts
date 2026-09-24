@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { CurationSnapshotSchema, RunKnowledgeProjectionSchema, type RunKnowledgeProjection } from '@vostride/agent-qa-schema'
-import { chromium, type BrowserContext, type Page } from 'playwright-core'
+import { chromium, type BrowserContext, type CDPSession, type Page } from 'playwright-core'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { recordingFixture, type RecordingFixture } from './recording-dom-fixture.js'
 import { populatedRunSpawnEnv, POPULATED_SECRET_ENV_VAR } from './populated-run-fixture.js'
@@ -218,10 +218,11 @@ const worlds = new Map<World, Extract<RunKnowledgeProjection, { kind: 'ready' }>
 let serving: World = 'settled'
 
 type EffectRead = { world: World; filter: string; entries: Array<{ outcome: string; glyph: string; sentence: string }>; uncounted: number }
-type Focused = { id: number; tag: string; label: string | null; inKnowledge: boolean; srOnly: string; tooltip: string | null; scrollTop: number }
+type Ax = { role: string; name: string; description: string }
+type Focused = { id: number; tag: string; label: string | null; inKnowledge: boolean; visible: string; meaning: string; ax: Ax; tooltip: string | null; scrollTop: number }
 type Inventory = { stepRefs: number[]; onTrial: number[]; buckets: number[]; uncounted: number[]; recordIdCopies: number[]; proposals: number[] }
 type TooltipEscape = { trigger: string; shown: string | null; afterEscape: number }
-type Walk = { focused: Focused[]; inventory: Inventory; labels: Record<number, string | null>; srOnly: Record<number, string>; escapes: TooltipEscape[] }
+type Walk = { focused: Focused[]; inventory: Inventory; labels: Record<number, string | null>; visible: Record<number, string>; meaning: Record<number, string>; escapes: TooltipEscape[] }
 const effects: EffectRead[] = []
 let walk: Walk | undefined
 
@@ -264,34 +265,59 @@ async function driveGrayscale(context: BrowserContext, url: string) {
   serving = 'settled'
 }
 
+/** Chromium's computed role, name and description for whatever holds focus, through CDP. */
+async function focusedAx(cdp: CDPSession): Promise<Ax> {
+  const { result } = await cdp.send('Runtime.evaluate', { expression: 'document.activeElement', objectGroup: 'walk' })
+  try {
+    if (result.objectId === undefined) return { role: '', name: '', description: '' }
+    const { node } = await cdp.send('DOM.describeNode', { objectId: result.objectId })
+    const { nodes } = await cdp.send('Accessibility.getPartialAXTree', { objectId: result.objectId, fetchRelatives: false })
+    const ax = nodes.find(entry => entry.backendDOMNodeId === node.backendNodeId)
+    const text = (value: unknown) => typeof value === 'string' ? value : value === undefined || value === null ? '' : String(value)
+    return { role: text(ax?.role?.value), name: text(ax?.name?.value), description: text(ax?.description?.value) }
+  } finally {
+    await cdp.send('Runtime.releaseObjectGroup', { objectGroup: 'walk' })
+  }
+}
+
 /** Tab through the whole Knowledge pane with Retrieval details open, then prove Escape closes a tooltip. */
 async function driveKeyboard(context: BrowserContext, url: string): Promise<Walk> {
   const page = await context.newPage()
   await openKnowledge(page, url)
   await openDetails(page)
   await scrollPane(page, 'top')
+  const cdp = await context.newCDPSession(page)
+  await cdp.send('DOM.enable')
+  await cdp.send('Accessibility.enable')
   const inventory = await page.evaluate(() => {
     const ids = new WeakMap<Element, number>()
     let next = 0
     const idOf = (element: Element) => { if (!ids.has(element)) ids.set(element, next++); return ids.get(element)! }
-    ;(window as unknown as { walkIdOf: (element: Element) => number }).walkIdOf = idOf
+    const normalize = (text: string | null | undefined) => (text ?? '').replace(/\s+/g, ' ').trim()
+    const meaningOf = (element: Element) => normalize((element.getAttribute('aria-describedby') ?? '').split(/\s+/)
+      .filter(id => id.length > 0).map(id => document.getElementById(id)?.textContent ?? '').join(' '))
+    const helpers = window as unknown as { walkIdOf: (element: Element) => number; walkNormalize: typeof normalize; walkMeaningOf: typeof meaningOf }
+    helpers.walkIdOf = idOf
+    helpers.walkNormalize = normalize
+    helpers.walkMeaningOf = meaningOf
     const root = document.querySelector('[data-knowledge-state="ready"]')!
     const all = (selector: string) => [...root.querySelectorAll(selector)]
-    const onTrial = all('[data-used-record] span[tabindex="0"]').filter(element => (element.textContent ?? '').includes('on trial'))
     const groups = {
-      stepRefs: all('[data-step-ref]'), onTrial, buckets: all('[data-bucket-label]'),
-      uncounted: all('[data-effect-uncounted] span[tabindex="0"]'), recordIdCopies: all('[data-record-id-copy]'),
-      proposals: all('[data-pending-proposals] button'),
+      stepRefs: all('[data-step-ref]'), onTrial: all('[data-used-record][data-on-trial] [data-slot="tooltip-trigger"]'),
+      buckets: all('[data-bucket-label]'), uncounted: all('[data-effect-uncounted] [data-slot="tooltip-trigger"]'),
+      recordIdCopies: all('[data-record-id-copy]'), proposals: all('[data-pending-proposals] button'),
     }
     const labels: Record<number, string | null> = {}
-    const srOnly: Record<number, string> = {}
+    const visible: Record<number, string> = {}
+    const meaning: Record<number, string> = {}
     const inventory = Object.fromEntries(Object.entries(groups).map(([key, elements]) => [key, elements.map(element => {
       const id = idOf(element)
       labels[id] = element.getAttribute('aria-label')
-      srOnly[id] = (element.querySelector('.sr-only')?.textContent ?? '').trim()
+      visible[id] = normalize(element.textContent)
+      meaning[id] = meaningOf(element)
       return id
     })]))
-    return { inventory, labels, srOnly }
+    return { inventory, labels, visible, meaning }
   })
   await page.getByRole('tab', { name: 'Knowledge' }).focus()
   const focused: Focused[] = []
@@ -302,11 +328,11 @@ async function driveKeyboard(context: BrowserContext, url: string): Promise<Walk
     const now = await page.evaluate(() => {
       const element = document.activeElement
       if (!element || element === document.body) return undefined
-      const idOf = (window as unknown as { walkIdOf: (element: Element) => number }).walkIdOf
+      const helpers = window as unknown as { walkIdOf: (element: Element) => number; walkNormalize: (text: string | null) => string; walkMeaningOf: (element: Element) => string }
       return {
-        id: idOf(element), tag: element.tagName.toLowerCase(), label: element.getAttribute('aria-label'),
+        id: helpers.walkIdOf(element), tag: element.tagName.toLowerCase(), label: element.getAttribute('aria-label'),
         inKnowledge: element.closest('[data-knowledge-state]') !== null,
-        srOnly: (element.querySelector('.sr-only')?.textContent ?? '').trim(),
+        visible: helpers.walkNormalize(element.textContent), meaning: helpers.walkMeaningOf(element),
         // A closing tooltip lingers through its exit animation, so only open ones are read.
         tooltip: [...document.querySelectorAll('[data-slot="tooltip-content"]:not([data-state="closed"])')].map(node => node.textContent ?? '').join(' ') || null,
         scrollTop: element.closest('[data-slot="scroll-area"]')?.scrollTop ?? -1,
@@ -316,14 +342,14 @@ async function driveKeyboard(context: BrowserContext, url: string): Promise<Walk
     if (focused.some(entry => entry.id === now.id)) break
     if (entered && !now.inKnowledge) break
     entered ||= now.inKnowledge
-    focused.push(now)
+    focused.push({ ...now, ax: await focusedAx(cdp) })
   }
 
   const escapes: TooltipEscape[] = []
   for (const [trigger, selector] of [
-    ['on trial', '[data-used-record][data-on-trial] span[tabindex="0"]'],
+    ['on trial', '[data-used-record][data-on-trial] [data-slot="tooltip-trigger"]'],
     ['bucket label', '[data-bucket-label]'],
-    ['uncounted line', '[data-effect-uncounted] span[tabindex="0"]'],
+    ['uncounted line', '[data-effect-uncounted] [data-slot="tooltip-trigger"]'],
   ] as const) {
     const target = page.locator(selector).first()
     await target.scrollIntoViewIfNeeded()
@@ -337,6 +363,7 @@ async function driveKeyboard(context: BrowserContext, url: string): Promise<Walk
     await tooltip.first().waitFor({ state: 'detached', timeout: 5_000 }).catch(() => undefined)
     escapes.push({ trigger, shown, afterEscape: await tooltip.count() })
   }
+  await cdp.detach()
   await page.close()
   return { focused, ...inventory, inventory: inventory.inventory as Inventory, escapes }
 }
@@ -696,22 +723,55 @@ describe('the Knowledge tab on the shipped bundle at three geometries (427-13)',
 
   it('KNOWLEDGE-ACCESSIBLE-TREE', () => {
     expect(walk, JSON.stringify(failures)).toBeDefined()
-    const { focused, inventory, labels, srOnly, escapes } = walk!
+    const { focused, inventory, labels, visible, meaning, escapes } = walk!
     const reached = new Set(focused.map(entry => entry.id))
     const where = (group: string) => `${group}: ${JSON.stringify(focused.map(entry => `${entry.tag}:${entry.label ?? ''}`))}`
     for (const [group, ids] of Object.entries(inventory)) {
       expect(ids.length, `no ${group} on the page`).toBeGreaterThan(0)
       for (const id of ids) expect(reached.has(id), where(`${group} ${String(id)} never took focus`)).toBe(true)
     }
+    const normalize = (text: string) => text.replace(/\s+/g, ' ').trim()
+    const occurrences = (text: string, part: string) => part.length === 0 ? 0 : text.split(part).length - 1
+    // Every Tab stop in the pane is a control Chromium can name (G-427-1, WCAG 4.1.2).
+    for (const [index, entry] of focused.entries()) {
+      if (!entry.inKnowledge) continue
+      const control = `Tab stop ${String(index)} <${entry.tag}> named ${JSON.stringify(entry.ax.name)} (role ${JSON.stringify(entry.ax.role)})`
+      expect(['generic', 'none', 'presentation', ''].includes(entry.ax.role), `${control}: no usable role`).toBe(false)
+      expect(normalize(entry.ax.name).length, `${control}: empty accessible name`).toBeGreaterThan(0)
+      const name = normalize(entry.ax.name).toLowerCase()
+      const description = normalize(entry.ax.description).toLowerCase()
+      if (description.length > 0) {
+        expect(name.includes(description) || description.includes(name), `${control}: announces ${JSON.stringify(description)} twice`).toBe(false)
+      }
+    }
+    const byId = new Map(focused.map(entry => [entry.id, entry]))
+    const triggerIds = [...inventory.onTrial, ...inventory.buckets, ...inventory.uncounted]
+    expect({ onTrial: inventory.onTrial.length, buckets: inventory.buckets.length, uncounted: inventory.uncounted.length }).toEqual({ onTrial: 6, buckets: 6, uncounted: 1 })
+    for (const id of triggerIds) {
+      const entry = byId.get(id)!
+      const control = `tooltip trigger ${String(id)} <${entry.tag}> named ${JSON.stringify(entry.ax.name)}`
+      const name = normalize(entry.ax.name)
+      const description = normalize(entry.ax.description)
+      expect(entry.ax.role, control).toBe('button')
+      expect(name.toLowerCase(), control).toBe(visible[id]!.toLowerCase())
+      expect(meaning[id]!.length, `${control}: no described-by meaning`).toBeGreaterThan(0)
+      expect(description, control).toBe(meaning[id])
+      expect(name.includes(description), `${control}: its meaning is inside its name`).toBe(false)
+      expect(occurrences(`${name} ${description}`, meaning[id]!), `${control}: meaning announced other than once`).toBe(1)
+    }
     for (const id of inventory.stepRefs) expect(labels[id], 'a step reference\'s accessible name').toMatch(/^Go to /)
-    for (const id of [...inventory.onTrial, ...inventory.buckets, ...inventory.uncounted]) expect(srOnly[id]!.length, `tooltip trigger ${String(id)} has no sr-only meaning`).toBeGreaterThan(0)
-    for (const id of inventory.proposals) expect(labels[id]).toMatch(/^Copy review command/)
+    for (const id of inventory.proposals) {
+      const entry = byId.get(id)!
+      expect(labels[id]).toMatch(/^Copy review command/)
+      expect(entry.ax.name.startsWith('Copy review command: '), JSON.stringify(entry.ax)).toBe(true)
+      expect(entry.ax.description, `the copy button's description: ${JSON.stringify(entry.ax)}`).toBe('')
+    }
     for (const id of inventory.recordIdCopies) expect(labels[id]).toMatch(/^Copy record id /)
     // Tab shows a trigger's tooltip unless the focus had to scroll the pane: Radix closes a tooltip
     // when an ancestor scrolls, and the browser's focus scroll lands a frame after the open. The
-    // sr-only meaning above is what is announced either way; the closed ones are counted, not hidden.
-    const triggers = focused.filter(item => [...inventory.onTrial, ...inventory.buckets, ...inventory.uncounted].includes(item.id))
-    for (const entry of triggers) if (entry.tooltip !== null) expect(entry.tooltip).toContain(entry.srOnly)
+    // trigger's own description is what is announced either way; the closed ones are counted, not hidden.
+    const triggers = focused.filter(item => triggerIds.includes(item.id))
+    for (const entry of triggers) if (entry.tooltip !== null) expect(entry.tooltip).toContain(meaning[entry.id])
     expect(triggers.filter(entry => entry.tooltip !== null).length, 'no trigger showed its tooltip on Tab').toBeGreaterThan(0)
     expect(escapes.map(entry => entry.trigger)).toEqual(['on trial', 'bucket label', 'uncounted line'])
     for (const entry of escapes) {

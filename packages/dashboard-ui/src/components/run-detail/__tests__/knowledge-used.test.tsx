@@ -316,33 +316,70 @@ function withCurrent(summary: string, currentStatus: string) {
   return { ...content(summary, "fact"), currentStatus }
 }
 
-describe("a record on trial says what that means, without the store's word for it (D-09, D-13)", () => {
-  it("ON-TRIAL-TAG: a focusable on-trial tag with its meaning as tooltip and sr-only text; no other row wears it", async () => {
-    container = document.createElement("div")
-    document.body.append(container)
-    root = createRoot(container)
-    const used = usedOf([
-      step(0, { channel1: [servedLine("rec_t", "the promo code field is optional", "candidate", false), servedLine("rec_n", "a proven line", "active", false)] }),
-      step(1, { channel1: [servedLine("rec_t", "the promo code field is optional", "candidate", true)] }),
-    ])
-    act(() => { root?.render(<TooltipProvider delayDuration={0}><KnowledgeUsed view={used} /></TooltipProvider>) })
+function mountTrial(): HTMLElement {
+  container = document.createElement("div")
+  document.body.append(container)
+  root = createRoot(container)
+  const used = usedOf([
+    step(0, { channel1: [servedLine("rec_t", "the promo code field is optional", "candidate", false), servedLine("rec_n", "a proven line", "active", false)] }),
+    step(1, { channel1: [servedLine("rec_t", "the promo code field is optional", "candidate", true)] }),
+  ])
+  act(() => { root?.render(<TooltipProvider delayDuration={0}><KnowledgeUsed view={used} /></TooltipProvider>) })
+  return container
+}
 
-    const [trial, proven] = rows(container)
+function describedBy(trigger: HTMLElement | null | undefined): { ids: string[]; targets: Array<HTMLElement | null> } {
+  const ids = (trigger?.getAttribute("aria-describedby") ?? "").split(/\s+/).filter(id => id.length > 0)
+  return { ids, targets: ids.map(id => document.getElementById(id)) }
+}
+
+describe("a record on trial says what that means, without the store's word for it (D-09, D-13)", () => {
+  it("ON-TRIAL-TAG: a focusable on-trial tag with its meaning as tooltip and as its description; no other row wears it", async () => {
+    const view = mountTrial()
+
+    const [trial, proven] = rows(view)
     expect(trial?.getAttribute("data-on-trial")).toBe("true")
     expect(proven?.hasAttribute("data-on-trial")).toBe(false)
     expect(proven?.textContent).not.toContain(ON_TRIAL_TAG)
 
-    const trigger = trial?.querySelector<HTMLElement>('span[tabindex="0"]')
+    const trigger = trial?.querySelector<HTMLElement>('[data-slot="tooltip-trigger"]')
     expect(trigger).not.toBeNull()
     expect(trigger?.querySelector('[data-slot="badge"]')?.textContent).toBe(ON_TRIAL_TAG)
-    expect(trigger?.querySelector(".sr-only")?.textContent).toBe(ON_TRIAL_TOOLTIP)
+    expect(describedBy(trigger).targets[0]?.textContent).toBe(ON_TRIAL_TOOLTIP)
     expect(trigger?.querySelector("svg")?.getAttribute("aria-hidden")).toBe("true")
 
-    const section = container.querySelector('[data-knowledge-section="used"]')
+    const section = view.querySelector('[data-knowledge-section="used"]')
     expect(section?.textContent).not.toMatch(/canary/i)
     await act(async () => { trigger?.focus() })
     expect(document.querySelector('[role="tooltip"]')?.textContent).toBe(ON_TRIAL_TOOLTIP)
     expect(section?.textContent).not.toMatch(/canary/i)
+  })
+
+  it("TRIGGER-ACCESSIBLE-NAME: the on-trial tag is a button named by its label, its meaning its one static description", async () => {
+    const view = mountTrial()
+    const [trial] = rows(view)
+    const trigger = trial?.querySelector<HTMLElement>('[data-slot="tooltip-trigger"]')
+
+    expect(trigger?.tagName).toBe("BUTTON")
+    expect(trigger?.getAttribute("type")).toBe("button")
+    for (const attribute of ["role", "aria-label", "title"]) expect(trigger?.hasAttribute(attribute), attribute).toBe(false)
+    expect(trigger?.textContent?.trim()).toBe(ON_TRIAL_TAG)
+    expect(trigger?.textContent).not.toContain(ON_TRIAL_TOOLTIP)
+
+    const { ids, targets } = describedBy(trigger)
+    expect(ids).toHaveLength(1)
+    const description = targets[0]
+    expect(description).not.toBeNull()
+    expect(trigger?.contains(description ?? null)).toBe(false)
+    expect(description?.hasAttribute("hidden")).toBe(true)
+    expect(description?.textContent).toBe(ON_TRIAL_TOOLTIP)
+    expect(`${trigger?.textContent ?? ""} ${description?.textContent ?? ""}`.split(ON_TRIAL_TOOLTIP).length - 1).toBe(1)
+
+    await act(async () => { trigger?.focus() })
+    const tooltip = document.querySelector<HTMLElement>('[role="tooltip"]')
+    expect(tooltip?.textContent).toBe(ON_TRIAL_TOOLTIP)
+    expect(trigger?.getAttribute("aria-describedby")).toBe(ids[0])
+    expect(trigger?.getAttribute("aria-describedby")).not.toBe(tooltip?.id)
   })
 })
 

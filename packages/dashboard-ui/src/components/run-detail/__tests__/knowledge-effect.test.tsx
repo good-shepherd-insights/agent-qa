@@ -137,6 +137,11 @@ function entries(view: HTMLElement): HTMLElement[] {
   return [...view.querySelectorAll<HTMLElement>("li[data-effect-entry]")]
 }
 
+function describedBy(trigger: HTMLElement | null | undefined): { ids: string[]; targets: Array<HTMLElement | null> } {
+  const ids = (trigger?.getAttribute("aria-describedby") ?? "").split(/\s+/).filter(id => id.length > 0)
+  return { ids, targets: ids.map(id => document.getElementById(id)) }
+}
+
 function glyphClass(entry: HTMLElement): string {
   return [...(entry.querySelector("svg")?.classList ?? [])].find(name => name.startsWith("lucide-")) ?? ""
 }
@@ -205,7 +210,8 @@ describe("the store's words never reach the Effect section (D-12)", () => {
   it("EFFECT-NO-STORE-WORDS: every outcome, a replay and the uncounted line say none of them", async () => {
     const view = mount(<KnowledgeEffect view={everyOutcome()} />)
 
-    const trigger = view.querySelector<HTMLElement>("[data-effect-uncounted] span[tabindex='0']")
+    const trigger = view.querySelector<HTMLElement>('[data-effect-uncounted] [data-slot="tooltip-trigger"]')
+    expect(trigger).not.toBeNull()
     await act(async () => { trigger?.focus() })
     const text = `${section(view).textContent ?? ""} ${document.querySelector('[role="tooltip"]')?.textContent ?? ""}`.toLowerCase()
     expect(text).toContain("replayed all 2 of its steps")
@@ -221,11 +227,11 @@ describe("uncounted trials are one quiet, explained line (D-14)", () => {
 
     const line = view.querySelector<HTMLElement>('[data-effect-uncounted="2"]')
     expect(line).not.toBeNull()
-    const trigger = line?.querySelector<HTMLElement>("span")
+    const trigger = line?.querySelector<HTMLElement>('[data-slot="tooltip-trigger"]')
     expect(trigger?.tabIndex).toBe(0)
     expect(trigger?.firstChild?.textContent).toBe(uncountedTrialsLine(2))
     // The meaning is announced without hover, as the other tooltip triggers' is (UI-SPEC keyboard note).
-    expect(trigger?.querySelector(".sr-only")?.textContent).toBe(UNCOUNTED_TRIALS_TOOLTIP)
+    expect(describedBy(trigger).targets[0]?.textContent).toBe(UNCOUNTED_TRIALS_TOOLTIP)
     expect(line?.querySelector("svg")).toBeNull()
     expect(line?.outerHTML).not.toMatch(/amber|destructive/)
 
@@ -233,12 +239,42 @@ describe("uncounted trials are one quiet, explained line (D-14)", () => {
     expect(document.querySelector('[role="tooltip"]')?.textContent).toBe(UNCOUNTED_TRIALS_TOOLTIP)
   })
 
+  it("TRIGGER-ACCESSIBLE-NAME: the uncounted line is a button named by its sentence, its meaning its one static description", async () => {
+    const view = mount(<KnowledgeEffect view={everyOutcome()} />)
+    const line = view.querySelector<HTMLElement>('[data-effect-uncounted="2"]')
+    const trigger = line?.querySelector<HTMLElement>('[data-slot="tooltip-trigger"]')
+
+    expect(trigger?.tagName).toBe("BUTTON")
+    expect(trigger?.getAttribute("type")).toBe("button")
+    for (const attribute of ["role", "aria-label", "title"]) expect(trigger?.hasAttribute(attribute), attribute).toBe(false)
+    expect(trigger?.textContent?.trim()).toBe(uncountedTrialsLine(2))
+    expect(trigger?.textContent).not.toContain(UNCOUNTED_TRIALS_TOOLTIP)
+    for (const name of ["underline", "decoration-dotted", "cursor-help", "text-left"]) expect(trigger?.classList.contains(name), name).toBe(true)
+    expect(line?.querySelector("svg")).toBeNull()
+    expect(line?.outerHTML).not.toMatch(/amber|destructive/)
+
+    const { ids, targets } = describedBy(trigger)
+    expect(ids).toHaveLength(1)
+    const description = targets[0]
+    expect(description).not.toBeNull()
+    expect(trigger?.contains(description ?? null)).toBe(false)
+    expect(description?.hasAttribute("hidden")).toBe(true)
+    expect(description?.textContent).toBe(UNCOUNTED_TRIALS_TOOLTIP)
+    expect(`${trigger?.textContent ?? ""} ${description?.textContent ?? ""}`.split(UNCOUNTED_TRIALS_TOOLTIP).length - 1).toBe(1)
+
+    await act(async () => { trigger?.focus() })
+    const tooltip = document.querySelector<HTMLElement>('[role="tooltip"]')
+    expect(tooltip?.textContent).toBe(UNCOUNTED_TRIALS_TOOLTIP)
+    expect(trigger?.getAttribute("aria-describedby")).toBe(ids[0])
+    expect(trigger?.getAttribute("aria-describedby")).not.toBe(tooltip?.id)
+  })
+
   it("EFFECT-UNCOUNTED-TOOLTIP: the uncounted line follows the absence sentence when nothing else was measured", () => {
     const view = mount(<KnowledgeEffect view={effectSectionView(projection([step(0, [line("rec_q", "a quiet trial")])]))} />)
 
     expect(view.querySelector("[data-effect-list]")).toBeNull()
     expect(view.querySelector("[data-section-absence]")?.textContent).toBe(EFFECT_NOTHING_MEASURED_TEXT)
-    expect(view.querySelector('[data-effect-uncounted="1"] span')?.firstChild?.textContent).toBe(uncountedTrialsLine(1))
+    expect(view.querySelector('[data-effect-uncounted="1"] [data-slot="tooltip-trigger"]')?.firstChild?.textContent).toBe(uncountedTrialsLine(1))
     expect(view.querySelector("[data-effect-unmeasured]")).toBeNull()
   })
 })
