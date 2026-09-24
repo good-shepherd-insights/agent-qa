@@ -35,6 +35,7 @@ import {
 import type {
   BriefWhyNoTraceReason,
   CurationBreakdown,
+  InspectRecordView,
   PostProcessingChipStatus,
   PromotionPath,
   RecordChange,
@@ -43,8 +44,10 @@ import type {
   RetrievalRungReason,
   RetrievalTraceLeg,
   RunKnowledgeCanaryAttribution,
+  RunKnowledgeContentAbsence,
   RunKnowledgePlanSource,
   RunKnowledgeProjection,
+  RunKnowledgeRecordContent,
   RunKnowledgeStep,
   RunKnowledgeTrace,
   TraceLine,
@@ -324,35 +327,149 @@ export interface UseView {
   readonly addresses: readonly StepAddress[]
 }
 
+// The schema's record-kind enum, derived rather than re-spelled (C427-RECORD-KINDS-EXACT).
+export type RecordKind = InspectRecordView['kind']
+
+export const RECORD_KIND_LABELS = {
+  fact: 'Fact',
+  caution: 'Caution',
+  procedure: 'Procedure',
+  policy: 'Policy',
+  unknown: 'Open question',
+} as const satisfies Record<RecordKind, string>
+
+const RECORD_KINDS: ReadonlySet<string> = new Set(Object.keys(RECORD_KIND_LABELS))
+
+function isRecordKind(kind: string): kind is RecordKind {
+  return RECORD_KINDS.has(kind)
+}
+
+export const RECORD_UNREADABLE_LEAD = 'A record that can no longer be read'
+
+export const CONTENT_ABSENCE_REASON_TEXT = {
+  'not-found': 'It is no longer in the knowledge store.',
+  'scan-incomplete': 'The knowledge store could not be fully read.',
+  'not-bound': 'This dashboard has no record reader for this project.',
+} as const satisfies Record<RunKnowledgeContentAbsence['reason'], string>
+
+export const PROCEDURE_CONTENT_NOT_RECORDED_LEAD = "A procedure whose content isn't part of this run's record"
+
+export const USED_PAGE_SIZE = 50
+
+export function showAllRecordsLabel(total: number): string {
+  return `Show all ${String(total)} records`
+}
+
+export interface RecordJoin {
+  readonly content?: RunKnowledgeRecordContent
+  readonly absence?: RunKnowledgeContentAbsence
+}
+
+// Every joined row in the read, folded by record id: the first content wins, an absence stands
+// only where no row carried content. Steps are walked in (test, step) order, channels 1, 3, 2.
+export function contentById(
+  projection: Extract<RunKnowledgeProjection, { kind: 'ready' }>,
+): ReadonlyMap<string, RecordJoin> {
+  const joined = new Map<string, RecordJoin>()
+  const fold = (id: string, row: { recordContent?: RunKnowledgeRecordContent; contentAbsence?: RunKnowledgeContentAbsence }) => {
+    if (joined.get(id)?.content !== undefined) return
+    if (row.recordContent !== undefined) joined.set(id, { content: row.recordContent })
+    else if (row.contentAbsence !== undefined && !joined.has(id)) joined.set(id, { absence: row.contentAbsence })
+  }
+  for (const step of [...projection.steps].sort(compareAddresses)) {
+    for (const line of step.served.channel1) fold(line.id, line)
+    for (const line of step.served.channel3) fold(line.id, line)
+    for (const line of step.served.channel2) fold(line.id, line)
+  }
+  for (const row of projection.learned.changes) fold(row.recordId, row)
+  for (const row of projection.learned.sinceThen?.changes ?? []) fold(row.recordId, row)
+  return joined
+}
+
+export type UsedLeadSource = 'served' | 'joined' | 'absent' | 'not-recorded'
+
 // `key` is the record's first-use position, never its id: no id leaves the grouping map.
 export interface UsedRecordView {
   readonly key: string
   readonly primary: string
+  readonly leadSource: UsedLeadSource
+  readonly kind?: RecordKind
+  readonly content?: RunKnowledgeRecordContent
+  readonly contentAbsence?: RunKnowledgeContentAbsence
   readonly uses: readonly UseView[]
 }
 
-// Steps are sorted explicitly rather than trusting wire order (RESEARCH A3); a Map keeps first-use order.
+interface UsedRecordEntry {
+  served?: string
+  servedKind?: string
+  readonly uses: Map<UseVerb, StepAddress[]>
+}
+
+// Steps are sorted explicitly rather than trusting wire order (RESEARCH A3); within a step the
+// serving order is channel 1, channel 3, plan source, channel 2 (UI-SPEC S1). A Map keeps first use.
 export function usedRecordViews(
   projection: Extract<RunKnowledgeProjection, { kind: 'ready' }>,
 ): readonly UsedRecordView[] {
-  const steps = [...projection.steps].sort(compareAddresses)
-  const byId = new Map<string, { primary: string; addresses: StepAddress[] }>()
-  for (const step of steps) {
+  const byId = new Map<string, UsedRecordEntry>()
+  const use = (id: string, verb: UseVerb, address: StepAddress): UsedRecordEntry => {
+    let entry = byId.get(id)
+    if (entry === undefined) {
+      entry = { uses: new Map() }
+      byId.set(id, entry)
+    }
+    const addresses = entry.uses.get(verb)
+    if (addresses === undefined) entry.uses.set(verb, [address])
+    else if (compareAddresses(addresses.at(-1)!, address) !== 0) addresses.push(address)
+    return entry
+  }
+
+  for (const step of [...projection.steps].sort(compareAddresses)) {
     const address: StepAddress = { testIndex: step.testIndex, stepIndex: step.stepIndex, stepText: step.stepText }
     for (const line of step.served.channel1) {
-      const entry = byId.get(line.id)
-      if (entry === undefined) {
-        byId.set(line.id, { primary: line.summary, addresses: [address] })
-      } else if (compareAddresses(entry.addresses.at(-1)!, address) !== 0) {
-        entry.addresses.push(address)
-      }
+      const entry = use(line.id, 'given', address)
+      if (entry.served === undefined) entry.served = line.summary
+      if (entry.servedKind === undefined) entry.servedKind = line.kind
     }
+    for (const line of step.served.channel3) {
+      const entry = use(line.id, 'caution', address)
+      if (entry.served === undefined) entry.served = line.summary
+    }
+    if (step.planSource !== undefined) {
+      use(step.planSource.procedureId, step.planSource.kind === 'procedure-replay' ? 'replayed' : 'hint', address)
+    }
+    for (const line of step.served.channel2) use(line.id, 'opened', address)
   }
-  return [...byId.values()].map((entry, index) => ({
-    key: String(index),
-    primary: entry.primary,
-    uses: [{ verb: 'given', addresses: entry.addresses }],
-  }))
+
+  const joins = contentById(projection)
+  return [...byId.entries()].map(([id, entry], index) => {
+    const join = joins.get(id)
+    const content = join?.content
+    const absence = content === undefined ? join?.absence : undefined
+    const planSourceOnly = [...entry.uses.keys()].every(verb => verb === 'replayed' || verb === 'hint')
+    const [primary, leadSource]: [string, UsedLeadSource] =
+      entry.served !== undefined
+        ? [entry.served, 'served']
+        : content !== undefined
+          ? [content.summary, 'joined']
+          : absence !== undefined || !planSourceOnly
+            ? [RECORD_UNREADABLE_LEAD, 'absent']
+            : [PROCEDURE_CONTENT_NOT_RECORDED_LEAD, 'not-recorded']
+    const kind =
+      content !== undefined
+        ? content.kind
+        : entry.servedKind !== undefined && isRecordKind(entry.servedKind)
+          ? entry.servedKind
+          : undefined
+    return {
+      key: String(index),
+      primary,
+      leadSource,
+      ...(kind === undefined ? {} : { kind }),
+      ...(content === undefined ? {} : { content }),
+      ...(absence === undefined ? {} : { contentAbsence: absence }),
+      uses: [...entry.uses].map(([verb, addresses]) => ({ verb, addresses })),
+    }
+  })
 }
 
 export interface UsedSectionView {
