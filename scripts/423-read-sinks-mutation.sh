@@ -70,7 +70,7 @@ const KTD = 'src/__tests__/conformance/knowledge-tab-dom.test.ts'
 const instruments = {
   'read-sinks': { pkg: 'packages/cli', files: [SINKS], typecheck: false, count: 10, env: { VITEST_MAX_WORKERS: '1' } },
   'knowledge-views': { pkg: 'packages/dashboard-ui', files: [LEARNED_T, TAB_T], typecheck: false, count: 70 },
-  'knowledge-tab-dom': { pkg: 'packages/cli', files: [KTD], typecheck: false, count: 23, env: { VITEST_MAX_WORKERS: '1' } },
+  'knowledge-tab-dom': { pkg: 'packages/cli', files: [KTD], typecheck: false, count: 24, env: { VITEST_MAX_WORKERS: '1' } },
 }
 
 const UI_DIST = "join(PACKAGES_ROOT, 'dashboard-ui', 'dist')"

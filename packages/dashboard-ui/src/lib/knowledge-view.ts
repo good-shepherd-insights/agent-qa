@@ -880,9 +880,6 @@ export const CHANNEL_EYEBROWS = {
   3: 'CHANNEL 3 · CAUTIONS',
 } as const
 
-/** The per-line trace expander's trigger (D-04, 407-06). */
-export const WHY_TRIGGER_TEXT = 'Why this line?'
-
 /**
  * One answered trace line: which leg ranked it, where, and how strongly (D-04, 407-06).
  *

@@ -69,7 +69,6 @@ import {
   STEP_NO_BRIEF_TEXT,
   STORE_READ_INCOMPLETE_TEXT,
   USED_HEADING,
-  WHY_TRIGGER_TEXT,
   CHANNEL_EYEBROWS,
   DOCTOR_HINT_TEXT,
   RUNG_CAUSE_LABELS,
@@ -374,7 +373,6 @@ describe('the reserved copy the expansion plans consume is published NOW', () =>
       2: 'CHANNEL 2 · READ TRACES',
       3: 'CHANNEL 3 · CAUTIONS',
     })
-    expect(WHY_TRIGGER_TEXT).toBe('Why this line?')
   })
 
   it('renders a trace line with its score to three decimal places', () => {

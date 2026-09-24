@@ -266,7 +266,6 @@ const DOCTOR_HINT_TEXT = publishedConstant('DOCTOR_HINT_TEXT')
 const NO_BRIEF_LINES_TEXT = publishedConstant('NO_BRIEF_LINES_TEXT')
 const NO_BRIEF_SERVED_TEXT = publishedConstant('NO_BRIEF_SERVED_TEXT')
 const STEP_NO_BRIEF_TEXT = publishedConstant('STEP_NO_BRIEF_TEXT')
-const WHY_TRIGGER_TEXT = publishedConstant('WHY_TRIGGER_TEXT')
 const CHANGES_UNREADABLE_TEXT = publishedConstant('CHANGES_UNREADABLE_TEXT')
 const STORE_READ_INCOMPLETE_TEXT = publishedConstant('STORE_READ_INCOMPLETE_TEXT')
 /**
@@ -848,8 +847,14 @@ interface ServedLineObservation {
    * distinction is the whole subject of (c4)'s third agreement.
    */
   readonly canaryOutcome?: string
-  /** The `Why this line?` disclosure's text, after it was opened. Absent when there was none. */
+  /** The line's inline trace (`leg … · rank … · score …`, 427 D-19). Absent when there was none. */
   readonly whyText?: string
+}
+
+/** One default-view section's markup, read before Retrieval details was opened (427 SC2). */
+interface DefaultSectionMarkup {
+  readonly section: string
+  readonly html: string
 }
 
 /** One Memory changes row as (c1)/(c4)/(c5) compare it: its bucket and its subject record id. */
@@ -881,6 +886,12 @@ interface PageObservation {
   readonly usedAbsence?: string
   /** The Retrieval details root's `data-state` after the drive opened it (427 D-19). */
   readonly retrievalDetailsState?: string
+  /** The used, effect and changes sections' outerHTML on the resting tab (427 SC2). */
+  readonly defaultSections: readonly DefaultSectionMarkup[]
+  /** Every `[data-row-primary]` text on the resting tab (427 SC2). */
+  readonly rowPrimaries: readonly string[]
+  /** Retrieval details' outerHTML with the served step row expanded (427 SC2). */
+  readonly retrievalDetailsHtml?: string
   /** The `[data-used-summary]` sentence, as painted inside the opened Retrieval details. */
   readonly usedSummary?: string
   /** How many `[data-step-index]` rows the Used half drew. */
@@ -1273,6 +1284,13 @@ async function openRetrievalDetails(page: Page): Promise<string | undefined> {
   )
 }
 
+/** Retrieval details' outerHTML as it stands, or nothing when the tab painted no such section. */
+async function detailsMarkup(page: Page): Promise<string | undefined> {
+  const details = page.locator('[data-knowledge-section="retrieval-details"]').first()
+  if ((await details.count()) === 0) return undefined
+  return details.evaluate((node) => node.outerHTML).catch(() => undefined)
+}
+
 /**
  * Open one run's detail page and harvest the whole Knowledge story a person can reach.
  *
@@ -1367,6 +1385,15 @@ async function observeKnowledge(
       })),
     )
     const learnedCountLine = await textOf(page, '[data-learned-count-line]')
+    // SC2 is read on the RESTING tab: what the three default sections carry before anything opens.
+    const defaultSections: DefaultSectionMarkup[] = await page.locator('[data-knowledge-section]').evaluateAll(
+      (sections) => sections
+        .filter((section) => ['used', 'effect', 'changes'].includes(section.getAttribute('data-knowledge-section') ?? ''))
+        .map((section) => ({ section: section.getAttribute('data-knowledge-section') ?? '?', html: section.outerHTML })),
+    )
+    const rowPrimaries = await page.locator('[data-row-primary]').evaluateAll(
+      (nodes) => nodes.map((node) => (node.textContent ?? '').trim()),
+    )
     const retrievalDetailsState = await openRetrievalDetails(page)
     const usedSummary = await textOf(page, '[data-used-summary]')
     const knowledgeStepCount = await page.locator('[data-step-index]').count()
@@ -1397,10 +1424,11 @@ async function observeKnowledge(
       (_, index) => ({ bucket: learnedBuckets[index] ?? '?', id: ledgerIds[index] ?? '?' }),
     )
 
-    // ── One expanded row, and the why-trace inside it. The row that served something is chosen by
+    // ── One expanded row, and the inline why-trace inside it. The row that served something is chosen by
     // the attribute the panel stamped, so a fixture that served nothing expands its first row and
     // records an empty channel rather than hunting for one that does not exist.
     const servedLines: ServedLineObservation[] = []
+    let retrievalDetailsHtml: string | undefined
     const rows = page.locator('[data-step-index]')
     const rowCount = await rows.count()
     let target = -1
@@ -1419,8 +1447,6 @@ async function observeKnowledge(
       const lineCount = await lines.count()
       for (let index = 0; index < lineCount; index += 1) {
         const line = lines.nth(index)
-        const why = line.getByText(WHY_TRIGGER_TEXT, { exact: false }).first()
-        if ((await why.count()) > 0) await why.click().catch(() => undefined)
         const harvested = await line.evaluate((element) => ({
           traceState: element.getAttribute('data-trace-state') ?? '?',
           servedAsCanary: element.getAttribute('data-served-as-canary') ?? '?',
@@ -1428,8 +1454,8 @@ async function observeKnowledge(
           // non-canary line; it is carried through as an absent key, never as an empty string.
           canaryOutcome: element.getAttribute('data-canary-outcome'),
           // The mono paragraphs inside the line: the first is the record id, and the trace answer
-          // is the one that follows an opened disclosure.
-          monoText: Array.from(element.querySelectorAll('p'))
+          // is the one that starts `leg ` — inline since 427 D-19, with no disclosure to open.
+          monoText: Array.from(element.querySelectorAll('p.font-mono'))
             .map((node) => (node.textContent ?? '').trim())
             .filter((text) => text !== ''),
         }))
@@ -1444,9 +1470,11 @@ async function observeKnowledge(
           ...(whyText === undefined ? {} : { whyText }),
         })
       }
+      retrievalDetailsHtml = await detailsMarkup(page)
       // The row is collapsed again so the later shortcut legs read a page in its resting shape.
       await row.locator('button').first().click().catch(() => undefined)
     }
+    if (retrievalDetailsHtml === undefined) retrievalDetailsHtml = await detailsMarkup(page)
 
     // ── D-02's re-pointed `m`. The tab is left first, so "still on knowledge" cannot pass for
     // "the key brought us back".
@@ -1509,6 +1537,9 @@ async function observeKnowledge(
       sectionOrder,
       ...(usedAbsence === undefined ? {} : { usedAbsence }),
       ...(retrievalDetailsState === undefined ? {} : { retrievalDetailsState }),
+      defaultSections,
+      rowPrimaries,
+      ...(retrievalDetailsHtml === undefined ? {} : { retrievalDetailsHtml }),
       ...(usedSummary === undefined ? {} : { usedSummary }),
       knowledgeStepCount,
       briefLineCounts,
@@ -2344,9 +2375,44 @@ describePosix('the shipped dashboard renders the Knowledge tab and the rung bann
     const answer = entry as NonNullable<typeof entry>
     expect(
       painted.whyText,
-      'the `Why this line?` disclosure did not print the leg, rank and score the serve-time trace '
+      'the served line did not print, inline, the leg, rank and score the serve-time trace '
       + `recorded for this record.${context('served', served)}`,
     ).toBe(traceLineText(answer.leg, answer.rank, answer.score))
+  })
+
+  it('(b7) the served record\'s id appears only inside Retrieval details (SC2)', () => {
+    const observed = visitOf('served', served)
+    const projection = readyProjection('served', served)
+    const servedId = projection.steps.flatMap((step) => step.served.channel1.map((line) => line.id))[0]
+    expect(
+      servedId,
+      `the served run carried no channel-1 line, so there is no id to look for.${context('served', served)}`,
+    ).toBeDefined()
+    const id = servedId as string
+
+    expect(
+      observed.defaultSections.map((section) => section.section).sort(),
+      `the resting tab did not paint the three default sections.${context('served', served)}`,
+    ).toEqual(['changes', 'effect', 'used'])
+    for (const section of observed.defaultSections) {
+      expect(
+        section.html.includes(id),
+        `the ${section.section} section carries the served record id ${id} before Retrieval details `
+        + `was opened — as text, a title or a data attribute.${context('served', served)}`,
+      ).toBe(false)
+    }
+    expect(
+      observed.rowPrimaries.length,
+      `the resting tab painted no row primary text at all.${context('served', served)}`,
+    ).toBeGreaterThan(0)
+    expect(
+      observed.rowPrimaries,
+      `a default-view row leads with the served record id ${id}.${context('served', served)}`,
+    ).not.toContain(id)
+    expect(
+      observed.retrievalDetailsHtml?.includes(id),
+      `the opened Retrieval details does not carry the served record id ${id}.${context('served', served)}`,
+    ).toBe(true)
   })
 
   it('(b3) the header banner is present exactly when the projection says the rung degraded', () => {
