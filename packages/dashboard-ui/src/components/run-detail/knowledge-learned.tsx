@@ -58,10 +58,12 @@ import { Archive, Check, CornerDownRight, Inbox, Plus, Replace, type LucideIcon 
 import type { CurationBucket } from "@vostride/agent-qa-schema"
 
 import { ReviewCommandButton } from "@/components/id-badge"
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { KnowledgeRecordBody, RecordApplicability } from "./knowledge-record-body"
 import { MaskedText } from "./masked-text"
 import {
   BUCKET_LABELS,
+  BUCKET_MEANINGS,
   MEMORY_CHANGES_HEADING,
   WAS_PREFIX,
   sinceThisRunHeading,
@@ -72,6 +74,8 @@ import {
 
 /** A half heading: 16px/500 — explicitly `font-medium`, because the global `h4` rule is 600. */
 const HEADING_CLASS = "text-base font-medium leading-snug"
+
+const FOCUS_RING = "focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
 
 // All five labels share one neutral tone; the glyph shape and the word carry the bucket (UI-SPEC).
 const BUCKET_GLYPHS: Record<CurationBucket, LucideIcon> = {
@@ -253,7 +257,6 @@ export function KnowledgeLearned({
  * components a used row shows.
  */
 function BucketRow({ row }: { row: LearnedRowView }) {
-  const Glyph = BUCKET_GLYPHS[row.bucket]
   return (
     <li
       data-record-change={row.bucket}
@@ -261,13 +264,7 @@ function BucketRow({ row }: { row: LearnedRowView }) {
       className="py-2 space-y-1"
     >
       <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
-        <span
-          data-bucket-label={row.bucket}
-          className="inline-flex items-center gap-1 text-xs font-medium uppercase tracking-wider text-muted-foreground"
-        >
-          <Glyph className="size-3" aria-hidden />
-          {BUCKET_LABELS[row.bucket]}
-        </span>
+        <BucketLabel bucket={row.bucket} />
         <span data-row-primary className="text-sm wrap-anywhere">
           <MaskedText text={row.primary} />
         </span>
@@ -291,5 +288,32 @@ function BucketRow({ row }: { row: LearnedRowView }) {
       )}
       {row.content === undefined ? null : <KnowledgeRecordBody content={row.content} />}
     </li>
+  )
+}
+
+/**
+ * A bucket word a reader can focus to learn what it means (427 D-16, the 425 D-10 trigger idiom).
+ * The visible word is `BUCKET_LABELS[bucket]`; the meaning rides as the tooltip and as sr-only text,
+ * so it is announced without hover.
+ */
+function BucketLabel({ bucket }: { bucket: CurationBucket }) {
+  const Glyph = BUCKET_GLYPHS[bucket]
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <span
+          data-bucket-label={bucket}
+          tabIndex={0}
+          className={`inline-flex items-center gap-1 cursor-help rounded-sm text-xs font-medium uppercase tracking-wider text-muted-foreground underline decoration-dotted underline-offset-4 ${FOCUS_RING}`}
+        >
+          <Glyph className="size-3" aria-hidden />
+          {BUCKET_LABELS[bucket]}
+          <span className="sr-only">{BUCKET_MEANINGS[bucket]}</span>
+        </span>
+      </TooltipTrigger>
+      <TooltipContent side="bottom" align="start" sideOffset={4} className="max-w-[320px] text-left">
+        {BUCKET_MEANINGS[bucket]}
+      </TooltipContent>
+    </Tooltip>
   )
 }

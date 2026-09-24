@@ -1011,15 +1011,15 @@ export const MEMORY_CHANGES_HEADING = 'Memory changes'
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * What the half says while curation has not settled (D-12).
+ * What the half says while curation has not settled (D-12; re-copied in the section's words, 427).
  *
  * A SENTENCE, NOT A SKELETON. A skeleton claims bytes are on their way and will arrive shortly;
  * curation is a chain a daemon may not have picked up yet, and 404's own posture text exists
- * because "pending" can mean hours. The sentence names the CONDITION the deltas depend on, which
+ * because "pending" can mean hours. The sentence names the CONDITION the changes depend on, which
  * is the only thing a reader can act on — and it is the same sentence for `pending` and `running`
  * because the reader is waiting on one fact either way.
  */
-export const DELTAS_PENDING_TEXT = 'Deltas land when curation settles.'
+export const CHANGES_PENDING_TEXT = 'Memory changes appear after post-run processing finishes.'
 
 /**
  * What the half says when curation failed (D-12).
@@ -1101,8 +1101,8 @@ export const CHANGES_UNREADABLE_TEXT = 'Change records could not be read from th
  */
 export const STORE_READ_INCOMPLETE_TEXT = 'The knowledge store could not be fully read. Run `agent-qa doctor`.'
 
-/** What the half says when curation settled having moved neither count (D-12). */
-export const CHANGED_NOTHING_TEXT = 'Curation ran and changed nothing.'
+/** What the half says when curation settled having changed nothing (D-12; the section's words, 427). */
+export const NO_MEMORY_CHANGES_SENTENCE = 'Post-run processing finished and changed nothing in memory.'
 
 /**
  * The reconciliation's LAST cause, when the read justifies none of the others (425-06 · D-19).
@@ -1226,6 +1226,15 @@ export const BUCKET_LABELS = {
   superseded: 'Superseded',
   deprecated: 'Deprecated',
   proposed: 'Proposed',
+} as const satisfies Record<CurationBucket, string>
+
+// 427 D-16 — what each bucket word means, as its label's tooltip and sr-only text.
+export const BUCKET_MEANINGS = {
+  added: 'New knowledge recorded from this run.',
+  confirmed: 'Existing knowledge this run backed up, including knowledge promoted to trusted.',
+  superseded: 'Replaced by a newer version; agents are given the new one.',
+  deprecated: 'Retired; agents are no longer given it.',
+  proposed: 'Recorded, but held for review instead of changing what agents are given.',
 } as const satisfies Record<CurationBucket, string>
 
 // A change seen without a snapshot maps onto the same words; Proposed is never synthesized (425 D-18).
@@ -2158,7 +2167,7 @@ export function learnedView(
   if (status === 'pending' || status === 'running') {
     // `rows: []` here is now a STATEMENT, not a consequence of ordering: the rows are in scope and
     // this arm declines to list them, because an unsettled chain has not finished deciding (D-12).
-    return { state: status, sentence: DELTAS_PENDING_TEXT, rows: [], ...degraded, ...readNote, ...snapshot }
+    return { state: status, sentence: CHANGES_PENDING_TEXT, rows: [], ...degraded, ...readNote, ...snapshot }
   }
 
   if (status === 'failed') {
@@ -2244,7 +2253,7 @@ export function learnedView(
   // one, which describes a row that recorded no measurement at all.
   if (breakdown !== undefined) {
     return counted === 0
-      ? { state, countLine, ...countNote, sentence: CHANGED_NOTHING_TEXT, rows: [], ...reconciled(settledCause) }
+      ? { state, countLine, ...countNote, sentence: NO_MEMORY_CHANGES_SENTENCE, rows: [], ...reconciled(settledCause) }
       : { state, countLine, ...countNote, sentence: CHANGES_NOT_AVAILABLE_TEXT, rows: [], ...reconciled(settledCause) }
   }
 
@@ -2253,7 +2262,7 @@ export function learnedView(
   }
 
   return counts.curated === 0 && counts.deprecated === 0
-    ? { state, countLine, ...countNote, sentence: CHANGED_NOTHING_TEXT, rows: [], ...snapshot }
+    ? { state, countLine, ...countNote, sentence: NO_MEMORY_CHANGES_SENTENCE, rows: [], ...snapshot }
     : { state, countLine, ...countNote, sentence: CHANGES_NOT_AVAILABLE_TEXT, rows: [], ...snapshot }
 }
 
