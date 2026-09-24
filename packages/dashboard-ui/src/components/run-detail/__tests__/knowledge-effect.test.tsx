@@ -104,11 +104,11 @@ function everyOutcome(): EffectSectionView {
       step(1, [line("rec_k", "the cart badge counts items"), line("rec_p", "search is instant")]),
       step(2, [line("rec_u", "the filter panel remembers choices")], replay("rec_r", PASSED, { cursor: 0, length: 2 })),
       step(3, [], replay("rec_r", PASSED, { cursor: 1, length: 2 })),
-      step(4, [], {
-        kind: "procedure-replay",
-        procedureId: "rec_s",
-        guard: { checksPassed: 1, total: 3, miss: { procedureStepIndex: 1, reason: "descriptor-missing" } },
-      }),
+      step(4, [], replay(
+        "rec_s",
+        { checksPassed: 0, total: 1, miss: { procedureStepIndex: 0, reason: "descriptor-missing" } },
+        { cursor: 0, length: 3 },
+      )),
     ],
     {
       scanIncomplete: true,

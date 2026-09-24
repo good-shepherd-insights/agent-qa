@@ -14,6 +14,8 @@ import {
   UNCOUNTED_TRIALS_TOOLTIP,
   effectSectionView,
   effectSentenceText,
+  isReplayComplete,
+  planSourceSentence,
   projectKnowledgeView,
   replayCompleteParts,
   replayStop,
@@ -259,50 +261,161 @@ describe('a procedure replay is measured (D-11, D-12)', () => {
     expect(view.entries[0]?.parts).toEqual(replayCompleteParts(3, 3))
   })
 
+  it('REPLAY-GROUPED-STEPS: the same stop of one procedure in two member tests is one entry; a later stop is its own', () => {
+    const stopAt = (index: number) =>
+      replay('rec_g', { checksPassed: 0, total: 1, miss: { procedureStepIndex: index, reason: 'page-anchor-mismatch' } }, { cursor: index, length: 3 })
+    const view = effectSectionView(projection([
+      step(1, { planSource: stopAt(1) }, 0),
+      step(1, { planSource: stopAt(1) }, 1),
+      step(2, { planSource: stopAt(2) }, 2),
+    ]))
+
+    expect(view.entries.map(entry => entry.outcome)).toEqual(['replay-stopped', 'replay-stopped'])
+    expect(steps(view, 0)).toEqual(['0:1', '1:1'])
+    expect(view.entries[0]?.parts).toEqual(replayStoppedParts(2, 3, 'page-anchor-mismatch'))
+    expect(steps(view, 1)).toEqual(['2:2'])
+    expect(view.entries[1]?.parts).toEqual(replayStoppedParts(3, 3, 'page-anchor-mismatch'))
+  })
+
   it('REPLAY-STOPPED-IS-PROBLEM: a miss at procedure step index 2 stops the replay at its step 3 and names the cause', () => {
     const view = effectSectionView(projection([
-      step(0, {
-        planSource: {
-          kind: 'procedure-replay',
-          procedureId: 'rec_s',
-          guard: { checksPassed: 2, total: 6, miss: { procedureStepIndex: 2, reason: 'descriptor-missing' } },
-        },
+      step(0, { planSource: replay('rec_s', PASSED, { cursor: 0, length: 6 }) }),
+      step(1, { planSource: replay('rec_s', PASSED, { cursor: 1, length: 6 }) }),
+      step(2, {
+        planSource: replay(
+          'rec_s',
+          { checksPassed: 0, total: 1, miss: { procedureStepIndex: 2, reason: 'descriptor-missing' } },
+          { cursor: 2, length: 6 },
+        ),
       }),
     ]))
 
+    expect(view.entries.map(entry => entry.outcome)).toEqual(['replay-stopped', 'replay-complete'])
     expect(view.entries[0]).toMatchObject({ outcome: 'replay-stopped', tone: 'problem' })
     expect(view.entries[0]?.parts).toEqual(replayStoppedParts(3, 6, 'descriptor-missing'))
+    expect(effectSentenceText(view.entries[0]!.parts, 'step 3')).toBe("Replay stopped at its step 3 of 6 in step 3: the element wasn't found")
+    expect(view.entries[1]?.parts).toEqual(replayCompleteParts(2, 6))
+    expect(effectSentenceText(view.entries[1]!.parts, 'steps 1 and 2')).toBe('Replayed 2 of its 6 steps in steps 1 and 2')
   })
 
   it('REPLAY-STOPPED-IS-PROBLEM: a miss outranks an execution failure, which outranks a verifier rejection', () => {
     expect(replayStop({
-      checksPassed: 1,
-      total: 4,
+      checksPassed: 0,
+      total: 1,
       miss: { procedureStepIndex: 3, reason: 'gate-refused' },
       executionFailure: { procedureStepIndex: 1 },
       verifierRejection: { procedureStepIndex: 0 },
     })).toEqual({ step: 4, cause: 'gate-refused' })
     expect(replayStop({
-      checksPassed: 1,
-      total: 4,
+      checksPassed: 0,
+      total: 1,
       executionFailure: { procedureStepIndex: 1 },
       verifierRejection: { procedureStepIndex: 0 },
     })).toEqual({ step: 2, cause: 'execution-failure' })
-    expect(replayStop({ checksPassed: 4, total: 4, verifierRejection: { procedureStepIndex: 3 } }))
+    expect(replayStop({ checksPassed: 1, total: 1, verifierRejection: { procedureStepIndex: 3 } }))
       .toEqual({ step: 4, cause: 'verifier-rejection' })
-    expect(replayStop({ checksPassed: 4, total: 4 })).toBeUndefined()
+    expect(replayStop({ checksPassed: 1, total: 1 })).toBeUndefined()
   })
 
   it('REPLAY-STOPPED-IS-PROBLEM: a stopped replay sorts before a trial that held up in an earlier step', () => {
     const view = effectSectionView(projection(
       [
         step(0, { channel1: [trial('rec_c', 'an early confirmation')] }),
-        step(4, { planSource: { kind: 'procedure-replay', procedureId: 'rec_r', guard: { checksPassed: 0, total: 3, executionFailure: { procedureStepIndex: 0 } } } }),
+        step(4, {
+          planSource: replay('rec_r', { checksPassed: 0, total: 1, executionFailure: { procedureStepIndex: 0 } }, { cursor: 0, length: 3 }),
+        }),
       ],
       { attributions: [attributed('rec_c', 0, 'confirmed')] },
     ))
 
     expect(view.entries.map(entry => entry.outcome)).toEqual(['replay-stopped', 'confirmed'])
+  })
+})
+
+describe("a replay's size is the procedure's recorded flow, never the per-step fold (D-12)", () => {
+  it('REPLAY-SIZE-FROM-FLOW: three completed body steps then a miss at body index 3 of a six-step flow', () => {
+    const view = effectSectionView(projection([
+      ...[0, 1, 2].map(index => step(index, { planSource: replay('rec_f', PASSED, { cursor: index, length: 6 }) })),
+      step(3, {
+        planSource: replay(
+          'rec_f',
+          { checksPassed: 0, total: 1, miss: { procedureStepIndex: 3, reason: 'descriptor-missing' } },
+          { cursor: 3, length: 6 },
+        ),
+      }),
+    ]))
+
+    expect(view.entries.map(entry => entry.outcome)).toEqual(['replay-stopped', 'replay-complete'])
+    expect(view.entries[0]?.parts).toEqual(replayStoppedParts(4, 6, 'descriptor-missing'))
+    expect(effectSentenceText(view.entries[0]!.parts, 'step 4')).toBe("Replay stopped at its step 4 of 6 in step 4: the element wasn't found")
+    expect(view.entries[1]?.parts).toEqual(replayCompleteParts(3, 6))
+    expect(effectSentenceText(view.entries[1]!.parts, 'steps 1–3')).toBe('Replayed 3 of its 6 steps in steps 1–3')
+  })
+
+  it('REPLAY-SIZE-FROM-FLOW: with no recorded flow neither replay sentence prints an "of N" clause', () => {
+    const view = effectSectionView(projection([
+      step(0, { planSource: replay('rec_a', PASSED) }),
+      step(1, { planSource: replay('rec_b', { checksPassed: 0, total: 1, miss: { procedureStepIndex: 1, reason: 'descriptor-missing' } }) }),
+    ]))
+
+    const texts = view.entries.map((entry, index) => effectSentenceText(entry.parts, `step ${String(index === 0 ? 2 : 1)}`))
+    expect(texts).toEqual([
+      "Replay stopped at its step 2 in step 2: the element wasn't found",
+      'Replayed in step 1 — every replayed action was accepted',
+    ])
+    for (const text of texts) expect(text).not.toContain(' of ')
+  })
+
+  it('REPLAY-SIZE-FROM-FLOW: a one-step procedure reads its only step, and no stop prints a step above its denominator', () => {
+    const only = effectSectionView(projection([step(0, { planSource: replay('rec_o', PASSED, { cursor: 0, length: 1 }) })]))
+    expect(effectSentenceText(only.entries[0]!.parts, 'step 1')).toBe('Replayed its only step in step 1')
+
+    const beyond = effectSectionView(projection([
+      step(0, {
+        planSource: replay(
+          'rec_m',
+          { checksPassed: 0, total: 1, miss: { procedureStepIndex: 3, reason: 'descriptor-missing' } },
+          { cursor: 0, length: 1 },
+        ),
+      }),
+    ]))
+    const text = effectSentenceText(beyond.entries[0]!.parts, 'step 1')
+    expect(text).toBe("Replay stopped at its step 4 in step 1: the element wasn't found")
+    for (const [, k, n] of text.matchAll(/step (\d+) of (\d+)/g)) expect(Number(k)).toBeLessThanOrEqual(Number(n))
+  })
+})
+
+describe('only a fold that passed every attempted check is a completed replay (D-11, D-14)', () => {
+  it('REPLAY-INCOMPLETE-NOT-COMPLETE: a policy-denied replayed action and an empty fold are no entry', () => {
+    const denied = replay('rec_i', { checksPassed: 0, total: 1 }, { cursor: 0, length: 3 })
+    const view = effectSectionView(projection([step(0, { planSource: denied })]))
+
+    expect(view.entries).toEqual([])
+    expect(view.absence).toBe(EFFECT_NOTHING_MEASURED_TEXT)
+    const parsed = projection([step(0, { planSource: denied })]).steps[0]?.planSource
+    if (parsed === undefined) throw new Error('expected a plan source')
+    expect(planSourceSentence(parsed)).toBe('replayed 0/1')
+
+    const empty = effectSectionView(projection([step(0, { planSource: replay('rec_e', { checksPassed: 0, total: 0 }) })]))
+    expect(empty.entries).toEqual([])
+
+    expect(isReplayComplete({ checksPassed: 0, total: 1 })).toBe(false)
+    expect(isReplayComplete({ checksPassed: 0, total: 0 })).toBe(false)
+    expect(isReplayComplete({ checksPassed: 1, total: 1 })).toBe(true)
+  })
+
+  it('REPLAY-INCOMPLETE-NOT-COMPLETE: an unfinished third step leaves the first two as the completed replay', () => {
+    const view = effectSectionView(projection([
+      step(0, { planSource: replay('rec_n', PASSED, { cursor: 0, length: 3 }) }),
+      step(1, { planSource: replay('rec_n', PASSED, { cursor: 1, length: 3 }) }),
+      step(2, { planSource: replay('rec_n', { checksPassed: 0, total: 1 }, { cursor: 2, length: 3 }) }),
+    ]))
+
+    expect(view.entries).toHaveLength(1)
+    expect(view.entries[0]?.outcome).toBe('replay-complete')
+    expect(steps(view, 0)).toEqual(['0:0', '0:1'])
+    expect(view.entries[0]?.parts).toEqual(replayCompleteParts(2, 3))
+    expect(effectSentenceText(view.entries[0]!.parts, 'steps 1 and 2')).toBe('Replayed 2 of its 3 steps in steps 1 and 2')
   })
 })
 
@@ -390,8 +503,12 @@ describe('each outcome reads as a plain sentence with its steps (D-12)', () => {
       .toBe('Replayed in step 2 — every replayed action was accepted')
     expect(effectSentenceText(replayStoppedParts(3, 6, 'descriptor-missing'), at))
       .toBe("Replay stopped at its step 3 of 6 in step 2: the element wasn't found")
-    expect(effectSentenceText(replayStoppedParts(1, 2, 'verifier-rejection'), at))
-      .toBe("Replay stopped at its step 1 of 2 in step 2: the result didn't pass verification")
+    expect(effectSentenceText(replayStoppedParts(1, 1, 'gate-refused'), at))
+      .toBe('Replay stopped at its only step in step 2: a safety check refused the action')
+    expect(effectSentenceText(replayStoppedParts(4, undefined, 'verifier-rejection'), at))
+      .toBe("Replay stopped at its step 4 in step 2: the result didn't pass verification")
+    expect(effectSentenceText(replayStoppedParts(4, 1, 'descriptor-missing'), at))
+      .toBe("Replay stopped at its step 4 in step 2: the element wasn't found")
   })
 
   it('EFFECT-SENTENCES: the uncounted line and its tooltip say no reason beyond the fixed sentence', () => {
