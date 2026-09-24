@@ -11,6 +11,7 @@ import {
   EFFECT_TONES,
   EFFECT_TONE_OF,
   REPLAY_STOP_CAUSES,
+  UNCOUNTED_TRIALS_TOOLTIP,
   effectSectionView,
   effectSentenceText,
   projectKnowledgeView,
@@ -374,5 +375,6 @@ describe('each outcome reads as a plain sentence with its steps (D-12)', () => {
   it('EFFECT-SENTENCES: the uncounted line and its tooltip say no reason beyond the fixed sentence', () => {
     expect(uncountedTrialsLine(1)).toBe("1 record on trial wasn't counted for or against by this run")
     expect(uncountedTrialsLine(2)).toBe("2 records on trial weren't counted for or against by this run")
+    expect(UNCOUNTED_TRIALS_TOOLTIP).toBe("Post-run processing finished without counting this run's result toward it.")
   })
 })

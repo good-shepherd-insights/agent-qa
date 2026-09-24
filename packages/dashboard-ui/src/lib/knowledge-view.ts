@@ -545,11 +545,18 @@ interface UsedRecordEntry {
   readonly uses: Map<UseVerb, StepAddress[]>
 }
 
-// Steps are sorted explicitly rather than trusting wire order (RESEARCH A3); within a step the
-// serving order is channel 1, channel 3, plan source, channel 2 (UI-SPEC S1). A Map keeps first use.
 export function usedRecordViews(
   projection: Extract<RunKnowledgeProjection, { kind: 'ready' }>,
 ): readonly UsedRecordView[] {
+  return [...usedRecordsById(projection).values()]
+}
+
+// Steps are sorted explicitly rather than trusting wire order (RESEARCH A3); within a step the
+// serving order is channel 1, channel 3, plan source, channel 2 (UI-SPEC S1). A Map keeps first use.
+// The Effect section reads the same map, so both sections name a record the same way.
+function usedRecordsById(
+  projection: Extract<RunKnowledgeProjection, { kind: 'ready' }>,
+): ReadonlyMap<string, UsedRecordView> {
   const byId = new Map<string, UsedRecordEntry>()
   const use = (id: string, verb: UseVerb, address: StepAddress): UsedRecordEntry => {
     let entry = byId.get(id)
@@ -583,7 +590,9 @@ export function usedRecordViews(
   }
 
   const joins = contentById(projection)
-  return [...byId.entries()].map(([id, entry], index) => {
+  const views = new Map<string, UsedRecordView>()
+  let index = 0
+  for (const [id, entry] of byId) {
     const join = joins.get(id)
     const content = join?.content
     const absence = content === undefined ? join?.absence : undefined
@@ -603,7 +612,7 @@ export function usedRecordViews(
           ? entry.servedKind
           : undefined
     const sinceStatus = sinceStatusFor(entry.servedStatus, content?.currentStatus)
-    return {
+    views.set(id, {
       key: String(index),
       primary,
       leadSource,
@@ -613,8 +622,10 @@ export function usedRecordViews(
       ...(entry.onTrial === undefined ? {} : { onTrial: entry.onTrial }),
       ...(sinceStatus === undefined ? {} : { sinceStatus }),
       uses: [...entry.uses].map(([verb, addresses]) => ({ verb, addresses })),
-    }
-  })
+    })
+    index += 1
+  }
+  return views
 }
 
 export interface UsedSectionView {
@@ -623,8 +634,238 @@ export interface UsedSectionView {
   readonly absence?: string
 }
 
+// 427 · D-11..D-14 — the Effect section: measured effects only. The two folds are the shipped
+// canaryOutcomeWord and brokeAt; this block re-words their answers and never re-derives them.
+
+export type EffectOutcome =
+  | 'contradicted'
+  | 'harmful'
+  | 'replay-stopped'
+  | 'confirmed'
+  | 'helpful'
+  | 'replay-complete'
+  | 'pending'
+  | 'unknown'
+
+// prettier-ignore
+export const EFFECT_OUTCOMES = [
+  'contradicted',
+  'harmful',
+  'replay-stopped',
+  'confirmed',
+  'helpful',
+  'replay-complete',
+  'pending',
+  'unknown',
+] as const satisfies readonly EffectOutcome[]
+
+export type EffectTone = 'problem' | 'positive' | 'pending' | 'unknown'
+
+// The order entries group in (D-11): problems first, unknowns last.
+// prettier-ignore
+export const EFFECT_TONES = [
+  'problem',
+  'positive',
+  'pending',
+  'unknown',
+] as const satisfies readonly EffectTone[]
+
+export const EFFECT_TONE_OF = {
+  contradicted: 'problem',
+  harmful: 'problem',
+  'replay-stopped': 'problem',
+  confirmed: 'positive',
+  helpful: 'positive',
+  'replay-complete': 'positive',
+  pending: 'pending',
+  unknown: 'unknown',
+} as const satisfies Record<EffectOutcome, EffectTone>
+
+export interface EffectSentenceParts {
+  readonly lead: string
+  readonly tail: string
+}
+
+type TrialOutcome = Exclude<EffectOutcome, 'replay-stopped' | 'replay-complete'>
+
+// Every entry names its steps (D-11), so pending and unknown carry them too.
+export const EFFECT_SENTENCES = {
+  contradicted: { lead: "Didn't hold up in", tail: ' — the run saw something different' },
+  harmful: { lead: 'Misled the agent in', tail: '' },
+  confirmed: { lead: 'Held up in', tail: ' — the run saw the same thing' },
+  helpful: { lead: 'Helped in', tail: '' },
+  pending: { lead: 'On trial in', tail: ' — waiting for post-run processing' },
+  unknown: { lead: "Couldn't be checked in", tail: " — part of the knowledge store couldn't be read" },
+} as const satisfies Record<TrialOutcome, EffectSentenceParts>
+
+type ReplayGuard = Extract<RunKnowledgePlanSource, { kind: 'procedure-replay' }>['guard']
+
+type ReplayMissReason = NonNullable<ReplayGuard['miss']>['reason']
+
+export type ReplayStopCause = ReplayMissReason | 'execution-failure' | 'verifier-rejection'
+
+export const REPLAY_STOP_CAUSES = {
+  'descriptor-ambiguous': 'more than one element matched',
+  'descriptor-missing': "the element wasn't found",
+  'page-anchor-mismatch': "the page didn't match",
+  'gate-refused': 'a safety check refused the action',
+  'parameter-unbound': "a value it needed wasn't provided",
+  'non-replayable-action': "that action can't be replayed",
+  'execution-failure': 'the action failed to run',
+  'verifier-rejection': "the result didn't pass verification",
+} as const satisfies Record<ReplayStopCause, string>
+
+export function replayCompleteParts(total: number): EffectSentenceParts {
+  return { lead: `Replayed all ${String(total)} of its steps in`, tail: '' }
+}
+
+// `step` is one-based: the procedure's own step a person counts by.
+export function replayStoppedParts(step: number, total: number, cause: ReplayStopCause): EffectSentenceParts {
+  return {
+    lead: `Replay stopped at its step ${String(step)} of ${String(total)} in`,
+    tail: `: ${REPLAY_STOP_CAUSES[cause]}`,
+  }
+}
+
+const BROKE_STOP_CAUSES = {
+  executionFailure: 'execution-failure',
+  verifierRejection: 'verifier-rejection',
+} as const satisfies Record<Exclude<BrokeCause, 'miss'>, ReplayStopCause>
+
+// brokeAt's precedence, with the miss reason kept verbatim; `step` is one-based.
+export function replayStop(guard: ReplayGuard): { readonly step: number; readonly cause: ReplayStopCause } | undefined {
+  const broke = brokeAt(guard)
+  if (broke === undefined) return undefined
+  return {
+    step: broke.step + 1,
+    cause: broke.cause === 'miss' ? broke.reason : BROKE_STOP_CAUSES[broke.cause],
+  }
+}
+
+export function effectSentenceText(parts: EffectSentenceParts, stepsText: string): string {
+  return `${parts.lead} ${stepsText}${parts.tail}`
+}
+
+export function uncountedTrialsLine(count: number): string {
+  return count === 1
+    ? "1 record on trial wasn't counted for or against by this run"
+    : `${String(count)} records on trial weren't counted for or against by this run`
+}
+
+export const UNCOUNTED_TRIALS_TOOLTIP = "Post-run processing finished without counting this run's result toward it."
+
+export function unmeasuredRecordsLine(count: number): string {
+  return count === 1
+    ? '1 other record has no measured effect.'
+    : `${String(count)} other records have no measured effect.`
+}
+
+export interface EffectEntryView {
+  readonly key: string
+  readonly outcome: EffectOutcome
+  readonly tone: EffectTone
+  readonly parts: EffectSentenceParts
+  readonly addresses: readonly StepAddress[]
+  // The record's Knowledge used primary text, so both sections name it the same way.
+  readonly record: string
+}
+
+export interface EffectCountLine {
+  readonly count: number
+  readonly line: string
+}
+
 export interface EffectSectionView {
-  readonly absence: string
+  readonly entries: readonly EffectEntryView[]
+  readonly absence?: string
+  readonly uncounted?: EffectCountLine
+  readonly unmeasured?: EffectCountLine
+}
+
+interface EffectDraft {
+  readonly recordId: string
+  readonly outcome: EffectOutcome
+  readonly parts: EffectSentenceParts
+  readonly addresses: StepAddress[]
+}
+
+export function effectSectionView(
+  projection: Extract<RunKnowledgeProjection, { kind: 'ready' }>,
+): EffectSectionView {
+  const used = usedRecordsById(projection)
+  const position = new Map([...used.keys()].map((id, index) => [id, index]))
+  const status = projection.curation.status
+  const scanIncomplete = projection.learned.scanIncomplete === true
+
+  const trials = new Map<string, EffectDraft>()
+  const replays: EffectDraft[] = []
+  const uncountedIds = new Set<string>()
+
+  for (const step of [...projection.steps].sort(compareAddresses)) {
+    const address: StepAddress = { testIndex: step.testIndex, stepIndex: step.stepIndex, stepText: step.stepText }
+    for (const line of step.served.channel1) {
+      if (!line.servedAsCanary) continue
+      const attribution = projection.learned.canaryAttributions.find(
+        row => row.testIndex === step.testIndex && row.stepIndex === step.stepIndex && row.recordId === line.id,
+      )
+      const word = canaryOutcomeWord(status, attribution, scanIncomplete)
+      if (word === 'not-attributed') {
+        uncountedIds.add(line.id)
+        continue
+      }
+      const groupKey = `${word}\u0000${line.id}`
+      const draft = trials.get(groupKey)
+      if (draft === undefined) {
+        trials.set(groupKey, { recordId: line.id, outcome: word, parts: EFFECT_SENTENCES[word], addresses: [address] })
+      } else if (compareAddresses(draft.addresses.at(-1)!, address) !== 0) {
+        draft.addresses.push(address)
+      }
+    }
+    if (step.planSource?.kind === 'procedure-replay') {
+      const { guard, procedureId } = step.planSource
+      const stop = replayStop(guard)
+      replays.push(
+        stop === undefined
+          ? { recordId: procedureId, outcome: 'replay-complete', parts: replayCompleteParts(guard.total), addresses: [address] }
+          : {
+              recordId: procedureId,
+              outcome: 'replay-stopped',
+              parts: replayStoppedParts(stop.step, guard.total, stop.cause),
+              addresses: [address],
+            },
+      )
+    }
+  }
+
+  const rank = (draft: EffectDraft) => EFFECT_TONES.indexOf(EFFECT_TONE_OF[draft.outcome])
+  const drafts = [...trials.values(), ...replays].sort(
+    (a, b) =>
+      rank(a) - rank(b) ||
+      compareAddresses(a.addresses[0]!, b.addresses[0]!) ||
+      (position.get(a.recordId) ?? 0) - (position.get(b.recordId) ?? 0),
+  )
+  const entries: EffectEntryView[] = drafts.map((draft, index) => ({
+    key: String(index),
+    outcome: draft.outcome,
+    tone: EFFECT_TONE_OF[draft.outcome],
+    parts: draft.parts,
+    addresses: draft.addresses,
+    record: used.get(draft.recordId)?.primary ?? RECORD_UNREADABLE_LEAD,
+  }))
+
+  const measured = new Set(drafts.map(draft => draft.recordId))
+  const uncountedCount = [...uncountedIds].filter(id => !measured.has(id)).length
+  const unmeasuredCount = [...used.keys()].filter(id => !measured.has(id) && !uncountedIds.has(id)).length
+  const uncounted = uncountedCount === 0 ? {} : { uncounted: { count: uncountedCount, line: uncountedTrialsLine(uncountedCount) } }
+
+  if (entries.length === 0) {
+    return { entries, absence: used.size === 0 ? EFFECT_NOTHING_USED_TEXT : EFFECT_NOTHING_MEASURED_TEXT, ...uncounted }
+  }
+  return {
+    entries,
+    ...uncounted,
+    ...(unmeasuredCount === 0 ? {} : { unmeasured: { count: unmeasuredCount, line: unmeasuredRecordsLine(unmeasuredCount) } }),
+  }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1188,10 +1429,12 @@ export function planSourceSentence(planSource: RunKnowledgePlanSource): string {
   return replayedText(planSource.guard.checksPassed, planSource.guard.total)
 }
 
-function brokeAt(
-  guard: Extract<RunKnowledgePlanSource, { kind: 'procedure-replay' }>['guard'],
-): { readonly step: number; readonly cause: BrokeCause } | undefined {
-  if (guard.miss !== undefined) return { step: guard.miss.procedureStepIndex, cause: 'miss' }
+type BrokeAt =
+  | { readonly step: number; readonly cause: 'miss'; readonly reason: ReplayMissReason }
+  | { readonly step: number; readonly cause: Exclude<BrokeCause, 'miss'> }
+
+function brokeAt(guard: ReplayGuard): BrokeAt | undefined {
+  if (guard.miss !== undefined) return { step: guard.miss.procedureStepIndex, cause: 'miss', reason: guard.miss.reason }
   if (guard.executionFailure !== undefined) {
     return { step: guard.executionFailure.procedureStepIndex, cause: 'executionFailure' }
   }
@@ -1863,9 +2106,7 @@ export function projectKnowledgeView(read: KnowledgeRead): KnowledgeView {
   const used: UsedSectionView = records.length > 0
     ? { records, countLine: usedCountLine(records.length) }
     : { records, absence: steps.length === 0 ? NO_BRIEF_SERVED_TEXT : NO_BRIEF_LINES_TEXT }
-  const effect: EffectSectionView = {
-    absence: records.length === 0 ? EFFECT_NOTHING_USED_TEXT : EFFECT_NOTHING_MEASURED_TEXT,
-  }
+  const effect = effectSectionView(projection)
 
   const proposals = proposalsView(projection.pendingProposalCount)
 
