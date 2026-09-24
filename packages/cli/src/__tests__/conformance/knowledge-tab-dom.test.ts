@@ -825,7 +825,13 @@ interface PageObservation {
   readonly bannerText?: string
   /** `data-knowledge-state` after `7`. */
   readonly stateAfter7?: string
-  /** The `[data-used-summary]` sentence, as painted. */
+  /** Every `data-knowledge-section` in document order, read before Retrieval details was opened (427 SC1). */
+  readonly sectionOrder: readonly string[]
+  /** The Knowledge used section's `[data-section-absence]` sentence, when it printed one (427 D-02). */
+  readonly usedAbsence?: string
+  /** The Retrieval details root's `data-state` after the drive opened it (427 D-19). */
+  readonly retrievalDetailsState?: string
+  /** The `[data-used-summary]` sentence, as painted inside the opened Retrieval details. */
   readonly usedSummary?: string
   /** How many `[data-step-index]` rows the Used half drew. */
   readonly knowledgeStepCount: number
@@ -937,6 +943,9 @@ function context(label: string, recorded: Recorded): string {
     + `overview=${recorded.visit?.stateAfterOverview ?? '(unmounted)'} `
     + `m=${recorded.visit?.stateAfterM ?? '(none)'} `
     + `chip=${recorded.visit?.stateAfterChip ?? '(none)'}`,
+    `sections: ${(recorded.visit?.sectionOrder ?? []).join(', ') || '(none)'}; `
+    + `used absence: ${JSON.stringify(recorded.visit?.usedAbsence ?? null)}; `
+    + `retrieval details: ${recorded.visit?.retrievalDetailsState ?? '(absent)'}`,
     `used summary: ${JSON.stringify(recorded.visit?.usedSummary ?? null)}`,
     `knowledge step rows: ${String(recorded.visit?.knowledgeStepCount ?? 0)}; `
     + `brief-line counts: ${(recorded.visit?.briefLineCounts ?? []).join(', ') || '(none)'}`,
@@ -1127,6 +1136,30 @@ async function attributeOf(page: Page, selector: string, name: string): Promise<
 }
 
 /**
+ * Open the collapsed Retrieval details section, where 427 D-19 moved the per-step ledger, and wait
+ * for its root to read open. Records rather than throws, like every other wait in this file.
+ */
+async function openRetrievalDetails(page: Page): Promise<string | undefined> {
+  const details = page.locator('[data-knowledge-section="retrieval-details"]').first()
+  if ((await details.count()) === 0) return undefined
+  await details.locator('[data-slot="collapsible-trigger"]').first().click().catch(() => undefined)
+  await page
+    .waitForFunction(
+      () => document
+        .querySelector('[data-knowledge-section="retrieval-details"] [data-slot="collapsible"]')
+        ?.getAttribute('data-state') === 'open',
+      undefined,
+      { timeout: PAGE_BUDGET_MS },
+    )
+    .catch(() => undefined)
+  return attributeOf(
+    page,
+    '[data-knowledge-section="retrieval-details"] [data-slot="collapsible"]',
+    'data-state',
+  )
+}
+
+/**
  * Open one run's detail page and harvest the whole Knowledge story a person can reach.
  *
  * THE TAB IS REACHED BY THE KEY A PERSON PRESSES rather than by a `?tab=` deep link: `7` is the
@@ -1206,6 +1239,13 @@ async function observeKnowledge(
     const bannerText = await textOf(page, '[data-rung-banner]')
 
     const stateAfter7 = await attributeOf(page, '[data-knowledge-state]', 'data-knowledge-state')
+    // THE ORDER IS READ ON THE RESTING TAB, then the ledger is opened: 427 D-19 put the per-step
+    // rows behind a collapsed Retrieval details, and every harvest below reads them from there.
+    const sectionOrder = await page.locator('[data-knowledge-section]').evaluateAll(
+      (sections) => sections.map((section) => section.getAttribute('data-knowledge-section') ?? '?'),
+    )
+    const usedAbsence = await textOf(page, '[data-knowledge-section="used"] [data-section-absence]')
+    const retrievalDetailsState = await openRetrievalDetails(page)
     const usedSummary = await textOf(page, '[data-used-summary]')
     const knowledgeStepCount = await page.locator('[data-step-index]').count()
     const briefLineCounts = await page.locator('[data-step-index]').evaluateAll(
@@ -1337,6 +1377,9 @@ async function observeKnowledge(
       ...(bannerReason === undefined ? {} : { bannerReason }),
       ...(bannerText === undefined ? {} : { bannerText }),
       ...(stateAfter7 === undefined ? {} : { stateAfter7 }),
+      sectionOrder,
+      ...(usedAbsence === undefined ? {} : { usedAbsence }),
+      ...(retrievalDetailsState === undefined ? {} : { retrievalDetailsState }),
       ...(usedSummary === undefined ? {} : { usedSummary }),
       knowledgeStepCount,
       briefLineCounts,
@@ -1486,6 +1529,7 @@ async function probeUnbrokenTokenWrap(
         { timeout: PAGE_BUDGET_MS },
       )
       .catch(() => undefined)
+    await openRetrievalDetails(page)
 
     const rows = page.locator('[data-step-index]')
     const rowCount = await rows.count()
@@ -1970,7 +2014,7 @@ describePosix('the shipped dashboard renders the Knowledge tab and the rung bann
     ).toEqual(projection.steps.map(() => '0'))
   })
 
-  it('(a4) the Used summary is the published absence sentence for a run that served nothing', () => {
+  it('(a4) the Knowledge used section states the published absence sentence for a run that served nothing', () => {
     const observed = visitOf('scan', scan)
     const projection = readyProjection('scan', scan)
     const servedTotal = projection.steps.reduce(
@@ -1987,8 +2031,9 @@ describePosix('the shipped dashboard renders the Knowledge tab and the rung bann
     // Both are read out of the module, so a rename reds here rather than silently passing.
     const expected = projection.steps.length === 0 ? NO_BRIEF_SERVED_TEXT : NO_BRIEF_LINES_TEXT
     expect(
-      observed.usedSummary,
-      `the derived Used summary is not the published sentence for this run.${context('scan', scan)}`,
+      observed.usedAbsence,
+      'the Knowledge used section\'s `[data-section-absence]` is not the published sentence for '
+      + `this run (427 D-02).${context('scan', scan)}`,
     ).toBe(expected)
   })
 
@@ -2031,6 +2076,15 @@ describePosix('the shipped dashboard renders the Knowledge tab and the rung bann
       'pressing the `curation` chip did not activate the Knowledge tab. The click-through does '
       + `not depend on the chip's status.${context('scan', scan)}`,
     ).toBe('ready')
+  })
+
+  it('(a8) the tab paints its sections in the order the view publishes (SC1)', () => {
+    const observed = visitOf('scan', scan)
+    expect(
+      observed.sectionOrder,
+      'the ready Knowledge tab did not paint its `[data-knowledge-section]` elements in the order '
+      + `KNOWLEDGE_SECTIONS publishes (427 D-02).${context('scan', scan)}`,
+    ).toEqual(publishedStringArray('KNOWLEDGE_SECTIONS'))
   })
 
   // ── (B) The seeded knowledge root: a served line, and the why-trace behind it.
