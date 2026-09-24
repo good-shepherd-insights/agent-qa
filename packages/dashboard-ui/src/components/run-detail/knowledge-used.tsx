@@ -10,6 +10,7 @@ import { NESTED_TRIGGER_CLASS } from "./knowledge-brief-line"
 import { KnowledgeRecordBody, RecordApplicability } from "./knowledge-record-body"
 import { KnowledgeStepRefs } from "./knowledge-step-ref"
 import { MaskedText } from "./masked-text"
+import { RetrievalStatement } from "./retrieval-statement"
 import {
   CONTENT_ABSENCE_REASON_TEXT,
   ON_TRIAL_TAG,
@@ -42,6 +43,7 @@ export function KnowledgeUsed({ view, stepRefs }: { view: UsedSectionView; stepR
           </span>
         )}
       </div>
+      {view.retrieval === undefined ? null : <RetrievalStatement view={view.retrieval} />}
       {view.records.length === 0 ? (
         <p data-section-absence className="text-sm text-muted-foreground">{view.absence}</p>
       ) : (

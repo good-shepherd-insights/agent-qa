@@ -215,6 +215,20 @@ describe("memidex, no rung and no store say nothing; the statement sits under th
     expect(absenceAt).toBeGreaterThan(statementAt)
   })
 
+  it("the statement sits in the default view, so it speaks none of Retrieval details' machinery words (SC4)", () => {
+    // knowledge-default-view.test.tsx's MACHINERY list, applied to every class's rendered text.
+    const machinery = ["canary", "leg ", "rank ", "score ", "attribution", "digest", "tier ", "channel"]
+    for (const [rung, reason] of [...INFO, ...WARNING]) {
+      const host = usedSection(recorded(rung, reason))
+      const text = (statement(host)?.textContent ?? "").toLowerCase()
+      expect(text.length).toBeGreaterThan(0)
+      for (const word of machinery) expect(text.includes(word), `${rung}/${String(reason)} says ${word}`).toBe(false)
+      act(() => { root?.unmount() })
+      container?.remove()
+      root = undefined
+    }
+  })
+
   it("the tab statement never truncates: it wraps and shows the whole sentence (E7)", () => {
     for (const [rung, reason] of [...INFO, ...WARNING]) {
       const host = usedSection(recorded(rung, reason))

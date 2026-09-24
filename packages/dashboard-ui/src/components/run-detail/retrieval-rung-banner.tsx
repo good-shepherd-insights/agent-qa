@@ -24,36 +24,16 @@
 // frame, a pre-407 run, or a project with no reader bound (D-16). Rendering an empty strip for the
 // first would put amber across every healthy run; rendering "unknown" for the second would claim a
 // fact the page does not have. The absence of the element IS the statement.
+//
+// ONLY WARNINGS REACH THE HEADER (427 D-20). A fresh index, an unrecorded cause and a configured
+// level are information: the Knowledge tab states them and this strip stays silent. A locked or
+// corrupt index and unavailable semantic search paint it, with the class glyph and the doctor pointer.
 
-import { TriangleAlert } from "lucide-react"
-
-import { rungBannerText } from "@/lib/knowledge-view"
+import { retrievalClassFor, rungBannerText } from "@/lib/knowledge-view"
 import { cn } from "@/lib/utils"
 import type { RetrievalRung, RetrievalRungReason } from "@vostride/agent-qa-schema"
 
-/** The literal command the hint names, kept as a constant so the mono split cannot mistype it. */
-const DOCTOR_COMMAND = "agent-qa doctor"
-
-/**
- * The sentence, with its command in `font-mono` and its bytes unchanged.
- *
- * SPLIT BY INDEX, NOT BY TEMPLATE. The `code` element is cosmetic — UI-SPEC puts CLI commands in
- * mono — but the DOM cells and 407-11's parity read address `textContent`, so the split has to be
- * a partition of the very string `rungBannerText` returned. Slicing the sentence at the command's
- * own offset makes byte-equality structural: there is no second spelling of the sentence here that
- * could drift from the first.
- */
-function sentenceNodes(sentence: string) {
-  const at = sentence.indexOf(DOCTOR_COMMAND)
-  if (at < 0) return sentence
-  return (
-    <>
-      {sentence.slice(0, at)}
-      <code className="font-mono">{DOCTOR_COMMAND}</code>
-      {sentence.slice(at + DOCTOR_COMMAND.length)}
-    </>
-  )
-}
+import { RETRIEVAL_CLASS_GLYPHS, doctorSentenceNodes } from "./retrieval-statement"
 
 export interface RetrievalRungBannerProps {
   /** The recorded rung word. Absent means "not known yet" — see the header note. */
@@ -72,14 +52,18 @@ export interface RetrievalRungBannerProps {
 }
 
 export function RetrievalRungBanner({ rung, reason, variant = "navbar" }: RetrievalRungBannerProps) {
-  const sentence = rungBannerText(rung === undefined ? undefined : {
+  const recorded = rung === undefined ? undefined : {
     rung,
     ...(reason === undefined ? {} : { reason }),
-  })
-  if (rung === undefined || sentence === undefined) return null
+  }
+  const sentence = rungBannerText(recorded)
+  const retrievalClass = recorded === undefined ? undefined : retrievalClassFor(recorded)
+  // rungBannerText answers only for the two warning classes (427 D-20), so a fresh index, an
+  // unrecorded cause and a configured level paint nothing here and are stated in the tab instead.
+  if (rung === undefined || sentence === undefined || retrievalClass === undefined) return null
 
   // THE DOM CONTRACT IS SPELLED OUT AT BOTH RENDER SITES, not hoisted into a shared spread. The
-  // four attributes below are what 407-11's parity cell and the Playwright DOM cells address, and
+  // five attributes below are what 407-11's parity cell and the Playwright DOM cells address, and
   // a hoisted object would leave a mutation that drops one of them matching nothing to grep for.
   // `data-rung-reason={reason}` is absent-when-undefined by React's own rule — an EMPTY attribute
   // would read as a cause somebody measured to be nothing.
@@ -92,20 +76,24 @@ export function RetrievalRungBanner({ rung, reason, variant = "navbar" }: Retrie
         data-rung-banner
         data-rung={rung}
         data-rung-reason={reason}
+        data-retrieval-class={retrievalClass}
         role="status"
         title={sentence}
         className="text-amber-500"
       >
-        {sentenceNodes(sentence)}
+        {doctorSentenceNodes(sentence)}
       </p>
     )
   }
+
+  const Glyph = RETRIEVAL_CLASS_GLYPHS[retrievalClass]
 
   return (
     <div
       data-rung-banner
       data-rung={rung}
       data-rung-reason={reason}
+      data-retrieval-class={retrievalClass}
       role="status"
       title={sentence}
       className={cn(
@@ -115,9 +103,9 @@ export function RetrievalRungBanner({ rung, reason, variant = "navbar" }: Retrie
         "px-4 py-1.5 text-xs text-foreground/80",
       )}
     >
-      <TriangleAlert className="h-4 w-4 text-amber-500 shrink-0" aria-hidden="true" />
+      <Glyph className="h-4 w-4 text-amber-500 shrink-0" aria-hidden="true" />
       {/* The sentence truncates; the whole of it stays reachable in the wrapper's `title`. */}
-      <span className="truncate">{sentenceNodes(sentence)}</span>
+      <span className="truncate">{doctorSentenceNodes(sentence)}</span>
     </div>
   )
 }
