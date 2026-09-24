@@ -43,6 +43,7 @@
 #   K25  the curator's note renders before the trust counts                        -> FULL-RECORD-ORDER (memory.md §7.5)
 #   K26  K11's id-as-primary, on the rebuilt bundle a spawned dashboard serves     -> (b7) (SC2, shipped)
 #   K27  the header strip paints a fresh store's bootstrap, on the rebuilt bundle  -> (a2) (SC5, shipped)
+#   K28  a replay with no break member counts as complete, checks passed or not    -> REPLAY-INCOMPLETE-NOT-COMPLETE (D-14)
 #
 # ALLOWED CO-REDS are listed on each leg with a one-line reason; nothing else may red. No leg names
 # the shipped-binary Learned-root curation-word cell as a red or a green: it is nondeterministic
@@ -64,7 +65,7 @@
 #   neutered  apply NO mutation; the run must FATAL with "<leg>: suite stayed green"
 #   fatal     mutate every subject, then throw; every subject must be restored
 #   SIGINT | SIGTERM | SIGHUP   the same, then deliver that signal to itself
-# AGENT_QA_427_KNOWLEDGE_MUTATION_LEG=K01..K27 runs one leg (normal or neutered runs only).
+# AGENT_QA_427_KNOWLEDGE_MUTATION_LEG=K01..K28 runs one leg (normal or neutered runs only).
 # AGENT_QA_427_KNOWLEDGE_MUTATION_LIST=1 prints the declared inventory and exits.
 #
 # Installed Node 24, workspace tools and the installed Playwright Chromium are required. No
@@ -104,8 +105,8 @@ const SNAPSHOT_T = 'src/__tests__/423-curation-snapshot.test.ts'
 const DOM = 'src/__tests__/conformance/knowledge-tab-dom.test.ts'
 
 const instruments = {
-  'ui-view': { pkg: 'packages/dashboard-ui', files: [USED_V, EFFECT_V, CHANGES_V, RETRIEVAL_V, VIEW_D], typecheck: true, count: 91 },
-  'ui-parts': { pkg: 'packages/dashboard-ui', files: [USED_C, BODY_C, EFFECT_C, DETAILS_C, DEFAULT_C, STATEMENT_C, STEP_REF_C], typecheck: false, count: 57 },
+  'ui-view': { pkg: 'packages/dashboard-ui', files: [USED_V, EFFECT_V, CHANGES_V, RETRIEVAL_V, VIEW_D], typecheck: true, count: 98 },
+  'ui-parts': { pkg: 'packages/dashboard-ui', files: [USED_C, BODY_C, EFFECT_C, DETAILS_C, DEFAULT_C, STATEMENT_C, STEP_REF_C], typecheck: false, count: 58 },
   'ui-tab': { pkg: 'packages/dashboard-ui', files: [TAB_C, LEARNED_C, STEP_C, BANNER_C], typecheck: false, count: 114 },
   store: { pkg: 'packages/knowledge-local', files: [SNAPSHOT_T], typecheck: false, count: 20 },
   'knowledge-dom': { pkg: 'packages/cli', files: [DOM], typecheck: false, count: 24, env: { VITEST_MAX_WORKERS: '1' } },
@@ -480,8 +481,8 @@ const legs = [
     subject: VIEW_SRC, instrument: 'ui-view', claim: 'HINT-NOT-EFFECT',
     operation: 'add an effect entry for a step whose plan a procedure only hinted',
     edits: [{
-      from: "    if (step.planSource?.kind === 'procedure-replay') {\n      const { guard, procedureId } = step.planSource\n",
-      to: "    if (step.planSource?.kind === 'procedure-hint') {\n      replays.push({ recordId: step.planSource.procedureId, outcome: 'replay-complete', parts: replayCompleteParts(0), addresses: [address] })\n    }\n    if (step.planSource?.kind === 'procedure-replay') {\n      const { guard, procedureId } = step.planSource\n",
+      from: "    if (step.planSource?.kind === 'procedure-replay') {\n      const { guard, procedureId, flow } = step.planSource\n",
+      to: "    if (step.planSource?.kind === 'procedure-hint') {\n      const { procedureId } = step.planSource\n      replays.set(procedureId, { recordId: procedureId, length: undefined, stop: undefined, addresses: [address], cursors: new Set<number>() })\n    }\n    if (step.planSource?.kind === 'procedure-replay') {\n      const { guard, procedureId, flow } = step.planSource\n",
     }],
     reds: [effect('HINT-NOT-EFFECT')],
     allowed: [],
@@ -529,10 +530,22 @@ const legs = [
     allowed: [dom('(b3)')],
     greens: [dom('(a1)'), dom('(a3)'), dom('(a8)')],
   },
+  {
+    subject: VIEW_SRC, instrument: 'ui-view', claim: 'REPLAY-INCOMPLETE-NOT-COMPLETE',
+    operation: 'count a replay as complete whenever no break member is recorded',
+    edits: [{
+      from: '  return replayStop(guard) === undefined && guard.total > 0 && guard.checksPassed === guard.total\n',
+      to: '  return replayStop(guard) === undefined\n',
+    }],
+    reds: [effect('REPLAY-INCOMPLETE-NOT-COMPLETE', 2)],
+    allowed: [],
+    greens: [effect('REPLAY-COMPLETE'), effect('REPLAY-SIZE-FROM-FLOW', 3), effect('HINT-NOT-EFFECT'), effect('EFFECT-ORDER', 2),
+      effect('EFFECT-GROUPED-STEPS')],
+  },
 ]
 
 runGate({
   slug: '427-knowledge-mutation', envPrefix: 'AGENT_QA_427_KNOWLEDGE_MUTATION', idPrefix: 'K',
-  instruments, legs, expectedLegs: 27, banner: 'KNOWLEDGE_MUTATION_OK',
+  instruments, legs, expectedLegs: 28, banner: 'KNOWLEDGE_MUTATION_OK',
 })
 NODE

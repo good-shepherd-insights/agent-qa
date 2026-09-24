@@ -106,6 +106,8 @@ runSelftest({
       reds: [`${DOM} > (b7)`] },
     { id: 'K27', claim: 'BOOTSTRAP-NOT-IN-STRIP', subject: VIEW_SRC, crossing: UI,
       reds: [`${DOM} > (a2)`] },
+    { id: 'K28', claim: 'REPLAY-INCOMPLETE-NOT-COMPLETE', subject: VIEW_SRC,
+      reds: [`${EFFECT_V} > REPLAY-INCOMPLETE-NOT-COMPLETE (x2)`] },
   ],
 })
 NODE
