@@ -38,6 +38,8 @@
 // was not regenerated, and every comparison below remains byte-exact.
 // Phase 420-20 D-19 adds the cached provisional trust-prior text to those same two
 // stderr fields. All other historical data and the six exact comparisons are retained.
+// Phase 427-04 D-24 adds the recorded all-zero curation line to those same two stderr
+// fields: a clean fold that committed nothing now records its five zero buckets.
 // 418 CR-02 additionally requires one strict originating-run canary-policy.json per
 // produced handoff. The capture helper checks its exact contents and run identity;
 // the inventory below adds its explicit cardinality, without filtering the file.
