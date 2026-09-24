@@ -200,7 +200,9 @@ describe("uncounted trials are one quiet, explained line (D-14)", () => {
     expect(line).not.toBeNull()
     const trigger = line?.querySelector<HTMLElement>("span")
     expect(trigger?.tabIndex).toBe(0)
-    expect(trigger?.textContent).toBe(uncountedTrialsLine(2))
+    expect(trigger?.firstChild?.textContent).toBe(uncountedTrialsLine(2))
+    // The meaning is announced without hover, as the other tooltip triggers' is (UI-SPEC keyboard note).
+    expect(trigger?.querySelector(".sr-only")?.textContent).toBe(UNCOUNTED_TRIALS_TOOLTIP)
     expect(line?.querySelector("svg")).toBeNull()
     expect(line?.outerHTML).not.toMatch(/amber|destructive/)
 
@@ -213,7 +215,7 @@ describe("uncounted trials are one quiet, explained line (D-14)", () => {
 
     expect(view.querySelector("[data-effect-list]")).toBeNull()
     expect(view.querySelector("[data-section-absence]")?.textContent).toBe(EFFECT_NOTHING_MEASURED_TEXT)
-    expect(view.querySelector('[data-effect-uncounted="1"]')?.textContent).toBe(uncountedTrialsLine(1))
+    expect(view.querySelector('[data-effect-uncounted="1"] span')?.firstChild?.textContent).toBe(uncountedTrialsLine(1))
     expect(view.querySelector("[data-effect-unmeasured]")).toBeNull()
   })
 })

@@ -82,6 +82,7 @@ export function KnowledgeEffect({
                 className={`cursor-help rounded-sm underline decoration-dotted underline-offset-4 ${FOCUS_RING}`}
               >
                 {view.uncounted.line}
+                <span className="sr-only">{UNCOUNTED_TRIALS_TOOLTIP}</span>
               </span>
             </TooltipTrigger>
             <TooltipContent side="bottom" align="start" sideOffset={4} className="max-w-[320px] text-left">
