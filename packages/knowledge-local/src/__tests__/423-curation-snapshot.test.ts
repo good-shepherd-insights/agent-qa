@@ -90,6 +90,32 @@ function snapshot(f: ReturnType<typeof commitFixture>, run = 'synthetic-run-43')
   return foldCurationSnapshot(readCurationEffects({ knowledgeRoot: f.root, sourceRunId: run }))
 }
 
+function fiveBucketFixture() {
+  const f = commitFixture()
+  const active = { ...f.deps, profile: { mode: 'drain-to-active' as const } }
+  expect(commitCurationDelta(active, f.claimed, f.checkpoint(f.supersede)).kind).toBe('applied')
+  // Reuse one run attribution across distinct candidates, with independent historical ordinals.
+  const commit = (name: string, ordinal: number, make: (job: CommitCurationJob) => Delta, proposed = false) => {
+    const j = f.job(name, ordinal)
+    j.payload.sourceRunId = 'synthetic-run-43'
+    const result = commitCurationDelta(proposed ? f.deps : active, j, f.checkpoint(make(j)))
+    expect(['applied', 'converted-confirm', 'downgraded'], `${name}: ${JSON.stringify(result)}`).toContain(result.kind)
+    return result
+  }
+  commit('New', 44, () => ({ ...f.add, bundle: f.draft('New') }))
+  const oldConfirm = f.job('Existing', 45)
+  const existing = commitCurationDelta(active, oldConfirm, f.checkpoint({ ...f.add, bundle: f.draft('Existing') }))
+  if (existing.kind !== 'applied') throw new Error('fixture existing Add')
+  for (const ordinal of [46, 47]) commit('Reinforce', ordinal, (j) => ({ kind: 'Confirm', origin: 'agent', scope: f.add.scope,
+    citedIds: [existing.bundleId], targetId: existing.bundleId, evidenceToken: asEvidenceToken(j.payload.evidenceToken) }))
+  const oldDeprecate = f.job('Retire', 48)
+  const retiring = commitCurationDelta(active, oldDeprecate, f.checkpoint({ ...f.add, bundle: f.draft('Retire') }))
+  if (retiring.kind !== 'applied') throw new Error('fixture retired Add')
+  commit('Retired', 49, () => ({ kind: 'Deprecate', origin: 'agent', scope: f.add.scope, citedIds: [retiring.bundleId], targetId: retiring.bundleId, reason: 'synthetic retired' }))
+  commit('Held', 50, () => ({ ...f.supersede, precondition: [], newBundle: f.draft('Held') } as Delta), true)
+  return f
+}
+
 describe('423 curation snapshot', () => {
   it('REPLACEMENT-INDEPENDENT-CONFIRM keeps actual confirmation after suppressing only replacement Add', () => {
     const f = commitFixture()
@@ -111,33 +137,45 @@ describe('423 curation snapshot', () => {
     ])
   })
   it('CURATION-FIVE-BUCKETS counts five actual affected units and suppresses replacement Add', () => {
-    const f = commitFixture()
-    const active = { ...f.deps, profile: { mode: 'drain-to-active' as const } }
-    expect(commitCurationDelta(active, f.claimed, f.checkpoint(f.supersede)).kind).toBe('applied')
-    // Reuse one run attribution across distinct candidates, with independent historical ordinals.
-    const commit = (name: string, ordinal: number, make: (job: CommitCurationJob) => Delta, proposed = false) => {
-      const j = f.job(name, ordinal)
-      j.payload.sourceRunId = 'synthetic-run-43'
-      const result = commitCurationDelta(proposed ? f.deps : active, j, f.checkpoint(make(j)))
-      expect(['applied', 'converted-confirm', 'downgraded'], `${name}: ${JSON.stringify(result)}`).toContain(result.kind)
-      return result
-    }
-    commit('New', 44, () => ({ ...f.add, bundle: f.draft('New') }))
-    const oldConfirm = f.job('Existing', 45)
-    const existing = commitCurationDelta(active, oldConfirm, f.checkpoint({ ...f.add, bundle: f.draft('Existing') }))
-    if (existing.kind !== 'applied') throw new Error('fixture existing Add')
-    for (const ordinal of [46, 47]) commit('Reinforce', ordinal, (j) => ({ kind: 'Confirm', origin: 'agent', scope: f.add.scope,
-      citedIds: [existing.bundleId], targetId: existing.bundleId, evidenceToken: asEvidenceToken(j.payload.evidenceToken) }))
-    const oldDeprecate = f.job('Retire', 48)
-    const retiring = commitCurationDelta(active, oldDeprecate, f.checkpoint({ ...f.add, bundle: f.draft('Retire') }))
-    if (retiring.kind !== 'applied') throw new Error('fixture retired Add')
-    commit('Retired', 49, () => ({ kind: 'Deprecate', origin: 'agent', scope: f.add.scope, citedIds: [retiring.bundleId], targetId: retiring.bundleId, reason: 'synthetic retired' }))
-    commit('Held', 50, () => ({ ...f.supersede, precondition: [], newBundle: f.draft('Held') } as Delta), true)
+    const f = fiveBucketFixture()
     const result = snapshot(f)
     expect(result.breakdown).toEqual({ added: 1, confirmed: 1, superseded: 1, deprecated: 1, proposed: 1 })
     expect(result.rows).toHaveLength(5)
     expect(result.rows.find(r => r.bucket === 'superseded')?.changes.some(e => e.bucket === 'added')).toBe(true)
     expect(result.rows.find(r => r.bucket === 'confirmed')?.changes).toHaveLength(2)
+  })
+
+  it('SNAPSHOT-ROWS-IN-DIFF finds every snapshot change in the real diff; only run-created records carry the run link', async () => {
+    const f = fiveBucketFixture()
+    const run = 'synthetic-run-43'
+    const report = await drainQueue({ knowledgeRoot: f.root, auditBaseDir: f.deps.auditBaseDir, lease: f.authority,
+      author: async () => ({ kind: 'fallback-required', reason: 'no-model' }), executionContext: 'ci', policy: f.deps.policy,
+      maintenance: 'skip', sourceRunId: run })
+    expect({ failures: report.failures, requeued: report.requeued, remaining: report.remaining })
+      .toEqual({ failures: 0, requeued: 0, remaining: 0 })
+    const rows = report.snapshot?.rows ?? []
+    expect(rows).toHaveLength(5)
+    const diff = diffSince({ knowledgeRoot: f.root, sinceOrdinal: 0 })
+    // The identity runs.knowledge can compare on: diffSince reports an Add without the receipt token.
+    const same = (left: RecordChange, right: RecordChange) => left.recordId === right.recordId
+      && left.change === right.change && left.atOrdinal === right.atOrdinal && left.byRecordId === right.byRecordId
+    const observed = rows.flatMap(row => row.changes.map((entry) => {
+      const found = diff.filter(change => same(change, entry.change))
+      expect(found, `${row.bucket}/${entry.bucket}/${entry.change.change}`).toHaveLength(1)
+      return `${row.bucket}/${entry.bucket}/${entry.change.change}:${found[0]?.sourceRunId === run ? 'run-linked' : 'unlinked'}`
+    }))
+    expect(observed.sort()).toEqual([
+      'added/added/added:run-linked',
+      'confirmed/confirmed/confirmed:unlinked',
+      'confirmed/confirmed/confirmed:unlinked',
+      'deprecated/deprecated/deprecated:unlinked',
+      'proposed/proposed/added:run-linked',
+      'superseded/added/added:run-linked',
+      'superseded/superseded/superseded:unlinked',
+    ])
+    const unlinked = diff.filter(change => rows.some(row => row.changes.some(entry => same(change, entry.change)))
+      && change.sourceRunId !== run)
+    expect(unlinked.every(change => change.sourceRunId === undefined)).toBe(true)
   })
 
   it.each(['propose-only', 'validation', 'existing', 'deprecation'] as const)('DOWNGRADE-ORIGIN %s uses recorded disposition', (kind) => {
