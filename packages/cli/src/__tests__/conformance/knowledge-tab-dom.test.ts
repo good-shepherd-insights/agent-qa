@@ -69,6 +69,8 @@ import {
 } from '@vostride/agent-qa-safety'
 import {
   BundleOutcomeEventSchema,
+  CURATION_BREAKDOWN_BUCKETS,
+  CURATION_BUCKET_PRECEDENCE,
   RunKnowledgeProjectionSchema,
   asEvidenceToken,
   asRecordId,
@@ -230,6 +232,34 @@ function publishedStringArray(
   return members
 }
 
+/**
+ * A module-private `const NAME = { key: 'value', … }` table with bare keys, as a map (427 D-15).
+ *
+ * `CHANGE_BUCKETS` is how `learnedView` maps a change kind onto 425's five words when a run has no
+ * snapshot. It is read here rather than retyped so (c4)'s door projection maps the way the page
+ * does; a table this cannot read THROWS.
+ */
+function sourceKeyTable(name: string): Record<string, string> {
+  const block = new RegExp(`const ${name}[^=]*=\\s*\\{([\\s\\S]*?)\\n\\}`, 'u').exec(knowledgeViewSource())
+  if (block === null) throw new Error(`${name} is no longer an object literal in ${KNOWLEDGE_VIEW_REL}`)
+  const table: Record<string, string> = {}
+  for (const line of (block[1] as string).split('\n')) {
+    const entry = /^\s*([a-z]+):\s*'([a-z]+)',?\s*$/u.exec(line)
+    if (entry !== null) table[entry[1] as string] = entry[2] as string
+  }
+  if (Object.keys(table).length === 0) throw new Error(`${name} carries no members in ${KNOWLEDGE_VIEW_REL}`)
+  return table
+}
+
+/** A single-quoted export of `post-processing-view.ts` — `post-processing-dom.test.ts`'s idiom. */
+function postProcessingConstant(name: string): string {
+  const relativePath = join('lib', 'post-processing-view.ts')
+  const source = readFileSync(join(PACKAGES_ROOT, 'dashboard-ui', 'src', relativePath), 'utf8')
+  const match = new RegExp(`export const ${name}\\s*=\\s*'([^']+)'`, 'u').exec(source)
+  if (match === null) throw new Error(`${name} is no longer an exported single-quoted string in ${relativePath}`)
+  return match[1] as string
+}
+
 const RUNG_LABELS = publishedLabelTable('RUNG_LABELS')
 const RUNG_CAUSE_LABELS = publishedLabelTable('RUNG_CAUSE_LABELS')
 const DOCTOR_HINT_TEXT = publishedConstant('DOCTOR_HINT_TEXT')
@@ -238,6 +268,7 @@ const NO_BRIEF_SERVED_TEXT = publishedConstant('NO_BRIEF_SERVED_TEXT')
 const STEP_NO_BRIEF_TEXT = publishedConstant('STEP_NO_BRIEF_TEXT')
 const WHY_TRIGGER_TEXT = publishedConstant('WHY_TRIGGER_TEXT')
 const CHANGES_UNREADABLE_TEXT = publishedConstant('CHANGES_UNREADABLE_TEXT')
+const STORE_READ_INCOMPLETE_TEXT = publishedConstant('STORE_READ_INCOMPLETE_TEXT')
 /**
  * The note a failed chain prints BESIDE the records it had already committed (407-26/27).
  *
@@ -248,6 +279,19 @@ const CHANGES_UNREADABLE_TEXT = publishedConstant('CHANGES_UNREADABLE_TEXT')
 const CURATION_FAILED_PARTIAL_TEXT = publishedConstant('CURATION_FAILED_PARTIAL_TEXT')
 /** The five Learned kinds `learnedView` narrows to, READ FROM SOURCE and never retyped here. */
 const LEARNED_CHANGE_KINDS = publishedStringArray('LEARNED_CHANGE_KINDS')
+/** Each Learned kind's bucket word when a run has no snapshot (427 D-15), read from source. */
+const CHANGE_BUCKETS = sourceKeyTable('CHANGE_BUCKETS')
+for (const kind of LEARNED_CHANGE_KINDS) {
+  if (CHANGE_BUCKETS[kind] === undefined) {
+    throw new Error(`CHANGE_BUCKETS in ${KNOWLEDGE_VIEW_REL} maps no bucket for the Learned kind \`${kind}\``)
+  }
+}
+/** What the effect section says when the run used no stored knowledge (427 D-02, SC1). */
+const EFFECT_NOTHING_USED_TEXT = publishedConstant('EFFECT_NOTHING_USED_TEXT')
+/** What the changes section says when post-run processing changed nothing (427, SC1). */
+const NO_MEMORY_CHANGES_SENTENCE = publishedConstant('NO_MEMORY_CHANGES_SENTENCE')
+/** The breakdown line of an all-zero snapshot, read from the module that composes it (425 D-16). */
+const NO_MEMORY_CHANGES_TEXT = postProcessingConstant('NO_MEMORY_CHANGES_TEXT')
 
 /**
  * The banner sentence, composed from the two published tables and the published hint.
@@ -808,6 +852,12 @@ interface ServedLineObservation {
   readonly whyText?: string
 }
 
+/** One Memory changes row as (c1)/(c4)/(c5) compare it: its bucket and its subject record id. */
+interface LearnedRow {
+  readonly bucket: string
+  readonly id: string
+}
+
 /** Everything one run-detail visit recorded. */
 interface PageObservation {
   readonly finalUrl: string
@@ -841,8 +891,17 @@ interface PageObservation {
   readonly firstRowNoBriefText?: string
   /** `data-learned-state` on the Learned half's root, when the half rendered. */
   readonly learnedState?: string
-  /** Every record row the Learned half painted, in document order (407-15's row contract). */
-  readonly learnedRows: readonly { readonly change: string; readonly id: string }[]
+  /**
+   * Every Memory changes row, in document order: the row's bucket (`data-record-change`, 427 D-15)
+   * and the subject id Retrieval details lists for it at the same index (`dl[data-ledger-changes]`
+   * → `[data-ledger-row="record"]`, 427 D-19). A row no longer carries its id; `?` is a side the
+   * page did not paint.
+   */
+  readonly learnedRows: readonly LearnedRow[]
+  /** `[data-learned-count-line]`, when the heading printed one. */
+  readonly learnedCountLine?: string
+  /** Every `[data-knowledge-section]` with the `[data-section-absence]` sentences inside it (427 SC1). */
+  readonly sectionAbsences: readonly { readonly section: string; readonly absences: readonly string[] }[]
   /** `data-learned-read` on the Learned root. Absent IS the clean read — never an empty string. */
   readonly learnedRead?: string
   /** The `[data-learned-sentence]` prose, when the half printed one. */
@@ -854,6 +913,8 @@ interface PageObservation {
    * string, exactly as `learnedSentence` is carried.
    */
   readonly learnedChainNote?: string
+  /** The `[data-learned-read-note]` prose beside rows served over a partial read (407-18). */
+  readonly learnedReadNote?: string
   /** The channel-1 lines of the first row the drive expanded. */
   readonly servedLines: readonly ServedLineObservation[]
   /** `data-knowledge-state` after `1` — absent is the tab having been left. */
@@ -911,6 +972,21 @@ interface Recorded {
 
 const scan: Recorded = {}
 const served: Recorded = {}
+/**
+ * (a9)'s learned-nothing world, driven only when fixture A's own curation committed something
+ * (assumption A4 false). Its one step is declared impossible by the planner, so the run resolves
+ * no element and files no curation candidate: the chain settles having changed nothing, and D-24
+ * records that as the all-zero snapshot (427-04).
+ */
+const quiet: Recorded = {}
+
+/** A served all-zero curation snapshot — the recorded "learned nothing" fact (427 D-24). */
+function allZeroSnapshot(projection: RunKnowledgeProjection | undefined): boolean {
+  const snapshot = projection?.kind === 'ready' ? projection.learned.curationSnapshot : undefined
+  return snapshot !== undefined
+    && snapshot.rows.length === 0
+    && CURATION_BREAKDOWN_BUCKETS.every((bucket) => snapshot.breakdown[bucket] === 0)
+}
 
 let browser: Browser | undefined
 let browserPresent = false
@@ -918,6 +994,7 @@ const contexts: BrowserContext[] = []
 const servers: FixtureServer[] = []
 const dashboards: SpawnedDashboard[] = []
 let stubServer: StubModelServer | undefined
+let quietStubServer: StubModelServer | undefined
 
 /** The context every failure message carries, for one fixture. */
 function context(label: string, recorded: Recorded): string {
@@ -1085,20 +1162,57 @@ function channel1BranchOf(projection: RunKnowledgeProjection | undefined): strin
 }
 
 /**
- * The Learned rows the door's answer implies — `learnedView`'s kind narrow, and nothing else.
+ * The Memory changes rows the door's answer implies, as bucket and subject id (427 D-15).
  *
- * MIRRORS `learnedView` (`packages/dashboard-ui/src/lib/knowledge-view.ts`): it filters
- * `projection.learned.changes` through `LEARNED_CHANGE_KIND_SET` and maps each survivor to a row,
- * in the producer's order — it does NOT re-filter by run, because `runs.knowledge` already did
- * that join. This is the DOOR side of the agreement; `PageObservation.learnedRows` is the PAGE
- * side.
+ * MIRRORS `changeDrafts` (`packages/dashboard-ui/src/lib/knowledge-view.ts`). With a snapshot the
+ * rows ARE its rows in its order, a supersession led by its replacement, then one row per
+ * since-then change of a published kind. Without one, `learned.changes` narrowed to
+ * `LEARNED_CHANGE_KINDS` group per record in first-appearance order, a replacement's Add folds into
+ * the supersession it completes, and the group takes the first `CURATION_BUCKET_PRECEDENCE` bucket.
+ * It does NOT re-filter by run: `runs.knowledge` already did that join. This is the DOOR side of
+ * the agreement; `PageObservation.learnedRows` is the PAGE side.
  */
 function learnedRowsOf(
   projection: Extract<RunKnowledgeProjection, { kind: 'ready' }>,
-): readonly { readonly change: string; readonly id: string }[] {
-  return projection.learned.changes
-    .filter((change) => LEARNED_CHANGE_KINDS.includes(change.change))
-    .map((change) => ({ change: change.change, id: change.recordId }))
+): readonly LearnedRow[] {
+  const { curationSnapshot, sinceThen, changes } = projection.learned
+  const kept = (list: readonly (typeof changes)[number][]) =>
+    list.filter((change) => LEARNED_CHANGE_KINDS.includes(change.change))
+  const subjectOf = (bucket: string, recordId: string, byRecordId: string | undefined) =>
+    bucket === 'superseded' && byRecordId !== undefined ? byRecordId : recordId
+
+  if (curationSnapshot !== undefined) {
+    return [
+      ...curationSnapshot.rows.map((row) => ({
+        bucket: row.bucket,
+        id: subjectOf(row.bucket, row.recordId, row.byRecordId),
+      })),
+      ...kept(sinceThen?.changes ?? []).map((change) => ({
+        bucket: CHANGE_BUCKETS[change.change] ?? '?',
+        id: subjectOf(change.change, change.recordId, change.byRecordId),
+      })),
+    ]
+  }
+
+  const victimOf = new Map<string, string>()
+  for (const change of kept(changes)) {
+    if (change.change === 'superseded' && change.byRecordId !== undefined) {
+      victimOf.set(change.byRecordId, change.recordId)
+    }
+  }
+  const groups = new Map<string, (typeof changes)[number][]>()
+  for (const change of kept(changes)) {
+    const id = change.change === 'added' ? victimOf.get(change.recordId) ?? change.recordId : change.recordId
+    groups.set(id, [...(groups.get(id) ?? []), change])
+  }
+  return [...groups].map(([id, group]) => {
+    const buckets = group.map((change) => CHANGE_BUCKETS[change.change] ?? '?')
+    const bucket = CURATION_BUCKET_PRECEDENCE.find((word) => buckets.includes(word)) ?? buckets[0] ?? '?'
+    const replacement = bucket === 'superseded'
+      ? [...group].reverse().find((change) => change.change === 'superseded' && change.byRecordId !== undefined)?.byRecordId
+      : undefined
+    return { bucket, id: replacement ?? id }
+  })
 }
 
 /**
@@ -1245,6 +1359,14 @@ async function observeKnowledge(
       (sections) => sections.map((section) => section.getAttribute('data-knowledge-section') ?? '?'),
     )
     const usedAbsence = await textOf(page, '[data-knowledge-section="used"] [data-section-absence]')
+    const sectionAbsences = await page.locator('[data-knowledge-section]').evaluateAll(
+      (sections) => sections.map((section) => ({
+        section: section.getAttribute('data-knowledge-section') ?? '?',
+        absences: Array.from(section.querySelectorAll('[data-section-absence]'))
+          .map((node) => (node.textContent ?? '').trim()),
+      })),
+    )
+    const learnedCountLine = await textOf(page, '[data-learned-count-line]')
     const retrievalDetailsState = await openRetrievalDetails(page)
     const usedSummary = await textOf(page, '[data-used-summary]')
     const knowledgeStepCount = await page.locator('[data-step-index]').count()
@@ -1256,17 +1378,24 @@ async function observeKnowledge(
       `[data-step-index] >> text=${STEP_NO_BRIEF_TEXT}`,
     ).catch(() => undefined)
     const learnedState = await attributeOf(page, '[data-learned-state]', 'data-learned-state')
-    // ATTRIBUTE-ADDRESSED, NOT TEXT-ADDRESSED. The row's identity is `data-record-change` +
-    // `data-record-id`; its badge word and its tint are presentation this file does not pin.
     const learnedRead = await attributeOf(page, '[data-learned-state]', 'data-learned-read')
     const learnedSentence = await textOf(page, '[data-learned-sentence]')
     const learnedChainNote = await textOf(page, '[data-learned-chain-note]')
-    const learnedRows = await page
+    const learnedReadNote = await textOf(page, '[data-learned-read-note]')
+    // ATTRIBUTE-ADDRESSED, NOT TEXT-ADDRESSED (427 D-15/D-19). A row's bucket is its
+    // `data-record-change`; its id is no longer on the row but in the opened Retrieval details, one
+    // `dl[data-ledger-changes]` per row in the same order, subject id first.
+    const learnedBuckets = await page
       .locator('[data-learned-state] li[data-record-change]')
-      .evaluateAll((rows) => rows.map((row) => ({
-        change: row.getAttribute('data-record-change') ?? '?',
-        id: row.getAttribute('data-record-id') ?? '?',
-      })))
+      .evaluateAll((rows) => rows.map((row) => row.getAttribute('data-record-change') ?? '?'))
+    const ledgerIds = await page
+      .locator('[data-knowledge-section="retrieval-details"] dl[data-ledger-changes]')
+      .evaluateAll((blocks) => blocks.map((block) =>
+        (block.querySelector('[data-ledger-row="record"] > *')?.textContent ?? '?').trim()))
+    const learnedRows: LearnedRow[] = Array.from(
+      { length: Math.max(learnedBuckets.length, ledgerIds.length) },
+      (_, index) => ({ bucket: learnedBuckets[index] ?? '?', id: ledgerIds[index] ?? '?' }),
+    )
 
     // ── One expanded row, and the why-trace inside it. The row that served something is chosen by
     // the attribute the panel stamped, so a fixture that served nothing expands its first row and
@@ -1386,9 +1515,12 @@ async function observeKnowledge(
       ...(firstRowNoBriefText === undefined ? {} : { firstRowNoBriefText }),
       ...(learnedState === undefined ? {} : { learnedState }),
       learnedRows,
+      ...(learnedCountLine === undefined ? {} : { learnedCountLine }),
+      sectionAbsences,
       ...(learnedRead === undefined ? {} : { learnedRead }),
       ...(learnedSentence === undefined ? {} : { learnedSentence }),
       ...(learnedChainNote === undefined ? {} : { learnedChainNote }),
+      ...(learnedReadNote === undefined ? {} : { learnedReadNote }),
       servedLines,
       ...(stateAfterOverview === undefined ? {} : { stateAfterOverview }),
       ...(stateAfterM === undefined ? {} : { stateAfterM }),
@@ -1941,13 +2073,21 @@ describePosix('the shipped dashboard renders the Knowledge tab and the rung bann
     // real dashboard; two at once on one machine is the resource contention WINDOWS #309 recorded.
     await driveFixture('knowledge-tab-dom-scan', scan, false, addresses)
     await driveFixture('knowledge-tab-dom-served', served, true, addresses)
-  }, RUN_BUDGET_MS * 2 + 360_000)
+    if (!allZeroSnapshot(scan.visit?.projection)) {
+      quietStubServer = await startStubModelServer({ plannerOutcome: 'stepFailed' })
+      await driveFixture('knowledge-tab-dom-quiet', quiet, false, {
+        modelBaseUrl: quietStubServer.baseUrl,
+        targetUrl: targetServer.url,
+      })
+    }
+  }, RUN_BUDGET_MS * 3 + 480_000)
 
   afterAll(async () => {
     for (const held of contexts) await held.close().catch(() => undefined)
     await browser?.close().catch(() => undefined)
     for (const dashboard of dashboards) await dashboard.stop().catch(() => undefined)
     await stubServer?.close()
+    await quietStubServer?.close()
     for (const server of servers) await server.close()
     cleanupTempRoots()
   })
@@ -2085,6 +2225,53 @@ describePosix('the shipped dashboard renders the Knowledge tab and the rung bann
       'the ready Knowledge tab did not paint its `[data-knowledge-section]` elements in the order '
       + `KNOWLEDGE_SECTIONS publishes (427 D-02).${context('scan', scan)}`,
     ).toEqual(publishedStringArray('KNOWLEDGE_SECTIONS'))
+  })
+
+  it('(a9) a run that used nothing and learned nothing states each absence (SC1)', () => {
+    // SC1 ON THE SHIPPED BINARY, OVER D-24's RECORDED FACT. A zero-effect curation publishes an
+    // all-zero snapshot (427-04), so "learned nothing" is a recorded breakdown the page reads, not
+    // a missing one it infers. Fixture A is the world expected to carry it (assumption A4); when its
+    // chain committed something, the cell asserts on the quiet world, whose curation committed
+    // nothing, and names which world it read. It never skips.
+    visitOf('scan', scan)
+    const scanSnapshot = scan.visit?.projection?.kind === 'ready'
+      ? scan.visit.projection.learned.curationSnapshot ?? '(absent)'
+      : '(no ready read)'
+    const a4 = allZeroSnapshot(scan.visit?.projection)
+    const label = a4 ? 'scan' : 'quiet'
+    const recorded = a4 ? scan : quiet
+    const seen = `\n(a9) assumption A4 ${a4 ? 'holds' : 'is false'}; fixture A's snapshot: `
+      + `${JSON.stringify(scanSnapshot)}; asserted on: ${label}${context(label, recorded)}`
+    console.info('(a9)', JSON.stringify({ a4, scanSnapshot, world: label }))
+
+    const observed = visitOf(label, recorded)
+    const ready = readyProjection(label, recorded)
+    expect(
+      allZeroSnapshot(ready),
+      `the ${label} world's curation served no all-zero snapshot, so its learned-nothing state is `
+      + `not the recorded fact D-24 publishes (427-04).${seen}`,
+    ).toBe(true)
+    expect(
+      ready.steps.reduce((total, step) => total + servedLineCount(step), 0),
+      `the ${label} world served a brief line, so it is not a run that used nothing.${seen}`,
+    ).toBe(0)
+
+    const absencesOf = (section: string): readonly string[] | undefined =>
+      observed.sectionAbsences.find((entry) => entry.section === section)?.absences
+    expect(absencesOf('used'), `Knowledge used did not state exactly its one absence.${seen}`)
+      .toEqual([ready.steps.length === 0 ? NO_BRIEF_SERVED_TEXT : NO_BRIEF_LINES_TEXT])
+    expect(absencesOf('effect'), `Effect on this run did not state exactly its one absence.${seen}`)
+      .toEqual([EFFECT_NOTHING_USED_TEXT])
+    expect(
+      absencesOf('changes'),
+      `Memory changes did not state exactly one absence, NO_MEMORY_CHANGES_SENTENCE.${seen}`,
+    ).toEqual([NO_MEMORY_CHANGES_SENTENCE])
+    expect(observed.learnedState, `the learned-nothing chain is not settled \`done\`.${seen}`).toBe('done')
+    expect(
+      observed.learnedCountLine,
+      `the Memory changes count line does not read the all-zero breakdown's words.${seen}`,
+    ).toBe(NO_MEMORY_CHANGES_TEXT)
+    expect(observed.learnedRows, `a run that learned nothing painted Memory changes rows.${seen}`).toEqual([])
   })
 
   // ── (B) The seeded knowledge root: a served line, and the why-trace behind it.
@@ -2294,9 +2481,10 @@ describePosix('the shipped dashboard renders the Knowledge tab and the rung bann
     ).toBeDefined()
     const painted = observed as PageObservation
     expect(
-      painted.learnedRows.some((row) => row.change === 'added' && row.id === publishedId),
-      'the Learned half painted no `li[data-record-change="added"][data-record-id]` for the record '
-      + `the op served as this run's own addition.${context('served', served)}`,
+      painted.learnedRows.some((row) => row.bucket === 'added' && row.id === publishedId),
+      'the Memory changes section painted no `li[data-record-change="added"]` whose Retrieval '
+      + 'details ledger entry names the record the op served as this run\'s own addition '
+      + `(427 D-15/D-19).${context('served', served)}`,
     ).toBe(true)
     expect(
       painted.learnedSentence,
@@ -2362,16 +2550,29 @@ describePosix('the shipped dashboard renders the Knowledge tab and the rung bann
       'the Learned half did not stamp `data-learned-read="incomplete"`, so a reader is shown an '
       + `absence with no way to tell it from an unreadable store.${context('served', served)}`,
     ).toBe('incomplete')
+    // RE-SPELLED 427-09 (D-15). Memory changes rows come from curation's fixed snapshot, which is
+    // not a store scan, so a partial scan no longer empties the list: the page paints exactly the
+    // door's rows and names the partial read BESIDE them. With no row to list it still prints the
+    // unreadable-store sentence.
+    const doorRows = learnedRowsOf(ready)
     expect(
-      painted.learnedRows.length,
-      'the Learned half painted record rows out of a scan that did not complete.'
-      + context('served', served),
-    ).toBe(0)
-    expect(
-      painted.learnedSentence,
-      'the Learned half did not print the published unreadable-store sentence, so a reader is told '
-      + `to wait for a page that will never fill on its own.${context('served', served)}`,
-    ).toBe(CHANGES_UNREADABLE_TEXT)
+      painted.learnedRows,
+      'the Memory changes section painted rows other than the door\'s snapshot rows over a scan '
+      + `that did not complete.${context('served', served)}`,
+    ).toEqual(doorRows)
+    if (doorRows.length > 0) {
+      expect(
+        [painted.learnedSentence, painted.learnedReadNote],
+        'the Memory changes section did not name the partial read beside the rows it painted, or '
+        + `printed a sentence over them.${context('served', served)}`,
+      ).toEqual([undefined, STORE_READ_INCOMPLETE_TEXT])
+    } else {
+      expect(
+        painted.learnedSentence,
+        'the Learned half did not print the published unreadable-store sentence, so a reader is told '
+        + `to wait for a page that will never fill on its own.${context('served', served)}`,
+      ).toBe(CHANGES_UNREADABLE_TEXT)
+    }
   })
 
   it('(c3) every projection this file read parses against the wire contract', () => {
@@ -2548,8 +2749,10 @@ describePosix('the shipped dashboard renders the Knowledge tab and the rung bann
           : ' (SETTLED-AND-DONE chain — the other arm that lists rows)'
       expect(
         painted.learnedRows,
-        `AGREEMENT 1 BROKE in the ${entry.world} world: the Learned rows the page painted are not `
-        + `the door's \`learned.changes\` narrowed to ${JSON.stringify(LEARNED_CHANGE_KINDS)}`
+        `AGREEMENT 1 BROKE in the ${entry.world} world: the Memory changes rows the page painted `
+        + `(bucket from the row, id from Retrieval details) are not the door's answer projected `
+        + `as \`changeDrafts\` does — the snapshot's rows then since-then changes, or \`learned.changes\` `
+        + `narrowed to ${JSON.stringify(LEARNED_CHANGE_KINDS)} and grouped per record`
         + `${armNote}. This is the CR-01 class: `
         + `a half that paints a different set from the one it was served.${seen}`,
       ).toEqual(arm === 'unsettled' ? [] : learnedRowsOf(ready))
@@ -2905,37 +3108,31 @@ describePosix('the shipped dashboard renders the Knowledge tab and the rung bann
       `the Learned half's root does not read \`failed\` in the attributed-failed world, so the `
       + `page is no longer saying the two facts side by side.${seen}`,
     ).toBe('failed')
-    // ── AND THE EMPTY ROW LIST HERE IS PINNED TO AN EMPTY DOOR LIST, NOT TO A LAW.
+    // ── AND THE ROWS HERE ARE THE DOOR'S SNAPSHOT ROWS, NOT A LAW ABOUT THE FAILED ARM.
     //
-    // THE ANSWER DID NOT MOVE; ITS REASON DID (REVIEW CR-01 · G-407-12). This assertion used to
-    // say the empty list was `learnedView`'s failed arm discarding served rows as shipped. That
-    // is no longer true and, since the owner ruling of 2026-08-31, no longer the law: a
+    // RE-SPELLED 427-09 (D-15). Since the owner ruling of 2026-08-31 (REVIEW CR-01 · G-407-12) a
     // settled-and-failed chain lists exactly what a settled-and-done one would, and AGREEMENT 1
-    // now enforces that on BOTH settled arms. `[]` is still the right answer HERE for a reason
-    // that has nothing to do with the failed arm — this world is driven AFTER
-    // `plantMalformedBundle`, its change-records read degrades permanently for that memory root,
-    // and the door serves no change at all. So the door's own emptiness is asserted FIRST, and
-    // the page's emptiness is tied to it.
+    // enforces that on both settled arms. This world is driven AFTER `plantMalformedBundle`, so its
+    // change-records read degrades permanently for this root and the door serves no change at all —
+    // asserted FIRST. What the page lists is curation's fixed snapshot, which no store scan
+    // produces, so the rows are the door's snapshot rows, bucket from the row and id from Retrieval
+    // details.
     //
     // THE LAW IS MEASURED IN THE SIXTH WORLD, `failed-with-changes`, which is planted BEFORE the
     // malformed bundle precisely so it can hold both a failed chain and served change records.
     expect(
       ready.learned.changes.length,
-      `the attributed-failed world's door served \`learned.changes\` after all, so the empty page `
-      + `list below is no longer explained by an empty door list — and this cell would be `
-      + `asserting the very behaviour AGREEMENT 1 now forbids. If the change-records read stopped `
-      + `degrading for a root holding a malformed bundle, this cell needs rewriting, not `
-      + `silencing.${seen}`,
+      `the attributed-failed world's door served \`learned.changes\` after all, so this world no `
+      + `longer measures a degraded change-records read. If the read stopped degrading for a root `
+      + `holding a malformed bundle, this cell needs rewriting, not silencing.${seen}`,
     ).toBe(0)
     expect(
       visit.learnedRows,
-      `the Learned half painted record rows the door did not serve: \`learned.changes\` is empty `
-      + `in this world (the malformed bundle planted before it degrades the change-records read `
-      + `permanently for this root), so there is nothing for the half to list. This is NOT the `
-      + `failed arm suppressing rows — that behaviour was ruled against on 2026-08-31 and `
-      + `AGREEMENT 1 enforces the ruling; the law is measured in the \`failed-with-changes\` `
-      + `world.${seen}`,
-    ).toEqual([])
+      `the Memory changes section painted rows other than the door's: \`learned.changes\` is empty `
+      + `in this world, so the only rows to list are curation's own snapshot rows. This is NOT the `
+      + `failed arm suppressing rows — that behaviour was ruled against on 2026-08-31 and AGREEMENT `
+      + `1 enforces the ruling; the law is measured in the \`failed-with-changes\` world.${seen}`,
+    ).toEqual(learnedRowsOf(ready))
   })
 
   it('(c6) an unbroken 120-char summary fits the row with the break utility and overruns it without — measured, both ways', () => {

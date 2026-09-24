@@ -70,7 +70,7 @@ const KTD = 'src/__tests__/conformance/knowledge-tab-dom.test.ts'
 const instruments = {
   'read-sinks': { pkg: 'packages/cli', files: [SINKS], typecheck: false, count: 10, env: { VITEST_MAX_WORKERS: '1' } },
   'knowledge-views': { pkg: 'packages/dashboard-ui', files: [LEARNED_T, TAB_T], typecheck: false, count: 70 },
-  'knowledge-tab-dom': { pkg: 'packages/cli', files: [KTD], typecheck: false, count: 22, env: { VITEST_MAX_WORKERS: '1' } },
+  'knowledge-tab-dom': { pkg: 'packages/cli', files: [KTD], typecheck: false, count: 23, env: { VITEST_MAX_WORKERS: '1' } },
 }
 
 const UI_DIST = "join(PACKAGES_ROOT, 'dashboard-ui', 'dist')"
@@ -164,8 +164,9 @@ const legs = [
       { from: "    return rows.length > 0\n      ? {\n          state: 'failed',\n          rows,\n          chainNote", to: "    return rows.length < 0\n      ? {\n          state: 'failed',\n          rows,\n          chainNote" },
       { from: "      : { state: 'failed', sentence: CURATION_FAILED_TEXT, rows: [],", to: "      : { state: 'failed', sentence: CURATION_FAILED_TEXT, rows: [], failed423: \"early-empty\"," },
     ],
-    reds: [page('(c4)')], allowed: [],
-    greens: [page('(c5)'), page('(c1)'), page('(c3)'), page('(b4)'), page('(a3)')],
+    // (c5) is allowed since 427-09: its failed world lists the snapshot row the early-empty arm drops.
+    reds: [page('(c4)')], allowed: [page('(c5)')],
+    greens: [page('(c1)'), page('(c3)'), page('(b4)'), page('(a3)'), page('(a9)')],
   },
 ]
 
