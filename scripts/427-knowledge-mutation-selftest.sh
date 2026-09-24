@@ -112,6 +112,8 @@ runSelftest({
       reds: [`${EFFECT_V} > REPLAY-SIZE-FROM-FLOW: three completed body steps`] },
     { id: 'K30', claim: 'REPLAY-GROUPED-STEPS', subject: VIEW_SRC,
       reds: [`${EFFECT_V} > REPLAY-GROUPED-STEPS (x2)`] },
+    { id: 'K31', claim: 'REPLAY-PER-FLOW', subject: VIEW_SRC,
+      reds: [`${EFFECT_V} > REPLAY-PER-FLOW (x3)`] },
   ],
 })
 NODE
