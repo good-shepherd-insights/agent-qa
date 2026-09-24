@@ -913,6 +913,44 @@ export const STEP_NOT_FOUND_TEXT = 'no evidence recorded for this step'
 /** The serve-time canary marker, worn by every canary line whatever curation did with it (D-08). */
 export const CANARY_BADGE_TEXT = 'canary'
 
+/** The canary marker as Retrieval details states it, beside the line's record id (427 D-19). */
+export const LEDGER_ON_TRIAL_TEXT = 'on trial (canary)'
+
+/** The four outcomes the store can attribute to a canary line, as opposed to the three non-answers. */
+export type AttributedOutcomeWord = Extract<CanaryOutcomeWord, 'confirmed' | 'contradicted' | 'helpful' | 'harmful'>
+
+/** The store's attribution word for a canary line, in plain text (427 D-19). */
+export function attributionWordText(outcome: AttributedOutcomeWord): string {
+  return `attribution: ${outcome}`
+}
+
+/** A served line's serve-time facts as one mono meta line (427 D-19). */
+export function trustMetaLine(trust: number, tier: string, status: string): string {
+  return `trust ${trust.toFixed(2)} · tier ${tier} · status ${status}`
+}
+
+/** The accessible name of the copy button beside a record id in Retrieval details. */
+export function copyRecordIdLabel(id: string): string {
+  return `Copy record id ${id}`
+}
+
+/** Announced when a record id reached the clipboard. */
+export const RECORD_ID_COPIED_TEXT = 'Record id copied to the clipboard'
+
+/** Announced when it did not, with the id spelled out so it can still be selected. */
+export function recordIdCopyFailedText(id: string): string {
+  return `Could not copy — select the id to copy it: ${id}`
+}
+
+/**
+ * The retrieval level one step recorded, stated only below `memidex` (427 D-19). A step whose rung
+ * differs from the run's therefore says so on its own ledger row.
+ */
+export function ledgerRungLine(rung: Exclude<RetrievalRung, 'memidex'>, reason?: RetrievalRungReason): string {
+  const cause = reason === undefined ? '' : ` — ${RUNG_CAUSE_LABELS[reason]}`
+  return `Retrieval level: ${RUNG_LABELS[rung]}${cause}`
+}
+
 /**
  * What a canary line says while curation is still `pending` or `running` (D-08).
  *
@@ -1395,10 +1433,11 @@ export interface BriefLineView {
   readonly canaryOutcome?: CanaryOutcomeWord
 }
 
-/** One channel-2 read trace, as the row renders it. `bodyDigest` is storage identity, not shown. */
+/** One channel-2 read trace, as the Retrieval details row renders it (427 D-19 shows the digest). */
 export interface ReadTraceView {
   readonly id: string
   readonly detailLevel: string
+  readonly bodyDigest: string
 }
 
 /** One channel-3 caution, as the row renders it. */
@@ -1413,11 +1452,20 @@ export interface CutCandidatesView {
   readonly lines: readonly TraceLine[]
 }
 
-/** The replay/hint row: the sentence of record and the tone the badge is tinted by. */
+/** The replay/hint row: the procedure, the sentence of record, and the outcome it states. */
 export interface PlanSourceView {
   readonly kind: 'procedure-replay' | 'procedure-hint'
+  readonly procedureId: string
   readonly sentence: string
   readonly tone: 'ok' | 'broke' | 'hint'
+  /** The guard's recorded reason code, present only on a replay that broke on a miss. */
+  readonly missReason?: ReplayMissReason
+}
+
+/** A step's recorded retrieval level, present only when it was below `memidex` (427 D-19). */
+export interface LedgerRungView {
+  readonly rung: Exclude<RetrievalRung, 'memidex'>
+  readonly reason?: RetrievalRungReason
 }
 
 /** Everything an EXPANDED step row shows. Empty channels are empty arrays, never absent. */
@@ -1429,6 +1477,8 @@ export interface StepDetailView {
   readonly cut?: CutCandidatesView
   /** Present only on a step whose evidence recorded a procedure plan source. */
   readonly planSource?: PlanSourceView
+  /** Present only on a step that recorded a rung below `memidex`. */
+  readonly rung?: LedgerRungView
 }
 
 /** One page of a channel, plus the trigger that reveals the rest. */
@@ -1564,13 +1614,17 @@ function brokeAt(guard: ReplayGuard): BrokeAt | undefined {
 /** The plan-source row: its sentence and the tone the UI-SPEC tints its badge by. */
 export function planSourceView(planSource: RunKnowledgePlanSource): PlanSourceView {
   const sentence = planSourceSentence(planSource)
+  const procedureId = planSource.procedureId
   if (planSource.kind === 'procedure-hint') {
-    return { kind: 'procedure-hint', sentence, tone: 'hint' }
+    return { kind: 'procedure-hint', procedureId, sentence, tone: 'hint' }
   }
+  const broke = brokeAt(planSource.guard)
   return {
     kind: 'procedure-replay',
+    procedureId,
     sentence,
-    tone: brokeAt(planSource.guard) === undefined ? 'ok' : 'broke',
+    tone: broke === undefined ? 'ok' : 'broke',
+    ...(broke?.cause === 'miss' ? { missReason: broke.reason } : {}),
   }
 }
 
@@ -1874,13 +1928,17 @@ function stepDetail(
   )
 
   const cut = cutCandidates(step.trace)
+  const rung = step.retrievalRung === undefined ? undefined : rungView(step.retrievalRung)
 
   return {
     channel1,
-    channel2: step.served.channel2.map(line => ({ id: line.id, detailLevel: line.detailLevel })),
+    channel2: step.served.channel2.map(line => ({ id: line.id, detailLevel: line.detailLevel, bodyDigest: line.bodyDigest })),
     channel3: step.served.channel3.map(line => ({ id: line.id, summary: line.summary })),
     ...(cut === undefined ? {} : { cut }),
     ...(step.planSource === undefined ? {} : { planSource: planSourceView(step.planSource) }),
+    ...(rung === undefined || rung.rung === 'memidex'
+      ? {}
+      : { rung: { rung: rung.rung, ...(rung.reason === undefined ? {} : { reason: rung.reason }) } }),
   }
 }
 

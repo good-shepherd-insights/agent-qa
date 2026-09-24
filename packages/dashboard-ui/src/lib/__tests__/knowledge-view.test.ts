@@ -861,7 +861,7 @@ describe('the projection joins the trace, the ledger, the outcome and the plan s
 
     const detail = detailOf(view)
     expect(detail.cut?.label).toBe(cutCandidatesLabel(1))
-    expect(detail.planSource).toEqual({ kind: 'procedure-replay', sentence: 'replayed 5/5', tone: 'ok' })
+    expect(detail.planSource).toEqual({ kind: 'procedure-replay', procedureId: 'p_1', sentence: 'replayed 5/5', tone: 'ok' })
   })
 
   it('leaves the cut ledger and the plan source ABSENT — not null — when the step recorded neither', () => {

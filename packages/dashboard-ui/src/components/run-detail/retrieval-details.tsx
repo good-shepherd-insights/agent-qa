@@ -10,6 +10,7 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/component
 import { NESTED_TRIGGER_CLASS } from "./knowledge-brief-line"
 import { KnowledgeStepDetail } from "./knowledge-step-detail"
 import { MaskedText } from "./masked-text"
+import { RecordIdCopy } from "./record-id-copy"
 import {
   LEDGER_ROW_LABELS,
   MEMORY_CHANGES_HEADING,
@@ -80,7 +81,7 @@ function StepRow({ row }: { row: StepRowView }) {
         data-brief-lines={String(row.briefLines)}
         data-canary-lines={String(row.canaryLines)}
       >
-        <CollapsibleTrigger className="group flex w-full items-center gap-2 py-1 text-left text-sm hover:text-foreground">
+        <CollapsibleTrigger className="group flex w-full items-center gap-2 py-1 text-left text-xs font-medium hover:text-foreground">
           <ChevronRight className="h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform group-data-[state=open]:rotate-90" />
           <span className="truncate">{row.title}</span>
           {row.noBrief === true ? (
@@ -111,6 +112,16 @@ function lines(values: readonly string[]): ReactNode {
   ))
 }
 
+/** Record ids, one per line, each followed by its copy button; a line's text stays the id alone. */
+function idLines(values: readonly string[]): ReactNode {
+  return values.map((value, index) => (
+    <span key={index} className="block">
+      <MaskedText text={value} />
+      <RecordIdCopy id={value} className="ml-1" />
+    </span>
+  ))
+}
+
 /**
  * One changed record's technical facts (D-19 part 2), in the 424 Technical details `dl` idiom: a row
  * is pushed only when its fact exists. The one link takes its href from the view, which built it
@@ -119,7 +130,7 @@ function lines(values: readonly string[]): ReactNode {
 function ChangeLedgerEntry({ entry }: { entry: ChangeLedgerView }) {
   const rows: [LedgerRow, ReactNode][] = [
     ["bucket", entry.bucket],
-    ["record", lines(entry.recordIds)],
+    ["record", idLines(entry.recordIds)],
   ]
   if (entry.events.length > 0) rows.push(["events", lines(entry.events.map(ledgerEventText))])
   if (entry.promotionPath !== undefined) rows.push(["promotion", promotionPathLabel(entry.promotionPath)])

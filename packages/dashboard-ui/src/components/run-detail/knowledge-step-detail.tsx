@@ -5,12 +5,13 @@
 // row; this component is what goes in it.
 //
 // IT IS PRESENTATIONAL AND KNOWS NO RUN. It takes a `StepDetailView` and paints it. Every sentence
-// it renders — the channel eyebrows, the cut-candidates label, the replay/hint sentence — is an
-// exported constant or a function of `lib/knowledge-view.ts`. Nothing here decides a word.
+// it renders — the channel eyebrows, the cut-candidates label, the replay/hint sentence, the rung
+// line — is an exported constant or a function of `lib/knowledge-view.ts`. Nothing here decides a
+// word.
 //
-// AN EMPTY CHANNEL STILL GETS ITS EYEBROW. Three named sections, always, because "channel 2 served
-// nothing" and "this surface does not show channel 2" are different facts and a reader can only
-// tell them apart if the heading is there either way.
+// ONLY WHAT WAS SERVED (427 D-19). This block lives inside Retrieval details, so a channel the step
+// was not served is left out rather than named empty; a step served nothing keeps its row, which
+// says `no brief served`. Every id carries a copy button, and the plan source is plain text.
 //
 // THE PAGE IS THE OVERFLOW STRATEGY, not virtualisation (UI-SPEC). Step rows render collapsed, so
 // the tab's DOM is bounded by step count; the one unbounded case — a single step served hundreds
@@ -24,21 +25,22 @@
 
 import { ChevronRight } from "lucide-react"
 
-import { Badge } from "@/components/ui/badge"
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
 import { KnowledgeBriefLine, NESTED_TRIGGER_CLASS } from "./knowledge-brief-line"
 import { MaskedText } from "./masked-text"
+import { RecordIdCopy } from "./record-id-copy"
 import {
   CHANNEL_EYEBROWS,
   CHANNEL_PAGE_SIZE,
   channelPage,
+  ledgerRungLine,
   type BriefLineView,
   type PlanSourceView,
   type StepDetailView,
 } from "@/lib/knowledge-view"
 
-/** The eyebrow role, from the UI-SPEC Typography table (the shortcut legend's own style). */
-const EYEBROW_CLASS = "text-[10px] uppercase tracking-wider font-medium text-muted-foreground"
+/** The eyebrow role: 12px uppercase, the UI-SPEC's one label size (the 10px eyebrow is retired). */
+const EYEBROW_CLASS = "text-xs uppercase tracking-wider font-medium text-muted-foreground"
 
 /** Children of a section indent by the chevron width — `artifact-config-tab.tsx`'s own offset. */
 const CHANNEL_LIST_CLASS = "pl-5 space-y-2"
@@ -52,44 +54,48 @@ const CUT_EYEBROW = "CUT CANDIDATES"
 export function KnowledgeStepDetail({ detail }: { detail: StepDetailView }) {
   return (
     <div className="space-y-4">
-      <Channel1 lines={detail.channel1} />
+      {detail.channel1.length > 0 ? <Channel1 lines={detail.channel1} /> : null}
 
-      <section className="space-y-2">
-        <p className={EYEBROW_CLASS}>{CHANNEL_EYEBROWS[2]}</p>
-        <ul className={CHANNEL_LIST_CLASS}>
-          {detail.channel2.map(trace => (
-            <li key={trace.id} data-served-channel="2" className="flex flex-wrap items-center gap-2">
-              {/* This id had NO break at all, and it is a flex item of a `flex flex-wrap` row —
-                  sized from its own content, so its min-content contribution was the whole
-                  unbroken record id and the row could only grow past its column.
-                  `overflow-wrap: anywhere` is the value that reduces that contribution;
-                  `overflow-wrap: break-word` would not, which is why the other spelling is
-                  nowhere in this file. Applied here rather than in the shared mono constant. */}
-              <span className={`${MONO_CLASS} wrap-anywhere`}>{trace.id}</span>
-              <span className="text-xs text-muted-foreground">{trace.detailLevel}</span>
-            </li>
-          ))}
-        </ul>
-      </section>
+      {detail.channel2.length > 0 ? (
+        <section data-ledger-channel="2" className="space-y-2">
+          <p className={EYEBROW_CLASS}>{CHANNEL_EYEBROWS[2]}</p>
+          <ul className={CHANNEL_LIST_CLASS}>
+            {detail.channel2.map(trace => (
+              <li key={trace.id} data-served-channel="2" className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                {/* This id is a flex item sized from its own content, so its min-content
+                    contribution would be the whole unbroken record id. `overflow-wrap: anywhere`
+                    is the value that reduces it; `break-word` would not. Applied here rather than
+                    in the shared mono constant. */}
+                <span className="flex min-w-0 items-center gap-1">
+                  <span className={`${MONO_CLASS} wrap-anywhere`}>{trace.id}</span>
+                  <RecordIdCopy id={trace.id} />
+                </span>
+                <span className="text-xs text-muted-foreground">{trace.detailLevel}</span>
+                <span className={`${MONO_CLASS} wrap-anywhere`}>{trace.bodyDigest}</span>
+              </li>
+            ))}
+          </ul>
+        </section>
+      ) : null}
 
-      <section className="space-y-2">
-        <p className={EYEBROW_CLASS}>{CHANNEL_EYEBROWS[3]}</p>
-        <ul className={CHANNEL_LIST_CLASS}>
-          {detail.channel3.map(caution => (
-            <li key={caution.id} data-served-channel="3" className="space-y-1">
-              {/* `overflow-wrap: anywhere`, NOT `overflow-wrap: break-word`. Same node shape, same
-                  reason as channel 1 (`knowledge-brief-line.tsx`): a caution summary is regularly
-                  one unbroken token, and `break-word` leaves min-content width at the whole token —
-                  it offers a break only once the box HAS a width, so a content-sized box never
-                  shrinks far enough to reach it. Only `anywhere` participates in intrinsic sizing.
-                  This span was byte-identical to the channel-1 span before that fix. */}
-              <span className="text-sm wrap-anywhere"><MaskedText text={caution.summary} /></span>
-              {/* Applied at the USE SITE, not inside the shared mono constant above. */}
-              <p className={`${MONO_CLASS} wrap-anywhere`}>{caution.id}</p>
-            </li>
-          ))}
-        </ul>
-      </section>
+      {detail.channel3.length > 0 ? (
+        <section data-ledger-channel="3" className="space-y-2">
+          <p className={EYEBROW_CLASS}>{CHANNEL_EYEBROWS[3]}</p>
+          <ul className={CHANNEL_LIST_CLASS}>
+            {detail.channel3.map(caution => (
+              <li key={caution.id} data-served-channel="3" className="space-y-1">
+                {/* `overflow-wrap: anywhere`, NOT `break-word`: a caution summary is regularly one
+                    unbroken token, and only `anywhere` participates in intrinsic sizing. */}
+                <span className="block text-xs wrap-anywhere"><MaskedText text={caution.summary} /></span>
+                <div className="flex min-w-0 items-center gap-1">
+                  <p className={`${MONO_CLASS} min-w-0 wrap-anywhere`}>{caution.id}</p>
+                  <RecordIdCopy id={caution.id} />
+                </div>
+              </li>
+            ))}
+          </ul>
+        </section>
+      ) : null}
 
       {detail.cut === undefined ? null : (
         <div data-cut-candidates={String(detail.cut.lines.length)}>
@@ -117,6 +123,12 @@ export function KnowledgeStepDetail({ detail }: { detail: StepDetailView }) {
       )}
 
       {detail.planSource === undefined ? null : <PlanSourceRow planSource={detail.planSource} />}
+
+      {detail.rung === undefined ? null : (
+        <p data-ledger-rung className="text-xs text-muted-foreground">
+          {ledgerRungLine(detail.rung.rung, detail.rung.reason)}
+        </p>
+      )}
     </div>
   )
 }
@@ -131,7 +143,7 @@ function Channel1({ lines }: { lines: readonly BriefLineView[] }) {
   const page = channelPage(lines)
 
   return (
-    <section className="space-y-2">
+    <section data-ledger-channel="1" className="space-y-2">
       <p className={EYEBROW_CLASS}>{CHANNEL_EYEBROWS[1]}</p>
       <ul className={CHANNEL_LIST_CLASS}>
         {page.lines.map(line => (
@@ -158,22 +170,21 @@ function Channel1({ lines }: { lines: readonly BriefLineView[] }) {
 }
 
 /**
- * The procedure row: what the step's plan came from, and how that went (D-07).
+ * The procedure row: which procedure the step's plan came from, and how that went (D-07).
  *
- * The tone drives the tint only. The SENTENCE is the view's, and a replay that broke reads as a
- * break even at a full check count — that judgement is made once, in `planSourceView`.
+ * Plain text since 427 D-19. The SENTENCE is the view's, and a replay that broke reads as a break
+ * even at a full check count — that judgement is made once, in `planSourceView`. The tone rides
+ * on `data-plan-source-outcome` only.
  */
 function PlanSourceRow({ planSource }: { planSource: PlanSourceView }) {
-  const look =
-    planSource.tone === "ok"
-      ? { variant: "outline" as const, className: "bg-emerald-500/15 text-emerald-500 border-emerald-500/20" }
-      : planSource.tone === "broke"
-        ? { variant: "destructive" as const, className: "" }
-        : { variant: "outline" as const, className: "" }
-
   return (
-    <div data-plan-source-outcome={planSource.tone} className="flex items-center gap-2">
-      <Badge variant={look.variant} className={`text-xs ${look.className}`}>{planSource.sentence}</Badge>
+    <div data-plan-source-outcome={planSource.tone} className="space-y-1">
+      <div className="flex min-w-0 items-center gap-1">
+        <span className={`${MONO_CLASS} wrap-anywhere`}>{planSource.procedureId}</span>
+        <RecordIdCopy id={planSource.procedureId} />
+      </div>
+      <p className="text-xs">{planSource.sentence}</p>
+      {planSource.missReason === undefined ? null : <p className={MONO_CLASS}>{planSource.missReason}</p>}
     </div>
   )
 }
