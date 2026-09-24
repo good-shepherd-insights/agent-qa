@@ -419,6 +419,85 @@ describe('only a fold that passed every attempted check is a completed replay (D
   })
 })
 
+const DENIED = { checksPassed: 0, total: 1 }
+const MISS = { checksPassed: 0, total: 1, miss: { procedureStepIndex: 1, reason: 'descriptor-missing' } }
+
+function login(guard: Record<string, unknown>, cursor: number) {
+  return replay('rec_login', guard, { cursor, length: 3 })
+}
+
+function entryAt(view: EffectSectionView, addresses: string[]) {
+  const index = view.entries.findIndex((_, at) => steps(view, at).join(' ') === addresses.join(' '))
+  return index === -1 ? undefined : view.entries[index]
+}
+
+function allThreeListsNone(view: EffectSectionView, shortFlow: string[]) {
+  const all = replayCompleteParts(3, 3)
+  view.entries.forEach((entry, at) => {
+    if (entry.parts.lead !== all.lead || entry.parts.tail !== all.tail) return
+    for (const address of shortFlow) expect(steps(view, at)).not.toContain(address)
+  })
+}
+
+describe('a completed replay is sized by its own flow, never by other flows of its procedure (D-11, D-12)', () => {
+  it('REPLAY-PER-FLOW: a second test\'s flow that stops after one body step reads 1 of 3, never all 3', () => {
+    const complete = [0, 1, 2].map(index => step(index, { planSource: login(PASSED, index) }, 0))
+    const world = (second: Record<string, unknown>) => effectSectionView(projection([
+      ...complete,
+      step(0, { planSource: login(PASSED, 0) }, 1),
+      step(1, { planSource: login(second, 1) }, 1),
+    ]))
+
+    const denied = world(DENIED)
+    expect(denied.entries).toHaveLength(2)
+    expect(denied.entries.map(entry => entry.outcome)).toEqual(['replay-complete', 'replay-complete'])
+    expect(entryAt(denied, ['0:0', '0:1', '0:2'])?.parts).toEqual(replayCompleteParts(3, 3))
+    const short = entryAt(denied, ['1:0'])
+    expect(short?.parts).toEqual(replayCompleteParts(1, 3))
+    expect(effectSentenceText(short!.parts, 'step 1')).toBe('Replayed 1 of its 3 steps in step 1')
+    allThreeListsNone(denied, ['1:0'])
+
+    const missed = world(MISS)
+    expect(missed.entries).toHaveLength(3)
+    expect(entryAt(missed, ['0:0', '0:1', '0:2'])?.parts).toEqual(replayCompleteParts(3, 3))
+    expect(entryAt(missed, ['1:0'])).toMatchObject({ outcome: 'replay-complete', parts: replayCompleteParts(1, 3) })
+    expect(entryAt(missed, ['1:1'])).toMatchObject({
+      outcome: 'replay-stopped',
+      parts: replayStoppedParts(2, 3, 'descriptor-missing'),
+    })
+    allThreeListsNone(missed, ['1:0'])
+  })
+
+  it('REPLAY-PER-FLOW: a test that ends after one body step is its own entry; two complete flows are one', () => {
+    const view = effectSectionView(projection([
+      ...[0, 1, 2].map(index => step(index, { planSource: login(PASSED, index) }, 0)),
+      step(0, { planSource: login(PASSED, 0) }, 1),
+      ...[0, 1, 2].map(index => step(index, { planSource: login(PASSED, index) }, 2)),
+    ]))
+
+    expect(view.entries).toHaveLength(2)
+    expect(entryAt(view, ['0:0', '0:1', '0:2', '2:0', '2:1', '2:2'])).toMatchObject({
+      outcome: 'replay-complete',
+      parts: replayCompleteParts(3, 3),
+    })
+    expect(entryAt(view, ['1:0'])).toMatchObject({ outcome: 'replay-complete', parts: replayCompleteParts(1, 3) })
+    allThreeListsNone(view, ['1:0'])
+  })
+
+  it('REPLAY-PER-FLOW: inside one test a fresh match after a completed flow is its own flow', () => {
+    const view = effectSectionView(projection([
+      ...[0, 1, 2].map(index => step(index, { planSource: login(PASSED, index) })),
+      step(3, { planSource: login(PASSED, 0) }),
+      step(4, { planSource: login(DENIED, 1) }),
+    ]))
+
+    expect(view.entries).toHaveLength(2)
+    expect(entryAt(view, ['0:0', '0:1', '0:2'])).toMatchObject({ outcome: 'replay-complete', parts: replayCompleteParts(3, 3) })
+    expect(entryAt(view, ['0:3'])).toMatchObject({ outcome: 'replay-complete', parts: replayCompleteParts(1, 3) })
+    allThreeListsNone(view, ['0:3'])
+  })
+})
+
 describe('an unsettled or unreadable fold is re-worded, never re-derived (D-12, E5 loading / error)', () => {
   it('EFFECT-PENDING: while curation is pending or running every trial entry is pending, attributed or not', () => {
     for (const status of ['pending', 'running'] as const) {
