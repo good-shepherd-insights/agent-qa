@@ -15,6 +15,17 @@ export interface ReadCurationEffectsOptions {
 
 /** Read only successful, surviving effects; current status is never classification authority. */
 export function readCurationEffects(options: ReadCurationEffectsOptions): CurationSnapshotChange[] {
+  return readCurationEffectsForRun(options).effects
+}
+
+/**
+ * `runLinked` is whether any surviving store change carries this run's id or one of its canary
+ * observation ids. An empty effect list means "nothing committed" only when it is false; otherwise
+ * the receipts were lost and absent must never read as zero.
+ */
+export function readCurationEffectsForRun(
+  options: ReadCurationEffectsOptions,
+): { effects: CurationSnapshotChange[]; runLinked: boolean } {
   const receipts = listCurationEffectReceipts(options.knowledgeRoot)
     .filter(row => row.sourceRunId === options.sourceRunId)
   const bundles = enumerateMaintenanceBundleDirs(options.knowledgeRoot).map(entry => ({
@@ -45,8 +56,10 @@ export function readCurationEffects(options: ReadCurationEffectsOptions): Curati
   // The maintenance fold already applies canonical replay/retraction identities and
   // promotion receipt attribution. Never infer a curation Add/Confirm from bundle shape.
   const observations = new Set(options.observationIds ?? [])
+  let runLinked = false
   for (const change of diffSince({ knowledgeRoot: options.knowledgeRoot, sinceOrdinal: 0 })) {
     const canary = change.observationId !== undefined && observations.has(change.observationId)
+    if (canary || change.sourceRunId === options.sourceRunId) runLinked = true
     if ((change.change === 'confirmed' && canary)
       || (change.change === 'promoted' && (canary || change.sourceRunId === options.sourceRunId))) {
       // The caller's emitted observation identities attribute this event to the run,
@@ -56,7 +69,7 @@ export function readCurationEffects(options: ReadCurationEffectsOptions): Curati
       } }))
     }
   }
-  return effects
+  return { effects, runLinked }
 }
 
 /** One affected record, strongest classification, with all historical identities retained. */

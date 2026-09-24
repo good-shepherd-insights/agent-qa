@@ -16,7 +16,7 @@ import {
   type CurationSnapshot,
   type CurationSnapshotChange,
 } from '@vostride/agent-qa-schema'
-import { foldCurationSnapshot, readCurationEffects } from './curation-snapshot.js'
+import { foldCurationSnapshot, readCurationEffectsForRun } from './curation-snapshot.js'
 
 import { openKnowledgeReader, type KnowledgeReader } from '../index-reader.js'
 import {
@@ -1272,10 +1272,14 @@ export async function drainQueue(options: DrainOptions): Promise<DrainReport> {
     }
     return result
   } finally {
+    // Stays true unless the read proves no store change belongs to the run: lost receipts never fold to zero.
+    let runLinked = true
     if (options.sourceRunId !== undefined) {
       try {
-        result.effects = readCurationEffects({ knowledgeRoot: options.knowledgeRoot,
+        const read = readCurationEffectsForRun({ knowledgeRoot: options.knowledgeRoot,
           sourceRunId: options.sourceRunId, observationIds: options.observationIds })
+        result.effects = read.effects
+        runLinked = read.runLinked
       } catch {
         recordFailure(result, 'commit', 'curation effect read incomplete')
       }
@@ -1293,7 +1297,8 @@ export async function drainQueue(options: DrainOptions): Promise<DrainReport> {
     }
     updateRemaining(result, options.knowledgeRoot, lease.leaseId)
     if (result.kind === 'drained' && result.failures === 0 && result.requeued === 0
-      && result.remaining === 0 && result.effects !== undefined && result.effects.length > 0) {
+      && result.remaining === 0 && result.effects !== undefined
+      && (result.effects.length > 0 || runLinked === false)) {
       // Not recordFailure: a failure count would make a committed drain incomplete and retry it.
       try {
         result.snapshot = foldCurationSnapshot(result.effects)
