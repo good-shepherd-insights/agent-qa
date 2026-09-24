@@ -41,10 +41,18 @@
 #   K23  a not-attributed trial becomes an unknown entry                           -> UNCOUNTED-NOT-EFFECTS (D-14)
 #   K24  a procedure hint adds an effect entry                                     -> HINT-NOT-EFFECT (D-11)
 #   K25  the curator's note renders before the trust counts                        -> FULL-RECORD-ORDER (memory.md §7.5)
+#   K26  K11's id-as-primary, on the rebuilt bundle a spawned dashboard serves     -> (b7) (SC2, shipped)
+#   K27  the header strip paints a fresh store's bootstrap, on the rebuilt bundle  -> (a2) (SC5, shipped)
 #
 # ALLOWED CO-REDS are listed on each leg with a one-line reason; nothing else may red. No leg names
 # the shipped-binary Learned-root curation-word cell as a red or a green: it is nondeterministic
 # under a full-parallel build (WINDOWS #426).
+#
+# K26 AND K27 CROSS THE DIST BOUNDARY. Their cells read the shipped bundle a spawned dashboard serves,
+# so each leg rebuilds `@vostride/agent-qa-dashboard-ui`, whose Vite bundle has no importable entry; it
+# names the literal by which the instrument serves that dist and plants a marker (id427primary,
+# boot427strip) the rebuilt bundle must carry, so the engine proves the mutation reached the page.
+# The shipped-binary suite runs with one worker.
 #
 # Engine, arrival proof, counted selection and restoration: scripts/423-mutation-engine.cjs.
 #
@@ -56,10 +64,11 @@
 #   neutered  apply NO mutation; the run must FATAL with "<leg>: suite stayed green"
 #   fatal     mutate every subject, then throw; every subject must be restored
 #   SIGINT | SIGTERM | SIGHUP   the same, then deliver that signal to itself
-# AGENT_QA_427_KNOWLEDGE_MUTATION_LEG=K01..K25 runs one leg (normal or neutered runs only).
+# AGENT_QA_427_KNOWLEDGE_MUTATION_LEG=K01..K27 runs one leg (normal or neutered runs only).
 # AGENT_QA_427_KNOWLEDGE_MUTATION_LIST=1 prints the declared inventory and exits.
 #
-# Installed Node 24 and workspace tools are required. No downloads or provider calls. Ends with a
+# Installed Node 24, workspace tools and the installed Playwright Chromium are required. No
+# downloads or provider calls. Ends with a
 # forced workspace build whenever a byte was mutated.
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
@@ -92,13 +101,18 @@ const LEARNED_C = 'src/components/run-detail/__tests__/knowledge-learned.test.ts
 const STEP_C = 'src/components/run-detail/__tests__/knowledge-step-detail.test.tsx'
 const BANNER_C = 'src/components/run-detail/__tests__/retrieval-rung-banner.test.tsx'
 const SNAPSHOT_T = 'src/__tests__/423-curation-snapshot.test.ts'
+const DOM = 'src/__tests__/conformance/knowledge-tab-dom.test.ts'
 
 const instruments = {
   'ui-view': { pkg: 'packages/dashboard-ui', files: [USED_V, EFFECT_V, CHANGES_V, RETRIEVAL_V, VIEW_D], typecheck: true, count: 91 },
   'ui-parts': { pkg: 'packages/dashboard-ui', files: [USED_C, BODY_C, EFFECT_C, DETAILS_C, DEFAULT_C, STATEMENT_C, STEP_REF_C], typecheck: false, count: 57 },
   'ui-tab': { pkg: 'packages/dashboard-ui', files: [TAB_C, LEARNED_C, STEP_C, BANNER_C], typecheck: false, count: 114 },
   store: { pkg: 'packages/knowledge-local', files: [SNAPSHOT_T], typecheck: false, count: 20 },
+  'knowledge-dom': { pkg: 'packages/cli', files: [DOM], typecheck: false, count: 24, env: { VITEST_MAX_WORKERS: '1' } },
 }
+
+const UI_DIST = "join(PACKAGES_ROOT, 'dashboard-ui', 'dist')"
+const ui = marker => ({ pkg: '@vostride/agent-qa-dashboard-ui', dir: 'packages/dashboard-ui', marker, reference: UI_DIST })
 
 const used = (name, count) => cell('ui-view', USED_V, name, count)
 const effect = (name, count) => cell('ui-view', EFFECT_V, name, count)
@@ -116,6 +130,7 @@ const learned = (name, count) => cell('ui-tab', LEARNED_C, name, count)
 const step = (name, count) => cell('ui-tab', STEP_C, name, count)
 const banner = (name, count) => cell('ui-tab', BANNER_C, name, count)
 const snap = (name, count) => cell('store', SNAPSHOT_T, name, count)
+const dom = (name, count) => cell('knowledge-dom', DOM, name, count)
 
 const legs = [
   {
@@ -484,10 +499,40 @@ const legs = [
     allowed: [body('EVIDENCE-NOTE-NEVER-ALONE'), usedC('FULL-RECORD-ORDER')],
     greens: [body('TRUST-COUNTS-LINE'), body('RECORD-BODY-HOSTILE-TEXT'), usedC('KIND-LABEL')],
   },
+  {
+    subject: VIEW_SRC, instrument: 'knowledge-dom', claim: 'NO-ID-IN-DEFAULT-VIEW',
+    operation: 'lead a served used row with its record id, on the rebuilt bundle over a real served run',
+    crossing: ui('id427primary'),
+    edits: [{
+      from: "      entry.served !== undefined\n        ? [entry.served, 'served']\n",
+      to: "      entry.served !== undefined\n        ? [id || 'id427primary', 'served']\n",
+    }],
+    reds: [dom('(b7)')],
+    allowed: [],
+    greens: [dom('(a3)'), dom('(a8)'), dom('(b1)')],
+  },
+  {
+    subject: VIEW_SRC, instrument: 'knowledge-dom', claim: 'BOOTSTRAP-NOT-IN-STRIP',
+    operation: "paint the header strip for every class below memidex, a fresh store's bootstrap included",
+    crossing: ui('boot427strip'),
+    // Not K19's tone flip: (a2) reads RETRIEVAL_CLASS_TONES from source before it reads the page, so
+    // a flipped table would red that source read and never reach the page. Opening the strip's own
+    // gate leaves every table as published, so (a2) can only red on the painted header.
+    edits: [{
+      from: '  if (statement?.pointer === undefined) return undefined\n  return `${statement.sentence} ${statement.pointer}`\n',
+      to: "  if (statement === undefined) return undefined\n  return `${statement.sentence} ${statement.pointer ?? 'boot427strip'}`\n",
+    }],
+    reds: [dom('(a2)')],
+    // (b3) holds "strip present exactly when the tone is warning" on the served world, whose rung
+    // depends on the host; where that world is served below memidex on an info class, the open gate
+    // paints its strip too.
+    allowed: [dom('(b3)')],
+    greens: [dom('(a1)'), dom('(a3)'), dom('(a8)')],
+  },
 ]
 
 runGate({
   slug: '427-knowledge-mutation', envPrefix: 'AGENT_QA_427_KNOWLEDGE_MUTATION', idPrefix: 'K',
-  instruments, legs, expectedLegs: 25, banner: 'KNOWLEDGE_MUTATION_OK',
+  instruments, legs, expectedLegs: 27, banner: 'KNOWLEDGE_MUTATION_OK',
 })
 NODE

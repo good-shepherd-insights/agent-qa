@@ -80,7 +80,9 @@
     "validate:425-header-mutation": "bash scripts/425-header-mutation.sh",
     "validate:425-header-mutation-selftest": "bash scripts/425-header-mutation-selftest.sh",
     "validate:426-feedback-mutation": "bash scripts/426-feedback-mutation.sh",
-    "validate:426-feedback-mutation-selftest": "bash scripts/426-feedback-mutation-selftest.sh"
+    "validate:426-feedback-mutation-selftest": "bash scripts/426-feedback-mutation-selftest.sh",
+    "validate:427-knowledge-mutation": "bash scripts/427-knowledge-mutation.sh",
+    "validate:427-knowledge-mutation-selftest": "bash scripts/427-knowledge-mutation-selftest.sh"
   },
   "pnpm": {
     "onlyBuiltDependencies": [
