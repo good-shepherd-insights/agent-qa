@@ -295,24 +295,27 @@ function BucketRow({ row }: { row: LearnedRowView }) {
 
 /**
  * A bucket word a reader can focus to learn what it means (427 D-16, the 425 D-10 trigger idiom).
- * The visible word is `BUCKET_LABELS[bucket]`; the meaning rides as the tooltip and as sr-only text,
- * so it is announced without hover.
+ * The visible word is `BUCKET_LABELS[bucket]` and names the button; the meaning is the tooltip and
+ * the button's description, so it is announced without hover.
  */
 function BucketLabel({ bucket }: { bucket: CurationBucket }) {
   const Glyph = BUCKET_GLYPHS[bucket]
+  const meaningId = useId()
   return (
     <Tooltip>
+      {/* The trigger's own described-by replaces Radix's open-time one, so the meaning is announced once, open or closed. */}
       <TooltipTrigger asChild>
-        <span
+        <button
+          type="button"
           data-bucket-label={bucket}
-          tabIndex={0}
+          aria-describedby={meaningId}
           className={`inline-flex items-center gap-1 cursor-help rounded-sm text-xs font-medium uppercase tracking-wider text-muted-foreground underline decoration-dotted underline-offset-4 ${FOCUS_RING}`}
         >
           <Glyph className="size-3" aria-hidden />
           {BUCKET_LABELS[bucket]}
-          <span className="sr-only">{BUCKET_MEANINGS[bucket]}</span>
-        </span>
+        </button>
       </TooltipTrigger>
+      <span id={meaningId} hidden>{BUCKET_MEANINGS[bucket]}</span>
       <TooltipContent side="bottom" align="start" sideOffset={4} className="max-w-[320px] text-left">
         {BUCKET_MEANINGS[bucket]}
       </TooltipContent>

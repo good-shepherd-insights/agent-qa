@@ -124,17 +124,19 @@ function UsedRecordRow({ record, stepRefs }: { record: UsedRecordView; stepRefs?
 }
 
 function OnTrialTag() {
+  const meaningId = useId()
   return (
     <Tooltip>
+      {/* The trigger's own described-by replaces Radix's open-time one, so the meaning is announced once, open or closed. */}
       <TooltipTrigger asChild>
-        <span tabIndex={0} className={`inline-flex rounded-md ${FOCUS_RING}`}>
+        <button type="button" aria-describedby={meaningId} className={`inline-flex rounded-md ${FOCUS_RING}`}>
           <Badge variant="outline" className="cursor-help text-muted-foreground">
             <FlaskConical className="size-3" aria-hidden />
             {ON_TRIAL_TAG}
           </Badge>
-          <span className="sr-only">{ON_TRIAL_TOOLTIP}</span>
-        </span>
+        </button>
       </TooltipTrigger>
+      <span id={meaningId} hidden>{ON_TRIAL_TOOLTIP}</span>
       <TooltipContent side="bottom" align="start" sideOffset={4} className="max-w-[320px] text-left">
         {ON_TRIAL_TOOLTIP}
       </TooltipContent>

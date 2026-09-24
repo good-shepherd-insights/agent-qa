@@ -740,8 +740,9 @@ describe('the Knowledge tab on the shipped bundle at three geometries (427-13)',
       expect(normalize(entry.ax.name).length, `${control}: empty accessible name`).toBeGreaterThan(0)
       const name = normalize(entry.ax.name).toLowerCase()
       const description = normalize(entry.ax.description).toLowerCase()
+      // A meaning may use its trigger's words ("on trial"), so only a description that repeats the name, or sits inside it, is a second announcement.
       if (description.length > 0) {
-        expect(name.includes(description) || description.includes(name), `${control}: announces ${JSON.stringify(description)} twice`).toBe(false)
+        expect(name.includes(description) || description === name, `${control}: announces ${JSON.stringify(description)} twice`).toBe(false)
       }
     }
     const byId = new Map(focused.map(entry => [entry.id, entry]))

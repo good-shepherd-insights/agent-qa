@@ -61,6 +61,7 @@ export function KnowledgeEffect({
   testNames?: ReadonlyMap<number, string>
 }) {
   const headingId = useId()
+  const uncountedMeaningId = useId()
   return (
     <section data-knowledge-section="effect" aria-labelledby={headingId} className="space-y-2">
       <h4 id={headingId} className={HEADING_CLASS}>{EFFECT_HEADING}</h4>
@@ -76,15 +77,17 @@ export function KnowledgeEffect({
       {view.uncounted === undefined ? null : (
         <p data-effect-uncounted={String(view.uncounted.count)} className="text-xs text-muted-foreground">
           <Tooltip>
+            {/* The trigger's own described-by replaces Radix's open-time one, so the meaning is announced once, open or closed. */}
             <TooltipTrigger asChild>
-              <span
-                tabIndex={0}
-                className={`cursor-help rounded-sm underline decoration-dotted underline-offset-4 ${FOCUS_RING}`}
+              <button
+                type="button"
+                aria-describedby={uncountedMeaningId}
+                className={`cursor-help rounded-sm text-left underline decoration-dotted underline-offset-4 ${FOCUS_RING}`}
               >
                 {view.uncounted.line}
-                <span className="sr-only">{UNCOUNTED_TRIALS_TOOLTIP}</span>
-              </span>
+              </button>
             </TooltipTrigger>
+            <span id={uncountedMeaningId} hidden>{UNCOUNTED_TRIALS_TOOLTIP}</span>
             <TooltipContent side="bottom" align="start" sideOffset={4} className="max-w-[320px] text-left">
               {UNCOUNTED_TRIALS_TOOLTIP}
             </TooltipContent>

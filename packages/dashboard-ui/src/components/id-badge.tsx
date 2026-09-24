@@ -86,7 +86,6 @@ export function ReviewCommandButton({
           data-review-command={command}
           data-copy-status={status}
           aria-label={`${label}: ${command}`}
-          title={label}
           onClick={handleCopy}
           className={className}
         >
