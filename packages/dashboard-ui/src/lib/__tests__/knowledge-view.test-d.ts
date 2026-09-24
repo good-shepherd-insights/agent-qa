@@ -2,18 +2,31 @@
 // added to the union alone compiles everywhere and is never painted; this bar catches that half.
 
 import { expectTypeOf, test } from 'vitest'
-import type { BundleStatus as SchemaBundleStatus, InspectRecordView, RunKnowledgeRecordContent } from '@vostride/agent-qa-schema'
+import type {
+  BundleStatus as SchemaBundleStatus,
+  InspectRecordView,
+  RunKnowledgePlanSource,
+  RunKnowledgeRecordContent,
+} from '@vostride/agent-qa-schema'
 import {
   ANCHOR_PHRASE_TYPES,
   CURRENT_STATUS_WORDS,
+  EFFECT_OUTCOMES,
+  EFFECT_SENTENCES,
+  EFFECT_TONES,
+  EFFECT_TONE_OF,
   KNOWLEDGE_SECTIONS,
+  REPLAY_STOP_CAUSES,
   RECORD_KIND_LABELS,
   SINCE_STATUS_TAGS,
   USE_VERBS,
   USE_VERB_PHRASES,
   type AnchorPhraseType,
   type BundleStatus,
+  type EffectOutcome,
+  type EffectTone,
   type KnowledgeSection,
+  type ReplayStopCause,
   type RecordKind,
   type UseVerb,
 } from '../knowledge-view'
@@ -58,4 +71,37 @@ test('C427-STATUS-WORDS-SHAPE', () => {
   expectTypeOf<BundleStatus>().toEqualTypeOf<RunKnowledgeRecordContent['currentStatus']>()
   expectTypeOf<keyof typeof SINCE_STATUS_TAGS>().toEqualTypeOf<BundleStatus>()
   expectTypeOf<keyof typeof CURRENT_STATUS_WORDS>().toEqualTypeOf<BundleStatus>()
+})
+
+test('C427-EFFECT-OUTCOMES-EXACT', () => {
+  type Expected =
+    | 'contradicted'
+    | 'harmful'
+    | 'replay-stopped'
+    | 'confirmed'
+    | 'helpful'
+    | 'replay-complete'
+    | 'pending'
+    | 'unknown'
+  expectTypeOf<EffectOutcome>().toEqualTypeOf<Expected>()
+  expectTypeOf<(typeof EFFECT_OUTCOMES)[number]>().toEqualTypeOf<Expected>()
+  expectTypeOf<Exclude<EffectOutcome, (typeof EFFECT_OUTCOMES)[number]>>().toEqualTypeOf<never>()
+  expectTypeOf<Exclude<(typeof EFFECT_OUTCOMES)[number], EffectOutcome>>().toEqualTypeOf<never>()
+  expectTypeOf<keyof typeof EFFECT_TONE_OF>().toEqualTypeOf<EffectOutcome>()
+  expectTypeOf<keyof typeof EFFECT_SENTENCES>().toEqualTypeOf<Exclude<EffectOutcome, 'replay-stopped' | 'replay-complete'>>()
+})
+
+test('C427-EFFECT-TONES-EXACT', () => {
+  type Expected = 'problem' | 'positive' | 'pending' | 'unknown'
+  expectTypeOf<EffectTone>().toEqualTypeOf<Expected>()
+  expectTypeOf<(typeof EFFECT_TONES)[number]>().toEqualTypeOf<Expected>()
+  expectTypeOf<Exclude<EffectTone, (typeof EFFECT_TONES)[number]>>().toEqualTypeOf<never>()
+  expectTypeOf<Exclude<(typeof EFFECT_TONES)[number], EffectTone>>().toEqualTypeOf<never>()
+  expectTypeOf<(typeof EFFECT_TONE_OF)[EffectOutcome]>().toEqualTypeOf<EffectTone>()
+})
+
+test('C427-REPLAY-STOP-CAUSES-EXACT', () => {
+  type MissReason = NonNullable<Extract<RunKnowledgePlanSource, { kind: 'procedure-replay' }>['guard']['miss']>['reason']
+  expectTypeOf<ReplayStopCause>().toEqualTypeOf<MissReason | 'execution-failure' | 'verifier-rejection'>()
+  expectTypeOf<keyof typeof REPLAY_STOP_CAUSES>().toEqualTypeOf<ReplayStopCause>()
 })
