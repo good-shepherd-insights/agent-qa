@@ -55,6 +55,11 @@ const banner = (host: HTMLElement) => host.querySelector<HTMLElement>("[data-run
 
 /** The sentence of record, taken from the module that owns it so feed and assertion cannot drift. */
 const FLOOR_SENTENCE = rungBannerText({ rung: "static-floor", reason: "native-runtime-unavailable" })
+const CORRUPT_SENTENCE = rungBannerText({ rung: "bundle-scan", reason: "index-corrupt" })
+
+function glyphClass(el: Element | null | undefined): string {
+  return [...(el?.querySelector("svg")?.classList ?? [])].find(name => name.startsWith("lucide-")) ?? ""
+}
 
 function runRow(): RunRow {
   return {
@@ -99,49 +104,67 @@ describe("the top rung and the unknown rung render NOTHING (D-14, D-16)", () => 
   })
 })
 
-describe("a degraded rung says rung, cause and the doctor hint on one line (D-15)", () => {
-  it("carries the DOM contract and the sentence of record", () => {
-    const host = mount(<RetrievalRungBanner rung="static-floor" reason="native-runtime-unavailable" />)
+describe("only a warning class paints the strip, with its statement and the doctor pointer (427 D-20, D-23)", () => {
+  it("WARNING-STRIP-WITH-POINTER: a corrupt index carries the DOM contract, its class glyph and the sentence of record", () => {
+    const host = mount(<RetrievalRungBanner rung="bundle-scan" reason="index-corrupt" />)
     const el = banner(host)
     expect(el).not.toBeNull()
-    expect(el?.getAttribute("data-rung")).toBe("static-floor")
-    expect(el?.getAttribute("data-rung-reason")).toBe("native-runtime-unavailable")
+    expect(el?.getAttribute("data-rung")).toBe("bundle-scan")
+    expect(el?.getAttribute("data-rung-reason")).toBe("index-corrupt")
+    expect(el?.getAttribute("data-retrieval-class")).toBe("index-problem")
     // `status`, never `alert` — it is informational about a run, not an interruption (UI-SPEC).
     expect(el?.getAttribute("role")).toBe("status")
+    expect(el?.getAttribute("class")).toContain("py-1.5")
+    expect(el?.getAttribute("class")).toContain("bg-amber-500/5")
+    expect(glyphClass(el)).toBe("lucide-triangle-alert")
     // BYTE-EQUAL including the `code` element around the command: the DOM cells read `textContent`,
     // so an element split that inserted or dropped a space would be a silent copy change.
-    expect(el?.textContent).toBe(FLOOR_SENTENCE)
-    expect(el?.getAttribute("title")).toBe(FLOOR_SENTENCE)
+    expect(CORRUPT_SENTENCE).toBeDefined()
+    expect(el?.textContent).toBe(CORRUPT_SENTENCE)
+    expect(el?.getAttribute("title")).toBe(CORRUPT_SENTENCE)
+    expect(el?.querySelector("code")?.textContent).toBe("agent-qa doctor")
+    expect(el?.textContent).not.toContain("`")
   })
 
-  it("carries the raw enum words, not the labels, in the attributes", () => {
-    const host = mount(<RetrievalRungBanner rung="bundle-scan" reason="index-unavailable" />)
-    const el = banner(host)
-    expect(el?.getAttribute("data-rung")).toBe("bundle-scan")
-    expect(el?.getAttribute("data-rung-reason")).toBe("index-unavailable")
-    expect(el?.textContent).toContain("bundle scan")
-    expect(el?.textContent).toContain("knowledge index unavailable (cause not recorded), scanning bundles")
+  it("BOOTSTRAP-NOT-IN-STRIP: both variants paint nothing for a fresh index, an unrecorded cause or a configured level", () => {
+    const cases = [
+      ["bundle-scan", "index-not-built"],
+      ["bundle-scan", "index-unavailable"],
+      ["static-floor", "profile-static-configured"],
+      ["lexical-only", "floor-disabled"],
+    ] as const
+    for (const [rung, reason] of cases) {
+      for (const variant of ["navbar", "live"] as const) {
+        const host = mount(<RetrievalRungBanner variant={variant} rung={rung} reason={reason} />)
+        expect(banner(host)).toBeNull()
+        expect(host.textContent).toBe("")
+        act(() => { root?.unmount() })
+        container?.remove()
+        root = undefined
+      }
+    }
   })
 
-  it("leaves `data-rung-reason` ABSENT rather than empty when the rung carries no cause", () => {
+  it("BOOTSTRAP-NOT-IN-STRIP: a degraded rung that recorded no cause paints no strip either", () => {
     const host = mount(<RetrievalRungBanner rung="lexical-only" />)
-    const el = banner(host)
-    expect(el?.getAttribute("data-rung")).toBe("lexical-only")
-    expect(el?.hasAttribute("data-rung-reason")).toBe(false)
+    expect(banner(host)).toBeNull()
+    expect(host.textContent).toBe("")
   })
 })
 
 describe("the tint is amber, and it is never red (D-19's rationale on the header)", () => {
-  it("paints the warning icon amber in the navbar variant", () => {
+  it("paints the class glyph amber in the navbar variant", () => {
     const host = mount(<RetrievalRungBanner rung="static-floor" reason="native-runtime-unavailable" />)
     const icon = banner(host)?.querySelector("svg")
     expect(icon).not.toBeNull()
+    expect(glyphClass(banner(host))).toBe("lucide-search-x")
     expect(icon?.getAttribute("class")).toContain("text-amber-500")
     expect(icon?.getAttribute("aria-hidden")).toBe("true")
   })
 
   it("carries no red or destructive class anywhere in the rendered subtree", () => {
-    const host = mount(<RetrievalRungBanner rung="lexical-only" reason="floor-disabled" />)
+    const host = mount(<RetrievalRungBanner rung="lexical-only" reason="model-not-downloaded" />)
+    expect(banner(host)).not.toBeNull()
     for (const el of host.querySelectorAll("*")) {
       expect(el.getAttribute("class") ?? "").not.toMatch(/destructive|red-\d/)
     }
@@ -171,25 +194,30 @@ describe("two variants, one sentence (D-14)", () => {
     expect(el?.querySelector(".truncate")).not.toBeNull()
   })
 
-  it("both variants render the SAME sentence for the same rung", () => {
-    const navbarHost = mount(<RetrievalRungBanner rung="bundle-scan" reason="index-unavailable" />)
-    const navbarText = banner(navbarHost)?.textContent
+  it("WARNING-STRIP-WITH-POINTER: both variants render the SAME sentence and class for unavailable semantic search", () => {
+    const navbarHost = mount(<RetrievalRungBanner rung="static-floor" reason="native-runtime-unavailable" />)
+    const navbar = banner(navbarHost)
+    expect(navbar?.getAttribute("data-retrieval-class")).toBe("semantic-search-unavailable")
+    expect(glyphClass(navbar)).toBe("lucide-search-x")
+    const navbarText = navbar?.textContent
+    expect(navbarText).toBe(FLOOR_SENTENCE)
     act(() => { root?.unmount() })
     container?.remove()
-    const liveHost = mount(<RetrievalRungBanner variant="live" rung="bundle-scan" reason="index-unavailable" />)
+    const liveHost = mount(<RetrievalRungBanner variant="live" rung="static-floor" reason="native-runtime-unavailable" />)
+    expect(banner(liveHost)?.getAttribute("data-retrieval-class")).toBe("semantic-search-unavailable")
     expect(banner(liveHost)?.textContent).toBe(navbarText)
   })
 })
 
 describe("the run header wires it as a second row, once (D-14)", () => {
-  it("renders EXACTLY ONE banner when the durable read carried a degraded rung", () => {
+  it("renders EXACTLY ONE banner when the durable read carried a warning-class rung", () => {
     const host = mount(
       <MemoryRouter>
         <RunNavbar
           run={runRow()}
           shortcutsOpen={false}
           onToggleShortcuts={() => {}}
-          retrievalRung={{ schemaVersion: 1, rung: "bundle-scan", reason: "index-unavailable" }}
+          retrievalRung={{ schemaVersion: 2, rung: "bundle-scan", reason: "index-locked" }}
         />
       </MemoryRouter>,
     )
