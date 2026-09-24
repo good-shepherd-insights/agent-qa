@@ -79,7 +79,7 @@ const instruments = {
   'schema-curation': { pkg: 'packages/schema', files: [CUR, CUR_D], typecheck: true, count: 21 },
   'schema-stages': { pkg: 'packages/schema', files: [STG, STG_D], typecheck: true, count: 23 },
   'curation-store': { pkg: 'packages/knowledge-local', files: [SNAPSHOT, RECOVERY], typecheck: false, count: 31 },
-  'runs-knowledge': { pkg: 'packages/agent', files: [RUNS], typecheck: false, count: 69 },
+  'runs-knowledge': { pkg: 'packages/agent', files: [RUNS], typecheck: false, count: 71 },
   'chain-notification': { pkg: 'packages/agent', files: [CHAIN_T], typecheck: false, count: 13 },
   'post-processing-read': { pkg: 'packages/agent', files: [READ_T], typecheck: false, count: 13 },
   'cold-read': { pkg: 'packages/cli', files: [COLD_T], typecheck: false, count: 30, env: { VITEST_MAX_WORKERS: '1' } },

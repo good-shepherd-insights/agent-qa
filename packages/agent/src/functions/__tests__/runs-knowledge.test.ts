@@ -300,6 +300,28 @@ function fixedSnapshot() {
     ], breakdown: { added: 1, confirmed: 1, superseded: 1, deprecated: 1, proposed: 1 } })
 }
 
+/**
+ * The fixed snapshot's changes as a REAL store's diffSince reports them (427-02 Task 1,
+ * SNAPSHOT-ROWS-IN-DIFF): an Add carries the run link and no receipt token, while a confirmation,
+ * deprecation or supersession of a record an earlier run created carries its token and no run.
+ * Nothing here stamps sourceRunId on an unlinked change. Returned in the store's own identity order,
+ * which is the order runs.knowledge serves.
+ */
+function realShapedDiff(snapshot: ReturnType<typeof fixedSnapshot>): RecordChange[] {
+  return snapshot.rows.flatMap(row => row.changes.map(({ change: recorded }) => {
+    if (recorded.change === 'added') {
+      return change({ recordId: recorded.recordId, change: 'added', atOrdinal: recorded.atOrdinal, sourceRunId: RUN_ID })
+    }
+    const unlinked: RecordChange = { ...recorded }
+    delete unlinked.sourceRunId
+    return unlinked
+  })).sort((left, right) => (left.recordId < right.recordId ? -1 : left.recordId > right.recordId ? 1 : 0)
+    || left.atOrdinal - right.atOrdinal)
+}
+
+const identityOf = (row: RecordChange) =>
+  [row.recordId, row.change, row.atOrdinal, row.byRecordId ?? '', row.evidenceToken ?? ''].join('|')
+
 describe('423 current content and fixed historical sections', () => {
   beforeEach(() => setActiveMaskingContextResolver(() => masking))
   afterEach(() => setActiveMaskingContextResolver(() => undefined))
@@ -412,6 +434,52 @@ describe('423 current content and fixed historical sections', () => {
         showRecords: async ({ recordIds }) => recordIds.map(currentRecord) } })
     expect(result.learned).toHaveProperty('curationSnapshot', snapshot)
     expect(result.learned).toHaveProperty('sinceThen', { changes: later.map(row => expect.objectContaining(row)), count: 2 })
+  })
+
+  it('SNAPSHOT-ROW-JOIN: every change the fixed snapshot recorded is joined even without a run link', async () => {
+    const snapshot = fixedSnapshot()
+    const before = JSON.stringify(snapshot)
+    const diff = realShapedDiff(snapshot)
+    const showRecords = vi.fn(async ({ recordIds }: { recordIds: readonly string[] }) => recordIds.map(currentRecord))
+    const result = await ready({ bindPostProcessing: true, chain: { curationSnapshot: snapshot,
+      curateMemory: { status: 'done', claimed: false } }, knowledge: { diffSince: async () => diff, showRecords,
+      canaryAttributions: async () => ({ rows: [{ candidateId: 'rec-canary', testIndex: 1, stepIndex: 0,
+        observationId: 'canary-outcome:elsewhere', outcome: 'confirmed' as const }], skippedBundles: 0 }) } })
+    expect(diff.filter(row => row.sourceRunId === undefined).map(row => `${row.recordId}/${row.change}`))
+      .toEqual(['confirmed/confirmed', 'confirmed/confirmed', 'deprecated/deprecated', 'victim/superseded'])
+    expect(result.learned.changes.map(identityOf)).toEqual(diff.map(identityOf))
+    for (const row of snapshot.rows.flatMap(entry => entry.changes.map(recorded => recorded.change))) {
+      expect(result.learned.changes.filter(learned => identityOf(learned) === identityOf(row)), identityOf(row)).toHaveLength(1)
+    }
+    for (const row of result.learned.changes) {
+      expect(row).toHaveProperty('recordContent.content', `Current body 🧪 ${row.recordId}`)
+      expect(row).not.toHaveProperty('contentAbsence')
+    }
+    expect(result.learned.changes.find(row => row.recordId === 'deprecated')).not.toHaveProperty('sourceRunId')
+    expect(new Set(showRecords.mock.calls[0]?.[0].recordIds))
+      .toEqual(new Set(['rec-a', 'rec-b', 'rec-c', 'rec-canary', ...diff.map(row => row.recordId)]))
+    expect(result.learned).toHaveProperty('sinceThen', { changes: [], count: 0 })
+    expect(result.learned).toHaveProperty('curationSnapshot', snapshot)
+    expect(JSON.stringify(snapshot)).toBe(before)
+    expect(RunKnowledgeProjectionSchema.parse(result)).toEqual(result)
+  })
+
+  it('NEIGHBOUR-STAYS-OUT: a same-record change the snapshot did not record is never this run\'s', async () => {
+    const snapshot = fixedSnapshot()
+    const diff = realShapedDiff(snapshot)
+    const neighbours = [
+      change({ recordId: 'confirmed', change: 'confirmed', atOrdinal: 30, sourceRunId: OTHER_RUN_ID, evidenceToken: 'neighbour-confirm' }),
+      change({ recordId: 'deprecated', change: 'deprecated', atOrdinal: 31, evidenceToken: 'receipt-deprecated' }),
+      change({ recordId: 'victim', change: 'superseded', atOrdinal: 32, byRecordId: 'replacement', evidenceToken: 'receipt-victim' }),
+    ]
+    const result = await ready({ bindPostProcessing: true, chain: { curationSnapshot: snapshot,
+      curateMemory: { status: 'done', claimed: false } }, knowledge: { diffSince: async () => [...diff, ...neighbours],
+      showRecords: async ({ recordIds }) => recordIds.map(currentRecord) } })
+    expect(result.learned.changes.map(identityOf)).toEqual(diff.map(identityOf))
+    for (const neighbour of neighbours) {
+      expect(result.learned.changes.map(identityOf)).not.toContain(identityOf(neighbour))
+    }
+    expect(result.learned).toHaveProperty('sinceThen', { changes: [], count: 0 })
   })
 
   it('FAILED-CHAIN-ROWS-RETAINED: incomplete curation keeps actual changes without invented snapshot/counts', async () => {
