@@ -824,6 +824,7 @@ export function effectSectionView(
 
   const trials = new Map<string, EffectDraft>()
   const replays = new Map<string, ReplayDraft>()
+  const flows = new Map<string, { readonly stepIndex: number; readonly cursor: number; readonly start: number }>()
   const uncountedIds = new Set<string>()
 
   for (const step of [...projection.steps].sort(compareAddresses)) {
@@ -849,9 +850,21 @@ export function effectSectionView(
     if (step.planSource?.kind === 'procedure-replay') {
       const { guard, procedureId, flow } = step.planSource
       const stop = replayStop(guard)
+      // The runner carries a flow only into the very next test step at the next cursor.
+      const flowKey = `${String(step.testIndex)}\u0000${procedureId}`
+      const tracked = flows.get(flowKey)
+      const continues =
+        tracked !== undefined && flow !== undefined &&
+        step.stepIndex === tracked.stepIndex + 1 && flow.cursor === tracked.cursor + 1
+      const start = continues ? tracked.start : step.stepIndex
+      if (flow === undefined) flows.delete(flowKey)
+      else flows.set(flowKey, { stepIndex: step.stepIndex, cursor: flow.cursor, start })
+      const flowInstance = flow === undefined ? '' : `${String(step.testIndex)}:${String(start)}`
       if (stop !== undefined || isReplayComplete(guard)) {
         // The procedure's size is its recorded flow; the guard fold only counts this test step's actions.
-        const groupKey = [procedureId, flow?.length ?? '', stop?.step ?? '', stop?.cause ?? ''].join('\u0000')
+        const groupKey = stop === undefined
+          ? [procedureId, flow?.length ?? '', flowInstance].join('\u0000')
+          : [procedureId, flow?.length ?? '', stop.step, stop.cause].join('\u0000')
         const draft = replays.get(groupKey) ?? {
           recordId: procedureId,
           length: flow?.length,
@@ -867,7 +880,22 @@ export function effectSectionView(
     }
   }
 
-  const replayDrafts = [...replays.values()].map((draft): EffectDraft => ({
+  const merged = new Map<string, ReplayDraft>()
+  for (const [groupKey, draft] of replays) {
+    const mergeKey = draft.stop === undefined
+      ? [draft.recordId, draft.length ?? '', draft.cursors.size].join('\u0000')
+      : groupKey
+    const into = merged.get(mergeKey)
+    if (into === undefined) {
+      merged.set(mergeKey, draft)
+      continue
+    }
+    for (const address of draft.addresses) {
+      if (compareAddresses(into.addresses.at(-1)!, address) !== 0) into.addresses.push(address)
+    }
+  }
+
+  const replayDrafts = [...merged.values()].map((draft): EffectDraft => ({
     recordId: draft.recordId,
     outcome: draft.stop === undefined ? 'replay-complete' : 'replay-stopped',
     parts:
