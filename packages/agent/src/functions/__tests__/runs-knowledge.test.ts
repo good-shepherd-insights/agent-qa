@@ -449,7 +449,10 @@ describe('423 current content and fixed historical sections', () => {
       .toEqual(['confirmed/confirmed', 'confirmed/confirmed', 'deprecated/deprecated', 'victim/superseded'])
     expect(result.learned.changes.map(identityOf)).toEqual(diff.map(identityOf))
     for (const row of snapshot.rows.flatMap(entry => entry.changes.map(recorded => recorded.change))) {
-      expect(result.learned.changes.filter(learned => identityOf(learned) === identityOf(row)), identityOf(row)).toHaveLength(1)
+      // A store Add has no receipt token, so the token is compared only where both carry one.
+      expect(result.learned.changes.filter(learned => learned.recordId === row.recordId && learned.change === row.change
+        && learned.atOrdinal === row.atOrdinal && learned.byRecordId === row.byRecordId
+        && (learned.evidenceToken === undefined || learned.evidenceToken === row.evidenceToken)), identityOf(row)).toHaveLength(1)
     }
     for (const row of result.learned.changes) {
       expect(row).toHaveProperty('recordContent.content', `Current body 🧪 ${row.recordId}`)

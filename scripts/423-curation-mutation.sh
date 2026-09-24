@@ -212,7 +212,7 @@ const legs = [
         + '      changes: row.changes.map((entry) => ({ ...entry, change: (changes.find((current) => current.recordId === entry.change.recordId\n'
         + '        && current.change === entry.change.change && current.atOrdinal === entry.change.atOrdinal) ?? entry.change) as typeof entry.change })) })) }\n' }],
     reds: [runs('SNAPSHOT-STABLE')],
-    allowed: [runs('LATER-PROMOTION')],
+    allowed: [runs('LATER-PROMOTION'), runs('SNAPSHOT-ROW-JOIN')],
     greens: [runs('FAILED-CHAIN-ROWS-RETAINED'), runs('CURRENT-VS-HISTORICAL'), runs('NOT-FOUND-RETAINED'),
       runs('JOINED-STRINGS-MASKED'), runs('keeps only rows this run produced and drops the neighbour and the orphan')],
   },

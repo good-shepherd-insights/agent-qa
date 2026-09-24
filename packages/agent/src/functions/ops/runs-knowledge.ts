@@ -488,11 +488,13 @@ export const runsKnowledgeSpec: FunctionSpec<RunsKnowledgeInput, RunKnowledgePro
     // is a sentence a person acts on, and a neighbouring run's curation must never wear it.
     const observationIds = new Set(attributions.map((row) => row.observationId))
     let changes: RecordChange[] = []
+    let diffChanges: readonly RecordChange[] = []
     try {
       const diff = await knowledgeRecordsDiffSpec.invoke(
         { sinceOrdinal: Math.max(0, document.buildOrdinal - 1) },
         deps,
       )
+      diffChanges = diff.changes
       changes = diff.changes.filter((change) =>
         change.sourceRunId === runId
         || (change.observationId !== undefined && observationIds.has(change.observationId)))
@@ -510,6 +512,21 @@ export const runsKnowledgeSpec: FunctionSpec<RunsKnowledgeInput, RunKnowledgePro
     const mask: MaskFn = masking === undefined
       ? () => maskedMarker('secret')
       : (text) => masking.mask(text)
+
+    // The fixed checkpoint first; the notification carries a copy of the same snapshot.
+    const curationSnapshot = status?.curationSnapshot
+      ?? status?.notification?.stages.curation.curationSnapshot
+
+    // THE SNAPSHOT'S OWN RECORD IS ALSO AN ATTRIBUTION (427-02, owner decision option-a). A
+    // confirmation, deprecation or supersession of a record an earlier run created carries no run
+    // link in the store, yet this run's curation recorded it by exact identity. Admitting it here,
+    // before the join, is what gives every snapshot row its content; record id alone never admits.
+    if (curationSnapshot !== undefined) {
+      const linked = new Set(changes)
+      changes = diffChanges.filter((change) =>
+        linked.has(change) || recordedBySnapshot(change, curationSnapshot, mask))
+    }
+
     const join = await joinRecords(deps.knowledge, [
       ...steps.flatMap((row) => [
         ...row.served.channel1.map((line) => line.id),
@@ -532,9 +549,6 @@ export const runsKnowledgeSpec: FunctionSpec<RunsKnowledgeInput, RunKnowledgePro
       ...join.joinFor(row.recordId),
     }))
 
-    // The fixed checkpoint first; the notification carries a copy of the same snapshot.
-    const curationSnapshot = status?.curationSnapshot
-      ?? status?.notification?.stages.curation.curationSnapshot
     const sinceThen = curationSnapshot === undefined
       ? undefined
       : joinedChanges.filter((row) => !recordedBySnapshot(row, curationSnapshot, mask))
