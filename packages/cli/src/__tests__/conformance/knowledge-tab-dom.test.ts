@@ -31,8 +31,8 @@
 //
 //   (A) `knowledge-tab-dom-scan` — the populated fixture UNCHANGED. Empty knowledge root, no
 //       index, so retrieval serves nothing and the rung is the deterministic `bundle-scan`. This
-//       is where the banner's sentence of record, the empty Used half, the `m` shortcut, the
-//       deleted memory tab and the `curation` chip click-through are measured.
+//       is where the silent header and the tab's fresh-index statement, the empty Used half, the
+//       `m` shortcut, the deleted memory tab and the `curation` chip click-through are measured.
 //
 //   (B) `knowledge-tab-dom-served` — the same fixture with ONE published bundle at the run's own
 //       product scope and a rebuilt index, seeded BEFORE the binary is spawned. This is the only
@@ -260,9 +260,14 @@ function postProcessingConstant(name: string): string {
   return match[1] as string
 }
 
-const RUNG_LABELS = publishedLabelTable('RUNG_LABELS')
-const RUNG_CAUSE_LABELS = publishedLabelTable('RUNG_CAUSE_LABELS')
-const DOCTOR_HINT_TEXT = publishedConstant('DOCTOR_HINT_TEXT')
+/** Each recorded reason's retrieval class and each class's tone (427 D-20, D-21), read from source. */
+const RETRIEVAL_CLASS_BY_REASON = publishedLabelTable('RETRIEVAL_CLASS_BY_REASON')
+const RETRIEVAL_CLASS_TONES = publishedLabelTable('RETRIEVAL_CLASS_TONES')
+for (const retrievalClass of Object.values(RETRIEVAL_CLASS_BY_REASON)) {
+  if (RETRIEVAL_CLASS_TONES[retrievalClass] === undefined) {
+    throw new Error(`RETRIEVAL_CLASS_TONES in ${KNOWLEDGE_VIEW_REL} gives no tone for the class \`${retrievalClass}\``)
+  }
+}
 const NO_BRIEF_LINES_TEXT = publishedConstant('NO_BRIEF_LINES_TEXT')
 const NO_BRIEF_SERVED_TEXT = publishedConstant('NO_BRIEF_SERVED_TEXT')
 const STEP_NO_BRIEF_TEXT = publishedConstant('STEP_NO_BRIEF_TEXT')
@@ -293,22 +298,17 @@ const NO_MEMORY_CHANGES_SENTENCE = publishedConstant('NO_MEMORY_CHANGES_SENTENCE
 const NO_MEMORY_CHANGES_TEXT = postProcessingConstant('NO_MEMORY_CHANGES_TEXT')
 
 /**
- * The banner sentence, composed from the two published tables and the published hint.
+ * The retrieval class a recorded rung below memidex reads as, from the published class map.
  *
- * ONLY THE CONNECTIVE PUNCTUATION IS SPELLED HERE. The three drifty parts — the rung word, the
- * cause word and the door — are read out of `knowledge-view.ts`; the shape is `rungBannerText`'s,
- * at `packages/dashboard-ui/src/lib/knowledge-view.ts:1005`. A label edited on either side reds
- * this cell instead of leaving it asserting a string nothing renders.
+ * The sentences themselves are pinned in jsdom, which imports the constants; many carry an
+ * apostrophe and are not single-quoted literals this file can read. A reason the map does not
+ * name THROWS rather than falling back to a class.
  */
-function bannerSentence(rung: string, reason: string | undefined): string {
-  const label = RUNG_LABELS[rung]
-  if (label === undefined) throw new Error(`RUNG_LABELS names no ${rung}`)
-  const causeLabel = reason === undefined ? undefined : RUNG_CAUSE_LABELS[reason]
-  if (reason !== undefined && causeLabel === undefined) {
-    throw new Error(`RUNG_CAUSE_LABELS names no ${reason}`)
-  }
-  const cause = causeLabel === undefined ? '' : ` — ${causeLabel}`
-  return `Retrieval degraded: ${label}${cause}. ${DOCTOR_HINT_TEXT}`
+function retrievalClassOf(reason: string | undefined): string {
+  if (reason === undefined) return 'cause-not-recorded'
+  const retrievalClass = RETRIEVAL_CLASS_BY_REASON[reason]
+  if (retrievalClass === undefined) throw new Error(`RETRIEVAL_CLASS_BY_REASON names no ${reason}`)
+  return retrievalClass
 }
 
 /**
@@ -878,6 +878,13 @@ interface PageObservation {
   readonly bannerRung?: string
   readonly bannerReason?: string
   readonly bannerText?: string
+  /** `data-retrieval-class` on the header banner (427 D-20). */
+  readonly bannerClass?: string
+  /** The Knowledge used section's `[data-retrieval-statement]` class and tone (427 D-20). */
+  readonly statementClass?: string
+  readonly statementTone?: string
+  /** How many `[data-doctor-pointer]` elements the page drew (427 D-23). */
+  readonly doctorPointerCount: number
   /** `data-knowledge-state` after `7`. */
   readonly stateAfter7?: string
   /** Every `data-knowledge-section` in document order, read before Retrieval details was opened (427 SC1). */
@@ -1369,6 +1376,18 @@ async function observeKnowledge(
     const bannerRung = await attributeOf(page, '[data-rung-banner]', 'data-rung')
     const bannerReason = await attributeOf(page, '[data-rung-banner]', 'data-rung-reason')
     const bannerText = await textOf(page, '[data-rung-banner]')
+    const bannerClass = await attributeOf(page, '[data-rung-banner]', 'data-retrieval-class')
+    const statementClass = await attributeOf(
+      page,
+      '[data-knowledge-section="used"] [data-retrieval-statement]',
+      'data-retrieval-class',
+    )
+    const statementTone = await attributeOf(
+      page,
+      '[data-knowledge-section="used"] [data-retrieval-statement]',
+      'data-retrieval-tone',
+    )
+    const doctorPointerCount = await page.locator('[data-doctor-pointer]').count()
 
     const stateAfter7 = await attributeOf(page, '[data-knowledge-state]', 'data-knowledge-state')
     // THE ORDER IS READ ON THE RESTING TAB, then the ledger is opened: 427 D-19 put the per-step
@@ -1533,6 +1552,10 @@ async function observeKnowledge(
       ...(bannerRung === undefined ? {} : { bannerRung }),
       ...(bannerReason === undefined ? {} : { bannerReason }),
       ...(bannerText === undefined ? {} : { bannerText }),
+      ...(bannerClass === undefined ? {} : { bannerClass }),
+      ...(statementClass === undefined ? {} : { statementClass }),
+      ...(statementTone === undefined ? {} : { statementTone }),
+      doctorPointerCount,
       ...(stateAfter7 === undefined ? {} : { stateAfter7 }),
       sectionOrder,
       ...(usedAbsence === undefined ? {} : { usedAbsence }),
@@ -2146,23 +2169,31 @@ describePosix('the shipped dashboard renders the Knowledge tab and the rung bann
     ).toBe('index-not-built')
   })
 
-  it('(a2) the run header paints the rung banner with the sentence of record', () => {
+  it('(a2) the run header paints no rung strip for a fresh index; the tab states it as information', () => {
     const observed = visitOf('scan', scan)
     const projection = readyProjection('scan', scan)
+    const retrievalClass = retrievalClassOf(projection.retrievalRung?.reason)
+    expect(
+      retrievalClass,
+      `an index that was never built reads as the fresh-index class.${context('scan', scan)}`,
+    ).toBe('fresh-index')
+    expect(RETRIEVAL_CLASS_TONES[retrievalClass]).toBe('info')
     expect(
       observed.bannerRung,
-      'the run-detail header painted no `[data-rung-banner]` for a run the projection says was '
-      + `served on a DEGRADED rung.${context('scan', scan)}`,
-    ).toBe(projection.retrievalRung?.rung)
+      'the run-detail header painted a `[data-rung-banner]` for a fresh store\'s bootstrap, which '
+      + `is information and never a header warning (427 D-20).${context('scan', scan)}`,
+    ).toBeUndefined()
     expect(
-      observed.bannerReason,
-      `the banner's \`data-rung-reason\` disagrees with the recorded cause.${context('scan', scan)}`,
-    ).toBe(projection.retrievalRung?.reason)
+      observed.statementClass,
+      'the Knowledge used section states no fresh-index retrieval level for a run served on '
+      + `bundle-scan / index-not-built.${context('scan', scan)}`,
+    ).toBe('fresh-index')
+    expect(observed.statementTone, `the fresh-index statement is not info-toned.${context('scan', scan)}`)
+      .toBe('info')
     expect(
-      observed.bannerText,
-      'the banner text is not the sentence the two published label tables compose for this '
-      + `recorded rung and cause.${context('scan', scan)}`,
-    ).toBe(bannerSentence('bundle-scan', 'index-not-built'))
+      observed.doctorPointerCount,
+      `an info-class statement carries a doctor pointer (427 D-23).${context('scan', scan)}`,
+    ).toBe(0)
   })
 
   it('(a3) pressing `7` opens a ready Knowledge tab with one row per recorded step', () => {
@@ -2415,7 +2446,7 @@ describePosix('the shipped dashboard renders the Knowledge tab and the rung bann
     ).toBe(true)
   })
 
-  it('(b3) the header banner is present exactly when the projection says the rung degraded', () => {
+  it('(b3) the header banner is present exactly when the recorded rung\'s class tone is warning', () => {
     const observed = visitOf('served', served)
     const projection = readyProjection('served', served)
     const rung = projection.retrievalRung?.rung
@@ -2427,24 +2458,41 @@ describePosix('the shipped dashboard renders the Knowledge tab and the rung bann
     if (rung === 'memidex') {
       // NO HOST ASSUMPTION IN EITHER DIRECTION. A machine with a native embedder and a rebuilt
       // index reaches the top rung, and the top rung is not a degradation — so the honest claim
-      // is silence, and painting an amber strip here would be the defect.
+      // is silence in the header and in the tab.
       expect(
         observed.bannerRung,
-        'the run reached the top rung and the header still painted a degradation banner.'
+        'the run reached the top rung and the header still painted a rung strip.'
         + context('served', served),
+      ).toBeUndefined()
+      expect(
+        observed.statementClass,
+        `the run reached the top rung and the tab still stated a retrieval level.${context('served', served)}`,
+      ).toBeUndefined()
+      return
+    }
+    const retrievalClass = retrievalClassOf(projection.retrievalRung?.reason)
+    const tone = RETRIEVAL_CLASS_TONES[retrievalClass]
+    expect(
+      observed.statementClass,
+      `the tab's retrieval statement disagrees with the recorded rung's class.${context('served', served)}`,
+    ).toBe(retrievalClass)
+    if (tone !== 'warning') {
+      expect(
+        observed.bannerRung,
+        `the header painted a rung strip for the ${retrievalClass} class, which is information `
+        + `the tab states, not a warning (427 D-20).${context('served', served)}`,
       ).toBeUndefined()
       return
     }
     expect(
       observed.bannerRung,
-      'the projection records a degraded rung and the header painted no banner for it.'
+      `the recorded ${retrievalClass} class is a warning and the header painted no strip for it.`
       + context('served', served),
     ).toBe(rung)
     expect(
-      observed.bannerText,
-      'the banner text is not the sentence the published label tables compose for the rung and '
-      + `cause this run recorded.${context('served', served)}`,
-    ).toBe(bannerSentence(rung as string, projection.retrievalRung?.reason))
+      observed.bannerClass,
+      `the strip's \`data-retrieval-class\` disagrees with the recorded reason's class.${context('served', served)}`,
+    ).toBe(retrievalClass)
   })
 
   it('(b4) the Learned half\'s root carries the curation word the projection served', () => {
