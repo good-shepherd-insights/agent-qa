@@ -475,7 +475,11 @@ describe("a partial store read paints the rows it was handed AND says the read w
 
     const rows = view.querySelectorAll('li[data-record-change="confirmed"]')
     expect(rows.length).toBe(1)
-    expect(rows[0]?.getAttribute("data-record-id")).toBe("fact-el-textbox-password-9a05ce")
+    // 427 D-15/D-19: the row carries its bucket, never its id; the id reads in Retrieval details.
+    expect(rows[0]?.hasAttribute("data-record-id")).toBe(false)
+    await openRetrievalDetails(view)
+    expect(view.querySelector('dl[data-ledger-changes] dd[data-ledger-row="record"]')?.textContent)
+      .toBe("fact-el-textbox-password-9a05ce")
 
     const learned = view.querySelector("[data-learned-state]")
     expect(learned?.getAttribute("data-learned-read")).toBe("incomplete")
@@ -582,7 +586,10 @@ describe("a served attribution row beats a FAILED curation chain, at the page (4
     // record does not un-commit it, and the record is on screen beside the `failed` chip.
     const changeRows = view.querySelectorAll("li[data-record-change]")
     expect(changeRows.length).toBe(1)
-    expect(changeRows[0]?.getAttribute("data-record-id")).toBe(SERVED_CHANGE.recordId)
+    expect(changeRows[0]?.hasAttribute("data-record-id")).toBe(false)
+    // Retrieval details is already open: expandedLineOf opened it to reach the step line.
+    expect(view.querySelector('dl[data-ledger-changes] dd[data-ledger-row="record"]')?.textContent)
+      .toBe(SERVED_CHANGE.recordId)
   })
 
   // THE SUB-QUESTION THE RULING LEFT OPEN, crossed at the page on both of its halves. With no row
@@ -636,7 +643,10 @@ describe("the Learned half paints what a failed chain committed, and states its 
 
     const rows = view.querySelectorAll("li[data-record-change]")
     expect(rows.length).toBe(1)
-    expect(rows[0]?.getAttribute("data-record-id")).toBe(SERVED_CHANGE.recordId)
+    expect(rows[0]?.hasAttribute("data-record-id")).toBe(false)
+    await openRetrievalDetails(view)
+    expect(view.querySelector('dl[data-ledger-changes] dd[data-ledger-row="record"]')?.textContent)
+      .toBe(SERVED_CHANGE.recordId)
 
     expect(view.querySelector("[data-learned-chain-note]")?.textContent)
       .toBe(CURATION_FAILED_PARTIAL_TEXT)

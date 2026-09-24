@@ -40,30 +40,31 @@
 // a daemon may not have picked up for hours (404's posture text exists for exactly that reason).
 // A shimmer would promise an arrival nobody has scheduled.
 //
-// `data-learned-state`, `data-learned-count-line`, `data-record-change`, `data-record-id` and
-// `data-pending-proposals` ARE THE CELL CONTRACT, never the visible text. The jsdom cells here and
-// 407-11's Playwright cells on the built bundle both address attributes, so a copy change moves
+// `data-learned-state`, `data-learned-count-line`, `data-record-change` (the bucket word, 427 D-15)
+// and `data-pending-proposals` ARE THE CELL CONTRACT, never the visible text. The jsdom cells here
+// and the Playwright cells on the built bundle both address attributes, so a copy change moves
 // `lib/knowledge-view.ts` and nothing else.
 //
-// EVERY HREF COMES FROM A BUILDER, NEVER FROM A PROJECTION STRING (T-407-21). The row's `href` is
-// whatever `entityRefRoute` resolved in the projection — a route this build owns or nothing at all
-// — and the reference STRING is only ever rendered as text. A row whose reference is hostile
-// therefore paints the hostile text and links nowhere, which is the cell directly below the
-// `data-record-ref` span.
+// NO ID, REFERENCE OR RECEIPT IS PAINTED ON A ROW (427 D-19). A row says what happened to a record
+// in 425's five words and leads with the record's content; every id, raw event and link lives in
+// Retrieval details (`retrieval-details.tsx`).
 //
 // ALL TEXT GOES THROUGH REACT TEXT NODES. No raw-HTML injection escape hatch appears anywhere in
-// this file — a grep for React's one is an acceptance criterion. Record ids are producer strings
-// crossing the display seam, and a hostile-id cell asserts an `<img onerror=…>` creates no element.
+// this file — a grep for React's one is an acceptance criterion. Summaries are producer strings
+// crossing the display seam and render through MaskedText.
 
 import { useId } from "react"
-import { Link } from "react-router"
+import { Archive, Check, CornerDownRight, Inbox, Plus, Replace, type LucideIcon } from "lucide-react"
+import type { CurationBucket } from "@vostride/agent-qa-schema"
 
 import { ReviewCommandButton } from "@/components/id-badge"
-import { Badge } from "@/components/ui/badge"
+import { KnowledgeRecordBody, RecordApplicability } from "./knowledge-record-body"
+import { MaskedText } from "./masked-text"
 import {
+  BUCKET_LABELS,
   MEMORY_CHANGES_HEADING,
-  promotionPathLabel,
-  type LearnedChangeKind,
+  WAS_PREFIX,
+  sinceThisRunHeading,
   type LearnedRowView,
   type LearnedView,
   type ProposalsView,
@@ -72,30 +73,13 @@ import {
 /** A half heading: 16px/500 — explicitly `font-medium`, because the global `h4` rule is 600. */
 const HEADING_CLASS = "text-base font-medium leading-snug"
 
-/**
- * The kind badge's look, as a closed table over the five Learned kinds.
- *
- * `promoted` borrows the verdict badge's emerald because a promotion is the one change in the set
- * that made the store MORE trusted; `deprecated` is the same destructive as a failed run because
- * it is the one that retired something. `confirmed` and `superseded` are bare outlines: they moved
- * a record without changing what a reader should do about it.
- *
- * `added` TAKES THE SAME EMERALD, and the borrowing is deliberate rather than lazy. A new record
- * made the store LARGER, not more trusted, so the two are not the same event — but the UI-SPEC
- * adds no colour in this phase and `added` is the only other positive kind in the table, so it
- * wears the one success tint the SPEC already reserves. The `data-record-change` attribute, not
- * the tint, is what tells the two apart for a cell or a reader looking closely.
- *
- * A `Record<LearnedChangeKind, …>` rather than a switch with a default, so a sixth kind is a
- * compile error here rather than a row that silently paints whichever arm the lookup missed —
- * which is precisely what happened when `added` was admitted to the vocabulary at the view.
- */
-const KIND_LOOK: Record<LearnedChangeKind, Parameters<typeof Badge>[0]> = {
-  added: { className: "bg-emerald-500/15 text-emerald-500 border-emerald-500/20" },
-  confirmed: { variant: "outline" },
-  superseded: { variant: "outline" },
-  deprecated: { variant: "destructive" },
-  promoted: { className: "bg-emerald-500/15 text-emerald-500 border-emerald-500/20" },
+// All five labels share one neutral tone; the glyph shape and the word carry the bucket (UI-SPEC).
+const BUCKET_GLYPHS: Record<CurationBucket, LucideIcon> = {
+  added: Plus,
+  confirmed: Check,
+  superseded: Replace,
+  deprecated: Archive,
+  proposed: Inbox,
 }
 
 /**
@@ -118,6 +102,8 @@ export function KnowledgeLearned({
   proposals?: ProposalsView | undefined
 }) {
   const headingId = useId()
+  const curationRows = view.rows.filter(row => row.section !== "since-then")
+  const laterRows = view.rows.filter(row => row.section === "since-then")
   return (
     <section
       data-knowledge-section="changes"
@@ -182,12 +168,29 @@ export function KnowledgeLearned({
         </p>
       )}
 
-      {view.rows.length === 0 ? null : (
-        <ul className="space-y-2">
-          {view.rows.map(row => (
-            <RecordRow key={row.key} row={row} />
+      {curationRows.length === 0 ? null : (
+        <ul className="divide-y divide-border">
+          {curationRows.map(row => (
+            <BucketRow key={row.key} row={row} />
           ))}
         </ul>
+      )}
+
+      {/*
+        LATER CHANGES STAND APART, OPEN (427 D-17). They happened after this run's curation, so
+        they never enter the heading's breakdown (423 D-15) and read under their own heading.
+      */}
+      {laterRows.length === 0 ? null : (
+        <div data-since-this-run={String(laterRows.length)} className="space-y-1 pt-2">
+          <h5 className="text-xs font-medium text-muted-foreground tabular-nums">
+            {sinceThisRunHeading(laterRows.length)}
+          </h5>
+          <ul className="divide-y divide-border">
+            {laterRows.map(row => (
+              <BucketRow key={row.key} row={row} />
+            ))}
+          </ul>
+        </div>
       )}
 
       {/*
@@ -244,61 +247,49 @@ export function KnowledgeLearned({
 }
 
 /**
- * One changed record: what happened to it, the address it happened to, and its id.
- *
- * THE ID IS ALWAYS RENDERED and the reference is not. A change record's id is a content-derived
- * bundle id far more often than it is an entity short-ID, so most rows carry no canonical
- * reference at all — and a row that showed only a reference would render blank for those. The id
- * is the one thing every row has, so it is the one thing every row prints.
- *
- * THREE RENDERINGS OF THE REFERENCE, and the middle one is the point. Routed → an anchor. Present
- * but unrouted → the URI as text, because this build can say WHAT the row points at without being
- * able to say where to click (`ENTITY_KIND_ROUTES.MEM` is `null` under the DASH-03 contract).
- * Absent → nothing, because inventing an address for an unaddressable record is the guessed link
- * D-10 forbids.
- *
- * AND THAT SAME FACT IS WHY THE ID NEEDS AN INTRINSIC BREAK (407-23 · G-407-2): a content-derived
- * bundle id is one unbroken token, so `wrap-anywhere` (`overflow-wrap: anywhere`) is what lets this
- * baseline row shrink it — `break-word` permits a break only after the box has already been sized,
- * which is not soon enough for an item sized from its own content. The reference beside it solves
- * the same problem the other way, with `truncate max-w-[32rem]`, and is left exactly as it is.
+ * One affected record (427 D-15): its bucket word, then what it says. A supersession leads with
+ * the new version and reads the old one on a Was: line; a Proposed row says it was held for review;
+ * a later change says what happened later. Where it applies and the full record are the same
+ * components a used row shows.
  */
-function RecordRow({ row }: { row: LearnedRowView }) {
+function BucketRow({ row }: { row: LearnedRowView }) {
+  const Glyph = BUCKET_GLYPHS[row.bucket]
   return (
     <li
-      data-record-change={row.kind}
-      data-record-id={row.recordId}
+      data-record-change={row.bucket}
       {...(row.section === undefined ? {} : { "data-learned-section": row.section })}
-      className="flex flex-wrap items-baseline gap-2 text-sm"
+      className="py-2 space-y-1"
     >
-      <Badge {...KIND_LOOK[row.kind]}>{row.kind}</Badge>
-      {row.promotionPath === undefined ? null : (
+      <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
         <span
-          data-promotion-path={row.promotionPath}
-          data-promotion-receipt={row.promotionReceiptDigest ?? ''}
-          className="text-xs text-muted-foreground wrap-anywhere"
+          data-bucket-label={row.bucket}
+          className="inline-flex items-center gap-1 text-xs font-medium uppercase tracking-wider text-muted-foreground"
         >
-          promoted via {promotionPathLabel(row.promotionPath)}
-          {row.promotionReceiptDigest ? ` · ${row.promotionReceiptDigest.slice(0, 12)}` : ''}
+          <Glyph className="size-3" aria-hidden />
+          {BUCKET_LABELS[row.bucket]}
         </span>
-      )}
-      {row.ref === undefined ? null : row.href === undefined ? (
-        <span data-record-ref className="truncate max-w-[32rem] text-muted-foreground">
-          {row.ref}
+        <span data-row-primary className="text-sm wrap-anywhere">
+          <MaskedText text={row.primary} />
         </span>
-      ) : (
-        <Link
-          data-record-ref
-          to={row.href}
-          title={row.ref}
-          className="truncate max-w-[32rem] text-primary underline-offset-4 hover:underline"
-        >
-          {row.ref}
-        </Link>
+        {row.note === undefined ? null : (
+          <span data-proposed-note className="text-xs text-muted-foreground">
+            · {row.note}
+          </span>
+        )}
+      </div>
+      {row.was === undefined ? null : (
+        <p data-superseded-was className="flex items-baseline gap-1 text-xs text-muted-foreground wrap-anywhere">
+          <CornerDownRight className="size-3 shrink-0" aria-hidden />
+          <span>
+            {WAS_PREFIX} <MaskedText text={row.was.primary} />
+          </span>
+        </p>
       )}
-      <span data-record-id-text className="font-mono text-xs text-muted-foreground wrap-anywhere">
-        {row.recordId}
-      </span>
+      {row.applicability === undefined ? null : <RecordApplicability view={row.applicability} />}
+      {row.sinceDetail === undefined ? null : (
+        <p data-since-detail className="text-xs text-muted-foreground">{row.sinceDetail}</p>
+      )}
+      {row.content === undefined ? null : <KnowledgeRecordBody content={row.content} />}
     </li>
   )
 }

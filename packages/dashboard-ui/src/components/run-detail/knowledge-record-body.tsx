@@ -1,7 +1,9 @@
-// 427 · D-06, D-09 — Show full record, shared by used rows and memory-change rows. The code-computed
-// counts always render and always precede the curator's note (memory.md §7.5), so the note is never
-// the only thing said. Numeric trust, tier and evidence tokens stay in Retrieval details.
+// 427 · D-06, D-08, D-09 — where a record applies and Show full record, shared by used rows and
+// memory-change rows (one concept, one treatment). The code-computed counts always render and always
+// precede the curator's note (memory.md §7.5), so the note is never the only thing said. Numeric
+// trust, tier and evidence tokens stay in Retrieval details.
 
+import { Fragment } from "react"
 import { ChevronRight } from "lucide-react"
 import type { RunKnowledgeRecordContent } from "@vostride/agent-qa-schema"
 
@@ -13,7 +15,39 @@ import {
   SHOW_FULL_RECORD_LABEL,
   currentStatusLine,
   trustCountsLine,
+  type AnchorPhraseView,
+  type ApplicabilityView,
 } from "@/lib/knowledge-view"
+
+export function RecordApplicability({ view }: { view: ApplicabilityView }) {
+  return (
+    <p data-row-applicability className="text-xs text-muted-foreground wrap-anywhere">
+      <MaskedText text={view.lead} />
+      {view.phrases.map((phrase, index) => (
+        <Fragment key={index}>
+          {" · "}
+          <AnchorPhrase phrase={phrase} />
+        </Fragment>
+      ))}
+    </p>
+  )
+}
+
+function AnchorPhrase({ phrase }: { phrase: AnchorPhraseView }) {
+  if (phrase.literal !== undefined) {
+    return (
+      <span data-anchor-type={phrase.type}>
+        {phrase.text}{" "}
+        <code className="font-mono wrap-anywhere"><MaskedText text={phrase.literal} /></code>
+      </span>
+    )
+  }
+  return (
+    <span data-anchor-type={phrase.type} className={phrase.type === "unparsed" ? "font-mono wrap-anywhere" : undefined}>
+      <MaskedText text={phrase.text} />
+    </span>
+  )
+}
 
 export function KnowledgeRecordBody({ content }: { content: RunKnowledgeRecordContent }) {
   const { confirmations, contradictions, trustNarrative } = content.currentTrust
