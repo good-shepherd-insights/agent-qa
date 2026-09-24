@@ -4,13 +4,17 @@ import { describe, expect, it } from 'vitest'
 import { RunKnowledgeProjectionSchema, type RunKnowledgeProjection } from '@vostride/agent-qa-schema'
 
 import {
+  ANCHOR_PHRASE_TYPES,
   KNOWLEDGE_SECTIONS,
   PROCEDURE_CONTENT_NOT_RECORDED_LEAD,
   RECORD_KIND_LABELS,
   RECORD_UNREADABLE_LEAD,
   USE_VERBS,
+  applicabilityText,
+  applicabilityView,
   contentById,
   formatStepRefs,
+  parseAnchor,
   stepRefAccessibleName,
   usedCountLine,
   usedRecordViews,
@@ -26,7 +30,7 @@ function content(summary: string, kind = 'fact') {
     content: `body of ${summary}`,
     summary,
     kind,
-    applicability: { product: 'shop', scope: 'shop', anchors: [], openedAtOrdinal: 1 },
+    applicability: { product: 'shop', scope: 'shop', anchors: [] as string[], openedAtOrdinal: 1 },
     currentStatus: 'active',
     currentTrust: { confirmations: 1, contradictions: 0, evidenceTokens: [], lastEventOrdinal: 1 },
   }
@@ -112,6 +116,7 @@ describe('the 427 closed sets are exactly the published members', () => {
   it('CLOSED-SETS-427: the sections and the use verbs', () => {
     expect(KNOWLEDGE_SECTIONS).toEqual(['used', 'effect', 'changes', 'retrieval-details'])
     expect(USE_VERBS).toEqual(['given', 'opened', 'caution', 'replayed', 'hint'])
+    expect(ANCHOR_PHRASE_TYPES).toEqual(['platform', 'page', 'flow', 'el', 'selector', 'error', 'unparsed'])
     expect(RECORD_KIND_LABELS).toEqual({
       fact: 'Fact',
       caution: 'Caution',
@@ -310,5 +315,75 @@ describe('a step reference has a full accessible name (UI-SPEC S3)', () => {
     const address: StepAddress = { testIndex: 0, stepIndex: 1, stepText: 'Open cart' }
     expect(stepRefAccessibleName(address)).toBe('Go to step 2 · Open cart')
     expect(stepRefAccessibleName(address, 'checkout')).toBe('Go to checkout · step 2 · Open cart')
+  })
+})
+
+const anchor = (value: Record<string, unknown>) => JSON.stringify(value)
+
+function applicability(product: string, scope: string, anchors: readonly string[]) {
+  return { product, scope, anchors: [...anchors], openedAtOrdinal: 1 }
+}
+
+describe('where a record applies, in plain words (D-08)', () => {
+  it('APPLICABILITY-KNOWN-ANSWER: the demo-store record reads Applies to example-web · web · flow measurement:assert-value:url', () => {
+    expect(applicabilityView).toBeTypeOf('function')
+    const known = applicability('example-web', 'example-web', [
+      '{"platform":"web","t":"platform"}',
+      '{"name":"measurement:assert-value:url","t":"flow"}',
+    ])
+    expect(applicabilityText(applicabilityView(known))).toBe('Applies to example-web · web · flow measurement:assert-value:url')
+
+    const joined = { ...content('the url is asserted'), applicability: known }
+    const [view] = usedRecordViews(projection([step(0, [line('rec_k', 'the url is asserted', { recordContent: joined })])]))
+    expect(view?.applicability).toEqual(applicabilityView(known))
+    expect(JSON.stringify(view)).not.toContain('rec_')
+  })
+
+  it('APPLICABILITY-ORDER: platform, page, flow, element, selector, error whatever order the anchors arrive in', () => {
+    expect(applicabilityView).toBeTypeOf('function')
+    const view = applicabilityView(applicability('shop', 'shop', [
+      anchor({ message: 'Out of stock', t: 'error' }),
+      anchor({ literal: '#buy > button', t: 'selector' }),
+      anchor({ name: 'Buy', ordinal: 2, role: 'button', t: 'el' }),
+      anchor({ route: '/cart', t: 'page' }),
+      anchor({ name: 'checkout', t: 'flow' }),
+      anchor({ platform: 'android', t: 'platform' }),
+    ]))
+    expect(view.phrases.map(phrase => phrase.type)).toEqual(['platform', 'page', 'flow', 'el', 'selector', 'error'])
+    expect(view.phrases).toEqual([
+      { type: 'platform', text: 'android' },
+      { type: 'page', text: 'page /cart' },
+      { type: 'flow', text: 'flow checkout' },
+      { type: 'el', text: 'element button "Buy" #2' },
+      { type: 'selector', text: 'selector', literal: '#buy > button' },
+      { type: 'error', text: 'error "Out of stock"' },
+    ])
+    expect(applicabilityText(view)).toBe(
+      'Applies to shop · android · page /cart · flow checkout · element button "Buy" #2 · selector #buy > button · error "Out of stock"',
+    )
+    const noOrdinal = applicabilityView(applicability('shop', 'shop', [anchor({ name: 'Buy', role: 'button', t: 'el' })]))
+    expect(noOrdinal.phrases).toEqual([{ type: 'el', text: 'element button "Buy"' }])
+  })
+
+  it('APPLICABILITY-PRODUCT-SCOPE: product and scope print once when equal, both when they differ; no anchors is the lead alone', () => {
+    expect(applicabilityView).toBeTypeOf('function')
+    expect(applicabilityView(applicability('shop', 'checkout', []))).toEqual({ lead: 'Applies to shop · checkout', phrases: [] })
+    expect(applicabilityText(applicabilityView(applicability('shop', 'checkout', [])))).toBe('Applies to shop · checkout')
+    expect(applicabilityText(applicabilityView(applicability('shop', 'shop', [])))).toBe('Applies to shop')
+  })
+
+  it('ANCHOR-UNPARSED-VERBATIM: not JSON, or JSON of no anchor shape, is kept verbatim after the parsed phrases', () => {
+    expect(parseAnchor).toBeTypeOf('function')
+    expect(parseAnchor('{"platform":"web","t":"platform"}')).toEqual({ t: 'platform', platform: 'web' })
+    expect(parseAnchor('page:/cart')).toEqual({ t: 'unparsed', raw: 'page:/cart' })
+    expect(parseAnchor('{"t":"page"}')).toEqual({ t: 'unparsed', raw: '{"t":"page"}' })
+    expect(parseAnchor('{"platform":"desktop","t":"platform"}')).toEqual({ t: 'unparsed', raw: '{"platform":"desktop","t":"platform"}' })
+
+    const view = applicabilityView(applicability('shop', 'shop', ['page:/cart', '{"t":"page"}', '{"route":"/cart","t":"page"}']))
+    expect(view.phrases).toEqual([
+      { type: 'page', text: 'page /cart' },
+      { type: 'unparsed', text: 'page:/cart' },
+      { type: 'unparsed', text: '{"t":"page"}' },
+    ])
   })
 })

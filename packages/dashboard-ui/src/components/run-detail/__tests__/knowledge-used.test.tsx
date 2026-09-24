@@ -7,7 +7,7 @@ import { act, type ReactElement } from "react"
 import { createRoot, type Root } from "react-dom/client"
 import { afterEach, describe, expect, it } from "vitest"
 
-import { RunKnowledgeProjectionSchema } from "@vostride/agent-qa-schema"
+import { RunKnowledgeProjectionSchema, maskedMarker } from "@vostride/agent-qa-schema"
 
 import { KnowledgeUsed } from "@/components/run-detail/knowledge-used"
 import { TabKnowledge } from "@/components/run-detail/tab-knowledge"
@@ -48,12 +48,12 @@ type Join = {
   contentAbsence?: { reason: "not-found" | "scan-incomplete" | "not-bound" }
 }
 
-function content(summary: string, kind: string) {
+function content(summary: string, kind: string, applicability: { product?: string; scope?: string; anchors?: string[] } = {}) {
   return {
     content: `body of ${summary}`,
     summary,
     kind,
-    applicability: { product: "shop", scope: "shop", anchors: [], openedAtOrdinal: 1 },
+    applicability: { product: "shop", scope: "shop", anchors: [] as string[], openedAtOrdinal: 1, ...applicability },
     currentStatus: "active",
     currentTrust: { confirmations: 1, contradictions: 0, evidenceTokens: [], lastEventOrdinal: 1 },
   }
@@ -227,5 +227,78 @@ describe("producer text is text (T-427-05-01)", () => {
 
     expect(view.querySelector("[data-row-primary]")?.textContent).toBe(hostile)
     expect(view.querySelector("img")).toBeNull()
+  })
+})
+
+function appliesRow(anchors: string[], place: { product?: string; scope?: string } = {}): HTMLElement {
+  const view = mount(<KnowledgeUsed view={usedOf([
+    step(0, { channel1: [line("rec_a", "the url is asserted", "fact", { recordContent: content("the url is asserted", "fact", { ...place, anchors }) })] }),
+  ])} />)
+  const applies = view.querySelector<HTMLElement>("[data-row-applicability]")
+  expect(applies).not.toBeNull()
+  return applies!
+}
+
+describe("a used row says where its record applies (D-08)", () => {
+  it("APPLICABILITY-KNOWN-ANSWER: the demo-store record's line reads exactly the known answer", () => {
+    const applies = appliesRow(
+      ['{"platform":"web","t":"platform"}', '{"name":"measurement:assert-value:url","t":"flow"}'],
+      { product: "example-web", scope: "example-web" },
+    )
+    expect(applies.textContent).toBe("Applies to example-web · web · flow measurement:assert-value:url")
+    expect(applies.className).toContain("wrap-anywhere")
+    expect([...applies.querySelectorAll("[data-anchor-type]")].map(span => span.getAttribute("data-anchor-type")))
+      .toEqual(["platform", "flow"])
+  })
+
+  it("APPLICABILITY-ORDER: phrases paint platform, page, flow, element, selector, error, unparsed", () => {
+    const applies = appliesRow([
+      "not an anchor",
+      '{"message":"Out of stock","t":"error"}',
+      '{"literal":"#buy","t":"selector"}',
+      '{"name":"Buy","ordinal":2,"role":"button","t":"el"}',
+      '{"route":"/cart","t":"page"}',
+      '{"name":"checkout","t":"flow"}',
+      '{"platform":"ios","t":"platform"}',
+    ])
+    expect([...applies.querySelectorAll("[data-anchor-type]")].map(span => span.getAttribute("data-anchor-type")))
+      .toEqual(["platform", "page", "flow", "el", "selector", "error", "unparsed"])
+    expect(applies.querySelector('[data-anchor-type="el"]')?.textContent).toBe('element button "Buy" #2')
+  })
+
+  it("APPLICABILITY-PRODUCT-SCOPE: a differing product and scope both print; no anchors is the lead alone", () => {
+    expect(appliesRow([], { product: "shop", scope: "checkout" }).textContent).toBe("Applies to shop · checkout")
+    act(() => { root?.unmount() })
+    container?.remove()
+    expect(appliesRow([]).textContent).toBe("Applies to shop")
+  })
+
+  it("ANCHOR-UNPARSED-VERBATIM: an anchor that does not parse renders verbatim in mono, masked, never dropped", () => {
+    const secret = maskedMarker("secret")
+    const applies = appliesRow([`token=${secret}`, '{"t":"page"}', '{"route":"/cart","t":"page"}'])
+    const unparsed = [...applies.querySelectorAll<HTMLElement>('[data-anchor-type="unparsed"]')]
+    expect(unparsed.length).toBe(2)
+    for (const span of unparsed) expect(span.className).toContain("font-mono")
+    expect(unparsed[1]?.textContent).toBe('{"t":"page"}')
+    expect(unparsed[0]?.textContent?.startsWith("token=")).toBe(true)
+    expect(unparsed[0]?.querySelector('[data-masked="secret"]')).not.toBeNull()
+    expect(applies.textContent).not.toContain(secret)
+    expect([...applies.querySelectorAll("[data-anchor-type]")].map(span => span.getAttribute("data-anchor-type")))
+      .toEqual(["page", "unparsed", "unparsed"])
+  })
+
+  it("SELECTOR-IN-MONO: a selector literal sits in a mono code element after the word selector", () => {
+    const applies = appliesRow(['{"literal":"div.cart > button[data-buy]","t":"selector"}'])
+    const selector = applies.querySelector('[data-anchor-type="selector"]')
+    expect(selector?.textContent).toBe("selector div.cart > button[data-buy]")
+    const code = selector?.querySelector("code")
+    expect(code?.textContent).toBe("div.cart > button[data-buy]")
+    expect(code?.className).toContain("font-mono")
+    expect(code?.className).toContain("wrap-anywhere")
+  })
+
+  it("APPLICABILITY-KNOWN-ANSWER: a row with no joined content has no applicability line", () => {
+    const view = mount(<KnowledgeUsed view={usedOf([step(0, { channel1: [line("rec_a", "served only")] })])} />)
+    expect(view.querySelector("[data-row-applicability]")).toBeNull()
   })
 })

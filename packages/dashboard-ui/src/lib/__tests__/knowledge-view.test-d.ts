@@ -4,10 +4,12 @@
 import { expectTypeOf, test } from 'vitest'
 import type { InspectRecordView, RunKnowledgeRecordContent } from '@vostride/agent-qa-schema'
 import {
+  ANCHOR_PHRASE_TYPES,
   KNOWLEDGE_SECTIONS,
   RECORD_KIND_LABELS,
   USE_VERBS,
   USE_VERB_PHRASES,
+  type AnchorPhraseType,
   type KnowledgeSection,
   type RecordKind,
   type UseVerb,
@@ -36,4 +38,12 @@ test('C427-RECORD-KINDS-EXACT', () => {
   expectTypeOf<RecordKind>().toEqualTypeOf<InspectRecordView['kind']>()
   expectTypeOf<RunKnowledgeRecordContent['kind']>().toEqualTypeOf<RecordKind>()
   expectTypeOf<keyof typeof RECORD_KIND_LABELS>().toEqualTypeOf<RecordKind>()
+})
+
+test('C427-ANCHOR-PHRASE-TYPES-EXACT', () => {
+  type Expected = 'platform' | 'page' | 'flow' | 'el' | 'selector' | 'error' | 'unparsed'
+  expectTypeOf<AnchorPhraseType>().toEqualTypeOf<Expected>()
+  expectTypeOf<(typeof ANCHOR_PHRASE_TYPES)[number]>().toEqualTypeOf<Expected>()
+  expectTypeOf<Exclude<AnchorPhraseType, (typeof ANCHOR_PHRASE_TYPES)[number]>>().toEqualTypeOf<never>()
+  expectTypeOf<Exclude<(typeof ANCHOR_PHRASE_TYPES)[number], AnchorPhraseType>>().toEqualTypeOf<never>()
 })
