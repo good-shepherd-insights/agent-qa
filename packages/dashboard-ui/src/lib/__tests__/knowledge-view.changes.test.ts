@@ -275,7 +275,11 @@ describe('every technical fact of a changed record is gathered for Retrieval det
     const view = projectKnowledgeView({ kind: 'read', projection: run })
     if (view.state !== 'ready') throw new Error('expected ready')
     expect(view.ledger.changes).toEqual(entries)
-    expect(JSON.stringify(view.learned.rows)).not.toContain('fact-victim')
+    for (const row of view.learned.rows) {
+      for (const key of ['recordId', 'recordIds', 'ref', 'href', 'promotionPath', 'promotionReceiptDigest', 'events']) {
+        expect(row).not.toHaveProperty(key)
+      }
+    }
   })
 
   it('CLOSED-SETS-427: the bucket labels, since-then details and ledger row labels', () => {

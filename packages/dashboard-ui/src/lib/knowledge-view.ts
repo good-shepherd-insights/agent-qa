@@ -26,16 +26,17 @@
 
 import {
   CURATION_BREAKDOWN_BUCKETS,
+  CURATION_BUCKET_PRECEDENCE,
   ProposalIdSchema,
   RecordAnchorsSchema,
   TRACE_TRUNCATION_TOP_K,
-  canonicalJson,
   formatEntityUri,
   parseShortId,
 } from '@vostride/agent-qa-schema'
 import type {
   BriefWhyNoTraceReason,
   CurationBreakdown,
+  CurationBucket,
   InspectRecordView,
   PostProcessingChipStatus,
   PromotionPath,
@@ -1213,6 +1214,116 @@ export function promotionPathLabel(path: PromotionPath): string {
 
 const LEARNED_CHANGE_KIND_SET: ReadonlySet<string> = new Set(LEARNED_CHANGE_KINDS)
 
+function isLearnedChangeKind(kind: RecordChange['change']): kind is LearnedChangeKind {
+  return LEARNED_CHANGE_KIND_SET.has(kind)
+}
+
+// 427 · D-15..D-17 — Memory changes speak 425's five words. Lower-cased, each label IS the bucket
+// key `curationBreakdownLine` prints, so the rows and the heading share one vocabulary (SC3).
+export const BUCKET_LABELS = {
+  added: 'Added',
+  confirmed: 'Confirmed',
+  superseded: 'Superseded',
+  deprecated: 'Deprecated',
+  proposed: 'Proposed',
+} as const satisfies Record<CurationBucket, string>
+
+// A change seen without a snapshot maps onto the same words; Proposed is never synthesized (425 D-18).
+const CHANGE_BUCKETS = {
+  added: 'added',
+  confirmed: 'confirmed',
+  promoted: 'confirmed',
+  superseded: 'superseded',
+  deprecated: 'deprecated',
+} as const satisfies Record<LearnedChangeKind, CurationBucket>
+
+export const PROPOSED_NOTE = 'held for review, not applied'
+
+export const OPEN_QUESTION_NOTE = 'open question raised for review'
+
+export const WAS_PREFIX = 'Was:'
+
+export const RECORD_CONTENT_NOT_RECORDED_LEAD = "A record whose content isn't part of this run's record"
+
+export function sinceThisRunHeading(count: number): string {
+  return `Since this run · ${String(count)} ${count === 1 ? 'change' : 'changes'}`
+}
+
+export const SINCE_THEN_DETAILS = {
+  added: 'added later',
+  confirmed: 'confirmed again, later',
+  promoted: 'promoted to trusted, later',
+  superseded: 'superseded later',
+  deprecated: 'retired later',
+} as const satisfies Record<LearnedChangeKind, string>
+
+export function sinceThenDetail(change: LearnedChangeKind): string {
+  return SINCE_THEN_DETAILS[change]
+}
+
+// 427 · D-19 part 2 — the Retrieval details rows for one changed record, in render order.
+export type LedgerRow =
+  | 'bucket'
+  | 'record'
+  | 'events'
+  | 'promotion'
+  | 'receipt'
+  | 'evidence'
+  | 'observation'
+  | 'sourceRun'
+  | 'validity'
+  | 'link'
+
+export const LEDGER_ROW_LABELS = {
+  bucket: 'Bucket',
+  record: 'Record',
+  events: 'Events',
+  promotion: 'Promotion path',
+  receipt: 'Receipt digest',
+  evidence: 'Evidence',
+  observation: 'Observation',
+  sourceRun: 'Source run',
+  validity: 'Validity',
+  link: 'Reference',
+} as const satisfies Record<LedgerRow, string>
+
+export interface LedgerEvent {
+  readonly change: RecordChange['change']
+  readonly atOrdinal: number
+}
+
+export function ledgerEventText(event: LedgerEvent): string {
+  return `${event.change} @ ${String(event.atOrdinal)}`
+}
+
+export interface LedgerValidity {
+  readonly openedAtOrdinal: number
+  readonly closedAtOrdinal?: number
+}
+
+export function ledgerValidityText(validity: LedgerValidity): string {
+  const opened = `opened @ ${String(validity.openedAtOrdinal)}`
+  return validity.closedAtOrdinal === undefined ? opened : `${opened} · closed @ ${String(validity.closedAtOrdinal)}`
+}
+
+/** Every technical fact behind one Memory changes row; rendered only inside Retrieval details. */
+export interface ChangeLedgerView {
+  readonly key: string
+  readonly bucket: CurationBucket
+  readonly section?: LearnedRowSection
+  /** The row's subject first; a supersession's old record second. */
+  readonly recordIds: readonly string[]
+  readonly events: readonly LedgerEvent[]
+  readonly promotionPath?: PromotionPath
+  readonly promotionReceiptDigest?: string
+  readonly evidenceTokens: readonly string[]
+  readonly observationIds: readonly string[]
+  readonly sourceRunIds: readonly string[]
+  readonly validity?: LedgerValidity
+  readonly ref?: string
+  readonly href?: string
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // The view
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1510,61 +1621,41 @@ export interface StepRowView {
  */
 export type LearnedState = 'pending' | 'running' | 'done' | 'failed' | 'counts-absent'
 
+export type LearnedLeadSource = 'joined' | 'absent' | 'not-recorded'
+
+/** The old record beneath a supersession row: its summary, or why it cannot be shown. */
+export interface SupersededWasView {
+  readonly primary: string
+  readonly leadSource: LearnedLeadSource
+}
+
 /**
- * One record this run's curation changed (D-10).
+ * One record this run's curation affected, in its strongest bucket (427 D-15).
  *
- * `ref` AND `href` ARE TWO DIFFERENT ABSENCES. `ref` is missing when the record id is not an
- * addressable entity short-ID at all — most record ids are content-derived bundle ids, and minting
- * an entity URI for one would be hand-formatting an address to a thing the scheme does not name.
- * `href` is missing when the reference IS canonical but this dashboard has no page for its kind
- * (`ENTITY_KIND_ROUTES.MEM` is `null` under the DASH-03 contract). The row is addressable by
- * `recordId` in both cases; neither absence is ever a guess.
+ * NO ID, REFERENCE OR RECEIPT RIDES ON A ROW (D-19). Those live in the matching
+ * {@link ChangeLedgerView}, which only Retrieval details renders. `key` is the row's position
+ * across the whole list (curation rows, then since-then rows), rebuilt on every render.
  */
 export interface LearnedRowView {
-  /**
-   * The row's identity across a re-render — TOTAL BY CONSTRUCTION (407-26 · REVIEW WR-04).
-   *
-   * ONE RECORD CAN CARRY SEVERAL CHANGES IN ONE RUN. `diffSince` emits one `RecordChange` per
-   * surviving outcome event, so a bundle confirmed at ordinal 12 and superseded at 13 crosses the
-   * op's run filter twice and lands here as two near-identical rows. `recordId` alone is not
-   * unique, and React would warn and reconcile one of the two away on the re-render that fires as
-   * curation settles — which is exactly when the second row appears.
-   *
-   * NO PROJECTION OF `RecordChange`'S OWN MEMBERS CAN REPRODUCE THE PRODUCER'S IDENTITY, and every
-   * form of this key before 407-26 claimed to (round-2 WR-05, re-raised as REVIEW WR-04 and open
-   * across three rounds). `survivingOutcomeEvents` dedupes on
-   * `eventDedupKey = \`${evidenceToken}:${curationJobId}\``, and `curationJobId` reaches this DTO
-   * nowhere: `RecordChangeSchema` is `.strict()` and does not carry it. `deriveEvidenceToken`
-   * hashes `(attributingObservationId, anchor, buildOrdinal)` and deliberately EXCLUDES the
-   * candidate id, while `confirmedEvent` stamps `curationJobId: job.candidateId` — so one evidence
-   * token with two job ids is reachable by construction, both events survive the dedupe, and the
-   * two changes that arrive here are identical in all five members the old key spelled. A key
-   * built from those members is therefore not the producer's identity; it is a guess that happens
-   * to hold until that shape appears.
-   *
-   * SO THE INDEX IS THE TIE-BREAK, AND IT IS SOUND HERE SPECIFICALLY. The list is re-derived from
-   * the projection on every render by {@link learnedView}'s fold and handed to a plain `.map` in
-   * `knowledge-learned.tsx` — never spliced, never sorted in place, never memoised across a
-   * projection change. Within a render pass the index IS the row, and across one it is a total
-   * order over rows that were all rebuilt together. The record members are retained after it
-   * purely so a key read in DevTools still names the record it belongs to.
-   */
   readonly key: string
-  readonly kind: LearnedChangeKind
-  /** Receipt attribution copied from the producer, never inferred from the badge. */
-  readonly promotionPath?: PromotionPath
-  readonly promotionReceiptDigest?: string
-  /** The record's own id, VERBATIM — the row addresses a record, not a title. */
-  readonly recordId: string
-  /** The canonical entity URI, built by the schema's own codec. Never hand-formatted here. */
-  readonly ref?: string
-  /** Where the reference goes in THIS build, when it goes anywhere. Never a minted route. */
-  readonly href?: string
+  readonly bucket: CurationBucket
   /**
-   * Which of the op's two sections this change is in (423 D-15). Present only beside a recorded
+   * Which of the op's two sections this row is in (423 D-15). Present only beside a recorded
    * snapshot: without one there is nothing to section against, and the half says so instead.
    */
   readonly section?: LearnedRowSection
+  readonly primary: string
+  readonly leadSource: LearnedLeadSource
+  readonly kind?: RecordKind
+  readonly content?: RunKnowledgeRecordContent
+  readonly contentAbsence?: RunKnowledgeContentAbsence
+  readonly applicability?: ApplicabilityView
+  /** A supersession's old record; the row itself leads with the new version. */
+  readonly was?: SupersededWasView
+  /** Proposed rows only (D-16). */
+  readonly note?: string
+  /** Since-then rows only (D-17): what happened later. */
+  readonly sinceDetail?: string
 }
 
 export type LearnedRowSection = 'curation' | 'since-then'
@@ -1693,6 +1784,8 @@ export type KnowledgeView =
 export interface LedgerView {
   readonly summary: string
   readonly steps: readonly StepRowView[]
+  /** One entry per Memory changes row, in row order (427 D-19 part 2). */
+  readonly changes: readonly ChangeLedgerView[]
 }
 
 /** Did this step get served anything at all, on any channel? The one fold "briefed" means. */
@@ -1803,19 +1896,149 @@ function learnedRecordRef(recordId: string): string | undefined {
   return parseShortId(recordId)?.kind === 'MEM' ? formatEntityUri('MEM', recordId) : undefined
 }
 
-function learnedRow(row: RecordChange, index: number, section?: LearnedRowSection): LearnedRowView {
-  const ref = learnedRecordRef(row.recordId)
-  const href = ref === undefined ? undefined : entityRefRoute(ref)
+/** One Memory changes row before it is split into what a reader sees and what the ledger holds. */
+interface ChangeDraft {
+  readonly bucket: CurationBucket
+  readonly section?: LearnedRowSection
+  /** The record the row leads with: a supersession's replacement, else the record itself. */
+  readonly subjectId: string
+  readonly wasId?: string
+  readonly changes: readonly RecordChange[]
+  readonly later?: LearnedChangeKind
+}
+
+function strongestBucket(buckets: readonly CurationBucket[]): CurationBucket {
+  return CURATION_BUCKET_PRECEDENCE.find(bucket => buckets.includes(bucket)) ?? buckets[0]!
+}
+
+function replacementOf(changes: readonly RecordChange[]): string | undefined {
+  return [...changes].reverse().find(change => change.change === 'superseded' && change.byRecordId !== undefined)?.byRecordId
+}
+
+// D-15: with a snapshot the rows ARE its rows, so they equal the breakdown; later changes follow as
+// their own rows (D-17). Without one, changes group per record in first-appearance order, and a
+// replacement's Add folds into the supersession it completes.
+function changeDrafts(projection: Extract<RunKnowledgeProjection, { kind: 'ready' }>): readonly ChangeDraft[] {
+  const { curationSnapshot, sinceThen, changes } = projection.learned
+
+  if (curationSnapshot !== undefined) {
+    const curation = curationSnapshot.rows.map((row): ChangeDraft => {
+      const replaced = row.bucket === 'superseded' && row.byRecordId !== undefined
+      return {
+        bucket: row.bucket,
+        section: 'curation',
+        subjectId: replaced ? row.byRecordId! : row.recordId,
+        ...(replaced ? { wasId: row.recordId } : {}),
+        changes: row.changes.map(entry => entry.change),
+      }
+    })
+    const later = (sinceThen?.changes ?? []).flatMap((change): ChangeDraft[] => {
+      if (!isLearnedChangeKind(change.change)) return []
+      const replaced = change.change === 'superseded' && change.byRecordId !== undefined
+      return [{
+        bucket: CHANGE_BUCKETS[change.change],
+        section: 'since-then',
+        subjectId: replaced ? change.byRecordId! : change.recordId,
+        ...(replaced ? { wasId: change.recordId } : {}),
+        changes: [change],
+        later: change.change,
+      }]
+    })
+    return [...curation, ...later]
+  }
+
+  const kept = changes.filter(change => isLearnedChangeKind(change.change))
+  const victimOf = new Map<string, string>()
+  for (const change of kept) {
+    if (change.change === 'superseded' && change.byRecordId !== undefined) victimOf.set(change.byRecordId, change.recordId)
+  }
+  const groups = new Map<string, RecordChange[]>()
+  for (const change of kept) {
+    const id = change.change === 'added' ? victimOf.get(change.recordId) ?? change.recordId : change.recordId
+    const group = groups.get(id)
+    if (group === undefined) groups.set(id, [change])
+    else group.push(change)
+  }
+  return [...groups].map(([id, group]): ChangeDraft => {
+    const bucket = strongestBucket(group.map(change => CHANGE_BUCKETS[change.change as LearnedChangeKind]))
+    const replacement = bucket === 'superseded' ? replacementOf(group) : undefined
+    return {
+      bucket,
+      subjectId: replacement ?? id,
+      ...(replacement === undefined ? {} : { wasId: id }),
+      changes: group,
+    }
+  })
+}
+
+function leadOf(join: RecordJoin | undefined): { primary: string; leadSource: LearnedLeadSource } {
+  if (join?.content !== undefined) return { primary: join.content.summary, leadSource: 'joined' }
+  if (join?.absence !== undefined) return { primary: RECORD_UNREADABLE_LEAD, leadSource: 'absent' }
+  return { primary: RECORD_CONTENT_NOT_RECORDED_LEAD, leadSource: 'not-recorded' }
+}
+
+function learnedRow(draft: ChangeDraft, index: number, joins: ReadonlyMap<string, RecordJoin>): LearnedRowView {
+  const join = joins.get(draft.subjectId)
+  const content = join?.content
+  const absence = content === undefined ? join?.absence : undefined
+  const note = draft.bucket !== 'proposed' ? undefined : content?.kind === 'unknown' ? OPEN_QUESTION_NOTE : PROPOSED_NOTE
   return {
-    key: `${String(index)}:${row.recordId}:${row.change}:${String(row.atOrdinal)}`,
-    kind: row.change as LearnedChangeKind,
-    recordId: row.recordId,
-    ...(row.promotionPath === undefined ? {} : { promotionPath: row.promotionPath }),
-    ...(row.promotionReceiptDigest === undefined ? {} : { promotionReceiptDigest: row.promotionReceiptDigest }),
+    key: String(index),
+    bucket: draft.bucket,
+    ...(draft.section === undefined ? {} : { section: draft.section }),
+    ...leadOf(join),
+    ...(content === undefined ? {} : { kind: content.kind, content, applicability: applicabilityView(content.applicability) }),
+    ...(absence === undefined ? {} : { contentAbsence: absence }),
+    ...(draft.wasId === undefined ? {} : { was: leadOf(joins.get(draft.wasId)) }),
+    ...(note === undefined ? {} : { note }),
+    ...(draft.later === undefined ? {} : { sinceDetail: sinceThenDetail(draft.later) }),
+  }
+}
+
+function distinct(values: readonly (string | undefined)[]): string[] {
+  return [...new Set(values.filter((value): value is string => value !== undefined))]
+}
+
+function ledgerEntry(draft: ChangeDraft, index: number, joins: ReadonlyMap<string, RecordJoin>): ChangeLedgerView {
+  const ref = learnedRecordRef(draft.subjectId)
+  const href = ref === undefined ? undefined : entityRefRoute(ref)
+  const promotion = draft.changes.find(change => change.promotionPath !== undefined)
+  const applicability = joins.get(draft.subjectId)?.content?.applicability
+  return {
+    key: String(index),
+    bucket: draft.bucket,
+    ...(draft.section === undefined ? {} : { section: draft.section }),
+    recordIds: draft.wasId === undefined ? [draft.subjectId] : [draft.subjectId, draft.wasId],
+    events: draft.changes.map(change => ({ change: change.change, atOrdinal: change.atOrdinal })),
+    ...(promotion?.promotionPath === undefined ? {} : { promotionPath: promotion.promotionPath }),
+    ...(promotion?.promotionReceiptDigest === undefined ? {} : { promotionReceiptDigest: promotion.promotionReceiptDigest }),
+    evidenceTokens: distinct(draft.changes.map(change => change.evidenceToken)),
+    observationIds: distinct(draft.changes.map(change => change.observationId)),
+    sourceRunIds: distinct(draft.changes.map(change => change.sourceRunId)),
+    ...(applicability === undefined
+      ? {}
+      : {
+          validity: {
+            openedAtOrdinal: applicability.openedAtOrdinal,
+            ...(applicability.closedAtOrdinal === undefined ? {} : { closedAtOrdinal: applicability.closedAtOrdinal }),
+          },
+        }),
     ...(ref === undefined ? {} : { ref }),
     ...(href === undefined ? {} : { href }),
-    ...(section === undefined ? {} : { section }),
   }
+}
+
+/**
+ * Retrieval details' memory-changes part: one entry per Memory changes row, in the same order
+ * (D-19 part 2). An unsettled chain lists no rows, so it has no entries either (D-12).
+ */
+export function changeLedgerViews(
+  projection: Extract<RunKnowledgeProjection, { kind: 'ready' }>,
+): readonly ChangeLedgerView[] {
+  const { status } = projection.curation
+  if (status === 'pending' || status === 'running') return []
+  const joins = contentById(projection)
+  return changeDrafts(projection).map((draft, index) => ledgerEntry(draft, index, joins))
 }
 
 /**
@@ -1889,18 +2112,12 @@ export function learnedView(
   // prevents the next arm from being written above it — leaving no code between the fold and the
   // returns does.
   //
-  // SECTIONED BY THE OP'S OWN LISTS (423 D-15). `sinceThen.changes` is a filter over the same
-  // `changes` array, so membership is whole-row equality; this module never re-derives the
-  // snapshot identity rule the op applied.
+  // ONE ROW PER AFFECTED RECORD (427 D-15). With a snapshot the curation rows are its rows, in
+  // its order, so they equal the breakdown; the op's since-then changes follow as their own
+  // section (423 D-15, 427 D-17). Content is joined by record id from the whole read.
   const { curationSnapshot, sinceThen } = projection.learned
-  const sinceThenRows = new Set((sinceThen?.changes ?? []).map(row => canonicalJson(row)))
-  const sectionOf = (row: RecordChange): LearnedRowSection | undefined =>
-    curationSnapshot === undefined
-      ? undefined
-      : sinceThenRows.has(canonicalJson(row)) ? 'since-then' : 'curation'
-  const rows = projection.learned.changes
-    .filter(row => LEARNED_CHANGE_KIND_SET.has(row.change))
-    .map((row, index) => learnedRow(row, index, sectionOf(row)))
+  const joins = contentById(projection)
+  const rows = changeDrafts(projection).map((draft, index) => learnedRow(draft, index, joins))
   const snapshotView: LearnedSnapshotView | undefined = curationSnapshot === undefined
     ? undefined
     : {
@@ -2114,7 +2331,7 @@ export function projectKnowledgeView(read: KnowledgeRead): KnowledgeView {
     state: 'ready',
     used,
     effect,
-    ledger: { summary, steps },
+    ledger: { summary, steps, changes: changeLedgerViews(projection) },
     ...(projection.retrievalRung === undefined ? {} : { rung: rungView(projection.retrievalRung) }),
     learned: learnedView(projection),
     ...(proposals === undefined ? {} : { proposals }),

@@ -268,8 +268,8 @@ const legs = [
     ],
     allowed: [],
     greens: [
-      know('RECONCILIATION-ONLY-ON-MISMATCH: states the gap when the buckets total more than the rows'),
-      know('RECONCILIATION-ONLY-ON-MISMATCH: agrees the noun with the count — one change, zero shown'),
+      know('RECONCILIATION-ONLY-ON-MISMATCH: a schema-valid snapshot shows one curation row per counted record'),
+      know('RECONCILIATION-ONLY-ON-MISMATCH: the reconciliation text agrees its noun with the count'),
       know('RECONCILIATION-CAUSE-FROM-READ', 4), know('LEARNED-BREAKDOWN-LINE', 3),
     ],
   },
