@@ -44,7 +44,7 @@ function projection(steps: ReturnType<typeof step>[]): ReadyProjection {
   return parsed
 }
 
-const at = (stepIndex: number, testIndex = 0): StepAddress => ({ testIndex, stepIndex })
+const at = (stepIndex: number, testIndex = 0): StepAddress => ({ testIndex, stepIndex, stepText: `step text ${String(stepIndex)}` })
 
 function text(segments: readonly StepRefSegment[]): string {
   return segments.map(segment => (segment.kind === 'text' ? segment.text : segment.label)).join('')

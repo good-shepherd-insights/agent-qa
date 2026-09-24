@@ -2,18 +2,20 @@
 
 import { Fragment, useId } from "react"
 
+import { KnowledgeStepRefs } from "./knowledge-step-ref"
 import { MaskedText } from "./masked-text"
 import {
   USED_HEADING,
   USE_VERB_PHRASES,
   formatStepRefs,
+  type StepRefContext,
   type UsedRecordView,
   type UsedSectionView,
 } from "@/lib/knowledge-view"
 
 const HEADING_CLASS = "text-base font-medium leading-snug"
 
-export function KnowledgeUsed({ view }: { view: UsedSectionView }) {
+export function KnowledgeUsed({ view, stepRefs }: { view: UsedSectionView; stepRefs?: StepRefContext }) {
   const headingId = useId()
   return (
     <section data-knowledge-section="used" aria-labelledby={headingId} className="space-y-2">
@@ -30,7 +32,7 @@ export function KnowledgeUsed({ view }: { view: UsedSectionView }) {
       ) : (
         <ul className="divide-y divide-border">
           {view.records.map(record => (
-            <UsedRecordRow key={record.key} record={record} />
+            <UsedRecordRow key={record.key} record={record} stepRefs={stepRefs} />
           ))}
         </ul>
       )}
@@ -38,7 +40,7 @@ export function KnowledgeUsed({ view }: { view: UsedSectionView }) {
   )
 }
 
-function UsedRecordRow({ record }: { record: UsedRecordView }) {
+function UsedRecordRow({ record, stepRefs }: { record: UsedRecordView; stepRefs?: StepRefContext }) {
   return (
     <li
       data-used-record
@@ -53,7 +55,7 @@ function UsedRecordRow({ record }: { record: UsedRecordView }) {
           <Fragment key={use.verb}>
             {index > 0 ? " · " : null}
             {index === 0 ? USE_VERB_PHRASES[use.verb].lead : USE_VERB_PHRASES[use.verb].follow}{" "}
-            {formatStepRefs(use.addresses).map(segment => (segment.kind === "text" ? segment.text : segment.label)).join("")}
+            <KnowledgeStepRefs segments={formatStepRefs(use.addresses)} stepRefs={stepRefs} />
           </Fragment>
         ))}
       </p>

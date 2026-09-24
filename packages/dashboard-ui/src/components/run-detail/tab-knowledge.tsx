@@ -32,7 +32,12 @@ import { EvidenceIncomplete } from "./evidence-incomplete"
 import { KnowledgeLearned } from "./knowledge-learned"
 import { KnowledgeUsed } from "./knowledge-used"
 import { RetrievalDetails } from "./retrieval-details"
-import { EFFECT_HEADING, type EffectSectionView, type KnowledgeView } from "@/lib/knowledge-view"
+import {
+  EFFECT_HEADING,
+  type EffectSectionView,
+  type KnowledgeView,
+  type StepRefContext,
+} from "@/lib/knowledge-view"
 
 /** The tab body's own padding and rhythm (UI-SPEC: `TabsContent` → `ScrollArea` → this div). */
 const CONTENT_CLASS = "px-3 py-4 space-y-4"
@@ -43,7 +48,7 @@ const HEADING_CLASS = "text-base font-medium leading-snug"
 /** A page-level body sentence. `break-words` so a long masked error wraps inside the pane. */
 const BODY_CLASS = "text-sm text-muted-foreground break-words"
 
-export function TabKnowledge({ view }: { view: KnowledgeView | undefined }) {
+export function TabKnowledge({ view, stepRefs }: { view: KnowledgeView | undefined; stepRefs?: StepRefContext }) {
   // THE READ HAS NOT LANDED. Three bars and no words — the chips' `…` posture, which says nobody
   // has answered yet rather than guessing at what the answer will be.
   if (view === undefined) {
@@ -90,7 +95,7 @@ export function TabKnowledge({ view }: { view: KnowledgeView | undefined }) {
   // at the foot, and Memory changes renders on every ready run so each heading always states itself.
   return (
     <div data-knowledge-state="ready" className="px-3 py-4 space-y-6">
-      <KnowledgeUsed view={view.used} />
+      <KnowledgeUsed view={view.used} stepRefs={stepRefs} />
       <KnowledgeEffect view={view.effect} />
       <KnowledgeLearned view={view.learned} proposals={view.proposals} />
       <RetrievalDetails ledger={view.ledger} />

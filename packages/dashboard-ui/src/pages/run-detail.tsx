@@ -44,7 +44,7 @@ import {
   showMemberChrome,
 } from "@/lib/run-detail-view"
 import { projectPostProcessingView } from "@/lib/post-processing-view"
-import { bannerRung, projectKnowledgeView } from "@/lib/knowledge-view"
+import { bannerRung, projectKnowledgeView, type StepAddress, type StepRefContext } from "@/lib/knowledge-view"
 import { projectAnalysisView, type OnMark, type MarkDenial } from "@/lib/analysis-view"
 import { shouldRouteRunToLive } from "@/lib/status"
 import { useKeyboardShortcuts } from "@/hooks/use-keyboard-shortcuts"
@@ -1058,6 +1058,60 @@ export default function RunDetailPage() {
     setSelection({ type: 'step', stepId })
   }, [groups, displaySteps, searchParams, setSearchParams])
 
+  // 427 D-03: a Knowledge step reference is a cited step that also brings its tree row into view.
+  // The tab and the focus stay where the reader left them.
+  //
+  // A STEP THE MEMBER FILTER HIDES IS SELECTED ONLY ONCE THE WIDENED TREE HAS RENDERED. The router
+  // lands the URL in a transition, so a selection set in the same click renders first against the
+  // narrowed tree, where the visible-tree guard pulls it back and the URL sync rewrites the member
+  // param the click had just removed.
+  const [pendingKnowledgeStep, setPendingKnowledgeStep] = useState<string | null>(null)
+  const scrollTreeRowIntoView = useCallback((stepId: string) => {
+    requestAnimationFrame(() => {
+      const container: ParentNode = stepTreeScrollRef.current ?? document
+      const row = container.querySelector<HTMLElement>(`[data-step-id="${stepId}"]`)
+      const reduced = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false
+      row?.scrollIntoView({ block: 'nearest', behavior: reduced ? 'auto' : 'smooth' })
+    })
+  }, [])
+  const onKnowledgeStep = useCallback((address: StepAddress) => {
+    const stepId = runDetailStepKey(address.testIndex, address.stepIndex)
+    if (displaySteps.some((step) => step.id === stepId)) {
+      onCitedStep(address.testIndex, address.stepIndex)
+      scrollTreeRowIntoView(stepId)
+      return
+    }
+    const exists = groups.some(
+      (entry) =>
+        entry.member.testIndex === address.testIndex
+        && entry.steps.some(({ step }) => step.stepIndex === address.stepIndex),
+    )
+    if (!exists) return
+    const next = new URLSearchParams(searchParams)
+    next.delete('member')
+    setSearchParams(next, { replace: false })
+    setPendingKnowledgeStep(stepId)
+  }, [displaySteps, groups, onCitedStep, scrollTreeRowIntoView, searchParams, setSearchParams])
+  useEffect(() => {
+    if (pendingKnowledgeStep === null) return
+    if (!displaySteps.some((step) => step.id === pendingKnowledgeStep)) return
+    setPendingKnowledgeStep(null)
+    setSelection({ type: 'step', stepId: pendingKnowledgeStep })
+    scrollTreeRowIntoView(pendingKnowledgeStep)
+  }, [pendingKnowledgeStep, displaySteps, setSelection, scrollTreeRowIntoView])
+
+  const knowledgeStepRefs = useMemo<StepRefContext>(() => ({
+    onSelect: onKnowledgeStep,
+    resolvable: (address) => groups.some(
+      (entry) =>
+        entry.member.testIndex === address.testIndex
+        && entry.steps.some(({ step }) => step.stepIndex === address.stepIndex),
+    ),
+    testNames: groups.length > 1
+      ? new Map(groups.map(({ member }) => [member.testIndex, memberDisplayName(member)]))
+      : new Map(),
+  }), [groups, onKnowledgeStep])
+
   /**
    * Narrow the tree to a cluster sibling's own group (406-06 · D-08).
    *
@@ -1252,6 +1306,7 @@ export default function RunDetailPage() {
                   platform={run.platform}
                   pipelineRef={pipelineRef}
                   knowledge={knowledgeView}
+                  knowledgeStepRefs={knowledgeStepRefs}
                   onSelectStep={stepId => setSelection({ type: 'step', stepId })}
                 />
                 </div>

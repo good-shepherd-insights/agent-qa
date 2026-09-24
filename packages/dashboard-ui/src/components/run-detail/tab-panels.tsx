@@ -10,7 +10,7 @@ import { TabAriaTree } from "./tab-aria-tree"
 import { TabA11y } from "./tab-a11y"
 import { TabKnowledge } from "./tab-knowledge"
 import type { ExecutionLogEntry } from "@/lib/api"
-import type { KnowledgeView } from "@/lib/knowledge-view"
+import type { KnowledgeView, StepRefContext } from "@/lib/knowledge-view"
 import type { DisplayStep } from "@/lib/display-step"
 import type { ReasoningPipelineHandle } from "@/components/reasoning-pipeline"
 import type { RunDetailSubAction } from "@vostride/agent-qa-schema"
@@ -37,6 +37,8 @@ interface TabPanelsProps extends OverviewPlayerProps {
    * — the page owns the one `runs.knowledge` client, and this component paints what it is handed.
    */
   knowledge?: KnowledgeView | undefined
+  /** 427 D-03: the page's step-reference callback and resolver; the tab only calls back. */
+  knowledgeStepRefs?: StepRefContext
   onSelectStep?: (stepId: string) => void
 }
 
@@ -52,6 +54,7 @@ export function TabPanels({
   model, playhead, recording, frame, playerSource, onPlayerSourceChange, onPlayheadChange, seekFraction, isTimelineKeyIgnored,
   pipelineRef, timeline, clock, seekRevision, onProgress, onPlayheadObserved, onRecordingEnded, autoPlay,
   knowledge,
+  knowledgeStepRefs,
   onSelectStep,
 }: TabPanelsProps) {
   const hasExecutionLogs = executionLogs.length > 0
@@ -201,7 +204,7 @@ export function TabPanels({
 
       <TabsContent value="knowledge" className="flex-1 min-h-0">
         <ScrollArea className="h-full">
-          <TabKnowledge view={knowledge} />
+          <TabKnowledge view={knowledge} stepRefs={knowledgeStepRefs} />
         </ScrollArea>
       </TabsContent>
     </Tabs>

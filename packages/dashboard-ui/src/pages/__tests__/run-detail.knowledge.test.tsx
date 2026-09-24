@@ -21,10 +21,10 @@
 
 import { act, type ReactNode } from "react"
 import { createRoot, type Root } from "react-dom/client"
-import { MemoryRouter, Route, Routes } from "react-router"
+import { MemoryRouter, Route, Routes, useLocation } from "react-router"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 
-import type { RunKnowledgeProjection } from "@vostride/agent-qa-schema"
+import { asRef, type RunKnowledgeProjection } from "@vostride/agent-qa-schema"
 
 import RunDetailPage from "@/pages/run-detail"
 import {
@@ -728,5 +728,188 @@ describe("the v1 Memory surface is GONE from the main pane, not guarded (407-16 
 
     expect(knowledgeState(view)).toBe("ready")
     expect(memoryTriggers(view)).toHaveLength(0)
+  })
+})
+
+/**
+ * 427 D-03 · UI-SPEC S3: every step number in the Knowledge used rows is a control that selects its
+ * step on the page (Open Question 4 follows onCitedStep: an address that exists anywhere in the run
+ * is a control, and activation widens a hiding member filter; an address the run does not contain
+ * is plain text).
+ */
+describe("427 D-03: a step reference in Knowledge used takes the reader to that step", () => {
+  function servedLine(id: string, summary: string) {
+    return { id, kind: "fact", summary, trust: 0.9, status: "active", servedAsCanary: false, tier: "confirmed" }
+  }
+
+  function knowledgeStep(testIndex: number, stepIndex: number, channel1: ReturnType<typeof servedLine>[]) {
+    return {
+      testId: `t_${String(testIndex)}`,
+      testIndex,
+      stepIndex,
+      stepText: `step text ${String(testIndex)}:${String(stepIndex)}`,
+      served: { channel1, channel2: [], channel3: [] },
+      trace: { kind: "no-trace" as const, reason: "pre-trace-run" as const },
+    }
+  }
+
+  function knowledgeOf(steps: ReturnType<typeof knowledgeStep>[]): RunKnowledgeProjection {
+    return { ...POPULATED, steps, learned: { changes: [], canaryAttributions: [] } } as RunKnowledgeProjection
+  }
+
+  const shaOf = (testIndex: number, stepIndex: number) => `${String(testIndex)}${String(stepIndex)}`.repeat(32)
+
+  function steppedDetail(id: string, members: { testIndex: number; name: string; steps: number }[]) {
+    const addresses = members.flatMap(member =>
+      Array.from({ length: member.steps }, (_, stepIndex) => ({ testIndex: member.testIndex, stepIndex })))
+    return {
+      runId: id,
+      members: members.map(member => ({ testIndex: member.testIndex, attempts: 1, name: member.name, outcome: "passed" as const })),
+      steps: addresses.map(({ testIndex, stepIndex }) => ({
+        testIndex,
+        stepIndex,
+        stepText: `Step ${String(stepIndex + 1)}`,
+        cacheStatus: "miss" as const,
+        verifierVerdict: { pass: true, reasoning: "looks right" },
+        selfHealOccurred: false,
+        briefDigest: "d00",
+        status: "passed" as const,
+        durationMs: 1000,
+      })),
+      subActions: addresses.map(({ testIndex, stepIndex }) => ({
+        testIndex,
+        stepIndex,
+        subActionIndex: 0,
+        plan: `Action ${String(testIndex)}:${String(stepIndex)}`,
+        plannedAction: { type: "click", ref: asRef(`button-${String(testIndex)}-${String(stepIndex)}`) },
+        screenStateHash: "f".repeat(64),
+        result: { success: true },
+        artifactRefs: [{ id: `decision-screenshot:${shaOf(testIndex, stepIndex)}`, sha: shaOf(testIndex, stepIndex) }],
+      })),
+      tokens: { measuredSteps: 0, unmeasuredSteps: addresses.length },
+    }
+  }
+
+  function LocationProbe() {
+    const location = useLocation()
+    return <output data-location={location.search} />
+  }
+
+  async function renderWithLocation(url: string): Promise<HTMLElement> {
+    container = document.createElement("div")
+    document.body.appendChild(container)
+    root = createRoot(container)
+    await act(async () => {
+      root?.render(
+        <MemoryRouter initialEntries={[url]}>
+          <LocationProbe />
+          <Routes>
+            <Route path="/runs/:id" element={<RunDetailPage />} />
+          </Routes>
+        </MemoryRouter>,
+      )
+    })
+    await flushRender()
+    return container as HTMLElement
+  }
+
+  function query(view: HTMLElement): URLSearchParams {
+    return new URLSearchParams(view.querySelector("[data-location]")?.getAttribute("data-location") ?? "")
+  }
+
+  function selectedStepId(view: HTMLElement): string | null {
+    return view.querySelector('[role="treeitem"][data-step-id][aria-selected="true"]')?.getAttribute("data-step-id") ?? null
+  }
+
+  function playheadRow(view: HTMLElement): string | null {
+    return view.querySelector("[data-playhead-row]")?.getAttribute("data-sub-action-id") ?? null
+  }
+
+  async function activate(control: HTMLElement): Promise<void> {
+    await act(async () => {
+      control.focus()
+      control.click()
+    })
+    await flushRender()
+  }
+
+  it("STEP-REF-SELECTS-STEP: selects the step, parks the playhead there, keeps the Knowledge tab and the focus", async () => {
+    fetchRunDetailMock.mockImplementation((id: string) =>
+      Promise.resolve(steppedDetail(id, [{ testIndex: 0, name: "Checkout", steps: 3 }])))
+    const cart = servedLine("rec_cart", "the cart page lives at /view_cart")
+    const coupon = servedLine("rec_coupon", "coupons apply on the review step")
+    fetchRunKnowledgeMock.mockResolvedValue(knowledgeOf([
+      knowledgeStep(0, 0, [cart]),
+      knowledgeStep(0, 1, [cart, coupon]),
+      knowledgeStep(0, 2, [cart]),
+    ]))
+
+    const view = await renderWithLocation(`/runs/${RUN_ID}?tab=knowledge`)
+    expect(knowledgeState(view)).toBe("ready")
+    expect([...view.querySelectorAll("[data-row-uses]")].map(line => line.textContent))
+      .toEqual(["Given in steps 1–3", "Given in step 2"])
+    expect(selectedStepId(view)).toBe("0:0")
+
+    const control = view.querySelector<HTMLElement>('button[data-step-ref][data-step-ref-test="0"][data-step-ref-step="1"]')
+    expect(control).not.toBeNull()
+    await activate(control!)
+
+    expect(selectedStepId(view)).toBe("0:1")
+    expect(playheadRow(view)).toBe("0:1-0")
+    expect(query(view).get("step")).toBe("0:1")
+    expect(knowledgeState(view)).toBe("ready")
+    expect(view.querySelector('[role="tab"][data-state="active"]')?.textContent).toBe("Knowledge")
+    expect(document.activeElement).toBe(control)
+
+    await act(async () => { await new Promise(resolve => requestAnimationFrame(() => resolve(undefined))) })
+    const scrolled = vi.mocked(Element.prototype.scrollIntoView).mock.contexts
+    expect(scrolled).toContain(view.querySelector('[data-step-id="0:1"]'))
+    expect(Element.prototype.scrollIntoView).toHaveBeenCalledWith({ block: "nearest", behavior: "smooth" })
+  })
+
+  it("STEP-REF-HIDDEN-MEMBER-WIDENS: a reference to a member the filter hides widens the filter, then selects", async () => {
+    fetchRunDetailMock.mockImplementation((id: string) =>
+      Promise.resolve(steppedDetail(id, [
+        { testIndex: 0, name: "checkout", steps: 2 },
+        { testIndex: 1, name: "login", steps: 1 },
+      ])))
+    const shared = servedLine("rec_shared", "the session cookie is named sid")
+    fetchRunKnowledgeMock.mockResolvedValue(knowledgeOf([
+      knowledgeStep(0, 1, [shared]),
+      knowledgeStep(1, 0, [shared]),
+    ]))
+
+    const view = await renderWithLocation(`/runs/${RUN_ID}?tab=knowledge&member=0`)
+    expect(knowledgeState(view)).toBe("ready")
+    expect(view.querySelector('[data-step-id="1:0"]')).toBeNull()
+
+    const control = view.querySelector<HTMLElement>('button[data-step-ref][data-step-ref-test="1"][data-step-ref-step="0"]')
+    expect(control).not.toBeNull()
+    await activate(control!)
+
+    expect(query(view).has("member")).toBe(false)
+    expect(selectedStepId(view)).toBe("1:0")
+    expect(knowledgeState(view)).toBe("ready")
+  })
+
+  it("STEP-REF-UNRESOLVABLE-PLAIN: an address the run detail does not contain is plain text, not a button", async () => {
+    fetchRunDetailMock.mockImplementation((id: string) =>
+      Promise.resolve(steppedDetail(id, [{ testIndex: 0, name: "Checkout", steps: 2 }])))
+    const cart = servedLine("rec_cart", "the cart page lives at /view_cart")
+    fetchRunKnowledgeMock.mockResolvedValue(knowledgeOf([
+      knowledgeStep(0, 0, [cart]),
+      knowledgeStep(0, 5, [cart]),
+    ]))
+
+    const view = await renderWithLocation(`/runs/${RUN_ID}?tab=knowledge`)
+    const uses = view.querySelector("[data-row-uses]")
+    expect(uses?.textContent).toBe("Given in steps 1 and 6")
+
+    expect(uses?.querySelector('button[data-step-ref][data-step-ref-step="0"]')?.textContent).toBe("1")
+    expect(uses?.querySelector('[data-step-ref-step="5"]')).toBeNull()
+    expect([...(uses?.querySelectorAll("button") ?? [])].map(button => button.textContent)).toEqual(["1"])
+    const plain = [...(uses?.querySelectorAll("span.tabular-nums") ?? [])].filter(span => span.textContent === "6")
+    expect(plain).toHaveLength(1)
+    expect(plain[0]?.hasAttribute("data-step-ref")).toBe(false)
   })
 })

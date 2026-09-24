@@ -232,6 +232,19 @@ export function usedCountLine(count: number): string {
 export interface StepAddress {
   readonly testIndex: number
   readonly stepIndex: number
+  readonly stepText: string
+}
+
+// 427 D-03: the page's side of a step reference. The tab only calls back; selection, playhead and
+// scroll stay page state.
+export interface StepRefContext {
+  readonly onSelect: (address: StepAddress) => void
+  readonly resolvable: (address: StepAddress) => boolean
+  readonly testNames: ReadonlyMap<number, string>
+}
+
+export function stepRefAccessibleName(address: StepAddress): string {
+  return `Go to step ${String(address.stepIndex + 1)} · ${address.stepText}`
 }
 
 export type StepRefSegment =
@@ -301,7 +314,7 @@ export function usedRecordViews(
   const steps = [...projection.steps].sort(compareAddresses)
   const byId = new Map<string, { primary: string; addresses: StepAddress[] }>()
   for (const step of steps) {
-    const address: StepAddress = { testIndex: step.testIndex, stepIndex: step.stepIndex }
+    const address: StepAddress = { testIndex: step.testIndex, stepIndex: step.stepIndex, stepText: step.stepText }
     for (const line of step.served.channel1) {
       const entry = byId.get(line.id)
       if (entry === undefined) {
