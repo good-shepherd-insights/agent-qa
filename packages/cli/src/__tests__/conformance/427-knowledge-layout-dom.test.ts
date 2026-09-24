@@ -216,6 +216,130 @@ const machinery: Machinery[] = []
 const worlds = new Map<World, Extract<RunKnowledgeProjection, { kind: 'ready' }>>()
 let serving: World = 'settled'
 
+type EffectRead = { world: World; filter: string; entries: Array<{ outcome: string; glyph: string; sentence: string }>; uncounted: number }
+type Focused = { id: number; tag: string; label: string | null; inKnowledge: boolean; srOnly: string; tooltip: string | null; scrollTop: number }
+type Inventory = { stepRefs: number[]; onTrial: number[]; buckets: number[]; uncounted: number[]; recordIdCopies: number[]; proposals: number[] }
+type TooltipEscape = { trigger: string; shown: string | null; afterEscape: number }
+type Walk = { focused: Focused[]; inventory: Inventory; labels: Record<number, string | null>; srOnly: Record<number, string>; escapes: TooltipEscape[] }
+const effects: EffectRead[] = []
+let walk: Walk | undefined
+
+async function captureElement(page: Page, selector: string, name: string) {
+  const directory = process.env.AGENT_QA_427_CAPTURE_DIR
+  if (!directory) return
+  mkdirSync(directory, { recursive: true })
+  await page.locator(selector).first().screenshot({ path: join(directory, `${name}.png`), animations: 'disabled' })
+}
+
+async function readEffect(page: Page, world: World) {
+  const read = await page.evaluate(() => {
+    const section = document.querySelector('[data-knowledge-section="effect"]')!
+    return {
+      filter: getComputedStyle(section).filter,
+      entries: [...section.querySelectorAll('[data-effect-entry]')].map(entry => ({
+        outcome: entry.getAttribute('data-effect-outcome') ?? '',
+        glyph: [...(entry.querySelector('svg')?.classList ?? [])].find(name => name.startsWith('lucide-') && name !== 'lucide-icon') ?? '',
+        sentence: (entry.querySelector('[data-effect-sentence]')?.textContent ?? '').trim(),
+      })),
+      uncounted: Number(section.querySelector('[data-effect-uncounted]')?.getAttribute('data-effect-uncounted') ?? 0),
+    }
+  })
+  effects.push({ world, ...read })
+}
+
+/** E5 populated: the Effect section with colour stripped, in the two worlds that together hold all eight outcomes. */
+async function driveGrayscale(context: BrowserContext, url: string) {
+  for (const [world, name] of [['scan-incomplete', 'knowledge-effect-grayscale'], ['pending', 'knowledge-effect-grayscale-pending']] as const) {
+    serving = world
+    const page = await context.newPage()
+    await openKnowledge(page, url)
+    await page.addStyleTag({ content: '[data-knowledge-section="effect"] { filter: grayscale(1) }' })
+    await page.locator('[data-knowledge-section="effect"]').scrollIntoViewIfNeeded()
+    await frames(page)
+    await captureElement(page, '[data-knowledge-section="effect"]', name)
+    await readEffect(page, world)
+    await page.close()
+  }
+  serving = 'settled'
+}
+
+/** Tab through the whole Knowledge pane with Retrieval details open, then prove Escape closes a tooltip. */
+async function driveKeyboard(context: BrowserContext, url: string): Promise<Walk> {
+  const page = await context.newPage()
+  await openKnowledge(page, url)
+  await openDetails(page)
+  await scrollPane(page, 'top')
+  const inventory = await page.evaluate(() => {
+    const ids = new WeakMap<Element, number>()
+    let next = 0
+    const idOf = (element: Element) => { if (!ids.has(element)) ids.set(element, next++); return ids.get(element)! }
+    ;(window as unknown as { walkIdOf: (element: Element) => number }).walkIdOf = idOf
+    const root = document.querySelector('[data-knowledge-state="ready"]')!
+    const all = (selector: string) => [...root.querySelectorAll(selector)]
+    const onTrial = all('[data-used-record] span[tabindex="0"]').filter(element => (element.textContent ?? '').includes('on trial'))
+    const groups = {
+      stepRefs: all('[data-step-ref]'), onTrial, buckets: all('[data-bucket-label]'),
+      uncounted: all('[data-effect-uncounted] span[tabindex="0"]'), recordIdCopies: all('[data-record-id-copy]'),
+      proposals: all('[data-pending-proposals] button'),
+    }
+    const labels: Record<number, string | null> = {}
+    const srOnly: Record<number, string> = {}
+    const inventory = Object.fromEntries(Object.entries(groups).map(([key, elements]) => [key, elements.map(element => {
+      const id = idOf(element)
+      labels[id] = element.getAttribute('aria-label')
+      srOnly[id] = (element.querySelector('.sr-only')?.textContent ?? '').trim()
+      return id
+    })]))
+    return { inventory, labels, srOnly }
+  })
+  await page.getByRole('tab', { name: 'Knowledge' }).focus()
+  const focused: Focused[] = []
+  let entered = false
+  for (let press = 0; press < 600; press++) {
+    await page.keyboard.press('Tab')
+    await frames(page)
+    const now = await page.evaluate(() => {
+      const element = document.activeElement
+      if (!element || element === document.body) return undefined
+      const idOf = (window as unknown as { walkIdOf: (element: Element) => number }).walkIdOf
+      return {
+        id: idOf(element), tag: element.tagName.toLowerCase(), label: element.getAttribute('aria-label'),
+        inKnowledge: element.closest('[data-knowledge-state]') !== null,
+        srOnly: (element.querySelector('.sr-only')?.textContent ?? '').trim(),
+        // A closing tooltip lingers through its exit animation, so only open ones are read.
+        tooltip: [...document.querySelectorAll('[data-slot="tooltip-content"]:not([data-state="closed"])')].map(node => node.textContent ?? '').join(' ') || null,
+        scrollTop: element.closest('[data-slot="scroll-area"]')?.scrollTop ?? -1,
+      }
+    })
+    if (now === undefined) break
+    if (focused.some(entry => entry.id === now.id)) break
+    if (entered && !now.inKnowledge) break
+    entered ||= now.inKnowledge
+    focused.push(now)
+  }
+
+  const escapes: TooltipEscape[] = []
+  for (const [trigger, selector] of [
+    ['on trial', '[data-used-record][data-on-trial] span[tabindex="0"]'],
+    ['bucket label', '[data-bucket-label]'],
+    ['uncounted line', '[data-effect-uncounted] span[tabindex="0"]'],
+  ] as const) {
+    const target = page.locator(selector).first()
+    await target.scrollIntoViewIfNeeded()
+    // Let the scroll event land before focusing, or Radix reads it as a reason to close.
+    await frames(page)
+    await frames(page)
+    await target.focus()
+    const tooltip = page.locator('[data-slot="tooltip-content"]')
+    const shown = await tooltip.first().waitFor({ timeout: 5_000 }).then(async () => await tooltip.first().textContent(), () => null)
+    await page.keyboard.press('Escape')
+    await tooltip.first().waitFor({ state: 'detached', timeout: 5_000 }).catch(() => undefined)
+    escapes.push({ trigger, shown, afterEscape: await tooltip.count() })
+  }
+  await page.close()
+  return { focused, ...inventory, inventory: inventory.inventory as Inventory, escapes }
+}
+
 async function frames(page: Page) {
   await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))))
 }
@@ -426,6 +550,7 @@ describe('the Knowledge tab on the shipped bundle at three geometries (427-13)',
       await routeKnowledge(context, runId)
       const page = await context.newPage()
       await openKnowledge(page, url)
+      await readEffect(page, 'settled')
       const opened = await detailsState(page)
       await driveGeometry(page, DESKTOP_LABEL, 'knowledge-1280')
       // A tab switch unmounts the pane, so Retrieval details must come back closed.
@@ -442,11 +567,14 @@ describe('the Knowledge tab on the shipped bundle at three geometries (427-13)',
       await narrow.setViewportSize(NARROW)
       await openKnowledge(narrow, url)
       await driveGeometry(narrow, NARROW_LABEL, 'knowledge-400')
+      await narrow.close()
+      try { await driveGrayscale(context, url) } catch (error) { failures.grayscale = String(error) }
+      try { walk = await driveKeyboard(context, url) } catch (error) { failures.keyboard = String(error) }
       await context.close()
 
       await driveZoom(url, runId)
     } catch (error) { failures.drive = String(error) }
-    const observation = { realRead, realSteps, zoom, remount, geometries, failures,
+    const observation = { realRead, realSteps, zoom, remount, geometries, failures, effects, walk,
       machinery: machinery.map(({ sections, ...rest }) => ({ ...rest, sections: Object.fromEntries(Object.entries(sections).map(([name, { text }]) => [name, text])) })) }
     if (process.env.AGENT_QA_427_CAPTURE_DIR) {
       mkdirSync(process.env.AGENT_QA_427_CAPTURE_DIR, { recursive: true })
@@ -516,5 +644,57 @@ describe('the Knowledge tab on the shipped bundle at three geometries (427-13)',
     for (const id of [...RECORD_IDS, ...DIGESTS]) expect(open!.details.includes(id), `Retrieval details is missing ${id}`).toBe(true)
     expect(remount, JSON.stringify(failures)).toEqual({ opened: 'closed', afterSwitch: 'closed', detailsRowsAfterSwitch: 0 })
     expect(realRead?.status, 'the real knowledge door answered the run before the substitution').toBe(200)
+  })
+
+  it('EFFECT-GRAYSCALE', () => {
+    expect(effects.map(read => read.world), JSON.stringify(failures)).toEqual(['settled', 'scan-incomplete', 'pending'])
+    const [settled, partial, pending] = effects
+    // No single run can show all eight: pending needs curation unsettled, the four attributed
+    // outcomes need it settled, and unknown needs the store read incomplete (canaryOutcomeWord).
+    expect(settled!.entries.map(entry => entry.outcome).sort()).toEqual(['confirmed', 'contradicted', 'harmful', 'helpful', 'replay-complete', 'replay-stopped'])
+    expect(settled!.uncounted).toBe(2)
+    expect(partial!.filter).toBe('grayscale(1)')
+    expect(pending!.filter).toBe('grayscale(1)')
+    // Two unmeasured trials become two unknown entries (one per record), so the partial world paints eight entries over seven outcomes.
+    expect([...new Set(partial!.entries.map(entry => entry.outcome))].sort()).toEqual(['confirmed', 'contradicted', 'harmful', 'helpful', 'replay-complete', 'replay-stopped', 'unknown'])
+    expect(partial!.entries).toHaveLength(8)
+    expect([...new Set(pending!.entries.map(entry => entry.outcome))].sort()).toEqual(['pending', 'replay-complete', 'replay-stopped'])
+    for (const read of [partial!, pending!]) {
+      const outcomes = new Set(read.entries.map(entry => entry.outcome))
+      expect(new Set(read.entries.map(entry => entry.glyph)).size, `${read.world}: ${JSON.stringify(read.entries)}`).toBe(outcomes.size)
+    }
+    const byOutcome = new Map([...partial!.entries, ...pending!.entries].map(entry => [entry.outcome, entry]))
+    expect(byOutcome.size).toBe(8)
+    const glyphs = [...byOutcome.values()].map(entry => entry.glyph)
+    expect(glyphs.every(glyph => glyph.startsWith('lucide-')), JSON.stringify(glyphs)).toBe(true)
+    expect(new Set(glyphs).size, JSON.stringify(glyphs)).toBe(8)
+    expect(new Set([...byOutcome.values()].map(entry => entry.sentence)).size).toBe(8)
+    for (const entry of [...partial!.entries, ...pending!.entries]) expect(byOutcome.get(entry.outcome)!.glyph).toBe(entry.glyph)
+  })
+
+  it('KNOWLEDGE-ACCESSIBLE-TREE', () => {
+    expect(walk, JSON.stringify(failures)).toBeDefined()
+    const { focused, inventory, labels, srOnly, escapes } = walk!
+    const reached = new Set(focused.map(entry => entry.id))
+    const where = (group: string) => `${group}: ${JSON.stringify(focused.map(entry => `${entry.tag}:${entry.label ?? ''}`))}`
+    for (const [group, ids] of Object.entries(inventory)) {
+      expect(ids.length, `no ${group} on the page`).toBeGreaterThan(0)
+      for (const id of ids) expect(reached.has(id), where(`${group} ${String(id)} never took focus`)).toBe(true)
+    }
+    for (const id of inventory.stepRefs) expect(labels[id], 'a step reference\'s accessible name').toMatch(/^Go to /)
+    for (const id of [...inventory.onTrial, ...inventory.buckets, ...inventory.uncounted]) expect(srOnly[id]!.length, `tooltip trigger ${String(id)} has no sr-only meaning`).toBeGreaterThan(0)
+    for (const id of inventory.proposals) expect(labels[id]).toMatch(/^Copy review command/)
+    for (const id of inventory.recordIdCopies) expect(labels[id]).toMatch(/^Copy record id /)
+    // Tab shows a trigger's tooltip unless the focus had to scroll the pane: Radix closes a tooltip
+    // when an ancestor scrolls, and the browser's focus scroll lands a frame after the open. The
+    // sr-only meaning above is what is announced either way; the closed ones are counted, not hidden.
+    const triggers = focused.filter(item => [...inventory.onTrial, ...inventory.buckets, ...inventory.uncounted].includes(item.id))
+    for (const entry of triggers) if (entry.tooltip !== null) expect(entry.tooltip).toContain(entry.srOnly)
+    expect(triggers.filter(entry => entry.tooltip !== null).length, 'no trigger showed its tooltip on Tab').toBeGreaterThan(0)
+    expect(escapes.map(entry => entry.trigger)).toEqual(['on trial', 'bucket label', 'uncounted line'])
+    for (const entry of escapes) {
+      expect(entry.shown?.length ?? 0, `${entry.trigger}: focus showed no tooltip`).toBeGreaterThan(0)
+      expect(entry.afterEscape, `${entry.trigger}: Escape left the tooltip open`).toBe(0)
+    }
   })
 })
