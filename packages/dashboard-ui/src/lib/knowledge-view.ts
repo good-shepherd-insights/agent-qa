@@ -1127,9 +1127,6 @@ export function reconciliationCountText(counted: number, shown: number): string 
   return `${String(counted)} ${counted === 1 ? 'change' : 'changes'} counted · ${String(shown)} shown`
 }
 
-/** The one CTA in the whole tab (D-11) — where proposals are reviewed, never a proposal itself. */
-export const REVIEW_PROPOSALS_CTA = 'Review proposals'
-
 /**
  * The runnable review command for every pending proposal (423 D-19 · SC5).
  *
@@ -1163,16 +1160,16 @@ export function reviewCommandCopyFailedText(command: string): string {
 }
 
 /**
- * The pending-proposals line (D-11).
+ * The pending-proposals line (D-11; re-copied by 427 D-18).
  *
- * THE VERB AGREES WITH THE COUNT, not just the noun. `1 proposals awaiting` and `1 proposal
- * awaiting` are both wrong; the singular is its own sentence, which is why this is a function and
- * not a template with an `s`.
+ * THE COUNT IS THE PROJECT'S, NOT THIS RUN'S. `pendingProposalCount` is read across the whole
+ * workspace inbox, so the line names that scope rather than letting a run page read it as its own.
+ * The singular is its own sentence, which is why this is a function and not a template with an `s`.
  */
 export function pendingProposalsLine(count: number): string {
   return count === 1
-    ? '1 proposal awaits your decision'
-    : `${String(count)} proposals awaiting your decision`
+    ? '1 proposal waiting for review in this project'
+    : `${String(count)} proposals waiting for review in this project`
 }
 
 /**
@@ -1756,9 +1753,10 @@ export interface LearnedView {
 export interface ProposalsView {
   readonly count: number
   readonly line: string
-  readonly ctaText: string
   /** A runnable CLI command (423 D-19), never a route: there is no dashboard proposals inbox. */
   readonly command: string
+  /** The copy button's accessible purpose; the command follows it in the accessible name (D-18). */
+  readonly copyLabel: string
 }
 
 /** The rung that served THIS run, if the evidence recorded one (D-13). */
@@ -2281,10 +2279,10 @@ function proposalsView(count: number | undefined): ProposalsView | undefined {
   return {
     count,
     line: pendingProposalsLine(count),
-    ctaText: REVIEW_PROPOSALS_CTA,
     // No dashboard inbox route exists and this module mints none; the run-detail CTA no longer
     // targets Chat (423 D-19 · SC5). It carries the terminal command over `proposals.list`.
     command: PENDING_PROPOSALS_REVIEW_COMMAND,
+    copyLabel: COPY_REVIEW_COMMAND_LABEL,
   }
 }
 

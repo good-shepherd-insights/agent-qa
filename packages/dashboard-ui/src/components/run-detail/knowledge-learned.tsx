@@ -228,23 +228,25 @@ export function KnowledgeLearned({
       )}
 
       {proposals === undefined ? null : (
-        <p
-          data-pending-proposals={String(proposals.count)}
-          className="flex flex-wrap items-baseline gap-2 text-sm text-muted-foreground"
-        >
-          <span className="tabular-nums">{proposals.line}</span>
+        <div data-pending-proposals={String(proposals.count)} className="space-y-1 pt-2">
+          <p className="text-sm text-muted-foreground tabular-nums">{proposals.line}</p>
           {/*
-            THE CTA IS A RUNNABLE COMMAND, NOT A ROUTE (423 D-19 · SC5). No dashboard inbox exists,
-            so the control shows and copies `ProposalsView.command`; `ctaText` names it for
-            assistive technology. Both come from `lib/knowledge-view.ts`.
+            THE CTA IS A RUNNABLE COMMAND, NOT A ROUTE (423 D-19 · SC5, 427 D-18). No dashboard inbox
+            exists, so the command reads in its own <code> and an icon button beside it copies it;
+            `copyLabel` leads the button's accessible name. Both come from `lib/knowledge-view.ts`.
           */}
-          <ReviewCommandButton
-            data-review-proposals
-            command={proposals.command}
-            label={proposals.ctaText}
-            className="font-mono text-xs text-primary underline-offset-4 hover:underline"
-          />
-        </p>
+          <div className="flex items-center gap-1">
+            <code data-pending-proposals-command className="font-mono text-xs text-muted-foreground wrap-anywhere">
+              {proposals.command}
+            </code>
+            <ReviewCommandButton
+              data-review-proposals
+              variant="icon"
+              command={proposals.command}
+              label={proposals.copyLabel}
+            />
+          </div>
+        </div>
       )}
     </section>
   )

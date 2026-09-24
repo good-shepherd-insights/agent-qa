@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react"
 import { Check, Copy } from "lucide-react"
 
+import { Button } from "@/components/ui/button"
 import { REVIEW_COMMAND_COPIED_TEXT, reviewCommandCopyFailedText } from "@/lib/knowledge-view"
 
 export function IdBadge({ label, value }: { label: string; value: string }) {
@@ -32,16 +33,21 @@ type CopyStatus = "idle" | "copied" | "failed"
  * visible text and leads nothing away from the page. The clipboard write is optional-chained and
  * awaited: outside a secure context there is no clipboard, and a rejected write is reported as a
  * failure that spells the command out rather than as a tick.
+ *
+ * `variant="icon"` (427 D-18) is for a caller that shows the command in its own `<code>` beside the
+ * control: the button shows only the Copy glyph and keeps the command as sr-only text.
  */
 export function ReviewCommandButton({
   command,
   label,
   className,
+  variant = "text",
   ...attributes
 }: {
   command: string
   label: string
   className?: string
+  variant?: "text" | "icon"
 } & { [attribute: `data-${string}`]: string | boolean }) {
   const [status, setStatus] = useState<CopyStatus>("idle")
   const reset = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
@@ -63,6 +69,37 @@ export function ReviewCommandButton({
     )
   }
 
+  const statusRegion = (
+    <span data-review-command-status role="status" aria-live="polite" className="sr-only">
+      {status === "copied" ? REVIEW_COMMAND_COPIED_TEXT : status === "failed" ? reviewCommandCopyFailedText(command) : ""}
+    </span>
+  )
+
+  if (variant === "icon") {
+    return (
+      <>
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon-xs"
+          {...attributes}
+          data-review-command={command}
+          data-copy-status={status}
+          aria-label={`${label}: ${command}`}
+          title={label}
+          onClick={handleCopy}
+          className={className}
+        >
+          <span className="sr-only">{command}</span>
+          {status === "copied"
+            ? <Check className="size-3.5 text-emerald-500" aria-hidden="true" />
+            : <Copy className="size-3.5" aria-hidden="true" />}
+        </Button>
+        {statusRegion}
+      </>
+    )
+  }
+
   return (
     <>
       <button
@@ -80,9 +117,7 @@ export function ReviewCommandButton({
           ? <Check className="h-3 w-3 shrink-0 text-emerald-400" aria-hidden="true" />
           : <Copy className="h-3 w-3 shrink-0 opacity-60" aria-hidden="true" />}
       </button>
-      <span data-review-command-status role="status" aria-live="polite" className="sr-only">
-        {status === "copied" ? REVIEW_COMMAND_COPIED_TEXT : status === "failed" ? reviewCommandCopyFailedText(command) : ""}
-      </span>
+      {statusRegion}
     </>
   )
 }

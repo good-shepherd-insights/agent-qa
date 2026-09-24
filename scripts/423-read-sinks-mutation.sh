@@ -24,7 +24,7 @@
 #   S05  the human evidence door restores without sanitizing auth state        -> HTTP-EVIDENCE-HUMAN
 #   S06  the composer history's review control becomes a link to /chat         -> NO-CHAT-TARGET
 #   S07  the composer history's review control copies a Chat route              -> NO-CHAT-TARGET
-#   S08  the Knowledge proposals CTA becomes a link to /chat                    -> NO-CHAT-TARGET
+#   S08  the Knowledge proposals copy control becomes a link to /chat           -> NO-CHAT-TARGET
 #   S09  a failed chain's learned half returns the early-empty arm              -> FAILED-CHAIN-ROWS-RETAINED (view)
 #   S10  the same early-empty arm on the built page over a real failed chain    -> knowledge-tab-dom (c4)
 #
@@ -144,9 +144,9 @@ const legs = [
       '              data-history-review\n              command={`/chat?proposal=${disposition.proposalId}&chat423=chat423route`}\n'),
     operation: 'make the history review control copy a Chat route',
   },
-  chatLeg(LEARNED, 'Knowledge proposals CTA', 'chat423proposals',
-    '          <ReviewCommandButton\n            data-review-proposals\n            command={proposals.command}\n            label={proposals.ctaText}\n            className="font-mono text-xs text-primary underline-offset-4 hover:underline"\n          />\n',
-    '          <a\n            data-review-proposals\n            data-chat423="chat423proposals"\n            href="/chat"\n            className="font-mono text-xs text-primary underline-offset-4 hover:underline"\n          >{proposals.ctaText}</a>\n'),
+  chatLeg(LEARNED, 'Knowledge proposals copy control', 'chat423proposals',
+    '            <ReviewCommandButton\n              data-review-proposals\n              variant="icon"\n              command={proposals.command}\n              label={proposals.copyLabel}\n            />\n',
+    '            <a\n              data-review-proposals\n              data-chat423="chat423proposals"\n              href="/chat"\n            >{proposals.copyLabel}</a>\n'),
   {
     subject: VIEW, instrument: 'knowledge-views', claim: 'FAILED-CHAIN-ROWS-RETAINED', operation: "return a failed chain's early-empty arm even when rows were committed",
     edits: [{ from: "    return rows.length > 0\n      ? {\n          state: 'failed',\n          rows,\n          chainNote", to: "    return rows.length < 0\n      ? {\n          state: 'failed',\n          rows,\n          chainNote" }],
