@@ -49,7 +49,7 @@ function mount(element: ReactElement): HTMLElement {
 }
 
 type Join = {
-  recordContent?: ReturnType<typeof content>
+  recordContent?: ReturnType<typeof content> & { currentTrust: { trustNarrative?: string } }
   contentAbsence?: { reason: "not-found" | "scan-incomplete" | "not-bound" }
 }
 
@@ -60,7 +60,7 @@ function content(summary: string, kind: string, applicability: { product?: strin
     kind,
     applicability: { product: "shop", scope: "shop", anchors: [] as string[], openedAtOrdinal: 1, ...applicability },
     currentStatus: "active",
-    currentTrust: { confirmations: 1, contradictions: 0, evidenceTokens: [], lastEventOrdinal: 1 },
+    currentTrust: { confirmations: 1, contradictions: 0, evidenceTokens: [] as string[], lastEventOrdinal: 1 },
   }
 }
 

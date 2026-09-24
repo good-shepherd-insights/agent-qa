@@ -1,16 +1,21 @@
 // 427 · D-02, D-04..D-07, D-10 — the Knowledge used section: one content-led row per record, no ids.
 
 import { Fragment, useId } from "react"
-import { ChevronRight } from "lucide-react"
+import { ChevronRight, FlaskConical, History } from "lucide-react"
 
 import { Badge } from "@/components/ui/badge"
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { NESTED_TRIGGER_CLASS } from "./knowledge-brief-line"
+import { KnowledgeRecordBody } from "./knowledge-record-body"
 import { KnowledgeStepRefs } from "./knowledge-step-ref"
 import { MaskedText } from "./masked-text"
 import {
   CONTENT_ABSENCE_REASON_TEXT,
+  ON_TRIAL_TAG,
+  ON_TRIAL_TOOLTIP,
   RECORD_KIND_LABELS,
+  SINCE_STATUS_TAGS,
   USED_HEADING,
   USED_PAGE_SIZE,
   USE_VERB_PHRASES,
@@ -24,6 +29,8 @@ import {
 } from "@/lib/knowledge-view"
 
 const HEADING_CLASS = "text-base font-medium leading-snug"
+
+const FOCUS_RING = "focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
 
 export function KnowledgeUsed({ view, stepRefs }: { view: UsedSectionView; stepRefs?: StepRefContext }) {
   const headingId = useId()
@@ -73,6 +80,8 @@ function UsedRecordRow({ record, stepRefs }: { record: UsedRecordView; stepRefs?
       data-used-record
       data-use-verbs={record.uses.map(use => use.verb).join(" ")}
       {...(record.kind === undefined ? {} : { "data-record-kind": record.kind })}
+      {...(record.onTrial === undefined ? {} : { "data-on-trial": "true" })}
+      {...(record.sinceStatus === undefined ? {} : { "data-since-status": record.sinceStatus })}
       {...(record.contentAbsence === undefined ? {} : { "data-content-absence": record.contentAbsence.reason })}
       className="py-2 space-y-1"
     >
@@ -83,6 +92,13 @@ function UsedRecordRow({ record, stepRefs }: { record: UsedRecordView; stepRefs?
         <span data-row-primary className="text-sm wrap-anywhere">
           <MaskedText text={record.primary} />
         </span>
+        {record.onTrial === undefined ? null : <OnTrialTag />}
+        {record.sinceStatus === undefined ? null : (
+          <Badge variant="outline" className="text-muted-foreground">
+            <History className="size-3" aria-hidden />
+            {SINCE_STATUS_TAGS[record.sinceStatus]}
+          </Badge>
+        )}
       </div>
       {record.applicability === undefined ? null : <ApplicabilityLine view={record.applicability} />}
       {record.contentAbsence === undefined ? null : (
@@ -102,7 +118,27 @@ function UsedRecordRow({ record, stepRefs }: { record: UsedRecordView; stepRefs?
           </Fragment>
         ))}
       </p>
+      {record.content === undefined ? null : <KnowledgeRecordBody content={record.content} />}
     </li>
+  )
+}
+
+function OnTrialTag() {
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <span tabIndex={0} className={`inline-flex rounded-md ${FOCUS_RING}`}>
+          <Badge variant="outline" className="cursor-help text-muted-foreground">
+            <FlaskConical className="size-3" aria-hidden />
+            {ON_TRIAL_TAG}
+          </Badge>
+          <span className="sr-only">{ON_TRIAL_TOOLTIP}</span>
+        </span>
+      </TooltipTrigger>
+      <TooltipContent side="bottom" align="start" sideOffset={4} className="max-w-[320px] text-left">
+        {ON_TRIAL_TOOLTIP}
+      </TooltipContent>
+    </Tooltip>
   )
 }
 

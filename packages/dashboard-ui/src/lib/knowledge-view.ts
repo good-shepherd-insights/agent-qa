@@ -471,6 +471,56 @@ export function applicabilityText(view: ApplicabilityView): string {
     .join(' · ')
 }
 
+export const ON_TRIAL_TAG = 'on trial'
+
+export const ON_TRIAL_TOOLTIP =
+  "New knowledge that isn't proven yet is given to the agent on trial, so a run can show whether it holds up. This run's result counts for or against it."
+
+// The schema's status enum, derived rather than re-spelled (C427-STATUS-WORDS-SHAPE).
+export type BundleStatus = RunKnowledgeRecordContent['currentStatus']
+
+export const SINCE_STATUS_TAGS = {
+  active: 'since proven',
+  candidate: 'since put back on trial',
+  superseded: 'since superseded',
+  deprecated: 'since retired',
+} as const satisfies Record<BundleStatus, string>
+
+export const CURRENT_STATUS_WORDS = {
+  active: 'in use',
+  candidate: 'on trial',
+  superseded: 'superseded',
+  deprecated: 'retired',
+} as const satisfies Record<BundleStatus, string>
+
+const BUNDLE_STATUSES: ReadonlySet<string> = new Set(Object.keys(CURRENT_STATUS_WORDS))
+
+function isBundleStatus(status: string): status is BundleStatus {
+  return BUNDLE_STATUSES.has(status)
+}
+
+// A since tag needs a serve-time status to compare against; only channel 1 carries one.
+export function sinceStatusFor(served: string | undefined, current: BundleStatus | undefined): BundleStatus | undefined {
+  if (served === undefined || current === undefined || !isBundleStatus(served)) return undefined
+  return served === current ? undefined : current
+}
+
+export function currentStatusLine(status: BundleStatus): string {
+  return `Current status: ${CURRENT_STATUS_WORDS[status]}`
+}
+
+function timesText(count: number): string {
+  return count === 1 ? 'once' : `${String(count)} times`
+}
+
+export function trustCountsLine(confirmations: number, contradictions: number): string {
+  return `Confirmed ${timesText(confirmations)} · contradicted ${timesText(contradictions)}`
+}
+
+export const SHOW_FULL_RECORD_LABEL = 'Show full record'
+
+export const EVIDENCE_NOTE_LABEL = "Curator's note — written by the curator, not verified"
+
 export type UsedLeadSource = 'served' | 'joined' | 'absent' | 'not-recorded'
 
 // `key` is the record's first-use position, never its id: no id leaves the grouping map.
@@ -482,12 +532,16 @@ export interface UsedRecordView {
   readonly content?: RunKnowledgeRecordContent
   readonly applicability?: ApplicabilityView
   readonly contentAbsence?: RunKnowledgeContentAbsence
+  readonly onTrial?: true
+  readonly sinceStatus?: BundleStatus
   readonly uses: readonly UseView[]
 }
 
 interface UsedRecordEntry {
   served?: string
   servedKind?: string
+  servedStatus?: string
+  onTrial?: true
   readonly uses: Map<UseVerb, StepAddress[]>
 }
 
@@ -515,6 +569,8 @@ export function usedRecordViews(
       const entry = use(line.id, 'given', address)
       if (entry.served === undefined) entry.served = line.summary
       if (entry.servedKind === undefined) entry.servedKind = line.kind
+      if (entry.servedStatus === undefined) entry.servedStatus = line.status
+      if (line.servedAsCanary) entry.onTrial = true
     }
     for (const line of step.served.channel3) {
       const entry = use(line.id, 'caution', address)
@@ -546,6 +602,7 @@ export function usedRecordViews(
         : entry.servedKind !== undefined && isRecordKind(entry.servedKind)
           ? entry.servedKind
           : undefined
+    const sinceStatus = sinceStatusFor(entry.servedStatus, content?.currentStatus)
     return {
       key: String(index),
       primary,
@@ -553,6 +610,8 @@ export function usedRecordViews(
       ...(kind === undefined ? {} : { kind }),
       ...(content === undefined ? {} : { content, applicability: applicabilityView(content.applicability) }),
       ...(absence === undefined ? {} : { contentAbsence: absence }),
+      ...(entry.onTrial === undefined ? {} : { onTrial: entry.onTrial }),
+      ...(sinceStatus === undefined ? {} : { sinceStatus }),
       uses: [...entry.uses].map(([verb, addresses]) => ({ verb, addresses })),
     }
   })
