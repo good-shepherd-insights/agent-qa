@@ -718,8 +718,15 @@ export const REPLAY_STOP_CAUSES = {
   'verifier-rejection': "the result didn't pass verification",
 } as const satisfies Record<ReplayStopCause, string>
 
-export function replayCompleteParts(total: number): EffectSentenceParts {
-  return { lead: `Replayed all ${String(total)} of its steps in`, tail: '' }
+// `length` is the procedure's recorded size (flow.length); `replayed` counts its distinct body steps.
+export function replayCompleteParts(replayed: number | undefined, length: number | undefined): EffectSentenceParts {
+  if (replayed === undefined || length === undefined || replayed === 0) {
+    return { lead: 'Replayed in', tail: ' — every replayed action was accepted' }
+  }
+  if (replayed === length) {
+    return { lead: length === 1 ? 'Replayed its only step in' : `Replayed all ${String(length)} of its steps in`, tail: '' }
+  }
+  return { lead: `Replayed ${String(replayed)} of its ${String(length)} steps in`, tail: '' }
 }
 
 // `step` is one-based: the procedure's own step a person counts by.
@@ -792,6 +799,13 @@ interface EffectDraft {
   readonly addresses: StepAddress[]
 }
 
+interface ReplayCompleteDraft {
+  readonly recordId: string
+  readonly length: number | undefined
+  readonly addresses: StepAddress[]
+  readonly cursors: Set<number>
+}
+
 export function effectSectionView(
   projection: Extract<RunKnowledgeProjection, { kind: 'ready' }>,
 ): EffectSectionView {
@@ -801,6 +815,7 @@ export function effectSectionView(
   const scanIncomplete = projection.learned.scanIncomplete === true
 
   const trials = new Map<string, EffectDraft>()
+  const completed = new Map<string, ReplayCompleteDraft>()
   const replays: EffectDraft[] = []
   const uncountedIds = new Set<string>()
 
@@ -825,19 +840,39 @@ export function effectSectionView(
       }
     }
     if (step.planSource?.kind === 'procedure-replay') {
-      const { guard, procedureId } = step.planSource
+      const { guard, procedureId, flow } = step.planSource
       const stop = replayStop(guard)
-      replays.push(
-        stop === undefined
-          ? { recordId: procedureId, outcome: 'replay-complete', parts: replayCompleteParts(guard.total), addresses: [address] }
-          : {
-              recordId: procedureId,
-              outcome: 'replay-stopped',
-              parts: replayStoppedParts(stop.step, guard.total, stop.cause),
-              addresses: [address],
-            },
-      )
+      if (stop === undefined) {
+        // The procedure's size is its recorded flow; the guard fold only counts this test step's actions.
+        const groupKey = `${procedureId}\u0000${String(flow?.length ?? '')}`
+        const draft = completed.get(groupKey) ?? {
+          recordId: procedureId,
+          length: flow?.length,
+          addresses: [],
+          cursors: new Set<number>(),
+        }
+        completed.set(groupKey, draft)
+        const last = draft.addresses.at(-1)
+        if (last === undefined || compareAddresses(last, address) !== 0) draft.addresses.push(address)
+        if (flow !== undefined && flow.cursor < flow.length) draft.cursors.add(flow.cursor)
+      } else {
+        replays.push({
+          recordId: procedureId,
+          outcome: 'replay-stopped',
+          parts: replayStoppedParts(stop.step, guard.total, stop.cause),
+          addresses: [address],
+        })
+      }
     }
+  }
+
+  for (const draft of completed.values()) {
+    replays.push({
+      recordId: draft.recordId,
+      outcome: 'replay-complete',
+      parts: replayCompleteParts(draft.cursors.size, draft.length),
+      addresses: draft.addresses,
+    })
   }
 
   const rank = (draft: EffectDraft) => EFFECT_TONES.indexOf(EFFECT_TONE_OF[draft.outcome])
