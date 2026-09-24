@@ -6,6 +6,7 @@ import type {
   BundleStatus as SchemaBundleStatus,
   CurationBucket,
   InspectRecordView,
+  RetrievalRungReason,
   RunKnowledgePlanSource,
   RunKnowledgeRecordContent,
 } from '@vostride/agent-qa-schema'
@@ -21,6 +22,9 @@ import {
   LEDGER_ROW_LABELS,
   REPLAY_STOP_CAUSES,
   RECORD_KIND_LABELS,
+  RETRIEVAL_CLASSES,
+  RETRIEVAL_CLASS_BY_REASON,
+  RETRIEVAL_CLASS_TONES,
   SINCE_STATUS_TAGS,
   SINCE_THEN_DETAILS,
   USE_VERBS,
@@ -34,6 +38,8 @@ import {
   type LedgerRow,
   type ReplayStopCause,
   type RecordKind,
+  type RetrievalClass,
+  type RetrievalTone,
   type UseVerb,
 } from '../knowledge-view'
 
@@ -118,4 +124,20 @@ test('C427-BUCKET-LABELS-SHAPE', () => {
   expectTypeOf<keyof typeof BUCKET_LABELS>().toEqualTypeOf<CurationBucket>()
   expectTypeOf<keyof typeof SINCE_THEN_DETAILS>().toEqualTypeOf<LearnedChangeKind>()
   expectTypeOf<keyof typeof LEDGER_ROW_LABELS>().toEqualTypeOf<LedgerRow>()
+})
+
+test('C427-RETRIEVAL-CLASSES-EXACT', () => {
+  type Expected = 'fresh-index' | 'cause-not-recorded' | 'index-problem' | 'semantic-search-unavailable' | 'by-configuration'
+  expectTypeOf<RetrievalClass>().toEqualTypeOf<Expected>()
+  expectTypeOf<(typeof RETRIEVAL_CLASSES)[number]>().toEqualTypeOf<Expected>()
+  expectTypeOf<Exclude<RetrievalClass, (typeof RETRIEVAL_CLASSES)[number]>>().toEqualTypeOf<never>()
+  expectTypeOf<Exclude<(typeof RETRIEVAL_CLASSES)[number], RetrievalClass>>().toEqualTypeOf<never>()
+  expectTypeOf<RetrievalTone>().toEqualTypeOf<'info' | 'warning'>()
+  expectTypeOf<keyof typeof RETRIEVAL_CLASS_TONES>().toEqualTypeOf<RetrievalClass>()
+  expectTypeOf<(typeof RETRIEVAL_CLASS_TONES)[RetrievalClass]>().toEqualTypeOf<RetrievalTone>()
+})
+
+test('C427-RETRIEVAL-CLASS-BY-REASON-TOTAL', () => {
+  expectTypeOf<keyof typeof RETRIEVAL_CLASS_BY_REASON>().toEqualTypeOf<RetrievalRungReason>()
+  expectTypeOf<(typeof RETRIEVAL_CLASS_BY_REASON)[RetrievalRungReason]>().toEqualTypeOf<RetrievalClass>()
 })

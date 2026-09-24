@@ -71,6 +71,7 @@ import {
   USED_HEADING,
   CHANNEL_EYEBROWS,
   DOCTOR_HINT_TEXT,
+  DOCTOR_POINTER_TEXT,
   RUNG_CAUSE_LABELS,
   RUNG_LABELS,
   bannerRung,
@@ -91,6 +92,7 @@ import {
   readFailedBody,
   reconciliationCountText,
   replayedText,
+  retrievalStatement,
   rungBannerText,
   showAllLinesLabel,
   stepRowTitle,
@@ -1926,23 +1928,24 @@ describe('the 407-09 copy is published as constants, like every sentence before 
 // The rung banner's copy of record (407-10 · TRST-01, D-13/D-14/D-15/D-16)
 // ---------------------------------------------------------------------------
 
-describe('the banner sentence is composed from closed tables, never from an error (D-15)', () => {
+describe('the strip sentence exists only for warning classes, composed from closed tables (D-15, 427 D-20)', () => {
   it('renders the SENTENCE OF RECORD byte-for-byte for a floor host', () => {
-    // UI-SPEC § Copywriting → "Banner sentence of record". Spelled as a literal here on purpose:
-    // this is the one string 407-11 and the visual check read back, so a cell composed from the
-    // same constants the implementation uses would go green on a template that lost its em dash.
+    // Spelled as a literal on purpose: a cell composed from the same constants the implementation
+    // uses would go green on a template that lost its em dash.
     expect(rungBannerText({ rung: 'static-floor', reason: 'native-runtime-unavailable' })).toBe(
-      'Retrieval degraded: static-floor embeddings — native ONNX runtime unavailable. Run `agent-qa doctor`.',
+      "This run's knowledge retrieval used the lightweight static-floor embeddings instead of the full model — native ONNX runtime unavailable. To check the store's health now, run agent-qa doctor. It reports current health and doesn't change what this run recorded.",
     )
   })
 
-  it('renders the other two degraded rungs through the same template', () => {
-    expect(rungBannerText({ rung: 'bundle-scan', reason: 'index-unavailable' })).toBe(
-      'Retrieval degraded: bundle scan — knowledge index unavailable (cause not recorded), scanning bundles. Run `agent-qa doctor`.',
+  it('renders a locked index as its statement plus the doctor pointer, and paints nothing for the info classes', () => {
+    expect(retrievalStatement).toBeTypeOf('function')
+    expect(rungBannerText({ rung: 'bundle-scan', reason: 'index-locked' })).toBe(
+      `${retrievalStatement('bundle-scan', 'index-locked')} ${DOCTOR_POINTER_TEXT}`,
     )
-    expect(rungBannerText({ rung: 'lexical-only', reason: 'floor-disabled' })).toBe(
-      'Retrieval degraded: lexical-only retrieval — static floor disabled. Run `agent-qa doctor`.',
-    )
+    expect(rungBannerText({ rung: 'bundle-scan', reason: 'index-not-built' })).toBeUndefined()
+    expect(rungBannerText({ rung: 'static-floor', reason: 'profile-static-configured' })).toBeUndefined()
+    expect(rungBannerText({ rung: 'lexical-only', reason: 'floor-disabled' })).toBeUndefined()
+    expect(rungBannerText({ rung: 'bundle-scan', reason: 'index-unavailable' })).toBeUndefined()
   })
 
   it('says NOTHING for the top rung and for a run that recorded none', () => {
@@ -1952,19 +1955,24 @@ describe('the banner sentence is composed from closed tables, never from an erro
     expect(rungBannerText(undefined)).toBeUndefined()
   })
 
-  it('drops the cause clause rather than printing a blank one when a degraded rung carries no reason', () => {
+  it('paints no strip for a degraded rung that carries no reason — its cause was not recorded, which is information', () => {
     // The fold never mints this, but the schema types `reason` optional on every rung, so the
-    // shape is reachable. An em dash with nothing after it is the failure this arm exists to avoid.
-    const text = rungBannerText({ rung: 'static-floor' })
-    expect(text).toBe('Retrieval degraded: static-floor embeddings. Run `agent-qa doctor`.')
-    expect(text).not.toContain('—')
+    // shape is reachable from a historical handoff. It claims neither a fault nor health.
+    expect(rungBannerText({ rung: 'static-floor' })).toBeUndefined()
+    expect(rungBannerText({ rung: 'bundle-scan' })).toBeUndefined()
   })
 
-  it('ends every sentence with the doctor hint, and the hint is one exported constant', () => {
+  it('ends every warning sentence with the doctor pointer; no rung sentence says Retrieval degraded or carries a backtick', () => {
     expect(DOCTOR_HINT_TEXT).toBe('Run `agent-qa doctor`.')
     for (const reason of RETRIEVAL_RUNG_REASONS) {
-      const text = rungBannerText({ rung: 'static-floor', reason })
-      expect(text?.endsWith(DOCTOR_HINT_TEXT)).toBe(true)
+      for (const rung of ['bundle-scan', 'static-floor', 'lexical-only'] as const) {
+        const text = rungBannerText({ rung, reason })
+        if (text === undefined) continue
+        expect(text.endsWith(` ${DOCTOR_POINTER_TEXT}`)).toBe(true)
+        expect(text).not.toContain('Retrieval degraded')
+        expect(text).not.toContain('`')
+        expect(text).not.toContain(DOCTOR_HINT_TEXT)
+      }
     }
   })
 })
