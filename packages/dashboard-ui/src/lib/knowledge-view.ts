@@ -27,6 +27,7 @@
 import {
   CURATION_BREAKDOWN_BUCKETS,
   ProposalIdSchema,
+  RecordAnchorsSchema,
   TRACE_TRUNCATION_TOP_K,
   canonicalJson,
   formatEntityUri,
@@ -386,6 +387,90 @@ export function contentById(
   return joined
 }
 
+export type AnchorPhraseType = 'platform' | 'page' | 'flow' | 'el' | 'selector' | 'error' | 'unparsed'
+
+// The render order of anchor phrases (D-08): whatever order the anchors array holds, a line reads
+// platform, page, flow, element, selector, error, then anything that did not parse.
+// prettier-ignore
+export const ANCHOR_PHRASE_TYPES = [
+  'platform',
+  'page',
+  'flow',
+  'el',
+  'selector',
+  'error',
+  'unparsed',
+] as const satisfies readonly AnchorPhraseType[]
+
+const ANCHOR_SHAPE = RecordAnchorsSchema.element.shape.normalized
+
+type SchemaAnchor = Extract<ReturnType<typeof ANCHOR_SHAPE.safeParse>, { success: true }>['data']
+
+export type ParsedAnchor = SchemaAnchor | { readonly t: 'unparsed'; readonly raw: string }
+
+// Anchors arrive as canonical-JSON strings, masked by the op. The schema owns the shapes; one that
+// is not JSON, or is JSON of no anchor shape, comes back unparsed so the line keeps it verbatim.
+export function parseAnchor(raw: string): ParsedAnchor {
+  try {
+    const parsed = ANCHOR_SHAPE.safeParse(JSON.parse(raw))
+    return parsed.success ? parsed.data : { t: 'unparsed', raw }
+  } catch {
+    return { t: 'unparsed', raw }
+  }
+}
+
+export interface AnchorPhraseView {
+  readonly type: AnchorPhraseType
+  readonly text: string
+  readonly literal?: string
+}
+
+export interface ApplicabilityView {
+  readonly lead: string
+  readonly phrases: readonly AnchorPhraseView[]
+}
+
+export const APPLIES_TO_PREFIX = 'Applies to'
+
+function anchorPhrase(anchor: ParsedAnchor): AnchorPhraseView {
+  switch (anchor.t) {
+    case 'platform':
+      return { type: 'platform', text: anchor.platform }
+    case 'page':
+      return { type: 'page', text: `page ${anchor.route}` }
+    case 'flow':
+      return { type: 'flow', text: `flow ${anchor.name}` }
+    case 'el':
+      return {
+        type: 'el',
+        text: `element ${anchor.role} "${anchor.name}"${anchor.ordinal === undefined ? '' : ` #${String(anchor.ordinal)}`}`,
+      }
+    case 'selector':
+      return { type: 'selector', text: 'selector', literal: anchor.literal }
+    case 'error':
+      return { type: 'error', text: `error "${anchor.message}"` }
+    case 'unparsed':
+      return { type: 'unparsed', text: anchor.raw }
+  }
+}
+
+// Validity ordinals never appear here; they belong to Retrieval details.
+export function applicabilityView(applicability: RunKnowledgeRecordContent['applicability']): ApplicabilityView {
+  const place = applicability.product === applicability.scope
+    ? applicability.scope
+    : `${applicability.product} · ${applicability.scope}`
+  const rank = (type: AnchorPhraseType) => ANCHOR_PHRASE_TYPES.indexOf(type)
+  const phrases = applicability.anchors
+    .map(raw => anchorPhrase(parseAnchor(raw)))
+    .sort((a, b) => rank(a.type) - rank(b.type))
+  return { lead: `${APPLIES_TO_PREFIX} ${place}`, phrases }
+}
+
+export function applicabilityText(view: ApplicabilityView): string {
+  return [view.lead, ...view.phrases.map(phrase => (phrase.literal === undefined ? phrase.text : `${phrase.text} ${phrase.literal}`))]
+    .join(' · ')
+}
+
 export type UsedLeadSource = 'served' | 'joined' | 'absent' | 'not-recorded'
 
 // `key` is the record's first-use position, never its id: no id leaves the grouping map.
@@ -395,6 +480,7 @@ export interface UsedRecordView {
   readonly leadSource: UsedLeadSource
   readonly kind?: RecordKind
   readonly content?: RunKnowledgeRecordContent
+  readonly applicability?: ApplicabilityView
   readonly contentAbsence?: RunKnowledgeContentAbsence
   readonly uses: readonly UseView[]
 }
@@ -465,7 +551,7 @@ export function usedRecordViews(
       primary,
       leadSource,
       ...(kind === undefined ? {} : { kind }),
-      ...(content === undefined ? {} : { content }),
+      ...(content === undefined ? {} : { content, applicability: applicabilityView(content.applicability) }),
       ...(absence === undefined ? {} : { contentAbsence: absence }),
       uses: [...entry.uses].map(([verb, addresses]) => ({ verb, addresses })),
     }

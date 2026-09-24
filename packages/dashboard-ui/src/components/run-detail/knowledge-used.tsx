@@ -16,6 +16,8 @@ import {
   USE_VERB_PHRASES,
   formatStepRefs,
   showAllRecordsLabel,
+  type AnchorPhraseView,
+  type ApplicabilityView,
   type StepRefContext,
   type UsedRecordView,
   type UsedSectionView,
@@ -82,6 +84,7 @@ function UsedRecordRow({ record, stepRefs }: { record: UsedRecordView; stepRefs?
           <MaskedText text={record.primary} />
         </span>
       </div>
+      {record.applicability === undefined ? null : <ApplicabilityLine view={record.applicability} />}
       {record.contentAbsence === undefined ? null : (
         <p data-row-absence-reason className="text-xs text-muted-foreground wrap-anywhere">
           {CONTENT_ABSENCE_REASON_TEXT[record.contentAbsence.reason]}
@@ -100,5 +103,35 @@ function UsedRecordRow({ record, stepRefs }: { record: UsedRecordView; stepRefs?
         ))}
       </p>
     </li>
+  )
+}
+
+function ApplicabilityLine({ view }: { view: ApplicabilityView }) {
+  return (
+    <p data-row-applicability className="text-xs text-muted-foreground wrap-anywhere">
+      <MaskedText text={view.lead} />
+      {view.phrases.map((phrase, index) => (
+        <Fragment key={index}>
+          {" · "}
+          <AnchorPhrase phrase={phrase} />
+        </Fragment>
+      ))}
+    </p>
+  )
+}
+
+function AnchorPhrase({ phrase }: { phrase: AnchorPhraseView }) {
+  if (phrase.literal !== undefined) {
+    return (
+      <span data-anchor-type={phrase.type}>
+        {phrase.text}{" "}
+        <code className="font-mono wrap-anywhere"><MaskedText text={phrase.literal} /></code>
+      </span>
+    )
+  }
+  return (
+    <span data-anchor-type={phrase.type} className={phrase.type === "unparsed" ? "font-mono wrap-anywhere" : undefined}>
+      <MaskedText text={phrase.text} />
+    </span>
   )
 }
