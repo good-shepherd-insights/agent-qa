@@ -9,7 +9,12 @@
 // stream — one source per run id, closed on teardown — not the door's URL composition, which the
 // 403 `api.run-stream` suite already binds.
 //
-// THE LAST CELL IS THE RETIREMENT'S OWN. A panel that fell back to constructing its own
+// THE ONE ROW (428 D-19/D-21/D-22). The panel renders its rows through the live page's
+// `LiveStepRowView`: a named glyph and the label, no clock, secrets as the masked chip. The
+// duration a finalized row used to show lives in run detail now, so the finalize cell asserts it
+// is absent (re-spelled in place; the title is unchanged).
+//
+// THE RETIREMENT CELL IS THE RETIREMENT'S OWN. A panel that fell back to constructing its own
 // `EventSource` against the retired feed would satisfy every other cell here, so the retirement is
 // asserted directly: zero constructions of a URL naming the legacy path.
 
@@ -19,6 +24,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { RunResultsPanel } from '@/components/run-results-panel'
 import type { RunStreamOptions } from '@/lib/api'
+import { LIVE_STEP_STATUS_NAMES } from '@/lib/live-step-row'
+import type { StepStatus } from '@/lib/run-stream-reducer'
 
 import type { RunEventEnvelope, RunEventPayload, RunEventType } from '@vostride/agent-qa-schema'
 
@@ -125,6 +132,7 @@ afterEach(() => {
   container = null
   vi.clearAllMocks()
   vi.unstubAllGlobals()
+  vi.useRealTimers()
 })
 
 describe('RunResultsPanel on the run stream', () => {
@@ -149,7 +157,8 @@ describe('RunResultsPanel on the run stream', () => {
 
     feed(stepFinalized({ status: 'passed', durationMs: 1200 }))
     expect(view.querySelectorAll('[data-step-status="passed"]')).toHaveLength(1)
-    expect(view.textContent).toContain('1.2s')
+    // 428 D-19: a row carries no duration; run detail has it.
+    expect(view.textContent).not.toContain('1.2s')
   })
 
   it('renders the terminal badge from the verdict and marks still-running rows', async () => {
@@ -195,5 +204,53 @@ describe('RunResultsPanel on the run stream', () => {
 
     expect(view.textContent).toContain('Open the page')
     expect(constructed.filter((url) => url.includes(LEGACY_FEED_PATH))).toHaveLength(0)
+  })
+})
+
+describe('RunResultsPanel renders the one live row (428 D-21)', () => {
+  it('PANEL-USES-SHARED-ROW: each reducer row is an li with its status, ticks and a glyph named by status', async () => {
+    const view = await renderPanel()
+
+    feed(stepStarted('Open the page'), stepFinalized({ status: 'passed', durationMs: 5 }), stepStarted('Click Save', 0, 1))
+
+    const rows = [...view.querySelectorAll('[data-step-status]')]
+    expect(rows).toHaveLength(2)
+    expect(rows.map((row) => row.tagName)).toEqual(['LI', 'LI'])
+    expect(rows.every((row) => row.parentElement?.tagName === 'UL')).toBe(true)
+    expect(rows.map((row) => row.getAttribute('data-step-status'))).toEqual(['passed', 'running'])
+    for (const row of rows) {
+      expect(row.getAttribute('data-step-ticks')).not.toBeNull()
+      const glyphs = row.querySelectorAll('[role="img"]')
+      expect(glyphs).toHaveLength(1)
+      const status = row.getAttribute('data-step-status') as StepStatus
+      expect(glyphs[0]?.getAttribute('aria-label')).toBe(LIVE_STEP_STATUS_NAMES[status])
+    }
+  })
+
+  it('PANEL-NO-CLOCK: after 90 s of a running step the panel shows no clock, no duration and no elapsed badge', async () => {
+    vi.useFakeTimers()
+    const view = await renderPanel()
+
+    feed(stepStarted('Open the page'), stepFinalized({ status: 'passed', durationMs: 1200 }), stepStarted('Click Save', 0, 1))
+    act(() => {
+      vi.advanceTimersByTime(90_000)
+    })
+
+    const text = view.textContent ?? ''
+    expect(text).not.toMatch(/\d+:\d{2}/)
+    expect(text).not.toMatch(/\d+(\.\d+)?(ms|s|m|h)\b/)
+    expect(view.querySelector('.lucide-clock')).toBeNull()
+    expect(view.querySelector('[data-elapsed]')).toBeNull()
+  })
+
+  it('PANEL-SECRET-AS-CHIP: a <SECRET_n> placeholder in step text is the masked chip, never raw text', async () => {
+    const view = await renderPanel()
+
+    feed(stepStarted('type <SECRET_1> into Password'))
+
+    expect(view.querySelectorAll('[data-masked="secret"]')).toHaveLength(1)
+    expect(view.textContent).not.toContain('<SECRET_')
+    expect(view.innerHTML).not.toContain('&lt;SECRET_')
+    expect(view.textContent).toContain('into Password')
   })
 })
