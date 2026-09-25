@@ -1920,3 +1920,49 @@ input[type="number"] {
     opacity: 0;
   }
 }
+
+/* THE LIVE PREVIEW'S HEALTH DOT (428 D-02/D-16/D-17). About 8px, with a two-tone ring so it reads
+   on light and dark pages alike. Only the healthy green dot pulses, and it is still under
+   reduced motion. */
+@keyframes live-dot-pulse {
+  0%,
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.55;
+    transform: scale(0.85);
+  }
+}
+
+.live-dot {
+  display: block;
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  box-shadow:
+    0 0 0 1.5px rgb(0 0 0 / 0.35),
+    0 0 0 3px rgb(255 255 255 / 0.7);
+}
+
+.live-dot-green {
+  background-color: var(--color-emerald-500);
+  animation: live-dot-pulse 2s ease-in-out infinite;
+}
+
+.live-dot-amber {
+  background-color: var(--color-amber-500);
+  animation: none;
+}
+
+.live-dot-red {
+  background-color: var(--color-red-500);
+  animation: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .live-dot-green {
+    animation: none;
+  }
+}

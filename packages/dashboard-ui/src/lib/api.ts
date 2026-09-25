@@ -12,6 +12,7 @@ import type {
   RunKnowledgeProjection,
   RunServiceReadiness,
   RunsLiveUrlResult,
+  EditorLiveUrlResult,
   RunsEvidenceInput,
   RunsEvidenceResult,
   RunsMarkInput,
@@ -942,6 +943,18 @@ export function openRunStream(runId: string, opts: RunStreamOptions = {}): Event
  */
 export async function fetchLiveUrl(runId: string, handle = 0): Promise<RunsLiveUrlResult> {
   return request(`/api/runs/${encodeURIComponent(runId)}/live-url?handle=${encodeURIComponent(String(handle))}`)
+}
+
+/**
+ * Mint a live-view URL for one editor session (428 D-07/D-14 · `editor.liveurl`).
+ *
+ * The same contract as {@link fetchLiveUrl}: the token rides in the result's fragment, and the body
+ * is the op's own result verbatim. The refusals are the door's own words (`unknown_session`,
+ * `live_view_unavailable`, `live_url_mint_failed`, `cross_site_refused`) and arrive on
+ * `ApiError.message`.
+ */
+export async function fetchEditorLiveUrl(sessionId: string): Promise<EditorLiveUrlResult> {
+  return request(`/api/live-editor/sessions/${encodeURIComponent(sessionId)}/live-url`)
 }
 
 /**

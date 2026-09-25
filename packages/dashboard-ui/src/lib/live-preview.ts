@@ -212,6 +212,7 @@ export type LivePreviewEvent =
   | { type: 'renew-failed' }
   | { type: 'embed'; report: EmbedReport }
   | { type: 'lost-scheduled' }
+  /** The not-yet poll's interval passed with its question still out: it counts toward the bound, so a door that never answers still ends the wait (403-15). */
   | { type: 'wait-unanswered' }
   | { type: 'retry' }
   | { type: 'subject-over'; reason: 'run-ended' | 'session-ended' }
@@ -334,8 +335,9 @@ export function reduceLivePreview(state: LivePreviewMachine, event: LivePreviewE
   switch (event.type) {
     case 'mint-started':
     case 'lost-scheduled':
-    case 'wait-unanswered':
       return state
+    case 'wait-unanswered':
+      return state.phase === 'waiting' ? wait(state) : state
     case 'minted': {
       if (event.stream.kind === 'none') {
         return event.memberAnswered ? { ...carried(state), phase: 'no-stream' } : wait(state)
