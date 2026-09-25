@@ -3,11 +3,13 @@ import { LiveSession } from './live-session.js'
 import type { SessionState, LiveSessionConfig, EntityRef } from './types.js'
 import type { AppiumManager } from '../execution/appium-manager.js'
 import type { ConfigManager } from '../config/index.js'
+import type { LiveEditorSubjects } from '../live-view/editor-subjects.js'
 
 export interface SessionManagerDeps {
   appiumManager?: AppiumManager
   configManager?: ConfigManager
   configPath?: string
+  liveEditorSubjects?: LiveEditorSubjects
 }
 
 export class SessionManager {

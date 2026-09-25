@@ -1,4 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
+import type { Mock } from 'vitest'
+import type { LiveFrame, LiveFrameEndReason } from '@vostride/agent-qa-schema'
 import type { LiveSessionConfig } from '../live-editor/types.js'
 
 const HOOK_ID = 'h_amber-birch-coral-delta-ember-falcon-garden-harbor-island-jungle'
@@ -10,6 +12,20 @@ const mockCleanup = vi.fn().mockResolvedValue(undefined)
 const mockExecute = vi.fn().mockResolvedValue({ success: true })
 const mockScreenshot = vi.fn().mockResolvedValue(Buffer.from('fake-screenshot'))
 const mockObserve = vi.fn().mockResolvedValue({ tree: '', elements: [], timestamp: 0, metadata: {} })
+// The web adapter's Chromium screencast, as the editor's hub sees it (428 D-07).
+let screencastEmit: ((frame: LiveFrame) => void) | undefined
+const mockScreencastStart = vi.fn(async (onFrame: (frame: LiveFrame) => void) => {
+  screencastEmit = onFrame
+})
+const mockScreencastStop = vi.fn(async () => {
+  screencastEmit = undefined
+})
+const mockScreencast = {
+  kind: 'cdp-screencast' as const,
+  start: mockScreencastStart,
+  ack: vi.fn(async () => {}),
+  stop: mockScreencastStop,
+}
 
 vi.mock('@vostride/agent-qa-web', () => ({
   WebPlatformAdapter: vi.fn().mockImplementation(function () {
@@ -20,6 +36,7 @@ vi.mock('@vostride/agent-qa-web', () => ({
       execute: mockExecute,
       screenshot: mockScreenshot,
       observe: mockObserve,
+      liveStream: mockScreencast,
     }
   }),
 }))
@@ -821,6 +838,121 @@ describe('LiveSession', () => {
       [expect.objectContaining({ name: 'Cleanup Auth' })],
       expect.objectContaining({ env: { AUTH_TOKEN: 'hook-token' } }),
     )
+  })
+
+  it('HUB-REGISTERED-UNDER-SESSION: a web session registers its screencast as handle 0 of its own hub', async () => {
+    await session.initialize(webConfig)
+    const attachment = session.liveAttachment()
+
+    expect(attachment.streamCapabilityOf(0)).toEqual({ kind: 'cdp-screencast' })
+
+    const frames: LiveFrame[] = []
+    const subscription = attachment.subscribeFrames(0, (frame) => frames.push(frame))
+    expect(subscription, 'handle 0 is subscribable').toBeDefined()
+    await vi.waitFor(() => expect(mockScreencastStart).toHaveBeenCalledTimes(1))
+
+    screencastEmit?.({
+      id: 7,
+      bytes: new Uint8Array([1, 2, 3]),
+      metadata: { width: 10, height: 20, timestamp: 1_700_000_000_000 },
+    })
+    expect(frames.map((frame) => frame.id)).toEqual([7])
+    expect(frames[0]?.kind).toBe('cdp-screencast')
+    subscription?.unsubscribe()
+  })
+
+  it('HUB-REGISTERED-UNDER-SESSION: a session whose setup hooks failed has no adapter and no hub', async () => {
+    mockRunHooks.mockResolvedValue({ results: new Map(), variables: {}, allPassed: false, duration: 1 })
+    await session.initialize({
+      ...webConfig,
+      setupHooks: [HOOK_ID],
+      resolvedHooks: new Map([[HOOK_ID, {
+        id: HOOK_ID,
+        name: 'Seed Auth',
+        runtime: 'node',
+        file: '/tmp/seed-auth.js',
+        deps: [],
+        timeout: 30_000,
+        network: false,
+      }]]),
+    })
+    const attachment = session.liveAttachment()
+
+    expect(attachment.streamCapabilityOf(0)).toEqual({ kind: 'none' })
+    expect(attachment.subscribeFrames(0, () => {})).toBeUndefined()
+  })
+
+  it('MOBILE-REGISTERS-SNAPSHOT: a mobile session registers the adapter\'s context-neutral snapshot stream', async () => {
+    const { AndroidPlatformAdapter } = await import('@vostride/agent-qa-android')
+    const snapshotStream = {
+      kind: 'snapshot' as const,
+      start: vi.fn(async () => {}),
+      ack: vi.fn(async () => {}),
+      stop: vi.fn(async () => {}),
+    }
+    const mobileScreenshot = vi.fn()
+    ;(AndroidPlatformAdapter as unknown as Mock).mockImplementationOnce(function () {
+      return {
+        platform: 'android',
+        setup: vi.fn().mockResolvedValue(undefined),
+        cleanup: vi.fn().mockResolvedValue(undefined),
+        execute: vi.fn(),
+        observe: vi.fn(),
+        screenshot: mobileScreenshot,
+        liveStream: snapshotStream,
+      }
+    })
+
+    await session.initialize({ ...webConfig, platform: 'android', appPackage: 'com.example.app' })
+    const attachment = session.liveAttachment()
+
+    expect(attachment.streamCapabilityOf(0)).toEqual({ kind: 'snapshot' })
+    const subscription = attachment.subscribeFrames(0, () => {})
+    expect(subscription).toBeDefined()
+    await vi.waitFor(() => expect(snapshotStream.start).toHaveBeenCalledTimes(1))
+    expect(mobileScreenshot, 'never the context-switching screenshot()').not.toHaveBeenCalled()
+    subscription?.unsubscribe()
+  })
+
+  it('CLEANUP-CLOSES-HUB-AND-ENDS: cleanup closes the hub before the browser goes, settles ended, and runs once', async () => {
+    await session.initialize({
+      ...webConfig,
+      teardownHooks: [TEARDOWN_HOOK_ID],
+      resolvedHooks: new Map([[TEARDOWN_HOOK_ID, {
+        id: TEARDOWN_HOOK_ID,
+        name: 'Cleanup Auth',
+        runtime: 'node',
+        file: '/tmp/cleanup-auth.js',
+        deps: [],
+        timeout: 30_000,
+        network: false,
+      }]]),
+    })
+    const attachment = session.liveAttachment()
+    let ended = false
+    void attachment.ended.then(() => {
+      ended = true
+    })
+    const ends: LiveFrameEndReason[] = []
+    attachment.subscribeFrames(0, () => {}, (reason) => ends.push(reason))
+    await vi.waitFor(() => expect(mockScreencastStart).toHaveBeenCalledTimes(1))
+    await Promise.resolve()
+    expect(ended, 'ended is pending while the session lives').toBe(false)
+
+    await session.cleanup()
+    await Promise.resolve()
+
+    expect(ends).toEqual(['closed'])
+    expect(ended).toBe(true)
+    expect(mockScreencastStop).toHaveBeenCalledTimes(1)
+    expect(mockScreencastStop.mock.invocationCallOrder[0]).toBeLessThan(mockCleanup.mock.invocationCallOrder[0] ?? 0)
+    expect(mockRunHooks).toHaveBeenCalledTimes(1)
+    expect(mockCleanup).toHaveBeenCalledTimes(1)
+
+    await session.cleanup()
+
+    expect(mockRunHooks, 'teardown hooks run once').toHaveBeenCalledTimes(1)
+    expect(mockCleanup, 'the browser is closed once').toHaveBeenCalledTimes(1)
   })
 
   it('getScreenshot delegates to adapter', async () => {

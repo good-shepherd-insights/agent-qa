@@ -46,6 +46,7 @@ import { prepareMobileLiveSession } from './mobile-bootstrap.js'
 import type { MobileLiveAppiumLease } from './mobile-bootstrap.js'
 import type { AppiumManager } from '../execution/appium-manager.js'
 import type { ConfigManager } from '../config/index.js'
+import type { LiveEditorAttachment } from '../live-view/editor-subjects.js'
 import type {
   SessionState,
   LiveDraftMetadata,
@@ -61,7 +62,7 @@ import type {
   ServerMessage,
 } from './types.js'
 
-const IDLE_TIMEOUT_MS = 5 * 60 * 1000
+export const IDLE_TIMEOUT_MS = 5 * 60 * 1000
 
 const RUNJS_DBL_RE = /\{\{runJS:"((?:[^"\\]|\\.)*)"\}\}/g
 const RUNJS_SGL_RE = /\{\{runJS:'((?:[^'\\]|\\.)*)'\}\}/g
@@ -273,6 +274,14 @@ export class LiveSession {
 
   get modelName(): string {
     return this._modelName
+  }
+
+  liveAttachment(): LiveEditorAttachment {
+    return {
+      streamCapabilityOf: () => ({ kind: 'none' }),
+      subscribeFrames: () => undefined,
+      ended: new Promise<void>(() => {}),
+    }
   }
 
   attachMessageSink(sink: ((message: ServerMessage) => void) | null): void {
