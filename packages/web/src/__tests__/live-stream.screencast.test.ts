@@ -4,8 +4,11 @@
 // `setInterval(() => page.screenshot())` just as well as by `Page.startScreencast`, and the two
 // are different products: a poller costs a browser a full rasterise several times a second on
 // every run forever, and it cannot tell a page that is changing from a page that is not. The
-// property that separates them has a NEGATIVE ARM — a page that is not moving must produce
-// (almost) nothing — so this file measures both arms, and the negative one is the one with teeth.
+// property that separates them has a NEGATIVE ARM — a page that is not moving must not produce
+// frames at a poller's cadence — so this file measures both arms, and the negative one is the one
+// with teeth. Since 428 D-15 a static page is not silent: it produces a fresh keepalive capture
+// every 2 s so the viewer's dot stays green, and STATIC-PAGE-KEEPALIVE bounds that cadence both
+// ways (a 1 s poller is too many frames, a silent screencast too few).
 //
 // K=5, ZERO TOLERATED FAILURES ON THE POSITIVE ARM. One green run is roughly 60% likely to hide a
 // 40% flake (WINDOWS: "live gate k=1 hides flakes"), and the claim here is about a timing-shaped
@@ -43,16 +46,22 @@ const EXPECTED_ITERATIONS = 5
 const ANIMATED_WINDOW_MS = 3_000
 const ANIMATED_MIN_FRAMES = 3
 /**
- * The negative arm's window and ceiling.
+ * STATIC-PAGE-KEEPALIVE's window, count band and cadence floor (428 D-15, re-spelled from 403-02's
+ * one-frame ceiling, which the keepalive retires — RESEARCH P11).
  *
- * ONE frame is tolerated, and exactly one: CDP delivers an initial frame when a screencast starts,
- * which is the current paint rather than a change. Anything above that is a producer emitting
- * without the page having moved — i.e. polling. The measured counts for all five iterations are
- * printed by the cell, and this ceiling is NOT to be raised without a dated note saying what was
- * measured and why (403-02, plan decision A2).
+ * After the first frame, a static page gets a fresh capture every `LIVE_KEEPALIVE_QUIET_MS`
+ * (2_000), so 6 s holds between 2 and 4 frames: fewer is a silent producer (the dot would go amber
+ * on a healthy page), more is a producer emitting faster than the keepalive — i.e. polling. The gap
+ * floor sits 200 ms under the keepalive period, so a 1 s poller fails it on every pair. The
+ * measured counts are printed by the cell; do not widen the band without a dated note saying what
+ * was measured and why.
  */
-const STATIC_WINDOW_MS = 4_000
-const STATIC_MAX_FRAMES = 1
+const STATIC_WINDOW_MS = 6_000
+const STATIC_MIN_FRAMES = 2
+const STATIC_MAX_FRAMES = 4
+const KEEPALIVE_MIN_GAP_MS = 1_800
+/** TIMESTAMP-EPOCH-MS: a capture time in epoch ms is within this of the receiver's clock. */
+const EPOCH_MS_TOLERANCE_MS = 5_000
 
 let page: LiveStreamFixturePage | undefined
 
@@ -94,6 +103,33 @@ async function collect(
     frames.push(frame)
     void capability.ack(frame.id)
   })
+  await new Promise((resolve) => setTimeout(resolve, windowMs))
+  await capability.stop()
+  return frames
+}
+
+/**
+ * Start, wait for the first frame, then collect every frame that arrives in the `windowMs` after
+ * it, acking each. The returned list starts with that first frame, which the window excludes.
+ */
+async function collectAfterFirst(
+  capability: NonNullable<WebPlatformAdapter['liveStream']>,
+  windowMs: number,
+): Promise<LiveFrame[]> {
+  const frames: LiveFrame[] = []
+  let firstAt: number | undefined
+  let resolveFirst: () => void = () => undefined
+  const first = new Promise<void>((resolve) => { resolveFirst = resolve })
+  await capability.start((frame) => {
+    const now = Date.now()
+    if (firstAt === undefined) {
+      firstAt = now
+      resolveFirst()
+    }
+    if (now - firstAt <= windowMs) frames.push(frame)
+    void capability.ack(frame.id)
+  })
+  await Promise.race([first, new Promise((resolve) => setTimeout(resolve, 5_000))])
   await new Promise((resolve) => setTimeout(resolve, windowMs))
   await capability.stop()
   return frames
@@ -151,9 +187,10 @@ describe('WebPlatformAdapter.liveStream is CHANGE-DRIVEN, not polled (LIVE-01)',
     }
   }, 180_000)
 
-  it('NEGATIVE ARM: a STATIC page produces at most one frame, k=5 — the polling discriminator', async () => {
-    // RED under `setInterval(page.screenshot)`: a poller keeps producing whether or not the page
-    // has moved, so it would deliver ~20 frames into this window on every iteration.
+  it('STATIC-PAGE-KEEPALIVE: a static page produces a fresh frame every 2 s, never faster, k=5', async () => {
+    // RED under a silent screencast (a static page goes quiet after its first paint, so a healthy
+    // page reads amber) and RED under `setInterval(page.screenshot)` at 1 s (too many frames, and
+    // every gap under the floor).
     const adapter = await adapterOn(fixture().url)
     const counts: number[] = []
     try {
@@ -164,21 +201,72 @@ describe('WebPlatformAdapter.liveStream is CHANGE-DRIVEN, not polled (LIVE-01)',
       await new Promise((resolve) => setTimeout(resolve, 1_000))
 
       for (let k = 0; k < 5; k++) {
-        const frames = await collect(capability as NonNullable<typeof capability>, STATIC_WINDOW_MS)
-        counts.push(frames.length)
+        const frames = await collectAfterFirst(
+          capability as NonNullable<typeof capability>,
+          STATIC_WINDOW_MS,
+        )
+        const after = frames.length - 1
+        counts.push(after)
+        const stamps = frames.map((frame) => frame.metadata.timestamp)
         expect(
-          frames.length,
-          `iteration ${String(k)}/5: a page that is NOT MOVING produced ${String(frames.length)} `
-          + `frame(s) in ${String(STATIC_WINDOW_MS)} ms. counts so far = [${counts.join(', ')}]. `
-          + 'A producer that emits while nothing changes is a poller, which is the implementation '
-          + 'LIVE-01 retires — do not raise this ceiling without a dated note saying what was '
-          + 'measured and why.',
-        ).toBeLessThanOrEqual(STATIC_MAX_FRAMES)
+          after,
+          `iteration ${String(k)}/5: a static page produced ${String(after)} frame(s) in the `
+          + `${String(STATIC_WINDOW_MS)} ms after its first frame. counts so far = [${counts.join(', ')}], `
+          + `timestamps = [${stamps.join(', ')}]. Fewer than ${String(STATIC_MIN_FRAMES)} is a silent `
+          + `producer; more than ${String(STATIC_MAX_FRAMES)} is a poller.`,
+        ).toBeGreaterThanOrEqual(STATIC_MIN_FRAMES)
+        expect(after, `iteration ${String(k)}/5: counts so far = [${counts.join(', ')}]`)
+          .toBeLessThanOrEqual(STATIC_MAX_FRAMES)
+        // The gap from the first frame to the second is not bounded: CDP may deliver a second paint
+        // right after the first. From the second frame on, only keepalives arrive.
+        for (let index = 1; index + 1 < frames.length; index++) {
+          const earlier = frames[index]?.metadata.timestamp
+          const later = frames[index + 1]?.metadata.timestamp
+          expect(earlier, `iteration ${String(k)} frame ${String(index)} carries a capture time`)
+            .toBeTypeOf('number')
+          expect(later).toBeTypeOf('number')
+          expect(
+            (later as number) - (earlier as number),
+            `iteration ${String(k)}: frames ${String(index)} and ${String(index + 1)} are `
+            + `${String((later as number) - (earlier as number))} ms apart; timestamps = `
+            + `[${stamps.join(', ')}]. A keepalive fires only after 2 s of quiet.`,
+          ).toBeGreaterThanOrEqual(KEEPALIVE_MIN_GAP_MS)
+        }
       }
       expect(counts, 'both arms run k=5 — a shrunken loop is a weaker claim, silently')
         .toHaveLength(EXPECTED_ITERATIONS)
-      // eslint-disable-next-line no-console -- the A2 evidence the SUMMARY records
-      console.log(`[403-02 A2] static-arm frame counts over 5 iterations: ${counts.join(', ')}`)
+      // eslint-disable-next-line no-console -- the D-15 evidence the SUMMARY records
+      console.log(`[428-06 D-15] static-page frame counts over 5 iterations: ${counts.join(', ')}`)
+    } finally {
+      await adapter.cleanup().catch(() => undefined)
+    }
+  }, 180_000)
+
+  it('TIMESTAMP-EPOCH-MS: every Chromium frame carries its capture time in epoch milliseconds', async () => {
+    // CDP's `metadata.timestamp` is `Network.TimeSinceEpoch`: SECONDS. Passed through unconverted it
+    // reads as January 1970 to every layer that treats it as epoch ms, and the viewer's dot would
+    // compute an age of fifty-odd years on a healthy stream.
+    const adapter = await adapterOn(`${fixture().url}?animate=1`)
+    try {
+      const capability = adapter.liveStream as NonNullable<WebPlatformAdapter['liveStream']>
+      const received: { frame: LiveFrame; receivedAt: number }[] = []
+      await capability.start((frame) => {
+        received.push({ frame, receivedAt: Date.now() })
+        void capability.ack(frame.id)
+      })
+      await new Promise((resolve) => setTimeout(resolve, 1_500))
+      await capability.stop()
+
+      expect(received.length, 'an animating page produced frames to measure').toBeGreaterThan(0)
+      for (const [index, { frame, receivedAt }] of received.entries()) {
+        const stamp = frame.metadata.timestamp
+        expect(stamp, `frame ${String(index)} carries a capture time`).toBeTypeOf('number')
+        expect(
+          Math.abs((stamp as number) - receivedAt),
+          `frame ${String(index)}: timestamp ${String(stamp)} against Date.now() ${String(receivedAt)} `
+          + 'at receipt. A value near 1.7e9 is CDP seconds passed through unconverted.',
+        ).toBeLessThan(EPOCH_MS_TOLERANCE_MS)
+      }
     } finally {
       await adapter.cleanup().catch(() => undefined)
     }
