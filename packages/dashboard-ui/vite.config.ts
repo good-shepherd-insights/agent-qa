@@ -34,14 +34,16 @@ export default defineConfig({
     emptyOutDir: true,
   },
   server: {
+    // Object form with no changeOrigin: a string entry makes Vite rewrite Host to the target, and
+    // the same-site guard would then refuse the dashboard's own dev page (428 D-08).
     proxy: {
       '/api/live-editor/ws': {
         target: 'http://localhost:3470',
         ws: true,
       },
-      '/api': 'http://localhost:3470',
-      '/screenshots': 'http://localhost:3470',
-      '/videos': 'http://localhost:3470',
+      '/api': { target: 'http://localhost:3470' },
+      '/screenshots': { target: 'http://localhost:3470' },
+      '/videos': { target: 'http://localhost:3470' },
     },
   },
 })
