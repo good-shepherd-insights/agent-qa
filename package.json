@@ -84,7 +84,9 @@
     "validate:427-knowledge-mutation": "bash scripts/427-knowledge-mutation.sh",
     "validate:427-knowledge-mutation-selftest": "bash scripts/427-knowledge-mutation-selftest.sh",
     "validate:428-live-contract-mutation": "bash scripts/428-live-contract-mutation.sh",
-    "validate:428-live-contract-mutation-selftest": "bash scripts/428-live-contract-mutation-selftest.sh"
+    "validate:428-live-contract-mutation-selftest": "bash scripts/428-live-contract-mutation-selftest.sh",
+    "validate:428-live-ui-mutation": "bash scripts/428-live-ui-mutation.sh",
+    "validate:428-live-ui-mutation-selftest": "bash scripts/428-live-ui-mutation-selftest.sh"
   },
   "pnpm": {
     "onlyBuiltDependencies": [
