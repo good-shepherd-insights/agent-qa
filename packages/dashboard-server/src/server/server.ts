@@ -19,7 +19,9 @@ import { LIVE_EMBED_PATH_PREFIX, LIVE_VIEW_WS_PATH } from '../live-view/protocol
 import { renderLiveEmbedPage } from '../live-view/embed-page.js'
 import { createFrameProxy } from '../live-view/frame-proxy.js'
 import { refuseNonLoopbackHost } from './cross-site.js'
+import type { LiveEditorSubjects } from '../live-view/editor-subjects.js'
 import type {
+  EditorLiveUrlResult,
   LiveUrlVerdict,
   LiveViewSubjectRef,
   RunSession,
@@ -225,7 +227,20 @@ interface StartServerOptions {
   liveView?: {
     validate(token: string, expect: { subject: LiveViewSubjectRef; now: number }): LiveUrlVerdict
     mintLiveUrl(runId: string, handle: number): Promise<RunsLiveUrlResult>
+    /**
+     * The `editor.liveurl` mint, dispatched through the registry (428 D-07). ABSENT MEANS NO
+     * EDITOR VIEW IS MINTED, and `GET /api/live-editor/sessions/:id/live-url` answers 503 by name.
+     */
+    mintEditorLiveUrl?(sessionId: string): Promise<EditorLiveUrlResult>
   }
+  /**
+   * The editor-subject registry (428 D-07): the session manager registers each live editor session
+   * here and the frame socket attaches editor subjects through it.
+   *
+   * ABSENT MEANS NO EDITOR SUBJECT IS SERVED ON THE FRAME SOCKET. `agent-qa dashboard` creates one
+   * registry and hands the same object to the live-view composition and to this server.
+   */
+  liveEditorSubjects?: LiveEditorSubjects
   /**
    * The in-process post-processing chip relay (404-05, D-16).
    *

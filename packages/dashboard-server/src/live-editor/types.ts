@@ -226,3 +226,10 @@ export interface LiveSessionConfig {
     appiumUrl?: string
   }
 }
+
+/**
+ * The close code the control socket uses for a session this process does not hold (428 P5), so the
+ * page can say the session ended instead of "Disconnected". The dashboard UI spells the same number;
+ * Plan 23 pins the two equal.
+ */
+export const LIVE_EDITOR_UNKNOWN_SESSION_CLOSE_CODE = 4404
