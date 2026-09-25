@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { LiveSessionPane } from '@/components/live-session-pane'
 import type { LiveModeAuthStateCaptureConfig } from '@/components/live-mode-auth-state-control'
+import { TooltipProvider } from '@/components/ui/tooltip'
 import type { AuthStateMetadata } from '@/lib/api'
 
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
@@ -18,9 +19,12 @@ vi.mock('@/components/editor/aria-panel', () => ({
   EditorAriaPanel: () => <div data-testid="aria-panel" />,
 }))
 
-vi.mock('@/components/editor/screencast-viewer', () => ({
-  ScreencastViewer: () => <div data-testid="screencast-viewer" />,
-}))
+const { fetchEditorLiveUrlMock } = vi.hoisted(() => ({ fetchEditorLiveUrlMock: vi.fn() }))
+
+vi.mock('@/lib/api', async () => {
+  const actual = await vi.importActual<typeof import('@/lib/api')>('@/lib/api')
+  return { ...actual, fetchEditorLiveUrl: fetchEditorLiveUrlMock }
+})
 
 vi.mock('@/components/ui/resizable', () => ({
   ResizablePanelGroup: ({ children }: { children: ReactElement | ReactElement[] }) => <div>{children}</div>,
@@ -81,51 +85,65 @@ function renderPane(overrides: PaneOverrides = {}) {
     onSave: vi.fn().mockResolvedValue(undefined),
     ...(overrides.authStateCapture ?? {}),
   }
-  const paneOverrides = { ...overrides, authStateCapture } as Record<string, unknown>
+  const paneOverrides = { liveSessionId: 's1', ...overrides, authStateCapture } as Record<string, unknown>
 
   act(() => {
     root.render(
-      <LiveSessionPane
-        connectionState="connected"
-        isLaunching={false}
-        targetName="staging-web"
-        targetLabel="https://staging.example.com"
-        platform="web"
-        screenshot={null}
-        currentUrl="https://staging.example.com/dashboard"
-        pendingNavigation={null}
-        steps={[]}
-        setupHooks={[]}
-        teardownHooks={[]}
-        tests={[]}
-        selection={null}
-        runningStepId={null}
-        terminalState={null}
-        draftState="saved"
-        ariaTree={null}
-        errorMessage={null}
-        devtoolsTab="reasoning"
-        canRunAll={false}
-        isRunningAll={false}
-        isStoppingRunAll={false}
-        onDevtoolsTabChange={vi.fn()}
-        onRunAll={vi.fn()}
-        onStopAll={vi.fn()}
-        onEndSession={vi.fn()}
-        onBack={vi.fn()}
-        onForward={vi.fn()}
-        onRefresh={vi.fn()}
-        onNavigate={vi.fn()}
-        onRequestAriaTree={vi.fn()}
-        {...(paneOverrides as any)}
-      />,
+      <TooltipProvider>
+        <LiveSessionPane
+          connectionState="connected"
+          isLaunching={false}
+          targetName="staging-web"
+          targetLabel="https://staging.example.com"
+          platform="web"
+          currentUrl="https://staging.example.com/dashboard"
+          pendingNavigation={null}
+          steps={[]}
+          setupHooks={[]}
+          teardownHooks={[]}
+          tests={[]}
+          selection={null}
+          runningStepId={null}
+          terminalState={null}
+          draftState="saved"
+          ariaTree={null}
+          errorMessage={null}
+          devtoolsTab="reasoning"
+          canRunAll={false}
+          isRunningAll={false}
+          isStoppingRunAll={false}
+          onDevtoolsTabChange={vi.fn()}
+          onRunAll={vi.fn()}
+          onStopAll={vi.fn()}
+          onEndSession={vi.fn()}
+          onBack={vi.fn()}
+          onForward={vi.fn()}
+          onRefresh={vi.fn()}
+          onNavigate={vi.fn()}
+          onRequestAriaTree={vi.fn()}
+          {...(paneOverrides as any)}
+        />
+      </TooltipProvider>,
     )
   })
 
   return authStateCapture
 }
 
+async function flush(): Promise<void> {
+  await act(async () => {
+    await Promise.resolve()
+    await Promise.resolve()
+  })
+}
+
 beforeEach(() => {
+  fetchEditorLiveUrlMock.mockReset()
+  fetchEditorLiveUrlMock.mockImplementation(async (sessionId: string) => ({
+    liveUrl: `http://x/live/${sessionId}#v1.e.b`,
+    expiresAt: Date.now() + 300_000,
+    stream: { kind: 'cdp-screencast' },
+  }))
   container = document.createElement('div')
   document.body.appendChild(container)
   root = createRoot(container)
@@ -354,5 +372,63 @@ describe('LiveSessionPane live header (428 D-05)', () => {
       expect(statusWordElements(header())).toHaveLength(0)
     },
   )
+})
+
+// THE EDITOR WATCHES THROUGH THE ONE SHARED PREVIEW (428 PXH-LIVE-01, D-02, D-07). Test → Live
+// renders `LivePreview` with an editor subject where the image-polling viewer used to be, and the
+// editor's navigation and auth-state controls sit in the preview's chrome row, which renders only
+// when it has something to hold.
+describe('LiveSessionPane shared live preview (428 PXH-LIVE-01)', () => {
+  it('EDITOR-RENDERS-SHARED-PREVIEW: a connected pane renders the editor subject\'s one embed and no live image', async () => {
+    renderPane()
+    await flush()
+
+    expect(fetchEditorLiveUrlMock).toHaveBeenCalledWith('s1')
+    const preview = container.querySelector('[data-live-preview][data-preview-subject="editor"]')
+    expect(preview).not.toBeNull()
+    const embeds = [...(preview?.querySelectorAll('[data-live-embed]') ?? [])]
+    expect(embeds).toHaveLength(1)
+    expect(embeds[0]?.tagName).toBe('IFRAME')
+    expect(embeds[0]?.getAttribute('src')).toContain('/live/s1?host=dashboard#')
+    expect(container.querySelectorAll('img')).toHaveLength(0)
+  })
+
+  it('EDITOR-RENDERS-SHARED-PREVIEW: the terminal card and the idle explainer stay the editor\'s own', async () => {
+    renderPane({ terminalState: { reason: 'ended', title: 'Session ended', description: 'Done' } })
+    await flush()
+    expect(container.textContent).toContain('Session ended')
+    expect(container.querySelector('[data-live-preview]')).toBeNull()
+
+    act(() => {
+      root.unmount()
+      root = createRoot(container)
+    })
+    renderPane({ connectionState: 'idle', liveSessionId: null })
+    await flush()
+    expect(container.textContent).toContain('Live mode is target-scoped')
+    expect(container.querySelector('[data-live-preview]')).toBeNull()
+  })
+
+  it('EDITOR-CHROME-ROW: a web session\'s navigation, address bar, auth-state capture and copy URL are the chrome row', async () => {
+    renderPane()
+    await flush()
+
+    const chrome = container.querySelector('[data-live-preview] [data-preview-chrome]')
+    expect(chrome).not.toBeNull()
+    const labels = [...(chrome?.querySelectorAll('button') ?? [])].map(
+      (button) => button.getAttribute('aria-label') ?? button.textContent?.trim(),
+    )
+    expect(labels).toEqual(expect.arrayContaining(['Go back', 'Go forward', 'Refresh page', 'Save auth state', 'Copy URL']))
+    expect(chrome?.querySelectorAll('input')).toHaveLength(1)
+    expect(header().querySelector('input')).toBeNull()
+  })
+
+  it('EDITOR-CHROME-ROW: a mobile session without those controls renders no empty chrome row', async () => {
+    renderPane({ platform: 'android', targetName: 'android-target', targetLabel: 'Android device' })
+    await flush()
+
+    expect(container.querySelector('[data-live-preview]')).not.toBeNull()
+    expect(container.querySelector('[data-preview-chrome]')).toBeNull()
+  })
 })
 
