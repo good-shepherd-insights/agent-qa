@@ -132,7 +132,7 @@ function openFrameSocket(input: { port: number; subjectId: string; token: string
   let head = ''
   let upgraded = false
   let upgradeStatus = 0
-  let pending = Buffer.alloc(0)
+  let pending: Buffer = Buffer.alloc(0)
   let hungUp = false
 
   socket.on('error', () => { hungUp = true })

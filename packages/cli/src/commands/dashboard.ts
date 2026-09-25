@@ -60,7 +60,11 @@ import {
 } from '@vostride/agent-qa-schema'
 import { createRunServiceSessionRegistry } from '../composition/run-service-session-registry.js'
 import type { RunServiceSessionRegistry } from '../composition/run-service-session-registry.js'
-import { composeLiveView, mintLiveUrlThrough } from '../composition/live-view-composition.js'
+import {
+  composeLiveView,
+  mintEditorLiveUrlThrough,
+  mintLiveUrlThrough,
+} from '../composition/live-view-composition.js'
 import { createDisplayUnmasker, markUnrestorablePlaceholders } from '../composition/display-unmask.js'
 import type { DisplayUnmask, DisplayUnmaskSecretStore } from '../composition/display-unmask.js'
 import {
@@ -1960,6 +1964,7 @@ async function startDashboardBackedServices(
       // because the composition root that holds both the database and the function layer is this
       // command — `packages/dashboard-server` cannot reach the registry to bind itself.
       createDashboardRunDetailReader,
+      createLiveEditorSubjects,
       createPostProcessingRelay,
       resolveDashboardDbPath,
       startServer,
@@ -2034,9 +2039,19 @@ async function startDashboardBackedServices(
     // `/api/run-stream/:runId` door answered 503 about runs this very process was executing. It is
     // composed here, once, for both arms; the token arm receives it rather than building a second.
     const sessions = createRunServiceSessionRegistry({ observeSessions: runDoor.observeSessions })
+    // 428 D-07: the editor-subject registry, created once beside the run registry. The same object
+    // is the function layer's editor lookup (through `composeLiveView`) and the server's (the
+    // session manager registers into it, the frame socket attaches from it), so the mint and the
+    // socket can never disagree about which editor sessions exist.
+    const editorSubjects = createLiveEditorSubjects()
     // The signer, the mint port and the validator, joined once. `composeLiveView` binds its own
     // minted-token masking store inside the composer (402-06's law) — the command never does.
-    const liveView = composeLiveView({ sessions, origin: () => boundOrigin, door: runDoor })
+    const liveView = composeLiveView({
+      sessions,
+      origin: () => boundOrigin,
+      door: runDoor,
+      editorCapabilityOf: editorSubjects.capabilityOf,
+    })
 
     const { agentHost, host: runHost, enterRunTriggerScope } = composeDashboardDoor({
       agentQaRoot: resolve(configDir, '.agent-qa'),
@@ -2133,7 +2148,15 @@ async function startDashboardBackedServices(
           runHost.registry as FunctionRegistry,
           DASHBOARD_FUNCTION_CALLER,
         ),
+        // 428 D-07: the same dispatcher, the same caller, the editor subject. `editor.liveurl` is
+        // reached only through this door; it is unprojected from MCP by ruling.
+        mintEditorLiveUrl: mintEditorLiveUrlThrough(
+          runHost.registry as FunctionRegistry,
+          DASHBOARD_FUNCTION_CALLER,
+        ),
       },
+      // 428 D-07: the registry `composeLiveView` reads above, handed to the server by reference.
+      liveEditorSubjects: editorSubjects,
       uiDir,
       artifactsDir: resolve(configDir, artifactsDir),
       workspacePaths,

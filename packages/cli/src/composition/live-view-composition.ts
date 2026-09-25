@@ -8,13 +8,15 @@
 // composed elsewhere is a token system with two opinions about what a valid token is.
 
 import {
+  EDITOR_LIVE_URL_FUNCTION_ID,
   invokeFunction,
   RUNS_LIVE_URL_FUNCTION_ID,
   validateLiveUrlToken,
 } from '@vostride/agent-qa-agent'
 import type { FunctionRegistry, LiveViewPort } from '@vostride/agent-qa-agent'
-import { RunsLiveUrlResultSchema } from '@vostride/agent-qa-schema'
+import { EditorLiveUrlResultSchema, RunsLiveUrlResultSchema } from '@vostride/agent-qa-schema'
 import type {
+  EditorLiveUrlResult,
   FunctionCaller,
   LiveStreamDeclaration,
   LiveUrlSigner,
@@ -39,6 +41,12 @@ export interface ComposeLiveViewInput {
   readonly door: Pick<DashboardRunDoor, 'bindMaskingSecrets'>
   readonly signer?: LiveUrlSigner
   readonly now?: () => number
+  /**
+   * The editor session lookup (428 D-07), taken STRUCTURALLY as a plain function so this module
+   * imports nothing from the dashboard server. Absent means the host serves no live editor, and
+   * `editor.liveurl` refuses `LiveViewUnavailableError`.
+   */
+  readonly editorCapabilityOf?: (sessionId: string) => LiveStreamDeclaration | undefined
 }
 
 export interface ComposedLiveView {
@@ -88,6 +96,7 @@ export function composeLiveView(input: ComposeLiveViewInput): ComposedLiveView {
       minted.push(token)
       while (minted.length > MINTED_LIVE_URL_TOKEN_CAP) minted.shift()
     },
+    ...(input.editorCapabilityOf === undefined ? {} : { editorCapabilityOf: input.editorCapabilityOf }),
   }
 
   return {
@@ -123,5 +132,19 @@ export function mintLiveUrlThrough(
 ): (runId: string, handle: number) => Promise<RunsLiveUrlResult> {
   return async (runId, handle) => RunsLiveUrlResultSchema.parse(
     await invokeFunction(registry, RUNS_LIVE_URL_FUNCTION_ID, { runId, handle }, caller),
+  )
+}
+
+/**
+ * Mint one editor `liveUrl` through the SHIPPED dispatcher (428 D-07), exactly as
+ * {@link mintLiveUrlThrough} mints a run's: the same dispatcher, the same caller, the editor
+ * subject. Parsed with the `.strict()` result schema, never cast.
+ */
+export function mintEditorLiveUrlThrough(
+  registry: FunctionRegistry,
+  caller: FunctionCaller,
+): (sessionId: string) => Promise<EditorLiveUrlResult> {
+  return async (sessionId) => EditorLiveUrlResultSchema.parse(
+    await invokeFunction(registry, EDITOR_LIVE_URL_FUNCTION_ID, { sessionId }, caller),
   )
 }

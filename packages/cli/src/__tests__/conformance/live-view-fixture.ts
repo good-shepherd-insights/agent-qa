@@ -42,7 +42,11 @@ import type {
 } from '@vostride/agent-qa-schema'
 
 import { DASHBOARD_FUNCTION_CALLER, composeDashboardDoor, createDashboardRunDoor } from '../../commands/dashboard.js'
-import { composeLiveView, mintLiveUrlThrough } from '../../composition/live-view-composition.js'
+import {
+  composeLiveView,
+  mintEditorLiveUrlThrough,
+  mintLiveUrlThrough,
+} from '../../composition/live-view-composition.js'
 import { createRunServiceSessionRegistry } from '../../composition/run-service-session-registry.js'
 import { trackTempRoot } from './spawned-chat.js'
 
@@ -409,6 +413,7 @@ export async function startLiveViewHarness(input: {
     sessions,
     origin: () => boundOrigin,
     door: runDoor,
+    editorCapabilityOf: editorSubjects.capabilityOf,
   })
 
   const { agentHost, host } = composeDashboardDoor({
@@ -434,6 +439,8 @@ export async function startLiveViewHarness(input: {
       // THE SHIPPED MINT, BY REFERENCE — the same function both doors call, so a cell that got a
       // liveUrl got it through the op-level gate and not around it.
       mintLiveUrl: mintLiveUrlThrough(host.registry, DASHBOARD_FUNCTION_CALLER),
+      // The editor subject's mint, through the same dispatcher under the same caller (428 D-07).
+      mintEditorLiveUrl: mintEditorLiveUrlThrough(host.registry, DASHBOARD_FUNCTION_CALLER),
     },
   })
 
