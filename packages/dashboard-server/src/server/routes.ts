@@ -4683,11 +4683,18 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps): (req: In
       return
     }
 
+    // THE LIVE-EDITOR DOORS (428 D-08 — WINDOWS #275). These four arms create, list, end and read
+    // auth state out of sessions that drive a real browser, which is more than the live-url grants.
+    // Each runs the one same-site predicate first and answers every arm, success and refusal alike,
+    // through `jsonNoCors`: a wildcard grant on an admitted answer would leave a readable session
+    // list behind for any origin (RESEARCH P6). The rest of this router keeps its posture.
     // POST /api/live-editor/sessions/:id/auth-state — save auth state from active web Live Mode context
     const liveEditorAuthStateMatch = path.match(/^\/api\/live-editor\/sessions\/([^/]+)\/auth-state$/)
     if (liveEditorAuthStateMatch && req.method === 'POST') {
+      // 428 D-08 (WINDOWS #275): the same-site guard first, and no wildcard grant on any answer.
+      if (refuseCrossSiteDisplayRead(req, res)) return
       if (!sessionManager) {
-        json(res, { error: 'Live editor not available' }, 503)
+        jsonNoCors(res, { error: 'Live editor not available' }, 503)
         return
       }
       ;(async () => {
@@ -4697,30 +4704,30 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps): (req: In
           const body = await readJsonBody<{ name?: unknown; replace?: unknown }>(req)
           const parsedName = AuthStateNameSchema.safeParse(typeof body?.name === 'string' ? body.name : '')
           if (!parsedName.success) {
-            json(res, { error: 'Auth state name must be a lowercase slug.' }, 400)
+            jsonNoCors(res, { error: 'Auth state name must be a lowercase slug.' }, 400)
             return
           }
 
           stateName = parsedName.data
           session = sessionManager.getSession(decodeURIComponent(liveEditorAuthStateMatch[1]))
           if (!session) {
-            notFound(res, 'Session not found')
+            jsonNoCors(res, { error: 'Session not found' }, 404)
             return
           }
 
           if (typeof session.captureWebAuthState !== 'function') {
-            json(res, {
+            jsonNoCors(res, {
               error: `Could not save auth state "${stateName}" for target "${getSessionTargetNameForAuthState(session)}".`,
             }, 500)
             return
           }
 
           const authState = await session.captureWebAuthState(stateName, { replace: body?.replace === true })
-          json(res, { authState })
+          jsonNoCors(res, { authState })
         } catch (err: unknown) {
           const targetName = getSessionTargetNameForAuthState(session)
           const response = buildAuthStateSaveErrorMessage(stateName || 'unknown', targetName, err)
-          json(res, { error: response.message }, response.status)
+          jsonNoCors(res, { error: response.message }, response.status)
         }
       })()
       return
@@ -4728,8 +4735,10 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps): (req: In
 
     // POST /api/live-editor/sessions — create a new live editor session
     if (path === '/api/live-editor/sessions' && req.method === 'POST') {
+      // 428 D-08 (WINDOWS #275): the same-site guard first, and no wildcard grant on any answer.
+      if (refuseCrossSiteDisplayRead(req, res)) return
       if (!sessionManager) {
-        json(res, { error: 'Live editor not available' }, 503)
+        jsonNoCors(res, { error: 'Live editor not available' }, 503)
         return
       }
       ;(async () => {
@@ -4752,7 +4761,7 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps): (req: In
           const platform = body?.platform ?? 'web'
           const runtimeLLM = await resolveDashboardRuntimeLLM(configManager, llmConfig, authFetch)
           if (!runtimeLLM.ok) {
-            json(res, { error: runtimeLLM.error }, 400)
+            jsonNoCors(res, { error: runtimeLLM.error }, 400)
             return
           }
           const setupHooks = Array.isArray(body?.setupHooks)
@@ -4779,7 +4788,7 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps): (req: In
           let resolvedHooks = new Map<string, import('@vostride/agent-qa-core').HookDefinition>()
           let hookRegistryError: string | undefined
           if (!workspacePaths) {
-            json(res, { error: 'Workspace path resolution not available' }, 500)
+            jsonNoCors(res, { error: 'Workspace path resolution not available' }, 500)
             return
           }
 
@@ -4787,7 +4796,7 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps): (req: In
             const envContent = await readFile(workspacePaths.envFile.absolutePath, 'utf-8')
             envVars = parseEnvFile(envContent)
           } catch {
-            json(res, { error: `workspace.envFile file could not be loaded: ${workspacePaths.envFile.workspaceRelativePath}` }, 400)
+            jsonNoCors(res, { error: `workspace.envFile file could not be loaded: ${workspacePaths.envFile.workspaceRelativePath}` }, 400)
             return
           }
 
@@ -4796,7 +4805,7 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps): (req: In
             secretStore = SecretStore.fromEnvContent(secretsContent)
             secretRedactor = new SecretRedactor(secretStore)
           } catch {
-            json(res, { error: `workspace.secretsFile file could not be loaded: ${workspacePaths.secretsFile.workspaceRelativePath}` }, 400)
+            jsonNoCors(res, { error: `workspace.secretsFile file could not be loaded: ${workspacePaths.secretsFile.workspaceRelativePath}` }, 400)
             return
           }
 
@@ -4827,10 +4836,10 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps): (req: In
             },
             entityRef,
           )
-          json(res, { sessionId, sessionNumber }, 201)
+          jsonNoCors(res, { sessionId, sessionNumber }, 201)
         } catch (err: unknown) {
           const message = err instanceof Error ? err.message : String(err)
-          json(res, { error: message }, 500)
+          jsonNoCors(res, { error: message }, 500)
         }
       })()
       return
@@ -4838,28 +4847,32 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps): (req: In
 
     // GET /api/live-editor/sessions — list all active live editor sessions
     if (path === '/api/live-editor/sessions' && req.method === 'GET') {
+      // 428 D-08 (WINDOWS #275): the same-site guard first, and no wildcard grant on any answer.
+      if (refuseCrossSiteDisplayRead(req, res)) return
       if (!sessionManager) {
-        json(res, { error: 'Live editor not available' }, 503)
+        jsonNoCors(res, { error: 'Live editor not available' }, 503)
         return
       }
-      json(res, { sessions: sessionManager.listSessions() })
+      jsonNoCors(res, { sessions: sessionManager.listSessions() })
       return
     }
 
     // DELETE /api/live-editor/sessions/:id — terminate a live editor session
     const liveEditorSessionMatch = path.match(/^\/api\/live-editor\/sessions\/([^/]+)$/)
     if (liveEditorSessionMatch && req.method === 'DELETE') {
+      // 428 D-08 (WINDOWS #275): the same-site guard first, and no wildcard grant on any answer.
+      if (refuseCrossSiteDisplayRead(req, res)) return
       if (!sessionManager) {
-        json(res, { error: 'Live editor not available' }, 503)
+        jsonNoCors(res, { error: 'Live editor not available' }, 503)
         return
       }
       const sessionId = liveEditorSessionMatch[1]
       ;(async () => {
         const terminated = await sessionManager.terminateSession(sessionId)
         if (terminated) {
-          json(res, { ok: true })
+          jsonNoCors(res, { ok: true })
         } else {
-          notFound(res, 'Session not found')
+          jsonNoCors(res, { error: 'Session not found' }, 404)
         }
       })()
       return

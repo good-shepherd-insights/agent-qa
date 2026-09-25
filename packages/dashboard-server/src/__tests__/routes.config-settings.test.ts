@@ -1649,7 +1649,8 @@ describe('dashboard LLM auth and test routes', () => {
 
     const liveRes = await invokeRoute('/api/live-editor/sessions', {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      // 428 D-08: the live-editor doors run the same-site guard, which refuses an absent Host.
+      headers: { 'content-type': 'application/json', host: '127.0.0.1:3470' },
       body: JSON.stringify({
         platform: 'web',
         url: 'https://example.com',
