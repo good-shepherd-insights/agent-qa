@@ -11,7 +11,12 @@ import type {
   RecordingCapability,
 } from '@vostride/agent-qa-runner'
 import type { LiveFrame } from '@vostride/agent-qa-schema'
-import { assertNever, buildScreenState, LIVE_KEEPALIVE_QUIET_MS } from '@vostride/agent-qa-runner'
+import {
+  assertNever,
+  buildScreenState,
+  createSnapshotLiveStream,
+  LIVE_KEEPALIVE_QUIET_MS,
+} from '@vostride/agent-qa-runner'
 import type { ScreenState } from '@vostride/agent-qa-schema'
 import { convertKeysForPlatform, isMacPlatform } from '@vostride/agent-qa-runner'
 import { parseAriaSnapshot, enrichWebNodes, captureWebScroll } from './observer.js'
@@ -155,6 +160,8 @@ export class WebPlatformAdapter implements PlatformAdapter<'web'> {
   private lastScreencastSize: { width: number; height: number } | null = null
   private keepaliveEchoDeadline: number | null = null
   private screencastChain: Promise<void> = Promise.resolve()
+  // 428 D-12: the labelled snapshot preview standing in for a screencast withdrawn mid-stream.
+  private withdrawnSnapshot: LiveStreamCapability | null = null
 
   async setup(config: PlatformConfig): Promise<void> {
     this.recordingConfig = config.recording
@@ -270,6 +277,7 @@ export class WebPlatformAdapter implements PlatformAdapter<'web'> {
       stop: (): Promise<void> =>
         this.onScreencastChain(async () => {
           this.screencastOnFrame = null
+          await this.stopWithdrawnSnapshot()
           await this.detachScreencast()
         }),
     }
@@ -384,6 +392,7 @@ export class WebPlatformAdapter implements PlatformAdapter<'web'> {
     try {
       cdp = await context.newCDPSession(page)
     } catch {
+      this.handleScreencastWithdrawn(null)
       return
     }
     this.screencast = cdp
@@ -391,9 +400,46 @@ export class WebPlatformAdapter implements PlatformAdapter<'web'> {
     try {
       await cdp.send('Page.startScreencast', { ...SCREENCAST_PARAMS })
     } catch {
+      this.handleScreencastWithdrawn(cdp)
       return
     }
-    if (this.screencast === cdp) this.armKeepalive(cdp)
+    if (this.screencast !== cdp) return
+    this.armKeepalive(cdp)
+    await this.stopWithdrawnSnapshot()
+  }
+
+  /**
+   * 428 D-12's second half: the screencast was withdrawn while the browser is still up (its CDP
+   * session detached or unusable), which only this capability can see. Detected when a keepalive
+   * capture or a re-bind's start rejects on the active session; the capability then serves the
+   * labelled 1 s snapshot preview of the current page through the same `onFrame`, until `stop()`,
+   * `cleanup()` or a successful re-bind. The declared kind stays `cdp-screencast`; the frames carry
+   * `kind: 'snapshot'`, which is what labels the preview. Runs on the serialised chain.
+   */
+  private handleScreencastWithdrawn(cdp: CDPSession | null): void {
+    void this.onScreencastChain(async () => {
+      if (this.screencast !== cdp) return
+      const onFrame = this.screencastOnFrame
+      if (onFrame === null || this.withdrawnSnapshot !== null || !this.browserIsLive()) return
+      await this.detachScreencast()
+      const snapshot = createSnapshotLiveStream({ capture: () => this.screenshot() })
+      this.withdrawnSnapshot = snapshot
+      // Re-minted into the capability's own id sequence, so ids stay monotonic for every viewer.
+      await snapshot.start((frame) => {
+        if (this.withdrawnSnapshot !== snapshot) return
+        onFrame({ ...frame, id: ++this.screencastFrameSeq })
+      })
+    })
+  }
+
+  private browserIsLive(): boolean {
+    return !this.intentionalClose && !this.disconnected && this.browser?.isConnected() === true
+  }
+
+  private async stopWithdrawnSnapshot(): Promise<void> {
+    const snapshot = this.withdrawnSnapshot
+    this.withdrawnSnapshot = null
+    try { await snapshot?.stop() } catch { /* best-effort */ }
   }
 
   private clearKeepalive(): void {
@@ -411,8 +457,10 @@ export class WebPlatformAdapter implements PlatformAdapter<'web'> {
 
   /**
    * 428 D-15: a fresh capture on the same CDP session, emitted as a frame with no ack token (the ack
-   * path drops ids it never minted a token for). A capture that rejects emits nothing and re-arms;
-   * one that never settles emits nothing and arms nothing, which is the honest amber.
+   * path drops ids it never minted a token for). A capture that rejects emits nothing: while the
+   * capability is started under a live browser that is a withdrawn screencast (D-12, see
+   * `handleScreencastWithdrawn`), otherwise it re-arms. One that never settles emits nothing and
+   * arms nothing, which is the honest amber.
    */
   private async fireKeepalive(cdp: CDPSession): Promise<void> {
     this.keepaliveTimer = null
@@ -423,7 +471,9 @@ export class WebPlatformAdapter implements PlatformAdapter<'web'> {
       const result = await cdp.send('Page.captureScreenshot', { format: 'jpeg', quality: 60 })
       data = result.data
     } catch {
-      if (this.screencast === cdp) this.armKeepalive(cdp)
+      if (this.screencast !== cdp) return
+      if (this.screencastOnFrame !== null && this.browserIsLive()) this.handleScreencastWithdrawn(cdp)
+      else this.armKeepalive(cdp)
       return
     }
     if (this.screencast !== cdp) return
@@ -458,6 +508,7 @@ export class WebPlatformAdapter implements PlatformAdapter<'web'> {
     // 403: stop the screencast before the browser goes away so the CDP session is detached cleanly.
     // Clearing the consumer first makes any re-bind still queued on the chain a no-op.
     this.screencastOnFrame = null
+    await this.stopWithdrawnSnapshot()
     try { await this.screencastCapability?.stop() } catch { /* best-effort */ }
     this.screencastCapability = null
     // Pitfall 7: clear persistent route interception, network emulation, and any pending
