@@ -572,7 +572,10 @@ describe('399.1 D-01 — no classifier pattern-matches a value', () => {
     // 2026-09-15 (423-37 D-16): 44. runs.mark.preview folds the mark kind, draft kind, decision
     // count and quarantine class, and delegates refusals to runs.mark's fold; no reasoning or
     // corrected expectation reaches a receipt.
-    expect(bodiesScanned, 'no classify bodies were extracted — this scan ranges nothing').toBe(44)
+    // 2026-09-25 (428 D-07): 45. editor.liveurl arrives with its own classify member for the same
+    // reason runs.liveurl declares one — its result carries a live credential its outcome sentence
+    // may never interpolate.
+    expect(bodiesScanned, 'no classify bodies were extracted — this scan ranges nothing').toBe(45)
   })
 
   it('control: the body extractor and the scan both FIRE on a fold that sniffs', () => {

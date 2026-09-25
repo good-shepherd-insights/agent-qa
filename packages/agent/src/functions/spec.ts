@@ -1112,12 +1112,18 @@ export interface StartedRun {
  * that into `unknown_run`) and a `LiveStreamDeclaration` — possibly `{ kind: 'none' }` — otherwise.
  * `onMinted` is the Q4(b) hook: every minted token value is offered to the host's masking store, so
  * runs started after the mint mask it if it is ever printed.
+ *
+ * `editorCapabilityOf` is the editor subject's read (428 D-07), through which `editor.liveurl`
+ * mints. ABSENT means this host serves no live editor — the standalone MCP host and the MCP App
+ * host never bind it, and the op refuses by name. `undefined` means no such live editor session.
+ * It is a separate lookup from `capabilityOf` so an editor session can never be addressed as a run.
  */
 export interface LiveViewPort {
   signer: LiveUrlSigner
   origin(): string | undefined
   now(): number
   capabilityOf(runId: string, handle: number): LiveStreamDeclaration | undefined
+  editorCapabilityOf?(sessionId: string): LiveStreamDeclaration | undefined
   onMinted?(token: string): void
 }
 
