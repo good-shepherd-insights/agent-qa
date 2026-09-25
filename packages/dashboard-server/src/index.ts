@@ -105,6 +105,7 @@ export { createLiveEditorSubjects } from './live-view/editor-subjects.js'
 export type { LiveEditorAttachment, LiveEditorSubjects } from './live-view/editor-subjects.js'
 export {
   LIVE_EMBED_PATH_PREFIX,
+  LIVE_VIEW_END_REASONS,
   LIVE_VIEW_HELLO_MAX_BYTES,
   LIVE_VIEW_PING_MS,
   LIVE_VIEW_REFUSAL_CLOSE_CODE,
@@ -112,6 +113,9 @@ export {
   LIVE_VIEW_SLOW_VIEWER_BYTES,
   LIVE_VIEW_WS_PATH,
 } from './live-view/protocol.js'
+// 428 P5: the control socket's close code for a session this process does not hold. The dashboard
+// UI spells the same number, and the CLI's conformance cells pin the two equal.
+export { LIVE_EDITOR_UNKNOWN_SESSION_CLOSE_CODE } from './live-editor/types.js'
 export type {
   LiveViewClientMessage,
   LiveViewRefusalReason,
