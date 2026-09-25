@@ -1,11 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router'
 import { toast } from 'sonner'
-import { Radio, XCircle } from 'lucide-react'
+import { MonitorPlay, XCircle } from 'lucide-react'
 
 import { EmptyState } from '@/components/empty-state'
 import { LivePreview } from '@/components/live-preview/live-preview'
-import { LivenessPill, livenessForAttach } from '@/components/live-run/liveness-pill'
 import { StepList } from '@/components/live-run/step-list'
 import { RetrievalRungBanner } from '@/components/run-detail/retrieval-rung-banner'
 import { Badge } from '@/components/ui/badge'
@@ -21,11 +20,9 @@ import {
   createInitialRunStreamState,
   markGap,
   reduceRunStream,
-  type LivenessSource,
   type RunStreamState,
 } from '@/lib/run-stream-reducer'
 import { getRunStatusDescriptor, getStatusBadgeClassName } from '@/lib/status'
-import { cn } from '@/lib/utils'
 
 import type { RunEventEnvelope } from '@vostride/agent-qa-schema'
 
@@ -48,8 +45,10 @@ import type { RunEventEnvelope } from '@vostride/agent-qa-schema'
  *    carry it — the reducer dropped those fields at ingest and the props never name them.
  *  - HNST-02: motion and a count, never a phase word, because the page has no way to know what
  *    happens between two sub-actions and will not guess.
- *  - HNST-03: liveness is read off BUS ENVELOPES, so a socket to a dead run goes `lost` rather than
- *    reading "connected" forever.
+ *  - HNST-03, AS 428 D-03 LEFT IT: the page makes no claim about the bus channel at all. There is
+ *    no liveness pill and no pulsing icon; a dead bus shows as rows that stop moving, and the
+ *    facts the page does state (the gap marker, the terminal band, the run-over sentence) come
+ *    from the stream's own envelopes and the door's classification of a close.
  *
  * AND AT THE END IT MOVES WITH THE RUN (2026-08-26, Phase 404 · LIFE-01, D-13/D-14 — this
  * paragraph replaces 403's D-12 "it does not navigate", which deferred the decision to the phase
@@ -77,10 +76,9 @@ import type { RunEventEnvelope } from '@vostride/agent-qa-schema'
  * delivered one, the navigation fires and the band is moot.
  */
 
-const SOURCE_OPEN = 1
 const SOURCE_CLOSED = 2
 
-/** The page's one clock cadence: the elapsed timer and the staleness window both re-read here. */
+/** The page's one clock cadence: the running row's elapsed time re-reads here. */
 const CLOCK_TICK_MS = 1000
 
 /**
@@ -115,11 +113,8 @@ export default function LiveRunPage() {
 
   const [state, setState] = useState<RunStreamState>(createInitialRunStreamState)
   const [now, setNow] = useState(() => Date.now())
-  const [attachedAt, setAttachedAt] = useState<number | undefined>(undefined)
   const [attachToken, setAttachToken] = useState(0)
   const [runOver, setRunOver] = useState(false)
-  const [erroredWhileConnecting, setErroredWhileConnecting] = useState(false)
-  const [sourceReadyState, setSourceReadyState] = useState(0)
   const [fallbackRun, setFallbackRun] = useState<RunRow | null>(null)
   const [runMetaFailed, setRunMetaFailed] = useState(false)
   const [isCancelling, setIsCancelling] = useState(false)
@@ -166,8 +161,6 @@ export default function LiveRunPage() {
   }, [id])
 
   const onEvent = useCallback((envelope: RunEventEnvelope) => {
-    setErroredWhileConnecting(false)
-    setSourceReadyState(SOURCE_OPEN)
     const at = Date.now()
     setNow(at)
     setState((previous) => reduceRunStream(previous, envelope, at))
@@ -177,9 +170,6 @@ export default function LiveRunPage() {
     if (id === undefined) return
     let disposed = false
 
-    const attachAt = Date.now()
-    setAttachedAt(attachAt)
-    setSourceReadyState(0)
     // Every not-yet re-attach timer this attach armed, cleared with the attach that armed it — a
     // page unmounted mid-probe must not wake up and re-open a socket nobody is watching.
     const pendingTimers: ReturnType<typeof setTimeout>[] = []
@@ -188,22 +178,16 @@ export default function LiveRunPage() {
       // `=== undefined`, never truthiness: seq 0 is a real resume point ("from the very
       // beginning"), and a falsy guard here would silently turn it into "from wherever you like".
       lastEventId: resumeRef.current,
+      // D-12. At `runFinished` the door closes the stream on its own terms and the reducer
+      // freezes the rows; there is nothing left to attach to and nothing to classify.
       onEvent,
-      onFinished: () => {
-        // D-12. The door closed the stream on its own terms; there is nothing left to attach to
-        // and nothing to classify. The page freezes and offers the durable record.
-        setSourceReadyState(SOURCE_CLOSED)
-      },
       onError: (_event, errored) => {
         if (disposed) return
-        setSourceReadyState(errored.readyState)
 
-        if (errored.readyState !== SOURCE_CLOSED) {
-          // The browser is retrying this socket itself, with `Last-Event-ID` for free. Saying
-          // `reconnecting` is the whole of what a person needs told.
-          setErroredWhileConnecting(true)
-          return
-        }
+        // The browser is retrying this socket itself, with `Last-Event-ID` for free. The page
+        // says nothing about it: a retry that works resumes the rows, and one that does not ends
+        // in a CLOSED source, which is classified below.
+        if (errored.readyState !== SOURCE_CLOSED) return
 
         // A CLOSED source is one wordless event standing for three different situations, so the
         // page asks the door which one it was rather than guessing from `readyState` (403-04).
@@ -256,25 +240,13 @@ export default function LiveRunPage() {
               return
             }
             case 'lost': {
-              // The question could not be asked or could not be understood. The pill already says
-              // `lost` for a closed source; the run may well still be alive, and run detail is the
-              // durable place to find out.
+              // The question could not be asked or could not be understood. The run may well
+              // still be alive, and run detail is the durable place to find out.
               return
             }
           }
         })
       },
-    })
-
-    // AN OPEN SOCKET IS TRACKED PRECISELY SO IT CANNOT BE MISTAKEN FOR LIVENESS. Recording the
-    // transport's own `open` is what makes "the socket is open and the run has said nothing for
-    // twenty seconds" a state this page can be in, and therefore a lie it can refuse to tell. A
-    // page that never learned the socket was open could not distinguish that from a socket still
-    // dialling — and would have no way to be wrong about it, which is not the same as being right.
-    source.addEventListener('open', () => {
-      if (disposed) return
-      setSourceReadyState(SOURCE_OPEN)
-      setErroredWhileConnecting(false)
     })
 
     return () => {
@@ -283,12 +255,6 @@ export default function LiveRunPage() {
       source.close()
     }
   }, [id, attachToken, onEvent])
-
-  const livenessSource: LivenessSource = useMemo(
-    () => ({ readyState: sourceReadyState, erroredWhileConnecting }),
-    [sourceReadyState, erroredWhileConnecting],
-  )
-  const liveness = livenessForAttach(state, now, livenessSource, attachedAt)
 
   const members = useMemo(() => Object.values(state.members), [state.members])
   const verdictWord = state.verdict ?? fallbackRun?.status ?? 'unknown'
@@ -307,7 +273,7 @@ export default function LiveRunPage() {
   }, [id, isCancelling])
 
   if (id === undefined) {
-    return <EmptyState icon={Radio} title="No run selected" description="Select a test run to watch live execution" />
+    return <EmptyState icon={MonitorPlay} title="No run selected" description="Select a test run to watch live execution" />
   }
 
   const title = fallbackRun?.name ?? 'Live Run'
@@ -340,29 +306,14 @@ export default function LiveRunPage() {
     <div className="flex h-screen min-w-0 flex-col overflow-hidden">
       <div className="flex h-14 shrink-0 items-center justify-between gap-2 border-b px-3">
         {/*
-          The product tour's live-run anchor. It moved from the deleted progress band to the
-          header status group — the tour step says "live mode shows the active execution", and the
-          pill beside the title is now the thing that says so.
+          THE HEADER IS FOUR THINGS (428 D-04): the title and the file path here, Cancel while the
+          run is running and the link to run detail on the right. The product tour's live-run
+          anchor sits on this title group, so the tour step points at the name of the run being
+          watched. Nothing here pulses or speaks about the bus channel (D-03).
         */}
         <div data-tour-id="tour-live-run-status" className="flex min-w-0 items-center gap-2">
-          <Radio className={cn('size-4 shrink-0', !isOver && 'animate-pulse text-blue-500')} />
           <div className="min-w-0">
-            <div className="flex items-center gap-2">
-              <h2 className="truncate text-base font-semibold leading-tight">{title}</h2>
-              {/*
-                THE PILL IS A CLAIM ABOUT A CHANNEL, so it goes away with the channel. A run that
-                finished has no liveness to report — `lost` over a clean `runFinished` would read
-                as a failure of the very delivery that just completed successfully, and `live` over
-                a closed socket would be the open-socket lie wearing the other mask.
-              */}
-              {!isOver && (
-                <LivenessPill
-                  liveness={liveness.kind}
-                  lastActivityAgeMs={liveness.lastActivityAgeMs}
-                  attachedAgeMs={attachedAt === undefined ? undefined : now - attachedAt}
-                />
-              )}
-            </div>
+            <h2 className="truncate text-base font-semibold leading-tight">{title}</h2>
             {fallbackRun?.filePath !== undefined && fallbackRun.filePath !== null && (
               <div className="min-w-0 truncate text-xs text-muted-foreground">{fallbackRun.filePath}</div>
             )}

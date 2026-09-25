@@ -11,7 +11,6 @@ import type {
   RunEventEnvelope,
 } from '@vostride/agent-qa-schema'
 
-import type { LivenessSource } from '../run-stream-reducer'
 import {
   LIVE_DOT_STATES,
   LIVE_EMBED_END_REASONS,
@@ -91,10 +90,20 @@ test('C428-EMBED-REFUSAL-REASONS-EXACT: the token verdicts plus the three the so
   expectTypeOf<(typeof LIVE_EMBED_REFUSAL_REASONS)[number]>().toEqualTypeOf<Expected>()
 })
 
+/**
+ * The transport state a bus liveness judgement read, restated here since 428 D-03 deleted the
+ * reducer's `LivenessSource`: an `EventSource.readyState` and whether the source is retrying.
+ * The machine must still admit neither.
+ */
+interface BusTransportState {
+  readyState: number
+  erroredWhileConnecting: boolean
+}
+
 test('NO-BUS-INPUT: the machine admits no bus envelope, liveness source or socket state', () => {
   expectTypeOf<Extract<LivePreviewEvent, { envelope: unknown }>>().toEqualTypeOf<never>()
   expectTypeOf<Extract<LivePreviewEvent, { readyState: unknown }>>().toEqualTypeOf<never>()
   expectTypeOf<Extract<FieldTypes<LivePreviewEvent>, RunEventEnvelope>>().toEqualTypeOf<never>()
   expectTypeOf<Extract<RunEventEnvelope, FieldTypes<LivePreviewEvent>>>().toEqualTypeOf<never>()
-  expectTypeOf<Extract<LivenessSource, FieldTypes<LivePreviewEvent>>>().toEqualTypeOf<never>()
+  expectTypeOf<Extract<BusTransportState, FieldTypes<LivePreviewEvent>>>().toEqualTypeOf<never>()
 })

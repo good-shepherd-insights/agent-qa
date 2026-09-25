@@ -31,18 +31,14 @@ import type {
  * in `run-stream-reducer.test.ts` is the proof, feeding real payloads that carry the forbidden
  * fields and asserting the serialised state is free of them at every depth.
  *
- * EVERY CLOCK IS A PARAMETER. `reduceRunStream(state, envelope, now)` and
- * `livenessOf(state, now, source)` both take the reading rather than take it. A wall clock inside a
- * window-boundary function is a flake that fails one run in N and reads as a real defect when it
- * does (403-03 measured exactly that shape in a byte-comparing fixture).
+ * EVERY CLOCK IS A PARAMETER. `reduceRunStream(state, envelope, now)` takes the reading rather than
+ * take it. A wall clock inside the fold is a flake that fails one run in N and reads as a real
+ * defect when it does (403-03 measured exactly that shape in a byte-comparing fixture).
+ *
+ * NO LIVENESS VERDICT (428 D-03). This module once also judged the bus channel `live`, `lost` or
+ * `reconnecting` for a pill on the live page. The owner removed that pill: a dead bus now shows as
+ * rows that stop moving, and the module publishes no judgement about the channel.
  */
-
-/**
- * The stale window behind D-11's liveness pill: TWICE the run bus's 10 s heartbeat cadence
- * (`runner/src/run/bus.ts`). One missed heartbeat is a scheduler hiccup; two is a channel that has
- * stopped delivering, and saying so is the whole of HNST-03.
- */
-export const LIVENESS_STALE_MS = 20_000
 
 /** The step vocabulary HNST-02 fixes, in lifecycle order. Compatible with `lib/status.ts`. */
 export const STEP_STATUSES = [
@@ -171,25 +167,6 @@ export interface RunStreamState {
   retrievalRung?: RecordedRetrievalRung
 }
 
-export type LivenessKind = 'connecting' | 'live' | 'reconnecting' | 'lost'
-
-export interface Liveness {
-  kind: LivenessKind
-  /** How long since the last BUS envelope. Undefined before the first one. */
-  lastActivityAgeMs?: number
-}
-
-/** What {@link livenessOf} needs to know about the transport, without importing one. */
-export interface LivenessSource {
-  /** `EventSource.readyState`: 0 CONNECTING, 1 OPEN, 2 CLOSED. */
-  readyState: number
-  /** Whether the source has raised `error` and is retrying. */
-  erroredWhileConnecting: boolean
-}
-
-const SOURCE_CONNECTING = 0
-const SOURCE_CLOSED = 2
-
 export function createInitialRunStreamState(): RunStreamState {
   return {
     members: {},
@@ -229,43 +206,6 @@ export function stepStatusOf(payload: StepFinalizedPayload): StepStatus {
     return 'failed'
   }
   return payload.verifierVerdict.pass ? 'passed' : 'failed'
-}
-
-/**
- * D-11's liveness, read off BUS ENVELOPES and the transport's own state — in that order of
- * authority.
- *
- * AN OPEN SOCKET IS NOT LIVENESS. That is the lie HNST-03 names: a socket to a dead run reads
- * "connected" forever, and the SSE comment heartbeat keeps it that way. Only an envelope the run
- * itself published moves `lastEnvelopeAt`, which is why the bus `heartbeat` — an envelope — counts
- * and the transport comment does not.
- *
- * NO ENVELOPE YET IS `connecting`, EVEN ON AN OPEN SOCKET. The channel is attached; the run has
- * said nothing. Calling that `live` would be the open-socket lie in its first two seconds, and
- * calling it `lost` would slander a run that has not spoken yet.
- */
-export function livenessOf(
-  state: RunStreamState,
-  now: number,
-  source: LivenessSource,
-  staleMs: number = LIVENESS_STALE_MS,
-): Liveness {
-  const lastActivityAgeMs = state.lastEnvelopeAt === undefined ? undefined : now - state.lastEnvelopeAt
-
-  // A closed source is the end of this channel whatever the bus last said. The page's job then is
-  // to classify WHY by asking the door (`classifyRunStreamClose`), never to keep a stale pill.
-  if (source.readyState === SOURCE_CLOSED) return { kind: 'lost', lastActivityAgeMs }
-
-  if (source.erroredWhileConnecting && source.readyState === SOURCE_CONNECTING) {
-    return { kind: 'reconnecting', lastActivityAgeMs }
-  }
-
-  if (lastActivityAgeMs === undefined) return { kind: 'connecting', lastActivityAgeMs: undefined }
-
-  // Half-open on purpose: at exactly `staleMs` the window has elapsed.
-  return lastActivityAgeMs < staleMs
-    ? { kind: 'live', lastActivityAgeMs }
-    : { kind: 'lost', lastActivityAgeMs }
 }
 
 /**

@@ -129,7 +129,7 @@ export const foundationProductTourSteps = [
   {
     id: 'live-run',
     title: 'Watch the run live',
-    body: 'Live mode shows the active execution while the harness works through each step.',
+    body: 'Live mode shows the running test: its steps on one side and the browser beside them.',
     route: (context) => (context.runId ? routes.runLive(context.runId) : null),
     targetId: 'tour-live-run-status',
     include: hasRun,

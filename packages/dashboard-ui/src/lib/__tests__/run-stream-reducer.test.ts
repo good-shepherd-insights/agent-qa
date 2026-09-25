@@ -534,7 +534,7 @@ describe('members, the thin handle stream and the terminal freeze', () => {
 // ---------------------------------------------------------------------------
 
 describe('D-03: the module publishes no bus liveness, and an absent export is the proof', () => {
-  // RE-SPELLED 2026-09-26 (428-16). These eleven cells pinned `livenessOf` and its 20 s window.
+  // RE-SPELLED 2026-09-26 (428-16). These ten cells pinned `livenessOf` and its 20 s window.
   // The owner removed bus liveness from the live page (428 D-03), and the pure half went with it.
   // Each cell now states one absence: an export, a type, a transport input or a window, read off
   // the module namespace or its source, so the liveness path cannot come back by one import.
@@ -558,6 +558,8 @@ describe('D-03: the module publishes no bus liveness, and an absent export is th
       'reduceRunStream',
       'stepStatusOf',
     ])
+    expect(exportNames().filter((name) => /liveness/iu.test(name)), 'no export names liveness, in any casing')
+      .toEqual([])
   })
 
   it('a heartbeat is still folded as activity, and the state it produces names no liveness verdict', () => {
@@ -567,10 +569,6 @@ describe('D-03: the module publishes no bus liveness, and an absent export is th
     }
     expect(state).toMatchObject({ lastEnvelopeAt: 20_000, terminal: false })
     expect(Object.keys(state).filter((key) => /liveness/iu.test(key))).toEqual([])
-  })
-
-  it('no runtime export names liveness, in any casing', () => {
-    expect(exportNames().filter((name) => /liveness/iu.test(name))).toEqual([])
   })
 
   it('the source declares no Liveness, LivenessKind or LivenessSource type', () => {
@@ -583,7 +581,7 @@ describe('D-03: the module publishes no bus liveness, and an absent export is th
 
   it('no exported function takes a transport: the function exports and their arities are the fold\'s own', () => {
     const functions = Object.fromEntries(
-      Object.entries(reducer)
+      Object.entries(reducer as Record<string, unknown>)
         .filter((entry): entry is [string, (...args: never[]) => unknown] => typeof entry[1] === 'function')
         .map(([name, fn]) => [name, fn.length]),
     )
