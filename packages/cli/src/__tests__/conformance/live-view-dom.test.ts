@@ -402,8 +402,10 @@ describe('the built live surface, in a real browser (403-06 Task 1)', () => {
 
       // AND THE PAGE DID RECEIVE IT. Without this the assertion above would pass on a page that
       // never got the envelope at all, which measures nothing.
+      // 428 D-19/D-20: the tick reaches the row as the breathing glyph's re-key, never as a count.
       expect(await page.locator('[data-step-motion]').count()).toBeGreaterThanOrEqual(1)
-      expect(await page.locator('[data-step-ticks-label]').first().textContent()).toBe('1 actions')
+      expect(await page.locator('[data-step-motion]').first().getAttribute('data-motion-key')).toBe('1')
+      expect(await page.locator('[data-step-ticks' + '-label]').count()).toBe(0)
 
       // D-09's inertness, measured rather than asserted about the props: there is nothing in the
       // steps pane a person can click to open the thing that is not there.
@@ -693,7 +695,10 @@ describe('the built live surface, in a real browser (403-06 Task 1)', () => {
     await onLivePage('r_none', async (page) => {
       await page.locator('[data-member-note]').waitFor({ state: 'attached', timeout: 30_000 })
       expect(await page.locator('[data-member-note]').textContent()).toBe(DID_NOT_RUN_NOTE)
-      expect(await page.locator('[data-member-outcome]').getAttribute('data-member-outcome')).toBe('skipped')
+      // 428 D-19: a single-member run has no member header, so the note is the pane's sentence and
+      // no outcome badge repeats what the verdict is about to say.
+      expect(await page.locator('[data-member-note]').evaluate((node) => node.tagName)).toBe('P')
+      expect(await page.locator('[data-member-outcome]').count()).toBe(0)
       expect(
         await page.locator('[data-terminal-state]').count(),
         'nothing has ended yet, so nothing claims it has',

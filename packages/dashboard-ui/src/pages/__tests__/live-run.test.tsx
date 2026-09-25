@@ -11,9 +11,10 @@
 // checking never fires. The sentinels below are the same constants the reducer suite feeds, so a
 // feed and an assertion cannot drift apart.
 //
-// WHY EVERY CLOCK IS FAKE. The running row shows elapsed time and the preview re-mints at half its
-// TTL. Each of those is a cell whose verdict would otherwise depend on real elapsed time — the
-// flake shape 403-03 measured, which reads exactly like a real defect when it fires.
+// WHY EVERY CLOCK IS FAKE. The preview re-mints at half its TTL, and NO-CLOCK-ON-ANY-ROW advances
+// time to prove the rows show none (428 D-19). Each is a cell whose verdict would otherwise depend
+// on real elapsed time — the flake shape 403-03 measured, which reads exactly like a real defect
+// when it fires.
 //
 // WHY THE NO-LIVENESS-PILL CELLS RUN k=5 (428 D-03). The page used to carry a bus liveness pill
 // (HNST-03); the owner removed it, and a dead bus now shows only as rows that stop moving. The

@@ -44,8 +44,9 @@ import type { RunEventEnvelope } from '@vostride/agent-qa-schema'
  * THE THREE HONESTY CLAIMS ARE STRUCTURAL, NOT EDITORIAL.
  *  - HNST-01: nothing provisional is reachable because {@link StepList} accepts nothing that could
  *    carry it — the reducer dropped those fields at ingest and the props never name them.
- *  - HNST-02: motion and a count, never a phase word, because the page has no way to know what
- *    happens between two sub-actions and will not guess.
+ *  - HNST-02: motion, never a phase word, because the page has no way to know what happens
+ *    between two sub-actions and will not guess. Since 428 D-19/D-20 a row carries no count and no
+ *    clock either: the running glyph breathes, and durations live in run detail.
  *  - HNST-03, AS 428 D-03 LEFT IT: the page makes no claim about the bus channel at all. There is
  *    no liveness pill and no pulsing icon; a dead bus shows as rows that stop moving, and the
  *    facts the page does state (the gap marker, the terminal band, the run-over sentence) come
@@ -79,9 +80,6 @@ import type { RunEventEnvelope } from '@vostride/agent-qa-schema'
 
 const SOURCE_CLOSED = 2
 
-/** The page's one clock cadence: the running row's elapsed time re-reads here. */
-const CLOCK_TICK_MS = 1000
-
 /**
  * D-13's visible gap, in words. The bus never silently truncates and neither does this page: a
  * step that flips `pending` → `failed` with no visible reason is the failure the marker exists to
@@ -113,7 +111,6 @@ export default function LiveRunPage() {
   const navigate = useNavigate()
 
   const [state, setState] = useState<RunStreamState>(createInitialRunStreamState)
-  const [now, setNow] = useState(() => Date.now())
   const [attachToken, setAttachToken] = useState(0)
   const [runOver, setRunOver] = useState(false)
   const [fallbackRun, setFallbackRun] = useState<RunRow | null>(null)
@@ -145,11 +142,6 @@ export default function LiveRunPage() {
     return () => { observer.disconnect() }
   }, [pageRoot])
 
-  useEffect(() => {
-    const timer = setInterval(() => { setNow(Date.now()) }, CLOCK_TICK_MS)
-    return () => { clearInterval(timer) }
-  }, [])
-
   // D-13. THE RUN ANSWERED, SO THE VIEWER MOVES TO THE RECORD OF IT — see the header block for
   // why this keys on `verdict` and not on `runFinished`, and why the history entry is REPLACED.
   // `state.verdict` is first-verdict-wins in the reducer, so this effect's dependency cannot
@@ -178,7 +170,6 @@ export default function LiveRunPage() {
 
   const onEvent = useCallback((envelope: RunEventEnvelope) => {
     const at = Date.now()
-    setNow(at)
     setState((previous) => reduceRunStream(previous, envelope, at))
   }, [])
 
@@ -332,7 +323,7 @@ export default function LiveRunPage() {
   const stepsPanel = (
     <ResizablePanel key="steps" id={panelIds.steps} defaultSize={stacked ? '55%' : 40} minSize={stacked ? '20%' : 20}>
       <section data-live-pane="steps" className="flex h-full min-h-0 min-w-[280px] flex-col overflow-y-auto">
-        <StepList members={members} steps={state.steps} terminal={state.terminal} now={now} />
+        <StepList members={members} steps={state.steps} terminal={state.terminal} />
       </section>
     </ResizablePanel>
   )
