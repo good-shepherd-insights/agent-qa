@@ -196,10 +196,18 @@ export type { RunEventBus, CreateRunEventBusOptions } from './run/bus.js'
 // 403 D-05/D-07: the per-run live-frame hub (lazy start, graced stop, bounded ack).
 export {
   createLiveStreamHub,
+  defaultLiveStreamTimer,
   LIVE_STREAM_ACK_BOUND_MS,
   LIVE_STREAM_STOP_GRACE_MS,
 } from './run/live-stream-hub.js'
 export type { LiveStreamHub, CreateLiveStreamHubOptions } from './run/live-stream-hub.js'
+// 428 D-11/D-13: the labelled 1s snapshot producer behind the same capability contract.
+export {
+  createSnapshotLiveStream,
+  imageSizeOf,
+  LIVE_KEEPALIVE_QUIET_MS,
+  LIVE_SNAPSHOT_INTERVAL_MS,
+} from './run/snapshot-live-stream.js'
 export type {
   BaselineProbeResult,
   ConfigDigests,

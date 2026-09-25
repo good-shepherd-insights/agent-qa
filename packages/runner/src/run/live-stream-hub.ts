@@ -25,8 +25,11 @@ export const LIVE_STREAM_STOP_GRACE_MS = 2_000
 /** How long the hub waits for every subscriber to ack a frame before acking on their behalf. */
 export const LIVE_STREAM_ACK_BOUND_MS = 250
 
-/** Default timer: the `bus.ts` idiom — unref'd so a pending grace never holds the process open. */
-function defaultTimer(): RunTimerPort {
+/**
+ * Default timer: the `bus.ts` idiom — unref'd so a pending grace never holds the process open.
+ * Exported so the snapshot producer shares it rather than copying it (428 D-11).
+ */
+export function defaultLiveStreamTimer(): RunTimerPort {
   return {
     schedule(delayMs: number, fn: () => void): () => void {
       const handle = setTimeout(fn, delayMs) as unknown as { unref?: () => void }
@@ -140,7 +143,7 @@ interface StreamState {
 const NONE: LiveStreamDeclaration = { kind: 'none' }
 
 export function createLiveStreamHub(opts: CreateLiveStreamHubOptions = {}): LiveStreamHub {
-  const timer = opts.timer ?? defaultTimer()
+  const timer = opts.timer ?? defaultLiveStreamTimer()
   const graceMs = opts.graceMs ?? LIVE_STREAM_STOP_GRACE_MS
   const ackBoundMs = opts.ackBoundMs ?? LIVE_STREAM_ACK_BOUND_MS
   const onWarning = opts.onWarning
