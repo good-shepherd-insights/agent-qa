@@ -203,6 +203,12 @@ function runGate(spec) {
           }
         }
       }
+      // A cell that parses a stylesheet reads it by a path relative to its own file (428-26), and
+      // that read reaches the stylesheet as surely as an import reaches a module.
+      for (const match of text.matchAll(/resolve\(\s*__dirname\s*,\s*(['"])(\.[^'"]*\.css)\1\s*\)/g)) {
+        const resolved = path.resolve(path.dirname(file), match[2])
+        if (fs.existsSync(resolved) && fs.lstatSync(resolved).isFile()) stack.push(resolved)
+      }
     }
     return seen
   }
