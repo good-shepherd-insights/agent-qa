@@ -12,6 +12,7 @@ import { describe, expect, it } from 'vitest'
 
 import { createLiveEditorSubjects } from '../live-view/editor-subjects.js'
 import type { LiveEditorAttachment } from '../live-view/editor-subjects.js'
+import { LIVE_EMBED_REPORT_EVENTS, LIVE_EMBED_STATES } from '../live-view/embed-page.js'
 import { LIVE_VIEW_END_REASONS, LIVE_VIEW_REFUSAL_REASONS } from '../live-view/protocol.js'
 
 describe('the live view closed sets (428)', () => {
@@ -30,6 +31,26 @@ describe('the live view closed sets (428)', () => {
 
   it('C428-END-REASONS-EXACT: every end has its own name, and there are three', () => {
     expect([...LIVE_VIEW_END_REASONS]).toEqual(['runFinished', 'handleFinished', 'sessionEnded'])
+  })
+
+  it('C428-EMBED-STATES-EXACT: the embed names an ended editor session, and nothing else is new', () => {
+    expect([...LIVE_EMBED_STATES]).toEqual([
+      'connecting',
+      'live',
+      'no-stream',
+      'expired',
+      'refused',
+      'stream-ended',
+      'session-ended',
+      'ended',
+      'lost',
+    ])
+  })
+
+  it('C428-EMBED-REPORT-EVENTS-EXACT: the embed reports five facts to its host', () => {
+    // Read through a widened type so a missing export fails on the assertion, not on a spread.
+    const events = LIVE_EMBED_REPORT_EVENTS as readonly string[] | undefined
+    expect(Array.from(events ?? [])).toEqual(['ready', 'frame', 'ended', 'refused', 'lost'])
   })
 })
 

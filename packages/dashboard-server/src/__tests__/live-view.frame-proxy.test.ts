@@ -40,7 +40,10 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { DashboardDatabase } from '../db/database.js'
 import {
   LIVE_EMBED_EXPIRED_MESSAGE,
+  LIVE_EMBED_HOST_PARAM,
   LIVE_EMBED_NO_STREAM_MESSAGE,
+  LIVE_EMBED_REPORT_EVENTS,
+  LIVE_EMBED_SESSION_ENDED_MESSAGE,
   LIVE_EMBED_STATES,
 } from '../live-view/embed-page.js'
 import { createLiveEditorSubjects } from '../live-view/editor-subjects.js'
@@ -1184,6 +1187,96 @@ describe('the frame proxy through the production startServer frame (403 D-06/D-1
     expect(LIVE_EMBED_STATES, 'and `no-stream` is a declared state of the page').toContain('no-stream')
     // This document owns no step list and cannot see its host's, so it names no position for one.
     expect(LIVE_EMBED_NO_STREAM_MESSAGE).not.toMatch(/\b(?:below|beneath|above|left|right)\b/u)
+  })
+
+  // 428 D-10: the one deliberate change to the served page. Each cell reads the SERVED bytes, as
+  // (20) and (25) do, so the constant and the document cannot drift apart.
+  async function servedEmbed(): Promise<{ style: string; script: string }> {
+    const planted = plantSession({ runId: 'r1' })
+    const frame = await productionFrame({ r1: planted.session })
+    const body = await (await fetch(`${frame.origin}/live/r1`)).text()
+    const style = /<style nonce="[^"]+">([\s\S]*?)<\/style>/u.exec(body)?.[1] ?? ''
+    const script = /<script nonce="[^"]+">([\s\S]*?)<\/script>/u.exec(body)?.[1] ?? ''
+    expect(script.length, 'the served document must contain the embed script').toBeGreaterThan(200)
+    return { style, script }
+  }
+
+  it('(34) SERVED-SESSION-ENDED-COPY: the EXACT session-ended copy, in the branch keyed on sessionEnded (428 D-07/D-09)', async () => {
+    expect(LIVE_EMBED_SESSION_ENDED_MESSAGE, 'the copy is one exported constant').toBe('session ended')
+    const { script } = await servedEmbed()
+    expect(script, 'the served script must carry the exported session-ended message verbatim')
+      .toContain(JSON.stringify(LIVE_EMBED_SESSION_ENDED_MESSAGE))
+
+    const sessionBranch = /'sessionEnded'[^\n]*\n?[^\n]*/gu
+    const branches = script.match(sessionBranch) ?? []
+    expect(
+      branches.some((line) => line.includes(JSON.stringify(LIVE_EMBED_SESSION_ENDED_MESSAGE))
+        && line.includes("'session-ended'")),
+      `no branch keyed on 'sessionEnded' sets the session-ended state with ${JSON.stringify(LIVE_EMBED_SESSION_ENDED_MESSAGE)}`,
+    ).toBe(true)
+    expect(LIVE_EMBED_STATES, 'and `session-ended` is a declared state of the page').toContain('session-ended')
+  })
+
+  it('(35) SERVED-SNAPSHOT-PAINTER-BRANCH: both declared kinds paint, and the Blob names no MIME type (428 D-11/D-13, A2)', async () => {
+    const { script } = await servedEmbed()
+    const readyAt = script.indexOf("msg.type === 'ready'")
+    expect(readyAt, 'the served script has a ready branch').toBeGreaterThan(-1)
+    const noStreamAt = script.indexOf("setState('no-stream'", readyAt)
+    expect(noStreamAt, 'the ready branch has its no-stream arm').toBeGreaterThan(readyAt)
+    const paintingArm = script.slice(readyAt, noStreamAt)
+    expect(paintingArm, 'the screencast paints').toContain("'cdp-screencast'")
+    expect(paintingArm, 'the snapshot kind paints on the same canvas, before the no-stream arm')
+      .toContain("'snapshot'")
+
+    const blobCalls = [...script.matchAll(/new Blob\(([^)]*)\)/gu)].map((match) => match[1] ?? '')
+    expect(blobCalls.length, 'the witness: the painter builds a Blob').toBeGreaterThan(0)
+    for (const call of blobCalls) {
+      expect(
+        call,
+        'a typed Blob tells a non-Chromium host the bytes are that type; with no type the decoder '
+          + 'sniffs, so PNG snapshot bytes paint too (RESEARCH A2)',
+      ).not.toContain('type')
+    }
+  })
+
+  it('(36) SERVED-HOST-HINT-RULE: the host hint hides the centred text, read from the query named by LIVE_EMBED_HOST_PARAM', async () => {
+    expect(LIVE_EMBED_HOST_PARAM, 'the hint is one exported query name').toBe('host')
+    const { style, script } = await servedEmbed()
+    expect(style, 'a hinted host speaks for the page, so the page does not say it twice')
+      .toContain('main[data-embed-host] p { display: none; }')
+    expect(script, 'the hint is read from the query, never the fragment that carries the token')
+      .toContain(`new URLSearchParams(location.search).get(${JSON.stringify(LIVE_EMBED_HOST_PARAM)})`)
+    expect(script, 'the hint lands through setAttribute, never through markup')
+      .toContain("root.setAttribute('data-embed-host'")
+  })
+
+  it('(37) SERVED-REPORT-HAS-NO-TOKEN: every report to the host is closed-set words and numbers (428 D-15, Q-BRIDGE)', async () => {
+    const { script } = await servedEmbed()
+    const definition = /function report\(payload\) \{[\s\S]*?\n {2}\}/u.exec(script)?.[0] ?? ''
+    expect(definition, 'the served script defines one report function').not.toBe('')
+    expect(definition, 'which returns when there is no host').toContain('window.parent === window')
+    expect(definition, 'and posts the payload to its parent').toContain("window.parent.postMessage(payload, '*')")
+    expect(definition).not.toMatch(/token|runId|location/u)
+
+    const callCount = (script.match(/\breport\(/gu) ?? []).length - 1
+    const literals = [...script.matchAll(/\breport\(\{([^}]*)\}\)/gu)].map((match) => match[1] ?? '')
+    expect(literals.length, 'every report call passes an object literal').toBe(callCount)
+    expect(literals.length, 'the witness: the scan found the report calls').toBeGreaterThanOrEqual(5)
+
+    const allowed = new Set(['event', 'kind', 'ts', 'width', 'height', 'reason'])
+    const events = new Set<string>()
+    for (const literal of literals) {
+      expect(literal, 'a report never mentions the token, the run id or the location')
+        .not.toMatch(/token|runId|location/u)
+      for (const part of literal.split(',')) {
+        const key = part.split(':')[0]?.trim() ?? ''
+        expect(allowed.has(key), `report key ${key} is outside the closed set`).toBe(true)
+      }
+      const event = /event: '([a-z]+)'/u.exec(literal)?.[1]
+      if (event !== undefined) events.add(event)
+    }
+    expect([...events].sort(), 'each report event is reported, and nothing else')
+      .toEqual([...LIVE_EMBED_REPORT_EVENTS].sort())
   })
 
   it('(22) THE FRAME IS THE SHIPPED ONE — asserted on this file\'s own source', async () => {
