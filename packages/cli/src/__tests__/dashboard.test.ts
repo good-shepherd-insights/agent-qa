@@ -82,6 +82,10 @@ vi.mock('@vostride/agent-qa-dashboard', async () => {
     // not a thing this file should be stubbing: it is a one-method object over a database handle,
     // with no server and no socket in it.
     createDashboardRunDetailReader: actual.createDashboardRunDetailReader,
+    // 428-12 (D-07): THE REAL EDITOR-SUBJECT REGISTRY, on the same reasoning. The command
+    // destructures it from this package and calls it beside the run registry; it is an in-memory
+    // `Map` with no server, no socket and no browser in it.
+    createLiveEditorSubjects: actual.createLiveEditorSubjects,
     isRunTriggerConfirmScope: actual.isRunTriggerConfirmScope,
     resolveDashboardDbPath: mockResolveDashboardDbPath,
     startServer: mockStartServer,
