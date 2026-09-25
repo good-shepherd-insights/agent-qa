@@ -25,7 +25,7 @@
 import { readFileSync, readdirSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 
-import { RunsLiveUrlResultSchema } from '@vostride/agent-qa-schema'
+import { EditorLiveUrlResultSchema, RunsLiveUrlResultSchema } from '@vostride/agent-qa-schema'
 import { chromium } from 'playwright-core'
 import type { Browser, Page } from 'playwright-core'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
@@ -43,6 +43,7 @@ import {
 import type { SpawnedDashboard } from './spawned-chat.js'
 import {
   openIdStream,
+  plantEditorSubject,
   plantLiveRun,
   publishTo,
   startLiveViewHarness,
@@ -377,6 +378,39 @@ describe('the shipped zero-token dashboard serves a live view (403 D-14, LIVE-02
       .not.toContain('v1.')
     // And it is the LIVE VIEW, not the SPA fallback wearing its URL (Pitfall 10).
     expect(body).toContain('data-embed-state')
+
+    // THE EDITOR ARM (428 D-07). An editor session is served by the same embed page and frame
+    // socket, so the same absence holds around an editor mint. Measured on the shipped composition
+    // the live-view harness composes, because a real editor session in this binary would need a
+    // declared model the run above must not see.
+    const harness = await startLiveViewHarness({ label: 'anchors-editor' })
+    const editor = plantEditorSubject(harness, { sessionId: 'ed-anchor', kind: 'cdp-screencast' })
+    try {
+      const mint = await fetch(`${harness.origin}/api/live-editor/sessions/ed-anchor/live-url`)
+      const mintBody = await mint.text()
+      expect(mint.status, 'the editor mint door answers the no-Origin caller').toBe(200)
+      // THE NEEDLE'S POSITIVE CONTROL: the mint's own body is the one place the token appears.
+      expect(mintBody, 'the mint hands out a v1 token').toContain('v1.')
+      const token = EditorLiveUrlResultSchema.parse(JSON.parse(mintBody)).liveUrl.split('#')[1] as string
+
+      const surroundings: [string, Response][] = [
+        ['the editor embed document', await fetch(`${harness.origin}/live/ed-anchor`)],
+        ['the live-editor session list', await fetch(`${harness.origin}/api/live-editor/sessions`)],
+        ['the run mint door, asked for the editor id', await fetch(`${harness.origin}/api/runs/ed-anchor/live-url`)],
+      ]
+      for (const [name, response] of surroundings) {
+        const text = await response.text()
+        expect(text, `${name} (${String(response.status)}) carries a token`).not.toContain('v1.')
+        expect(text, `${name} carries the editor token`).not.toContain(token)
+      }
+      const embed = await fetch(`${harness.origin}/live/ed-anchor`)
+      const embedBody = await embed.text()
+      expect(embed.status, 'the embed page is served for an editor subject').toBe(200)
+      expect(embedBody, 'and it is the live view').toContain('data-embed-state')
+    } finally {
+      await editor.close()
+      await harness.close()
+    }
   }, 60_000)
 })
 

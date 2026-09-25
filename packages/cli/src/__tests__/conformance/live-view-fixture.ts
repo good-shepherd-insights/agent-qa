@@ -318,6 +318,11 @@ export interface LiveViewHarness {
   /** The run registry's own lookup, the one the run mint and the frame socket's run arm read. */
   attachRun(runId: string): RunSession | undefined
   /**
+   * The door's masking store, read back live: the union of every store bound through
+   * `bindMaskingSecrets`, which is where `composeLiveView` registers each minted token.
+   */
+  maskingSecrets(): { forEachSecret(cb: (name: string, value: string) => void): void } | undefined
+  /**
    * Write a run ROW for a planted run, and move its status (404-06 · LIFE-01, D-13/D-07).
    *
    * WHY A PLANTED SESSION NEEDS ONE. `plant` registers a session with the run-service registry —
@@ -453,6 +458,7 @@ export async function startLiveViewHarness(input: {
     server: started.server as Server,
     editorSubjects,
     attachRun: (runId: string) => sessions.attach(runId),
+    maskingSecrets: () => runDoor.runBridge.maskingSecrets?.(),
     plant: (run: PlantedLiveRun) => {
       if (publishSession === undefined) throw new Error('the session registry is not observing')
       publishSession(run.session)

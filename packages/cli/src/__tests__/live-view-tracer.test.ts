@@ -26,15 +26,17 @@ import type { FunctionRegistry } from '@vostride/agent-qa-agent'
 import { LIVE_EMBED_EXPIRED_MESSAGE, LIVE_EMBED_PATH_PREFIX as SERVER_EMBED_PATH_PREFIX } from '@vostride/agent-qa-dashboard'
 import { startRun } from '@vostride/agent-qa-runner'
 import type { MemberTestRunContext, RunConfig } from '@vostride/agent-qa-runner'
-import { RunsLiveUrlResultSchema } from '@vostride/agent-qa-schema'
+import { EditorLiveUrlResultSchema, RunsLiveUrlResultSchema } from '@vostride/agent-qa-schema'
 import type { CompletedRunHandoff, RunEventEnvelope, RunSession } from '@vostride/agent-qa-schema'
 import { generateTestId } from '@vostride/agent-qa-ids'
 import { WebPlatformAdapter } from '@vostride/agent-qa-web'
-import { afterAll, beforeAll, describe, expect, it } from 'vitest'
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 
 import { DASHBOARD_FUNCTION_CALLER, composeDashboardDoor, createDashboardRunDoor } from '../commands/dashboard.js'
 import { composeLiveView } from '../composition/live-view-composition.js'
 import { createRunServiceSessionRegistry } from '../composition/run-service-session-registry.js'
+import { plantEditorSubject, startLiveViewHarness } from './conformance/live-view-fixture.js'
+import { cleanupTempRoots } from './conformance/spawned-chat.js'
 import { startLiveStreamFixturePage } from './fixtures/live-stream-fixture-page.js'
 import type { LiveStreamFixturePage } from './fixtures/live-stream-fixture-page.js'
 
@@ -408,4 +410,128 @@ describe('the tracer: one real CDP frame behind a function-layer-minted liveUrl'
       await embed.close()
     }
   }, 120_000)
+})
+
+// ---- The editor token's absence (428 D-07; RESEARCH P7: the 'v1.' needle stays) ----------------
+//
+// The same credential rules as a run token, measured on the shipped composition the live-view
+// harness composes: the editor mint door, the dispatcher under the dashboard caller, and the frame
+// socket. The server runs in THIS process, so its log is this process's console and standard
+// streams, captured for the whole exchange.
+
+/** Every line written to the console or the standard streams while `run` is in flight. */
+async function captureProcessLog<T>(run: () => Promise<T>): Promise<{ result: T; log: string }> {
+  const lines: string[] = []
+  const record = (...parts: unknown[]): void => {
+    lines.push(parts.map((part) => (typeof part === 'string' ? part : String(part))).join(' '))
+  }
+  const spies = [
+    vi.spyOn(console, 'log').mockImplementation(record),
+    vi.spyOn(console, 'info').mockImplementation(record),
+    vi.spyOn(console, 'warn').mockImplementation(record),
+    vi.spyOn(console, 'error').mockImplementation(record),
+    vi.spyOn(console, 'debug').mockImplementation(record),
+  ]
+  const stdoutWrite = process.stdout.write.bind(process.stdout)
+  const stderrWrite = process.stderr.write.bind(process.stderr)
+  const streamSpies = [
+    vi.spyOn(process.stdout, 'write').mockImplementation(((chunk: unknown, ...rest: unknown[]) => {
+      record(typeof chunk === 'string' ? chunk : Buffer.from(chunk as Uint8Array).toString('utf8'))
+      return (stdoutWrite as (...args: unknown[]) => boolean)(chunk, ...rest)
+    }) as typeof process.stdout.write),
+    vi.spyOn(process.stderr, 'write').mockImplementation(((chunk: unknown, ...rest: unknown[]) => {
+      record(typeof chunk === 'string' ? chunk : Buffer.from(chunk as Uint8Array).toString('utf8'))
+      return (stderrWrite as (...args: unknown[]) => boolean)(chunk, ...rest)
+    }) as typeof process.stderr.write),
+  ]
+  try {
+    const result = await run()
+    return { result, log: lines.join('\n') }
+  } finally {
+    for (const spy of [...spies, ...streamSpies]) spy.mockRestore()
+  }
+}
+
+/** Open the frame socket as a page would, say hello, and read until `ended` or the budget. */
+async function watchEditor(origin: string, sessionId: string, token: string, until: () => Promise<void>): Promise<string[]> {
+  const socket = new WebSocket(`${origin.replace(/^http/u, 'ws')}/api/live-view/ws?runId=${encodeURIComponent(sessionId)}`)
+  const texts: string[] = []
+  let frames = 0
+  await new Promise<void>((settle, fail) => {
+    const budget = setTimeout(() => { fail(new Error(`no ended within budget; messages=${JSON.stringify(texts)}`)) }, 20_000)
+    socket.addEventListener('open', () => { socket.send(JSON.stringify({ type: 'hello', token })) })
+    socket.addEventListener('message', (event: MessageEvent) => {
+      if (typeof event.data !== 'string') { frames += 1; if (frames === 1) void until(); return }
+      texts.push(event.data)
+    })
+    socket.addEventListener('close', () => { clearTimeout(budget); settle() })
+    socket.addEventListener('error', () => { clearTimeout(budget); settle() })
+  })
+  return texts
+}
+
+describe('an editor token obeys every credential rule a run token does (428 D-07)', () => {
+  it('EDITOR-TOKEN-ABSENT-FROM-LOGS: no editor token in the server log, any non-mint body, or any URL but a fragment', async () => {
+    const harness = await startLiveViewHarness({ label: '428-12-tracer' })
+    const editor = plantEditorSubject(harness, { sessionId: 'ed-log', kind: 'cdp-screencast' })
+    try {
+      const { result, log } = await captureProcessLog(async () => {
+        // THE CAPTURE'S OWN POSITIVE CONTROL: both channels are hooked, so an absence below is a
+        // reading and not a deaf scanner.
+        console.log('428-12 capture control: console')
+        process.stderr.write('428-12 capture control: stderr\n')
+
+        const mintResponse = await fetch(`${harness.origin}/api/live-editor/sessions/ed-log/live-url`)
+        const mintBody = await mintResponse.text()
+        const minted = EditorLiveUrlResultSchema.parse(JSON.parse(mintBody))
+        const token = minted.liveUrl.split('#')[1] as string
+
+        const bodies: [string, string][] = []
+        const collect = async (name: string, url: string): Promise<void> => {
+          const response = await fetch(url)
+          bodies.push([`${name} (${String(response.status)})`, await response.text()])
+        }
+        await collect('the editor embed document', `${harness.origin}/live/ed-log`)
+        await collect('the live-editor session list', `${harness.origin}/api/live-editor/sessions`)
+        await collect('the run mint door, asked for the editor id', `${harness.origin}/api/runs/ed-log/live-url`)
+        await collect('an unheld editor session\'s mint', `${harness.origin}/api/live-editor/sessions/nope/live-url`)
+
+        const socketTexts = await watchEditor(harness.origin, 'ed-log', token, async () => { await editor.end() })
+        bodies.push(['the frame socket\'s text messages', socketTexts.join('\n')])
+        return { mintStatus: mintResponse.status, mintBody, liveUrl: minted.liveUrl, token, bodies, socketTexts }
+      })
+
+      expect(result.mintStatus, 'the no-Origin caller mints').toBe(200)
+      expect(log, 'the capture saw the console').toContain('428-12 capture control: console')
+      expect(log, 'the capture saw stderr').toContain('428-12 capture control: stderr')
+      // THE NEEDLES' POSITIVE CONTROL: the mint's own body carries the token and its needle.
+      expect(result.mintBody, 'the mint body is the one place the token is handed out').toContain(result.token)
+      expect(result.mintBody).toContain('v1.')
+      expect(result.socketTexts.map((text) => (JSON.parse(text) as { type?: string }).type), 'the socket was watched to its end')
+        .toEqual(expect.arrayContaining(['ready', 'frame', 'ended']))
+
+      const [, claimsPart, signaturePart] = result.token.split('.')
+      expect((claimsPart ?? '').length, 'a substantial needle').toBeGreaterThan(20)
+      const needles: [string, string][] = [
+        ['v1.', 'the token version prefix'],
+        [result.token, 'the whole editor token'],
+        [claimsPart as string, 'the token\'s claims body'],
+        [signaturePart as string, 'the token\'s signature'],
+      ]
+      for (const [needle, what] of needles) {
+        expect(log, `the server log carries ${what}`).not.toContain(needle)
+        for (const [name, body] of result.bodies) {
+          expect(body, `${name} carries ${what}`).not.toContain(needle)
+        }
+      }
+      // A URL carries the token only after its '#': the path the server sees has none of it.
+      const [beforeFragment] = result.liveUrl.split('#')
+      expect(beforeFragment, 'the served path and query carry no token').not.toContain('v1.')
+      expect(beforeFragment).not.toContain(claimsPart as string)
+    } finally {
+      await editor.close()
+      await harness.close()
+      cleanupTempRoots()
+    }
+  }, 60_000)
 })

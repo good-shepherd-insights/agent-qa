@@ -21,9 +21,10 @@ import { dirname, join, resolve } from 'node:path'
 import { RUNS_LIVE_URL_FUNCTION_ID } from '@vostride/agent-qa-agent'
 import type { FunctionRegistry } from '@vostride/agent-qa-agent'
 import { invokeFunction } from '@vostride/agent-qa-agent'
-import { RunsLiveUrlResultSchema } from '@vostride/agent-qa-schema'
+import { EditorLiveUrlResultSchema, RunsLiveUrlResultSchema } from '@vostride/agent-qa-schema'
 import type { TrustScope } from '@vostride/agent-qa-schema'
 import { generateTestId } from '@vostride/agent-qa-ids'
+import { createMaskingContext, seedMaskingContext } from '@vostride/agent-qa-safety'
 import { afterEach, describe, expect, it } from 'vitest'
 
 import {
@@ -34,6 +35,8 @@ import {
 } from '../commands/dashboard.js'
 import { composeLiveView } from '../composition/live-view-composition.js'
 import { createRunServiceSessionRegistry } from '../composition/run-service-session-registry.js'
+import { plantEditorSubject, startLiveViewHarness } from './conformance/live-view-fixture.js'
+import { cleanupTempRoots } from './conformance/spawned-chat.js'
 
 /** The declared credential. `…_CRED` matches no suffix `sensitiveEnvSlice` recognises, on purpose. */
 const CREDENTIAL = 'zz-403-01-planted-run-credential-9f21ab'
@@ -276,6 +279,45 @@ describe('the union never manufactures an empty store (#224 posture preserved)',
       expect(runDoor.runBridge.maskingSecrets?.()).toBeUndefined()
     } finally {
       db.close()
+    }
+  }, 60_000)
+})
+
+describe('an editor token is a minted credential like any other (428 D-07)', () => {
+  it('EDITOR-TOKEN-MASKED: an editor token minted through the door reaches the masking store, and a later print of it is masked', async () => {
+    // THE SHIPPED COMPOSITION: the harness wires `composeLiveView` with the editor lookup and the
+    // editor mint door exactly as `agent-qa dashboard` does, so the token below crossed the op's
+    // `onMinted` on its way out of the door.
+    const harness = await startLiveViewHarness({ label: '428-12-masking' })
+    const editor = plantEditorSubject(harness, { sessionId: 'ed-mask', kind: 'cdp-screencast' })
+    try {
+      const response = await fetch(`${harness.origin}/api/live-editor/sessions/ed-mask/live-url`)
+      const raw = await response.text()
+      expect(response.status, `the editor mint door answered ${response.status === 200 ? '200' : raw.slice(0, 200)}`)
+        .toBe(200)
+      const token = EditorLiveUrlResultSchema.parse(JSON.parse(raw)).liveUrl.split('#')[1] as string
+      expect(token.startsWith('v1.'), 'the needle this cell masks is a real v1 token').toBe(true)
+
+      const store = harness.maskingSecrets()
+      expect(store, 'the composition bound its minted-token store through the door').toBeDefined()
+      const walked: string[] = []
+      store?.forEachSecret((_name, value) => { walked.push(value) })
+      expect(walked, 'the editor token was offered to the masking store').toContain(token)
+
+      // A LATER PRINT: a masking context seeded from the store after the mint, as a run started
+      // afterwards is seeded (`seed.ts`).
+      const context = createMaskingContext()
+      seedMaskingContext(context, { secretStore: store })
+      const masked = context.mask(`the editor printed ${token} on its way past`)
+      expect(masked, 'the editor token is masked').not.toContain(token)
+      expect(masked, 'nothing of the token survives the mask').not.toContain('v1.')
+      expect(masked).toContain('SECRET')
+      expect(masked, 'a mask is a substitution, not a redaction of the whole line')
+        .toContain('the editor printed')
+    } finally {
+      await editor.close()
+      await harness.close()
+      cleanupTempRoots()
     }
   }, 60_000)
 })
