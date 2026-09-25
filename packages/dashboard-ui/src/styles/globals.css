@@ -1966,3 +1966,27 @@ input[type="number"] {
     animation: none;
   }
 }
+
+/* THE LIVE STEP ROW'S BREATHING GLYPH (428 D-20). A running step's glyph breathes, and the row
+   re-keys it on every recorded sub-action so the breath restarts. It is still under reduced motion. */
+@keyframes live-step-breathe {
+  0%,
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.45;
+    transform: scale(0.9);
+  }
+}
+
+.live-step-breathing {
+  animation: live-step-breathe 1.6s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .live-step-breathing {
+    animation: none;
+  }
+}

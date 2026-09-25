@@ -1,8 +1,22 @@
-import { Check, Circle, CircleDashed, Minus, ShieldCheck, X, type LucideIcon } from 'lucide-react'
+import { Ban, Check, Circle, CircleDashed, Minus, ShieldCheck, X, type LucideIcon } from 'lucide-react'
 
+import { LIVE_STEP_STATUS_NAMES } from '@/lib/live-step-row'
 import type { LiveStepRow, StepStatus } from '@/lib/run-stream-reducer'
 import { cn } from '@/lib/utils'
 
+/**
+ * THE LIVE STEP ROW (428 D-19/D-20/D-21/D-22).
+ *
+ * A row is one status glyph and the step label, nothing else. There is no clock, no bar and no
+ * count on any row: durations live in run detail (D-19, the owner's choice). The row is inert and
+ * accepts only {@link LiveStepRow}, which has no field a half-finished thought could occupy.
+ *
+ * THE RUNNING GLYPH BREATHES (D-20). Its wrapper is re-keyed on every tick, so the animation
+ * restarts each time the run records a sub-action. That restart says "something just happened"
+ * and nothing about what. It is blue, never green, and never a dot.
+ */
+
+/** One shape per status, so colour is never the only signal (RESEARCH P13). */
 export const LIVE_STEP_GLYPHS = {
   pending: CircleDashed,
   running: Circle,
@@ -10,7 +24,7 @@ export const LIVE_STEP_GLYPHS = {
   failed: X,
   healed: ShieldCheck,
   skipped: Minus,
-  cancelled: Minus,
+  cancelled: Ban,
 } satisfies Record<StepStatus, LucideIcon>
 
 const STATUS_TONE: Record<StepStatus, string> = {
@@ -26,29 +40,27 @@ const STATUS_TONE: Record<StepStatus, string> = {
 export function LiveStepRowView({ row }: { row: LiveStepRow }) {
   const Glyph = LIVE_STEP_GLYPHS[row.status]
   const isRunning = row.status === 'running'
+
   return (
     <li
       data-step-status={row.status}
       data-step-ticks={String(row.ticks)}
       className="flex items-center gap-2 border-b border-border/40 px-3 py-1.5 text-sm last:border-b-0"
     >
-      <Glyph className={cn('size-3.5 shrink-0', STATUS_TONE[row.status])} aria-hidden="true" />
+      <span
+        key={isRunning ? `motion-${String(row.ticks)}` : 'still'}
+        data-step-motion={isRunning ? '' : undefined}
+        data-motion-key={isRunning ? String(row.ticks) : undefined}
+        role="img"
+        aria-label={LIVE_STEP_STATUS_NAMES[row.status]}
+        className="inline-flex shrink-0"
+      >
+        <Glyph
+          className={cn('size-3.5', STATUS_TONE[row.status], isRunning && 'live-step-breathing')}
+          aria-hidden="true"
+        />
+      </span>
       <span className="min-w-0 flex-1 truncate">{row.text || `step ${String(row.stepIndex + 1)}`}</span>
-      {isRunning && (
-        <>
-          <span
-            key={`motion-${String(row.ticks)}`}
-            data-step-motion=""
-            data-motion-key={String(row.ticks)}
-            aria-label="working"
-            role="progressbar"
-            className="h-1 w-10 shrink-0 animate-pulse rounded-full bg-blue-500/60"
-          />
-          <span data-step-ticks-label className="shrink-0 font-mono text-xs text-muted-foreground">
-            {String(row.ticks)} actions
-          </span>
-        </>
-      )}
     </li>
   )
 }
