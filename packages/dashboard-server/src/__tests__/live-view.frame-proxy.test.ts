@@ -43,6 +43,8 @@ import {
   LIVE_EMBED_NO_STREAM_MESSAGE,
   LIVE_EMBED_STATES,
 } from '../live-view/embed-page.js'
+import { createLiveEditorSubjects } from '../live-view/editor-subjects.js'
+import type { LiveEditorSubjects } from '../live-view/editor-subjects.js'
 import { createFrameProxy } from '../live-view/frame-proxy.js'
 import {
   LIVE_VIEW_HELLO_MAX_BYTES,
@@ -76,6 +78,17 @@ function tokenFor(input: {
   return mintLiveUrlToken(signer, {
     subject: { kind: 'run', runId: input.runId, handle: input.handle ?? 0 },
     scope: input.scope ?? LIVE_URL_SCOPE,
+    iat: now,
+    exp: input.exp ?? now + 60_000,
+  })
+}
+
+/** An editor subject's token (428 D-07): the same signer and scope, the editor kind. */
+function editorTokenFor(input: { sessionId: string; exp?: number }): string {
+  const now = Date.now()
+  return mintLiveUrlToken(signer, {
+    subject: { kind: 'editor', sessionId: input.sessionId },
+    scope: LIVE_URL_SCOPE,
     iat: now,
     exp: input.exp ?? now + 60_000,
   })
@@ -321,41 +334,70 @@ async function openViewer(frame: Frame, query: string): Promise<Viewer> {
 interface DirectProxyViewer {
   /** Everything written to the socket, in order. Text and binary alike. */
   readonly sent: unknown[]
+  /** The text messages among `sent`, parsed, in order. */
+  readonly texts: ServerText[]
   /** Speak the hello, as the message handler the proxy registered would receive it. */
   greet(token: string): void
+  /** Speak any later client message (`ack`, `renew`) the same way. */
+  send(value: unknown): void
   setBuffered(bytes: number): void
   /** Kill the socket the way a real one dies: `readyState` 3, and `send` throws. */
   die(): void
   /** Called after every successful write, so a cell can die mid-frame. */
   onSent?: (data: unknown) => void
+  /** The proxy's close call, if it made one. */
+  readonly closed: { code: number | undefined; reason: string | undefined } | undefined
+  /** Every registry lookup the proxy made, as `run:<id>` or `editor:<id>`, in order. */
+  readonly lookups: string[]
 }
 
-function directProxyViewer(planted: PlantedSession, runId: string): DirectProxyViewer {
+/**
+ * The subjects behind the direct proxy: one planted run session answering every run lookup, or
+ * run sessions by id beside an editor-subject registry (428 D-07). The editor cells use this
+ * fixture because the server wiring that hands the proxy its editor lookup lands in Plan 11.
+ */
+type DirectProxySubjects =
+  | PlantedSession
+  | { readonly runs?: Record<string, RunSession>; readonly editors?: LiveEditorSubjects }
+
+function directProxyViewer(subjects: DirectProxySubjects, runId: string): DirectProxyViewer {
   const sent: unknown[] = []
+  const lookups: string[] = []
   const handlers = new Map<string, ((...args: unknown[]) => void)[]>()
   let buffered = 0
-  let alive = true
+  let readyState = 1
+  let closed: DirectProxyViewer['closed']
+  const speak = (value: unknown): void => {
+    for (const handler of handlers.get('message') ?? []) handler(JSON.stringify(value), false)
+  }
   const api: DirectProxyViewer = {
     sent,
-    greet: (token) => {
-      for (const handler of handlers.get('message') ?? []) {
-        handler(JSON.stringify({ type: 'hello', token }), false)
-      }
+    get texts() {
+      return sent
+        .filter((data): data is string => typeof data === 'string')
+        .map((data) => JSON.parse(data) as ServerText)
     },
+    greet: (token) => { speak({ type: 'hello', token }) },
+    send: speak,
     setBuffered: (bytes) => { buffered = bytes },
-    die: () => { alive = false },
+    die: () => { readyState = 3 },
+    get closed() { return closed },
+    lookups,
   }
   const fakeSocket = {
     OPEN: 1,
-    get readyState() { return alive ? 1 : 3 },
+    get readyState() { return readyState },
     get bufferedAmount() { return buffered },
     send: (data: unknown) => {
       // A REAL `ws` THROWS on a closed socket. Reproducing that is the whole of cell (24).
-      if (!alive) throw new Error('WebSocket is not open: readyState 3 (CLOSED)')
+      if (readyState !== 1) throw new Error(`WebSocket is not open: readyState ${String(readyState)}`)
       sent.push(data)
       api.onSent?.(data)
     },
-    close: () => {},
+    close: (code?: number, reason?: string) => {
+      closed ??= { code, reason }
+      if (readyState === 1) readyState = 2
+    },
     ping: () => {},
     on(event: string, handler: (...args: unknown[]) => void) {
       handlers.set(event, [...(handlers.get(event) ?? []), handler])
@@ -363,12 +405,93 @@ function directProxyViewer(planted: PlantedSession, runId: string): DirectProxyV
     },
     once(event: string, handler: (...args: unknown[]) => void) { return this.on(event, handler) },
   }
+  const planted = 'session' in subjects ? subjects : undefined
+  const runs = 'session' in subjects ? undefined : subjects.runs
+  const editors = 'session' in subjects ? undefined : subjects.editors
   const proxy = createFrameProxy({
     validate: (token, expectation) => validateLiveUrlToken(signer, token, expectation),
-    attach: () => planted.session,
+    attach: (id) => {
+      lookups.push(`run:${id}`)
+      return planted !== undefined ? planted.session : runs?.[id]
+    },
+    ...(editors === undefined
+      ? {}
+      : {
+        attachEditor: (id: string) => {
+          lookups.push(`editor:${id}`)
+          return editors.attach(id)
+        },
+      }),
   })
   proxy(fakeSocket as unknown as WebSocket, runId)
   return api
+}
+
+// ---- Real hubs behind a subject ----------------------------------------------------------------
+
+/** A real `createLiveStreamHub` with one scripted producer on handle 0, emitting frames of `width`. */
+function hubSource(width: number): {
+  readonly hub: ReturnType<typeof createLiveStreamHub>
+  started(): boolean
+  emit(id: number): void
+} {
+  const timer: RunTimerPort = { schedule: () => () => undefined, now: () => Date.now() }
+  const hub = createLiveStreamHub({ timer })
+  let sink: ((frame: LiveFrame) => void) | undefined
+  hub.register(0, {
+    kind: 'cdp-screencast',
+    start: async (onFrame) => { sink = onFrame },
+    ack: async () => {},
+    stop: async () => { sink = undefined },
+  })
+  return {
+    hub,
+    started: () => sink !== undefined,
+    emit: (id) => {
+      sink?.({ id, bytes: new Uint8Array([0xff, 0xd8, id]), metadata: { width, height: 360 } })
+    },
+  }
+}
+
+/** A run whose frames come from a real hub. */
+function hubRun(runId: string, width: number): {
+  readonly source: ReturnType<typeof hubSource>
+  readonly session: RunSession
+} {
+  const source = hubSource(width)
+  const session = {
+    ...plantSession({ runId }).session,
+    subscribeFrames: (
+      handle: number,
+      onFrame: (frame: LiveFrame) => void,
+      onEnd?: (reason: LiveFrameEndReason) => void,
+    ) => source.hub.subscribe(handle, onFrame, onEnd),
+    streamCapabilityOf: (handle: number) => source.hub.capabilityOf(handle),
+  } as RunSession
+  return { source, session }
+}
+
+/** An editor subject registered through `createLiveEditorSubjects`, its frames from a real hub. */
+function plantEditor(subjects: LiveEditorSubjects, sessionId: string, width: number): {
+  readonly source: ReturnType<typeof hubSource>
+  /** The session is over: its hub closes, then `ended` settles. */
+  end(): Promise<void>
+} {
+  const source = hubSource(width)
+  let settle: () => void = () => {}
+  const ended = new Promise<void>((resolve) => { settle = resolve })
+  subjects.register(sessionId, {
+    streamCapabilityOf: (handle) => source.hub.capabilityOf(handle),
+    subscribeFrames: (handle, onFrame, onEnd) => source.hub.subscribe(handle, onFrame, onEnd),
+    ended,
+  })
+  return {
+    source,
+    end: async () => {
+      await source.hub.close()
+      settle()
+    },
+  }
 }
 
 const jpeg = (id: number): LiveFrame => ({
@@ -1130,5 +1253,122 @@ describe('the frame proxy through the production startServer frame (403 D-06/D-1
       source,
       'a character-length cap is not a byte cap; the byte count is what the socket buffers',
     ).toContain('Buffer.byteLength')
+  })
+})
+
+describe('the editor subject on the frame socket (428 D-07/D-09/D-10)', () => {
+  const widthsOf = (viewer: DirectProxyViewer): number[] =>
+    viewer.texts.filter((text) => text.type === 'frame').map((text) => text.width as number)
+
+  it('(30) KIND-DISPATCH-BY-SIGNED-SUBJECT: one id, two subjects, and each token opens only its own', async () => {
+    const editors = createLiveEditorSubjects()
+    const run = hubRun('shared-id', 640)
+    const editor = plantEditor(editors, 'shared-id', 800)
+    const subjects = { runs: { 'shared-id': run.session }, editors }
+
+    const runViewer = directProxyViewer(subjects, 'shared-id')
+    runViewer.greet(tokenFor({ runId: 'shared-id' }))
+    expect(runViewer.texts[0]?.type, 'the run token is greeted').toBe('ready')
+    expect(runViewer.lookups, 'and only the run registry was asked').toEqual(['run:shared-id'])
+    await vi.waitFor(() => { expect(run.source.started()).toBe(true) })
+    expect(editor.source.started(), 'the editor producer is untouched by a run token').toBe(false)
+    run.source.emit(1)
+    expect(widthsOf(runViewer), 'the run token sees the run\'s frames').toEqual([640])
+
+    const editorViewer = directProxyViewer(subjects, 'shared-id')
+    editorViewer.greet(editorTokenFor({ sessionId: 'shared-id' }))
+    const ready = editorViewer.texts[0]
+    expect(ready?.type, 'the editor token is greeted').toBe('ready')
+    expect(editorViewer.lookups, 'and only the editor registry was asked')
+      .toEqual(['editor:shared-id'])
+    // D-10, RESEARCH Open Question 1: the published field names do not move. `runId` is the path
+    // id and `handle` is 0; there is no subject field.
+    expect(ready?.runId).toBe('shared-id')
+    expect(ready?.handle).toBe(0)
+    expect(ready?.stream?.kind).toBe('cdp-screencast')
+    expect(Object.keys(ready ?? {}).sort()).toEqual(['expiresAt', 'handle', 'runId', 'stream', 'type'])
+    await vi.waitFor(() => { expect(editor.source.started()).toBe(true) })
+    editor.source.emit(2)
+    expect(widthsOf(editorViewer), 'the editor token sees the editor\'s frames').toEqual([800])
+    expect(widthsOf(runViewer), 'and the run viewer never saw them').toEqual([640])
+
+    await run.source.hub.close()
+    await editor.end()
+  })
+
+  it('(30) KIND-DISPATCH-BY-SIGNED-SUBJECT: a token presented at another subject\'s id is refused scope_mismatch before any attach', () => {
+    const editors = createLiveEditorSubjects()
+    const run = hubRun('run-r', 640)
+    const editor = plantEditor(editors, 'editor-s', 800)
+    const subjects = { runs: { 'run-r': run.session }, editors }
+
+    const runTokenAtEditor = directProxyViewer(subjects, 'editor-s')
+    runTokenAtEditor.greet(tokenFor({ runId: 'run-r' }))
+    expect(runTokenAtEditor.texts.map((text) => text.reason)).toEqual(['scope_mismatch'])
+    expect(runTokenAtEditor.closed?.code).toBe(LIVE_VIEW_REFUSAL_CLOSE_CODE)
+    expect(runTokenAtEditor.lookups, 'refused before any registry is asked').toEqual([])
+
+    const editorTokenAtRun = directProxyViewer(subjects, 'run-r')
+    editorTokenAtRun.greet(editorTokenFor({ sessionId: 'editor-s' }))
+    expect(editorTokenAtRun.texts.map((text) => text.reason)).toEqual(['scope_mismatch'])
+    expect(editorTokenAtRun.closed?.code).toBe(LIVE_VIEW_REFUSAL_CLOSE_CODE)
+    expect(editorTokenAtRun.lookups).toEqual([])
+    expect(run.source.started() || editor.source.started(), 'no producer was started').toBe(false)
+  })
+
+  it('(31) UNKNOWN-SESSION-BY-NAME: a valid editor token for a session nobody holds is refused unknown_session', () => {
+    const editors = createLiveEditorSubjects()
+    plantEditor(editors, 'someone-else', 800)
+    const viewer = directProxyViewer({ runs: {}, editors }, 'ghost')
+    viewer.greet(editorTokenFor({ sessionId: 'ghost' }))
+    expect(viewer.texts.map((text) => text.type)).toEqual(['refused'])
+    expect(viewer.texts[0]?.reason).toBe('unknown_session')
+    expect(viewer.closed?.code).toBe(LIVE_VIEW_REFUSAL_CLOSE_CODE)
+    expect(viewer.closed?.reason).toBe('unknown_session')
+    expect(viewer.lookups, 'the editor lookup is the answer, and no run was asked')
+      .toEqual(['editor:ghost'])
+  })
+
+  it('(32) RENEW-KEEPS-SUBJECT-KIND: an editor socket renews with an editor token and refuses a run one', () => {
+    const editors = createLiveEditorSubjects()
+    const editor = plantEditor(editors, 'shared-id', 800)
+    const run = hubRun('shared-id', 640)
+    const viewer = directProxyViewer({ runs: { 'shared-id': run.session }, editors }, 'shared-id')
+    viewer.greet(editorTokenFor({ sessionId: 'shared-id', exp: Date.now() + 5_000 }))
+    expect(viewer.texts[0]?.type, 'the witness: the editor socket is open').toBe('ready')
+
+    const laterExp = Date.now() + 60_000
+    viewer.send({ type: 'renew', token: editorTokenFor({ sessionId: 'shared-id', exp: laterExp }) })
+    const renewed = viewer.texts.find((text) => text.type === 'renewed')
+    expect(renewed?.expiresAt, 'a fresh editor token extends the deadline').toBe(laterExp)
+    expect(viewer.closed).toBeUndefined()
+
+    viewer.send({ type: 'renew', token: tokenFor({ runId: 'shared-id' }) })
+    expect(
+      viewer.texts.filter((text) => text.type === 'refused').map((text) => text.reason),
+      'a renew is validated against the kind resolved at greet, never re-dispatched',
+    ).toEqual(['scope_mismatch'])
+    expect(viewer.closed?.code).toBe(LIVE_VIEW_REFUSAL_CLOSE_CODE)
+    expect(viewer.lookups, 'the run registry was never asked').toEqual(['editor:shared-id'])
+    void editor.end()
+  })
+
+  it('(33) SESSION-END-SAYS-SESSION-ENDED: an editor session ending sends ended { sessionEnded } and closes 1000', async () => {
+    const editors = createLiveEditorSubjects()
+    const editor = plantEditor(editors, 'session-e', 800)
+    const viewer = directProxyViewer({ editors }, 'session-e')
+    viewer.greet(editorTokenFor({ sessionId: 'session-e' }))
+    expect(viewer.texts[0]?.type).toBe('ready')
+    await vi.waitFor(() => { expect(editor.source.started(), 'the witness: streaming').toBe(true) })
+    editor.source.emit(1)
+    expect(widthsOf(viewer)).toEqual([800])
+
+    await editor.end()
+    await vi.waitFor(() => { expect(viewer.closed).toBeDefined() })
+    expect(
+      viewer.texts.filter((text) => text.type === 'ended').map((text) => text.reason),
+      'the session\'s own end, by its own name — the closed hub under it said nothing',
+    ).toEqual(['sessionEnded'])
+    expect(viewer.closed).toEqual({ code: 1000, reason: 'sessionEnded' })
   })
 })

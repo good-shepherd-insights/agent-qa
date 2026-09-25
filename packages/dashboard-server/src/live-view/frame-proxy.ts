@@ -32,10 +32,13 @@ import {
   LIVE_VIEW_SLOW_VIEWER_BYTES,
 } from './protocol.js'
 import type { LiveViewRefusalReason, LiveViewServerMessage } from './protocol.js'
+import type { LiveEditorAttachment } from './editor-subjects.js'
 
 export interface FrameProxyDeps {
   validate(token: string, expect: { subject: LiveViewSubjectRef; now: number }): LiveUrlVerdict
   attach(runId: string): RunSession | undefined
+  /** 428 D-07: the editor-subject lookup. Absent means no editor subject is served on this socket. */
+  attachEditor?(sessionId: string): LiveEditorAttachment | undefined
   now?: () => number
 }
 
