@@ -20,13 +20,16 @@
 // default a project gets.
 
 import { randomBytes } from 'node:crypto'
+import { readFileSync, writeFileSync } from 'node:fs'
 import { createServer } from 'node:http'
 import type { Server } from 'node:http'
 import { connect } from 'node:net'
+import { basename, dirname } from 'node:path'
 
 import { chromium } from 'playwright-core'
 import type { Browser } from 'playwright-core'
 import { describe, expect, it, beforeAll, afterAll } from 'vitest'
+import { EditorLiveUrlResultSchema } from '@vostride/agent-qa-schema'
 
 import {
   DASHBOARD_ANCHORED_BUILDS,
@@ -909,4 +912,398 @@ describe('the live-url mint door refuses a cross-site browser request (SC-2, LIV
       .toContain('cross_site_refused')
     expect(reading.hostAbsentLiveUrl, `${context} — the absent Host leaks no token`).toBeNull()
   }, 120_000)
+})
+
+// ---- the live-editor surface (428 D-08, WINDOWS #275) --------------------------------------------
+//
+// ITS OWN SPAWNED DASHBOARD. An editor session constructs its planner at creation, so the project
+// declares a model: an `openai-compatible` stub that is never called, because no cell here plans a
+// step. The cells above keep their zero-model project, whose run lifecycle they depend on.
+//
+// One real editor session is created through the no-Origin door (a headless Chromium in the
+// child), so cell (10) has a session to mint for. The control-socket and door refusals use an id
+// no session holds, so a guard that failed could not end the real session.
+
+const EDITOR_MODEL_NAME = 'cross-site-stub'
+/** Nothing listens here; the stub model is constructed and never called. */
+const EDITOR_MODEL_BASE_URL = 'http://127.0.0.1:9/v1'
+/** An id no session holds. */
+const UNHELD_SESSION_ID = 'no-such-session'
+
+/**
+ * The browsers root the child is handed, so its hermetic `HOME` does not hide the installed
+ * Chromium (the populated-run fixture's reasoning). Playwright's own resolver answers; an explicit
+ * `PLAYWRIGHT_BROWSERS_PATH` in this process wins.
+ */
+function playwrightBrowsersRoot(): string | undefined {
+  const declared = process.env.PLAYWRIGHT_BROWSERS_PATH
+  if (declared !== undefined && declared.trim() !== '') return declared
+  let current: string
+  try {
+    current = dirname(chromium.executablePath())
+  } catch {
+    return undefined
+  }
+  for (;;) {
+    const parent = dirname(current)
+    if (parent === current) return undefined
+    if (basename(current).startsWith('chromium')) return parent
+    current = parent
+  }
+}
+
+interface EditorFixture {
+  readonly dashboard: ReadySpawnedDashboard
+  readonly sessionId: string
+}
+
+let editorFixture: EditorFixture | undefined
+
+function editorHeld(): EditorFixture {
+  if (editorFixture === undefined) throw new Error('the live-editor cross-site fixture never came up')
+  return editorFixture
+}
+
+interface ControlSocketReading {
+  /** `101` is an accepted upgrade; `0` means the door hung up before any status line. */
+  readonly upgradeStatus: number
+  /** The close code the server sent after accepting, if it sent one. */
+  readonly closeCode: number | undefined
+  readonly note?: string
+}
+
+/** One control-socket upgrade with EXACTLY the Origin the cell states (`undefined`: none at all). */
+function upgradeControlSocketRaw(input: {
+  readonly port: number
+  readonly sessionId: string
+  readonly origin?: string
+  readonly budgetMs?: number
+}): Promise<ControlSocketReading> {
+  return new Promise<ControlSocketReading>((settle) => {
+    const socket = connect(input.port, '127.0.0.1')
+    let head = ''
+    let upgradeStatus = 0
+    let upgraded = false
+    let closeCode: number | undefined
+    let pending = Buffer.alloc(0)
+    let settled = false
+    const finish = (note?: string): void => {
+      if (settled) return
+      settled = true
+      clearTimeout(budget)
+      socket.destroy()
+      settle({ upgradeStatus, closeCode, ...(note === undefined ? {} : { note }) })
+    }
+    const budget = setTimeout(() => finish('no answer within the cell budget'), input.budgetMs ?? 10_000)
+    socket.on('error', (error: Error) => finish(error.message))
+    socket.on('close', () => finish('the door hung up'))
+    socket.on('data', (chunk: Buffer) => {
+      if (!upgraded) {
+        head += chunk.toString('latin1')
+        const split = head.indexOf('\r\n\r\n')
+        if (split === -1) return
+        upgradeStatus = Number.parseInt(head.split('\r\n')[0]?.split(' ')[1] ?? '', 10)
+        if (!Number.isInteger(upgradeStatus)) upgradeStatus = 0
+        if (upgradeStatus !== 101) { finish(`the upgrade was answered ${String(upgradeStatus)}`); return }
+        upgraded = true
+        pending = Buffer.from(head.slice(split + 4), 'latin1')
+      } else {
+        pending = Buffer.concat([pending, chunk])
+      }
+      // A server close frame: FIN + opcode 8, unmasked, a two-byte code first.
+      if (pending.length >= 4 && ((pending[0] ?? 0) & 0x0f) === 0x8) {
+        closeCode = pending.readUInt16BE(2)
+        finish()
+      }
+    })
+    socket.on('connect', () => {
+      const headers: Record<string, string> = {
+        host: `127.0.0.1:${String(input.port)}`,
+        upgrade: 'websocket',
+        connection: 'Upgrade',
+        'sec-websocket-key': randomBytes(16).toString('base64'),
+        'sec-websocket-version': '13',
+      }
+      if (input.origin !== undefined) headers.origin = input.origin
+      socket.write(
+        `GET /api/live-editor/ws?sessionId=${encodeURIComponent(input.sessionId)} HTTP/1.1\r\n`
+        + Object.entries(headers).map(([key, value]) => `${key}: ${value}\r\n`).join('')
+        + '\r\n',
+      )
+    })
+  })
+}
+
+function editorMintPath(sessionId: string): string {
+  return `/api/live-editor/sessions/${encodeURIComponent(sessionId)}/live-url`
+}
+
+describe('the live-editor surface refuses a cross-site caller (428 D-08, WINDOWS #275)', () => {
+  beforeAll(async () => {
+    const project = runServiceFixtureProject('live-editor-cross-site', false)
+    const config = JSON.parse(readFileSync(project.configPath, 'utf8')) as Record<string, unknown>
+    const registry = (config.registry ?? {}) as Record<string, unknown>
+    config.registry = {
+      ...registry,
+      llms: [{
+        name: EDITOR_MODEL_NAME,
+        provider: 'openai-compatible',
+        model: 'stub-model',
+        baseURL: EDITOR_MODEL_BASE_URL,
+      }],
+    }
+    config.use = { ...((config.use ?? {}) as Record<string, unknown>), llm: EDITOR_MODEL_NAME }
+    writeFileSync(project.configPath, `${JSON.stringify(config, null, 2)}\n`, 'utf8')
+
+    const port = await reserveEphemeralPort()
+    const browsersRoot = playwrightBrowsersRoot()
+    const dashboard = await spawnDashboard(
+      project.root,
+      project.configPath,
+      port,
+      60_000,
+      browsersRoot === undefined ? {} : { PLAYWRIGHT_BROWSERS_PATH: browsersRoot },
+    )
+    // Held before any assertion, so afterAll stops the child even if session creation fails.
+    editorFixture = { dashboard, sessionId: '' }
+    expect(
+      dashboard.ready,
+      `the built \`agent-qa dashboard\` never reported that it was listening. ${childContext(dashboard)}`,
+    ).toBe(true)
+
+    // A plain node `fetch`: no Origin, the non-browser caller the guard admits.
+    const created = await fetch(`${dashboard.origin}/api/live-editor/sessions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ platform: 'web', headless: true }),
+    })
+    const createdBody = await created.text()
+    expect(created.status, `the session door refused: ${createdBody}. ${childContext(dashboard)}`).toBe(201)
+    const sessionId = (JSON.parse(createdBody) as { sessionId?: string }).sessionId
+    expect(typeof sessionId, `the create answer named no session: ${createdBody}`).toBe('string')
+    editorFixture = { dashboard, sessionId: sessionId as string }
+  }, 180_000)
+
+  afterAll(async () => {
+    const open = editorFixture
+    editorFixture = undefined
+    if (open === undefined) return
+    if (open.sessionId !== '') {
+      await fetch(`${open.dashboard.origin}/api/live-editor/sessions/${encodeURIComponent(open.sessionId)}`, {
+        method: 'DELETE',
+      }).then(async (response) => response.text()).catch(() => undefined)
+    }
+    await open.dashboard.stop()
+  }, 60_000)
+
+  it('(8) the control socket\'s upgrade (#275, live-editor surface): absent and same-host Origins admitted, null and foreign destroyed', async () => {
+    const f = editorHeld()
+    const port = f.dashboard.port
+    const arms = {
+      // THE ALLOWED SHAPES FIRST, as in cell (5): a non-browser client with no Origin at all …
+      absent: await upgradeControlSocketRaw({ port, sessionId: UNHELD_SESSION_ID }),
+      // … and the dashboard's own page.
+      sameHost: await upgradeControlSocketRaw({
+        port, sessionId: UNHELD_SESSION_ID, origin: `http://127.0.0.1:${String(port)}`,
+      }),
+      // UNLIKE THE FRAME SOCKET, the literal `null` is refused: this socket has no sandboxed embed.
+      opaque: await upgradeControlSocketRaw({ port, sessionId: UNHELD_SESSION_ID, origin: 'null' }),
+      hostile: await upgradeControlSocketRaw({ port, sessionId: UNHELD_SESSION_ID, origin: HOSTILE_ORIGIN }),
+    }
+    console.log(`(8) control-socket Origin rungs: ${JSON.stringify(arms)}`)
+    const context = `${JSON.stringify(arms)}. ${childContext(f.dashboard)}`
+
+    for (const name of ['absent', 'sameHost'] as const) {
+      expect(arms[name].upgradeStatus, `${context} — the ${name} arm's upgrade is accepted`).toBe(101)
+      expect(
+        arms[name].closeCode,
+        `${context} — the ${name} arm is closed by name for an id no session holds`,
+      ).toBe(4404)
+    }
+    for (const name of ['opaque', 'hostile'] as const) {
+      expect(
+        arms[name].upgradeStatus,
+        `${context} — the ${name} arm is destroyed before any status line`,
+      ).toBe(0)
+      expect(arms[name].closeCode, `${context} — a destroyed upgrade sends no close frame`).toBeUndefined()
+    }
+  }, 60_000)
+
+  it('(9) every live-editor door and the editor mint (#275, live-editor surface): a foreign Origin is refused 403 with no Access-Control-Allow-Origin', async () => {
+    const f = editorHeld()
+    const port = f.dashboard.port
+    const hostileHeaders = {
+      origin: HOSTILE_ORIGIN,
+      'sec-fetch-site': 'cross-site',
+      'sec-fetch-mode': 'cors',
+      'sec-fetch-dest': 'empty',
+    }
+    const doors = [
+      { name: 'POST /api/live-editor/sessions', method: 'POST', path: '/api/live-editor/sessions', body: '{}' },
+      { name: 'GET /api/live-editor/sessions', method: 'GET', path: '/api/live-editor/sessions' },
+      {
+        name: 'DELETE /api/live-editor/sessions/:id',
+        method: 'DELETE',
+        path: `/api/live-editor/sessions/${UNHELD_SESSION_ID}`,
+      },
+      {
+        name: 'POST /api/live-editor/sessions/:id/auth-state',
+        method: 'POST',
+        path: `/api/live-editor/sessions/${UNHELD_SESSION_ID}/auth-state`,
+        body: '{"name":"probe"}',
+      },
+      { name: 'GET /api/live-editor/sessions/:id/live-url', method: 'GET', path: editorMintPath(f.sessionId) },
+    ] as const
+
+    const readings: Record<string, unknown>[] = []
+    for (const door of doors) {
+      const hostile = await rawRequest(port, {
+        method: door.method,
+        path: door.path,
+        headers: { ...hostileHeaders, ...('body' in door ? { 'content-type': 'application/json' } : {}) },
+        ...('body' in door ? { body: door.body } : {}),
+      })
+      // THE ALLOWED TWIN, in the same breath: the same door with no Origin reaches past the guard.
+      // Its POST twins carry a body the route refuses on its own terms (malformed JSON), so no
+      // session is created or changed by a twin.
+      const twin = await rawRequest(port, {
+        method: door.method,
+        path: door.path,
+        ...('body' in door ? { headers: { 'content-type': 'application/json' }, body: 'not json' } : {}),
+      })
+      readings.push({
+        door: door.name,
+        hostileStatus: hostile.status,
+        hostileAcao: hostile.headers['access-control-allow-origin'] ?? null,
+        hostileBody: hostile.body.slice(0, 120),
+        twinStatus: twin.status,
+        twinAcao: twin.headers['access-control-allow-origin'] ?? null,
+        // A twin that minted carries a credential: the reading says so and never prints it.
+        twinBody: liveUrlIn(twin) === undefined ? twin.body.slice(0, 120) : '<a liveUrl, withheld>',
+      })
+    }
+    console.log(`(9) live-editor doors: ${JSON.stringify(readings)}`)
+    const context = `${JSON.stringify(readings)}. ${childContext(f.dashboard)}`
+
+    for (const reading of readings) {
+      expect(reading.twinStatus, `${context} — ${String(reading.door)}: the twin is answered`).not.toBe(0)
+      expect(
+        reading.twinStatus,
+        `${context} — ${String(reading.door)}: the twin reaches past the guard`,
+      ).not.toBe(403)
+      expect(reading.twinAcao, `${context} — ${String(reading.door)}: no wildcard grant on the twin`).toBeNull()
+
+      expect(reading.hostileStatus, `${context} — ${String(reading.door)}: refused by name`).toBe(403)
+      expect(String(reading.hostileBody), `${context} — ${String(reading.door)}: the typed refusal`)
+        .toContain('cross_site_refused')
+      expect(reading.hostileAcao, `${context} — ${String(reading.door)}: no read grant on the refusal`)
+        .toBeNull()
+      expect(String(reading.hostileBody), `${context} — ${String(reading.door)}: no token leaves`)
+        .not.toContain('v1.')
+    }
+  }, 60_000)
+
+  it('(10) the same-origin editor mint (#275, live-editor surface) answers 200 with no Access-Control-Allow-Origin, and a page on another origin cannot read it', async () => {
+    const f = editorHeld()
+    const port = f.dashboard.port
+    const sameOrigin = await rawRequest(port, {
+      method: 'GET',
+      path: editorMintPath(f.sessionId),
+      headers: {
+        origin: f.dashboard.origin,
+        'sec-fetch-site': 'same-origin',
+        'sec-fetch-mode': 'cors',
+        'sec-fetch-dest': 'empty',
+      },
+    })
+    const sameOriginContext = `status=${String(sameOrigin.status)} body=${sameOrigin.body.slice(0, 200)} `
+      + `note=${sameOrigin.note ?? 'none'}. ${childContext(f.dashboard)}`
+    expect(sameOrigin.status, `${sameOriginContext} — the dashboard's own page mints`).toBe(200)
+    const result = EditorLiveUrlResultSchema.parse(JSON.parse(sameOrigin.body))
+    expect(result.liveUrl, `${sameOriginContext} — a real token, in the fragment`).toMatch(/^http.*#v1\./u)
+    expect(
+      sameOrigin.headers['access-control-allow-origin'] ?? null,
+      `${sameOriginContext} — the admitted answer stamps no cross-origin read grant`,
+    ).toBeNull()
+
+    if (browser === undefined) {
+      try {
+        browser = await chromium.launch({ headless: true })
+      } catch (error) {
+        throw new Error(
+          `${BROWSER_INSTALL_INSTRUCTION} underlying error: `
+          + `${error instanceof Error ? error.message : String(error)}`,
+        )
+      }
+    }
+
+    const attackerPort = await reserveEphemeralPort()
+    const dash = `http://127.0.0.1:${String(port)}`
+    // The control is a read a foreign document is still allowed to make, as in cell (2).
+    const controlUrl = `${dash}/api/stats`
+    const mintUrl = `${dash}${editorMintPath(f.sessionId)}`
+    const html = `<!doctype html><meta charset="utf-8"><title>second origin</title><body><script>
+      window.__reading = { phase: 'pending' };
+      (async () => {
+        const reading = { phase: 'done', control: null, controlError: null, target: null, targetError: null };
+        try {
+          const response = await fetch(${JSON.stringify(controlUrl)});
+          reading.control = { status: response.status, bodyHead: (await response.text()).slice(0, 80) };
+        } catch (error) { reading.controlError = String(error); }
+        try {
+          const response = await fetch(${JSON.stringify(mintUrl)});
+          reading.target = { status: response.status, bodyHead: (await response.text()).slice(0, 300) };
+        } catch (error) { reading.targetError = String(error); }
+        window.__reading = reading;
+      })();
+    </script></body>`
+    const attacker = await serveAttackerPage(attackerPort, html)
+
+    interface PageReading {
+      control: { status: number; bodyHead: string } | null
+      controlError: string | null
+      target: { status: number; bodyHead: string } | null
+      targetError: string | null
+    }
+
+    const arms: (PageReading & { arm: number })[] = []
+    try {
+      // k=5, the house rule for a real-Chromium cell (cell (2)).
+      for (let k = 0; k < 5; k += 1) {
+        const page = await browser.newPage()
+        try {
+          await page.goto(`http://127.0.0.1:${String(attackerPort)}/`, { waitUntil: 'load', timeout: 30_000 })
+          await page.waitForFunction(
+            () => (window as unknown as { __reading: { phase: string } }).__reading.phase === 'done',
+            undefined,
+            { timeout: 30_000 },
+          )
+          const reading = await page.evaluate(
+            () => (window as unknown as { __reading: unknown }).__reading,
+          ) as PageReading
+          arms.push({ arm: k + 1, ...reading })
+        } finally {
+          await page.close().catch(() => undefined)
+        }
+      }
+    } finally {
+      await new Promise<void>((closed) => attacker.close(() => closed()))
+    }
+    console.log(`(10) second-origin editor mint k=5: ${JSON.stringify(arms)}`)
+
+    for (const reading of arms) {
+      const context = `arm ${String(reading.arm)} of 5: ${JSON.stringify(reading)}. ${childContext(f.dashboard)}`
+      expect(reading.control?.status, `${context} — THE CONTROL: the page reaches the dashboard at all`)
+        .toBe(200)
+      expect(reading.controlError, `${context} — the control read a body back`).toBeNull()
+      expect(
+        (reading.target?.bodyHead ?? '').includes('liveUrl'),
+        `${context} — a page on another origin must not obtain an editor liveUrl`,
+      ).toBe(false)
+      expect(
+        reading.targetError !== null || reading.target?.status === 403,
+        `${context} — the mint is unreadable to this document, or refused by name with 403`,
+      ).toBe(true)
+    }
+  }, 300_000)
 })
