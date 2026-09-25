@@ -124,6 +124,9 @@ const BINDING_PARITY_INPUTS: Readonly<Record<string, unknown>> = {
   // `{}` default would report an input error and this case would read that as `dispatched`,
   // certifying nothing about the `liveView` binding it exists to measure.
   'runs.liveurl': { runId: 'run-alpha' },
+  // 428 D-07: on runs.liveurl's reasoning — `sessionId` is required, so the `{}` default would
+  // report an input error and certify nothing about the `liveView` binding.
+  'editor.liveurl': { sessionId: 's1' },
   // 419 GATE3-01: valid input lets this census reach the actual binding check.
   'runs.mark': { runId: 'run-alpha', kind: 'false-fail' },
   'runs.mark.preview': { runId: 'run-alpha', kind: 'false-fail' },

@@ -61,6 +61,7 @@ import { quarantineListSpec } from '../functions/ops/quarantine-list.js'
 import { quarantineReleaseSpec } from '../functions/ops/quarantine-release.js'
 import { runsEventsSpec } from '../functions/ops/runs-events.js'
 import { runsLiveUrlSpec } from '../functions/ops/runs-live-url.js'
+import { editorLiveUrlSpec } from '../functions/ops/editor-live-url.js'
 import { runsDigestSpec } from '../functions/ops/runs-digest.js'
 import { runsArtifactSpec } from '../functions/ops/runs-artifact.js'
 import { runsDetailSpec } from '../functions/ops/runs-detail.js'
@@ -219,6 +220,9 @@ export const CONTRACTS_BY_ID: Readonly<Record<string, DeclaredContracts>> = {
   // projection is exactly where a published catalogue could lose the `none` arm, leaving a caller
   // with no declared way to learn that a target has no live preview at all.
   'runs.liveurl': runsLiveUrlSpec,
+  // 2026-09-25 (428 D-07): the editor subject's minter, paired the day it is registered. Its output
+  // reuses runs.liveurl's `stream` union, so the `none` arm is checked here a second time.
+  'editor.liveurl': editorLiveUrlSpec,
   // 388 D-14. Paired here the day it is registered, which is exactly what the growth seam is
   // for: its output contract is the first in this map with a nested optional object, so an
   // unchecked projection would have been the first place a `notification` could quietly stop

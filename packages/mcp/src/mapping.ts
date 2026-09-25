@@ -14,6 +14,10 @@
 // tools are the feedback reads (marks history and the mark consequence preview); the typed
 // evidence read lands unprojected on `runs.detail`'s completed-run footing.
 //
+// 2026-09-25 (428 D-07): the unprojected side grows to TWENTY-SIX when `editor.liveurl` is
+// registered; the projected side and the tool count do not move. The editor subject's mint is
+// reachable only through the dashboard door, by ruling.
+//
 // 2026-08-17 (398 D-09): the unprojected side moved from nineteen to twenty when `agent.explain`
 // was registered. This sentence is prose and the guard is the mechanism — but the prose is updated
 // in the same change-set anyway, because a header that goes on stating a partition the code stopped
@@ -640,7 +644,8 @@ export interface UnprojectedOp {
    */
   // WIDENED AGAIN on 2026-09-15 (423-21, D-04) for `runs.evidence`, on the same reasoning: 397
   // could not have ruled on an op registered in 423. Membership is spelled by op id in the guard.
-  readonly adjudication: '397' | '398' | '405' | '407' | '408' | '423'
+  // WIDENED AGAIN on 2026-09-25 (428 D-07) for `editor.liveurl`, on the same reasoning.
+  readonly adjudication: '397' | '398' | '405' | '407' | '408' | '423' | '428'
 }
 
 export const UNPROJECTED_OPS: readonly UnprojectedOp[] = Object.freeze([
@@ -779,6 +784,16 @@ export const UNPROJECTED_OPS: readonly UnprojectedOp[] = Object.freeze([
       + 'on every call, for every caller, whereas the `ui://` read is an unlisted address a '
       + 'caller must already know and deliberately ask for.',
     adjudication: '408',
+  }),
+  Object.freeze({
+    opId: 'editor.liveurl',
+    reason:
+      'D-07 (dated 2026-09-25, 428): the op mints a view credential for a live EDITOR session, '
+      + 'which is private to the dashboard page that owns it; it is reachable only through the '
+      + 'dashboard door and never through an MCP tool or the MCP App live-run resource. Projecting '
+      + 'it would give an agent a watch carrier for a draft execution, which the owner declined in '
+      + 'D-07. Unprojected by ruling, not by deferral.',
+    adjudication: '428',
   }),
   Object.freeze({
     opId: 'config.get',

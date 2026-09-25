@@ -56,6 +56,7 @@ import { quarantineListSpec } from './ops/quarantine-list.js'
 import { quarantineReleaseSpec } from './ops/quarantine-release.js'
 import { runsEventsSpec } from './ops/runs-events.js'
 import { runsLiveUrlSpec } from './ops/runs-live-url.js'
+import { editorLiveUrlSpec } from './ops/editor-live-url.js'
 import { runsDigestSpec } from './ops/runs-digest.js'
 import { runsArtifactSpec } from './ops/runs-artifact.js'
 import { runsDetailSpec } from './ops/runs-detail.js'
@@ -110,6 +111,9 @@ const BUILT_IN_FUNCTION_SPECS: readonly FunctionSpec[] = [
   // `liveView` dep, so a host with no served origin lists it `unbound` BY NAME rather than
   // handing back a URL that resolves to nothing.
   runsLiveUrlSpec as FunctionSpec,
+  // 2026-09-25 (428 D-07): the editor subject's minter, through the same `liveView` dep; a host
+  // that serves no live editor refuses it by name. Unprojected from MCP by ruling.
+  editorLiveUrlSpec as FunctionSpec,
   // Bound exactly in the compositions that supply a `runInvocation` port (D-16); listed
   // either way, so a host that cannot start a run reports a visible `unbound` rather than a
   // hole in the catalog, and `invokeFunction` refuses it by name. `composeLocalAgent()` in

@@ -254,6 +254,9 @@ const ALL_FUNCTION_IDS = [
   // declares `config-write` and NOT `read`, so it joins the derived drop-out set with its six
   // siblings and the filter assertion stays a claim about the RULE.
   'config.undo.propose',
+  // 428 D-07: in SORT position (`editor.` falls between `config.` and `entities.`). Read-tier like
+  // runs.liveurl, so it survives safe-mode filtering and the derived non-read set is unchanged.
+  'editor.liveurl',
   // 387 D-09: both read-tier, so both survive safe-mode filtering — which is what makes the
   // filter assertion below sharper rather than merely longer. `runs.start` is still the only
   // id that drops out, and it now drops out of a set two entries larger.
