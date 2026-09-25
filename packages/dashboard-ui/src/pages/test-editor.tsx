@@ -308,9 +308,11 @@ export default function TestEditorPage() {
     steps: liveSteps,
     setupHooks: liveHookConfig.setup,
     teardownHooks: liveHookConfig.teardown,
-    allowReconnect: false,
+    // The server detaches a dropped session for its idle window, so a drop resumes it (428 D-09).
+    allowReconnect: true,
   })
   const terminateLiveSession = liveEditor.terminateSession
+  const liveSessionGone = liveEditor.sessionGone
   liveSessionIdRef.current = liveSessionId
   terminateLiveSessionRef.current = terminateLiveSession
 
@@ -699,9 +701,11 @@ export default function TestEditorPage() {
     }
   }, [])
 
+  // A session the server no longer holds stays on the pane, whose preview names it (428 D-09).
   useEffect(() => {
     if (!liveSessionId) return
     if (liveConnectionState !== "disconnected") return
+    if (liveSessionGone) return
     logLiveDebug("page", "live session moved to terminal state", {
       liveSessionId,
       liveConnectionState,
@@ -713,7 +717,7 @@ export default function TestEditorPage() {
     setLiveSelection(null)
     setLiveHookConfig({ setup: [], teardown: [] })
     setLiveModeOpen(true)
-  }, [liveConnectionState, liveSessionId])
+  }, [liveConnectionState, liveSessionGone, liveSessionId])
 
   useEffect(() => {
     if (!shouldAutoLaunchLive || autoLaunchLiveRef.current) return
@@ -891,6 +895,7 @@ export default function TestEditorPage() {
       liveSessionNumber={liveSessionNumber}
       platform={livePlatform}
       liveSessionId={liveSessionId}
+      sessionGone={liveEditor.sessionGone}
       currentUrl={liveEditor.currentUrl}
       pendingNavigation={liveEditor.pendingNavigation}
       steps={liveEditor.steps}
@@ -920,7 +925,7 @@ export default function TestEditorPage() {
       onRestartSession={setupHooksStale ? () => void handleRestartLiveSession() : undefined}
       showEndSessionAction={isMobile}
       onCloseLiveMode={closeLiveMode}
-      onStartFreshSession={() => void handleConnectLiveSession()}
+      onStartFreshSession={() => void (liveSessionGone ? handleRestartLiveSession() : handleConnectLiveSession())}
       onBack={liveEditor.goBack}
       onForward={liveEditor.goForward}
       onRefresh={liveEditor.refreshPage}

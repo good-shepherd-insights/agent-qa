@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useCallback } from 'react'
 import { deleteLiveEditorSession, type LiveExecutionLogEntry } from '@/lib/api'
 import type { LivePhase } from '@/lib/display-step'
 import { logLiveDebug } from '@/lib/live-debug'
+import { LIVE_EDITOR_SESSION_GONE_CLOSE_CODE } from '@/lib/live-preview'
 
 /**
  * One sub-action of a LIVE editor step (405-11).
@@ -208,6 +209,8 @@ export interface UseLiveEditorReturn {
   runningStepId: string | null
   sessionId: string | null
   isTerminated: boolean
+  /** The server closed the control socket because it no longer holds this session (4404). */
+  sessionGone: boolean
   deviceLogs: Array<{ level: string; message: string; timestamp: number }>
   platform: 'web' | 'android' | 'ios'
   ariaTree: string | null
@@ -418,6 +421,16 @@ function isLiveTestOwner(owner: LiveHookOwner): owner is LiveTestOwner {
   return owner.scope === 'test'
 }
 
+// A socket this hook has let go of must not report its close: it would schedule a reconnect to a
+// session the hook no longer holds, or clear the ref of the socket that replaced it.
+function closeQuietly(ws: WebSocket): void {
+  ws.onopen = null
+  ws.onmessage = null
+  ws.onerror = null
+  ws.onclose = null
+  ws.close()
+}
+
 export function useLiveEditor(
   sessionId: string | null,
   options: UseLiveEditorOptions = {},
@@ -444,6 +457,7 @@ export function useLiveEditor(
   const [runningTestIndex, setRunningTestIndex] = useState<number | null>(null)
   const [isRunningAllTests, setIsRunningAllTests] = useState(false)
   const [isStoppingRunAllTests, setIsStoppingRunAllTests] = useState(false)
+  const [sessionGone, setSessionGone] = useState(false)
 
   const wsRef = useRef<WebSocket | null>(null)
   const reconnectCountRef = useRef(0)
@@ -506,7 +520,7 @@ export function useLiveEditor(
   const connect = useCallback((sid: string) => {
     if (wsRef.current) {
       logLiveDebug('hook', 'closing previous websocket before reconnect', { sessionId: sid })
-      wsRef.current.close()
+      closeQuietly(wsRef.current)
       wsRef.current = null
     }
 
@@ -1032,7 +1046,7 @@ export function useLiveEditor(
       }
     }
 
-    ws.onclose = () => {
+    ws.onclose = (event) => {
       wsRef.current = null
 
       if (terminatedRef.current) {
@@ -1040,13 +1054,20 @@ export function useLiveEditor(
         return
       }
 
+      // The server detaches a dropped session for its idle window (428 D-09), so any other close
+      // is worth a reconnect to the same session; 4404 means the server no longer holds it.
+      const gone = event.code === LIVE_EDITOR_SESSION_GONE_CLOSE_CODE
+      const willReconnect = !gone && allowReconnect && reconnectCountRef.current < 3
+
       logLiveDebug('hook', 'websocket closed unexpectedly', {
         sessionId: sid,
         allowReconnect,
         reconnectCount: reconnectCountRef.current,
+        code: event.code,
       })
 
-      setConnectionState('disconnected')
+      if (gone) setSessionGone(true)
+      setConnectionState(willReconnect ? 'connecting' : 'disconnected')
       setPendingNavigation(null)
       activeHookRunRef.current = null
       setSteps(prev => prev.map(s =>
@@ -1062,7 +1083,7 @@ export function useLiveEditor(
       cancelResolverRef.current = null
       applyPendingExternalSteps()
 
-      if (allowReconnect && reconnectCountRef.current < 3) {
+      if (willReconnect) {
         const delay = Math.pow(2, reconnectCountRef.current) * 1000
         reconnectCountRef.current++
         logLiveDebug('hook', 'scheduling reconnect', {
@@ -1115,6 +1136,7 @@ export function useLiveEditor(
   }, [externalTests])
 
   useEffect(() => {
+    setSessionGone(false)
     if (!sessionId) {
       setConnectionState('idle')
       setSteps(externalSteps ? syncExternalSteps([], externalSteps) : [])
@@ -1145,7 +1167,7 @@ export function useLiveEditor(
       }
       if (wsRef.current) {
         logLiveDebug('hook', 'cleaning up websocket for session effect', { sessionId })
-        wsRef.current.close()
+        closeQuietly(wsRef.current)
         wsRef.current = null
       }
     }
@@ -1557,6 +1579,7 @@ export function useLiveEditor(
     runningStepId,
     sessionId,
     isTerminated: terminatedRef.current,
+    sessionGone,
     deviceLogs,
     platform,
     ariaTree,
