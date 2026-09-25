@@ -154,6 +154,7 @@ export class WebPlatformAdapter implements PlatformAdapter<'web'> {
   private keepaliveTimer: ReturnType<typeof setTimeout> | null = null
   private lastScreencastSize: { width: number; height: number } | null = null
   private keepaliveEchoDeadline: number | null = null
+  private screencastChain: Promise<void> = Promise.resolve()
 
   async setup(config: PlatformConfig): Promise<void> {
     this.recordingConfig = config.recording
@@ -210,14 +211,18 @@ export class WebPlatformAdapter implements PlatformAdapter<'web'> {
   /**
    * 403 D-05/LIVE-01: the Chromium screencast producer, or ABSENT when this adapter cannot stream.
    *
-   * Absence is the honest declaration (`{ kind: 'none' }` downstream) — there is deliberately no
-   * `page.screenshot()` fallback anywhere on this path, because polling would satisfy a
-   * "frames arrived" test while being a different product (LIVE-01's prohibition).
+   * Absence means "no continuous stream", not "no preview": since 428-05 the composition's
+   * `liveStreamFor` wraps this adapter's `screenshot()` in the labelled 1 s snapshot producer, both
+   * as the fallback behind a screencast that fails to start and as the whole preview on a
+   * non-Chromium target. The two gates here (Chromium only, and a page to stream) stay exactly as
+   * they are, so the absence stays honest.
    *
-   * SCOPE (Pitfall 6): the screencast binds to `this.page` at `start`. A step that acts on another
-   * tab keeps showing the page the stream started on; multi-tab follow is a follow-up WINDOWS entry,
-   * not silent behaviour — the capability is re-created per `start`, so a future page-switch hook
-   * only needs to stop-and-start it.
+   * SCOPE (428 D-18, closes WIN #273): the screencast shows the page the test is acting on. Both
+   * page-switch sites (`tab new`, `tab switch`) go through `setActivePage`, which re-binds the
+   * running screencast to the new page INSIDE this same capability object: no stop, no re-register,
+   * no stream end, so a subscriber only sees the picture change. Start, stop and re-bind run on one
+   * serialised chain. A popup or a closing tab never changes `this.page` in this adapter, so the
+   * preview already shows the acting page in those cases.
    */
   get liveStream(): LiveStreamCapability | undefined {
     if (this.browserName !== 'chromium') return undefined
@@ -225,74 +230,36 @@ export class WebPlatformAdapter implements PlatformAdapter<'web'> {
     if (this.screencastCapability) return this.screencastCapability
     const capability: LiveStreamCapability = {
       kind: 'cdp-screencast',
-      start: async (onFrame: (frame: LiveFrame) => void): Promise<void> => {
-        if (this.screencast) return
-        const page = this.page
-        const context = this.context
-        if (!page || !context) return
-        const cdp = await context.newCDPSession(page)
-        this.screencast = cdp
-        this.screencastOnFrame = onFrame
-        this.screencastAckTokens.clear()
-        cdp.on('Page.screencastFrame', (event) => {
-          const metadata = event.metadata
-          this.lastScreencastSize = { width: metadata.deviceWidth, height: metadata.deviceHeight }
+      start: (onFrame: (frame: LiveFrame) => void): Promise<void> =>
+        this.onScreencastChain(async () => {
+          if (this.screencastOnFrame !== null) return
+          const page = this.page
+          const context = this.context
+          if (!page || !context) return
+          const cdp = await context.newCDPSession(page)
+          this.screencast = cdp
+          this.screencastOnFrame = onFrame
+          this.screencastAckTokens.clear()
+          this.attachScreencast(cdp, onFrame)
+          try {
+            await cdp.send('Page.startScreencast', { ...SCREENCAST_PARAMS })
+          } catch (error) {
+            // A start that fails leaves nothing started, so the hub's fallback owns the handle.
+            this.screencast = null
+            this.screencastOnFrame = null
+            try { await cdp.detach() } catch { /* best-effort */ }
+            throw error
+          }
           if (this.screencast === cdp) this.armKeepalive(cdp)
-          const echoDeadline = this.keepaliveEchoDeadline
-          this.keepaliveEchoDeadline = null
-          if (echoDeadline !== null && Date.now() <= echoDeadline) {
-            void cdp.send('Page.screencastFrameAck', { sessionId: event.sessionId }).catch(() => undefined)
-            return
-          }
-          // `LiveFrame.id` IS NOT `event.sessionId`, AND CONFLATING THEM WAS A BUG (403-02).
-          //
-          // `sessionId` is CDP's ack TOKEN. Measured on Chromium 1.59.1 it is `1` for every frame
-          // of a stream — 281 frames, one distinct value. `LiveFrame.id` is the PRODUCT's frame
-          // identity: the hub keys its per-frame ack quorum on it, the wire protocol pairs a
-          // `frame` header with an `ack` by it, and the embed page correlates its pending header
-          // with the binary that follows by it. A constant id makes the hub's second
-          // `awaiting.set(id, …)` overwrite the first — orphaning its bound timer and dropping the
-          // outstanding set, so one frame is acked twice and another never at all.
-          //
-          // So the adapter mints a monotonic id and remembers which CDP token it stands for.
-          const id = ++this.screencastFrameSeq
-          this.screencastAckTokens.set(id, event.sessionId)
-          // Bound the map. An evicted token is acked on its way out: an un-acked token is a
-          // producer stalled forever, which is worse than a frame nobody watched.
-          while (this.screencastAckTokens.size > SCREENCAST_ACK_WINDOW) {
-            const oldest = this.screencastAckTokens.keys().next()
-            if (oldest.done === true) break
-            const token = this.screencastAckTokens.get(oldest.value)
-            this.screencastAckTokens.delete(oldest.value)
-            if (token !== undefined) {
-              void cdp.send('Page.screencastFrameAck', { sessionId: token }).catch(() => undefined)
-            }
-          }
-          onFrame({
-            id,
-            bytes: decodeBase64(event.data),
-            metadata: {
-              width: metadata.deviceWidth,
-              height: metadata.deviceHeight,
-              // CDP's `TimeSinceEpoch` is SECONDS; every other layer reads epoch ms (428 D-15).
-              ...(metadata.timestamp === undefined
-                ? {}
-                : { timestamp: Math.round(metadata.timestamp * 1000) }),
-              scrollOffsetX: metadata.scrollOffsetX,
-              scrollOffsetY: metadata.scrollOffsetY,
-            },
-          })
-        })
-        await cdp.send('Page.startScreencast', { ...SCREENCAST_PARAMS })
-        if (this.screencast === cdp) this.armKeepalive(cdp)
-      },
+        }),
       ack: async (frameId: number): Promise<void> => {
         const cdp = this.screencast
         if (!cdp) return
         const sessionId = this.screencastAckTokens.get(frameId)
         this.screencastAckTokens.delete(frameId)
-        // An ack for a frame this producer never minted (a stale viewer, a re-started stream) is
-        // dropped rather than forwarded: acking an arbitrary token is worse than acking nothing.
+        // An ack for a frame this producer never minted (a stale viewer, a re-started stream, a
+        // keepalive, a frame from before a re-bind) is dropped rather than forwarded: acking an
+        // arbitrary token is worse than acking nothing.
         if (sessionId === undefined) return
         try {
           await cdp.send('Page.screencastFrameAck', { sessionId })
@@ -300,20 +267,133 @@ export class WebPlatformAdapter implements PlatformAdapter<'web'> {
           // Acking after stop (or after the page navigated away) is expected, never an error.
         }
       },
-      stop: async (): Promise<void> => {
-        const cdp = this.screencast
-        this.screencast = null
-        this.screencastOnFrame = null
-        this.clearKeepalive()
-        this.keepaliveEchoDeadline = null
-        this.screencastAckTokens.clear()
-        if (!cdp) return
-        try { await cdp.send('Page.stopScreencast') } catch { /* best-effort */ }
-        try { await cdp.detach() } catch { /* best-effort */ }
-      },
+      stop: (): Promise<void> =>
+        this.onScreencastChain(async () => {
+          this.screencastOnFrame = null
+          await this.detachScreencast()
+        }),
     }
     this.screencastCapability = capability
     return capability
+  }
+
+  /** Run `step` after every earlier start, stop and re-bind has settled (428 D-18). */
+  private onScreencastChain(step: () => Promise<void>): Promise<void> {
+    const run = this.screencastChain.then(step)
+    this.screencastChain = run.catch(() => undefined)
+    return run
+  }
+
+  /** Stop and detach the current CDP session, best-effort, and forget its tokens and keepalive. */
+  private async detachScreencast(): Promise<void> {
+    const cdp = this.screencast
+    this.screencast = null
+    this.clearKeepalive()
+    this.keepaliveEchoDeadline = null
+    this.screencastAckTokens.clear()
+    if (!cdp) return
+    try { await cdp.send('Page.stopScreencast') } catch { /* best-effort */ }
+    try { await cdp.detach() } catch { /* best-effort */ }
+  }
+
+  /** Wire `cdp`'s screencast frames to `onFrame`; shared by `start` and `rebindScreencast`. */
+  private attachScreencast(cdp: CDPSession, onFrame: (frame: LiveFrame) => void): void {
+    cdp.on('Page.screencastFrame', (event) => {
+      // A session being replaced by a re-bind may still deliver a frame of the old page.
+      if (this.screencast !== cdp) return
+      const metadata = event.metadata
+      this.lastScreencastSize = { width: metadata.deviceWidth, height: metadata.deviceHeight }
+      this.armKeepalive(cdp)
+      const echoDeadline = this.keepaliveEchoDeadline
+      this.keepaliveEchoDeadline = null
+      if (echoDeadline !== null && Date.now() <= echoDeadline) {
+        void cdp.send('Page.screencastFrameAck', { sessionId: event.sessionId }).catch(() => undefined)
+        return
+      }
+      // `LiveFrame.id` IS NOT `event.sessionId`, AND CONFLATING THEM WAS A BUG (403-02).
+      //
+      // `sessionId` is CDP's ack TOKEN. Measured on Chromium 1.59.1 it is `1` for every frame
+      // of a stream — 281 frames, one distinct value. `LiveFrame.id` is the PRODUCT's frame
+      // identity: the hub keys its per-frame ack quorum on it, the wire protocol pairs a
+      // `frame` header with an `ack` by it, and the embed page correlates its pending header
+      // with the binary that follows by it. A constant id makes the hub's second
+      // `awaiting.set(id, …)` overwrite the first — orphaning its bound timer and dropping the
+      // outstanding set, so one frame is acked twice and another never at all.
+      //
+      // So the adapter mints a monotonic id and remembers which CDP token it stands for. The
+      // sequence continues across re-binds, so ids stay monotonic for every subscriber.
+      const id = ++this.screencastFrameSeq
+      this.screencastAckTokens.set(id, event.sessionId)
+      // Bound the map. An evicted token is acked on its way out: an un-acked token is a
+      // producer stalled forever, which is worse than a frame nobody watched.
+      while (this.screencastAckTokens.size > SCREENCAST_ACK_WINDOW) {
+        const oldest = this.screencastAckTokens.keys().next()
+        if (oldest.done === true) break
+        const token = this.screencastAckTokens.get(oldest.value)
+        this.screencastAckTokens.delete(oldest.value)
+        if (token !== undefined) {
+          void cdp.send('Page.screencastFrameAck', { sessionId: token }).catch(() => undefined)
+        }
+      }
+      onFrame({
+        id,
+        bytes: decodeBase64(event.data),
+        metadata: {
+          width: metadata.deviceWidth,
+          height: metadata.deviceHeight,
+          // CDP's `TimeSinceEpoch` is SECONDS; every other layer reads epoch ms (428 D-15).
+          ...(metadata.timestamp === undefined
+            ? {}
+            : { timestamp: Math.round(metadata.timestamp * 1000) }),
+          scrollOffsetX: metadata.scrollOffsetX,
+          scrollOffsetY: metadata.scrollOffsetY,
+        },
+      })
+    })
+  }
+
+  /**
+   * The one place the page the test acts on changes (428 D-18). Recording keeps following its
+   * starting page through the revision counter (424 reconciliation 25(d)); the live screencast,
+   * when running, re-binds to the new page on the serialised chain.
+   */
+  private setActivePage(page: Page): void {
+    this.page = page
+    this.recordingPageRevision++
+    if (this.screencastOnFrame !== null) {
+      void this.onScreencastChain(() => this.rebindScreencast())
+    }
+  }
+
+  /**
+   * Move the running screencast onto `this.page` without its subscribers noticing: the old session
+   * is stopped and detached, a new one is started with the stored `onFrame`, and the id sequence
+   * continues. Ids still pending in the hub settle through its ack bound and are dropped here as
+   * unknown. Best-effort throughout; it never throws into a step.
+   */
+  private async rebindScreencast(): Promise<void> {
+    const onFrame = this.screencastOnFrame
+    const page = this.page
+    const context = this.context
+    if (onFrame === null || !page || !context) return
+    await this.detachScreencast()
+    this.lastScreencastSize = null
+    // A headed browser may not paint a background tab (RESEARCH P15, assumption A4).
+    try { await page.bringToFront() } catch { /* best-effort */ }
+    let cdp: CDPSession
+    try {
+      cdp = await context.newCDPSession(page)
+    } catch {
+      return
+    }
+    this.screencast = cdp
+    this.attachScreencast(cdp, onFrame)
+    try {
+      await cdp.send('Page.startScreencast', { ...SCREENCAST_PARAMS })
+    } catch {
+      return
+    }
+    if (this.screencast === cdp) this.armKeepalive(cdp)
   }
 
   private clearKeepalive(): void {
@@ -376,6 +456,8 @@ export class WebPlatformAdapter implements PlatformAdapter<'web'> {
     this.recordingCapability = undefined
     this.recordingConfig = undefined
     // 403: stop the screencast before the browser goes away so the CDP session is detached cleanly.
+    // Clearing the consumer first makes any re-bind still queued on the chain a no-op.
+    this.screencastOnFrame = null
     try { await this.screencastCapability?.stop() } catch { /* best-effort */ }
     this.screencastCapability = null
     // Pitfall 7: clear persistent route interception, network emulation, and any pending
@@ -404,6 +486,7 @@ export class WebPlatformAdapter implements PlatformAdapter<'web'> {
     this.clearKeepalive()
     this.lastScreencastSize = null
     this.screencastAckTokens.clear()
+    this.screencastChain = Promise.resolve()
   }
 
   get isBrowserDisconnected(): boolean {
@@ -806,8 +889,7 @@ export class WebPlatformAdapter implements PlatformAdapter<'web'> {
           this.attachLogListeners(newPage)
           await newPage.goto(action.url, { waitUntil: 'domcontentloaded' })
           await waitForPageReady(newPage)
-          this.page = newPage
-          this.recordingPageRevision++
+          this.setActivePage(newPage)
           return { success: true }
         }
         const pages = this.context!.pages()
@@ -828,8 +910,7 @@ export class WebPlatformAdapter implements PlatformAdapter<'web'> {
         if (!target) {
           return { success: false, error: `No tab found matching ${JSON.stringify({ index: action.index, title: action.title, url: action.url })}` }
         }
-        this.page = target
-        this.recordingPageRevision++
+        this.setActivePage(target)
         return { success: true }
       }
 
