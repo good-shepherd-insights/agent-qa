@@ -65,15 +65,19 @@ const signer: LiveUrlSigner = {
   },
 }
 
-function tokenFor(input: Partial<LiveUrlClaims> & { runId: string }): string {
+function tokenFor(input: {
+  runId: string
+  handle?: number
+  scope?: LiveUrlClaims['scope']
+  exp?: number
+}): string {
   const now = Date.now()
   return mintLiveUrlToken(signer, {
-    runId: input.runId,
-    handle: input.handle ?? 0,
+    subject: { kind: 'run', runId: input.runId, handle: input.handle ?? 0 },
     scope: input.scope ?? LIVE_URL_SCOPE,
-    iat: input.iat ?? now,
+    iat: now,
     exp: input.exp ?? now + 60_000,
-  } as LiveUrlClaims)
+  })
 }
 
 // ---- The planted run session -------------------------------------------------------------------

@@ -16,7 +16,13 @@
 
 import type WebSocket from 'ws'
 
-import type { LiveFrame, LiveFrameSubscription, LiveUrlVerdict, RunSession } from '@vostride/agent-qa-schema'
+import type {
+  LiveFrame,
+  LiveFrameSubscription,
+  LiveUrlVerdict,
+  LiveViewSubjectRef,
+  RunSession,
+} from '@vostride/agent-qa-schema'
 
 import {
   LIVE_VIEW_HELLO_MAX_BYTES,
@@ -27,7 +33,7 @@ import {
 import type { LiveViewRefusalReason, LiveViewServerMessage } from './protocol.js'
 
 export interface FrameProxyDeps {
-  validate(token: string, expect: { runId: string; now: number }): LiveUrlVerdict
+  validate(token: string, expect: { subject: LiveViewSubjectRef; now: number }): LiveUrlVerdict
   attach(runId: string): RunSession | undefined
   now?: () => number
 }
@@ -123,9 +129,15 @@ export function createFrameProxy(deps: FrameProxyDeps): (ws: WebSocket, runId: s
     }
 
     const greet = (token: string): void => {
-      const verdict = deps.validate(token, { runId, now: now() })
+      const verdict = deps.validate(token, { subject: { kind: 'run', id: runId }, now: now() })
       if (verdict.kind !== 'ok') {
         refuse(verdict.reason)
+        return
+      }
+      // The validator already refused any other kind; this narrows the type for the handle read.
+      const subject = verdict.claims.subject
+      if (subject.kind !== 'run') {
+        refuse('scope_mismatch')
         return
       }
       const session = deps.attach(runId)
@@ -133,7 +145,7 @@ export function createFrameProxy(deps: FrameProxyDeps): (ws: WebSocket, runId: s
         refuse('unknown_run')
         return
       }
-      const handle = verdict.claims.handle
+      const handle = subject.handle
       const stream = session.streamCapabilityOf(handle)
       send(ws, { type: 'ready', runId, handle, stream, expiresAt: verdict.claims.exp })
       armDeadline(verdict.claims.exp)
@@ -209,7 +221,10 @@ export function createFrameProxy(deps: FrameProxyDeps): (ws: WebSocket, runId: s
       if (message.type === 'renew' && typeof message.token === 'string') {
         // D-02's silent re-mint, INSIDE the socket: a fresh token extends this viewer's deadline
         // without re-opening anything. It is re-validated in full — a renew is not a lesser check.
-        const verdict = deps.validate(message.token, { runId, now: now() })
+        const verdict = deps.validate(message.token, {
+          subject: { kind: 'run', id: runId },
+          now: now(),
+        })
         if (verdict.kind !== 'ok') {
           refuse(verdict.reason)
           return

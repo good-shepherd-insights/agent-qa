@@ -19,6 +19,7 @@ import type {
   LiveStreamDeclaration,
   LiveUrlSigner,
   LiveUrlVerdict,
+  LiveViewSubjectRef,
   RunsLiveUrlResult,
 } from '@vostride/agent-qa-schema'
 
@@ -44,7 +45,7 @@ export interface ComposedLiveView {
   /** The mint-side port `FunctionDeps.liveView` binds to. */
   readonly liveView: LiveViewPort
   /** The read side — the function layer's own validator, closed over the same signer. */
-  validate(token: string, expect: { runId: string; now: number }): LiveUrlVerdict
+  validate(token: string, expect: { subject: LiveViewSubjectRef; now: number }): LiveUrlVerdict
   /** Every token this composition has minted, as a masking secret store. */
   readonly mintedSecretStore: { forEachSecret(cb: (name: string, value: string) => void): void }
 }

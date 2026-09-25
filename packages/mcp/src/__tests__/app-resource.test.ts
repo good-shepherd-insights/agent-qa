@@ -434,11 +434,13 @@ describe('resources/read mints through the ONE wall and serves the wrapper (D-01
 
     const handles = liveUrls.map((liveUrl) => {
       const verdict = validateLiveUrlToken(signer, tokenOf(liveUrl), {
-        runId: FIXTURE_RUN_ID,
+        subject: { kind: 'run', id: FIXTURE_RUN_ID },
         now: clock.at(),
       })
       expect(verdict.kind, `the shipped validator accepts ${liveUrl}`).toBe('ok')
-      return verdict.kind === 'ok' ? verdict.claims.handle : -1
+      return verdict.kind === 'ok' && verdict.claims.subject.kind === 'run'
+        ? verdict.claims.subject.handle
+        : -1
     })
     expect([...handles].sort()).toEqual([0, 1])
   })
@@ -522,11 +524,12 @@ describe('an announced-but-EMPTY roster is the SAME document as an unannounced o
         const liveUrls = liveUrlsIn(html)
         expect(liveUrls.length, `${label}: one pane`).toBe(1)
         const verdict = validateLiveUrlToken(signer, tokenOf(liveUrls[0]!), {
-          runId: FIXTURE_RUN_ID,
+          subject: { kind: 'run', id: FIXTURE_RUN_ID },
           now: clock.at(),
         })
         expect(verdict.kind, `${label}: the shipped validator accepts the mint`).toBe('ok')
-        expect(verdict.kind === 'ok' ? verdict.claims.handle : -1, `${label}: handle 0`).toBe(0)
+        const subject = verdict.kind === 'ok' ? verdict.claims.subject : undefined
+        expect(subject?.kind === 'run' ? subject.handle : -1, `${label}: handle 0`).toBe(0)
       }
     })
   })

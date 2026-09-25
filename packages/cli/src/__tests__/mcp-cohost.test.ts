@@ -438,7 +438,7 @@ describe('a served App token validates against THIS composition\'s validator (D-
       // reference the same function `startServer` binds as the frame proxy's `validate`. A token
       // minted in a DIFFERENT process would fail here, which is exactly D-03's hazard.
       const verdict = harness.liveView.validate(matches[0] as string, {
-        runId: RUN_ID,
+        subject: { kind: 'run', id: RUN_ID },
         now: Date.now(),
       })
       expect(verdict.kind).toBe('ok')

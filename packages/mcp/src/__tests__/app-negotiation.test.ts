@@ -404,7 +404,7 @@ describe('the ui:// read over the shipped node handler (D-09, T-408-01/T-408-06)
         // The SAME clock the fixture mints on (WR-07). A literal here would be the fixture clock's
         // defect one line over: a validation instant pinned to a past epoch reports `expired` for a
         // token minted a millisecond ago.
-        runId: FIXTURE_RUN_ID,
+        subject: { kind: 'run', id: FIXTURE_RUN_ID },
         now: Date.now(),
       })
       expect(

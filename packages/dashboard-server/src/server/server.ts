@@ -19,7 +19,12 @@ import { LIVE_EMBED_PATH_PREFIX, LIVE_VIEW_WS_PATH } from '../live-view/protocol
 import { renderLiveEmbedPage } from '../live-view/embed-page.js'
 import { createFrameProxy } from '../live-view/frame-proxy.js'
 import { refuseNonLoopbackHost } from './cross-site.js'
-import type { LiveUrlVerdict, RunSession, RunsLiveUrlResult } from '@vostride/agent-qa-schema'
+import type {
+  LiveUrlVerdict,
+  LiveViewSubjectRef,
+  RunSession,
+  RunsLiveUrlResult,
+} from '@vostride/agent-qa-schema'
 import {
   isLoopbackHost,
   type ResolvedWorkspacePaths,
@@ -218,7 +223,7 @@ interface StartServerOptions {
    * holds NO signing key and NO token parse of its own; both are the function layer's, handed in.
    */
   liveView?: {
-    validate(token: string, expect: { runId: string; now: number }): LiveUrlVerdict
+    validate(token: string, expect: { subject: LiveViewSubjectRef; now: number }): LiveUrlVerdict
     mintLiveUrl(runId: string, handle: number): Promise<RunsLiveUrlResult>
   }
   /**
