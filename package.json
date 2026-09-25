@@ -82,7 +82,9 @@
     "validate:426-feedback-mutation": "bash scripts/426-feedback-mutation.sh",
     "validate:426-feedback-mutation-selftest": "bash scripts/426-feedback-mutation-selftest.sh",
     "validate:427-knowledge-mutation": "bash scripts/427-knowledge-mutation.sh",
-    "validate:427-knowledge-mutation-selftest": "bash scripts/427-knowledge-mutation-selftest.sh"
+    "validate:427-knowledge-mutation-selftest": "bash scripts/427-knowledge-mutation-selftest.sh",
+    "validate:428-live-contract-mutation": "bash scripts/428-live-contract-mutation.sh",
+    "validate:428-live-contract-mutation-selftest": "bash scripts/428-live-contract-mutation-selftest.sh"
   },
   "pnpm": {
     "onlyBuiltDependencies": [
