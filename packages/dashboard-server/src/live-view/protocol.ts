@@ -50,6 +50,19 @@ export const LIVE_VIEW_REFUSAL_REASONS = [
 
 export type LiveViewRefusalReason = LiveUrlRefusalReason | 'unknown_run' | 'unknown_handle'
 
+/**
+ * Every reason an `ended` message can carry, each naming a different fact (403 CR-03, 428 D-07/D-09).
+ * `runFinished`: the run is over. `handleFinished`: this member's stream is over while its run
+ * continues. `sessionEnded`: an editor session is over.
+ */
+export type LiveViewEndReason = 'runFinished' | 'handleFinished' | 'sessionEnded'
+// prettier-ignore
+export const LIVE_VIEW_END_REASONS = [
+  'runFinished',
+  'handleFinished',
+  'sessionEnded',
+] as const satisfies readonly LiveViewEndReason[]
+
 /** What the PAGE sends. `hello` must be first; `ack` and `renew` are valid only after `ready`. */
 export type LiveViewClientMessage =
   | { type: 'hello'; token: string }
@@ -70,7 +83,8 @@ export type LiveViewServerMessage =
   // kind. Both are ADDITIVE and optional: a frame that carries neither sends the pre-428 header.
   | { type: 'frame'; id: number; width: number; height: number; ts?: number; kind?: LiveStreamKind }
   | { type: 'renewed'; expiresAt: number }
-  // TWO ENDS, EACH BY ITS OWN NAME (403 CR-03). `handleFinished` says THIS member's stream is over
-  // while the run continues; `runFinished` says the run is over. Additive to the published
-  // contract: a consumer that only knows `runFinished` still reads every message it used to.
-  | { type: 'ended'; reason: 'runFinished' | 'handleFinished' }
+  // EVERY END BY ITS OWN NAME (403 CR-03). `handleFinished` says THIS member's stream is over
+  // while the run continues; `runFinished` says the run is over; `sessionEnded` says an editor
+  // session is over (428 D-07/D-09). Each is additive to the published contract: a consumer that
+  // knows only the older names still reads every message it used to.
+  | { type: 'ended'; reason: LiveViewEndReason }

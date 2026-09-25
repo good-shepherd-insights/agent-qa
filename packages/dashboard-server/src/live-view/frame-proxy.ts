@@ -18,6 +18,7 @@ import type WebSocket from 'ws'
 
 import type {
   LiveFrame,
+  LiveFrameEndReason,
   LiveFrameSubscription,
   LiveUrlVerdict,
   LiveViewSubjectRef,
@@ -115,17 +116,21 @@ export function createFrameProxy(deps: FrameProxyDeps): (ws: WebSocket, runId: s
     }
 
     /**
-     * THIS HANDLE'S STREAM ENDED WHILE THE RUN CONTINUES (403 CR-03).
+     * THIS HANDLE'S STREAM ENDED UNDER THE VIEWER, AND THE HUB SAYS WHY (403 CR-03, 428 RESEARCH P9).
      *
-     * A multi-member run settles one member at a time, and the member's browser goes down with it.
-     * Without this the viewer kept a frozen last frame under `data-embed-state="live"` until the
-     * whole run ended — a stale picture claiming to be live, which is exactly what the embed page's
-     * own law forbids. The socket is NOT closed: `runFinished` is a different fact, it is still
-     * coming, and a viewer who is told one end is not thereby told the other.
+     * `withdrawn`: a multi-member run settles one member at a time, and the member's browser goes
+     * down with it. Without a word the viewer kept a frozen last frame under
+     * `data-embed-state="live"` until the whole run ended — a stale picture claiming to be live,
+     * which is exactly what the embed page's own law forbids. The socket is NOT closed:
+     * `runFinished` is a different fact, it is still coming, and a viewer who is told one end is
+     * not thereby told the other.
+     *
+     * `closed`: the hub itself went down because the whole subject is over. That is not a finished
+     * member, so nothing is said here; the subject's own end message follows.
      */
-    const onStreamEnd = (): void => {
+    const onStreamEnd = (reason: LiveFrameEndReason): void => {
       subscription = undefined
-      send(ws, { type: 'ended', reason: 'handleFinished' })
+      if (reason === 'withdrawn') send(ws, { type: 'ended', reason: 'handleFinished' })
     }
 
     const greet = (token: string): void => {
@@ -147,18 +152,25 @@ export function createFrameProxy(deps: FrameProxyDeps): (ws: WebSocket, runId: s
       }
       const handle = subject.handle
       const stream = session.streamCapabilityOf(handle)
+      // SUBSCRIBE FIRST, THEN READY (428 D-14, #274). `ready` tells the page a first frame is
+      // coming, so it may only be said once a subscription exists. A declared stream whose
+      // subscription comes back undefined settled between the two reads, and the viewer is told
+      // so by name instead of waiting for a frame that will never arrive.
+      // `{ kind: 'none' }` is an HONEST answer, not a failure: the socket stays open so the page
+      // can still receive `ended`, and no painter is ever started.
+      if (stream.kind !== 'none') {
+        subscription = session.subscribeFrames(handle, onFrame, onStreamEnd)
+        if (subscription === undefined) {
+          refuse('unknown_handle')
+          return
+        }
+      }
       send(ws, { type: 'ready', runId, handle, stream, expiresAt: verdict.claims.exp })
       armDeadline(verdict.claims.exp)
       ping = setInterval(() => {
         if (ws.readyState === ws.OPEN) ws.ping()
       }, LIVE_VIEW_PING_MS)
       ping.unref?.()
-
-      // `{ kind: 'none' }` is an HONEST answer, not a failure: the socket stays open so the page
-      // can still receive `ended`, and no painter is ever started.
-      if (stream.kind !== 'none') {
-        subscription = session.subscribeFrames(handle, onFrame, onStreamEnd)
-      }
 
       session.done.then(
         () => {
