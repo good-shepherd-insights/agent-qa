@@ -17,6 +17,9 @@ export {
   // 403 D-03: the runs.liveurl mint op's two contracts.
   RunsLiveUrlInputSchema,
   RunsLiveUrlResultSchema,
+  // 428 D-07: the editor subject's mint op contracts.
+  EditorLiveUrlInputSchema,
+  EditorLiveUrlResultSchema,
   // 388 D-14: the chip-truth read op's two contracts, and the notification's wire shape.
   RunsPostProcessingInputSchema,
   RunNotificationSchema,
@@ -66,6 +69,8 @@ export type {
   RunsEventsInput,
   RunsLiveUrlInput,
   RunsLiveUrlResult,
+  EditorLiveUrlInput,
+  EditorLiveUrlResult,
   RunsPostProcessingInput,
   RunStartAcknowledgement,
   // 405 D-03: the run-detail shapes. `RunDetailRows` is the PORT's answer (rows only); the

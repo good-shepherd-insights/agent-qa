@@ -447,6 +447,26 @@ export const RunsLiveUrlResultSchema = z.object({
 
 export type RunsLiveUrlResult = z.infer<typeof RunsLiveUrlResultSchema>
 
+/** The editor subject's mint input (428 D-07), reachable only through the dashboard door. */
+export const EditorLiveUrlInputSchema = z.object({
+  sessionId: z.string().min(1),
+}).strict()
+
+export type EditorLiveUrlInput = z.infer<typeof EditorLiveUrlInputSchema>
+
+/**
+ * The editor subject's mint result (428 D-07). No `handle`: an editor session has exactly one
+ * stream. `.strict()` is load-bearing because the composition parses this result, so a grown field
+ * throws instead of leaking.
+ */
+export const EditorLiveUrlResultSchema = z.object({
+  liveUrl: z.string(),
+  expiresAt: z.number().int(),
+  stream: LiveStreamDeclarationSchema,
+}).strict()
+
+export type EditorLiveUrlResult = z.infer<typeof EditorLiveUrlResultSchema>
+
 export const RUN_EVENT_ENVELOPE_SCHEMA_VERSION = 1
 
 /**
