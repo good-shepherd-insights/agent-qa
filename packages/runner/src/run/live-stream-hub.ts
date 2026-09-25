@@ -62,7 +62,15 @@ export interface CreateLiveStreamHubOptions {
  * the CONSUMER side the `RunSession` exposes.
  */
 export interface LiveStreamHub {
-  register(handle: number, capability: LiveStreamCapability | undefined): void
+  /**
+   * `fallback` is the labelled snapshot producer this handle switches to when `capability` fails
+   * to start (428 D-12). The failure is still recorded; `capabilityOf` keeps the declared kind.
+   */
+  register(
+    handle: number,
+    capability: LiveStreamCapability | undefined,
+    fallback?: LiveStreamCapability,
+  ): void
   subscribe(
     handle: number,
     onFrame: (frame: LiveFrame) => void,
@@ -101,7 +109,15 @@ interface Subscriber {
  * restarted it for the next viewer — a live view permanently blank with nothing reporting an error.
  */
 interface StreamState {
+  /** The DECLARED producer. `capabilityOf` answers its kind whichever producer is running. */
   capability: LiveStreamCapability
+  /** Started in the primary's place when the primary's `start` rejects (428 D-12). */
+  fallback?: LiveStreamCapability
+  /**
+   * The producer this watched interval is actually using: acks, stops and the frame kind stamp
+   * route here. Reset to the primary on every stop, so the next interval tries the primary first.
+   */
+  active: LiveStreamCapability
   subscribers: Set<Subscriber>
   /** What the subscriber set asks for. True on first attach; false when the grace elapses empty. */
   desired: boolean
@@ -158,7 +174,7 @@ export function createLiveStreamHub(opts: CreateLiveStreamHubOptions = {}): Live
     if (!entry) return
     state.awaiting.delete(frameId)
     entry.cancel()
-    void state.capability.ack(frameId).catch(() => {
+    void state.active.ack(frameId).catch(() => {
       // Acking a frame after the stream stopped is expected, not an error (D-07).
     })
   }
@@ -171,25 +187,47 @@ export function createLiveStreamHub(opts: CreateLiveStreamHubOptions = {}): Live
   function reconcile(state: StreamState): void {
     if (state.reconciling) return
     state.reconciling = true
+    const onFrame = (frame: LiveFrame): void => {
+      deliver(state, frame)
+    }
     state.chain = state.chain.then(async () => {
       try {
         while (state.desired !== state.running) {
           if (state.desired) {
             state.running = true
             try {
-              await state.capability.start((frame) => { deliver(state, frame) })
+              await state.capability.start(onFrame)
             } catch (error: unknown) {
-              state.running = false
+              // Recorded BEFORE any switch (D-12): a fallback must never hide the primary's failure.
               warn('live-stream-start-failed', `live stream failed to start: ${describe(error)}`)
-              break
+              const fallback = state.fallback
+              if (fallback === undefined) {
+                state.running = false
+                break
+              }
+              // Active before the start, so a burst delivered inside `start()` is already stamped
+              // and acked as the fallback's.
+              state.active = fallback
+              try {
+                await fallback.start(onFrame)
+              } catch (fallbackError: unknown) {
+                state.active = state.capability
+                state.running = false
+                warn(
+                  'live-stream-start-failed',
+                  `live stream fallback (${fallback.kind}) failed to start: ${describe(fallbackError)}`,
+                )
+                break
+              }
             }
           } else {
             state.running = false
             try {
-              await state.capability.stop()
+              await state.active.stop()
             } catch (error: unknown) {
               warn('live-stream-stop-failed', `live stream failed to stop: ${describe(error)}`)
             }
+            state.active = state.capability
           }
         }
       } finally {
@@ -255,7 +293,7 @@ export function createLiveStreamHub(opts: CreateLiveStreamHubOptions = {}): Live
         produced.metadata.timestamp === undefined
           ? { ...produced.metadata, timestamp: timer.now() }
           : produced.metadata,
-      kind: produced.kind ?? state.capability.kind,
+      kind: produced.kind ?? state.active.kind,
     }
 
     // Snapshot so a mid-delivery detach (or a subscriber that unsubscribes from its own callback)
@@ -313,7 +351,7 @@ export function createLiveStreamHub(opts: CreateLiveStreamHubOptions = {}): Live
   }
 
   return {
-    register(handle, capability): void {
+    register(handle, capability, fallback): void {
       const existing = streams.get(handle)
       if (capability === undefined) {
         // The member finished (or declares nothing): stop whatever was running, TELL whoever was
@@ -336,6 +374,8 @@ export function createLiveStreamHub(opts: CreateLiveStreamHubOptions = {}): Live
       }
       streams.set(handle, {
         capability,
+        ...(fallback === undefined ? {} : { fallback }),
+        active: capability,
         subscribers: new Set<Subscriber>(),
         desired: false,
         running: false,

@@ -361,8 +361,8 @@ export function startRun(config: RunConfig): RunSession {
             evidenceContext = context
           },
           evidenceArtifacts: ports.evidenceArtifacts,
-          registerLiveStream(capability) {
-            liveStreams.register(testIndex, capability)
+          registerLiveStream(capability, fallback) {
+            liveStreams.register(testIndex, capability, fallback)
           },
         })
         .then(

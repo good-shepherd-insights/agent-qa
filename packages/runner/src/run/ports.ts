@@ -385,8 +385,13 @@ export interface MemberTestRunContext {
    * nothing about, and the shell owns the per-run hub that refcounts it. Passing `undefined`
    * withdraws the declaration (the handle then reads `{ kind: 'none' }`). Absent on the context
    * ⇒ a composition that predates live view; the executor's optional call is a no-op.
+   * `fallback` is the labelled snapshot producer the hub switches to when the primary fails to
+   * start (428 D-12).
    */
-  registerLiveStream?(capability: LiveStreamCapability | undefined): void
+  registerLiveStream?(
+    capability: LiveStreamCapability | undefined,
+    fallback?: LiveStreamCapability,
+  ): void
 }
 
 /**
