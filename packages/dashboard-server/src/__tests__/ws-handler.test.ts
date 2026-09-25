@@ -1,7 +1,7 @@
-import { describe, it, expect, beforeEach, vi, type Mock } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi, type Mock } from 'vitest'
 import { createSessionHandler } from '../live-editor/ws-handler.js'
-import type { LiveSession } from '../live-editor/live-session.js'
-import type { SessionState } from '../live-editor/types.js'
+import { IDLE_TIMEOUT_MS, LiveSession } from '../live-editor/live-session.js'
+import type { ServerMessage, SessionState } from '../live-editor/types.js'
 
 const HOOK_ID = 'h_amber-birch-coral-delta-ember-falcon-garden-harbor-island-jungle'
 
@@ -16,7 +16,11 @@ class MockWebSocket {
     this.sentMessages.push(data)
   }
 
-  close(_code?: number, _reason?: string) {}
+  closes: Array<[number | undefined, string | undefined]> = []
+
+  close(code?: number, reason?: string) {
+    this.closes.push([code, reason])
+  }
 
   on(event: string, handler: Function) {
     this.handlers.set(event, handler)
@@ -37,6 +41,11 @@ class MockWebSocket {
     if (handler) handler()
   }
 
+  simulateError() {
+    const handler = this.handlers.get('error')
+    if (handler) handler(new Error('socket reset'))
+  }
+
   parsed(index: number) {
     return JSON.parse(this.sentMessages[index])
   }
@@ -54,6 +63,9 @@ function createMockSession(overrides: Partial<LiveSession> = {}) {
     interactive: true,
     terminalError: null,
   }
+
+  // The attachment generation (RESEARCH P4), shared by every handler attached to this session.
+  let generation = 0
 
   return {
     sessionId: 'test-session-123',
@@ -91,8 +103,14 @@ function createMockSession(overrides: Partial<LiveSession> = {}) {
     startIdleTimer: vi.fn(),
     clearIdleTimer: vi.fn(),
     attachMessageSink: vi.fn(),
+    beginAttachment: vi.fn(() => ++generation),
+    isCurrentAttachment: vi.fn((candidate: number) => candidate === generation),
     ...overrides,
   } as unknown as LiveSession
+}
+
+async function flushMicrotasks(): Promise<void> {
+  for (let i = 0; i < 10; i++) await Promise.resolve()
 }
 
 describe('ws-handler', () => {
@@ -105,6 +123,10 @@ describe('ws-handler', () => {
     session = createMockSession()
     onTerminate = vi.fn()
     vi.clearAllMocks()
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
   })
 
   it('sends session-ready on handler attach', () => {
@@ -353,13 +375,145 @@ describe('ws-handler', () => {
     expect(ws.parsed(2).hook.variables.AUTH_TOKEN).toBe('hook-token')
   })
 
-  it('on close cleans up the disposable session immediately', async () => {
+  it('UNEXPECTED-CLOSE-DETACHES: an unexpected close detaches the session instead of ending it (428 D-09)', async () => {
     const handler = createSessionHandler(session as unknown as LiveSession, onTerminate)
     handler(ws as any)
 
     ws.simulateClose()
-    await vi.waitFor(() => expect(session.cleanup).toHaveBeenCalled())
+    await flushMicrotasks()
+
+    expect(session.attachMessageSink).toHaveBeenLastCalledWith(null)
+    expect(session.startIdleTimer).toHaveBeenCalledTimes(1)
+    expect(session.cleanup, 'the browser, draft, page, hooks and lease stay').not.toHaveBeenCalled()
+    expect(onTerminate).not.toHaveBeenCalled()
+    expect(session.cancelStep, 'an idle session has no step to cancel').not.toHaveBeenCalled()
+  })
+
+  describe('EXPIRY-TERMINATES-ONCE', () => {
+    function withRealIdleTimer() {
+      let idle: ReturnType<typeof setTimeout> | undefined
+      return createMockSession({
+        startIdleTimer: vi.fn((onExpire: () => void) => {
+          clearTimeout(idle)
+          idle = setTimeout(onExpire, IDLE_TIMEOUT_MS)
+        }),
+        clearIdleTimer: vi.fn(() => clearTimeout(idle)),
+      } as Partial<LiveSession>)
+    }
+
+    it('EXPIRY-TERMINATES-ONCE: a detached session ends through onTerminate once the idle window passes', async () => {
+      vi.useFakeTimers()
+      session = withRealIdleTimer()
+      createSessionHandler(session as unknown as LiveSession, onTerminate)(ws as any)
+
+      ws.simulateClose()
+      await vi.advanceTimersByTimeAsync(IDLE_TIMEOUT_MS - 1)
+      expect(onTerminate, 'not one millisecond early').not.toHaveBeenCalled()
+
+      await vi.advanceTimersByTimeAsync(1)
+      expect(onTerminate).toHaveBeenCalledTimes(1)
+      await vi.advanceTimersByTimeAsync(IDLE_TIMEOUT_MS)
+      expect(onTerminate).toHaveBeenCalledTimes(1)
+      expect(session.cleanup, 'teardown is the manager\'s, through onTerminate').not.toHaveBeenCalled()
+    })
+
+    it('EXPIRY-TERMINATES-ONCE: an error event takes the same detach path, and the close after it adds nothing', async () => {
+      vi.useFakeTimers()
+      session = withRealIdleTimer()
+      createSessionHandler(session as unknown as LiveSession, onTerminate)(ws as any)
+
+      ws.simulateError()
+      ws.simulateClose()
+      await vi.advanceTimersByTimeAsync(IDLE_TIMEOUT_MS - 1)
+      expect(onTerminate).not.toHaveBeenCalled()
+      expect(session.attachMessageSink).toHaveBeenLastCalledWith(null)
+      expect(session.startIdleTimer).toHaveBeenCalledTimes(1)
+
+      await vi.advanceTimersByTimeAsync(1)
+      expect(onTerminate).toHaveBeenCalledTimes(1)
+    })
+  })
+
+  it('TERMINATE-MESSAGE-ENDS-AT-ONCE: an explicit terminate-session ends the session without waiting for any timer', async () => {
+    vi.useFakeTimers()
+    createSessionHandler(session as unknown as LiveSession, onTerminate)(ws as any)
+
+    ws.simulateMessage({ type: 'terminate-session' })
+    await flushMicrotasks()
+
+    expect(session.cleanup).toHaveBeenCalledTimes(1)
+    expect(onTerminate).toHaveBeenCalledTimes(1)
+    expect(ws.parsed(2).type).toBe('session-terminated')
+    expect(ws.closes).toEqual([[1000, 'Session terminated']])
+
+    ws.simulateClose()
+    await flushMicrotasks()
+    expect(session.startIdleTimer, 'the close that follows an explicit end arms nothing').not.toHaveBeenCalled()
+    expect(session.cleanup).toHaveBeenCalledTimes(1)
+    expect(onTerminate).toHaveBeenCalledTimes(1)
+  })
+
+  it('SUPERSEDED-CLOSE-IS-INERT: a superseded socket\'s late close cannot detach the socket that replaced it', async () => {
+    const first = new MockWebSocket()
+    const second = new MockWebSocket()
+    createSessionHandler(session as unknown as LiveSession, onTerminate)(first as any)
+    createSessionHandler(session as unknown as LiveSession, onTerminate)(second as any)
+    const sinkCalls = (session.attachMessageSink as unknown as Mock).mock.calls
+
+    first.simulateClose()
+    await flushMicrotasks()
+
+    expect(sinkCalls.at(-1)?.[0], 'the second socket\'s sink stays attached').toEqual(expect.any(Function))
     expect(session.startIdleTimer).not.toHaveBeenCalled()
-    expect(onTerminate).toHaveBeenCalled()
+    expect(session.cleanup).not.toHaveBeenCalled()
+    expect(onTerminate).not.toHaveBeenCalled()
+
+    second.simulateClose()
+    await flushMicrotasks()
+
+    expect(sinkCalls.at(-1)?.[0]).toBeNull()
+    expect(session.startIdleTimer).toHaveBeenCalledTimes(1)
+  })
+
+  it('DETACH-CANCELS-IN-FLIGHT-STEP: a drop during an executing step cancels it server-side (A3 default)', async () => {
+    session.status = 'executing'
+    createSessionHandler(session as unknown as LiveSession, onTerminate)(ws as any)
+
+    ws.simulateClose()
+    await flushMicrotasks()
+
+    expect(session.cancelStep).toHaveBeenCalledTimes(1)
+    expect(session.cleanup).not.toHaveBeenCalled()
+  })
+
+  it('REATTACH-RESUMES-AND-FLUSHES: a re-attach inside the window resumes the session and flushes what it missed', async () => {
+    vi.useFakeTimers()
+    const live = new LiveSession('reattach-session')
+    const clearIdleTimer = vi.spyOn(live, 'clearIdleTimer')
+    const first = new MockWebSocket()
+    createSessionHandler(live, onTerminate)(first as any)
+
+    first.simulateClose()
+    await flushMicrotasks()
+    expect(live.status, 'detached, not ended').not.toBe('terminated')
+
+    // dispatch is the session's one outbound path; with no sink attached it buffers.
+    const missed: ServerMessage = { type: 'error', message: 'sent while detached' }
+    ;(live as unknown as { dispatch(message: ServerMessage): void }).dispatch(missed)
+    expect(first.sentMessages.map((raw) => JSON.parse(raw).type)).not.toContain('error')
+
+    const second = new MockWebSocket()
+    const callsBefore = clearIdleTimer.mock.calls.length
+    createSessionHandler(live, onTerminate)(second as any)
+
+    expect(clearIdleTimer.mock.calls.length).toBeGreaterThan(callsBefore)
+    expect(second.sentMessages.map((raw) => JSON.parse(raw))).toEqual([
+      expect.objectContaining({ type: 'session-ready', sessionId: 'reattach-session' }),
+      missed,
+      expect.objectContaining({ type: 'session-state' }),
+    ])
+
+    await vi.advanceTimersByTimeAsync(IDLE_TIMEOUT_MS * 2)
+    expect(onTerminate, 'the re-attach cleared the idle window').not.toHaveBeenCalled()
   })
 })
