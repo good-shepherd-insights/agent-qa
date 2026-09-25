@@ -11,7 +11,11 @@
 // the CLI, which may import both — the drift is measured rather than assumed away.
 
 import { LIVE_URL_REFUSAL_REASONS } from '@vostride/agent-qa-schema'
-import type { LiveStreamDeclaration, LiveUrlRefusalReason } from '@vostride/agent-qa-schema'
+import type {
+  LiveStreamDeclaration,
+  LiveStreamKind,
+  LiveUrlRefusalReason,
+} from '@vostride/agent-qa-schema'
 
 /** The frame socket. A query carries the run id ONLY — never the token (D-04). */
 export const LIVE_VIEW_WS_PATH = '/api/live-view/ws'
@@ -62,7 +66,9 @@ export type LiveViewClientMessage =
 export type LiveViewServerMessage =
   | { type: 'ready'; runId: string; handle: number; stream: LiveStreamDeclaration; expiresAt: number }
   | { type: 'refused'; reason: LiveViewRefusalReason }
-  | { type: 'frame'; id: number; width: number; height: number }
+  // 428 D-15: `ts` is the frame's capture time in epoch ms and `kind` the producing capability's
+  // kind. Both are ADDITIVE and optional: a frame that carries neither sends the pre-428 header.
+  | { type: 'frame'; id: number; width: number; height: number; ts?: number; kind?: LiveStreamKind }
   | { type: 'renewed'; expiresAt: number }
   // TWO ENDS, EACH BY ITS OWN NAME (403 CR-03). `handleFinished` says THIS member's stream is over
   // while the run continues; `runFinished` says the run is over. Additive to the published

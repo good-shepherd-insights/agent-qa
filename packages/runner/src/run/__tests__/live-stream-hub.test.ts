@@ -787,6 +787,58 @@ describe('the N-viewer invariant (403-02 · D-07/D-16 · LIVE-01)', () => {
   })
 })
 
+// ---- 428-01: CAPTURE TIME AND KIND ON THE FRAME (D-15, PXH-LIVE-03) -----------------------------
+//
+// A frame's time is its CAPTURE time in integer epoch milliseconds. The producer stamps it; the hub
+// fills it from its own clock only when the producer did not, and never overwrites one it was given.
+
+describe('the hub stamps capture time and producer kind on a copy (428-01 · D-15)', () => {
+  it('(t) TS-STAMPED-WHEN-ABSENT: an unstamped frame reaches the subscriber at timer.now(), the producer object untouched', async () => {
+    const timer = makeFakeTimer()
+    const capability = makeFakeCapability()
+    const hub = createLiveStreamHub({ timer })
+    hub.register(0, capability)
+    const seen: LiveFrame[] = []
+    hub.subscribe(0, (f) => seen.push(f))
+    await settle()
+    const produced = frame(3)
+    capability.emit(produced)
+    expect(seen).toHaveLength(1)
+    expect(seen[0]?.metadata.timestamp, 'the hub clock, in epoch ms').toBe(timer.now())
+    expect(seen[0]?.id, 'the ack ledger keys on the unchanged id').toBe(3)
+    expect(produced.metadata.timestamp, 'the producer\'s frame is never mutated').toBeUndefined()
+    expect(produced.kind).toBeUndefined()
+  })
+
+  it('(u) TS-KEPT-WHEN-PRESENT: a producer-supplied capture time is never overwritten', async () => {
+    const timer = makeFakeTimer()
+    const capability = makeFakeCapability()
+    const hub = createLiveStreamHub({ timer })
+    hub.register(0, capability)
+    const seen: LiveFrame[] = []
+    hub.subscribe(0, (f) => seen.push(f))
+    await settle()
+    capability.emit({ ...frame(5), metadata: { width: 320, height: 240, timestamp: 42 } })
+    expect(seen[0]?.metadata.timestamp).toBe(42)
+  })
+
+  it('(v) KIND-STAMPED-FROM-CAPABILITY: an unkinded frame takes the capability\'s kind; a kinded one keeps its own', async () => {
+    const timer = makeFakeTimer()
+    const capability = makeFakeCapability()
+    const hub = createLiveStreamHub({ timer })
+    hub.register(0, capability)
+    const seen: LiveFrame[] = []
+    const subscription = hub.subscribe(0, (f) => seen.push(f))
+    await settle()
+    capability.emit(frame(6))
+    capability.emit({ ...frame(7), kind: 'mjpeg' })
+    expect(seen.map((f) => f.kind)).toEqual(['cdp-screencast', 'mjpeg'])
+    subscription?.ack(6)
+    subscription?.ack(7)
+    expect(capability.acked, 'the stamped copy is acked by the producer\'s own id').toEqual([6, 7])
+  })
+})
+
 // ---- THE SEAM, THROUGH THE REAL RUN --------------------------------------------------------
 //
 // The hub cells above drive the hub directly and the frame-proxy cells drive a PLANTED

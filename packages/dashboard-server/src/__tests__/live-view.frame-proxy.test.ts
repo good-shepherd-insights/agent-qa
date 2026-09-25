@@ -31,6 +31,8 @@ import {
   type RunSession,
 } from '@vostride/agent-qa-schema'
 import { mintLiveUrlToken, validateLiveUrlToken } from '@vostride/agent-qa-agent'
+import { createLiveStreamHub } from '@vostride/agent-qa-runner'
+import type { LiveStreamCapability, RunTimerPort } from '@vostride/agent-qa-runner'
 import WebSocket from 'ws'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
@@ -209,6 +211,8 @@ interface ServerText {
   readonly id?: number
   readonly width?: number
   readonly height?: number
+  readonly ts?: number
+  readonly kind?: string
 }
 
 interface Viewer {
@@ -383,6 +387,11 @@ describe('the frame proxy through the production startServer frame (403 D-06/D-1
     expect(header?.id).toBe(11)
     expect(header?.width).toBe(640)
     expect(header?.height).toBe(360)
+    // 428: ts and kind are ADDITIVE. A frame that carries neither sends exactly the old header.
+    expect(Object.keys(header ?? {}).sort(), 'an unstamped frame keeps the pre-428 header keys')
+      .toEqual(['height', 'id', 'type', 'width'])
+    expect(header).not.toHaveProperty('ts')
+    expect(header).not.toHaveProperty('kind')
     expect([...(viewer.binaries[0] as Buffer)], 'the viewer receives the producer\'s own bytes')
       .toEqual([...jpeg(11).bytes])
     expect(viewer.order.slice(-2), 'the binary follows its header immediately')
@@ -789,6 +798,61 @@ describe('the frame proxy through the production startServer frame (403 D-06/D-1
       'and the lost frame is acked on the dead viewer behalf: CDP will not produce frame N+1 until '
       + 'N is acked, so a viewer that vanished must not stall the stream for everyone else',
     ).toEqual([9])
+  })
+
+  it('(26) TRACER-FRAME-TS: capture time and producer kind reach the header through a real hub (428 D-15, GAP-L3)', async () => {
+    // The one path PXH-LIVE-03's dot reads: producer -> real hub -> RunSession seam -> production
+    // proxy -> the viewer's frame header. The proxy never stamps a time of its own; the hub stamps
+    // timer.now() only when the producer supplied none.
+    const CAPTURE_NOW = 1_700_000_000_000
+    const timer: RunTimerPort = { schedule: () => () => undefined, now: () => CAPTURE_NOW }
+    const hub = createLiveStreamHub({ timer })
+    let sink: ((frame: LiveFrame) => void) | undefined
+    const capability: LiveStreamCapability = {
+      kind: 'cdp-screencast',
+      start: async (onFrame) => { sink = onFrame },
+      ack: async () => {},
+      stop: async () => { sink = undefined },
+    }
+    hub.register(0, capability)
+    const session = {
+      ...plantSession({ runId: 'r26' }).session,
+      subscribeFrames: (
+        handle: number,
+        onFrame: (frame: LiveFrame) => void,
+        onEnd?: () => void,
+      ) => hub.subscribe(handle, onFrame, onEnd),
+      streamCapabilityOf: (handle: number) => hub.capabilityOf(handle),
+    } as RunSession
+    const frame = await productionFrame({ r26: session })
+    const viewer = await openViewer(frame, '?runId=r26')
+    viewer.send({ type: 'hello', token: tokenFor({ runId: 'r26', handle: 0 }) })
+
+    const ready = await viewer.waitFor(['ready'])
+    expect(ready.stream?.kind, 'the declaration comes from the real hub').toBe('cdp-screencast')
+    await vi.waitFor(() => { expect(sink, 'the hub started the producer for this viewer').toBeDefined() })
+
+    sink?.({ id: 1, bytes: new Uint8Array([0xff, 0xd8, 0x01]), metadata: { width: 640, height: 360 } })
+    await viewer.waitForBinaries(1)
+    const unstamped = viewer.texts.filter((text) => text.type === 'frame')[0]
+    expect(unstamped?.id).toBe(1)
+    expect(unstamped?.ts, 'a frame captured without a time reads the hub clock, in epoch ms')
+      .toBe(CAPTURE_NOW)
+    expect(unstamped?.kind, 'and names the capability that produced it').toBe('cdp-screencast')
+    expect(viewer.order.slice(-2)).toEqual(['text:frame', 'binary'])
+    viewer.send({ type: 'ack', id: 1 })
+
+    sink?.({
+      id: 2,
+      bytes: new Uint8Array([0xff, 0xd8, 0x02]),
+      metadata: { width: 640, height: 360, timestamp: 1_699_999_999_000 },
+    })
+    await viewer.waitForBinaries(2)
+    const stamped = viewer.texts.filter((text) => text.type === 'frame')[1]
+    expect(stamped?.id).toBe(2)
+    expect(stamped?.ts, 'a producer-supplied capture time is never overwritten').toBe(1_699_999_999_000)
+    expect(stamped?.kind).toBe('cdp-screencast')
+    await hub.close()
   })
 
   it('(19) the embed page: 200, the four headers, the nonce equality, and a fresh nonce per response', async () => {

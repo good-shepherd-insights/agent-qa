@@ -78,11 +78,15 @@ export function createFrameProxy(deps: FrameProxyDeps): (ws: WebSocket, runId: s
         subscription?.ack(frame.id)
         return
       }
+      // 428 D-15: the capture time and kind the frame CARRIES, forwarded when present. The proxy
+      // keeps no clock of its own for this: a time taken here measures socket delivery, not capture.
       send(ws, {
         type: 'frame',
         id: frame.id,
         width: frame.metadata.width,
         height: frame.metadata.height,
+        ...(frame.metadata.timestamp !== undefined ? { ts: frame.metadata.timestamp } : {}),
+        ...(frame.kind !== undefined ? { kind: frame.kind } : {}),
       })
       // THE BINARY HALF IS GUARDED TOO (403 WR-06). The check at the top of this callback is not
       // enough: a socket can close between it and here, and `ws.send` then THROWS — straight up

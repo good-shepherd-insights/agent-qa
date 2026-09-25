@@ -238,7 +238,19 @@ export function createLiveStreamHub(opts: CreateLiveStreamHubOptions = {}): Live
     })
   }
 
-  function deliver(state: StreamState, frame: LiveFrame): void {
+  function deliver(state: StreamState, produced: LiveFrame): void {
+    // 428 D-15: fan out ONE stamped copy. The producer's capture time and kind win when present;
+    // the hub's clock and the capability's kind fill only what is absent. The id is unchanged,
+    // because the ack ledger below keys on it, and the producer's object is never mutated.
+    const frame: LiveFrame = {
+      ...produced,
+      metadata:
+        produced.metadata.timestamp === undefined
+          ? { ...produced.metadata, timestamp: timer.now() }
+          : produced.metadata,
+      kind: produced.kind ?? state.capability.kind,
+    }
+
     // Snapshot so a mid-delivery detach (or a subscriber that unsubscribes from its own callback)
     // cannot disturb the walk — the `bus.ts:125-139` shape.
     const receivers = [...state.subscribers]

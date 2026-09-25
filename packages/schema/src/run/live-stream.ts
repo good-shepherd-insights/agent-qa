@@ -23,7 +23,12 @@ export const LiveStreamDeclarationSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('none') }).strict(),
 ])
 
-/** Per-frame geometry as the producer reported it (CDP `screencastFrame.metadata`). */
+/**
+ * Per-frame geometry as the producer reported it (CDP `screencastFrame.metadata`), plus the frame's
+ * time. `timestamp` is the frame's CAPTURE time in integer epoch milliseconds, stamped by the
+ * producer at capture (428 D-15). It is the one definition of a frame's time on every layer: the
+ * hub fills it from its own clock only when a producer left it out, and never overwrites it.
+ */
 export interface LiveFrameMetadata {
   width: number
   height: number
@@ -41,6 +46,8 @@ export interface LiveFrame {
   id: number
   bytes: Uint8Array
   metadata: LiveFrameMetadata
+  /** The kind of the capability that produced this frame, stamped by the hub when the producer did not set it. */
+  kind?: LiveStreamKind
 }
 
 /**
