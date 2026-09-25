@@ -10,7 +10,6 @@ import {
   Loader2,
   PlayCircle,
   RefreshCw,
-  Smartphone,
   Square,
   Terminal,
   Webhook,
@@ -85,18 +84,10 @@ interface LiveSessionPaneProps {
   executionUnit?: "step" | "test"
   runAllLabel?: string
   stopAllLabel?: string
+  /** Kept for the page callers; the pane no longer renders it (428 D-05). */
   liveSessionNumber?: number | null
   unitRowsSlot?: ReactNode
   authStateCapture?: LiveModeAuthStateCaptureConfig | null
-}
-
-const STATUS_META: Record<ConnectionState, { label: string; tone: string }> = {
-  idle: { label: "Ready", tone: "bg-muted-foreground/35" },
-  connecting: { label: "Connecting", tone: "bg-primary animate-pulse" },
-  connected: { label: "Connected", tone: "bg-emerald-500" },
-  executing: { label: "Executing", tone: "bg-primary animate-pulse" },
-  disconnected: { label: "Disconnected", tone: "bg-amber-500" },
-  error: { label: "Error", tone: "bg-destructive" },
 }
 
 function draftBadgeMeta(draftState: LiveSessionPaneProps["draftState"]): { label: string; className: string } {
@@ -456,7 +447,6 @@ export function LiveSessionPane({
   executionUnit = "step",
   runAllLabel,
   stopAllLabel,
-  liveSessionNumber = null,
   unitRowsSlot,
   authStateCapture = null,
 }: LiveSessionPaneProps) {
@@ -465,12 +455,6 @@ export function LiveSessionPane({
   const [isEditingAddress, setIsEditingAddress] = useState(false)
 
   const effectiveState: ConnectionState = isLaunching ? "connecting" : connectionState
-  const statusMeta = terminalState
-    ? {
-        label: terminalState.reason === "ended" ? "Ended" : "Disconnected",
-        tone: terminalState.reason === "ended" ? "bg-muted-foreground/45" : "bg-amber-500",
-      }
-    : STATUS_META[effectiveState]
 
   const displaySteps = useMemo(
     () => steps.map((step, index) => fromEditorStep(step, index)),
@@ -586,16 +570,6 @@ export function LiveSessionPane({
     }
   }, [browserLabel, isEditingAddress])
 
-  const runningLabel = useMemo(() => {
-    if (suiteMode) {
-      const runningTest = tests.find((test) => test.status === "running")
-      return runningTest ? `Running ${runningTest.name}` : null
-    }
-    if (!runningStepId) return null
-    const runningStep = displaySteps.find((step) => step.id === runningStepId)
-    return runningStep ? `Running step ${runningStep.stepOrder + 1}` : "Running current step"
-  }, [displaySteps, runningStepId, suiteMode, tests])
-
   const handleCopyUrl = async () => {
     if (!browserLabel) return
     await navigator.clipboard.writeText(browserLabel)
@@ -622,41 +596,14 @@ export function LiveSessionPane({
 
   return (
     <div className="flex h-full min-h-0 flex-col bg-card/30">
+      {/* THE LIVE HEADER (428 D-05): the target, the draft badge and the actions. Health is the
+          preview dot's alone, so there is no connection badge, session number or running label. */}
       <div data-live-header className="border-b px-4 py-3">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="min-w-0 space-y-1">
-            <div className="flex flex-wrap items-center gap-2">
-              <span className="text-sm font-medium">
-                {targetName || "Live Session"}
-              </span>
-              <Badge variant="outline" className="text-[10px] uppercase tracking-wide">
-                {statusMeta.label}
-              </Badge>
-              {(connectionState === "connected" || connectionState === "executing") && typeof liveSessionNumber === "number" && (
-                <Badge
-                  variant="outline"
-                  aria-live="polite"
-                  className="text-[10px] tracking-wider font-medium text-muted-foreground bg-muted/50 border-border/50"
-                >
-                  Session #{liveSessionNumber}
-                </Badge>
-              )}
-              {runningLabel && (
-                <span className="text-xs text-muted-foreground">
-                  {runningLabel}
-                </span>
-              )}
-            </div>
-            <div className="flex items-center gap-2 text-xs text-muted-foreground">
-              {platform === "web" ? (
-                <Globe className="size-3.5 shrink-0" />
-              ) : (
-                <Smartphone className="size-3.5 shrink-0" />
-              )}
-              <span className="truncate" title={browserLabel}>
-                {browserLabel}
-              </span>
-            </div>
+            <span className="text-sm font-medium">
+              {targetName || "Live Session"}
+            </span>
             {errorMessage && !terminalState && (
               <div className="min-w-0 max-w-2xl text-xs text-destructive [overflow-wrap:anywhere]">
                 {errorMessage}
@@ -669,11 +616,6 @@ export function LiveSessionPane({
               <Badge variant="outline" className={cn("text-[10px]", draftMeta.className)}>
                 {draftMeta.label}
               </Badge>
-              {setupHooksStale && (
-                <Badge className="border-amber-500/30 bg-amber-500/10 text-amber-600 dark:text-amber-400">
-                  Restart required
-                </Badge>
-              )}
               {showRunAllToolbar && (
                 isRunningAll ? (
                   <Button
