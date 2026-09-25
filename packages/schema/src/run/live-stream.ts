@@ -2,11 +2,21 @@ import { z } from 'zod'
 
 /**
  * The live-view transport families a run handle can declare (403 D-05/D-08). `cdp-screencast` is
- * the only kind with a producer today; `mjpeg` (mobile, M6) and `webrtc` (headful phase 2) are
- * named here so a consumer switches on a DECLARED kind rather than on a browser name or an
- * adapter class (LIVE-04's prohibition).
+ * the continuous stream; `snapshot` is the labelled 1s fallback frames arrive through when
+ * continuous streaming is unavailable (PXH-LIVE-02, 428 D-11), delivered on the same hub, socket
+ * and embed page. `snapshot` supersedes 403 D-08's rejection of stills (the dated note lands in
+ * 428 Plan 27). `mjpeg` (mobile, M6) and `webrtc` (headful phase 2) are named here so a consumer
+ * switches on a DECLARED kind rather than on a browser name or an adapter class (LIVE-04's
+ * prohibition).
  */
-export type LiveStreamKind = 'cdp-screencast' | 'mjpeg' | 'webrtc'
+export type LiveStreamKind = 'cdp-screencast' | 'snapshot' | 'mjpeg' | 'webrtc'
+// prettier-ignore
+export const LIVE_STREAM_KINDS = [
+  'cdp-screencast',
+  'snapshot',
+  'mjpeg',
+  'webrtc',
+] as const satisfies readonly LiveStreamKind[]
 
 /**
  * What a handle declares about its live stream. `{ kind: 'none' }` is the HONEST absent state —
@@ -18,6 +28,7 @@ export type LiveStreamDeclaration = { kind: LiveStreamKind } | { kind: 'none' }
 /** The zod mirror of {@link LiveStreamDeclaration} — a discriminated union on `kind`. */
 export const LiveStreamDeclarationSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('cdp-screencast') }).strict(),
+  z.object({ kind: z.literal('snapshot') }).strict(),
   z.object({ kind: z.literal('mjpeg') }).strict(),
   z.object({ kind: z.literal('webrtc') }).strict(),
   z.object({ kind: z.literal('none') }).strict(),
@@ -49,6 +60,18 @@ export interface LiveFrame {
   /** The kind of the capability that produced this frame, stamped by the hub when the producer did not set it. */
   kind?: LiveStreamKind
 }
+
+/**
+ * Why a handle's frame stream ended under its subscribers (428; the hub speaks them from Plan 04).
+ * `withdrawn`: the member's capability was withdrawn or replaced while its run continues.
+ * `closed`: the hub itself closed, because the run or the editor session is over.
+ */
+export type LiveFrameEndReason = 'withdrawn' | 'closed'
+// prettier-ignore
+export const LIVE_FRAME_END_REASONS = [
+  'withdrawn',
+  'closed',
+] as const satisfies readonly LiveFrameEndReason[]
 
 /**
  * A subscriber's hold on a handle's frame stream. `ack` reports that this subscriber consumed the
