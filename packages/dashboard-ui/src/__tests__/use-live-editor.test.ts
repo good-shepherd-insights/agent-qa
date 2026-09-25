@@ -3,7 +3,7 @@
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 
-import { act, createElement } from 'react'
+import { act, createElement, useEffect, useRef } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -236,5 +236,207 @@ describe('HOOK-HAS-NO-SCREENSHOT-POLLING', () => {
     for (const needle of [...POLLING_NAMES, RETIRED_REQUEST]) {
       expect(source).not.toContain(needle)
     }
+  })
+})
+
+// D-09 · RESEARCH P2/P5: the server detaches on a dropped control socket, so an explicit end must
+// reach it without the socket, and a server that no longer holds the session must be named.
+class LifecycleProbeSocket {
+  static instances: LifecycleProbeSocket[] = []
+  static readonly CONNECTING = 0
+  static readonly OPEN = 1
+  static readonly CLOSING = 2
+  static readonly CLOSED = 3
+
+  readonly sent: Array<Record<string, unknown>> = []
+  readyState = 1
+  onopen: ((event: Event) => void) | null = null
+  onmessage: ((event: MessageEvent<string>) => void) | null = null
+  onclose: ((event: CloseEvent) => void) | null = null
+  onerror: ((event: Event) => void) | null = null
+
+  constructor(readonly url: string) {
+    LifecycleProbeSocket.instances.push(this)
+  }
+
+  emit(message: Record<string, unknown>): void {
+    this.onmessage?.(new MessageEvent('message', { data: JSON.stringify(message) }))
+  }
+
+  open(): void {
+    this.readyState = 1
+    this.onopen?.(new Event('open'))
+  }
+
+  drop(code: number): void {
+    this.readyState = 3
+    this.onclose?.(new CloseEvent('close', { code }))
+  }
+
+  send(data: string): void {
+    this.sent.push(JSON.parse(data))
+  }
+
+  close(): void {
+    this.readyState = 3
+    this.onclose?.(new CloseEvent('close', { code: 1000 }))
+  }
+}
+
+describe('428-20 editor session lifecycle', () => {
+  let container: HTMLDivElement
+  let root: Root | null
+  let originalWebSocket: typeof WebSocket
+  const fetchMock = vi.fn()
+  const holder: { current: UseLiveEditorReturn | null } = { current: null }
+
+  function deleteCallsFor(sessionId: string) {
+    return fetchMock.mock.calls.filter(
+      ([url, init]) =>
+        url === `/api/live-editor/sessions/${sessionId}`
+        && (init as RequestInit | undefined)?.method === 'DELETE',
+    )
+  }
+
+  async function mount(element: ReturnType<typeof createElement>) {
+    root = createRoot(container)
+    await act(async () => {
+      root?.render(element)
+    })
+  }
+
+  async function unmount() {
+    await act(async () => {
+      root?.unmount()
+    })
+    root = null
+  }
+
+  beforeEach(() => {
+    vi.useFakeTimers()
+    originalWebSocket = globalThis.WebSocket
+    LifecycleProbeSocket.instances = []
+    globalThis.WebSocket = LifecycleProbeSocket as unknown as typeof WebSocket
+    fetchMock.mockReset()
+    fetchMock.mockImplementation(() =>
+      Promise.resolve({
+        ok: true,
+        status: 200,
+        statusText: 'OK',
+        json: () => Promise.resolve({ ok: true }),
+      }),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+    container = document.createElement('div')
+    document.body.appendChild(container)
+    root = null
+  })
+
+  afterEach(async () => {
+    if (root) await unmount()
+    container.remove()
+    holder.current = null
+    globalThis.WebSocket = originalWebSocket
+    vi.unstubAllGlobals()
+    vi.useRealTimers()
+  })
+
+  function Harness({ sessionId, allowReconnect }: { sessionId: string | null; allowReconnect: boolean }) {
+    holder.current = useLiveEditor(sessionId, { allowReconnect })
+    return null
+  }
+
+  // The editor pages' shape: the hook's own effect is declared first, so on unmount it closes
+  // the socket before the page's unmount effect asks for the end (RESEARCH P2).
+  function PageShapedHarness({ sessionId }: { sessionId: string }) {
+    const editor = useLiveEditor(sessionId, { allowReconnect: false })
+    const terminateRef = useRef(editor.terminateSession)
+    terminateRef.current = editor.terminateSession
+    useEffect(() => () => {
+      terminateRef.current()
+    }, [])
+    holder.current = editor
+    return null
+  }
+
+  it('UNMOUNT-DELETES-WITH-SOCKET-CLOSED: an end with the socket already closed sends nothing and DELETEs with keepalive', async () => {
+    await mount(createElement(Harness, { sessionId: 'session-ends', allowReconnect: false }))
+    const socket = LifecycleProbeSocket.instances[0]
+    await act(async () => {
+      socket.emit({ type: 'session-ready', platform: 'web', interactive: true })
+    })
+    await act(async () => {
+      socket.drop(1006)
+    })
+
+    await act(async () => {
+      holder.current?.terminateSession()
+    })
+
+    expect(socket.sent.filter((message) => message.type === 'terminate-session')).toEqual([])
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/live-editor/sessions/session-ends',
+      expect.objectContaining({ method: 'DELETE', keepalive: true }),
+    )
+  })
+
+  it('UNMOUNT-DELETES-WITH-SOCKET-CLOSED: leaving the page still DELETEs after the hook closed the socket', async () => {
+    await mount(createElement(PageShapedHarness, { sessionId: 'session-page' }))
+    const socket = LifecycleProbeSocket.instances[0]
+    await act(async () => {
+      socket.emit({ type: 'session-ready', platform: 'web', interactive: true })
+    })
+
+    await unmount()
+
+    expect(socket.readyState).toBe(LifecycleProbeSocket.CLOSED)
+    expect(deleteCallsFor('session-page')).toHaveLength(1)
+    expect(deleteCallsFor('session-page')[0]?.[1]).toMatchObject({ keepalive: true })
+  })
+
+  it('UNMOUNT-DELETES-WITH-SOCKET-CLOSED: an end with the socket open also says terminate-session', async () => {
+    await mount(createElement(Harness, { sessionId: 'session-open', allowReconnect: false }))
+    const socket = LifecycleProbeSocket.instances[0]
+    await act(async () => {
+      socket.emit({ type: 'session-ready', platform: 'web', interactive: true })
+    })
+
+    await act(async () => {
+      holder.current?.terminateSession()
+    })
+
+    expect(socket.sent.filter((message) => message.type === 'terminate-session')).toHaveLength(1)
+    expect(deleteCallsFor('session-open')).toHaveLength(1)
+  })
+
+  it('PAGEHIDE-DELETES: pagehide during a session DELETEs with keepalive, and the listener leaves with the hook', async () => {
+    await mount(createElement(Harness, { sessionId: 'session-hide', allowReconnect: false }))
+    const socket = LifecycleProbeSocket.instances[0]
+    await act(async () => {
+      socket.emit({ type: 'session-ready', platform: 'web', interactive: true })
+    })
+
+    await act(async () => {
+      window.dispatchEvent(new Event('pagehide'))
+    })
+
+    expect(deleteCallsFor('session-hide')).toHaveLength(1)
+    expect(deleteCallsFor('session-hide')[0]?.[1]).toMatchObject({ keepalive: true })
+
+    await unmount()
+    window.dispatchEvent(new Event('pagehide'))
+
+    expect(deleteCallsFor('session-hide')).toHaveLength(1)
+  })
+
+  it('PAGEHIDE-DELETES: no session, no DELETE', async () => {
+    await mount(createElement(Harness, { sessionId: null, allowReconnect: false }))
+
+    await act(async () => {
+      window.dispatchEvent(new Event('pagehide'))
+    })
+
+    expect(fetchMock).not.toHaveBeenCalled()
   })
 })
