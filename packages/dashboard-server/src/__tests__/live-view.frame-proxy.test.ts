@@ -23,6 +23,7 @@ import type { AddressInfo } from 'node:net'
 import {
   LIVE_URL_SCOPE,
   type LiveFrame,
+  type LiveFrameEndReason,
   type LiveFrameSubscription,
   type LiveStreamDeclaration,
   type LiveUrlClaims,
@@ -93,7 +94,7 @@ interface PlantedSession {
    * ends, its subscriber set is cleared, and every subscriber's `onEnd` is called. The RUN is
    * untouched — `done` is still pending, which is the whole point of CR-03.
    */
-  endStream(): void
+  endStream(reason?: LiveFrameEndReason): void
   readonly acked: number[]
   readonly unsubscribes: number
   readonly cancels: number
@@ -103,9 +104,13 @@ interface PlantedSession {
 function plantSession(input: {
   runId: string
   stream?: LiveStreamDeclaration
+  /** Called at the top of every `subscribeFrames`, so a cell can see what was sent before it. */
+  onSubscribe?: () => void
+  /** `nothing`: the handle settled between the two reads, so the subscription comes back undefined. */
+  subscribeAnswers?: 'nothing'
 }): PlantedSession {
   const sinks = new Set<(frame: LiveFrame) => void>()
-  const ends = new Set<() => void>()
+  const ends = new Set<(reason: LiveFrameEndReason) => void>()
   const acked: number[] = []
   let unsubscribes = 0
   let cancels = 0
@@ -123,9 +128,11 @@ function plantSession(input: {
     subscribeFrames: (
       _handle: number,
       onFrame: (frame: LiveFrame) => void,
-      onEnd?: () => void,
+      onEnd?: (reason: LiveFrameEndReason) => void,
     ): LiveFrameSubscription | undefined => {
+      input.onSubscribe?.()
       subscribeCalls += 1
+      if (input.subscribeAnswers === 'nothing') return undefined
       sinks.add(onFrame)
       if (onEnd !== undefined) ends.add(onEnd)
       return {
@@ -145,11 +152,11 @@ function plantSession(input: {
     session,
     emit: (frame) => { for (const sink of [...sinks]) sink(frame) },
     finish: () => { finish() },
-    endStream: () => {
+    endStream: (reason = 'withdrawn') => {
       const leaving = [...ends]
       ends.clear()
       sinks.clear()
-      for (const onEnd of leaving) onEnd()
+      for (const onEnd of leaving) onEnd(reason)
     },
     get acked() { return acked },
     get unsubscribes() { return unsubscribes },
@@ -303,11 +310,13 @@ async function openViewer(frame: Frame, query: string): Promise<Viewer> {
 
 // ---- THE ONE DIRECT-PROXY FIXTURE --------------------------------------------------------------
 //
-// Two claims in this file are about a socket whose STATE a real socket cannot be made to have on
-// cue: `bufferedAmount` above the drop threshold (cell 18) and a `readyState` that flips BETWEEN
-// two statements of one callback (cell 24). Both need a scripted socket, and both go through this
-// ONE construction — so the census cell below still finds a single direct-proxy call site and a
-// third cell cannot quietly opt out of the shipped frame by writing its own.
+// Three claims in this file are about a socket whose STATE a real socket cannot be made to have on
+// cue: `bufferedAmount` above the drop threshold (cell 18), a `readyState` that flips BETWEEN two
+// statements of one callback (cell 24), and what had been WRITTEN at the instant the proxy
+// subscribed (cell 27 — a real socket's receipt is asynchronous, so it cannot order the two). All
+// three need a scripted socket, and all go through this ONE construction — so the census cell
+// below still finds a single direct-proxy call site and another cell cannot quietly opt out of
+// the shipped frame by writing its own.
 
 interface DirectProxyViewer {
   /** Everything written to the socket, in order. Text and binary alike. */
@@ -620,6 +629,120 @@ describe('the frame proxy through the production startServer frame (403 D-06/D-1
     ).toEqual(['handleFinished', 'runFinished'])
     expect(viewer.order.join('|')).toBe('text:ready|text:frame|binary|text:ended|text:ended')
     expect(planted.cancels, 'and nothing about this touched the run (D-16)').toBe(0)
+  })
+
+  it('(27) READY-AFTER-SUBSCRIBE: the subscription exists before the viewer is told ready (428 D-14, #274)', () => {
+    // DIRECT PROXY, and for the reason the fixture's header gives: the claim is about what had been
+    // written to the socket at the instant `subscribeFrames` ran. A real socket receives
+    // asynchronously, so a production-frame viewer would see `ready` after the subscription under
+    // either order and the cell could not tell them apart.
+    const writtenAtSubscribe: number[] = []
+    let viewer: DirectProxyViewer | undefined
+    const planted = plantSession({
+      runId: 'r27',
+      onSubscribe: () => { writtenAtSubscribe.push(viewer?.sent.length ?? -1) },
+    })
+    viewer = directProxyViewer(planted, 'r27')
+    viewer.greet(tokenFor({ runId: 'r27' }))
+
+    expect(planted.subscribeCalls, 'the witness: the proxy did subscribe').toBe(1)
+    expect(
+      writtenAtSubscribe,
+      'nothing may reach the viewer before the subscription exists — a `ready` sent first promises '
+      + 'frames from a subscription that may never be made',
+    ).toEqual([0])
+    const first = JSON.parse(String(viewer.sent[0])) as ServerText
+    expect(first.type, 'and the first thing the viewer is sent is ready').toBe('ready')
+  })
+
+  it('(28) UNKNOWN-HANDLE-EMITTED: a declared stream whose subscription comes back empty is refused by name', async () => {
+    // #274 (a+b). The handle settled between `streamCapabilityOf` and `subscribeFrames`: the first
+    // read declared a stream, the second found nothing. Before 428 the viewer got `ready` and then
+    // waited forever for a first frame; the declared reason was never sent.
+    const planted = plantSession({ runId: 'r28', subscribeAnswers: 'nothing' })
+    const frame = await productionFrame({ r28: planted.session })
+    const viewer = await openViewer(frame, '?runId=r28')
+    viewer.send({ type: 'hello', token: tokenFor({ runId: 'r28', handle: 4 }) })
+
+    const answer = await viewer.waitFor(['refused', 'ready'])
+    expect(planted.subscribeCalls, 'the witness: the stream was declared and a subscription tried')
+      .toBe(1)
+    expect(answer.type, 'an unresolvable handle is refused, never greeted').toBe('refused')
+    expect(answer.reason).toBe('unknown_handle')
+    expect(await viewer.waitForClose()).toBe(LIVE_VIEW_REFUSAL_CLOSE_CODE)
+    expect(viewer.texts.some((text) => text.type === 'ready'), 'and ready is never sent').toBe(false)
+  })
+
+  it('(29) CLOSED-IS-NOT-HANDLE-FINISHED: a closed hub is not a finished member (428 RESEARCH P9)', async () => {
+    const capabilityFor = (): { capability: LiveStreamCapability; started: () => boolean } => {
+      let running = false
+      return {
+        capability: {
+          kind: 'cdp-screencast',
+          start: async () => { running = true },
+          ack: async () => {},
+          stop: async () => { running = false },
+        },
+        started: () => running,
+      }
+    }
+    const hubSession = (runId: string): {
+      hub: ReturnType<typeof createLiveStreamHub>
+      planted: PlantedSession
+      session: RunSession
+    } => {
+      const timer: RunTimerPort = { schedule: () => () => undefined, now: () => Date.now() }
+      const hub = createLiveStreamHub({ timer })
+      const planted = plantSession({ runId })
+      const session = {
+        ...planted.session,
+        subscribeFrames: (
+          handle: number,
+          onFrame: (frame: LiveFrame) => void,
+          onEnd?: (reason: LiveFrameEndReason) => void,
+        ) => hub.subscribe(handle, onFrame, onEnd),
+        streamCapabilityOf: (handle: number) => hub.capabilityOf(handle),
+      } as RunSession
+      return { hub, planted, session }
+    }
+
+    // WITHDRAWN: the member finished while its run continues. Cell (23)'s fact, through a real hub.
+    const withdrawn = hubSession('r29w')
+    const withdrawnProducer = capabilityFor()
+    withdrawn.hub.register(0, withdrawnProducer.capability)
+    // CLOSED: the whole hub went down. The run's own end is the message that follows.
+    const closed = hubSession('r29c')
+    const closedProducer = capabilityFor()
+    closed.hub.register(0, closedProducer.capability)
+    const frame = await productionFrame({ r29w: withdrawn.session, r29c: closed.session })
+
+    const first = await openViewer(frame, '?runId=r29w')
+    first.send({ type: 'hello', token: tokenFor({ runId: 'r29w' }) })
+    expect((await first.waitFor(['ready'])).stream?.kind).toBe('cdp-screencast')
+    await vi.waitFor(() => { expect(withdrawnProducer.started(), 'the witness: streaming').toBe(true) })
+    withdrawn.hub.register(0, undefined)
+    expect((await first.waitFor(['ended'])).reason, 'a withdrawal is a finished member')
+      .toBe('handleFinished')
+    expect(first.closeCode, 'and the run is still going').toBeUndefined()
+
+    const second = await openViewer(frame, '?runId=r29c')
+    second.send({ type: 'hello', token: tokenFor({ runId: 'r29c' }) })
+    expect((await second.waitFor(['ready'])).stream?.kind).toBe('cdp-screencast')
+    await vi.waitFor(() => { expect(closedProducer.started(), 'the witness: streaming').toBe(true) })
+    await closed.hub.close()
+    await new Promise((resolve) => setTimeout(resolve, 150))
+    expect(
+      second.texts.filter((text) => text.type === 'ended').map((text) => text.reason),
+      'a closed hub says nothing by itself — it is the subject ending, not a member finishing',
+    ).toEqual([])
+    expect(second.closeCode).toBeUndefined()
+
+    closed.planted.finish()
+    expect(await second.waitForClose()).toBe(1000)
+    expect(
+      second.texts.filter((text) => text.type === 'ended').map((text) => text.reason),
+      'the subject\'s own end is the one end this viewer hears',
+    ).toEqual(['runFinished'])
   })
 
   it('(13) THE EXPIRY DEADLINE: a socket whose token lapses mid-stream is refused BY NAME', async () => {
