@@ -147,18 +147,22 @@ const TOKEN_ENV_VAR = 'AGENT_QA_408_06_HARNESS_TOKEN'
 const TOKEN_VALUE = 'harness-token-408-06-not-a-real-credential'
 
 /**
- * The 403-02 D-7 change-driven tolerance, copied with its reasoning rather than re-derived.
+ * The static-page band, copied with its reasoning from the web adapter's STATIC-PAGE-KEEPALIVE cell
+ * rather than re-derived.
  *
- * `STATIC_MAX_FRAMES = 1` is not slack: CDP delivers one frame when a screencast starts (and after a
- * navigation settles), which is the CURRENT PAINT rather than a change. Anything above that over a
- * four-second window is a producer emitting while nothing moved — i.e. polling, which is precisely
- * what LIVE-01 forbids and what this arm exists to catch. Raising this ceiling requires a dated note
- * saying what was measured and why.
+ * 2026-09-25 (428-06, D-15): the 403-02 D-7 ceiling of ONE frame in four seconds is retired. A
+ * static page now gets a fresh keepalive capture every 2 s (`LIVE_KEEPALIVE_QUIET_MS`) so the
+ * viewer's freshness dot stays green, and this harness measured 2 painted frames in 4 s once it
+ * shipped. Over a six-second window that is 2 or 3 frames; fewer is a producer gone silent on a
+ * healthy page, and more than 4 is a producer emitting faster than the keepalive — i.e. polling,
+ * which LIVE-01 forbids and this arm exists to catch (a 1 s poller paints about 6). Widening the
+ * band requires a dated note saying what was measured and why.
  */
 const CHANGING_WINDOW_MS = 3_000
 const STATIC_SETTLE_MS = 3_000
-const STATIC_WINDOW_MS = 4_000
-const STATIC_MAX_FRAMES = 1
+const STATIC_WINDOW_MS = 6_000
+const STATIC_MIN_FRAMES = 2
+const STATIC_MAX_FRAMES = 4
 
 // ---- The Apps-host CSP, mapped from the OFFICIAL schema's own documented mapping ---------------
 
@@ -984,7 +988,7 @@ describe('leg 2 — the App renders and the frames are CHANGE-DRIVEN (D-12, crit
     }
   }, 180_000)
 
-  it('(6) frames PAINT through the nested embed while the page changes, and STOP while it is static', async () => {
+  it('(6) frames PAINT through the nested embed while the page changes, and slow to the 2 s keepalive while it is static', async () => {
     const served = await readServedApp()
     // THE PERMISSIVE HOST, for the same reason cell (5) names: the frame counter this arm reads is
     // maintained by the App's own inline script, so this cell cannot exist on a host that runs none.
@@ -1037,7 +1041,8 @@ describe('leg 2 — the App renders and the frames are CHANGE-DRIVEN (D-12, crit
 
       // THE NEGATIVE ARM, and it is the half that distinguishes a change-driven producer from a
       // polling one: the SAME run's SAME browser is pointed at the static fixture page, and after it
-      // settles nothing more should arrive. A screenshot poller would keep counting.
+      // settles only the 2 s keepalive should arrive (428 D-15). A 1 s screenshot poller paints
+      // more than the band allows.
       await held().navigateTarget(held().targetUrl)
       await page.waitForTimeout(STATIC_SETTLE_MS)
       const beforeStatic = await paintedFrames(embed)
@@ -1047,9 +1052,15 @@ describe('leg 2 — the App renders and the frames are CHANGE-DRIVEN (D-12, crit
       console.log(`408-06 change-driven: painted ${String(staticDelta)} frame(s) in ${String(STATIC_WINDOW_MS)}ms while the page was static`)
       expect(
         staticDelta,
-        `the watched page was static for ${String(STATIC_WINDOW_MS)}ms and the embed still painted `
-        + `${String(staticDelta)} frame(s) — above the ${String(STATIC_MAX_FRAMES)}-frame CDP `
-        + 'start/settle allowance that is a current paint rather than a change (403-02 D-7)',
+        `the watched page was static for ${String(STATIC_WINDOW_MS)}ms and the embed painted `
+        + `${String(staticDelta)} frame(s) — below ${String(STATIC_MIN_FRAMES)} the keepalive went `
+        + 'silent on a healthy page (428 D-15)',
+      ).toBeGreaterThanOrEqual(STATIC_MIN_FRAMES)
+      expect(
+        staticDelta,
+        `the watched page was static for ${String(STATIC_WINDOW_MS)}ms and the embed painted `
+        + `${String(staticDelta)} frame(s) — above ${String(STATIC_MAX_FRAMES)} the producer is `
+        + 'emitting faster than the 2 s keepalive, i.e. polling (403-02 D-7, 428 D-15)',
       ).toBeLessThanOrEqual(STATIC_MAX_FRAMES)
     } finally {
       await page.close()
