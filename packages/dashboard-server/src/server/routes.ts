@@ -17,7 +17,12 @@ import { CHAT_ROUTE_PREFIX, RUN_CONFIRM_ROUTE_PREFIX, createChatRouter } from '.
 import { isRunTriggerConfirmScope } from '../chat/confirm-registry.js'
 import type { AgentHost } from '../chat/host.js'
 import { parseHandleParam } from '@vostride/agent-qa-schema'
-import type { RunServiceReadiness, RunSession, RunsLiveUrlResult } from '@vostride/agent-qa-schema'
+import type {
+  EditorLiveUrlResult,
+  RunServiceReadiness,
+  RunSession,
+  RunsLiveUrlResult,
+} from '@vostride/agent-qa-schema'
 import {
   handleParamOf,
   lastEventIdParamOf,
@@ -1812,6 +1817,12 @@ interface RouterDeps {
    * `runServiceReadiness`'s idiom — never a 404 (the route exists) and never a URL to nowhere.
    */
   mintLiveUrl?: (runId: string, handle: number) => Promise<RunsLiveUrlResult>
+  /**
+   * The `editor.liveurl` mint, dispatched through the registry by the composition root (428 D-07).
+   * The editor counterpart of `mintLiveUrl`: a function, never a signer. ABSENT MEANS THIS HOST
+   * MINTS NO EDITOR VIEW, and the route answers 503 by name.
+   */
+  mintEditorLiveUrl?: (sessionId: string) => Promise<EditorLiveUrlResult>
   /**
    * The in-process chip sink the post-processing stream relays from (404-05, D-16).
    *
@@ -4633,6 +4644,42 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps): (req: In
           json(res, { error: err instanceof Error ? err.message : 'Failed to delete variable' }, 500)
         }
       })()
+      return
+    }
+
+    // GET /api/live-editor/sessions/:id/live-url — the editor mint door (428 D-07).
+    //
+    // A copy of the run mint door above, arm for arm: the same-site guard first, 503 when unbound,
+    // the op's result verbatim and its refusals mapped by error name. Every arm answers through
+    // `jsonNoCors`, because the success body is the token. The DELETE arm below matches one path
+    // segment after the id, so it never sees a `/live-url` suffix.
+    if (req.method === 'GET' && /^\/api\/live-editor\/sessions\/[^/]+\/live-url$/.test(path)) {
+      if (refuseCrossSiteRequest(req) !== undefined) {
+        jsonNoCors(res, { error: 'cross_site_refused' }, 403)
+        return
+      }
+      if (!deps.mintEditorLiveUrl) {
+        jsonNoCors(res, { error: 'live_view_unavailable' }, 503)
+        return
+      }
+      let editorSessionId: string
+      try {
+        editorSessionId = decodeURIComponent(
+          path.slice('/api/live-editor/sessions/'.length, -'/live-url'.length),
+        )
+      } catch {
+        jsonNoCors(res, { error: 'unknown_session' }, 404)
+        return
+      }
+      void deps.mintEditorLiveUrl(editorSessionId).then(
+        (result) => { jsonNoCors(res, result) },
+        (error: unknown) => {
+          const name = error instanceof Error ? error.name : ''
+          if (name === 'UnknownLiveEditorSessionError') { jsonNoCors(res, { error: 'unknown_session' }, 404); return }
+          if (name === 'LiveViewUnavailableError') { jsonNoCors(res, { error: 'live_view_unavailable' }, 503); return }
+          jsonNoCors(res, { error: 'live_url_mint_failed' }, 500)
+        },
+      )
       return
     }
 

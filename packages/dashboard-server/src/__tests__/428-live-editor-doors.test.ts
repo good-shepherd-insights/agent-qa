@@ -5,16 +5,26 @@
 // so the cells choose the exact `Origin` and `Sec-Fetch-Site` a browser would send; the `Host` is
 // the one Node writes for the loopback address the server listens on.
 
+import { createHmac, timingSafeEqual } from 'node:crypto'
 import { request as httpRequest } from 'node:http'
 import type { IncomingHttpHeaders } from 'node:http'
 import type { AddressInfo } from 'node:net'
 
-import type { EditorLiveUrlResult, LiveUrlVerdict } from '@vostride/agent-qa-schema'
+import {
+  LIVE_URL_SCOPE,
+  type EditorLiveUrlResult,
+  type LiveUrlSigner,
+  type LiveUrlVerdict,
+} from '@vostride/agent-qa-schema'
+import { mintLiveUrlToken, validateLiveUrlToken } from '@vostride/agent-qa-agent'
 import WebSocket from 'ws'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { DashboardDatabase } from '../db/database.js'
 import { LIVE_EDITOR_UNKNOWN_SESSION_CLOSE_CODE } from '../live-editor/types.js'
+import { createLiveEditorSubjects } from '../live-view/editor-subjects.js'
+import type { LiveEditorAttachment, LiveEditorSubjects } from '../live-view/editor-subjects.js'
+import { LIVE_EMBED_PATH_PREFIX, LIVE_VIEW_WS_PATH } from '../live-view/protocol.js'
 import { startServer } from '../server/server.js'
 
 const FOREIGN_ORIGIN = 'http://evil.example'
@@ -33,18 +43,30 @@ afterEach(() => {
 
 type EditorMint = (sessionId: string) => Promise<EditorLiveUrlResult>
 
-async function serve(input: { mintEditorLiveUrl?: EditorMint; liveView?: false } = {}): Promise<Served> {
+const signer: LiveUrlSigner = {
+  sign: (data) => createHmac('sha256', 'zz-428-11-editor-doors-signing-key').update(data).digest('base64url'),
+  equals: (a, b) => {
+    const left = Buffer.from(a)
+    const right = Buffer.from(b)
+    return left.length === right.length && timingSafeEqual(left, right)
+  },
+}
+
+async function serve(input: {
+  mintEditorLiveUrl?: EditorMint
+  liveView?: false
+  liveEditorSubjects?: LiveEditorSubjects
+} = {}): Promise<Served> {
   const db = new DashboardDatabase({ dbPath: ':memory:' })
-  const refuseEverything = (): LiveUrlVerdict =>
-    ({ kind: 'refused', reason: 'malformed' }) as unknown as LiveUrlVerdict
   const started = await startServer({
     db,
     port: 0,
+    ...(input.liveEditorSubjects === undefined ? {} : { liveEditorSubjects: input.liveEditorSubjects }),
     ...(input.liveView === false
       ? {}
       : {
           liveView: {
-            validate: refuseEverything,
+            validate: (token, expectation): LiveUrlVerdict => validateLiveUrlToken(signer, token, expectation),
             mintLiveUrl: async () => { throw new Error('this fixture mints no run view') },
             ...(input.mintEditorLiveUrl === undefined ? {} : { mintEditorLiveUrl: input.mintEditorLiveUrl }),
           },
@@ -271,5 +293,45 @@ describe('the control-socket upgrade: /api/live-editor/ws', () => {
     expect(outcome.switched).toBe(true)
     expect(outcome.closeCode).toBe(4404)
     expect(outcome.closeReason).toBe('unknown_session')
+  })
+})
+
+describe('the frame socket serves editor subjects from liveEditorSubjects', () => {
+  it('FRAME-SERVES-EDITOR-SUBJECT: an editor token opens a registered session on the production frame', async () => {
+    const subjects = createLiveEditorSubjects()
+    const attachment: LiveEditorAttachment = {
+      streamCapabilityOf: () => ({ kind: 'none' }),
+      subscribeFrames: () => undefined,
+      ended: new Promise<void>(() => {}),
+    }
+    subjects.register('session-1', attachment)
+    // No run registry: the editor registry alone is enough to serve the embed page and the socket.
+    const served = await serve({ liveEditorSubjects: subjects })
+
+    const embed = await call(served, 'GET', `${LIVE_EMBED_PATH_PREFIX}session-1`)
+    expect(embed.status, 'the embed page is served for an editor-only host').toBe(200)
+
+    const now = Date.now()
+    const token = mintLiveUrlToken(signer, {
+      subject: { kind: 'editor', sessionId: 'session-1' },
+      scope: LIVE_URL_SCOPE,
+      iat: now,
+      exp: now + 60_000,
+    })
+    const socket = new WebSocket(`ws://127.0.0.1:${String(served.port)}${LIVE_VIEW_WS_PATH}?runId=session-1`)
+    const first = await new Promise<{ type?: string; runId?: string; stream?: { kind?: string } }>((resolve, reject) => {
+      const budget = setTimeout(() => { reject(new Error('no answer to hello within 5000 ms')) }, 5_000)
+      socket.once('open', () => { socket.send(JSON.stringify({ type: 'hello', token })) })
+      socket.once('message', (data: Buffer) => {
+        clearTimeout(budget)
+        resolve(JSON.parse(data.toString('utf8')) as { type?: string })
+      })
+      socket.once('error', reject)
+    })
+    socket.close()
+
+    expect(first.type).toBe('ready')
+    expect(first.runId).toBe('session-1')
+    expect(first.stream?.kind).toBe('none')
   })
 })

@@ -18,7 +18,8 @@ import { createSessionHandler } from '../live-editor/ws-handler.js'
 import { LIVE_EMBED_PATH_PREFIX, LIVE_VIEW_WS_PATH } from '../live-view/protocol.js'
 import { renderLiveEmbedPage } from '../live-view/embed-page.js'
 import { createFrameProxy } from '../live-view/frame-proxy.js'
-import { refuseNonLoopbackHost } from './cross-site.js'
+import { refuseCrossSiteRequest, refuseNonLoopbackHost } from './cross-site.js'
+import { LIVE_EDITOR_UNKNOWN_SESSION_CLOSE_CODE } from '../live-editor/types.js'
 import type { LiveEditorSubjects } from '../live-view/editor-subjects.js'
 import type {
   EditorLiveUrlResult,
@@ -263,7 +264,7 @@ export async function startServer(opts: StartServerOptions): Promise<{
   port: number
   close: () => void
 }> {
-  const { db, port = 3470, uiDir, workspacePaths, configPath, llmConfig, authFetch, agentHost, executionBackend, runService, runServiceReadiness, liveView, postProcessingRelay } = opts
+  const { db, port = 3470, uiDir, workspacePaths, configPath, llmConfig, authFetch, agentHost, executionBackend, runService, runServiceReadiness, liveView, liveEditorSubjects, postProcessingRelay } = opts
   // 403 D-14: the explicit port wins; the pre-403 derivation is the fallback for legacy callers.
   const runServiceAttach = opts.runServiceAttach ?? runService?.attach
   const host = opts.host?.trim() || DEFAULT_DASHBOARD_HOST
@@ -597,7 +598,15 @@ export async function startServer(opts: StartServerOptions): Promise<{
     appiumManager,
     configManager,
     configPath: resolvedConfigPath,
+    // 428 D-07: each created session registers here, which is what the frame socket attaches.
+    ...(liveEditorSubjects === undefined ? {} : { liveEditorSubjects }),
   })
+
+  // 428 D-07: the embed route and the frame socket serve a live view when the seam is bound and at
+  // least one subject registry is present. The proxy dispatches on the token's signed kind, so a
+  // missing registry is only a lookup that answers nothing.
+  const servesLiveView = liveView !== undefined
+    && (runServiceAttach !== undefined || liveEditorSubjects !== undefined)
 
   const apiRouter = createRouter({
     db,
@@ -630,6 +639,11 @@ export async function startServer(opts: StartServerOptions): Promise<{
     // 403 D-03: the mint route's port, on the same conditional-spread house rule — absent means
     // this host serves no live view and the route's own 503 arm decides, in one place.
     ...(liveView === undefined ? {} : { mintLiveUrl: liveView.mintLiveUrl }),
+    // 428 D-07: the editor mint, on the same house rule — absent means the editor mint route's own
+    // 503 decides.
+    ...(liveView?.mintEditorLiveUrl === undefined
+      ? {}
+      : { mintEditorLiveUrl: liveView.mintEditorLiveUrl }),
     // 404-05 (D-16): the same conditional-spread house rule — absent means this host serves no
     // post-processing push channel and the stream arm's own 503 decides, in one place.
     ...(postProcessingRelay === undefined ? {} : { postProcessingRelay }),
@@ -696,7 +710,7 @@ export async function startServer(opts: StartServerOptions): Promise<{
       // `Referrer-Policy: no-referrer` so the fragment-carried token cannot ride a `Referer` out
       // (T-403-12).
       if (req.method === 'GET' && path.startsWith(LIVE_EMBED_PATH_PREFIX)) {
-        if (liveView === undefined || runServiceAttach === undefined) {
+        if (!servesLiveView) {
           res.writeHead(503, { 'Content-Type': 'application/json' })
           res.end(JSON.stringify({ error: 'live_view_unavailable' }))
           return
@@ -838,15 +852,29 @@ export async function startServer(opts: StartServerOptions): Promise<{
         }
       }
       const liveRunId = url.searchParams.get('runId')
-      if (liveRunId === null || liveRunId === '' || liveView === undefined || runServiceAttach === undefined) {
+      if (liveRunId === null || liveRunId === '' || liveView === undefined || !servesLiveView) {
         socket.destroy()
         return
       }
-      const proxy = createFrameProxy({ validate: liveView.validate, attach: runServiceAttach })
+      const proxy = createFrameProxy({
+        validate: liveView.validate,
+        attach: runServiceAttach ?? ((): undefined => undefined),
+        ...(liveEditorSubjects === undefined ? {} : { attachEditor: liveEditorSubjects.attach }),
+      })
       wss.handleUpgrade(request, socket, head, (ws) => { proxy(ws, liveRunId) })
       return
     }
     if (url.pathname === '/api/live-editor/ws') {
+      // THE SAME-SITE GUARD, FIRST (428 D-08 — WINDOWS #275). This socket drives a browser, and a
+      // WebSocket upgrade is exempt from CORS, so a page on another origin could otherwise open it.
+      // Unlike the frame socket there is no sandboxed embed to admit, so the literal `null` is
+      // refused with every other foreign origin. A refusal is a bare destroy: nothing is written
+      // back to a cross-site caller, not even a status line.
+      const crossSite = refuseCrossSiteRequest(request)
+      if (crossSite !== undefined) {
+        socket.destroy()
+        return
+      }
       const sessionId = url.searchParams.get('sessionId')
       if (!sessionId) {
         socket.destroy()
@@ -854,7 +882,11 @@ export async function startServer(opts: StartServerOptions): Promise<{
       }
       const session = sessionManager.getSession(sessionId)
       if (!session) {
-        socket.destroy()
+        // 428 P5: an admitted caller asking for a session this process does not hold is told so by
+        // name, so the page can say the session ended instead of "Disconnected".
+        wss.handleUpgrade(request, socket, head, (ws) => {
+          ws.close(LIVE_EDITOR_UNKNOWN_SESSION_CLOSE_CODE, 'unknown_session')
+        })
         return
       }
 
