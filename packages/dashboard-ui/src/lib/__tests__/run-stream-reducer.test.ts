@@ -12,10 +12,13 @@
 // sentinel values and assert on the actual runtime object, at every depth, via `JSON.stringify`.
 // The type is the intent; the cell is the proof.
 //
-// EVERY CLOCK IS INJECTED. `reduceRunStream(state, envelope, now)` takes `now` as a parameter and
-// `livenessOf(state, now, source)` takes it again. A wall clock in a window-boundary cell is a
-// flake that reads as a real defect (403-03 measured exactly that in a byte-comparing fixture),
-// and the 19_999 / 20_000 rows below are precisely the shape that would flake.
+// EVERY CLOCK IS INJECTED. `reduceRunStream(state, envelope, now)` takes `now` as a parameter. A
+// wall clock in the fold is a flake that reads as a real defect (403-03 measured exactly that in a
+// byte-comparing fixture). The liveness window that once took a clock too is gone (428 D-03), and
+// the absence cells below say so.
+
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 
 import { describe, expect, it } from 'vitest'
 
@@ -25,11 +28,10 @@ import type {
   RunEventType,
 } from '@vostride/agent-qa-schema'
 
+import * as reducer from '@/lib/run-stream-reducer'
 import {
-  LIVENESS_STALE_MS,
   STEP_STATUSES,
   createInitialRunStreamState,
-  livenessOf,
   markGap,
   reduceRunStream,
   stepStatusOf,
@@ -45,11 +47,6 @@ import {
 const SENTINEL = 'SENTINEL-REASONING-7f3a'
 
 const RUN_ID = 'run_live'
-
-/** EventSource's own readyState vocabulary, restated for a source double that has no browser. */
-const CONNECTING = 0
-const OPEN = 1
-const CLOSED = 2
 
 let nextSeq = 1
 
@@ -533,76 +530,93 @@ describe('members, the thin handle stream and the terminal freeze', () => {
 })
 
 // ---------------------------------------------------------------------------
-// D-11: liveness comes from bus envelopes, never from a socket
+// D-03 (428): the reducer publishes no liveness verdict (supersedes 403's D-11)
 // ---------------------------------------------------------------------------
 
-describe('D-11: liveness is fed by bus envelopes, and an open socket alone is not one', () => {
-  const withEnvelopeAt = (at: number): RunStreamState =>
-    reduceRunStream(createInitialRunStreamState(), envelope('heartbeat', {}, 2), at)
+describe('D-03: the module publishes no bus liveness, and an absent export is the proof', () => {
+  // RE-SPELLED 2026-09-26 (428-16). These eleven cells pinned `livenessOf` and its 20 s window.
+  // The owner removed bus liveness from the live page (428 D-03), and the pure half went with it.
+  // Each cell now states one absence: an export, a type, a transport input or a window, read off
+  // the module namespace or its source, so the liveness path cannot come back by one import.
+  const exportNames = (): string[] => Object.keys(reducer).sort()
+  const source = (): string => readFileSync(resolve(process.cwd(), 'src/lib/run-stream-reducer.ts'), 'utf8')
 
-  it('pins the stale window at twice the bus\'s 10 s heartbeat cadence', () => {
-    expect(LIVENESS_STALE_MS).toBe(20_000)
+  it('the module exports no LIVENESS_STALE_MS — the page keeps no stale window over the bus', () => {
+    expect(exportNames()).not.toContain('LIVENESS_STALE_MS')
   })
 
-  it('is `live` at 19_999 ms since the last envelope on an OPEN source', () => {
-    const state = withEnvelopeAt(0)
-    expect(livenessOf(state, 19_999, { readyState: OPEN, erroredWhileConnecting: false }))
-      .toEqual({ kind: 'live', lastActivityAgeMs: 19_999 })
+  it('the module exports no livenessOf', () => {
+    expect(exportNames()).not.toContain('livenessOf')
   })
 
-  it('is `lost` at exactly 20_000 ms — the window is half-open, and the boundary is asserted, not assumed', () => {
-    const state = withEnvelopeAt(0)
-    expect(livenessOf(state, 20_000, { readyState: OPEN, erroredWhileConnecting: false }))
-      .toEqual({ kind: 'lost', lastActivityAgeMs: 20_000 })
+  it('THE EXPORT CENSUS: the runtime exports are exactly the fold, its helpers and its vocabulary', () => {
+    expect(exportNames()).toEqual([
+      'DID_NOT_RUN_NOTE',
+      'STEP_STATUSES',
+      'createInitialRunStreamState',
+      'markGap',
+      'reduceRunStream',
+      'stepStatusOf',
+    ])
   })
 
-  it('counts a HEARTBEAT as activity — a run thinking for four minutes is alive, not lost', () => {
-    // The whole point of D-11: a multi-minute local-model call produces no step events at all.
+  it('a heartbeat is still folded as activity, and the state it produces names no liveness verdict', () => {
     let state = createInitialRunStreamState()
-    for (const tick of [0, 10_000, 20_000, 30_000, 40_000]) {
+    for (const tick of [0, 10_000, 20_000]) {
       state = reduceRunStream(state, envelope('heartbeat', {}), tick)
     }
-    expect(livenessOf(state, 49_000, { readyState: OPEN, erroredWhileConnecting: false }).kind).toBe('live')
-    expect(livenessOf(state, 60_001, { readyState: OPEN, erroredWhileConnecting: false }).kind).toBe('lost')
+    expect(state).toMatchObject({ lastEnvelopeAt: 20_000, terminal: false })
+    expect(Object.keys(state).filter((key) => /liveness/iu.test(key))).toEqual([])
   })
 
-  it('is `reconnecting` while the source reports CONNECTING after an error, even inside the fresh window', () => {
-    const state = withEnvelopeAt(0)
-    expect(livenessOf(state, 1_000, { readyState: CONNECTING, erroredWhileConnecting: true }).kind)
-      .toBe('reconnecting')
+  it('no runtime export names liveness, in any casing', () => {
+    expect(exportNames().filter((name) => /liveness/iu.test(name))).toEqual([])
   })
 
-  it('returns to `live` once the reconnect reaches OPEN and the window is still fresh', () => {
-    const state = withEnvelopeAt(0)
-    expect(livenessOf(state, 1_000, { readyState: OPEN, erroredWhileConnecting: true }))
-      .toEqual({ kind: 'live', lastActivityAgeMs: 1_000 })
+  it('the source declares no Liveness, LivenessKind or LivenessSource type', () => {
+    expect(source()).not.toMatch(/\b(?:interface|type)\s+Liveness\w*/u)
   })
 
-  it('is `lost` on a CLOSED source no matter how recent the last envelope was', () => {
-    const state = withEnvelopeAt(0)
-    expect(livenessOf(state, 1, { readyState: CLOSED, erroredWhileConnecting: false }).kind).toBe('lost')
-    expect(livenessOf(state, 1, { readyState: CLOSED, erroredWhileConnecting: true }).kind).toBe('lost')
+  it('the reducer reads no transport: the source never names an EventSource readyState', () => {
+    expect(source()).not.toMatch(/readyState/u)
   })
 
-  it('AN OPEN SOCKET ALONE IS NEVER `live` — zero envelopes is `connecting`, not connected', () => {
-    // The lie HNST-03 names: an open socket to a dead run reads "connected" forever.
-    const state = createInitialRunStreamState()
-    expect(livenessOf(state, 999_999, { readyState: OPEN, erroredWhileConnecting: false }))
-      .toEqual({ kind: 'connecting', lastActivityAgeMs: undefined })
-    expect(livenessOf(state, 999_999, { readyState: CONNECTING, erroredWhileConnecting: false }).kind)
-      .toBe('connecting')
+  it('no exported function takes a transport: the function exports and their arities are the fold\'s own', () => {
+    const functions = Object.fromEntries(
+      Object.entries(reducer)
+        .filter((entry): entry is [string, (...args: never[]) => unknown] => typeof entry[1] === 'function')
+        .map(([name, fn]) => [name, fn.length]),
+    )
+    expect(functions).toEqual({
+      createInitialRunStreamState: 0,
+      markGap: 3,
+      reduceRunStream: 3,
+      stepStatusOf: 1,
+    })
   })
 
-  it('honours an injected stale window, so the constant is a default and not a hard-coded law', () => {
-    const state = withEnvelopeAt(0)
-    expect(livenessOf(state, 500, { readyState: OPEN, erroredWhileConnecting: false }, 400).kind).toBe('lost')
-    expect(livenessOf(state, 399, { readyState: OPEN, erroredWhileConnecting: false }, 400).kind).toBe('live')
+  it('a long silence changes nothing the state holds — no clock-derived field exists to go stale', () => {
+    const state = reduceRunStream(createInitialRunStreamState(), envelope('heartbeat', {}, 2), 0)
+    expect(Object.keys(state).sort()).toEqual([
+      'gap',
+      'handles',
+      'lastEnvelopeAt',
+      'lastSeq',
+      'members',
+      'notices',
+      'steps',
+      'terminal',
+      'verdict',
+    ])
   })
 
-  it('reports the last-activity age so the page can render "last activity 32s ago"', () => {
-    const state = withEnvelopeAt(1_000)
-    expect(livenessOf(state, 33_000, { readyState: OPEN, erroredWhileConnecting: false }).lastActivityAgeMs)
-      .toBe(32_000)
+  it('the source spells no stale window: no 20_000 and no twice-the-heartbeat constant', () => {
+    expect(source()).not.toMatch(/20_000|STALE_MS/u)
+  })
+
+  it('the clock-as-parameter rule names only the fold: the source never mentions livenessOf', () => {
+    expect(source()).not.toContain('livenessOf')
+    expect(source()).toContain('EVERY CLOCK IS A PARAMETER')
   })
 })
 

@@ -11,13 +11,14 @@
 // checking never fires. The sentinels below are the same constants the reducer suite feeds, so a
 // feed and an assertion cannot drift apart.
 //
-// WHY EVERY CLOCK IS FAKE. The pill's window is 20 s, the running row shows elapsed time and the
-// preview re-mints at half its TTL. Every one of those is a cell whose verdict would otherwise
-// depend on real elapsed time — the flake shape 403-03 measured, which reads exactly like a real
-// defect when it fires.
+// WHY EVERY CLOCK IS FAKE. The running row shows elapsed time and the preview re-mints at half its
+// TTL. Each of those is a cell whose verdict would otherwise depend on real elapsed time — the
+// flake shape 403-03 measured, which reads exactly like a real defect when it fires.
 //
-// WHY THE PILL CELLS RUN k=5. The three liveness claims are the ones a scheduler hiccup could make
-// pass once. Fresh mount per iteration, so nothing carries across.
+// WHY THE NO-LIVENESS-PILL CELLS RUN k=5 (428 D-03). The page used to carry a bus liveness pill
+// (HNST-03); the owner removed it, and a dead bus now shows only as rows that stop moving. The
+// three traffic scenarios the pill was measured over are kept, each now asserting that nothing on
+// the page speaks about the channel. Fresh mount per iteration, so nothing carries across.
 //
 // `openRunStream` IS NOT MOCKED. It composes the door's URL and enumerates the bus's event names
 // from the schema; mocking it would replace the very contract these cells exist to bind. What is
@@ -315,8 +316,12 @@ const stepsPane = (): Element => {
   if (pane === null) throw new Error('the steps pane does not exist')
   return pane
 }
-const livenessWord = () => q('[data-liveness]')?.getAttribute('data-liveness')
-const lastActivitySeconds = () => Number(q('[data-liveness]')?.getAttribute('data-last-activity'))
+/** Everything the removed pill used to say, read the two ways it could come back: a node or words. */
+const livenessClaims = () => ({
+  elements: qa('[data-liveness]').length,
+  activityWords: /last activity|no activity yet/iu.test(document.body.textContent ?? ''),
+})
+const NO_LIVENESS_CLAIM = { elements: 0, activityWords: false }
 const previewState = () => q('[data-preview-state]')?.getAttribute('data-preview-state')
 
 beforeEach(() => {
@@ -441,71 +446,112 @@ describe('the running row moves without inventing a phase (HNST-02, D-10)', () =
   })
 })
 
-describe('the pill tells the truth about the channel (HNST-03, D-11)', () => {
-  it('k=5: heartbeat-only traffic for 60 s stays `live` with a last-activity age under the window', async () => {
+describe('NO-LIVENESS-PILL: the page makes no claim about the bus channel (428 D-03 supersedes HNST-03)', () => {
+  // RE-SPELLED 2026-09-26 (428-16). These four cells were HNST-03's pill cells: `live` across
+  // heartbeats, `lost` over an open and silent socket, `reconnecting` while dialling, and the
+  // preview holding its state through each. D-03 removes the pill, so the same traffic now
+  // asserts that no liveness element and no activity age appear. The positive half of each cell
+  // proves the page DID fold the traffic, so the absence is about a page that heard the bus.
+  it('NO-LIVENESS-PILL k=5: 11 s of heartbeat-only traffic renders no liveness element', async () => {
     for (let k = 0; k < 5; k += 1) {
       await mount()
       await open()
-      await emit(runStarted())
+      await emit(runStarted(), testStarted(0, 'the member', 1))
+      expect(qa('[data-live-pane="steps"] li'), 'the page folded the stream').toHaveLength(1)
 
-      for (let beat = 0; beat < 6; beat += 1) {
-        await advance(9_000)
-        expect(livenessWord()).toBe('live')
-        expect(lastActivitySeconds()).toBe(9)
-        await advance(1_000)
-        await emit(heartbeat())
-        expect(livenessWord()).toBe('live')
-        expect(lastActivitySeconds()).toBe(0)
-      }
-    }
-  })
-
-  it('k=5: an OPEN socket that has heard nothing for 20 s reads `lost`, not `connected`', async () => {
-    for (let k = 0; k < 5; k += 1) {
-      await mount()
-      await open()
-      // The socket is open and the run has said nothing. This is the HNST-03 lie in its purest
-      // form: every page that branches on `readyState` shows a green dot here, forever.
-      expect(latest().readyState).toBe(OPEN)
-
-      await advance(19_000)
-      expect(livenessWord()).toBe('connecting')
-
+      await advance(9_000)
+      expect(livenessClaims()).toEqual(NO_LIVENESS_CLAIM)
       await advance(1_000)
-      expect(latest().readyState).toBe(OPEN)
-      expect(livenessWord()).toBe('lost')
-      expect(latest().closed).toBe(false)
+      await emit(heartbeat())
+      await advance(1_000)
+      expect(livenessClaims()).toEqual(NO_LIVENESS_CLAIM)
+      expect(sources()).toHaveLength(1)
     }
   })
 
-  it('k=5: an error while the socket is dialling reads `reconnecting`', async () => {
+  it('NO-LIVENESS-PILL k=5: an OPEN socket that has heard nothing for 21 s renders no liveness element', async () => {
+    for (let k = 0; k < 5; k += 1) {
+      await mount()
+      await open()
+      expect(latest().readyState).toBe(OPEN)
+
+      await advance(21_000)
+      expect(latest().readyState).toBe(OPEN)
+      expect(latest().closed).toBe(false)
+      expect(livenessClaims()).toEqual(NO_LIVENESS_CLAIM)
+    }
+  })
+
+  it('NO-LIVENESS-PILL k=5: a socket dropped while dialling and then restored renders no liveness element', async () => {
     for (let k = 0; k < 5; k += 1) {
       await mount()
       await open()
       await emit(runStarted())
-      expect(livenessWord()).toBe('live')
 
       await fail(CONNECTING)
-      expect(livenessWord()).toBe('reconnecting')
-      // The browser retries this socket itself — the page does not open a second one.
+      expect(livenessClaims()).toEqual(NO_LIVENESS_CLAIM)
+      // The browser retries this socket itself — the page does not open a second one, and a
+      // dialling error is not a close the door is asked to classify.
       expect(sources()).toHaveLength(1)
       expect(classifyRunStreamCloseMock).not.toHaveBeenCalled()
+
+      await open()
+      await emit(testStarted(0, 'the member', 1))
+      expect(qa('[data-live-pane="steps"] li'), 'the restored socket delivers').toHaveLength(1)
+      expect(livenessClaims()).toEqual(NO_LIVENESS_CLAIM)
     }
   })
 
-  it('the preview pane keeps its own state through every pill transition', async () => {
+  it('the preview keeps its own state across a dropped and restored socket, and nothing claims liveness', async () => {
     await mount()
     await open()
     await emit(runStarted())
     expect(previewState()).toBe('loading')
 
     await fail(CONNECTING)
-    expect(livenessWord()).toBe('reconnecting')
     expect(previewState()).toBe('loading')
 
     await advance(20_000)
-    expect(livenessWord()).toBe('reconnecting')
     expect(previewState()).toBe('loading')
+    expect(livenessClaims()).toEqual(NO_LIVENESS_CLAIM)
+  })
+})
+
+describe('the header is the title, the file path, Cancel and view run detail (428 D-04)', () => {
+  const header = (): Element => {
+    const found = q('[data-tour-id="tour-live-run-status"]')?.parentElement
+    if (found === null || found === undefined) throw new Error('the live header does not exist')
+    return found
+  }
+
+  it('NO-PULSING-RADIO: nothing in the header pulses, and it holds exactly the four things', async () => {
+    await mount()
+    await open()
+    await emit(runStarted(), testStarted(0, 'the member', 1), stepStarted())
+
+    const titleGroup = q('[data-tour-id="tour-live-run-status"]')
+    expect({
+      titleGroupIcons: titleGroup?.querySelectorAll('svg').length,
+      pulsing: header().querySelectorAll('[class*="animate-pulse"]').length,
+      title: titleGroup?.querySelector('h2')?.textContent,
+      titleGroupText: titleGroup?.textContent,
+      buttons: [...header().querySelectorAll('button')].map((button) => button.textContent),
+      links: [...header().querySelectorAll('a')].map((link) => link.hasAttribute('data-run-detail-link')),
+      headerText: header().textContent,
+    }).toEqual({
+      titleGroupIcons: 0,
+      pulsing: 0,
+      title: 'a run',
+      titleGroupText: 'a runtests/a.yaml',
+      buttons: ['Cancel'],
+      links: [true],
+      headerText: 'a runtests/a.yamlCancelview run detail',
+    })
+
+    // Cancel is there only while the run is running.
+    await emit(stepFinalized(0, 0, { status: 'passed' }), testFinished(0, 'passed'), runFinished())
+    expect(header().querySelectorAll('button')).toHaveLength(0)
+    expect(header().textContent).toBe('a runtests/a.yamlview run detail')
   })
 })
 

@@ -31,11 +31,12 @@
 // all the shipped ones; the RunSession's three seams are held so a cell can hold a run mid-step
 // and measure a twenty-one-second silence without sleeping and hoping.
 //
-// THE TIMING CELLS RUN IN REAL TIME, DELIBERATELY. 403-05's k=5 liveness cells run on fake timers,
-// which measures the reducer's arithmetic. What has never been measured is whether the SHIPPED
-// page, over a real socket, against a real bus heartbeat, still says the true word after eleven
-// seconds — and whether it says `lost` after twenty-one on a socket that is STILL OPEN. Fake
-// timers cannot answer either question, so these are wall-clock arms and every arm is reported.
+// THE TIMING CELLS RUN IN REAL TIME, DELIBERATELY. They once measured HNST-03's liveness pill over
+// a real socket and a real bus heartbeat. 428 D-03 removed the pill, and (5a)-(5c) now measure
+// that the SHIPPED page says nothing about the channel across the same eleven seconds of
+// heartbeats, twenty-one seconds of an open and silent socket, and a dropped socket. Fake timers
+// cannot answer those questions for the built bundle, so these are wall-clock arms and every arm
+// is reported.
 
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
@@ -492,22 +493,27 @@ describe('the built live surface, in a real browser (403-06 Task 1)', () => {
     })
   }, 120_000)
 
-  it('(5a) HNST-03: k=5 — the pill reads `live` across 11 s of heartbeat-only traffic', async () => {
+  // (5a), (5b) AND (5c) RE-SPELLED 2026-09-26 (428-16 · D-03). They measured HNST-03's pill over
+  // three kinds of real traffic: `live` across heartbeats, `lost` over an open and silent socket,
+  // and `reconnecting` then `live` across a server-dropped socket. The owner removed bus liveness
+  // from the page (a dead bus now shows only as rows that stop moving), so each cell keeps its
+  // number and its traffic and now asserts that the SHIPPED page renders no `[data-liveness]` and
+  // no activity age through it. Each keeps a positive control: the page provably heard the bus.
+  it('(5a) D-03: k=5 — 11 s of heartbeat-only traffic renders no liveness element', async () => {
     const f = held()
-    const arms: { arm: number; liveness: string | null; lastActivity: string | null; attaches: number }[] = []
+    const arms: { arm: number; liveness: number; activityWords: boolean; rows: number; attaches: number }[] = []
     for (let k = 0; k < 5; k += 1) {
       // A FRESH PAGE PER ARM, so each arm is an independent attach over an independent socket
       // rather than five readings of one page's single subscription.
       const reading = await onLivePage('r_dom', async (page, attaches) => {
-        const pill = page.locator('[data-liveness]')
-        await pill.waitFor({ state: 'attached', timeout: 20_000 })
+        await page.locator('[data-live-pane="steps"] li').first().waitFor({ state: 'attached', timeout: 20_000 })
         // NOTHING IS PUBLISHED HERE. The only traffic in this window is the bus's own 10 s
-        // heartbeat, which is exactly the claim: a heartbeat is an ENVELOPE and it counts, while
-        // the transport's own 15 s comment does not.
+        // heartbeat and the transport's 15 s comment.
         await page.waitForTimeout(11_000)
         return {
-          liveness: await pill.getAttribute('data-liveness'),
-          lastActivity: await pill.getAttribute('data-last-activity'),
+          liveness: await page.locator('[data-liveness]').count(),
+          activityWords: await page.evaluate(() => /last activity|no activity yet/iu.test(document.body.textContent ?? '')),
+          rows: await page.locator('[data-live-pane="steps"] li').count(),
           attaches: attaches.length,
         }
       })
@@ -515,26 +521,26 @@ describe('the built live surface, in a real browser (403-06 Task 1)', () => {
     }
     for (const arm of arms) {
       const context = `arm ${String(arm.arm)} of 5: ${JSON.stringify(arms)}`
-      expect(arm.liveness, context).toBe('live')
-      expect(Number(arm.lastActivity), context).toBeLessThanOrEqual(10)
+      expect(arm.liveness, context).toBe(0)
+      expect(arm.activityWords, context).toBe(false)
+      expect(arm.rows, `${context} — the page folded the run's envelopes`).toBeGreaterThan(0)
       expect(arm.attaches, `${context} — one continuous socket, not a reconnect loop`).toBe(1)
     }
     expect(f.dom.cancelCalls(), 'watching a run never cancels it').toBe(0)
     console.log(`(5a) k=5 heartbeat arms: ${JSON.stringify(arms)}`)
   }, 180_000)
 
-  it('(5b) HNST-03: k=2 — an OPEN socket that has heard nothing for 21 s reads `lost`', async () => {
+  it('(5b) D-03: k=2 — an OPEN socket that has heard nothing for 21 s renders no liveness element', async () => {
     const arms: {
       arm: number
-      liveness: string | null
-      lastActivity: string | null
+      liveness: number
+      activityWords: boolean
       attaches: number
-      afterPublish: string | null
+      rowsAfterPublish: number
+      livenessAfterPublish: number
     }[] = []
     for (let k = 0; k < 2; k += 1) {
-      // A FRESH RUN PER ARM, ON A 60 s HEARTBEAT. The window has to be genuinely silent: a run
-      // planted once in `beforeAll` would have heartbeated during the cells above, and the arm
-      // would be measuring an arbitrary point in the bus's cadence rather than silence.
+      // A FRESH RUN PER ARM, ON A 60 s HEARTBEAT, so the window is genuinely silent.
       const quiet = plantLiveRun({
         runId: `r_quiet_${String(k)}`,
         heartbeatMs: 60_000,
@@ -545,24 +551,24 @@ describe('the built live surface, in a real browser (403-06 Task 1)', () => {
       publishTo(quiet, 'runStarted', { busSchemaVersion: 1, memberTestCount: 1, handles: [0] })
 
       const reading = await onLivePage(quiet.runId, async (page, attaches) => {
-        const pill = page.locator('[data-liveness]')
-        await pill.waitFor({ state: 'attached', timeout: 20_000 })
+        await page.locator('[data-live-pane="steps"]').waitFor({ state: 'attached', timeout: 20_000 })
         await page.waitForTimeout(21_000)
         const silent = {
-          liveness: await pill.getAttribute('data-liveness'),
-          lastActivity: await pill.getAttribute('data-last-activity'),
+          liveness: await page.locator('[data-liveness]').count(),
+          activityWords: await page.evaluate(() => /last activity|no activity yet/iu.test(document.body.textContent ?? '')),
           attaches: attaches.length,
         }
-        // THE DISCRIMINATOR, AND THE REASON THIS CELL IS NOT SATISFIED BY A CLOSED SOCKET.
-        // `lost` is ALSO what a CLOSED source reads, so "it says lost" on its own would be the
-        // right word for the wrong reason. Publishing one envelope into the SAME socket and
-        // watching the pill go back to `live` with the attach count UNCHANGED proves the channel
-        // was open and delivering the whole time — which is exactly the open-socket lie HNST-03
-        // refuses to tell.
-        publishTo(quiet, 'heartbeat', {})
-        await page.locator('[data-liveness="live"]').waitFor({ state: 'attached', timeout: 20_000 })
+        // THE POSITIVE CONTROL. One envelope into the SAME socket reaches the rows with the attach
+        // count unchanged, so the socket was open and delivering the whole silent window, and the
+        // page still said nothing about it.
+        publishTo(quiet, 'testStarted', { testId: 't0', testIndex: 0, name: 'the quiet member', totalSteps: 1 })
+        await page.locator('[data-live-pane="steps"] li').first().waitFor({ state: 'attached', timeout: 20_000 })
         expect(attaches.length, 'the socket was never re-opened — it was open all along').toBe(silent.attaches)
-        return { ...silent, afterPublish: await pill.getAttribute('data-liveness') }
+        return {
+          ...silent,
+          rowsAfterPublish: await page.locator('[data-live-pane="steps"] li').count(),
+          livenessAfterPublish: await page.locator('[data-liveness]').count(),
+        }
       })
       arms.push({ arm: k + 1, ...reading })
       expect(quiet.cancelCalls(), 'a viewer that stopped hearing anything did not end the run').toBe(0)
@@ -570,28 +576,51 @@ describe('the built live surface, in a real browser (403-06 Task 1)', () => {
     }
     for (const arm of arms) {
       const context = `arm ${String(arm.arm)} of 2: ${JSON.stringify(arms)}`
-      expect(arm.liveness, context).toBe('lost')
-      expect(Number(arm.lastActivity), context).toBeGreaterThanOrEqual(20)
+      expect(arm.liveness, context).toBe(0)
+      expect(arm.activityWords, context).toBe(false)
       expect(arm.attaches, `${context} — ONE attach, so the socket never closed`).toBe(1)
-      expect(arm.afterPublish, `${context} — and it recovers on the next envelope`).toBe('live')
+      expect(arm.rowsAfterPublish, `${context} — and the next envelope reaches the rows`).toBe(1)
+      expect(arm.livenessAfterPublish, context).toBe(0)
     }
     console.log(`(5b) k=2 open-and-silent arms: ${JSON.stringify(arms)}`)
   }, 180_000)
 
-  it('(5c) HNST-03: a dropped socket reads `reconnecting`, and `live` again once it is back', async () => {
+  it('(5c) D-03: a dropped socket that comes back renders no liveness element either side of the drop', async () => {
     const f = held()
-    await onLivePage('r_dom', async (page) => {
-      await page.locator('[data-liveness="live"]').waitFor({ state: 'attached', timeout: 40_000 })
+    const reading = await onLivePage('r_dom', async (page, attaches) => {
+      await page.locator('[data-live-pane="steps"] li').first().waitFor({ state: 'attached', timeout: 40_000 })
+      const before = await page.locator('[data-liveness]').count()
 
       // THE SERVER DROPS THE SOCKET. Not a client-side close and not a doubled error: the Node
       // server ends every open connection, which is what a restarted dashboard or a dropped
       // network link looks like from the page's side.
+      const attachesBeforeDrop = attaches.length
       f.harness.server.closeAllConnections()
 
-      await page.locator('[data-liveness="reconnecting"]').waitFor({ state: 'attached', timeout: 20_000 })
-      // AND IT RECOVERS. A page stuck on `reconnecting` forever is its own dishonesty.
-      await page.locator('[data-liveness="live"]').waitFor({ state: 'attached', timeout: 60_000 })
+      // AND IT COMES BACK: the browser (or the page's classified reattach) opens the stream again.
+      const deadline = Date.now() + 60_000
+      while (attaches.length <= attachesBeforeDrop && Date.now() < deadline) {
+        await page.waitForTimeout(150)
+      }
+      await page.waitForTimeout(2_000)
+      return {
+        before,
+        reattached: attaches.length > attachesBeforeDrop,
+        after: await page.locator('[data-liveness]').count(),
+        activityWords: await page.evaluate(() => /last activity|no activity yet|reconnecting/iu.test(
+          document.querySelector('[data-tour-id="tour-live-run-status"]')?.parentElement?.textContent ?? '',
+        )),
+        rows: await page.locator('[data-live-pane="steps"] li').count(),
+      }
     })
+    expect(reading, JSON.stringify(reading)).toEqual({
+      before: 0,
+      reattached: true,
+      after: 0,
+      activityWords: false,
+      rows: reading.rows,
+    })
+    expect(reading.rows, 'the rows survive the drop').toBeGreaterThan(0)
     expect(f.dom.cancelCalls()).toBe(0)
   }, 180_000)
 
@@ -612,7 +641,9 @@ describe('the built live surface, in a real browser (403-06 Task 1)', () => {
     const f = held()
     await onLivePage('r_dom', async (page, attaches) => {
       await page.locator('[data-live-pane="steps"]').waitFor({ state: 'attached', timeout: 20_000 })
-      await page.locator('[data-liveness="live"]').waitFor({ state: 'attached', timeout: 40_000 })
+      // The page has attached and folded the run once its rows are on screen (428 D-03 removed the
+      // liveness pill this cell used to wait on).
+      await page.locator('[data-live-pane="steps"] li').first().waitFor({ state: 'attached', timeout: 40_000 })
 
       publishTo(f.dom, 'stepFinalized', { testIndex: 0, stepIndex: 0, status: 'passed', durationMs: 1200 })
       publishTo(f.dom, 'testFinished', { testId: 't0', testIndex: 0, outcome: 'passed', durationMs: 1400 })
@@ -625,12 +656,10 @@ describe('the built live surface, in a real browser (403-06 Task 1)', () => {
       const previewState = await page.locator('[data-preview-state]').getAttribute('data-preview-state')
       expect(previewState, 'a run this page has watched END has nothing left to embed').toBe('run-ended')
       expect(await page.locator('[data-live-pane]').count(), 'two panes, to the last frame').toBe(2)
-      // 403-05 D-2: the pill is a claim about a CHANNEL, so it goes away with the channel. A
-      // finished run has no liveness to report, and `lost` over a clean `runFinished` would slander
-      // the delivery that just completed.
+      // No liveness element at the end either: 428 D-03 removed the pill from the page entirely.
       expect(
         await page.locator('[data-liveness]').count(),
-        'the liveness pill is absent once the run is over (403-05 D-2)',
+        'no liveness element on the live page (428 D-03)',
       ).toBe(0)
       // The embed comes down with the run: a token minted now would outlive the thing it addresses.
       // (The plan text expected `data-embed-state="ended"` INSIDE a surviving iframe; the shipped
