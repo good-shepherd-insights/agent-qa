@@ -54,6 +54,7 @@ export function createSessionHandler(
     }
 
     session.clearIdleTimer()
+    const generation = session.beginAttachment()
 
     const state = session.getState()
     send(ws, {
@@ -377,14 +378,25 @@ export function createSessionHandler(
       }
     })
 
-    ws.on('close', () => {
+    // 428 D-09: an unexpected drop DETACHES the session for the idle window so the page can
+    // reconnect to the same browser, draft, page, hook state and lease. Explicit ends go through
+    // terminate-session or DELETE and stay immediate. A superseded socket's late close is inert
+    // (RESEARCH P4), and an in-flight step is cancelled so the reconnected page and the server
+    // agree it was cancelled (RESEARCH P3, A3 taken as the default).
+    let detached = false
+    function detach(): void {
+      if (logPollInterval) clearInterval(logPollInterval)
+      if (detached || cleanedUp) return
+      detached = true
+      if (!session.isCurrentAttachment(generation)) return
       session.attachMessageSink(null)
-      void cleanupSession()
-    })
+      if (session.status === 'executing') session.cancelStep()
+      session.startIdleTimer(() => {
+        onTerminate()
+      })
+    }
 
-    ws.on('error', () => {
-      session.attachMessageSink(null)
-      void cleanupSession()
-    })
+    ws.on('close', detach)
+    ws.on('error', detach)
   }
 }

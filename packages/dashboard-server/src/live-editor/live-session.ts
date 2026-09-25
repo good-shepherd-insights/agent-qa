@@ -277,6 +277,8 @@ export class LiveSession {
   private resolveEnded: () => void = () => {}
   private readonly ended: Promise<void>
   private cleanupRun: Promise<void> | null = null
+  // RESEARCH P4: which control socket is the current one. Only its close may detach the session.
+  private attachmentGeneration = 0
 
   constructor(sessionId: string, private deps: LiveSessionDeps = {}) {
     this.sessionId = sessionId
@@ -305,6 +307,15 @@ export class LiveSession {
     const registration = liveStreamFor(this.adapter)
     hub.register(0, registration?.capability, registration?.fallback)
     this.liveHub = hub
+  }
+
+  beginAttachment(): number {
+    this.attachmentGeneration += 1
+    return this.attachmentGeneration
+  }
+
+  isCurrentAttachment(generation: number): boolean {
+    return generation === this.attachmentGeneration
   }
 
   attachMessageSink(sink: ((message: ServerMessage) => void) | null): void {
