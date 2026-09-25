@@ -5,12 +5,22 @@
 // a user, not by a test. So the dashboard route and the frame proxy call `validateLiveUrlToken` BY
 // REFERENCE through a composed port and hold no parse of their own (LIVE-02's third prohibition).
 //
+// TWO SUBJECT KINDS, ONE PAIR (428 D-07). A token names its subject: a run handle or an editor
+// session. The validator's kind-and-id comparison is the whole cross-kind rule — a run token never
+// opens an editor session and the reverse, even when the two ids are byte-identical.
+//
 // PURE BY CONSTRUCTION. `packages/agent` is providerNeutral + storageNeutral, so no host crypto
 // primitive, no `Buffer` and no host API appears here: the HMAC arrives as an injected
 // {@link LiveUrlSigner}, and base64url is hand-rolled over an ASCII-only claims body.
 
 import { LIVE_URL_SCOPE } from '@vostride/agent-qa-schema'
-import type { LiveUrlClaims, LiveUrlSigner, LiveUrlVerdict } from '@vostride/agent-qa-schema'
+import type {
+  LiveUrlClaims,
+  LiveUrlSigner,
+  LiveUrlVerdict,
+  LiveViewSubject,
+  LiveViewSubjectRef,
+} from '@vostride/agent-qa-schema'
 
 /** The token's format marker. A FIXED prefix, deliberately — there is no algorithm negotiation. */
 export const LIVE_URL_TOKEN_VERSION = 'v1'
@@ -58,13 +68,18 @@ export function decodeBase64Url(text: string): string | undefined {
   return out
 }
 
+function subjectBodyOf(subject: LiveViewSubject): LiveViewSubject {
+  return subject.kind === 'run'
+    ? { kind: 'run', runId: subject.runId, handle: subject.handle }
+    : { kind: 'editor', sessionId: subject.sessionId }
+}
+
 function claimsBodyOf(claims: LiveUrlClaims): string {
   // Field ORDER is fixed here rather than left to `JSON.stringify` of a caller's object, because
   // the signed bytes are this exact string — a re-ordered body would be a different token.
   return encodeBase64Url(
     JSON.stringify({
-      runId: claims.runId,
-      handle: claims.handle,
+      subject: subjectBodyOf(claims.subject),
       scope: claims.scope,
       iat: claims.iat,
       exp: claims.exp,
@@ -81,6 +96,22 @@ export function mintLiveUrlToken(signer: LiveUrlSigner, claims: LiveUrlClaims): 
   return `${LIVE_URL_TOKEN_VERSION}.${body}.${signer.sign(body)}`
 }
 
+function parseSubject(value: unknown): LiveViewSubject | undefined {
+  if (typeof value !== 'object' || value === null) return undefined
+  const candidate = value as Record<string, unknown>
+  if (candidate.kind === 'run') {
+    if (typeof candidate.runId !== 'string' || candidate.runId === '') return undefined
+    const handle = candidate.handle
+    if (typeof handle !== 'number' || !Number.isInteger(handle)) return undefined
+    return { kind: 'run', runId: candidate.runId, handle }
+  }
+  if (candidate.kind === 'editor') {
+    if (typeof candidate.sessionId !== 'string' || candidate.sessionId === '') return undefined
+    return { kind: 'editor', sessionId: candidate.sessionId }
+  }
+  return undefined
+}
+
 function parseClaims(decoded: string): LiveUrlClaims | undefined {
   let value: unknown
   try {
@@ -90,21 +121,26 @@ function parseClaims(decoded: string): LiveUrlClaims | undefined {
   }
   if (typeof value !== 'object' || value === null) return undefined
   const candidate = value as Record<string, unknown>
-  if (typeof candidate.runId !== 'string' || candidate.runId === '') return undefined
-  if (typeof candidate.handle !== 'number' || !Number.isInteger(candidate.handle)) return undefined
+  const subject = parseSubject(candidate.subject)
+  if (subject === undefined) return undefined
   if (typeof candidate.scope !== 'string') return undefined
   if (typeof candidate.iat !== 'number' || typeof candidate.exp !== 'number') return undefined
   return {
-    runId: candidate.runId,
-    handle: candidate.handle,
+    subject,
     scope: candidate.scope as LiveUrlClaims['scope'],
     iat: candidate.iat,
     exp: candidate.exp,
   }
 }
 
+function subjectIdOf(subject: LiveViewSubject): string {
+  return subject.kind === 'run' ? subject.runId : subject.sessionId
+}
+
 /**
- * Validate a token against the run it was presented for.
+ * Validate a token against the subject it was presented for: a run by its id, or an editor session
+ * by its id. A signed subject of another kind, or of the same kind with another id, is
+ * `scope_mismatch` (428 D-07).
  *
  * THE SIGNATURE IS CHECKED BEFORE THE BODY IS PARSED (T-403-01). A validator that parses first
  * reports `malformed` for an attacker-authored body and `bad_signature` only for a well-formed
@@ -115,7 +151,7 @@ function parseClaims(decoded: string): LiveUrlClaims | undefined {
 export function validateLiveUrlToken(
   signer: LiveUrlSigner,
   token: string,
-  expect: { runId: string; now: number },
+  expect: { subject: LiveViewSubjectRef; now: number },
 ): LiveUrlVerdict {
   const parts = token.split('.')
   if (parts.length !== 3) return { kind: 'refused', reason: 'malformed' }
@@ -130,7 +166,9 @@ export function validateLiveUrlToken(
   if (claims === undefined) return { kind: 'refused', reason: 'malformed' }
 
   if (claims.exp <= expect.now) return { kind: 'refused', reason: 'expired' }
-  if (claims.runId !== expect.runId) return { kind: 'refused', reason: 'scope_mismatch' }
+  const sameSubject =
+    claims.subject.kind === expect.subject.kind && subjectIdOf(claims.subject) === expect.subject.id
+  if (!sameSubject) return { kind: 'refused', reason: 'scope_mismatch' }
   if (claims.scope !== LIVE_URL_SCOPE) return { kind: 'refused', reason: 'scope_mismatch' }
   return { kind: 'ok', claims }
 }

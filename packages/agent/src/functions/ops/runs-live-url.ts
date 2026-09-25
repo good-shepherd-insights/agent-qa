@@ -81,8 +81,7 @@ export const runsLiveUrlSpec: FunctionSpec<RunsLiveUrlInput, RunsLiveUrlResult> 
     const now = liveView.now()
     const exp = now + LIVE_URL_TTL_MS
     const token = mintLiveUrlToken(liveView.signer, {
-      runId: input.runId,
-      handle,
+      subject: { kind: 'run', runId: input.runId, handle },
       scope: LIVE_URL_SCOPE,
       iat: now,
       exp,

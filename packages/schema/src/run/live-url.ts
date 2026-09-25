@@ -30,13 +30,14 @@ export const LIVE_VIEW_SUBJECT_KINDS = [
 export type LiveViewSubjectRef = { kind: LiveViewSubjectKind; id: string }
 
 /**
- * What a `liveUrl` token asserts. `handle` is the per-member run handle the viewer attaches to;
- * `iat`/`exp` are ms-epoch, so the whole claims body is JSON-and-integer only — no date parsing on
- * the refusal path, and no ambiguity about units at the boundary.
+ * What a `liveUrl` token asserts. `subject` is who the token lets you watch: a run handle (the
+ * per-member handle the viewer attaches to) or an editor session. A run token never opens an
+ * editor session and the reverse (428 D-07). `iat`/`exp` are ms-epoch, so the whole claims body is
+ * JSON-and-integer only — no date parsing on the refusal path, and no ambiguity about units at the
+ * boundary.
  */
 export interface LiveUrlClaims {
-  runId: string
-  handle: number
+  subject: LiveViewSubject
   scope: typeof LIVE_URL_SCOPE
   iat: number
   exp: number

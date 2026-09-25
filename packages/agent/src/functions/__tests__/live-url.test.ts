@@ -46,8 +46,16 @@ const fakeSigner: LiveUrlSigner = {
 const NOW = 1_700_000_000_000
 
 function claims(overrides: Partial<LiveUrlClaims> = {}): LiveUrlClaims {
-  return { runId: 'run-alpha', handle: 0, scope: LIVE_URL_SCOPE, iat: NOW, exp: NOW + 60_000, ...overrides }
+  return {
+    subject: { kind: 'run', runId: 'run-alpha', handle: 0 },
+    scope: LIVE_URL_SCOPE,
+    iat: NOW,
+    exp: NOW + 60_000,
+    ...overrides,
+  }
 }
+
+const AT_RUN_ALPHA = { subject: { kind: 'run', id: 'run-alpha' }, now: NOW } as const
 
 const CALLER: FunctionCaller = {
   surface: 'test',
@@ -110,7 +118,7 @@ describe('base64url helpers are a round trip over the claims body', () => {
 describe('mintLiveUrlToken / validateLiveUrlToken (403 D-01/D-02)', () => {
   it('round-trips a freshly minted token to ok with the claims intact', () => {
     const token = mintLiveUrlToken(fakeSigner, claims())
-    const verdict = validateLiveUrlToken(fakeSigner, token, { runId: 'run-alpha', now: NOW })
+    const verdict = validateLiveUrlToken(fakeSigner, token, AT_RUN_ALPHA)
     expect(verdict.kind).toBe('ok')
     if (verdict.kind !== 'ok') return
     expect(verdict.claims).toEqual(claims())
@@ -119,7 +127,7 @@ describe('mintLiveUrlToken / validateLiveUrlToken (403 D-01/D-02)', () => {
   it('refuses a flipped signature byte as bad_signature', () => {
     const token = mintLiveUrlToken(fakeSigner, claims())
     const tampered = `${token.slice(0, -1)}${token.endsWith('X') ? 'Y' : 'X'}`
-    expect(validateLiveUrlToken(fakeSigner, tampered, { runId: 'run-alpha', now: NOW }))
+    expect(validateLiveUrlToken(fakeSigner, tampered, AT_RUN_ALPHA))
       .toEqual({ kind: 'refused', reason: 'bad_signature' })
   })
 
@@ -127,10 +135,10 @@ describe('mintLiveUrlToken / validateLiveUrlToken (403 D-01/D-02)', () => {
     const token = mintLiveUrlToken(fakeSigner, claims())
     const [, body, signature] = token.split('.') as [string, string, string]
     for (const bad of [`${body}.${signature}`, `v2.${body}.${signature}`, `v1..${signature}`, `v1.${body}.`]) {
-      expect(validateLiveUrlToken(fakeSigner, bad, { runId: 'run-alpha', now: NOW }).kind)
+      expect(validateLiveUrlToken(fakeSigner, bad, AT_RUN_ALPHA).kind)
         .toBe('refused')
       expect(
-        (validateLiveUrlToken(fakeSigner, bad, { runId: 'run-alpha', now: NOW }) as { reason: string }).reason,
+        (validateLiveUrlToken(fakeSigner, bad, AT_RUN_ALPHA) as { reason: string }).reason,
         bad,
       ).toBe('malformed')
     }
@@ -139,7 +147,7 @@ describe('mintLiveUrlToken / validateLiveUrlToken (403 D-01/D-02)', () => {
   it('refuses a well-signed non-JSON body as malformed', () => {
     const body = encodeBase64Url('not json at all')
     const token = `v1.${body}.${fakeSigner.sign(body)}`
-    expect(validateLiveUrlToken(fakeSigner, token, { runId: 'run-alpha', now: NOW }))
+    expect(validateLiveUrlToken(fakeSigner, token, AT_RUN_ALPHA))
       .toEqual({ kind: 'refused', reason: 'malformed' })
   })
 
@@ -149,21 +157,22 @@ describe('mintLiveUrlToken / validateLiveUrlToken (403 D-01/D-02)', () => {
     // an attacker whether their claims body parsed.
     const body = encodeBase64Url('not json at all')
     const token = `v1.${body}.sig:WRONG`
-    expect(validateLiveUrlToken(fakeSigner, token, { runId: 'run-alpha', now: NOW }))
+    expect(validateLiveUrlToken(fakeSigner, token, AT_RUN_ALPHA))
       .toEqual({ kind: 'refused', reason: 'bad_signature' })
   })
 
   it('refuses an exp at or before now as expired', () => {
     for (const exp of [NOW, NOW - 1]) {
       const token = mintLiveUrlToken(fakeSigner, claims({ exp }))
-      expect(validateLiveUrlToken(fakeSigner, token, { runId: 'run-alpha', now: NOW }))
+      expect(validateLiveUrlToken(fakeSigner, token, AT_RUN_ALPHA))
         .toEqual({ kind: 'refused', reason: 'expired' })
     }
   })
 
   it('refuses another run id as scope_mismatch (cross-run scope confusion, T-403-03)', () => {
     const token = mintLiveUrlToken(fakeSigner, claims())
-    expect(validateLiveUrlToken(fakeSigner, token, { runId: 'run-other', now: NOW }))
+    const other = { subject: { kind: 'run', id: 'run-other' }, now: NOW } as const
+    expect(validateLiveUrlToken(fakeSigner, token, other))
       .toEqual({ kind: 'refused', reason: 'scope_mismatch' })
   })
 
@@ -171,7 +180,7 @@ describe('mintLiveUrlToken / validateLiveUrlToken (403 D-01/D-02)', () => {
     // A scope the union does not admit — minted through the `unknown` door on purpose, because
     // what is under test is the VALIDATOR's refusal of a token some other minter could produce.
     const token = mintLiveUrlToken(fakeSigner, { ...claims(), scope: 'control' } as unknown as LiveUrlClaims)
-    expect(validateLiveUrlToken(fakeSigner, token, { runId: 'run-alpha', now: NOW }))
+    expect(validateLiveUrlToken(fakeSigner, token, AT_RUN_ALPHA))
       .toEqual({ kind: 'refused', reason: 'scope_mismatch' })
   })
 
@@ -184,7 +193,9 @@ describe('mintLiveUrlToken / validateLiveUrlToken (403 D-01/D-02)', () => {
   })
 })
 
-describe('the token names its subject, and a subject of one kind never opens the other (428 D-07)', () => {
+describe('the token names its subject; one kind never opens the other (428 D-07)', () => {
+  const AS_RUN = { subject: { kind: 'run', id: 'shared' }, now: NOW } as const
+  const AS_EDITOR = { subject: { kind: 'editor', id: 'shared' }, now: NOW } as const
   const runSubject = { kind: 'run', runId: 'shared', handle: 0 } as const
   const editorSubject = { kind: 'editor', sessionId: 'shared' } as const
 
@@ -200,35 +211,41 @@ describe('the token names its subject, and a subject of one kind never opens the
   it('RUN-TOKEN-REFUSED-FOR-EDITOR-SUBJECT', () => {
     // The ids are byte-identical on purpose: only the signed kind can tell the two subjects apart.
     const token = mintLiveUrlToken(fakeSigner, subjectClaims(runSubject))
-    expect(validateLiveUrlToken(fakeSigner, token, { subject: { kind: 'editor', id: 'shared' }, now: NOW }))
+    expect(validateLiveUrlToken(fakeSigner, token, AS_EDITOR))
       .toEqual({ kind: 'refused', reason: 'scope_mismatch' })
     expect(
-      validateLiveUrlToken(fakeSigner, token, { subject: { kind: 'run', id: 'shared' }, now: NOW }).kind,
+      validateLiveUrlToken(fakeSigner, token, AS_RUN).kind,
       'the same token opens its own kind, so the refusal is the kind rule and not a parse failure',
     ).toBe('ok')
   })
 
   it('EDITOR-TOKEN-REFUSED-FOR-RUN-SUBJECT', () => {
     const token = mintLiveUrlToken(fakeSigner, subjectClaims(editorSubject))
-    expect(validateLiveUrlToken(fakeSigner, token, { subject: { kind: 'run', id: 'shared' }, now: NOW }))
+    expect(validateLiveUrlToken(fakeSigner, token, AS_RUN))
       .toEqual({ kind: 'refused', reason: 'scope_mismatch' })
-    const own = validateLiveUrlToken(fakeSigner, token, { subject: { kind: 'editor', id: 'shared' }, now: NOW })
-    expect(own).toEqual({ kind: 'ok', claims: subjectClaims(editorSubject) })
+    expect(validateLiveUrlToken(fakeSigner, token, AS_EDITOR))
+      .toEqual({ kind: 'ok', claims: subjectClaims(editorSubject) })
   })
 
   it('SUBJECT-BODY-FIELD-ORDER', () => {
     // A caller's object is never spread into the signed bytes: an extra or re-ordered key on the
     // way in must not change what is signed.
-    const sloppy = { exp: NOW + 60_000, iat: NOW, scope: LIVE_URL_SCOPE, extra: 1, subject: { handle: 0, runId: 'shared', kind: 'run' } }
-    const runBody = JSON.parse(
-      decodeBase64Url(mintLiveUrlToken(fakeSigner, sloppy as unknown as LiveUrlClaims).split('.')[1] as string) as string,
-    ) as Record<string, unknown>
+    const bodyOf = (token: string): Record<string, unknown> => {
+      const decoded = decodeBase64Url(token.split('.')[1] as string) as string
+      return JSON.parse(decoded) as Record<string, unknown>
+    }
+    const sloppy = {
+      exp: NOW + 60_000,
+      iat: NOW,
+      scope: LIVE_URL_SCOPE,
+      extra: 1,
+      subject: { handle: 0, runId: 'shared', kind: 'run', extra: 1 },
+    }
+    const runBody = bodyOf(mintLiveUrlToken(fakeSigner, sloppy as unknown as LiveUrlClaims))
     expect(Object.keys(runBody)).toEqual(['subject', 'scope', 'iat', 'exp'])
     expect(Object.keys(runBody.subject as object)).toEqual(['kind', 'runId', 'handle'])
 
-    const editorBody = JSON.parse(
-      decodeBase64Url(mintLiveUrlToken(fakeSigner, subjectClaims(editorSubject)).split('.')[1] as string) as string,
-    ) as Record<string, unknown>
+    const editorBody = bodyOf(mintLiveUrlToken(fakeSigner, subjectClaims(editorSubject)))
     expect(Object.keys(editorBody)).toEqual(['subject', 'scope', 'iat', 'exp'])
     expect(Object.keys(editorBody.subject as object)).toEqual(['kind', 'sessionId'])
   })
@@ -236,15 +253,15 @@ describe('the token names its subject, and a subject of one kind never opens the
   it('UNKNOWN-SUBJECT-KIND-MALFORMED', () => {
     // Each body also carries the pre-428 top-level runId/handle, so a parser that still read the
     // old shape would accept it: only a subject-aware parser refuses these.
-    const legacy = { runId: 'shared', handle: 0, scope: LIVE_URL_SCOPE, iat: NOW, exp: NOW + 60_000 }
+    const legacy = { runId: 'shared', handle: 0, scope: LIVE_URL_SCOPE, iat: NOW, exp: NOW + 1 }
     const unknownKind = { ...legacy, subject: { kind: 'suite', id: 'shared' } }
     const runWithoutHandle = { ...legacy, subject: { kind: 'run', runId: 'shared' } }
     for (const body of [unknownKind, runWithoutHandle]) {
-      expect(validateLiveUrlToken(fakeSigner, signedBodyToken(body), { subject: { kind: 'run', id: 'shared' }, now: NOW }))
+      expect(validateLiveUrlToken(fakeSigner, signedBodyToken(body), AS_RUN))
         .toEqual({ kind: 'refused', reason: 'malformed' })
       const unsigned = `v1.${encodeBase64Url(JSON.stringify(body))}.sig:WRONG`
       expect(
-        validateLiveUrlToken(fakeSigner, unsigned, { subject: { kind: 'run', id: 'shared' }, now: NOW }),
+        validateLiveUrlToken(fakeSigner, unsigned, AS_RUN),
         'the signature is still checked before the body is parsed',
       ).toEqual({ kind: 'refused', reason: 'bad_signature' })
     }
@@ -262,6 +279,10 @@ describe('runs.liveurl through invokeFunction (403 D-03)', () => {
     expect(result.handle).toBe(0)
     expect(result.stream, 'the result ECHOES the declared capability, it does not guess')
       .toEqual({ kind: 'cdp-screencast' })
+    const token = result.liveUrl.split('#')[1] as string
+    const verdict = validateLiveUrlToken(fakeSigner, token, AT_RUN_ALPHA)
+    expect(verdict.kind === 'ok' && verdict.claims.subject, 'the op mints a run subject')
+      .toEqual({ kind: 'run', runId: 'run-alpha', handle: 0 })
   })
 
   it('echoes an honest none capability rather than refusing', async () => {
