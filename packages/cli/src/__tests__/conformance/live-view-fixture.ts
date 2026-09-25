@@ -31,6 +31,7 @@ import type { LiveStreamCapability, RunEventBus } from '@vostride/agent-qa-runne
 import type {
   CompletedRunHandoff,
   LiveFrame,
+  LiveFrameEndReason,
   LiveFrameSubscription,
   LiveStreamDeclaration,
   LiveStreamKind,
@@ -130,6 +131,14 @@ export function plantLiveRun(input: PlantLiveRunInput): PlantedLiveRun {
   let frameId = 0
   let producer: ReturnType<typeof setInterval> | undefined
   let settled = false
+  // A STALL HOLDS THE PICTURE AND NOTHING ELSE. The bus's heartbeat timer is its own and keeps
+  // running, which is what lets a cell show that bus traffic cannot keep the dot green (428 SC3).
+  let stalled = false
+  let heartbeats = 0
+  const endListeners: ((reason: LiveFrameEndReason) => void)[] = []
+  bus.subscribe(undefined, (envelope) => {
+    if (envelope.type === 'heartbeat') heartbeats += 1
+  })
   // THE DECLARED CAPABILITY IS A VARIABLE, NOT A CONSTANT (403-07 gap 1). `input.capability` seeds
   // it and `latchCapability` moves it; both seams below read THIS, so "absent at attach, present a
   // beat later" — the production ordering — is expressible without a timer anywhere on the path.
@@ -141,13 +150,16 @@ export function plantLiveRun(input: PlantLiveRunInput): PlantedLiveRun {
   const startProducer = (): void => {
     if (producer !== undefined) return
     producer = setInterval(() => {
-      if (subscribers.size === 0) return
+      if (subscribers.size === 0 || stalled) return
       frameId += 1
       delivered.push(frameId)
+      // Stamped as a member's hub stamps them (428 D-15): capture time and the producing kind.
+      const kind = input.frameKind ?? (declaredCapability.kind === 'none' ? undefined : declaredCapability.kind)
       const frame: LiveFrame = {
         id: frameId,
         bytes: input.frameBytes ?? new Uint8Array(0),
-        metadata: { width: input.frameWidth ?? 640, height: input.frameHeight ?? 400 },
+        metadata: { width: input.frameWidth ?? 640, height: input.frameHeight ?? 400, timestamp: Date.now() },
+        ...(kind === undefined ? {} : { kind }),
       }
       for (const onFrame of [...subscribers]) onFrame(frame)
     }, input.frameIntervalMs ?? PLANTED_FRAME_INTERVAL_MS)
@@ -159,10 +171,12 @@ export function plantLiveRun(input: PlantLiveRunInput): PlantedLiveRun {
     status: 'running',
     executionContext: 'local-headless',
     subscribe: (fromSeq, handler) => bus.subscribe(fromSeq, handler),
-    subscribeFrames: (_handle, onFrame, _onEnd): LiveFrameSubscription | undefined => {
+    subscribeFrames: (_handle, onFrame, onEnd): LiveFrameSubscription | undefined => {
       // AN HONEST ABSENCE, never an error: a handle that declares no stream has no subscription to
       // hand out, and the pane renders a sentence rather than a frame that never arrives.
       if (declaredCapability.kind === 'none') return undefined
+      // Held for a cell that ends the stream by name; no cell here does yet.
+      if (onEnd !== undefined) endListeners.push(onEnd)
       subscribers.add(onFrame)
       startProducer()
       return {
@@ -185,9 +199,9 @@ export function plantLiveRun(input: PlantLiveRunInput): PlantedLiveRun {
     openFrameSubscriptions: () => subscribers.size,
     isDone: () => settled,
     latchCapability: (next: LiveStreamDeclaration) => { declaredCapability = next },
-    stall: () => {},
-    resume: () => {},
-    heartbeatsSeen: () => 0,
+    stall: () => { stalled = true },
+    resume: () => { stalled = false },
+    heartbeatsSeen: () => heartbeats,
     finish: (verdict: RunStatus = 'passed') => {
       if (settled) return
       settled = true
