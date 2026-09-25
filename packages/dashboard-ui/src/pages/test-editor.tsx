@@ -362,7 +362,7 @@ export default function TestEditorPage() {
       return {
         reason: "disconnected" as const,
         title: "Live session disconnected",
-        description: "The connection dropped and the disposable session was terminated. Start a fresh session to reconnect.",
+        description: "The connection dropped and could not be restored. Start a fresh session to continue.",
       }
     }
 
