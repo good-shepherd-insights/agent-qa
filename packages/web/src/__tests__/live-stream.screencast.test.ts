@@ -23,9 +23,13 @@
 // describe block over there. There is nothing to measure about a screencast produced by a mock,
 // and the absence of that mock here is itself an acceptance criterion of this plan.
 
+import { createServer } from 'node:http'
+import type { AddressInfo } from 'node:net'
+
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 
-import type { LiveFrame } from '@vostride/agent-qa-schema'
+import { createLiveStreamHub } from '@vostride/agent-qa-runner'
+import type { LiveFrame, LiveFrameEndReason } from '@vostride/agent-qa-schema'
 
 import { WebPlatformAdapter } from '../adapter.js'
 import { startLiveStreamFixturePage } from './fixtures/live-stream-fixture-page.js'
@@ -64,15 +68,69 @@ const KEEPALIVE_MIN_GAP_MS = 1_800
 const EPOCH_MS_TOLERANCE_MS = 5_000
 
 let page: LiveStreamFixturePage | undefined
+let tall: LiveStreamFixturePage | undefined
+
+/**
+ * TAB-FOLLOW's pages: a tall document with a fixed, animating box (so the compositor keeps
+ * producing frames wherever the page is scrolled), scrolled on load to `?scroll=N`. Two pages with
+ * different scroll offsets are two pages a frame's `scrollOffsetY` can tell apart. Local to this
+ * file so the 403 fixture page stays a byte-for-byte twin of the cli one.
+ */
+async function startTallAnimatingPage(): Promise<LiveStreamFixturePage> {
+  const server = createServer((req, res) => {
+    const scroll = Number(new URL(req.url ?? '/', 'http://127.0.0.1').searchParams.get('scroll') ?? 0)
+    const body = `<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="utf-8"><title>tall ${String(scroll)}</title>
+<style>
+  html, body { margin: 0; background: #101418; }
+  body { height: 4000px; }
+  #box { width: 200px; height: 200px; background: #4ade80; position: fixed; top: 80px; left: 0; }
+  @keyframes slide { from { transform: translateX(0) } to { transform: translateX(600px) } }
+  #box { animation: slide 1.2s linear infinite alternate; }
+</style>
+</head>
+<body><div id="box"></div>
+<script>window.addEventListener('load', () => { window.scrollTo(0, ${String(scroll)}) })</script>
+</body>
+</html>
+`
+    res.writeHead(200, {
+      'Content-Type': 'text/html; charset=utf-8',
+      'Cache-Control': 'no-store',
+      'Content-Length': Buffer.byteLength(body),
+    })
+    res.end(body)
+  })
+  await new Promise<void>((resolve) => { server.listen(0, '127.0.0.1', resolve) })
+  const address = server.address() as AddressInfo
+  return {
+    url: `http://127.0.0.1:${String(address.port)}/`,
+    close: () => new Promise<void>((resolve) => { server.close(() => { resolve() }) }),
+  }
+}
 
 beforeAll(async () => {
   page = await startLiveStreamFixturePage()
+  tall = await startTallAnimatingPage()
 }, 60_000)
 
 afterAll(async () => {
   await page?.close().catch(() => undefined)
+  await tall?.close().catch(() => undefined)
   page = undefined
+  tall = undefined
 })
+
+/** Resolve once `predicate` holds, or give up after `timeoutMs`; the caller asserts on the result. */
+async function waitFor(predicate: () => boolean, timeoutMs: number): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() < deadline) {
+    if (predicate()) return true
+    await new Promise((resolve) => setTimeout(resolve, 50))
+  }
+  return predicate()
+}
 
 const fixture = (): LiveStreamFixturePage => {
   expect(page, 'the fixture page never started').toBeDefined()
@@ -307,6 +365,63 @@ describe('WebPlatformAdapter.liveStream is CHANGE-DRIVEN, not polled (LIVE-01)',
       // eslint-disable-next-line no-console -- the backpressure evidence the SUMMARY records
       console.log(`[403-02] ack backpressure: unacked=${String(unacked.length)} acked=${String(acked.length)} frames / 3 s`)
     } finally {
+      await adapter.cleanup().catch(() => undefined)
+    }
+  }, 180_000)
+
+  it('TAB-FOLLOW: the running screencast follows the page the test acts on, with no end and no re-register (#273)', async () => {
+    // RED while the screencast stays bound to the page it started on: every frame after the switch
+    // still carries page A's scroll offset. Driven through a REAL hub, because "no end, no
+    // re-register" is a fact about what a subscriber sees, not about the capability alone.
+    const tallUrl = (tall as LiveStreamFixturePage).url
+    const adapter = await adapterOn(`${tallUrl}?scroll=0`)
+    const hub = createLiveStreamHub()
+    const frames: LiveFrame[] = []
+    const ends: LiveFrameEndReason[] = []
+    try {
+      const before = adapter.liveStream
+      expect(before?.kind).toBe('cdp-screencast')
+      hub.register(0, before)
+      const subscription = hub.subscribe(
+        0,
+        (frame) => { frames.push(frame); subscription?.ack(frame.id) },
+        (reason) => { ends.push(reason) },
+      )
+      expect(subscription, 'the hub accepts a subscriber for the registered handle').toBeDefined()
+      const onA = await waitFor(() => frames.some((frame) => frame.metadata.scrollOffsetY === 0), 3_000)
+      expect(onA, 'page A (scrolled to 0) streams before the switch').toBe(true)
+
+      const opened = await adapter.execute({ type: 'tab', action: 'new', url: `${tallUrl}?scroll=500` })
+      expect(opened.success, `tab new failed: ${String(opened.error)}`).toBe(true)
+      const seenAtNew = frames.length
+      const onB = await waitFor(
+        () => frames.slice(seenAtNew).some((frame) => frame.metadata.scrollOffsetY === 500),
+        3_000,
+      )
+      expect(
+        onB,
+        'within 3 s of `tab new`, frames come from the new page (scrollOffsetY 500). offsets seen '
+        + `after the switch = [${[...new Set(frames.slice(seenAtNew).map((f) => f.metadata.scrollOffsetY))].join(', ')}]`,
+      ).toBe(true)
+
+      const switched = await adapter.execute({ type: 'tab', action: 'switch', index: 0 })
+      expect(switched.success, `tab switch failed: ${String(switched.error)}`).toBe(true)
+      const seenAtSwitch = frames.length
+      const backOnA = await waitFor(
+        () => frames.slice(seenAtSwitch).some((frame) => frame.metadata.scrollOffsetY === 0),
+        3_000,
+      )
+      expect(backOnA, 'switching back to tab 0 brings page A\'s frames (scrollOffsetY 0) again').toBe(true)
+
+      expect(ends, 'the subscriber was never told its stream ended').toEqual([])
+      expect(adapter.liveStream, 'the same capability object before and after the switches').toBe(before)
+      expect(hub.capabilityOf(0).kind, 'the handle still declares the screencast').toBe('cdp-screencast')
+      const ids = frames.map((frame) => frame.id)
+      expect(ids, 'frame ids keep one monotonic sequence across the re-binds')
+        .toEqual([...ids].sort((left, right) => left - right))
+      subscription?.unsubscribe()
+    } finally {
+      await hub.close().catch(() => undefined)
       await adapter.cleanup().catch(() => undefined)
     }
   }, 180_000)
