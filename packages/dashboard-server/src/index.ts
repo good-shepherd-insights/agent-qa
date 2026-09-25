@@ -91,7 +91,11 @@ export {
 // cells drive the page.
 export {
   LIVE_EMBED_EXPIRED_MESSAGE,
+  LIVE_EMBED_HOST_PARAM,
   LIVE_EMBED_NO_STREAM_MESSAGE,
+  LIVE_EMBED_REPORT_EVENTS,
+  LIVE_EMBED_REPORT_INTERVAL_MS,
+  LIVE_EMBED_SESSION_ENDED_MESSAGE,
   LIVE_EMBED_STATES,
   renderLiveEmbedPage,
 } from './live-view/embed-page.js'
@@ -113,7 +117,7 @@ export type {
   LiveViewRefusalReason,
   LiveViewServerMessage,
 } from './live-view/protocol.js'
-export type { LiveEmbedState } from './live-view/embed-page.js'
+export type { LiveEmbedReportEvent, LiveEmbedState } from './live-view/embed-page.js'
 export type {
   MintLiveUrlInput,
   ResumePoint,

@@ -1,4 +1,4 @@
-// The SERVED EMBED PAGE (403 D-06/D-08, ratified 2026-08-25).
+// The SERVED EMBED PAGE (403 D-06/D-08, ratified 2026-08-25; changed once by 428 D-10).
 //
 // THIS DOCUMENT IS THE PRODUCT'S PUBLISHED SURFACE for a live view. A `liveUrl` resolves to it, an
 // iframe in the dashboard shows it, and 408's MCP App embed will show the same bytes — so what it
@@ -12,10 +12,34 @@
 // link says `link expired`, a target that cannot stream says so, an unknown stream kind says so.
 // A live preview that fails silently is indistinguishable from a run that is not running, which is
 // the one thing a person watching must be able to tell.
+//
+// IT TELLS ITS HOST WHAT IT SEES, AND NOTHING ELSE (428 D-10/D-15, RESEARCH Q-BRIDGE). The page
+// posts closed-set facts to `window.parent` with target `'*'`, because a sandboxed page cannot name
+// its host's origin: `ready`, `frame` (throttled, always the newest), `ended`, `refused`, `lost`.
+// A payload is event words, stream kinds, end or refusal reasons and numbers — never the token, the
+// run id or the location, since whatever page frames this one reads every report. A host that does
+// not listen (the MCP App wrapper) loses nothing.
+//
+// ONE MESSAGE PER STATE. A host that draws its own status chrome says so with the `host` query
+// parameter; the page then hides its centred text, so no state is said twice on one screen. The
+// hint is read from the query, never the fragment, and carries no credential.
 
 import { LIVE_VIEW_WS_PATH } from './protocol.js'
 
+/** Every value `[data-embed-state]` can take. */
+export type LiveEmbedState =
+  | 'connecting'
+  | 'live'
+  | 'no-stream'
+  | 'expired'
+  | 'refused'
+  | 'stream-ended'
+  | 'session-ended'
+  | 'ended'
+  | 'lost'
+
 /** Every value `[data-embed-state]` can take. The 403-02 DOM cells range this list. */
+// prettier-ignore
 export const LIVE_EMBED_STATES = [
   'connecting',
   'live',
@@ -26,11 +50,31 @@ export const LIVE_EMBED_STATES = [
   // because a person watching one member of a suite needs to know which of the two happened — and
   // neither may be shown as `live` over whichever frame happened to be last.
   'stream-ended',
+  // AN EDITOR SESSION ENDED (428 D-07/D-09). An editor subject has no run to end.
+  'session-ended',
   'ended',
   'lost',
-] as const
+] as const satisfies readonly LiveEmbedState[]
 
-export type LiveEmbedState = (typeof LIVE_EMBED_STATES)[number]
+/** Every fact the page reports to its host (428 D-15). */
+export type LiveEmbedReportEvent = 'ready' | 'frame' | 'ended' | 'refused' | 'lost'
+// prettier-ignore
+export const LIVE_EMBED_REPORT_EVENTS = [
+  'ready',
+  'frame',
+  'ended',
+  'refused',
+  'lost',
+] as const satisfies readonly LiveEmbedReportEvent[]
+
+/**
+ * The query parameter a host sets when it draws its own status chrome (`/live/<id>?host=dashboard`).
+ * Any non-empty value lands on `main[data-embed-host]` and hides the page's centred text.
+ */
+export const LIVE_EMBED_HOST_PARAM = 'host'
+
+/** At most one `frame` report per this many milliseconds; the report carries the newest frame. */
+export const LIVE_EMBED_REPORT_INTERVAL_MS = 500
 
 /**
  * What an EXPIRED link says, exactly (D-02).
@@ -50,6 +94,9 @@ export const LIVE_EMBED_EXPIRED_MESSAGE = 'link expired'
  */
 export const LIVE_EMBED_NO_STREAM_MESSAGE = 'no live preview for this target'
 
+/** What an ended editor session says, exactly (428 D-07/D-09; frame-proxy cell 34). */
+export const LIVE_EMBED_SESSION_ENDED_MESSAGE = 'session ended'
+
 const STYLE = `
   :root { color-scheme: dark light }
   html, body { margin: 0; height: 100%; background: #0b0d10; }
@@ -57,6 +104,7 @@ const STYLE = `
   canvas { max-width: 100%; max-height: 100%; display: none; pointer-events: none; }
   main[data-embed-state="live"] canvas { display: block; }
   main[data-embed-state="live"] p { display: none; }
+  main[data-embed-host] p { display: none; }
 `
 
 /**
@@ -74,6 +122,9 @@ export function renderLiveEmbedPage(input: { runId: string; nonce: string }): st
   const wsPathLiteral = scriptLiteral(LIVE_VIEW_WS_PATH)
   const expiredLiteral = scriptLiteral(LIVE_EMBED_EXPIRED_MESSAGE)
   const noStreamLiteral = scriptLiteral(LIVE_EMBED_NO_STREAM_MESSAGE)
+  const sessionEndedLiteral = scriptLiteral(LIVE_EMBED_SESSION_ENDED_MESSAGE)
+  const hostParamLiteral = scriptLiteral(LIVE_EMBED_HOST_PARAM)
+  const reportIntervalLiteral = String(LIVE_EMBED_REPORT_INTERVAL_MS)
 
   return `<!DOCTYPE html>
 <html lang="en">
@@ -97,14 +148,54 @@ export function renderLiveEmbedPage(input: { runId: string; nonce: string }): st
   var ctx = canvas.getContext('2d');
   var frames = 0;
 
+  // A HOST THAT SPEAKS FOR THIS PAGE says so in the query. The value only ever becomes an
+  // attribute value, so it can hide text and nothing more.
+  var hostHint = new URLSearchParams(location.search).get(${hostParamLiteral});
+  if (hostHint) root.setAttribute('data-embed-host', hostHint);
+
   function setState(state, text) {
     root.setAttribute('data-embed-state', state);
     message.textContent = text;
   }
 
+  // Facts for whichever page frames this one. Built only from closed-set words and numbers.
+  function report(payload) {
+    if (window.parent === window) return;
+    try { window.parent.postMessage(payload, '*'); } catch (e) { /* a host that cannot receive changes nothing here */ }
+  }
+
+  var reportInterval = ${reportIntervalLiteral};
+  var lastFrameReportAt = 0;
+  var frameReportTimer = null;
+  var newestFrame = null;
+
+  function flushFrameReport() {
+    frameReportTimer = null;
+    if (newestFrame === null) return;
+    var fact = newestFrame;
+    newestFrame = null;
+    lastFrameReportAt = Date.now();
+    report({ event: 'frame', ts: fact.ts, kind: fact.kind, width: fact.width, height: fact.height });
+  }
+
+  // At most one frame report per interval, and always the newest: a trailing timer flushes it.
+  function reportFrame(fact) {
+    newestFrame = fact;
+    if (frameReportTimer !== null) return;
+    var wait = lastFrameReportAt + reportInterval - Date.now();
+    if (wait <= 0) flushFrameReport();
+    else frameReportTimer = setTimeout(flushFrameReport, wait);
+  }
+
+  function stopFrameReports() {
+    newestFrame = null;
+    if (frameReportTimer !== null) clearTimeout(frameReportTimer);
+    frameReportTimer = null;
+  }
+
   // THE TOKEN IS READ FROM THE FRAGMENT AND NEVER PUT BACK ANYWHERE. It is not written to the
-  // document, not added to the socket URL, and not stored — it goes into one message and stays
-  // in this closure.
+  // document, not added to the socket URL, not reported to the host, and not stored — it goes
+  // into one message and stays in this closure.
   var token = location.hash.slice(1);
   if (token === '') {
     setState('refused', 'missing token');
@@ -129,7 +220,9 @@ export function renderLiveEmbedPage(input: { runId: string; nonce: string }): st
       if (pending === null) return;
       var header = pending;
       pending = null;
-      var blob = new Blob([event.data], { type: 'image/jpeg' });
+      // NO MIME TYPE: the decoder sniffs the bytes, so a JPEG screencast frame and a PNG snapshot
+      // both paint in every host, not only in Chromium (428 RESEARCH A2).
+      var blob = new Blob([event.data]);
       createImageBitmap(blob).then(function (bitmap) {
         if (canvas.width !== header.width || canvas.height !== header.height) {
           canvas.width = header.width;
@@ -141,6 +234,7 @@ export function renderLiveEmbedPage(input: { runId: string; nonce: string }): st
         root.setAttribute('data-embed-frames', String(frames));
         if (!ended) setState('live', 'live');
         socket.send(JSON.stringify({ type: 'ack', id: header.id }));
+        if (!ended) reportFrame(header);
       }).catch(function () {
         socket.send(JSON.stringify({ type: 'ack', id: header.id }));
       });
@@ -152,33 +246,40 @@ export function renderLiveEmbedPage(input: { runId: string; nonce: string }): st
 
     if (msg.type === 'ready') {
       // THE PAINTER IS CHOSEN BY THE DECLARED KIND — never by a browser name, an adapter class or
-      // a transport guess (LIVE-04's prohibition).
-      if (msg.stream && msg.stream.kind === 'cdp-screencast') {
+      // a transport guess (LIVE-04's prohibition). A snapshot paints on the same canvas (428 D-11).
+      var kind = msg.stream ? msg.stream.kind : undefined;
+      if (kind === 'cdp-screencast' || kind === 'snapshot') {
         setState('connecting', 'waiting for the first frame…');
-      } else if (msg.stream && msg.stream.kind === 'none') {
+      } else if (kind === 'none') {
         setState('no-stream', ${noStreamLiteral});
       } else {
         setState('no-stream', 'unsupported stream kind');
       }
+      report({ event: 'ready', kind: kind });
       return;
     }
     if (msg.type === 'frame') {
-      pending = { id: msg.id, width: msg.width, height: msg.height };
+      pending = { id: msg.id, width: msg.width, height: msg.height, ts: msg.ts, kind: msg.kind };
       return;
     }
     if (msg.type === 'refused') {
       ended = true;
+      stopFrameReports();
       if (msg.reason === 'expired') setState('expired', ${expiredLiteral});
       else setState('refused', String(msg.reason));
+      report({ event: 'refused', reason: msg.reason });
       return;
     }
     if (msg.type === 'ended') {
-      // EVERY ABSENCE IS NAMED, AND THESE ARE TWO DIFFERENT ABSENCES. Painting stops either way --
-      // the canvas is hidden outside the live state -- so neither end can leave a frozen frame on
-      // screen labelled as though it were still arriving.
+      // EVERY ABSENCE IS NAMED, AND THESE ARE DIFFERENT ABSENCES. Painting stops either way -- the
+      // canvas is hidden outside the live state -- so no end can leave a frozen frame on screen
+      // labelled as though it were still arriving.
       ended = true;
+      stopFrameReports();
       if (msg.reason === 'handleFinished') setState('stream-ended', 'this target finished — the run is still going');
+      else if (msg.reason === 'sessionEnded') setState('session-ended', ${sessionEndedLiteral});
       else setState('ended', 'run ended');
+      report({ event: 'ended', reason: msg.reason });
       return;
     }
   });
@@ -187,7 +288,9 @@ export function renderLiveEmbedPage(input: { runId: string; nonce: string }): st
     if (ended) return;
     if (root.getAttribute('data-embed-state') === 'expired') return;
     if (root.getAttribute('data-embed-state') === 'refused') return;
+    stopFrameReports();
     setState('lost', 'connection lost');
+    report({ event: 'lost' });
   });
 
   // A HOST THAT RE-MINTS replaces the fragment; the socket renews in place rather than reloading,

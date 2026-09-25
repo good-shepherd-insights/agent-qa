@@ -75,16 +75,18 @@ const REBUILD_INSTRUCTION =
 const PIN_INPUT = Object.freeze({ runId: 'pin-run', nonce: 'pin-nonce' })
 
 /**
- * The 403 embed page's rendered bytes, sha256, MEASURED on 2026-08-31 at 408-05.
+ * The 403 embed page's rendered bytes, sha256, MEASURED on 2026-09-25 by 428 D-10 (the embed
+ * paints snapshots, reports to its host, honours the host hint and names an ended editor session).
+ * Re-mint only in a phase that deliberately changes the page.
  *
  * Frozen by Phase 408's criterion 3. A phase that legitimately changes the embed page re-mints this
  * in its own dated commit — see the header. Do not "fix" a red here by re-running the hash into the
  * constant as part of an unrelated change: that is the exact silent drift the pin forbids.
  */
-const EMBED_PAGE_SHA256 = '3c13f464c55e8b2cb24a4d5e3d21645f0ee10c27d8876106ff79d01a1969d311'
+const EMBED_PAGE_SHA256 = 'c637a7c4007e6cb51451d360869a8cfe3fbf0b7d8366d48b1a9baf792947d72a'
 
 /** The same render's length in UTF-8 bytes, so a mismatch says how much moved and not just that. */
-const EMBED_PAGE_BYTES = 5172
+const EMBED_PAGE_BYTES = 7392
 
 /** A source file with its comments removed — a comment naming a rule must not fail that rule. */
 function commentStrippedFile(path: string): string {
