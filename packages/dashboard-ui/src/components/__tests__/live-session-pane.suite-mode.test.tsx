@@ -239,3 +239,20 @@ describe('LiveSessionPane suite mode', () => {
     expect(container.textContent).not.toContain('Run All Tests')
   })
 })
+
+describe('LiveSessionPane suite-mode live header (428 D-05)', () => {
+  it('EDITOR-HEADER-MINIMAL: no "Running {test}" label and no session number in suite mode', () => {
+    renderPane({
+      tests: [{ ...selectedTest, status: 'running' }],
+      liveSessionNumber: 4,
+    })
+
+    const header = container.querySelector('[data-live-header]')
+    expect(header).not.toBeNull()
+    const text = header?.textContent ?? ''
+    expect(text).toContain('web')
+    expect(text).not.toContain('Running Checkout flow')
+    expect(text).not.toContain('Session #')
+  })
+})
+

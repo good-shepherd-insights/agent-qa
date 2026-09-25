@@ -268,3 +268,91 @@ describe('LiveSessionPane auth-state capture control', () => {
     expect(JSON.stringify(onSave.mock.calls[0][0])).not.toContain('path')
   })
 })
+
+// THE EDITOR'S LIVE HEADER, JUST THE ESSENTIALS (428 D-05). Owner: "what if we drop everything.
+// I am a fan of minimal things. Just a dot maybe." The header keeps the target name, the draft
+// badge, Run All / Stop All and End Live Session. The connection badge, the session number, the
+// running label, the URL line under the title and the "Restart required" badge are gone; the
+// hooks-changed banner and the error text are each said once, only when they apply. Health is the
+// preview dot's alone, so the header carries no status dot of its own.
+const STATUS_WORDS = /^(Ready|Connecting|Connected|Executing|Disconnected|Error|Ended)$/i
+
+function statusWordElements(scope: Element): Element[] {
+  return [...scope.querySelectorAll('*')].filter((element) => STATUS_WORDS.test(element.textContent?.trim() ?? ''))
+}
+
+function header(): HTMLElement {
+  const element = container.querySelector<HTMLElement>('[data-live-header]')
+  if (!element) throw new Error('Expected the live header')
+  return element
+}
+
+function occurrences(text: string, needle: string): number {
+  return text.split(needle).length - 1
+}
+
+describe('LiveSessionPane live header (428 D-05)', () => {
+  it('EDITOR-HEADER-MINIMAL: the target, the draft badge and the actions, and nothing about the connection', () => {
+    renderPane({
+      draftState: 'unsaved',
+      liveSessionNumber: 3,
+      runningStepId: 'step-missing',
+      canRunAll: true,
+      showEndSessionAction: true,
+    })
+
+    const text = header().textContent ?? ''
+    expect(text).toContain('staging-web')
+    expect(text).toContain('Using unsaved draft')
+    expect(text).toContain('Run All Steps')
+    expect(text).toContain('End Live Session')
+    expect(text).not.toContain('Session #')
+    expect(text).not.toMatch(/Running (step|current)/)
+    expect(statusWordElements(header())).toHaveLength(0)
+    expect(text).not.toContain('Restart required')
+    const urlLines = [...header().querySelectorAll('span, div')].filter(
+      (element) => element.textContent?.trim() === 'https://staging.example.com/dashboard',
+    )
+    expect(urlLines).toHaveLength(0)
+
+    act(() => {
+      root.unmount()
+      root = createRoot(container)
+    })
+    renderPane({ isRunningAll: true, connectionState: 'executing', showEndSessionAction: true })
+    const running = header().textContent ?? ''
+    expect(running).toContain('Stop All Steps')
+    expect(statusWordElements(header())).toHaveLength(0)
+  })
+
+  it('EDITOR-HEADER-MINIMAL: the hooks-changed banner and the error text are each said once, only when they apply', () => {
+    renderPane()
+    expect(container.textContent).not.toContain('Hook order or names changed')
+
+    act(() => {
+      root.unmount()
+      root = createRoot(container)
+    })
+    renderPane({ setupHooksStale: true, errorMessage: 'The browser went away' })
+
+    const text = container.textContent ?? ''
+    expect(occurrences(text, 'Hook order or names changed')).toBe(1)
+    expect(occurrences(text, 'The browser went away')).toBe(1)
+    expect(text).not.toContain('Restart required')
+  })
+
+  it.each(['idle', 'connecting', 'connected', 'executing', 'disconnected', 'error'] as const)(
+    'EDITOR-HEADER-NO-STATUS-DOT: a %s pane header carries no pulsing or emerald status mark',
+    (connectionState) => {
+      renderPane({ connectionState })
+
+      const marks = [...header().querySelectorAll('*')].filter((element) => {
+        const className = element.getAttribute('class') ?? ''
+        return className.includes('animate-pulse') || className.includes('bg-emerald')
+      })
+      expect(marks).toHaveLength(0)
+      expect(statusWordElements(header())).toHaveLength(0)
+    },
+  )
+})
+
