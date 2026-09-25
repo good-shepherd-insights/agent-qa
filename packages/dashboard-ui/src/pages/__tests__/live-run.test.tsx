@@ -95,10 +95,16 @@ vi.mock('react-router', async () => {
 })
 vi.mock('@/hooks/use-page-title', () => ({ usePageTitle: () => {} }))
 vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn() } }))
+// The panel doubles render the props the layout cells read (428 D-06): the Group's orientation and
+// each panel's id and default size.
 vi.mock('@/components/ui/resizable', () => ({
-  ResizablePanelGroup: ({ children }: { children: ReactNode }) => <div>{children}</div>,
-  ResizablePanel: ({ children }: { children: ReactNode }) => <div>{children}</div>,
-  ResizableHandle: () => <div />,
+  ResizablePanelGroup: ({ children, orientation }: { children: ReactNode; orientation?: string }) => (
+    <div data-resizable-group data-orientation={orientation}>{children}</div>
+  ),
+  ResizablePanel: ({ children, id, defaultSize }: { children: ReactNode; id?: string; defaultSize?: unknown }) => (
+    <div data-resizable-panel data-panel-id={id} data-default-size={JSON.stringify(defaultSize)}>{children}</div>
+  ),
+  ResizableHandle: () => <div data-resizable-handle />,
 }))
 
 /** The browser primitive, doubled: constructed URLs recorded, every dispatch driven by hand. */
@@ -1237,5 +1243,109 @@ describe('the live header says which rung served this run, from the evidence (40
     expect(q('[data-rung-banner]')).not.toBeNull()
     expect(q('[data-gap-marker]')).toBeNull()
     expect(q('[data-run-over]')).toBeNull()
+  })
+})
+
+// A controllable ResizeObserver, as in run-detail.feedback.test.tsx: it records what each observer
+// watches and reports a width only when a cell asks, so an observer never called back is the
+// unmeasured page.
+class StubResizeObserver {
+  static live = new Set<StubResizeObserver>()
+  readonly targets = new Set<Element>()
+  constructor(readonly callback: ResizeObserverCallback) { StubResizeObserver.live.add(this) }
+  observe(target: Element): void { this.targets.add(target) }
+  unobserve(target: Element): void { this.targets.delete(target) }
+  disconnect(): void {
+    this.targets.clear()
+    StubResizeObserver.live.delete(this)
+  }
+}
+
+describe('below 768 px the page stacks with the preview on top (428 D-06 · PXH-LIVE-04)', () => {
+  const group = (): Element => {
+    const found = q('[data-resizable-group]')
+    if (found === null) throw new Error('the panel group does not exist')
+    return found
+  }
+  const paneOrder = () => qa('[data-live-pane]').map((pane) => pane.getAttribute('data-live-pane'))
+  const panelIds = () => qa('[data-resizable-panel]').map((panel) => panel.getAttribute('data-panel-id'))
+
+  async function resizePage(width: number): Promise<void> {
+    const root = group().parentElement
+    const watching = [...StubResizeObserver.live].filter((observer) => root !== null && observer.targets.has(root))
+    expect(watching, 'the page root is not observed').not.toHaveLength(0)
+    const entry = {
+      target: root,
+      contentRect: { width, height: 900 },
+      contentBoxSize: [{ inlineSize: width, blockSize: 900 }],
+      borderBoxSize: [{ inlineSize: width, blockSize: 900 }],
+      devicePixelContentBoxSize: [],
+    } as unknown as ResizeObserverEntry
+    await act(async () => {
+      for (const observer of watching) observer.callback([entry], observer as unknown as ResizeObserver)
+    })
+    await flush()
+  }
+
+  beforeEach(() => {
+    StubResizeObserver.live.clear()
+    vi.stubGlobal('ResizeObserver', StubResizeObserver)
+  })
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  it('STACKS-BELOW-768-PREVIEW-FIRST: at 400 px the group is vertical and the preview comes first; at 1280 px it is horizontal with the steps first', async () => {
+    await mount()
+    await open()
+    await emit(runStarted(), testStarted(0, 'the member', 1))
+
+    await resizePage(400)
+    const stacked = { orientation: group().getAttribute('data-orientation'), panes: paneOrder(), ids: panelIds() }
+
+    await resizePage(1280)
+    const docked = { orientation: group().getAttribute('data-orientation'), panes: paneOrder(), ids: panelIds() }
+
+    expect({ stacked, docked }).toEqual({
+      stacked: { orientation: 'vertical', panes: ['preview', 'steps'], ids: ['live-preview-stacked', 'live-steps-stacked'] },
+      docked: { orientation: 'horizontal', panes: ['steps', 'preview'], ids: ['live-steps', 'live-preview'] },
+    })
+  })
+
+  it('GROUP-KEY-STABLE: crossing the breakpoint keeps the same Group node and the same step list, and does not re-mint the preview', async () => {
+    await mount()
+    await open()
+    await emit(runStarted(), testStarted(0, 'the member', 1))
+
+    const groupBefore = group()
+    const stepsBefore = stepsPane()
+    const mintsBefore = fetchLiveUrlMock.mock.calls.length
+    await resizePage(400)
+    const flippedTo = group().getAttribute('data-orientation')
+    await resizePage(1280)
+
+    expect({
+      flippedTo,
+      backTo: group().getAttribute('data-orientation'),
+      sameGroup: group() === groupBefore,
+      sameSteps: stepsPane() === stepsBefore,
+      mints: fetchLiveUrlMock.mock.calls.length - mintsBefore,
+    }).toEqual({ flippedTo: 'vertical', backTo: 'horizontal', sameGroup: true, sameSteps: true, mints: 0 })
+  })
+
+  it('TWO-PANES-BOTH-LAYOUTS: exactly two [data-live-pane] docked, stacked and unmeasured', async () => {
+    await mount()
+    const unmeasured = { orientation: group().getAttribute('data-orientation'), panes: qa('[data-live-pane]').length }
+    await resizePage(400)
+    const stacked = { orientation: group().getAttribute('data-orientation'), panes: qa('[data-live-pane]').length }
+    await resizePage(1280)
+    const docked = { orientation: group().getAttribute('data-orientation'), panes: qa('[data-live-pane]').length }
+
+    expect({ unmeasured, stacked, docked }).toEqual({
+      unmeasured: { orientation: 'horizontal', panes: 2 },
+      stacked: { orientation: 'vertical', panes: 2 },
+      docked: { orientation: 'horizontal', panes: 2 },
+    })
   })
 })
