@@ -82,6 +82,15 @@ export interface PlantedLiveRun {
    * instant. A run whose cell never calls it behaves byte-identically to before.
    */
   latchCapability(next: LiveStreamDeclaration): void
+  /**
+   * Hold the producer's frames while the bus keeps its own heartbeat (428 SC3): the one fault in
+   * which the channel is alive and the picture is not.
+   */
+  stall(): void
+  /** Let the producer emit again after `stall()`. */
+  resume(): void
+  /** How many heartbeat envelopes this run's bus has published so far. */
+  heartbeatsSeen(): number
   /** Stop the frame producer and close the bus. Never publishes. */
   close(): void
 }
@@ -96,6 +105,8 @@ export interface PlantLiveRunInput {
   readonly frameWidth?: number
   readonly frameHeight?: number
   readonly frameIntervalMs?: number
+  /** The kind each frame is stamped with. Defaults to the declared capability's kind. */
+  readonly frameKind?: LiveStreamKind
 }
 
 /**
@@ -148,7 +159,7 @@ export function plantLiveRun(input: PlantLiveRunInput): PlantedLiveRun {
     status: 'running',
     executionContext: 'local-headless',
     subscribe: (fromSeq, handler) => bus.subscribe(fromSeq, handler),
-    subscribeFrames: (_handle, onFrame): LiveFrameSubscription | undefined => {
+    subscribeFrames: (_handle, onFrame, _onEnd): LiveFrameSubscription | undefined => {
       // AN HONEST ABSENCE, never an error: a handle that declares no stream has no subscription to
       // hand out, and the pane renders a sentence rather than a frame that never arrives.
       if (declaredCapability.kind === 'none') return undefined
@@ -174,6 +185,9 @@ export function plantLiveRun(input: PlantLiveRunInput): PlantedLiveRun {
     openFrameSubscriptions: () => subscribers.size,
     isDone: () => settled,
     latchCapability: (next: LiveStreamDeclaration) => { declaredCapability = next },
+    stall: () => {},
+    resume: () => {},
+    heartbeatsSeen: () => 0,
     finish: (verdict: RunStatus = 'passed') => {
       if (settled) return
       settled = true
