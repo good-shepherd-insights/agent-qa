@@ -85,16 +85,40 @@ export function createSnapshotLiveStream(input: {
   }
 }
 
+/** What a run or an editor session registers with its hub: a stream, and what replaces it on a failed start. */
 export type LiveStreamRegistration = {
   capability: LiveStreamCapability
   fallback?: LiveStreamCapability
 }
 
+/**
+ * THE ONE SELECTION RULE (428 D-11/D-12), used by both run paths and the editor.
+ *
+ * The adapter's own `liveStream` always wins. `screenshot()` is wrapped in the snapshot producer
+ * only when the adapter's own capability is not already a snapshot: as the fallback behind a
+ * continuous stream that may fail to start, or as the whole preview when there is no continuous
+ * stream. An adapter whose own stream IS a snapshot (mobile) gets no fallback, which is what keeps
+ * a mobile run off its context-switching `screenshot()`.
+ */
 export function liveStreamFor(
-  _adapter: Pick<PlatformAdapter, 'liveStream' | 'screenshot'> | undefined,
-  _options?: { timer?: RunTimerPort },
+  adapter: Pick<PlatformAdapter, 'liveStream' | 'screenshot'> | undefined,
+  options: { timer?: RunTimerPort } = {},
 ): LiveStreamRegistration | undefined {
-  return undefined
+  if (adapter === undefined) return undefined
+  const own = adapter.liveStream
+  if (own?.kind === 'snapshot') return { capability: own }
+  const screenshot = adapter.screenshot?.bind(adapter)
+  const snapshot =
+    screenshot === undefined
+      ? undefined
+      : createSnapshotLiveStream({
+          capture: () => screenshot(),
+          ...(options.timer === undefined ? {} : { timer: options.timer }),
+        })
+  if (own !== undefined) {
+    return snapshot === undefined ? { capability: own } : { capability: own, fallback: snapshot }
+  }
+  return snapshot === undefined ? undefined : { capability: snapshot }
 }
 
 const PNG_SIGNATURE = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a] as const

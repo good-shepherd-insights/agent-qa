@@ -53,6 +53,7 @@ import {
   coerceRunJSResult,
   createMemoryTools,
   createRecordLedger,
+  liveStreamFor,
   resolveSecretEnv,
   resolveSecretTemplatesInValue,
 } from '@vostride/agent-qa-runner'
@@ -74,7 +75,6 @@ import type {
   MemberStepSpec,
   MemberTest,
   MemberTestExecutor,
-  LiveStreamCapability,
   MemberTestRunContext,
   NonActionToolMap,
   PlannerConfig,
@@ -642,11 +642,12 @@ export interface SuiteMemberBinding {
 }
 
 /**
- * Declare (or withdraw) a member's live stream on the shell-provided context (403 D-05).
- *
- * Duck-typed exactly like `captureFailureScreenshotFromAdapter` below: an adapter that predates
- * live view has no `liveStream` property, so the member registers `undefined` and its handle reads
- * `{ kind: 'none' }` — an honest absence, never a throw and never a screenshot-polling fallback.
+ * Declare (or withdraw) a member's live stream on the shell-provided context (403 D-05), by the one
+ * selection rule `liveStreamFor` (428 D-11/D-12). A continuous stream is registered with the
+ * labelled 1s snapshot producer over `screenshot()` as its fallback, which the hub starts when the
+ * stream fails to start. An adapter with no continuous stream but a `screenshot()` registers the
+ * snapshot producer itself; an adapter whose own stream is already a snapshot registers that alone;
+ * an adapter with neither registers `undefined` and its handle reads `{ kind: 'none' }`.
  * The `ctx.registerLiveStream?.()` call is itself optional so a composition that predates the port
  * is a no-op rather than a crash.
  */
@@ -654,8 +655,8 @@ export function registerAdapterLiveStream(
   ctx: MemberTestRunContext,
   adapter: PlatformAdapter | undefined,
 ): void {
-  const capability = (adapter as { liveStream?: LiveStreamCapability } | undefined)?.liveStream
-  ctx.registerLiveStream?.(capability)
+  const registration = liveStreamFor(adapter)
+  ctx.registerLiveStream?.(registration?.capability, registration?.fallback)
 }
 
 /**

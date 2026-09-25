@@ -44,10 +44,15 @@ export type ActionsFor<P extends Platform = Platform> = SchemaActionsFor<P>
 
 /**
  * An adapter's LIVE STREAM capability (403 D-05). The adapter owns the producer (a CDP screencast,
- * an MJPEG broadcaster, a WebRTC track); the runner owns nothing but this object, so no `Page` and
- * no session handle ever leaves the adapter. Lifecycle is lazy and refcounted by the run's
- * {@link LiveStreamHub}: `start` on the first viewer, `ack` per consumed frame (the producer's
- * flow control), `stop` on the last — idempotent, so a double stop is a no-op rather than a throw.
+ * an MJPEG broadcaster, a WebRTC track, or a snapshot producer over a capture that is safe to run
+ * beside a step); the runner owns nothing but this object, so no `Page` and no session handle ever
+ * leaves the adapter. Lifecycle is lazy and refcounted by the run's {@link LiveStreamHub}: `start`
+ * on the first viewer, `ack` per consumed frame (the producer's flow control), `stop` on the
+ * last — idempotent, so a double stop is a no-op rather than a throw.
+ *
+ * The labelled 1s snapshot producer (`createSnapshotLiveStream`) sits behind this same contract
+ * (428 D-11): the composition registers it as the whole preview when an adapter has no continuous
+ * stream, and as the fallback the hub starts when a continuous stream fails to start (D-12).
  */
 export interface LiveStreamCapability {
   readonly kind: LiveStreamKind
@@ -81,9 +86,13 @@ export interface PlatformAdapter<P extends Platform = Platform> {
   execute(action: ActionsFor<P>): Promise<ActionResult>
   screenshot?(): Promise<Buffer | undefined>
   /**
-   * 403 D-05: the optional live-stream producer for this adapter's current target. ABSENT is the
-   * honest "no live preview" declaration (non-Chromium, remote farm, mobile pre-M6) — the hub maps
-   * absence to `{ kind: 'none' }` and no surface ever falls back to screenshot polling.
+   * 403 D-05: the optional live-stream producer for this adapter's current target. ABSENT means
+   * "no continuous stream" (non-Chromium, remote farm), not "no preview": the composition's
+   * `liveStreamFor` wraps `screenshot()` in the labelled 1s snapshot producer instead, and uses
+   * that producer as the fallback when a continuous stream fails to start (428 D-11/D-12). Only an
+   * adapter with neither reads `{ kind: 'none' }`. An adapter whose `screenshot()` mutates shared
+   * state (the mobile adapters switch the Appium context) must expose its own snapshot
+   * `liveStream` over a side-effect-free capture instead, so `screenshot()` is never wrapped.
    */
   readonly liveStream?: LiveStreamCapability
   readonly recording?: RecordingCapability
