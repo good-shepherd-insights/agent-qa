@@ -178,6 +178,70 @@ async function captureElement(page: Page, selector: string, name: string): Promi
   await page.locator(selector).first().screenshot({ path: join(directory, `${name}.png`), animations: 'disabled' })
 }
 
+async function capturePage(page: Page, name: string): Promise<void> {
+  const directory = process.env[CAPTURE_DIR_ENV]
+  if (!directory) return
+  mkdirSync(directory, { recursive: true })
+  await page.screenshot({ path: join(directory, `${name}.png`), animations: 'disabled' })
+}
+
+async function waitForGreen(page: Page): Promise<void> {
+  await page.locator('[data-preview-state="live"]').waitFor({ state: 'attached', timeout: 40_000 })
+  await page.locator('[data-live-dot="green"]').waitFor({ state: 'attached', timeout: 10_000 })
+}
+
+interface Box { x: number; y: number; width: number; height: number }
+
+interface PageLayout {
+  viewport: number
+  panes: number
+  embeds: number
+  dot: string | null
+  preview: Box | null
+  steps: Box | null
+  frame: Box | null
+  dotBox: Box | null
+  dotInFrame: boolean
+}
+
+async function readLayout(page: Page): Promise<PageLayout> {
+  return page.evaluate(() => {
+    const box = (selector: string) => {
+      const node = document.querySelector(selector)
+      if (node === null) return null
+      const rect = node.getBoundingClientRect()
+      return { x: rect.x, y: rect.y, width: rect.width, height: rect.height }
+    }
+    const frame = document.querySelector('[data-preview-frame]')
+    const dot = document.querySelector('[data-live-dot]')
+    return {
+      viewport: window.innerWidth,
+      panes: document.querySelectorAll('[data-live-pane]').length,
+      embeds: document.querySelectorAll('[data-live-embed]').length,
+      dot: dot?.getAttribute('data-live-dot') ?? null,
+      preview: box('[data-live-pane="preview"]'),
+      steps: box('[data-live-pane="steps"]'),
+      frame: box('[data-preview-frame]'),
+      dotBox: box('[data-live-dot]'),
+      dotInFrame: frame !== null && dot !== null && frame.contains(dot),
+    }
+  })
+}
+
+function previewAboveSteps(layout: PageLayout): boolean {
+  const { preview, steps } = layout
+  return preview !== null && steps !== null && preview.y + preview.height <= steps.y + 1
+}
+
+/** How many frames the embed document says it painted, or -1 while there is no embed document. */
+async function embedFramesPainted(page: Page): Promise<number> {
+  const frame = page.frames().find((one) => one.url().includes('/live/'))
+  if (frame === undefined) return -1
+  return frame.evaluate(() =>
+    Number(document.querySelector('[data-embed-state]')?.getAttribute('data-embed-frames') ?? '-1'),
+  ).catch(() => -1)
+}
+
 async function waitForRowsInAllStates(page: Page): Promise<void> {
   for (const status of ['passed', 'running', 'pending']) {
     await page.locator(`[data-live-pane="steps"] li[data-step-status="${status}"]`).first()
@@ -298,3 +362,137 @@ describe('the live step rows on the shipped bundle (428-24 Task 1)', () => {
     })
   }, 120_000)
 })
+
+/** D-06: a flip may reload the moved iframe, and the embed must reconnect by itself within this. */
+const FLIP_TO_GREEN_BUDGET_MS = 8_000
+
+describe('the live page layout on the shipped bundle (428-24 Task 2)', () => {
+  it('STACKED-AT-400: the preview is on top at full width with its dot on the picture, over two panes', async () => {
+    await onLivePage(ROWS_RUN, async (page) => {
+      await waitForRowsInAllStates(page)
+      await waitForGreen(page)
+      const layout = await readLayout(page)
+      const context = JSON.stringify(layout)
+      console.log(`STACKED-AT-400: ${context}`)
+      expect(layout.viewport, context).toBe(NARROW.width)
+      expect(layout.panes, context).toBe(2)
+      expect(previewAboveSteps(layout), `${context} — the preview is above the steps`).toBe(true)
+      expect(layout.preview?.width ?? 0, `${context} — the preview spans the page`).toBeGreaterThanOrEqual(380)
+      expect(layout.dotInFrame, `${context} — the dot is inside the picture`).toBe(true)
+      const { frame, dotBox } = layout
+      expect(frame !== null && dotBox !== null, context).toBe(true)
+      if (frame !== null && dotBox !== null) {
+        expect(dotBox.x + dotBox.width, context).toBeLessThanOrEqual(frame.x + frame.width)
+        expect(dotBox.y, context).toBeGreaterThanOrEqual(frame.y)
+      }
+      await capturePage(page, '428-live-page-400')
+    }, NARROW)
+  }, 120_000)
+
+  it('DOCKED-AT-1280: the steps sit left of the preview, over two panes', async () => {
+    await onLivePage(ROWS_RUN, async (page) => {
+      await waitForRowsInAllStates(page)
+      await waitForGreen(page)
+      const layout = await readLayout(page)
+      const context = JSON.stringify(layout)
+      console.log(`DOCKED-AT-1280: ${context}`)
+      expect(layout.viewport, context).toBe(DESKTOP.width)
+      expect(layout.panes, context).toBe(2)
+      const { preview, steps } = layout
+      expect(preview !== null && steps !== null, context).toBe(true)
+      if (preview !== null && steps !== null) {
+        expect(steps.x + steps.width, `${context} — the steps are left of the preview`).toBeLessThanOrEqual(preview.x + 1)
+        expect(Math.abs(steps.y - preview.y), `${context} — side by side`).toBeLessThanOrEqual(1)
+      }
+      expect(layout.dotInFrame, context).toBe(true)
+      await capturePage(page, '428-live-page-1280')
+    })
+  }, 120_000)
+
+  it('FLIP-RECOVERS: crossing from 1280 to 400 px returns to a green dot and one embed within 8 s', async () => {
+    await onLivePage(ROWS_RUN, async (page) => {
+      const watch = watchEmbed(page)
+      await waitForRowsInAllStates(page)
+      await waitForGreen(page)
+      expect(previewAboveSteps(await readLayout(page)), 'the control: the page starts docked').toBe(false)
+
+      const down = await flipAndWatch(page, NARROW, watch)
+      console.log(`FLIP-RECOVERS 1280->400: ${JSON.stringify(down)}`)
+      expectRecovered(down, true)
+
+      // The way back moves the preview panel's node (React keeps the steps panel in place and moves
+      // the others), which is where a real browser reloads the iframe (428-16's note).
+      const up = await flipAndWatch(page, DESKTOP, watch)
+      console.log(`FLIP-RECOVERS 400->1280: ${JSON.stringify(up)}`)
+      expectRecovered(up, false)
+    })
+  }, 120_000)
+})
+
+interface EmbedWatch { loads(): number; mints(): number }
+
+function watchEmbed(page: Page): EmbedWatch {
+  let loads = 0
+  let mints = 0
+  page.on('request', (request) => {
+    if (request.url().includes('/live-url')) mints += 1
+  })
+  page.on('framenavigated', (frame) => {
+    if (frame !== page.mainFrame() && frame.url().includes('/live/')) loads += 1
+  })
+  return { loads: () => loads, mints: () => mints }
+}
+
+interface FlipReading {
+  to: number
+  /** When the page last stopped being unhealthy: green, one embed, painting, in the new arrangement. */
+  recoveredAfterMs: number
+  dots: string[]
+  embedReloads: number
+  reMints: number
+  paintedAtEnd: number
+  end: PageLayout
+}
+
+/** Flip the viewport and watch the whole budget, so a late reload cannot hide behind an early green. */
+async function flipAndWatch(page: Page, viewport: { width: number; height: number }, watch: EmbedWatch): Promise<FlipReading> {
+  const loadsBefore = watch.loads()
+  const mintsBefore = watch.mints()
+  const wantStacked = viewport.width < 768
+  const flippedAt = Date.now()
+  await page.setViewportSize(viewport)
+  const dots: string[] = []
+  let lastUnhealthyAt = flippedAt
+  let end = await readLayout(page)
+  let painted = -1
+  while (Date.now() - flippedAt < FLIP_TO_GREEN_BUDGET_MS) {
+    end = await readLayout(page)
+    painted = await embedFramesPainted(page)
+    const dot = end.dot ?? 'none'
+    if (dots[dots.length - 1] !== dot) dots.push(dot)
+    const healthy = previewAboveSteps(end) === wantStacked && end.dot === 'green' && end.embeds === 1 && painted >= 1
+    if (!healthy) lastUnhealthyAt = Date.now()
+    await page.waitForTimeout(100)
+  }
+  return {
+    to: viewport.width,
+    recoveredAfterMs: lastUnhealthyAt - flippedAt,
+    dots,
+    embedReloads: watch.loads() - loadsBefore,
+    reMints: watch.mints() - mintsBefore,
+    paintedAtEnd: painted,
+    end,
+  }
+}
+
+function expectRecovered(reading: FlipReading, stacked: boolean): void {
+  const context = JSON.stringify(reading)
+  expect(previewAboveSteps(reading.end), `${context} — the arrangement followed the width`).toBe(stacked)
+  expect(reading.end.panes, context).toBe(2)
+  expect(reading.end.embeds, context).toBe(1)
+  expect(reading.end.dot, context).toBe('green')
+  expect(reading.end.dotInFrame, context).toBe(true)
+  expect(reading.paintedAtEnd, `${context} — the embed is painting`).toBeGreaterThanOrEqual(1)
+  expect(reading.recoveredAfterMs, `${context} — healthy again within the budget, and stayed so`)
+    .toBeLessThan(FLIP_TO_GREEN_BUDGET_MS - 500)
+}
