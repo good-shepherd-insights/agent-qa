@@ -126,6 +126,11 @@ export {
   RUNS_LIVE_URL_FUNCTION_ID,
   UnknownRunError,
 } from './functions/ops/runs-live-url.js'
+// 428 D-07: the editor subject's mint id and its named refusal. The spec stays behind invokeFunction.
+export {
+  EDITOR_LIVE_URL_FUNCTION_ID,
+  UnknownLiveEditorSessionError,
+} from './functions/ops/editor-live-url.js'
 // 387 ENTY-02: the caller-facing refusal for an address nothing ever minted. A permanently
 // minted address whose entity was tombstoned still resolves (D-04) — this is not that case.
 export { EntityNotFoundError } from './functions/ops/entities-get.js'

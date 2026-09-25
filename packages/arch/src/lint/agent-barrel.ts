@@ -172,6 +172,9 @@ export const EXPECTED_AGENT_BARREL_VALUE_EXPORTS: readonly string[] = [
   'ConfigProposalNotApplicableError',
   'DuplicateFunctionIdError',
   'DuplicateJobKindError',
+  // 428-07, D-07: the editor subject's minter, published beside runs.liveurl's — its id and its
+  // named refusal only. Its spec stays private like every other: a spec carries its own `invoke`.
+  'EDITOR_LIVE_URL_FUNCTION_ID',
   // 398 D-09: `explain`'s id, on the exact footing of every `*_FUNCTION_ID` elsewhere in this list — a name a caller
   // puts on the wire, never a dispatch handle. In SORT position: this list is compared against the
   // barrel's sorted export set by exact positional equality.
@@ -320,6 +323,7 @@ export const EXPECTED_AGENT_BARREL_VALUE_EXPORTS: readonly string[] = [
   'UndeclaredJobSuccessorError',
   'UnknownFunctionError',
   'UnknownJobKindError',
+  'UnknownLiveEditorSessionError',
   'UnknownRunError',
   // 388 plan 01: the post-run chain's ONE id derivation. It joins the value list rather than
   // the type list because addressing is a computation, not a shape — the chip projection, the
