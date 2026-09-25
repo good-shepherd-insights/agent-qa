@@ -335,3 +335,89 @@ describe('the frame socket serves editor subjects from liveEditorSubjects', () =
     expect(first.stream?.kind).toBe('none')
   })
 })
+
+interface Door {
+  readonly name: string
+  readonly method: string
+  readonly path: string
+  readonly body?: string
+}
+
+const LIVE_EDITOR_DOORS: readonly Door[] = [
+  { name: 'POST /api/live-editor/sessions', method: 'POST', path: '/api/live-editor/sessions', body: '{"platform":"web"}' },
+  { name: 'GET /api/live-editor/sessions', method: 'GET', path: '/api/live-editor/sessions' },
+  { name: 'DELETE /api/live-editor/sessions/abc', method: 'DELETE', path: '/api/live-editor/sessions/abc' },
+  {
+    name: 'POST /api/live-editor/sessions/abc/auth-state',
+    method: 'POST',
+    path: '/api/live-editor/sessions/abc/auth-state',
+    body: '{"name":"main"}',
+  },
+]
+
+const CROSS_SITE_CALLERS: readonly { readonly name: string; readonly headers: Record<string, string> }[] = [
+  { name: 'a foreign Origin', headers: { origin: FOREIGN_ORIGIN } },
+  { name: 'Sec-Fetch-Site cross-site with no Origin', headers: { 'sec-fetch-site': 'cross-site' } },
+]
+
+describe('LIVE-EDITOR-DOORS-REFUSE-CROSS-SITE', () => {
+  for (const door of LIVE_EDITOR_DOORS) {
+    for (const caller of CROSS_SITE_CALLERS) {
+      it(`LIVE-EDITOR-DOORS-REFUSE-CROSS-SITE: ${door.name} refuses ${caller.name}`, async () => {
+        const served = await serve()
+
+        const answer = await call(served, door.method, door.path, caller.headers, door.body)
+
+        expect(answer.status).toBe(403)
+        expect(answer.json()).toEqual({ error: 'cross_site_refused' })
+      })
+    }
+  }
+})
+
+describe('LIVE-EDITOR-DOORS-CARRY-NO-ACAO', () => {
+  it('LIVE-EDITOR-DOORS-CARRY-NO-ACAO: no refused answer carries a wildcard grant', async () => {
+    const served = await serve()
+
+    for (const door of LIVE_EDITOR_DOORS) {
+      for (const caller of CROSS_SITE_CALLERS) {
+        const answer = await call(served, door.method, door.path, caller.headers, door.body)
+        expect(answer.headers['access-control-allow-origin'], `${door.name}, ${caller.name}`)
+          .toBeUndefined()
+      }
+    }
+  })
+
+  it('LIVE-EDITOR-DOORS-CARRY-NO-ACAO: no admitted answer carries a wildcard grant', async () => {
+    const served = await serve()
+    const admitted: readonly { readonly name: string; readonly headers: Record<string, string> }[] = [
+      { name: 'a same-host Origin', headers: { origin: served.selfOrigin, 'sec-fetch-site': 'same-origin' } },
+      { name: 'no Origin', headers: {} },
+    ]
+
+    for (const door of LIVE_EDITOR_DOORS) {
+      for (const caller of admitted) {
+        const answer = await call(served, door.method, door.path, caller.headers, door.body)
+        expect(answer.status, `${door.name}, ${caller.name} is admitted`).not.toBe(403)
+        expect(answer.headers['access-control-allow-origin'], `${door.name}, ${caller.name}`)
+          .toBeUndefined()
+      }
+    }
+  })
+
+  it('LIVE-EDITOR-DOORS-CARRY-NO-ACAO: an admitted GET lists sessions and an admitted DELETE of an unknown id answers as before', async () => {
+    const served = await serve()
+
+    const listed = await call(served, 'GET', '/api/live-editor/sessions', { origin: served.selfOrigin })
+    expect(listed.status).toBe(200)
+    expect(listed.json()).toEqual({ sessions: [] })
+
+    const deleted = await call(served, 'DELETE', '/api/live-editor/sessions/abc')
+    expect(deleted.status).toBe(404)
+    expect(deleted.json()).toEqual({ error: 'Session not found' })
+
+    const saved = await call(served, 'POST', '/api/live-editor/sessions/abc/auth-state', {}, '{"name":"main"}')
+    expect(saved.status).toBe(404)
+    expect(saved.json()).toEqual({ error: 'Session not found' })
+  })
+})
