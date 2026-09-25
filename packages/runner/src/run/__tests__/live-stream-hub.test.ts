@@ -900,6 +900,144 @@ describe('every end names its reason and close() evicts (428-04 · D-14 · #277)
   })
 })
 
+// ---- 428-04: A FAILED START HANDS OVER TO THE SNAPSHOT FALLBACK (D-12) ---------------------------
+//
+// Only the hub can both record the failure on the run's durable log AND switch producers, so the
+// fallback seat lives here. The failure is still written before the switch: a fallback that hid the
+// primary's failure would make a degraded preview indistinguishable from a healthy one.
+
+/** A primary whose `start` rejects `failures` times, then behaves like the plain fake. */
+function makeRejectingCapability(failures = Number.POSITIVE_INFINITY): FakeCapability {
+  const base = makeFakeCapability()
+  let remaining = failures
+  return {
+    ...base,
+    async start(onFrame) {
+      if (remaining > 0) {
+        remaining -= 1
+        base.calls.push('start')
+        throw new Error('screencast refused')
+      }
+      await base.start(onFrame)
+    },
+  }
+}
+
+function makeSnapshotCapability(): FakeCapability {
+  return { ...makeFakeCapability(), kind: 'snapshot' }
+}
+
+describe('a failed primary start hands over to its snapshot fallback (428-04 · D-12)', () => {
+  it('START-FAILURE-FALLS-BACK: the failure is recorded, the fallback starts, and its frames arrive labelled snapshot', async () => {
+    const timer = makeFakeTimer()
+    const warnings: string[] = []
+    const hub = createLiveStreamHub({ timer, onWarning: (code) => warnings.push(code) })
+    const primary = makeRejectingCapability()
+    const fallback = makeSnapshotCapability()
+    hub.register(0, primary, fallback)
+    const seen: LiveFrame[] = []
+    hub.subscribe(0, (f) => seen.push(f))
+    await flush()
+
+    expect(warnings, 'the primary\'s failure is still on the run\'s record').toEqual([
+      'live-stream-start-failed',
+    ])
+    expect(primary.calls).toEqual(['start'])
+    expect(fallback.calls, 'and the fallback took over').toEqual(['start'])
+    fallback.emit(frame(8))
+    expect(seen.map((f) => [f.id, f.kind])).toEqual([[8, 'snapshot']])
+  })
+
+  it('FALLBACK-ACK-ROUTES-TO-ACTIVE: acks and the graced stop reach the fallback, never the primary', async () => {
+    const timer = makeFakeTimer()
+    const hub = createLiveStreamHub({ timer })
+    const primary = makeRejectingCapability()
+    const fallback = makeSnapshotCapability()
+    hub.register(0, primary, fallback)
+    const subscription = hub.subscribe(0, () => {})
+    await flush()
+    fallback.emit(frame(8))
+    subscription?.ack(8)
+    expect(fallback.acked).toEqual([8])
+    expect(primary.acked).toEqual([])
+
+    subscription?.unsubscribe()
+    expect(timer.fire(LIVE_STREAM_STOP_GRACE_MS)).toBe(1)
+    await flush()
+    expect(fallback.calls, 'the fallback only runs while someone watches').toContain('stop')
+    expect(primary.calls).not.toContain('stop')
+  })
+
+  it('CAPABILITY-OF-DECLARED-UNDER-FALLBACK: capabilityOf keeps answering the declared kind while the fallback runs', async () => {
+    const timer = makeFakeTimer()
+    const hub = createLiveStreamHub({ timer })
+    const primary = makeRejectingCapability()
+    const fallback = makeSnapshotCapability()
+    hub.register(0, primary, fallback)
+    hub.subscribe(0, () => {})
+    await flush()
+    expect(fallback.calls, 'the witness: the fallback is the running producer').toEqual(['start'])
+    expect(hub.capabilityOf(0), 'the ready message\'s painter decision does not move').toEqual({
+      kind: 'cdp-screencast',
+    })
+  })
+
+  it('a later watched interval tries the primary first again', async () => {
+    const timer = makeFakeTimer()
+    const hub = createLiveStreamHub({ timer })
+    const primary = makeRejectingCapability(1)
+    const fallback = makeSnapshotCapability()
+    hub.register(0, primary, fallback)
+    const first = hub.subscribe(0, () => {})
+    await flush()
+    expect(fallback.calls).toEqual(['start'])
+    first?.unsubscribe()
+    expect(timer.fire(LIVE_STREAM_STOP_GRACE_MS)).toBe(1)
+    await flush()
+
+    const seen: LiveFrame[] = []
+    hub.subscribe(0, (f) => seen.push(f))
+    await flush()
+    expect(primary.calls.filter((call) => call === 'start')).toHaveLength(2)
+    expect(fallback.calls.filter((call) => call === 'start'), 'the recovered primary needs no fallback')
+      .toHaveLength(1)
+    primary.emit(frame(9))
+    expect(seen.map((f) => [f.id, f.kind])).toEqual([[9, 'cdp-screencast']])
+  })
+
+  it('a fallback that also fails to start is recorded a second time, naming the fallback, and delivers nothing', async () => {
+    const timer = makeFakeTimer()
+    const warnings: [string, string][] = []
+    const hub = createLiveStreamHub({ timer, onWarning: (code, message) => warnings.push([code, message]) })
+    const primary = makeRejectingCapability()
+    const fallback: FakeCapability = { ...makeRejectingCapability(), kind: 'snapshot' }
+    hub.register(0, primary, fallback)
+    hub.subscribe(0, () => {})
+    await flush()
+    expect(warnings.map(([code]) => code)).toEqual([
+      'live-stream-start-failed',
+      'live-stream-start-failed',
+    ])
+    expect(warnings[1]?.[1]).toContain('fallback')
+    expect(fallback.calls).toEqual(['start'])
+  })
+
+  it('NO-FALLBACK-STAYS-DOWN: without a fallback a rejecting start records the warning and delivers nothing', async () => {
+    const timer = makeFakeTimer()
+    const warnings: string[] = []
+    const hub = createLiveStreamHub({ timer, onWarning: (code) => warnings.push(code) })
+    const primary = makeRejectingCapability()
+    hub.register(0, primary)
+    const seen: LiveFrame[] = []
+    hub.subscribe(0, (f) => seen.push(f))
+    await flush()
+    expect(warnings).toEqual(['live-stream-start-failed'])
+    expect(primary.calls).toEqual(['start'])
+    primary.emit(frame(1))
+    expect(seen).toEqual([])
+  })
+})
+
 // ---- THE SEAM, THROUGH THE REAL RUN --------------------------------------------------------
 //
 // The hub cells above drive the hub directly and the frame-proxy cells drive a PLANTED
