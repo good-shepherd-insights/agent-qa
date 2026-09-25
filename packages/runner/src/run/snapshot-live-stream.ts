@@ -11,7 +11,7 @@
 // from whatever `capture` the adapter or the composition hands in.
 
 import type { LiveFrame } from '@vostride/agent-qa-schema'
-import type { LiveStreamCapability } from '../platform.js'
+import type { LiveStreamCapability, PlatformAdapter } from '../platform.js'
 import { defaultLiveStreamTimer } from './live-stream-hub.js'
 import type { RunTimerPort } from './ports.js'
 
@@ -83,6 +83,18 @@ export function createSnapshotLiveStream(input: {
       cancel?.()
     },
   }
+}
+
+export type LiveStreamRegistration = {
+  capability: LiveStreamCapability
+  fallback?: LiveStreamCapability
+}
+
+export function liveStreamFor(
+  _adapter: Pick<PlatformAdapter, 'liveStream' | 'screenshot'> | undefined,
+  _options?: { timer?: RunTimerPort },
+): LiveStreamRegistration | undefined {
+  return undefined
 }
 
 const PNG_SIGNATURE = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a] as const

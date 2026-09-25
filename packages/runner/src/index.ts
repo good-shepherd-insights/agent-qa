@@ -207,7 +207,9 @@ export {
   imageSizeOf,
   LIVE_KEEPALIVE_QUIET_MS,
   LIVE_SNAPSHOT_INTERVAL_MS,
+  liveStreamFor,
 } from './run/snapshot-live-stream.js'
+export type { LiveStreamRegistration } from './run/snapshot-live-stream.js'
 export type {
   BaselineProbeResult,
   ConfigDigests,

@@ -1,11 +1,13 @@
 import { describe, it, expect } from 'vitest'
 import type { LiveFrame } from '@vostride/agent-qa-schema'
+import type { LiveStreamCapability } from '../../platform.js'
 import type { RunTimerPort } from '../ports.js'
 import { createLiveStreamHub, LIVE_STREAM_STOP_GRACE_MS } from '../live-stream-hub.js'
 import {
   createSnapshotLiveStream,
   imageSizeOf,
   LIVE_SNAPSHOT_INTERVAL_MS,
+  liveStreamFor,
 } from '../snapshot-live-stream.js'
 
 /**
@@ -309,5 +311,73 @@ describe('imageSizeOf (428 Open Question 3)', () => {
     expect(imageSizeOf(new Uint8Array([7, 8, 9]))).toEqual({ width: 0, height: 0 })
     expect(imageSizeOf(pngHeader(800, 600).subarray(0, 20))).toEqual({ width: 0, height: 0 })
     expect(imageSizeOf(jpegHeader(640, 480).subarray(0, 24))).toEqual({ width: 0, height: 0 })
+  })
+})
+
+function makeScreencast(kind: LiveStreamCapability['kind']): LiveStreamCapability {
+  return {
+    kind,
+    async start() {},
+    async ack() {},
+    async stop() {},
+  }
+}
+
+function makeScreenshotSpy(): { screenshot: () => Promise<Buffer | undefined>; calls: () => number } {
+  let calls = 0
+  return {
+    screenshot: async () => {
+      calls += 1
+      return Buffer.from(pngHeader(320, 240))
+    },
+    calls: () => calls,
+  }
+}
+
+describe('liveStreamFor (428 D-11/D-12)', () => {
+  it('LIVE-STREAM-FOR-SELECTION: a continuous stream with a screenshot() gets a snapshot fallback over it', async () => {
+    const timer = makeFakeTimer()
+    const screencast = makeScreencast('cdp-screencast')
+    const shots = makeScreenshotSpy()
+    const registration = liveStreamFor({ liveStream: screencast, screenshot: shots.screenshot }, { timer })
+    expect(registration?.capability).toBe(screencast)
+    expect(registration?.fallback?.kind).toBe('snapshot')
+    const frames: LiveFrame[] = []
+    await registration?.fallback?.start((frame) => frames.push(frame))
+    await settle()
+    expect(shots.calls(), 'the fallback captures through screenshot()').toBe(1)
+    expect(frames.map((frame) => frame.metadata.width)).toEqual([320])
+    await registration?.fallback?.stop()
+  })
+
+  it('LIVE-STREAM-FOR-SELECTION: no continuous stream but a screenshot() gets a snapshot producer and no fallback', async () => {
+    const timer = makeFakeTimer()
+    const shots = makeScreenshotSpy()
+    const registration = liveStreamFor({ screenshot: shots.screenshot }, { timer })
+    expect(registration?.capability.kind).toBe('snapshot')
+    expect(registration !== undefined && 'fallback' in registration).toBe(false)
+    await registration?.capability.start(() => {})
+    await settle()
+    expect(shots.calls()).toBe(1)
+    await registration?.capability.stop()
+  })
+
+  it("LIVE-STREAM-FOR-SELECTION: an adapter's own snapshot stream is used as-is, and its screenshot() is never wrapped", async () => {
+    const timer = makeFakeTimer()
+    const own = makeScreencast('snapshot')
+    const shots = makeScreenshotSpy()
+    const registration = liveStreamFor({ liveStream: own, screenshot: shots.screenshot }, { timer })
+    expect(registration?.capability).toBe(own)
+    expect(registration !== undefined && 'fallback' in registration).toBe(false)
+    await registration?.capability.start(() => {})
+    timer.fire(LIVE_SNAPSHOT_INTERVAL_MS)
+    await settle()
+    expect(shots.calls(), 'the context-switching screenshot() is never reached').toBe(0)
+    expect(timer.pending(LIVE_SNAPSHOT_INTERVAL_MS), 'nothing liveStreamFor built is ticking').toBe(0)
+  })
+
+  it('LIVE-STREAM-FOR-SELECTION: an adapter with neither, or no adapter, gets nothing', () => {
+    expect(liveStreamFor({})).toBeUndefined()
+    expect(liveStreamFor(undefined)).toBeUndefined()
   })
 })
