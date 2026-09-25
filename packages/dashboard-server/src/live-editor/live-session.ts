@@ -20,6 +20,8 @@ import {
   resolveSecretEnv,
   parseHookInline,
   stripHookInline,
+  createLiveStreamHub,
+  liveStreamFor,
 } from '@vostride/agent-qa-runner'
 import { DockerHookExecutor } from '@vostride/agent-qa-runner-local'
 import { createModel, createTokenAccounting, resolveCapabilities } from '@vostride/agent-qa-model'
@@ -39,6 +41,7 @@ import type {
   SecretRedactor,
   SecretStore,
   StorageStatePort,
+  LiveStreamHub,
 } from '@vostride/agent-qa-runner'
 import type { LanguageModel } from 'ai'
 import { authFromFetch, authFromRuntimeConfig, toModelProfileAndAuth } from '../llm-model-mapping.js'
@@ -267,21 +270,41 @@ export class LiveSession {
   private mobileAppiumLease: MobileLiveAppiumLease | null = null
   private secretStore: SecretStore | undefined
   private secretRedactor: SecretRedactor | undefined
+  // 428 D-07: one hub per session, handle 0, created once the adapter exists. A session whose
+  // setup hooks failed has no adapter and therefore no hub; its subject declares `none`.
+  private liveHub: LiveStreamHub | null = null
+  private attachment: LiveEditorAttachment | null = null
+  private resolveEnded: () => void = () => {}
+  private readonly ended: Promise<void>
+  private cleanupRun: Promise<void> | null = null
 
   constructor(sessionId: string, private deps: LiveSessionDeps = {}) {
     this.sessionId = sessionId
+    this.ended = new Promise<void>((resolve) => {
+      this.resolveEnded = resolve
+    })
   }
 
   get modelName(): string {
     return this._modelName
   }
 
+  /** What the editor-subject registry holds for this session: its hub, read at call time. */
   liveAttachment(): LiveEditorAttachment {
-    return {
-      streamCapabilityOf: () => ({ kind: 'none' }),
-      subscribeFrames: () => undefined,
-      ended: new Promise<void>(() => {}),
+    this.attachment ??= {
+      streamCapabilityOf: (handle) => this.liveHub?.capabilityOf(handle) ?? { kind: 'none' },
+      subscribeFrames: (handle, onFrame, onEnd) => this.liveHub?.subscribe(handle, onFrame, onEnd),
+      ended: this.ended,
     }
+    return this.attachment
+  }
+
+  private openLiveHub(): void {
+    if (!this.adapter || this.liveHub) return
+    const hub = createLiveStreamHub()
+    const registration = liveStreamFor(this.adapter)
+    hub.register(0, registration?.capability, registration?.fallback)
+    this.liveHub = hub
   }
 
   attachMessageSink(sink: ((message: ServerMessage) => void) | null): void {
@@ -630,6 +653,7 @@ export class LiveSession {
         this.currentUrl = 'about:blank'
       }
     }
+    this.openLiveHub()
 
     const { vision: _vision, ...modelIdentity } = config.llmConfig
     void _vision
@@ -1373,9 +1397,24 @@ export class LiveSession {
     }
   }
 
-  async cleanup(): Promise<void> {
+  /** Idempotent: every later or concurrent call shares the first run, so teardown happens once. */
+  cleanup(): Promise<void> {
+    if (this.status === 'terminated') return Promise.resolve()
+    this.cleanupRun ??= this.runCleanup()
+    return this.cleanupRun
+  }
+
+  private async runCleanup(): Promise<void> {
     this.clearIdleTimer()
     this.readyForInteraction = false
+    // The hub closes first, so subscribers hear 'closed' and the screencast stops before the
+    // browser that produces it goes away.
+    const hub = this.liveHub
+    this.liveHub = null
+    try {
+      await hub?.close()
+    } catch {}
+    this.resolveEnded()
     try {
       await this.adapter?.cleanup()
     } finally {
