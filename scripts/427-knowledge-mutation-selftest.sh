@@ -114,6 +114,8 @@ runSelftest({
       reds: [`${EFFECT_V} > REPLAY-GROUPED-STEPS (x2)`] },
     { id: 'K31', claim: 'REPLAY-PER-FLOW', subject: VIEW_SRC,
       reds: [`${EFFECT_V} > REPLAY-PER-FLOW (x3)`] },
+    { id: 'K32', claim: 'TRIGGER-ACCESSIBLE-NAME', subject: USED_SRC,
+      reds: [`${USED_C} > TRIGGER-ACCESSIBLE-NAME`] },
   ],
 })
 NODE

@@ -12,7 +12,8 @@
 # still records its snapshot, problems first in the Effect section, no uncounted trial and no hint
 # listed as an effect, a replay sized by its recorded flow and by its own flow (never by the other
 # flows of its procedure), complete only when every attempted check passed and one entry per
-# procedure and extent, and the curator's note after the counts. Every suite that pins
+# procedure and extent, the curator's note after the counts, and every tooltip trigger a named
+# button whose meaning is its one description. Every suite that pins
 # those is green today with nothing taken away, which is exactly what a green suite cannot tell you.
 # So each leg below plants the regression that would re-open one set or break one promise, and
 # requires its NAMED cell to red while the listed controls hold.
@@ -49,6 +50,7 @@
 #   K29  a replay's size is the per-step guard total, not the recorded flow length -> REPLAY-SIZE-FROM-FLOW (D-12)
 #   K30  every replayed step is its own effect entry again                         -> REPLAY-GROUPED-STEPS (UI-SPEC S4)
 #   K31  every flow of a procedure is unioned into one completed replay again      -> REPLAY-PER-FLOW (D-12)
+#   K32  the on-trial trigger is a focusable span again, with no role and so no name -> TRIGGER-ACCESSIBLE-NAME (G-427-1)
 #
 # ALLOWED CO-REDS are listed on each leg with a one-line reason; nothing else may red. No leg names
 # the shipped-binary Learned-root curation-word cell as a red or a green: it is nondeterministic
@@ -70,7 +72,7 @@
 #   neutered  apply NO mutation; the run must FATAL with "<leg>: suite stayed green"
 #   fatal     mutate every subject, then throw; every subject must be restored
 #   SIGINT | SIGTERM | SIGHUP   the same, then deliver that signal to itself
-# AGENT_QA_427_KNOWLEDGE_MUTATION_LEG=K01..K31 runs one leg (normal or neutered runs only).
+# AGENT_QA_427_KNOWLEDGE_MUTATION_LEG=K01..K32 runs one leg (normal or neutered runs only).
 # AGENT_QA_427_KNOWLEDGE_MUTATION_LIST=1 prints the declared inventory and exits.
 #
 # Installed Node 24, workspace tools and the installed Playwright Chromium are required. No
@@ -111,7 +113,7 @@ const DOM = 'src/__tests__/conformance/knowledge-tab-dom.test.ts'
 
 const instruments = {
   'ui-view': { pkg: 'packages/dashboard-ui', files: [USED_V, EFFECT_V, CHANGES_V, RETRIEVAL_V, VIEW_D], typecheck: true, count: 101 },
-  'ui-parts': { pkg: 'packages/dashboard-ui', files: [USED_C, BODY_C, EFFECT_C, DETAILS_C, DEFAULT_C, STATEMENT_C, STEP_REF_C], typecheck: false, count: 58 },
+  'ui-parts': { pkg: 'packages/dashboard-ui', files: [USED_C, BODY_C, EFFECT_C, DETAILS_C, DEFAULT_C, STATEMENT_C, STEP_REF_C], typecheck: false, count: 60 },
   'ui-tab': { pkg: 'packages/dashboard-ui', files: [TAB_C, LEARNED_C, STEP_C, BANNER_C], typecheck: false, count: 114 },
   store: { pkg: 'packages/knowledge-local', files: [SNAPSHOT_T], typecheck: false, count: 20 },
   'knowledge-dom': { pkg: 'packages/cli', files: [DOM], typecheck: false, count: 24, env: { VITEST_MAX_WORKERS: '1' } },
@@ -609,10 +611,21 @@ const legs = [
     greens: [effect('REPLAY-COMPLETE'), effect('REPLAY-GROUPED-STEPS', 2), effect('REPLAY-SIZE-FROM-FLOW', 3),
       effect('REPLAY-INCOMPLETE-NOT-COMPLETE', 2), effect('EFFECT-GROUPED-STEPS'), effect('HINT-NOT-EFFECT')],
   },
+  {
+    subject: USED_SRC, instrument: 'ui-parts', claim: 'TRIGGER-ACCESSIBLE-NAME',
+    operation: 'turn the on-trial trigger back into the focusable span the UAT found, with no role and so no name',
+    edits: [
+      { from: '        <button type="button"', to: '        <span tabIndex={0}' },
+      { from: '        </button>\n', to: '        </span>\n' },
+    ],
+    reds: [usedC('TRIGGER-ACCESSIBLE-NAME')],
+    allowed: [],
+    greens: [usedC('ON-TRIAL-TAG'), usedC('KIND-LABEL'), effectC('TRIGGER-ACCESSIBLE-NAME'), defaultView('NO-MACHINERY-IN-DEFAULT-VIEW')],
+  },
 ]
 
 runGate({
   slug: '427-knowledge-mutation', envPrefix: 'AGENT_QA_427_KNOWLEDGE_MUTATION', idPrefix: 'K',
-  instruments, legs, expectedLegs: 31, banner: 'KNOWLEDGE_MUTATION_OK',
+  instruments, legs, expectedLegs: 32, banner: 'KNOWLEDGE_MUTATION_OK',
 })
 NODE
