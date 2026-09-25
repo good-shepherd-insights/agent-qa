@@ -1384,11 +1384,6 @@ export class LiveSession {
     }
   }
 
-  async getScreenshot(): Promise<Buffer | undefined> {
-    if (!this.readyForInteraction) return undefined
-    return this.adapter?.screenshot?.()
-  }
-
   async getAriaTree(): Promise<string | null> {
     if (!this.readyForInteraction || !this.adapter) return null
     if (!this.adapter) return null

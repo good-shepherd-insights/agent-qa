@@ -147,7 +147,6 @@ export type ClientMessage =
     }
   | { type: 'cancel-step' }
   | { type: 'terminate-session' }
-  | { type: 'get-screenshot' }
   | { type: 'get-state' }
   | { type: 'navigate'; url: string }
   | { type: 'refresh-page' }
@@ -171,7 +170,6 @@ export type ServerMessage =
   | { type: 'test-step-error'; step: LiveTestStepPayload; error: string }
   | { type: 'test-complete'; test: LiveTestExecutionPayload; result: LiveTestResultPayload }
   | { type: 'test-error'; test: LiveTestExecutionPayload; error: string }
-  | { type: 'screenshot'; data: string }
   | { type: 'session-state'; state: SessionState }
   | { type: 'session-terminated' }
   | { type: 'browser-disconnected' }

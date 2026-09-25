@@ -278,16 +278,6 @@ export function createSessionHandler(
           break
         }
 
-        case 'get-screenshot': {
-          const buf = await session.getScreenshot()
-          if (buf) {
-            send(ws, { type: 'screenshot', data: buf.toString('base64') })
-          } else {
-            send(ws, { type: 'error', message: 'Screenshot unavailable' })
-          }
-          break
-        }
-
         case 'get-state': {
           send(ws, { type: 'session-state', state: session.getState() })
           break
