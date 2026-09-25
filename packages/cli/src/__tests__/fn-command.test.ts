@@ -811,6 +811,9 @@ describe('agent-qa fn (generic function invoker)', () => {
       // a live-view port exists — `agent-qa dashboard`'s `composeLiveView`. A CLI host with no
       // server to serve the embed page from has nothing to mint a link TO, and says so.
       'runs.liveurl': { requiredScopes: ['read'], resultKind: 'unary', bindingStatus: 'unbound' },
+      // 428 D-07: UNBOUND here on runs.liveurl's reasoning. A live editor binds only where the
+      // dashboard serves one, so a plain CLI host has no editor session to mint a link for.
+      'editor.liveurl': { requiredScopes: ['read'], resultKind: 'unary', bindingStatus: 'unbound' },
       // 388 D-14: BOUND on every local host, and NOT gated on whether this one drains the
       // chain — the two are different questions, and a host that only ever reads is exactly
       // the caller that most needs durable chip truth. Read-tier, so it survives safe mode.

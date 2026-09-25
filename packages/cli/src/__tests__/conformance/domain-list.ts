@@ -77,6 +77,7 @@ export interface CanonicalDomain {
 
 /**
  * The taxonomy. Fourteen members: D-15's eight, plus the six domains later phases argued for.
+ * Fifteen since 2026-09-25 (428 D-07): `editor` joined when `editor.liveurl` landed.
  *
  * Sorted by domain so a diff adding one is a single line in a predictable place.
  */
@@ -102,6 +103,12 @@ export const CANONICAL_ID_DOMAINS: readonly CanonicalDomain[] = Object.freeze([
     charter:
       'the project configuration document: reading the masked resolution, and every proposal-'
       + 'mediated write to it, including scaffolding and undo (395)',
+  }),
+  Object.freeze({
+    domain: 'editor',
+    charter:
+      'the dashboard\'s live test editor session — a draft execution a person drives, as '
+      + 'distinct from `runs`, which is a queued run\'s record (428 D-07)',
   }),
   Object.freeze({
     domain: 'entities',

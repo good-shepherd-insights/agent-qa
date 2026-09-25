@@ -8,7 +8,7 @@
     "conformance suite is red, so a regeneration cannot launder an unrelated failure, and no",
     "test-runner update flag reaches this file."
   ],
-  "opCount": 51,
+  "opCount": 52,
   "rows": [
     {
       "bindingStatusAtRoot": "bound",
@@ -334,6 +334,26 @@
       "risk": {
         "name": "fn:config.undo.propose",
         "readOnly": false,
+        "recognized": true
+      }
+    },
+    {
+      "bindingStatusAtRoot": "unbound",
+      "classifies": true,
+      "id": "editor.liveurl",
+      "inputSchemaDigest": "27fb8ddfe3b3dff5b644909b7f9459ec6bc13efaf8ccc548ed3597135ab7be11",
+      "outputSchemaDigest": "aea12ee396e215bf9f6fb4a0fd9fa467fa1513061273f02df6e1c16f31d7913c",
+      "partition": {
+        "kind": "unprojected",
+        "reason": "credential-mint-deferral"
+      },
+      "requiredScopes": [
+        "read"
+      ],
+      "resultKind": "unary",
+      "risk": {
+        "name": "fn:editor.liveurl",
+        "readOnly": true,
         "recognized": true
       }
     },
@@ -929,7 +949,7 @@
       "classifies": true,
       "id": "runs.liveurl",
       "inputSchemaDigest": "7ddcdc4b2077bfbc93e0692945020570dc6b9edbbcab6764b4fcf540526f0f83",
-      "outputSchemaDigest": "a1647dcc1436bdbf39f59e9c44d37976e4337742a790bd844476b95fdfd838d0",
+      "outputSchemaDigest": "549a1d878bd7c5c5324cfbbafe7321d40d5e971782c68de57d26dc49988995b8",
       "partition": {
         "kind": "unprojected",
         "reason": "credential-mint-deferral"

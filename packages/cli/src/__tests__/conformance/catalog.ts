@@ -214,6 +214,16 @@ export const CATALOG_DOC_PATHS: readonly (readonly [string, CatalogDocAdjudicati
     Object.freeze(['config.target.create', Object.freeze({ absentReason: CATALOG_DOC_ABSENT_REASON })] as const),
     Object.freeze(['config.target.edit', Object.freeze({ absentReason: CATALOG_DOC_ABSENT_REASON })] as const),
     Object.freeze(['config.undo.propose', Object.freeze({ absentReason: CATALOG_DOC_ABSENT_REASON })] as const),
+    // 2026-09-25 (428, D-07): in SORT position after `config.undo.propose`, an explicit dated
+    // absence on `runs.liveurl`'s idiom.
+    Object.freeze([
+      'editor.liveurl',
+      Object.freeze({
+        absentReason:
+          'no shipped page documents the editor mint (dated 2026-09-25, 428 D-07); a person meets '
+          + 'it through Test → Live on the dashboard, which is the only door that dispatches it.',
+      }),
+    ] as const),
     Object.freeze(['entities.get', Object.freeze({ absentReason: CATALOG_DOC_ABSENT_REASON })] as const),
     Object.freeze(['entities.resolve', Object.freeze({ absentReason: CATALOG_DOC_ABSENT_REASON })] as const),
     Object.freeze(['grants.list', Object.freeze({ absentReason: CATALOG_DOC_ABSENT_REASON })] as const),

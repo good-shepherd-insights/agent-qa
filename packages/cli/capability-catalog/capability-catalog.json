@@ -222,7 +222,7 @@
       "v1Name": "agent_qa_validate_test"
     }
   ],
-  "rowCount": 59,
+  "rowCount": 60,
   "rows": [
     {
       "alias": "digest",
@@ -973,6 +973,39 @@
       "surfaces": [
         "chat",
         "mcp"
+      ]
+    },
+    {
+      "description": "Mint a short-lived, view-scoped live-view URL for one live editor session.",
+      "docAbsentReason": "no shipped page documents the editor mint (dated 2026-09-25, 428 D-07); a person meets it through Test → Live on the dashboard, which is the only door that dispatches it.",
+      "docPath": null,
+      "exampleCall": {
+        "arguments": {
+          "sessionId": "<SESSIONID>"
+        }
+      },
+      "id": "editor.liveurl",
+      "kind": "op",
+      "mcpUnprojectedReasonKey": "credential-mint-deferral",
+      "params": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "sessionId": {
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "sessionId"
+        ],
+        "type": "object"
+      },
+      "requiredScopes": [
+        "read"
+      ],
+      "surfaces": [
+        "chat"
       ]
     },
     {
@@ -2529,5 +2562,5 @@
       "shortDescription": "Triage agent-qa run failures"
     }
   ],
-  "rowsDigest": "30e79532ad4e3d8d602e0278410c58ad0ba0ebf06688b6e84c4d3ed1ca8c0303"
+  "rowsDigest": "ae4583c9e743a65722dc2a85aefb9baf5e0bb1dd12192cc832aaf082415b8ea0"
 }

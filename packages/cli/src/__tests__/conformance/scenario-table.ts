@@ -49,6 +49,7 @@ import {
   ConfigTargetCreateInputSchema,
   ConfigTargetEditInputSchema,
   ConfigUndoProposeInputSchema,
+  EditorLiveUrlInputSchema,
   ENTITY_DASHBOARD_ROUTES,
   ENTITY_KINDS,
   EntitiesGetInputSchema,
@@ -119,6 +120,8 @@ export const OP_INPUT_CONTRACTS = {
   'config.target.create': ConfigTargetCreateInputSchema,
   'config.target.edit': ConfigTargetEditInputSchema,
   'config.undo.propose': ConfigUndoProposeInputSchema,
+  // 2026-09-25 (428 D-07): the editor subject's mint.
+  'editor.liveurl': EditorLiveUrlInputSchema,
   'entities.get': EntitiesGetInputSchema,
   'entities.resolve': EntitiesResolveInputSchema,
   'grants.list': GrantsListInputSchema,
@@ -814,6 +817,21 @@ export const SCENARIO_TABLE = Object.freeze([
         'summaryLine',
       ],
     },
+    policyPoints: { grant: 'allow', refuse: 'deny' },
+  }),
+  // 2026-09-25 (428 D-07): the editor subject's mint, mirroring runs.liveurl's row, in SORT
+  // position (the render matrix derives its cell names from this order). Unprojected on MCP by
+  // ruling and keyed `credential-mint-deferral` for the same defining fact: the op hands out a
+  // credential. Its result carries no `handle`, since an editor session has one stream.
+  scenario({
+    opId: 'editor.liveurl',
+    input: { sessionId: 'editor-session-1' },
+    perSurface: {
+      chat: { reachable: true },
+      mcp: { unprojected: 'credential-mint-deferral' },
+      fn: { reachable: true },
+    },
+    renderExpect: { markers: ['expiresAt', 'liveUrl', 'stream'] },
     policyPoints: { grant: 'allow', refuse: 'deny' },
   }),
   // 387: `get` takes an exact address; the fixture entity directory is what stands behind it.

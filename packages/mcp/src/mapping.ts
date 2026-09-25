@@ -788,11 +788,11 @@ export const UNPROJECTED_OPS: readonly UnprojectedOp[] = Object.freeze([
   Object.freeze({
     opId: 'editor.liveurl',
     reason:
-      'D-07 (dated 2026-09-25, 428): the op mints a view credential for a live EDITOR session, '
-      + 'which is private to the dashboard page that owns it; it is reachable only through the '
-      + 'dashboard door and never through an MCP tool or the MCP App live-run resource. Projecting '
-      + 'it would give an agent a watch carrier for a draft execution, which the owner declined in '
-      + 'D-07. Unprojected by ruling, not by deferral.',
+      'D-07 (dated 2026-09-25, 428): the op MINTS A CREDENTIAL — a view credential for a live '
+      + 'EDITOR session, which is private to the dashboard page that owns it; it is reachable only '
+      + 'through the dashboard door and never through an MCP tool or the MCP App live-run '
+      + 'resource. Projecting it would give an agent a watch carrier for a draft execution, which '
+      + 'the owner declined in D-07. Unprojected by ruling, not by deferral.',
     adjudication: '428',
   }),
   Object.freeze({
