@@ -11,7 +11,12 @@
 // until frame N is acked, so ONE wedged viewer would freeze the stream for everyone. After
 // `ackBoundMs` the hub acks on that viewer's behalf and the frames keep flowing.
 
-import type { LiveFrame, LiveFrameSubscription, LiveStreamDeclaration } from '@vostride/agent-qa-schema'
+import type {
+  LiveFrame,
+  LiveFrameEndReason,
+  LiveFrameSubscription,
+  LiveStreamDeclaration,
+} from '@vostride/agent-qa-schema'
 import type { LiveStreamCapability } from '../platform.js'
 import type { RunTimerPort } from './ports.js'
 
@@ -61,7 +66,7 @@ export interface LiveStreamHub {
   subscribe(
     handle: number,
     onFrame: (frame: LiveFrame) => void,
-    onEnd?: () => void,
+    onEnd?: (reason: LiveFrameEndReason) => void,
   ): LiveFrameSubscription | undefined
   capabilityOf(handle: number): LiveStreamDeclaration
   close(): Promise<void>
@@ -70,15 +75,17 @@ export interface LiveStreamHub {
 interface Subscriber {
   onFrame: (frame: LiveFrame) => void
   /**
-   * Called ONCE when this handle's stream ends under the subscriber (403 CR-03): the member
-   * finished and withdrew its declaration, or a re-register replaced the capability. Optional, so
-   * a caller that only wants frames is unchanged.
+   * Called ONCE when this handle's stream ends under the subscriber (403 CR-03), naming why
+   * (428 D-14). `withdrawn`: the member finished or a re-register replaced its capability, and the
+   * subject goes on. `closed`: the whole subject is over (the hub closed), so a consumer should
+   * defer to the subject's own end rather than report this member's. Optional, so a caller that
+   * only wants frames is unchanged.
    *
    * WHY IT EXISTS. Dropping a subscriber set silently is what leaves a live view frozen: the last
    * frame stays painted and the surface goes on calling itself live, which is the one state a
    * person watching cannot tell apart from a run that is still running.
    */
-  onEnd?: () => void
+  onEnd?: (reason: LiveFrameEndReason) => void
 }
 
 /**
@@ -215,13 +222,13 @@ export function createLiveStreamHub(opts: CreateLiveStreamHubOptions = {}): Live
    * A subscriber that throws here is already gone, so its throw is swallowed rather than reported:
    * the run has nowhere to put it and the remaining subscribers must still be told.
    */
-  function endStream(state: StreamState): void {
+  function endStream(state: StreamState, reason: LiveFrameEndReason): void {
     state.dead = true
     const leaving = [...state.subscribers]
     state.subscribers.clear()
     for (const subscriber of leaving) {
       try {
-        subscriber.onEnd?.()
+        subscriber.onEnd?.(reason)
       } catch {
         /* a viewer that throws on the way out is gone anyway — and it is not the run's business */
       }
@@ -315,7 +322,7 @@ export function createLiveStreamHub(opts: CreateLiveStreamHubOptions = {}): Live
         streams.delete(handle)
         if (existing) {
           stopStream(existing)
-          endStream(existing)
+          endStream(existing, 'withdrawn')
         }
         return
       }
@@ -325,7 +332,7 @@ export function createLiveStreamHub(opts: CreateLiveStreamHubOptions = {}): Live
         // they hold a subscription to a state that is about to be unreachable, and nothing will
         // ever deliver to them again. Same end, same name.
         stopStream(existing)
-        endStream(existing)
+        endStream(existing, 'withdrawn')
       }
       streams.set(handle, {
         capability,
@@ -379,11 +386,13 @@ export function createLiveStreamHub(opts: CreateLiveStreamHubOptions = {}): Live
     },
 
     async close(): Promise<void> {
+      // The third eviction site, and it evicts like the other two (428 D-14, #277): each state is
+      // marked dead and its subscribers told, so a release held past close() arms no grace.
       closed = true
       const pending: Promise<void>[] = []
       for (const [, state] of streams) {
-        state.subscribers.clear()
         stopStream(state)
+        endStream(state, 'closed')
         pending.push(state.chain)
       }
       streams.clear()

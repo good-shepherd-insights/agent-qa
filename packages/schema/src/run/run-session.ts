@@ -1,5 +1,10 @@
 import type { CompletedRunHandoff } from '../handoff/completed-run-handoff'
-import type { LiveFrame, LiveFrameSubscription, LiveStreamDeclaration } from './live-stream'
+import type {
+  LiveFrame,
+  LiveFrameEndReason,
+  LiveFrameSubscription,
+  LiveStreamDeclaration,
+} from './live-stream'
 import type { RunEventEnvelope } from './bus-events'
 import type { RunId } from './run-id'
 import type { RunStatus, ExecutionContext } from './run-status'
@@ -56,11 +61,13 @@ export interface RunSession {
    * subscriber — the member finished, or its capability was replaced. OPTIONAL, so every caller
    * that only wants frames is unchanged. It is what lets a surface NAME the end of one member's
    * stream instead of holding a frozen last frame and going on calling it live.
+   * 2026-09-25 (428 D-14): `onEnd` names its reason — `withdrawn` (this member finished or was
+   * replaced, the subject goes on) or `closed` (the whole subject is over).
    */
   subscribeFrames(
     handle: number,
     onFrame: (frame: LiveFrame) => void,
-    onEnd?: () => void,
+    onEnd?: (reason: LiveFrameEndReason) => void,
   ): LiveFrameSubscription | undefined
   /** What handle `handle` can stream right now (403 D-08). `{ kind: 'none' }` for an absent/finished handle. */
   streamCapabilityOf(handle: number): LiveStreamDeclaration

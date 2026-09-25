@@ -1,6 +1,11 @@
 import { expectTypeOf } from 'vitest'
 import type { RunId, RunStatus, ExecutionContext } from '../run/index'
-import type { LiveFrame, LiveFrameSubscription, LiveStreamDeclaration } from '../run/live-stream'
+import type {
+  LiveFrame,
+  LiveFrameEndReason,
+  LiveFrameSubscription,
+  LiveStreamDeclaration,
+} from '../run/live-stream'
 import type { RunCompletion, RunSession } from '../run/run-session'
 
 // M1-lite contract (D-13, SESSION-01): identity + status, the subscribe/replay seam,
@@ -20,6 +25,10 @@ expectTypeOf<RunSession['subscribe']>().returns.toEqualTypeOf<() => void>()
 expectTypeOf<RunSession['streamCapabilityOf']>().parameter(0).toEqualTypeOf<number>()
 expectTypeOf<RunSession['streamCapabilityOf']>().returns.toEqualTypeOf<LiveStreamDeclaration>()
 expectTypeOf<RunSession['subscribeFrames']>().parameter(0).toEqualTypeOf<number>()
+// 2026-09-25 (428 D-14): the end callback names its reason; a zero-argument callback still fits.
+expectTypeOf<RunSession['subscribeFrames']>().parameter(2)
+  .toEqualTypeOf<((reason: LiveFrameEndReason) => void) | undefined>()
+expectTypeOf<() => void>().toMatchTypeOf<NonNullable<Parameters<RunSession['subscribeFrames']>[2]>>()
 expectTypeOf<RunSession['subscribeFrames']>().returns
   .toEqualTypeOf<LiveFrameSubscription | undefined>()
 expectTypeOf<keyof RunSession>().toEqualTypeOf<
