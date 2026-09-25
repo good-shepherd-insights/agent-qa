@@ -839,6 +839,67 @@ describe('the hub stamps capture time and producer kind on a copy (428-01 · D-1
   })
 })
 
+// ---- 428-04: EVERY END SAYS WHY, AND close() EVICTS LIKE THE OTHER TWO SITES (D-14, #277) -------
+//
+// `withdrawn`: this member finished or was replaced, and its subject goes on. `closed`: the whole
+// subject is over. A consumer that cannot tell the two apart either ends a whole view when one
+// member finishes, or holds a frozen frame when the run ends.
+
+describe('every end names its reason and close() evicts (428-04 · D-14 · #277)', () => {
+  it('CLOSE-EVICTS-AND-TELLS: close() ends every subscriber once with closed, stops once, refuses later subscribers', async () => {
+    const timer = makeFakeTimer()
+    const capability = makeFakeCapability()
+    const hub = createLiveStreamHub({ timer })
+    hub.register(0, capability)
+    const ends: string[] = []
+    hub.subscribe(0, () => {}, (reason) => ends.push(`one:${reason}`))
+    hub.subscribe(0, () => {}, (reason) => ends.push(`two:${reason}`))
+    await flush()
+    expect(capability.calls, 'the witness: the stream really was running').toContain('start')
+
+    await hub.close()
+    expect(ends, 'each viewer is told, once, that the whole subject is over').toEqual([
+      'one:closed',
+      'two:closed',
+    ])
+    expect(capability.calls.filter((call) => call === 'stop')).toHaveLength(1)
+    expect(hub.subscribe(0, () => {}), 'an evicted handle hands out nothing').toBeUndefined()
+  })
+
+  it('RELEASE-AFTER-CLOSE-ARMS-NOTHING: a subscription released after close() arms no grace timer', async () => {
+    const timer = makeFakeTimer()
+    const capability = makeFakeCapability()
+    const hub = createLiveStreamHub({ timer })
+    hub.register(0, capability)
+    const held = hub.subscribe(0, () => {})
+    await flush()
+    await hub.close()
+    held?.unsubscribe()
+    expect(
+      timer.pending(LIVE_STREAM_STOP_GRACE_MS),
+      'a grace armed on an evicted state is a callback holding a closed hub (#277)',
+    ).toBe(0)
+    expect(capability.calls.filter((call) => call === 'stop')).toHaveLength(1)
+  })
+
+  it('WITHDRAW-SAYS-WITHDRAWN: a withdrawal and a replacement both end their subscribers with withdrawn', async () => {
+    const timer = makeFakeTimer()
+    const hub = createLiveStreamHub({ timer })
+    const ends: string[] = []
+
+    hub.register(0, makeFakeCapability())
+    hub.subscribe(0, () => {}, (reason) => ends.push(`withdraw:${reason}`))
+    hub.register(1, makeFakeCapability())
+    hub.subscribe(1, () => {}, (reason) => ends.push(`replace:${reason}`))
+    await flush()
+
+    hub.register(0, undefined)
+    hub.register(1, makeFakeCapability())
+    await flush()
+    expect(ends).toEqual(['withdraw:withdrawn', 'replace:withdrawn'])
+  })
+})
+
 // ---- THE SEAM, THROUGH THE REAL RUN --------------------------------------------------------
 //
 // The hub cells above drive the hub directly and the frame-proxy cells drive a PLANTED
