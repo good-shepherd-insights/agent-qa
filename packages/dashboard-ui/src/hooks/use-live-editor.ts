@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
-import type { LiveExecutionLogEntry } from '@/lib/api'
+import { deleteLiveEditorSession, type LiveExecutionLogEntry } from '@/lib/api'
 import type { LivePhase } from '@/lib/display-step'
 import { logLiveDebug } from '@/lib/live-debug'
 
@@ -1501,14 +1501,32 @@ export function useLiveEditor(
     }
   }, [isRunningAllTests, sendMessage])
 
+  // An explicit end must not depend on the control socket: the server only detaches on a dropped
+  // socket (428 D-09), and the page's unmount runs after this hook has closed it (RESEARCH P2).
   const terminateSession = useCallback(() => {
     runAllAbortedRef.current = true
     setIsRunningAll(false)
     setIsStoppingRunAll(false)
     terminatedRef.current = true
+    if (reconnectTimerRef.current) {
+      clearTimeout(reconnectTimerRef.current)
+      reconnectTimerRef.current = null
+    }
     logLiveDebug('hook', 'terminating session', { sessionId })
     sendMessage({ type: 'terminate-session' })
+    if (sessionId) {
+      deleteLiveEditorSession(sessionId, { keepalive: true }).catch(() => {
+        logLiveDebug('hook', 'session delete refused or already gone', { sessionId })
+      })
+    }
   }, [sendMessage, sessionId])
+
+  useEffect(() => {
+    if (!sessionId) return
+    const endOnPageHide = () => terminateSession()
+    window.addEventListener('pagehide', endOnPageHide)
+    return () => window.removeEventListener('pagehide', endOnPageHide)
+  }, [sessionId, terminateSession])
 
   const runningStepId = runningStepIndex !== null ? steps[runningStepIndex]?.id ?? null : null
 

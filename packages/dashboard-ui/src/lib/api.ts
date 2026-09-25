@@ -1538,8 +1538,21 @@ export async function createLiveEditorSession(
   return result
 }
 
-export async function deleteLiveEditorSession(sessionId: string): Promise<{ ok: boolean }> {
-  return postJson(`/api/live-editor/sessions/${encodeURIComponent(sessionId)}`, undefined, 'DELETE')
+// keepalive lets the DELETE outlive the page on pagehide (428 D-09), which postJson cannot ask for.
+export async function deleteLiveEditorSession(
+  sessionId: string,
+  options: { keepalive?: boolean } = {},
+): Promise<{ ok: boolean }> {
+  const res = await fetch(`${API_BASE}/api/live-editor/sessions/${encodeURIComponent(sessionId)}`, {
+    method: 'DELETE',
+    ...(options.keepalive ? { keepalive: true } : {}),
+  })
+  if (!res.ok) {
+    const payload = await parseErrorPayload(res)
+    throw new ApiError(res.status, res.statusText, payload)
+  }
+  if (res.status === 204) return { ok: true }
+  return res.json() as Promise<{ ok: boolean }>
 }
 
 export async function fetchLiveEditorSessions(): Promise<{ sessions: Array<{ sessionId: string; platform: string; status: string; currentStep: string | null; currentUrl: string | null; stepsExecuted: number; createdAt: number }> }> {
