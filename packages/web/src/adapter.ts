@@ -11,7 +11,7 @@ import type {
   RecordingCapability,
 } from '@vostride/agent-qa-runner'
 import type { LiveFrame } from '@vostride/agent-qa-schema'
-import { assertNever, buildScreenState } from '@vostride/agent-qa-runner'
+import { assertNever, buildScreenState, LIVE_KEEPALIVE_QUIET_MS } from '@vostride/agent-qa-runner'
 import type { ScreenState } from '@vostride/agent-qa-schema'
 import { convertKeysForPlatform, isMacPlatform } from '@vostride/agent-qa-runner'
 import { parseAriaSnapshot, enrichWebNodes, captureWebScroll } from './observer.js'
@@ -68,10 +68,17 @@ function readSeamStorageState(action: unknown): Parameters<BrowserContext['setSt
  * The `Page.startScreencast` parameters this adapter ships (403 discretion D-06).
  *
  * WHAT MAKES THE STREAM CHANGE-DRIVEN is the ack, not a parameter: CDP emits a frame when the
- * compositor produces one and then stalls until `Page.screencastFrameAck` arrives, so a static page
- * produces (almost) nothing — precisely the property a screenshot-polling implementation cannot
- * have. `live-stream.screencast.test.ts` measures both halves on a real Chromium: an animating page
- * yields hundreds of frames in 3 s WITH acks and 3 without, and a static page yields at most one.
+ * compositor produces one and then stalls until `Page.screencastFrameAck` arrives, so a moving page
+ * streams at the viewer's pace and a page that is not moving produces no screencast frames at all.
+ * `live-stream.screencast.test.ts` measures both halves on a real Chromium: an animating page yields
+ * hundreds of frames in 3 s WITH acks and 3 without.
+ *
+ * A STATIC PAGE STILL PRODUCES A FRAME EVERY 2 S (428 D-15). After `LIVE_KEEPALIVE_QUIET_MS` without
+ * a screencast frame the capability takes a fresh `Page.captureScreenshot` on the same CDP session
+ * and emits it, so the viewer's freshness dot stays green on a page that is simply still. It is a
+ * new capture stamped when it resolves, never the last frame re-sent: a wedged renderer produces
+ * nothing and the dot ages to amber, which is the truth. STATIC-PAGE-KEEPALIVE bounds the cadence
+ * both ways (2-4 frames in 6 s, gaps of at least 1.8 s), so a 1 s poller still fails it.
  *
  * `maxFramesInFlight` IS NOT A CDP PARAMETER and was removed after being measured to do nothing:
  * with and without it, an unacked stream delivered the same 3 frames per 3 s. Chromium tolerates
@@ -95,6 +102,16 @@ export const SCREENCAST_PARAMS = {
  * forever — the failure this whole ack path exists to avoid.
  */
 const SCREENCAST_ACK_WINDOW = 64
+
+/**
+ * How long after a keepalive frame one screencast frame is treated as that capture's echo.
+ *
+ * `Page.captureScreenshot` makes the compositor paint once, and the screencast delivers that paint
+ * as a frame within a millisecond of the capture (measured: same-millisecond stamps on every
+ * keepalive of a static page). It is the same picture the keepalive just emitted, so it is acked at
+ * once and not emitted; a page that really starts moving is only one frame later.
+ */
+const KEEPALIVE_ECHO_WINDOW_MS = 250
 
 /** Decode a CDP base64 frame payload to bytes without a `Buffer` round-trip in the hot path. */
 function decodeBase64(data: string): Uint8Array {
@@ -131,6 +148,12 @@ export class WebPlatformAdapter implements PlatformAdapter<'web'> {
   // 403-02: the PRODUCT's frame identity, and the CDP ack token it maps to. See `liveStream`.
   private screencastFrameSeq = 0
   private screencastAckTokens = new Map<number, number>()
+  // 428 D-15: the running screencast's consumer, its quiet-page keepalive, and the size a keepalive
+  // frame reports (the last screencast frame's device size).
+  private screencastOnFrame: ((frame: LiveFrame) => void) | null = null
+  private keepaliveTimer: ReturnType<typeof setTimeout> | null = null
+  private lastScreencastSize: { width: number; height: number } | null = null
+  private keepaliveEchoDeadline: number | null = null
 
   async setup(config: PlatformConfig): Promise<void> {
     this.recordingConfig = config.recording
@@ -209,9 +232,18 @@ export class WebPlatformAdapter implements PlatformAdapter<'web'> {
         if (!page || !context) return
         const cdp = await context.newCDPSession(page)
         this.screencast = cdp
+        this.screencastOnFrame = onFrame
         this.screencastAckTokens.clear()
         cdp.on('Page.screencastFrame', (event) => {
           const metadata = event.metadata
+          this.lastScreencastSize = { width: metadata.deviceWidth, height: metadata.deviceHeight }
+          if (this.screencast === cdp) this.armKeepalive(cdp)
+          const echoDeadline = this.keepaliveEchoDeadline
+          this.keepaliveEchoDeadline = null
+          if (echoDeadline !== null && Date.now() <= echoDeadline) {
+            void cdp.send('Page.screencastFrameAck', { sessionId: event.sessionId }).catch(() => undefined)
+            return
+          }
           // `LiveFrame.id` IS NOT `event.sessionId`, AND CONFLATING THEM WAS A BUG (403-02).
           //
           // `sessionId` is CDP's ack TOKEN. Measured on Chromium 1.59.1 it is `1` for every frame
@@ -242,13 +274,17 @@ export class WebPlatformAdapter implements PlatformAdapter<'web'> {
             metadata: {
               width: metadata.deviceWidth,
               height: metadata.deviceHeight,
-              ...(metadata.timestamp === undefined ? {} : { timestamp: metadata.timestamp }),
+              // CDP's `TimeSinceEpoch` is SECONDS; every other layer reads epoch ms (428 D-15).
+              ...(metadata.timestamp === undefined
+                ? {}
+                : { timestamp: Math.round(metadata.timestamp * 1000) }),
               scrollOffsetX: metadata.scrollOffsetX,
               scrollOffsetY: metadata.scrollOffsetY,
             },
           })
         })
         await cdp.send('Page.startScreencast', { ...SCREENCAST_PARAMS })
+        if (this.screencast === cdp) this.armKeepalive(cdp)
       },
       ack: async (frameId: number): Promise<void> => {
         const cdp = this.screencast
@@ -267,6 +303,9 @@ export class WebPlatformAdapter implements PlatformAdapter<'web'> {
       stop: async (): Promise<void> => {
         const cdp = this.screencast
         this.screencast = null
+        this.screencastOnFrame = null
+        this.clearKeepalive()
+        this.keepaliveEchoDeadline = null
         this.screencastAckTokens.clear()
         if (!cdp) return
         try { await cdp.send('Page.stopScreencast') } catch { /* best-effort */ }
@@ -275,6 +314,51 @@ export class WebPlatformAdapter implements PlatformAdapter<'web'> {
     }
     this.screencastCapability = capability
     return capability
+  }
+
+  private clearKeepalive(): void {
+    if (this.keepaliveTimer !== null) clearTimeout(this.keepaliveTimer)
+    this.keepaliveTimer = null
+  }
+
+  /** (Re-)arm the quiet-page keepalive for `cdp`; every screencast frame pushes it back. */
+  private armKeepalive(cdp: CDPSession): void {
+    this.clearKeepalive()
+    const timer = setTimeout(() => { void this.fireKeepalive(cdp) }, LIVE_KEEPALIVE_QUIET_MS)
+    timer.unref?.()
+    this.keepaliveTimer = timer
+  }
+
+  /**
+   * 428 D-15: a fresh capture on the same CDP session, emitted as a frame with no ack token (the ack
+   * path drops ids it never minted a token for). A capture that rejects emits nothing and re-arms;
+   * one that never settles emits nothing and arms nothing, which is the honest amber.
+   */
+  private async fireKeepalive(cdp: CDPSession): Promise<void> {
+    this.keepaliveTimer = null
+    if (this.screencast !== cdp) return
+    const framesBefore = this.screencastFrameSeq
+    let data: string
+    try {
+      const result = await cdp.send('Page.captureScreenshot', { format: 'jpeg', quality: 60 })
+      data = result.data
+    } catch {
+      if (this.screencast === cdp) this.armKeepalive(cdp)
+      return
+    }
+    if (this.screencast !== cdp) return
+    const onFrame = this.screencastOnFrame
+    if (onFrame === null) return
+    // A screencast frame that landed while the capture was in flight is already a fresh frame.
+    if (this.screencastFrameSeq !== framesBefore) return
+    const size = this.lastScreencastSize ?? this.page?.viewportSize() ?? { width: 0, height: 0 }
+    onFrame({
+      id: ++this.screencastFrameSeq,
+      bytes: decodeBase64(data),
+      metadata: { width: size.width, height: size.height, timestamp: Date.now() },
+    })
+    this.keepaliveEchoDeadline = Date.now() + KEEPALIVE_ECHO_WINDOW_MS
+    this.armKeepalive(cdp)
   }
 
   get recording(): RecordingCapability | undefined {
@@ -316,6 +400,9 @@ export class WebPlatformAdapter implements PlatformAdapter<'web'> {
     this.disconnected = false
     this.intentionalClose = false
     this.screencast = null
+    this.screencastOnFrame = null
+    this.clearKeepalive()
+    this.lastScreencastSize = null
     this.screencastAckTokens.clear()
   }
 
