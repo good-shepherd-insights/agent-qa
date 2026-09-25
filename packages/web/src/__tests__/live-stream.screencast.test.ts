@@ -193,6 +193,17 @@ async function collectAfterFirst(
   return frames
 }
 
+/**
+ * Withdraw the running screencast the way a dying CDP session does, while the browser stays up:
+ * detach the adapter's own session. The session is private and never handed out, so the cell
+ * reaches it through a cast; nothing in the product can.
+ */
+async function detachPrivateScreencastSession(adapter: WebPlatformAdapter): Promise<void> {
+  const session = (adapter as unknown as { screencast: { detach(): Promise<void> } | null }).screencast
+  expect(session, 'the screencast is running on a private CDP session').not.toBeNull()
+  await session?.detach()
+}
+
 describe('WebPlatformAdapter.liveStream is CHANGE-DRIVEN, not polled (LIVE-01)', () => {
   it('POSITIVE ARM: an animating page produces frames, k=5, zero tolerated failures', async () => {
     const adapter = await adapterOn(`${fixture().url}?animate=1`)
@@ -422,6 +433,114 @@ describe('WebPlatformAdapter.liveStream is CHANGE-DRIVEN, not polled (LIVE-01)',
       subscription?.unsubscribe()
     } finally {
       await hub.close().catch(() => undefined)
+      await adapter.cleanup().catch(() => undefined)
+    }
+  }, 180_000)
+
+  it('WITHDRAWN-FALLS-BACK: a screencast withdrawn under a live browser becomes labelled 1 s snapshots, and stop() ends them', async () => {
+    // RED while a withdrawn screencast simply goes silent: the viewer keeps the last frame and the
+    // dot ages to amber on a browser that is still up (428 D-12's second half).
+    const adapter = await adapterOn(`${fixture().url}?animate=1`)
+    try {
+      const capability = adapter.liveStream as NonNullable<WebPlatformAdapter['liveStream']>
+      const received: { frame: LiveFrame; at: number }[] = []
+      await capability.start((frame) => {
+        received.push({ frame, at: Date.now() })
+        void capability.ack(frame.id)
+      })
+      const streaming = await waitFor(() => received.length > 0, 3_000)
+      expect(streaming, 'the screencast was running before the withdrawal').toBe(true)
+
+      await detachPrivateScreencastSession(adapter)
+      const withdrawnAt = Date.now()
+      const fellBack = await waitFor(
+        () => received.some(({ frame, at }) => at >= withdrawnAt && frame.kind === 'snapshot'),
+        4_000,
+      )
+      expect(
+        fellBack,
+        'within 4 s of the withdrawal the consumer receives frames labelled `snapshot`. kinds seen '
+        + `after it = [${received.filter(({ at }) => at >= withdrawnAt).map(({ frame }) => String(frame.kind)).join(', ')}]`,
+      ).toBe(true)
+      await new Promise((resolve) => setTimeout(resolve, 3_200))
+      const snapshots = received.filter(({ frame }) => frame.kind === 'snapshot')
+      expect(snapshots.length, 'snapshots keep coming about once a second').toBeGreaterThanOrEqual(3)
+      for (let index = 1; index < snapshots.length; index++) {
+        const gap = (snapshots[index] as { at: number }).at - (snapshots[index - 1] as { at: number }).at
+        expect(gap, `snapshot ${String(index)} arrived ${String(gap)} ms after the one before`)
+          .toBeGreaterThanOrEqual(600)
+        expect(gap).toBeLessThanOrEqual(1_600)
+      }
+      const ids = received.map(({ frame }) => frame.id)
+      expect(ids, 'the fallback continues the capability\'s one monotonic id sequence')
+        .toEqual([...ids].sort((left, right) => left - right))
+      expect(new Set(ids).size).toBe(ids.length)
+      expect(capability.kind, 'the declared kind stays the screencast; the frames carry the label')
+        .toBe('cdp-screencast')
+
+      await capability.stop()
+      const atStop = received.length
+      await new Promise((resolve) => setTimeout(resolve, 2_000))
+      expect(received.length, 'stop() halts the snapshot fallback').toBe(atStop)
+    } finally {
+      await adapter.cleanup().catch(() => undefined)
+    }
+  }, 180_000)
+
+  it('WITHDRAWN-FALLS-BACK (re-bind): a tab switch after a withdrawal restores the screencast and stops the snapshots', async () => {
+    const adapter = await adapterOn(`${fixture().url}?animate=1`)
+    try {
+      const capability = adapter.liveStream as NonNullable<WebPlatformAdapter['liveStream']>
+      const received: { frame: LiveFrame; at: number }[] = []
+      await capability.start((frame) => {
+        received.push({ frame, at: Date.now() })
+        void capability.ack(frame.id)
+      })
+      expect(await waitFor(() => received.length > 0, 3_000)).toBe(true)
+      await detachPrivateScreencastSession(adapter)
+      const withdrawnAt = Date.now()
+      expect(
+        await waitFor(() => received.some(({ frame, at }) => at >= withdrawnAt && frame.kind === 'snapshot'), 4_000),
+        'the fallback is running before the switch',
+      ).toBe(true)
+
+      const switched = await adapter.execute({ type: 'tab', action: 'switch', index: 0 })
+      expect(switched.success).toBe(true)
+      const switchedAt = Date.now()
+      expect(
+        await waitFor(() => received.some(({ frame, at }) => at >= switchedAt && frame.kind === undefined), 3_000),
+        'screencast frames (no snapshot label) resume after the re-bind',
+      ).toBe(true)
+      const resumedAt = Date.now()
+      await new Promise((resolve) => setTimeout(resolve, 2_500))
+      const lateSnapshots = received.filter(({ frame, at }) => at > resumedAt && frame.kind === 'snapshot')
+      expect(lateSnapshots.length, 'the snapshot fallback stopped once the screencast was back').toBe(0)
+      await capability.stop()
+    } finally {
+      await adapter.cleanup().catch(() => undefined)
+    }
+  }, 180_000)
+
+  it('WITHDRAWN-FALLS-BACK (cleanup): cleanup() while the snapshot fallback runs stops it', async () => {
+    const adapter = await adapterOn(`${fixture().url}?animate=1`)
+    const received: LiveFrame[] = []
+    try {
+      const capability = adapter.liveStream as NonNullable<WebPlatformAdapter['liveStream']>
+      await capability.start((frame) => {
+        received.push(frame)
+        void capability.ack(frame.id)
+      })
+      expect(await waitFor(() => received.length > 0, 3_000)).toBe(true)
+      await detachPrivateScreencastSession(adapter)
+      expect(
+        await waitFor(() => received.some((frame) => frame.kind === 'snapshot'), 4_000),
+        'the fallback is running before cleanup',
+      ).toBe(true)
+      await adapter.cleanup()
+      const atCleanup = received.length
+      await new Promise((resolve) => setTimeout(resolve, 2_000))
+      expect(received.length, 'no frame after cleanup()').toBe(atCleanup)
+    } finally {
       await adapter.cleanup().catch(() => undefined)
     }
   }, 180_000)
