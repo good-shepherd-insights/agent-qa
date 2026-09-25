@@ -1,6 +1,13 @@
 import { expectTypeOf, test } from 'vitest'
-import { LIVE_FRAME_END_REASONS, LIVE_STREAM_KINDS } from '../index'
-import type { LiveFrameEndReason, LiveStreamDeclaration, LiveStreamKind } from '../index'
+import { LIVE_FRAME_END_REASONS, LIVE_STREAM_KINDS, LIVE_VIEW_SUBJECT_KINDS } from '../index'
+import type {
+  LiveFrameEndReason,
+  LiveStreamDeclaration,
+  LiveStreamKind,
+  LiveViewSubject,
+  LiveViewSubjectKind,
+  LiveViewSubjectRef,
+} from '../index'
 
 test('C428-LIVE-STREAM-KINDS-EXACT', () => {
   type Expected = 'cdp-screencast' | 'snapshot' | 'mjpeg' | 'webrtc'
@@ -17,4 +24,18 @@ test('C428-FRAME-END-REASONS-EXACT', () => {
   expectTypeOf<(typeof LIVE_FRAME_END_REASONS)[number]>().toEqualTypeOf<Expected>()
   expectTypeOf<Exclude<LiveFrameEndReason, Expected>>().toEqualTypeOf<never>()
   expectTypeOf<Exclude<Expected, LiveFrameEndReason>>().toEqualTypeOf<never>()
+})
+
+test('C428-LIVE-VIEW-SUBJECT-KINDS-EXACT', () => {
+  type Expected = 'run' | 'editor'
+  expectTypeOf<LiveViewSubjectKind>().toEqualTypeOf<Expected>()
+  expectTypeOf<(typeof LIVE_VIEW_SUBJECT_KINDS)[number]>().toEqualTypeOf<LiveViewSubjectKind>()
+  expectTypeOf<Exclude<LiveViewSubject['kind'], Expected>>().toEqualTypeOf<never>()
+  expectTypeOf<Exclude<Expected, LiveViewSubject['kind']>>().toEqualTypeOf<never>()
+
+  const ref: LiveViewSubjectRef = { kind: 'editor', id: 's1' }
+  expectTypeOf(ref).toEqualTypeOf<LiveViewSubjectRef>()
+  // @ts-expect-error a suite is not a live-view subject
+  const suite: LiveViewSubjectRef = { kind: 'suite', id: 's1' }
+  void suite
 })

@@ -27,3 +27,7 @@ test('EDITOR-LIVE-URL-DTOS-STRICT', () => {
   expect(api.EditorLiveUrlResultSchema.parse(result)).toEqual(result)
   expect(api.EditorLiveUrlResultSchema.safeParse({ ...result, handle: 0 }).success).toBe(false)
 })
+
+test('C428-LIVE-VIEW-SUBJECT-KINDS-EXACT', () => {
+  expect(api.LIVE_VIEW_SUBJECT_KINDS).toEqual(['run', 'editor'])
+})

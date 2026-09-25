@@ -28,8 +28,16 @@ export type { RunSession, RunCompletion } from './run-session'
 // 403 D-05/D-08: live-view frame vocabulary — frames as data, capability declared per handle.
 export { LIVE_FRAME_END_REASONS, LIVE_STREAM_KINDS, LiveStreamDeclarationSchema } from './live-stream'
 // 403 D-01..D-04: the liveUrl capability-token vocabulary (types + refusal names only).
-export { LIVE_URL_REFUSAL_REASONS, LIVE_URL_SCOPE } from './live-url'
-export type { LiveUrlClaims, LiveUrlRefusalReason, LiveUrlSigner, LiveUrlVerdict } from './live-url'
+export { LIVE_URL_REFUSAL_REASONS, LIVE_URL_SCOPE, LIVE_VIEW_SUBJECT_KINDS } from './live-url'
+export type {
+  LiveUrlClaims,
+  LiveUrlRefusalReason,
+  LiveUrlSigner,
+  LiveUrlVerdict,
+  LiveViewSubject,
+  LiveViewSubjectKind,
+  LiveViewSubjectRef,
+} from './live-url'
 export type {
   LiveFrame,
   LiveFrameEndReason,

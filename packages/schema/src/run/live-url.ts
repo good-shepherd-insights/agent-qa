@@ -11,6 +11,25 @@
 export const LIVE_URL_SCOPE = 'view' as const
 
 /**
+ * Who a live-view token lets you watch: a run token never opens an editor session and the reverse
+ * (428 D-07).
+ */
+export type LiveViewSubject =
+  | { kind: 'run'; runId: string; handle: number }
+  | { kind: 'editor'; sessionId: string }
+
+export type LiveViewSubjectKind = LiveViewSubject['kind']
+
+// prettier-ignore
+export const LIVE_VIEW_SUBJECT_KINDS = [
+  'run',
+  'editor',
+] as const satisfies readonly LiveViewSubject['kind'][]
+
+/** The expectation a validator is called with: the subject's kind and its path id. */
+export type LiveViewSubjectRef = { kind: LiveViewSubjectKind; id: string }
+
+/**
  * What a `liveUrl` token asserts. `handle` is the per-member run handle the viewer attaches to;
  * `iat`/`exp` are ms-epoch, so the whole claims body is JSON-and-integer only — no date parsing on
  * the refusal path, and no ambiguity about units at the boundary.
