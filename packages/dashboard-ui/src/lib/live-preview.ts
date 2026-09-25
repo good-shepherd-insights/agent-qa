@@ -215,3 +215,58 @@ export type LivePreviewEvent =
   | { type: 'retry' }
   | { type: 'subject-over'; reason: 'run-ended' | 'session-ended' }
   | { type: 'reset' }
+
+type LivePreviewPhase =
+  | 'minting'
+  | 'waiting'
+  | 'embedded'
+  | 'reconnecting'
+  | 'disconnected'
+  | 'expired'
+  | 'session-ended'
+  | 'run-ended'
+  | 'member-ended'
+  | 'no-stream'
+  | 'unavailable'
+
+export interface LivePreviewFrame {
+  ts: number
+  kind?: LiveStreamKind
+  width: number
+  height: number
+  arrivedAt: number
+}
+
+export interface LivePreviewMachine {
+  phase: LivePreviewPhase
+  declared?: LiveStreamKind
+  ready?: LiveStreamKind | 'none'
+  frame?: LivePreviewFrame
+  skew?: number
+  reconnectAttempts?: number
+  waitingAttempts?: number
+  gaveUp?: true
+}
+
+export interface LivePreviewView {
+  state: LivePreviewStateName
+  dot?: LiveDotState
+  words?: string
+  label?: string
+  action?: LivePreviewAction
+  snapshot: boolean
+  retryInMs?: number
+  frameSize?: { width: number; height: number }
+}
+
+export function createInitialLivePreview(): LivePreviewMachine {
+  return { phase: 'minting' }
+}
+
+export function reduceLivePreview(state: LivePreviewMachine, _event: LivePreviewEvent, _now: number): LivePreviewMachine {
+  return state
+}
+
+export function deriveLivePreview(_state: LivePreviewMachine, _now: number): LivePreviewView {
+  return { state: 'loading', snapshot: false }
+}
