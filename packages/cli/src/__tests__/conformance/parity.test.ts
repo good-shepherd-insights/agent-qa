@@ -1094,6 +1094,27 @@ describe('the parity suite ranges the registry census over every rostered surfac
     ).toEqual({ unprojected: 'credential-mint-deferral' })
   })
 
+  it('EDITOR-LIVEURL-UNPROJECTED-RULING: editor.liveurl stays unprojected by the 428 ruling (428 D-07)', () => {
+    // D-07: an editor session's view credential is private to the dashboard page that owns it, and
+    // the owner declined an MCP watch carrier for a draft execution. mapping-bump-guard pins the
+    // counts; this cell pins the ruling on the conformance layer, so a mint tool for an editor
+    // session reds here by name as well.
+    const entry = UNPROJECTED_OPS.find((candidate) => candidate.opId === 'editor.liveurl')
+    expect(entry, 'editor.liveurl left the unprojected register — re-home this ruling before it does')
+      .toBeDefined()
+    expect(
+      unprojectedReasonKeyOf(entry!.reason),
+      'the 428 ruling files the editor mint under the credential class, as runs.liveurl is filed',
+    ).toBe('credential-mint-deferral')
+    expect(entry!.reason, 'the credential fact the class is named for').toContain('MINTS A CREDENTIAL')
+    expect(entry!.reason, 'the dated 428 ruling marker').toContain('2026-09-25')
+    expect(entry!.adjudication, 'the provenance column credits the phase that ruled').toBe('428')
+    expect(
+      scenarioRowFor('editor.liveurl')?.perSurface.mcp,
+      'the ruling keeps editor.liveurl unprojected — an editor watch tool is declined, not deferred',
+    ).toEqual({ unprojected: 'credential-mint-deferral' })
+  })
+
   it('control: the reason classifier answers per class, and refuses prose it does not know', () => {
     for (const [key, signature] of UNPROJECTED_REASON_SIGNATURES) {
       expect(

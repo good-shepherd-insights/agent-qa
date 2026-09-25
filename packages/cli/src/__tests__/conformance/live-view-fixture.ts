@@ -24,14 +24,16 @@ import type { Server } from 'node:http'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 
+import type { LiveEditorAttachment, LiveEditorSubjects } from '@vostride/agent-qa-dashboard'
 import { generateTestId } from '@vostride/agent-qa-ids'
-import { createRunEventBus } from '@vostride/agent-qa-runner'
-import type { RunEventBus } from '@vostride/agent-qa-runner'
+import { createLiveStreamHub, createRunEventBus } from '@vostride/agent-qa-runner'
+import type { LiveStreamCapability, RunEventBus } from '@vostride/agent-qa-runner'
 import type {
   CompletedRunHandoff,
   LiveFrame,
   LiveFrameSubscription,
   LiveStreamDeclaration,
+  LiveStreamKind,
   RunCompletion,
   RunEventEnvelope,
   RunId,
@@ -302,8 +304,15 @@ export function openIdStream(url: string, input: { lastEventId?: number } = {}):
 export interface LiveViewHarness {
   readonly origin: string
   readonly server: Server
+  /**
+   * The editor-subject registry, created once beside the run registry and handed to both the
+   * composition and the server, as `agent-qa dashboard` does (428 D-07).
+   */
+  readonly editorSubjects: LiveEditorSubjects
   /** Register a planted run with the session registry the whole composition reads through. */
   plant(run: PlantedLiveRun): void
+  /** The run registry's own lookup, the one the run mint and the frame socket's run arm read. */
+  attachRun(runId: string): RunSession | undefined
   /**
    * Write a run ROW for a planted run, and move its status (404-06 · LIFE-01, D-13/D-07).
    *
@@ -385,7 +394,7 @@ export async function startLiveViewHarness(input: {
   const configPath = harnessWorkspace(input.label)
   const configDir = dirname(resolve(configPath))
 
-  const { DashboardDatabase, startServer } = await import('@vostride/agent-qa-dashboard')
+  const { DashboardDatabase, createLiveEditorSubjects, startServer } = await import('@vostride/agent-qa-dashboard')
   const db = new DashboardDatabase({ dbPath: join(configDir, 'dashboard.db') })
   const runDoor = await createDashboardRunDoor({ db })
   let boundOrigin: string | undefined
@@ -394,6 +403,7 @@ export async function startLiveViewHarness(input: {
   const sessions = createRunServiceSessionRegistry({
     observeSessions: (observer) => { publishSession = observer; return () => { publishSession = undefined } },
   })
+  const editorSubjects = createLiveEditorSubjects()
 
   const liveView = composeLiveView({
     sessions,
@@ -418,6 +428,7 @@ export async function startLiveViewHarness(input: {
     agentHost,
     executionBackend: runDoor.backend,
     runServiceAttach: sessions.attach,
+    liveEditorSubjects: editorSubjects,
     liveView: {
       validate: liveView.validate,
       // THE SHIPPED MINT, BY REFERENCE — the same function both doors call, so a cell that got a
@@ -433,6 +444,8 @@ export async function startLiveViewHarness(input: {
   return {
     origin: boundOrigin,
     server: started.server as Server,
+    editorSubjects,
+    attachRun: (runId: string) => sessions.attach(runId),
     plant: (run: PlantedLiveRun) => {
       if (publishSession === undefined) throw new Error('the session registry is not observing')
       publishSession(run.session)
@@ -456,6 +469,90 @@ export async function startLiveViewHarness(input: {
       await host.close()
       db.close()
       rmSync(configDir, { recursive: true, force: true })
+    },
+  }
+}
+
+// ---- The planted editor subject (428 D-07) ------------------------------------------------------
+//
+// What the live editor's session manager registers for a session, with the adapter replaced by a
+// fake producer. The hub is the shipped `createLiveStreamHub`, so its lazy start, graced stop and
+// close-time eviction are the real ones: the producer emits only while somebody is subscribed.
+
+export interface PlantEditorSubjectInput {
+  readonly sessionId: string
+  readonly kind: LiveStreamKind
+  readonly frameIntervalMs?: number
+  readonly frameBytes?: Uint8Array
+}
+
+export interface PlantedEditorSubject {
+  readonly sessionId: string
+  /** End the session as the session manager does: forget the subject, close its hub, settle `ended`. */
+  end(): Promise<void>
+  /** Tear down without ending by name. Idempotent. */
+  close(): Promise<void>
+}
+
+/** A few bytes that are a complete, if empty, JPEG: SOI then EOI. */
+const PLANTED_EDITOR_FRAME_BYTES = new Uint8Array([0xff, 0xd8, 0xff, 0xd9])
+
+export function plantEditorSubject(
+  harness: LiveViewHarness,
+  input: PlantEditorSubjectInput,
+): PlantedEditorSubject {
+  let producer: ReturnType<typeof setInterval> | undefined
+  let frameId = 0
+  const capability: LiveStreamCapability = {
+    kind: input.kind,
+    start: async (onFrame: (frame: LiveFrame) => void) => {
+      if (producer !== undefined) return
+      producer = setInterval(() => {
+        frameId += 1
+        onFrame({
+          id: frameId,
+          bytes: input.frameBytes ?? PLANTED_EDITOR_FRAME_BYTES,
+          metadata: { width: 640, height: 400, timestamp: Date.now() },
+        })
+      }, input.frameIntervalMs ?? PLANTED_FRAME_INTERVAL_MS)
+      producer.unref?.()
+    },
+    ack: async () => {},
+    stop: async () => {
+      if (producer !== undefined) clearInterval(producer)
+      producer = undefined
+    },
+  }
+  const hub = createLiveStreamHub()
+  hub.register(0, capability)
+
+  let settle: () => void = () => {}
+  const ended = new Promise<void>((resolvePromise) => { settle = resolvePromise })
+  const attachment: LiveEditorAttachment = {
+    streamCapabilityOf: (handle) => hub.capabilityOf(handle),
+    subscribeFrames: (handle, onFrame, onEnd) => hub.subscribe(handle, onFrame, onEnd),
+    ended,
+  }
+  harness.editorSubjects.register(input.sessionId, attachment)
+
+  let over = false
+  const finish = async (): Promise<void> => {
+    if (over) return
+    over = true
+    if (harness.editorSubjects.attach(input.sessionId) === attachment) {
+      harness.editorSubjects.unregister(input.sessionId)
+    }
+    await hub.close()
+    settle()
+  }
+
+  return {
+    sessionId: input.sessionId,
+    end: finish,
+    close: async () => {
+      await finish()
+      if (producer !== undefined) clearInterval(producer)
+      producer = undefined
     },
   }
 }
