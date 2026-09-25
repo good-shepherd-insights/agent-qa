@@ -15,3 +15,7 @@ export const LIVE_STEP_STATUS_NAMES = {
   skipped: 'skipped',
   cancelled: 'cancelled',
 } as const satisfies Record<StepStatus, string>
+
+export function liveLabelText(raw: string): string {
+  return raw
+}

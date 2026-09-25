@@ -64,6 +64,12 @@ export const TOKEN_USAGE_TRIGGER_LABEL = 'Token usage — details'
 export const MASKED_SECRET_LABEL = "masked secret — not in this host's config"
 
 /**
+ * The same chip on a LIVE surface (428 D-22). The live wire masks by design (405 D-09), so the value
+ * is not missing from this host's config and the run-detail sentence would state a false reason.
+ */
+export const MASKED_SECRET_LIVE_LABEL = 'masked secret'
+
+/**
  * The chip for a masked email (D-10).
  *
  * Email placeholders are minted during masking BY DETECTION and have no source to re-derive from,

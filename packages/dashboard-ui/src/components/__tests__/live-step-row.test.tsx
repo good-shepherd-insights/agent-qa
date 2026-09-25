@@ -12,8 +12,16 @@ import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, describe, expect, it } from 'vitest'
 
+import { maskedMarker } from '@vostride/agent-qa-schema'
+
 import { LIVE_STEP_GLYPHS, LiveStepRowView } from '@/components/live-step-row'
-import { LIVE_STEP_STATUS_NAMES } from '@/lib/live-step-row'
+import { MaskedChip } from '@/components/run-detail/masked-chip'
+import { LIVE_STEP_STATUS_NAMES, liveLabelText } from '@/lib/live-step-row'
+import {
+  MASKED_EMAIL_LABEL,
+  MASKED_SECRET_LABEL,
+  MASKED_SECRET_LIVE_LABEL,
+} from '@/lib/run-detail-view'
 import { STEP_STATUSES, type LiveStepRow, type StepStatus } from '@/lib/run-stream-reducer'
 
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
@@ -127,5 +135,66 @@ describe('THE LIVE STEP ROW (428 D-19/D-20)', () => {
     expect(reduced.some((block) => /\.live-step-breathing\s*\{\s*animation:\s*none;?\s*\}/.test(block[1] ?? ''))).toBe(
       true,
     )
+  })
+})
+
+describe('SECRET PLACEHOLDERS ON A LIVE ROW (428 D-22, WINDOWS #289)', () => {
+  it('SECRET-PLACEHOLDER-AS-CHIP: a <SECRET_n> placeholder is painted as the masked chip and never reaches the DOM raw', () => {
+    const li = render(row({ status: 'running', text: 'type <SECRET_1> into Password' }))
+    const text = li.textContent ?? ''
+    expect(text).toContain('type ')
+    expect(text).toContain(' into Password')
+    expect(text).not.toContain('<SECRET_')
+    expect(li.innerHTML).not.toMatch(/SECRET_\d/)
+    expect(li.querySelectorAll('[data-masked="secret"]')).toHaveLength(1)
+  })
+
+  it('LIVE-CHIP-LABEL: the live chip says masked secret, and run detail keeps its own sentence', () => {
+    expect(MASKED_SECRET_LIVE_LABEL).toBe('masked secret')
+    const li = render(row({ text: 'type <SECRET_1> into Password' }))
+    expect(li.querySelector('[data-masked="secret"]')?.textContent).toBe(MASKED_SECRET_LIVE_LABEL)
+
+    act(() => {
+      root!.render(<MaskedChip category="secret" />)
+    })
+    expect(container!.querySelector('[data-masked="secret"]')?.textContent).toBe(MASKED_SECRET_LABEL)
+  })
+
+  it('CHIP-STAYS-WHOLE: text segments ellipsise and the chip never shrinks, so a long label never clips it', () => {
+    const li = render(row({ text: `type <SECRET_1> into the ${'very '.repeat(40)}long Password field` }))
+    const label = li.children[1] as HTMLElement
+    for (const token of ['flex', 'min-w-0', 'flex-1', 'items-center', 'overflow-hidden']) {
+      expect(label.classList.contains(token), token).toBe(true)
+    }
+    const parts = [...label.children] as HTMLElement[]
+    expect(parts).toHaveLength(3)
+    for (const part of parts) {
+      if (part.querySelector('[data-masked]')) {
+        expect(part.classList.contains('shrink-0')).toBe(true)
+      } else {
+        expect(part.classList.contains('truncate')).toBe(true)
+        expect(part.classList.contains('min-w-0')).toBe(true)
+      }
+    }
+    expect(parts.filter((part) => part.querySelector('[data-masked]'))).toHaveLength(1)
+  })
+
+  it('two placeholders are two chips, and an email placeholder keeps its own chip', () => {
+    const li = render(row({ text: 'sign in with <EMAIL_0> and <SECRET_1> then <SECRET_2>' }))
+    expect(li.querySelectorAll('[data-masked="secret"]')).toHaveLength(2)
+    expect(li.querySelector('[data-masked="email"]')?.textContent).toBe(MASKED_EMAIL_LABEL)
+    expect(li.textContent ?? '').not.toMatch(/<(SECRET|EMAIL)_/)
+  })
+
+  it('liveLabelText turns placeholders into markers through the schema, and leaves near misses as text', () => {
+    expect(liveLabelText('a <SECRET_1> b')).toBe(`a ${maskedMarker('secret')} b`)
+    expect(liveLabelText('<EMAIL_12>')).toBe(maskedMarker('email'))
+    for (const nearMiss of ['<secret_1>', '<SECRET_>', 'SECRET_1', 'click Save', '']) {
+      expect(liveLabelText(nearMiss), nearMiss).toBe(nearMiss)
+    }
+    const source = readFileSync(resolve(__dirname, '../../lib/live-step-row.ts'), 'utf8')
+    expect(source).toContain('PLACEHOLDER_PATTERN')
+    expect(source).toContain('maskedMarker')
+    expect(source).not.toMatch(/new RegExp|[=(,]\s*\/[^/*\s][^/\n]*\/[gimsuy]*/)
   })
 })
