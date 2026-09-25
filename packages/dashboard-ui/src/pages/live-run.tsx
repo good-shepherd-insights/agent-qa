@@ -4,8 +4,8 @@ import { toast } from 'sonner'
 import { Radio, XCircle } from 'lucide-react'
 
 import { EmptyState } from '@/components/empty-state'
+import { LivePreview } from '@/components/live-preview/live-preview'
 import { LivenessPill, livenessForAttach } from '@/components/live-run/liveness-pill'
-import { PreviewPane } from '@/components/live-run/preview-pane'
 import { StepList } from '@/components/live-run/step-list'
 import { RetrievalRungBanner } from '@/components/run-detail/retrieval-rung-banner'
 import { Badge } from '@/components/ui/badge'
@@ -455,12 +455,15 @@ export default function LiveRunPage() {
 
         <ResizablePanel defaultSize={60} minSize={30}>
           <section data-live-pane="preview" className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden">
-            <PreviewPane
-              runId={id}
-              handles={state.handles}
-              membersByHandle={state.members}
-              terminal={state.terminal}
-              runOver={runOver}
+            <LivePreview
+              subject={{
+                kind: 'run',
+                runId: id,
+                handles: state.handles,
+                membersByHandle: state.members,
+                terminal: state.terminal,
+                runOver,
+              }}
             />
           </section>
         </ResizablePanel>

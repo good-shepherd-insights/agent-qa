@@ -90,7 +90,7 @@ function publishedSentence(relativePath: string, name: string): string {
   return match[1] as string
 }
 
-const NO_STREAM_TEXT = publishedSentence('components/live-run/preview-pane.tsx', 'NO_STREAM_TEXT')
+const NO_STREAM_TEXT = publishedSentence('lib/live-preview.ts', 'NO_STREAM_TEXT')
 /**
  * Long enough to cover more than one not-yet retry period, so "the sentence did not flicker" is a
  * claim about a window the poll would have fired in twice rather than one lucky sample.
@@ -229,13 +229,13 @@ async function previewWord(page: Page): Promise<string | null> {
   )
 }
 
-/** Poll until the pane leaves `minting` (its transient first render), then report what it settled on. */
+/** Poll until the pane leaves `loading` (its transient first render, once `minting`), then report what it settled on. */
 async function settledPreviewWord(page: Page, budgetMs = 20_000): Promise<string | null> {
   const deadline = Date.now() + budgetMs
   let seen = await previewWord(page)
   while (Date.now() < deadline) {
     seen = await previewWord(page)
-    if (seen !== null && seen !== 'minting') return seen
+    if (seen !== null && seen !== 'loading') return seen
     await page.waitForTimeout(100)
   }
   return seen
@@ -418,8 +418,10 @@ describe('the built live surface, in a real browser (403-06 Task 1)', () => {
     const f = held()
     const ackedBefore = f.dom.ackedFrameIds().length
     await onLivePage('r_dom', async (page) => {
-      await page.locator('[data-preview-state="embedded"]').waitFor({ state: 'attached', timeout: 40_000 })
-      const embed = page.locator('[data-live-embed]')
+      // RE-SPELLED 2026-09-26 (428-15): `embedded` with frames is `live` on the shared preview, and
+      // the embed sits inside the aspect box whose corner carries the dot.
+      await page.locator('[data-preview-state="live"]').waitFor({ state: 'attached', timeout: 40_000 })
+      const embed = page.locator('[data-preview-frame] [data-live-embed]')
       await embed.waitFor({ state: 'attached', timeout: 10_000 })
       // The sandbox is the reason the token may ride the fragment at all (T-403-09).
       expect(await embed.getAttribute('sandbox')).toBe('allow-scripts')
@@ -619,9 +621,9 @@ describe('the built live surface, in a real browser (403-06 Task 1)', () => {
       f.dom.finish('passed')
 
       await page.locator('[data-terminal-state]').waitFor({ state: 'attached', timeout: 30_000 })
-      await page.locator('[data-preview-state="ended"]').waitFor({ state: 'attached', timeout: 30_000 })
+      await page.locator('[data-preview-state="run-ended"]').waitFor({ state: 'attached', timeout: 30_000 })
       const previewState = await page.locator('[data-preview-state]').getAttribute('data-preview-state')
-      expect(previewState, 'a run this page has watched END has nothing left to embed').toBe('ended')
+      expect(previewState, 'a run this page has watched END has nothing left to embed').toBe('run-ended')
       expect(await page.locator('[data-live-pane]').count(), 'two panes, to the last frame').toBe(2)
       // 403-05 D-2: the pill is a claim about a CHANNEL, so it goes away with the channel. A
       // finished run has no liveness to report, and `lost` over a clean `runFinished` would slander
@@ -714,13 +716,14 @@ describe('the built live surface, in a real browser (403-06 Task 1)', () => {
         // (a) THE NOT-YET STATE, and no iframe over a stream that does not exist yet.
         const atAttach = await settledPreviewWord(page, 25_000)
         const embedsAtAttach = await page.locator('[data-live-embed]').count()
+        const framedAtAttach = await page.locator('[data-preview-frame] [data-live-embed]').count()
 
         // (b) ONLY NOW does the member's browser come up. The CELL decides this instant.
         run.latchCapability({ kind: 'cdp-screencast' })
         const control = await mintStreamKind(run.runId)
 
         // (c) The pane must find its way back on its own.
-        const afterLatch = await previewWordUntil(page, 'embedded', 25_000)
+        const afterLatch = await previewWordUntil(page, 'live', 25_000)
         const embed = await embedReading(page, 25_000)
 
         // (d) The watched member starting must not UNDO a live embed. Published only after the
@@ -729,7 +732,8 @@ describe('the built live surface, in a real browser (403-06 Task 1)', () => {
         await page.waitForTimeout(3_000)
         const afterStepStarted = await previewWord(page)
 
-        return { atAttach, embedsAtAttach, control, afterLatch, embed, afterStepStarted }
+        const framedAfterLatch = await page.locator('[data-preview-frame] [data-live-embed]').count()
+        return { atAttach, embedsAtAttach, framedAtAttach, control, afterLatch, framedAfterLatch, embed, afterStepStarted }
       })
       arms.push({ arm: k + 1, ...reading })
     }
@@ -744,14 +748,16 @@ describe('the built live surface, in a real browser (403-06 Task 1)', () => {
       expect(arm.atAttach, `${context} — a member whose browser is not up yet is NOT a declared absence`)
         .toBe('waiting')
       expect(arm.embedsAtAttach, `${context} — nothing is embedded over a stream that does not exist yet`).toBe(0)
-      expect(arm.afterLatch, `${context} — SC-1: the pane re-mints while the run is live`).toBe('embedded')
+      expect(arm.framedAtAttach, context).toBe(0)
+      expect(arm.afterLatch, `${context} — SC-1: the pane re-mints while the run is live`).toBe('live')
+      expect(arm.framedAfterLatch, `${context} — the embed sits inside the aspect box`).toBe(1)
       const embed = arm.embed as EmbedReading
       expect(embed.state, `${context} — and the embed PAINTS`).toBe('live')
       expect(embed.frames, context).toBeGreaterThanOrEqual(1)
       expect(embed.liveNodes, `${context} — the same fact through the document's own selector`)
         .toBeGreaterThanOrEqual(1)
       expect(arm.afterStepStarted, `${context} — the member starting does not undo a live embed`)
-        .toBe('embedded')
+        .toBe('live')
     }
   }, 600_000)
 
@@ -788,7 +794,7 @@ describe('the built live surface, in a real browser (403-06 Task 1)', () => {
         publishTo(run, 'runStarted', { busSchemaVersion: 1, memberTestCount: 1, handles: [0] })
         const controlAfter = await mintStreamKind(run.runId)
 
-        const afterPlant = await previewWordUntil(page, 'embedded', 20_000)
+        const afterPlant = await previewWordUntil(page, 'live', 20_000)
         const runOverAfter = await page.locator('[data-run-over]').count()
         return { beforePlant, controlBefore, runOverBefore, controlAfter, afterPlant, runOverAfter }
       })
@@ -802,7 +808,7 @@ describe('the built live surface, in a real browser (403-06 Task 1)', () => {
         .toContain('unknown_run')
       expect(arm.controlAfter, `${context} — and really does answer once the session is published`)
         .toBe('cdp-screencast')
-      expect(arm.afterPlant, `${context} — ARM 2`).toBe('embedded')
+      expect(arm.afterPlant, `${context} — ARM 2`).toBe('live')
     }
   }, 600_000)
   // ---- 404-06 · LIFE-01, D-13/D-14/D-07 --------------------------------------------------------

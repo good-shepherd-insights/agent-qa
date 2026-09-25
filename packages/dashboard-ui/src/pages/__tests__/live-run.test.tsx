@@ -30,14 +30,15 @@ import { MemoryRouter, Route, Routes, useLocation } from 'react-router'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import LiveRunPage from '@/pages/live-run'
+import { STEPS_EMPTY_TEXT } from '@/components/live-run/step-list'
 import {
   NO_STREAM_RETRY_MS,
   NO_STREAM_TEXT,
+  PREVIEW_LOADING_TEXT,
   WAITING_ATTEMPT_LIMIT,
   WAITING_GAVE_UP_LABEL,
   WAITING_GAVE_UP_TEXT,
-} from '@/components/live-run/preview-pane'
-import { STEPS_EMPTY_TEXT } from '@/components/live-run/step-list'
+} from '@/lib/live-preview'
 import { DID_NOT_RUN_NOTE } from '@/lib/run-stream-reducer'
 
 import type { RunEventEnvelope, RunEventPayload, RunEventType } from '@vostride/agent-qa-schema'
@@ -496,15 +497,15 @@ describe('the pill tells the truth about the channel (HNST-03, D-11)', () => {
     await mount()
     await open()
     await emit(runStarted())
-    expect(previewState()).toBe('embedded')
+    expect(previewState()).toBe('loading')
 
     await fail(CONNECTING)
     expect(livenessWord()).toBe('reconnecting')
-    expect(previewState()).toBe('embedded')
+    expect(previewState()).toBe('loading')
 
     await advance(20_000)
     expect(livenessWord()).toBe('reconnecting')
-    expect(previewState()).toBe('embedded')
+    expect(previewState()).toBe('loading')
   })
 })
 
@@ -589,7 +590,7 @@ describe('the page ends where the run ends, and MOVES the viewer with it (D-13, 
 
     expect(q('[data-terminal-state]')).not.toBeNull()
     expect(document.body.textContent).toContain('run ended')
-    expect(previewState()).toBe('ended')
+    expect(previewState()).toBe('run-ended')
     expect(q('[data-live-embed]')).toBeNull()
     expect(q('[data-run-detail-link]')?.getAttribute('href')).toBe(`/runs/${RUN_ID}`)
     // Liveness is a claim about a channel; a finished run has none to make.
@@ -867,9 +868,9 @@ describe('the preview is one embed or an honest sentence (LIVE-04, D-02, D-08)',
     const afterAnswer = { ...settled(), iframes: qa('iframe').length }
 
     expect({ whileSlow, atNextTick, afterAnswer }).toEqual({
-      whileSlow: { state: 'waiting', text: 'attaching to the live view...', calls: 2 },
-      atNextTick: { state: 'waiting', text: 'attaching to the live view...', calls: 2 },
-      afterAnswer: { state: 'embedded', text: undefined, calls: 2, iframes: 1 },
+      whileSlow: { state: 'waiting', text: PREVIEW_LOADING_TEXT, calls: 2 },
+      atNextTick: { state: 'waiting', text: PREVIEW_LOADING_TEXT, calls: 2 },
+      afterAnswer: { state: 'loading', text: undefined, calls: 2, iframes: 1 },
     })
   })
 
@@ -941,9 +942,9 @@ describe('the preview is one embed or an honest sentence (LIVE-04, D-02, D-08)',
     await mount()
     await open()
 
-    expect(previewState()).toBe('embedded')
+    expect(previewState()).toBe('loading')
     const frame = q('[data-live-embed]')
-    expect(frame?.getAttribute('src')).toBe('http://x/live/r1#v1.mjpeg')
+    expect(frame?.getAttribute('src')).toBe('http://x/live/r1?host=dashboard#v1.mjpeg')
     expect(frame?.getAttribute('sandbox')).toBe('allow-scripts')
   })
 
@@ -972,7 +973,7 @@ describe('the preview is one embed or an honest sentence (LIVE-04, D-02, D-08)',
     await emit(runStarted([0]))
 
     expect(q('[data-handle-picker]')).toBeNull()
-    expect(previewState()).toBe('embedded')
+    expect(previewState()).toBe('loading')
   })
 
   it('the mint is renewed silently at half its life and the frame swaps to the new url', async () => {
@@ -986,9 +987,9 @@ describe('the preview is one embed or an honest sentence (LIVE-04, D-02, D-08)',
     expect(fetchLiveUrlMock).toHaveBeenCalledTimes(2)
     const second = q('[data-live-embed]')?.getAttribute('src')
     expect(second).not.toBe(first)
-    expect(second).toBe(`http://x/live/${RUN_ID}?h=0#v1.a.b.${String(BASE_TIME + TTL_MS / 2)}`)
+    expect(second).toBe(`http://x/live/${RUN_ID}?h=0&host=dashboard#v1.a.b.${String(BASE_TIME + TTL_MS / 2)}`)
     // Silent: nothing about the swap reaches the person watching.
-    expect(previewState()).toBe('embedded')
+    expect(previewState()).toBe('loading')
   })
 
   it('a refused mint names the door’s own word and shows no frame', async () => {
@@ -1065,7 +1066,7 @@ describe('the bus is the truth on this page', () => {
     expect(qa('[data-live-pane]')).toHaveLength(2)
     expect(q('[data-run-meta-unavailable]')).not.toBeNull()
     expect(q('[data-live-pane="steps"] li')?.getAttribute('data-step-status')).toBe('running')
-    expect(previewState()).toBe('embedded')
+    expect(previewState()).toBe('loading')
   })
 
   it('a run warning is reduced to a code and a message', async () => {
