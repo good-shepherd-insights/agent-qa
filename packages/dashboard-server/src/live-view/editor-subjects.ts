@@ -38,10 +38,15 @@ export interface LiveEditorSubjects {
 }
 
 export function createLiveEditorSubjects(): LiveEditorSubjects {
+  const attachments = new Map<string, LiveEditorAttachment>()
   return {
-    register: () => {},
-    unregister: () => {},
-    attach: () => undefined,
-    capabilityOf: () => undefined,
+    register: (sessionId, attachment) => {
+      attachments.set(sessionId, attachment)
+    },
+    unregister: (sessionId) => {
+      attachments.delete(sessionId)
+    },
+    attach: (sessionId) => attachments.get(sessionId),
+    capabilityOf: (sessionId) => attachments.get(sessionId)?.streamCapabilityOf(0),
   }
 }

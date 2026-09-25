@@ -96,6 +96,9 @@ export {
   renderLiveEmbedPage,
 } from './live-view/embed-page.js'
 export { createFrameProxy } from './live-view/frame-proxy.js'
+// 428 D-07: the editor-subject registry the frame socket reads editor sessions from.
+export { createLiveEditorSubjects } from './live-view/editor-subjects.js'
+export type { LiveEditorAttachment, LiveEditorSubjects } from './live-view/editor-subjects.js'
 export {
   LIVE_EMBED_PATH_PREFIX,
   LIVE_VIEW_HELLO_MAX_BYTES,

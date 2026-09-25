@@ -38,17 +38,23 @@ export const LIVE_VIEW_REFUSAL_CLOSE_CODE = 4400
 /**
  * Every reason this socket can refuse a viewer, BY NAME.
  *
- * The four token verdicts plus the two this layer alone can answer: a run this process never
- * started, and a handle that run does not have. Extending the token's list rather than restating
- * it is what stops the two vocabularies from drifting.
+ * The four token verdicts plus the three this layer alone can answer: a run this process never
+ * started, a handle that run does not have, and an editor session this process does not hold
+ * (428 D-07). Extending the token's list rather than restating it is what stops the two
+ * vocabularies from drifting.
  */
+export type LiveViewRefusalReason =
+  | LiveUrlRefusalReason
+  | 'unknown_run'
+  | 'unknown_handle'
+  | 'unknown_session'
+// prettier-ignore
 export const LIVE_VIEW_REFUSAL_REASONS = [
   ...LIVE_URL_REFUSAL_REASONS,
   'unknown_run',
   'unknown_handle',
-] as const
-
-export type LiveViewRefusalReason = LiveUrlRefusalReason | 'unknown_run' | 'unknown_handle'
+  'unknown_session',
+] as const satisfies readonly LiveViewRefusalReason[]
 
 /**
  * Every reason an `ended` message can carry, each naming a different fact (403 CR-03, 428 D-07/D-09).

@@ -1,9 +1,16 @@
 // The FRAME PROXY (403 D-04/D-06/D-16) — the server end of one viewer's socket.
 //
-// WHAT IT HOLDS AND WHAT IT DOES NOT. It holds a validator it was HANDED and a run lookup it was
-// HANDED. It parses no token, mints nothing, and reads no token off a URL: the first text message
-// is the only carriage, and `deps.validate` is the function layer's own `validateLiveUrlToken`
-// bound to the same signer that minted (LIVE-02's third prohibition made structural).
+// WHAT IT HOLDS AND WHAT IT DOES NOT. It holds a validator it was HANDED, a run lookup it was
+// HANDED and, when it serves editor sessions, an editor lookup it was HANDED. It parses no token,
+// mints nothing, and reads no token off a URL: the first text message is the only carriage, and
+// `deps.validate` is the function layer's own `validateLiveUrlToken` bound to the same signer that
+// minted (LIVE-02's third prohibition made structural).
+//
+// TWO SUBJECTS, ONE SOCKET (428 D-07). The path id names a run or an editor session, and the
+// token's SIGNED subject kind decides which lookup is asked. A run token only ever reaches the run
+// lookup and an editor token only ever reaches the editor lookup, even when both hold the same id.
+// Validation always comes before either lookup, so `unknown_run` and `unknown_session` are only
+// reachable with a valid token for that exact id.
 //
 // D-16: a detach NEVER touches the run. Closing a viewer's socket unsubscribes it from the frame
 // hub and clears this socket's timers, and that is the whole of it — nothing that ends a run,
@@ -21,6 +28,7 @@ import type {
   LiveFrameEndReason,
   LiveFrameSubscription,
   LiveUrlVerdict,
+  LiveViewSubjectKind,
   LiveViewSubjectRef,
   RunSession,
 } from '@vostride/agent-qa-schema'
@@ -42,6 +50,9 @@ export interface FrameProxyDeps {
   now?: () => number
 }
 
+/** What the socket reads frames from: a run session, or an editor session's attachment. */
+type FrameSource = Pick<RunSession, 'streamCapabilityOf' | 'subscribeFrames'>
+
 /** Guarded send — the `live-editor/ws-handler.ts` idiom, so a closed socket is never written to. */
 function send(ws: WebSocket, message: LiveViewServerMessage): void {
   if (ws.readyState === ws.OPEN) ws.send(JSON.stringify(message))
@@ -50,8 +61,11 @@ function send(ws: WebSocket, message: LiveViewServerMessage): void {
 export function createFrameProxy(deps: FrameProxyDeps): (ws: WebSocket, runId: string) => void {
   const now = deps.now ?? ((): number => Date.now())
 
+  // `runId` is the path id. For an editor subject it is the session id; the published name stays.
   return (ws: WebSocket, runId: string): void => {
     let subscription: LiveFrameSubscription | undefined
+    /** The subject kind the greet resolved. A renew is validated against this kind only. */
+    let subjectKind: LiveViewSubjectKind | undefined
     let deadline: ReturnType<typeof setTimeout> | undefined
     let ping: ReturnType<typeof setInterval> | undefined
     let greeted = false
@@ -136,25 +150,30 @@ export function createFrameProxy(deps: FrameProxyDeps): (ws: WebSocket, runId: s
       if (reason === 'withdrawn') send(ws, { type: 'ended', reason: 'handleFinished' })
     }
 
-    const greet = (token: string): void => {
-      const verdict = deps.validate(token, { subject: { kind: 'run', id: runId }, now: now() })
-      if (verdict.kind !== 'ok') {
-        refuse(verdict.reason)
-        return
+    const validateAs = (token: string, kind: LiveViewSubjectKind): LiveUrlVerdict =>
+      deps.validate(token, { subject: { kind, id: runId }, now: now() })
+
+    /**
+     * RESOLVE THE SUBJECT BY THE TOKEN'S SIGNED KIND (428 D-07). A run first; only a
+     * `scope_mismatch` there, on a socket that serves editor sessions, is worth asking again as an
+     * editor. Every other refusal is the answer as it stands.
+     */
+    const resolve = (token: string): LiveUrlVerdict => {
+      const asRun = validateAs(token, 'run')
+      if (asRun.kind === 'refused' && asRun.reason === 'scope_mismatch' && deps.attachEditor) {
+        return validateAs(token, 'editor')
       }
-      // The validator already refused any other kind; this narrows the type for the handle read.
-      const subject = verdict.claims.subject
-      if (subject.kind !== 'run') {
-        refuse('scope_mismatch')
-        return
-      }
-      const session = deps.attach(runId)
-      if (session === undefined) {
-        refuse('unknown_run')
-        return
-      }
-      const handle = subject.handle
-      const stream = session.streamCapabilityOf(handle)
+      return asRun
+    }
+
+    /** Subscribe, then say ready, then wait for the subject's own end. */
+    const open = (
+      source: FrameSource,
+      handle: number,
+      expiresAt: number,
+      end: { ended: Promise<unknown>; reason: 'runFinished' | 'sessionEnded' },
+    ): void => {
+      const stream = source.streamCapabilityOf(handle)
       // SUBSCRIBE FIRST, THEN READY (428 D-14, #274). `ready` tells the page a first frame is
       // coming, so it may only be said once a subscription exists. A declared stream whose
       // subscription comes back undefined settled between the two reads, and the viewer is told
@@ -162,31 +181,55 @@ export function createFrameProxy(deps: FrameProxyDeps): (ws: WebSocket, runId: s
       // `{ kind: 'none' }` is an HONEST answer, not a failure: the socket stays open so the page
       // can still receive `ended`, and no painter is ever started.
       if (stream.kind !== 'none') {
-        subscription = session.subscribeFrames(handle, onFrame, onStreamEnd)
+        subscription = source.subscribeFrames(handle, onFrame, onStreamEnd)
         if (subscription === undefined) {
           refuse('unknown_handle')
           return
         }
       }
-      send(ws, { type: 'ready', runId, handle, stream, expiresAt: verdict.claims.exp })
-      armDeadline(verdict.claims.exp)
+      // D-10: an editor subject reuses the published fields as they are. `runId` is the path id
+      // and `handle` is 0; no subject field is added.
+      send(ws, { type: 'ready', runId, handle, stream, expiresAt })
+      armDeadline(expiresAt)
       ping = setInterval(() => {
         if (ws.readyState === ws.OPEN) ws.ping()
       }, LIVE_VIEW_PING_MS)
       ping.unref?.()
 
-      session.done.then(
-        () => {
-          send(ws, { type: 'ended', reason: 'runFinished' })
-          clearTimers()
-          ws.close(1000, 'runFinished')
-        },
-        () => {
-          send(ws, { type: 'ended', reason: 'runFinished' })
-          clearTimers()
-          ws.close(1000, 'runFinished')
-        },
-      )
+      const finish = (): void => {
+        send(ws, { type: 'ended', reason: end.reason })
+        clearTimers()
+        ws.close(1000, end.reason)
+      }
+      end.ended.then(finish, finish)
+    }
+
+    const greet = (token: string): void => {
+      const verdict = resolve(token)
+      if (verdict.kind !== 'ok') {
+        refuse(verdict.reason)
+        return
+      }
+      const subject = verdict.claims.subject
+      subjectKind = subject.kind
+      if (subject.kind === 'run') {
+        const session = deps.attach(runId)
+        if (session === undefined) {
+          refuse('unknown_run')
+          return
+        }
+        open(session, subject.handle, verdict.claims.exp, {
+          ended: session.done,
+          reason: 'runFinished',
+        })
+        return
+      }
+      const attachment = deps.attachEditor?.(runId)
+      if (attachment === undefined) {
+        refuse('unknown_session')
+        return
+      }
+      open(attachment, 0, verdict.claims.exp, { ended: attachment.ended, reason: 'sessionEnded' })
     }
 
     ws.on('message', (data: unknown, isBinary?: boolean) => {
@@ -236,10 +279,11 @@ export function createFrameProxy(deps: FrameProxyDeps): (ws: WebSocket, runId: s
       if (message.type === 'renew' && typeof message.token === 'string') {
         // D-02's silent re-mint, INSIDE the socket: a fresh token extends this viewer's deadline
         // without re-opening anything. It is re-validated in full — a renew is not a lesser check.
-        const verdict = deps.validate(message.token, {
-          subject: { kind: 'run', id: runId },
-          now: now(),
-        })
+        if (subjectKind === undefined) {
+          refuse('malformed')
+          return
+        }
+        const verdict = validateAs(message.token, subjectKind)
         if (verdict.kind !== 'ok') {
           refuse(verdict.reason)
           return
