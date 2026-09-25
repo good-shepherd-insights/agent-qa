@@ -17,8 +17,8 @@ import {
 } from "lucide-react"
 import { EditorAriaPanel } from "@/components/editor/aria-panel"
 import { EditorStepDetail } from "@/components/editor/editor-step-detail"
-import { ScreencastViewer } from "@/components/editor/screencast-viewer"
 import { EmptyState } from "@/components/empty-state"
+import { LivePreview } from "@/components/live-preview/live-preview"
 import { LiveModeAuthStateControl, type LiveModeAuthStateCaptureConfig } from "@/components/live-mode-auth-state-control"
 import { TabConsole } from "@/components/run-detail/tab-console"
 import { TabEnv } from "@/components/run-detail/tab-env"
@@ -50,7 +50,10 @@ interface LiveSessionPaneProps {
   targetName: string | null
   targetLabel: string | null
   platform: "web" | "android" | "ios"
-  screenshot: string | null
+  /** The live editor session the preview mints its view for; null before one exists. */
+  liveSessionId: string | null
+  /** The session is gone on the server (Plan 20 feeds this from the hook). */
+  sessionGone?: boolean
   currentUrl: string | null
   pendingNavigation: PendingNavigationState | null
   steps: EditorStep[]
@@ -413,7 +416,8 @@ export function LiveSessionPane({
   targetName,
   targetLabel,
   platform,
-  screenshot,
+  liveSessionId,
+  sessionGone = false,
   currentUrl,
   pendingNavigation,
   steps,
@@ -588,6 +592,95 @@ export function LiveSessionPane({
     onNavigate(nextUrl)
   }
 
+  // THE EDITOR'S CONTROLS ARE THE PREVIEW'S CHROME ROW (428 D-02). A mobile session has none of
+  // them, so it passes nothing and the preview renders no empty row.
+  const previewChrome = platform === "web" ? (
+    <div className="flex min-w-0 flex-1 items-center gap-2">
+      <div className="flex shrink-0 items-center gap-1">
+        <Button
+          variant="ghost"
+          size="icon-sm"
+          onClick={onBack}
+          disabled={effectiveState === "executing" || effectiveState === "idle"}
+          aria-label="Go back"
+        >
+          <ChevronLeft className="size-3.5" />
+        </Button>
+        <Button
+          variant="ghost"
+          size="icon-sm"
+          onClick={onForward}
+          disabled={effectiveState === "executing" || effectiveState === "idle"}
+          aria-label="Go forward"
+        >
+          <ChevronRight className="size-3.5" />
+        </Button>
+        <Button
+          variant="ghost"
+          size="icon-sm"
+          onClick={onRefresh}
+          disabled={effectiveState === "executing" || effectiveState === "idle"}
+          aria-label="Refresh page"
+        >
+          <RefreshCw className="size-3.5" />
+        </Button>
+      </div>
+
+      <div className="flex min-w-0 flex-1 items-center gap-2 rounded-full border bg-background px-3 py-1">
+        {pendingNavigation ? (
+          <Loader2 className="size-3.5 shrink-0 animate-spin text-muted-foreground" />
+        ) : (
+          <Globe className="size-3.5 shrink-0 text-muted-foreground" />
+        )}
+        <input
+          value={addressValue}
+          title={browserLabel}
+          onFocus={() => setIsEditingAddress(true)}
+          onBlur={() => {
+            setIsEditingAddress(false)
+            setAddressValue(browserLabel)
+          }}
+          onChange={(event) => setAddressValue(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === "Enter") {
+              event.preventDefault()
+              handleNavigate()
+            }
+            if (event.key === "Escape") {
+              event.preventDefault()
+              setIsEditingAddress(false)
+              setAddressValue(browserLabel)
+            }
+          }}
+          disabled={effectiveState === "executing" || effectiveState === "idle"}
+          className={cn(
+            "min-w-0 flex-1 bg-transparent text-sm outline-none",
+            isEditingAddress ? "text-left" : "text-center",
+          )}
+        />
+      </div>
+
+      <div className="flex shrink-0 items-center justify-end gap-1">
+        {showAuthStateCapture && authStateCapture && (
+          <LiveModeAuthStateControl
+            capture={authStateCapture}
+            disabled={effectiveState === "executing"}
+          />
+        )}
+        <Button
+          variant="ghost"
+          size="icon-sm"
+          onClick={handleCopyUrl}
+          disabled={!browserLabel}
+          aria-label={copied ? "URL copied" : "Copy URL"}
+          title={copied ? "URL copied" : "Copy URL"}
+        >
+          {copied ? <Check className="size-3.5" /> : <Copy className="size-3.5" />}
+        </Button>
+      </div>
+    </div>
+  ) : null
+
   const showSelectionEmptyState = !suiteMode && Boolean(
     selection
     && selection.type !== "hook"
@@ -669,103 +762,6 @@ export function LiveSessionPane({
           </div>
         )}
 
-        {!terminalState && (
-          platform === "web" ? (
-            <div className="mt-3 flex items-center gap-2">
-              <div className="flex shrink-0 items-center gap-1">
-                <Button
-                  variant="ghost"
-                  size="icon-sm"
-                  onClick={onBack}
-                  disabled={effectiveState === "executing" || effectiveState === "idle"}
-                  aria-label="Go back"
-                >
-                  <ChevronLeft className="size-3.5" />
-                </Button>
-                <Button
-                  variant="ghost"
-                  size="icon-sm"
-                  onClick={onForward}
-                  disabled={effectiveState === "executing" || effectiveState === "idle"}
-                  aria-label="Go forward"
-                >
-                  <ChevronRight className="size-3.5" />
-                </Button>
-                <Button
-                  variant="ghost"
-                  size="icon-sm"
-                  onClick={onRefresh}
-                  disabled={effectiveState === "executing" || effectiveState === "idle"}
-                  aria-label="Refresh page"
-                >
-                  <RefreshCw className="size-3.5" />
-                </Button>
-              </div>
-
-              <div className="flex min-w-0 flex-1 items-center gap-2 rounded-full border bg-background px-3 py-2">
-                {pendingNavigation ? (
-                  <Loader2 className="size-3.5 shrink-0 animate-spin text-muted-foreground" />
-                ) : (
-                  <Globe className="size-3.5 shrink-0 text-muted-foreground" />
-                )}
-                <input
-                  value={addressValue}
-                  title={browserLabel}
-                  onFocus={() => setIsEditingAddress(true)}
-                  onBlur={() => {
-                    setIsEditingAddress(false)
-                    setAddressValue(browserLabel)
-                  }}
-                  onChange={(event) => setAddressValue(event.target.value)}
-                  onKeyDown={(event) => {
-                    if (event.key === "Enter") {
-                      event.preventDefault()
-                      handleNavigate()
-                    }
-                    if (event.key === "Escape") {
-                      event.preventDefault()
-                      setIsEditingAddress(false)
-                      setAddressValue(browserLabel)
-                    }
-                  }}
-                  disabled={effectiveState === "executing" || effectiveState === "idle"}
-                  className={cn(
-                    "min-w-0 flex-1 bg-transparent text-sm outline-none",
-                    isEditingAddress ? "text-left" : "text-center",
-                  )}
-                />
-              </div>
-
-              <div className="flex shrink-0 items-center justify-end gap-1">
-                {showAuthStateCapture && authStateCapture && (
-                  <LiveModeAuthStateControl
-                    capture={authStateCapture}
-                    disabled={effectiveState === "executing"}
-                  />
-                )}
-                <Button
-                  variant="ghost"
-                  size="icon-sm"
-                  onClick={handleCopyUrl}
-                  disabled={!browserLabel}
-                  aria-label={copied ? "URL copied" : "Copy URL"}
-                  title={copied ? "URL copied" : "Copy URL"}
-                >
-                  {copied ? <Check className="size-3.5" /> : <Copy className="size-3.5" />}
-                </Button>
-              </div>
-            </div>
-          ) : (
-            <div className="mt-3 flex flex-wrap items-center gap-2">
-              {showEndSessionAction && (
-                <Button variant="destructive" size="sm" onClick={onEndSession}>
-                  <Square className="size-3.5" />
-                  End Live Session
-                </Button>
-              )}
-            </div>
-          )
-        )}
       </div>
 
       {executionUnit === "test" && unitRowsSlot}
@@ -814,11 +810,21 @@ export function LiveSessionPane({
                 </div>
               </div>
             </div>
-          ) : (
-            <ScreencastViewer
-              screenshot={screenshot}
-              connectionState={effectiveState}
+          ) : liveSessionId ? (
+            <LivePreview
+              subject={{
+                kind: "editor",
+                sessionId: liveSessionId,
+                sessionGone,
+                onStartFresh: onStartFreshSession ?? onEndSession,
+              }}
+              chrome={previewChrome}
             />
+          ) : (
+            <div className="flex h-full items-center justify-center gap-3 text-sm text-muted-foreground">
+              <Loader2 className="size-5 animate-spin" />
+              Connecting to browser...
+            </div>
           )}
         </ResizablePanel>
 

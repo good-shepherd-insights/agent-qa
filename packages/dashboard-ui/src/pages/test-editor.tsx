@@ -890,7 +890,7 @@ export default function TestEditorPage() {
       targetLabel={liveTargetLabel}
       liveSessionNumber={liveSessionNumber}
       platform={livePlatform}
-      screenshot={liveEditor.screenshot}
+      liveSessionId={liveSessionId}
       currentUrl={liveEditor.currentUrl}
       pendingNavigation={liveEditor.pendingNavigation}
       steps={liveEditor.steps}

@@ -758,7 +758,7 @@ export default function SuiteEditorPage() {
       targetLabel={liveEditor.currentUrl || "Configured start URL"}
       liveSessionNumber={liveSessionNumber}
       platform={liveEditor.platform}
-      screenshot={liveEditor.screenshot}
+      liveSessionId={liveSessionId}
       currentUrl={liveEditor.currentUrl}
       pendingNavigation={liveEditor.pendingNavigation}
       steps={liveEditor.steps}

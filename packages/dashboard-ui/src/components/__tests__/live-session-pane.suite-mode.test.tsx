@@ -23,10 +23,6 @@ vi.mock('@/components/editor/aria-panel', () => ({
   EditorAriaPanel: () => <div data-testid="aria-panel" />,
 }))
 
-vi.mock('@/components/editor/screencast-viewer', () => ({
-  ScreencastViewer: () => <div data-testid="screencast-viewer" />,
-}))
-
 vi.mock('@/components/ui/resizable', () => ({
   ResizablePanelGroup: ({ children }: { children: ReactElement | ReactElement[] }) => <div>{children}</div>,
   ResizablePanel: ({ children }: { children: ReactElement | ReactElement[] }) => <div>{children}</div>,
@@ -129,7 +125,7 @@ function renderPane(overrides: Partial<React.ComponentProps<typeof LiveSessionPa
       targetName="web"
       targetLabel="https://example.com"
       platform="web"
-      screenshot={null}
+      liveSessionId={null}
       currentUrl="https://example.com"
       pendingNavigation={null}
       steps={[]}
