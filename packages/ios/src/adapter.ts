@@ -5,6 +5,7 @@ import type {
   ConsoleLogEntry,
   Direction,
   InterimNode,
+  LiveStreamCapability,
   ObserveOptions,
   PlatformAdapter,
   PlatformConfig,
@@ -15,6 +16,7 @@ import {
   assertNever,
   buildScreenState,
   compareFillReread,
+  createSnapshotLiveStream,
   interimTreeIdentity,
   resolveAppName,
   runDirectionScrollWithRetry,
@@ -237,6 +239,7 @@ export class IOSPlatformAdapter implements PlatformAdapter<'ios'> {
   private activeWebContext: string | null = null
   private webContextChecked = false
   private currentContext: string | null = null
+  private liveStreamCapability: LiveStreamCapability | undefined
   private consoleLogs: ConsoleLogEntry[] = []
   private consoleDrainIndex = 0
   private captureConsole = true
@@ -270,6 +273,9 @@ export class IOSPlatformAdapter implements PlatformAdapter<'ios'> {
   }
 
   async cleanup(): Promise<void> {
+    try { await this.liveStreamCapability?.stop() } catch { /* best-effort */ }
+    this.liveStreamCapability = undefined
+
     try {
       if (this.driver) {
         await this.driver.deleteSession()
@@ -286,6 +292,18 @@ export class IOSPlatformAdapter implements PlatformAdapter<'ios'> {
     this.activeWebContext = null
     this.webContextChecked = false
     this.currentContext = null
+  }
+
+  /**
+   * 428 D-11: the labelled 1s snapshot preview, over `captureScreenshot()` — `takeScreenshot()`
+   * and nothing else. Never `screenshot()`: that one switches the Appium context, and a tick
+   * landing between a step's context switch and its command would run the command in the wrong
+   * context. Declared before the driver exists (a capture then answers `undefined`), so the
+   * composition's selection never falls through to `screenshot()`.
+   */
+  get liveStream(): LiveStreamCapability {
+    this.liveStreamCapability ??= createSnapshotLiveStream({ capture: () => this.captureScreenshot() })
+    return this.liveStreamCapability
   }
 
   async observe(_options?: ObserveOptions): Promise<ScreenState> {

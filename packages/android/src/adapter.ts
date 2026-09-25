@@ -10,6 +10,7 @@ import type {
   InterimNode,
   ObserveOptions,
   PlatformAdapter,
+  LiveStreamCapability,
   PlatformConfig,
   RecordingCapability,
   ScrollPrimitives,
@@ -19,6 +20,7 @@ import {
   assertNever,
   buildScreenState,
   compareFillReread,
+  createSnapshotLiveStream,
   interimTreeIdentity,
   resolveAppName,
   runDirectionScrollWithRetry,
@@ -429,6 +431,7 @@ export class AndroidPlatformAdapter implements PlatformAdapter<'android'> {
   // Cached so we skip redundant switchContext round-trips.
   private currentContext: string | null = null
   private recordingCapability: RecordingCapability | undefined
+  private liveStreamCapability: LiveStreamCapability | undefined
   private consoleLogs: ConsoleLogEntry[] = []
   private consoleDrainIndex = 0
   private captureConsole = true
@@ -481,6 +484,8 @@ export class AndroidPlatformAdapter implements PlatformAdapter<'android'> {
   async cleanup(): Promise<void> {
     try { await this.recordingCapability?.stop() } catch { /* best-effort */ }
     this.recordingCapability = undefined
+    try { await this.liveStreamCapability?.stop() } catch { /* best-effort */ }
+    this.liveStreamCapability = undefined
 
     try {
       if (this.driver) {
@@ -634,6 +639,18 @@ export class AndroidPlatformAdapter implements PlatformAdapter<'android'> {
     this.consoleDrainIndex = this.consoleLogs.length
     if (!level) return newLogs
     return newLogs.filter(e => e.level === level)
+  }
+
+  /**
+   * 428 D-11: the labelled 1s snapshot preview, over `captureScreenshot()` — `takeScreenshot()`
+   * and nothing else. Never `screenshot()`: that one switches the Appium context, and a tick
+   * landing between a step's context switch and its command would run the command in the wrong
+   * context. Declared before the driver exists (a capture then answers `undefined`), so the
+   * composition's selection never falls through to `screenshot()`.
+   */
+  get liveStream(): LiveStreamCapability {
+    this.liveStreamCapability ??= createSnapshotLiveStream({ capture: () => this.captureScreenshot() })
+    return this.liveStreamCapability
   }
 
   get recording(): RecordingCapability | undefined {
