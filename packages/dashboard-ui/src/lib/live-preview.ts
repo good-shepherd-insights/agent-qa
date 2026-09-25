@@ -230,6 +230,7 @@ type LivePreviewPhase =
   | 'unavailable'
 
 export interface LivePreviewFrame {
+  /** Capture time on the producer's clock, epoch ms. */
   ts: number
   kind?: LiveStreamKind
   width: number
@@ -242,6 +243,7 @@ export interface LivePreviewMachine {
   declared?: LiveStreamKind
   ready?: LiveStreamKind | 'none'
   frame?: LivePreviewFrame
+  /** The smallest arrival minus capture seen since the subject was set: the producer-to-viewer clock offset plus the fastest delivery. */
   skew?: number
   reconnectAttempts?: number
   waitingAttempts?: number
@@ -259,14 +261,149 @@ export interface LivePreviewView {
   frameSize?: { width: number; height: number }
 }
 
+const ENDED_PHASES: readonly LivePreviewPhase[] = ['run-ended', 'member-ended', 'session-ended']
+
 export function createInitialLivePreview(): LivePreviewMachine {
   return { phase: 'minting' }
 }
 
-export function reduceLivePreview(state: LivePreviewMachine, _event: LivePreviewEvent, _now: number): LivePreviewMachine {
-  return state
+/** What survives a fresh mint: the clock calibration for this subject and a spent wait. */
+function carried(state: LivePreviewMachine): Pick<LivePreviewMachine, 'skew' | 'gaveUp'> {
+  return {
+    ...(state.skew === undefined ? {} : { skew: state.skew }),
+    ...(state.gaveUp === true ? { gaveUp: true } : {}),
+  }
 }
 
-export function deriveLivePreview(_state: LivePreviewMachine, _now: number): LivePreviewView {
-  return { state: 'loading', snapshot: false }
+function lose(state: LivePreviewMachine): LivePreviewMachine {
+  const attempts = (state.reconnectAttempts ?? 0) + 1
+  const phase = attempts <= LIVE_RECONNECT_BACKOFF_MS.length ? 'reconnecting' : 'disconnected'
+  return { ...state, phase, reconnectAttempts: attempts }
+}
+
+function wait(state: LivePreviewMachine): LivePreviewMachine {
+  if (state.gaveUp === true) return { ...carried(state), phase: 'no-stream' }
+  const attempts = (state.waitingAttempts ?? 0) + 1
+  return attempts >= WAITING_ATTEMPT_LIMIT
+    ? { ...carried(state), phase: 'no-stream', gaveUp: true }
+    : { ...carried(state), phase: 'waiting', waitingAttempts: attempts }
+}
+
+function showing(state: LivePreviewMachine): boolean {
+  return state.phase === 'embedded' || state.phase === 'reconnecting'
+}
+
+function reduceReport(state: LivePreviewMachine, report: EmbedReport, now: number): LivePreviewMachine {
+  switch (report.event) {
+    case 'ready':
+      return showing(state) ? { ...state, ready: report.kind } : state
+    case 'frame': {
+      if (!showing(state)) return state
+      const skew = report.ts === undefined ? state.skew : Math.min(state.skew ?? Infinity, now - report.ts)
+      const ts = report.ts ?? now - (state.skew ?? 0)
+      const kind = report.kind ?? state.declared
+      const { reconnectAttempts: _spent, ...rest } = state
+      return {
+        ...rest,
+        phase: 'embedded',
+        ...(skew === undefined ? {} : { skew }),
+        frame: { ts, ...(kind === undefined ? {} : { kind }), width: report.width, height: report.height, arrivedAt: now },
+      }
+    }
+    case 'ended':
+      if (report.reason === 'runFinished') return { ...state, phase: 'run-ended' }
+      if (report.reason === 'handleFinished') return { ...state, phase: 'member-ended' }
+      return { ...state, phase: 'session-ended' }
+    case 'refused':
+      if (report.reason === 'expired') return { ...state, phase: 'expired' }
+      if (report.reason === 'unknown_session') return { ...state, phase: 'session-ended' }
+      if (report.reason === 'unknown_run' || report.reason === 'unknown_handle') return lose(state)
+      return { ...state, phase: 'disconnected' }
+    case 'lost':
+      return showing(state) ? lose(state) : state
+  }
+}
+
+/** Pure and total: the host passes its clock reading, and an ending is left only by reset. */
+export function reduceLivePreview(state: LivePreviewMachine, event: LivePreviewEvent, now: number): LivePreviewMachine {
+  if (event.type === 'reset') return createInitialLivePreview()
+  if (event.type === 'subject-over') return { ...state, phase: event.reason }
+  if (ENDED_PHASES.includes(state.phase)) return state
+
+  switch (event.type) {
+    case 'mint-started':
+    case 'lost-scheduled':
+      return state
+    case 'minted': {
+      if (event.stream.kind === 'none') {
+        return event.memberAnswered ? { ...carried(state), phase: 'no-stream' } : wait(state)
+      }
+      const declared = event.stream.kind
+      if (showing(state)) return { ...state, declared }
+      if (state.phase !== 'minting' && state.phase !== 'waiting') return state
+      return { ...carried(state), phase: 'embedded', declared }
+    }
+    case 'mint-refused':
+      if (event.word === 'unknown_session') return { ...state, phase: 'session-ended' }
+      if (event.word === 'unknown_run') return wait(state)
+      return { ...state, phase: 'unavailable' }
+    case 'renew-failed':
+      return { ...state, phase: 'expired' }
+    case 'embed':
+      return reduceReport(state, event.report, now)
+    case 'retry':
+      return { ...carried(state), phase: 'minting' }
+  }
+}
+
+function view(state: LivePreviewMachine, fields: Omit<LivePreviewView, 'snapshot'> & { snapshot?: boolean }): LivePreviewView {
+  const frame = state.frame
+  return {
+    snapshot: false,
+    ...fields,
+    ...(frame === undefined ? {} : { frameSize: { width: frame.width, height: frame.height } }),
+  }
+}
+
+/** What the corner says at `now`. Reads frame facts only: never a bus, a socket or a run event. */
+export function deriveLivePreview(state: LivePreviewMachine, now: number): LivePreviewView {
+  switch (state.phase) {
+    case 'minting':
+      return view(state, { state: 'loading', words: PREVIEW_LOADING_TEXT })
+    case 'waiting':
+      return view(state, { state: 'waiting', words: PREVIEW_LOADING_TEXT })
+    case 'embedded': {
+      const frame = state.frame
+      if (frame === undefined) return view(state, { state: 'loading', words: PREVIEW_LOADING_TEXT })
+      const age = now - (frame.ts + (state.skew ?? 0))
+      return age < LIVE_FRESHNESS_WINDOW_MS
+        ? view(state, { state: 'live', dot: 'green', snapshot: frame.kind === 'snapshot' })
+        : view(state, { state: 'delayed', dot: 'amber', words: PREVIEW_DELAYED_TEXT })
+    }
+    case 'reconnecting': {
+      const attempt = Math.min(Math.max(state.reconnectAttempts ?? 1, 1), LIVE_RECONNECT_BACKOFF_MS.length)
+      return view(state, {
+        state: 'reconnecting',
+        dot: 'amber',
+        words: PREVIEW_RECONNECTING_TEXT,
+        retryInMs: LIVE_RECONNECT_BACKOFF_MS[attempt - 1],
+      })
+    }
+    case 'disconnected':
+      return view(state, { state: 'disconnected', dot: 'red', words: PREVIEW_DISCONNECTED_TEXT, action: 'reconnect' })
+    case 'expired':
+      return view(state, { state: 'expired', dot: 'red', words: PREVIEW_EXPIRED_TEXT, action: 'refresh' })
+    case 'session-ended':
+      return view(state, { state: 'session-ended', dot: 'red', words: PREVIEW_SESSION_ENDED_TEXT, action: 'start-fresh' })
+    case 'run-ended':
+      return view(state, { state: 'run-ended', words: PREVIEW_RUN_ENDED_TEXT })
+    case 'member-ended':
+      return view(state, { state: 'member-ended', words: PREVIEW_MEMBER_ENDED_TEXT })
+    case 'no-stream':
+      return state.gaveUp === true
+        ? view(state, { state: 'no-stream', words: WAITING_GAVE_UP_TEXT, label: WAITING_GAVE_UP_LABEL })
+        : view(state, { state: 'no-stream', words: NO_STREAM_TEXT })
+    case 'unavailable':
+      return view(state, { state: 'unavailable', words: PREVIEW_UNAVAILABLE_TEXT })
+  }
 }
