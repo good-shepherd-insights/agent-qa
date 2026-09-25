@@ -826,7 +826,7 @@ export async function startServer(opts: StartServerOptions): Promise<{
       // inherited here. This rung refuses the ONE shape it can honestly refuse: a present `Origin`
       // that names another host. It is explicitly NOT a credential, and the reason is worth writing
       // down rather than rediscovering. The legitimate embed page runs in an iframe sandboxed
-      // WITHOUT `allow-same-origin` (`preview-pane.tsx`), so its upgrade carries the literal
+      // WITHOUT `allow-same-origin` (`live-preview.tsx`), so its upgrade carries the literal
       // `null` — and a sandboxed ATTACKER iframe sends exactly the same thing. Accepting `null` is
       // therefore mandatory for the real embed and worthless as a gate, and dropping the sandbox to
       // make this check "real" would hand the embed same-origin access to the dashboard, which is a

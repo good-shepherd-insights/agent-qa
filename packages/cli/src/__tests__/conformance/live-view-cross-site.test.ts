@@ -689,7 +689,7 @@ describe('the live-url mint door refuses a cross-site browser request (SC-2, LIV
       absent: await speakToFrameSocketRaw({
         port: f.dashboard.port, runId: f.runId, token: token as string, until: ['ready', 'ended', 'refused'],
       }),
-      // THE SANDBOXED EMBED'S SHAPE. `preview-pane.tsx` sandboxes the embed iframe WITHOUT
+      // THE SANDBOXED EMBED'S SHAPE. `live-preview.tsx` sandboxes the embed iframe WITHOUT
       // `allow-same-origin`, so the real embed's upgrade carries the literal `null`.
       opaque: await speakToFrameSocketRaw({
         port: f.dashboard.port, runId: f.runId, token: token as string, origin: 'null',
