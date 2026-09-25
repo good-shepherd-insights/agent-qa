@@ -15,6 +15,7 @@ import { getRunFaviconState, type RunFaviconState, useRunStatusFavicon } from '@
 import { cancelRun, classifyRunStreamClose, fetchRun, openRunStream } from '@/lib/api'
 import type { RunRow } from '@/lib/api'
 import { rungBannerText } from '@/lib/knowledge-view'
+import { liveRunLayoutOf, liveRunPanelIds } from '@/lib/live-run-layout'
 import { routes, type RunDetailNavigationState } from '@/lib/routes'
 import {
   createInitialRunStreamState,
@@ -128,6 +129,21 @@ export default function LiveRunPage() {
   // How many times this page has re-attached to a run the door does not know about YET. Bounded,
   // so D-15's refusal to hammer a settled door survives the not-yet probe below.
   const notYetAttemptsRef = useRef(0)
+
+  // 428 D-06: the page's own inline size decides docked or stacked. 0 until the observer reports,
+  // and an unmeasured page is docked. The observer only sets a width; the layout is a pure function
+  // of it, so it cannot feed back into the size it measures.
+  const [pageRoot, setPageRoot] = useState<HTMLDivElement | null>(null)
+  const [pageWidth, setPageWidth] = useState(0)
+  useEffect(() => {
+    if (!pageRoot) return
+    const observer = new ResizeObserver((entries) => {
+      const entry = entries[entries.length - 1]
+      if (entry) setPageWidth(entry.contentRect.width)
+    })
+    observer.observe(pageRoot)
+    return () => { observer.disconnect() }
+  }, [pageRoot])
 
   useEffect(() => {
     const timer = setInterval(() => { setNow(Date.now()) }, CLOCK_TICK_MS)
@@ -302,8 +318,46 @@ export default function LiveRunPage() {
     ...(rung.reason === undefined ? {} : { reason: rung.reason }),
   })
 
+  // THE TWO ARRANGEMENTS (428 D-06, 426-11's idiom). Below 768 px the preview goes on top at full
+  // width and the step list scrolls beneath it; otherwise the steps sit beside the preview as
+  // before. The switch changes the Group's orientation, the panels' ids and their order, and never
+  // the Group's key. The panels keep stable React keys, so React MOVES them rather than remounting
+  // them: the step list and the preview component survive the switch. A real browser does reload
+  // an iframe whose node moves; the embed reconnects by itself with its still-valid fragment token.
+  // Docked sizes are the ones this page always had; stacked sizes are percentages of the height.
+  const layout = liveRunLayoutOf(pageWidth)
+  const panelIds = liveRunPanelIds(layout)
+  const stacked = layout === 'stacked'
+
+  const stepsPanel = (
+    <ResizablePanel key="steps" id={panelIds.steps} defaultSize={stacked ? '55%' : 40} minSize={stacked ? '20%' : 20}>
+      <section data-live-pane="steps" className="flex h-full min-h-0 min-w-[280px] flex-col overflow-y-auto">
+        <StepList members={members} steps={state.steps} terminal={state.terminal} now={now} />
+      </section>
+    </ResizablePanel>
+  )
+
+  const previewPanel = (
+    <ResizablePanel key="preview" id={panelIds.preview} defaultSize={stacked ? '45%' : 60} minSize={stacked ? '25%' : 30}>
+      <section data-live-pane="preview" className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden">
+        <LivePreview
+          subject={{
+            kind: 'run',
+            runId: id,
+            handles: state.handles,
+            membersByHandle: state.members,
+            terminal: state.terminal,
+            runOver,
+          }}
+        />
+      </section>
+    </ResizablePanel>
+  )
+
+  const handle = <ResizableHandle key="handle" withHandle />
+
   return (
-    <div className="flex h-screen min-w-0 flex-col overflow-hidden">
+    <div ref={setPageRoot} className="flex h-screen min-w-0 flex-col overflow-hidden">
       <div className="flex h-14 shrink-0 items-center justify-between gap-2 border-b px-3">
         {/*
           THE HEADER IS FOUR THINGS (428 D-04): the title and the file path here, Cancel while the
@@ -395,29 +449,12 @@ export default function LiveRunPage() {
         </div>
       )}
 
-      <ResizablePanelGroup orientation="horizontal" className="min-h-0 flex-1 overflow-hidden">
-        <ResizablePanel defaultSize={40} minSize={20}>
-          <section data-live-pane="steps" className="flex h-full min-h-0 min-w-[280px] flex-col overflow-y-auto">
-            <StepList members={members} steps={state.steps} terminal={state.terminal} now={now} />
-          </section>
-        </ResizablePanel>
-
-        <ResizableHandle withHandle />
-
-        <ResizablePanel defaultSize={60} minSize={30}>
-          <section data-live-pane="preview" className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden">
-            <LivePreview
-              subject={{
-                kind: 'run',
-                runId: id,
-                handles: state.handles,
-                membersByHandle: state.members,
-                terminal: state.terminal,
-                runOver,
-              }}
-            />
-          </section>
-        </ResizablePanel>
+      <ResizablePanelGroup
+        key="live-run-panels"
+        orientation={stacked ? 'vertical' : 'horizontal'}
+        className="min-h-0 flex-1 overflow-hidden"
+      >
+        {stacked ? [previewPanel, handle, stepsPanel] : [stepsPanel, handle, previewPanel]}
       </ResizablePanelGroup>
     </div>
   )
