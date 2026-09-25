@@ -1,5 +1,22 @@
-import { describe, expect, it } from 'vitest'
-import { syncExternalHooks, syncExternalSteps, type EditorStep, type LiveHookExecution } from '../hooks/use-live-editor'
+// @vitest-environment jsdom
+
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
+
+import { act, createElement } from 'react'
+import { createRoot, type Root } from 'react-dom/client'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+
+import {
+  syncExternalHooks,
+  syncExternalSteps,
+  useLiveEditor,
+  type EditorStep,
+  type LiveHookExecution,
+  type UseLiveEditorReturn,
+} from '../hooks/use-live-editor'
+
+;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
 const SETUP_HOOK_ID = 'h_amber-birch-coral-delta-ember-falcon-garden-harbor-island-jungle'
 const NEXT_HOOK_ID = 'h_aster-bloom-cloud-drift-ember-field-glade-hollow-ivory-jasper'
@@ -113,5 +130,111 @@ describe('syncExternalHooks', () => {
     expect(next[0].name).toBe(NEXT_HOOK_ID)
     expect(next[0].status).toBe('pending')
     expect(next[0].id).toBe(NEXT_HOOK_ID)
+  })
+})
+
+// SC1 · D-07: the editor watches through the shared preview, so the hook no longer polls the
+// control socket for base64 screenshots. The needles are concatenated so this file cannot match
+// itself.
+const RETIRED_REQUEST = 'get-' + 'screenshot'
+const RETIRED_MEMBERS = ['screen' + 'shot', 'request' + 'Screenshot']
+const POLLING_NAMES = ['start' + 'ScreenshotPolling', 'set' + 'Screenshot']
+
+class PollingProbeSocket {
+  static instances: PollingProbeSocket[] = []
+  static readonly CONNECTING = 0
+  static readonly OPEN = 1
+  static readonly CLOSING = 2
+  static readonly CLOSED = 3
+
+  readonly sent: Array<Record<string, unknown>> = []
+  readyState = 1
+  onopen: ((event: Event) => void) | null = null
+  onmessage: ((event: MessageEvent<string>) => void) | null = null
+  onclose: ((event: CloseEvent) => void) | null = null
+  onerror: ((event: Event) => void) | null = null
+
+  constructor(readonly url: string) {
+    PollingProbeSocket.instances.push(this)
+  }
+
+  emit(message: Record<string, unknown>): void {
+    this.onmessage?.(new MessageEvent('message', { data: JSON.stringify(message) }))
+  }
+
+  send(data: string): void {
+    this.sent.push(JSON.parse(data))
+  }
+
+  close(): void {
+    this.readyState = 3
+    this.onclose?.(new CloseEvent('close'))
+  }
+}
+
+describe('HOOK-HAS-NO-SCREENSHOT-POLLING', () => {
+  let container: HTMLDivElement
+  let root: Root
+  let originalWebSocket: typeof WebSocket
+  const holder: { current: UseLiveEditorReturn | null } = { current: null }
+
+  function Harness() {
+    holder.current = useLiveEditor('session-poll', { allowReconnect: false })
+    return null
+  }
+
+  beforeEach(async () => {
+    vi.useFakeTimers()
+    Object.defineProperty(document, 'hidden', { configurable: true, get: () => false })
+    originalWebSocket = globalThis.WebSocket
+    PollingProbeSocket.instances = []
+    globalThis.WebSocket = PollingProbeSocket as unknown as typeof WebSocket
+    container = document.createElement('div')
+    document.body.appendChild(container)
+    root = createRoot(container)
+    await act(async () => {
+      root.render(createElement(Harness))
+    })
+  })
+
+  afterEach(async () => {
+    await act(async () => {
+      root.unmount()
+    })
+    container.remove()
+    holder.current = null
+    globalThis.WebSocket = originalWebSocket
+    delete (document as { hidden?: boolean }).hidden
+    vi.useRealTimers()
+  })
+
+  it('HOOK-HAS-NO-SCREENSHOT-POLLING: a connected session sends no retired request in 10 s', async () => {
+    const socket = PollingProbeSocket.instances[0]
+    expect(socket).toBeDefined()
+    await act(async () => {
+      socket.emit({ type: 'session-ready', platform: 'web', interactive: true })
+    })
+    expect(holder.current?.connectionState).toBe('connected')
+
+    await act(async () => {
+      vi.advanceTimersByTime(10_000)
+    })
+
+    expect(socket.sent.filter((message) => message.type === RETIRED_REQUEST)).toEqual([])
+  })
+
+  it('HOOK-HAS-NO-SCREENSHOT-POLLING: the return has no screenshot and no requestScreenshot', () => {
+    const editor = holder.current
+    expect(editor).not.toBeNull()
+    for (const member of RETIRED_MEMBERS) {
+      expect(Object.keys(editor ?? {})).not.toContain(member)
+    }
+  })
+
+  it("HOOK-HAS-NO-SCREENSHOT-POLLING: the hook's source names no polling function or retired message", () => {
+    const source = readFileSync(resolve(process.cwd(), 'src/hooks/use-live-editor.ts'), 'utf8')
+    for (const needle of [...POLLING_NAMES, RETIRED_REQUEST]) {
+      expect(source).not.toContain(needle)
+    }
   })
 })
