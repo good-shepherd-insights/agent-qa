@@ -439,4 +439,126 @@ describe('428-20 editor session lifecycle', () => {
 
     expect(fetchMock).not.toHaveBeenCalled()
   })
+
+  it('SESSION-GONE-ON-4404: a 4404 close names the session gone, cancels the running step and schedules no reconnect', async () => {
+    await mount(createElement(Harness, { sessionId: 'session-gone', allowReconnect: true }))
+    const socket = LifecycleProbeSocket.instances[0]
+    await act(async () => {
+      socket.emit({ type: 'session-ready', platform: 'web', interactive: true })
+    })
+    await act(async () => {
+      holder.current?.executeStep('Open the page')
+    })
+    expect(holder.current?.steps[0]?.status).toBe('running')
+
+    await act(async () => {
+      socket.drop(4404)
+    })
+
+    expect(holder.current?.sessionGone).toBe(true)
+    expect(holder.current?.connectionState).toBe('disconnected')
+    expect(holder.current?.steps[0]?.status).toBe('cancelled')
+
+    await act(async () => {
+      vi.advanceTimersByTime(10_000)
+    })
+
+    expect(LifecycleProbeSocket.instances).toHaveLength(1)
+    expect(holder.current?.sessionGone).toBe(true)
+  })
+
+  it('SESSION-GONE-ON-4404: a new session id clears it', async () => {
+    await mount(createElement(Harness, { sessionId: 'session-gone', allowReconnect: true }))
+    await act(async () => {
+      LifecycleProbeSocket.instances[0].drop(4404)
+    })
+    expect(holder.current?.sessionGone).toBe(true)
+
+    await act(async () => {
+      root?.render(createElement(Harness, { sessionId: 'session-fresh', allowReconnect: true }))
+    })
+
+    expect(holder.current?.sessionGone).toBe(false)
+    expect(LifecycleProbeSocket.instances.at(-1)?.url).toContain('sessionId=session-fresh')
+  })
+
+  it('RECONNECT-RESUMES-SESSION: a 1006 close reconnects to the same session at 1 s, 2 s and 4 s and resumes it', async () => {
+    await mount(createElement(Harness, { sessionId: 'session-keep', allowReconnect: true }))
+    await act(async () => {
+      LifecycleProbeSocket.instances[0].emit({ type: 'session-ready', platform: 'web', interactive: true })
+    })
+    expect(holder.current?.connectionState).toBe('connected')
+
+    for (const [attempt, delay] of [[1, 1_000], [2, 2_000], [3, 4_000]] as const) {
+      await act(async () => {
+        LifecycleProbeSocket.instances[attempt - 1].drop(1006)
+      })
+      expect(holder.current?.connectionState).not.toBe('disconnected')
+      expect(holder.current?.sessionGone).toBe(false)
+
+      await act(async () => {
+        vi.advanceTimersByTime(delay - 1)
+      })
+      expect(LifecycleProbeSocket.instances).toHaveLength(attempt)
+      await act(async () => {
+        vi.advanceTimersByTime(1)
+      })
+      expect(LifecycleProbeSocket.instances).toHaveLength(attempt + 1)
+      expect(LifecycleProbeSocket.instances[attempt].url).toContain('sessionId=session-keep')
+    }
+
+    const resumed = LifecycleProbeSocket.instances[3]
+    await act(async () => {
+      resumed.open()
+      resumed.emit({ type: 'session-ready', platform: 'web', interactive: true })
+    })
+
+    expect(holder.current?.connectionState).toBe('connected')
+    expect(holder.current?.sessionId).toBe('session-keep')
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it('RECONNECT-RESUMES-SESSION: after three failed reconnects the hook says disconnected and stops', async () => {
+    await mount(createElement(Harness, { sessionId: 'session-lost', allowReconnect: true }))
+    for (const delay of [1_000, 2_000, 4_000]) {
+      await act(async () => {
+        LifecycleProbeSocket.instances.at(-1)?.drop(1006)
+      })
+      await act(async () => {
+        vi.advanceTimersByTime(delay)
+      })
+    }
+    await act(async () => {
+      LifecycleProbeSocket.instances.at(-1)?.drop(1006)
+    })
+
+    expect(holder.current?.connectionState).toBe('disconnected')
+    await act(async () => {
+      vi.advanceTimersByTime(30_000)
+    })
+    expect(LifecycleProbeSocket.instances).toHaveLength(4)
+  })
+
+  it('RECONNECT-RESUMES-SESSION: a session change never reconnects the old session', async () => {
+    await mount(createElement(Harness, { sessionId: 'session-old', allowReconnect: true }))
+    await act(async () => {
+      root?.render(createElement(Harness, { sessionId: 'session-new', allowReconnect: true }))
+    })
+    await act(async () => {
+      vi.advanceTimersByTime(10_000)
+    })
+
+    const urls = LifecycleProbeSocket.instances.map((socket) => socket.url)
+    expect(urls.filter((url) => url.includes('sessionId=session-old'))).toHaveLength(1)
+    expect(urls.filter((url) => url.includes('sessionId=session-new'))).toHaveLength(1)
+    expect(LifecycleProbeSocket.instances.at(-1)?.readyState).toBe(LifecycleProbeSocket.OPEN)
+  })
+
+  it('RECONNECT-RESUMES-SESSION: both editor pages let the hook reconnect and pass sessionGone to the pane', () => {
+    for (const page of ['src/pages/test-editor.tsx', 'src/pages/suite-editor.tsx']) {
+      const source = readFileSync(resolve(process.cwd(), page), 'utf8')
+      expect(source, page).toContain('sessionGone={liveEditor.' + 'sessionGone}')
+      expect(source, page).not.toContain('allowReconnect: ' + 'false')
+    }
+  })
 })
