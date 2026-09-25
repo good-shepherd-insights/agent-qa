@@ -212,6 +212,7 @@ export type LivePreviewEvent =
   | { type: 'renew-failed' }
   | { type: 'embed'; report: EmbedReport }
   | { type: 'lost-scheduled' }
+  | { type: 'wait-unanswered' }
   | { type: 'retry' }
   | { type: 'subject-over'; reason: 'run-ended' | 'session-ended' }
   | { type: 'reset' }
@@ -333,6 +334,7 @@ export function reduceLivePreview(state: LivePreviewMachine, event: LivePreviewE
   switch (event.type) {
     case 'mint-started':
     case 'lost-scheduled':
+    case 'wait-unanswered':
       return state
     case 'minted': {
       if (event.stream.kind === 'none') {

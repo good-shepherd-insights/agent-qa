@@ -486,6 +486,25 @@ describe('one machine for both entry points (428-14 Task 2)', () => {
     expect(reduceLivePreview(state, { type: 'reset' }, T + 130_000), 'a new subject starts over').toEqual(createInitialLivePreview())
   })
 
+  it('WAIT-UNANSWERED-COUNTS: an interval that passes with the question still out counts toward the bound', () => {
+    let state = reduceLivePreview(createInitialLivePreview(), minted('none', false), T)
+    for (let attempt = 2; attempt < WAITING_ATTEMPT_LIMIT; attempt += 1) {
+      state = reduceLivePreview(state, { type: 'wait-unanswered' }, T + attempt * NO_STREAM_RETRY_MS)
+      expect(deriveLivePreview(state, T).state, `attempt ${attempt}`).toBe('waiting')
+    }
+    state = reduceLivePreview(state, { type: 'wait-unanswered' }, T + 100_000)
+    expect(deriveLivePreview(state, T + 100_000)).toMatchObject({ state: 'no-stream', label: WAITING_GAVE_UP_LABEL })
+    expect(
+      reduceLivePreview(state, minted('cdp-screencast', false), T + 110_000),
+      'an answer landing after the bound does not reopen it',
+    ).toEqual(state)
+
+    const live = liveAt(T)
+    expect(reduceLivePreview(live, { type: 'wait-unanswered' }, T + 1), 'outside waiting it changes nothing').toBe(live)
+    const minting = createInitialLivePreview()
+    expect(reduceLivePreview(minting, { type: 'wait-unanswered' }, T + 1)).toBe(minting)
+  })
+
   it('NO-NUMBERS-IN-WORDS: every state the machine can reach says its words without a digit', () => {
     const reached: LivePreviewView[] = [
       deriveLivePreview(createInitialLivePreview(), T),
@@ -536,6 +555,7 @@ describe('one machine for both entry points (428-14 Task 2)', () => {
       embed({ event: 'refused', reason: 'malformed' }),
       lost,
       { type: 'lost-scheduled' },
+      { type: 'wait-unanswered' },
       { type: 'retry' },
       { type: 'subject-over', reason: 'run-ended' },
       { type: 'reset' },
