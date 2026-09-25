@@ -55,6 +55,8 @@ const SENTINEL_REASONING = 'SENTINEL-REASONING-7f3a'
 const SENTINEL_ACTION = 'SENTINEL-ACTION-9c1e'
 
 const RUN_ID = 'r1'
+// Concatenated so this file cannot satisfy the phase's deletion census by matching itself.
+const TICKS_LABEL_ATTR = 'data-step-ticks' + '-label'
 const BASE_TIME = 1_700_000_000_000
 const TTL_MS = 300_000
 
@@ -436,7 +438,10 @@ describe('the running row moves without inventing a phase (HNST-02, D-10)', () =
     expect(q('[data-live-pane="steps"] li')?.getAttribute('data-step-status')).toBe('healed')
   })
 
-  it('the tick count is a plain number of actions and the motion re-keys on each one', async () => {
+  // RE-SPELLED 2026-09-26 (428 D-19/D-20). This cell asserted the row said `3 actions`. The owner
+  // removed the count: the breathing glyph's re-key is the one progress signal left, and it says
+  // "something happened" without a number.
+  it('NO-ACTION-COUNT: a running row after three sub-actions shows no count, and the motion re-keys on each one', async () => {
     await mount()
     await open()
     await emit(runStarted(), testStarted(0, 'the member', 1), stepStarted())
@@ -444,11 +449,85 @@ describe('the running row moves without inventing a phase (HNST-02, D-10)', () =
 
     await emit(subActionRecorded(0, 0, 0), subActionRecorded(0, 0, 1), subActionRecorded(0, 0, 2))
 
-    expect(q('[data-step-ticks-label]')?.textContent).toBe('3 actions')
+    expect(q(`[${TICKS_LABEL_ATTR}]`)).toBeNull()
+    expect(stepsPane().textContent ?? '').not.toMatch(/action/iu)
     expect(q('[data-live-pane="steps"] li')?.getAttribute('data-step-ticks')).toBe('3')
     expect(q('[data-step-motion]')?.getAttribute('data-motion-key')).toBe('3')
     // No phase was invented from the ticks, in any casing.
     expect(stepsPane().outerHTML.toLowerCase()).not.toMatch(/observing|planning|acting/)
+  })
+
+  it('NO-CLOCK-ON-ANY-ROW: running, finished and pending rows show no time, however long the run goes', async () => {
+    await mount()
+    await open()
+    await emit(
+      runStarted(),
+      testStarted(0, 'the member', 3),
+      stepStarted(0, 0),
+      stepFinalized(0, 0, { status: 'passed', durationMs: 65_000 }),
+      stepStarted(0, 1, 'click the button'),
+    )
+    await advance(90_000)
+
+    const rows = qa('[data-live-pane="steps"] li')
+    expect(rows.map((row) => row.getAttribute('data-step-status'))).toEqual(['passed', 'running', 'pending'])
+    for (const row of rows) {
+      expect(row.textContent ?? '', row.getAttribute('data-step-status') ?? '').not.toMatch(/\d+:\d{2}/)
+    }
+  })
+})
+
+describe('a member header only where there is more than one member (428 D-19)', () => {
+  it('NO-REPEATED-SINGLE-MEMBER-TITLE: a single-member run says its title once', async () => {
+    fetchRunMock.mockResolvedValue({
+      run: { id: RUN_ID, name: 'Checkout flow', status: 'running', filePath: 'tests/a.yaml' },
+      steps: [],
+      tests: [],
+    })
+    await mount()
+    await open()
+    await emit(runStarted(), testStarted(0, 'Checkout flow', 1), stepStarted())
+
+    expect(q('h2')?.textContent).toBe('Checkout flow')
+    expect(qa('[data-member] h3')).toEqual([])
+    expect(stepsPane().querySelectorAll('h3')).toHaveLength(0)
+    expect((document.body.textContent ?? '').split('Checkout flow')).toHaveLength(2)
+  })
+
+  it('SINGLE-MEMBER-NOTE-AS-SENTENCE: a single member that did not run says so once, as the pane\'s sentence', async () => {
+    await mount()
+    await open()
+    await emit(runStarted(), testStarted(0, 'the member', 2), testFinished(0, 'skipped'))
+
+    const notes = qa('[data-member-note]')
+    expect(notes).toHaveLength(1)
+    expect(notes[0]?.tagName).toBe('P')
+    expect(notes[0]?.textContent).toBe(DID_NOT_RUN_NOTE)
+    expect(stepsPane().contains(notes[0] ?? null)).toBe(true)
+    expect(stepsPane().querySelectorAll('h3')).toHaveLength(0)
+    expect((stepsPane().textContent ?? '').split(DID_NOT_RUN_NOTE)).toHaveLength(2)
+  })
+
+  it('MULTI-MEMBER-COMPACT-HEADER: a two-member suite has one header per member, the name then the outcome or note', async () => {
+    await mount()
+    await open()
+    await emit(
+      runStarted([0, 1]),
+      testStarted(0, 'first member', 1),
+      stepStarted(0, 0),
+      stepFinalized(0, 0, { status: 'passed' }),
+      testFinished(0, 'passed'),
+      testStarted(1, 'second member', 1),
+      testFinished(1, 'skipped'),
+    )
+
+    const headers = qa('[data-member] h3')
+    expect(headers).toHaveLength(2)
+    expect(headers[0]?.firstElementChild?.textContent).toBe('first member')
+    expect(headers[0]?.querySelector('[data-member-outcome]')?.textContent).toBe('passed')
+    expect(headers[0]?.querySelector('[data-member-note]')).toBeNull()
+    expect(headers[1]?.firstElementChild?.textContent).toBe('second member')
+    expect(headers[1]?.querySelector('[data-member-note]')?.textContent).toBe(DID_NOT_RUN_NOTE)
   })
 })
 
