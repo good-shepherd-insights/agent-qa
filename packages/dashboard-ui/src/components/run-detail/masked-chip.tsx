@@ -16,7 +16,7 @@
 import { Lock } from "lucide-react"
 
 import { Badge } from "@/components/ui/badge"
-import { MASKED_EMAIL_LABEL, MASKED_SECRET_LABEL } from "@/lib/run-detail-view"
+import { MASKED_EMAIL_LABEL, MASKED_SECRET_LABEL, MASKED_SECRET_LIVE_LABEL } from "@/lib/run-detail-view"
 import type { MaskedCategory } from "@vostride/agent-qa-schema"
 
 /**
@@ -26,21 +26,22 @@ import type { MaskedCategory } from "@vostride/agent-qa-schema"
  * in: the failure banner's copy button writes the same sentence to the clipboard, and a second
  * switch over the same closed set would be a second place a third category could go unnamed.
  */
-export function maskedLabel(category: MaskedCategory): string {
+export function maskedLabel(category: MaskedCategory, surface?: "live"): string {
   switch (category) {
     case "secret":
-      return MASKED_SECRET_LABEL
+      // On a live surface the value is masked by design, not missing from config (428 D-22).
+      return surface === "live" ? MASKED_SECRET_LIVE_LABEL : MASKED_SECRET_LABEL
     case "email":
       return MASKED_EMAIL_LABEL
   }
 }
 
-export function MaskedChip({ category }: { category: MaskedCategory }) {
+export function MaskedChip({ category, surface }: { category: MaskedCategory; surface?: "live" }) {
   return (
     <span data-masked={category} className="inline-flex align-baseline">
       <Badge variant="outline" className="gap-1 text-muted-foreground border-border font-normal">
         <Lock className="h-3 w-3" aria-hidden="true" />
-        {maskedLabel(category)}
+        {maskedLabel(category, surface)}
       </Badge>
     </span>
   )

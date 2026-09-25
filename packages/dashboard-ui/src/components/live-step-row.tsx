@@ -1,6 +1,8 @@
 import { Ban, Check, Circle, CircleDashed, Minus, ShieldCheck, X, type LucideIcon } from 'lucide-react'
 
-import { LIVE_STEP_STATUS_NAMES } from '@/lib/live-step-row'
+import { MaskedChip } from '@/components/run-detail/masked-chip'
+import { LIVE_STEP_STATUS_NAMES, liveLabelText } from '@/lib/live-step-row'
+import { splitMaskedText } from '@/lib/masked-text'
 import type { LiveStepRow, StepStatus } from '@/lib/run-stream-reducer'
 import { cn } from '@/lib/utils'
 
@@ -14,6 +16,10 @@ import { cn } from '@/lib/utils'
  * THE RUNNING GLYPH BREATHES (D-20). Its wrapper is re-keyed on every tick, so the animation
  * restarts each time the run records a sub-action. That restart says "something just happened"
  * and nothing about what. It is blue, never green, and never a dot.
+ *
+ * SECRETS ARE CHIPS (D-22). A `<SECRET_n>` placeholder in the label is painted as run detail's
+ * masked chip, with the live surface's own label. Text segments ellipsise and the chip never
+ * shrinks, so a long label never clips it. Every segment is a React text node or an element.
  */
 
 /** One shape per status, so colour is never the only signal (RESEARCH P13). */
@@ -60,7 +66,19 @@ export function LiveStepRowView({ row }: { row: LiveStepRow }) {
           aria-hidden="true"
         />
       </span>
-      <span className="min-w-0 flex-1 truncate">{row.text || `step ${String(row.stepIndex + 1)}`}</span>
+      <span className="flex min-w-0 flex-1 items-center gap-1 overflow-hidden">
+        {splitMaskedText(liveLabelText(row.text || `step ${String(row.stepIndex + 1)}`)).map((segment, index) =>
+          segment.kind === 'text' ? (
+            <span key={index} className="min-w-0 truncate">
+              {segment.text}
+            </span>
+          ) : (
+            <span key={index} className="shrink-0">
+              <MaskedChip category={segment.category} surface="live" />
+            </span>
+          ),
+        )}
+      </span>
     </li>
   )
 }
