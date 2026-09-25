@@ -184,6 +184,73 @@ describe('mintLiveUrlToken / validateLiveUrlToken (403 D-01/D-02)', () => {
   })
 })
 
+describe('the token names its subject, and a subject of one kind never opens the other (428 D-07)', () => {
+  const runSubject = { kind: 'run', runId: 'shared', handle: 0 } as const
+  const editorSubject = { kind: 'editor', sessionId: 'shared' } as const
+
+  function subjectClaims(subject: LiveUrlClaims['subject']): LiveUrlClaims {
+    return { subject, scope: LIVE_URL_SCOPE, iat: NOW, exp: NOW + 60_000 }
+  }
+
+  function signedBodyToken(body: unknown): string {
+    const encoded = encodeBase64Url(JSON.stringify(body))
+    return `v1.${encoded}.${fakeSigner.sign(encoded)}`
+  }
+
+  it('RUN-TOKEN-REFUSED-FOR-EDITOR-SUBJECT', () => {
+    // The ids are byte-identical on purpose: only the signed kind can tell the two subjects apart.
+    const token = mintLiveUrlToken(fakeSigner, subjectClaims(runSubject))
+    expect(validateLiveUrlToken(fakeSigner, token, { subject: { kind: 'editor', id: 'shared' }, now: NOW }))
+      .toEqual({ kind: 'refused', reason: 'scope_mismatch' })
+    expect(
+      validateLiveUrlToken(fakeSigner, token, { subject: { kind: 'run', id: 'shared' }, now: NOW }).kind,
+      'the same token opens its own kind, so the refusal is the kind rule and not a parse failure',
+    ).toBe('ok')
+  })
+
+  it('EDITOR-TOKEN-REFUSED-FOR-RUN-SUBJECT', () => {
+    const token = mintLiveUrlToken(fakeSigner, subjectClaims(editorSubject))
+    expect(validateLiveUrlToken(fakeSigner, token, { subject: { kind: 'run', id: 'shared' }, now: NOW }))
+      .toEqual({ kind: 'refused', reason: 'scope_mismatch' })
+    const own = validateLiveUrlToken(fakeSigner, token, { subject: { kind: 'editor', id: 'shared' }, now: NOW })
+    expect(own).toEqual({ kind: 'ok', claims: subjectClaims(editorSubject) })
+  })
+
+  it('SUBJECT-BODY-FIELD-ORDER', () => {
+    // A caller's object is never spread into the signed bytes: an extra or re-ordered key on the
+    // way in must not change what is signed.
+    const sloppy = { exp: NOW + 60_000, iat: NOW, scope: LIVE_URL_SCOPE, extra: 1, subject: { handle: 0, runId: 'shared', kind: 'run' } }
+    const runBody = JSON.parse(
+      decodeBase64Url(mintLiveUrlToken(fakeSigner, sloppy as unknown as LiveUrlClaims).split('.')[1] as string) as string,
+    ) as Record<string, unknown>
+    expect(Object.keys(runBody)).toEqual(['subject', 'scope', 'iat', 'exp'])
+    expect(Object.keys(runBody.subject as object)).toEqual(['kind', 'runId', 'handle'])
+
+    const editorBody = JSON.parse(
+      decodeBase64Url(mintLiveUrlToken(fakeSigner, subjectClaims(editorSubject)).split('.')[1] as string) as string,
+    ) as Record<string, unknown>
+    expect(Object.keys(editorBody)).toEqual(['subject', 'scope', 'iat', 'exp'])
+    expect(Object.keys(editorBody.subject as object)).toEqual(['kind', 'sessionId'])
+  })
+
+  it('UNKNOWN-SUBJECT-KIND-MALFORMED', () => {
+    // Each body also carries the pre-428 top-level runId/handle, so a parser that still read the
+    // old shape would accept it: only a subject-aware parser refuses these.
+    const legacy = { runId: 'shared', handle: 0, scope: LIVE_URL_SCOPE, iat: NOW, exp: NOW + 60_000 }
+    const unknownKind = { ...legacy, subject: { kind: 'suite', id: 'shared' } }
+    const runWithoutHandle = { ...legacy, subject: { kind: 'run', runId: 'shared' } }
+    for (const body of [unknownKind, runWithoutHandle]) {
+      expect(validateLiveUrlToken(fakeSigner, signedBodyToken(body), { subject: { kind: 'run', id: 'shared' }, now: NOW }))
+        .toEqual({ kind: 'refused', reason: 'malformed' })
+      const unsigned = `v1.${encodeBase64Url(JSON.stringify(body))}.sig:WRONG`
+      expect(
+        validateLiveUrlToken(fakeSigner, unsigned, { subject: { kind: 'run', id: 'shared' }, now: NOW }),
+        'the signature is still checked before the body is parsed',
+      ).toEqual({ kind: 'refused', reason: 'bad_signature' })
+    }
+  })
+})
+
 describe('runs.liveurl through invokeFunction (403 D-03)', () => {
   it('returns a schema-parseable result whose liveUrl is origin + /live/ + fragment', async () => {
     const live = recordingLiveView()
