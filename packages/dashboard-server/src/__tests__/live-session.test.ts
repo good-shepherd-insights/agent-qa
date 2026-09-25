@@ -955,11 +955,13 @@ describe('LiveSession', () => {
     expect(mockCleanup, 'the browser is closed once').toHaveBeenCalledTimes(1)
   })
 
+  // 428-19 (D-07): the session has no screenshot getter. The adapter's capture is reached only
+  // through the hub's snapshot producer, lazily, so an initialized session with no viewer never
+  // captures. The title is kept.
   it('getScreenshot delegates to adapter', async () => {
     await session.initialize(webConfig)
-    const screenshot = await session.getScreenshot()
-    expect(mockScreenshot).toHaveBeenCalled()
-    expect(screenshot).toBeInstanceOf(Buffer)
+    expect('getScreenshot' in session).toBe(false)
+    expect(mockScreenshot).not.toHaveBeenCalled()
   })
 
   it('initialize does not pass resolved vision sizing to adapter.setup() or createModel()', async () => {

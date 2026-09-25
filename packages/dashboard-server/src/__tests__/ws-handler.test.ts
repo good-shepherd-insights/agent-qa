@@ -267,6 +267,8 @@ describe('ws-handler', () => {
     await vi.waitFor(() => expect(onTerminate).toHaveBeenCalled())
   })
 
+  // 428-19 (D-07): the control socket no longer carries screenshots. Both cells keep their titles
+  // and assert the retirement: the mock session could still capture, and the handler never asks.
   it('get-screenshot sends base64 screenshot', async () => {
     const handler = createSessionHandler(session as unknown as LiveSession, onTerminate)
     handler(ws as any)
@@ -274,14 +276,12 @@ describe('ws-handler', () => {
     ws.simulateMessage({ type: 'get-screenshot' })
     await vi.waitFor(() => expect(ws.sentMessages.length).toBe(3))
 
-    const msg = ws.parsed(2)
-    expect(msg.type).toBe('screenshot')
-    expect(msg.data).toBe(Buffer.from('fake-png').toString('base64'))
+    const types = ws.sentMessages.map((raw) => JSON.parse(raw).type)
+    expect(types).not.toContain('screenshot')
+    expect((session as unknown as { getScreenshot: Mock }).getScreenshot).not.toHaveBeenCalled()
   })
 
   it('get-screenshot sends error when unavailable', async () => {
-    ;(session.getScreenshot as any).mockResolvedValue(undefined)
-
     const handler = createSessionHandler(session as unknown as LiveSession, onTerminate)
     handler(ws as any)
 
@@ -290,7 +290,7 @@ describe('ws-handler', () => {
 
     const msg = ws.parsed(2)
     expect(msg.type).toBe('error')
-    expect(msg.message).toBe('Screenshot unavailable')
+    expect(msg.message).toBe('Unknown message type: get-screenshot')
   })
 
   it('get-state sends session-state', async () => {
