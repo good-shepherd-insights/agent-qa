@@ -78,7 +78,8 @@ vi.mock('webdriverio', () => ({
 }))
 
 import { IOSPlatformAdapter } from '../adapter.js'
-import type { PlatformConfig } from '@vostride/agent-qa-runner'
+import type { PlatformAdapter, PlatformConfig } from '@vostride/agent-qa-runner'
+import type { LiveFrame } from '@vostride/agent-qa-schema'
 import zlib from 'node:zlib'
 
 // --- PNG helpers (avoids adding sharp as ios dep per Pitfall 5) ---
@@ -785,6 +786,50 @@ describe('IOSPlatformAdapter', () => {
       await adapter.setup({ platform: 'ios' })
       const result = await adapter.execute({ type: 'tapCoordinate', x: 800, y: 400, coordSpace: 'viewport' })
       expect(result.coordinates).toEqual({ x: 800, y: 400 })
+    })
+  })
+
+  describe('liveStream (428 D-11)', () => {
+    function contextSpies() {
+      const spies = {
+        getContext: vi.fn().mockResolvedValue('NATIVE_APP'),
+        switchContext: vi.fn().mockResolvedValue(undefined),
+        getWindowSize: vi.fn().mockResolvedValue({ width: 1080, height: 1920 }),
+        takeScreenshot: vi.fn().mockResolvedValue(SCREENSHOT_BASE64),
+      }
+      Object.assign(mockDriver, spies)
+      return spies
+    }
+
+    it('LIVE-STREAM-IS-CONTEXT-NEUTRAL-SNAPSHOT: snapshots come from takeScreenshot alone, never a context switch', async () => {
+      await adapter.setup({ platform: 'ios' })
+      const spies = contextSpies()
+      const stream = (adapter as PlatformAdapter<'ios'>).liveStream
+      expect(stream?.kind).toBe('snapshot')
+      const frames: LiveFrame[] = []
+      await stream!.start((frame) => frames.push(frame))
+      await vi.waitFor(() => expect(frames).toHaveLength(1))
+      await stream!.stop()
+      expect(Buffer.from(frames[0].bytes).toString('base64')).toBe(SCREENSHOT_BASE64)
+      expect(frames[0].kind).toBe('snapshot')
+      expect(spies.takeScreenshot).toHaveBeenCalledTimes(1)
+      expect(spies.switchContext, 'a tick must never move the session under a running step').not.toHaveBeenCalled()
+      expect(spies.getContext).not.toHaveBeenCalled()
+      expect(spies.getWindowSize).not.toHaveBeenCalled()
+    })
+
+    it('the getter answers one capability, before the driver exists too, and cleanup() stops and drops it', async () => {
+      const early = (adapter as PlatformAdapter<'ios'>).liveStream
+      expect(early?.kind, 'declared before setup, so selection never reaches screenshot()').toBe('snapshot')
+      await adapter.setup({ platform: 'ios' })
+      const stream = (adapter as PlatformAdapter<'ios'>).liveStream
+      expect(stream).toBe(early)
+      expect((adapter as PlatformAdapter<'ios'>).liveStream).toBe(stream)
+      const stop = vi.spyOn(stream!, 'stop')
+      await stream!.start(() => {})
+      await adapter.cleanup()
+      expect(stop).toHaveBeenCalledTimes(1)
+      expect((adapter as PlatformAdapter<'ios'>).liveStream).not.toBe(stream)
     })
   })
 })
