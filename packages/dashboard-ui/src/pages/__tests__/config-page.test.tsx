@@ -44,7 +44,8 @@ import ConfigPage from '@/pages/config'
 
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
-const { sampleConfig } = vi.hoisted(() => ({
+const { sampleConfig, CONFIG_FILE_PATH } = vi.hoisted(() => ({
+  CONFIG_FILE_PATH: '/work/agent-qa.config.yaml',
   sampleConfig: {
   workspace: {
     testMatch: ['tests/**/*.yaml'],
@@ -113,7 +114,13 @@ vi.mock('@/lib/api', () => ({
   }),
   fetchConfig: vi.fn().mockResolvedValue({
     config: sampleConfig,
+    provider: 'openai-compatible',
+    revision: 'rev-1',
+    file: { path: CONFIG_FILE_PATH, lines: [] },
   }),
+  fetchConfigRevision: vi.fn().mockResolvedValue({ revision: 'rev-1' }),
+  applyConfigChanges: vi.fn().mockResolvedValue({ revision: 'rev-2' }),
+  undoConfigAction: vi.fn().mockResolvedValue({ restored: true, revision: 'rev-3' }),
   updateSettings: vi.fn().mockResolvedValue({ updated: true }),
   fetchAuthStates: vi.fn().mockResolvedValue({ authStates: [] }),
   fetchAuthStatus: vi.fn().mockResolvedValue({ credentials: [] }),
@@ -277,6 +284,10 @@ function shellChrome(view: HTMLElement) {
 
 const BUCKET_LABELS = /\b(?:Workspace|Services|Registry|Use|Analytics)\b/
 const DOTTED_CONFIG_PATH = /\b(?:workspace|services|registry|use|knowledge|analytics)\.[A-Za-z]/
+
+function readAnswer({ config }: { config: Record<string, unknown> }) {
+  return { config, provider: null, revision: 'rev-1', file: { path: CONFIG_FILE_PATH, lines: [] } }
+}
 
 function configWithLlm(llm: Record<string, unknown>) {
   const name = String(llm.name ?? '')
@@ -1010,14 +1021,14 @@ describe('ConfigPage task tabs shell', () => {
   })
 
   it('formats OpenAI-Compatible configs and keeps static provider fallback built-in only', async () => {
-    vi.mocked(fetchConfig).mockResolvedValueOnce({
+    vi.mocked(fetchConfig).mockResolvedValueOnce(readAnswer({
       config: configWithLlm({
         name: 'planner',
         provider: 'openai-compatible',
         model: 'openrouter/auto',
         baseURL: 'https://openrouter.ai/api/v1',
       }),
-    })
+    }))
 
     const view = await renderAt('/config/models')
 
@@ -1033,13 +1044,13 @@ describe('ConfigPage task tabs shell', () => {
   })
 
   it('does not mark provider-mismatched same-name credentials connected', async () => {
-    vi.mocked(fetchConfig).mockResolvedValueOnce({
+    vi.mocked(fetchConfig).mockResolvedValueOnce(readAnswer({
       config: configWithLlm({
         name: 'planner',
         provider: 'anthropic-subscription',
         model: 'claude-sonnet-4-20250514',
       }),
-    })
+    }))
     vi.mocked(fetchAuthStatus).mockResolvedValueOnce({
       credentials: [{
         configName: 'planner',
@@ -1057,7 +1068,7 @@ describe('ConfigPage task tabs shell', () => {
   })
 
   it('renders the OpenAI-Compatible modal with free-form model and Base URL tooltip', async () => {
-    vi.mocked(fetchConfig).mockResolvedValueOnce({
+    vi.mocked(fetchConfig).mockResolvedValueOnce(readAnswer({
       config: configWithLlm({
         name: 'planner',
         provider: 'openai-compatible',
@@ -1066,7 +1077,7 @@ describe('ConfigPage task tabs shell', () => {
         vision: true,
         contextWindow: '256k',
       }),
-    })
+    }))
 
     await renderAt('/config/models')
     await openFirstLlmEditor()
@@ -1088,13 +1099,13 @@ describe('ConfigPage task tabs shell', () => {
   })
 
   it('requires Base URL before saving OpenAI-Compatible configs', async () => {
-    vi.mocked(fetchConfig).mockResolvedValueOnce({
+    vi.mocked(fetchConfig).mockResolvedValueOnce(readAnswer({
       config: configWithLlm({
         name: 'planner',
         provider: 'openai-compatible',
         model: 'openrouter/auto',
       }),
-    })
+    }))
 
     await renderAt('/config/models')
     await openFirstLlmEditor()
@@ -1110,14 +1121,14 @@ describe('ConfigPage task tabs shell', () => {
   })
 
   it('saves and tests OpenAI-Compatible credentials with the named config key', async () => {
-    vi.mocked(fetchConfig).mockResolvedValueOnce({
+    vi.mocked(fetchConfig).mockResolvedValueOnce(readAnswer({
       config: configWithLlm({
         name: 'planner',
         provider: 'openai-compatible',
         model: 'openrouter/auto',
         baseURL: 'https://openrouter.ai/api/v1',
       }),
-    })
+    }))
     vi.mocked(testLLMConnection).mockResolvedValueOnce({
       success: true,
       provider: 'openai-compatible',
@@ -1156,14 +1167,14 @@ describe('ConfigPage task tabs shell', () => {
   })
 
   it('does not render blocking no-api-key copy for compatible no-key tests', async () => {
-    vi.mocked(fetchConfig).mockResolvedValueOnce({
+    vi.mocked(fetchConfig).mockResolvedValueOnce(readAnswer({
       config: configWithLlm({
         name: 'planner',
         provider: 'openai-compatible',
         model: 'openrouter/auto',
         baseURL: 'https://openrouter.ai/api/v1',
       }),
-    })
+    }))
     vi.mocked(testLLMConnection).mockResolvedValueOnce({
       success: false,
       error: 'no_api_key',
@@ -1184,13 +1195,13 @@ describe('ConfigPage task tabs shell', () => {
   })
 
   it('keeps first-party subscription auth UI available', async () => {
-    vi.mocked(fetchConfig).mockResolvedValueOnce({
+    vi.mocked(fetchConfig).mockResolvedValueOnce(readAnswer({
       config: configWithLlm({
         name: 'planner',
         provider: 'openai-subscription',
         model: 'gpt-5.4',
       }),
-    })
+    }))
 
     await renderAt('/config/models')
     await openFirstLlmEditor()
@@ -1201,13 +1212,13 @@ describe('ConfigPage task tabs shell', () => {
 
   it('exchanges Anthropic subscription codes with the product provider identifier', async () => {
     const openSpy = vi.spyOn(window, 'open').mockImplementation(() => null)
-    vi.mocked(fetchConfig).mockResolvedValueOnce({
+    vi.mocked(fetchConfig).mockResolvedValueOnce(readAnswer({
       config: configWithLlm({
         name: 'planner',
         provider: 'anthropic-subscription',
         model: 'claude-sonnet-4-20250514',
       }),
-    })
+    }))
 
     try {
       await renderAt('/config/models')
@@ -1250,13 +1261,13 @@ describe('ConfigPage task tabs shell', () => {
       mode: 'browser-poll',
     })
     vi.mocked(pollPluginAuthResult).mockResolvedValueOnce({ status: 'completed', saved: true })
-    vi.mocked(fetchConfig).mockResolvedValueOnce({
+    vi.mocked(fetchConfig).mockResolvedValueOnce(readAnswer({
       config: configWithLlm({
         name: 'planner',
         provider: 'openai-subscription',
         model: 'gpt-5.4',
       }),
-    })
+    }))
 
     try {
       await renderAt('/config/models')
@@ -1326,7 +1337,7 @@ describe('ConfigPage task tabs shell', () => {
   })
 
   it('saves mobile target app install fields from the target editor', async () => {
-    vi.mocked(fetchConfig).mockResolvedValueOnce({
+    vi.mocked(fetchConfig).mockResolvedValueOnce(readAnswer({
       config: configWithTargets({
         releaseAndroid: {
           platform: 'android',
@@ -1334,7 +1345,7 @@ describe('ConfigPage task tabs shell', () => {
           appActivity: 'org.wikipedia.main.MainActivity',
         },
       }),
-    })
+    }))
 
     await renderAt('/config/targets')
 

@@ -20,6 +20,14 @@ import type {
   RunsMarkOutcome,
   RunsMarkPreviewResult,
   RunsMarksHistoryResult,
+  ConfigChange,
+  ConfigPathSegment,
+  ConfigUndoRequest,
+  ConfigUndoResult,
+  ConfigWriteIssue,
+  ConfigWriteRequest,
+  ConfigWriteResult,
+  MaskingClass,
 } from '@vostride/agent-qa-schema'
 
 export interface RunRow {
@@ -1180,6 +1188,22 @@ export interface ConfigResponse {
   config: Record<string, unknown>
 }
 
+/** One line of the masked config file; `path` names the secret the line holds. */
+export interface ConfigFileLine {
+  n: number
+  text: string
+  class?: Exclude<MaskingClass, 'plain'>
+  path?: ConfigPathSegment[]
+}
+
+/** GET /api/config (429 D-22): the masked config, the file's revision and its lines. */
+export interface ConfigReadAnswer extends ConfigResponse {
+  provider: string | null
+  revision: string
+  file: { path: string | null; lines: ConfigFileLine[] }
+  fileIssues?: ConfigWriteIssue[]
+}
+
 export interface AppMetadataResponse {
   version: string
   update?: {
@@ -1210,8 +1234,27 @@ export interface LLMTestResult {
   provider?: string
 }
 
-export async function fetchConfig(): Promise<ConfigResponse> {
+export async function fetchConfig(): Promise<ConfigReadAnswer> {
   return request('/api/config')
+}
+
+/** One field-merge write of leaf changes (429 D-19); undoable answers a single-use Undo token. */
+export async function applyConfigChanges(
+  changes: ConfigChange[],
+  options: { undoable?: boolean } = {},
+): Promise<ConfigWriteResult> {
+  const body: ConfigWriteRequest =
+    options.undoable === undefined ? { changes } : { changes, undoable: options.undoable }
+  return postJson('/api/config', body, 'PATCH')
+}
+
+export async function fetchConfigRevision(): Promise<{ revision: string }> {
+  return request('/api/config/revision')
+}
+
+export async function undoConfigAction(token: string): Promise<ConfigUndoResult> {
+  const body: ConfigUndoRequest = { token }
+  return postJson('/api/config/undo', body)
 }
 
 export async function fetchAppMetadata(): Promise<AppMetadataResponse> {
