@@ -99,7 +99,7 @@ const WARNING: ReadonlyArray<readonly [LowerRung, RetrievalRungReason, string, s
   ["bundle-scan", "index-locked", "index-problem", "lucide-triangle-alert"],
   ["bundle-scan", "index-corrupt", "index-problem", "lucide-triangle-alert"],
   ["static-floor", "native-runtime-unavailable", "semantic-search-unavailable", "lucide-search-x"],
-  ["lexical-only", "low-ram-deferral", "semantic-search-unavailable", "lucide-search-x"],
+  ["lexical-only", "model-not-downloaded", "semantic-search-unavailable", "lucide-search-x"],
 ]
 
 function recorded(rung: LowerRung, reason: RetrievalRungReason | undefined): Recorded {

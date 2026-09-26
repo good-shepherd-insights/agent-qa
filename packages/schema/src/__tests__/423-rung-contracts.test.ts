@@ -18,7 +18,6 @@ import type { StepEvidence } from '../index'
 const HISTORICAL_REASONS = [
   'native-runtime-unavailable',
   'profile-unresolved',
-  'low-ram-deferral',
   'model-not-downloaded',
   'embedder-load-failed',
   'index-unavailable',
@@ -90,13 +89,13 @@ function readThroughEveryReader(recorded: Record<string, unknown>) {
 }
 
 describe('C423-RUNG-REASONS-EXACT', () => {
-  test('pins eleven current reasons, in order, against an independent list', () => {
+  test('pins ten current reasons, in order, against an independent list', () => {
     expect(RETRIEVAL_RUNG_REASONS).toEqual([...CURRENT_REASONS])
-    expect(new Set(RETRIEVAL_RUNG_REASONS).size).toBe(11)
+    expect(new Set(RETRIEVAL_RUNG_REASONS).size).toBe(10)
     expect(RETRIEVAL_RUNGS).toEqual(['memidex', 'bundle-scan', 'static-floor', 'lexical-only'])
   })
 
-  test('the historical v1 arm admits exactly the eight pre-423 reasons', () => {
+  test('the historical v1 arm admits exactly the seven pre-423 reasons', () => {
     const admitted = CURRENT_REASONS.filter((reason) => RecordedRetrievalRungSchema.safeParse({
       schemaVersion: 1,
       rung: 'bundle-scan',
@@ -105,7 +104,7 @@ describe('C423-RUNG-REASONS-EXACT', () => {
     expect(admitted).toEqual([...HISTORICAL_REASONS])
   })
 
-  test('the current v2 arm admits exactly the eleven reasons and no invented word', () => {
+  test('the current v2 arm admits exactly the ten reasons and no invented word', () => {
     const admitted = CURRENT_REASONS.filter((reason) => RecordedRetrievalRungSchema.safeParse({
       schemaVersion: 2,
       rung: 'bundle-scan',
@@ -143,7 +142,7 @@ describe('RUNG-V2', () => {
     { schemaVersion: 2, rung: 'bundle-scan', reason: 'index-not-built' },
     { schemaVersion: 2, rung: 'bundle-scan', reason: 'index-locked' },
     { schemaVersion: 2, rung: 'bundle-scan', reason: 'index-corrupt' },
-    { schemaVersion: 2, rung: 'lexical-only', reason: 'low-ram-deferral' },
+    { schemaVersion: 2, rung: 'lexical-only', reason: 'model-not-downloaded' },
   ])('current bytes stay readable and byte-identical through every reader: %j', (recorded) => {
     const read = readThroughEveryReader(recorded)
     const bytes = JSON.stringify(recorded)

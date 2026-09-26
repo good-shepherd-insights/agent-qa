@@ -10,7 +10,6 @@ import type * as Brief from '../brief/index'
 type HistoricalReason =
   | 'native-runtime-unavailable'
   | 'profile-unresolved'
-  | 'low-ram-deferral'
   | 'model-not-downloaded'
   | 'embedder-load-failed'
   | 'index-unavailable'
@@ -23,7 +22,7 @@ type V1 = Extract<RecordedRetrievalRung, { schemaVersion: 1 }>
 type V2 = Extract<RecordedRetrievalRung, { schemaVersion: 2 }>
 
 describe('C423-RUNG-REASONS-EXACT', () => {
-  test('pins eleven current reasons in both directions through public exports', () => {
+  test('pins ten current reasons in both directions through public exports', () => {
     expectTypeOf<RetrievalRungReason>().toEqualTypeOf<CurrentReason>()
     expectTypeOf<(typeof RETRIEVAL_RUNG_REASONS)[number]>().toEqualTypeOf<CurrentReason>()
     expectTypeOf<
@@ -35,14 +34,14 @@ describe('C423-RUNG-REASONS-EXACT', () => {
     expectTypeOf<Brief.RetrievalRungReason>().toEqualTypeOf<RetrievalRungReason>()
   })
 
-  test('pins the historical v1 arm to exactly the eight pre-423 reasons', () => {
+  test('pins the historical v1 arm to exactly the seven pre-423 reasons', () => {
     expectTypeOf<NonNullable<V1['reason']>>().toEqualTypeOf<HistoricalReason>()
     expectTypeOf<Extract<NonNullable<V1['reason']>, 'index-not-built'>>().toEqualTypeOf<never>()
     expectTypeOf<Extract<NonNullable<V1['reason']>, 'index-locked'>>().toEqualTypeOf<never>()
     expectTypeOf<Extract<NonNullable<V1['reason']>, 'index-corrupt'>>().toEqualTypeOf<never>()
   })
 
-  test('pins the current v2 arm to exactly the eleven reasons', () => {
+  test('pins the current v2 arm to exactly the ten reasons', () => {
     expectTypeOf<NonNullable<V2['reason']>>().toEqualTypeOf<CurrentReason>()
     expectTypeOf<Extract<NonNullable<V2['reason']>, 'index-missing'>>().toEqualTypeOf<never>()
   })

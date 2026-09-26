@@ -50,11 +50,11 @@ runSelftest({
     { id: 'R06', claim: 'LEGACY-HISTORICAL', subject: 'packages/schema/src/run/bus-projections.ts', reds: [
       'src/__tests__/423-rung-contracts.test.ts > LEGACY-HISTORICAL > a v1 index-unavailable is never upgraded, reinterpreted or re-versioned by a read'] },
     { id: 'R07', claim: 'C423-RUNG-REASONS-EXACT', subject: VOCAB, reds: [
-      `${SR} > pins eleven current reasons, in order, against an independent list`,
-      `${SR_D} > pins eleven current reasons in both directions through public exports`] },
+      `${SR} > pins ten current reasons, in order, against an independent list`,
+      `${SR_D} > pins ten current reasons in both directions through public exports`] },
     { id: 'R08', claim: 'C423-RUNG-REASONS-EXACT', subject: VOCAB, reds: [
-      `${SR} > the historical v1 arm admits exactly the eight pre-423 reasons`,
-      `${SR_D} > pins the historical v1 arm to exactly the eight pre-423 reasons`] },
+      `${SR} > the historical v1 arm admits exactly the seven pre-423 reasons`,
+      `${SR_D} > pins the historical v1 arm to exactly the seven pre-423 reasons`] },
     { id: 'R09', claim: 'RUNG-LABEL-PARITY', subject: 'packages/cli/src/commands/doctor-knowledge-checks.ts', reds: [
       'src/__tests__/rung-label-parity.test.ts > RUNG-LABEL-PARITY > pins each index cause to the same exact bytes on both doors'] },
   ],

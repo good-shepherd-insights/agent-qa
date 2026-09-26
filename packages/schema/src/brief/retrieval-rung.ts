@@ -53,7 +53,6 @@ export type RetrievalRung = (typeof RETRIEVAL_RUNGS)[number]
  *   fold mints it, and no reader may reinterpret it as one of the three causes above.
  * `native-runtime-unavailable` — the native ONNX runtime could not load; the floor took over.
  * `profile-static-configured` — the floor is serving because the PREFERRED profile is static.
- * `low-ram-deferral` — `DeferReason: 'ram-budget'`.
  * `model-not-downloaded` — `DeferReason: 'cold-artifact'`.
  * `embedder-load-failed` — `DeferReason: 'load-failure'`.
  * `profile-unresolved` — `DeferReason: 'worker-unavailable'` (the 399 daemon posture).
@@ -62,7 +61,6 @@ export type RetrievalRung = (typeof RETRIEVAL_RUNGS)[number]
 export const RETRIEVAL_RUNG_REASONS = [
   'native-runtime-unavailable',
   'profile-unresolved',
-  'low-ram-deferral',
   'model-not-downloaded',
   'embedder-load-failed',
   'index-unavailable',
@@ -75,11 +73,10 @@ export const RETRIEVAL_RUNG_REASONS = [
 
 export type RetrievalRungReason = (typeof RETRIEVAL_RUNG_REASONS)[number]
 
-/** The eight reasons a `schemaVersion: 1` rung could be written with, frozen as of 407. */
+/** The seven reasons a `schemaVersion: 1` rung could be written with, frozen as of 407. */
 const HISTORICAL_RETRIEVAL_RUNG_REASONS = [
   'native-runtime-unavailable',
   'profile-unresolved',
-  'low-ram-deferral',
   'model-not-downloaded',
   'embedder-load-failed',
   'index-unavailable',
@@ -93,7 +90,7 @@ const HISTORICAL_RETRIEVAL_RUNG_REASONS = [
  * travels with the value, so a rung read out of an old handoff states which contract it was
  * written under rather than being interpreted under today's.
  *
- * TWO STRICT ARMS (423 D-22). `schemaVersion: 1` is the historical arm with its original eight
+ * TWO STRICT ARMS (423 D-22). `schemaVersion: 1` is the historical arm with its seven historical
  * reasons, so a v1 value carrying a 423 cause is refused as mislabelled. `schemaVersion: 2` is
  * what every current fold writes, over the widened vocabulary. Old bytes are read under their
  * own arm and never upgraded.

@@ -21,7 +21,7 @@ import { projectInputLeg } from '../input-leg'
 const RUNG: RecordedRetrievalRung = {
   schemaVersion: 1,
   rung: 'lexical-only',
-  reason: 'low-ram-deferral',
+  reason: 'model-not-downloaded',
 }
 
 function makeProof(): LosslessServedBriefProofV1 {

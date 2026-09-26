@@ -29,7 +29,6 @@ const EXPECTED: Record<RetrievalRungReason, readonly [LowerRung, string]> = {
   'native-runtime-unavailable': ['static-floor', 'semantic-search-unavailable'],
   'model-not-downloaded': ['lexical-only', 'semantic-search-unavailable'],
   'embedder-load-failed': ['lexical-only', 'semantic-search-unavailable'],
-  'low-ram-deferral': ['lexical-only', 'semantic-search-unavailable'],
   'profile-unresolved': ['lexical-only', 'semantic-search-unavailable'],
   'profile-static-configured': ['static-floor', 'by-configuration'],
   'floor-disabled': ['lexical-only', 'by-configuration'],

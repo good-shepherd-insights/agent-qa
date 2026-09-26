@@ -1,4 +1,4 @@
-// THE ELEVEN CAUSE LABELS, HELD EQUAL ACROSS TWO DOORS (Phase 407 plan 11 · TRST-01 / TRST-02,
+// THE TEN CAUSE LABELS, HELD EQUAL ACROSS TWO DOORS (Phase 407 plan 11 · TRST-01 / TRST-02,
 // D-15 / D-18; widened by 423 D-22).
 //
 // WHY THIS CELL EXISTS AT ALL. The retrieval rung is printed by two surfaces that share no module:
@@ -331,7 +331,6 @@ const EXPECTED_REASONS = [
   'index-locked',
   'index-not-built',
   'index-unavailable',
-  'low-ram-deferral',
   'model-not-downloaded',
   'native-runtime-unavailable',
   'profile-static-configured',
@@ -358,7 +357,7 @@ const CURRENT_INDEX_CAUSES = [
 const NATIVE = EMBEDDERS[0]!.outcome
 
 describe('RUNG-LABEL-PARITY', () => {
-  it('both doors key exactly the eleven hand-spelled reasons', () => {
+  it('both doors key exactly the ten hand-spelled reasons', () => {
     expect(Object.keys(RUNG_CAUSE_LABELS).sort()).toEqual(EXPECTED_REASONS)
     expect(Object.keys(DASHBOARD_CAUSE_LABELS).sort()).toEqual(EXPECTED_REASONS)
     expect(RECORDED_REASONS).toEqual(EXPECTED_REASONS)

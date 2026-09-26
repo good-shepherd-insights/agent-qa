@@ -2537,7 +2537,6 @@ export const RUNG_LABELS: Record<Exclude<RetrievalRung, 'memidex'>, string> = {
 export const RUNG_CAUSE_LABELS: Record<RetrievalRungReason, string> = {
   'native-runtime-unavailable': 'native ONNX runtime unavailable',
   'profile-unresolved': 'embedder profile unresolved (deferred)',
-  'low-ram-deferral': 'embedding deferred on low memory',
   'model-not-downloaded': 'embedding model not downloaded',
   'embedder-load-failed': 'embedder failed to load',
   'index-unavailable': 'knowledge index unavailable (cause not recorded), scanning bundles',
@@ -2588,7 +2587,6 @@ export const RETRIEVAL_CLASS_BY_REASON = {
   'native-runtime-unavailable': 'semantic-search-unavailable',
   'model-not-downloaded': 'semantic-search-unavailable',
   'embedder-load-failed': 'semantic-search-unavailable',
-  'low-ram-deferral': 'semantic-search-unavailable',
   'profile-unresolved': 'semantic-search-unavailable',
   'profile-static-configured': 'by-configuration',
   'floor-disabled': 'by-configuration',

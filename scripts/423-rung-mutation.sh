@@ -18,8 +18,8 @@
 #   R04  a schema-version mismatch folds to index-not-built                    -> RUNG-SCHEMA
 #   R05  an absent index mints the historical index-unavailable word again     -> LEGACY-HISTORICAL (fold)
 #   R06  the step-finalized projection upgrades a v1 index-unavailable to v2   -> LEGACY-HISTORICAL (readers)
-#   R07  a twelfth current reason joins the vocabulary                         -> C423-RUNG-REASONS-EXACT runtime+type
-#   R08  the historical v1 arm admits the eleven current reasons               -> C423-RUNG-REASONS-EXACT runtime+type
+#   R07  an eleventh current reason joins the vocabulary                       -> C423-RUNG-REASONS-EXACT runtime+type
+#   R08  the historical v1 arm admits the ten current reasons                  -> C423-RUNG-REASONS-EXACT runtime+type
 #   R09  doctor's index-locked label drifts from the dashboard's               -> RUNG-LABEL-PARITY
 #
 # Engine, arrival proof, counted selection and restoration: scripts/423-mutation-engine.cjs.
@@ -125,33 +125,33 @@ const legs = [
     allowed: [sr('RUNG-V1', V1_LEGACY)],
     greens: [sr('LEGACY-HISTORICAL', 'the legacy code stays a member of the current vocabulary with its historical meaning'),
       sr('RUNG-V2', V2('index-not-built')), sr('RUNG-V2', 'the three new causes remain distinct values after a read'),
-      sr(C423, 'the historical v1 arm admits exactly the eight pre-423 reasons'),
-      srD(C423, 'pins the historical v1 arm to exactly the eight pre-423 reasons')],
+      sr(C423, 'the historical v1 arm admits exactly the seven pre-423 reasons'),
+      srD(C423, 'pins the historical v1 arm to exactly the seven pre-423 reasons')],
   },
   {
-    subject: VOCAB, instrument: 'rung-schema', claim: C423, operation: 'widen the current reason vocabulary with a twelfth reason',
+    subject: VOCAB, instrument: 'rung-schema', claim: C423, operation: 'widen the current reason vocabulary with an eleventh reason',
     edits: [{ from: "  'index-corrupt',\n] as const\n", to: "  'index-corrupt',\n  'index-evicted',\n] as const\n" }],
-    reds: [sr(C423, 'pins eleven current reasons, in order, against an independent list'),
-      srD(C423, 'pins eleven current reasons in both directions through public exports')],
-    allowed: [srD(C423, 'pins the current v2 arm to exactly the eleven reasons'),
+    reds: [sr(C423, 'pins ten current reasons, in order, against an independent list'),
+      srD(C423, 'pins ten current reasons in both directions through public exports')],
+    allowed: [srD(C423, 'pins the current v2 arm to exactly the ten reasons'),
       srD(C423, 'pins exactly two strict versioned arms over the same four rungs')],
-    greens: [sr(C423, 'the historical v1 arm admits exactly the eight pre-423 reasons'),
-      srD(C423, 'pins the historical v1 arm to exactly the eight pre-423 reasons'),
+    greens: [sr(C423, 'the historical v1 arm admits exactly the seven pre-423 reasons'),
+      srD(C423, 'pins the historical v1 arm to exactly the seven pre-423 reasons'),
       sr('LEGACY-HISTORICAL', 'a v1 index-unavailable is never upgraded, reinterpreted or re-versioned by a read'),
       srD('RUNG-INVALID-VERSION', 'refuses a third version and a v1 value carrying a 423 cause at the type boundary')],
   },
   {
     subject: VOCAB, instrument: 'rung-schema', claim: C423, operation: 'let the historical v1 arm admit every current reason',
     edits: [{ from: '  reason: z.enum(HISTORICAL_RETRIEVAL_RUNG_REASONS).optional(),\n', to: '  reason: z.enum(RETRIEVAL_RUNG_REASONS).optional(),\n' }],
-    reds: [sr(C423, 'the historical v1 arm admits exactly the eight pre-423 reasons'),
-      srD(C423, 'pins the historical v1 arm to exactly the eight pre-423 reasons')],
+    reds: [sr(C423, 'the historical v1 arm admits exactly the seven pre-423 reasons'),
+      srD(C423, 'pins the historical v1 arm to exactly the seven pre-423 reasons')],
     allowed: [sr('RUNG-INVALID-VERSION', 'the schema refuses a mislabelled, future or widened value:'),
       sr('RUNG-INVALID-VERSION', 'the persisted handoff guard refuses the same step:'),
       sr('RUNG-INVALID-VERSION', 'the runs.knowledge wire contract refuses it at run level:'),
       srD(C423, 'pins exactly two strict versioned arms over the same four rungs'),
       srD('RUNG-INVALID-VERSION', 'refuses a third version and a v1 value carrying a 423 cause at the type boundary')],
-    greens: [sr(C423, 'pins eleven current reasons, in order, against an independent list'),
-      srD(C423, 'pins eleven current reasons in both directions through public exports'),
+    greens: [sr(C423, 'pins ten current reasons, in order, against an independent list'),
+      srD(C423, 'pins ten current reasons in both directions through public exports'),
       sr('RUNG-V1', V1_LEGACY),
       sr('LEGACY-HISTORICAL', 'a v1 index-unavailable is never upgraded, reinterpreted or re-versioned by a read')],
   },
@@ -163,7 +163,7 @@ const legs = [
     allowed: [lab(PARITY_407, 'every reason reads the same words on both doors, byte for byte'),
       lab('LEGACY-LABEL', 'never lends a current cause its wording'),
       lab('DOCTOR-CURRENT-SEPARATE', "doctor names the live 'locked' face as 'index-locked', never the historical word")],
-    greens: [lab('RUNG-LABEL-PARITY', 'both doors key exactly the eleven hand-spelled reasons'),
+    greens: [lab('RUNG-LABEL-PARITY', 'both doors key exactly the ten hand-spelled reasons'),
       lab('RUNG-LABEL-PARITY', 'never presents not-built as corrupt, and keeps every cause label distinct'),
       lab('LEGACY-LABEL', 'reads the historical word as cause not recorded on both doors'),
       lab('DOCTOR-CURRENT-SEPARATE', "doctor names the live 'absent' face as 'index-not-built', never the historical word"),

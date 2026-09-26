@@ -70,7 +70,6 @@ const { foldRetrievalRung, indexDbPath } = LOCAL_KNOWLEDGE_PROBES
 export const RUNG_CAUSE_LABELS: Record<RetrievalRungReason, string> = {
   'native-runtime-unavailable': 'native ONNX runtime unavailable',
   'profile-unresolved': 'embedder profile unresolved (deferred)',
-  'low-ram-deferral': 'embedding deferred on low memory',
   'model-not-downloaded': 'embedding model not downloaded',
   'embedder-load-failed': 'embedder failed to load',
   'index-unavailable': 'knowledge index unavailable (cause not recorded), scanning bundles',
