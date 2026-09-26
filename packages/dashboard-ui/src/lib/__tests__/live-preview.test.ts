@@ -529,7 +529,7 @@ describe('one machine for both entry points (428-14 Task 2)', () => {
         ),
         T,
       ),
-      deriveLivePreview(reduceLivePreview(createInitialLivePreview(), { type: 'mint-refused', word: 'live_url_mint_failed' }, T), T),
+      deriveLivePreview(reduceLivePreview(createInitialLivePreview(), { type: 'mint-refused', word: 'live_view_unavailable' }, T), T),
     ]
     expect(new Set(reached.map((view) => view.state)), 'the census covers every state').toEqual(new Set(LIVE_PREVIEW_STATES))
     for (const view of reached) {

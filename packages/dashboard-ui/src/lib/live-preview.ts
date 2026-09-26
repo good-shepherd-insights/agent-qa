@@ -297,6 +297,13 @@ function wait(state: LivePreviewMachine): LivePreviewMachine {
     : { ...carried(state), phase: 'waiting', waitingAttempts: attempts }
 }
 
+/**
+ * The mint doors' definite refusals: this host serves no live view, or the request itself is one it
+ * will never serve. Any other failure (a fetch that never arrived, a 5xx) is worth the quiet
+ * reconnect, not a dead end (428 WR-05).
+ */
+const MINT_REFUSED_FOR_GOOD: readonly string[] = ['live_view_unavailable', 'invalid_handle', 'cross_site_refused']
+
 function showing(state: LivePreviewMachine): boolean {
   return state.phase === 'embedded' || state.phase === 'reconnecting'
 }
@@ -356,7 +363,7 @@ export function reduceLivePreview(state: LivePreviewMachine, event: LivePreviewE
     case 'mint-refused':
       if (event.word === 'unknown_session') return { ...state, phase: 'session-ended' }
       if (event.word === 'unknown_run') return wait(state)
-      return { ...state, phase: 'unavailable' }
+      return MINT_REFUSED_FOR_GOOD.includes(event.word) ? { ...state, phase: 'unavailable' } : lose(state)
     case 'renew-failed':
       return { ...state, phase: 'expired' }
     case 'embed':
