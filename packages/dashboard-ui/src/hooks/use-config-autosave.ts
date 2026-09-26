@@ -69,6 +69,13 @@ export interface ConfigUndoMeta {
   judge?: boolean
 }
 
+/** The action the last Undo reversed, once the re-read shows it again; seq tells repeats apart. */
+export interface ConfigRestored {
+  kind: ExplicitActionKind
+  name: string
+  seq: number
+}
+
 export interface ConfigDraftTarget {
   tab: ConfigTab
   fieldKey: string
@@ -100,6 +107,8 @@ export interface ConfigAutosave {
     fields?: readonly ConfigFieldRef[],
   ) => Promise<boolean>
   undo: () => Promise<void>
+  /** What the last Undo restored, so the section holding it can return focus to the row. */
+  restored: ConfigRestored | undefined
   goToFirstDraft: () => ConfigDraftTarget | undefined
   /** Re-reads with the loading state shown (the Reload config button). */
   reload: () => void
@@ -377,6 +386,7 @@ interface EngineHost {
   setLoad: (load: ConfigLoadState) => void
   setStorageKey: (key: string) => void
   setPin: (pin: Pin | undefined) => void
+  setRestored: (restored: ConfigUndoMeta) => void
 }
 
 function createEngine(host: EngineHost) {
@@ -733,6 +743,7 @@ function createEngine(host: EngineHost) {
       if (!attached) return
       emit({ type: "undo-finished" })
       await read()
+      if (attached) host.setRestored({ kind: pending.kind, name: pending.name })
     } catch (error) {
       if (!attached) return
       emit({ type: "undo-finished" })
@@ -800,6 +811,7 @@ export function useConfigAutosave(): ConfigAutosave {
   const [load, setLoad] = useState<ConfigLoadState>({ kind: "loading" })
   const [storageKey, setStorageKey] = useState<string | undefined>(undefined)
   const [pin, setPin] = useState<Pin | undefined>(undefined)
+  const [restored, setRestored] = useState<ConfigRestored | undefined>(undefined)
   const [, setTick] = useState(0)
   const stateRef = useRef(state)
   stateRef.current = state
@@ -811,6 +823,7 @@ export function useConfigAutosave(): ConfigAutosave {
       setLoad,
       setStorageKey,
       setPin,
+      setRestored: ({ kind, name }) => setRestored((previous) => ({ kind, name, seq: (previous?.seq ?? 0) + 1 })),
     })
   }
   const engine = engineRef.current
@@ -883,6 +896,7 @@ export function useConfigAutosave(): ConfigAutosave {
     setFocusedField: engine.setFocusedField,
     runExplicit: engine.runExplicit,
     undo: engine.undo,
+    restored,
     goToFirstDraft: () => firstDraft(state),
     reload: engine.reload,
     refresh: engine.refresh,

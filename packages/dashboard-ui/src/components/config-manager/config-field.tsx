@@ -183,7 +183,7 @@ export function ConfigField({
     control = (
       <Select
         value={typeof value === "string" ? value : ""}
-        onValueChange={(next) => settleNow(next, { valid: true, value: next })}
+        onValueChange={(next) => settleNow(next, parse ? parse(next) : { valid: true, value: next })}
       >
         <SelectTrigger
           id={controlId}
