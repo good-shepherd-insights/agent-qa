@@ -1,1 +1,29 @@
-export const CONFIG_SECTION_LABELS: Record<string, string> = {}
+import type { ConfigSectionId } from './config-tabs'
+
+export const CONFIG_SECTION_LABELS = {
+  models: 'Models',
+  'screenshot-size': 'Screenshot size',
+  'planner-limits': 'Planner limits',
+  targets: 'Targets',
+  devices: 'Devices',
+  'device-farms': 'Device farms',
+  'login-states': 'Saved login states',
+  'mobile-app-state': 'Mobile app state',
+  browser: 'Browser',
+  timeouts: 'Timeouts',
+  runs: 'Parallel runs',
+  cache: 'Cache',
+  recording: 'Recording',
+  accessibility: 'Accessibility',
+  'log-capture': 'Log capture',
+  'test-discovery': 'Test discovery',
+  files: 'Hooks, env and secrets files',
+  knowledge: 'Knowledge store',
+  dashboard: 'Dashboard',
+  logging: 'Logging',
+  'pass-rate-scope': 'Pass-rate scope',
+  mcp: 'MCP access',
+  'run-service-tokens': 'Run-service tokens',
+  eval: 'Evaluation',
+  'config-file': 'Config file',
+} as const satisfies Record<ConfigSectionId, string>
