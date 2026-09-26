@@ -220,6 +220,27 @@ function runGate(spec) {
           if (fs.existsSync(resolved) && fs.lstatSync(resolved).isFile()) scanned.add(resolved)
         }
       }
+      // A cell that walks source by URL names a directory root beside its own file and reads the
+      // files and directories it spells under that root (429-35, the Config static cells). Each
+      // named file, and every non-test source under each named directory, joins the closure the
+      // same way: its bytes are read, its imports are not.
+      for (const rootMatch of text.matchAll(/const \w+ = new URL\(\s*(['"])(\.{1,2}\/(?:[^'"]*\/)?)\1\s*,\s*import\.meta\.url\s*\)/g)) {
+        const base = path.resolve(path.dirname(file), rootMatch[2])
+        const walk = dir => {
+          for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+            if (entry.name === '__tests__') continue
+            const child = path.join(dir, entry.name)
+            if (entry.isDirectory()) walk(child)
+            else if (/\.tsx?$/.test(entry.name) && !/\.test\.tsx?$/.test(entry.name)) scanned.add(child)
+          }
+        }
+        for (const literal of text.matchAll(/(['"])([\w@-][\w@./-]*(?:\/|\.tsx?))\1/g)) {
+          const resolved = path.resolve(base, literal[2])
+          if (!resolved.startsWith(`${base}${path.sep}`) || !fs.existsSync(resolved)) continue
+          if (literal[2].endsWith('/') && fs.lstatSync(resolved).isDirectory()) walk(resolved)
+          else if (fs.lstatSync(resolved).isFile()) scanned.add(resolved)
+        }
+      }
     }
     return new Set([...seen, ...scanned])
   }
