@@ -17,12 +17,15 @@ import { ConfigAutosaveProvider, useConfigAutosave, type ConfigAutosave } from '
 import {
   applyConfigChanges,
   deleteAuthCredential,
+  exchangePluginAuthCode,
   fetchAuthStatus,
   fetchConfig,
   fetchConfigRevision,
   fetchLLMProviders,
+  pollPluginAuthResult,
   revealConfigValue,
   saveCredential,
+  startPluginAuth,
   testLLMConnection,
   undoConfigAction,
   type AuthCredentialInfo,
@@ -42,6 +45,7 @@ import {
   SAVE_HEADER_LABEL,
   SAVE_KEY_AND_TEST_LABEL,
   SETTLE_DELAY_MS,
+  SIGN_IN_AGAIN_LABEL,
   SIGN_OUT_LABEL,
   USED_AS_JUDGE_LINE,
   fixedFactsLine,
@@ -60,6 +64,9 @@ vi.mock('@/lib/api', async (importOriginal) => ({
   deleteAuthCredential: vi.fn(),
   saveCredential: vi.fn(),
   revealConfigValue: vi.fn(),
+  startPluginAuth: vi.fn(),
+  pollPluginAuthResult: vi.fn(),
+  exchangePluginAuthCode: vi.fn(),
 }))
 
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
@@ -633,5 +640,62 @@ describe('ModelRow key and settings (429-24 Task 2)', () => {
     expect(values).not.toContain('router')
     expect(values).not.toContain('openai-compatible')
     expect(panel?.querySelector('select, [role="combobox"], [role="radio"]')).toBeNull()
+  })
+})
+
+describe('ModelRow Sign in again (429-26 Task 2)', () => {
+  it('SIGN-IN-AGAIN-SAVED-ROW: an expired or not-connected sign-in row runs the sign-in flow for its saved name, then its test', async () => {
+    vi.spyOn(window, 'open').mockImplementation(() => null)
+    await mount()
+    const signedIn = await openModel('gpt-5.6')
+    expect(buttonNamed(signedIn, SIGN_IN_AGAIN_LABEL)).toBeNull()
+
+    const panel = await openModel('sonnet')
+    expect(status('sonnet')).toBe('sign-in-expired')
+    const again = buttonNamed(panel, SIGN_IN_AGAIN_LABEL)
+    expect(again).not.toBeNull()
+    expect(again!.getAttribute('data-variant')).toBe('outline')
+    expect(again!.getAttribute('data-size')).toBe('sm')
+    expect(again!.querySelector('svg')).not.toBeNull()
+
+    vi.mocked(startPluginAuth).mockResolvedValueOnce({ authorizeUrl: 'https://auth.example/claude', sessionId: 'session-1', mode: 'manual-code', created: false })
+    await click(again)
+    expect(startPluginAuth).toHaveBeenCalledWith('anthropic-subscription', 'sonnet')
+    expect(window.open).toHaveBeenCalled()
+    const codeInput = row('sonnet')!.querySelector<HTMLInputElement>('[data-sign-in-code] input')
+    expect(codeInput?.type).toBe('password')
+    await type(codeInput, 'the-code')
+
+    vi.mocked(exchangePluginAuthCode).mockResolvedValueOnce({ status: 'completed', saved: true })
+    vi.mocked(fetchAuthStatus).mockClear()
+    vi.mocked(testLLMConnection).mockClear()
+    await click(row('sonnet')!.querySelector<HTMLButtonElement>('[data-sign-in-code] [data-sign-in-code-connect]'))
+    await flush()
+    expect(exchangePluginAuthCode).toHaveBeenCalledWith('anthropic-subscription', 'session-1', 'the-code')
+    expect(fetchAuthStatus).toHaveBeenCalled()
+    expect(testLLMConnection).toHaveBeenCalledTimes(1)
+    expect(testLLMConnection).toHaveBeenCalledWith(expect.objectContaining({ provider: 'anthropic-subscription', configName: 'sonnet' }))
+    expect(row('sonnet')!.querySelector('[data-test-result="connected"]')).not.toBeNull()
+    expect(row('sonnet')!.innerHTML).not.toContain('the-code')
+    expect(writes()).toHaveLength(0)
+    await unmount()
+
+    vi.mocked(fetchAuthStatus).mockResolvedValue({
+      credentials: credentials().filter((credential) => credential.configName !== 'sonnet'),
+    })
+    await mount()
+    const notConnected = await openModel('sonnet')
+    expect(status('sonnet')).toBe('not-connected')
+    vi.mocked(startPluginAuth).mockResolvedValueOnce({ authorizeUrl: 'https://auth.example/claude', sessionId: 'session-2', mode: 'browser-poll', created: true })
+    vi.mocked(pollPluginAuthResult).mockResolvedValueOnce({ status: 'completed', saved: true })
+    vi.mocked(testLLMConnection).mockClear()
+    await click(buttonNamed(notConnected, SIGN_IN_AGAIN_LABEL))
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2000)
+    })
+    await flush()
+    expect(pollPluginAuthResult).toHaveBeenCalledWith('anthropic-subscription', 'session-2')
+    expect(testLLMConnection).toHaveBeenCalledTimes(1)
+    expect(testLLMConnection).toHaveBeenCalledWith(expect.objectContaining({ configName: 'sonnet' }))
   })
 })

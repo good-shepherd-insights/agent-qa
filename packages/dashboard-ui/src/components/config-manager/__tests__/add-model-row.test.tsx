@@ -18,18 +18,25 @@ import {
   ApiError,
   applyConfigChanges,
   connectLLM,
+  deleteAuthCredential,
+  exchangePluginAuthCode,
   fetchAuthStatus,
   fetchConfig,
   fetchConfigRevision,
   fetchLLMProviders,
   fetchLiveModelCatalog,
   fetchModelCatalog,
+  moveCredential,
+  pollPluginAuthResult,
+  startPluginAuth,
+  type AuthCredentialInfo,
   type LLMProviderMetadata,
 } from '@/lib/api'
 import {
   ADD_FLOW_FIELD_LABELS,
   ADD_MODEL_LABEL,
   BECAME_DEFAULT_TEXT,
+  CANCEL_SIGN_IN_LABEL,
   DISCARD_DRAFT_LABEL,
   CONNECTING_LABEL,
   CONNECTION_CHOICE_HINTS,
@@ -38,11 +45,18 @@ import {
   CONNECT_LABEL,
   MAKE_DEFAULT_LABEL,
   NAME_RULE_ERROR,
+  REPLACE_KEY_LABEL,
   SAVED_WITHOUT_TEST_TEXT,
   SAVE_WITHOUT_TESTING_LABEL,
+  SIGN_IN_TIMED_OUT_TEXT,
+  SIGN_IN_WAITING_LABEL,
+  SIGN_IN_WAITING_TEXT,
   TEST_RESULT_TEXT,
   connectedSavedText,
+  existingCredentialLine,
+  nameCredentialConflictError,
   nameTakenError,
+  signInFailedText,
   signInPluginMissingText,
 } from '@/lib/config-copy'
 import { ADD_MODEL_DRAFT_STORAGE_PREFIX } from '@/lib/add-model-draft'
@@ -60,6 +74,11 @@ vi.mock('@/lib/api', async (importOriginal) => ({
   fetchLiveModelCatalog: vi.fn(),
   testLLMConnection: vi.fn(),
   connectLLM: vi.fn(),
+  startPluginAuth: vi.fn(),
+  pollPluginAuthResult: vi.fn(),
+  exchangePluginAuthCode: vi.fn(),
+  moveCredential: vi.fn(),
+  deleteAuthCredential: vi.fn(),
 }))
 
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
@@ -245,6 +264,8 @@ function deferred<T>() {
   return { promise, resolve }
 }
 
+let openSpy: ReturnType<typeof vi.spyOn> | undefined
+
 async function fillOpenAiCompatible(model = 'gpt-5.6') {
   await choose('openai-compatible-key')
   await type(input('baseURL'), 'https://llm.example.com/v1')
@@ -262,10 +283,15 @@ beforeEach(() => {
   vi.mocked(fetchLLMProviders).mockResolvedValue({ providers: PROVIDERS })
   vi.mocked(fetchModelCatalog).mockResolvedValue({ catalog: {} })
   vi.mocked(fetchLiveModelCatalog).mockResolvedValue({ models: [] })
+  vi.mocked(pollPluginAuthResult).mockResolvedValue({ status: 'pending' })
+  vi.mocked(moveCredential).mockResolvedValue({ moved: true })
+  vi.mocked(deleteAuthCredential).mockResolvedValue({ deleted: true })
+  openSpy = vi.spyOn(window, 'open').mockImplementation(() => null)
 })
 
 afterEach(async () => {
   await unmount()
+  openSpy?.mockRestore()
   vi.clearAllMocks()
   vi.useRealTimers()
   localStorage.clear()
@@ -687,5 +713,336 @@ describe('The add row in the list (429-25 Task 3)', () => {
     const emptyAdd = container!.querySelector('[data-models-empty] button')
     expect(emptyAdd).not.toBeNull()
     expect(document.activeElement).toBe(emptyAdd)
+  })
+})
+
+// SIGN-IN DRAFTS, EXISTING CREDENTIALS, COLLISIONS, RENAMES AND DISCARD (429-26 · D-15, D-16, D-17,
+// research A3 · UI-SPEC S5, E5). A sign-in choice signs the draft name in with no save first, then
+// the test runs by itself; a name that already holds this provider's credential only tests; another
+// provider's credential is never touched; a draft's own sign-in follows its name, and Discard removes
+// only a credential this draft created.
+
+const AUTHORIZE_URL = 'https://auth.example/authorize'
+const HOUR = 60 * 60 * 1000
+
+function signInButton() {
+  return addRow()?.querySelector<HTMLButtonElement>('[data-add-sign-in]') ?? null
+}
+
+function existingLine() {
+  return addRow()?.querySelector<HTMLElement>('[data-existing-credential]') ?? null
+}
+
+function failedLine() {
+  return addRow()?.querySelector('[data-test-result="failed"]')?.textContent ?? null
+}
+
+async function advance(ms: number) {
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(ms)
+  })
+  await flush()
+}
+
+function answerSignIn(mode: 'browser-poll' | 'manual-code', created: boolean) {
+  vi.mocked(startPluginAuth).mockResolvedValueOnce({ authorizeUrl: AUTHORIZE_URL, sessionId: 'session-1', mode, created })
+}
+
+function heldCredentials(...items: Array<Pick<AuthCredentialInfo, 'configName' | 'provider' | 'type'>>): AuthCredentialInfo[] {
+  return items.map((item) => ({ ...item, expires: item.type === 'oauth' ? Date.now() + HOUR : null, source: 'auth-store' }))
+}
+
+/** Signs gpt-5.6 in with ChatGPT through a browser poll whose test then fails, so the draft stays. */
+async function signInThenFailTest(created: boolean) {
+  await choose('chatgpt-sign-in')
+  answerSignIn('browser-poll', created)
+  await click(signInButton())
+  vi.mocked(pollPluginAuthResult).mockResolvedValueOnce({ status: 'completed', saved: true })
+  vi.mocked(connectLLM).mockResolvedValueOnce({ success: false, errorClass: 'auth_error', message: 'The plan refused the model.' })
+  await advance(2000)
+}
+
+describe('AddModelRow sign-in drafts (429-26 Task 2)', () => {
+  it('SIGN-IN-DRAFT-BROWSER-POLL: Sign in with Claude signs the draft name in with no save, then the test runs by itself and a pass saves it', async () => {
+    await mount()
+    await choose('claude-sign-in')
+    expect(input('model')?.value).toBe('claude-sonnet-4.5')
+    await type(input('name'), 'claude-draft')
+    const button = signInButton()
+    expect(button?.textContent?.trim()).toBe(CONNECTION_CHOICE_LABELS['claude-sign-in'])
+    expect(button?.getAttribute('data-variant')).toBe('default')
+    expect(button?.querySelector('svg')).not.toBeNull()
+    expect(connectButton()).toBeNull()
+
+    answerSignIn('browser-poll', true)
+    await click(button)
+    expect(startPluginAuth).toHaveBeenCalledWith('anthropic-subscription', 'claude-draft')
+    expect(openSpy!.mock.calls[0][0]).toBe(AUTHORIZE_URL)
+    expect(openSpy!.mock.calls[0][1]).toBe('_blank')
+    expect(applyConfigChanges).not.toHaveBeenCalled()
+    expect(connectLLM).not.toHaveBeenCalled()
+    expect(addState()).toBe('signing-in')
+    expect(signInButton()?.textContent?.trim()).toBe(SIGN_IN_WAITING_LABEL)
+    expect(signInButton()?.getAttribute('aria-disabled')).toBe('true')
+    const waiting = addRow()!.querySelector('[data-sign-in-waiting]')
+    expect(waiting?.textContent).toContain(SIGN_IN_WAITING_TEXT)
+    const cancel = buttonsNamed(waiting, CANCEL_SIGN_IN_LABEL)
+    expect(cancel).toHaveLength(1)
+    expect(cancel[0].getAttribute('data-variant')).toBe('link')
+    expect(input('name')?.readOnly).toBe(true)
+
+    await advance(2000)
+    expect(pollPluginAuthResult).toHaveBeenCalledWith('anthropic-subscription', 'session-1')
+    expect(connectLLM).not.toHaveBeenCalled()
+
+    const saved = modelsConfig([...EXISTING, { name: 'claude-draft', provider: 'anthropic-subscription', model: 'claude-sonnet-4.5' }])
+    vi.mocked(fetchConfig).mockResolvedValue(answer(saved, 'rev-4') as never)
+    vi.mocked(connectLLM).mockResolvedValueOnce({ success: true, saved: true, becameDefault: true, usedCredential: true, revision: 'rev-4' })
+    vi.mocked(pollPluginAuthResult).mockResolvedValueOnce({ status: 'completed', saved: true })
+    await advance(2000)
+    await flush()
+
+    expect(connectLLM).toHaveBeenCalledTimes(1)
+    expect(vi.mocked(connectLLM).mock.calls[0][0]).toEqual({
+      name: 'claude-draft',
+      provider: 'anthropic-subscription',
+      model: 'claude-sonnet-4.5',
+    })
+    expect(addRow()).toBeNull()
+    expect(row('claude-draft')?.querySelector('[data-model-landing]')?.textContent).toContain(connectedSavedText('claude-draft'))
+    expect(applyConfigChanges).not.toHaveBeenCalled()
+    await advance(20_000)
+    expect(pollPluginAuthResult).toHaveBeenCalledTimes(2)
+  })
+
+  it('SIGN-IN-DRAFT-MANUAL-CODE: the manual mode shows Code from the sign-in page and Connect, which exchanges the code and then tests', async () => {
+    await mount()
+    await choose('claude-sign-in')
+    answerSignIn('manual-code', true)
+    await click(signInButton())
+
+    expect(addState()).toBe('signing-in')
+    const codeField = addRow()!.querySelector('[data-sign-in-code]')
+    expect(codeField?.querySelector('label')?.textContent).toBe(ADD_FLOW_FIELD_LABELS.signInCode)
+    const codeInput = codeField?.querySelector<HTMLInputElement>('input') ?? null
+    expect(codeInput?.type).toBe('password')
+    const codeConnect = codeField?.querySelector<HTMLButtonElement>('[data-sign-in-code-connect]') ?? null
+    expect(codeConnect?.textContent?.trim()).toBe(CONNECT_LABEL)
+    expect(codeConnect?.getAttribute('data-variant')).toBe('default')
+    expect(signInButton()?.textContent?.trim()).toBe(CONNECTION_CHOICE_LABELS['claude-sign-in'])
+
+    await type(codeInput, 'code-from-page')
+    expect(storedText()).not.toContain('code-from-page')
+    vi.mocked(exchangePluginAuthCode).mockResolvedValueOnce({ status: 'completed', saved: true })
+    vi.mocked(connectLLM).mockResolvedValueOnce({ success: false, errorClass: 'auth_error', message: 'The plan refused the model.' })
+    await click(codeConnect)
+    await flush()
+
+    expect(exchangePluginAuthCode).toHaveBeenCalledWith('anthropic-subscription', 'session-1', 'code-from-page')
+    expect(vi.mocked(connectLLM).mock.calls[0][0]).toEqual({
+      name: 'claude-sonnet-4.5',
+      provider: 'anthropic-subscription',
+      model: 'claude-sonnet-4.5',
+    })
+    expect(pollPluginAuthResult).not.toHaveBeenCalled()
+    expect(addRow()!.querySelector('[data-sign-in-code]')).toBeNull()
+    expect(container!.innerHTML).not.toContain('code-from-page')
+    expect(storedText()).not.toContain('code-from-page')
+  })
+
+  it('SIGN-IN-FAILED-LINE: a sign-in failure shows signInFailedText and the button returns; a completed sign-in whose test fails offers Save without testing', async () => {
+    await mount()
+    await choose('chatgpt-sign-in')
+    answerSignIn('browser-poll', true)
+    await click(signInButton())
+    vi.mocked(pollPluginAuthResult).mockResolvedValueOnce({ status: 'error', error: 'The sign-in was denied.' })
+    await advance(2000)
+
+    expect(failedLine()).toBe(signInFailedText('The sign-in was denied.'))
+    expect(addState()).toBe('failed')
+    expect(signInButton()?.textContent?.trim()).toBe(CONNECTION_CHOICE_LABELS['chatgpt-sign-in'])
+    expect(signInButton()?.getAttribute('aria-disabled')).toBeNull()
+    expect(connectLLM).not.toHaveBeenCalled()
+    expect(buttonsNamed(addRow(), SAVE_WITHOUT_TESTING_LABEL)).toHaveLength(0)
+
+    answerSignIn('browser-poll', true)
+    await click(signInButton())
+    expect(failedLine()).toBeNull()
+    vi.mocked(pollPluginAuthResult).mockResolvedValueOnce({ status: 'completed', saved: true })
+    vi.mocked(connectLLM).mockResolvedValueOnce({ success: false, errorClass: 'auth_error', message: 'The plan refused the model.' })
+    await advance(2000)
+
+    expect(connectLLM).toHaveBeenCalledTimes(1)
+    expect(failedLine()).toBe('The plan refused the model.')
+    expect(buttonsNamed(addRow(), SAVE_WITHOUT_TESTING_LABEL)).toHaveLength(1)
+    expect(existingLine()?.textContent).toContain(existingCredentialLine('sign-in', 'gpt-5.6'))
+    expect(signInButton()).toBeNull()
+    expect(connectButton()?.textContent?.trim()).toBe(CONNECT_LABEL)
+  })
+
+  it('SIGN-IN-WAITING-CANCEL-AND-TIMEOUT: Cancel sign-in returns the button with no line; five minutes without a result shows the timed-out line', async () => {
+    await mount()
+    await choose('chatgpt-sign-in')
+    answerSignIn('browser-poll', true)
+    await click(signInButton())
+    await click(buttonsNamed(addRow()!.querySelector('[data-sign-in-waiting]'), CANCEL_SIGN_IN_LABEL)[0])
+    expect(addState()).toBe('editing')
+    expect(signInButton()?.textContent?.trim()).toBe(CONNECTION_CHOICE_LABELS['chatgpt-sign-in'])
+    expect(addRow()!.querySelector('[data-test-result]')).toBeNull()
+    await advance(10_000)
+    expect(pollPluginAuthResult).not.toHaveBeenCalled()
+
+    answerSignIn('browser-poll', true)
+    await click(signInButton())
+    await advance(5 * 60 * 1000)
+    expect(failedLine()).toBe(SIGN_IN_TIMED_OUT_TEXT)
+    expect(signInButton()?.textContent?.trim()).toBe(CONNECTION_CHOICE_LABELS['chatgpt-sign-in'])
+    expect(connectLLM).not.toHaveBeenCalled()
+  })
+})
+
+describe('AddModelRow existing credentials and collisions (429-26 Task 2)', () => {
+  it('EXISTING-CREDENTIAL-CONNECT-ONLY-TESTS: a name holding this provider\'s credential shows the existing line and Connect only tests; key modes offer Replace key', async () => {
+    vi.mocked(fetchAuthStatus).mockResolvedValue({
+      credentials: heldCredentials(
+        { configName: 'claude', provider: 'anthropic-subscription', type: 'oauth' },
+        { configName: 'router', provider: 'openai-compatible', type: 'api' },
+      ),
+    })
+    await mount()
+    await choose('claude-sign-in')
+    await type(input('name'), 'claude')
+    await blur(input('name'))
+    expect(existingLine()?.textContent).toContain(existingCredentialLine('sign-in', 'claude'))
+    expect(signInButton()).toBeNull()
+    expect(connectButton()?.textContent?.trim()).toBe(CONNECT_LABEL)
+    vi.mocked(connectLLM).mockResolvedValueOnce({ success: false, errorClass: 'auth_error', message: 'Expired.' })
+    await click(connectButton())
+    expect(vi.mocked(connectLLM).mock.calls[0][0]).toEqual({
+      name: 'claude',
+      provider: 'anthropic-subscription',
+      model: 'claude-sonnet-4.5',
+    })
+    expect(startPluginAuth).not.toHaveBeenCalled()
+    await unmount()
+    localStorage.clear()
+    vi.mocked(connectLLM).mockClear()
+
+    await mount()
+    await choose('openai-compatible-key')
+    await type(input('baseURL'), 'https://llm.example.com/v1')
+    await type(input('model'), 'gpt-5.6')
+    await type(input('name'), 'router')
+    expect(input('key')).toBeNull()
+    expect(existingLine()?.textContent).toContain(existingCredentialLine('key', 'router'))
+    const replace = buttonsNamed(existingLine(), REPLACE_KEY_LABEL)
+    expect(replace).toHaveLength(1)
+    vi.mocked(connectLLM).mockResolvedValueOnce({ success: false, errorClass: 'auth_error', message: 'Refused.' })
+    await click(connectButton())
+    expect(vi.mocked(connectLLM).mock.calls[0][0]).toEqual({
+      name: 'router',
+      provider: 'openai-compatible',
+      model: 'gpt-5.6',
+      baseURL: 'https://llm.example.com/v1',
+    })
+
+    await click(replace[0])
+    expect(existingLine()).toBeNull()
+    expect(document.activeElement).toBe(input('key'))
+    await type(input('key'), TYPED_KEY)
+    vi.mocked(connectLLM).mockResolvedValueOnce({ success: false, errorClass: 'auth_error', message: 'Refused.' })
+    await click(connectButton())
+    expect(vi.mocked(connectLLM).mock.calls[1][0].credential).toEqual({ type: 'api-key', secret: TYPED_KEY })
+  })
+
+  it('NAME-CONFLICT-BLOCKS: a name holding another provider\'s credential shows the conflict hint and neither Connect nor Sign in starts anything', async () => {
+    vi.mocked(fetchAuthStatus).mockResolvedValue({
+      credentials: heldCredentials({ configName: 'shared', provider: 'anthropic-compatible', type: 'api' }),
+    })
+    await mount()
+    await fillOpenAiCompatible()
+    await type(input('name'), 'shared')
+    await blur(input('name'))
+    const conflict = nameCredentialConflictError('shared', 'Anthropic-compatible')
+    expect(fieldError('name')).toBe(conflict)
+    expect(input('name')?.getAttribute('aria-invalid')).toBe('true')
+    expect(existingLine()).toBeNull()
+    await click(connectButton())
+    expect(connectLLM).not.toHaveBeenCalled()
+    expect(document.activeElement).toBe(input('name'))
+
+    await choose('chatgpt-sign-in')
+    expect(input('name')?.value).toBe('shared')
+    await click(signInButton())
+    expect(startPluginAuth).not.toHaveBeenCalled()
+    expect(fieldError('name')).toBe(conflict)
+    expect(connectLLM).not.toHaveBeenCalled()
+    expect(moveCredential).not.toHaveBeenCalled()
+    expect(deleteAuthCredential).not.toHaveBeenCalled()
+  })
+})
+
+describe('AddModelRow renames and discard after a sign-in (429-26 Task 2)', () => {
+  it('NAME-EDIT-AFTER-SIGN-IN-MOVES: a renamed draft moves the sign-in it created; a sign-in it did not create is never moved', async () => {
+    await mount()
+    await signInThenFailTest(true)
+    expect(JSON.parse(localStorage.getItem(DRAFT_KEY) ?? '{}').createdCredential).toBe(true)
+    await type(input('name'), 'gpt-renamed')
+    expect(moveCredential).not.toHaveBeenCalled()
+    await blur(input('name'))
+    expect(moveCredential).toHaveBeenCalledTimes(1)
+    expect(moveCredential).toHaveBeenCalledWith('gpt-5.6', 'gpt-renamed', 'openai-subscription')
+    expect(existingLine()?.textContent).toContain(existingCredentialLine('sign-in', 'gpt-renamed'))
+    vi.mocked(connectLLM).mockResolvedValueOnce({ success: false, errorClass: 'auth_error', message: 'Still refused.' })
+    await click(connectButton())
+    expect(vi.mocked(connectLLM).mock.calls.at(-1)?.[0]).toEqual({
+      name: 'gpt-renamed',
+      provider: 'openai-subscription',
+      model: 'gpt-5.6',
+    })
+    expect(startPluginAuth).toHaveBeenCalledTimes(1)
+    await unmount()
+    localStorage.clear()
+    vi.mocked(moveCredential).mockClear()
+
+    await mount()
+    await signInThenFailTest(false)
+    await type(input('name'), 'gpt-other')
+    await blur(input('name'))
+    expect(moveCredential).not.toHaveBeenCalled()
+    expect(existingLine()).toBeNull()
+    expect(signInButton()?.textContent?.trim()).toBe(CONNECTION_CHOICE_LABELS['chatgpt-sign-in'])
+  })
+
+  it('DISCARD-REMOVES-ONLY-CREATED-CREDENTIAL: Discard removes a sign-in this draft created and never one that existed before', async () => {
+    await mount()
+    await signInThenFailTest(true)
+    await click(addRow()!.querySelector<HTMLButtonElement>('[data-discard-draft]'))
+    expect(addRow()).toBeNull()
+    expect(deleteAuthCredential).toHaveBeenCalledTimes(1)
+    expect(deleteAuthCredential).toHaveBeenCalledWith('gpt-5.6')
+    await unmount()
+    localStorage.clear()
+    vi.mocked(deleteAuthCredential).mockClear()
+
+    await mount()
+    await signInThenFailTest(false)
+    await click(addRow()!.querySelector<HTMLButtonElement>('[data-discard-draft]'))
+    expect(addRow()).toBeNull()
+    expect(deleteAuthCredential).not.toHaveBeenCalled()
+    await unmount()
+    localStorage.clear()
+
+    vi.mocked(fetchAuthStatus).mockResolvedValue({
+      credentials: heldCredentials({ configName: 'claude', provider: 'anthropic-subscription', type: 'oauth' }),
+    })
+    await mount()
+    await choose('claude-sign-in')
+    await type(input('name'), 'claude')
+    vi.mocked(connectLLM).mockResolvedValueOnce({ success: false, errorClass: 'auth_error', message: 'Expired.' })
+    await click(connectButton())
+    await click(addRow()!.querySelector<HTMLButtonElement>('[data-discard-draft]'))
+    expect(addRow()).toBeNull()
+    expect(deleteAuthCredential).not.toHaveBeenCalled()
   })
 })
