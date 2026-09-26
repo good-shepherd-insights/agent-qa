@@ -32,6 +32,7 @@ import type {
   MaskingClass,
   LlmConnectRequest,
   LlmConnectResult,
+  LlmCredentialMoveRequest,
 } from '@vostride/agent-qa-schema'
 
 export interface RunRow {
@@ -1362,6 +1363,12 @@ export async function exchangePluginAuthCode(
   code: string,
 ): Promise<{ status: 'completed'; saved: boolean }> {
   return postJson(`/api/auth/plugin/${encodeURIComponent(provider)}/exchange`, { sessionId, code })
+}
+
+/** A draft's own sign-in or key follows its name while the name is still editable (429-09). */
+export async function moveCredential(from: string, to: string, provider: string): Promise<{ moved: boolean }> {
+  const body: LlmCredentialMoveRequest = { from, to, provider }
+  return postJson('/api/auth/credential/move', body)
 }
 
 /** The server holds the removed credential for Undo; the answer carries only the token (429-11 D-24). */
