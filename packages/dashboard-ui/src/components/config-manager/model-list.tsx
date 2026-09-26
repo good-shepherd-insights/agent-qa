@@ -3,8 +3,10 @@
 // Every saved model is one row in file order. The list waits for the credential-status read, and
 // a failed read shows every row Not connected: a status the page has not read is never claimed.
 // Add model sits in the section's heading row; with no models the empty state holds the only one.
+// A row being deleted is hidden at once, focus moves to the next row, else the previous one, else
+// Add model, and an Undo focuses the row it brought back (429-24 · D-24).
 
-import { useEffect, useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import { useNavigate } from "react-router"
 import { Plus, TriangleAlert } from "lucide-react"
 
@@ -28,6 +30,16 @@ interface WorkspaceReads {
 
 const LLMS_REF: ConfigFieldRef = { segments: ["registry", "llms"], tab: "models" }
 const DEFAULT_REF: ConfigFieldRef = { segments: ["use", "llm"], tab: "models" }
+const EVAL_REF: ConfigFieldRef = { segments: ["eval"], tab: "models" }
+const ADD_BUTTON = Symbol("add-model")
+
+function withName(names: ReadonlySet<string>, name: string, present: boolean): ReadonlySet<string> {
+  if (names.has(name) === present) return names
+  const next = new Set(names)
+  if (present) next.add(name)
+  else next.delete(name)
+  return next
+}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value)
@@ -49,10 +61,51 @@ export function ModelList(_props: ModelListProps) {
   const navigate = useNavigate()
   const [reads, setReads] = useState<WorkspaceReads | undefined>(undefined)
   const [openName, setOpenName] = useState<string | undefined>(undefined)
+  const [removing, setRemoving] = useState<ReadonlySet<string>>(new Set())
+  const [hiddenCredentials, setHiddenCredentials] = useState<ReadonlySet<string>>(new Set())
+  const list = useRef<HTMLUListElement>(null)
+  const addButton = useRef<HTMLButtonElement>(null)
+  const pendingFocus = useRef<string | typeof ADD_BUTTON | undefined>(undefined)
+  const restored = autosave.restored
+  // An Undo from before this list mounted (a tab change since) never moves focus.
+  const seenSeq = useRef(restored?.seq)
   const models = savedModels(autosave.valueOf(LLMS_REF))
+  const shown = models.filter((model) => !removing.has(model.name))
   const defaultValue = autosave.valueOf(DEFAULT_REF)
   const defaultName = typeof defaultValue === "string" ? defaultValue : undefined
   const hasDefault = models.some((model) => model.name === defaultName)
+  const evalConfig = autosave.valueOf(EVAL_REF)
+
+  function focusRow(name: string) {
+    const rows = Array.from(list.current?.querySelectorAll<HTMLElement>("li[data-model-row]") ?? [])
+    rows.find((row) => row.getAttribute("data-model-name") === name)?.querySelector<HTMLElement>("[data-model-row-toggle]")?.focus()
+  }
+
+  useEffect(() => {
+    const target = pendingFocus.current
+    if (target === undefined) return
+    pendingFocus.current = undefined
+    if (target === ADD_BUTTON) addButton.current?.focus()
+    else focusRow(target)
+  })
+
+  useEffect(() => {
+    if (restored === undefined || restored.seq === seenSeq.current) return
+    seenSeq.current = restored.seq
+    if (restored.kind === "delete-model") {
+      focusRow(restored.name)
+      return
+    }
+    if (restored.kind !== "sign-out" && restored.kind !== "remove-key") return
+    const name = restored.name
+    void fetchAuthStatus().then(
+      (answer) => {
+        setReads((current) => (current === undefined ? current : { ...current, credentials: answer.credentials ?? [] }))
+        setHiddenCredentials((current) => withName(current, name, false))
+      },
+      () => setHiddenCredentials((current) => withName(current, name, false)),
+    )
+  }, [restored])
 
   useEffect(() => {
     let active = true
@@ -91,11 +144,18 @@ export function ModelList(_props: ModelListProps) {
     )
   }
 
-  if (models.length === 0) {
+  function removeStart(name: string) {
+    const names = shown.map((model) => model.name)
+    const index = names.indexOf(name)
+    pendingFocus.current = names[index + 1] ?? names[index - 1] ?? ADD_BUTTON
+    setRemoving((current) => withName(current, name, true))
+  }
+
+  if (shown.length === 0) {
     return (
       <div data-models-empty className="col-span-full space-y-4 rounded-md border border-border px-4 py-8">
         <p className="text-sm">{NO_MODELS_TEXT}</p>
-        <Button type="button" onClick={addModel}>
+        <Button ref={addButton} type="button" onClick={addModel}>
           <Plus className="size-3.5" aria-hidden="true" />
           {ADD_MODEL_LABEL}
         </Button>
@@ -104,9 +164,18 @@ export function ModelList(_props: ModelListProps) {
   }
 
   const now = Date.now()
+  const credentials = reads.credentials.filter((credential) => !hiddenCredentials.has(credential.configName))
   return (
     <>
-      <Button type="button" variant="outline" size="sm" data-model-add className="justify-self-end" onClick={addModel}>
+      <Button
+        ref={addButton}
+        type="button"
+        variant="outline"
+        size="sm"
+        data-model-add
+        className="justify-self-end"
+        onClick={addModel}
+      >
         <Plus className="size-3.5" aria-hidden="true" />
         {ADD_MODEL_LABEL}
       </Button>
@@ -119,17 +188,26 @@ export function ModelList(_props: ModelListProps) {
             {NO_DEFAULT_TEXT}
           </p>
         )}
-        <ul data-model-list data-field-list="registry.llms" className="divide-y divide-border rounded-md border border-border">
-          {models.map((model) => (
+        <ul
+          ref={list}
+          data-model-list
+          data-field-list="registry.llms"
+          className="divide-y divide-border rounded-md border border-border"
+        >
+          {shown.map((model) => (
             <ModelRow
               key={model.name}
               model={model}
-              status={modelStatus(reads.credentials, model, now)}
+              status={modelStatus(credentials, model, now)}
               facts={providerFacts(reads.providers, model.provider)}
               isDefault={model.name === defaultName}
+              evalConfig={evalConfig}
               open={openName === model.name}
               onToggle={() => setOpenName((current) => (current === model.name ? undefined : model.name))}
               onMakeDefault={() => makeDefault(model.name)}
+              onRemoveStart={() => removeStart(model.name)}
+              onRemoveEnd={() => setRemoving((current) => withName(current, model.name, false))}
+              onCredentialHidden={(hidden) => setHiddenCredentials((current) => withName(current, model.name, hidden))}
             />
           ))}
         </ul>

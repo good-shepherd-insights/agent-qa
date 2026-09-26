@@ -1,31 +1,46 @@
-// ONE SAVED MODEL (429-23 · D-10, D-11, D-12 · UI-SPEC S4 "Closed row", "Open row panel").
+// ONE SAVED MODEL (429-23, 429-24 · D-10, D-11, D-12, D-17, D-23, D-24 · UI-SPEC S4, S6, E6).
 //
 // The closed row is its disclosure button: the name, the Default badge, the model line and one
 // status word derived from the credential-status read. The open panel sits inside the same row
-// and holds the connection test, whose line lives only while the row stays open, and Make default.
+// and holds the connection test, whose line lives only while the row stays open, Make default,
+// the credential actions and Delete model. Deleting, signing out and removing a key act at once
+// and offer Undo; none asks first. The default model offers no delete.
 
 import { useEffect, useId, useRef, useState, type RefObject } from "react"
-import { ChevronRight, LoaderCircle, TriangleAlert } from "lucide-react"
-import { CONFIG_MASK_PLACEHOLDER } from "@vostride/agent-qa-schema"
+import { ChevronRight, LoaderCircle, LogOut, Trash2, TriangleAlert } from "lucide-react"
+import { CONFIG_MASK_PLACEHOLDER, type ConfigChange } from "@vostride/agent-qa-schema"
 
 import { ConnectionLine } from "@/components/config-manager/connection-line"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import { testLLMConnection, type AuthCredentialInfo, type LLMProviderMetadata, type LLMTestResult } from "@/lib/api"
+import { useConfigAutosaveContext } from "@/hooks/use-config-autosave"
+import {
+  deleteAuthCredential,
+  testLLMConnection,
+  type AuthCredentialInfo,
+  type LLMProviderMetadata,
+  type LLMTestResult,
+} from "@/lib/api"
 import {
   DEFAULT_BADGE,
+  DEFAULT_CANNOT_DELETE_LINE,
+  DELETE_MODEL_LABEL,
   FIXED_CONNECTION_LABELS,
   MAKE_DEFAULT_LABEL,
   MODEL_STATUS_WORDS,
   PROVIDER_FALLBACK_LABELS,
+  REMOVE_KEY_LABEL,
+  SIGN_OUT_LABEL,
   SUBSCRIPTION_PLAN_NAMES,
   TEST_CONNECTION_LABEL,
+  USED_AS_JUDGE_LINE,
   connectionSentence,
   fixedFactsLine,
   modelLine,
   providerErrorSentence,
 } from "@/lib/config-copy"
 import type { ModelStatus, TestResult } from "@/lib/config-tabs"
+import { isEvalJudge, judgeChangesAfterDelete } from "@/lib/model-workspace"
 import { cn } from "@/lib/utils"
 
 export interface SavedModel {
@@ -138,20 +153,69 @@ function useConnectionTest(model: SavedModel) {
   return { line, run }
 }
 
-interface ModelPanelProps {
+/** What the list does around a row's explicit actions: hiding the row or its credential, and focus. */
+export interface ModelRowActions {
+  /** The row is being deleted: the list hides it and moves focus to its neighbour. */
+  onRemoveStart: () => void
+  /** The delete settled: a landed write already dropped the row, a failed one shows it again. */
+  onRemoveEnd: () => void
+  /** The row's credential reads as gone (true) or back (false) until the next credential read. */
+  onCredentialHidden: (hidden: boolean) => void
+}
+
+interface ModelPanelProps extends ModelRowActions {
   id: string
   model: SavedModel
   status: ModelStatus
   facts: ProviderFacts
   isDefault: boolean
+  evalConfig: unknown
   onMakeDefault: () => void
   header: RefObject<HTMLButtonElement | null>
 }
 
-function ModelPanel({ id, model, status, facts, isDefault, onMakeDefault, header }: ModelPanelProps) {
+function ModelPanel({
+  id,
+  model,
+  status,
+  facts,
+  isDefault,
+  evalConfig,
+  onMakeDefault,
+  header,
+  onRemoveStart,
+  onRemoveEnd,
+  onCredentialHidden,
+}: ModelPanelProps) {
+  const autosave = useConfigAutosaveContext()
   const test = useConnectionTest(model)
   const testing = test.line?.state === "testing"
   const connection = (FIXED_CONNECTION_LABELS as Record<string, string>)[model.provider] ?? facts.label
+  const judge = isEvalJudge(evalConfig, model.name)
+  const signedIn = facts.signIn && status !== "not-connected"
+  const keySaved = !facts.signIn && status === "key-saved"
+
+  async function removeCredential(kind: "sign-out" | "remove-key") {
+    onCredentialHidden(true)
+    header.current?.focus()
+    try {
+      const answer = await deleteAuthCredential(model.name)
+      if (answer.undo) autosave.offerUndo(answer.undo, { kind, name: model.name })
+    } catch (error) {
+      onCredentialHidden(false)
+      autosave.failExplicit(error)
+    }
+  }
+
+  async function deleteModel() {
+    const changes: ConfigChange[] = [
+      { op: "unset", path: ["registry", "llms", { name: model.name }] },
+      ...judgeChangesAfterDelete(evalConfig, model.name),
+    ]
+    onRemoveStart()
+    await autosave.runExplicit(changes, { kind: "delete-model", name: model.name, judge })
+    onRemoveEnd()
+  }
 
   return (
     <div id={id} data-model-panel className="grid grid-cols-[0.75rem_minmax(0,1fr)] gap-x-2 bg-muted/40 px-4 py-4">
@@ -191,28 +255,66 @@ function ModelPanel({ id, model, status, facts, isDefault, onMakeDefault, header
             )}
           </div>
           {test.line === undefined ? null : <ConnectionLine state={test.line.state} sentence={test.line.sentence} />}
+          {signedIn || keySaved ? (
+            <div data-model-credential className="flex flex-wrap items-center gap-2">
+              {keySaved ? (
+                <Button type="button" variant="ghost" size="sm" onClick={() => void removeCredential("remove-key")}>
+                  {REMOVE_KEY_LABEL}
+                </Button>
+              ) : (
+                <Button type="button" variant="ghost" size="sm" onClick={() => void removeCredential("sign-out")}>
+                  <LogOut className="size-3.5" aria-hidden="true" />
+                  {SIGN_OUT_LABEL}
+                </Button>
+              )}
+            </div>
+          ) : null}
         </div>
         {connection === undefined ? null : (
           <p data-model-fixed className="text-xs text-muted-foreground">
             {fixedFactsLine(connection)}
           </p>
         )}
+        <div data-model-footer className="space-y-2">
+          {judge ? (
+            <p data-model-judge className="text-xs text-muted-foreground">
+              {USED_AS_JUDGE_LINE}
+            </p>
+          ) : null}
+          {isDefault ? (
+            <p data-model-default-line className="text-xs text-muted-foreground">
+              {DEFAULT_CANNOT_DELETE_LINE}
+            </p>
+          ) : (
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="text-muted-foreground hover:text-destructive"
+              onClick={() => void deleteModel()}
+            >
+              <Trash2 className="size-3.5" aria-hidden="true" />
+              {DELETE_MODEL_LABEL}
+            </Button>
+          )}
+        </div>
       </div>
     </div>
   )
 }
 
-interface ModelRowProps {
+interface ModelRowProps extends ModelRowActions {
   model: SavedModel
   status: ModelStatus
   facts: ProviderFacts
   isDefault: boolean
+  evalConfig: unknown
   open: boolean
   onToggle: () => void
   onMakeDefault: () => void
 }
 
-export function ModelRow({ model, status, facts, isDefault, open, onToggle, onMakeDefault }: ModelRowProps) {
+export function ModelRow({ model, status, facts, isDefault, evalConfig, open, onToggle, onMakeDefault, ...actions }: ModelRowProps) {
   const panelId = useId()
   const header = useRef<HTMLButtonElement>(null)
   const line = facts.label === undefined ? model.model : modelLine(model.model, facts.label)
@@ -270,8 +372,10 @@ export function ModelRow({ model, status, facts, isDefault, open, onToggle, onMa
           status={status}
           facts={facts}
           isDefault={isDefault}
+          evalConfig={evalConfig}
           onMakeDefault={onMakeDefault}
           header={header}
+          {...actions}
         />
       ) : null}
     </li>

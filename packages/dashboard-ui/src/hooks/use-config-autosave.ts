@@ -106,6 +106,16 @@ export interface ConfigAutosave {
     undoMeta?: ConfigUndoMeta,
     fields?: readonly ConfigFieldRef[],
   ) => Promise<boolean>
+  /**
+   * Offers Undo for an action the server already performed through its own door (a credential
+   * delete); the Undo link then redeems the server's token as for a config write.
+   */
+  offerUndo: (undo: { token: string }, meta: ConfigUndoMeta) => void
+  /**
+   * An explicit action outside the config write failed: the status says so. As for a refused
+   * explicit write, Retry re-sends only drafts, so it clears this failure and re-reads the file.
+   */
+  failExplicit: (error: unknown) => void
   undo: () => Promise<void>
   /** What the last Undo restored, so the section holding it can return focus to the row. */
   restored: ConfigRestored | undefined
@@ -735,6 +745,28 @@ function createEngine(host: EngineHost) {
     return explicitWrite(keys, changes, undoMeta)
   }
 
+  function offerUndo(ticket: { token: string }, meta: ConfigUndoMeta) {
+    if (!attached) return
+    emit({
+      type: "undo-offered",
+      kind: meta.kind,
+      name: meta.name,
+      token: ticket.token,
+      expiresAt: Date.now() + UNDO_WINDOW_MS,
+      ...(meta.judge === undefined ? {} : { judge: meta.judge }),
+    })
+  }
+
+  function failExplicit(error: unknown) {
+    if (!attached) return
+    const { message } = issuesFrom(error, [])
+    emit(
+      message === undefined
+        ? { type: "write-failed", id: "explicit-action", issues: [] }
+        : { type: "write-failed", id: "explicit-action", issues: [], message },
+    )
+  }
+
   async function undo(): Promise<void> {
     const pending = host.getState().machine.undo
     if (!pending || Date.now() >= pending.expiresAt) return
@@ -784,6 +816,8 @@ function createEngine(host: EngineHost) {
     refresh,
     poll,
     runExplicit,
+    offerUndo,
+    failExplicit,
     undo,
     setFocusedField,
   }
@@ -895,6 +929,8 @@ export function useConfigAutosave(): ConfigAutosave {
     errorOf: (field) => state.machine.fields[configFieldKeyOf(field.segments)]?.error,
     setFocusedField: engine.setFocusedField,
     runExplicit: engine.runExplicit,
+    offerUndo: engine.offerUndo,
+    failExplicit: engine.failExplicit,
     undo: engine.undo,
     restored,
     goToFirstDraft: () => firstDraft(state),

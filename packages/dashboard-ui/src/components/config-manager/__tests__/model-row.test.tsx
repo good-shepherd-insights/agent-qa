@@ -392,26 +392,33 @@ describe('ModelRow explicit actions (429-24 Task 1)', () => {
     await click(buttonNamed(row('router'), DELETE_MODEL_LABEL))
     expect(row('router')).not.toBeNull()
     expect(hook!.status.state).toBe('failed')
+    expect(hook!.status.message).toBe('disk full')
 
+    // Retry re-sends drafts only (UI-SPEC E2): a refused delete is not sent again, and the file shows as it is.
     await act(async () => {
       hook!.retry()
     })
     await flush()
-    expect(row('router')).toBeNull()
-    expect(hook!.status.state).toBe('undo')
+    expect(applyConfigChanges).toHaveBeenCalledTimes(1)
+    expect(row('router')).not.toBeNull()
+    expect(hook!.status.state).not.toBe('failed')
 
     await openModel('gpt-5.6')
     vi.mocked(deleteAuthCredential).mockRejectedValueOnce(new Error('auth store locked'))
     await click(buttonNamed(row('gpt-5.6'), SIGN_OUT_LABEL))
     expect(status('gpt-5.6')).toBe('signed-in')
     expect(hook!.status.state).toBe('failed')
+    expect(hook!.status.message).toBe('auth store locked')
 
-    // Retry runs the sign-out again.
     await act(async () => {
       hook!.retry()
     })
     await flush()
-    expect(deleteAuthCredential).toHaveBeenCalledTimes(2)
+    expect(deleteAuthCredential).toHaveBeenCalledTimes(1)
+    expect(status('gpt-5.6')).toBe('signed-in')
+    expect(hook!.status.state).not.toBe('failed')
+
+    await click(buttonNamed(row('gpt-5.6'), SIGN_OUT_LABEL))
     expect(status('gpt-5.6')).toBe('not-connected')
     expect(hook!.status.state).toBe('undo')
 

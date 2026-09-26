@@ -1331,7 +1331,7 @@ export async function saveCredential(
   provider: string,
   type: 'api-key' | 'bearer-token',
   secret: string,
-): Promise<{ saved: boolean }> {
+): Promise<{ saved: boolean; created: boolean }> {
   return postJson('/api/auth/credential', { configName, provider, type, secret })
 }
 
@@ -1357,7 +1357,10 @@ export async function exchangePluginAuthCode(
   return postJson(`/api/auth/plugin/${encodeURIComponent(provider)}/exchange`, { sessionId, code })
 }
 
-export async function deleteAuthCredential(configName: string): Promise<{ deleted: boolean }> {
+/** The server holds the removed credential for Undo; the answer carries only the token (429-11 D-24). */
+export async function deleteAuthCredential(
+  configName: string,
+): Promise<{ deleted: boolean; undo?: { token: string; expiresAt: number } }> {
   return postJson(`/api/auth/${encodeURIComponent(configName)}`, undefined, 'DELETE')
 }
 
