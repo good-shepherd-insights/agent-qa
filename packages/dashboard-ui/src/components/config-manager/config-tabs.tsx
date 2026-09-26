@@ -22,6 +22,14 @@ function edgeFadeMask({ left, right }: EdgeFade): string | undefined {
   return `linear-gradient(to right, ${start}, ${end})`
 }
 
+/** Scrolls the strip, and only the strip, so as much of the trigger as fits is showing. */
+function revealTrigger(box: HTMLElement, trigger: HTMLElement) {
+  const strip = box.getBoundingClientRect()
+  const own = trigger.getBoundingClientRect()
+  if (own.left < strip.left || own.width > strip.width) box.scrollLeft -= strip.left - own.left
+  else if (own.right > strip.right) box.scrollLeft += own.right - strip.right
+}
+
 export interface ConfigTabBarProps {
   tab: ConfigTab
   draftTabs?: ReadonlySet<ConfigTab>
@@ -40,11 +48,19 @@ export function ConfigTabBar({ tab, draftTabs, statusSlot }: ConfigTabBarProps) 
     setFade((current) => (current.left === left && current.right === right ? current : { left, right }))
   }, [])
 
+  const activeTab = useRef(tab)
+  activeTab.current = tab
+
   useLayoutEffect(() => {
     measure()
     const box = scrollRef.current
     if (!box || typeof ResizeObserver === "undefined") return
-    const observer = new ResizeObserver(measure)
+    // A widening status (an Undo line) narrows the strip; the active tab stays in view.
+    const observer = new ResizeObserver(() => {
+      const trigger = box.querySelector<HTMLElement>(`[data-config-tab="${activeTab.current}"]`)
+      if (trigger) revealTrigger(box, trigger)
+      measure()
+    })
     observer.observe(box)
     return () => observer.disconnect()
   }, [measure])
