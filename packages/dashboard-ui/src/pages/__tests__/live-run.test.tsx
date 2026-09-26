@@ -185,8 +185,14 @@ const runStarted = (handles?: readonly number[]) =>
     ...(handles === undefined ? {} : { handles: [...handles] }),
   })
 
-const testStarted = (testIndex = 0, name = 'the member', totalSteps?: number) =>
-  envelope('testStarted', { testId: `t${String(testIndex)}`, testIndex, name, totalSteps })
+const testStarted = (testIndex = 0, name = 'the member', totalSteps?: number, stepTexts?: readonly string[]) =>
+  envelope('testStarted', {
+    testId: `t${String(testIndex)}`,
+    testIndex,
+    name,
+    totalSteps,
+    ...(stepTexts === undefined ? {} : { stepTexts: [...stepTexts] }),
+  })
 
 const stepStarted = (testIndex = 0, stepIndex = 0, stepText = 'open the page') =>
   envelope('stepStarted', { testIndex, stepIndex, stepText })
@@ -475,6 +481,27 @@ describe('the running row moves without inventing a phase (HNST-02, D-10)', () =
     for (const row of rows) {
       expect(row.textContent ?? '', row.getAttribute('data-step-status') ?? '').not.toMatch(/\d+:\d{2}/)
     }
+  })
+})
+
+describe('a pending row reads its real step text or is not drawn (G-428-2, owner decision 2026-09-26 (2))', () => {
+  const rowReadings = () =>
+    qa('[data-live-pane="steps"] li').map((row) => [row.getAttribute('data-step-status'), row.textContent])
+
+  it('PENDING-ROWS-SHOW-KNOWN-TEXT: the texts testStarted carried label the pending rows', async () => {
+    await mount()
+    await open()
+    await emit(
+      runStarted(),
+      testStarted(0, 'the member', 3, ['open the page', 'click Save', 'check the toast']),
+      stepStarted(0, 0),
+    )
+
+    expect(rowReadings()).toEqual([
+      ['running', 'open the page'],
+      ['pending', 'click Save'],
+      ['pending', 'check the toast'],
+    ])
   })
 })
 

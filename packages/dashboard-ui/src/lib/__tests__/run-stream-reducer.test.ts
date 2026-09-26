@@ -530,6 +530,55 @@ describe('members, the thin handle stream and the terminal freeze', () => {
 })
 
 // ---------------------------------------------------------------------------
+// G-428-2 (428-30): a pending row carries the masked text testStarted sent
+// ---------------------------------------------------------------------------
+
+describe('G-428-2: pending rows are seeded from testStarted.stepTexts (owner decision 2026-09-26 (2))', () => {
+  // The producer (428-28) masks each entry with the run's own MaskingContext, so an entry equals
+  // the stepText its step later announces. The fold keeps the entry as it arrived: no unmasking
+  // happens here, and a `<SECRET_n>` stays a placeholder until the row paints it as a chip.
+  const started = (extra: Record<string, unknown>) =>
+    envelope('testStarted', { testId: 't', testIndex: 0, name: 'm', ...extra })
+
+  it('PENDING-TEXT-FROM-STEP-TEXTS: the seeded rows read the texts, stepStarted replaces one, a bare finalize keeps one', () => {
+    const seeded = fold([started({ totalSteps: 3, stepTexts: ['a', 'b', 'c'] })])
+    expect(rowsOf(seeded, 0).map((row) => [row.stepIndex, row.status, row.text]))
+      .toEqual([[0, 'pending', 'a'], [1, 'pending', 'b'], [2, 'pending', 'c']])
+    // Built field by field: the payload's list is not a key on any row.
+    expect(Object.keys(rowAt(seeded, 0, 0) as object).sort())
+      .toEqual(['createdSeq', 'status', 'stepIndex', 'testIndex', 'text', 'ticks'])
+
+    const later = fold([
+      started({ totalSteps: 3, stepTexts: ['a', 'b', 'c'] }),
+      stepStarted(0, 1, 'b2'),
+      stepFinalized(0, 2, { status: 'passed' }),
+    ])
+    expect(rowAt(later, 0, 1)).toMatchObject({ status: 'running', text: 'b2' })
+    expect(rowAt(later, 0, 2)).toMatchObject({ status: 'passed', text: 'c' })
+  })
+
+  it('OLD-PRODUCER-PENDING-TEXT-EMPTY: a testStarted with no stepTexts seeds pending rows with empty text', () => {
+    const state = fold([started({ totalSteps: 2 })])
+    expect(rowsOf(state, 0).map((row) => [row.status, row.text])).toEqual([['pending', ''], ['pending', '']])
+  })
+
+  it('STEP-TEXTS-ONLY-STRINGS: only string entries are read, the count stays totalSteps\'s, and a non-array is ignored', () => {
+    // The payload crossed a trust boundary as JSON. A string is indexable too, so `'xy'[0]` would
+    // read as a step text unless the fold checks for an array first.
+    const mixed = fold([started({ totalSteps: 2, stepTexts: [1, 'b'] })])
+    expect(rowsOf(mixed, 0).map((row) => row.text)).toEqual(['', 'b'])
+
+    const longer = fold([started({ totalSteps: 2, stepTexts: ['x', 'y', 'z'] })])
+    expect(rowsOf(longer, 0).map((row) => row.text)).toEqual(['x', 'y'])
+
+    for (const notAnArray of ['xy', { 0: 'x', 1: 'y' }, null, 7]) {
+      const state = fold([started({ totalSteps: 2, stepTexts: notAnArray })])
+      expect(rowsOf(state, 0).map((row) => row.text), JSON.stringify(notAnArray)).toEqual(['', ''])
+    }
+  })
+})
+
+// ---------------------------------------------------------------------------
 // D-03 (428): the reducer publishes no liveness verdict (supersedes 403's D-11)
 // ---------------------------------------------------------------------------
 
