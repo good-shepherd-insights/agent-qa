@@ -4,6 +4,7 @@ import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { MemoryRouter, Route, Routes } from 'react-router'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { CONFIG_SCHEMA_LEAVES, configLeafOwner } from '@vostride/agent-qa-schema'
 
 vi.mock('monaco-editor', () => ({
   languages: {
@@ -22,12 +23,18 @@ vi.mock('monaco-editor', () => ({
 }))
 
 import ConfigPage from '@/pages/config'
-import { CONFIG_NAVIGATION_ITEMS } from '@/lib/config-navigation'
+import { CONFIG_SECTIONS, CONFIG_TABS, LEGACY_CONFIG_PAIRS, type ConfigTab } from '@/lib/config-tabs'
 import { DEVICE_TRANSPORT_OPTIONS } from '@/components/config-manager/devices-section'
 import { LLM_PROVIDER_OPTIONS, LlmSection } from '@/components/config-manager/llm-section'
 import { fetchAuthStatus, saveCredential } from '@/lib/api'
 import { LLM_PROVIDER_COMPLETION_VALUES } from '@/lib/yaml-completions'
-import { ADD_MODEL_LABEL, DEFAULT_BADGE, PLANNER_FIELD_LABELS, VISION_FIELD_LABELS } from '@/lib/config-copy'
+import {
+  ADD_MODEL_LABEL,
+  CONFIG_SECTION_LABELS,
+  DEFAULT_BADGE,
+  PLANNER_FIELD_LABELS,
+  VISION_FIELD_LABELS,
+} from '@/lib/config-copy'
 
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
@@ -40,8 +47,110 @@ if (!Element.prototype.setPointerCapture) {
 if (!Element.prototype.releasePointerCapture) {
   Element.prototype.releasePointerCapture = () => {}
 }
+if (!Element.prototype.scrollIntoView) {
+  Element.prototype.scrollIntoView = () => {}
+}
 
-const { sampleConfig } = vi.hoisted(() => ({
+const { sampleConfig, fullConfig, page } = vi.hoisted(() => ({
+  page: { config: undefined as Record<string, unknown> | undefined },
+  // Every record and list holds at least one entry, so each list renders its rows (D-06).
+  fullConfig: {
+    workspace: {
+      testMatch: ['tests/**/*.yaml'],
+      suiteMatch: ['tests/**/*.suite.yaml'],
+      testPathIgnore: ['**/draft/**'],
+      hooksFile: 'tests/hooks.ts',
+      envFile: '.env.local',
+      secretsFile: '.env.secrets.local',
+    },
+    knowledge: { dir: 'agent-qa-knowledge', commitArtifacts: 'none', contextBudgetTokens: 4000 },
+    services: {
+      dashboard: {
+        port: 4173,
+        host: '127.0.0.1',
+        baseUrl: 'http://127.0.0.1:4173',
+        dbPath: '.agent-qa/runs.db',
+        artifactsDir: '.agent-qa/artifacts',
+        workspace: '.',
+        runServiceTokens: [
+          { name: 'teammate', tokenEnvVar: 'AGENT_QA_RUN_TOKEN', trustScope: { org: 'acme', project: 'acme-web' } },
+        ],
+      },
+      authState: { dir: '.agent-qa/auth' },
+      cache: { dir: '.agent-qa/cache', ttl: '7d' },
+      logging: { level: 'info' },
+      recording: { enabled: true, keepFailuresOnly: false },
+      accessibility: {
+        enabled: true,
+        standard: 'wcag2aa',
+        runAfter: 'test-end',
+        failOnViolation: false,
+        disableRules: ['color-contrast'],
+        exclude: ['#cookie-banner'],
+      },
+      vision: { screenshotSize: '256k', effectiveResolution: 768 },
+      mcp: {
+        enabled: true,
+        transport: 'http',
+        host: '127.0.0.1',
+        port: 4174,
+        path: '/mcp',
+        stdio: { grantConfigWrite: false },
+        tokens: [{ name: 'ci', tokenEnvVar: 'AGENT_QA_MCP_TOKEN', scopes: ['read'] }],
+      },
+    },
+    registry: {
+      llms: [
+        {
+          name: 'claude-proxy',
+          provider: 'anthropic-compatible',
+          model: 'claude-remote',
+          baseURL: 'https://anthropic-proxy.example/messages',
+          vision: true,
+          contextWindow: '200k',
+          providerHeaders: { 'X-Team': 'qa' },
+        },
+        { name: 'gemini-fast', provider: 'gemini', model: 'gemini-2.5-flash' },
+      ],
+      targets: {
+        staging: { platform: 'web', url: 'https://example.com', product: 'example', environment: 'staging' },
+        shop: {
+          platform: 'android',
+          appPackage: 'com.example.shop',
+          appActivity: '.MainActivity',
+          app: { path: 'apps/shop.apk', browserstack: 'bs://shop' },
+        },
+      },
+      devices: { iosLocal: { platform: 'ios', transport: 'local', match: { udid: 'abc' } } },
+      providers: { browserstack: { username: 'qa-team' } },
+    },
+    use: {
+      browser: { name: 'chromium', headless: true, viewport: { width: 1280, height: 720 } },
+      timeout: { step: '30s', test: '10m', navigation: '10s' },
+      planner: { maxSubActions: 20, previousStepCount: 5 },
+      logCapture: { console: true, network: true },
+      mobile: { appState: 'reset' },
+      llm: 'claude-proxy',
+      parallel: true,
+      workers: 2,
+      buildTag: 'nightly',
+      cache: true,
+    },
+    analytics: {
+      privacy: true,
+      passRateScope: { attributes: { 'git.branch': 'master', 'user.email': { regex: '^ci@' } } },
+    },
+    eval: {
+      k: 3,
+      seed: 7,
+      judges: ['claude-proxy', 'gemini-fast'],
+      judgeAllowSameFamily: false,
+      gate1: { maxPerJob: 4, maxScreens: 12 },
+      gate2: { canaryHorizonBuilds: 3, maxAblations: 2, maxLowerTrustPerScope: 1 },
+      adversarial: { maxProbeCalls: 20, maxSeedsPerRefresh: 5 },
+      seeding: { silverPerTestCap: 2 },
+    },
+  },
   sampleConfig: {
   workspace: {
     testMatch: ['tests/**/*.yaml'],
@@ -122,9 +231,17 @@ const mockFetchAuthStatus = vi.mocked(fetchAuthStatus)
 const mockSaveCredential = vi.mocked(saveCredential)
 
 vi.mock('@/lib/api', () => ({
-  fetchConfig: vi.fn().mockResolvedValue({
-    config: sampleConfig,
-  }),
+  fetchAppMetadata: vi.fn().mockResolvedValue({ version: '0.1.13' }),
+  fetchConfig: vi.fn(async () => ({
+    config: page.config ?? sampleConfig,
+    provider: null,
+    revision: 'rev-1',
+    file: { path: '/work/agent-qa.config.yaml', lines: [] },
+  })),
+  fetchConfigRevision: vi.fn().mockResolvedValue({ revision: 'rev-1' }),
+  applyConfigChanges: vi.fn().mockResolvedValue({ revision: 'rev-2' }),
+  undoConfigAction: vi.fn().mockResolvedValue({ restored: true, revision: 'rev-3' }),
+  revealConfigValue: vi.fn().mockResolvedValue({ value: '' }),
   updateSettings: vi.fn().mockResolvedValue({ updated: true }),
   fetchAuthStates: vi.fn().mockResolvedValue({ authStates: [] }),
   fetchAuthStatus: vi.fn().mockResolvedValue({ credentials: [] }),
@@ -311,14 +428,146 @@ async function assertConfigSectionShells(destinations: string[]) {
   }
 }
 
+// plugins.* is a file edit by decision and safety.* is deleted by Phase 432; every other leaf of
+// the published schema has a field on the page (D-06).
+const PAGE_LEAVES = CONFIG_SCHEMA_LEAVES.filter(
+  (pattern) => !pattern.startsWith('plugins.') && !pattern.startsWith('safety.'),
+)
+
+interface FieldMark {
+  kind: 'path' | 'list'
+  value: string
+  where: string
+}
+
+function fieldMarks(tab: ConfigTab): FieldMark[] {
+  const panel = container!.querySelector(`[data-config-panel="${tab}"]`)!
+  return (Array.from(panel.querySelectorAll('[data-field-path], [data-field-list]')) as HTMLElement[]).flatMap((element) => {
+    const where = `${tab}/${element.closest('[data-config-section]')?.getAttribute('data-config-section') ?? '?'}`
+    const path = element.getAttribute('data-field-path')
+    const list = element.getAttribute('data-field-list')
+    return [
+      ...(path === null ? [] : [{ kind: 'path' as const, value: path, where }]),
+      ...(list === null ? [] : [{ kind: 'list' as const, value: list, where }]),
+    ]
+  })
+}
+
+async function activateTab(tab: ConfigTab) {
+  const trigger = container!.querySelector(`[role="tab"][data-config-tab="${tab}"]`)
+  expect(trigger, tab).not.toBeNull()
+  await act(async () => {
+    trigger!.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true, button: 0 }))
+  })
+  await flushRender()
+}
+
+/** Every field mark on every tab, with each row of each list opened in turn (Radix unmounts inactive panels). */
+async function collectFieldMarks(): Promise<FieldMark[]> {
+  const marks: FieldMark[] = []
+  for (const tab of CONFIG_TABS) {
+    await activateTab(tab)
+    marks.push(...fieldMarks(tab))
+    const panel = container!.querySelector(`[data-config-panel="${tab}"]`)!
+    const headers = Array.from(panel.querySelectorAll('[data-model-row-toggle], [data-row-header]')) as HTMLElement[]
+    for (const header of headers) {
+      await act(async () => {
+        header.click()
+      })
+      await flushRender()
+      marks.push(...fieldMarks(tab))
+    }
+  }
+  return marks
+}
+
+/**
+ * The marks that can stand for a leaf: a field whose path is the pattern, a list whose owner is
+ * the pattern's owner, or, for a list of plain values (`a.b[]`), the one field that edits the
+ * whole list at its owner path.
+ */
+function coversLeaf(mark: FieldMark, pattern: string): boolean {
+  const owner = configLeafOwner(pattern)
+  if (mark.kind === 'list') return mark.value === owner
+  return mark.value === pattern || (pattern === `${owner}[]` && mark.value === owner)
+}
+
 afterEach(() => {
   cleanupRender()
+  page.config = undefined
   vi.clearAllMocks()
 })
 
 describe('ConfigPage schema coverage', () => {
+  it('SCHEMA-COVERAGE-EVERY-LEAF: every schema leaf but plugins and safety has a field or list owner on some tab', async () => {
+    page.config = fullConfig
+    await renderAt('/config/models')
+
+    expect(PAGE_LEAVES.length, 'the witness: the schema walk found the leaves').toBeGreaterThanOrEqual(95)
+    const marks = await collectFieldMarks()
+    const uncovered = PAGE_LEAVES.filter((pattern) => !marks.some((mark) => coversLeaf(mark, pattern)))
+    expect(uncovered, `schema leaves with no field on the page: ${uncovered.join(', ')}`).toEqual([])
+    for (const pattern of ['use.workers', 'use.buildTag', 'eval.gate2.canaryHorizonBuilds']) {
+      expect(marks.some((mark) => mark.kind === 'path' && mark.value === pattern), pattern).toBe(true)
+    }
+  })
+
+  it('SCHEMA-COVERAGE-EXACTLY-ONCE: each leaf is owned by exactly one section, and no field or list renders in two sections', async () => {
+    page.config = fullConfig
+    await renderAt('/config/models')
+
+    const marks = await collectFieldMarks()
+    const twice = PAGE_LEAVES.flatMap((pattern) => {
+      const sections = new Set(marks.filter((mark) => coversLeaf(mark, pattern)).map((mark) => mark.where))
+      return sections.size > 1 ? [`${pattern} (${[...sections].join(', ')})`] : []
+    })
+    expect(twice, `schema leaves rendered by more than one section: ${twice.join('; ')}`).toEqual([])
+
+    const sectionsByMark = new Map<string, Set<string>>()
+    for (const mark of marks) {
+      const key = `${mark.kind}=${mark.value}`
+      sectionsByMark.set(key, (sectionsByMark.get(key) ?? new Set()).add(mark.where))
+    }
+    const shared = [...sectionsByMark].filter(([, sections]) => sections.size > 1).map(([key, sections]) => `${key} (${[...sections].join(', ')})`)
+    expect(shared, `fields rendered by more than one section: ${shared.join('; ')}`).toEqual([])
+  })
+
+  it('EVERY-SECTION-RENDERS-EMPTY: with an empty config all five tabs and every section heading render, unset leaves show defaults only as placeholders, and Models shows its empty state', async () => {
+    page.config = {}
+    const view = await renderAt('/config/models')
+
+    const tabs = Array.from(view.querySelectorAll('[role="tab"]')) as HTMLElement[]
+    expect(tabs.map((tab) => tab.getAttribute('data-config-tab'))).toEqual([...CONFIG_TABS])
+    for (const tab of tabs) {
+      expect(tab.hasAttribute('disabled'), tab.getAttribute('data-config-tab')!).toBe(false)
+      expect(tab.getAttribute('aria-disabled'), tab.getAttribute('data-config-tab')!).not.toBe('true')
+      expect(tab.hidden, tab.getAttribute('data-config-tab')!).toBe(false)
+    }
+    expect(view.querySelector('[data-config-section="models"] [data-models-empty]')).not.toBeNull()
+
+    for (const tab of CONFIG_TABS) {
+      await activateTab(tab)
+      const panel = view.querySelector(`[data-config-panel="${tab}"]`) as HTMLElement
+      expect(panel, tab).not.toBeNull()
+      for (const id of CONFIG_SECTIONS[tab]) {
+        const heading = panel.querySelector(`[data-config-section="${id}"] > h2`)
+        expect(heading?.textContent, `${tab}/${id}`).toBe(CONFIG_SECTION_LABELS[id])
+      }
+      const filled = (
+        Array.from(panel.querySelectorAll('[data-config-field] input, [data-config-field] textarea')) as (
+          | HTMLInputElement
+          | HTMLTextAreaElement
+        )[]
+      )
+        .filter((control) => !['checkbox', 'radio', 'hidden'].includes(control.getAttribute('type') ?? ''))
+        .filter((control) => control.value !== '')
+        .map((control) => control.closest('[data-field-path]')?.getAttribute('data-field-path'))
+      expect(filled, `${tab}: unset leaves showing a value instead of a placeholder`).toEqual([])
+    }
+  })
+
   it('matches the final UI-SPEC inventory exactly', () => {
-    expect(CONFIG_NAVIGATION_ITEMS.map((item) => `${item.bucket}:${item.item}`)).toEqual(EXPECTED_DESTINATIONS)
+    expect([...LEGACY_CONFIG_PAIRS]).toEqual(EXPECTED_DESTINATIONS)
   })
 
   it('exposes only the current LLM provider contract in UI fixtures', () => {
@@ -470,8 +719,8 @@ describe('ConfigPage schema coverage', () => {
     }
   })
 
-  it('Config section shells: all 22 destinations', async () => {
-    const destinations = CONFIG_NAVIGATION_ITEMS.map((item) => `${item.bucket}:${item.item}`)
+  it('Config section shells: all 21 legacy destinations', async () => {
+    const destinations: string[] = [...LEGACY_CONFIG_PAIRS]
 
     expect(destinations).toEqual(EXPECTED_DESTINATIONS)
     await assertConfigSectionShells(destinations)
