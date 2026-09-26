@@ -63,10 +63,15 @@ const ROWS_RUN = 'r_428_rows'
 const TITLE_RUN = 'r_428_title'
 const SUITE_RUN = 'r_428_suite'
 const SECRET_RUN = 'r_428_secret'
+const OLD_PRODUCER_RUN = 'r_428_old_producer'
 
 const SINGLE_TITLE = 'Checkout keeps the basket'
 const SUITE_MEMBERS = ['the sign-in member', 'the basket member'] as const
 const SECRET_STEP_TEXT = 'type <SECRET_1> into Password'
+/** ROWS_RUN's three steps, as its testStarted carries them (428-30, G-428-2). */
+const ROWS_STEP_TEXTS = ['open the search page', 'search for the blue kettle', 'add the kettle to the basket'] as const
+/** The one step an old producer's run has started; its testStarted carries no stepTexts. */
+const OLD_PRODUCER_STEP_TEXT = 'open the old checkout'
 
 interface LayoutFixture {
   readonly harness: LiveViewHarness
@@ -82,7 +87,14 @@ function held(): LayoutFixture {
   return fixture
 }
 
-function plantRun(runId: string, members: readonly { name: string; totalSteps: number }[]): PlantedLiveRun {
+interface PlantedMember {
+  readonly name: string
+  readonly totalSteps: number
+  /** Absent for an old producer, whose testStarted carries only the count. */
+  readonly stepTexts?: readonly string[]
+}
+
+function plantRun(runId: string, members: readonly PlantedMember[]): PlantedLiveRun {
   const run = plantLiveRun({
     runId,
     heartbeatMs: 10_000,
@@ -93,7 +105,13 @@ function plantRun(runId: string, members: readonly { name: string; totalSteps: n
   held().harness.plant(run)
   publishTo(run, 'runStarted', { busSchemaVersion: 1, memberTestCount: members.length, handles: [0] })
   members.forEach((member, testIndex) => {
-    publishTo(run, 'testStarted', { testId: `t${String(testIndex)}`, testIndex, name: member.name, totalSteps: member.totalSteps })
+    publishTo(run, 'testStarted', {
+      testId: `t${String(testIndex)}`,
+      testIndex,
+      name: member.name,
+      totalSteps: member.totalSteps,
+      ...(member.stepTexts === undefined ? {} : { stepTexts: [...member.stepTexts] }),
+    })
   })
   return run
 }
@@ -122,14 +140,15 @@ beforeAll(async () => {
   fixture = { harness, browser, jpeg }
 
   // Rows in all three states: step 1 finished after two sub-actions, step 2 running after one, and
-  // step 3 planned and pending.
-  const rows = plantRun(ROWS_RUN, [{ name: 'the rows member', totalSteps: 3 }])
+  // step 3 planned and pending. The pending row is drawn because testStarted carried its text
+  // (428-30, G-428-2).
+  const rows = plantRun(ROWS_RUN, [{ name: 'the rows member', totalSteps: 3, stepTexts: ROWS_STEP_TEXTS }])
   harness.insertRunRow({ runId: ROWS_RUN, name: 'Search finds the blue kettle', status: 'running' })
-  publishTo(rows, 'stepStarted', { testIndex: 0, stepIndex: 0, stepText: 'open the search page' })
+  publishTo(rows, 'stepStarted', { testIndex: 0, stepIndex: 0, stepText: ROWS_STEP_TEXTS[0] })
   publishTo(rows, 'subActionRecorded', { testIndex: 0, stepIndex: 0, subActionIndex: 0 })
   publishTo(rows, 'subActionRecorded', { testIndex: 0, stepIndex: 0, subActionIndex: 1 })
   publishTo(rows, 'stepFinalized', { testIndex: 0, stepIndex: 0, status: 'passed', durationMs: 65_000 })
-  publishTo(rows, 'stepStarted', { testIndex: 0, stepIndex: 1, stepText: 'search for the blue kettle' })
+  publishTo(rows, 'stepStarted', { testIndex: 0, stepIndex: 1, stepText: ROWS_STEP_TEXTS[1] })
   publishTo(rows, 'subActionRecorded', { testIndex: 0, stepIndex: 1, subActionIndex: 0 })
 
   const single = plantRun(TITLE_RUN, [{ name: SINGLE_TITLE, totalSteps: 2 }])
@@ -142,6 +161,11 @@ beforeAll(async () => {
 
   const secret = plantRun(SECRET_RUN, [{ name: 'the secret member', totalSteps: 1 }])
   publishTo(secret, 'stepStarted', { testIndex: 0, stepIndex: 0, stepText: SECRET_STEP_TEXT })
+
+  // An old producer: three steps counted, no texts sent, and only step 1 started.
+  const oldProducer = plantRun(OLD_PRODUCER_RUN, [{ name: 'the old producer member', totalSteps: 3 }])
+  harness.insertRunRow({ runId: OLD_PRODUCER_RUN, name: 'The old checkout', status: 'running' })
+  publishTo(oldProducer, 'stepStarted', { testIndex: 0, stepIndex: 0, stepText: OLD_PRODUCER_STEP_TEXT })
 }, 180_000)
 
 afterAll(async () => {
@@ -276,6 +300,23 @@ async function readRows(page: Page): Promise<{ rows: RowReading[]; progressbars:
 }
 
 describe('the live step rows on the shipped bundle (428-24 Task 1)', () => {
+  it('NO-STEP-PLACEHOLDER-SHIPPED: an old producer\'s run draws only its running row at 1280 and 400, and no row reads step N', async () => {
+    for (const viewport of [DESKTOP, NARROW]) {
+      await onLivePage(OLD_PRODUCER_RUN, async (page) => {
+        await page.locator('[data-live-pane="steps"] li[data-step-status="running"]')
+          .waitFor({ state: 'attached', timeout: 40_000 })
+        await page.waitForTimeout(ROW_WATCH_MS)
+        const reading = await readRows(page)
+        const context = `${String(viewport.width)} px: ${JSON.stringify(reading)}`
+        expect(reading.rows.map((row) => [row.status, row.text]), context)
+          .toEqual([['running', OLD_PRODUCER_STEP_TEXT]])
+        expect(reading.rows.filter((row) => /^step \d+$/iu.test(row.text.trim())), context).toEqual([])
+        expect(reading.paneText, context).not.toMatch(/(?:^|\n)\s*step \d+\s*(?:\n|$)/iu)
+        await captureElement(page, '[data-live-pane="steps"]', `428-live-old-producer-${String(viewport.width)}`)
+      }, viewport)
+    }
+  }, 120_000)
+
   it('ROWS-GLYPH-AND-LABEL-SHIPPED: every running, finished and pending row is one named glyph and the label', async () => {
     await onLivePage(ROWS_RUN, async (page) => {
       await waitForRowsInAllStates(page)
@@ -293,7 +334,10 @@ describe('the live step rows on the shipped bundle (428-24 Task 1)', () => {
         expect(row.text, `${context} — no count`).not.toMatch(/action/iu)
         expect(row.text, `${context} — no duration`).not.toMatch(/\d\s*(?:ms|s|sec|m|min)\b/u)
       }
-      expect(reading.rows[2]?.text, context).toBe('step 3')
+      // RE-SPELLED 2026-09-26 (428-30, owner decision 2026-09-26 (2), G-428-2). This line pinned the
+      // pending row to the step-N placeholder. The owner removed it, so ROWS_RUN's testStarted now
+      // carries its step texts and the pending row reads its planted third text.
+      expect(reading.rows.map((row) => row.text), context).toEqual([...ROWS_STEP_TEXTS])
       expect(reading.paneText, `${context} — the pane`).not.toMatch(/\d+:\d{2}|action/iu)
       expect(reading.progressbars, context).toBe(0)
       await captureElement(page, '[data-live-pane="steps"]', '428-live-steps-1280')

@@ -619,7 +619,16 @@ describe('INVK-05 on real sockets: two surfaces, a mid-run resume, and a detach 
     const pageB = await held.newPage()
     try {
       publishTo(run, 'runStarted', { busSchemaVersion: 1, memberTestCount: 1, handles: [0] })
-      publishTo(run, 'testStarted', { testId: 't0', testIndex: 0, name: 'the shared member', totalSteps: 3 })
+      // RE-SPELLED 2026-09-26 (428-30, owner decision 2026-09-26 (2), G-428-2). A row with no text
+      // is no longer drawn, so this testStarted carries its step texts and the pending rows both
+      // surfaces wait for and count are still drawn.
+      publishTo(run, 'testStarted', {
+        testId: 't0',
+        testIndex: 0,
+        name: 'the shared member',
+        totalSteps: 3,
+        stepTexts: ['the first step', 'the running step', 'the last step'],
+      })
 
       // BOTH ATTACHED BEFORE THE INTERESTING ENVELOPES, so this is a concurrency claim and not two
       // replays of a finished run taken one after the other.

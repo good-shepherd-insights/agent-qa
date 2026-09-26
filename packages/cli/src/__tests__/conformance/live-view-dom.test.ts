@@ -563,7 +563,12 @@ describe('the built live surface, in a real browser (403-06 Task 1)', () => {
         // THE POSITIVE CONTROL. One envelope into the SAME socket reaches the rows with the attach
         // count unchanged, so the socket was open and delivering the whole silent window, and the
         // page still said nothing about it.
-        publishTo(quiet, 'testStarted', { testId: 't0', testIndex: 0, name: 'the quiet member', totalSteps: 1 })
+        // RE-SPELLED 2026-09-26 (428-30, owner decision 2026-09-26 (2), G-428-2). A row with no text
+        // is no longer drawn, so this testStarted carries its one step text and the row it waits
+        // for and counts is still drawn.
+        publishTo(quiet, 'testStarted', {
+          testId: 't0', testIndex: 0, name: 'the quiet member', totalSteps: 1, stepTexts: ['open the quiet page'],
+        })
         await page.locator('[data-live-pane="steps"] li').first().waitFor({ state: 'attached', timeout: 20_000 })
         expect(attaches.length, 'the socket was never re-opened — it was open all along').toBe(silent.attaches)
         return {

@@ -88,6 +88,15 @@ const stepFinalized = (extra: Record<string, unknown>, testIndex = 0, stepIndex 
     ...extra,
   })
 
+const testStarted = (totalSteps: number, stepTexts?: readonly string[], testIndex = 0) =>
+  envelope('testStarted', {
+    testId: `t${String(testIndex)}`,
+    testIndex,
+    name: 'the member',
+    totalSteps,
+    ...(stepTexts === undefined ? {} : { stepTexts: [...stepTexts] }),
+  })
+
 const verdict = (word: string) => envelope('verdict', { verdict: word })
 const runFinished = () => envelope('runFinished', {})
 
@@ -252,5 +261,37 @@ describe('RunResultsPanel renders the one live row (428 D-21)', () => {
     expect(view.textContent).not.toContain('<SECRET_')
     expect(view.innerHTML).not.toContain('&lt;SECRET_')
     expect(view.textContent).toContain('into Password')
+  })
+})
+
+describe('RunResultsPanel draws a row only when it has text (G-428-2, owner decision 2026-09-26 (2))', () => {
+  const WAITING = 'Waiting for events...'
+  const readings = (view: HTMLElement) =>
+    [...view.querySelectorAll('li')].map((row) => [row.getAttribute('data-step-status'), row.textContent])
+  const placeholders = (view: HTMLElement) =>
+    [...view.querySelectorAll('li')].filter((row) => /^step \d+$/iu.test(row.textContent ?? ''))
+
+  it('PANEL-NO-STEP-PLACEHOLDER: an old producer draws only started rows, step texts draw pending rows, and nothing drawn still waits', async () => {
+    const old = await renderPanel()
+    const connecting = old.textContent?.includes(WAITING)
+    feed(testStarted(2))
+    const oldBeforeStart = { waiting: old.textContent?.includes(WAITING), lists: old.querySelectorAll('ul').length }
+    feed(stepStarted('Open the page'))
+    const oldAfterStart = { rows: readings(old), placeholders: placeholders(old).length, waiting: old.textContent?.includes(WAITING) }
+
+    act(() => root!.unmount())
+    root = null
+    container?.remove()
+
+    const known = await renderPanel()
+    feed(testStarted(2, ['Open the page', 'Click Save']), stepStarted('Open the page'))
+    const withTexts = { rows: readings(known), placeholders: placeholders(known).length }
+
+    expect({ connecting, oldBeforeStart, oldAfterStart, withTexts }).toEqual({
+      connecting: true,
+      oldBeforeStart: { waiting: true, lists: 0 },
+      oldAfterStart: { rows: [['running', 'Open the page']], placeholders: 0, waiting: false },
+      withTexts: { rows: [['running', 'Open the page'], ['pending', 'Click Save']], placeholders: 0 },
+    })
   })
 })
