@@ -402,9 +402,12 @@ describe('the built live surface, in a real browser (403-06 Task 1)', () => {
 
       // AND THE PAGE DID RECEIVE IT. Without this the assertion above would pass on a page that
       // never got the envelope at all, which measures nothing.
-      // 428 D-19/D-20: the tick reaches the row as the breathing glyph's re-key, never as a count.
-      expect(await page.locator('[data-step-motion]').count()).toBeGreaterThanOrEqual(1)
-      expect(await page.locator('[data-step-motion]').first().getAttribute('data-motion-key')).toBe('1')
+      // 428 D-19: the tick reaches the running row as data-step-ticks, never as a count; the wait
+      // above is the proof it arrived.
+      // RE-SPELLED 2026-09-26 (428-32, owner decision 2026-09-26 (5), G-428-5): this read the tick
+      // as the breathing glyph's re-key. The glyph is still, so no motion marker is on the page.
+      expect(await page.locator('[data-step-status="running"][data-step-ticks="1"]').count()).toBe(1)
+      expect(await page.locator('[data-step-motion]').count()).toBe(0)
       expect(await page.locator('[data-step-ticks' + '-label]').count()).toBe(0)
 
       // D-09's inertness, measured rather than asserted about the props: there is nothing in the

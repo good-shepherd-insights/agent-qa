@@ -411,25 +411,30 @@ describe('the live page is two panes and nothing else (HNST-01, D-09)', () => {
   })
 })
 
-describe('the running row moves without inventing a phase (HNST-02, D-10)', () => {
-  it('finalizing clears the motion and keeps the status word', async () => {
+// RE-SPELLED 2026-09-26 (428-32, owner decision 2026-09-26 (5), G-428-5). The running glyph is still,
+// so the page no longer marks a row "in motion". These cells count the running status instead, and
+// NO-ACTION-COUNT asserts that no motion marker is left anywhere in the document.
+describe('the running row advances without inventing a phase (HNST-02, D-10)', () => {
+  // Was "finalizing clears the motion and keeps the status word".
+  it('finalizing ends the running status and keeps the status word', async () => {
     await mount()
     await open()
     await emit(runStarted(), testStarted(0, 'the member', 1), stepStarted())
-    expect(qa('[data-step-motion]')).toHaveLength(1)
+    expect(qa('[data-step-status="running"]')).toHaveLength(1)
 
     await emit(stepFinalized(0, 0, { status: 'passed' }))
     expect(q('[data-live-pane="steps"] li')?.getAttribute('data-step-status')).toBe('passed')
-    expect(qa('[data-step-motion]')).toEqual([])
+    expect(qa('[data-step-status="running"]')).toEqual([])
   })
 
-  it('exactly one row is in motion at a time', async () => {
+  // Was "exactly one row is in motion at a time".
+  it('exactly one row is running at a time', async () => {
     await mount()
     await open()
     await emit(runStarted(), testStarted(0, 'the member', 2), stepStarted(0, 0))
     await emit(stepFinalized(0, 0, { status: 'passed' }), stepStarted(0, 1, 'click the button'))
 
-    expect(qa('[data-step-motion]')).toHaveLength(1)
+    expect(qa('[data-step-status="running"]')).toHaveLength(1)
     expect(qa('[data-live-pane="steps"] li').map((row) => row.getAttribute('data-step-status'))).toEqual([
       'passed',
       'running',
@@ -448,18 +453,21 @@ describe('the running row moves without inventing a phase (HNST-02, D-10)', () =
   // RE-SPELLED 2026-09-26 (428 D-19/D-20). This cell asserted the row said `3 actions`. The owner
   // removed the count: the breathing glyph's re-key is the one progress signal left, and it says
   // "something happened" without a number.
-  it('NO-ACTION-COUNT: a running row after three sub-actions shows no count, and the motion re-keys on each one', async () => {
+  // RE-SPELLED AGAIN 2026-09-26 (428-32, owner decision 2026-09-26 (5), G-428-5). Its title ended
+  // "and the motion re-keys on each one". The glyph no longer moves or re-keys, so the ticks reach
+  // the row only as data-step-ticks, and no motion marker is left in the document.
+  it('NO-ACTION-COUNT: a running row after three sub-actions shows no count, and the ticks reach the row only as data-step-ticks', async () => {
     await mount()
     await open()
     await emit(runStarted(), testStarted(0, 'the member', 1), stepStarted())
-    expect(q('[data-step-motion]')?.getAttribute('data-motion-key')).toBe('0')
+    expect(q('[data-live-pane="steps"] li')?.getAttribute('data-step-ticks')).toBe('0')
 
     await emit(subActionRecorded(0, 0, 0), subActionRecorded(0, 0, 1), subActionRecorded(0, 0, 2))
 
     expect(q(`[${TICKS_LABEL_ATTR}]`)).toBeNull()
     expect(stepsPane().textContent ?? '').not.toMatch(/action/iu)
     expect(q('[data-live-pane="steps"] li')?.getAttribute('data-step-ticks')).toBe('3')
-    expect(q('[data-step-motion]')?.getAttribute('data-motion-key')).toBe('3')
+    expect(document.querySelectorAll('[data-step-motion]')).toHaveLength(0)
     // No phase was invented from the ticks, in any casing.
     expect(stepsPane().outerHTML.toLowerCase()).not.toMatch(/observing|planning|acting/)
   })
