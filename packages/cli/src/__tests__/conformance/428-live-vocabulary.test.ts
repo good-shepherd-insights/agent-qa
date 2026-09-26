@@ -11,6 +11,7 @@ import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 
 import {
+  LIVE_EDITOR_SUPERSEDED_CLOSE_CODE,
   LIVE_EDITOR_UNKNOWN_SESSION_CLOSE_CODE,
   LIVE_EMBED_HOST_PARAM,
   LIVE_EMBED_REPORT_EVENTS,
@@ -80,6 +81,14 @@ describe('the live-view words the firewall writes twice (428-23 Task 2)', () => 
     expect(typeof server, spellings(server, ui)).toBe('number')
     expect(ui, spellings(server, ui)).toBe(server)
     expect(server, spellings(server, ui)).toBe(4404)
+  })
+
+  it('SUPERSEDED-CODE-EQUAL: the editor knows a replaced control socket by the code the server closes it with', () => {
+    const server = LIVE_EDITOR_SUPERSEDED_CLOSE_CODE
+    const ui = uiNumber('LIVE_EDITOR_SUPERSEDED_CLOSE_CODE')
+    expect(typeof server, spellings(server, ui)).toBe('number')
+    expect(ui, spellings(server, ui)).toBe(server)
+    expect(server, spellings(server, ui)).toBe(4409)
   })
 
   it('REFUSAL-REASONS-KNOWN-TO-UI: every refusal the frame socket can send is one the preview accepts', () => {

@@ -116,6 +116,9 @@ export const LIVE_PREVIEW_HOST_QUERY = '?host=dashboard'
 /** The server's close code for an editor control socket whose session is gone. */
 export const LIVE_EDITOR_SESSION_GONE_CLOSE_CODE = 4404
 
+/** The server's close code for an editor control socket a newer one replaced; the page does not reconnect. */
+export const LIVE_EDITOR_SUPERSEDED_CLOSE_CODE = 4409
+
 export const SNAPSHOT_PREVIEW_LABEL = 'Snapshot preview · updates every 1s'
 export const PREVIEW_LOADING_TEXT = 'Connecting to the preview…'
 export const PREVIEW_DELAYED_TEXT = 'Preview delayed'

@@ -1,6 +1,7 @@
 import type WebSocket from 'ws'
 import { parseTestFile } from '@vostride/agent-qa-core'
 import type { LiveSession } from './live-session.js'
+import { LIVE_EDITOR_SUPERSEDED_CLOSE_CODE } from './types.js'
 import type {
   LiveStepResultPayload,
   ServerMessage,
@@ -55,7 +56,14 @@ export function createSessionHandler(
     }
 
     session.clearIdleTimer()
-    const generation = session.beginAttachment()
+    // 428 WR-01: a newer socket replaces this one. It is closed by name, its log poll stops, and
+    // any command it still sends is ignored, so one page drives the session at a time.
+    const generation = session.beginAttachment(() => {
+      if (detached || cleanedUp) return
+      detached = true
+      if (logPollInterval) clearInterval(logPollInterval)
+      ws.close(LIVE_EDITOR_SUPERSEDED_CLOSE_CODE, 'superseded')
+    })
 
     const state = session.getState()
     send(ws, {
@@ -98,6 +106,7 @@ export function createSessionHandler(
     }
 
     ws.on('message', async (data) => {
+      if (detached || !session.isCurrentAttachment(generation)) return
       let msg: any
       try {
         msg = JSON.parse(data.toString())

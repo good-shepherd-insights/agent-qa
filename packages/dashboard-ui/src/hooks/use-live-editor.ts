@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useCallback } from 'react'
 import { deleteLiveEditorSession, type LiveExecutionLogEntry } from '@/lib/api'
 import type { LivePhase } from '@/lib/display-step'
 import { logLiveDebug } from '@/lib/live-debug'
-import { LIVE_EDITOR_SESSION_GONE_CLOSE_CODE } from '@/lib/live-preview'
+import { LIVE_EDITOR_SESSION_GONE_CLOSE_CODE, LIVE_EDITOR_SUPERSEDED_CLOSE_CODE } from '@/lib/live-preview'
 
 /**
  * One sub-action of a LIVE editor step (405-11).
@@ -1055,9 +1055,11 @@ export function useLiveEditor(
       }
 
       // The server detaches a dropped session for its idle window (428 D-09), so any other close
-      // is worth a reconnect to the same session; 4404 means the server no longer holds it.
+      // is worth a reconnect to the same session; 4404 means the server no longer holds it, and
+      // 4409 that another socket took the session over, which a reconnect would only take back.
       const gone = event.code === LIVE_EDITOR_SESSION_GONE_CLOSE_CODE
-      const willReconnect = !gone && allowReconnect && reconnectCountRef.current < 3
+      const superseded = event.code === LIVE_EDITOR_SUPERSEDED_CLOSE_CODE
+      const willReconnect = !gone && !superseded && allowReconnect && reconnectCountRef.current < 3
 
       logLiveDebug('hook', 'websocket closed unexpectedly', {
         sessionId: sid,

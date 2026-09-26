@@ -2,12 +2,13 @@
 //
 // Phase 428 turned a dropped control socket into a detach (D-09), so a page can reconnect to the
 // same session. These cells pin what that path owes the page: a command's outcome reaches the
-// socket attached when it finishes (CR-01). The session is the real LiveSession; only the
-// commands' own work is stubbed.
+// socket attached when it finishes (CR-01), and a socket a newer one replaced stops driving the
+// session (WR-01). The session is the real LiveSession; only the commands' own work is stubbed.
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { LiveSession } from '../live-session.js'
+import { LIVE_EDITOR_SUPERSEDED_CLOSE_CODE } from '../types.js'
 import type { LiveHookPayload, LiveTestResultPayload, ServerMessage } from '../types.js'
 import { createSessionHandler } from '../ws-handler.js'
 
@@ -152,5 +153,46 @@ describe('428 review: the editor control socket', () => {
     expect(after.map((message) => message.type), 'the reattached sink kept its place')
       .toEqual(['hook-complete', 'session-terminated'])
     expect(before).toEqual([])
+  })
+
+  it('WR-01 SUPERSEDED-SOCKET-CLOSED: a newer socket closes the one it replaced by name', () => {
+    const session = new LiveSession('wr01-closed')
+    const first = attach(session)
+    const second = attach(session)
+
+    expect(first.closes).toEqual([{ code: LIVE_EDITOR_SUPERSEDED_CLOSE_CODE, reason: 'superseded' }])
+    expect(second.closes).toEqual([])
+  })
+
+  it('WR-01 SUPERSEDED-SOCKET-CANNOT-DRIVE: the replaced socket\'s commands are ignored and cannot end the session', async () => {
+    const session = new LiveSession('wr01-drive')
+    const cleanup = vi.spyOn(session, 'cleanup')
+    const onTerminate = vi.fn()
+    const first = attach(session, onTerminate)
+    const second = attach(session, onTerminate)
+    const firstSeen = first.sent.length
+
+    first.message({ type: 'terminate-session' })
+    first.message({ type: 'get-state' })
+    await flush()
+    expect(cleanup).not.toHaveBeenCalled()
+    expect(onTerminate).not.toHaveBeenCalled()
+    expect(first.sent.length, 'the replaced socket gets no replies').toBe(firstSeen)
+
+    second.message({ type: 'get-state' })
+    await flush()
+    expect(second.types().at(-1), 'the current socket still drives').toBe('session-state')
+  })
+
+  it('WR-01 ONE-LOG-POLL: a replaced mobile socket stops draining device logs', async () => {
+    vi.useFakeTimers()
+    const session = new LiveSession('wr01-logs')
+    vi.spyOn(session, 'getState').mockReturnValue({ ...session.getState(), platform: 'android', interactive: true })
+    const drain = vi.spyOn(session, 'drainDeviceLogs').mockResolvedValue([])
+    attach(session)
+    attach(session)
+
+    await vi.advanceTimersByTimeAsync(2_000)
+    expect(drain, 'only the current socket polls').toHaveBeenCalledTimes(1)
   })
 })

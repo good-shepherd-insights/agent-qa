@@ -67,6 +67,9 @@ import type {
 
 export const IDLE_TIMEOUT_MS = 5 * 60 * 1000
 
+/** Why the session let go of a control socket. */
+export type LiveAttachmentRelease = 'superseded'
+
 const RUNJS_DBL_RE = /\{\{runJS:"((?:[^"\\]|\\.)*)"\}\}/g
 const RUNJS_SGL_RE = /\{\{runJS:'((?:[^'\\]|\\.)*)'\}\}/g
 
@@ -280,6 +283,7 @@ export class LiveSession {
   private cleanupRun: Promise<void> | null = null
   // RESEARCH P4: which control socket is the current one. Only its close may detach the session.
   private attachmentGeneration = 0
+  private releaseAttachment: ((reason: LiveAttachmentRelease) => void) | null = null
 
   constructor(sessionId: string, private deps: LiveSessionDeps = {}) {
     this.sessionId = sessionId
@@ -310,8 +314,16 @@ export class LiveSession {
     this.liveHub = hub
   }
 
-  beginAttachment(): number {
+  /**
+   * Make a control socket the current one. `release` is how the session lets go of it later: the
+   * previous attachment's is called with `superseded` here (428 WR-01), so one socket drives the
+   * session at a time.
+   */
+  beginAttachment(release?: (reason: LiveAttachmentRelease) => void): number {
+    const previous = this.releaseAttachment
     this.attachmentGeneration += 1
+    this.releaseAttachment = release ?? null
+    previous?.('superseded')
     return this.attachmentGeneration
   }
 

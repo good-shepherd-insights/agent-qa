@@ -3,6 +3,7 @@
 // 428 code review (428-REVIEW.md): the editor keeps reconnect on (D-09), so a dropped control
 // socket is an ordinary event during a suite run. CR-01: the drop settles a test in flight, so
 // "Run all tests" ends instead of waiting forever for an answer the old socket cannot carry.
+// WR-01: a socket the server replaced (4409) does not reconnect and take the session back.
 
 import React, { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
@@ -13,6 +14,7 @@ import {
   type LiveEditorExternalTest,
   type UseLiveEditorReturn,
 } from '../hooks/use-live-editor'
+import { LIVE_EDITOR_SUPERSEDED_CLOSE_CODE } from '../lib/live-preview'
 
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
@@ -134,5 +136,24 @@ describe('useLiveEditor reconnect during a suite run (428 review)', () => {
     expect(holder.current?.connectionState, 'a reconnect is on its way').toBe('connecting')
     expect(socket.sent.filter((message) => message.type === 'execute-test'), 'the run stopped at the dropped test')
       .toHaveLength(1)
+  })
+
+  it('WR-01 SUPERSEDED-DOES-NOT-RECONNECT: a 4409 close leaves the page disconnected instead of taking the session back', async () => {
+    const holder: Holder = { current: null }
+    await act(async () => {
+      root?.render(React.createElement(Harness, { holder, tests: [] }))
+    })
+    const socket = ReconnectProbeSocket.instances[0]
+    if (socket === undefined) throw new Error('no control socket opened')
+    await act(async () => {
+      socket.emit({ type: 'session-ready', platform: 'web', interactive: true })
+    })
+
+    await act(async () => {
+      socket.drop(LIVE_EDITOR_SUPERSEDED_CLOSE_CODE)
+    })
+
+    expect(holder.current?.connectionState).toBe('disconnected')
+    expect(holder.current?.sessionGone, 'the session itself is still held').toBe(false)
   })
 })

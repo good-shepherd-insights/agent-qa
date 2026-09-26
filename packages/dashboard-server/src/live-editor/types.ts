@@ -231,3 +231,10 @@ export interface LiveSessionConfig {
  * Plan 23 pins the two equal.
  */
 export const LIVE_EDITOR_UNKNOWN_SESSION_CLOSE_CODE = 4404
+
+/**
+ * The close code for a control socket a newer one has replaced (428 WR-01). The session is still
+ * held; this socket no longer drives it, so the page must not reconnect and take it back. The
+ * dashboard UI spells the same number.
+ */
+export const LIVE_EDITOR_SUPERSEDED_CLOSE_CODE = 4409

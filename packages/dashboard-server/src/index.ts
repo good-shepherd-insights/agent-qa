@@ -115,7 +115,7 @@ export {
 } from './live-view/protocol.js'
 // 428 P5: the control socket's close code for a session this process does not hold. The dashboard
 // UI spells the same number, and the CLI's conformance cells pin the two equal.
-export { LIVE_EDITOR_UNKNOWN_SESSION_CLOSE_CODE } from './live-editor/types.js'
+export { LIVE_EDITOR_SUPERSEDED_CLOSE_CODE, LIVE_EDITOR_UNKNOWN_SESSION_CLOSE_CODE } from './live-editor/types.js'
 export type {
   LiveViewClientMessage,
   LiveViewRefusalReason,
