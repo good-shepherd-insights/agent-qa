@@ -1,23 +1,30 @@
 // ONE SAVED MODEL (429-23 · D-10, D-11, D-12 · UI-SPEC S4 "Closed row", "Open row panel").
 //
 // The closed row is its disclosure button: the name, the Default badge, the model line and one
-// status word derived from the credential-status read. The open panel sits inside the same row.
+// status word derived from the credential-status read. The open panel sits inside the same row
+// and holds the connection test, whose line lives only while the row stays open, and Make default.
 
-import { useId } from "react"
-import { ChevronRight, TriangleAlert } from "lucide-react"
+import { useEffect, useId, useRef, useState, type RefObject } from "react"
+import { ChevronRight, LoaderCircle, TriangleAlert } from "lucide-react"
+import { CONFIG_MASK_PLACEHOLDER } from "@vostride/agent-qa-schema"
 
+import { ConnectionLine } from "@/components/config-manager/connection-line"
 import { Badge } from "@/components/ui/badge"
-import type { AuthCredentialInfo, LLMProviderMetadata } from "@/lib/api"
+import { Button } from "@/components/ui/button"
+import { testLLMConnection, type AuthCredentialInfo, type LLMProviderMetadata, type LLMTestResult } from "@/lib/api"
 import {
   DEFAULT_BADGE,
+  MAKE_DEFAULT_LABEL,
   MODEL_STATUS_WORDS,
   PROVIDER_FALLBACK_LABELS,
   SUBSCRIPTION_PLAN_NAMES,
+  TEST_CONNECTION_LABEL,
   connectionSentence,
   fixedFactsLine,
   modelLine,
+  providerErrorSentence,
 } from "@/lib/config-copy"
-import type { ModelStatus } from "@/lib/config-tabs"
+import type { ModelStatus, TestResult } from "@/lib/config-tabs"
 import { cn } from "@/lib/utils"
 
 export interface SavedModel {
@@ -71,6 +78,128 @@ function planName(provider: string, label: string | undefined): string {
   return (SUBSCRIPTION_PLAN_NAMES as Record<string, string>)[provider] ?? label ?? ""
 }
 
+interface TestLine {
+  state: TestResult
+  sentence?: string
+}
+
+function lineFor(result: LLMTestResult): TestLine {
+  if (result.success) return { state: result.unauthenticated ? "connected-without-key" : "connected" }
+  return { state: "failed", sentence: result.message ?? providerErrorSentence("network_error", "") }
+}
+
+function lineForError(error: unknown): TestLine {
+  const payload = (error as { payload?: Record<string, unknown> | null } | null)?.payload
+  const message = payload && typeof payload.message === "string" ? payload.message : undefined
+  return { state: "failed", sentence: message ?? providerErrorSentence("network_error", "") }
+}
+
+// Header values come back masked from the config read; a masked value would only be sent as text.
+function sendableHeaders(headers: Record<string, string> | undefined): Record<string, string> | undefined {
+  if (headers === undefined) return undefined
+  const kept = Object.entries(headers).filter(([, value]) => value !== CONFIG_MASK_PLACEHOLDER)
+  return kept.length > 0 ? Object.fromEntries(kept) : undefined
+}
+
+/** Runs the row's connection test; only the latest test started while the panel is open sets the line. */
+function useConnectionTest(model: SavedModel) {
+  const [line, setLine] = useState<TestLine | undefined>(undefined)
+  const latest = useRef(0)
+
+  useEffect(() => {
+    return () => {
+      latest.current = Number.NaN
+    }
+  }, [])
+
+  async function run() {
+    const id = latest.current + 1
+    latest.current = id
+    setLine({ state: "testing" })
+    const headers = sendableHeaders(model.providerHeaders)
+    let next: TestLine
+    try {
+      next = lineFor(
+        await testLLMConnection({
+          provider: model.provider,
+          model: model.model,
+          ...(model.baseURL ? { baseURL: model.baseURL } : {}),
+          ...(headers ? { providerHeaders: headers } : {}),
+          configName: model.name,
+        }),
+      )
+    } catch (error) {
+      next = lineForError(error)
+    }
+    if (latest.current === id) setLine(next)
+  }
+
+  return { line, run }
+}
+
+interface ModelPanelProps {
+  id: string
+  model: SavedModel
+  status: ModelStatus
+  facts: ProviderFacts
+  isDefault: boolean
+  onMakeDefault: () => void
+  header: RefObject<HTMLButtonElement | null>
+}
+
+function ModelPanel({ id, model, status, facts, isDefault, onMakeDefault, header }: ModelPanelProps) {
+  const test = useConnectionTest(model)
+  const testing = test.line?.state === "testing"
+
+  return (
+    <div id={id} data-model-panel className="grid grid-cols-[0.75rem_minmax(0,1fr)] gap-x-2 bg-muted/40 px-4 py-4">
+      <div className="col-start-2 min-w-0 space-y-4">
+        <div data-model-connection className="space-y-2">
+          <p className="text-sm">
+            {connectionSentence(status, planName(model.provider, facts.label), {
+              signIn: facts.signIn,
+              keyOptional: facts.keyOptional,
+            })}
+          </p>
+          <div className="flex flex-wrap items-center gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              aria-disabled={testing ? true : undefined}
+              onClick={() => {
+                if (!testing) void test.run()
+              }}
+            >
+              {testing ? <LoaderCircle className="size-3.5 motion-safe:animate-spin" aria-hidden="true" /> : null}
+              {TEST_CONNECTION_LABEL}
+            </Button>
+            {isDefault ? null : (
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  onMakeDefault()
+                  header.current?.focus()
+                }}
+              >
+                {MAKE_DEFAULT_LABEL}
+              </Button>
+            )}
+          </div>
+          {test.line === undefined ? null : <ConnectionLine state={test.line.state} sentence={test.line.sentence} />}
+        </div>
+        {facts.label === undefined ? null : (
+          <p data-model-fixed className="text-xs text-muted-foreground">
+            {fixedFactsLine(facts.label)}
+          </p>
+        )}
+      </div>
+    </div>
+  )
+}
+
 interface ModelRowProps {
   model: SavedModel
   status: ModelStatus
@@ -78,10 +207,12 @@ interface ModelRowProps {
   isDefault: boolean
   open: boolean
   onToggle: () => void
+  onMakeDefault: () => void
 }
 
-export function ModelRow({ model, status, facts, isDefault, open, onToggle }: ModelRowProps) {
+export function ModelRow({ model, status, facts, isDefault, open, onToggle, onMakeDefault }: ModelRowProps) {
   const panelId = useId()
+  const header = useRef<HTMLButtonElement>(null)
   const line = facts.label === undefined ? model.model : modelLine(model.model, facts.label)
   const expired = status === "sign-in-expired"
 
@@ -94,6 +225,7 @@ export function ModelRow({ model, status, facts, isDefault, open, onToggle }: Mo
       data-model-open={open ? "true" : "false"}
     >
       <button
+        ref={header}
         type="button"
         data-model-row-toggle
         aria-expanded={open}
@@ -130,27 +262,15 @@ export function ModelRow({ model, status, facts, isDefault, open, onToggle }: Mo
         </span>
       </button>
       {open ? (
-        <div
+        <ModelPanel
           id={panelId}
-          data-model-panel
-          className="grid grid-cols-[0.75rem_minmax(0,1fr)] gap-x-2 bg-muted/40 px-4 py-4"
-        >
-          <div className="col-start-2 min-w-0 space-y-4">
-            <div data-model-connection className="space-y-2">
-              <p className="text-sm">
-                {connectionSentence(status, planName(model.provider, facts.label), {
-                  signIn: facts.signIn,
-                  keyOptional: facts.keyOptional,
-                })}
-              </p>
-            </div>
-            {facts.label === undefined ? null : (
-              <p data-model-fixed className="text-xs text-muted-foreground">
-                {fixedFactsLine(facts.label)}
-              </p>
-            )}
-          </div>
-        </div>
+          model={model}
+          status={status}
+          facts={facts}
+          isDefault={isDefault}
+          onMakeDefault={onMakeDefault}
+          header={header}
+        />
       ) : null}
     </li>
   )

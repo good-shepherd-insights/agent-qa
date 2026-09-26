@@ -73,6 +73,11 @@ export function ModelList(_props: ModelListProps) {
     }
   }, [])
 
+  function makeDefault(name: string) {
+    autosave.edit(DEFAULT_REF, name, { valid: true, value: name })
+    autosave.settle(DEFAULT_REF)
+  }
+
   function addModel() {
     navigate(`${configTabPath("models")}?add`)
   }
@@ -124,6 +129,7 @@ export function ModelList(_props: ModelListProps) {
               isDefault={model.name === defaultName}
               open={openName === model.name}
               onToggle={() => setOpenName((current) => (current === model.name ? undefined : model.name))}
+              onMakeDefault={() => makeDefault(model.name)}
             />
           ))}
         </ul>

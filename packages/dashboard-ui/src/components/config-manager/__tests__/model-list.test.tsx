@@ -505,7 +505,7 @@ describe('ModelRow connection block (429-23 Task 2)', () => {
     }
     expect(testLLMConnection).not.toHaveBeenCalled()
 
-    vi.mocked(testLLMConnection).mockResolvedValueOnce({ success: true })
+    vi.mocked(testLLMConnection).mockResolvedValue({ success: true })
     await openModel('flash')
     await click(testButton('flash'))
     expect(testLine('flash')?.getAttribute('data-test-result')).toBe('connected')
