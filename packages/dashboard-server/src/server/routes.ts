@@ -19,6 +19,7 @@ import type { AgentHost } from '../chat/host.js'
 import {
   classifyProviderError,
   extractProviderError,
+  LlmCredentialMoveRequestSchema,
   parseHandleParam,
   providerErrorSentence,
 } from '@vostride/agent-qa-schema'
@@ -67,7 +68,7 @@ import {
 } from './config-routes.js'
 import type { PostProcessingRelay } from '../execution/post-processing-relay.js'
 import type { LLMAuthProviderPlugin, OAuthTokens } from '@vostride/agent-qa-core'
-import { AuthStateNameSchema, buildInternalRunAttributes, mergeRunAttributes, readAuth, writeAuth, removeAuth, getAgentQaVersion, getAgentQaUpdateStatus, getLLMAuthProviderPlugin, listAuthStateMetadata, listLLMAuthProviderPlugins, ModelConfigSchema, NamedLLMConfigSchema, WorkspaceSchema, ServicesSchema, RegistrySchema, UseSchema, MobileAppStateSchema, TimeoutConfigSchema, CacheConfigSchema, PlannerConfigSchema, LoggingConfigSchema, LogCaptureConfigSchema, AccessibilityConfigSchema, DashboardConfigSchema, McpConfigSchema, RecordingConfigSchema, BrowserConfigSchema, AnalyticsSchema, AgentQaConfigSchema, TestDefinitionSchema, SuiteDefinitionSchema, parseEnvFile, serializeEnvFile, parseHooksFile, RUNTIME_IMAGE_MAP, redactAuthStateValue, validateUserRunAttributes, discoverWorkspaceFiles, isWorkspacePathMatch, resolveWorkspaceFileTarget, SizeString, KnowledgeConfigSchema } from '@vostride/agent-qa-core'
+import { AuthStateNameSchema, buildInternalRunAttributes, mergeRunAttributes, readAuth, writeAuth, removeAuth, getAgentQaVersion, getAgentQaUpdateStatus, getLLMAuthProviderPlugin, listAuthStateMetadata, listLLMAuthProviderPlugins, ModelConfigSchema, NamedLLMConfigSchema, NameSlugSchema, WorkspaceSchema, ServicesSchema, RegistrySchema, UseSchema, MobileAppStateSchema, TimeoutConfigSchema, CacheConfigSchema, PlannerConfigSchema, LoggingConfigSchema, LogCaptureConfigSchema, AccessibilityConfigSchema, DashboardConfigSchema, McpConfigSchema, RecordingConfigSchema, BrowserConfigSchema, AnalyticsSchema, AgentQaConfigSchema, TestDefinitionSchema, SuiteDefinitionSchema, parseEnvFile, serializeEnvFile, parseHooksFile, RUNTIME_IMAGE_MAP, redactAuthStateValue, validateUserRunAttributes, discoverWorkspaceFiles, isWorkspacePathMatch, resolveWorkspaceFileTarget, SizeString, KnowledgeConfigSchema } from '@vostride/agent-qa-core'
 import { SecretStore, SecretRedactor } from '@vostride/agent-qa-runner'
 import { DockerHookExecutor } from '@vostride/agent-qa-runner-local'
 import type { ResolvedWorkspacePaths, RunAttributes, WorkspaceFileKind, WorkspaceFileRecord } from '@vostride/agent-qa-core'
@@ -124,71 +125,111 @@ function isKnownLLMProvider(provider: string): boolean {
   return LLM_PROVIDER_MODES.has(provider) || Boolean(getLLMAuthProviderPlugin(provider))
 }
 
+type CredentialTarget =
+  | { ok: true; configName: string; created: boolean }
+  | { ok: false; status: number; error: string; message?: string }
+
+type CredentialNameCheck =
+  | { ok: true; name: string }
+  | { ok: false; status: number; error: string; message?: string }
+
+// 429-09 D-15/D-16: auth.json is machine-wide and keyed by name, so every name passes core's
+// name rule before the store is read or written.
+function checkCredentialName(configName: unknown): CredentialNameCheck {
+  const name = typeof configName === 'string' ? configName.trim() : ''
+  if (!name) return { ok: false, status: 400, error: 'configName is required' }
+  const parsed = NameSlugSchema.safeParse(name)
+  if (!parsed.success) {
+    return { ok: false, status: 400, error: 'name_invalid', message: parsed.error.issues[0]?.message ?? 'Invalid name' }
+  }
+  return { ok: true, name }
+}
+
+async function findRegistryLlm(
+  configManager: ConfigManager,
+  name: string,
+): Promise<{ provider?: unknown } | undefined> {
+  const config = await configManager.read() as { registry?: { llms?: unknown[] } }
+  const llms = Array.isArray(config.registry?.llms) ? config.registry.llms : []
+  return llms.find((item) => {
+    return Boolean(item)
+      && typeof item === 'object'
+      && !Array.isArray(item)
+      && (item as { name?: unknown }).name === name
+  }) as { provider?: unknown } | undefined
+}
+
+// The product provider an auth.json entry belongs to, mapped the way GET /api/auth/status maps it.
+function credentialProductProvider(key: string, credential: DashboardAuthCredential): string {
+  if (credential.type === 'oauth') return toProductProviderLabel(credential.provider ?? key)
+  if (credential.type === 'bearer') return credential.provider
+  return credential.provider ?? key
+}
+
+function ownAuthEntry(
+  store: Record<string, DashboardAuthCredential | undefined>,
+  name: string,
+): DashboardAuthCredential | undefined {
+  return Object.prototype.hasOwnProperty.call(store, name) ? store[name] : undefined
+}
+
+async function readAuthEntry(name: string): Promise<DashboardAuthCredential | undefined> {
+  return ownAuthEntry(await readAuth() as Record<string, DashboardAuthCredential | undefined>, name)
+}
+
+const CREDENTIAL_PROVIDER_CONFLICT = {
+  status: 409,
+  error: 'credential_provider_conflict',
+  message: 'A saved credential under this name belongs to a different provider.',
+} as const
+
+async function requireCredentialTarget(
+  configManager: ConfigManager,
+  name: string,
+  provider: string,
+): Promise<CredentialTarget> {
+  const match = await findRegistryLlm(configManager, name)
+  if (match && match.provider !== provider) {
+    return { ok: false, status: 400, error: `LLM config "${name}" uses ${String(match.provider)}, not ${provider}` }
+  }
+  const existing = await readAuthEntry(name)
+  if (existing && credentialProductProvider(name, existing) !== provider) {
+    return { ok: false, ...CREDENTIAL_PROVIDER_CONFLICT }
+  }
+  return { ok: true, configName: name, created: existing === undefined }
+}
+
 async function requirePluginAuthConfig(
   configManager: ConfigManager | undefined,
   configName: unknown,
   plugin: LLMAuthProviderPlugin,
-): Promise<{ ok: true; configName: string } | { ok: false; error: string }> {
-  const targetConfigName = typeof configName === 'string' ? configName.trim() : ''
-  if (!targetConfigName) {
-    return { ok: false, error: 'configName is required' }
-  }
+): Promise<CredentialTarget> {
+  const name = checkCredentialName(configName)
+  if (!name.ok) return name
   if (!configManager) {
-    return { ok: false, error: 'Config manager is required to save OAuth credentials' }
+    return { ok: false, status: 400, error: 'Config manager is required to save OAuth credentials' }
   }
-
-  const config = await configManager.read() as { registry?: { llms?: unknown[] } }
-  const llms = Array.isArray(config.registry?.llms) ? config.registry.llms : []
-  const match = llms.find((item) => {
-    return Boolean(item)
-      && typeof item === 'object'
-      && !Array.isArray(item)
-      && (item as { name?: unknown }).name === targetConfigName
-  }) as { provider?: unknown } | undefined
-
-  if (!match) {
-    return { ok: false, error: `LLM config "${targetConfigName}" not found` }
-  }
-  if (match.provider !== plugin.providerId) {
-    return { ok: false, error: `LLM config "${targetConfigName}" uses ${String(match.provider)}, not ${plugin.providerId}` }
-  }
-
-  return { ok: true, configName: targetConfigName }
+  return requireCredentialTarget(configManager, name.name, plugin.providerId)
 }
 
 async function requireCredentialConfig(
   configManager: ConfigManager | undefined,
   configName: unknown,
   provider: string,
-): Promise<{ ok: true; configName: string } | { ok: false; error: string }> {
-  const targetConfigName = typeof configName === 'string' ? configName.trim() : ''
-  if (!targetConfigName) {
-    return { ok: false, error: 'configName is required' }
-  }
+): Promise<CredentialTarget> {
+  const name = checkCredentialName(configName)
+  if (!name.ok) return name
   if (!API_KEY_CREDENTIAL_PROVIDERS.has(provider)) {
-    return { ok: false, error: 'provider must support typed credentials' }
+    return { ok: false, status: 400, error: 'provider must support typed credentials' }
   }
   if (!configManager) {
-    return { ok: false, error: 'Config manager is required to save credentials' }
+    return { ok: false, status: 400, error: 'Config manager is required to save credentials' }
   }
+  return requireCredentialTarget(configManager, name.name, provider)
+}
 
-  const config = await configManager.read() as { registry?: { llms?: unknown[] } }
-  const llms = Array.isArray(config.registry?.llms) ? config.registry.llms : []
-  const match = llms.find((item) => {
-    return Boolean(item)
-      && typeof item === 'object'
-      && !Array.isArray(item)
-      && (item as { name?: unknown }).name === targetConfigName
-  }) as { provider?: unknown } | undefined
-
-  if (!match) {
-    return { ok: false, error: `LLM config "${targetConfigName}" not found` }
-  }
-  if (match.provider !== provider) {
-    return { ok: false, error: `LLM config "${targetConfigName}" uses ${String(match.provider)}, not ${provider}` }
-  }
-
-  return { ok: true, configName: targetConfigName }
+function credentialRefusalBody(refusal: { error: string; message?: string }): { error: string; message?: string } {
+  return refusal.message === undefined ? { error: refusal.error } : { error: refusal.error, message: refusal.message }
 }
 
 type DashboardAuthCredential =
@@ -3930,7 +3971,7 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps): (req: In
             try {
               const target = await requirePluginAuthConfig(configManager, body.configName, plugin)
               if (!target.ok) {
-                json(res, { error: target.error }, 400)
+                json(res, credentialRefusalBody(target), target.status)
                 return
               }
               const started = await plugin.startAuth({
@@ -3970,6 +4011,7 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps): (req: In
                 authorizeUrl: started.authorizeUrl,
                 sessionId,
                 mode: plugin.dashboardAuth.mode,
+                created: target.created,
               })
             } catch (err: unknown) {
               json(res, { error: err instanceof Error ? err.message : 'Failed to start auth plugin flow' }, 500)
@@ -4103,7 +4145,7 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps): (req: In
           try {
             const target = await requireCredentialConfig(configManager, body.configName, provider)
             if (!target.ok) {
-              json(res, { error: target.error }, 400)
+              json(res, credentialRefusalBody(target), target.status)
               return
             }
 
@@ -4112,12 +4154,63 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps): (req: In
             } else {
               await writeDashboardAuth(target.configName, { type: 'api', provider, key: secret })
             }
-            json(res, { saved: true })
+            json(res, { saved: true, created: target.created })
           } catch (err: unknown) {
             json(res, { error: err instanceof Error ? err.message : 'Failed to save credential' }, 500)
           }
         })
         .catch(() => json(res, { error: 'Invalid request body' }, 400))
+      return
+    }
+
+    // POST /api/auth/credential/move — 429-09 D-15: a draft's credential follows its name while the
+    // name is still editable. Only between names that are not in registry.llms, and never onto a
+    // name that already holds a credential.
+    if (path === '/api/auth/credential/move' && req.method === 'POST') {
+      readJsonBody<unknown>(req)
+        .then(async (raw) => {
+          const parsed = LlmCredentialMoveRequestSchema.safeParse(raw)
+          if (!parsed.success) {
+            json(res, { error: 'invalid_setup_input' }, 400)
+            return
+          }
+          const from = checkCredentialName(parsed.data.from)
+          const to = checkCredentialName(parsed.data.to)
+          if (!from.ok || !to.ok) {
+            json(res, { error: 'name_invalid' }, 400)
+            return
+          }
+          if (!configManager) {
+            json(res, { error: 'Config manager is required to move credentials' }, 400)
+            return
+          }
+          try {
+            if (await findRegistryLlm(configManager, from.name) || await findRegistryLlm(configManager, to.name)) {
+              json(res, { error: 'name_taken' }, 409)
+              return
+            }
+            const store = await readAuth() as Record<string, DashboardAuthCredential | undefined>
+            const entry = ownAuthEntry(store, from.name)
+            if (!entry) {
+              json(res, { error: 'credential_missing' }, 404)
+              return
+            }
+            if (credentialProductProvider(from.name, entry) !== parsed.data.provider) {
+              json(res, credentialRefusalBody(CREDENTIAL_PROVIDER_CONFLICT), CREDENTIAL_PROVIDER_CONFLICT.status)
+              return
+            }
+            if (ownAuthEntry(store, to.name)) {
+              json(res, { error: 'credential_exists' }, 409)
+              return
+            }
+            await writeDashboardAuth(to.name, entry)
+            await removeAuth(from.name)
+            json(res, { moved: true })
+          } catch (err: unknown) {
+            json(res, { error: err instanceof Error ? err.message : 'Failed to move credential' }, 500)
+          }
+        })
+        .catch(() => json(res, { error: 'invalid_setup_input' }, 400))
       return
     }
 

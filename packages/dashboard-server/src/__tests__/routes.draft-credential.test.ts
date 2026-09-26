@@ -337,6 +337,10 @@ describe('draft credentials (429-09 Task 2)', () => {
 describe('moving a draft credential (429-09 Task 2)', () => {
   const MOVE = '/api/auth/credential/move'
 
+  beforeEach(() => {
+    registerFakeSubscriptionPlugins()
+  })
+
   it('CREDENTIAL-MOVE: a draft sign-in follows the name to a free name', async () => {
     authStore.current = { 'draft-a': OPENAI_OAUTH, keep: { type: 'api', provider: 'gemini', key: 'g' } }
 
