@@ -29,7 +29,6 @@ import {
   moveCredential,
   pollPluginAuthResult,
   startPluginAuth,
-  updateSettings,
   type AuthCredentialInfo,
   type LLMProviderMetadata,
   type ModelCatalogEntry,
@@ -69,6 +68,8 @@ import {
 import { ADD_MODEL_DRAFT_STORAGE_PREFIX } from '@/lib/add-model-draft'
 import { CONNECTION_CHOICES, type ConnectionChoice } from '@/lib/config-tabs'
 
+const API_EXPORTS = Object.keys(await vi.importActual<typeof import('@/lib/api')>('@/lib/api'))
+
 vi.mock('@/lib/api', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/lib/api')>()),
   fetchConfig: vi.fn(),
@@ -86,7 +87,6 @@ vi.mock('@/lib/api', async (importOriginal) => ({
   exchangePluginAuthCode: vi.fn(),
   moveCredential: vi.fn(),
   deleteAuthCredential: vi.fn(),
-  updateSettings: vi.fn(),
 }))
 
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
@@ -1125,7 +1125,7 @@ describe('The model modal\'s claims on the add row (429-30 Task 1)', () => {
     await flush()
     expect(connectLLM).toHaveBeenCalledTimes(1)
     expect(row('gpt-5.6')).not.toBeNull()
-    expect(updateSettings).not.toHaveBeenCalled()
+    expect(API_EXPORTS).not.toContain('updateSettings')
     expect(applyConfigChanges).not.toHaveBeenCalled()
   })
 
@@ -1259,7 +1259,7 @@ describe('The model modal\'s claims on the add row (429-30 Task 1)', () => {
     await click(signInButton())
     expect(startPluginAuth).toHaveBeenCalledWith('openai-subscription', 'fresh-plan')
     expect(applyConfigChanges).not.toHaveBeenCalled()
-    expect(updateSettings).not.toHaveBeenCalled()
+    expect(API_EXPORTS).not.toContain('updateSettings')
     expect(connectLLM).not.toHaveBeenCalled()
   })
 })

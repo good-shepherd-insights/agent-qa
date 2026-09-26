@@ -257,7 +257,6 @@ vi.mock('@/lib/api', () => ({
   applyConfigChanges: vi.fn().mockResolvedValue({ revision: 'rev-2' }),
   undoConfigAction: vi.fn().mockResolvedValue({ restored: true, revision: 'rev-3' }),
   revealConfigValue: vi.fn().mockResolvedValue({ value: '' }),
-  updateSettings: vi.fn().mockResolvedValue({ updated: true }),
   fetchAuthStates: vi.fn().mockResolvedValue({ authStates: [] }),
   fetchAuthStatus: vi.fn().mockResolvedValue({ credentials: [] }),
   fetchLLMProviders: vi.fn().mockResolvedValue({

@@ -7,10 +7,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { RecordingSection } from '@/components/config-manager/recording-section'
 import { ConfigAutosaveProvider, useConfigAutosave } from '@/hooks/use-config-autosave'
-import { applyConfigChanges, fetchConfig, fetchConfigRevision, updateSettings } from '@/lib/api'
+import { applyConfigChanges, fetchConfig, fetchConfigRevision } from '@/lib/api'
 import { RECORDING_FIELD_HELP, RECORDING_FIELD_LABELS } from '@/lib/config-copy'
 
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
+
+const API_EXPORTS = Object.keys(await vi.importActual<typeof import('@/lib/api')>('@/lib/api'))
 
 vi.mock('@/lib/api', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/lib/api')>()),
@@ -18,7 +20,6 @@ vi.mock('@/lib/api', async (importOriginal) => ({
   fetchConfigRevision: vi.fn(),
   applyConfigChanges: vi.fn(),
   undoConfigAction: vi.fn(),
-  updateSettings: vi.fn(),
 }))
 
 vi.mock('sonner', () => ({
@@ -129,7 +130,7 @@ describe('RecordingSection', () => {
 
     expect(saveButton(view)).toBeUndefined()
     expect(applyConfigChanges).not.toHaveBeenCalled()
-    expect(updateSettings).not.toHaveBeenCalled()
+    expect(API_EXPORTS).not.toContain('updateSettings')
   })
 
   it('changes failures-only without persisting an unchosen enabled default', async () => {
@@ -154,7 +155,7 @@ describe('RecordingSection', () => {
     expect(vi.mocked(applyConfigChanges).mock.calls[0]![0]).toEqual([
       { op: 'set', path: KEEP_FAILURES_ONLY, value: true },
     ])
-    expect(updateSettings).not.toHaveBeenCalled()
+    expect(API_EXPORTS).not.toContain('updateSettings')
     expect(toast.success).not.toHaveBeenCalled()
     expect(toast.error).not.toHaveBeenCalled()
   })
@@ -216,6 +217,6 @@ describe('RecordingSection', () => {
       [{ op: 'set', path: ENABLED, value: true }],
       [{ op: 'set', path: KEEP_FAILURES_ONLY, value: false }],
     ])
-    expect(updateSettings).not.toHaveBeenCalled()
+    expect(API_EXPORTS).not.toContain('updateSettings')
   })
 })

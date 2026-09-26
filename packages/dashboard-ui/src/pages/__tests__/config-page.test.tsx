@@ -23,7 +23,6 @@ import {
   saveCredential,
   startPluginAuth,
   testLLMConnection,
-  updateSettings,
 } from '@/lib/api'
 import {
   ACCESSIBILITY_FIELD_PLACEHOLDERS,
@@ -166,6 +165,8 @@ const { sampleConfig, CONFIG_FILE_PATH } = vi.hoisted(() => ({
   },
 }))
 
+const API_EXPORTS = Object.keys(await vi.importActual<typeof import('@/lib/api')>('@/lib/api'))
+
 vi.mock('@/lib/api', () => ({
   fetchAppMetadata: vi.fn().mockResolvedValue({
     version: '0.1.13',
@@ -179,7 +180,6 @@ vi.mock('@/lib/api', () => ({
   fetchConfigRevision: vi.fn().mockResolvedValue({ revision: 'rev-1' }),
   applyConfigChanges: vi.fn().mockResolvedValue({ revision: 'rev-2' }),
   undoConfigAction: vi.fn().mockResolvedValue({ restored: true, revision: 'rev-3' }),
-  updateSettings: vi.fn().mockResolvedValue({ updated: true }),
   fetchAuthStates: vi.fn().mockResolvedValue({ authStates: [] }),
   fetchAuthStatus: vi.fn().mockResolvedValue({ credentials: [] }),
   fetchLLMProviders: vi.fn().mockResolvedValue({
@@ -1007,7 +1007,7 @@ describe('ConfigPage task tabs shell', () => {
       [{ op: 'set', path: HOOKS_FILE_SEGMENTS, value: 'tests/runtime-hooks.ts' }],
       [{ op: 'set', path: ENV_FILE_SEGMENTS, value: '.env.ci' }],
     ])
-    expect(updateSettings).not.toHaveBeenCalled()
+    expect(API_EXPORTS).not.toContain('updateSettings')
     expect(toast.success).not.toHaveBeenCalled()
     expect(toast.error).not.toHaveBeenCalled()
   })
@@ -1025,7 +1025,7 @@ describe('ConfigPage task tabs shell', () => {
     expect(hooksInput?.getAttribute('aria-invalid')).toBe('true')
     expect(envInput?.getAttribute('aria-invalid')).toBe('true')
     expect(applyConfigChanges).not.toHaveBeenCalled()
-    expect(updateSettings).not.toHaveBeenCalled()
+    expect(API_EXPORTS).not.toContain('updateSettings')
     expect(sectionButton('files', 'Save Changes')).toBeNull()
   })
 
@@ -1044,7 +1044,7 @@ describe('ConfigPage task tabs shell', () => {
     expect(discovery.textContent).not.toMatch(DOTTED_CONFIG_PATH)
     expect(testMatch?.getAttribute('aria-invalid')).toBe('true')
     expect(applyConfigChanges).not.toHaveBeenCalled()
-    expect(updateSettings).not.toHaveBeenCalled()
+    expect(API_EXPORTS).not.toContain('updateSettings')
   })
 
   it('TEST-DISCOVERY-LIST-FIELDS: test files, suite files and paths to skip are list fields, one pattern per line, that write on settle', async () => {
@@ -1071,7 +1071,7 @@ describe('ConfigPage task tabs shell', () => {
       [{ op: 'set', path: TEST_PATH_IGNORE_SEGMENTS, value: ['**/draft/**', '**/tmp/**'] }],
       [{ op: 'set', path: TEST_MATCH_SEGMENTS, value: ['e2e/**/*.yaml'] }],
     ])
-    expect(updateSettings).not.toHaveBeenCalled()
+    expect(API_EXPORTS).not.toContain('updateSettings')
   })
 
   it('SECRETS-FILE-MASKED-WITH-EYE: the secrets file shows the server\'s masked text with a Show button, and never an editable input', async () => {
@@ -1182,7 +1182,7 @@ describe('ConfigPage task tabs shell', () => {
     expect(mobile.querySelector('[data-config-section-shell]')).toBeNull()
     expect(mobile.textContent).not.toContain('use.mobile.appState')
     expect(mobile.textContent).not.toContain('Mobile defaults saved')
-    expect(updateSettings).not.toHaveBeenCalled()
+    expect(API_EXPORTS).not.toContain('updateSettings')
     expect(toast.success).not.toHaveBeenCalled()
   })
 
@@ -1194,7 +1194,7 @@ describe('ConfigPage task tabs shell', () => {
     expect(vi.mocked(applyConfigChanges).mock.calls).toEqual([
       [[{ op: 'set', path: APP_STATE_SEGMENTS, value: 'preserve' }]],
     ])
-    expect(updateSettings).not.toHaveBeenCalled()
+    expect(API_EXPORTS).not.toContain('updateSettings')
     expect(section('mobile-app-state')!.textContent).toContain(MOBILE_APP_STATE_LABELS.preserve)
   })
 
@@ -1229,7 +1229,7 @@ describe('ConfigPage task tabs shell', () => {
     await flushRender()
 
     expect(vi.mocked(applyConfigChanges).mock.calls).toEqual([[[{ op: 'set', path: ['use', 'llm'], value: 'backup' }]]])
-    expect(updateSettings).not.toHaveBeenCalled()
+    expect(API_EXPORTS).not.toContain('updateSettings')
     expect(modelRow('backup')?.querySelector('[data-model-default-badge]')).not.toBeNull()
     expect(models.textContent).not.toContain('Default Device')
     expect(models.textContent).not.toContain('use.device')
@@ -1255,7 +1255,7 @@ describe('ConfigPage task tabs shell', () => {
     expect(vi.mocked(applyConfigChanges).mock.calls[0]![0]).toEqual([
       { op: 'set', path: HEADLESS_SEGMENTS, value: false },
     ])
-    expect(updateSettings).not.toHaveBeenCalled()
+    expect(API_EXPORTS).not.toContain('updateSettings')
   })
 
   it('TIMEOUT-ONE-LEAF-WRITE: typing into Step timeout writes that one leaf once, after the pause', async () => {
@@ -1273,7 +1273,7 @@ describe('ConfigPage task tabs shell', () => {
 
     expect(applyConfigChanges).toHaveBeenCalledTimes(1)
     expect(vi.mocked(applyConfigChanges).mock.calls[0]![0]).toEqual([{ op: 'set', path: STEP_SEGMENTS, value: '45s' }])
-    expect(updateSettings).not.toHaveBeenCalled()
+    expect(API_EXPORTS).not.toContain('updateSettings')
   })
 
   it('TIMEOUT-ONE-LEAF-WRITE: with no timeouts in the file, the same write carries the two other timeouts at their shown defaults', async () => {
@@ -1350,7 +1350,7 @@ describe('ConfigPage task tabs shell', () => {
       [{ op: 'set', path: PARALLEL_SEGMENTS, value: false }],
       [{ op: 'set', path: KEEP_FAILURES_SEGMENTS, value: true }],
     ])
-    expect(updateSettings).not.toHaveBeenCalled()
+    expect(API_EXPORTS).not.toContain('updateSettings')
     expect(toast.success).not.toHaveBeenCalled()
     expect(toast.error).not.toHaveBeenCalled()
   })
@@ -1403,7 +1403,7 @@ describe('ConfigPage task tabs shell', () => {
       { op: 'set', path: EXCLUDE_SEGMENTS, value: ['#cookie-banner'] },
     ])
     expect(applyConfigChanges).toHaveBeenCalledTimes(2)
-    expect(updateSettings).not.toHaveBeenCalled()
+    expect(API_EXPORTS).not.toContain('updateSettings')
   })
 
   it('shows consolidated runtime path placeholders for dashboard and cache', async () => {
@@ -1637,7 +1637,7 @@ describe('ConfigPage task tabs shell', () => {
       { undoable: true },
     ])
     expect(statusRegion()?.textContent).toContain(undoLine('change-knowledge-dir', KNOWLEDGE_FIELD_LABELS.dir))
-    expect(updateSettings).not.toHaveBeenCalled()
+    expect(API_EXPORTS).not.toContain('updateSettings')
     expect(toast.success).not.toHaveBeenCalled()
   })
 
@@ -1676,7 +1676,7 @@ describe('ConfigPage task tabs shell', () => {
     expect(Array.from(dashboard.querySelectorAll('button')).map((button) => button.textContent?.trim())).not.toContain(
       applyActionName(DASHBOARD_FIELD_LABELS.port),
     )
-    expect(updateSettings).not.toHaveBeenCalled()
+    expect(API_EXPORTS).not.toContain('updateSettings')
     expect(toast.success).not.toHaveBeenCalled()
   })
 
@@ -1734,7 +1734,7 @@ describe('ConfigPage task tabs shell', () => {
     expect(vi.mocked(applyConfigChanges).mock.calls.map((call) => call[0])).toEqual([
       [{ op: 'set', path: PRIVACY_SEGMENTS, value: true }],
     ])
-    expect(updateSettings).not.toHaveBeenCalled()
+    expect(API_EXPORTS).not.toContain('updateSettings')
     expect(toast.success).not.toHaveBeenCalled()
     expect(toast.error).not.toHaveBeenCalled()
   })
@@ -1925,7 +1925,7 @@ describe('ConfigPage task tabs shell', () => {
     expect(baseUrlInput?.getAttribute('aria-invalid')).toBe('true')
     expect(baseUrlInput?.getAttribute('aria-describedby')?.split(' ')).toContain(error?.id)
     expect(connectLLM).not.toHaveBeenCalled()
-    expect(updateSettings).not.toHaveBeenCalled()
+    expect(API_EXPORTS).not.toContain('updateSettings')
   })
 
   it('saves and tests OpenAI-Compatible credentials with the named config key', async () => {
@@ -2174,7 +2174,7 @@ describe('ConfigPage task tabs shell', () => {
       [[{ op: 'set', path: ['registry', 'targets', 'releaseAndroid', 'app', 'browserstack'], value: 'bs://uploaded-app' }]],
     ])
     expect(section('targets')?.textContent).toContain('App: apps/wikipedia-alpha.apk / bs://uploaded-app')
-    expect(updateSettings).not.toHaveBeenCalled()
+    expect(API_EXPORTS).not.toContain('updateSettings')
     expect(document.body.querySelector('[role="dialog"]')).toBeNull()
   })
 
@@ -2220,7 +2220,7 @@ describe('ConfigPage task tabs shell', () => {
       [{ op: 'unset', path: ['registry', 'providers', 'openai'] }],
       { undoable: true },
     )
-    expect(updateSettings).not.toHaveBeenCalled()
+    expect(API_EXPORTS).not.toContain('updateSettings')
     expect(container!.textContent).toContain(undoLine('delete-device-farm', 'openai'))
     expect(section('device-farms')!.textContent).toContain(NO_DEVICE_FARMS_TEXT)
   })

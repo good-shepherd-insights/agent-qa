@@ -28,7 +28,6 @@ import {
   startPluginAuth,
   testLLMConnection,
   undoConfigAction,
-  updateSettings,
   type AuthCredentialInfo,
   type LLMProviderMetadata,
 } from '@/lib/api'
@@ -58,6 +57,8 @@ import {
   undoLine,
 } from '@/lib/config-copy'
 
+const API_EXPORTS = Object.keys(await vi.importActual<typeof import('@/lib/api')>('@/lib/api'))
+
 vi.mock('@/lib/api', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/lib/api')>()),
   fetchConfig: vi.fn(),
@@ -73,7 +74,6 @@ vi.mock('@/lib/api', async (importOriginal) => ({
   startPluginAuth: vi.fn(),
   pollPluginAuthResult: vi.fn(),
   exchangePluginAuthCode: vi.fn(),
-  updateSettings: vi.fn(),
 }))
 
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
@@ -736,7 +736,7 @@ describe('The model modal\'s claims on a saved row (429-30 Task 1)', () => {
       [[{ op: 'set', path: ['registry', 'llms', { name: 'router' }, 'contextWindow'], value: '256k' }]],
     ])
     expect(JSON.stringify(writes())).not.toMatch(/screenshotSize|effectiveResolution/)
-    expect(updateSettings).not.toHaveBeenCalled()
+    expect(API_EXPORTS).not.toContain('updateSettings')
   })
 
   it('LEGACY-LLM-SAVED-VISION-AUTHORITATIVE: a saved vision off stays off, whatever the model id suggests', async () => {

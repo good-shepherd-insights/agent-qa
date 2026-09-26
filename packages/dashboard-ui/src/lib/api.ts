@@ -1276,10 +1276,6 @@ export async function fetchTargets(): Promise<{ targets: string[] }> {
   return request('/api/config/targets')
 }
 
-export async function updateSettings(settings: Record<string, unknown>): Promise<{ updated: boolean }> {
-  return postJson('/api/config/settings', settings, 'PUT')
-}
-
 export async function fetchAuthStatus(): Promise<AuthStatusResponse> {
   return request('/api/auth/status')
 }

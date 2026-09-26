@@ -30,7 +30,6 @@ vi.mock('@/lib/api', async (importOriginal) => ({
   fetchConfigRevision: vi.fn(),
   applyConfigChanges: vi.fn(),
   revealConfigValue: vi.fn(),
-  updateSettings: vi.fn(),
 }))
 
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true

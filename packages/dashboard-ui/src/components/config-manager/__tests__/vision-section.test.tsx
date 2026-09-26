@@ -17,15 +17,16 @@ import {
   configFieldKeyOf,
   useConfigAutosave,
 } from '@/hooks/use-config-autosave'
-import { applyConfigChanges, fetchConfig, fetchConfigRevision, updateSettings } from '@/lib/api'
+import { applyConfigChanges, fetchConfig, fetchConfigRevision } from '@/lib/api'
 import { PLANNER_FIELD_LABELS, VISION_FIELD_LABELS } from '@/lib/config-copy'
+
+const API_EXPORTS = Object.keys(await vi.importActual<typeof import('@/lib/api')>('@/lib/api'))
 
 vi.mock('@/lib/api', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/lib/api')>()),
   fetchConfig: vi.fn(),
   fetchConfigRevision: vi.fn(),
   applyConfigChanges: vi.fn(),
-  updateSettings: vi.fn(),
 }))
 
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
@@ -132,7 +133,7 @@ describe('VisionSection and PlannerSection', () => {
       [[{ op: 'set', path: ['services', 'vision', 'screenshotSize'], value: '256k' }]],
       [[{ op: 'set', path: ['services', 'vision', 'effectiveResolution'], value: 768 }]],
     ])
-    expect(updateSettings).not.toHaveBeenCalled()
+    expect(API_EXPORTS).not.toContain('updateSettings')
     expect(document.body.querySelector('[data-sonner-toast]')).toBeNull()
   })
 
@@ -156,6 +157,6 @@ describe('VisionSection and PlannerSection', () => {
         { op: 'set', path: ['use', 'planner', 'previousStepCount'], value: 5 },
       ]],
     ])
-    expect(updateSettings).not.toHaveBeenCalled()
+    expect(API_EXPORTS).not.toContain('updateSettings')
   })
 })

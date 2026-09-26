@@ -134,10 +134,10 @@ describe('runtime path static contract', () => {
 
   it('keeps removed mobile/action-proof copy out of public dashboard surfaces', () => {
     const publicDashboardFiles = [
-      'packages/dashboard-ui/src/components/config-manager/execution-defaults-section.tsx',
       'packages/dashboard-ui/src/components/config-manager/mobile-section.tsx',
+      'packages/dashboard-ui/src/components/config-manager/model-list.tsx',
       'packages/dashboard-ui/src/components/test-settings-panel.tsx',
-      'packages/dashboard-ui/src/lib/config-navigation.ts',
+      'packages/dashboard-ui/src/lib/config-tabs.ts',
       'packages/dashboard-ui/src/pages/config.tsx',
     ].map((file) => readFileSync(new URL(`../../../../../${file}`, import.meta.url), 'utf-8')).join('\n')
 
