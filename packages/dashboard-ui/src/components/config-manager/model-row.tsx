@@ -14,6 +14,7 @@ import { Button } from "@/components/ui/button"
 import { testLLMConnection, type AuthCredentialInfo, type LLMProviderMetadata, type LLMTestResult } from "@/lib/api"
 import {
   DEFAULT_BADGE,
+  FIXED_CONNECTION_LABELS,
   MAKE_DEFAULT_LABEL,
   MODEL_STATUS_WORDS,
   PROVIDER_FALLBACK_LABELS,
@@ -150,6 +151,7 @@ interface ModelPanelProps {
 function ModelPanel({ id, model, status, facts, isDefault, onMakeDefault, header }: ModelPanelProps) {
   const test = useConnectionTest(model)
   const testing = test.line?.state === "testing"
+  const connection = (FIXED_CONNECTION_LABELS as Record<string, string>)[model.provider] ?? facts.label
 
   return (
     <div id={id} data-model-panel className="grid grid-cols-[0.75rem_minmax(0,1fr)] gap-x-2 bg-muted/40 px-4 py-4">
@@ -190,9 +192,9 @@ function ModelPanel({ id, model, status, facts, isDefault, onMakeDefault, header
           </div>
           {test.line === undefined ? null : <ConnectionLine state={test.line.state} sentence={test.line.sentence} />}
         </div>
-        {facts.label === undefined ? null : (
+        {connection === undefined ? null : (
           <p data-model-fixed className="text-xs text-muted-foreground">
-            {fixedFactsLine(facts.label)}
+            {fixedFactsLine(connection)}
           </p>
         )}
       </div>

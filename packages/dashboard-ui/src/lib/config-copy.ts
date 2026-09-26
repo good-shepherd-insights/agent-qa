@@ -221,6 +221,15 @@ export const SAVE_KEY_AND_TEST_LABEL = 'Save key and test'
 export const KEEP_CURRENT_KEY_LABEL = 'Keep current key'
 export const NEW_KEY_LABEL = 'New key'
 
+/** How a saved model connects, as the fixed-facts line names it; a plugin provider uses its label. */
+export const FIXED_CONNECTION_LABELS = {
+  'openai-subscription': 'your ChatGPT plan',
+  'anthropic-subscription': 'your Claude plan',
+  'openai-compatible': 'an OpenAI-compatible API key',
+  'anthropic-compatible': 'an Anthropic-compatible key or token',
+  gemini: 'a Gemini API key',
+} as const satisfies Record<string, string>
+
 export function fixedFactsLine(connectionLabel: string): string {
   return `Connects with ${connectionLabel}. The name and connection are fixed; to change them, add a new model.`
 }

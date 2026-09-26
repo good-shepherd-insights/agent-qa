@@ -398,7 +398,7 @@ describe('ModelRow connection block (429-23 Task 2)', () => {
     expect(panelOf('router')!.querySelector('[data-model-connection]')?.textContent).toContain(
       connectionSentence('not-connected', 'OpenAI-compatible', { signIn: false, keyOptional: true }),
     )
-    expect(panelOf('router')!.querySelector('[data-model-fixed]')?.textContent).toBe(fixedFactsLine('OpenAI-compatible'))
+    expect(panelOf('router')!.querySelector('[data-model-fixed]')?.textContent).toBe(fixedFactsLine('an OpenAI-compatible API key'))
 
     const first = deferred<LLMTestResult>()
     vi.mocked(testLLMConnection).mockReturnValueOnce(first.promise)
