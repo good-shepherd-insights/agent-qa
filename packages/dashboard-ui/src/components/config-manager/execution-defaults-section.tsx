@@ -10,7 +10,6 @@ import {
   ConfigSectionShell,
 } from "@/components/config-manager/config-section-shell"
 import { Label } from "@/components/ui/label"
-import { Switch } from "@/components/ui/switch"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import {
@@ -37,13 +36,10 @@ export function ExecutionDefaultsSection({ config, onConfigChange }: ExecutionDe
     .filter((name): name is string => typeof name === 'string')
 
   const [defaultLlm, setDefaultLlm] = useState((useBlock.llm as string) ?? "")
-  const [parallel, setParallel] = useState((useBlock.parallel as boolean) ?? false)
   const [saving, setSaving] = useState(false)
 
   async function handleSave() {
-    const payload: Record<string, unknown> = {
-      'use.parallel': parallel,
-    }
+    const payload: Record<string, unknown> = {}
     if (defaultLlm) payload['use.llm'] = defaultLlm
 
     setSaving(true)
@@ -68,7 +64,6 @@ export function ExecutionDefaultsSection({ config, onConfigChange }: ExecutionDe
         <div className="flex flex-wrap gap-2">
           <Badge variant="secondary">Registry-backed</Badge>
           <Badge variant="outline" className="font-mono text-[11px]">use.llm</Badge>
-          <Badge variant="outline" className="font-mono text-[11px]">use.parallel</Badge>
         </div>
 
         <div className="space-y-2">
@@ -93,18 +88,6 @@ export function ExecutionDefaultsSection({ config, onConfigChange }: ExecutionDe
             </ConfigLineNotice>
           )}
           <p className="text-xs text-muted-foreground">This value selects from entries defined in Registry.</p>
-        </div>
-
-        <div className="flex items-center justify-between gap-4">
-          <div className="space-y-0.5">
-            <Label htmlFor="use-parallel">Parallel Execution</Label>
-            <p className="text-xs text-muted-foreground">Allow eligible web runs and suite parent jobs to share available queue slots by default.</p>
-          </div>
-          <Switch
-            id="use-parallel"
-            checked={parallel}
-            onCheckedChange={setParallel}
-          />
         </div>
 
         <Button size="sm" onClick={handleSave} disabled={saving}>

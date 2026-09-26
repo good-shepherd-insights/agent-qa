@@ -47,6 +47,7 @@ import { DashboardSection } from "@/components/config-manager/dashboard-section"
 import { TestMatchSection } from "@/components/config-manager/test-match-section"
 import { FilesSection } from "@/components/config-manager/files-section"
 import { LogCaptureSection } from "@/components/config-manager/log-capture-section"
+import { RunsSection } from "@/components/config-manager/runs-section"
 import { ExecutionDefaultsSection } from "@/components/config-manager/execution-defaults-section"
 import { MobileSection } from "@/components/config-manager/mobile-section"
 import { KnowledgeSection } from "@/components/config-manager/knowledge-section"
@@ -72,6 +73,7 @@ const SECTION_COMPONENTS: Partial<Record<ConfigSectionId, readonly ComponentType
   "mobile-app-state": [MobileSection],
   browser: [BrowserSection],
   timeouts: [TimeoutSection],
+  runs: [RunsSection],
   cache: [CacheSection],
   recording: [RecordingSection],
   accessibility: [AccessibilitySection],

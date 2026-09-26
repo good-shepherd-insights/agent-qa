@@ -1,9 +1,9 @@
 // THE FIELD HELPERS (429-17 Task 1 · research A1, Pitfall 1 · 424 note 27).
 //
 // Five schema blocks require every sibling (plus use.browser.viewport, whose width and height are
-// both required once it exists). A leaf-only write into one of them while it is absent would
-// always fail validation, so the write carries the required siblings at the defaults the fields
-// show as placeholders, and nothing optional.
+// both required once it exists, and services.accessibility, whose enabled is). A leaf-only write
+// into one of them while it is absent would always fail validation, so the write carries the
+// required siblings at the defaults the fields show as placeholders, and nothing optional.
 
 import type { ConfigChange } from '@vostride/agent-qa-schema'
 import { describe, expect, it } from 'vitest'
@@ -19,7 +19,8 @@ import {
 
 // Verified against core/src/schema/primitives.ts (TimeoutConfigSchema, BrowserConfigSchema and its
 // viewport, PlannerConfigSchema, LogCaptureConfigSchema) and core/src/schema/services-schema.ts
-// (CacheConfigSchema). dashboard-ui cannot import core, so the required keys are pinned here.
+// (CacheConfigSchema, AccessibilityConfigSchema). dashboard-ui cannot import core, so the required
+// keys are pinned here.
 const SCHEMA_REQUIRED_KEYS: Record<string, readonly string[]> = {
   'use.timeout': ['step', 'test', 'navigation'],
   'use.planner': ['maxSubActions', 'previousStepCount'],
@@ -27,12 +28,14 @@ const SCHEMA_REQUIRED_KEYS: Record<string, readonly string[]> = {
   'use.browser': ['name', 'headless'],
   'use.browser.viewport': ['width', 'height'],
   'services.cache': ['dir', 'ttl'],
+  'services.accessibility': ['enabled'],
 }
 
 const BLOCKS: Readonly<Record<string, Readonly<Record<string, unknown>>>> = REQUIRED_SIBLING_BLOCKS
 
 const SCHEMA_OPTIONAL_KEYS: Record<string, readonly string[]> = {
   'use.browser': ['viewport'],
+  'services.accessibility': ['standard', 'runAfter', 'failOnViolation', 'disableRules', 'exclude'],
 }
 
 function set(path: string[], value: unknown): ConfigChange {

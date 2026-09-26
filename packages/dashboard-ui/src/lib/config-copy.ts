@@ -342,6 +342,72 @@ export const TIMEOUT_FIELD_LABELS = {
   navigation: 'Navigation timeout',
 } as const
 
+export const RUNS_FIELD_LABELS = {
+  parallel: 'Run tests in parallel',
+  workers: 'Parallel workers',
+  buildTag: 'Build tag',
+} as const
+
+export const RUNS_FIELD_HELP = {
+  parallel: 'Run the tests of one run at the same time.',
+  workers: 'The most tests that run at once.',
+  buildTag: 'Names the app build under test.',
+} as const
+
+export const CACHE_FIELD_LABELS = {
+  enabled: 'Reuse cached actions',
+  dir: 'Cache folder',
+  ttl: 'Keep cached actions for',
+} as const
+
+export const RECORDING_FIELD_LABELS = {
+  enabled: 'Record video',
+  keepFailuresOnly: 'Keep recordings of failed tests only',
+} as const
+
+export const RECORDING_FIELD_HELP = {
+  enabled: 'Record video of each test. Recordings stay on this machine.',
+  keepFailuresOnly: 'Useful for CI and large suites. Passed tests then open on Frames.',
+} as const
+
+export const ACCESSIBILITY_FIELD_LABELS = {
+  enabled: 'Check accessibility',
+  standard: 'Standard',
+  runAfter: 'Run checks after',
+  failOnViolation: 'Fail tests with violations',
+  disableRules: 'Rules to skip',
+  exclude: 'Elements to skip',
+} as const
+
+export const ACCESSIBILITY_FIELD_HELP = {
+  disableRules: 'One axe rule ID per line.',
+  exclude: 'One CSS selector per line.',
+} as const
+
+export const ACCESSIBILITY_FIELD_PLACEHOLDERS = {
+  disableRules: 'color-contrast',
+  exclude: '#cookie-banner',
+} as const
+
+export const ACCESSIBILITY_STANDARD_LABELS = {
+  wcag2a: 'WCAG 2.0 A',
+  wcag2aa: 'WCAG 2.0 AA',
+  wcag2aaa: 'WCAG 2.0 AAA',
+} as const
+
+export const ACCESSIBILITY_ALL_RULES_TEXT = 'All rules'
+
+export const ACCESSIBILITY_RUN_AFTER_LABELS = {
+  'every-step': 'Every step',
+  navigation: 'Navigation',
+  'test-end': 'Test end',
+} as const
+
+export const LOG_CAPTURE_FIELD_LABELS = {
+  console: 'Capture console logs',
+  network: 'Capture network logs',
+} as const
+
 export const NO_TARGETS_TEXT = 'No targets yet.'
 export const NO_DEVICES_TEXT = 'No devices yet.'
 export const NO_DEVICE_FARMS_TEXT = 'No device farms yet.'

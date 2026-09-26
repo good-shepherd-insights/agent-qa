@@ -1,6 +1,6 @@
 // THE FIELD HELPERS (429-17 · UI-SPEC S2 "Field row", research A1 and Pitfall 1).
 //
-// These schema blocks require every sibling once the block exists, so a leaf-only write into an
+// These schema blocks have required keys once the block exists, so a leaf-only write into an
 // absent one would always fail validation. The write carries the other required siblings at the
 // defaults the fields show as placeholders; optional siblings are never materialized (424 note 27).
 
@@ -18,6 +18,7 @@ export const REQUIRED_SIBLING_BLOCKS = {
   'use.browser': { name: 'chromium', headless: true },
   'use.browser.viewport': { width: 1280, height: 720 },
   'services.cache': { dir: '.agent-qa/cache', ttl: '7d' },
+  'services.accessibility': { enabled: false },
 } as const satisfies Readonly<Record<string, Readonly<Record<string, LeafDefault>>>>
 
 export type RequiredSiblingBlock = keyof typeof REQUIRED_SIBLING_BLOCKS

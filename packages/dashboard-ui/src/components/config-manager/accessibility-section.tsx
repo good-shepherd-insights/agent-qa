@@ -1,111 +1,74 @@
-import { useState } from "react"
-import { toast } from "sonner"
-import { Loader2 } from "lucide-react"
+import { ConfigField, type ConfigFieldTarget } from "@/components/config-manager/config-field"
 import {
-  ConfigSectionBody,
-  ConfigSectionHeader,
-  ConfigSectionShell,
-} from "@/components/config-manager/config-section-shell"
-import { Label } from "@/components/ui/label"
-import { Button } from "@/components/ui/button"
-import { Switch } from "@/components/ui/switch"
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select"
-import { updateSettings } from "@/lib/api"
+  ACCESSIBILITY_ALL_RULES_TEXT,
+  ACCESSIBILITY_FIELD_HELP,
+  ACCESSIBILITY_FIELD_LABELS,
+  ACCESSIBILITY_FIELD_PLACEHOLDERS,
+  ACCESSIBILITY_RUN_AFTER_LABELS,
+  ACCESSIBILITY_STANDARD_LABELS,
+} from "@/lib/config-copy"
+import { REQUIRED_SIBLING_BLOCKS } from "@/lib/config-fields"
 
-interface AccessibilitySectionProps {
-  config: Record<string, unknown>
-  onConfigChange: () => void
+type AccessibilityLeaf = keyof typeof ACCESSIBILITY_FIELD_LABELS
+
+function accessibilityField(leaf: AccessibilityLeaf): ConfigFieldTarget {
+  return {
+    segments: ["services", "accessibility", leaf],
+    tab: "execution",
+    pattern: `services.accessibility.${leaf}`,
+  }
 }
 
-export function AccessibilitySection({ config, onConfigChange }: AccessibilitySectionProps) {
-  const a11y = ((config.services as any)?.accessibility ?? {}) as {
-    enabled?: boolean
-    standard?: string
-    runAfter?: string
-    failOnViolation?: boolean
-  }
-  const [enabled, setEnabled] = useState(a11y.enabled ?? false)
-  const [standard, setStandard] = useState(a11y.standard ?? "wcag2aa")
-  const [runAfter, setRunAfter] = useState(a11y.runAfter ?? "test-end")
-  const [failOnViolation, setFailOnViolation] = useState(a11y.failOnViolation ?? false)
-  const [saving, setSaving] = useState(false)
+function optionsOf(labels: Readonly<Record<string, string>>) {
+  return Object.entries(labels).map(([value, label]) => ({ value, label }))
+}
 
-  async function handleSave() {
-    setSaving(true)
-    try {
-      await updateSettings({
-        'services.accessibility': { enabled, standard, runAfter, failOnViolation },
-      })
-      onConfigChange()
-      toast.success("Configuration saved")
-    } catch {
-      toast.error("Failed to save configuration")
-    } finally {
-      setSaving(false)
-    }
-  }
+const STANDARD_OPTIONS = optionsOf(ACCESSIBILITY_STANDARD_LABELS)
+const RUN_AFTER_OPTIONS = optionsOf(ACCESSIBILITY_RUN_AFTER_LABELS)
 
+export function AccessibilitySection() {
   return (
-    <ConfigSectionShell>
-      <ConfigSectionHeader>
-        <h2 className="text-base font-semibold">Accessibility</h2>
-        <p className="text-sm text-muted-foreground">Configure accessibility audit settings</p>
-      </ConfigSectionHeader>
-      <ConfigSectionBody>
-        <div className="flex items-center justify-between">
-          <div className="space-y-0.5">
-            <Label htmlFor="a11y-enabled">Enabled</Label>
-            <p className="text-xs text-muted-foreground">Run accessibility checks during tests</p>
-          </div>
-          <Switch id="a11y-enabled" checked={enabled} onCheckedChange={setEnabled} />
-        </div>
-
-        <div className="space-y-2">
-          <Label htmlFor="a11y-standard">Standard</Label>
-          <Select value={standard} onValueChange={setStandard}>
-            <SelectTrigger id="a11y-standard">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="wcag2a">WCAG 2.0 A</SelectItem>
-              <SelectItem value="wcag2aa">WCAG 2.0 AA</SelectItem>
-              <SelectItem value="wcag2aaa">WCAG 2.0 AAA</SelectItem>
-            </SelectContent>
-          </Select>
-        </div>
-
-        <div className="space-y-2">
-          <Label htmlFor="a11y-run-after">Run After</Label>
-          <Select value={runAfter} onValueChange={setRunAfter}>
-            <SelectTrigger id="a11y-run-after">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="every-step">Every Step</SelectItem>
-              <SelectItem value="navigation">Navigation</SelectItem>
-              <SelectItem value="test-end">Test End</SelectItem>
-            </SelectContent>
-          </Select>
-        </div>
-
-        <div className="flex items-center justify-between">
-          <div className="space-y-0.5">
-            <Label htmlFor="a11y-fail">Fail on Violation</Label>
-            <p className="text-xs text-muted-foreground">Fail the test if violations are found</p>
-          </div>
-          <Switch id="a11y-fail" checked={failOnViolation} onCheckedChange={setFailOnViolation} />
-        </div>
-
-        <Button size="sm" onClick={handleSave} disabled={saving}>
-          {saving ? <Loader2 className="size-4 animate-spin" /> : "Save Changes"}
-        </Button>
-      </ConfigSectionBody>
-    </ConfigSectionShell>
+    <>
+      <ConfigField
+        field={accessibilityField("enabled")}
+        label={ACCESSIBILITY_FIELD_LABELS.enabled}
+        kind="switch"
+        defaultChecked={REQUIRED_SIBLING_BLOCKS["services.accessibility"].enabled}
+      />
+      <ConfigField
+        field={accessibilityField("standard")}
+        label={ACCESSIBILITY_FIELD_LABELS.standard}
+        kind="select"
+        options={STANDARD_OPTIONS}
+        placeholder={ACCESSIBILITY_ALL_RULES_TEXT}
+      />
+      <ConfigField
+        field={accessibilityField("runAfter")}
+        label={ACCESSIBILITY_FIELD_LABELS.runAfter}
+        kind="select"
+        options={RUN_AFTER_OPTIONS}
+        placeholder={ACCESSIBILITY_RUN_AFTER_LABELS["every-step"]}
+      />
+      <ConfigField
+        field={accessibilityField("failOnViolation")}
+        label={ACCESSIBILITY_FIELD_LABELS.failOnViolation}
+        kind="switch"
+        defaultChecked={false}
+      />
+      <ConfigField
+        field={accessibilityField("disableRules")}
+        label={ACCESSIBILITY_FIELD_LABELS.disableRules}
+        kind="list"
+        help={ACCESSIBILITY_FIELD_HELP.disableRules}
+        placeholder={ACCESSIBILITY_FIELD_PLACEHOLDERS.disableRules}
+      />
+      <ConfigField
+        field={accessibilityField("exclude")}
+        label={ACCESSIBILITY_FIELD_LABELS.exclude}
+        kind="list"
+        help={ACCESSIBILITY_FIELD_HELP.exclude}
+        placeholder={ACCESSIBILITY_FIELD_PLACEHOLDERS.exclude}
+      />
+    </>
   )
 }
