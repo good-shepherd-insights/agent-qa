@@ -57,6 +57,11 @@ function functionOutputs(): string[] {
     copy.keepValueName('Authorization'),
     copy.attributeValueLabel('git.branch'),
     copy.removeAttributeName('git.branch'),
+    copy.targetNameTakenError('staging'),
+    copy.deviceNameTakenError('pixel'),
+    copy.deviceMatchKeysHelp('iOS', ['udid', 'bundleId']),
+    copy.deviceMatchSettingLabel('pixel', 'serial'),
+    copy.removeMatchSettingName('pixel', 'serial'),
   ]
 }
 

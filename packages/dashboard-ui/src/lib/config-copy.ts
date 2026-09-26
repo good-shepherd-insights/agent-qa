@@ -548,6 +548,104 @@ export const LOGIN_STATES_LOADING_TEXT = 'Loading saved login states…'
 export const LOGIN_STATES_LOAD_FAILED_TEXT = "Couldn't load saved login states."
 export const RELOAD_LOGIN_STATES_LABEL = 'Reload login states'
 
+export const LOGIN_STATE_COLUMN_LABELS = {
+  target: 'Target',
+  name: 'Name',
+  captured: 'Captured',
+} as const satisfies Record<string, string>
+
+export const LOGIN_STATES_FIELD_LABELS = {
+  dir: 'Login states folder',
+} as const
+
+export const LOGIN_STATES_DIR_PLACEHOLDER = '.agent-qa/auth-states'
+export const LOGIN_STATES_DIR_REQUIRED_ERROR = 'Add a folder for saved login states.'
+
+export const MOBILE_FIELD_LABELS = {
+  appState: 'App state',
+} as const
+
+export const MOBILE_APP_STATE_LABELS = {
+  preserve: 'Preserve app data',
+  reset: 'Reset app data',
+} as const satisfies Record<'preserve' | 'reset', string>
+
+export const MOBILE_APP_STATE_HELP = 'Mobile runs need this choice.'
+
+export const ADD_TARGET_LABEL = 'Add target'
+export const DISCARD_TARGET_LABEL = 'Discard target'
+export const ADD_DEVICE_LABEL = 'Add device'
+export const DISCARD_DEVICE_LABEL = 'Discard device'
+
+export const TARGET_PLATFORM_LABELS = {
+  web: 'Web',
+  android: 'Android',
+  ios: 'iOS',
+} as const satisfies Record<'web' | 'android' | 'ios', string>
+
+export const TARGET_ENVIRONMENT_LABELS = {
+  local: 'Local',
+  shared: 'Shared',
+} as const satisfies Record<'local' | 'shared', string>
+
+export const TARGET_ENVIRONMENT_PLACEHOLDER = 'Not declared'
+
+export const TARGET_FIELD_LABELS = {
+  name: 'Name',
+  platform: 'Platform',
+  url: 'URL',
+  product: 'Product',
+  bundleId: 'Bundle ID',
+  appPackage: 'App package',
+  appActivity: 'App activity',
+  appPath: 'App file',
+  browserstackApp: 'BrowserStack app',
+  environment: 'Environment',
+} as const satisfies Record<string, string>
+
+/** Before an app file or BrowserStack app in a mobile target's summary. */
+export const TARGET_APP_SUMMARY_PREFIX = 'App'
+
+export const TARGET_NAME_REQUIRED_ERROR = 'Add a name for the target.'
+export const TARGET_NAME_FORMAT_ERROR =
+  'Use lowercase letters, digits and hyphens, starting with a letter and ending with a letter or digit.'
+export const TARGET_URL_REQUIRED_ERROR = 'Add the URL for a web target.'
+export const TARGET_WEB_NEEDS_URL_ERROR = 'Add a URL before making this a web target.'
+export const TARGET_PRODUCT_ERROR = "A product name can't contain two dots in a row, slashes or backslashes."
+export const TARGET_APP_PATH_ERROR = 'Use a path inside the project, not a full path.'
+
+export function targetNameTakenError(name: string): string {
+  return `A target named ${name} already exists.`
+}
+
+export const DEVICE_FIELD_LABELS = {
+  name: 'Name',
+  platform: 'Platform',
+  transport: 'Connection',
+  key: 'Setting',
+  value: 'Value',
+} as const satisfies Record<string, string>
+
+export const DEVICE_NAME_REQUIRED_ERROR = 'Add a name for the device.'
+
+export function deviceNameTakenError(name: string): string {
+  return `A device named ${name} already exists.`
+}
+
+/** Under Add setting on a local device: the settings that device can match on. */
+export function deviceMatchKeysHelp(platform: string, keys: readonly string[]): string {
+  return `A local ${platform} device can match on ${keys.join(', ')}.`
+}
+
+/** A device setting's accessible label, so each eye and Replace value names its own device and key. */
+export function deviceMatchSettingLabel(device: string, key: string): string {
+  return `${device} ${key}`
+}
+
+export function removeMatchSettingName(device: string, key: string): string {
+  return `Remove setting ${key} from ${device}`
+}
+
 export const ACCESS_TOKENS_HEADING = 'Access tokens'
 export const ADD_TOKEN_LABEL = 'Add token'
 export const NO_TOKENS_TEXT = 'No access tokens yet.'
