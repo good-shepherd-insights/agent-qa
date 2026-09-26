@@ -1,11 +1,17 @@
 import { expectTypeOf, test } from 'vitest'
-import { CONFIG_NAMED_ARRAYS, CONFIG_WRITE_OPS, CONFIG_WRITE_REFUSALS } from '../index'
+import {
+  CONFIG_NAMED_ARRAYS,
+  CONFIG_WRITE_OPS,
+  CONFIG_WRITE_REFUSALS,
+  MASKING_CLASSES,
+} from '../index'
 import type {
   ConfigChange,
   ConfigNamedArray,
   ConfigPathSegment,
   ConfigWriteOp,
   ConfigWriteRefusal,
+  MaskingClass,
 } from '../index'
 
 test('C429-CONFIG-WRITE-OPS-EXACT', () => {
@@ -38,4 +44,12 @@ test('C429-CONFIG-NAMED-ARRAYS-EXACT', () => {
   expectTypeOf<(typeof CONFIG_NAMED_ARRAYS)[number]>().toEqualTypeOf<Expected>()
   expectTypeOf<Exclude<ConfigNamedArray, Expected>>().toEqualTypeOf<never>()
   expectTypeOf<Exclude<Expected, ConfigNamedArray>>().toEqualTypeOf<never>()
+})
+
+test('C429-MASKING-CLASSES-EXACT', () => {
+  type Expected = 'secret' | 'env-var-name' | 'plain'
+  expectTypeOf<MaskingClass>().toEqualTypeOf<Expected>()
+  expectTypeOf<(typeof MASKING_CLASSES)[number]>().toEqualTypeOf<Expected>()
+  expectTypeOf<Exclude<MaskingClass, Expected>>().toEqualTypeOf<never>()
+  expectTypeOf<Exclude<Expected, MaskingClass>>().toEqualTypeOf<never>()
 })
