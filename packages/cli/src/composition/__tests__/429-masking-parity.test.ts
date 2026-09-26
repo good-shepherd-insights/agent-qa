@@ -60,7 +60,11 @@ function plantedSegments(pattern: string, index: number): (string | number)[] {
   )
 }
 
-function plantAt(root: Record<string, unknown>, segments: (string | number)[], value: string): void {
+function plantAt(
+  root: Record<string, unknown>,
+  segments: (string | number)[],
+  value: string,
+): void {
   let node: Record<string | number, unknown> = root
   segments.forEach((segment, depth) => {
     if (depth === segments.length - 1) {

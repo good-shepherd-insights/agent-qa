@@ -53,7 +53,7 @@ const FIXTURE_URL_PASSWORD = 'hunter2-URL-DO-NOT-LEAK'
  * DESIGN, so what has to hold is a property of the RENDER.
  *
  * The parameter names are drawn from outside the masker's vocabulary: `ticket`, `assertion`
- * and `sso` each read 0 in `masked-config.ts` (positive control `SECRET_KEY_TERMS` = 2 in
+ * and `sso` each read 0 in `masked-config.ts` (positive control `classifyConfigPath` = 3 in
  * the same read). A parameter-name regex was falsified by the verifier's own `?session=`
  * repro; only a rule over the value's structure survives the next name nobody thought of.
  */
@@ -72,7 +72,7 @@ const FIXTURE_TARGET_URL_SECRET = 'sk-live-SSO-DO-NOT-LEAK-7003'
  *
  * The forms are taken from 384-VERIFICATION.md's gap entry rather than from the fix, and the
  * parameter names (`waybill`, `hallmark`, `emblem`, `lanyard`) each read 0 in
- * `masked-config.ts`'s bytes, measured with a positive control (`SECRET_KEY_TERMS` = 2) in
+ * `masked-config.ts`'s bytes, measured with a positive control (`classifyConfigPath` = 3) in
  * the same read. `masked-config.test.ts` carries the characterisation proving the four are
  * precondition-rejected, asserted against Node's `URL` rather than against our own branches.
  */

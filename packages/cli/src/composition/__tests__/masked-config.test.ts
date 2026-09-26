@@ -5,11 +5,12 @@
 // builder itself, so the claim holds for every surface that ever renders the result — not
 // just for the one CLI leg that happens to print it today.
 //
-// The disclosure rule is DERIVED from the config schema rather than enumerated, so the
-// cases below are drawn from the schema's shape and from credential names this repo's
-// masker has never listed. Two round-2 findings are the reason: a corpus generated from an
-// implementation's own constant list cannot vary along the axis that still leaks, and a
-// masker that judges by name cannot tell a credential from a package name.
+// The disclosure rule is the one shared, path-keyed masking map (429 D-08), so the cases
+// below are drawn from schema paths and from credential names no masker in this repo lists.
+// Two round-2 findings are the reason: a corpus generated from an implementation's own
+// constant list cannot vary along the axis that still leaks, and a masker that judges by name
+// cannot tell a credential from a package name. The schema-derived visibility oracle stays
+// tested here as the walker the map's parity cells check against.
 
 // The oracle is built from the real config schema on purpose — test files are excluded
 // from the arch specifier scan, so this proves the walk against the shipped tree without
@@ -18,6 +19,7 @@ import { AgentQaConfigSchema } from '@vostride/agent-qa-core'
 import {
   CONFIG_MASK_PLACEHOLDER,
   MASKED_RESOLVED_CONFIG_SCHEMA_VERSION,
+  classifyConfigPath,
   remoteDeviceSchema,
 } from '@vostride/agent-qa-schema'
 import { describe, expect, it } from 'vitest'
@@ -29,7 +31,6 @@ import {
   CREDENTIAL_BEARING_URL_LEAVES,
   isCredentialBearingUrlField,
   isMaskedConfigPath,
-  isSecretConfigKey,
 } from '../masked-config.js'
 
 const SECRET = 'sk-live-DO-NOT-LEAK-4242'
@@ -42,7 +43,7 @@ const USERINFO_PASSWORD = 'hunter2-DO-NOT-LEAK'
  *
  * The parameter names are the OUT_OF_VOCABULARY discipline applied to the axis that leaked.
  * `ticket`, `assertion` and `sso` each read 0 in `masked-config.ts`'s bytes — measured with
- * a positive control (`SECRET_KEY_TERMS` = 2) in the same read — so no name the masker has
+ * a positive control (`classifyConfigPath` = 3) in the same read — so no name the masker has
  * ever seen decides these cases. The round-3 verifier falsified a parameter-name regex with
  * its own `?session=` repro; what closes them is the shape of the VALUE.
  */
@@ -64,7 +65,7 @@ const RENDERED_LEAF_SECRET = 'sk-live-RENDERED-DO-NOT-LEAK-9004'
  * characterisation block at the end of this file asserts against the platform parser rather
  * than against any branch of ours. The parameter names — `waybill`, `hallmark`, `emblem`,
  * `lanyard` — each read 0 in `masked-config.ts`'s bytes, measured with a positive control
- * (`SECRET_KEY_TERMS` = 2) in the same read.
+ * (`classifyConfigPath` = 3) in the same read.
  */
 const PROTOCOL_RELATIVE_USERINFO_SECRET = 'sk-live-USERINFO-DO-NOT-LEAK-9105'
 const PROTOCOL_RELATIVE_QUERY_SECRET = 'sk-live-WAYBILL-DO-NOT-LEAK-9106'
@@ -127,12 +128,17 @@ const OPAQUE_PATH_SECRET = 'sk-live-CAIRN-DO-NOT-LEAK-9208'
 
 const visibility = buildConfigVisibilityOracle(AgentQaConfigSchema)
 
+/** A dot-path's segments, reading a purely numeric segment as an array index. */
+function segmentsOf(key: string): (string | number)[] {
+  return key.split('.').map((segment) => (/^\d+$/u.test(segment) ? Number(segment) : segment))
+}
+
 /**
  * Ten credential key names drawn from OUTSIDE this repo's masker.
  *
- * Not one of them appears in `SECRET_KEY_TERMS` or `SECRET_KEY_SEGMENTS`, and the name
- * census misses every one — which is the point. They are masked because the SCHEMA declares
- * `registry.devices.<name>.match` free-form, not because anyone recognised the word.
+ * Not one of them is spelled in the masking map, and no masker here reads a key's spelling —
+ * which is the point. They are masked because the map declares `registry.devices.*.match.*`
+ * secret wholesale, not because anyone recognised the word.
  */
 const OUT_OF_VOCABULARY_CREDENTIAL_NAMES = [
   'jwt',
@@ -484,8 +490,11 @@ describe('no node kind outside the walker\'s vocabulary earns visibility (CR-02 
   })
 })
 
-describe('isSecretConfigKey (the additive name census)', () => {
-  it('recognises the secret-shaped key families', () => {
+describe('classifyConfigPath (the one map, re-targeting the retired name census)', () => {
+  it('classifies each secret-shaped key family secret by its schema path', () => {
+    // Each key is secret because of where it sits: inside a free-form record the map marks
+    // secret wholesale, at a path the map does not describe, or at `workspace.secretsFile`,
+    // which the map lists as secret.
     for (const key of [
       'registry.providers.acme.apiKey',
       'registry.providers.acme.API_KEY',
@@ -500,13 +509,11 @@ describe('isSecretConfigKey (the additive name census)', () => {
       'a.bearerToken',
       'workspace.secretsFile',
     ]) {
-      expect(isSecretConfigKey(key), key).toBe(true)
+      expect(classifyConfigPath(segmentsOf(key)), key).toBe('secret')
     }
   })
 
-  it('recognises short whole-segment credential names the substring scan misses', () => {
-    // 'key'.includes('apikey') is false, so a bare `key` segment slipped the term relation
-    // entirely. These are matched by exact segment on the value-bearing leaf.
+  it('classifies short whole-segment credential names secret at undeclared paths', () => {
     for (const key of [
       'deploy.key',
       'deploy.keys',
@@ -518,33 +525,42 @@ describe('isSecretConfigKey (the additive name census)', () => {
       'deploy.cred',
       'deploy.creds',
     ]) {
-      expect(isSecretConfigKey(key), key).toBe(true)
+      expect(classifyConfigPath(segmentsOf(key)), key).toBe('secret')
     }
   })
 
-  it('reads the value-bearing LEAF, so an ancestor never masks a constrained child', () => {
-    // This is the M-01 correction, at the level it is decided. A census cannot tell a
-    // credential from a package name, and when it scanned ancestors it guessed wrong:
-    // `plugins.auth.<n>.package` names code that runs in-process with full Node access, and
-    // the word `auth` three segments up was the whole reason it was hidden.
-    //
-    // Narrowing the census gives up nothing, because the schema rule now carries what the
-    // ancestor scan used to: `deploy.creds.region` is still masked (see the combined
-    // decision below), it is simply masked for a reason that holds for names no list
-    // contains.
-    expect(isSecretConfigKey('plugins.auth.0.package')).toBe(false)
-    expect(isSecretConfigKey('deploy.creds.region')).toBe(false)
+  it('decides by the whole path, so an ancestor word never masks a plain child', () => {
+    // The M-01 correction, kept: `plugins.auth.<n>.package` names code that runs in-process
+    // with full Node access, and the word `auth` two segments up does not hide it. The
+    // undeclared `deploy.creds.region` is secret because the map does not describe it, not
+    // because of the word `creds`.
+    expect(classifyConfigPath(segmentsOf('plugins.auth.0.package'))).toBe('plain')
+    expect(classifyConfigPath(segmentsOf('deploy.creds.region'))).toBe('secret')
+    expect(classifyConfigPath(segmentsOf('deploy.region'))).toBe('secret')
   })
 
-  it('misses every out-of-vocabulary credential name, which is why it is not the rule', () => {
-    // Stated as an assertion rather than left implicit: this is the census's known blind
-    // spot, and the schema rule is what covers it.
-    for (const name of OUT_OF_VOCABULARY_CREDENTIAL_NAMES) {
-      expect(isSecretConfigKey(`registry.devices.pixel.match.${name}`), name).toBe(false)
+  it('guesses nothing from a name: plain stays plain, undeclared stays secret', () => {
+    // The no-guessing claim, both directions. Plain schema leaves whose names contain
+    // credential words stay plain...
+    for (const key of [
+      'knowledge.contextBudgetTokens',
+      'services.mcp.tokens.0.name',
+      'services.dashboard.runServiceTokens.0.name',
+      'services.dashboard.runServiceTokens.0.trustScope.org',
+      'plugins.auth.0.path',
+    ]) {
+      expect(classifyConfigPath(segmentsOf(key)), key).toBe('plain')
+    }
+    // ...and undeclared paths are secret whatever they are called, including the ten
+    // out-of-vocabulary credential names and innocuous words.
+    for (const name of [...OUT_OF_VOCABULARY_CREDENTIAL_NAMES, 'region', 'label']) {
+      expect(classifyConfigPath(['deploy', name]), name).toBe('secret')
+      expect(classifyConfigPath(['registry', 'devices', 'pixel', 'match', name]), name)
+        .toBe('secret')
     }
   })
 
-  it('leaves ordinary configuration keys alone', () => {
+  it('leaves ordinary configuration keys plain', () => {
     for (const key of [
       'workspace.testMatch',
       'knowledge.dir',
@@ -552,24 +568,24 @@ describe('isSecretConfigKey (the additive name census)', () => {
       'registry.llms.0.baseURL',
       'services.dashboard.port',
       'use.browser.headless',
-      // A token BUDGET is a count, not a credential — the one named carve-out.
+      // A token BUDGET is a count, not a credential, and the map says plain.
       'knowledge.contextBudgetTokens',
-      // Phase 387 D-10: a workspace NAME. The `→ false` half of the census matters as much as
-      // the `→ true` half — this is the row that catches over-masking a leaf the entity-card
-      // producer needs verbatim in order to render a link at all.
+      // Phase 387 D-10: a workspace NAME. The plain half matters as much as the secret half —
+      // this is the row that catches over-masking a leaf the entity-card producer needs
+      // verbatim in order to render a link at all.
       'services.dashboard.workspace',
       'services.dashboard.baseUrl',
     ]) {
-      expect(isSecretConfigKey(key), key).toBe(false)
+      expect(classifyConfigPath(segmentsOf(key)), key).toBe('plain')
     }
   })
 })
 
 describe('isMaskedConfigPath (the whole disclosure decision)', () => {
-  it('masks ten credential names the census has never listed, by schema derivation alone', () => {
+  it('masks ten out-of-vocabulary credential names, by the map alone', () => {
     for (const name of OUT_OF_VOCABULARY_CREDENTIAL_NAMES) {
       const key = `registry.devices.pixel.match.${name}`
-      expect(isMaskedConfigPath(key, visibility), key).toBe(true)
+      expect(isMaskedConfigPath(segmentsOf(key)), key).toBe(true)
     }
   })
 
@@ -587,32 +603,31 @@ describe('isMaskedConfigPath (the whole disclosure decision)', () => {
       'registry.devices.pixel.match',
       'analytics.passRateScope.attributes.tier',
     ]) {
-      expect(isMaskedConfigPath(key, visibility), key).toBe(true)
+      expect(isMaskedConfigPath(segmentsOf(key)), key).toBe(true)
     }
   })
 
   it('masks a path the schema does not describe, whatever its segments are called', () => {
-    // The ancestor-scan property, moved to a stronger carrier. `deploy.creds.region` used
-    // to be masked because the word `creds` sat mid-path; it is now masked because the
-    // schema does not describe the path at all — which also covers the mid-path words no
-    // list contains.
+    // The ancestor-scan property, on its strongest carrier: `deploy.creds.region` is masked
+    // because the map does not describe the path at all, which also covers the mid-path
+    // words no list contains.
     for (const key of [
       'deploy.creds.region',
       'deploy.vault.endpoint',
       'registry.llms.0.apiKey',
       'a.mnemonic',
     ]) {
-      expect(isMaskedConfigPath(key, visibility), key).toBe(true)
+      expect(isMaskedConfigPath(segmentsOf(key)), key).toBe(true)
     }
   })
 
-  it('adds the census on top of a schema-constrained path', () => {
-    // The census is additive, and this proves it still bites: the schema constrains
-    // `workspace.secretsFile` end-to-end, and it is masked anyway because its own leaf
-    // names a credential file. Its neighbour is the one named carve-out.
+  it('masks a schema-constrained path the map lists as secret', () => {
+    // The map is not only the oracle's opaque set: the schema constrains
+    // `workspace.secretsFile` end-to-end, and the map masks it anyway because it names a
+    // credential file. A token budget beside it is plain.
     expect(visibility.classify('workspace.secretsFile')).toBe('constrained')
-    expect(isMaskedConfigPath('workspace.secretsFile', visibility)).toBe(true)
-    expect(isMaskedConfigPath('knowledge.contextBudgetTokens', visibility)).toBe(false)
+    expect(isMaskedConfigPath(segmentsOf('workspace.secretsFile'))).toBe(true)
+    expect(isMaskedConfigPath(segmentsOf('knowledge.contextBudgetTokens'))).toBe(false)
   })
 
   it('leaves a schema-constrained package name VISIBLE (M-01)', () => {
@@ -620,8 +635,8 @@ describe('isMaskedConfigPath (the whole disclosure decision)', () => {
     // access. Hiding it from the one capability whose purpose is configuration triage is a
     // disclosure failure of its own, and the round-2 asymmetry — auth hidden, providers
     // shown — was produced entirely by the word `auth` appearing in one path.
-    expect(isMaskedConfigPath('plugins.auth.0.package', visibility)).toBe(false)
-    expect(isMaskedConfigPath('plugins.providers.0.package', visibility)).toBe(false)
+    expect(isMaskedConfigPath(segmentsOf('plugins.auth.0.package'))).toBe(false)
+    expect(isMaskedConfigPath(segmentsOf('plugins.providers.0.package'))).toBe(false)
   })
 
   it('leaves ordinary configuration keys visible', () => {
@@ -640,7 +655,7 @@ describe('isMaskedConfigPath (the whole disclosure decision)', () => {
       'registry.devices.pixel.platform',
       'registry.targets.web.url',
     ]) {
-      expect(isMaskedConfigPath(key, visibility), key).toBe(false)
+      expect(isMaskedConfigPath(segmentsOf(key)), key).toBe(false)
     }
   })
 })
@@ -649,7 +664,6 @@ describe('buildMaskedResolvedConfig', () => {
   it('drops secret-shaped values at construction and keeps the rest', () => {
     const config = buildMaskedResolvedConfig({
       configPath: '/workspace/agent-qa.config.yaml',
-      visibility,
       resolved: {
         registry: { providers: { acme: { apiKey: SECRET, baseURL: 'https://acme.test' } } },
       },
@@ -683,7 +697,6 @@ describe('buildMaskedResolvedConfig', () => {
     )
     const config = buildMaskedResolvedConfig({
       configPath: 'agent-qa.config.yaml',
-      visibility,
       resolved: {
         registry: {
           devices: { pixel: { platform: 'android', transport: 'browserstack', match: planted } },
@@ -714,7 +727,6 @@ describe('buildMaskedResolvedConfig', () => {
   it('reduces a registered URL field carrying userinfo to its origin', () => {
     const config = buildMaskedResolvedConfig({
       configPath: 'agent-qa.config.yaml',
-      visibility,
       resolved: {
         registry: {
           llms: [{
@@ -749,7 +761,6 @@ describe('buildMaskedResolvedConfig', () => {
     // someone recognised a word — and now nothing reads the parameter names at all.
     const config = buildMaskedResolvedConfig({
       configPath: 'agent-qa.config.yaml',
-      visibility,
       resolved: {
         registry: {
           llms: [{
@@ -787,7 +798,6 @@ describe('buildMaskedResolvedConfig', () => {
   it('reduces a registered URL field carrying a fragment to its origin (CR-01)', () => {
     const config = buildMaskedResolvedConfig({
       configPath: 'agent-qa.config.yaml',
-      visibility,
       resolved: {
         registry: {
           llms: [{ name: 'judge', baseURL: `https://llm.acme.test/v1#assertion=${URL_FRAGMENT_SECRET}` }],
@@ -820,7 +830,6 @@ describe('buildMaskedResolvedConfig', () => {
     // yields no origin. The assertions are unchanged; only what makes them true is.
     const config = buildMaskedResolvedConfig({
       configPath: 'agent-qa.config.yaml',
-      visibility,
       resolved: {
         registry: {
           llms: [
@@ -886,7 +895,6 @@ describe('buildMaskedResolvedConfig', () => {
     // runs in-process with full Node access belongs in a configuration triage read.
     const config = buildMaskedResolvedConfig({
       configPath: 'agent-qa.config.yaml',
-      visibility,
       resolved: {
         plugins: { auth: [{ package: SCOPED_PACKAGE_NAME }] },
         knowledge: { dir: 'agent-qa-knowledge' },
@@ -921,7 +929,6 @@ describe('buildMaskedResolvedConfig', () => {
     })
     const config = buildMaskedResolvedConfig({
       configPath: 'agent-qa.config.yaml',
-      visibility,
       resolved: {
         registry: { targets: { web: { platform: 'web', url: urlish } } },
         workspace: { hooksFile: 4242 },
@@ -945,7 +952,6 @@ describe('buildMaskedResolvedConfig', () => {
   it('leaves non-URL and userinfo-free strings byte-identical', () => {
     const config = buildMaskedResolvedConfig({
       configPath: 'agent-qa.config.yaml',
-      visibility,
       resolved: {
         registry: { llms: [{ name: 'judge', baseURL: 'https://llm.acme.test' }] },
         knowledge: { dir: 'agent-qa-knowledge' },
@@ -977,7 +983,6 @@ describe('buildMaskedResolvedConfig', () => {
   it('renders every value as a string so no value type bypasses masking', () => {
     const config = buildMaskedResolvedConfig({
       configPath: 'agent-qa.config.yaml',
-      visibility,
       resolved: {
         services: { dashboard: { port: 4000 } },
         use: { browser: { headless: true } },
@@ -1000,7 +1005,6 @@ describe('buildMaskedResolvedConfig', () => {
   it('descends into arrays so a secret nested in one is still masked', () => {
     const config = buildMaskedResolvedConfig({
       configPath: 'agent-qa.config.yaml',
-      visibility,
       resolved: {
         registry: { llms: [{ name: 'judge', apiKey: SECRET }] },
       },
@@ -1022,7 +1026,6 @@ describe('buildMaskedResolvedConfig', () => {
   it('attributes each key to the highest-precedence layer that carries it', () => {
     const config = buildMaskedResolvedConfig({
       configPath: 'agent-qa.config.yaml',
-      visibility,
       resolved: {
         knowledge: { dir: 'agent-qa-knowledge' },
         services: { dashboard: { port: 9999 }, logging: { level: 'debug' } },
@@ -1044,7 +1047,6 @@ describe('buildMaskedResolvedConfig', () => {
   it('emits entries in a deterministic key order', () => {
     const input = {
       configPath: 'agent-qa.config.yaml',
-      visibility,
       resolved: { b: { z: 1, a: 2 }, a: { m: 3 } },
       layers: [],
     }
@@ -1099,7 +1101,6 @@ describe('a non-registered leaf is never inspected, so it cannot be over-masked 
   it('returns glob, selector and package values byte-identical with masked: false', () => {
     const config = buildMaskedResolvedConfig({
       configPath: 'agent-qa.config.yaml',
-      visibility,
       resolved: {
         workspace: {
           testMatch: [GLOB_WILDCARD_VALUE],
@@ -1140,7 +1141,6 @@ describe('a non-registered leaf is never inspected, so it cannot be over-masked 
     const shared = 'https://x.test/a?q=1#f'
     const config = buildMaskedResolvedConfig({
       configPath: 'agent-qa.config.yaml',
-      visibility,
       resolved: {
         workspace: { hooksFile: shared },
         registry: { targets: { web: { platform: 'web', url: shared } } },
@@ -1164,6 +1164,10 @@ describe('a non-registered leaf is never inspected, so it cannot be over-masked 
  * schema package (`config/remote-device.ts`), and their canonical values carry a device-farm
  * access key in the userinfo. Grafting the shipped declaration rather than hand-mirroring it
  * means this corpus measures the same node the product ships.
+ *
+ * Since 429 D-08 the graft is visible to the oracle only. `deployment` is not a config path,
+ * so the masking map fails closed on it and both remote-device cases render the placeholder:
+ * the path decision now masks them before the render rule is reached.
  */
 const grownVisibility = buildConfigVisibilityOracle(growRealSchema({
   deployment: z.object({
@@ -1201,14 +1205,14 @@ const CREDENTIAL_CASES: readonly CredentialCase[] = [
     component: 'userinfo',
     form: 'absolute',
     sentinel: USERINFO_APPIUM_SECRET,
-    expected: 'https://hub.provider.test',
+    expected: CONFIG_MASK_PLACEHOLDER,
   },
   {
     key: 'deployment.remoteDevice.webDriverAgentUrl',
     component: 'fragment',
     form: 'absolute',
     sentinel: FRAGMENT_WDA_SECRET,
-    expected: 'https://wda.provider.test',
+    expected: CONFIG_MASK_PLACEHOLDER,
   },
   {
     key: 'registry.targets.relhook.url',
@@ -1272,7 +1276,6 @@ const CREDENTIAL_CORPUS_CONFIG = {
 describe('a registered URL field is reduced to its origin, whatever the credential rides in (CR-03)', () => {
   const config = buildMaskedResolvedConfig({
     configPath: 'agent-qa.config.yaml',
-    visibility: grownVisibility,
     resolved: CREDENTIAL_CORPUS_CONFIG,
     layers: [],
   })
@@ -1287,11 +1290,13 @@ describe('a registered URL field is reduced to its origin, whatever the credenti
     )
     expect(new Set(CREDENTIAL_CASES.map((entry) => entry.form)).size).toBe(5)
     expect(new Set(CREDENTIAL_CASES.map((entry) => entry.component)).size).toBe(4)
-    // …and every planted key really is one the oracle CLEARED, so each case exercises the
-    // render rule rather than the path decision.
+    // …and every planted key is one the oracle CLEARED. The map clears the config-schema
+    // keys, so those cases exercise the render rule; it fails closed on the grafted
+    // `deployment` keys, which are not config paths.
     for (const entry of CREDENTIAL_CASES) {
       expect(grownVisibility.classify(entry.key), entry.key).toBe('constrained')
-      expect(isMaskedConfigPath(entry.key, grownVisibility), entry.key).toBe(false)
+      expect(isMaskedConfigPath(segmentsOf(entry.key)), entry.key)
+        .toBe(entry.key.startsWith('deployment.'))
     }
   })
 
@@ -1312,7 +1317,11 @@ describe('a registered URL field is reduced to its origin, whatever the credenti
     // eight absences above are facts about the render and not about an empty output.
     expect(serialized).toContain('hooks.acme.test')
     expect(serialized).toContain('agent-qa-knowledge')
-    expect(byKey['deployment.region']).toMatchObject({ value: 'eu-west', masked: false })
+    // The grafted neighbour is masked by the map (fail closed); the config-schema ones are not.
+    expect(byKey['deployment.region']).toMatchObject({
+      value: CONFIG_MASK_PLACEHOLDER,
+      masked: true,
+    })
     expect(byKey['registry.llms.0.name']).toMatchObject({ value: 'judge', masked: false })
     expect(byKey['registry.targets.hook.platform']).toMatchObject({ value: 'web', masked: false })
   })
@@ -1338,8 +1347,8 @@ describe('a registered URL field is reduced to its origin, whatever the credenti
  * different is not care — it is that a leaf's ARRIVAL is a RED BUILD. The walk below reads the
  * shipped config schema as data, collects every string-bearing leaf PATH it declares, and pins
  * that whole set; it never consults the registered names. So schema growth cannot go unnoticed,
- * while a leaf already pinned and unregistered is the census note's residual class rather than
- * this guard's. The corpus is therefore the SCHEMA's own surface, not this file's vocabulary,
+ * while a leaf already pinned and unregistered is the masker's stated residual class rather
+ * than this guard's. The corpus is therefore the SCHEMA's own surface, not this file's vocabulary,
  * which is the same discipline the visibility walker's `Object.keys(z)` companion table uses.
  *
  * Failing means over-masking a new field until someone registers it, never disclosure — so
@@ -1476,8 +1485,8 @@ function declaredStringLeafPaths(schema: unknown): Set<string> {
  * The residue this pin does NOT close, named rather than denied: a leaf already pinned and not
  * registered stays visible and publishes whatever it is given. `workspace.hooksFile`,
  * `services.cache.dir` and `use.buildTag` are reproducible examples — each schema-ACCEPTS
- * `https://u:pw@h/p` and renders it verbatim. That is the census note's residual class in
- * `masked-config.ts`, reached from the other side, not a second one.
+ * `https://u:pw@h/p` and renders it verbatim. That is the residual class `masked-config.ts`
+ * states in its header, reached from the other side, not a second one.
  *
  * An earlier revision of this comment named `services.mcp.host` instead and was wrong in both
  * directions: that field is `LoopbackHostSchema`, refined to exactly `localhost`, `127.0.0.1`
@@ -1669,8 +1678,8 @@ describe('the registered URL-name set cannot silently go stale', () => {
     // flipped, every entity card would silently lose its `url`.
     expect(isCredentialBearingUrlField('services.dashboard.baseUrl')).toBe(true)
     expect(isCredentialBearingUrlField('services.dashboard.workspace')).toBe(false)
-    expect(isMaskedConfigPath('services.dashboard.baseUrl', visibility)).toBe(false)
-    expect(isMaskedConfigPath('services.dashboard.workspace', visibility)).toBe(false)
+    expect(isMaskedConfigPath(segmentsOf('services.dashboard.baseUrl'))).toBe(false)
+    expect(isMaskedConfigPath(segmentsOf('services.dashboard.workspace'))).toBe(false)
   })
 
   it('registers panel members as inert registry names while masking adjacent credentials', () => {
@@ -1680,7 +1689,6 @@ describe('the registered URL-name set cannot silently go stale', () => {
     }
     const config = buildMaskedResolvedConfig({
       configPath: '/workspace/agent-qa.config.yaml',
-      visibility,
       resolved,
       layers: [{ source: 'config-file', values: resolved }],
     })
@@ -1689,7 +1697,7 @@ describe('the registered URL-name set cannot silently go stale', () => {
       const key = `eval.judges.${index}`
       expect(visibility.classify(key)).toBe('constrained')
       expect(isCredentialBearingUrlField(key)).toBe(false)
-      expect(isMaskedConfigPath(key, visibility)).toBe(false)
+      expect(isMaskedConfigPath(segmentsOf(key))).toBe(false)
       expect(config.entries).toContainEqual({
         key, value: name, source: 'config-file', masked: false,
       })
@@ -1710,33 +1718,64 @@ describe('the registered URL-name set cannot silently go stale', () => {
     expect(isCredentialBearingUrlField('services.mcp.tokens.*.tokenEnvVar')).toBe(false)
 
     // The label renders verbatim. It is what an operator called a credential, not the credential.
-    expect(isMaskedConfigPath('services.mcp.tokens.0.name', visibility)).toBe(false)
+    expect(isMaskedConfigPath(segmentsOf('services.mcp.tokens.0.name'))).toBe(false)
 
-    // `tokenEnvVar` is MASKED, and this row is recorded as measured rather than argued into the
-    // shape the D-06 story would prefer. The name census reads the leaf, `tokenenvvar` contains
-    // `token`, and the value is hidden in `config show`. That is over-masking — a variable NAME is
-    // not a secret and an operator loses the ability to read which variable their own server wants
-    // — and it is left standing, because the alternative is adding a carve-out to a credential
-    // census in order to make a field whose name contains `token` more visible. The census being
-    // this eager is also the reason a violation of the refs-only law would fail closed: a `token`
-    // field added to the entry tomorrow is hidden by this same rule, ahead of anyone noticing.
-    expect(isMaskedConfigPath('services.mcp.tokens.0.tokenEnvVar', visibility)).toBe(true)
+    // `tokenEnvVar` is VISIBLE since 429 D-08 (WIN #153): a variable NAME is not a secret, and
+    // the map classifies it env-var-name, so an operator can read which variable their own
+    // server wants. It used to be over-masked because its name contains `token`. A violation of
+    // the refs-only law still fails closed: a `token` field added to the entry tomorrow is a
+    // path the map does not describe, so it is secret until someone classifies it.
+    expect(classifyConfigPath(segmentsOf('services.mcp.tokens.0.tokenEnvVar')))
+      .toBe('env-var-name')
+    expect(isMaskedConfigPath(segmentsOf('services.mcp.tokens.0.tokenEnvVar'))).toBe(false)
+    expect(isMaskedConfigPath(segmentsOf('services.mcp.tokens.0.token'))).toBe(true)
 
-    // And the reason that is SAFE: there is no third leaf under a token entry. The census walks
-    // the shipped schema, so this is the schema's own answer rather than a claim about it — a
-    // `token` field added tomorrow appears here and fails the pin above on the same run.
+    // And there is no third leaf under a token entry. The walk reads the shipped schema, so this
+    // is the schema's own answer rather than a claim about it — a `token` field added tomorrow
+    // appears here and fails the pin above on the same run.
     const leaves = [...declaredStringLeafPaths(AgentQaConfigSchema)]
       .filter((path) => path.startsWith('services.mcp.tokens.'))
       .sort()
     expect(leaves).toEqual(['services.mcp.tokens.*.name', 'services.mcp.tokens.*.tokenEnvVar'])
   })
 
+  it('CONFIG-SHOW-ENV-VAR-NAME-IN-CLEAR', () => {
+    // WIN #153's CLI known answer (429 D-08): both token tables render their variable NAMES
+    // verbatim. The values those variables hold are never read by `config show`.
+    const resolved = {
+      services: {
+        mcp: { tokens: [{ name: 'ci', tokenEnvVar: 'AGENT_QA_MCP_TOKEN', scopes: ['read'] }] },
+        dashboard: {
+          runServiceTokens: [{ name: 'ci', tokenEnvVar: 'AGENT_QA_RUN_TOKEN', trustScope: {} }],
+        },
+      },
+    }
+    const config = buildMaskedResolvedConfig({
+      configPath: 'agent-qa.config.yaml',
+      resolved,
+      layers: [{ source: 'config-file', values: resolved }],
+    })
+    expect(config.entries).toContainEqual({
+      key: 'services.mcp.tokens.0.tokenEnvVar',
+      value: 'AGENT_QA_MCP_TOKEN',
+      source: 'config-file',
+      masked: false,
+    })
+    expect(config.entries).toContainEqual({
+      key: 'services.dashboard.runServiceTokens.0.tokenEnvVar',
+      value: 'AGENT_QA_RUN_TOKEN',
+      source: 'config-file',
+      masked: false,
+    })
+    expect(config.entries.every((entry) => !entry.masked)).toBe(true)
+  })
+
   it('registers the four names the corpus above plants credentials on', () => {
     for (const name of ['url', 'baseURL', 'appiumUrl', 'webDriverAgentUrl']) {
       expect(isCredentialBearingUrlField(name), name).toBe(true)
     }
-    // The traversal is the census's, so an array index or an operator-named record key
-    // cannot change the answer.
+    // The traversal drops numeric segments and reads the leaf, so an array index or an
+    // operator-named record key cannot change the answer.
     expect(isCredentialBearingUrlField('registry.llms.0.baseURL')).toBe(true)
     expect(isCredentialBearingUrlField('registry.targets.web.url')).toBe(true)
     // …and an ordinary leaf is not registered, which is why it is never inspected.
