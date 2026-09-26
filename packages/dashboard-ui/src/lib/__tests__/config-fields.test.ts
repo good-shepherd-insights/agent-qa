@@ -29,6 +29,8 @@ const SCHEMA_REQUIRED_KEYS: Record<string, readonly string[]> = {
   'services.cache': ['dir', 'ttl'],
 }
 
+const BLOCKS: Readonly<Record<string, Readonly<Record<string, unknown>>>> = REQUIRED_SIBLING_BLOCKS
+
 const SCHEMA_OPTIONAL_KEYS: Record<string, readonly string[]> = {
   'use.browser': ['viewport'],
 }
@@ -80,10 +82,10 @@ describe('completeRequiredSiblings', () => {
     expect(Object.keys(REQUIRED_SIBLING_BLOCKS).sort()).toEqual(Object.keys(SCHEMA_REQUIRED_KEYS).sort())
 
     for (const [block, required] of Object.entries(SCHEMA_REQUIRED_KEYS)) {
-      expect(Object.keys(REQUIRED_SIBLING_BLOCKS[block]!), block).toEqual([...required])
+      expect(Object.keys(BLOCKS[block]!), block).toEqual([...required])
       const blockPath = block.split('.')
       for (const key of required) {
-        const changes = [set([...blockPath, key], REQUIRED_SIBLING_BLOCKS[block]![key])]
+        const changes = [set([...blockPath, key], BLOCKS[block]![key])]
         const extra = added(changes, completeRequiredSiblings(changes, {}))
         const inBlock = extra
           .filter((change) => change.path.length === blockPath.length + 1)

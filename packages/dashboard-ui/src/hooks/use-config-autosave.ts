@@ -38,6 +38,7 @@ import {
   type RestoredDraft,
 } from "@/lib/config-autosave"
 import { REVISION_POLL_MS, SAVED_VISIBLE_MS, SETTLE_DELAY_MS, UNDO_WINDOW_MS } from "@/lib/config-copy"
+import { completeRequiredSiblings } from "@/lib/config-fields"
 import { CONFIG_TABS, type ConfigTab, type ExplicitActionKind, type FieldState } from "@/lib/config-tabs"
 
 export const CONFIG_DRAFTS_STORAGE_PREFIX = "agent-qa:config-drafts:"
@@ -473,7 +474,7 @@ function createEngine(host: EngineHost) {
       entry.held = false
       clearTimer(key)
     }
-    void write(keys, changes)
+    void write(keys, answer ? completeRequiredSiblings(changes, answer.config) : changes)
   }
 
   function edit(field: ConfigFieldRef, raw: unknown, parsed: ConfigFieldParse) {
