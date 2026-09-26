@@ -7,8 +7,8 @@
 // the snapshot label, the reduced-motion rule. jsdom computes no animation and lays nothing out, so
 // every claim here is made again on the BUILT dashboard-ui bundle, served by the production
 // `startServer` and driven by a real headless Chromium: one green dot and nothing on the live page
-// animating (owner decision 2026-09-26 (5), G-428-5), a dot at the preview container's top-left in
-// its chrome and clear of the picture (owner decision 2026-09-26 (4), G-428-4), amber when frames
+// animating (owner decision 2026-09-26 (5), G-428-5), a dot floating alone at the preview's top-right,
+// outside the chrome and clear of the picture (owner decision 2026-09-26 (6)), amber when frames
 // stop while the bus keeps heartbeating, and the literal snapshot label when the frames are
 // snapshots.
 //
@@ -236,15 +236,16 @@ interface Box { x: number; y: number; width: number; height: number }
 
 interface StatusGeometry {
   section: Box
-  chrome: Box
+  area: Box
   frame: Box
   dot: Box
+  chrome: Box | null
+  dotInCorner: boolean
   dotInChrome: boolean
-  chromeScrollWidth: number
-  chromeClientWidth: number
+  dotInFrame: boolean
 }
 
-/** The preview container, its chrome row, the picture's box and the dot, read in one pass. */
+/** The preview container, the preview area, its chrome row, the picture's box and the dot, read in one pass. */
 async function statusGeometry(page: Page): Promise<StatusGeometry> {
   const reading = await page.evaluate(() => {
     const box = (node: Element | null) => {
@@ -253,41 +254,46 @@ async function statusGeometry(page: Page): Promise<StatusGeometry> {
       return { x: rect.x, y: rect.y, width: rect.width, height: rect.height }
     }
     const chrome = document.querySelector('[data-live-preview] [data-preview-chrome]')
+    const corner = document.querySelector('[data-live-preview] [data-preview-dot-corner]')
+    const frame = document.querySelector('[data-preview-frame]')
     const dot = document.querySelector('[data-live-dot]')
     return {
       section: box(document.querySelector('[data-live-preview]')),
-      chrome: box(chrome),
-      frame: box(document.querySelector('[data-preview-frame]')),
+      area: box(corner?.parentElement ?? null),
+      frame: box(frame),
       dot: box(dot),
+      chrome: box(chrome),
+      dotInCorner: corner !== null && dot !== null && corner.contains(dot),
       dotInChrome: chrome !== null && dot !== null && chrome.contains(dot),
-      chromeScrollWidth: chrome?.scrollWidth ?? -1,
-      chromeClientWidth: chrome?.clientWidth ?? -1,
+      dotInFrame: frame !== null && dot !== null && frame.contains(dot),
     }
   })
-  const { section, chrome, frame, dot } = reading
-  if (section === null || chrome === null || frame === null || dot === null) {
+  const { section, area, frame, dot } = reading
+  if (section === null || area === null || frame === null || dot === null) {
     throw new Error(`no box: ${JSON.stringify(reading)}`)
   }
-  return { ...reading, section, chrome, frame, dot }
+  return { ...reading, section, area, frame, dot }
 }
 
-/** Owner decision 2026-09-26 (4): top-left of the container, in its chrome, never over the picture. */
-function expectDotTopLeftOfContainer(geometry: StatusGeometry, label: string): void {
-  const { section, chrome, frame, dot } = geometry
+/** Owner decision 2026-09-26 (6): alone at the preview area's top-right, no chrome row, never over the picture. */
+function expectDotTopRightOfContainer(geometry: StatusGeometry, label: string): void {
+  const { section, area, frame, dot } = geometry
   const context = `${label}: ${JSON.stringify(geometry)}`
   expect(frame.width, `${context} — the picture has a size`).toBeGreaterThan(40)
-  expect(geometry.dotInChrome, `${context} — the dot is in the chrome`).toBe(true)
-  expect(dot.x - section.x, `${context} — left edge of the container`).toBeLessThanOrEqual(24)
-  expect(dot.x - section.x, context).toBeGreaterThanOrEqual(0)
-  expect(dot.y - section.y, `${context} — top of the container, within the chrome's height`)
-    .toBeLessThanOrEqual(chrome.height)
-  expect(dot.y - section.y, context).toBeGreaterThanOrEqual(0)
+  expect(geometry.chrome, `${context} — a bare live frame renders no chrome row`).toBeNull()
+  expect(geometry.dotInCorner, `${context} — the dot is in its own corner`).toBe(true)
+  expect(geometry.dotInChrome, `${context} — the dot is not in the chrome`).toBe(false)
+  expect(geometry.dotInFrame, `${context} — the dot is not in the picture's box`).toBe(false)
+  const right = area.x + area.width - (dot.x + dot.width)
+  expect(right, `${context} — right edge of the preview area`).toBeLessThanOrEqual(24)
+  expect(right, context).toBeGreaterThanOrEqual(0)
+  expect(dot.x + dot.width, `${context} — inside the container`).toBeLessThanOrEqual(section.x + section.width)
+  expect(dot.y - area.y, `${context} — top of the preview area`).toBeLessThanOrEqual(24)
+  expect(dot.y - area.y, context).toBeGreaterThanOrEqual(0)
+  expect(dot.y, `${context} — inside the container`).toBeGreaterThanOrEqual(section.y)
   const intersects = dot.x < frame.x + frame.width && frame.x < dot.x + dot.width
     && dot.y < frame.y + frame.height && frame.y < dot.y + dot.height
   expect(intersects, `${context} — the dot's box meets the picture's box`).toBe(false)
-  expect(dot.y + dot.height, `${context} — the dot ends above the picture`).toBeLessThanOrEqual(frame.y)
-  expect(geometry.chromeScrollWidth, `${context} — the chrome row does not overflow`)
-    .toBeLessThanOrEqual(geometry.chromeClientWidth + 1)
 }
 
 describe('the live preview corner on the shipped bundle (428-23 Task 1)', () => {
@@ -403,19 +409,23 @@ describe('the live preview corner on the shipped bundle (428-23 Task 1)', () => 
   // saw the dot cover the tested page's own header and asked for it "at the top left of the browser
   // container", so the dot is measured against the preview container and its chrome, clear of the
   // picture, at both widths.
-  it('DOT-TOP-LEFT-OF-CONTAINER: the dot is in the chrome at the container\'s top-left, and its box never meets the picture\'s', async () => {
+  //
+  // RE-SPELLED 2026-09-26 (owner decision 2026-09-26 (6)). Was "DOT-TOP-LEFT-OF-CONTAINER: the dot
+  // is in the chrome at the container's top-left, ...". The dot left the chrome row for its own
+  // corner at the preview area's top-right, and a bare live frame renders no chrome row at all.
+  it('DOT-TOP-RIGHT-OF-CONTAINER: the dot floats alone at the preview\'s top-right with no chrome row, and its box never meets the picture\'s', async () => {
     await onLivePage(DOT_RUN, async (page) => {
       await waitForGreen(page)
       const geometry = await statusGeometry(page)
-      console.log(`DOT-TOP-LEFT-OF-CONTAINER 1280: ${JSON.stringify(geometry)}`)
-      expectDotTopLeftOfContainer(geometry, '1280')
+      console.log(`DOT-TOP-RIGHT-OF-CONTAINER 1280: ${JSON.stringify(geometry)}`)
+      expectDotTopRightOfContainer(geometry, '1280')
       await capture(page, '428-corner-healthy-1280')
     })
     await onLivePage(DOT_RUN, async (page) => {
       await waitForGreen(page)
       const geometry = await statusGeometry(page)
-      console.log(`DOT-TOP-LEFT-OF-CONTAINER 400: ${JSON.stringify(geometry)}`)
-      expectDotTopLeftOfContainer(geometry, '400')
+      console.log(`DOT-TOP-RIGHT-OF-CONTAINER 400: ${JSON.stringify(geometry)}`)
+      expectDotTopRightOfContainer(geometry, '400')
       await capture(page, '428-corner-healthy-400')
     }, NARROW)
   }, 120_000)

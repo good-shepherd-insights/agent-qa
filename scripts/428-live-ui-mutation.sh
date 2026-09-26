@@ -54,7 +54,7 @@
 #   U33  the watch rule returns the previous handle whenever there is one          -> WATCH-SWITCHES-WHEN-NEXT-STARTS ((3))
 #   U34  U32's edit, on the rebuilt bundle                                          -> FOLLOWS-RUNNING-MEMBER-SHIPPED ((3), shipped)
 #   U35  the status cluster renders inside the picture's box, not the chrome       -> DOT-IN-CHROME-TOP-LEFT (owner 2026-09-26 (4))
-#   U36  the status cluster sits top-right over the picture, on the rebuilt bundle  -> DOT-TOP-LEFT-OF-CONTAINER ((4), shipped)
+#   U36  the dot's corner sits over the middle of the picture, on the rebuilt bundle -> DOT-TOP-RIGHT-OF-CONTAINER ((6), shipped)
 #   U37  the running glyph takes Tailwind's pulse animation                        -> RUNNING-GLYPH-STILL (owner 2026-09-26 (5))
 #
 # ALLOWED CO-REDS are listed on each leg with a one-line reason; nothing else may red.
@@ -94,7 +94,7 @@
 # Green controls follow the renamed cells: RUNNING-BREATHES-AND-REKEYS is RUNNING-GLYPH-STILL,
 # REDUCED-MOTION-STILL-DOT is DOT-IS-STILL, ONE-PULSING-GREEN-DOT is NO-ANIMATION-ON-LIVE-PAGE,
 # REDUCED-MOTION-DOT-STILL is DOT-STILL-UNDER-ANY-MOTION-PREFERENCE and CORNER-ON-PICTURE is
-# DOT-TOP-LEFT-OF-CONTAINER. ui-lib also selects live-run-watch.test.ts, and every instrument's
+# DOT-TOP-RIGHT-OF-CONTAINER. ui-lib also selects live-run-watch.test.ts, and every instrument's
 # count is re-measured on the 428-34 tree.
 #
 # The same day, legs 25 -> 37 and subjects 9 -> 12 (health-dot.tsx, run-stream-reducer.ts and
@@ -274,7 +274,7 @@ const legs = [
     // It reads the same dot's computed animation, with and without reduced motion, and Tailwind's
     // pulse has no reduced-motion guard.
     allowed: [dom('DOT-STILL-UNDER-ANY-MOTION-PREFERENCE')],
-    greens: [dom('DOT-TOP-LEFT-OF-CONTAINER'), dom('NO-LABEL-ON-SCREENCAST'), layoutDom('ROWS-GLYPH-AND-LABEL-SHIPPED')],
+    greens: [dom('DOT-TOP-RIGHT-OF-CONTAINER'), dom('NO-LABEL-ON-SCREENCAST'), layoutDom('ROWS-GLYPH-AND-LABEL-SHIPPED')],
   },
   {
     subject: PREVIEW_SRC, instrument: 'ui-lib', claim: 'NO-BUS-INPUT',
@@ -488,8 +488,8 @@ const legs = [
     // Re-spelled 2026-09-26 (428-35): it removed the reduced-motion rule that stilled the pulse;
     // there is no pulse to still, so the pulse itself comes back.
     edits: [{
-      from: '.live-dot-green {\n  background-color: var(--color-emerald-500);\n}\n',
-      to: '.live-dot-green {\n  background-color: var(--color-emerald-500);\n  animation: live-dot-pulse 2s ease-in-out infinite;\n}\n\n@keyframes live-dot-pulse {\n  0%, 100% { opacity: 1; }\n  50% { opacity: 0.4; }\n}\n',
+      from: '.live-dot-green {\n  background-color: color-mix(in oklch, var(--color-green-500) 70%, transparent);\n}\n',
+      to: '.live-dot-green {\n  background-color: color-mix(in oklch, var(--color-green-500) 70%, transparent);\n  animation: live-dot-pulse 2s ease-in-out infinite;\n}\n\n@keyframes live-dot-pulse {\n  0%, 100% { opacity: 1; }\n  50% { opacity: 0.4; }\n}\n',
     }],
     reds: [preview('DOT-IS-STILL')],
     allowed: [],
@@ -621,17 +621,16 @@ const legs = [
     greens: [preview('BRIDGE-SOURCE-CHECKED'), preview('HANDLE-FROM-HOST'), preview('DOT-IS-STILL')],
   },
   {
-    subject: COMPONENT_SRC, instrument: 'dom', claim: 'DOT-TOP-LEFT-OF-CONTAINER',
-    operation: "position the status cluster at the preview's top-right over the picture, on the rebuilt bundle",
+    subject: COMPONENT_SRC, instrument: 'dom', claim: 'DOT-TOP-RIGHT-OF-CONTAINER',
+    // Re-spelled 2026-09-26 (owner decision 2026-09-26 (6)): the dot has its own corner, so that
+    // corner is what moves onto the picture.
+    operation: "move the dot's corner to the middle of the preview, over the picture, on the rebuilt bundle",
     crossing: ui('dot428moved'),
-    edits: [
-      { from: '      className="flex h-full min-h-0 flex-col"\n', to: '      className="relative flex h-full min-h-0 flex-col"\n' },
-      {
-        from: '    <div data-preview-corner className="flex min-w-0 flex-wrap items-center gap-2">\n',
-        to: '    <div data-preview-corner className="dot428moved absolute right-2 top-1/2 z-10 flex min-w-0 flex-wrap items-center gap-2">\n',
-      },
-    ],
-    reds: [dom('DOT-TOP-LEFT-OF-CONTAINER')],
+    edits: [{
+      from: '          <div data-preview-dot-corner className="absolute right-1 top-1 z-10">\n',
+      to: '          <div data-preview-dot-corner className="dot428moved absolute left-1/2 top-1/2 z-10">\n',
+    }],
+    reds: [dom('DOT-TOP-RIGHT-OF-CONTAINER')],
     allowed: [
       // Each layout cell asserts, at its width, that the dot is clear of the picture.
       layoutDom('STACKED-AT-400'), layoutDom('DOCKED-AT-1280'), layoutDom('FLIP-RECOVERS'),
