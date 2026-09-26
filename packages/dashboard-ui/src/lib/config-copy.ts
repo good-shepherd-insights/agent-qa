@@ -1,4 +1,50 @@
-import type { ConfigSectionId } from './config-tabs'
+// THE CONFIG PAGE'S STRINGS OF RECORD (429 UI-SPEC Copywriting Contract · PXH-CONF-01..05).
+//
+// Every sentence the Config page renders is an exported constant or pure function here, so cells
+// import the constant instead of re-typing prose. Strings holding an apostrophe use double quotes.
+// No string carries storage vocabulary (bucket names, dotted config paths); those stay in
+// data-field-path attributes. Connection-failure sentences are never spelled here: they come from
+// the shared classifier in @vostride/agent-qa-schema, byte-identical with the CLI (D-18).
+
+import type {
+  ConfigSectionId,
+  ConfigTab,
+  ConnectionChoice,
+  ExplicitActionKind,
+  ModelStatus,
+  SaveState,
+  TestResult,
+} from './config-tabs'
+
+export { providerErrorSentence } from '@vostride/agent-qa-schema'
+
+/** An edit in a text field settles this long after the last keystroke, or on blur. */
+export const SETTLE_DELAY_MS = 1_000
+
+/** How long "Saved" stays before it fades back to an empty status. */
+export const SAVED_VISIBLE_MS = 2_000
+
+/** How long an explicit action offers Undo before it becomes final. */
+export const UNDO_WINDOW_MS = 10_000
+
+/** How often the page asks whether the config file changed on disk. */
+export const REVISION_POLL_MS = 2_000
+
+/** Between a status word and its action, as in "Couldn't save · Retry". */
+export const STATUS_SEPARATOR = ' · '
+
+export const CONFIG_PAGE_TITLE = 'Config'
+
+export const CONFIG_TAB_LABELS = {
+  models: 'Models',
+  targets: 'Targets',
+  execution: 'Execution',
+  project: 'Project',
+  advanced: 'Advanced',
+} as const satisfies Record<ConfigTab, string>
+
+export const CONFIG_TABS_ARIA_LABEL = 'Config sections'
+export const TAB_DRAFT_SR_SUFFIX = ", has changes that aren't saved"
 
 export const CONFIG_SECTION_LABELS = {
   models: 'Models',
@@ -27,3 +73,313 @@ export const CONFIG_SECTION_LABELS = {
   eval: 'Evaluation',
   'config-file': 'Config file',
 } as const satisfies Record<ConfigSectionId, string>
+
+export function configCommandLabel(tab: ConfigTab, section: ConfigSectionId): string {
+  return `Config: ${CONFIG_TAB_LABELS[tab]} / ${CONFIG_SECTION_LABELS[section]}`
+}
+
+export const LEGACY_LINK_NOT_FOUND_TEXT = 'That setting link is out of date, so Models is shown instead.'
+
+export const CONFIG_LOAD_FAILED_TITLE = "Couldn't load the config"
+
+export function configLoadFailedBody(reason: string): string {
+  return `${reason}. Reload it, or fix the file in your editor — this page picks up the change.`
+}
+
+export const RELOAD_CONFIG_LABEL = 'Reload config'
+
+export const SAVE_STATUS_WORDS = {
+  saving: 'Saving…',
+  saved: 'Saved',
+  draft: 'Not saved',
+  failed: "Couldn't save",
+} as const satisfies Partial<Record<SaveState, string>>
+
+export const RETRY_LABEL = 'Retry'
+export const NOT_SAVED_ACTION_NAME = 'Not saved. Go to the first unsaved field.'
+export const UNDO_LABEL = 'Undo'
+
+/** The past-tense line an explicit action leaves in the status; the status appends " · Undo". */
+export function undoLine(kind: ExplicitActionKind, name: string, opts: { judge?: boolean } = {}): string {
+  switch (kind) {
+    case 'delete-model':
+      return opts.judge ? `Deleted ${name}, an eval judge` : `Deleted ${name}`
+    case 'delete-target':
+      return `Deleted target ${name}`
+    case 'delete-device':
+      return `Deleted device ${name}`
+    case 'delete-device-farm':
+      return `Deleted device farm ${name}`
+    case 'delete-mcp-token':
+    case 'delete-run-service-token':
+      return `Deleted token ${name}`
+    case 'sign-out':
+      return `Signed out of ${name}`
+    case 'remove-key':
+      return `Removed the key for ${name}`
+    case 'change-knowledge-dir':
+      return 'Changed the knowledge folder'
+    case 'change-db-path':
+      return 'Changed the database'
+    case 'change-artifacts-dir':
+      return 'Changed the artifacts folder'
+  }
+}
+
+export type DeleteActionKind = Extract<ExplicitActionKind, `delete-${string}`>
+
+/** The accessible name of a row's delete icon button. */
+export function deleteActionName(kind: DeleteActionKind, name: string): string {
+  switch (kind) {
+    case 'delete-model':
+      return `Delete model ${name}`
+    case 'delete-target':
+      return `Delete target ${name}`
+    case 'delete-device':
+      return `Delete device ${name}`
+    case 'delete-device-farm':
+      return `Delete device farm ${name}`
+    case 'delete-mcp-token':
+    case 'delete-run-service-token':
+      return `Delete token ${name}`
+  }
+}
+
+export const ADD_MODEL_LABEL = 'Add model'
+export const NEW_MODEL_ROW_TITLE = 'New model'
+export const DISCARD_DRAFT_LABEL = 'Discard draft'
+
+export const MODEL_STATUS_WORDS = {
+  'signed-in': 'Signed in',
+  'key-saved': 'Key saved',
+  'not-connected': 'Not connected',
+  'sign-in-expired': 'Sign-in expired',
+} as const satisfies Record<ModelStatus, string>
+
+export const DEFAULT_BADGE = 'Default'
+
+export function modelLine(model: string, providerLabel: string): string {
+  return `${model}${STATUS_SEPARATOR}${providerLabel}`
+}
+
+/** The plan a sign-in provider connects through, as the signed-in sentence names it. */
+export const SUBSCRIPTION_PLAN_NAMES = {
+  'openai-subscription': 'ChatGPT',
+  'anthropic-subscription': 'Claude',
+} as const satisfies Record<string, string>
+
+export interface ConnectionSentenceOptions {
+  /** The model connects by signing in to a plan rather than with a key. */
+  signIn: boolean
+  /** The endpoint may work without a key (credential-optional providers). */
+  keyOptional?: boolean
+}
+
+/** One sentence stating a saved model's connection; for a signed-in row the label is the plan's name. */
+export function connectionSentence(
+  status: ModelStatus,
+  providerLabel: string,
+  opts: ConnectionSentenceOptions,
+): string {
+  switch (status) {
+    case 'signed-in':
+      return `Signed in with your ${providerLabel} plan.`
+    case 'key-saved':
+      return 'Key saved on this machine.'
+    case 'not-connected':
+      if (opts.signIn) return 'Not signed in.'
+      return opts.keyOptional ? 'No key saved. This endpoint may not need one.' : 'No key saved.'
+    case 'sign-in-expired':
+      return 'Sign-in expired. Sign in again to use this model.'
+  }
+}
+
+export const TEST_CONNECTION_LABEL = 'Test connection'
+export const MAKE_DEFAULT_LABEL = 'Make default'
+export const REPLACE_KEY_LABEL = 'Replace key'
+export const REMOVE_KEY_LABEL = 'Remove key'
+export const SIGN_IN_AGAIN_LABEL = 'Sign in again'
+export const SIGN_OUT_LABEL = 'Sign out'
+export const DELETE_MODEL_LABEL = 'Delete model'
+export const SAVE_KEY_AND_TEST_LABEL = 'Save key and test'
+export const KEEP_CURRENT_KEY_LABEL = 'Keep current key'
+export const NEW_KEY_LABEL = 'New key'
+
+export function fixedFactsLine(connectionLabel: string): string {
+  return `Connects with ${connectionLabel}. The name and connection are fixed; to change them, add a new model.`
+}
+
+export const USED_AS_JUDGE_LINE = 'Used as an eval judge.'
+export const DEFAULT_CANNOT_DELETE_LINE = 'This is the default model. Make another model the default first.'
+export const NO_MODELS_TEXT = 'Runs need a model. Add one to get started.'
+export const NO_DEFAULT_TEXT = 'No default model. Runs need one — make one of these the default.'
+
+/** A failed test shows providerErrorSentence instead, so `failed` has no entry here. */
+export const TEST_RESULT_TEXT = {
+  testing: 'Testing the connection…',
+  connected: 'Connected',
+  'connected-without-key': 'Connected without a key',
+} as const satisfies Partial<Record<TestResult, string>>
+
+export const CONNECT_LABEL = 'Connect'
+export const CONNECTING_LABEL = 'Connecting…'
+export const CONNECT_FORM_LEGEND = 'How do you connect?'
+
+export const CONNECTION_CHOICE_LABELS = {
+  'chatgpt-sign-in': 'Sign in with ChatGPT',
+  'claude-sign-in': 'Sign in with Claude',
+  'openai-compatible-key': 'OpenAI-compatible API key',
+  'anthropic-compatible-key': 'Anthropic-compatible key or token',
+  'gemini-key': 'Gemini API key',
+} as const satisfies Record<ConnectionChoice, string>
+
+export const CONNECTION_CHOICE_HINTS = {
+  'chatgpt-sign-in': 'Uses your ChatGPT plan. No key needed.',
+  'claude-sign-in': 'Uses your Claude plan. No key needed.',
+  'openai-compatible-key': 'OpenAI, or any endpoint that speaks its API.',
+  'anthropic-compatible-key': 'Anthropic, or any endpoint that speaks its API.',
+  'gemini-key': 'A key from Google AI Studio.',
+} as const satisfies Record<ConnectionChoice, string>
+
+export const ADD_FLOW_FIELD_LABELS = {
+  baseUrl: 'Base URL',
+  model: 'Model',
+  apiKey: 'API key',
+  keyType: 'Key type',
+  key: 'Key',
+  token: 'Token',
+  headers: 'Headers',
+  name: 'Name',
+  signInCode: 'Code from the sign-in page',
+} as const satisfies Record<string, string>
+
+export const ADD_HEADER_LABEL = 'Add header'
+
+export type CredentialKeyType = 'api-key' | 'bearer-token'
+
+export const KEY_TYPE_LABELS = {
+  'api-key': 'API key',
+  'bearer-token': 'Bearer token',
+} as const satisfies Record<CredentialKeyType, string>
+
+export const KEY_OPTIONAL_HELP = "Leave empty if your endpoint doesn't need a key."
+export const BASE_URL_HELP = "The exact base URL. agent-qa doesn't add paths to it."
+
+export function existingCredentialLine(kind: 'key' | 'sign-in', name: string): string {
+  return kind === 'key'
+    ? `A key for ${name} is already saved on this machine.`
+    : `Already signed in as ${name} on this machine.`
+}
+
+export const NAME_RULE_ERROR = 'Use lowercase letters, digits, hyphens and dots, starting with a letter or digit.'
+
+export function nameTakenError(name: string): string {
+  return `A model named ${name} already exists.`
+}
+
+export function nameCredentialConflictError(name: string, providerLabel: string): string {
+  return `${name} already has a saved sign-in or key for ${providerLabel}. Choose another name.`
+}
+
+export const MODEL_REQUIRED_ERROR = 'Model is required.'
+export const BASE_URL_REQUIRED_ERROR = 'Base URL is required for compatible providers.'
+
+export const SIGN_IN_WAITING_TEXT = 'Finish signing in on the page that opened.'
+export const CANCEL_SIGN_IN_LABEL = 'Cancel sign-in'
+export const SIGN_IN_WAITING_LABEL = 'Waiting for sign-in…'
+export const SIGN_IN_TIMED_OUT_TEXT = 'Sign-in timed out. Try again.'
+
+export function signInFailedText(reason: string): string {
+  return `Sign-in didn't finish: ${reason}`
+}
+
+export function connectedSavedText(name: string): string {
+  return `Connected. Saved as ${name}.`
+}
+
+export const BECAME_DEFAULT_TEXT = "It's now the default model."
+export const SAVE_WITHOUT_TESTING_LABEL = 'Save without testing'
+export const SAVED_WITHOUT_TEST_TEXT = 'Saved without a connection test.'
+
+export const APPLY_LABEL = 'Apply'
+export const KEEP_CURRENT_PATH_LABEL = 'Keep current path'
+
+/** The one-word Apply button's accessible name names the path it applies. */
+export function applyActionName(pathLabel: string): string {
+  return `${APPLY_LABEL} ${pathLabel}`
+}
+
+export const PORT_RESTART_HELP = 'Takes effect after the dashboard restarts.'
+
+export const NO_TARGETS_TEXT = 'No targets yet.'
+export const NO_DEVICES_TEXT = 'No devices yet.'
+export const NO_DEVICE_FARMS_TEXT = 'No device farms yet.'
+export const NO_LOGIN_STATES_TEXT = 'No saved login states yet. Save one from a web Live Mode session.'
+export const LOGIN_STATES_LOADING_TEXT = 'Loading saved login states…'
+export const LOGIN_STATES_LOAD_FAILED_TEXT = "Couldn't load saved login states."
+export const RELOAD_LOGIN_STATES_LABEL = 'Reload login states'
+
+export const ACCESS_TOKENS_HEADING = 'Access tokens'
+export const ADD_TOKEN_LABEL = 'Add token'
+export const NO_TOKENS_TEXT = 'No access tokens yet.'
+
+export function tokenEnvLine(envVar: string): string {
+  return `Token from ${envVar}`
+}
+
+export const TOKEN_FIELD_LABELS = {
+  name: 'Name',
+  envVar: 'Environment variable',
+} as const satisfies Record<string, string>
+
+export const EVAL_GROUP_LABELS = {
+  judge: 'Judge',
+  gate1: 'Gate 1',
+  gate2: 'Gate 2',
+  adversarial: 'Adversarial',
+  seeding: 'Seeding',
+} as const satisfies Record<string, string>
+
+export const JUDGE_MODELS_LABEL = 'Judge models'
+export const JUDGE_LIMIT_TEXT = 'Up to three judges.'
+export const JUDGE_NO_MODELS_TEXT = 'Add a model first to pick a judge.'
+
+export const CONFIG_FILE_NOTE = 'Read-only. Edit the file in your editor; changes show here by themselves.'
+export const COPY_PATH_LABEL = 'Copy config file path'
+
+export const COPY_STATUS_WORDS = {
+  copied: 'Copied',
+  failed: "Couldn't copy",
+} as const satisfies Record<'copied' | 'failed', string>
+
+export function showValueName(label: string): string {
+  return `Show ${label}`
+}
+
+export function hideValueName(label: string): string {
+  return `Hide ${label}`
+}
+
+export const REPLACE_VALUE_LABEL = 'Replace value'
+export const SAVE_VALUE_LABEL = 'Save value'
+export const KEEP_CURRENT_VALUE_LABEL = 'Keep current value'
+
+export function replaceValueName(label: string): string {
+  return `${REPLACE_VALUE_LABEL} for ${label}`
+}
+
+export function saveValueName(label: string): string {
+  return `${SAVE_VALUE_LABEL} for ${label}`
+}
+
+export function keepValueName(label: string): string {
+  return `${KEEP_CURRENT_VALUE_LABEL} for ${label}`
+}
+
+export const SAVE_SETTING_LABEL = 'Save setting'
+export const DISCARD_SETTING_LABEL = 'Discard setting'
+export const ADD_SETTING_LABEL = 'Add setting'
+export const REVEAL_FAILED_TEXT = "Couldn't show this value. Try again."
+
+export const TOUR_LLM_SETUP_BODY =
+  "A run needs a model. Add one: choose how you connect, and it's tested and saved as soon as it works."
