@@ -137,6 +137,17 @@ async function flush(): Promise<void> {
   })
 }
 
+/** A frame report from the preview's own embed: the one source the preview listens to. */
+async function postFrame(): Promise<void> {
+  const embed = container.querySelector<HTMLIFrameElement>('[data-live-preview] [data-live-embed]')
+  if (embed?.contentWindow == null) throw new Error('Expected the preview embed')
+  const data = { event: 'frame', ts: Date.now(), kind: 'cdp-screencast', width: 800, height: 600 }
+  await act(async () => {
+    window.dispatchEvent(new MessageEvent('message', { data, source: embed.contentWindow }))
+    await Promise.resolve()
+  })
+}
+
 beforeEach(() => {
   fetchEditorLiveUrlMock.mockReset()
   fetchEditorLiveUrlMock.mockImplementation(async (sessionId: string) => ({
@@ -409,7 +420,11 @@ describe('LiveSessionPane shared live preview (428 PXH-LIVE-01)', () => {
     expect(container.querySelector('[data-live-preview]')).toBeNull()
   })
 
-  it('EDITOR-CHROME-ROW: a web session\'s navigation, address bar, auth-state capture and copy URL are the chrome row', async () => {
+  // RE-SPELLED 2026-09-26 (428-34, owner decision 2026-09-26 (4), G-428-4). Was "EDITOR-CHROME-ROW:
+  // a web session's navigation, address bar, auth-state capture and copy URL are the chrome row".
+  // The preview's status now leads that row at the container's top-left, so after a frame the dot
+  // comes first and the editor's toolbar follows it in the same row.
+  it('EDITOR-CHROME-ROW: a web session\'s toolbar is the chrome row, and after a frame the dot leads it', async () => {
     renderPane()
     await flush()
 
@@ -421,14 +436,46 @@ describe('LiveSessionPane shared live preview (428 PXH-LIVE-01)', () => {
     expect(labels).toEqual(expect.arrayContaining(['Go back', 'Go forward', 'Refresh page', 'Save auth state', 'Copy URL']))
     expect(chrome?.querySelectorAll('input')).toHaveLength(1)
     expect(header().querySelector('input')).toBeNull()
+
+    await postFrame()
+    const row = container.querySelector('[data-live-preview] [data-preview-chrome]')
+    const children = [...(row?.children ?? [])]
+    const toolbarAt = children.findIndex((child) => child.querySelector('[aria-label="Go back"]') !== null)
+    expect({
+      lead: children[0]?.hasAttribute('data-preview-corner') ?? false,
+      first: children[0]?.firstElementChild?.getAttribute('data-live-dot') ?? null,
+      toolbarAt,
+      inputs: row?.querySelectorAll('input').length,
+    }).toEqual({ lead: true, first: 'green', toolbarAt: 1, inputs: 1 })
+    expect(header().querySelector('[data-live-dot]')).toBeNull()
   })
 
-  it('EDITOR-CHROME-ROW: a mobile session without those controls renders no empty chrome row', async () => {
-    renderPane({ platform: 'android', targetName: 'android-target', targetLabel: 'Android device' })
+  // RE-SPELLED 2026-09-26 (428-34, owner decision 2026-09-26 (4), G-428-4). Was "EDITOR-CHROME-ROW:
+  // a mobile session without those controls renders no empty chrome row", read before any frame.
+  // A mobile session still passes no toolbar, so before its preview has anything to say there is no
+  // row, and once a frame arrives the row holds the dot and nothing of the web toolbar.
+  it('EDITOR-CHROME-ROW: a mobile session has no row before its preview speaks, and then only the dot', async () => {
+    const mobile = { platform: 'android', targetName: 'android-target', targetLabel: 'Android device' } as const
+    fetchEditorLiveUrlMock.mockImplementationOnce(() => new Promise<never>(() => {}))
+    renderPane(mobile)
     await flush()
-
     expect(container.querySelector('[data-live-preview]')).not.toBeNull()
     expect(container.querySelector('[data-preview-chrome]')).toBeNull()
+
+    act(() => {
+      root.unmount()
+      root = createRoot(container)
+    })
+    renderPane(mobile)
+    await flush()
+    await postFrame()
+    const row = container.querySelector('[data-live-preview] [data-preview-chrome]')
+    const buttons = [...(row?.querySelectorAll('button') ?? [])]
+    expect({
+      children: [...(row?.children ?? [])].map((child) => child.hasAttribute('data-preview-corner')),
+      dots: buttons.map((button) => button.getAttribute('data-live-dot')),
+      inputs: row?.querySelectorAll('input').length,
+    }).toEqual({ children: [true], dots: ['green'], inputs: 0 })
   })
 })
 
