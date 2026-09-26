@@ -1,214 +1,261 @@
-import { useState } from "react"
-import { Loader2, Plus, Trash2 } from "lucide-react"
-import { toast } from "sonner"
+// PASS-RATE SCOPE (429-21 · D-06, D-08, D-09 · UI-SPEC S2, S8).
+//
+// Attribute values are secret in the shared masking map, as the CLI masks them, so each row shows
+// its key in clear and its value through SecretValue. A new attribute is typed into component
+// state only and saved with an explicit button; removing one writes at once. Privacy is a switch
+// whose off state removes the key, because the schema allows it only as true.
 
-import { updateSettings } from "@/lib/api"
-import {
-  ConfigLineNotice,
-  ConfigSectionBody,
-  ConfigSectionHeader,
-  ConfigSectionShell,
-} from "@/components/config-manager/config-section-shell"
+import { useEffect, useId, useRef, useState, type KeyboardEvent } from "react"
+import { Plus, Trash2 } from "lucide-react"
+import type { ConfigChange, ConfigPathSegment } from "@vostride/agent-qa-schema"
+
+import { ConfigField } from "@/components/config-manager/config-field"
+import { SecretValue } from "@/components/config-manager/secret-value"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
+import { Switch } from "@/components/ui/switch"
+import { useConfigAutosaveContext } from "@/hooks/use-config-autosave"
 import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select"
-
-type AttributeMode = "exact" | "regex"
-
-interface AttributeRow {
-  id: string
-  key: string
-  mode: AttributeMode
-  value: string
-}
+  ADD_ATTRIBUTE_LABEL,
+  ATTRIBUTE_FIELD_LABELS,
+  ATTRIBUTE_PATTERN_TAG,
+  DISCARD_SETTING_LABEL,
+  INVALID_ATTRIBUTE_PATTERN_ERROR,
+  MATCH_AS_PATTERN_LABEL,
+  NO_ATTRIBUTES_TEXT,
+  PASS_RATE_SCOPE_HELP,
+  PRIVACY_FIELD_HELP,
+  PRIVACY_FIELD_LABELS,
+  SAVE_SETTING_LABEL,
+  attributeValueLabel,
+  removeAttributeName,
+} from "@/lib/config-copy"
 
 interface AnalyticsSectionProps {
   config: Record<string, unknown>
   onConfigChange: () => void
 }
 
+const ATTRIBUTES_PATH = ["analytics", "passRateScope", "attributes"] as const
+const VALUE_PATTERN = "analytics.passRateScope.attributes.*"
+const REGEX_PATTERN = "analytics.passRateScope.attributes.*.regex"
+
+interface AttributeRow {
+  key: string
+  pattern: boolean
+  segments: ConfigPathSegment[]
+  maskedText: string
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === "object" && !Array.isArray(value)
+  return typeof value === "object" && value !== null && !Array.isArray(value)
 }
 
-function getInitialRows(config: Record<string, unknown>): AttributeRow[] {
+function maskedTextOf(value: unknown): string {
+  if (typeof value === "string") return value
+  if (value === null || value === undefined) return ""
+  return typeof value === "object" ? JSON.stringify(value) : String(value)
+}
+
+function attributesOf(config: Record<string, unknown>): AttributeRow[] {
   const analytics = isRecord(config.analytics) ? config.analytics : {}
-  const passRateScope = isRecord(analytics.passRateScope) ? analytics.passRateScope : {}
-  const attributes = isRecord(passRateScope.attributes) ? passRateScope.attributes : {}
-
-  const rows: AttributeRow[] = []
-  for (const [index, [key, rawValue]] of Object.entries(attributes).entries()) {
-    if (typeof rawValue === "string") {
-      rows.push({ id: `existing-${index}`, key, mode: "exact", value: rawValue })
-      continue
-    }
-    if (isRecord(rawValue) && typeof rawValue.regex === "string") {
-      rows.push({ id: `existing-${index}`, key, mode: "regex", value: rawValue.regex })
-    }
-  }
-  return rows
+  const scope = isRecord(analytics.passRateScope) ? analytics.passRateScope : {}
+  const attributes = isRecord(scope.attributes) ? scope.attributes : {}
+  return Object.entries(attributes).map(([key, value]) =>
+    isRecord(value) && "regex" in value
+      ? { key, pattern: true, segments: [...ATTRIBUTES_PATH, key, "regex"], maskedText: maskedTextOf(value.regex) }
+      : { key, pattern: false, segments: [...ATTRIBUTES_PATH, key], maskedText: maskedTextOf(value) },
+  )
 }
 
-function buildPassRateScope(rows: AttributeRow[]) {
-  const attributes: Record<string, string | { regex: string }> = {}
-  const seenKeys = new Set<string>()
-
-  for (const row of rows) {
-    const key = row.key.trim()
-    const value = row.value.trim()
-    const hasAnyValue = key.length > 0 || value.length > 0
-    if (!hasAnyValue) continue
-    if (!key) return { error: "Attribute key is required." }
-    if (!value) return { error: `Value is required for ${key}.` }
-    if (seenKeys.has(key)) return { error: `Duplicate attribute key: ${key}` }
-    if (row.mode === "regex") {
-      try {
-        new RegExp(value)
-      } catch {
-        return { error: `Invalid regex for ${key}.` }
-      }
-      attributes[key] = { regex: value }
-    } else {
-      attributes[key] = value
-    }
-    seenKeys.add(key)
+function isValidPattern(value: string): boolean {
+  try {
+    new RegExp(value)
+    return true
+  } catch {
+    return false
   }
-
-  return { value: { attributes } }
 }
 
-export function AnalyticsSection({ config, onConfigChange }: AnalyticsSectionProps) {
-  const [rows, setRows] = useState<AttributeRow[]>(() => getInitialRows(config))
+export function AnalyticsSection({ config }: AnalyticsSectionProps) {
+  const autosave = useConfigAutosaveContext()
+  const [removing, setRemoving] = useState<ReadonlySet<string>>(new Set())
+  const [adding, setAdding] = useState(false)
+  const listRef = useRef<HTMLUListElement>(null)
+  const addButton = useRef<HTMLButtonElement>(null)
+  const focusAddNext = useRef(false)
+
+  useEffect(() => {
+    if (!adding && focusAddNext.current) {
+      focusAddNext.current = false
+      addButton.current?.focus()
+    }
+  }, [adding])
+
+  const all = attributesOf(config)
+  const rows = all.filter((row) => !removing.has(row.key))
+
+  function focusAfterRemoving(key: string) {
+    const items = Array.from(listRef.current?.children ?? []) as HTMLElement[]
+    const index = items.findIndex((item) => item.dataset.passRateAttribute === key)
+    const neighbour = items[index + 1] ?? items[index - 1]
+    const target = neighbour?.querySelector("button") ?? addButton.current
+    target?.focus()
+  }
+
+  async function remove(key: string) {
+    focusAfterRemoving(key)
+    setRemoving((current) => new Set(current).add(key))
+    await autosave.runExplicit([{ op: "unset", path: [...ATTRIBUTES_PATH, key] }])
+    setRemoving((current) => {
+      const next = new Set(current)
+      next.delete(key)
+      return next
+    })
+  }
+
+  function closeAdd() {
+    focusAddNext.current = true
+    setAdding(false)
+  }
+
+  return (
+    <>
+      <div data-field-list="analytics.passRateScope.attributes" className="space-y-3">
+        <p className="text-xs text-muted-foreground break-words">{PASS_RATE_SCOPE_HELP}</p>
+        {rows.length > 0 ? (
+          <ul ref={listRef} className="space-y-2">
+            {rows.map((row) => (
+              <li
+                key={row.key}
+                data-pass-rate-attribute={row.key}
+                className="grid items-center gap-1 sm:grid-cols-[minmax(8rem,auto)_1fr_auto] sm:gap-3"
+              >
+                <div className="flex min-w-0 items-center gap-2">
+                  <span className="min-w-0 font-mono text-xs wrap-anywhere">{row.key}</span>
+                  {row.pattern ? <span className="text-xs text-muted-foreground">{ATTRIBUTE_PATTERN_TAG}</span> : null}
+                </div>
+                <SecretValue
+                  field={{ segments: row.segments, pattern: row.pattern ? REGEX_PATTERN : VALUE_PATTERN }}
+                  label={attributeValueLabel(row.key)}
+                  maskedText={row.maskedText}
+                />
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon-sm"
+                  aria-label={removeAttributeName(row.key)}
+                  className="hover:text-destructive"
+                  onClick={() => void remove(row.key)}
+                >
+                  <Trash2 className="size-3.5" aria-hidden="true" />
+                </Button>
+              </li>
+            ))}
+          </ul>
+        ) : null}
+        {adding ? <AddAttribute takenKeys={all.map((row) => row.key)} onClose={closeAdd} /> : null}
+        {adding ? null : (
+          <div className="flex flex-wrap items-center gap-3">
+            {rows.length === 0 ? <p className="text-sm text-muted-foreground">{NO_ATTRIBUTES_TEXT}</p> : null}
+            <Button ref={addButton} type="button" variant="outline" size="sm" onClick={() => setAdding(true)}>
+              <Plus className="size-3.5" aria-hidden="true" />
+              {ADD_ATTRIBUTE_LABEL}
+            </Button>
+          </div>
+        )}
+      </div>
+      <ConfigField
+        field={{ segments: ["analytics", "privacy"], tab: "project", pattern: "analytics.privacy" }}
+        label={PRIVACY_FIELD_LABELS.privacy}
+        kind="switch"
+        help={PRIVACY_FIELD_HELP.privacy}
+        unsetWhenOff
+      />
+    </>
+  )
+}
+
+function AddAttribute({ takenKeys, onClose }: { takenKeys: readonly string[]; onClose: () => void }) {
+  const autosave = useConfigAutosaveContext()
+  const patternId = useId()
+  const errorId = useId()
+  const [key, setKey] = useState("")
+  const [value, setValue] = useState("")
+  const [pattern, setPattern] = useState(false)
   const [saving, setSaving] = useState(false)
+  const name = key.trim()
+  const invalidPattern = pattern && value !== "" && !isValidPattern(value)
+  const ready = name !== "" && value !== "" && !takenKeys.includes(name) && !invalidPattern
 
-  function updateRow(id: string, patch: Partial<Omit<AttributeRow, "id">>) {
-    setRows((current) => current.map((row) => row.id === id ? { ...row, ...patch } : row))
-  }
-
-  function addRow() {
-    setRows((current) => [
-      ...current,
-      { id: `new-${Date.now()}-${current.length}`, key: "", mode: "exact", value: "" },
-    ])
-  }
-
-  function removeRow(id: string) {
-    setRows((current) => current.filter((row) => row.id !== id))
-  }
-
-  async function handleSave() {
-    const result = buildPassRateScope(rows)
-    if ("error" in result) {
-      toast.error(result.error)
-      return
-    }
-
+  async function save() {
+    if (!ready || saving) return
     setSaving(true)
-    try {
-      await updateSettings({
-        "analytics.passRateScope": result.value,
-      })
-      onConfigChange()
-      toast.success("Configuration saved")
-    } catch {
-      toast.error("Failed to save configuration")
-    } finally {
-      setSaving(false)
+    const change: ConfigChange = {
+      op: "set",
+      path: [...ATTRIBUTES_PATH, name],
+      value: pattern ? { regex: value } : value,
+    }
+    const landed = await autosave.runExplicit([change])
+    setSaving(false)
+    if (landed) onClose()
+  }
+
+  function keyDown(event: KeyboardEvent<HTMLInputElement>) {
+    if (event.key === "Enter") {
+      event.preventDefault()
+      void save()
+    } else if (event.key === "Escape") {
+      event.preventDefault()
+      onClose()
     }
   }
 
   return (
-    <ConfigSectionShell>
-      <ConfigSectionHeader>
-        <h2 className="text-base font-semibold">Pass Rate Scope</h2>
-        <p className="text-sm text-muted-foreground">Choose run attributes for scoped pass rate, flaky score, and test/suite analytics values.</p>
-      </ConfigSectionHeader>
-      <ConfigSectionBody>
-        {rows.length === 0 ? (
-          <ConfigLineNotice className="border-dashed">
-            No scoped attributes configured. Add at least one attribute to enable scoped analytics.
-          </ConfigLineNotice>
-        ) : (
-          <div className="overflow-hidden border border-border">
-            <div className="hidden grid-cols-[minmax(160px,1fr)_120px_minmax(160px,1fr)_44px] gap-3 border-b border-border px-3 py-2 text-xs text-muted-foreground md:grid">
-              <span>Key</span>
-              <span>Match</span>
-              <span>Value</span>
-              <span />
-            </div>
-            <div className="divide-y divide-border">
-              {rows.map((row) => (
-                <div
-                  key={row.id}
-                  className="grid grid-cols-1 items-end gap-3 px-3 py-3 md:grid-cols-[minmax(160px,1fr)_120px_minmax(160px,1fr)_44px]"
-                >
-                  <div className="space-y-2">
-                    <Label htmlFor={`analytics-scope-key-${row.id}`} className="sr-only">Attribute key</Label>
-                    <Input
-                      id={`analytics-scope-key-${row.id}`}
-                      data-testid="analytics-scope-key"
-                      value={row.key}
-                      placeholder="git.branch"
-                      onChange={(event) => updateRow(row.id, { key: event.target.value })}
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor={`analytics-scope-mode-${row.id}`} className="sr-only">Attribute match mode</Label>
-                    <Select
-                      value={row.mode}
-                      onValueChange={(value) => updateRow(row.id, { mode: value as AttributeMode })}
-                    >
-                      <SelectTrigger id={`analytics-scope-mode-${row.id}`}>
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="exact">Exact</SelectItem>
-                        <SelectItem value="regex">Regex</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor={`analytics-scope-value-${row.id}`} className="sr-only">Attribute value</Label>
-                    <Input
-                      id={`analytics-scope-value-${row.id}`}
-                      data-testid="analytics-scope-value"
-                      value={row.value}
-                      placeholder={row.mode === "regex" ? "^(main|master)$" : "master"}
-                      onChange={(event) => updateRow(row.id, { value: event.target.value })}
-                    />
-                  </div>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="icon"
-                    onClick={() => removeRow(row.id)}
-                    aria-label={`Remove ${row.key || "attribute"}`}
-                  >
-                    <Trash2 className="size-4" />
-                  </Button>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-
-        <div className="flex flex-wrap gap-2">
-          <Button type="button" variant="outline" size="sm" onClick={addRow}>
-            <Plus className="size-4" />
-            Add Attribute
-          </Button>
-          <Button type="button" size="sm" onClick={handleSave} disabled={saving}>
-            {saving ? <Loader2 className="size-4 animate-spin" /> : "Save Changes"}
-          </Button>
-        </div>
-      </ConfigSectionBody>
-    </ConfigSectionShell>
+    <div data-pass-rate-attribute-draft className="space-y-2">
+      <div className="flex max-w-md flex-wrap items-center gap-1">
+        <Input
+          type="text"
+          autoComplete="off"
+          autoFocus
+          aria-label={ATTRIBUTE_FIELD_LABELS.key}
+          placeholder={ATTRIBUTE_FIELD_LABELS.key}
+          value={key}
+          onChange={(event) => setKey(event.target.value)}
+          onKeyDown={keyDown}
+          className="h-8 w-36 font-mono"
+        />
+        <Input
+          type="password"
+          autoComplete="off"
+          aria-label={ATTRIBUTE_FIELD_LABELS.value}
+          aria-invalid={invalidPattern ? true : undefined}
+          aria-describedby={invalidPattern ? errorId : undefined}
+          placeholder={ATTRIBUTE_FIELD_LABELS.value}
+          value={value}
+          onChange={(event) => setValue(event.target.value)}
+          onKeyDown={keyDown}
+          className="h-8 min-w-0 flex-1 font-mono"
+        />
+      </div>
+      <div className="flex items-center gap-2">
+        <Switch id={patternId} checked={pattern} onCheckedChange={setPattern} />
+        <Label htmlFor={patternId}>{MATCH_AS_PATTERN_LABEL}</Label>
+      </div>
+      {invalidPattern ? (
+        <p id={errorId} className="text-xs text-destructive">
+          {INVALID_ATTRIBUTE_PATTERN_ERROR}
+        </p>
+      ) : null}
+      <div className="flex flex-wrap items-center gap-1">
+        <Button type="button" variant="outline" size="sm" disabled={!ready || saving} onClick={() => void save()}>
+          {SAVE_SETTING_LABEL}
+        </Button>
+        <Button type="button" variant="ghost" size="sm" onClick={onClose}>
+          {DISCARD_SETTING_LABEL}
+        </Button>
+      </div>
+    </div>
   )
 }

@@ -200,7 +200,7 @@ const SURFACE_MARKERS: Record<string, { title: string; marker: string }> = {
   'use:log-capture': { title: 'Log capture', marker: 'Capture network logs' },
   'use:mobile': { title: 'Mobile', marker: 'App state' },
   'use:execution-defaults': { title: 'Execution Defaults', marker: 'Default LLM' },
-  'analytics:pass-rate-scope': { title: 'Pass Rate Scope', marker: 'Add Attribute' },
+  'analytics:pass-rate-scope': { title: 'Pass-rate scope', marker: 'Add attribute' },
 }
 
 let container: HTMLDivElement | null = null

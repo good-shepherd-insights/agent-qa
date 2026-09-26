@@ -53,6 +53,8 @@ export interface ConfigFieldProps {
   placeholder?: string
   /** A switch's effective default position while the leaf is unset. */
   defaultChecked?: boolean
+  /** Turning the switch off removes the key, for a leaf the schema allows only as true. */
+  unsetWhenOff?: boolean
   options?: readonly ConfigFieldOption[]
   number?: ConfigNumberRules
   parse?: (raw: string) => ConfigFieldParse
@@ -92,6 +94,7 @@ export function ConfigField({
   help,
   placeholder,
   defaultChecked = false,
+  unsetWhenOff = false,
   options = [],
   number,
   parse,
@@ -164,7 +167,7 @@ export function ConfigField({
           <Switch
             id={controlId}
             checked={checked}
-            onCheckedChange={(next) => settleNow(next, { valid: true, value: next })}
+            onCheckedChange={(next) => settleNow(next, next || !unsetWhenOff ? { valid: true, value: next } : UNSET)}
             onFocus={focus}
             onBlur={() => autosave.setFocusedField(undefined)}
             {...aria}
