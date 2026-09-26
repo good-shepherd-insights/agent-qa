@@ -1,238 +1,306 @@
-import { useEffect, useMemo, useState } from "react"
-import { Loader2, Pencil, Plus, Trash2 } from "lucide-react"
-import { toast } from "sonner"
+// DEVICE FARMS (429-19 · D-08, D-09, D-23, D-24 · UI-SPEC S8 "Device farms", E8).
+//
+// registry.providers is secret wholesale, so each farm lists its settings key by key and every
+// value is a SecretValue: masked, revealed per click, replaced explicitly. New settings and farms
+// are typed into component state only and saved with an explicit button; deleting a farm acts at
+// once and offers Undo.
 
-import { updateSettings } from "@/lib/api"
-import {
-  ConfigSectionBody,
-  ConfigSectionHeader,
-  ConfigSectionShell,
-} from "@/components/config-manager/config-section-shell"
-import { Input } from "@/components/ui/input"
-import { Label } from "@/components/ui/label"
+import { useEffect, useRef, useState, type KeyboardEvent } from "react"
+import { Plus, Trash2 } from "lucide-react"
+import type { ConfigChange } from "@vostride/agent-qa-schema"
+
+import { SecretValue } from "@/components/config-manager/secret-value"
 import { Button } from "@/components/ui/button"
-import { Textarea } from "@/components/ui/textarea"
-import { Badge } from "@/components/ui/badge"
+import { Input } from "@/components/ui/input"
+import { useConfigAutosaveContext } from "@/hooks/use-config-autosave"
 import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog"
+  ADD_DEVICE_FARM_LABEL,
+  ADD_SETTING_LABEL,
+  DEVICE_FARM_FIELD_LABELS,
+  DISCARD_SETTING_LABEL,
+  NO_DEVICE_FARMS_TEXT,
+  SAVE_SETTING_LABEL,
+  deleteActionName,
+  deviceFarmSettingLabel,
+} from "@/lib/config-copy"
 
 interface ProvidersSectionProps {
   config: Record<string, unknown>
   onConfigChange: () => void
 }
 
-export function ProvidersSection({ config, onConfigChange }: ProvidersSectionProps) {
-  const initialProviders = useMemo(
-    () => (((config.registry as Record<string, unknown> | undefined) ?? {}).providers ?? {}) as Record<string, Record<string, unknown>>,
-    [config],
-  )
-  const [providers, setProviders] = useState<Record<string, Record<string, unknown>>>(initialProviders)
-  const [editingName, setEditingName] = useState<string | null>(null)
-  const [draftName, setDraftName] = useState("")
-  const [draftJson, setDraftJson] = useState("{}")
-  const [dialogOpen, setDialogOpen] = useState(false)
-  const [saving, setSaving] = useState(false)
+const SETTING_PATTERN = "registry.providers.*.*"
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+}
+
+function farmsOf(config: Record<string, unknown>): [string, Record<string, unknown>][] {
+  const registry = config.registry
+  const providers = isRecord(registry) ? registry.providers : undefined
+  if (!isRecord(providers)) return []
+  return Object.entries(providers).map(([name, settings]) => [name, isRecord(settings) ? settings : {}])
+}
+
+function maskedTextOf(value: unknown): string {
+  if (typeof value === "string") return value
+  if (value === null || value === undefined) return ""
+  return typeof value === "object" ? JSON.stringify(value) : String(value)
+}
+
+export function ProvidersSection({ config }: ProvidersSectionProps) {
+  const autosave = useConfigAutosaveContext()
+  const [removing, setRemoving] = useState<ReadonlySet<string>>(new Set())
+  const [adding, setAdding] = useState(false)
+  const listRef = useRef<HTMLUListElement>(null)
+  const addFarmButton = useRef<HTMLButtonElement>(null)
+  const focusAddFarmNext = useRef(false)
 
   useEffect(() => {
-    setProviders(initialProviders)
-  }, [initialProviders])
-
-  function resetDraft() {
-    setEditingName(null)
-    setDraftName("")
-    setDraftJson("{}")
-  }
-
-  function openCreateDialog() {
-    resetDraft()
-    setDialogOpen(true)
-  }
-
-  function parseProviderJson() {
-    try {
-      const parsed = JSON.parse(draftJson || "{}")
-      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-        toast.error("Provider config must be a JSON object")
-        return null
-      }
-      return parsed as Record<string, unknown>
-    } catch {
-      toast.error("Provider config must be valid JSON")
-      return null
+    if (!adding && focusAddFarmNext.current) {
+      focusAddFarmNext.current = false
+      addFarmButton.current?.focus()
     }
+  }, [adding])
+
+  const farms = farmsOf(config).filter(([name]) => !removing.has(name))
+  const names = new Set(farmsOf(config).map(([name]) => name))
+
+  function focusAfterRemoving(name: string) {
+    const rows = Array.from(listRef.current?.children ?? []) as HTMLElement[]
+    const index = rows.findIndex((row) => row.dataset.deviceFarm === name)
+    const neighbour = rows[index + 1] ?? rows[index - 1]
+    const target = neighbour?.querySelector("button") ?? addFarmButton.current
+    target?.focus()
   }
 
-  function handleApplyProvider() {
-    if (!draftName.trim()) {
-      toast.error("Provider key is required")
-      return
-    }
-    const parsed = parseProviderJson()
-    if (!parsed) return
-
-    const trimmedName = draftName.trim()
-    const nextProviders = { ...providers }
-    if (editingName && editingName !== trimmedName) {
-      delete nextProviders[editingName]
-    }
-    nextProviders[trimmedName] = parsed
-    setProviders(nextProviders)
-    setDialogOpen(false)
-    resetDraft()
+  async function deleteFarm(name: string) {
+    focusAfterRemoving(name)
+    setRemoving((current) => new Set(current).add(name))
+    await autosave.runExplicit([{ op: "unset", path: ["registry", "providers", name] }], {
+      kind: "delete-device-farm",
+      name,
+    })
+    setRemoving((current) => {
+      const next = new Set(current)
+      next.delete(name)
+      return next
+    })
   }
 
-  function handleEdit(name: string) {
-    setEditingName(name)
-    setDraftName(name)
-    setDraftJson(JSON.stringify(providers[name] ?? {}, null, 2))
-    setDialogOpen(true)
+  function closeAddFarm() {
+    focusAddFarmNext.current = true
+    setAdding(false)
   }
-
-  async function handleSave() {
-    setSaving(true)
-    try {
-      await updateSettings({ "registry.providers": providers })
-      onConfigChange()
-      toast.success("Changes saved")
-    } catch {
-      toast.error("Failed to save configuration")
-    } finally {
-      setSaving(false)
-    }
-  }
-
-  const providerNames = Object.keys(providers).sort()
 
   return (
-    <>
-      <ConfigSectionShell>
-        <ConfigSectionHeader>
-          <h2 className="text-base font-semibold">Providers</h2>
-          <p className="mt-1 text-sm text-muted-foreground">
-            Store provider-keyed integration config for BrowserStack and other supported remote services.
-          </p>
-        </ConfigSectionHeader>
-        <ConfigSectionBody>
-          <div className="space-y-3 border border-border bg-transparent rounded-none px-4 py-3">
-            <div className="flex flex-wrap items-start justify-between gap-3">
-              <div className="space-y-1">
-                <p className="text-sm font-medium">Provider integration registry</p>
-                <p className="text-xs text-muted-foreground">
-                  Use this when a transport or integration expects provider-specific JSON keyed by provider name.
-                </p>
+    <div data-field-list="registry.providers" className="space-y-3">
+      {farms.length > 0 ? (
+        <ul ref={listRef} className="divide-y divide-border">
+          {farms.map(([name, settings]) => (
+            <li key={name} data-device-farm={name} className="space-y-2 py-3 first:pt-0">
+              <div className="flex items-center gap-2">
+                <span className="min-w-0 flex-1 font-mono text-sm wrap-anywhere">{name}</span>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon-sm"
+                  aria-label={deleteActionName("delete-device-farm", name)}
+                  className="hover:text-destructive"
+                  onClick={() => void deleteFarm(name)}
+                >
+                  <Trash2 className="size-3.5" aria-hidden="true" />
+                </Button>
               </div>
-              <Button size="sm" onClick={openCreateDialog}>
-                <Plus className="size-4" />
-                Add Provider
-              </Button>
-            </div>
-            <p className="text-xs text-muted-foreground">
-              The schema is intentionally open-ended. The dashboard keeps the editor as raw JSON, parses it locally, and the config backend validates the final object again on save.
-            </p>
-          </div>
-
-          <div className="space-y-3">
-            {providerNames.length === 0 ? (
-              <div className="border border-dashed border-border bg-transparent rounded-none p-6 text-sm text-muted-foreground">
-                No providers configured. Add provider JSON when a remote integration needs named credentials or settings.
-              </div>
-            ) : (
-              providerNames.map((name) => (
-                <div key={name} className="border border-border bg-transparent rounded-none px-4 py-3">
-                  <div className="flex flex-wrap items-start justify-between gap-3">
-                    <div className="space-y-2">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <p className="font-medium">{name}</p>
-                        <Badge variant="secondary">Integration JSON</Badge>
-                      </div>
-                      <pre className="overflow-auto rounded-none bg-muted/40 p-3 text-xs text-muted-foreground">
-                        {JSON.stringify(providers[name] ?? {}, null, 2)}
-                      </pre>
+              {Object.keys(settings).length > 0 ? (
+                <dl className="space-y-2">
+                  {Object.entries(settings).map(([key, value]) => (
+                    <div key={key} className="grid items-center gap-1 sm:grid-cols-[minmax(8rem,auto)_1fr] sm:gap-3">
+                      <dt className="font-mono text-xs text-muted-foreground wrap-anywhere">{key}</dt>
+                      <dd>
+                        <SecretValue
+                          field={{ segments: ["registry", "providers", name, key], pattern: SETTING_PATTERN }}
+                          label={deviceFarmSettingLabel(name, key)}
+                          maskedText={maskedTextOf(value)}
+                        />
+                      </dd>
                     </div>
-                    <div className="flex items-center gap-2">
-                      <Button variant="outline" size="sm" onClick={() => handleEdit(name)}>
-                        <Pencil className="size-4" />
-                        Edit
-                      </Button>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => setProviders((current) => {
-                          const next = { ...current }
-                          delete next[name]
-                          return next
-                        })}
-                      >
-                        <Trash2 className="size-4" />
-                        Delete
-                      </Button>
-                    </div>
-                  </div>
-                </div>
-              ))
-            )}
-          </div>
-
-          <Button size="sm" onClick={handleSave} disabled={saving}>
-            {saving ? <Loader2 className="size-4 animate-spin" /> : "Save Changes"}
+                  ))}
+                </dl>
+              ) : null}
+              <AddSetting farm={name} existingKeys={Object.keys(settings)} />
+            </li>
+          ))}
+        </ul>
+      ) : null}
+      {adding ? <AddFarm takenNames={names} onClose={closeAddFarm} /> : null}
+      {adding ? null : (
+        <div className="flex flex-wrap items-center gap-3">
+          {farms.length === 0 ? <p className="text-sm text-muted-foreground">{NO_DEVICE_FARMS_TEXT}</p> : null}
+          <Button ref={addFarmButton} type="button" variant="outline" size="sm" onClick={() => setAdding(true)}>
+            <Plus className="size-3.5" aria-hidden="true" />
+            {ADD_DEVICE_FARM_LABEL}
           </Button>
-        </ConfigSectionBody>
-      </ConfigSectionShell>
+        </div>
+      )}
+    </div>
+  )
+}
 
-      <Dialog
-        open={dialogOpen}
-        onOpenChange={(open) => {
-          setDialogOpen(open)
-          if (!open) resetDraft()
+interface SettingDraft {
+  key: string
+  value: string
+}
+
+const EMPTY_SETTING: SettingDraft = { key: "", value: "" }
+
+/** A key and a password value, typed into component state only and saved with an explicit button. */
+function SettingInputs({
+  draft,
+  onChange,
+  onSave,
+  onDiscard,
+  autoFocus,
+}: {
+  draft: SettingDraft
+  onChange: (next: SettingDraft) => void
+  onSave: () => void
+  onDiscard: () => void
+  autoFocus: boolean
+}) {
+  function keyDown(event: KeyboardEvent<HTMLInputElement>) {
+    if (event.key === "Enter") {
+      event.preventDefault()
+      onSave()
+    } else if (event.key === "Escape") {
+      event.preventDefault()
+      onDiscard()
+    }
+  }
+
+  return (
+    <div className="flex max-w-md flex-wrap items-center gap-1">
+      <Input
+        type="text"
+        autoComplete="off"
+        autoFocus={autoFocus}
+        aria-label={DEVICE_FARM_FIELD_LABELS.key}
+        placeholder={DEVICE_FARM_FIELD_LABELS.key}
+        value={draft.key}
+        onChange={(event) => onChange({ ...draft, key: event.target.value })}
+        onKeyDown={keyDown}
+        className="h-8 w-36 font-mono"
+      />
+      <Input
+        type="password"
+        autoComplete="off"
+        aria-label={DEVICE_FARM_FIELD_LABELS.value}
+        placeholder={DEVICE_FARM_FIELD_LABELS.value}
+        value={draft.value}
+        onChange={(event) => onChange({ ...draft, value: event.target.value })}
+        onKeyDown={keyDown}
+        className="h-8 min-w-0 flex-1 font-mono"
+      />
+    </div>
+  )
+}
+
+function AddSetting({ farm, existingKeys }: { farm: string; existingKeys: readonly string[] }) {
+  const autosave = useConfigAutosaveContext()
+  const [open, setOpen] = useState(false)
+  const [draft, setDraft] = useState<SettingDraft>(EMPTY_SETTING)
+  const [saving, setSaving] = useState(false)
+  const addButton = useRef<HTMLButtonElement>(null)
+  const focusAddNext = useRef(false)
+  const key = draft.key.trim()
+  const ready = key !== "" && draft.value !== "" && !existingKeys.includes(key)
+
+  useEffect(() => {
+    if (!open && focusAddNext.current) {
+      focusAddNext.current = false
+      addButton.current?.focus()
+    }
+  }, [open])
+
+  function close() {
+    setDraft(EMPTY_SETTING)
+    focusAddNext.current = true
+    setOpen(false)
+  }
+
+  async function save() {
+    if (!ready || saving) return
+    setSaving(true)
+    const change: ConfigChange = { op: "set", path: ["registry", "providers", farm, key], value: draft.value }
+    const landed = await autosave.runExplicit([change])
+    setSaving(false)
+    if (landed) close()
+  }
+
+  if (!open) {
+    return (
+      <Button ref={addButton} type="button" variant="ghost" size="xs" onClick={() => setOpen(true)}>
+        <Plus className="size-3" aria-hidden="true" />
+        {ADD_SETTING_LABEL}
+      </Button>
+    )
+  }
+
+  return (
+    <div className="flex flex-wrap items-center gap-1">
+      <SettingInputs draft={draft} onChange={setDraft} onSave={() => void save()} onDiscard={close} autoFocus />
+      <Button type="button" variant="outline" size="sm" disabled={!ready || saving} onClick={() => void save()}>
+        {SAVE_SETTING_LABEL}
+      </Button>
+      <Button type="button" variant="ghost" size="sm" onClick={close}>
+        {DISCARD_SETTING_LABEL}
+      </Button>
+    </div>
+  )
+}
+
+function AddFarm({ takenNames, onClose }: { takenNames: ReadonlySet<string>; onClose: () => void }) {
+  const autosave = useConfigAutosaveContext()
+  const [name, setName] = useState("")
+  const [draft, setDraft] = useState<SettingDraft>(EMPTY_SETTING)
+  const [saving, setSaving] = useState(false)
+  const farm = name.trim()
+  const key = draft.key.trim()
+  const ready = farm !== "" && !takenNames.has(farm) && key !== "" && draft.value !== ""
+
+  async function save() {
+    if (!ready || saving) return
+    setSaving(true)
+    const change: ConfigChange = { op: "set", path: ["registry", "providers", farm], value: { [key]: draft.value } }
+    const landed = await autosave.runExplicit([change])
+    setSaving(false)
+    if (landed) onClose()
+  }
+
+  return (
+    <div data-device-farm-draft className="space-y-2">
+      <Input
+        type="text"
+        autoComplete="off"
+        autoFocus
+        aria-label={DEVICE_FARM_FIELD_LABELS.name}
+        placeholder={DEVICE_FARM_FIELD_LABELS.name}
+        value={name}
+        onChange={(event) => setName(event.target.value)}
+        onKeyDown={(event) => {
+          if (event.key === "Escape") onClose()
         }}
-      >
-        <DialogContent className="sm:max-w-xl">
-          <DialogHeader>
-            <DialogTitle>{editingName ? `Edit ${editingName}` : "Add Provider"}</DialogTitle>
-            <DialogDescription>
-              Update the provider entry in this section draft. Use Save Changes in the section to persist it to config.
-            </DialogDescription>
-          </DialogHeader>
-
-          <div className="space-y-4">
-            <div className="space-y-2">
-              <Label htmlFor="provider-key">Provider Key</Label>
-              <Input
-                id="provider-key"
-                placeholder="browserstack"
-                value={draftName}
-                onChange={(e) => setDraftName(e.target.value)}
-              />
-            </div>
-
-            <div className="space-y-2">
-              <Label htmlFor="provider-json">Provider JSON</Label>
-              <Textarea
-                id="provider-json"
-                className="min-h-[200px] font-mono text-sm"
-                value={draftJson}
-                onChange={(e) => setDraftJson(e.target.value)}
-              />
-              <p className="text-xs text-muted-foreground">
-                Keep provider payloads honest to the integration contract. This surface does not invent provider-specific forms.
-              </p>
-            </div>
-          </div>
-
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setDialogOpen(false)}>Cancel</Button>
-            <Button onClick={handleApplyProvider}>
-              {editingName ? "Apply Provider Changes" : "Add Provider to Section"}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-    </>
+        className="h-8 max-w-xs font-mono"
+      />
+      <div className="flex flex-wrap items-center gap-1">
+        <SettingInputs draft={draft} onChange={setDraft} onSave={() => void save()} onDiscard={onClose} autoFocus={false} />
+        <Button type="button" variant="outline" size="sm" disabled={!ready || saving} onClick={() => void save()}>
+          {SAVE_SETTING_LABEL}
+        </Button>
+        <Button type="button" variant="ghost" size="sm" onClick={onClose}>
+          {DISCARD_SETTING_LABEL}
+        </Button>
+      </div>
+    </div>
   )
 }

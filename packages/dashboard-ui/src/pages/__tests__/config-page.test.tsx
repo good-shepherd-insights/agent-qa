@@ -25,6 +25,7 @@ import {
 import { LLM_PROVIDER_OPTIONS } from '@/components/config-manager/llm-section'
 import {
   ACCESSIBILITY_FIELD_PLACEHOLDERS,
+  ADD_DEVICE_FARM_LABEL,
   CONFIG_LOAD_FAILED_TITLE,
   CONFIG_PAGE_TITLE,
   CONFIG_SECTION_LABELS,
@@ -34,6 +35,7 @@ import {
   HEADLESS_HELP,
   LEGACY_LINK_NOT_FOUND_TEXT,
   NOT_SAVED_ACTION_NAME,
+  NO_DEVICE_FARMS_TEXT,
   RELOAD_CONFIG_LABEL,
   RETRY_LABEL,
   SAVE_STATUS_WORDS,
@@ -41,6 +43,8 @@ import {
   TAB_DRAFT_SR_SUFFIX,
   configFileIssuesBody,
   configLoadFailedBody,
+  deleteActionName,
+  undoLine,
 } from '@/lib/config-copy'
 import { CONFIG_DRAFTS_STORAGE_PREFIX, configFieldControlId, configFieldKeyOf } from '@/hooks/use-config-autosave'
 import {
@@ -1746,21 +1750,51 @@ describe('ConfigPage task tabs shell', () => {
     })
   })
 
-  it('explains device farm usage clearly and edits them in a modal', async () => {
+  it('DEVICE-FARMS-SECRET-ROWS-ON-PAGE: device farms list each setting as a masked SecretValue with no dialog or section save', async () => {
     await renderAt('/config/targets?section=device-farms')
 
     const farms = section('device-farms')!
     expect(farms.querySelector('h2')?.textContent).toBe(CONFIG_SECTION_LABELS['device-farms'])
-    expect(farms.textContent).toContain('BrowserStack')
-    expect(farms.textContent).toContain('provider-specific JSON keyed by provider name')
+    const list = farms.querySelector('[data-field-list="registry.providers"]')
+    expect(list).not.toBeNull()
+    const row = list!.querySelector('[data-device-farm="openai"]')
+    expect(row).not.toBeNull()
+    const secret = row!.querySelector('[data-secret-field]')
+    expect(secret?.getAttribute('data-field-path')).toBe('registry.providers.*.*')
+    expect(secret?.getAttribute('data-reveal-state')).toBe('masked')
+    expect(row!.textContent).toContain('apiBase')
+    expect(farms.querySelector('textarea')).toBeNull()
+    expect(sectionButton('device-farms', 'Edit')).toBeNull()
+    expect(sectionButton('device-farms', 'Save Changes')).toBeNull()
+    expect(farms.textContent).not.toContain('provider-specific JSON')
+    expect(document.body.querySelector('[role="dialog"]')).toBeNull()
+    expect(sectionButton('device-farms', ADD_DEVICE_FARM_LABEL)).not.toBeNull()
+  })
 
+  it('DEVICE-FARM-DELETE-ON-PAGE: deleting a device farm writes one undoable unset and shows its Undo line', async () => {
+    vi.mocked(applyConfigChanges).mockResolvedValueOnce({
+      revision: 'rev-2',
+      undo: { token: 'tok-farm', expiresAt: Date.now() + 30_000 },
+    } as never)
+    await renderAt('/config/targets?section=device-farms')
+
+    const remove = Array.from(section('device-farms')!.querySelectorAll('button')).find(
+      (button) => button.getAttribute('aria-label') === deleteActionName('delete-device-farm', 'openai'),
+    )
+    expect(remove).toBeDefined()
     await act(async () => {
-      sectionButton('device-farms', 'Edit')!.click()
+      remove!.click()
     })
     await flushRender()
 
-    expect(document.body.textContent).toContain('Edit openai')
-    expect(document.body.textContent).toContain('Apply Provider Changes')
+    expect(section('device-farms')!.querySelector('[data-device-farm="openai"]')).toBeNull()
+    expect(applyConfigChanges).toHaveBeenCalledWith(
+      [{ op: 'unset', path: ['registry', 'providers', 'openai'] }],
+      { undoable: true },
+    )
+    expect(updateSettings).not.toHaveBeenCalled()
+    expect(container!.textContent).toContain(undoLine('delete-device-farm', 'openai'))
+    expect(section('device-farms')!.textContent).toContain(NO_DEVICE_FARMS_TEXT)
   })
 })
 

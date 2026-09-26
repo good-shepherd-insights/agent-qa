@@ -476,6 +476,18 @@ export function keepValueName(label: string): string {
 export const SAVE_SETTING_LABEL = 'Save setting'
 export const DISCARD_SETTING_LABEL = 'Discard setting'
 export const ADD_SETTING_LABEL = 'Add setting'
+export const ADD_DEVICE_FARM_LABEL = 'Add device farm'
+
+export const DEVICE_FARM_FIELD_LABELS = {
+  name: 'Name',
+  key: 'Setting',
+  value: 'Value',
+} as const satisfies Record<string, string>
+
+/** A farm setting's accessible label, so each eye and Replace value names its own farm and key. */
+export function deviceFarmSettingLabel(farm: string, key: string): string {
+  return `${farm} ${key}`
+}
 export const REVEAL_FAILED_TEXT = "Couldn't show this value. Try again."
 
 export const TOUR_LLM_SETUP_BODY =

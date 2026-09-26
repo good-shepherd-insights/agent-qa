@@ -193,7 +193,7 @@ const SURFACE_MARKERS: Record<string, { title: string; marker: string }> = {
   'registry:llms': { title: 'Models', marker: 'Add Configuration' },
   'registry:targets': { title: 'Targets', marker: 'Add Target' },
   'registry:devices': { title: 'Devices', marker: 'Add Device' },
-  'registry:providers': { title: 'Providers', marker: 'BrowserStack' },
+  'registry:providers': { title: 'Device farms', marker: 'Add device farm' },
   'use:browser': { title: 'Browser', marker: 'Viewport width' },
   'use:timeouts': { title: 'Timeouts', marker: 'Step timeout' },
   'use:planner': { title: 'Planner', marker: 'Max Sub-Actions' },
@@ -288,8 +288,8 @@ async function assertConfigSectionShells(destinations: string[]) {
     expect(view.textContent).toContain(contract.title)
     expect(view.textContent).toContain(contract.marker)
     expect(view.textContent).not.toContain('Missing config surface')
-    // A section rebuilt on ConfigField has field rows in place of the shipped shell.
-    expect(view.querySelector('[data-config-section-shell], [data-config-field]')).not.toBeNull()
+    // A section rebuilt on ConfigField or as a record list has field rows in place of the shipped shell.
+    expect(view.querySelector('[data-config-section-shell], [data-config-field], [data-field-list]')).not.toBeNull()
     expect(view.querySelector('[data-config-section-shell] [data-slot="card"]')).toBeNull()
 
     cleanupRender()
