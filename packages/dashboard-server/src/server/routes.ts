@@ -66,6 +66,7 @@ import {
   registerConfigRevisionRoute,
   registerConfigWriteRoute,
 } from './config-routes.js'
+import { registerLlmConnectRoute } from './llm-connect-route.js'
 import type { PostProcessingRelay } from '../execution/post-processing-relay.js'
 import type { LLMAuthProviderPlugin, OAuthTokens } from '@vostride/agent-qa-core'
 import { AuthStateNameSchema, buildInternalRunAttributes, mergeRunAttributes, readAuth, writeAuth, removeAuth, getAgentQaVersion, getAgentQaUpdateStatus, getLLMAuthProviderPlugin, listAuthStateMetadata, listLLMAuthProviderPlugins, ModelConfigSchema, NamedLLMConfigSchema, NameSlugSchema, WorkspaceSchema, ServicesSchema, RegistrySchema, UseSchema, MobileAppStateSchema, TimeoutConfigSchema, CacheConfigSchema, PlannerConfigSchema, LoggingConfigSchema, LogCaptureConfigSchema, AccessibilityConfigSchema, DashboardConfigSchema, McpConfigSchema, RecordingConfigSchema, BrowserConfigSchema, AnalyticsSchema, AgentQaConfigSchema, TestDefinitionSchema, SuiteDefinitionSchema, parseEnvFile, serializeEnvFile, parseHooksFile, RUNTIME_IMAGE_MAP, redactAuthStateValue, validateUserRunAttributes, discoverWorkspaceFiles, isWorkspacePathMatch, resolveWorkspaceFileTarget, SizeString, KnowledgeConfigSchema } from '@vostride/agent-qa-core'
@@ -1920,6 +1921,22 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps): (req: In
         return
       }
       registerConfigRevealRoute(req, res, { configManager })
+      return
+    }
+
+    // 429-10 D-15/D-17: the draft connect transaction, ahead of the shared OPTIONS arm so its
+    // answers never pass through the wildcard grant.
+    if (path === '/api/llm/connect' && req.method === 'POST') {
+      if (!configManager) {
+        jsonNoCors(res, { error: 'config_unavailable' }, 503)
+        return
+      }
+      registerLlmConnectRoute(req, res, {
+        configManager,
+        withCredentialLock,
+        credentialProvider: (name, credential) => credentialProductProvider(name, credential as DashboardAuthCredential),
+        connectionTimeoutMs: llmConnectionTestTimeoutMs,
+      })
       return
     }
 
