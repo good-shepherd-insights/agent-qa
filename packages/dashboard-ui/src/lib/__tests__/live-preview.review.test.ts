@@ -5,6 +5,7 @@ import { describe, expect, it } from 'vitest'
 
 import {
   LIVE_RECONNECT_BACKOFF_MS,
+  NO_STREAM_TEXT,
   PREVIEW_UNAVAILABLE_TEXT,
   createInitialLivePreview,
   deriveLivePreview,
@@ -37,5 +38,21 @@ describe('the live preview machine after review (428)', () => {
       const state = reduceLivePreview(createInitialLivePreview(), { type: 'mint-refused', word }, T)
       expect(deriveLivePreview(state, T), word).toMatchObject({ state: 'unavailable', words: PREVIEW_UNAVAILABLE_TEXT })
     }
+  })
+
+  it('WR-06 READY-NONE-IS-NO-STREAM: a greet that finds no stream under an up iframe says so instead of loading forever', () => {
+    const embedded = reduceLivePreview(
+      createInitialLivePreview(),
+      { type: 'minted', stream: { kind: 'cdp-screencast' }, memberAnswered: true },
+      T,
+    )
+    const reconnecting = reduceLivePreview(embedded, { type: 'embed', report: { event: 'lost' } }, T + 1)
+    for (const [name, state] of [['embedded', embedded], ['reconnecting', reconnecting]] as const) {
+      const next = reduceLivePreview(state, { type: 'embed', report: { event: 'ready', kind: 'none' } }, T + 2)
+      expect(deriveLivePreview(next, T + 3), name).toMatchObject({ state: 'no-stream', words: NO_STREAM_TEXT })
+    }
+
+    const ready = reduceLivePreview(embedded, { type: 'embed', report: { event: 'ready', kind: 'cdp-screencast' } }, T + 2)
+    expect(deriveLivePreview(ready, T + 3).state, 'a real stream still waits for its first frame').toBe('loading')
   })
 })

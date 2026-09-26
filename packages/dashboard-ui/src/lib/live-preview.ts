@@ -311,7 +311,11 @@ function showing(state: LivePreviewMachine): boolean {
 function reduceReport(state: LivePreviewMachine, report: EmbedReport, now: number): LivePreviewMachine {
   switch (report.event) {
     case 'ready':
-      return showing(state) ? { ...state, ready: report.kind } : state
+      if (!showing(state)) return state
+      // The greet read the capability after the mint did: a member that withdrew in between is
+      // greeted with `none`, and no frame or end will follow on this socket (428 WR-06).
+      if (report.kind === 'none') return { ...carried(state), phase: 'no-stream' }
+      return { ...state, ready: report.kind }
     case 'frame': {
       if (!showing(state)) return state
       const skew = report.ts === undefined ? state.skew : Math.min(state.skew ?? Infinity, now - report.ts)
