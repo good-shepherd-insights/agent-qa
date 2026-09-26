@@ -165,6 +165,15 @@ export const MODEL_STATUS_WORDS = {
 
 export const DEFAULT_BADGE = 'Default'
 
+/** Provider labels for when the provider list can't be read; a row never shows a provider id. */
+export const PROVIDER_FALLBACK_LABELS = {
+  'openai-compatible': 'OpenAI-compatible',
+  'anthropic-compatible': 'Anthropic-compatible',
+  gemini: 'Gemini',
+  'openai-subscription': 'ChatGPT plan',
+  'anthropic-subscription': 'Claude plan',
+} as const satisfies Record<string, string>
+
 export function modelLine(model: string, providerLabel: string): string {
   return `${model}${STATUS_SEPARATOR}${providerLabel}`
 }
