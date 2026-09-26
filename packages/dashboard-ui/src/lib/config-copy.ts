@@ -726,6 +726,30 @@ export function removeMatchSettingName(device: string, key: string): string {
   return `Remove setting ${key} from ${device}`
 }
 
+export const MCP_FIELD_LABELS = {
+  enabled: 'MCP server',
+  transport: 'Transport',
+  host: 'Host',
+  port: 'Port',
+  path: 'Path',
+  grantConfigWrite: 'Config edits over stdio',
+} as const satisfies Record<string, string>
+
+export const MCP_FIELD_HELP = {
+  enabled: "When off, the dashboard doesn't host the MCP endpoint. Declared tokens stay in the file.",
+  host: 'Only localhost, 127.0.0.1 or ::1.',
+  grantConfigWrite: 'Lets an editor that starts agent-qa over stdio change this config.',
+} as const satisfies Record<string, string>
+
+export const MCP_TRANSPORT_LABELS = {
+  http: 'HTTP',
+  stdio: 'Stdio',
+} as const satisfies Record<'http' | 'stdio', string>
+
+export const MCP_TRANSPORT_PLACEHOLDER = 'Not set'
+export const MCP_HOST_ERROR = 'Use localhost, 127.0.0.1 or ::1.'
+export const MCP_PATH_ERROR = 'Start the path with /.'
+
 export const ACCESS_TOKENS_HEADING = 'Access tokens'
 export const ADD_TOKEN_LABEL = 'Add token'
 export const NO_TOKENS_TEXT = 'No access tokens yet.'

@@ -1775,6 +1775,40 @@ describe('ConfigPage task tabs shell', () => {
     expect(panel.querySelector('[data-config-section-shell]')).toBeNull()
   })
 
+  it('ADVANCED-TOKEN-LEAVES-HAVE-FIELDS: the Advanced tab has a field for every MCP leaf and a list for MCP and run-service tokens', async () => {
+    await renderAt('/config/advanced')
+
+    const panel = container!.querySelector('[data-config-panel="advanced"]') as HTMLElement
+    expect(panel).not.toBeNull()
+    expect(section('mcp')).not.toBeNull()
+    expect(section('run-service-tokens')).not.toBeNull()
+    for (const path of [
+      'services.mcp.enabled',
+      'services.mcp.transport',
+      'services.mcp.host',
+      'services.mcp.port',
+      'services.mcp.path',
+      'services.mcp.stdio.grantConfigWrite',
+    ]) {
+      expect(section('mcp')!.querySelector(`[data-field-path="${path}"]`), path).not.toBeNull()
+    }
+    expect(section('mcp')!.querySelector('[data-field-list="services.mcp.tokens"]')).not.toBeNull()
+    expect(
+      section('run-service-tokens')!.querySelector('[data-field-list="services.dashboard.runServiceTokens"]'),
+    ).not.toBeNull()
+
+    const advancedLeaves = CONFIG_SCHEMA_LEAVES.filter(
+      (pattern) => pattern.startsWith('services.mcp.') || pattern.startsWith('services.dashboard.runServiceTokens'),
+    )
+    expect(advancedLeaves.length, 'the witness: the filter found the MCP and run-service leaves').toBeGreaterThanOrEqual(13)
+    for (const pattern of advancedLeaves) {
+      const owner = configLeafOwner(pattern)
+      expect(panel.querySelector(`[data-field-path="${owner}"], [data-field-list="${owner}"]`), pattern).not.toBeNull()
+    }
+    const buttonNames = Array.from(panel.querySelectorAll('button')).map((button) => button.textContent?.trim())
+    expect(buttonNames).not.toContain('Save Changes')
+  })
+
   it('exposes vision and context window per model while the shared screenshot budget stays out of the model row', async () => {
     await renderAt('/config/models')
 
