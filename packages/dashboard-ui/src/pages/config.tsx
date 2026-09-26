@@ -1,11 +1,17 @@
-import { useCallback, useEffect, useState, type ComponentType } from "react"
+import { useEffect, useState, type ComponentType } from "react"
 import { useNavigate, useParams, useSearchParams } from "react-router"
 
 import { Button } from "@/components/ui/button"
 import { Tabs, TabsContent } from "@/components/ui/tabs"
 import { FormSkeleton } from "@/components/page-skeleton"
-import { fetchAppMetadata, fetchConfig } from "@/lib/api"
+import { fetchAppMetadata } from "@/lib/api"
 import { usePageTitle } from "@/hooks/use-page-title"
+import {
+  ConfigAutosaveProvider,
+  configFieldControlId,
+  useConfigAutosave,
+  type ConfigDraftTarget,
+} from "@/hooks/use-config-autosave"
 import {
   CONFIG_SECTIONS,
   CONFIG_TABS,
@@ -16,15 +22,18 @@ import {
   type ConfigTab,
 } from "@/lib/config-tabs"
 import {
+  CONFIG_FILE_ISSUES_TITLE,
   CONFIG_LOAD_FAILED_TITLE,
   CONFIG_PAGE_TITLE,
   CONFIG_SECTION_LABELS,
   LEGACY_LINK_NOT_FOUND_TEXT,
   RELOAD_CONFIG_LABEL,
+  configFileIssuesBody,
   configLoadFailedBody,
 } from "@/lib/config-copy"
 import { ConfigLineNotice } from "@/components/config-manager/config-section-shell"
 import { ConfigTabBar } from "@/components/config-manager/config-tabs"
+import { SaveStatus } from "@/components/config-manager/save-status"
 import { LlmSection } from "@/components/config-manager/llm-section"
 import { TimeoutSection } from "@/components/config-manager/timeout-section"
 import { CacheSection } from "@/components/config-manager/cache-section"
@@ -75,11 +84,6 @@ const SECTION_COMPONENTS: Partial<Record<ConfigSectionId, readonly ComponentType
   "pass-rate-scope": [AnalyticsSection],
 }
 
-type LoadState =
-  | { kind: "loading" }
-  | { kind: "error"; reason: string }
-  | { kind: "ready"; config: Record<string, unknown> }
-
 function configSectionHeadingId(section: ConfigSectionId): string {
   return `config-section-${section}-heading`
 }
@@ -88,9 +92,8 @@ function sectionBelongsTo(tab: ConfigTab, section: string): section is ConfigSec
   return (CONFIG_SECTIONS[tab] as readonly string[]).includes(section)
 }
 
-function loadFailureReason(error: unknown): string {
-  const text = error instanceof Error ? error.message : String(error)
-  return text.trim().replace(/[.\s]+$/, "")
+function issueReason(message: string): string {
+  return message.trim().replace(/[.\s]+$/, "")
 }
 
 function prefersReducedMotion(): boolean {
@@ -102,7 +105,9 @@ export default function ConfigPage() {
   const navigate = useNavigate()
   const { tab: tabParam } = useParams()
   const [searchParams] = useSearchParams()
-  const [state, setState] = useState<LoadState>({ kind: "loading" })
+  const autosave = useConfigAutosave()
+  const state = autosave.load
+  const [pendingFocus, setPendingFocus] = useState<ConfigDraftTarget | undefined>(undefined)
   const [appVersion, setAppVersion] = useState<string | null>(null)
   const [showLegacyNotice, setShowLegacyNotice] = useState(false)
 
@@ -130,19 +135,6 @@ export default function ConfigPage() {
       navigate(configTabPath("models"), { replace: true })
     }
   }, [navigate, resolvedTab, searchParams, sectionParam, tabParam])
-
-  const loadConfig = useCallback(async () => {
-    try {
-      const res = await fetchConfig()
-      setState({ kind: "ready", config: res.config })
-    } catch (error) {
-      setState({ kind: "error", reason: loadFailureReason(error) })
-    }
-  }, [])
-
-  useEffect(() => {
-    void loadConfig()
-  }, [loadConfig])
 
   useEffect(() => {
     let active = true
@@ -177,6 +169,17 @@ export default function ConfigPage() {
     navigate(configTabPath(resolvedTab), { replace: true })
   }, [navigate, ready, resolvedTab, sectionParam])
 
+  // Not saved: focus the draft's control once its tab is active. Radix mounts a newly active
+  // panel's children one render later, so the focus waits a tick.
+  useEffect(() => {
+    if (pendingFocus === undefined || pendingFocus.tab !== tab) return
+    const timer = setTimeout(() => {
+      document.getElementById(configFieldControlId(pendingFocus.fieldKey))?.focus()
+      setPendingFocus(undefined)
+    }, 0)
+    return () => clearTimeout(timer)
+  }, [pendingFocus, tab])
+
   function handleTabChange(value: string) {
     const next = resolveConfigTab(value)
     if (next === undefined || next === tab) return
@@ -184,9 +187,14 @@ export default function ConfigPage() {
     navigate(configTabPath(next))
   }
 
-  function reloadConfig() {
-    setState({ kind: "loading" })
-    void loadConfig()
+  function goToFirstDraft() {
+    const target = autosave.goToFirstDraft()
+    if (target === undefined) return
+    if (target.tab !== tab) {
+      setShowLegacyNotice(false)
+      navigate(configTabPath(target.tab))
+    }
+    setPendingFocus(target)
   }
 
   if (state.kind === "loading") {
@@ -211,48 +219,67 @@ export default function ConfigPage() {
         <ConfigLineNotice data-config-load-error className="mt-6 space-y-2">
           <p className="text-sm font-medium text-foreground">{CONFIG_LOAD_FAILED_TITLE}</p>
           <p className="text-xs">{configLoadFailedBody(state.reason)}</p>
-          <Button type="button" variant="outline" size="sm" onClick={reloadConfig}>
+          <Button type="button" variant="outline" size="sm" onClick={autosave.reload}>
             {RELOAD_CONFIG_LABEL}
           </Button>
         </ConfigLineNotice>
       ) : (
-        <Tabs value={tab} onValueChange={handleTabChange} className="mt-6">
-          <ConfigTabBar tab={tab} />
-          {CONFIG_TABS.map((id) => (
-            <TabsContent
-              key={id}
-              value={id}
-              data-config-panel={id}
-              data-tour-id={id === tab ? "tour-config-section" : undefined}
-              className="space-y-8 pt-6"
-            >
-              {CONFIG_SECTIONS[id].map((section) => {
-                const components = SECTION_COMPONENTS[section]
-                if (!components) return null
-                const headingId = configSectionHeadingId(section)
-                return (
-                  <section
-                    key={section}
-                    data-config-section={section}
-                    aria-labelledby={headingId}
-                    className="space-y-4"
-                  >
-                    <h2
-                      id={headingId}
-                      tabIndex={-1}
-                      className="rounded-sm text-base font-medium leading-snug outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
+        <ConfigAutosaveProvider value={autosave}>
+          {state.answer.fileIssues?.[0] ? (
+            <ConfigLineNotice data-config-file-issues className="mt-6 space-y-2">
+              <p className="text-sm font-medium text-foreground">{CONFIG_FILE_ISSUES_TITLE}</p>
+              <p className="text-xs">{configFileIssuesBody(issueReason(state.answer.fileIssues[0].message))}</p>
+            </ConfigLineNotice>
+          ) : null}
+          <Tabs value={tab} onValueChange={handleTabChange} className="mt-6">
+            <ConfigTabBar
+              tab={tab}
+              draftTabs={autosave.draftTabs}
+              statusSlot={
+                <SaveStatus
+                  status={autosave.status}
+                  onRetry={autosave.retry}
+                  onUndo={() => void autosave.undo()}
+                  onGoToDraft={goToFirstDraft}
+                />
+              }
+            />
+            {CONFIG_TABS.map((id) => (
+              <TabsContent
+                key={id}
+                value={id}
+                data-config-panel={id}
+                data-tour-id={id === tab ? "tour-config-section" : undefined}
+                className="space-y-8 pt-6"
+              >
+                {CONFIG_SECTIONS[id].map((section) => {
+                  const components = SECTION_COMPONENTS[section]
+                  if (!components) return null
+                  const headingId = configSectionHeadingId(section)
+                  return (
+                    <section
+                      key={section}
+                      data-config-section={section}
+                      aria-labelledby={headingId}
+                      className="space-y-4"
                     >
-                      {CONFIG_SECTION_LABELS[section]}
-                    </h2>
-                    {components.map((Component, index) => (
-                      <Component key={index} config={state.config} onConfigChange={loadConfig} />
-                    ))}
-                  </section>
-                )
-              })}
-            </TabsContent>
-          ))}
-        </Tabs>
+                      <h2
+                        id={headingId}
+                        tabIndex={-1}
+                        className="rounded-sm text-base font-medium leading-snug outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
+                      >
+                        {CONFIG_SECTION_LABELS[section]}
+                      </h2>
+                      {components.map((Component, index) => (
+                        <Component key={index} config={state.answer.config} onConfigChange={autosave.refresh} />
+                      ))}
+                    </section>
+                  )
+                })}
+              </TabsContent>
+            ))}
+          </Tabs>
+        </ConfigAutosaveProvider>
       )}
 
       <p

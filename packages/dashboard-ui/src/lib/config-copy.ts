@@ -88,6 +88,13 @@ export function configLoadFailedBody(reason: string): string {
 
 export const RELOAD_CONFIG_LABEL = 'Reload config'
 
+/** The file parses but fails whole-config validation (429-16): one notice above the tabs. */
+export const CONFIG_FILE_ISSUES_TITLE = 'The config file has a problem'
+
+export function configFileIssuesBody(reason: string): string {
+  return `${reason}. Fix it in your editor — this page picks up the change.`
+}
+
 export const SAVE_STATUS_WORDS = {
   saving: 'Saving…',
   saved: 'Saved',

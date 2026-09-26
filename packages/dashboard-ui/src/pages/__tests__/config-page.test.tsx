@@ -8,11 +8,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { APPROVED_SAAS_PLACEHOLDER_SLUGS } from '@vostride/agent-qa-ids'
 
 import {
+  applyConfigChanges,
   exchangePluginAuthCode,
   fetchAppMetadata,
   fetchAuthStates,
   fetchAuthStatus,
   fetchConfig,
+  fetchConfigRevision,
   fetchLLMProviders,
   pollPluginAuthResult,
   saveCredential,
@@ -27,10 +29,17 @@ import {
   CONFIG_SECTION_LABELS,
   CONFIG_TAB_LABELS,
   CONFIG_TABS_ARIA_LABEL,
+  CONFIG_FILE_ISSUES_TITLE,
   LEGACY_LINK_NOT_FOUND_TEXT,
+  NOT_SAVED_ACTION_NAME,
   RELOAD_CONFIG_LABEL,
+  RETRY_LABEL,
+  SAVE_STATUS_WORDS,
+  TAB_DRAFT_SR_SUFFIX,
+  configFileIssuesBody,
   configLoadFailedBody,
 } from '@/lib/config-copy'
+import { CONFIG_DRAFTS_STORAGE_PREFIX, configFieldControlId, configFieldKeyOf } from '@/hooks/use-config-autosave'
 import {
   CONFIG_SECTIONS,
   CONFIG_TABS,
@@ -148,6 +157,50 @@ vi.mock('@/lib/api', () => ({
   exchangePluginAuthCode: vi.fn().mockResolvedValue({ status: 'completed', saved: true }),
   deleteAuthCredential: vi.fn(),
 }))
+
+// A stand-in for a section rebuilt on the shared autosave hook (429-16): the shipped Timeouts
+// editor still renders, and beside it one step-timeout input reads and writes through the
+// page's ConfigAutosaveProvider, settling on Enter like every rebuilt text field.
+vi.mock('@/components/config-manager/timeout-section', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/components/config-manager/timeout-section')>()
+  const autosave = await import('@/hooks/use-config-autosave')
+  const field = { segments: ['use', 'timeout', 'step'], tab: 'execution' } as const
+  function AutosaveProbe() {
+    const hook = autosave.useConfigAutosaveContext()
+    const id = autosave.configFieldControlId(autosave.configFieldKeyOf(field.segments))
+    const error = hook.errorOf(field)
+    return (
+      <>
+        <input
+          id={id}
+          data-autosave-probe
+          aria-invalid={error === undefined ? undefined : true}
+          aria-describedby={error === undefined ? undefined : `${id}-error`}
+          value={String(hook.valueOf(field) ?? '')}
+          onChange={(event) => {
+            const raw = event.target.value
+            hook.edit(field, raw, /^\d+s$/.test(raw)
+              ? { valid: true, value: raw }
+              : { valid: false, error: 'Use a duration like 30s.' })
+          }}
+          onKeyDown={(event) => {
+            if (event.key === 'Enter') hook.settle(field)
+          }}
+        />
+        {error === undefined ? null : <p id={`${id}-error`}>{error}</p>}
+      </>
+    )
+  }
+  return {
+    ...actual,
+    TimeoutSection: (props: Parameters<typeof actual.TimeoutSection>[0]) => (
+      <>
+        <actual.TimeoutSection {...props} />
+        <AutosaveProbe />
+      </>
+    ),
+  }
+})
 
 vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn() } }))
 vi.mock('@/hooks/use-page-title', () => ({ usePageTitle: () => {} }))
@@ -332,6 +385,181 @@ afterEach(() => {
   container = null
   delete (Element.prototype as { scrollIntoView?: unknown }).scrollIntoView
   vi.clearAllMocks()
+  localStorage.clear()
+})
+
+const STEP_SEGMENTS = ['use', 'timeout', 'step']
+const STEP_KEY = configFieldKeyOf(STEP_SEGMENTS)
+
+function probeInput() {
+  return container?.querySelector('[data-autosave-probe]') as HTMLInputElement | null
+}
+
+function statusRegion() {
+  return container?.querySelector('[data-config-tabbar] [role="status"]') as HTMLElement | null
+}
+
+/** Types a value into the probe and settles it with Enter, so focus never leaves the field. */
+async function typeAndSettle(value: string) {
+  const input = probeInput()
+  expect(input, 'the probe input').not.toBeNull()
+  await act(async () => {
+    input!.focus()
+    setInputValue(input!, value)
+  })
+  await act(async () => {
+    input!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }))
+  })
+  await flushRender()
+}
+
+function refusedWrite() {
+  return Object.assign(new Error('validation_failed'), {
+    payload: {
+      error: 'validation_failed',
+      issues: [{ path: STEP_SEGMENTS, message: 'Step timeout must be at least 1s.' }],
+    },
+  })
+}
+
+/**
+ * What Tab visits, in order: enabled controls and tabindex >= 0 elements in DOM order, skipping
+ * hidden inactive panels. Radix makes the tab list itself the strip's one stop (roving focus
+ * then lands on the active tab).
+ */
+function tabStops(root: ParentNode): HTMLElement[] {
+  return (Array.from(root.querySelectorAll('a[href], button, input, select, textarea, [tabindex]')) as HTMLElement[])
+    .filter((element) => element.tabIndex >= 0 && !(element as HTMLButtonElement).disabled)
+    .filter((element) => element.closest('[hidden], [aria-hidden="true"], .sr-only') === null)
+}
+
+describe('ConfigPage autosave wiring (429-16 Task 3)', () => {
+  it('STATUS-IN-TAB-BAR: the one status sits in the tab bar, outside the scrolling tab list', async () => {
+    const view = await renderAt('/config/models')
+
+    const statuses = view.querySelectorAll('[data-save-status]')
+    expect(statuses).toHaveLength(1)
+    const status = statuses[0]!
+    expect(status.closest('[data-config-tabbar]')).not.toBeNull()
+    expect(status.closest('[data-config-tabs-scroll]')).toBeNull()
+    expect(status.closest('[data-config-status-slot]')?.className).toContain('shrink-0')
+    expect(status.getAttribute('data-save-status')).toBe('idle')
+  })
+
+  it('TAB-DRAFT-DOT: a draft restored from storage marks its tab with a dot and an accessible suffix', async () => {
+    localStorage.setItem(
+      `${CONFIG_DRAFTS_STORAGE_PREFIX}${CONFIG_FILE_PATH}`,
+      JSON.stringify({ [STEP_KEY]: { segments: STEP_SEGMENTS, tab: 'execution', raw: '30 seconds' } }),
+    )
+    const view = await renderAt('/config/models')
+
+    const execution = tabTrigger('execution')!
+    expect(execution.querySelector('[data-tab-draft]')).not.toBeNull()
+    expect(execution.querySelector('[data-tab-draft]')?.getAttribute('aria-hidden')).not.toBeNull()
+    expect(execution.textContent).toBe(`${CONFIG_TAB_LABELS.execution}${TAB_DRAFT_SR_SUFFIX}`)
+    for (const tab of CONFIG_TABS.filter((id) => id !== 'execution')) {
+      expect(tabTrigger(tab)?.querySelector('[data-tab-draft]'), tab).toBeNull()
+      expect(tabTrigger(tab)?.textContent, tab).toBe(CONFIG_TAB_LABELS[tab])
+    }
+    expect(view.querySelector('[data-save-status]')?.getAttribute('data-save-status')).toBe('draft')
+    expect(applyConfigChanges).not.toHaveBeenCalled()
+  })
+
+  it('NOT-SAVED-GOES-TO-FIRST-DRAFT: Not saved opens the draft\'s tab and focuses its field', async () => {
+    localStorage.setItem(
+      `${CONFIG_DRAFTS_STORAGE_PREFIX}${CONFIG_FILE_PATH}`,
+      JSON.stringify({ [STEP_KEY]: { segments: STEP_SEGMENTS, tab: 'execution', raw: '30 seconds' } }),
+    )
+    await renderAt('/config/models')
+
+    const notSaved = container?.querySelector(`button[aria-label="${NOT_SAVED_ACTION_NAME}"]`) as HTMLButtonElement | null
+    expect(notSaved).not.toBeNull()
+    await act(async () => {
+      notSaved!.click()
+    })
+    await flushRender()
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0))
+    })
+
+    expect(currentLocation().pathname).toBe('/config/execution')
+    expect(document.activeElement).toBe(probeInput())
+    expect(document.activeElement?.id).toBe(configFieldControlId(STEP_KEY))
+    expect(probeInput()?.value).toBe('30 seconds')
+  })
+
+  it('ERROR-ANNOUNCED-FOCUS-STAYS: a refused write is announced politely, marks the field, and leaves focus where it was', async () => {
+    vi.mocked(applyConfigChanges).mockRejectedValueOnce(refusedWrite())
+    await renderAt('/config/execution')
+
+    await typeAndSettle('0s')
+
+    expect(applyConfigChanges).toHaveBeenCalledTimes(1)
+    expect(vi.mocked(applyConfigChanges).mock.calls[0]![0]).toEqual([{ op: 'set', path: STEP_SEGMENTS, value: '0s' }])
+    expect(statusRegion()?.getAttribute('aria-live')).toBe('polite')
+    expect(statusRegion()?.textContent).toBe(SAVE_STATUS_WORDS.failed)
+    expect(container?.querySelector('[data-save-status]')?.getAttribute('data-save-status')).toBe('failed')
+    expect(container?.querySelector('[data-save-status]')?.textContent).not.toContain(SAVE_STATUS_WORDS.saved)
+    expect(document.activeElement).toBe(probeInput())
+    expect(probeInput()?.value).toBe('0s')
+    expect(probeInput()?.getAttribute('aria-invalid')).toBe('true')
+    const describedBy = probeInput()?.getAttribute('aria-describedby')
+    expect(document.getElementById(describedBy!)?.textContent).toBe('Step timeout must be at least 1s.')
+    expect(tabTrigger('execution')?.querySelector('[data-tab-draft]')).not.toBeNull()
+
+    await act(async () => {
+      findButton(RETRY_LABEL)!.click()
+    })
+    await flushRender()
+    expect(applyConfigChanges).toHaveBeenCalledTimes(2)
+    expect(container?.querySelector('[data-save-status]')?.getAttribute('data-save-status')).toBe('saved')
+  })
+
+  it('TAB-ORDER-STRIP-STATUS-PANEL: Tab goes from the active tab to Retry, then into the panel', async () => {
+    vi.mocked(applyConfigChanges).mockRejectedValueOnce(refusedWrite())
+    await renderAt('/config/execution')
+    await typeAndSettle('0s')
+    expect(container?.querySelector('[data-save-status]')?.getAttribute('data-save-status')).toBe('failed')
+
+    const stops = tabStops(container!)
+    const tablist = container!.querySelector('[role="tablist"]')!
+    const strip = stops.filter((element) => element === tablist || tablist.contains(element))
+    expect(strip, 'the tab strip is one stop').toHaveLength(1)
+    expect(tabTrigger('execution')?.getAttribute('aria-selected')).toBe('true')
+    const retry = findButton(RETRY_LABEL)!
+    const panel = container!.querySelector('[data-config-panel="execution"]')!
+    const firstPanelStop = stops.findIndex((element) => panel === element || panel.contains(element))
+
+    expect(stops.indexOf(strip[0]!)).toBe(0)
+    expect(firstPanelStop).toBeGreaterThan(0)
+    expect(stops.slice(1, firstPanelStop)).toEqual([retry])
+  })
+
+  it('FILE-ISSUES-RECOVER-WITHOUT-RELOAD: a file failing validation shows one notice above the tabs, which clears when the file is fixed', async () => {
+    vi.mocked(fetchConfig).mockResolvedValueOnce({
+      ...readAnswer({ config: sampleConfig }),
+      fileIssues: [{ path: STEP_SEGMENTS, message: 'Step timeout must be a duration such as 30s.' }],
+    })
+    const view = await renderAt('/config/models')
+
+    const notices = view.querySelectorAll('[data-config-file-issues]')
+    expect(notices).toHaveLength(1)
+    expect(notices[0]!.textContent).toContain(CONFIG_FILE_ISSUES_TITLE)
+    expect(notices[0]!.textContent).toContain(configFileIssuesBody('Step timeout must be a duration such as 30s'))
+    const tabbar = view.querySelector('[data-config-tabbar]')!
+    expect(notices[0]!.compareDocumentPosition(tabbar) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+
+    vi.mocked(fetchConfigRevision).mockResolvedValueOnce({ revision: 'rev-fixed' })
+    vi.mocked(fetchConfig).mockResolvedValueOnce({ ...readAnswer({ config: sampleConfig }), revision: 'rev-fixed' })
+    await act(async () => {
+      window.dispatchEvent(new Event('focus'))
+    })
+    await flushRender()
+
+    expect(fetchConfig).toHaveBeenCalledTimes(2)
+    expect(view.querySelector('[data-config-file-issues]')).toBeNull()
+    expect(tabTriggers()).toHaveLength(CONFIG_TABS.length)
+  })
 })
 
 describe('ConfigPage task tabs shell', () => {

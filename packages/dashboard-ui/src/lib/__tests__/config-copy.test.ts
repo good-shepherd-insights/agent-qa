@@ -30,6 +30,7 @@ function functionOutputs(): string[] {
   return [
     ...CONFIG_TABS.flatMap((tab) => CONFIG_SECTION_IDS.map((section) => copy.configCommandLabel(tab, section))),
     copy.configLoadFailedBody('The file is not valid YAML'),
+    copy.configFileIssuesBody('Step timeout must be a duration such as 30s'),
     ...EXPLICIT_ACTION_KINDS.map((kind) => copy.undoLine(kind, 'gpt')),
     copy.undoLine('delete-model', 'gpt', { judge: true }),
     ...deleteKinds.map((kind) => copy.deleteActionName(kind, 'staging')),

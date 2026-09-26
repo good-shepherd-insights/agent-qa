@@ -20,7 +20,6 @@ import {
 import { classifyConfigPath, type ConfigChange, type ConfigPathSegment } from "@vostride/agent-qa-schema"
 
 import {
-  ApiError,
   applyConfigChanges,
   fetchConfig,
   fetchConfigRevision,
@@ -83,7 +82,10 @@ export interface ConfigAutosave {
   runExplicit: (changes: ConfigChange[], undoMeta: ConfigUndoMeta) => Promise<void>
   undo: () => Promise<void>
   goToFirstDraft: () => ConfigDraftTarget | undefined
+  /** Re-reads with the loading state shown (the Reload config button). */
   reload: () => void
+  /** Re-reads quietly, for sections still saving through their own routes. */
+  refresh: () => void
 }
 
 interface FieldLocation {
@@ -255,9 +257,15 @@ function writeStoredDrafts(storageKey: string, state: HookState): void {
   }
 }
 
+/** The structured body an ApiError carries, read by shape so any thrown answer is handled alike. */
+function errorPayload(error: unknown): Record<string, unknown> | undefined {
+  if (!(error instanceof Error) || !("payload" in error)) return undefined
+  return isRecord(error.payload) ? error.payload : undefined
+}
+
 function loadFailureReason(error: unknown): string {
-  const payloadMessage =
-    error instanceof ApiError && typeof error.payload?.message === "string" ? error.payload.message : undefined
+  const message = errorPayload(error)?.message
+  const payloadMessage = typeof message === "string" ? message : undefined
   const text = payloadMessage ?? (error instanceof Error ? error.message : String(error))
   return text.trim().replace(/[.\s]+$/, "")
 }
@@ -365,10 +373,10 @@ function createEngine(host: EngineHost) {
   }
 
   function issuesFrom(error: unknown, keys: readonly string[]): { issues: ConfigAutosaveIssue[]; message?: string } {
-    if (!(error instanceof ApiError)) {
-      return { issues: [], message: error instanceof Error ? error.message : String(error) }
-    }
-    const listed = Array.isArray(error.payload?.issues) ? error.payload.issues : []
+    const text = error instanceof Error ? error.message : String(error)
+    const payload = errorPayload(error)
+    if (payload === undefined) return { issues: [], message: text }
+    const listed = Array.isArray(payload.issues) ? payload.issues : []
     const issues: ConfigAutosaveIssue[] = []
     const unmatched: string[] = []
     for (const item of listed) {
@@ -383,7 +391,7 @@ function createEngine(host: EngineHost) {
       if (fieldKey === undefined) unmatched.push(item.message)
       else issues.push({ fieldKey, message: item.message })
     }
-    const message = unmatched[0] ?? (issues.length === 0 ? error.message : undefined)
+    const message = unmatched[0] ?? (issues.length === 0 ? text : undefined)
     return message === undefined ? { issues } : { issues, message }
   }
 
@@ -618,6 +626,10 @@ function createEngine(host: EngineHost) {
     }
   }
 
+  function refresh() {
+    void read()
+  }
+
   function reload() {
     loaded = false
     host.setLoad({ kind: "loading" })
@@ -641,6 +653,7 @@ function createEngine(host: EngineHost) {
     settle,
     retry,
     reload,
+    refresh,
     poll,
     runExplicit,
     undo,
@@ -753,6 +766,7 @@ export function useConfigAutosave(): ConfigAutosave {
     undo: engine.undo,
     goToFirstDraft: () => firstDraft(state),
     reload: engine.reload,
+    refresh: engine.refresh,
   }
 }
 
