@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto'
-import { readFile, writeFile, mkdir, rename, rm, stat } from 'node:fs/promises'
+import { chmod, lstat, readFile, realpath, writeFile, mkdir, rename, rm, stat } from 'node:fs/promises'
 import { basename, dirname, join } from 'node:path'
 import { Document, isMap, isScalar, isSeq, parseDocument, stringify } from 'yaml'
 import { AgentQaConfigSchema } from '@vostride/agent-qa-core'
@@ -212,6 +212,7 @@ export class ConfigManager {
     return next
   }
 
+  // The per-instance mutex: each transaction chains onto the tail, released however it settles.
   private writeChain: Promise<void> = Promise.resolve()
 
   private async applyChangesOnce(changes: readonly ConfigChange[]): Promise<ApplyChangesOutcome> {
@@ -267,10 +268,13 @@ export class ConfigManager {
     return { kind: 'ok', revision: revisionOf(next) }
   }
 
+  // 429-05 Pitfall 8 / Pattern 1 step 6: the temp file sits beside the real file, keeps its mode
+  // (chmod, because writeFile's mode is filtered by the umask), and replaces it in one rename.
   private async writeAtomic(content: string): Promise<void> {
-    const directory = dirname(this.configPath)
-    const tempPath = join(directory, `.${basename(this.configPath)}.${process.pid}.${randomUUID()}.tmp`)
-    const mode = await stat(this.configPath).then(
+    const target = await this.writeTarget()
+    const directory = dirname(target)
+    const tempPath = join(directory, `.${basename(target)}.${process.pid}.${randomUUID()}.tmp`)
+    const mode = await stat(target).then(
       (stats) => stats.mode & 0o777,
       (err: unknown) => {
         if (isMissingFile(err)) return undefined
@@ -280,11 +284,24 @@ export class ConfigManager {
     await mkdir(directory, { recursive: true })
     try {
       await writeFile(tempPath, content, mode === undefined ? undefined : { mode })
-      await rename(tempPath, this.configPath)
+      if (mode !== undefined) await chmod(tempPath, mode)
+      await rename(tempPath, target)
     } catch (error) {
       await rm(tempPath, { force: true }).catch(() => undefined)
       throw error
     }
+  }
+
+  // A symlinked config keeps its link: the file it points at is the one replaced.
+  private async writeTarget(): Promise<string> {
+    const isLink = await lstat(this.configPath).then(
+      (stats) => stats.isSymbolicLink(),
+      (err: unknown) => {
+        if (isMissingFile(err)) return false
+        throw err
+      },
+    )
+    return isLink ? await realpath(this.configPath) : this.configPath
   }
 }
 

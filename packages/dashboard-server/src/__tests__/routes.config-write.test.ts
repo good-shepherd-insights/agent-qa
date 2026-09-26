@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import { mkdtemp, readFile, rename, rm, writeFile } from 'node:fs/promises'
+import { chmod, lstat, mkdtemp, readFile, rename, rm, stat, symlink, writeFile } from 'node:fs/promises'
 import { IncomingMessage, type IncomingHttpHeaders, type ServerResponse } from 'node:http'
 import { Socket } from 'node:net'
 import { join } from 'node:path'
@@ -269,5 +269,70 @@ describe('PATCH /api/config (429-01)', () => {
     expect(JSON.parse(response.body)).toEqual({
       revision: createHash('sha256').update(onDisk).digest('hex'),
     })
+  })
+})
+
+describe('PATCH /api/config concurrency, idempotency and file identity (429-05)', () => {
+  it('TWO-SETTLES-BOTH-LAND: two PATCH requests started together both reach the file', async () => {
+    const configPath = await useConfigWorkspace()
+
+    const [step, headless] = await Promise.all([
+      patchConfig(setStep('45s')),
+      patchConfig({ changes: [{ op: 'set', path: ['use', 'browser', 'headless'], value: true }] }),
+    ])
+
+    expect([step.status, headless.status]).toEqual([200, 200])
+    const parsed = parseYaml(await readFile(configPath, 'utf-8')) as {
+      use: { timeout: { step: string }; browser: { headless: boolean } }
+    }
+    expect(parsed.use.timeout.step).toBe('45s')
+    expect(parsed.use.browser.headless).toBe(true)
+  })
+
+  it('APPLY-TWICE-IDEMPOTENT: the same change set twice leaves the same bytes and the same revision', async () => {
+    const configPath = await useConfigWorkspace()
+    const body = {
+      changes: [
+        { op: 'set', path: ['use', 'timeout', 'step'], value: '45s' },
+        { op: 'set', path: ['use', 'browser', 'headless'], value: true },
+      ],
+    }
+
+    const first = await patchConfig(body)
+    const afterFirst = await readFile(configPath)
+    const second = await patchConfig(body)
+
+    expect([first.status, second.status]).toEqual([200, 200])
+    expect(Buffer.compare(await readFile(configPath), afterFirst)).toBe(0)
+    expect(JSON.parse(second.body)).toEqual(JSON.parse(first.body))
+  })
+
+  it('MODE-PRESERVED: the rewritten file keeps the mode the owner gave it', async () => {
+    const configPath = await useConfigWorkspace()
+
+    for (const [mode, step] of [[0o640, '45s'], [0o664, '50s']] as const) {
+      await chmod(configPath, mode)
+      const response = await patchConfig(setStep(step))
+      expect(response.status).toBe(200)
+      expect((await stat(configPath)).mode & 0o777).toBe(mode)
+    }
+  })
+
+  it('SYMLINK-KEPT: a symlinked config keeps its link and the real file takes the change', async () => {
+    const realDir = await mkdtemp(join(tmpdir(), 'agent-qa-config-real-'))
+    const linkDir = await mkdtemp(join(tmpdir(), 'agent-qa-config-link-'))
+    tempDirs.push(realDir, linkDir)
+    const realPath = join(realDir, 'agent-qa.config.yaml')
+    const configPath = join(linkDir, 'agent-qa.config.yaml')
+    await writeFile(realPath, baseConfig, 'utf-8')
+    await symlink(realPath, configPath)
+    router = createRouter({ db: createMockDatabase() as any, configManager: new ConfigManager(configPath), configPath })
+
+    const response = await patchConfig(setStep('45s'))
+
+    expect(response.status).toBe(200)
+    expect((await lstat(configPath)).isSymbolicLink()).toBe(true)
+    const parsed = parseYaml(await readFile(realPath, 'utf-8')) as { use: { timeout: { step: string } } }
+    expect(parsed.use.timeout.step).toBe('45s')
   })
 })
