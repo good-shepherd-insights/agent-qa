@@ -21,8 +21,14 @@ import {
 const STEP = configFieldKey(['use', 'timeout', 'step'])
 const BROWSER = configFieldKey(['use', 'browser', 'name'])
 
-function fold(steps: readonly (readonly [ConfigAutosaveEvent, number])[], from = createInitialConfigAutosave()) {
-  return steps.reduce<ConfigAutosaveState>((state, [event, now]) => reduceConfigAutosave(state, event, now), from)
+function fold(
+  steps: readonly (readonly [ConfigAutosaveEvent, number])[],
+  from = createInitialConfigAutosave(),
+) {
+  return steps.reduce<ConfigAutosaveState>(
+    (state, [event, now]) => reduceConfigAutosave(state, event, now),
+    from,
+  )
 }
 
 type Flag = Exclude<SaveState, 'idle'>
@@ -51,7 +57,8 @@ describe('the save-status precedence (429-15 Task 1)', () => {
       const flags = new Set(PRECEDENCE.filter((_, bit) => (mask & (1 << bit)) !== 0))
       const expected: SaveState = PRECEDENCE.find((flag) => flags.has(flag)) ?? 'idle'
       const actual = deriveSaveStatus(stateWith(flags, now), now).state
-      if (actual !== expected) wrong.push(`{${[...flags].join(', ')}} → ${actual}, expected ${expected}`)
+      if (actual !== expected)
+        wrong.push(`{${[...flags].join(', ')}} → ${actual}, expected ${expected}`)
     }
     expect(wrong).toEqual([])
   })
@@ -65,7 +72,15 @@ describe('a failed write (429-15 Task 1)', () => {
       [{ type: 'write-succeeded', id: 'w0' }, 900],
       [{ type: 'edit', fieldKey: STEP, raw: '30s', valid: true }, 1_000],
       [{ type: 'write-started', id: 'w1', fieldKeys: [STEP] }, 1_000],
-      [{ type: 'write-failed', id: 'w1', issues: [], message: 'The config file could not be written' }, 1_200],
+      [
+        {
+          type: 'write-failed',
+          id: 'w1',
+          issues: [],
+          message: 'The config file could not be written',
+        },
+        1_200,
+      ],
     ])
     for (const now of [1_200, 1_201, 900 + SAVED_VISIBLE_MS - 1, 3_200, 60_000, 10_000_000]) {
       expect(deriveSaveStatus(failed, now).state, `now ${now}`).toBe('failed')
@@ -97,13 +112,24 @@ describe('a failed write (429-15 Task 1)', () => {
 
     const named = reduceConfigAutosave(
       edited,
-      { type: 'write-failed', id: 'w1', issues: [{ fieldKey: STEP, message: 'Must be at most 10m' }] },
+      {
+        type: 'write-failed',
+        id: 'w1',
+        issues: [{ fieldKey: STEP, message: 'Must be at most 10m' }],
+      },
       1_100,
     )
-    expect(named.fields[STEP]).toEqual({ raw: '30s', fieldState: 'failed', error: 'Must be at most 10m' })
+    expect(named.fields[STEP]).toEqual({
+      raw: '30s',
+      fieldState: 'failed',
+      error: 'Must be at most 10m',
+    })
     expect(named.fields[BROWSER]).toEqual({ raw: 'chromium', fieldState: 'draft' })
     expect(draftFieldKeys(named)).toEqual([STEP, BROWSER])
-    expect(deriveSaveStatus(named, 1_100)).toMatchObject({ state: 'failed', failingFieldKeys: [STEP] })
+    expect(deriveSaveStatus(named, 1_100)).toMatchObject({
+      state: 'failed',
+      failingFieldKeys: [STEP],
+    })
 
     const whole = reduceConfigAutosave(
       edited,
@@ -120,12 +146,19 @@ describe('a partial write (429-15 Task 1)', () => {
   it('PARTIAL-SHOWS-NOT-SAVED: a write that lands beside a remaining draft shows Not saved until the draft clears', () => {
     const landed = fold([
       [{ type: 'edit', fieldKey: BROWSER, raw: 'firefox', valid: true }, 1_000],
-      [{ type: 'edit', fieldKey: STEP, raw: '30 parsecs', valid: false, error: 'Not a duration' }, 1_000],
+      [
+        { type: 'edit', fieldKey: STEP, raw: '30 parsecs', valid: false, error: 'Not a duration' },
+        1_000,
+      ],
       [{ type: 'write-started', id: 'w1', fieldKeys: [BROWSER] }, 1_000],
       [{ type: 'write-succeeded', id: 'w1' }, 1_100],
     ])
     expect(landed.fields[BROWSER]).toEqual({ raw: 'firefox', fieldState: 'clean' })
-    expect(landed.fields[STEP]).toEqual({ raw: '30 parsecs', fieldState: 'draft', error: 'Not a duration' })
+    expect(landed.fields[STEP]).toEqual({
+      raw: '30 parsecs',
+      fieldState: 'draft',
+      error: 'Not a duration',
+    })
     for (const now of [1_100, 1_500, 1_100 + SAVED_VISIBLE_MS - 1, 1_100 + SAVED_VISIBLE_MS]) {
       expect(deriveSaveStatus(landed, now).state, `now ${now}`).toBe('draft')
     }
@@ -138,10 +171,17 @@ describe('a partial write (429-15 Task 1)', () => {
     const landed = fold([
       [{ type: 'edit', fieldKey: STEP, raw: '30s', valid: true }, 1_000],
       [{ type: 'write-started', id: 'w1', fieldKeys: [STEP] }, 1_000],
-      [{ type: 'edit', fieldKey: STEP, raw: '3 parsecs', valid: false, error: 'Not a duration' }, 1_050],
+      [
+        { type: 'edit', fieldKey: STEP, raw: '3 parsecs', valid: false, error: 'Not a duration' },
+        1_050,
+      ],
       [{ type: 'write-succeeded', id: 'w1' }, 1_100],
     ])
-    expect(landed.fields[STEP]).toEqual({ raw: '3 parsecs', fieldState: 'draft', error: 'Not a duration' })
+    expect(landed.fields[STEP]).toEqual({
+      raw: '3 parsecs',
+      fieldState: 'draft',
+      error: 'Not a duration',
+    })
     expect(deriveSaveStatus(landed, 1_100).state).toBe('draft')
   })
 })
@@ -163,9 +203,18 @@ describe('the windows (429-15 Task 1)', () => {
   it('UNDO-WINDOW: an Undo line holds for UNDO_WINDOW_MS, then yields to the draft beneath it', () => {
     const t = 2_000
     const offered = fold([
-      [{ type: 'edit', fieldKey: STEP, raw: '30 parsecs', valid: false, error: 'Not a duration' }, 1_000],
       [
-        { type: 'undo-offered', kind: 'delete-target', name: 'staging', token: 'u1', expiresAt: t + UNDO_WINDOW_MS },
+        { type: 'edit', fieldKey: STEP, raw: '30 parsecs', valid: false, error: 'Not a duration' },
+        1_000,
+      ],
+      [
+        {
+          type: 'undo-offered',
+          kind: 'delete-target',
+          name: 'staging',
+          token: 'u1',
+          expiresAt: t + UNDO_WINDOW_MS,
+        },
         t,
       ],
     ])
@@ -184,7 +233,13 @@ describe('the windows (429-15 Task 1)', () => {
     const t = 3_000
     const first = reduceConfigAutosave(
       createInitialConfigAutosave(),
-      { type: 'undo-offered', kind: 'delete-target', name: 'staging', token: 'first', expiresAt: t + 60_000 },
+      {
+        type: 'undo-offered',
+        kind: 'delete-target',
+        name: 'staging',
+        token: 'first',
+        expiresAt: t + 60_000,
+      },
       t,
     )
     const second = reduceConfigAutosave(
