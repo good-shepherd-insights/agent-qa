@@ -316,6 +316,15 @@ export function applyActionName(pathLabel: string): string {
   return `${APPLY_LABEL} ${pathLabel}`
 }
 
+/** Keep current path's accessible name, so each data-path field's button names its own path. */
+export function keepPathName(pathLabel: string): string {
+  return `${KEEP_CURRENT_PATH_LABEL} for ${pathLabel}`
+}
+
+export type DataPathKey = 'knowledge.dir' | 'services.dashboard.dbPath' | 'services.dashboard.artifactsDir'
+
+export const APPLY_CONSEQUENCES: Readonly<Partial<Record<DataPathKey, string>>> = {}
+
 export const PORT_RESTART_HELP = 'Takes effect after the dashboard restarts.'
 
 /** A duration field's draft error: the forms the field accepts. */

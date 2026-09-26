@@ -48,6 +48,7 @@ function functionOutputs(): string[] {
     copy.signInFailedText('the page was closed'),
     copy.connectedSavedText('gpt'),
     copy.applyActionName('knowledge folder'),
+    copy.keepPathName('knowledge folder'),
     copy.tokenEnvLine('AGENT_QA_MCP_TOKEN'),
     copy.showValueName('Authorization'),
     copy.hideValueName('Authorization'),
@@ -158,6 +159,25 @@ describe('COPY-429: the Config strings of record (429-12 Task 2)', () => {
     expect(source).toContain("export { providerErrorSentence } from '@vostride/agent-qa-schema'")
     expect(source).not.toContain('Rate limited. Try again later.')
     expect(source).not.toContain('Authentication failed.')
+  })
+
+  // Each line is re-derived from the code that reads the path (429-20 SUMMARY records file:line
+  // evidence): the dashboard opens its database at startup, runs and agent calls resolve the
+  // knowledge folder per run or call while a standing daemon keeps its own, and the artifacts
+  // folder holds only each run's working-memory file, which nothing the dashboard shows reads.
+  it('CONSEQUENCE-LINES-PINNED: the three data paths, each with the one sentence the code bears out', () => {
+    expect(copy.APPLY_CONSEQUENCES).toEqual({
+      'knowledge.dir':
+        'New runs and agents use the new folder right away; a running agent-qa daemon switches when it restarts. Nothing in the current folder is moved or deleted.',
+      'services.dashboard.dbPath':
+        "The dashboard opens the new database when it restarts, and runs in the current one won't show until you switch back. Nothing is moved or deleted.",
+      'services.dashboard.artifactsDir':
+        'New runs write their working-memory file to the new folder. Earlier runs still show, and nothing is moved or deleted.',
+    })
+    for (const line of Object.values(copy.APPLY_CONSEQUENCES)) {
+      expect(line, line).not.toMatch(/\d/)
+      expect(line, line).not.toMatch(/\b(?:screenshots?|recordings?)\b/i)
+    }
   })
 
   it('COPY-429: the timing constants', () => {
