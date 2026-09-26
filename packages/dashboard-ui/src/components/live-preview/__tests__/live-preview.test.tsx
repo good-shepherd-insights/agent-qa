@@ -52,7 +52,7 @@ vi.mock('@/lib/api', async () => {
 const runSubject = (overrides: Partial<LivePreviewRunSubject> = {}): LivePreviewRunSubject => ({
   kind: 'run',
   runId: RUN_ID,
-  handles: [0],
+  handle: 0,
   membersByHandle: {},
   terminal: false,
   runOver: false,
@@ -347,15 +347,42 @@ describe('the corner dot (D-02, D-13, D-16, D-17 · PXH-LIVE-03)', () => {
 })
 
 describe('the chrome row renders only with content (D-02)', () => {
-  it('CHROME-ONLY-WITH-CONTENT: a single-member run has no row; two handles or a host chrome node have one', async () => {
-    await mount(runSubject({ handles: [0] }))
+  // RE-SPELLED 2026-09-26 (428-33, owner decision 2026-09-26 (3), G-428-3). Was "CHROME-ONLY-WITH-
+  // CONTENT: a single-member run has no row; two handles or a host chrome node have one". The owner
+  // removed the handle selector, so a run subject never has chrome of its own; the host decides the
+  // handle. A run subject watching handle 1 of a suite still renders no row, no picker and no select.
+  it('CHROME-ONLY-WITH-CONTENT: a run subject renders no row and never a picker; a host chrome node has one', async () => {
+    await mount(runSubject({ handle: 0 }))
     expect(q('[data-preview-chrome]')).toBeNull()
 
-    await mount(runSubject({ handles: [0, 1] }))
-    expect(q('[data-preview-chrome] [data-handle-picker]')).not.toBeNull()
+    await mount(runSubject({ handle: 1 }))
+    expect({
+      chrome: q('[data-preview-chrome]'),
+      pickers: qa('[data-handle-picker]').length,
+      selects: qa('select').length,
+    }).toEqual({ chrome: null, pickers: 0, selects: 0 })
 
     await mount(editorSubject(), <span data-editor-toolbar>toolbar</span>)
     expect(q('[data-preview-chrome] [data-editor-toolbar]')).not.toBeNull()
+  })
+})
+
+describe('the host decides the handle (G-428-3, owner decision 2026-09-26 (3))', () => {
+  it('HANDLE-FROM-HOST: the preview mints for the handle it is given, and a new handle starts over with a mint for it', async () => {
+    await mount(runSubject({ handle: 0 }))
+    expect(fetchLiveUrlMock.mock.calls.at(-1)).toEqual([RUN_ID, 0])
+    await post(frame())
+    expect(previewState()).toBe('live')
+
+    await rerender(runSubject({ handle: 1 }))
+    expect({
+      lastCall: fetchLiveUrlMock.mock.calls.at(-1),
+      state: previewState(),
+    }).toEqual({ lastCall: [RUN_ID, 1], state: 'loading' })
+
+    const calls = fetchLiveUrlMock.mock.calls.length
+    await rerender(runSubject({ handle: 1 }))
+    expect(fetchLiveUrlMock, 'the same handle again is not a new subject').toHaveBeenCalledTimes(calls)
   })
 })
 

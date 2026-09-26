@@ -863,7 +863,11 @@ describe('the preview is one embed or an honest sentence (LIVE-04, D-02, D-08)',
     })
     await mount()
     await open()
-    await emit(runStarted([0, 1]), testStarted(1, 'the live member', 1), testFinished(0, 'skipped'))
+    // RE-SPELLED 2026-09-26 (428-33, owner decision 2026-09-26 (3), G-428-3). This cell used to emit
+    // testStarted(1) as well and relied on the preview's old default handle 0. The preview now follows
+    // the running member, so a running member 1 would take the watch; with no other member running,
+    // the watch holds on member 0, which is the member this cell is about. Every claim is unchanged.
+    await emit(runStarted([0, 1]), testFinished(0, 'skipped'))
 
     const at0 = previewState()
     for (let attempt = 0; attempt < 3; attempt += 1) {
@@ -898,7 +902,12 @@ describe('the preview is one embed or an honest sentence (LIVE-04, D-02, D-08)',
     })
     await mount()
     await open()
-    await emit(runStarted([0, 1]), testStarted(1, 'the live member', 1))
+    // RE-SPELLED 2026-09-26 (428-33, owner decision 2026-09-26 (3), G-428-3). The cell used to emit
+    // testStarted(1) up front and switch handle through the picker, which is gone. Under the follow
+    // rule a member with a row is running, so the roster comes alone first: handle 0 has no member
+    // row, the first-roster rule watches it, and it reaches the bound exactly as before. Member 1
+    // then starts without answering, and the preview switches to it with nobody touching anything.
+    await emit(runStarted([0, 1]))
 
     const at0 = previewState()
     for (let attempt = 0; attempt < WAITING_ATTEMPT_LIMIT; attempt += 1) {
@@ -910,14 +919,7 @@ describe('the preview is one embed or an honest sentence (LIVE-04, D-02, D-08)',
     const labelAfterCap = q('[data-preview-reason-label]')?.textContent
     const callsAfterCap = fetchLiveUrlMock.mock.calls.length
 
-    const picker = q('[data-handle-picker]') as HTMLSelectElement | null
-    expect(picker).not.toBeNull()
-    await act(async () => {
-      if (picker === null) throw new Error('the handle picker does not exist')
-      picker.value = '1'
-      picker.dispatchEvent(new Event('change', { bubbles: true }))
-      await Promise.resolve()
-    })
+    await emit(testStarted(1, 'the live member', 1))
 
     expect(WAITING_GAVE_UP_TEXT).not.toBe(NO_STREAM_TEXT)
     expect({
@@ -1152,22 +1154,20 @@ describe('the preview is one embed or an honest sentence (LIVE-04, D-02, D-08)',
     expect(frame?.getAttribute('sandbox')).toBe('allow-scripts')
   })
 
-  it('a roster of more than one handle offers a picker that re-mints for the chosen handle', async () => {
+  // RE-SPELLED 2026-09-26 (428-33, owner decision 2026-09-26 (3), G-428-3). Was "a roster of more
+  // than one handle offers a picker that re-mints for the chosen handle". The owner removed the
+  // picker; the re-mint for the other handle is kept, and the member starting is what drives it.
+  it('a roster of more than one handle offers no picker, and the preview re-mints for the member that starts', async () => {
     await mount()
     await open()
     await emit(runStarted([0, 1]))
 
-    const picker = q('[data-handle-picker]')
-    expect(picker).not.toBeNull()
+    expect(q('[data-handle-picker]')).toBeNull()
     expect(fetchLiveUrlMock.mock.calls.at(-1)).toEqual([RUN_ID, 0])
 
-    await act(async () => {
-      const select = picker as HTMLSelectElement
-      select.value = '1'
-      select.dispatchEvent(new Event('change', { bubbles: true }))
-      await Promise.resolve()
-    })
+    await emit(testStarted(1))
 
+    expect(q('[data-handle-picker]')).toBeNull()
     expect(fetchLiveUrlMock.mock.calls.at(-1)).toEqual([RUN_ID, 1])
   })
 
@@ -1204,6 +1204,51 @@ describe('the preview is one embed or an honest sentence (LIVE-04, D-02, D-08)',
     expect(previewState()).toBe('unavailable')
     expect(q('[data-preview-error]')?.getAttribute('data-preview-error')).toBe('live_view_unavailable')
     expect(q('iframe')).toBeNull()
+  })
+})
+
+// THE PREVIEW FOLLOWS THE RUNNING MEMBER (G-428-3, owner decision 2026-09-26 (3)). The owner saw a
+// suite's page sit on "This test finished while the run goes on" while its second member ran, with a
+// handle selector as the only way off it, and asked for the selector to go and the handle to follow.
+describe('the preview follows the running member, and nobody picks a handle (G-428-3)', () => {
+  it('FOLLOWS-RUNNING-MEMBER: when member 0 finishes and member 1 starts, the preview mints for handle 1', async () => {
+    await mount()
+    await open()
+    await emit(runStarted([0, 1]), testStarted(0, 'the first member', 1), stepStarted(0, 0))
+    const whileFirstRuns = fetchLiveUrlMock.mock.calls.at(-1)
+
+    await emit(testFinished(0, 'passed'))
+    const betweenMembers = fetchLiveUrlMock.mock.calls.at(-1)
+
+    await emit(testStarted(1, 'the second member', 1), stepStarted(1, 0))
+    await flush()
+
+    expect({
+      whileFirstRuns,
+      betweenMembers,
+      afterSecondStarts: fetchLiveUrlMock.mock.calls.at(-1),
+      memberEnded: previewState() === 'member-ended',
+      embedsSecond: q('[data-live-embed]')?.getAttribute('src')?.includes('?h=1&') ?? false,
+    }).toEqual({
+      whileFirstRuns: [RUN_ID, 0],
+      betweenMembers: [RUN_ID, 0],
+      afterSecondStarts: [RUN_ID, 1],
+      memberEnded: false,
+      embedsSecond: true,
+    })
+  })
+
+  it('NO-HANDLE-PICKER: a two-member suite with both members started shows no selector and no watching label', async () => {
+    await mount()
+    await open()
+    await emit(runStarted([0, 1]), testStarted(0, 'the first member', 1), testStarted(1, 'the second member', 1))
+
+    expect({
+      pickers: qa('[data-handle-picker]').length,
+      selects: qa('select').length,
+      watchingLabels: qa('label').filter((label) => label.textContent?.trim() === 'watching').length,
+      watchingWord: /\bwatching\b/iu.test(document.body.textContent ?? ''),
+    }).toEqual({ pickers: 0, selects: 0, watchingLabels: 0, watchingWord: false })
   })
 })
 
