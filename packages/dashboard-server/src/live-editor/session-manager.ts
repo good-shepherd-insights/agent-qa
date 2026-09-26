@@ -39,7 +39,9 @@ export class SessionManager {
     // RESEARCH P1: the idle window runs until the first control socket attaches (the upgrade
     // clears it), so a session nobody ever opens cannot hold a browser or a lease forever.
     session.startIdleTimer(() => {
-      void this.terminateSession(sessionId)
+      void this.terminateSession(sessionId).catch((error: unknown) => {
+        console.error(`[live-editor] idle expiry could not end session ${sessionId}`, error)
+      })
     })
 
     // sessionNumber is used for display only; never for authorization lookups

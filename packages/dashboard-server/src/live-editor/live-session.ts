@@ -67,8 +67,8 @@ import type {
 
 export const IDLE_TIMEOUT_MS = 5 * 60 * 1000
 
-/** Why the session let go of a control socket. */
-export type LiveAttachmentRelease = 'superseded'
+/** Why the session let go of a control socket: a newer one replaced it, or the session ended. */
+export type LiveAttachmentRelease = 'superseded' | 'ended'
 
 const RUNJS_DBL_RE = /\{\{runJS:"((?:[^"\\]|\\.)*)"\}\}/g
 const RUNJS_SGL_RE = /\{\{runJS:'((?:[^'\\]|\\.)*)'\}\}/g
@@ -1413,7 +1413,11 @@ export class LiveSession {
 
   startIdleTimer(onExpire: () => void): void {
     this.clearIdleTimer()
+    // 428 WR-02: an ended session has nothing left to expire, and the window never holds the
+    // process open on its own.
+    if (this.cleanupRun !== null) return
     this.idleTimer = setTimeout(onExpire, IDLE_TIMEOUT_MS)
+    this.idleTimer.unref?.()
   }
 
   clearIdleTimer(): void {
@@ -1433,6 +1437,10 @@ export class LiveSession {
   private async runCleanup(): Promise<void> {
     this.clearIdleTimer()
     this.readyForInteraction = false
+    // 428 WR-02: the attached control socket is told the session is gone, however it ended.
+    const release = this.releaseAttachment
+    this.releaseAttachment = null
+    release?.('ended')
     // The hub closes first, so subscribers hear 'closed' and the screencast stops before the
     // browser that produces it goes away.
     const hub = this.liveHub

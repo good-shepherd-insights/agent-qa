@@ -893,7 +893,9 @@ export async function startServer(opts: StartServerOptions): Promise<{
       wss.handleUpgrade(request, socket, head, (ws) => {
         session.clearIdleTimer()
         const handler = createSessionHandler(session, () => {
-          sessionManager.terminateSession(sessionId)
+          void sessionManager.terminateSession(sessionId).catch((error: unknown) => {
+            console.error(`[live-editor] could not end session ${sessionId}`, error)
+          })
         }, (event) => {
           db.insertTokenEvent(event)
         }, testFileManager)

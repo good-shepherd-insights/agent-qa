@@ -3,12 +3,14 @@
 // Phase 428 turned a dropped control socket into a detach (D-09), so a page can reconnect to the
 // same session. These cells pin what that path owes the page: a command's outcome reaches the
 // socket attached when it finishes (CR-01), and a socket a newer one replaced stops driving the
-// session (WR-01). The session is the real LiveSession; only the commands' own work is stubbed.
+// session (WR-01), and a session that ends closes its socket and leaves no timer behind (WR-02).
+// The session is the real LiveSession; only the commands' own work is stubbed.
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { LiveSession } from '../live-session.js'
-import { LIVE_EDITOR_SUPERSEDED_CLOSE_CODE } from '../types.js'
+import { IDLE_TIMEOUT_MS, LiveSession } from '../live-session.js'
+import { SessionManager } from '../session-manager.js'
+import { LIVE_EDITOR_SUPERSEDED_CLOSE_CODE, LIVE_EDITOR_UNKNOWN_SESSION_CLOSE_CODE } from '../types.js'
 import type { LiveHookPayload, LiveTestResultPayload, ServerMessage } from '../types.js'
 import { createSessionHandler } from '../ws-handler.js'
 
@@ -194,5 +196,53 @@ describe('428 review: the editor control socket', () => {
 
     await vi.advanceTimersByTimeAsync(2_000)
     expect(drain, 'only the current socket polls').toHaveBeenCalledTimes(1)
+  })
+
+  it('WR-02 END-CLOSES-CONTROL-SOCKET: a session ended elsewhere closes its socket as gone and arms no idle window', async () => {
+    vi.useFakeTimers()
+    const session = new LiveSession('wr02-closes')
+    const onTerminate = vi.fn()
+    const socket = attach(session, onTerminate)
+
+    await session.cleanup()
+    expect(socket.closes).toEqual([{ code: LIVE_EDITOR_UNKNOWN_SESSION_CLOSE_CODE, reason: 'session_ended' }])
+
+    socket.drop()
+    expect(vi.getTimerCount(), 'the close that follows arms no timer on the dead session').toBe(0)
+    await vi.advanceTimersByTimeAsync(IDLE_TIMEOUT_MS * 2)
+    expect(onTerminate).not.toHaveBeenCalled()
+  })
+
+  it('WR-02 IDLE-TIMER-INERT-ONCE-ENDED: startIdleTimer on an ended session arms nothing', async () => {
+    vi.useFakeTimers()
+    const session = new LiveSession('wr02-inert')
+    await session.cleanup()
+    session.startIdleTimer(vi.fn())
+    expect(vi.getTimerCount()).toBe(0)
+  })
+
+  it('WR-02 IDLE-TIMER-UNREF: the idle window never holds the process open', () => {
+    const session = new LiveSession('wr02-unref')
+    session.startIdleTimer(vi.fn())
+    const timer = (session as unknown as { idleTimer: NodeJS.Timeout | null }).idleTimer
+    expect(timer?.hasRef()).toBe(false)
+    session.clearIdleTimer()
+  })
+
+  it('WR-02 EXPIRY-FAILURE-HANDLED: an idle expiry whose cleanup rejects is reported, not left unhandled', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    vi.spyOn(LiveSession.prototype, 'initialize').mockResolvedValue(undefined)
+    vi.spyOn(LiveSession.prototype, 'cleanup').mockRejectedValue(new Error('teardown failed'))
+    const reported = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    const manager = new SessionManager()
+    const { sessionId } = await manager.createSession({
+      platform: 'web',
+      llmConfig: { provider: 'anthropic-compatible', model: 'm', baseURL: 'https://example.invalid' },
+    })
+
+    await vi.advanceTimersByTimeAsync(IDLE_TIMEOUT_MS)
+    await new Promise((resolve) => setImmediate(resolve))
+    expect(manager.getSession(sessionId)).toBeUndefined()
+    expect(reported).toHaveBeenCalledWith(expect.stringContaining(sessionId), expect.any(Error))
   })
 })

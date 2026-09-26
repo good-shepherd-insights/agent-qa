@@ -1,7 +1,7 @@
 import type WebSocket from 'ws'
 import { parseTestFile } from '@vostride/agent-qa-core'
 import type { LiveSession } from './live-session.js'
-import { LIVE_EDITOR_SUPERSEDED_CLOSE_CODE } from './types.js'
+import { LIVE_EDITOR_SUPERSEDED_CLOSE_CODE, LIVE_EDITOR_UNKNOWN_SESSION_CLOSE_CODE } from './types.js'
 import type {
   LiveStepResultPayload,
   ServerMessage,
@@ -58,11 +58,14 @@ export function createSessionHandler(
     session.clearIdleTimer()
     // 428 WR-01: a newer socket replaces this one. It is closed by name, its log poll stops, and
     // any command it still sends is ignored, so one page drives the session at a time.
-    const generation = session.beginAttachment(() => {
+    // 428 WR-02: a session ended elsewhere (DELETE, idle expiry) closes this socket as gone, so the
+    // page leaves "connected". A terminate-session from this socket closes it itself.
+    const generation = session.beginAttachment((reason) => {
       if (detached || cleanedUp) return
       detached = true
       if (logPollInterval) clearInterval(logPollInterval)
-      ws.close(LIVE_EDITOR_SUPERSEDED_CLOSE_CODE, 'superseded')
+      if (reason === 'superseded') ws.close(LIVE_EDITOR_SUPERSEDED_CLOSE_CODE, 'superseded')
+      else ws.close(LIVE_EDITOR_UNKNOWN_SESSION_CLOSE_CODE, 'session_ended')
     })
 
     const state = session.getState()
