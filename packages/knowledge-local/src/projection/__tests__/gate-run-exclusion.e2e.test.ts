@@ -146,6 +146,10 @@ const MARKER_CENSUS: Readonly<Record<string, 'consumer' | 'carrier' | 'producer'
   'packages/runner/src/run/shell.ts': 'carrier',
   'packages/agent/src/functions/ops/runs-start.ts': 'carrier',
   'packages/agent/src/functions/ops/runs-get.ts': 'carrier',
+  // 2026-09-26 (425-02, D-08): `projectPostProcessingExclusion` re-states the markers as the
+  // reason a surface renders for a chain that was never enqueued. It gates no table and no
+  // enqueue; it moves the recorded fact onto the read DTO, which is what `carrier` names.
+  'packages/agent/src/functions/ops/runs-post-processing.ts': 'carrier',
   'packages/agent/src/jobs/kinds.ts': 'carrier',
   // 2026-08-26 (404-04, D-05/D-08): IT LANDED, AND IT IS A CONSUMER — declared here, exactly as
   // the paragraph above said this census would demand.
