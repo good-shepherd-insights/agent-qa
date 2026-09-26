@@ -436,7 +436,6 @@ export {
 export {
   acquireEmbedder,
   discoverEmbedderWorker,
-  EMBEDDER_MIN_AVAILABLE_BYTES,
   resetEmbedderCapability,
   resolveEmbedderCapability,
 } from './embedder-acquire.js'

@@ -29,20 +29,10 @@ import {
 } from './embedder-worker/worker-registration.js'
 import { embeddingProfileKey } from './index-open.js'
 
-/**
- * PROVISIONAL 1 GiB pending real-host telemetry from the Phase 376 bench.
- *
- * This internal, config-free pre-load check deliberately overrides memory.md §5.8's
- * "configurable" letter (D-15). The static floor remains the no-budget escape hatch;
- * see the dated reconciliation note in REQUIREMENTS.md.
- */
-export const EMBEDDER_MIN_AVAILABLE_BYTES = 1_073_741_824
-
 export type WorkerDiscoveryResult = { kind: 'no-worker' } | { kind: 'worker' }
 export type EmbedderRung = 'native' | 'floor'
 export type EmbedderWorkerPolicy = 'preferred' | 'required'
 export type DeferReason =
-  | 'ram-budget'
   | 'cold-artifact'
   | 'load-failure'
   | 'worker-unavailable'
@@ -65,7 +55,6 @@ export type AcquireEmbedderOutcome =
  */
 export interface EmbedderProbes {
   discoverWorker?: (agentQaRoot: string) => Promise<WorkerDiscoveryResult>
-  availableMemory?: () => number
   createNativeEmbedder?: (options: {
     profile: EmbeddingProfile
     allowDownload: boolean
@@ -307,7 +296,6 @@ async function probeCapability({
   'preferredProfile' | 'allowDownload' | 'workerPolicy' | 'agentQaRoot'
 >> & Pick<ResolveEmbedderCapabilityOptions, 'probes'>): Promise<CapabilityOutcome> {
   const discoverWorker = probes?.discoverWorker ?? discoverEmbedderWorker
-  const availableMemory = probes?.availableMemory ?? (() => process.availableMemory())
   const nativeFactory = probes?.createNativeEmbedder ?? createNativeEmbedder
   const floorFactory = probes?.createFloorEmbedder ?? (() => {
     loadFloorAssets()
@@ -329,16 +317,6 @@ async function probeCapability({
     }
     if (workerPolicy === 'required') {
       return { kind: 'deferred', reason: 'worker-unavailable' }
-    }
-    // The budget gate exists to stop the ONNX runtime loading on a host that cannot hold it. The
-    // static floor loads a shipped deterministic asset and constructs no runtime, so applying the
-    // same gate refuses the one rung that exists FOR a host with no memory to spare — and takes the
-    // embedder worker, which asks for this profile by name, down with it at startup.
-    if (
-      preferredProfile.backend !== 'static'
-      && availableMemory() < EMBEDDER_MIN_AVAILABLE_BYTES
-    ) {
-      return { kind: 'deferred', reason: 'ram-budget' }
     }
   } catch {
     return {

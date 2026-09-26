@@ -11,7 +11,6 @@ import {
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import {
-  EMBEDDER_MIN_AVAILABLE_BYTES,
   acquireEmbedder,
   resetEmbedderCapability,
   resolveEmbedderCapability,
@@ -22,8 +21,6 @@ import { createNativeEmbedder } from '../embedder-native.js'
 import type { EmbedderPort } from '../embedder-port.js'
 import { MODEL_CACHE_DIR_ENV_VAR } from '../model-cache-dir.js'
 import { makeFakeEmbedder } from './fixtures/fake-embedder.js'
-
-const HEALTHY_MEMORY = EMBEDDER_MIN_AVAILABLE_BYTES + 1
 
 afterEach(() => resetEmbedderCapability())
 
@@ -42,7 +39,6 @@ function coldArtifactError(): Error {
 function probes(overrides: Partial<EmbedderProbes> = {}): EmbedderProbes {
   return {
     discoverWorker: vi.fn().mockResolvedValue({ kind: 'no-worker' }),
-    availableMemory: vi.fn().mockReturnValue(HEALTHY_MEMORY),
     createNativeEmbedder: vi.fn().mockResolvedValue(makeFakeEmbedder()),
     createFloorEmbedder: vi.fn().mockReturnValue(makeFakeEmbedder(512)),
     ...overrides,
@@ -106,31 +102,7 @@ describe('acquireEmbedder', () => {
     expect(outcome).toEqual({ kind: 'lexical-only' })
   })
 
-  it('defers before runtime loading when available memory is below the provisional budget', async () => {
-    const createNativeEmbedder = vi.fn().mockResolvedValue(makeFakeEmbedder())
-    const createFloorEmbedder = vi.fn().mockReturnValue(makeFakeEmbedder(512))
-
-    const outcome = await acquireEmbedder({
-      preferredProfile: DEFAULT_EMBEDDING_PROFILE,
-      allowDownload: false,
-      probes: probes({
-        availableMemory: vi.fn().mockReturnValue(EMBEDDER_MIN_AVAILABLE_BYTES - 1),
-        createNativeEmbedder,
-        createFloorEmbedder,
-      }),
-    })
-
-    expect(outcome).toEqual({ kind: 'deferred', reason: 'ram-budget' })
-    expect(createNativeEmbedder).not.toHaveBeenCalled()
-    expect(createFloorEmbedder).not.toHaveBeenCalled()
-  })
-
-  it('serves the static floor below the RAM budget because the floor is the no-budget rung', async () => {
-    // The 1 GiB gate exists to keep the ONNX runtime from loading on a host that cannot hold it.
-    // The static floor loads a shipped deterministic asset and constructs no runtime at all, so
-    // applying the same gate refuses the exact rung that exists for a host with no memory to
-    // spare — and the embedder worker, which asks for this profile by name, then dies at startup
-    // with `could not resolve profile: deferred` on any loaded machine.
+  it('serves the static floor for a static preferred profile without loading the native runtime', async () => {
     const floor = makeFakeEmbedder(STATIC_FLOOR_EMBEDDING_PROFILE.dim)
     const createNativeEmbedder = vi.fn().mockRejectedValue(
       new Error('the native runtime must never load for a static profile'),
@@ -140,7 +112,6 @@ describe('acquireEmbedder', () => {
       preferredProfile: STATIC_FLOOR_EMBEDDING_PROFILE,
       allowDownload: false,
       probes: probes({
-        availableMemory: vi.fn().mockReturnValue(0),
         createNativeEmbedder,
         createFloorEmbedder: vi.fn().mockReturnValue(floor),
       }),
@@ -155,15 +126,14 @@ describe('acquireEmbedder', () => {
     expect(createNativeEmbedder).not.toHaveBeenCalled()
   })
 
-  it('still requires the hosted worker for a static profile below the RAM budget', async () => {
-    // Required policy is a posture, not a resource question: it must keep winning over both the
-    // budget gate and the floor short-circuit.
+  it('still requires the hosted worker for a static profile', async () => {
+    // Required policy keeps winning over the floor short-circuit.
     const outcome = await resolveEmbedderCapability({
       preferredProfile: STATIC_FLOOR_EMBEDDING_PROFILE,
       allowDownload: false,
       workerPolicy: 'required',
       agentQaRoot: '/hosted/project/.agent-qa',
-      probes: probes({ availableMemory: vi.fn().mockReturnValue(0) }),
+      probes: probes(),
     })
 
     expect(outcome).toEqual({ kind: 'deferred', reason: 'worker-unavailable' })
@@ -172,7 +142,6 @@ describe('acquireEmbedder', () => {
   it('requires the hosted worker without entering native or floor factories', async () => {
     const agentQaRoot = '/hosted/project/.agent-qa'
     const discoverWorker = vi.fn().mockResolvedValue({ kind: 'no-worker' })
-    const availableMemory = vi.fn().mockReturnValue(HEALTHY_MEMORY)
     const createNativeEmbedder = vi.fn().mockResolvedValue(makeFakeEmbedder())
     const createFloorEmbedder = vi.fn().mockReturnValue(makeFakeEmbedder(512))
     const requiredOptions = {
@@ -182,7 +151,6 @@ describe('acquireEmbedder', () => {
       agentQaRoot,
       probes: probes({
         discoverWorker,
-        availableMemory,
         createNativeEmbedder,
         createFloorEmbedder,
       }),
@@ -195,7 +163,6 @@ describe('acquireEmbedder', () => {
 
     expect(outcome).toEqual({ kind: 'deferred', reason: 'worker-unavailable' })
     expect(discoverWorker).toHaveBeenCalledWith(agentQaRoot)
-    expect(availableMemory).not.toHaveBeenCalled()
     expect(createNativeEmbedder).not.toHaveBeenCalled()
     expect(createFloorEmbedder).not.toHaveBeenCalled()
   })
@@ -284,9 +251,8 @@ describe('acquireEmbedder', () => {
 
   it('memoizes capability resolution per profile and probe seam', async () => {
     const discoverWorker = vi.fn().mockResolvedValue({ kind: 'no-worker' })
-    const availableMemory = vi.fn().mockReturnValue(HEALTHY_MEMORY)
     const createNativeEmbedder = vi.fn().mockResolvedValue(makeFakeEmbedder())
-    const injected = probes({ discoverWorker, availableMemory, createNativeEmbedder })
+    const injected = probes({ discoverWorker, createNativeEmbedder })
     const options = {
       preferredProfile: DEFAULT_EMBEDDING_PROFILE,
       allowDownload: false,
@@ -300,7 +266,6 @@ describe('acquireEmbedder', () => {
 
     expect(first).toBe(second)
     expect(discoverWorker).toHaveBeenCalledTimes(1)
-    expect(availableMemory).toHaveBeenCalledTimes(1)
     expect(createNativeEmbedder).toHaveBeenCalledTimes(1)
   })
 

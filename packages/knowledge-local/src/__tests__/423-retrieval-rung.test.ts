@@ -46,7 +46,6 @@ function markerExists(knowledgeRoot: string): boolean {
 function neverProbed(): EmbedderProbes {
   return {
     discoverWorker: vi.fn().mockResolvedValue({ kind: 'no-worker' }),
-    availableMemory: vi.fn().mockReturnValue(Number.MAX_SAFE_INTEGER),
     createNativeEmbedder: vi.fn().mockResolvedValue(makeFakeEmbedder()),
     createFloorEmbedder: vi.fn().mockReturnValue(makeFakeEmbedder(512)),
   }
@@ -69,7 +68,7 @@ const EMBEDDERS: readonly EmbedderAxis[] = [
     profile: STATIC_FLOOR_EMBEDDING_PROFILE,
     embedder: makeFakeEmbedder(STATIC_FLOOR_EMBEDDING_PROFILE.dim),
   },
-  { kind: 'deferred', reason: 'ram-budget' },
+  { kind: 'deferred', reason: 'cold-artifact' },
   { kind: 'lexical-only' },
 ]
 

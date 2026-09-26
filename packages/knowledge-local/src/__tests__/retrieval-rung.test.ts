@@ -17,7 +17,6 @@ import {
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import {
-  EMBEDDER_MIN_AVAILABLE_BYTES,
   resetEmbedderCapability,
   type EmbedderProbes,
 } from '../embedder-acquire.js'
@@ -33,8 +32,6 @@ import {
 } from '../retrieval-rung.js'
 import { makeFakeEmbedder } from './fixtures/fake-embedder.js'
 import { scaffoldKnowledgeRoot } from './fixtures/bundle-fixture.js'
-
-const HEALTHY_MEMORY = EMBEDDER_MIN_AVAILABLE_BYTES + 1
 
 const roots: string[] = []
 
@@ -101,7 +98,6 @@ const READY_FLOOR: EmbedderAxis = {
 function probes(overrides: Partial<EmbedderProbes> = {}): EmbedderProbes {
   return {
     discoverWorker: vi.fn().mockResolvedValue({ kind: 'no-worker' }),
-    availableMemory: vi.fn().mockReturnValue(HEALTHY_MEMORY),
     createNativeEmbedder: vi.fn().mockResolvedValue(makeFakeEmbedder()),
     createFloorEmbedder: vi.fn().mockReturnValue(makeFakeEmbedder(512)),
     ...overrides,
@@ -118,7 +114,7 @@ describe('foldRetrievalRung — the index axis is folded FIRST (D-17)', () => {
   it.each<[string, EmbedderAxis]>([
     ['a live native embedder', READY_NATIVE],
     ['the static floor', READY_FLOOR],
-    ['a deferred embedder', { kind: 'deferred', reason: 'ram-budget' }],
+    ['a deferred embedder', { kind: 'deferred', reason: 'cold-artifact' }],
     ['no embedder at all', { kind: 'lexical-only' }],
   ])('folds an absent scan face to bundle-scan/index-not-built with %s', (_name, embedder) => {
     // No dense leg can run against an index that will not open, whatever the embedder did —
@@ -156,7 +152,6 @@ describe('foldRetrievalRung — the index axis is folded FIRST (D-17)', () => {
   })
 
   it.each([
-    ['ram-budget', 'low-ram-deferral'],
     ['cold-artifact', 'model-not-downloaded'],
     ['load-failure', 'embedder-load-failed'],
     ['worker-unavailable', 'profile-unresolved'],
@@ -180,7 +175,6 @@ describe('foldRetrievalRung — the index axis is folded FIRST (D-17)', () => {
     const embedders: EmbedderAxis[] = [
       READY_NATIVE,
       READY_FLOOR,
-      { kind: 'deferred', reason: 'ram-budget' },
       { kind: 'deferred', reason: 'cold-artifact' },
       { kind: 'deferred', reason: 'load-failure' },
       { kind: 'deferred', reason: 'worker-unavailable' },
@@ -276,23 +270,6 @@ describe('resolveRetrievalRung — never throws, never downloads, never writes',
       schemaVersion: 2,
       rung: 'lexical-only',
       reason: 'floor-disabled',
-    })
-  })
-
-  it('folds a starved host to lexical-only/low-ram-deferral', async () => {
-    const knowledgeRoot = await healthyRoot()
-
-    const recorded = await resolveRetrievalRung({
-      knowledgeRoot,
-      agentQaRoot: knowledgeRoot,
-      preferredProfile: DEFAULT_EMBEDDING_PROFILE,
-      probes: probes({ availableMemory: vi.fn().mockReturnValue(0) }),
-    })
-
-    expect(recorded).toEqual({
-      schemaVersion: 2,
-      rung: 'lexical-only',
-      reason: 'low-ram-deferral',
     })
   })
 

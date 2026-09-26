@@ -247,7 +247,6 @@ describe('createKnowledgeChecks', () => {
   })
 
   it.each([
-    ['ram-budget', 'low-ram-deferral'],
     ['cold-artifact', 'model-not-downloaded'],
     ['load-failure', 'embedder-load-failed'],
     ['worker-unavailable', 'profile-unresolved'],
@@ -573,7 +572,6 @@ describe('createKnowledgeChecks', () => {
     const embedders = [
       ready('native'),
       ready('floor'),
-      deferred('ram-budget'),
       deferred('cold-artifact'),
       deferred('load-failure'),
       deferred('worker-unavailable'),

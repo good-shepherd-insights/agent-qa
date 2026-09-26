@@ -117,15 +117,14 @@ describe('automatic embedding degradation ladder', () => {
       allowDownload: false,
       probes: {
         discoverWorker: vi.fn().mockResolvedValue({ kind: 'no-worker' }),
-        availableMemory: vi.fn().mockReturnValue(
-          knowledgeLocal.EMBEDDER_MIN_AVAILABLE_BYTES - 1,
-        ),
         createNativeEmbedder: vi.fn().mockRejectedValue(
-          new Error('native runtime must not load below the RAM budget'),
+          Object.assign(new Error('model artifact is not present in the local cache'), {
+            code: 'ENOENT',
+          }),
         ),
       },
     })
-    expect(deferred).toEqual({ kind: 'deferred', reason: 'ram-budget' })
+    expect(deferred).toEqual({ kind: 'deferred', reason: 'cold-artifact' })
 
     const first = await knowledgeLocal.rebuildIndex({
       knowledgeRoot,
@@ -155,9 +154,6 @@ describe('automatic embedding degradation ladder', () => {
       allowDownload: false,
       probes: {
         discoverWorker: vi.fn().mockResolvedValue({ kind: 'no-worker' }),
-        availableMemory: vi.fn().mockReturnValue(
-          knowledgeLocal.EMBEDDER_MIN_AVAILABLE_BYTES + 1,
-        ),
         createNativeEmbedder: vi.fn().mockResolvedValue(
           makeFakeEmbedder(DEFAULT_EMBEDDING_PROFILE.dim),
         ),
@@ -214,9 +210,6 @@ describe('automatic embedding degradation ladder', () => {
       allowDownload: false,
       probes: {
         discoverWorker: vi.fn().mockResolvedValue({ kind: 'no-worker' }),
-        availableMemory: vi.fn().mockReturnValue(
-          knowledgeLocal.EMBEDDER_MIN_AVAILABLE_BYTES + 1,
-        ),
         createNativeEmbedder: vi.fn().mockRejectedValue(moduleUnavailableError()),
       },
     })
@@ -259,9 +252,6 @@ describe('automatic embedding degradation ladder', () => {
       allowDownload: false,
       probes: {
         discoverWorker: vi.fn().mockResolvedValue({ kind: 'no-worker' }),
-        availableMemory: vi.fn().mockReturnValue(
-          knowledgeLocal.EMBEDDER_MIN_AVAILABLE_BYTES + 1,
-        ),
       },
     })
 

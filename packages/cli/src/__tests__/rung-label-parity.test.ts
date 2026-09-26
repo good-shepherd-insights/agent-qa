@@ -151,7 +151,6 @@ const EMBEDDERS: readonly { readonly label: string; readonly outcome: AcquireEmb
       embedder: INERT_EMBEDDER,
     },
   },
-  { label: 'deferred/ram-budget', outcome: { kind: 'deferred', reason: 'ram-budget' } },
   { label: 'deferred/cold-artifact', outcome: { kind: 'deferred', reason: 'cold-artifact' } },
   { label: 'deferred/load-failure', outcome: { kind: 'deferred', reason: 'load-failure' } },
   { label: 'deferred/worker-unavailable', outcome: { kind: 'deferred', reason: 'worker-unavailable' } },

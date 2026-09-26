@@ -62,7 +62,6 @@ const INDEX_REASONS: Record<RebuildReason, RetrievalRungReason> = {
  * word that a banner would then print to a person.
  */
 const DEFERRED_REASONS: Record<DeferReason, RetrievalRungReason> = {
-  'ram-budget': 'low-ram-deferral',
   'cold-artifact': 'model-not-downloaded',
   'load-failure': 'embedder-load-failed',
   'worker-unavailable': 'profile-unresolved',
