@@ -70,6 +70,8 @@ function AppLayout() {
   const matches = useMatches()
   const location = useLocation()
   const hideHeader = matches.some((m) => (m.handle as Record<string, unknown>)?.hideHeader)
+  // Config pins its tab bar and save status with `sticky`, which needs `main` to own the scroll.
+  const mainScrolls = matches.some((m) => (m.handle as Record<string, unknown>)?.mainScrolls)
   const [appMetadata, setAppMetadata] = useState<AppMetadataResponse | null>(null)
   const [updateDismissal, setUpdateDismissal] = useState<UpdateBannerDismissal | null>(() =>
     readUpdateBannerDismissalCookie(),
@@ -121,7 +123,7 @@ function AppLayout() {
       <ChatSessionProvider>
       <ProductTourProvider pathname={location.pathname} hideHeader={hideHeader}>
         <AppSidebar />
-        <SidebarInset className={cn(hideHeader && "h-svh overflow-hidden")}>
+        <SidebarInset className={cn(hideHeader && "h-svh overflow-hidden", mainScrolls && "h-svh")}>
           {showUpdateBanner ? (
             <UpdateBanner
               installedVersion={installedVersion}
@@ -424,13 +426,13 @@ const router = createBrowserRouter([
       },
       {
         path: "config",
-        handle: { crumb: "Config" },
+        handle: { crumb: "Config", mainScrolls: true },
         errorElement: <RouteErrorBoundary />,
         element: configElement,
       },
       {
         path: "config/:tab",
-        handle: { crumb: "Config" },
+        handle: { crumb: "Config", mainScrolls: true },
         errorElement: <RouteErrorBoundary />,
         element: configElement,
       },
