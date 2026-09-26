@@ -24,6 +24,7 @@ import {
 } from '@/lib/api'
 import { LLM_PROVIDER_OPTIONS } from '@/components/config-manager/llm-section'
 import {
+  ACCESSIBILITY_FIELD_PLACEHOLDERS,
   CONFIG_LOAD_FAILED_TITLE,
   CONFIG_PAGE_TITLE,
   CONFIG_SECTION_LABELS,
@@ -350,6 +351,22 @@ afterEach(() => {
 const STEP_SEGMENTS = ['use', 'timeout', 'step']
 const STEP_KEY = configFieldKeyOf(STEP_SEGMENTS)
 const HEADLESS_SEGMENTS = ['use', 'browser', 'headless']
+const PARALLEL_SEGMENTS = ['use', 'parallel']
+const KEEP_FAILURES_SEGMENTS = ['services', 'recording', 'keepFailuresOnly']
+const EXCLUDE_SEGMENTS = ['services', 'accessibility', 'exclude']
+
+async function typeListAndBlur(textarea: HTMLTextAreaElement, value: string) {
+  const setter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value')?.set
+  await act(async () => {
+    textarea.focus()
+    setter?.call(textarea, value)
+    textarea.dispatchEvent(new Event('input', { bubbles: true }))
+  })
+  await act(async () => {
+    textarea.blur()
+  })
+  await flushRender()
+}
 
 /** The Step timeout ConfigField, which the 429-16 wiring cells drive. */
 function stepInput() {
@@ -961,8 +978,9 @@ describe('ConfigPage task tabs shell', () => {
       'planner-limits',
     ])
     expect(section('models')?.textContent).toContain('primary')
-    expect(section('models')?.querySelector('#use-parallel')).not.toBeNull()
-    expect(section('models')?.textContent).toContain('Allow eligible web runs and suite parent jobs to share available queue slots by default.')
+    expect(section('models')?.querySelector('#use-parallel')).toBeNull()
+    expect(section('models')?.querySelector('[data-field-path="use.parallel"]')).toBeNull()
+    expect(section('models')?.textContent).not.toContain('Parallel Execution')
     expect(section('screenshot-size')?.querySelector('h2')?.textContent).toBe(CONFIG_SECTION_LABELS['screenshot-size'])
     expect(section('planner-limits')?.querySelector('h2')?.textContent).toBe(CONFIG_SECTION_LABELS['planner-limits'])
     expect(findButton('Execution Defaults')).toBeNull()
@@ -989,28 +1007,21 @@ describe('ConfigPage task tabs shell', () => {
     await renderAt('/config/models')
 
     const models = section('models')!
-    expect(models.textContent).toContain('Allow eligible web runs and suite parent jobs to share available queue slots by default.')
+    expect(models.textContent).toContain('Default LLM')
     expect(models.textContent).not.toContain('Global Headless')
     expect(document.body.querySelector('#use-global-headless')).toBeNull()
     expect(document.body.querySelector('#browser-headless')).toBeNull()
     expect(models.textContent).not.toContain('use.browser.headless')
     expect(models.textContent).not.toContain('use.headless')
 
-    const parallelSwitch = models.querySelector('#use-parallel') as HTMLButtonElement | null
-    expect(parallelSwitch).not.toBeNull()
-
-    await act(async () => {
-      parallelSwitch!.click()
-    })
-    await flushRender()
+    expect(models.querySelector('#use-parallel')).toBeNull()
 
     await act(async () => {
       sectionButton('models', 'Save Runtime Defaults')!.click()
     })
     await flushRender()
 
-    expect(updateSettings).toHaveBeenCalledWith({
-      'use.parallel': false,
+    expect(updateSettings).toHaveBeenCalledExactlyOnceWith({
       'use.llm': 'primary',
     })
     expect(models.textContent).not.toContain('Default Device')
@@ -1102,6 +1113,92 @@ describe('ConfigPage task tabs shell', () => {
     expect(toast.error).not.toHaveBeenCalled()
   })
 
+  it('NO-SAVE-BUTTON-EXECUTION: the Execution panel has no Save Changes or Save Runtime Defaults button, and its switches autosave with no pop-up message', async () => {
+    await renderAt('/config/execution')
+
+    const panel = container!.querySelector('[data-config-panel="execution"]') as HTMLElement
+    expect(panel).not.toBeNull()
+    const buttonNames = Array.from(panel.querySelectorAll('button')).map((button) => button.textContent?.trim())
+    expect(buttonNames).not.toContain('Save Changes')
+    expect(buttonNames).not.toContain('Save Runtime Defaults')
+    expect(panel.querySelector('[data-config-section-shell]')).toBeNull()
+    for (const id of CONFIG_SECTIONS.execution) {
+      expect(section(id)?.querySelectorAll('[data-config-field]').length, id).toBeGreaterThan(0)
+    }
+
+    const parallelSwitch = document.getElementById(configFieldControlId(configFieldKeyOf(PARALLEL_SEGMENTS))) as HTMLButtonElement | null
+    expect(section('runs')?.contains(parallelSwitch)).toBe(true)
+    expect(parallelSwitch?.getAttribute('aria-checked')).toBe('true')
+    await act(async () => {
+      parallelSwitch!.click()
+    })
+    await flushRender()
+    const keepFailuresSwitch = document.getElementById(configFieldControlId(configFieldKeyOf(KEEP_FAILURES_SEGMENTS))) as HTMLButtonElement | null
+    await act(async () => {
+      keepFailuresSwitch!.click()
+    })
+    await flushRender()
+
+    expect(vi.mocked(applyConfigChanges).mock.calls.map((call) => call[0])).toEqual([
+      [{ op: 'set', path: PARALLEL_SEGMENTS, value: false }],
+      [{ op: 'set', path: KEEP_FAILURES_SEGMENTS, value: true }],
+    ])
+    expect(updateSettings).not.toHaveBeenCalled()
+    expect(toast.success).not.toHaveBeenCalled()
+    expect(toast.error).not.toHaveBeenCalled()
+  })
+
+  it('EXECUTION-LEAVES-HAVE-FIELDS: every Execution leaf that had no field at HEAD now has one on the Execution tab', async () => {
+    await renderAt('/config/execution')
+
+    const panel = container!.querySelector('[data-config-panel="execution"]') as HTMLElement
+    for (const pattern of [
+      'use.parallel',
+      'use.workers',
+      'use.buildTag',
+      'use.cache',
+      'services.recording.keepFailuresOnly',
+      'services.accessibility.disableRules',
+      'services.accessibility.exclude',
+    ]) {
+      expect(panel.querySelectorAll(`[data-field-path="${pattern}"]`), pattern).toHaveLength(1)
+    }
+    expect(section('runs')?.querySelector('[data-field-path="use.workers"] input')?.getAttribute('placeholder')).toBe('3')
+    expect(section('cache')?.querySelector('[data-field-path="use.cache"] [role="switch"]')?.getAttribute('aria-checked')).toBe('true')
+  })
+
+  it('LIST-FIELD-ZERO-ONE-MANY: a list leaf reads the same at zero, one and many items', async () => {
+    await renderAt('/config/execution?section=accessibility')
+
+    const exclude = document.getElementById(configFieldControlId(configFieldKeyOf(EXCLUDE_SEGMENTS))) as HTMLTextAreaElement | null
+    expect(exclude?.tagName).toBe('TEXTAREA')
+    expect(exclude!.value).toBe('')
+    expect(exclude!.placeholder).toBe(ACCESSIBILITY_FIELD_PLACEHOLDERS.exclude)
+    expect(exclude!.closest('[data-field-path]')?.getAttribute('data-field-path')).toBe('services.accessibility.exclude')
+
+    await act(async () => {
+      exclude!.focus()
+    })
+    await act(async () => {
+      exclude!.blur()
+    })
+    await flushRender()
+    expect(applyConfigChanges).not.toHaveBeenCalled()
+
+    await typeListAndBlur(exclude!, '#cookie-banner\n.chat-widget')
+    expect(vi.mocked(applyConfigChanges).mock.calls.at(-1)![0]).toEqual([
+      { op: 'set', path: EXCLUDE_SEGMENTS, value: ['#cookie-banner', '.chat-widget'] },
+    ])
+    expect(exclude!.value).toBe('#cookie-banner\n.chat-widget')
+
+    await typeListAndBlur(exclude!, '#cookie-banner')
+    expect(vi.mocked(applyConfigChanges).mock.calls.at(-1)![0]).toEqual([
+      { op: 'set', path: EXCLUDE_SEGMENTS, value: ['#cookie-banner'] },
+    ])
+    expect(applyConfigChanges).toHaveBeenCalledTimes(2)
+    expect(updateSettings).not.toHaveBeenCalled()
+  })
+
   it('shows consolidated runtime path placeholders for dashboard and cache', async () => {
     const view = await renderAt('/config/project?section=dashboard')
 
@@ -1114,7 +1211,9 @@ describe('ConfigPage task tabs shell', () => {
     await activateTab('execution')
 
     expect(currentLocation()).toEqual({ pathname: '/config/execution', search: '' })
-    const cacheDirInput = section('cache')?.querySelector('#cache-dir') as HTMLInputElement | null
+    const cacheDirInput = section('cache')?.querySelector(
+      `#${configFieldControlId(configFieldKeyOf(['services', 'cache', 'dir']))}`,
+    ) as HTMLInputElement | null
     expect(cacheDirInput).not.toBeNull()
     expect(cacheDirInput?.placeholder).toBe('.agent-qa/cache')
   })

@@ -184,11 +184,11 @@ const SURFACE_MARKERS: Record<string, { title: string; marker: string }> = {
   'workspace:files': { title: 'Files', marker: 'Hooks File' },
   'knowledge:store': { title: 'Knowledge', marker: 'Knowledge Directory' },
   'services:dashboard': { title: 'Dashboard', marker: 'Database Path' },
-  'services:cache': { title: 'Cache', marker: 'Cache Directory' },
+  'services:cache': { title: 'Cache', marker: 'Cache folder' },
   'services:auth-states': { title: 'Auth States', marker: 'No auth states saved' },
   'services:logging': { title: 'Logging', marker: 'Log Level' },
   'services:recording': { title: 'Recording', marker: 'Record video of each test. Recordings stay on this machine.' },
-  'services:accessibility': { title: 'Accessibility', marker: 'Run After' },
+  'services:accessibility': { title: 'Accessibility', marker: 'Run checks after' },
   'services:vision': { title: 'Vision', marker: 'Screenshot Size' },
   'registry:llms': { title: 'Models', marker: 'Add Configuration' },
   'registry:targets': { title: 'Targets', marker: 'Add Target' },
@@ -197,9 +197,9 @@ const SURFACE_MARKERS: Record<string, { title: string; marker: string }> = {
   'use:browser': { title: 'Browser', marker: 'Viewport width' },
   'use:timeouts': { title: 'Timeouts', marker: 'Step timeout' },
   'use:planner': { title: 'Planner', marker: 'Max Sub-Actions' },
-  'use:log-capture': { title: 'Log Capture', marker: 'Capture network logs' },
+  'use:log-capture': { title: 'Log capture', marker: 'Capture network logs' },
   'use:mobile': { title: 'Mobile', marker: 'App state' },
-  'use:execution-defaults': { title: 'Execution Defaults', marker: 'Parallel Execution' },
+  'use:execution-defaults': { title: 'Execution Defaults', marker: 'Default LLM' },
   'analytics:pass-rate-scope': { title: 'Pass Rate Scope', marker: 'Add Attribute' },
 }
 
@@ -288,7 +288,8 @@ async function assertConfigSectionShells(destinations: string[]) {
     expect(view.textContent).toContain(contract.title)
     expect(view.textContent).toContain(contract.marker)
     expect(view.textContent).not.toContain('Missing config surface')
-    expect(view.querySelector('[data-config-section-shell]')).not.toBeNull()
+    // A section rebuilt on ConfigField has field rows in place of the shipped shell.
+    expect(view.querySelector('[data-config-section-shell], [data-config-field]')).not.toBeNull()
     expect(view.querySelector('[data-config-section-shell] [data-slot="card"]')).toBeNull()
 
     cleanupRender()
