@@ -5,7 +5,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { LlmSection } from '@/components/config-manager/llm-section'
-import { fetchLiveModelCatalog, fetchModelCatalog, updateSettings } from '@/lib/api'
+import { fetchLiveModelCatalog, fetchModelCatalog, testLLMConnection, updateSettings } from '@/lib/api'
 import { toast } from 'sonner'
 
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
@@ -113,6 +113,7 @@ const mockUpdateSettings = vi.mocked(updateSettings)
 const mockFetchModelCatalog = vi.mocked(fetchModelCatalog)
 const mockFetchLiveModelCatalog = vi.mocked(fetchLiveModelCatalog)
 const mockToastError = vi.mocked(toast.error)
+const mockTestLLMConnection = vi.mocked(testLLMConnection)
 
 let container: HTMLDivElement | null = null
 let root: Root | null = null
@@ -615,5 +616,34 @@ describe('LlmSection model-config modal', () => {
     expect(document.body.textContent).toContain('Optional non-secret headers sent with this Anthropic-compatible endpoint.')
     expect(visionSwitch?.getAttribute('aria-checked')).toBe('false')
     expect(contextWindowInput?.value).toBe('200k')
+  })
+
+  it('CONNECTION-FAILURE-RENDERS-SERVER-SENTENCE: a failed test shows the server sentence verbatim', async () => {
+    const sentence = 'Invalid request. Check model and provider settings.'
+    mockTestLLMConnection.mockResolvedValueOnce({
+      success: false,
+      error: 'invalid_request',
+      message: sentence,
+    })
+    await renderLlmSection(configWithLlm({
+      name: 'remote-openai',
+      provider: 'openai-compatible',
+      model: 'openrouter/auto',
+      baseURL: 'https://openrouter.ai/api/v1',
+    }))
+    await openFirstLlmEditor()
+
+    await act(async () => {
+      const testButton = Array.from(document.body.querySelectorAll('button')).find((button) =>
+        button.textContent?.trim() === 'Test Connection',
+      ) as HTMLButtonElement
+      testButton.click()
+    })
+    await flushRender()
+
+    expect(mockTestLLMConnection).toHaveBeenCalledTimes(1)
+    const alert = document.body.querySelector('[role="alert"]')
+    expect(alert?.textContent).toBe(sentence)
+    expect(document.body.textContent).not.toContain('Connection failed.')
   })
 })

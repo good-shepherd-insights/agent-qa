@@ -76,6 +76,7 @@ import {
   type LLMTestResult,
   type ModelCatalogEntry,
 } from "@/lib/api"
+import { providerErrorSentence } from "@vostride/agent-qa-schema"
 
 export const LLM_PROVIDER_OPTIONS = [
   { value: "openai-compatible", label: "OpenAI-compatible" },
@@ -256,18 +257,6 @@ function findCatalogVisionMatch(modelValue: string, entries: ModelCatalogEntry[]
 
 function modelCatalogListId(provider: string): string {
   return `config-model-options-${provider.replace(/[^a-zA-Z0-9_-]/g, "-")}`
-}
-
-function getConnectionFailureCopy(result: LLMTestResult): string {
-  if (result.error === "missing_credential" && result.message) return result.message
-  if (result.error === "auth_error") return "Authentication failed. Check the saved credential for this config."
-  if (result.error === "model_not_found") return "Model not found. Check the model name."
-  if (result.error === "network_error") return "Network error. Check the exact base URL and try again."
-  if (result.error === "invalid_request" && result.message) return `Connection failed. ${result.message}`
-  if (result.message) return result.message.startsWith("Connection failed.")
-    ? result.message
-    : `Connection failed. ${result.message}`
-  return "Connection failed. Provider returned an error."
 }
 
 export function LlmSection({ config, onConfigChange }: LlmSectionProps) {
@@ -764,12 +753,19 @@ function LlmConfigModal({ open, onOpenChange, config, existingNames, onSave, onA
         configName: name || undefined,
       })
       setTestResult(result)
-    } catch {
-      setTestResult({
-        success: false,
-        error: "network_error",
-        message: "Network error. Check the exact base URL and try again.",
-      })
+    } catch (err) {
+      const payload = (err as { payload?: Record<string, unknown> | null } | null)?.payload
+      setTestResult(payload && typeof payload.message === "string"
+        ? {
+            success: false,
+            error: typeof payload.error === "string" ? payload.error : "invalid_request",
+            message: payload.message,
+          }
+        : {
+            success: false,
+            error: "network_error",
+            message: providerErrorSentence("network_error", ""),
+          })
     } finally {
       setTesting(false)
     }
@@ -1100,7 +1096,7 @@ function LlmConfigModal({ open, onOpenChange, config, existingNames, onSave, onA
     return (
       <div className="flex items-center gap-2 text-sm text-destructive" role="alert">
         <XCircle className="size-4" />
-        <span>{getConnectionFailureCopy(testResult)}</span>
+        <span>{testResult.message}</span>
       </div>
     )
   }
