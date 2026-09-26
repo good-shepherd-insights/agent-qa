@@ -223,7 +223,7 @@ export default function ConfigPage() {
               key={id}
               value={id}
               data-config-panel={id}
-              data-tour-id="tour-config-section"
+              data-tour-id={id === tab ? "tour-config-section" : undefined}
               className="space-y-8 pt-6"
             >
               {CONFIG_SECTIONS[id].map((section) => {
