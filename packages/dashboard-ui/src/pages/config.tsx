@@ -34,7 +34,7 @@ import {
 import { ConfigLineNotice } from "@/components/config-manager/config-section-shell"
 import { ConfigTabBar } from "@/components/config-manager/config-tabs"
 import { SaveStatus } from "@/components/config-manager/save-status"
-import { LlmSection } from "@/components/config-manager/llm-section"
+import { ModelList } from "@/components/config-manager/model-list"
 import { TimeoutSection } from "@/components/config-manager/timeout-section"
 import { CacheSection } from "@/components/config-manager/cache-section"
 import { AuthStatesSection } from "@/components/config-manager/auth-states-section"
@@ -48,7 +48,6 @@ import { TestMatchSection } from "@/components/config-manager/test-match-section
 import { FilesSection } from "@/components/config-manager/files-section"
 import { LogCaptureSection } from "@/components/config-manager/log-capture-section"
 import { RunsSection } from "@/components/config-manager/runs-section"
-import { ExecutionDefaultsSection } from "@/components/config-manager/execution-defaults-section"
 import { MobileSection } from "@/components/config-manager/mobile-section"
 import { KnowledgeSection } from "@/components/config-manager/knowledge-section"
 import { VisionSection } from "@/components/config-manager/vision-section"
@@ -63,7 +62,7 @@ interface SectionProps {
 }
 
 const SECTION_COMPONENTS: Partial<Record<ConfigSectionId, readonly ComponentType<SectionProps>[]>> = {
-  models: [LlmSection, ExecutionDefaultsSection],
+  models: [ModelList],
   "screenshot-size": [VisionSection],
   "planner-limits": [PlannerSection],
   targets: [TargetsSection],
@@ -84,6 +83,11 @@ const SECTION_COMPONENTS: Partial<Record<ConfigSectionId, readonly ComponentType
   dashboard: [DashboardSection],
   logging: [LoggingSection],
   "pass-rate-scope": [AnalyticsSection],
+}
+
+// The Models heading shares its row with Add model (UI-SPEC S4); the list spans the row below.
+const SECTION_LAYOUT: Partial<Record<ConfigSectionId, string>> = {
+  models: "grid grid-cols-[minmax(0,1fr)_auto] items-center gap-4",
 }
 
 function configSectionHeadingId(section: ConfigSectionId): string {
@@ -263,7 +267,7 @@ export default function ConfigPage() {
                       key={section}
                       data-config-section={section}
                       aria-labelledby={headingId}
-                      className="space-y-4"
+                      className={SECTION_LAYOUT[section] ?? "space-y-4"}
                     >
                       <h2
                         id={headingId}

@@ -486,6 +486,26 @@ export const BROWSER_NAME_LABELS = {
 
 export const HEADLESS_HELP = 'Run web browsers without a visible window.'
 
+export const VISION_FIELD_LABELS = {
+  screenshotSize: 'Largest screenshot',
+  effectiveResolution: 'Longest edge in pixels',
+} as const
+
+export const VISION_FIELD_HELP = {
+  screenshotSize: 'The most a screenshot sent to any vision model may weigh, such as 256k. Empty sends it uncompressed.',
+  effectiveResolution: 'Screenshots are scaled so their longest edge fits this many pixels.',
+} as const
+
+export const PLANNER_FIELD_LABELS = {
+  maxSubActions: 'Most actions per step',
+  previousStepCount: 'Earlier steps the planner sees',
+} as const
+
+export const PLANNER_FIELD_HELP = {
+  maxSubActions: 'The most actions the planner may take to finish one step.',
+  previousStepCount: 'How many earlier steps the planner reads before planning the next.',
+} as const
+
 export const TIMEOUT_FIELD_LABELS = {
   step: 'Step timeout',
   test: 'Test timeout',

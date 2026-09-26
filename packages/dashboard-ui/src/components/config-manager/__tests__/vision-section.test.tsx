@@ -1,110 +1,161 @@
 // @vitest-environment jsdom
 
+// THE SHARED MODEL SETTINGS (429-23 Task 3 · D-10 · UI-SPEC S4 "Shared settings", S3).
+//
+// Screenshot size (the one services.vision budget) and planner limits are ordinary ConfigField
+// sections: each leaf writes itself once it settles, with no Save button and no pop-up message.
+
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { PlannerSection } from '@/components/config-manager/planner-section'
 import { VisionSection } from '@/components/config-manager/vision-section'
-import { updateSettings } from '@/lib/api'
-import { toast } from 'sonner'
+import {
+  ConfigAutosaveProvider,
+  configFieldControlId,
+  configFieldKeyOf,
+  useConfigAutosave,
+} from '@/hooks/use-config-autosave'
+import { applyConfigChanges, fetchConfig, fetchConfigRevision, updateSettings } from '@/lib/api'
+import { PLANNER_FIELD_LABELS, VISION_FIELD_LABELS } from '@/lib/config-copy'
+
+vi.mock('@/lib/api', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/api')>()),
+  fetchConfig: vi.fn(),
+  fetchConfigRevision: vi.fn(),
+  applyConfigChanges: vi.fn(),
+  updateSettings: vi.fn(),
+}))
 
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
-vi.mock('@/lib/api', () => ({
-  updateSettings: vi.fn().mockResolvedValue({ updated: true }),
-}))
+function answer(config: Record<string, unknown>) {
+  return { config, provider: null, revision: 'rev-1', file: { path: '/work/agent-qa.config.yaml', lines: [] } }
+}
 
-vi.mock('sonner', () => ({
-  toast: {
-    success: vi.fn(),
-    error: vi.fn(),
-  },
-}))
-
-const mockUpdateSettings = vi.mocked(updateSettings)
-const mockToast = vi.mocked(toast)
+function Harness() {
+  const autosave = useConfigAutosave()
+  if (autosave.load.kind !== 'ready') return null
+  return (
+    <ConfigAutosaveProvider value={autosave}>
+      <section data-config-section="screenshot-size">
+        <VisionSection />
+      </section>
+      <section data-config-section="planner-limits">
+        <PlannerSection />
+      </section>
+    </ConfigAutosaveProvider>
+  )
+}
 
 let container: HTMLDivElement | null = null
 let root: Root | null = null
 
-async function renderVisionSection(config: Record<string, unknown>, onConfigChange = vi.fn()) {
+async function flush() {
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(0)
+  })
+}
+
+async function mount() {
   container = document.createElement('div')
   document.body.appendChild(container)
   root = createRoot(container)
-
   await act(async () => {
-    root!.render(<VisionSection config={config} onConfigChange={onConfigChange} />)
+    root!.render(<Harness />)
   })
-
-  return { container, onConfigChange }
+  await flush()
 }
 
-function setInputValue(input: HTMLInputElement, value: string) {
-  const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')?.set
-  setter?.call(input, value)
-  input.dispatchEvent(new Event('input', { bubbles: true }))
+function input(segments: readonly string[]) {
+  return document.getElementById(configFieldControlId(configFieldKeyOf(segments))) as HTMLInputElement | null
 }
 
-function cleanupRender() {
-  if (root) {
-    act(() => root!.unmount())
-  }
-  root = null
-  if (container) {
-    container.remove()
-  }
-  container = null
+function labelFor(control: HTMLElement | null) {
+  return control ? container?.querySelector(`label[for="${control.id}"]`)?.textContent : undefined
 }
 
-afterEach(() => {
-  cleanupRender()
-  vi.clearAllMocks()
+async function typeAndBlur(control: HTMLInputElement | null, value: string) {
+  expect(control).not.toBeNull()
+  await act(async () => {
+    control!.focus()
+    const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')?.set
+    setter?.call(control!, value)
+    control!.dispatchEvent(new Event('input', { bubbles: true }))
+  })
+  await act(async () => {
+    control!.blur()
+  })
+  await flush()
+}
+
+beforeEach(() => {
+  vi.useFakeTimers()
+  localStorage.clear()
+  vi.mocked(fetchConfigRevision).mockResolvedValue({ revision: 'rev-1' })
+  vi.mocked(applyConfigChanges).mockResolvedValue({ revision: 'rev-2' } as never)
 })
 
-describe('VisionSection', () => {
-  it('marks sizing fields optional and saves the shared services.vision budget', async () => {
-    const { container: view, onConfigChange } = await renderVisionSection({
-      services: {
-        vision: {
-          screenshotSize: '128k',
-          effectiveResolution: 512,
-        },
-      },
-    })
+afterEach(async () => {
+  if (root) await act(async () => root!.unmount())
+  root = null
+  container?.remove()
+  container = null
+  vi.clearAllMocks()
+  vi.useRealTimers()
+  localStorage.clear()
+})
 
-    expect(view.textContent).toContain('Screenshot Size (optional)')
-    expect(view.textContent).toContain('Effective Resolution (optional)')
+describe('VisionSection and PlannerSection', () => {
+  it('VISION-AUTOSAVES-BY-LEAF: the shared screenshot-size budget shows its saved values and each leaf writes itself, with no Save button or pop-up message', async () => {
+    vi.mocked(fetchConfig).mockResolvedValue(
+      answer({ services: { vision: { screenshotSize: '128k', effectiveResolution: 512 } } }) as never,
+    )
+    await mount()
 
-    const screenshotSizeInput = view.querySelector('#vision-screenshot-size') as HTMLInputElement | null
-    const effectiveResolutionInput = view.querySelector('#vision-effective-resolution') as HTMLInputElement | null
-    expect(screenshotSizeInput).not.toBeNull()
-    expect(effectiveResolutionInput).not.toBeNull()
+    const size = input(['services', 'vision', 'screenshotSize'])
+    const edge = input(['services', 'vision', 'effectiveResolution'])
+    expect(size?.value).toBe('128k')
+    expect(edge?.value).toBe('512')
+    expect(labelFor(size)).toBe(VISION_FIELD_LABELS.screenshotSize)
+    expect(labelFor(edge)).toBe(VISION_FIELD_LABELS.effectiveResolution)
+    expect(container!.querySelector('[data-field-path="services.vision.screenshotSize"]')).not.toBeNull()
+    expect(container!.querySelector('[data-field-path="services.vision.effectiveResolution"]')).not.toBeNull()
+    const buttons = Array.from(container!.querySelectorAll('button')).map((button) => button.textContent?.trim())
+    expect(buttons).not.toContain('Save Changes')
 
-    await act(async () => {
-      setInputValue(screenshotSizeInput!, '256k')
-      setInputValue(effectiveResolutionInput!, '768')
-    })
+    await typeAndBlur(size, '256k')
+    await typeAndBlur(edge, '768')
 
-    const saveButton = Array.from(view.querySelectorAll('button')).find((button) =>
-      button.textContent?.includes('Save Changes'),
-    ) as HTMLButtonElement | undefined
-    expect(saveButton).toBeDefined()
+    expect(vi.mocked(applyConfigChanges).mock.calls).toEqual([
+      [[{ op: 'set', path: ['services', 'vision', 'screenshotSize'], value: '256k' }]],
+      [[{ op: 'set', path: ['services', 'vision', 'effectiveResolution'], value: 768 }]],
+    ])
+    expect(updateSettings).not.toHaveBeenCalled()
+    expect(document.body.querySelector('[data-sonner-toast]')).toBeNull()
+  })
 
-    await act(async () => {
-      saveButton!.dispatchEvent(new MouseEvent('click', { bubbles: true }))
-    })
-    await act(async () => {
-      await Promise.resolve()
-    })
+  it('PLANNER-LIMITS-AUTOSAVE: with no planner block, one limit writes itself with the other at its shown default', async () => {
+    vi.mocked(fetchConfig).mockResolvedValue(answer({ use: {} }) as never)
+    await mount()
 
-    expect(mockUpdateSettings).toHaveBeenCalledTimes(1)
-    expect(mockUpdateSettings).toHaveBeenCalledWith({
-      'services.vision': {
-        screenshotSize: '256k',
-        effectiveResolution: 768,
-      },
-    })
-    expect(onConfigChange).toHaveBeenCalledTimes(1)
-    expect(mockToast.success).toHaveBeenCalledWith('Configuration saved')
+    const most = input(['use', 'planner', 'maxSubActions'])
+    const earlier = input(['use', 'planner', 'previousStepCount'])
+    expect(labelFor(most)).toBe(PLANNER_FIELD_LABELS.maxSubActions)
+    expect(labelFor(earlier)).toBe(PLANNER_FIELD_LABELS.previousStepCount)
+    expect(most?.value).toBe('')
+    expect(most?.placeholder).toBe('20')
+    expect(earlier?.placeholder).toBe('5')
+
+    await typeAndBlur(most, '12')
+
+    expect(vi.mocked(applyConfigChanges).mock.calls).toEqual([
+      [[
+        { op: 'set', path: ['use', 'planner', 'maxSubActions'], value: 12 },
+        { op: 'set', path: ['use', 'planner', 'previousStepCount'], value: 5 },
+      ]],
+    ])
+    expect(updateSettings).not.toHaveBeenCalled()
   })
 })

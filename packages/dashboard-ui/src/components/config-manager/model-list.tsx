@@ -119,7 +119,7 @@ export function ModelList(_props: ModelListProps) {
             {NO_DEFAULT_TEXT}
           </p>
         )}
-        <ul data-model-list className="divide-y divide-border rounded-md border border-border">
+        <ul data-model-list data-field-list="registry.llms" className="divide-y divide-border rounded-md border border-border">
           {models.map((model) => (
             <ModelRow
               key={model.name}

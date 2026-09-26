@@ -24,12 +24,13 @@ import {
   testLLMConnection,
   updateSettings,
 } from '@/lib/api'
-import { LLM_PROVIDER_OPTIONS } from '@/components/config-manager/llm-section'
+import { LLM_PROVIDER_OPTIONS, LlmSection } from '@/components/config-manager/llm-section'
 import {
   ACCESSIBILITY_FIELD_PLACEHOLDERS,
   ADD_DEVICE_FARM_LABEL,
   ADD_DEVICE_LABEL,
   ADD_TARGET_LABEL,
+  ADD_MODEL_LABEL,
   CONFIG_LOAD_FAILED_TITLE,
   CONFIG_PAGE_TITLE,
   CONFIG_SECTION_LABELS,
@@ -38,6 +39,8 @@ import {
   CONFIG_FILE_ISSUES_TITLE,
   HEADLESS_HELP,
   LEGACY_LINK_NOT_FOUND_TEXT,
+  MAKE_DEFAULT_LABEL,
+  MODEL_STATUS_WORDS,
   NOT_SAVED_ACTION_NAME,
   NO_DEVICE_FARMS_TEXT,
   NO_DEVICES_TEXT,
@@ -57,7 +60,12 @@ import {
   SAVE_STATUS_WORDS,
   SETTLE_DELAY_MS,
   TAB_DRAFT_SR_SUFFIX,
+  TEST_CONNECTION_LABEL,
+  TEST_RESULT_TEXT,
+  VISION_FIELD_LABELS,
+  PLANNER_FIELD_LABELS,
   applyActionName,
+  connectionSentence,
   configFileIssuesBody,
   configLoadFailedBody,
   deleteActionName,
@@ -364,6 +372,41 @@ async function openFirstLlmEditor() {
     ;(document.body.querySelector('button[title="Edit configuration"]') as HTMLButtonElement).click()
   })
   await flushRender()
+}
+
+// The shipped modal no longer mounts on the page. Cells whose claim moves to a model row or the
+// add row in a later plan (24, 25, 26) render it directly until that plan re-homes them; Plan 30
+// deletes it.
+async function renderShippedModal(config: Record<string, unknown>) {
+  container = document.createElement('div')
+  document.body.appendChild(container)
+  root = createRoot(container)
+  await act(async () => {
+    root!.render(<LlmSection config={config} onConfigChange={vi.fn()} />)
+  })
+  await flushRender()
+  return container
+}
+
+function modelRow(name: string) {
+  return (Array.from(container?.querySelectorAll('[data-model-row]') ?? []) as HTMLElement[]).find(
+    (item) => item.getAttribute('data-model-name') === name,
+  ) ?? null
+}
+
+async function openModelRow(name: string) {
+  const header = modelRow(name)?.querySelector('[data-model-row-toggle]') as HTMLButtonElement | null
+  expect(header, `the ${name} row header`).not.toBeNull()
+  await act(async () => {
+    header!.click()
+  })
+  await flushRender()
+  return modelRow(name)!.querySelector('[data-model-panel]') as HTMLElement
+}
+
+function buttonIn(scope: ParentNode | null | undefined, label: string) {
+  const buttons = Array.from(scope?.querySelectorAll('button') ?? []) as HTMLButtonElement[]
+  return buttons.find((button) => button.textContent?.trim() === label) ?? null
 }
 
 afterEach(() => {
@@ -1104,6 +1147,42 @@ describe('ConfigPage task tabs shell', () => {
     expect(findButton('Execution Defaults')).toBeNull()
   })
 
+  it('SHARED-MODEL-SETTINGS-UNDER-LIST: on Models the model list comes first, then Screenshot size and Planner limits, and the old default-model picker is gone', async () => {
+    await renderAt('/config/models')
+
+    const list = section('models')?.querySelector('[data-model-list]')
+    const screenshotHeading = section('screenshot-size')?.querySelector('h2')
+    const plannerHeading = section('planner-limits')?.querySelector('h2')
+    expect(list).not.toBeNull()
+    expect(screenshotHeading?.textContent).toBe(CONFIG_SECTION_LABELS['screenshot-size'])
+    expect(plannerHeading?.textContent).toBe(CONFIG_SECTION_LABELS['planner-limits'])
+    expect(list!.compareDocumentPosition(screenshotHeading!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(screenshotHeading!.compareDocumentPosition(plannerHeading!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+
+    // The heading row holds the Models heading and Add model; the list spans the row below.
+    const addModel = sectionButton('models', ADD_MODEL_LABEL)
+    expect(addModel?.parentElement).toBe(section('models'))
+    expect(section('models')?.firstElementChild?.tagName).toBe('H2')
+
+    for (const segments of [
+      ['services', 'vision', 'screenshotSize'],
+      ['services', 'vision', 'effectiveResolution'],
+    ]) {
+      expect(section('screenshot-size')!.contains(fieldControl(segments)), segments.join('.')).toBe(true)
+    }
+    for (const segments of [['use', 'planner', 'maxSubActions'], ['use', 'planner', 'previousStepCount']]) {
+      expect(section('planner-limits')!.contains(fieldControl(segments)), segments.join('.')).toBe(true)
+    }
+    expect(section('planner-limits')?.textContent).toContain(PLANNER_FIELD_LABELS.maxSubActions)
+
+    expect(document.body.querySelector('#use-default-llm')).toBeNull()
+    expect(document.body.textContent).not.toContain('Default LLM')
+    expect(findButton('Save Runtime Defaults')).toBeNull()
+    expect(findButton('Save Changes')).toBeNull()
+    expect(document.body.querySelector('[data-config-section-shell]')).toBeNull()
+    expect(document.body.querySelector('[role="dialog"]')).toBeNull()
+  })
+
   it('NO-SAVE-BUTTON-TARGETS: mobile app state shows its saved choice in a select, with no Save button, boxed shell or pop-up message', async () => {
     await renderAt('/config/targets?section=mobile-app-state')
 
@@ -1133,11 +1212,21 @@ describe('ConfigPage task tabs shell', () => {
     expect(section('mobile-app-state')!.textContent).toContain(MOBILE_APP_STATE_LABELS.preserve)
   })
 
-  it('keeps browser headless out of the Models tab defaults', async () => {
+  it('keeps browser headless out of the Models tab defaults: the default model is a row badge, and Make default writes only the default model', async () => {
+    vi.mocked(fetchConfig).mockResolvedValueOnce(readAnswer({
+      config: {
+        ...sampleConfig,
+        registry: {
+          ...sampleConfig.registry,
+          llms: [...sampleConfig.registry.llms, { name: 'backup', provider: 'gemini', model: 'gemini-2.5-flash' }],
+        },
+      },
+    }))
     await renderAt('/config/models')
 
     const models = section('models')!
-    expect(models.textContent).toContain('Default LLM')
+    expect(modelRow('primary')?.querySelector('[data-model-default-badge]')).not.toBeNull()
+    expect(models.textContent).not.toContain('Default LLM')
     expect(models.textContent).not.toContain('Global Headless')
     expect(document.body.querySelector('#use-global-headless')).toBeNull()
     expect(document.body.querySelector('#browser-headless')).toBeNull()
@@ -1145,15 +1234,17 @@ describe('ConfigPage task tabs shell', () => {
     expect(models.textContent).not.toContain('use.headless')
 
     expect(models.querySelector('#use-parallel')).toBeNull()
+    expect(sectionButton('models', 'Save Runtime Defaults')).toBeNull()
 
+    const panel = await openModelRow('backup')
     await act(async () => {
-      sectionButton('models', 'Save Runtime Defaults')!.click()
+      buttonIn(panel, MAKE_DEFAULT_LABEL)!.click()
     })
     await flushRender()
 
-    expect(updateSettings).toHaveBeenCalledExactlyOnceWith({
-      'use.llm': 'primary',
-    })
+    expect(vi.mocked(applyConfigChanges).mock.calls).toEqual([[[{ op: 'set', path: ['use', 'llm'], value: 'backup' }]]])
+    expect(updateSettings).not.toHaveBeenCalled()
+    expect(modelRow('backup')?.querySelector('[data-model-default-badge]')).not.toBeNull()
     expect(models.textContent).not.toContain('Default Device')
     expect(models.textContent).not.toContain('use.device')
   })
@@ -1684,22 +1775,25 @@ describe('ConfigPage task tabs shell', () => {
     expect(panel.querySelector('[data-config-section-shell]')).toBeNull()
   })
 
-  it('exposes vision and context window in the LLM configuration modal', async () => {
+  it('exposes vision and context window per model while the shared screenshot budget stays out of the model row', async () => {
     await renderAt('/config/models')
 
-    await openFirstLlmEditor()
+    const panel = await openModelRow('primary')
+    expect(document.body.querySelector('[role="dialog"]')).toBeNull()
+    expect(modelRow('primary')!.contains(panel)).toBe(true)
+    expect(panel.querySelector('[data-field-path^="services.vision"]')).toBeNull()
+    expect(panel.textContent).not.toContain(VISION_FIELD_LABELS.effectiveResolution)
+    expect(section('screenshot-size')?.querySelector('[data-field-path="services.vision.effectiveResolution"]')).not.toBeNull()
 
+    // The saved per-model settings are the shipped modal's until Plan 24 moves them into the row.
+    cleanupAfterDialog()
+    await renderShippedModal(sampleConfig)
+    await openFirstLlmEditor()
     const visionSwitch = document.body.querySelector('#config-vision') as HTMLButtonElement | null
     const contextWindowInput = document.body.querySelector('#config-context-window') as HTMLInputElement | null
-
     expect(visionSwitch?.getAttribute('role')).toBe('switch')
     expect(visionSwitch?.getAttribute('aria-checked')).toBe('true')
-    expect(document.body.textContent).toContain('Vision (optional)')
-    expect(document.body.textContent).toContain('Context Window (optional)')
     expect(contextWindowInput?.value).toBe('128k')
-    const dialog = document.body.querySelector('[role="dialog"]')
-    expect(dialog?.querySelector('#config-effective-resolution')).toBeNull()
-    expect(dialog?.textContent).not.toContain('Effective Resolution')
   })
 
   it('formats OpenAI-Compatible configs and keeps static provider fallback built-in only', async () => {
@@ -1743,13 +1837,14 @@ describe('ConfigPage task tabs shell', () => {
       }],
     })
 
-    const view = await renderAt('/config/models')
+    await renderAt('/config/models')
 
-    expect(view.textContent).toContain('Missing credential')
-    expect(view.textContent).not.toContain('OAuth connected')
+    expect(modelRow('planner')?.getAttribute('data-model-status')).toBe('not-connected')
+    expect(modelRow('planner')?.querySelector('[data-model-row-status]')?.textContent).toBe(MODEL_STATUS_WORDS['not-connected'])
+    expect(section('models')?.textContent).not.toContain(MODEL_STATUS_WORDS['signed-in'])
   })
 
-  it('renders the OpenAI-Compatible modal with free-form model and Base URL tooltip', async () => {
+  it('renders the OpenAI-Compatible model free-form in its row, with the Base URL and its help in the shipped modal until Plan 24', async () => {
     vi.mocked(fetchConfig).mockResolvedValueOnce(readAnswer({
       config: configWithLlm({
         name: 'planner',
@@ -1762,6 +1857,20 @@ describe('ConfigPage task tabs shell', () => {
     }))
 
     await renderAt('/config/models')
+    const line = modelRow('planner')?.querySelector('[data-model-row-model]')
+    expect(line?.textContent).toBe('openrouter/auto · OpenAI-compatible')
+    expect(modelRow('planner')?.textContent).not.toContain('Subscription')
+
+    // The row's Base URL and model fields arrive with Plan 24; the shipped modal holds them until then.
+    cleanupAfterDialog()
+    await renderShippedModal(configWithLlm({
+      name: 'planner',
+      provider: 'openai-compatible',
+      model: 'openrouter/auto',
+      baseURL: 'https://openrouter.ai/api/v1',
+      vision: true,
+      contextWindow: '256k',
+    }))
     await openFirstLlmEditor()
 
     const modelInput = Array.from(document.body.querySelectorAll('input'))
@@ -1780,16 +1889,12 @@ describe('ConfigPage task tabs shell', () => {
     expect(document.body.querySelector('[role="dialog"]')?.textContent).not.toContain('Subscription')
   })
 
-  it('requires Base URL before saving OpenAI-Compatible configs', async () => {
-    vi.mocked(fetchConfig).mockResolvedValueOnce(readAnswer({
-      config: configWithLlm({
-        name: 'planner',
-        provider: 'openai-compatible',
-        model: 'openrouter/auto',
-      }),
+  it('requires Base URL before saving OpenAI-Compatible configs (the shipped modal, until the Plan 25 add row)', async () => {
+    await renderShippedModal(configWithLlm({
+      name: 'planner',
+      provider: 'openai-compatible',
+      model: 'openrouter/auto',
     }))
-
-    await renderAt('/config/models')
     await openFirstLlmEditor()
 
     await act(async () => {
@@ -1819,33 +1924,23 @@ describe('ConfigPage task tabs shell', () => {
     })
 
     await renderAt('/config/models')
-    await openFirstLlmEditor()
+    const panel = await openModelRow('planner')
+    expect(panel.querySelector('input[type="password"]')).toBeNull()
 
-    const keyInput = document.body.querySelector('input[type="password"][placeholder="secret-value"]') as HTMLInputElement
     await act(async () => {
-      setInputValue(keyInput, 'sk-router')
+      buttonIn(panel, TEST_CONNECTION_LABEL)!.click()
     })
     await flushRender()
 
-    await act(async () => {
-      dialogButton('Save Credential')!.click()
-    })
-    await flushRender()
-
-    expect(saveCredential).toHaveBeenCalledWith('planner', 'openai-compatible', 'api-key', 'sk-router')
-
-    await act(async () => {
-      dialogButton('Test Connection')!.click()
-    })
-    await flushRender()
-
+    expect(saveCredential).not.toHaveBeenCalled()
     expect(testLLMConnection).toHaveBeenCalledWith({
       provider: 'openai-compatible',
       model: 'openrouter/auto',
       baseURL: 'https://openrouter.ai/api/v1',
       configName: 'planner',
     })
-    expect(document.body.textContent).toContain('Connection successful')
+    expect(modelRow('planner')?.querySelector('[data-test-result]')?.textContent).toBe(TEST_RESULT_TEXT.connected)
+    expect(document.body.querySelector('[role="dialog"]')).toBeNull()
   })
 
   it('does not render blocking no-api-key copy for compatible no-key tests', async () => {
@@ -1865,14 +1960,17 @@ describe('ConfigPage task tabs shell', () => {
     })
 
     await renderAt('/config/models')
-    await openFirstLlmEditor()
+    const panel = await openModelRow('planner')
+    expect(panel.querySelector('[data-model-connection]')?.textContent).toContain(
+      connectionSentence('not-connected', 'OpenAI-compatible', { signIn: false, keyOptional: true }),
+    )
 
     await act(async () => {
-      dialogButton('Test Connection')!.click()
+      buttonIn(panel, TEST_CONNECTION_LABEL)!.click()
     })
     await flushRender()
 
-    expect(document.body.textContent).toContain('Testing without a saved API key.')
+    expect(modelRow('planner')?.querySelector('[data-test-result]')?.textContent).toBe('Testing without a saved API key.')
     expect(document.body.textContent).not.toContain('No API key or subscription configured')
   })
 
@@ -1886,24 +1984,30 @@ describe('ConfigPage task tabs shell', () => {
     }))
 
     await renderAt('/config/models')
-    await openFirstLlmEditor()
+    const panel = await openModelRow('planner')
+    expect(panel.querySelector('[data-model-connection]')?.textContent).toContain(
+      connectionSentence('not-connected', 'ChatGPT', { signIn: true }),
+    )
+    expect(panel.querySelector('input[type="password"]')).toBeNull()
+    expect(panel.textContent).not.toContain('Save Credential')
 
+    // Sign in again arrives with Plan 26; the shipped modal holds the sign-in until then.
+    cleanupAfterDialog()
+    await renderShippedModal(configWithLlm({ name: 'planner', provider: 'openai-subscription', model: 'gpt-5.4' }))
+    await openFirstLlmEditor()
     expect(document.body.textContent).toContain('Login with OpenAI subscription')
     expect(document.body.textContent).not.toContain('Save Credential')
   })
 
-  it('exchanges Anthropic subscription codes with the product provider identifier', async () => {
+  it('exchanges Anthropic subscription codes with the product provider identifier (the shipped modal, until Plan 26)', async () => {
     const openSpy = vi.spyOn(window, 'open').mockImplementation(() => null)
-    vi.mocked(fetchConfig).mockResolvedValueOnce(readAnswer({
-      config: configWithLlm({
+
+    try {
+      await renderShippedModal(configWithLlm({
         name: 'planner',
         provider: 'anthropic-subscription',
         model: 'claude-sonnet-4-20250514',
-      }),
-    }))
-
-    try {
-      await renderAt('/config/models')
+      }))
       await openFirstLlmEditor()
 
       await act(async () => {
@@ -1934,7 +2038,7 @@ describe('ConfigPage task tabs shell', () => {
     }
   })
 
-  it('polls OpenAI subscription OAuth and relies on server-owned credential persistence', async () => {
+  it('polls OpenAI subscription OAuth and relies on server-owned credential persistence (the shipped modal, until Plan 26)', async () => {
     vi.useFakeTimers()
     const openSpy = vi.spyOn(window, 'open').mockImplementation(() => null)
     vi.mocked(startPluginAuth).mockResolvedValueOnce({
@@ -1943,16 +2047,13 @@ describe('ConfigPage task tabs shell', () => {
       mode: 'browser-poll',
     })
     vi.mocked(pollPluginAuthResult).mockResolvedValueOnce({ status: 'completed', saved: true })
-    vi.mocked(fetchConfig).mockResolvedValueOnce(readAnswer({
-      config: configWithLlm({
+
+    try {
+      await renderShippedModal(configWithLlm({
         name: 'planner',
         provider: 'openai-subscription',
         model: 'gpt-5.4',
-      }),
-    }))
-
-    try {
-      await renderAt('/config/models')
+      }))
       await openFirstLlmEditor()
 
       await act(async () => {

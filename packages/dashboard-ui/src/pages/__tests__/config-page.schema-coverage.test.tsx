@@ -24,9 +24,10 @@ vi.mock('monaco-editor', () => ({
 import ConfigPage from '@/pages/config'
 import { CONFIG_NAVIGATION_ITEMS } from '@/lib/config-navigation'
 import { DEVICE_TRANSPORT_OPTIONS } from '@/components/config-manager/devices-section'
-import { LLM_PROVIDER_OPTIONS } from '@/components/config-manager/llm-section'
+import { LLM_PROVIDER_OPTIONS, LlmSection } from '@/components/config-manager/llm-section'
 import { fetchAuthStatus, saveCredential } from '@/lib/api'
 import { LLM_PROVIDER_COMPLETION_VALUES } from '@/lib/yaml-completions'
+import { ADD_MODEL_LABEL, DEFAULT_BADGE, PLANNER_FIELD_LABELS, VISION_FIELD_LABELS } from '@/lib/config-copy'
 
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
@@ -189,17 +190,17 @@ const SURFACE_MARKERS: Record<string, { title: string; marker: string }> = {
   'services:logging': { title: 'Logging', marker: 'Log level' },
   'services:recording': { title: 'Recording', marker: 'Record video of each test. Recordings stay on this machine.' },
   'services:accessibility': { title: 'Accessibility', marker: 'Run checks after' },
-  'services:vision': { title: 'Vision', marker: 'Screenshot Size' },
-  'registry:llms': { title: 'Models', marker: 'Add Configuration' },
+  'services:vision': { title: 'Screenshot size', marker: VISION_FIELD_LABELS.screenshotSize },
+  'registry:llms': { title: 'Models', marker: ADD_MODEL_LABEL },
   'registry:targets': { title: 'Targets', marker: 'Add target' },
   'registry:devices': { title: 'Devices', marker: 'Add device' },
   'registry:providers': { title: 'Device farms', marker: 'Add device farm' },
   'use:browser': { title: 'Browser', marker: 'Viewport width' },
   'use:timeouts': { title: 'Timeouts', marker: 'Step timeout' },
-  'use:planner': { title: 'Planner', marker: 'Max Sub-Actions' },
+  'use:planner': { title: 'Planner limits', marker: PLANNER_FIELD_LABELS.maxSubActions },
   'use:log-capture': { title: 'Log capture', marker: 'Capture network logs' },
   'use:mobile': { title: 'Mobile', marker: 'App state' },
-  'use:execution-defaults': { title: 'Execution Defaults', marker: 'Default LLM' },
+  'use:execution-defaults': { title: 'Models', marker: DEFAULT_BADGE },
   'analytics:pass-rate-scope': { title: 'Pass-rate scope', marker: 'Add attribute' },
 }
 
@@ -246,8 +247,22 @@ async function openEditModalForConfig(view: HTMLDivElement, name: string) {
   await flushRender()
 }
 
+// The Models tab lists each model as a row that opens in place (429-23); the modal's per-model
+// fields and credential controls move into the row and the add row in Plans 24-26, so until then
+// these cells render the shipped modal directly. Plan 30 deletes it.
+async function renderShippedModal() {
+  container = document.createElement('div')
+  document.body.appendChild(container)
+  root = createRoot(container)
+  await act(async () => {
+    root!.render(<LlmSection config={sampleConfig} onConfigChange={vi.fn()} />)
+  })
+  await flushRender()
+  return container
+}
+
 async function renderLlmEditorForConfig(name: string) {
-  const view = await renderAt('/config?bucket=registry&item=llms')
+  const view = await renderShippedModal()
   await openEditModalForConfig(view, name)
   return view
 }
@@ -423,7 +438,7 @@ describe('ConfigPage schema coverage', () => {
   })
 
   it('renders maintained model suggestions without replacing free text entry', async () => {
-    const view = await renderAt('/config?bucket=registry&item=llms')
+    const view = await renderShippedModal()
     await openAddLlmModal(view)
 
     expect(document.body.innerHTML).toContain('<datalist')
