@@ -16,6 +16,7 @@ import { cancelRun, classifyRunStreamClose, fetchRun, openRunStream } from '@/li
 import type { RunRow } from '@/lib/api'
 import { rungBannerText } from '@/lib/knowledge-view'
 import { liveRunLayoutOf, liveRunPanelIds } from '@/lib/live-run-layout'
+import { watchedHandleOf } from '@/lib/live-run-watch'
 import { routes, type RunDetailNavigationState } from '@/lib/routes'
 import {
   createInitialRunStreamState,
@@ -265,6 +266,13 @@ export default function LiveRunPage() {
   }, [id, attachToken, onEvent])
 
   const members = useMemo(() => Object.values(state.members), [state.members])
+
+  // THE PREVIEW FOLLOWS THE RUNNING MEMBER (G-428-3, owner decision 2026-09-26 (3)). Nobody picks a
+  // handle: it is derived from the reduced stream, and the ref carries the last one watched so the
+  // rule can keep a running member and hold a finished one until the next member starts.
+  const watchedRef = useRef<number | undefined>(undefined)
+  const watchedHandle = watchedHandleOf({ handles: state.handles, members: state.members }, watchedRef.current)
+  watchedRef.current = watchedHandle
   const verdictWord = state.verdict ?? fallbackRun?.status ?? 'unknown'
   const verdictDescriptor = getRunStatusDescriptor(verdictWord)
 
@@ -336,7 +344,7 @@ export default function LiveRunPage() {
           subject={{
             kind: 'run',
             runId: id,
-            handles: state.handles,
+            handle: watchedHandle,
             membersByHandle: state.members,
             terminal: state.terminal,
             runOver,

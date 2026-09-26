@@ -947,6 +947,13 @@ describe('the preview is one embed or an honest sentence (LIVE-04, D-02, D-08)',
 
   // THE BOUND IS A BOUND (403-15, G-403-2). Three roads led back into `waiting` after the cap; each
   // is one cell, and each reads the same triple so a sentence cannot lag the state by a render.
+  //
+  // RE-SPELLED 2026-09-26 (428-33, owner decision 2026-09-26 (3), G-428-3). (A)..(D) used to start
+  // member 1 while the preview sat on its old default handle 0. The preview now follows the running
+  // member, so that start would switch it to handle 1 after the mount's mint for handle 0, and every
+  // call count would be one higher. The running-but-unanswered member is now member 0, the one the
+  // preview watches from mount, so each cell counts the same calls on the same handle as before, and
+  // (C)'s late outcome is the watched member's own.
   const noneAnswer = () => ({
     liveUrl: 'http://x/live/r1#v1.a.b',
     expiresAt: Date.now() + TTL_MS,
@@ -964,7 +971,7 @@ describe('the preview is one embed or an honest sentence (LIVE-04, D-02, D-08)',
     fetchLiveUrlMock.mockImplementation(async () => noneAnswer())
     await mount()
     await open()
-    await emit(runStarted([0, 1]), testStarted(1, 'the live member', 1))
+    await emit(runStarted([0, 1]), testStarted(0, 'the live member', 1))
     for (let attempt = 0; attempt < WAITING_ATTEMPT_LIMIT; attempt += 1) {
       await advance(NO_STREAM_RETRY_MS)
     }
@@ -999,7 +1006,7 @@ describe('the preview is one embed or an honest sentence (LIVE-04, D-02, D-08)',
     })
     await mount()
     await open()
-    await emit(runStarted([0, 1]), testStarted(1, 'the live member', 1))
+    await emit(runStarted([0, 1]), testStarted(0, 'the live member', 1))
     for (let attempt = 0; attempt < WAITING_ATTEMPT_LIMIT; attempt += 1) {
       await advance(NO_STREAM_RETRY_MS)
     }
@@ -1026,7 +1033,7 @@ describe('the preview is one embed or an honest sentence (LIVE-04, D-02, D-08)',
     fetchLiveUrlMock.mockImplementation(async () => noneAnswer())
     await mount()
     await open()
-    await emit(runStarted([0, 1]), testStarted(1, 'the live member', 1))
+    await emit(runStarted([0, 1]), testStarted(0, 'the live member', 1))
     for (let attempt = 0; attempt < WAITING_ATTEMPT_LIMIT; attempt += 1) {
       await advance(NO_STREAM_RETRY_MS)
     }
@@ -1065,7 +1072,7 @@ describe('the preview is one embed or an honest sentence (LIVE-04, D-02, D-08)',
     })
     await mount()
     await open()
-    await emit(runStarted([0, 1]), testStarted(1, 'the live member', 1))
+    await emit(runStarted([0, 1]), testStarted(0, 'the live member', 1))
     await advance(NO_STREAM_RETRY_MS)
     const whileSlow = settled()
     await advance(NO_STREAM_RETRY_MS)

@@ -49,8 +49,11 @@ import type { LiveStreamDeclaration } from '@vostride/agent-qa-schema'
 export interface LivePreviewRunSubject {
   kind: 'run'
   runId: string
-  /** The run's attachable handle roster, as runStarted announced it. Undefined means it announced none. */
-  handles: readonly number[] | undefined
+  /**
+   * The handle to watch, decided by the host (G-428-3). The preview follows the running member, which
+   * the host derives from the run stream; a new handle starts the preview over with a mint for it.
+   */
+  handle: number
   /** The reducer's member rows by handle: whether the watched member's browser can be up yet. */
   membersByHandle: Readonly<Record<number, MemberRow>>
   terminal: boolean
@@ -121,7 +124,7 @@ export function LivePreview({ subject, chrome }: LivePreviewProps) {
   const over = subject.kind === 'run' ? subject.terminal || subject.runOver : subject.sessionGone
   const overReason = subject.kind === 'run' ? 'run-ended' : 'session-ended'
 
-  const [handle, setHandle] = useState(0)
+  const handle = subject.kind === 'run' ? subject.handle : 0
   const machineRef = useRef<LivePreviewMachine>(createInitialLivePreview())
   const [machine, setMachine] = useState<LivePreviewMachine>(machineRef.current)
   const [now, setNow] = useState(() => Date.now())
@@ -327,8 +330,6 @@ export function LivePreview({ subject, chrome }: LivePreviewProps) {
     mintFor('remount')
   }
 
-  const handles = subject.kind === 'run' ? subject.handles : undefined
-  const showPicker = handles !== undefined && handles.length > 1
   const frameSize = view.frameSize
   const ratio = frameSize === undefined || frameSize.width <= 0 || frameSize.height <= 0
     ? { width: 16, height: 9 }
@@ -355,32 +356,11 @@ export function LivePreview({ subject, chrome }: LivePreviewProps) {
       data-preview-state={view.state}
       className="flex h-full min-h-0 flex-col"
     >
-      <PreviewChrome>
-        {showPicker && (
-          <>
-            <label htmlFor="live-preview-handle" className="text-muted-foreground">
-              watching
-            </label>
-            {/* One preview and a picker, never a grid (D-08): a person watches one member at a time. */}
-            <select
-              id="live-preview-handle"
-              data-handle-picker
-              value={handle}
-              onChange={(event) => {
-                setHandle(Number(event.target.value))
-              }}
-              className="rounded-sm border bg-background px-1.5 py-0.5"
-            >
-              {handles.map((value) => (
-                <option key={value} value={value}>
-                  handle {value}
-                </option>
-              ))}
-            </select>
-          </>
-        )}
-        {chrome}
-      </PreviewChrome>
+      {/*
+        One preview, which follows the running member (owner review 2026-09-26), never a grid (D-08).
+        The handle selector this row used to hold is gone (G-428-3); the host decides the handle.
+      */}
+      <PreviewChrome>{chrome}</PreviewChrome>
 
       <div className="flex min-h-0 flex-1 items-center justify-center [container-type:size]">
         {framed && mint !== undefined ? (
