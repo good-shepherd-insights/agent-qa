@@ -190,7 +190,7 @@ const SURFACE_MARKERS: Record<string, { title: string; marker: string }> = {
   'services:recording': { title: 'Recording', marker: 'Record video of each test. Recordings stay on this machine.' },
   'services:accessibility': { title: 'Accessibility', marker: 'Run After' },
   'services:vision': { title: 'Vision', marker: 'Screenshot Size' },
-  'registry:llms': { title: 'LLMs', marker: 'Add Configuration' },
+  'registry:llms': { title: 'Models', marker: 'Add Configuration' },
   'registry:targets': { title: 'Targets', marker: 'Add Target' },
   'registry:devices': { title: 'Devices', marker: 'Add Device' },
   'registry:providers': { title: 'Providers', marker: 'BrowserStack' },
@@ -224,6 +224,7 @@ async function renderAt(url: string) {
       <MemoryRouter initialEntries={[url]}>
         <Routes>
           <Route path="/config" element={<ConfigPage />} />
+          <Route path="/config/:tab" element={<ConfigPage />} />
         </Routes>
       </MemoryRouter>,
     )

@@ -4,7 +4,7 @@ import { act, type ReactNode } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router'
 import { toast } from 'sonner'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { APPROVED_SAAS_PLACEHOLDER_SLUGS } from '@vostride/agent-qa-ids'
 
 import {
@@ -21,6 +21,25 @@ import {
   updateSettings,
 } from '@/lib/api'
 import { LLM_PROVIDER_OPTIONS } from '@/components/config-manager/llm-section'
+import {
+  CONFIG_LOAD_FAILED_TITLE,
+  CONFIG_PAGE_TITLE,
+  CONFIG_SECTION_LABELS,
+  CONFIG_TAB_LABELS,
+  CONFIG_TABS_ARIA_LABEL,
+  LEGACY_LINK_NOT_FOUND_TEXT,
+  RELOAD_CONFIG_LABEL,
+  configLoadFailedBody,
+} from '@/lib/config-copy'
+import {
+  CONFIG_SECTIONS,
+  CONFIG_TABS,
+  LEGACY_CONFIG_LINKS,
+  LEGACY_CONFIG_PAIRS,
+  type ConfigSectionId,
+  type ConfigTab,
+} from '@/lib/config-tabs'
+import { routes } from '@/lib/routes'
 import ConfigPage from '@/pages/config'
 
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
@@ -145,6 +164,12 @@ function LocationProbe() {
 
 let container: HTMLDivElement | null = null
 let root: Root | null = null
+let scrollIntoViewSpy: ReturnType<typeof vi.fn>
+
+beforeEach(() => {
+  scrollIntoViewSpy = vi.fn()
+  Element.prototype.scrollIntoView = scrollIntoViewSpy as unknown as Element['scrollIntoView']
+})
 
 async function flushRender() {
   await act(async () => {
@@ -159,19 +184,19 @@ async function renderAt(url: string) {
   document.body.appendChild(container)
   root = createRoot(container)
 
+  const page = (
+    <>
+      <LocationProbe />
+      <ConfigPage />
+    </>
+  )
+
   await act(async () => {
     root!.render(
       <MemoryRouter initialEntries={[url]}>
         <Routes>
-          <Route
-            path="/config"
-            element={
-              <>
-                <LocationProbe />
-                <ConfigPage />
-              </>
-            }
-          />
+          <Route path="/config" element={page} />
+          <Route path="/config/:tab" element={page} />
         </Routes>
       </MemoryRouter>,
     )
@@ -181,13 +206,56 @@ async function renderAt(url: string) {
   return container
 }
 
-function findButton(label: string) {
-  const buttons = Array.from(container?.querySelectorAll('button') ?? []) as HTMLButtonElement[]
+function currentLocation() {
+  const probe = container?.querySelector('[data-testid="location"]')
+  return {
+    pathname: probe?.getAttribute('data-pathname') ?? null,
+    search: probe?.getAttribute('data-search') ?? null,
+  }
+}
+
+function tabTriggers() {
+  return Array.from(container?.querySelectorAll('[role="tab"]') ?? []) as HTMLButtonElement[]
+}
+
+function tabTrigger(tab: ConfigTab) {
+  return container?.querySelector(`[role="tab"][data-config-tab="${tab}"]`) as HTMLButtonElement | null
+}
+
+async function activateTab(tab: ConfigTab) {
+  const trigger = tabTrigger(tab)
+  expect(trigger, tab).not.toBeNull()
+  await act(async () => {
+    trigger!.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true, button: 0 }))
+  })
+  await flushRender()
+}
+
+async function pressKey(target: Element, key: string) {
+  await act(async () => {
+    target.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true }))
+    await new Promise((resolve) => setTimeout(resolve, 0))
+  })
+  await flushRender()
+}
+
+function section(id: ConfigSectionId) {
+  return container?.querySelector(`[data-config-section="${id}"]`) as HTMLElement | null
+}
+
+function sectionButton(id: ConfigSectionId, label: string) {
+  const buttons = Array.from(section(id)?.querySelectorAll('button') ?? []) as HTMLButtonElement[]
   return buttons.find((button) => button.textContent?.trim() === label) ?? null
 }
 
-function findDocumentButton(label: string) {
-  const buttons = Array.from(document.body.querySelectorAll('button')) as HTMLButtonElement[]
+function dialogButton(label: string) {
+  const dialog = document.body.querySelector('[role="dialog"]')
+  const buttons = Array.from(dialog?.querySelectorAll('button') ?? []) as HTMLButtonElement[]
+  return buttons.find((button) => button.textContent?.trim() === label) ?? null
+}
+
+function findButton(label: string) {
+  const buttons = Array.from(container?.querySelectorAll('button') ?? []) as HTMLButtonElement[]
   return buttons.find((button) => button.textContent?.trim() === label) ?? null
 }
 
@@ -196,6 +264,19 @@ function setInputValue(input: HTMLInputElement, value: string) {
   setter?.call(input, value)
   input.dispatchEvent(new Event('input', { bubbles: true }))
 }
+
+// The page chrome with every section body stripped: what a reader sees besides the section
+// headings and the shipped editors each section still mounts until its own plan rebuilds it.
+function shellChrome(view: HTMLElement) {
+  const page = view.querySelector('[data-config-page]')!.cloneNode(true) as HTMLElement
+  for (const node of Array.from(page.querySelectorAll('[data-config-section] > :not(h2)'))) {
+    node.remove()
+  }
+  return page
+}
+
+const BUCKET_LABELS = /\b(?:Workspace|Services|Registry|Use|Analytics)\b/
+const DOTTED_CONFIG_PATH = /\b(?:workspace|services|registry|use|knowledge|analytics)\.[A-Za-z]/
 
 function configWithLlm(llm: Record<string, unknown>) {
   const name = String(llm.name ?? '')
@@ -238,56 +319,280 @@ afterEach(() => {
     container.remove()
   }
   container = null
+  delete (Element.prototype as { scrollIntoView?: unknown }).scrollIntoView
   vi.clearAllMocks()
 })
 
-describe('ConfigPage schema-driven shell', () => {
-  it('uses the shared Config-shaped FormSkeleton while loading', async () => {
+describe('ConfigPage task tabs shell', () => {
+  it('SHELL-LOADING: a pending read shows only the Config-shaped FormSkeleton and no tab strip', async () => {
     vi.mocked(fetchConfig).mockReturnValueOnce(new Promise(() => {}))
 
-    const view = await renderAt('/config?bucket=workspace&item=discovery')
+    const view = await renderAt('/config/models')
 
+    expect(view.querySelector('[data-config-page]')?.getAttribute('data-config-state')).toBe('loading')
     expect(view.querySelector('[data-skeleton="config"]')).not.toBeNull()
-    expect(view.querySelector('[data-skeleton-part="config-layout"]')).not.toBeNull()
-    expect(view.querySelector('[data-skeleton-part="config-rail"]')).not.toBeNull()
-    expect(view.querySelector('[data-skeleton-part="config-main"]')).not.toBeNull()
-    expect(view.querySelector('[data-config-page-root]')).toBeNull()
+    expect(view.querySelector('[role="tab"]')).toBeNull()
+    expect(view.querySelector('[data-config-tabbar]')).toBeNull()
+    expect(view.querySelector('[data-config-panel]')).toBeNull()
   })
 
-  it('exposes the Phase 205 rail/main layout without card chrome', async () => {
-    const view = await renderAt('/config?bucket=workspace&item=discovery')
+  it('SHELL-LOADING: switching tabs renders from the loaded config and fetches nothing', async () => {
+    const view = await renderAt('/config/models')
+    expect(view.querySelector('[data-config-page]')?.getAttribute('data-config-state')).toBe('ready')
+    expect(fetchConfig).toHaveBeenCalledTimes(1)
 
-    const rootElement = view.querySelector('[data-config-page-root]')
-    expect(rootElement).not.toBeNull()
-    expect(rootElement?.className).toContain('gap-0')
+    await activateTab('execution')
+    await activateTab('project')
 
-    const rail = view.querySelector('[data-config-rail]')
-    expect(rail).not.toBeNull()
-    expect(rail?.className).toContain('border-r')
-    expect(rail?.className).toContain('border-border')
-
-    const main = view.querySelector('[data-config-main]')
-    expect(main).not.toBeNull()
-    expect(main?.className).toContain('pl-6')
-
-    const activeItem = findButton('Discovery')
-    expect(activeItem?.className).not.toContain('rounded-md')
-    expect(activeItem?.className).not.toContain('bg-accent')
-    expect(view.querySelector('[data-config-page-root] [data-slot="card"]')).toBeNull()
+    expect(currentLocation().pathname).toBe('/config/project')
+    expect(section('files')).not.toBeNull()
+    expect(fetchConfig).toHaveBeenCalledTimes(1)
   })
 
-  it('renders the app version as subtle footer metadata in the config main column', async () => {
-    const view = await renderAt('/config?bucket=workspace&item=discovery')
+  it('LOAD-ERROR-RELOADS-WITHOUT-PAGE-RELOAD: a failed read offers Reload config, which re-reads in place', async () => {
+    vi.mocked(fetchConfig).mockRejectedValueOnce(new Error('agent-qa.config.yaml is not valid YAML.'))
+
+    const view = await renderAt('/config/models')
+
+    const error = view.querySelector('[data-config-load-error]')
+    expect(view.querySelector('[data-config-page]')?.getAttribute('data-config-state')).toBe('error')
+    expect(error).not.toBeNull()
+    expect(error?.textContent).toContain(CONFIG_LOAD_FAILED_TITLE)
+    expect(error?.textContent).toContain(configLoadFailedBody('agent-qa.config.yaml is not valid YAML'))
+    expect(view.querySelector('[role="tab"]')).toBeNull()
+    expect(toast.error).not.toHaveBeenCalled()
+
+    const reload = findButton(RELOAD_CONFIG_LABEL)
+    expect(reload).not.toBeNull()
+    await act(async () => {
+      reload!.click()
+    })
+    await flushRender()
+
+    expect(fetchConfig).toHaveBeenCalledTimes(2)
+    expect(view.querySelector('[data-config-load-error]')).toBeNull()
+    expect(tabTriggers()).toHaveLength(CONFIG_TABS.length)
+    expect(currentLocation().pathname).toBe('/config/models')
+  })
+
+  it('TABS-FIVE-IN-ORDER: exactly five tabs in the order Models, Targets, Execution, Project, Advanced', async () => {
+    const view = await renderAt('/config/models')
+
+    const triggers = tabTriggers()
+    expect(triggers).toHaveLength(5)
+    expect(triggers.map((trigger) => trigger.textContent?.trim())).toEqual(
+      CONFIG_TABS.map((tab) => CONFIG_TAB_LABELS[tab]),
+    )
+    expect(triggers.map((trigger) => trigger.getAttribute('data-config-tab'))).toEqual([...CONFIG_TABS])
+    expect(view.querySelectorAll('[role="tablist"]')).toHaveLength(1)
+    expect(view.querySelector('[role="tablist"]')?.getAttribute('aria-label')).toBe(CONFIG_TABS_ARIA_LABEL)
+    expect(view.querySelector('[role="tablist"]')?.getAttribute('data-tour-id')).toBe('tour-config-nav')
+    expect(view.querySelector('[data-config-tabs-scroll] [role="tablist"]')).not.toBeNull()
+    expect(view.querySelector('[data-config-tabbar] > [data-config-status-slot]')).not.toBeNull()
+    expect(view.querySelector('[data-config-tabs-scroll] [data-config-status-slot]')).toBeNull()
+    expect(view.querySelector('h1')?.textContent).toBe(CONFIG_PAGE_TITLE)
+  })
+
+  it('BARE-CONFIG-LANDS-ON-MODELS: bare /config is replaced by /config/models with the Models panel active', async () => {
+    const view = await renderAt('/config')
+
+    expect(currentLocation()).toEqual({ pathname: '/config/models', search: '' })
+    expect(tabTrigger('models')?.getAttribute('aria-selected')).toBe('true')
+    expect(view.querySelector('[data-config-panel="models"]')).not.toBeNull()
+    expect(view.querySelector('[data-config-panel="models"]')?.getAttribute('data-tour-id')).toBe('tour-config-section')
+    expect(view.querySelector('[data-config-invalid-notice]')).toBeNull()
+    expect(fetchConfig).toHaveBeenCalledTimes(1)
+  })
+
+  it.each(LEGACY_CONFIG_PAIRS)(
+    'LEGACY-PAIR-LANDS-AND-FOCUSES: %s lands on its tab with its heading focused and no ?section left',
+    async (pair) => {
+      const [bucket, item] = pair.split(':')
+      const { tab, section: sectionId } = LEGACY_CONFIG_LINKS[pair]
+
+      const view = await renderAt(`/config?bucket=${bucket}&item=${item}`)
+
+      expect(currentLocation()).toEqual({ pathname: `/config/${tab}`, search: '' })
+      expect(tabTrigger(tab)?.getAttribute('aria-selected')).toBe('true')
+      const heading = section(sectionId)?.querySelector('h2')
+      expect(heading?.textContent).toBe(CONFIG_SECTION_LABELS[sectionId])
+      expect(document.activeElement).toBe(heading)
+      expect(scrollIntoViewSpy.mock.contexts).toContain(heading)
+      expect(view.querySelector('[data-config-invalid-notice]')).toBeNull()
+      expect(routes.configItem(bucket, item)).toBe(`/config/${tab}?section=${sectionId}`)
+    },
+  )
+
+  it('LEGACY-PAIR-LANDS-AND-FOCUSES: the table covers all 21 live legacy pairs', () => {
+    expect(LEGACY_CONFIG_PAIRS).toHaveLength(21)
+    expect(Object.keys(LEGACY_CONFIG_LINKS).sort()).toEqual([...LEGACY_CONFIG_PAIRS].sort())
+  })
+
+  it('SECTION-DEEP-LINK-FOCUSES: ?section scrolls its heading into view, focuses it, then leaves the URL', async () => {
+    const view = await renderAt('/config/execution?section=timeouts')
+
+    const heading = section('timeouts')?.querySelector('h2')
+    expect(heading).not.toBeNull()
+    expect(heading?.getAttribute('tabindex')).toBe('-1')
+    expect(section('timeouts')?.getAttribute('aria-labelledby')).toBe(heading?.id)
+    expect(document.activeElement).toBe(heading)
+    const call = scrollIntoViewSpy.mock.calls[scrollIntoViewSpy.mock.contexts.indexOf(heading)]
+    expect(call?.[0]).toMatchObject({ block: 'start' })
+    expect(currentLocation()).toEqual({ pathname: '/config/execution', search: '' })
+    expect(view.querySelector('[data-config-invalid-notice]')).toBeNull()
+  })
+
+  it('UNKNOWN-LINK-NOTICE-ONCE: an unknown legacy link lands on Models with the notice until the next tab change', async () => {
+    const view = await renderAt('/config?bucket=workspace&item=unknown')
+
+    expect(currentLocation()).toEqual({ pathname: '/config/models', search: '' })
+    const notice = view.querySelector('[data-config-invalid-notice]')
+    expect(notice?.textContent).toBe(LEGACY_LINK_NOT_FOUND_TEXT)
+    expect(notice?.hasAttribute('data-config-line-notice')).toBe(true)
+    expect(notice?.textContent).not.toContain('bucket')
+    expect(notice?.textContent).not.toContain('unknown')
+    expect(notice?.querySelector('[data-slot="badge"]')).toBeNull()
+    expect(view.querySelectorAll('[data-config-invalid-notice]')).toHaveLength(1)
+
+    await activateTab('targets')
+    expect(view.querySelector('[data-config-invalid-notice]')).toBeNull()
+
+    await activateTab('models')
+    expect(view.querySelector('[data-config-invalid-notice]')).toBeNull()
+  })
+
+  it('UNKNOWN-LINK-NOTICE-ONCE: an unknown tab or a section from another tab lands on Models with the notice', async () => {
+    let view = await renderAt('/config/storage')
+
+    expect(currentLocation()).toEqual({ pathname: '/config/models', search: '' })
+    expect(view.querySelector('[data-config-invalid-notice]')?.textContent).toBe(LEGACY_LINK_NOT_FOUND_TEXT)
+    expect(view.textContent).not.toContain('storage')
+
+    cleanupAfterDialog()
+    view = await renderAt('/config/models?section=browser')
+
+    expect(currentLocation()).toEqual({ pathname: '/config/models', search: '' })
+    expect(view.querySelector('[data-config-invalid-notice]')?.textContent).toBe(LEGACY_LINK_NOT_FOUND_TEXT)
+  })
+
+  it('NO-RAIL: the desktop rail and its main column never render', async () => {
+    for (const tab of CONFIG_TABS) {
+      const view = await renderAt(`/config/${tab}`)
+
+      expect(view.querySelector('[data-config-rail]')).toBeNull()
+      expect(view.querySelector('[data-config-main]')).toBeNull()
+      expect(view.querySelector('[data-config-page-root]')).toBeNull()
+      expect(view.querySelector('aside')).toBeNull()
+      expect(view.querySelector('[data-config-page] > [data-slot="card"]')).toBeNull()
+      expect(view.querySelector('[data-config-page]')?.className).toContain('max-w-4xl')
+
+      cleanupAfterDialog()
+    }
+  })
+
+  it('NO-NAV-SELECT: no select or combobox navigates Config, at desktop or ~400px', async () => {
+    const originalWidth = window.innerWidth
+    try {
+      for (const width of [1280, 400]) {
+        Object.defineProperty(window, 'innerWidth', { configurable: true, value: width })
+        window.dispatchEvent(new Event('resize'))
+
+        const view = await renderAt('/config/models')
+        const chrome = shellChrome(view)
+
+        expect(view.querySelector('[data-config-mobile-selector]')).toBeNull()
+        expect(chrome.querySelector('select, [role="combobox"], [role="listbox"]')).toBeNull()
+        expect(chrome.textContent).not.toContain('Select Setting')
+        expect(view.querySelector('[aria-label="Select config setting"]')).toBeNull()
+        expect(view.querySelectorAll('[role="tablist"]')).toHaveLength(1)
+        expect(tabTriggers()).toHaveLength(5)
+
+        cleanupAfterDialog()
+      }
+    } finally {
+      Object.defineProperty(window, 'innerWidth', { configurable: true, value: originalWidth })
+    }
+  })
+
+  it('NO-PATH-BADGES: no bucket name, item id, dotted config path or badge renders in the page chrome', async () => {
+    for (const tab of CONFIG_TABS) {
+      const view = await renderAt(`/config/${tab}`)
+      const chrome = shellChrome(view)
+      const text = chrome.textContent ?? ''
+
+      expect(chrome.querySelector('[data-slot="badge"]')).toBeNull()
+      expect(text).not.toMatch(DOTTED_CONFIG_PATH)
+      expect(text).not.toMatch(BUCKET_LABELS)
+      for (const pair of LEGACY_CONFIG_PAIRS) {
+        const [bucket, item] = pair.split(':')
+        expect(text).not.toContain(pair)
+        expect(text).not.toContain(`${bucket}/${item}`)
+        if (item.includes('-')) expect(text).not.toContain(item)
+      }
+      expect(text).not.toContain('Manage workspace, services, registry, and runtime defaults.')
+      expect(text).not.toContain('Missing config surface')
+
+      const headings = Array.from(view.querySelectorAll('[data-config-section] > h2')).map((h) => h.textContent)
+      const sectionIds = Array.from(view.querySelectorAll('[data-config-section]')).map((node) =>
+        node.getAttribute('data-config-section') as ConfigSectionId,
+      )
+      expect(headings).toEqual(sectionIds.map((id) => CONFIG_SECTION_LABELS[id]))
+      expect(sectionIds.every((id) => (CONFIG_SECTIONS[tab] as readonly string[]).includes(id))).toBe(true)
+
+      cleanupAfterDialog()
+    }
+  })
+
+  it('TAB-ARROW-KEYS: Right moves to and activates Targets with focus kept on its tab, End activates Advanced', async () => {
+    await renderAt('/config/models')
+
+    const models = tabTrigger('models')!
+    await act(async () => {
+      models.focus()
+    })
+    expect(document.activeElement).toBe(models)
+
+    await pressKey(models, 'ArrowRight')
+
+    const targets = tabTrigger('targets')!
+    expect(targets.getAttribute('aria-selected')).toBe('true')
+    expect(document.activeElement).toBe(targets)
+    expect(currentLocation().pathname).toBe('/config/targets')
+    expect(scrollIntoViewSpy.mock.contexts).toContain(targets)
+    const targetsCall = scrollIntoViewSpy.mock.calls[scrollIntoViewSpy.mock.contexts.lastIndexOf(targets)]
+    expect(targetsCall?.[0]).toMatchObject({ inline: 'nearest', block: 'nearest' })
+
+    await pressKey(targets, 'End')
+
+    const advanced = tabTrigger('advanced')!
+    expect(advanced.getAttribute('aria-selected')).toBe('true')
+    expect(document.activeElement).toBe(advanced)
+    expect(currentLocation().pathname).toBe('/config/advanced')
+
+    await pressKey(advanced, 'Home')
+
+    expect(tabTrigger('models')?.getAttribute('aria-selected')).toBe('true')
+    expect(document.activeElement).toBe(tabTrigger('models'))
+    expect(currentLocation().pathname).toBe('/config/models')
+
+    await pressKey(tabTrigger('models')!, 'ArrowLeft')
+
+    expect(tabTrigger('advanced')?.getAttribute('aria-selected')).toBe('true')
+    expect(document.activeElement).toBe(tabTrigger('advanced'))
+  })
+
+  it('renders the app version as subtle footer metadata below the tabs', async () => {
+    const view = await renderAt('/config/project')
 
     const footer = view.querySelector('[data-config-app-version]')
-    const main = view.querySelector('[data-config-main]')
-    const rail = view.querySelector('[data-config-rail]')
+    const page = view.querySelector('[data-config-page]')
+    const tabbar = view.querySelector('[data-config-tabbar]')
 
     expect(fetchAppMetadata).toHaveBeenCalledTimes(1)
     expect(footer).not.toBeNull()
     expect(footer?.textContent).toBe('agent-qa v0.1.13')
-    expect(main?.contains(footer)).toBe(true)
-    expect(rail?.textContent).not.toContain('0.1.13')
+    expect(page?.contains(footer)).toBe(true)
+    expect(tabbar?.textContent).not.toContain('0.1.13')
     expect(footer?.className).toContain('text-[11px]')
     expect(footer?.className).toContain('font-mono')
     expect(footer?.className).toContain('text-muted-foreground/70')
@@ -298,73 +603,38 @@ describe('ConfigPage schema-driven shell', () => {
   it('renders version fallback when metadata returns an empty version', async () => {
     vi.mocked(fetchAppMetadata).mockResolvedValueOnce({ version: '   ' })
 
-    const view = await renderAt('/config?bucket=workspace&item=discovery')
+    const view = await renderAt('/config/project')
     const footer = view.querySelector('[data-config-app-version]')
 
     expect(footer?.textContent).toBe('agent-qa version unavailable')
-    expect(view.textContent).toContain('Discovery')
-    expect(view.textContent).toContain('workspace.testMatch')
+    expect(section('test-discovery')?.querySelector('h2')?.textContent).toBe(CONFIG_SECTION_LABELS['test-discovery'])
+    expect(view.querySelector('#test-match')).not.toBeNull()
   })
 
   it('keeps config content available and quiet when metadata loading fails', async () => {
     vi.mocked(fetchAppMetadata).mockRejectedValueOnce(new Error('metadata unavailable'))
 
-    const view = await renderAt('/config?bucket=workspace&item=discovery')
+    const view = await renderAt('/config/project')
     const footer = view.querySelector('[data-config-app-version]')
 
     expect(footer?.textContent).toBe('agent-qa version unavailable')
-    expect(view.textContent).toContain('Discovery')
-    expect(view.textContent).toContain('workspace.testMatch')
+    expect(section('test-discovery')).not.toBeNull()
+    expect(view.querySelector('#test-match')).not.toBeNull()
     expect(toast.error).not.toHaveBeenCalled()
   })
 
-  it('renders the mobile selector and invalid-selection notice as unframed line blocks', async () => {
-    const view = await renderAt('/config?bucket=workspace&item=unknown')
-
-    const mobileSelector = view.querySelector('[data-config-mobile-selector]')
-    expect(mobileSelector).not.toBeNull()
-    expect(mobileSelector?.className).toContain('border-b')
-    expect(mobileSelector?.querySelector('[data-slot="card"]')).toBeNull()
-
-    const invalidNotice = view.querySelector('[data-config-invalid-notice]')
-    expect(invalidNotice).not.toBeNull()
-    expect(invalidNotice?.className).toContain('border')
-    expect(invalidNotice?.querySelector('[data-slot="card"]')).toBeNull()
-  })
-
-  it('canonicalizes bare /config and renders grouped schema buckets', async () => {
+  it('updates the URL and the panel when a tab is chosen', async () => {
     const view = await renderAt('/config')
-    const location = view.querySelector('[data-testid="location"]')
 
-    expect(location?.getAttribute('data-pathname')).toBe('/config')
-    expect(location?.getAttribute('data-search')).toBe('?bucket=workspace&item=discovery')
-    expect(view.textContent).toContain('Workspace')
-    expect(view.textContent).toContain('Services')
-    expect(view.textContent).toContain('Registry')
-    expect(view.textContent).toContain('Use')
-    expect(view.textContent).toContain('Analytics')
-    expect(view.textContent).toContain('Discovery')
-    expect(view.textContent).not.toContain('Missing config surface')
+    await activateTab('project')
 
-    const buttons = Array.from(view.querySelectorAll('button')).map((button) => button.textContent?.trim())
-    expect(buttons).not.toContain('LLM')
-  })
-
-  it('updates the URL and selected heading when the sidebar selection changes', async () => {
-    const view = await renderAt('/config')
-    const filesButton = findButton('Files')
-    expect(filesButton).not.toBeNull()
-
-    await act(async () => {
-      filesButton!.click()
-    })
-    await flushRender()
-
-    expect(view.querySelector('[data-testid="location"]')?.getAttribute('data-search')).toBe('?bucket=workspace&item=files')
-    expect(view.textContent).toContain('Files')
-    expect(view.textContent).toContain('workspace.hooksFile')
-    expect(view.textContent).toContain('workspace.envFile')
-    expect(view.textContent).toContain('workspace.secretsFile')
+    expect(currentLocation()).toEqual({ pathname: '/config/project', search: '' })
+    expect(tabTrigger('project')?.getAttribute('aria-selected')).toBe('true')
+    expect(view.querySelector('[data-config-panel="models"]')?.getAttribute('data-state')).toBe('inactive')
+    expect(view.querySelector('[data-config-panel="models"] [data-config-section]')).toBeNull()
+    expect(view.querySelectorAll('[data-tour-id="tour-config-section"]')).toHaveLength(1)
+    expect(view.querySelector('[data-tour-id="tour-config-section"]')?.getAttribute('data-config-panel')).toBe('project')
+    expect(section('files')).not.toBeNull()
     expect(view.textContent).toContain('Secrets File')
     expect((document.body.querySelector('#workspace-secrets-file') as HTMLInputElement | null)?.value).toBe('.secrets.local')
     expect(view.textContent).toContain('Required dotenv-style file for runtime-only secrets.')
@@ -372,7 +642,7 @@ describe('ConfigPage schema-driven shell', () => {
   })
 
   it('saves workspace file paths with a required secrets file', async () => {
-    await renderAt('/config?bucket=workspace&item=files')
+    await renderAt('/config/project?section=files')
 
     const hooksInput = document.body.querySelector('#workspace-hooks-file') as HTMLInputElement | null
     const envInput = document.body.querySelector('#workspace-env-file') as HTMLInputElement | null
@@ -388,7 +658,7 @@ describe('ConfigPage schema-driven shell', () => {
     })
 
     await act(async () => {
-      findDocumentButton('Save Changes')!.click()
+      sectionButton('files', 'Save Changes')!.click()
     })
     await flushRender()
 
@@ -400,7 +670,7 @@ describe('ConfigPage schema-driven shell', () => {
   })
 
   it('blocks saving workspace files when required file paths are empty', async () => {
-    await renderAt('/config?bucket=workspace&item=files')
+    await renderAt('/config/project?section=files')
 
     const hooksInput = document.body.querySelector('#workspace-hooks-file') as HTMLInputElement | null
     const envInput = document.body.querySelector('#workspace-env-file') as HTMLInputElement | null
@@ -416,7 +686,7 @@ describe('ConfigPage schema-driven shell', () => {
     })
 
     await act(async () => {
-      findDocumentButton('Save Changes')!.click()
+      sectionButton('files', 'Save Changes')!.click()
     })
     await flushRender()
 
@@ -430,7 +700,7 @@ describe('ConfigPage schema-driven shell', () => {
   })
 
   it('blocks saving empty workspace discovery match arrays', async () => {
-    await renderAt('/config?bucket=workspace&item=discovery')
+    await renderAt('/config/project?section=test-discovery')
 
     const testMatchInput = document.body.querySelector('#test-match') as HTMLTextAreaElement | null
     const suiteMatchInput = document.body.querySelector('#suite-match') as HTMLTextAreaElement | null
@@ -446,7 +716,7 @@ describe('ConfigPage schema-driven shell', () => {
     })
 
     await act(async () => {
-      findDocumentButton('Save Changes')!.click()
+      sectionButton('test-discovery', 'Save Changes')!.click()
     })
     await flushRender()
 
@@ -455,59 +725,48 @@ describe('ConfigPage schema-driven shell', () => {
     expect(updateSettings).not.toHaveBeenCalled()
   })
 
-  it('keeps Logging and Log Capture as separate deep-linkable destinations', async () => {
-    const view = await renderAt('/config?bucket=services&item=logging')
+  it('keeps Logging on Project and Log capture on Execution, each deep-linkable', async () => {
+    await renderAt('/config/project?section=logging')
 
-    expect(view.querySelector('[data-testid="location"]')?.getAttribute('data-search')).toBe('?bucket=services&item=logging')
-    expect(view.textContent).toContain('Logging')
-    expect(view.textContent).toContain('services.logging')
-    expect(view.textContent).not.toContain('use.logCapture')
+    expect(currentLocation()).toEqual({ pathname: '/config/project', search: '' })
+    expect(document.activeElement).toBe(section('logging')?.querySelector('h2'))
+    expect(section('log-capture')).toBeNull()
 
-    const logCaptureButton = findButton('Log Capture')
-    expect(logCaptureButton).not.toBeNull()
+    cleanupAfterDialog()
+    await renderAt('/config/execution?section=log-capture')
 
-    await act(async () => {
-      logCaptureButton!.click()
-    })
-    await flushRender()
-
-    expect(view.querySelector('[data-testid="location"]')?.getAttribute('data-search')).toBe('?bucket=use&item=log-capture')
-    expect(view.textContent).toContain('Log Capture')
-    expect(view.textContent).toContain('use.logCapture')
+    expect(currentLocation()).toEqual({ pathname: '/config/execution', search: '' })
+    expect(document.activeElement).toBe(section('log-capture')?.querySelector('h2'))
+    expect(section('logging')).toBeNull()
   })
 
-  it('keeps LLMs and Execution Defaults as separate destinations', async () => {
-    const view = await renderAt('/config?bucket=registry&item=llms')
+  it('renders the model list, the default model, screenshot size and planner limits in one place under Models', async () => {
+    const view = await renderAt('/config/models')
 
-    expect(view.querySelector('[data-testid="location"]')?.getAttribute('data-search')).toBe('?bucket=registry&item=llms')
-    expect(view.textContent).toContain('LLMs')
-    expect(view.textContent).toContain('registry.llms')
-
-    const defaultsButton = findButton('Execution Defaults')
-    expect(defaultsButton).not.toBeNull()
-
-    await act(async () => {
-      defaultsButton!.click()
-    })
-    await flushRender()
-
-    expect(view.querySelector('[data-testid="location"]')?.getAttribute('data-search')).toBe('?bucket=use&item=execution-defaults')
-    expect(view.textContent).toContain('Execution Defaults')
-    expect(view.textContent).toContain('use.parallel')
-    expect(view.textContent).not.toContain('use.device')
-    expect(view.textContent).not.toContain('Global Headless')
+    const panel = view.querySelector('[data-config-panel="models"]')
+    expect(panel).not.toBeNull()
+    expect(Array.from(panel!.querySelectorAll('[data-config-section]')).map((node) => node.getAttribute('data-config-section'))).toEqual([
+      'models',
+      'screenshot-size',
+      'planner-limits',
+    ])
+    expect(section('models')?.textContent).toContain('primary')
+    expect(section('models')?.querySelector('#use-parallel')).not.toBeNull()
+    expect(section('models')?.textContent).toContain('Allow eligible web runs and suite parent jobs to share available queue slots by default.')
+    expect(section('screenshot-size')?.querySelector('h2')?.textContent).toBe(CONFIG_SECTION_LABELS['screenshot-size'])
+    expect(section('planner-limits')?.querySelector('h2')?.textContent).toBe(CONFIG_SECTION_LABELS['planner-limits'])
+    expect(findButton('Execution Defaults')).toBeNull()
   })
 
-  it('renders and saves mobile app-state defaults from the Mobile destination', async () => {
-    const view = await renderAt('/config?bucket=use&item=mobile')
+  it('renders and saves mobile app-state defaults from the Mobile app state section', async () => {
+    await renderAt('/config/targets?section=mobile-app-state')
 
-    expect(view.textContent).toContain('Mobile')
-    expect(view.textContent).toContain('use.mobile.appState')
-    expect(view.textContent).toContain('App state')
-    expect(view.textContent).toContain('Reset app data')
+    const mobile = section('mobile-app-state')
+    expect(mobile?.textContent).toContain('App state')
+    expect(mobile?.textContent).toContain('Reset app data')
 
     await act(async () => {
-      findDocumentButton('Save Mobile Defaults')!.click()
+      sectionButton('mobile-app-state', 'Save Mobile Defaults')!.click()
     })
     await flushRender()
 
@@ -516,16 +775,18 @@ describe('ConfigPage schema-driven shell', () => {
     })
   })
 
-  it('keeps browser headless out of execution defaults', async () => {
-    await renderAt('/config?bucket=use&item=execution-defaults')
+  it('keeps browser headless out of the Models tab defaults', async () => {
+    await renderAt('/config/models')
 
-    expect(document.body.textContent).toContain('Allow eligible web runs and suite parent jobs to share available queue slots by default.')
-    expect(document.body.textContent).not.toContain('Global Headless')
+    const models = section('models')!
+    expect(models.textContent).toContain('Allow eligible web runs and suite parent jobs to share available queue slots by default.')
+    expect(models.textContent).not.toContain('Global Headless')
     expect(document.body.querySelector('#use-global-headless')).toBeNull()
-    expect(document.body.textContent).not.toContain('use.browser.headless')
-    expect(document.body.textContent).not.toContain('use.headless')
+    expect(document.body.querySelector('#browser-headless')).toBeNull()
+    expect(models.textContent).not.toContain('use.browser.headless')
+    expect(models.textContent).not.toContain('use.headless')
 
-    const parallelSwitch = document.body.querySelector('#use-parallel') as HTMLButtonElement | null
+    const parallelSwitch = models.querySelector('#use-parallel') as HTMLButtonElement | null
     expect(parallelSwitch).not.toBeNull()
 
     await act(async () => {
@@ -534,7 +795,7 @@ describe('ConfigPage schema-driven shell', () => {
     await flushRender()
 
     await act(async () => {
-      findDocumentButton('Save Runtime Defaults')!.click()
+      sectionButton('models', 'Save Runtime Defaults')!.click()
     })
     await flushRender()
 
@@ -542,17 +803,18 @@ describe('ConfigPage schema-driven shell', () => {
       'use.parallel': false,
       'use.llm': 'primary',
     })
-    expect(document.body.textContent).not.toContain('Default Device')
-    expect(document.body.textContent).not.toContain('use.device')
+    expect(models.textContent).not.toContain('Default Device')
+    expect(models.textContent).not.toContain('use.device')
   })
 
   it('saves browser headless from the Browser section only', async () => {
-    const view = await renderAt('/config?bucket=use&item=browser')
+    await renderAt('/config/execution?section=browser')
 
-    expect(view.textContent).toContain('Browser')
-    expect(view.textContent).toContain('Run web browsers without a visible window.')
+    const browser = section('browser')!
+    expect(browser.querySelector('h2')?.textContent).toBe(CONFIG_SECTION_LABELS.browser)
+    expect(browser.textContent).toContain('Run web browsers without a visible window.')
 
-    const headlessSwitch = document.body.querySelector('#browser-headless') as HTMLButtonElement | null
+    const headlessSwitch = browser.querySelector('#browser-headless') as HTMLButtonElement | null
     expect(headlessSwitch).not.toBeNull()
 
     await act(async () => {
@@ -561,7 +823,7 @@ describe('ConfigPage schema-driven shell', () => {
     await flushRender()
 
     await act(async () => {
-      findDocumentButton('Save Changes')!.click()
+      sectionButton('browser', 'Save Changes')!.click()
     })
     await flushRender()
 
@@ -575,7 +837,7 @@ describe('ConfigPage schema-driven shell', () => {
   })
 
   it('shows consolidated runtime path placeholders for dashboard and cache', async () => {
-    const view = await renderAt('/config?bucket=services&item=dashboard')
+    const view = await renderAt('/config/project?section=dashboard')
 
     const dbPathInput = document.body.querySelector('#dashboard-db-path') as HTMLInputElement | null
     expect(dbPathInput).not.toBeNull()
@@ -583,21 +845,15 @@ describe('ConfigPage schema-driven shell', () => {
     expect(view.textContent).not.toContain('Tests Directory')
     expect(document.body.querySelector('#dashboard-tests-dir')).toBeNull()
 
-    const cacheButton = findButton('Cache')
-    expect(cacheButton).not.toBeNull()
+    await activateTab('execution')
 
-    await act(async () => {
-      cacheButton!.click()
-    })
-    await flushRender()
-
-    expect(view.querySelector('[data-testid="location"]')?.getAttribute('data-search')).toBe('?bucket=services&item=cache')
-    const cacheDirInput = document.body.querySelector('#cache-dir') as HTMLInputElement | null
+    expect(currentLocation()).toEqual({ pathname: '/config/execution', search: '' })
+    const cacheDirInput = section('cache')?.querySelector('#cache-dir') as HTMLInputElement | null
     expect(cacheDirInput).not.toBeNull()
     expect(cacheDirInput?.placeholder).toBe('.agent-qa/cache')
   })
 
-  it('renders Auth States as a list-only Services destination without secret details', async () => {
+  it('renders Saved login states as a list-only Targets section without secret details', async () => {
     vi.mocked(fetchAuthStates).mockResolvedValueOnce({
       authStates: [
         {
@@ -620,20 +876,20 @@ describe('ConfigPage schema-driven shell', () => {
       ],
     })
 
-    const view = await renderAt('/config?bucket=services&item=auth-states')
+    await renderAt('/config/targets?section=login-states')
 
-    expect(view.querySelector('[data-testid="location"]')?.getAttribute('data-search')).toBe('?bucket=services&item=auth-states')
-    expect(view.textContent).toContain('Auth States')
-    expect(view.textContent).toContain('services.authState')
-    expect(view.textContent).toContain('services.authState.dir')
-    expect(view.textContent).toContain('Target')
-    expect(view.textContent).toContain('Name')
-    expect(view.textContent).toContain('Captured')
-    expect(view.textContent).toContain('Kind')
-    expect(view.textContent).toContain('staging-web')
-    expect(view.textContent).toContain('admin')
-    expect(view.textContent).toContain('web')
-    expect(view.querySelector('time[datetime="2026-05-17T10:00:00.000Z"]')).not.toBeNull()
+    const loginStates = section('login-states')!
+    expect(currentLocation()).toEqual({ pathname: '/config/targets', search: '' })
+    expect(loginStates.querySelector('h2')?.textContent).toBe(CONFIG_SECTION_LABELS['login-states'])
+    expect(loginStates.textContent).not.toContain('services.authState')
+    expect(loginStates.textContent).toContain('Target')
+    expect(loginStates.textContent).toContain('Name')
+    expect(loginStates.textContent).toContain('Captured')
+    expect(loginStates.textContent).toContain('Kind')
+    expect(loginStates.textContent).toContain('staging-web')
+    expect(loginStates.textContent).toContain('admin')
+    expect(loginStates.textContent).toContain('web')
+    expect(loginStates.querySelector('time[datetime="2026-05-17T10:00:00.000Z"]')).not.toBeNull()
     expect(fetchAuthStates).toHaveBeenCalledTimes(1)
 
     const forbiddenCopy = [
@@ -656,30 +912,30 @@ describe('ConfigPage schema-driven shell', () => {
       '2026-05-17T10:01:00.000Z',
     ]
     for (const text of forbiddenCopy) {
-      expect(view.textContent).not.toContain(text)
+      expect(loginStates.textContent).not.toContain(text)
     }
   })
 
-  it('renders the Auth States empty state copy', async () => {
+  it('renders the Saved login states empty state copy', async () => {
     vi.mocked(fetchAuthStates).mockResolvedValueOnce({ authStates: [] })
 
-    const view = await renderAt('/config?bucket=services&item=auth-states')
+    await renderAt('/config/targets?section=login-states')
 
-    expect(view.textContent).toContain('No auth states saved')
-    expect(view.textContent).toContain('Save auth state from a connected web Live Mode session.')
+    expect(section('login-states')?.textContent).toContain('No auth states saved')
+    expect(section('login-states')?.textContent).toContain('Save auth state from a connected web Live Mode session.')
   })
 
-  it('renders a safe Auth States load failure message', async () => {
+  it('renders a safe Saved login states load failure message', async () => {
     vi.mocked(fetchAuthStates).mockRejectedValueOnce(new Error('metadata path leaked'))
 
-    const view = await renderAt('/config?bucket=services&item=auth-states')
+    const view = await renderAt('/config/targets?section=login-states')
 
-    expect(view.textContent).toContain('Could not load saved auth states.')
+    expect(section('login-states')?.textContent).toContain('Could not load saved auth states.')
     expect(view.textContent).not.toContain('metadata path leaked')
   })
 
   it('exposes and saves the knowledge directory with the knowledge settings block', async () => {
-    await renderAt('/config?bucket=knowledge&item=store')
+    await renderAt('/config/project?section=knowledge')
 
     const knowledgeDirInput = document.body.querySelector('#knowledge-dir') as HTMLInputElement | null
     expect(knowledgeDirInput).not.toBeNull()
@@ -692,7 +948,7 @@ describe('ConfigPage schema-driven shell', () => {
     await flushRender()
 
     await act(async () => {
-      findDocumentButton('Save Changes')!.click()
+      sectionButton('knowledge', 'Save Changes')!.click()
     })
     await flushRender()
 
@@ -705,12 +961,13 @@ describe('ConfigPage schema-driven shell', () => {
   })
 
   it('edits analytics pass rate scope attributes', async () => {
-    const view = await renderAt('/config?bucket=analytics&item=pass-rate-scope')
+    await renderAt('/config/project?section=pass-rate-scope')
 
-    expect(view.querySelector('[data-testid="location"]')?.getAttribute('data-search')).toBe('?bucket=analytics&item=pass-rate-scope')
-    expect(view.textContent).toContain('Pass Rate Scope')
-    expect(view.textContent).toContain('analytics.passRateScope.attributes')
-    expect(view.textContent).toContain('Regex')
+    const scope = section('pass-rate-scope')!
+    expect(currentLocation()).toEqual({ pathname: '/config/project', search: '' })
+    expect(scope.querySelector('h2')?.textContent).toBe(CONFIG_SECTION_LABELS['pass-rate-scope'])
+    expect(scope.textContent).not.toContain('analytics.passRateScope.attributes')
+    expect(scope.textContent).toContain('Regex')
 
     const branchValue = document.body.querySelector('#analytics-scope-value-existing-0') as HTMLInputElement | null
     expect(branchValue?.value).toBe('master')
@@ -720,7 +977,7 @@ describe('ConfigPage schema-driven shell', () => {
     })
 
     await act(async () => {
-      findDocumentButton('Save Changes')!.click()
+      sectionButton('pass-rate-scope', 'Save Changes')!.click()
     })
     await flushRender()
 
@@ -735,7 +992,7 @@ describe('ConfigPage schema-driven shell', () => {
   })
 
   it('exposes vision and context window in the LLM configuration modal', async () => {
-    await renderAt('/config?bucket=registry&item=llms')
+    await renderAt('/config/models')
 
     await openFirstLlmEditor()
 
@@ -747,8 +1004,9 @@ describe('ConfigPage schema-driven shell', () => {
     expect(document.body.textContent).toContain('Vision (optional)')
     expect(document.body.textContent).toContain('Context Window (optional)')
     expect(contextWindowInput?.value).toBe('128k')
-    expect(document.body.querySelector('#config-effective-resolution')).toBeNull()
-    expect(document.body.textContent).not.toContain('Effective Resolution')
+    const dialog = document.body.querySelector('[role="dialog"]')
+    expect(dialog?.querySelector('#config-effective-resolution')).toBeNull()
+    expect(dialog?.textContent).not.toContain('Effective Resolution')
   })
 
   it('formats OpenAI-Compatible configs and keeps static provider fallback built-in only', async () => {
@@ -761,7 +1019,7 @@ describe('ConfigPage schema-driven shell', () => {
       }),
     })
 
-    const view = await renderAt('/config?bucket=registry&item=llms')
+    const view = await renderAt('/config/models')
 
     expect(LLM_PROVIDER_OPTIONS.map((option) => option.value)).toEqual([
       'openai-compatible',
@@ -792,7 +1050,7 @@ describe('ConfigPage schema-driven shell', () => {
       }],
     })
 
-    const view = await renderAt('/config?bucket=registry&item=llms')
+    const view = await renderAt('/config/models')
 
     expect(view.textContent).toContain('Missing credential')
     expect(view.textContent).not.toContain('OAuth connected')
@@ -810,7 +1068,7 @@ describe('ConfigPage schema-driven shell', () => {
       }),
     })
 
-    await renderAt('/config?bucket=registry&item=llms')
+    await renderAt('/config/models')
     await openFirstLlmEditor()
 
     const modelInput = Array.from(document.body.querySelectorAll('input'))
@@ -826,7 +1084,7 @@ describe('ConfigPage schema-driven shell', () => {
     expect(baseUrlInput?.value).toBe('https://openrouter.ai/api/v1')
     expect(contextWindowInput?.value).toBe('256k')
     expect(modelInput?.getAttribute('list')).toBe('config-model-options-openai-compatible')
-    expect(document.body.textContent).not.toContain('Subscription')
+    expect(document.body.querySelector('[role="dialog"]')?.textContent).not.toContain('Subscription')
   })
 
   it('requires Base URL before saving OpenAI-Compatible configs', async () => {
@@ -838,11 +1096,11 @@ describe('ConfigPage schema-driven shell', () => {
       }),
     })
 
-    await renderAt('/config?bucket=registry&item=llms')
+    await renderAt('/config/models')
     await openFirstLlmEditor()
 
     await act(async () => {
-      findDocumentButton('Save Changes')!.click()
+      dialogButton('Save Changes')!.click()
     })
     await flushRender()
 
@@ -867,7 +1125,7 @@ describe('ConfigPage schema-driven shell', () => {
       unauthenticated: false,
     })
 
-    await renderAt('/config?bucket=registry&item=llms')
+    await renderAt('/config/models')
     await openFirstLlmEditor()
 
     const keyInput = document.body.querySelector('input[type="password"][placeholder="secret-value"]') as HTMLInputElement
@@ -877,14 +1135,14 @@ describe('ConfigPage schema-driven shell', () => {
     await flushRender()
 
     await act(async () => {
-      findDocumentButton('Save Credential')!.click()
+      dialogButton('Save Credential')!.click()
     })
     await flushRender()
 
     expect(saveCredential).toHaveBeenCalledWith('planner', 'openai-compatible', 'api-key', 'sk-router')
 
     await act(async () => {
-      findDocumentButton('Test Connection')!.click()
+      dialogButton('Test Connection')!.click()
     })
     await flushRender()
 
@@ -913,11 +1171,11 @@ describe('ConfigPage schema-driven shell', () => {
       message: 'Testing without a saved API key.',
     })
 
-    await renderAt('/config?bucket=registry&item=llms')
+    await renderAt('/config/models')
     await openFirstLlmEditor()
 
     await act(async () => {
-      findDocumentButton('Test Connection')!.click()
+      dialogButton('Test Connection')!.click()
     })
     await flushRender()
 
@@ -934,7 +1192,7 @@ describe('ConfigPage schema-driven shell', () => {
       }),
     })
 
-    await renderAt('/config?bucket=registry&item=llms')
+    await renderAt('/config/models')
     await openFirstLlmEditor()
 
     expect(document.body.textContent).toContain('Login with OpenAI subscription')
@@ -952,11 +1210,11 @@ describe('ConfigPage schema-driven shell', () => {
     })
 
     try {
-      await renderAt('/config?bucket=registry&item=llms')
+      await renderAt('/config/models')
       await openFirstLlmEditor()
 
       await act(async () => {
-        findDocumentButton('Login with Anthropic subscription')!.click()
+        dialogButton('Login with Anthropic subscription')!.click()
       })
       await flushRender()
 
@@ -967,7 +1225,7 @@ describe('ConfigPage schema-driven shell', () => {
       await flushRender()
 
       await act(async () => {
-        findDocumentButton('Connect')!.click()
+        dialogButton('Connect')!.click()
       })
       await flushRender()
 
@@ -1001,11 +1259,11 @@ describe('ConfigPage schema-driven shell', () => {
     })
 
     try {
-      await renderAt('/config?bucket=registry&item=llms')
+      await renderAt('/config/models')
       await openFirstLlmEditor()
 
       await act(async () => {
-        findDocumentButton('Login with OpenAI subscription')!.click()
+        dialogButton('Login with OpenAI subscription')!.click()
       })
       await flushRender()
 
@@ -1026,10 +1284,10 @@ describe('ConfigPage schema-driven shell', () => {
   })
 
   it('uses focused modal edit flows for Targets and Devices', async () => {
-    await renderAt('/config?bucket=registry&item=targets')
+    await renderAt('/config/targets?section=targets')
 
     await act(async () => {
-      findDocumentButton('Edit')!.click()
+      sectionButton('targets', 'Edit')!.click()
     })
     await flushRender()
 
@@ -1038,10 +1296,10 @@ describe('ConfigPage schema-driven shell', () => {
 
     cleanupAfterDialog()
 
-    await renderAt('/config?bucket=registry&item=devices')
+    await renderAt('/config/targets?section=devices')
 
     await act(async () => {
-      findDocumentButton('Edit')!.click()
+      sectionButton('devices', 'Edit')!.click()
     })
     await flushRender()
 
@@ -1050,10 +1308,10 @@ describe('ConfigPage schema-driven shell', () => {
   })
 
   it('uses an approved SaaS slug for the target product placeholder', async () => {
-    await renderAt('/config?bucket=registry&item=targets')
+    await renderAt('/config/targets')
 
     await act(async () => {
-      findDocumentButton('Add Target')!.click()
+      sectionButton('targets', 'Add Target')!.click()
     })
     await flushRender()
 
@@ -1078,10 +1336,10 @@ describe('ConfigPage schema-driven shell', () => {
       }),
     })
 
-    const view = await renderAt('/config?bucket=registry&item=targets')
+    await renderAt('/config/targets')
 
     await act(async () => {
-      findDocumentButton('Edit')!.click()
+      sectionButton('targets', 'Edit')!.click()
     })
     await flushRender()
 
@@ -1097,14 +1355,14 @@ describe('ConfigPage schema-driven shell', () => {
     await flushRender()
 
     await act(async () => {
-      findDocumentButton('Apply Target Changes')!.click()
+      dialogButton('Apply Target Changes')!.click()
     })
     await flushRender()
 
-    expect(view.textContent).toContain('App: apps/wikipedia-alpha.apk / bs://uploaded-app')
+    expect(section('targets')?.textContent).toContain('App: apps/wikipedia-alpha.apk / bs://uploaded-app')
 
     await act(async () => {
-      findDocumentButton('Save Changes')!.click()
+      sectionButton('targets', 'Save Changes')!.click()
     })
     await flushRender()
 
@@ -1123,14 +1381,16 @@ describe('ConfigPage schema-driven shell', () => {
     })
   })
 
-  it('explains Providers usage clearly and edits providers in a modal', async () => {
-    const view = await renderAt('/config?bucket=registry&item=providers')
+  it('explains device farm usage clearly and edits them in a modal', async () => {
+    await renderAt('/config/targets?section=device-farms')
 
-    expect(view.textContent).toContain('BrowserStack')
-    expect(view.textContent).toContain('provider-specific JSON keyed by provider name')
+    const farms = section('device-farms')!
+    expect(farms.querySelector('h2')?.textContent).toBe(CONFIG_SECTION_LABELS['device-farms'])
+    expect(farms.textContent).toContain('BrowserStack')
+    expect(farms.textContent).toContain('provider-specific JSON keyed by provider name')
 
     await act(async () => {
-      findDocumentButton('Edit')!.click()
+      sectionButton('device-farms', 'Edit')!.click()
     })
     await flushRender()
 

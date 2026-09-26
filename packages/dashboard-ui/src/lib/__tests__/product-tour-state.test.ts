@@ -191,7 +191,7 @@ describe('foundation product tour step contracts', () => {
       })),
     ).toEqual([
       { id: 'intro', route: null },
-      { id: 'llm-setup', route: '/config?bucket=registry&item=llms' },
+      { id: 'llm-setup', route: '/config/models?section=models' },
       { id: 'runs', route: '/runs' },
       { id: 'tests', route: '/tests' },
       { id: 'suites', route: '/suites' },

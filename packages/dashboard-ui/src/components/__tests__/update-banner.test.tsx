@@ -122,6 +122,8 @@ const eligibleRoutes = [
   ['/hooks', 'hooks-page'],
   ['/suites', 'suites-page'],
   ['/config', 'config-page'],
+  ['/config/models', 'config-page'],
+  ['/config/advanced', 'config-page'],
 ] as const
 
 const excludedRoutes = [

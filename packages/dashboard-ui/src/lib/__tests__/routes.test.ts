@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url'
 
 import { describe, it, expect } from 'vitest'
 
+import { CONFIG_SECTIONS, CONFIG_TABS, LEGACY_CONFIG_LINKS, LEGACY_CONFIG_PAIRS } from '@/lib/config-tabs'
 import { routes } from '@/lib/routes'
 
 describe('canonical dashboard routes', () => {
@@ -72,8 +73,30 @@ describe('suite route helpers', () => {
 })
 
 describe('config route helpers', () => {
-  it('configItem returns canonical bucket/item query params', () => {
-    expect(routes.configItem('registry', 'targets')).toBe('/config?bucket=registry&item=targets')
+  it('CONFIG-ITEM-ALIAS: configItem returns the mapped tab URL for a legacy pair, and Models otherwise', () => {
+    expect(routes.configItem('registry', 'llms')).toBe('/config/models?section=models')
+    expect(routes.configItem('registry', 'targets')).toBe('/config/targets?section=targets')
+    expect(routes.configItem('use', 'execution-defaults')).toBe('/config/models?section=models')
+    expect(routes.configItem('registry', 'unknown')).toBe('/config/models')
+    expect(routes.configItem('nope', 'llms')).toBe('/config/models')
+    for (const pair of LEGACY_CONFIG_PAIRS) {
+      const [bucket, item] = pair.split(':')
+      const { tab, section } = LEGACY_CONFIG_LINKS[pair]
+      expect(routes.configItem(bucket, item)).toBe(`/config/${tab}?section=${section}`)
+    }
+  })
+
+  it('CONFIG-TAB-PATH: configTab builds /config/{tab} with an optional section', () => {
+    expect(routes.configTab('models')).toBe('/config/models')
+    expect(routes.configTab('advanced')).toBe('/config/advanced')
+    expect(routes.configTab('execution', 'timeouts')).toBe('/config/execution?section=timeouts')
+    for (const tab of CONFIG_TABS) {
+      expect(routes.configTab(tab)).toBe(`/config/${tab}`)
+      for (const section of CONFIG_SECTIONS[tab]) {
+        expect(routes.configTab(tab, section)).toBe(`/config/${tab}?section=${section}`)
+      }
+    }
+    expect(routes.config).toBe('/config')
   })
 })
 
