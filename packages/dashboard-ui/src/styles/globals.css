@@ -1921,21 +1921,18 @@ input[type="number"] {
   }
 }
 
-/* THE LIVE PREVIEW'S HEALTH DOT (428 D-02/D-16/D-17). About 8px, with a two-tone ring so it reads
-   on light and dark pages alike. The dot is still in every state (owner review 2026-09-26): its
-   state is told apart by its colour and by its accessible name, never by motion. */
+/* THE LIVE PREVIEW'S HEALTH DOT (428 D-02/D-16/D-17). A small, ringless dot (owner decision
+   2026-09-26 (6)). The dot is still in every state (owner review 2026-09-26): its state is told
+   apart by its colour and by its accessible name, never by motion. */
 .live-dot {
   display: block;
-  width: 8px;
-  height: 8px;
+  width: 6px;
+  height: 6px;
   border-radius: 999px;
-  box-shadow:
-    0 0 0 1.5px rgb(0 0 0 / 0.35),
-    0 0 0 3px rgb(255 255 255 / 0.7);
 }
 
 .live-dot-green {
-  background-color: var(--color-emerald-500);
+  background-color: color-mix(in oklch, var(--color-green-500) 70%, transparent);
 }
 
 .live-dot-amber {

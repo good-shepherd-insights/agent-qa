@@ -1,7 +1,7 @@
 // THE PREVIEW'S ONE HEALTH DOT (428 D-02/D-16/D-17 · PXH-LIVE-03), on BucketLabel's accessible-trigger idiom (427-19).
 //
-// It leads the preview's chrome at the container's top-left (owner decision 2026-09-26 (4)), so its
-// tooltip opens rightward from the dot's left edge, into the pane rather than out of it.
+// It floats at the container's top-right (owner decision 2026-09-26 (6)), so its tooltip opens
+// leftward from the dot's right edge, into the pane rather than out of it.
 
 import { useId } from 'react'
 
@@ -30,7 +30,7 @@ export function HealthDot({ state }: { state: LiveDotState }) {
         </button>
       </TooltipTrigger>
       <span id={meaningId} hidden>{LIVE_DOT_MEANINGS[state]}</span>
-      <TooltipContent side="bottom" align="start" sideOffset={4} className="max-w-[280px] text-left">
+      <TooltipContent side="bottom" align="end" sideOffset={4} className="max-w-[280px] text-left">
         {LIVE_DOT_MEANINGS[state]}
       </TooltipContent>
     </Tooltip>

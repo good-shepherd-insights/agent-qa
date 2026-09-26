@@ -424,7 +424,10 @@ describe('LiveSessionPane shared live preview (428 PXH-LIVE-01)', () => {
   // a web session's navigation, address bar, auth-state capture and copy URL are the chrome row".
   // The preview's status now leads that row at the container's top-left, so after a frame the dot
   // comes first and the editor's toolbar follows it in the same row.
-  it('EDITOR-CHROME-ROW: a web session\'s toolbar is the chrome row, and after a frame the dot leads it', async () => {
+  //
+  // RE-SPELLED 2026-09-26 (owner decision 2026-09-26 (6)): the dot left the row for the preview's
+  // top-right corner, so after a frame the toolbar still leads the row and the dot is not in it.
+  it('EDITOR-CHROME-ROW: a web session\'s toolbar is the chrome row, and after a frame the dot sits outside it', async () => {
     renderPane()
     await flush()
 
@@ -442,11 +445,11 @@ describe('LiveSessionPane shared live preview (428 PXH-LIVE-01)', () => {
     const children = [...(row?.children ?? [])]
     const toolbarAt = children.findIndex((child) => child.querySelector('[aria-label="Go back"]') !== null)
     expect({
-      lead: children[0]?.hasAttribute('data-preview-corner') ?? false,
-      first: children[0]?.firstElementChild?.getAttribute('data-live-dot') ?? null,
+      dotInRow: row?.querySelector('[data-live-dot]') ?? null,
+      dot: container.querySelector('[data-preview-dot-corner] [data-live-dot]')?.getAttribute('data-live-dot') ?? null,
       toolbarAt,
       inputs: row?.querySelectorAll('input').length,
-    }).toEqual({ lead: true, first: 'green', toolbarAt: 1, inputs: 1 })
+    }).toEqual({ dotInRow: null, dot: 'green', toolbarAt: 0, inputs: 1 })
     expect(header().querySelector('[data-live-dot]')).toBeNull()
   })
 
@@ -454,7 +457,10 @@ describe('LiveSessionPane shared live preview (428 PXH-LIVE-01)', () => {
   // a mobile session without those controls renders no empty chrome row", read before any frame.
   // A mobile session still passes no toolbar, so before its preview has anything to say there is no
   // row, and once a frame arrives the row holds the dot and nothing of the web toolbar.
-  it('EDITOR-CHROME-ROW: a mobile session has no row before its preview speaks, and then only the dot', async () => {
+  //
+  // RE-SPELLED 2026-09-26 (owner decision 2026-09-26 (6)): the dot never makes a row, so after a
+  // frame a mobile session still has none and the dot floats in the preview's top-right corner.
+  it('EDITOR-CHROME-ROW: a mobile session has no row before or after its first frame, and the dot floats in its corner', async () => {
     const mobile = { platform: 'android', targetName: 'android-target', targetLabel: 'Android device' } as const
     fetchEditorLiveUrlMock.mockImplementationOnce(() => new Promise<never>(() => {}))
     renderPane(mobile)
@@ -469,13 +475,10 @@ describe('LiveSessionPane shared live preview (428 PXH-LIVE-01)', () => {
     renderPane(mobile)
     await flush()
     await postFrame()
-    const row = container.querySelector('[data-live-preview] [data-preview-chrome]')
-    const buttons = [...(row?.querySelectorAll('button') ?? [])]
     expect({
-      children: [...(row?.children ?? [])].map((child) => child.hasAttribute('data-preview-corner')),
-      dots: buttons.map((button) => button.getAttribute('data-live-dot')),
-      inputs: row?.querySelectorAll('input').length,
-    }).toEqual({ children: [true], dots: ['green'], inputs: 0 })
+      row: container.querySelector('[data-live-preview] [data-preview-chrome]'),
+      dot: container.querySelector('[data-preview-dot-corner] [data-live-dot]')?.getAttribute('data-live-dot') ?? null,
+    }).toEqual({ row: null, dot: 'green' })
   })
 })
 

@@ -377,13 +377,12 @@ export function LivePreview({ subject, chrome }: LivePreviewProps) {
     </button>
   )
 
-  // THE STATUS IS SAID ONCE. With a dot, or with an iframe up and something to say beside it
-  // (loading's words before the first frame), it leads the chrome; otherwise the words are a
-  // dot-less sentence in the middle of the pane.
-  const statusShown = dot !== null || (framed && (view.words !== undefined || view.snapshot))
+  // THE STATUS IS SAID ONCE. The dot floats alone at the container's top-right and never makes a row
+  // (owner decision 2026-09-26 (6)). With a dot or an iframe up, any words, label or action lead the
+  // chrome; otherwise the words are a dot-less sentence in the middle of the pane.
+  const statusShown = (dot !== null || framed) && (view.words !== undefined || view.snapshot || action !== null)
   const status = statusShown ? (
     <div data-preview-corner className="flex min-w-0 flex-wrap items-center gap-2">
-      {dot}
       {view.snapshot && (
         <span data-snapshot-label className="text-xs text-muted-foreground">
           {SNAPSHOT_PREVIEW_LABEL}
@@ -408,11 +407,16 @@ export function LivePreview({ subject, chrome }: LivePreviewProps) {
       {/*
         One preview, which follows the running member (owner review 2026-09-26), never a grid (D-08).
         The handle selector this row used to hold is gone (G-428-3); the host decides the handle.
-        The status leads the row at the container's top-left (owner decision 2026-09-26 (4)).
+        The status words lead the row at the container's top-left (owner decision 2026-09-26 (4)).
       */}
       <PreviewChrome status={status}>{chrome}</PreviewChrome>
 
-      <div className="flex min-h-0 flex-1 items-center justify-center [container-type:size]">
+      <div className="relative flex min-h-0 flex-1 items-center justify-center [container-type:size]">
+        {dot !== null && (
+          <div data-preview-dot-corner className="absolute right-1 top-1 z-10">
+            {dot}
+          </div>
+        )}
         {framed && mint !== undefined ? (
           // THE BOX TAKES THE PICTURE'S OWN ASPECT RATIO (P10), and it holds the picture alone.
           <div

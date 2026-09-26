@@ -295,19 +295,19 @@ describe('the corner dot (D-02, D-13, D-16, D-17 · PXH-LIVE-03)', () => {
     }).toEqual({ dot: null, corner: null, words: null })
   })
 
-  // RE-SPELLED 2026-09-26 (428-34, owner decision 2026-09-26 (4), G-428-4). Was "SNAPSHOT-LABEL-
-  // BESIDE-DOT: a snapshot frame puts the label in the corner beside the green dot", where the corner
-  // sat on the picture. The label now follows the dot in the chrome's status cluster.
-  it('SNAPSHOT-LABEL-BESIDE-DOT: a snapshot frame puts the label in the chrome\'s status cluster, right after the green dot', async () => {
+  // RE-SPELLED 2026-09-26 (owner decision 2026-09-26 (6)). Was "... puts the label in the chrome's
+  // status cluster, right after the green dot". The dot left the chrome for the top-right corner, so
+  // the label now leads the status cluster on its own while the dot stays green in its corner.
+  it('SNAPSHOT-LABEL: a snapshot frame puts the label first in the chrome\'s status cluster, with the green dot in its corner', async () => {
     await mount(runSubject())
     await post(frame(800, 600))
     expect(q('[data-snapshot-label]'), 'a screencast frame carries no label').toBeNull()
     await post(frame(800, 600, 'snapshot'))
     const corner = q('[data-preview-chrome] [data-preview-corner]')
-    const shown = [...(corner?.children ?? [])].filter((child) => !(child as HTMLElement).hidden)
-    expect(shown.slice(0, 2).map((child) => child.getAttribute('data-live-dot') ?? child.hasAttribute('data-snapshot-label')))
-      .toEqual(['green', true])
+    expect(corner?.firstElementChild?.hasAttribute('data-snapshot-label')).toBe(true)
     expect(corner?.querySelector('[data-snapshot-label]')?.textContent).toBe(SNAPSHOT_PREVIEW_LABEL)
+    expect(corner?.querySelector('[data-live-dot]') ?? null).toBeNull()
+    expect(q('[data-preview-dot-corner] [data-live-dot]')?.getAttribute('data-live-dot')).toBe('green')
   })
 
   // The words are read inside the chrome since 2026-09-26 (428-34, G-428-4); the claim is unchanged.
@@ -378,7 +378,10 @@ describe('the chrome row renders only with content (D-02)', () => {
   // subject renders no row and never a picker; a host chrome node has one". The status cluster now
   // leads the chrome, so a run subject has a row once it has something to say beside the picture.
   // Before its mint answers it has neither status nor host chrome, and so no row.
-  it('CHROME-ONLY-WITH-CONTENT: no status and no host chrome is no row; a status alone or a host chrome node alone makes one', async () => {
+  //
+  // RE-SPELLED 2026-09-26 (owner decision 2026-09-26 (6)): the dot alone never makes a row, so the
+  // status that makes one is loading's words, and a live green frame takes the row away again.
+  it('CHROME-ONLY-WITH-CONTENT: no status and no host chrome is no row; status words alone or a host chrome node alone makes one', async () => {
     const unanswered = () => new Promise<never>(() => {})
     fetchLiveUrlMock.mockImplementationOnce(unanswered)
     await mount(runSubject({ handle: 0 }))
@@ -393,9 +396,11 @@ describe('the chrome row renders only with content (D-02)', () => {
     }).toEqual({ chrome: null, pickers: 0, selects: 0 })
 
     await mount(runSubject({ handle: 0 }))
-    await post(frame())
     const statusOnly = q('[data-preview-chrome]')
+    expect(previewState()).toBe('loading')
     expect([...(statusOnly?.children ?? [])].map((child) => child.hasAttribute('data-preview-corner'))).toEqual([true])
+    await post(frame())
+    expect({ state: previewState(), chrome: q('[data-preview-chrome]') }).toEqual({ state: 'live', chrome: null })
 
     fetchEditorLiveUrlMock.mockImplementationOnce(unanswered)
     await mount(editorSubject(), <span data-editor-toolbar>toolbar</span>)
@@ -407,11 +412,12 @@ describe('the chrome row renders only with content (D-02)', () => {
   })
 })
 
-// OWNER DECISION 2026-09-26 (4), G-428-4: "it should be at the top left of the browser container".
-// The dot is the preview container's status light: the first thing in its chrome row, with the
-// snapshot label, the words and the one action beside it, and never over the tested page's pixels.
-describe('the dot leads the chrome, clear of the picture (owner decision 2026-09-26 (4))', () => {
-  it('DOT-IN-CHROME-TOP-LEFT: the status cluster leads the chrome, the dot leads the cluster, and the picture holds no status', async () => {
+// OWNER DECISION 2026-09-26 (6), superseding (4): "There should not be a row / border just for this
+// ... it should be at the top right of the browser container and should be very subtle". The dot
+// floats alone in the preview area's top-right corner, outside both the chrome row and the frame
+// box; the snapshot label, the words and the one action still lead the chrome when there are any.
+describe('the dot floats top-right, outside the chrome (owner decision 2026-09-26 (6))', () => {
+  it('DOT-TOP-RIGHT: the dot is in its own corner, never in the chrome, and the picture holds no status', async () => {
     const pictureStatus = () => {
       const box = q('[data-preview-frame]')
       return {
@@ -423,14 +429,12 @@ describe('the dot leads the chrome, clear of the picture (owner decision 2026-09
     }
     const bare = { iframe: true, dot: null, corner: null, words: null }
 
+    const cornerDot = () => q('[data-preview-dot-corner] [data-live-dot]')?.getAttribute('data-live-dot') ?? null
+
     await mount(runSubject())
     await post(frame())
-    const chrome = q('[data-preview-chrome]')
-    const lead = chrome?.firstElementChild ?? null
-    expect({
-      lead: lead?.hasAttribute('data-preview-corner') ?? false,
-      first: lead?.firstElementChild?.getAttribute('data-live-dot') ?? null,
-    }).toEqual({ lead: true, first: 'green' })
+    expect({ chrome: q('[data-preview-chrome]'), dot: cornerDot() }).toEqual({ chrome: null, dot: 'green' })
+    expect(q('[data-preview-dot-corner]')?.parentElement?.contains(q('[data-preview-frame]'))).toBe(true)
     expect(pictureStatus()).toEqual(bare)
 
     await mount(editorSubject(), <span data-editor-toolbar>toolbar</span>)
@@ -438,8 +442,9 @@ describe('the dot leads the chrome, clear of the picture (owner decision 2026-09
     const children = [...(q('[data-preview-chrome]')?.children ?? [])]
     expect(children.map((child) =>
       child.hasAttribute('data-preview-corner') ? 'status' : child.hasAttribute('data-editor-toolbar') ? 'toolbar' : 'other',
-    )).toEqual(['status', 'toolbar'])
-    expect(children[0]?.firstElementChild?.getAttribute('data-live-dot')).toBe('green')
+    )).toEqual(['toolbar'])
+    expect(q('[data-preview-chrome] [data-live-dot]')).toBeNull()
+    expect(cornerDot()).toBe('green')
     expect(pictureStatus()).toEqual(bare)
 
     await mount(runSubject())
@@ -452,10 +457,11 @@ describe('the dot leads the chrome, clear of the picture (owner decision 2026-09
     const status = q('[data-preview-chrome] [data-preview-corner]')
     expect({
       state: previewState(),
-      first: status?.firstElementChild?.getAttribute('data-live-dot') ?? null,
+      dot: cornerDot(),
+      dotInChrome: q('[data-preview-chrome] [data-live-dot]'),
       words: status?.querySelector('[data-preview-words]')?.textContent ?? null,
       action: status?.querySelector('[data-preview-action]')?.getAttribute('data-preview-action') ?? null,
-    }).toEqual({ state: 'disconnected', first: 'red', words: PREVIEW_DISCONNECTED_TEXT, action: 'reconnect' })
+    }).toEqual({ state: 'disconnected', dot: 'red', dotInChrome: null, words: PREVIEW_DISCONNECTED_TEXT, action: 'reconnect' })
     expect(pictureStatus()).toEqual(bare)
   })
 })
