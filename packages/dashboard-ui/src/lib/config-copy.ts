@@ -373,6 +373,53 @@ export const DASHBOARD_FIELD_HELP = {
   workspace: 'Names this project in those links.',
 } as const
 
+export const TEST_DISCOVERY_FIELD_LABELS = {
+  testMatch: 'Test files',
+  suiteMatch: 'Suite files',
+  testPathIgnore: 'Paths to skip',
+} as const
+
+export const TEST_DISCOVERY_FIELD_HELP = {
+  testMatch: 'One glob pattern per line. A file matching any of them is a test.',
+  suiteMatch: 'One glob pattern per line. A file matching any of them is a suite.',
+  testPathIgnore: 'One glob pattern per line. Matching files are never picked up as tests.',
+} as const
+
+export const TEST_MATCH_REQUIRED_ERROR = 'Add at least one pattern for test files.'
+export const SUITE_MATCH_REQUIRED_ERROR = 'Add at least one pattern for suite files.'
+
+export const FILES_FIELD_LABELS = {
+  hooksFile: 'Hooks file',
+  envFile: 'Environment file',
+  secretsFile: 'Secrets file',
+} as const
+
+export const FILES_FIELD_HELP = {
+  hooksFile: 'The shared hooks module for tests and suites.',
+  envFile: 'A dotenv file loaded before runs start.',
+  secretsFile: 'A dotenv-style file for secrets that only running tests read.',
+} as const
+
+export const HOOKS_FILE_REQUIRED_ERROR = 'Hooks file is required.'
+export const ENV_FILE_REQUIRED_ERROR = 'Environment file is required.'
+
+export const LOGGING_FIELD_LABELS = {
+  level: 'Log level',
+} as const
+
+export const LOGGING_FIELD_HELP = {
+  level: "How much detail a run prints. A command's own flag wins over it.",
+} as const
+
+/** Runs print at Warning when the level is unset. */
+export const LOGGING_LEVEL_LABELS = {
+  silent: 'Silent',
+  error: 'Error',
+  warn: 'Warning',
+  info: 'Info',
+  debug: 'Debug',
+} as const
+
 /** A duration field's draft error: the forms the field accepts. */
 export const DURATION_INPUT_ERROR = 'Use a duration like 30s, 5m or 1h.'
 

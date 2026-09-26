@@ -180,13 +180,13 @@ const EXPECTED_DESTINATIONS = [
 ]
 
 const SURFACE_MARKERS: Record<string, { title: string; marker: string }> = {
-  'workspace:discovery': { title: 'Discovery', marker: 'Test Match Patterns' },
-  'workspace:files': { title: 'Files', marker: 'Hooks File' },
+  'workspace:discovery': { title: 'Test discovery', marker: 'Test files' },
+  'workspace:files': { title: 'Hooks, env and secrets files', marker: 'Hooks file' },
   'knowledge:store': { title: 'Knowledge', marker: 'Knowledge folder' },
   'services:dashboard': { title: 'Dashboard', marker: 'Database file' },
   'services:cache': { title: 'Cache', marker: 'Cache folder' },
   'services:auth-states': { title: 'Auth States', marker: 'No auth states saved' },
-  'services:logging': { title: 'Logging', marker: 'Log Level' },
+  'services:logging': { title: 'Logging', marker: 'Log level' },
   'services:recording': { title: 'Recording', marker: 'Record video of each test. Recordings stay on this machine.' },
   'services:accessibility': { title: 'Accessibility', marker: 'Run checks after' },
   'services:vision': { title: 'Vision', marker: 'Screenshot Size' },
