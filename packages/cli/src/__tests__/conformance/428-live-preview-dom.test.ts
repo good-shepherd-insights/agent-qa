@@ -1,15 +1,16 @@
 /// <reference lib="dom" />
 // The DOM lib is referenced here because this file's `page.evaluate` callbacks run in a browser.
 
-// THE LIVE PREVIEW'S CORNER ON THE SHIPPED PAGE (428 SC2/SC3, D-02/D-13/D-15/D-16 · PXH-LIVE-02/03).
+// THE LIVE PREVIEW'S STATUS ON THE SHIPPED PAGE (428 SC2/SC3, D-02/D-13/D-15/D-16 · PXH-LIVE-02/03).
 //
-// jsdom proved the corner's contract in `live-preview.test.tsx`: one dot, its name, its tooltip,
+// jsdom proved the status's contract in `live-preview.test.tsx`: one dot, its name, its tooltip,
 // the snapshot label, the reduced-motion rule. jsdom computes no animation and lays nothing out, so
 // every claim here is made again on the BUILT dashboard-ui bundle, served by the production
 // `startServer` and driven by a real headless Chromium: one green dot and nothing on the live page
-// animating (owner decision 2026-09-26 (5), G-428-5), a dot that sits on the picture's top-right
-// corner, amber when frames stop while the bus keeps heartbeating, and the literal snapshot label
-// when the frames are snapshots.
+// animating (owner decision 2026-09-26 (5), G-428-5), a dot at the preview container's top-left in
+// its chrome and clear of the picture (owner decision 2026-09-26 (4), G-428-4), amber when frames
+// stop while the bus keeps heartbeating, and the literal snapshot label when the frames are
+// snapshots.
 //
 // THE RUN IS PLANTED AND THE SERVER IS NOT (see `live-view-fixture.ts`). Every word a cell expects
 // is read out of `lib/live-preview.ts`, so a copy change that forgets these cells turns them red.
@@ -199,11 +200,13 @@ async function cornerReading(page: Page): Promise<{ state: string | null; dot: s
   }))
 }
 
+// Since 2026-09-26 (428-34, G-428-4) a capture is the whole preview, chrome and picture, because
+// the status sits in the chrome above the picture; it was the picture's box alone.
 async function capture(page: Page, name: string): Promise<void> {
   const directory = process.env[CAPTURE_DIR_ENV]
   if (!directory) return
   mkdirSync(directory, { recursive: true })
-  await page.locator('[data-preview-frame]').first()
+  await page.locator('[data-live-preview]').first()
     .screenshot({ path: join(directory, `${name}.png`), animations: 'disabled' })
 }
 
@@ -231,23 +234,60 @@ async function waitForRunningRowAndPaint(page: Page): Promise<number> {
 
 interface Box { x: number; y: number; width: number; height: number }
 
-async function cornerGeometry(page: Page): Promise<{ frame: Box; dot: Box }> {
-  const frame = await page.locator('[data-preview-frame]').boundingBox()
-  const dot = await page.locator('[data-live-dot]').boundingBox()
-  if (frame === null || dot === null) throw new Error(`no box: frame=${JSON.stringify(frame)} dot=${JSON.stringify(dot)}`)
-  return { frame, dot }
+interface StatusGeometry {
+  section: Box
+  chrome: Box
+  frame: Box
+  dot: Box
+  dotInChrome: boolean
+  chromeScrollWidth: number
+  chromeClientWidth: number
 }
 
-function expectDotOnTopRight(geometry: { frame: Box; dot: Box }, label: string): void {
-  const { frame, dot } = geometry
+/** The preview container, its chrome row, the picture's box and the dot, read in one pass. */
+async function statusGeometry(page: Page): Promise<StatusGeometry> {
+  const reading = await page.evaluate(() => {
+    const box = (node: Element | null) => {
+      if (node === null) return null
+      const rect = node.getBoundingClientRect()
+      return { x: rect.x, y: rect.y, width: rect.width, height: rect.height }
+    }
+    const chrome = document.querySelector('[data-live-preview] [data-preview-chrome]')
+    const dot = document.querySelector('[data-live-dot]')
+    return {
+      section: box(document.querySelector('[data-live-preview]')),
+      chrome: box(chrome),
+      frame: box(document.querySelector('[data-preview-frame]')),
+      dot: box(dot),
+      dotInChrome: chrome !== null && dot !== null && chrome.contains(dot),
+      chromeScrollWidth: chrome?.scrollWidth ?? -1,
+      chromeClientWidth: chrome?.clientWidth ?? -1,
+    }
+  })
+  const { section, chrome, frame, dot } = reading
+  if (section === null || chrome === null || frame === null || dot === null) {
+    throw new Error(`no box: ${JSON.stringify(reading)}`)
+  }
+  return { ...reading, section, chrome, frame, dot }
+}
+
+/** Owner decision 2026-09-26 (4): top-left of the container, in its chrome, never over the picture. */
+function expectDotTopLeftOfContainer(geometry: StatusGeometry, label: string): void {
+  const { section, chrome, frame, dot } = geometry
   const context = `${label}: ${JSON.stringify(geometry)}`
   expect(frame.width, `${context} — the picture has a size`).toBeGreaterThan(40)
-  expect(dot.x, context).toBeGreaterThanOrEqual(frame.x)
-  expect(dot.y, context).toBeGreaterThanOrEqual(frame.y)
-  expect(dot.x + dot.width, context).toBeLessThanOrEqual(frame.x + frame.width)
-  expect(dot.y + dot.height, context).toBeLessThanOrEqual(frame.y + frame.height)
-  expect(dot.x, `${context} — right half`).toBeGreaterThanOrEqual(frame.x + frame.width / 2)
-  expect(dot.y + dot.height, `${context} — top half`).toBeLessThanOrEqual(frame.y + frame.height / 2)
+  expect(geometry.dotInChrome, `${context} — the dot is in the chrome`).toBe(true)
+  expect(dot.x - section.x, `${context} — left edge of the container`).toBeLessThanOrEqual(24)
+  expect(dot.x - section.x, context).toBeGreaterThanOrEqual(0)
+  expect(dot.y - section.y, `${context} — top of the container, within the chrome's height`)
+    .toBeLessThanOrEqual(chrome.height)
+  expect(dot.y - section.y, context).toBeGreaterThanOrEqual(0)
+  const intersects = dot.x < frame.x + frame.width && frame.x < dot.x + dot.width
+    && dot.y < frame.y + frame.height && frame.y < dot.y + dot.height
+  expect(intersects, `${context} — the dot's box meets the picture's box`).toBe(false)
+  expect(dot.y + dot.height, `${context} — the dot ends above the picture`).toBeLessThanOrEqual(frame.y)
+  expect(geometry.chromeScrollWidth, `${context} — the chrome row does not overflow`)
+    .toBeLessThanOrEqual(geometry.chromeClientWidth + 1)
 }
 
 describe('the live preview corner on the shipped bundle (428-23 Task 1)', () => {
@@ -358,15 +398,24 @@ describe('the live preview corner on the shipped bundle (428-23 Task 1)', () => 
     })
   }, 120_000)
 
-  it('CORNER-ON-PICTURE: the dot sits inside the picture\'s box, in its top-right quarter', async () => {
+  // RE-SPELLED 2026-09-26 (428-34, owner decision 2026-09-26 (4), G-428-4). This cell was
+  // CORNER-ON-PICTURE, "the dot sits inside the picture's box, in its top-right quarter". The owner
+  // saw the dot cover the tested page's own header and asked for it "at the top left of the browser
+  // container", so the dot is measured against the preview container and its chrome, clear of the
+  // picture, at both widths.
+  it('DOT-TOP-LEFT-OF-CONTAINER: the dot is in the chrome at the container\'s top-left, and its box never meets the picture\'s', async () => {
     await onLivePage(DOT_RUN, async (page) => {
       await waitForGreen(page)
-      expectDotOnTopRight(await cornerGeometry(page), '1280')
+      const geometry = await statusGeometry(page)
+      console.log(`DOT-TOP-LEFT-OF-CONTAINER 1280: ${JSON.stringify(geometry)}`)
+      expectDotTopLeftOfContainer(geometry, '1280')
       await capture(page, '428-corner-healthy-1280')
     })
     await onLivePage(DOT_RUN, async (page) => {
       await waitForGreen(page)
-      expectDotOnTopRight(await cornerGeometry(page), '400')
+      const geometry = await statusGeometry(page)
+      console.log(`DOT-TOP-LEFT-OF-CONTAINER 400: ${JSON.stringify(geometry)}`)
+      expectDotTopLeftOfContainer(geometry, '400')
       await capture(page, '428-corner-healthy-400')
     }, NARROW)
   }, 120_000)
