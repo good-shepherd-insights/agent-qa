@@ -10,6 +10,7 @@ import { CONFIG_SCHEMA_LEAVES, configLeafOwner } from '@vostride/agent-qa-schema
 
 import {
   applyConfigChanges,
+  connectLLM,
   exchangePluginAuthCode,
   fetchAppMetadata,
   fetchAuthStates,
@@ -24,13 +25,14 @@ import {
   testLLMConnection,
   updateSettings,
 } from '@/lib/api'
-import { LLM_PROVIDER_OPTIONS, LlmSection } from '@/components/config-manager/llm-section'
 import {
   ACCESSIBILITY_FIELD_PLACEHOLDERS,
   ADD_DEVICE_FARM_LABEL,
   ADD_DEVICE_LABEL,
   ADD_TARGET_LABEL,
   ADD_MODEL_LABEL,
+  BASE_URL_HELP,
+  BASE_URL_REQUIRED_ERROR,
   CONFIG_LOAD_FAILED_TITLE,
   CONFIG_PAGE_TITLE,
   CONFIG_SECTION_LABELS,
@@ -55,10 +57,12 @@ import {
   TARGET_FIELD_LABELS,
   DEVICE_FIELD_LABELS,
   PORT_RESTART_HELP,
+  PROVIDER_FALLBACK_LABELS,
   RELOAD_CONFIG_LABEL,
   RETRY_LABEL,
   SAVE_STATUS_WORDS,
   SETTLE_DELAY_MS,
+  SIGN_IN_AGAIN_LABEL,
   TAB_DRAFT_SR_SUFFIX,
   TEST_CONNECTION_LABEL,
   TEST_RESULT_TEXT,
@@ -86,6 +90,8 @@ import { CONFIG_DRAFTS_STORAGE_PREFIX, configFieldControlId, configFieldKeyOf } 
 import {
   CONFIG_SECTIONS,
   CONFIG_TABS,
+  CONNECTION_CHOICES,
+  CONNECTION_CHOICE_PROVIDERS,
   LEGACY_CONFIG_LINKS,
   LEGACY_CONFIG_PAIRS,
   type ConfigSectionId,
@@ -199,6 +205,8 @@ vi.mock('@/lib/api', () => ({
   pollPluginAuthResult: vi.fn().mockResolvedValue({ status: 'pending' }),
   exchangePluginAuthCode: vi.fn().mockResolvedValue({ status: 'completed', saved: true }),
   deleteAuthCredential: vi.fn(),
+  connectLLM: vi.fn(),
+  moveCredential: vi.fn(),
   revealConfigValue: vi.fn().mockResolvedValue({ value: '.secrets.local' }),
 }))
 
@@ -308,12 +316,6 @@ function sectionButton(id: ConfigSectionId, label: string) {
   return buttons.find((button) => button.textContent?.trim() === label) ?? null
 }
 
-function dialogButton(label: string) {
-  const dialog = document.body.querySelector('[role="dialog"]')
-  const buttons = Array.from(dialog?.querySelectorAll('button') ?? []) as HTMLButtonElement[]
-  return buttons.find((button) => button.textContent?.trim() === label) ?? null
-}
-
 function findButton(label: string) {
   const buttons = Array.from(container?.querySelectorAll('button') ?? []) as HTMLButtonElement[]
   return buttons.find((button) => button.textContent?.trim() === label) ?? null
@@ -367,25 +369,9 @@ function configWithTargets(targets: Record<string, unknown>) {
   }
 }
 
-async function openFirstLlmEditor() {
-  await act(async () => {
-    ;(document.body.querySelector('button[title="Edit configuration"]') as HTMLButtonElement).click()
-  })
-  await flushRender()
-}
-
-// The shipped modal no longer mounts on the page. Cells whose claim moves to a model row or the
-// add row in a later plan (24, 25, 26) render it directly until that plan re-homes them; Plan 30
-// deletes it.
-async function renderShippedModal(config: Record<string, unknown>) {
-  container = document.createElement('div')
-  document.body.appendChild(container)
-  root = createRoot(container)
-  await act(async () => {
-    root!.render(<LlmSection config={config} onConfigChange={vi.fn()} />)
-  })
-  await flushRender()
-  return container
+/** The add row's draft field (429-25): its label, input, help and error line. */
+function addField(name: string) {
+  return container?.querySelector(`[data-model-draft] [data-add-field="${name}"]`) as HTMLElement | null
 }
 
 function modelRow(name: string) {
@@ -1819,13 +1805,8 @@ describe('ConfigPage task tabs shell', () => {
     expect(panel.textContent).not.toContain(VISION_FIELD_LABELS.effectiveResolution)
     expect(section('screenshot-size')?.querySelector('[data-field-path="services.vision.effectiveResolution"]')).not.toBeNull()
 
-    // The saved per-model settings are the shipped modal's until Plan 24 moves them into the row.
-    cleanupAfterDialog()
-    await renderShippedModal(sampleConfig)
-    await openFirstLlmEditor()
-    const visionSwitch = document.body.querySelector('#config-vision') as HTMLButtonElement | null
-    const contextWindowInput = document.body.querySelector('#config-context-window') as HTMLInputElement | null
-    expect(visionSwitch?.getAttribute('role')).toBe('switch')
+    const visionSwitch = panel.querySelector('[data-field-path="registry.llms[].vision"] [role="switch"]')
+    const contextWindowInput = panel.querySelector('[data-field-path="registry.llms[].contextWindow"] input') as HTMLInputElement | null
     expect(visionSwitch?.getAttribute('aria-checked')).toBe('true')
     expect(contextWindowInput?.value).toBe('128k')
   })
@@ -1842,10 +1823,15 @@ describe('ConfigPage task tabs shell', () => {
 
     const view = await renderAt('/config/models')
 
-    expect(LLM_PROVIDER_OPTIONS.map((option) => option.value)).toEqual([
-      'openai-compatible',
-      'anthropic-compatible',
-      'gemini',
+    // The built-in key providers are the add row's key choices; the sign-in ones come from the plugin.
+    const keyProviders = CONNECTION_CHOICES.filter((choice) => choice.endsWith('-key')).map(
+      (choice) => CONNECTION_CHOICE_PROVIDERS[choice],
+    )
+    expect(keyProviders).toEqual(['openai-compatible', 'anthropic-compatible', 'gemini'])
+    expect(keyProviders.map((provider) => PROVIDER_FALLBACK_LABELS[provider])).toEqual([
+      'OpenAI-compatible',
+      'Anthropic-compatible',
+      'Gemini',
     ])
     expect(view.textContent).toContain('OpenAI-compatible')
     expect(view.textContent).not.toContain('Ollama')
@@ -1878,7 +1864,7 @@ describe('ConfigPage task tabs shell', () => {
     expect(section('models')?.textContent).not.toContain(MODEL_STATUS_WORDS['signed-in'])
   })
 
-  it('renders the OpenAI-Compatible model free-form in its row, with the Base URL and its help in the shipped modal until Plan 24', async () => {
+  it('renders the OpenAI-Compatible model free-form in its row, with the Base URL and its help in the open row', async () => {
     vi.mocked(fetchConfig).mockResolvedValueOnce(readAnswer({
       config: configWithLlm({
         name: 'planner',
@@ -1895,50 +1881,51 @@ describe('ConfigPage task tabs shell', () => {
     expect(line?.textContent).toBe('openrouter/auto · OpenAI-compatible')
     expect(modelRow('planner')?.textContent).not.toContain('Subscription')
 
-    // The row's Base URL and model fields arrive with Plan 24; the shipped modal holds them until then.
-    cleanupAfterDialog()
-    await renderShippedModal(configWithLlm({
-      name: 'planner',
-      provider: 'openai-compatible',
-      model: 'openrouter/auto',
-      baseURL: 'https://openrouter.ai/api/v1',
-      vision: true,
-      contextWindow: '256k',
-    }))
-    await openFirstLlmEditor()
-
-    const modelInput = Array.from(document.body.querySelectorAll('input'))
-      .find((input) => input.value === 'openrouter/auto') as HTMLInputElement | undefined
-    const baseUrlInput = document.body.querySelector('#config-base-url') as HTMLInputElement | null
-    const contextWindowInput = document.body.querySelector('#config-context-window') as HTMLInputElement | null
-    const endpointHelp = document.body.querySelector('button[aria-label="Compatible endpoint help"]')
-
-    expect(document.body.textContent).toContain('Base URL')
-    expect(document.body.textContent).toContain('Enter the exact endpoint base URL. agent-qa will not append paths.')
-    expect(endpointHelp).not.toBeNull()
-    expect(baseUrlInput?.placeholder).toBe('https://openrouter.ai/api/v1')
-    expect(baseUrlInput?.value).toBe('https://openrouter.ai/api/v1')
+    const panel = await openModelRow('planner')
+    const modelInput = panel.querySelector('[data-field-path="registry.llms[].model"] input') as HTMLInputElement | null
+    const baseUrlField = panel.querySelector('[data-field-path="registry.llms[].baseURL"]')
+    const contextWindowInput = panel.querySelector('[data-field-path="registry.llms[].contextWindow"] input') as HTMLInputElement | null
+    expect(modelInput?.type).toBe('text')
+    expect(modelInput?.value).toBe('openrouter/auto')
+    expect(baseUrlField?.textContent).toContain('Base URL')
+    expect(baseUrlField?.textContent).toContain(BASE_URL_HELP)
+    expect((baseUrlField?.querySelector('input') as HTMLInputElement | null)?.value).toBe('https://openrouter.ai/api/v1')
     expect(contextWindowInput?.value).toBe('256k')
-    expect(modelInput?.getAttribute('list')).toBe('config-model-options-openai-compatible')
-    expect(document.body.querySelector('[role="dialog"]')?.textContent).not.toContain('Subscription')
+    // The help is an inline line now; the modal's tooltip trigger is gone.
+    expect(document.body.querySelector('button[aria-label="Compatible endpoint help"]')).toBeNull()
+    expect(document.body.querySelector('[role="dialog"]')).toBeNull()
+
+    cleanupAfterDialog()
+    await renderAt('/config/models?add=openai-compatible-key')
+    const addBaseUrl = addField('baseURL')?.querySelector('input') as HTMLInputElement | null
+    const addModel = addField('model')?.querySelector('input') as HTMLInputElement | null
+    expect(addBaseUrl?.placeholder).toBe('https://openrouter.ai/api/v1')
+    expect(addField('baseURL')?.textContent).toContain(BASE_URL_HELP)
+    const listId = addModel?.getAttribute('list')
+    expect(listId).toBeTruthy()
+    expect(document.getElementById(listId!)?.querySelector('option[value="openrouter/auto"]')).not.toBeNull()
   })
 
-  it('requires Base URL before saving OpenAI-Compatible configs (the shipped modal, until the Plan 25 add row)', async () => {
-    await renderShippedModal(configWithLlm({
-      name: 'planner',
-      provider: 'openai-compatible',
-      model: 'openrouter/auto',
-    }))
-    await openFirstLlmEditor()
-
+  it('requires Base URL before connecting OpenAI-Compatible models in the add row', async () => {
+    await renderAt('/config/models?add=openai-compatible-key')
+    const modelInput = addField('model')?.querySelector('input') as HTMLInputElement
     await act(async () => {
-      dialogButton('Save Changes')!.click()
+      setInputValue(modelInput, 'openrouter/auto')
     })
     await flushRender()
 
-    const baseUrlInput = document.body.querySelector('#config-base-url') as HTMLInputElement | null
-    expect(document.body.textContent).toContain('Base URL is required for compatible providers.')
-    expect(baseUrlInput?.getAttribute('aria-describedby')).toBe('base-url-error')
+    await act(async () => {
+      ;(container!.querySelector('[data-model-draft] [data-add-connect]') as HTMLButtonElement).click()
+    })
+    await flushRender()
+
+    const baseUrlInput = addField('baseURL')?.querySelector('input') as HTMLInputElement | null
+    const error = addField('baseURL')?.querySelector('[data-field-error]')
+    expect(error?.textContent).toBe(BASE_URL_REQUIRED_ERROR)
+    expect(baseUrlInput?.getAttribute('aria-invalid')).toBe('true')
+    expect(baseUrlInput?.getAttribute('aria-describedby')?.split(' ')).toContain(error?.id)
+    expect(connectLLM).not.toHaveBeenCalled()
+    expect(updateSettings).not.toHaveBeenCalled()
   })
 
   it('saves and tests OpenAI-Compatible credentials with the named config key', async () => {
@@ -2025,56 +2012,66 @@ describe('ConfigPage task tabs shell', () => {
     expect(panel.querySelector('input[type="password"]')).toBeNull()
     expect(panel.textContent).not.toContain('Save Credential')
 
-    // Sign in again arrives with Plan 26; the shipped modal holds the sign-in until then.
-    cleanupAfterDialog()
-    await renderShippedModal(configWithLlm({ name: 'planner', provider: 'openai-subscription', model: 'gpt-5.4' }))
-    await openFirstLlmEditor()
-    expect(document.body.textContent).toContain('Login with OpenAI subscription')
+    // A not-connected sign-in row offers Sign in again (429-26); the modal's login button is gone.
+    expect(buttonIn(panel, SIGN_IN_AGAIN_LABEL)).not.toBeNull()
+    expect(document.body.textContent).not.toContain('Login with OpenAI subscription')
     expect(document.body.textContent).not.toContain('Save Credential')
   })
 
-  it('exchanges Anthropic subscription codes with the product provider identifier (the shipped modal, until Plan 26)', async () => {
+  it('exchanges Anthropic subscription codes with the product provider identifier (Sign in again on its row)', async () => {
     const openSpy = vi.spyOn(window, 'open').mockImplementation(() => null)
-
-    try {
-      await renderShippedModal(configWithLlm({
+    vi.mocked(fetchConfig).mockResolvedValueOnce(readAnswer({
+      config: configWithLlm({
         name: 'planner',
         provider: 'anthropic-subscription',
         model: 'claude-sonnet-4-20250514',
-      }))
-      await openFirstLlmEditor()
+      }),
+    }))
+
+    try {
+      await renderAt('/config/models')
+      const panel = await openModelRow('planner')
 
       await act(async () => {
-        dialogButton('Login with Anthropic subscription')!.click()
+        buttonIn(panel, SIGN_IN_AGAIN_LABEL)!.click()
       })
       await flushRender()
 
-      const codeInput = document.body.querySelector('input[placeholder="authorization-code"]') as HTMLInputElement
+      const codeInput = modelRow('planner')!.querySelector('[data-sign-in-code] input') as HTMLInputElement
+      expect(codeInput.type).toBe('password')
       await act(async () => {
         setInputValue(codeInput, 'anthropic-code')
       })
       await flushRender()
 
       await act(async () => {
-        dialogButton('Connect')!.click()
+        ;(modelRow('planner')!.querySelector('[data-sign-in-code-connect]') as HTMLButtonElement).click()
       })
       await flushRender()
 
       expect(startPluginAuth).toHaveBeenCalledWith('anthropic-subscription', 'planner')
-      expect(openSpy).toHaveBeenCalledWith('https://auth.example/start', '_blank')
+      expect(openSpy.mock.calls[0]?.slice(0, 2)).toEqual(['https://auth.example/start', '_blank'])
       expect(exchangePluginAuthCode).toHaveBeenCalledWith(
         'anthropic-subscription',
         'session-1',
         'anthropic-code',
       )
+      expect(document.body.querySelector('[role="dialog"]')).toBeNull()
     } finally {
       openSpy.mockRestore()
     }
   })
 
-  it('polls OpenAI subscription OAuth and relies on server-owned credential persistence (the shipped modal, until Plan 26)', async () => {
+  it('polls OpenAI subscription OAuth and relies on server-owned credential persistence (Sign in again on its row)', async () => {
     vi.useFakeTimers()
     const openSpy = vi.spyOn(window, 'open').mockImplementation(() => null)
+    vi.mocked(fetchConfig).mockResolvedValueOnce(readAnswer({
+      config: configWithLlm({
+        name: 'planner',
+        provider: 'openai-subscription',
+        model: 'gpt-5.4',
+      }),
+    }))
     vi.mocked(startPluginAuth).mockResolvedValueOnce({
       authorizeUrl: 'https://auth.example/openai',
       sessionId: 'session-1',
@@ -2083,15 +2080,11 @@ describe('ConfigPage task tabs shell', () => {
     vi.mocked(pollPluginAuthResult).mockResolvedValueOnce({ status: 'completed', saved: true })
 
     try {
-      await renderShippedModal(configWithLlm({
-        name: 'planner',
-        provider: 'openai-subscription',
-        model: 'gpt-5.4',
-      }))
-      await openFirstLlmEditor()
+      await renderAt('/config/models')
+      const panel = await openModelRow('planner')
 
       await act(async () => {
-        dialogButton('Login with OpenAI subscription')!.click()
+        buttonIn(panel, SIGN_IN_AGAIN_LABEL)!.click()
       })
       await flushRender()
 
@@ -2101,7 +2094,7 @@ describe('ConfigPage task tabs shell', () => {
       await flushRender()
 
       expect(startPluginAuth).toHaveBeenCalledWith('openai-subscription', 'planner')
-      expect(openSpy).toHaveBeenCalledWith('https://auth.example/openai', '_blank')
+      expect(openSpy.mock.calls[0]?.slice(0, 2)).toEqual(['https://auth.example/openai', '_blank'])
       expect(pollPluginAuthResult).toHaveBeenCalledWith('openai-subscription', 'session-1')
       expect(saveCredential).not.toHaveBeenCalled()
       expect(exchangePluginAuthCode).not.toHaveBeenCalled()

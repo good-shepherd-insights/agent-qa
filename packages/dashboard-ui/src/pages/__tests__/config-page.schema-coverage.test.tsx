@@ -23,17 +23,32 @@ vi.mock('monaco-editor', () => ({
 }))
 
 import ConfigPage from '@/pages/config'
-import { CONFIG_SECTIONS, CONFIG_TABS, LEGACY_CONFIG_PAIRS, type ConfigTab } from '@/lib/config-tabs'
+import {
+  CONFIG_SECTIONS,
+  CONFIG_TABS,
+  CONNECTION_CHOICES,
+  CONNECTION_CHOICE_PROVIDERS,
+  LEGACY_CONFIG_PAIRS,
+  type ConfigTab,
+  type ConnectionChoice,
+} from '@/lib/config-tabs'
 import { DEVICE_TRANSPORT_OPTIONS } from '@/components/config-manager/devices-section'
-import { LLM_PROVIDER_OPTIONS, LlmSection } from '@/components/config-manager/llm-section'
-import { fetchAuthStatus, saveCredential } from '@/lib/api'
+import { connectLLM, deleteAuthCredential, fetchAuthStatus, saveCredential, type AuthCredentialInfo } from '@/lib/api'
 import { LLM_PROVIDER_COMPLETION_VALUES } from '@/lib/yaml-completions'
 import {
+  ADD_FLOW_FIELD_LABELS,
+  ADD_HEADER_LABEL,
   ADD_MODEL_LABEL,
   CONFIG_SECTION_LABELS,
   DEFAULT_BADGE,
+  KEY_TYPE_LABELS,
   PLANNER_FIELD_LABELS,
+  PROVIDER_FALLBACK_LABELS,
+  REMOVE_KEY_LABEL,
+  REPLACE_KEY_LABEL,
+  SAVE_KEY_AND_TEST_LABEL,
   VISION_FIELD_LABELS,
+  undoLine,
 } from '@/lib/config-copy'
 
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
@@ -268,6 +283,8 @@ vi.mock('@/lib/api', () => ({
   pollPluginAuthResult: vi.fn(),
   exchangePluginAuthCode: vi.fn(),
   deleteAuthCredential: vi.fn(),
+  connectLLM: vi.fn(),
+  moveCredential: vi.fn(),
 }))
 
 vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn() } }))
@@ -352,46 +369,49 @@ async function renderAt(url: string) {
   return container
 }
 
-async function openEditModalForConfig(view: HTMLDivElement, name: string) {
-  const row = Array.from(view.querySelectorAll('tr')).find((item) => item.textContent?.includes(name))
-  expect(row, `row for ${name}`).toBeDefined()
-  const button = row!.querySelector('button[title="Edit configuration"]') as HTMLButtonElement | null
-  expect(button, `edit button for ${name}`).not.toBeNull()
+// The model modal is gone (429-30 · D-10): its cells here drive the saved rows and the add row.
+function modelRow(name: string) {
+  return container?.querySelector(`[data-model-row][data-model-name="${name}"]`) as HTMLElement | null
+}
 
+function addRow() {
+  return container?.querySelector('[data-model-draft]') as HTMLElement | null
+}
+
+function buttonIn(scope: ParentNode | null | undefined, label: string) {
+  const buttons = Array.from(scope?.querySelectorAll('button') ?? []) as HTMLButtonElement[]
+  return buttons.find((button) => button.textContent?.trim() === label) ?? null
+}
+
+async function press(element: Element | null | undefined) {
+  expect(element).toBeTruthy()
   await act(async () => {
-    button!.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    ;(element as HTMLElement).focus()
+    ;(element as HTMLElement).click()
   })
   await flushRender()
 }
 
-// The Models tab lists each model as a row that opens in place (429-23); the modal's per-model
-// fields and credential controls move into the row and the add row in Plans 24-26, so until then
-// these cells render the shipped modal directly. Plan 30 deletes it.
-async function renderShippedModal() {
-  container = document.createElement('div')
-  document.body.appendChild(container)
-  root = createRoot(container)
-  await act(async () => {
-    root!.render(<LlmSection config={sampleConfig} onConfigChange={vi.fn()} />)
-  })
-  await flushRender()
-  return container
+async function openModelRow(name: string) {
+  const header = modelRow(name)?.querySelector('[data-model-row-toggle]')
+  expect(header, `the ${name} row header`).toBeTruthy()
+  if (header!.getAttribute('aria-expanded') !== 'true') await press(header)
+  return modelRow(name)!.querySelector('[data-model-panel]') as HTMLElement
 }
 
-async function renderLlmEditorForConfig(name: string) {
-  const view = await renderShippedModal()
-  await openEditModalForConfig(view, name)
-  return view
+/** The Models tab with the add row open on a connection choice, its reads and catalog settled. */
+async function renderAddRow(choice: ConnectionChoice) {
+  await renderAt(`/config/models?add=${choice}`)
+  for (let pass = 0; pass < 3; pass++) await flushRender()
+  expect(addRow(), 'the add row').not.toBeNull()
 }
 
-async function openAddLlmModal(view: HTMLDivElement) {
-  const button = Array.from(view.querySelectorAll('button')).find((item) => item.textContent?.includes('Add Configuration'))
-  expect(button).toBeDefined()
+async function chooseConnection(choice: ConnectionChoice) {
+  await press(addRow()?.querySelector(`[data-connection-choice="${choice}"] [role="radio"]`))
+}
 
-  await act(async () => {
-    button!.dispatchEvent(new MouseEvent('click', { bubbles: true }))
-  })
-  await flushRender()
+function bearerCredential(): AuthCredentialInfo {
+  return { configName: 'anthropic-compatible', provider: 'anthropic-compatible', type: 'bearer', expires: null, source: 'auth-store' }
 }
 
 function setInputValue(input: HTMLInputElement, value: string) {
@@ -496,6 +516,8 @@ afterEach(() => {
   cleanupRender()
   page.config = undefined
   vi.clearAllMocks()
+  // A stored add-row draft would re-open the add row on the next render.
+  localStorage.clear()
 })
 
 describe('ConfigPage schema coverage', () => {
@@ -571,7 +593,11 @@ describe('ConfigPage schema coverage', () => {
   })
 
   it('exposes only the current LLM provider contract in UI fixtures', () => {
-    expect(LLM_PROVIDER_OPTIONS.map((option) => option.value)).toEqual([
+    // The built-in key providers are the add row's key choices; the sign-in ones come from the plugin.
+    const keyProviders = CONNECTION_CHOICES.filter((choice) => choice.endsWith('-key')).map(
+      (choice) => CONNECTION_CHOICE_PROVIDERS[choice],
+    )
+    expect(keyProviders).toEqual([
       'openai-compatible',
       'anthropic-compatible',
       'gemini',
@@ -583,116 +609,141 @@ describe('ConfigPage schema coverage', () => {
       'anthropic-subscription',
       'gemini',
     ])
-    expect(LLM_PROVIDER_OPTIONS.map((option) => option.label)).toEqual([
+    expect(keyProviders.map((provider) => PROVIDER_FALLBACK_LABELS[provider])).toEqual([
       'OpenAI-compatible',
       'Anthropic-compatible',
       'Gemini',
     ])
-    expect(LLM_PROVIDER_OPTIONS.map((option) => option.value)).not.toContain('anthropic')
-    expect(LLM_PROVIDER_OPTIONS.map((option) => option.value)).not.toContain('openai')
-    expect(LLM_PROVIDER_OPTIONS.map((option) => option.value)).not.toContain('google')
-    expect(LLM_PROVIDER_OPTIONS.map((option) => option.value)).not.toContain('authMethod')
-    expect(LLM_PROVIDER_OPTIONS.map((option) => option.value)).not.toContain('ollama')
-    expect(LLM_PROVIDER_OPTIONS.map((option) => option.value)).not.toContain('lmstudio')
-    expect(LLM_PROVIDER_OPTIONS.map((option) => option.value)).not.toContain('custom')
+    const choiceProviders: string[] = Object.values(CONNECTION_CHOICE_PROVIDERS)
+    expect(new Set(choiceProviders)).toEqual(new Set(LLM_PROVIDER_COMPLETION_VALUES))
+    for (const retired of ['anthropic', 'openai', 'google', 'authMethod', 'ollama', 'lmstudio', 'custom']) {
+      expect(choiceProviders).not.toContain(retired)
+    }
   })
 
   it('renders provider header rows only for anthropic-compatible', async () => {
-    await renderLlmEditorForConfig('anthropic-compatible')
-    expect(document.body.textContent).toContain('Provider Headers')
-    expect(document.body.querySelector('input[placeholder="header-name"]')).not.toBeNull()
-    expect(document.body.querySelector('input[placeholder="header-value"]')).not.toBeNull()
+    await renderAt('/config/models')
+    const proxy = await openModelRow('anthropic-compatible')
+    expect(proxy.querySelector('[data-model-headers] legend')?.textContent).toBe(ADD_FLOW_FIELD_LABELS.headers)
+    expect(buttonIn(proxy, ADD_HEADER_LABEL)).not.toBeNull()
+    for (const name of ['openai-compatible', 'gemini-fast', 'codex', 'claude-subscription']) {
+      const panel = await openModelRow(name)
+      expect(panel.querySelector('[data-model-headers]'), name).toBeNull()
+    }
     cleanupRender()
 
-    for (const name of ['openai-compatible', 'gemini-fast', 'codex', 'claude-subscription']) {
-      await renderLlmEditorForConfig(name)
-      expect(document.body.textContent).not.toContain('Provider Headers')
-      expect(document.body.querySelector('input[placeholder="header-name"]')).toBeNull()
-      expect(document.body.querySelector('input[placeholder="header-value"]')).toBeNull()
-      cleanupRender()
+    await renderAddRow('anthropic-compatible-key')
+    expect(addRow()?.querySelector('[data-add-headers]')).not.toBeNull()
+    for (const choice of ['openai-compatible-key', 'gemini-key', 'chatgpt-sign-in', 'claude-sign-in'] as const) {
+      await chooseConnection(choice)
+      expect(addRow()?.querySelector('[data-add-headers]'), choice).toBeNull()
     }
   })
 
   it('allows bearer-token credential selection for anthropic-compatible', async () => {
-    await renderLlmEditorForConfig('anthropic-compatible')
+    await renderAddRow('anthropic-compatible-key')
+    const keyType = addRow()?.querySelector('[data-add-field="keyType"]')
+    expect(keyType?.textContent).toContain(KEY_TYPE_LABELS['api-key'])
+    expect(keyType?.textContent).toContain(KEY_TYPE_LABELS['bearer-token'])
+    await press(keyType?.querySelector('[role="radio"][value="bearer-token"]'))
+    expect(addRow()?.querySelector('[data-add-field="key"] label')?.textContent).toBe(ADD_FLOW_FIELD_LABELS.token)
+    // The key goes with Connect; the modal's separate Save Credential button is gone.
+    expect(document.body.textContent).not.toContain('Save Credential')
 
-    expect(document.body.textContent).toContain('API key')
-    expect(document.body.textContent).toContain('Bearer token')
-    expect(document.body.textContent).toContain('Save Credential')
+    await chooseConnection('openai-compatible-key')
+    expect(addRow()?.querySelector('[data-add-field="keyType"]')).toBeNull()
   })
 
   it('saves anthropic-compatible bearer tokens through the typed credential API', async () => {
-    await renderLlmEditorForConfig('anthropic-compatible')
+    mockFetchAuthStatus.mockResolvedValue({ credentials: [bearerCredential()] })
+    try {
+      await renderAt('/config/models')
+      const panel = await openModelRow('anthropic-compatible')
+      await press(buttonIn(panel, REPLACE_KEY_LABEL))
+      const secretInput = modelRow('anthropic-compatible')!.querySelector('[data-replace-key] input[type="password"]') as HTMLInputElement | null
+      expect(secretInput).not.toBeNull()
+      await act(async () => {
+        setInputValue(secretInput!, 'bearer-secret')
+      })
+      await press(buttonIn(modelRow('anthropic-compatible'), SAVE_KEY_AND_TEST_LABEL))
 
-    const secretInput = document.body.querySelector('input[type="password"][placeholder="secret-value"]') as HTMLInputElement | null
-    expect(secretInput).not.toBeNull()
-    await act(async () => {
-      setInputValue(secretInput!, 'bearer-secret')
-    })
+      expect(mockSaveCredential).toHaveBeenCalledWith(
+        'anthropic-compatible',
+        'anthropic-compatible',
+        'bearer-token',
+        'bearer-secret',
+      )
+      expect(container!.innerHTML).not.toContain('bearer-secret')
+      cleanupRender()
 
-    const saveButton = Array.from(document.body.querySelectorAll('button')).find((button) =>
-      button.textContent?.includes('Save Credential'),
-    ) as HTMLButtonElement | undefined
-    expect(saveButton).toBeDefined()
-    await act(async () => {
-      saveButton!.dispatchEvent(new MouseEvent('click', { bubbles: true }))
-    })
-    await flushRender()
-
-    expect(mockSaveCredential).toHaveBeenCalledWith(
-      'anthropic-compatible',
-      'anthropic-compatible',
-      'bearer-token',
-      'bearer-secret',
-    )
+      vi.mocked(connectLLM).mockResolvedValueOnce({ success: false, errorClass: 'auth_error', message: 'Refused.' })
+      await renderAddRow('anthropic-compatible-key')
+      await press(addRow()?.querySelector('[data-add-field="keyType"] [role="radio"][value="bearer-token"]'))
+      for (const [field, value] of [['baseURL', 'https://anthropic-proxy.example/messages'], ['model', 'claude-remote'], ['key', 'draft-bearer'], ['name', 'claude-draft']] as const) {
+        await act(async () => {
+          setInputValue(addRow()!.querySelector(`[data-add-field="${field}"] input`) as HTMLInputElement, value)
+        })
+      }
+      await flushRender()
+      await press(addRow()?.querySelector('[data-add-connect]'))
+      expect(vi.mocked(connectLLM).mock.calls[0]?.[0].credential).toEqual({ type: 'bearer-token', secret: 'draft-bearer' })
+    } finally {
+      mockFetchAuthStatus.mockResolvedValue({ credentials: [] })
+    }
   })
 
-  it('confirms credential deletion before deleting', async () => {
-    mockFetchAuthStatus.mockResolvedValueOnce({
-      credentials: [{
-        configName: 'anthropic-compatible',
-        provider: 'anthropic-compatible',
-        type: 'bearer',
-        expires: null,
-        source: 'auth-store',
-      }],
-    })
-    await renderLlmEditorForConfig('anthropic-compatible')
+  it('credential deletion no longer asks first: Remove key acts at once and offers Undo', async () => {
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true)
+    mockFetchAuthStatus.mockResolvedValue({ credentials: [bearerCredential()] })
+    vi.mocked(deleteAuthCredential).mockResolvedValueOnce({
+      deleted: true,
+      undo: { token: 'undo-key', expiresAt: Date.now() + 30_000 },
+    } as never)
+    try {
+      await renderAt('/config/models')
+      const panel = await openModelRow('anthropic-compatible')
+      await press(buttonIn(panel, REMOVE_KEY_LABEL))
 
-    const deleteButton = Array.from(document.body.querySelectorAll('button')).find(
-      (button) => button.textContent === 'Delete' || button.getAttribute('aria-label') === 'Delete credential',
-    ) as HTMLButtonElement | undefined
-    expect(deleteButton).toBeDefined()
-
-    await act(async () => {
-      deleteButton!.dispatchEvent(new MouseEvent('click', { bubbles: true }))
-    })
-    await flushRender()
-
-    expect(document.body.textContent).toContain(
-      'Delete saved credential for anthropic-compatible? Tests using this config may fail until a new credential is saved.',
-    )
-    expect(document.body.textContent).toContain('Keep Credential')
-    expect(document.body.textContent).toContain('Delete Credential')
+      expect(deleteAuthCredential).toHaveBeenCalledWith('anthropic-compatible')
+      expect(document.body.querySelector('[role="dialog"], [role="alertdialog"]')).toBeNull()
+      expect(confirmSpy).not.toHaveBeenCalled()
+      expect(document.body.textContent).not.toContain('Delete saved credential for')
+      expect(document.body.textContent).not.toContain('Keep Credential')
+      expect(document.body.textContent).not.toContain('Delete Credential')
+      expect(container!.textContent).toContain(undoLine('remove-key', 'anthropic-compatible'))
+    } finally {
+      mockFetchAuthStatus.mockResolvedValue({ credentials: [] })
+      confirmSpy.mockRestore()
+    }
   })
 
   it('uses a free text model input with datalist suggestions', async () => {
-    await renderLlmEditorForConfig('openai-compatible')
+    await renderAt('/config/models')
+    const panel = await openModelRow('openai-compatible')
+    const saved = panel.querySelector('[data-field-path="registry.llms[].model"] input') as HTMLInputElement | null
+    expect(saved?.type).toBe('text')
+    expect(saved?.value).toBe('openrouter/auto')
+    cleanupRender()
 
-    const input = document.body.querySelector('input[placeholder="model-name"]') as HTMLInputElement | null
-    expect(input).not.toBeNull()
-    expect(input?.getAttribute('list')).toBe('config-model-options-openai-compatible')
-    const datalist = document.body.querySelector('#config-model-options-openai-compatible')
-    expect(datalist).not.toBeNull()
+    await renderAddRow('openai-compatible-key')
+    const input = addRow()?.querySelector('[data-add-field="model"] input') as HTMLInputElement | null
+    expect(input?.type).toBe('text')
+    const listId = input?.getAttribute('list')
+    expect(listId).toBeTruthy()
+    expect(document.getElementById(listId!)?.tagName).toBe('DATALIST')
   })
 
   it('renders maintained model suggestions without replacing free text entry', async () => {
-    const view = await renderShippedModal()
-    await openAddLlmModal(view)
+    await renderAddRow('openai-compatible-key')
+    const input = addRow()?.querySelector('[data-add-field="model"] input') as HTMLInputElement | null
 
     expect(document.body.innerHTML).toContain('<datalist')
-    expect(document.body.querySelector('input[placeholder="model-name"]')?.getAttribute('list')).toBe('config-model-options-openai-compatible')
-    expect(document.body.querySelector('option[value="openrouter/auto"]')).not.toBeNull()
+    expect(document.getElementById(input!.getAttribute('list')!)?.querySelector('option[value="openrouter/auto"]')).not.toBeNull()
+    await act(async () => {
+      setInputValue(input!, 'my-own/model-id')
+    })
+    await flushRender()
+    expect(input!.value).toBe('my-own/model-id')
     expect(document.body.textContent).not.toContain('PROVIDER_MODELS')
     expect(document.body.textContent).not.toContain('SUBSCRIPTION_MODELS')
     expect(document.body.textContent).not.toContain('Gemini 2.0 Flash')

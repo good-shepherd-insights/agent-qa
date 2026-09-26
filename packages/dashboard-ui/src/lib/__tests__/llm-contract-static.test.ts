@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 
 import { describe, expect, it, vi } from 'vitest'
 
@@ -31,7 +31,13 @@ const EXPECTED_PROVIDER_MODES = [
 ] as const
 
 const completionSource = readFileSync(new URL('../yaml-completions.ts', import.meta.url), 'utf-8')
-const llmSectionSource = readFileSync(new URL('../../components/config-manager/llm-section.tsx', import.meta.url), 'utf-8')
+// The model workspace (429-30 · D-10): the add row and the saved row replaced the model modal.
+const MODEL_WORKSPACE_FILES = ['add-model-row.tsx', 'model-row.tsx'] as const
+const modelWorkspaceSources = MODEL_WORKSPACE_FILES.map((file) =>
+  readFileSync(new URL(`../../components/config-manager/${file}`, import.meta.url), 'utf-8'),
+)
+const modelWorkspaceSource = modelWorkspaceSources.join('\n')
+const DELETED_MODAL = new URL('../../components/config-manager/llm-section.tsx', import.meta.url)
 
 describe('LLM provider static contract', () => {
   it('yaml completions expose exactly five provider modes', () => {
@@ -64,14 +70,30 @@ describe('LLM provider static contract', () => {
   it('config UI branches on provider metadata instead of a compatible-provider literal set', () => {
     const modelPackageImport = '@vostride/' + 'agent-qa-model'
 
-    expect(llmSectionSource).not.toMatch(/COMPATIBLE_PROVIDERS\s*=\s*new Set/)
-    expect(llmSectionSource).toContain('providerInfo?.needsBaseURL === true')
-    expect(llmSectionSource).toContain('providerInfo?.baseURLPlaceholder ??')
-    expect(llmSectionSource).not.toContain(modelPackageImport)
+    expect(modelWorkspaceSource).not.toMatch(/COMPATIBLE_PROVIDERS\s*=\s*new Set/)
+    expect(modelWorkspaceSource).toContain('metadata.needsBaseURL === true')
+    expect(modelWorkspaceSource).toContain('facts?.needsBaseURL === true')
+    expect(modelWorkspaceSource).toContain('?.baseURLPlaceholder}')
+    expect(modelWorkspaceSource).not.toContain(modelPackageImport)
   })
 
-  it('offline fallback marks compatible providers with baseURL metadata', () => {
-    expect(llmSectionSource).toMatch(/id:\s*"openai-compatible"[\s\S]*needsBaseURL:\s*true[\s\S]*baseURLPlaceholder:\s*"https:\/\/openrouter\.ai\/api\/v1"/)
-    expect(llmSectionSource).toMatch(/id:\s*"anthropic-compatible"[\s\S]*needsBaseURL:\s*true[\s\S]*baseURLPlaceholder:\s*"https:\/\/anthropic-proxy\.example\/messages"/)
+  it('offline fallback marks compatible providers as needing a base URL', () => {
+    expect(modelWorkspaceSource).toMatch(/const compatible = id === "openai-compatible" \|\| id === "anthropic-compatible"/)
+    expect(modelWorkspaceSource).toMatch(/needsBaseURL = metadata \? metadata\.needsBaseURL === true : compatible/)
+    // The placeholder comes from the provider endpoint only; the modal's hard-coded offline placeholders are gone.
+    expect(modelWorkspaceSource).not.toContain('https://openrouter.ai/api/v1')
+    expect(modelWorkspaceSource).not.toContain('https://anthropic-proxy.example/messages')
+  })
+
+  it('LLM-CONTRACT-ON-NEW-FILES: the contract cells read the add row and the saved row', () => {
+    expect(modelWorkspaceSources).toHaveLength(MODEL_WORKSPACE_FILES.length)
+    const [addRow, savedRow] = modelWorkspaceSources
+    expect(addRow).toContain('export function AddModelRow(')
+    expect(savedRow).toContain('export function ModelRow(')
+    expect(savedRow).toContain('export function providerFacts(')
+  })
+
+  it('LLM-MODAL-GONE: the model modal file is deleted', () => {
+    expect(existsSync(DELETED_MODAL)).toBe(false)
   })
 })

@@ -1276,25 +1276,6 @@ export async function fetchTargets(): Promise<{ targets: string[] }> {
   return request('/api/config/targets')
 }
 
-export async function updateLLMs(
-  llms: Array<{
-    name: string
-    provider: string
-    model: string
-    baseURL?: string
-    providerHeaders?: Record<string, string>
-    vision?: boolean
-    contextWindow?: string
-  }>,
-  defaultLLM: string,
-): Promise<{ updated: boolean }> {
-  return postJson('/api/config/llms', { llms, defaultLLM }, 'PUT')
-}
-
-export async function updateDefaultLLM(name: string): Promise<{ updated: boolean }> {
-  return postJson('/api/config/default-llm', { defaultLLM: name }, 'PUT')
-}
-
 export async function updateSettings(settings: Record<string, unknown>): Promise<{ updated: boolean }> {
   return postJson('/api/config/settings', settings, 'PUT')
 }
