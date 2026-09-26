@@ -16,6 +16,8 @@ import type {
   TestResult,
 } from './config-tabs'
 
+import type { FunctionScope, TrustScopeKey } from '@vostride/agent-qa-schema'
+
 export { providerErrorSentence } from '@vostride/agent-qa-schema'
 
 /** An edit in a text field settles this long after the last keystroke, or on blur. */
@@ -736,6 +738,37 @@ export const TOKEN_FIELD_LABELS = {
   name: 'Name',
   envVar: 'Environment variable',
 } as const satisfies Record<string, string>
+
+export const DISCARD_TOKEN_LABEL = 'Discard token'
+export const TOKEN_NAME_REQUIRED_ERROR = 'Add a name for the token.'
+export const TOKEN_ENV_VAR_REQUIRED_ERROR = 'Add the environment variable that holds the token.'
+
+export function tokenNameTakenError(name: string): string {
+  return `A token named ${name} already exists.`
+}
+
+/** The MCP add row's scope group: what a caller holding the token may do. */
+export const SCOPES_LABEL = 'Token scopes'
+
+export const FUNCTION_SCOPE_LABELS = {
+  read: 'Read',
+  run: 'Run tests',
+  'config-write': 'Edit config',
+  'knowledge-write': 'Edit knowledge',
+  'approval-write': 'Manage approvals',
+  'test-write': 'Write tests',
+} as const satisfies Record<FunctionScope, string>
+
+export const SCOPE_REQUIRED_ERROR = 'Choose at least one scope.'
+
+/** The run-service add row's optional trust scope: whose project or org the token acts for. */
+export const TRUST_SCOPE_LEGEND = 'Trust scope'
+export const TRUST_SCOPE_HELP = 'Optional. Leave both empty for a token that acts for no project or org.'
+
+export const TRUST_SCOPE_LABELS = {
+  project: 'Project',
+  org: 'Org',
+} as const satisfies Record<TrustScopeKey, string>
 
 export const EVAL_GROUP_LABELS = {
   judge: 'Judge',
