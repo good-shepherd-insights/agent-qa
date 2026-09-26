@@ -411,8 +411,9 @@ function expectLongLabelFullyVisible(reading: LongLabelReading, viewport: { widt
 }
 
 describe('the live step rows on the shipped bundle (428-24 Task 1)', () => {
-  it('LONG-LABEL-FULLY-VISIBLE-SHIPPED: a label longer than the steps pane wraps in full with a whole chip', async () => {
-    for (const viewport of [DESKTOP]) {
+  it('LONG-LABEL-FULLY-VISIBLE-SHIPPED: a label longer than the steps pane wraps in full with a whole chip at 1280 and 400', async () => {
+    // 1280 is the docked page; 400 is the stacked one, where the steps pane is the page's width.
+    for (const viewport of [DESKTOP, NARROW]) {
       await onLivePage(LONG_RUN, async (page) => {
         const reading = await readLongLabel(page)
         console.log(`LONG-LABEL-FULLY-VISIBLE-SHIPPED ${String(viewport.width)}: ${JSON.stringify(reading)}`)

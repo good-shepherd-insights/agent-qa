@@ -295,3 +295,30 @@ describe('RunResultsPanel draws a row only when it has text (G-428-2, owner deci
     })
   })
 })
+
+describe('RunResultsPanel shows the whole label (G-428-1, owner decision 2026-09-26 (1))', () => {
+  const LONG =
+    'Select "Show" from the navbar, scroll to the end and click more, wait for the whole list to finish '
+    + 'loading, then check that every card keeps its full title and its supercalifragilistic caption'
+  const CLIPPING_CLASS =
+    /^(?:truncate|overflow-hidden|overflow-x-hidden|overflow-clip|overflow-x-clip|text-ellipsis|overflow-ellipsis|whitespace-nowrap|text-nowrap|line-clamp-.+)$/u
+
+  it('PANEL-FULL-LABEL: a long step text renders in full in the panel\'s row, and nothing in the row clips it', async () => {
+    expect(LONG.length).toBeGreaterThanOrEqual(180)
+    const view = await renderPanel()
+
+    feed(testStarted(1, [LONG]), stepStarted(LONG))
+
+    const rows = [...view.querySelectorAll('li[data-step-status]')]
+    expect(rows).toHaveLength(1)
+    const li = rows[0] as HTMLElement
+    expect(li.textContent).toBe(LONG)
+    for (const word of LONG.split(/\s+/u)) {
+      expect(li.textContent, word).toContain(word)
+    }
+    const clipping = [li, ...li.querySelectorAll('*')].flatMap((element) =>
+      [...element.classList].filter((token) => CLIPPING_CLASS.test(token)).map((token) => `${element.tagName}.${token}`),
+    )
+    expect(clipping).toEqual([])
+  })
+})
