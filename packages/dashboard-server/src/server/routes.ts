@@ -8,7 +8,7 @@ import type { ExecutionBackend } from '../execution/execution-backend.js'
 import type { JobQueue } from '../queue/job-queue.js'
 import { extractTestFileMetadata, type SupportedPlatform, type TestFileManager } from '../tests/test-file-manager.js'
 import type { SuiteFileManager } from '../tests/suite-file-manager.js'
-import type { ConfigManager } from '../config/index.js'
+import { carriesMaskPlaceholder, MASK_WRITTEN_BACK, type ConfigManager } from '../config/index.js'
 import { HookRegistryManager, isHookRegistryMutationError } from '../hooks/hook-registry-manager.js'
 import { readJsonBody } from './body-parser.js'
 import { refuseCrossSiteRequest } from './cross-site.js'
@@ -3712,6 +3712,12 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps): (req: In
             const unsupportedKeys = Object.keys(body).filter((key) => !allowedSettingsPaths.has(key))
             if (unsupportedKeys.length > 0) {
               json(res, { error: 'Unsupported setting path', details: unsupportedKeys }, 400)
+              return
+            }
+            // 429-05 Pitfall 4: refused before any section is written, so a masked value served by
+            // GET can never land in the file, not even after an earlier section of the same save.
+            if (carriesMaskPlaceholder(body)) {
+              json(res, { error: MASK_WRITTEN_BACK }, 400)
               return
             }
 

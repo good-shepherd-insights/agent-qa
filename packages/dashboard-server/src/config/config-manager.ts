@@ -1,22 +1,45 @@
 import { createHash, randomUUID } from 'node:crypto'
 import { readFile, writeFile, mkdir, rename, rm, stat } from 'node:fs/promises'
 import { basename, dirname, join } from 'node:path'
-import { isMap, isScalar, isSeq, parseDocument, stringify, type Document } from 'yaml'
+import { Document, isMap, isScalar, isSeq, parseDocument, stringify } from 'yaml'
 import { AgentQaConfigSchema } from '@vostride/agent-qa-core'
 import {
+  CONFIG_MASK_PLACEHOLDER,
   CONFIG_NAMED_ARRAYS,
   type ConfigChange,
   type ConfigPathSegment,
   type ConfigWriteIssue,
+  type ConfigWriteRefusal,
 } from '@vostride/agent-qa-schema'
 
 export type ApplyChangesOutcome =
   | { kind: 'ok'; revision: string }
   | {
     kind: 'refused'
-    error: 'invalid_write_input' | 'path_not_found' | 'validation_failed'
+    error: Exclude<ConfigWriteRefusal, 'write_failed'>
     issues?: ConfigWriteIssue[]
   }
+
+export type ConfigReadOutcome =
+  | { kind: 'ok'; config: Record<string, unknown>; raw: string; revision: string }
+  | { kind: 'absent' }
+  | { kind: 'file_invalid'; message: string }
+
+export const MASK_WRITTEN_BACK = 'mask_written_back'
+
+/** True when any string anywhere in the value is the mask placeholder the server hands the page. */
+export function carriesMaskPlaceholder(value: unknown): boolean {
+  if (typeof value === 'string') return value === CONFIG_MASK_PLACEHOLDER
+  if (Array.isArray(value)) return value.some(carriesMaskPlaceholder)
+  if (typeof value === 'object' && value !== null) {
+    return Object.values(value as Record<string, unknown>).some(carriesMaskPlaceholder)
+  }
+  return false
+}
+
+function isMissingFile(err: unknown): boolean {
+  return (err as NodeJS.ErrnoException | undefined)?.code === 'ENOENT'
+}
 
 const SENSITIVE_KEYS = new Set(['apikey', 'token', 'key', 'accesskey'])
 
@@ -62,6 +85,26 @@ export class ConfigManager {
     }
   }
 
+  // 429-05 Pitfall 3: a half-edited file is named, never served as the partial config yaml recovers.
+  async readWithRevision(): Promise<ConfigReadOutcome> {
+    let bytes: Buffer
+    try {
+      bytes = await readFile(this.configPath)
+    } catch (err: unknown) {
+      if (isMissingFile(err)) return { kind: 'absent' }
+      throw err
+    }
+    const raw = bytes.toString('utf-8')
+    const doc = parseDocument(raw)
+    if (doc.errors.length > 0) return { kind: 'file_invalid', message: parseErrorSummary(doc) }
+    return {
+      kind: 'ok',
+      config: (doc.toJSON() as Record<string, unknown> | null) ?? {},
+      raw,
+      revision: createHash('sha256').update(bytes).digest('hex'),
+    }
+  }
+
   async readMasked(): Promise<Record<string, unknown>> {
     const config = await this.read()
     return deepMask(config) as Record<string, unknown>
@@ -71,7 +114,13 @@ export class ConfigManager {
     return section.includes('.') ? section.split('.') : [section]
   }
 
+  // 429-05 Pitfall 4: the legacy writers refuse a mask too, until Plan 31 deletes them.
+  private assertNoMask(value: unknown): void {
+    if (carriesMaskPlaceholder(value)) throw new Error(MASK_WRITTEN_BACK)
+  }
+
   async updateSection(section: string, value: Record<string, unknown>): Promise<void> {
+    this.assertNoMask(value)
     const path = this.sectionPath(section)
     let content: string
     try {
@@ -93,6 +142,7 @@ export class ConfigManager {
   }
 
   async replaceSection(section: string, value: Record<string, unknown>): Promise<void> {
+    this.assertNoMask(value)
     const path = this.sectionPath(section)
     let content: string
     try {
@@ -112,6 +162,7 @@ export class ConfigManager {
   }
 
   async replaceSectionRaw(section: string, value: unknown): Promise<void> {
+    this.assertNoMask(value)
     const path = this.sectionPath(section)
     let content: string
     try {
@@ -164,8 +215,20 @@ export class ConfigManager {
   private writeChain: Promise<void> = Promise.resolve()
 
   private async applyChangesOnce(changes: readonly ConfigChange[]): Promise<ApplyChangesOutcome> {
-    const content = await readFile(this.configPath, 'utf-8')
-    const doc = parseDocument(content)
+    if (changes.some((change) => change.op !== 'unset' && carriesMaskPlaceholder(change.value))) {
+      return { kind: 'refused', error: MASK_WRITTEN_BACK }
+    }
+    let doc: Document
+    try {
+      doc = parseDocument(await readFile(this.configPath, 'utf-8'))
+    } catch (err: unknown) {
+      if (!isMissingFile(err)) throw err
+      // Pitfall 2: a missing file starts empty and goes through setIn like any other, so a dotted
+      // top-level key such as `use.timeout:` can never be written.
+      doc = new Document()
+    }
+    // yaml recovers a partial tree from a broken file and refuses to stringify it: never rewrite one.
+    if (doc.errors.length > 0) return { kind: 'refused', error: 'file_invalid' }
     let writesBrowserHeadless = false
     for (const change of changes) {
       const path = resolvePath(doc, change.path)
@@ -207,9 +270,16 @@ export class ConfigManager {
   private async writeAtomic(content: string): Promise<void> {
     const directory = dirname(this.configPath)
     const tempPath = join(directory, `.${basename(this.configPath)}.${process.pid}.${randomUUID()}.tmp`)
-    const { mode } = await stat(this.configPath)
+    const mode = await stat(this.configPath).then(
+      (stats) => stats.mode & 0o777,
+      (err: unknown) => {
+        if (isMissingFile(err)) return undefined
+        throw err
+      },
+    )
+    await mkdir(directory, { recursive: true })
     try {
-      await writeFile(tempPath, content, { mode: mode & 0o777 })
+      await writeFile(tempPath, content, mode === undefined ? undefined : { mode })
       await rename(tempPath, this.configPath)
     } catch (error) {
       await rm(tempPath, { force: true }).catch(() => undefined)
@@ -280,6 +350,13 @@ function setsLeaf(path: ResolvedPath, value: unknown, leaf: readonly string[]): 
     cursor = (cursor as Record<string, unknown>)[key]
   }
   return cursor !== undefined
+}
+
+// The first line only: yaml's message goes on to quote the offending source line, which can be a
+// secret the page must not be served.
+function parseErrorSummary(doc: Document): string {
+  const first = doc.errors[0]?.message ?? 'The config file is not valid YAML.'
+  return first.split('\n')[0]!.replace(/:\s*$/, '')
 }
 
 function revisionOf(content: string): string {
