@@ -37,6 +37,7 @@ import {
   LIVE_PREVIEW_ACTION_LABELS,
   LIVE_PREVIEW_HOST_QUERY,
   NO_STREAM_RETRY_MS,
+  RENEW_RETRY_MS,
   SNAPSHOT_PREVIEW_LABEL,
   createInitialLivePreview,
   deriveLivePreview,
@@ -154,6 +155,9 @@ export function LivePreview({ subject, chrome }: LivePreviewProps) {
   // The TTL the current mint was issued with, so "less than half of it remains" is answerable.
   const mintedAtRef = useRef<number | undefined>(undefined)
   const ttlRef = useRef<number | undefined>(undefined)
+  // When the token the embed holds runs out, and how many renews in a row have failed before then.
+  const expiresAtRef = useRef<number | undefined>(undefined)
+  const [renewRetry, setRenewRetry] = useState(0)
 
   const dispatch = useCallback((event: LivePreviewEvent): LivePreviewMachine => {
     const at = Date.now()
@@ -170,6 +174,8 @@ export function LivePreview({ subject, chrome }: LivePreviewProps) {
     inFlightRef.current = false
     mintedAtRef.current = undefined
     ttlRef.current = undefined
+    expiresAtRef.current = undefined
+    setRenewRetry(0)
     setMint(undefined)
   }, [])
 
@@ -186,14 +192,17 @@ export function LivePreview({ subject, chrome }: LivePreviewProps) {
           if (requestRef.current !== token) return
           inFlightRef.current = false
           setRefusal(undefined)
+          setRenewRetry(0)
           if (answer.stream.kind === 'none') {
             // A `none` carries nothing to renew, so it arms no re-mint.
             mintedAtRef.current = undefined
             ttlRef.current = undefined
+            expiresAtRef.current = undefined
             setMint(undefined)
           } else {
             mintedAtRef.current = Date.now()
             ttlRef.current = Math.max(0, answer.expiresAt - Date.now())
+            expiresAtRef.current = answer.expiresAt
             setMint({ liveUrl: answer.liveUrl, expiresAt: answer.expiresAt })
             if (purpose === 'remount') setFrameKey((key) => key + 1)
           }
@@ -202,12 +211,24 @@ export function LivePreview({ subject, chrome }: LivePreviewProps) {
         (error: unknown) => {
           if (requestRef.current !== token) return
           inFlightRef.current = false
-          mintedAtRef.current = undefined
-          ttlRef.current = undefined
           if (purpose === 'renew') {
+            // A renew that fails while the embed's token still has time left (a network blip, a
+            // 500) keeps the picture and asks again; the link has expired only once it has run out
+            // (428 WR-04). The embed's own `refused: expired` says the same thing sooner.
+            const expiresAt = expiresAtRef.current
+            if (expiresAt !== undefined && Date.now() < expiresAt) {
+              setRenewRetry((count) => count + 1)
+              return
+            }
+            mintedAtRef.current = undefined
+            ttlRef.current = undefined
+            expiresAtRef.current = undefined
             dispatch({ type: 'renew-failed' })
             return
           }
+          mintedAtRef.current = undefined
+          ttlRef.current = undefined
+          expiresAtRef.current = undefined
           setMint(undefined)
           // The door's own word, kept as an attribute for a reader who needs it; the status says copy.
           const word = error instanceof Error ? error.message : 'live_url_mint_failed'
@@ -282,17 +303,21 @@ export function LivePreview({ subject, chrome }: LivePreviewProps) {
   }, [waiting, pollTick, dispatch, forget, mintFor])
 
   // THE SILENT RE-MINT, AT HALF-LIFE and not at expiry: a capability that expired mid-step would
-  // black the frame out, and half the TTL leaves the same margin again for a slow door.
+  // black the frame out, and half the TTL leaves the same margin again for a slow door. After a
+  // failed renew it asks again every RENEW_RETRY_MS, and last at the expiry itself.
   useEffect(() => {
     if (!renewable || mint === undefined) return
-    const delay = Math.max(0, (mint.expiresAt - Date.now()) / 2)
+    const remaining = mint.expiresAt - Date.now()
+    const delay = renewRetry === 0
+      ? Math.max(0, remaining / 2)
+      : Math.max(0, Math.min(RENEW_RETRY_MS, remaining))
     const timer = setTimeout(() => {
       mintFor('renew')
     }, delay)
     return () => {
       clearTimeout(timer)
     }
-  }, [renewable, mint, mintFor])
+  }, [renewable, mint, renewRetry, mintFor])
 
   // A backgrounded tab's timers barely fire, so coming back into view is its own renew trigger.
   useEffect(() => {

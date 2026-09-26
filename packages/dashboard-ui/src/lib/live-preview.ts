@@ -110,6 +110,9 @@ export const NO_STREAM_RETRY_MS = 2_500
 /** Backstop only: 24 waiting mints at 2.5 s is about a minute (G-403-2). */
 export const WAITING_ATTEMPT_LIMIT = 24
 
+/** How soon a failed silent re-mint asks again while the token it would replace still has time left (428 WR-04). */
+export const RENEW_RETRY_MS = 5_000
+
 /** The embed's host hint; the server spells the parameter LIVE_EMBED_HOST_PARAM. */
 export const LIVE_PREVIEW_HOST_QUERY = '?host=dashboard'
 

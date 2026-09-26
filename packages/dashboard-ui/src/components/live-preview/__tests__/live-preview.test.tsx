@@ -29,6 +29,7 @@ import {
   PREVIEW_DELAYED_TEXT,
   PREVIEW_DISCONNECTED_TEXT,
   PREVIEW_EXPIRED_TEXT,
+  RENEW_RETRY_MS,
   SNAPSHOT_PREVIEW_LABEL,
 } from '@/lib/live-preview'
 
@@ -206,7 +207,7 @@ describe('the iframe is the one sandboxed embed with the host hint (T-428-15-02,
 })
 
 describe('renew in place, reconnect by remount (RESEARCH P8)', () => {
-  it('HALF-LIFE-RENEW-KEEPS-IFRAME: the renew changes only the fragment of the same node, and a failed renew is expired', async () => {
+  it('HALF-LIFE-RENEW-KEEPS-IFRAME: the renew changes only the fragment of the same node, and a failed renew is expired once its token runs out', async () => {
     await mount(runSubject())
     await post(frame())
     const first = embed()
@@ -219,9 +220,17 @@ describe('renew in place, reconnect by remount (RESEARCH P8)', () => {
       `http://x/live/${RUN_ID}?host=dashboard#v1.a.b.${String(BASE_TIME + TTL_MS / 2)}`,
     )
 
-    fetchLiveUrlMock.mockRejectedValueOnce(new Error('live_url_mint_failed'))
+    // 428 WR-04: a failed renew with time left on the token keeps the picture and asks again.
+    fetchLiveUrlMock.mockRejectedValue(new Error('live_url_mint_failed'))
     await advance(TTL_MS / 2)
     expect(fetchLiveUrlMock).toHaveBeenCalledTimes(3)
+    await post(frame())
+    expect(previewState(), 'the token the embed holds is still good').toBe('live')
+    await advance(RENEW_RETRY_MS)
+    expect(fetchLiveUrlMock, 'the renew is asked again').toHaveBeenCalledTimes(4)
+
+    const renewedExpiry = BASE_TIME + TTL_MS / 2 + TTL_MS
+    while (Date.now() < renewedExpiry) await advance(RENEW_RETRY_MS)
     expect({
       state: previewState(),
       dot: q('[data-live-dot]')?.getAttribute('data-live-dot'),
