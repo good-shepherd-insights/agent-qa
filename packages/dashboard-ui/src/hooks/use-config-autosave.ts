@@ -832,9 +832,16 @@ function createEngine(host: EngineHost) {
 
 type Engine = ReturnType<typeof createEngine>
 
-function firstDraft(state: HookState): ConfigDraftTarget | undefined {
+function firstDraft(state: HookState, externalDrafts: ReadonlySet<ConfigTab>): ConfigDraftTarget | undefined {
   let best: ConfigDraftTarget | undefined
   let bestRank = Number.POSITIVE_INFINITY
+  for (const tab of externalDrafts) {
+    const rank = CONFIG_TABS.indexOf(tab)
+    if (rank < bestRank) {
+      best = { tab, fieldKey: externalDraftFieldKey(tab) }
+      bestRank = rank
+    }
+  }
   for (const fieldKey of draftFieldKeys(state.machine)) {
     const location = state.locations[fieldKey]
     if (!location) continue
@@ -853,6 +860,18 @@ export function useConfigAutosave(): ConfigAutosave {
   const [storageKey, setStorageKey] = useState<string | undefined>(undefined)
   const [pin, setPin] = useState<Pin | undefined>(undefined)
   const [restored, setRestored] = useState<ConfigRestored | undefined>(undefined)
+  const [externalDrafts, setExternalDrafts] = useState<ReadonlySet<ConfigTab>>(() => new Set())
+  const setExternalDraft = useMemo(
+    () => (tab: ConfigTab, present: boolean) =>
+      setExternalDrafts((previous) => {
+        if (previous.has(tab) === present) return previous
+        const next = new Set(previous)
+        if (present) next.add(tab)
+        else next.delete(tab)
+        return next
+      }),
+    [],
+  )
   const [, setTick] = useState(0)
   const stateRef = useRef(state)
   stateRef.current = state
@@ -892,7 +911,12 @@ export function useConfigAutosave(): ConfigAutosave {
     if (storageKey !== undefined) writeStoredDrafts(storageKey, state)
   }, [state, storageKey])
 
-  const status = deriveSaveStatus(state.machine, Date.now())
+  const machineStatus = deriveSaveStatus(state.machine, Date.now())
+  // An external draft sits at the draft rung: it outranks saved and idle, never failed, undo or saving.
+  const status: ConfigSaveStatus =
+    externalDrafts.size > 0 && (machineStatus.state === "saved" || machineStatus.state === "idle")
+      ? { ...machineStatus, state: "draft" }
+      : machineStatus
   const savedAt = state.machine.savedAt
   const undoExpiresAt = state.machine.undo?.expiresAt
 
@@ -906,13 +930,13 @@ export function useConfigAutosave(): ConfigAutosave {
   }, [status.state, savedAt, undoExpiresAt])
 
   const draftTabs = useMemo(() => {
-    const tabs = new Set<ConfigTab>()
+    const tabs = new Set<ConfigTab>(externalDrafts)
     for (const key of draftFieldKeys(state.machine)) {
       const location = state.locations[key]
       if (location) tabs.add(location.tab)
     }
     return tabs
-  }, [state])
+  }, [state, externalDrafts])
 
   const config = load.kind === "ready" ? load.answer.config : undefined
 
@@ -940,10 +964,10 @@ export function useConfigAutosave(): ConfigAutosave {
     failExplicit: engine.failExplicit,
     undo: engine.undo,
     restored,
-    goToFirstDraft: () => firstDraft(state),
+    goToFirstDraft: () => firstDraft(state, externalDrafts),
     reload: engine.reload,
     refresh: engine.refresh,
-    setExternalDraft: () => {},
+    setExternalDraft,
   }
 }
 
