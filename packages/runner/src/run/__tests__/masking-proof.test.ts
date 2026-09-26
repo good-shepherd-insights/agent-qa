@@ -290,3 +290,71 @@ describe('WINDOWS #305 — real step evidence is masked AT REST by the assembly'
     expect(step.interpolatedVariables).toEqual(CARVE_OUT_VARIABLES)
   })
 })
+
+// Owner decision 2026-09-26 (2), G-428-2: a live row shows a step's real text before the step
+// starts, so the member's authored step texts ride testStarted. They are authored content, not
+// identity, so the shell masks them with the run's ONE context, the same one the member's event
+// sink masks stepStarted.stepText with. Entry i must equal step i's announced text byte for byte.
+const STEP_TEXTS = ['open the page', `type ${SECRET} into Password`] as const
+
+const announcingExecutor: MemberTestExecutor = async (member, ctx) => {
+  STEP_TEXTS.forEach((stepText, stepIndex) => {
+    ctx.events.stepStarted({ stepIndex, stepText })
+  })
+  return {
+    name: member.testId,
+    filePath: `${member.testId}.test.ts`,
+    status: 'passed',
+    steps: STEP_TEXTS.map(name => ({ name, status: 'passed' as const, duration: 1 })),
+    duration: 1,
+  }
+}
+
+async function runWithStepTexts(masking: MaskingContext): Promise<{
+  testStarted: RunEventEnvelope[]
+  stepStarted: RunEventEnvelope[]
+}> {
+  const log = makeCapturingEventLog()
+  const session = startRun({
+    ...configWith(masking, log.port, announcingExecutor),
+    members: [
+      {
+        testId: 'a',
+        name: 'test a',
+        filePath: 'a.test.ts',
+        totalSteps: STEP_TEXTS.length,
+        stepTexts: [...STEP_TEXTS],
+      },
+    ],
+  })
+  const envelopes: RunEventEnvelope[] = []
+  session.subscribe(1, event => envelopes.push(event))
+  await session.done
+  return {
+    testStarted: envelopes.filter(event => event.type === 'testStarted'),
+    stepStarted: envelopes.filter(event => event.type === 'stepStarted'),
+  }
+}
+
+describe('G-428-2 — testStarted.stepTexts is masked like stepStarted.stepText', () => {
+  it('STEP-TEXTS-MASKED-LIKE-STEP-TEXT', async () => {
+    const masked = await runWithStepTexts(SYNTHETIC)
+    expect(masked.testStarted).toHaveLength(1)
+    const stepTexts = (masked.testStarted[0].payload as { stepTexts?: readonly string[] }).stepTexts
+    expect(stepTexts).toHaveLength(2)
+    const announced = masked.stepStarted.map(event => (event.payload as { stepText: string }).stepText)
+    expect(announced).toHaveLength(2)
+    expect(stepTexts).toEqual(announced)
+    for (const event of [...masked.testStarted, ...masked.stepStarted]) {
+      expect(JSON.stringify(event.payload)).not.toContain(SECRET)
+    }
+    expect(JSON.stringify(masked.testStarted[0].payload)).toContain('[masked]')
+    expect(announced[1]).toContain('[masked]')
+
+    const identity = await runWithStepTexts(IDENTITY)
+    const rawTexts = (identity.testStarted[0].payload as { stepTexts?: readonly string[] }).stepTexts
+    expect(rawTexts).toEqual([...STEP_TEXTS])
+    expect(identity.stepStarted.map(event => (event.payload as { stepText: string }).stepText))
+      .toEqual([...STEP_TEXTS])
+  })
+})

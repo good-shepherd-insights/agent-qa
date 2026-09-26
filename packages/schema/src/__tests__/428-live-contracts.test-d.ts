@@ -7,6 +7,7 @@ import type {
   LiveViewSubject,
   LiveViewSubjectKind,
   LiveViewSubjectRef,
+  TestStartedPayload,
 } from '../index'
 
 test('C428-LIVE-STREAM-KINDS-EXACT', () => {
@@ -38,4 +39,13 @@ test('C428-LIVE-VIEW-SUBJECT-KINDS-EXACT', () => {
   // @ts-expect-error a suite is not a live-view subject
   const suite: LiveViewSubjectRef = { kind: 'suite', id: 's1' }
   void suite
+})
+
+test('C428-TEST-STARTED-STEP-TEXTS-OPTIONAL', () => {
+  expectTypeOf<TestStartedPayload['stepTexts']>().toEqualTypeOf<readonly string[] | undefined>()
+
+  const bare = { testId: 't1', testIndex: 0, name: 'a test' }
+  expectTypeOf(bare).toExtend<TestStartedPayload>()
+  const payload: TestStartedPayload = bare
+  void payload
 })
