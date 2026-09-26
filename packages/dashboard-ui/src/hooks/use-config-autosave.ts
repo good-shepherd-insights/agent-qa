@@ -17,7 +17,12 @@ import {
   type Dispatch,
   type ReactNode,
 } from "react"
-import { classifyConfigPath, type ConfigChange, type ConfigPathSegment } from "@vostride/agent-qa-schema"
+import {
+  CONFIG_MASK_PLACEHOLDER,
+  classifyConfigPath,
+  type ConfigChange,
+  type ConfigPathSegment,
+} from "@vostride/agent-qa-schema"
 
 import {
   applyConfigChanges,
@@ -80,7 +85,8 @@ export interface ConfigAutosave {
   stateOf: (field: ConfigFieldRef) => FieldState
   errorOf: (field: ConfigFieldRef) => string | undefined
   setFocusedField: (field: ConfigFieldRef | undefined) => void
-  runExplicit: (changes: ConfigChange[], undoMeta: ConfigUndoMeta) => Promise<void>
+  /** One explicit write; with undo metadata it offers Undo. Resolves true once the write landed. */
+  runExplicit: (changes: ConfigChange[], undoMeta?: ConfigUndoMeta) => Promise<boolean>
   undo: () => Promise<void>
   goToFirstDraft: () => ConfigDraftTarget | undefined
   /** Re-reads with the loading state shown (the Reload config button). */
@@ -125,12 +131,32 @@ export function configFieldControlId(fieldKey: string): string {
   return `config-field-${encodeURIComponent(fieldKey).replace(/%/g, "_")}`
 }
 
+function classifiedPath(segments: readonly ConfigPathSegment[]): (string | number)[] {
+  return segments.map((segment) => (typeof segment === "object" ? 0 : segment))
+}
+
 function isSecretPath(segments: readonly ConfigPathSegment[]): boolean {
-  return classifyConfigPath(segments.map((segment) => (typeof segment === "object" ? 0 : segment))) === "secret"
+  return classifyConfigPath(classifiedPath(segments)) === "secret"
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value)
+}
+
+/** A written value as the server would serve it back: every secret leaf is the mask, never the typed text. */
+function maskedLikeServer(value: unknown, path: (string | number)[]): unknown {
+  if (Array.isArray(value)) return value.map((item, index) => maskedLikeServer(item, [...path, index]))
+  if (isRecord(value)) {
+    return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, maskedLikeServer(item, [...path, key])]))
+  }
+  if (value === null || value === undefined) return value
+  return classifyConfigPath(path) === "secret" ? CONFIG_MASK_PLACEHOLDER : value
+}
+
+function mirroredChange(change: ConfigChange): ConfigChange {
+  if (change.op === "unset") return change
+  const path = classifiedPath(change.path)
+  return { ...change, value: maskedLikeServer(change.value, change.op === "append" ? [...path, 0] : path) }
 }
 
 function childAt(node: unknown, segment: ConfigPathSegment): { found: boolean; value: unknown; index?: number } {
@@ -398,7 +424,7 @@ function createEngine(host: EngineHost) {
 
   function applyLanded(changes: readonly ConfigChange[]): boolean {
     if (!answer) return false
-    const config = patchConfig(answer.config, changes)
+    const config = patchConfig(answer.config, changes.map(mirroredChange))
     if (!config) {
       // The landed write could not be mirrored here, so the next poll re-reads it.
       revision = undefined
@@ -413,7 +439,7 @@ function createEngine(host: EngineHost) {
     keys: readonly string[],
     changes: ConfigChange[],
     explicit?: ConfigUndoMeta,
-  ): Promise<void> {
+  ): Promise<boolean> {
     const id = `config-write-${++writeSeq}`
     let landed!: () => void
     flight = new Promise<void>((resolve) => {
@@ -424,7 +450,7 @@ function createEngine(host: EngineHost) {
       const result = explicit
         ? await applyConfigChanges(changes, { undoable: true })
         : await applyConfigChanges(changes)
-      if (!attached) return
+      if (!attached) return false
       revision = result.revision
       const mirrored = applyLanded(changes)
       const written = keys.filter((key) => {
@@ -447,14 +473,16 @@ function createEngine(host: EngineHost) {
           ...(explicit.judge === undefined ? {} : { judge: explicit.judge }),
         })
       }
+      return true
     } catch (error) {
-      if (!attached) return
+      if (!attached) return false
       for (const key of keys) {
         const entry = outbox.get(key)
         if (entry && !entry.dirty && entry.change) entry.held = true
       }
       const { issues, message } = issuesFrom(error, keys)
       emit(message === undefined ? { type: "write-failed", id, issues } : { type: "write-failed", id, issues, message })
+      return false
     } finally {
       flight = undefined
       landed()
@@ -605,10 +633,10 @@ function createEngine(host: EngineHost) {
     }
   }
 
-  async function runExplicit(changes: ConfigChange[], undoMeta: ConfigUndoMeta): Promise<void> {
+  async function runExplicit(changes: ConfigChange[], undoMeta?: ConfigUndoMeta): Promise<boolean> {
     while (flight) await flight
-    if (!attached) return
-    await write([], changes, undoMeta)
+    if (!attached) return false
+    return write([], changes, undoMeta)
   }
 
   async function undo(): Promise<void> {
