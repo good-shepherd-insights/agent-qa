@@ -58,6 +58,7 @@ import { AnalyticsSection } from "@/components/config-manager/analytics-section"
 import { McpSection } from "@/components/config-manager/mcp-section"
 import { TokenList } from "@/components/config-manager/token-list"
 import { EvalSection } from "@/components/config-manager/eval-section"
+import { ConfigFileView } from "@/components/config-manager/config-file-view"
 
 interface SectionProps {
   config: Record<string, unknown>
@@ -93,6 +94,7 @@ const SECTION_COMPONENTS: Partial<Record<ConfigSectionId, readonly ComponentType
   mcp: [McpSection],
   "run-service-tokens": [RunServiceTokensSection],
   eval: [EvalSection],
+  "config-file": [ConfigFileView],
 }
 
 // The Models heading shares its row with Add model (UI-SPEC S4); the list spans the row below.

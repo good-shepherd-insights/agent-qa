@@ -328,6 +328,13 @@ function errorPayload(error: unknown): Record<string, unknown> | undefined {
   return isRecord(error.payload) ? error.payload : undefined
 }
 
+/** A read the server refused with a 4xx is about the file itself; any other failure may pass by. */
+function isFileRefusal(error: unknown): boolean {
+  if (!(error instanceof Error) || !("status" in error)) return false
+  const { status } = error as { status: unknown }
+  return typeof status === "number" && status < 500
+}
+
 function loadFailureReason(error: unknown): string {
   const message = errorPayload(error)?.message
   const payloadMessage = typeof message === "string" ? message : undefined
@@ -709,6 +716,9 @@ function createEngine(host: EngineHost) {
       host.setLoad({ kind: "ready", answer: next })
     } catch (error) {
       if (!attached) return
+      // A quiet re-read that failed in transit keeps the last good answer with no notice; the
+      // revision stays stale, so the next poll reads again.
+      if (loaded && !isFileRefusal(error)) return
       if (polledRevision !== undefined) revision = polledRevision
       loaded = false
       host.setLoad({ kind: "error", reason: loadFailureReason(error) })
