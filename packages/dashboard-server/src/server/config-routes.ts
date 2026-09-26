@@ -2,7 +2,12 @@
 // drive it, and no answer carries a cross-origin read grant.
 import type { IncomingMessage, ServerResponse } from 'node:http'
 
-import { CONFIG_REVISION_ABSENT, ConfigWriteRequestSchema } from '@vostride/agent-qa-schema'
+import {
+  classifyConfigPath,
+  CONFIG_REVISION_ABSENT,
+  ConfigRevealRequestSchema,
+  ConfigWriteRequestSchema,
+} from '@vostride/agent-qa-schema'
 
 import type { ConfigManager } from '../config/index.js'
 import { respondJson } from '../run-service/run-detail-routes.js'
@@ -58,4 +63,49 @@ export function registerConfigRevisionRoute(
     const revision = read.kind === 'absent' ? CONFIG_REVISION_ABSENT : read.revision
     respondJson(res, 200, { revision })
   }, () => { respondJson(res, 500, { error: 'read_failed' }) })
+}
+
+/**
+ * POST /api/config/reveal (429-06 D-09). One in-file secret per explicit request, same-site only,
+ * never cached and never logged. It reads the config file alone: never auth.json, never the env.
+ */
+export function registerConfigRevealRoute(
+  req: IncomingMessage,
+  res: ServerResponse,
+  deps: { readonly configManager: ConfigManager },
+): void {
+  if (req.method !== 'POST') {
+    respondJson(res, 405, { error: 'method_not_allowed' })
+    return
+  }
+  if (refuseCrossSiteRequest(req) !== undefined) {
+    respondJson(res, 403, { error: 'cross_site_refused' })
+    return
+  }
+  const contentType = req.headers['content-type']?.toLowerCase() ?? ''
+  if (!contentType.startsWith('application/json')) {
+    respondJson(res, 400, { error: 'invalid_write_input' })
+    return
+  }
+  void readJsonBody<unknown>(req).then(async (body) => {
+    const parsed = ConfigRevealRequestSchema.safeParse(body)
+    if (!parsed.success) {
+      respondJson(res, 400, { error: 'invalid_write_input' })
+      return
+    }
+    const { path } = parsed.data
+    const classified = path.map((segment) => (typeof segment === 'object' ? 0 : segment))
+    if (classifyConfigPath(classified) !== 'secret') {
+      respondJson(res, 422, { error: 'reveal_not_secret' })
+      return
+    }
+    const outcome = await deps.configManager.revealAt(path)
+    if (outcome.kind === 'not_found') {
+      respondJson(res, 404, { error: 'reveal_not_found' })
+      return
+    }
+    res.setHeader('Cache-Control', 'no-store')
+    respondJson(res, 200, { value: outcome.value })
+  }, () => { respondJson(res, 400, { error: 'invalid_write_input' }) })
+    .catch(() => { respondJson(res, 500, { error: 'reveal_failed' }) })
 }

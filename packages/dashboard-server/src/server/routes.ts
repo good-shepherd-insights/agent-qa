@@ -55,7 +55,11 @@ import { serveRunAnalysisRead } from '../run-service/run-analysis-routes.js'
 // database.
 import { serveRunKnowledgeRead } from '../run-service/run-knowledge-routes.js'
 import { registerRunMarkRoute } from '../run-service/run-mark-routes.js'
-import { registerConfigRevisionRoute, registerConfigWriteRoute } from './config-routes.js'
+import {
+  registerConfigRevealRoute,
+  registerConfigRevisionRoute,
+  registerConfigWriteRoute,
+} from './config-routes.js'
 import type { PostProcessingRelay } from '../execution/post-processing-relay.js'
 import type { LLMAuthProviderPlugin, OAuthTokens } from '@vostride/agent-qa-core'
 import { AuthStateNameSchema, buildInternalRunAttributes, mergeRunAttributes, readAuth, writeAuth, removeAuth, getAgentQaVersion, getAgentQaUpdateStatus, getLLMAuthProviderPlugin, listAuthStateMetadata, listLLMAuthProviderPlugins, ModelConfigSchema, NamedLLMConfigSchema, WorkspaceSchema, ServicesSchema, RegistrySchema, UseSchema, MobileAppStateSchema, TimeoutConfigSchema, CacheConfigSchema, PlannerConfigSchema, LoggingConfigSchema, LogCaptureConfigSchema, AccessibilityConfigSchema, DashboardConfigSchema, McpConfigSchema, RecordingConfigSchema, BrowserConfigSchema, AnalyticsSchema, AgentQaConfigSchema, TestDefinitionSchema, SuiteDefinitionSchema, parseEnvFile, serializeEnvFile, parseHooksFile, RUNTIME_IMAGE_MAP, redactAuthStateValue, validateUserRunAttributes, discoverWorkspaceFiles, isWorkspacePathMatch, resolveWorkspaceFileTarget, SizeString, KnowledgeConfigSchema } from '@vostride/agent-qa-core'
@@ -1906,6 +1910,16 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps): (req: In
         return
       }
       registerConfigRevisionRoute(req, res, { configManager })
+      return
+    }
+
+    // 429-06 D-09: the eye's read answers every method itself, so no preflight grant reaches it.
+    if (path === '/api/config/reveal') {
+      if (!configManager) {
+        jsonNoCors(res, { error: 'config_unavailable' }, 503)
+        return
+      }
+      registerConfigRevealRoute(req, res, { configManager })
       return
     }
 
