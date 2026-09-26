@@ -82,6 +82,8 @@ vi.mock('ai', () => ({
   parsePartialJson: vi.fn(),
 }))
 
+import { createHash } from 'node:crypto'
+import { CONFIG_MASK_PLACEHOLDER } from '@vostride/agent-qa-schema'
 import { ConfigManager } from '../config/config-manager.js'
 import { createRouter } from '../server/routes.js'
 import { writeFile, readFile, mkdir, rm } from 'node:fs/promises'
@@ -542,6 +544,97 @@ describe('ConfigManager.applyChanges ops and selectors (429-05)', () => {
     const parsed = parseYaml(await readFile(configPath, 'utf-8')) as { use: Record<string, unknown> }
     expect(parsed.use.browser).toEqual({ name: 'chromium', headless: false })
     expect(parsed.use).not.toHaveProperty('headless')
+  })
+})
+
+const BROKEN_YAML = 'a: 1\nb: [1, 2\nc: 3\n'
+
+describe('ConfigManager broken files, missing files and the mask guard (429-05)', () => {
+  it('FILE-INVALID-REFUSED: a file that does not parse is refused and never rewritten', async () => {
+    await writeFile(configPath, BROKEN_YAML)
+
+    const outcome = await manager.applyChanges([
+      { op: 'set', path: ['use', 'mobile', 'appState'], value: 'preserve' },
+    ])
+
+    expect(outcome).toEqual({ kind: 'refused', error: 'file_invalid' })
+    expect(await readFile(configPath, 'utf-8')).toBe(BROKEN_YAML)
+  })
+
+  it('READ-REFUSES-BROKEN-FILE: a revisioned read names a broken file instead of serving part of it', async () => {
+    await writeFile(configPath, BROKEN_YAML)
+    const broken = await manager.readWithRevision()
+    expect(broken.kind).toBe('file_invalid')
+    expect(broken.kind === 'file_invalid' ? broken.message : '').not.toBe('')
+
+    const valid = writeConfig(WRITE_BASE_LINES, WRITE_MOBILE_LINES)
+    await writeFile(configPath, valid)
+    expect(await manager.readWithRevision()).toEqual({
+      kind: 'ok',
+      config: parseYaml(valid),
+      raw: valid,
+      revision: createHash('sha256').update(valid).digest('hex'),
+    })
+
+    await rm(configPath)
+    expect(await manager.readWithRevision()).toEqual({ kind: 'absent' })
+  })
+
+  it('ENOENT-STARTS-EMPTY-DOCUMENT: a missing file is built through the same path, with no dotted top-level key', async () => {
+    await rm(configPath)
+
+    await expect(manager.applyChanges([
+      {
+        op: 'set',
+        path: ['workspace'],
+        value: {
+          testMatch: ['tests/**/*.yaml'],
+          suiteMatch: ['suites/**/*.suite.yaml'],
+          hooksFile: 'hooks.yaml',
+          envFile: '.env',
+          secretsFile: '.env.secrets.local',
+        },
+      },
+      { op: 'set', path: ['use', 'timeout', 'step'], value: '30s' },
+      { op: 'set', path: ['use', 'timeout', 'test'], value: '10m' },
+      { op: 'set', path: ['use', 'timeout', 'navigation'], value: '10s' },
+      { op: 'set', path: ['use', 'mobile', 'appState'], value: 'preserve' },
+    ])).resolves.toMatchObject({ kind: 'ok' })
+
+    const text = await readFile(configPath, 'utf-8')
+    expect((parseYaml(text) as { use: { timeout: unknown } }).use.timeout)
+      .toEqual({ step: '30s', test: '10m', navigation: '10s' })
+    expect(text).not.toMatch(/^use\.timeout:/m)
+  })
+
+  it('MASK-NEVER-WRITTEN-BACK: no write path puts the mask placeholder into the file', async () => {
+    await writeFile(configPath, writeConfig(WRITE_BASE_LINES, WRITE_MODELS_LINES, WRITE_USE_LINES))
+    const before = await readFile(configPath)
+    const maskedProviders = { browserstack: { username: 'owner', accessKey: CONFIG_MASK_PLACEHOLDER } }
+
+    const outcomes = [
+      await manager.applyChanges([
+        { op: 'set', path: ['registry', 'llms', { name: 'gpt-5.6' }, 'baseURL'], value: CONFIG_MASK_PLACEHOLDER },
+      ]),
+      await manager.applyChanges([
+        { op: 'set', path: ['registry', 'providers'], value: maskedProviders },
+      ]),
+      await manager.applyChanges([
+        {
+          op: 'append',
+          path: ['services', 'mcp', 'tokens'],
+          value: { name: 'ci', tokenEnvVar: 'AGENT_QA_MCP_CI_TOKEN', scopes: ['read', CONFIG_MASK_PLACEHOLDER] },
+        },
+      ]),
+    ]
+
+    for (const outcome of outcomes) {
+      expect(outcome).toEqual({ kind: 'refused', error: 'mask_written_back' })
+    }
+    await expect(manager.updateSection('registry.providers', maskedProviders)).rejects.toThrow('mask_written_back')
+    await expect(manager.replaceSection('registry.providers', maskedProviders)).rejects.toThrow('mask_written_back')
+    await expect(manager.replaceSectionRaw('registry.providers', maskedProviders)).rejects.toThrow('mask_written_back')
+    expect(Buffer.compare(await readFile(configPath), before)).toBe(0)
   })
 })
 

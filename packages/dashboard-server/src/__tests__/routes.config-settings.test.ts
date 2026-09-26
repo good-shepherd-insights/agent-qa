@@ -1,4 +1,4 @@
-import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { IncomingMessage, type IncomingHttpHeaders, type ServerResponse } from 'node:http'
 import { Socket } from 'node:net'
 import { dirname, join } from 'node:path'
@@ -8,6 +8,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { ConfigManager } from '../config/index.js'
 import { createRouter } from '../server/routes.js'
+import { CONFIG_MASK_PLACEHOLDER } from '@vostride/agent-qa-schema'
 import {
   clearLLMAuthProviderPlugins,
   readAuth,
@@ -1091,6 +1092,25 @@ describe('PUT /api/config/settings', () => {
     expect(data.details).toContain(
       'registry.devices.iosSimulator.match.serial: Match field "serial" is not valid for ios local transport. Allowed: udid, bundleId, automationName, platformVersion',
     )
+  })
+
+  it('MASK-NEVER-WRITTEN-BACK: a settings save carrying the mask placeholder answers 400 and writes nothing', async () => {
+    const { configManager, configPath } = await createConfigWorkspace()
+    router = createRouter({ db: createMockDatabase() as any, configManager, configPath })
+    const before = await readFile(configPath)
+
+    const res = await invokeRoute('/api/config/settings', {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        'services.logging': { level: 'warn' },
+        'registry.providers': { browserstack: { username: 'owner', accessKey: CONFIG_MASK_PLACEHOLDER } },
+      }),
+    })
+
+    expect(res.status).toBe(400)
+    expect(JSON.parse(res.body)).toEqual({ error: 'mask_written_back' })
+    expect(Buffer.compare(await readFile(configPath), before)).toBe(0)
   })
 })
 
