@@ -4,6 +4,7 @@ import {
   CONFIG_WRITE_OPS,
   CONFIG_WRITE_REFUSALS,
   MASKING_CLASSES,
+  PROVIDER_ERROR_CLASSES,
 } from '../index'
 import type {
   ConfigChange,
@@ -12,6 +13,7 @@ import type {
   ConfigWriteOp,
   ConfigWriteRefusal,
   MaskingClass,
+  ProviderErrorClass,
 } from '../index'
 
 test('C429-CONFIG-WRITE-OPS-EXACT', () => {
@@ -52,4 +54,18 @@ test('C429-MASKING-CLASSES-EXACT', () => {
   expectTypeOf<(typeof MASKING_CLASSES)[number]>().toEqualTypeOf<Expected>()
   expectTypeOf<Exclude<MaskingClass, Expected>>().toEqualTypeOf<never>()
   expectTypeOf<Exclude<Expected, MaskingClass>>().toEqualTypeOf<never>()
+})
+
+test('C429-PROVIDER-ERROR-CLASSES-EXACT', () => {
+  type Expected =
+    | 'auth_error'
+    | 'model_not_found'
+    | 'rate_limit'
+    | 'network_error'
+    | 'invalid_request'
+    | 'provider_error'
+  expectTypeOf<ProviderErrorClass>().toEqualTypeOf<Expected>()
+  expectTypeOf<(typeof PROVIDER_ERROR_CLASSES)[number]>().toEqualTypeOf<Expected>()
+  expectTypeOf<Exclude<ProviderErrorClass, Expected>>().toEqualTypeOf<never>()
+  expectTypeOf<Exclude<Expected, ProviderErrorClass>>().toEqualTypeOf<never>()
 })

@@ -96,3 +96,88 @@ test('LEAF-OWNER', () => {
   expect(api.configLeafOwner('workspace.testMatch[]')).toBe('workspace.testMatch')
   expect(api.configLeafOwner('use.timeout.step')).toBe('use.timeout.step')
 })
+
+test('C429-PROVIDER-ERROR-CLASSES-EXACT', () => {
+  expect(api.PROVIDER_ERROR_CLASSES).toEqual([
+    'auth_error',
+    'model_not_found',
+    'rate_limit',
+    'network_error',
+    'invalid_request',
+    'provider_error',
+  ])
+})
+
+test('CLASSIFIER-ORDER-PINNED', () => {
+  const cases: readonly [string, number | undefined, api.ProviderErrorClass][] = [
+    ['401 unauthorized', undefined, 'auth_error'],
+    ['Invalid API key', undefined, 'auth_error'],
+    ['model gpt-x does not exist', undefined, 'model_not_found'],
+    ['x', 404, 'model_not_found'],
+    ['quota exceeded', undefined, 'rate_limit'],
+    ['request timeout: rate limit', undefined, 'rate_limit'],
+    ['fetch failed', undefined, 'network_error'],
+    ['ECONNREFUSED 127.0.0.1', undefined, 'network_error'],
+    ['invalid_request: bad field', undefined, 'invalid_request'],
+    ['teapot', undefined, 'provider_error'],
+  ]
+  for (const [message, statusCode, expected] of cases) {
+    expect({ message, statusCode, class: api.classifyProviderError(message, statusCode) }).toEqual({
+      message,
+      statusCode,
+      class: expected,
+    })
+  }
+  expect([...new Set(cases.map(([, , expected]) => expected))]).toEqual([
+    ...api.PROVIDER_ERROR_CLASSES,
+  ])
+})
+
+test('CLASSIFIER-EMPTY-MESSAGE', () => {
+  expect(api.classifyProviderError('')).toBe('provider_error')
+  expect(api.providerErrorSentence('provider_error', '')).toBe('Connection failed. ')
+  for (const thrown of [null, undefined, 42, {}]) {
+    const { message } = api.extractProviderError(thrown)
+    expect(api.classifyProviderError(message)).toBe('provider_error')
+  }
+})
+
+test('SENTENCES-BYTE-IDENTICAL', () => {
+  const sentences = Object.fromEntries(
+    api.PROVIDER_ERROR_CLASSES.map(errorClass => [
+      errorClass,
+      api.providerErrorSentence(errorClass, 'upstream said no'),
+    ]),
+  )
+  expect(sentences).toEqual({
+    auth_error: 'Authentication failed. Check the saved credential for this config.',
+    model_not_found: 'Model not found. Check the model name.',
+    rate_limit: 'Rate limited. Try again later.',
+    network_error: 'Network error. Check the exact base URL and try again.',
+    invalid_request: 'Invalid request. Check model and provider settings.',
+    provider_error: 'Connection failed. upstream said no',
+  })
+})
+
+test('EXTRACT-PROVIDER-ERROR', () => {
+  const withProps = (props: Record<string, unknown>) =>
+    Object.assign(new Error('original message'), props)
+
+  expect(api.extractProviderError(withProps({ data: { error: { message: 'bad key' } } }))).toEqual({
+    message: 'bad key',
+  })
+  expect(api.extractProviderError(withProps({ data: { detail: 'nope' } }))).toEqual({
+    message: 'nope',
+  })
+  expect(api.extractProviderError(withProps({ responseBody: '{"detail":"d"}' }))).toEqual({
+    message: 'd',
+  })
+  expect(api.extractProviderError(withProps({ responseBody: 'not json' }))).toEqual({
+    message: 'original message',
+  })
+  expect(api.extractProviderError(withProps({ statusCode: 429 }))).toEqual({
+    message: 'original message',
+    statusCode: 429,
+  })
+  expect(api.extractProviderError('x')).toEqual({ message: 'x' })
+})
