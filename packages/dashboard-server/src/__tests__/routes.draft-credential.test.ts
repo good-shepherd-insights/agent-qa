@@ -404,3 +404,171 @@ describe('moving a draft credential (429-09 Task 2)', () => {
     expect(authStore.current).toEqual({ 'draft-a': OPENAI_OAUTH })
   })
 })
+
+// 429-09 Task 3: the five auth doors, driven the way 428-live-editor-doors.test.ts drives the
+// live-editor doors, plus the rebound Host a DNS-rebinding page presents.
+const FOREIGN_ORIGIN = 'http://evil.example'
+const CROSS_SITE_CALLERS: readonly { readonly name: string; readonly headers: IncomingHttpHeaders }[] = [
+  { name: 'a foreign Origin', headers: { 'content-type': 'application/json', host: SELF_HOST, origin: FOREIGN_ORIGIN } },
+  { name: 'Sec-Fetch-Site cross-site with no Origin', headers: { 'content-type': 'application/json', host: SELF_HOST, 'sec-fetch-site': 'cross-site' } },
+  { name: 'a rebound Host', headers: { 'content-type': 'application/json', host: 'evil.example:4317', origin: 'http://evil.example:4317' } },
+]
+
+interface AuthDoor {
+  readonly name: string
+  readonly method: 'POST' | 'DELETE'
+  path(sessionId: string): string
+  body(sessionId: string): unknown
+}
+
+const AUTH_DOORS: readonly AuthDoor[] = [
+  {
+    name: 'POST /api/auth/credential',
+    method: 'POST',
+    path: () => '/api/auth/credential',
+    body: () => ({ configName: 'gpt-5.6', provider: 'openai-compatible', type: 'api-key', secret: 'sk-planted' }),
+  },
+  {
+    name: 'POST /api/auth/credential/move',
+    method: 'POST',
+    path: () => '/api/auth/credential/move',
+    body: () => ({ from: 'draft-a', to: 'draft-b', provider: 'openai-subscription' }),
+  },
+  {
+    name: 'DELETE /api/auth/:configName',
+    method: 'DELETE',
+    path: () => '/api/auth/draft-a',
+    body: () => undefined,
+  },
+  {
+    name: 'POST /api/auth/plugin/:provider/start',
+    method: 'POST',
+    path: () => '/api/auth/plugin/anthropic-subscription/start',
+    body: () => ({ configName: 'claude-draft' }),
+  },
+  {
+    name: 'POST /api/auth/plugin/:provider/exchange',
+    method: 'POST',
+    path: () => '/api/auth/plugin/anthropic-subscription/exchange',
+    body: (sessionId) => ({ sessionId, code: 'code-planted' }),
+  },
+]
+
+async function callDoor(door: AuthDoor, sessionId: string, headers: IncomingHttpHeaders): Promise<MockResponse> {
+  const body = door.body(sessionId)
+  return invokeRoute(door.path(sessionId), {
+    method: door.method,
+    headers,
+    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+  })
+}
+
+async function startSameSiteSession(): Promise<string> {
+  const start = await post('/api/auth/plugin/anthropic-subscription/start', { configName: 'claude-pending' })
+  expect(start.status).toBe(200)
+  return (JSON.parse(start.body) as { sessionId: string }).sessionId
+}
+
+describe('AUTH-DOORS-SAME-SITE (429-09 Task 3)', () => {
+  beforeEach(() => {
+    registerFakeSubscriptionPlugins()
+    authStore.current = { 'draft-a': OPENAI_OAUTH }
+  })
+
+  for (const door of AUTH_DOORS) {
+    for (const caller of CROSS_SITE_CALLERS) {
+      it(`AUTH-DOORS-SAME-SITE: ${door.name} refuses ${caller.name}`, async () => {
+        const sessionId = await startSameSiteSession()
+        vi.clearAllMocks()
+
+        const res = await callDoor(door, sessionId, caller.headers)
+
+        expect(res.status).toBe(403)
+        expect(JSON.parse(res.body)).toEqual({ error: 'cross_site_refused' })
+        expect(res.headers['access-control-allow-origin']).toBeUndefined()
+        expect(mockWriteAuth).not.toHaveBeenCalled()
+        expect(mockRemoveAuth).not.toHaveBeenCalled()
+        expect(authStore.current).toEqual({ 'draft-a': OPENAI_OAUTH })
+      })
+    }
+  }
+
+  it('AUTH-DOORS-SAME-SITE: an admitted caller is answered with no wildcard grant', async () => {
+    const admitted: readonly IncomingHttpHeaders[] = [
+      SAME_SITE,
+      { ...SAME_SITE, origin: `http://${SELF_HOST}`, 'sec-fetch-site': 'same-origin' },
+    ]
+    for (const headers of admitted) {
+      for (const door of AUTH_DOORS) {
+        authStore.current = { 'draft-a': OPENAI_OAUTH }
+        const sessionId = await startSameSiteSession()
+        const res = await callDoor(door, sessionId, headers)
+        expect(res.status, door.name).not.toBe(403)
+        expect(res.status, door.name).toBeLessThan(300)
+        expect(res.headers['access-control-allow-origin'], door.name).toBeUndefined()
+      }
+    }
+  })
+
+  it('AUTH-DOORS-SAME-SITE: refusals on the doors carry no wildcard grant either', async () => {
+    const refused = await post('/api/auth/credential', { configName: '__proto__', provider: 'openai-compatible', type: 'api-key', secret: 'k' })
+    expect(refused.status).toBe(400)
+    expect(refused.headers['access-control-allow-origin']).toBeUndefined()
+
+    const unknownPlugin = await post('/api/auth/plugin/not-a-plugin/start', { configName: 'x' })
+    expect(unknownPlugin.status).toBe(404)
+    expect(unknownPlugin.headers['access-control-allow-origin']).toBeUndefined()
+  })
+})
+
+describe('CREDENTIAL-WRITES-SERIALIZED (429-09 Task 3)', () => {
+  it('CREDENTIAL-WRITES-SERIALIZED: two credential saves never interleave their auth.json writes', async () => {
+    const events: string[] = []
+    const slowWrite = async (name: string, credential: unknown) => {
+      events.push(`start:${name}`)
+      await new Promise((resolve) => setTimeout(resolve, 20))
+      authStore.current = { ...authStore.current, [name]: credential }
+      events.push(`end:${name}`)
+    }
+    mockWriteAuth.mockImplementationOnce(slowWrite as never).mockImplementationOnce(slowWrite as never)
+
+    const [a, b] = await Promise.all([
+      post('/api/auth/credential', { configName: 'model-a', provider: 'openai-compatible', type: 'api-key', secret: 'sk-a' }),
+      post('/api/auth/credential', { configName: 'model-b', provider: 'openai-compatible', type: 'api-key', secret: 'sk-b' }),
+    ])
+
+    expect(a.status).toBe(200)
+    expect(b.status).toBe(200)
+    expect(events).toHaveLength(4)
+    const [first, second, third, fourth] = events
+    expect(first?.startsWith('start:')).toBe(true)
+    expect(second).toBe(first?.replace('start:', 'end:'))
+    expect(third?.startsWith('start:')).toBe(true)
+    expect(fourth).toBe(third?.replace('start:', 'end:'))
+    expect(Object.keys(authStore.current).sort()).toEqual(['model-a', 'model-b'])
+  })
+
+  it('CREDENTIAL-WRITES-SERIALIZED: a delete waits for an in-flight save', async () => {
+    const events: string[] = []
+    mockWriteAuth.mockImplementationOnce((async (name: string, credential: unknown) => {
+      events.push(`write-start:${name}`)
+      await new Promise((resolve) => setTimeout(resolve, 20))
+      authStore.current = { ...authStore.current, [name]: credential }
+      events.push(`write-end:${name}`)
+    }) as never)
+    mockRemoveAuth.mockImplementationOnce((async (name: string) => {
+      events.push(`remove:${name}`)
+      const next = { ...authStore.current }
+      delete next[name]
+      authStore.current = next
+    }) as never)
+
+    await Promise.all([
+      post('/api/auth/credential', { configName: 'model-a', provider: 'openai-compatible', type: 'api-key', secret: 'sk-a' }),
+      invokeRoute('/api/auth/model-a', { method: 'DELETE', headers: SAME_SITE }),
+    ])
+
+    expect(events).toEqual(['write-start:model-a', 'write-end:model-a', 'remove:model-a'])
+    expect(authStore.current).toEqual({})
+  })
+})
