@@ -1,5 +1,6 @@
-import { readFile, writeFile, mkdir, unlink } from 'node:fs/promises'
-import { dirname, join } from 'node:path'
+import { randomUUID } from 'node:crypto'
+import { readFile, writeFile, mkdir, unlink, rename, rm } from 'node:fs/promises'
+import { basename, dirname, join } from 'node:path'
 import { homedir } from 'node:os'
 import type { AuthCredential, AuthStore } from './types.js'
 
@@ -7,6 +8,19 @@ export function getAuthPath(): string {
   const xdg = process.env.XDG_DATA_HOME
   if (xdg) return join(xdg, 'agent-qa', 'auth.json')
   return join(homedir(), '.agent-qa', 'auth.json')
+}
+
+async function writeStoreAtomic(authPath: string, store: AuthStore): Promise<void> {
+  const directory = dirname(authPath)
+  const tempPath = join(directory, `.${basename(authPath)}.${process.pid}.${randomUUID()}.tmp`)
+  await mkdir(directory, { recursive: true })
+  try {
+    await writeFile(tempPath, JSON.stringify(store, null, 2), { mode: 0o600 })
+    await rename(tempPath, authPath)
+  } catch (error) {
+    await rm(tempPath, { force: true }).catch(() => undefined)
+    throw error
+  }
 }
 
 export async function readAuth(path?: string): Promise<AuthStore> {
@@ -27,8 +41,7 @@ export async function writeAuth(
   const authPath = path ?? getAuthPath()
   const store = await readAuth(authPath)
   store[provider] = credential
-  await mkdir(dirname(authPath), { recursive: true })
-  await writeFile(authPath, JSON.stringify(store, null, 2), { mode: 0o600 })
+  await writeStoreAtomic(authPath, store)
 }
 
 export async function removeAuth(provider: string, path?: string): Promise<void> {
@@ -43,7 +56,7 @@ export async function removeAuth(provider: string, path?: string): Promise<void>
     }
     return
   }
-  await writeFile(authPath, JSON.stringify(store, null, 2), { mode: 0o600 })
+  await writeStoreAtomic(authPath, store)
 }
 
 export async function getCredential(
