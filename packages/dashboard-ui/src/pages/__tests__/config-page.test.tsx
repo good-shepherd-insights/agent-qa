@@ -28,6 +28,8 @@ import { LLM_PROVIDER_OPTIONS } from '@/components/config-manager/llm-section'
 import {
   ACCESSIBILITY_FIELD_PLACEHOLDERS,
   ADD_DEVICE_FARM_LABEL,
+  ADD_DEVICE_LABEL,
+  ADD_TARGET_LABEL,
   CONFIG_LOAD_FAILED_TITLE,
   CONFIG_PAGE_TITLE,
   CONFIG_SECTION_LABELS,
@@ -38,6 +40,17 @@ import {
   LEGACY_LINK_NOT_FOUND_TEXT,
   NOT_SAVED_ACTION_NAME,
   NO_DEVICE_FARMS_TEXT,
+  NO_DEVICES_TEXT,
+  NO_LOGIN_STATES_TEXT,
+  NO_TARGETS_TEXT,
+  LOGIN_STATES_LOADING_TEXT,
+  LOGIN_STATES_LOAD_FAILED_TEXT,
+  LOGIN_STATE_COLUMN_LABELS,
+  MOBILE_APP_STATE_LABELS,
+  MOBILE_FIELD_LABELS,
+  RELOAD_LOGIN_STATES_LABEL,
+  TARGET_FIELD_LABELS,
+  DEVICE_FIELD_LABELS,
   PORT_RESTART_HELP,
   RELOAD_CONFIG_LABEL,
   RETRY_LABEL,
@@ -456,6 +469,44 @@ function refusedWrite() {
  * hidden inactive panels. Radix makes the tab list itself the strip's one stop (roving focus
  * then lands on the active tab).
  */
+const APP_STATE_SEGMENTS = ['use', 'mobile', 'appState']
+
+function deferredValue<T>() {
+  let resolve!: (value: T) => void
+  const promise = new Promise<T>((res) => {
+    resolve = res
+  })
+  return { promise, resolve }
+}
+
+async function openRow(row: Element | null) {
+  const header = row?.querySelector('[data-row-header]') as HTMLButtonElement | null
+  expect(header, 'the row header').not.toBeNull()
+  await act(async () => {
+    header!.click()
+  })
+  await flushRender()
+}
+
+/** Opens a Radix select from the keyboard and picks the option with this text. */
+async function chooseOption(trigger: HTMLElement | null, text: string) {
+  expect(trigger, 'the select trigger').not.toBeNull()
+  await act(async () => {
+    trigger!.focus()
+    trigger!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }))
+  })
+  await flushRender()
+  const option = (Array.from(document.body.querySelectorAll('[role="option"]')) as HTMLElement[]).find(
+    (item) => item.textContent?.trim() === text,
+  )
+  expect(option, text).toBeDefined()
+  await act(async () => {
+    option!.focus()
+    option!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }))
+  })
+  await flushRender()
+}
+
 function tabStops(root: ParentNode): HTMLElement[] {
   return (Array.from(root.querySelectorAll('a[href], button, input, select, textarea, [tabindex]')) as HTMLElement[])
     .filter((element) => element.tabIndex >= 0 && !(element as HTMLButtonElement).disabled)
@@ -1053,21 +1104,33 @@ describe('ConfigPage task tabs shell', () => {
     expect(findButton('Execution Defaults')).toBeNull()
   })
 
-  it('renders and saves mobile app-state defaults from the Mobile app state section', async () => {
+  it('NO-SAVE-BUTTON-TARGETS: mobile app state shows its saved choice in a select, with no Save button, boxed shell or pop-up message', async () => {
     await renderAt('/config/targets?section=mobile-app-state')
 
-    const mobile = section('mobile-app-state')
-    expect(mobile?.textContent).toContain('App state')
-    expect(mobile?.textContent).toContain('Reset app data')
+    const mobile = section('mobile-app-state')!
+    const field = mobile.querySelector('[data-field-path="use.mobile.appState"]')
+    expect(field).not.toBeNull()
+    expect(field!.textContent).toContain(MOBILE_FIELD_LABELS.appState)
+    expect(field!.textContent).toContain(MOBILE_APP_STATE_LABELS.reset)
+    expect(fieldControl(APP_STATE_SEGMENTS)?.getAttribute('role')).toBe('combobox')
+    expect(sectionButton('mobile-app-state', 'Save Mobile Defaults')).toBeNull()
+    expect(mobile.querySelector('[data-config-section-shell]')).toBeNull()
+    expect(mobile.textContent).not.toContain('use.mobile.appState')
+    expect(mobile.textContent).not.toContain('Mobile defaults saved')
+    expect(updateSettings).not.toHaveBeenCalled()
+    expect(toast.success).not.toHaveBeenCalled()
+  })
 
-    await act(async () => {
-      sectionButton('mobile-app-state', 'Save Mobile Defaults')!.click()
-    })
-    await flushRender()
+  it('MOBILE-APP-STATE-AUTOSAVES: choosing an app state writes that one leaf at once, with no Save button', async () => {
+    await renderAt('/config/targets?section=mobile-app-state')
 
-    expect(updateSettings).toHaveBeenCalledWith({
-      'use.mobile.appState': 'reset',
-    })
+    await chooseOption(fieldControl(APP_STATE_SEGMENTS), MOBILE_APP_STATE_LABELS.preserve)
+
+    expect(vi.mocked(applyConfigChanges).mock.calls).toEqual([
+      [[{ op: 'set', path: APP_STATE_SEGMENTS, value: 'preserve' }]],
+    ])
+    expect(updateSettings).not.toHaveBeenCalled()
+    expect(section('mobile-app-state')!.textContent).toContain(MOBILE_APP_STATE_LABELS.preserve)
   })
 
   it('keeps browser headless out of the Models tab defaults', async () => {
@@ -1316,13 +1379,15 @@ describe('ConfigPage task tabs shell', () => {
     expect(currentLocation()).toEqual({ pathname: '/config/targets', search: '' })
     expect(loginStates.querySelector('h2')?.textContent).toBe(CONFIG_SECTION_LABELS['login-states'])
     expect(loginStates.textContent).not.toContain('services.authState')
-    expect(loginStates.textContent).toContain('Target')
-    expect(loginStates.textContent).toContain('Name')
-    expect(loginStates.textContent).toContain('Captured')
-    expect(loginStates.textContent).toContain('Kind')
+    const headings = Array.from(loginStates.querySelectorAll('th')).map((cell) => cell.textContent)
+    expect(headings).toEqual([
+      LOGIN_STATE_COLUMN_LABELS.target,
+      LOGIN_STATE_COLUMN_LABELS.name,
+      LOGIN_STATE_COLUMN_LABELS.captured,
+    ])
+    expect(loginStates.textContent).not.toContain('Kind')
     expect(loginStates.textContent).toContain('staging-web')
     expect(loginStates.textContent).toContain('admin')
-    expect(loginStates.textContent).toContain('web')
     expect(loginStates.querySelector('time[datetime="2026-05-17T10:00:00.000Z"]')).not.toBeNull()
     expect(fetchAuthStates).toHaveBeenCalledTimes(1)
 
@@ -1355,8 +1420,10 @@ describe('ConfigPage task tabs shell', () => {
 
     await renderAt('/config/targets?section=login-states')
 
-    expect(section('login-states')?.textContent).toContain('No auth states saved')
-    expect(section('login-states')?.textContent).toContain('Save auth state from a connected web Live Mode session.')
+    expect(section('login-states')?.textContent).toContain(NO_LOGIN_STATES_TEXT)
+    expect(section('login-states')?.textContent).not.toContain('No auth states saved')
+    expect(section('login-states')?.textContent).not.toContain('Save auth state from a connected web Live Mode session.')
+    expect(section('login-states')?.querySelector('h3')).toBeNull()
   })
 
   it('renders a safe Saved login states load failure message', async () => {
@@ -1364,8 +1431,93 @@ describe('ConfigPage task tabs shell', () => {
 
     const view = await renderAt('/config/targets?section=login-states')
 
-    expect(section('login-states')?.textContent).toContain('Could not load saved auth states.')
+    expect(section('login-states')?.textContent).toContain(LOGIN_STATES_LOAD_FAILED_TEXT)
+    expect(section('login-states')?.textContent).not.toContain('Could not load saved auth states.')
     expect(view.textContent).not.toContain('metadata path leaked')
+  })
+
+  it('LOGIN-STATES-LOADING: until the saved login states read lands its section says so, while the rest of the Targets tab renders', async () => {
+    const read = deferredValue<{ authStates: never[] }>()
+    vi.mocked(fetchAuthStates).mockReturnValueOnce(read.promise)
+
+    await renderAt('/config/targets')
+
+    expect(section('login-states')?.textContent).toContain(LOGIN_STATES_LOADING_TEXT)
+    expect(section('login-states')?.querySelector('table')).toBeNull()
+    expect(section('targets')?.querySelector('[data-target="staging"]')).not.toBeNull()
+    expect(section('devices')?.querySelector('[data-device="iosLocal"]')).not.toBeNull()
+    expect(section('device-farms')?.querySelector('[data-device-farm="openai"]')).not.toBeNull()
+    expect(section('mobile-app-state')?.querySelector('[data-field-path="use.mobile.appState"]')).not.toBeNull()
+
+    await act(async () => {
+      read.resolve({ authStates: [] })
+    })
+    await flushRender()
+    expect(section('login-states')?.textContent).not.toContain(LOGIN_STATES_LOADING_TEXT)
+    expect(section('login-states')?.textContent).toContain(NO_LOGIN_STATES_TEXT)
+  })
+
+  it('LOGIN-STATES-RELOAD: a failed read offers Reload login states, which re-runs only that read and shows the list, while the other sections stay rendered', async () => {
+    vi.mocked(fetchAuthStates)
+      .mockRejectedValueOnce(new Error('offline'))
+      .mockResolvedValueOnce({
+        authStates: [{ version: 1, kind: 'web', target: 'staging-web', name: 'admin', capturedAt: '2026-05-17T10:00:00.000Z' }],
+      })
+
+    await renderAt('/config/targets')
+
+    const loginStates = section('login-states')!
+    expect(loginStates.textContent).toContain(LOGIN_STATES_LOAD_FAILED_TEXT)
+    const reload = sectionButton('login-states', RELOAD_LOGIN_STATES_LABEL)
+    expect(reload).not.toBeNull()
+    expect(section('targets')?.querySelector('[data-target="staging"]')).not.toBeNull()
+    expect(section('devices')?.querySelector('[data-device="iosLocal"]')).not.toBeNull()
+    expect(fetchConfig).toHaveBeenCalledTimes(1)
+
+    await act(async () => {
+      reload!.click()
+    })
+    await flushRender()
+
+    expect(fetchAuthStates).toHaveBeenCalledTimes(2)
+    expect(fetchConfig).toHaveBeenCalledTimes(1)
+    expect(section('login-states')!.textContent).not.toContain(LOGIN_STATES_LOAD_FAILED_TEXT)
+    expect(section('login-states')!.querySelector('[data-login-state="staging-web:admin"]')).not.toBeNull()
+    expect(section('targets')?.querySelector('[data-target="staging"]')).not.toBeNull()
+    expect(section('devices')?.querySelector('[data-device="iosLocal"]')).not.toBeNull()
+    expect(section('mobile-app-state')?.querySelector('[data-field-path="use.mobile.appState"]')).not.toBeNull()
+  })
+
+  it('RECORD-LIST-EMPTY-STATES: empty lists say so beside their Add buttons, the read-only saved login states name the next step, and the shipped sentences are gone', async () => {
+    vi.mocked(fetchConfig).mockResolvedValueOnce(readAnswer({
+      config: { ...sampleConfig, registry: { llms: sampleConfig.registry.llms } },
+    }))
+    vi.mocked(fetchAuthStates).mockResolvedValueOnce({ authStates: [] })
+
+    const view = await renderAt('/config/targets')
+
+    expect(section('targets')!.textContent).toContain(NO_TARGETS_TEXT)
+    expect(sectionButton('targets', ADD_TARGET_LABEL)).not.toBeNull()
+    expect(section('devices')!.textContent).toContain(NO_DEVICES_TEXT)
+    expect(sectionButton('devices', ADD_DEVICE_LABEL)).not.toBeNull()
+    expect(section('device-farms')!.textContent).toContain(NO_DEVICE_FARMS_TEXT)
+    expect(sectionButton('device-farms', ADD_DEVICE_FARM_LABEL)).not.toBeNull()
+    expect(section('login-states')!.textContent).toContain(NO_LOGIN_STATES_TEXT)
+    expect(section('targets')!.querySelector('[data-target]')).toBeNull()
+    expect(section('devices')!.querySelector('[data-device]')).toBeNull()
+
+    const panel = view.querySelector('[data-config-panel="targets"]')!.textContent ?? ''
+    for (const removed of [
+      'No targets configured',
+      'No devices configured',
+      'No providers configured',
+      'No auth states saved',
+      'Save auth state from a connected web Live Mode session.',
+      'runtime defaults',
+      'JSON',
+    ]) {
+      expect(panel, removed).not.toContain(removed)
+    }
   })
 
   it('KNOWLEDGE-DIR-APPLY: the knowledge folder saves only through Apply, as one undoable write, with no Save button', async () => {
@@ -1824,49 +1976,49 @@ describe('ConfigPage task tabs shell', () => {
     }
   })
 
-  it('uses focused modal edit flows for Targets and Devices', async () => {
+  it('NO-DIALOG-TARGETS: targets and devices open their fields in place, with no Edit dialog, Edit button or Save button', async () => {
     await renderAt('/config/targets?section=targets')
 
-    await act(async () => {
-      sectionButton('targets', 'Edit')!.click()
-    })
-    await flushRender()
+    expect(sectionButton('targets', 'Edit')).toBeNull()
+    expect(sectionButton('targets', 'Save Changes')).toBeNull()
+    expect(section('targets')!.querySelector('[data-config-section-shell]')).toBeNull()
+    await openRow(section('targets')!.querySelector('[data-target="staging"]'))
 
-    expect(document.body.textContent).toContain('Edit staging')
-    expect(document.body.textContent).toContain('Apply Target Changes')
+    expect(document.body.querySelector('[role="dialog"]')).toBeNull()
+    expect(fieldControl<HTMLInputElement>(['registry', 'targets', 'staging', 'url'])?.value).toBe('https://example.com')
+    expect(section('targets')!.textContent).toContain(TARGET_FIELD_LABELS.url)
+    expect(document.body.textContent).not.toContain('Apply Target Changes')
 
     cleanupAfterDialog()
 
     await renderAt('/config/targets?section=devices')
 
-    await act(async () => {
-      sectionButton('devices', 'Edit')!.click()
-    })
-    await flushRender()
+    expect(sectionButton('devices', 'Edit')).toBeNull()
+    expect(sectionButton('devices', 'Save Changes')).toBeNull()
+    await openRow(section('devices')!.querySelector('[data-device="iosLocal"]'))
 
-    expect(document.body.textContent).toContain('Edit iosLocal')
-    expect(document.body.textContent).toContain('Apply Device Changes')
+    expect(document.body.querySelector('[role="dialog"]')).toBeNull()
+    expect(section('devices')!.querySelector('[data-field-path="registry.devices.*.platform"]')).not.toBeNull()
+    expect(section('devices')!.textContent).toContain(DEVICE_FIELD_LABELS.transport)
+    expect(document.body.textContent).not.toContain('Apply Device Changes')
   })
 
   it('uses an approved SaaS slug for the target product placeholder', async () => {
     await renderAt('/config/targets')
 
-    await act(async () => {
-      sectionButton('targets', 'Add Target')!.click()
-    })
-    await flushRender()
+    await openRow(section('targets')!.querySelector('[data-target="staging"]'))
 
-    const productInput = document.body.querySelector('#target-product') as HTMLInputElement | null
+    const productInput = fieldControl<HTMLInputElement>(['registry', 'targets', 'staging', 'product'])
     expect(productInput).not.toBeNull()
 
     const firstPlaceholder = productInput!.placeholder
     expect([...APPROVED_SAAS_PLACEHOLDER_SLUGS]).toContain(firstPlaceholder)
 
     await flushRender()
-    expect((document.body.querySelector('#target-product') as HTMLInputElement | null)?.placeholder).toBe(firstPlaceholder)
+    expect(fieldControl<HTMLInputElement>(['registry', 'targets', 'staging', 'product'])?.placeholder).toBe(firstPlaceholder)
   })
 
-  it('saves mobile target app install fields from the target editor', async () => {
+  it('NO-SAVE-BUTTON-TARGETS: a mobile target\'s app file and BrowserStack app autosave by leaf from its row', async () => {
     vi.mocked(fetchConfig).mockResolvedValueOnce(readAnswer({
       config: configWithTargets({
         releaseAndroid: {
@@ -1879,47 +2031,23 @@ describe('ConfigPage task tabs shell', () => {
 
     await renderAt('/config/targets')
 
-    await act(async () => {
-      sectionButton('targets', 'Edit')!.click()
-    })
-    await flushRender()
+    await openRow(section('targets')!.querySelector('[data-target="releaseAndroid"]'))
 
-    const appPathInput = document.body.querySelector('#target-app-path') as HTMLInputElement | null
-    const browserstackInput = document.body.querySelector('#target-browserstack-app') as HTMLInputElement | null
+    const appPathInput = fieldControl<HTMLInputElement>(['registry', 'targets', 'releaseAndroid', 'app', 'path'])
+    const browserstackInput = fieldControl<HTMLInputElement>(['registry', 'targets', 'releaseAndroid', 'app', 'browserstack'])
     expect(appPathInput).not.toBeNull()
     expect(browserstackInput).not.toBeNull()
 
-    await act(async () => {
-      setInputValue(appPathInput!, 'apps/wikipedia-alpha.apk')
-      setInputValue(browserstackInput!, 'bs://uploaded-app')
-    })
-    await flushRender()
+    await typeTextAndBlur(appPathInput!, 'apps/wikipedia-alpha.apk')
+    await typeTextAndBlur(browserstackInput!, 'bs://uploaded-app')
 
-    await act(async () => {
-      dialogButton('Apply Target Changes')!.click()
-    })
-    await flushRender()
-
+    expect(vi.mocked(applyConfigChanges).mock.calls).toEqual([
+      [[{ op: 'set', path: ['registry', 'targets', 'releaseAndroid', 'app', 'path'], value: 'apps/wikipedia-alpha.apk' }]],
+      [[{ op: 'set', path: ['registry', 'targets', 'releaseAndroid', 'app', 'browserstack'], value: 'bs://uploaded-app' }]],
+    ])
     expect(section('targets')?.textContent).toContain('App: apps/wikipedia-alpha.apk / bs://uploaded-app')
-
-    await act(async () => {
-      sectionButton('targets', 'Save Changes')!.click()
-    })
-    await flushRender()
-
-    expect(updateSettings).toHaveBeenCalledWith({
-      'registry.targets': {
-        releaseAndroid: {
-          platform: 'android',
-          appPackage: 'org.wikipedia.alpha',
-          appActivity: 'org.wikipedia.main.MainActivity',
-          app: {
-            path: 'apps/wikipedia-alpha.apk',
-            browserstack: 'bs://uploaded-app',
-          },
-        },
-      },
-    })
+    expect(updateSettings).not.toHaveBeenCalled()
+    expect(document.body.querySelector('[role="dialog"]')).toBeNull()
   })
 
   it('DEVICE-FARMS-SECRET-ROWS-ON-PAGE: device farms list each setting as a masked SecretValue with no dialog or section save', async () => {

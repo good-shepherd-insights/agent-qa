@@ -185,7 +185,7 @@ const SURFACE_MARKERS: Record<string, { title: string; marker: string }> = {
   'knowledge:store': { title: 'Knowledge', marker: 'Knowledge folder' },
   'services:dashboard': { title: 'Dashboard', marker: 'Database file' },
   'services:cache': { title: 'Cache', marker: 'Cache folder' },
-  'services:auth-states': { title: 'Auth States', marker: 'No auth states saved' },
+  'services:auth-states': { title: 'Saved login states', marker: 'No saved login states yet.' },
   'services:logging': { title: 'Logging', marker: 'Log level' },
   'services:recording': { title: 'Recording', marker: 'Record video of each test. Recordings stay on this machine.' },
   'services:accessibility': { title: 'Accessibility', marker: 'Run checks after' },

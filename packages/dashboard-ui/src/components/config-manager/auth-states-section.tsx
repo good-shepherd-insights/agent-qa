@@ -1,25 +1,43 @@
+// SAVED LOGIN STATES (429-22 · UI-SPEC S2, E1 partial, E8 · SC4).
+//
+// The folder autosaves like any field. The list has its own read: until it lands the section says
+// so while the rest of the tab renders, and a failed read offers Reload login states, which re-runs
+// only this read. The list is read-only: target, name and when it was captured.
+
 import { useEffect, useState } from "react"
 
-import {
-  ConfigSectionBody,
-  ConfigSectionHeader,
-  ConfigSectionShell,
-} from "@/components/config-manager/config-section-shell"
-import { ScrollArea } from "@/components/ui/scroll-area"
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table"
+import { ConfigField } from "@/components/config-manager/config-field"
+import { Button } from "@/components/ui/button"
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
+import type { ConfigFieldParse } from "@/hooks/use-config-autosave"
 import { fetchAuthStates, type AuthStateMetadata } from "@/lib/api"
+import {
+  LOGIN_STATES_DIR_PLACEHOLDER,
+  LOGIN_STATES_DIR_REQUIRED_ERROR,
+  LOGIN_STATES_FIELD_LABELS,
+  LOGIN_STATES_LOADING_TEXT,
+  LOGIN_STATES_LOAD_FAILED_TEXT,
+  LOGIN_STATE_COLUMN_LABELS,
+  NO_LOGIN_STATES_TEXT,
+  RELOAD_LOGIN_STATES_LABEL,
+} from "@/lib/config-copy"
+
+interface AuthStatesSectionProps {
+  config: Record<string, unknown>
+  onConfigChange: () => void
+}
+
+type LoginStatesRead =
+  | { kind: "loading" }
+  | { kind: "error" }
+  | { kind: "ready"; states: AuthStateMetadata[] }
 
 const DATE_FORMAT = new Intl.DateTimeFormat(undefined, {
   dateStyle: "medium",
   timeStyle: "short",
 })
+
+const CELL_CLASS = "max-w-[220px] whitespace-normal font-mono text-xs [overflow-wrap:anywhere]"
 
 function formatCapturedAt(value: string) {
   const date = new Date(value)
@@ -29,94 +47,89 @@ function formatCapturedAt(value: string) {
   return DATE_FORMAT.format(date)
 }
 
-export function AuthStatesSection() {
-  const [authStates, setAuthStates] = useState<AuthStateMetadata[]>([])
-  const [loading, setLoading] = useState(true)
-  const [loadFailed, setLoadFailed] = useState(false)
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+}
+
+function configuredDir(config: Record<string, unknown>): string | undefined {
+  const services = config.services
+  const authState = isRecord(services) ? services.authState : undefined
+  const dir = isRecord(authState) ? authState.dir : undefined
+  return typeof dir === "string" ? dir : undefined
+}
+
+export function AuthStatesSection({ config }: AuthStatesSectionProps) {
+  const [read, setRead] = useState<LoginStatesRead>({ kind: "loading" })
+  const [attempt, setAttempt] = useState(0)
+  const dir = configuredDir(config)
 
   useEffect(() => {
     let active = true
-
-    async function loadAuthStates() {
-      setLoading(true)
-      try {
-        const result = await fetchAuthStates()
-        if (!active) return
-        setAuthStates(result.authStates.filter((state) => state.kind === "web"))
-        setLoadFailed(false)
-      } catch {
-        if (!active) return
-        setAuthStates([])
-        setLoadFailed(true)
-      } finally {
-        if (active) {
-          setLoading(false)
-        }
-      }
-    }
-
-    loadAuthStates()
-
+    setRead({ kind: "loading" })
+    fetchAuthStates()
+      .then((result) => {
+        if (active) setRead({ kind: "ready", states: result.authStates.filter((state) => state.kind === "web") })
+      })
+      .catch(() => {
+        if (active) setRead({ kind: "error" })
+      })
     return () => {
       active = false
     }
-  }, [])
+  }, [attempt, dir])
+
+  // The folder is required once the block exists, so emptying a set folder stays a draft.
+  function parseDir(raw: string): ConfigFieldParse {
+    if (raw.trim() !== "") return { valid: true, value: raw.trim() }
+    return dir === undefined ? { valid: true, unset: true } : { valid: false, error: LOGIN_STATES_DIR_REQUIRED_ERROR }
+  }
 
   return (
-    <ConfigSectionShell>
-      <ConfigSectionHeader>
-        <h2 className="text-base font-semibold">Auth States</h2>
-        <p className="mt-1 text-sm text-muted-foreground">
-          Review saved web auth states by target and logical name.
-        </p>
-      </ConfigSectionHeader>
-      <ConfigSectionBody>
-        {loading ? (
-          <p className="text-sm text-muted-foreground">Loading auth states...</p>
-        ) : loadFailed ? (
-          <div role="alert" className="border border-destructive/30 px-4 py-3 text-sm text-destructive">
-            Could not load saved auth states.
+    <div className="space-y-4">
+      <ConfigField
+        field={{ segments: ["services", "authState", "dir"], tab: "targets", pattern: "services.authState.dir" }}
+        label={LOGIN_STATES_FIELD_LABELS.dir}
+        kind="text"
+        placeholder={LOGIN_STATES_DIR_PLACEHOLDER}
+        parse={parseDir}
+      />
+      <div data-login-states={read.kind}>
+        {read.kind === "loading" ? (
+          <p className="text-sm text-muted-foreground">{LOGIN_STATES_LOADING_TEXT}</p>
+        ) : read.kind === "error" ? (
+          <div className="space-y-2">
+            <p className="text-sm text-destructive">{LOGIN_STATES_LOAD_FAILED_TEXT}</p>
+            <Button type="button" variant="outline" size="sm" onClick={() => setAttempt((count) => count + 1)}>
+              {RELOAD_LOGIN_STATES_LABEL}
+            </Button>
           </div>
-        ) : authStates.length === 0 ? (
-          <div className="space-y-2 py-8 text-center">
-            <h3 className="text-sm font-semibold">No auth states saved</h3>
-            <p className="text-sm text-muted-foreground">
-              Save auth state from a connected web Live Mode session.
-            </p>
-          </div>
+        ) : read.states.length === 0 ? (
+          <p className="text-sm text-muted-foreground">{NO_LOGIN_STATES_TEXT}</p>
         ) : (
-          <ScrollArea className="w-full">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Target</TableHead>
-                  <TableHead>Name</TableHead>
-                  <TableHead>Captured</TableHead>
-                  <TableHead>Kind</TableHead>
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>{LOGIN_STATE_COLUMN_LABELS.target}</TableHead>
+                <TableHead>{LOGIN_STATE_COLUMN_LABELS.name}</TableHead>
+                <TableHead>{LOGIN_STATE_COLUMN_LABELS.captured}</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {read.states.map((state) => (
+                <TableRow key={`${state.target}:${state.name}`} data-login-state={`${state.target}:${state.name}`}>
+                  <TableCell className={CELL_CLASS}>{state.target}</TableCell>
+                  <TableCell className={CELL_CLASS}>{state.name}</TableCell>
+                  <TableCell className={`${CELL_CLASS} text-muted-foreground`}>
+                    <time dateTime={state.capturedAt} title={state.capturedAt}>
+                      {formatCapturedAt(state.capturedAt)}
+                    </time>
+                  </TableCell>
                 </TableRow>
-              </TableHeader>
-              <TableBody>
-                {authStates.map((state) => (
-                  <TableRow key={`${state.target}:${state.name}`}>
-                    <TableCell className="max-w-[220px] whitespace-normal font-mono text-xs [overflow-wrap:anywhere]">
-                      {state.target}
-                    </TableCell>
-                    <TableCell className="max-w-[220px] whitespace-normal font-mono text-xs [overflow-wrap:anywhere]">
-                      {state.name}
-                    </TableCell>
-                    <TableCell className="max-w-[220px] whitespace-normal font-mono text-xs text-muted-foreground">
-                      <time dateTime={state.capturedAt} title={state.capturedAt}>
-                        {formatCapturedAt(state.capturedAt)}
-                      </time>
-                    </TableCell>
-                    <TableCell className="font-mono text-xs">{state.kind}</TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          </ScrollArea>
+              ))}
+            </TableBody>
+          </Table>
         )}
-      </ConfigSectionBody>
-    </ConfigSectionShell>
+      </div>
+    </div>
   )
 }
