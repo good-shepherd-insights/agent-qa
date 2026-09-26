@@ -25,7 +25,7 @@ import type {
   RunKnowledgeStep,
   TraceLine,
 } from '@vostride/agent-qa-schema'
-import { RETRIEVAL_RUNGS, RETRIEVAL_RUNG_REASONS } from '@vostride/agent-qa-schema'
+import { RECORDED_RETRIEVAL_RUNG_REASONS, RETRIEVAL_RUNGS } from '@vostride/agent-qa-schema'
 
 import type { KnowledgeRead } from '@/lib/api'
 import {
@@ -1964,7 +1964,7 @@ describe('the strip sentence exists only for warning classes, composed from clos
 
   it('ends every warning sentence with the doctor pointer; no rung sentence says Retrieval degraded or carries a backtick', () => {
     expect(DOCTOR_HINT_TEXT).toBe('Run `agent-qa doctor`.')
-    for (const reason of RETRIEVAL_RUNG_REASONS) {
+    for (const reason of RECORDED_RETRIEVAL_RUNG_REASONS) {
       for (const rung of ['bundle-scan', 'static-floor', 'lexical-only'] as const) {
         const text = rungBannerText({ rung, reason })
         if (text === undefined) continue
@@ -1978,9 +1978,9 @@ describe('the strip sentence exists only for warning classes, composed from clos
 })
 
 describe('the two label tables are TOTAL over the schema vocabularies', () => {
-  it('RUNG_CAUSE_LABELS has exactly the eight recorded reasons, none blank', () => {
-    expect(Object.keys(RUNG_CAUSE_LABELS).sort()).toEqual([...RETRIEVAL_RUNG_REASONS].sort())
-    for (const reason of RETRIEVAL_RUNG_REASONS) {
+  it('RUNG_CAUSE_LABELS has exactly the recorded reasons, none blank', () => {
+    expect(Object.keys(RUNG_CAUSE_LABELS).sort()).toEqual([...RECORDED_RETRIEVAL_RUNG_REASONS].sort())
+    for (const reason of RECORDED_RETRIEVAL_RUNG_REASONS) {
       expect(RUNG_CAUSE_LABELS[reason].length).toBeGreaterThan(0)
     }
   })

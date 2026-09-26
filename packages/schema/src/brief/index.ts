@@ -20,11 +20,13 @@ export type {
 // they are persisted next to.
 export {
   RETRIEVAL_RUNGS,
+  RECORDED_RETRIEVAL_RUNG_REASONS,
   RETRIEVAL_RUNG_REASONS,
   RecordedRetrievalRungSchema,
 } from './retrieval-rung'
 export type {
   RecordedRetrievalRung,
+  RecordedRetrievalRungReason,
   RetrievalRung,
   RetrievalRungReason,
 } from './retrieval-rung'

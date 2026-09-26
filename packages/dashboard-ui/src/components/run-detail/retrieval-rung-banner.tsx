@@ -31,7 +31,7 @@
 
 import { retrievalClassFor, rungBannerText } from "@/lib/knowledge-view"
 import { cn } from "@/lib/utils"
-import type { RetrievalRung, RetrievalRungReason } from "@vostride/agent-qa-schema"
+import type { RetrievalRung, RecordedRetrievalRungReason } from "@vostride/agent-qa-schema"
 
 import { RETRIEVAL_CLASS_GLYPHS, doctorSentenceNodes } from "./retrieval-statement"
 
@@ -39,7 +39,7 @@ export interface RetrievalRungBannerProps {
   /** The recorded rung word. Absent means "not known yet" — see the header note. */
   rung?: RetrievalRung
   /** The recorded cause. Absent on `memidex`, and (historically) reachable absent on a lower rung. */
-  reason?: RetrievalRungReason
+  reason?: RecordedRetrievalRungReason
   /**
    * Which header is asking.
    *

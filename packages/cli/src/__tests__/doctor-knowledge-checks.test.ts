@@ -6,7 +6,7 @@ import { join, relative, resolve } from 'node:path'
 import {
   DEFAULT_EMBEDDING_PROFILE,
   asEvidenceToken,
-  RETRIEVAL_RUNG_REASONS,
+  RECORDED_RETRIEVAL_RUNG_REASONS,
   type EmbeddingProfile,
 } from '@vostride/agent-qa-schema'
 
@@ -592,10 +592,10 @@ describe('createKnowledgeChecks', () => {
   })
 
   it('maps every reason word in the closed vocabulary to a non-empty label', () => {
-    for (const reason of RETRIEVAL_RUNG_REASONS) {
+    for (const reason of RECORDED_RETRIEVAL_RUNG_REASONS) {
       expect(RUNG_CAUSE_LABELS[reason]).toBeTruthy()
     }
-    expect(Object.keys(RUNG_CAUSE_LABELS).sort()).toEqual([...RETRIEVAL_RUNG_REASONS].sort())
+    expect(Object.keys(RUNG_CAUSE_LABELS).sort()).toEqual([...RECORDED_RETRIEVAL_RUNG_REASONS].sort())
   })
 
   it('is idempotent against a real knowledge root: same answers, byte-identical listing, nothing written', async () => {

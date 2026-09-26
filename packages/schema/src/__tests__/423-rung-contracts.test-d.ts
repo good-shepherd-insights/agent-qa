@@ -7,7 +7,7 @@ import type * as Brief from '../brief/index'
 
 // Independent literal unions: neither expected vocabulary is derived from production.
 // Plan 423-23 owns the mutation script; C423-RUNG-REASONS-EXACT is its required RED cell.
-type HistoricalReason =
+type SharedReason =
   | 'native-runtime-unavailable'
   | 'profile-unresolved'
   | 'model-not-downloaded'
@@ -15,7 +15,8 @@ type HistoricalReason =
   | 'index-unavailable'
   | 'floor-disabled'
   | 'profile-static-configured'
-type CurrentReason = HistoricalReason | 'index-not-built' | 'index-locked' | 'index-corrupt'
+type HistoricalReason = SharedReason | 'low-ram-deferral'
+type CurrentReason = SharedReason | 'index-not-built' | 'index-locked' | 'index-corrupt'
 type Rung = 'memidex' | 'bundle-scan' | 'static-floor' | 'lexical-only'
 
 type V1 = Extract<RecordedRetrievalRung, { schemaVersion: 1 }>
@@ -34,7 +35,7 @@ describe('C423-RUNG-REASONS-EXACT', () => {
     expectTypeOf<Brief.RetrievalRungReason>().toEqualTypeOf<RetrievalRungReason>()
   })
 
-  test('pins the historical v1 arm to exactly the seven pre-423 reasons', () => {
+  test('pins the historical v1 arm to exactly the eight pre-423 reasons', () => {
     expectTypeOf<NonNullable<V1['reason']>>().toEqualTypeOf<HistoricalReason>()
     expectTypeOf<Extract<NonNullable<V1['reason']>, 'index-not-built'>>().toEqualTypeOf<never>()
     expectTypeOf<Extract<NonNullable<V1['reason']>, 'index-locked'>>().toEqualTypeOf<never>()
@@ -43,6 +44,7 @@ describe('C423-RUNG-REASONS-EXACT', () => {
 
   test('pins the current v2 arm to exactly the ten reasons', () => {
     expectTypeOf<NonNullable<V2['reason']>>().toEqualTypeOf<CurrentReason>()
+    expectTypeOf<Extract<NonNullable<V2['reason']>, 'low-ram-deferral'>>().toEqualTypeOf<never>()
     expectTypeOf<Extract<NonNullable<V2['reason']>, 'index-missing'>>().toEqualTypeOf<never>()
   })
 

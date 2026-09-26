@@ -6,7 +6,7 @@ import type {
   BundleStatus as SchemaBundleStatus,
   CurationBucket,
   InspectRecordView,
-  RetrievalRungReason,
+  RecordedRetrievalRungReason,
   RunKnowledgePlanSource,
   RunKnowledgeRecordContent,
 } from '@vostride/agent-qa-schema'
@@ -138,6 +138,6 @@ test('C427-RETRIEVAL-CLASSES-EXACT', () => {
 })
 
 test('C427-RETRIEVAL-CLASS-BY-REASON-TOTAL', () => {
-  expectTypeOf<keyof typeof RETRIEVAL_CLASS_BY_REASON>().toEqualTypeOf<RetrievalRungReason>()
-  expectTypeOf<(typeof RETRIEVAL_CLASS_BY_REASON)[RetrievalRungReason]>().toEqualTypeOf<RetrievalClass>()
+  expectTypeOf<keyof typeof RETRIEVAL_CLASS_BY_REASON>().toEqualTypeOf<RecordedRetrievalRungReason>()
+  expectTypeOf<(typeof RETRIEVAL_CLASS_BY_REASON)[RecordedRetrievalRungReason]>().toEqualTypeOf<RetrievalClass>()
 })

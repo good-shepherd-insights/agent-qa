@@ -909,7 +909,7 @@
       "classifies": true,
       "id": "runs.knowledge",
       "inputSchemaDigest": "55df3bfd3c544e0140548637d1539243fb285899b52998dc36a6dbe1989aee6d",
-      "outputSchemaDigest": "47cb4d78207d9e988e689e9890a230f6cc123c67e888dcd5d03901e1f07c7913",
+      "outputSchemaDigest": "b72f57104d0c59f19488691e9beb4305524c63a5c2d054ab16075aef428492ef",
       "partition": {
         "kind": "unprojected",
         "reason": "not-mid-flight-read"

@@ -31,7 +31,7 @@ import {
   DEFAULT_EMBEDDING_PROFILE,
   type EmbeddingProfile,
   type RecordedRetrievalRung,
-  type RetrievalRungReason,
+  type RecordedRetrievalRungReason,
   type PromotionJudgePosture,
 } from '@vostride/agent-qa-schema'
 import {
@@ -59,7 +59,7 @@ const { foldRetrievalRung, indexDbPath } = LOCAL_KNOWLEDGE_PROBES
 
 /**
  * The closed reason vocabulary rendered for a person, as a TOTAL map rather than a switch with a
- * default: a new `RetrievalRungReason` becomes a compile error here instead of a blank cause
+ * default: a new `RecordedRetrievalRungReason` becomes a compile error here instead of a blank cause
  * printed after an em dash. 407-11 pins this table equal to the dashboard's copy of it — the two
  * surfaces share no UI module, so the labels are defined twice by necessity and asserted equal.
  *
@@ -67,9 +67,10 @@ const { foldRetrievalRung, indexDbPath } = LOCAL_KNOWLEDGE_PROBES
  * (not built, locked, corrupt). `index-unavailable` keeps a label solely because the table is
  * shared with recorded runs, where it means a pre-423 scan whose cause was never recorded.
  */
-export const RUNG_CAUSE_LABELS: Record<RetrievalRungReason, string> = {
+export const RUNG_CAUSE_LABELS: Record<RecordedRetrievalRungReason, string> = {
   'native-runtime-unavailable': 'native ONNX runtime unavailable',
   'profile-unresolved': 'embedder profile unresolved (deferred)',
+  'low-ram-deferral': 'embedding deferred on low memory',
   'model-not-downloaded': 'embedding model not downloaded',
   'embedder-load-failed': 'embedder failed to load',
   'index-unavailable': 'knowledge index unavailable (cause not recorded), scanning bundles',

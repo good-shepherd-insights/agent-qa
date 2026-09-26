@@ -43,7 +43,7 @@ import type {
   RecordChange,
   RecordedRetrievalRung,
   RetrievalRung,
-  RetrievalRungReason,
+  RecordedRetrievalRungReason,
   RetrievalTraceLeg,
   RunKnowledgeCanaryAttribution,
   RunKnowledgeContentAbsence,
@@ -1010,7 +1010,7 @@ export function recordIdCopyFailedText(id: string): string {
  * The retrieval level one step recorded, stated only below `memidex` (427 D-19). A step whose rung
  * differs from the run's therefore says so on its own ledger row.
  */
-export function ledgerRungLine(rung: Exclude<RetrievalRung, 'memidex'>, reason?: RetrievalRungReason): string {
+export function ledgerRungLine(rung: Exclude<RetrievalRung, 'memidex'>, reason?: RecordedRetrievalRungReason): string {
   const cause = reason === undefined ? '' : ` — ${RUNG_CAUSE_LABELS[reason]}`
   return `Retrieval level: ${RUNG_LABELS[rung]}${cause}`
 }
@@ -1529,7 +1529,7 @@ export interface PlanSourceView {
 /** A step's recorded retrieval level, present only when it was below `memidex` (427 D-19). */
 export interface LedgerRungView {
   readonly rung: Exclude<RetrievalRung, 'memidex'>
-  readonly reason?: RetrievalRungReason
+  readonly reason?: RecordedRetrievalRungReason
 }
 
 /** Everything an EXPANDED step row shows. Empty channels are empty arrays, never absent. */
@@ -1880,7 +1880,7 @@ export interface ProposalsView {
 /** The rung that served THIS run, if the evidence recorded one (D-13). */
 export interface RungView {
   readonly rung: RetrievalRung
-  readonly reason?: RetrievalRungReason
+  readonly reason?: RecordedRetrievalRungReason
 }
 
 /**
@@ -2527,16 +2527,17 @@ export const RUNG_LABELS: Record<Exclude<RetrievalRung, 'memidex'>, string> = {
  * `static` PREFERRED profile are three distinct operator situations, and 407-08 chose the wording
  * for them first. This table follows that one rather than the spec where the two differ.
  *
- * A new `RetrievalRungReason` becomes a compile error here instead of a blank cause printed
+ * A new `RecordedRetrievalRungReason` becomes a compile error here instead of a blank cause printed
  * after an em dash.
  *
  * 423 D-22: a banner states what a run RECORDED. The three index causes are what post-423 runs
  * record; `index-unavailable` is only ever read off a pre-423 run and says so ("cause not
  * recorded") rather than guessing which of the three it was. Current health is `agent-qa doctor`.
  */
-export const RUNG_CAUSE_LABELS: Record<RetrievalRungReason, string> = {
+export const RUNG_CAUSE_LABELS: Record<RecordedRetrievalRungReason, string> = {
   'native-runtime-unavailable': 'native ONNX runtime unavailable',
   'profile-unresolved': 'embedder profile unresolved (deferred)',
+  'low-ram-deferral': 'embedding deferred on low memory',
   'model-not-downloaded': 'embedding model not downloaded',
   'embedder-load-failed': 'embedder failed to load',
   'index-unavailable': 'knowledge index unavailable (cause not recorded), scanning bundles',
@@ -2587,10 +2588,11 @@ export const RETRIEVAL_CLASS_BY_REASON = {
   'native-runtime-unavailable': 'semantic-search-unavailable',
   'model-not-downloaded': 'semantic-search-unavailable',
   'embedder-load-failed': 'semantic-search-unavailable',
+  'low-ram-deferral': 'semantic-search-unavailable',
   'profile-unresolved': 'semantic-search-unavailable',
   'profile-static-configured': 'by-configuration',
   'floor-disabled': 'by-configuration',
-} as const satisfies Record<RetrievalRungReason, RetrievalClass>
+} as const satisfies Record<RecordedRetrievalRungReason, RetrievalClass>
 
 // prettier-ignore
 export const RETRIEVAL_CLASS_TONES = {
@@ -2610,11 +2612,11 @@ export function retrievalClassFor(rung: RungView): RetrievalClass | undefined {
   return rung.rung === 'memidex' ? undefined : classOfReason(rung.reason)
 }
 
-function classOfReason(reason: RetrievalRungReason | undefined): RetrievalClass {
+function classOfReason(reason: RecordedRetrievalRungReason | undefined): RetrievalClass {
   return reason === undefined ? 'cause-not-recorded' : RETRIEVAL_CLASS_BY_REASON[reason]
 }
 
-export function retrievalStatement(rung: Exclude<RetrievalRung, 'memidex'>, reason?: RetrievalRungReason): string {
+export function retrievalStatement(rung: Exclude<RetrievalRung, 'memidex'>, reason?: RecordedRetrievalRungReason): string {
   const retrievalClass = classOfReason(reason)
   switch (retrievalClass) {
     case 'fresh-index':
@@ -2638,7 +2640,7 @@ export function retrievalStatement(rung: Exclude<RetrievalRung, 'memidex'>, reas
   }
 }
 
-function causeLabel(reason: RetrievalRungReason | undefined): string {
+function causeLabel(reason: RecordedRetrievalRungReason | undefined): string {
   return reason === undefined ? '' : RUNG_CAUSE_LABELS[reason]
 }
 
@@ -2647,7 +2649,7 @@ export interface RetrievalStatementView {
   readonly retrievalClass: RetrievalClass
   readonly tone: RetrievalTone
   readonly rung: Exclude<RetrievalRung, 'memidex'>
-  readonly reason?: RetrievalRungReason
+  readonly reason?: RecordedRetrievalRungReason
   readonly sentence: string
   readonly pointer?: string
 }

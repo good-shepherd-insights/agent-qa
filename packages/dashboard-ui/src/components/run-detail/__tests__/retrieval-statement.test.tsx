@@ -7,7 +7,7 @@ import { act, type ReactElement } from "react"
 import { createRoot, type Root } from "react-dom/client"
 import { afterEach, describe, expect, it } from "vitest"
 
-import { RunKnowledgeProjectionSchema, type RetrievalRung, type RetrievalRungReason } from "@vostride/agent-qa-schema"
+import { RunKnowledgeProjectionSchema, type RetrievalRung, type RecordedRetrievalRungReason } from "@vostride/agent-qa-schema"
 
 import { KnowledgeUsed } from "@/components/run-detail/knowledge-used"
 import { TabKnowledge } from "@/components/run-detail/tab-knowledge"
@@ -43,7 +43,7 @@ type LowerRung = Exclude<RetrievalRung, "memidex">
 
 interface Recorded {
   readonly rung: RetrievalRung
-  readonly reason?: RetrievalRungReason
+  readonly reason?: RecordedRetrievalRungReason
 }
 
 function servedStep() {
@@ -70,7 +70,7 @@ function view(recorded: Recorded | undefined, options: { withRows?: boolean; kno
     steps: options.withRows === true ? [servedStep()] : [],
     curation: { status: "done" },
     learned: { changes: [], canaryAttributions: [] },
-    ...(recorded === undefined ? {} : { retrievalRung: { schemaVersion: 2, ...recorded } }),
+    ...(recorded === undefined ? {} : { retrievalRung: { schemaVersion: recorded.reason === "low-ram-deferral" ? 1 : 2, ...recorded } }),
   })
   return projectKnowledgeView({ kind: "read", projection })
 }
@@ -87,7 +87,7 @@ function glyphClass(el: Element | null | undefined): string {
 
 const statement = (host: HTMLElement) => host.querySelector<HTMLElement>("[data-retrieval-statement]")
 
-const INFO: ReadonlyArray<readonly [LowerRung, RetrievalRungReason | undefined, string, string]> = [
+const INFO: ReadonlyArray<readonly [LowerRung, RecordedRetrievalRungReason | undefined, string, string]> = [
   ["bundle-scan", "index-not-built", "fresh-index", "lucide-package-open"],
   ["bundle-scan", "index-unavailable", "cause-not-recorded", "lucide-circle-question-mark"],
   ["lexical-only", undefined, "cause-not-recorded", "lucide-circle-question-mark"],
@@ -95,14 +95,14 @@ const INFO: ReadonlyArray<readonly [LowerRung, RetrievalRungReason | undefined, 
   ["lexical-only", "floor-disabled", "by-configuration", "lucide-sliders-horizontal"],
 ]
 
-const WARNING: ReadonlyArray<readonly [LowerRung, RetrievalRungReason, string, string]> = [
+const WARNING: ReadonlyArray<readonly [LowerRung, RecordedRetrievalRungReason, string, string]> = [
   ["bundle-scan", "index-locked", "index-problem", "lucide-triangle-alert"],
   ["bundle-scan", "index-corrupt", "index-problem", "lucide-triangle-alert"],
   ["static-floor", "native-runtime-unavailable", "semantic-search-unavailable", "lucide-search-x"],
-  ["lexical-only", "model-not-downloaded", "semantic-search-unavailable", "lucide-search-x"],
+  ["lexical-only", "low-ram-deferral", "semantic-search-unavailable", "lucide-search-x"],
 ]
 
-function recorded(rung: LowerRung, reason: RetrievalRungReason | undefined): Recorded {
+function recorded(rung: LowerRung, reason: RecordedRetrievalRungReason | undefined): Recorded {
   return { rung, ...(reason === undefined ? {} : { reason }) }
 }
 

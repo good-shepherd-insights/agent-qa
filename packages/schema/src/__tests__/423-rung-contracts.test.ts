@@ -15,7 +15,7 @@ import type { StepEvidence } from '../index'
 // Independent vocabularies, spelled by hand so neither list is derived from production.
 // Plan 423-23 owns the mutation script; C423-RUNG-REASONS-EXACT and LEGACY-HISTORICAL are its
 // required named RED cells.
-const HISTORICAL_REASONS = [
+const SHARED_REASONS = [
   'native-runtime-unavailable',
   'profile-unresolved',
   'model-not-downloaded',
@@ -24,8 +24,11 @@ const HISTORICAL_REASONS = [
   'floor-disabled',
   'profile-static-configured',
 ] as const
+const RETIRED_REASONS = ['low-ram-deferral'] as const
+const HISTORICAL_REASONS = [...SHARED_REASONS, ...RETIRED_REASONS] as const
 const NEW_INDEX_REASONS = ['index-not-built', 'index-locked', 'index-corrupt'] as const
-const CURRENT_REASONS = [...HISTORICAL_REASONS, ...NEW_INDEX_REASONS] as const
+const CURRENT_REASONS = [...SHARED_REASONS, ...NEW_INDEX_REASONS] as const
+const EVERY_REASON = [...SHARED_REASONS, ...RETIRED_REASONS, ...NEW_INDEX_REASONS] as const
 
 const identity = (value: string) => value
 
@@ -95,8 +98,8 @@ describe('C423-RUNG-REASONS-EXACT', () => {
     expect(RETRIEVAL_RUNGS).toEqual(['memidex', 'bundle-scan', 'static-floor', 'lexical-only'])
   })
 
-  test('the historical v1 arm admits exactly the seven pre-423 reasons', () => {
-    const admitted = CURRENT_REASONS.filter((reason) => RecordedRetrievalRungSchema.safeParse({
+  test('the historical v1 arm admits exactly the eight pre-423 reasons', () => {
+    const admitted = EVERY_REASON.filter((reason) => RecordedRetrievalRungSchema.safeParse({
       schemaVersion: 1,
       rung: 'bundle-scan',
       reason,
@@ -105,7 +108,7 @@ describe('C423-RUNG-REASONS-EXACT', () => {
   })
 
   test('the current v2 arm admits exactly the ten reasons and no invented word', () => {
-    const admitted = CURRENT_REASONS.filter((reason) => RecordedRetrievalRungSchema.safeParse({
+    const admitted = EVERY_REASON.filter((reason) => RecordedRetrievalRungSchema.safeParse({
       schemaVersion: 2,
       rung: 'bundle-scan',
       reason,
