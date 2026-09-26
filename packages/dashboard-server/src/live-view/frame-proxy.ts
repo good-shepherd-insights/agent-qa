@@ -66,6 +66,9 @@ export function createFrameProxy(deps: FrameProxyDeps): (ws: WebSocket, runId: s
     let subscription: LiveFrameSubscription | undefined
     /** The subject kind the greet resolved. A renew is validated against this kind only. */
     let subjectKind: LiveViewSubjectKind | undefined
+    /** The handle the greet opened, and the expiry the deadline is armed for (428 WR-07). */
+    let greetedHandle: number | undefined
+    let deadlineAt: number | undefined
     let deadline: ReturnType<typeof setTimeout> | undefined
     let ping: ReturnType<typeof setInterval> | undefined
     let greeted = false
@@ -88,6 +91,7 @@ export function createFrameProxy(deps: FrameProxyDeps): (ws: WebSocket, runId: s
     /** Arm (or re-arm) the expiry deadline. An unrenewed socket is refused BY NAME, not dropped. */
     const armDeadline = (expiresAt: number): void => {
       if (deadline !== undefined) clearTimeout(deadline)
+      deadlineAt = expiresAt
       const remaining = Math.max(0, expiresAt - now())
       deadline = setTimeout(() => { refuse('expired') }, remaining)
       deadline.unref?.()
@@ -173,6 +177,7 @@ export function createFrameProxy(deps: FrameProxyDeps): (ws: WebSocket, runId: s
       expiresAt: number,
       end: { ended: Promise<unknown>; reason: 'runFinished' | 'sessionEnded' },
     ): void => {
+      greetedHandle = handle
       const stream = source.streamCapabilityOf(handle)
       // SUBSCRIBE FIRST, THEN READY (428 D-14, #274). `ready` tells the page a first frame is
       // coming, so it may only be said once a subscription exists. A declared stream whose
@@ -288,8 +293,16 @@ export function createFrameProxy(deps: FrameProxyDeps): (ws: WebSocket, runId: s
           refuse(verdict.reason)
           return
         }
-        armDeadline(verdict.claims.exp)
-        send(ws, { type: 'renewed', expiresAt: verdict.claims.exp })
+        // 428 WR-07: a token is view-scoped to one handle, so a renew must name the handle this
+        // socket greeted with; and an older token, replayed or reordered, never shortens the
+        // deadline a newer one set.
+        const renewed = verdict.claims.subject
+        if (renewed.kind === 'run' && renewed.handle !== greetedHandle) {
+          refuse('scope_mismatch')
+          return
+        }
+        if (deadlineAt === undefined || verdict.claims.exp > deadlineAt) armDeadline(verdict.claims.exp)
+        send(ws, { type: 'renewed', expiresAt: deadlineAt ?? verdict.claims.exp })
         return
       }
       refuse('malformed')
