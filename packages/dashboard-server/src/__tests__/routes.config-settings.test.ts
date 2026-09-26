@@ -75,7 +75,7 @@ vi.mock('@vostride/agent-qa-core', async () => {
   }
   const ModelConfigSchema = modelConfigBaseSchema.superRefine(validateModelConfig)
   const NamedLLMConfigSchema = modelConfigBaseSchema.extend({
-    name: z.string().regex(/^[a-z0-9][a-z0-9-]*$/),
+    name: actual.NameSlugSchema,
     contextWindow: z.union([z.string(), z.number()]).optional(),
   }).strict().superRefine(validateModelConfig)
   const WorkspaceSchema = z.object({

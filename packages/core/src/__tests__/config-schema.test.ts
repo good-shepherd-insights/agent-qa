@@ -3,6 +3,7 @@ import { AgentQaConfigSchema } from '../schema/config-schema.js'
 import {
   ModelConfigSchema,
   NamedLLMConfigSchema,
+  NameSlugSchema,
   TimeoutConfigSchema,
   PlannerConfigSchema,
   BrowserConfigSchema,
@@ -1031,6 +1032,36 @@ describe('NamedLLMConfigSchema — name validation', () => {
       model: 'claude-sonnet-4-20250514',
     })
     expect(result.success).toBe(false)
+  })
+
+  it('DOTTED-NAMES-ACCEPTED: dotted names parse, bad spellings are refused (D-13)', () => {
+    const parse = (name: string) => NamedLLMConfigSchema.safeParse({
+      name,
+      provider: 'anthropic-subscription',
+      model: 'claude-sonnet-4-20250514',
+    })
+    for (const name of ['gpt-5.6', 'claude-sonnet-4.5', 'local', 'gpt-5-6', 'claude-main']) {
+      expect(parse(name).success, name).toBe(true)
+      expect(NameSlugSchema.safeParse(name).success, name).toBe(true)
+    }
+    for (const name of ['-gpt', '.gpt', 'GPT-5', 'gpt 5']) {
+      expect(parse(name).success, name).toBe(false)
+      const direct = NameSlugSchema.safeParse(name)
+      expect(direct.success, name).toBe(false)
+      if (!direct.success) {
+        expect(direct.error.issues[0]!.message).toBe(
+          'Name must be lowercase letters, digits, hyphens and dots, starting with a letter or digit',
+        )
+      }
+    }
+
+    const config = AgentQaConfigSchema.safeParse(withWorkspace({
+      registry: {
+        llms: [{ name: 'gpt-5.6', provider: 'openai-compatible', model: 'gpt-5.6', baseURL: 'https://remote.example/api/v1' }],
+      },
+      use: { llm: 'gpt-5.6' },
+    }))
+    expect(config.success).toBe(true)
   })
 })
 

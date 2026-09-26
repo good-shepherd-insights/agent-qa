@@ -128,8 +128,8 @@ const ModelConfigBaseSchema = z.object({
 
 export const ModelConfigSchema = ModelConfigBaseSchema.superRefine(validateModelConfig)
 
-const NameSlugSchema = z.string()
-  .regex(/^[a-z0-9][a-z0-9-]*$/, 'Name must be lowercase alphanumeric + hyphens, starting with alphanumeric')
+export const NameSlugSchema = z.string()
+  .regex(/^[a-z0-9][a-z0-9.-]*$/, 'Name must be lowercase letters, digits, hyphens and dots, starting with a letter or digit')
 
 export const NamedLLMConfigSchema = ModelConfigBaseSchema.extend({
   name: NameSlugSchema,
