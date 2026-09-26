@@ -9,6 +9,7 @@ import type { JobQueue } from '../queue/job-queue.js'
 import { extractTestFileMetadata, type SupportedPlatform, type TestFileManager } from '../tests/test-file-manager.js'
 import type { SuiteFileManager } from '../tests/suite-file-manager.js'
 import { carriesMaskPlaceholder, MASK_WRITTEN_BACK, type ConfigManager } from '../config/index.js'
+import { createUndoStore, UNDO_RETENTION_MS } from '../config/undo-store.js'
 import { HookRegistryManager, isHookRegistryMutationError } from '../hooks/hook-registry-manager.js'
 import { readJsonBody } from './body-parser.js'
 import { refuseCrossSiteRequest } from './cross-site.js'
@@ -64,6 +65,7 @@ import { registerRunMarkRoute } from '../run-service/run-mark-routes.js'
 import {
   registerConfigRevealRoute,
   registerConfigRevisionRoute,
+  registerConfigUndoRoute,
   registerConfigWriteRoute,
 } from './config-routes.js'
 import { createConnectInFlight, registerLlmConnectRoute } from './llm-connect-route.js'
@@ -1861,6 +1863,7 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps): (req: In
   const pluginOAuthSessions = new Map<string, PluginOAuthSession>()
   const withCredentialLock = createCredentialLock()
   const connectsInFlight = createConnectInFlight()
+  const undoStore = createUndoStore({ retentionMs: UNDO_RETENTION_MS })
 
   return (req: IncomingMessage, res: ServerResponse) => {
     // 400-16 (gap 7): the SAME guarded parse `server.ts`'s listener uses, not a second copy. In the
@@ -1901,7 +1904,13 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps): (req: In
         jsonNoCors(res, { error: 'config_unavailable' }, 503)
         return
       }
-      registerConfigWriteRoute(req, res, { configManager })
+      registerConfigWriteRoute(req, res, { configManager, undoStore })
+      return
+    }
+
+    // 429-11 D-24: the Undo door answers every method itself, so no preflight grant reaches it.
+    if (path === '/api/config/undo') {
+      registerConfigUndoRoute(req, res, { configManager, undoStore })
       return
     }
 

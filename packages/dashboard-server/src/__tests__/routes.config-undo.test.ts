@@ -229,6 +229,7 @@ describe('undoable config writes (429-11 Task 1)', () => {
     expect(parsed.registry.llms[1]?.providerHeaders).toEqual({ 'x-org-route': HEADER_SENTINEL })
     expect(text).toContain(MODEL_COMMENT)
     expect(text).toContain(INLINE_COMMENT)
+    expect(text).toBe(modelsConfig())
   })
 
   it('UNDO-JUDGE-DELETE-RESTORES-BOTH: one Undo restores the model and its eval judge list', async () => {
@@ -254,6 +255,7 @@ describe('undoable config writes (429-11 Task 1)', () => {
     expect(await llmNames(configPath)).toEqual(['a', 'gpt', 'b'])
     const parsed = parseYaml(await readFile(configPath, 'utf-8')) as { eval: Record<string, unknown> }
     expect(parsed.eval).toEqual({ judges: ['gpt', 'b'] })
+    expect(await readFile(configPath, 'utf-8')).toBe(modelsConfig(['eval:', '  judges:', '    - gpt', '    - b']))
   })
 
   it('UNDO-DATA-PATH: Undo of a data-path change restores the previous value', async () => {

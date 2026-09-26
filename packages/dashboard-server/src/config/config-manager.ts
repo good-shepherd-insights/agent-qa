@@ -1,10 +1,12 @@
 import { createHash, randomUUID } from 'node:crypto'
 import { chmod, lstat, readFile, realpath, writeFile, mkdir, rename, rm, stat } from 'node:fs/promises'
 import { basename, dirname, join } from 'node:path'
+import { isDeepStrictEqual } from 'node:util'
 import {
   Document,
   isAlias,
   isMap,
+  isNode,
   isPair,
   isScalar,
   isSeq,
@@ -13,6 +15,7 @@ import {
   Scalar,
   stringify,
   visit,
+  type Node,
 } from 'yaml'
 import { AgentQaConfigSchema } from '@vostride/agent-qa-core'
 import {
@@ -28,12 +31,28 @@ import {
 } from '@vostride/agent-qa-schema'
 
 export type ApplyChangesOutcome =
-  | { kind: 'ok'; revision: string }
+  | { kind: 'ok'; revision: string; priors?: ConfigPriors }
   | {
     kind: 'refused'
     error: Exclude<ConfigWriteRefusal, 'write_failed'>
     issues?: ConfigWriteIssue[]
   }
+
+type FieldState = { present: false } | { present: true; value: unknown }
+
+/**
+ * What one change found and left at the field it touched (429-11 D-24). The nodes are the file's
+ * own, so a restore brings back real secrets and comments rather than anything the page holds.
+ */
+export type ConfigPrior =
+  | { kind: 'entry'; array: ConfigPathSegment[]; name: string; index: number; node: Node }
+  | { kind: 'path'; path: ConfigPathSegment[]; before: Node | null | undefined; after: FieldState }
+
+export type ConfigPriors = readonly ConfigPrior[]
+
+export type RestorePriorsOutcome =
+  | { kind: 'ok'; revision: string }
+  | { kind: 'refused'; error: 'undo_conflict' | 'file_invalid' }
 
 export type ConfigReadOutcome =
   | { kind: 'ok'; config: Record<string, unknown>; raw: string; revision: string }
@@ -263,16 +282,57 @@ export class ConfigManager {
 
   // 429-01 D-19/D-22: one transaction per request, serialised so overlapping autosaves never
   // read the same bytes and drop each other's field.
-  async applyChanges(changes: readonly ConfigChange[]): Promise<ApplyChangesOutcome> {
-    const next = this.writeChain.then(() => this.applyChangesOnce(changes))
-    this.writeChain = next.then(() => undefined, () => undefined)
-    return next
+  async applyChanges(
+    changes: readonly ConfigChange[],
+    options: { capturePriors?: boolean } = {},
+  ): Promise<ApplyChangesOutcome> {
+    return this.serialized(() => this.applyChangesOnce(changes, options.capturePriors === true))
+  }
+
+  // 429-11 D-24: an Undo is one more transaction on the same mutex, newest change first. A field
+  // that no longer holds what the change left there was written since, and is never overwritten.
+  async restorePriors(priors: ConfigPriors): Promise<RestorePriorsOutcome> {
+    return this.serialized(() => this.restorePriorsOnce(priors))
   }
 
   // The per-instance mutex: each transaction chains onto the tail, released however it settles.
   private writeChain: Promise<void> = Promise.resolve()
 
-  private async applyChangesOnce(changes: readonly ConfigChange[]): Promise<ApplyChangesOutcome> {
+  private serialized<T>(work: () => Promise<T>): Promise<T> {
+    const next = this.writeChain.then(work)
+    this.writeChain = next.then(() => undefined, () => undefined)
+    return next
+  }
+
+  private async restorePriorsOnce(priors: ConfigPriors): Promise<RestorePriorsOutcome> {
+    let doc: Document
+    try {
+      doc = parseDocument(await readFile(this.configPath, 'utf-8'))
+    } catch (err: unknown) {
+      if (isMissingFile(err)) return { kind: 'refused', error: 'undo_conflict' }
+      throw err
+    }
+    if (doc.errors.length > 0) return { kind: 'refused', error: 'file_invalid' }
+    let next: string
+    try {
+      for (const prior of [...priors].reverse()) {
+        if (!restorePrior(doc, prior)) return { kind: 'refused', error: 'undo_conflict' }
+      }
+      const parsed = AgentQaConfigSchema.safeParse(normalizeForValidation(doc.toJSON()))
+      if (!parsed.success) return { kind: 'refused', error: 'undo_conflict' }
+      next = doc.toString()
+    } catch {
+      // A restored node that no longer fits the file (an alias whose anchor is gone) is not restorable.
+      return { kind: 'refused', error: 'undo_conflict' }
+    }
+    await this.writeAtomic(next)
+    return { kind: 'ok', revision: revisionOf(next) }
+  }
+
+  private async applyChangesOnce(
+    changes: readonly ConfigChange[],
+    capturePriors: boolean,
+  ): Promise<ApplyChangesOutcome> {
     if (changes.some((change) => change.op !== 'unset' && carriesMaskPlaceholder(change.value))) {
       return { kind: 'refused', error: MASK_WRITTEN_BACK }
     }
@@ -288,9 +348,12 @@ export class ConfigManager {
     // yaml recovers a partial tree from a broken file and refuses to stringify it: never rewrite one.
     if (doc.errors.length > 0) return { kind: 'refused', error: 'file_invalid' }
     let writesBrowserHeadless = false
+    const priors: ConfigPrior[] = []
     for (const change of changes) {
       const path = resolvePath(doc, change.path)
       if (path === undefined) return { kind: 'refused', error: 'path_not_found' }
+      const entry = capturePriors ? namedEntryPrior(doc, change, path) : undefined
+      const before = capturePriors && entry === undefined ? nodeAt(doc, path) : undefined
       try {
         if (change.op === 'set') {
           doc.setIn(path, doc.createNode(change.value))
@@ -304,9 +367,19 @@ export class ConfigManager {
         // yaml throws when a path walks through a scalar: the field the change names is not there.
         return { kind: 'refused', error: 'path_not_found' }
       }
+      if (entry !== undefined) priors.push(entry)
+      else if (capturePriors) {
+        priors.push({ kind: 'path', path: [...change.path], before, after: fieldState(doc, path) })
+      }
     }
     // Carried from the legacy settings route: the browser-scoped key replaces a root use.headless.
-    if (writesBrowserHeadless && doc.hasIn(LEGACY_HEADLESS_PATH)) doc.deleteIn(LEGACY_HEADLESS_PATH)
+    if (writesBrowserHeadless && doc.hasIn(LEGACY_HEADLESS_PATH)) {
+      const before = capturePriors ? nodeAt(doc, LEGACY_HEADLESS_PATH) : undefined
+      doc.deleteIn(LEGACY_HEADLESS_PATH)
+      if (capturePriors) {
+        priors.push({ kind: 'path', path: [...LEGACY_HEADLESS_PATH], before, after: { present: false } })
+      }
+    }
 
     const parsed = AgentQaConfigSchema.safeParse(normalizeForValidation(doc.toJSON()))
     if (!parsed.success) {
@@ -322,7 +395,9 @@ export class ConfigManager {
 
     const next = doc.toString()
     await this.writeAtomic(next)
-    return { kind: 'ok', revision: revisionOf(next) }
+    return capturePriors
+      ? { kind: 'ok', revision: revisionOf(next), priors }
+      : { kind: 'ok', revision: revisionOf(next) }
   }
 
   // 429-05 Pitfall 8 / Pattern 1 step 6: the temp file sits beside the real file, keeps its mode
@@ -403,6 +478,53 @@ function unsetAndPrune(doc: Document, path: ResolvedPath): void {
     if (!isMap(node) || node.items.length > 0) return
     doc.deleteIn(ancestor)
   }
+}
+
+// An unset of one named-array entry is recorded as the entry itself, so Undo re-inserts it by
+// name at its index instead of comparing the whole list.
+function namedEntryPrior(doc: Document, change: ConfigChange, path: ResolvedPath): ConfigPrior | undefined {
+  const last = change.path[change.path.length - 1]
+  if (change.op !== 'unset' || typeof last !== 'object') return undefined
+  const index = path[path.length - 1]
+  const node = doc.getIn(path, true)
+  if (typeof index !== 'number' || !isNode(node)) return undefined
+  return { kind: 'entry', array: change.path.slice(0, -1), name: last.name, index, node: node.clone() as Node }
+}
+
+// undefined: the field is absent. null: the key is there with no value.
+function nodeAt(doc: Document, path: ResolvedPath): Node | null | undefined {
+  if (!doc.hasIn(path)) return undefined
+  const node = doc.getIn(path, true)
+  if (isNode(node)) return node.clone() as Node
+  return node === undefined || node === null ? null : doc.createNode(node)
+}
+
+function fieldState(doc: Document, path: ResolvedPath): FieldState {
+  if (!doc.hasIn(path)) return { present: false }
+  const node = doc.getIn(path, true)
+  return { present: true, value: isNode(node) ? node.toJS(doc) : node ?? null }
+}
+
+function restorePrior(doc: Document, prior: ConfigPrior): boolean {
+  if (prior.kind === 'entry') {
+    const arrayPath = resolvePath(doc, prior.array)
+    if (arrayPath === undefined) return false
+    const seq = doc.getIn(arrayPath, true)
+    if (seq === undefined || seq === null || (isScalar(seq) && seq.value === null)) {
+      doc.setIn(arrayPath, doc.createNode([]))
+      return restorePrior(doc, prior)
+    }
+    if (!isSeq(seq)) return false
+    if (seq.items.some((item) => isMap(item) && item.get('name') === prior.name)) return false
+    seq.items.splice(Math.min(prior.index, seq.items.length), 0, prior.node.clone())
+    return true
+  }
+  const path = resolvePath(doc, prior.path)
+  if (path === undefined) return false
+  if (!isDeepStrictEqual(fieldState(doc, path), prior.after)) return false
+  if (prior.before === undefined) unsetAndPrune(doc, path)
+  else doc.setIn(path, prior.before === null ? null : prior.before.clone())
+  return true
 }
 
 function appendTo(doc: Document, path: ResolvedPath, value: unknown): boolean {
