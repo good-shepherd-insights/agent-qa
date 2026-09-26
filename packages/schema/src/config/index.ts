@@ -20,6 +20,16 @@ export {
   ConfigPathSegmentSchema,
   ConfigWriteRequestSchema,
 } from './config-write'
+// 2026-09-26, 429-03 D-08: the one masking map every config surface shares, and the schema's
+// leaf list derived from it.
+export type { ConfigLeafPattern, MaskingClass } from './masking'
+export {
+  CONFIG_MASKING_MAP,
+  CONFIG_SCHEMA_LEAVES,
+  classifyConfigPath,
+  configLeafOwner,
+  MASKING_CLASSES,
+} from './masking'
 export type { BrowserConfig } from './browser'
 export { appStateSchema, browserConfigSchema, viewportSchema } from './browser'
 export type { DeviceConfig } from './device'
