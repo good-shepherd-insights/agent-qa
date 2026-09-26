@@ -806,6 +806,24 @@ export const JUDGE_MODELS_LABEL = 'Judge models'
 export const JUDGE_LIMIT_TEXT = 'Up to three judges.'
 export const JUDGE_NO_MODELS_TEXT = 'Add a model first to pick a judge.'
 
+export const EVAL_FIELD_LABELS = {
+  judgeAllowSameFamily: 'Allow a judge from the same model family',
+  k: 'Runs per case',
+  seed: 'Seed',
+  maxScreens: 'Most screens per screening',
+  maxPerJob: 'Most screenings per run',
+  maxAblations: 'Most ablations',
+  canaryHorizonBuilds: 'Canary horizon in builds',
+  maxLowerTrustPerScope: 'Most lower-trust items per scope',
+  maxSeedsPerRefresh: 'Most seeds per refresh',
+  maxProbeCalls: 'Most probe calls per refresh',
+  silverPerTestCap: 'Most silver labels per test',
+} as const satisfies Record<string, string>
+
+export const EVAL_FIELD_HELP = {
+  judgeAllowSameFamily: 'Off by default. Every score a same-family judge gives says so.',
+} as const satisfies Record<string, string>
+
 export const CONFIG_FILE_NOTE = 'Read-only. Edit the file in your editor; changes show here by themselves.'
 export const COPY_PATH_LABEL = 'Copy config file path'
 
