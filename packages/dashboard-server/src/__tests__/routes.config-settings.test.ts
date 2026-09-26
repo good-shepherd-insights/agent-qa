@@ -1826,13 +1826,21 @@ describe('dashboard LLM auth and test routes', () => {
   })
 
   it('deletes credentials by config name', async () => {
+    mockReadAuth.mockResolvedValue({
+      'remote-openai': { type: 'api', provider: 'openai-compatible', key: 'sk-remote' },
+    })
     const res = await invokeRoute('/api/auth/remote-openai', {
       method: 'DELETE',
       headers: { host: LLM_TEST_HOST },
     })
 
     expect(res.status).toBe(200)
-    expect(JSON.parse(res.body)).toEqual({ deleted: true })
+    // 429-11 D-24: the removal answers an Undo token and never the credential it removed.
+    expect(JSON.parse(res.body)).toEqual({
+      deleted: true,
+      undo: { token: expect.any(String), expiresAt: expect.any(Number) },
+    })
+    expect(res.body).not.toContain('sk-remote')
     expect(mockRemoveAuth).toHaveBeenCalledWith('remote-openai')
   })
 

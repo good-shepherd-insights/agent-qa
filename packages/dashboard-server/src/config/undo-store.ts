@@ -7,8 +7,10 @@ import type { ConfigPriors } from './config-manager.js'
 /** How long a token stays redeemable: longer than the page's 10 s Undo link, so a late click lands. */
 export const UNDO_RETENTION_MS = 30_000
 
-/** What a token redeems: the priors of an undoable config write. */
-export type UndoPayload = { kind: 'config'; priors: ConfigPriors }
+/** What a token redeems: the priors of an undoable config write, or a removed auth.json entry. */
+export type UndoPayload =
+  | { kind: 'config'; priors: ConfigPriors }
+  | { kind: 'credential'; name: string; credential: unknown }
 
 export interface UndoTicket {
   token: string

@@ -128,7 +128,12 @@ export function registerConfigRevealRoute(
 export function registerConfigUndoRoute(
   req: IncomingMessage,
   res: ServerResponse,
-  deps: { readonly configManager?: ConfigManager; readonly undoStore: UndoStore },
+  deps: {
+    readonly configManager?: ConfigManager
+    readonly undoStore: UndoStore
+    /** Writes the credential back under the credential lock; false when the name is taken again. */
+    readonly restoreCredential: (name: string, credential: unknown) => Promise<boolean>
+  },
 ): void {
   if (req.method !== 'POST') {
     respondJson(res, 405, { error: 'method_not_allowed' })
@@ -147,6 +152,12 @@ export function registerConfigUndoRoute(
     const payload = deps.undoStore.take(parsed.data.token, Date.now())
     if (payload === undefined) {
       respondJson(res, 410, { error: 'undo_expired' })
+      return
+    }
+    if (payload.kind === 'credential') {
+      const restored = await deps.restoreCredential(payload.name, payload.credential)
+      if (restored) respondJson(res, 200, { restored: true })
+      else respondJson(res, 409, { error: 'undo_conflict' })
       return
     }
     if (deps.configManager === undefined) {

@@ -1910,7 +1910,15 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps): (req: In
 
     // 429-11 D-24: the Undo door answers every method itself, so no preflight grant reaches it.
     if (path === '/api/config/undo') {
-      registerConfigUndoRoute(req, res, { configManager, undoStore })
+      registerConfigUndoRoute(req, res, {
+        configManager,
+        undoStore,
+        restoreCredential: (name, credential) => withCredentialLock(async () => {
+          if (await readAuthEntry(name) !== undefined) return false
+          await writeDashboardAuth(name, credential as DashboardAuthCredential)
+          return true
+        }),
+      })
       return
     }
 
@@ -3855,10 +3863,21 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps): (req: In
             jsonNoCors(res, { error: 'cross_site_refused' }, 403)
             return
           }
+          // 429-11 D-24: the removed entry is held server-side for Undo; the answer never carries it.
           ;(async () => {
             try {
-              await withCredentialLock(() => removeAuth(providerName))
-              jsonNoCors(res, { deleted: true })
+              const removed = await withCredentialLock(async () => {
+                const credential = await readAuthEntry(providerName)
+                if (credential === undefined) return undefined
+                await removeAuth(providerName)
+                return credential
+              })
+              if (removed === undefined) {
+                jsonNoCors(res, { deleted: false })
+                return
+              }
+              const undo = undoStore.put({ kind: 'credential', name: providerName, credential: removed }, Date.now())
+              jsonNoCors(res, { deleted: true, undo })
             } catch (err: unknown) {
               jsonNoCors(res, { error: err instanceof Error ? err.message : 'Failed to delete credential' }, 500)
             }
