@@ -3,13 +3,19 @@ export { platformBase, platformBaseShape, timeoutConfigSchema } from './base'
 // 2026-09-26, 429-01 D-19: the field-merge write DTO PATCH /api/config parses.
 export type {
   ConfigChange,
+  ConfigNamedArray,
   ConfigPathSegment,
   ConfigWriteIssue,
+  ConfigWriteOp,
+  ConfigWriteRefusal,
   ConfigWriteRequest,
   ConfigWriteResult,
 } from './config-write'
 export {
+  CONFIG_NAMED_ARRAYS,
   CONFIG_REVISION_ABSENT,
+  CONFIG_WRITE_OPS,
+  CONFIG_WRITE_REFUSALS,
   ConfigChangeSchema,
   ConfigPathSegmentSchema,
   ConfigWriteRequestSchema,
