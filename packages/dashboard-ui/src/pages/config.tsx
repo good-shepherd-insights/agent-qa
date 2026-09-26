@@ -57,6 +57,7 @@ import { ProvidersSection } from "@/components/config-manager/providers-section"
 import { AnalyticsSection } from "@/components/config-manager/analytics-section"
 import { McpSection } from "@/components/config-manager/mcp-section"
 import { TokenList } from "@/components/config-manager/token-list"
+import { EvalSection } from "@/components/config-manager/eval-section"
 
 interface SectionProps {
   config: Record<string, unknown>
@@ -91,6 +92,7 @@ const SECTION_COMPONENTS: Partial<Record<ConfigSectionId, readonly ComponentType
   "pass-rate-scope": [AnalyticsSection],
   mcp: [McpSection],
   "run-service-tokens": [RunServiceTokensSection],
+  eval: [EvalSection],
 }
 
 // The Models heading shares its row with Add model (UI-SPEC S4); the list spans the row below.
