@@ -19,16 +19,24 @@ import {
   fetchConfig,
   fetchConfigRevision,
   fetchLLMProviders,
+  testLLMConnection,
   type AuthCredentialInfo,
+  type LLMTestResult,
   type LLMProviderMetadata,
 } from '@/lib/api'
 import {
   ADD_MODEL_LABEL,
   DEFAULT_BADGE,
+  MAKE_DEFAULT_LABEL,
   MODEL_STATUS_WORDS,
   NO_DEFAULT_TEXT,
   NO_MODELS_TEXT,
+  TEST_CONNECTION_LABEL,
+  TEST_RESULT_TEXT,
+  connectionSentence,
+  fixedFactsLine,
   modelLine,
+  providerErrorSentence,
 } from '@/lib/config-copy'
 
 vi.mock('@/lib/api', async (importOriginal) => ({
@@ -358,5 +366,188 @@ describe('ModelList closed rows (429-23 Task 1)', () => {
     await click(toggle(row('router')))
     expect(container!.querySelectorAll('[data-model-panel]')).toHaveLength(0)
     expect(document.body.querySelector('[role="dialog"]')).toBeNull()
+  })
+})
+
+function panelOf(name: string) {
+  return row(name)?.querySelector('[data-model-panel]') ?? null
+}
+
+function testButton(name: string) {
+  return buttonsNamed(panelOf(name), TEST_CONNECTION_LABEL)[0] ?? null
+}
+
+function makeDefaultButton(name: string) {
+  return buttonsNamed(panelOf(name), MAKE_DEFAULT_LABEL)[0] ?? null
+}
+
+function testLine(name: string) {
+  return (row(name)?.querySelector('[data-test-result]') ?? null) as HTMLElement | null
+}
+
+async function openModel(name: string) {
+  if (toggle(row(name))?.getAttribute('aria-expanded') !== 'true') await click(toggle(row(name)))
+  expect(panelOf(name), name).not.toBeNull()
+}
+
+describe('ModelRow connection block (429-23 Task 2)', () => {
+  it('TEST-LINE-STATES: Test connection reads Testing, then Connected with no number, the server sentence verbatim when it fails, or Connected without a key', async () => {
+    await mount()
+    await openModel('router')
+
+    expect(panelOf('router')!.querySelector('[data-model-connection]')?.textContent).toContain(
+      connectionSentence('not-connected', 'OpenAI-compatible', { signIn: false, keyOptional: true }),
+    )
+    expect(panelOf('router')!.querySelector('[data-model-fixed]')?.textContent).toBe(fixedFactsLine('OpenAI-compatible'))
+
+    const first = deferred<LLMTestResult>()
+    vi.mocked(testLLMConnection).mockReturnValueOnce(first.promise)
+    await click(testButton('router'))
+
+    expect(testLLMConnection).toHaveBeenCalledWith({
+      provider: 'openai-compatible',
+      model: 'openrouter/auto',
+      baseURL: 'https://openrouter.ai/api/v1',
+      configName: 'router',
+    })
+    let line = testLine('router')
+    expect(line?.getAttribute('data-test-result')).toBe('testing')
+    expect(line?.getAttribute('role')).toBe('status')
+    expect(line?.getAttribute('aria-live')).toBe('polite')
+    expect(line?.textContent).toBe(TEST_RESULT_TEXT.testing)
+    expect(testButton('router')?.getAttribute('aria-disabled')).toBe('true')
+    expect(testButton('router')?.querySelector('svg')?.getAttribute('class')).toContain('lucide-loader-circle')
+    expect(makeDefaultButton('router')?.getAttribute('aria-disabled')).not.toBe('true')
+
+    // Activating the busy button starts nothing.
+    await click(testButton('router'))
+    expect(testLLMConnection).toHaveBeenCalledTimes(1)
+
+    await act(async () => {
+      first.resolve({ success: true, responseTime: 412, provider: 'openai-compatible', model: 'openrouter/auto' })
+    })
+    await flush()
+    line = testLine('router')
+    expect(line?.getAttribute('data-test-result')).toBe('connected')
+    expect(line?.textContent).toBe(TEST_RESULT_TEXT.connected)
+    expect(line?.textContent).not.toMatch(/\d/)
+    expect(line?.querySelector('svg')?.getAttribute('class')).toContain('lucide-circle-check')
+    expect(line?.querySelector('svg')?.getAttribute('class')).toContain('text-emerald-500')
+    expect(testButton('router')?.getAttribute('aria-disabled')).not.toBe('true')
+
+    vi.mocked(testLLMConnection).mockResolvedValueOnce({
+      success: false,
+      error: 'rate_limit',
+      message: 'Rate limited. Try again later.',
+    })
+    await click(testButton('router'))
+    line = testLine('router')
+    expect(line?.getAttribute('data-test-result')).toBe('failed')
+    expect(line?.textContent).toBe('Rate limited. Try again later.')
+    expect(line?.querySelector('p')?.getAttribute('class')).toContain('text-destructive')
+    expect(line?.querySelector('svg')?.getAttribute('class')).toContain('lucide-circle-x')
+
+    vi.mocked(testLLMConnection).mockResolvedValueOnce({
+      success: true,
+      unauthenticated: true,
+      message: 'Testing without a saved API key.',
+    })
+    await click(testButton('router'))
+    line = testLine('router')
+    expect(line?.getAttribute('data-test-result')).toBe('connected-without-key')
+    expect(line?.textContent).toBe(TEST_RESULT_TEXT['connected-without-key'])
+
+    vi.mocked(testLLMConnection).mockRejectedValueOnce(new Error('offline'))
+    await click(testButton('router'))
+    line = testLine('router')
+    expect(line?.getAttribute('data-test-result')).toBe('failed')
+    expect(line?.textContent).toBe(providerErrorSentence('network_error', ''))
+  })
+
+  it('LATEST-TEST-WINS: an older test that answers after a newer one never overwrites the line', async () => {
+    await mount()
+    const older = deferred<LLMTestResult>()
+    const newer = deferred<LLMTestResult>()
+    vi.mocked(testLLMConnection).mockReturnValueOnce(older.promise).mockReturnValueOnce(newer.promise)
+
+    await openModel('flash')
+    await click(testButton('flash'))
+    expect(testLine('flash')?.getAttribute('data-test-result')).toBe('testing')
+
+    // Closing the row drops its line; reopening starts clean, and a new test starts at once.
+    await click(toggle(row('flash')))
+    await openModel('flash')
+    expect(testLine('flash')).toBeNull()
+    await click(testButton('flash'))
+    expect(testLLMConnection).toHaveBeenCalledTimes(2)
+    expect(testLine('flash')?.getAttribute('data-test-result')).toBe('testing')
+
+    await act(async () => {
+      newer.resolve({ success: false, error: 'model_not_found', message: 'Model not found. Check the model name.' })
+    })
+    await flush()
+    expect(testLine('flash')?.textContent).toBe('Model not found. Check the model name.')
+
+    await act(async () => {
+      older.resolve({ success: true })
+    })
+    await flush()
+    expect(testLine('flash')?.getAttribute('data-test-result')).toBe('failed')
+    expect(testLine('flash')?.textContent).toBe('Model not found. Check the model name.')
+    expect(testButton('flash')?.getAttribute('aria-disabled')).not.toBe('true')
+  })
+
+  it('NO-STORED-TEST-RESULT: a fresh mount shows no test line, and a result lives only until its row closes', async () => {
+    await mount()
+    for (const name of ['gpt-5.6', 'flash', 'router', 'sonnet']) {
+      await openModel(name)
+      expect(testLine(name), name).toBeNull()
+    }
+    expect(testLLMConnection).not.toHaveBeenCalled()
+
+    vi.mocked(testLLMConnection).mockResolvedValueOnce({ success: true })
+    await openModel('flash')
+    await click(testButton('flash'))
+    expect(testLine('flash')?.getAttribute('data-test-result')).toBe('connected')
+
+    await click(toggle(row('flash')))
+    await openModel('flash')
+    expect(testLine('flash')).toBeNull()
+
+    await click(testButton('flash'))
+    expect(testLine('flash')?.getAttribute('data-test-result')).toBe('connected')
+    const stored = Object.keys(localStorage).map((key) => localStorage.getItem(key) ?? '').join('\n')
+    expect(stored).not.toContain(TEST_RESULT_TEXT.connected)
+    await unmount()
+
+    await mount()
+    await openModel('flash')
+    expect(testLine('flash')).toBeNull()
+  })
+
+  it('MAKE-DEFAULT-AUTOSAVES: Make default writes the default model once, moves the badge at once and keeps focus on the row header', async () => {
+    await mount()
+    await openModel('flash')
+    expect(makeDefaultButton('flash')).toBeNull()
+
+    await openModel('router')
+    const write = deferred<{ revision: string }>()
+    vi.mocked(applyConfigChanges).mockReturnValueOnce(write.promise as never)
+    await click(makeDefaultButton('router'))
+
+    expect(vi.mocked(applyConfigChanges).mock.calls).toEqual([[[{ op: 'set', path: ['use', 'llm'], value: 'router' }]]])
+    expect(row('router')!.querySelector('[data-model-default-badge]')).not.toBeNull()
+    expect(row('flash')!.querySelector('[data-model-default-badge]')).toBeNull()
+    expect(container!.querySelectorAll('[data-model-default-badge]')).toHaveLength(1)
+    expect(makeDefaultButton('router')).toBeNull()
+    expect(document.activeElement).toBe(toggle(row('router')))
+    expect(hook!.status.state).toBe('saving')
+
+    await act(async () => {
+      write.resolve({ revision: 'rev-2' })
+    })
+    await flush()
+    expect(hook!.status.state).toBe('saved')
+    expect(applyConfigChanges).toHaveBeenCalledTimes(1)
   })
 })
