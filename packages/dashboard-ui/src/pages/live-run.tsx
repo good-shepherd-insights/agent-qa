@@ -44,11 +44,12 @@ import type { RunEventEnvelope } from '@vostride/agent-qa-schema'
  * THE THREE HONESTY CLAIMS ARE STRUCTURAL, NOT EDITORIAL.
  *  - HNST-01: nothing provisional is reachable because {@link StepList} accepts nothing that could
  *    carry it — the reducer dropped those fields at ingest and the props never name them.
- *  - HNST-02: motion, never a phase word, because the page has no way to know what happens
+ *  - HNST-02: a status, never a phase word, because the page has no way to know what happens
  *    between two sub-actions and will not guess. Since 428 D-19/D-20 a row carries no count and no
- *    clock either: the running glyph breathes, and durations live in run detail.
+ *    clock either, and since the owner's 2026-09-26 review (G-428-5) its running glyph is still;
+ *    durations live in run detail.
  *  - HNST-03, AS 428 D-03 LEFT IT: the page makes no claim about the bus channel at all. There is
- *    no liveness pill and no pulsing icon; a dead bus shows as rows that stop moving, and the
+ *    no liveness pill and no pulsing icon; a dead bus shows as rows that stop advancing, and the
  *    facts the page does state (the gap marker, the terminal band, the run-over sentence) come
  *    from the stream's own envelopes and the door's classification of a close.
  *

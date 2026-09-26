@@ -1922,20 +1922,8 @@ input[type="number"] {
 }
 
 /* THE LIVE PREVIEW'S HEALTH DOT (428 D-02/D-16/D-17). About 8px, with a two-tone ring so it reads
-   on light and dark pages alike. Only the healthy green dot pulses, and it is still under
-   reduced motion. */
-@keyframes live-dot-pulse {
-  0%,
-  100% {
-    opacity: 1;
-    transform: scale(1);
-  }
-  50% {
-    opacity: 0.55;
-    transform: scale(0.85);
-  }
-}
-
+   on light and dark pages alike. The dot is still in every state (owner review 2026-09-26): its
+   state is told apart by its colour and by its accessible name, never by motion. */
 .live-dot {
   display: block;
   width: 8px;
@@ -1948,45 +1936,12 @@ input[type="number"] {
 
 .live-dot-green {
   background-color: var(--color-emerald-500);
-  animation: live-dot-pulse 2s ease-in-out infinite;
 }
 
 .live-dot-amber {
   background-color: var(--color-amber-500);
-  animation: none;
 }
 
 .live-dot-red {
   background-color: var(--color-red-500);
-  animation: none;
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .live-dot-green {
-    animation: none;
-  }
-}
-
-/* THE LIVE STEP ROW'S BREATHING GLYPH (428 D-20). A running step's glyph breathes, and the row
-   re-keys it on every recorded sub-action so the breath restarts. It is still under reduced motion. */
-@keyframes live-step-breathe {
-  0%,
-  100% {
-    opacity: 1;
-    transform: scale(1);
-  }
-  50% {
-    opacity: 0.45;
-    transform: scale(0.9);
-  }
-}
-
-.live-step-breathing {
-  animation: live-step-breathe 1.6s ease-in-out infinite;
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .live-step-breathing {
-    animation: none;
-  }
 }

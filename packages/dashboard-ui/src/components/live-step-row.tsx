@@ -13,9 +13,10 @@ import { cn } from '@/lib/utils'
  * count on any row: durations live in run detail (D-19, the owner's choice). The row is inert and
  * accepts only {@link LiveStepRow}, which has no field a half-finished thought could occupy.
  *
- * THE RUNNING GLYPH BREATHES (D-20). Its wrapper is re-keyed on every tick, so the animation
- * restarts each time the run records a sub-action. That restart says "something just happened"
- * and nothing about what. It is blue, never green, and never a dot.
+ * THE RUNNING GLYPH IS STILL (owner review 2026-09-26, G-428-5; supersedes D-20's breathing glyph
+ * and its per-tick re-key). It is a still blue shape, never green and never a dot. Nothing on the row
+ * moves: a status is told apart by its shape, its tone and its accessible name. A sub-action reaches
+ * the row only as `data-step-ticks`.
  *
  * SECRETS ARE CHIPS (D-22). A `<SECRET_n>` placeholder in the label is painted as run detail's
  * masked chip, with the live surface's own label. Every segment is a React text node or an element.
@@ -55,7 +56,6 @@ const STATUS_TONE: Record<StepStatus, string> = {
 export function LiveStepRowView({ row }: { row: LiveStepRow }) {
   if (!liveRowShown(row)) return null
   const Glyph = LIVE_STEP_GLYPHS[row.status]
-  const isRunning = row.status === 'running'
 
   return (
     <li
@@ -64,17 +64,11 @@ export function LiveStepRowView({ row }: { row: LiveStepRow }) {
       className="flex items-start gap-2 border-b border-border/40 px-3 py-1.5 text-sm last:border-b-0"
     >
       <span
-        key={isRunning ? `motion-${String(row.ticks)}` : 'still'}
-        data-step-motion={isRunning ? '' : undefined}
-        data-motion-key={isRunning ? String(row.ticks) : undefined}
         role="img"
         aria-label={LIVE_STEP_STATUS_NAMES[row.status]}
         className="inline-flex h-5 shrink-0 items-center"
       >
-        <Glyph
-          className={cn('size-3.5', STATUS_TONE[row.status], isRunning && 'live-step-breathing')}
-          aria-hidden="true"
-        />
+        <Glyph className={cn('size-3.5', STATUS_TONE[row.status])} aria-hidden="true" />
       </span>
       <span className="min-w-0 flex-1 whitespace-normal break-words leading-5 [overflow-wrap:anywhere]">
         {splitMaskedText(liveLabelText(row.text)).map((segment, index) =>

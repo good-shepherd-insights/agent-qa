@@ -35,7 +35,7 @@ import { getRunStatusDescriptor } from "@/lib/status"
 // text-less pending rows leave the panel saying it is waiting rather than blank.
 
 // A row still running when the run answered takes the run's ending, so a stream that stopped
-// mid-step never leaves a breathing glyph claiming work is still happening.
+// mid-step never leaves a running glyph claiming work is still happening.
 const SETTLED_STEP_STATUS: Record<RunStatus, StepStatus> = {
   passed: "passed",
   failed: "failed",

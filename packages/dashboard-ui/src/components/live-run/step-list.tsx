@@ -17,8 +17,8 @@ import type { MemberRow, LiveStepRow } from '@/lib/run-stream-reducer'
  * first, which is a visible change to a published contract rather than one more line in the JSX.
  *
  * WHAT A ROW SAYS (428 D-19/D-20). Every row renders through {@link LiveStepRowView}: a status
- * glyph and the label, with no clock, no bar and no count. A running glyph breathes. Durations live
- * in run detail.
+ * glyph and the label, with no clock, no bar and no count. The running glyph is still (owner review
+ * 2026-09-26, G-428-5). Durations live in run detail.
  *
  * ONLY ROWS WITH TEXT ARE DRAWN (owner decision 2026-09-26 (2), G-428-2). A row the runner sent no
  * text for is not drawn, and the empty state counts drawn rows, so an old producer's text-less
