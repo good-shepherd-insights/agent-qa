@@ -6,6 +6,7 @@ import { MemoryRouter, Route, Routes, useLocation } from 'react-router'
 import { toast } from 'sonner'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { APPROVED_SAAS_PLACEHOLDER_SLUGS } from '@vostride/agent-qa-ids'
+import { CONFIG_SCHEMA_LEAVES, configLeafOwner } from '@vostride/agent-qa-schema'
 
 import {
   applyConfigChanges,
@@ -17,6 +18,7 @@ import {
   fetchConfigRevision,
   fetchLLMProviders,
   pollPluginAuthResult,
+  revealConfigValue,
   saveCredential,
   startPluginAuth,
   testLLMConnection,
@@ -47,7 +49,16 @@ import {
   configLoadFailedBody,
   deleteActionName,
   DASHBOARD_FIELD_LABELS,
+  ENV_FILE_REQUIRED_ERROR,
+  FILES_FIELD_HELP,
+  FILES_FIELD_LABELS,
+  HOOKS_FILE_REQUIRED_ERROR,
   KNOWLEDGE_FIELD_LABELS,
+  PRIVACY_FIELD_LABELS,
+  SUITE_MATCH_REQUIRED_ERROR,
+  TEST_MATCH_REQUIRED_ERROR,
+  attributeValueLabel,
+  showValueName,
   undoLine,
 } from '@/lib/config-copy'
 import { CONFIG_DRAFTS_STORAGE_PREFIX, configFieldControlId, configFieldKeyOf } from '@/hooks/use-config-autosave'
@@ -167,6 +178,7 @@ vi.mock('@/lib/api', () => ({
   pollPluginAuthResult: vi.fn().mockResolvedValue({ status: 'pending' }),
   exchangePluginAuthCode: vi.fn().mockResolvedValue({ status: 'completed', saved: true }),
   deleteAuthCredential: vi.fn(),
+  revealConfigValue: vi.fn().mockResolvedValue({ value: '.secrets.local' }),
 }))
 
 vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn() } }))
@@ -362,6 +374,27 @@ const HEADLESS_SEGMENTS = ['use', 'browser', 'headless']
 const PARALLEL_SEGMENTS = ['use', 'parallel']
 const KEEP_FAILURES_SEGMENTS = ['services', 'recording', 'keepFailuresOnly']
 const EXCLUDE_SEGMENTS = ['services', 'accessibility', 'exclude']
+const TEST_MATCH_SEGMENTS = ['workspace', 'testMatch']
+const SUITE_MATCH_SEGMENTS = ['workspace', 'suiteMatch']
+const TEST_PATH_IGNORE_SEGMENTS = ['workspace', 'testPathIgnore']
+const HOOKS_FILE_SEGMENTS = ['workspace', 'hooksFile']
+const ENV_FILE_SEGMENTS = ['workspace', 'envFile']
+const PRIVACY_SEGMENTS = ['analytics', 'privacy']
+
+function fieldControl<T extends HTMLElement>(segments: readonly string[]) {
+  return document.getElementById(configFieldControlId(configFieldKeyOf(segments))) as T | null
+}
+
+async function typeTextAndBlur(input: HTMLInputElement, value: string) {
+  await act(async () => {
+    input.focus()
+    setInputValue(input, value)
+  })
+  await act(async () => {
+    input.blur()
+  })
+  await flushRender()
+}
 
 async function typeListAndBlur(textarea: HTMLTextAreaElement, value: string) {
   const setter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value')?.set
@@ -843,7 +876,7 @@ describe('ConfigPage task tabs shell', () => {
 
     expect(footer?.textContent).toBe('agent-qa version unavailable')
     expect(section('test-discovery')?.querySelector('h2')?.textContent).toBe(CONFIG_SECTION_LABELS['test-discovery'])
-    expect(view.querySelector('#test-match')).not.toBeNull()
+    expect(section('test-discovery')?.contains(fieldControl(TEST_MATCH_SEGMENTS))).toBe(true)
   })
 
   it('keeps config content available and quiet when metadata loading fails', async () => {
@@ -854,7 +887,7 @@ describe('ConfigPage task tabs shell', () => {
 
     expect(footer?.textContent).toBe('agent-qa version unavailable')
     expect(section('test-discovery')).not.toBeNull()
-    expect(view.querySelector('#test-match')).not.toBeNull()
+    expect(section('test-discovery')?.contains(fieldControl(TEST_MATCH_SEGMENTS))).toBe(true)
     expect(toast.error).not.toHaveBeenCalled()
   })
 
@@ -870,94 +903,120 @@ describe('ConfigPage task tabs shell', () => {
     expect(view.querySelectorAll('[data-tour-id="tour-config-section"]')).toHaveLength(1)
     expect(view.querySelector('[data-tour-id="tour-config-section"]')?.getAttribute('data-config-panel')).toBe('project')
     expect(section('files')).not.toBeNull()
-    expect(view.textContent).toContain('Secrets File')
-    expect((document.body.querySelector('#workspace-secrets-file') as HTMLInputElement | null)?.value).toBe('.secrets.local')
-    expect(view.textContent).toContain('Required dotenv-style file for runtime-only secrets.')
-    expect(view.textContent).toContain('Required dotenv file loaded before runs start.')
+    expect(section('files')?.textContent).toContain(FILES_FIELD_LABELS.secretsFile)
+    expect(section('files')?.querySelector('[data-field-path="workspace.secretsFile"] code')?.textContent).toBe('.secrets.local')
+    expect(view.textContent).toContain(FILES_FIELD_HELP.secretsFile)
+    expect(view.textContent).toContain(FILES_FIELD_HELP.envFile)
   })
 
-  it('saves workspace file paths with a required secrets file', async () => {
+  it('NO-SAVE-BUTTON-PROJECT: the hooks and environment files autosave by leaf, with no Save button or pop-up message', async () => {
     await renderAt('/config/project?section=files')
 
-    const hooksInput = document.body.querySelector('#workspace-hooks-file') as HTMLInputElement | null
-    const envInput = document.body.querySelector('#workspace-env-file') as HTMLInputElement | null
-    const secretsInput = document.body.querySelector('#workspace-secrets-file') as HTMLInputElement | null
-    expect(hooksInput).not.toBeNull()
-    expect(envInput).not.toBeNull()
-    expect(secretsInput).not.toBeNull()
+    expect(sectionButton('files', 'Save Changes')).toBeNull()
+    expect(section('files')!.querySelector('[data-config-section-shell]')).toBeNull()
+    const hooksInput = fieldControl<HTMLInputElement>(HOOKS_FILE_SEGMENTS)
+    const envInput = fieldControl<HTMLInputElement>(ENV_FILE_SEGMENTS)
+    expect(hooksInput?.value).toBe('tests/hooks.ts')
+    expect(envInput?.value).toBe('.env.local')
+    expect(section('files')!.querySelector('[data-field-path="workspace.secretsFile"] input')).toBeNull()
 
-    await act(async () => {
-      setInputValue(hooksInput!, 'tests/runtime-hooks.ts')
-      setInputValue(envInput!, '.env.ci')
-      setInputValue(secretsInput!, '.secrets.ci')
-    })
+    await typeTextAndBlur(hooksInput!, 'tests/runtime-hooks.ts')
+    await typeTextAndBlur(envInput!, '.env.ci')
 
-    await act(async () => {
-      sectionButton('files', 'Save Changes')!.click()
-    })
-    await flushRender()
-
-    expect(updateSettings).toHaveBeenCalledWith({
-      'workspace.hooksFile': 'tests/runtime-hooks.ts',
-      'workspace.envFile': '.env.ci',
-      'workspace.secretsFile': '.secrets.ci',
-    })
+    expect(vi.mocked(applyConfigChanges).mock.calls.map((call) => call[0])).toEqual([
+      [{ op: 'set', path: HOOKS_FILE_SEGMENTS, value: 'tests/runtime-hooks.ts' }],
+      [{ op: 'set', path: ENV_FILE_SEGMENTS, value: '.env.ci' }],
+    ])
+    expect(updateSettings).not.toHaveBeenCalled()
+    expect(toast.success).not.toHaveBeenCalled()
+    expect(toast.error).not.toHaveBeenCalled()
   })
 
-  it('blocks saving workspace files when required file paths are empty', async () => {
+  it('NO-SAVE-BUTTON-PROJECT: an emptied hooks or environment file stays a draft with its error and writes nothing', async () => {
     await renderAt('/config/project?section=files')
 
-    const hooksInput = document.body.querySelector('#workspace-hooks-file') as HTMLInputElement | null
-    const envInput = document.body.querySelector('#workspace-env-file') as HTMLInputElement | null
-    const secretsInput = document.body.querySelector('#workspace-secrets-file') as HTMLInputElement | null
-    expect(hooksInput).not.toBeNull()
-    expect(envInput).not.toBeNull()
-    expect(secretsInput).not.toBeNull()
+    const hooksInput = fieldControl<HTMLInputElement>(HOOKS_FILE_SEGMENTS)
+    const envInput = fieldControl<HTMLInputElement>(ENV_FILE_SEGMENTS)
+    await typeTextAndBlur(hooksInput!, '')
+    await typeTextAndBlur(envInput!, '   ')
 
-    await act(async () => {
-      setInputValue(hooksInput!, '')
-      setInputValue(envInput!, '')
-      setInputValue(secretsInput!, '')
-    })
-
-    await act(async () => {
-      sectionButton('files', 'Save Changes')!.click()
-    })
-    await flushRender()
-
-    expect(document.body.textContent).toContain('Hooks file is required.')
-    expect(document.body.textContent).toContain('Environment file is required.')
-    expect(document.body.textContent).toContain('Secrets file is required.')
+    expect(section('files')?.textContent).toContain(HOOKS_FILE_REQUIRED_ERROR)
+    expect(section('files')?.textContent).toContain(ENV_FILE_REQUIRED_ERROR)
     expect(hooksInput?.getAttribute('aria-invalid')).toBe('true')
     expect(envInput?.getAttribute('aria-invalid')).toBe('true')
-    expect(secretsInput?.getAttribute('aria-invalid')).toBe('true')
+    expect(applyConfigChanges).not.toHaveBeenCalled()
+    expect(updateSettings).not.toHaveBeenCalled()
+    expect(sectionButton('files', 'Save Changes')).toBeNull()
+  })
+
+  it('NO-SAVE-BUTTON-PROJECT: an emptied test or suite pattern list stays a draft with a plain error and writes nothing', async () => {
+    await renderAt('/config/project?section=test-discovery')
+
+    expect(sectionButton('test-discovery', 'Save Changes')).toBeNull()
+    const testMatch = fieldControl<HTMLTextAreaElement>(TEST_MATCH_SEGMENTS)
+    const suiteMatch = fieldControl<HTMLTextAreaElement>(SUITE_MATCH_SEGMENTS)
+    await typeListAndBlur(testMatch!, '')
+    await typeListAndBlur(suiteMatch!, '  \n ')
+
+    const discovery = section('test-discovery')!
+    expect(discovery.textContent).toContain(TEST_MATCH_REQUIRED_ERROR)
+    expect(discovery.textContent).toContain(SUITE_MATCH_REQUIRED_ERROR)
+    expect(discovery.textContent).not.toMatch(DOTTED_CONFIG_PATH)
+    expect(testMatch?.getAttribute('aria-invalid')).toBe('true')
+    expect(applyConfigChanges).not.toHaveBeenCalled()
     expect(updateSettings).not.toHaveBeenCalled()
   })
 
-  it('blocks saving empty workspace discovery match arrays', async () => {
+  it('TEST-DISCOVERY-LIST-FIELDS: test files, suite files and paths to skip are list fields, one pattern per line, that write on settle', async () => {
     await renderAt('/config/project?section=test-discovery')
 
-    const testMatchInput = document.body.querySelector('#test-match') as HTMLTextAreaElement | null
-    const suiteMatchInput = document.body.querySelector('#suite-match') as HTMLTextAreaElement | null
-    expect(testMatchInput).not.toBeNull()
-    expect(suiteMatchInput).not.toBeNull()
+    const discovery = section('test-discovery')!
+    const fields = [
+      [TEST_MATCH_SEGMENTS, 'workspace.testMatch', 'tests/**/*.yaml'],
+      [SUITE_MATCH_SEGMENTS, 'workspace.suiteMatch', 'tests/**/*.suite.yaml'],
+      [TEST_PATH_IGNORE_SEGMENTS, 'workspace.testPathIgnore', '**/draft/**'],
+    ] as const
+    for (const [segments, pattern, text] of fields) {
+      const control = fieldControl<HTMLTextAreaElement>(segments)
+      expect(control?.tagName, pattern).toBe('TEXTAREA')
+      expect(control?.value, pattern).toBe(text)
+      expect(control?.closest('[data-field-path]')?.getAttribute('data-field-path'), pattern).toBe(pattern)
+      expect(discovery.contains(control), pattern).toBe(true)
+    }
+
+    await typeListAndBlur(fieldControl<HTMLTextAreaElement>(TEST_PATH_IGNORE_SEGMENTS)!, '**/draft/**\n  \n**/tmp/**')
+    await typeListAndBlur(fieldControl<HTMLTextAreaElement>(TEST_MATCH_SEGMENTS)!, 'e2e/**/*.yaml')
+
+    expect(vi.mocked(applyConfigChanges).mock.calls.map((call) => call[0])).toEqual([
+      [{ op: 'set', path: TEST_PATH_IGNORE_SEGMENTS, value: ['**/draft/**', '**/tmp/**'] }],
+      [{ op: 'set', path: TEST_MATCH_SEGMENTS, value: ['e2e/**/*.yaml'] }],
+    ])
+    expect(updateSettings).not.toHaveBeenCalled()
+  })
+
+  it('SECRETS-FILE-MASKED-WITH-EYE: the secrets file shows the server\'s masked text with a Show button, and never an editable input', async () => {
+    vi.mocked(fetchConfig).mockResolvedValueOnce(readAnswer({
+      config: { ...sampleConfig, workspace: { ...sampleConfig.workspace, secretsFile: '[masked]' } },
+    }) as never)
+    await renderAt('/config/project?section=files')
+
+    const secret = section('files')!.querySelector('[data-secret-field][data-field-path="workspace.secretsFile"]') as HTMLElement | null
+    expect(secret).not.toBeNull()
+    expect(secret!.getAttribute('data-reveal-state')).toBe('masked')
+    expect(secret!.querySelector('code')?.textContent).toBe('[masked]')
+    expect(secret!.querySelector('input')).toBeNull()
+    const show = Array.from(secret!.querySelectorAll('button')).find(
+      (button) => button.getAttribute('aria-label') === showValueName(FILES_FIELD_LABELS.secretsFile),
+    )
+    expect(show).toBeDefined()
 
     await act(async () => {
-      const setter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value')?.set
-      setter?.call(testMatchInput!, '')
-      testMatchInput!.dispatchEvent(new Event('input', { bubbles: true }))
-      setter?.call(suiteMatchInput!, '')
-      suiteMatchInput!.dispatchEvent(new Event('input', { bubbles: true }))
-    })
-
-    await act(async () => {
-      sectionButton('test-discovery', 'Save Changes')!.click()
+      show!.click()
     })
     await flushRender()
-
-    expect(document.body.textContent).toContain('workspace.testMatch must contain at least one pattern.')
-    expect(document.body.textContent).toContain('workspace.suiteMatch must contain at least one pattern.')
-    expect(updateSettings).not.toHaveBeenCalled()
+    expect(revealConfigValue).toHaveBeenCalledWith(['workspace', 'secretsFile'])
+    expect(secret!.querySelector('code')?.textContent).toBe('.secrets.local')
+    expect(applyConfigChanges).not.toHaveBeenCalled()
   })
 
   it('keeps Logging on Project and Log capture on Execution, each deep-linkable', async () => {
@@ -1419,35 +1478,58 @@ describe('ConfigPage task tabs shell', () => {
     }
   })
 
-  it('edits analytics pass rate scope attributes', async () => {
+  it('NO-SAVE-BUTTON-PROJECT: pass-rate scope lists masked attribute rows with no Save button, and its privacy switch autosaves with no pop-up message', async () => {
     await renderAt('/config/project?section=pass-rate-scope')
 
     const scope = section('pass-rate-scope')!
     expect(currentLocation()).toEqual({ pathname: '/config/project', search: '' })
     expect(scope.querySelector('h2')?.textContent).toBe(CONFIG_SECTION_LABELS['pass-rate-scope'])
     expect(scope.textContent).not.toContain('analytics.passRateScope.attributes')
-    expect(scope.textContent).toContain('Regex')
+    expect(sectionButton('pass-rate-scope', 'Save Changes')).toBeNull()
+    expect(scope.querySelector('[data-config-section-shell]')).toBeNull()
+    expect(scope.querySelectorAll('input[type="text"], input[type="password"], textarea')).toHaveLength(0)
+    const rows = Array.from(scope.querySelectorAll('[data-pass-rate-attribute]')).map((row) => row.getAttribute('data-pass-rate-attribute'))
+    expect(rows).toEqual(['git.branch', 'user.email'])
+    expect(Array.from(scope.querySelectorAll('button')).some(
+      (button) => button.getAttribute('aria-label') === showValueName(attributeValueLabel('git.branch')),
+    )).toBe(true)
 
-    const branchValue = document.body.querySelector('#analytics-scope-value-existing-0') as HTMLInputElement | null
-    expect(branchValue?.value).toBe('master')
-
+    const privacy = fieldControl<HTMLButtonElement>(PRIVACY_SEGMENTS)
+    expect(privacy?.getAttribute('aria-checked')).toBe('false')
+    expect(scope.querySelector('[data-field-path="analytics.privacy"]')?.textContent).toContain(PRIVACY_FIELD_LABELS.privacy)
     await act(async () => {
-      setInputValue(branchValue!, 'main')
-    })
-
-    await act(async () => {
-      sectionButton('pass-rate-scope', 'Save Changes')!.click()
+      privacy!.click()
     })
     await flushRender()
 
-    expect(updateSettings).toHaveBeenCalledWith({
-      'analytics.passRateScope': {
-        attributes: {
-          'git.branch': 'main',
-          'user.email': { regex: '^ci@' },
-        },
-      },
-    })
+    expect(vi.mocked(applyConfigChanges).mock.calls.map((call) => call[0])).toEqual([
+      [{ op: 'set', path: PRIVACY_SEGMENTS, value: true }],
+    ])
+    expect(updateSettings).not.toHaveBeenCalled()
+    expect(toast.success).not.toHaveBeenCalled()
+    expect(toast.error).not.toHaveBeenCalled()
+  })
+
+  it('PROJECT-LEAVES-HAVE-FIELDS: every workspace, knowledge, dashboard (but run-service tokens), logging and analytics leaf has a field on the Project tab', async () => {
+    await renderAt('/config/project')
+
+    const panel = container!.querySelector('[data-config-panel="project"]') as HTMLElement
+    const projectLeaves = CONFIG_SCHEMA_LEAVES.filter(
+      (pattern) =>
+        pattern.startsWith('workspace.') ||
+        pattern.startsWith('knowledge.') ||
+        (pattern.startsWith('services.dashboard.') && !pattern.startsWith('services.dashboard.runServiceTokens')) ||
+        pattern.startsWith('services.logging.') ||
+        pattern.startsWith('analytics.'),
+    )
+    expect(projectLeaves.length, 'the witness: the filter found the Project leaves').toBeGreaterThanOrEqual(19)
+    for (const pattern of projectLeaves) {
+      const owner = configLeafOwner(pattern)
+      expect(panel.querySelector(`[data-field-path="${owner}"], [data-field-list="${owner}"]`), pattern).not.toBeNull()
+    }
+    const buttonNames = Array.from(panel.querySelectorAll('button')).map((button) => button.textContent?.trim())
+    expect(buttonNames).not.toContain('Save Changes')
+    expect(panel.querySelector('[data-config-section-shell]')).toBeNull()
   })
 
   it('exposes vision and context window in the LLM configuration modal', async () => {

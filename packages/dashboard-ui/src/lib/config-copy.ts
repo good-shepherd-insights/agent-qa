@@ -420,6 +420,36 @@ export const LOGGING_LEVEL_LABELS = {
   debug: 'Debug',
 } as const
 
+export const PASS_RATE_SCOPE_HELP = 'Scoped pass rates count only runs whose attributes match every one of these.'
+export const NO_ATTRIBUTES_TEXT = 'No attributes yet.'
+export const ADD_ATTRIBUTE_LABEL = 'Add attribute'
+export const MATCH_AS_PATTERN_LABEL = 'Match as a pattern'
+/** Beside an attribute's key when its value is matched as a pattern. */
+export const ATTRIBUTE_PATTERN_TAG = 'Pattern'
+export const INVALID_ATTRIBUTE_PATTERN_ERROR = 'Not a valid pattern.'
+
+export const ATTRIBUTE_FIELD_LABELS = {
+  key: 'Attribute',
+  value: 'Value',
+} as const satisfies Record<string, string>
+
+/** An attribute value's accessible label, so each eye and Replace value names its own attribute. */
+export function attributeValueLabel(key: string): string {
+  return `${key} value`
+}
+
+export function removeAttributeName(key: string): string {
+  return `Remove attribute ${key}`
+}
+
+export const PRIVACY_FIELD_LABELS = {
+  privacy: 'Turn off usage data',
+} as const
+
+export const PRIVACY_FIELD_HELP = {
+  privacy: 'When on, agent-qa sends no product usage data from this project.',
+} as const
+
 /** A duration field's draft error: the forms the field accepts. */
 export const DURATION_INPUT_ERROR = 'Use a duration like 30s, 5m or 1h.'
 

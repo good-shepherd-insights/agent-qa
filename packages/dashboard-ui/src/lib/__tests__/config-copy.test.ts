@@ -55,6 +55,8 @@ function functionOutputs(): string[] {
     copy.replaceValueName('Authorization'),
     copy.saveValueName('Authorization'),
     copy.keepValueName('Authorization'),
+    copy.attributeValueLabel('git.branch'),
+    copy.removeAttributeName('git.branch'),
   ]
 }
 
