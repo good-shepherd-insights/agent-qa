@@ -1,9 +1,14 @@
-// THE SHARED LIVE PREVIEW (428 D-02/D-13/D-14/D-16/D-17 · PXH-LIVE-01): one mint, one sandboxed embed, one corner.
+// THE SHARED LIVE PREVIEW (428 D-02/D-13/D-14/D-16/D-17 · PXH-LIVE-01): one mint, one sandboxed embed, one status light.
 //
 // Both entry points render this component: a run (the active run page) and an editor session
 // (Test → Live and the suite editor, Plan 18). It mints for its subject, embeds the served embed
 // page in an iframe, listens to the closed-set facts that page posts, runs the pure machine in
-// lib/live-preview.ts and draws the corner.
+// lib/live-preview.ts and draws the status.
+//
+// THE DOT IS THE CONTAINER'S STATUS LIGHT (owner decision 2026-09-26 (4), G-428-4). It leads the
+// preview's chrome row, at the container's top-left, with the snapshot label, the words and the one
+// action beside it, ahead of any host toolbar. Nothing is drawn over the tested page's pixels: the
+// picture's box holds the iframe alone. This supersedes D-02's dot on the frame's top-right corner.
 //
 // THE TOKEN IS THE REASON FOR THE SANDBOX. The minted liveUrl carries a short-lived capability in
 // its fragment. It lives in this component's state and the iframe's src, and nowhere else: it is
@@ -14,7 +19,7 @@
 // THE BRIDGE TRUSTS IDENTITY, NOT ORIGIN (Q-BRIDGE). The embed's origin is the string 'null' by
 // construction, so the only check that means anything is that the event's source is this
 // component's own iframe window. What passes is rebuilt by parseEmbedReport from closed sets, and
-// no posted string is ever rendered: the corner speaks only in this package's copy constants.
+// no posted string is ever rendered: the status speaks only in this package's copy constants.
 //
 // RENEW IN PLACE, RECONNECT BY REMOUNT (RESEARCH P8). The silent half-life re-mint changes only
 // the fragment of the same iframe, which the embed hears as a hashchange on a live socket. A dead
@@ -89,10 +94,10 @@ interface MintAnswer {
 /** `open` is a first ask, `renew` swaps the fragment in place, `remount` puts up a new iframe. */
 type MintPurpose = 'open' | 'renew' | 'remount'
 
-/** How often the corner re-reads the newest frame's age while an iframe is up. */
+/** How often the status re-reads the newest frame's age while an iframe is up. */
 const CLOCK_TICK_MS = 1_000
 
-/** The states that keep the iframe up: the picture, or the last of it, with the corner on top. */
+/** The states that keep the iframe up: the picture, or the last of it, under the status row. */
 const FRAME_STATES: ReadonlySet<LivePreviewStateName> = new Set([
   'loading',
   'live',
@@ -106,8 +111,6 @@ const FRAME_STATES: ReadonlySet<LivePreviewStateName> = new Set([
 const RENEWABLE_STATES: ReadonlySet<LivePreviewStateName> = new Set(['loading', 'live', 'delayed'])
 
 const FOCUS_RING = 'focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50'
-
-const CORNER_TEXT = 'rounded-sm bg-background/85 px-1.5 py-0.5 text-xs text-foreground shadow-sm'
 
 /** The host hint is a query, never a credential; it goes before the fragment so the token stays where it was. */
 export function withHostHint(liveUrl: string): string {
@@ -206,7 +209,7 @@ export function LivePreview({ subject, chrome }: LivePreviewProps) {
             return
           }
           setMint(undefined)
-          // The door's own word, kept as an attribute for a reader who needs it; the corner says copy.
+          // The door's own word, kept as an attribute for a reader who needs it; the status says copy.
           const word = error instanceof Error ? error.message : 'live_url_mint_failed'
           setRefusal(word)
           dispatch({ type: 'mint-refused', word })
@@ -247,7 +250,7 @@ export function LivePreview({ subject, chrome }: LivePreviewProps) {
   const reconnectAttempt = machine.reconnectAttempts
   const waiting = kind === 'run' && view.state === 'waiting'
 
-  // The corner reads a frame's age, so it needs a clock while there is a frame to age.
+  // The status reads a frame's age, so it needs a clock while there is a frame to age.
   useEffect(() => {
     if (!framed) return
     const timer = setInterval(() => {
@@ -349,6 +352,27 @@ export function LivePreview({ subject, chrome }: LivePreviewProps) {
     </button>
   )
 
+  // THE STATUS IS SAID ONCE. With a dot, or with an iframe up and something to say beside it
+  // (loading's words before the first frame), it leads the chrome; otherwise the words are a
+  // dot-less sentence in the middle of the pane.
+  const statusShown = dot !== null || (framed && (view.words !== undefined || view.snapshot))
+  const status = statusShown ? (
+    <div data-preview-corner className="flex min-w-0 flex-wrap items-center gap-2">
+      {dot}
+      {view.snapshot && (
+        <span data-snapshot-label className="text-xs text-muted-foreground">
+          {SNAPSHOT_PREVIEW_LABEL}
+        </span>
+      )}
+      {view.words !== undefined && (
+        <span data-preview-words className="text-xs text-foreground">
+          {view.words}
+        </span>
+      )}
+      {action}
+    </div>
+  ) : null
+
   return (
     <section
       data-live-preview
@@ -359,16 +383,16 @@ export function LivePreview({ subject, chrome }: LivePreviewProps) {
       {/*
         One preview, which follows the running member (owner review 2026-09-26), never a grid (D-08).
         The handle selector this row used to hold is gone (G-428-3); the host decides the handle.
+        The status leads the row at the container's top-left (owner decision 2026-09-26 (4)).
       */}
-      <PreviewChrome>{chrome}</PreviewChrome>
+      <PreviewChrome status={status}>{chrome}</PreviewChrome>
 
       <div className="flex min-h-0 flex-1 items-center justify-center [container-type:size]">
         {framed && mint !== undefined ? (
-          // THE BOX TAKES THE PICTURE'S OWN ASPECT RATIO (P10), so the corner is the picture's
-          // corner and not a corner of the letterboxing around it.
+          // THE BOX TAKES THE PICTURE'S OWN ASPECT RATIO (P10), and it holds the picture alone.
           <div
             data-preview-frame
-            className="relative max-h-full max-w-full"
+            className="max-h-full max-w-full"
             style={{
               aspectRatio: `${String(ratio.width)} / ${String(ratio.height)}`,
               width: `min(100cqw, calc(100cqh * ${String(ratio.width)} / ${String(ratio.height)}))`,
@@ -383,58 +407,31 @@ export function LivePreview({ subject, chrome }: LivePreviewProps) {
               title="live preview"
               className="size-full border-0"
             />
-            <div data-preview-corner className="absolute right-2 top-2 flex items-center gap-2">
-              {view.snapshot && (
-                <span data-snapshot-label className={CORNER_TEXT}>
-                  {SNAPSHOT_PREVIEW_LABEL}
-                </span>
-              )}
-              {view.words !== undefined && (
-                <span data-preview-words className={CORNER_TEXT}>
-                  {view.words}
-                </span>
-              )}
-              {action}
-              {dot}
-            </div>
           </div>
         ) : (
-          <div className="flex flex-col items-center gap-2 p-6 text-center">
-            {(dot !== null || action !== null) && (
-              <div data-preview-corner className="flex items-center gap-2">
-                {dot}
-                {dot !== null && view.words !== undefined && (
-                  <span data-preview-words className="text-sm text-foreground">
-                    {view.words}
-                  </span>
-                )}
-                {action}
-              </div>
-            )}
-            {dot === null && view.words !== undefined && (
-              <>
-                {/* A sibling, not a child: the sentence is read with exact equality. */}
-                {view.label !== undefined && (
-                  <span
-                    data-preview-reason-label
-                    className="rounded-sm border border-amber-500/20 bg-amber-500/15 px-1.5 py-0.5 text-xs text-amber-500"
-                  >
-                    {view.label}
-                  </span>
-                )}
-                <p
-                  data-preview-sentence
-                  {...(view.state === 'no-stream'
-                    ? { 'data-preview-reason': view.label === undefined ? 'declared' : 'gave-up' }
-                    : {})}
-                  {...(view.state === 'unavailable' && refusal !== undefined ? { 'data-preview-error': refusal } : {})}
-                  className="text-sm text-muted-foreground"
+          !statusShown && view.words !== undefined && (
+            <div className="flex flex-col items-center gap-2 p-6 text-center">
+              {/* A sibling, not a child: the sentence is read with exact equality. */}
+              {view.label !== undefined && (
+                <span
+                  data-preview-reason-label
+                  className="rounded-sm border border-amber-500/20 bg-amber-500/15 px-1.5 py-0.5 text-xs text-amber-500"
                 >
-                  {view.words}
-                </p>
-              </>
-            )}
-          </div>
+                  {view.label}
+                </span>
+              )}
+              <p
+                data-preview-sentence
+                {...(view.state === 'no-stream'
+                  ? { 'data-preview-reason': view.label === undefined ? 'declared' : 'gave-up' }
+                  : {})}
+                {...(view.state === 'unavailable' && refusal !== undefined ? { 'data-preview-error': refusal } : {})}
+                className="text-sm text-muted-foreground"
+              >
+                {view.words}
+              </p>
+            </div>
+          )
         )}
       </div>
     </section>
