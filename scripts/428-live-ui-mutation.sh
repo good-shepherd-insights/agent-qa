@@ -5,14 +5,14 @@
 # WHAT THIS PROVES, AND WHY A GREEN SUITE DOES NOT PROVE IT. Phase 428 closed six UI vocabularies
 # (the preview states, the dot states, the embed report events the page listens for, the corner's
 # actions, the two page layouts and the step glyph table, made injective) and made a set of
-# promises about what the preview and the live rows say: exactly one thing on the page pulses and
-# it is the green dot, health is read from frames and never from the bus, a stall turns the dot
+# promises about what the preview and the live rows say: nothing on the live page animates and the
+# one green dot is still, health is read from frames and never from the bus, a stall turns the dot
 # amber while the bus keeps heartbeating, a static page stays green on the keepalive, snapshot
 # frames carry the literal label, the editor hook polls for no screenshot, a secret placeholder is
 # the masked chip, a row is a glyph and a label with no clock, count or bar, a single member's
 # title is said once. It also deleted things that must stay deleted: the liveness pill, a second
 # live embed, a bridge that trusts any window, an editor end that needs the socket, a Group keyed
-# by the layout and a dot that pulses under reduced motion. Every suite that pins those is green
+# by the layout and a dot that animates at all. Every suite that pins those is green
 # today with nothing taken away, which is exactly what a green suite cannot tell you. So each leg
 # below plants the regression that would re-open one set, break one promise or bring one deletion
 # back, and requires its NAMED cell to red while the listed controls hold. The contract-side legs
@@ -25,7 +25,7 @@
 #   U04  a fourth action joins LivePreviewAction, its array and its label           -> C428-PREVIEW-ACTIONS-EXACT
 #   U05  a third layout joins LiveRunLayout and LIVE_RUN_LAYOUTS                     -> CLOSED-SETS-428-LAYOUT (D-06)
 #   U06  cancelled maps to Minus again, the glyph skipped already has               -> GLYPH-TABLE-TOTAL-AND-INJECTIVE (D-19)
-#   U07  the running glyph's wrapper also takes live-dot-green, on the rebuilt bundle -> ONE-PULSING-GREEN-DOT (D-02, shipped)
+#   U07  the dot's mark takes Tailwind's pulse animation, on the rebuilt bundle     -> NO-ANIMATION-ON-LIVE-PAGE (owner 2026-09-26 (5), shipped)
 #   U08  LivePreviewEvent gains a bus envelope that the machine reads as a frame    -> NO-BUS-INPUT (D-15)
 #   U09  deriveLivePreview ignores a frame's age once one has arrived               -> STALL-TURNS-AMBER (D-16)
 #   U10  U09's edit, on the rebuilt bundle over a heartbeating bus                  -> STALL-TURNS-AMBER-WHILE-HEARTBEAT-CONTINUES (SC3, shipped)
@@ -33,17 +33,17 @@
 #   U12  SNAPSHOT_PREVIEW_LABEL loses its words and reads 'Snapshot'               -> SNAPSHOT-LABEL-IFF-SNAPSHOT-FRAME (D-13)
 #   U13  the label drifts to every 2s, on the rebuilt bundle                       -> SNAPSHOT-LABEL-ON-SNAPSHOT-FRAMES (D-13, shipped)
 #   U14  the editor hook sends the retired screenshot request every second again   -> HOOK-HAS-NO-SCREENSHOT-POLLING (SC1)
-#   U15  the row renders row.text without liveLabelText                            -> SECRET-PLACEHOLDER-AS-CHIP (D-22, #289)
-#   U16  the running row renders a mm:ss elapsed span                              -> NO-CLOCK-ON-ANY-ROW (D-19)
-#   U17  the running row renders an 'N actions' span                               -> NO-ACTION-COUNT (D-19)
-#   U18  the running row renders a progressbar                                     -> ROW-IS-GLYPH-AND-LABEL (D-19)
+#   U15  the row renders row.text without liveLabelText (on the wrapping label)    -> SECRET-PLACEHOLDER-AS-CHIP (D-22, #289)
+#   U16  the running row renders a mm:ss elapsed span before the wrapping label    -> NO-CLOCK-ON-ANY-ROW (D-19)
+#   U17  the running row renders an 'N actions' span before the wrapping label     -> NO-ACTION-COUNT (D-19)
+#   U18  the running row renders a progressbar before the wrapping label           -> ROW-IS-GLYPH-AND-LABEL (D-19)
 #   U19  the member header renders for a single member                             -> NO-REPEATED-SINGLE-MEMBER-TITLE (D-19)
 #   U20  the live page's header renders a data-liveness element again              -> NO-LIVENESS-PILL (D-03)
 #   U21  the editor's run panel renders a second data-live-embed iframe            -> ONE-PREVIEW-COMPONENT (SC1)
 #   U22  the message listener drops the event.source check                         -> BRIDGE-SOURCE-CHECKED (Q-BRIDGE)
 #   U23  terminateSession ends the session only over the socket                    -> UNMOUNT-DELETES-WITH-SOCKET-CLOSED (D-09)
 #   U24  the ResizablePanelGroup's key follows the layout                          -> GROUP-KEY-STABLE (D-06)
-#   U25  the reduced-motion rule for .live-dot-green is removed                    -> REDUCED-MOTION-STILL-DOT (D-02)
+#   U25  .live-dot-green gets an infinite animation and its keyframes back         -> DOT-IS-STILL (owner 2026-09-26 (5))
 #
 # ALLOWED CO-REDS are listed on each leg with a one-line reason; nothing else may red.
 #
@@ -54,12 +54,35 @@
 # U07, U10 AND U13 CROSS THE DIST BOUNDARY. Their cells read the shipped bundle a real Chromium
 # loads from a production server, so each leg rebuilds `@vostride/agent-qa-dashboard-ui`, whose
 # Vite bundle has no importable entry; it names the literal by which the instrument serves that
-# dist and plants a marker the rebuilt bundle must carry (the running wrapper's
-# `live-dot-green` class, `stall428green`, `updates every 2s`), so the engine proves the mutation
+# dist and plants a marker the rebuilt bundle must carry (the dot mark's
+# `live-dot animate-pulse` class, `stall428green`, `updates every 2s`), so the engine proves the mutation
 # reached the page. The shipped-bundle suites run with one worker.
 #
 # U25's SUBJECT IS A STYLESHEET. The row and preview suites parse globals.css through a path
 # relative to their own file, and the engine's closure follows that read (428-26).
+#
+# 2026-09-26 (428-35, owner review G-428-1..5). The owner's review of the shipped live page made
+# five decisions: (1) a live row shows its whole label, wrapped; (2) no row reads `step N`; (3) the
+# preview follows the running member and there is no handle selector; (4) the health dot sits at
+# the preview container's top-left, in its chrome, clear of the picture; (5) the dot and the running
+# glyph are still. 428-30..34 built them and re-spelled the cells, which left legs aimed at markup
+# and titles that no longer exist. Re-spelled here, each still planting the regression its claim
+# names:
+#   U07  was ONE-PULSING-GREEN-DOT (the running glyph's wrapper took live-dot-green, so a second
+#        element pulsed). Nothing pulses now, so the dot's own mark takes Tailwind's pulse
+#        animation, on its new subject health-dot.tsx, and reds NO-ANIMATION-ON-LIVE-PAGE.
+#   U15  same claim (SECRET-PLACEHOLDER-AS-CHIP); anchored on the label line without the retired
+#        step-N fallback.
+#   U16..U18  same claims; LABEL_SPAN names the new wrapping label container, and the planted
+#        spans test `row.status === 'running'`, since the row's isRunning went with the motion.
+#   U25  was REDUCED-MOTION-STILL-DOT (removed the reduced-motion rule that stilled the pulse). There
+#        is no pulse to still, so the leg puts an infinite animation and its keyframes back on
+#        .live-dot-green, and reds DOT-IS-STILL.
+# Green controls follow the renamed cells: RUNNING-BREATHES-AND-REKEYS is RUNNING-GLYPH-STILL,
+# REDUCED-MOTION-STILL-DOT is DOT-IS-STILL, ONE-PULSING-GREEN-DOT is NO-ANIMATION-ON-LIVE-PAGE,
+# REDUCED-MOTION-DOT-STILL is DOT-STILL-UNDER-ANY-MOTION-PREFERENCE and CORNER-ON-PICTURE is
+# DOT-TOP-LEFT-OF-CONTAINER. ui-lib also selects live-run-watch.test.ts, and every instrument's
+# count is re-measured on the 428-34 tree.
 #
 # Engine, arrival proof, counted selection and restoration: scripts/423-mutation-engine.cjs.
 #
@@ -91,10 +114,12 @@ const STEPS_SRC = 'packages/dashboard-ui/src/components/live-run/step-list.tsx'
 const PAGE_SRC = 'packages/dashboard-ui/src/pages/live-run.tsx'
 const HOOK_SRC = 'packages/dashboard-ui/src/hooks/use-live-editor.ts'
 const CSS_SRC = 'packages/dashboard-ui/src/styles/globals.css'
+const HEALTH_SRC = 'packages/dashboard-ui/src/components/live-preview/health-dot.tsx'
 
 const LIB_T = 'src/lib/__tests__/live-preview.test.ts'
 const LIB_D = 'src/lib/__tests__/live-preview.test-d.ts'
 const LAYOUT_T = 'src/lib/__tests__/live-run-layout.test.ts'
+const WATCH_T = 'src/lib/__tests__/live-run-watch.test.ts'
 const PREVIEW_C = 'src/components/live-preview/__tests__/live-preview.test.tsx'
 const ONE_C = 'src/components/live-preview/__tests__/one-preview.test.ts'
 const ROW_C = 'src/components/__tests__/live-step-row.test.tsx'
@@ -105,10 +130,10 @@ const PREVIEW_DOM = 'src/__tests__/conformance/428-live-preview-dom.test.ts'
 const LAYOUT_DOM = 'src/__tests__/conformance/428-live-layout-dom.test.ts'
 
 const instruments = {
-  'ui-lib': { pkg: 'packages/dashboard-ui', files: [LIB_T, LIB_D, LAYOUT_T], typecheck: true, count: 34 },
-  'ui-parts': { pkg: 'packages/dashboard-ui', files: [PREVIEW_C, ONE_C, ROW_C, PANEL_C, HOOK_T], typecheck: false, count: 53 },
-  'ui-page': { pkg: 'packages/dashboard-ui', files: [PAGE_C], typecheck: false, count: 51 },
-  dom: { pkg: 'packages/cli', files: [PREVIEW_DOM, LAYOUT_DOM], typecheck: false, count: 15, env: { VITEST_MAX_WORKERS: '1' } },
+  'ui-lib': { pkg: 'packages/dashboard-ui', files: [LIB_T, LIB_D, LAYOUT_T, WATCH_T], typecheck: true, count: 42 },
+  'ui-parts': { pkg: 'packages/dashboard-ui', files: [PREVIEW_C, ONE_C, ROW_C, PANEL_C, HOOK_T], typecheck: false, count: 60 },
+  'ui-page': { pkg: 'packages/dashboard-ui', files: [PAGE_C], typecheck: false, count: 55 },
+  dom: { pkg: 'packages/cli', files: [PREVIEW_DOM, LAYOUT_DOM], typecheck: false, count: 19, env: { VITEST_MAX_WORKERS: '1' } },
 }
 
 const UI_DIST = "join(PACKAGES_ROOT, 'dashboard-ui', 'dist')"
@@ -128,7 +153,7 @@ const layoutDom = (name, count) => cell('dom', LAYOUT_DOM, name, count)
 
 const AGE = '      const age = now - (frame.ts + (state.skew ?? 0))\n'
 const AGE_IGNORED = "      const age = frame.kind === ('stall428green' as LiveStreamKind) ? now - frame.ts : 0\n"
-const LABEL_SPAN = '      <span className="flex min-w-0 flex-1 items-center gap-1 overflow-hidden">\n'
+const LABEL_SPAN = '      <span className="min-w-0 flex-1 whitespace-normal break-words leading-5 [overflow-wrap:anywhere]">\n'
 
 const legs = [
   {
@@ -203,21 +228,23 @@ const legs = [
     edits: [{ from: '  cancelled: Ban,\n', to: '  cancelled: Minus,\n' }],
     reds: [row('GLYPH-TABLE-TOTAL-AND-INJECTIVE')],
     allowed: [],
-    greens: [row('ROW-IS-GLYPH-AND-LABEL'), row('STATUS-NAME-NOT-COLOUR'), row('RUNNING-BREATHES-AND-REKEYS')],
+    greens: [row('ROW-IS-GLYPH-AND-LABEL'), row('STATUS-NAME-NOT-COLOUR'), row('RUNNING-GLYPH-STILL')],
   },
   {
-    subject: ROW_SRC, instrument: 'dom', claim: 'ONE-PULSING-GREEN-DOT',
-    operation: "give the running glyph's wrapper the green dot's class, on the rebuilt bundle a real Chromium loads",
-    crossing: ui('inline-flex shrink-0 live-dot-green'),
-    // On the svg itself the later .live-step-breathing rule would win the animation at equal
-    // specificity; the wrapper has no animation of its own, so the dot's pulse lands on it.
+    subject: HEALTH_SRC, instrument: 'dom', claim: 'NO-ANIMATION-ON-LIVE-PAGE',
+    operation: "give the dot's mark Tailwind's pulse animation, on the rebuilt bundle a real Chromium loads",
+    crossing: ui('live-dot animate-pulse'),
+    // Re-spelled 2026-09-26 (428-35): it planted a second pulsing element beside the pulsing dot;
+    // nothing on the page animates now, so the dot itself is what starts moving again.
     edits: [{
-      from: '        className="inline-flex shrink-0"\n',
-      to: "        className={isRunning ? 'inline-flex shrink-0 live-dot-green' : 'inline-flex shrink-0'}\n",
+      from: '          <span data-live-dot-mark aria-hidden className={`live-dot live-dot-${state}`} />\n',
+      to: '          <span data-live-dot-mark aria-hidden className={`live-dot animate-pulse live-dot-${state}`} />\n',
     }],
-    reds: [dom('ONE-PULSING-GREEN-DOT')],
-    allowed: [],
-    greens: [dom('REDUCED-MOTION-DOT-STILL'), dom('CORNER-ON-PICTURE'), layoutDom('ROWS-GLYPH-AND-LABEL-SHIPPED')],
+    reds: [dom('NO-ANIMATION-ON-LIVE-PAGE')],
+    // It reads the same dot's computed animation, with and without reduced motion, and Tailwind's
+    // pulse has no reduced-motion guard.
+    allowed: [dom('DOT-STILL-UNDER-ANY-MOTION-PREFERENCE')],
+    greens: [dom('DOT-TOP-LEFT-OF-CONTAINER'), dom('NO-LABEL-ON-SCREENCAST'), layoutDom('ROWS-GLYPH-AND-LABEL-SHIPPED')],
   },
   {
     subject: PREVIEW_SRC, instrument: 'ui-lib', claim: 'NO-BUS-INPUT',
@@ -257,7 +284,7 @@ const legs = [
     edits: [{ from: AGE, to: AGE_IGNORED }],
     reds: [dom('STALL-TURNS-AMBER-WHILE-HEARTBEAT-CONTINUES')],
     allowed: [],
-    greens: [dom('ONE-PULSING-GREEN-DOT'), dom('SNAPSHOT-LABEL-ON-SNAPSHOT-FRAMES'), dom('NO-LABEL-ON-SCREENCAST')],
+    greens: [dom('NO-ANIMATION-ON-LIVE-PAGE'), dom('SNAPSHOT-LABEL-ON-SNAPSHOT-FRAMES'), dom('NO-LABEL-ON-SCREENCAST')],
   },
   {
     subject: PREVIEW_SRC, instrument: 'ui-lib', claim: 'STATIC-PAGE-STAYS-GREEN',
@@ -294,7 +321,7 @@ const legs = [
     allowed: [],
     // The fallback cell reads the page against the drifted source, so it stays green only if the
     // rebuilt bundle carries the drift: the page-side proof that the mutation arrived.
-    greens: [dom('SNAPSHOT-LABEL-ON-FALLBACK-FRAMES'), dom('NO-LABEL-ON-SCREENCAST'), dom('ONE-PULSING-GREEN-DOT')],
+    greens: [dom('SNAPSHOT-LABEL-ON-FALLBACK-FRAMES'), dom('NO-LABEL-ON-SCREENCAST'), dom('NO-ANIMATION-ON-LIVE-PAGE')],
   },
   {
     subject: HOOK_SRC, instrument: 'ui-parts', claim: 'HOOK-HAS-NO-SCREENSHOT-POLLING',
@@ -312,8 +339,8 @@ const legs = [
     subject: ROW_SRC, instrument: 'ui-parts', claim: 'SECRET-PLACEHOLDER-AS-CHIP',
     operation: 'render row.text without turning its placeholders into the masked marker',
     edits: [{
-      from: '        {splitMaskedText(liveLabelText(row.text || `step ${String(row.stepIndex + 1)}`)).map(',
-      to: '        {splitMaskedText(row.text || `step ${String(row.stepIndex + 1)}`).map(',
+      from: '        {splitMaskedText(liveLabelText(row.text)).map(',
+      to: '        {splitMaskedText(row.text).map(',
     }],
     reds: [row('SECRET-PLACEHOLDER-AS-CHIP')],
     // Each of these paints a placeholder as its chip through the same label path, the editor's run
@@ -327,10 +354,11 @@ const legs = [
     operation: 'render a mm:ss elapsed span on the running row',
     edits: [{
       from: LABEL_SPAN,
-      to: "      {isRunning && (\n        <span data-step-clock className=\"shrink-0 tabular-nums text-muted-foreground\">\n          {(() => {\n            const seconds = Math.floor(Math.max(0, Date.now() - (row.startedAt ?? Date.now())) / 1_000)\n            return `${String(Math.floor(seconds / 60))}:${String(seconds % 60).padStart(2, '0')}`\n          })()}\n        </span>\n      )}\n" + LABEL_SPAN,
+      to: "      {row.status === 'running' && (\n        <span data-step-clock className=\"shrink-0 tabular-nums text-muted-foreground\">\n          {(() => {\n            const seconds = Math.floor(Math.max(0, Date.now() - (row.startedAt ?? Date.now())) / 1_000)\n            return `${String(Math.floor(seconds / 60))}:${String(seconds % 60).padStart(2, '0')}`\n          })()}\n        </span>\n      )}\n" + LABEL_SPAN,
     }],
     reds: [page('NO-CLOCK-ON-ANY-ROW')],
-    allowed: [],
+    // Each reads the running row's whole text, which now carries the clock (428-35, measured).
+    allowed: [page('PENDING-ROWS-SHOW-KNOWN-TEXT'), page('TEXTLESS-PENDING-ROWS-ABSENT')],
     greens: [page('NO-ACTION-COUNT'), page('NO-REPEATED-SINGLE-MEMBER-TITLE'), page('GROUP-KEY-STABLE')],
   },
   {
@@ -338,10 +366,11 @@ const legs = [
     operation: "render an 'N actions' span on the running row",
     edits: [{
       from: LABEL_SPAN,
-      to: "      {isRunning && (\n        <span data-step-count className=\"shrink-0 text-xs text-muted-foreground\">\n          {`${String(row.ticks)} actions`}\n        </span>\n      )}\n" + LABEL_SPAN,
+      to: "      {row.status === 'running' && (\n        <span data-step-count className=\"shrink-0 text-xs text-muted-foreground\">\n          {`${String(row.ticks)} actions`}\n        </span>\n      )}\n" + LABEL_SPAN,
     }],
     reds: [page('NO-ACTION-COUNT')],
-    allowed: [],
+    // Each reads the running row's whole text, which now carries the count (428-35, measured).
+    allowed: [page('PENDING-ROWS-SHOW-KNOWN-TEXT'), page('TEXTLESS-PENDING-ROWS-ABSENT')],
     greens: [page('NO-CLOCK-ON-ANY-ROW'), page('NO-REPEATED-SINGLE-MEMBER-TITLE'), page('GROUP-KEY-STABLE')],
   },
   {
@@ -349,11 +378,12 @@ const legs = [
     operation: 'render a progressbar on the running row',
     edits: [{
       from: LABEL_SPAN,
-      to: "      {isRunning && (\n        <span role=\"progressbar\" aria-valuenow={row.ticks} className=\"h-1 w-8 shrink-0 rounded bg-blue-500\" />\n      )}\n" + LABEL_SPAN,
+      to: "      {row.status === 'running' && (\n        <span role=\"progressbar\" aria-valuenow={row.ticks} className=\"h-1 w-8 shrink-0 rounded bg-blue-500\" />\n      )}\n" + LABEL_SPAN,
     }],
     reds: [row('ROW-IS-GLYPH-AND-LABEL')],
-    // It reads the label as the row's second child, which is now the bar.
-    allowed: [row('CHIP-STAYS-WHOLE')],
+    // Each reads the label as the row's second child, which is now the bar; the wrap and first-line
+    // cells joined 428-31 (measured 428-35).
+    allowed: [row('CHIP-STAYS-WHOLE'), row('FULL-LABEL-WRAPS'), row('GLYPH-ON-FIRST-LINE')],
     greens: [row('GLYPH-TABLE-TOTAL-AND-INJECTIVE'), row('STATUS-NAME-NOT-COLOUR'), row('SECRET-PLACEHOLDER-AS-CHIP')],
   },
   {
@@ -389,7 +419,7 @@ const legs = [
     }],
     reds: [one('ONE-PREVIEW-COMPONENT')],
     allowed: [],
-    greens: [preview('BRIDGE-SOURCE-CHECKED'), preview('REDUCED-MOTION-STILL-DOT'), row('ROW-IS-GLYPH-AND-LABEL')],
+    greens: [preview('BRIDGE-SOURCE-CHECKED'), preview('DOT-IS-STILL'), row('ROW-IS-GLYPH-AND-LABEL')],
   },
   {
     subject: COMPONENT_SRC, instrument: 'ui-parts', claim: 'BRIDGE-SOURCE-CHECKED',
@@ -400,7 +430,7 @@ const legs = [
     }],
     reds: [preview('BRIDGE-SOURCE-CHECKED')],
     allowed: [],
-    greens: [preview('REDUCED-MOTION-STILL-DOT'), preview('CLEANUP-ON-UNMOUNT', 2), preview('HOST-HINT-IN-SRC'), one('ONE-PREVIEW-COMPONENT')],
+    greens: [preview('DOT-IS-STILL'), preview('CLEANUP-ON-UNMOUNT', 2), preview('HOST-HINT-IN-SRC'), one('ONE-PREVIEW-COMPONENT')],
   },
   {
     subject: HOOK_SRC, instrument: 'ui-parts', claim: 'UNMOUNT-DELETES-WITH-SOCKET-CLOSED',
@@ -423,12 +453,17 @@ const legs = [
     greens: [page('TWO-PANES-BOTH-LAYOUTS'), page('NO-LIVENESS-PILL', 3), page('NO-REPEATED-SINGLE-MEMBER-TITLE')],
   },
   {
-    subject: CSS_SRC, instrument: 'ui-parts', claim: 'REDUCED-MOTION-STILL-DOT',
-    operation: 'remove the reduced-motion rule that stills the green dot',
-    edits: [{ from: '@media (prefers-reduced-motion: reduce) {\n  .live-dot-green {\n    animation: none;\n  }\n}\n\n', to: '' }],
-    reds: [preview('REDUCED-MOTION-STILL-DOT')],
+    subject: CSS_SRC, instrument: 'ui-parts', claim: 'DOT-IS-STILL',
+    operation: 'put an infinite animation and its keyframes back on the green dot',
+    // Re-spelled 2026-09-26 (428-35): it removed the reduced-motion rule that stilled the pulse;
+    // there is no pulse to still, so the pulse itself comes back.
+    edits: [{
+      from: '.live-dot-green {\n  background-color: var(--color-emerald-500);\n}\n',
+      to: '.live-dot-green {\n  background-color: var(--color-emerald-500);\n  animation: live-dot-pulse 2s ease-in-out infinite;\n}\n\n@keyframes live-dot-pulse {\n  0%, 100% { opacity: 1; }\n  50% { opacity: 0.4; }\n}\n',
+    }],
+    reds: [preview('DOT-IS-STILL')],
     allowed: [],
-    greens: [preview('BRIDGE-SOURCE-CHECKED'), row('RUNNING-BREATHES-AND-REKEYS'), one('ONE-PREVIEW-COMPONENT')],
+    greens: [preview('BRIDGE-SOURCE-CHECKED'), row('RUNNING-GLYPH-STILL'), one('ONE-PREVIEW-COMPONENT')],
   },
 ]
 
