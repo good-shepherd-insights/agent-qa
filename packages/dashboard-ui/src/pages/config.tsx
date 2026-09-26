@@ -1,4 +1,4 @@
-import { useEffect, useState, type ComponentType } from "react"
+import { useEffect, useRef, useState, type ComponentType } from "react"
 import { useNavigate, useParams, useSearchParams } from "react-router"
 
 import { Button } from "@/components/ui/button"
@@ -198,6 +198,34 @@ export default function ConfigPage() {
     return () => clearTimeout(timer)
   }, [pendingFocus, tab])
 
+  // UI-SPEC S9: the Retry button unmounts once its write lands, so focus goes back to the field
+  // that had failed, else the active tab. A retry that fails again leaves focus on Retry.
+  const retryFocus = useRef<{ target: ConfigDraftTarget | undefined; sent: boolean } | undefined>(undefined)
+  const saveState = autosave.status.state
+
+  useEffect(() => {
+    const pending = retryFocus.current
+    if (pending === undefined) return
+    if (saveState === "saving") {
+      pending.sent = true
+      return
+    }
+    if (saveState === "failed") {
+      if (pending.sent) retryFocus.current = undefined
+      return
+    }
+    retryFocus.current = undefined
+    if (document.activeElement !== null && document.activeElement !== document.body) return
+    const field =
+      pending.target?.tab === tab ? document.getElementById(configFieldControlId(pending.target.fieldKey)) : null
+    ;(field ?? document.querySelector<HTMLElement>(`[data-config-tab="${tab}"]`))?.focus()
+  }, [saveState, tab])
+
+  function retrySave() {
+    retryFocus.current = { target: autosave.failedFieldTarget(), sent: false }
+    autosave.retry()
+  }
+
   function handleTabChange(value: string) {
     const next = resolveConfigTab(value)
     if (next === undefined || next === tab) return
@@ -256,7 +284,7 @@ export default function ConfigPage() {
               statusSlot={
                 <SaveStatus
                   status={autosave.status}
-                  onRetry={autosave.retry}
+                  onRetry={retrySave}
                   onUndo={() => void autosave.undo()}
                   onGoToDraft={goToFirstDraft}
                 />

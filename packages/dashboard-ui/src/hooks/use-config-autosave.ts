@@ -120,6 +120,8 @@ export interface ConfigAutosave {
   /** What the last Undo restored, so the section holding it can return focus to the row. */
   restored: ConfigRestored | undefined
   goToFirstDraft: () => ConfigDraftTarget | undefined
+  /** The field the failed write named, else the first field it carried: where focus goes after Retry. */
+  failedFieldTarget: () => ConfigDraftTarget | undefined
   /** Re-reads with the loading state shown (the Reload config button). */
   reload: () => void
   /** Re-reads quietly, for sections still saving through their own routes. */
@@ -842,6 +844,17 @@ function createEngine(host: EngineHost) {
 
 type Engine = ReturnType<typeof createEngine>
 
+function failedField(state: HookState): ConfigDraftTarget | undefined {
+  const named = Object.entries(state.machine.fields)
+    .filter(([, field]) => field.fieldState === "failed")
+    .map(([key]) => key)
+  for (const fieldKey of [...named, ...(state.machine.failure?.fieldKeys ?? [])]) {
+    const location = state.locations[fieldKey]
+    if (location) return { tab: location.tab, fieldKey }
+  }
+  return undefined
+}
+
 function firstDraft(state: HookState, externalDrafts: ReadonlySet<ConfigTab>): ConfigDraftTarget | undefined {
   let best: ConfigDraftTarget | undefined
   let bestRank = Number.POSITIVE_INFINITY
@@ -975,6 +988,7 @@ export function useConfigAutosave(): ConfigAutosave {
     undo: engine.undo,
     restored,
     goToFirstDraft: () => firstDraft(state, externalDrafts),
+    failedFieldTarget: () => failedField(state),
     reload: engine.reload,
     refresh: engine.refresh,
     setExternalDraft,

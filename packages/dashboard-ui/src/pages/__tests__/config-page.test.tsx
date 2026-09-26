@@ -624,6 +624,29 @@ describe('ConfigPage autosave wiring (429-16 Task 3)', () => {
     expect(container?.querySelector('[data-save-status]')?.getAttribute('data-save-status')).toBe('saved')
   })
 
+  it('RETRY-RETURNS-FOCUS: once a Retry lands, focus goes back to the field whose write failed', async () => {
+    vi.mocked(applyConfigChanges).mockRejectedValueOnce(
+      Object.assign(new Error('write_failed'), { payload: { error: 'write_failed' } }),
+    )
+    await renderAt('/config/execution')
+    await typeAndSettle('45s')
+    expect(container?.querySelector('[data-save-status]')?.getAttribute('data-save-status')).toBe('failed')
+
+    const retry = findButton(RETRY_LABEL)!
+    await act(async () => {
+      retry.focus()
+    })
+    expect(document.activeElement).toBe(retry)
+    await act(async () => {
+      retry.click()
+    })
+    await flushRender()
+
+    expect(applyConfigChanges).toHaveBeenCalledTimes(2)
+    expect(container?.querySelector('[data-save-status]')?.getAttribute('data-save-status')).toBe('saved')
+    expect(document.activeElement).toBe(stepInput())
+  })
+
   it('TAB-ORDER-STRIP-STATUS-PANEL: Tab goes from the active tab to Retry, then into the panel', async () => {
     vi.mocked(applyConfigChanges).mockRejectedValueOnce(refusedWrite())
     await renderAt('/config/execution')
