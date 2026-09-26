@@ -1345,7 +1345,7 @@ export async function saveCredential(
 export async function startPluginAuth(
   provider: string,
   configName: string,
-): Promise<{ authorizeUrl: string; sessionId: string; mode: 'browser-poll' | 'manual-code' }> {
+): Promise<{ authorizeUrl: string; sessionId: string; mode: 'browser-poll' | 'manual-code'; created?: boolean }> {
   return postJson(`/api/auth/plugin/${encodeURIComponent(provider)}/start`, { configName })
 }
 
