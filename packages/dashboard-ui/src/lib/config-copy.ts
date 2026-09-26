@@ -341,6 +341,7 @@ export function nameCredentialConflictError(name: string, providerLabel: string)
 }
 
 export const MODEL_REQUIRED_ERROR = 'Model is required.'
+export const KEY_REQUIRED_ERROR = 'API key is required.'
 export const BASE_URL_REQUIRED_ERROR = 'Base URL is required for compatible providers.'
 
 export const SIGN_IN_WAITING_TEXT = 'Finish signing in on the page that opened.'
@@ -357,9 +358,9 @@ export function connectedSavedText(name: string): string {
 }
 
 export const BECAME_DEFAULT_TEXT = "It's now the default model."
+/** A sign-in choice whose auth plugin is not registered (research A8); the CLI names the same package. */
 export function signInPluginMissingText(choiceLabel: string): string {
-  void choiceLabel
-  return ''
+  return `${choiceLabel} needs the @vostride/agent-qa-subscription-auth plugin. Install it and list it under plugins.auth in agent-qa.config.yaml.`
 }
 
 export const SAVE_WITHOUT_TESTING_LABEL = 'Save without testing'

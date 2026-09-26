@@ -7,9 +7,10 @@
 // Add model, and an Undo focuses the row it brought back (429-24 · D-24).
 
 import { useEffect, useRef, useState } from "react"
-import { useNavigate } from "react-router"
+import { useNavigate, useSearchParams } from "react-router"
 import { Plus, TriangleAlert } from "lucide-react"
 
+import { AddModelRow, type AddModelLanding } from "@/components/config-manager/add-model-row"
 import {
   ModelRow,
   credentialKeyType,
@@ -22,7 +23,7 @@ import { Skeleton } from "@/components/ui/skeleton"
 import { useConfigAutosaveContext, type ConfigFieldRef } from "@/hooks/use-config-autosave"
 import { fetchAuthStatus, fetchLLMProviders, type AuthCredentialInfo, type LLMProviderMetadata } from "@/lib/api"
 import { ADD_MODEL_LABEL, NO_DEFAULT_TEXT, NO_MODELS_TEXT } from "@/lib/config-copy"
-import { configTabPath } from "@/lib/config-tabs"
+import { CONNECTION_CHOICES, configTabPath, type ConnectionChoice } from "@/lib/config-tabs"
 
 interface ModelListProps {
   config: Record<string, unknown>
@@ -62,9 +63,18 @@ function savedModels(value: unknown): SavedModel[] {
   )
 }
 
+function choiceParam(value: string | null): ConnectionChoice | undefined {
+  return CONNECTION_CHOICES.find((choice) => choice === value)
+}
+
 export function ModelList(_props: ModelListProps) {
   const autosave = useConfigAutosaveContext()
   const navigate = useNavigate()
+  const [searchParams] = useSearchParams()
+  const addOpen = searchParams.has("add")
+  const [landing, setLanding] = useState<AddModelLanding | undefined>(undefined)
+  const landingFocus = useRef<string | undefined>(undefined)
+  const configPath = autosave.load.kind === "ready" ? (autosave.load.answer.file?.path ?? "") : ""
   const [reads, setReads] = useState<WorkspaceReads | undefined>(undefined)
   const [openName, setOpenName] = useState<string | undefined>(undefined)
   const [removing, setRemoving] = useState<ReadonlySet<string>>(new Set())
@@ -86,6 +96,18 @@ export function ModelList(_props: ModelListProps) {
     const rows = Array.from(list.current?.querySelectorAll<HTMLElement>("li[data-model-row]") ?? [])
     rows.find((row) => row.getAttribute("data-model-name") === name)?.querySelector<HTMLElement>("[data-model-row-toggle]")?.focus()
   }
+
+  // The saved row appears once the re-read lands, so its focus waits until the row is there.
+  useEffect(() => {
+    const name = landingFocus.current
+    if (name === undefined) return
+    const toggle = Array.from(list.current?.querySelectorAll<HTMLElement>("li[data-model-row]") ?? [])
+      .find((row) => row.getAttribute("data-model-name") === name)
+      ?.querySelector<HTMLElement>("[data-model-row-toggle]")
+    if (!toggle) return
+    landingFocus.current = undefined
+    toggle.focus()
+  })
 
   useEffect(() => {
     const target = pendingFocus.current
@@ -141,6 +163,19 @@ export function ModelList(_props: ModelListProps) {
     navigate(`${configTabPath("models")}?add`)
   }
 
+  function closeAdd() {
+    navigate(configTabPath("models"), { replace: true })
+  }
+
+  function connected(next: AddModelLanding) {
+    setLanding(next)
+    setOpenName(next.name)
+    landingFocus.current = next.name
+    closeAdd()
+    autosave.refresh()
+    refreshCredentials(next.name)
+  }
+
   if (reads === undefined) {
     return (
       <div data-models-loading aria-busy="true" className="col-span-full space-y-2">
@@ -157,7 +192,7 @@ export function ModelList(_props: ModelListProps) {
     setRemoving((current) => withName(current, name, true))
   }
 
-  if (shown.length === 0) {
+  if (shown.length === 0 && !addOpen) {
     return (
       <div data-models-empty className="col-span-full space-y-4 rounded-md border border-border px-4 py-8">
         <p className="text-sm">{NO_MODELS_TEXT}</p>
@@ -200,6 +235,17 @@ export function ModelList(_props: ModelListProps) {
           data-field-list="registry.llms"
           className="divide-y divide-border rounded-md border border-border"
         >
+          {addOpen ? (
+            <AddModelRow
+              configPath={configPath}
+              providers={reads.providers}
+              existingNames={models.map((model) => model.name)}
+              initialChoice={choiceParam(searchParams.get("add"))}
+              focusRequest={{ seq: 1, target: choiceParam(searchParams.get("add")) ? "field" : "choice" }}
+              onConnected={connected}
+              onDiscard={closeAdd}
+            />
+          ) : null}
           {shown.map((model) => (
             <ModelRow
               key={model.name}
@@ -210,7 +256,11 @@ export function ModelList(_props: ModelListProps) {
               isDefault={model.name === defaultName}
               evalConfig={evalConfig}
               open={openName === model.name}
-              onToggle={() => setOpenName((current) => (current === model.name ? undefined : model.name))}
+              landing={landing?.name === model.name ? landing : undefined}
+              onToggle={() => {
+                setLanding(undefined)
+                setOpenName((current) => (current === model.name ? undefined : model.name))
+              }}
               onMakeDefault={() => makeDefault(model.name)}
               onRemoveStart={() => removeStart(model.name)}
               onRemoveEnd={() => setRemoving((current) => withName(current, model.name, false))}

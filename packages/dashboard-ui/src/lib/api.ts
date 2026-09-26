@@ -1328,9 +1328,9 @@ export async function testLLMConnection(opts: {
   return postJson('/api/llm/test', opts)
 }
 
+/** Tests a draft model with its typed credential and writes it only on a pass or an explicit skipTest. */
 export async function connectLLM(request: LlmConnectRequest): Promise<LlmConnectResult> {
-  void request
-  throw new Error('connectLLM is not implemented yet')
+  return postJson('/api/llm/connect', request)
 }
 
 export async function saveCredential(

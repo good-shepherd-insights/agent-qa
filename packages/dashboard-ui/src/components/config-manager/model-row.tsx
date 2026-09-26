@@ -9,7 +9,7 @@
 // their own buttons, never as drafts.
 
 import { useEffect, useId, useRef, useState, type KeyboardEvent, type RefObject } from "react"
-import { ChevronRight, CircleAlert, LoaderCircle, LogOut, Plus, Trash2, TriangleAlert } from "lucide-react"
+import { ChevronRight, CircleAlert, CircleCheck, LoaderCircle, LogOut, Plus, Trash2, TriangleAlert } from "lucide-react"
 import { CONFIG_MASK_PLACEHOLDER, type ConfigChange, type ConfigPathSegment } from "@vostride/agent-qa-schema"
 
 import { ConfigField, type ConfigFieldTarget } from "@/components/config-manager/config-field"
@@ -33,6 +33,7 @@ import {
   ADD_FLOW_FIELD_LABELS,
   ADD_HEADER_LABEL,
   BASE_URL_HELP,
+  BECAME_DEFAULT_TEXT,
   BASE_URL_REQUIRED_ERROR,
   DEFAULT_BADGE,
   DEFAULT_CANNOT_DELETE_LINE,
@@ -51,6 +52,7 @@ import {
   PROVIDER_FALLBACK_LABELS,
   REMOVE_KEY_LABEL,
   REPLACE_KEY_LABEL,
+  SAVED_WITHOUT_TEST_TEXT,
   SAVE_HEADER_LABEL,
   SAVE_KEY_AND_TEST_LABEL,
   SETTLE_DELAY_MS,
@@ -58,6 +60,7 @@ import {
   SUBSCRIPTION_PLAN_NAMES,
   TEST_CONNECTION_LABEL,
   USED_AS_JUDGE_LINE,
+  connectedSavedText,
   connectionSentence,
   fixedFactsLine,
   headerNameFieldName,
@@ -558,6 +561,52 @@ function ModelSettings({ model, facts }: { model: SavedModel; facts: ProviderFac
   )
 }
 
+/** How a model the add row just saved lands: its line until a test runs here or the row closes. */
+export interface ModelLanding {
+  becameDefault: boolean
+  withoutTest: boolean
+}
+
+function LandingLine({
+  name,
+  landing,
+  isDefault,
+  onMakeDefault,
+}: {
+  name: string
+  landing: ModelLanding
+  isDefault: boolean
+  onMakeDefault: () => void
+}) {
+  const saved = landing.withoutTest ? SAVED_WITHOUT_TEST_TEXT : connectedSavedText(name)
+  return (
+    <div
+      data-model-landing
+      data-test-result={landing.withoutTest ? undefined : "connected"}
+      role="status"
+      aria-live="polite"
+      className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-2 text-sm"
+    >
+      <span className="flex h-[1lh] shrink-0 items-center">
+        <CircleCheck
+          className={cn("size-3.5", landing.withoutTest ? "text-muted-foreground" : "text-emerald-500")}
+          aria-hidden="true"
+        />
+      </span>
+      <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
+        <p className="break-words text-foreground">
+          {landing.becameDefault ? `${saved} ${BECAME_DEFAULT_TEXT}` : saved}
+        </p>
+        {landing.becameDefault || isDefault ? null : (
+          <Button type="button" variant="outline" size="xs" onClick={onMakeDefault}>
+            {MAKE_DEFAULT_LABEL}
+          </Button>
+        )}
+      </div>
+    </div>
+  )
+}
+
 interface ModelPanelProps extends ModelRowActions {
   id: string
   model: SavedModel
@@ -568,6 +617,7 @@ interface ModelPanelProps extends ModelRowActions {
   evalConfig: unknown
   onMakeDefault: () => void
   header: RefObject<HTMLButtonElement | null>
+  landing?: ModelLanding
 }
 
 function ModelPanel({
@@ -580,6 +630,7 @@ function ModelPanel({
   evalConfig,
   onMakeDefault,
   header,
+  landing,
   onRemoveStart,
   onRemoveEnd,
   onCredentialHidden,
@@ -697,6 +748,17 @@ function ModelPanel({
             ) : null}
           </div>
           {replacing ? <ReplaceKeyGroup onSave={saveKey} onKeep={closeReplace} /> : null}
+          {test.line === undefined && landing !== undefined ? (
+            <LandingLine
+              name={model.name}
+              landing={landing}
+              isDefault={isDefault}
+              onMakeDefault={() => {
+                onMakeDefault()
+                header.current?.focus()
+              }}
+            />
+          ) : null}
           {test.line === undefined ? null : <ConnectionLine state={test.line.state} sentence={test.line.sentence} />}
         </div>
         <ModelSettings model={model} facts={facts} />
@@ -743,6 +805,8 @@ interface ModelRowProps extends ModelRowActions {
   open: boolean
   onToggle: () => void
   onMakeDefault: () => void
+  /** Set on the row the add row just saved, while it stays open. */
+  landing?: ModelLanding
 }
 
 export function ModelRow({
@@ -755,6 +819,7 @@ export function ModelRow({
   open,
   onToggle,
   onMakeDefault,
+  landing,
   ...actions
 }: ModelRowProps) {
   const panelId = useId()
@@ -818,6 +883,7 @@ export function ModelRow({
           evalConfig={evalConfig}
           onMakeDefault={onMakeDefault}
           header={header}
+          landing={landing}
           {...actions}
         />
       ) : null}
