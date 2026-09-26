@@ -277,7 +277,11 @@ interface PageLayout {
   steps: Box | null
   frame: Box | null
   dotBox: Box | null
-  dotInFrame: boolean
+  // RE-SPELLED 2026-09-26 (428-34, owner decision 2026-09-26 (4), G-428-4). The reading used to say
+  // whether the picture's box contained the dot. The dot now leads the preview's chrome, so the
+  // reading says whether the chrome holds it and whether its box meets the picture's box at all.
+  dotInChrome: boolean
+  dotOverlapsFrame: boolean
 }
 
 async function readLayout(page: Page): Promise<PageLayout> {
@@ -288,8 +292,10 @@ async function readLayout(page: Page): Promise<PageLayout> {
       const rect = node.getBoundingClientRect()
       return { x: rect.x, y: rect.y, width: rect.width, height: rect.height }
     }
-    const frame = document.querySelector('[data-preview-frame]')
+    const chrome = document.querySelector('[data-live-preview] [data-preview-chrome]')
     const dot = document.querySelector('[data-live-dot]')
+    const frameBox = box('[data-preview-frame]')
+    const dotBox = box('[data-live-dot]')
     return {
       viewport: window.innerWidth,
       panes: document.querySelectorAll('[data-live-pane]').length,
@@ -297,9 +303,12 @@ async function readLayout(page: Page): Promise<PageLayout> {
       dot: dot?.getAttribute('data-live-dot') ?? null,
       preview: box('[data-live-pane="preview"]'),
       steps: box('[data-live-pane="steps"]'),
-      frame: box('[data-preview-frame]'),
-      dotBox: box('[data-live-dot]'),
-      dotInFrame: frame !== null && dot !== null && frame.contains(dot),
+      frame: frameBox,
+      dotBox,
+      dotInChrome: chrome !== null && dot !== null && chrome.contains(dot),
+      dotOverlapsFrame: frameBox !== null && dotBox !== null
+        && dotBox.x < frameBox.x + frameBox.width && frameBox.x < dotBox.x + dotBox.width
+        && dotBox.y < frameBox.y + frameBox.height && frameBox.y < dotBox.y + dotBox.height,
     }
   })
 }
@@ -570,7 +579,10 @@ describe('the live step rows on the shipped bundle (428-24 Task 1)', () => {
 const FLIP_TO_GREEN_BUDGET_MS = 8_000
 
 describe('the live page layout on the shipped bundle (428-24 Task 2)', () => {
-  it('STACKED-AT-400: the preview is on top at full width with its dot on the picture, over two panes', async () => {
+  // RE-SPELLED 2026-09-26 (428-34, owner decision 2026-09-26 (4), G-428-4). Was "STACKED-AT-400: the
+  // preview is on top at full width with its dot on the picture, over two panes", which asserted the
+  // dot inside the picture's box. The dot is now in the chrome above the picture, at the pane's left.
+  it('STACKED-AT-400: the preview is on top at full width with its dot in the chrome above the picture, over two panes', async () => {
     await onLivePage(ROWS_RUN, async (page) => {
       await waitForRowsInAllStates(page)
       await waitForGreen(page)
@@ -581,12 +593,16 @@ describe('the live page layout on the shipped bundle (428-24 Task 2)', () => {
       expect(layout.panes, context).toBe(2)
       expect(previewAboveSteps(layout), `${context} — the preview is above the steps`).toBe(true)
       expect(layout.preview?.width ?? 0, `${context} — the preview spans the page`).toBeGreaterThanOrEqual(380)
-      expect(layout.dotInFrame, `${context} — the dot is inside the picture`).toBe(true)
-      const { frame, dotBox } = layout
-      expect(frame !== null && dotBox !== null, context).toBe(true)
-      if (frame !== null && dotBox !== null) {
-        expect(dotBox.x + dotBox.width, context).toBeLessThanOrEqual(frame.x + frame.width)
-        expect(dotBox.y, context).toBeGreaterThanOrEqual(frame.y)
+      expect(layout.dotInChrome, `${context} — the dot is in the preview's chrome`).toBe(true)
+      expect(layout.dotOverlapsFrame, `${context} — the dot is clear of the picture`).toBe(false)
+      const { preview, frame, dotBox } = layout
+      expect(preview !== null && frame !== null && dotBox !== null, context).toBe(true)
+      if (preview !== null && frame !== null && dotBox !== null) {
+        expect(dotBox.x, `${context} — inside the preview pane`).toBeGreaterThanOrEqual(preview.x)
+        expect(dotBox.x + dotBox.width, `${context} — in the pane's left quarter`)
+          .toBeLessThanOrEqual(preview.x + preview.width / 4)
+        expect(dotBox.y, `${context} — inside the preview pane`).toBeGreaterThanOrEqual(preview.y)
+        expect(dotBox.y + dotBox.height, `${context} — above the picture`).toBeLessThanOrEqual(frame.y)
       }
       await capturePage(page, '428-live-page-400')
     }, NARROW)
@@ -607,7 +623,9 @@ describe('the live page layout on the shipped bundle (428-24 Task 2)', () => {
         expect(steps.x + steps.width, `${context} — the steps are left of the preview`).toBeLessThanOrEqual(preview.x + 1)
         expect(Math.abs(steps.y - preview.y), `${context} — side by side`).toBeLessThanOrEqual(1)
       }
-      expect(layout.dotInFrame, context).toBe(true)
+      // Re-spelled 2026-09-26 (428-34, G-428-4): the dot was asserted inside the picture's box.
+      expect(layout.dotInChrome, context).toBe(true)
+      expect(layout.dotOverlapsFrame, context).toBe(false)
       await capturePage(page, '428-live-page-1280')
     })
   }, 120_000)
@@ -694,7 +712,9 @@ function expectRecovered(reading: FlipReading, stacked: boolean): void {
   expect(reading.end.panes, context).toBe(2)
   expect(reading.end.embeds, context).toBe(1)
   expect(reading.end.dot, context).toBe('green')
-  expect(reading.end.dotInFrame, context).toBe(true)
+  // Re-spelled 2026-09-26 (428-34, G-428-4): each leg asserted the dot inside the picture's box.
+  expect(reading.end.dotInChrome, context).toBe(true)
+  expect(reading.end.dotOverlapsFrame, context).toBe(false)
   expect(reading.paintedAtEnd, `${context} — the embed is painting`).toBeGreaterThanOrEqual(1)
   expect(reading.recoveredAfterMs, `${context} — healthy again within the budget, and stayed so`)
     .toBeLessThan(FLIP_TO_GREEN_BUDGET_MS - 500)

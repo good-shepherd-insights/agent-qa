@@ -425,7 +425,8 @@ describe('the built live surface, in a real browser (403-06 Task 1)', () => {
     const ackedBefore = f.dom.ackedFrameIds().length
     await onLivePage('r_dom', async (page) => {
       // RE-SPELLED 2026-09-26 (428-15): `embedded` with frames is `live` on the shared preview, and
-      // the embed sits inside the aspect box whose corner carries the dot.
+      // the embed sits inside the aspect box. Since 2026-09-26 (428-34, G-428-4) that box holds the
+      // picture alone; the dot leads the preview's chrome above it.
       await page.locator('[data-preview-state="live"]').waitFor({ state: 'attached', timeout: 40_000 })
       const embed = page.locator('[data-preview-frame] [data-live-embed]')
       await embed.waitFor({ state: 'attached', timeout: 10_000 })
