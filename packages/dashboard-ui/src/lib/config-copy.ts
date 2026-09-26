@@ -357,6 +357,11 @@ export function connectedSavedText(name: string): string {
 }
 
 export const BECAME_DEFAULT_TEXT = "It's now the default model."
+export function signInPluginMissingText(choiceLabel: string): string {
+  void choiceLabel
+  return ''
+}
+
 export const SAVE_WITHOUT_TESTING_LABEL = 'Save without testing'
 export const SAVED_WITHOUT_TEST_TEXT = 'Saved without a connection test.'
 

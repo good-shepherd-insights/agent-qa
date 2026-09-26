@@ -30,6 +30,8 @@ import type {
   ConfigWriteRequest,
   ConfigWriteResult,
   MaskingClass,
+  LlmConnectRequest,
+  LlmConnectResult,
 } from '@vostride/agent-qa-schema'
 
 export interface RunRow {
@@ -1324,6 +1326,11 @@ export async function testLLMConnection(opts: {
   providerHeaders?: Record<string, string>
 }): Promise<LLMTestResult> {
   return postJson('/api/llm/test', opts)
+}
+
+export async function connectLLM(request: LlmConnectRequest): Promise<LlmConnectResult> {
+  void request
+  throw new Error('connectLLM is not implemented yet')
 }
 
 export async function saveCredential(
