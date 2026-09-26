@@ -18,8 +18,13 @@ import { cn } from '@/lib/utils'
  * and nothing about what. It is blue, never green, and never a dot.
  *
  * SECRETS ARE CHIPS (D-22). A `<SECRET_n>` placeholder in the label is painted as run detail's
- * masked chip, with the live surface's own label. Text segments ellipsise and the chip never
- * shrinks, so a long label never clips it. Every segment is a React text node or an element.
+ * masked chip, with the live surface's own label. Every segment is a React text node or an element.
+ *
+ * THE WHOLE LABEL, WRAPPED (owner decision 2026-09-26 (1), G-428-1; supersedes 428-17's one-line
+ * row). A long label wraps onto more lines and long words break, so every step's full text is
+ * readable while it runs; nothing clips it and nothing ends it in an ellipsis. The glyph sits in a
+ * box one label line tall, so it stays on the first line. A chip is an unbreakable inline box that
+ * the text flows around: it is never split across lines, never shrunk and never clipped.
  *
  * NO TEXT, NO ROW (owner decision 2026-09-26 (2), G-428-2; supersedes 428-17's step-N fallback).
  * A row with no text draws nothing, so a pending step the runner sent no text for is simply absent
@@ -56,7 +61,7 @@ export function LiveStepRowView({ row }: { row: LiveStepRow }) {
     <li
       data-step-status={row.status}
       data-step-ticks={String(row.ticks)}
-      className="flex items-center gap-2 border-b border-border/40 px-3 py-1.5 text-sm last:border-b-0"
+      className="flex items-start gap-2 border-b border-border/40 px-3 py-1.5 text-sm last:border-b-0"
     >
       <span
         key={isRunning ? `motion-${String(row.ticks)}` : 'still'}
@@ -64,21 +69,19 @@ export function LiveStepRowView({ row }: { row: LiveStepRow }) {
         data-motion-key={isRunning ? String(row.ticks) : undefined}
         role="img"
         aria-label={LIVE_STEP_STATUS_NAMES[row.status]}
-        className="inline-flex shrink-0"
+        className="inline-flex h-5 shrink-0 items-center"
       >
         <Glyph
           className={cn('size-3.5', STATUS_TONE[row.status], isRunning && 'live-step-breathing')}
           aria-hidden="true"
         />
       </span>
-      <span className="flex min-w-0 flex-1 items-center gap-1 overflow-hidden">
+      <span className="min-w-0 flex-1 whitespace-normal break-words leading-5 [overflow-wrap:anywhere]">
         {splitMaskedText(liveLabelText(row.text)).map((segment, index) =>
           segment.kind === 'text' ? (
-            <span key={index} className="min-w-0 truncate">
-              {segment.text}
-            </span>
+            <span key={index}>{segment.text}</span>
           ) : (
-            <span key={index} className="shrink-0">
+            <span key={index} className="inline-flex shrink-0 whitespace-nowrap align-middle">
               <MaskedChip category={segment.category} surface="live" />
             </span>
           ),
