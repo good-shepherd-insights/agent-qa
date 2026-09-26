@@ -184,6 +184,7 @@ function runGate(spec) {
   // ---- arrival --------------------------------------------------------------------------------
   function relativeClosure(pkg, files) {
     const seen = new Set()
+    const scanned = new Set()
     const stack = files.map(file => path.join(root, pkg, file))
     while (stack.length > 0) {
       const file = stack.pop()
@@ -209,8 +210,18 @@ function runGate(spec) {
         const resolved = path.resolve(path.dirname(file), match[2])
         if (fs.existsSync(resolved) && fs.lstatSync(resolved).isFile()) stack.push(resolved)
       }
+      // A cell that scans another source as TEXT joins its path onto its own directory (429-34, the
+      // classifier lint). That read reaches the file's bytes, but none of the file's imports, so the
+      // file joins the closure without being walked.
+      if (/const here = dirname\(fileURLToPath\(import\.meta\.url\)\)/.test(text)) {
+        for (const match of text.matchAll(/join\(\s*here\s*,\s*((?:'[^']+'\s*,\s*)*'[^']+\.tsx?')\s*\)/g)) {
+          const parts = [...match[1].matchAll(/'([^']+)'/g)].map(part => part[1])
+          const resolved = path.resolve(path.dirname(file), ...parts)
+          if (fs.existsSync(resolved) && fs.lstatSync(resolved).isFile()) scanned.add(resolved)
+        }
+      }
     }
-    return seen
+    return new Set([...seen, ...scanned])
   }
 
   function proveArrival() {
@@ -249,11 +260,14 @@ function runGate(spec) {
         console.log(`ARRIVAL ${leg.id}: ${leg.subject} crosses into ${leg.instrument} through the rebuilt ${leg.crossing.pkg} dist`)
         continue
       }
-      if (!leg.subject.startsWith(`${instrument.pkg}/`)) {
+      if (!closures.has(leg.instrument)) closures.set(leg.instrument, relativeClosure(instrument.pkg, instrument.files))
+      const inClosure = closures.get(leg.instrument).has(path.join(root, leg.subject))
+      // Another package's SOURCE counts only when the closure reaches it directly; otherwise the
+      // instrument would read that package's dist, which the leg does not rebuild.
+      if (!leg.subject.startsWith(`${instrument.pkg}/`) && !inClosure) {
         throw new Error(`${leg.id}: ${leg.subject} is outside ${instrument.pkg} and declares no dist crossing`)
       }
-      if (!closures.has(leg.instrument)) closures.set(leg.instrument, relativeClosure(instrument.pkg, instrument.files))
-      if (!closures.get(leg.instrument).has(path.join(root, leg.subject))) {
+      if (!inClosure) {
         throw new Error(`${leg.id}: ${leg.subject} is not in the relative-import closure of ${leg.instrument} — a green would measure nothing`)
       }
       console.log(`ARRIVAL ${leg.id}: ${leg.subject} is in the ${leg.instrument} import closure`)
