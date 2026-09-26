@@ -4,13 +4,16 @@
 // throwaway store. A browser that cannot launch is a red, never a skip. Captures go only where
 // AGENT_QA_429_CAPTURE_DIR points. Run with --maxWorkers=1: the cells share one spawned dashboard.
 
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, statSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import { CONFIG_MASK_PLACEHOLDER } from '@vostride/agent-qa-schema'
 import { chromium, type Browser, type BrowserContext, type Page } from 'playwright-core'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
+import { parse, parseDocument } from 'yaml'
+
+import { POPULATED_MODEL_ID, startStubModelServer, type StubModelServer } from './populated-run-fixture.js'
 
 import {
   DASHBOARD_ANCHORED_BUILDS,
@@ -538,4 +541,358 @@ describe('Config tabs, links, geometry, masking and names on the shipped bundle 
     expect(h.dialogs, 'a dialog mounted in Config during this task').toEqual([])
     expect(realAuthFingerprint(), "the operator's own auth.json changed during the run").toBe(realAuthBefore)
   }, 60_000)
+})
+
+// ---- Task 2: the continuous add flow, keyboard recovery and outside edits -------------------------
+
+const TYPED_KEY = 'zz-429-33-typed-key-not-a-credential-5e0a'
+const CONNECTED_SAVED = (name: string) => `Connected. Saved as ${name}.`
+const BECAME_DEFAULT = "It's now the default model."
+
+// No model and no default, so the first model a flow saves becomes the default.
+const TASK2_CONFIG = [
+  'workspace:',
+  '  testMatch:',
+  '    - tests/**/*.test.yaml',
+  '  suiteMatch:',
+  '    - suites/**/*.suite.yaml',
+  '  hooksFile: hooks.yaml',
+  '  envFile: .env',
+  '  secretsFile: .env.secrets.local',
+  'use:',
+  '  mobile:',
+  '    appState: preserve',
+  '  browser:',
+  '    name: chromium',
+  '    headless: false',
+  '',
+].join('\n')
+
+interface Poll {
+  readonly at: number
+  readonly bytes: string
+}
+
+/** Reads the config file every few milliseconds, keeping each distinct content and when it appeared. */
+function watchFile(path: string) {
+  const seen: Poll[] = [{ at: Date.now(), bytes: readFileSync(path, 'utf8') }]
+  let reads = 1
+  const timer = setInterval(() => {
+    let bytes: string
+    try { bytes = readFileSync(path, 'utf8') } catch { return }
+    reads += 1
+    if (bytes !== seen[seen.length - 1]!.bytes) seen.push({ at: Date.now(), bytes })
+  }, 4)
+  return {
+    seen,
+    reads: () => reads,
+    stop: () => clearInterval(timer),
+  }
+}
+
+async function activeSummary(page: Page) {
+  return await page.evaluate(() => {
+    const element = document.activeElement as HTMLElement | null
+    const input = element as HTMLInputElement | null
+    return {
+      id: element?.id ?? '',
+      tag: element?.tagName.toLowerCase() ?? '',
+      role: element?.getAttribute('role') ?? '',
+      value: element?.getAttribute('value') ?? '',
+      label: (input?.labels?.[0]?.textContent ?? element?.getAttribute('aria-label') ?? '').trim(),
+      text: (element?.textContent ?? '').trim(),
+    }
+  })
+}
+
+/** Tab (or Shift+Tab) until the focused element satisfies the test; keyboard only. */
+async function tabTo(page: Page, wanted: (active: Awaited<ReturnType<typeof activeSummary>>) => boolean, key: 'Tab' | 'Shift+Tab' = 'Tab') {
+  const path: string[] = []
+  for (let press = 0; press < 40; press++) {
+    const active = await activeSummary(page)
+    if (wanted(active)) return active
+    path.push(`${active.tag}[${active.role}] ${active.label || active.text.slice(0, 24)}`)
+    await page.keyboard.press(key)
+  }
+  throw new Error(`${key} never reached the wanted control; it passed: ${path.join(' | ')}`)
+}
+
+async function selectAllAndType(page: Page, text: string) {
+  await page.keyboard.press('ControlOrMeta+A')
+  await page.keyboard.type(text)
+}
+
+describe('the continuous add flow, keyboard recovery and outside edits on the shipped bundle (429-33 task 2)', () => {
+  let dashboard: SpawnedDashboard | undefined
+  let harness: Harness | undefined
+  let project: Project | undefined
+  let stub: StubModelServer | undefined
+  let realAuthBefore = ''
+
+  beforeAll(async () => {
+    const freshness = buildFreshness(DASHBOARD_ANCHORED_BUILDS)
+    expect(freshness, REBUILD_INSTRUCTION).toEqual({ missing: [], stale: [] })
+
+    realAuthBefore = realAuthFingerprint()
+    stub = await startStubModelServer()
+    project = writeProject('add', TASK2_CONFIG)
+    const spawned = await spawnDashboard(project.root, project.configPath, await reserveEphemeralPort())
+    expect(spawned.ready, `the built dashboard never listened. stdout: ${spawned.stdout().slice(-1200)} stderr: ${spawned.stderr().slice(-1200)}`).toBe(true)
+    dashboard = spawned
+    harness = new Harness(await launchBrowser(spawned), spawned.origin)
+  }, 180_000)
+
+  afterAll(async () => {
+    if (project !== undefined) chmodSync(project.root, 0o700)
+    await harness?.closeAll()
+    await dashboard?.stop()
+    await stub?.close()
+    cleanupTempRoots()
+  })
+
+  function live() {
+    expect(harness, 'the shipped dashboard or the browser did not stand up; see beforeAll').toBeDefined()
+    return { h: harness!, project: project!, stub: stub! }
+  }
+
+  /** Back to no model and no default, with no stored credential: the next add becomes the default. */
+  function resetProject(target: Project) {
+    writeFileSync(target.configPath, TASK2_CONFIG, 'utf8')
+    rmSync(target.authPath, { force: true })
+  }
+
+  async function capture(page: Page, name: string) {
+    await captureFullPage(page, name)
+  }
+
+  function expectSaved(target: Project, name: string, baseUrl: string) {
+    const config = parse(readFileSync(target.configPath, 'utf8')) as {
+      registry?: { llms?: Array<Record<string, unknown>> }
+      use?: { llm?: unknown }
+    }
+    expect(config.registry?.llms, 'the saved definition').toEqual([
+      { name, provider: 'openai-compatible', model: POPULATED_MODEL_ID, baseURL: baseUrl },
+    ])
+    expect(config.use?.llm, 'the new model became the default').toBe(name)
+    expect(readFileSync(target.configPath, 'utf8')).not.toContain(TYPED_KEY)
+    const auth = JSON.parse(readFileSync(target.authPath, 'utf8')) as Record<string, unknown>
+    expect(auth[name], 'the hermetic auth.json holds the typed key under the name').toEqual({
+      type: 'api', provider: 'openai-compatible', key: TYPED_KEY,
+    })
+  }
+
+  it('ADD-FLOW-NO-INTERMEDIATE-SAVE', async () => {
+    const { h, project: target, stub: model } = live()
+    const reports: string[] = []
+    for (const viewport of [DESKTOP, NARROW]) {
+      resetProject(target)
+      const name = viewport === DESKTOP ? 'stub-desktop' : 'stub-narrow'
+      const label = labelOf(viewport)
+      const opened = await h.page(viewport)
+      const { page } = opened
+      const original = readFileSync(target.configPath, 'utf8')
+      await openConfig(h, page, '/config/models?add')
+      const row = page.locator('li[data-model-draft]')
+      await row.waitFor({ timeout: 10_000 })
+      const watch = watchFile(target.configPath)
+      try {
+        await capture(page, `add-flow-${label}-1-choices`)
+        await row.getByRole('radio', { name: /^OpenAI-compatible API key/ }).click()
+        await row.getByLabel('Base URL', { exact: true }).waitFor({ timeout: 5_000 })
+        await capture(page, `add-flow-${label}-2-chosen`)
+        await row.getByLabel('Base URL', { exact: true }).fill(model.baseUrl)
+        await row.getByLabel('Model', { exact: true }).fill(POPULATED_MODEL_ID)
+        await row.getByLabel('API key', { exact: true }).fill(TYPED_KEY)
+        await row.getByLabel('Name', { exact: true }).fill(name)
+        await row.getByLabel('Name', { exact: true }).blur()
+        await frames(page)
+        await capture(page, `add-flow-${label}-3-filled`)
+        expect(watch.seen.map((poll) => poll.bytes), `${label}: the config changed before Connect`).toEqual([original])
+
+        const probesBefore = model.requests.length
+        const connectAt = Date.now()
+        await row.getByRole('button', { name: 'Connect', exact: true }).click()
+        const saved = page.locator(`li[data-model-row][data-model-name="${name}"]`)
+        await saved.filter({ hasText: CONNECTED_SAVED(name) }).waitFor({ timeout: 30_000 })
+        await expect.poll(() => watch.seen.length, { timeout: 5_000 }).toBeGreaterThan(1)
+        await capture(page, `add-flow-${label}-4-saved`)
+        watch.stop()
+
+        const probes = model.requests.slice(probesBefore).filter((request) => request.kind === 'text')
+        const changes = watch.seen.slice(1)
+        reports.push(`${label}: reads=${String(watch.reads())} connectAt=${String(connectAt)} probes=${JSON.stringify(probes.map((probe) => ({ at: probe.at, path: probe.path, status: probe.status })))} changes=${JSON.stringify(changes.map((change) => change.at))}`)
+        expect(probes.length, `${label}: Connect never reached the stub model server`).toBe(1)
+        expect(probes[0]!.status).toBe(200)
+        expect(changes, `${label}: the config was written more than once`).toHaveLength(1)
+        expect(watch.seen[0]!.bytes, `${label}: the first read is not the file as it was`).toBe(original)
+        expect(changes[0]!.at, `${label}: the config changed before the connection test ran`).toBeGreaterThanOrEqual(probes[0]!.at)
+        expect(changes[0]!.at).toBeGreaterThanOrEqual(connectAt)
+        for (const poll of watch.seen) expect(poll.bytes.includes(TYPED_KEY), `${label}: the key reached the config file`).toBe(false)
+        expectSaved(target, name, model.baseUrl)
+        const rowText = (await saved.textContent()) ?? ''
+        expect(rowText, `${label}: ${rowText}`).toContain(`${CONNECTED_SAVED(name)} ${BECAME_DEFAULT}`)
+        expect(await page.evaluate(() => document.documentElement.outerHTML)).not.toContain(TYPED_KEY)
+      } finally {
+        watch.stop()
+      }
+      expect(opened.errors).toEqual([])
+      await h.close(opened)
+    }
+    process.stderr.write(`429-33 ADD-FLOW-NO-INTERMEDIATE-SAVE:\n${reports.join('\n')}\n`)
+    expect(h.dialogs, 'a dialog mounted during the add flow').toEqual([])
+  }, 180_000)
+
+  it('KEYBOARD-ADD-AT-400', async () => {
+    const { h, project: target, stub: model } = live()
+    resetProject(target)
+    const name = 'stub-keyboard'
+    const label = labelOf(NARROW)
+    const opened = await h.page(NARROW)
+    const { page } = opened
+    await openConfig(h, page, '/config/models?add')
+    await page.locator('li[data-model-draft]').waitFor({ timeout: 10_000 })
+    await page.evaluate(() => {
+      const counts = { pointer: 0 }
+      ;(window as unknown as { __pointer: typeof counts }).__pointer = counts
+      for (const type of ['pointerdown', 'mousedown', 'click']) {
+        window.addEventListener(type, (event) => { if ((event as MouseEvent).detail > 0 || type !== 'click') counts.pointer += 1 }, true)
+      }
+    })
+    await page.waitForFunction(() => document.activeElement?.getAttribute('role') === 'radio', undefined, { timeout: 5_000 })
+    await capture(page, `add-keyboard-${label}-1-choices`)
+    const walked: string[] = []
+    for (let press = 0; press < 6; press++) {
+      const now = await activeSummary(page)
+      const checked = await page.evaluate(() => document.querySelector('[role="radio"][aria-checked="true"]')?.getAttribute('value') ?? 'none')
+      walked.push(`${now.value}:${checked}`)
+      if (now.value === 'openai-compatible-key') break
+      // Held like a real keypress: Radix moves roving focus in a timeout and checks the radio only
+      // while the arrow is still down, so a zero-length press never checks anything.
+      await page.keyboard.press('ArrowDown', { delay: 60 })
+      await frames(page)
+    }
+    const chosen = await activeSummary(page)
+    expect(chosen.value, `${JSON.stringify(chosen)} walked ${walked.join(' > ')}`).toBe('openai-compatible-key')
+    await page.waitForFunction(() => document.querySelector('[data-connection-choice="openai-compatible-key"] [role="radio"]')?.getAttribute('aria-checked') === 'true', undefined, { timeout: 3_000 }).catch(() => undefined)
+    const checked = await page.evaluate(() => [...document.querySelectorAll('[role="radio"][aria-checked="true"]')].map((radio) => radio.getAttribute('value')))
+    expect(checked, `arrow keys moved focus without choosing; walked ${walked.join(' > ')}`).toEqual(['openai-compatible-key'])
+
+    await tabTo(page, (active) => active.label === 'Base URL')
+    await page.keyboard.type(model.baseUrl)
+    await tabTo(page, (active) => active.label === 'Model')
+    await page.keyboard.type(POPULATED_MODEL_ID)
+    await tabTo(page, (active) => active.label === 'API key')
+    await page.keyboard.type(TYPED_KEY)
+    await tabTo(page, (active) => active.label === 'Name')
+    await selectAllAndType(page, name)
+    await capture(page, `add-keyboard-${label}-2-filled`)
+    await tabTo(page, (active) => active.tag === 'button' && active.text === 'Connect')
+    const original = readFileSync(target.configPath, 'utf8')
+    expect(original, 'nothing was saved while the fields were typed').toBe(TASK2_CONFIG)
+    await page.keyboard.press('Enter')
+    const saved = page.locator(`li[data-model-row][data-model-name="${name}"]`)
+    await saved.filter({ hasText: CONNECTED_SAVED(name) }).waitFor({ timeout: 30_000 })
+    await page.waitForFunction((row) => document.activeElement?.closest(`li[data-model-name="${row}"]`) !== null
+      && document.activeElement?.hasAttribute('data-model-row-toggle') === true, name, { timeout: 5_000 }).catch(() => undefined)
+    await capture(page, `add-keyboard-${label}-3-saved`)
+
+    expectSaved(target, name, model.baseUrl)
+    expect((await saved.textContent()) ?? '').toContain(`${CONNECTED_SAVED(name)} ${BECAME_DEFAULT}`)
+    const landed = await page.evaluate((row) => ({
+      inRow: document.activeElement?.closest(`li[data-model-name="${row}"]`) !== null,
+      toggle: document.activeElement?.hasAttribute('data-model-row-toggle') ?? false,
+    }), name)
+    expect(landed, 'focus did not land on the saved row').toEqual({ inRow: true, toggle: true })
+    const pointer = await page.evaluate(() => (window as unknown as { __pointer: { pointer: number } }).__pointer.pointer)
+    expect(pointer, 'a pointer event fired during the keyboard-only flow').toBe(0)
+    expect(opened.errors).toEqual([])
+    await h.close(opened)
+    expect(h.dialogs, 'a dialog mounted during the keyboard add flow').toEqual([])
+  }, 120_000)
+
+  it('AUTOSAVE-ERROR-RECOVERY-BY-KEYBOARD', async () => {
+    const { h, project: target } = live()
+    const label = labelOf(NARROW)
+    const opened = await h.page(NARROW)
+    const { page } = opened
+    await openTab(h, page, 'execution')
+    const step = page.getByLabel('Step timeout', { exact: true })
+    const stepId = await step.getAttribute('id')
+    expect(stepId).toBeTruthy()
+    await step.focus()
+    const before = readFileSync(target.configPath, 'utf8')
+    const mode = statSync(target.root).mode & 0o777
+    chmodSync(target.root, 0o500)
+    let afterTab: Awaited<ReturnType<typeof activeSummary>>
+    let failedRead: { status: string | null; text: string; announced: string }
+    try {
+      await selectAllAndType(page, '45s')
+      await page.keyboard.press('Tab')
+      afterTab = await activeSummary(page)
+      await page.locator('[data-save-status="failed"]').waitFor({ timeout: 10_000 })
+      failedRead = await page.evaluate(() => ({
+        status: document.querySelector('[data-save-status]')?.getAttribute('data-save-status') ?? null,
+        text: [...(document.querySelector('[data-save-status]')?.children ?? [])]
+          .map((child) => (child.textContent ?? '').trim()).filter((part) => part !== '').join(' '),
+        announced: (document.querySelector('[role="status"][aria-live="polite"]')?.textContent ?? '').trim(),
+      }))
+      await capture(page, `recovery-${label}-1-failed`)
+      const stillFocused = await activeSummary(page)
+      expect(stillFocused, 'the failure moved focus').toEqual(afterTab)
+      expect(readFileSync(target.configPath, 'utf8'), 'a refused write changed the file').toBe(before)
+    } finally {
+      chmodSync(target.root, mode)
+    }
+    expect(afterTab.label, 'Tab left Step timeout for the next field').not.toBe('Step timeout')
+    expect(failedRead.text).toBe("Couldn't save · Retry")
+    expect(failedRead.announced).toBe("Couldn't save")
+    expect(await step.getAttribute('data-field-state') ?? await page.locator('[data-field-path="use.timeout.step"]').getAttribute('data-field-state')).not.toBe('clean')
+
+    await tabTo(page, (active) => active.tag === 'button' && active.text === 'Retry', 'Shift+Tab')
+    await capture(page, `recovery-${label}-2-retry-focused`)
+    await page.keyboard.press('Enter')
+    await page.locator('[data-save-status="saved"]').waitFor({ timeout: 10_000 })
+    await capture(page, `recovery-${label}-3-saved`)
+    const config = parse(readFileSync(target.configPath, 'utf8')) as { use?: { timeout?: { step?: unknown } } }
+    expect(config.use?.timeout?.step, 'Retry did not land the held value').toBe('45s')
+    await page.waitForFunction((id) => document.activeElement?.id === id, stepId, { timeout: 5_000 }).catch(() => undefined)
+    const focused = await activeSummary(page)
+    expect(focused.id, `focus after Retry: ${JSON.stringify(focused)}`).toBe(stepId)
+    expect(opened.errors).toEqual([])
+    await h.close(opened)
+    expect(h.dialogs, 'a dialog mounted during the error recovery').toEqual([])
+  }, 120_000)
+
+  it('OUTSIDE-EDIT-SHIPPED', async () => {
+    const { h, project: target } = live()
+    const opened = await h.page(DESKTOP)
+    const { page } = opened
+    await openTab(h, page, 'execution')
+    const headless = page.getByRole('switch', { name: 'Headless', exact: true })
+    expect(await headless.getAttribute('aria-checked')).toBe('false')
+    await page.evaluate(() => { (window as unknown as { __sameDocument: string }).__sameDocument = 'yes' })
+    await capture(page, `outside-edit-${labelOf(DESKTOP)}-1-before`)
+
+    const doc = parseDocument(readFileSync(target.configPath, 'utf8'))
+    doc.setIn(['use', 'browser', 'headless'], true)
+    writeFileSync(target.configPath, String(doc), 'utf8')
+    const wroteAt = Date.now()
+    await expect.poll(async () => await headless.getAttribute('aria-checked'), { timeout: 5_000, interval: 100 }).toBe('true')
+    const shownAfterMs = Date.now() - wroteAt
+    expect(await page.evaluate(() => (window as unknown as { __sameDocument?: string }).__sameDocument), 'the page reloaded').toBe('yes')
+    await capture(page, `outside-edit-${labelOf(DESKTOP)}-2-picked-up`)
+
+    await page.getByLabel('Step timeout', { exact: true }).focus()
+    await selectAllAndType(page, '50s')
+    await page.keyboard.press('Tab')
+    await expect.poll(() => (parse(readFileSync(target.configPath, 'utf8')) as { use?: { timeout?: { step?: unknown } } }).use?.timeout?.step, { timeout: 10_000 }).toBe('50s')
+    const config = parse(readFileSync(target.configPath, 'utf8')) as { use?: { browser?: { headless?: unknown }; timeout?: { step?: unknown } } }
+    expect(config.use?.browser?.headless, 'the human autosave dropped the outside edit').toBe(true)
+    expect(config.use?.timeout?.step).toBe('50s')
+    process.stderr.write(`429-33 OUTSIDE-EDIT-SHIPPED: the switch showed the outside edit ${String(shownAfterMs)}ms after the write\n`)
+    expect(opened.errors).toEqual([])
+    await h.close(opened)
+    expect(h.dialogs, 'a dialog mounted during the outside edit').toEqual([])
+    expect(realAuthFingerprint(), "the operator's own auth.json changed during the run").toBe(realAuthBefore)
+  }, 120_000)
 })
