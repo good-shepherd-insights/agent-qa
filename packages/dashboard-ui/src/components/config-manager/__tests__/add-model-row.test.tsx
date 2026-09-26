@@ -29,12 +29,16 @@ import {
   moveCredential,
   pollPluginAuthResult,
   startPluginAuth,
+  updateSettings,
   type AuthCredentialInfo,
   type LLMProviderMetadata,
+  type ModelCatalogEntry,
 } from '@/lib/api'
 import {
   ADD_FLOW_FIELD_LABELS,
   ADD_MODEL_LABEL,
+  BASE_URL_HELP,
+  BASE_URL_REQUIRED_ERROR,
   BECAME_DEFAULT_TEXT,
   CANCEL_SIGN_IN_LABEL,
   DISCARD_DRAFT_LABEL,
@@ -43,7 +47,10 @@ import {
   CONNECTION_CHOICE_LABELS,
   CONNECT_FORM_LEGEND,
   CONNECT_LABEL,
+  KEY_OPTIONAL_HELP,
+  KEY_REQUIRED_ERROR,
   MAKE_DEFAULT_LABEL,
+  MODEL_REQUIRED_ERROR,
   NAME_RULE_ERROR,
   REPLACE_KEY_LABEL,
   SAVED_WITHOUT_TEST_TEXT,
@@ -79,6 +86,7 @@ vi.mock('@/lib/api', async (importOriginal) => ({
   exchangePluginAuthCode: vi.fn(),
   moveCredential: vi.fn(),
   deleteAuthCredential: vi.fn(),
+  updateSettings: vi.fn(),
 }))
 
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
@@ -1044,5 +1052,214 @@ describe('AddModelRow renames and discard after a sign-in (429-26 Task 2)', () =
     await click(addRow()!.querySelector<HTMLButtonElement>('[data-discard-draft]'))
     expect(addRow()).toBeNull()
     expect(deleteAuthCredential).not.toHaveBeenCalled()
+  })
+})
+
+// THE MODEL MODAL'S CLAIMS ON THE ADD ROW (429-30 · D-10). The modal is gone. Each claim its suite
+// made about adding a model is asserted here on the add row, or pinned as gone where the phase
+// reversed it (asterisk markers, the whole-list write, a vision switch before saving, and saving
+// before a sign-in).
+
+const CATALOG: Record<string, ModelCatalogEntry[]> = {
+  'openai-compatible': [
+    { id: 'deepseek-chat', label: 'DeepSeek Chat', vision: false, notes: 'text-only' },
+    { id: 'gpt-5.5', label: 'GPT-5.5', vision: true },
+  ],
+  'anthropic-compatible': [{ id: 'claude-sonnet-4-20250514', label: 'Claude Sonnet 4', vision: true }],
+  gemini: [{ id: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash', vision: true }],
+}
+
+function suggestionsFor(element: HTMLInputElement | null): string[] {
+  const listId = element?.getAttribute('list')
+  expect(listId, 'the model input names its suggestions list').toBeTruthy()
+  const datalist = document.getElementById(listId!)
+  expect(datalist?.tagName).toBe('DATALIST')
+  return Array.from(datalist!.querySelectorAll('option')).map((option) => option.value)
+}
+
+function describedText(element: HTMLInputElement | null): string {
+  const ids = element?.getAttribute('aria-describedby')?.split(' ') ?? []
+  return ids.map((id) => document.getElementById(id)?.textContent ?? '').join(' ')
+}
+
+describe('The model modal\'s claims on the add row (429-30 Task 1)', () => {
+  it('LEGACY-LLM-REQUIRED-FIELDS-FOLLOW-PROVIDER: provider metadata decides the fields; a compatible key is optional and a Gemini key is required', async () => {
+    await mount()
+    await choose('gemini-key')
+    expect(fieldEl('baseURL')).toBeNull()
+    expect(fieldEl('key')).not.toBeNull()
+    expect(fieldEl('key')?.textContent).not.toContain(KEY_OPTIONAL_HELP)
+    await type(input('model'), 'gemini-2.5-flash')
+    await type(input('name'), 'gemini-fast')
+    await click(connectButton())
+    expect(connectLLM).not.toHaveBeenCalled()
+    expect(fieldError('key')).toBe(KEY_REQUIRED_ERROR)
+    expect(document.activeElement).toBe(input('key'))
+
+    await choose('openai-compatible-key')
+    expect(fieldEl('baseURL')).not.toBeNull()
+    expect(fieldEl('key')?.textContent).toContain(KEY_OPTIONAL_HELP)
+    await type(input('baseURL'), 'https://llm.example.com/v1')
+    await type(input('model'), 'gpt-5.6')
+    vi.mocked(connectLLM).mockResolvedValueOnce({ success: false, errorClass: 'auth_error', message: 'Refused.' })
+    await click(connectButton())
+    expect(connectLLM).toHaveBeenCalledTimes(1)
+    expect(vi.mocked(connectLLM).mock.calls[0][0]).not.toHaveProperty('credential')
+    expect(fieldError('key')).toBeNull()
+  })
+
+  it('LEGACY-LLM-REQUIRED-MARKERS-GONE: no asterisk markers or "* Required" line, and a new model is written by the connect door, never by a whole-list settings write', async () => {
+    await mount()
+    await fillOpenAiCompatible()
+    expect(addRow()!.textContent).not.toContain('* Required')
+    expect(addRow()!.querySelector('[aria-required="true"]')).toBeNull()
+    const stars = Array.from(addRow()!.querySelectorAll('label span[aria-hidden="true"]')).filter(
+      (item) => item.textContent === '*',
+    )
+    expect(stars).toHaveLength(0)
+
+    const saved = modelsConfig([...EXISTING, { name: 'gpt-5.6', provider: 'openai-compatible', model: 'gpt-5.6', baseURL: 'https://llm.example.com/v1' }])
+    vi.mocked(fetchConfig).mockResolvedValue(answer(saved, 'rev-2') as never)
+    vi.mocked(connectLLM).mockResolvedValueOnce({ success: true, saved: true, becameDefault: false, usedCredential: true, revision: 'rev-2' })
+    await click(connectButton())
+    await flush()
+    expect(connectLLM).toHaveBeenCalledTimes(1)
+    expect(row('gpt-5.6')).not.toBeNull()
+    expect(updateSettings).not.toHaveBeenCalled()
+    expect(applyConfigChanges).not.toHaveBeenCalled()
+  })
+
+  it('LEGACY-LLM-DOTTED-NAME-ACCEPTED: a dotted name is accepted and an uppercase one is refused with the name rule (D-13)', async () => {
+    await mount()
+    await choose('openai-compatible-key')
+    await type(input('name'), 'gpt-5.6')
+    await blur(input('name'))
+    expect(fieldError('name')).toBeNull()
+    expect(input('name')?.getAttribute('aria-invalid')).toBeNull()
+    expect(input('name')?.getAttribute('aria-describedby')).toBeNull()
+
+    await type(input('name'), 'GPT-5')
+    await blur(input('name'))
+    expect(fieldError('name')).toBe(NAME_RULE_ERROR)
+    expect(NAME_RULE_ERROR).toBe('Use lowercase letters, digits, hyphens and dots, starting with a letter or digit.')
+    expect(input('name')?.getAttribute('aria-invalid')).toBe('true')
+    expect(describedText(input('name'))).toContain(NAME_RULE_ERROR)
+  })
+
+  it('LEGACY-LLM-MODEL-REQUIRED-ON-BLUR: the model is required on blur, and the error leaves while typing', async () => {
+    await mount()
+    await choose('gemini-key')
+    await blur(input('model'))
+    expect(fieldError('model')).toBe(MODEL_REQUIRED_ERROR)
+    expect(input('model')?.getAttribute('aria-invalid')).toBe('true')
+    expect(describedText(input('model'))).toContain(MODEL_REQUIRED_ERROR)
+
+    await type(input('model'), 'gemini-2.5-flash')
+    expect(fieldError('model')).toBeNull()
+    expect(input('model')?.getAttribute('aria-invalid')).toBeNull()
+    expect(input('model')?.getAttribute('aria-describedby')).toBeNull()
+  })
+
+  it('LEGACY-LLM-BASE-URL-REQUIRED: a compatible model needs a base URL on blur and on Connect, and Connect starts nothing without one', async () => {
+    await mount()
+    await choose('openai-compatible-key')
+    await blur(input('baseURL'))
+    expect(fieldError('baseURL')).toBe(BASE_URL_REQUIRED_ERROR)
+    expect(input('baseURL')?.getAttribute('aria-invalid')).toBe('true')
+    expect(describedText(input('baseURL'))).toContain(BASE_URL_REQUIRED_ERROR)
+    expect(describedText(input('baseURL'))).toContain(BASE_URL_HELP)
+
+    await type(input('baseURL'), 'https://openrouter.ai/api/v1')
+    expect(fieldError('baseURL')).toBeNull()
+    expect(input('baseURL')?.getAttribute('aria-invalid')).toBeNull()
+
+    await type(input('baseURL'), '')
+    await type(input('model'), 'gpt-5.5')
+    await type(input('key'), TYPED_KEY)
+    await click(connectButton())
+    expect(fieldError('baseURL')).toBe(BASE_URL_REQUIRED_ERROR)
+    expect(document.activeElement).toBe(input('baseURL'))
+    expect(connectLLM).not.toHaveBeenCalled()
+  })
+
+  it('LEGACY-LLM-CATALOG-DATALIST-PER-PROVIDER: the free-text model input suggests the chosen provider\'s catalog entries only', async () => {
+    vi.mocked(fetchModelCatalog).mockResolvedValue({ catalog: CATALOG })
+    await mount()
+    await choose('openai-compatible-key')
+    expect(fetchModelCatalog).toHaveBeenCalled()
+    expect(input('model')?.type).toBe('text')
+    expect(suggestionsFor(input('model'))).toEqual(['deepseek-chat', 'gpt-5.5'])
+
+    await choose('gemini-key')
+    expect(suggestionsFor(input('model'))).toEqual(['gemini-2.5-flash'])
+
+    await type(input('model'), 'my-own/model-id')
+    expect(input('model')?.value).toBe('my-own/model-id')
+  })
+
+  it('LEGACY-LLM-LIVE-CATALOG-FAILURE-KEEPS-STATIC: a failed live model list for an OpenAI-compatible URL keeps the catalog suggestions, says nothing, and never sends the key', async () => {
+    vi.mocked(fetchModelCatalog).mockResolvedValue({ catalog: CATALOG })
+    vi.mocked(fetchLiveModelCatalog).mockRejectedValueOnce(new Error('network down'))
+    await mount()
+    await choose('openai-compatible-key')
+    await type(input('key'), TYPED_KEY)
+    await type(input('baseURL'), ' https://openrouter.ai/api/v1 ')
+    await blur(input('baseURL'))
+
+    expect(fetchLiveModelCatalog).toHaveBeenCalledWith({ baseURL: 'https://openrouter.ai/api/v1' })
+    const sent = vi.mocked(fetchLiveModelCatalog).mock.calls[0][0]
+    expect(sent).not.toHaveProperty('apiKey')
+    expect(JSON.stringify(sent)).not.toContain(TYPED_KEY)
+    expect(suggestionsFor(input('model'))).toEqual(expect.arrayContaining(['deepseek-chat', 'gpt-5.5']))
+    expect(addRow()!.querySelector('[data-test-result]')).toBeNull()
+    expect(fieldError('baseURL')).toBeNull()
+  })
+
+  it('LEGACY-LLM-LIVE-CATALOG-MERGED: the live model list for an OpenAI-compatible URL joins the catalog suggestions', async () => {
+    vi.mocked(fetchModelCatalog).mockResolvedValue({ catalog: CATALOG })
+    vi.mocked(fetchLiveModelCatalog).mockResolvedValueOnce({
+      models: [{ id: 'live-local-model', label: 'Live Local Model', vision: false }],
+    })
+    await mount()
+    await choose('openai-compatible-key')
+    await type(input('baseURL'), 'https://openrouter.ai/api/v1')
+    await blur(input('baseURL'))
+    expect(suggestionsFor(input('model'))).toEqual(expect.arrayContaining(['gpt-5.5', 'live-local-model']))
+  })
+
+  it('LEGACY-LLM-NO-LIVE-CATALOG-ANTHROPIC: an Anthropic-compatible base URL never asks for a live model list', async () => {
+    await mount()
+    await choose('anthropic-compatible-key')
+    await type(input('baseURL'), 'https://anthropic-proxy.example/messages')
+    await blur(input('baseURL'))
+    expect(fetchLiveModelCatalog).not.toHaveBeenCalled()
+  })
+
+  it('LEGACY-LLM-VISION-PREFILL-GONE: the add row offers no vision switch to prefill from the catalog, and Connect sends no vision', async () => {
+    vi.mocked(fetchModelCatalog).mockResolvedValue({ catalog: CATALOG })
+    await mount()
+    await choose('openai-compatible-key')
+    await type(input('baseURL'), 'https://llm.example.com/v1')
+    await type(input('model'), 'deepseek-chat')
+    expect(addRow()!.querySelector('[role="switch"]')).toBeNull()
+    expect(addRow()!.querySelector('[data-field-path="registry.llms[].vision"]')).toBeNull()
+    expect(addRow()!.querySelector('#config-vision')).toBeNull()
+
+    vi.mocked(connectLLM).mockResolvedValueOnce({ success: false, errorClass: 'auth_error', message: 'Refused.' })
+    await click(connectButton())
+    expect(vi.mocked(connectLLM).mock.calls[0][0]).not.toHaveProperty('vision')
+  })
+
+  it('LEGACY-LLM-SAVE-BEFORE-SIGN-IN-GONE: a new model\'s sign-in starts with no config write first and no "before testing" instruction', async () => {
+    await mount()
+    await choose('chatgpt-sign-in')
+    await type(input('name'), 'fresh-plan')
+    expect(addRow()!.textContent).not.toContain('for this config before testing')
+    answerSignIn('browser-poll', true)
+    await click(signInButton())
+    expect(startPluginAuth).toHaveBeenCalledWith('openai-subscription', 'fresh-plan')
+    expect(applyConfigChanges).not.toHaveBeenCalled()
+    expect(updateSettings).not.toHaveBeenCalled()
+    expect(connectLLM).not.toHaveBeenCalled()
   })
 })

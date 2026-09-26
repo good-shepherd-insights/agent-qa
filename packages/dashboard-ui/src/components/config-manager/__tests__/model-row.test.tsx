@@ -28,10 +28,12 @@ import {
   startPluginAuth,
   testLLMConnection,
   undoConfigAction,
+  updateSettings,
   type AuthCredentialInfo,
   type LLMProviderMetadata,
 } from '@/lib/api'
 import {
+  ADD_FLOW_FIELD_LABELS,
   ADD_HEADER_LABEL,
   ADD_MODEL_LABEL,
   DEFAULT_CANNOT_DELETE_LINE,
@@ -39,6 +41,8 @@ import {
   FIXED_CONNECTION_LABELS,
   KEEP_CURRENT_KEY_LABEL,
   MAKE_DEFAULT_LABEL,
+  MODEL_SETTING_HELP,
+  MODEL_SETTING_LABELS,
   NEW_KEY_LABEL,
   REMOVE_KEY_LABEL,
   REPLACE_KEY_LABEL,
@@ -47,6 +51,8 @@ import {
   SETTLE_DELAY_MS,
   SIGN_IN_AGAIN_LABEL,
   SIGN_OUT_LABEL,
+  TEST_CONNECTION_LABEL,
+  TEST_RESULT_TEXT,
   USED_AS_JUDGE_LINE,
   fixedFactsLine,
   undoLine,
@@ -67,6 +73,7 @@ vi.mock('@/lib/api', async (importOriginal) => ({
   startPluginAuth: vi.fn(),
   pollPluginAuthResult: vi.fn(),
   exchangePluginAuthCode: vi.fn(),
+  updateSettings: vi.fn(),
 }))
 
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
@@ -697,5 +704,120 @@ describe('ModelRow Sign in again (429-26 Task 2)', () => {
     expect(pollPluginAuthResult).toHaveBeenCalledWith('anthropic-subscription', 'session-2')
     expect(testLLMConnection).toHaveBeenCalledTimes(1)
     expect(testLLMConnection).toHaveBeenCalledWith(expect.objectContaining({ configName: 'sonnet' }))
+  })
+})
+
+// THE MODEL MODAL'S CLAIMS ON A SAVED ROW (429-30 · D-10). The modal is gone. Each claim its suite
+// made about a saved model is asserted here on the open row, or pinned as gone where the phase
+// reversed it (the Edit dialog, the Save Changes footer, and the milliseconds on a passed test).
+
+const MODAL_BUTTONS = ['Save Changes', 'Save Credential', 'Keep Credential', 'Delete Credential', 'Delete Configuration', 'Add Configuration']
+
+describe('The model modal\'s claims on a saved row (429-30 Task 1)', () => {
+  it('LEGACY-LLM-VISION-AND-CONTEXT-WINDOW: the row edits vision and context window by leaf, with no per-model screenshot sizing', async () => {
+    await mount()
+    const panel = await openModel('router')
+    const vision = field(panel, 'registry.llms[].vision')?.querySelector('[role="switch"]') ?? null
+    expect(vision?.getAttribute('aria-checked')).toBe('true')
+    expect(inputIn(panel, 'registry.llms[].contextWindow')).not.toBeNull()
+    expect(panel?.textContent).toContain(MODEL_SETTING_LABELS.vision)
+    expect(panel?.textContent).toContain(MODEL_SETTING_LABELS.contextWindow)
+    expect(panel?.textContent).toContain(MODEL_SETTING_HELP.vision)
+    expect(panel?.textContent).toContain(MODEL_SETTING_HELP.contextWindow)
+    expect(panel?.querySelector('[data-field-path^="services.vision"]')).toBeNull()
+    expect(panel?.querySelector('[data-field-path="registry.llms[].effectiveResolution"]')).toBeNull()
+    expect(panel?.querySelector('[data-field-path="registry.llms[].screenshotSize"]')).toBeNull()
+    expect(panel?.textContent).not.toContain('Screenshot Size')
+    expect(panel?.textContent).not.toContain('Effective Resolution')
+
+    await type(inputIn(row('router'), 'registry.llms[].contextWindow'), '256k')
+    await waitPastSettle()
+    expect(writes()).toEqual([
+      [[{ op: 'set', path: ['registry', 'llms', { name: 'router' }, 'contextWindow'], value: '256k' }]],
+    ])
+    expect(JSON.stringify(writes())).not.toMatch(/screenshotSize|effectiveResolution/)
+    expect(updateSettings).not.toHaveBeenCalled()
+  })
+
+  it('LEGACY-LLM-SAVED-VISION-AUTHORITATIVE: a saved vision off stays off, whatever the model id suggests', async () => {
+    const llms = LLMS.map((llm) => (llm.name === 'router' ? { ...llm, model: 'claude-sonnet-4-20250514', vision: false } : llm))
+    vi.mocked(fetchConfig).mockResolvedValue(answer(modelsConfig(llms)) as never)
+    await mount()
+    const panel = await openModel('router')
+    const vision = field(panel, 'registry.llms[].vision')?.querySelector('[role="switch"]') ?? null
+    expect(vision?.getAttribute('aria-checked')).toBe('false')
+  })
+
+  it('LEGACY-LLM-HEADERS-ANTHROPIC-ONLY: only an Anthropic-compatible row offers headers, their values masked, beside its own vision and context window', async () => {
+    const proxy = { ...PROXY, vision: false, contextWindow: '200k' }
+    vi.mocked(fetchConfig).mockResolvedValue(answer(modelsConfig([...LLMS, proxy])) as never)
+    await mount()
+    const panel = await openModel('claude-proxy')
+    const headers = panel?.querySelector('[data-model-headers]')
+    expect(headers?.querySelector('legend')?.textContent).toBe(ADD_FLOW_FIELD_LABELS.headers)
+    expect(field(panel, 'registry.llms[].providerHeaders.*')?.textContent).toContain(CONFIG_MASK_PLACEHOLDER)
+    expect(field(panel, 'registry.llms[].vision')?.querySelector('[role="switch"]')?.getAttribute('aria-checked')).toBe('false')
+    expect(inputIn(panel, 'registry.llms[].contextWindow')?.value).toBe('200k')
+    expect(panel?.textContent).not.toContain('Provider Headers (optional)')
+    expect(panel?.textContent).not.toContain('Optional non-secret headers')
+
+    for (const name of ['router', 'flash', 'gpt-5.6', 'sonnet']) {
+      const other = await openModel(name)
+      expect(other?.querySelector('[data-model-headers]'), name).toBeNull()
+    }
+  })
+
+  it('LEGACY-LLM-CONNECTION-FAILURE-RENDERS-SERVER-SENTENCE: a failed test shows the server sentence verbatim', async () => {
+    const sentence = 'Invalid request. Check model and provider settings.'
+    vi.mocked(testLLMConnection).mockResolvedValueOnce({ success: false, error: 'invalid_request', message: sentence })
+    await mount()
+    const panel = await openModel('router')
+    await click(buttonNamed(panel, TEST_CONNECTION_LABEL))
+    expect(testLLMConnection).toHaveBeenCalledTimes(1)
+    expect(row('router')!.querySelector('[data-test-result="failed"]')?.textContent).toBe(sentence)
+    expect(container!.textContent).not.toContain('Connection failed.')
+  })
+
+  it('LEGACY-LLM-EDIT-DIALOG-GONE: no Edit configuration button, no configurations table, and no dialog opens from a row or Add model', async () => {
+    await mount()
+    expect(container!.querySelector('button[title="Edit configuration"]')).toBeNull()
+    expect(container!.querySelector('table')).toBeNull()
+    expect(container!.textContent).not.toContain('LLM Configurations')
+    for (const name of ['gpt-5.6', 'flash', 'router', 'sonnet']) {
+      await openModel(name)
+      expect(document.querySelector('[role="dialog"], [role="alertdialog"], [aria-modal="true"]'), name).toBeNull()
+      expect(document.body.textContent).not.toContain(`Edit ${name}`)
+    }
+    await click(container!.querySelector<HTMLButtonElement>('[data-model-add]'))
+    expect(container!.querySelector('[data-model-list] > li[data-model-draft]')).not.toBeNull()
+    noDialog()
+  })
+
+  it('LEGACY-LLM-SAVE-CHANGES-GONE: no open row and not the add row renders Save Changes or the modal\'s credential buttons', async () => {
+    await mount()
+    for (const name of ['gpt-5.6', 'flash', 'router', 'sonnet']) {
+      const panel = await openModel(name)
+      for (const label of MODAL_BUTTONS) {
+        expect(buttonNamed(panel, label), `${name}: ${label}`).toBeNull()
+      }
+    }
+    await click(container!.querySelector<HTMLButtonElement>('[data-model-add]'))
+    const add = container!.querySelector('[data-model-list] > li[data-model-draft]')
+    expect(add).not.toBeNull()
+    for (const label of MODAL_BUTTONS) {
+      expect(buttonNamed(add, label), `add row: ${label}`).toBeNull()
+    }
+  })
+
+  it('LEGACY-LLM-SUCCESS-MILLISECONDS-GONE: a passed test says Connected, with no response time', async () => {
+    vi.mocked(testLLMConnection).mockResolvedValueOnce({ success: true, responseTime: 123, provider: 'openai-compatible', model: 'openrouter/auto' })
+    await mount()
+    const panel = await openModel('router')
+    await click(buttonNamed(panel, TEST_CONNECTION_LABEL))
+    const line = row('router')!.querySelector('[data-test-result="connected"]')
+    expect(line?.textContent).toBe(TEST_RESULT_TEXT.connected)
+    expect(row('router')!.textContent).not.toContain('123')
+    expect(row('router')!.textContent).not.toMatch(/\d\s*ms\b/)
+    expect(row('router')!.textContent).not.toContain('Connection successful')
   })
 })
