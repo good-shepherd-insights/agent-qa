@@ -301,6 +301,39 @@ describe('LlmSection model-config modal', () => {
     })
   })
 
+  it('UI-DOTTED-NAME-ACCEPTED: accepts dotted names and refuses uppercase with the name rule (D-13)', async () => {
+    await renderLlmSection(configWithoutLlms())
+    await openAddLlmEditor()
+
+    const nameInput = document.body.querySelector('#config-name') as HTMLInputElement
+
+    await act(async () => {
+      setInputValue(nameInput, 'gpt-5.6')
+    })
+    await flushRender()
+    await act(async () => {
+      blurInput(nameInput)
+    })
+    await flushRender()
+
+    expect(document.body.querySelector('#name-error')).toBeNull()
+    expect(nameInput.getAttribute('aria-describedby')).toBeNull()
+
+    await act(async () => {
+      setInputValue(nameInput, 'GPT-5')
+    })
+    await flushRender()
+    await act(async () => {
+      blurInput(nameInput)
+    })
+    await flushRender()
+
+    expect(document.body.querySelector('#name-error')?.textContent).toBe(
+      'Use lowercase letters, digits, hyphens and dots, starting with a letter or digit.',
+    )
+    expect(nameInput.getAttribute('aria-describedby')).toBe('name-error')
+  })
+
   it('validates model as required on blur and clears the error while typing', async () => {
     await renderLlmSection(configWithoutLlms())
     await openAddLlmEditor()

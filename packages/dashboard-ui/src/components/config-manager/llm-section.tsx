@@ -699,8 +699,8 @@ function LlmConfigModal({ open, onOpenChange, config, existingNames, onSave, onA
 
   function validateName(value: string): string {
     if (!value) return ""
-    if (!/^[a-z0-9][a-z0-9-]*$/.test(value)) {
-      return "Name must be lowercase letters, numbers, and hyphens, starting with a letter or number"
+    if (!/^[a-z0-9][a-z0-9.-]*$/.test(value)) {
+      return "Use lowercase letters, digits, hyphens and dots, starting with a letter or digit."
     }
     const others = existingNames.filter((n) => n !== config?.name)
     if (others.includes(value)) {
