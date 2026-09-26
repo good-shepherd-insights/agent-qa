@@ -1370,7 +1370,7 @@ describe('dashboard LLM auth and test routes', () => {
     })
 
     expect(res.status).toBe(200)
-    expect(JSON.parse(res.body)).toEqual({ saved: true })
+    expect(JSON.parse(res.body)).toEqual({ saved: true, created: true })
     expect(mockWriteAuth).toHaveBeenCalledWith('remote-openai', {
       type: 'api',
       provider: 'openai-compatible',
@@ -1393,7 +1393,7 @@ describe('dashboard LLM auth and test routes', () => {
     })
 
     expect(res.status).toBe(200)
-    expect(JSON.parse(res.body)).toEqual({ saved: true })
+    expect(JSON.parse(res.body)).toEqual({ saved: true, created: true })
     expect(mockWriteAuth).toHaveBeenCalledWith('remote-anthropic', {
       type: 'bearer',
       provider: 'anthropic-compatible',
@@ -1419,7 +1419,9 @@ describe('dashboard LLM auth and test routes', () => {
     expect(mockWriteAuth).not.toHaveBeenCalled()
   })
 
-  it('rejects credential save for unknown config names', async () => {
+  // 429-09 D-15: re-targeted from "rejects credential save for unknown config names" — a name
+  // not yet in registry.llms is a draft, and its credential is accepted.
+  it('accepts credential save for a draft name not yet in registry.llms', async () => {
     await useConfigWorkspace(credentialConfig)
 
     const res = await invokeRoute('/api/auth/credential', {
@@ -1433,11 +1435,13 @@ describe('dashboard LLM auth and test routes', () => {
       }),
     })
 
-    expect(res.status).toBe(400)
-    expect(JSON.parse(res.body)).toEqual({
-      error: 'LLM config "provider-fallback" not found',
+    expect(res.status).toBe(200)
+    expect(JSON.parse(res.body)).toEqual({ saved: true, created: true })
+    expect(mockWriteAuth).toHaveBeenCalledWith('provider-fallback', {
+      type: 'api',
+      provider: 'openai-compatible',
+      key: 'sk-remote',
     })
-    expect(mockWriteAuth).not.toHaveBeenCalled()
   })
 
   it('rejects credential save when config provider does not match the request provider', async () => {
@@ -1707,7 +1711,7 @@ describe('dashboard LLM auth and test routes', () => {
     }), undefined)
   })
 
-  it('rejects plugin auth starts for non-matching or missing named subscription configs', async () => {
+  it('rejects plugin auth starts for non-matching named subscription configs and accepts a draft name', async () => {
     await useConfigWorkspace(subscriptionConfig)
     registerTestSubscriptionPlugins()
 
@@ -1733,6 +1737,21 @@ describe('dashboard LLM auth and test routes', () => {
       error: 'LLM config "claude" uses anthropic-subscription, not openai-subscription',
     })
     expect(mockWriteAuth).not.toHaveBeenCalled()
+
+    // 429-09 D-15: a name missing from registry.llms is a draft, and its sign-in starts.
+    const missingRes = await invokeRoute('/api/auth/plugin/openai-subscription/start', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        configName: 'codex-draft',
+      }),
+    })
+    expect(missingRes.status).toBe(200)
+    expect(JSON.parse(missingRes.body)).toMatchObject({
+      authorizeUrl: 'https://auth.example/openai',
+      mode: 'browser-poll',
+      created: true,
+    })
   })
 
   it('reports plugin auth config read failures as server errors', async () => {
