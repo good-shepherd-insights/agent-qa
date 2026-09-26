@@ -242,6 +242,59 @@ async function invokeRoute(
   })
 }
 
+const SELF_HOST_HEADERS: IncomingHttpHeaders = { 'content-type': 'application/json', host: '127.0.0.1:4317' }
+
+function patchConfig(changes: unknown[]): Promise<MockResponse> {
+  return invokeRoute('/api/config', { method: 'PATCH', headers: SELF_HOST_HEADERS, body: JSON.stringify({ changes }) })
+}
+
+async function readConfig(): Promise<Record<string, any>> {
+  const read = await manager.readWithRevision()
+  if (read.kind !== 'ok') throw new Error(`config read answered ${read.kind}`)
+  return read.config as Record<string, any>
+}
+
+// A config the whole-config validation accepts, laid out like SAMPLE_CONFIG, for the ordering cells.
+const ORDERED_CONFIG = `# Test config
+workspace:
+  testMatch:
+    - tests/**/*.yaml
+  suiteMatch:
+    - suites/**/*.suite.yaml
+  hooksFile: hooks.yaml
+  envFile: .env
+  secretsFile: .env.secrets.local
+
+services:
+  dashboard:
+    port: 3470
+  cache:
+    dir: .cache
+    ttl: 7d
+
+registry:
+  llms:
+    - name: planner
+      provider: openai-compatible
+      model: openrouter/auto
+      baseURL: https://openrouter.ai/api/v1
+    - name: claude-sonnet
+      provider: gemini
+      model: gemini-2.5-flash
+    - name: new-model
+      provider: gemini
+      model: gemini-2.5-pro
+
+use:
+  timeout:
+    step: 30s
+    test: 10m
+    navigation: 10s
+  llm: planner
+  mobile:
+    appState: preserve
+`
+
 describe('ConfigManager', () => {
   it.each([undefined, {}, { keepFailuresOnly: true }, { keepFailuresOnly: false }, { enabled: true }, { enabled: false }])(
     'keeps authored recording omissions through GET, no-op and unrelated saves: %j', async recording => {
@@ -264,98 +317,117 @@ describe('ConfigManager', () => {
       })
       expect(AgentQaConfigSchema.parse(authored).services?.recording)
         .toEqual({ enabled: true, ...recording })
-      const section = authored.services?.recording
-      for (const body of [
-        section === undefined ? {} : { 'services.recording': section },
-        { 'services.logging': { level: 'warn' } },
-      ]) {
-        expect((await invokeRoute('/api/config/settings', {
-          method: 'PUT', body: JSON.stringify(body),
-        })).status).toBe(200)
+      const section = authored.services?.recording as Record<string, unknown> | undefined
+      // The no-op save re-sends each authored leaf as it stands; an absent block is unset again.
+      const noOp = section === undefined
+        ? [{ op: 'unset', path: ['services', 'recording'] }]
+        : Object.keys(section).length === 0
+          ? [{ op: 'set', path: ['services', 'recording'], value: {} }]
+          : Object.entries(section).map(([key, value]) => ({ op: 'set', path: ['services', 'recording', key], value }))
+      for (const changes of [noOp, [{ op: 'set', path: ['services', 'logging', 'level'], value: 'warn' }]]) {
+        expect((await patchConfig(changes)).status).toBe(200)
         const saved = parseYaml(await readFile(configPath, 'utf8'))
         expect(saved.services?.recording).toEqual(recording)
         expect(AgentQaConfigSchema.parse(saved).services?.recording)
           .toEqual({ enabled: true, ...recording })
       }
       const beforeInvalid = await readFile(configPath, 'utf8')
-      expect((await invokeRoute('/api/config/settings', {
-        method: 'PUT', body: JSON.stringify({ 'services.recording': { videoDir: 'videos' } }),
-      })).status).toBe(400)
+      const invalid = await patchConfig([{ op: 'set', path: ['services', 'recording', 'videoDir'], value: 'videos' }])
+      expect(invalid.status).toBe(422)
+      expect(JSON.parse(invalid.body)).toMatchObject({ error: 'validation_failed' })
       expect(await readFile(configPath, 'utf8')).toBe(beforeInvalid)
     },
   )
 
   describe('key ordering preservation', () => {
-    it('replaceSection preserves key position in YAML', async () => {
-      await manager.replaceSection('use.healing', { maxAttempts: 10 })
-      const content = await readFile(configPath, 'utf-8')
-      const healingIdx = content.indexOf('healing:')
-      const llmIdx = content.indexOf('llm:')
-      expect(healingIdx).toBeGreaterThan(-1)
-      expect(llmIdx).toBeGreaterThan(-1)
-      expect(healingIdx).toBeLessThan(llmIdx)
+    beforeEach(async () => {
+      await writeFile(configPath, ORDERED_CONFIG)
     })
 
-    it('replaceSectionRaw preserves scalar key position', async () => {
-      await manager.replaceSectionRaw('use.llm', 'claude-sonnet')
+    it('applyChanges preserves key position in YAML', async () => {
+      expect((await manager.applyChanges([
+        { op: 'set', path: ['use', 'timeout'], value: { step: '45s', test: '10m', navigation: '10s' } },
+      ])).kind).toBe('ok')
       const content = await readFile(configPath, 'utf-8')
-      const healingIdx = content.indexOf('healing:')
+      const timeoutIdx = content.indexOf('timeout:')
+      const llmIdx = content.indexOf('llm:')
+      expect(timeoutIdx).toBeGreaterThan(-1)
+      expect(llmIdx).toBeGreaterThan(-1)
+      expect(timeoutIdx).toBeLessThan(llmIdx)
+      expect(content).toContain('step: 45s')
+    })
+
+    it('applyChanges preserves scalar key position', async () => {
+      expect((await manager.applyChanges([{ op: 'set', path: ['use', 'llm'], value: 'claude-sonnet' }])).kind).toBe('ok')
+      const content = await readFile(configPath, 'utf-8')
+      const timeoutIdx = content.indexOf('timeout:')
       const llmIdx = content.indexOf('llm: claude-sonnet')
-      expect(healingIdx).toBeLessThan(llmIdx)
+      expect(timeoutIdx).toBeGreaterThan(-1)
+      expect(timeoutIdx).toBeLessThan(llmIdx)
       // llm should still be inside the use block, not at root
       expect(content).not.toMatch(/^use\.llm:/m)
       expect(content).toMatch(/^\s+llm: claude-sonnet/m)
     })
 
-    it('replaceSection for services.cache keeps it before use block', async () => {
-      await manager.replaceSection('services.cache', { dir: '.new-cache', ttl: '30d' })
+    it('applyChanges for services.cache keeps it before use block', async () => {
+      expect((await manager.applyChanges([
+        { op: 'set', path: ['services', 'cache'], value: { dir: '.new-cache', ttl: '30d' } },
+      ])).kind).toBe('ok')
       const content = await readFile(configPath, 'utf-8')
       const servicesIdx = content.indexOf('services:')
       const useIdx = content.indexOf('use:')
+      expect(content).toContain('dir: .new-cache')
       expect(servicesIdx).toBeLessThan(useIdx)
     })
 
-    it('replaceSection persists the knowledge block as one unit', async () => {
-      await manager.replaceSection('knowledge', {
-        dir: 'agent-qa-knowledge',
-        commitArtifacts: 'thumbnails',
-      })
+    it('applyChanges persists the knowledge block as one unit', async () => {
+      expect((await manager.applyChanges([
+        { op: 'set', path: ['knowledge'], value: { dir: 'agent-qa-knowledge', commitArtifacts: 'thumbnails' } },
+      ])).kind).toBe('ok')
 
-      const config = await manager.read()
+      const config = await readConfig()
       expect(config.knowledge).toMatchObject({
         dir: 'agent-qa-knowledge',
         commitArtifacts: 'thumbnails',
       })
     })
 
-    it('replaceSectionRaw for array preserves position', async () => {
-      await manager.replaceSectionRaw('workspace.testMatch', ['tests/web/**/*.yaml', 'tests/mobile/**/*.yaml'])
+    it('applyChanges for array preserves position', async () => {
+      expect((await manager.applyChanges([
+        { op: 'set', path: ['workspace', 'testMatch'], value: ['tests/web/**/*.yaml', 'tests/mobile/**/*.yaml'] },
+      ])).kind).toBe('ok')
       const content = await readFile(configPath, 'utf-8')
       const workspaceIdx = content.indexOf('workspace:')
       const servicesIdx = content.indexOf('services:')
       const testMatchIdx = content.indexOf('testMatch:')
+      expect(content).toContain('tests/mobile/**/*.yaml')
       expect(testMatchIdx).toBeGreaterThan(workspaceIdx)
       expect(testMatchIdx).toBeLessThan(servicesIdx)
     })
   })
 
-  describe('dotted path handling', () => {
-    it('replaceSection splits dotted path into nested keys', async () => {
-      await manager.replaceSection('services.dashboard', { port: 4000 })
-      const config = await manager.read()
-      expect((config.services as any).dashboard.port).toBe(4000)
+  describe('segment path handling', () => {
+    beforeEach(async () => {
+      await writeFile(configPath, ORDERED_CONFIG)
     })
 
-    it('replaceSectionRaw writes nested scalar via dotted path', async () => {
-      await manager.replaceSectionRaw('use.llm', 'new-model')
-      const config = await manager.read()
-      expect((config.use as any).llm).toBe('new-model')
+    it('applyChanges writes a nested key from its segment path', async () => {
+      expect((await manager.applyChanges([{ op: 'set', path: ['services', 'dashboard', 'port'], value: 4000 }])).kind).toBe('ok')
+      const config = await readConfig()
+      expect(config.services.dashboard.port).toBe(4000)
+    })
+
+    it('applyChanges writes a nested scalar and never a dotted top-level key', async () => {
+      expect((await manager.applyChanges([{ op: 'set', path: ['use', 'llm'], value: 'new-model' }])).kind).toBe('ok')
+      const config = await readConfig()
+      expect(config.use.llm).toBe('new-model')
       // must not create a literal "use.llm" top-level key
       expect(Object.keys(config)).not.toContain('use.llm')
     })
 
-    it('deleteSectionRaw removes a dotted path without deleting nested browser settings', async () => {
+    it('applyChanges unset removes a nested path without deleting nested browser settings', async () => {
       await writeFile(configPath, [
+        ...WRITE_BASE_LINES,
         'use:',
         '  headless: true',
         '  browser:',
@@ -364,14 +436,16 @@ describe('ConfigManager', () => {
         '    viewport:',
         '      width: 1280',
         '      height: 720',
+        '  mobile:',
+        '    appState: preserve',
         '',
       ].join('\n'))
 
-      await manager.deleteSectionRaw('use.headless')
+      expect((await manager.applyChanges([{ op: 'unset', path: ['use', 'headless'] }])).kind).toBe('ok')
 
-      const config = await manager.read()
-      expect((config.use as any).headless).toBeUndefined()
-      expect((config.use as any).browser).toMatchObject({
+      const config = await readConfig()
+      expect(config.use.headless).toBeUndefined()
+      expect(config.use.browser).toMatchObject({
         name: 'chromium',
         headless: false,
         viewport: {
@@ -384,7 +458,8 @@ describe('ConfigManager', () => {
 
   describe('comments preservation', () => {
     it('preserves YAML comments after updates', async () => {
-      await manager.replaceSectionRaw('use.llm', 'claude')
+      await writeFile(configPath, ORDERED_CONFIG)
+      expect((await manager.applyChanges([{ op: 'set', path: ['use', 'llm'], value: 'claude-sonnet' }])).kind).toBe('ok')
       const content = await readFile(configPath, 'utf-8')
       expect(content).toContain('# Test config')
     })

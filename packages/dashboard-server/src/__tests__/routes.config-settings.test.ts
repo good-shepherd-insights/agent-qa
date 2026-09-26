@@ -490,72 +490,128 @@ describe('GET /api/app-metadata', () => {
   })
 })
 
-describe('PUT /api/config/settings', () => {
-  it('persists the missing latest-schema sections through dotted config paths', async () => {
-    const { configManager, configPath } = await createConfigWorkspace()
-    router = createRouter({
-      db: createMockDatabase() as any,
-      configManager,
-      configPath,
-    })
+// 429-32 D-19: the settings, model-list and default-model claims the per-section PUT routes proved,
+// each driven through the one field-merge write (PATCH /api/config) or the draft-model connect.
+const SETTINGS_WORKSPACE_LINES = [
+  'workspace:',
+  '  testMatch:',
+  '    - tests/**/*.yaml',
+  '  suiteMatch:',
+  '    - suites/**/*.suite.yaml',
+  '  hooksFile: hooks.yaml',
+  '  envFile: .env',
+  '  secretsFile: .env.secrets.local',
+]
 
-    const res = await invokeRoute('/api/config/settings', {
-      method: 'PUT',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
-        'workspace.hooksFile': './hooks.yaml',
-        'workspace.testMatch': ['tests/**/*.yaml'],
-        'workspace.suiteMatch': ['suites/**/*.suite.yaml'],
-        'workspace.envFile': './.env.local',
-        'workspace.secretsFile': './.env.secrets.local',
-        'knowledge': {
-          dir: 'agent-qa-knowledge',
-          commitArtifacts: 'thumbnails',
-          contextBudgetTokens: 4096,
-        },
-        'services.vision': {
-          screenshotSize: '512k',
-          effectiveResolution: 768,
-        },
-        'registry.targets': {
-          staging: {
-            platform: 'web',
-            url: 'https://staging.example.com',
-            product: 'webapp',
-          },
-        },
-        'registry.devices': {
-          simulator: {
-            platform: 'ios',
-            transport: 'local',
-            match: {
-              udid: 'iphone-17',
-              bundleId: 'com.example.app',
-            },
-          },
-        },
-        'registry.providers': {
-          browserstack: {
-            project: 'agent-qa',
-            retries: 2,
-          },
-        },
-        'analytics.passRateScope': {
-          attributes: {
-            'git.branch': { regex: '^(main|master)$' },
-            'user.email': 'ci@example.com',
-          },
-        },
-        'use.mobile.appState': 'reset',
-        'use.browser.headless': true,
-        'use.parallel': false,
+const MOBILE_USE_LINES = ['  mobile:', '    appState: preserve']
+
+function settingsConfig(useLines: string[] = MOBILE_USE_LINES, registryLines: string[] = ['registry: {}']): string {
+  return [...SETTINGS_WORKSPACE_LINES, 'services: {}', ...registryLines, 'use:', ...useLines, ''].join('\n')
+}
+
+async function useSettingsWorkspace(initialConfig = settingsConfig()): Promise<{
+  configManager: ConfigManager
+  configPath: string
+}> {
+  const workspace = await createConfigWorkspace(initialConfig)
+  router = createRouter({ db: createMockDatabase() as any, ...workspace })
+  return workspace
+}
+
+type WriteIssue = { path: Array<string | number>; message: string }
+
+const set = (path: Array<string | number>, value: unknown) => ({ op: 'set', path, value })
+
+function patchConfig(changes: unknown[]): Promise<MockResponse> {
+  return invokeRoute('/api/config', {
+    method: 'PATCH',
+    headers: LLM_TEST_HEADERS,
+    body: JSON.stringify({ changes }),
+  })
+}
+
+function connectModel(body: Record<string, unknown>): Promise<MockResponse> {
+  return invokeRoute('/api/llm/connect', {
+    method: 'POST',
+    headers: LLM_TEST_HEADERS,
+    body: JSON.stringify(body),
+  })
+}
+
+async function readConfig(configManager: ConfigManager): Promise<Record<string, any>> {
+  const read = await configManager.readWithRevision()
+  if (read.kind !== 'ok') throw new Error(`config read answered ${read.kind}`)
+  return read.config as Record<string, any>
+}
+
+const dotted = (issue: WriteIssue): string => issue.path.map(String).join('.')
+
+async function expectValidationRefused(res: MockResponse, configPath: string, before: Buffer): Promise<WriteIssue[]> {
+  expect(res.status).toBe(422)
+  const data = JSON.parse(res.body) as { error: string; issues?: WriteIssue[] }
+  expect(data.error).toBe('validation_failed')
+  expect(Buffer.compare(await readFile(configPath), before)).toBe(0)
+  return data.issues ?? []
+}
+
+async function expectPatchRefused(changes: unknown[], initialConfig?: string): Promise<WriteIssue[]> {
+  const { configPath } = await useSettingsWorkspace(initialConfig)
+  const before = await readFile(configPath)
+  return expectValidationRefused(await patchConfig(changes), configPath, before)
+}
+
+describe('settings writes through PATCH /api/config (429-32)', () => {
+  it('persists the missing latest-schema sections through segment config paths', async () => {
+    const { configManager } = await useSettingsWorkspace()
+
+    const res = await patchConfig([
+      set(['workspace', 'hooksFile'], './hooks.yaml'),
+      set(['workspace', 'testMatch'], ['tests/**/*.yaml']),
+      set(['workspace', 'suiteMatch'], ['suites/**/*.suite.yaml']),
+      set(['workspace', 'envFile'], './.env.local'),
+      set(['workspace', 'secretsFile'], './.env.secrets.local'),
+      set(['knowledge'], {
+        dir: 'agent-qa-knowledge',
+        commitArtifacts: 'thumbnails',
+        contextBudgetTokens: 4096,
       }),
-    })
+      set(['services', 'vision'], {
+        screenshotSize: '512k',
+        effectiveResolution: 768,
+      }),
+      set(['registry', 'targets', 'staging'], {
+        platform: 'web',
+        url: 'https://staging.example.com',
+        product: 'webapp',
+      }),
+      set(['registry', 'devices', 'simulator'], {
+        platform: 'ios',
+        transport: 'local',
+        match: {
+          udid: 'iphone-17',
+          bundleId: 'com.example.app',
+        },
+      }),
+      set(['registry', 'providers', 'browserstack'], {
+        project: 'agent-qa',
+        retries: 2,
+      }),
+      set(['analytics', 'passRateScope'], {
+        attributes: {
+          'git.branch': { regex: '^(main|master)$' },
+          'user.email': 'ci@example.com',
+        },
+      }),
+      set(['use', 'mobile', 'appState'], 'reset'),
+      set(['use', 'browser', 'headless'], true),
+      set(['use', 'browser', 'name'], 'chromium'),
+      set(['use', 'parallel'], false),
+    ])
 
     expect(res.status).toBe(200)
-    expect(JSON.parse(res.body)).toEqual({ updated: true })
+    expect(JSON.parse(res.body)).toHaveProperty('revision')
 
-    const config = await configManager.read()
+    const config = await readConfig(configManager)
     expect(config).toMatchObject({
       workspace: {
         hooksFile: './hooks.yaml',
@@ -616,151 +672,92 @@ describe('PUT /api/config/settings', () => {
         parallel: false,
       },
     })
-    expect((config.use as any).headless).toBeUndefined()
+    expect(config.use.headless).toBeUndefined()
+    expect(Object.keys(config).filter((key) => key.includes('.'))).toEqual([])
   })
 
   it('persists shared services.vision settings', async () => {
-    const { configManager, configPath } = await createConfigWorkspace()
-    router = createRouter({
-      db: createMockDatabase() as any,
-      configManager,
-      configPath,
-    })
+    const { configManager } = await useSettingsWorkspace()
 
-    const res = await invokeRoute('/api/config/settings', {
-      method: 'PUT',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
-        'services.vision': {
-          screenshotSize: '384k',
-          effectiveResolution: 640,
-        },
+    const res = await patchConfig([
+      set(['services', 'vision'], {
+        screenshotSize: '384k',
+        effectiveResolution: 640,
       }),
-    })
+    ])
 
     expect(res.status).toBe(200)
-    expect(JSON.parse(res.body)).toEqual({ updated: true })
-
-    const config = await configManager.read()
-    expect((config.services as any)?.vision).toEqual({
+    const config = await readConfig(configManager)
+    expect(config.services?.vision).toEqual({
       screenshotSize: '384k',
       effectiveResolution: 640,
     })
   })
 
   it('rejects unknown services.vision keys', async () => {
-    const res = await invokeRoute('/api/config/settings', {
-      method: 'PUT',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
-        'services.vision': {
-          screenshotSize: '384k',
-          cropMode: 'center',
-        },
+    const issues = await expectPatchRefused([
+      set(['services', 'vision'], {
+        screenshotSize: '384k',
+        cropMode: 'center',
       }),
-    })
+    ])
 
-    expect(res.status).toBe(400)
-    const data = JSON.parse(res.body) as { error: string; details: string[] }
-    expect(data.error).toBe('Validation failed')
-    expect(data.details.some((detail) =>
-      detail.startsWith('services.vision:')
-      && detail.includes('cropMode'),
+    expect(issues.some((issue) =>
+      dotted(issue).startsWith('services.vision')
+      && issue.message.includes('cropMode'),
     )).toBe(true)
   })
 
   it('persists use.mobile.appState scalar updates', async () => {
-    const { configManager, configPath } = await createConfigWorkspace()
-    router = createRouter({
-      db: createMockDatabase() as any,
-      configManager,
-      configPath,
-    })
+    const { configManager } = await useSettingsWorkspace()
 
-    const res = await invokeRoute('/api/config/settings', {
-      method: 'PUT',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
-        'use.mobile.appState': 'reset',
-      }),
-    })
+    const res = await patchConfig([set(['use', 'mobile', 'appState'], 'reset')])
 
     expect(res.status).toBe(200)
-    const config = await configManager.read()
-    expect((config.use as any).mobile).toEqual({ appState: 'reset' })
+    const config = await readConfig(configManager)
+    expect(config.use.mobile).toEqual({ appState: 'reset' })
   })
 
   it('rejects invalid use.mobile.appState values', async () => {
-    const res = await invokeRoute('/api/config/settings', {
-      method: 'PUT',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
-        'use.mobile.appState': 'fresh',
-      }),
-    })
+    const issues = await expectPatchRefused([set(['use', 'mobile', 'appState'], 'fresh')])
 
-    expect(res.status).toBe(400)
-    const data = JSON.parse(res.body) as { error: string; details: string[] }
-    expect(data.error).toBe('Validation failed')
-    expect(data.details.some((detail) => detail.startsWith('use.mobile.appState:'))).toBe(true)
+    expect(issues.some((issue) => dotted(issue) === 'use.mobile.appState')).toBe(true)
   })
 
   it('rejects removed global use.device settings', async () => {
-    const { configManager, configPath } = await createConfigWorkspace()
-    router = createRouter({
-      db: createMockDatabase() as any,
-      configManager,
+    const { configManager, configPath } = await useSettingsWorkspace()
+    const before = await readFile(configPath)
+
+    const issues = await expectValidationRefused(
+      await patchConfig([set(['use', 'device'], 'ios-sim')]),
       configPath,
-    })
+      before,
+    )
 
-    const res = await invokeRoute('/api/config/settings', {
-      method: 'PUT',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
-        'use.device': 'ios-sim',
-      }),
-    })
-
-    expect(res.status).toBe(400)
-    const data = JSON.parse(res.body) as { error: string; details: string[] }
-    expect(data.error).toBe('Unsupported setting path')
-    expect(data.details).toContain('use.device')
-    const config = await configManager.read()
-    expect((config.use as any).device).toBeUndefined()
+    expect(issues.some((issue) => dotted(issue).startsWith('use') && issue.message.includes('device'))).toBe(true)
+    const config = await readConfig(configManager)
+    expect(config.use.device).toBeUndefined()
   })
 
   it('saves browser headless scalar without dropping browser siblings', async () => {
-    const { configManager, configPath } = await createConfigWorkspace([
-      'workspace: {}',
-      'services: {}',
-      'registry: {}',
-      'use:',
+    const { configManager } = await useSettingsWorkspace(settingsConfig([
       '  browser:',
       '    name: chromium',
       '    viewport:',
       '      width: 1280',
       '      height: 720',
       '  parallel: true',
-      '',
-    ].join('\n'))
-    router = createRouter({
-      db: createMockDatabase() as any,
-      configManager,
-      configPath,
-    })
+      ...MOBILE_USE_LINES,
+    ]))
 
-    const res = await invokeRoute('/api/config/settings', {
-      method: 'PUT',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
-        'use.browser.headless': true,
-        'use.parallel': false,
-      }),
-    })
+    const res = await patchConfig([
+      set(['use', 'browser', 'headless'], true),
+      set(['use', 'parallel'], false),
+    ])
 
     expect(res.status).toBe(200)
-    const config = await configManager.read()
-    expect((config.use as any).browser).toMatchObject({
+    const config = await readConfig(configManager)
+    expect(config.use.browser).toMatchObject({
       name: 'chromium',
       headless: true,
       viewport: {
@@ -768,42 +765,30 @@ describe('PUT /api/config/settings', () => {
         height: 720,
       },
     })
-    expect((config.use as any).parallel).toBe(false)
-    expect((config.use as any).headless).toBeUndefined()
+    expect(config.use.parallel).toBe(false)
+    expect(config.use.headless).toBeUndefined()
   })
 
   it('migrates legacy root headless to browser headless when nested value is absent', async () => {
-    const { configManager, configPath } = await createConfigWorkspace([
-      'workspace: {}',
-      'services: {}',
-      'registry: {}',
-      'use:',
+    const { configManager } = await useSettingsWorkspace(settingsConfig([
       '  headless: true',
       '  browser:',
       '    name: chromium',
       '    viewport:',
       '      width: 1280',
       '      height: 720',
-      '',
-    ].join('\n'))
-    router = createRouter({
-      db: createMockDatabase() as any,
-      configManager,
-      configPath,
-    })
+      ...MOBILE_USE_LINES,
+    ]))
 
-    const res = await invokeRoute('/api/config/settings', {
-      method: 'PUT',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
-        'use.parallel': false,
-      }),
-    })
+    const res = await patchConfig([
+      set(['use', 'browser', 'headless'], true),
+      set(['use', 'parallel'], false),
+    ])
 
     expect(res.status).toBe(200)
-    const config = await configManager.read()
-    expect((config.use as any).headless).toBeUndefined()
-    expect((config.use as any).browser).toMatchObject({
+    const config = await readConfig(configManager)
+    expect(config.use.headless).toBeUndefined()
+    expect(config.use.browser).toMatchObject({
       name: 'chromium',
       headless: true,
       viewport: {
@@ -811,15 +796,11 @@ describe('PUT /api/config/settings', () => {
         height: 720,
       },
     })
-    expect((config.use as any).parallel).toBe(false)
+    expect(config.use.parallel).toBe(false)
   })
 
   it('keeps nested browser headless and removes legacy root headless when both exist', async () => {
-    const { configManager, configPath } = await createConfigWorkspace([
-      'workspace: {}',
-      'services: {}',
-      'registry: {}',
-      'use:',
+    const { configManager } = await useSettingsWorkspace(settingsConfig([
       '  headless: true',
       '  browser:',
       '    name: chromium',
@@ -827,26 +808,18 @@ describe('PUT /api/config/settings', () => {
       '    viewport:',
       '      width: 1280',
       '      height: 720',
-      '',
-    ].join('\n'))
-    router = createRouter({
-      db: createMockDatabase() as any,
-      configManager,
-      configPath,
-    })
+      ...MOBILE_USE_LINES,
+    ]))
 
-    const res = await invokeRoute('/api/config/settings', {
-      method: 'PUT',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
-        'use.parallel': false,
-      }),
-    })
+    const res = await patchConfig([
+      set(['use', 'browser', 'headless'], false),
+      set(['use', 'parallel'], false),
+    ])
 
     expect(res.status).toBe(200)
-    const config = await configManager.read()
-    expect((config.use as any).headless).toBeUndefined()
-    expect((config.use as any).browser).toMatchObject({
+    const config = await readConfig(configManager)
+    expect(config.use.headless).toBeUndefined()
+    expect(config.use.browser).toMatchObject({
       name: 'chromium',
       headless: false,
       viewport: {
@@ -854,166 +827,82 @@ describe('PUT /api/config/settings', () => {
         height: 720,
       },
     })
-    expect((config.use as any).parallel).toBe(false)
+    expect(config.use.parallel).toBe(false)
   })
 
-  it.each([
-    ['workspace.hooksFile', 'hooksFile is required'],
-    ['workspace.envFile', 'envFile is required'],
-    ['workspace.secretsFile', 'secretsFile is required'],
-  ])('rejects an empty %s value', async (field, message) => {
-    const res = await invokeRoute('/api/config/settings', {
-      method: 'PUT',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
-        [field]: '',
-      }),
-    })
+  it.each(['hooksFile', 'envFile', 'secretsFile'])('rejects an empty workspace.%s value', async (field) => {
+    const issues = await expectPatchRefused([set(['workspace', field], '')])
 
-    expect(res.status).toBe(400)
-    const data = JSON.parse(res.body) as { error: string; details: string[] }
-    expect(data.error).toBe('Validation failed')
-    expect(data.details.some((detail) =>
-      detail.startsWith(`${field}:`)
-      && detail.includes(message),
-    )).toBe(true)
+    expect(issues.some((issue) => dotted(issue) === `workspace.${field}`)).toBe(true)
   })
 
-  it.each(['workspace.testMatch', 'workspace.suiteMatch'])('rejects an empty %s array', async (field) => {
-    const res = await invokeRoute('/api/config/settings', {
-      method: 'PUT',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
-        [field]: [],
-      }),
-    })
+  it.each(['testMatch', 'suiteMatch'])('rejects an empty workspace.%s array', async (field) => {
+    const issues = await expectPatchRefused([set(['workspace', field], [])])
 
-    expect(res.status).toBe(400)
-    const data = JSON.parse(res.body) as { error: string; details: string[] }
-    expect(data.error).toBe('Validation failed')
-    expect(data.details.some((detail) => detail.startsWith(`${field}:`))).toBe(true)
+    expect(issues.some((issue) => dotted(issue).startsWith(`workspace.${field}`))).toBe(true)
   })
 
   it('rejects services.dashboard.testsDir', async () => {
-    const res = await invokeRoute('/api/config/settings', {
-      method: 'PUT',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
-        'services.dashboard': {
-          testsDir: './tests',
-        },
-      }),
-    })
+    const issues = await expectPatchRefused([set(['services', 'dashboard', 'testsDir'], './tests')])
 
-    expect(res.status).toBe(400)
-    const data = JSON.parse(res.body) as { error: string; details: string[] }
-    expect(data.error).toBe('Validation failed')
-    expect(data.details.join('\n')).toContain('testsDir')
+    expect(issues.map((issue) => `${dotted(issue)}: ${issue.message}`).join('\n')).toContain('testsDir')
   })
 
   it('rejects empty knowledge.dir', async () => {
-    const res = await invokeRoute('/api/config/settings', {
-      method: 'PUT',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
-        'knowledge': {
-          dir: '',
-        },
-      }),
-    })
+    const issues = await expectPatchRefused([set(['knowledge', 'dir'], '')])
 
-    expect(res.status).toBe(400)
-    const data = JSON.parse(res.body) as { error: string; details: string[] }
-    expect(data.error).toBe('Validation failed')
-    expect(data.details.some((detail) => detail.startsWith('knowledge.dir:'))).toBe(true)
+    expect(issues.some((issue) => dotted(issue) === 'knowledge.dir')).toBe(true)
   })
 
   it('rejects an absolute knowledge.dir (repo-relative refine, T-373-06)', async () => {
-    const res = await invokeRoute('/api/config/settings', {
-      method: 'PUT',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
-        'knowledge': {
-          dir: '/etc/knowledge',
-        },
-      }),
-    })
+    const issues = await expectPatchRefused([set(['knowledge', 'dir'], '/etc/knowledge')])
 
-    expect(res.status).toBe(400)
-    const data = JSON.parse(res.body) as { error: string; details: string[] }
-    expect(data.error).toBe('Validation failed')
-    expect(data.details.some((detail) => detail.startsWith('knowledge.dir:'))).toBe(true)
+    expect(issues.some((issue) => dotted(issue) === 'knowledge.dir')).toBe(true)
   })
 
   it('rejects invalid analytics pass rate scope predicates', async () => {
-    const res = await invokeRoute('/api/config/settings', {
-      method: 'PUT',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
-        'analytics.passRateScope': {
-          attributes: {
-            'git.branch': { regex: '' },
-          },
+    const issues = await expectPatchRefused([
+      set(['analytics', 'passRateScope'], {
+        attributes: {
+          'git.branch': { regex: '' },
         },
       }),
-    })
+    ])
 
-    expect(res.status).toBe(400)
-    const data = JSON.parse(res.body) as { error: string; details: string[] }
-    expect(data.error).toBe('Validation failed')
-    expect(data.details.some((detail) =>
-      detail.startsWith('analytics.passRateScope.attributes.git.branch.regex:'),
+    expect(issues.some((issue) =>
+      dotted(issue).startsWith('analytics.passRateScope.attributes.git.branch'),
     )).toBe(true)
   })
 
-  it('rejects invalid web targets with dotted validation paths', async () => {
-    const res = await invokeRoute('/api/config/settings', {
-      method: 'PUT',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
-        'registry.targets': {
-          'bad-web': {
-            platform: 'web',
-          },
-        },
+  it('rejects invalid web targets with segment validation paths', async () => {
+    const issues = await expectPatchRefused([
+      set(['registry', 'targets', 'bad-web'], {
+        platform: 'web',
       }),
-    })
+    ])
 
-    expect(res.status).toBe(400)
-    const data = JSON.parse(res.body) as { error: string; details: string[] }
-    expect(data.error).toBe('Validation failed')
-    expect(data.details).toContain('registry.targets.bad-web: Web targets must have a url')
+    expect(issues.map((issue) => `${dotted(issue)}: ${issue.message}`))
+      .toContain('registry.targets.bad-web: Web targets must have a url')
   })
 
   it('persists mobile target app install fields', async () => {
-    const { configManager, configPath } = await createConfigWorkspace()
-    router = createRouter({
-      db: createMockDatabase() as any,
-      configManager,
-      configPath,
-    })
+    const { configManager } = await useSettingsWorkspace()
 
-    const res = await invokeRoute('/api/config/settings', {
-      method: 'PUT',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
-        'registry.targets': {
-          'release-android': {
-            platform: 'android',
-            appPackage: 'org.wikipedia.alpha',
-            appActivity: 'org.wikipedia.main.MainActivity',
-            app: {
-              path: 'apps/wikipedia-alpha.apk',
-              browserstack: 'bs://uploaded-app',
-            },
-          },
+    const res = await patchConfig([
+      set(['registry', 'targets', 'release-android'], {
+        platform: 'android',
+        appPackage: 'org.wikipedia.alpha',
+        appActivity: 'org.wikipedia.main.MainActivity',
+        app: {
+          path: 'apps/wikipedia-alpha.apk',
+          browserstack: 'bs://uploaded-app',
         },
       }),
-    })
+    ])
 
     expect(res.status).toBe(200)
 
-    const config = await configManager.read()
+    const config = await readConfig(configManager)
     expect(config).toMatchObject({
       registry: {
         targets: {
@@ -1032,99 +921,102 @@ describe('PUT /api/config/settings', () => {
   })
 
   it('rejects absolute mobile target app path', async () => {
-    const res = await invokeRoute('/api/config/settings', {
-      method: 'PUT',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
-        'registry.targets': {
-          'bad-android': {
-            platform: 'android',
-            app: {
-              path: '/tmp/wikipedia.apk',
-            },
-          },
+    const issues = await expectPatchRefused([
+      set(['registry', 'targets', 'bad-android'], {
+        platform: 'android',
+        app: {
+          path: '/tmp/wikipedia.apk',
         },
       }),
-    })
+    ])
 
-    expect(res.status).toBe(400)
-    const data = JSON.parse(res.body) as { error: string; details: string[] }
-    expect(data.error).toBe('Validation failed')
-    expect(data.details).toContain('registry.targets.bad-android.app.path: app.path must be relative')
+    expect(issues.map((issue) => `${dotted(issue)}: ${issue.message}`))
+      .toContain('registry.targets.bad-android.app.path: app.path must be relative')
   })
 
   it('rejects unknown mobile target app keys', async () => {
-    const res = await invokeRoute('/api/config/settings', {
-      method: 'PUT',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
-        'registry.targets': {
-          'bad-android': {
-            platform: 'android',
-            app: {
-              path: 'apps/wikipedia.apk',
-              fallback: 'installed',
-            },
-          },
+    const issues = await expectPatchRefused([
+      set(['registry', 'targets', 'bad-android'], {
+        platform: 'android',
+        app: {
+          path: 'apps/wikipedia.apk',
+          fallback: 'installed',
         },
       }),
-    })
+    ])
 
-    expect(res.status).toBe(400)
-    const data = JSON.parse(res.body) as { error: string; details: string[] }
-    expect(data.error).toBe('Validation failed')
-    expect(data.details.some((detail) =>
-      detail.startsWith('registry.targets.bad-android.app:')
-      && detail.includes('fallback'),
+    expect(issues.some((issue) =>
+      dotted(issue).startsWith('registry.targets.bad-android.app')
+      && issue.message.includes('fallback'),
     )).toBe(true)
   })
 
-  it('rejects invalid local device match fields with dotted validation paths', async () => {
-    const res = await invokeRoute('/api/config/settings', {
-      method: 'PUT',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
-        'registry.devices': {
-          iosSimulator: {
-            platform: 'ios',
-            transport: 'local',
-            match: {
-              serial: 'android-only',
-            },
-          },
+  it('rejects invalid local device match fields with segment validation paths', async () => {
+    const issues = await expectPatchRefused([
+      set(['registry', 'devices', 'iosSimulator'], {
+        platform: 'ios',
+        transport: 'local',
+        match: {
+          serial: 'android-only',
         },
       }),
-    })
+    ])
 
-    expect(res.status).toBe(400)
-    const data = JSON.parse(res.body) as { error: string; details: string[] }
-    expect(data.error).toBe('Validation failed')
-    expect(data.details).toContain(
+    expect(issues.map((issue) => `${dotted(issue)}: ${issue.message}`)).toContain(
       'registry.devices.iosSimulator.match.serial: Match field "serial" is not valid for ios local transport. Allowed: udid, bundleId, automationName, platformVersion',
     )
   })
 
-  it('MASK-NEVER-WRITTEN-BACK: a settings save carrying the mask placeholder answers 400 and writes nothing', async () => {
-    const { configManager, configPath } = await createConfigWorkspace()
-    router = createRouter({ db: createMockDatabase() as any, configManager, configPath })
+  it('MASK-NEVER-WRITTEN-BACK: a settings save carrying the mask placeholder is refused and writes nothing', async () => {
+    const { configPath } = await useSettingsWorkspace()
     const before = await readFile(configPath)
 
-    const res = await invokeRoute('/api/config/settings', {
-      method: 'PUT',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
-        'services.logging': { level: 'warn' },
-        'registry.providers': { browserstack: { username: 'owner', accessKey: CONFIG_MASK_PLACEHOLDER } },
-      }),
-    })
+    const res = await patchConfig([
+      set(['services', 'logging', 'level'], 'warn'),
+      set(['registry', 'providers', 'browserstack'], { username: 'owner', accessKey: CONFIG_MASK_PLACEHOLDER }),
+    ])
 
-    expect(res.status).toBe(400)
+    expect(res.status).toBe(422)
     expect(JSON.parse(res.body)).toEqual({ error: 'mask_written_back' })
     expect(Buffer.compare(await readFile(configPath), before)).toBe(0)
   })
 })
 
-describe('PUT /api/config/llms', () => {
+const PLANNER_DEFINITION = {
+  name: 'planner',
+  provider: 'openai-compatible',
+  model: 'openrouter/auto',
+  baseURL: 'https://openrouter.ai/api/v1',
+}
+
+// A model-list write the connect route refuses by name is also refused when appended through the
+// field-merge write, so neither path can land the definition.
+async function expectModelRefusedBothWays(
+  draft: Record<string, unknown>,
+  connectRefusal: string,
+): Promise<{ connectBody: { error: string; issues?: WriteIssue[] }; patchIssues: WriteIssue[] }> {
+  const { configPath } = await useSettingsWorkspace()
+  const before = await readFile(configPath)
+
+  const connected = await connectModel({ ...draft, skipTest: true })
+  expect(connected.status).toBe(400)
+  const connectBody = JSON.parse(connected.body) as { error: string; issues?: WriteIssue[] }
+  expect(connectBody.error).toBe(connectRefusal)
+  expect(Buffer.compare(await readFile(configPath), before)).toBe(0)
+
+  const patchIssues = await expectValidationRefused(
+    await patchConfig([
+      { op: 'append', path: ['registry', 'llms'], value: draft },
+      set(['use', 'llm'], draft.name),
+    ]),
+    configPath,
+    before,
+  )
+  expect(mockWriteAuth).not.toHaveBeenCalled()
+  return { connectBody, patchIssues }
+}
+
+describe('model list and default model writes through connect and PATCH (429-32)', () => {
   it('omits product-facing authMethod from GET /api/config', async () => {
     const { configManager, configPath } = await createConfigWorkspace([
       'workspace: {}',
@@ -1156,201 +1048,151 @@ describe('PUT /api/config/llms', () => {
   })
 
   it('accepts exactly the five LLM provider modes in registry.llms', async () => {
-    const { configManager, configPath } = await createConfigWorkspace()
-    router = createRouter({
-      db: createMockDatabase() as any,
-      configManager,
-      configPath,
-    })
+    registerTestSubscriptionPlugins()
+    const { configManager } = await useSettingsWorkspace()
 
-    const res = await invokeRoute('/api/config/llms', {
-      method: 'PUT',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
-        llms: [
-          {
-            name: 'openai-compatible',
-            provider: 'openai-compatible',
-            model: 'openrouter/auto',
-            baseURL: 'https://openrouter.ai/api/v1',
-          },
-          {
-            name: 'anthropic-compatible',
-            provider: 'anthropic-compatible',
-            model: 'claude-remote',
-            baseURL: 'https://anthropic-proxy.example/messages',
-            providerHeaders: {
-              'anthropic-beta': 'messages-2023-12-15',
-            },
-          },
-          { name: 'openai-subscription', provider: 'openai-subscription', model: 'gpt-5.3-codex' },
-          { name: 'anthropic-subscription', provider: 'anthropic-subscription', model: 'claude-sonnet-4-20250514' },
-          { name: 'gemini', provider: 'gemini', model: 'gemini-2.5-flash' },
-        ],
-        defaultLLM: 'openai-compatible',
-      }),
-    })
+    const drafts = [
+      {
+        name: 'openai-compatible',
+        provider: 'openai-compatible',
+        model: 'openrouter/auto',
+        baseURL: 'https://openrouter.ai/api/v1',
+      },
+      {
+        name: 'anthropic-compatible',
+        provider: 'anthropic-compatible',
+        model: 'claude-remote',
+        baseURL: 'https://anthropic-proxy.example/messages',
+        providerHeaders: {
+          'anthropic-beta': 'messages-2023-12-15',
+        },
+      },
+      { name: 'openai-subscription', provider: 'openai-subscription', model: 'gpt-5.3-codex' },
+      { name: 'anthropic-subscription', provider: 'anthropic-subscription', model: 'claude-sonnet-4-20250514' },
+      { name: 'gemini', provider: 'gemini', model: 'gemini-2.5-flash' },
+    ]
+    for (const draft of drafts) {
+      const res = await connectModel({ ...draft, skipTest: true })
+      expect(res.status).toBe(200)
+      expect(JSON.parse(res.body)).toMatchObject({ success: true, saved: true })
+    }
 
-    expect(res.status).toBe(200)
-    const config = await configManager.read()
-    expect(((config.registry as any).llms as Array<{ provider: string }>).map((llm) => llm.provider)).toEqual([
+    const config = await readConfig(configManager)
+    expect((config.registry.llms as Array<{ provider: string }>).map((llm) => llm.provider)).toEqual([
       'openai-compatible',
       'anthropic-compatible',
       'openai-subscription',
       'anthropic-subscription',
       'gemini',
     ])
+    expect(config.use.llm).toBe('openai-compatible')
   })
 
   it('rejects product-facing authMethod in registry.llms', async () => {
-    const res = await invokeRoute('/api/config/llms', {
-      method: 'PUT',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
-        llms: [{
-          name: 'planner',
-          provider: 'openai-compatible',
-          model: 'openrouter/auto',
-          baseURL: 'https://openrouter.ai/api/v1',
-          authMethod: 'key',
-        }],
-        defaultLLM: 'planner',
-      }),
-    })
+    const { patchIssues } = await expectModelRefusedBothWays(
+      { ...PLANNER_DEFINITION, authMethod: 'key' },
+      'invalid_setup_input',
+    )
 
-    expect(res.status).toBe(400)
-    const data = JSON.parse(res.body) as { details: string[] }
-    expect(data.details.join('\n')).toContain('authMethod')
+    expect(patchIssues.map((issue) => `${dotted(issue)}: ${issue.message}`).join('\n')).toContain('authMethod')
   })
 
   it('writes compatible configs without inline API keys', async () => {
-    const { configManager, configPath } = await createConfigWorkspace()
-    router = createRouter({
-      db: createMockDatabase() as any,
-      configManager,
-      configPath,
-    })
+    const { configManager, configPath } = await useSettingsWorkspace()
 
-    const res = await invokeRoute('/api/config/llms', {
-      method: 'PUT',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
-        llms: [{
-          name: 'planner',
-          provider: 'openai-compatible',
-          model: 'openrouter/auto',
-          baseURL: 'https://openrouter.ai/api/v1',
-        }],
-        defaultLLM: 'planner',
-      }),
+    const res = await connectModel({
+      ...PLANNER_DEFINITION,
+      credential: { type: 'api-key', secret: LLM_TEST_CREDENTIAL },
+      skipTest: true,
     })
 
     expect(res.status).toBe(200)
+    expect(JSON.parse(res.body)).toMatchObject({ success: true, saved: true, becameDefault: true })
 
-    const config = await configManager.read()
+    const config = await readConfig(configManager)
     expect(config).toMatchObject({
       registry: {
-        llms: [{
-          name: 'planner',
-          provider: 'openai-compatible',
-          model: 'openrouter/auto',
-          baseURL: 'https://openrouter.ai/api/v1',
-        }],
+        llms: [PLANNER_DEFINITION],
       },
       use: {
         llm: 'planner',
       },
     })
-    expect(((config.registry as any).llms[0] as Record<string, unknown>)).not.toHaveProperty('apiKey')
+    expect(config.registry.llms[0] as Record<string, unknown>).not.toHaveProperty('apiKey')
+    expect(await readFile(configPath, 'utf-8')).not.toContain(LLM_TEST_CREDENTIAL)
+    expect(mockWriteAuth).toHaveBeenCalledWith('planner', {
+      type: 'api',
+      provider: 'openai-compatible',
+      key: LLM_TEST_CREDENTIAL,
+    })
   })
 
   it('rejects openai-compatible configs without baseURL', async () => {
-    const res = await invokeRoute('/api/config/llms', {
-      method: 'PUT',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
-        llms: [{
-          name: 'planner',
-          provider: 'openai-compatible',
-          model: 'openrouter/auto',
-        }],
-        activeLlm: 'planner',
-      }),
-    })
+    const { connectBody, patchIssues } = await expectModelRefusedBothWays(
+      { name: 'planner', provider: 'openai-compatible', model: 'openrouter/auto' },
+      'invalid_setup_input',
+    )
 
-    expect(res.status).toBe(400)
-    const data = JSON.parse(res.body) as { error: string; details: string[] }
-    expect(data.error).toBe('Validation failed')
-    expect(data.details.join('\n')).toContain('baseURL')
-    expect(data.details.join('\n')).toContain('Base URL is required')
+    const connectDetails = (connectBody.issues ?? []).map((issue) => `${dotted(issue)}: ${issue.message}`).join('\n')
+    expect(connectDetails).toContain('baseURL')
+    expect(connectDetails).toContain('Base URL is required')
+    expect(patchIssues.some((issue) => issue.path.includes('baseURL'))).toBe(true)
   })
 
   it('rejects inline openai-compatible API keys before persistence', async () => {
-    const res = await invokeRoute('/api/config/llms', {
-      method: 'PUT',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
-        llms: [{
-          name: 'planner',
-          provider: 'openai-compatible',
-          model: 'openrouter/auto',
-          baseURL: 'https://openrouter.ai/api/v1',
-          apiKey: 'sk-test',
-        }],
-        activeLlm: 'planner',
-      }),
-    })
+    const { patchIssues } = await expectModelRefusedBothWays(
+      { ...PLANNER_DEFINITION, apiKey: 'sk-test' },
+      'invalid_setup_input',
+    )
 
-    expect(res.status).toBe(400)
-    const data = JSON.parse(res.body) as { error: string; details: string[] }
-    expect(data.error).toBe('Validation failed')
-    expect(data.details.join('\n')).toContain('apiKey')
+    expect(patchIssues.map((issue) => `${dotted(issue)}: ${issue.message}`).join('\n')).toContain('apiKey')
   })
 
   it('rejects providerHeaders on non-anthropic-compatible configs', async () => {
-    const res = await invokeRoute('/api/config/llms', {
-      method: 'PUT',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
-        llms: [{
-          name: 'planner',
-          provider: 'openai-compatible',
-          model: 'openrouter/auto',
-          baseURL: 'https://openrouter.ai/api/v1',
-          providerHeaders: {
-            'x-extra': 'not-allowed',
-          },
-        }],
-        activeLlm: 'planner',
-      }),
-    })
+    const { connectBody, patchIssues } = await expectModelRefusedBothWays(
+      { ...PLANNER_DEFINITION, providerHeaders: { 'x-extra': 'not-allowed' } },
+      'invalid_setup_input',
+    )
 
-    expect(res.status).toBe(400)
-    const data = JSON.parse(res.body) as { error: string; details: string[] }
-    expect(data.error).toBe('Validation failed')
-    expect(data.details.join('\n')).toContain('providerHeaders')
+    expect((connectBody.issues ?? []).some((issue) => issue.path.includes('providerHeaders'))).toBe(true)
+    expect(patchIssues.some((issue) => issue.path.includes('providerHeaders'))).toBe(true)
   })
 
   it('rejects removed provider values through generic schema validation', async () => {
-    const res = await invokeRoute('/api/config/llms', {
-      method: 'PUT',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
-        llms: [{
-          name: 'legacy',
-          provider: 'ollama',
-          model: 'llama3',
-          baseURL: 'http://localhost:11434/v1',
-        }],
-        activeLlm: 'legacy',
-      }),
-    })
+    const { connectBody, patchIssues } = await expectModelRefusedBothWays(
+      { name: 'legacy', provider: 'ollama', model: 'llama3', baseURL: 'http://localhost:11434/v1' },
+      'invalid_setup_input',
+    )
 
-    expect(res.status).toBe(400)
-    const data = JSON.parse(res.body) as { error: string; details: string[] }
-    expect(data.error).toBe('Validation failed')
-    expect(data.details.some((detail) => detail.startsWith('provider:'))).toBe(true)
-    expect(data.details.join('\n')).not.toMatch(/migration|deprecated|legacy provider/i)
+    expect(patchIssues.some((issue) => issue.path.includes('provider'))).toBe(true)
+    const messages = [connectBody, ...patchIssues].map((item) => JSON.stringify(item)).join('\n')
+    expect(messages).not.toMatch(/migration|deprecated|legacy provider/i)
+  })
+
+  it('switches the default model with a PATCH set of use.llm, and refuses a name registry.llms does not hold', async () => {
+    const registryLines = [
+      'registry:',
+      '  llms:',
+      '    - name: planner',
+      '      provider: openai-compatible',
+      '      model: openrouter/auto',
+      '      baseURL: https://openrouter.ai/api/v1',
+      '    - name: fast',
+      '      provider: gemini',
+      '      model: gemini-2.5-flash',
+    ]
+    const { configManager, configPath } = await useSettingsWorkspace(
+      settingsConfig(['  llm: planner', ...MOBILE_USE_LINES], registryLines),
+    )
+
+    const switched = await patchConfig([set(['use', 'llm'], 'fast')])
+    expect(switched.status).toBe(200)
+    expect((await readConfig(configManager)).use.llm).toBe('fast')
+
+    const before = await readFile(configPath)
+    const issues = await expectValidationRefused(await patchConfig([set(['use', 'llm'], 'missing')]), configPath, before)
+    expect(issues.some((issue) => dotted(issue) === 'use.llm')).toBe(true)
+    expect((await readConfig(configManager)).use.llm).toBe('fast')
   })
 })
 
