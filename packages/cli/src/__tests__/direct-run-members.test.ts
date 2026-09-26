@@ -5,6 +5,7 @@ import {
   type ParsedTestBinding,
 } from '@vostride/agent-qa-core'
 import { projectRunOutcomes } from '@vostride/agent-qa-knowledge-local'
+import { memberStepText } from '@vostride/agent-qa-runner'
 import {
   asRunId,
   type CompletedRunHandoff,
@@ -44,6 +45,20 @@ const FILE_B_CONTENT = [
   'target: storefront',
   'steps:',
   '  - Complete checkout from the cart page',
+  '',
+].join('\n')
+
+const MIXED_STEPS_ID = 't_prest-onus-hand-anes-arched-picked-shadow-watch-lias-sho'
+const MIXED_STEPS_FILE = '/workspace/tests/profile.yaml'
+const MIXED_STEPS_CONTENT = [
+  `test-id: ${MIXED_STEPS_ID}`,
+  'name: profile saves',
+  'target: storefront',
+  'steps:',
+  '  - Open the profile page',
+  '  - step: Type "Ada" into the Name field and save',
+  '    timeout: 30s',
+  '  - Check the page says "Saved"',
   '',
 ].join('\n')
 
@@ -97,6 +112,23 @@ describe('buildDirectRunMembers', () => {
       expect(filePath.startsWith('/')).toBe(false)
       expect(filePath).not.toContain('/var/ci/build')
     }
+  })
+
+  // Owner decision 2026-09-26 (2), G-428-2: the descriptor carries the texts member-runner will
+  // announce at stepStarted, derived through the runner's one helper, for plain and object steps.
+  it('STEP-TEXTS-FROM-PARSED-STEPS', () => {
+    const bindings = parseBindings(MIXED_STEPS_FILE, MIXED_STEPS_CONTENT)
+    const { members } = buildDirectRunMembers(bindings, CONFIG_DIR)
+
+    expect(members.map(({ stepTexts }) => stepTexts)).toEqual([
+      [
+        'Open the profile page',
+        'Type "Ada" into the Name field and save',
+        'Check the page says "Saved"',
+      ],
+    ])
+    expect(members[0].stepTexts).toEqual(bindings[0].test.steps.map((step) => memberStepText(step)))
+    expect(members[0].totalSteps).toBe(members[0].stepTexts?.length)
   })
 
   it('REFUSES a binding whose source file escapes the config directory', () => {
