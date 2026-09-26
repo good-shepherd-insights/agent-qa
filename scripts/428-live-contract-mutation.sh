@@ -44,6 +44,20 @@
 #   C22  the live-editor session list answers through json() and its wildcard    -> LIVE-EDITOR-DOORS-CARRY-NO-ACAO (D-08)
 #   C23  one byte of the embed page's STYLE changes, on the rebuilt dashboard     -> the embed pin's sha cell (D-10)
 #
+# 2026-09-26 (428-29, G-428-2): legs 23 → 27. The owner's live-preview review found pending rows
+# reading "step 2" while step 1 ran, because testStarted carried a step count and no step texts.
+# 428-28 added an optional stepTexts to testStarted, masked at the producer by the run's own
+# MaskingContext and filled by the CLI member builders (PXH-LIVE-04). That is four promises, and a
+# green suite cannot tell you any of them still holds, so each new leg reds the cell that pins one:
+#   C24  TestStartedPayload.stepTexts turns required                              -> C428-TEST-STARTED-STEP-TEXTS-OPTIONAL
+#   C25  the shell publishes stepTexts without the run's mask                     -> STEP-TEXTS-MASKED-LIKE-STEP-TEXT
+#   C26  the shell stops carrying stepTexts on testStarted                        -> STEP-TEXTS-ON-TESTSTARTED
+#   C27  buildDirectRunMembers drops stepTexts                                    -> STEP-TEXTS-FROM-PARSED-STEPS
+# The schema instrument's files are unchanged; its count moves 7 → 9 only because 428-28 added one
+# cell to each of its two files. C25 and C26 run on a new runner-shell instrument and C27 on a new
+# cli-members instrument, each over its own package's source, so none of them crosses a dist. C01..C23
+# and the eight earlier instruments are otherwise unchanged.
+#
 # ALLOWED CO-REDS are listed on each leg with a one-line reason; nothing else may red.
 #
 # C10 IS MEASURED AT THE SOURCE. The engine gives a leg one instrument, so C10 reds the server
@@ -66,7 +80,7 @@
 #   neutered  apply NO mutation; the run must FATAL with "<leg>: suite stayed green"
 #   fatal     mutate every subject, then throw; every subject must be restored
 #   SIGINT | SIGTERM | SIGHUP   the same, then deliver that signal to itself
-# AGENT_QA_428_LIVE_CONTRACT_MUTATION_LEG=C01..C23 runs one leg (normal or neutered runs only).
+# AGENT_QA_428_LIVE_CONTRACT_MUTATION_LEG=C01..C24 runs one leg (normal or neutered runs only).
 # AGENT_QA_428_LIVE_CONTRACT_MUTATION_LIST=1 prints the declared inventory and exits.
 #
 # Installed Node 24, workspace tools and the installed Playwright Chromium are required. No
@@ -91,6 +105,7 @@ const HANDLER_SRC = 'packages/dashboard-server/src/live-editor/ws-handler.ts'
 const SERVER_SRC = 'packages/dashboard-server/src/server/server.ts'
 const ROUTES_SRC = 'packages/dashboard-server/src/server/routes.ts'
 const MAPPING_SRC = 'packages/mcp/src/mapping.ts'
+const BUS_EVENTS_SRC = 'packages/schema/src/run/bus-events.ts'
 
 const SCHEMA_T = 'src/__tests__/428-live-contracts.test.ts'
 const SCHEMA_D = 'src/__tests__/428-live-contracts.test-d.ts'
@@ -112,7 +127,7 @@ const EDITOR_VIEW_T = 'src/__tests__/conformance/428-editor-live-view.test.ts'
 const CROSS_SITE_T = 'src/__tests__/conformance/live-view-cross-site.test.ts'
 
 const instruments = {
-  schema: { pkg: 'packages/schema', files: [SCHEMA_T, SCHEMA_D], typecheck: true, count: 7 },
+  schema: { pkg: 'packages/schema', files: [SCHEMA_T, SCHEMA_D], typecheck: true, count: 9 },
   agent: { pkg: 'packages/agent', files: [TOKEN_T, EDITOR_URL_T], typecheck: false, count: 27 },
   runner: { pkg: 'packages/runner', files: [HUB_T, SNAPSHOT_T], typecheck: false, count: 52 },
   web: { pkg: 'packages/web', files: [SCREENCAST_T], typecheck: false, count: 10, env: { VITEST_MAX_WORKERS: '1' } },
@@ -466,10 +481,21 @@ const legs = [
       pin('pins the two path constants the whole live-view transport is addressed by'),
       editorView('EDITOR-LIVE-VIEW-END-TO-END')],
   },
+  {
+    subject: BUS_EVENTS_SRC, instrument: 'schema', claim: 'C428-TEST-STARTED-STEP-TEXTS-OPTIONAL',
+    operation: 'turn the TestStartedPayload stepTexts member from optional to required',
+    edits: [{ from: '  stepTexts?: readonly string[]\n}\n', to: '  stepTexts: readonly string[]\n}\n' }],
+    reds: [schemaD('C428-TEST-STARTED-STEP-TEXTS-OPTIONAL')],
+    // Measured: nothing else reds. The runtime twin builds a typed bare payload, but the runtime
+    // file is not type-checked, and the envelope's payload stays an open record at run time.
+    allowed: [],
+    greens: [schemaT('C428-TEST-STARTED-STEP-TEXTS-ADDITIVE'), schemaD('C428-LIVE-STREAM-KINDS-EXACT'),
+      schemaT('C428-LIVE-STREAM-KINDS-EXACT')],
+  },
 ]
 
 runGate({
   slug: '428-live-contract-mutation', envPrefix: 'AGENT_QA_428_LIVE_CONTRACT_MUTATION', idPrefix: 'C',
-  instruments, legs, expectedLegs: 23, banner: 'LIVE_CONTRACT_MUTATION_OK',
+  instruments, legs, expectedLegs: 24, banner: 'LIVE_CONTRACT_MUTATION_OK',
 })
 NODE
