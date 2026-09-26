@@ -147,8 +147,13 @@ beforeEach(() => {
   vi.useFakeTimers()
   localStorage.clear()
   vi.mocked(fetchConfig).mockResolvedValue(answer(baseConfig) as never)
-  vi.mocked(fetchConfigRevision).mockResolvedValue({ revision: "rev-1" })
-  vi.mocked(applyConfigChanges).mockResolvedValue({ revision: "rev-2" })
+  // One fake server: the revision route answers whatever the last write landed.
+  let serverRevision = "rev-1"
+  vi.mocked(fetchConfigRevision).mockImplementation(async () => ({ revision: serverRevision }))
+  vi.mocked(applyConfigChanges).mockImplementation(async () => {
+    serverRevision = "rev-2"
+    return { revision: serverRevision }
+  })
 })
 
 afterEach(async () => {
