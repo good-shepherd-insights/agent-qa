@@ -51,6 +51,11 @@ export {
 export type {
   AndroidPlatformConfig,
   BrowserConfig,
+  ConfigChange,
+  ConfigPathSegment,
+  ConfigWriteIssue,
+  ConfigWriteRequest,
+  ConfigWriteResult,
   DeviceConfig,
   EffectiveWorkersInput,
   IosPlatformConfig,
@@ -73,6 +78,10 @@ export type {
 export {
   appStateSchema,
   browserConfigSchema,
+  CONFIG_REVISION_ABSENT,
+  ConfigChangeSchema,
+  ConfigPathSegmentSchema,
+  ConfigWriteRequestSchema,
   DEFAULT_PARALLEL_WORKERS,
   deviceConfigSchema,
   McpStdioGrantSchema,

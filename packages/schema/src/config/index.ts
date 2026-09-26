@@ -1,5 +1,19 @@
 export type { PlatformBase, TimeoutConfig } from './base'
 export { platformBase, platformBaseShape, timeoutConfigSchema } from './base'
+// 2026-09-26, 429-01 D-19: the field-merge write DTO PATCH /api/config parses.
+export type {
+  ConfigChange,
+  ConfigPathSegment,
+  ConfigWriteIssue,
+  ConfigWriteRequest,
+  ConfigWriteResult,
+} from './config-write'
+export {
+  CONFIG_REVISION_ABSENT,
+  ConfigChangeSchema,
+  ConfigPathSegmentSchema,
+  ConfigWriteRequestSchema,
+} from './config-write'
 export type { BrowserConfig } from './browser'
 export { appStateSchema, browserConfigSchema, viewportSchema } from './browser'
 export type { DeviceConfig } from './device'

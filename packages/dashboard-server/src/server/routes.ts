@@ -55,6 +55,7 @@ import { serveRunAnalysisRead } from '../run-service/run-analysis-routes.js'
 // database.
 import { serveRunKnowledgeRead } from '../run-service/run-knowledge-routes.js'
 import { registerRunMarkRoute } from '../run-service/run-mark-routes.js'
+import { registerConfigWriteRoute } from './config-routes.js'
 import type { PostProcessingRelay } from '../execution/post-processing-relay.js'
 import type { LLMAuthProviderPlugin, OAuthTokens } from '@vostride/agent-qa-core'
 import { AuthStateNameSchema, buildInternalRunAttributes, mergeRunAttributes, readAuth, writeAuth, removeAuth, getAgentQaVersion, getAgentQaUpdateStatus, getLLMAuthProviderPlugin, listAuthStateMetadata, listLLMAuthProviderPlugins, ModelConfigSchema, NamedLLMConfigSchema, WorkspaceSchema, ServicesSchema, RegistrySchema, UseSchema, MobileAppStateSchema, TimeoutConfigSchema, CacheConfigSchema, PlannerConfigSchema, LoggingConfigSchema, LogCaptureConfigSchema, AccessibilityConfigSchema, DashboardConfigSchema, McpConfigSchema, RecordingConfigSchema, BrowserConfigSchema, AnalyticsSchema, AgentQaConfigSchema, TestDefinitionSchema, SuiteDefinitionSchema, parseEnvFile, serializeEnvFile, parseHooksFile, RUNTIME_IMAGE_MAP, redactAuthStateValue, validateUserRunAttributes, discoverWorkspaceFiles, isWorkspacePathMatch, resolveWorkspaceFileTarget, SizeString, KnowledgeConfigSchema } from '@vostride/agent-qa-core'
@@ -1884,6 +1885,17 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps): (req: In
       // here for the identical reason — ahead of the shared `cors()` arm, so no page a person has
       // open can preflight a route whose whole power is to approve an ask-tier run on their machine.
       chatRouter(req, res)
+      return
+    }
+
+    // 429-01 D-19: the field-merge config write, ahead of the shared OPTIONS arm so its answers
+    // never pass through the wildcard grant.
+    if (path === '/api/config' && req.method === 'PATCH') {
+      if (!configManager) {
+        jsonNoCors(res, { error: 'config_unavailable' }, 503)
+        return
+      }
+      registerConfigWriteRoute(req, res, { configManager })
       return
     }
 
