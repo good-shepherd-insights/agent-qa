@@ -16,7 +16,12 @@ import { tryParseRequestUrl } from './request-url.js'
 import { CHAT_ROUTE_PREFIX, RUN_CONFIRM_ROUTE_PREFIX, createChatRouter } from '../chat/chat-routes.js'
 import { isRunTriggerConfirmScope } from '../chat/confirm-registry.js'
 import type { AgentHost } from '../chat/host.js'
-import { parseHandleParam } from '@vostride/agent-qa-schema'
+import {
+  classifyProviderError,
+  extractProviderError,
+  parseHandleParam,
+  providerErrorSentence,
+} from '@vostride/agent-qa-schema'
 import type {
   EditorLiveUrlResult,
   RunServiceReadiness,
@@ -80,10 +85,6 @@ const API_KEY_CREDENTIAL_PROVIDERS = new Set([
   'anthropic-compatible',
   'gemini',
 ])
-const LLM_TEST_UNAUTHENTICATED_MESSAGE = 'Testing without a saved credential.'
-const LLM_TEST_AUTH_ERROR_MESSAGE = 'Authentication failed. Check the saved credential for this config.'
-const LLM_TEST_MODEL_NOT_FOUND_MESSAGE = 'Model not found. Check the model name.'
-const LLM_TEST_NETWORK_ERROR_MESSAGE = 'Network error. Check the exact base URL and try again.'
 const DASHBOARD_EXECUTION_TIMEOUT_BUFFER_MS = 60_000
 const REMOTE_LLM_CONNECTION_TEST_TIMEOUT_MS = 10_000
 const LOCAL_COMPATIBLE_LLM_CONNECTION_TEST_TIMEOUT_MS = 120_000
@@ -397,67 +398,6 @@ function pruneExpiredPluginOAuthSessions(sessions: Map<string, PluginOAuthSessio
       cleanupPluginOAuthSession(session)
       sessions.delete(sessionId)
     }
-  }
-}
-
-function extractProviderErrorMessage(err: unknown): { message: string; statusCode?: number } {
-  const errObj = err as Record<string, unknown>
-  const statusCode = errObj?.statusCode as number | undefined
-  const responseBody = errObj?.responseBody as string | undefined
-  const data = errObj?.data as Record<string, unknown> | undefined
-  const apiError = data?.error as Record<string, string> | undefined
-
-  let message = err instanceof Error ? err.message : String(err)
-
-  if (apiError?.message && apiError.message !== 'Error') {
-    message = apiError.message
-  } else if (data?.detail && typeof data.detail === 'string') {
-    message = data.detail
-  } else if (responseBody) {
-    try {
-      const body = JSON.parse(responseBody)
-      if (body?.detail) message = body.detail
-      else if (body?.error?.message && body.error.message !== 'Error') message = body.error.message
-    } catch {
-      // response body was not JSON
-    }
-  }
-
-  return { message, statusCode }
-}
-
-function classifyProviderError(message: string, statusCode?: number): string {
-  const fullContext = `${message} ${statusCode ?? ''}`
-  if (/auth|unauthorized|401|invalid.*key|permission/i.test(fullContext)) {
-    return 'auth_error'
-  }
-  if (/model.*not.*support|model.*not.*found|not found|404|does not exist/i.test(fullContext)) {
-    return 'model_not_found'
-  }
-  if (/ECONNREFUSED|ENOTFOUND|timeout|abort|fetch failed|network/i.test(fullContext)) {
-    return 'network_error'
-  }
-  if (/rate|429|quota|limit/i.test(fullContext)) {
-    return 'rate_limit'
-  }
-  if (/invalid_request|400|bad request/i.test(fullContext)) {
-    return 'invalid_request'
-  }
-  return 'provider_error'
-}
-
-function publicLLMTestMessage(category: string, providerMessage: string): string {
-  switch (category) {
-    case 'auth_error':
-      return LLM_TEST_AUTH_ERROR_MESSAGE
-    case 'model_not_found':
-      return LLM_TEST_MODEL_NOT_FOUND_MESSAGE
-    case 'network_error':
-      return LLM_TEST_NETWORK_ERROR_MESSAGE
-    case 'provider_error':
-      return `Connection failed. ${providerMessage}`
-    default:
-      return providerMessage
   }
 }
 
@@ -4182,7 +4122,13 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps): (req: In
     }
 
     // POST /api/llm/test — test LLM connection
+    // Same-site only and no wildcard grant on any answer: this arm spends a saved credential
+    // against a provider, so a page on another origin must not be able to drive it.
     if (path === '/api/llm/test' && req.method === 'POST') {
+      if (refuseCrossSiteRequest(req) !== undefined) {
+        jsonNoCors(res, { error: 'cross_site_refused' }, 403)
+        return
+      }
       readJsonBody<{
         configName?: string
         provider?: string
@@ -4193,7 +4139,7 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps): (req: In
         .then(async (body) => {
           const rawBody = body as Record<string, unknown>
           if ('apiKey' in rawBody) {
-            json(res, {
+            jsonNoCors(res, {
               success: false,
               error: 'invalid_request',
               message: 'apiKey is not accepted in LLM test requests. Save credentials for the named config instead.',
@@ -4203,7 +4149,7 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps): (req: In
           const providerName = typeof body.provider === 'string' ? body.provider.trim() : ''
           const modelName = typeof body.model === 'string' ? body.model.trim() : ''
           if (!providerName || !modelName) {
-            json(res, { success: false, error: 'invalid_request', message: 'provider and model are required' }, 400)
+            jsonNoCors(res, { success: false, error: 'invalid_request', message: 'provider and model are required' }, 400)
             return
           }
           const configName = typeof body.configName === 'string' ? body.configName.trim() : ''
@@ -4221,7 +4167,7 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps): (req: In
 
           const parsedConfig = ModelConfigSchema.safeParse(llmCandidate)
           if (!parsedConfig.success) {
-            json(res, {
+            jsonNoCors(res, {
               success: false,
               error: 'invalid_request',
               message: parsedConfig.error.issues
@@ -4244,7 +4190,7 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps): (req: In
           }
           const resolvedAuth = await coreAuth.resolveLLMAuth(configName, llmConfig)
           if (resolvedAuth.kind === 'missing') {
-            json(res, {
+            jsonNoCors(res, {
               success: false,
               error: 'missing_credential',
               message: resolvedAuth.message,
@@ -4277,32 +4223,32 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps): (req: In
               clearTimeout(timeout)
             }
 
-            json(res, {
+            jsonNoCors(res, {
               success: true,
               model: modelName,
               provider: providerName,
               timeoutMs: connectionTimeoutMs,
               responseTime: Date.now() - start,
-              ...(unauthenticated ? { unauthenticated: true, message: authMessage ?? LLM_TEST_UNAUTHENTICATED_MESSAGE } : {}),
+              ...(unauthenticated ? { unauthenticated: true, message: authMessage } : {}),
             })
           } catch (err: unknown) {
             const connectionTimeoutMs = llmConnectionTestTimeoutMs(llmConfig)
-            const { message: providerMessage, statusCode } = extractProviderErrorMessage(err)
-            const errorCategory = classifyProviderError(providerMessage, statusCode)
-            const message = publicLLMTestMessage(errorCategory, providerMessage)
+            const { message: providerMessage, statusCode } = extractProviderError(err)
+            const errorClass = classifyProviderError(providerMessage, statusCode)
+            const message = providerErrorSentence(errorClass, providerMessage)
 
-            json(res, {
+            jsonNoCors(res, {
               success: false,
-              error: errorCategory,
+              error: errorClass,
               message,
               timeoutMs: connectionTimeoutMs,
               ...(statusCode ? { statusCode } : {}),
               ...(message !== providerMessage ? { details: providerMessage } : {}),
-              ...(unauthenticated ? { unauthenticated: true, authMessage: authMessage ?? LLM_TEST_UNAUTHENTICATED_MESSAGE } : {}),
+              ...(unauthenticated ? { unauthenticated: true, authMessage } : {}),
             })
           }
         })
-        .catch(() => json(res, { success: false, error: 'invalid_request', message: 'Invalid request body' }, 400))
+        .catch(() => jsonNoCors(res, { success: false, error: 'invalid_request', message: 'Invalid request body' }, 400))
       return
     }
 

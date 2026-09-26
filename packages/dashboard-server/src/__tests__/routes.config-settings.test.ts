@@ -8,7 +8,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { ConfigManager } from '../config/index.js'
 import { createRouter } from '../server/routes.js'
-import { CONFIG_MASK_PLACEHOLDER } from '@vostride/agent-qa-schema'
+import {
+  CONFIG_MASK_PLACEHOLDER,
+  PROVIDER_ERROR_CLASSES,
+  providerErrorSentence,
+  type ProviderErrorClass,
+} from '@vostride/agent-qa-schema'
 import {
   clearLLMAuthProviderPlugins,
   readAuth,
@@ -136,6 +141,11 @@ interface MockResponse {
   headers: Record<string, string>
   body: string
 }
+
+// A loopback caller that names its Host, the way curl, the CLI and the dashboard's own page do.
+const LLM_TEST_HOST = '127.0.0.1:4317'
+const LLM_TEST_HEADERS: IncomingHttpHeaders = { 'content-type': 'application/json', host: LLM_TEST_HOST }
+const LLM_TEST_CREDENTIAL = 'sk-fixture-credential-429-08'
 
 let router: ReturnType<typeof createRouter>
 let tempDirs: string[] = []
@@ -1817,7 +1827,7 @@ describe('dashboard LLM auth and test routes', () => {
 
     const res = await invokeRoute('/api/llm/test', {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: LLM_TEST_HEADERS,
       body: JSON.stringify({
         configName: 'remote-openai',
         provider: 'openai-compatible',
@@ -1850,7 +1860,7 @@ describe('dashboard LLM auth and test routes', () => {
 
     const res = await invokeRoute('/api/llm/test', {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: LLM_TEST_HEADERS,
       body: JSON.stringify({
         configName: 'remote-anthropic',
         provider: 'anthropic-compatible',
@@ -1879,7 +1889,7 @@ describe('dashboard LLM auth and test routes', () => {
 
     const res = await invokeRoute('/api/llm/test', {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: LLM_TEST_HEADERS,
       body: JSON.stringify({
         configName: 'gemini-fast',
         provider: 'gemini',
@@ -1909,7 +1919,7 @@ describe('dashboard LLM auth and test routes', () => {
 
     await invokeRoute('/api/llm/test', {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: LLM_TEST_HEADERS,
       body: JSON.stringify({
         configName: 'remote-anthropic',
         provider: 'anthropic-compatible',
@@ -1934,7 +1944,7 @@ describe('dashboard LLM auth and test routes', () => {
     mockCreateModel.mockClear()
     const invalidHeadersRes = await invokeRoute('/api/llm/test', {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: LLM_TEST_HEADERS,
       body: JSON.stringify({
         configName: 'remote-openai',
         provider: 'openai-compatible',
@@ -1958,7 +1968,7 @@ describe('dashboard LLM auth and test routes', () => {
   it('rejects auth-like providerHeaders', async () => {
     const res = await invokeRoute('/api/llm/test', {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: LLM_TEST_HEADERS,
       body: JSON.stringify({
         configName: 'remote-anthropic',
         provider: 'anthropic-compatible',
@@ -1983,7 +1993,7 @@ describe('dashboard LLM auth and test routes', () => {
   it('rejects inline apiKey in LLM connection test requests', async () => {
     const res = await invokeRoute('/api/llm/test', {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: LLM_TEST_HEADERS,
       body: JSON.stringify({
         configName: 'remote-openai',
         provider: 'openai-compatible',
@@ -2013,7 +2023,7 @@ describe('dashboard LLM auth and test routes', () => {
 
     const res = await invokeRoute('/api/llm/test', {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: LLM_TEST_HEADERS,
       body: JSON.stringify({
         configName: 'remote-anthropic',
         provider: 'anthropic-compatible',
@@ -2038,7 +2048,7 @@ describe('dashboard LLM auth and test routes', () => {
       kind: 'api-key',
       credentialKey: 'remote-openai',
       provider: 'openai-compatible',
-      apiKey: 'sk-bad',
+      apiKey: LLM_TEST_CREDENTIAL,
     })
     mockGenerateText.mockRejectedValueOnce(Object.assign(new Error('invalid API key'), {
       statusCode: 401,
@@ -2046,7 +2056,7 @@ describe('dashboard LLM auth and test routes', () => {
 
     const res = await invokeRoute('/api/llm/test', {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: LLM_TEST_HEADERS,
       body: JSON.stringify({
         configName: 'remote-openai',
         provider: 'openai-compatible',
@@ -2059,8 +2069,9 @@ describe('dashboard LLM auth and test routes', () => {
     expect(JSON.parse(res.body)).toMatchObject({
       success: false,
       error: 'auth_error',
-      message: 'Authentication failed. Check the saved credential for this config.',
+      message: providerErrorSentence('auth_error', 'invalid API key'),
     })
+    expect(res.body).not.toContain(LLM_TEST_CREDENTIAL)
   })
 
   it('returns model_not_found for missing model responses', async () => {
@@ -2068,7 +2079,7 @@ describe('dashboard LLM auth and test routes', () => {
       kind: 'api-key',
       credentialKey: 'remote-openai',
       provider: 'openai-compatible',
-      apiKey: 'sk-remote',
+      apiKey: LLM_TEST_CREDENTIAL,
     })
     mockGenerateText.mockRejectedValueOnce(Object.assign(new Error('model not found'), {
       statusCode: 404,
@@ -2076,7 +2087,7 @@ describe('dashboard LLM auth and test routes', () => {
 
     const res = await invokeRoute('/api/llm/test', {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: LLM_TEST_HEADERS,
       body: JSON.stringify({
         configName: 'remote-openai',
         provider: 'openai-compatible',
@@ -2089,8 +2100,9 @@ describe('dashboard LLM auth and test routes', () => {
     expect(JSON.parse(res.body)).toMatchObject({
       success: false,
       error: 'model_not_found',
-      message: 'Model not found. Check the model name.',
+      message: providerErrorSentence('model_not_found', 'model not found'),
     })
+    expect(res.body).not.toContain(LLM_TEST_CREDENTIAL)
   })
 
   it('returns network_error for base URL failures', async () => {
@@ -2105,7 +2117,7 @@ describe('dashboard LLM auth and test routes', () => {
 
     const res = await invokeRoute('/api/llm/test', {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: LLM_TEST_HEADERS,
       body: JSON.stringify({
         configName: 'remote-openai',
         provider: 'openai-compatible',
@@ -2118,9 +2130,127 @@ describe('dashboard LLM auth and test routes', () => {
     expect(JSON.parse(res.body)).toMatchObject({
       success: false,
       error: 'network_error',
-      message: 'Network error. Check the exact base URL and try again.',
+      message: providerErrorSentence('network_error', 'fetch failed'),
       unauthenticated: true,
       authMessage: 'Testing without a saved credential.',
     })
+    expect(res.body).not.toContain(LLM_TEST_CREDENTIAL)
+  })
+
+  // One provider rejection per class, each one's message chosen so the shared classifier's
+  // first-match order lands on exactly that class.
+  const REJECTION_PER_CLASS: Record<ProviderErrorClass, { message: string; statusCode?: number }> = {
+    auth_error: { message: 'invalid API key', statusCode: 401 },
+    model_not_found: { message: 'model not found', statusCode: 404 },
+    rate_limit: { message: 'Too many requests, slow down', statusCode: 429 },
+    network_error: { message: 'fetch failed' },
+    invalid_request: { message: 'bad request: messages must be non-empty', statusCode: 400 },
+    provider_error: { message: 'upstream exploded', statusCode: 500 },
+  }
+
+  async function testWithSavedCredential(headers: IncomingHttpHeaders = LLM_TEST_HEADERS) {
+    return await invokeRoute('/api/llm/test', {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        configName: 'remote-openai',
+        provider: 'openai-compatible',
+        model: 'openrouter/auto',
+        baseURL: 'https://openrouter.ai/api/v1',
+      }),
+    })
+  }
+
+  it('TEST-ROUTE-SENTENCE-EVERY-CLASS: every provider-error class answers the shared sentence', async () => {
+    expect(Object.keys(REJECTION_PER_CLASS).sort()).toEqual([...PROVIDER_ERROR_CLASSES].sort())
+    mockResolveLLMAuth.mockResolvedValue({
+      kind: 'api-key',
+      credentialKey: 'remote-openai',
+      provider: 'openai-compatible',
+      apiKey: LLM_TEST_CREDENTIAL,
+    })
+
+    for (const errorClass of PROVIDER_ERROR_CLASSES) {
+      const rejection = REJECTION_PER_CLASS[errorClass]
+      mockGenerateText.mockRejectedValueOnce(Object.assign(new Error(rejection.message), {
+        ...(rejection.statusCode ? { statusCode: rejection.statusCode } : {}),
+      }))
+
+      const res = await testWithSavedCredential()
+
+      expect(res.status, errorClass).toBe(200)
+      const answer = JSON.parse(res.body)
+      expect(answer, errorClass).toMatchObject({ success: false, error: errorClass })
+      expect(answer.message, errorClass).toBe(providerErrorSentence(errorClass, rejection.message))
+      expect(res.body, errorClass).not.toContain(LLM_TEST_CREDENTIAL)
+    }
+    expect(mockGenerateText).toHaveBeenCalledTimes(PROVIDER_ERROR_CLASSES.length)
+  })
+
+  it('LLM-TEST-SAME-SITE: a cross-site caller is refused and no answer carries a wildcard grant', async () => {
+    mockResolveLLMAuth.mockResolvedValue({
+      kind: 'api-key',
+      credentialKey: 'remote-openai',
+      provider: 'openai-compatible',
+      apiKey: LLM_TEST_CREDENTIAL,
+    })
+    const callers: Array<{ name: string; headers: IncomingHttpHeaders }> = [
+      {
+        name: 'a foreign Origin',
+        headers: { ...LLM_TEST_HEADERS, origin: 'http://evil.example' },
+      },
+      {
+        name: 'Sec-Fetch-Site cross-site with no Origin',
+        headers: { ...LLM_TEST_HEADERS, 'sec-fetch-site': 'cross-site' },
+      },
+      { name: 'a rebound Host', headers: { 'content-type': 'application/json', host: 'evil.test' } },
+    ]
+
+    for (const caller of callers) {
+      const refused = await testWithSavedCredential(caller.headers)
+      expect(refused.status, caller.name).toBe(403)
+      expect(JSON.parse(refused.body), caller.name).toEqual({ error: 'cross_site_refused' })
+      expect(refused.headers['access-control-allow-origin'], caller.name).toBeUndefined()
+    }
+    expect(mockResolveLLMAuth).not.toHaveBeenCalled()
+    expect(mockGenerateText).not.toHaveBeenCalled()
+
+    const sameSite = { ...LLM_TEST_HEADERS, origin: `http://${LLM_TEST_HOST}`, 'sec-fetch-site': 'same-origin' }
+    const connected = await testWithSavedCredential(sameSite)
+    expect(connected.status).toBe(200)
+    expect(JSON.parse(connected.body)).toMatchObject({ success: true })
+
+    mockGenerateText.mockRejectedValueOnce(new Error('upstream exploded'))
+    const failed = await testWithSavedCredential()
+    expect(JSON.parse(failed.body)).toMatchObject({ success: false, error: 'provider_error' })
+
+    const inlineKey = await invokeRoute('/api/llm/test', {
+      method: 'POST',
+      headers: LLM_TEST_HEADERS,
+      body: JSON.stringify({ provider: 'openai-compatible', model: 'm', apiKey: 'sk-inline' }),
+    })
+    expect(inlineKey.status).toBe(400)
+
+    const notJson = await invokeRoute('/api/llm/test', {
+      method: 'POST',
+      headers: LLM_TEST_HEADERS,
+      body: '{not json',
+    })
+    expect(notJson.status).toBe(400)
+
+    mockResolveLLMAuth.mockResolvedValueOnce({
+      kind: 'missing',
+      credentialKey: 'remote-openai',
+      provider: 'openai-compatible',
+      required: true,
+      message: 'Save an API key for this config before testing.',
+    })
+    const missing = await testWithSavedCredential()
+    expect(JSON.parse(missing.body)).toMatchObject({ success: false, error: 'missing_credential' })
+
+    for (const answer of [connected, failed, inlineKey, notJson, missing]) {
+      expect(answer.headers['access-control-allow-origin']).toBeUndefined()
+      expect(answer.body).not.toContain(LLM_TEST_CREDENTIAL)
+    }
   })
 })

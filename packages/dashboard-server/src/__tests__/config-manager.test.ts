@@ -693,7 +693,7 @@ describe('dashboard compatible auth routes', () => {
 
     const res = await invokeRoute('/api/llm/test', {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', host: '127.0.0.1:4317' },
       body: JSON.stringify({
         provider: 'openai-compatible',
         configName: 'planner',
@@ -737,7 +737,7 @@ describe('dashboard compatible auth routes', () => {
 
     const res = await invokeRoute('/api/llm/test', {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', host: '127.0.0.1:4317' },
       body: JSON.stringify({
         provider: 'openai-compatible',
         model: 'openrouter/auto',
@@ -769,7 +769,7 @@ describe('dashboard compatible auth routes', () => {
 
     const res = await invokeRoute('/api/llm/test', {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', host: '127.0.0.1:4317' },
       body: JSON.stringify({
         provider: 'openai-compatible',
         configName: 'planner',
@@ -799,7 +799,7 @@ describe('dashboard compatible auth routes', () => {
 
     const res = await invokeRoute('/api/llm/test', {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', host: '127.0.0.1:4317' },
       body: JSON.stringify({
         provider: 'gemini',
         configName: 'gemini-fast',
@@ -831,7 +831,7 @@ describe('dashboard compatible auth routes', () => {
 
     const res = await invokeRoute('/api/llm/test', {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', host: '127.0.0.1:4317' },
       body: JSON.stringify({
         provider: 'openai-compatible',
         configName: 'planner',
