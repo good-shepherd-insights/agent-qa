@@ -464,12 +464,15 @@ describe('the running row moves without inventing a phase (HNST-02, D-10)', () =
     expect(stepsPane().outerHTML.toLowerCase()).not.toMatch(/observing|planning|acting/)
   })
 
+  // RE-SPELLED 2026-09-26 (428-30, owner decision 2026-09-26 (2), G-428-2). The pending arm relied
+  // on a text-less pending row being drawn. A row with no text is no longer drawn, so this
+  // testStarted now carries stepTexts and the claim is unchanged.
   it('NO-CLOCK-ON-ANY-ROW: running, finished and pending rows show no time, however long the run goes', async () => {
     await mount()
     await open()
     await emit(
       runStarted(),
-      testStarted(0, 'the member', 3),
+      testStarted(0, 'the member', 3, ['open the page', 'click the button', 'check the toast']),
       stepStarted(0, 0),
       stepFinalized(0, 0, { status: 'passed', durationMs: 65_000 }),
       stepStarted(0, 1, 'click the button'),
@@ -593,11 +596,14 @@ describe('NO-LIVENESS-PILL: the page makes no claim about the bus channel (428 D
   // preview holding its state through each. D-03 removes the pill, so the same traffic now
   // asserts that no liveness element and no activity age appear. The positive half of each cell
   // proves the page DID fold the traffic, so the absence is about a page that heard the bus.
+  // RE-SPELLED 2026-09-26 (428-30, owner decision 2026-09-26 (2), G-428-2). Its positive half
+  // counted a text-less pending row as proof the page folded the stream. A row with no text is no
+  // longer drawn, so this testStarted now carries stepTexts and the claim is unchanged.
   it('NO-LIVENESS-PILL k=5: 11 s of heartbeat-only traffic renders no liveness element', async () => {
     for (let k = 0; k < 5; k += 1) {
       await mount()
       await open()
-      await emit(runStarted(), testStarted(0, 'the member', 1))
+      await emit(runStarted(), testStarted(0, 'the member', 1, ['open the page']))
       expect(qa('[data-live-pane="steps"] li'), 'the page folded the stream').toHaveLength(1)
 
       await advance(9_000)
@@ -623,6 +629,9 @@ describe('NO-LIVENESS-PILL: the page makes no claim about the bus channel (428 D
     }
   })
 
+  // RE-SPELLED 2026-09-26 (428-30, owner decision 2026-09-26 (2), G-428-2). Its positive half
+  // counted a text-less pending row as proof the restored socket delivered. A row with no text is
+  // no longer drawn, so this testStarted now carries stepTexts and the claim is unchanged.
   it('NO-LIVENESS-PILL k=5: a socket dropped while dialling and then restored renders no liveness element', async () => {
     for (let k = 0; k < 5; k += 1) {
       await mount()
@@ -637,7 +646,7 @@ describe('NO-LIVENESS-PILL: the page makes no claim about the bus channel (428 D
       expect(classifyRunStreamCloseMock).not.toHaveBeenCalled()
 
       await open()
-      await emit(testStarted(0, 'the member', 1))
+      await emit(testStarted(0, 'the member', 1, ['open the page']))
       expect(qa('[data-live-pane="steps"] li'), 'the restored socket delivers').toHaveLength(1)
       expect(livenessClaims()).toEqual(NO_LIVENESS_CLAIM)
     }

@@ -151,7 +151,7 @@ describe('THE LIVE STEP ROW (428 D-19/D-20)', () => {
 
   it('NO-STEP-PLACEHOLDER: a row with no text renders no element in any status, and no drawn row reads step N', () => {
     for (const status of STEP_STATUSES) {
-      for (const text of ['', '   ']) {
+      for (const text of ['', '   ', undefined as unknown as string]) {
         const list = renderList(row({ status, text, stepIndex: 2 }))
         expect(list.children, `${status} ${JSON.stringify(text)}`).toHaveLength(0)
         expect(list.textContent, `${status} ${JSON.stringify(text)}`).toBe('')

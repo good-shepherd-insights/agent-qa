@@ -1,7 +1,7 @@
 import { Ban, Check, Circle, CircleDashed, Minus, ShieldCheck, X, type LucideIcon } from 'lucide-react'
 
 import { MaskedChip } from '@/components/run-detail/masked-chip'
-import { LIVE_STEP_STATUS_NAMES, liveLabelText } from '@/lib/live-step-row'
+import { LIVE_STEP_STATUS_NAMES, liveLabelText, liveRowShown } from '@/lib/live-step-row'
 import { splitMaskedText } from '@/lib/masked-text'
 import type { LiveStepRow, StepStatus } from '@/lib/run-stream-reducer'
 import { cn } from '@/lib/utils'
@@ -20,6 +20,10 @@ import { cn } from '@/lib/utils'
  * SECRETS ARE CHIPS (D-22). A `<SECRET_n>` placeholder in the label is painted as run detail's
  * masked chip, with the live surface's own label. Text segments ellipsise and the chip never
  * shrinks, so a long label never clips it. Every segment is a React text node or an element.
+ *
+ * NO TEXT, NO ROW (owner decision 2026-09-26 (2), G-428-2; supersedes 428-17's step-N fallback).
+ * A row with no text draws nothing, so a pending step the runner sent no text for is simply absent
+ * rather than labelled with a placeholder. {@link liveRowShown} is the one predicate.
  */
 
 /** One shape per status, so colour is never the only signal (RESEARCH P13). */
@@ -44,6 +48,7 @@ const STATUS_TONE: Record<StepStatus, string> = {
 }
 
 export function LiveStepRowView({ row }: { row: LiveStepRow }) {
+  if (!liveRowShown(row)) return null
   const Glyph = LIVE_STEP_GLYPHS[row.status]
   const isRunning = row.status === 'running'
 
@@ -67,7 +72,7 @@ export function LiveStepRowView({ row }: { row: LiveStepRow }) {
         />
       </span>
       <span className="flex min-w-0 flex-1 items-center gap-1 overflow-hidden">
-        {splitMaskedText(liveLabelText(row.text || `step ${String(row.stepIndex + 1)}`)).map((segment, index) =>
+        {splitMaskedText(liveLabelText(row.text)).map((segment, index) =>
           segment.kind === 'text' ? (
             <span key={index} className="min-w-0 truncate">
               {segment.text}

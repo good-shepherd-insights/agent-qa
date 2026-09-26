@@ -1,6 +1,6 @@
 import { PLACEHOLDER_PATTERN, maskedMarker, type MaskedCategory } from '@vostride/agent-qa-schema'
 
-import type { StepStatus } from '@/lib/run-stream-reducer'
+import type { LiveStepRow, StepStatus } from '@/lib/run-stream-reducer'
 
 /**
  * THE LIVE STEP ROW'S WORDS (428 D-19/D-20/D-22).
@@ -30,4 +30,15 @@ export function liveLabelText(raw: string): string {
   return raw.replaceAll(PLACEHOLDER_PATTERN, (_match, category: string) =>
     maskedMarker(category.toLowerCase() as MaskedCategory),
   )
+}
+
+/**
+ * Whether a live row is drawn at all (owner decision 2026-09-26 (2), G-428-2): "either show the
+ * entire step text or don't show it at all". A row whose text is empty or only whitespace is not
+ * drawn, so no surface ever paints a `step N` placeholder in its place.
+ */
+export function liveRowShown(row: Pick<LiveStepRow, 'text'>): boolean {
+  // The text arrived as JSON from another process, so a producer that sent none is not drawn
+  // rather than throwing here.
+  return typeof row.text === 'string' && row.text.trim() !== ''
 }

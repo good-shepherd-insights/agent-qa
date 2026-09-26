@@ -1,4 +1,5 @@
 import { LiveStepRowView } from '@/components/live-step-row'
+import { liveRowShown } from '@/lib/live-step-row'
 import type { MemberRow, LiveStepRow } from '@/lib/run-stream-reducer'
 
 /**
@@ -18,6 +19,10 @@ import type { MemberRow, LiveStepRow } from '@/lib/run-stream-reducer'
  * WHAT A ROW SAYS (428 D-19/D-20). Every row renders through {@link LiveStepRowView}: a status
  * glyph and the label, with no clock, no bar and no count. A running glyph breathes. Durations live
  * in run detail.
+ *
+ * ONLY ROWS WITH TEXT ARE DRAWN (owner decision 2026-09-26 (2), G-428-2). A row the runner sent no
+ * text for is not drawn, and the empty state counts drawn rows, so an old producer's text-less
+ * pending rows still leave the pane saying `waiting for the first step`.
  *
  * ONE TITLE, SAID ONCE (428 D-19). A single-member run renders no member header, because the page
  * title already names it; a single member's `did not run` note is the pane's sentence instead. A
@@ -41,7 +46,10 @@ export function StepList({ members, steps, terminal }: StepListProps) {
   // The empty state is a claim about a LIVE stream that has produced no row. Once a member has
   // settled, `did not run` is the honest word and "waiting" would be a lie about a member that is
   // never going to start.
-  const showEmpty = steps.length === 0 && !anyMemberSettled && !terminal
+  const drawnRows = (testIndex: number) =>
+    steps.filter((row) => row.testIndex === testIndex && liveRowShown(row))
+  const drawnCount = steps.filter(liveRowShown).length
+  const showEmpty = drawnCount === 0 && !anyMemberSettled && !terminal
   const showMemberHeaders = memberIndices.length > 1
 
   if (showEmpty) {
@@ -58,7 +66,7 @@ export function StepList({ members, steps, terminal }: StepListProps) {
     <div className="flex h-full min-h-0 flex-col">
       {memberIndices.map((testIndex) => {
         const member = members.find((item) => item.testIndex === testIndex)
-        const rows = steps.filter((row) => row.testIndex === testIndex)
+        const rows = drawnRows(testIndex)
         return (
           <div key={testIndex} data-member={String(testIndex)}>
             {showMemberHeaders ? (
