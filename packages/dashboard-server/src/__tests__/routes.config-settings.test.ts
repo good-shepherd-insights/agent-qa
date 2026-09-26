@@ -1360,7 +1360,7 @@ describe('dashboard LLM auth and test routes', () => {
 
     const res = await invokeRoute('/api/auth/credential', {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', host: LLM_TEST_HOST },
       body: JSON.stringify({
         configName: 'remote-openai',
         provider: 'openai-compatible',
@@ -1383,7 +1383,7 @@ describe('dashboard LLM auth and test routes', () => {
 
     const res = await invokeRoute('/api/auth/credential', {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', host: LLM_TEST_HOST },
       body: JSON.stringify({
         configName: 'remote-anthropic',
         provider: 'anthropic-compatible',
@@ -1404,7 +1404,7 @@ describe('dashboard LLM auth and test routes', () => {
   it('rejects credential save without configName', async () => {
     const res = await invokeRoute('/api/auth/credential', {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', host: LLM_TEST_HOST },
       body: JSON.stringify({
         provider: 'openai-compatible',
         type: 'api-key',
@@ -1426,7 +1426,7 @@ describe('dashboard LLM auth and test routes', () => {
 
     const res = await invokeRoute('/api/auth/credential', {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', host: LLM_TEST_HOST },
       body: JSON.stringify({
         configName: 'provider-fallback',
         provider: 'openai-compatible',
@@ -1449,7 +1449,7 @@ describe('dashboard LLM auth and test routes', () => {
 
     const res = await invokeRoute('/api/auth/credential', {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', host: LLM_TEST_HOST },
       body: JSON.stringify({
         configName: 'remote-anthropic',
         provider: 'openai-compatible',
@@ -1469,7 +1469,7 @@ describe('dashboard LLM auth and test routes', () => {
     registerTestSubscriptionPlugins()
     const res = await invokeRoute('/api/auth/credential', {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', host: LLM_TEST_HOST },
       body: JSON.stringify({
         configName: 'claude-subscription',
         provider: 'anthropic-subscription',
@@ -1527,7 +1527,7 @@ describe('dashboard LLM auth and test routes', () => {
 
     const startRes = await invokeRoute('/api/auth/plugin/openai-subscription/start', {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', host: LLM_TEST_HOST },
       body: JSON.stringify({
         configName: 'codex',
       }),
@@ -1576,7 +1576,7 @@ describe('dashboard LLM auth and test routes', () => {
 
     const startRes = await invokeRoute('/api/auth/plugin/anthropic-subscription/start', {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', host: LLM_TEST_HOST },
       body: JSON.stringify({ configName: 'claude' }),
     })
     expect(startRes.status).toBe(200)
@@ -1588,7 +1588,7 @@ describe('dashboard LLM auth and test routes', () => {
 
     const exchangeRes = await invokeRoute('/api/auth/plugin/anthropic-subscription/exchange', {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', host: LLM_TEST_HOST },
       body: JSON.stringify({
         sessionId: started.sessionId,
         code: 'anthropic-code',
@@ -1610,7 +1610,7 @@ describe('dashboard LLM auth and test routes', () => {
 
     const replayRes = await invokeRoute('/api/auth/plugin/anthropic-subscription/exchange', {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', host: LLM_TEST_HOST },
       body: JSON.stringify({
         sessionId: started.sessionId,
         code: 'anthropic-code',
@@ -1663,7 +1663,7 @@ describe('dashboard LLM auth and test routes', () => {
 
     const startRes = await invokeRoute('/api/auth/plugin/openai-subscription/start', {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', host: LLM_TEST_HOST },
       body: JSON.stringify({ configName: 'codex' }),
     })
     expect(startRes.status).toBe(200)
@@ -1717,7 +1717,7 @@ describe('dashboard LLM auth and test routes', () => {
 
     const blankRes = await invokeRoute('/api/auth/plugin/openai-subscription/start', {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', host: LLM_TEST_HOST },
       body: JSON.stringify({
         configName: '   ',
       }),
@@ -1727,7 +1727,7 @@ describe('dashboard LLM auth and test routes', () => {
 
     const mismatchRes = await invokeRoute('/api/auth/plugin/openai-subscription/start', {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', host: LLM_TEST_HOST },
       body: JSON.stringify({
         configName: 'claude',
       }),
@@ -1741,7 +1741,7 @@ describe('dashboard LLM auth and test routes', () => {
     // 429-09 D-15: a name missing from registry.llms is a draft, and its sign-in starts.
     const missingRes = await invokeRoute('/api/auth/plugin/openai-subscription/start', {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', host: LLM_TEST_HOST },
       body: JSON.stringify({
         configName: 'codex-draft',
       }),
@@ -1766,7 +1766,7 @@ describe('dashboard LLM auth and test routes', () => {
 
     const res = await invokeRoute('/api/auth/plugin/openai-subscription/start', {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', host: LLM_TEST_HOST },
       body: JSON.stringify({
         configName: 'codex',
       }),
@@ -1828,6 +1828,7 @@ describe('dashboard LLM auth and test routes', () => {
   it('deletes credentials by config name', async () => {
     const res = await invokeRoute('/api/auth/remote-openai', {
       method: 'DELETE',
+      headers: { host: LLM_TEST_HOST },
     })
 
     expect(res.status).toBe(200)

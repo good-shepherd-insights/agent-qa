@@ -232,6 +232,24 @@ function credentialRefusalBody(refusal: { error: string; message?: string }): { 
   return refusal.message === undefined ? { error: refusal.error } : { error: refusal.error, message: refusal.message }
 }
 
+async function credentialConflictAt(name: string, provider: string): Promise<boolean> {
+  const existing = await readAuthEntry(name)
+  return existing !== undefined && credentialProductProvider(name, existing) !== provider
+}
+
+export type CredentialLock = <T>(work: () => Promise<T>) => Promise<T>
+
+// 429-09: one queue per router for every auth.json write and removal, so a save, a move, a delete
+// and a sign-in completion never interleave their read-modify-write of the machine-wide store.
+export function createCredentialLock(): CredentialLock {
+  let tail: Promise<unknown> = Promise.resolve()
+  return <T>(work: () => Promise<T>): Promise<T> => {
+    const run = tail.then(work)
+    tail = run.catch(() => undefined)
+    return run
+  }
+}
+
 type DashboardAuthCredential =
   | { type: 'oauth'; provider?: string; tokens: { expires: number } }
   | { type: 'api'; provider?: string; key?: string }
@@ -1840,6 +1858,7 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps): (req: In
   // a second answer to what the door is.
   const chatRouter = createChatRouter(deps.agentHost)
   const pluginOAuthSessions = new Map<string, PluginOAuthSession>()
+  const withCredentialLock = createCredentialLock()
 
   return (req: IncomingMessage, res: ServerResponse) => {
     // 400-16 (gap 7): the SAME guarded parse `server.ts`'s listener uses, not a second copy. In the
@@ -3804,12 +3823,16 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps): (req: In
         if (providerName === 'status' || providerName === 'credential' || providerName === 'oauth') {
           // Fall through to other handlers
         } else {
+          if (refuseCrossSiteRequest(req) !== undefined) {
+            jsonNoCors(res, { error: 'cross_site_refused' }, 403)
+            return
+          }
           ;(async () => {
             try {
-              await removeAuth(providerName)
-              json(res, { deleted: true })
+              await withCredentialLock(() => removeAuth(providerName))
+              jsonNoCors(res, { deleted: true })
             } catch (err: unknown) {
-              json(res, { error: err instanceof Error ? err.message : 'Failed to delete credential' }, 500)
+              jsonNoCors(res, { error: err instanceof Error ? err.message : 'Failed to delete credential' }, 500)
             }
           })()
           return
@@ -3953,10 +3976,17 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps): (req: In
       const segments = path.split('/')
       const provider = segments.length >= 6 ? decodeURIComponent(segments[4] ?? '') : ''
       const action = segments.length >= 6 ? segments[5] : ''
+      // 429-09: start and code exchange plant a machine-wide credential, so both are same-site only
+      // and no answer on them carries a cross-origin grant.
+      const authDoor = req.method === 'POST' && (action === 'start' || action === 'exchange')
+      if (authDoor && refuseCrossSiteRequest(req) !== undefined) {
+        jsonNoCors(res, { error: 'cross_site_refused' }, 403)
+        return
+      }
       const plugin = provider ? getLLMAuthProviderPlugin(provider) : undefined
 
       if (!plugin) {
-        json(res, { error: `Auth plugin provider "${provider}" is not registered` }, 404)
+        ;(authDoor ? jsonNoCors : json)(res, { error: `Auth plugin provider "${provider}" is not registered` }, 404)
         return
       }
 
@@ -3964,14 +3994,14 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps): (req: In
         readJsonBody<{ configName?: string; callbackUrl?: string }>(req)
           .then(async (body) => {
             if (!plugin.startAuth) {
-              json(res, { error: `Provider "${provider}" does not support dashboard auth start` }, 400)
+              jsonNoCors(res, { error: `Provider "${provider}" does not support dashboard auth start` }, 400)
               return
             }
 
             try {
               const target = await requirePluginAuthConfig(configManager, body.configName, plugin)
               if (!target.ok) {
-                json(res, credentialRefusalBody(target), target.status)
+                jsonNoCors(res, credentialRefusalBody(target), target.status)
                 return
               }
               const started = await plugin.startAuth({
@@ -3993,11 +4023,16 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps): (req: In
               if (started.waitForTokens) {
                 started.waitForTokens
                   .then(async (tokens: OAuthTokens) => {
-                    await writeDashboardAuth(target.configName, {
-                      type: 'oauth',
-                      provider: plugin.credentialProviderId,
-                      tokens,
+                    const conflict = await withCredentialLock(async () => {
+                      if (await credentialConflictAt(target.configName, plugin.providerId)) return true
+                      await writeDashboardAuth(target.configName, {
+                        type: 'oauth',
+                        provider: plugin.credentialProviderId,
+                        tokens,
+                      })
+                      return false
                     })
+                    if (conflict) throw new Error(CREDENTIAL_PROVIDER_CONFLICT.message)
                     session.status = 'completed'
                   })
                   .catch((err: unknown) => {
@@ -4007,17 +4042,17 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps): (req: In
                   .finally(() => cleanupPluginOAuthSession(session))
               }
 
-              json(res, {
+              jsonNoCors(res, {
                 authorizeUrl: started.authorizeUrl,
                 sessionId,
                 mode: plugin.dashboardAuth.mode,
                 created: target.created,
               })
             } catch (err: unknown) {
-              json(res, { error: err instanceof Error ? err.message : 'Failed to start auth plugin flow' }, 500)
+              jsonNoCors(res, { error: err instanceof Error ? err.message : 'Failed to start auth plugin flow' }, 500)
             }
           })
-          .catch(() => json(res, { error: 'Invalid request body' }, 400))
+          .catch(() => jsonNoCors(res, { error: 'Invalid request body' }, 400))
         return
       }
 
@@ -4048,22 +4083,22 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps): (req: In
         readJsonBody<{ sessionId?: string; code?: string }>(req)
           .then(async (body) => {
             if (!plugin.exchangeCode) {
-              json(res, { error: `Provider "${provider}" does not support code exchange` }, 400)
+              jsonNoCors(res, { error: `Provider "${provider}" does not support code exchange` }, 400)
               return
             }
             const sessionId = typeof body.sessionId === 'string' ? body.sessionId.trim() : ''
             const code = typeof body.code === 'string' ? body.code.trim() : ''
             if (!sessionId || !code) {
-              json(res, { error: 'sessionId and code are required' }, 400)
+              jsonNoCors(res, { error: 'sessionId and code are required' }, 400)
               return
             }
             const session = pluginOAuthSessions.get(sessionId)
             if (!session || session.providerId !== provider) {
-              json(res, { error: 'Auth session not found' }, 404)
+              jsonNoCors(res, { error: 'Auth session not found' }, 404)
               return
             }
             if (session.status !== 'pending') {
-              json(res, { error: 'Auth session is no longer pending' }, 409)
+              jsonNoCors(res, { error: 'Auth session is no longer pending' }, 409)
               return
             }
 
@@ -4072,24 +4107,36 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps): (req: In
                 code,
                 sessionState: session.sessionState,
               })
-              await writeDashboardAuth(session.configName, {
-                type: 'oauth',
-                provider: session.credentialProviderId,
-                tokens,
+              const conflict = await withCredentialLock(async () => {
+                if (await credentialConflictAt(session.configName, session.providerId)) return true
+                await writeDashboardAuth(session.configName, {
+                  type: 'oauth',
+                  provider: session.credentialProviderId,
+                  tokens,
+                })
+                return false
               })
+              if (conflict) {
+                session.status = 'error'
+                session.error = CREDENTIAL_PROVIDER_CONFLICT.message
+                cleanupPluginOAuthSession(session)
+                pluginOAuthSessions.delete(sessionId)
+                jsonNoCors(res, credentialRefusalBody(CREDENTIAL_PROVIDER_CONFLICT), CREDENTIAL_PROVIDER_CONFLICT.status)
+                return
+              }
               session.status = 'completed'
               cleanupPluginOAuthSession(session)
               pluginOAuthSessions.delete(sessionId)
-              json(res, { status: 'completed', saved: true })
+              jsonNoCors(res, { status: 'completed', saved: true })
             } catch (err: unknown) {
               session.status = 'error'
               session.error = err instanceof Error ? err.message : 'Token exchange failed'
               cleanupPluginOAuthSession(session)
               pluginOAuthSessions.delete(sessionId)
-              json(res, { error: session.error }, 500)
+              jsonNoCors(res, { error: session.error }, 500)
             }
           })
-          .catch(() => json(res, { error: 'Invalid request body' }, 400))
+          .catch(() => jsonNoCors(res, { error: 'Invalid request body' }, 400))
         return
       }
 
@@ -4099,6 +4146,10 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps): (req: In
 
     // POST /api/auth/credential — store typed credentials from dashboard
     if (path === '/api/auth/credential' && req.method === 'POST') {
+      if (refuseCrossSiteRequest(req) !== undefined) {
+        jsonNoCors(res, { error: 'cross_site_refused' }, 403)
+        return
+      }
       readJsonBody<{
         configName?: string
         provider?: string
@@ -4111,55 +4162,58 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps): (req: In
           const secret = typeof body.secret === 'string' ? body.secret.trim() : ''
 
           if (typeof body.configName !== 'string' || body.configName.trim() === '') {
-            json(res, { error: 'configName is required' }, 400)
+            jsonNoCors(res, { error: 'configName is required' }, 400)
             return
           }
           if (!provider || !isKnownLLMProvider(provider)) {
-            json(res, { error: 'valid provider is required' }, 400)
+            jsonNoCors(res, { error: 'valid provider is required' }, 400)
             return
           }
           if (credentialType !== 'api-key' && credentialType !== 'bearer-token') {
-            json(res, { error: 'type must be api-key or bearer-token' }, 400)
+            jsonNoCors(res, { error: 'type must be api-key or bearer-token' }, 400)
             return
           }
           if (!secret) {
-            json(res, { error: 'secret is required' }, 400)
+            jsonNoCors(res, { error: 'secret is required' }, 400)
             return
           }
 
           if (getLLMAuthProviderPlugin(provider)) {
-            json(res, { error: 'Subscription providers use OAuth login' }, 400)
+            jsonNoCors(res, { error: 'Subscription providers use OAuth login' }, 400)
             return
           }
 
           if (credentialType === 'bearer-token' && provider !== 'anthropic-compatible') {
-            json(res, { error: 'bearer-token credentials are only supported for anthropic-compatible configs' }, 400)
+            jsonNoCors(res, { error: 'bearer-token credentials are only supported for anthropic-compatible configs' }, 400)
             return
           }
 
           if (credentialType === 'api-key' && !API_KEY_CREDENTIAL_PROVIDERS.has(provider)) {
-            json(res, { error: 'api-key credentials are not supported for this provider' }, 400)
+            jsonNoCors(res, { error: 'api-key credentials are not supported for this provider' }, 400)
             return
           }
 
           try {
-            const target = await requireCredentialConfig(configManager, body.configName, provider)
+            const target = await withCredentialLock(async () => {
+              const checked = await requireCredentialConfig(configManager, body.configName, provider)
+              if (!checked.ok) return checked
+              if (credentialType === 'bearer-token') {
+                await writeDashboardAuth(checked.configName, { type: 'bearer', provider, token: secret })
+              } else {
+                await writeDashboardAuth(checked.configName, { type: 'api', provider, key: secret })
+              }
+              return checked
+            })
             if (!target.ok) {
-              json(res, credentialRefusalBody(target), target.status)
+              jsonNoCors(res, credentialRefusalBody(target), target.status)
               return
             }
-
-            if (credentialType === 'bearer-token') {
-              await writeDashboardAuth(target.configName, { type: 'bearer', provider, token: secret })
-            } else {
-              await writeDashboardAuth(target.configName, { type: 'api', provider, key: secret })
-            }
-            json(res, { saved: true, created: target.created })
+            jsonNoCors(res, { saved: true, created: target.created })
           } catch (err: unknown) {
-            json(res, { error: err instanceof Error ? err.message : 'Failed to save credential' }, 500)
+            jsonNoCors(res, { error: err instanceof Error ? err.message : 'Failed to save credential' }, 500)
           }
         })
-        .catch(() => json(res, { error: 'Invalid request body' }, 400))
+        .catch(() => jsonNoCors(res, { error: 'Invalid request body' }, 400))
       return
     }
 
@@ -4167,50 +4221,51 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps): (req: In
     // name is still editable. Only between names that are not in registry.llms, and never onto a
     // name that already holds a credential.
     if (path === '/api/auth/credential/move' && req.method === 'POST') {
+      if (refuseCrossSiteRequest(req) !== undefined) {
+        jsonNoCors(res, { error: 'cross_site_refused' }, 403)
+        return
+      }
       readJsonBody<unknown>(req)
         .then(async (raw) => {
           const parsed = LlmCredentialMoveRequestSchema.safeParse(raw)
           if (!parsed.success) {
-            json(res, { error: 'invalid_setup_input' }, 400)
+            jsonNoCors(res, { error: 'invalid_setup_input' }, 400)
             return
           }
           const from = checkCredentialName(parsed.data.from)
           const to = checkCredentialName(parsed.data.to)
           if (!from.ok || !to.ok) {
-            json(res, { error: 'name_invalid' }, 400)
+            jsonNoCors(res, { error: 'name_invalid' }, 400)
             return
           }
           if (!configManager) {
-            json(res, { error: 'Config manager is required to move credentials' }, 400)
+            jsonNoCors(res, { error: 'Config manager is required to move credentials' }, 400)
             return
           }
           try {
-            if (await findRegistryLlm(configManager, from.name) || await findRegistryLlm(configManager, to.name)) {
-              json(res, { error: 'name_taken' }, 409)
+            const refusal = await withCredentialLock(async (): Promise<{ status: number; error: string; message?: string } | undefined> => {
+              if (await findRegistryLlm(configManager, from.name) || await findRegistryLlm(configManager, to.name)) {
+                return { status: 409, error: 'name_taken' }
+              }
+              const store = await readAuth() as Record<string, DashboardAuthCredential | undefined>
+              const entry = ownAuthEntry(store, from.name)
+              if (!entry) return { status: 404, error: 'credential_missing' }
+              if (credentialProductProvider(from.name, entry) !== parsed.data.provider) return CREDENTIAL_PROVIDER_CONFLICT
+              if (ownAuthEntry(store, to.name)) return { status: 409, error: 'credential_exists' }
+              await writeDashboardAuth(to.name, entry)
+              await removeAuth(from.name)
+              return undefined
+            })
+            if (refusal) {
+              jsonNoCors(res, credentialRefusalBody(refusal), refusal.status)
               return
             }
-            const store = await readAuth() as Record<string, DashboardAuthCredential | undefined>
-            const entry = ownAuthEntry(store, from.name)
-            if (!entry) {
-              json(res, { error: 'credential_missing' }, 404)
-              return
-            }
-            if (credentialProductProvider(from.name, entry) !== parsed.data.provider) {
-              json(res, credentialRefusalBody(CREDENTIAL_PROVIDER_CONFLICT), CREDENTIAL_PROVIDER_CONFLICT.status)
-              return
-            }
-            if (ownAuthEntry(store, to.name)) {
-              json(res, { error: 'credential_exists' }, 409)
-              return
-            }
-            await writeDashboardAuth(to.name, entry)
-            await removeAuth(from.name)
-            json(res, { moved: true })
+            jsonNoCors(res, { moved: true })
           } catch (err: unknown) {
-            json(res, { error: err instanceof Error ? err.message : 'Failed to move credential' }, 500)
+            jsonNoCors(res, { error: err instanceof Error ? err.message : 'Failed to move credential' }, 500)
           }
         })
-        .catch(() => json(res, { error: 'invalid_setup_input' }, 400))
+        .catch(() => jsonNoCors(res, { error: 'invalid_setup_input' }, 400))
       return
     }
 

@@ -646,7 +646,7 @@ describe('dashboard compatible auth routes', () => {
   it('stores openai-compatible API keys under the named LLM config key', async () => {
     const res = await invokeRoute('/api/auth/credential', {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', host: '127.0.0.1:4317' },
       body: JSON.stringify({
         provider: 'openai-compatible',
         configName: 'planner',
@@ -667,7 +667,7 @@ describe('dashboard compatible auth routes', () => {
   it('rejects openai-compatible API key saves without configName', async () => {
     const res = await invokeRoute('/api/auth/credential', {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', host: '127.0.0.1:4317' },
       body: JSON.stringify({
         provider: 'openai-compatible',
         type: 'api-key',

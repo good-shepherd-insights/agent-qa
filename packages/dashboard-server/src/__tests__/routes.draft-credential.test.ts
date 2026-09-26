@@ -550,9 +550,14 @@ describe('CREDENTIAL-WRITES-SERIALIZED (429-09 Task 3)', () => {
 
   it('CREDENTIAL-WRITES-SERIALIZED: a delete waits for an in-flight save', async () => {
     const events: string[] = []
+    let releaseWrite!: () => void
+    const writeGate = new Promise<void>((resolve) => { releaseWrite = resolve })
+    let markWriteStarted!: () => void
+    const writeStarted = new Promise<void>((resolve) => { markWriteStarted = resolve })
     mockWriteAuth.mockImplementationOnce((async (name: string, credential: unknown) => {
       events.push(`write-start:${name}`)
-      await new Promise((resolve) => setTimeout(resolve, 20))
+      markWriteStarted()
+      await writeGate
       authStore.current = { ...authStore.current, [name]: credential }
       events.push(`write-end:${name}`)
     }) as never)
@@ -563,10 +568,12 @@ describe('CREDENTIAL-WRITES-SERIALIZED (429-09 Task 3)', () => {
       authStore.current = next
     }) as never)
 
-    await Promise.all([
-      post('/api/auth/credential', { configName: 'model-a', provider: 'openai-compatible', type: 'api-key', secret: 'sk-a' }),
-      invokeRoute('/api/auth/model-a', { method: 'DELETE', headers: SAME_SITE }),
-    ])
+    const save = post('/api/auth/credential', { configName: 'model-a', provider: 'openai-compatible', type: 'api-key', secret: 'sk-a' })
+    await writeStarted
+    const removal = invokeRoute('/api/auth/model-a', { method: 'DELETE', headers: SAME_SITE })
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    releaseWrite()
+    await Promise.all([save, removal])
 
     expect(events).toEqual(['write-start:model-a', 'write-end:model-a', 'remove:model-a'])
     expect(authStore.current).toEqual({})
