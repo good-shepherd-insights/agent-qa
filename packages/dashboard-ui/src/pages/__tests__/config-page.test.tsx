@@ -30,11 +30,13 @@ import {
   CONFIG_TAB_LABELS,
   CONFIG_TABS_ARIA_LABEL,
   CONFIG_FILE_ISSUES_TITLE,
+  HEADLESS_HELP,
   LEGACY_LINK_NOT_FOUND_TEXT,
   NOT_SAVED_ACTION_NAME,
   RELOAD_CONFIG_LABEL,
   RETRY_LABEL,
   SAVE_STATUS_WORDS,
+  SETTLE_DELAY_MS,
   TAB_DRAFT_SR_SUFFIX,
   configFileIssuesBody,
   configLoadFailedBody,
@@ -157,50 +159,6 @@ vi.mock('@/lib/api', () => ({
   exchangePluginAuthCode: vi.fn().mockResolvedValue({ status: 'completed', saved: true }),
   deleteAuthCredential: vi.fn(),
 }))
-
-// A stand-in for a section rebuilt on the shared autosave hook (429-16): the shipped Timeouts
-// editor still renders, and beside it one step-timeout input reads and writes through the
-// page's ConfigAutosaveProvider, settling on Enter like every rebuilt text field.
-vi.mock('@/components/config-manager/timeout-section', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('@/components/config-manager/timeout-section')>()
-  const autosave = await import('@/hooks/use-config-autosave')
-  const field = { segments: ['use', 'timeout', 'step'], tab: 'execution' } as const
-  function AutosaveProbe() {
-    const hook = autosave.useConfigAutosaveContext()
-    const id = autosave.configFieldControlId(autosave.configFieldKeyOf(field.segments))
-    const error = hook.errorOf(field)
-    return (
-      <>
-        <input
-          id={id}
-          data-autosave-probe
-          aria-invalid={error === undefined ? undefined : true}
-          aria-describedby={error === undefined ? undefined : `${id}-error`}
-          value={String(hook.valueOf(field) ?? '')}
-          onChange={(event) => {
-            const raw = event.target.value
-            hook.edit(field, raw, /^\d+s$/.test(raw)
-              ? { valid: true, value: raw }
-              : { valid: false, error: 'Use a duration like 30s.' })
-          }}
-          onKeyDown={(event) => {
-            if (event.key === 'Enter') hook.settle(field)
-          }}
-        />
-        {error === undefined ? null : <p id={`${id}-error`}>{error}</p>}
-      </>
-    )
-  }
-  return {
-    ...actual,
-    TimeoutSection: (props: Parameters<typeof actual.TimeoutSection>[0]) => (
-      <>
-        <actual.TimeoutSection {...props} />
-        <AutosaveProbe />
-      </>
-    ),
-  }
-})
 
 vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn() } }))
 vi.mock('@/hooks/use-page-title', () => ({ usePageTitle: () => {} }))
@@ -384,25 +342,38 @@ afterEach(() => {
   }
   container = null
   delete (Element.prototype as { scrollIntoView?: unknown }).scrollIntoView
+  vi.useRealTimers()
   vi.clearAllMocks()
   localStorage.clear()
 })
 
 const STEP_SEGMENTS = ['use', 'timeout', 'step']
 const STEP_KEY = configFieldKeyOf(STEP_SEGMENTS)
+const HEADLESS_SEGMENTS = ['use', 'browser', 'headless']
 
-function probeInput() {
-  return container?.querySelector('[data-autosave-probe]') as HTMLInputElement | null
+/** The Step timeout ConfigField, which the 429-16 wiring cells drive. */
+function stepInput() {
+  return document.getElementById(configFieldControlId(STEP_KEY)) as HTMLInputElement | null
 }
 
 function statusRegion() {
   return container?.querySelector('[data-config-tabbar] [role="status"]') as HTMLElement | null
 }
 
-/** Types a value into the probe and settles it with Enter, so focus never leaves the field. */
+/** Types a value into Step timeout and leaves it focused, so only the pause can settle it. */
+async function typeWithoutSettling(value: string) {
+  const input = stepInput()
+  expect(input, 'the Step timeout input').not.toBeNull()
+  await act(async () => {
+    input!.focus()
+    setInputValue(input!, value)
+  })
+}
+
+/** Types a value into Step timeout and settles it with Enter, so focus never leaves the field. */
 async function typeAndSettle(value: string) {
-  const input = probeInput()
-  expect(input, 'the probe input').not.toBeNull()
+  const input = stepInput()
+  expect(input, 'the Step timeout input').not.toBeNull()
   await act(async () => {
     input!.focus()
     setInputValue(input!, value)
@@ -483,9 +454,9 @@ describe('ConfigPage autosave wiring (429-16 Task 3)', () => {
     })
 
     expect(currentLocation().pathname).toBe('/config/execution')
-    expect(document.activeElement).toBe(probeInput())
+    expect(document.activeElement).toBe(stepInput())
     expect(document.activeElement?.id).toBe(configFieldControlId(STEP_KEY))
-    expect(probeInput()?.value).toBe('30 seconds')
+    expect(stepInput()?.value).toBe('30 seconds')
   })
 
   it('ERROR-ANNOUNCED-FOCUS-STAYS: a refused write is announced politely, marks the field, and leaves focus where it was', async () => {
@@ -500,10 +471,10 @@ describe('ConfigPage autosave wiring (429-16 Task 3)', () => {
     expect(statusRegion()?.textContent).toBe(SAVE_STATUS_WORDS.failed)
     expect(container?.querySelector('[data-save-status]')?.getAttribute('data-save-status')).toBe('failed')
     expect(container?.querySelector('[data-save-status]')?.textContent).not.toContain(SAVE_STATUS_WORDS.saved)
-    expect(document.activeElement).toBe(probeInput())
-    expect(probeInput()?.value).toBe('0s')
-    expect(probeInput()?.getAttribute('aria-invalid')).toBe('true')
-    const describedBy = probeInput()?.getAttribute('aria-describedby')
+    expect(document.activeElement).toBe(stepInput())
+    expect(stepInput()?.value).toBe('0s')
+    expect(stepInput()?.getAttribute('aria-invalid')).toBe('true')
+    const describedBy = stepInput()?.getAttribute('aria-describedby')
     expect(document.getElementById(describedBy!)?.textContent).toBe('Step timeout must be at least 1s.')
     expect(tabTrigger('execution')?.querySelector('[data-tab-draft]')).not.toBeNull()
 
@@ -1046,33 +1017,89 @@ describe('ConfigPage task tabs shell', () => {
     expect(models.textContent).not.toContain('use.device')
   })
 
-  it('saves browser headless from the Browser section only', async () => {
+  it('BROWSER-HEADLESS-ONE-WRITE: toggling headless in the Browser section writes that one leaf at once', async () => {
     await renderAt('/config/execution?section=browser')
 
     const browser = section('browser')!
     expect(browser.querySelector('h2')?.textContent).toBe(CONFIG_SECTION_LABELS.browser)
-    expect(browser.textContent).toContain('Run web browsers without a visible window.')
+    expect(browser.textContent).toContain(HEADLESS_HELP)
 
-    const headlessSwitch = browser.querySelector('#browser-headless') as HTMLButtonElement | null
+    const headlessSwitch = browser.querySelector(`#${configFieldControlId(configFieldKeyOf(HEADLESS_SEGMENTS))}`) as HTMLButtonElement | null
     expect(headlessSwitch).not.toBeNull()
+    expect(headlessSwitch!.closest('[data-field-path]')?.getAttribute('data-field-path')).toBe('use.browser.headless')
 
     await act(async () => {
       headlessSwitch!.click()
     })
     await flushRender()
 
+    expect(applyConfigChanges).toHaveBeenCalledTimes(1)
+    expect(vi.mocked(applyConfigChanges).mock.calls[0]![0]).toEqual([
+      { op: 'set', path: HEADLESS_SEGMENTS, value: false },
+    ])
+    expect(updateSettings).not.toHaveBeenCalled()
+  })
+
+  it('TIMEOUT-ONE-LEAF-WRITE: typing into Step timeout writes that one leaf once, after the pause', async () => {
+    await renderAt('/config/execution?section=timeouts')
+    vi.useFakeTimers()
+
+    await typeWithoutSettling('45s')
     await act(async () => {
-      sectionButton('browser', 'Save Changes')!.click()
+      await vi.advanceTimersByTimeAsync(SETTLE_DELAY_MS - 1)
+    })
+    expect(applyConfigChanges).not.toHaveBeenCalled()
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1)
+    })
+
+    expect(applyConfigChanges).toHaveBeenCalledTimes(1)
+    expect(vi.mocked(applyConfigChanges).mock.calls[0]![0]).toEqual([{ op: 'set', path: STEP_SEGMENTS, value: '45s' }])
+    expect(updateSettings).not.toHaveBeenCalled()
+  })
+
+  it('TIMEOUT-ONE-LEAF-WRITE: with no timeouts in the file, the same write carries the two other timeouts at their shown defaults', async () => {
+    const { timeout: _timeout, ...useWithoutTimeout } = sampleConfig.use
+    vi.mocked(fetchConfig).mockResolvedValueOnce(readAnswer({ config: { ...sampleConfig, use: useWithoutTimeout } }) as never)
+    await renderAt('/config/execution?section=timeouts')
+    expect(stepInput()?.value).toBe('')
+    expect(stepInput()?.placeholder).toBe('30s')
+    vi.useFakeTimers()
+
+    await typeWithoutSettling('45s')
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(SETTLE_DELAY_MS)
+    })
+
+    expect(applyConfigChanges).toHaveBeenCalledTimes(1)
+    expect(vi.mocked(applyConfigChanges).mock.calls[0]![0]).toEqual([
+      { op: 'set', path: STEP_SEGMENTS, value: '45s' },
+      { op: 'set', path: ['use', 'timeout', 'test'], value: '10m' },
+      { op: 'set', path: ['use', 'timeout', 'navigation'], value: '10s' },
+    ])
+  })
+
+  it('NO-SAVE-BUTTON-BROWSER-TIMEOUTS: Browser and Timeouts have no Save button, no boxed shell and no pop-up message', async () => {
+    await renderAt('/config/execution')
+
+    for (const id of ['browser', 'timeouts'] as const) {
+      const body = section(id)!
+      expect(body, id).not.toBeNull()
+      expect(sectionButton(id, 'Save Changes'), id).toBeNull()
+      expect(body.querySelector('[data-config-section-shell]'), id).toBeNull()
+      expect(body.querySelectorAll('[data-config-field]').length, id).toBeGreaterThan(0)
+    }
+    expect(section('timeouts')!.querySelectorAll('[data-config-field]')).toHaveLength(3)
+
+    await act(async () => {
+      ;(section('browser')!.querySelector(`#${configFieldControlId(configFieldKeyOf(HEADLESS_SEGMENTS))}`) as HTMLButtonElement).click()
     })
     await flushRender()
+    await typeAndSettle('45s')
 
-    expect(updateSettings).toHaveBeenCalledWith({
-      'use.browser': {
-        name: 'chromium',
-        headless: false,
-        viewport: { width: 1280, height: 720 },
-      },
-    })
+    expect(applyConfigChanges).toHaveBeenCalledTimes(2)
+    expect(toast.success).not.toHaveBeenCalled()
+    expect(toast.error).not.toHaveBeenCalled()
   })
 
   it('shows consolidated runtime path placeholders for dashboard and cache', async () => {
