@@ -38,7 +38,7 @@ describe('guided first-run product tour flow', () => {
     expect(llmSetup.body).toBe(
       'A run needs an LLM. Add or choose one, test the connection, save the config, then continue.',
     )
-    expect(resolveProductTourStepRoute(llmSetup)).toBe('/config?bucket=registry&item=llms')
+    expect(resolveProductTourStepRoute(llmSetup)).toBe('/config/models?section=models')
   })
 
   it('keeps the wayfinding sweep short and outcome-focused', () => {

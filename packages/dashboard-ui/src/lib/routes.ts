@@ -1,3 +1,9 @@
+import {
+  configTabPath,
+  resolveLegacyConfigLink,
+  type ConfigSectionId,
+  type ConfigTab,
+} from '@/lib/config-tabs'
 import { shouldRouteRunToLive } from '@/lib/status'
 
 import type { RunStatus } from '@vostride/agent-qa-schema'
@@ -25,7 +31,11 @@ export const routes = {
   suiteNew: '/suites/new',
   suiteView: (suiteId: string) => `/suite/${suiteId}`,
   suiteEdit: (suiteId: string) => `/suite/${suiteId}/edit`,
-  configItem: (bucket: string, item: string) => `/config?bucket=${bucket}&item=${item}`,
+  configTab: (tab: ConfigTab, section?: ConfigSectionId) => configTabPath(tab, section),
+  configItem: (bucket: string, item: string) => {
+    const link = resolveLegacyConfigLink(new URLSearchParams({ bucket, item }))
+    return link.kind === 'mapped' ? configTabPath(link.tab, link.section) : configTabPath('models')
+  },
 
   // 405-06 · DETL-03 (D-14 / 400-08): hrefs are minted from this total map, never copied off a
   // store-written URL. An artifact is addressed by the `{ id, sha }` ref the projection carries;

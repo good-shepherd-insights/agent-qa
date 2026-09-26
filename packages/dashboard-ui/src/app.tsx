@@ -56,8 +56,15 @@ const UPDATE_BANNER_ELIGIBLE_PATHS = new Set<string>([
   routes.tests,
   routes.hooks,
   routes.suites,
-  routes.config,
 ])
+
+function isUpdateBannerEligiblePath(pathname: string): boolean {
+  return (
+    UPDATE_BANNER_ELIGIBLE_PATHS.has(pathname) ||
+    pathname === routes.config ||
+    pathname.startsWith(`${routes.config}/`)
+  )
+}
 
 function AppLayout() {
   const matches = useMatches()
@@ -87,7 +94,7 @@ function AppLayout() {
   const installedVersion = appMetadata?.version.trim() ?? ""
   const latestVersion = appMetadata?.update?.latestVersion.trim() ?? ""
   const eligibleBannerRoute =
-    UPDATE_BANNER_ELIGIBLE_PATHS.has(location.pathname) && !hideHeader
+    isUpdateBannerEligiblePath(location.pathname) && !hideHeader
   const showUpdateBanner = Boolean(
     eligibleBannerRoute &&
       installedVersion &&
@@ -147,6 +154,12 @@ function AppLayout() {
     </SidebarProvider>
   )
 }
+
+const configElement = (
+  <Suspense fallback={<FormSkeleton />}>
+    <ConfigPage />
+  </Suspense>
+)
 
 const router = createBrowserRouter([
   {
@@ -413,11 +426,13 @@ const router = createBrowserRouter([
         path: "config",
         handle: { crumb: "Config" },
         errorElement: <RouteErrorBoundary />,
-        element: (
-          <Suspense fallback={<FormSkeleton />}>
-            <ConfigPage />
-          </Suspense>
-        ),
+        element: configElement,
+      },
+      {
+        path: "config/:tab",
+        handle: { crumb: "Config" },
+        errorElement: <RouteErrorBoundary />,
+        element: configElement,
       },
       { path: "settings", element: <Navigate to="/config" replace /> },
       { path: "*", element: <Navigate to={routes.runs} replace /> },
