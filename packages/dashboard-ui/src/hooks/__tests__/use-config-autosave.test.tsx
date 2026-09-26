@@ -5,8 +5,8 @@ import { createRoot, type Root } from "react-dom/client"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { classifyConfigPath, type ConfigPathSegment } from "@vostride/agent-qa-schema"
 
-import { ApiError, applyConfigChanges, fetchConfig, fetchConfigRevision } from "@/lib/api"
-import { SETTLE_DELAY_MS } from "@/lib/config-copy"
+import { ApiError, applyConfigChanges, fetchConfig, fetchConfigRevision, undoConfigAction } from "@/lib/api"
+import { REVISION_POLL_MS, SETTLE_DELAY_MS, UNDO_WINDOW_MS, undoLine } from "@/lib/config-copy"
 import {
   CONFIG_DRAFTS_STORAGE_PREFIX,
   useConfigAutosave,
@@ -44,6 +44,7 @@ const baseConfig = {
 const headless: ConfigFieldRef = { segments: ["use", "browser", "headless"], tab: "execution" }
 const step: ConfigFieldRef = { segments: ["use", "timeout", "step"], tab: "execution" }
 const envFile: ConfigFieldRef = { segments: ["workspace", "envFile"], tab: "project" }
+const testTimeout: ConfigFieldRef = { segments: ["use", "timeout", "test"], tab: "execution" }
 const farmKey: ConfigFieldRef = { segments: ["registry", "providers", "farm", "accessKey"], tab: "targets" }
 const modelHeader: ConfigFieldRef = {
   segments: ["registry", "llms", { name: "primary" }, "providerHeaders", "Authorization"],
@@ -134,7 +135,15 @@ function classOf(segments: readonly ConfigPathSegment[]) {
   return classifyConfigPath(segments.map((segment) => (typeof segment === "object" ? 0 : segment)))
 }
 
+let visibility: DocumentVisibilityState = "visible"
+
+function setVisibility(next: DocumentVisibilityState) {
+  visibility = next
+}
+
 beforeEach(() => {
+  visibility = "visible"
+  Object.defineProperty(document, "visibilityState", { configurable: true, get: () => visibility })
   vi.useFakeTimers()
   localStorage.clear()
   vi.mocked(fetchConfig).mockResolvedValue(answer(baseConfig) as never)
@@ -365,5 +374,206 @@ describe("useConfigAutosave settle, write, drafts and retry (429-16 Task 1)", ()
     expect(writeCalls()[2]).toHaveLength(2)
     await advance(SETTLE_DELAY_MS * 2)
     expect(writeCalls()).toHaveLength(3)
+  })
+})
+
+const editedOutside = {
+  ...baseConfig,
+  use: { timeout: { step: "2m", test: "20m" }, browser: { headless: false } },
+}
+
+describe("useConfigAutosave outside edits, explicit actions and Undo (429-16 Task 2)", () => {
+  it("OUTSIDE-EDIT-MERGES-QUIETLY: a revision the page did not write re-reads the config and shows the new value", async () => {
+    await mount()
+    vi.mocked(fetchConfigRevision).mockResolvedValue({ revision: "rev-9" })
+    vi.mocked(fetchConfig).mockResolvedValue(answer(editedOutside, "rev-9") as never)
+
+    await advance(REVISION_POLL_MS)
+
+    expect(fetchConfig).toHaveBeenCalledTimes(2)
+    expect(hook!.valueOf(headless)).toBe(false)
+    expect(hook!.valueOf(step)).toBe("2m")
+    expect(hook!.status.state).toBe("idle")
+    expect(hook!.load.kind).toBe("ready")
+
+    await advance(REVISION_POLL_MS * 3)
+    expect(fetchConfig).toHaveBeenCalledTimes(2)
+  })
+
+  it("OWN-WRITE-NO-REFETCH: a poll answering the revision this page just wrote re-reads nothing", async () => {
+    await mount()
+    await run((h) => {
+      h.edit(headless, false, { valid: true, value: false })
+      h.settle(headless)
+    })
+    vi.mocked(fetchConfigRevision).mockResolvedValue({ revision: "rev-2" })
+
+    await advance(REVISION_POLL_MS * 3)
+
+    expect(vi.mocked(fetchConfigRevision).mock.calls.length).toBeGreaterThanOrEqual(3)
+    expect(fetchConfig).toHaveBeenCalledTimes(1)
+    expect(hook!.valueOf(headless)).toBe(false)
+  })
+
+  it("POLL-ONLY-WHEN-VISIBLE: a hidden page never polls; becoming visible or focused polls at once", async () => {
+    setVisibility("hidden")
+    await mount()
+    await advance(REVISION_POLL_MS * 4)
+    expect(fetchConfigRevision).not.toHaveBeenCalled()
+
+    setVisibility("visible")
+    await act(async () => {
+      document.dispatchEvent(new Event("visibilitychange"))
+    })
+    await flush()
+    expect(fetchConfigRevision).toHaveBeenCalledTimes(1)
+
+    await act(async () => {
+      window.dispatchEvent(new Event("focus"))
+    })
+    await flush()
+    expect(fetchConfigRevision).toHaveBeenCalledTimes(2)
+
+    await advance(REVISION_POLL_MS)
+    expect(fetchConfigRevision).toHaveBeenCalledTimes(3)
+
+    setVisibility("hidden")
+    await act(async () => {
+      document.dispatchEvent(new Event("visibilitychange"))
+    })
+    await advance(REVISION_POLL_MS * 4)
+    expect(fetchConfigRevision).toHaveBeenCalledTimes(3)
+
+    await unmount()
+    setVisibility("visible")
+    await advance(REVISION_POLL_MS * 4)
+    expect(fetchConfigRevision).toHaveBeenCalledTimes(3)
+  })
+
+  it("REFRESH-NEVER-CLOBBERS-FOCUSED: an outside re-read keeps the focused field and every draft", async () => {
+    await mount()
+    await run((h) => h.setFocusedField(testTimeout))
+    await run((h) => h.edit(step, "soon", durationParse("soon")))
+    vi.mocked(fetchConfigRevision).mockResolvedValue({ revision: "rev-9" })
+    vi.mocked(fetchConfig).mockResolvedValue(answer(editedOutside, "rev-9") as never)
+
+    await advance(REVISION_POLL_MS)
+
+    expect(fetchConfig).toHaveBeenCalledTimes(2)
+    expect(hook!.valueOf(headless)).toBe(false)
+    expect(hook!.valueOf(testTimeout)).toBe("10m")
+    expect(hook!.valueOf(step)).toBe("soon")
+    expect(hook!.stateOf(step)).toBe("draft")
+
+    await run((h) => h.setFocusedField(undefined))
+    expect(hook!.valueOf(testTimeout)).toBe("20m")
+    expect(hook!.valueOf(step)).toBe("soon")
+  })
+
+  it("REFRESH-NEVER-CLOBBERS-FOCUSED: a focused field's settled value survives a re-read until focus leaves", async () => {
+    await mount()
+    await run((h) => h.setFocusedField(envFile))
+    await run((h) => {
+      h.edit(envFile, ".env.ci", textParse(".env.ci"))
+      h.settle(envFile)
+    })
+    vi.mocked(fetchConfigRevision).mockResolvedValue({ revision: "rev-9" })
+    vi.mocked(fetchConfig).mockResolvedValue(
+      answer({ ...editedOutside, workspace: { envFile: ".env.other" } }, "rev-9") as never,
+    )
+    await advance(REVISION_POLL_MS)
+
+    expect(hook!.valueOf(envFile)).toBe(".env.ci")
+    await run((h) => h.setFocusedField(undefined))
+    expect(hook!.valueOf(envFile)).toBe(".env.other")
+  })
+
+  it("UNDO-CALLS-SERVER: an explicit action writes undoable, offers Undo, and Undo restores through the server", async () => {
+    vi.mocked(applyConfigChanges).mockResolvedValueOnce({
+      revision: "rev-2",
+      undo: { token: "tok-1", expiresAt: Date.now() + 30_000 },
+    })
+    vi.mocked(undoConfigAction).mockResolvedValue({ restored: true, revision: "rev-3" })
+    await mount()
+    const changes = [{ op: "unset" as const, path: ["registry", "llms", { name: "primary" }] }]
+
+    await act(async () => {
+      await hook!.runExplicit(changes, { kind: "delete-model", name: "primary" })
+    })
+    await flush()
+
+    expect(applyConfigChanges).toHaveBeenCalledWith(changes, { undoable: true })
+    expect(hook!.status.state).toBe("undo")
+    expect(hook!.status.undo).toEqual({ line: undoLine("delete-model", "primary"), name: "primary", token: "tok-1" })
+
+    vi.mocked(fetchConfig).mockResolvedValue(answer(baseConfig, "rev-3") as never)
+    await act(async () => {
+      await hook!.undo()
+    })
+    await flush()
+
+    expect(undoConfigAction).toHaveBeenCalledWith("tok-1")
+    expect(fetchConfig).toHaveBeenCalledTimes(2)
+    expect(hook!.status.state).not.toBe("undo")
+    expect(hook!.status.state).not.toBe("failed")
+  })
+
+  it("UNDO-CALLS-SERVER: the Undo line leaves after its window, and a refused Undo reads Couldn't save", async () => {
+    vi.mocked(applyConfigChanges).mockResolvedValue({
+      revision: "rev-2",
+      undo: { token: "tok-2", expiresAt: Date.now() + 30_000 },
+    })
+    await mount()
+    const changes = [{ op: "unset" as const, path: ["registry", "targets", "staging"] }]
+
+    await act(async () => {
+      await hook!.runExplicit(changes, { kind: "delete-target", name: "staging" })
+    })
+    expect(hook!.status.state).toBe("undo")
+    await advance(UNDO_WINDOW_MS)
+    expect(hook!.status.state).not.toBe("undo")
+
+    await act(async () => {
+      await hook!.runExplicit(changes, { kind: "delete-target", name: "staging" })
+    })
+    vi.mocked(undoConfigAction).mockRejectedValueOnce(new ApiError(409, "Conflict", { error: "undo_conflict" }))
+    await act(async () => {
+      await hook!.undo()
+    })
+    await flush()
+    expect(undoConfigAction).toHaveBeenCalledWith("tok-2")
+    expect(hook!.status.state).toBe("failed")
+  })
+
+  it("NOT-SAVED-GOES-TO-FIRST-DRAFT: the first draft by tab order is where Not saved goes", async () => {
+    await mount()
+    expect(hook!.goToFirstDraft()).toBeUndefined()
+
+    await run((h) => h.edit(envFile, "  ", { valid: false, error: "Use a file path." }))
+    await run((h) => h.edit(step, "soon", durationParse("soon")))
+
+    expect(hook!.goToFirstDraft()).toEqual({ tab: "execution", fieldKey: JSON.stringify(step.segments) })
+  })
+
+  it("FILE-ISSUES-RECOVER-WITHOUT-RELOAD: a file that stops parsing shows the load error, and a fixed file returns by itself", async () => {
+    await mount()
+    vi.mocked(fetchConfigRevision).mockResolvedValue({ revision: "rev-bad" })
+    vi.mocked(fetchConfig).mockRejectedValue(
+      new ApiError(409, "Conflict", { error: "file_invalid", message: "agent-qa.config.yaml line 3: bad indentation." }),
+    )
+
+    await advance(REVISION_POLL_MS)
+    expect(hook!.load).toEqual({ kind: "error", reason: "agent-qa.config.yaml line 3: bad indentation" })
+    expect(fetchConfig).toHaveBeenCalledTimes(2)
+
+    await advance(REVISION_POLL_MS * 2)
+    expect(fetchConfig).toHaveBeenCalledTimes(2)
+
+    vi.mocked(fetchConfigRevision).mockResolvedValue({ revision: "rev-good" })
+    vi.mocked(fetchConfig).mockResolvedValue(answer(editedOutside, "rev-good") as never)
+    await advance(REVISION_POLL_MS)
+
+    expect(hook!.load.kind).toBe("ready")
+    expect(hook!.valueOf(step)).toBe("2m")
   })
 })
