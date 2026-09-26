@@ -10,6 +10,9 @@
 # reason a total read off the gate would be worthless: it would agree with the gate however the gate
 # moved.
 #
+# 2026-09-26 (428-29, G-428-2): the inventory grows 23 → 27 rows with the gate. C24..C27 pin the
+# optional, masked stepTexts that 428-28 added to testStarted.
+#
 # Runs in place on the real tree. Slow; a phase gate, not a per-commit sample.
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
@@ -31,6 +34,9 @@ const HANDLER_SRC = 'packages/dashboard-server/src/live-editor/ws-handler.ts'
 const SERVER_SRC = 'packages/dashboard-server/src/server/server.ts'
 const ROUTES_SRC = 'packages/dashboard-server/src/server/routes.ts'
 const MAPPING_SRC = 'packages/mcp/src/mapping.ts'
+const BUS_EVENTS_SRC = 'packages/schema/src/run/bus-events.ts'
+const SHELL_SRC = 'packages/runner/src/run/shell.ts'
+const MEMBERS_SRC = 'packages/cli/src/commands/direct-run-members.ts'
 
 const SCHEMA_D = 'src/__tests__/428-live-contracts.test-d.ts'
 const TOKEN_T = 'src/functions/__tests__/live-url.test.ts'
@@ -45,6 +51,9 @@ const HANDLER_T = 'src/__tests__/ws-handler.test.ts'
 const DELETED_T = 'src/__tests__/428-screenshot-path-deleted.test.ts'
 const GUARD_T = 'src/__tests__/mapping-bump-guard.test.ts'
 const PIN_T = 'src/__tests__/conformance/embed-contract-pin.test.ts'
+const SHELL_T = 'src/run/__tests__/run-shell.test.ts'
+const MASKING_T = 'src/run/__tests__/masking-proof.test.ts'
+const MEMBERS_T = 'src/__tests__/direct-run-members.test.ts'
 
 const DASHBOARD = '@vostride/agent-qa-dashboard'
 
@@ -105,6 +114,14 @@ runSelftest({
       reds: [`${DOORS_T} > LIVE-EDITOR-DOORS-CARRY-NO-ACAO: no admitted answer carries a wildcard grant`] },
     { id: 'C23', claim: 'EMBED-PAGE-SHA256', subject: EMBED_SRC, crossing: DASHBOARD,
       reds: [`${PIN_T} > hashes the served embed page to the constant recorded when 408 froze it`] },
+    { id: 'C24', claim: 'C428-TEST-STARTED-STEP-TEXTS-OPTIONAL', subject: BUS_EVENTS_SRC,
+      reds: [`${SCHEMA_D} > C428-TEST-STARTED-STEP-TEXTS-OPTIONAL`] },
+    { id: 'C25', claim: 'STEP-TEXTS-MASKED-LIKE-STEP-TEXT', subject: SHELL_SRC,
+      reds: [`${MASKING_T} > STEP-TEXTS-MASKED-LIKE-STEP-TEXT`] },
+    { id: 'C26', claim: 'STEP-TEXTS-ON-TESTSTARTED', subject: SHELL_SRC,
+      reds: [`${SHELL_T} > STEP-TEXTS-ON-TESTSTARTED`] },
+    { id: 'C27', claim: 'STEP-TEXTS-FROM-PARSED-STEPS', subject: MEMBERS_SRC,
+      reds: [`${MEMBERS_T} > STEP-TEXTS-FROM-PARSED-STEPS`] },
   ],
 })
 NODE

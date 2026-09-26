@@ -80,7 +80,7 @@
 #   neutered  apply NO mutation; the run must FATAL with "<leg>: suite stayed green"
 #   fatal     mutate every subject, then throw; every subject must be restored
 #   SIGINT | SIGTERM | SIGHUP   the same, then deliver that signal to itself
-# AGENT_QA_428_LIVE_CONTRACT_MUTATION_LEG=C01..C24 runs one leg (normal or neutered runs only).
+# AGENT_QA_428_LIVE_CONTRACT_MUTATION_LEG=C01..C27 runs one leg (normal or neutered runs only).
 # AGENT_QA_428_LIVE_CONTRACT_MUTATION_LIST=1 prints the declared inventory and exits.
 #
 # Installed Node 24, workspace tools and the installed Playwright Chromium are required. No
@@ -106,6 +106,8 @@ const SERVER_SRC = 'packages/dashboard-server/src/server/server.ts'
 const ROUTES_SRC = 'packages/dashboard-server/src/server/routes.ts'
 const MAPPING_SRC = 'packages/mcp/src/mapping.ts'
 const BUS_EVENTS_SRC = 'packages/schema/src/run/bus-events.ts'
+const SHELL_SRC = 'packages/runner/src/run/shell.ts'
+const MEMBERS_SRC = 'packages/cli/src/commands/direct-run-members.ts'
 
 const SCHEMA_T = 'src/__tests__/428-live-contracts.test.ts'
 const SCHEMA_D = 'src/__tests__/428-live-contracts.test-d.ts'
@@ -125,6 +127,9 @@ const GUARD_T = 'src/__tests__/mapping-bump-guard.test.ts'
 const PIN_T = 'src/__tests__/conformance/embed-contract-pin.test.ts'
 const EDITOR_VIEW_T = 'src/__tests__/conformance/428-editor-live-view.test.ts'
 const CROSS_SITE_T = 'src/__tests__/conformance/live-view-cross-site.test.ts'
+const SHELL_T = 'src/run/__tests__/run-shell.test.ts'
+const MASKING_T = 'src/run/__tests__/masking-proof.test.ts'
+const MEMBERS_T = 'src/__tests__/direct-run-members.test.ts'
 
 const instruments = {
   schema: { pkg: 'packages/schema', files: [SCHEMA_T, SCHEMA_D], typecheck: true, count: 9 },
@@ -146,6 +151,8 @@ const instruments = {
     count: 18,
     env: { VITEST_MAX_WORKERS: '1' },
   },
+  'runner-shell': { pkg: 'packages/runner', files: [SHELL_T, MASKING_T], typecheck: false, count: 47 },
+  'cli-members': { pkg: 'packages/cli', files: [MEMBERS_T], typecheck: false, count: 5 },
 }
 
 const server = marker => ({ pkg: '@vostride/agent-qa-dashboard', dir: 'packages/dashboard-server', marker })
@@ -168,6 +175,9 @@ const guard = (name, count) => cell('mcp', GUARD_T, name, count)
 const pin = (name, count) => cell('cli', PIN_T, name, count)
 const editorView = (name, count) => cell('cli', EDITOR_VIEW_T, name, count)
 const crossSite = (name, count) => cell('cli', CROSS_SITE_T, name, count)
+const shellRun = (name, count) => cell('runner-shell', SHELL_T, name, count)
+const masking = (name, count) => cell('runner-shell', MASKING_T, name, count)
+const members = (name, count) => cell('cli-members', MEMBERS_T, name, count)
 
 const legs = [
   {
@@ -492,10 +502,42 @@ const legs = [
     greens: [schemaT('C428-TEST-STARTED-STEP-TEXTS-ADDITIVE'), schemaD('C428-LIVE-STREAM-KINDS-EXACT'),
       schemaT('C428-LIVE-STREAM-KINDS-EXACT')],
   },
+  {
+    subject: SHELL_SRC, instrument: 'runner-shell', claim: 'STEP-TEXTS-MASKED-LIKE-STEP-TEXT',
+    operation: "publish testStarted's stepTexts without the run's mask, so the raw texts ride it",
+    edits: [{ from: '{ stepTexts: member.stepTexts.map(mask) }', to: '{ stepTexts: member.stepTexts }' }],
+    reds: [masking('STEP-TEXTS-MASKED-LIKE-STEP-TEXT')],
+    // The shell's own stepTexts cell expects the planted secret as [masked] and absent from the payload.
+    allowed: [shellRun('STEP-TEXTS-ON-TESTSTARTED')],
+    greens: [masking('a synthetic MaskingContext scrubs the secret from bus payloads, event-log lines, AND the handoff'),
+      shellRun('testStarted carries the member descriptor parity fields when present'),
+      shellRun('a bare member (no optional parity fields) yields a testStarted with no undefined-holes (JSON round-trip)')],
+  },
+  {
+    subject: SHELL_SRC, instrument: 'runner-shell', claim: 'STEP-TEXTS-ON-TESTSTARTED',
+    operation: 'delete the stepTexts conditional spread from the testStarted publish',
+    edits: [{ from: '        ...(member.stepTexts !== undefined ? { stepTexts: member.stepTexts.map(mask) } : {}),\n', to: '' }],
+    reds: [shellRun('STEP-TEXTS-ON-TESTSTARTED')],
+    // The masking cell compares testStarted's stepTexts with the announced texts, and they are now absent.
+    allowed: [masking('STEP-TEXTS-MASKED-LIKE-STEP-TEXT')],
+    greens: [shellRun('testStarted carries the member descriptor parity fields when present'),
+      shellRun('a bare member (no optional parity fields) yields a testStarted with no undefined-holes (JSON round-trip)'),
+      masking('leaves stepText, plannedAction and interpolatedVariables byte-identical under a firing mask (G-381-3)')],
+  },
+  {
+    subject: MEMBERS_SRC, instrument: 'cli-members', claim: 'STEP-TEXTS-FROM-PARSED-STEPS',
+    operation: 'delete the stepTexts line from the direct-run member builder',
+    edits: [{ from: '      stepTexts: test.steps.map((step) => memberStepText(step)),\n', to: '' }],
+    reds: [members('STEP-TEXTS-FROM-PARSED-STEPS')],
+    allowed: [],
+    greens: [members('keeps each member and digest bound to its parsed source file'),
+      members('mints an identity no checkout root leaks into'),
+      members('projects equal-named tests from different files as distinct outcome rows')],
+  },
 ]
 
 runGate({
   slug: '428-live-contract-mutation', envPrefix: 'AGENT_QA_428_LIVE_CONTRACT_MUTATION', idPrefix: 'C',
-  instruments, legs, expectedLegs: 24, banner: 'LIVE_CONTRACT_MUTATION_OK',
+  instruments, legs, expectedLegs: 27, banner: 'LIVE_CONTRACT_MUTATION_OK',
 })
 NODE
