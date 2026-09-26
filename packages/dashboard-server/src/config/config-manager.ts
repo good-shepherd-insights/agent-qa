@@ -1,12 +1,27 @@
 import { createHash, randomUUID } from 'node:crypto'
 import { chmod, lstat, readFile, realpath, writeFile, mkdir, rename, rm, stat } from 'node:fs/promises'
 import { basename, dirname, join } from 'node:path'
-import { Document, isMap, isScalar, isSeq, parseDocument, stringify } from 'yaml'
+import {
+  Document,
+  isAlias,
+  isMap,
+  isPair,
+  isScalar,
+  isSeq,
+  LineCounter,
+  parseDocument,
+  Scalar,
+  stringify,
+  visit,
+} from 'yaml'
 import { AgentQaConfigSchema } from '@vostride/agent-qa-core'
 import {
+  classifyConfigPath,
   CONFIG_MASK_PLACEHOLDER,
   CONFIG_NAMED_ARRAYS,
+  CONFIG_REVISION_ABSENT,
   type ConfigChange,
+  type MaskingClass,
   type ConfigPathSegment,
   type ConfigWriteIssue,
   type ConfigWriteRefusal,
@@ -23,7 +38,27 @@ export type ApplyChangesOutcome =
 export type ConfigReadOutcome =
   | { kind: 'ok'; config: Record<string, unknown>; raw: string; revision: string }
   | { kind: 'absent' }
-  | { kind: 'file_invalid'; message: string }
+  | { kind: 'file_invalid'; message: string; revision: string }
+
+/** One line of the masked config file. `path` is the segment path of the secret the line holds. */
+export interface ConfigFileLine {
+  n: number
+  text: string
+  class?: Exclude<MaskingClass, 'plain'>
+  path?: ConfigPathSegment[]
+}
+
+export type MaskedConfigOutcome =
+  | {
+    kind: 'ok'
+    config: Record<string, unknown>
+    revision: string
+    lines: ConfigFileLine[]
+    fileIssues: ConfigWriteIssue[]
+  }
+  | { kind: 'file_invalid'; message: string; revision: string }
+
+export type RevealOutcome = { kind: 'ok'; value: string } | { kind: 'not_found' }
 
 export const MASK_WRITTEN_BACK = 'mask_written_back'
 
@@ -39,36 +74,6 @@ export function carriesMaskPlaceholder(value: unknown): boolean {
 
 function isMissingFile(err: unknown): boolean {
   return (err as NodeJS.ErrnoException | undefined)?.code === 'ENOENT'
-}
-
-const SENSITIVE_KEYS = new Set(['apikey', 'token', 'key', 'accesskey'])
-
-function isSensitiveKey(key: string): boolean {
-  return SENSITIVE_KEYS.has(key.toLowerCase())
-}
-
-function maskValue(value: string): string {
-  if (value.length >= 8) {
-    return value.slice(0, 3) + '****...' + value.slice(-4)
-  }
-  return '****'
-}
-
-function deepMask(obj: unknown, parentKey = ''): unknown {
-  if (typeof obj === 'string' && isSensitiveKey(parentKey)) {
-    return maskValue(obj)
-  }
-  if (Array.isArray(obj)) {
-    return obj.map((item, i) => deepMask(item, String(i)))
-  }
-  if (typeof obj === 'object' && obj !== null) {
-    const result: Record<string, unknown> = {}
-    for (const [key, value] of Object.entries(obj as Record<string, unknown>)) {
-      result[key] = deepMask(value, key)
-    }
-    return result
-  }
-  return obj
 }
 
 export class ConfigManager {
@@ -87,6 +92,59 @@ export class ConfigManager {
 
   // 429-05 Pitfall 3: a half-edited file is named, never served as the partial config yaml recovers.
   async readWithRevision(): Promise<ConfigReadOutcome> {
+    const read = await this.readParsed()
+    if (read.kind !== 'ok') return read
+    return { kind: 'ok', config: read.config, raw: read.raw, revision: read.revision }
+  }
+
+  // 429-06 D-08: every value the map classes secret is replaced whole, in the payload and in the
+  // file view, and the view is tagged on the masked text because masking changes line counts.
+  async readMasked(): Promise<MaskedConfigOutcome> {
+    const read = await this.readParsed()
+    if (read.kind === 'absent') {
+      return { kind: 'ok', config: {}, revision: CONFIG_REVISION_ABSENT, lines: [], fileIssues: [] }
+    }
+    if (read.kind === 'file_invalid') return read
+    const secretValues: string[] = []
+    const masked = maskDocument(read.doc, secretValues)
+    const config = (maskByMap(masked.toJSON(), []) as Record<string, unknown> | null) ?? {}
+    const parsed = AgentQaConfigSchema.safeParse(normalizeForValidation(read.config))
+    const fileIssues = parsed.success
+      ? []
+      : parsed.error.issues.map((issue) => ({
+        path: issue.path.map((key) => (typeof key === 'number' ? key : String(key))),
+        message: redactSecrets(issue.message, secretValues),
+      }))
+    const lines = classifyLines(masked.toString())
+    return { kind: 'ok', config, revision: read.revision, lines, fileIssues }
+  }
+
+  // 429-06 D-09: one in-file value, read from the config file alone.
+  async revealAt(path: readonly ConfigPathSegment[]): Promise<RevealOutcome> {
+    let raw: string
+    try {
+      raw = await readFile(this.configPath, 'utf-8')
+    } catch (err: unknown) {
+      if (isMissingFile(err)) return { kind: 'not_found' }
+      throw err
+    }
+    const doc = parseDocument(raw)
+    if (doc.errors.length > 0) return { kind: 'not_found' }
+    const resolved = resolvePath(doc, path)
+    if (resolved === undefined) return { kind: 'not_found' }
+    let node = doc.getIn(resolved, true)
+    if (isAlias(node)) node = node.resolve(doc)
+    if (!isScalar(node) || node.value === null || node.value === undefined) {
+      return { kind: 'not_found' }
+    }
+    return { kind: 'ok', value: String(node.value) }
+  }
+
+  private async readParsed(): Promise<
+    | { kind: 'ok'; doc: Document; config: Record<string, unknown>; raw: string; revision: string }
+    | { kind: 'absent' }
+    | { kind: 'file_invalid'; message: string; revision: string }
+  > {
     let bytes: Buffer
     try {
       bytes = await readFile(this.configPath)
@@ -94,20 +152,19 @@ export class ConfigManager {
       if (isMissingFile(err)) return { kind: 'absent' }
       throw err
     }
+    const revision = createHash('sha256').update(bytes).digest('hex')
     const raw = bytes.toString('utf-8')
     const doc = parseDocument(raw)
-    if (doc.errors.length > 0) return { kind: 'file_invalid', message: parseErrorSummary(doc) }
+    if (doc.errors.length > 0) {
+      return { kind: 'file_invalid', message: parseErrorSummary(doc), revision }
+    }
     return {
       kind: 'ok',
+      doc,
       config: (doc.toJSON() as Record<string, unknown> | null) ?? {},
       raw,
-      revision: createHash('sha256').update(bytes).digest('hex'),
+      revision,
     }
-  }
-
-  async readMasked(): Promise<Record<string, unknown>> {
-    const config = await this.read()
-    return deepMask(config) as Record<string, unknown>
   }
 
   private sectionPath(section: string): string[] {
@@ -374,6 +431,117 @@ function setsLeaf(path: ResolvedPath, value: unknown, leaf: readonly string[]): 
 function parseErrorSummary(doc: Document): string {
   const first = doc.errors[0]?.message ?? 'The config file is not valid YAML.'
   return first.split('\n')[0]!.replace(/:\s*$/, '')
+}
+
+type VisitPath = readonly unknown[]
+
+// The segment path of a node inside a pair value or a sequence item; undefined for a mapping key.
+// With `named`, an entry of a named array that carries a unique name is addressed by `{ name }`.
+function nodeSegments(
+  key: unknown,
+  node: unknown,
+  path: VisitPath,
+  named = false,
+): ConfigPathSegment[] | undefined {
+  if (key === 'key') return undefined
+  const segments: ConfigPathSegment[] = []
+  const plain: (string | number)[] = []
+  for (let i = 0; i < path.length; i++) {
+    const ancestor = path[i]
+    const child = i + 1 < path.length ? path[i + 1] : node
+    if (isPair(ancestor)) {
+      if (child === ancestor.key) return undefined
+      const segment = isScalar(ancestor.key) ? String(ancestor.key.value) : String(ancestor.key)
+      segments.push(segment)
+      plain.push(segment)
+    } else if (isSeq(ancestor)) {
+      const index = ancestor.items.indexOf(child as never)
+      const inNamedArray = named && NAMED_ARRAY_PATHS.some((arrayPath) => samePath(arrayPath, plain))
+      const name = inNamedArray ? uniqueName(ancestor.items, child) : undefined
+      segments.push(name === undefined ? index : { name })
+      plain.push(index)
+    }
+  }
+  return segments
+}
+
+function uniqueName(items: readonly unknown[], child: unknown): string | undefined {
+  if (!isMap(child)) return undefined
+  const name = child.get('name')
+  if (typeof name !== 'string') return undefined
+  const matches = items.filter((item) => isMap(item) && item.get('name') === name)
+  return matches.length === 1 ? name : undefined
+}
+
+function classifySegments(segments: readonly ConfigPathSegment[]): MaskingClass {
+  return classifyConfigPath(segments.map((segment) => (typeof segment === 'object' ? 0 : segment)))
+}
+
+function maskDocument(doc: Document, secretValues: string[]): Document {
+  const masked = doc.clone()
+  visit(masked, {
+    Scalar(key, node, path) {
+      const segments = nodeSegments(key, node, path)
+      if (segments === undefined || node.value === null || node.value === undefined) return
+      if (classifySegments(segments) !== 'secret' || node.value === CONFIG_MASK_PLACEHOLDER) return
+      secretValues.push(String(node.value))
+      node.value = CONFIG_MASK_PLACEHOLDER
+      node.type = undefined
+    },
+    // An alias at a secret path would carry the anchored value into the payload in clear.
+    Alias(key, node, path) {
+      const segments = nodeSegments(key, node, path)
+      if (segments !== undefined && classifySegments(segments) === 'secret') {
+        return new Scalar(CONFIG_MASK_PLACEHOLDER)
+      }
+      return undefined
+    },
+  })
+  return masked
+}
+
+function maskByMap(value: unknown, segments: (string | number)[]): unknown {
+  if (Array.isArray(value)) return value.map((item, i) => maskByMap(item, [...segments, i]))
+  if (typeof value === 'object' && value !== null) {
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>).map(([key, item]) => [
+        key,
+        maskByMap(item, [...segments, key]),
+      ]),
+    )
+  }
+  if (value === null || value === undefined) return value
+  return classifyConfigPath(segments) === 'secret' ? CONFIG_MASK_PLACEHOLDER : value
+}
+
+function classifyLines(text: string): ConfigFileLine[] {
+  const lineCounter = new LineCounter()
+  const doc = parseDocument(text, { lineCounter })
+  const tags = new Map<number, Pick<ConfigFileLine, 'class' | 'path'>>()
+  visit(doc, {
+    Scalar(key, node, path) {
+      if (node.range === undefined || node.range === null || node.value === null) return
+      const segments = nodeSegments(key, node, path, true)
+      if (segments === undefined) return
+      const maskingClass = classifySegments(segments)
+      if (maskingClass === 'plain') return
+      const { line } = lineCounter.linePos(node.range[0])
+      const existing = tags.get(line)
+      if (existing?.class === 'secret') return
+      if (maskingClass === 'secret') tags.set(line, { class: 'secret', path: segments })
+      else if (existing === undefined) tags.set(line, { class: 'env-var-name' })
+    },
+  })
+  const texts = text.split('\n')
+  if (texts.length > 0 && texts[texts.length - 1] === '') texts.pop()
+  return texts.map((lineText, i) => ({ n: i + 1, text: lineText, ...tags.get(i + 1) }))
+}
+
+// A validation message may quote the value it rejects; a secret one never reaches the page.
+function redactSecrets(message: string, secretValues: readonly string[]): string {
+  return secretValues.some((value) => value.length >= 4 && message.includes(value))
+    ? 'This value is not valid.'
+    : message
 }
 
 function revisionOf(content: string): string {

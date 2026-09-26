@@ -2,7 +2,7 @@
 // drive it, and no answer carries a cross-origin read grant.
 import type { IncomingMessage, ServerResponse } from 'node:http'
 
-import { ConfigWriteRequestSchema } from '@vostride/agent-qa-schema'
+import { CONFIG_REVISION_ABSENT, ConfigWriteRequestSchema } from '@vostride/agent-qa-schema'
 
 import type { ConfigManager } from '../config/index.js'
 import { respondJson } from '../run-service/run-detail-routes.js'
@@ -45,4 +45,17 @@ export function registerConfigWriteRoute(
       : { error: outcome.error, issues: outcome.issues })
   }, () => { respondJson(res, 400, { error: 'invalid_write_input' }) })
     .catch(() => { respondJson(res, 500, { error: 'write_failed' }) })
+}
+
+/** GET /api/config/revision. The sha256 of the file's bytes, even when they do not parse. */
+export function registerConfigRevisionRoute(
+  _req: IncomingMessage,
+  res: ServerResponse,
+  deps: { readonly configManager: ConfigManager },
+): void {
+  deps.configManager.readWithRevision().then((read) => {
+    res.setHeader('Cache-Control', 'no-store')
+    const revision = read.kind === 'absent' ? CONFIG_REVISION_ABSENT : read.revision
+    respondJson(res, 200, { revision })
+  }, () => { respondJson(res, 500, { error: 'read_failed' }) })
 }

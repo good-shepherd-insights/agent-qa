@@ -55,7 +55,7 @@ import { serveRunAnalysisRead } from '../run-service/run-analysis-routes.js'
 // database.
 import { serveRunKnowledgeRead } from '../run-service/run-knowledge-routes.js'
 import { registerRunMarkRoute } from '../run-service/run-mark-routes.js'
-import { registerConfigWriteRoute } from './config-routes.js'
+import { registerConfigRevisionRoute, registerConfigWriteRoute } from './config-routes.js'
 import type { PostProcessingRelay } from '../execution/post-processing-relay.js'
 import type { LLMAuthProviderPlugin, OAuthTokens } from '@vostride/agent-qa-core'
 import { AuthStateNameSchema, buildInternalRunAttributes, mergeRunAttributes, readAuth, writeAuth, removeAuth, getAgentQaVersion, getAgentQaUpdateStatus, getLLMAuthProviderPlugin, listAuthStateMetadata, listLLMAuthProviderPlugins, ModelConfigSchema, NamedLLMConfigSchema, WorkspaceSchema, ServicesSchema, RegistrySchema, UseSchema, MobileAppStateSchema, TimeoutConfigSchema, CacheConfigSchema, PlannerConfigSchema, LoggingConfigSchema, LogCaptureConfigSchema, AccessibilityConfigSchema, DashboardConfigSchema, McpConfigSchema, RecordingConfigSchema, BrowserConfigSchema, AnalyticsSchema, AgentQaConfigSchema, TestDefinitionSchema, SuiteDefinitionSchema, parseEnvFile, serializeEnvFile, parseHooksFile, RUNTIME_IMAGE_MAP, redactAuthStateValue, validateUserRunAttributes, discoverWorkspaceFiles, isWorkspacePathMatch, resolveWorkspaceFileTarget, SizeString, KnowledgeConfigSchema } from '@vostride/agent-qa-core'
@@ -1899,6 +1899,16 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps): (req: In
       return
     }
 
+    // 429-06 D-22: the cheap revision read the page polls to notice an outside edit.
+    if (path === '/api/config/revision' && req.method === 'GET') {
+      if (!configManager) {
+        jsonNoCors(res, { error: 'config_unavailable' }, 503)
+        return
+      }
+      registerConfigRevisionRoute(req, res, { configManager })
+      return
+    }
+
     if (req.method === 'OPTIONS') {
       cors(res)
       return
@@ -3491,15 +3501,27 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps): (req: In
       }
       ;(async () => {
         try {
-          const config = await configManager.readMasked()
-          const configObj = config as Record<string, unknown>
-          const registry = configObj.registry as Record<string, unknown> | undefined
-          const llms = (registry?.llms ?? configObj.llms) as Array<Record<string, unknown>> | undefined
-          const use = configObj.use as Record<string, unknown> | undefined
-          const activeLlm = (use?.llm ?? configObj.defaultLLM) as string | undefined
-          const defaultCfg = llms?.find((c) => c.name === activeLlm)
+          const read = await configManager.readMasked()
+          if (read.kind === 'file_invalid') {
+            json(res, { error: 'file_invalid', message: read.message }, 409)
+            return
+          }
+          const { config, revision, lines, fileIssues } = read
+          const registry = config.registry as Record<string, unknown> | undefined
+          const llms = (registry?.llms ?? config.llms) as Array<Record<string, unknown>> | undefined
+          const use = config.use as Record<string, unknown> | undefined
+          const activeLlm = (use?.llm ?? config.defaultLLM) as string | undefined
+          const defaultCfg = Array.isArray(llms)
+            ? llms.find((c) => c?.name === activeLlm)
+            : undefined
           const provider = (defaultCfg?.provider as string) ?? null
-          json(res, { config, provider })
+          json(res, {
+            config,
+            provider,
+            revision,
+            file: { path: deps.configPath ?? null, lines },
+            ...(fileIssues.length > 0 ? { fileIssues } : {}),
+          })
         } catch (err: unknown) {
           json(res, { error: err instanceof Error ? err.message : 'Failed to read config' }, 500)
         }
@@ -3571,7 +3593,7 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps): (req: In
               json(res, { error: 'use.llm string is required' }, 400)
               return
             }
-            const config = await configManager.readMasked()
+            const config = await configManager.read()
             const configObj = config as Record<string, unknown>
             const registry = configObj.registry as Record<string, unknown> | undefined
             const llms = (registry?.llms ?? configObj.llms) as Array<Record<string, unknown>> | undefined

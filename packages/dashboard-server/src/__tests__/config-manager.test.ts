@@ -257,7 +257,11 @@ describe('ConfigManager', () => {
       const response = await invokeRoute('/api/config')
       expect(response.status).toBe(200)
       const authored = JSON.parse(response.body).config
-      expect(authored).toEqual(source)
+      // 429-06 D-08: the map classes workspace.secretsFile secret, so the read carries it masked whole.
+      expect(authored).toEqual({
+        ...source,
+        workspace: { ...source.workspace, secretsFile: CONFIG_MASK_PLACEHOLDER },
+      })
       expect(AgentQaConfigSchema.parse(authored).services?.recording)
         .toEqual({ enabled: true, ...recording })
       const section = authored.services?.recording
@@ -849,5 +853,33 @@ describe('dashboard compatible auth routes', () => {
       }),
       { kind: 'none' },
     )
+  })
+})
+
+describe('ConfigManager map-masked read (429-06)', () => {
+  it('READ-MASKED-ALIASES-FAIL-CLOSED: an alias never carries a secret value past the map in either direction', async () => {
+    await writeFile(configPath, [
+      'workspace:',
+      '  secretsFile: &secret secret-DO-NOT-LEAK.local',
+      '  envFile: &plain plain-anchor.env',
+      'knowledge:',
+      '  dir: *secret',
+      'registry:',
+      '  providers:',
+      '    farm:',
+      '      accessKey: *plain',
+      '',
+    ].join('\n'))
+
+    const read = await manager.readMasked()
+
+    expect(read.kind).toBe('ok')
+    if (read.kind !== 'ok') return
+    const config = read.config as { workspace: Record<string, string>; knowledge: { dir: string }; registry: any }
+    expect(config.workspace.secretsFile).toBe(CONFIG_MASK_PLACEHOLDER)
+    expect(config.knowledge.dir).toBe(CONFIG_MASK_PLACEHOLDER)
+    expect(config.registry.providers.farm.accessKey).toBe(CONFIG_MASK_PLACEHOLDER)
+    expect(config.workspace.envFile).toBe('plain-anchor.env')
+    expect(JSON.stringify(read)).not.toContain('DO-NOT-LEAK')
   })
 })
