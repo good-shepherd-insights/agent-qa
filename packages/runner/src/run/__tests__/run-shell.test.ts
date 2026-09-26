@@ -514,6 +514,33 @@ describe('363 D-01 — enriched testStarted / testFinished payloads', () => {
     // filePath is REQUIRED since 381-01 (ABRF-02) — it always rides the payload now.
     expect(started.payload).toHaveProperty('filePath', 'a.test.ts')
     expect(started.payload).not.toHaveProperty('suiteId')
+    expect(started.payload).not.toHaveProperty('stepTexts')
+    expect(JSON.parse(JSON.stringify(started.payload))).toEqual(started.payload)
+  })
+
+  // G-428-2 (owner decision 2026-09-26 (2)): the descriptor's raw step texts ride testStarted in
+  // step order, masked by this describe's context.
+  it('STEP-TEXTS-ON-TESTSTARTED', async () => {
+    const members: RunMemberDescriptor[] = [
+      {
+        testId: 'login',
+        name: 'Login',
+        filePath: 'tests/login.yaml',
+        totalSteps: 3,
+        stepTexts: ['Open the login page', `Type ${SECRET} into Password`, 'Submit the form'],
+      },
+    ]
+    const session = startRun(baseConfig({ masking, members, executor: scriptedExecutor({}, []) }))
+    const events = drain(session)
+    await done(session)
+
+    const started = events.find(e => e.type === 'testStarted')!
+    expect((started.payload as { stepTexts?: readonly string[] }).stepTexts).toEqual([
+      'Open the login page',
+      'Type [masked] into Password',
+      'Submit the form',
+    ])
+    expect(JSON.stringify(started.payload)).not.toContain(SECRET)
     expect(JSON.parse(JSON.stringify(started.payload))).toEqual(started.payload)
   })
 

@@ -185,6 +185,9 @@ function buildRollCallFixture(): RollCallFixture {
     suiteIndex: 0,
     suiteTotal: 1,
     totalSteps: 2,
+    // G-428-2: the authored step texts ride the already-enrolled envelope stream, masked at the
+    // producer exactly as the matching stepStarted.stepText below.
+    stepTexts: [ctx.mask(`Navigate to ${SECRETS.step}`), 'Submit credentials'],
   }
 
   const okStep: StepFinalizedPayload = {

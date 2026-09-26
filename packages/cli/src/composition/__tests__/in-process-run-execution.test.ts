@@ -302,6 +302,8 @@ import {
   resolveMaskingHostKey,
 } from '@vostride/agent-qa-agent-local'
 import type { RiskActionDescriptor } from '@vostride/agent-qa-schema'
+import { parseTestFile } from '@vostride/agent-qa-core'
+import { memberStepText } from '@vostride/agent-qa-runner'
 
 /** The process-global resolver is exactly that; a leaked pin poisons every sibling cell. */
 const shippedExecutionContextResolver = getActiveExecutionContext
@@ -520,6 +522,53 @@ describe('a door holding only a RunsStartInput gets a policy-gated run, in proce
         'the standalone test',
         'the suite member',
       ])
+    } finally {
+      await target.close()
+    }
+  }, 120_000)
+
+  // Owner decision 2026-09-26 (2), G-428-2: both producers put the texts member-runner announces on
+  // every descriptor. The expected texts come from the fixture's own YAML through the core parser,
+  // located by each descriptor's own identity path and test id.
+  it('STEP-TEXTS-ON-BOTH-MEMBER-BUILDERS', async () => {
+    const target = new CountingTarget()
+    await target.listen()
+    try {
+      const fixture = createInProcessFixture({
+        origin: target.origin,
+        environment: 'local',
+        secondSuiteMember: true,
+      })
+      const parsedStepTexts = (member: { filePath: string; testId: string }): string[] => {
+        const absolute = join(fixture.project, member.filePath)
+        const parsed = parseTestFile(readFileSync(absolute, 'utf8'), absolute)
+        expect(parsed.errors).toEqual([])
+        const test = parsed.tests.find((candidate) => candidate['test-id'] === member.testId)
+        expect(test).toBeDefined()
+        return test!.steps.map((step) => memberStepText(step))
+      }
+
+      const testInputs = await withExitTrap(() =>
+        resolveRunInvocationInputs({ configPath: fixture.configPath, patterns: [fixture.testPattern] }),
+      )
+      const direct = await produceMembersFromPatterns({ inputs: testInputs, runId: 'r_step-texts-test' })
+      expect(direct.members.map((member) => member.testId)).toEqual([fixture.directTestId])
+
+      const suiteInputs = await withExitTrap(() =>
+        resolveRunInvocationInputs({ configPath: fixture.configPath, patterns: [fixture.suitePattern] }),
+      )
+      const suite = await produceMembersFromPatterns({ inputs: suiteInputs, runId: 'r_step-texts-suite' })
+      expect(suite.members.map((member) => member.testId)).toEqual([
+        fixture.memberTestId,
+        fixture.secondMemberTestId,
+      ])
+
+      for (const member of [...direct.members, ...suite.members]) {
+        const expected = parsedStepTexts(member)
+        expect(expected.length).toBeGreaterThan(0)
+        expect(member.stepTexts).toEqual(expected)
+        expect(member.totalSteps).toBe(expected.length)
+      }
     } finally {
       await target.close()
     }
