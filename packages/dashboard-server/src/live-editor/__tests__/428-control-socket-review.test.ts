@@ -4,11 +4,12 @@
 // same session. These cells pin what that path owes the page: a command's outcome reaches the
 // socket attached when it finishes (CR-01), and a socket a newer one replaced stops driving the
 // session (WR-01), and a session that ends closes its socket and leaves no timer behind (WR-02).
-// The session is the real LiveSession; only the commands' own work is stubbed.
+// Teardown is not held hostage by a hub close that never settles (WR-03). The session is the
+// real LiveSession; only the commands' own work is stubbed.
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { IDLE_TIMEOUT_MS, LiveSession } from '../live-session.js'
+import { IDLE_TIMEOUT_MS, LIVE_HUB_CLOSE_LIMIT_MS, LiveSession } from '../live-session.js'
 import { SessionManager } from '../session-manager.js'
 import { LIVE_EDITOR_SUPERSEDED_CLOSE_CODE, LIVE_EDITOR_UNKNOWN_SESSION_CLOSE_CODE } from '../types.js'
 import type { LiveHookPayload, LiveTestResultPayload, ServerMessage } from '../types.js'
@@ -244,5 +245,30 @@ describe('428 review: the editor control socket', () => {
     await new Promise((resolve) => setImmediate(resolve))
     expect(manager.getSession(sessionId)).toBeUndefined()
     expect(reported).toHaveBeenCalledWith(expect.stringContaining(sessionId), expect.any(Error))
+  })
+
+  it('WR-03 TEARDOWN-NOT-HELD-BY-HUB: a hub close that never settles cannot keep the browser up', async () => {
+    vi.useFakeTimers()
+    const session = new LiveSession('wr03-hub')
+    const adapterCleanup = vi.fn(async () => undefined)
+    const internals = session as unknown as { liveHub: unknown; adapter: unknown }
+    internals.liveHub = { close: () => new Promise<void>(() => undefined) }
+    internals.adapter = { cleanup: adapterCleanup }
+    let ended = false
+    void session.liveAttachment().ended.then(() => {
+      ended = true
+    })
+
+    let finished = false
+    void session.cleanup().then(() => {
+      finished = true
+    })
+    await vi.advanceTimersByTimeAsync(LIVE_HUB_CLOSE_LIMIT_MS)
+    await flush()
+
+    expect(finished, 'cleanup went on past the wedged hub').toBe(true)
+    expect(adapterCleanup).toHaveBeenCalledTimes(1)
+    expect(ended, 'frame sockets hear the session ended').toBe(true)
+    expect(session.status).toBe('terminated')
   })
 })

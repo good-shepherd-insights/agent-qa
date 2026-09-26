@@ -67,6 +67,9 @@ import type {
 
 export const IDLE_TIMEOUT_MS = 5 * 60 * 1000
 
+/** How long teardown waits for the live hub to close before it tears the browser down anyway. */
+export const LIVE_HUB_CLOSE_LIMIT_MS = 2_000
+
 /** Why the session let go of a control socket: a newer one replaced it, or the session ended. */
 export type LiveAttachmentRelease = 'superseded' | 'ended'
 
@@ -1442,12 +1445,20 @@ export class LiveSession {
     this.releaseAttachment = null
     release?.('ended')
     // The hub closes first, so subscribers hear 'closed' and the screencast stops before the
-    // browser that produces it goes away.
+    // browser that produces it goes away. Its close waits on the screencast's CDP stop, which a
+    // wedged renderer never answers, so the wait is bounded and teardown always goes on (428 WR-03).
     const hub = this.liveHub
     this.liveHub = null
-    try {
-      await hub?.close()
-    } catch {}
+    if (hub) {
+      let limit: ReturnType<typeof setTimeout> | undefined
+      await Promise.race([
+        hub.close().catch(() => undefined),
+        new Promise<void>((resolve) => {
+          limit = setTimeout(resolve, LIVE_HUB_CLOSE_LIMIT_MS)
+        }),
+      ])
+      clearTimeout(limit)
+    }
     this.resolveEnded()
     try {
       await this.adapter?.cleanup()
