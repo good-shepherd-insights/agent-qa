@@ -234,6 +234,35 @@ export function fixedFactsLine(connectionLabel: string): string {
   return `Connects with ${connectionLabel}. The name and connection are fixed; to change them, add a new model.`
 }
 
+/** A saved model's settings in its open row (UI-SPEC S4 item 2); Model and Base URL share the add flow's labels. */
+export const MODEL_SETTING_LABELS = {
+  vision: 'Vision',
+  contextWindow: 'Context window',
+} as const satisfies Record<string, string>
+
+export const MODEL_SETTING_HELP = {
+  vision: 'Whether this model can read screenshots. Turn it off for text-only models.',
+  contextWindow: 'A size such as 256k. Leave it empty to detect it.',
+} as const satisfies Record<string, string>
+
+export const HEADER_FIELD_LABELS = {
+  name: 'Name',
+  value: 'Value',
+} as const satisfies Record<string, string>
+
+export const SAVE_HEADER_LABEL = 'Save header'
+export const DISCARD_HEADER_LABEL = 'Discard header'
+export const HEADER_NAME_REQUIRED_ERROR = 'A header needs a name.'
+
+export function headerNameTakenError(name: string): string {
+  return `A header named ${name} already exists.`
+}
+
+/** A saved header's accessible label, so each name field, eye and Replace value names its header. */
+export function modelHeaderLabel(header: string): string {
+  return `${header} header`
+}
+
 export const USED_AS_JUDGE_LINE = 'Used as an eval judge.'
 export const DEFAULT_CANNOT_DELETE_LINE = 'This is the default model. Make another model the default first.'
 export const NO_MODELS_TEXT = 'Runs need a model. Add one to get started.'

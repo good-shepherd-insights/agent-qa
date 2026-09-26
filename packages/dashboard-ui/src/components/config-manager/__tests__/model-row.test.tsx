@@ -9,6 +9,7 @@
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { MemoryRouter, Route, Routes } from 'react-router'
+import { CONFIG_MASK_PLACEHOLDER } from '@vostride/agent-qa-schema'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { ModelList } from '@/components/config-manager/model-list'
@@ -20,6 +21,7 @@ import {
   fetchConfig,
   fetchConfigRevision,
   fetchLLMProviders,
+  revealConfigValue,
   saveCredential,
   testLLMConnection,
   undoConfigAction,
@@ -27,13 +29,22 @@ import {
   type LLMProviderMetadata,
 } from '@/lib/api'
 import {
+  ADD_HEADER_LABEL,
   ADD_MODEL_LABEL,
   DEFAULT_CANNOT_DELETE_LINE,
   DELETE_MODEL_LABEL,
+  FIXED_CONNECTION_LABELS,
+  KEEP_CURRENT_KEY_LABEL,
   MAKE_DEFAULT_LABEL,
+  NEW_KEY_LABEL,
   REMOVE_KEY_LABEL,
+  REPLACE_KEY_LABEL,
+  SAVE_HEADER_LABEL,
+  SAVE_KEY_AND_TEST_LABEL,
+  SETTLE_DELAY_MS,
   SIGN_OUT_LABEL,
   USED_AS_JUDGE_LINE,
+  fixedFactsLine,
   undoLine,
 } from '@/lib/config-copy'
 
@@ -48,6 +59,7 @@ vi.mock('@/lib/api', async (importOriginal) => ({
   testLLMConnection: vi.fn(),
   deleteAuthCredential: vi.fn(),
   saveCredential: vi.fn(),
+  revealConfigValue: vi.fn(),
 }))
 
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
@@ -72,6 +84,15 @@ const LLMS = [
 
 // The credential-status read carries no secret; SECRET is what a leak would look like.
 const SECRET = 'sk-live-never-in-the-page'
+const HEADER_SECRET = 'org-header-secret'
+
+const PROXY = {
+  name: 'claude-proxy',
+  provider: 'anthropic-compatible',
+  model: 'claude-sonnet-4-20250514',
+  baseURL: 'https://proxy.example/anthropic',
+  providerHeaders: { 'X-Org': CONFIG_MASK_PLACEHOLDER },
+}
 
 function credentials(): AuthCredentialInfo[] {
   return [
@@ -209,6 +230,40 @@ function status(name: string) {
   return row(name)?.getAttribute('data-model-status')
 }
 
+async function type(input: Element | null, value: string) {
+  expect(input).not.toBeNull()
+  await act(async () => {
+    ;(input as HTMLInputElement).focus()
+    const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')?.set
+    setter?.call(input, value)
+    input!.dispatchEvent(new Event('input', { bubbles: true }))
+  })
+  await flush()
+}
+
+async function waitPastSettle() {
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(SETTLE_DELAY_MS * 3)
+  })
+  await flush()
+}
+
+function field(scope: ParentNode | null | undefined, pattern: string) {
+  return scope?.querySelector(`[data-field-path="${pattern}"]`) ?? null
+}
+
+function inputIn(scope: ParentNode | null | undefined, pattern: string) {
+  return (field(scope, pattern)?.querySelector('input') ?? null) as HTMLInputElement | null
+}
+
+function passwordInputs(scope: ParentNode | null | undefined) {
+  return Array.from(scope?.querySelectorAll('input[type="password"]') ?? []) as HTMLInputElement[]
+}
+
+function writes() {
+  return vi.mocked(applyConfigChanges).mock.calls
+}
+
 async function undo() {
   await act(async () => {
     await hook!.undo()
@@ -229,6 +284,7 @@ beforeEach(() => {
   vi.mocked(testLLMConnection).mockResolvedValue({ success: true })
   vi.mocked(deleteAuthCredential).mockResolvedValue({ deleted: true, undo: undoTicket('undo-credential') } as never)
   vi.mocked(saveCredential).mockResolvedValue({ saved: true, created: false } as never)
+  vi.mocked(revealConfigValue).mockResolvedValue({ value: HEADER_SECRET } as never)
 })
 
 afterEach(async () => {
@@ -426,5 +482,154 @@ describe('ModelRow explicit actions (429-24 Task 1)', () => {
     await undo()
     expect(hook!.status.state).toBe('failed')
     expect(status('gpt-5.6')).toBe('not-connected')
+  })
+})
+
+describe('ModelRow key and settings (429-24 Task 2)', () => {
+  it('REPLACE-KEY-SAVES-THEN-TESTS: the new key saves server-side, then the test runs, and a failed test keeps the key', async () => {
+    await mount()
+    expect(buttonNamed(await openModel('gpt-5.6'), REPLACE_KEY_LABEL)).toBeNull()
+
+    const panel = await openModel('flash')
+    await click(buttonNamed(panel, REPLACE_KEY_LABEL))
+    const [input] = passwordInputs(row('flash'))
+    expect(input).toBeDefined()
+    expect(input.getAttribute('autocomplete')).toBe('off')
+    expect(document.querySelector(`label[for="${input.id}"]`)?.textContent).toBe(NEW_KEY_LABEL)
+    expect(document.activeElement).toBe(input)
+
+    await type(input, SECRET)
+    await waitPastSettle()
+    expect(saveCredential).not.toHaveBeenCalled()
+    expect(applyConfigChanges).not.toHaveBeenCalled()
+    expect(hook!.draftTabs.size).toBe(0)
+    expect(JSON.stringify(localStorage)).not.toContain(SECRET)
+
+    const saved = deferred<{ saved: boolean; created: boolean }>()
+    vi.mocked(saveCredential).mockReturnValueOnce(saved.promise as never)
+    vi.mocked(testLLMConnection).mockResolvedValueOnce({ success: false, message: 'The key was refused.' })
+    await click(buttonNamed(row('flash'), SAVE_KEY_AND_TEST_LABEL))
+    expect(saveCredential).toHaveBeenCalledWith('flash', 'gemini', 'api-key', SECRET)
+    expect(testLLMConnection).not.toHaveBeenCalled()
+
+    await act(async () => {
+      saved.resolve({ saved: true, created: false })
+    })
+    await flush()
+    expect(testLLMConnection).toHaveBeenCalledTimes(1)
+    expect(vi.mocked(testLLMConnection).mock.calls[0][0]).toMatchObject({ configName: 'flash', provider: 'gemini' })
+    expect(passwordInputs(row('flash')).every((item) => item.value === '')).toBe(true)
+    expect(container!.innerHTML).not.toContain(SECRET)
+
+    const line = row('flash')!.querySelector('[data-test-result]')
+    expect(line?.getAttribute('data-test-result')).toBe('failed')
+    expect(line?.textContent).toContain('The key was refused.')
+    expect(deleteAuthCredential).not.toHaveBeenCalled()
+    expect(status('flash')).toBe('key-saved')
+    expect(document.activeElement).toBe(buttonNamed(row('flash'), REPLACE_KEY_LABEL))
+  })
+
+  it('KEEP-CURRENT-KEY-RESTORES-FOCUS: Keep current key drops the typed key, saves nothing and focuses Replace key', async () => {
+    await mount()
+    const panel = await openModel('flash')
+    await click(buttonNamed(panel, REPLACE_KEY_LABEL))
+    await type(passwordInputs(row('flash'))[0], SECRET)
+
+    await click(buttonNamed(row('flash'), KEEP_CURRENT_KEY_LABEL))
+    expect(passwordInputs(row('flash'))).toHaveLength(0)
+    expect(document.activeElement).toBe(buttonNamed(row('flash'), REPLACE_KEY_LABEL))
+    expect(saveCredential).not.toHaveBeenCalled()
+    expect(testLLMConnection).not.toHaveBeenCalled()
+    expect(container!.innerHTML).not.toContain(SECRET)
+
+    await click(buttonNamed(row('flash'), REPLACE_KEY_LABEL))
+    expect(passwordInputs(row('flash'))[0].value).toBe('')
+  })
+
+  it('MODEL-SETTINGS-AUTOSAVE: the row settings write by leaf, vision at once, and header values never autosave', async () => {
+    vi.mocked(fetchConfig).mockResolvedValue(answer(modelsConfig([...LLMS, PROXY])) as never)
+    await mount()
+
+    const flash = await openModel('flash')
+    expect(field(flash, 'registry.llms[].model')).not.toBeNull()
+    expect(field(flash, 'registry.llms[].baseURL')).toBeNull()
+    expect(field(flash, 'registry.llms[].providerHeaders')).toBeNull()
+
+    const router = await openModel('router')
+    expect(field(router, 'registry.llms[].providerHeaders')).toBeNull()
+    await type(inputIn(router, 'registry.llms[].model'), 'openrouter/fast')
+    await waitPastSettle()
+    await type(inputIn(router, 'registry.llms[].baseURL'), 'https://openrouter.ai/api/v2')
+    await waitPastSettle()
+    await type(inputIn(router, 'registry.llms[].contextWindow'), '128k')
+    await waitPastSettle()
+    const leaf = (key: string) => ['registry', 'llms', { name: 'router' }, key]
+    expect(writes()).toEqual([
+      [[{ op: 'set', path: leaf('model'), value: 'openrouter/fast' }]],
+      [[{ op: 'set', path: leaf('baseURL'), value: 'https://openrouter.ai/api/v2' }]],
+      [[{ op: 'set', path: leaf('contextWindow'), value: '128k' }]],
+    ])
+
+    const vision = field(row('router'), 'registry.llms[].vision')?.querySelector('[role="switch"]') as HTMLElement | null
+    expect(vision?.getAttribute('aria-checked')).toBe('true')
+    await act(async () => {
+      vision!.click()
+    })
+    expect(writes()[3]).toEqual([[{ op: 'set', path: leaf('vision'), value: false }]])
+
+    const proxy = await openModel('claude-proxy')
+    const secret = field(proxy, 'registry.llms[].providerHeaders.*')
+    expect(secret?.textContent).toContain(CONFIG_MASK_PLACEHOLDER)
+    const name = inputIn(proxy, 'registry.llms[].providerHeaders')
+    expect(name?.value).toBe('X-Org')
+    await type(name, 'X-Team')
+    await waitPastSettle()
+    const headers = ['registry', 'llms', { name: 'claude-proxy' }, 'providerHeaders']
+    expect(revealConfigValue).toHaveBeenCalledWith([...headers, 'X-Org'])
+    expect(writes()[4]).toEqual([
+      [
+        { op: 'unset', path: [...headers, 'X-Org'] },
+        { op: 'set', path: [...headers, 'X-Team'], value: HEADER_SECRET },
+      ],
+    ])
+    expect(container!.innerHTML).not.toContain(HEADER_SECRET)
+
+    await click(buttonNamed(row('claude-proxy'), ADD_HEADER_LABEL))
+    const draft = row('claude-proxy')!.querySelector('[data-header-draft]')
+    const [draftName] = Array.from(draft?.querySelectorAll('input:not([type="password"])') ?? []) as HTMLInputElement[]
+    const [draftValue] = passwordInputs(draft)
+    expect(draftValue?.getAttribute('autocomplete')).toBe('off')
+    await type(draftName, 'X-Trace')
+    await type(draftValue, 'trace-secret')
+    await waitPastSettle()
+    expect(writes()).toHaveLength(5)
+    expect(JSON.stringify(localStorage)).not.toContain('trace-secret')
+    expect(hook!.draftTabs.size).toBe(0)
+
+    await click(buttonNamed(row('claude-proxy'), SAVE_HEADER_LABEL))
+    expect(writes()[5]).toEqual([[{ op: 'set', path: [...headers, 'X-Trace'], value: 'trace-secret' }]])
+    expect(container!.innerHTML).not.toContain('trace-secret')
+  })
+
+  it('NAME-AND-PROVIDER-FIXED: the open row states the name and connection as fixed facts and offers no input for them', async () => {
+    await mount()
+    const panel = await openModel('router')
+    expect(panel?.querySelector('[data-model-fixed]')?.textContent).toBe(
+      fixedFactsLine(FIXED_CONNECTION_LABELS['openai-compatible']),
+    )
+    // The row's editable fields are its leaves; name and provider are not among them.
+    const paths = Array.from(panel?.querySelectorAll('[data-field-path]') ?? []).map((item) => item.getAttribute('data-field-path'))
+    expect(paths).toEqual([
+      'registry.llms[].model',
+      'registry.llms[].baseURL',
+      'registry.llms[].vision',
+      'registry.llms[].contextWindow',
+    ])
+    expect(field(panel, 'registry.llms[].name')).toBeNull()
+    expect(field(panel, 'registry.llms[].provider')).toBeNull()
+    const values = (Array.from(panel?.querySelectorAll('input') ?? []) as HTMLInputElement[]).map((input) => input.value)
+    expect(values).not.toContain('router')
+    expect(values).not.toContain('openai-compatible')
+    expect(panel?.querySelector('select, [role="combobox"], [role="radio"]')).toBeNull()
   })
 })
