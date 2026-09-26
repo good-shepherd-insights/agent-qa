@@ -65,6 +65,8 @@ const SUITE_RUN = 'r_428_suite'
 const SECRET_RUN = 'r_428_secret'
 const OLD_PRODUCER_RUN = 'r_428_old_producer'
 const LONG_RUN = 'r_428_long_label'
+/** A two-member suite whose second member starts while the page watches (428-33, G-428-3). */
+const FOLLOW_RUN = 'r_428_suite_follow'
 
 const SINGLE_TITLE = 'Checkout keeps the basket'
 const SUITE_MEMBERS = ['the sign-in member', 'the basket member'] as const
@@ -81,6 +83,14 @@ const LONG_STEP_TEXT =
   'Select "Show" from the navbar, scroll to the end and click more, wait for the whole list to finish '
   + 'loading, then type <SECRET_1> into the search box and check that every card in the grid keeps its '
   + 'full title, its price and its supercalifragilisticexpialidocious caption visible without being cut off'
+/** FOLLOW_RUN's two members, each with its step texts. */
+const FOLLOW_MEMBERS = [
+  { name: 'the first follow member', totalSteps: 1, stepTexts: ['open the first page'] },
+  { name: 'the second follow member', totalSteps: 1, stepTexts: ['open the second page'] },
+] as const
+/** How long the follow cell waits for the second member's mint, and samples for member-ended after it starts. */
+const FOLLOW_MINT_BUDGET_MS = 15_000
+const FOLLOW_SAMPLE_MS = 3_000
 /** Every word the long label paints outside its placeholder. */
 const LONG_STEP_WORDS = LONG_STEP_TEXT.replace(/<SECRET_\d+>/gu, ' ').split(/\s+/u).filter((word) => word !== '')
 
@@ -105,7 +115,25 @@ interface PlantedMember {
   readonly stepTexts?: readonly string[]
 }
 
-function plantRun(runId: string, members: readonly PlantedMember[]): PlantedLiveRun {
+function publishTestStarted(run: PlantedLiveRun, testIndex: number, member: PlantedMember): void {
+  publishTo(run, 'testStarted', {
+    testId: `t${String(testIndex)}`,
+    testIndex,
+    name: member.name,
+    totalSteps: member.totalSteps,
+    ...(member.stepTexts === undefined ? {} : { stepTexts: [...member.stepTexts] }),
+  })
+}
+
+/**
+ * Plant a run and start its members. The roster defaults to [0], the shape every run here had
+ * before 428-33; `started` says how many members start at plant time, so a cell can start the rest.
+ */
+function plantRun(
+  runId: string,
+  members: readonly PlantedMember[],
+  options: { roster?: readonly number[]; started?: number } = {},
+): PlantedLiveRun {
   const run = plantLiveRun({
     runId,
     heartbeatMs: 10_000,
@@ -114,18 +142,18 @@ function plantRun(runId: string, members: readonly PlantedMember[]): PlantedLive
   })
   plantedRuns.push(run)
   held().harness.plant(run)
-  publishTo(run, 'runStarted', { busSchemaVersion: 1, memberTestCount: members.length, handles: [0] })
-  members.forEach((member, testIndex) => {
-    publishTo(run, 'testStarted', {
-      testId: `t${String(testIndex)}`,
-      testIndex,
-      name: member.name,
-      totalSteps: member.totalSteps,
-      ...(member.stepTexts === undefined ? {} : { stepTexts: [...member.stepTexts] }),
-    })
+  publishTo(run, 'runStarted', {
+    busSchemaVersion: 1,
+    memberTestCount: members.length,
+    handles: [...(options.roster ?? [0])],
+  })
+  members.slice(0, options.started ?? members.length).forEach((member, testIndex) => {
+    publishTestStarted(run, testIndex, member)
   })
   return run
 }
+
+let followRun: PlantedLiveRun | undefined
 
 beforeAll(async () => {
   expect(buildFreshness(DASHBOARD_ANCHORED_BUILDS), REBUILD_INSTRUCTION)
@@ -182,6 +210,12 @@ beforeAll(async () => {
   const long = plantRun(LONG_RUN, [{ name: 'the long member', totalSteps: 1, stepTexts: [LONG_STEP_TEXT] }])
   harness.insertRunRow({ runId: LONG_RUN, name: 'The long label', status: 'running' })
   publishTo(long, 'stepStarted', { testIndex: 0, stepIndex: 0, stepText: LONG_STEP_TEXT })
+
+  // A suite of two whose first member is running and whose second has not started (428-33,
+  // G-428-3). The follow cell finishes the first and starts the second while the page watches.
+  followRun = plantRun(FOLLOW_RUN, FOLLOW_MEMBERS, { roster: [0, 1], started: 1 })
+  harness.insertRunRow({ runId: FOLLOW_RUN, name: 'The follow suite', status: 'running' })
+  publishTo(followRun, 'stepStarted', { testIndex: 0, stepIndex: 0, stepText: FOLLOW_MEMBERS[0].stepTexts[0] })
 }, 180_000)
 
 afterAll(async () => {
@@ -200,10 +234,12 @@ async function onLivePage<T>(
   runId: string,
   body: (page: Page) => Promise<T>,
   viewport: { width: number; height: number } = DESKTOP,
+  beforeGoto?: (page: Page) => void,
 ): Promise<T> {
   const context = await held().browser.newContext({ viewport })
   try {
     const page = await context.newPage()
+    beforeGoto?.(page)
     await page.goto(`${held().harness.origin}/runs/${encodeURIComponent(runId)}/live`)
     return await body(page)
   } finally {
@@ -663,3 +699,128 @@ function expectRecovered(reading: FlipReading, stacked: boolean): void {
   expect(reading.recoveredAfterMs, `${context} — healthy again within the budget, and stayed so`)
     .toBeLessThan(FLIP_TO_GREEN_BUDGET_MS - 500)
 }
+
+// A SUITE'S PAGE FOLLOWS ITS RUNNING MEMBER, WITH NO SELECTOR (428-33 · G-428-3, owner decision
+// 2026-09-26 (3)). The planted run's frames ignore the handle, so every handle streams; a minted
+// liveUrl carries its handle only inside the signed fragment token, so the cell observes the mint
+// request `/live-url?handle=N` and the liveUrl its response answered with.
+
+interface MintSeen {
+  handle: string | null
+  status: number
+  liveUrl: string | undefined
+  /** When the answer was read, by the test's clock. */
+  at: number
+}
+
+/** Record every mint the page asks for and what it was answered, from before the page loads. */
+function recordMints(page: Page, mints: MintSeen[]): void {
+  page.on('response', (response) => {
+    if (!response.url().includes('/live-url')) return
+    const handle = new URL(response.url()).searchParams.get('handle')
+    void response.json().then(
+      (body: unknown) => {
+        const liveUrl = (body as { liveUrl?: unknown }).liveUrl
+        mints.push({
+          handle,
+          status: response.status(),
+          liveUrl: typeof liveUrl === 'string' ? liveUrl : undefined,
+          at: Date.now(),
+        })
+      },
+      () => { mints.push({ handle, status: response.status(), liveUrl: undefined, at: Date.now() }) },
+    )
+  })
+}
+
+/** The iframe's src with the preview's host hint taken back out, which is the liveUrl it embeds. */
+function withoutHostHint(src: string): string {
+  return src.includes('&host=dashboard') ? src.replace('&host=dashboard', '') : src.replace('?host=dashboard', '')
+}
+
+/** A mint as the log may show it: the handle and the url without its fragment, which is the token. */
+function redactedMint(mint: MintSeen): { handle: string | null; status: number; liveUrl: string | undefined } {
+  return { handle: mint.handle, status: mint.status, liveUrl: mint.liveUrl?.split('#')[0] }
+}
+
+describe('a suite\'s shipped page follows its running member (428-33, G-428-3)', () => {
+  it('FOLLOWS-RUNNING-MEMBER-SHIPPED: member 1 starting mints for handle 1, the embed switches to it, and the dot is green again', async () => {
+    const run = followRun
+    if (run === undefined) throw new Error('FOLLOW_RUN was never planted')
+    const mints: MintSeen[] = []
+    await onLivePage(FOLLOW_RUN, async (page) => {
+      await waitForGreen(page)
+      const before = mints.map(redactedMint)
+      expect(before.length, JSON.stringify(before)).toBeGreaterThanOrEqual(1)
+      expect(before.every((mint) => mint.handle === '0'), `${JSON.stringify(before)} — the control: member 0 is watched`).toBe(true)
+
+      publishTo(run, 'stepFinalized', { testIndex: 0, stepIndex: 0, status: 'passed', durationMs: 1_000 })
+      publishTo(run, 'testFinished', { testId: 't0', testIndex: 0, outcome: 'passed', durationMs: 10 })
+      publishTestStarted(run, 1, FOLLOW_MEMBERS[1])
+      publishTo(run, 'stepStarted', { testIndex: 1, stepIndex: 0, stepText: FOLLOW_MEMBERS[1].stepTexts[0] })
+      const startedAt = Date.now()
+
+      const states: string[] = []
+      while (Date.now() - startedAt < FOLLOW_SAMPLE_MS) {
+        const state = await page.evaluate(() =>
+          document.querySelector('[data-preview-state]')?.getAttribute('data-preview-state') ?? 'none')
+        if (states[states.length - 1] !== state) states.push(state)
+        await page.waitForTimeout(100)
+      }
+
+      let second: MintSeen | undefined
+      while (second === undefined && Date.now() - startedAt < FOLLOW_MINT_BUDGET_MS) {
+        second = mints.find((mint) => mint.handle === '1' && mint.liveUrl !== undefined)
+        if (second === undefined) await page.waitForTimeout(100)
+      }
+      const secondAfterMs = second === undefined ? undefined : second.at - startedAt
+      const trace = { before, states, mints: mints.map(redactedMint), secondAfterMs }
+      console.log(`FOLLOWS-RUNNING-MEMBER-SHIPPED: ${JSON.stringify(trace)}`)
+      expect(second, `${JSON.stringify(trace)} — a mint for handle 1 within 15 s`).toBeDefined()
+      expect(states, `${JSON.stringify(trace)} — never the member-finished sentence while member 1 runs`)
+        .not.toContain('member-ended')
+      const wanted = second?.liveUrl ?? ''
+
+      let embedded = ''
+      while (Date.now() - startedAt < FOLLOW_MINT_BUDGET_MS) {
+        embedded = withoutHostHint(await page.locator('[data-live-embed]').getAttribute('src', { timeout: 1_000 }).catch(() => '') ?? '')
+        if (embedded === wanted) break
+        await page.waitForTimeout(100)
+      }
+      expect(embedded === wanted, `${JSON.stringify(trace)} — the iframe embeds the handle 1 mint`).toBe(true)
+
+      await waitForGreen(page)
+      const after = await page.evaluate(() => ({
+        state: document.querySelector('[data-preview-state]')?.getAttribute('data-preview-state') ?? null,
+        dot: document.querySelector('[data-live-dot]')?.getAttribute('data-live-dot') ?? null,
+        embeds: document.querySelectorAll('[data-live-embed]').length,
+        selects: document.querySelectorAll('select').length,
+        pickers: document.querySelectorAll('[data-handle-picker]').length,
+      }))
+      expect(after, JSON.stringify({ ...trace, after })).toEqual({ state: 'live', dot: 'green', embeds: 1, selects: 0, pickers: 0 })
+      await capturePage(page, '428-live-suite-follow-1280')
+    }, DESKTOP, (page) => { recordMints(page, mints) })
+  }, 120_000)
+
+  it('NO-HANDLE-PICKER-SHIPPED: a two-member suite has no select, no handle picker and no watching label at 1280 and 400', async () => {
+    for (const viewport of [DESKTOP, NARROW]) {
+      await onLivePage(FOLLOW_RUN, async (page) => {
+        await page.locator('[data-member="0"]').waitFor({ state: 'attached', timeout: 40_000 })
+        await page.locator('[data-live-preview]').waitFor({ state: 'attached', timeout: 40_000 })
+        await page.locator('[data-live-embed]').waitFor({ state: 'attached', timeout: 40_000 })
+        const reading = await page.evaluate(() => ({
+          roster: document.querySelectorAll('[data-member]').length,
+          previews: document.querySelectorAll('[data-live-preview]').length,
+          selects: document.querySelectorAll('select').length,
+          pickers: document.querySelectorAll('[data-handle-picker]').length,
+          watching: /\bwatching\b/iu.test(document.body.innerText),
+        }))
+        const context = `${String(viewport.width)} px: ${JSON.stringify(reading)}`
+        expect(reading.previews, `${context} — the control: the preview is on the page`).toBe(1)
+        expect(reading.roster, `${context} — the control: the suite's members are on the page`).toBeGreaterThanOrEqual(1)
+        expect({ selects: reading.selects, pickers: reading.pickers, watching: reading.watching }, context)
+          .toEqual({ selects: 0, pickers: 0, watching: false })
+      }, viewport)
+    }
+  }, 120_000)
+})
