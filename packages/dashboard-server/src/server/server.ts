@@ -10,7 +10,7 @@ import type { ExecutionBackend, RunSettledDetails, RunSettledStatus } from '../e
 import { JobQueue } from '../queue/job-queue.js'
 import { TestFileManager } from '../tests/test-file-manager.js'
 import { SuiteFileManager } from '../tests/suite-file-manager.js'
-import { ConfigManager } from '../config/index.js'
+import { ConfigManager, readConfigValues } from '../config/index.js'
 import { AppiumManager } from '../execution/appium-manager.js'
 import { WebSocketServer } from 'ws'
 import { SessionManager } from '../live-editor/session-manager.js'
@@ -292,7 +292,7 @@ export async function startServer(opts: StartServerOptions): Promise<{
   const configManager = new ConfigManager(resolvedConfigPath)
 
   // Read concurrency from config (defaults to os.cpus().length)
-  const config = await configManager.read().catch(() => ({}))
+  const config = await readConfigValues(configManager).catch(() => ({}))
   const concurrency = typeof (config as any).concurrency === 'number'
     ? (config as any).concurrency
     : cpus().length

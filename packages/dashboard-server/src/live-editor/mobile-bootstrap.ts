@@ -11,7 +11,7 @@ import type {
 } from '@vostride/agent-qa-core'
 import type { PlatformConfig } from '@vostride/agent-qa-runner'
 import type { AppiumManager } from '../execution/appium-manager.js'
-import type { ConfigManager } from '../config/index.js'
+import { readConfigValues, type ConfigManager } from '../config/index.js'
 
 interface LocalMobileBindings {
   devices?: Record<string, Record<string, unknown>>
@@ -89,7 +89,7 @@ export async function prepareMobileLiveSession(
     })
   }
 
-  const config = await input.configManager.read()
+  const config = await readConfigValues(input.configManager)
   let localBindings: LocalMobileBindings | null = null
 
   try {

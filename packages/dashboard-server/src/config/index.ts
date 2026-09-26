@@ -1,1 +1,7 @@
-export { ConfigManager, carriesMaskPlaceholder, MASK_WRITTEN_BACK } from './config-manager.js'
+export {
+  ConfigFileInvalidError,
+  ConfigManager,
+  carriesMaskPlaceholder,
+  MASK_WRITTEN_BACK,
+  readConfigValues,
+} from './config-manager.js'

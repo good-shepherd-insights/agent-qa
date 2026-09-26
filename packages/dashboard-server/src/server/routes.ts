@@ -8,7 +8,7 @@ import type { ExecutionBackend } from '../execution/execution-backend.js'
 import type { JobQueue } from '../queue/job-queue.js'
 import { extractTestFileMetadata, type SupportedPlatform, type TestFileManager } from '../tests/test-file-manager.js'
 import type { SuiteFileManager } from '../tests/suite-file-manager.js'
-import { carriesMaskPlaceholder, MASK_WRITTEN_BACK, type ConfigManager } from '../config/index.js'
+import { readConfigValues, type ConfigManager } from '../config/index.js'
 import { createUndoStore, UNDO_RETENTION_MS } from '../config/undo-store.js'
 import { HookRegistryManager, isHookRegistryMutationError } from '../hooks/hook-registry-manager.js'
 import { readJsonBody } from './body-parser.js'
@@ -71,7 +71,7 @@ import {
 import { createConnectInFlight, registerLlmConnectRoute } from './llm-connect-route.js'
 import type { PostProcessingRelay } from '../execution/post-processing-relay.js'
 import type { LLMAuthProviderPlugin, OAuthTokens } from '@vostride/agent-qa-core'
-import { AuthStateNameSchema, buildInternalRunAttributes, mergeRunAttributes, readAuth, writeAuth, removeAuth, getAgentQaVersion, getAgentQaUpdateStatus, getLLMAuthProviderPlugin, listAuthStateMetadata, listLLMAuthProviderPlugins, ModelConfigSchema, NamedLLMConfigSchema, NameSlugSchema, WorkspaceSchema, ServicesSchema, RegistrySchema, UseSchema, MobileAppStateSchema, TimeoutConfigSchema, CacheConfigSchema, PlannerConfigSchema, LoggingConfigSchema, LogCaptureConfigSchema, AccessibilityConfigSchema, DashboardConfigSchema, McpConfigSchema, RecordingConfigSchema, BrowserConfigSchema, AnalyticsSchema, AgentQaConfigSchema, TestDefinitionSchema, SuiteDefinitionSchema, parseEnvFile, serializeEnvFile, parseHooksFile, RUNTIME_IMAGE_MAP, redactAuthStateValue, validateUserRunAttributes, discoverWorkspaceFiles, isWorkspacePathMatch, resolveWorkspaceFileTarget, SizeString, KnowledgeConfigSchema } from '@vostride/agent-qa-core'
+import { AuthStateNameSchema, buildInternalRunAttributes, mergeRunAttributes, readAuth, writeAuth, removeAuth, getAgentQaVersion, getAgentQaUpdateStatus, getLLMAuthProviderPlugin, listAuthStateMetadata, listLLMAuthProviderPlugins, ModelConfigSchema, NameSlugSchema, TimeoutConfigSchema, AgentQaConfigSchema, TestDefinitionSchema, SuiteDefinitionSchema, parseEnvFile, serializeEnvFile, parseHooksFile, RUNTIME_IMAGE_MAP, redactAuthStateValue, validateUserRunAttributes, discoverWorkspaceFiles, isWorkspacePathMatch, resolveWorkspaceFileTarget, SizeString } from '@vostride/agent-qa-core'
 import { SecretStore, SecretRedactor } from '@vostride/agent-qa-runner'
 import { DockerHookExecutor } from '@vostride/agent-qa-runner-local'
 import type { ResolvedWorkspacePaths, RunAttributes, WorkspaceFileKind, WorkspaceFileRecord } from '@vostride/agent-qa-core'
@@ -106,10 +106,6 @@ type DashboardExecutionTimeoutSource =
   | 'suite.use.timeout.test'
   | 'config.use.timeout.test'
   | 'none'
-
-type ConfigSectionValidationResult =
-  | { success: true }
-  | { success: false; error: { issues: { message: string; path: PropertyKey[] }[] } }
 
 interface DashboardExecutionTimeout {
   timeoutMs?: number
@@ -152,7 +148,7 @@ async function findRegistryLlm(
   configManager: ConfigManager,
   name: string,
 ): Promise<{ provider?: unknown } | undefined> {
-  const config = await configManager.read() as { registry?: { llms?: unknown[] } }
+  const config = await readConfigValues(configManager) as { registry?: { llms?: unknown[] } }
   const llms = Array.isArray(config.registry?.llms) ? config.registry.llms : []
   return llms.find((item) => {
     return Boolean(item)
@@ -389,7 +385,7 @@ async function resolveDashboardRuntimeLLM(
     return { ok: true, llmConfig: fallbackLLMConfig, authFetch: fallbackAuthFetch }
   }
 
-  const rawConfig = await configManager.read()
+  const rawConfig = await readConfigValues(configManager)
   const registry = isPlainRecord(rawConfig.registry) ? rawConfig.registry : {}
   const use = isPlainRecord(rawConfig.use) ? rawConfig.use : {}
   const llms = Array.isArray(registry.llms) ? registry.llms : []
@@ -710,23 +706,9 @@ function parseAnalyticsScopePredicates(config: Record<string, unknown> | undefin
   return { ok: true, predicates }
 }
 
-function validateAnalyticsPassRateScope(value: unknown): ConfigSectionValidationResult {
-  const result = AnalyticsSchema.shape.passRateScope.safeParse(value)
-  if (result.success) return { success: true }
-  return {
-    success: false,
-    error: {
-      issues: result.error.issues.map((issue) => ({
-        message: issue.message,
-        path: issue.path,
-      })),
-    },
-  }
-}
-
 async function readAnalyticsScopePredicates(configManager: ConfigManager | undefined): Promise<{ ok: true; predicates: AttributePredicate[] } | { ok: false; error: string }> {
   if (!configManager) return { ok: true, predicates: [] }
-  const config = await configManager.read()
+  const config = await readConfigValues(configManager)
   const parsedConfig = AgentQaConfigSchema.safeParse(config)
   if (!parsedConfig.success) {
     return { ok: true, predicates: [] }
@@ -797,7 +779,7 @@ function getTargetPlatformMap(config: unknown): Map<string, SupportedPlatform> {
 async function readTargetPlatformMap(configManager?: ConfigManager): Promise<Map<string, SupportedPlatform>> {
   if (!configManager) return new Map()
   try {
-    const config = await configManager.read()
+    const config = await readConfigValues(configManager)
     return getTargetPlatformMap(config)
   } catch {
     return new Map()
@@ -827,7 +809,7 @@ function parseUseTestTimeoutMs(useConfig: unknown): number | undefined {
 async function readConfigTestTimeoutMs(configManager?: ConfigManager): Promise<number | undefined> {
   if (!configManager) return undefined
   try {
-    const config = await configManager.read()
+    const config = await readConfigValues(configManager)
     const parsed = AgentQaConfigSchema.safeParse(config)
     if (parsed.success) {
       return parseUseTestTimeoutMs(parsed.data.use)
@@ -872,7 +854,7 @@ function parseUseParallel(useConfig: unknown): boolean | undefined {
 async function readConfigUseParallel(configManager?: ConfigManager): Promise<boolean | undefined> {
   if (!configManager) return undefined
   try {
-    const config = await configManager.read()
+    const config = await readConfigValues(configManager)
     const parsed = AgentQaConfigSchema.safeParse(config)
     if (parsed.success) {
       return parseUseParallel(parsed.data.use)
@@ -1972,7 +1954,7 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps): (req: In
       }
       ;(async () => {
         try {
-          const config = await configManager.read()
+          const config = await readConfigValues(configManager)
           const targetName = url.searchParams.get('target') ?? undefined
           const authStates = await listAuthStateMetadata({
             configDir: dirname(resolve(deps.configPath!)),
@@ -3530,7 +3512,7 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps): (req: In
       }
       ;(async () => {
         try {
-          const config = await configManager.read()
+          const config = await readConfigValues(configManager)
           const configObj = config as Record<string, unknown>
           const registry = configObj.registry as Record<string, unknown> | undefined
           const targets = registry?.targets as Record<string, unknown> | undefined
@@ -3579,89 +3561,6 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps): (req: In
       return
     }
 
-    // PUT /api/config/llms — update registry.llms array + use.llm
-    if (path === '/api/config/llms' && req.method === 'PUT') {
-      if (!configManager) {
-        json(res, { error: 'Config management not available' }, 501)
-        return
-      }
-      readJsonBody<{ llms: unknown[]; defaultLLM?: string; activeLlm?: string }>(req)
-        .then(async (body) => {
-          try {
-            if (!Array.isArray(body.llms) || body.llms.length === 0) {
-              json(res, { error: 'llms array is required and must not be empty' }, 400)
-              return
-            }
-            const selectedLlm = body.activeLlm ?? body.defaultLLM
-            const errors: string[] = []
-            const names: string[] = []
-            const sanitizedArray: Array<ReturnType<typeof NamedLLMConfigSchema.parse>> = []
-            for (const item of body.llms) {
-              const result = NamedLLMConfigSchema.safeParse(item)
-              if (!result.success) {
-                for (const issue of result.error.issues) {
-                  errors.push(`${issue.path.join('.')}: ${issue.message}`)
-                }
-              } else {
-                names.push(result.data.name)
-                sanitizedArray.push(result.data)
-              }
-            }
-            const dupes = names.filter((n, i) => names.indexOf(n) !== i)
-            if (dupes.length > 0) {
-              errors.push(`Duplicate config names: ${[...new Set(dupes)].join(', ')}`)
-            }
-            if (!selectedLlm || !names.includes(selectedLlm)) {
-              errors.push(`use.llm "${selectedLlm}" does not match any name in registry.llms`)
-            }
-            if (errors.length > 0) {
-              json(res, { error: 'Validation failed', details: errors }, 400)
-              return
-            }
-            await configManager.replaceSectionRaw('registry.llms', sanitizedArray)
-            await configManager.replaceSectionRaw('use.llm', selectedLlm)
-            json(res, { updated: true })
-          } catch (err: unknown) {
-            json(res, { error: err instanceof Error ? err.message : 'Failed to update LLM config' }, 500)
-          }
-        })
-        .catch(() => json(res, { error: 'Invalid request body' }, 400))
-      return
-    }
-
-    // PUT /api/config/default-llm — switch active LLM (use.llm)
-    if (path === '/api/config/default-llm' && req.method === 'PUT') {
-      if (!configManager) {
-        json(res, { error: 'Config management not available' }, 501)
-        return
-      }
-      readJsonBody<{ defaultLLM?: string; llm?: string }>(req)
-        .then(async (body) => {
-          try {
-            const llmName = body.llm ?? body.defaultLLM
-            if (!llmName || typeof llmName !== 'string') {
-              json(res, { error: 'use.llm string is required' }, 400)
-              return
-            }
-            const config = await configManager.read()
-            const configObj = config as Record<string, unknown>
-            const registry = configObj.registry as Record<string, unknown> | undefined
-            const llms = (registry?.llms ?? configObj.llms) as Array<Record<string, unknown>> | undefined
-            const names = (llms ?? []).map((c) => c.name as string)
-            if (!names.includes(llmName)) {
-              json(res, { error: `use.llm "${llmName}" does not match any name in registry.llms` }, 400)
-              return
-            }
-            await configManager.replaceSectionRaw('use.llm', llmName)
-            json(res, { updated: true })
-          } catch (err: unknown) {
-            json(res, { error: err instanceof Error ? err.message : 'Failed to update use.llm' }, 500)
-          }
-        })
-        .catch(() => json(res, { error: 'Invalid request body' }, 400))
-      return
-    }
-
     // POST /api/config/farm/test-connection — test farm provider credentials
     if (path === '/api/config/farm/test-connection' && req.method === 'POST') {
       readJsonBody<{ provider: string; username: string; accessKey: string }>(req)
@@ -3684,167 +3583,6 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps): (req: In
             }
           } catch (err) {
             json(res, { success: false, error: err instanceof Error ? err.message : 'Connection failed' })
-          }
-        })
-        .catch(() => json(res, { error: 'Invalid request body' }, 400))
-      return
-    }
-
-    // PUT /api/config/settings — update config sections
-    if (path === '/api/config/settings' && req.method === 'PUT') {
-      if (!configManager) {
-        json(res, { error: 'Config management not available' }, 501)
-        return
-      }
-      readJsonBody<Record<string, unknown>>(req)
-        .then(async (body) => {
-          try {
-            const sectionValidators: Record<string, { safeParse: (v: unknown) => ConfigSectionValidationResult }> = {
-              'use.timeout': TimeoutConfigSchema,
-              'use.planner': PlannerConfigSchema,
-              'use.logCapture': LogCaptureConfigSchema,
-              'use.browser': BrowserConfigSchema,
-              'use.browser.headless': BrowserConfigSchema.shape.headless,
-              'knowledge': KnowledgeConfigSchema,
-              'services.vision': ServicesSchema.shape.vision,
-              'services.cache': CacheConfigSchema,
-              'services.logging': LoggingConfigSchema,
-              'services.recording': RecordingConfigSchema,
-              'services.accessibility': AccessibilityConfigSchema,
-              'services.dashboard': DashboardConfigSchema,
-              'services.mcp': McpConfigSchema,
-              'registry.targets': RegistrySchema.shape.targets,
-              'registry.devices': RegistrySchema.shape.devices,
-              'registry.providers': RegistrySchema.shape.providers,
-              'analytics.passRateScope': { safeParse: validateAnalyticsPassRateScope },
-              'workspace.testMatch': WorkspaceSchema.shape.testMatch,
-              'workspace.suiteMatch': WorkspaceSchema.shape.suiteMatch,
-              'workspace.hooksFile': WorkspaceSchema.shape.hooksFile,
-              'workspace.envFile': WorkspaceSchema.shape.envFile,
-              'workspace.secretsFile': WorkspaceSchema.shape.secretsFile,
-              'use.mobile': UseSchema.shape.mobile,
-              'use.mobile.appState': MobileAppStateSchema,
-              'use.parallel': UseSchema.shape.parallel,
-            }
-            const objectSections = [
-              'use.timeout',
-              'use.planner',
-              'use.logCapture',
-              'use.browser',
-              'use.mobile',
-              'knowledge',
-              'services.vision',
-              'services.cache',
-              'services.logging',
-              'services.recording',
-              'services.accessibility',
-              'services.dashboard',
-              'services.mcp',
-              'registry.targets',
-              'registry.devices',
-              'registry.providers',
-              'analytics.passRateScope',
-            ] as const
-            const arraySections = ['workspace.testMatch', 'workspace.testPathIgnore', 'workspace.suiteMatch', 'registry.llms'] as const
-            const scalarSections = [
-              'workspace.hooksFile',
-              'workspace.envFile',
-              'workspace.secretsFile',
-              'use.llm',
-              'use.mobile.appState',
-              'use.browser.headless',
-              'use.parallel',
-            ] as const
-
-            const currentConfig = await configManager.read()
-            const currentUse = isRecord(currentConfig.use) ? currentConfig.use : {}
-            const currentBrowser = isRecord(currentUse.browser) ? currentUse.browser : {}
-            const currentHasRootHeadless = typeof currentUse.headless === 'boolean'
-            const currentHasBrowserHeadless = typeof currentBrowser.headless === 'boolean'
-            const requestHasRootHeadless = Object.prototype.hasOwnProperty.call(body, 'use.headless')
-            const requestHasBrowserHeadlessScalar = Object.prototype.hasOwnProperty.call(body, 'use.browser.headless')
-            const requestBrowserBlock = body['use.browser']
-            const requestHasBrowserHeadlessObject = isRecord(requestBrowserBlock) && typeof requestBrowserBlock.headless === 'boolean'
-            if (
-              currentHasRootHeadless
-              && !currentHasBrowserHeadless
-              && !requestHasBrowserHeadlessScalar
-              && !requestHasBrowserHeadlessObject
-            ) {
-              body['use.browser.headless'] = currentUse.headless
-            }
-
-            const allowedSettingsPaths = new Set<string>([
-              ...Object.keys(sectionValidators),
-              ...objectSections,
-              ...arraySections,
-              ...scalarSections,
-              'use.headless',
-            ])
-            const unsupportedKeys = Object.keys(body).filter((key) => !allowedSettingsPaths.has(key))
-            if (unsupportedKeys.length > 0) {
-              json(res, { error: 'Unsupported setting path', details: unsupportedKeys }, 400)
-              return
-            }
-            // 429-05 Pitfall 4: refused before any section is written, so a masked value served by
-            // GET can never land in the file, not even after an earlier section of the same save.
-            if (carriesMaskPlaceholder(body)) {
-              json(res, { error: MASK_WRITTEN_BACK }, 400)
-              return
-            }
-
-            const errors: string[] = []
-            for (const [section, validator] of Object.entries(sectionValidators)) {
-              const value = body[section]
-              if (value !== undefined) {
-                const result = validator.safeParse(value)
-                if (!result.success) {
-                  for (const issue of result.error!.issues) {
-                    const path = issue.path.length ? `${section}.${issue.path.map(String).join('.')}` : section
-                    errors.push(`${path}: ${issue.message}`)
-                  }
-                }
-              }
-            }
-
-            if (Array.isArray(body['registry.llms'])) {
-              for (const [idx, item] of (body['registry.llms'] as unknown[]).entries()) {
-                const result = NamedLLMConfigSchema.safeParse(item)
-                if (!result.success) {
-                  for (const issue of result.error!.issues) {
-                    const p = issue.path.length ? `registry.llms[${idx}].${issue.path.join('.')}` : `registry.llms[${idx}]`
-                    errors.push(`${p}: ${issue.message}`)
-                  }
-                }
-              }
-            }
-
-            if (errors.length > 0) {
-              json(res, { error: 'Validation failed', details: errors }, 400)
-              return
-            }
-
-            for (const section of objectSections) {
-              if (body[section] && typeof body[section] === 'object') {
-                await configManager.replaceSection(section, body[section] as Record<string, unknown>)
-              }
-            }
-            for (const section of arraySections) {
-              if (body[section] !== undefined) {
-                await configManager.replaceSectionRaw(section, body[section])
-              }
-            }
-            for (const section of scalarSections) {
-              if (body[section] !== undefined) {
-                await configManager.replaceSectionRaw(section, body[section])
-              }
-            }
-            if (currentHasRootHeadless || requestHasRootHeadless) {
-              await configManager.deleteSectionRaw('use.headless')
-            }
-            json(res, { updated: true })
-          } catch (err: unknown) {
-            json(res, { error: err instanceof Error ? err.message : 'Failed to update settings' }, 500)
           }
         })
         .catch(() => json(res, { error: 'Invalid request body' }, 400))
@@ -4460,7 +4198,7 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps): (req: In
             return
           }
           try {
-            const cfg = await configManager.read()
+            const cfg = await readConfigValues(configManager)
             const cacheDir = (cfg as {
               services?: { cache?: { dir?: string } }
               cache?: { dir?: string }

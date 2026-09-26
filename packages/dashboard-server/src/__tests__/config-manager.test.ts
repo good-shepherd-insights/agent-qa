@@ -710,9 +710,6 @@ describe('ConfigManager broken files, missing files and the mask guard (429-05)'
     for (const outcome of outcomes) {
       expect(outcome).toEqual({ kind: 'refused', error: 'mask_written_back' })
     }
-    await expect(manager.updateSection('registry.providers', maskedProviders)).rejects.toThrow('mask_written_back')
-    await expect(manager.replaceSection('registry.providers', maskedProviders)).rejects.toThrow('mask_written_back')
-    await expect(manager.replaceSectionRaw('registry.providers', maskedProviders)).rejects.toThrow('mask_written_back')
     expect(Buffer.compare(await readFile(configPath), before)).toBe(0)
   })
 })

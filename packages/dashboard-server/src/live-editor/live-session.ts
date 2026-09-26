@@ -48,7 +48,7 @@ import { authFromFetch, authFromRuntimeConfig, toModelProfileAndAuth } from '../
 import { prepareMobileLiveSession } from './mobile-bootstrap.js'
 import type { MobileLiveAppiumLease } from './mobile-bootstrap.js'
 import type { AppiumManager } from '../execution/appium-manager.js'
-import type { ConfigManager } from '../config/index.js'
+import { readConfigValues, type ConfigManager } from '../config/index.js'
 import type { LiveEditorAttachment } from '../live-view/editor-subjects.js'
 import type {
   SessionState,
@@ -1292,7 +1292,7 @@ export class LiveSession {
       throw new Error('Cannot save auth state because the active browser context is unavailable.')
     }
 
-    const config = await this.deps.configManager.read()
+    const config = await readConfigValues(this.deps.configManager)
     const authStateDir = getConfiguredAuthStateDir(config)
     const paths = resolveAuthStatePaths({
       configDir: dirname(resolvePath(this.deps.configPath)),

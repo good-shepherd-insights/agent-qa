@@ -8,7 +8,7 @@ import { tmpdir } from 'node:os'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { parse as parseYaml } from 'yaml'
 
-import { ConfigManager } from '../config/index.js'
+import { ConfigFileInvalidError, ConfigManager, readConfigValues } from '../config/index.js'
 import { createRouter } from '../server/routes.js'
 
 vi.mock('node:fs/promises', async (importOriginal) => {
@@ -334,5 +334,79 @@ describe('PATCH /api/config concurrency, idempotency and file identity (429-05)'
     expect((await lstat(configPath)).isSymbolicLink()).toBe(true)
     const parsed = parseYaml(await readFile(realPath, 'utf-8')) as { use: { timeout: { step: string } } }
     expect(parsed.use.timeout.step).toBe('45s')
+  })
+})
+
+const CONFIG_MANAGER_SOURCE = new URL('../config/config-manager.ts', import.meta.url)
+const FILE_ACCESS = /\b(?:readFile|writeFile|rename|rm|lstat|realpath|stat|chmod|mkdir)\(/
+
+// The ConfigManager class body, from its declaration to the first closing brace at column 0.
+function classBody(source: string): string {
+  const start = source.indexOf('export class ConfigManager {')
+  expect(start).toBeGreaterThan(-1)
+  const end = source.indexOf('\n}\n', start)
+  return source.slice(start, end)
+}
+
+describe('one write path to the config file (429-32)', () => {
+  it('LEGACY-WRITE-ROUTES-GONE: a PUT to each retired per-section route is an unknown route and the file is untouched', async () => {
+    const configPath = await useConfigWorkspace()
+    const before = await readFile(configPath)
+    const retired: Array<[string, unknown]> = [
+      ['/api/config/settings', { 'use.timeout': { step: '45s', test: '10m', navigation: '10s' } }],
+      ['/api/config/llms', {
+        llms: [{ name: 'planner', provider: 'gemini', model: 'gemini-2.5-flash' }],
+        defaultLLM: 'planner',
+      }],
+      ['/api/config/default-llm', { llm: 'planner' }],
+    ]
+
+    for (const [url, body] of retired) {
+      const response = await invokeRoute(url, {
+        method: 'PUT',
+        headers: { host: HOST, 'content-type': 'application/json' },
+        body: JSON.stringify(body),
+      })
+      expect([url, response.status]).toEqual([url, 404])
+    }
+    expect(Buffer.compare(await readFile(configPath), before)).toBe(0)
+
+    // The control: the one write route still answers on the same router and file.
+    expect((await patchConfig(setStep('45s'))).status).toBe(200)
+  })
+
+  it('ONE-WRITE-PATH: the manager exposes only the five file methods, and nothing outside the class touches the file', async () => {
+    const source = await readFile(CONFIG_MANAGER_SOURCE, 'utf-8')
+    const body = classBody(source)
+
+    const publicMethods = [...body.matchAll(/^ {2}(?:async )?([A-Za-z]\w*)\(/gm)].map((match) => match[1])
+    expect(publicMethods.sort()).toEqual(
+      ['applyChanges', 'constructor', 'readMasked', 'readWithRevision', 'restorePriors', 'revealAt'],
+    )
+    for (const retired of ['updateSection', 'replaceSection', 'replaceSectionRaw', 'deleteSectionRaw', 'readDocument']) {
+      expect(source).not.toMatch(new RegExp(`\\b${retired}\\b`))
+    }
+    expect(source).not.toMatch(/^ {2}(?:async )?read\(/m)
+
+    // Every direct file access sits inside the class; a module-level reader goes through it.
+    const outside = source.replace(body, '')
+    expect(outside.split('\n').filter((line) => FILE_ACCESS.test(line) && !line.startsWith('import'))).toEqual([])
+
+    const manager = new ConfigManager(join(tmpdir(), 'agent-qa-one-write-path.yaml'))
+    const prototypeMethods = Object.getOwnPropertyNames(Object.getPrototypeOf(manager))
+    for (const retired of ['read', 'updateSection', 'replaceSection', 'replaceSectionRaw', 'deleteSectionRaw', 'readDocument']) {
+      expect(prototypeMethods).not.toContain(retired)
+    }
+  })
+
+  it('VALUES-READ-REFUSES-BROKEN-FILE: a reader that only needs values never gets the part of a broken file yaml recovers', async () => {
+    const { configManager, configPath } = await createConfigWorkspace()
+    expect(await readConfigValues(configManager)).toEqual(parseYaml(baseConfig))
+
+    await writeFile(configPath, 'a: 1\nb: [1, 2\nc: 3\n', 'utf-8')
+    await expect(readConfigValues(configManager)).rejects.toBeInstanceOf(ConfigFileInvalidError)
+
+    await rm(configPath)
+    expect(await readConfigValues(configManager)).toEqual({})
   })
 })

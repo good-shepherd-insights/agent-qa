@@ -21,7 +21,7 @@ vi.mock('@vostride/agent-qa-runner-local', async (importOriginal) => ({
   DockerHookExecutor: class { execute(...args: unknown[]) { return mockRunHookInSandbox(...args) } },
 }))
 
-import { ConfigManager } from '../config/index.js'
+import { ConfigManager, readConfigValues } from '../config/index.js'
 import { createRouter } from '../server/routes.js'
 import { resolveWorkspacePaths, type ResolvedWorkspacePaths } from '@vostride/agent-qa-core'
 
@@ -153,7 +153,7 @@ async function createConfigWorkspace(
     configManager: new ConfigManager(configPath),
     configPath,
     workspacePaths: resolveWorkspacePaths({
-      config: await new ConfigManager(configPath).read() as any,
+      config: await readConfigValues(new ConfigManager(configPath)) as any,
       configPath,
     }),
     dir,

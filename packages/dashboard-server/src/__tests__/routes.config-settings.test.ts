@@ -1598,7 +1598,7 @@ describe('dashboard LLM auth and test routes', () => {
 
   it('reports plugin auth config read failures as server errors', async () => {
     const { configManager, configPath } = await createConfigWorkspace(subscriptionConfig)
-    vi.spyOn(configManager, 'read').mockRejectedValue(new Error('config read failed'))
+    vi.spyOn(configManager, 'readWithRevision').mockRejectedValue(new Error('config read failed'))
     router = createRouter({
       db: createMockDatabase() as any,
       configManager,

@@ -13,7 +13,6 @@ import {
   LineCounter,
   parseDocument,
   Scalar,
-  stringify,
   visit,
   type Node,
 } from 'yaml'
@@ -95,19 +94,26 @@ function isMissingFile(err: unknown): boolean {
   return (err as NodeJS.ErrnoException | undefined)?.code === 'ENOENT'
 }
 
+export class ConfigFileInvalidError extends Error {
+  constructor(message: string) {
+    super(`The config file does not parse: ${message}`)
+    this.name = 'ConfigFileInvalidError'
+  }
+}
+
+/**
+ * The config's values for a reader that only needs them (429-32, Pitfall 3): a missing file reads
+ * as empty, and a file that does not parse is an error rather than the part of it yaml recovers.
+ */
+export async function readConfigValues(manager: ConfigManager): Promise<Record<string, unknown>> {
+  const read = await manager.readWithRevision()
+  if (read.kind === 'ok') return read.config
+  if (read.kind === 'absent') return {}
+  throw new ConfigFileInvalidError(read.message)
+}
+
 export class ConfigManager {
   constructor(private configPath: string) {}
-
-  async read(): Promise<Record<string, unknown>> {
-    try {
-      const content = await readFile(this.configPath, 'utf-8')
-      const doc = parseDocument(content)
-      return (doc.toJSON() as Record<string, unknown>) ?? {}
-    } catch (err: unknown) {
-      if ((err as NodeJS.ErrnoException).code === 'ENOENT') return {}
-      throw err
-    }
-  }
 
   // 429-05 Pitfall 3: a half-edited file is named, never served as the partial config yaml recovers.
   async readWithRevision(): Promise<ConfigReadOutcome> {
@@ -184,100 +190,6 @@ export class ConfigManager {
       raw,
       revision,
     }
-  }
-
-  private sectionPath(section: string): string[] {
-    return section.includes('.') ? section.split('.') : [section]
-  }
-
-  // 429-05 Pitfall 4: the legacy writers refuse a mask too, until Plan 31 deletes them.
-  private assertNoMask(value: unknown): void {
-    if (carriesMaskPlaceholder(value)) throw new Error(MASK_WRITTEN_BACK)
-  }
-
-  async updateSection(section: string, value: Record<string, unknown>): Promise<void> {
-    this.assertNoMask(value)
-    const path = this.sectionPath(section)
-    let content: string
-    try {
-      content = await readFile(this.configPath, 'utf-8')
-    } catch (err: unknown) {
-      if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
-        await mkdir(dirname(this.configPath), { recursive: true })
-        await writeFile(this.configPath, stringify({ [section]: value }))
-        return
-      }
-      throw err
-    }
-
-    const doc = parseDocument(content)
-    for (const [key, val] of Object.entries(value)) {
-      doc.setIn([...path, key], val)
-    }
-    await writeFile(this.configPath, doc.toString())
-  }
-
-  async replaceSection(section: string, value: Record<string, unknown>): Promise<void> {
-    this.assertNoMask(value)
-    const path = this.sectionPath(section)
-    let content: string
-    try {
-      content = await readFile(this.configPath, 'utf-8')
-    } catch (err: unknown) {
-      if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
-        await mkdir(dirname(this.configPath), { recursive: true })
-        await writeFile(this.configPath, stringify({ [section]: value }))
-        return
-      }
-      throw err
-    }
-    const doc = parseDocument(content)
-    // Overwrite in-place to preserve key ordering in the YAML file
-    doc.setIn(path, doc.createNode(value))
-    await writeFile(this.configPath, doc.toString())
-  }
-
-  async replaceSectionRaw(section: string, value: unknown): Promise<void> {
-    this.assertNoMask(value)
-    const path = this.sectionPath(section)
-    let content: string
-    try {
-      content = await readFile(this.configPath, 'utf-8')
-    } catch (err: unknown) {
-      if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
-        await mkdir(dirname(this.configPath), { recursive: true })
-        await writeFile(this.configPath, stringify({ [section]: value }))
-        return
-      }
-      throw err
-    }
-    const doc = parseDocument(content)
-    // Overwrite in-place to preserve key ordering in the YAML file
-    doc.setIn(path, doc.createNode(value))
-    await writeFile(this.configPath, doc.toString())
-  }
-
-  async deleteSectionRaw(section: string): Promise<void> {
-    const path = this.sectionPath(section)
-    let content: string
-    try {
-      content = await readFile(this.configPath, 'utf-8')
-    } catch (err: unknown) {
-      if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
-        await mkdir(dirname(this.configPath), { recursive: true })
-        await writeFile(this.configPath, stringify({}))
-        return
-      }
-      throw err
-    }
-    const doc = parseDocument(content)
-    doc.deleteIn(path)
-    await writeFile(this.configPath, doc.toString())
-  }
-
-  async readDocument(): Promise<Document> {
-    const content = await readFile(this.configPath, 'utf-8')
-    return parseDocument(content)
   }
 
   // 429-01 D-19/D-22: one transaction per request, serialised so overlapping autosaves never
@@ -372,7 +284,7 @@ export class ConfigManager {
         priors.push({ kind: 'path', path: [...change.path], before, after: fieldState(doc, path) })
       }
     }
-    // Carried from the legacy settings route: the browser-scoped key replaces a root use.headless.
+    // The browser-scoped key replaces a root use.headless in the same write.
     if (writesBrowserHeadless && doc.hasIn(LEGACY_HEADLESS_PATH)) {
       const before = capturePriors ? nodeAt(doc, LEGACY_HEADLESS_PATH) : undefined
       doc.deleteIn(LEGACY_HEADLESS_PATH)

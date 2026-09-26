@@ -486,19 +486,24 @@ describe('LiveSession.executeTestCommand (suite-mode orchestration)', () => {
         getUrl: vi.fn(() => 'http://localhost:4723'),
       } as any,
       configManager: {
-        read: vi.fn().mockResolvedValue({
-          registry: {
-            targets: {
-              'release-android-wikipedia': {
-                platform: 'android',
-                appPackage: 'org.wikipedia.alpha',
+        readWithRevision: vi.fn().mockResolvedValue({
+          kind: 'ok',
+          raw: '',
+          revision: 'fixture',
+          config: {
+            registry: {
+              targets: {
+                'release-android-wikipedia': {
+                  platform: 'android',
+                  appPackage: 'org.wikipedia.alpha',
+                },
               },
-            },
-            devices: {
-              'release-android-emu': {
-                platform: 'android',
-                transport: 'local',
-                match: {},
+              devices: {
+                'release-android-emu': {
+                  platform: 'android',
+                  transport: 'local',
+                  match: {},
+                },
               },
             },
           },

@@ -7,7 +7,7 @@ import { prepareMobileLiveSession } from '../mobile-bootstrap.js'
 
 function makeConfigManager(config: Record<string, unknown>) {
   return {
-    read: vi.fn().mockResolvedValue(config),
+    readWithRevision: vi.fn().mockResolvedValue({ kind: 'ok', config, raw: '', revision: 'fixture' }),
   } as any
 }
 
