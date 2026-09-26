@@ -182,8 +182,8 @@ const EXPECTED_DESTINATIONS = [
 const SURFACE_MARKERS: Record<string, { title: string; marker: string }> = {
   'workspace:discovery': { title: 'Discovery', marker: 'Test Match Patterns' },
   'workspace:files': { title: 'Files', marker: 'Hooks File' },
-  'knowledge:store': { title: 'Knowledge', marker: 'Knowledge Directory' },
-  'services:dashboard': { title: 'Dashboard', marker: 'Database Path' },
+  'knowledge:store': { title: 'Knowledge', marker: 'Knowledge folder' },
+  'services:dashboard': { title: 'Dashboard', marker: 'Database file' },
   'services:cache': { title: 'Cache', marker: 'Cache folder' },
   'services:auth-states': { title: 'Auth States', marker: 'No auth states saved' },
   'services:logging': { title: 'Logging', marker: 'Log Level' },

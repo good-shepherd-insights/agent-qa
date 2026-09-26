@@ -103,7 +103,7 @@ describe('runtime path static contract', () => {
     expect(uiSource).toContain('routes.testNew')
     expect(uiSource).toContain('routes.suiteNew')
     expect(uiSource).toContain('routes.hookNew')
-    expect(uiSource).toContain('Knowledge Directory')
+    expect(uiSource).toContain('Knowledge folder')
   })
 
   it('keeps UI source copy aligned with required env files', () => {

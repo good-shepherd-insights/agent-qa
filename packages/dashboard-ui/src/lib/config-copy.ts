@@ -340,6 +340,39 @@ export const APPLY_CONSEQUENCES = {
 
 export const PORT_RESTART_HELP = 'Takes effect after the dashboard restarts.'
 
+export const KNOWLEDGE_FIELD_LABELS = {
+  dir: 'Knowledge folder',
+  commitArtifacts: 'Images committed with knowledge',
+  contextBudgetTokens: 'Knowledge budget',
+} as const
+
+export const KNOWLEDGE_FIELD_HELP = {
+  dir: 'A folder inside this repository.',
+  contextBudgetTokens: 'The most tokens of knowledge a run is given. Leave empty for no cap.',
+} as const
+
+export const KNOWLEDGE_COMMIT_ARTIFACTS_LABELS = {
+  none: 'None',
+  thumbnails: 'Thumbnails',
+} as const
+
+export const NO_CAP_PLACEHOLDER = 'No cap'
+
+export const DASHBOARD_FIELD_LABELS = {
+  port: 'Port',
+  host: 'Host',
+  dbPath: 'Database file',
+  artifactsDir: 'Artifacts folder',
+  baseUrl: 'Dashboard address',
+  workspace: 'Workspace name',
+} as const
+
+export const DASHBOARD_FIELD_HELP = {
+  host: "Must be an address on this machine. Takes effect after the dashboard restarts.",
+  baseUrl: 'Links to tests and runs in agent answers start with this address. They need a workspace name too.',
+  workspace: 'Names this project in those links.',
+} as const
+
 /** A duration field's draft error: the forms the field accepts. */
 export const DURATION_INPUT_ERROR = 'Use a duration like 30s, 5m or 1h.'
 

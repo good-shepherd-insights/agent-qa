@@ -36,14 +36,18 @@ import {
   LEGACY_LINK_NOT_FOUND_TEXT,
   NOT_SAVED_ACTION_NAME,
   NO_DEVICE_FARMS_TEXT,
+  PORT_RESTART_HELP,
   RELOAD_CONFIG_LABEL,
   RETRY_LABEL,
   SAVE_STATUS_WORDS,
   SETTLE_DELAY_MS,
   TAB_DRAFT_SR_SUFFIX,
+  applyActionName,
   configFileIssuesBody,
   configLoadFailedBody,
   deleteActionName,
+  DASHBOARD_FIELD_LABELS,
+  KNOWLEDGE_FIELD_LABELS,
   undoLine,
 } from '@/lib/config-copy'
 import { CONFIG_DRAFTS_STORAGE_PREFIX, configFieldControlId, configFieldKeyOf } from '@/hooks/use-config-autosave'
@@ -1206,7 +1210,9 @@ describe('ConfigPage task tabs shell', () => {
   it('shows consolidated runtime path placeholders for dashboard and cache', async () => {
     const view = await renderAt('/config/project?section=dashboard')
 
-    const dbPathInput = document.body.querySelector('#dashboard-db-path') as HTMLInputElement | null
+    const dbPathInput = section('dashboard')?.querySelector(
+      `#${configFieldControlId(configFieldKeyOf(['services', 'dashboard', 'dbPath']))}`,
+    ) as HTMLInputElement | null
     expect(dbPathInput).not.toBeNull()
     expect(dbPathInput?.placeholder).toBe('.agent-qa/runs.db')
     expect(view.textContent).not.toContain('Tests Directory')
@@ -1303,30 +1309,114 @@ describe('ConfigPage task tabs shell', () => {
     expect(view.textContent).not.toContain('metadata path leaked')
   })
 
-  it('exposes and saves the knowledge directory with the knowledge settings block', async () => {
+  it('KNOWLEDGE-DIR-APPLY: the knowledge folder saves only through Apply, as one undoable write, with no Save button', async () => {
+    vi.mocked(applyConfigChanges).mockResolvedValueOnce({ revision: 'rev-2', undo: { token: 'undo-knowledge' } } as never)
     await renderAt('/config/project?section=knowledge')
+    vi.useFakeTimers()
 
-    const knowledgeDirInput = document.body.querySelector('#knowledge-dir') as HTMLInputElement | null
+    const knowledge = section('knowledge')!
+    expect(sectionButton('knowledge', 'Save Changes')).toBeNull()
+    expect(knowledge.querySelector('[data-config-section-shell]')).toBeNull()
+    const knowledgeDirInput = document.getElementById(
+      configFieldControlId(configFieldKeyOf(['knowledge', 'dir'])),
+    ) as HTMLInputElement | null
     expect(knowledgeDirInput).not.toBeNull()
     expect(knowledgeDirInput?.placeholder).toBe('agent-qa-knowledge')
     expect(knowledgeDirInput?.value).toBe('agent-qa-knowledge')
 
     await act(async () => {
+      knowledgeDirInput!.focus()
       setInputValue(knowledgeDirInput!, 'docs/agent-qa-knowledge')
     })
-    await flushRender()
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(SETTLE_DELAY_MS * 5)
+    })
+    expect(applyConfigChanges).not.toHaveBeenCalled()
+    expect(knowledge.querySelector('[data-field-path="knowledge.dir"]')?.getAttribute('data-apply-state')).toBe('pending')
+
+    const apply = Array.from(knowledge.querySelectorAll('button')).find(
+      (button) => button.getAttribute('aria-label') === applyActionName(KNOWLEDGE_FIELD_LABELS.dir),
+    ) as HTMLButtonElement | undefined
+    expect(apply).toBeDefined()
+    await act(async () => {
+      apply!.click()
+      await vi.advanceTimersByTimeAsync(0)
+    })
+
+    expect(applyConfigChanges).toHaveBeenCalledTimes(1)
+    expect(vi.mocked(applyConfigChanges).mock.calls[0]).toEqual([
+      [{ op: 'set', path: ['knowledge', 'dir'], value: 'docs/agent-qa-knowledge' }],
+      { undoable: true },
+    ])
+    expect(statusRegion()?.textContent).toContain(undoLine('change-knowledge-dir', KNOWLEDGE_FIELD_LABELS.dir))
+    expect(updateSettings).not.toHaveBeenCalled()
+    expect(toast.success).not.toHaveBeenCalled()
+  })
+
+  it('PORT-AUTOSAVES-WITH-RESTART-LINE: changing the dashboard port writes once after the pause, and its help line says it takes effect after a restart', async () => {
+    await renderAt('/config/project?section=dashboard')
+    vi.useFakeTimers()
+
+    const dashboard = section('dashboard')!
+    expect(sectionButton('dashboard', 'Save Changes')).toBeNull()
+    expect(dashboard.querySelector('[data-config-section-shell]')).toBeNull()
+    const portRow = dashboard.querySelector('[data-field-path="services.dashboard.port"]') as HTMLElement | null
+    expect(portRow).not.toBeNull()
+    expect(portRow!.querySelector('[data-field-help]')?.textContent).toBe(PORT_RESTART_HELP)
+    expect(portRow!.hasAttribute('data-apply-state')).toBe(false)
+    const portInput = document.getElementById(
+      configFieldControlId(configFieldKeyOf(['services', 'dashboard', 'port'])),
+    ) as HTMLInputElement | null
+    expect(portInput?.value).toBe('4173')
 
     await act(async () => {
-      sectionButton('knowledge', 'Save Changes')!.click()
+      portInput!.focus()
+      setInputValue(portInput!, '4180')
     })
-    await flushRender()
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(SETTLE_DELAY_MS - 1)
+    })
+    expect(applyConfigChanges).not.toHaveBeenCalled()
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1)
+    })
 
-    expect(updateSettings).toHaveBeenCalledWith({
-      'knowledge': {
-        dir: 'docs/agent-qa-knowledge',
-        commitArtifacts: 'none',
-      },
-    })
+    expect(applyConfigChanges).toHaveBeenCalledTimes(1)
+    expect(vi.mocked(applyConfigChanges).mock.calls[0]).toEqual([
+      [{ op: 'set', path: ['services', 'dashboard', 'port'], value: 4180 }],
+    ])
+    expect(Array.from(dashboard.querySelectorAll('button')).map((button) => button.textContent?.trim())).not.toContain(
+      applyActionName(DASHBOARD_FIELD_LABELS.port),
+    )
+    expect(updateSettings).not.toHaveBeenCalled()
+    expect(toast.success).not.toHaveBeenCalled()
+  })
+
+  it('PROJECT-DATA-LEAVES-HAVE-FIELDS: the Project tab has a field for every knowledge leaf and every Dashboard leaf but run-service tokens', async () => {
+    await renderAt('/config/project')
+
+    const panel = container!.querySelector('[data-config-panel="project"]') as HTMLElement
+    expect(panel).not.toBeNull()
+    for (const path of [
+      'knowledge.dir',
+      'knowledge.commitArtifacts',
+      'knowledge.contextBudgetTokens',
+      'services.dashboard.dbPath',
+      'services.dashboard.artifactsDir',
+      'services.dashboard.port',
+      'services.dashboard.host',
+      'services.dashboard.baseUrl',
+      'services.dashboard.workspace',
+    ]) {
+      expect(panel.querySelector(`[data-field-path="${path}"]`), path).not.toBeNull()
+    }
+    for (const path of ['knowledge.dir', 'services.dashboard.dbPath', 'services.dashboard.artifactsDir']) {
+      expect(panel.querySelector(`[data-field-path="${path}"]`)?.getAttribute('data-apply-state'), path).toBe('clean')
+    }
+    expect(panel.querySelector('[data-field-path^="services.dashboard.runServiceTokens"]')).toBeNull()
+    for (const id of ['knowledge', 'dashboard'] as const) {
+      expect(section(id)?.textContent, id).not.toContain('Save Changes')
+    }
   })
 
   it('edits analytics pass rate scope attributes', async () => {
