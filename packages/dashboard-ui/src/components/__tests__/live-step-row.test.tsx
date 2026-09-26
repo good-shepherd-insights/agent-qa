@@ -2,8 +2,9 @@
 
 // THE LIVE STEP ROW (428 D-19/D-20/D-22).
 //
-// A live step row is one status glyph and the step label, nothing else. The running glyph breathes,
-// restarting each time the run records a sub-action, and every status has its own shape and name.
+// A live step row is one status glyph and the step label, nothing else. Every status has its own
+// shape, tone and name, and nothing on the row moves: the running glyph is a still blue shape (owner
+// decision 2026-09-26 (5), G-428-5).
 
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
@@ -46,6 +47,42 @@ function clippingClasses(root: Element, skip: (element: Element) => boolean = ()
     .flatMap((element) =>
       [...element.classList].filter((token) => CLIPPING_CLASS.test(token)).map((token) => `${element.tagName}.${token}`),
     )
+}
+
+/** Any class that names motion, on the row or anything inside it. */
+const ANIMATION_CLASS = /animate|breath|pulse/iu
+
+function animationClasses(root: Element): string[] {
+  return [root, ...root.querySelectorAll('*')].flatMap((element) =>
+    [...element.classList].filter((token) => ANIMATION_CLASS.test(token)).map((token) => `${element.tagName}.${token}`),
+  )
+}
+
+// THE NEEDLES ARE CONCATENATED so this file cannot satisfy a census of the removed motion by
+// matching itself.
+const REMOVED_ROW_KEYFRAMES = 'live-' + 'step'
+const REMOVED_ROW_CLASS = 'live-step-' + 'breathing'
+
+/** globals.css with its comments removed, so prose never answers for a rule. */
+function stylesheetRules(): { css: string; rules: { selector: string; body: string }[]; reduced: string[] } {
+  const css = readFileSync(resolve(__dirname, '../../styles/globals.css'), 'utf8').replace(/\/\*[\s\S]*?\*\//gu, '')
+  const rules = [...css.matchAll(/([^{}]+)\{([^{}]*)\}/gu)].map((match) => ({
+    selector: (match[1] ?? '').trim(),
+    body: match[2] ?? '',
+  }))
+  const reduced: string[] = []
+  for (const match of css.matchAll(/@media\s*\(prefers-reduced-motion:\s*reduce\)\s*\{/gu)) {
+    let depth = 1
+    let at = (match.index ?? 0) + match[0].length
+    const start = at
+    while (depth > 0 && at < css.length) {
+      if (css[at] === '{') depth += 1
+      if (css[at] === '}') depth -= 1
+      at += 1
+    }
+    reduced.push(css.slice(start, at - 1))
+  }
+  return { css, rules, reduced }
 }
 
 let container: HTMLDivElement | null = null
@@ -127,25 +164,33 @@ describe('THE LIVE STEP ROW (428 D-19/D-20)', () => {
     }
   })
 
-  it('RUNNING-BREATHES-AND-REKEYS: the running glyph breathes and restarts on every sub-action', () => {
+  // RE-SPELLED 2026-09-26 (428-32, owner decision 2026-09-26 (5), G-428-5). This cell was
+  // RUNNING-BREATHES-AND-REKEYS, "the running glyph breathes and restarts on every sub-action". The
+  // owner asked for a still glyph, so the breathing class and the per-tick re-key that restarted it
+  // are gone. Each guarantee stays as an absence: the glyph is blue, never green and never a dot; no
+  // status animates; and a sub-action still reaches the row, as data-step-ticks.
+  it('RUNNING-GLYPH-STILL: the running glyph is a still blue shape, and a sub-action does not re-key it', () => {
     const first = render(row({ status: 'running', ticks: 3 }))
     const wrapperAt3 = first.children[0] as HTMLElement
-    expect(wrapperAt3.hasAttribute('data-step-motion')).toBe(true)
-    expect(wrapperAt3.getAttribute('data-motion-key')).toBe('3')
     const glyph = wrapperAt3.querySelector('svg')
-    expect(glyph?.classList.contains('live-step-breathing')).toBe(true)
-    // Neither green nor a dot: SC3's count of green dots must still see exactly one.
+    expect(glyph?.classList.contains('text-blue-500'), 'the running glyph is blue').toBe(true)
+    // Neither green nor a dot: the page's one green dot is the preview's.
     expect(glyph?.getAttribute('class') ?? '').not.toMatch(/emerald|green|live-dot/)
+    expect(animationClasses(first)).toEqual([])
+    expect(wrapperAt3.hasAttribute('data-step-motion')).toBe(false)
+    expect(wrapperAt3.hasAttribute('data-motion-key')).toBe(false)
+    expect(first.getAttribute('data-step-ticks')).toBe('3')
 
     const second = render(row({ status: 'running', ticks: 4 }))
-    const wrapperAt4 = second.children[0] as HTMLElement
-    expect(wrapperAt4).not.toBe(wrapperAt3)
-    expect(wrapperAt4.getAttribute('data-motion-key')).toBe('4')
+    expect(second.children[0], 'a sub-action keeps the same glyph node').toBe(wrapperAt3)
+    expect(second.getAttribute('data-step-ticks')).toBe('4')
+    expect(animationClasses(second)).toEqual([])
 
     for (const status of STEP_STATUSES.filter((each) => each !== 'running')) {
       const li = render(row({ status, ticks: 4 }))
-      expect(li.querySelector('.live-step-breathing'), status).toBeNull()
+      expect(animationClasses(li), status).toEqual([])
       expect(li.querySelector('[data-step-motion]'), status).toBeNull()
+      expect(li.querySelector('[data-motion-key]'), status).toBeNull()
     }
   })
 
@@ -214,14 +259,25 @@ describe('THE LIVE STEP ROW (428 D-19/D-20)', () => {
     }
   })
 
-  it('the breathing animation is named, and it is still under prefers-reduced-motion', () => {
-    const css = readFileSync(resolve(__dirname, '../../styles/globals.css'), 'utf8')
-    expect(css).toContain('@keyframes live-step-breathe')
-    expect(css).toMatch(/\.live-step-breathing\s*\{[^}]*animation:\s*live-step-breathe\b/)
-    const reduced = [...css.matchAll(/@media \(prefers-reduced-motion: reduce\)\s*\{([\s\S]*?)\n\}/g)]
-    expect(reduced.some((block) => /\.live-step-breathing\s*\{\s*animation:\s*none;?\s*\}/.test(block[1] ?? ''))).toBe(
-      true,
+  // RE-SPELLED 2026-09-26 (428-32, owner decision 2026-09-26 (5), G-428-5). This cell was "the
+  // breathing animation is named, and it is still under prefers-reduced-motion". The animation is
+  // gone, so its keyframes, its class and the reduced-motion rule that stilled it are asserted
+  // absent. The editor card's beam is a different surface and is not asserted on here.
+  it('NO-ROW-ANIMATION-CSS: globals.css has no live row keyframes, no breathing class and no reduced-motion rule for a row', () => {
+    const { css, rules, reduced } = stylesheetRules()
+    const keyframes = [...css.matchAll(/@keyframes\s+([\w-]+)/gu)].map((match) => match[1] ?? '')
+    expect(keyframes.filter((name) => name.startsWith(REMOVED_ROW_KEYFRAMES))).toEqual([])
+    expect(rules.filter((rule) => rule.selector.includes(`.${REMOVED_ROW_CLASS}`)).map((rule) => rule.selector)).toEqual([])
+    expect(css.includes(REMOVED_ROW_CLASS)).toBe(false)
+    const rowRulesUnderReducedMotion = reduced.flatMap((block) =>
+      [...block.matchAll(/([^{}]+)\{([^{}]*)\}/gu)]
+        .map((match) => (match[1] ?? '').trim())
+        .filter((selector) => selector.includes('.live-step')),
     )
+    expect(rowRulesUnderReducedMotion).toEqual([])
+    // The control: the parser reads real rules, including the reduced-motion block the editor keeps.
+    expect(keyframes.length).toBeGreaterThan(0)
+    expect(reduced.some((block) => block.includes('.live-running-surface'))).toBe(true)
   })
 })
 

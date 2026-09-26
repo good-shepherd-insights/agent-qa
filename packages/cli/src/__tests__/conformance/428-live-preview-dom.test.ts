@@ -6,9 +6,10 @@
 // jsdom proved the corner's contract in `live-preview.test.tsx`: one dot, its name, its tooltip,
 // the snapshot label, the reduced-motion rule. jsdom computes no animation and lays nothing out, so
 // every claim here is made again on the BUILT dashboard-ui bundle, served by the production
-// `startServer` and driven by a real headless Chromium: one pulsing green element on the whole
-// page, a dot that sits on the picture's top-right corner, amber when frames stop while the bus
-// keeps heartbeating, and the literal snapshot label when the frames are snapshots.
+// `startServer` and driven by a real headless Chromium: one green dot and nothing on the live page
+// animating (owner decision 2026-09-26 (5), G-428-5), a dot that sits on the picture's top-right
+// corner, amber when frames stop while the bus keeps heartbeating, and the literal snapshot label
+// when the frames are snapshots.
 //
 // THE RUN IS PLANTED AND THE SERVER IS NOT (see `live-view-fixture.ts`). Every word a cell expects
 // is read out of `lib/live-preview.ts`, so a copy change that forgets these cells turns them red.
@@ -76,6 +77,10 @@ const DOT_RUN = 'r_428_dot'
 const SNAPSHOT_RUN = 'r_428_snapshot'
 const FALLBACK_RUN = 'r_428_fallback'
 
+// THE NEEDLES ARE CONCATENATED so this file cannot satisfy a census of the removed motion by
+// matching itself: the dot's pulse and the running glyph's breath, both removed by 428-32.
+const REMOVED_ANIMATIONS = ['live-dot' + '-pulse', 'live-step' + '-breathe'] as const
+
 interface PreviewFixture {
   readonly harness: LiveViewHarness
   readonly browser: Browser
@@ -91,7 +96,7 @@ function held(): PreviewFixture {
   return fixture
 }
 
-/** Plant a one-member run whose member has started a step, so its row breathes. */
+/** Plant a one-member run whose member has started a step, so the page has a running row. */
 function plantStreamingRun(input: PlantLiveRunInput): PlantedLiveRun {
   const run = plantLiveRun(input)
   plantedRuns.push(run)
@@ -202,6 +207,28 @@ async function capture(page: Page, name: string): Promise<void> {
     .screenshot({ path: join(directory, `${name}.png`), animations: 'disabled' })
 }
 
+/** How many frames the embed document says it painted, or -1 while there is no embed document. */
+async function embedFramesPainted(page: Page): Promise<number> {
+  const frame = page.frames().find((one) => one.url().includes('/live/'))
+  if (frame === undefined) return -1
+  return frame.evaluate(() =>
+    Number(document.querySelector('[data-embed-state]')?.getAttribute('data-embed-frames') ?? '-1'),
+  ).catch(() => -1)
+}
+
+/** The positive control for the stillness cells: a running row and an embed that has painted. */
+async function waitForRunningRowAndPaint(page: Page): Promise<number> {
+  await page.locator('[data-live-pane="steps"] li[data-step-status="running"]').first()
+    .waitFor({ state: 'attached', timeout: 20_000 })
+  const deadline = Date.now() + 20_000
+  let painted = await embedFramesPainted(page)
+  while (painted <= 0 && Date.now() < deadline) {
+    await page.waitForTimeout(100)
+    painted = await embedFramesPainted(page)
+  }
+  return painted
+}
+
 interface Box { x: number; y: number; width: number; height: number }
 
 async function cornerGeometry(page: Page): Promise<{ frame: Box; dot: Box }> {
@@ -224,37 +251,81 @@ function expectDotOnTopRight(geometry: { frame: Box; dot: Box }, label: string):
 }
 
 describe('the live preview corner on the shipped bundle (428-23 Task 1)', () => {
-  it('ONE-PULSING-GREEN-DOT: exactly one element on the page pulses, and it is the green dot', async () => {
+  // RE-SPELLED 2026-09-26 (428-32, owner decision 2026-09-26 (5), G-428-5). This cell was
+  // ONE-PULSING-GREEN-DOT, "exactly one element on the page pulses, and it is the green dot", which
+  // counted elements by their animation name and used the breathing glyph as its control. The owner
+  // asked for a plain dot and a still glyph, so the census now reads every element of both panes,
+  // and their pseudo-elements, and expects no animation at all. The one green dot stays.
+  it('NO-ANIMATION-ON-LIVE-PAGE: one green dot, and nothing in either live pane animates', async () => {
     await onLivePage(DOT_RUN, async (page) => {
       await waitForGreen(page)
-      // The control: a running step breathes, and that animation is not the dot's.
-      await page.locator('[data-step-motion]').first().waitFor({ state: 'attached', timeout: 20_000 })
-      const census = await page.evaluate(() => {
-        const probe = document.createElement('span')
-        probe.style.backgroundColor = 'var(--color-emerald-500)'
-        document.body.append(probe)
-        const greenToken = getComputedStyle(probe).backgroundColor
-        probe.remove()
-        const all = [...document.querySelectorAll('*')]
-        const pulsing = all
-          .filter((node) => getComputedStyle(node).animationName === 'live-dot-pulse')
-          .map((node) => ({
-            tag: node.tagName,
-            background: getComputedStyle(node).backgroundColor,
-            inGreenDot: node.closest('[data-live-dot="green"]') !== null,
-          }))
-        const others = all
+      const painted = await waitForRunningRowAndPaint(page)
+      const census = await page.evaluate((removed: readonly string[]) => {
+        const panes = [...document.querySelectorAll('[data-live-pane]')]
+        const animated: { pane: string | null; node: string; pseudo: string; name: string }[] = []
+        let inspected = 0
+        for (const pane of panes) {
+          for (const node of [pane, ...pane.querySelectorAll('*')]) {
+            for (const pseudo of ['', '::before', '::after']) {
+              inspected += 1
+              const name = getComputedStyle(node, pseudo === '' ? null : pseudo).animationName
+              if (name !== 'none') {
+                animated.push({
+                  pane: pane.getAttribute('data-live-pane'),
+                  node: `${node.tagName}.${node.getAttribute('class') ?? ''}`,
+                  pseudo,
+                  name,
+                })
+              }
+            }
+          }
+        }
+        const removedInUse = [...document.querySelectorAll('*')]
           .map((node) => getComputedStyle(node).animationName)
-          .filter((name) => name !== 'none' && name !== 'live-dot-pulse')
-        return { greenToken, pulsing, otherAnimations: [...new Set(others)] }
-      })
-      const context = JSON.stringify(census)
-      expect(census.pulsing, context).toHaveLength(1)
-      expect(census.pulsing[0]?.inGreenDot, context).toBe(true)
-      expect(census.greenToken, `${context} — the green token resolved`).not.toBe('rgba(0, 0, 0, 0)')
-      expect(census.pulsing[0]?.background, context).toBe(census.greenToken)
-      expect(census.otherAnimations, `${context} — the breathing glyph animates and was not counted`)
-        .toContain('live-step-breathe')
+          .filter((name) => removed.some((each) => name.split(',').map((part) => part.trim()).includes(each)))
+
+        const keyframes: string[] = []
+        const walk = (rules: CSSRuleList): void => {
+          for (const rule of [...rules]) {
+            if (rule instanceof CSSKeyframesRule) keyframes.push(rule.name)
+            if ('cssRules' in rule && rule.cssRules instanceof CSSRuleList) walk(rule.cssRules)
+          }
+        }
+        let sheets = 0
+        for (const sheet of [...document.styleSheets]) {
+          try {
+            walk(sheet.cssRules)
+            sheets += 1
+          } catch {
+            // A cross-origin sheet cannot be read; the dashboard serves its own.
+          }
+        }
+        return {
+          panes: panes.map((pane) => pane.getAttribute('data-live-pane')).sort(),
+          inspected,
+          animated,
+          removedInUse: [...new Set(removedInUse)],
+          sheets,
+          keyframesSeen: keyframes.length,
+          removedKeyframes: keyframes.filter((name) => removed.includes(name)),
+          dots: [...document.querySelectorAll('[data-live-dot]')].map((dot) => dot.getAttribute('data-live-dot')),
+          runningRows: document.querySelectorAll('[data-live-pane="steps"] li[data-step-status="running"]').length,
+          embeds: document.querySelectorAll('[data-live-pane="preview"] [data-live-embed]').length,
+        }
+      }, REMOVED_ANIMATIONS)
+      const context = JSON.stringify({ ...census, painted })
+      console.log(`NO-ANIMATION-ON-LIVE-PAGE: ${context}`)
+
+      expect(census.panes, context).toEqual(['preview', 'steps'])
+      expect(census.dots, context).toEqual(['green'])
+      expect(census.runningRows, `${context} — the control: a running row is on the page`).toBeGreaterThanOrEqual(1)
+      expect(census.embeds, `${context} — the control: the embed is on the page`).toBe(1)
+      expect(painted, `${context} — the control: the embed painted a frame`).toBeGreaterThan(0)
+      expect(census.sheets, `${context} — the control: the stylesheets were read`).toBeGreaterThan(0)
+      expect(census.keyframesSeen, `${context} — the control: keyframes rules were read`).toBeGreaterThan(0)
+      expect(census.animated, context).toEqual([])
+      expect(census.removedInUse, context).toEqual([])
+      expect(census.removedKeyframes, context).toEqual([])
     })
   }, 120_000)
 
@@ -397,15 +468,27 @@ describe('the live preview corner on the shipped bundle (428-23 Task 1)', () => 
     })
   }, 120_000)
 
-  it('REDUCED-MOTION-DOT-STILL: under prefers-reduced-motion the green dot does not animate', async () => {
+  // RE-SPELLED 2026-09-26 (428-32, owner decision 2026-09-26 (5), G-428-5). This cell was
+  // REDUCED-MOTION-DOT-STILL, "under prefers-reduced-motion the green dot does not animate", whose
+  // control was that the same dot pulsed without the preference. Both readings are now still, for
+  // the dot and for the running glyph.
+  it('DOT-STILL-UNDER-ANY-MOTION-PREFERENCE: the green dot and the running glyph are still with and without reduced motion', async () => {
     await onLivePage(DOT_RUN, async (page) => {
       await waitForGreen(page)
-      const mark = page.locator('[data-live-dot="green"] [data-live-dot-mark]')
-      const before = await mark.evaluate((node) => getComputedStyle(node).animationName)
+      await waitForRunningRowAndPaint(page)
+      const read = async (): Promise<{ reduce: boolean; dot: string; glyph: string }> => ({
+        reduce: await page.evaluate(() => matchMedia('(prefers-reduced-motion: reduce)').matches),
+        dot: await page.locator('[data-live-dot="green"] [data-live-dot-mark]')
+          .evaluate((node) => getComputedStyle(node).animationName),
+        glyph: await page.locator('[data-live-pane="steps"] li[data-step-status="running"] svg').first()
+          .evaluate((node) => getComputedStyle(node).animationName),
+      })
+      const before = await read()
       await page.emulateMedia({ reducedMotion: 'reduce' })
-      const after = await mark.evaluate((node) => getComputedStyle(node).animationName)
-      expect(before, 'the control: the same dot pulses without the preference').toBe('live-dot-pulse')
-      expect(after).toBe('none')
+      const after = await read()
+      const context = JSON.stringify({ before, after })
+      expect(before, context).toEqual({ reduce: false, dot: 'none', glyph: 'none' })
+      expect(after, context).toEqual({ reduce: true, dot: 'none', glyph: 'none' })
     })
   }, 120_000)
 })

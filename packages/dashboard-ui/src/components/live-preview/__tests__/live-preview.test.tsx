@@ -389,36 +389,40 @@ describe('the editor subject (D-14 · SC2)', () => {
   })
 })
 
-describe('motion (D-02, dot geometry and motion)', () => {
-  it('REDUCED-MOTION-STILL-DOT: only the green dot pulses, and it is still under reduced motion', () => {
-    const css = readFileSync(resolve(__dirname, '../../../styles/globals.css'), 'utf8')
+// THE NEEDLE IS CONCATENATED so this file cannot satisfy a census of the removed motion by matching
+// itself.
+const REMOVED_DOT_KEYFRAMES = 'live-' + 'dot'
+
+// RE-SPELLED 2026-09-26 (428-32, owner decision 2026-09-26 (5), G-428-5). This describe was "motion
+// (D-02, dot geometry and motion)" and its cell was REDUCED-MOTION-STILL-DOT, "only the green dot
+// pulses, and it is still under reduced motion". The owner asked for a plain dot, so the dot is still
+// under any motion preference. D-02's geometry, its three colours and its three names stay.
+describe('the still dot (D-02 geometry; owner decision 2026-09-26 (5))', () => {
+  it('DOT-IS-STILL: no .live-dot rule animates, no dot keyframes exist, and three colours and three names remain', () => {
+    const css = readFileSync(resolve(__dirname, '../../../styles/globals.css'), 'utf8').replace(/\/\*[\s\S]*?\*\//gu, '')
     const rules = [...css.matchAll(/([^{}]+)\{([^{}]*)\}/gu)].map((match) => ({
       selector: (match[1] ?? '').trim(),
       body: match[2] ?? '',
     }))
-    const pulsing = rules.filter((rule) => /animation[^;]*live-dot-pulse/u.test(rule.body)).map((rule) => rule.selector)
-    expect(pulsing).toEqual(['.live-dot-green'])
-    expect(css).toContain('@keyframes live-dot-pulse')
+    const dotRules = rules.filter((rule) => rule.selector.includes('.live-dot'))
+    expect(dotRules.map((rule) => rule.selector), 'the control: the dot rules are read').toContain('.live-dot')
+    const animating = dotRules
+      .filter((rule) => /(?:^|[;\s])animation(?:-name)?\s*:/u.test(rule.body))
+      .map((rule) => rule.selector)
+    expect(animating).toEqual([])
+    const keyframes = [...css.matchAll(/@keyframes\s+([\w-]+)/gu)].map((match) => match[1] ?? '')
+    expect(keyframes.length, 'the control: keyframes are read').toBeGreaterThan(0)
+    expect(keyframes.filter((name) => name.startsWith(REMOVED_DOT_KEYFRAMES))).toEqual([])
 
-    const reduced: string[] = []
-    const opener = /@media\s*\(prefers-reduced-motion:\s*reduce\)\s*\{/gu
-    for (const match of css.matchAll(opener)) {
-      let depth = 1
-      let at = (match.index ?? 0) + match[0].length
-      const start = at
-      while (depth > 0 && at < css.length) {
-        if (css[at] === '{') depth += 1
-        if (css[at] === '}') depth -= 1
-        at += 1
-      }
-      reduced.push(css.slice(start, at - 1))
-    }
-    const stilled = reduced.some((block) =>
-      [...block.matchAll(/([^{}]+)\{([^{}]*)\}/gu)].some(
-        (match) => (match[1] ?? '').trim() === '.live-dot-green' && /animation:\s*none/u.test(match[2] ?? ''),
-      ),
-    )
-    expect(stilled, 'a prefers-reduced-motion block sets animation none on .live-dot-green').toBe(true)
+    const colours = (['green', 'amber', 'red'] as const).map((state) => {
+      const rule = rules.find((each) => each.selector === `.live-dot-${state}`)
+      return /background-color:\s*([^;]+);/u.exec(rule?.body ?? '')?.[1]?.trim()
+    })
+    expect(colours.every((colour) => colour !== undefined), JSON.stringify(colours)).toBe(true)
+    expect(new Set(colours).size, JSON.stringify(colours)).toBe(3)
+
+    expect(Object.keys(LIVE_DOT_NAMES).sort()).toEqual(['amber', 'green', 'red'])
+    expect(new Set(Object.values(LIVE_DOT_NAMES)).size).toBe(3)
   })
 })
 
