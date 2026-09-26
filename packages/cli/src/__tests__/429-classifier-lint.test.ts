@@ -5,7 +5,6 @@ import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 
 // D-18: the CLI and the dashboard classify a failed provider call through the one shared module.
-// Plan 10 adds the connect route's source to this cell.
 const here = dirname(fileURLToPath(import.meta.url))
 const SOURCES = [
   { name: 'agent-qa auth test', path: join(here, '..', 'commands', 'auth.ts') },
@@ -13,12 +12,17 @@ const SOURCES = [
     name: 'dashboard routes',
     path: join(here, '..', '..', '..', 'dashboard-server', 'src', 'server', 'routes.ts'),
   },
+  {
+    name: 'dashboard connect route',
+    path: join(here, '..', '..', '..', 'dashboard-server', 'src', 'server', 'llm-connect-route.ts'),
+  },
 ] as const
 
 const LOCAL_CLASSIFIER_LITERAL = 'auth|unauthorized|401'
 
 describe('one provider-error classifier (429-08)', () => {
   it('CLASSIFIER-ONE-MODULE: each surface imports the shared classifier and spells none of its own', () => {
+    expect(SOURCES, 'the witness: the auth test, the routes and the connect route are scanned').toHaveLength(3)
     for (const { name, path } of SOURCES) {
       const source = readFileSync(path, 'utf8')
       const imports = source.match(/^import[\s\S]*?from '([^']+)'/gmu) ?? []

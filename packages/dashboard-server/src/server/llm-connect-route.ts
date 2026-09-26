@@ -10,6 +10,7 @@ import {
   NameSlugSchema,
   readAuth,
   removeAuth,
+  resolveLLMAuth,
   writeAuth,
   type AuthCredential,
 } from '@vostride/agent-qa-core'
@@ -25,7 +26,12 @@ import {
 } from '@vostride/agent-qa-schema'
 
 import type { ConfigManager } from '../config/index.js'
-import { authFromRuntimeConfig, toModelProfileAndAuth, type DashboardLLMConfig } from '../llm-model-mapping.js'
+import {
+  authFromFetch,
+  authFromRuntimeConfig,
+  toModelProfileAndAuth,
+  type DashboardLLMConfig,
+} from '../llm-model-mapping.js'
 import { respondJson } from '../run-service/run-detail-routes.js'
 import { readJsonBody } from './body-parser.js'
 import { refuseCrossSiteRequest } from './cross-site.js'
@@ -38,6 +44,13 @@ export interface LlmConnectDeps {
   readonly credentialProvider: (name: string, credential: AuthCredential) => string
   /** The test route's probe budget for this model. */
   readonly connectionTimeoutMs: (config: { provider?: unknown; baseURL?: unknown }) => number
+  /** The router's names with a connect in flight: a second connect for one answers name_taken at once. */
+  readonly inFlight: Set<string>
+}
+
+/** One set per router, shared by every connect it answers. */
+export function createConnectInFlight(): Set<string> {
+  return new Set<string>()
 }
 
 type Answer = { readonly status: number; readonly body: unknown }
@@ -104,6 +117,45 @@ function toStoredCredential(
     : { type: 'api', provider, key: credential.secret }
 }
 
+type ResolvedTestAuth =
+  | { kind: 'ok'; auth: ResolvedModelAuth; usedCredential: boolean }
+  | { kind: 'missing' }
+
+// D-16: a typed secret is used inline; otherwise the saved credential under the name, or the
+// draft's completed sign-in, composed exactly as the live session composes it.
+async function resolveTestAuth(
+  name: string,
+  provider: string,
+  llmConfig: DashboardLLMConfig,
+  credential: LlmConnectRequest['credential'],
+): Promise<ResolvedTestAuth> {
+  if (credential) {
+    const auth = authFromRuntimeConfig(
+      credential.type === 'api-key' ? { apiKey: credential.secret } : { authToken: credential.secret },
+    )
+    return { kind: 'ok', auth, usedCredential: true }
+  }
+  const resolved = await resolveLLMAuth(name, llmConfig)
+  switch (resolved.kind) {
+    case 'api-key':
+      return { kind: 'ok', auth: authFromRuntimeConfig({ apiKey: resolved.apiKey }), usedCredential: true }
+    case 'bearer-token':
+      return { kind: 'ok', auth: authFromRuntimeConfig({ authToken: resolved.token }), usedCredential: true }
+    case 'auth-fetch':
+      return {
+        kind: 'ok',
+        auth: authFromRuntimeConfig({}, authFromFetch(provider, resolved.fetch)),
+        usedCredential: true,
+      }
+    case 'unauthenticated':
+    case 'missing':
+      if (getProvider(provider)?.credentialOptional === true) {
+        return { kind: 'ok', auth: { kind: 'none' }, usedCredential: false }
+      }
+      return { kind: 'missing' }
+  }
+}
+
 async function probe(
   llmConfig: DashboardLLMConfig,
   auth: ResolvedModelAuth,
@@ -125,10 +177,21 @@ async function connectLlm(raw: unknown, deps: LlmConnectDeps): Promise<Answer> {
   const parsed = LlmConnectRequestSchema.safeParse(raw)
   if (!parsed.success) return refuse(400, 'invalid_setup_input')
   const request = parsed.data
+  const { name } = request
+  if (!NameSlugSchema.safeParse(name).success) return refuse(400, 'name_invalid')
+  if (deps.inFlight.has(name)) return refuse(409, 'name_taken')
+  deps.inFlight.add(name)
+  try {
+    return await connectName(request, deps)
+  } finally {
+    deps.inFlight.delete(name)
+  }
+}
+
+async function connectName(request: LlmConnectRequest, deps: LlmConnectDeps): Promise<Answer> {
   const { name, credential } = request
   const provider = request.provider.trim()
   const modelId = request.model.trim()
-  if (!NameSlugSchema.safeParse(name).success) return refuse(400, 'name_invalid')
   if (!isKnownProvider(provider) || !modelId) return refuse(400, 'invalid_setup_input')
   if (credential && !credentialAccepted(provider, credential.type)) return refuse(400, 'credential_not_accepted')
 
@@ -157,13 +220,11 @@ async function connectLlm(raw: unknown, deps: LlmConnectDeps): Promise<Answer> {
 
   let usedCredential = credential !== undefined
   if (!request.skipTest) {
-    if (!credential) return refuse(400, 'credential_missing')
-    const auth = authFromRuntimeConfig(
-      credential.type === 'api-key' ? { apiKey: credential.secret } : { authToken: credential.secret },
-    )
-    usedCredential = auth.kind !== 'none'
+    const resolved = await resolveTestAuth(name, provider, llmConfig, credential)
+    if (resolved.kind === 'missing') return refuse(400, 'credential_missing')
+    usedCredential = resolved.usedCredential
     try {
-      await probe(llmConfig, auth, deps.connectionTimeoutMs(llmConfig))
+      await probe(llmConfig, resolved.auth, deps.connectionTimeoutMs(llmConfig))
     } catch (err: unknown) {
       const { message, statusCode } = extractProviderError(err)
       const providerMessage = withoutSecret(message, credential?.secret)

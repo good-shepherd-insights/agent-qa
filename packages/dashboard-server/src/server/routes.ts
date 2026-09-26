@@ -66,7 +66,7 @@ import {
   registerConfigRevisionRoute,
   registerConfigWriteRoute,
 } from './config-routes.js'
-import { registerLlmConnectRoute } from './llm-connect-route.js'
+import { createConnectInFlight, registerLlmConnectRoute } from './llm-connect-route.js'
 import type { PostProcessingRelay } from '../execution/post-processing-relay.js'
 import type { LLMAuthProviderPlugin, OAuthTokens } from '@vostride/agent-qa-core'
 import { AuthStateNameSchema, buildInternalRunAttributes, mergeRunAttributes, readAuth, writeAuth, removeAuth, getAgentQaVersion, getAgentQaUpdateStatus, getLLMAuthProviderPlugin, listAuthStateMetadata, listLLMAuthProviderPlugins, ModelConfigSchema, NamedLLMConfigSchema, NameSlugSchema, WorkspaceSchema, ServicesSchema, RegistrySchema, UseSchema, MobileAppStateSchema, TimeoutConfigSchema, CacheConfigSchema, PlannerConfigSchema, LoggingConfigSchema, LogCaptureConfigSchema, AccessibilityConfigSchema, DashboardConfigSchema, McpConfigSchema, RecordingConfigSchema, BrowserConfigSchema, AnalyticsSchema, AgentQaConfigSchema, TestDefinitionSchema, SuiteDefinitionSchema, parseEnvFile, serializeEnvFile, parseHooksFile, RUNTIME_IMAGE_MAP, redactAuthStateValue, validateUserRunAttributes, discoverWorkspaceFiles, isWorkspacePathMatch, resolveWorkspaceFileTarget, SizeString, KnowledgeConfigSchema } from '@vostride/agent-qa-core'
@@ -1860,6 +1860,7 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps): (req: In
   const chatRouter = createChatRouter(deps.agentHost)
   const pluginOAuthSessions = new Map<string, PluginOAuthSession>()
   const withCredentialLock = createCredentialLock()
+  const connectsInFlight = createConnectInFlight()
 
   return (req: IncomingMessage, res: ServerResponse) => {
     // 400-16 (gap 7): the SAME guarded parse `server.ts`'s listener uses, not a second copy. In the
@@ -1936,6 +1937,7 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps): (req: In
         withCredentialLock,
         credentialProvider: (name, credential) => credentialProductProvider(name, credential as DashboardAuthCredential),
         connectionTimeoutMs: llmConnectionTestTimeoutMs,
+        inFlight: connectsInFlight,
       })
       return
     }
