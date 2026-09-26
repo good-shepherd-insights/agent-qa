@@ -11,7 +11,8 @@ import {
   type TestFileInfo,
   type SuiteFileInfo,
 } from "@/lib/api"
-import { getConfigCommandLabel, searchConfigNavigationItems } from "@/lib/config-navigation"
+import { configCommandLabel, CONFIG_SECTION_LABELS } from "@/lib/config-copy"
+import { CONFIG_SECTION_ALIASES, searchConfigSections } from "@/lib/config-tabs"
 import { routes } from "@/lib/routes"
 import { useProductTour } from "@/components/product-tour"
 import {
@@ -86,7 +87,7 @@ export function CommandPalette() {
   const { restartTour } = useProductTour()
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const searchRequestRef = useRef(0)
-  const configResults = searchConfigNavigationItems(searchQuery)
+  const configResults = searchQuery.trim().length < 2 ? [] : searchConfigSections(searchQuery)
 
   useEffect(() => {
     const down = (e: KeyboardEvent) => {
@@ -332,25 +333,19 @@ export function CommandPalette() {
           <>
             <CommandSeparator />
             <CommandGroup heading="Config">
-              {configResults.map((item) => (
+              {configResults.map(({ tab, section }) => (
                 <CommandItem
-                  key={`${item.bucket}-${item.item}`}
+                  key={`${tab}-${section}`}
                   value={buildCommandValue(
                     "config",
-                    item.bucket,
-                    item.bucketLabel,
-                    item.item,
-                    item.itemLabel,
-                    item.title,
-                    item.description,
-                    item.aliases,
-                    item.fieldPaths,
-                    getConfigCommandLabel(item),
+                    configCommandLabel(tab, section),
+                    CONFIG_SECTION_LABELS[section],
+                    [...CONFIG_SECTION_ALIASES[section]],
                   )}
-                  onSelect={() => handleSelect(routes.configItem(item.bucket, item.item))}
+                  onSelect={() => handleSelect(routes.configTab(tab, section))}
                 >
                   <SlidersHorizontal />
-                  <span>{getConfigCommandLabel(item)}</span>
+                  <span>{configCommandLabel(tab, section)}</span>
                 </CommandItem>
               ))}
             </CommandGroup>

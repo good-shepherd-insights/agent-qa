@@ -1,16 +1,22 @@
 import { describe, expect, it } from 'vitest'
 
+import { CONFIG_SECTION_LABELS, configCommandLabel } from '@/lib/config-copy'
 import {
-  CONFIG_NAVIGATION_ITEMS,
-  DEFAULT_CONFIG_SELECTION,
-  getConfigCommandLabel,
-  normalizeConfigSelection,
-  searchConfigNavigationItems,
-} from '@/lib/config-navigation'
+  CONFIG_SECTION_ALIASES,
+  CONFIG_TABS,
+  LEGACY_CONFIG_PAIRS,
+  resolveConfigTab,
+  resolveLegacyConfigLink,
+  searchConfigSections,
+} from '@/lib/config-tabs'
+
+function sectionsFor(query: string): string[] {
+  return searchConfigSections(query).map((entry) => entry.section)
+}
 
 describe('config navigation inventory', () => {
   it('contains every UI-SPEC config destination', () => {
-    expect(CONFIG_NAVIGATION_ITEMS.map((item) => `${item.bucket}:${item.item}`)).toEqual([
+    expect([...LEGACY_CONFIG_PAIRS]).toEqual([
       'workspace:discovery',
       'workspace:files',
       'knowledge:store',
@@ -36,81 +42,59 @@ describe('config navigation inventory', () => {
   })
 
   it('normalizes missing selection to the default config destination', () => {
-    expect(normalizeConfigSelection(new URLSearchParams())).toEqual(DEFAULT_CONFIG_SELECTION)
+    expect(resolveLegacyConfigLink(new URLSearchParams())).toEqual({ kind: 'none' })
+    expect(CONFIG_TABS[0]).toBe('models')
   })
 
   it('normalizes invalid selection to the nearest valid destination', () => {
-    expect(normalizeConfigSelection(new URLSearchParams('bucket=workspace&item=bogus'))).toEqual({
-      bucket: 'workspace',
-      item: 'discovery',
+    expect(resolveLegacyConfigLink(new URLSearchParams('bucket=workspace&item=bogus'))).toEqual({
+      kind: 'unknown',
     })
-
-    expect(normalizeConfigSelection(new URLSearchParams('bucket=bogus&item=bogus'))).toEqual(DEFAULT_CONFIG_SELECTION)
+    expect(resolveLegacyConfigLink(new URLSearchParams('bucket=bogus&item=bogus'))).toEqual({
+      kind: 'unknown',
+    })
+    expect(resolveConfigTab('bogus')).toBeUndefined()
   })
 
   it('finds config destinations by label and alias', () => {
-    expect(searchConfigNavigationItems('targets').map((item) => item.item)).toContain('targets')
-    expect(searchConfigNavigationItems('env file').map((item) => item.item)).toContain('files')
-    expect(searchConfigNavigationItems('log capture').map((item) => item.item)).toContain('log-capture')
-    expect(searchConfigNavigationItems('reset app data').map((item) => item.item)).toContain('mobile')
-    expect(searchConfigNavigationItems('pass rate').map((item) => item.item)).toContain('pass-rate-scope')
-    expect(searchConfigNavigationItems('saved auth').map((item) => item.item)).toContain('auth-states')
-    expect(searchConfigNavigationItems('browser headless').map((item) => item.item)).toEqual(['browser'])
+    expect(sectionsFor('targets')).toContain('targets')
+    expect(sectionsFor('env file')).toContain('files')
+    expect(sectionsFor('log capture')).toContain('log-capture')
+    expect(sectionsFor('reset app data')).toContain('mobile-app-state')
+    expect(sectionsFor('pass rate')).toContain('pass-rate-scope')
+    expect(sectionsFor('saved auth')).toContain('login-states')
+    expect(sectionsFor('browser headless')).toEqual(['browser'])
   })
 
   it('keeps browser-scoped headless in the Browser destination only', () => {
-    const browserItem = CONFIG_NAVIGATION_ITEMS.find(
-      (item) => item.bucket === 'use' && item.item === 'browser',
-    )
-    const defaultsItem = CONFIG_NAVIGATION_ITEMS.find(
-      (item) => item.bucket === 'use' && item.item === 'execution-defaults',
-    )
-
-    expect(browserItem?.fieldPaths).toContain('use.browser.headless')
-    expect(defaultsItem?.fieldPaths).not.toContain('use.headless')
-    expect(defaultsItem?.fieldPaths).not.toContain('use.browser.headless')
-    expect(defaultsItem?.fieldPaths).not.toContain('use.device')
+    expect(sectionsFor('headless')).toEqual(['browser'])
+    expect(CONFIG_SECTION_ALIASES.models).not.toContain('headless')
+    expect(CONFIG_SECTION_ALIASES.models).not.toContain('device')
   })
 
-  it('indexes audited services runtime path fields', () => {
-    const dashboardItem = CONFIG_NAVIGATION_ITEMS.find((item) => item.bucket === 'services' && item.item === 'dashboard')
-    const cacheItem = CONFIG_NAVIGATION_ITEMS.find((item) => item.bucket === 'services' && item.item === 'cache')
-    const authStatesItem = CONFIG_NAVIGATION_ITEMS.find((item) => item.bucket === 'services' && item.item === 'auth-states')
-    const knowledgeItem = CONFIG_NAVIGATION_ITEMS.find((item) => item.bucket === 'knowledge' && item.item === 'store')
-    const visionItem = CONFIG_NAVIGATION_ITEMS.find((item) => item.bucket === 'services' && item.item === 'vision')
-
-    expect(dashboardItem?.fieldPaths).toEqual(expect.arrayContaining([
-      'services.dashboard',
+  it('finds the runtime storage sections by their words, never by a dotted path', () => {
+    expect(sectionsFor('db path')).toEqual(['dashboard'])
+    expect(sectionsFor('artifacts dir')).toEqual(['dashboard'])
+    expect(sectionsFor('cache dir')).toEqual(['cache'])
+    expect(sectionsFor('ttl')).toEqual(['cache'])
+    expect(sectionsFor('saved auth')).toEqual(['login-states'])
+    expect(sectionsFor('commit artifacts')).toEqual(['knowledge'])
+    expect(sectionsFor('context budget')).toEqual(['knowledge'])
+    expect(sectionsFor('knowledge dir')).toEqual(['knowledge'])
+    expect(sectionsFor('screenshot size')).toEqual(['screenshot-size'])
+    for (const dotted of [
       'services.dashboard.dbPath',
-      'services.dashboard.artifactsDir',
-    ]))
-    expect(cacheItem?.fieldPaths).toEqual(expect.arrayContaining([
-      'services.cache',
-      'services.cache.dir',
       'services.cache.ttl',
-    ]))
-    expect(authStatesItem?.fieldPaths).toEqual(expect.arrayContaining([
-      'services.authState',
       'services.authState.dir',
-    ]))
-    expect(knowledgeItem?.fieldPaths).toEqual(expect.arrayContaining([
-      'knowledge',
       'knowledge.dir',
-      'knowledge.commitArtifacts',
-      'knowledge.contextBudgetTokens',
-    ]))
-    expect(visionItem?.fieldPaths).toEqual(expect.arrayContaining([
-      'services.vision',
       'services.vision.screenshotSize',
-      'services.vision.effectiveResolution',
-    ]))
-    expect(searchConfigNavigationItems('knowledge dir').map((item) => item.item)).toEqual(['store'])
-    expect(searchConfigNavigationItems('screenshot size').map((item) => item.item)).toEqual(['vision'])
+    ]) {
+      expect(sectionsFor(dotted), dotted).toEqual([])
+    }
   })
 
   it('formats the shared command label contract', () => {
-    const targetItem = CONFIG_NAVIGATION_ITEMS.find((item) => item.bucket === 'registry' && item.item === 'targets')
-    expect(targetItem).toBeDefined()
-    expect(getConfigCommandLabel(targetItem!)).toBe('Config: Registry / Targets')
+    expect(CONFIG_SECTION_LABELS.targets).toBe('Targets')
+    expect(configCommandLabel('targets', 'targets')).toBe('Config: Targets / Targets')
   })
 })

@@ -82,6 +82,9 @@ vi.mock('@/components/ui/command', () => ({
 }))
 
 import { CommandPalette } from '@/components/command-palette'
+import { CONFIG_SECTION_LABELS, CONFIG_TAB_LABELS, configCommandLabel } from '@/lib/config-copy'
+import { CONFIG_SECTIONS, CONFIG_TABS, LEGACY_CONFIG_LINKS, LEGACY_CONFIG_PAIRS } from '@/lib/config-tabs'
+import { routes } from '@/lib/routes'
 
 let container: HTMLDivElement
 let root: Root
@@ -124,70 +127,147 @@ afterEach(() => {
   container.remove()
 })
 
+function reopenPalette() {
+  act(() => {
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'k', metaKey: true }))
+  })
+}
+
+function configItems(): HTMLButtonElement[] {
+  return Array.from(
+    container.querySelectorAll('[data-cmd-group="Config"] [data-testid="cmd-item"]'),
+  ) as HTMLButtonElement[]
+}
+
+function configItemLabelled(label: string): HTMLButtonElement | undefined {
+  return configItems().find((item) => item.textContent === label)
+}
+
+const STORAGE_WORDS = /\b(workspace|knowledge\.|services|registry|use\.|analytics)\b|[a-z]\.[a-z]/i
+const ALL_CONFIG_LABELS = new Set(
+  CONFIG_TABS.flatMap((tab) => CONFIG_SECTIONS[tab].map((section) => configCommandLabel(tab, section))),
+)
+const LABEL_SHAPE = new RegExp(
+  `^Config: (${Object.values(CONFIG_TAB_LABELS).join('|')}) / .+$`,
+)
+
 describe('command palette config navigation', () => {
-  it('shows config item results and navigates to canonical config deep links', async () => {
+  it('shows the Targets section and navigates to its tab and section', async () => {
     await renderPalette()
     await typeSearch('targets')
-    const items = Array.from(container.querySelectorAll('[data-testid="cmd-item"]')) as HTMLButtonElement[]
-    const configItem = items.find((item) => item.textContent?.includes('Config: Registry / Targets'))
+    const configItem = configItemLabelled('Config: Targets / Targets')
     expect(configItem).toBeDefined()
 
     act(() => {
       configItem!.click()
     })
 
-    expect(navigateSpy).toHaveBeenCalledWith('/config?bucket=registry&item=targets')
+    expect(navigateSpy).toHaveBeenCalledWith('/config/targets?section=targets')
   })
 
   it('matches obvious aliases like env file and log capture', async () => {
     await renderPalette()
     await typeSearch('env file')
-    expect(container.textContent).toContain('Config: Workspace / Files')
-    const envItem = Array.from(container.querySelectorAll('[data-testid="cmd-item"]'))
-      .find((item) => item.textContent?.includes('Config: Workspace / Files')) as HTMLButtonElement | undefined
-    expect(envItem?.getAttribute('data-value')).toContain('Config: Workspace / Files')
-    expect(envItem?.getAttribute('data-value')).toContain('workspace.envFile')
+    expect(container.textContent).toContain('Config: Project / Hooks, env and secrets files')
+    const envItem = configItemLabelled('Config: Project / Hooks, env and secrets files')
+    expect(envItem?.getAttribute('data-value')).toContain('Config: Project / Hooks, env and secrets files')
     expect(envItem?.getAttribute('data-value')?.toLowerCase()).toContain('env file')
+    expect(envItem?.getAttribute('data-value')).not.toContain('workspace.envFile')
 
     await typeSearch('log capture')
-    expect(container.textContent).toContain('Config: Use / Log Capture')
+    expect(container.textContent).toContain('Config: Execution / Log capture')
 
     await typeSearch('pass rate')
-    expect(container.textContent).toContain('Config: Analytics / Pass Rate Scope')
+    expect(container.textContent).toContain('Config: Project / Pass-rate scope')
   })
 
-  it('matches audited service field paths for runtime storage and knowledge', async () => {
+  it('matches runtime storage and knowledge by section words, never by dotted path', async () => {
     await renderPalette()
-    await typeSearch('knowledge.dir')
-    let items = Array.from(container.querySelectorAll('[data-testid="cmd-item"]')) as HTMLButtonElement[]
-    let configItem = items.find((item) => item.textContent?.includes('Config: Knowledge / Knowledge Store'))
+    await typeSearch('knowledge dir')
+    let configItem = configItemLabelled('Config: Project / Knowledge store')
     expect(configItem).toBeDefined()
-    expect(configItem?.getAttribute('data-value')).toContain('knowledge.dir')
+    expect(configItem?.getAttribute('data-value')).not.toContain('knowledge.dir')
 
-    await typeSearch('artifactsDir')
-    items = Array.from(container.querySelectorAll('[data-testid="cmd-item"]')) as HTMLButtonElement[]
-    configItem = items.find((item) => item.textContent?.includes('Config: Services / Dashboard'))
+    await typeSearch('artifacts dir')
+    configItem = configItemLabelled('Config: Project / Dashboard')
     expect(configItem).toBeDefined()
-    expect(configItem?.getAttribute('data-value')).toContain('services.dashboard.artifactsDir')
+    expect(configItem?.getAttribute('data-value')).not.toContain('services.dashboard.artifactsDir')
 
-    await typeSearch('services.cache.ttl')
-    items = Array.from(container.querySelectorAll('[data-testid="cmd-item"]')) as HTMLButtonElement[]
-    configItem = items.find((item) => item.textContent?.includes('Config: Services / Cache'))
+    await typeSearch('ttl')
+    configItem = configItemLabelled('Config: Execution / Cache')
     expect(configItem).toBeDefined()
-    expect(configItem?.getAttribute('data-value')).toContain('services.cache.ttl')
+    expect(configItem?.getAttribute('data-value')).not.toContain('services.cache.ttl')
+
+    for (const dotted of ['knowledge.dir', 'services.dashboard.artifactsDir', 'services.cache.ttl']) {
+      await typeSearch(dotted)
+      expect(configItems()).toEqual([])
+    }
   })
 
-  it('opens the analytics pass rate scope config destination', async () => {
+  it('opens the pass-rate scope config destination on the Project tab', async () => {
     await renderPalette()
-    await typeSearch('analytics scope')
-    const items = Array.from(container.querySelectorAll('[data-testid="cmd-item"]')) as HTMLButtonElement[]
-    const configItem = items.find((item) => item.textContent?.includes('Config: Analytics / Pass Rate Scope'))
+    await typeSearch('pass-rate scope')
+    const configItem = configItemLabelled('Config: Project / Pass-rate scope')
     expect(configItem).toBeDefined()
 
     act(() => {
       configItem!.click()
     })
 
-    expect(navigateSpy).toHaveBeenCalledWith('/config?bucket=analytics&item=pass-rate-scope')
+    expect(navigateSpy).toHaveBeenCalledWith('/config/project?section=pass-rate-scope')
+  })
+
+  it(
+    'PALETTE-CONFIG-ENTRIES: each entry is labelled Config: {Tab} / {Section} and opens where its legacy link lands',
+    async () => {
+      await renderPalette()
+      await typeSearch('timeouts')
+      const timeouts = configItemLabelled('Config: Execution / Timeouts')
+      expect(timeouts).toBeDefined()
+      act(() => {
+        timeouts!.click()
+      })
+      expect(navigateSpy).toHaveBeenLastCalledWith('/config/execution?section=timeouts')
+
+      for (const pair of LEGACY_CONFIG_PAIRS) {
+        const { tab, section } = LEGACY_CONFIG_LINKS[pair]
+        const [bucket, item] = pair.split(':') as [string, string]
+        reopenPalette()
+        await typeSearch(CONFIG_SECTION_LABELS[section])
+        const entry = configItemLabelled(configCommandLabel(tab, section))
+        expect(entry, pair).toBeDefined()
+        act(() => {
+          entry!.click()
+        })
+        expect(navigateSpy).toHaveBeenLastCalledWith(routes.configItem(bucket, item))
+        expect(navigateSpy).toHaveBeenLastCalledWith(routes.configTab(tab, section))
+      }
+    },
+    30_000,
+  )
+
+  it('PALETTE-SEARCH-NO-STORAGE-VOCAB: bucket names and dotted paths find nothing, and every label is task-shaped', async () => {
+    await renderPalette()
+    for (const query of ['registry', 'use.timeout', 'workspace', 'services', 'analytics', 'use.llm']) {
+      await typeSearch(query)
+      const hits = configItems().filter((item) =>
+        item.textContent?.toLowerCase().includes(query.toLowerCase()),
+      )
+      expect(hits, query).toEqual([])
+      expect(configItems(), query).toEqual([])
+    }
+
+    for (const query of ['in', 'se', 'time', 'model']) {
+      await typeSearch(query)
+      const items = configItems()
+      expect(items.length, query).toBeGreaterThan(0)
+      for (const item of items) {
+        const label = item.textContent ?? ''
+        expect(label).toMatch(LABEL_SHAPE)
+        expect(ALL_CONFIG_LABELS.has(label), label).toBe(true)
+        expect(label).not.toMatch(STORAGE_WORDS)
+        expect(item.getAttribute('data-value') ?? '').not.toMatch(STORAGE_WORDS)
+      }
+    }
   })
 })
