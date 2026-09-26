@@ -13,6 +13,7 @@ import { parse as parseYaml } from 'yaml'
 
 import { ConfigManager } from '../config/index.js'
 import { createRouter } from '../server/routes.js'
+import { removeAuth, writeAuth } from '@vostride/agent-qa-core'
 
 const { authStore } = vi.hoisted(() => ({
   authStore: { current: {} as Record<string, unknown> },
@@ -34,6 +35,9 @@ vi.mock('@vostride/agent-qa-core', async () => {
     }),
   }
 })
+
+const mockWriteAuth = vi.mocked(writeAuth)
+const mockRemoveAuth = vi.mocked(removeAuth)
 
 interface MockResponse {
   status: number
@@ -390,4 +394,147 @@ describe('undoable config writes (429-11 Task 1)', () => {
     expect(get.headers['access-control-allow-origin']).toBeUndefined()
     expect(Buffer.compare(await readFile(configPath), before)).toBe(0)
   })
+})
+
+const ACCESS_TOKEN = 'oauth-access-fixture-5b1d0e77'
+const REFRESH_TOKEN = 'oauth-refresh-fixture-c2a94f10'
+const SIGNED_IN = {
+  type: 'oauth',
+  provider: 'openai-subscription',
+  tokens: { access: ACCESS_TOKEN, refresh: REFRESH_TOKEN, expires: 1_777_675_000_000 },
+}
+
+function signOut(name: string, headers: IncomingHttpHeaders = SAME_SITE): Promise<MockResponse> {
+  return invokeRoute(`/api/auth/${encodeURIComponent(name)}`, { method: 'DELETE', headers })
+}
+
+describe('undoable sign-out and key removal (429-11 Task 2)', () => {
+  it('UNDO-SIGN-OUT-RESTORES-SERVER-SIDE: Undo writes the identical credential back and no answer carries it', async () => {
+    await useConfig(modelsConfig())
+    authStore.current = { gpt: structuredClone(SIGNED_IN), other: { type: 'api', provider: 'openai-compatible', key: 'sk-other' } }
+
+    const removed = await signOut('gpt')
+
+    expect(removed.status).toBe(200)
+    const body = JSON.parse(removed.body) as { deleted: boolean; undo?: { token: string; expiresAt: number } }
+    expect(body.deleted).toBe(true)
+    expect(Object.keys(body).sort()).toEqual(['deleted', 'undo'])
+    expect(typeof body.undo?.token).toBe('string')
+    expect(mockRemoveAuth).toHaveBeenCalledWith('gpt')
+    expect(authStore.current).not.toHaveProperty('gpt')
+    mockWriteAuth.mockClear()
+
+    const restored = await postUndo(body.undo!.token)
+
+    expect(restored.status).toBe(200)
+    expect(JSON.parse(restored.body)).toEqual({ restored: true })
+    expect(mockWriteAuth).toHaveBeenCalledTimes(1)
+    expect(mockWriteAuth).toHaveBeenCalledWith('gpt', SIGNED_IN)
+    expect(authStore.current.gpt).toEqual(SIGNED_IN)
+    for (const answer of [removed, restored]) {
+      expect(answer.body).not.toContain(ACCESS_TOKEN)
+      expect(answer.body).not.toContain(REFRESH_TOKEN)
+      expect(answer.headers['access-control-allow-origin']).toBeUndefined()
+    }
+  })
+
+  it('UNDO-SIGN-OUT-RESTORES-SERVER-SIDE: removing a name with no credential answers deleted false and no token', async () => {
+    await useConfig(modelsConfig())
+    authStore.current = { other: { type: 'api', provider: 'openai-compatible', key: 'sk-other' } }
+
+    const removed = await signOut('gpt')
+
+    expect(removed.status).toBe(200)
+    expect(JSON.parse(removed.body)).toEqual({ deleted: false })
+    expect(mockRemoveAuth).not.toHaveBeenCalled()
+    expect(authStore.current).toEqual({ other: { type: 'api', provider: 'openai-compatible', key: 'sk-other' } })
+  })
+
+  it('UNDO-TOKEN-SINGLE-USE: a sign-out Undo token restores once', async () => {
+    await useConfig(modelsConfig())
+    authStore.current = { gpt: structuredClone(SIGNED_IN) }
+    const { token } = undoOf(await signOut('gpt'))
+    expect((await postUndo(token)).status).toBe(200)
+    mockWriteAuth.mockClear()
+
+    const again = await postUndo(token)
+
+    expect(again.status).toBe(410)
+    expect(JSON.parse(again.body)).toEqual({ error: 'undo_expired' })
+    expect(mockWriteAuth).not.toHaveBeenCalled()
+  })
+
+  it('UNDO-CONFLICT: a credential saved under the name since the sign-out is never overwritten', async () => {
+    await useConfig(modelsConfig())
+    authStore.current = { gpt: structuredClone(SIGNED_IN) }
+    const { token } = undoOf(await signOut('gpt'))
+    const saved = await invokeRoute('/api/auth/credential', {
+      method: 'POST',
+      headers: SAME_SITE,
+      body: JSON.stringify({ configName: 'gpt', provider: 'anthropic-compatible', type: 'api-key', secret: 'sk-newer' }),
+    })
+    expect(saved.status).toBe(200)
+    const newer = structuredClone(authStore.current.gpt)
+    expect(newer).toBeDefined()
+    mockWriteAuth.mockClear()
+
+    const conflicted = await postUndo(token)
+
+    expect(conflicted.status).toBe(409)
+    expect(JSON.parse(conflicted.body)).toEqual({ error: 'undo_conflict' })
+    expect(mockWriteAuth).not.toHaveBeenCalled()
+    expect(authStore.current.gpt).toEqual(newer)
+  })
+})
+
+const FOREIGN_ORIGIN = 'http://evil.example'
+const CROSS_SITE_CALLERS: readonly { readonly name: string; readonly headers: IncomingHttpHeaders }[] = [
+  { name: 'a foreign Origin', headers: { ...SAME_SITE, origin: FOREIGN_ORIGIN } },
+  { name: 'Sec-Fetch-Site cross-site with no Origin', headers: { ...SAME_SITE, 'sec-fetch-site': 'cross-site' } },
+  { name: 'a rebound Host', headers: { 'content-type': 'application/json', host: 'evil.example:4317', origin: 'http://evil.example:4317' } },
+]
+
+describe('UNDO-SAME-SITE (429-11 Task 2)', () => {
+  for (const caller of CROSS_SITE_CALLERS) {
+    it(`UNDO-SAME-SITE: POST /api/config/undo refuses ${caller.name} and restores nothing`, async () => {
+      const configPath = await useConfig(modelsConfig())
+      const { token } = undoOf(await patchConfig({ undoable: true, changes: [deleteGpt] }))
+      const afterDelete = await readFile(configPath)
+
+      const refused = await postUndo(token, caller.headers)
+
+      expect(refused.status).toBe(403)
+      expect(JSON.parse(refused.body)).toEqual({ error: 'cross_site_refused' })
+      expect(refused.headers['access-control-allow-origin']).toBeUndefined()
+      expect(Buffer.compare(await readFile(configPath), afterDelete)).toBe(0)
+      expect((await postUndo(token)).status).toBe(200)
+    })
+
+    it(`UNDO-SAME-SITE: POST /api/config/undo refuses ${caller.name} for a sign-out token`, async () => {
+      await useConfig(modelsConfig())
+      authStore.current = { gpt: structuredClone(SIGNED_IN) }
+      const { token } = undoOf(await signOut('gpt'))
+      mockWriteAuth.mockClear()
+
+      const refused = await postUndo(token, caller.headers)
+
+      expect(refused.status).toBe(403)
+      expect(refused.headers['access-control-allow-origin']).toBeUndefined()
+      expect(mockWriteAuth).not.toHaveBeenCalled()
+      expect(authStore.current).toEqual({})
+    })
+
+    it(`UNDO-SAME-SITE: DELETE /api/auth/:configName refuses ${caller.name} and removes nothing`, async () => {
+      await useConfig(modelsConfig())
+      authStore.current = { gpt: structuredClone(SIGNED_IN) }
+
+      const refused = await signOut('gpt', caller.headers)
+
+      expect(refused.status).toBe(403)
+      expect(JSON.parse(refused.body)).toEqual({ error: 'cross_site_refused' })
+      expect(refused.headers['access-control-allow-origin']).toBeUndefined()
+      expect(mockRemoveAuth).not.toHaveBeenCalled()
+      expect(authStore.current).toEqual({ gpt: SIGNED_IN })
+    })
+  }
 })
