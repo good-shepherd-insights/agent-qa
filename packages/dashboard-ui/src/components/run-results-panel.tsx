@@ -4,6 +4,7 @@ import type { RunStatus } from "@vostride/agent-qa-schema"
 import { Button } from "@/components/ui/button"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { LiveStepRowView } from "@/components/live-step-row"
+import { liveRowShown } from "@/lib/live-step-row"
 import { openRunStream } from "@/lib/api"
 import {
   createInitialRunStreamState,
@@ -28,6 +29,10 @@ import { getRunStatusDescriptor } from "@/lib/status"
 // a named glyph and the label. There is no clock anywhere in the panel, no duration on a row and
 // no elapsed badge; durations live in run detail. `<SECRET_n>` placeholders are painted as the
 // masked chip by the row itself.
+//
+// ONLY ROWS WITH TEXT ARE DRAWN (owner decision 2026-09-26 (2), G-428-2). A row the runner sent no
+// text for is left out before the list and before the empty-state decision, so an old producer's
+// text-less pending rows leave the panel saying it is waiting rather than blank.
 
 // A row still running when the run answered takes the run's ending, so a stream that stopped
 // mid-step never leaves a breathing glyph claiming work is still happening.
@@ -86,7 +91,7 @@ export function RunResultsPanel({ runId, onClose }: RunResultsPanelProps) {
   // The reducer keeps rows in bus seq order — the run's own total order, never arrival order.
   const rows = useMemo<LiveStepRow[]>(
     () =>
-      state.steps.map((row) =>
+      state.steps.filter(liveRowShown).map((row) =>
         row.status === "running" && finalStatus !== undefined
           ? { ...row, status: SETTLED_STEP_STATUS[finalStatus] }
           : row,
@@ -127,7 +132,7 @@ export function RunResultsPanel({ runId, onClose }: RunResultsPanelProps) {
             ))}
           </ul>
         )}
-        {rows.length === 0 && posture === "connecting" && (
+        {rows.length === 0 && (posture === "connecting" || posture === "running") && (
           <div className="text-sm text-muted-foreground text-center py-8">
             Waiting for events...
           </div>
