@@ -1,17 +1,21 @@
 import { expectTypeOf, test } from 'vitest'
 import {
+  CONFIG_ACTION_REFUSALS,
   CONFIG_NAMED_ARRAYS,
   CONFIG_WRITE_OPS,
   CONFIG_WRITE_REFUSALS,
+  LLM_SETUP_REFUSALS,
   MASKING_CLASSES,
   PROVIDER_ERROR_CLASSES,
 } from '../index'
 import type {
+  ConfigActionRefusal,
   ConfigChange,
   ConfigNamedArray,
   ConfigPathSegment,
   ConfigWriteOp,
   ConfigWriteRefusal,
+  LlmSetupRefusal,
   MaskingClass,
   ProviderErrorClass,
 } from '../index'
@@ -68,4 +72,28 @@ test('C429-PROVIDER-ERROR-CLASSES-EXACT', () => {
   expectTypeOf<(typeof PROVIDER_ERROR_CLASSES)[number]>().toEqualTypeOf<Expected>()
   expectTypeOf<Exclude<ProviderErrorClass, Expected>>().toEqualTypeOf<never>()
   expectTypeOf<Exclude<Expected, ProviderErrorClass>>().toEqualTypeOf<never>()
+})
+
+test('C429-LLM-SETUP-REFUSALS-EXACT', () => {
+  type Expected =
+    | 'invalid_setup_input'
+    | 'name_invalid'
+    | 'name_taken'
+    | 'credential_provider_conflict'
+    | 'credential_not_accepted'
+    | 'credential_missing'
+    | 'credential_exists'
+    | 'validation_failed'
+  expectTypeOf<LlmSetupRefusal>().toEqualTypeOf<Expected>()
+  expectTypeOf<(typeof LLM_SETUP_REFUSALS)[number]>().toEqualTypeOf<Expected>()
+  expectTypeOf<Exclude<LlmSetupRefusal, Expected>>().toEqualTypeOf<never>()
+  expectTypeOf<Exclude<Expected, LlmSetupRefusal>>().toEqualTypeOf<never>()
+})
+
+test('C429-CONFIG-ACTION-REFUSALS-EXACT', () => {
+  type Expected = 'undo_expired' | 'undo_conflict' | 'reveal_not_secret' | 'reveal_not_found'
+  expectTypeOf<ConfigActionRefusal>().toEqualTypeOf<Expected>()
+  expectTypeOf<(typeof CONFIG_ACTION_REFUSALS)[number]>().toEqualTypeOf<Expected>()
+  expectTypeOf<Exclude<ConfigActionRefusal, Expected>>().toEqualTypeOf<never>()
+  expectTypeOf<Exclude<Expected, ConfigActionRefusal>>().toEqualTypeOf<never>()
 })

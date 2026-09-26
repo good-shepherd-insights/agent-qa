@@ -1,10 +1,16 @@
 export type { PlatformBase, TimeoutConfig } from './base'
 export { platformBase, platformBaseShape, timeoutConfigSchema } from './base'
-// 2026-09-26, 429-01 D-19: the field-merge write DTO PATCH /api/config parses.
+// 2026-09-26, 429-01 D-19: the field-merge write DTO PATCH /api/config parses; 429-04 D-09/D-24
+// adds the reveal and Undo DTOs beside it.
 export type {
+  ConfigActionRefusal,
   ConfigChange,
   ConfigNamedArray,
   ConfigPathSegment,
+  ConfigRevealRequest,
+  ConfigRevealResult,
+  ConfigUndoRequest,
+  ConfigUndoResult,
   ConfigWriteIssue,
   ConfigWriteOp,
   ConfigWriteRefusal,
@@ -12,12 +18,15 @@ export type {
   ConfigWriteResult,
 } from './config-write'
 export {
+  CONFIG_ACTION_REFUSALS,
   CONFIG_NAMED_ARRAYS,
   CONFIG_REVISION_ABSENT,
   CONFIG_WRITE_OPS,
   CONFIG_WRITE_REFUSALS,
   ConfigChangeSchema,
   ConfigPathSegmentSchema,
+  ConfigRevealRequestSchema,
+  ConfigUndoRequestSchema,
   ConfigWriteRequestSchema,
 } from './config-write'
 // 2026-09-26, 429-03 D-08: the one masking map every config surface shares, and the schema's

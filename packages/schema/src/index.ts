@@ -51,10 +51,15 @@ export {
 export type {
   AndroidPlatformConfig,
   BrowserConfig,
+  ConfigActionRefusal,
   ConfigChange,
   ConfigLeafPattern,
   ConfigNamedArray,
   ConfigPathSegment,
+  ConfigRevealRequest,
+  ConfigRevealResult,
+  ConfigUndoRequest,
+  ConfigUndoResult,
   ConfigWriteIssue,
   ConfigWriteOp,
   ConfigWriteRefusal,
@@ -84,6 +89,7 @@ export {
   appStateSchema,
   browserConfigSchema,
   classifyConfigPath,
+  CONFIG_ACTION_REFUSALS,
   CONFIG_MASKING_MAP,
   CONFIG_NAMED_ARRAYS,
   CONFIG_REVISION_ABSENT,
@@ -93,6 +99,8 @@ export {
   ConfigChangeSchema,
   configLeafOwner,
   ConfigPathSegmentSchema,
+  ConfigRevealRequestSchema,
+  ConfigUndoRequestSchema,
   ConfigWriteRequestSchema,
   DEFAULT_PARALLEL_WORKERS,
   deviceConfigSchema,
@@ -1762,3 +1770,16 @@ export {
   providerErrorSentence,
 } from './llm/provider-error'
 export type { ProviderErrorClass } from './llm/provider-error'
+// 2026-09-26, 429-04 D-15/D-09/D-24: the draft connect, credential save and move DTOs.
+export {
+  LLM_SETUP_REFUSALS,
+  LlmConnectRequestSchema,
+  LlmCredentialMoveRequestSchema,
+} from './llm/connect'
+export type {
+  LlmConnectRequest,
+  LlmConnectResult,
+  LlmCredentialMoveRequest,
+  LlmCredentialSaveResult,
+  LlmSetupRefusal,
+} from './llm/connect'

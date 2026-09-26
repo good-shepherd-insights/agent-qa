@@ -181,3 +181,78 @@ test('EXTRACT-PROVIDER-ERROR', () => {
   })
   expect(api.extractProviderError('x')).toEqual({ message: 'x' })
 })
+
+test('C429-LLM-SETUP-REFUSALS-EXACT', () => {
+  expect(api.LLM_SETUP_REFUSALS).toEqual([
+    'invalid_setup_input',
+    'name_invalid',
+    'name_taken',
+    'credential_provider_conflict',
+    'credential_not_accepted',
+    'credential_missing',
+    'credential_exists',
+    'validation_failed',
+  ])
+})
+
+test('C429-CONFIG-ACTION-REFUSALS-EXACT', () => {
+  expect(api.CONFIG_ACTION_REFUSALS).toEqual([
+    'undo_expired',
+    'undo_conflict',
+    'reveal_not_secret',
+    'reveal_not_found',
+  ])
+})
+
+test('CONNECT-REQUEST-STRICT', () => {
+  const schema = api.LlmConnectRequestSchema
+  const withKey = {
+    name: 'gpt-5.6',
+    provider: 'openai-compatible',
+    model: 'gpt-5.6',
+    baseURL: 'https://api.example.test/v1',
+    providerHeaders: { 'x-trace': 'on' },
+    credential: { type: 'api-key', secret: 'sk-test' },
+    skipTest: false,
+  }
+  const withoutCredential = { name: 'codex', provider: 'openai-subscription', model: 'gpt-5.6' }
+  expect(schema.parse(withKey)).toEqual(withKey)
+  expect(schema.parse(withoutCredential)).toEqual(withoutCredential)
+
+  const refused = [
+    { ...withoutCredential, extra: true },
+    { ...withoutCredential, credential: { type: 'oauth', secret: 'sk-test' } },
+    { ...withoutCredential, credential: { type: 'api-key', secret: '' } },
+    { ...withoutCredential, credential: { type: 'api-key', secret: 'sk-test', extra: true } },
+    { ...withoutCredential, name: '' },
+  ]
+  for (const body of refused) {
+    expect(schema.safeParse(body).success).toBe(false)
+  }
+})
+
+test('REVEAL-UNDO-MOVE-STRICT', () => {
+  const cases = [
+    {
+      schema: api.ConfigRevealRequestSchema,
+      valid: { path: ['registry', 'llms', { name: 'gpt-5.6' }, 'providerHeaders', 'Authorization'] },
+      emptyRequired: { path: [''] },
+    },
+    {
+      schema: api.ConfigUndoRequestSchema,
+      valid: { token: 'undo-1' },
+      emptyRequired: { token: '' },
+    },
+    {
+      schema: api.LlmCredentialMoveRequestSchema,
+      valid: { from: 'old', to: 'new', provider: 'anthropic-compatible' },
+      emptyRequired: { from: 'old', to: '', provider: 'anthropic-compatible' },
+    },
+  ] as const
+  for (const { schema, valid, emptyRequired } of cases) {
+    expect(schema.parse(valid)).toEqual(valid)
+    expect(schema.safeParse({ ...valid, extra: true }).success).toBe(false)
+    expect(schema.safeParse(emptyRequired).success).toBe(false)
+  }
+  expect(api.ConfigRevealRequestSchema.safeParse({ path: [] }).success).toBe(false)
+})
