@@ -311,6 +311,12 @@ export interface RunMemberDescriptor {
   suiteTotal?: number
   totalSteps?: number
   /**
+   * G-428-2 (2026-09-26): the raw authored text of each step, in order. It is the same string
+   * member-runner announces at `stepStarted` (`memberStepText`). The shell masks it onto
+   * `testStarted.stepTexts`; callers never pre-mask. Absent ⇒ omitted from the payload.
+   */
+  stepTexts?: readonly string[]
+  /**
    * THIS MEMBER'S OWN TARGET's run-start health baseline (D-04, 401-19 WR-04).
    *
    * PER MEMBER, NOT PER RUN, because a run's members may name different targets and a reading taken

@@ -314,7 +314,9 @@ export function startRun(config: RunConfig): RunSession {
       // grouping, totalSteps). Suite grouping rides testStarted — the shell stays suite-agnostic
       // (no suite lifecycle events); reporters derive boundaries by watching the grouping change.
       // Absent optionals are omitted via conditional spread so no undefined-hole survives round-trip.
-      // These are structural identity fields (not captured streams) — unmasked, matching testId/name.
+      // Every field but stepTexts is structural identity (not a captured stream) — unmasked, matching
+      // testId/name. stepTexts (G-428-2) is authored step content, so it is masked here by `mask`, the
+      // same MaskingContext the member's event sink below masks stepStarted.stepText with.
       bus.publish('testStarted', {
         testId: member.testId,
         testIndex,
@@ -325,6 +327,7 @@ export function startRun(config: RunConfig): RunSession {
         ...(member.suiteIndex !== undefined ? { suiteIndex: member.suiteIndex } : {}),
         ...(member.suiteTotal !== undefined ? { suiteTotal: member.suiteTotal } : {}),
         ...(member.totalSteps !== undefined ? { totalSteps: member.totalSteps } : {}),
+        ...(member.stepTexts !== undefined ? { stepTexts: member.stepTexts.map(mask) } : {}),
       })
 
       // Member abort chained to the run controller so run-level cancel/budget aborts the active test.
