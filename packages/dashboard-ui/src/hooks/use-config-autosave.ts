@@ -79,14 +79,26 @@ export interface ConfigAutosave {
   status: ConfigSaveStatus
   draftTabs: ReadonlySet<ConfigTab>
   edit: (field: ConfigFieldRef, raw: unknown, parsed: ConfigFieldParse) => void
+  /** Keeps a typed value as a draft that never writes by itself; only an explicit action saves it. */
+  hold: (field: ConfigFieldRef, raw: string) => void
+  /** Drops a field's draft, so it shows the file's value again. */
+  discard: (field: ConfigFieldRef) => void
   settle: (field: ConfigFieldRef) => void
   retry: () => void
   valueOf: (field: ConfigFieldRef) => unknown
   stateOf: (field: ConfigFieldRef) => FieldState
   errorOf: (field: ConfigFieldRef) => string | undefined
   setFocusedField: (field: ConfigFieldRef | undefined) => void
-  /** One explicit write; with undo metadata it offers Undo. Resolves true once the write landed. */
-  runExplicit: (changes: ConfigChange[], undoMeta?: ConfigUndoMeta) => Promise<boolean>
+  /**
+   * One explicit write; with undo metadata it offers Undo. Resolves true once the write landed.
+   * Fields it carries show saving, take the server's named reasons, and drop their held draft once
+   * it lands; a refused write with fields is what Retry sends again.
+   */
+  runExplicit: (
+    changes: ConfigChange[],
+    undoMeta?: ConfigUndoMeta,
+    fields?: readonly ConfigFieldRef[],
+  ) => Promise<boolean>
   undo: () => Promise<void>
   goToFirstDraft: () => ConfigDraftTarget | undefined
   /** Re-reads with the loading state shown (the Reload config button). */
@@ -353,6 +365,12 @@ interface Pin {
   value: unknown
 }
 
+interface HeldExplicit {
+  keys: readonly string[]
+  changes: ConfigChange[]
+  undoMeta?: ConfigUndoMeta
+}
+
 interface EngineHost {
   dispatch: Dispatch<HookAction>
   getState: () => HookState
@@ -375,6 +393,9 @@ function createEngine(host: EngineHost) {
   let restored = false
   let focusedKey: string | undefined
   let pin: Pin | undefined
+  /** The raw value each held field shows; an explicit write drops it only if it is still what it sent. */
+  const holds = new Map<string, unknown>()
+  let heldExplicit: HeldExplicit | undefined
 
   function emit(event: ConfigAutosaveEvent, newLocations?: Record<string, FieldLocation>) {
     host.dispatch({ event, now: Date.now(), ...(newLocations ? { locations: newLocations } : {}) })
@@ -439,8 +460,10 @@ function createEngine(host: EngineHost) {
     keys: readonly string[],
     changes: ConfigChange[],
     explicit?: ConfigUndoMeta,
+    byAction = false,
   ): Promise<boolean> {
     const id = `config-write-${++writeSeq}`
+    const sentHolds = keys.map((key) => holds.get(key))
     let landed!: () => void
     flight = new Promise<void>((resolve) => {
       landed = resolve
@@ -463,6 +486,13 @@ function createEngine(host: EngineHost) {
       if (mirrored) {
         for (const key of written) releaseClean(key)
       }
+      if (byAction) {
+        keys.forEach((key, index) => {
+          if (outbox.get(key)?.dirty || holds.get(key) !== sentHolds[index]) return
+          holds.delete(key)
+          emit({ type: "draft-cleared", fieldKey: key })
+        })
+      }
       if (explicit && result.undo) {
         emit({
           type: "undo-offered",
@@ -479,6 +509,9 @@ function createEngine(host: EngineHost) {
       for (const key of keys) {
         const entry = outbox.get(key)
         if (entry && !entry.dirty && entry.change) entry.held = true
+      }
+      if (byAction && keys.length > 0) {
+        heldExplicit = explicit === undefined ? { keys, changes } : { keys, changes, undoMeta: explicit }
       }
       const { issues, message } = issuesFrom(error, keys)
       emit(message === undefined ? { type: "write-failed", id, issues } : { type: "write-failed", id, issues, message })
@@ -538,6 +571,37 @@ function createEngine(host: EngineHost) {
     )
   }
 
+  function forgetHeldExplicit(key: string) {
+    if (heldExplicit?.keys.includes(key)) heldExplicit = undefined
+  }
+
+  function hold(field: ConfigFieldRef, raw: string) {
+    const key = configFieldKeyOf(field.segments)
+    const location: FieldLocation = { segments: [...field.segments], tab: field.tab }
+    locations.set(key, location)
+    clearTimer(key)
+    outbox.delete(key)
+    forgetHeldExplicit(key)
+    if (pin?.fieldKey === key) setPin(undefined)
+    if (answer && sameAsFile(raw, valueAt(answer.config, field.segments))) {
+      holds.delete(key)
+      emit({ type: "draft-cleared", fieldKey: key })
+      return
+    }
+    holds.set(key, raw)
+    emit({ type: "edit", fieldKey: key, raw, valid: false }, { [key]: location })
+  }
+
+  function discard(field: ConfigFieldRef) {
+    const key = configFieldKeyOf(field.segments)
+    clearTimer(key)
+    outbox.delete(key)
+    holds.delete(key)
+    forgetHeldExplicit(key)
+    if (pin?.fieldKey === key) setPin(undefined)
+    emit({ type: "draft-cleared", fieldKey: key })
+  }
+
   function settle(field: ConfigFieldRef) {
     clearTimer(configFieldKeyOf(field.segments))
     flush()
@@ -552,10 +616,14 @@ function createEngine(host: EngineHost) {
       }
       if (entry.dirty) resend = true
     }
+    const explicit = heldExplicit
+    heldExplicit = undefined
+    if (explicit) void explicitWrite(explicit.keys, explicit.changes, explicit.undoMeta)
     if (resend || flight) {
       flush()
       return
     }
+    if (explicit) return
     // A refused explicit action or Undo leaves nothing to re-send: clear the failure (it stays
     // while any draft remains) and show the file as it is.
     emit({ type: "draft-cleared", fieldKey: "" })
@@ -633,10 +701,28 @@ function createEngine(host: EngineHost) {
     }
   }
 
-  async function runExplicit(changes: ConfigChange[], undoMeta?: ConfigUndoMeta): Promise<boolean> {
+  async function explicitWrite(
+    keys: readonly string[],
+    changes: ConfigChange[],
+    undoMeta?: ConfigUndoMeta,
+  ): Promise<boolean> {
     while (flight) await flight
     if (!attached) return false
-    return write([], changes, undoMeta)
+    return write(keys, changes, undoMeta, true)
+  }
+
+  function runExplicit(
+    changes: ConfigChange[],
+    undoMeta?: ConfigUndoMeta,
+    fields: readonly ConfigFieldRef[] = [],
+  ): Promise<boolean> {
+    const keys = fields.map((field) => {
+      const key = configFieldKeyOf(field.segments)
+      locations.set(key, { segments: [...field.segments], tab: field.tab })
+      forgetHeldExplicit(key)
+      return key
+    })
+    return explicitWrite(keys, changes, undoMeta)
   }
 
   async function undo(): Promise<void> {
@@ -679,6 +765,8 @@ function createEngine(host: EngineHost) {
     attach,
     detach,
     edit,
+    hold,
+    discard,
     settle,
     retry,
     reload,
@@ -779,6 +867,8 @@ export function useConfigAutosave(): ConfigAutosave {
     status,
     draftTabs,
     edit: engine.edit,
+    hold: engine.hold,
+    discard: engine.discard,
     settle: engine.settle,
     retry: engine.retry,
     valueOf: (field) => {

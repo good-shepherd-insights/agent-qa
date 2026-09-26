@@ -323,7 +323,20 @@ export function keepPathName(pathLabel: string): string {
 
 export type DataPathKey = 'knowledge.dir' | 'services.dashboard.dbPath' | 'services.dashboard.artifactsDir'
 
-export const APPLY_CONSEQUENCES: Readonly<Partial<Record<DataPathKey, string>>> = {}
+/**
+ * What applying a new data path changes, as the code does it (429-20, law 2): the dashboard opens
+ * its database at startup, runs and agent calls resolve the knowledge folder per run or call while
+ * a standing daemon keeps the one it started with, and the artifacts folder holds only each run's
+ * working-memory file, which nothing the dashboard shows reads.
+ */
+export const APPLY_CONSEQUENCES = {
+  'knowledge.dir':
+    'New runs and agents use the new folder right away; a running agent-qa daemon switches when it restarts. Nothing in the current folder is moved or deleted.',
+  'services.dashboard.dbPath':
+    "The dashboard opens the new database when it restarts, and runs in the current one won't show until you switch back. Nothing is moved or deleted.",
+  'services.dashboard.artifactsDir':
+    'New runs write their working-memory file to the new folder. Earlier runs still show, and nothing is moved or deleted.',
+} as const satisfies Record<DataPathKey, string>
 
 export const PORT_RESTART_HELP = 'Takes effect after the dashboard restarts.'
 
