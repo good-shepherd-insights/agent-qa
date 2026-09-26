@@ -10,7 +10,13 @@ import { useEffect, useRef, useState } from "react"
 import { useNavigate } from "react-router"
 import { Plus, TriangleAlert } from "lucide-react"
 
-import { ModelRow, modelStatus, providerFacts, type SavedModel } from "@/components/config-manager/model-row"
+import {
+  ModelRow,
+  credentialKeyType,
+  modelStatus,
+  providerFacts,
+  type SavedModel,
+} from "@/components/config-manager/model-row"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
 import { useConfigAutosaveContext, type ConfigFieldRef } from "@/hooks/use-config-autosave"
@@ -89,15 +95,8 @@ export function ModelList(_props: ModelListProps) {
     else focusRow(target)
   })
 
-  useEffect(() => {
-    if (restored === undefined || restored.seq === seenSeq.current) return
-    seenSeq.current = restored.seq
-    if (restored.kind === "delete-model") {
-      focusRow(restored.name)
-      return
-    }
-    if (restored.kind !== "sign-out" && restored.kind !== "remove-key") return
-    const name = restored.name
+  /** Reads the credential status again, and shows the named row's credential as the read says. */
+  function refreshCredentials(name: string) {
     void fetchAuthStatus().then(
       (answer) => {
         setReads((current) => (current === undefined ? current : { ...current, credentials: answer.credentials ?? [] }))
@@ -105,6 +104,13 @@ export function ModelList(_props: ModelListProps) {
       },
       () => setHiddenCredentials((current) => withName(current, name, false)),
     )
+  }
+
+  useEffect(() => {
+    if (restored === undefined || restored.seq === seenSeq.current) return
+    seenSeq.current = restored.seq
+    if (restored.kind === "delete-model") focusRow(restored.name)
+    else if (restored.kind === "sign-out" || restored.kind === "remove-key") refreshCredentials(restored.name)
   }, [restored])
 
   useEffect(() => {
@@ -200,6 +206,7 @@ export function ModelList(_props: ModelListProps) {
               model={model}
               status={modelStatus(credentials, model, now)}
               facts={providerFacts(reads.providers, model.provider)}
+              keyType={credentialKeyType(credentials, model)}
               isDefault={model.name === defaultName}
               evalConfig={evalConfig}
               open={openName === model.name}
@@ -208,6 +215,7 @@ export function ModelList(_props: ModelListProps) {
               onRemoveStart={() => removeStart(model.name)}
               onRemoveEnd={() => setRemoving((current) => withName(current, model.name, false))}
               onCredentialHidden={(hidden) => setHiddenCredentials((current) => withName(current, model.name, hidden))}
+              onCredentialSaved={() => refreshCredentials(model.name)}
             />
           ))}
         </ul>

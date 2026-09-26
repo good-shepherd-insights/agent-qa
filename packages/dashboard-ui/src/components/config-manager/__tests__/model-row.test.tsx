@@ -277,7 +277,8 @@ beforeEach(() => {
   vi.spyOn(window, 'confirm').mockReturnValue(true)
   vi.mocked(fetchConfig).mockResolvedValue(answer(modelsConfig()) as never)
   vi.mocked(fetchConfigRevision).mockResolvedValue({ revision: 'rev-1' })
-  vi.mocked(applyConfigChanges).mockResolvedValue({ revision: 'rev-2', undo: undoTicket('undo-config') } as never)
+  // The mocked write answers the polled revision, so a poll does not re-read the unchanged fixture over a landed write.
+  vi.mocked(applyConfigChanges).mockResolvedValue({ revision: 'rev-1', undo: undoTicket('undo-config') } as never)
   vi.mocked(undoConfigAction).mockResolvedValue({ restored: true })
   vi.mocked(fetchAuthStatus).mockResolvedValue({ credentials: credentials() })
   vi.mocked(fetchLLMProviders).mockResolvedValue({ providers: PROVIDERS })
@@ -593,6 +594,7 @@ describe('ModelRow key and settings (429-24 Task 2)', () => {
       ],
     ])
     expect(container!.innerHTML).not.toContain(HEADER_SECRET)
+    expect(Array.from(row('claude-proxy')!.querySelectorAll('[data-model-header]')).map((item) => item.getAttribute('data-model-header'))).toEqual(['X-Team'])
 
     await click(buttonNamed(row('claude-proxy'), ADD_HEADER_LABEL))
     const draft = row('claude-proxy')!.querySelector('[data-header-draft]')

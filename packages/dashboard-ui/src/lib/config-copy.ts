@@ -258,6 +258,11 @@ export function headerNameTakenError(name: string): string {
   return `A header named ${name} already exists.`
 }
 
+/** The accessible name of a saved header's name field. */
+export function headerNameFieldName(header: string): string {
+  return `${HEADER_FIELD_LABELS.name} of the ${header} header`
+}
+
 /** A saved header's accessible label, so each name field, eye and Replace value names its header. */
 export function modelHeaderLabel(header: string): string {
   return `${header} header`
