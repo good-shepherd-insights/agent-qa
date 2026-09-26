@@ -463,12 +463,12 @@ describe('ConfigManager.applyChanges ops and selectors (429-05)', () => {
     await writeFile(configPath, writeConfig(WRITE_BASE_LINES, WRITE_MOBILE_LINES))
 
     const outcome = await manager.applyChanges([
-      { op: 'append', path: ['services', 'mcp', 'tokens'], value: { name: 'ci', token: 'ci-token-value' } },
+      { op: 'append', path: ['services', 'mcp', 'tokens'], value: { name: 'ci', tokenEnvVar: 'AGENT_QA_MCP_CI_TOKEN', scopes: ['read'] } },
     ])
 
     expect(outcome.kind).toBe('ok')
     const parsed = parseYaml(await readFile(configPath, 'utf-8')) as { services: { mcp: { tokens: unknown[] } } }
-    expect(parsed.services.mcp.tokens).toEqual([{ name: 'ci', token: 'ci-token-value' }])
+    expect(parsed.services.mcp.tokens).toEqual([{ name: 'ci', tokenEnvVar: 'AGENT_QA_MCP_CI_TOKEN', scopes: ['read'] }])
   })
 
   it('NAME-SELECTOR-RESOLVES: a { name } segment changes only that entry', async () => {

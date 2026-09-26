@@ -1,9 +1,14 @@
 import { createHash, randomUUID } from 'node:crypto'
 import { readFile, writeFile, mkdir, rename, rm, stat } from 'node:fs/promises'
 import { basename, dirname, join } from 'node:path'
-import { parseDocument, stringify, type Document } from 'yaml'
+import { isMap, isScalar, isSeq, parseDocument, stringify, type Document } from 'yaml'
 import { AgentQaConfigSchema } from '@vostride/agent-qa-core'
-import type { ConfigChange, ConfigWriteIssue } from '@vostride/agent-qa-schema'
+import {
+  CONFIG_NAMED_ARRAYS,
+  type ConfigChange,
+  type ConfigPathSegment,
+  type ConfigWriteIssue,
+} from '@vostride/agent-qa-schema'
 
 export type ApplyChangesOutcome =
   | { kind: 'ok'; revision: string }
@@ -161,15 +166,26 @@ export class ConfigManager {
   private async applyChangesOnce(changes: readonly ConfigChange[]): Promise<ApplyChangesOutcome> {
     const content = await readFile(this.configPath, 'utf-8')
     const doc = parseDocument(content)
+    let writesBrowserHeadless = false
     for (const change of changes) {
-      if (change.op !== 'set') return { kind: 'refused', error: 'invalid_write_input' }
-      const path: (string | number)[] = []
-      for (const segment of change.path) {
-        if (typeof segment === 'object') return { kind: 'refused', error: 'path_not_found' }
-        path.push(segment)
+      const path = resolvePath(doc, change.path)
+      if (path === undefined) return { kind: 'refused', error: 'path_not_found' }
+      try {
+        if (change.op === 'set') {
+          doc.setIn(path, doc.createNode(change.value))
+          writesBrowserHeadless ||= setsLeaf(path, change.value, BROWSER_HEADLESS_PATH)
+        } else if (change.op === 'unset') {
+          unsetAndPrune(doc, path)
+        } else if (!appendTo(doc, path, change.value)) {
+          return { kind: 'refused', error: 'path_not_found' }
+        }
+      } catch {
+        // yaml throws when a path walks through a scalar: the field the change names is not there.
+        return { kind: 'refused', error: 'path_not_found' }
       }
-      doc.setIn(path, doc.createNode(change.value))
     }
+    // Carried from the legacy settings route: the browser-scoped key replaces a root use.headless.
+    if (writesBrowserHeadless && doc.hasIn(LEGACY_HEADLESS_PATH)) doc.deleteIn(LEGACY_HEADLESS_PATH)
 
     const parsed = AgentQaConfigSchema.safeParse(normalizeForValidation(doc.toJSON()))
     if (!parsed.success) {
@@ -200,6 +216,70 @@ export class ConfigManager {
       throw error
     }
   }
+}
+
+type ResolvedPath = (string | number)[]
+
+const NAMED_ARRAY_PATHS: readonly (readonly string[])[] = CONFIG_NAMED_ARRAYS.map((named) => named.split('.'))
+const BROWSER_HEADLESS_PATH = ['use', 'browser', 'headless']
+const LEGACY_HEADLESS_PATH = ['use', 'headless']
+
+function samePath(a: readonly (string | number)[], b: readonly (string | number)[]): boolean {
+  return a.length === b.length && a.every((segment, i) => segment === b[i])
+}
+
+// A { name } segment is resolved to the index its entry has in the file now, and only inside the
+// named arrays, so an outside reorder can never redirect a change to another entry.
+function resolvePath(doc: Document, path: readonly ConfigPathSegment[]): ResolvedPath | undefined {
+  const resolved: ResolvedPath = []
+  for (const segment of path) {
+    if (typeof segment !== 'object') {
+      resolved.push(segment)
+      continue
+    }
+    if (!NAMED_ARRAY_PATHS.some((named) => samePath(named, resolved))) return undefined
+    const seq = doc.getIn(resolved, true)
+    if (!isSeq(seq)) return undefined
+    const index = seq.items.findIndex((item) => isMap(item) && item.get('name') === segment.name)
+    if (index < 0) return undefined
+    resolved.push(index)
+  }
+  return resolved
+}
+
+// Deleting a leaf leaves `parent: {}`, which a section schema can reject, so every ancestor map the
+// delete empties goes too. A sequence entry is never pruned: that would shift its siblings.
+function unsetAndPrune(doc: Document, path: ResolvedPath): void {
+  if (!doc.hasIn(path)) return
+  doc.deleteIn(path)
+  for (let depth = path.length - 1; depth >= 1; depth--) {
+    const ancestor = path.slice(0, depth)
+    if (typeof ancestor[depth - 1] !== 'string') return
+    const node = doc.getIn(ancestor, true)
+    if (!isMap(node) || node.items.length > 0) return
+    doc.deleteIn(ancestor)
+  }
+}
+
+function appendTo(doc: Document, path: ResolvedPath, value: unknown): boolean {
+  const existing = doc.getIn(path, true)
+  if (existing === undefined || existing === null || (isScalar(existing) && existing.value === null)) {
+    doc.setIn(path, doc.createNode([value]))
+    return true
+  }
+  if (!isSeq(existing)) return false
+  existing.add(doc.createNode(value))
+  return true
+}
+
+function setsLeaf(path: ResolvedPath, value: unknown, leaf: readonly string[]): boolean {
+  if (path.length > leaf.length || !samePath(path, leaf.slice(0, path.length))) return false
+  let cursor = value
+  for (const key of leaf.slice(path.length)) {
+    if (typeof cursor !== 'object' || cursor === null || Array.isArray(cursor)) return false
+    cursor = (cursor as Record<string, unknown>)[key]
+  }
+  return cursor !== undefined
 }
 
 function revisionOf(content: string): string {
