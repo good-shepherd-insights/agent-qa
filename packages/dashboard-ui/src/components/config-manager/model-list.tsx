@@ -259,7 +259,8 @@ export function ModelList(_props: ModelListProps) {
         <Plus className="size-3.5" aria-hidden="true" />
         {ADD_MODEL_LABEL}
       </Button>
-      <div className="col-span-full space-y-4">
+      {/* use.llm is edited here: each row's Default badge or Make default (UI-SPEC S2). */}
+      <div data-field-path="use.llm" className="col-span-full space-y-4">
         {hasDefault ? null : (
           <p data-no-default className="flex items-start gap-1 text-xs text-foreground">
             <span className="flex h-[1lh] shrink-0 items-center">
