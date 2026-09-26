@@ -118,6 +118,13 @@ const SCREENCAST_ACK_WINDOW = 64
  */
 const KEEPALIVE_ECHO_WINDOW_MS = 250
 
+/**
+ * How often a screencast that fell back to snapshots tries to come back (428 WR-08). A withdrawal is
+ * not always permanent, and without a way back one bad moment labels the rest of the run a
+ * snapshot preview.
+ */
+export const SCREENCAST_RECOVERY_MS = 10_000
+
 /** Decode a CDP base64 frame payload to bytes without a `Buffer` round-trip in the hot path. */
 function decodeBase64(data: string): Uint8Array {
   const binary = atob(data)
@@ -162,6 +169,7 @@ export class WebPlatformAdapter implements PlatformAdapter<'web'> {
   private screencastChain: Promise<void> = Promise.resolve()
   // 428 D-12: the labelled snapshot preview standing in for a screencast withdrawn mid-stream.
   private withdrawnSnapshot: LiveStreamCapability | null = null
+  private screencastRecoveryTimer: ReturnType<typeof setTimeout> | null = null
 
   async setup(config: PlatformConfig): Promise<void> {
     this.recordingConfig = config.recording
@@ -379,15 +387,18 @@ export class WebPlatformAdapter implements PlatformAdapter<'web'> {
    * continues. Ids still pending in the hub settle through its ack bound and are dropped here as
    * unknown. Best-effort throughout; it never throws into a step.
    */
-  private async rebindScreencast(): Promise<void> {
+  private async rebindScreencast(options: { focus?: boolean } = {}): Promise<void> {
     const onFrame = this.screencastOnFrame
     const page = this.page
     const context = this.context
     if (onFrame === null || !page || !context) return
     await this.detachScreencast()
     this.lastScreencastSize = null
-    // A headed browser may not paint a background tab (RESEARCH P15, assumption A4).
-    try { await page.bringToFront() } catch { /* best-effort */ }
+    // A headed browser may not paint a background tab (RESEARCH P15, assumption A4). A recovery
+    // attempt keeps the page where it is, so it never takes focus on a person's desktop.
+    if (options.focus !== false) {
+      try { await page.bringToFront() } catch { /* best-effort */ }
+    }
     let cdp: CDPSession
     try {
       cdp = await context.newCDPSession(page)
@@ -429,7 +440,28 @@ export class WebPlatformAdapter implements PlatformAdapter<'web'> {
         if (this.withdrawnSnapshot !== snapshot) return
         onFrame({ ...frame, id: ++this.screencastFrameSeq })
       })
+      this.armScreencastRecovery()
     })
+  }
+
+  /** While the snapshot fallback runs, try the screencast again every SCREENCAST_RECOVERY_MS (428 WR-08). */
+  private armScreencastRecovery(): void {
+    this.clearScreencastRecovery()
+    const timer = setTimeout(() => {
+      this.screencastRecoveryTimer = null
+      void this.onScreencastChain(async () => {
+        if (this.withdrawnSnapshot === null || this.screencastOnFrame === null || !this.browserIsLive()) return
+        await this.rebindScreencast({ focus: false })
+        if (this.withdrawnSnapshot !== null) this.armScreencastRecovery()
+      })
+    }, SCREENCAST_RECOVERY_MS)
+    timer.unref?.()
+    this.screencastRecoveryTimer = timer
+  }
+
+  private clearScreencastRecovery(): void {
+    if (this.screencastRecoveryTimer !== null) clearTimeout(this.screencastRecoveryTimer)
+    this.screencastRecoveryTimer = null
   }
 
   private browserIsLive(): boolean {
@@ -437,6 +469,7 @@ export class WebPlatformAdapter implements PlatformAdapter<'web'> {
   }
 
   private async stopWithdrawnSnapshot(): Promise<void> {
+    this.clearScreencastRecovery()
     const snapshot = this.withdrawnSnapshot
     this.withdrawnSnapshot = null
     try { await snapshot?.stop() } catch { /* best-effort */ }
@@ -457,10 +490,11 @@ export class WebPlatformAdapter implements PlatformAdapter<'web'> {
 
   /**
    * 428 D-15: a fresh capture on the same CDP session, emitted as a frame with no ack token (the ack
-   * path drops ids it never minted a token for). A capture that rejects emits nothing: while the
-   * capability is started under a live browser that is a withdrawn screencast (D-12, see
-   * `handleScreencastWithdrawn`), otherwise it re-arms. One that never settles emits nothing and
-   * arms nothing, which is the honest amber.
+   * path drops ids it never minted a token for). A capture that rejects emits nothing. While the
+   * capability is started under a live browser, a session that then fails a trivial probe too is a
+   * withdrawn screencast (D-12, see `handleScreencastWithdrawn`); one that still answers only had a
+   * bad moment, such as a cross-process navigation, and re-arms (428 WR-08). One that never settles
+   * emits nothing and arms nothing, which is the honest amber.
    */
   private async fireKeepalive(cdp: CDPSession): Promise<void> {
     this.keepaliveTimer = null
@@ -472,7 +506,9 @@ export class WebPlatformAdapter implements PlatformAdapter<'web'> {
       data = result.data
     } catch {
       if (this.screencast !== cdp) return
-      if (this.screencastOnFrame !== null && this.browserIsLive()) this.handleScreencastWithdrawn(cdp)
+      const withdrawn = this.screencastOnFrame !== null && this.browserIsLive() && !(await this.sessionAnswers(cdp))
+      if (this.screencast !== cdp) return
+      if (withdrawn) this.handleScreencastWithdrawn(cdp)
       else this.armKeepalive(cdp)
       return
     }
@@ -489,6 +525,16 @@ export class WebPlatformAdapter implements PlatformAdapter<'web'> {
     })
     this.keepaliveEchoDeadline = Date.now() + KEEPALIVE_ECHO_WINDOW_MS
     this.armKeepalive(cdp)
+  }
+
+  /** Whether `cdp` still answers a command that cannot fail on a usable session. */
+  private async sessionAnswers(cdp: CDPSession): Promise<boolean> {
+    try {
+      await cdp.send('Runtime.evaluate', { expression: '1' })
+      return true
+    } catch {
+      return false
+    }
   }
 
   get recording(): RecordingCapability | undefined {
