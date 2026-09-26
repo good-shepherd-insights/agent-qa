@@ -1,5 +1,6 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { Command } from 'commander'
+import pc from 'picocolors'
 
 vi.mock('node:fs/promises', () => ({
   readFile: vi.fn(() => Promise.reject({ code: 'ENOENT' })),
@@ -795,6 +796,171 @@ describe('auth test', () => {
       }),
       { kind: 'api-key', apiKey: 'test-key' },
     )
+  })
+})
+
+describe('auth test exit code (429-08)', () => {
+  const CREDENTIAL = 'sk-fixture-credential-429-08'
+
+  // Each rejection lands on exactly one class in the classifier's first-match order; the printed
+  // sentence is spelled out here, not derived, so the lines stay pinned byte for byte.
+  const FAILURE_ARMS = [
+    {
+      cell: 'AUTH-TEST-EXIT-AUTH-ERROR',
+      rejection: Object.assign(new Error('invalid API key'), { statusCode: 401 }),
+      message: 'invalid API key',
+      sentence: 'Authentication failed. Check the saved credential for this config.',
+    },
+    {
+      cell: 'AUTH-TEST-EXIT-MODEL-NOT-FOUND',
+      rejection: Object.assign(new Error('Not Found'), { statusCode: 404 }),
+      message: 'Not Found',
+      sentence: 'Model not found. Check the model name.',
+    },
+    {
+      cell: 'AUTH-TEST-EXIT-RATE-LIMIT',
+      rejection: Object.assign(new Error('Too many requests, slow down'), { statusCode: 429 }),
+      message: 'Too many requests, slow down',
+      sentence: 'Rate limited. Try again later.',
+    },
+    {
+      cell: 'AUTH-TEST-EXIT-NETWORK-ERROR',
+      rejection: new Error('fetch failed'),
+      message: 'fetch failed',
+      sentence: 'Network error. Check the exact base URL and try again.',
+    },
+    {
+      cell: 'AUTH-TEST-EXIT-INVALID-REQUEST',
+      rejection: Object.assign(new Error('bad request: messages must be non-empty'), { statusCode: 400 }),
+      message: 'bad request: messages must be non-empty',
+      sentence: 'Invalid request. Check model and provider settings.',
+    },
+    {
+      cell: 'AUTH-TEST-EXIT-PROVIDER-ERROR',
+      rejection: Object.assign(new Error('upstream exploded'), { statusCode: 500 }),
+      message: 'upstream exploded',
+      sentence: 'Connection failed. upstream exploded',
+    },
+  ] as const
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    consoleLogs.length = 0
+    process.exitCode = undefined
+    mockCreateModel.mockReturnValue({} as any)
+    mockGenerateText.mockResolvedValue({ text: 'ok' } as any)
+    setNamedConfig({
+      name: 'default',
+      provider: 'openai-compatible',
+      model: 'model-name',
+      baseURL: 'https://remote.example/v1',
+    })
+    mockResolveModelAuth.mockResolvedValue({
+      kind: 'api-key',
+      credentialKey: 'default',
+      provider: 'openai-compatible',
+      apiKey: CREDENTIAL,
+    })
+  })
+
+  afterEach(() => {
+    process.exitCode = undefined
+  })
+
+  it('AUTH-TEST-EXIT-CONFIG-UNRESOLVED: an unresolved config prints its red line and exits 1', async () => {
+    mockResolveNamedConfig.mockRejectedValueOnce(new Error('No LLM config named "nope".'))
+
+    await runAuthTest(['--config', 'nope'])
+
+    expect(consoleLogs).toEqual([pc.red('No LLM config named "nope".')])
+    expect(process.exitCode).toBe(1)
+    expect(mockGenerateText).not.toHaveBeenCalled()
+  })
+
+  it('AUTH-TEST-EXIT-MISSING-CREDENTIAL: a missing credential prints its message and exits 1', async () => {
+    mockResolveModelAuth.mockResolvedValueOnce({
+      kind: 'missing',
+      credentialKey: 'default',
+      provider: 'openai-compatible',
+      required: true,
+      message: 'Save an API key for this config before testing.',
+    } as any)
+
+    await runAuthTest()
+
+    expect(consoleLogs).toEqual([
+      pc.dim('Testing config: default...'),
+      pc.red('Save an API key for this config before testing.'),
+    ])
+    expect(process.exitCode).toBe(1)
+    expect(mockCreateModel).not.toHaveBeenCalled()
+  })
+
+  it('AUTH-TEST-EXIT-CONSTRUCTION-THROW: a model that cannot be built prints red and exits 1', async () => {
+    mockCreateModel.mockImplementationOnce(() => {
+      throw new Error('Unknown provider "nope".')
+    })
+
+    await expect(runAuthTest()).resolves.toBeUndefined()
+
+    expect(consoleLogs).toEqual([
+      pc.dim('Testing config: default...'),
+      pc.red('Unknown provider "nope".'),
+    ])
+    expect(process.exitCode).toBe(1)
+    expect(mockGenerateText).not.toHaveBeenCalled()
+  })
+
+  for (const arm of FAILURE_ARMS) {
+    it(`${arm.cell}: prints the class sentence and the provider message, and exits 1`, async () => {
+      mockGenerateText.mockRejectedValueOnce(arm.rejection)
+
+      await runAuthTest()
+
+      expect(consoleLogs).toEqual([
+        pc.dim('Testing config: default...'),
+        pc.red(arm.sentence),
+        pc.dim(arm.message),
+      ])
+      expect(process.exitCode).toBe(1)
+      expect(getOutput()).not.toContain(CREDENTIAL)
+    })
+  }
+
+  it('AUTH-TEST-EXIT-ZERO-ONLY-CONNECTED: only a passing test leaves the exit code unset', async () => {
+    await runAuthTest()
+
+    expect(consoleLogs).toHaveLength(2)
+    expect(consoleLogs[1]).toMatch(/^.*Connected to openai-compatible\/model-name \(\d+ms\).*$/u)
+    expect(consoleLogs[1]).toBe(pc.green(consoleLogs[1]!.replace(/\u001b\[\d+m/gu, '')))
+    expect(process.exitCode).toBeUndefined()
+  })
+
+  it('AUTH-TEST-UNAUTHENTICATED-DECIDED-BY-TEST: the test that follows the dim line decides', async () => {
+    const unauthenticated = {
+      kind: 'unauthenticated',
+      credentialKey: 'default',
+      provider: 'openai-compatible',
+      optional: true,
+      message: 'Testing without a saved credential.',
+    } as any
+
+    mockResolveModelAuth.mockResolvedValueOnce(unauthenticated)
+    await runAuthTest()
+    expect(consoleLogs[1]).toBe(pc.dim('Testing without a saved credential.'))
+    expect(consoleLogs[2]).toContain('Connected to openai-compatible/model-name')
+    expect(process.exitCode).toBeUndefined()
+
+    mockResolveModelAuth.mockResolvedValueOnce(unauthenticated)
+    mockGenerateText.mockRejectedValueOnce(new Error('fetch failed'))
+    await runAuthTest()
+    expect(consoleLogs).toEqual([
+      pc.dim('Testing config: default...'),
+      pc.dim('Testing without a saved credential.'),
+      pc.red('Network error. Check the exact base URL and try again.'),
+      pc.dim('fetch failed'),
+    ])
+    expect(process.exitCode).toBe(1)
   })
 })
 
