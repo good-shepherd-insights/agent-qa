@@ -24,7 +24,7 @@ import type {
 import type { SecretStore, SecretRedactor, HookDefinition, NonActionToolMap, SandboxRunnerOptions } from '@vostride/agent-qa-runner'
 import { DockerHookExecutor } from '@vostride/agent-qa-runner-local'
 import type { TestResult, PlatformAdapter, PlatformConfig } from '@vostride/agent-qa-runner'
-import { WorkingMemoryStore, runMemberTest, createStepModelScope } from '@vostride/agent-qa-runner'
+import { WorkingMemoryStore, runMemberTest, createStepModelScope, memberStepText } from '@vostride/agent-qa-runner'
 import { createCliStepModelScopeFactory } from '../composition/step-model-scope.js'
 import type { CliStepModelScopeOptions } from '../composition/step-model-scope.js'
 import type { RunMemberDescriptor, ConfigDigests, MemberTestRunContext, MemberTestExecutor, StepModelScopeFactory } from '@vostride/agent-qa-runner'
@@ -3151,6 +3151,9 @@ export async function produceSuiteRunMembers(
         suiteIndex,
         suiteTotal: preparedSuites.length,
         totalSteps: test.steps.length,
+        // G-428-2: read off the unpatched test; patchTestForSuite leaves steps alone and
+        // toMemberTest passes them through, so these are the texts stepStarted announces.
+        stepTexts: test.steps.map((step) => memberStepText(step)),
       })
       digestMembers.push({
         testFileContent: prepared.testFileContents[i] ?? '',

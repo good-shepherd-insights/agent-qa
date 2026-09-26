@@ -1,5 +1,6 @@
 import { workspaceRelativeIdentityPath } from '@vostride/agent-qa-core'
 import type { ParsedTestBinding } from '@vostride/agent-qa-core'
+import { memberStepText } from '@vostride/agent-qa-runner'
 import type { RunMemberDescriptor } from '@vostride/agent-qa-runner'
 
 export interface DirectRunMembers {
@@ -38,6 +39,8 @@ export function buildDirectRunMembers(
       // NO failFastGroup — the single-test path runs all members then aggregates.
       filePath: workspaceRelativeIdentityPath(configDir, filePath),
       totalSteps: test.steps.length,
+      // G-428-2: the raw texts member-runner will announce at stepStarted; the shell masks them.
+      stepTexts: test.steps.map((step) => memberStepText(step)),
     })),
     digestMembers: bindings.map(({ fileContent }) => ({ testFileContent: fileContent })),
   }

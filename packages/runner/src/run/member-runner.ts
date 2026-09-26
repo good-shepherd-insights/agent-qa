@@ -78,6 +78,15 @@ export interface MemberStepSpec {
   }
 }
 
+/**
+ * The one derivation of the text a step is announced with at `stepStarted` (G-428-2). Every
+ * producer that states a step's text before it starts (the CLI's `stepTexts` on each member
+ * descriptor) derives it here, so the pending text and the announced text cannot drift.
+ */
+export function memberStepText(step: string | MemberStepSpec): string {
+  return typeof step === 'string' ? step : step.step
+}
+
 /** The runner-owned member-test shape (a core-independent subset of TestDefinition). */
 export interface MemberTest {
   testId: string
@@ -483,7 +492,7 @@ async function runMemberAttempt(
   for (let stepIndex = 0; shouldRunSteps && stepIndex < member.steps.length; stepIndex++) {
     if (cancelled) break
     const stepDef = member.steps[stepIndex]
-    const rawInstruction = typeof stepDef === 'string' ? stepDef : stepDef.step
+    const rawInstruction = memberStepText(stepDef)
     if (testDeadline && testTimeout && performance.now() >= testDeadline) {
       recordBeforeStart(stepIndex, rawInstruction, createTimeoutStepResult(rawInstruction, 'test', testTimeout))
       testFailed = true

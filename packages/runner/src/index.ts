@@ -249,7 +249,7 @@ export { createMemberEventSink } from './run/event-sink.js'
 // Phase 363 D-05 — the runner-owned member-runner (dissolution target for core's
 // runTest/runTestWithRetry) + the pure inline-DSL parsing + the moved failure-summary.
 // Built + tested against fakes here; Plan 11 cuts the CLI over and deletes the core side.
-export { runMemberTest } from './run/member-runner.js'
+export { runMemberTest, memberStepText } from './run/member-runner.js'
 export type {
   MemberTest,
   MemberStepSpec,
