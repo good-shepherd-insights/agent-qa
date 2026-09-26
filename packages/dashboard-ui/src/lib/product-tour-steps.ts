@@ -1,3 +1,4 @@
+import { TOUR_LLM_SETUP_BODY } from '@/lib/config-copy'
 import { routes } from '@/lib/routes'
 import { normalizeRunStatus } from '@/lib/status'
 
@@ -63,8 +64,8 @@ export const foundationProductTourSteps = [
   {
     id: 'llm-setup',
     title: 'Configure your LLM first',
-    body: 'A run needs an LLM. Add or choose one, test the connection, save the config, then continue.',
-    route: routes.configItem('registry', 'llms'),
+    body: TOUR_LLM_SETUP_BODY,
+    route: routes.configTab('models'),
     targetId: 'tour-config-section',
   },
   {
@@ -99,7 +100,7 @@ export const foundationProductTourSteps = [
     id: 'config',
     title: 'Config controls local setup',
     body: 'Config controls the model, target, runtime, and dashboard setup agent-qa uses locally.',
-    route: routes.config,
+    route: routes.configTab('models'),
     targetId: 'tour-config-section',
   },
   {

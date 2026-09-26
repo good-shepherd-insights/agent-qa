@@ -18,6 +18,10 @@ import {
   writeProductTourStateCookie,
   type ProductTourState,
 } from '@/lib/product-tour-state'
+import { TOUR_LLM_SETUP_BODY } from '@/lib/config-copy'
+import { CONFIG_TABS } from '@/lib/config-tabs'
+import { getProductTourStep, resolveProductTourStepRoute } from '@/lib/product-tour-steps'
+import { routes } from '@/lib/routes'
 
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
@@ -538,13 +542,31 @@ describe('AppLayout product tour integration', () => {
 
     await clickButton('Start tour')
 
-    expect(window.location.pathname).toBe('/config')
-    expect(window.location.search).toBe('?bucket=registry&item=llms')
+    expect(window.location.pathname).toBe('/config/models')
+    expect(window.location.search).toBe('')
     expect(container?.querySelector('[data-testid="config-page"]')).not.toBeNull()
     expect(readProductTourStateCookie()).toMatchObject({
       activeStepId: 'llm-setup',
-      activeRoute: '/config?bucket=registry&item=llms',
+      activeRoute: '/config/models',
     })
+  })
+
+  it('TOUR-CONFIG-STEP-ON-MODELS: the config step lands on /config/models without a redirect bounce', async () => {
+    await renderAppAt('/tests')
+
+    for (let index = 0; index < 6; index += 1) {
+      await clickButton(index === 0 ? 'Start tour' : 'Next')
+    }
+
+    expect(textContent()).toContain('Config controls local setup')
+    expect(window.location.pathname).toBe('/config/models')
+    expect(window.location.search).toBe('')
+    expect(container?.querySelector('[data-testid="config-page"]')).not.toBeNull()
+    expect(readProductTourStateCookie()).toMatchObject({
+      activeStepId: 'config',
+      activeRoute: '/config/models',
+    })
+    expect(resolveProductTourStepRoute(getProductTourStep('config')!)).toBe(routes.configTab('models'))
   })
 
   it('renders bottom-right step controls when a routed anchor target is missing', async () => {
@@ -589,6 +611,23 @@ describe('ProductTourProvider auto-start behavior', () => {
 
   it('does not auto-start when hideHeader is true', async () => {
     await renderTour({ path: '/runs', hideHeader: true })
+
+    expectNoDialog()
+  })
+
+  it.each(CONFIG_TABS.map((tab) => `/config/${tab}`))(
+    'TOUR-AUTO-START-CONFIG-TABS: auto-starts the intro step on %s',
+    async (path) => {
+      await renderTour({ path })
+
+      expect(dialog()).not.toBeNull()
+      expect(textContent()).toContain('Welcome to agent-qa')
+      expect(container?.querySelector('[data-testid="active-step"]')?.textContent).toBe('intro')
+    },
+  )
+
+  it('TOUR-AUTO-START-CONFIG-TABS: only /config and /config/* match, not a path that merely starts with config', async () => {
+    await renderTour({ path: '/configuration' })
 
     expectNoDialog()
   })
@@ -726,10 +765,10 @@ describe('ProductTourProvider route-aware navigation and fallback rendering', ()
 
     await clickButton('Start tour')
 
-    expect(container?.querySelector('[data-testid="location"]')?.textContent).toBe('/config')
+    expect(container?.querySelector('[data-testid="location"]')?.textContent).toBe('/config/models')
     expect(readProductTourStateCookie()).toMatchObject({
       activeStepId: 'llm-setup',
-      activeRoute: '/config?bucket=registry&item=llms',
+      activeRoute: '/config/models',
     })
 
     await clickButton('Next')
@@ -744,8 +783,20 @@ describe('ProductTourProvider route-aware navigation and fallback rendering', ()
 
     expect(readProductTourStateCookie()).toMatchObject({
       activeStepId: 'llm-setup',
-      activeRoute: '/config?bucket=registry&item=llms',
+      activeRoute: '/config/models',
     })
+  })
+
+  it('TOUR-LLM-SETUP-ON-MODELS: the LLM step lands on Models with the no-save copy', async () => {
+    await renderTour({ path: '/tests' })
+
+    await clickButton('Start tour')
+
+    expect(container?.querySelector('[data-testid="location"]')?.textContent).toBe('/config/models')
+    expect(textContent()).toContain('Configure your LLM first')
+    expect(textContent()).toContain(TOUR_LLM_SETUP_BODY)
+    expect(textContent()).not.toContain('save the config')
+    expect(resolveProductTourStepRoute(getProductTourStep('llm-setup')!)).toBe(routes.configTab('models'))
   })
 
   it('renders bottom-right step copy for missing anchors', async () => {

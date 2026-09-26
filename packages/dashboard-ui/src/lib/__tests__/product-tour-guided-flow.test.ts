@@ -31,14 +31,15 @@ describe('guided first-run product tour flow', () => {
     )
   })
 
-  it('routes the LLM setup step to the registry LLM config page', () => {
+  it('routes the LLM setup step to the Models tab', () => {
     const llmSetup = step('llm-setup')
 
     expect(llmSetup.title).toBe('Configure your LLM first')
     expect(llmSetup.body).toBe(
-      'A run needs an LLM. Add or choose one, test the connection, save the config, then continue.',
+      "A run needs a model. Add one: choose how you connect, and it's tested and saved as soon as it works.",
     )
-    expect(resolveProductTourStepRoute(llmSetup)).toBe('/config/models?section=models')
+    expect(llmSetup.body).not.toContain('save the config')
+    expect(resolveProductTourStepRoute(llmSetup)).toBe('/config/models')
   })
 
   it('keeps the wayfinding sweep short and outcome-focused', () => {
