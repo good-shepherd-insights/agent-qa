@@ -1753,3 +1753,12 @@ export type { MarkProposalStamp } from './knowledge/proposal'
 export { KnowledgeMarkInputSchema } from './knowledge/review-verbs'
 export type { KnowledgeMarkInput } from './knowledge/review-verbs'
 export { OVERTURNED_EVENT_TYPE } from './knowledge/outcome-event'
+// 2026-09-26, 429-04 D-18: the one provider-error classifier the CLI, the dashboard server and
+// the UI share, with the CLI's order and sentences.
+export {
+  classifyProviderError,
+  extractProviderError,
+  PROVIDER_ERROR_CLASSES,
+  providerErrorSentence,
+} from './llm/provider-error'
+export type { ProviderErrorClass } from './llm/provider-error'
