@@ -42,6 +42,7 @@ export function createSessionHandler(
 ): (ws: WebSocket) => void {
   return (ws: WebSocket) => {
     let cleanedUp = false
+    let detached = false
 
     async function cleanupSession(): Promise<void> {
       if (cleanedUp) return
@@ -68,6 +69,17 @@ export function createSessionHandler(
       send(ws, message)
     })
     send(ws, { type: 'session-state', state })
+
+    // 428 CR-01: a command outlives the socket that issued it. While this socket is the attached
+    // one its replies go straight to it; once it has dropped or been superseded they go through the
+    // session to the socket attached now, or wait for the next one.
+    function reply(message: ServerMessage): void {
+      if (!detached && session.isCurrentAttachment(generation)) {
+        send(ws, message)
+        return
+      }
+      session.deliver(message)
+    }
 
     let logPollInterval: ReturnType<typeof setInterval> | null = null
     const platform = state.platform
@@ -97,7 +109,7 @@ export function createSessionHandler(
       switch (msg.type) {
         case 'execute-step': {
           if (session.status === 'executing') {
-            send(ws, {
+            reply({
               type: 'step-busy',
               currentStep: session.getState().currentStep ?? 'unknown',
             })
@@ -108,7 +120,7 @@ export function createSessionHandler(
               msg.stepInstruction,
               msg.stepIndex,
               (phase) => {
-                send(ws, {
+                reply({
                   type: 'step-phase',
                   phase: phase.phase,
                   data: {
@@ -123,9 +135,9 @@ export function createSessionHandler(
               msg.draft,
             )
             if (result.status === 'cancelled') {
-              send(ws, { type: 'step-cancelled' })
+              reply({ type: 'step-cancelled' })
             } else {
-              send(ws, {
+              reply({
                 type: 'step-complete',
                 result: toStepResultPayload(result),
               })
@@ -140,19 +152,19 @@ export function createSessionHandler(
               }
               try {
                 const tree = await session.getAriaTree()
-                if (tree) send(ws, { type: 'aria-tree', tree })
+                if (tree) reply({ type: 'aria-tree', tree })
               } catch {}
             }
-            send(ws, { type: 'session-state', state: session.getState() })
+            reply({ type: 'session-state', state: session.getState() })
             const adapter = (session as any).adapter
             if (adapter && typeof adapter.isBrowserDisconnected === 'boolean' && adapter.isBrowserDisconnected) {
-              send(ws, { type: 'browser-disconnected' })
+              reply({ type: 'browser-disconnected' })
             }
           } catch (err: any) {
-            send(ws, { type: 'step-error', error: err.message })
+            reply({ type: 'step-error', error: err.message })
             const adapter = (session as any).adapter
             if (adapter && typeof adapter.isBrowserDisconnected === 'boolean' && adapter.isBrowserDisconnected) {
-              send(ws, { type: 'browser-disconnected' })
+              reply({ type: 'browser-disconnected' })
             }
           }
           break
@@ -160,7 +172,7 @@ export function createSessionHandler(
 
         case 'execute-hook': {
           if (session.status === 'executing') {
-            send(ws, {
+            reply({
               type: 'step-busy',
               currentStep: session.getState().currentStep ?? 'unknown',
             })
@@ -168,16 +180,16 @@ export function createSessionHandler(
           }
           try {
             await session.executeHookCommand(msg.phase, msg.hookId)
-            send(ws, { type: 'session-state', state: session.getState() })
+            reply({ type: 'session-state', state: session.getState() })
           } catch (err: any) {
-            send(ws, { type: 'error', message: err.message })
+            reply({ type: 'error', message: err.message })
           }
           break
         }
 
         case 'execute-test': {
           if (session.status === 'executing') {
-            send(ws, {
+            reply({
               type: 'step-busy',
               currentStep: session.getState().currentStep ?? 'unknown',
             })
@@ -210,7 +222,7 @@ export function createSessionHandler(
             )
             console.log(`[ws-handler] execute-test: starting "${testDef.name}" (${stepInstructions.length} steps, setup=${(testDef.setup ?? []).length}, teardown=${(testDef.teardown ?? []).length})`)
 
-            send(ws, {
+            reply({
               type: 'test-start',
               test: {
                 testExecutionId: msg.testExecutionId,
@@ -234,7 +246,7 @@ export function createSessionHandler(
             )
 
             console.log(`[ws-handler] execute-test: finished "${testDef.name}" status=${result.status} duration=${result.duration}ms${result.error ? ` error=${result.error}` : ''}`)
-            send(ws, {
+            reply({
               type: 'test-complete',
               test: {
                 testExecutionId: msg.testExecutionId,
@@ -244,14 +256,14 @@ export function createSessionHandler(
               },
               result,
             })
-            send(ws, { type: 'session-state', state: session.getState() })
+            reply({ type: 'session-state', state: session.getState() })
           } catch (err: any) {
             console.error(`[ws-handler] execute-test: caught error for path=${msg.path}`, {
               message: err?.message,
               stack: err?.stack,
               code: err?.code,
             })
-            send(ws, {
+            reply({
               type: 'test-error',
               test: {
                 testExecutionId: msg.testExecutionId,
@@ -261,7 +273,7 @@ export function createSessionHandler(
               },
               error: err?.message ?? String(err),
             })
-            send(ws, { type: 'session-state', state: session.getState() })
+            reply({ type: 'session-state', state: session.getState() })
           }
           break
         }
@@ -279,90 +291,90 @@ export function createSessionHandler(
         }
 
         case 'get-state': {
-          send(ws, { type: 'session-state', state: session.getState() })
+          reply({ type: 'session-state', state: session.getState() })
           break
         }
 
         case 'navigate': {
           if (session.status === 'executing') {
-            send(ws, { type: 'step-busy', currentStep: session.getState().currentStep ?? 'unknown' })
+            reply({ type: 'step-busy', currentStep: session.getState().currentStep ?? 'unknown' })
             return
           }
           try {
             const url = await session.navigate(msg.url)
-            send(ws, { type: 'navigate-complete', url })
-            send(ws, { type: 'session-state', state: session.getState() })
+            reply({ type: 'navigate-complete', url })
+            reply({ type: 'session-state', state: session.getState() })
           } catch (err: any) {
-            send(ws, { type: 'error', message: err.message })
+            reply({ type: 'error', message: err.message })
           }
           break
         }
 
         case 'refresh-page': {
           if (session.status === 'executing') {
-            send(ws, { type: 'step-busy', currentStep: session.getState().currentStep ?? 'unknown' })
+            reply({ type: 'step-busy', currentStep: session.getState().currentStep ?? 'unknown' })
             return
           }
           try {
             const url = await session.refreshPage()
-            send(ws, { type: 'navigate-complete', url })
-            send(ws, { type: 'session-state', state: session.getState() })
+            reply({ type: 'navigate-complete', url })
+            reply({ type: 'session-state', state: session.getState() })
           } catch (err: any) {
-            send(ws, { type: 'error', message: err.message })
+            reply({ type: 'error', message: err.message })
           }
           break
         }
 
         case 'go-back': {
           if (session.status === 'executing') {
-            send(ws, { type: 'step-busy', currentStep: session.getState().currentStep ?? 'unknown' })
+            reply({ type: 'step-busy', currentStep: session.getState().currentStep ?? 'unknown' })
             return
           }
           try {
             const url = await session.goBack()
-            send(ws, { type: 'navigate-complete', url })
-            send(ws, { type: 'session-state', state: session.getState() })
+            reply({ type: 'navigate-complete', url })
+            reply({ type: 'session-state', state: session.getState() })
           } catch (err: any) {
-            send(ws, { type: 'error', message: err.message })
+            reply({ type: 'error', message: err.message })
           }
           break
         }
 
         case 'go-forward': {
           if (session.status === 'executing') {
-            send(ws, { type: 'step-busy', currentStep: session.getState().currentStep ?? 'unknown' })
+            reply({ type: 'step-busy', currentStep: session.getState().currentStep ?? 'unknown' })
             return
           }
           try {
             const url = await session.goForward()
-            send(ws, { type: 'navigate-complete', url })
-            send(ws, { type: 'session-state', state: session.getState() })
+            reply({ type: 'navigate-complete', url })
+            reply({ type: 'session-state', state: session.getState() })
           } catch (err: any) {
-            send(ws, { type: 'error', message: err.message })
+            reply({ type: 'error', message: err.message })
           }
           break
         }
 
         case 'get-aria-tree': {
           if (session.status === 'executing') {
-            send(ws, { type: 'error', message: 'Cannot inspect ARIA tree while step is executing' })
+            reply({ type: 'error', message: 'Cannot inspect ARIA tree while step is executing' })
             return
           }
           try {
             const tree = await session.getAriaTree()
             if (tree) {
-              send(ws, { type: 'aria-tree', tree })
+              reply({ type: 'aria-tree', tree })
             } else {
-              send(ws, { type: 'error', message: 'ARIA tree unavailable' })
+              reply({ type: 'error', message: 'ARIA tree unavailable' })
             }
           } catch (err: any) {
-            send(ws, { type: 'error', message: err.message })
+            reply({ type: 'error', message: err.message })
           }
           break
         }
 
         default: {
-          send(ws, { type: 'error', message: `Unknown message type: ${msg.type}` })
+          reply({ type: 'error', message: `Unknown message type: ${msg.type}` })
           break
         }
       }
@@ -373,7 +385,6 @@ export function createSessionHandler(
     // terminate-session or DELETE and stay immediate. A superseded socket's late close is inert
     // (RESEARCH P4), and an in-flight step is cancelled so the reconnected page and the server
     // agree it was cancelled (RESEARCH P3, A3 taken as the default).
-    let detached = false
     function detach(): void {
       if (logPollInterval) clearInterval(logPollInterval)
       if (detached || cleanedUp) return

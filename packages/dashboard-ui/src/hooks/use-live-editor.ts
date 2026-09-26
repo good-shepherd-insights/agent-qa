@@ -1081,6 +1081,22 @@ export function useLiveEditor(
       stepCompleteResolverRef.current = null
       cancelResolverRef.current?.()
       cancelResolverRef.current = null
+      // A test in flight is settled the same way (428 CR-01), so "Run all tests" ends. The server
+      // cancels it on the drop; its outcome, if one follows, reaches the reconnected socket and
+      // only updates the row.
+      const runningTest = runningTestIndexRef.current
+      if (runningTest !== null) {
+        setTests(prev => prev.map((t, i) =>
+          i === runningTest && (t.status === 'running' || t.status === 'cancelling')
+            ? { ...t, status: 'cancelled' as const, runningStepIndex: null }
+            : t,
+        ))
+      }
+      runningTestIndexRef.current = null
+      setRunningTestIndex(null)
+      const testResolver = testCompleteResolverRef.current
+      testCompleteResolverRef.current = null
+      testResolver?.({ status: 'cancelled' })
       applyPendingExternalSteps()
 
       if (willReconnect) {

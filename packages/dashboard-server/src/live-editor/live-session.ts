@@ -267,6 +267,7 @@ export class LiveSession {
   private hookRegistryError: string | null = null
   private pendingMessages: ServerMessage[] = []
   private messageSink: ((message: ServerMessage) => void) | null = null
+  private hookCaptures = new Set<LiveHookPayload[]>()
   private mobileAppiumLease: MobileLiveAppiumLease | null = null
   private secretStore: SecretStore | undefined
   private secretRedactor: SecretRedactor | undefined
@@ -328,8 +329,24 @@ export class LiveSession {
     this.pendingMessages = []
   }
 
+  /**
+   * A command's reply, for whichever control socket is attached now (428 CR-01). A command can
+   * outlive the socket that issued it, and its outcome belongs to the page, not to that socket:
+   * with none attached it is held and flushed to the next one.
+   */
+  deliver(message: ServerMessage): void {
+    if (this.messageSink) {
+      this.messageSink(message)
+      return
+    }
+    this.pendingMessages.push(message)
+  }
+
   private dispatch(message: ServerMessage): void {
     message = this.redact(message)
+    if (message.type === 'hook-complete') {
+      for (const capture of this.hookCaptures) capture.push(message.hook)
+    }
     if (this.messageSink) {
       this.messageSink(message)
       return
@@ -1210,29 +1227,20 @@ export class LiveSession {
   }
 
   // Thin wrapper around runLifecycleHooks that also captures the dispatched
-  // hook payloads (hook-start / hook-complete) for inclusion in the
-  // LiveTestResultPayload. Uses a sink intercept so existing callers of
-  // runLifecycleHooks (executeHookCommand, initialize, cleanup) keep their
-  // current behaviour unchanged.
+  // hook payloads (hook-complete) for inclusion in the LiveTestResultPayload.
+  // The capture sits beside the message sink rather than wrapping it, so a
+  // control socket that reattaches mid-hook keeps its sink (428 CR-01).
   private async runLifecycleHooksCapturing(
     phase: 'setup' | 'teardown',
     hookIds: string[],
     sink: LiveHookPayload[],
     owner: LiveHookOwner = { scope: 'suite' },
   ): Promise<{ allPassed: boolean; logs: LiveExecutionLog[] }> {
-    const originalSink = this.messageSink
-    const wrappedSink = (message: ServerMessage) => {
-      if (message.type === 'hook-complete') {
-        sink.push(message.hook)
-      }
-      if (originalSink) originalSink(message)
-      else this.pendingMessages.push(message)
-    }
-    this.messageSink = wrappedSink
+    this.hookCaptures.add(sink)
     try {
       return await this.runLifecycleHooks(phase, hookIds, owner)
     } finally {
-      this.messageSink = originalSink
+      this.hookCaptures.delete(sink)
     }
   }
 
