@@ -82,7 +82,11 @@ export interface LiveStepRow {
   testIndex: number
   stepIndex: number
   status: StepStatus
-  /** The step's own text, verbatim from `stepStarted`; empty until the step starts. */
+  /**
+   * The step's own text, verbatim from `stepStarted`. Before the step starts, the masked text
+   * `testStarted.stepTexts` carried. Empty when neither is known, and then the row is not drawn
+   * (428-30, G-428-2).
+   */
   text: string
   /** The `ts` of the `stepStarted` envelope — the page's elapsed-time origin. */
   startedAt?: number
@@ -302,6 +306,14 @@ export function reduceRunStream(state: RunStreamState, envelope: RunEventEnvelop
         name: payload.name,
         totalSteps: payload.totalSteps,
       }
+      // The texts crossed a trust boundary as JSON, so only an array's string entries are read, and
+      // the row count stays totalSteps's however long the list is (428-30, G-428-2).
+      const stepTexts: unknown = payload.stepTexts
+      const pendingText = (stepIndex: number): string => {
+        if (!Array.isArray(stepTexts)) return ''
+        const entry: unknown = stepTexts[stepIndex]
+        return typeof entry === 'string' ? entry : ''
+      }
       let steps = base.steps
       if (payload.totalSteps !== undefined) {
         for (let stepIndex = 0; stepIndex < payload.totalSteps; stepIndex += 1) {
@@ -310,7 +322,7 @@ export function reduceRunStream(state: RunStreamState, envelope: RunEventEnvelop
             testIndex: payload.testIndex,
             stepIndex,
             status: 'pending',
-            text: '',
+            text: pendingText(stepIndex),
             ticks: 0,
             createdSeq: envelope.seq,
           })
