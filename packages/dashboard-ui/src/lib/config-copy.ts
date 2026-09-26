@@ -318,6 +318,9 @@ export function applyActionName(pathLabel: string): string {
 
 export const PORT_RESTART_HELP = 'Takes effect after the dashboard restarts.'
 
+/** A duration field's draft error: the forms the field accepts. */
+export const DURATION_INPUT_ERROR = 'Use a duration like 30s, 5m or 1h.'
+
 export const NO_TARGETS_TEXT = 'No targets yet.'
 export const NO_DEVICES_TEXT = 'No devices yet.'
 export const NO_DEVICE_FARMS_TEXT = 'No device farms yet.'
