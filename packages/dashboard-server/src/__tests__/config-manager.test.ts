@@ -385,6 +385,166 @@ describe('ConfigManager', () => {
   })
 })
 
+const WRITE_BASE_LINES = [
+  'workspace:',
+  '  testMatch:',
+  '    - tests/**/*.yaml',
+  '  suiteMatch:',
+  '    - suites/**/*.suite.yaml',
+  '  hooksFile: hooks.yaml',
+  '  envFile: .env',
+  '  secretsFile: .env.secrets.local',
+]
+
+const WRITE_MODELS_LINES = [
+  'registry:',
+  '  llms:',
+  '    - name: planner',
+  '      provider: openai-compatible',
+  '      model: openrouter/auto',
+  '      baseURL: https://openrouter.ai/api/v1',
+  '    - name: gpt-5.6',
+  '      provider: openai-compatible',
+  '      model: gpt-5.6-base',
+  '      baseURL: https://api.example.test/v1',
+]
+
+const WRITE_USE_LINES = [
+  'use:',
+  '  llm: planner',
+  '  mobile:',
+  '    appState: preserve',
+]
+
+const WRITE_MOBILE_LINES = ['use:', '  mobile:', '    appState: preserve']
+
+function writeConfig(...blocks: string[][]): string {
+  return [...blocks.flat(), ''].join('\n')
+}
+
+type LlmEntry = { name: string; model: string }
+
+function llmsOf(text: string): LlmEntry[] {
+  return (parseYaml(text) as { registry: { llms: LlmEntry[] } }).registry.llms
+}
+
+describe('ConfigManager.applyChanges ops and selectors (429-05)', () => {
+  it('UNSET-PRUNES-EMPTY-PARENTS: an unset prunes every ancestor map it empties, and keeps a sibling', async () => {
+    await writeFile(configPath, writeConfig(
+      WRITE_BASE_LINES,
+      ['services:', '  recording:', '    keepFailuresOnly: true'],
+      WRITE_MOBILE_LINES,
+    ))
+
+    const pruned = await manager.applyChanges([
+      { op: 'unset', path: ['services', 'recording', 'keepFailuresOnly'] },
+    ])
+
+    expect(pruned.kind).toBe('ok')
+    const afterPrune = parseYaml(await readFile(configPath, 'utf-8')) as Record<string, unknown>
+    expect(afterPrune).not.toHaveProperty('services')
+
+    await writeFile(configPath, writeConfig(
+      WRITE_BASE_LINES,
+      ['services:', '  recording:', '    keepFailuresOnly: true', '    enabled: true'],
+      WRITE_MOBILE_LINES,
+    ))
+
+    const kept = await manager.applyChanges([
+      { op: 'unset', path: ['services', 'recording', 'keepFailuresOnly'] },
+    ])
+
+    expect(kept.kind).toBe('ok')
+    const afterKeep = parseYaml(await readFile(configPath, 'utf-8')) as { services: { recording: unknown } }
+    expect(afterKeep.services.recording).toEqual({ enabled: true })
+  })
+
+  it('APPEND-CREATES-SEQ: an append to an absent sequence creates it with one entry', async () => {
+    await writeFile(configPath, writeConfig(WRITE_BASE_LINES, WRITE_MOBILE_LINES))
+
+    const outcome = await manager.applyChanges([
+      { op: 'append', path: ['services', 'mcp', 'tokens'], value: { name: 'ci', token: 'ci-token-value' } },
+    ])
+
+    expect(outcome.kind).toBe('ok')
+    const parsed = parseYaml(await readFile(configPath, 'utf-8')) as { services: { mcp: { tokens: unknown[] } } }
+    expect(parsed.services.mcp.tokens).toEqual([{ name: 'ci', token: 'ci-token-value' }])
+  })
+
+  it('NAME-SELECTOR-RESOLVES: a { name } segment changes only that entry', async () => {
+    await writeFile(configPath, writeConfig(WRITE_BASE_LINES, WRITE_MODELS_LINES, WRITE_USE_LINES))
+
+    const outcome = await manager.applyChanges([
+      { op: 'set', path: ['registry', 'llms', { name: 'gpt-5.6' }, 'model'], value: 'gpt-5.6-pro' },
+    ])
+
+    expect(outcome.kind).toBe('ok')
+    expect(llmsOf(await readFile(configPath, 'utf-8')).map(({ name, model }) => [name, model])).toEqual([
+      ['planner', 'openrouter/auto'],
+      ['gpt-5.6', 'gpt-5.6-pro'],
+    ])
+  })
+
+  it('REORDERED-SEQ-HITS-RIGHT-ENTRY: after an outside reorder the same change still hits gpt-5.6', async () => {
+    const reversed = [
+      'registry:',
+      '  llms:',
+      ...WRITE_MODELS_LINES.slice(6),
+      ...WRITE_MODELS_LINES.slice(2, 6),
+    ]
+    await writeFile(configPath, writeConfig(WRITE_BASE_LINES, reversed, WRITE_USE_LINES))
+
+    const outcome = await manager.applyChanges([
+      { op: 'set', path: ['registry', 'llms', { name: 'gpt-5.6' }, 'model'], value: 'gpt-5.6-pro' },
+    ])
+
+    expect(outcome.kind).toBe('ok')
+    expect(llmsOf(await readFile(configPath, 'utf-8')).map(({ name, model }) => [name, model])).toEqual([
+      ['gpt-5.6', 'gpt-5.6-pro'],
+      ['planner', 'openrouter/auto'],
+    ])
+  })
+
+  it('NAME-SELECTOR-MISSING-REFUSED: an unknown name, or a { name } outside a named array, refuses and writes nothing', async () => {
+    await writeFile(configPath, writeConfig(WRITE_BASE_LINES, WRITE_MODELS_LINES, WRITE_USE_LINES))
+    const before = await readFile(configPath)
+
+    const missing = await manager.applyChanges([
+      { op: 'set', path: ['registry', 'llms', { name: 'missing' }, 'model'], value: 'x' },
+    ])
+    const outside = await manager.applyChanges([
+      { op: 'set', path: ['workspace', 'testMatch', { name: 'tests/**/*.yaml' }], value: 'x' },
+    ])
+
+    expect(missing).toEqual({ kind: 'refused', error: 'path_not_found' })
+    expect(outside).toEqual({ kind: 'refused', error: 'path_not_found' })
+    expect(Buffer.compare(await readFile(configPath), before)).toBe(0)
+
+    // The control: the same selector on a name that is present resolves, so the refusal above
+    // is about the missing entry and not about { name } segments as such.
+    const present = await manager.applyChanges([
+      { op: 'set', path: ['registry', 'llms', { name: 'gpt-5.6' }, 'model'], value: 'gpt-5.6-pro' },
+    ])
+    expect(present.kind).toBe('ok')
+  })
+
+  it('LEGACY-HEADLESS-MIGRATED: setting use.browser.headless removes a root use.headless in the same write', async () => {
+    await writeFile(configPath, writeConfig(
+      WRITE_BASE_LINES,
+      ['use:', '  headless: true', '  browser:', '    name: chromium', '  mobile:', '    appState: preserve'],
+    ))
+
+    const outcome = await manager.applyChanges([
+      { op: 'set', path: ['use', 'browser', 'headless'], value: false },
+    ])
+
+    expect(outcome.kind).toBe('ok')
+    const parsed = parseYaml(await readFile(configPath, 'utf-8')) as { use: Record<string, unknown> }
+    expect(parsed.use.browser).toEqual({ name: 'chromium', headless: false })
+    expect(parsed.use).not.toHaveProperty('headless')
+  })
+})
+
 describe('dashboard compatible auth routes', () => {
   it('stores openai-compatible API keys under the named LLM config key', async () => {
     const res = await invokeRoute('/api/auth/credential', {
