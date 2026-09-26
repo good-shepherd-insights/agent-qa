@@ -124,6 +124,8 @@ export interface ConfigAutosave {
   reload: () => void
   /** Re-reads quietly, for sections still saving through their own routes. */
   refresh: () => void
+  /** A draft held outside the field map (the add row): its tab carries the dot and the status reads Not saved. */
+  setExternalDraft: (tab: ConfigTab, present: boolean) => void
 }
 
 interface FieldLocation {
@@ -155,6 +157,11 @@ function initialHookState(): HookState {
 /** The same key the machine uses: the JSON of the field's segments. */
 export function configFieldKeyOf(segments: readonly ConfigPathSegment[]): string {
   return JSON.stringify(segments)
+}
+
+/** The field key Not saved names for a tab's external draft; its control carries configFieldControlId of it. */
+export function externalDraftFieldKey(tab: ConfigTab): string {
+  return `external:${tab}`
 }
 
 /** The DOM id of a field's control, so Not saved can focus it. */
@@ -936,6 +943,7 @@ export function useConfigAutosave(): ConfigAutosave {
     goToFirstDraft: () => firstDraft(state),
     reload: engine.reload,
     refresh: engine.refresh,
+    setExternalDraft: () => {},
   }
 }
 

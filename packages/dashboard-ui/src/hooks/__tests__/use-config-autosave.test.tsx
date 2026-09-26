@@ -9,6 +9,7 @@ import { ApiError, applyConfigChanges, fetchConfig, fetchConfigRevision, undoCon
 import { REVISION_POLL_MS, SETTLE_DELAY_MS, UNDO_WINDOW_MS, undoLine } from "@/lib/config-copy"
 import {
   CONFIG_DRAFTS_STORAGE_PREFIX,
+  externalDraftFieldKey,
   useConfigAutosave,
   type ConfigAutosave,
   type ConfigFieldParse,
@@ -580,5 +581,32 @@ describe("useConfigAutosave outside edits, explicit actions and Undo (429-16 Tas
 
     expect(hook!.load.kind).toBe("ready")
     expect(hook!.valueOf(step)).toBe("2m")
+  })
+})
+
+describe("useConfigAutosave external drafts (429-25 Task 1)", () => {
+  it("EXTERNAL-DRAFT-NOT-SAVED: an open add row marks its tab and reads Not saved until it goes, writing nothing", async () => {
+    await mount()
+    expect(hook!.status.state).toBe("idle")
+    expect(hook!.draftTabs.has("models")).toBe(false)
+
+    await run((h) => h.setExternalDraft("models", true))
+    expect(hook!.status.state).toBe("draft")
+    expect([...hook!.draftTabs]).toEqual(["models"])
+    expect(hook!.goToFirstDraft()).toEqual({ tab: "models", fieldKey: externalDraftFieldKey("models") })
+    await advance(SETTLE_DELAY_MS * 2)
+    expect(applyConfigChanges).not.toHaveBeenCalled()
+
+    await run((h) => h.edit(step, "soon", durationParse("soon")))
+    expect(hook!.goToFirstDraft()).toEqual({ tab: "models", fieldKey: externalDraftFieldKey("models") })
+
+    await run((h) => h.setExternalDraft("models", false))
+    expect([...hook!.draftTabs]).toEqual(["execution"])
+    expect(hook!.goToFirstDraft()).toEqual({ tab: "execution", fieldKey: JSON.stringify(step.segments) })
+
+    await run((h) => h.discard(step))
+    expect(hook!.status.state).toBe("idle")
+    expect(hook!.draftTabs.size).toBe(0)
+    expect(storedText()).not.toContain("external:")
   })
 })
