@@ -4,13 +4,16 @@
 // a failed read shows every row Not connected: a status the page has not read is never claimed.
 // Add model sits in the section's heading row; with no models the empty state holds the only one.
 // A row being deleted is hidden at once, focus moves to the next row, else the previous one, else
-// Add model, and an Undo focuses the row it brought back (429-24 · D-24).
+// Add model, and an Undo focuses the row it brought back (429-24 · D-24). The add row sits first
+// and there is at most one: Add model or ?add while it is open focuses it, ?add is removed once
+// applied, a stored add draft re-opens it after a reload, and a pass lands the saved row open
+// (429-25 · D-14, D-15 · UI-SPEC S5).
 
 import { useEffect, useRef, useState } from "react"
-import { useNavigate, useSearchParams } from "react-router"
+import { useSearchParams } from "react-router"
 import { Plus, TriangleAlert } from "lucide-react"
 
-import { AddModelRow, type AddModelLanding } from "@/components/config-manager/add-model-row"
+import { AddModelRow, type AddFocusRequest, type AddModelLanding } from "@/components/config-manager/add-model-row"
 import {
   ModelRow,
   credentialKeyType,
@@ -22,8 +25,9 @@ import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
 import { useConfigAutosaveContext, type ConfigFieldRef } from "@/hooks/use-config-autosave"
 import { fetchAuthStatus, fetchLLMProviders, type AuthCredentialInfo, type LLMProviderMetadata } from "@/lib/api"
+import { readAddModelDraft } from "@/lib/add-model-draft"
 import { ADD_MODEL_LABEL, NO_DEFAULT_TEXT, NO_MODELS_TEXT } from "@/lib/config-copy"
-import { CONNECTION_CHOICES, configTabPath, type ConnectionChoice } from "@/lib/config-tabs"
+import { CONNECTION_CHOICES, type ConnectionChoice } from "@/lib/config-tabs"
 
 interface ModelListProps {
   config: Record<string, unknown>
@@ -67,14 +71,23 @@ function choiceParam(value: string | null): ConnectionChoice | undefined {
   return CONNECTION_CHOICES.find((choice) => choice === value)
 }
 
+interface AddRowState {
+  initialChoice?: ConnectionChoice
+  focus: AddFocusRequest | undefined
+}
+
 export function ModelList(_props: ModelListProps) {
   const autosave = useConfigAutosaveContext()
-  const navigate = useNavigate()
-  const [searchParams] = useSearchParams()
-  const addOpen = searchParams.has("add")
+  const [searchParams, setSearchParams] = useSearchParams()
+  const addParam = searchParams.get("add")
+  const configPath = autosave.load.kind === "ready" ? (autosave.load.answer.file?.path ?? "") : ""
+  // A stored add draft (a reload mid-draft) re-opens the row; it takes focus only when asked.
+  const [add, setAdd] = useState<AddRowState | undefined>(() =>
+    readAddModelDraft(configPath) === undefined ? undefined : { focus: undefined },
+  )
+  const focusSeq = useRef(0)
   const [landing, setLanding] = useState<AddModelLanding | undefined>(undefined)
   const landingFocus = useRef<string | undefined>(undefined)
-  const configPath = autosave.load.kind === "ready" ? (autosave.load.answer.file?.path ?? "") : ""
   const [reads, setReads] = useState<WorkspaceReads | undefined>(undefined)
   const [openName, setOpenName] = useState<string | undefined>(undefined)
   const [removing, setRemoving] = useState<ReadonlySet<string>>(new Set())
@@ -159,19 +172,45 @@ export function ModelList(_props: ModelListProps) {
     autosave.settle(DEFAULT_REF)
   }
 
-  function addModel() {
-    navigate(`${configTabPath("models")}?add`)
+  /** Opens the one add row, or focuses it when it is already open. */
+  function openAdd(initialChoice: ConnectionChoice | undefined) {
+    focusSeq.current += 1
+    const seq = focusSeq.current
+    setAdd((current) =>
+      current === undefined
+        ? { ...(initialChoice === undefined ? {} : { initialChoice }), focus: { seq, target: initialChoice ? "field" : "choice" } }
+        : { ...current, focus: { seq, target: "choice" } },
+    )
   }
 
-  function closeAdd() {
-    navigate(configTabPath("models"), { replace: true })
+  useEffect(() => {
+    if (addParam === null) return
+    openAdd(choiceParam(addParam))
+    setSearchParams(
+      (current) => {
+        const next = new URLSearchParams(current)
+        next.delete("add")
+        return next
+      },
+      { replace: true },
+    )
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- the link is applied once, then removed
+  }, [addParam])
+
+  function addModel() {
+    openAdd(undefined)
+  }
+
+  function discardAdd() {
+    pendingFocus.current = ADD_BUTTON
+    setAdd(undefined)
   }
 
   function connected(next: AddModelLanding) {
+    setAdd(undefined)
     setLanding(next)
     setOpenName(next.name)
     landingFocus.current = next.name
-    closeAdd()
     autosave.refresh()
     refreshCredentials(next.name)
   }
@@ -192,7 +231,7 @@ export function ModelList(_props: ModelListProps) {
     setRemoving((current) => withName(current, name, true))
   }
 
-  if (shown.length === 0 && !addOpen) {
+  if (shown.length === 0 && add === undefined) {
     return (
       <div data-models-empty className="col-span-full space-y-4 rounded-md border border-border px-4 py-8">
         <p className="text-sm">{NO_MODELS_TEXT}</p>
@@ -235,17 +274,17 @@ export function ModelList(_props: ModelListProps) {
           data-field-list="registry.llms"
           className="divide-y divide-border rounded-md border border-border"
         >
-          {addOpen ? (
+          {add === undefined ? null : (
             <AddModelRow
               configPath={configPath}
               providers={reads.providers}
               existingNames={models.map((model) => model.name)}
-              initialChoice={choiceParam(searchParams.get("add"))}
-              focusRequest={{ seq: 1, target: choiceParam(searchParams.get("add")) ? "field" : "choice" }}
+              {...(add.initialChoice === undefined ? {} : { initialChoice: add.initialChoice })}
+              {...(add.focus === undefined ? {} : { focusRequest: add.focus })}
               onConnected={connected}
-              onDiscard={closeAdd}
+              onDiscard={discardAdd}
             />
-          ) : null}
+          )}
           {shown.map((model) => (
             <ModelRow
               key={model.name}

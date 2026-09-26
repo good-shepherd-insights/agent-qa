@@ -319,7 +319,7 @@ describe('ModelList closed rows (429-23 Task 1)', () => {
     expect(container!.querySelector('[data-no-default]')).toBeNull()
   })
 
-  it('NO-MODELS-EMPTY-STATE: no models shows one sentence and Add model as the one filled button, and Add model opens the add row link', async () => {
+  it('NO-MODELS-EMPTY-STATE: no models shows one sentence and Add model as the one filled button, and Add model opens the add row', async () => {
     vi.mocked(fetchConfig).mockResolvedValueOnce(answer(modelsConfig([])) as never)
     await mount()
 
@@ -332,9 +332,14 @@ describe('ModelList closed rows (429-23 Task 1)', () => {
     expect(empty!.contains(adds[0])).toBe(true)
     expect(adds[0].getAttribute('data-variant')).toBe('default')
 
+    // 429-25 re-target: Add model opens the add row in place (it no longer goes through ?add).
     await click(adds[0])
-    expect(location()).toEqual({ pathname: '/config/models', search: '?add' })
+    expect(container!.querySelector('[data-model-list] > li[data-model-draft]')).not.toBeNull()
+    expect(container!.querySelector('[data-models-empty]')).toBeNull()
+    expect(document.activeElement?.getAttribute('role')).toBe('radio')
+    expect(location()).toEqual({ pathname: '/config/models', search: '' })
     await unmount()
+    localStorage.clear()
 
     await mount()
     const headingAdds = buttonsNamed(container, ADD_MODEL_LABEL)

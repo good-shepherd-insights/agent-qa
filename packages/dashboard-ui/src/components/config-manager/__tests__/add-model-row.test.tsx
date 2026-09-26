@@ -9,7 +9,7 @@
 
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
-import { MemoryRouter, Route, Routes, useLocation } from 'react-router'
+import { MemoryRouter, Route, Routes, useLocation, useNavigate, type NavigateFunction } from 'react-router'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { ModelList } from '@/components/config-manager/model-list'
@@ -28,7 +28,9 @@ import {
 } from '@/lib/api'
 import {
   ADD_FLOW_FIELD_LABELS,
+  ADD_MODEL_LABEL,
   BECAME_DEFAULT_TEXT,
+  DISCARD_DRAFT_LABEL,
   CONNECTING_LABEL,
   CONNECTION_CHOICE_HINTS,
   CONNECTION_CHOICE_LABELS,
@@ -43,6 +45,7 @@ import {
   nameTakenError,
   signInPluginMissingText,
 } from '@/lib/config-copy'
+import { ADD_MODEL_DRAFT_STORAGE_PREFIX } from '@/lib/add-model-draft'
 import { CONNECTION_CHOICES, type ConnectionChoice } from '@/lib/config-tabs'
 
 vi.mock('@/lib/api', async (importOriginal) => ({
@@ -82,9 +85,25 @@ function answer(config: Record<string, unknown>, revision = 'rev-1') {
   return { config, provider: null, revision, file: { path: CONFIG_PATH, lines: [] } }
 }
 
+let navigateTo: NavigateFunction | undefined
+
 function LocationProbe() {
   const location = useLocation()
+  navigateTo = useNavigate()
   return <div data-testid="location" data-pathname={location.pathname} data-search={location.search} />
+}
+
+function location() {
+  const probe = container?.querySelector('[data-testid="location"]')
+  return { pathname: probe?.getAttribute('data-pathname'), search: probe?.getAttribute('data-search') }
+}
+
+async function go(path: string) {
+  await act(async () => {
+    navigateTo!(path)
+  })
+  await flush()
+  await flush()
 }
 
 function Harness() {
@@ -131,6 +150,7 @@ async function unmount() {
   root = null
   container?.remove()
   container = null
+  navigateTo = undefined
 }
 
 function addRow() {
@@ -519,5 +539,153 @@ describe('AddModelRow sign-in choices (429-25 Task 2)', () => {
     expect(addRow()!.querySelector('[data-sign-in-plugin-missing]')).toBeNull()
     expect(input('model')?.value).toBe('gpt-5.6')
     expect(input('key')).toBeNull()
+  })
+})
+
+const DRAFT_KEY = `${ADD_MODEL_DRAFT_STORAGE_PREFIX}${CONFIG_PATH}`
+
+function addRows() {
+  return container?.querySelectorAll('[data-model-list] > li[data-model-draft]') ?? []
+}
+
+function headingAdd() {
+  return container?.querySelector<HTMLButtonElement>('[data-model-add]') ?? null
+}
+
+describe('The add row in the list (429-25 Task 3)', () => {
+  it('ONE-ADD-ROW: Add model opens one add row first in the list; Add model or ?add while it is open focuses it instead', async () => {
+    await mount('/config/models')
+    expect(addRow()).toBeNull()
+    await click(headingAdd())
+    expect(addRows()).toHaveLength(1)
+    expect(container!.querySelector('[data-model-list] > li')).toBe(addRow())
+    expect(document.activeElement).toBe(radio(CONNECTION_CHOICES[0]))
+    expect(location()).toEqual({ pathname: '/config/models', search: '' })
+
+    await choose('openai-compatible-key')
+    await type(input('model'), 'a-very-long-model-id/with-a-path/and-more-segments-than-fit-in-the-input')
+    await click(headingAdd())
+    expect(addRows()).toHaveLength(1)
+    expect(document.activeElement).toBe(radio('openai-compatible-key'))
+    expect(input('model')?.value).toBe('a-very-long-model-id/with-a-path/and-more-segments-than-fit-in-the-input')
+
+    await go('/config/models?add')
+    expect(addRows()).toHaveLength(1)
+    expect(document.activeElement).toBe(radio('openai-compatible-key'))
+    expect(location()).toEqual({ pathname: '/config/models', search: '' })
+    expect(input('model')?.value).toBe('a-very-long-model-id/with-a-path/and-more-segments-than-fit-in-the-input')
+
+    for (const field of ['baseURL', 'model', 'key', 'name']) {
+      expect(input(field)?.className, field).toContain('w-full')
+      expect(input(field)?.className, field).toContain('max-w-md')
+    }
+    expect(connectButton()?.parentElement?.className).toContain('flex-wrap')
+    expect(addRow()!.querySelector('[data-add-step="connect"] [role="radiogroup"]')?.className).toContain('gap-2')
+    expect(applyConfigChanges).not.toHaveBeenCalled()
+  })
+
+  it('ADD-DEEP-LINK: ?add opens the add row on the first choice, ?add={choice} selects it and focuses its first field, and the link is consumed', async () => {
+    await mount('/config/models?add')
+    expect(addRows()).toHaveLength(1)
+    expect(addState()).toBe('choosing')
+    expect(document.activeElement).toBe(radio(CONNECTION_CHOICES[0]))
+    expect(location()).toEqual({ pathname: '/config/models', search: '' })
+    await unmount()
+    localStorage.clear()
+
+    await mount('/config/models?add=gemini-key')
+    expect(radio('gemini-key')?.getAttribute('aria-checked')).toBe('true')
+    expect(addState()).toBe('editing')
+    expect(document.activeElement).toBe(input('model'))
+    expect(location()).toEqual({ pathname: '/config/models', search: '' })
+    await unmount()
+    localStorage.clear()
+
+    await mount('/config/models?add=openai-compatible-key')
+    expect(document.activeElement).toBe(input('baseURL'))
+    await unmount()
+    localStorage.clear()
+
+    await mount('/config/models?add=not-a-choice')
+    expect(addState()).toBe('choosing')
+    expect(document.activeElement).toBe(radio(CONNECTION_CHOICES[0]))
+  })
+
+  it('ADD-DRAFT-RESTORED-WITHOUT-SECRETS: a reload re-opens the add row with its non-secret fields and every secret field empty', async () => {
+    localStorage.setItem(
+      DRAFT_KEY,
+      JSON.stringify({ choice: 'openai-compatible-key', baseURL: 'https://llm.example.com/v1', model: 'gpt-5.6', name: 'gpt-5.6', nameEdited: false }),
+    )
+    await mount('/config/models')
+    expect(addRows()).toHaveLength(1)
+    expect(radio('openai-compatible-key')?.getAttribute('aria-checked')).toBe('true')
+    expect(input('baseURL')?.value).toBe('https://llm.example.com/v1')
+    expect(input('model')?.value).toBe('gpt-5.6')
+    expect(input('name')?.value).toBe('gpt-5.6')
+    expect(input('key')?.value).toBe('')
+
+    await choose('anthropic-compatible-key')
+    await type(input('baseURL'), 'https://claude.example.com')
+    await type(input('model'), 'claude-sonnet-4.5')
+    await click(addRow()!.querySelector<HTMLButtonElement>('[data-add-field="keyType"] [role="radio"][value="bearer-token"]'))
+    await type(input('key'), TYPED_KEY)
+    await type(input('name'), 'sonnet')
+    await click(buttonsNamed(addRow(), 'Add header')[0])
+    const [headerName, headerValue] = Array.from(addRow()!.querySelectorAll<HTMLInputElement>('[data-add-header] input'))
+    await type(headerName, 'X-Team')
+    await type(headerValue, 'header-secret')
+    expect(storedText()).not.toContain(TYPED_KEY)
+    expect(storedText()).not.toContain('header-secret')
+    await unmount()
+
+    await mount('/config/models')
+    expect(radio('anthropic-compatible-key')?.getAttribute('aria-checked')).toBe('true')
+    expect(input('baseURL')?.value).toBe('https://claude.example.com')
+    expect(input('model')?.value).toBe('claude-sonnet-4.5')
+    expect(input('name')?.value).toBe('sonnet')
+    expect(addRow()!.querySelector('[data-add-field="keyType"] [role="radio"][value="bearer-token"]')?.getAttribute('aria-checked')).toBe('true')
+    expect(fieldEl('key')?.querySelector('label')?.textContent).toBe(ADD_FLOW_FIELD_LABELS.token)
+    expect(input('key')?.value).toBe('')
+    const restored = Array.from(addRow()!.querySelectorAll<HTMLInputElement>('[data-add-header] input'))
+    expect(restored.map((item) => item.value)).toEqual(['X-Team', ''])
+    expect(container!.innerHTML).not.toContain(TYPED_KEY)
+    expect(container!.innerHTML).not.toContain('header-secret')
+  })
+
+  it('DISCARD-DRAFT: Discard removes the row at once with no question and focuses Add model; Escape does not discard', async () => {
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true)
+    await mount('/config/models?add')
+    await fillOpenAiCompatible()
+    expect(localStorage.getItem(DRAFT_KEY)).not.toBeNull()
+
+    await act(async () => {
+      input('model')!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+    })
+    await flush()
+    expect(addRow()).not.toBeNull()
+    expect(input('key')?.value).toBe(TYPED_KEY)
+
+    const discard = addRow()!.querySelector<HTMLButtonElement>('[data-discard-draft]')
+    expect(discard?.textContent?.trim()).toBe(DISCARD_DRAFT_LABEL)
+    expect(discard?.getAttribute('data-variant')).toBe('ghost')
+    await click(discard)
+    expect(addRow()).toBeNull()
+    expect(localStorage.getItem(DRAFT_KEY)).toBeNull()
+    expect(document.activeElement).toBe(headingAdd())
+    expect(document.activeElement?.textContent?.trim()).toBe(ADD_MODEL_LABEL)
+    expect(confirmSpy).not.toHaveBeenCalled()
+    expect(document.querySelector('[role="dialog"], [role="alertdialog"]')).toBeNull()
+    expect(container!.textContent).not.toContain('Undo')
+    expect(applyConfigChanges).not.toHaveBeenCalled()
+    expect(connectLLM).not.toHaveBeenCalled()
+    confirmSpy.mockRestore()
+    await unmount()
+
+    vi.mocked(fetchConfig).mockResolvedValue(answer(modelsConfig([])) as never)
+    await mount('/config/models?add')
+    await click(addRow()!.querySelector<HTMLButtonElement>('[data-discard-draft]'))
+    const emptyAdd = container!.querySelector('[data-models-empty] button')
+    expect(emptyAdd).not.toBeNull()
+    expect(document.activeElement).toBe(emptyAdd)
   })
 })

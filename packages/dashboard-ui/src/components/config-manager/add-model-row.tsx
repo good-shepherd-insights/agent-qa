@@ -15,7 +15,11 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group"
-import { useConfigAutosaveContext } from "@/hooks/use-config-autosave"
+import {
+  configFieldControlId,
+  externalDraftFieldKey,
+  useConfigAutosaveContext,
+} from "@/hooks/use-config-autosave"
 import {
   clearAddModelDraft,
   readAddModelDraft,
@@ -475,7 +479,14 @@ export function AddModelRow({
   return (
     <li data-model-row data-model-draft data-add-state={addState}>
       <div className="grid min-h-12 grid-cols-[0.75rem_minmax(0,1fr)_auto] items-center gap-x-2 px-4 py-2">
-        <span className="col-start-2 text-sm font-medium">{NEW_MODEL_ROW_TITLE}</span>
+        {/* Not saved lands here while the add row is the tab's draft. */}
+        <span
+          id={configFieldControlId(externalDraftFieldKey("models"))}
+          tabIndex={-1}
+          className="col-start-2 rounded-sm text-sm font-medium outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
+        >
+          {NEW_MODEL_ROW_TITLE}
+        </span>
         <Button type="button" variant="ghost" size="sm" data-discard-draft onClick={discard}>
           {DISCARD_DRAFT_LABEL}
         </Button>
