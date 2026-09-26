@@ -4,6 +4,11 @@ import pc from 'picocolors'
 import input from '@inquirer/input'
 import password from '@inquirer/password'
 import { createModel } from '@vostride/agent-qa-model'
+import {
+  classifyProviderError,
+  extractProviderError,
+  providerErrorSentence,
+} from '@vostride/agent-qa-schema'
 import type { LLMAuthProviderPlugin, OAuthTokens } from '@vostride/agent-qa-core'
 
 type ProviderMode =
@@ -94,32 +99,6 @@ function statusForResolvedAuth(auth: ResolvedAuth): string {
     case 'missing':
       return pc.red('Missing credential')
   }
-}
-
-function extractProviderError(err: unknown): { message: string; statusCode?: number } {
-  const errObj = err as Record<string, unknown>
-  const statusCode = errObj?.statusCode as number | undefined
-  const responseBody = errObj?.responseBody as string | undefined
-  const data = errObj?.data as Record<string, unknown> | undefined
-  const apiError = data?.error as Record<string, string> | undefined
-
-  let message = err instanceof Error ? err.message : String(err)
-
-  if (apiError?.message && apiError.message !== 'Error') {
-    message = apiError.message
-  } else if (typeof data?.detail === 'string') {
-    message = data.detail
-  } else if (responseBody) {
-    try {
-      const body = JSON.parse(responseBody)
-      if (body?.detail) message = body.detail
-      else if (body?.error?.message && body.error.message !== 'Error') message = body.error.message
-    } catch {
-      // Provider did not return JSON.
-    }
-  }
-
-  return { message, statusCode }
 }
 
 function openAuthorizationUrl(url: string): void {
@@ -411,6 +390,7 @@ export function createAuthCommand(): Command {
           configName = name
         } catch (err: unknown) {
           console.log(pc.red(err instanceof Error ? err.message : String(err)))
+          process.exitCode = 1
           return
         }
 
@@ -422,6 +402,7 @@ export function createAuthCommand(): Command {
         const auth = await resolveModelAuth(configName, planner) as ResolvedAuth
         if (auth.kind === 'missing') {
           console.log(pc.red(auth.message))
+          process.exitCode = 1
           return
         }
         if (auth.kind === 'unauthenticated') {
@@ -430,8 +411,15 @@ export function createAuthCommand(): Command {
 
         const { generateText } = await import('ai')
 
-        const { profile, auth: modelAuth } = toModelProfileAndAuth(planner, auth as any)
-        const model = createModel(profile, modelAuth)
+        let model: ReturnType<typeof createModel>
+        try {
+          const { profile, auth: modelAuth } = toModelProfileAndAuth(planner, auth as any)
+          model = createModel(profile, modelAuth)
+        } catch (err: unknown) {
+          console.log(pc.red(err instanceof Error ? err.message : String(err)))
+          process.exitCode = 1
+          return
+        }
 
         const start = Date.now()
         const controller = new AbortController()
@@ -446,22 +434,9 @@ export function createAuthCommand(): Command {
           console.log(pc.green(`Connected to ${planner.provider}/${planner.model} (${elapsed}ms)`))
         } catch (err: unknown) {
           const { message, statusCode } = extractProviderError(err)
-          const fullContext = `${message} ${statusCode ?? ''}`
-
-          if (/auth|unauthorized|401|invalid.*key|permission/i.test(fullContext)) {
-            console.log(pc.red('Authentication failed. Check the saved credential for this config.'))
-          } else if (/model.*not.*support|not found|404|does not exist/i.test(fullContext)) {
-            console.log(pc.red('Model not found. Check the model name.'))
-          } else if (/rate|429|quota|limit/i.test(fullContext)) {
-            console.log(pc.red('Rate limited. Try again later.'))
-          } else if (/ECONNREFUSED|ENOTFOUND|timeout|abort|fetch failed|network/i.test(fullContext)) {
-            console.log(pc.red('Network error. Check the exact base URL and try again.'))
-          } else if (/invalid_request|400|bad request/i.test(fullContext)) {
-            console.log(pc.red('Invalid request. Check model and provider settings.'))
-          } else {
-            console.log(pc.red(`Connection failed. ${message}`))
-          }
+          console.log(pc.red(providerErrorSentence(classifyProviderError(message, statusCode), message)))
           console.log(pc.dim(message))
+          process.exitCode = 1
         } finally {
           clearTimeout(timeout)
         }
