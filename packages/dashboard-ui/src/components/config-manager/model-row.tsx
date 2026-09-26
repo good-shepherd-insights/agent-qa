@@ -1,4 +1,4 @@
-// ONE SAVED MODEL (429-23, 429-24 · D-10, D-11, D-12, D-17, D-23, D-24 · UI-SPEC S4, S6, E6).
+// ONE SAVED MODEL (429-23, 429-24, 429-26 · D-10, D-11, D-12, D-17, D-23, D-24 · UI-SPEC S4, S6, E6).
 //
 // The closed row is its disclosure button: the name, the Default badge, the model line and one
 // status word derived from the credential-status read. The open panel sits inside the same row
@@ -6,7 +6,8 @@
 // the credential actions, the row's settings and Delete model. Deleting, signing out and removing
 // a key act at once and offer Undo; none asks first. The default model offers no delete. Settings
 // autosave by leaf; a key and a header value are typed into this component only and save through
-// their own buttons, never as drafts.
+// their own buttons, never as drafts. A sign-in model that is not connected or whose sign-in expired
+// offers Sign in again, the add row's sign-in flow for the saved name, and its test runs after.
 
 import { useEffect, useId, useRef, useState, type KeyboardEvent, type RefObject } from "react"
 import { ChevronRight, CircleAlert, CircleCheck, LoaderCircle, LogOut, Plus, Trash2, TriangleAlert } from "lucide-react"
@@ -14,12 +15,14 @@ import { CONFIG_MASK_PLACEHOLDER, type ConfigChange, type ConfigPathSegment } fr
 
 import { ConfigField, type ConfigFieldTarget } from "@/components/config-manager/config-field"
 import { ConnectionLine } from "@/components/config-manager/connection-line"
+import { SignInButton, SignInProgress, signInActive, signInLine } from "@/components/config-manager/sign-in-progress"
 import { SecretValue } from "@/components/config-manager/secret-value"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { useConfigAutosaveContext, type ConfigFieldParse } from "@/hooks/use-config-autosave"
+import { useSignInFlow } from "@/hooks/use-sign-in-flow"
 import {
   deleteAuthCredential,
   revealConfigValue,
@@ -56,6 +59,7 @@ import {
   SAVE_HEADER_LABEL,
   SAVE_KEY_AND_TEST_LABEL,
   SETTLE_DELAY_MS,
+  SIGN_IN_AGAIN_LABEL,
   SIGN_OUT_LABEL,
   SUBSCRIPTION_PLAN_NAMES,
   TEST_CONNECTION_LABEL,
@@ -646,6 +650,16 @@ function ModelPanel({
   const [replacing, setReplacing] = useState(false)
   const replaceButton = useRef<HTMLButtonElement>(null)
   const focusReplaceNext = useRef(false)
+  // D-17: Sign in again is the add row's sign-in for the saved name; the test runs once it completes.
+  const signInFlow = useSignInFlow({
+    onCompleted: () => {
+      onCredentialSaved()
+      void test.run()
+    },
+  })
+  const signInOffered =
+    signInActive(signInFlow) || (facts.signIn && (status === "not-connected" || status === "sign-in-expired"))
+  const shownLine = signInLine(signInFlow) ?? test.line
 
   useEffect(() => {
     if (!replacing && focusReplaceNext.current) {
@@ -735,6 +749,16 @@ function ModelPanel({
                 {REPLACE_KEY_LABEL}
               </Button>
             )}
+            {signInOffered ? (
+              <SignInButton
+                data-sign-in-again
+                flow={signInFlow}
+                label={SIGN_IN_AGAIN_LABEL}
+                variant="outline"
+                size="sm"
+                onStart={() => void signInFlow.start(model.provider, model.name)}
+              />
+            ) : null}
             {keySaved ? (
               <Button type="button" variant="ghost" size="sm" onClick={() => void removeCredential("remove-key")}>
                 {REMOVE_KEY_LABEL}
@@ -748,7 +772,8 @@ function ModelPanel({
             ) : null}
           </div>
           {replacing ? <ReplaceKeyGroup onSave={saveKey} onKeep={closeReplace} /> : null}
-          {test.line === undefined && landing !== undefined ? (
+          <SignInProgress flow={signInFlow} />
+          {shownLine === undefined && landing !== undefined ? (
             <LandingLine
               name={model.name}
               landing={landing}
@@ -759,7 +784,7 @@ function ModelPanel({
               }}
             />
           ) : null}
-          {test.line === undefined ? null : <ConnectionLine state={test.line.state} sentence={test.line.sentence} />}
+          {shownLine === undefined ? null : <ConnectionLine state={shownLine.state} sentence={shownLine.sentence} />}
         </div>
         <ModelSettings model={model} facts={facts} />
         {connection === undefined ? null : (

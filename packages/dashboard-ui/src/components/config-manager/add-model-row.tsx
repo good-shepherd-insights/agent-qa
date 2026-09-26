@@ -1,16 +1,22 @@
-// THE ADD ROW (429-25 · D-13, D-14, D-15, D-17, research A8 · UI-SPEC S5, E5 · PXH-CONF-03).
+// THE ADD ROW (429-25, 429-26 · D-13..D-17, research A3, A8 · UI-SPEC S5, E5 · PXH-CONF-03).
 //
 // How you connect comes first, then only that choice's fields, then the name, then Connect. The
 // connect door tests the draft with the typed credential and writes it only on a pass, or on the
 // explicit Save without testing a failure offers; this row never writes the config itself. The
 // typed key and header values live in this component's state only; every other field persists in
 // the add-row draft store, so a reload restores the row with its secrets empty.
+//
+// A sign-in choice signs the draft name in straight away and then tests by itself. A name that
+// already holds this provider's credential on this machine only tests; a name holding another
+// provider's credential is refused before anything starts. A sign-in this draft created follows a
+// rename and goes with Discard; a credential that existed before the draft is never moved or removed.
 
 import { useEffect, useId, useRef, useState, type ReactNode } from "react"
 import { CircleAlert, LoaderCircle, Plus } from "lucide-react"
 
 import { providerFacts } from "@/components/config-manager/model-row"
 import { ConnectionLine } from "@/components/config-manager/connection-line"
+import { SignInButton, SignInProgress, signInActive, signInLine } from "@/components/config-manager/sign-in-progress"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
@@ -20,6 +26,7 @@ import {
   externalDraftFieldKey,
   useConfigAutosaveContext,
 } from "@/hooks/use-config-autosave"
+import { useSignInFlow, type SignInCompletion } from "@/hooks/use-sign-in-flow"
 import {
   clearAddModelDraft,
   readAddModelDraft,
@@ -30,8 +37,12 @@ import {
 } from "@/lib/add-model-draft"
 import {
   connectLLM,
+  deleteAuthCredential,
+  fetchAuthStatus,
   fetchLiveModelCatalog,
   fetchModelCatalog,
+  moveCredential,
+  type AuthCredentialInfo,
   type LLMProviderMetadata,
   type ModelCatalogEntry,
 } from "@/lib/api"
@@ -54,7 +65,10 @@ import {
   MODEL_REQUIRED_ERROR,
   NAME_RULE_ERROR,
   NEW_MODEL_ROW_TITLE,
+  REPLACE_KEY_LABEL,
   SAVE_WITHOUT_TESTING_LABEL,
+  existingCredentialLine,
+  nameCredentialConflictError,
   nameTakenError,
   providerErrorSentence,
   signInPluginMissingText,
@@ -144,6 +158,21 @@ function mergeCatalog(...lists: readonly (readonly ModelCatalogEntry[])[]): Mode
 interface Initial {
   draft: AddModelDraft
   headers: HeaderDraft[]
+}
+
+/** A sign-in this draft completed: under which name, for which provider, and whether it created it. */
+interface DraftSignIn {
+  name: string
+  provider: string
+  created: boolean
+}
+
+/** After a reload, a stored createdCredential means the sign-in under the stored name is this draft's. */
+function restoredSignIn(draft: AddModelDraft): DraftSignIn | undefined {
+  if (draft.createdCredential !== true || draft.choice === undefined || !isSignIn(draft.choice) || !draft.name) {
+    return undefined
+  }
+  return { name: draft.name, provider: providerOf(draft.choice), created: true }
 }
 
 function initialState(
@@ -241,6 +270,11 @@ export function AddModelRow({
   const [offerSkip, setOfferSkip] = useState(false)
   const [catalog, setCatalog] = useState<Record<string, ModelCatalogEntry[]>>({})
   const [liveCatalog, setLiveCatalog] = useState<ModelCatalogEntry[]>([])
+  const [heldCredentials, setHeldCredentials] = useState<readonly AuthCredentialInfo[]>([])
+  const [signedIn, setSignedIn] = useState<DraftSignIn | undefined>(() => restoredSignIn(initial.draft))
+  const [replaceKey, setReplaceKey] = useState(false)
+  const focusKeyNext = useRef(false)
+  const flow = useSignInFlow({ onCompleted: signInCompleted })
   const choiceRefs = useRef(new Map<ConnectionChoice, HTMLButtonElement>())
   const fieldRefs = useRef(new Map<FieldName, HTMLInputElement>())
   const nextHeaderId = useRef(initial.headers.length + 1)
@@ -255,11 +289,24 @@ export function AddModelRow({
   const needsBaseURL = keyMode && facts?.needsBaseURL === true
   const keyOptional = keyMode && facts?.keyOptional === true
   const anthropic = choice === "anthropic-compatible-key"
+  const signingIn = signInActive(flow)
+  const busy = connecting || signingIn
+  const existing = choice !== undefined && !pluginMissing && holdsCredential(name)
+  const usingExistingKey = keyMode && existing && !replaceKey
+  const existingSignIn = signIn && existing
+  const shownLine = signInLine(flow) ?? line
   const liveCapable =
     choice === "openai-compatible-key" ||
     (provider !== undefined && providers.find((item) => item.id === provider)?.modelAdapter === "openai-responses")
-  const addState: AddState =
-    connecting ? "connecting" : line?.state === "failed" ? "failed" : choice === undefined ? "choosing" : "editing"
+  const addState: AddState = connecting
+    ? "connecting"
+    : signingIn
+      ? "signing-in"
+      : shownLine?.state === "failed"
+        ? "failed"
+        : choice === undefined
+          ? "choosing"
+          : "editing"
   const headerNames = headers.map((header) => header.name)
   const headerNamesKey = JSON.stringify(headerNames)
   const suggestions = mergeCatalog(provider === undefined ? [] : (catalog[provider] ?? []), liveCatalog)
@@ -292,6 +339,22 @@ export function AddModelRow({
   }, [])
 
   useEffect(() => {
+    let active = true
+    fetchAuthStatus().then(
+      (answer) => {
+        if (active) setHeldCredentials(answer.credentials ?? [])
+      },
+      () => {
+        // Without the read, the server's own refusals still guard another provider's credential.
+      },
+    )
+    return () => {
+      active = false
+    }
+  }, [])
+
+  const createdCredential = signedIn?.created === true
+  useEffect(() => {
     writeAddModelDraft(configPath, {
       ...(choice === undefined ? {} : { choice }),
       baseURL,
@@ -300,8 +363,15 @@ export function AddModelRow({
       nameEdited,
       keyType,
       headerNames: JSON.parse(headerNamesKey) as string[],
+      ...(createdCredential ? { createdCredential: true } : {}),
     })
-  }, [configPath, choice, baseURL, model, name, nameEdited, keyType, headerNamesKey])
+  }, [configPath, choice, baseURL, model, name, nameEdited, keyType, headerNamesKey, createdCredential])
+
+  useEffect(() => {
+    if (!replaceKey || !focusKeyNext.current) return
+    focusKeyNext.current = false
+    fieldRefs.current.get("key")?.focus()
+  }, [replaceKey])
 
   useEffect(() => {
     if (focusRequest === undefined) return
@@ -317,6 +387,25 @@ export function AddModelRow({
     // eslint-disable-next-line react-hooks/exhaustive-deps -- only a new request moves focus
   }, [focusRequest?.seq])
 
+  function heldUnder(candidate: string): AuthCredentialInfo | undefined {
+    return heldCredentials.find((credential) => credential.configName === candidate)
+  }
+
+  /** D-16: the name already holds this choice's credential on this machine, so Connect only tests. */
+  function holdsCredential(candidate: string): boolean {
+    if (provider === undefined || candidate === "") return false
+    if (signedIn?.name === candidate) return signedIn.provider === provider
+    return heldUnder(candidate)?.provider === provider
+  }
+
+  /** Claude's Discretion "Name collision": another provider's credential under the name is never overwritten. */
+  function credentialConflict(candidate: string): string | undefined {
+    if (provider === undefined || candidate === "") return undefined
+    const holder = signedIn?.name === candidate ? signedIn.provider : heldUnder(candidate)?.provider
+    if (holder === undefined || holder === provider) return undefined
+    return nameCredentialConflictError(candidate, providerFacts(providers, holder).label ?? holder)
+  }
+
   function validate(field: FieldName, overrides: Partial<Record<FieldName, string>> = {}): string | undefined {
     const value = (key: FieldName, fallback: string) => overrides[key] ?? fallback
     switch (field) {
@@ -325,10 +414,26 @@ export function AddModelRow({
       case "model":
         return value("model", model).trim() === "" ? MODEL_REQUIRED_ERROR : undefined
       case "key":
-        return keyMode && !keyOptional && value("key", secret) === "" ? KEY_REQUIRED_ERROR : undefined
-      case "name":
-        return validateModelName(value("name", name), existingNames)
+        return keyMode && !keyOptional && !usingExistingKey && value("key", secret) === "" ? KEY_REQUIRED_ERROR : undefined
+      case "name": {
+        const candidate = value("name", name)
+        return validateModelName(candidate, existingNames) ?? credentialConflict(candidate)
+      }
     }
+  }
+
+  /** Shows every invalid field's error and focuses the first; true when all are valid. */
+  function validateFields(order: readonly FieldName[]): boolean {
+    const found: FieldErrors = {}
+    for (const field of order) {
+      const error = validate(field)
+      if (error !== undefined) found[field] = error
+    }
+    setErrors(found)
+    const firstInvalid = order.find((field) => found[field] !== undefined)
+    if (firstInvalid === undefined) return true
+    fieldRefs.current.get(firstInvalid)?.focus()
+    return false
   }
 
   function showError(field: FieldName, error: string | undefined) {
@@ -348,8 +453,10 @@ export function AddModelRow({
 
   function changeChoice(value: string) {
     const next = CONNECTION_CHOICES.find((item) => item === value)
-    if (next === undefined || next === choice || connecting) return
+    if (next === undefined || next === choice || busy) return
     const nextModel = defaultModelOf(providers, next)
+    flow.cancel()
+    setReplaceKey(false)
     setChoice(next)
     setBaseURL("")
     setModel(nextModel)
@@ -400,18 +507,8 @@ export function AddModelRow({
 
   async function connect(skipTest: boolean) {
     if (connecting || choice === undefined || provider === undefined) return
-    const order: FieldName[] = ["baseURL", "model", "key", "name"]
-    const found: FieldErrors = {}
-    for (const field of order) {
-      const error = validate(field)
-      if (error !== undefined) found[field] = error
-    }
-    setErrors(found)
-    const firstInvalid = order.find((field) => found[field] !== undefined)
-    if (firstInvalid !== undefined) {
-      fieldRefs.current.get(firstInvalid)?.focus()
-      return
-    }
+    if (!validateFields(["baseURL", "model", "key", "name"])) return
+    if (flow.state === "failed" || flow.state === "timed-out") flow.cancel()
     const providerHeaders = sendableHeaders()
     const request = {
       name,
@@ -419,7 +516,7 @@ export function AddModelRow({
       model: model.trim(),
       ...(needsBaseURL || baseURL.trim() !== "" ? { baseURL: baseURL.trim() } : {}),
       ...(providerHeaders ? { providerHeaders } : {}),
-      ...(keyMode && secret !== "" ? { credential: { type: anthropic ? keyType : "api-key", secret } } : {}),
+      ...(keyMode && !usingExistingKey && secret !== "" ? { credential: { type: anthropic ? keyType : "api-key", secret } } : {}),
       ...(skipTest ? { skipTest: true } : {}),
     }
     setConnecting(true)
@@ -457,9 +554,58 @@ export function AddModelRow({
     setOfferSkip(true)
   }
 
+  /** D-15/D-17: the sign-in finished for the draft name, so the test runs by itself, with no key. */
+  function signInCompleted(completion: SignInCompletion) {
+    const createdBefore = signedIn?.name === completion.name && signedIn.created
+    setSignedIn({ name: completion.name, provider: completion.provider, created: completion.created || createdBefore })
+    void connect(false)
+  }
+
+  function startSignIn() {
+    // A manual-code sign-in may be started again, for a provider page that was closed.
+    if (connecting || flow.state === "waiting" || flow.exchanging || provider === undefined) return
+    if (!validateFields(["model", "name"])) return
+    setLine(undefined)
+    setOfferSkip(false)
+    void flow.start(provider, name)
+  }
+
+  /** Research A3: a sign-in this draft created follows the name; one that existed before never moves. */
+  async function settleName() {
+    const error = validate("name")
+    showError("name", error)
+    const own = signedIn
+    const to = name
+    if (error !== undefined || own === undefined || !own.created || own.name === to || own.provider !== provider) return
+    if (heldUnder(to) !== undefined) return
+    try {
+      await moveCredential(own.name, to, own.provider)
+    } catch (failure) {
+      if (!mounted.current) return
+      const refusal = refusalOf(failure)
+      if (refusal.code !== "credential_exists") {
+        showError("name", refusal.message ?? providerErrorSentence("network_error", ""))
+      }
+      return
+    }
+    if (mounted.current) setSignedIn({ ...own, name: to })
+  }
+
   function discard() {
+    flow.cancel()
+    // Claude's Discretion "Discarded draft": only a credential this draft created goes with it.
+    if (signedIn?.created === true) {
+      deleteAuthCredential(signedIn.name).catch(() => {
+        // The draft is gone either way; the credential stays until signed out from a saved row.
+      })
+    }
     clearAddModelDraft(configPath)
     onDiscard()
+  }
+
+  function replaceSavedKey() {
+    focusKeyNext.current = true
+    setReplaceKey(true)
   }
 
   function inputRef(field: FieldName) {
@@ -495,7 +641,7 @@ export function AddModelRow({
         <div className="col-start-2 min-w-0 space-y-4">
           <fieldset data-add-step="connect" className="space-y-2">
             <legend className="text-sm font-medium">{CONNECT_FORM_LEGEND}</legend>
-            <RadioGroup className="gap-2" value={choice ?? ""} onValueChange={changeChoice} disabled={connecting}>
+            <RadioGroup className="gap-2" value={choice ?? ""} onValueChange={changeChoice} disabled={busy}>
               {CONNECTION_CHOICES.map((item) => {
                 const itemId = `${baseId}-${item}`
                 const hintId = `${itemId}-hint`
@@ -543,7 +689,7 @@ export function AddModelRow({
                         inputMode="url"
                         autoComplete="off"
                         placeholder={providers.find((item) => item.id === provider)?.baseURLPlaceholder}
-                        readOnly={connecting}
+                        readOnly={busy}
                         value={baseURL}
                         onChange={(event) => {
                           setBaseURL(event.target.value)
@@ -574,7 +720,7 @@ export function AddModelRow({
                         type="text"
                         autoComplete="off"
                         list={suggestions.length > 0 ? listId : undefined}
-                        readOnly={connecting}
+                        readOnly={busy}
                         value={model}
                         onChange={(event) => changeModel(event.target.value)}
                         onBlur={() => showError("model", validate("model"))}
@@ -600,7 +746,7 @@ export function AddModelRow({
                         id={`${baseId}-key-type`}
                         className="flex flex-wrap gap-4"
                         value={keyType}
-                        disabled={connecting}
+                        disabled={busy}
                         onValueChange={(value) => {
                           if (value === "api-key" || value === "bearer-token") setKeyType(value)
                         }}
@@ -615,7 +761,20 @@ export function AddModelRow({
                     )}
                   </DraftField>
                 ) : null}
-                {keyMode ? (
+                {usingExistingKey ? (
+                  <div data-existing-credential className="space-y-1">
+                    <p className="text-xs text-muted-foreground break-words">{existingCredentialLine("key", name)}</p>
+                    <Button
+                      type="button"
+                      variant="link"
+                      size="sm"
+                      className="h-auto px-0 text-xs"
+                      onClick={replaceSavedKey}
+                    >
+                      {REPLACE_KEY_LABEL}
+                    </Button>
+                  </div>
+                ) : keyMode ? (
                   <DraftField
                     id={`${baseId}-key`}
                     name="key"
@@ -629,7 +788,7 @@ export function AddModelRow({
                         id={`${baseId}-key`}
                         type="password"
                         autoComplete="off"
-                        readOnly={connecting}
+                        readOnly={busy}
                         value={secret}
                         onChange={(event) => {
                           setSecret(event.target.value)
@@ -655,7 +814,7 @@ export function AddModelRow({
                           type="text"
                           aria-label={HEADER_FIELD_LABELS.name}
                           autoComplete="off"
-                          readOnly={connecting}
+                          readOnly={busy}
                           value={header.name}
                           onChange={(event) =>
                             setHeaders((current) =>
@@ -668,7 +827,7 @@ export function AddModelRow({
                           type="password"
                           aria-label={HEADER_FIELD_LABELS.value}
                           autoComplete="off"
-                          readOnly={connecting}
+                          readOnly={busy}
                           value={header.value}
                           onChange={(event) =>
                             setHeaders((current) =>
@@ -718,10 +877,10 @@ export function AddModelRow({
                       type="text"
                       autoComplete="off"
                       spellCheck={false}
-                      readOnly={connecting}
+                      readOnly={busy}
                       value={name}
                       onChange={(event) => changeName(event.target.value)}
-                      onBlur={() => showError("name", validate("name"))}
+                      onBlur={() => void settleName()}
                       className="w-full max-w-md font-mono"
                       {...aria}
                     />
@@ -734,21 +893,42 @@ export function AddModelRow({
                   <p data-sign-in-plugin-missing className="text-xs text-muted-foreground break-words">
                     {signInPluginMissingText(CONNECTION_CHOICE_LABELS[choice])}
                   </p>
-                ) : keyMode ? (
-                  <div className="flex flex-wrap items-center gap-2">
-                    <Button
-                      type="button"
-                      data-add-connect
-                      aria-disabled={connecting ? true : undefined}
-                      onClick={() => void connect(false)}
-                    >
-                      {connecting ? <LoaderCircle className="size-3.5 motion-safe:animate-spin" aria-hidden="true" /> : null}
-                      {connecting ? CONNECTING_LABEL : CONNECT_LABEL}
-                    </Button>
-                  </div>
+                ) : keyMode || existingSignIn ? (
+                  <>
+                    {existingSignIn ? (
+                      <p data-existing-credential className="text-xs text-muted-foreground break-words">
+                        {existingCredentialLine("sign-in", name)}
+                      </p>
+                    ) : null}
+                    <div className="flex flex-wrap items-center gap-2">
+                      <Button
+                        type="button"
+                        data-add-connect
+                        aria-disabled={connecting ? true : undefined}
+                        onClick={() => void connect(false)}
+                      >
+                        {connecting ? <LoaderCircle className="size-3.5 motion-safe:animate-spin" aria-hidden="true" /> : null}
+                        {connecting ? CONNECTING_LABEL : CONNECT_LABEL}
+                      </Button>
+                    </div>
+                  </>
+                ) : signIn ? (
+                  <>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <SignInButton
+                        data-add-sign-in
+                        flow={flow}
+                        label={CONNECTION_CHOICE_LABELS[choice]}
+                        variant="default"
+                        size="default"
+                        onStart={startSignIn}
+                      />
+                    </div>
+                    <SignInProgress flow={flow} />
+                  </>
                 ) : null}
-                {line === undefined ? null : <ConnectionLine state={line.state} sentence={line.sentence} />}
-                {offerSkip && !connecting ? (
+                {shownLine === undefined ? null : <ConnectionLine state={shownLine.state} sentence={shownLine.sentence} />}
+                {offerSkip && !busy ? (
                   <Button
                     type="button"
                     variant="link"
