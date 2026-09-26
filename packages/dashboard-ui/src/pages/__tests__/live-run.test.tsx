@@ -503,6 +503,34 @@ describe('a pending row reads its real step text or is not drawn (G-428-2, owner
       ['pending', 'check the toast'],
     ])
   })
+
+  it('TEXTLESS-PENDING-ROWS-ABSENT: an old producer\'s pending rows are not drawn, and no row reads step N', async () => {
+    await mount()
+    await open()
+    await emit(runStarted(), testStarted(0, 'the member', 3))
+    const beforeFirstStep = {
+      empty: q('[data-steps-empty]')?.textContent,
+      rows: stepsPane().querySelectorAll('li').length,
+    }
+    await emit(stepStarted(0, 0))
+    const afterFirstStep = rowReadings()
+    const placeholders = qa('[data-live-pane="steps"] li').filter((row) => /^step \d+$/iu.test(row.textContent ?? ''))
+
+    await mount()
+    await open()
+    await emit(runStarted(), testStarted(0, 'the member', 3), testFinished(0, 'skipped'))
+    const neverStarted = {
+      note: q('[data-member-note]')?.textContent,
+      rows: stepsPane().querySelectorAll('li').length,
+    }
+
+    expect({ beforeFirstStep, afterFirstStep, placeholders, neverStarted }).toEqual({
+      beforeFirstStep: { empty: STEPS_EMPTY_TEXT, rows: 0 },
+      afterFirstStep: [['running', 'open the page']],
+      placeholders: [],
+      neverStarted: { note: DID_NOT_RUN_NOTE, rows: 0 },
+    })
+  })
 })
 
 describe('a member header only where there is more than one member (428 D-19)', () => {

@@ -65,6 +65,25 @@ function render(value: LiveStepRow): HTMLLIElement {
   return li
 }
 
+/** The list the row was rendered into, for the cells where drawing no row is the claim. */
+function renderList(value: LiveStepRow): HTMLUListElement {
+  if (!container) {
+    container = document.createElement('div')
+    document.body.appendChild(container)
+    root = createRoot(container)
+  }
+  act(() => {
+    root!.render(
+      <ul>
+        <LiveStepRowView row={value} />
+      </ul>,
+    )
+  })
+  const list = container.querySelector('ul')
+  if (!list) throw new Error('the list did not render')
+  return list
+}
+
 afterEach(() => {
   if (root) act(() => root!.unmount())
   root = null
@@ -122,9 +141,27 @@ describe('THE LIVE STEP ROW (428 D-19/D-20)', () => {
     }
   })
 
-  it('PLAIN-LABEL-UNCHANGED: a label with no placeholder renders as is, and an empty one as step N', () => {
+  // RE-SPELLED 2026-09-26 (428-30, owner decision 2026-09-26 (2), G-428-2). This cell was
+  // "a label with no placeholder renders as is, and an empty one as step N". The owner removed the
+  // step-N fallback: a row with no text is not drawn. The empty-label clause is not deleted; it
+  // moved to NO-STEP-PLACEHOLDER below, inverted.
+  it('PLAIN-LABEL-UNCHANGED: a label with no placeholder renders as is', () => {
     expect(render(row({ text: 'click Save' })).textContent).toBe('click Save')
-    expect(render(row({ text: '', stepIndex: 2 })).textContent).toBe('step 3')
+  })
+
+  it('NO-STEP-PLACEHOLDER: a row with no text renders no element in any status, and no drawn row reads step N', () => {
+    for (const status of STEP_STATUSES) {
+      for (const text of ['', '   ']) {
+        const list = renderList(row({ status, text, stepIndex: 2 }))
+        expect(list.children, `${status} ${JSON.stringify(text)}`).toHaveLength(0)
+        expect(list.textContent, `${status} ${JSON.stringify(text)}`).toBe('')
+      }
+    }
+    const drawn = STEP_STATUSES.flatMap((status, stepIndex) =>
+      ['', 'click Save'].map((text) => renderList(row({ status, text, stepIndex })).textContent ?? ''),
+    )
+    expect(drawn.filter((text) => text !== '')).toHaveLength(STEP_STATUSES.length)
+    expect(drawn.filter((text) => /^step \d+$/iu.test(text))).toEqual([])
   })
 
   it('the breathing animation is named, and it is still under prefers-reduced-motion', () => {
