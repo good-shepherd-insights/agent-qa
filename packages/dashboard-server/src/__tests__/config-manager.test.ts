@@ -656,7 +656,7 @@ describe('dashboard compatible auth routes', () => {
     })
 
     expect(res.status).toBe(200)
-    expect(JSON.parse(res.body)).toEqual({ saved: true })
+    expect(JSON.parse(res.body)).toEqual({ saved: true, created: true })
     expect(mockWriteAuth).toHaveBeenCalledWith('planner', {
       type: 'api',
       provider: 'openai-compatible',
