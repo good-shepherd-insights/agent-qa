@@ -10,7 +10,7 @@
 // What "real" means in this file, stated so it can be checked rather than trusted: an actual
 // YAML file on disk, resolved by `resolveConfig` through the shipped `AgentQaConfigSchema`
 // (which is `.strict()`, so an undeclared `services.dashboard` key would fail the read
-// outright), masked by `buildMaskedResolvedConfig` under the schema-derived visibility oracle,
+// outright), masked by `buildMaskedResolvedConfig` through the shared masking map (429 D-08),
 // and handed to the real `entities.get` op through `createFunctionRegistry` and
 // `invokeFunction`. The only stubs are the ports this claim is not about.
 

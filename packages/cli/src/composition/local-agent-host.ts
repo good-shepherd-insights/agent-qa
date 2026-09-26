@@ -194,7 +194,6 @@ import type { InProcessCliRunExecutionOptions } from './in-process-run-execution
 // Type-only: the pump's authority shape, named here because this door's drain leg declares
 // what its `takeLease` thunk answered. Erased at emit, so no runtime edge is added.
 import type { CurationWriterAuthority } from '../curation/curation-tail.js'
-import { buildConfigVisibilityOracle } from './config-visibility.js'
 import { buildMaskedResolvedConfig } from './masked-config.js'
 
 /**
@@ -245,20 +244,16 @@ export const CLI_FUNCTION_CALLER: FunctionCaller = {
  * ever crosses into the function layer is already masked. `loadAuthPlugins: false` keeps the read a
  * read: resolving a capability must not load and execute plugin code.
  *
- * This is also where the disclosure rule gets its authority. `AgentQaConfigSchema` is walked ONCE,
- * here at the composition root, into the visibility oracle the masker consults per entry — so the
- * masker decides what is secret by what the schema declares free-form rather than by a list of
- * paths it would have to keep correct.
+ * What is secret is decided by the one shared masking map (429 D-08), the same map the dashboard
+ * masks through, so this binding supplies no oracle of its own.
  */
 export function createMaskedConfigReader(configPath: string): ConfigReaderPort {
-  const visibility = buildConfigVisibilityOracle(AgentQaConfigSchema)
   return {
     async getMasked() {
       const resolved = await resolveConfig({ configPath, loadAuthPlugins: false })
       return buildMaskedResolvedConfig({
         configPath,
         resolved,
-        visibility,
         // Ascending precedence, mirroring `resolveConfig`'s own merge order. `cli-flag` is
         // absent because the `fn` invoker passes no configuration flags; `test-file` never
         // participates in a project-level config read.
