@@ -64,6 +64,7 @@ const TITLE_RUN = 'r_428_title'
 const SUITE_RUN = 'r_428_suite'
 const SECRET_RUN = 'r_428_secret'
 const OLD_PRODUCER_RUN = 'r_428_old_producer'
+const LONG_RUN = 'r_428_long_label'
 
 const SINGLE_TITLE = 'Checkout keeps the basket'
 const SUITE_MEMBERS = ['the sign-in member', 'the basket member'] as const
@@ -72,6 +73,16 @@ const SECRET_STEP_TEXT = 'type <SECRET_1> into Password'
 const ROWS_STEP_TEXTS = ['open the search page', 'search for the blue kettle', 'add the kettle to the basket'] as const
 /** The one step an old producer's run has started; its testStarted carries no stepTexts. */
 const OLD_PRODUCER_STEP_TEXT = 'open the old checkout'
+/**
+ * The owner's own example from the 2026-09-26 review (G-428-1), which the one-line row cut off at
+ * 'wait f…', extended so it is longer than the steps pane at any width, with one masked secret.
+ */
+const LONG_STEP_TEXT =
+  'Select "Show" from the navbar, scroll to the end and click more, wait for the whole list to finish '
+  + 'loading, then type <SECRET_1> into the search box and check that every card in the grid keeps its '
+  + 'full title, its price and its supercalifragilisticexpialidocious caption visible without being cut off'
+/** Every word the long label paints outside its placeholder. */
+const LONG_STEP_WORDS = LONG_STEP_TEXT.replace(/<SECRET_\d+>/gu, ' ').split(/\s+/u).filter((word) => word !== '')
 
 interface LayoutFixture {
   readonly harness: LiveViewHarness
@@ -166,6 +177,11 @@ beforeAll(async () => {
   const oldProducer = plantRun(OLD_PRODUCER_RUN, [{ name: 'the old producer member', totalSteps: 3 }])
   harness.insertRunRow({ runId: OLD_PRODUCER_RUN, name: 'The old checkout', status: 'running' })
   publishTo(oldProducer, 'stepStarted', { testIndex: 0, stepIndex: 0, stepText: OLD_PRODUCER_STEP_TEXT })
+
+  // One running step whose label is longer than the steps pane (428-31, G-428-1).
+  const long = plantRun(LONG_RUN, [{ name: 'the long member', totalSteps: 1, stepTexts: [LONG_STEP_TEXT] }])
+  harness.insertRunRow({ runId: LONG_RUN, name: 'The long label', status: 'running' })
+  publishTo(long, 'stepStarted', { testIndex: 0, stepIndex: 0, stepText: LONG_STEP_TEXT })
 }, 180_000)
 
 afterAll(async () => {
@@ -299,7 +315,113 @@ async function readRows(page: Page): Promise<{ rows: RowReading[]; progressbars:
   })
 }
 
+interface LongLabelReading {
+  viewport: number
+  lineHeight: number
+  row: Box
+  label: Box
+  glyph: Box
+  chip: Box | null
+  pane: Box | null
+  chipScroll: { scrollWidth: number; clientWidth: number } | null
+  /** Every element in the row, the row included, whose content is wider than its box. */
+  overflowing: { tag: string; className: string; scrollWidth: number; clientWidth: number }[]
+  /** Every element in the row whose computed text-overflow is ellipsis. */
+  ellipsised: string[]
+  labelTextOverflow: string
+  labelWhiteSpace: string
+  text: string
+}
+
+/** Measure the running row of LONG_RUN in the page as laid out (428-31, G-428-1). */
+async function readLongLabel(page: Page): Promise<LongLabelReading> {
+  const row = page.locator('[data-live-pane="steps"] li[data-step-status="running"]')
+  await row.waitFor({ state: 'attached', timeout: 40_000 })
+  return row.evaluate((node) => {
+    const li = node as HTMLElement
+    const box = (element: Element | null) => {
+      if (element === null) return null
+      const rect = element.getBoundingClientRect()
+      return { x: rect.x, y: rect.y, width: rect.width, height: rect.height }
+    }
+    const glyph = li.children[0] as HTMLElement
+    const label = li.children[1] as HTMLElement
+    const chip = li.querySelector('[data-masked]') as HTMLElement | null
+    const style = getComputedStyle(label)
+    const all = [li, ...li.querySelectorAll('*')].filter((element): element is HTMLElement => element instanceof HTMLElement)
+    return {
+      viewport: window.innerWidth,
+      lineHeight: Number.parseFloat(style.lineHeight),
+      row: box(li) as Box,
+      label: box(label) as Box,
+      glyph: box(glyph) as Box,
+      chip: box(chip),
+      pane: box(document.querySelector('[data-live-pane="steps"]')),
+      chipScroll: chip === null ? null : { scrollWidth: chip.scrollWidth, clientWidth: chip.clientWidth },
+      overflowing: all
+        .filter((element) => element.scrollWidth > element.clientWidth + 1)
+        .map((element) => ({
+          tag: element.tagName,
+          className: element.className,
+          scrollWidth: element.scrollWidth,
+          clientWidth: element.clientWidth,
+        })),
+      ellipsised: all
+        .filter((element) => getComputedStyle(element).textOverflow === 'ellipsis')
+        .map((element) => `${element.tagName}.${element.className}`),
+      labelTextOverflow: style.textOverflow,
+      labelWhiteSpace: style.whiteSpace,
+      text: li.innerText,
+    }
+  })
+}
+
+function expectLongLabelFullyVisible(reading: LongLabelReading, viewport: { width: number }): void {
+  const context = JSON.stringify(reading)
+  expect(reading.viewport, context).toBe(viewport.width)
+  expect(reading.overflowing, `${context} — nothing in the row is wider than its box`).toEqual([])
+  expect(reading.ellipsised, `${context} — no element ellipsises`).toEqual([])
+  expect(reading.labelTextOverflow, context).not.toBe('ellipsis')
+  expect(reading.labelWhiteSpace, context).not.toBe('nowrap')
+  expect(Number.isFinite(reading.lineHeight) && reading.lineHeight > 0, `${context} — a measurable line`).toBe(true)
+  expect(reading.row.height, `${context} — the row spans more than one line`).toBeGreaterThan(1.5 * reading.lineHeight)
+  expect(reading.label.height, `${context} — the label spans at least two lines`).toBeGreaterThan(1.5 * reading.lineHeight)
+  for (const word of LONG_STEP_WORDS) {
+    expect(reading.text, `${context} — the word ${JSON.stringify(word)} is painted`).toContain(word)
+  }
+  expect(reading.text, context).not.toContain('<SECRET_')
+  const { chip, row, label, glyph, pane } = reading
+  expect(chip, `${context} — the chip is in the row`).not.toBeNull()
+  if (chip !== null) {
+    expect(chip.x, `${context} — the chip starts inside the row`).toBeGreaterThanOrEqual(row.x - 1)
+    expect(chip.y, context).toBeGreaterThanOrEqual(row.y - 1)
+    expect(chip.x + chip.width, `${context} — the chip ends inside the row`).toBeLessThanOrEqual(row.x + row.width + 1)
+    expect(chip.y + chip.height, context).toBeLessThanOrEqual(row.y + row.height + 1)
+  }
+  expect(reading.chipScroll, context).not.toBeNull()
+  if (reading.chipScroll !== null) {
+    expect(reading.chipScroll.scrollWidth, `${context} — the chip is not clipped`)
+      .toBeLessThanOrEqual(reading.chipScroll.clientWidth + 1)
+  }
+  if (pane !== null) {
+    expect(row.x + row.width, `${context} — the row stays inside the steps pane`).toBeLessThanOrEqual(pane.x + pane.width + 1)
+  }
+  expect(glyph.y + glyph.height / 2 - label.y, `${context} — the glyph sits on the label's first line`)
+    .toBeLessThan(reading.lineHeight)
+}
+
 describe('the live step rows on the shipped bundle (428-24 Task 1)', () => {
+  it('LONG-LABEL-FULLY-VISIBLE-SHIPPED: a label longer than the steps pane wraps in full with a whole chip', async () => {
+    for (const viewport of [DESKTOP]) {
+      await onLivePage(LONG_RUN, async (page) => {
+        const reading = await readLongLabel(page)
+        console.log(`LONG-LABEL-FULLY-VISIBLE-SHIPPED ${String(viewport.width)}: ${JSON.stringify(reading)}`)
+        expectLongLabelFullyVisible(reading, viewport)
+        await captureElement(page, '[data-live-pane="steps"]', `428-live-steps-long-${String(viewport.width)}`)
+      }, viewport)
+    }
+  }, 120_000)
+
   it('NO-STEP-PLACEHOLDER-SHIPPED: an old producer\'s run draws only its running row at 1280 and 400, and no row reads step N', async () => {
     for (const viewport of [DESKTOP, NARROW]) {
       await onLivePage(OLD_PRODUCER_RUN, async (page) => {

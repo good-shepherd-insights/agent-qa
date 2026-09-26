@@ -31,6 +31,23 @@ import { STEP_STATUSES, type LiveStepRow, type StepStatus } from '@/lib/run-stre
 const TICKS_LABEL_ATTR = 'data-step-ticks' + '-label'
 const CLOCK_PATTERN = /\d+:\d{2}/
 
+/** The owner's own example from the 2026-09-26 review (G-428-1), extended well past any pane. */
+const LONG_LABEL =
+  'Select "Show" from the navbar, scroll to the end and click more, wait for the list to finish loading, '
+  + `then check that ${'every '.repeat(12)}card keeps its whole title and supercalifragilisticexpialidocious caption`
+
+/** Any class that clips a label to one line or hides what does not fit. */
+const CLIPPING_CLASS =
+  /^(?:truncate|overflow-hidden|overflow-x-hidden|overflow-clip|overflow-x-clip|text-ellipsis|overflow-ellipsis|whitespace-nowrap|text-nowrap|line-clamp-.+)$/u
+
+function clippingClasses(root: Element, skip: (element: Element) => boolean = () => false): string[] {
+  return [root, ...root.querySelectorAll('*')]
+    .filter((element) => !skip(element))
+    .flatMap((element) =>
+      [...element.classList].filter((token) => CLIPPING_CLASS.test(token)).map((token) => `${element.tagName}.${token}`),
+    )
+}
+
 let container: HTMLDivElement | null = null
 let root: Root | null = null
 
@@ -164,6 +181,39 @@ describe('THE LIVE STEP ROW (428 D-19/D-20)', () => {
     expect(drawn.filter((text) => /^step \d+$/iu.test(text))).toEqual([])
   })
 
+  // Owner decision 2026-09-26 (1), G-428-1: a live row shows the step's whole label and wraps.
+  it('FULL-LABEL-WRAPS: in every status a long label wraps in full, and nothing in the row clips or ellipsises it', () => {
+    for (const status of STEP_STATUSES) {
+      const li = render(row({ status, text: LONG_LABEL }))
+      expect(li.textContent, status).toBe(LONG_LABEL)
+      expect(clippingClasses(li), status).toEqual([])
+      const label = li.children[1] as HTMLElement
+      expect(label.classList.contains('whitespace-normal'), `${status}: whitespace-normal`).toBe(true)
+      expect(
+        label.classList.contains('break-words') || label.classList.contains('[overflow-wrap:anywhere]'),
+        `${status}: long words break`,
+      ).toBe(true)
+      expect(li.classList.contains('items-start'), `${status}: the row aligns its items to the start`).toBe(true)
+      expect(li.classList.contains('items-center'), status).toBe(false)
+    }
+  })
+
+  it('GLYPH-ON-FIRST-LINE: the glyph sits in a box one label line tall, centred, so it stays on the first line', () => {
+    for (const status of STEP_STATUSES) {
+      const li = render(row({ status, text: LONG_LABEL }))
+      const wrapper = li.children[0] as HTMLElement
+      const label = li.children[1] as HTMLElement
+      const height = [...wrapper.classList].find((token) => /^h-\d+(?:\.\d+)?$/u.test(token))
+      expect(height, `${status}: the glyph's box has a fixed height`).toBeDefined()
+      const lineToken = `leading-${(height ?? 'h-none').slice(2)}`
+      expect(label.classList.contains(lineToken), `${status}: the label's line is ${lineToken}`).toBe(true)
+      expect(wrapper.classList.contains('items-center'), `${status}: the glyph is centred in its box`).toBe(true)
+      expect(wrapper.classList.contains('shrink-0'), status).toBe(true)
+      expect(wrapper.getAttribute('role'), status).toBe('img')
+      expect(li.children, status).toHaveLength(2)
+    }
+  })
+
   it('the breathing animation is named, and it is still under prefers-reduced-motion', () => {
     const css = readFileSync(resolve(__dirname, '../../styles/globals.css'), 'utf8')
     expect(css).toContain('@keyframes live-step-breathe')
@@ -197,23 +247,39 @@ describe('SECRET PLACEHOLDERS ON A LIVE ROW (428 D-22, WINDOWS #289)', () => {
     expect(container!.querySelector('[data-masked="secret"]')?.textContent).toBe(MASKED_SECRET_LABEL)
   })
 
-  it('CHIP-STAYS-WHOLE: text segments ellipsise and the chip never shrinks, so a long label never clips it', () => {
-    const li = render(row({ text: `type <SECRET_1> into the ${'very '.repeat(40)}long Password field` }))
+  // RE-SPELLED 2026-09-26 (428-31, owner decision 2026-09-26 (1), G-428-1). This cell was "text
+  // segments ellipsise and the chip never shrinks, so a long label never clips it". It pinned
+  // 428-17's one-line row: a flex, items-center, overflow-hidden label whose text segments carried
+  // the one-line ellipsis utility and min-w-0. The owner chose a wrapping row, so those tokens are
+  // now asserted ABSENT, and the chip's promise is kept: its wrapper is shrink-0 and nowrap, so it
+  // is never split across lines, never shrunk and never clipped.
+  it('CHIP-STAYS-WHOLE: the label wraps in full, and the chip stays whole: never split, shrunk or clipped', () => {
+    const text = `type <SECRET_1> into the ${'very '.repeat(40)}long Password field`
+    const li = render(row({ text }))
     const label = li.children[1] as HTMLElement
-    for (const token of ['flex', 'min-w-0', 'flex-1', 'items-center', 'overflow-hidden']) {
-      expect(label.classList.contains(token), token).toBe(true)
+    for (const token of ['min-w-0', 'flex-1', 'whitespace-normal']) {
+      expect(label.classList.contains(token), `${token} present`).toBe(true)
+    }
+    for (const token of ['overflow-hidden', 'items-center']) {
+      expect(label.classList.contains(token), `${token} absent`).toBe(false)
     }
     const parts = [...label.children] as HTMLElement[]
     expect(parts).toHaveLength(3)
+    const chipParts = parts.filter((part) => part.querySelector('[data-masked]'))
+    expect(chipParts).toHaveLength(1)
     for (const part of parts) {
-      if (part.querySelector('[data-masked]')) {
-        expect(part.classList.contains('shrink-0')).toBe(true)
+      if (chipParts.includes(part)) {
+        for (const token of ['shrink-0', 'whitespace-nowrap', 'inline-flex']) {
+          expect(part.classList.contains(token), `the chip's wrapper: ${token}`).toBe(true)
+        }
       } else {
-        expect(part.classList.contains('truncate')).toBe(true)
-        expect(part.classList.contains('min-w-0')).toBe(true)
+        expect(clippingClasses(part), 'a text segment').toEqual([])
       }
     }
-    expect(parts.filter((part) => part.querySelector('[data-masked]'))).toHaveLength(1)
+    // Outside the chip's own wrapper nothing clips; the chip's badge is whole by its own nowrap.
+    expect(clippingClasses(li, (element) => chipParts.some((part) => part.contains(element)))).toEqual([])
+    expect(li.textContent).toContain(' into the ')
+    expect(li.textContent).toContain('long Password field')
   })
 
   it('two placeholders are two chips, and an email placeholder keeps its own chip', () => {
