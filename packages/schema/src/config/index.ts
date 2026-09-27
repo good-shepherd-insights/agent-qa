@@ -17,10 +17,13 @@ export type {
   ConfigWriteRequest,
   ConfigWriteResult,
 } from './config-write'
+// 2026-09-27, 429-44 WR-01: the page write door's denied roots and path policy.
+export type { ConfigWriteDeniedRoot } from './config-write'
 export {
   CONFIG_ACTION_REFUSALS,
   CONFIG_NAMED_ARRAYS,
   CONFIG_REVISION_ABSENT,
+  CONFIG_WRITE_DENIED_ROOTS,
   CONFIG_WRITE_OPS,
   CONFIG_WRITE_REFUSALS,
   ConfigChangeSchema,
@@ -28,6 +31,7 @@ export {
   ConfigRevealRequestSchema,
   ConfigUndoRequestSchema,
   ConfigWriteRequestSchema,
+  isPageWritableConfigPath,
 } from './config-write'
 // 2026-09-26, 429-03 D-08: the one masking map every config surface shares, and the schema's
 // leaf list derived from it.
@@ -37,6 +41,7 @@ export {
   CONFIG_SCHEMA_LEAVES,
   classifyConfigPath,
   configLeafOwner,
+  isConfigSchemaPath,
   MASKING_CLASSES,
 } from './masking'
 export type { BrowserConfig } from './browser'

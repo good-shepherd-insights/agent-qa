@@ -207,6 +207,28 @@ export function classifyConfigPath(segments: readonly (string | number)[]): Mask
 }
 
 /**
+ * True when the path is one the published schema describes: a leaf or an ancestor of one.
+ * Unlike classifyConfigPath, an unknown path answers false rather than failing closed to secret.
+ * A string segment never stands for an array item, even when spelled '[]'.
+ */
+export function isConfigSchemaPath(segments: readonly (string | number)[]): boolean {
+  let node = TRIE
+  for (const segment of segments) {
+    let next: TrieNode | undefined
+    if (typeof segment === 'number') {
+      next = node.children.get(ARRAY_ITEM)
+    } else if (segment === ARRAY_ITEM) {
+      next = node.children.get(RECORD_KEY)
+    } else {
+      next = node.children.get(segment) ?? node.children.get(RECORD_KEY)
+    }
+    if (next === undefined) return false
+    node = next
+  }
+  return true
+}
+
+/**
  * The list owner of a leaf pattern: the prefix before its first '*' or '[]' token, or the
  * pattern itself when it has neither.
  */

@@ -60,6 +60,8 @@ export type {
   ConfigRevealResult,
   ConfigUndoRequest,
   ConfigUndoResult,
+  // 2026-09-27, 429-44 WR-01
+  ConfigWriteDeniedRoot,
   ConfigWriteIssue,
   ConfigWriteOp,
   ConfigWriteRefusal,
@@ -94,6 +96,8 @@ export {
   CONFIG_NAMED_ARRAYS,
   CONFIG_REVISION_ABSENT,
   CONFIG_SCHEMA_LEAVES,
+  // 2026-09-27, 429-44 WR-01: the page write door's denied roots and path policy.
+  CONFIG_WRITE_DENIED_ROOTS,
   CONFIG_WRITE_OPS,
   CONFIG_WRITE_REFUSALS,
   ConfigChangeSchema,
@@ -104,6 +108,8 @@ export {
   ConfigWriteRequestSchema,
   DEFAULT_PARALLEL_WORKERS,
   deviceConfigSchema,
+  isConfigSchemaPath,
+  isPageWritableConfigPath,
   MASKING_CLASSES,
   McpStdioGrantSchema,
   McpTokenEntrySchema,

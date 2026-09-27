@@ -2,6 +2,7 @@
 // names one field by segments, never a dotted string, so a key holding a dot stays addressable
 // and an outside edit to a sibling field is never rewritten.
 import { z } from 'zod'
+import { isConfigSchemaPath } from './masking'
 
 /**
  * What one change does to the field its path names.
@@ -81,6 +82,32 @@ export const ConfigPathSegmentSchema = z.union([
 ])
 
 const ConfigPathSchema = z.array(ConfigPathSegmentSchema).min(1)
+
+// 2026-09-27, 429-44 WR-01: the page's write door writes exactly what the page renders a field
+// for, which is every schema leaf outside these roots.
+
+/**
+ * Roots the page's write door never writes.
+ * - `plugins`: names code the CLI loads, so it stays a file edit (D-06).
+ * - `safety`: deleted by Phase 432; the page has no field for it.
+ */
+export type ConfigWriteDeniedRoot = 'plugins' | 'safety'
+// prettier-ignore
+export const CONFIG_WRITE_DENIED_ROOTS = [
+  'plugins',
+  'safety',
+] as const satisfies readonly ConfigWriteDeniedRoot[]
+
+/**
+ * True when the page's write door may change the path: a schema leaf or an ancestor of one,
+ * outside the denied roots. A `{ name }` selector is read as an array item.
+ */
+export function isPageWritableConfigPath(path: readonly ConfigPathSegment[]): boolean {
+  const root = path[0]
+  if (typeof root !== 'string') return false
+  if ((CONFIG_WRITE_DENIED_ROOTS as readonly string[]).includes(root)) return false
+  return isConfigSchemaPath(path.map(segment => (typeof segment === 'object' ? 0 : segment)))
+}
 
 const [SET_OP, UNSET_OP, APPEND_OP, SET_IF_ABSENT_OP, MOVE_OP, EXPECT_OP] = CONFIG_WRITE_OPS
 
