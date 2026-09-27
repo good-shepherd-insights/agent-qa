@@ -3,13 +3,28 @@
 // and an outside edit to a sibling field is never rewritten.
 import { z } from 'zod'
 
-/** What one change does to the field its path names. */
-export type ConfigWriteOp = 'set' | 'unset' | 'append'
+/**
+ * What one change does to the field its path names.
+ * - `set-if-absent`: writes only when the field is absent from the file at merge time
+ *   (required-sibling completion, 429-42).
+ * - `move`: re-keys a field inside the server, so its value never travels (a header rename).
+ * - `expect`: a precondition checked against the file as read; its value is null for an absent field.
+ */
+export type ConfigWriteOp =
+  | 'set'
+  | 'unset'
+  | 'append'
+  | 'set-if-absent'
+  | 'move'
+  | 'expect'
 // prettier-ignore
 export const CONFIG_WRITE_OPS = [
   'set',
   'unset',
   'append',
+  'set-if-absent',
+  'move',
+  'expect',
 ] as const satisfies readonly ConfigWriteOp[]
 
 /**
@@ -20,6 +35,8 @@ export const CONFIG_WRITE_OPS = [
  * - `validation_failed`: the merged config fails whole-config validation.
  * - `mask_written_back`: a value carries the mask placeholder (Plan 05's guard).
  * - `write_failed`: the atomic write itself failed.
+ * - `field_changed`: an `expect` found the field changed since the page read it.
+ * - `path_not_writable`: the path is not one this door may write or test.
  */
 export type ConfigWriteRefusal =
   | 'invalid_write_input'
@@ -28,6 +45,8 @@ export type ConfigWriteRefusal =
   | 'validation_failed'
   | 'mask_written_back'
   | 'write_failed'
+  | 'field_changed'
+  | 'path_not_writable'
 // prettier-ignore
 export const CONFIG_WRITE_REFUSALS = [
   'invalid_write_input',
@@ -36,6 +55,8 @@ export const CONFIG_WRITE_REFUSALS = [
   'validation_failed',
   'mask_written_back',
   'write_failed',
+  'field_changed',
+  'path_not_writable',
 ] as const satisfies readonly ConfigWriteRefusal[]
 
 /**
@@ -61,12 +82,15 @@ export const ConfigPathSegmentSchema = z.union([
 
 const ConfigPathSchema = z.array(ConfigPathSegmentSchema).min(1)
 
-const [SET_OP, UNSET_OP, APPEND_OP] = CONFIG_WRITE_OPS
+const [SET_OP, UNSET_OP, APPEND_OP, SET_IF_ABSENT_OP, MOVE_OP, EXPECT_OP] = CONFIG_WRITE_OPS
 
 export const ConfigChangeSchema = z.discriminatedUnion('op', [
   z.object({ op: z.literal(SET_OP), path: ConfigPathSchema, value: z.unknown() }).strict(),
   z.object({ op: z.literal(UNSET_OP), path: ConfigPathSchema }).strict(),
   z.object({ op: z.literal(APPEND_OP), path: ConfigPathSchema, value: z.unknown() }).strict(),
+  z.object({ op: z.literal(SET_IF_ABSENT_OP), path: ConfigPathSchema, value: z.unknown() }).strict(),
+  z.object({ op: z.literal(MOVE_OP), from: ConfigPathSchema, path: ConfigPathSchema }).strict(),
+  z.object({ op: z.literal(EXPECT_OP), path: ConfigPathSchema, value: z.unknown() }).strict(),
 ])
 
 export type ConfigChange = z.infer<typeof ConfigChangeSchema>

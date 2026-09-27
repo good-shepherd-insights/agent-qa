@@ -246,7 +246,7 @@ export class ConfigManager {
     changes: readonly ConfigChange[],
     capturePriors: boolean,
   ): Promise<ApplyChangesOutcome> {
-    if (changes.some((change) => change.op !== 'unset' && carriesMaskPlaceholder(change.value))) {
+    if (changes.some((change) => change.op !== 'unset' && change.op !== 'move' && carriesMaskPlaceholder(change.value))) {
       return { kind: 'refused', error: MASK_WRITTEN_BACK }
     }
     let doc: Document
@@ -269,6 +269,9 @@ export class ConfigManager {
     let writesBrowserHeadless = false
     const priors: ConfigPrior[] = []
     for (const change of changes) {
+      if (change.op === 'set-if-absent' || change.op === 'move' || change.op === 'expect') {
+        return { kind: 'refused', error: 'path_not_found' }
+      }
       const path = resolvePath(doc, change.path)
       if (path === undefined) return { kind: 'refused', error: 'path_not_found' }
       const entry = capturePriors ? namedEntryPrior(doc, change, path) : undefined

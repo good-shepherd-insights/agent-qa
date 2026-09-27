@@ -194,7 +194,7 @@ function maskedLikeServer(value: unknown, path: (string | number)[]): unknown {
 }
 
 function mirroredChange(change: ConfigChange): ConfigChange {
-  if (change.op === "unset") return change
+  if (change.op === "unset" || change.op === "move") return change
   const path = classifiedPath(change.path)
   return { ...change, value: maskedLikeServer(change.value, change.op === "append" ? [...path, 0] : path) }
 }
@@ -351,6 +351,8 @@ function patchConfig(
 ): Record<string, unknown> | undefined {
   const next = JSON.parse(JSON.stringify(config)) as Record<string, unknown>
   nextChange: for (const change of changes) {
+    // Decided by the file at merge time, so only the next read can show what landed.
+    if (change.op === "set-if-absent" || change.op === "move" || change.op === "expect") return undefined
     const parentPath = change.path.slice(0, -1)
     const last = change.path[change.path.length - 1]!
     let parent: unknown = next
