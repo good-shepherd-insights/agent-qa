@@ -169,11 +169,16 @@ interface DraftSignIn {
   created: boolean
 }
 
-/** After a reload, a stored createdCredential means the sign-in under the stored name is this draft's. */
-function restoredSignIn(draft: AddModelDraft): DraftSignIn | undefined {
+/**
+ * After a reload, a stored createdCredential means the sign-in under the stored name is this
+ * draft's, unless that name is now a saved model: its Connect saved it and the answer was lost.
+ * Answering undefined also drops createdCredential from storage on the row's first draft write.
+ */
+function restoredSignIn(draft: AddModelDraft, savedNames: readonly string[]): DraftSignIn | undefined {
   if (draft.createdCredential !== true || draft.choice === undefined || !isSignIn(draft.choice) || !draft.name) {
     return undefined
   }
+  if (savedNames.includes(draft.name)) return undefined
   return { name: draft.name, provider: providerOf(draft.choice), created: true }
 }
 
@@ -289,7 +294,7 @@ export function AddModelRow({
   const [catalog, setCatalog] = useState<Record<string, ModelCatalogEntry[]>>({})
   const [liveCatalog, setLiveCatalog] = useState<ModelCatalogEntry[]>([])
   const [heldCredentials, setHeldCredentials] = useState<readonly AuthCredentialInfo[]>([])
-  const [signedIn, setSignedIn] = useState<DraftSignIn | undefined>(() => restoredSignIn(initial.draft))
+  const [signedIn, setSignedIn] = useState<DraftSignIn | undefined>(() => restoredSignIn(initial.draft, existingNames))
   const [replaceKey, setReplaceKey] = useState(false)
   const focusKeyNext = useRef(false)
   const flow = useSignInFlow({ onCompleted: signInCompleted })
@@ -633,8 +638,9 @@ export function AddModelRow({
 
   function discard() {
     flow.cancel()
-    // Claude's Discretion "Discarded draft": only a credential this draft created goes with it.
-    if (signedIn?.created === true) {
+    // Claude's Discretion "Discarded draft": only a credential this draft created goes with it,
+    // and never one a saved model now uses.
+    if (signedIn?.created === true && !existingNames.includes(signedIn.name)) {
       deleteAuthCredential(signedIn.name).catch(() => {
         // The draft is gone either way; the credential stays until signed out from a saved row.
       })
