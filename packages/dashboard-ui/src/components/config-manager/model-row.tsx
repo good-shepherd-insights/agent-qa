@@ -691,13 +691,20 @@ function ModelPanel({
     }
   }
 
+  // Computed from the freshest config and recomputed once on field_changed (D-22). Once the delete
+  // settles, Retry computes nothing: a refused delete is not sent again (UI-SPEC E2).
   async function deleteModel() {
-    const changes: ConfigChange[] = [
-      { op: "unset", path: ["registry", "llms", { name: model.name }] },
-      ...judgeChangesAfterDelete(evalConfig, model.name),
-    ]
+    let settled = false
+    const compute = (config: Record<string, unknown>): ConfigChange[] =>
+      settled
+        ? []
+        : [
+            { op: "unset", path: ["registry", "llms", { name: model.name }] },
+            ...judgeChangesAfterDelete(isRecord(config.eval) ? config.eval : undefined, model.name),
+          ]
     onRemoveStart()
-    await autosave.runExplicit(changes, { kind: "delete-model", name: model.name, judge })
+    await autosave.runComputed(compute, { kind: "delete-model", name: model.name, judge })
+    settled = true
     onRemoveEnd()
   }
 

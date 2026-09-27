@@ -19,9 +19,14 @@ export function isEvalJudge(evalConfig: unknown, name: string): boolean {
   return evalConfig.judge === name || (judgeList(evalConfig)?.includes(name) ?? false)
 }
 
+// The two expect ops lead, so a delete computed from a list the file no longer holds is refused.
 export function judgeChangesAfterDelete(evalConfig: unknown, name: string): ConfigChange[] {
-  if (!isRecord(evalConfig)) return []
-  const changes: ConfigChange[] = []
+  const block = isRecord(evalConfig) ? evalConfig : {}
+  const changes: ConfigChange[] = [
+    { op: 'expect', path: ['eval', 'judge'], value: block.judge ?? null },
+    { op: 'expect', path: ['eval', 'judges'], value: block.judges ?? null },
+  ]
+  if (!isRecord(evalConfig)) return changes
   if (evalConfig.judge === name) changes.push({ op: 'unset', path: ['eval', 'judge'] })
   const judges = judgeList(evalConfig)
   if (judges?.includes(name)) {
