@@ -19,8 +19,8 @@
 # NAMED cell to red while the listed controls hold. The UI-side legs are 429-35's.
 #
 # THE LEGS
-#   C01  a fourth op joins ConfigWriteOp and CONFIG_WRITE_OPS                     -> C429-CONFIG-WRITE-OPS-EXACT
-#   C02  a seventh refusal joins ConfigWriteRefusal and its array                 -> C429-CONFIG-WRITE-REFUSALS-EXACT
+#   C01  a seventh op joins ConfigWriteOp and CONFIG_WRITE_OPS                    -> C429-CONFIG-WRITE-OPS-EXACT
+#   C02  a ninth refusal joins ConfigWriteRefusal and its array                   -> C429-CONFIG-WRITE-REFUSALS-EXACT
 #   C03  a fourth named array joins ConfigNamedArray and CONFIG_NAMED_ARRAYS       -> C429-CONFIG-NAMED-ARRAYS-EXACT
 #   C04  a fourth class joins MaskingClass and MASKING_CLASSES                    -> C429-MASKING-CLASSES-EXACT
 #   C05  a seventh class joins ProviderErrorClass and PROVIDER_ERROR_CLASSES      -> C429-PROVIDER-ERROR-CLASSES-EXACT
@@ -46,6 +46,34 @@
 #   C25  one leaf line leaves CONFIG_MASKING_MAP                                  -> CONFIG-SCHEMA-LEAVES-PINNED (D-06)
 #   C26  the map classes services.mcp.tokens[].tokenEnvVar secret, in config show -> CONFIG-SHOW-ENV-VAR-NAME-IN-CLEAR (D-08)
 #   C27  a retired per-section write route answers again                          -> LEGACY-WRITE-ROUTES-GONE (429-32)
+#   C28  a write answers its post-merge revision as its base                      -> BASE-REVISION-ANSWERED (429-37)
+#   C29  set-if-absent writes over a field the file already holds                 -> SET-IF-ABSENT-KEEPS-OUTSIDE-VALUE (429-42)
+#   C30  set-if-absent ignores a root use.headless                                -> LEGACY-HEADLESS-KEPT-ON-COMPLETION (429-42)
+#   C31  an expect skips its comparison with the file                             -> EXPECT-MISMATCH-REFUSED (429-42)
+#   C32  an expect may name a secret path                                         -> EXPECT-ON-SECRET-REFUSED (429-42)
+#   C33  a move skips its masking-class check                                     -> MOVE-ACROSS-CLASSES-REFUSED (429-52)
+#   C34  readMasked keeps the comments                                            -> COMMENTED-SECRET-NEVER-SERVED (429-41)
+#   C35  GET /api/config answers through json() with no same-site check           -> GET-CONFIG-SAME-SITE-NO-GRANT (429-41)
+#   C36  the write door drops its page-writable check                             -> WRITE-DOOR-REFUSES-DENIED-ROOTS (429-44)
+#   C37  a third root joins ConfigWriteDeniedRoot and CONFIG_WRITE_DENIED_ROOTS    -> C429-CONFIG-WRITE-DENIED-ROOTS-EXACT (429-44)
+#   C38  the test route stops redacting saved header values                       -> SAVED-HEADER-NEVER-ECHOED (429-43)
+#   C39  the auth store renames onto the symlink path                             -> AUTH-SYMLINK-KEPT (429-38)
+#   C40  a completion's Undo loses the root use.headless it moved                 -> UNDO-LEGACY-HEADLESS-RESTORED (429-49)
+#
+# THE GAP CLOSURE (2026-09-27, 429-49). Plans 429-37, -38 and -41..-44 and -52 closed review
+# findings CR-01, CR-02, WR-01 and WR-05 and deferred items 429-23 and 429-24 on the contract side,
+# and C28..C39 give each of those promises its planted regression. C40 pins the one gap-closure
+# behaviour no committed cell covered: an Undo of a set-if-absent completion that moved a root
+# use.headless (429-42's prior, named uncovered by 429-42 and 429-45); its cell,
+# UNDO-LEGACY-HEADLESS-RESTORED, was added with this leg. Four older legs moved with the source.
+# C01 and C02 plant after the members 429-42 added to the ops and refusals ('expect',
+# 'path_not_writable'). C15's anchor line now also appears in the set-if-absent branch, so it
+# carries the next line to stay unique. C21's mask guard now skips a move, so its condition is
+# spelled with that clause. C15 and C16 each gained co-reds from the new cells, listed with a
+# reason. Each re-spelled leg plants the same regression it planted before. C33 plants the whole
+# class check, both ends and leaf by leaf: with only the two-ends check dropped, the leaf check
+# still refuses a scalar move (the leaf of a scalar is the value itself), and all six move cells
+# stayed green (measured).
 #
 # C19 AND C26 PLANT ONE MUTATION TWICE. The engine gives a leg one instrument, and the env-var
 # name's two promises live in two suites: the dashboard's GET payload (server) and `config show`
@@ -72,7 +100,7 @@
 #   neutered  apply NO mutation; the run must FATAL with "<leg>: suite stayed green"
 #   fatal     mutate every subject, then throw; every subject must be restored
 #   SIGINT | SIGTERM | SIGHUP   the same, then deliver that signal to itself
-# AGENT_QA_429_CONFIG_CONTRACT_MUTATION_LEG=C01..C27 runs one leg (normal or neutered runs only).
+# AGENT_QA_429_CONFIG_CONTRACT_MUTATION_LEG=C01..C40 runs one leg (normal or neutered runs only).
 # AGENT_QA_429_CONFIG_CONTRACT_MUTATION_LIST=1 prints the declared inventory and exits.
 #
 # Installed Node 24 and workspace tools are required. No downloads or provider calls. Ends with a
@@ -94,6 +122,7 @@ const CONFIG_ROUTES_SRC = 'packages/dashboard-server/src/server/config-routes.ts
 const CONNECT_ROUTE_SRC = 'packages/dashboard-server/src/server/llm-connect-route.ts'
 const ROUTES_SRC = 'packages/dashboard-server/src/server/routes.ts'
 const AUTH_SRC = 'packages/cli/src/commands/auth.ts'
+const AUTH_STORE_SRC = 'packages/core/src/auth/store.ts'
 
 const SCHEMA_T = 'src/__tests__/429-config-contracts.test.ts'
 const SCHEMA_D = 'src/__tests__/429-config-contracts.test-d.ts'
@@ -106,19 +135,21 @@ const UNDO_T = 'src/__tests__/routes.config-undo.test.ts'
 const CONNECT_T = 'src/__tests__/routes.llm-connect.test.ts'
 const DRAFT_T = 'src/__tests__/routes.draft-credential.test.ts'
 const MANAGER_T = 'src/__tests__/config-manager.test.ts'
+const SAVED_HEADERS_T = 'src/__tests__/routes.llm-test-saved-headers.test.ts'
+const AUTH_STORE_T = 'src/__tests__/auth-store.test.ts'
 const AUTH_T = 'src/__tests__/auth-test.test.ts'
 const LINT_T = 'src/__tests__/429-classifier-lint.test.ts'
 const SHOW_T = 'src/composition/__tests__/masked-config.test.ts'
 const PARITY_T = 'src/composition/__tests__/429-masking-parity.test.ts'
 
 const instruments = {
-  schema: { pkg: 'packages/schema', files: [SCHEMA_T, SCHEMA_D], typecheck: true, count: 24 },
-  core: { pkg: 'packages/core', files: [CORE_SCHEMA_T, LEAVES_T], typecheck: false, count: 101 },
+  schema: { pkg: 'packages/schema', files: [SCHEMA_T, SCHEMA_D], typecheck: true, count: 27 },
+  core: { pkg: 'packages/core', files: [CORE_SCHEMA_T, LEAVES_T, AUTH_STORE_T], typecheck: false, count: 116 },
   server: {
     pkg: 'packages/dashboard-server',
-    files: [WRITE_T, MASKING_T, REVEAL_T, UNDO_T, CONNECT_T, DRAFT_T, MANAGER_T],
+    files: [WRITE_T, MASKING_T, REVEAL_T, UNDO_T, CONNECT_T, DRAFT_T, MANAGER_T, SAVED_HEADERS_T],
     typecheck: false,
-    count: 146,
+    count: 170,
   },
   cli: {
     pkg: 'packages/cli',
@@ -138,6 +169,7 @@ const schemaT = (name, count) => cell('schema', SCHEMA_T, name, count)
 const schemaD = (name, count) => cell('schema', SCHEMA_D, name, count)
 const coreSchema = (name, count) => cell('core', CORE_SCHEMA_T, name, count)
 const leaves = (name, count) => cell('core', LEAVES_T, name, count)
+const authStore = (name, count) => cell('core', AUTH_STORE_T, name, count)
 const write = (name, count) => cell('server', WRITE_T, name, count)
 const masking = (name, count) => cell('server', MASKING_T, name, count)
 const reveal = (name, count) => cell('server', REVEAL_T, name, count)
@@ -145,6 +177,7 @@ const undo = (name, count) => cell('server', UNDO_T, name, count)
 const connect = (name, count) => cell('server', CONNECT_T, name, count)
 const draft = (name, count) => cell('server', DRAFT_T, name, count)
 const manager = (name, count) => cell('server', MANAGER_T, name, count)
+const savedHeaders = (name, count) => cell('server', SAVED_HEADERS_T, name, count)
 const auth = (name, count) => cell('cli', AUTH_T, name, count)
 const lint = (name, count) => cell('cli', LINT_T, name, count)
 const show = (name, count) => cell('cli', SHOW_T, name, count)
@@ -153,10 +186,10 @@ const parity = (name, count) => cell('cli', PARITY_T, name, count)
 const legs = [
   {
     subject: WRITE_SRC, instrument: 'schema', claim: 'C429-CONFIG-WRITE-OPS-EXACT',
-    operation: 'add a fourth op to ConfigWriteOp and CONFIG_WRITE_OPS',
+    operation: 'add a seventh op to ConfigWriteOp and CONFIG_WRITE_OPS',
     edits: [
-      { from: "export type ConfigWriteOp = 'set' | 'unset' | 'append'\n", to: "export type ConfigWriteOp = 'set' | 'unset' | 'append' | 'prepend'\n" },
-      { from: "  'append',\n] as const satisfies readonly ConfigWriteOp[]", to: "  'append',\n  'prepend',\n] as const satisfies readonly ConfigWriteOp[]" },
+      { from: "  | 'expect'\n// prettier-ignore\nexport const CONFIG_WRITE_OPS", to: "  | 'expect'\n  | 'prepend'\n// prettier-ignore\nexport const CONFIG_WRITE_OPS" },
+      { from: "  'expect',\n] as const satisfies readonly ConfigWriteOp[]", to: "  'expect',\n  'prepend',\n] as const satisfies readonly ConfigWriteOp[]" },
     ],
     reds: [schemaD('C429-CONFIG-WRITE-OPS-EXACT')],
     // The runtime twin pins the array by value, so the extra member moves it too.
@@ -165,10 +198,10 @@ const legs = [
   },
   {
     subject: WRITE_SRC, instrument: 'schema', claim: 'C429-CONFIG-WRITE-REFUSALS-EXACT',
-    operation: 'add a seventh refusal to ConfigWriteRefusal and CONFIG_WRITE_REFUSALS',
+    operation: 'add a ninth refusal to ConfigWriteRefusal and CONFIG_WRITE_REFUSALS',
     edits: [
-      { from: "  | 'write_failed'\n// prettier-ignore\n", to: "  | 'write_failed'\n  | 'write_conflict'\n// prettier-ignore\n" },
-      { from: "  'write_failed',\n] as const satisfies readonly ConfigWriteRefusal[]", to: "  'write_failed',\n  'write_conflict',\n] as const satisfies readonly ConfigWriteRefusal[]" },
+      { from: "  | 'path_not_writable'\n// prettier-ignore\n", to: "  | 'path_not_writable'\n  | 'write_conflict'\n// prettier-ignore\n" },
+      { from: "  'path_not_writable',\n] as const satisfies readonly ConfigWriteRefusal[]", to: "  'path_not_writable',\n  'write_conflict',\n] as const satisfies readonly ConfigWriteRefusal[]" },
     ],
     reds: [schemaD('C429-CONFIG-WRITE-REFUSALS-EXACT')],
     // The runtime twin pins the array by value, so the extra member moves it too.
@@ -334,16 +367,19 @@ const legs = [
     subject: MANAGER_SRC, instrument: 'server', claim: 'SC3-FIELD-MERGE',
     operation: "set a block field's whole parent block from the change instead of the one field",
     edits: [{
-      from: '          doc.setIn(path, doc.createNode(change.value))\n',
-      to: "          if (path.length > 2 && path.every((key) => typeof key === 'string')) {\n            doc.setIn(path.slice(0, -1), doc.createNode({ [String(path[path.length - 1])]: change.value }))\n          } else doc.setIn(path, doc.createNode(change.value))\n",
+      from: '          doc.setIn(path, doc.createNode(change.value))\n          writesBrowserHeadless ||= ',
+      to: "          if (path.length > 2 && path.every((key) => typeof key === 'string')) {\n            doc.setIn(path.slice(0, -1), doc.createNode({ [String(path[path.length - 1])]: change.value }))\n          } else doc.setIn(path, doc.createNode(change.value))\n          writesBrowserHeadless ||= ",
     }],
     reds: [write('SC3-FIELD-MERGE')],
     // Each writes a field inside a block and needs its siblings kept: every PATCH cell drives the
     // step-timeout autosave, which now drops test and navigation and fails validation; the headless
-    // cell keeps browser.name; the empty-document cell builds use.timeout one field at a time.
+    // cell keeps browser.name; the empty-document cell builds use.timeout one field at a time. 429-49:
+    // the base-revision cell drives the same autosave, and set-if-absent's outside-value cell sets
+    // maxSubActions, which now drops the outside previousStepCount its completion must keep.
     allowed: [write('PATCH-ONE-ATOMIC-WRITE'), write('PATCH-CROSS-SITE-REFUSED'), write('PATCH-RETURNS-REVISION'),
       write('TWO-SETTLES-BOTH-LAND'), write('APPLY-TWICE-IDEMPOTENT'), write('MODE-PRESERVED'), write('SYMLINK-KEPT'),
-      write('LEGACY-WRITE-ROUTES-GONE'), manager('LEGACY-HEADLESS-MIGRATED'), manager('ENOENT-STARTS-EMPTY-DOCUMENT')],
+      write('LEGACY-WRITE-ROUTES-GONE'), manager('LEGACY-HEADLESS-MIGRATED'), manager('ENOENT-STARTS-EMPTY-DOCUMENT'),
+      write('BASE-REVISION-ANSWERED'), write('SET-IF-ABSENT-KEEPS-OUTSIDE-VALUE')],
     greens: [write('INVALID-MERGE-KEEPS-BYTES'), manager('NAME-SELECTOR-RESOLVES'),
       manager('applyChanges writes a nested scalar and never a dotted top-level key'), connect('CONNECT-PASS-SAVES')],
   },
@@ -358,7 +394,10 @@ const legs = [
     reds: [masking('GET-CARRIES-NO-SECRET')],
     // The file view no longer tags the header line secret; the issues cell's fixture header carries
     // its DO-NOT-LEAK sentinel, now served in clear; the reveal cell reveals a header path, now plain.
-    allowed: [masking('FILE-VIEW-LINES-CLASSED'), masking('GET-FILE-ISSUES'), reveal('REVEAL-RETURNS-ONE-VALUE')],
+    // 429-49: the comment cell's header value is served in clear; an expect on a header is no longer
+    // a secret and is compared; a header moved onto model now shares its class and lands.
+    allowed: [masking('FILE-VIEW-LINES-CLASSED'), masking('GET-FILE-ISSUES'), reveal('REVEAL-RETURNS-ONE-VALUE'),
+      masking('COMMENTED-SECRET-NEVER-SERVED'), write('EXPECT-ON-SECRET-REFUSED'), write('MOVE-ACROSS-CLASSES-REFUSED')],
     greens: [masking('ENV-VAR-NAME-IN-CLEAR'), masking('GET-HAS-REVISION-AND-FILE'), reveal('REVEAL-SECRET-PATHS-ONLY')],
   },
   {
@@ -416,7 +455,7 @@ const legs = [
     subject: MANAGER_SRC, instrument: 'server', claim: 'MASK-NEVER-WRITTEN-BACK',
     operation: 'remove the mask guard call from applyChanges',
     edits: [{
-      from: "    if (changes.some((change) => change.op !== 'unset' && carriesMaskPlaceholder(change.value))) {\n      return { kind: 'refused', error: MASK_WRITTEN_BACK }\n    }\n",
+      from: "    if (changes.some((change) => change.op !== 'unset' && change.op !== 'move' && carriesMaskPlaceholder(change.value))) {\n      return { kind: 'refused', error: MASK_WRITTEN_BACK }\n    }\n",
       to: '',
     }],
     reds: [manager('MASK-NEVER-WRITTEN-BACK')],
@@ -500,10 +539,170 @@ const legs = [
     allowed: [],
     greens: [write('ONE-WRITE-PATH'), write('VALUES-READ-REFUSES-BROKEN-FILE'), write('SC3-FIELD-MERGE')],
   },
+  {
+    subject: MANAGER_SRC, instrument: 'server', claim: 'BASE-REVISION-ANSWERED',
+    operation: 'answer the post-merge revision as the base revision of a write',
+    edits: [{
+      from: '    const next = doc.toString()\n    await this.writeAtomic(next)\n    return capturePriors\n',
+      to: '    const next = doc.toString()\n    await this.writeAtomic(next)\n    baseRevision = revisionOf(next)\n    return capturePriors\n',
+    }],
+    reds: [write('BASE-REVISION-ANSWERED')],
+    // It pins the base to the bytes before the write too, which the planted base now misstates.
+    allowed: [write('PATCH-RETURNS-REVISION')],
+    greens: [write('APPLY-TWICE-IDEMPOTENT'), write('SC3-FIELD-MERGE'), manager('MASK-NEVER-WRITTEN-BACK')],
+  },
+  {
+    subject: MANAGER_SRC, instrument: 'server', claim: 'SET-IF-ABSENT-KEEPS-OUTSIDE-VALUE',
+    operation: 'let set-if-absent write over a field the file already holds',
+    edits: [{ from: '          if (doc.hasIn(path)) continue\n', to: '' }],
+    reds: [write('SET-IF-ABSENT-KEEPS-OUTSIDE-VALUE')],
+    allowed: [],
+    greens: [write('SET-IF-ABSENT-FILLS-ABSENT'), write('LEGACY-HEADLESS-KEPT-ON-COMPLETION'), write('EXPECT-MATCH-WRITES')],
+  },
+  {
+    subject: MANAGER_SRC, instrument: 'server', claim: 'LEGACY-HEADLESS-KEPT-ON-COMPLETION',
+    operation: 'let set-if-absent ignore a root use.headless when it completes use.browser.headless',
+    edits: [{
+      from: '          if (samePath(path, BROWSER_HEADLESS_PATH) && doc.hasIn(LEGACY_HEADLESS_PATH)) {\n',
+      to: '          if (false && samePath(path, BROWSER_HEADLESS_PATH) && doc.hasIn(LEGACY_HEADLESS_PATH)) {\n',
+    }],
+    reds: [write('LEGACY-HEADLESS-KEPT-ON-COMPLETION')],
+    // It drives the same completion before its Undo and checks the moved value first.
+    allowed: [undo('UNDO-LEGACY-HEADLESS-RESTORED')],
+    greens: [write('SET-IF-ABSENT-KEEPS-OUTSIDE-VALUE'), write('SET-IF-ABSENT-FILLS-ABSENT'), manager('LEGACY-HEADLESS-MIGRATED')],
+  },
+  {
+    subject: MANAGER_SRC, instrument: 'server', claim: 'EXPECT-MISMATCH-REFUSED',
+    operation: 'let every expect skip its comparison with the file',
+    edits: [{
+      from: "    for (const change of expects) {\n      if (!isDeepStrictEqual(expectedFieldValue(doc, change.path), change.value ?? null)) {\n        return { kind: 'refused', error: 'field_changed', path: [...change.path] }\n      }\n    }\n",
+      to: '',
+    }],
+    reds: [write('EXPECT-MISMATCH-REFUSED')],
+    allowed: [],
+    greens: [write('EXPECT-MATCH-WRITES'), write('EXPECT-ON-SECRET-REFUSED'), write('SC3-FIELD-MERGE')],
+  },
+  {
+    subject: MANAGER_SRC, instrument: 'server', claim: 'EXPECT-ON-SECRET-REFUSED',
+    operation: 'let an expect name a secret path and be compared',
+    edits: [{
+      from: "    if (expects.some((change) => classifySegments(change.path) === 'secret')) {\n      return { kind: 'refused', error: 'path_not_writable' }\n    }\n",
+      to: '',
+    }],
+    reds: [write('EXPECT-ON-SECRET-REFUSED')],
+    allowed: [],
+    greens: [write('EXPECT-MISMATCH-REFUSED'), write('EXPECT-MATCH-WRITES'), manager('MASK-NEVER-WRITTEN-BACK')],
+  },
+  {
+    subject: MANAGER_SRC, instrument: 'server', claim: 'MOVE-ACROSS-CLASSES-REFUSED',
+    operation: "drop the move's masking-class check, at both ends and leaf by leaf",
+    edits: [
+      { from: "  if (classifySegments(from) !== classifySegments(to)) return { kind: 'refused', error: 'path_not_writable' }\n", to: '' },
+      {
+        from: "  if (leaves.some((leaf) => classifySegments([...from, ...leaf]) !== classifySegments([...to, ...leaf]))) {\n    return { kind: 'refused', error: 'path_not_writable' }\n  }\n",
+        to: '',
+      },
+    ],
+    reds: [write('MOVE-ACROSS-CLASSES-REFUSED')],
+    // The same class check, leaf by leaf: a secret block now lands on fields served in clear.
+    allowed: [write('MOVE-SUBTREE-ACROSS-CLASSES-REFUSED')],
+    greens: [write('MOVE-KEEPS-VALUE-SERVER-SIDE'), write('MOVE-INTO-ITSELF-REFUSED'), write('MOVE-FROM-MISSING-REFUSED')],
+  },
+  {
+    subject: MANAGER_SRC, instrument: 'server', claim: 'COMMENTED-SECRET-NEVER-SERVED',
+    operation: 'let readMasked keep the comments in the served file view',
+    edits: [{ from: '    stripComments(masked)\n', to: '' }],
+    reds: [masking('COMMENTED-SECRET-NEVER-SERVED')],
+    // Each pins a comment-free view of its own fixture: the accessKey line keeps its trailing
+    // comment, the owner-notes head comment is served, and the head comment line is counted again.
+    allowed: [masking('GET-CARRIES-NO-SECRET'), masking('GET-HAS-REVISION-AND-FILE'), masking('FILE-VIEW-LINES-CLASSED')],
+    greens: [masking('ENV-VAR-NAME-IN-CLEAR'), masking('GET-CONFIG-SAME-SITE-NO-GRANT'), reveal('REVEAL-RETURNS-ONE-VALUE')],
+  },
+  {
+    subject: ROUTES_SRC, instrument: 'server', claim: 'GET-CONFIG-SAME-SITE-NO-GRANT',
+    operation: 'answer GET /api/config through json() with no same-site check',
+    edits: [
+      {
+        from: "      if (refuseCrossSiteDisplayRead(req, res)) return\n      if (!configManager) {\n        jsonNoCors(res, { error: 'Config management not available' }, 501)\n",
+        to: "      if (!configManager) {\n        json(res, { error: 'Config management not available' }, 501)\n",
+      },
+      {
+        from: "            jsonNoCors(res, { error: 'file_invalid', message: read.message }, 409)\n",
+        to: "            json(res, { error: 'file_invalid', message: read.message }, 409)\n",
+      },
+      {
+        from: '          const provider = (defaultCfg?.provider as string) ?? null\n          jsonNoCors(res, {\n',
+        to: '          const provider = (defaultCfg?.provider as string) ?? null\n          json(res, {\n',
+      },
+      {
+        from: "          jsonNoCors(res, { error: err instanceof Error ? err.message : 'Failed to read config' }, 500)\n",
+        to: "          json(res, { error: err instanceof Error ? err.message : 'Failed to read config' }, 500)\n",
+      },
+    ],
+    reds: [masking('GET-CONFIG-SAME-SITE-NO-GRANT')],
+    allowed: [],
+    greens: [masking('GET-CARRIES-NO-SECRET'), masking('COMMENTED-SECRET-NEVER-SERVED'), reveal('REVEAL-SAME-SITE-ONLY')],
+  },
+  {
+    subject: CONFIG_ROUTES_SRC, instrument: 'server', claim: 'WRITE-DOOR-REFUSES-DENIED-ROOTS',
+    operation: "drop the write door's page-writable check",
+    edits: [{
+      from: "    const refused = parsed.data.changes.some((change) =>\n      !isPageWritableConfigPath(change.path)\n      || (change.op === 'move' && !isPageWritableConfigPath(change.from)))\n    if (refused) {\n      respondJson(res, 422, { error: 'path_not_writable' })\n      return\n    }\n",
+      to: '',
+    }],
+    reds: [write('WRITE-DOOR-REFUSES-DENIED-ROOTS')],
+    // Each sends a path the schema does not describe (an unknown leaf, the retired
+    // services.recording.videoDir), which now reaches validation and answers validation_failed.
+    allowed: [write('WRITE-DOOR-REFUSES-UNKNOWN-PATH'),
+      manager('keeps authored recording omissions through GET, no-op and unrelated saves', 6)],
+    greens: [write('WRITE-DOOR-ADMITS-PAGE-WRITES'), write('SC3-FIELD-MERGE'), write('PATCH-CROSS-SITE-REFUSED')],
+  },
+  {
+    subject: WRITE_SRC, instrument: 'schema', claim: 'C429-CONFIG-WRITE-DENIED-ROOTS-EXACT',
+    operation: 'add a third root to ConfigWriteDeniedRoot and CONFIG_WRITE_DENIED_ROOTS',
+    edits: [
+      { from: "export type ConfigWriteDeniedRoot = 'plugins' | 'safety'\n", to: "export type ConfigWriteDeniedRoot = 'plugins' | 'safety' | 'analytics'\n" },
+      { from: "  'safety',\n] as const satisfies readonly ConfigWriteDeniedRoot[]", to: "  'safety',\n  'analytics',\n] as const satisfies readonly ConfigWriteDeniedRoot[]" },
+    ],
+    reds: [schemaD('C429-CONFIG-WRITE-DENIED-ROOTS-EXACT')],
+    // The runtime twin pins the array by value, so the extra member moves it too.
+    allowed: [schemaT('C429-CONFIG-WRITE-DENIED-ROOTS-EXACT')],
+    greens: [schemaT('PAGE-WRITABLE-EVERY-RENDERED-LEAF'), schemaD('C429-CONFIG-WRITE-OPS-EXACT'), schemaT('C429-CONFIG-CHANGE-STRICT')],
+  },
+  {
+    subject: ROUTES_SRC, instrument: 'server', claim: 'SAVED-HEADER-NEVER-ECHOED',
+    operation: "stop redacting the saved header values out of the test route's provider message",
+    edits: [{
+      from: '            const providerMessage = withoutSavedValues(rawProviderMessage, savedHeaderValues)\n',
+      to: '            const providerMessage = rawProviderMessage\n',
+    }],
+    reds: [savedHeaders('SAVED-HEADER-NEVER-ECHOED')],
+    allowed: [],
+    greens: [savedHeaders('SAVED-HEADERS-SENT-BY-NAME'), savedHeaders('SAVED-HEADERS-ONLY-TO-SAVED-ENDPOINT'),
+      savedHeaders('MASK-HEADER-NEVER-SENT')],
+  },
+  {
+    subject: AUTH_STORE_SRC, instrument: 'core', claim: 'AUTH-SYMLINK-KEPT',
+    operation: 'rename the auth store onto the symlink path instead of the file it names',
+    edits: [{ from: '  const target = await authWriteTarget(authPath)\n', to: '  const target = authPath\n' }],
+    reds: [authStore('AUTH-SYMLINK-KEPT')],
+    // Both write through the same rename, which now replaces the link with a plain file.
+    allowed: [authStore('AUTH-SYMLINK-REMOVE-KEEPS-LINK'), authStore('AUTH-SYMLINK-DANGLING-CREATES-TARGET')],
+    greens: [authStore('WRITE-AUTH-ATOMIC', 2), authStore('deletes file when last credential is removed'),
+      authStore('writes file with 0o600 permissions')],
+  },
+  {
+    subject: MANAGER_SRC, instrument: 'server', claim: 'UNDO-LEGACY-HEADLESS-RESTORED',
+    operation: "drop the Undo prior for the root use.headless a set-if-absent completion moves",
+    edits: [{ from: '      if (legacyPrior !== undefined) priors.push(legacyPrior)\n', to: '' }],
+    reds: [undo('UNDO-LEGACY-HEADLESS-RESTORED')],
+    allowed: [],
+    greens: [write('LEGACY-HEADLESS-KEPT-ON-COMPLETION'), undo('UNDO-DATA-PATH', 2), write('MOVE-UNDO-RESTORES-BOTH')],
+  },
 ]
 
 runGate({
   slug: '429-config-contract-mutation', envPrefix: 'AGENT_QA_429_CONFIG_CONTRACT_MUTATION', idPrefix: 'C',
-  instruments, legs, expectedLegs: 27, banner: 'CONFIG_CONTRACT_MUTATION_OK',
+  instruments, legs, expectedLegs: 40, banner: 'CONFIG_CONTRACT_MUTATION_OK',
 })
 NODE
