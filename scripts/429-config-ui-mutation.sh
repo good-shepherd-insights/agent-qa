@@ -112,10 +112,12 @@
 # one); ui-components is re-measured, because the hook suite grew by the two EMPTY-RETRY-NEVER-SAVING
 # cells.
 #
-# THE REVIEW FIX (2026-09-27, WR-10). U45 plants the other half of U44's line: a failure for any id
-# drops the in-flight marker, so a foreign failure (an explicit action's or Undo's) orphans an
-# autosave that then lands unseen. Its red is the reducer cell FOREIGN-FAILURE-KEEPS-WRITE, the only
-# cell that fails a foreign id onto a live write; ui-lib is re-measured at 77 (was 76).
+# THE REVIEW FIX (2026-09-27, WR-10 and IN-15). U45 plants the other half of U44's line: a failure
+# for any id drops the in-flight marker, so a foreign failure (an explicit action's or Undo's)
+# orphans an autosave that then lands unseen. Its red is the reducer cell FOREIGN-FAILURE-KEEPS-WRITE,
+# the only cell that fails a foreign id onto a live write; ui-lib is re-measured at 77 (was 76). U44
+# now requires EXPLICIT-FAILURE-RESTORES-ROW to red instead of merely allowing it: its two idle
+# assertions read saving under that plant every time, so a loosened assertion would red the leg.
 #
 # Engine, arrival proof, counted selection and restoration: scripts/423-mutation-engine.cjs.
 #
@@ -769,9 +771,9 @@ const legs = [
     subject: AUTOSAVE_SRC, instrument: 'ui-components', claim: 'EMPTY-RETRY-NEVER-SAVING',
     operation: 'keep the write marker of a failed write that carried no field keys',
     edits: [{ from: '      return state.write?.id === event.id\n', to: '      return carried.length > 0\n' }],
-    reds: [hook('EMPTY-RETRY-NEVER-SAVING', 2)],
-    // It retries the real model row's Delete through the hook and pins idle since 429-53.
-    allowed: [modelRow('EXPLICIT-FAILURE-RESTORES-ROW')],
+    // The model row cell retries the real Delete and sign-out through the hook and pins idle.
+    reds: [hook('EMPTY-RETRY-NEVER-SAVING', 2), modelRow('EXPLICIT-FAILURE-RESTORES-ROW')],
+    allowed: [],
     greens: [hook('FORCED-FAILURE-KEEPS-DRAFT', 2), hook('COMPUTED-WRITE-GIVES-UP-HONESTLY'), hook('UNDO-CALLS-SERVER', 2)],
   },
   // ---- the review fix (WR-10) ---------------------------------------------------------------------
