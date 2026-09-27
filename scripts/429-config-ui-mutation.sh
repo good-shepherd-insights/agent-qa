@@ -49,6 +49,18 @@
 #   U29  a device farm's Delete asks first, in the ui dialog primitive               -> NO-DIALOG-IN-CONFIG (D-24)
 #   U30  U19's edit, on the rebuilt bundle a real Chromium loads                     -> TABS-FIVE-IN-ORDER-SHIPPED (D-04, shipped)
 #   U31  U27's edit, on the rebuilt bundle                                           -> STATUS-NEVER-SCROLLS-AWAY (D-20, shipped)
+#   U32  write() adopts a write's revision whatever base it merged onto              -> OUTSIDE-EDIT-INTERLEAVED-REREAD (429-37, CR-01)
+#   U33  the landed-write mirror gives up at an unset whose parent is absent         -> MIRROR-CONTINUES-PAST-MISSING-PARENT (429-37)
+#   U34  required-sibling completion sends each sibling as set                        -> SIBLING-COMPLETION-NEVER-OVERWRITES (429-45, CR-01)
+#   U35  a computed write gives up on its first field_changed                        -> COMPUTED-WRITE-MERGES-OUTSIDE-EDIT (429-46, CR-01)
+#   U36  the judge picker's write drops its expect ops                               -> JUDGE-WRITE-EXPECTS-LIST (429-46, CR-01)
+#   U37  judgeChangesAfterDelete drops its expect ops                                -> DELETE-JUDGE-EXPECTS-LIST (429-47, CR-01)
+#   U38  a header rename reads the value through the reveal door again               -> HEADER-RENAME-NEVER-REVEALS (429-47, D-09)
+#   U39  Discard deletes a created credential whose name is a saved model            -> DISCARD-NEVER-DELETES-SAVED-CREDENTIAL (429-48, WR-03)
+#   U40  every Connect refusal code falls back to the network sentence               -> CONNECT-REFUSAL-COPY (429-48, WR-02)
+#   U41  field_changed leaves CONNECT_REFUSAL_COPY                                   -> CONNECT-REFUSAL-COPY-TOTAL (429-48, WR-02)
+#   U42  a scope checkbox settles the add-token row on its own                        -> ADD-MCP-TOKEN-KEEPS-EVERY-SCOPE (429-39, WR-04)
+#   U43  U32's edit, on the rebuilt bundle                                           -> OUTSIDE-EDIT-INTERLEAVED-SHIPPED (429-37, shipped)
 #
 # ALLOWED CO-REDS are listed on each leg with a one-line reason; nothing else may red.
 #
@@ -74,6 +86,24 @@
 # the dom instrument serves that dist, and plants a class the rebuilt bundle must carry
 # (`navselect429`, `status429inside`). The shipped-bundle suite runs with one worker.
 #
+# THE GAP CLOSURE (2026-09-27, 429-50). U32..U43 give each UI promise 429-37..429-48 added its
+# planted regression: the write's base revision and the mirror past a missing parent (429-37), the
+# add-token scopes that settle with their row (429-39), sibling completion by set-if-absent (429-45),
+# the computed write and the judge picker's expects (429-46), the delete's expects and the header
+# rename by move (429-47), and the Connect refusal copy and the Discard guard (429-48). U43 plants
+# U32's edit on the rebuilt bundle, with a string comparison the minifier keeps (`stale429trusted`),
+# so OUTSIDE-EDIT-INTERLEAVED-SHIPPED has a leg of its own. U39 plants both halves of the pre-429-48
+# guard: with Discard's check removed alone, all 232 ui-components cells stayed green (measured),
+# because restoredSignIn already refuses a created sign-in under a saved name, so
+# RESTORED-DRAFT-DROPS-SAVED-CREATED is its co-red. No older leg's anchor moved: 429-47 rewrote the
+# model delete's body, not the Delete button U13 wraps, and U29 plants on providers-section.tsx; U22's
+# anchors in add-model-row.tsx are where 429-35 left them. Two older legs are re-spelled in their
+# allowed lists only, because the instruments now select the gap closure's files: U23 (the two Connect
+# refusal cells connect a draft named gpt-5.6) and U25 (the model-row cells that render a saved
+# header's SecretValue and assert the reveal door is never called). Re-measured: ui-lib 76 (adds
+# config-fields and model-workspace; config-copy grew by three), ui-components 232 (adds eval-section,
+# model-row and token-list; the hook, the add row and schema coverage grew), dom 12.
+#
 # Engine, arrival proof, counted selection and restoration: scripts/423-mutation-engine.cjs.
 #
 # USAGE
@@ -84,7 +114,7 @@
 #   neutered  apply NO mutation; the run must FATAL with "<leg>: suite stayed green"
 #   fatal     mutate every subject, then throw; every subject must be restored
 #   SIGINT | SIGTERM | SIGHUP   the same, then deliver that signal to itself
-# AGENT_QA_429_CONFIG_UI_MUTATION_LEG=U01..U31 runs one leg (normal or neutered runs only).
+# AGENT_QA_429_CONFIG_UI_MUTATION_LEG=U01..U43 runs one leg (normal or neutered runs only).
 # AGENT_QA_429_CONFIG_UI_MUTATION_LIST=1 prints the declared inventory and exits.
 #
 # Installed Node 24, workspace tools and the installed Playwright Chromium are required. No
@@ -109,6 +139,10 @@ const ADD_ROW_SRC = 'packages/dashboard-ui/src/components/config-manager/add-mod
 const SECRET_SRC = 'packages/dashboard-ui/src/components/config-manager/secret-value.tsx'
 const TAB_BAR_SRC = 'packages/dashboard-ui/src/components/config-manager/config-tabs.tsx'
 const PAGE_SRC = 'packages/dashboard-ui/src/pages/config.tsx'
+const FIELDS_SRC = 'packages/dashboard-ui/src/lib/config-fields.ts'
+const EVAL_SRC = 'packages/dashboard-ui/src/components/config-manager/eval-section.tsx'
+const WORKSPACE_SRC = 'packages/dashboard-ui/src/lib/model-workspace.ts'
+const TOKEN_SRC = 'packages/dashboard-ui/src/components/config-manager/token-list.tsx'
 
 const TABS_T = 'src/lib/__tests__/config-tabs.test.ts'
 const TABS_D = 'src/lib/__tests__/config-tabs.test-d.ts'
@@ -125,21 +159,26 @@ const PAGE_T = 'src/pages/__tests__/config-page.test.tsx'
 const COVERAGE_T = 'src/pages/__tests__/config-page.schema-coverage.test.tsx'
 const A11Y_T = 'src/pages/__tests__/config-page.a11y.test.tsx'
 const DOM_T = 'src/__tests__/conformance/429-config-dom.test.ts'
+const FIELDS_T = 'src/lib/__tests__/config-fields.test.ts'
+const WORKSPACE_T = 'src/lib/__tests__/model-workspace.test.ts'
+const EVAL_T = 'src/components/config-manager/__tests__/eval-section.test.tsx'
+const MODEL_ROW_T = 'src/components/config-manager/__tests__/model-row.test.tsx'
+const TOKEN_T = 'src/components/config-manager/__tests__/token-list.test.tsx'
 
 const instruments = {
   'ui-lib': {
     pkg: 'packages/dashboard-ui',
-    files: [TABS_T, TABS_D, COPY_T, AUTOSAVE_T, AUTOSAVE_D, DRAFT_T, STATIC_T],
+    files: [TABS_T, TABS_D, COPY_T, AUTOSAVE_T, AUTOSAVE_D, DRAFT_T, STATIC_T, FIELDS_T, WORKSPACE_T],
     typecheck: true,
-    count: 62,
+    count: 76,
   },
   'ui-components': {
     pkg: 'packages/dashboard-ui',
-    files: [HOOK_T, STATUS_T, SECRET_T, ADD_ROW_T, PAGE_T, COVERAGE_T, A11Y_T],
+    files: [HOOK_T, STATUS_T, SECRET_T, ADD_ROW_T, PAGE_T, COVERAGE_T, A11Y_T, EVAL_T, MODEL_ROW_T, TOKEN_T],
     typecheck: false,
-    count: 183,
+    count: 232,
   },
-  dom: { pkg: 'packages/cli', files: [DOM_T], typecheck: false, count: 11, env: { VITEST_MAX_WORKERS: '1' } },
+  dom: { pkg: 'packages/cli', files: [DOM_T], typecheck: false, count: 12, env: { VITEST_MAX_WORKERS: '1' } },
 }
 
 const UI_DIST = "join(PACKAGES_ROOT, 'dashboard-ui', 'dist')"
@@ -160,6 +199,11 @@ const page = (name, count) => cell('ui-components', PAGE_T, name, count)
 const coverage = (name, count) => cell('ui-components', COVERAGE_T, name, count)
 const a11y = (name, count) => cell('ui-components', A11Y_T, name, count)
 const dom = (name, count) => cell('dom', DOM_T, name, count)
+const fields = (name, count) => cell('ui-lib', FIELDS_T, name, count)
+const workspace = (name, count) => cell('ui-lib', WORKSPACE_T, name, count)
+const evals = (name, count) => cell('ui-components', EVAL_T, name, count)
+const modelRow = (name, count) => cell('ui-components', MODEL_ROW_T, name, count)
+const tokens = (name, count) => cell('ui-components', TOKEN_T, name, count)
 
 // One regression, measured in two instruments, is spelled once and planted by two legs.
 const FAILED_WRITE_CLEARS = {
@@ -174,6 +218,12 @@ const NAV_SELECT = {
 const STATUS_IN_SCROLL = {
   from: '        </TabsList>\n      </div>\n      <div data-config-status-slot className="shrink-0 pb-2">\n        {statusSlot}\n      </div>\n',
   to: '        </TabsList>\n        <div data-config-status-slot className="status429inside shrink-0 pb-2">\n          {statusSlot}\n        </div>\n      </div>\n',
+}
+// 429-37: a write answers the base it merged onto; trusting its revision whatever that base is
+// hides an outside edit the write absorbed. The literal survives the minifier, so U43 can find it.
+const BASE_TRUSTED = {
+  from: '      const stale =\n        typeof result.baseRevision === "string" && (revision === undefined || result.baseRevision !== revision)\n      revision = stale ? undefined : result.revision\n',
+  to: '      const stale = result.baseRevision === "stale429trusted"\n      revision = stale ? undefined : result.revision\n',
 }
 
 const legs = [
@@ -467,6 +517,8 @@ const legs = [
       addRow('SIGN-IN-WAITING-CANCEL-AND-TIMEOUT'), addRow('NAME-EDIT-AFTER-SIGN-IN-MOVES'),
       addRow('DISCARD-REMOVES-ONLY-CREATED-CREDENTIAL'), addRow('LEGACY-LLM-REQUIRED-MARKERS-GONE'),
       addRow('LEGACY-LLM-DOTTED-NAME-ACCEPTED'),
+      // 429-50: both refusal cells connect a draft named gpt-5.6, now refused before Connect.
+      addRow('CONNECT-REFUSAL-COPY'), addRow('CONNECT-REFUSAL-CONFLICT-ON-NAME'),
     ],
     greens: [addRow('ADD-STEPS-IN-ORDER'), addRow('ADD-FLOW-NO-WRITE-BEFORE-CONNECT'), addRow('DISCARD-DRAFT')],
   },
@@ -486,8 +538,9 @@ const legs = [
     operation: 'fetch the unmasked value as soon as a SecretValue mounts',
     edits: [{ from: '    mounted.current = true\n    const hide = () => mask()\n', to: '    mounted.current = true\n    void revealConfigValue([...field.segments])\n    const hide = () => mask()\n' }],
     reds: [secret('REVEAL-ON-CLICK-ONLY')],
-    // The neighbour it keeps unfetched is now fetched on mount too.
-    allowed: [secret('REVEAL-ONE-VALUE')],
+    // The neighbour it keeps unfetched is now fetched on mount too. 429-50: each model-row cell renders
+    // a saved header's SecretValue and asserts the reveal door is never called, so the mount reveal reds it.
+    allowed: [secret('REVEAL-ONE-VALUE'), modelRow('MODEL-SETTINGS-AUTOSAVE'), modelRow('HEADER-RENAME-NEVER-REVEALS', 2)],
     greens: [secret('SAVE-VALUE-EXPLICIT'), secret('REPLACE-VALUE-EMPTY-INPUT'), hook('SECRET-NEVER-IN-STORAGE', 2)],
   },
   {
@@ -557,10 +610,151 @@ const legs = [
     allowed: [],
     greens: [dom('TABS-FIVE-IN-ORDER-SHIPPED'), dom('LEGACY-LINKS-SHIPPED'), dom('NO-DIALOG-SHIPPED')],
   },
+  // ---- the gap closure (429-37..429-48; legs 429-50) --------------------------------------------
+  {
+    subject: HOOK_SRC, instrument: 'ui-components', claim: 'OUTSIDE-EDIT-INTERLEAVED-REREAD',
+    operation: "adopt a write's revision whatever base it merged onto",
+    edits: [BASE_TRUSTED],
+    reds: [hook('OUTSIDE-EDIT-INTERLEAVED-REREAD')],
+    // It needs the re-read the stale base starts; without it the next planner leaf is completed again.
+    allowed: [hook('INTERLEAVED-EDIT-KEEPS-OUTSIDE-SIBLING')],
+    greens: [hook('OWN-WRITE-NO-REFETCH'), hook('OUTSIDE-EDIT-MERGES-QUIETLY'), hook('MIRROR-CONTINUES-PAST-MISSING-PARENT')],
+  },
+  {
+    subject: HOOK_SRC, instrument: 'ui-components', claim: 'MIRROR-CONTINUES-PAST-MISSING-PARENT',
+    operation: 'let the landed-write mirror give up at an unset whose parent is absent',
+    edits: [{
+      from: '      // Nothing is there to remove; the rest of the set still applies (deferred 429-28).\n      return change.op === "unset"\n',
+      to: '      return false\n',
+    }],
+    reds: [hook('MIRROR-CONTINUES-PAST-MISSING-PARENT')],
+    allowed: [],
+    greens: [hook('MIRROR-APPLIES-NEW-OPS'), hook('OWN-WRITE-NO-REFETCH'), hook('ONE-WRITE-PER-SETTLE', 2)],
+  },
+  {
+    subject: FIELDS_SRC, instrument: 'ui-lib', claim: 'SIBLING-COMPLETION-NEVER-OVERWRITES',
+    operation: 'complete each required sibling with set, so the snapshot decides it may be replaced',
+    edits: [{ from: "        result.push({ op: 'set-if-absent', path: siblingPath, value })\n", to: "        result.push({ op: 'set', path: siblingPath, value })\n" }],
+    reds: [fields('SIBLING-COMPLETION-NEVER-OVERWRITES')],
+    // Each pins the op of the siblings it expects added, re-spelled to set-if-absent in 429-45.
+    allowed: [fields('SIBLING-COMPLETION', 3), fields('OPTIONAL-SIBLINGS-OMITTED')],
+    greens: [fields('DURATION-PARSE'), fields('LIST-TEXT'), workspace('DELETE-JUDGE-EXPECTS-LIST')],
+  },
+  {
+    subject: HOOK_SRC, instrument: 'ui-components', claim: 'COMPUTED-WRITE-MERGES-OUTSIDE-EDIT',
+    operation: 'let a computed write give up on its first field_changed',
+    edits: [{ from: '        if (compute === undefined || !attached || !isFieldChanged(error)) throw error\n', to: '        throw error\n' }],
+    reds: [hook("COMPUTED-WRITE-MERGES-OUTSIDE-EDIT: a field_changed refusal re-reads, recomputes and lands on the file's list")],
+    // Each needs the one automatic recompute first: the second refusal, the judge toggle and the model
+    // delete all land through it.
+    allowed: [
+      hook('COMPUTED-WRITE-GIVES-UP-HONESTLY'),
+      evals("JUDGE-TOGGLE-MERGES-OUTSIDE-JUDGE: a toggle refused field_changed lands on the file's new list after one re-read"),
+      modelRow('DELETE-MERGES-OUTSIDE-JUDGE-EDIT'),
+    ],
+    greens: [hook('COMPUTED-WRITE-MERGES-OUTSIDE-EDIT: an empty change set writes nothing'), hook('UNDO-CALLS-SERVER', 2), hook('MIRROR-APPLIES-NEW-OPS')],
+  },
+  {
+    subject: EVAL_SRC, instrument: 'ui-components', claim: 'JUDGE-WRITE-EXPECTS-LIST',
+    operation: "drop the expect ops from the judge picker's write",
+    edits: [
+      { from: '  const block = isRecord(config.eval) ? config.eval : {}\n  const current = configuredJudges(config)\n', to: '  const current = configuredJudges(config)\n' },
+      {
+        from: '  return [\n    { op: "expect", path: ["eval", "judge"], value: block.judge ?? null },\n    { op: "expect", path: ["eval", "judges"], value: block.judges ?? null },\n    ...judgeChanges(next),\n  ]\n',
+        to: '  return judgeChanges(next)\n',
+      },
+    ],
+    reds: [evals('JUDGE-WRITE-EXPECTS-LIST')],
+    // Each asserts the exact judge write, which leads with the two expect ops since 429-46.
+    allowed: [
+      evals('JUDGE-ONE-WRITES-JUDGE'), evals('JUDGE-THREE-DISABLES-REST'),
+      evals("JUDGE-TOGGLE-MERGES-OUTSIDE-JUDGE: a toggle refused field_changed lands on the file's new list after one re-read"),
+    ],
+    greens: [evals('JUDGE-NO-MODELS'), evals('EVAL-EVERY-LEAF-GROUPED'), hook('COMPUTED-WRITE-MERGES-OUTSIDE-EDIT', 2)],
+  },
+  {
+    subject: WORKSPACE_SRC, instrument: 'ui-lib', claim: 'DELETE-JUDGE-EXPECTS-LIST',
+    operation: 'drop the expect ops judgeChangesAfterDelete leads with',
+    edits: [{
+      from: "  const block = isRecord(evalConfig) ? evalConfig : {}\n  const changes: ConfigChange[] = [\n    { op: 'expect', path: ['eval', 'judge'], value: block.judge ?? null },\n    { op: 'expect', path: ['eval', 'judges'], value: block.judges ?? null },\n  ]\n",
+      to: '  const changes: ConfigChange[] = []\n',
+    }],
+    reds: [workspace('DELETE-JUDGE-EXPECTS-LIST')],
+    // It asserts the exact output for every eval shape, re-spelled to lead with the expects in 429-47.
+    allowed: [workspace('JUDGE-CHANGES-AFTER-DELETE')],
+    greens: [workspace('isEvalJudge reads eval.judge and eval.judges, and anything else is not a judge'), workspace('modelFieldSegments names one leaf of one saved model by its name'), fields('SIBLING-COMPLETION-NEVER-OVERWRITES')],
+  },
+  {
+    subject: MODEL_ROW_SRC, instrument: 'ui-components', claim: 'HEADER-RENAME-NEVER-REVEALS',
+    operation: 'read the header value through the reveal door and rename it with an unset and a set',
+    edits: [
+      { from: '  deleteAuthCredential,\n  saveCredential,\n', to: '  deleteAuthCredential,\n  revealConfigValue,\n  saveCredential,\n' },
+      {
+        from: '      const landed = await autosave.runExplicit([\n        { op: "move", from: [...segments, header], path: [...segments, next] },\n      ])\n',
+        to: '      const { value } = await revealConfigValue([...segments, header])\n      const landed = await autosave.runExplicit([\n        { op: "unset", path: [...segments, header] },\n        { op: "set", path: [...segments, next], value },\n      ])\n',
+      },
+    ],
+    reds: [modelRow('HEADER-RENAME-NEVER-REVEALS', 2)],
+    // Its rename step asserts the move and no reveal (re-spelled in 429-47).
+    allowed: [modelRow('MODEL-SETTINGS-AUTOSAVE')],
+    greens: [modelRow('LEGACY-LLM-HEADERS-ANTHROPIC-ONLY'), modelRow('DELETE-MODEL-UNDO'), secret('REVEAL-ON-CLICK-ONLY')],
+  },
+  {
+    subject: ADD_ROW_SRC, instrument: 'ui-components', claim: 'DISCARD-NEVER-DELETES-SAVED-CREDENTIAL',
+    operation: 'let Discard delete a created credential whose name is a saved model',
+    edits: [
+      { from: '  if (savedNames.includes(draft.name)) return undefined\n', to: '' },
+      { from: '    if (signedIn?.created === true && !existingNames.includes(signedIn.name)) {\n', to: '    if (signedIn?.created === true) {\n' },
+    ],
+    reds: [addRow('DISCARD-NEVER-DELETES-SAVED-CREDENTIAL')],
+    // The restore-side guard is half of this leg's plant; that cell pins it on its own.
+    allowed: [addRow('RESTORED-DRAFT-DROPS-SAVED-CREATED')],
+    greens: [addRow('DISCARD-REMOVES-ONLY-CREATED-CREDENTIAL'), addRow('DISCARD-DRAFT'), addRow('CONNECT-REFUSAL-COPY')],
+  },
+  {
+    subject: ADD_ROW_SRC, instrument: 'ui-components', claim: 'CONNECT-REFUSAL-COPY',
+    operation: 'let every Connect refusal code fall back to the network sentence',
+    edits: [{
+      from: '      setLine({ state: "failed", sentence: refusal.message ?? connectRefusalSentence(refusal.code, refusal.issues) })\n',
+      to: '      setLine({ state: "failed", sentence: refusal.message ?? providerErrorSentence("network_error", "") })\n',
+    }],
+    reds: [addRow('CONNECT-REFUSAL-COPY')],
+    allowed: [],
+    greens: [addRow('CONNECT-REFUSAL-CONFLICT-ON-NAME'), addRow('CONNECT-FAIL-KEEPS-DRAFT'), addRow('DISCARD-NEVER-DELETES-SAVED-CREDENTIAL')],
+  },
+  {
+    subject: COPY_SRC, instrument: 'ui-lib', claim: 'CONNECT-REFUSAL-COPY-TOTAL',
+    operation: 'drop field_changed from CONNECT_REFUSAL_COPY',
+    edits: [{ from: '  field_changed: COULD_NOT_SAVE_MODEL,\n', to: '' }],
+    reds: [copy('CONNECT-REFUSAL-COPY-TOTAL: every code the connect door can answer has its own full sentence')],
+    allowed: [],
+    greens: [copy('CONNECT-REFUSAL-COPY-TOTAL: the network sentence only without a code the map knows; issues follow two codes'), copy('FIELD-CHANGED-COPY'), copy('COPY-429: every exported string is non-empty')],
+  },
+  {
+    subject: TOKEN_SRC, instrument: 'ui-components', claim: 'ADD-MCP-TOKEN-KEEPS-EVERY-SCOPE',
+    operation: 'let a scope checkbox settle the add-token row on its own',
+    edits: [{
+      from: '    change({ ...draft, scopes: SCOPES.filter((item) => next.has(item)).join(",") })\n',
+      to: '    const updated = { ...draft, scopes: SCOPES.filter((item) => next.has(item)).join(",") }\n    change(updated)\n    void settle(updated, false)\n',
+    }],
+    reds: [tokens('ADD-MCP-TOKEN-KEEPS-EVERY-SCOPE')],
+    // Each checks a scope and asserts no write before the row settles (429-39).
+    allowed: [tokens('ADD-MCP-TOKEN-NEEDS-SCOPE'), tokens('ADD-TOKEN-SCOPES-LOCKED-WHILE-SAVING')],
+    greens: [tokens('ADD-RUN-SERVICE-TOKEN'), tokens('TOKEN-DELETE-UNDO'), tokens('TOKEN-ENV-NAME-IN-CLEAR')],
+  },
+  {
+    subject: HOOK_SRC, instrument: 'dom', claim: 'OUTSIDE-EDIT-INTERLEAVED-SHIPPED',
+    operation: "adopt a write's revision whatever base it merged onto, on the rebuilt bundle",
+    crossing: ui('stale429trusted'),
+    edits: [BASE_TRUSTED],
+    reds: [dom('OUTSIDE-EDIT-INTERLEAVED-SHIPPED')],
+    allowed: [],
+    greens: [dom('OUTSIDE-EDIT-SHIPPED'), dom('FILE-VIEW-MASKING-SHIPPED'), dom('TABS-FIVE-IN-ORDER-SHIPPED')],
+  },
 ]
 
 runGate({
   slug: '429-config-ui-mutation', envPrefix: 'AGENT_QA_429_CONFIG_UI_MUTATION', idPrefix: 'U',
-  instruments, legs, expectedLegs: 31, banner: 'CONFIG_UI_MUTATION_OK',
+  instruments, legs, expectedLegs: 43, banner: 'CONFIG_UI_MUTATION_OK',
 })
 NODE
