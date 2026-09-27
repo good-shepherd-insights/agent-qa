@@ -81,6 +81,74 @@ test('C429-CONFIG-CHANGE-STRICT', () => {
   }
 })
 
+test('C429-CONFIG-WRITE-DENIED-ROOTS-EXACT', () => {
+  expect(api.CONFIG_WRITE_DENIED_ROOTS).toEqual(['plugins', 'safety'])
+})
+
+function concreteLeafPath(pattern: string, named: boolean): api.ConfigPathSegment[] {
+  const path: api.ConfigPathSegment[] = []
+  const keys: string[] = []
+  for (const token of pattern.split('.')) {
+    let key = token
+    let items = 0
+    while (key.endsWith('[]')) {
+      key = key.slice(0, -2)
+      items++
+    }
+    keys.push(key)
+    path.push(key === '*' ? 'k' : key)
+    const owner = keys.join('.')
+    for (let item = 0; item < items; item++) {
+      const selectsByName =
+        named && item === 0 && (api.CONFIG_NAMED_ARRAYS as readonly string[]).includes(owner)
+      path.push(selectsByName ? { name: 'k' } : 0)
+    }
+  }
+  return path
+}
+
+test('PAGE-WRITABLE-EVERY-RENDERED-LEAF', () => {
+  const denied = api.CONFIG_WRITE_DENIED_ROOTS as readonly string[]
+  for (const pattern of api.CONFIG_SCHEMA_LEAVES) {
+    const expected = !denied.includes(pattern.split('.')[0]!)
+    for (const named of [false, true]) {
+      const path = concreteLeafPath(pattern, named)
+      expect({ pattern, path, writable: api.isPageWritableConfigPath(path) }).toEqual({
+        pattern,
+        path,
+        writable: expected,
+      })
+    }
+  }
+
+  const writable: api.ConfigPathSegment[][] = [
+    ['registry', 'llms'],
+    ['registry', 'llms', { name: 'k' }],
+    ['registry', 'targets', 'k'],
+    ['eval', 'judges'],
+    ['use', 'timeout'],
+  ]
+  const refused: api.ConfigPathSegment[][] = [
+    [],
+    ['use', 'bogus'],
+    ['plugins'],
+    ['plugins', 'auth', 0, 'path'],
+    ['safety', 'trustMode'],
+    ['registry', 'llms', { name: 'k' }, 'nope'],
+    ['registry', 'llms', '[]', 'model'],
+    [0, 'use'],
+  ]
+  for (const path of writable) {
+    expect({ path, writable: api.isPageWritableConfigPath(path) }).toEqual({ path, writable: true })
+    expect(api.isConfigSchemaPath(path.map(s => (typeof s === 'object' ? 0 : s)))).toBe(true)
+  }
+  for (const path of refused) {
+    expect({ path, writable: api.isPageWritableConfigPath(path) }).toEqual({ path, writable: false })
+  }
+  expect(api.isConfigSchemaPath(['plugins', 'auth', 0, 'path'])).toBe(true)
+  expect(api.isConfigSchemaPath(['use', 'bogus'])).toBe(false)
+})
+
 test('C429-MASKING-CLASSES-EXACT', () => {
   expect(api.MASKING_CLASSES).toEqual(['secret', 'env-var-name', 'plain'])
 })
