@@ -396,6 +396,36 @@ describe('undoable config writes (429-11 Task 1)', () => {
   })
 })
 
+// 429-42 made a set-if-absent completion of use.browser.headless carry a root use.headless under
+// its new key and delete the root key; this pins that one Undo brings the owner's root key back.
+describe('undo of a set-if-absent completion (429-49)', () => {
+  it('UNDO-LEGACY-HEADLESS-RESTORED: Undo of a completion that moved a root use.headless puts the root key back and removes the browser keys', async () => {
+    const legacy = knowledgeConfig([]).replace('use:\n', 'use:\n  headless: false\n')
+    const configPath = await useConfig(legacy)
+
+    const completed = await patchConfig({
+      undoable: true,
+      changes: [
+        { op: 'set', path: ['use', 'browser', 'name'], value: 'firefox' },
+        { op: 'set-if-absent', path: ['use', 'browser', 'headless'], value: true },
+      ],
+    })
+
+    expect(completed.status, completed.body).toBe(200)
+    const afterCompletion = parseYaml(await readFile(configPath, 'utf-8')) as { use: Record<string, unknown> }
+    expect(afterCompletion.use.browser).toEqual({ name: 'firefox', headless: false })
+    expect('headless' in afterCompletion.use).toBe(false)
+
+    const restored = await postUndo(undoOf(completed).token)
+
+    expect(restored.status, restored.body).toBe(200)
+    const parsed = parseYaml(await readFile(configPath, 'utf-8')) as { use: Record<string, unknown> }
+    expect(parsed.use.headless).toBe(false)
+    expect('browser' in parsed.use).toBe(false)
+    expect(parsed).toEqual(parseYaml(legacy))
+  })
+})
+
 const ACCESS_TOKEN = 'oauth-access-fixture-5b1d0e77'
 const REFRESH_TOKEN = 'oauth-refresh-fixture-c2a94f10'
 const SIGNED_IN = {
