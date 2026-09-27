@@ -61,6 +61,7 @@
 #   U41  field_changed leaves CONNECT_REFUSAL_COPY                                   -> CONNECT-REFUSAL-COPY-TOTAL (429-48, WR-02)
 #   U42  a scope checkbox settles the add-token row on its own                        -> ADD-MCP-TOKEN-KEEPS-EVERY-SCOPE (429-39, WR-04)
 #   U43  U32's edit, on the rebuilt bundle                                           -> OUTSIDE-EDIT-INTERLEAVED-SHIPPED (429-37, shipped)
+#   U44  write-failed keeps the marker of a failed keyless write                     -> EMPTY-RETRY-NEVER-SAVING (429-53, WR-06)
 #
 # ALLOWED CO-REDS are listed on each leg with a one-line reason; nothing else may red.
 #
@@ -104,6 +105,12 @@
 # config-fields and model-workspace; config-copy grew by three), ui-components 232 (adds eval-section,
 # model-row and token-list; the hook, the add row and schema coverage grew), dom 12.
 #
+# THE RE-VERIFICATION GAP (2026-09-27, 429-53). U44 plants the reducer arm the re-verification found
+# (WR-06): a failed write that carried no field keys kept its marker, so a Retry with nothing to send
+# read Saving… with nothing in flight. The subjects stay at eighteen (config-autosave.ts already is
+# one); ui-components is re-measured, because the hook suite grew by the two EMPTY-RETRY-NEVER-SAVING
+# cells.
+#
 # Engine, arrival proof, counted selection and restoration: scripts/423-mutation-engine.cjs.
 #
 # USAGE
@@ -114,7 +121,7 @@
 #   neutered  apply NO mutation; the run must FATAL with "<leg>: suite stayed green"
 #   fatal     mutate every subject, then throw; every subject must be restored
 #   SIGINT | SIGTERM | SIGHUP   the same, then deliver that signal to itself
-# AGENT_QA_429_CONFIG_UI_MUTATION_LEG=U01..U43 runs one leg (normal or neutered runs only).
+# AGENT_QA_429_CONFIG_UI_MUTATION_LEG=U01..U44 runs one leg (normal or neutered runs only).
 # AGENT_QA_429_CONFIG_UI_MUTATION_LIST=1 prints the declared inventory and exits.
 #
 # Installed Node 24, workspace tools and the installed Playwright Chromium are required. No
@@ -176,7 +183,7 @@ const instruments = {
     pkg: 'packages/dashboard-ui',
     files: [HOOK_T, STATUS_T, SECRET_T, ADD_ROW_T, PAGE_T, COVERAGE_T, A11Y_T, EVAL_T, MODEL_ROW_T, TOKEN_T],
     typecheck: false,
-    count: 232,
+    count: 234,
   },
   dom: { pkg: 'packages/cli', files: [DOM_T], typecheck: false, count: 12, env: { VITEST_MAX_WORKERS: '1' } },
 }
@@ -751,10 +758,20 @@ const legs = [
     allowed: [],
     greens: [dom('OUTSIDE-EDIT-SHIPPED'), dom('FILE-VIEW-MASKING-SHIPPED'), dom('TABS-FIVE-IN-ORDER-SHIPPED')],
   },
+  // ---- the re-verification gap (WR-06; leg 429-53) ----------------------------------------------
+  {
+    subject: AUTOSAVE_SRC, instrument: 'ui-components', claim: 'EMPTY-RETRY-NEVER-SAVING',
+    operation: 'keep the write marker of a failed write that carried no field keys',
+    edits: [{ from: '      return state.write?.id === event.id\n', to: '      return carried.length > 0\n' }],
+    reds: [hook('EMPTY-RETRY-NEVER-SAVING', 2)],
+    // It retries the real model row's Delete through the hook and pins idle since 429-53.
+    allowed: [modelRow('EXPLICIT-FAILURE-RESTORES-ROW')],
+    greens: [hook('FORCED-FAILURE-KEEPS-DRAFT', 2), hook('COMPUTED-WRITE-GIVES-UP-HONESTLY'), hook('UNDO-CALLS-SERVER', 2)],
+  },
 ]
 
 runGate({
   slug: '429-config-ui-mutation', envPrefix: 'AGENT_QA_429_CONFIG_UI_MUTATION', idPrefix: 'U',
-  instruments, legs, expectedLegs: 43, banner: 'CONFIG_UI_MUTATION_OK',
+  instruments, legs, expectedLegs: 44, banner: 'CONFIG_UI_MUTATION_OK',
 })
 NODE

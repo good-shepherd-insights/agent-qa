@@ -15,6 +15,9 @@
 # (U23, U25) moved only in their allowed lists, which this inventory does not spell, so their entries
 # are unchanged.
 #
+# 2026-09-27, 429-53: U44 joins (EMPTY-RETRY-NEVER-SAVING, the re-verification's WR-06); the subjects
+# are unchanged at eighteen, since config-autosave.ts already is one.
+#
 # Runs in place on the real tree. Slow; a phase gate, not a per-commit sample.
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
@@ -160,6 +163,9 @@ runSelftest({
       reds: [`${TOKEN_T} > ADD-MCP-TOKEN-KEEPS-EVERY-SCOPE`] },
     { id: 'U43', claim: 'OUTSIDE-EDIT-INTERLEAVED-SHIPPED', subject: HOOK_SRC, crossing: UI,
       reds: [`${DOM_T} > OUTSIDE-EDIT-INTERLEAVED-SHIPPED`] },
+    // The re-verification gap's leg (429-53, WR-06).
+    { id: 'U44', claim: 'EMPTY-RETRY-NEVER-SAVING', subject: AUTOSAVE_SRC,
+      reds: [`${HOOK_T} > EMPTY-RETRY-NEVER-SAVING (x2)`] },
   ],
 })
 NODE
