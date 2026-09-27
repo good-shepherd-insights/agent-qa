@@ -283,8 +283,12 @@ export class ConfigManager {
     const priors: ConfigPrior[] = []
     for (const change of changes) {
       if (change.op === 'expect') continue
-      // 429-52 implements move; until then it is refused rather than silently ignored.
-      if (change.op === 'move') return { kind: 'refused', error: 'path_not_found' }
+      if (change.op === 'move') {
+        const moved = moveField(doc, change.from, change.path, capturePriors)
+        if (moved.kind === 'refused') return moved
+        priors.push(...moved.priors)
+        continue
+      }
       const path = resolvePath(doc, change.path)
       if (path === undefined) return { kind: 'refused', error: 'path_not_found' }
       const entry = capturePriors ? namedEntryPrior(doc, change, path) : undefined
@@ -429,6 +433,61 @@ function unsetAndPrune(doc: Document, path: ResolvedPath): void {
     if (!isMap(node) || node.items.length > 0) return
     doc.deleteIn(ancestor)
   }
+}
+
+// 429-52 (deferred 429-24): a rename re-keys the file's own node, value and comments, so the value
+// never travels. Both ends must share a masking class, or a secret could land on a field served in
+// clear. The value lands before from is pruned, so an emptied parent goes only once it has moved.
+function moveField(
+  doc: Document,
+  from: readonly ConfigPathSegment[],
+  to: readonly ConfigPathSegment[],
+  capturePriors: boolean,
+): { kind: 'ok'; priors: ConfigPrior[] } | { kind: 'refused'; error: 'path_not_found' | 'path_not_writable' } {
+  const fromPath = resolvePath(doc, from)
+  const toPath = resolvePath(doc, to)
+  if (fromPath === undefined || toPath === undefined) return { kind: 'refused', error: 'path_not_found' }
+  if (classifySegments(from) !== classifySegments(to)) return { kind: 'refused', error: 'path_not_writable' }
+  const node = nodeAt(doc, fromPath)
+  if (node === undefined) return { kind: 'refused', error: 'path_not_found' }
+  // A block whose ends share a class can still hold leaves that class differently at the new key.
+  const leaves = leafPaths(isNode(node) ? node.toJS(doc) : node)
+  if (leaves.some((leaf) => classifySegments([...from, ...leaf]) !== classifySegments([...to, ...leaf]))) {
+    return { kind: 'refused', error: 'path_not_writable' }
+  }
+  if (samePath(fromPath, toPath)) return { kind: 'ok', priors: [] }
+  // A field moved inside itself, or onto an ancestor, would be deleted with its old key.
+  if (isPrefix(fromPath, toPath) || isPrefix(toPath, fromPath)) {
+    return { kind: 'refused', error: 'path_not_writable' }
+  }
+  const before = capturePriors ? nodeAt(doc, toPath) : undefined
+  try {
+    doc.setIn(toPath, node)
+  } catch {
+    return { kind: 'refused', error: 'path_not_found' }
+  }
+  unsetAndPrune(doc, fromPath)
+  if (!capturePriors) return { kind: 'ok', priors: [] }
+  return {
+    kind: 'ok',
+    priors: [
+      { kind: 'path', path: [...from], before: node === null ? null : node.clone() as Node, after: { present: false } },
+      { kind: 'path', path: [...to], before, after: fieldState(doc, toPath) },
+    ],
+  }
+}
+
+// The path of every leaf below a value, relative to it; a scalar or an empty block is its own leaf.
+function leafPaths(value: unknown): (string | number)[][] {
+  const entries: [string | number, unknown][] = Array.isArray(value)
+    ? value.map((item, i) => [i, item])
+    : typeof value === 'object' && value !== null ? Object.entries(value) : []
+  if (entries.length === 0) return [[]]
+  return entries.flatMap(([key, item]) => leafPaths(item).map((leaf) => [key, ...leaf]))
+}
+
+function isPrefix(prefix: ResolvedPath, path: ResolvedPath): boolean {
+  return prefix.length < path.length && samePath(prefix, path.slice(0, prefix.length))
 }
 
 // An unset of one named-array entry is recorded as the entry itself, so Undo re-inserts it by
