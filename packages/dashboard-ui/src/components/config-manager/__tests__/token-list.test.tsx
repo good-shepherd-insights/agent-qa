@@ -162,12 +162,28 @@ function draftInput(draft: HTMLElement | null, name: string) {
   return draft?.querySelector(`input[name="${name}"]`) as HTMLInputElement | null
 }
 
+function scopeBox(draft: HTMLElement | null, scope: string) {
+  return draft?.querySelector(`[role="checkbox"][data-scope="${scope}"]`) as HTMLElement | null
+}
+
+async function leaveRow(draft: HTMLElement | null, next: HTMLElement | null) {
+  expect(draft).not.toBeNull()
+  expect(next).not.toBeNull()
+  expect(draft!.contains(next)).toBe(false)
+  await act(async () => {
+    next!.focus()
+  })
+  await flush()
+}
+
 function deferred<T>() {
   let resolve!: (value: T) => void
-  const promise = new Promise<T>((res) => {
+  let reject!: (reason: unknown) => void
+  const promise = new Promise<T>((res, rej) => {
     resolve = res
+    reject = rej
   })
-  return { promise, resolve }
+  return { promise, resolve, reject }
 }
 
 beforeEach(() => {
@@ -212,7 +228,7 @@ describe('TokenList (429-27 Task 1)', () => {
     expect(teammate!.textContent).toContain(tokenEnvLine('AGENT_QA_RUN_TOKEN'))
   })
 
-  it('ADD-MCP-TOKEN-NEEDS-SCOPE: the MCP add row offers the six scopes and writes one append only once a scope is checked', async () => {
+  it('ADD-MCP-TOKEN-NEEDS-SCOPE: the MCP add row offers the six scopes and writes one append only once a scope is checked and the row settles', async () => {
     await mount()
     const mcp = section('mcp')
 
@@ -241,6 +257,10 @@ describe('TokenList (429-27 Task 1)', () => {
 
     const read = boxes.find((box) => labelOf(box) === FUNCTION_SCOPE_LABELS.read) as HTMLElement
     await click(read)
+    expect(applyConfigChanges).not.toHaveBeenCalled()
+    expect(draftIn(mcp)).not.toBeNull()
+
+    await pressEnter(draftInput(draft, 'tokenEnvVar'))
 
     expect(vi.mocked(applyConfigChanges).mock.calls).toEqual([
       [[{ op: 'append', path: ['services', 'mcp', 'tokens'], value: { name: 'agent', tokenEnvVar: 'AGENT_QA_AGENT_TOKEN', scopes: ['read'] } }]],
@@ -248,6 +268,72 @@ describe('TokenList (429-27 Task 1)', () => {
     expect(draftIn(mcp)).toBeNull()
     expect(tokenRow(mcp, 'agent')).not.toBeNull()
     expect(hook!.draftTabs.has('advanced')).toBe(false)
+  })
+
+  it('ADD-MCP-TOKEN-KEEPS-EVERY-SCOPE: checking scopes writes nothing; leaving the row appends one entry with every checked scope in order', async () => {
+    await mount()
+    const mcp = section('mcp')
+
+    await click(buttonIn(mcp, ADD_TOKEN_LABEL))
+    const draft = draftIn(mcp)
+    await type(draftInput(draft, 'name'), 'agent')
+    await type(draftInput(draft, 'tokenEnvVar'), 'AGENT_QA_AGENT_TOKEN')
+    await click(scopeBox(draft, 'config-write'))
+    expect(applyConfigChanges).not.toHaveBeenCalled()
+    await click(scopeBox(draft, 'read'))
+    expect(applyConfigChanges).not.toHaveBeenCalled()
+
+    await click(scopeBox(draft, 'run'))
+    await click(scopeBox(draft, 'run'))
+    expect(applyConfigChanges).not.toHaveBeenCalled()
+    expect(draftIn(mcp)).not.toBeNull()
+
+    await leaveRow(draft, buttonIn(tokenRow(mcp, 'ci'), deleteActionName('delete-mcp-token', 'ci')))
+
+    expect(vi.mocked(applyConfigChanges).mock.calls).toEqual([
+      [[{ op: 'append', path: ['services', 'mcp', 'tokens'], value: { name: 'agent', tokenEnvVar: 'AGENT_QA_AGENT_TOKEN', scopes: ['read', 'config-write'] } }]],
+    ])
+    expect(draftIn(mcp)).toBeNull()
+    expect(tokenRow(mcp, 'agent')).not.toBeNull()
+  })
+
+  it('ADD-TOKEN-SCOPES-LOCKED-WHILE-SAVING: the scope checkboxes are disabled while the append is in flight, and a refused append keeps every checked scope', async () => {
+    await mount()
+    const mcp = section('mcp')
+    const write = deferred<never>()
+    vi.mocked(applyConfigChanges).mockReturnValueOnce(write.promise as never)
+
+    await click(buttonIn(mcp, ADD_TOKEN_LABEL))
+    const draft = draftIn(mcp)
+    await type(draftInput(draft, 'name'), 'agent')
+    await type(draftInput(draft, 'tokenEnvVar'), 'AGENT_QA_AGENT_TOKEN')
+    await click(scopeBox(draft, 'read'))
+    expect(applyConfigChanges).not.toHaveBeenCalled()
+    await click(scopeBox(draft, 'config-write'))
+    await pressEnter(draftInput(draft, 'tokenEnvVar'))
+
+    expect(applyConfigChanges).toHaveBeenCalledTimes(1)
+    const boxes = Array.from(draft!.querySelectorAll('[role="checkbox"]')) as HTMLElement[]
+    for (const box of boxes) {
+      expect(box.hasAttribute('data-disabled') || box.getAttribute('aria-disabled') === 'true').toBe(true)
+    }
+    await click(scopeBox(draft, 'run'))
+    expect(scopeBox(draft, 'run')!.getAttribute('aria-checked')).toBe('false')
+    expect(draftInput(draft, 'name')!.disabled).toBe(false)
+
+    await act(async () => {
+      write.reject(new Error('refused'))
+    })
+    await flush()
+
+    expect(applyConfigChanges).toHaveBeenCalledTimes(1)
+    expect(draftIn(mcp)).toBe(draft)
+    expect(scopeBox(draft, 'read')!.getAttribute('aria-checked')).toBe('true')
+    expect(scopeBox(draft, 'config-write')!.getAttribute('aria-checked')).toBe('true')
+    for (const box of Array.from(draft!.querySelectorAll('[role="checkbox"]'))) {
+      expect(box.hasAttribute('data-disabled')).toBe(false)
+      expect((box as HTMLButtonElement).disabled).toBe(false)
+    }
   })
 
   it('ADD-RUN-SERVICE-TOKEN: the run-service add row takes an optional Project and Org and never writes an empty one', async () => {
