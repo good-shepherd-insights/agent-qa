@@ -14,6 +14,8 @@
 # 2026-09-26 (428-35, owner review G-428-1..5): U07 and U25 are re-aimed (NO-ANIMATION-ON-LIVE-PAGE
 # on health-dot.tsx, DOT-IS-STILL on globals.css), and U26..U37 guard the five owner decisions. The
 # inventory grows from 25 rows over 9 subjects to 37 rows over 12.
+# 2026-09-27 (429-40): U35 re-pointed from DOT-IN-CHROME-TOP-LEFT to DOT-TOP-RIGHT, the cell agent-qa
+# 617ccdd78 renamed; same subject, same regression.
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 exec node --test-reporter=tap --input-type=commonjs - <<'NODE'
@@ -127,8 +129,8 @@ runSelftest({
       reds: [`${WATCH_T} > WATCH-SWITCHES-WHEN-NEXT-STARTS`] },
     { id: 'U34', claim: 'FOLLOWS-RUNNING-MEMBER-SHIPPED', subject: PAGE_SRC, crossing: DASHBOARD_UI,
       reds: [`${LAYOUT_DOM} > FOLLOWS-RUNNING-MEMBER-SHIPPED`] },
-    { id: 'U35', claim: 'DOT-IN-CHROME-TOP-LEFT', subject: COMPONENT_SRC,
-      reds: [`${PREVIEW_C} > DOT-IN-CHROME-TOP-LEFT`] },
+    { id: 'U35', claim: 'DOT-TOP-RIGHT', subject: COMPONENT_SRC,
+      reds: [`${PREVIEW_C} > DOT-TOP-RIGHT`] },
     { id: 'U36', claim: 'DOT-TOP-RIGHT-OF-CONTAINER', subject: COMPONENT_SRC, crossing: DASHBOARD_UI,
       reds: [`${PREVIEW_DOM} > DOT-TOP-RIGHT-OF-CONTAINER`] },
     { id: 'U37', claim: 'RUNNING-GLYPH-STILL', subject: ROW_SRC,
