@@ -475,6 +475,26 @@ describe("useConfigAutosave outside edits, explicit actions and Undo (429-16 Tas
     expect(hook!.valueOf(previousStepCount)).toBe(77)
   })
 
+  // Deferred 429-28: an unset through a parent the config lacks leaves nothing to remove there,
+  // and the changes after it in the same set still show at once.
+  it("MIRROR-CONTINUES-PAST-MISSING-PARENT: a landed set shows every change after an unset whose parent is absent", async () => {
+    await mount()
+    const workers: ConfigFieldRef = { segments: ["use", "workers"], tab: "execution" }
+
+    let landed = false
+    await act(async () => {
+      landed = await hook!.runExplicit([
+        { op: "unset", path: ["use", "logCapture", "console"] },
+        { op: "set", path: ["use", "workers"], value: 3 },
+      ])
+    })
+    await flush()
+
+    expect(landed).toBe(true)
+    expect(hook!.valueOf(workers)).toBe(3)
+    expect(fetchConfig).toHaveBeenCalledTimes(1)
+  })
+
   it("POLL-ONLY-WHEN-VISIBLE: a hidden page never polls; becoming visible or focused polls at once", async () => {
     setVisibility("hidden")
     await mount()
