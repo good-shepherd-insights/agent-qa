@@ -8,6 +8,7 @@ import {
   ConfigRevealRequestSchema,
   ConfigUndoRequestSchema,
   ConfigWriteRequestSchema,
+  isPageWritableConfigPath,
 } from '@vostride/agent-qa-schema'
 
 import type { ConfigManager } from '../config/index.js'
@@ -33,6 +34,14 @@ export function registerConfigWriteRoute(
     const parsed = ConfigWriteRequestSchema.safeParse(body)
     if (!parsed.success) {
       respondJson(res, 400, { error: 'invalid_write_input' })
+      return
+    }
+    // 429-44 WR-01: this door changes only what the page renders a field for.
+    const refused = parsed.data.changes.some((change) =>
+      !isPageWritableConfigPath(change.path)
+      || (change.op === 'move' && !isPageWritableConfigPath(change.from)))
+    if (refused) {
+      respondJson(res, 422, { error: 'path_not_writable' })
       return
     }
     const undoable = parsed.data.undoable === true
