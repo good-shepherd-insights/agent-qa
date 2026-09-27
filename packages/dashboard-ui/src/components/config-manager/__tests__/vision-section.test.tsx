@@ -154,7 +154,7 @@ describe('VisionSection and PlannerSection', () => {
     expect(vi.mocked(applyConfigChanges).mock.calls).toEqual([
       [[
         { op: 'set', path: ['use', 'planner', 'maxSubActions'], value: 12 },
-        { op: 'set', path: ['use', 'planner', 'previousStepCount'], value: 5 },
+        { op: 'set-if-absent', path: ['use', 'planner', 'previousStepCount'], value: 5 },
       ]],
     ])
     expect(API_EXPORTS).not.toContain('updateSettings')

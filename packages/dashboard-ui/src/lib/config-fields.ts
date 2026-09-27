@@ -3,6 +3,7 @@
 // These schema blocks have required keys once the block exists, so a leaf-only write into an
 // absent one would always fail validation. The write carries the other required siblings at the
 // defaults the fields show as placeholders; optional siblings are never materialized (424 note 27).
+// The snapshot only offers the defaults; the server writes each one only if the field is absent (429-42).
 
 import type { ConfigChange, ConfigPathSegment } from '@vostride/agent-qa-schema'
 
@@ -43,7 +44,7 @@ function startsWith(path: readonly ConfigPathSegment[], prefix: readonly string[
 /** The changes plus, for each set inside an absent all-required block, that block's other required siblings. */
 export function completeRequiredSiblings(changes: readonly ConfigChange[], config: unknown): ConfigChange[] {
   const result = [...changes]
-  const sets = () => result.filter((change) => change.op === 'set')
+  const sets = () => result.filter((change) => change.op === 'set' || change.op === 'set-if-absent')
   for (const change of changes) {
     if (change.op !== 'set') continue
     for (const [block, defaults] of Object.entries(REQUIRED_SIBLING_BLOCKS)) {
@@ -53,7 +54,7 @@ export function completeRequiredSiblings(changes: readonly ConfigChange[], confi
       for (const [key, value] of Object.entries(defaults)) {
         const siblingPath = [...blockPath, key]
         if (sets().some((other) => startsWith(other.path, siblingPath))) continue
-        result.push({ op: 'set', path: siblingPath, value })
+        result.push({ op: 'set-if-absent', path: siblingPath, value })
       }
     }
   }

@@ -1315,8 +1315,8 @@ describe('ConfigPage task tabs shell', () => {
     expect(applyConfigChanges).toHaveBeenCalledTimes(1)
     expect(vi.mocked(applyConfigChanges).mock.calls[0]![0]).toEqual([
       { op: 'set', path: STEP_SEGMENTS, value: '45s' },
-      { op: 'set', path: ['use', 'timeout', 'test'], value: '10m' },
-      { op: 'set', path: ['use', 'timeout', 'navigation'], value: '10s' },
+      { op: 'set-if-absent', path: ['use', 'timeout', 'test'], value: '10m' },
+      { op: 'set-if-absent', path: ['use', 'timeout', 'navigation'], value: '10s' },
     ])
   })
 
