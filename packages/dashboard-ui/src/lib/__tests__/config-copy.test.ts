@@ -188,6 +188,10 @@ describe('COPY-429: the Config strings of record (429-12 Task 2)', () => {
     }
   })
 
+  it('FIELD-CHANGED-COPY: a computed write the file keeps moving under says the page now shows the file', () => {
+    expect(copy.FIELD_CHANGED_TEXT).toBe("This changed in the file. The page now shows the file's value.")
+  })
+
   it('COPY-429: the timing constants', () => {
     expect(copy.SETTLE_DELAY_MS).toBe(1_000)
     expect(copy.SAVED_VISIBLE_MS).toBe(2_000)

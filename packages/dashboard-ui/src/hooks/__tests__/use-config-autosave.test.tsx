@@ -11,7 +11,7 @@ import {
 } from "@vostride/agent-qa-schema"
 
 import { ApiError, applyConfigChanges, fetchConfig, fetchConfigRevision, undoConfigAction } from "@/lib/api"
-import { REVISION_POLL_MS, SETTLE_DELAY_MS, UNDO_WINDOW_MS, undoLine } from "@/lib/config-copy"
+import { FIELD_CHANGED_TEXT, REVISION_POLL_MS, SETTLE_DELAY_MS, UNDO_WINDOW_MS, undoLine } from "@/lib/config-copy"
 import {
   CONFIG_DRAFTS_STORAGE_PREFIX,
   externalDraftFieldKey,
@@ -68,8 +68,11 @@ function textParse(raw: string): ConfigFieldParse {
 }
 
 let hook: ConfigAutosave | undefined
+/** Every status a render showed, so a cell can say a state never appeared. */
+let seenStatuses: string[] = []
 function Harness() {
   hook = useConfigAutosave()
+  seenStatuses.push(hook.status.state)
   return null
 }
 
@@ -154,6 +157,7 @@ beforeEach(() => {
   Object.defineProperty(document, "visibilityState", { configurable: true, get: () => visibility })
   vi.useFakeTimers()
   localStorage.clear()
+  seenStatuses = []
   vi.mocked(fetchConfig).mockResolvedValue(answer(baseConfig) as never)
   // One fake server: the revision route answers whatever the last write landed, and each write
   // names the revision it merged onto (429-37), so every cell here stays on the trusted path.
@@ -773,5 +777,120 @@ describe("useConfigAutosave landed-write mirror for the new ops (429-45 Task 2)"
 
     expect(fetchConfig).toHaveBeenCalledTimes(2)
     expect(hook!.valueOf(headless)).toBe(false)
+  })
+})
+
+describe("useConfigAutosave computed writes (429-46 Task 1 · CR-01)", () => {
+  const judgesPath = ["eval", "judges"]
+  const judges: ConfigFieldRef = { segments: judgesPath, tab: "advanced" }
+
+  function withJudges(list: string[]) {
+    return { ...baseConfig, eval: { judges: list } }
+  }
+
+  function fieldChanged() {
+    return new ApiError(409, "Conflict", { error: "field_changed", path: judgesPath })
+  }
+
+  /** Adds one judge to whatever list the config it is handed holds, stating that list first. */
+  function addJudge(name: string) {
+    return vi.fn((config: Record<string, unknown>): ConfigChange[] => {
+      const block = config.eval as { judges?: string[] } | undefined
+      const read = block?.judges ?? []
+      return [
+        { op: "expect", path: judgesPath, value: read },
+        { op: "set", path: judgesPath, value: [...read, name] },
+      ]
+    })
+  }
+
+  it("COMPUTED-WRITE-MERGES-OUTSIDE-EDIT: a field_changed refusal re-reads, recomputes and lands on the file's list", async () => {
+    vi.mocked(fetchConfig).mockResolvedValue(answer(withJudges(["a", "b"])) as never)
+    await mount()
+    const first = deferred<never>()
+    vi.mocked(applyConfigChanges).mockReturnValueOnce(first.promise)
+    vi.mocked(applyConfigChanges).mockResolvedValueOnce({ baseRevision: "rev-5", revision: "rev-6" })
+    vi.mocked(fetchConfig).mockResolvedValue(answer(withJudges(["a", "b", "d"]), "rev-5") as never)
+    vi.mocked(fetchConfigRevision).mockResolvedValue({ revision: "rev-6" })
+    const compute = addJudge("c")
+
+    let landing!: Promise<boolean>
+    await act(async () => {
+      landing = hook!.runComputed(compute)
+    })
+    expect(hook!.status.state).toBe("saving")
+
+    await act(async () => {
+      first.reject(fieldChanged())
+    })
+    await flush()
+
+    expect(await landing).toBe(true)
+    expect(writeCalls()).toEqual([
+      [
+        { op: "expect", path: judgesPath, value: ["a", "b"] },
+        { op: "set", path: judgesPath, value: ["a", "b", "c"] },
+      ],
+      [
+        { op: "expect", path: judgesPath, value: ["a", "b", "d"] },
+        { op: "set", path: judgesPath, value: ["a", "b", "d", "c"] },
+      ],
+    ])
+    expect(fetchConfig).toHaveBeenCalledTimes(2)
+    expect(hook!.valueOf(judges)).toEqual(["a", "b", "d", "c"])
+    expect(hook!.status.state).toBe("saved")
+    expect(seenStatuses).toContain("saving")
+    expect(seenStatuses).not.toContain("failed")
+  })
+
+  it("COMPUTED-WRITE-MERGES-OUTSIDE-EDIT: an empty change set writes nothing", async () => {
+    await mount()
+    let landed = false
+    await act(async () => {
+      landed = await hook!.runComputed(() => [])
+    })
+    await flush()
+
+    expect(landed).toBe(true)
+    expect(applyConfigChanges).not.toHaveBeenCalled()
+    expect(hook!.status.state).toBe("idle")
+  })
+
+  it("COMPUTED-WRITE-GIVES-UP-HONESTLY: a second field_changed reads Couldn't save, and Retry recomputes from a fresh read", async () => {
+    vi.mocked(fetchConfig).mockResolvedValue(answer(withJudges(["a", "b"])) as never)
+    await mount()
+    vi.mocked(applyConfigChanges).mockRejectedValueOnce(fieldChanged()).mockRejectedValueOnce(fieldChanged())
+    vi.mocked(fetchConfig).mockResolvedValue(answer(withJudges(["a", "b", "d"]), "rev-5") as never)
+    const compute = addJudge("c")
+
+    let landed = true
+    await act(async () => {
+      landed = await hook!.runComputed(compute)
+    })
+    await flush()
+
+    expect(landed).toBe(false)
+    expect(writeCalls()).toHaveLength(2)
+    expect(hook!.status.state).toBe("failed")
+    expect(hook!.status.message).toBe(FIELD_CHANGED_TEXT)
+    expect(hook!.valueOf(judges)).toEqual(["a", "b", "d"])
+
+    vi.mocked(fetchConfig).mockResolvedValue(answer(withJudges(["a", "b", "d", "e"]), "rev-7") as never)
+    vi.mocked(fetchConfigRevision).mockResolvedValue({ revision: "rev-8" })
+    vi.mocked(applyConfigChanges).mockResolvedValueOnce({ baseRevision: "rev-7", revision: "rev-8" })
+    const readsBefore = vi.mocked(fetchConfig).mock.calls.length
+    compute.mockClear()
+
+    await run((h) => h.retry())
+
+    expect(fetchConfig).toHaveBeenCalledTimes(readsBefore + 1)
+    expect(compute).toHaveBeenCalledTimes(1)
+    expect(compute.mock.calls[0]![0]).toEqual(withJudges(["a", "b", "d", "e"]))
+    expect(writeCalls()).toHaveLength(3)
+    expect(writeCalls()[2]).toEqual([
+      { op: "expect", path: judgesPath, value: ["a", "b", "d", "e"] },
+      { op: "set", path: judgesPath, value: ["a", "b", "d", "e", "c"] },
+    ])
+    expect(hook!.status.state).toBe("saved")
   })
 })
