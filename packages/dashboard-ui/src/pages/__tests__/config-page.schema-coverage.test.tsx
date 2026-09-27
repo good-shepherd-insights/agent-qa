@@ -4,7 +4,13 @@ import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { MemoryRouter, Route, Routes } from 'react-router'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { CONFIG_SCHEMA_LEAVES, configLeafOwner } from '@vostride/agent-qa-schema'
+import {
+  CONFIG_SCHEMA_LEAVES,
+  CONFIG_WRITE_DENIED_ROOTS,
+  configLeafOwner,
+  isPageWritableConfigPath,
+  type ConfigPathSegment,
+} from '@vostride/agent-qa-schema'
 
 vi.mock('monaco-editor', () => ({
   languages: {
@@ -448,10 +454,25 @@ async function assertConfigSectionShells(destinations: string[]) {
 }
 
 // plugins.* is a file edit by decision and safety.* is deleted by Phase 432; every other leaf of
-// the published schema has a field on the page (D-06).
+// the published schema has a field on the page (D-06). 429-44: the page's write door refuses the
+// same roots, so both read one constant.
+const DENIED_ROOTS: readonly string[] = CONFIG_WRITE_DENIED_ROOTS
 const PAGE_LEAVES = CONFIG_SCHEMA_LEAVES.filter(
-  (pattern) => !pattern.startsWith('plugins.') && !pattern.startsWith('safety.'),
+  (pattern) => !DENIED_ROOTS.includes(pattern.split('.')[0]!),
 )
+
+/** A concrete path for a leaf pattern or list owner: each '*' becomes 'k' and each '[]' index 0. */
+function concretePath(pattern: string): ConfigPathSegment[] {
+  return pattern.split('.').flatMap((token) => {
+    let key = token
+    const items: number[] = []
+    while (key.endsWith('[]')) {
+      key = key.slice(0, -2)
+      items.push(0)
+    }
+    return [key === '*' ? 'k' : key, ...items]
+  })
+}
 
 interface FieldMark {
   kind: 'path' | 'list'
@@ -551,6 +572,22 @@ describe('ConfigPage schema coverage', () => {
     }
     const shared = [...sectionsByMark].filter(([, sections]) => sections.size > 1).map(([key, sections]) => `${key} (${[...sections].join(', ')})`)
     expect(shared, `fields rendered by more than one section: ${shared.join('; ')}`).toEqual([])
+  })
+
+  it('WRITE-POLICY-MATCHES-COVERAGE: every field and list the page renders is writable through its door, and every leaf it leaves out is refused', async () => {
+    page.config = fullConfig
+    await renderAt('/config/models')
+
+    const marks = await collectFieldMarks()
+    expect(marks.length, 'the witness: the walk found fields').toBeGreaterThan(0)
+    const refused = [...new Set(marks.map((mark) => mark.value))]
+      .filter((value) => !isPageWritableConfigPath(concretePath(value)))
+    expect(refused, `fields the page renders but its door refuses: ${refused.join(', ')}`).toEqual([])
+
+    const excluded = CONFIG_SCHEMA_LEAVES.filter((pattern) => !PAGE_LEAVES.includes(pattern))
+    expect(excluded.length, 'the witness: plugins and safety leaves exist').toBeGreaterThan(0)
+    const admitted = excluded.filter((pattern) => isPageWritableConfigPath(concretePath(pattern)))
+    expect(admitted, `leaves without a field that the door still admits: ${admitted.join(', ')}`).toEqual([])
   })
 
   it('EVERY-SECTION-RENDERS-EMPTY: with an empty config all five tabs and every section heading render, unset leaves show defaults only as placeholders, and Models shows its empty state', async () => {
