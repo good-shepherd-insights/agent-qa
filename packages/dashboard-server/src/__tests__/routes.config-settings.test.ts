@@ -1038,7 +1038,7 @@ describe('model list and default model writes through connect and PATCH (429-32)
       configPath,
     })
 
-    const res = await invokeRoute('/api/config')
+    const res = await invokeRoute('/api/config', { headers: { host: LLM_TEST_HOST } })
 
     expect(res.status).toBe(200)
     const data = JSON.parse(res.body) as Record<string, unknown>

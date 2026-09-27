@@ -453,3 +453,45 @@ describe('GET /api/config serves no comment text (429-41, CR-02)', () => {
     expect(body.revision).toBe(sha256(onDisk))
   })
 })
+
+describe('GET /api/config is same-site only with no cross-origin grant (429-41, CR-02)', () => {
+  it('GET-CONFIG-SAME-SITE-NO-GRANT: a cross-site or rebinding caller is refused before the read, and no answer grants a cross-origin read', async () => {
+    const configPath = await useConfigWorkspace(commentedConfig)
+    const readMasked = vi.spyOn(ConfigManager.prototype, 'readMasked')
+
+    const crossSite = await invokeRoute('/api/config', {
+      headers: { host: HOST, origin: 'https://evil.example', 'sec-fetch-site': 'cross-site' },
+    })
+    expect(crossSite.status).toBe(403)
+    expect(JSON.parse(crossSite.body)).toEqual({ error: 'cross_site_refused' })
+    expect(crossSite.headers).not.toHaveProperty('access-control-allow-origin')
+
+    const rebinding = await invokeRoute('/api/config', { headers: { host: 'evil.example' } })
+    expect(rebinding.status).toBe(403)
+    expect(JSON.parse(rebinding.body)).toEqual({ error: 'cross_site_refused' })
+    expect(rebinding.headers).not.toHaveProperty('access-control-allow-origin')
+    expect(readMasked).not.toHaveBeenCalled()
+
+    const sameOrigin = {
+      host: HOST,
+      origin: `http://${HOST}`,
+      'sec-fetch-site': 'same-origin',
+    }
+    const own = await invokeRoute('/api/config', { headers: sameOrigin })
+    expect(own.status).toBe(200)
+    expect(own.headers).not.toHaveProperty('access-control-allow-origin')
+    expect(JSON.parse(own.body).file.path).toBe(configPath)
+
+    await writeFile(configPath, 'a: [1, 2\n', 'utf-8')
+    const invalid = await invokeRoute('/api/config', { headers: sameOrigin })
+    expect(invalid.status).toBe(409)
+    expect(JSON.parse(invalid.body).error).toBe('file_invalid')
+    expect(invalid.headers).not.toHaveProperty('access-control-allow-origin')
+
+    router = createRouter({ db: createMockDatabase() as any })
+    const unavailable = await invokeRoute('/api/config', { headers: sameOrigin })
+    expect(unavailable.status).toBe(501)
+    expect(unavailable.headers).not.toHaveProperty('access-control-allow-origin')
+    readMasked.mockRestore()
+  })
+})

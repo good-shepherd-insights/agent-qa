@@ -307,7 +307,7 @@ describe('ConfigManager', () => {
         ...(recording === undefined ? {} : { services: { recording } }),
       }
       await writeFile(configPath, stringifyYaml(source))
-      const response = await invokeRoute('/api/config')
+      const response = await invokeRoute('/api/config', { headers: { host: SELF_HOST_HEADERS.host } })
       expect(response.status).toBe(200)
       const authored = JSON.parse(response.body).config
       // 429-06 D-08: the map classes workspace.secretsFile secret, so the read carries it masked whole.
