@@ -14,7 +14,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { EvalSection } from '@/components/config-manager/eval-section'
 import { ConfigAutosaveProvider, useConfigAutosave } from '@/hooks/use-config-autosave'
-import { applyConfigChanges, fetchConfig, fetchConfigRevision } from '@/lib/api'
+import { ApiError, applyConfigChanges, fetchConfig, fetchConfigRevision } from '@/lib/api'
 import {
   EVAL_GROUP_LABELS,
   JUDGE_LIMIT_TEXT,
@@ -40,6 +40,17 @@ function withModels(names: readonly string[], evalBlock?: Record<string, unknown
     registry: { llms: names.map((name) => ({ name, provider: 'openai-compatible', model: `${name}-model` })) },
     ...(evalBlock === undefined ? {} : { eval: evalBlock }),
   }
+}
+
+const JUDGE = ['eval', 'judge']
+const JUDGES = ['eval', 'judges']
+
+/** The two expect ops every judge write leads with: what the page computed from, null when absent. */
+function expectsRead(judge: string | null, judges: string[] | null) {
+  return [
+    { op: 'expect', path: JUDGE, value: judge },
+    { op: 'expect', path: JUDGES, value: judges },
+  ]
 }
 
 function answer(config: Record<string, unknown>) {
@@ -148,12 +159,13 @@ describe('EvalSection (429-28 Task 1)', () => {
     expect(judgeBoxes().map((box) => labelOf(box))).toEqual(MODELS)
   })
 
-  it('JUDGE-ONE-WRITES-JUDGE: one pick writes eval.judge and removes eval.judges; a second writes eval.judges and removes eval.judge', async () => {
+  it('JUDGE-ONE-WRITES-JUDGE: one pick writes eval.judge and removes eval.judges; a second writes eval.judges and removes eval.judge; each write first states what the page read', async () => {
     await mount(withModels(MODELS))
 
     await click(judgeBox('alpha'))
     expect(vi.mocked(applyConfigChanges).mock.calls).toEqual([
       [[
+        ...expectsRead(null, null),
         { op: 'set', path: ['eval', 'judge'], value: 'alpha' },
         { op: 'unset', path: ['eval', 'judges'] },
       ]],
@@ -163,6 +175,7 @@ describe('EvalSection (429-28 Task 1)', () => {
     await click(judgeBox('beta'))
     expect(vi.mocked(applyConfigChanges).mock.calls[1]).toEqual([
       [
+        ...expectsRead('alpha', null),
         { op: 'set', path: ['eval', 'judges'], value: ['alpha', 'beta'] },
         { op: 'unset', path: ['eval', 'judge'] },
       ],
@@ -172,12 +185,14 @@ describe('EvalSection (429-28 Task 1)', () => {
     await click(judgeBox('beta'))
     expect(vi.mocked(applyConfigChanges).mock.calls[2]).toEqual([
       [
+        ...expectsRead(null, ['alpha', 'beta']),
         { op: 'set', path: ['eval', 'judge'], value: 'beta' },
         { op: 'unset', path: ['eval', 'judges'] },
       ],
     ])
     expect(vi.mocked(applyConfigChanges).mock.calls[3]).toEqual([
       [
+        ...expectsRead('beta', null),
         { op: 'unset', path: ['eval', 'judge'] },
         { op: 'unset', path: ['eval', 'judges'] },
       ],
@@ -199,6 +214,7 @@ describe('EvalSection (429-28 Task 1)', () => {
     await click(judgeBox('gamma'))
     expect(vi.mocked(applyConfigChanges).mock.calls).toEqual([
       [[
+        ...expectsRead(null, ['alpha', 'beta']),
         { op: 'set', path: ['eval', 'judges'], value: ['alpha', 'beta', 'gamma'] },
         { op: 'unset', path: ['eval', 'judge'] },
       ]],
@@ -226,5 +242,72 @@ describe('EvalSection (429-28 Task 1)', () => {
     expect(picker.textContent).toContain(JUDGE_NO_MODELS_TEXT)
     const link = picker.querySelector('a') as HTMLAnchorElement | null
     expect(link?.getAttribute('href')).toBe('/config/models?add')
+  })
+
+  it('JUDGE-WRITE-EXPECTS-LIST: with eval.judge loaded, a second pick states the judge it read and that no list was there', async () => {
+    await mount(withModels(MODELS, { judge: 'alpha' }))
+
+    await click(judgeBox('beta'))
+    expect(vi.mocked(applyConfigChanges).mock.calls.map(([changes]) => changes)).toEqual([
+      [
+        { op: 'expect', path: ['eval', 'judge'], value: 'alpha' },
+        { op: 'expect', path: ['eval', 'judges'], value: null },
+        { op: 'set', path: ['eval', 'judges'], value: ['alpha', 'beta'] },
+        { op: 'unset', path: ['eval', 'judge'] },
+      ],
+    ])
+  })
+})
+
+describe('EvalSection judge writes an outside edit moved (429-46 Task 2 · CR-01)', () => {
+  function fieldChanged(path: string[]) {
+    return new ApiError(409, 'Conflict', { error: 'field_changed', path })
+  }
+
+  function checkedNames() {
+    return judgeBoxes().filter((box) => box.getAttribute('aria-checked') === 'true').map(labelOf)
+  }
+
+  it("JUDGE-TOGGLE-MERGES-OUTSIDE-JUDGE: a toggle refused field_changed lands on the file's new list after one re-read", async () => {
+    await mount(withModels(MODELS, { judge: 'alpha' }))
+    vi.mocked(applyConfigChanges).mockRejectedValueOnce(fieldChanged(JUDGE))
+    vi.mocked(fetchConfig).mockResolvedValue(answer(withModels(MODELS, { judges: ['alpha', 'delta'] })) as never)
+
+    await click(judgeBox('gamma'))
+    await flush()
+
+    expect(vi.mocked(applyConfigChanges).mock.calls.map(([changes]) => changes)).toEqual([
+      [
+        ...expectsRead('alpha', null),
+        { op: 'set', path: JUDGES, value: ['alpha', 'gamma'] },
+        { op: 'unset', path: JUDGE },
+      ],
+      [
+        ...expectsRead(null, ['alpha', 'delta']),
+        { op: 'set', path: JUDGES, value: ['alpha', 'delta', 'gamma'] },
+        { op: 'unset', path: JUDGE },
+      ],
+    ])
+    expect(fetchConfig).toHaveBeenCalledTimes(2)
+    expect(checkedNames()).toEqual(['alpha', 'gamma', 'delta'])
+    expect(judgeBox('beta')!.disabled).toBe(true)
+    expect(section().textContent).toContain(JUDGE_LIMIT_TEXT)
+  })
+
+  it("JUDGE-TOGGLE-MERGES-OUTSIDE-JUDGE: with the file's list full, the check is dropped and the full list shows", async () => {
+    await mount(withModels(MODELS, { judges: ['alpha', 'beta'] }))
+    vi.mocked(applyConfigChanges).mockRejectedValueOnce(fieldChanged(JUDGES))
+    vi.mocked(fetchConfig).mockResolvedValue(
+      answer(withModels(MODELS, { judges: ['alpha', 'beta', 'delta'] })) as never,
+    )
+
+    await click(judgeBox('gamma'))
+    await flush()
+
+    expect(applyConfigChanges).toHaveBeenCalledTimes(1)
+    expect(fetchConfig).toHaveBeenCalledTimes(2)
+    expect(checkedNames()).toEqual(['alpha', 'beta', 'delta'])
+    expect(judgeBox('gamma')!.disabled).toBe(true)
+    expect(section().textContent).toContain(JUDGE_LIMIT_TEXT)
   })
 })
