@@ -3527,15 +3527,18 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps): (req: In
 
     // GET /api/config — return masked config with active provider info
     if (path === '/api/config' && req.method === 'GET') {
+      // 429-41 (CR-02): the answer carries file text and the file's absolute path, so it is read
+      // same-site only and no outcome grants a cross-origin read.
+      if (refuseCrossSiteDisplayRead(req, res)) return
       if (!configManager) {
-        json(res, { error: 'Config management not available' }, 501)
+        jsonNoCors(res, { error: 'Config management not available' }, 501)
         return
       }
       ;(async () => {
         try {
           const read = await configManager.readMasked()
           if (read.kind === 'file_invalid') {
-            json(res, { error: 'file_invalid', message: read.message }, 409)
+            jsonNoCors(res, { error: 'file_invalid', message: read.message }, 409)
             return
           }
           const { config, revision, lines, fileIssues } = read
@@ -3547,7 +3550,7 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps): (req: In
             ? llms.find((c) => c?.name === activeLlm)
             : undefined
           const provider = (defaultCfg?.provider as string) ?? null
-          json(res, {
+          jsonNoCors(res, {
             config,
             provider,
             revision,
@@ -3555,7 +3558,7 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps): (req: In
             ...(fileIssues.length > 0 ? { fileIssues } : {}),
           })
         } catch (err: unknown) {
-          json(res, { error: err instanceof Error ? err.message : 'Failed to read config' }, 500)
+          jsonNoCors(res, { error: err instanceof Error ? err.message : 'Failed to read config' }, 500)
         }
       })()
       return
