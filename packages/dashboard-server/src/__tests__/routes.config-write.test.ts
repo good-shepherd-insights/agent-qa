@@ -510,6 +510,92 @@ describe('PATCH /api/config set-if-absent and expect (429-42)', () => {
   })
 })
 
+// 429-44 WR-01: the page's write door changes only what the page renders a field for.
+const policyConfig = baseConfig.replace('registry: {}', [
+  'registry:',
+  '  llms:',
+  '    - name: gpt',
+  '      provider: anthropic-compatible',
+  '      model: claude-proxy',
+  '      baseURL: https://llm.example.test/v1',
+].join('\n')) + [
+  'plugins:',
+  '  auth:',
+  '    - path: ./auth-plugin.mjs',
+  'safety:',
+  '  trustMode: false',
+  '',
+].join('\n')
+
+describe('PATCH /api/config path policy (429-44)', () => {
+  it('WRITE-DOOR-REFUSES-DENIED-ROOTS: plugins and safety are refused 422 before anything is read or written', async () => {
+    const configPath = await useConfigWorkspace(policyConfig)
+    const before = await readFile(configPath)
+    mockRename.mockClear()
+    const denied = [
+      { op: 'set', path: ['plugins', 'auth', 0, 'path'], value: './evil.mjs' },
+      { op: 'append', path: ['plugins', 'providers'], value: { path: './evil-provider.mjs' } },
+      { op: 'set', path: ['safety', 'trustMode'], value: true },
+      { op: 'move', from: ['use', 'timeout', 'step'], path: ['plugins', 'auth', 0, 'package'] },
+      { op: 'expect', path: ['safety', 'trustMode'], value: false },
+    ]
+
+    for (const change of denied) {
+      const response = await patchConfig({ changes: [change] })
+      expect([change, response.status]).toEqual([change, 422])
+      expect(JSON.parse(response.body)).toEqual({ error: 'path_not_writable' })
+      expect(Buffer.compare(await readFile(configPath), before)).toBe(0)
+    }
+    // A denied change beside a writable one refuses the whole set.
+    const mixed = await patchConfig({
+      changes: [setStep('45s').changes[0], { op: 'set', path: ['safety', 'trustMode'], value: true }],
+    })
+    expect(mixed.status).toBe(422)
+    expect(Buffer.compare(await readFile(configPath), before)).toBe(0)
+    expect(mockRename).not.toHaveBeenCalled()
+  })
+
+  it('WRITE-DOOR-REFUSES-UNKNOWN-PATH: a path the published schema does not describe is refused and nothing is written', async () => {
+    const configPath = await useConfigWorkspace(policyConfig)
+    const before = await readFile(configPath)
+    mockRename.mockClear()
+
+    const response = await patchConfig({ changes: [{ op: 'set', path: ['use', 'bogus'], value: 'x' }] })
+
+    expect(response.status).toBe(422)
+    expect(JSON.parse(response.body)).toEqual({ error: 'path_not_writable' })
+    expect(Buffer.compare(await readFile(configPath), before)).toBe(0)
+    expect(mockRename).not.toHaveBeenCalled()
+  })
+
+  it('WRITE-DOOR-ADMITS-PAGE-WRITES: fields the page renders, security-relevant ones included, still land', async () => {
+    const configPath = await useConfigWorkspace(policyConfig)
+    const admitted = [
+      { op: 'set', path: ['services', 'mcp', 'stdio', 'grantConfigWrite'], value: true },
+      { op: 'set', path: ['registry', 'llms', { name: 'gpt' }, 'providerHeaders', 'X-Org'], value: 'org-1' },
+      {
+        op: 'append',
+        path: ['services', 'mcp', 'tokens'],
+        value: { name: 'ci', tokenEnvVar: 'AGENT_QA_MCP_CI_TOKEN', scopes: ['read'] },
+      },
+    ]
+
+    for (const change of admitted) {
+      const response = await patchConfig({ changes: [change] })
+      expect([change, response.status], response.body).toEqual([change, 200])
+    }
+    const parsed = parseYaml(await readFile(configPath, 'utf-8')) as {
+      services: { mcp: { stdio: unknown; tokens: unknown } }
+      registry: { llms: Array<{ providerHeaders?: unknown }> }
+    }
+    expect(parsed.services.mcp.stdio).toEqual({ grantConfigWrite: true })
+    expect(parsed.registry.llms[0]!.providerHeaders).toEqual({ 'X-Org': 'org-1' })
+    expect(parsed.services.mcp.tokens).toEqual([
+      { name: 'ci', tokenEnvVar: 'AGENT_QA_MCP_CI_TOKEN', scopes: ['read'] },
+    ])
+  })
+})
+
 const CONFIG_MANAGER_SOURCE = new URL('../config/config-manager.ts', import.meta.url)
 const FILE_ACCESS = /\b(?:readFile|writeFile|rename|rm|lstat|realpath|stat|chmod|mkdir)\(/
 

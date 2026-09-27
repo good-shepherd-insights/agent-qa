@@ -2,6 +2,7 @@ import { expectTypeOf, test } from 'vitest'
 import {
   CONFIG_ACTION_REFUSALS,
   CONFIG_NAMED_ARRAYS,
+  CONFIG_WRITE_DENIED_ROOTS,
   CONFIG_WRITE_OPS,
   CONFIG_WRITE_REFUSALS,
   LLM_SETUP_REFUSALS,
@@ -13,6 +14,7 @@ import type {
   ConfigChange,
   ConfigNamedArray,
   ConfigPathSegment,
+  ConfigWriteDeniedRoot,
   ConfigWriteOp,
   ConfigWriteRefusal,
   LlmSetupRefusal,
@@ -28,6 +30,14 @@ test('C429-CONFIG-WRITE-OPS-EXACT', () => {
   expectTypeOf<Exclude<Expected, ConfigWriteOp>>().toEqualTypeOf<never>()
   expectTypeOf<ConfigChange['op']>().toEqualTypeOf<Expected>()
   expectTypeOf<ConfigChange['path'][number]>().toEqualTypeOf<ConfigPathSegment>()
+})
+
+test('C429-CONFIG-WRITE-DENIED-ROOTS-EXACT', () => {
+  type Expected = 'plugins' | 'safety'
+  expectTypeOf<ConfigWriteDeniedRoot>().toEqualTypeOf<Expected>()
+  expectTypeOf<(typeof CONFIG_WRITE_DENIED_ROOTS)[number]>().toEqualTypeOf<Expected>()
+  expectTypeOf<Exclude<ConfigWriteDeniedRoot, Expected>>().toEqualTypeOf<never>()
+  expectTypeOf<Exclude<Expected, ConfigWriteDeniedRoot>>().toEqualTypeOf<never>()
 })
 
 test('C429-CONFIG-WRITE-REFUSALS-EXACT', () => {
