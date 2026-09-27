@@ -21,7 +21,7 @@ import type {
 } from '../index'
 
 test('C429-CONFIG-WRITE-OPS-EXACT', () => {
-  type Expected = 'set' | 'unset' | 'append'
+  type Expected = 'set' | 'unset' | 'append' | 'set-if-absent' | 'move' | 'expect'
   expectTypeOf<ConfigWriteOp>().toEqualTypeOf<Expected>()
   expectTypeOf<(typeof CONFIG_WRITE_OPS)[number]>().toEqualTypeOf<Expected>()
   expectTypeOf<Exclude<ConfigWriteOp, Expected>>().toEqualTypeOf<never>()
@@ -38,6 +38,8 @@ test('C429-CONFIG-WRITE-REFUSALS-EXACT', () => {
     | 'validation_failed'
     | 'mask_written_back'
     | 'write_failed'
+    | 'field_changed'
+    | 'path_not_writable'
   expectTypeOf<ConfigWriteRefusal>().toEqualTypeOf<Expected>()
   expectTypeOf<(typeof CONFIG_WRITE_REFUSALS)[number]>().toEqualTypeOf<Expected>()
   expectTypeOf<Exclude<ConfigWriteRefusal, Expected>>().toEqualTypeOf<never>()

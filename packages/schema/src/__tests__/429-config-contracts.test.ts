@@ -2,7 +2,7 @@ import { expect, test } from 'vitest'
 import * as api from '../index'
 
 test('C429-CONFIG-WRITE-OPS-EXACT', () => {
-  expect(api.CONFIG_WRITE_OPS).toEqual(['set', 'unset', 'append'])
+  expect(api.CONFIG_WRITE_OPS).toEqual(['set', 'unset', 'append', 'set-if-absent', 'move', 'expect'])
 })
 
 test('C429-CONFIG-WRITE-REFUSALS-EXACT', () => {
@@ -13,6 +13,8 @@ test('C429-CONFIG-WRITE-REFUSALS-EXACT', () => {
     'validation_failed',
     'mask_written_back',
     'write_failed',
+    'field_changed',
+    'path_not_writable',
   ])
 })
 
@@ -31,6 +33,18 @@ test('C429-CONFIG-CHANGE-STRICT', () => {
     { changes: [{ op: 'unset', path: ['use', 'cache'] }] },
     { changes: [{ op: 'append', path: ['registry', 'llms'], value: { name: 'local', provider: 'gemini' } }] },
     { changes: [{ op: 'set', path: ['registry', 'llms', 0, 'model'], value: 'y' }], undoable: true },
+    { changes: [{ op: 'set-if-absent', path: ['use', 'timeout', 'test'], value: '10m' }] },
+    {
+      changes: [
+        {
+          op: 'move',
+          from: ['registry', 'llms', { name: 'proxy' }, 'providerHeaders', 'X-Org'],
+          path: ['registry', 'llms', { name: 'proxy' }, 'providerHeaders', 'X-Team'],
+        },
+      ],
+    },
+    { changes: [{ op: 'expect', path: ['eval', 'judges'], value: ['a', 'b'] }] },
+    { changes: [{ op: 'expect', path: ['eval', 'judge'], value: null }] },
   ]
   for (const body of accepted) {
     expect(schema.parse(body)).toEqual(body)
@@ -47,6 +61,20 @@ test('C429-CONFIG-CHANGE-STRICT', () => {
     { changes: [{ op: 'set', path: ['use', -1], value: 'x' }] },
     { changes: [{ op: 'set', path: ['registry', 'llms', { name: 'a', index: 0 }], value: 'x' }] },
     { changes: [{ op: 'set', path: ['use'], value: 1 }], extra: true },
+    { changes: [{ op: 'move', path: ['registry', 'llms', { name: 'proxy' }, 'providerHeaders', 'X-Team'] }] },
+    {
+      changes: [
+        {
+          op: 'move',
+          from: ['registry', 'llms', { name: 'proxy' }, 'providerHeaders', 'X-Org'],
+          path: ['registry', 'llms', { name: 'proxy' }, 'providerHeaders', 'X-Team'],
+          value: 'x',
+        },
+      ],
+    },
+    { changes: [{ op: 'expect', path: ['eval', 'judges'], value: ['a'], extra: true }] },
+    { changes: [{ op: 'set-if-absent', path: ['use', 'timeout', 'test'], value: '10m', extra: true }] },
+    { changes: [{ op: 'move', from: ['a'], path: ['b'], extra: true }] },
   ]
   for (const body of refused) {
     expect(schema.safeParse(body).success).toBe(false)
