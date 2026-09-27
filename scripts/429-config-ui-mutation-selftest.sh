@@ -10,6 +10,11 @@
 # reason a total read off the gate would be worthless: it would agree with the gate however the gate
 # moved.
 #
+# 2026-09-27, 429-50: U32..U43 are the gap closure's legs and four subjects join (config-fields.ts,
+# eval-section.tsx, model-workspace.ts, token-list.tsx), eighteen in all. The legs 429-50 re-spelled
+# (U23, U25) moved only in their allowed lists, which this inventory does not spell, so their entries
+# are unchanged.
+#
 # Runs in place on the real tree. Slow; a phase gate, not a per-commit sample.
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
@@ -31,6 +36,10 @@ const ADD_ROW_SRC = 'packages/dashboard-ui/src/components/config-manager/add-mod
 const SECRET_SRC = 'packages/dashboard-ui/src/components/config-manager/secret-value.tsx'
 const TAB_BAR_SRC = 'packages/dashboard-ui/src/components/config-manager/config-tabs.tsx'
 const PAGE_SRC = 'packages/dashboard-ui/src/pages/config.tsx'
+const FIELDS_SRC = 'packages/dashboard-ui/src/lib/config-fields.ts'
+const EVAL_SRC = 'packages/dashboard-ui/src/components/config-manager/eval-section.tsx'
+const WORKSPACE_SRC = 'packages/dashboard-ui/src/lib/model-workspace.ts'
+const TOKEN_SRC = 'packages/dashboard-ui/src/components/config-manager/token-list.tsx'
 
 const TABS_T = 'src/lib/__tests__/config-tabs.test.ts'
 const TABS_D = 'src/lib/__tests__/config-tabs.test-d.ts'
@@ -45,6 +54,11 @@ const PAGE_T = 'src/pages/__tests__/config-page.test.tsx'
 const COVERAGE_T = 'src/pages/__tests__/config-page.schema-coverage.test.tsx'
 const A11Y_T = 'src/pages/__tests__/config-page.a11y.test.tsx'
 const DOM_T = 'src/__tests__/conformance/429-config-dom.test.ts'
+const FIELDS_T = 'src/lib/__tests__/config-fields.test.ts'
+const WORKSPACE_T = 'src/lib/__tests__/model-workspace.test.ts'
+const EVAL_T = 'src/components/config-manager/__tests__/eval-section.test.tsx'
+const MODEL_ROW_T = 'src/components/config-manager/__tests__/model-row.test.tsx'
+const TOKEN_T = 'src/components/config-manager/__tests__/token-list.test.tsx'
 
 const UI = '@vostride/agent-qa-dashboard-ui'
 
@@ -121,6 +135,31 @@ runSelftest({
       reds: [`${DOM_T} > TABS-FIVE-IN-ORDER-SHIPPED`] },
     { id: 'U31', claim: 'STATUS-NEVER-SCROLLS-AWAY', subject: TAB_BAR_SRC, crossing: UI,
       reds: [`${DOM_T} > STATUS-NEVER-SCROLLS-AWAY`] },
+    // The gap closure's legs (429-50).
+    { id: 'U32', claim: 'OUTSIDE-EDIT-INTERLEAVED-REREAD', subject: HOOK_SRC,
+      reds: [`${HOOK_T} > OUTSIDE-EDIT-INTERLEAVED-REREAD`] },
+    { id: 'U33', claim: 'MIRROR-CONTINUES-PAST-MISSING-PARENT', subject: HOOK_SRC,
+      reds: [`${HOOK_T} > MIRROR-CONTINUES-PAST-MISSING-PARENT`] },
+    { id: 'U34', claim: 'SIBLING-COMPLETION-NEVER-OVERWRITES', subject: FIELDS_SRC,
+      reds: [`${FIELDS_T} > SIBLING-COMPLETION-NEVER-OVERWRITES`] },
+    { id: 'U35', claim: 'COMPUTED-WRITE-MERGES-OUTSIDE-EDIT', subject: HOOK_SRC,
+      reds: [`${HOOK_T} > COMPUTED-WRITE-MERGES-OUTSIDE-EDIT: a field_changed refusal re-reads, recomputes and lands on the file's list`] },
+    { id: 'U36', claim: 'JUDGE-WRITE-EXPECTS-LIST', subject: EVAL_SRC,
+      reds: [`${EVAL_T} > JUDGE-WRITE-EXPECTS-LIST`] },
+    { id: 'U37', claim: 'DELETE-JUDGE-EXPECTS-LIST', subject: WORKSPACE_SRC,
+      reds: [`${WORKSPACE_T} > DELETE-JUDGE-EXPECTS-LIST`] },
+    { id: 'U38', claim: 'HEADER-RENAME-NEVER-REVEALS', subject: MODEL_ROW_SRC,
+      reds: [`${MODEL_ROW_T} > HEADER-RENAME-NEVER-REVEALS (x2)`] },
+    { id: 'U39', claim: 'DISCARD-NEVER-DELETES-SAVED-CREDENTIAL', subject: ADD_ROW_SRC,
+      reds: [`${ADD_ROW_T} > DISCARD-NEVER-DELETES-SAVED-CREDENTIAL`] },
+    { id: 'U40', claim: 'CONNECT-REFUSAL-COPY', subject: ADD_ROW_SRC,
+      reds: [`${ADD_ROW_T} > CONNECT-REFUSAL-COPY`] },
+    { id: 'U41', claim: 'CONNECT-REFUSAL-COPY-TOTAL', subject: COPY_SRC,
+      reds: [`${COPY_T} > CONNECT-REFUSAL-COPY-TOTAL: every code the connect door can answer has its own full sentence`] },
+    { id: 'U42', claim: 'ADD-MCP-TOKEN-KEEPS-EVERY-SCOPE', subject: TOKEN_SRC,
+      reds: [`${TOKEN_T} > ADD-MCP-TOKEN-KEEPS-EVERY-SCOPE`] },
+    { id: 'U43', claim: 'OUTSIDE-EDIT-INTERLEAVED-SHIPPED', subject: HOOK_SRC, crossing: UI,
+      reds: [`${DOM_T} > OUTSIDE-EDIT-INTERLEAVED-SHIPPED`] },
   ],
 })
 NODE
