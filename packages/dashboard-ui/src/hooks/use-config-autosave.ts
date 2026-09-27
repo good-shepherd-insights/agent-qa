@@ -194,7 +194,7 @@ function maskedLikeServer(value: unknown, path: (string | number)[]): unknown {
 }
 
 function mirroredChange(change: ConfigChange): ConfigChange {
-  if (change.op === "unset" || change.op === "move") return change
+  if (change.op === "unset" || change.op === "move" || change.op === "expect") return change
   const path = classifiedPath(change.path)
   return { ...change, value: maskedLikeServer(change.value, change.op === "append" ? [...path, 0] : path) }
 }
@@ -213,14 +213,18 @@ function childAt(node: unknown, segment: ConfigPathSegment): { found: boolean; v
   return isRecord(node) && segment in node ? { found: true, value: node[segment] } : { found: false, value: undefined }
 }
 
-function valueAt(config: unknown, segments: readonly ConfigPathSegment[]): unknown {
+function lookup(config: unknown, segments: readonly ConfigPathSegment[]): { found: boolean; value: unknown } {
   let node = config
   for (const segment of segments) {
     const next = childAt(node, segment)
-    if (!next.found) return undefined
+    if (!next.found) return { found: false, value: undefined }
     node = next.value
   }
-  return node
+  return { found: true, value: node }
+}
+
+function valueAt(config: unknown, segments: readonly ConfigPathSegment[]): unknown {
+  return lookup(config, segments).value
 }
 
 /** The index path the server names in its issues, with each `{ name }` resolved on the loaded config. */
@@ -344,50 +348,77 @@ function loadFailureReason(error: unknown): string {
   return text.trim().replace(/[.\s]+$/, "")
 }
 
-/** The loaded config with a landed write applied, so nothing waits on a re-read; undefined when a path is not there. */
+type PlainChange =
+  | { op: "set" | "append"; path: readonly ConfigPathSegment[]; value: unknown }
+  | { op: "unset"; path: readonly ConfigPathSegment[] }
+
+const BROWSER_HEADLESS_PATH = ["use", "browser", "headless"]
+const LEGACY_HEADLESS_PATH = ["use", "headless"]
+
+/** One set, unset or append on the copy; false when its path is not there to mirror. */
+function applyAt(next: Record<string, unknown>, change: PlainChange): boolean {
+  const parentPath = change.path.slice(0, -1)
+  const last = change.path[change.path.length - 1]!
+  let parent: unknown = next
+  for (const segment of parentPath) {
+    const child = childAt(parent, segment)
+    if (child.found && (isRecord(child.value) || Array.isArray(child.value))) {
+      parent = child.value
+    } else if (change.op !== "unset" && typeof segment === "string" && isRecord(parent)) {
+      parent = parent[segment] = {}
+    } else {
+      // Nothing is there to remove; the rest of the set still applies (deferred 429-28).
+      return change.op === "unset"
+    }
+  }
+  const target = childAt(parent, last)
+  if (change.op === "append") {
+    if (typeof last !== "string" || !isRecord(parent)) return false
+    const list = target.found ? target.value : (parent[last] = [])
+    if (!Array.isArray(list)) return false
+    list.push(change.value)
+  } else if (Array.isArray(parent)) {
+    if (target.index === undefined) return change.op === "unset"
+    if (change.op === "unset") parent.splice(target.index, 1)
+    else parent[target.index] = change.value
+  } else if (isRecord(parent) && typeof last === "string") {
+    if (change.op === "unset") delete parent[last]
+    else parent[last] = change.value
+  } else {
+    return false
+  }
+  return true
+}
+
+/**
+ * The loaded config with a landed write applied as the server merges it on a trusted base, so
+ * nothing waits on a re-read; undefined when it cannot be mirrored here.
+ */
 function patchConfig(
   config: Record<string, unknown>,
   changes: readonly ConfigChange[],
 ): Record<string, unknown> | undefined {
   const next = JSON.parse(JSON.stringify(config)) as Record<string, unknown>
-  nextChange: for (const change of changes) {
-    // Decided by the file at merge time, so only the next read can show what landed.
-    if (change.op === "set-if-absent" || change.op === "move" || change.op === "expect") return undefined
-    const parentPath = change.path.slice(0, -1)
-    const last = change.path[change.path.length - 1]!
-    let parent: unknown = next
-    for (const segment of parentPath) {
-      const child = childAt(parent, segment)
-      if (child.found && (isRecord(child.value) || Array.isArray(child.value))) {
-        parent = child.value
-      } else if (change.op !== "unset" && typeof segment === "string" && isRecord(parent)) {
-        parent = parent[segment] = {}
-      } else if (change.op === "unset") {
-        // Nothing is there to remove; the rest of the set still applies (deferred 429-28).
-        continue nextChange
-      } else {
-        return undefined
-      }
+  for (const change of changes) {
+    if (change.op === "expect") continue
+    if (change.op === "move") {
+      // Both ends share a class (429-52), so a masked value stays the mask it already is here.
+      const moving = lookup(next, change.from)
+      if (!moving.found || !applyAt(next, { op: "unset", path: change.from })) return undefined
+      if (!applyAt(next, { op: "set", path: change.path, value: moving.value })) return undefined
+      continue
     }
-    const target = childAt(parent, last)
-    if (change.op === "append") {
-      if (typeof last !== "string" || !isRecord(parent)) return undefined
-      const list = target.found ? target.value : (parent[last] = [])
-      if (!Array.isArray(list)) return undefined
-      list.push(change.value)
-    } else if (Array.isArray(parent)) {
-      if (target.index === undefined) {
-        if (change.op === "unset") continue
-        return undefined
-      }
-      if (change.op === "unset") parent.splice(target.index, 1)
-      else parent[target.index] = change.value
-    } else if (isRecord(parent) && typeof last === "string") {
-      if (change.op === "unset") delete parent[last]
-      else parent[last] = change.value
-    } else {
-      return undefined
+    if (change.op === "set-if-absent") {
+      if (lookup(next, change.path).found) continue
+      // 429-42: completion over a root use.headless keeps the owner's value, so only a read shows it.
+      const legacy =
+        change.path.length === BROWSER_HEADLESS_PATH.length &&
+        change.path.every((segment, index) => segment === BROWSER_HEADLESS_PATH[index]) &&
+        lookup(next, LEGACY_HEADLESS_PATH).found
+      if (legacy || !applyAt(next, { op: "set", path: change.path, value: change.value })) return undefined
+      continue
     }
+    if (!applyAt(next, change)) return undefined
   }
   return next
 }
