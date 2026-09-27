@@ -166,7 +166,8 @@ function reduceEvent(
         ...(event.message === undefined ? {} : { message: event.message }),
       }
       const rest = without(state, 'savedAt')
-      return carried.length > 0
+      // A failed write is no longer in flight, whatever it carried.
+      return state.write?.id === event.id
         ? { ...without(rest, 'write'), fields, failure }
         : { ...rest, fields, failure }
     }
