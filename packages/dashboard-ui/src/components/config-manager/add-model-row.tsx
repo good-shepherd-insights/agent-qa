@@ -52,6 +52,7 @@ import {
   BASE_URL_HELP,
   BASE_URL_REQUIRED_ERROR,
   CONNECTING_LABEL,
+  CONNECT_REFUSAL_COPY,
   CONNECTION_CHOICE_HINTS,
   CONNECTION_CHOICE_LABELS,
   CONNECT_FORM_LEGEND,
@@ -67,6 +68,7 @@ import {
   NEW_MODEL_ROW_TITLE,
   REPLACE_KEY_LABEL,
   SAVE_WITHOUT_TESTING_LABEL,
+  connectRefusalSentence,
   existingCredentialLine,
   nameCredentialConflictError,
   nameTakenError,
@@ -189,12 +191,28 @@ function initialState(
   return { draft, headers }
 }
 
-function refusalOf(error: unknown): { code?: string; message?: string } {
+interface Refusal {
+  code?: string
+  message?: string
+  issues?: { message: string }[]
+}
+
+function issuesOf(raw: unknown): { message: string }[] | undefined {
+  if (!Array.isArray(raw)) return undefined
+  return raw.flatMap((issue) => {
+    const message = (issue as { message?: unknown } | null)?.message
+    return typeof message === "string" ? [{ message }] : []
+  })
+}
+
+function refusalOf(error: unknown): Refusal {
   const payload = (error as { payload?: Record<string, unknown> | null } | null)?.payload
   if (!payload) return {}
+  const issues = issuesOf(payload.issues)
   return {
     ...(typeof payload.error === "string" ? { code: payload.error } : {}),
     ...(typeof payload.message === "string" ? { message: payload.message } : {}),
+    ...(issues === undefined ? {} : { issues }),
   }
 }
 
@@ -399,9 +417,12 @@ export function AddModelRow({
   }
 
   /** Claude's Discretion "Name collision": another provider's credential under the name is never overwritten. */
-  function credentialConflict(candidate: string): string | undefined {
+  function credentialConflict(candidate: string, held: readonly AuthCredentialInfo[] = heldCredentials): string | undefined {
     if (provider === undefined || candidate === "") return undefined
-    const holder = signedIn?.name === candidate ? signedIn.provider : heldUnder(candidate)?.provider
+    const holder =
+      signedIn?.name === candidate
+        ? signedIn.provider
+        : held.find((credential) => credential.configName === candidate)?.provider
     if (holder === undefined || holder === provider) return undefined
     return nameCredentialConflictError(candidate, providerFacts(providers, holder).label ?? holder)
   }
@@ -540,7 +561,12 @@ export function AddModelRow({
         fieldRefs.current.get("key")?.focus()
         return
       }
-      setLine({ state: "failed", sentence: refusal.message ?? providerErrorSentence("network_error", "") })
+      if (refusal.code === "credential_provider_conflict") {
+        setLine(undefined)
+        await showServerConflict(request.name)
+        return
+      }
+      setLine({ state: "failed", sentence: refusal.message ?? connectRefusalSentence(refusal.code, refusal.issues) })
       return
     }
     if (!mounted.current) return
@@ -552,6 +578,20 @@ export function AddModelRow({
     setConnecting(false)
     setLine({ state: "failed", sentence: result.message })
     setOfferSkip(true)
+  }
+
+  /** The server saw another provider's credential under the name; re-read who holds it to say so. */
+  async function showServerConflict(candidate: string) {
+    let held = heldCredentials
+    try {
+      held = (await fetchAuthStatus()).credentials ?? held
+    } catch {
+      // The generic conflict sentence still names the fix.
+    }
+    if (!mounted.current) return
+    setHeldCredentials(held)
+    showError("name", credentialConflict(candidate, held) ?? CONNECT_REFUSAL_COPY.credential_provider_conflict)
+    fieldRefs.current.get("name")?.focus()
   }
 
   /** D-15/D-17: the sign-in finished for the draft name, so the test runs by itself, with no key. */

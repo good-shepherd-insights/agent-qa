@@ -16,7 +16,14 @@ import type {
   TestResult,
 } from './config-tabs'
 
-import type { FunctionScope, TrustScopeKey } from '@vostride/agent-qa-schema'
+import type {
+  ConfigWriteRefusal,
+  FunctionScope,
+  LlmSetupRefusal,
+  TrustScopeKey,
+} from '@vostride/agent-qa-schema'
+
+import { providerErrorSentence } from '@vostride/agent-qa-schema'
 
 export { providerErrorSentence } from '@vostride/agent-qa-schema'
 
@@ -347,6 +354,49 @@ export function nameCredentialConflictError(name: string, providerLabel: string)
 export const MODEL_REQUIRED_ERROR = 'Model is required.'
 export const KEY_REQUIRED_ERROR = 'API key is required.'
 export const BASE_URL_REQUIRED_ERROR = 'Base URL is required for compatible providers.'
+
+/** Every code POST /api/llm/connect can refuse with, including the route's own two. */
+export type ConnectRefusalCode = LlmSetupRefusal | ConfigWriteRefusal | 'connect_failed' | 'cross_site_refused'
+
+const COULD_NOT_SAVE_MODEL = "Couldn't save the model. Try again."
+
+export const CONNECT_REFUSAL_COPY = {
+  invalid_setup_input: 'Check the model and base URL.',
+  name_invalid: NAME_RULE_ERROR,
+  name_taken: 'Another model already uses this name.',
+  credential_provider_conflict: 'This name holds a key for a different connection. Choose another name.',
+  credential_not_accepted: "This connection doesn't take that kind of key.",
+  credential_missing: KEY_REQUIRED_ERROR,
+  credential_exists: 'Another saved key already uses this name.',
+  validation_failed: 'The config file has a problem to fix first.',
+  file_invalid: "The config file doesn't parse. Fix it in your editor, then connect again.",
+  invalid_write_input: COULD_NOT_SAVE_MODEL,
+  path_not_found: COULD_NOT_SAVE_MODEL,
+  mask_written_back: COULD_NOT_SAVE_MODEL,
+  write_failed: COULD_NOT_SAVE_MODEL,
+  field_changed: COULD_NOT_SAVE_MODEL,
+  path_not_writable: COULD_NOT_SAVE_MODEL,
+  connect_failed: COULD_NOT_SAVE_MODEL,
+  cross_site_refused: "This page isn't allowed to change the config.",
+} as const satisfies Record<ConnectRefusalCode, string>
+
+const REFUSALS_WITH_ISSUES: ReadonlySet<string> = new Set<ConnectRefusalCode>(['validation_failed', 'invalid_setup_input'])
+
+function isConnectRefusalCode(code: string): code is ConnectRefusalCode {
+  return Object.prototype.hasOwnProperty.call(CONNECT_REFUSAL_COPY, code)
+}
+
+/** The network sentence only when the server named no reason this page knows. */
+export function connectRefusalSentence(
+  code: string | undefined,
+  issues?: readonly { message: string }[],
+): string {
+  if (code === undefined || !isConnectRefusalCode(code)) return providerErrorSentence('network_error', '')
+  const sentence: string = CONNECT_REFUSAL_COPY[code]
+  const first = issues?.[0]?.message
+  if (!REFUSALS_WITH_ISSUES.has(code) || !first) return sentence
+  return `${sentence.replace(/\.$/, '')}: ${first}`
+}
 
 export const SIGN_IN_WAITING_TEXT = 'Finish signing in on the page that opened.'
 export const CANCEL_SIGN_IN_LABEL = 'Cancel sign-in'
