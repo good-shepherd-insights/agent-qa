@@ -365,6 +365,147 @@ describe('PATCH /api/config concurrency, idempotency and file identity (429-05)'
   })
 })
 
+// 429-42 CR-01: completion and snapshot-computed writes are decided by the file at merge time.
+function withoutLines(text: string, lines: readonly string[]): string {
+  return text.split('\n').filter((line) => !lines.includes(line)).join('\n')
+}
+
+const TIMEOUT_LINES = ['  timeout:', '    step: 30s', '    test: 10m', '    navigation: 10s']
+const BROWSER_LINES = ['  browser:', '    name: chromium', '    headless: false']
+
+const judgeRegistry = [
+  'registry:',
+  '  llms:',
+  ...['a', 'b', 'c', 'd'].flatMap((name) => [`    - name: ${name}`, '      provider: gemini', '      model: gemini-2.5-flash']),
+  '    - name: proxy',
+  '      provider: anthropic-compatible',
+  '      model: claude-proxy',
+  '      baseURL: https://llm.example.test/v1',
+  '      providerHeaders:',
+  '        X-Org: org-secret-value',
+].join('\n')
+
+function judgeConfig(judges: readonly string[]): string {
+  return baseConfig.replace('registry: {}', judgeRegistry)
+    + ['eval:', '  judges:', ...judges.map((judge) => `    - ${judge}`), ''].join('\n')
+}
+
+const judgeWrite = {
+  changes: [
+    { op: 'expect', path: ['eval', 'judges'], value: ['a', 'b'] },
+    { op: 'expect', path: ['eval', 'judge'], value: null },
+    { op: 'set', path: ['eval', 'judges'], value: ['a', 'b', 'c'] },
+  ],
+}
+
+describe('PATCH /api/config set-if-absent and expect (429-42)', () => {
+  it('SET-IF-ABSENT-KEEPS-OUTSIDE-VALUE: completion never replaces a sibling already in the file', async () => {
+    const configPath = await useConfigWorkspace()
+    const outside = baseConfig.replace('  mobile:', '  planner:\n    maxSubActions: 99\n    previousStepCount: 77\n  mobile:')
+    await writeFile(configPath, outside, 'utf-8')
+
+    const response = await patchConfig({
+      changes: [
+        { op: 'set', path: ['use', 'planner', 'maxSubActions'], value: 50 },
+        { op: 'set-if-absent', path: ['use', 'planner', 'previousStepCount'], value: 5 },
+      ],
+    })
+
+    expect(response.status, response.body).toBe(200)
+    const parsed = parseYaml(await readFile(configPath, 'utf-8')) as { use: { planner: unknown } }
+    expect(parsed.use.planner).toEqual({ maxSubActions: 50, previousStepCount: 77 })
+  })
+
+  it('SET-IF-ABSENT-FILLS-ABSENT: into an absent block every set-if-absent sibling is written', async () => {
+    const configPath = await useConfigWorkspace(withoutLines(baseConfig, TIMEOUT_LINES))
+
+    const response = await patchConfig({
+      changes: [
+        { op: 'set', path: ['use', 'timeout', 'step'], value: '45s' },
+        { op: 'set-if-absent', path: ['use', 'timeout', 'test'], value: '10m' },
+        { op: 'set-if-absent', path: ['use', 'timeout', 'navigation'], value: '10s' },
+      ],
+    })
+
+    expect(response.status, response.body).toBe(200)
+    const parsed = parseYaml(await readFile(configPath, 'utf-8')) as { use: { timeout: unknown } }
+    expect(parsed.use.timeout).toEqual({ step: '45s', test: '10m', navigation: '10s' })
+  })
+
+  it('SET-IF-ABSENT-TWICE-IDEMPOTENT: the same set-if-absent change set twice leaves the same bytes and revision', async () => {
+    const configPath = await useConfigWorkspace(withoutLines(baseConfig, TIMEOUT_LINES))
+    const body = {
+      changes: [
+        { op: 'set', path: ['use', 'timeout', 'step'], value: '45s' },
+        { op: 'set-if-absent', path: ['use', 'timeout', 'test'], value: '10m' },
+        { op: 'set-if-absent', path: ['use', 'timeout', 'navigation'], value: '10s' },
+      ],
+    }
+
+    const first = await patchConfig(body)
+    const afterFirst = await readFile(configPath)
+    const second = await patchConfig(body)
+
+    expect([first.status, second.status], second.body).toEqual([200, 200])
+    expect(Buffer.compare(await readFile(configPath), afterFirst)).toBe(0)
+    const [one, two] = [first, second].map((response) => JSON.parse(response.body) as { revision: string })
+    expect(two!.revision).toBe(one!.revision)
+  })
+
+  it('LEGACY-HEADLESS-KEPT-ON-COMPLETION: completing use.browser.headless keeps a root use.headless value and drops the legacy key', async () => {
+    const legacy = withoutLines(baseConfig, BROWSER_LINES).replace('use:\n', 'use:\n  headless: false\n')
+    const configPath = await useConfigWorkspace(legacy)
+
+    const response = await patchConfig({
+      changes: [
+        { op: 'set', path: ['use', 'browser', 'name'], value: 'firefox' },
+        { op: 'set-if-absent', path: ['use', 'browser', 'headless'], value: true },
+      ],
+    })
+
+    expect(response.status, response.body).toBe(200)
+    const parsed = parseYaml(await readFile(configPath, 'utf-8')) as { use: Record<string, unknown> }
+    expect(parsed.use.browser).toEqual({ name: 'firefox', headless: false })
+    expect('headless' in parsed.use).toBe(false)
+  })
+
+  it('EXPECT-MATCH-WRITES: a write whose expects match the file lands', async () => {
+    const configPath = await useConfigWorkspace(judgeConfig(['a', 'b']))
+
+    const response = await patchConfig(judgeWrite)
+
+    expect(response.status, response.body).toBe(200)
+    const parsed = parseYaml(await readFile(configPath, 'utf-8')) as { eval: Record<string, unknown> }
+    expect(parsed.eval).toEqual({ judges: ['a', 'b', 'c'] })
+  })
+
+  it('EXPECT-MISMATCH-REFUSED: a field changed outside refuses the whole set 409 and keeps the bytes', async () => {
+    const configPath = await useConfigWorkspace(judgeConfig(['a', 'b', 'd']))
+    const before = await readFile(configPath)
+    mockRename.mockClear()
+
+    const response = await patchConfig(judgeWrite)
+
+    expect(response.status).toBe(409)
+    expect(JSON.parse(response.body)).toEqual({ error: 'field_changed', path: ['eval', 'judges'] })
+    expect(Buffer.compare(await readFile(configPath), before)).toBe(0)
+    expect(mockRename).not.toHaveBeenCalled()
+  })
+
+  it('EXPECT-ON-SECRET-REFUSED: an expect on a secret is refused 422 whether or not the guess is right', async () => {
+    const configPath = await useConfigWorkspace(judgeConfig(['a', 'b']))
+    const before = await readFile(configPath)
+    const secretPath = ['registry', 'llms', { name: 'proxy' }, 'providerHeaders', 'X-Org']
+
+    for (const guess of ['guess', 'org-secret-value']) {
+      const response = await patchConfig({ changes: [{ op: 'expect', path: secretPath, value: guess }] })
+      expect([guess, response.status]).toEqual([guess, 422])
+      expect(JSON.parse(response.body)).toEqual({ error: 'path_not_writable' })
+    }
+    expect(Buffer.compare(await readFile(configPath), before)).toBe(0)
+  })
+})
+
 const CONFIG_MANAGER_SOURCE = new URL('../config/config-manager.ts', import.meta.url)
 const FILE_ACCESS = /\b(?:readFile|writeFile|rename|rm|lstat|realpath|stat|chmod|mkdir)\(/
 
