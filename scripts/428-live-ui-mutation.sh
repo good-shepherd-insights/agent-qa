@@ -53,7 +53,7 @@
 #   U32  the page passes the preview handle 0 instead of the derived handle        -> FOLLOWS-RUNNING-MEMBER ((3))
 #   U33  the watch rule returns the previous handle whenever there is one          -> WATCH-SWITCHES-WHEN-NEXT-STARTS ((3))
 #   U34  U32's edit, on the rebuilt bundle                                          -> FOLLOWS-RUNNING-MEMBER-SHIPPED ((3), shipped)
-#   U35  the status cluster renders inside the picture's box, not the chrome       -> DOT-IN-CHROME-TOP-LEFT (owner 2026-09-26 (4))
+#   U35  the status cluster renders inside the picture's box, not the chrome       -> DOT-TOP-RIGHT (owner 2026-09-26 (6), quick task 6)
 #   U36  the dot's corner sits over the middle of the picture, on the rebuilt bundle -> DOT-TOP-RIGHT-OF-CONTAINER ((6), shipped)
 #   U37  the running glyph takes Tailwind's pulse animation                        -> RUNNING-GLYPH-STILL (owner 2026-09-26 (5))
 #
@@ -105,6 +105,11 @@
 # top-left: U35, and U36 on the shipped page; (5) the running glyph still: U37 (the dot's stillness
 # is U07 and U25). U30's subject is step-list.tsx, not the row: the list drops text-less rows before
 # the row sees them, so only the list can put a step N row back on the shipped page.
+#
+# 2026-09-27, 429-40: U35 re-pointed from DOT-IN-CHROME-TOP-LEFT to DOT-TOP-RIGHT after agent-qa
+# 617ccdd78 renamed the cell; same regression, same instrument. Its co-reds are re-measured against
+# the moved dot: ASPECT-BOX no longer reds (a live green frame has no status cluster to misplace),
+# and SNAPSHOT-LABEL-BESIDE-DOT is SNAPSHOT-LABEL.
 #
 # Engine, arrival proof, counted selection and restoration: scripts/423-mutation-engine.cjs.
 #
@@ -605,18 +610,22 @@ const legs = [
     greens: [layoutDom('NO-HANDLE-PICKER-SHIPPED'), dom('NO-ANIMATION-ON-LIVE-PAGE')],
   },
   {
-    subject: COMPONENT_SRC, instrument: 'ui-parts', claim: 'DOT-IN-CHROME-TOP-LEFT',
+    subject: COMPONENT_SRC, instrument: 'ui-parts', claim: 'DOT-TOP-RIGHT',
     operation: "render the status cluster inside the picture's box instead of the chrome",
     edits: [
       { from: CHROME_LINE, to: '      <PreviewChrome>{chrome}</PreviewChrome>\n' },
       { from: '              className="size-full border-0"\n            />\n', to: '              className="size-full border-0"\n            />\n            {status}\n' },
     ],
-    reds: [preview('DOT-IN-CHROME-TOP-LEFT')],
+    reds: [preview('DOT-TOP-RIGHT')],
     allowed: [
-      // Each reads the status in the chrome, or the picture's box as the iframe alone; session-ended
-      // has no picture's box, so a status drawn only there is not drawn at all.
-      preview('ASPECT-BOX'), preview('SNAPSHOT-LABEL-BESIDE-DOT'), preview('AMBER-WORDS'), preview('RED-ACTION'),
-      preview('CHROME-ONLY-WITH-CONTENT'), preview('EDITOR-START-FRESH'),
+      // The snapshot label, the amber words and the Reconnect action are each read in the chrome's
+      // status cluster, which now sits in the picture's box instead.
+      preview('SNAPSHOT-LABEL'), preview('AMBER-WORDS'), preview('RED-ACTION'),
+      // Loading's words must make a chrome row; before a mint there is no picture's box, so they are
+      // drawn nowhere.
+      preview('CHROME-ONLY-WITH-CONTENT'),
+      // Session-ended has no picture's box, so its Start fresh action is not drawn at all.
+      preview('EDITOR-START-FRESH'),
     ],
     greens: [preview('BRIDGE-SOURCE-CHECKED'), preview('HANDLE-FROM-HOST'), preview('DOT-IS-STILL')],
   },
