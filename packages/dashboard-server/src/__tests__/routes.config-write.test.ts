@@ -596,6 +596,100 @@ describe('PATCH /api/config path policy (429-44)', () => {
   })
 })
 
+// 429-52 (deferred 429-24, server half): a header rename re-keys the value inside the server.
+const HEADER_SECRET = 'sk-header-secret-1'
+const headerConfig = baseConfig.replace('registry: {}', [
+  'registry:',
+  '  llms:',
+  '    - name: proxy',
+  '      provider: anthropic-compatible',
+  '      model: claude-proxy',
+  '      baseURL: https://llm.example.test/v1',
+  '      providerHeaders:',
+  `        X-Org: ${HEADER_SECRET} # the org header the proxy bills to`,
+].join('\n'))
+const HEADERS = ['registry', 'llms', { name: 'proxy' }, 'providerHeaders']
+
+describe('PATCH /api/config move (429-52)', () => {
+  it('MOVE-KEEPS-VALUE-SERVER-SIDE: a header rename lands with its value and comment, and the answer never carries the value', async () => {
+    const configPath = await useConfigWorkspace(headerConfig)
+
+    const response = await patchConfig({
+      changes: [{ op: 'move', from: [...HEADERS, 'X-Org'], path: [...HEADERS, 'X-Team'] }],
+    })
+
+    expect(response.status, response.body).toBe(200)
+    expect(response.body).not.toContain(HEADER_SECRET)
+    expect(Object.keys(JSON.parse(response.body) as object).sort()).toEqual(['baseRevision', 'revision'])
+    const text = await readFile(configPath, 'utf-8')
+    const parsed = parseYaml(text) as { registry: { llms: Array<{ providerHeaders: unknown }> } }
+    expect(parsed.registry.llms[0]!.providerHeaders).toEqual({ 'X-Team': HEADER_SECRET })
+    expect(text).toContain(`X-Team: ${HEADER_SECRET} # the org header the proxy bills to`)
+    expect(text).not.toContain('X-Org')
+  })
+
+  it('MOVE-ACROSS-CLASSES-REFUSED: a secret header moved onto a field served in clear is refused 422 and nothing is written', async () => {
+    const configPath = await useConfigWorkspace(headerConfig)
+    const before = await readFile(configPath)
+    mockRename.mockClear()
+
+    const response = await patchConfig({
+      changes: [{ op: 'move', from: [...HEADERS, 'X-Org'], path: ['registry', 'llms', { name: 'proxy' }, 'model'] }],
+    })
+
+    expect(response.status).toBe(422)
+    expect(JSON.parse(response.body)).toEqual({ error: 'path_not_writable' })
+    expect(Buffer.compare(await readFile(configPath), before)).toBe(0)
+    expect(mockRename).not.toHaveBeenCalled()
+  })
+
+  it('MOVE-FROM-MISSING-REFUSED: a move from a header that is not there is refused 422 and nothing is written', async () => {
+    const configPath = await useConfigWorkspace(headerConfig)
+    const before = await readFile(configPath)
+    mockRename.mockClear()
+
+    const response = await patchConfig({
+      changes: [{ op: 'move', from: [...HEADERS, 'X-Absent'], path: [...HEADERS, 'X-Team'] }],
+    })
+
+    expect(response.status).toBe(422)
+    expect(JSON.parse(response.body)).toEqual({ error: 'path_not_found' })
+    expect(Buffer.compare(await readFile(configPath), before)).toBe(0)
+    expect(mockRename).not.toHaveBeenCalled()
+  })
+
+  it('MOVE-INTO-ITSELF-REFUSED: a move onto a field inside the one it moves is refused and nothing is written', async () => {
+    const configPath = await useConfigWorkspace(headerConfig)
+    const before = await readFile(configPath)
+
+    for (const [from, path] of [
+      [['use', 'timeout'], ['use', 'timeout', 'step']],
+      [['use', 'timeout', 'step'], ['use', 'timeout']],
+    ]) {
+      const response = await patchConfig({ changes: [{ op: 'move', from, path }] })
+      expect([from, response.status]).toEqual([from, 422])
+      expect(JSON.parse(response.body)).toEqual({ error: 'path_not_writable' })
+    }
+    expect(Buffer.compare(await readFile(configPath), before)).toBe(0)
+  })
+
+  it('MOVE-UNDO-RESTORES-BOTH: the priors of a move bring back the old key and remove the new one', async () => {
+    const { configManager, configPath } = await createConfigWorkspace(headerConfig)
+
+    const moved = await configManager.applyChanges(
+      [{ op: 'move', from: [...HEADERS, 'X-Org'], path: [...HEADERS, 'X-Team'] }],
+      { capturePriors: true },
+    )
+    expect(moved.kind).toBe('ok')
+    if (moved.kind !== 'ok') return
+    expect(moved.priors).toHaveLength(2)
+
+    expect(await configManager.restorePriors(moved.priors!)).toEqual({ kind: 'ok', revision: expect.any(String) })
+    const parsed = parseYaml(await readFile(configPath, 'utf-8')) as { registry: { llms: Array<{ providerHeaders: unknown }> } }
+    expect(parsed.registry.llms[0]!.providerHeaders).toEqual({ 'X-Org': HEADER_SECRET })
+  })
+})
+
 const CONFIG_MANAGER_SOURCE = new URL('../config/config-manager.ts', import.meta.url)
 const FILE_ACCESS = /\b(?:readFile|writeFile|rename|rm|lstat|realpath|stat|chmod|mkdir)\(/
 
