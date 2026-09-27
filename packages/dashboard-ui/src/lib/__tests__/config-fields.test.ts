@@ -3,7 +3,8 @@
 // Five schema blocks require every sibling (plus use.browser.viewport, whose width and height are
 // both required once it exists, and services.accessibility, whose enabled is). A leaf-only write
 // into one of them while it is absent would always fail validation, so the write carries the
-// required siblings at the defaults the fields show as placeholders, and nothing optional.
+// required siblings at the defaults the fields show as placeholders, and nothing optional. Each
+// added sibling is set-if-absent (429-45): the server writes it only if the file lacks it.
 
 import type { ConfigChange } from '@vostride/agent-qa-schema'
 import { describe, expect, it } from 'vitest'
@@ -42,6 +43,10 @@ function set(path: string[], value: unknown): ConfigChange {
   return { op: 'set', path, value }
 }
 
+function ifAbsent(path: string[], value: unknown): ConfigChange {
+  return { op: 'set-if-absent', path, value }
+}
+
 function added(changes: readonly ConfigChange[], result: readonly ConfigChange[]) {
   return result.slice(changes.length)
 }
@@ -53,8 +58,8 @@ describe('completeRequiredSiblings', () => {
 
     expect(result.slice(0, 1)).toEqual(changes)
     expect(added(changes, result)).toEqual([
-      set(['use', 'timeout', 'test'], '10m'),
-      set(['use', 'timeout', 'navigation'], '10s'),
+      ifAbsent(['use', 'timeout', 'test'], '10m'),
+      ifAbsent(['use', 'timeout', 'navigation'], '10s'),
     ])
   })
 
@@ -66,7 +71,9 @@ describe('completeRequiredSiblings', () => {
     expect(completeRequiredSiblings(unset, {})).toEqual(unset)
 
     const both = [set(['use', 'timeout', 'step'], '45s'), set(['use', 'timeout', 'test'], '20m')]
-    expect(added(both, completeRequiredSiblings(both, {}))).toEqual([set(['use', 'timeout', 'navigation'], '10s')])
+    expect(added(both, completeRequiredSiblings(both, {}))).toEqual([
+      ifAbsent(['use', 'timeout', 'navigation'], '10s'),
+    ])
 
     const outside = [set(['workspace', 'envFile'], '.env')]
     expect(completeRequiredSiblings(outside, {})).toEqual(outside)
@@ -75,13 +82,13 @@ describe('completeRequiredSiblings', () => {
   it('SIBLING-COMPLETION: a viewport leaf in an absent browser block completes both blocks, never the whole viewport', () => {
     const changes = [set(['use', 'browser', 'viewport', 'width'], 1440)]
     expect(added(changes, completeRequiredSiblings(changes, {}))).toEqual([
-      set(['use', 'browser', 'name'], 'chromium'),
-      set(['use', 'browser', 'headless'], true),
-      set(['use', 'browser', 'viewport', 'height'], 720),
+      ifAbsent(['use', 'browser', 'name'], 'chromium'),
+      ifAbsent(['use', 'browser', 'headless'], true),
+      ifAbsent(['use', 'browser', 'viewport', 'height'], 720),
     ])
   })
 
-  it('OPTIONAL-SIBLINGS-OMITTED: every block adds exactly the schema\'s required keys and never an optional one', () => {
+  it('OPTIONAL-SIBLINGS-OMITTED: every block adds exactly the schema\'s required keys, each as set-if-absent, and never an optional one', () => {
     expect(Object.keys(REQUIRED_SIBLING_BLOCKS).sort()).toEqual(Object.keys(SCHEMA_REQUIRED_KEYS).sort())
 
     for (const [block, required] of Object.entries(SCHEMA_REQUIRED_KEYS)) {
@@ -96,10 +103,36 @@ describe('completeRequiredSiblings', () => {
         expect(inBlock.map((change) => change.path.at(-1)), `${block}.${key}`).toEqual(
           required.filter((other) => other !== key),
         )
+        expect(extra.map((change) => change.op), `${block}.${key}`).toEqual(extra.map(() => 'set-if-absent'))
         for (const optional of SCHEMA_OPTIONAL_KEYS[block] ?? []) {
           expect(extra.some((change) => change.path.includes(optional)), `${block}.${optional}`).toBe(false)
         }
       }
+    }
+  })
+})
+
+describe('completeRequiredSiblings never overwrites (429-45 · CR-01)', () => {
+  // The verifier's reproduction: the page's snapshot lacks use.planner while the file holds
+  // { maxSubActions: 99, previousStepCount: 77 }. Only the server sees the file at merge time.
+  it('SIBLING-COMPLETION-NEVER-OVERWRITES: every added sibling is set-if-absent, so the server keeps a value the snapshot missed', () => {
+    const changes = [set(['use', 'planner', 'maxSubActions'], 50)]
+    const result = completeRequiredSiblings(changes, { use: { browser: { name: 'chromium', headless: true } } })
+
+    expect(result).toEqual([
+      set(['use', 'planner', 'maxSubActions'], 50),
+      ifAbsent(['use', 'planner', 'previousStepCount'], 5),
+    ])
+    expect(
+      result.some((change) => change.op === 'set' && change.path.join('.') === 'use.planner.previousStepCount'),
+    ).toBe(false)
+
+    for (const [block, defaults] of Object.entries(BLOCKS)) {
+      const blockPath = block.split('.')
+      const [first, value] = Object.entries(defaults)[0]!
+      const own = [set([...blockPath, first], value)]
+      const extra = added(own, completeRequiredSiblings(own, {}))
+      expect(extra.every((change) => change.op === 'set-if-absent'), block).toBe(true)
     }
   })
 })

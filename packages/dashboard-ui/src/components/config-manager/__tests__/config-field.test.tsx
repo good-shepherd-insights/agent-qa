@@ -344,7 +344,7 @@ describe('ConfigField (429-17 Task 1)', () => {
     }
   })
 
-  it('SIBLING-COMPLETION: a leaf typed into an absent block writes its required siblings in the same write', async () => {
+  it('SIBLING-COMPLETION: a leaf typed into an absent block writes its required siblings, each set-if-absent, in the same write', async () => {
     vi.mocked(fetchConfig).mockResolvedValue(answer({ workspace: {} }) as never)
     await mount()
 
@@ -354,8 +354,8 @@ describe('ConfigField (429-17 Task 1)', () => {
     expect(writeCalls()).toEqual([
       [
         { op: 'set', path: ['use', 'timeout', 'step'], value: '45s' },
-        { op: 'set', path: ['use', 'timeout', 'test'], value: '10m' },
-        { op: 'set', path: ['use', 'timeout', 'navigation'], value: '10s' },
+        { op: 'set-if-absent', path: ['use', 'timeout', 'test'], value: '10m' },
+        { op: 'set-if-absent', path: ['use', 'timeout', 'navigation'], value: '10s' },
       ],
     ])
   })
