@@ -67,7 +67,7 @@ import {
   signInFailedText,
   signInPluginMissingText,
 } from '@/lib/config-copy'
-import { ADD_MODEL_DRAFT_STORAGE_PREFIX } from '@/lib/add-model-draft'
+import { ADD_MODEL_DRAFT_STORAGE_PREFIX, readAddModelDraft } from '@/lib/add-model-draft'
 import { CONNECTION_CHOICES, type ConnectionChoice } from '@/lib/config-tabs'
 
 const API_EXPORTS = Object.keys(await vi.importActual<typeof import('@/lib/api')>('@/lib/api'))
@@ -1138,6 +1138,61 @@ describe('AddModelRow renames and discard after a sign-in (429-26 Task 2)', () =
     await click(addRow()!.querySelector<HTMLButtonElement>('[data-discard-draft]'))
     expect(addRow()).toBeNull()
     expect(deleteAuthCredential).not.toHaveBeenCalled()
+  })
+
+  // WR-03: Connect saved claude on the server, but the answer was lost to a reload, so the stored
+  // draft still says this draft created the sign-in under claude.
+  const SAVED_CLAUDE = { name: 'claude', provider: 'anthropic-subscription', model: 'claude-sonnet-4.5' }
+
+  function storeCreatedDraft(name: string) {
+    localStorage.setItem(
+      DRAFT_KEY,
+      JSON.stringify({ choice: 'claude-sign-in', model: 'claude-sonnet-4.5', name, nameEdited: true, createdCredential: true }),
+    )
+  }
+
+  function savedClaude() {
+    vi.mocked(fetchConfig).mockResolvedValue(answer(modelsConfig([...EXISTING, SAVED_CLAUDE], 'flash')) as never)
+    vi.mocked(fetchAuthStatus).mockResolvedValue({
+      credentials: heldCredentials({ configName: 'claude', provider: 'anthropic-subscription', type: 'oauth' }),
+    })
+  }
+
+  it('DISCARD-NEVER-DELETES-SAVED-CREDENTIAL: after a reload whose Connect saved the model, Discard deletes nothing', async () => {
+    savedClaude()
+    storeCreatedDraft('claude')
+    await mount('/config/models')
+    expect(row('claude')).not.toBeNull()
+    expect(addRow()).not.toBeNull()
+    expect(input('name')?.value).toBe('claude')
+
+    await click(addRow()!.querySelector<HTMLButtonElement>('[data-discard-draft]'))
+    expect(addRow()).toBeNull()
+    expect(row('claude')).not.toBeNull()
+    expect(localStorage.getItem(DRAFT_KEY)).toBeNull()
+    expect(deleteAuthCredential).not.toHaveBeenCalled()
+  })
+
+  it('RESTORED-DRAFT-DROPS-SAVED-CREATED: a restored draft whose name is now a saved model forgets it created the sign-in', async () => {
+    savedClaude()
+    storeCreatedDraft('claude')
+    await mount('/config/models')
+    expect(addRow()).not.toBeNull()
+    expect(readAddModelDraft(CONFIG_PATH)?.name).toBe('claude')
+    expect(readAddModelDraft(CONFIG_PATH)?.createdCredential).toBeUndefined()
+    await unmount()
+
+    await mount('/config/models')
+    await click(addRow()!.querySelector<HTMLButtonElement>('[data-discard-draft]'))
+    expect(deleteAuthCredential).not.toHaveBeenCalled()
+    await unmount()
+
+    storeCreatedDraft('claude-draft')
+    await mount('/config/models')
+    expect(readAddModelDraft(CONFIG_PATH)?.createdCredential).toBe(true)
+    await click(addRow()!.querySelector<HTMLButtonElement>('[data-discard-draft]'))
+    expect(deleteAuthCredential).toHaveBeenCalledTimes(1)
+    expect(deleteAuthCredential).toHaveBeenCalledWith('claude-draft')
   })
 })
 
