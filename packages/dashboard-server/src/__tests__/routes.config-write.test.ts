@@ -643,6 +643,22 @@ describe('PATCH /api/config move (429-52)', () => {
     expect(mockRename).not.toHaveBeenCalled()
   })
 
+  it('MOVE-SUBTREE-ACROSS-CLASSES-REFUSED: a secret block whose values would land on fields served in clear is refused, though both ends class secret', async () => {
+    const withProvider = headerConfig.replace('registry:\n', 'registry:\n  providers:\n    farm:\n      platform: android\n      transport: local\n')
+    const configPath = await useConfigWorkspace(withProvider)
+    const before = await readFile(configPath)
+    mockRename.mockClear()
+
+    const response = await patchConfig({
+      changes: [{ op: 'move', from: ['registry', 'providers', 'farm'], path: ['registry', 'devices', 'farm'] }],
+    })
+
+    expect(response.status, response.body).toBe(422)
+    expect(JSON.parse(response.body)).toEqual({ error: 'path_not_writable' })
+    expect(Buffer.compare(await readFile(configPath), before)).toBe(0)
+    expect(mockRename).not.toHaveBeenCalled()
+  })
+
   it('MOVE-FROM-MISSING-REFUSED: a move from a header that is not there is refused 422 and nothing is written', async () => {
     const configPath = await useConfigWorkspace(headerConfig)
     const before = await readFile(configPath)
