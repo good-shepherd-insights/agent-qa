@@ -244,7 +244,7 @@ describe('GET /api/config masked by the one map (429-06)', () => {
     expect(config.registry.llms[0].baseURL).toBe('https://llm.example.test/v1')
     const lines = body.file.lines as FileLine[]
     expect(lineHolding(lines, 'accessKey:').text).toBe(
-      `      accessKey: "${CONFIG_MASK_PLACEHOLDER}" # rotated by the owner`,
+      `      accessKey: "${CONFIG_MASK_PLACEHOLDER}"`,
     )
     expect(lineHolding(lines, 'x-org-route:').text).toBe(
       `        x-org-route: "${CONFIG_MASK_PLACEHOLDER}"`,
@@ -273,11 +273,14 @@ describe('GET /api/config masked by the one map (429-06)', () => {
     expect(response.status).toBe(200)
     expect(body.provider).toBe('anthropic-compatible')
     expect(body.config.use.llm).toBe('gpt')
-    expect(body.revision).toBe(sha256(await readFile(configPath)))
+    const onDisk = await readFile(configPath, 'utf-8')
+    expect(body.revision).toBe(sha256(onDisk))
+    expect(onDisk).toContain('# owner notes: the farm key rotates monthly')
     expect(body.file.path).toBe(configPath)
     const lines = body.file.lines as FileLine[]
     expect(lines.map((line) => line.n)).toEqual(lines.map((_, i) => i + 1))
-    expect(lines[0]).toEqual({ n: 1, text: '# owner notes: the farm key rotates monthly' })
+    expect(lines.some((line) => line.text.includes('owner notes'))).toBe(false)
+    expect(lines[0]).toEqual({ n: 1, text: 'workspace:' })
     expect(lineHolding(lines, 'package:').text).toBe('    - package: "@example/agent-qa-auth"')
     expect(body).not.toHaveProperty('fileIssues')
   })
@@ -308,14 +311,15 @@ describe('GET /api/config masked by the one map (429-06)', () => {
       class: 'secret',
       path: ['workspace', 'secretsFile'],
     })
-    // The two-line block scalar is masked onto one line, so the view is one line shorter than the file.
+    // The three-line block scalar is masked onto one line and the head comment line is not served,
+    // so the view is three lines shorter than the file.
     const certificate = lineHolding(lines, 'certificate:')
     expect(certificate).toMatchObject({
       text: `      certificate: "${CONFIG_MASK_PLACEHOLDER}"`,
       class: 'secret',
     })
     expect(lines[certificate.n]!.text).toBe('  devices:')
-    expect(lines).toHaveLength(secretConfig.trimEnd().split('\n').length - 2)
+    expect(lines).toHaveLength(secretConfig.trimEnd().split('\n').length - 3)
     for (const plain of [
       '  llm: gpt',
       '      baseURL: https://llm.example.test/v1',
@@ -392,5 +396,60 @@ describe('GET /api/config masked by the one map (429-06)', () => {
       expect(typeof issue.message).toBe('string')
     }
     expect(response.body).not.toContain('DO-NOT-LEAK')
+  })
+})
+
+const COMMENT_SENTINELS = {
+  head: 'HEAD-COMMENT-DO-NOT-SERVE',
+  sequence: 'SEQ-COMMENT-DO-NOT-SERVE',
+  tail: 'TAIL-COMMENT-DO-NOT-SERVE',
+}
+
+const commentedSecrets = ['sk-OLD-SECRET-123456', 'sk-PREV-777', 'sk-LIVE-999']
+
+const commentedConfig = [
+  `# ${COMMENT_SENTINELS.head}`,
+  'workspace:',
+  '  testMatch:',
+  '    - tests/**/*.yaml',
+  `    # ${COMMENT_SENTINELS.sequence}`,
+  '    - more/**/*.yaml',
+  'registry:',
+  '  llms:',
+  '    - name: gpt',
+  '      provider: anthropic-compatible',
+  '      model: claude-proxy',
+  '      baseURL: https://llm.example.test/v1',
+  '      providerHeaders:',
+  '        # x-api-key: sk-OLD-SECRET-123456',
+  '        x-team: "sk-LIVE-999" # was sk-PREV-777',
+  'use:',
+  '  llm: gpt',
+  `# ${COMMENT_SENTINELS.tail}`,
+  '',
+].join('\n')
+
+describe('GET /api/config serves no comment text (429-41, CR-02)', () => {
+  it('COMMENTED-SECRET-NEVER-SERVED: no comment, and so no commented secret, reaches the read payload', async () => {
+    const configPath = await useConfigWorkspace(commentedConfig)
+
+    const { response, body } = await getConfig()
+
+    expect(response.status).toBe(200)
+    const served = JSON.stringify(body)
+    for (const planted of [...commentedSecrets, ...Object.values(COMMENT_SENTINELS)]) {
+      expect(served).not.toContain(planted)
+    }
+    const lines = body.file.lines as FileLine[]
+    expect(lines.map((line) => line.n)).toEqual(lines.map((_, i) => i + 1))
+    expect(lines.some((line) => line.text.includes('#'))).toBe(false)
+    expect(lineHolding(lines, 'x-team:')).toMatchObject({
+      text: `        x-team: "${CONFIG_MASK_PLACEHOLDER}"`,
+      class: 'secret',
+    })
+    expect(body.config.workspace.testMatch).toEqual(['tests/**/*.yaml', 'more/**/*.yaml'])
+    const onDisk = await readFile(configPath, 'utf-8')
+    expect(onDisk).toBe(commentedConfig)
+    expect(body.revision).toBe(sha256(onDisk))
   })
 })
