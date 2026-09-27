@@ -46,10 +46,10 @@ export function registerConfigWriteRoute(
     if (outcome.kind === 'ok') {
       if (undoable && outcome.priors !== undefined) {
         const undo = deps.undoStore.put({ kind: 'config', priors: outcome.priors }, Date.now())
-        respondJson(res, 200, { revision: outcome.revision, undo })
+        respondJson(res, 200, { revision: outcome.revision, baseRevision: outcome.baseRevision, undo })
         return
       }
-      respondJson(res, 200, { revision: outcome.revision })
+      respondJson(res, 200, { revision: outcome.revision, baseRevision: outcome.baseRevision })
       return
     }
     if (outcome.error === 'invalid_write_input') {

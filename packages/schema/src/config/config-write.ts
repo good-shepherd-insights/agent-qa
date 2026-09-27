@@ -80,7 +80,12 @@ export type ConfigWriteRequest = z.infer<typeof ConfigWriteRequestSchema>
 
 export type ConfigWriteIssue = { path: (string | number)[]; message: string }
 
-export type ConfigWriteResult = { revision: string; undo?: { token: string; expiresAt: number } }
+export type ConfigWriteResult = {
+  revision: string
+  /** The sha256 of the bytes the write merged onto; CONFIG_REVISION_ABSENT when the file did not exist. */
+  baseRevision?: string
+  undo?: { token: string; expiresAt: number }
+}
 
 /** The revision a config file that does not exist yet reports. */
 export const CONFIG_REVISION_ABSENT = 'absent'

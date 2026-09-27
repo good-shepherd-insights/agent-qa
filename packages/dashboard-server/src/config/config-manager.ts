@@ -30,7 +30,7 @@ import {
 } from '@vostride/agent-qa-schema'
 
 export type ApplyChangesOutcome =
-  | { kind: 'ok'; revision: string; priors?: ConfigPriors }
+  | { kind: 'ok'; revision: string; baseRevision: string; priors?: ConfigPriors }
   | {
     kind: 'refused'
     error: Exclude<ConfigWriteRefusal, 'write_failed'>
@@ -249,12 +249,18 @@ export class ConfigManager {
       return { kind: 'refused', error: MASK_WRITTEN_BACK }
     }
     let doc: Document
+    // 429-37 CR-01: the revision of the bytes this write merges onto, so the page can tell when an
+    // outside edit it never read was absorbed.
+    let baseRevision: string
     try {
-      doc = parseDocument(await readFile(this.configPath, 'utf-8'))
+      const bytes = await readFile(this.configPath)
+      baseRevision = createHash('sha256').update(bytes).digest('hex')
+      doc = parseDocument(bytes.toString('utf-8'))
     } catch (err: unknown) {
       if (!isMissingFile(err)) throw err
       // Pitfall 2: a missing file starts empty and goes through setIn like any other, so a dotted
       // top-level key such as `use.timeout:` can never be written.
+      baseRevision = CONFIG_REVISION_ABSENT
       doc = new Document()
     }
     // yaml recovers a partial tree from a broken file and refuses to stringify it: never rewrite one.
@@ -308,8 +314,8 @@ export class ConfigManager {
     const next = doc.toString()
     await this.writeAtomic(next)
     return capturePriors
-      ? { kind: 'ok', revision: revisionOf(next), priors }
-      : { kind: 'ok', revision: revisionOf(next) }
+      ? { kind: 'ok', revision: revisionOf(next), baseRevision, priors }
+      : { kind: 'ok', revision: revisionOf(next), baseRevision }
   }
 
   // 429-05 Pitfall 8 / Pattern 1 step 6: the temp file sits beside the real file, keeps its mode

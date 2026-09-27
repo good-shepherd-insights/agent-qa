@@ -422,6 +422,7 @@ function createEngine(host: EngineHost) {
   let attached = false
   let flight: Promise<void> | undefined
   let polling = false
+  let reading: Promise<void> | undefined
   let writeSeq = 0
   let answer: ConfigReadAnswer | undefined
   let loaded = false
@@ -510,7 +511,11 @@ function createEngine(host: EngineHost) {
         ? await applyConfigChanges(changes, { undoable: true })
         : await applyConfigChanges(changes)
       if (!attached) return false
-      revision = result.revision
+      // 429-37 CR-01: a write that merged onto bytes this page never read absorbed an outside
+      // edit, so its revision is not the page's own read; drop trust and re-read once it settles.
+      const stale =
+        typeof result.baseRevision === "string" && (revision === undefined || result.baseRevision !== revision)
+      revision = stale ? undefined : result.revision
       const mirrored = applyLanded(changes)
       const written = keys.filter((key) => {
         const entry = outbox.get(key)
@@ -556,6 +561,7 @@ function createEngine(host: EngineHost) {
       flight = undefined
       landed()
       if (attached) flush()
+      if (attached && !flight && revision === undefined) void quietRead()
     }
   }
 
@@ -727,12 +733,20 @@ function createEngine(host: EngineHost) {
     }
   }
 
+  /** One quiet re-read at a time: a stale write and a poll that both want one share it. */
+  function quietRead(polledRevision?: string): Promise<void> {
+    reading ??= read(polledRevision).finally(() => {
+      reading = undefined
+    })
+    return reading
+  }
+
   async function poll(): Promise<void> {
     if (polling || flight || !attached) return
     polling = true
     try {
       const { revision: current } = await fetchConfigRevision()
-      if (attached && !flight && current !== revision) await read(current)
+      if (attached && !flight && current !== revision) await quietRead(current)
     } catch {
       // A missed poll is retried on the next tick.
     } finally {

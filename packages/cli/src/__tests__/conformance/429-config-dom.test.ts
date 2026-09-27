@@ -895,4 +895,84 @@ describe('the continuous add flow, keyboard recovery and outside edits on the sh
     expect(h.dialogs, 'a dialog mounted during the outside edit').toEqual([])
     expect(realAuthFingerprint(), "the operator's own auth.json changed during the run").toBe(realAuthBefore)
   }, 120_000)
+
+  // 429-37 (CR-01): the outside edit lands and the page's own write follows before any poll could
+  // see it. The revision poll answers the first loaded revision until that write lands and then
+  // exactly what the write answered, as a real poll would, so only the write's own answer can make
+  // the page re-read.
+  it('OUTSIDE-EDIT-INTERLEAVED-SHIPPED', async () => {
+    const { h, project: target } = live()
+    resetProject(target)
+    const opened = await h.page(DESKTOP)
+    const { page } = opened
+    let served: string | undefined
+    let polls = 0
+    const configReads: number[] = []
+    let patchedAt: number | undefined
+    page.on('request', (request) => {
+      const url = new URL(request.url())
+      if (request.method() === 'GET' && url.pathname === '/api/config') configReads.push(Date.now())
+    })
+    await page.route('**/api/config/revision', async (route) => {
+      polls += 1
+      if (served === undefined) {
+        await route.continue()
+        return
+      }
+      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ revision: served }) })
+    })
+    await page.route('**/api/config', async (route) => {
+      const request = route.request()
+      if (request.method() !== 'PATCH') {
+        await route.continue()
+        return
+      }
+      const response = await route.fetch()
+      const body = (await response.json()) as { revision?: unknown }
+      if (typeof body.revision === 'string') served = body.revision
+      patchedAt = Date.now()
+      await route.fulfill({ response })
+    })
+    const firstRead = page.waitForResponse((response) =>
+      response.request().method() === 'GET' && new URL(response.url()).pathname === '/api/config')
+    await openTab(h, page, 'models')
+    const first = (await (await firstRead).json()) as { revision?: unknown }
+    expect(typeof first.revision, 'the first read carries no revision').toBe('string')
+    served = first.revision as string
+    const earlier = page.getByLabel('Earlier steps the planner sees', { exact: true })
+    expect(await earlier.inputValue(), 'the fixture must start with no use.planner block').toBe('')
+    await page.evaluate(() => { (window as unknown as { __sameDocument: string }).__sameDocument = 'yes' })
+    await capture(page, `outside-interleaved-${labelOf(DESKTOP)}-1-before`)
+
+    const doc = parseDocument(readFileSync(target.configPath, 'utf8'))
+    doc.setIn(['use', 'planner'], doc.createNode({ maxSubActions: 99, previousStepCount: 77 }))
+    writeFileSync(target.configPath, String(doc), 'utf8')
+    const patched = page.waitForResponse((response) =>
+      response.request().method() === 'PATCH' && new URL(response.url()).pathname === '/api/config')
+    await page.getByLabel('Largest screenshot', { exact: true }).focus()
+    await selectAllAndType(page, '512k')
+    await page.keyboard.press('Tab')
+    const answer = (await (await patched).json()) as { revision?: unknown; baseRevision?: unknown }
+    const readsBeforePatch = configReads.filter((at) => patchedAt === undefined || at < patchedAt).length
+
+    await expect.poll(async () => await earlier.inputValue(), { timeout: 5_000, interval: 100 }).toBe('77')
+    expect(await page.evaluate(() => (window as unknown as { __sameDocument?: string }).__sameDocument), 'the page reloaded').toBe('yes')
+    expect(typeof answer.baseRevision, `the write answer names no base: ${JSON.stringify(answer)}`).toBe('string')
+    expect(answer.baseRevision, 'the write merged onto the outside edit, so its base is not the first read').not.toBe(first.revision)
+    expect(configReads.length, 'the page never re-read after its own write merged the outside edit').toBeGreaterThan(readsBeforePatch)
+    await capture(page, `outside-interleaved-${labelOf(DESKTOP)}-2-re-read`)
+
+    await page.getByLabel('Most actions per step', { exact: true }).focus()
+    await selectAllAndType(page, '50')
+    await page.keyboard.press('Tab')
+    const plannerOnDisk = () => (parse(readFileSync(target.configPath, 'utf8')) as { use?: { planner?: unknown } }).use?.planner
+    await expect.poll(plannerOnDisk, { timeout: 10_000 }).toEqual({ maxSubActions: 50, previousStepCount: 77 })
+    const config = parse(readFileSync(target.configPath, 'utf8')) as { services?: { vision?: { screenshotSize?: unknown } } }
+    expect(config.services?.vision?.screenshotSize).toBe('512k')
+    process.stderr.write(`429-37 OUTSIDE-EDIT-INTERLEAVED-SHIPPED: polls=${String(polls)} configReads=${String(configReads.length)} readsBeforePatch=${String(readsBeforePatch)} answer=${JSON.stringify(answer)}\n`)
+    expect(opened.errors).toEqual([])
+    await h.close(opened)
+    expect(h.dialogs, 'a dialog mounted during the interleaved outside edit').toEqual([])
+    expect(realAuthFingerprint(), "the operator's own auth.json changed during the run").toBe(realAuthBefore)
+  }, 120_000)
 })
