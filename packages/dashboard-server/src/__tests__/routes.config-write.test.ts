@@ -502,6 +502,10 @@ describe('PATCH /api/config set-if-absent and expect (429-42)', () => {
       expect([guess, response.status]).toEqual([guess, 422])
       expect(JSON.parse(response.body)).toEqual({ error: 'path_not_writable' })
     }
+    // An ancestor holds the secret too, so it is never compared either.
+    const ancestor = await patchConfig({ changes: [{ op: 'expect', path: ['registry', 'llms'], value: [] }] })
+    expect(ancestor.status).toBe(422)
+    expect(JSON.parse(ancestor.body)).toEqual({ error: 'path_not_writable' })
     expect(Buffer.compare(await readFile(configPath), before)).toBe(0)
   })
 })

@@ -35,6 +35,8 @@ export type ApplyChangesOutcome =
     kind: 'refused'
     error: Exclude<ConfigWriteRefusal, 'write_failed'>
     issues?: ConfigWriteIssue[]
+    /** The field an `expect` found changed. */
+    path?: ConfigPathSegment[]
   }
 
 type FieldState = { present: false } | { present: true; value: unknown }
@@ -266,20 +268,46 @@ export class ConfigManager {
     }
     // yaml recovers a partial tree from a broken file and refuses to stringify it: never rewrite one.
     if (doc.errors.length > 0) return { kind: 'refused', error: 'file_invalid' }
+    // 429-42 CR-01: a write computed from the page's snapshot names what it read; every expect is
+    // checked against the file as read, before anything applies. A secret is never compared.
+    const expects = changes.filter((change) => change.op === 'expect')
+    if (expects.some((change) => classifySegments(change.path) === 'secret')) {
+      return { kind: 'refused', error: 'path_not_writable' }
+    }
+    for (const change of expects) {
+      if (!isDeepStrictEqual(expectedFieldValue(doc, change.path), change.value ?? null)) {
+        return { kind: 'refused', error: 'field_changed', path: [...change.path] }
+      }
+    }
     let writesBrowserHeadless = false
     const priors: ConfigPrior[] = []
     for (const change of changes) {
-      if (change.op === 'set-if-absent' || change.op === 'move' || change.op === 'expect') {
-        return { kind: 'refused', error: 'path_not_found' }
-      }
+      if (change.op === 'expect') continue
+      // 429-52 implements move; until then it is refused rather than silently ignored.
+      if (change.op === 'move') return { kind: 'refused', error: 'path_not_found' }
       const path = resolvePath(doc, change.path)
       if (path === undefined) return { kind: 'refused', error: 'path_not_found' }
       const entry = capturePriors ? namedEntryPrior(doc, change, path) : undefined
       const before = capturePriors && entry === undefined ? nodeAt(doc, path) : undefined
+      let legacyPrior: ConfigPrior | undefined
       try {
         if (change.op === 'set') {
           doc.setIn(path, doc.createNode(change.value))
           writesBrowserHeadless ||= setsLeaf(path, change.value, BROWSER_HEADLESS_PATH)
+        } else if (change.op === 'set-if-absent') {
+          // Required-sibling completion is decided by the file at this point of the transaction.
+          if (doc.hasIn(path)) continue
+          if (samePath(path, BROWSER_HEADLESS_PATH) && doc.hasIn(LEGACY_HEADLESS_PATH)) {
+            // The owner's root use.headless is the value completion keeps, under its new key.
+            const legacy = nodeAt(doc, LEGACY_HEADLESS_PATH)
+            doc.setIn(path, legacy === undefined || legacy === null ? null : legacy)
+            if (capturePriors) {
+              legacyPrior = { kind: 'path', path: [...LEGACY_HEADLESS_PATH], before: legacy, after: { present: false } }
+            }
+            doc.deleteIn(LEGACY_HEADLESS_PATH)
+          } else {
+            doc.setIn(path, doc.createNode(change.value))
+          }
         } else if (change.op === 'unset') {
           unsetAndPrune(doc, path)
         } else if (!appendTo(doc, path, change.value)) {
@@ -293,6 +321,7 @@ export class ConfigManager {
       else if (capturePriors) {
         priors.push({ kind: 'path', path: [...change.path], before, after: fieldState(doc, path) })
       }
+      if (legacyPrior !== undefined) priors.push(legacyPrior)
     }
     // The browser-scoped key replaces a root use.headless in the same write.
     if (writesBrowserHeadless && doc.hasIn(LEGACY_HEADLESS_PATH)) {
@@ -425,6 +454,15 @@ function fieldState(doc: Document, path: ResolvedPath): FieldState {
   if (!doc.hasIn(path)) return { present: false }
   const node = doc.getIn(path, true)
   return { present: true, value: isNode(node) ? node.toJS(doc) : node ?? null }
+}
+
+// What an expect compares against: the field's value as the file holds it, null when absent. A
+// selector naming no entry, or a path through a scalar, reads as absent.
+function expectedFieldValue(doc: Document, path: readonly ConfigPathSegment[]): unknown {
+  const resolved = resolvePath(doc, path)
+  if (resolved === undefined) return null
+  const state = fieldState(doc, resolved)
+  return state.present ? state.value : null
 }
 
 function restorePrior(doc: Document, prior: ConfigPrior): boolean {

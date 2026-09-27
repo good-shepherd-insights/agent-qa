@@ -56,6 +56,11 @@ export function registerConfigWriteRoute(
       respondJson(res, 400, { error: outcome.error })
       return
     }
+    // 429-42: an expect found the field moved; the page recomputes from a fresh read.
+    if (outcome.error === 'field_changed') {
+      respondJson(res, 409, { error: outcome.error, path: outcome.path })
+      return
+    }
     respondJson(res, 422, outcome.issues === undefined
       ? { error: outcome.error }
       : { error: outcome.error, issues: outcome.issues })
