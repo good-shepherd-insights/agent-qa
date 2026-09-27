@@ -69,6 +69,11 @@ const SENTINELS = {
   udid: 'zz-429-33-UDID-SENTINEL-0d61',
   auth: 'zz-429-33-AUTH-JSON-SENTINEL-73fa',
 } as const
+// 429-41 (CR-02): secrets written inside comments, which the file view never serves.
+const COMMENT_SENTINELS = {
+  above: 'zz-429-41-COMMENTED-HEADER-SENTINEL-5e0a',
+  trailing: 'zz-429-41-TRAILING-COMMENT-SENTINEL-a3d8',
+} as const
 const MCP_TOKEN_ENV_VAR = 'AGENT_QA_MCP_TOKEN'
 const PLUGIN_PACKAGE = '@example/agent-qa-auth'
 const LONG_TARGET = 'checkout-staging-with-a-deliberately-long-target-name'
@@ -99,6 +104,7 @@ const TASK1_CONFIG = [
   '      model: claude-proxy',
   '      baseURL: https://llm.example.invalid/v1',
   '      providerHeaders:',
+  `        # x-api-key: ${COMMENT_SENTINELS.above}`,
   `        x-org-route: ${SENTINELS.header}`,
   '  targets:',
   '    conformance:',
@@ -109,7 +115,7 @@ const TASK1_CONFIG = [
   '      url: https://checkout-staging.invalid',
   '  providers:',
   '    farm:',
-  `      accessKey: ${SENTINELS.farm}`,
+  `      accessKey: ${SENTINELS.farm} # was ${COMMENT_SENTINELS.trailing}`,
   '  devices:',
   '    phone:',
   '      platform: ios',
@@ -479,7 +485,7 @@ describe('Config tabs, links, geometry, masking and names on the shipped bundle 
     for (const tab of TABS) {
       await openTab(h, page, tab)
       const html = await page.evaluate(() => document.documentElement.outerHTML)
-      for (const [kind, sentinel] of Object.entries(SENTINELS)) if (html.includes(sentinel)) leaks.push(`${tab}: ${kind}`)
+      for (const [kind, sentinel] of Object.entries({ ...SENTINELS, ...COMMENT_SENTINELS })) if (html.includes(sentinel)) leaks.push(`${tab}: ${kind}`)
     }
     expect(leaks, 'a sentinel reached the page unmasked').toEqual([])
 
@@ -497,6 +503,11 @@ describe('Config tabs, links, geometry, masking and names on the shipped bundle 
     expect(lineWith('accessKey:')?.text).toContain(CONFIG_MASK_PLACEHOLDER)
     expect(lineWith('plugins:'), 'the plugins block is missing from the file view').toBeDefined()
     expect(lineWith(PLUGIN_PACKAGE), 'the plugin entry is missing from the file view').toBeDefined()
+    const viewText = (await view.textContent()) ?? ''
+    for (const sentinel of Object.values(COMMENT_SENTINELS)) {
+      expect(viewText, 'a commented secret reached the file view').not.toContain(sentinel)
+    }
+    expect(lines.some((line) => line.text.includes('#')), JSON.stringify(lines)).toBe(false)
     expect(await view.isVisible()).toBe(true)
     await captureFullPage(page, `config-file-masked-${labelOf(DESKTOP)}`)
 
@@ -504,6 +515,7 @@ describe('Config tabs, links, geometry, masking and names on the shipped bundle 
     await accessKey.getByRole('button', { name: 'Show accessKey', exact: true }).click()
     await accessKey.and(page.locator('[data-reveal-state="revealed"]')).waitFor({ timeout: 10_000 })
     expect(await accessKey.textContent()).toContain(SENTINELS.farm)
+    expect(await accessKey.textContent()).not.toContain(COMMENT_SENTINELS.trailing)
     expect(await page.evaluate(() => document.documentElement.outerHTML)).not.toContain(SENTINELS.header)
     expect(await page.evaluate(() => document.documentElement.outerHTML)).not.toContain(SENTINELS.auth)
     await captureViewport(page, `config-file-revealed-${labelOf(DESKTOP)}`)
