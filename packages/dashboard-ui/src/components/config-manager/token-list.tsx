@@ -3,8 +3,8 @@
 // MCP access tokens and run-service tokens: each row shows the token's name and the NAME of the
 // environment variable holding it, in clear; the value never reaches the page. Add token opens an
 // inline draft row asking for what the schema requires (a scope for an MCP token, an optional
-// trust scope for a run-service token) and writes one append once valid. Delete acts at once and
-// offers Undo.
+// trust scope for a run-service token) and writes one append when the row settles (focus leaves it
+// or Enter in a text field). Delete acts at once and offers Undo.
 
 import { useEffect, useId, useRef, useState, type FocusEvent } from "react"
 import { CircleAlert, Plus, Trash2 } from "lucide-react"
@@ -264,6 +264,7 @@ function AddTokenRow({ kind, initial, takenNames, onHold, onDiscard, onAdded }: 
   const [draft, setDraft] = useState(initial)
   const [touched, setTouched] = useState(false)
   const saving = useRef(false)
+  const [locked, setLocked] = useState(false)
   const baseId = useId()
   const errors = touched ? draftErrors(kind, draft, takenNames) : {}
   const checked = new Set(scopesOf(draft))
@@ -283,22 +284,23 @@ function AddTokenRow({ kind, initial, takenNames, onHold, onDiscard, onAdded }: 
     if (markTouched) setTouched(true)
     if (saving.current || Object.keys(draftErrors(kind, current, takenNames)).length > 0) return
     saving.current = true
+    setLocked(true)
     const landed = await autosave.runExplicit(
       [{ op: "append", path: [...listRef.segments], value: draftValue(kind, current) }],
       undefined,
       [listRef],
     )
     saving.current = false
+    setLocked(false)
     if (landed) onAdded()
   }
 
+  // A scope composes the unsaved entry like its text fields: it settles with the row, never alone.
   function toggleScope(scope: FunctionScope, on: boolean) {
     const next = new Set(checked)
     if (on) next.add(scope)
     else next.delete(scope)
-    const updated = { ...draft, scopes: SCOPES.filter((item) => next.has(item)).join(",") }
-    change(updated)
-    void settle(updated, false)
+    change({ ...draft, scopes: SCOPES.filter((item) => next.has(item)).join(",") })
   }
 
   function leave(event: FocusEvent<HTMLDivElement>) {
@@ -348,6 +350,7 @@ function AddTokenRow({ kind, initial, takenNames, onHold, onDiscard, onAdded }: 
                     id={id}
                     data-scope={scope}
                     checked={checked.has(scope)}
+                    disabled={locked}
                     onCheckedChange={(next) => toggleScope(scope, next === true)}
                   />
                   <Label htmlFor={id} className="font-normal">
