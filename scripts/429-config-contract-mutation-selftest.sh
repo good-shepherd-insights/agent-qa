@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# The task-oriented Config contract instrument's own test (429-34). Every declared leg is run
-# NEUTERED — the mutation withheld — and must FATAL with "<leg>: suite stayed green" after an actual
-# green child of its own suite. The interruption modes (fatal, SIGINT, SIGTERM, SIGHUP) must mutate
-# every subject and hand back the exact bytes and mtimes, then rebuild; a dirty subject must be
-# refused and left as found; invalid knobs refuse before ownership.
+# The task-oriented Config contract instrument's own test (429-34; C28..C40 added by 429-49).
+# Every declared leg is run NEUTERED — the mutation withheld — and must FATAL with "<leg>: suite
+# stayed green" after an actual green child of its own suite. The interruption modes (fatal, SIGINT,
+# SIGTERM, SIGHUP) must mutate every subject and hand back the exact bytes and mtimes, then rebuild;
+# a dirty subject must be refused and left as found; invalid knobs refuse before ownership.
 #
 # THE INVENTORY BELOW IS WRITTEN OUT, NOT DERIVED. A leg silently dropped, re-aimed or renamed in
 # 429-config-contract-mutation.sh reddens HERE instead of shrinking both in step — which is the
@@ -28,6 +28,7 @@ const CONFIG_ROUTES_SRC = 'packages/dashboard-server/src/server/config-routes.ts
 const CONNECT_ROUTE_SRC = 'packages/dashboard-server/src/server/llm-connect-route.ts'
 const ROUTES_SRC = 'packages/dashboard-server/src/server/routes.ts'
 const AUTH_SRC = 'packages/cli/src/commands/auth.ts'
+const AUTH_STORE_SRC = 'packages/core/src/auth/store.ts'
 
 const SCHEMA_T = 'src/__tests__/429-config-contracts.test.ts'
 const SCHEMA_D = 'src/__tests__/429-config-contracts.test-d.ts'
@@ -40,6 +41,8 @@ const UNDO_T = 'src/__tests__/routes.config-undo.test.ts'
 const CONNECT_T = 'src/__tests__/routes.llm-connect.test.ts'
 const DRAFT_T = 'src/__tests__/routes.draft-credential.test.ts'
 const MANAGER_T = 'src/__tests__/config-manager.test.ts'
+const SAVED_HEADERS_T = 'src/__tests__/routes.llm-test-saved-headers.test.ts'
+const AUTH_STORE_T = 'src/__tests__/auth-store.test.ts'
 const AUTH_T = 'src/__tests__/auth-test.test.ts'
 const LINT_T = 'src/__tests__/429-classifier-lint.test.ts'
 const SHOW_T = 'src/composition/__tests__/masked-config.test.ts'
@@ -114,6 +117,32 @@ runSelftest({
       reds: [`${SHOW_T} > CONFIG-SHOW-ENV-VAR-NAME-IN-CLEAR`] },
     { id: 'C27', claim: 'LEGACY-WRITE-ROUTES-GONE', subject: ROUTES_SRC,
       reds: [`${WRITE_T} > LEGACY-WRITE-ROUTES-GONE`] },
+    { id: 'C28', claim: 'BASE-REVISION-ANSWERED', subject: MANAGER_SRC,
+      reds: [`${WRITE_T} > BASE-REVISION-ANSWERED`] },
+    { id: 'C29', claim: 'SET-IF-ABSENT-KEEPS-OUTSIDE-VALUE', subject: MANAGER_SRC,
+      reds: [`${WRITE_T} > SET-IF-ABSENT-KEEPS-OUTSIDE-VALUE`] },
+    { id: 'C30', claim: 'LEGACY-HEADLESS-KEPT-ON-COMPLETION', subject: MANAGER_SRC,
+      reds: [`${WRITE_T} > LEGACY-HEADLESS-KEPT-ON-COMPLETION`] },
+    { id: 'C31', claim: 'EXPECT-MISMATCH-REFUSED', subject: MANAGER_SRC,
+      reds: [`${WRITE_T} > EXPECT-MISMATCH-REFUSED`] },
+    { id: 'C32', claim: 'EXPECT-ON-SECRET-REFUSED', subject: MANAGER_SRC,
+      reds: [`${WRITE_T} > EXPECT-ON-SECRET-REFUSED`] },
+    { id: 'C33', claim: 'MOVE-ACROSS-CLASSES-REFUSED', subject: MANAGER_SRC,
+      reds: [`${WRITE_T} > MOVE-ACROSS-CLASSES-REFUSED`] },
+    { id: 'C34', claim: 'COMMENTED-SECRET-NEVER-SERVED', subject: MANAGER_SRC,
+      reds: [`${MASKING_T} > COMMENTED-SECRET-NEVER-SERVED`] },
+    { id: 'C35', claim: 'GET-CONFIG-SAME-SITE-NO-GRANT', subject: ROUTES_SRC,
+      reds: [`${MASKING_T} > GET-CONFIG-SAME-SITE-NO-GRANT`] },
+    { id: 'C36', claim: 'WRITE-DOOR-REFUSES-DENIED-ROOTS', subject: CONFIG_ROUTES_SRC,
+      reds: [`${WRITE_T} > WRITE-DOOR-REFUSES-DENIED-ROOTS`] },
+    { id: 'C37', claim: 'C429-CONFIG-WRITE-DENIED-ROOTS-EXACT', subject: WRITE_SRC,
+      reds: [`${SCHEMA_D} > C429-CONFIG-WRITE-DENIED-ROOTS-EXACT`] },
+    { id: 'C38', claim: 'SAVED-HEADER-NEVER-ECHOED', subject: ROUTES_SRC,
+      reds: [`${SAVED_HEADERS_T} > SAVED-HEADER-NEVER-ECHOED`] },
+    { id: 'C39', claim: 'AUTH-SYMLINK-KEPT', subject: AUTH_STORE_SRC,
+      reds: [`${AUTH_STORE_T} > AUTH-SYMLINK-KEPT`] },
+    { id: 'C40', claim: 'UNDO-LEGACY-HEADLESS-RESTORED', subject: MANAGER_SRC,
+      reds: [`${UNDO_T} > UNDO-LEGACY-HEADLESS-RESTORED`] },
   ],
 })
 NODE
