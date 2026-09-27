@@ -19,6 +19,7 @@ import { isRunTriggerConfirmScope } from '../chat/confirm-registry.js'
 import type { AgentHost } from '../chat/host.js'
 import {
   classifyProviderError,
+  CONFIG_MASK_PLACEHOLDER,
   extractProviderError,
   LlmCredentialMoveRequestSchema,
   parseHandleParam,
@@ -147,7 +148,7 @@ function checkCredentialName(configName: unknown): CredentialNameCheck {
 async function findRegistryLlm(
   configManager: ConfigManager,
   name: string,
-): Promise<{ provider?: unknown } | undefined> {
+): Promise<SavedRegistryLlm | undefined> {
   const config = await readConfigValues(configManager) as { registry?: { llms?: unknown[] } }
   const llms = Array.isArray(config.registry?.llms) ? config.registry.llms : []
   return llms.find((item) => {
@@ -155,7 +156,68 @@ async function findRegistryLlm(
       && typeof item === 'object'
       && !Array.isArray(item)
       && (item as { name?: unknown }).name === name
-  }) as { provider?: unknown } | undefined
+  }) as SavedRegistryLlm | undefined
+}
+
+type SavedRegistryLlm = { provider?: unknown; baseURL?: unknown; providerHeaders?: unknown }
+
+const TEST_REDACTED = '[redacted]'
+const MIN_REDACTED_HEADER_LENGTH = 4
+
+function trimmedString(value: unknown): string {
+  return typeof value === 'string' ? value.trim() : ''
+}
+
+// 429-43: a saved model's header values are read from the file on the server, and only for the
+// endpoint the saved model names; a read failure means no saved headers.
+async function savedHeadersFor(
+  configManager: ConfigManager | undefined,
+  configName: string,
+  provider: string,
+  baseURL: string,
+): Promise<Record<string, string>> {
+  if (!configManager || !configName) return {}
+  let saved: SavedRegistryLlm | undefined
+  try {
+    saved = await findRegistryLlm(configManager, configName)
+  } catch {
+    return {}
+  }
+  if (!saved || saved.provider !== provider || trimmedString(saved.baseURL) !== baseURL) return {}
+  const headers = saved.providerHeaders
+  if (!headers || typeof headers !== 'object' || Array.isArray(headers)) return {}
+  const kept: Record<string, string> = {}
+  for (const [name, value] of Object.entries(headers)) {
+    if (typeof value === 'string') kept[name] = value
+  }
+  return kept
+}
+
+// Body headers override their saved namesake (HTTP names compare case-insensitively); a body value
+// that is the mask placeholder is dropped, so the literal mask is never sent.
+function mergeTestHeaders(
+  saved: Record<string, string>,
+  body: Record<string, unknown>,
+): { headers: Record<string, unknown>; savedValues: string[] } {
+  const headers: Record<string, unknown> = { ...saved }
+  for (const [name, value] of Object.entries(body)) {
+    if (value === CONFIG_MASK_PLACEHOLDER) continue
+    for (const key of Object.keys(headers)) {
+      if (key.toLowerCase() === name.toLowerCase()) delete headers[key]
+    }
+    headers[name] = value
+  }
+  const savedValues = Object.entries(saved)
+    .filter(([name, value]) => headers[name] === value)
+    .map(([, value]) => value)
+  return { headers, savedValues }
+}
+
+function withoutSavedValues(text: string, savedValues: readonly string[]): string {
+  return [...savedValues]
+    .filter((value) => value.length >= MIN_REDACTED_HEADER_LENGTH)
+    .sort((a, b) => b.length - a.length)
+    .reduce((redacted, value) => redacted.split(value).join(TEST_REDACTED), text)
 }
 
 // The product provider an auth.json entry belongs to, mapped the way GET /api/auth/status maps it.
@@ -4097,8 +4159,19 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps): (req: In
           if (typeof body.baseURL === 'string') {
             llmCandidate.baseURL = body.baseURL
           }
-          if (body.providerHeaders !== undefined) {
-            llmCandidate.providerHeaders = body.providerHeaders
+          let savedHeaderValues: string[] = []
+          const bodyHeaders: unknown = body.providerHeaders
+          const headerRecord = bodyHeaders !== null
+            && typeof bodyHeaders === 'object'
+            && !Array.isArray(bodyHeaders)
+          if (bodyHeaders === undefined || headerRecord) {
+            const baseURL = trimmedString(body.baseURL)
+            const saved = await savedHeadersFor(configManager, configName, providerName, baseURL)
+            const merged = mergeTestHeaders(saved, (bodyHeaders ?? {}) as Record<string, unknown>)
+            savedHeaderValues = merged.savedValues
+            if (Object.keys(merged.headers).length > 0) llmCandidate.providerHeaders = merged.headers
+          } else {
+            llmCandidate.providerHeaders = bodyHeaders
           }
 
           const parsedConfig = ModelConfigSchema.safeParse(llmCandidate)
@@ -4169,7 +4242,8 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps): (req: In
             })
           } catch (err: unknown) {
             const connectionTimeoutMs = llmConnectionTestTimeoutMs(llmConfig)
-            const { message: providerMessage, statusCode } = extractProviderError(err)
+            const { message: rawProviderMessage, statusCode } = extractProviderError(err)
+            const providerMessage = withoutSavedValues(rawProviderMessage, savedHeaderValues)
             const errorClass = classifyProviderError(providerMessage, statusCode)
             const message = providerErrorSentence(errorClass, providerMessage)
 
