@@ -3,7 +3,12 @@
 import { act } from "react"
 import { createRoot, type Root } from "react-dom/client"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
-import { classifyConfigPath, type ConfigPathSegment } from "@vostride/agent-qa-schema"
+import {
+  CONFIG_MASK_PLACEHOLDER,
+  classifyConfigPath,
+  type ConfigChange,
+  type ConfigPathSegment,
+} from "@vostride/agent-qa-schema"
 
 import { ApiError, applyConfigChanges, fetchConfig, fetchConfigRevision, undoConfigAction } from "@/lib/api"
 import { REVISION_POLL_MS, SETTLE_DELAY_MS, UNDO_WINDOW_MS, undoLine } from "@/lib/config-copy"
@@ -682,5 +687,91 @@ describe("useConfigAutosave external drafts (429-25 Task 1)", () => {
     expect(hook!.status.state).toBe("idle")
     expect(hook!.draftTabs.size).toBe(0)
     expect(storedText()).not.toContain("external:")
+  })
+})
+
+describe("useConfigAutosave landed-write mirror for the new ops (429-45 Task 2)", () => {
+  async function landExplicit(changes: ConfigChange[]) {
+    let landed = false
+    await act(async () => {
+      landed = await hook!.runExplicit(changes)
+    })
+    await flush()
+    return landed
+  }
+
+  function loadedConfig() {
+    return hook!.load.kind === "ready" ? hook!.load.answer.config : undefined
+  }
+
+  it("MIRROR-APPLIES-NEW-OPS: on a trusted base, set-if-absent, move and expect show at once with no re-read", async () => {
+    const proxyHeader = (name: string): ConfigFieldRef => ({
+      segments: ["registry", "llms", { name: "proxy" }, "providerHeaders", name],
+      tab: "models",
+    })
+    const cache: ConfigFieldRef = { segments: ["use", "cache"], tab: "execution" }
+    const workers: ConfigFieldRef = { segments: ["use", "workers"], tab: "execution" }
+    vi.mocked(fetchConfig).mockResolvedValue(
+      answer({
+        ...baseConfig,
+        registry: {
+          ...baseConfig.registry,
+          llms: [
+            ...baseConfig.registry.llms,
+            {
+              name: "proxy",
+              provider: "openai-compatible",
+              model: "gpt-4.1",
+              providerHeaders: { "X-Org": CONFIG_MASK_PLACEHOLDER },
+            },
+          ],
+        },
+      }) as never,
+    )
+    await mount()
+
+    expect(await landExplicit([{ op: "set-if-absent", path: ["use", "timeout", "test"], value: "20m" }])).toBe(true)
+    expect(hook!.valueOf(testTimeout)).toBe("10m")
+
+    expect(await landExplicit([{ op: "set-if-absent", path: ["use", "cache"], value: true }])).toBe(true)
+    expect(hook!.valueOf(cache)).toBe(true)
+
+    const headers = ["registry", "llms", { name: "proxy" }, "providerHeaders"] as const
+    expect(
+      await landExplicit([{ op: "move", from: [...headers, "X-Org"], path: [...headers, "X-Team"] }]),
+    ).toBe(true)
+    expect(hook!.valueOf(proxyHeader("X-Team"))).toBe(CONFIG_MASK_PLACEHOLDER)
+    expect(hook!.valueOf(proxyHeader("X-Org"))).toBeUndefined()
+    expect(JSON.stringify(loadedConfig())).not.toContain("X-Org")
+
+    const before = JSON.stringify(loadedConfig())
+    expect(await landExplicit([{ op: "expect", path: ["use", "timeout", "test"], value: "10m" }])).toBe(true)
+    expect(JSON.stringify(loadedConfig())).toBe(before)
+    expect(
+      await landExplicit([
+        { op: "expect", path: ["use", "timeout", "test"], value: "10m" },
+        { op: "set", path: ["use", "workers"], value: 3 },
+      ]),
+    ).toBe(true)
+    expect(hook!.valueOf(workers)).toBe(3)
+    expect(hook!.valueOf(testTimeout)).toBe("10m")
+
+    expect(fetchConfig).toHaveBeenCalledTimes(1)
+  })
+
+  // 429-42: completing use.browser.headless over a root use.headless keeps the owner's value, not
+  // the default, so the mirror cannot know what landed and must read it.
+  it("MIRROR-LEGACY-HEADLESS-REREADS: set-if-absent of browser headless over a root use.headless re-reads the file", async () => {
+    const legacy = { ...baseConfig, use: { timeout: baseConfig.use.timeout, headless: false } }
+    const moved = { ...baseConfig, use: { timeout: baseConfig.use.timeout, browser: { headless: false } } }
+    vi.mocked(fetchConfig).mockResolvedValueOnce(answer(legacy) as never)
+    vi.mocked(fetchConfig).mockResolvedValue(answer(moved, "rev-2") as never)
+    await mount()
+
+    expect(await landExplicit([{ op: "set-if-absent", path: ["use", "browser", "headless"], value: true }])).toBe(true)
+    await flush()
+
+    expect(fetchConfig).toHaveBeenCalledTimes(2)
+    expect(hook!.valueOf(headless)).toBe(false)
   })
 })
