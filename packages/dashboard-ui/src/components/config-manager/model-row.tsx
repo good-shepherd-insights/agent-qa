@@ -25,7 +25,6 @@ import { useConfigAutosaveContext, type ConfigFieldParse } from "@/hooks/use-con
 import { useSignInFlow } from "@/hooks/use-sign-in-flow"
 import {
   deleteAuthCredential,
-  revealConfigValue,
   saveCredential,
   testLLMConnection,
   type AuthCredentialInfo,
@@ -287,11 +286,7 @@ interface HeaderRowProps {
   others: readonly string[]
 }
 
-/**
- * One saved header: its name autosaves and its value is a SecretValue. The browser holds only the
- * mask, so a rename reads the value through the reveal door and moves it in one write, keeping it
- * in this call alone.
- */
+/** A rename is one server-side move, so the value never reaches the page. */
 function HeaderRow({ segments, header, masked, others }: HeaderRowProps) {
   const autosave = useConfigAutosaveContext()
   const inputId = useId()
@@ -312,10 +307,8 @@ function HeaderRow({ segments, header, masked, others }: HeaderRowProps) {
   async function rename(next: string) {
     renaming.current = true
     try {
-      const { value } = await revealConfigValue([...segments, header])
       const landed = await autosave.runExplicit([
-        { op: "unset", path: [...segments, header] },
-        { op: "set", path: [...segments, next], value },
+        { op: "move", from: [...segments, header], path: [...segments, next] },
       ])
       if (!landed) restore()
     } catch (failure) {
