@@ -268,7 +268,32 @@ describe('PATCH /api/config (429-01)', () => {
     const onDisk = await readFile(configPath)
     expect(JSON.parse(response.body)).toEqual({
       revision: createHash('sha256').update(onDisk).digest('hex'),
+      baseRevision: createHash('sha256').update(baseConfig).digest('hex'),
     })
+  })
+
+  // 429-37 CR-01: the answer names the bytes the write merged onto, so a page can tell its write
+  // absorbed an outside edit it never read.
+  it('BASE-REVISION-ANSWERED: the answer carries the sha256 of the bytes the write merged onto', async () => {
+    const configPath = await useConfigWorkspace()
+    const outside = Buffer.from(baseConfig.replace('headless: false', 'headless: true'), 'utf-8')
+    await writeFile(configPath, outside)
+
+    const response = await patchConfig(setStep('45s'))
+
+    expect(response.status).toBe(200)
+    const onDisk = await readFile(configPath)
+    const sha = (bytes: Buffer | string) => createHash('sha256').update(bytes).digest('hex')
+    expect(JSON.parse(response.body)).toEqual({ revision: sha(onDisk), baseRevision: sha(outside) })
+    expect(sha(outside)).not.toBe(sha(baseConfig))
+
+    await rm(configPath)
+    const whole = parseYaml(baseConfig) as Record<string, unknown>
+    const absent = await patchConfig({
+      changes: Object.entries(whole).map(([key, value]) => ({ op: 'set', path: [key], value })),
+    })
+    expect(absent.status, absent.body).toBe(200)
+    expect(JSON.parse(absent.body)).toEqual({ revision: sha(await readFile(configPath)), baseRevision: 'absent' })
   })
 })
 
@@ -304,7 +329,10 @@ describe('PATCH /api/config concurrency, idempotency and file identity (429-05)'
 
     expect([first.status, second.status]).toEqual([200, 200])
     expect(Buffer.compare(await readFile(configPath), afterFirst)).toBe(0)
-    expect(JSON.parse(second.body)).toEqual(JSON.parse(first.body))
+    const [one, two] = [first, second].map((response) => JSON.parse(response.body) as { revision: string; baseRevision: string })
+    expect(two!.revision).toBe(one!.revision)
+    // 429-37: the second write merged onto exactly what the first one wrote.
+    expect(two!.baseRevision).toBe(one!.revision)
   })
 
   it('MODE-PRESERVED: the rewritten file keeps the mode the owner gave it', async () => {

@@ -47,6 +47,8 @@ const step: ConfigFieldRef = { segments: ["use", "timeout", "step"], tab: "execu
 const envFile: ConfigFieldRef = { segments: ["workspace", "envFile"], tab: "project" }
 const testTimeout: ConfigFieldRef = { segments: ["use", "timeout", "test"], tab: "execution" }
 const farmKey: ConfigFieldRef = { segments: ["registry", "providers", "farm", "accessKey"], tab: "targets" }
+const maxSubActions: ConfigFieldRef = { segments: ["use", "planner", "maxSubActions"], tab: "models" }
+const previousStepCount: ConfigFieldRef = { segments: ["use", "planner", "previousStepCount"], tab: "models" }
 const modelHeader: ConfigFieldRef = {
   segments: ["registry", "llms", { name: "primary" }, "providerHeaders", "Authorization"],
   tab: "models",
@@ -148,12 +150,14 @@ beforeEach(() => {
   vi.useFakeTimers()
   localStorage.clear()
   vi.mocked(fetchConfig).mockResolvedValue(answer(baseConfig) as never)
-  // One fake server: the revision route answers whatever the last write landed.
+  // One fake server: the revision route answers whatever the last write landed, and each write
+  // names the revision it merged onto (429-37), so every cell here stays on the trusted path.
   let serverRevision = "rev-1"
   vi.mocked(fetchConfigRevision).mockImplementation(async () => ({ revision: serverRevision }))
   vi.mocked(applyConfigChanges).mockImplementation(async () => {
+    const baseRevision = serverRevision
     serverRevision = "rev-2"
-    return { revision: serverRevision }
+    return { baseRevision, revision: serverRevision }
   })
 })
 
@@ -406,8 +410,9 @@ describe("useConfigAutosave outside edits, explicit actions and Undo (429-16 Tas
     expect(fetchConfig).toHaveBeenCalledTimes(2)
   })
 
-  it("OWN-WRITE-NO-REFETCH: a poll answering the revision this page just wrote re-reads nothing", async () => {
+  it("OWN-WRITE-NO-REFETCH: a write whose base is the page's own revision, then polls answering its result, re-reads nothing", async () => {
     await mount()
+    vi.mocked(applyConfigChanges).mockResolvedValue({ baseRevision: "rev-1", revision: "rev-2" })
     await run((h) => {
       h.edit(headless, false, { valid: true, value: false })
       h.settle(headless)
@@ -419,6 +424,55 @@ describe("useConfigAutosave outside edits, explicit actions and Undo (429-16 Tas
     expect(vi.mocked(fetchConfigRevision).mock.calls.length).toBeGreaterThanOrEqual(3)
     expect(fetchConfig).toHaveBeenCalledTimes(1)
     expect(hook!.valueOf(headless)).toBe(false)
+  })
+
+  // 429-37 CR-01: the outside edit lands at rev-9 and the page writes before any poll tick; the
+  // write's answer names rev-9 as its base, which the page never read.
+  async function interleavedOutsideEdit() {
+    await mount()
+    const merged = {
+      ...baseConfig,
+      use: { ...baseConfig.use, browser: { headless: false }, planner: { maxSubActions: 99, previousStepCount: 77 } },
+    }
+    vi.mocked(applyConfigChanges).mockResolvedValue({ baseRevision: "rev-9", revision: "rev-10" })
+    vi.mocked(fetchConfig).mockResolvedValue(answer(merged, "rev-10") as never)
+    vi.mocked(fetchConfigRevision).mockResolvedValue({ revision: "rev-10" })
+    const statuses: string[] = []
+    await run((h) => {
+      h.edit(headless, false, { valid: true, value: false })
+      h.settle(headless)
+    })
+    statuses.push(hook!.status.state)
+    await flush()
+    statuses.push(hook!.status.state)
+    return statuses
+  }
+
+  it("OUTSIDE-EDIT-INTERLEAVED-REREAD: a write that merged an outside edit re-reads at once, with no poll", async () => {
+    const statuses = await interleavedOutsideEdit()
+
+    expect(fetchConfigRevision).not.toHaveBeenCalled()
+    expect(fetchConfig).toHaveBeenCalledTimes(2)
+    expect(hook!.valueOf(previousStepCount)).toBe(77)
+    expect(hook!.valueOf(maxSubActions)).toBe(99)
+    expect(hook!.valueOf(headless)).toBe(false)
+    expect(statuses).not.toContain("failed")
+    expect(hook!.status.state).not.toBe("failed")
+  })
+
+  it("INTERLEAVED-EDIT-KEEPS-OUTSIDE-SIBLING: after the re-read, one planner leaf sends only itself", async () => {
+    await interleavedOutsideEdit()
+    vi.mocked(applyConfigChanges).mockClear()
+    vi.mocked(applyConfigChanges).mockResolvedValue({ baseRevision: "rev-10", revision: "rev-11" })
+
+    await run((h) => {
+      h.edit(maxSubActions, 50, { valid: true, value: 50 })
+      h.settle(maxSubActions)
+    })
+
+    expect(writeCalls()).toEqual([[{ op: "set", path: ["use", "planner", "maxSubActions"], value: 50 }]])
+    expect(JSON.stringify(writeCalls())).not.toContain("previousStepCount")
+    expect(hook!.valueOf(previousStepCount)).toBe(77)
   })
 
   it("POLL-ONLY-WHEN-VISIBLE: a hidden page never polls; becoming visible or focused polls at once", async () => {
