@@ -894,3 +894,72 @@ describe("useConfigAutosave computed writes (429-46 Task 1 · CR-01)", () => {
     expect(hook!.status.state).toBe("saved")
   })
 })
+
+describe("useConfigAutosave a Retry with nothing to send (429-53 · WR-06)", () => {
+  function writeFailed() {
+    return new ApiError(500, "Internal Server Error", {
+      error: "write_failed",
+      message: "The config file could not be written.",
+    })
+  }
+
+  it("EMPTY-RETRY-NEVER-SAVING: a failed computed model delete, then Retry, ends idle with nothing in flight", async () => {
+    await mount()
+    vi.mocked(applyConfigChanges).mockRejectedValueOnce(writeFailed())
+    // The shape of model-row.tsx deleteModel: once the delete settles, Retry computes nothing.
+    let settled = false
+    const compute = vi.fn((): ConfigChange[] =>
+      settled ? [] : [{ op: "unset", path: ["registry", "llms", { name: "primary" }] }],
+    )
+
+    let landed = true
+    await act(async () => {
+      landed = await hook!.runComputed(compute, { kind: "delete-model", name: "primary" })
+    })
+    settled = true
+    await flush()
+
+    expect(landed).toBe(false)
+    expect(hook!.status.state).toBe("failed")
+    expect(writeCalls()).toHaveLength(1)
+
+    const mark = seenStatuses.length
+    await run((h) => h.retry())
+    await advance(60_000)
+
+    expect(hook!.status.state).toBe("idle")
+    expect(seenStatuses.slice(mark)).not.toContain("saving")
+    expect(seenStatuses.slice(mark)).not.toContain("saved")
+    expect(writeCalls()).toHaveLength(1)
+    expect(compute).toHaveBeenCalledTimes(2)
+  })
+
+  it("EMPTY-RETRY-NEVER-SAVING: a failed keyless explicit delete, then Retry, ends idle with nothing in flight", async () => {
+    await mount()
+    vi.mocked(applyConfigChanges).mockRejectedValueOnce(writeFailed())
+
+    let landed = true
+    await act(async () => {
+      landed = await hook!.runExplicit([{ op: "unset", path: ["registry", "targets", "staging"] }], {
+        kind: "delete-target",
+        name: "staging",
+      })
+    })
+    await flush()
+
+    expect(landed).toBe(false)
+    expect(hook!.status.state).toBe("failed")
+    expect(writeCalls()).toHaveLength(1)
+
+    const readsBefore = vi.mocked(fetchConfig).mock.calls.length
+    const mark = seenStatuses.length
+    await run((h) => h.retry())
+    await advance(60_000)
+
+    expect(hook!.status.state).toBe("idle")
+    expect(seenStatuses.slice(mark)).not.toContain("saving")
+    expect(seenStatuses.slice(mark)).not.toContain("saved")
+    expect(writeCalls()).toHaveLength(1)
+    expect(vi.mocked(fetchConfig).mock.calls.length).toBeGreaterThan(readsBefore)
+  })
+})

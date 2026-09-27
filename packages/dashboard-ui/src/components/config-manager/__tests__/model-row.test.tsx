@@ -525,7 +525,7 @@ describe('ModelRow explicit actions (429-24 Task 1)', () => {
     await flush()
     expect(applyConfigChanges).toHaveBeenCalledTimes(1)
     expect(row('router')).not.toBeNull()
-    expect(hook!.status.state).not.toBe('failed')
+    expect(hook!.status.state).toBe('idle')
 
     await openModel('gpt-5.6')
     vi.mocked(deleteAuthCredential).mockRejectedValueOnce(new Error('auth store locked'))
@@ -540,7 +540,7 @@ describe('ModelRow explicit actions (429-24 Task 1)', () => {
     await flush()
     expect(deleteAuthCredential).toHaveBeenCalledTimes(1)
     expect(status('gpt-5.6')).toBe('signed-in')
-    expect(hook!.status.state).not.toBe('failed')
+    expect(hook!.status.state).toBe('idle')
 
     await click(buttonNamed(row('gpt-5.6'), SIGN_OUT_LABEL))
     expect(status('gpt-5.6')).toBe('not-connected')
