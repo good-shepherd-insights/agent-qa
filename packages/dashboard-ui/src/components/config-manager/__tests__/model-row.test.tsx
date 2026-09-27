@@ -320,7 +320,14 @@ describe('ModelRow explicit actions (429-24 Task 1)', () => {
     await click(buttonNamed(panel, DELETE_MODEL_LABEL))
 
     expect(vi.mocked(applyConfigChanges).mock.calls).toEqual([
-      [[{ op: 'unset', path: ['registry', 'llms', { name: 'router' }] }], { undoable: true }],
+      [
+        [
+          { op: 'unset', path: ['registry', 'llms', { name: 'router' }] },
+          { op: 'expect', path: ['eval', 'judge'], value: null },
+          { op: 'expect', path: ['eval', 'judges'], value: null },
+        ],
+        { undoable: true },
+      ],
     ])
     expect(row('router')).toBeNull()
     noDialog()
@@ -356,6 +363,8 @@ describe('ModelRow explicit actions (429-24 Task 1)', () => {
       [
         [
           { op: 'unset', path: ['registry', 'llms', { name: 'router' }] },
+          { op: 'expect', path: ['eval', 'judge'], value: null },
+          { op: 'expect', path: ['eval', 'judges'], value: ['router', 'flash'] },
           { op: 'unset', path: ['eval', 'judges'] },
           { op: 'set', path: ['eval', 'judge'], value: 'flash' },
         ],
@@ -371,6 +380,49 @@ describe('ModelRow explicit actions (429-24 Task 1)', () => {
     expect(row('router')).not.toBeNull()
     await openModel('router')
     expect(row('router')!.textContent).toContain(USED_AS_JUDGE_LINE)
+  })
+
+  it("DELETE-MERGES-OUTSIDE-JUDGE-EDIT: a delete refused field_changed lands on the file's new judge list after one re-read", async () => {
+    vi.mocked(fetchConfig).mockResolvedValue(answer(modelsConfig(LLMS, 'router', { judges: ['gpt', 'flash'] })) as never)
+    await mount()
+    await openModel('flash')
+    vi.mocked(applyConfigChanges).mockRejectedValueOnce(
+      new ApiError(409, 'Conflict', { error: 'field_changed', path: ['eval', 'judges'] }),
+    )
+    vi.mocked(fetchConfig).mockResolvedValue(
+      answer(modelsConfig(LLMS, 'router', { judges: ['gpt', 'flash', 'x'] })) as never,
+    )
+    await click(buttonNamed(row('flash'), DELETE_MODEL_LABEL))
+    await flush()
+
+    const unsetFlash = { op: 'unset', path: ['registry', 'llms', { name: 'flash' }] }
+    expect(vi.mocked(applyConfigChanges).mock.calls).toEqual([
+      [
+        [
+          unsetFlash,
+          { op: 'expect', path: ['eval', 'judge'], value: null },
+          { op: 'expect', path: ['eval', 'judges'], value: ['gpt', 'flash'] },
+          { op: 'unset', path: ['eval', 'judges'] },
+          { op: 'set', path: ['eval', 'judge'], value: 'gpt' },
+        ],
+        { undoable: true },
+      ],
+      [
+        [
+          unsetFlash,
+          { op: 'expect', path: ['eval', 'judge'], value: null },
+          { op: 'expect', path: ['eval', 'judges'], value: ['gpt', 'flash', 'x'] },
+          { op: 'set', path: ['eval', 'judges'], value: ['gpt', 'x'] },
+        ],
+        { undoable: true },
+      ],
+    ])
+    expect(fetchConfig).toHaveBeenCalledTimes(2)
+    expect(row('flash')).toBeNull()
+    expect(hook!.status.state).toBe('undo')
+    expect(hook!.status.undo?.line).toBe(undoLine('delete-model', 'flash', { judge: true }))
+    const config = hook!.load.kind === 'ready' ? hook!.load.answer.config : undefined
+    expect((config as { eval?: unknown } | undefined)?.eval).toEqual({ judges: ['gpt', 'x'] })
   })
 
   it('FOCUS-AFTER-MODEL-DELETE: focus moves to the next row, else the previous one, else Add model', async () => {
