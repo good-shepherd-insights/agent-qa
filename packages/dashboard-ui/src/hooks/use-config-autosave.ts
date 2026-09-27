@@ -350,7 +350,7 @@ function patchConfig(
   changes: readonly ConfigChange[],
 ): Record<string, unknown> | undefined {
   const next = JSON.parse(JSON.stringify(config)) as Record<string, unknown>
-  for (const change of changes) {
+  nextChange: for (const change of changes) {
     const parentPath = change.path.slice(0, -1)
     const last = change.path[change.path.length - 1]!
     let parent: unknown = next
@@ -360,8 +360,11 @@ function patchConfig(
         parent = child.value
       } else if (change.op !== "unset" && typeof segment === "string" && isRecord(parent)) {
         parent = parent[segment] = {}
+      } else if (change.op === "unset") {
+        // Nothing is there to remove; the rest of the set still applies (deferred 429-28).
+        continue nextChange
       } else {
-        return change.op === "unset" ? next : undefined
+        return undefined
       }
     }
     const target = childAt(parent, last)
