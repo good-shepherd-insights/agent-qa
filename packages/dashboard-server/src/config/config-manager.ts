@@ -132,6 +132,7 @@ export class ConfigManager {
     if (read.kind === 'file_invalid') return read
     const secretValues: string[] = []
     const masked = maskDocument(read.doc, secretValues)
+    stripComments(masked)
     const config = (maskByMap(masked.toJSON(), []) as Record<string, unknown> | null) ?? {}
     const parsed = AgentQaConfigSchema.safeParse(normalizeForValidation(read.config))
     const fileIssues = parsed.success
@@ -538,6 +539,18 @@ function maskDocument(doc: Document, secretValues: string[]): Document {
     },
   })
   return masked
+}
+
+// 429-41 (CR-02): every comment goes, because secrecy is never decided from text (D-08).
+function stripComments(doc: Document): void {
+  doc.commentBefore = null
+  doc.comment = null
+  visit(doc, {
+    Node(_key, node) {
+      node.commentBefore = undefined
+      node.comment = undefined
+    },
+  })
 }
 
 function maskByMap(value: unknown, segments: (string | number)[]): unknown {
