@@ -4,7 +4,11 @@
 // carries storage vocabulary, no button label is a bare generic word, and the connection-failure
 // sentences are the shared classifier's own function, never a second spelling.
 
-import { providerErrorSentence as schemaProviderErrorSentence } from '@vostride/agent-qa-schema'
+import {
+  CONFIG_WRITE_REFUSALS,
+  LLM_SETUP_REFUSALS,
+  providerErrorSentence as schemaProviderErrorSentence,
+} from '@vostride/agent-qa-schema'
 import { readFileSync } from 'node:fs'
 
 import { describe, expect, it } from 'vitest'
@@ -197,5 +201,35 @@ describe('COPY-429: the Config strings of record (429-12 Task 2)', () => {
     expect(copy.SAVED_VISIBLE_MS).toBe(2_000)
     expect(copy.UNDO_WINDOW_MS).toBe(10_000)
     expect(copy.REVISION_POLL_MS).toBe(2_000)
+  })
+})
+
+describe('The Connect refusal sentences (429-48 Task 1)', () => {
+  it('CONNECT-REFUSAL-COPY-TOTAL: every code the connect door can answer has its own full sentence', () => {
+    const codes = new Set<string>([...LLM_SETUP_REFUSALS, ...CONFIG_WRITE_REFUSALS, 'connect_failed', 'cross_site_refused'])
+    expect(new Set(Object.keys(copy.CONNECT_REFUSAL_COPY))).toEqual(codes)
+    for (const [code, sentence] of Object.entries(copy.CONNECT_REFUSAL_COPY)) {
+      expect(sentence.trim(), code).not.toBe('')
+      expect(sentence, code).toMatch(/\.$/)
+      expect(sentence, code).not.toBe(schemaProviderErrorSentence('network_error', ''))
+    }
+  })
+
+  it('CONNECT-REFUSAL-COPY-TOTAL: the network sentence only without a code the map knows; issues follow two codes', () => {
+    const network = schemaProviderErrorSentence('network_error', '')
+    expect(copy.connectRefusalSentence(undefined)).toBe(network)
+    expect(copy.connectRefusalSentence('not_a_code')).toBe(network)
+    expect(copy.connectRefusalSentence('toString')).toBe(network)
+    expect(copy.connectRefusalSentence('file_invalid')).toBe(copy.CONNECT_REFUSAL_COPY.file_invalid)
+    expect(copy.connectRefusalSentence('validation_failed', [])).toBe(copy.CONNECT_REFUSAL_COPY.validation_failed)
+    expect(copy.connectRefusalSentence('validation_failed', [{ message: 'Invalid duration' }, { message: 'Second' }])).toBe(
+      'The config file has a problem to fix first: Invalid duration',
+    )
+    expect(copy.connectRefusalSentence('invalid_setup_input', [{ message: 'Invalid URL' }])).toBe(
+      'Check the model and base URL: Invalid URL',
+    )
+    expect(copy.connectRefusalSentence('write_failed', [{ message: 'Ignored' }])).toBe(copy.CONNECT_REFUSAL_COPY.write_failed)
+    expect(copy.CONNECT_REFUSAL_COPY.name_invalid).toBe(copy.NAME_RULE_ERROR)
+    expect(copy.CONNECT_REFUSAL_COPY.credential_missing).toBe(copy.KEY_REQUIRED_ERROR)
   })
 })

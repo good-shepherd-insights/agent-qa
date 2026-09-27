@@ -40,6 +40,7 @@ import {
   BASE_URL_REQUIRED_ERROR,
   BECAME_DEFAULT_TEXT,
   CANCEL_SIGN_IN_LABEL,
+  CONNECT_REFUSAL_COPY,
   DISCARD_DRAFT_LABEL,
   CONNECTING_LABEL,
   CONNECTION_CHOICE_HINTS,
@@ -62,6 +63,7 @@ import {
   existingCredentialLine,
   nameCredentialConflictError,
   nameTakenError,
+  providerErrorSentence,
   signInFailedText,
   signInPluginMissingText,
 } from '@/lib/config-copy'
@@ -552,6 +554,90 @@ describe('AddModelRow Connect (429-25 Task 2)', () => {
     expect(fieldError('name')).toBe(nameTakenError('gpt-5.6'))
     expect(input('key')?.value).toBe(TYPED_KEY)
     expect(buttonsNamed(addRow(), SAVE_WITHOUT_TESTING_LABEL)).toHaveLength(0)
+  })
+})
+
+describe('AddModelRow Connect refusals (429-48 Task 1)', () => {
+  const refusals: Array<{ payload: Record<string, unknown> | null; status: number; line: string }> = [
+    {
+      status: 422,
+      payload: {
+        error: 'validation_failed',
+        issues: [
+          { path: ['use', 'timeout', 'step'], message: 'Invalid duration' },
+          { path: ['x'], message: 'Second' },
+        ],
+      },
+      line: 'The config file has a problem to fix first: Invalid duration',
+    },
+    {
+      status: 400,
+      payload: { error: 'invalid_setup_input', issues: [{ path: ['baseURL'], message: 'Invalid URL' }] },
+      line: 'Check the model and base URL: Invalid URL',
+    },
+    { status: 409, payload: { error: 'file_invalid' }, line: CONNECT_REFUSAL_COPY.file_invalid },
+    { status: 400, payload: { error: 'credential_not_accepted' }, line: CONNECT_REFUSAL_COPY.credential_not_accepted },
+    { status: 422, payload: { error: 'validation_failed', issues: [] }, line: CONNECT_REFUSAL_COPY.validation_failed },
+    { status: 500, payload: { error: 'connect_failed' }, line: CONNECT_REFUSAL_COPY.connect_failed },
+  ]
+
+  it('CONNECT-REFUSAL-COPY: each refusal shows its own sentence, never the network one, and keeps the draft and the typed key', async () => {
+    const network = providerErrorSentence('network_error', '')
+    await mount()
+    await fillOpenAiCompatible()
+    for (const refusal of refusals) {
+      vi.mocked(connectLLM).mockRejectedValueOnce(new ApiError(refusal.status, 'Refused', refusal.payload))
+      await click(connectButton())
+      expect(addState(), refusal.line).toBe('failed')
+      expect(failedLine(), JSON.stringify(refusal.payload)).toBe(refusal.line)
+      expect(failedLine()).not.toBe(network)
+      expect(input('baseURL')?.value).toBe('https://llm.example.com/v1')
+      expect(input('model')?.value).toBe('gpt-5.6')
+      expect(input('name')?.value).toBe('gpt-5.6')
+      expect(input('key')?.value).toBe(TYPED_KEY)
+      expect(buttonsNamed(addRow(), SAVE_WITHOUT_TESTING_LABEL)).toHaveLength(0)
+    }
+    expect(connectLLM).toHaveBeenCalledTimes(refusals.length)
+
+    vi.mocked(connectLLM).mockRejectedValueOnce(new ApiError(502, 'Bad Gateway', null))
+    await click(connectButton())
+    expect(failedLine()).toBe(network)
+    vi.mocked(connectLLM).mockRejectedValueOnce(new TypeError('Failed to fetch'))
+    await click(connectButton())
+    expect(failedLine()).toBe(network)
+    expect(input('key')?.value).toBe(TYPED_KEY)
+    expect(applyConfigChanges).not.toHaveBeenCalled()
+  })
+
+  it('CONNECT-REFUSAL-CONFLICT-ON-NAME: a credential_provider_conflict refusal marks the name with the conflict and focuses it', async () => {
+    await mount()
+    await fillOpenAiCompatible()
+    vi.mocked(connectLLM).mockResolvedValueOnce({ success: false, errorClass: 'auth_error', message: 'Refused.' })
+    await click(connectButton())
+    expect(failedLine()).toBe('Refused.')
+
+    vi.mocked(fetchAuthStatus).mockResolvedValue({
+      credentials: heldCredentials({ configName: 'gpt-5.6', provider: 'anthropic-compatible', type: 'api' }),
+    })
+    vi.mocked(connectLLM).mockRejectedValueOnce(new ApiError(409, 'Conflict', { error: 'credential_provider_conflict' }))
+    await click(connectButton())
+    await flush()
+    expect(fieldError('name')).toBe(nameCredentialConflictError('gpt-5.6', 'Anthropic-compatible'))
+    expect(input('name')?.getAttribute('aria-invalid')).toBe('true')
+    expect(document.activeElement).toBe(input('name'))
+    expect(failedLine()).toBeNull()
+    expect(input('key')?.value).toBe(TYPED_KEY)
+    await unmount()
+
+    vi.mocked(fetchAuthStatus).mockResolvedValue({ credentials: [] })
+    await mount()
+    await fillOpenAiCompatible()
+    vi.mocked(connectLLM).mockRejectedValueOnce(new ApiError(409, 'Conflict', { error: 'credential_provider_conflict' }))
+    await click(connectButton())
+    await flush()
+    expect(fieldError('name')).toBe(CONNECT_REFUSAL_COPY.credential_provider_conflict)
+    expect(document.activeElement).toBe(input('name'))
+    expect(failedLine()).toBeNull()
   })
 })
 
