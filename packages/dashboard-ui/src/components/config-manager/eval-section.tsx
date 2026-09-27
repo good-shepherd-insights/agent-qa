@@ -2,7 +2,9 @@
 //
 // Every eval leaf as one field in its group. Judges are picked from the registered models, at most
 // three. The schema refuses a file declaring both eval.judge and eval.judges, so every pick writes
-// the one key its count calls for and removes the other in the same write.
+// the one key its count calls for and removes the other in the same write. Each pick is computed
+// from the freshest config the page holds and first states what it read (429-46), so a list an
+// outside edit changed is re-read and the pick lands on it.
 
 import { useId, useRef, useState, type ReactNode } from "react"
 import { Link } from "react-router"
@@ -61,6 +63,26 @@ function judgeChanges(judges: readonly string[]): ConfigChange[] {
   return [{ op: "set", path: list, value: [...judges] }, { op: "unset", path: judge }]
 }
 
+/**
+ * One judge toggle applied to the list the given config holds, led by the two expect ops that state
+ * what was read; [] when the toggle already holds or a check would pass the limit.
+ */
+export function judgeToggleChanges(
+  config: Record<string, unknown>,
+  name: string,
+  checked: boolean,
+): ConfigChange[] {
+  const block = isRecord(config.eval) ? config.eval : {}
+  const current = configuredJudges(config)
+  if (checked === current.includes(name) || (checked && current.length >= JUDGE_LIMIT)) return []
+  const next = checked ? [...current, name] : current.filter((judge) => judge !== name)
+  return [
+    { op: "expect", path: ["eval", "judge"], value: block.judge ?? null },
+    { op: "expect", path: ["eval", "judges"], value: block.judges ?? null },
+    ...judgeChanges(next),
+  ]
+}
+
 function Group({ id, children }: { id: EvalGroup; children: ReactNode }) {
   const headingId = `eval-group-${id}`
   return (
@@ -91,7 +113,7 @@ function JudgePicker({ config }: EvalSectionProps) {
     const next = checked ? [...selected, name] : selected.filter((judge) => judge !== name)
     const id = ++seq.current
     setPending(next)
-    await autosave.runExplicit(judgeChanges(next))
+    await autosave.runComputed((latest) => judgeToggleChanges(latest, name, checked))
     if (id === seq.current) setPending(undefined)
   }
 
