@@ -15,6 +15,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ModelList } from '@/components/config-manager/model-list'
 import { ConfigAutosaveProvider, useConfigAutosave, type ConfigAutosave } from '@/hooks/use-config-autosave'
 import {
+  ApiError,
   applyConfigChanges,
   deleteAuthCredential,
   exchangePluginAuthCode,
@@ -600,13 +601,8 @@ describe('ModelRow key and settings (429-24 Task 2)', () => {
     await type(name, 'X-Team')
     await waitPastSettle()
     const headers = ['registry', 'llms', { name: 'claude-proxy' }, 'providerHeaders']
-    expect(revealConfigValue).toHaveBeenCalledWith([...headers, 'X-Org'])
-    expect(writes()[4]).toEqual([
-      [
-        { op: 'unset', path: [...headers, 'X-Org'] },
-        { op: 'set', path: [...headers, 'X-Team'], value: HEADER_SECRET },
-      ],
-    ])
+    expect(revealConfigValue).not.toHaveBeenCalled()
+    expect(writes()[4]).toEqual([[{ op: 'move', from: [...headers, 'X-Org'], path: [...headers, 'X-Team'] }]])
     expect(container!.innerHTML).not.toContain(HEADER_SECRET)
     expect(Array.from(row('claude-proxy')!.querySelectorAll('[data-model-header]')).map((item) => item.getAttribute('data-model-header'))).toEqual(['X-Team'])
 
@@ -647,6 +643,47 @@ describe('ModelRow key and settings (429-24 Task 2)', () => {
     expect(values).not.toContain('router')
     expect(values).not.toContain('openai-compatible')
     expect(panel?.querySelector('select, [role="combobox"], [role="radio"]')).toBeNull()
+  })
+})
+
+describe('ModelRow header rename (429-47 Task 1 · deferred 429-24)', () => {
+  const HEADERS = ['registry', 'llms', { name: 'claude-proxy' }, 'providerHeaders']
+
+  function headerNames() {
+    return Array.from(row('claude-proxy')!.querySelectorAll('[data-model-header]')).map((item) =>
+      item.getAttribute('data-model-header'),
+    )
+  }
+
+  it('HEADER-RENAME-NEVER-REVEALS: a header rename is one server-side move, and the page never reads the value', async () => {
+    vi.mocked(fetchConfig).mockResolvedValue(answer(modelsConfig([...LLMS, PROXY])) as never)
+    await mount()
+    const proxy = await openModel('claude-proxy')
+    await type(inputIn(proxy, 'registry.llms[].providerHeaders'), 'X-Team')
+    await waitPastSettle()
+
+    expect(revealConfigValue).not.toHaveBeenCalled()
+    expect(writes()).toEqual([[[{ op: 'move', from: [...HEADERS, 'X-Org'], path: [...HEADERS, 'X-Team'] }]]])
+    expect(headerNames()).toEqual(['X-Team'])
+    expect(field(row('claude-proxy'), 'registry.llms[].providerHeaders.*')?.textContent).toContain(CONFIG_MASK_PLACEHOLDER)
+    expect(inputIn(row('claude-proxy'), 'registry.llms[].providerHeaders')?.value).toBe('X-Team')
+    expect(container!.innerHTML).not.toContain(HEADER_SECRET)
+  })
+
+  it("HEADER-RENAME-NEVER-REVEALS: a refused rename puts the saved name back and says Couldn't save, still without a reveal", async () => {
+    vi.mocked(fetchConfig).mockResolvedValue(answer(modelsConfig([...LLMS, PROXY])) as never)
+    await mount()
+    const proxy = await openModel('claude-proxy')
+    vi.mocked(applyConfigChanges).mockRejectedValueOnce(new ApiError(422, 'Unprocessable Entity', { error: 'validation_failed' }))
+    await type(inputIn(proxy, 'registry.llms[].providerHeaders'), 'X-Team')
+    await waitPastSettle()
+
+    expect(revealConfigValue).not.toHaveBeenCalled()
+    expect(writes()).toEqual([[[{ op: 'move', from: [...HEADERS, 'X-Org'], path: [...HEADERS, 'X-Team'] }]]])
+    expect(inputIn(row('claude-proxy'), 'registry.llms[].providerHeaders')?.value).toBe('X-Org')
+    expect(headerNames()).toEqual(['X-Org'])
+    expect(hook!.status.state).toBe('failed')
+    expect(container!.innerHTML).not.toContain(HEADER_SECRET)
   })
 })
 
