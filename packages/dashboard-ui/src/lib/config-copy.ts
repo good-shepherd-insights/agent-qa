@@ -107,6 +107,8 @@ export const SAVE_STATUS_WORDS = {
 export const RETRY_LABEL = 'Retry'
 export const NOT_SAVED_ACTION_NAME = 'Not saved. Go to the first unsaved field.'
 export const UNDO_LABEL = 'Undo'
+/** A computed write the file changed under twice in a row (429-46); the page has re-read it. */
+export const FIELD_CHANGED_TEXT = "This changed in the file. The page now shows the file's value."
 
 /** The past-tense line an explicit action leaves in the status; the status appends " · Undo". */
 export function undoLine(kind: ExplicitActionKind, name: string, opts: { judge?: boolean } = {}): string {

@@ -42,7 +42,13 @@ import {
   type ConfigSaveStatus,
   type RestoredDraft,
 } from "@/lib/config-autosave"
-import { REVISION_POLL_MS, SAVED_VISIBLE_MS, SETTLE_DELAY_MS, UNDO_WINDOW_MS } from "@/lib/config-copy"
+import {
+  FIELD_CHANGED_TEXT,
+  REVISION_POLL_MS,
+  SAVED_VISIBLE_MS,
+  SETTLE_DELAY_MS,
+  UNDO_WINDOW_MS,
+} from "@/lib/config-copy"
 import { completeRequiredSiblings } from "@/lib/config-fields"
 import { CONFIG_TABS, type ConfigTab, type ExplicitActionKind, type FieldState } from "@/lib/config-tabs"
 
@@ -76,6 +82,9 @@ export interface ConfigRestored {
   seq: number
 }
 
+/** Computes a write from the config it is handed: the freshest one the page holds. */
+export type ConfigCompute = (config: Record<string, unknown>) => ConfigChange[]
+
 export interface ConfigDraftTarget {
   tab: ConfigTab
   fieldKey: string
@@ -106,6 +115,12 @@ export interface ConfigAutosave {
     undoMeta?: ConfigUndoMeta,
     fields?: readonly ConfigFieldRef[],
   ) => Promise<boolean>
+  /**
+   * One explicit write computed from the freshest config the page holds (429-46 · CR-01). When the
+   * file changed under it (field_changed), the page re-reads and computes once more; a second
+   * refusal in a row reads Couldn't save, and Retry computes again from a fresh read.
+   */
+  runComputed: (compute: ConfigCompute, undoMeta?: ConfigUndoMeta) => Promise<boolean>
   /**
    * Offers Undo for an action the server already performed through its own door (a credential
    * delete); the Undo link then redeems the server's token as for a config write.
@@ -334,6 +349,10 @@ function errorPayload(error: unknown): Record<string, unknown> | undefined {
   return isRecord(error.payload) ? error.payload : undefined
 }
 
+function isFieldChanged(error: unknown): boolean {
+  return errorPayload(error)?.error === "field_changed"
+}
+
 /** A read the server refused with a 4xx is about the file itself; any other failure may pass by. */
 function isFileRefusal(error: unknown): boolean {
   if (!(error instanceof Error) || !("status" in error)) return false
@@ -440,6 +459,8 @@ interface HeldExplicit {
   keys: readonly string[]
   changes: ConfigChange[]
   undoMeta?: ConfigUndoMeta
+  /** A computed write is computed again on Retry, never re-sent as it was. */
+  compute?: ConfigCompute
 }
 
 interface EngineHost {
@@ -534,18 +555,37 @@ function createEngine(host: EngineHost) {
     changes: ConfigChange[],
     explicit?: ConfigUndoMeta,
     byAction = false,
+    compute?: ConfigCompute,
   ): Promise<boolean> {
-    const id = `config-write-${++writeSeq}`
+    let id = `config-write-${++writeSeq}`
     const sentHolds = keys.map((key) => holds.get(key))
     let landed!: () => void
     flight = new Promise<void>((resolve) => {
       landed = resolve
     })
     emit({ type: "write-started", id, fieldKeys: keys })
+    const send = (set: ConfigChange[]) =>
+      explicit ? applyConfigChanges(set, { undoable: true }) : applyConfigChanges(set)
     try {
-      const result = explicit
-        ? await applyConfigChanges(changes, { undoable: true })
-        : await applyConfigChanges(changes)
+      let result: Awaited<ReturnType<typeof applyConfigChanges>>
+      try {
+        result = await send(changes)
+      } catch (error) {
+        if (compute === undefined || !attached || !isFieldChanged(error)) throw error
+        // The file moved under a computed write: read it and compute once more (429-46).
+        if (reading) await reading
+        await quietRead()
+        if (!attached) return false
+        if (!answer) throw error
+        changes = compute(answer.config)
+        if (changes.length === 0) {
+          emit({ type: "write-succeeded", id })
+          return true
+        }
+        id = `config-write-${++writeSeq}`
+        emit({ type: "write-started", id, fieldKeys: keys })
+        result = await send(changes)
+      }
       if (!attached) return false
       // 429-37 CR-01: a write that merged onto bytes this page never read absorbed an outside
       // edit, so its revision is not the page's own read; drop trust and re-read once it settles.
@@ -587,8 +627,16 @@ function createEngine(host: EngineHost) {
         const entry = outbox.get(key)
         if (entry && !entry.dirty && entry.change) entry.held = true
       }
-      if (byAction && keys.length > 0) {
+      if (compute !== undefined) {
+        heldExplicit = { keys, changes, compute, ...(explicit === undefined ? {} : { undoMeta: explicit }) }
+      } else if (byAction && keys.length > 0) {
         heldExplicit = explicit === undefined ? { keys, changes } : { keys, changes, undoMeta: explicit }
+      }
+      if (compute !== undefined && isFieldChanged(error)) {
+        // A second refusal in a row: say so, and show the file as it now is.
+        revision = undefined
+        emit({ type: "write-failed", id, issues: [], message: FIELD_CHANGED_TEXT })
+        return false
       }
       const { issues, message } = issuesFrom(error, keys)
       emit(message === undefined ? { type: "write-failed", id, issues } : { type: "write-failed", id, issues, message })
@@ -696,7 +744,8 @@ function createEngine(host: EngineHost) {
     }
     const explicit = heldExplicit
     heldExplicit = undefined
-    if (explicit) void explicitWrite(explicit.keys, explicit.changes, explicit.undoMeta)
+    if (explicit?.compute) void computedWrite(explicit.compute, explicit.undoMeta, true)
+    else if (explicit) void explicitWrite(explicit.keys, explicit.changes, explicit.undoMeta)
     if (resend || flight) {
       flush()
       return
@@ -814,6 +863,33 @@ function createEngine(host: EngineHost) {
     return explicitWrite(keys, changes, undoMeta)
   }
 
+  async function computedWrite(
+    compute: ConfigCompute,
+    undoMeta?: ConfigUndoMeta,
+    fresh = false,
+  ): Promise<boolean> {
+    while (flight) await flight
+    if (!attached) return false
+    if (fresh || revision === undefined || !answer) {
+      if (reading) await reading
+      await quietRead()
+      while (flight) await flight
+      if (!attached) return false
+    }
+    if (!answer) return false
+    const changes = compute(answer.config)
+    if (changes.length === 0) {
+      // A Retry that finds nothing left to write clears the failure it was offered for.
+      if (fresh) emit({ type: "draft-cleared", fieldKey: "" })
+      return true
+    }
+    return write([], changes, undoMeta, true, compute)
+  }
+
+  function runComputed(compute: ConfigCompute, undoMeta?: ConfigUndoMeta): Promise<boolean> {
+    return computedWrite(compute, undoMeta)
+  }
+
   function offerUndo(ticket: { token: string }, meta: ConfigUndoMeta) {
     if (!attached) return
     emit({
@@ -885,6 +961,7 @@ function createEngine(host: EngineHost) {
     refresh,
     poll,
     runExplicit,
+    runComputed,
     offerUndo,
     failExplicit,
     undo,
@@ -1033,6 +1110,7 @@ export function useConfigAutosave(): ConfigAutosave {
     errorOf: (field) => state.machine.fields[configFieldKeyOf(field.segments)]?.error,
     setFocusedField: engine.setFocusedField,
     runExplicit: engine.runExplicit,
+    runComputed: engine.runComputed,
     offerUndo: engine.offerUndo,
     failExplicit: engine.failExplicit,
     undo: engine.undo,
