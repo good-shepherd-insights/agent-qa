@@ -140,6 +140,22 @@ describe('a failed write (429-15 Task 1)', () => {
     expect(whole.fields[BROWSER]).toEqual({ raw: 'chromium', fieldState: 'draft' })
     expect(deriveSaveStatus(whole, 1_100)).toMatchObject({ state: 'failed', failingFieldKeys: [] })
   })
+
+  it('FOREIGN-FAILURE-KEEPS-WRITE: a failure for another id leaves the in-flight write to land', () => {
+    for (const foreign of ['explicit-action', 'undo']) {
+      const s = fold([
+        [{ type: 'edit', fieldKey: STEP, raw: '30s', valid: true }, 1_000],
+        [{ type: 'write-started', id: 'w1', fieldKeys: [STEP] }, 1_000],
+        [{ type: 'write-failed', id: foreign, issues: [], message: 'auth store locked' }, 1_050],
+      ])
+      expect(s.write, foreign).toEqual({ id: 'w1', fieldKeys: [STEP] })
+      expect(s.fields[STEP], foreign).toEqual({ raw: '30s', fieldState: 'saving' })
+
+      const landed = reduceConfigAutosave(s, { type: 'write-succeeded', id: 'w1' }, 1_100)
+      expect(landed.write, foreign).toBeUndefined()
+      expect(landed.fields[STEP], foreign).toEqual({ raw: '30s', fieldState: 'clean' })
+    }
+  })
 })
 
 describe('a partial write (429-15 Task 1)', () => {

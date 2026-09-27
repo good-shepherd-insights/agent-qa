@@ -62,6 +62,7 @@
 #   U42  a scope checkbox settles the add-token row on its own                        -> ADD-MCP-TOKEN-KEEPS-EVERY-SCOPE (429-39, WR-04)
 #   U43  U32's edit, on the rebuilt bundle                                           -> OUTSIDE-EDIT-INTERLEAVED-SHIPPED (429-37, shipped)
 #   U44  write-failed keeps the marker of a failed keyless write                     -> EMPTY-RETRY-NEVER-SAVING (429-53, WR-06)
+#   U45  write-failed drops the in-flight marker whatever write failed               -> FOREIGN-FAILURE-KEEPS-WRITE (429 review, WR-10)
 #
 # ALLOWED CO-REDS are listed on each leg with a one-line reason; nothing else may red.
 #
@@ -111,6 +112,11 @@
 # one); ui-components is re-measured, because the hook suite grew by the two EMPTY-RETRY-NEVER-SAVING
 # cells.
 #
+# THE REVIEW FIX (2026-09-27, WR-10). U45 plants the other half of U44's line: a failure for any id
+# drops the in-flight marker, so a foreign failure (an explicit action's or Undo's) orphans an
+# autosave that then lands unseen. Its red is the reducer cell FOREIGN-FAILURE-KEEPS-WRITE, the only
+# cell that fails a foreign id onto a live write; ui-lib is re-measured at 77 (was 76).
+#
 # Engine, arrival proof, counted selection and restoration: scripts/423-mutation-engine.cjs.
 #
 # USAGE
@@ -121,7 +127,7 @@
 #   neutered  apply NO mutation; the run must FATAL with "<leg>: suite stayed green"
 #   fatal     mutate every subject, then throw; every subject must be restored
 #   SIGINT | SIGTERM | SIGHUP   the same, then deliver that signal to itself
-# AGENT_QA_429_CONFIG_UI_MUTATION_LEG=U01..U44 runs one leg (normal or neutered runs only).
+# AGENT_QA_429_CONFIG_UI_MUTATION_LEG=U01..U45 runs one leg (normal or neutered runs only).
 # AGENT_QA_429_CONFIG_UI_MUTATION_LIST=1 prints the declared inventory and exits.
 #
 # Installed Node 24, workspace tools and the installed Playwright Chromium are required. No
@@ -177,7 +183,7 @@ const instruments = {
     pkg: 'packages/dashboard-ui',
     files: [TABS_T, TABS_D, COPY_T, AUTOSAVE_T, AUTOSAVE_D, DRAFT_T, STATIC_T, FIELDS_T, WORKSPACE_T],
     typecheck: true,
-    count: 76,
+    count: 77,
   },
   'ui-components': {
     pkg: 'packages/dashboard-ui',
@@ -768,10 +774,19 @@ const legs = [
     allowed: [modelRow('EXPLICIT-FAILURE-RESTORES-ROW')],
     greens: [hook('FORCED-FAILURE-KEEPS-DRAFT', 2), hook('COMPUTED-WRITE-GIVES-UP-HONESTLY'), hook('UNDO-CALLS-SERVER', 2)],
   },
+  // ---- the review fix (WR-10) ---------------------------------------------------------------------
+  {
+    subject: AUTOSAVE_SRC, instrument: 'ui-lib', claim: 'FOREIGN-FAILURE-KEEPS-WRITE',
+    operation: 'let write-failed drop the in-flight marker whatever write failed',
+    edits: [{ from: '      return state.write?.id === event.id\n', to: '      return true\n' }],
+    reds: [autosave('FOREIGN-FAILURE-KEEPS-WRITE')],
+    allowed: [],
+    greens: [autosave('FAILED-WRITE-KEEPS-DRAFT'), autosave('FAILED-WRITE-NEVER-SAVED'), autosaveD('C429-AUTOSAVE-EVENTS-EXACT')],
+  },
 ]
 
 runGate({
   slug: '429-config-ui-mutation', envPrefix: 'AGENT_QA_429_CONFIG_UI_MUTATION', idPrefix: 'U',
-  instruments, legs, expectedLegs: 44, banner: 'CONFIG_UI_MUTATION_OK',
+  instruments, legs, expectedLegs: 45, banner: 'CONFIG_UI_MUTATION_OK',
 })
 NODE

@@ -18,6 +18,9 @@
 # 2026-09-27, 429-53: U44 joins (EMPTY-RETRY-NEVER-SAVING, the re-verification's WR-06); the subjects
 # are unchanged at eighteen, since config-autosave.ts already is one.
 #
+# 2026-09-27, the review fix: U45 joins (FOREIGN-FAILURE-KEEPS-WRITE, the review's WR-10) on the same
+# subject, so the subjects stay at eighteen.
+#
 # Runs in place on the real tree. Slow; a phase gate, not a per-commit sample.
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
@@ -166,6 +169,9 @@ runSelftest({
     // The re-verification gap's leg (429-53, WR-06).
     { id: 'U44', claim: 'EMPTY-RETRY-NEVER-SAVING', subject: AUTOSAVE_SRC,
       reds: [`${HOOK_T} > EMPTY-RETRY-NEVER-SAVING (x2)`] },
+    // The review fix's leg (WR-10).
+    { id: 'U45', claim: 'FOREIGN-FAILURE-KEEPS-WRITE', subject: AUTOSAVE_SRC,
+      reds: [`${AUTOSAVE_T} > FOREIGN-FAILURE-KEEPS-WRITE`] },
   ],
 })
 NODE
