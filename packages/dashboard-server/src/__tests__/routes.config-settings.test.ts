@@ -728,8 +728,12 @@ describe('settings writes through PATCH /api/config (429-32)', () => {
     const { configManager, configPath } = await useSettingsWorkspace()
     const before = await readFile(configPath)
 
+    // 429-44: the door refuses the retired leaf by path; inside a container value it still meets validation.
+    const refused = await patchConfig([set(['use', 'device'], 'ios-sim')])
+    expect(refused.status).toBe(422)
+    expect(JSON.parse(refused.body)).toEqual({ error: 'path_not_writable' })
     const issues = await expectValidationRefused(
-      await patchConfig([set(['use', 'device'], 'ios-sim')]),
+      await patchConfig([set(['use'], { device: 'ios-sim' })]),
       configPath,
       before,
     )
@@ -843,7 +847,17 @@ describe('settings writes through PATCH /api/config (429-32)', () => {
   })
 
   it('rejects services.dashboard.testsDir', async () => {
-    const issues = await expectPatchRefused([set(['services', 'dashboard', 'testsDir'], './tests')])
+    const { configPath } = await useSettingsWorkspace()
+    const before = await readFile(configPath)
+    // 429-44: the door refuses the retired leaf by path; inside a container value it still meets validation.
+    const refused = await patchConfig([set(['services', 'dashboard', 'testsDir'], './tests')])
+    expect(refused.status).toBe(422)
+    expect(JSON.parse(refused.body)).toEqual({ error: 'path_not_writable' })
+    const issues = await expectValidationRefused(
+      await patchConfig([set(['services', 'dashboard'], { testsDir: './tests' })]),
+      configPath,
+      before,
+    )
 
     expect(issues.map((issue) => `${dotted(issue)}: ${issue.message}`).join('\n')).toContain('testsDir')
   })

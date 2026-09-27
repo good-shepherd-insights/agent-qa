@@ -332,9 +332,14 @@ describe('ConfigManager', () => {
           .toEqual({ enabled: true, ...recording })
       }
       const beforeInvalid = await readFile(configPath, 'utf8')
+      // 429-44: the door refuses a path the schema does not describe; inside a container value
+      // the same key still meets whole-config validation.
       const invalid = await patchConfig([{ op: 'set', path: ['services', 'recording', 'videoDir'], value: 'videos' }])
       expect(invalid.status).toBe(422)
-      expect(JSON.parse(invalid.body)).toMatchObject({ error: 'validation_failed' })
+      expect(JSON.parse(invalid.body)).toEqual({ error: 'path_not_writable' })
+      const nested = await patchConfig([{ op: 'set', path: ['services', 'recording'], value: { videoDir: 'videos' } }])
+      expect(nested.status).toBe(422)
+      expect(JSON.parse(nested.body)).toMatchObject({ error: 'validation_failed' })
       expect(await readFile(configPath, 'utf8')).toBe(beforeInvalid)
     },
   )
