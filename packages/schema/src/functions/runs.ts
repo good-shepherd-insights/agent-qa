@@ -43,6 +43,7 @@ import { EXECUTION_CONTEXT_VALUES } from '../run/run-status'
 import type { ExecutionContext, RunStatus } from '../run/run-status'
 import type { Verdict } from '../verdict/verdict'
 import { RunDetailMemberMarkSchema, type RunDetailMemberMark } from './feedback'
+import { wireOutputContract } from './output-contract'
 import { oneJoinArm, recordJoinShape } from './record-join'
 
 export const RUN_SUMMARY_SCHEMA_VERSION = 1
@@ -175,6 +176,12 @@ export type RunsListInput = z.infer<typeof RunsListInputSchema>
 export const RunsListOutputSchema = z.array(RunSummarySchema)
 
 export type RunsListOutput = z.infer<typeof RunsListOutputSchema>
+
+/**
+ * `runs.list`'s advertised output (431-03, D-03/D-07): the named schema above as the validator,
+ * with a document in which each row's branded run id is the validated wire string it arrives as.
+ */
+export const RunsListOutputContract = wireOutputContract(RunsListOutputSchema)
 
 export const RUN_DETAIL_SCHEMA_VERSION = 1
 
@@ -890,6 +897,8 @@ export const RunsArtifactResultSchema = z.object({
 
 export type RunsArtifactResult = z.infer<typeof RunsArtifactResultSchema>
 
+export const RunsArtifactOutputContract = wireOutputContract(RunsArtifactResultSchema)
+
 /** A recorded row address, never a caller-selected blob SHA or path. */
 export const RunsEvidenceInputSchema = z.strictObject({
   runId: runIdSchema,
@@ -937,6 +946,13 @@ export const RunsEvidenceResultSchema = z.union([
   return value.outcome !== 'ready' || (value.evidence.state === 'present' && value.document.kind === value.address.kind)
 }, { message: 'Evidence, document and address must describe the same captured kind' })
 export type RunsEvidenceResult = z.infer<typeof RunsEvidenceResultSchema>
+
+/**
+ * `runs.evidence`'s advertised output (431-03): every arm validates through the schema above, and
+ * a captured variable map is published as the string-keyed entry map it is — own `__proto__`
+ * included — rather than re-described through a record parser that skips that key.
+ */
+export const RunsEvidenceOutputContract = wireOutputContract(RunsEvidenceResultSchema)
 
 // ---- `runs.knowledge` — what one run USED and LEARNED (Phase 407, LERN-01/LERN-02 · D-05) -----
 //

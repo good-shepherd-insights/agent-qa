@@ -224,6 +224,19 @@ export type {
 // surface can advertise the same object `invokeFunction` validates with.
 export { RunsListOutputSchema } from './runs'
 export type { RunsListOutput } from './runs'
+// 431-03 (D-03/D-07): the canonical output contracts — the runtime schema as validator, with an
+// explicit output document derived from the wire terminals the runtime schema transforms.
+export {
+  createOutputContract,
+  deriveWireOutputRepresentation,
+  wireOutputContract,
+} from './output-contract'
+export type { JsonSchemaDocument, OutputContract } from './output-contract'
+export {
+  RunsArtifactOutputContract,
+  RunsEvidenceOutputContract,
+  RunsListOutputContract,
+} from './runs'
 // 431 D-08: the list's bounds and its per-row test identity and recorded-target vocabulary.
 export { RUNS_LIST_DEFAULT_LIMIT, RUNS_LIST_MAX_LIMIT } from './runs'
 export type { RecordedTargets, RunSummaryTest } from './runs'

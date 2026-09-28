@@ -1660,9 +1660,16 @@ export type {
 
 // 396-04 (D-01 / D-16 · MCPS-02): `runs.list`'s named output contract and the three declared fold
 // contracts the MCP catalogue advertises. Published on the barrel because `packages/mcp` is their
-// consumer and it reaches this package only through here.
+// consumer and it reaches this package only through here. 431-03 adds the canonical output
+// contracts beside them.
 export {
   RunsListOutputSchema,
+  RunsListOutputContract,
+  RunsArtifactOutputContract,
+  RunsEvidenceOutputContract,
+  createOutputContract,
+  deriveWireOutputRepresentation,
+  wireOutputContract,
   RUNS_LIST_DEFAULT_LIMIT,
   RUNS_LIST_MAX_LIMIT,
   TOOL_FOLD_DISCRIMINANT,
@@ -1675,6 +1682,8 @@ export {
 } from './functions/index'
 export type {
   RunsListOutput,
+  JsonSchemaDocument,
+  OutputContract,
   RecordedTargets,
   RunSummaryTest,
   AuthoringRefineFoldInput,
