@@ -65,7 +65,25 @@ export interface RunSummary {
   endedAt: number
   /** Number of member tests the run recorded. */
   testCount: number
+  /** Every member test the run recorded, in recorded order, whatever filter selected the run. */
+  tests: RunSummaryTest[]
+  recordedTargets: RecordedTargets
 }
+
+export interface RunSummaryTest {
+  testIndex: number
+  testId: string
+  testName: string
+}
+
+/**
+ * The target names a run recorded when it happened (431 D-08), never read from current
+ * configuration. `unknown` is its own arm so a run with no readable snapshot can never pass for a
+ * run that recorded no targets.
+ */
+export type RecordedTargets =
+  | { status: 'recorded'; names: string[] }
+  | { status: 'unknown' }
 
 const scopeTierValues = [
   'global',
@@ -91,6 +109,17 @@ const scopeKeySchema = z.object({
   key: z.string(),
 }).strict()
 
+const RunSummaryTestSchema = z.object({
+  testIndex: z.number().int().nonnegative(),
+  testId: z.string(),
+  testName: z.string(),
+}).strict() satisfies z.ZodType<RunSummaryTest>
+
+const RecordedTargetsSchema = z.discriminatedUnion('status', [
+  z.object({ status: z.literal('recorded'), names: z.array(z.string().min(1)) }).strict(),
+  z.object({ status: z.literal('unknown') }).strict(),
+]) satisfies z.ZodType<RecordedTargets>
+
 export const RunSummarySchema = z.object({
   runId: runIdSchema,
   scope: scopeKeySchema,
@@ -100,14 +129,33 @@ export const RunSummarySchema = z.object({
   startedAt: z.number().int().nonnegative(),
   endedAt: z.number().int().nonnegative(),
   testCount: z.number().int().nonnegative(),
+  tests: z.array(RunSummaryTestSchema),
+  recordedTargets: RecordedTargetsSchema,
 }).strict() satisfies z.ZodType<RunSummary>
 
+export const RUNS_LIST_DEFAULT_LIMIT = 20
+export const RUNS_LIST_MAX_LIMIT = 200
+
+const listTextFilterSchema = z.string().refine((value) => value.trim().length > 0, {
+  message: 'must name something: an empty or whitespace-only filter matches nothing',
+})
+
+// `.int()` is safe-integer bounded in zod 4, so an unrepresentable epoch or limit is refused
+// rather than rounded.
+const epochMillisecondsSchema = z.number().int().nonnegative()
+
 /**
- * `runs.list` takes no arguments in the tracer slice. It is a `.strict()` empty object
- * rather than `z.void()` so filters (product, since-ordinal, limit) become additive
- * fields later without changing the op's input contract shape.
+ * `runs.list` filters (431 D-08). Every filter selects completed runs BEFORE the limit caps them.
+ * `test` matches a member's exact id or a case-insensitive substring of its title; `target`
+ * matches a recorded target name exactly; `since` is inclusive epoch milliseconds on `endedAt`.
  */
-export const RunsListInputSchema = z.object({}).strict()
+export const RunsListInputSchema = z.object({
+  verdict: z.enum(runStatusValues).optional(),
+  test: listTextFilterSchema.optional(),
+  target: listTextFilterSchema.optional(),
+  since: epochMillisecondsSchema.optional(),
+  limit: z.number().int().min(1).max(RUNS_LIST_MAX_LIMIT).optional(),
+}).strict()
 
 export type RunsListInput = z.infer<typeof RunsListInputSchema>
 

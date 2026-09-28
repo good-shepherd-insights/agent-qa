@@ -928,8 +928,8 @@
       "bindingStatusAtRoot": "bound",
       "classifies": true,
       "id": "runs.list",
-      "inputSchemaDigest": "71fc596a20f27da3dec80050e5d1f553eba34aea24c2853b853488a811e6b892",
-      "outputSchemaDigest": "4477fd7f01c7a8c079b9883f93a55fca1dc4a451e60bcf78a1dd8ad9958083c5",
+      "inputSchemaDigest": "d26bda8be5961bb706fc307fde53b4fbc7982a6351a6220b7be83981964e2263",
+      "outputSchemaDigest": "2c6f469c4a3fefa2a35a506ecd548d580f86a31b17f5eb07757bb2c42674ba9e",
       "partition": {
         "kind": "projected",
         "tool": "agent_qa_list_runs"

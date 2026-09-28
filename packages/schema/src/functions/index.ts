@@ -224,6 +224,9 @@ export type {
 // surface can advertise the same object `invokeFunction` validates with.
 export { RunsListOutputSchema } from './runs'
 export type { RunsListOutput } from './runs'
+// 431 D-08: the list's bounds and its per-row test identity and recorded-target vocabulary.
+export { RUNS_LIST_DEFAULT_LIMIT, RUNS_LIST_MAX_LIMIT } from './runs'
+export type { RecordedTargets, RunSummaryTest } from './runs'
 // 396-04 (D-01 · MCPS-02): the three declared fold contracts the MCP catalogue advertises. Minted
 // here because they are composed with zod and `packages/mcp` may not name a validator library
 // (D-20); see the module header for why a JSON-Schema-level composition cannot work at all.

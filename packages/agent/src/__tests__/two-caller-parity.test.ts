@@ -385,7 +385,7 @@ describe('one shared path: the same op, the same dispatch, for both callers', ()
     const resultB = (await invokeFunction(REGISTRY, 'runs.list', {}, CALLER_B)) as RunSummary[]
     const rowsB = audit.take()
 
-    expect(resultA.map((summary) => summary.runId)).toEqual(['run-alpha', 'run-beta'])
+    expect(resultA.map((summary) => summary.runId)).toEqual(['run-beta', 'run-alpha'])
     expect(resultB).toEqual(resultA)
 
     // Uniform gating (D-11): one row each, naming the same descriptor and the same tier.

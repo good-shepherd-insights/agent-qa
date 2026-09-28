@@ -250,7 +250,7 @@
     },
     {
       "alias": "status",
-      "description": "List the completed runs recorded for this project.",
+      "description": "List completed runs, newest finished first (20 by default, at most 200), each naming its tests; filter by verdict, test id or title, recorded target, or completion time.",
       "docAbsentReason": "D-07 (dated 2026-08-16): no canonical doc ships for this capability yet. The explicit absence is the honest state — a guessed path would existence-check green and mislead a reader — and the abstention coverage log is the demand signal for writing one.",
       "docPath": null,
       "kind": "alias",
@@ -2193,7 +2193,7 @@
       ]
     },
     {
-      "description": "List the completed runs recorded for this project.",
+      "description": "List completed runs, newest finished first (20 by default, at most 200), each naming its tests; filter by verdict, test id or title, recorded target, or completion time.",
       "docAbsentReason": "D-07 (dated 2026-08-16): no canonical doc ships for this capability yet. The explicit absence is the honest state — a guessed path would existence-check green and mislead a reader — and the abstention coverage log is the demand signal for writing one.",
       "docPath": null,
       "exampleCall": {
@@ -2205,7 +2205,34 @@
       "params": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "additionalProperties": false,
-        "properties": {},
+        "properties": {
+          "limit": {
+            "maximum": 200,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "since": {
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "target": {
+            "type": "string"
+          },
+          "test": {
+            "type": "string"
+          },
+          "verdict": {
+            "enum": [
+              "passed",
+              "failed",
+              "healed",
+              "timeout",
+              "cancelled"
+            ],
+            "type": "string"
+          }
+        },
         "type": "object"
       },
       "requiredScopes": [
@@ -2562,5 +2589,5 @@
       "shortDescription": "Triage agent-qa run failures"
     }
   ],
-  "rowsDigest": "ae4583c9e743a65722dc2a85aefb9baf5e0bb1dd12192cc832aaf082415b8ea0"
+  "rowsDigest": "8ec1f1e9c3955eb1b9f033dffaf1ad2de4e9e7f35823a8f11b424d4afe256432"
 }

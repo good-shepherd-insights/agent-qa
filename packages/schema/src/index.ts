@@ -1627,6 +1627,8 @@ export type {
 // consumer and it reaches this package only through here.
 export {
   RunsListOutputSchema,
+  RUNS_LIST_DEFAULT_LIMIT,
+  RUNS_LIST_MAX_LIMIT,
   TOOL_FOLD_DISCRIMINANT,
   AuthoringRefineFoldInputSchema,
   AuthoringRefineFoldOutputSchema,
@@ -1637,6 +1639,8 @@ export {
 } from './functions/index'
 export type {
   RunsListOutput,
+  RecordedTargets,
+  RunSummaryTest,
   AuthoringRefineFoldInput,
   ConfigChangeFoldInput,
   KnowledgeChangeFoldInput,

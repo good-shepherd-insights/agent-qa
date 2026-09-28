@@ -480,14 +480,15 @@ describe('agent-qa fn (generic function invoker)', () => {
       aggregateVerdict: string
       testCount: number
     }[]
-    expect(summaries.map((summary) => summary.runId)).toEqual(['run-alpha', 'run-beta'])
-    expect(summaries[0]).toMatchObject({
+    // 431 D-08: newest finished first; the fixture's run-beta ended after run-alpha.
+    expect(summaries.map((summary) => summary.runId)).toEqual(['run-beta', 'run-alpha'])
+    expect(summaries[1]).toMatchObject({
       runId: 'run-alpha',
       buildOrdinal: 11,
       aggregateVerdict: 'passed',
       testCount: 0,
     })
-    expect(summaries[1]).toMatchObject({ runId: 'run-beta', aggregateVerdict: 'failed' })
+    expect(summaries[0]).toMatchObject({ runId: 'run-beta', aggregateVerdict: 'failed' })
   })
 
   it('emits a deterministic listing for a fixed fixture', async () => {

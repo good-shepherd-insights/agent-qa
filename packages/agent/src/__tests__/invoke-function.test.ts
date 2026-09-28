@@ -334,7 +334,7 @@ describe('invokeFunction pipeline', () => {
 
     const result = (await invokeFunction(registry, 'runs.list', {}, caller(['read']))) as RunSummary[]
 
-    expect(result.map((summary) => summary.runId)).toEqual(['run-alpha', 'run-beta'])
+    expect(result.map((summary) => summary.runId)).toEqual(['run-beta', 'run-alpha'])
     expect(deps.listCalls()).toBe(1)
     const rows = audit.executionRows()
     expect(rows).toHaveLength(1)
