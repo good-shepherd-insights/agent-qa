@@ -208,6 +208,23 @@ describe('command palette suite navigation (SC-4)', () => {
     expect(navigateSpy).toHaveBeenCalledWith('/hooks')
   })
 
+  it('PALETTE-PAGES-EXACT: the Pages group is exactly the six product pages, in order, with no chat page', async () => {
+    await renderPalette()
+
+    const items = Array.from(container.querySelectorAll('[data-testid="cmd-item"]')) as HTMLButtonElement[]
+    const pageValues = items
+      .map((el) => el.getAttribute('data-value') ?? '')
+      .filter((value) => value.startsWith('page-'))
+    expect(pageValues).toEqual([
+      'page-Runs',
+      'page-Tests',
+      'page-Hooks',
+      'page-Suites',
+      'page-Insights',
+      'page-Config',
+    ])
+  })
+
   it('includes creation actions for new tests, suites, and hooks', async () => {
     await renderPalette()
 
