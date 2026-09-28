@@ -43,6 +43,8 @@ import {
   TARGET_GITIGNORE_PROBES,
   classifyInitPath,
   preflightInitPlan,
+  preflightManagedBlock,
+  upsertManagedBlock,
   upsertManagedGitignoreBlock,
   verifyEffectiveGitignore,
   writeConfigMarkerLast,
@@ -50,13 +52,18 @@ import {
   type InitFileResult,
   type InitFilesystemHooks,
   type InitPathPlan,
+  type ManagedBlockUpsertPlan,
 } from './init-filesystem.js'
 import {
   WRITE_AGENT_INSTRUCTIONS_FLAG,
   buildAgentInstructionPointer,
   buildKnowledgeAgentGuide,
 } from './knowledge-guide.js'
-import { AGENT_QA_INIT_MARKDOWN_BLOCK, renderManagedBlock } from './managed-block.js'
+import {
+  AGENT_QA_INIT_MARKDOWN_BLOCK,
+  renderManagedBlock,
+  type ManagedBlockContent,
+} from './managed-block.js'
 
 // The platform vocabulary and the scaffold's content producers live in `scaffold-content.ts` now
 // (D-04). Re-exported here because this module is their public door.
@@ -690,12 +697,28 @@ function initNextSteps(platform: InitPlatformInput): Array<{ command: string; de
 
 const ROOT_AGENT_INSTRUCTIONS_FILE = 'AGENTS.md'
 
-function agentInstructionPointerBlock(): string {
-  return renderManagedBlock({
+function agentInstructionPointerContent(): ManagedBlockContent {
+  return {
     descriptor: AGENT_QA_INIT_MARKDOWN_BLOCK,
     body: buildAgentInstructionPointer(),
     target: ROOT_AGENT_INSTRUCTIONS_FILE,
-  })
+  }
+}
+
+function agentInstructionPointerBlock(): string {
+  return renderManagedBlock(agentInstructionPointerContent())
+}
+
+// 431 D-20: the config marker is init's completion record, so a root block that fails to publish
+// must say the scaffold is incomplete rather than leave a half-written project looking done.
+function incompleteScaffoldError(error: unknown): Error {
+  const reason = error instanceof Error ? error.message : String(error)
+  return new Error(
+    `${reason}\nThe other scaffold files were written, but agent-qa.config.yaml was not written, `
+    + 'so this project is not initialized. Fix the cause above and rerun agent-qa init; '
+    + 'files it already wrote are kept.',
+    { cause: error },
+  )
 }
 
 // 431 D-18: printed flush left, because an indented marker line is not a marker and the managed
@@ -1134,13 +1157,22 @@ export function createInitCommand(hooks: InitCommandHooks = {}): Command {
         content: renderScaffoldConfigYaml(config),
         force,
       }
+      const agentInstructionsPlan: ManagedBlockUpsertPlan | null = opts.writeAgentInstructions === true
+        ? {
+          root: dir,
+          path: join(dir, ROOT_AGENT_INSTRUCTIONS_FILE),
+          content: agentInstructionPointerContent(),
+        }
+        : null
       const completePlan = [
         ...filePlans,
         ...(subscriptionAuthDependency ? [subscriptionAuthDependency.plan] : []),
         targetGitignorePlan,
+        ...(agentInstructionsPlan ? [{ root: dir, path: agentInstructionsPlan.path, content: '' }] : []),
         configPlan,
       ]
       const preflight = preflightInitPlan(completePlan)
+      if (agentInstructionsPlan) preflightManagedBlock(agentInstructionsPlan)
 
       const knowledgeGitignorePath = join(dir, KNOWLEDGE_ROOT_DIR, '.gitignore')
       const knowledgeGitignoreWasPresent = preflight.some(
@@ -1213,6 +1245,14 @@ export function createInitCommand(hooks: InitCommandHooks = {}): Command {
         recordOutcome(writeScaffoldFileAtomic(subscriptionAuthDependency.plan, {}))
       }
 
+      if (agentInstructionsPlan) {
+        try {
+          recordOutcome(upsertManagedBlock(agentInstructionsPlan))
+        } catch (error) {
+          throw incompleteScaffoldError(error)
+        }
+      }
+
       recordOutcome(writeConfigMarkerLast(configPlan, {}))
       hooks.onComplete?.([...outcomes])
 
@@ -1225,7 +1265,7 @@ export function createInitCommand(hooks: InitCommandHooks = {}): Command {
       console.log('')
       printOutcomeSummary(dir, outcomes)
       printNextSteps(platform, config, provider)
-      printAgentInstructionPointer()
+      if (!agentInstructionsPlan) printAgentInstructionPointer()
       console.log('')
     })
 

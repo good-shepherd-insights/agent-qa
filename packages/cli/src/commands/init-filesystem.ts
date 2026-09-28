@@ -1162,6 +1162,31 @@ function readManagedBlockTarget(path: string, inspection: InitPathInspection): s
   }
 }
 
+function composeManagedBlockTarget(
+  path: string,
+  inspection: InitPathInspection,
+  content: ManagedBlockContent,
+): { existing: string, candidate: string } {
+  const existing = inspection.classification === 'regular'
+    ? readManagedBlockTarget(path, inspection)
+    : ''
+  return { existing, candidate: composeManagedBlock(existing, content) }
+}
+
+/**
+ * Everything `upsertManagedBlock` would refuse, checked without taking its lock or writing
+ * (431 D-20), so a caller can refuse before its first write. The writer checks it all again
+ * under the lock: this answer authorizes nothing.
+ */
+export function preflightManagedBlock(plan: ManagedBlockUpsertPlan): InitPreflightResult {
+  const path = resolve(plan.path)
+  const inspection = inspectInitPath(path, resolve(plan.root ?? dirname(path)))
+  const lockPath = managedBlockLockPath(path)
+  if (lstatIfPresent(lockPath) !== undefined) throw new ManagedBlockLockRefusal(path, lockPath)
+  composeManagedBlockTarget(path, inspection, plan.content)
+  return { path, classification: inspection.classification }
+}
+
 /**
  * Upserts one managed block into a file (431 D-19/D-20 · EDGE-02).
  *
@@ -1181,10 +1206,7 @@ export function upsertManagedBlock(
   const lock = acquireManagedBlockLock(path)
   try {
     const inspection = inspectInitPath(path, root)
-    const existing = inspection.classification === 'regular'
-      ? readManagedBlockTarget(path, inspection)
-      : ''
-    const candidate = composeManagedBlock(existing, plan.content)
+    const { existing, candidate } = composeManagedBlockTarget(path, inspection, plan.content)
     if (candidate === existing) return { path, outcome: 'preserved' }
     return writeScaffoldFileAtomic(
       { path, root, content: candidate, force: inspection.classification === 'regular' },
@@ -1193,11 +1215,6 @@ export function upsertManagedBlock(
   } finally {
     releaseManagedBlockLock(lock)
   }
-}
-
-export function preflightManagedBlock(plan: ManagedBlockUpsertPlan): InitPreflightResult {
-  const path = resolve(plan.path)
-  return { path, classification: inspectInitPath(path, plan.root ?? dirname(path)).classification }
 }
 
 export function upsertManagedGitignoreBlock(
