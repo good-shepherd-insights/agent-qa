@@ -6,6 +6,7 @@
 // produced, because a guess would rewrite bytes nobody handed over.
 
 import {
+  chmodSync,
   existsSync,
   linkSync,
   lstatSync,
@@ -513,6 +514,34 @@ describe('MANAGED-CONCURRENCY', () => {
     expect(readFileSync(path, 'utf8')).toBe(
       `${USER_PROSE}\n\n${rendered(INIT_BLOCK)}\n\n${rendered(SKILLS_BLOCK)}\n`,
     )
+    expect(writerLeftovers(root)).toEqual([])
+  })
+
+  it('refuses, keeping a concurrent save, when the target changes before publication', () => {
+    const root = tempRoot()
+    const path = join(root, 'AGENTS.md')
+    writeFileSync(path, USER_PROSE)
+    const saved = `${USER_PROSE}\nsaved by an editor meanwhile\n`
+
+    expect(() => upsertManagedBlock({ path, root, content: INIT_BLOCK }, {
+      beforeAtomicReplacePublish: () => { writeFileSync(path, saved) },
+    })).toThrow(/changed while it was being updated/)
+    expect(readFileSync(path, 'utf8')).toBe(saved)
+    expect(writerLeftovers(root)).toEqual([])
+
+    expect(upsertManagedBlock({ path, root, content: INIT_BLOCK }).outcome).toBe('updated')
+    expect(readFileSync(path, 'utf8')).toBe(`${saved}\n${rendered(INIT_BLOCK)}\n`)
+  })
+
+  it.skipIf(process.platform === 'win32')('keeps the target permission bits when it replaces the file', () => {
+    const root = tempRoot()
+    for (const mode of [0o600, 0o640, 0o664]) {
+      const path = join(root, `AGENTS-${mode.toString(8)}.md`)
+      writeFileSync(path, USER_PROSE)
+      chmodSync(path, mode)
+      expect(upsertManagedBlock({ path, root, content: INIT_BLOCK }).outcome).toBe('updated')
+      expect(lstatSync(path).mode & 0o777).toBe(mode)
+    }
     expect(writerLeftovers(root)).toEqual([])
   })
 

@@ -88,7 +88,7 @@ const instruments = {
   census: { pkg: 'packages/cli', files: [CENSUS_T], typecheck: false, count: 16, dist: true, env: { VITEST_MAX_WORKERS: '1' } },
   instructions: { pkg: 'packages/cli', files: [INSTRUCTIONS_T], typecheck: false, count: 9, dist: true },
   'guide-exclusion': { pkg: 'packages/knowledge-local', files: [GUIDE_T], typecheck: false, count: 4 },
-  managed: { pkg: 'packages/cli', files: [MANAGED_T], typecheck: false, count: 56 },
+  managed: { pkg: 'packages/cli', files: [MANAGED_T], typecheck: false, count: 58 },
   image: { pkg: 'packages/mcp', files: [IMAGE_T], typecheck: false, count: 19 },
 }
 

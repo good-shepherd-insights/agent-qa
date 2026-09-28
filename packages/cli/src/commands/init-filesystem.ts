@@ -1136,7 +1136,13 @@ function acquireManagedBlockLock(path: string): HeldManagedBlockLock {
   }
 }
 
-function readManagedBlockTarget(path: string, inspection: InitPathInspection): string {
+interface ManagedBlockRead {
+  text: string
+  size: number
+  mtimeMs: number
+}
+
+function readManagedBlockTarget(path: string, inspection: InitPathInspection): ManagedBlockRead {
   if (inspection.nlink !== 1) {
     throw new Error(
       `Refusing to update ${path}: it has ${inspection.nlink} hard links, and replacing it `
@@ -1156,7 +1162,7 @@ function readManagedBlockTarget(path: string, inspection: InitPathInspection): s
     if (!Buffer.from(text, 'utf8').equals(bytes)) {
       throw new Error(`Refusing to update ${path}: it is not valid UTF-8`)
     }
-    return text
+    return { text, size: opened.size, mtimeMs: opened.mtimeMs }
   } finally {
     closeSync(fd)
   }
@@ -1166,11 +1172,31 @@ function composeManagedBlockTarget(
   path: string,
   inspection: InitPathInspection,
   content: ManagedBlockContent,
-): { existing: string, candidate: string } {
-  const existing = inspection.classification === 'regular'
+): { existing: string, candidate: string, read?: ManagedBlockRead } {
+  const read = inspection.classification === 'regular'
     ? readManagedBlockTarget(path, inspection)
-    : ''
-  return { existing, candidate: composeManagedBlock(existing, content) }
+    : undefined
+  const existing = read?.text ?? ''
+  return { existing, candidate: composeManagedBlock(existing, content), read }
+}
+
+// The lock serializes agent-qa writers only; an editor saving between the read and the rename
+// would otherwise be overwritten.
+function refuseIfChangedSinceRead(
+  path: string,
+  inspection: InitPathInspection,
+  read: ManagedBlockRead,
+): void {
+  const now = lstatIfPresent(path)
+  if (
+    now === undefined || !now.isFile() || now.dev !== inspection.dev || now.ino !== inspection.ino
+    || now.size !== read.size || now.mtimeMs !== read.mtimeMs
+    || readFileSync(path, 'utf8') !== read.text
+  ) {
+    throw new Error(
+      `Refusing to update ${path}: it changed while it was being updated; rerun to apply the block`,
+    )
+  }
 }
 
 /**
@@ -1192,7 +1218,8 @@ export function preflightManagedBlock(plan: ManagedBlockUpsertPlan): InitPreflig
  *
  * Cooperative writers serialize per target on an exclusively created sibling lock. Under it the
  * target is classified and read again, composed, and published through `writeScaffoldFileAtomic`,
- * so a failure leaves either the prior file or the complete new one. An existing lock refuses
+ * so a failure leaves either the prior file or the complete new one. A replacement keeps the
+ * target's permission bits and refuses if the target changed since it was read. An existing lock refuses
  * with `ManagedBlockLockRefusal`; only a lock this call created (same inode) is removed, and it
  * never touches a temporary it did not create.
  */
@@ -1206,11 +1233,18 @@ export function upsertManagedBlock(
   const lock = acquireManagedBlockLock(path)
   try {
     const inspection = inspectInitPath(path, root)
-    const { existing, candidate } = composeManagedBlockTarget(path, inspection, plan.content)
+    const { existing, candidate, read } = composeManagedBlockTarget(path, inspection, plan.content)
     if (candidate === existing) return { path, outcome: 'preserved' }
+    if (read === undefined) return writeScaffoldFileAtomic({ path, root, content: candidate }, hooks)
     return writeScaffoldFileAtomic(
-      { path, root, content: candidate, force: inspection.classification === 'regular' },
-      hooks,
+      { path, root, content: candidate, force: true, mode: inspection.permissions },
+      {
+        ...hooks,
+        beforeAtomicReplacePublish: (target) => {
+          hooks.beforeAtomicReplacePublish?.(target)
+          refuseIfChangedSinceRead(target, inspection, read)
+        },
+      },
     )
   } finally {
     releaseManagedBlockLock(lock)
