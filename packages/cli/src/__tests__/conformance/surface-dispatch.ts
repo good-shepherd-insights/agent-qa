@@ -269,8 +269,10 @@ export async function driveChatDispatch(
 export async function driveChatLines(
   typedLines: readonly string[],
   executionContext?: ExecutionContext,
+  // 431-08: a populated project the caller owns and removes; the default is this file's empty one.
+  workspace?: { readonly configPath: string },
 ): Promise<ChatDriveObservation> {
-  const configPath = fixtureWorkspace()
+  const configPath = workspace?.configPath ?? fixtureWorkspace()
   const root = dirname(resolve(configPath))
   const stdout: string[] = []
   const log = vi.spyOn(console, 'log').mockImplementation((...values: unknown[]) => {
@@ -332,7 +334,7 @@ export async function driveChatLines(
 
   const observed = readRuntimeObservations(join(root, '.agent-qa'))
 
-  rmSync(root, { recursive: true, force: true })
+  if (workspace === undefined) rmSync(root, { recursive: true, force: true })
 
   return { ...observed, stdout: stdout.join('\n') }
 }

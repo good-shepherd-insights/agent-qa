@@ -88,7 +88,7 @@
 
 import { createServer } from 'node:http'
 import type { IncomingMessage, Server, ServerResponse } from 'node:http'
-import { mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { basename, dirname, join } from 'node:path'
 
@@ -1261,5 +1261,123 @@ export async function drivePopulatedRun(
     finished,
     ...(lastType === undefined ? {} : { lastType }),
     elapsedMs: Date.now() - startedAt,
+  }
+}
+
+// ---- The discovery run (431-08, D-06/D-07/D-11) -----------------------------------------------------
+//
+// A COMPLETED RUN LEFT BEHIND BY THE SHIPPED WRITERS, NOT DRIVEN. The discovery reads read recorded
+// state, so this writes exactly what a finished run leaves: the handoff, content-addressed blobs
+// through `FsEvidenceArtifactStore`, and run-detail rows through `DashboardDatabase` at the path the
+// CLI composition binds (`.agent-qa/runs.db`). Two members, a served record, a sub-action with a
+// screenshot and ARIA, console and network documents and one recording. No address or secret-shaped
+// text appears, so every door's mask is the identity over it.
+
+const DISCOVERY_PNG_BASE64 =
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=='
+export const DISCOVERY_FIRST_TEST_NAME = 'Café checkout — 日本語 ✓'
+export const DISCOVERY_FIRST_STEP_TEXT = 'Öffne den Warenkorb «schnell»'
+
+export interface DiscoveryRunFixture {
+  readonly root: string
+  readonly configPath: string
+  readonly agentQaRoot: string
+  readonly runId: string
+  readonly recordId: string
+  readonly firstTestId: string
+  readonly secondTestId: string
+  readonly screenshotSha: string
+  readonly recordingSha: string
+  close(): void
+}
+
+export async function discoveryRunFixtureProject(): Promise<DiscoveryRunFixture> {
+  const { markFixture } = await import('../../gates/__tests__/feedback-fixture.js')
+  const { DashboardDatabase } = await import('@vostride/agent-qa-dashboard')
+  const { FsEvidenceArtifactStore } = await import('@vostride/agent-qa-runner-local')
+  const f = markFixture()
+  writeFileSync(join(f.root, 'hooks.yaml'), 'hooks: []\n')
+  writeFileSync(join(f.root, '.env'), '')
+  writeFileSync(join(f.root, '.env.secrets.local'), '')
+  mkdirSync(join(f.root, 'tests'), { recursive: true })
+  mkdirSync(join(f.root, 'suites'), { recursive: true })
+
+  const runId = String(f.handoff.runId)
+  const recordId = String(f.published.id)
+  const first = f.handoff.tests[0]!
+  first.testName = DISCOVERY_FIRST_TEST_NAME
+  first.steps[0]!.stepText = DISCOVERY_FIRST_STEP_TEXT
+  Object.assign(first.steps[0]!, { retrievalTrace: {
+    schemaVersion: 1, servedLines: [{ recordId, leg: 'lexical', rank: 1, score: 1.5 }], truncated: [],
+  } })
+  const second = structuredClone(first)
+  second.testId = generateTestId() as typeof second.testId
+  second.testIndex = 1
+  second.testName = 'Second member'
+  second.outcome = 'passed'
+  Object.assign(second.steps[0]!, { retrievalTrace: {
+    schemaVersion: 1, servedLines: [{ recordId, leg: 'dense', rank: 2, score: 0.25 }], truncated: [],
+  } })
+  f.handoff.tests.push(second)
+  f.save()
+
+  const png = Uint8Array.from(atob(DISCOVERY_PNG_BASE64), (char) => char.charCodeAt(0))
+  const webm = Uint8Array.from([0x1a, 0x45, 0xdf, 0xa3, ...Array.from({ length: 96 }, (_, i) => i)])
+  const blobs = new FsEvidenceArtifactStore({ root: f.agentQaRoot, runId: f.handoff.runId })
+  const screenshot = blobs.persistDecisionScreenshot(png)
+  const recording = blobs.persistDecisionScreenshot(webm)
+  const consoleRef = blobs.persistEvidenceDocument({ schemaVersion: 1, kind: 'console', records: [
+    { level: 'error', text: 'TypeError: price is undefined — 価格', timestamp: 3 },
+    { level: 'warning', text: 'slow response', timestamp: 4 },
+  ] })
+  const networkRef = blobs.persistEvidenceDocument({ schemaVersion: 1, kind: 'network', records: [{
+    url: 'https://app.test/api/cart?q=ümlaut', method: 'GET', status: 500,
+    requestHeaders: { accept: 'application/json' }, responseHeaders: { 'content-type': 'application/json' },
+    body: 'cart unavailable ✗', startTime: 1, endTime: 2,
+  }] })
+  const ariaRef = blobs.persistEvidenceDocument({ schemaVersion: 1, kind: 'aria', tree: '- button "Payer ✓"' })
+
+  const db = new DashboardDatabase({ dbPath: join(f.agentQaRoot, 'runs.db') })
+  db.insertRun({ id: runId, name: 'Discovery fixture', status: 'failed', duration: 1,
+    startedAt: new Date(0).toISOString(), endedAt: new Date(1).toISOString() })
+  db.upsertRunMember({ runId, testIndex: 0, testId: first.testId, name: DISCOVERY_FIRST_TEST_NAME, totalSteps: 1,
+    outcome: 'failed', recording: {
+      state: 'present', ref: { id: `recording:${recording.sha}`, sha: recording.sha },
+      contentType: 'video/webm', byteLength: webm.length,
+    } })
+  db.upsertRunMember({ runId, testIndex: 1, testId: second.testId, name: 'Second member', totalSteps: 1,
+    outcome: 'passed', recording: { state: 'absent', reason: 'not-captured' } })
+  db.insertRunStep({
+    runId, testIndex: 0, stepIndex: 0, stepText: DISCOVERY_FIRST_STEP_TEXT, cacheStatus: 'miss',
+    verifierVerdict: null, selfHealOccurred: false, briefDigest: '', status: 'failed',
+    evidence: {
+      console: { kind: 'console', state: 'present', ref: consoleRef as never, counts: { total: 2, errors: 1, warnings: 1 } },
+      network: { kind: 'network', state: 'present', ref: networkRef as never, counts: { total: 1, failed: 1, errored: 0 } },
+      a11y: { kind: 'a11y', state: 'absent', reason: 'unsupported' },
+      variables: { kind: 'variables', state: 'absent', reason: 'empty' },
+    },
+  })
+  db.insertRunStep({
+    runId, testIndex: 1, stepIndex: 0, stepText: 'Second step', cacheStatus: 'hit',
+    verifierVerdict: null, selfHealOccurred: false, briefDigest: '', status: 'passed',
+    evidence: {
+      console: { kind: 'console', state: 'absent', reason: 'empty' },
+      network: { kind: 'network', state: 'absent', reason: 'empty' },
+      a11y: { kind: 'a11y', state: 'absent', reason: 'unsupported' },
+      variables: { kind: 'variables', state: 'absent', reason: 'empty' },
+    },
+  })
+  db.insertRunSubAction({
+    runId, testIndex: 0, stepIndex: 0, subActionIndex: 0, plan: 'click Pay', plannedAction: {},
+    result: {}, screenStateHash: 'h0', artifactRefs: [screenshot, ariaRef],
+    ariaEvidence: { kind: 'aria', state: 'present', ref: ariaRef as never },
+  })
+  db.close()
+
+  return {
+    root: f.root, configPath: f.configPath, agentQaRoot: f.agentQaRoot, runId, recordId,
+    firstTestId: String(first.testId), secondTestId: String(second.testId),
+    screenshotSha: screenshot.sha, recordingSha: recording.sha,
+    close: () => rmSync(f.root, { recursive: true, force: true }),
   }
 }
