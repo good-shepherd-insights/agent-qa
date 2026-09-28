@@ -2496,13 +2496,15 @@ describe('the parity suite ranges the registry census over every rostered surfac
     //   inputs  — 26 less the 2 proposal apply doors and 1 pipeline downstream op = 23
     //   outputs — 26 less the 1 degraded contract and 1 pipeline downstream op    = 24
     // (2026-09-28, 431-03: `runs.list` left the degraded list with its canonical output contract.)
+    // (2026-09-28, 431-04 D-04/D-07: nine more projected capabilities, each compared on both sides:
+    // seven single reads and the evidence fold's two arms — 32 inputs and 33 outputs.)
     const projectedOpCount = AGENT_QA_TOOL_PROJECTIONS.reduce(
       (total, projection) => total + projection.ops.length,
       0,
     )
     const exceptionTotal = [...exceptionsTaken.values()].reduce((total, at) => total + at, 0)
-    expect(inputsCompared, 'leg 2 compared a different number of inputs').toBe(23)
-    expect(outputsCompared, 'leg 2 compared a different number of outputs').toBe(24)
+    expect(inputsCompared, 'leg 2 compared a different number of inputs').toBe(32)
+    expect(outputsCompared, 'leg 2 compared a different number of outputs').toBe(33)
     expect(
       inputsCompared + outputsCompared + exceptionTotal,
       'every projected capability must be compared or excepted on BOTH sides — no skip-lists',

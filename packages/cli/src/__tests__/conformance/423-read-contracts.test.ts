@@ -547,6 +547,12 @@ function toolFor(opId: string): string | undefined {
   return AGENT_QA_TOOL_PROJECTIONS.find(projection => projection.ops.includes(opId))?.name
 }
 
+/** A fold's call names its arm by op id under the fold's discriminant (431-04 D-07). */
+function mcpArgumentsFor(opId: string, input: Record<string, unknown>): Record<string, unknown> {
+  const discriminant = AGENT_QA_TOOL_PROJECTIONS.find(projection => projection.ops.includes(opId))?.discriminant
+  return discriminant === undefined ? input : { [discriminant]: opId, ...input }
+}
+
 /** What the human door shows for a machine answer: allowed text restored, restored auth state sanitized. */
 function humanViewOf(machine: unknown, scene: DurableScene | FeedbackScene, restores: boolean): unknown {
   if (!restores || !('allowedPlaceholder' in scene)) return machine
@@ -599,7 +605,7 @@ describe('423-38 all-door read contracts (D-04/D-18)', () => {
       if (row?.perSurface.mcp !== undefined && 'reachable' in row.perSurface.mcp) {
         expect(tool).toBe(row.perSurface.mcp.reachable.tool)
         expect(tools).toContain(tool)
-        const answer = await doors.mcp(tool!, input)
+        const answer = await doors.mcp(tool!, mcpArgumentsFor(scenario.opId, input))
         expect(answer).toMatchObject({ door: 'answered', isError: false })
         if (answer.door === 'answered') expect(answer.structured).toEqual(viaFn)
       } else {

@@ -907,7 +907,8 @@ export const SCENARIO_TABLE = Object.freeze([
     input: { runId: FIXTURE_RUN_ID, stepIndex: 0 },
     perSurface: {
       chat: { reachable: true },
-      mcp: { unprojected: 'not-mid-flight-read' },
+      // 2026-09-28 (431-04 D-04/D-07): projected; re-spelled with the mapping's move.
+      mcp: { reachable: { tool: 'agent_qa_explain_brief' } },
       fn: { reachable: true },
     },
     renderExpect: { markers: ['kind', 'trace'] },
@@ -918,7 +919,8 @@ export const SCENARIO_TABLE = Object.freeze([
     input: {},
     perSurface: {
       chat: { reachable: true },
-      mcp: { unprojected: 'not-mid-flight-read' },
+      // 2026-09-28 (431-04 D-04/D-07): projected; re-spelled with the mapping's move.
+      mcp: { reachable: { tool: 'agent_qa_list_knowledge_bundles' } },
       fn: { reachable: true },
     },
     renderExpect: {
@@ -980,7 +982,8 @@ export const SCENARIO_TABLE = Object.freeze([
     input: { recordId: 'rec-not-in-this-fixture' },
     perSurface: {
       chat: { reachable: true },
-      mcp: { unprojected: 'not-mid-flight-read' },
+      // 2026-09-28 (431-04 D-04/D-07): projected; re-spelled with the mapping's move.
+      mcp: { reachable: { tool: 'agent_qa_show_knowledge_record' } },
       fn: { reachable: true },
     },
     renderExpect: {
@@ -1001,7 +1004,8 @@ export const SCENARIO_TABLE = Object.freeze([
     input: { sinceOrdinal: 0 },
     perSurface: {
       chat: { reachable: true },
-      mcp: { unprojected: 'not-mid-flight-read' },
+      // 2026-09-28 (431-04 D-04/D-07): projected; re-spelled with the mapping's move.
+      mcp: { reachable: { tool: 'agent_qa_diff_knowledge_records' } },
       fn: { reachable: true },
     },
     renderExpect: { markers: ['changes', 'schemaVersion', 'sinceOrdinal'] },
@@ -1014,7 +1018,8 @@ export const SCENARIO_TABLE = Object.freeze([
     input: { filter: {} },
     perSurface: {
       chat: { reachable: true },
-      mcp: { unprojected: 'not-mid-flight-read' },
+      // 2026-09-28 (431-04 D-04/D-07): projected; re-spelled with the mapping's move.
+      mcp: { reachable: { tool: 'agent_qa_inspect_knowledge_records' } },
       fn: { reachable: true },
     },
     renderExpect: { markers: ['records', 'schemaVersion'] },
@@ -1145,7 +1150,8 @@ export const SCENARIO_TABLE = Object.freeze([
     input: { runId: FIXTURE_RUN_ID, sha: FIXTURE_ARTIFACT_SHA },
     perSurface: {
       chat: { reachable: true },
-      mcp: { unprojected: 'not-mid-flight-read' },
+      // 2026-09-28 (431-04 D-04/D-07): projected; re-spelled with the mapping's move.
+      mcp: { reachable: { tool: 'agent_qa_get_run_evidence' } },
       fn: { reachable: true },
     },
     renderExpect: { markers: ['bytesBase64', 'byteLength', 'contentType', 'runId', 'sha'] },
@@ -1208,7 +1214,8 @@ export const SCENARIO_TABLE = Object.freeze([
     input: { runId: FIXTURE_RUN_ID, testIndex: 0, stepIndex: 0, kind: 'console' },
     perSurface: {
       chat: { reachable: true },
-      mcp: { unprojected: 'not-mid-flight-read' },
+      // 2026-09-28 (431-04 D-04/D-07): projected; re-spelled with the mapping's move.
+      mcp: { reachable: { tool: 'agent_qa_get_run_evidence' } },
       fn: { reachable: true },
     },
     renderExpect: { markers: ['address', 'document', 'evidence', 'outcome'] },
@@ -1252,7 +1259,8 @@ export const SCENARIO_TABLE = Object.freeze([
     input: { runId: FIXTURE_RUN_ID },
     perSurface: {
       chat: { reachable: true },
-      mcp: { unprojected: 'not-mid-flight-read' },
+      // 2026-09-28 (431-04 D-04/D-07): projected; re-spelled with the mapping's move.
+      mcp: { reachable: { tool: 'agent_qa_get_run_knowledge' } },
       fn: { reachable: true },
     },
     renderExpect: { markers: ['kind', 'runId'] },

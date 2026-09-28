@@ -1168,7 +1168,9 @@ describe('423-21 read-op adjudication (D-04/D-18)', () => {
     for (const opId of ['runs.marks.history', 'runs.mark.preview'] as const) {
       expect(AGENT_QA_OP_CONTRACTS[opId]?.input, opId).toBe(contracts[opId])
     }
-    expect(AGENT_QA_OP_CONTRACTS['runs.evidence']).toBeUndefined()
+    // 2026-09-28 (431-04 D-07): runs.evidence is projected through the evidence fold, so the MCP
+    // contract table carries its own input singleton too.
+    expect(AGENT_QA_OP_CONTRACTS['runs.evidence']?.input).toBe(contracts['runs.evidence'])
     const registryIds = registryDeclarations().map(entry => entry.id)
     // 2026-09-25 (428 D-07): 52 — editor.liveurl registered, dashboard-only and MCP-unprojected.
     expect(registryIds).toHaveLength(52)
@@ -1178,7 +1180,7 @@ describe('423-21 read-op adjudication (D-04/D-18)', () => {
   it('OP-REGISTRY-SCENARIO: one scenario row, one MCP ruling, one doc adjudication and one remote route per new read', () => {
     expect(censusDiff(registryDeclarations().map(entry => entry.id), scenarioTableOpIds())).toEqual({ missing: [], stray: [] })
     const tools: Record<string, unknown> = {
-      'runs.evidence': { unprojected: 'not-mid-flight-read' },
+      'runs.evidence': { reachable: { tool: 'agent_qa_get_run_evidence' } },
       'runs.marks.history': { reachable: { tool: 'agent_qa_get_run_marks' } },
       'runs.mark.preview': { reachable: { tool: 'agent_qa_preview_run_mark' } },
     }
@@ -1202,9 +1204,8 @@ describe('423-21 read-op adjudication (D-04/D-18)', () => {
       expect(RUN_SERVICE_ROUTE_BINDINGS.filter(binding => 'opId' in binding && binding.opId === opId).map(binding => binding.key), opId)
         .toEqual([routes[opId]])
     }
-    const ruled = UNPROJECTED_OPS.filter(entry => entry.opId === 'runs.evidence')
-    expect(ruled).toHaveLength(1)
-    expect(unprojectedReasonKeyOf(ruled[0]!.reason)).toBe('not-mid-flight-read')
+    // 2026-09-28 (431-04 D-10): the 423 ruling moved to the projected side with a dated addendum.
+    expect(UNPROJECTED_OPS.filter(entry => entry.opId === 'runs.evidence')).toEqual([])
     // The widened completed-run reads keep the same one-rule marker sets over the 51-op registry.
     for (const opId of ['runs.detail', 'runs.postprocessing', 'runs.knowledge'] as const) {
       const output = declarationOf(opId).output as { oneOf?: Array<{ required?: string[] }>; anyOf?: Array<{ required?: string[] }>; required?: string[] }
