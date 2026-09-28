@@ -98,8 +98,10 @@ export interface AgentHost {
    * drift vector the parity legs exist to catch, and this package could not type-check one anyway.
    */
   readonly caller: FunctionCaller
+  // 2026-09-28, 430: optional until Plan 10 deletes the chat-only members; nothing reads them
+  // since the chat routes left.
   /** The agent package's `agent.ask` id, supplied rather than re-spelled. */
-  readonly agentAskFunctionId: string
+  readonly agentAskFunctionId?: string
   /**
    * The agent package's `runs.postprocessing` id, on `agentAskFunctionId`'s exact footing (404
    * D-16/D-18).
@@ -208,7 +210,7 @@ export interface AgentHost {
     caller: FunctionCaller,
   ): Promise<unknown>
   /** `foldFunctionResult`, bound by the composer. */
-  foldFunctionResult(
+  foldFunctionResult?(
     registry: AgentRegistryHandle,
     functionId: string,
     payload: unknown,
@@ -221,7 +223,7 @@ export interface AgentHost {
    * assembled from a registry the asker could have read itself (397 D-01's produced-enumeration
    * law). The browser needs the same bytes for `/help` and type-ahead.
    */
-  listDeclarations(
+  listDeclarations?(
     registry: AgentRegistryHandle,
     caller: FunctionCaller,
   ): readonly AgentDeclarationRow[]
@@ -241,7 +243,7 @@ export interface AgentHost {
    *
    * Returns its own unsubscribe, so a caller tears down what it registered and nothing else.
    */
-  onSessionEvent(
+  onSessionEvent?(
     listener: (sessionId: string, event: ChatSessionEvent) => void,
   ): () => void
   /**
