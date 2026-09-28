@@ -69,6 +69,7 @@ import { runsEvidenceSpec } from '../functions/ops/runs-evidence.js'
 import { runsMarkSpec } from '../functions/ops/runs-mark.js'
 import { runsMarkPreviewSpec } from '../functions/ops/runs-mark-preview.js'
 import { runsMarksHistorySpec } from '../functions/ops/runs-marks-history.js'
+import { runsOverviewSpec } from '../functions/ops/runs-overview.js'
 import { runsGetSpec } from '../functions/ops/runs-get.js'
 import { runsKnowledgeSpec } from '../functions/ops/runs-knowledge.js'
 import { runsListSpec } from '../functions/ops/runs-list.js'
@@ -206,6 +207,7 @@ export const CONTRACTS_BY_ID: Readonly<Record<string, DeclaredContracts>> = {
   'runs.mark': runsMarkSpec,
   'runs.mark.preview': runsMarkPreviewSpec,
   'runs.marks.history': runsMarksHistorySpec,
+  'runs.overview': runsOverviewSpec,
   'runs.events': runsEventsSpec,
   'runs.get': runsGetSpec,
   // 407-01 D-05. Paired here the day it is registered, on the growth seam's own rule. Its output

@@ -146,6 +146,15 @@ const RUN_ID_FIELD_VERDICTS: Readonly<
       + 'join was, and still is, neutered by `slugBranch`; the codec makes the id refuse to be '
       + 'REWRITTEN there rather than adding a second guard. The plain field is the output row.',
   },
+  'functions/runs-overview.ts': {
+    hardened: 1,
+    plainString: 1,
+    verdict:
+      'hardened here — 2026-09-28 (431 D-06) `RunsOverviewInput.runId` is caller-supplied and is '
+      + 'the run whose handoff and projection rows are read; the runs port resolves it against the '
+      + 'runs it enumerates. The plain field is `RunOverviewProjection.runId`, an echo of a '
+      + 'completed run the read already resolved.',
+  },
   'functions/authoring.ts': {
     hardened: 0,
     plainString: 1,

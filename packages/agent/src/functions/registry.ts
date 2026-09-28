@@ -67,6 +67,7 @@ import { runsListSpec } from './ops/runs-list.js'
 import { runsMarkSpec } from './ops/runs-mark.js'
 import { runsMarkPreviewSpec } from './ops/runs-mark-preview.js'
 import { runsMarksHistorySpec } from './ops/runs-marks-history.js'
+import { runsOverviewSpec } from './ops/runs-overview.js'
 import { runsPostProcessingSpec } from './ops/runs-post-processing.js'
 import { runsStartSpec } from './ops/runs-start.js'
 import type { FunctionDeclaration, FunctionDeps, FunctionSpec } from './spec.js'
@@ -179,6 +180,10 @@ const BUILT_IN_FUNCTION_SPECS: readonly FunctionSpec[] = [
   // used. A pruned handoff answers `evidence-incomplete` — a result the page renders, never a
   // refusal it has to catch (D-06).
   runsKnowledgeSpec as FunctionSpec,
+  // 431 D-06: one completed run's address map, composed from the handoff, the run-detail rows and
+  // the runs.knowledge projection. Bound through `runDetail`, so a host with no projection lists
+  // it `unbound` BY NAME instead of mapping a run it cannot see.
+  runsOverviewSpec as FunctionSpec,
   // 387 KREV-01 D-17: the MUTATING half — three proposes and one apply. Registered here and
   // bound only where a composition supplies `knowledgeReview`, so a read-only host lists all
   // four as `unbound` BY NAME rather than omitting them: a capability that is absent from a

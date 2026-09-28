@@ -188,6 +188,23 @@ export { MODEL_USAGE_ROLES, ModelUsageRoleSchema, ModelUsageIdentitySchema, Mode
 export type { ModelUsageRole, ModelUsage, ModelTokenUsage, ModelUsageObservations } from './run/model-usage'
 export { RunModelSummarySchema } from './functions/runs'
 export type { RunModelSummary } from './functions/runs'
+// 431 D-06: the runs.overview read's contracts.
+export {
+  RUN_OVERVIEW_TEXT_MAX_CODE_POINTS,
+  RUN_OVERVIEW_TRUNCATION_INDICATOR,
+  RunOverviewProjectionSchema,
+  RunOverviewStepSchema,
+  RunOverviewTestSchema,
+  RunOverviewTextSchema,
+  RunsOverviewInputSchema,
+} from './functions/runs-overview'
+export type {
+  RunOverviewProjection,
+  RunOverviewStep,
+  RunOverviewTest,
+  RunOverviewText,
+  RunsOverviewInput,
+} from './functions/runs-overview'
 export {
   EVIDENCE_REF_PREFIXES,
   EvidenceArtifactRefSchema,

@@ -136,6 +136,8 @@ const BINDING_PARITY_INPUTS: Readonly<Record<string, unknown>> = {
   // `{}` default would report an input error and this case would read that as `dispatched`,
   // certifying nothing about the `runDetail` binding it exists to measure.
   'runs.detail': { runId: 'run-alpha' },
+  // 431 D-06: bound through `runDetail` like its sibling above, and `runId` is required.
+  'runs.overview': { runId: 'run-alpha' },
   'runs.evidence': { runId: 'run-alpha', testIndex: 0, stepIndex: 0, kind: 'console' },
   // 405-05 D-12/D-13: a PARSING input on the same reasoning, and the sha carries a second reason
   // of its own — it is REGEX-constrained to 64 lowercase hex, so any placeholder shorter than

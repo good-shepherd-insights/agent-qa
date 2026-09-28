@@ -338,6 +338,8 @@ const ALL_FUNCTION_IDS = [
   'runs.mark.preview',
   // 423 D-19: read-tier, so it survives safe-mode filtering beside its runs. siblings.
   'runs.marks.history',
+  // 431 D-06: read-tier, in SORT position between `runs.marks.history` and `runs.postprocessing`.
+  'runs.overview',
   // 388 D-14: read-tier like its `runs.` siblings, so it too survives safe-mode filtering and
   // the filter assertion below sharpens rather than merely lengthens — `runs.start` plus the
   // four knowledge-write verbs are still exactly the ids that drop out.
