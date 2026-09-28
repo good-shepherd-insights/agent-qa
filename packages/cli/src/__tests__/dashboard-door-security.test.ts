@@ -18,6 +18,11 @@
 // refuses everything, which is a door nobody can use. The two axes the policy allows — a
 // same-origin browser drive and an Origin-less local drive — are pinned SEPARATELY, so a fix that
 // closed either one reds a cell.
+//
+// 430 (2026-09-28): the cross-site corpus is driven on the run-confirm pair, the routes that
+// survive until Phase 432. The guards sit on the method above the router's table, so the claims
+// are unchanged; what moved is the route, and the side effect a refusal must leave untouched is now
+// a parked run-trigger question that stays outstanding.
 
 import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { createServer, type Server } from 'node:http'
@@ -26,18 +31,16 @@ import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 
 import {
-  CHAT_CAPABILITIES_ROUTE,
-  CHAT_CATALOG_ROUTE,
-  CHAT_CONFIRM_ROUTE,
   CHAT_ROUTE_TABLE,
-  CHAT_SESSION_EVENTS_TEMPLATE,
-  CHAT_TURN_ROUTE,
+  RUN_CONFIRM_ANSWER_ROUTE,
+  RUN_CONFIRM_CHANNEL_ROUTE,
   createChatRouter,
   createConfirmRegistry,
   isMutatingChatRequest,
+  mintRunTriggerConfirmScope,
   type AgentHost,
+  type ChatConfirmAnswer,
   type ChatConfirmChannelFrame,
-  type ChatTurnResponse,
   type ConfirmRegistry,
 } from '@vostride/agent-qa-dashboard'
 import type { LocalAgentHost } from '@vostride/agent-qa-agent-local'
@@ -86,6 +89,8 @@ interface DoorFixture {
   readonly host: LocalAgentHost
   readonly server: Server
   readonly confirms: ConfirmRegistry
+  /** Channels a cell opened on the registry; closing them denies whatever is still parked. */
+  readonly cleanups: (() => void)[]
 }
 
 const openDoors: DoorFixture[] = []
@@ -123,6 +128,7 @@ async function openDoor(options: {
     host,
     server,
     confirms,
+    cleanups: [],
   }
   openDoors.push(fixture)
   return fixture
@@ -131,6 +137,7 @@ async function openDoor(options: {
 afterEach(async () => {
   while (openDoors.length > 0) {
     const door = openDoors.pop()!
+    for (const cleanup of door.cleanups.splice(0)) cleanup()
     await new Promise<void>((closed) => door.server.close(() => closed()))
     await door.host.close()
     rmSync(door.configRoot, { recursive: true, force: true })
@@ -239,6 +246,66 @@ function driveTurn(
   })
 }
 
+/** A run-confirm answer, driven with whatever headers the cell wants to state. */
+function driveAnswer(
+  port: number,
+  headers: Readonly<Record<string, string>>,
+  body: string,
+): Promise<RawResponse> {
+  return rawRequest(port, { method: 'POST', path: RUN_CONFIRM_ANSWER_ROUTE, headers, body })
+}
+
+// ---- the parked run-trigger question -------------------------------------------------------
+
+interface ParkedRunConfirm {
+  readonly scopeId: string
+  readonly confirmId: string
+  /** What the ask resolves to — the waiting run's decision. */
+  readonly outcome: Promise<ChatConfirmAnswer>
+  /** The well-formed answer to this question, as a browser holding its channel would send it. */
+  body(answer?: ChatConfirmAnswer): string
+  /** The answer it resolved to, or `undefined` while it is still outstanding. */
+  settled(): ChatConfirmAnswer | undefined
+  /** How many `confirm_resolved` frames this scope's channel has carried. */
+  resolvedFrames(): number
+}
+
+/**
+ * One outstanding run-trigger question, parked on the door's own registry.
+ *
+ * The registry is driven DIRECTLY rather than through a queued run, because what these cells are
+ * about is the ROUTE: a question is genuinely parked on a minted trigger scope with a live channel,
+ * so it is genuinely answerable, and the only variable is how the answer arrives. A real run
+ * raising the same question is `run-trigger-confirm.test.ts`'s subject.
+ */
+function parkRunConfirm(door: DoorFixture): ParkedRunConfirm {
+  const scopeId = mintRunTriggerConfirmScope()
+  const frames: ChatConfirmChannelFrame[] = []
+  const unsubscribe = door.confirms.subscribe((frameScope, frame) => {
+    if (frameScope === scopeId) frames.push(frame)
+  })
+  const closeChannel = door.confirms.openChannel(scopeId)
+  door.cleanups.push(closeChannel, unsubscribe)
+
+  let settled: ChatConfirmAnswer | undefined
+  const outcome = door.confirms.request({ scopeId, actionClass: 'run:start' })
+  void outcome.then((answer) => { settled = answer })
+
+  const request = frames.find((frame) => frame.kind === 'confirm_request')
+  if (request?.kind !== 'confirm_request') {
+    throw new Error('no run confirm was parked, so this cell would assert about nothing')
+  }
+  const confirmId = request.request.confirmId
+  return {
+    scopeId,
+    confirmId,
+    outcome,
+    body: (answer = 'accept') => JSON.stringify({ scopeId, confirmId, answer }),
+    settled: () => settled,
+    resolvedFrames: () => frames.filter((frame) => frame.kind === 'confirm_resolved').length,
+  }
+}
+
 // ---- the side-effect surface ---------------------------------------------------------------
 
 /** Every session file this door has written — the census a refusal must leave unchanged. */
@@ -261,18 +328,24 @@ function auditRows(configRoot: string): readonly Record<string, unknown>[] {
 interface SideEffects {
   readonly sessions: readonly string[]
   readonly auditRows: number
+  /** Outstanding questions on the registry — the surface an answer route writes to. */
+  readonly pendingConfirms: number
 }
 
-function sideEffects(configRoot: string): SideEffects {
-  return { sessions: sessionFiles(configRoot), auditRows: auditRows(configRoot).length }
+function sideEffects(door: DoorFixture): SideEffects {
+  return {
+    sessions: sessionFiles(door.configRoot),
+    auditRows: auditRows(door.configRoot).length,
+    pendingConfirms: door.confirms.pendingCount(),
+  }
 }
 
 /**
  * The whole REJECTS assertion, in one place so no cell can quietly assert less than its siblings.
  *
- * STATUS IS THE WEAKEST OF THE FOUR and it is deliberately not alone: a door that answered 403 and
- * executed the turn anyway would pass a status-only cell, and that door is precisely what the
- * shipped one was (200, with the reply hidden by a missing header).
+ * STATUS IS THE WEAKEST OF THESE and it is deliberately not alone: a door that answered 403 and
+ * acted anyway would pass a status-only cell, and that door is precisely what the shipped one was
+ * (200, with the reply hidden by a missing header).
  */
 function expectNoSideEffect(
   label: string,
@@ -284,136 +357,143 @@ function expectNoSideEffect(
   expect(response.status, `${label}: the door answered ${String(response.status)} ${response.note ?? ''}`)
     .toBe(expectedStatus)
   expect(response.body, `${label}: a refusal carries no receipts`).not.toContain('receipts')
+  expect(response.body, `${label}: a refusal resolved something`).not.toContain('resolved')
   expect(after.sessions, `${label}: the refused drive wrote a session file`).toEqual(before.sessions)
   expect(after.auditRows, `${label}: the refused drive wrote an execution-audit row`)
     .toBe(before.auditRows)
+  expect(after.pendingConfirms, `${label}: the refused drive spent a confirm id`)
+    .toBe(before.pendingConfirms)
+}
+
+/** The parked question is exactly as it was: nobody's answer reached it. */
+function expectStillOutstanding(label: string, parked: ParkedRunConfirm): void {
+  expect(parked.settled(), `${label}: the refused answer resolved the parked run confirm`)
+    .toBeUndefined()
+  expect(parked.resolvedFrames(), `${label}: the refused answer emitted a resolution`).toBe(0)
 }
 
 // ---- gap 6: the cross-origin drive ---------------------------------------------------------
 
 describe('the fourth door refuses a cross-origin drive before anything happens (gap 6)', () => {
-  it('6a — refuses the CORS simple request that used to execute a turn', async () => {
+  it('6a — refuses the CORS simple request, before the parked run confirm resolves', async () => {
     const door = await openDoor()
-    const before = sideEffects(door.configRoot)
+    const parked = parkRunConfirm(door)
+    const before = sideEffects(door)
 
-    // THE VERIFIER'S EXACT PROBE. `text/plain;charset=UTF-8` with a JSON body is a CORS SIMPLE
-    // request: no preflight is sent, so the door's 204-no-grant OPTIONS arm never runs.
-    const answered = await driveTurn(door.port, {
+    // THE VERIFIER'S EXACT PROBE, on the answer route. `text/plain;charset=UTF-8` with a JSON body
+    // is a CORS SIMPLE request: no preflight is sent, so the door's 204-no-grant OPTIONS arm never
+    // runs, and an unguarded route would approve an ask-tier run on the person's machine.
+    const answered = await driveAnswer(door.port, {
       'content-type': 'text/plain;charset=UTF-8',
       origin: HOSTILE_ORIGIN,
-    })
+    }, parked.body())
 
-    expectNoSideEffect('6a', answered, 403, before, sideEffects(door.configRoot))
+    expectNoSideEffect('6a', answered, 403, before, sideEffects(door))
+    expectStillOutstanding('6a', parked)
   })
 
   it('6b — refuses a cross-origin drive that declares application/json (the Origin leg alone)', async () => {
     const door = await openDoor()
-    const before = sideEffects(door.configRoot)
+    const parked = parkRunConfirm(door)
+    const before = sideEffects(door)
 
     // A Content-Type-only fix passes 6a and fails HERE: this request's media type is exactly the
     // one the door wants, and its Origin is still somebody else's page.
-    const answered = await driveTurn(door.port, {
+    const answered = await driveAnswer(door.port, {
       'content-type': 'application/json',
       origin: HOSTILE_ORIGIN,
-    })
+    }, parked.body())
 
-    expectNoSideEffect('6b', answered, 403, before, sideEffects(door.configRoot))
+    expectNoSideEffect('6b', answered, 403, before, sideEffects(door))
+    expectStillOutstanding('6b', parked)
   })
 
   it('6c — refuses a text/plain drive bearing no Origin at all (the Content-Type leg alone)', async () => {
     const door = await openDoor()
-    const before = sideEffects(door.configRoot)
+    const parked = parkRunConfirm(door)
+    const before = sideEffects(door)
 
     // An Origin-only fix passes 6a and 6b and fails HERE. The 415 matters beyond the refusal: a
     // browser that must send `application/json` must first send a preflight, and the preflight is
     // the arm this door already answers with no grant.
-    const answered = await driveTurn(door.port, { 'content-type': 'text/plain;charset=UTF-8' })
+    const answered = await driveAnswer(
+      door.port,
+      { 'content-type': 'text/plain;charset=UTF-8' },
+      parked.body(),
+    )
 
-    expectNoSideEffect('6c', answered, 415, before, sideEffects(door.configRoot))
+    expectNoSideEffect('6c', answered, 415, before, sideEffects(door))
+    expectStillOutstanding('6c', parked)
   })
 
-  it('6d — ACCEPTS the same-origin browser drive, which still executes a real turn', async () => {
+  it('6d — ACCEPTS the same-origin browser drive, which still resolves the parked run confirm', async () => {
     const door = await openDoor()
+    const parked = parkRunConfirm(door)
 
-    // The dashboard's own page, driving its own door: `Origin` equals the request's `Host` origin,
-    // which is what a browser sends on a same-origin POST.
-    const answered = await driveTurn(door.port, {
+    // The dashboard's own page, answering on its own door: `Origin` equals the request's `Host`
+    // origin, which is what a browser sends on a same-origin POST.
+    const answered = await driveAnswer(door.port, {
       'content-type': 'application/json',
       origin: `http://127.0.0.1:${String(door.port)}`,
-    })
+    }, parked.body())
 
-    expect(answered.status, `the same-origin drive was refused ${answered.note ?? ''}`).toBe(200)
-    const turn = JSON.parse(answered.body) as ChatTurnResponse
-    expect(turn.result.receipts.map((receipt) => `${receipt.functionId}:${receipt.status}`))
-      .toEqual(['config.get:executed'])
-    // The side effect this cell WANTS: the conversation is on disk.
-    expect(sessionFiles(door.configRoot)).toEqual([`${turn.result.sessionId}.jsonl`])
+    expect(answered.status, `the same-origin answer was refused ${answered.note ?? ''}`).toBe(200)
+    expect(JSON.parse(answered.body)).toEqual({ resolved: true, answer: 'accept' })
+    // The side effect this cell WANTS: the waiting run has its decision.
+    expect(await parked.outcome).toBe('accept')
+    expect(parked.resolvedFrames()).toBe(1)
+    expect(door.confirms.pendingCount()).toBe(0)
   })
 
   it('6e — ACCEPTS the Origin-less local drive (curl and local tooling, the recorded policy)', async () => {
     const door = await openDoor()
+    const parked = parkRunConfirm(door)
 
     // A SEPARATE AXIS from 6d and not a repetition of it: 6d varies the Origin's VALUE, this one
     // varies its PRESENCE. A guard that required an Origin would pass 6d and fail here, and it
     // would have bricked every scripted drive against a localhost door.
-    const answered = await driveTurn(door.port, { 'content-type': 'application/json' })
+    const answered = await driveAnswer(
+      door.port,
+      { 'content-type': 'application/json' },
+      parked.body('deny'),
+    )
 
-    expect(answered.status, `the Origin-less drive was refused ${answered.note ?? ''}`).toBe(200)
-    const turn = JSON.parse(answered.body) as ChatTurnResponse
-    expect(turn.result.receipts.map((receipt) => receipt.status)).toEqual(['executed'])
-    expect(sessionFiles(door.configRoot)).toEqual([`${turn.result.sessionId}.jsonl`])
+    expect(answered.status, `the Origin-less answer was refused ${answered.note ?? ''}`).toBe(200)
+    expect(JSON.parse(answered.body)).toEqual({ resolved: true, answer: 'deny' })
+    expect(await parked.outcome).toBe('deny')
+    expect(door.confirms.pendingCount()).toBe(0)
   })
 
-  it('6f — refuses a cross-origin answer to somebody else\'s outstanding confirm', async () => {
+  it('6f — refuses a cross-origin answer to somebody else\'s outstanding run confirm', async () => {
     const door = await openDoor()
 
-    // The registry is driven DIRECTLY here rather than through an ask-tier turn, because what this
-    // cell is about is the ROUTE: a question is genuinely parked and genuinely answerable, and the
-    // only variable is where the answer came from.
-    const frames: ChatConfirmChannelFrame[] = []
-    door.confirms.subscribe((_scopeId, frame) => { frames.push(frame) })
-    const closeChannel = door.confirms.openChannel('chat-400-14-confirm')
-    const parked = door.confirms.request({
-      // 401-09: the registry's axis is a confirm SCOPE now — a conversation id is one kind of scope
-      // and the chat route's wire word is unchanged, which is why the body below still says
-      // `sessionId`.
-      scopeId: 'chat-400-14-confirm',
-      actionClass: 'fn:control.400.14.confirm-arm',
-    })
-    const request = frames.find((frame) => frame.kind === 'confirm_request')
-    expect(request?.kind, 'no confirm was parked, so this cell would assert about nothing').toBe('confirm_request')
-    const confirmId = request?.kind === 'confirm_request' ? request.request.confirmId : ''
+    // The question belongs to the browser holding this scope's channel. A page on another origin
+    // that has learned the scope and the confirm id — the strongest attacker this route faces —
+    // still cannot spend them.
+    const parked = parkRunConfirm(door)
     expect(door.confirms.pendingCount()).toBe(1)
 
-    const body = JSON.stringify({ sessionId: 'chat-400-14-confirm', confirmId, answer: 'accept' })
-    const refused = await rawRequest(door.port, {
-      method: 'POST',
-      path: '/api/chat/confirm',
-      headers: { 'content-type': 'application/json', origin: HOSTILE_ORIGIN },
-      body,
-    })
+    const refused = await driveAnswer(door.port, {
+      'content-type': 'application/json',
+      origin: HOSTILE_ORIGIN,
+    }, parked.body())
 
-    expect(refused.status, `the cross-origin confirm was answered ${refused.note ?? ''}`).toBe(403)
+    expect(refused.status, `the cross-origin answer was accepted ${refused.note ?? ''}`).toBe(403)
     // THE SIDE EFFECT, which on this route is the registry rather than the disk: the id was never
-    // spent, so the question is still outstanding and the turn behind it is still waiting.
+    // spent, so the question is still outstanding and the run behind it is still waiting.
     expect(door.confirms.pendingCount(), 'the cross-origin answer spent the confirm id').toBe(1)
-    expect(
-      frames.filter((frame) => frame.kind === 'confirm_resolved'),
-      'the cross-origin answer resolved somebody else\'s question',
-    ).toEqual([])
+    expectStillOutstanding('6f', parked)
 
     // The ACCEPTS control on the same id: the person whose question it is can still answer it.
-    const accepted = await rawRequest(door.port, {
-      method: 'POST',
-      path: '/api/chat/confirm',
-      headers: { 'content-type': 'application/json' },
-      body,
-    })
+    const accepted = await driveAnswer(
+      door.port,
+      { 'content-type': 'application/json' },
+      parked.body(),
+    )
     expect(accepted.status).toBe(200)
     expect(JSON.parse(accepted.body)).toEqual({ resolved: true, answer: 'accept' })
-    expect(await parked).toBe('accept')
+    expect(await parked.outcome).toBe('accept')
     expect(door.confirms.pendingCount()).toBe(0)
-    closeChannel()
   })
 
   it('6g — refuses EVERY mutating route the router\'s own table declares, and reaches all of them same-origin', async () => {
@@ -426,25 +506,23 @@ describe('the fourth door refuses a cross-origin drive before anything happens (
     // method above this table, and this cell is what makes "complete" a measurement.
     const mutating = CHAT_ROUTE_TABLE.filter((row) => isMutatingChatRequest(row.method))
     expect(mutating.length, 'the table declares no mutating route, so this cell would range nothing')
-      .toBeGreaterThanOrEqual(2)
+      .toBeGreaterThanOrEqual(1)
     expect(
       mutating.map((row) => `${row.method} ${row.path}`).sort(),
       'a mutating route left this table would leave this corpus with it',
-    ).toEqual(expect.arrayContaining([`POST ${CHAT_CONFIRM_ROUTE}`, `POST ${CHAT_TURN_ROUTE}`]))
+    ).toEqual(expect.arrayContaining([`POST ${RUN_CONFIRM_ANSWER_ROUTE}`]))
     // And every path this door owns is IN the table, so dispatch cannot be reading one list while
     // this cell ranges another.
     const declared = CHAT_ROUTE_TABLE.map((row) => row.path)
-    for (const route of [
-      CHAT_TURN_ROUTE,
-      CHAT_CONFIRM_ROUTE,
-      CHAT_CAPABILITIES_ROUTE,
-      CHAT_CATALOG_ROUTE,
-      CHAT_SESSION_EVENTS_TEMPLATE,
-    ]) {
+    for (const route of [RUN_CONFIRM_ANSWER_ROUTE, RUN_CONFIRM_CHANNEL_ROUTE]) {
       expect(declared, `\`${route}\` is dispatched but absent from the table`).toContain(route)
     }
 
-    const body = JSON.stringify({ message: TRACER })
+    // EVERY ROW IS SENT THE SAME WELL-FORMED ANSWER, so the answer route's refusals are measured
+    // against a question that really is answerable. Any other mutating row reads it as a malformed
+    // body, which is that route working.
+    const parked = parkRunConfirm(door)
+    const body = parked.body()
     for (const row of mutating) {
       // A templated mutating route cannot be driven by a literal path, so it reds HERE rather than
       // being skipped in silence — the corpus must be extended before such a route can ship.
@@ -453,28 +531,29 @@ describe('the fourth door refuses a cross-origin drive before anything happens (
         `the mutating row \`${row.path}\` is templated; extend this cell rather than skipping it`,
       ).not.toContain(':')
 
-      const beforeOrigin = sideEffects(door.configRoot)
+      const beforeOrigin = sideEffects(door)
       const crossOrigin = await rawRequest(door.port, {
         method: row.method,
         path: row.path,
         headers: { 'content-type': 'application/json', origin: HOSTILE_ORIGIN },
         body,
       })
-      expectNoSideEffect(`6g cross-origin ${row.method} ${row.path}`, crossOrigin, 403, beforeOrigin, sideEffects(door.configRoot))
+      expectNoSideEffect(`6g cross-origin ${row.method} ${row.path}`, crossOrigin, 403, beforeOrigin, sideEffects(door))
 
-      const beforeType = sideEffects(door.configRoot)
+      const beforeType = sideEffects(door)
       const wrongType = await rawRequest(door.port, {
         method: row.method,
         path: row.path,
         headers: { 'content-type': 'text/plain;charset=UTF-8' },
         body,
       })
-      expectNoSideEffect(`6g text/plain ${row.method} ${row.path}`, wrongType, 415, beforeType, sideEffects(door.configRoot))
+      expectNoSideEffect(`6g text/plain ${row.method} ${row.path}`, wrongType, 415, beforeType, sideEffects(door))
     }
+    expectStillOutstanding('6g', parked)
 
     // THE ACCEPTS CONTROL OVER THE SAME COMPLETE SET, which is what stops this cell passing on a
     // door that refuses everything: driven from its own origin, no mutating route answers with
-    // either refusal. (`/confirm` answers 400 for this body, which is the route working.)
+    // either refusal, and the answer route spends the question.
     for (const row of mutating) {
       const answered = await rawRequest(door.port, {
         method: row.method,
@@ -490,38 +569,43 @@ describe('the fourth door refuses a cross-origin drive before anything happens (
         `the same-origin drive of ${row.method} ${row.path} was refused as cross-site or wrong-typed`,
       ).not.toContain(answered.status)
     }
+    expect(await parked.outcome).toBe('accept')
   })
 
   it('6i — refuses the literal `null` Origin, which is not the same fact as no Origin at all', async () => {
     const door = await openDoor()
-    const before = sideEffects(door.configRoot)
+    const parked = parkRunConfirm(door)
+    const before = sideEffects(door)
 
     // A SEPARATE RUNG FROM 6e AND THE ONE MOST EASILY LOST. `Origin: null` is what a sandboxed
     // iframe, a `data:` document and a cross-origin redirect send — an origin that declined to
     // name itself, which is the opposite of a local client that has no origin to name. A guard
     // written as "no usable origin means allow" would pass 6a, 6b, 6c, 6e and fail here.
-    const answered = await driveTurn(door.port, {
+    const answered = await driveAnswer(door.port, {
       'content-type': 'application/json',
       origin: 'null',
-    })
+    }, parked.body())
 
-    expectNoSideEffect('6i', answered, 403, before, sideEffects(door.configRoot))
+    expectNoSideEffect('6i', answered, 403, before, sideEffects(door))
+    expectStillOutstanding('6i', parked)
   })
 
   it('6h — refuses a same-origin-looking drive whose Sec-Fetch-Site says cross-site', async () => {
     const door = await openDoor()
-    const before = sideEffects(door.configRoot)
+    const parked = parkRunConfirm(door)
+    const before = sideEffects(door)
 
     // The third axis, varied alone: the Origin here is exactly the one 6d ACCEPTS, so nothing but
     // the fetch-metadata header can decide this request. A guard that read only `Origin` passes
     // 6a, 6b, 6c and fails here.
-    const answered = await driveTurn(door.port, {
+    const answered = await driveAnswer(door.port, {
       'content-type': 'application/json',
       origin: `http://127.0.0.1:${String(door.port)}`,
       'sec-fetch-site': 'cross-site',
-    })
+    }, parked.body())
 
-    expectNoSideEffect('6h', answered, 403, before, sideEffects(door.configRoot))
+    expectNoSideEffect('6h', answered, 403, before, sideEffects(door))
+    expectStillOutstanding('6h', parked)
   })
 })
 
