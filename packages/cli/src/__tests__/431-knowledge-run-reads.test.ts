@@ -781,7 +781,7 @@ describe('EXPORT-ATOMIC: exclusive publication that never overwrites', () => {
     expect(readdirSync(dir).filter((name) => name.endsWith('.tmp'))).toEqual([])
   })
 
-  it('creates no parent directory and refuses a symlinked parent', async () => {
+  it('creates no parent directory and exports through a symlinked parent, never over a symlinked file', async () => {
     const p = populatedProject()
     const dir = outDir()
     const missing = await cli(p.configPath, ['runs', 'evidence', p.runId, '--screenshot', p.screenshotSha, '--out', join(dir, 'new', 'shot.png')])
@@ -791,9 +791,16 @@ describe('EXPORT-ATOMIC: exclusive publication that never overwrites', () => {
     mkdirSync(join(dir, 'real'))
     symlinkSync(join(dir, 'real'), join(dir, 'alias'))
     const aliased = await cli(p.configPath, ['runs', 'evidence', p.runId, '--screenshot', p.screenshotSha, '--out', join(dir, 'alias', 'shot.png')])
-    expect(aliased.exitCode).toBe(1)
-    expect(aliased.stderr).toContain('symbolic link')
-    expect(readdirSync(join(dir, 'real'))).toEqual([])
+    expect(aliased.exitCode, aliased.stderr).toBe(0)
+    expect(new Uint8Array(readFileSync(join(dir, 'real', 'shot.png')))).toEqual(PNG)
+    expect(readdirSync(join(dir, 'real'))).toEqual(['shot.png'])
+    symlinkSync(join(dir, 'real', 'shot.png'), join(dir, 'real', 'link.png'))
+    const overLink = await cli(p.configPath, ['runs', 'evidence', p.runId, '--screenshot', p.screenshotSha, '--out', join(dir, 'alias', 'link.png')])
+    expect(overLink.exitCode).toBe(1)
+    expect(overLink.stderr).toContain('symbolic link')
+    const fileParent = await cli(p.configPath, ['runs', 'evidence', p.runId, '--screenshot', p.screenshotSha, '--out', join(dir, 'real', 'shot.png', 'x.png')])
+    expect(fileParent.exitCode).toBe(1)
+    expect(fileParent.stderr).toContain('not a directory')
   })
 
   it('loses a publication race without touching the winner, and cleans only its own temporary', () => {

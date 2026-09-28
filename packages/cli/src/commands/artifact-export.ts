@@ -1,7 +1,8 @@
 // Explicit byte export for `agent-qa runs evidence --screenshot <sha> --out <file>` (431-07).
 //
-// The destination must not exist in any form, and its parent must already be a real directory:
-// nothing is overwritten, followed through a link or created on the way. Bytes go to a sibling
+// The destination must not exist in any form, and its parent must already be a directory (possibly
+// reached through a link): nothing is overwritten, the destination itself is never followed through
+// a link, and no directory is created on the way. Bytes go to a sibling
 // temporary opened exclusively, then publish with link(2), which fails rather than replaces when a
 // competitor published first. The temporary this call created is the only file it ever removes.
 // Everything from the temporary's creation to its removal is synchronous, so a signal handler
@@ -17,6 +18,7 @@ import {
   lstatSync,
   openSync,
   readSync,
+  statSync,
   unlinkSync,
   writeSync,
 } from 'node:fs'
@@ -63,6 +65,15 @@ function lstatIfPresent(path: string): Stats | undefined {
   }
 }
 
+function statIfPresent(path: string): Stats | undefined {
+  try {
+    return statSync(path)
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined
+    throw error
+  }
+}
+
 function existingKind(stat: Stats): string {
   if (stat.isSymbolicLink()) return 'symbolic link'
   if (stat.isDirectory()) return 'directory'
@@ -70,16 +81,19 @@ function existingKind(stat: Stats): string {
   return 'special file'
 }
 
-/** Resolve `--out` and refuse it unless it names a new file inside an existing real directory. */
+/**
+ * Resolve `--out` and refuse it unless it names a new file inside an existing directory. The user
+ * names the destination, so a directory reached through a symbolic link (`/tmp` on macOS) is fine.
+ */
 export function preflightExportDestination(destination: string): string {
   const path = resolve(destination)
   const parent = dirname(path)
-  const parentStat = lstatIfPresent(parent)
+  const parentStat = statIfPresent(parent)
   if (parentStat === undefined) {
     throw new ArtifactExportError(
       `Refusing export destination ${path}: its directory ${parent} does not exist (no directory is created)`)
   }
-  if (parentStat.isSymbolicLink() || !parentStat.isDirectory()) {
+  if (!parentStat.isDirectory()) {
     throw new ArtifactExportError(
       `Refusing export destination ${path}: its parent ${parent} is a ${existingKind(parentStat)}, not a directory`)
   }
