@@ -9,6 +9,7 @@ import type {
   CompletedRunHandoff,
   FunctionCaller,
   PerTestOutcome,
+  RecordedTargets,
   RunStatus,
   RunSummary,
 } from '@vostride/agent-qa-schema'
@@ -64,10 +65,15 @@ function run(input: {
 interface Harness {
   list(input: unknown): Promise<RunSummary[]>
   listCalls(): number
+  targetCalls(): readonly string[]
 }
 
-function harness(documents: readonly CompletedRunHandoff[]): Harness {
+function harness(
+  documents: readonly CompletedRunHandoff[],
+  targets?: (runId: string) => RecordedTargets,
+): Harness {
   let listCalls = 0
+  const targetCalls: string[] = []
   const runs = {
     list: () => {
       listCalls += 1
@@ -76,6 +82,14 @@ function harness(documents: readonly CompletedRunHandoff[]): Harness {
     get: (runId: string) => Promise.resolve(documents.find((document) => document.runId === runId)),
     readEvents: () => Promise.resolve([]),
     readStepEvidence: () => Promise.resolve({ kind: 'run-not-recorded' } as const),
+    ...(targets === undefined
+      ? {}
+      : {
+          getRecordedTargets: (runId: string) => {
+            targetCalls.push(runId)
+            return Promise.resolve(targets(runId))
+          },
+        }),
   }
   const registry = createRegistryFromSpecs([runsListSpec], {
     deps: { runs } as unknown as FunctionDeps,
@@ -85,6 +99,7 @@ function harness(documents: readonly CompletedRunHandoff[]): Harness {
   return {
     list: async (input) => (await invokeFunction(registry, 'runs.list', input, READER)) as RunSummary[],
     listCalls: () => listCalls,
+    targetCalls: () => targetCalls,
   }
 }
 
@@ -281,5 +296,57 @@ describe('LIST-FILTERS: filters select before the cap (D-08, EDGE-13/14)', () =>
     const reader = harness([run({ runId: 'run-one', endedAt: 1 })])
 
     expect(await reader.list({ target: 'shop' })).toEqual([])
+  })
+})
+
+describe('LIST-TARGETS: recorded targets through the narrow reader port (D-08, T-431-01)', () => {
+  const recorded = (...names: string[]): RecordedTargets => ({ status: 'recorded', names })
+
+  it('filters on an exact recorded target name before capping', async () => {
+    const documents = Array.from({ length: 25 }, (_, index) =>
+      run({ runId: `run-${String(index).padStart(2, '0')}`, endedAt: 1_000 + index }))
+    const reader = harness(documents, (runId) => (
+      Number(runId.slice(4)) % 5 === 0 ? recorded('android-qa') : recorded('staging-web', 'android-qa')
+    ))
+
+    const listed = await reader.list({ target: 'staging-web' })
+
+    expect(listed).toHaveLength(20)
+    expect(listed[0]!.runId).toBe('run-24')
+    expect(listed.map((row) => row.runId)).not.toContain('run-20')
+    expect(listed.every((row) => row.recordedTargets.status === 'recorded')).toBe(true)
+  })
+
+  it('compares target names exactly: no case folding and no substring', async () => {
+    const reader = harness([run({ runId: 'run-one', endedAt: 1 })], () => recorded('staging-web'))
+
+    expect(await reader.list({ target: 'Staging-Web' })).toEqual([])
+    expect(await reader.list({ target: 'staging' })).toEqual([])
+    expect((await reader.list({ target: 'staging-web' })).map((row) => row.runId)).toEqual(['run-one'])
+  })
+
+  it('carries each row\'s recorded targets and never matches an unknown one', async () => {
+    const documents = [
+      run({ runId: 'run-known', endedAt: 2 }),
+      run({ runId: 'run-unknown', endedAt: 1 }),
+    ]
+    const reader = harness(documents, (runId) => (
+      runId === 'run-known' ? recorded('staging-web') : { status: 'unknown' }
+    ))
+
+    expect((await reader.list({})).map((row) => [row.runId, row.recordedTargets])).toEqual([
+      ['run-known', { status: 'recorded', names: ['staging-web'] }],
+      ['run-unknown', { status: 'unknown' }],
+    ])
+    expect((await reader.list({ target: 'staging-web' })).map((row) => row.runId))
+      .toEqual(['run-known'])
+  })
+
+  it('looks targets up only for the rows it returns when no target filter is set', async () => {
+    const reader = harness(numbered(30), () => recorded('staging-web'))
+
+    await reader.list({ limit: 3 })
+
+    expect(reader.targetCalls()).toEqual(['run-030', 'run-029', 'run-028'])
   })
 })
