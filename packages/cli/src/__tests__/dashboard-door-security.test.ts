@@ -10,9 +10,9 @@
 // measures them around a request written byte-by-byte onto a real socket.
 //
 // RAW SOCKETS RATHER THAN `fetch`, for two reasons that are both load-bearing. `fetch` normalises
-// a path, and gap 7's whole probe is a path (`/api/chat/sessions/%/events`) that no URL builder
-// will hand to a server. And `Origin` is a forbidden header name in a browser, so a corpus that
-// could only set the headers `fetch` permits could not state the attacker's request at all.
+// a path, and gap 7's probe is a request target (`//`) that no URL builder will hand to a server.
+// And `Origin` is a forbidden header name in a browser, so a corpus that could only set the headers
+// `fetch` permits could not state the attacker's request at all.
 //
 // ACCEPTS CONTROLS ARE NOT OPTIONAL HERE. A REJECTS-only corpus is green against a door that
 // refuses everything, which is a door nobody can use. The two axes the policy allows — a
@@ -23,6 +23,10 @@
 // survive until Phase 432. The guards sit on the method above the router's table, so the claims
 // are unchanged; what moved is the route, and the side effect a refusal must leave untouched is now
 // a parked run-trigger question that stays outstanding.
+//
+// 430 D-02 (2026-09-28): 7a (the session-id route) and 7b-i (the turn's fold guard) are deleted
+// with the routes they drove. The generic 404 those paths now answer is carried by
+// C430-DELETED-CHAT-ROUTES-SHARED-404 and process survival's s5.
 
 import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { createServer, type Server } from 'node:http'
@@ -47,9 +51,6 @@ import type { LocalAgentHost } from '@vostride/agent-qa-agent-local'
 import { afterEach, describe, expect, it } from 'vitest'
 
 import { composeDashboardDoor } from '../commands/dashboard.js'
-
-/** The tracer utterance every drive uses: bound in this composition, reads nothing staged. */
-const TRACER = '/fn config.get {}'
 
 /** The cross-origin an attacker's page is served from — the verifier's own probe value. */
 const HOSTILE_ORIGIN = 'https://evil.example'
@@ -177,8 +178,8 @@ function parseRaw(raw: string): RawResponse {
 /**
  * One request, written onto a socket exactly as given.
  *
- * The PATH IS NOT PARSED and the HEADERS ARE NOT FILTERED. That is the whole point: `/…/%/events`
- * and `Origin: https://evil.example` are both things a URL builder or a browser-shaped client would
+ * The PATH IS NOT PARSED and the HEADERS ARE NOT FILTERED. That is the whole point: `//` and
+ * `Origin: https://evil.example` are both things a URL builder or a browser-shaped client would
  * refuse to produce, and both are what the attacker sends.
  */
 function rawRequest(
@@ -229,20 +230,6 @@ function rawRequest(
         + (init.body ?? ''),
       )
     })
-  })
-}
-
-/** A turn, driven with whatever headers the cell wants to state. */
-function driveTurn(
-  port: number,
-  headers: Readonly<Record<string, string>>,
-  message = TRACER,
-): Promise<RawResponse> {
-  return rawRequest(port, {
-    method: 'POST',
-    path: '/api/chat/turn',
-    headers,
-    body: JSON.stringify({ message }),
   })
 }
 
@@ -655,53 +642,6 @@ async function settleEscapes(): Promise<void> {
 }
 
 describe('the fourth door outlives every malformed request a socket can carry (gap 7)', () => {
-  it('7a — answers an unparseable session id and serves the next request', async () => {
-    const door = await openDoor()
-    const watch = watchForEscapes()
-    try {
-      // A lone `%` is not a percent-escape, so `decodeURIComponent` throws `URIError`. On the
-      // shipped door that throw left a SYNCHRONOUS router as an uncaught exception: the request
-      // never answered and the `agent-qa dashboard` process died. One request, remotely, unauthed.
-      for (const malformed of ['%', '%E0']) {
-        const answered = await rawRequest(door.port, {
-          method: 'GET',
-          path: `/api/chat/sessions/${malformed}/events`,
-        })
-        expect(
-          answered.status,
-          `the malformed id \`${malformed}\` was never answered ${answered.note ?? ''}`,
-        ).toBe(404)
-
-        // AND THE PROCESS IS STILL SERVING. A cell that stopped at the first response would be
-        // green against a door that answered and then fell over.
-        const healthy = await rawRequest(door.port, {
-          method: 'GET',
-          path: '/api/chat/capabilities',
-        })
-        expect(healthy.status, 'the door stopped serving after the malformed request').toBe(200)
-        expect(JSON.parse(healthy.body)).toHaveProperty('ops')
-      }
-
-      // NO ORACLE. An id this process never minted and an id no parser can read must be the same
-      // bytes from outside, or the route tells a prober which session ids exist.
-      const unparseable = await rawRequest(door.port, {
-        method: 'GET',
-        path: '/api/chat/sessions/%/events',
-      })
-      const unminted = await rawRequest(door.port, {
-        method: 'GET',
-        path: '/api/chat/sessions/chat-400-14-never-minted/events',
-      })
-      expect(unparseable.status).toBe(unminted.status)
-      expect(unparseable.body).toBe(unminted.body)
-
-      await settleEscapes()
-      expect(watch.escaped, 'an exception escaped the chat router').toEqual([])
-    } finally {
-      watch.stop()
-    }
-  })
-
   it('7c — answers an unparseable request line and serves the next request', async () => {
     const door = await openDoor()
     const watch = watchForEscapes()
@@ -755,38 +695,6 @@ describe('the fourth door outlives every malformed request a socket can carry (g
 
       await settleEscapes()
       expect(watch.escaped, 'the exception escaped the chat router').toEqual([])
-    } finally {
-      watch.stop()
-    }
-  })
-
-  it('7b-i — a throwing fold answers 500 through the turn\'s own guard, not through the backstop', async () => {
-    const door = await openDoor({
-      wrapHost: (host) => ({
-        ...host,
-        foldFunctionResult: (): never => {
-          throw new Error('400-14 fold fault')
-        },
-      }),
-    })
-    const watch = watchForEscapes()
-    try {
-      // The fold map runs AFTER the op returned, so this is a rejection from the part of the turn
-      // that used to sit outside `handleTurn`'s own try — the measured sibling of the decode.
-      const answered = await driveTurn(door.port, { 'content-type': 'application/json' })
-      expect(answered.status, `the throwing fold never answered ${answered.note ?? ''}`).toBe(500)
-      // THE BODY, NOT JUST THE STATUS: this is the turn's own refusal wording. If the fold map
-      // drifts back outside the try, the router's boundary backstop answers instead — also a 500,
-      // with different bytes — and this assertion is what tells the two apart.
-      expect(JSON.parse(answered.body)).toEqual({
-        error: 'The turn could not be carried out [Error]',
-      })
-
-      const healthy = await rawRequest(door.port, { method: 'GET', path: '/api/chat/capabilities' })
-      expect(healthy.status, 'the door stopped serving after the throwing fold').toBe(200)
-
-      await settleEscapes()
-      expect(watch.escaped, 'the rejection escaped the chat router').toEqual([])
     } finally {
       watch.stop()
     }

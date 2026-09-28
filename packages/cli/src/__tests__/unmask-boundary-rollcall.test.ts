@@ -38,18 +38,16 @@ import {
 } from '@vostride/agent-qa-safety'
 import type { ConfirmPort, ProviderRequestParams } from '@vostride/agent-qa-safety'
 import { debugLoggingMiddleware } from '@vostride/agent-qa-model'
-// 405-10 (D-09): the shipped subscriber, database, detail adapter and BOTH routers. A cell that
+// 405-10 (D-09): the shipped subscriber, database, detail adapter and routers. A cell that
 // mounted its own would be measuring a door this product does not ship.
 import {
   DashboardDatabase,
-  createChatRouter,
   createDashboardRunDetailReader,
   createDashboardRunIngest,
   createRouter,
   createRunServiceRoutes,
-  recordStreamedEvent,
 } from '@vostride/agent-qa-dashboard'
-import type { AgentHost, SessionStreamWindow } from '@vostride/agent-qa-dashboard'
+import type { AgentHost } from '@vostride/agent-qa-dashboard'
 // 405-10: the shipped registry and dispatcher — `runs.detail` is where the projection is computed
 // and where `RunNotFoundError` is minted, so a fixture that answered it would be a second
 // implementation of both. DEV-only edges, on `run-detail-routes.test.ts`'s own reasoning:
@@ -65,7 +63,7 @@ import {
   type FunctionRegistry,
 } from '@vostride/agent-qa-agent'
 import { createEvidenceBlobReader } from '@vostride/agent-qa-agent-local'
-import { createServer, request as httpRequest } from 'node:http'
+import { createServer } from 'node:http'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { renderClauseResults } from '../commands/result-render.js'
 import {
@@ -476,21 +474,13 @@ function consoleLines(needle: string): string {
 }
 
 /**
- * Drive the SHIPPED dashboard chat door over a real socket and return the bytes it answered with.
+ * The base roll-call host the run reads below spread over (400-06, narrowed by 430 D-02).
  *
- * THE FOURTH DOOR'S EMIT IS A NEW HUMAN SURFACE (400-06) and this file's enrollment rule says a
- * surface that touches output must enrol to ship. It is a human surface for a reason that took
- * deciding: the browser cannot be the unmasking boundary, because the masking context lives in the
- * server process and shipping one to a page would mint a cleartext sink in a document, a bfcache
- * entry and a devtools log. So the boundary is this door's response bytes — the same position
- * `emitHuman` occupies for the CLI — and this entry is what holds it there.
- *
- * THE ROUTER IS THE SHIPPED ONE AND THE SOCKET IS REAL. What is supplied rather than composed is
- * the HOST, which is an input to the router and not the thing under test: a full
- * `composeDashboardDoor` here would drag a workspace, a config file and the whole port set into a
- * roll-call cell whose question is one line of transport. The `unmaskForDisplay` it binds is the
- * production binding's SHAPE — one `unmaskForHumanOutput` call per emit — over this file's one
- * fixture context, which is what lets the cell see a restoration at all.
+ * WHAT IS SUPPLIED rather than composed is the HOST, which is an input to the routers and not the
+ * thing under test. The `unmaskForDisplay` it binds is the production binding's SHAPE — one
+ * `unmaskForHumanOutput` call per emit — over this file's one fixture context, which is what lets
+ * a cell see a restoration at all. The dashboard's conversation emits it once served were deleted
+ * in 430; Plan 10 removes the members only they read.
  */
 function dashboardRollCallHost(
   onSessionEvent: (listener: (sessionId: string, event: ChatSessionEvent) => void) => void = () => {},
@@ -531,87 +521,6 @@ function dashboardRollCallHost(
     listDeclarations: () => [],
     onSessionEvent: (listener) => { onSessionEvent(listener); return () => {} },
     unmaskForDisplay: (text: string) => unmaskForHumanOutput(FIXTURE.ctx, text),
-  }
-}
-
-async function renderDashboardChatEmit(): Promise<string> {
-  const server = createServer(createChatRouter(dashboardRollCallHost()))
-  await new Promise<void>((done) => server.listen(0, '127.0.0.1', done))
-  const address = server.address()
-  const port = typeof address === 'object' && address !== null ? address.port : 0
-  try {
-    const response = await fetch(`http://127.0.0.1:${String(port)}/api/chat/turn`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ message: 'what did that op return' }),
-    })
-    return await response.text()
-  } finally {
-    await new Promise<void>((done) => server.close(() => { done() }))
-  }
-}
-
-/**
- * The SAME door's OTHER emit: one frame off the turn-events stream (400-06).
- *
- * A SEPARATE ENTRY BECAUSE IT IS A SEPARATE WRITE. The response body and the SSE frame are two
- * `res.write` sites in `chat-routes.ts` and a boundary applied to one is not applied to the other —
- * measured: deleting the frame's unmask left every other cell in this repository green. The stream
- * is also the channel a person actually watches a turn on, so a placeholder here is the version a
- * user would see first.
- */
-async function renderDashboardChatFrame(): Promise<string> {
-  let publish: ((sessionId: string, event: ChatSessionEvent) => void) | undefined
-  const host = dashboardRollCallHost((listener) => { publish = listener })
-  const server = createServer(createChatRouter(host))
-  await new Promise<void>((done) => server.listen(0, '127.0.0.1', done))
-  const address = server.address()
-  const port = typeof address === 'object' && address !== null ? address.port : 0
-  const sessionId = 'chat-20260821-000000-r0ll'
-  // MINT THE SESSION BEFORE CONNECTING (400-13). The events route now serves only sessions this
-  // process appended an event for, and this host is synthetic — nothing has driven a turn on it. So
-  // the mint is synthetic too: one event of a DIFFERENT kind, before the request, which the replay
-  // then carries ahead of the frame this entry is actually about. A `user_message` rather than a
-  // second `clause_result`, so the predicate below cannot be satisfied by the primer.
-  publish?.(sessionId, {
-    kind: 'user_message',
-    turnId: 'turn-0',
-    at: '2026-08-21T00:00:00.000Z',
-    text: 'mint',
-  })
-  try {
-    return await new Promise<string>((settle, fail) => {
-      const request = httpRequest({
-        host: '127.0.0.1',
-        port,
-        path: `/api/chat/sessions/${sessionId}/events`,
-        method: 'GET',
-      }, (response) => {
-        let seen = ''
-        response.setEncoding('utf8')
-        response.on('data', (chunk: string) => {
-          seen += chunk
-          if (seen.includes('event: clause_result')) {
-            request.destroy()
-            settle(seen)
-          }
-        })
-        response.on('error', () => { settle(seen) })
-        // The subscription is registered synchronously inside the handler, so the first byte of the
-        // stream (`:ok`) is the signal that this connection is one the fan-out can reach.
-        publish?.(sessionId, {
-          kind: 'clause_result',
-          turnId: 'turn-1',
-          at: '2026-08-21T00:00:00.000Z',
-          functionId: 'config.get',
-          payload: FIXTURE.clauseResults[0]!.payload,
-        })
-      })
-      request.on('error', fail)
-      request.end()
-    })
-  } finally {
-    await new Promise<void>((done) => server.close(() => { done() }))
   }
 }
 
@@ -687,10 +596,10 @@ function rollCallFunctionDeps(
 }
 
 /**
- * The roll-call host for the RUN reads: the chat host above, with a real registry behind it.
+ * The roll-call host for the RUN reads: the base host above, with a real registry behind it.
  *
- * `dashboardRollCallHost` answers every dispatch with a planted chat turn, which is right for the
- * chat entries and useless for these — `runs.detail` is where the projection is computed, where
+ * `dashboardRollCallHost` answers every dispatch with a planted fixture, which is useless for
+ * these — `runs.detail` is where the projection is computed, where
  * the token sum is folded and where `RunNotFoundError` is minted, so a fixture that answered it
  * would be a second implementation of all three. This one DISPATCHES, through the shipped
  * `invokeFunction`, and keeps the same one-call-per-emit `unmaskForDisplay`.
@@ -936,19 +845,6 @@ const HUMAN_SURFACES: HumanSurface[] = [
     ),
   },
   {
-    // 400-06: the same payload channel, on the fourth door, in the medium a browser reads. The
-    // masked value goes in through `invokeFunction` and the restored one has to come out of the
-    // socket, or the door is answering a person with a placeholder where a value belongs.
-    name: 'dashboard:chat-turn-response',
-    originals: [SECRETS.opResult],
-    render: renderDashboardChatEmit,
-  },
-  {
-    name: 'dashboard:chat-sse-frame',
-    originals: [SECRETS.opResult],
-    render: renderDashboardChatFrame,
-  },
-  {
     // 405-10 (D-09): THE REBUILT PAGE'S ONE DURABLE READ. Members carry the failure summary, steps
     // carry the step text and the step error — three different channels of one projection, so a
     // seam applied to only part of the tree reds here rather than in review.
@@ -1147,25 +1043,6 @@ const MASKED_SURFACES: MaskedSurface[] = [
     render: () => renderClauseResults(FIXTURE.clauseResults, FIXTURE.clauseResults.length).join('\n'),
   },
   {
-    // 400-06: THE DOOR'S IN-MEMORY REPLAY WINDOW, which is the pairing the human entry above needs.
-    // The turn response restores, so the tempting shortcut is to unmask on the way IN — at the
-    // point events are recorded — which would satisfy every rendering assertion while turning the
-    // server's reconnect buffer into a cleartext store that outlives the request. `recordStreamedEvent`
-    // is the shipped recorder and what it holds is what a reconnect replays.
-    name: 'machine:dashboard-chat-replay-window',
-    render: () => {
-      const windows = new Map<string, SessionStreamWindow>()
-      recordStreamedEvent(windows, 'chat-20260821-000000-r0ll', {
-        kind: 'clause_result',
-        turnId: 'turn-1',
-        at: '2026-08-21T00:00:00.000Z',
-        functionId: 'config.get',
-        payload: FIXTURE.clauseResults[0]!.payload,
-      })
-      return JSON.stringify([...windows.values()])
-    },
-  },
-  {
     // 405-10 (D-09): THE ROWS THE PAGE READS FROM. This is the pairing every human dashboard entry
     // above needs: those five restore, so the tempting shortcut is to unmask on the way IN — at
     // ingest — which would satisfy every response assertion in this file while turning the
@@ -1291,9 +1168,9 @@ const SURFACE_ROLLCALL = [
   'machine:provider-egress',
   'chat:clause-results',
   'machine:chat-clause-results',
-  'dashboard:chat-turn-response',
-  'dashboard:chat-sse-frame',
-  'machine:dashboard-chat-replay-window',
+  // 430 D-02 (2026-09-28): the dashboard's conversation emits and its replay window were deleted
+  // with the server door, so their three sinks leave the roll-call. A returning sink reds the
+  // enrollment cell below.
   // 405-10 (D-09): the dashboard's five human RUN reads and the four surfaces that must stay masked.
   'dashboard:run-detail',
   'dashboard:run-list',
