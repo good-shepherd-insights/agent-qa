@@ -64,6 +64,35 @@ function validateAgentFileNames(rootDir, errors) {
   })
 }
 
+function forbiddenBrandingErrors(label, body) {
+  return forbiddenBranding
+    .filter(forbidden => body.includes(forbidden))
+    .map(forbidden => `${label} contains forbidden branding: ${forbidden}`)
+}
+
+// 431 D-17: instructions init generates are not files in this repository, so they are linted as
+// the exact bytes their source template produces.
+export function validateGeneratedInstructions(documents) {
+  return documents.flatMap(document => forbiddenBrandingErrors(document.label, document.body))
+}
+
+export async function loadGeneratedInstructions(rootDir = root) {
+  const commands = join(rootDir, 'packages/cli/src/commands')
+  const guide = await import(pathToFileURL(join(commands, 'knowledge-guide.ts')).href)
+  const block = await import(pathToFileURL(join(commands, 'managed-block.ts')).href)
+  return [
+    { label: 'generated agent-qa-knowledge/AGENTS.md', body: guide.buildKnowledgeAgentGuide() },
+    {
+      label: 'generated root AGENTS.md pointer',
+      body: block.renderManagedBlock({
+        descriptor: block.AGENT_QA_INIT_MARKDOWN_BLOCK,
+        body: guide.buildAgentInstructionPointer(),
+        target: 'AGENTS.md',
+      }),
+    },
+  ]
+}
+
 function validateBrandingInAgentFiles(rootDir, errors) {
   const agentFiles = []
   walkFiles(rootDir, (file, name) => {
@@ -73,11 +102,7 @@ function validateBrandingInAgentFiles(rootDir, errors) {
   for (const file of agentFiles.sort()) {
     const body = readFileSync(file, 'utf8')
     const scanned = stripAllowedForbiddenBlock(rootDir, file, body, errors)
-    for (const forbidden of forbiddenBranding) {
-      if (scanned.includes(forbidden)) {
-        errors.push(`${relative(rootDir, file)} contains forbidden branding: ${forbidden}`)
-      }
-    }
+    errors.push(...forbiddenBrandingErrors(relative(rootDir, file), scanned))
   }
 }
 
@@ -119,12 +144,15 @@ export function validateAgentInstructions(rootDir = root, options = {}) {
 
   validateAgentFileNames(rootDir, errors)
   validateBrandingInAgentFiles(rootDir, errors)
+  errors.push(...validateGeneratedInstructions(options.generatedInstructions ?? []))
 
   return errors
 }
 
-function main() {
-  const errors = validateAgentInstructions(root)
+async function main() {
+  const errors = validateAgentInstructions(root, {
+    generatedInstructions: await loadGeneratedInstructions(root),
+  })
   if (errors.length === 0) {
     console.log('agent-qa AGENTS.md validation passed')
     return
@@ -136,5 +164,5 @@ function main() {
 }
 
 if (import.meta.url === pathToFileURL(process.argv[1]).href) {
-  main()
+  await main()
 }

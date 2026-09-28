@@ -35,6 +35,7 @@ import type {
   AgentManifestTokenRef,
 } from '@vostride/agent-qa-schema'
 
+import { WRITE_AGENT_INSTRUCTIONS_FLAG } from '../commands/knowledge-guide.js'
 import { resolveConfig } from '../config.js'
 import { CLI_FUNCTION_CALLER } from '../composition/local-agent-host.js'
 import { DEFAULT_MCP_SCOPES } from '../composition/mcp-token-resolution.js'
@@ -80,6 +81,10 @@ export const DEDICATED_READ_VERBS: readonly DedicatedReadVerb[] = Object.freeze(
   { verb: 'knowledge show', flags: ['--json'], opIds: ['knowledge.record.show'] },
   { verb: 'knowledge brief-why', flags: ['--step', '--test', '--record', '--json'], opIds: ['knowledge.brief.why'] },
 ].map((entry) => Object.freeze({ ...entry, flags: Object.freeze(entry.flags), opIds: Object.freeze(entry.opIds) })))
+
+/** `init`'s opt-in that writes the root pointer block into AGENTS.md (431 D-18/D-20). */
+export const INIT_AGENT_INSTRUCTIONS_VERB: { readonly verb: 'init', readonly flags: readonly string[] } =
+  Object.freeze({ verb: 'init', flags: Object.freeze([WRITE_AGENT_INSTRUCTIONS_FLAG]) })
 
 /** What `buildAgentManifest` needs from the outside: a config path, or nothing. */
 export interface AgentManifestInput {

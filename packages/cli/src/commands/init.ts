@@ -51,6 +51,8 @@ import {
   type InitFilesystemHooks,
   type InitPathPlan,
 } from './init-filesystem.js'
+import { buildAgentInstructionPointer, buildKnowledgeAgentGuide } from './knowledge-guide.js'
+import { AGENT_QA_INIT_MARKDOWN_BLOCK, renderManagedBlock } from './managed-block.js'
 
 // The platform vocabulary and the scaffold's content producers live in `scaffold-content.ts` now
 // (D-04). Re-exported here because this module is their public door.
@@ -682,6 +684,25 @@ function initNextSteps(platform: InitPlatformInput): Array<{ command: string; de
   return steps
 }
 
+const ROOT_AGENT_INSTRUCTIONS_FILE = 'AGENTS.md'
+
+function agentInstructionPointerBlock(): string {
+  return renderManagedBlock({
+    descriptor: AGENT_QA_INIT_MARKDOWN_BLOCK,
+    body: buildAgentInstructionPointer(),
+    target: ROOT_AGENT_INSTRUCTIONS_FILE,
+  })
+}
+
+// 431 D-18: printed flush left, because an indented marker line is not a marker and the managed
+// writer would refuse the pasted file as ambiguous.
+function printAgentInstructionPointer(): void {
+  console.log('')
+  console.log(`  Coding agents: add this block to ${ROOT_AGENT_INSTRUCTIONS_FILE} at the project root:`)
+  console.log('')
+  console.log(agentInstructionPointerBlock())
+}
+
 export interface InitCommandHooks {
   afterWrite?: (result: InitFileResult, boundary: number) => void
   onComplete?: (outcomes: readonly InitFileResult[]) => void
@@ -741,6 +762,13 @@ function buildScaffoldFilePlans(
       buildKnowledgeGitignore(),
       force,
       true,
+    ),
+    // 431 D-17: agent-qa's generated file, so --force regenerates it (not preserveOnForce).
+    scaffoldFilePlan(
+      dir,
+      join(KNOWLEDGE_ROOT_DIR, 'AGENTS.md'),
+      buildKnowledgeAgentGuide(),
+      force,
     ),
     scaffoldFilePlan(
       dir,
@@ -1189,6 +1217,7 @@ export function createInitCommand(hooks: InitCommandHooks = {}): Command {
       console.log('')
       printOutcomeSummary(dir, outcomes)
       printNextSteps(platform, config, provider)
+      printAgentInstructionPointer()
       console.log('')
     })
 

@@ -3,7 +3,10 @@ import { mkdtempSync, mkdirSync, rmSync, unlinkSync, writeFileSync } from 'node:
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
-import { validateAgentInstructions } from '../validate-agent-instructions.mjs'
+import {
+  loadGeneratedInstructions,
+  validateAgentInstructions,
+} from '../validate-agent-instructions.mjs'
 
 function writeFixture(rootDir, packageName = '@vostride/agent-qa-core') {
   writeFileSync(
@@ -104,5 +107,29 @@ test('forbidden branding outside root marker block is reported', () => {
     const errors = validateOnePackage(rootDir)
 
     assert.ok(errors.some(error => error.includes('forbidden branding')))
+  })
+})
+
+test('generated instructions are linted as the bytes init writes', async () => {
+  const generated = await loadGeneratedInstructions()
+  assert.deepEqual(generated.map(document => document.label), [
+    'generated agent-qa-knowledge/AGENTS.md',
+    'generated root AGENTS.md pointer',
+  ])
+  assert.ok(generated.every(document => document.body.includes('agent-qa')))
+
+  withFixture(rootDir => {
+    assert.deepEqual(
+      validateAgentInstructions(rootDir, { expectedPackageCount: 1, generatedInstructions: generated }),
+      [],
+    )
+    const errors = validateAgentInstructions(rootDir, {
+      expectedPackageCount: 1,
+      generatedInstructions: [{ label: 'generated guide', body: 'Ask agentqa_ first.' }],
+    })
+    assert.deepEqual(errors, [
+      'generated guide contains forbidden branding: agentqa',
+      'generated guide contains forbidden branding: agentqa_',
+    ])
   })
 })

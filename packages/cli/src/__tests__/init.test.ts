@@ -1412,11 +1412,12 @@ describe('init command', () => {
         .sort()
     }
 
-    it('fresh init creates exactly README.md, .gitignore, and policies/global.md under the root', async () => {
+    it('fresh init creates exactly AGENTS.md, README.md, .gitignore, and policies/global.md under the root', async () => {
       await runInit(['--dir', '/tmp/test-project', '--platform', 'web', '--skip-install'])
 
       expect(knowledgeWritePaths()).toEqual([
         `${KNOWLEDGE_ROOT}/.gitignore`,
+        `${KNOWLEDGE_ROOT}/AGENTS.md`,
         `${KNOWLEDGE_ROOT}/README.md`,
         `${KNOWLEDGE_ROOT}/policies/global.md`,
       ])
@@ -1429,6 +1430,7 @@ describe('init command', () => {
       expect(output).toContain('agent-qa-knowledge/README.md')
       expect(output).toContain('agent-qa-knowledge/.gitignore')
       expect(output).toContain('agent-qa-knowledge/policies/global.md')
+      expect(output).toContain('agent-qa-knowledge/AGENTS.md')
     })
 
     it('scaffolded knowledge .gitignore carries the six spec lines plus the init-tool rule', async () => {
@@ -1538,6 +1540,8 @@ describe('init command', () => {
       expect(findWriteCallEndingWith('agent-qa-knowledge/README.md')).toBeUndefined()
       expect(findWriteCallEndingWith('policies/global.md')).toBeUndefined()
       expect(findWriteCallEndingWith('agent-qa-knowledge/.gitignore')).toBeUndefined()
+      // 431 D-17: the guide is agent-qa's generated file, so --force regenerates it.
+      expect(findWriteCallEndingWith('agent-qa-knowledge/AGENTS.md')).toBeDefined()
     })
 
     it('warns naming the exact missing functional line of an existing knowledge .gitignore without rewriting it', async () => {
@@ -1600,6 +1604,7 @@ skills/.staging/
       '/tmp/test-project/.env.secrets.local',
       '/tmp/test-project/.gitignore',
       '/tmp/test-project/agent-qa-knowledge/.gitignore',
+      '/tmp/test-project/agent-qa-knowledge/AGENTS.md',
       '/tmp/test-project/agent-qa-knowledge/README.md',
       '/tmp/test-project/agent-qa-knowledge/policies/global.md',
       '/tmp/test-project/agent-qa.config.yaml',

@@ -15,7 +15,7 @@ import { stripVTControlCharacters } from 'node:util'
 
 import { AGENT_QA_TOOL_PROJECTIONS } from '@vostride/agent-qa-mcp'
 import { Command } from 'commander'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest'
 
 import { INIT_AGENT_INSTRUCTIONS_VERB } from '../capability-catalog/manifest.js'
 import { createInitCommand, type InitCommandHooks } from '../commands/init.js'
@@ -35,7 +35,7 @@ import { createSkillsCommand } from '../commands/skills.js'
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../../../..')
 const GUIDE = join('agent-qa-knowledge', 'AGENTS.md')
 const roots: string[] = []
-let log: ReturnType<typeof vi.spyOn>
+let log: MockInstance<typeof console.log>
 
 function tempProject(): string {
   const root = mkdtempSync(join(tmpdir(), 'agent-qa-431-guide-'))
@@ -70,6 +70,7 @@ function liveCommandPath(cli: string): string {
     .addCommand(createKnowledgeCommand())
     .addCommand(createProposalsCommand())
     .addCommand(createSkillsCommand())
+    .addCommand(createInitCommand())
   const words = cli.split(' ').slice(1)
   const path: string[] = []
   let parent: Command | undefined = program
