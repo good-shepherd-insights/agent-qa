@@ -332,7 +332,7 @@ describe('isUpdateBannerDismissed', () => {
 })
 
 describe('app shell update banner route gate', () => {
-  it('mounts the product tour provider around shell content and passes route state', async () => {
+  it('SHELL-CHILDREN-EXACT: mounts the product tour provider around shell content and passes route state', async () => {
     apiMock.fetchAppMetadata.mockResolvedValue(updateMetadata)
 
     await renderAppAt('/runs')
@@ -341,6 +341,8 @@ describe('app shell update banner route gate', () => {
     expect(provider).not.toBeNull()
     expect(provider?.getAttribute('data-pathname')).toBe('/runs')
     expect(provider?.getAttribute('data-hide-header')).toBe('false')
+    // 430 (2026-09-28, D-04): the shell holds no conversation mount. Exact equality, so a mount
+    // that returns reds wherever it is inserted.
     expect(
       Array.from(provider?.children ?? []).map((element) =>
         element.getAttribute('data-testid'),
@@ -350,10 +352,6 @@ describe('app shell update banner route gate', () => {
       'sidebar-inset',
       'product-tour-overlay',
       'command-palette',
-      // 400-09: the chat panel's launcher, a direct child of the shell on every route but `/chat`.
-      // The panel itself is a portal and has never appeared in this list; the button that OPENS it
-      // does, and 400-06 shipped the panel with no opener at all.
-      'chat-panel-launcher',
     ])
 
     cleanupRoot()
@@ -365,6 +363,15 @@ describe('app shell update banner route gate', () => {
     const editorProvider = container?.querySelector('[data-testid="product-tour-provider"]')
     expect(editorProvider?.getAttribute('data-pathname')).toBe('/tests/new')
     expect(editorProvider?.getAttribute('data-hide-header')).toBe('true')
+  })
+
+  it('NO-CHAT-ROUTE: /chat is not a route and falls through the catch-all to Runs', async () => {
+    apiMock.fetchAppMetadata.mockResolvedValue(updateMetadata)
+
+    await renderAppAt('/chat')
+
+    expect(container?.querySelector('[data-testid="runs-page"]')).not.toBeNull()
+    expect(window.location.pathname).toBe('/runs')
   })
 
   it.each(eligibleRoutes)('renders the update banner on %s', async (path, pageTestId) => {
