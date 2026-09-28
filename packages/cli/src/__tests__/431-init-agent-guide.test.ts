@@ -19,6 +19,7 @@ import { dirname, join, relative, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { stripVTControlCharacters } from 'node:util'
 
+import { openKnowledgeReader, rebuildIndex } from '@vostride/agent-qa-knowledge-local'
 import { AGENT_QA_TOOL_PROJECTIONS } from '@vostride/agent-qa-mcp'
 import { Command } from 'commander'
 import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest'
@@ -459,5 +460,26 @@ describe('INIT-MARKER-LAST: the root block publishes after the scaffold and befo
     await expect(run).rejects.toThrow(/Refusing malformed AGENTS\.md/)
     expect(readFileSync(join(dir, 'AGENTS.md'), 'utf8')).toBe(malformed)
     expect(existsSync(join(dir, 'agent-qa.config.yaml'))).toBe(false)
+  })
+})
+
+describe('INIT-GUIDE-EXCLUDED: the guide a fresh init writes never becomes knowledge or policy', () => {
+  it('indexes and serves nothing from a freshly initialized knowledge root, until the bytes sit on a policy rung', async () => {
+    const dir = tempProject()
+    await runInit(dir)
+    const knowledgeRoot = join(dir, 'agent-qa-knowledge')
+    const heading = buildKnowledgeAgentGuide().split('\n')[0]!
+    const served = (): string => JSON.stringify(
+      openKnowledgeReader({ knowledgeRoot, product: 'example-web' })
+        .getRunBrief({ tier: 'product', key: 'example-web' }, 4_000),
+    )
+
+    const report = await rebuildIndex({ knowledgeRoot })
+    expect(report.projected).toBe(0)
+    expect(report.scanIssues).toEqual([])
+    expect(served()).not.toContain(heading)
+
+    writeFileSync(join(knowledgeRoot, 'policies', 'global.md'), readFileSync(join(dir, GUIDE)))
+    expect(served()).toContain(heading)
   })
 })
