@@ -1,7 +1,8 @@
 // @vitest-environment jsdom
 
-// A denial shows the gate's neutral reason and only the remedies this surface can take. The
-// canonical reason names another surface's flag and is never composed into the DOM.
+// A denial on the dashboard shows the gate's neutral reason and nothing else (D-06). Whatever
+// remedy list the denial carries, the box is the same, and the canonical reason, which names
+// another surface's flag, is never composed into the DOM.
 //
 // Mounted into document.body through createRoot, the call main.tsx makes, so a broken mount path
 // cannot pass here.
@@ -9,6 +10,8 @@
 import { act, type ReactElement } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, describe, expect, it } from 'vitest'
+
+import type { GateRemedy } from '@vostride/agent-qa-schema'
 
 import { DenialBlock } from '@/components/run-detail/denial-block'
 
@@ -37,10 +40,19 @@ function mount(element: ReactElement): HTMLElement {
   return container
 }
 
-function remedyKinds(dom: ParentNode): (string | null)[] {
-  return [...dom.querySelectorAll('[data-remedy-kind]')].map((node) =>
-    node.getAttribute('data-remedy-kind'),
-  )
+function unmount(): void {
+  act(() => {
+    root?.unmount()
+  })
+  container?.remove()
+  root = undefined
+  container = undefined
+}
+
+// The denial as the wire carries it. Spread into the block, so a render that read the remedies
+// would see them.
+function wireDenial(neutralReason: string, remedies: readonly GateRemedy[]) {
+  return { neutralReason, remedies }
 }
 
 const TRUST_SESSION_FLAG = {
@@ -48,26 +60,41 @@ const TRUST_SESSION_FLAG = {
   params: { flag: '--trust-session', command: 'run' },
 } as const
 
-describe('DenialBlock renders the remedies this surface can take (D-15)', () => {
-  it("DENIAL-DASHBOARD-PROJECTION: renders the dashboard projection and never another surface's flag instructions", () => {
-    const dom = mount(
-      <DenialBlock
-        neutralReason="fail-closed (ci): tier: this action needs an approval this context has not established"
-        remedies={[{ kind: 'answer-confirm' }, TRUST_SESSION_FLAG]}
-      />,
-    )
-    // trust-session-flag lists only `cli` in the shipped surface table; a browser has no such flag.
-    expect(remedyKinds(dom)).toEqual(['answer-confirm'])
-    const remedyText = [...dom.querySelectorAll('[data-remedy-kind]')]
-      .map((node) => node.textContent ?? '')
-      .join('\n')
-    expect(remedyText).not.toContain('--trust-session')
-    expect(remedyText).toContain('confirm')
-    expect(dom.textContent).toContain(
-      'fail-closed (ci): tier: this action needs an approval this context has not established',
-    )
-    expect(dom.textContent).not.toContain('fail-closed: ask in ci without trust')
-    expect(dom.textContent).not.toContain('--trust-session')
+const WIRE_REMEDY_LISTS: readonly (readonly GateRemedy[])[] = [
+  [],
+  [TRUST_SESSION_FLAG],
+  [{ kind: 'present-bearer-scope' }],
+  [{ kind: 'answer-confirm' }],
+  [{ kind: 'answer-confirm' }, { kind: 'session-pin-final' }, TRUST_SESSION_FLAG],
+]
+
+const REMOVED_REMEDY_SENTENCES = [
+  'keep this chat open ' + 'and re-run it',
+  'start a new chat ' + 'session to run it',
+]
+
+describe('DenialBlock renders its reason only (D-06)', () => {
+  it('DENIAL-REASON-ONLY: renders the neutral reason alone, the same box whatever remedies the denial carries', () => {
+    const reason =
+      'fail-closed (ci): tier: this action needs an approval this context has not established'
+    const bare = mount(<DenialBlock {...wireDenial(reason, [])} />)
+    const denials = bare.querySelectorAll('[data-entry="denial"]')
+    expect(denials).toHaveLength(1)
+    expect(denials[0]?.textContent).toBe(reason)
+    const expectedMarkup = bare.innerHTML
+    unmount()
+
+    for (const remedies of WIRE_REMEDY_LISTS) {
+      const dom = mount(<DenialBlock {...wireDenial(reason, remedies)} />)
+      const kinds = remedies.map((remedy) => remedy.kind).join(',') || 'none'
+      expect(dom.querySelectorAll('[data-remedy-kind]'), kinds).toHaveLength(0)
+      expect(dom.querySelector('[data-entry="denial"]')?.textContent, kinds).toBe(reason)
+      for (const sentence of REMOVED_REMEDY_SENTENCES)
+        expect(dom.textContent, kinds).not.toContain(sentence)
+      expect(dom.textContent, kinds).not.toContain('--trust-session')
+      expect(dom.innerHTML, kinds).toBe(expectedMarkup)
+      unmount()
+    }
   })
 
   it('DENIAL-CANONICAL-PROSE-NEVER-IN-DOM: never lets the canonical prose reach the DOM, whatever it carries', () => {
@@ -82,25 +109,22 @@ describe('DenialBlock renders the remedies this surface can take (D-15)', () => 
 
     const dom = mount(
       <DenialBlock
-        neutralReason={neutralReason}
-        remedies={[{ kind: 'answer-confirm' }, TRUST_SESSION_FLAG]}
+        {...wireDenial(neutralReason, [{ kind: 'answer-confirm' }, TRUST_SESSION_FLAG])}
       />,
     )
     const denial = dom.querySelector<HTMLElement>('[data-entry="denial"]')
     expect(denial).not.toBeNull()
     expect(denial?.textContent).toContain(neutralReason)
-    expect(remedyKinds(denial as HTMLElement)).toEqual(['answer-confirm'])
     expect(denial?.textContent).not.toContain(canonicalTail)
     expect(denial?.textContent).not.toContain('--trust-session')
     expect(denial?.textContent).not.toContain('re-run and approve')
   })
 
-  it('DENIAL-EMPTY-PROJECTION-INVENTS-NOTHING: renders nothing where the dashboard projection is empty', () => {
-    const dom = mount(
-      <DenialBlock neutralReason="blocked: restricted tier" remedies={[TRUST_SESSION_FLAG]} />,
-    )
+  it('DENIAL-NOTHING-INVENTED: an empty reason renders the empty box, with no remedy and no fallback copy', () => {
+    const dom = mount(<DenialBlock {...wireDenial('', [TRUST_SESSION_FLAG])} />)
+    const denials = dom.querySelectorAll('[data-entry="denial"]')
+    expect(denials).toHaveLength(1)
     expect(dom.querySelectorAll('[data-remedy-kind]')).toHaveLength(0)
-    const denial = dom.querySelector<HTMLElement>('[data-entry="denial"]')
-    expect(denial?.textContent).toBe('blocked: restricted tier')
+    expect(denials[0]?.textContent).toBe('')
   })
 })

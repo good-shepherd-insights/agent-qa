@@ -753,7 +753,7 @@ describe('419 page mark post/refetch', () => {
     expect(statusText()).toBe(DRAFT_KEPT_STATUS)
     expect(container!.textContent).not.toContain(feedbackRecordedText(marked.disposition))
   })
-  it('renders typed denial and remedy without a refetch or invented mark', async () => {
+  it('renders a typed denial as its reason only, without a refetch or invented mark', async () => {
     markRunMock.mockRejectedValue(new MarkDeniedError({ reason: 'The safety gate denied this mark.', remedies: [{ kind: 'answer-confirm' }] }))
     await renderAt(`/runs/${RUN_ID}`)
     await openComposer(TEST_TARGET)
@@ -761,7 +761,7 @@ describe('419 page mark post/refetch', () => {
     await send(TEST_TARGET, 'false-fail')
     const denied = inComposer('[data-feedback-denied]')
     expect(denied?.textContent).toContain('The safety gate denied this mark.')
-    expect(denied?.querySelector('[data-remedy-kind="answer-confirm"]')?.textContent).toBeTruthy()
+    expect(denied?.querySelector('[data-remedy-kind]')).toBeNull()
     expect(fetchRunDetailMock).toHaveBeenCalledTimes(reads)
     expect(headerEntry()?.getAttribute('data-feedback-marked')).toBe('false')
   })
