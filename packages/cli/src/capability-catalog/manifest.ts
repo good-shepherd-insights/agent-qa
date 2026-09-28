@@ -56,6 +56,31 @@ export const AGENT_MANIFEST_NOTE: readonly string[] = Object.freeze([
   'your grant. `posture.tokenEnvRefs` names environment VARIABLES, never their contents.',
 ])
 
+/** One dedicated CLI read verb: its Commander path, its long flags and the ops it invokes. */
+export interface DedicatedReadVerb {
+  readonly verb: string
+  readonly flags: readonly string[]
+  readonly opIds: readonly string[]
+}
+
+/**
+ * The dedicated read verbs (431 D-11), each a thin client over the ops the manifest's rows
+ * describe. They stay off the four-door surface roster (430 D-03): `fn` is the roster's CLI
+ * door, and these verbs own no capability of their own.
+ */
+export const DEDICATED_READ_VERBS: readonly DedicatedReadVerb[] = Object.freeze([
+  { verb: 'runs list', flags: ['--verdict', '--test', '--target', '--since', '--limit', '--json'], opIds: ['runs.list'] },
+  { verb: 'runs overview', flags: ['--json'], opIds: ['runs.overview'] },
+  { verb: 'runs knowledge', flags: ['--json'], opIds: ['runs.knowledge'] },
+  {
+    verb: 'runs evidence',
+    flags: ['--test', '--step', '--sub-action', '--kind', '--screenshot', '--out', '--range-start', '--range-end', '--json'],
+    opIds: ['runs.evidence', 'runs.artifact'],
+  },
+  { verb: 'knowledge show', flags: ['--json'], opIds: ['knowledge.record.show'] },
+  { verb: 'knowledge brief-why', flags: ['--step', '--test', '--record', '--json'], opIds: ['knowledge.brief.why'] },
+].map((entry) => Object.freeze({ ...entry, flags: Object.freeze(entry.flags), opIds: Object.freeze(entry.opIds) })))
+
 /** What `buildAgentManifest` needs from the outside: a config path, or nothing. */
 export interface AgentManifestInput {
   /** Where this workspace's configuration lives. Defaults to the conventional file under `cwd`. */

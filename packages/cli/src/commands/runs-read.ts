@@ -10,21 +10,27 @@ import { dirname, resolve } from 'node:path'
 
 import {
   invokeFunction,
+  RUNS_ARTIFACT_FUNCTION_ID,
+  RUNS_EVIDENCE_FUNCTION_ID,
   RUNS_KNOWLEDGE_FUNCTION_ID,
   RUNS_LIST_FUNCTION_ID,
   RUNS_OVERVIEW_FUNCTION_ID,
 } from '@vostride/agent-qa-agent'
-import { RUNS_LIST_MAX_LIMIT, RunsListInputSchema } from '@vostride/agent-qa-schema'
+import { EVIDENCE_KINDS, RUNS_LIST_MAX_LIMIT, RunsListInputSchema } from '@vostride/agent-qa-schema'
 import type {
+  EvidenceKind,
   RunKnowledgeProjection,
   RunOverviewProjection,
   RunOverviewStep,
   RunSummary,
+  RunsArtifactResult,
+  RunsEvidenceResult,
   RunsListInput,
 } from '@vostride/agent-qa-schema'
 import { Command, InvalidArgumentError, Option } from 'commander'
 
 import { CLI_FUNCTION_CALLER, composeCliLocalAgent } from '../composition/local-agent-host.js'
+import { artifactBytes, exportArtifactBytes, preflightExportDestination } from './artifact-export.js'
 
 type Host = ReturnType<typeof composeCliLocalAgent>
 
@@ -73,6 +79,19 @@ function parseLimit(value: string): number {
     throw new InvalidArgumentError(`limit must be an integer from 1 to ${String(RUNS_LIST_MAX_LIMIT)}`)
   }
   return limit
+}
+
+function parseIndex(value: string): number {
+  const index = /^\d+$/.test(value) ? Number(value) : Number.NaN
+  if (!Number.isSafeInteger(index)) throw new InvalidArgumentError('must be a non-negative integer')
+  return index
+}
+
+class RunReadUsageError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = 'RunReadUsageError'
+  }
 }
 
 function parseFilterText(value: string): string {
@@ -293,6 +312,91 @@ export function renderRunKnowledge(projection: RunKnowledgeProjection): string {
   return lines.join('\n')
 }
 
+// ---- runs evidence --------------------------------------------------------------------------------
+
+export function renderEvidenceDocument(result: RunsEvidenceResult): string {
+  const { address } = result
+  const where = `${address.kind} evidence · run ${String(address.runId)} · test ${String(address.testIndex)}`
+    + ` · step ${String(address.stepIndex)}`
+    + `${address.subActionIndex === undefined ? '' : ` · sub-action ${String(address.subActionIndex)}`}`
+  if (result.outcome === 'read-error') return `${where} · read error (${result.code})`
+  if (result.outcome === 'absent') {
+    return `${where} · absent (${result.evidence.reason})${result.evidence.evidenceIncomplete === true ? ' · evidence incomplete' : ''}`
+  }
+  const entry = result.evidence
+  const summary = entry.kind === 'console' && entry.state === 'present'
+    ? `${plural(entry.counts.total, 'record')} · ${plural(entry.counts.errors, 'error')} · ${plural(entry.counts.warnings, 'warning')}`
+    : entry.kind === 'network' && entry.state === 'present'
+      ? `${plural(entry.counts.total, 'request')} · ${String(entry.counts.failed)} failed · ${String(entry.counts.errored)} errored`
+      : entry.kind === 'a11y' && entry.state === 'present'
+        ? `${String(entry.counts.critical)} critical · ${String(entry.counts.serious)} serious`
+          + ` · ${String(entry.counts.moderate)} moderate · ${String(entry.counts.minor)} minor`
+        : entry.kind === 'variables' && entry.state === 'present'
+          ? plural(entry.counts.count, 'variable')
+          : 'tree recorded'
+  return `${where} · ready · ${summary}\nThe document itself is printed by --json.`
+}
+
+interface EvidenceOptions {
+  test?: number
+  step?: number
+  subAction?: number
+  kind?: EvidenceKind
+  screenshot?: string
+  out?: string
+  rangeStart?: number
+  rangeEnd?: number
+  json?: boolean
+}
+
+type EvidenceRequest =
+  | { mode: 'document'; input: { testIndex: number; stepIndex: number; subActionIndex?: number; kind: EvidenceKind } }
+  | { mode: 'artifact'; sha: string; out: string; range?: { start: number; end: number } }
+
+function evidenceRequest(options: EvidenceOptions): EvidenceRequest {
+  const document = options.test !== undefined || options.step !== undefined || options.subAction !== undefined
+    || options.kind !== undefined
+  const artifact = options.screenshot !== undefined || options.out !== undefined
+    || options.rangeStart !== undefined || options.rangeEnd !== undefined
+  if (document && artifact) {
+    throw new RunReadUsageError('choose a document (--test, --step, --kind) or an artifact export '
+      + '(--screenshot, --out, --range-start, --range-end), not both')
+  }
+  if (!document && !artifact) {
+    throw new RunReadUsageError('name a document with --test <n> --step <n> --kind <kind>, '
+      + 'or export an artifact with --screenshot <sha> --out <file>')
+  }
+  if (document) {
+    for (const [flag, value] of [['--test <n>', options.test], ['--step <n>', options.step], ['--kind <kind>', options.kind]] as const) {
+      if (value === undefined) throw new RunReadUsageError(`a document read needs ${flag}`)
+    }
+    if (options.subAction !== undefined && options.kind !== 'aria') {
+      throw new RunReadUsageError('--sub-action addresses ARIA evidence only; use it with --kind aria')
+    }
+    return { mode: 'document', input: {
+      testIndex: options.test!, stepIndex: options.step!, kind: options.kind!,
+      ...(options.subAction === undefined ? {} : { subActionIndex: options.subAction }),
+    } }
+  }
+  if (options.screenshot === undefined) throw new RunReadUsageError('--out needs --screenshot <sha> from agent-qa runs overview')
+  if (!/^[0-9a-f]{64}$/.test(options.screenshot)) {
+    throw new RunReadUsageError('--screenshot must be a 64-character lowercase hex sha from agent-qa runs overview')
+  }
+  if (options.out === undefined) {
+    throw new RunReadUsageError('--screenshot needs --out <file>: the bytes are written to a new file you name')
+  }
+  if ((options.rangeStart === undefined) !== (options.rangeEnd === undefined)) {
+    throw new RunReadUsageError('--range-start and --range-end are given together (an inclusive byte range)')
+  }
+  if (options.rangeStart !== undefined && options.rangeEnd! < options.rangeStart) {
+    throw new RunReadUsageError('--range-end must not be below --range-start')
+  }
+  return {
+    mode: 'artifact', sha: options.screenshot, out: options.out,
+    ...(options.rangeStart === undefined ? {} : { range: { start: options.rangeStart, end: options.rangeEnd! } }),
+  }
+}
+
 // ---- Registration ---------------------------------------------------------------------------------
 
 export function registerRunReadCommands(command: Command): void {
@@ -338,6 +442,57 @@ export function registerRunReadCommands(command: Command): void {
           console.error(`agent-qa runs knowledge: no completed run recorded for id: ${runId}`
             + ' — run `agent-qa runs list` to see completed run ids')
           process.exitCode = 1
+        }
+      })
+    })
+
+  command.command('evidence <runId>')
+    .description('Read one step\'s evidence document, or export one artifact\'s bytes to a new file')
+    .option('--test <n>', 'zero-based test index, from runs overview', parseIndex)
+    .option('--step <n>', 'zero-based step index, from runs overview', parseIndex)
+    .option('--sub-action <n>', 'zero-based sub-action index, for --kind aria', parseIndex)
+    .addOption(new Option('--kind <kind>', 'the evidence document to read').choices([...EVIDENCE_KINDS]))
+    .option('--screenshot <sha>', 'export the artifact with this sha from runs overview (a screenshot or a recording)')
+    .option('--out <file>', 'the new file to write the artifact to; an existing path is never overwritten')
+    .option('--range-start <n>', 'first byte to export, with --range-end (inclusive)', parseIndex)
+    .option('--range-end <n>', 'last byte to export, with --range-start (inclusive)', parseIndex)
+    .option('--json', 'print the runs.evidence or runs.artifact result unchanged')
+    .action(async (runId: string, options: EvidenceOptions, cmd: Command) => {
+      let request: EvidenceRequest
+      try {
+        request = evidenceRequest(options)
+        if (request.mode === 'artifact') preflightExportDestination(request.out)
+      } catch (error) {
+        reportFailure('evidence', error)
+        return
+      }
+      await withHost('evidence', cmd, async (host) => {
+        if (request.mode === 'document') {
+          const result = await invokeFunction(host.registry, RUNS_EVIDENCE_FUNCTION_ID, { runId, ...request.input },
+            CLI_FUNCTION_CALLER) as RunsEvidenceResult
+          if (options.json === true) emitJson(result)
+          else console.log(renderEvidenceDocument(result))
+          if (result.outcome === 'read-error') {
+            console.error(`agent-qa runs evidence: read error ${result.code}`
+              + (result.code === 'address-not-found' ? ` — run \`agent-qa runs overview ${runId}\` for recorded addresses` : ''))
+            process.exitCode = 1
+          }
+          return
+        }
+        const result = await invokeFunction(host.registry, RUNS_ARTIFACT_FUNCTION_ID, {
+          runId, sha: request.sha, ...(request.range === undefined ? {} : { range: request.range }),
+        }, CLI_FUNCTION_CALLER) as RunsArtifactResult
+        const { bytes, sha256 } = artifactBytes(result, request.sha)
+        const written = exportArtifactBytes({ destination: request.out, bytes, sha256 })
+        const receipt = `wrote ${written.path} · ${result.contentType} · ${String(written.byteLength)} bytes`
+          + (result.range === undefined
+            ? ` · sha256 ${written.sha256}`
+            : ` · bytes ${String(result.range.start)}-${String(result.range.end)} of ${String(result.totalLength)}`)
+        if (options.json === true) {
+          emitJson(result)
+          console.error(receipt)
+        } else {
+          console.log(receipt)
         }
       })
     })

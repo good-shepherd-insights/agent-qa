@@ -26,6 +26,8 @@ import type { CompletedRunHandoff, EvidenceDocument, PerTestOutcome } from '@vos
 import { Command, CommanderError } from 'commander'
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { DEDICATED_READ_VERBS } from '../capability-catalog/manifest.js'
+import { exportArtifactBytes } from '../commands/artifact-export.js'
 import { composeMcpMasking, createMcpHttpRequestListener } from '../commands/mcp.js'
 import { createKnowledgeCommand } from '../commands/knowledge.js'
 import { createRunsCommand } from '../commands/runs.js'
@@ -770,8 +772,7 @@ describe('EXPORT-ATOMIC: exclusive publication that never overwrites', () => {
     expect(readdirSync(join(dir, 'real'))).toEqual([])
   })
 
-  it('loses a publication race without touching the winner, and cleans only its own temporary', async () => {
-    const { exportArtifactBytes } = await import('../commands/artifact-export.js')
+  it('loses a publication race without touching the winner, and cleans only its own temporary', () => {
     const dir = outDir()
     const destination = join(dir, 'race.png')
     const foreign = join(dir, '.race.png.agent-qa-export-1-foreign.tmp')
@@ -792,8 +793,7 @@ describe('EXPORT-ATOMIC: exclusive publication that never overwrites', () => {
     expect(readdirSync(dir).sort()).toEqual(['.race.png.agent-qa-export-1-foreign.tmp', 'race.png'])
   })
 
-  it('leaves no destination and no owned temporary when interrupted before publication', async () => {
-    const { exportArtifactBytes } = await import('../commands/artifact-export.js')
+  it('leaves no destination and no owned temporary when interrupted before publication', () => {
     const dir = outDir()
     const destination = join(dir, 'interrupted.png')
     const foreign = join(dir, '.interrupted.png.agent-qa-export-2-foreign.tmp')
@@ -805,8 +805,7 @@ describe('EXPORT-ATOMIC: exclusive publication that never overwrites', () => {
     expect(readdirSync(dir)).toEqual(['.interrupted.png.agent-qa-export-2-foreign.tmp'])
   })
 
-  it('refuses bytes that do not hash to the address before writing anything', async () => {
-    const { exportArtifactBytes } = await import('../commands/artifact-export.js')
+  it('refuses bytes that do not hash to the address before writing anything', () => {
     const dir = outDir()
     const destination = join(dir, 'tampered.png')
     expect(() => exportArtifactBytes({ destination, bytes: PNG, sha256: 'c'.repeat(64) })).toThrow(/sha256/u)
@@ -815,8 +814,7 @@ describe('EXPORT-ATOMIC: exclusive publication that never overwrites', () => {
 })
 
 describe('DEDICATED-READ-VERBS: the manifest table matches the live verbs and stays off the roster', () => {
-  it('names every new verb, its flags and the ops it invokes', async () => {
-    const { DEDICATED_READ_VERBS } = await import('../capability-catalog/manifest.js')
+  it('names every new verb, its flags and the ops it invokes', () => {
     const program = new Command().addCommand(createRunsCommand()).addCommand(createKnowledgeCommand())
     const live = (path: string) => path.split(' ').reduce<Command | undefined>(
       (parent, name) => parent?.commands.find((command) => command.name() === name), program)
@@ -862,5 +860,40 @@ describe('BUILT-CLI-RUN-READS: the shipped binary answers the run reads', () => 
     const missing = await spawnCollecting(p.root, [CLI_ENTRY, '--config', p.configPath, 'runs', 'overview', generateRunId()])
     expect(missing.code).toBe(1)
     expect(missing.stdout).toBe('')
+    const shown = await spawnCollecting(p.root, [CLI_ENTRY, '--config', p.configPath, 'knowledge', 'show', p.recordId, '--json'])
+    expect(shown.code, shown.stderr).toBe(0)
+    expect(JSON.parse(shown.stdout)).toMatchObject({ kind: 'found', record: { recordId: p.recordId } })
+    const why = await spawnCollecting(p.root, [CLI_ENTRY, '--config', p.configPath, 'knowledge', 'brief-why', p.runId,
+      '--step', '0', '--test', p.secondTestId, '--json'])
+    expect(why.code, why.stderr).toBe(0)
+    expect(JSON.parse(why.stdout)).toMatchObject({ kind: 'answered', trace: { servedLines: [{ leg: 'dense' }] } })
   }, 60_000)
+
+  it('exports a screenshot byte for byte through dist/cli.js', async () => {
+    const p = populatedProject()
+    const out = join(outDir(), 'shot.png')
+    const exported = await spawnCollecting(p.root, [CLI_ENTRY, '--config', p.configPath, 'runs', 'evidence', p.runId,
+      '--screenshot', p.screenshotSha, '--out', out])
+    expect(exported.code, exported.stderr).toBe(0)
+    expect(new Uint8Array(readFileSync(out))).toEqual(PNG)
+    expect(exported.stdout).toContain(`sha256 ${p.screenshotSha}`)
+  }, 60_000)
+
+  it('lets exactly one of several concurrent exports to one destination publish, completely', async () => {
+    const p = populatedProject()
+    for (let round = 0; round < 4; round += 1) {
+      const dir = outDir()
+      const out = join(dir, 'contended.webm')
+      const racers = await Promise.all(Array.from({ length: 3 }, () => spawnCollecting(p.root, [CLI_ENTRY, '--config',
+        p.configPath, 'runs', 'evidence', p.runId, '--screenshot', p.recordingSha, '--out', out])))
+      const winners = racers.filter((racer) => racer.code === 0)
+      expect(winners, JSON.stringify(racers.map((racer) => [racer.code, racer.stderr]))).toHaveLength(1)
+      for (const loser of racers.filter((racer) => racer.code !== 0)) {
+        expect(loser.code).toBe(1)
+        expect(loser.stderr).toContain('not overwritten')
+      }
+      expect(new Uint8Array(readFileSync(out))).toEqual(WEBM)
+      expect(readdirSync(dir)).toEqual(['contended.webm'])
+    }
+  }, 120_000)
 })
