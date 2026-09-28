@@ -10,26 +10,18 @@ export {
   tryParseRequestUrl,
 } from './request-url.js'
 
-// The fourth door (400-01). The router and the injected-host seam are published because the CLI
-// command that starts this server composes the host, and the conformance suite drives the router.
-// 400-14: the route TABLE, the safe-method set and the matcher are published beside them, because
-// gap 6's guards are applied to the method above the table rather than to each arm — and the only
-// way a cell can prove that ranges the COMPLETE set of mutating routes is to enumerate the table
-// dispatch itself reads.
+// The run-confirm router (401-09; narrowed by 430 D-02, removed in Phase 432). The router and the
+// injected-host seam are published because the CLI command that starts this server composes the
+// host, and the door-security suite drives the router. 400-14: the route TABLE, the safe-method set
+// and the matcher are published beside them, because gap 6's guards are applied to the method above
+// the table rather than to each arm — and the only way a cell can prove that ranges the COMPLETE
+// set of mutating routes is to enumerate the table dispatch itself reads.
 export {
-  CHAT_CAPABILITIES_ROUTE,
-  CHAT_CATALOG_ROUTE,
-  CHAT_CONFIRM_ROUTE,
-  CHAT_ROUTE_PREFIX,
   CHAT_ROUTE_TABLE,
   CHAT_SAFE_METHODS,
-  CHAT_SESSION_EVENTS_TEMPLATE,
-  CHAT_STREAM_BOUNDS,
-  CHAT_TURN_ROUTE,
   createChatRouter,
   isMutatingChatRequest,
   matchChatRoute,
-  recordStreamedEvent,
   RUN_CONFIRM_ANSWER_ROUTE,
   RUN_CONFIRM_CHANNEL_ROUTE,
   RUN_CONFIRM_ROUTE_PREFIX,
@@ -60,7 +52,6 @@ export type {
   ChatRouteMatch,
   ChatRouteRow,
   ChatRouter,
-  SessionStreamWindow,
 } from '../chat/chat-routes.js'
 export type {
   AgentDeclarationRow,
