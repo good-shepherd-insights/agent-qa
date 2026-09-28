@@ -276,6 +276,8 @@ function toPosixRel(value: string): string {
   return value.split('\\').join('/')
 }
 
+let sweptCache: readonly SweptFile[] | undefined
+
 /**
  * Every `.ts` file under every `SWEEP_ROOTS` entry, produced by walking, never typed out.
  *
@@ -283,6 +285,7 @@ function toPosixRel(value: string): string {
  * `.d.ts` files that would match `.ts` and double-count every module in the denominator.
  */
 function sweptProseFiles(): readonly SweptFile[] {
+  if (sweptCache !== undefined) return sweptCache
   const out: SweptFile[] = []
   const walk = (dir: string): void => {
     for (const entry of readdirSync(dir, { withFileTypes: true })) {
@@ -302,7 +305,10 @@ function sweptProseFiles(): readonly SweptFile[] {
     }
   }
   for (const root of SWEEP_ROOTS) walk(root)
-  return [...out].sort((a: SweptFile, b: SweptFile) => (a.rel < b.rel ? -1 : a.rel > b.rel ? 1 : 0))
+  sweptCache = Object.freeze(
+    [...out].sort((a: SweptFile, b: SweptFile) => (a.rel < b.rel ? -1 : a.rel > b.rel ? 1 : 0)),
+  )
+  return sweptCache
 }
 
 /** A source line whose content is a comment, in either idiom this repository uses. */
