@@ -60,7 +60,7 @@ const expected = [
     reds: [`${PROJECTION} > registers no search op and projects no search tool`] },
   { id: 'D08', claim: 'OVERVIEW-COLD-SCOPE', subject: COMPOSE_SRC,
     reds: [
-      `${COLD_SCOPE} > pins the cold read-scope allowlist to exactly six stored-text reads`,
+      `${COLD_SCOPE} > pins the cold read-scope allowlist to exactly seven stored-text reads`,
       `${COLD_SCOPE} > masks declared secrets in the cold overview and keeps the rest readable`,
       `${COLD_SCOPE} > opens the scope for the overview and not for an unrelated read`,
     ] },

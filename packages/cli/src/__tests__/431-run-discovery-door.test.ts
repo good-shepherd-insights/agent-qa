@@ -4,6 +4,7 @@
 // written by the runner's own handoff store under ids minted by the canonical generator. Run
 // `pnpm build` at the repository root first; the freshness guard refuses a stale build by name.
 
+import { writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 
 import { generateRunId } from '@vostride/agent-qa-ids'
@@ -36,8 +37,11 @@ interface Project {
   agentQaRoot: string
 }
 
+// An empty secrets file, as `init` writes one: without it the cold read scope has no masking
+// source and every listed title is the display marker.
 function project(label: string): Project {
   const { root, configPath } = fixtureProject(`431-01-${label}`)
+  writeFileSync(join(root, '.env.secrets.local'), '')
   return { root, configPath, agentQaRoot: join(root, '.agent-qa') }
 }
 

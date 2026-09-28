@@ -21,7 +21,7 @@ import { AGENT_QA_TOOL_PROJECTIONS } from '@vostride/agent-qa-mcp'
 import { DashboardDatabase, createDashboardRunDetailReader } from '@vostride/agent-qa-dashboard'
 import { generateRunId, generateTestId } from '@vostride/agent-qa-ids'
 import { FsEvidenceArtifactStore, FsHandoffStore } from '@vostride/agent-qa-runner-local'
-import { CURRENT_HANDOFF_SCHEMA_VERSION } from '@vostride/agent-qa-schema'
+import { CURRENT_HANDOFF_SCHEMA_VERSION, maskedMarker } from '@vostride/agent-qa-schema'
 import type { CompletedRunHandoff, EvidenceDocument, PerTestOutcome } from '@vostride/agent-qa-schema'
 import { Command, CommanderError } from 'commander'
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -329,6 +329,7 @@ describe('CLI-RUN-READ-PARITY: runs list, overview and knowledge', () => {
 
   it('normalizes every list flag into the canonical filter the MCP tool takes', async () => {
     const many = fixtureProject('431-07-flags')
+    writeFileSync(join(many.root, '.env.secrets.local'), '')
     const root = join(many.root, '.agent-qa')
     const old = completedRun(root, Date.UTC(2026, 0, 1, 12), [{ id: 't-cart', name: 'Cart totals' }], 'failed')
     const recent = completedRun(root, Date.UTC(2026, 5, 1, 12), [{ id: 't-pay', name: 'Pay now' }], 'failed')
@@ -352,6 +353,29 @@ describe('CLI-RUN-READ-PARITY: runs list, overview and knowledge', () => {
     expect((failed as { runId: string }[]).map((row) => row.runId)).toEqual([recent])
     const cart = json(await cli(many.configPath, ['runs', 'list', '--test', 'CART', '--json']))
     expect((cart as { runId: string }[]).map((row) => row.runId)).toEqual([old])
+  })
+
+  it('runs list masks a declared secret in a test name and --test is no oracle for it', async () => {
+    const secret = 'zz-431-list-sentinel-not-a-real-credential'
+    const project = fixtureProject('431-07-list-secret')
+    writeFileSync(join(project.root, '.env.secrets.local'), `LIST_PASSWORD=${secret}\n`)
+    const root = join(project.root, '.agent-qa')
+    const runId = completedRun(root, 1_700_000_000_000, [{ id: 't-login', name: `Login as ${secret}` }])
+    const mcp = await mcpReader({ configPath: project.configPath, agentQaRoot: root })
+
+    const listed = json(await cli(project.configPath, ['runs', 'list', '--json']))
+    expect(listed).toMatchObject([{ runId, tests: [{ testId: 't-login', testName: `Login as ${maskedMarker('secret')}` }] }])
+    expect(listed).toEqual(unwrapped(await mcp.structured('agent_qa_list_runs', {})))
+    const human = await cli(project.configPath, ['runs', 'list'])
+    expect(human.exitCode).toBe(0)
+    expect(`${human.stdout}${JSON.stringify(listed)}`).not.toContain(secret)
+
+    for (const probe of [secret, secret.slice(0, 12), secret.slice(-8)]) {
+      expect(json(await cli(project.configPath, ['runs', 'list', '--test', probe, '--json'])), probe).toEqual([])
+      expect(unwrapped(await mcp.structured('agent_qa_list_runs', { test: probe })), probe).toEqual([])
+    }
+    const visible = json(await cli(project.configPath, ['runs', 'list', '--test', 'LOGIN AS', '--json']))
+    expect((visible as { runId: string }[]).map((row) => row.runId)).toEqual([runId])
   })
 
   it.each([

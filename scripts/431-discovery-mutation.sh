@@ -82,7 +82,7 @@ const IMAGE_T = 'src/__tests__/431-evidence-image.test.ts'
 const instruments = {
   'mcp-guard': { pkg: 'packages/mcp', files: [GUARD_T], typecheck: false, count: 26 },
   'mcp-projection': { pkg: 'packages/mcp', files: [PROJECTION_T], typecheck: false, count: 24 },
-  'cold-scope': { pkg: 'packages/agent-local', files: [COLD_SCOPE_T], typecheck: false, count: 4 },
+  'cold-scope': { pkg: 'packages/agent-local', files: [COLD_SCOPE_T], typecheck: false, count: 5 },
   'cold-runtime': { pkg: 'packages/cli', files: [COLD_RUNTIME_T], typecheck: false, count: 10, dist: true,
     env: { VITEST_MAX_WORKERS: '1' } },
   census: { pkg: 'packages/cli', files: [CENSUS_T], typecheck: false, count: 16, dist: true, env: { VITEST_MAX_WORKERS: '1' } },
@@ -182,13 +182,14 @@ const legs = [
   {
     group: 'contracts', subject: COMPOSE_SRC, instrument: 'cold-scope', claim: 'OVERVIEW-COLD-SCOPE',
     operation: 'drop runs.overview from the cold read-scope allowlist',
-    edits: [edit("  'runs.postprocessing', 'runs.knowledge', 'runs.evidence', 'runs.marks.history', 'runs.mark.preview',\n  'runs.overview',\n] as const satisfies readonly string[]",
-      "  'runs.postprocessing', 'runs.knowledge', 'runs.evidence', 'runs.marks.history', 'runs.mark.preview',\n] as const satisfies readonly string[]")],
-    reds: [coldScope('pins the cold read-scope allowlist to exactly six stored-text reads'),
+    edits: [edit("  'runs.postprocessing', 'runs.knowledge', 'runs.evidence', 'runs.marks.history', 'runs.mark.preview',\n  'runs.overview', 'runs.list',\n]",
+      "  'runs.postprocessing', 'runs.knowledge', 'runs.evidence', 'runs.marks.history', 'runs.mark.preview',\n  'runs.list',\n]")],
+    reds: [coldScope('pins the cold read-scope allowlist to exactly seven stored-text reads'),
       coldScope('masks declared secrets in the cold overview and keeps the rest readable'),
       coldScope('opens the scope for the overview and not for an unrelated read')],
     allowed: [],
-    greens: [coldScope('falls to the no-context marker, never cleartext, on a host with no masking sources')],
+    greens: [coldScope('falls to the no-context marker, never cleartext, on a host with no masking sources'),
+      coldScope('masks the run list test names and never matches the title filter on a masked span')],
   },
   {
     // The value binding is used at module scope, so the bundler keeps the eager import and carries

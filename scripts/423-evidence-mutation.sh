@@ -218,10 +218,11 @@ const legs = [
     subject: COMPOSE, instrument: 'cli-read-posture', claim: 'COLD-EVIDENCE-HOST', operation: 'drop runs.evidence from the cold read-scope allowlist',
     crossing: { pkg: '@vostride/agent-qa-agent-local', dir: 'packages/agent-local', marker: 'evidence423allowlist' },
     edits: [{
-      // 423-46 widened the list with the two feedback reads and 431 D-06 with runs.overview, so the
-      // anchor is re-spelled onto the current literal. The leg still drops runs.evidence alone.
-      from: "const COLD_READ_SCOPE_FUNCTION_IDS = [\n  'runs.postprocessing', 'runs.knowledge', 'runs.evidence', 'runs.marks.history', 'runs.mark.preview',\n  'runs.overview',\n] as const",
-      to: "const COLD_READ_SCOPE_FUNCTION_IDS = [\n  'runs.postprocessing', 'runs.knowledge', 'evidence423allowlist', 'runs.marks.history', 'runs.mark.preview',\n  'runs.overview',\n] as const",
+      // 423-46 widened the list with the two feedback reads, 431 D-06 with runs.overview and the 431
+      // code review with runs.list, so the anchor is re-spelled onto the members alone. The leg still
+      // drops runs.evidence alone.
+      from: "  'runs.postprocessing', 'runs.knowledge', 'runs.evidence', 'runs.marks.history', 'runs.mark.preview',\n  'runs.overview', 'runs.list',\n]",
+      to: "  'runs.postprocessing', 'runs.knowledge', 'evidence423allowlist', 'runs.marks.history', 'runs.mark.preview',\n  'runs.overview', 'runs.list',\n]",
     }],
     reds: [posture('COLD-EVIDENCE-HOST')],
     allowed: [posture('COLD-EVIDENCE-HTTP')],

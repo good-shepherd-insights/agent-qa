@@ -3,7 +3,8 @@
 // `runs.overview` returns stored text — test names, step labels and served record summaries — so a
 // cold host must open the same read scope the other stored-text reads use and mask this project's
 // declared secrets with it. Without that scope the op falls to its no-context arm and every label
-// is the display marker, which is the difference the masked cell below measures.
+// is the display marker, which is the difference the masked cell below measures. `runs.list`
+// carries the same stored test names and joined the scope in the 431 code review.
 
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -16,6 +17,7 @@ import { FsHandoffStore } from '@vostride/agent-qa-runner-local'
 import {
   CURRENT_HANDOFF_SCHEMA_VERSION,
   RunOverviewProjectionSchema,
+  RunsListOutputSchema,
   maskedMarker,
 } from '@vostride/agent-qa-schema'
 import type {
@@ -132,10 +134,10 @@ function storedText(overview: RunOverviewProjection) {
 }
 
 describe('OVERVIEW-COLD-SCOPE: runs.overview reads stored text under the cold read scope', () => {
-  it('pins the cold read-scope allowlist to exactly six stored-text reads', () => {
+  it('pins the cold read-scope allowlist to exactly seven stored-text reads', () => {
     expect([...COLD_READ_SCOPE_FUNCTION_IDS]).toEqual([
       'runs.postprocessing', 'runs.knowledge', 'runs.evidence', 'runs.marks.history',
-      'runs.mark.preview', 'runs.overview',
+      'runs.mark.preview', 'runs.overview', 'runs.list',
     ])
   })
 
@@ -158,13 +160,36 @@ describe('OVERVIEW-COLD-SCOPE: runs.overview reads stored text under the cold re
     const sources = vi.fn(declared)
     const composed = host(sources)
     try {
-      await invokeFunction(composed.registry, 'runs.list', {}, READER)
       await invokeFunction(composed.registry, 'runs.detail', { runId: RUN_ID }, READER)
       expect(sources).not.toHaveBeenCalled()
       await overviewThrough(composed)
       expect(sources).toHaveBeenCalledTimes(1)
     } finally {
       await composed.close()
+    }
+  })
+
+  it('masks the run list test names and never matches the title filter on a masked span', async () => {
+    const listed = async (composed: ReturnType<typeof host>, input: Record<string, unknown>) =>
+      RunsListOutputSchema.parse(await invokeFunction(composed.registry, 'runs.list', input, READER))
+    const composed = host(declared)
+    try {
+      const rows = await listed(composed, {})
+      expect(rows.map((row) => row.tests.map((test) => test.testName))).toEqual([[`Login as ${REDACTED}`]])
+      expect(JSON.stringify(rows)).not.toContain(SENTINEL)
+      expect(await listed(composed, { test: SENTINEL.slice(0, 12) })).toEqual([])
+      expect((await listed(composed, { test: 'login as' })).map((row) => row.runId)).toEqual([RUN_ID])
+    } finally {
+      await composed.close()
+    }
+    const cold = host()
+    try {
+      const rows = await listed(cold, {})
+      expect(rows.map((row) => row.tests.map((test) => test.testName))).toEqual([[REDACTED]])
+      expect(await listed(cold, { test: 'login' })).toEqual([])
+      expect((await listed(cold, { test: 'test-login' })).map((row) => row.runId)).toEqual([RUN_ID])
+    } finally {
+      await cold.close()
     }
   })
 

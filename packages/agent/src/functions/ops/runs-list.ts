@@ -3,15 +3,21 @@
 // A pure function of (validated input, injected deps): it filters ONE completed-run snapshot,
 // orders it newest-finished first under a total order (endedAt, then runId) so a fixed fixture
 // always renders byte-identically, and caps what it returns only after every filter has run.
+//
+// Test names are stored text, masked exactly as runs.overview masks them (cold read scope, else
+// the display marker), and the title filter only ever sees the masked name.
 
+import { getActiveMaskingContext } from '@vostride/agent-qa-safety'
 import {
   RUNS_LIST_DEFAULT_LIMIT,
   RunsListInputSchema,
   RunsListOutputContract,
   RunsListOutputSchema,
+  maskedMarker,
 } from '@vostride/agent-qa-schema'
 import type {
   CompletedRunHandoff,
+  MaskFn,
   RecordedTargets,
   RunSummary,
   RunsListInput,
@@ -21,9 +27,15 @@ import type { ClauseVerdict, FunctionSpec } from '../spec.js'
 
 export const RUNS_LIST_FUNCTION_ID = 'runs.list'
 
+function activeMask(): MaskFn {
+  const masking = getActiveMaskingContext()
+  return masking === undefined ? () => maskedMarker('secret') : (text) => masking.mask(text)
+}
+
 export function toRunSummary(
   document: CompletedRunHandoff,
-  recordedTargets: RecordedTargets = { status: 'unknown' },
+  recordedTargets: RecordedTargets,
+  mask: MaskFn,
 ): RunSummary {
   return {
     runId: document.runId,
@@ -37,7 +49,7 @@ export function toRunSummary(
     tests: document.tests.map((test) => ({
       testIndex: test.testIndex,
       testId: test.testId,
-      testName: test.testName,
+      testName: mask(test.testName),
     })),
     recordedTargets,
   }
@@ -52,10 +64,10 @@ export function compareLatestFinished(
   return left.runId < right.runId ? 1 : left.runId > right.runId ? -1 : 0
 }
 
-function namesTest(document: CompletedRunHandoff, filter: string): boolean {
+function namesTest(document: CompletedRunHandoff, filter: string, mask: MaskFn): boolean {
   const needle = filter.toLowerCase()
   return document.tests.some((test) => (
-    test.testId === filter || test.testName.toLowerCase().includes(needle)
+    test.testId === filter || mask(test.testName).toLowerCase().includes(needle)
   ))
 }
 
@@ -90,11 +102,12 @@ export const runsListSpec: FunctionSpec<RunsListInput, RunSummary[]> = {
   },
   async invoke(input, deps) {
     const limit = input.limit ?? RUNS_LIST_DEFAULT_LIMIT
+    const mask = activeMask()
     const candidates = (await deps.runs.list())
       .filter((document) => (
         (input.verdict === undefined || document.aggregateVerdict === input.verdict)
         && (input.since === undefined || document.endedAt >= input.since)
-        && (input.test === undefined || namesTest(document, input.test))
+        && (input.test === undefined || namesTest(document, input.test, mask))
       ))
       .sort(compareLatestFinished)
     const summarize = (documents: readonly CompletedRunHandoff[]): Promise<RunSummary[]> =>
@@ -103,6 +116,7 @@ export const runsListSpec: FunctionSpec<RunsListInput, RunSummary[]> = {
         deps.runs.getRecordedTargets === undefined
           ? { status: 'unknown' }
           : await deps.runs.getRecordedTargets(document.runId),
+        mask,
       )))
 
     const { target } = input

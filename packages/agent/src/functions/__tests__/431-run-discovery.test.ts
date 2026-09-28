@@ -4,7 +4,8 @@
 // one measured path. The reader is a fake port: this layer owns ordering, filtering and the cap,
 // and never learns where a run's bytes live.
 
-import { CURRENT_HANDOFF_SCHEMA_VERSION } from '@vostride/agent-qa-schema'
+import { createMaskingContext, setActiveMaskingContextResolver } from '@vostride/agent-qa-safety'
+import { CURRENT_HANDOFF_SCHEMA_VERSION, maskedMarker } from '@vostride/agent-qa-schema'
 import type {
   CompletedRunHandoff,
   FunctionCaller,
@@ -14,7 +15,7 @@ import type {
   RunSummary,
 } from '@vostride/agent-qa-schema'
 import type { AuditSink } from '@vostride/agent-qa-safety'
-import { describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import { FunctionInputError, invokeFunction } from '../invoke.js'
 import { runsListSpec } from '../ops/runs-list.js'
@@ -29,6 +30,9 @@ const READER: FunctionCaller = {
 }
 
 const NO_AUDIT: AuditSink = { appendExecutionAudit() {}, appendGuardrailAudit() {} }
+
+beforeEach(() => setActiveMaskingContextResolver(() => createMaskingContext()))
+afterEach(() => setActiveMaskingContextResolver(() => undefined))
 
 function member(testIndex: number, testId: string, testName: string): PerTestOutcome {
   return {
@@ -226,6 +230,27 @@ describe('LIST-ROWS: every row names all of its tests', () => {
       { testIndex: 2, testId: 't-pay', testName: 'Payment declines' },
     ])
     expect(row!.testCount).toBe(3)
+  })
+
+  it('masks a declared secret in a test name and never matches the title filter on it', async () => {
+    const secret = 'T431-list-sentinel-not-a-real-credential'
+    const masking = createMaskingContext()
+    masking.register(secret)
+    setActiveMaskingContextResolver(() => masking)
+    const reader = harness([run({ runId: 'run-secret', endedAt: 1,
+      tests: [member(0, 't-login', `Login as ${secret}`)] })])
+
+    const [row] = await reader.list({})
+    expect(row!.tests[0]!.testName).toBe(masking.mask(`Login as ${secret}`))
+    expect(JSON.stringify(row)).not.toContain(secret)
+    expect(await reader.list({ test: secret.slice(0, 12) })).toEqual([])
+    expect((await reader.list({ test: 'login as' })).map((listed) => listed.runId)).toEqual(['run-secret'])
+
+    setActiveMaskingContextResolver(() => undefined)
+    const [cold] = await reader.list({})
+    expect(cold!.tests[0]!.testName).toBe(maskedMarker('secret'))
+    expect(await reader.list({ test: 'login' })).toEqual([])
+    expect((await reader.list({ test: 't-login' })).map((listed) => listed.runId)).toEqual(['run-secret'])
   })
 
   it('reports an unknown target set when no recorded target reader is bound', async () => {

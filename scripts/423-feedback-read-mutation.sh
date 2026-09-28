@@ -205,10 +205,10 @@ const legs = [
     subject: COMPOSE, instrument: 'feedback-reads', claim: 'HTTP-FEEDBACK-HUMAN-POSTURE', operation: 'drop the two feedback reads from the cold read-scope allowlist',
     crossing: { pkg: '@vostride/agent-qa-agent-local', dir: 'packages/agent-local', marker: 'feedback423allowlist' },
     edits: [{
-      // 431 D-06 widened the list with runs.overview on its own line, so the anchor is re-spelled onto
-      // the six-member literal. The leg's meaning is unchanged: it drops the two feedback reads only.
-      from: "const COLD_READ_SCOPE_FUNCTION_IDS = [\n  'runs.postprocessing', 'runs.knowledge', 'runs.evidence', 'runs.marks.history', 'runs.mark.preview',\n  'runs.overview',\n] as const",
-      to: "const COLD_READ_SCOPE_FUNCTION_IDS = [\n  'runs.postprocessing', 'runs.knowledge', 'runs.evidence', 'feedback423allowlist',\n  'runs.overview',\n] as const",
+      // 431 D-06 widened the list with runs.overview and the 431 code review with runs.list, so the
+      // anchor is re-spelled onto the members alone. The leg still drops the two feedback reads only.
+      from: "  'runs.postprocessing', 'runs.knowledge', 'runs.evidence', 'runs.marks.history', 'runs.mark.preview',\n  'runs.overview', 'runs.list',\n]",
+      to: "  'runs.postprocessing', 'runs.knowledge', 'runs.evidence', 'feedback423allowlist',\n  'runs.overview', 'runs.list',\n]",
     }],
     reds: [reads('HTTP-FEEDBACK-HUMAN-POSTURE')],
     allowed: [],

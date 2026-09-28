@@ -1075,8 +1075,9 @@ describe('423-21 feedback reads over both HTTP doors (D-18)', () => {
   // pinned from 423-21 until today (scripts/423-feedback-read-mutation.sh leg F10).
   //
   // 2026-09-28 (431 D-06): runs.overview joined the same allowlist, so the membership this cell
-  // closes on is six reads, pinned exactly AFTER the behaviour so leg F10 still reds on the doors'
+  // closes on was six reads, pinned exactly AFTER the behaviour so leg F10 still reds on the doors'
   // own output first. OVERVIEW-COLD-SCOPE (agent-local) measures the overview's own posture.
+  // The 431 code review added runs.list (its test names are the same stored text): seven reads.
   //
   // THE AMBIENT MASKING RESOLVER IS PUT BACK FIRST, and that line is the measurement rather than
   // hygiene beside it. Every other describe in this file "restores" the process resolver by
@@ -1122,7 +1123,7 @@ describe('423-21 feedback reads over both HTTP doors (D-18)', () => {
     expect(warmMachine.notes).toEqual(['first run-level note', null, masking.mask(`step note ${SECRET}`)])
     expect(JSON.stringify([warmHuman, warmMachine])).not.toContain(SECRET)
     expect([...COLD_READ_SCOPE_FUNCTION_IDS]).toEqual(['runs.postprocessing', 'runs.knowledge',
-      'runs.evidence', 'runs.marks.history', 'runs.mark.preview', 'runs.overview'])
+      'runs.evidence', 'runs.marks.history', 'runs.mark.preview', 'runs.overview', 'runs.list'])
   }, 180_000)
 
   it('FEEDBACK-HTTP-WRITES-NOTHING: HTTP history and preview leave every store byte-identical and create nothing', async () => {
