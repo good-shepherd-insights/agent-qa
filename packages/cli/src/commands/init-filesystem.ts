@@ -19,8 +19,10 @@ import {
 import { basename, dirname, relative, resolve, sep } from 'node:path'
 // D-04: the managed block's SHAPE — markers, header line, splice and append — lives with the
 // rest of the scaffold's content, so the proposal path composes the identical bytes this path
-// writes. What stays here is the WRITING: classification, atomic publish, preserve semantics.
-import { composeManagedGitignore } from './scaffold-content.js'
+// writes. What stays here is the WRITING: classification, lock, atomic publish, preserve
+// semantics.
+import { composeManagedBlock, type ManagedBlockContent } from './managed-block.js'
+import { managedGitignoreContent } from './scaffold-content.js'
 
 export type InitFileOutcome = 'created' | 'updated' | 'preserved'
 
@@ -1059,21 +1061,149 @@ export function writeConfigMarkerLast(
   return writeScaffoldFileAtomic(plan, hooks)
 }
 
+export interface ManagedBlockUpsertPlan {
+  path: string
+  root?: string
+  content: ManagedBlockContent
+}
+
+// Inside `DURABLE_TEMPORARY_GITIGNORE_RULE`'s namespace, so a lock an interrupted writer leaves
+// behind is not commit-visible wherever that rule is in force.
+const MANAGED_BLOCK_LOCK_SUFFIX = '.agent-qa-init-lock.tmp'
+
+export function managedBlockLockPath(path: string): string {
+  const absolutePath = resolve(path)
+  return resolve(dirname(absolutePath), `.${basename(absolutePath)}${MANAGED_BLOCK_LOCK_SUFFIX}`)
+}
+
+/** The target's lock already exists. It is never removed by a writer that did not create it. */
+export class ManagedBlockLockRefusal extends Error {
+  readonly lockPath: string
+
+  constructor(path: string, lockPath: string) {
+    super(
+      `Refusing to update ${path}: its lock ${lockPath} already exists. Another agent-qa `
+      + 'writer holds it, or an interrupted one left it behind; if no agent-qa command is '
+      + 'writing this file, delete the lock and rerun.',
+    )
+    this.name = 'ManagedBlockLockRefusal'
+    this.lockPath = lockPath
+  }
+}
+
+interface HeldManagedBlockLock {
+  path: string
+  dev: number
+  ino: number
+}
+
+function releaseManagedBlockLock(lock: HeldManagedBlockLock): void {
+  try {
+    const stat = lstatIfPresent(lock.path)
+    if (stat === undefined || stat.dev !== lock.dev || stat.ino !== lock.ino) return
+    unlinkSync(lock.path)
+  } catch (error) {
+    process.emitWarning(
+      `agent-qa could not remove its lock ${lock.path} `
+      + `(${error instanceof Error ? error.message : String(error)}); `
+      + 'delete it before the next agent-qa write to this file.',
+    )
+  }
+}
+
+function acquireManagedBlockLock(path: string): HeldManagedBlockLock {
+  const lockPath = managedBlockLockPath(path)
+  let fd: number
+  try {
+    fd = openSync(lockPath, 'wx', 0o600)
+  } catch (error) {
+    if (isErrno(error, 'EEXIST')) throw new ManagedBlockLockRefusal(path, lockPath)
+    throw error
+  }
+  let held: HeldManagedBlockLock | undefined
+  try {
+    try {
+      const { dev, ino } = fstatSync(fd)
+      held = { path: lockPath, dev, ino }
+      writeFileSync(fd, `pid ${process.pid}\n`)
+    } finally {
+      closeSync(fd)
+    }
+    return held
+  } catch (error) {
+    if (held !== undefined) releaseManagedBlockLock(held)
+    throw error
+  }
+}
+
+function readManagedBlockTarget(path: string, inspection: InitPathInspection): string {
+  if (inspection.nlink !== 1) {
+    throw new Error(
+      `Refusing to update ${path}: it has ${inspection.nlink} hard links, and replacing it `
+      + 'would leave the other names holding the old bytes',
+    )
+  }
+  const { O_RDONLY, O_NOFOLLOW = 0 } = fsConstants
+  const fd = openSync(path, O_RDONLY | O_NOFOLLOW)
+  try {
+    const opened = fstatSync(fd)
+    if (!opened.isFile() || opened.dev !== inspection.dev || opened.ino !== inspection.ino) {
+      throw new Error(`Refusing to update ${path}: it changed while it was being read`)
+    }
+    const bytes = readFileSync(fd)
+    const text = bytes.toString('utf8')
+    // Decoding would replace invalid sequences, and writing that back rewrites user bytes.
+    if (!Buffer.from(text, 'utf8').equals(bytes)) {
+      throw new Error(`Refusing to update ${path}: it is not valid UTF-8`)
+    }
+    return text
+  } finally {
+    closeSync(fd)
+  }
+}
+
+/**
+ * Upserts one managed block into a file (431 D-19/D-20 · EDGE-02).
+ *
+ * Cooperative writers serialize per target on an exclusively created sibling lock. Under it the
+ * target is classified and read again, composed, and published through `writeScaffoldFileAtomic`,
+ * so a failure leaves either the prior file or the complete new one. An existing lock refuses
+ * with `ManagedBlockLockRefusal`; only a lock this call created (same inode) is removed, and it
+ * never touches a temporary it did not create.
+ */
+export function upsertManagedBlock(
+  plan: ManagedBlockUpsertPlan,
+  hooks: InitFilesystemHooks = {},
+): InitFileResult {
+  const path = resolve(plan.path)
+  const root = resolve(plan.root ?? dirname(path))
+  ensureSafeParentDirectories(path, root)
+  const lock = acquireManagedBlockLock(path)
+  try {
+    const inspection = inspectInitPath(path, root)
+    const existing = inspection.classification === 'regular'
+      ? readManagedBlockTarget(path, inspection)
+      : ''
+    const candidate = composeManagedBlock(existing, plan.content)
+    if (candidate === existing) return { path, outcome: 'preserved' }
+    return writeScaffoldFileAtomic(
+      { path, root, content: candidate, force: inspection.classification === 'regular' },
+      hooks,
+    )
+  } finally {
+    releaseManagedBlockLock(lock)
+  }
+}
+
 export function upsertManagedGitignoreBlock(
   path: string,
   entries: readonly string[] = TARGET_GITIGNORE_ENTRIES,
 ): InitFileResult {
   const absolutePath = resolve(path)
-  const root = dirname(absolutePath)
-  const classification = classifyInitPath(absolutePath, root)
-  const existing = classification === 'regular' ? readFileSync(absolutePath, 'utf8') : ''
-  const candidate = composeManagedGitignore(existing, entries)
-  if (candidate === existing) return { path: absolutePath, outcome: 'preserved' }
-  return writeScaffoldFileAtomic({
+  return upsertManagedBlock({
     path: absolutePath,
-    root,
-    content: candidate,
-    force: classification === 'regular',
+    root: dirname(absolutePath),
+    content: managedGitignoreContent(entries),
   })
 }
 
