@@ -8,10 +8,10 @@
 // `git log --author` is what a person filters on when they want to know where a change came from.
 //
 // WHAT IS DRIVEN, AND WHY NOTHING BELOW IS A LOOKALIKE. Every cell composes a REAL host through
-// `composeCliLocalAgent` (or, for the dashboard arm, through `composeDashboardDoor` — the one
-// assembly `agent-qa dashboard` itself calls), mints a proposal through the shipped
-// `config.field.set` op, accepts it through the shipped `proposals.accept` op, and then reads the
-// author off the repository with `git log`. Not off a receipt: a receipt is this product's account
+// `composeCliLocalAgent`, mints a proposal through the shipped `config.field.set` op (or, for the
+// dashboard and legacy arms, writes a persisted record the shipped propose path produced), accepts
+// it through the shipped `proposals.accept` op, and then reads the author off the repository with
+// `git log`. Not off a receipt: a receipt is this product's account
 // of what it did, and the whole subject here is whether that account and git's agree.
 //
 // MORE THAN ONE SURFACE IS DRIVEN, DELIBERATELY. A suite that only ever drove `chat` was green
@@ -36,11 +36,7 @@ import type { FunctionCaller, FunctionScope } from '@vostride/agent-qa-schema'
 import { describe, expect, it, vi } from 'vitest'
 
 import { CHAT_DOOR_SURFACE } from '../commands/chat.js'
-import {
-  composeDashboardDoor,
-  DASHBOARD_FUNCTION_CALLER,
-  RUN_SERVICE_GRANTED_SCOPES,
-} from '../commands/dashboard.js'
+import { DASHBOARD_FUNCTION_CALLER, RUN_SERVICE_GRANTED_SCOPES } from '../commands/dashboard.js'
 import {
   AGENT_CONFIG_COMMIT_AUTHOR_BY_SURFACE,
   AGENT_CONFIG_COMMIT_AUTHOR_UNRECOGNISED,
@@ -193,24 +189,35 @@ async function accept(
 describe('a config-apply commit names the surface that MINTED the proposal', () => {
   it('(1) a dashboard-minted proposal is attributed to the dashboard, though the CLI applied it', async () => {
     const workspace = seedWorkspace()
-    // THE SHIPPED DOOR COMPOSER, the one `agent-qa dashboard` calls. A host assembled here from its
-    // parts would make this cell a statement about this file rather than about the product.
-    const { host } = composeDashboardDoor({
-      agentQaRoot: workspace.agentQaRoot,
-      configPath: workspace.configPath,
-      boundOrigin: () => undefined,
-      resolveExecutionContext: () => 'local-interactive',
-    })
+    // A PERSISTED RECORD, not a live mint (430 D-08, RESEARCH P18/P19). The stored
+    // `origin.surface: 'dashboard'` values were written by dashboard-chat config proposals, and no
+    // shipped door writes new ones, so the claim is that CLI apply still reads the old ones. The
+    // envelope carries no digest over `origin`, so setting the surface on the legacy bytes yields
+    // a record this build accepts.
+    const record = JSON.parse(readFileSync(LEGACY_FIXTURE, 'utf8')) as {
+      id: string
+      origin: Record<string, unknown>
+    }
+    record.origin.surface = 'dashboard'
+    mkdirSync(join(workspace.agentQaRoot, 'proposals'), { recursive: true })
+    writeFileSync(
+      join(workspace.agentQaRoot, 'proposals', `${record.id}.json`),
+      `${JSON.stringify(record, null, 2)}\n`,
+    )
 
-    const proposalId = await mint(host.registry, DASHBOARD_FUNCTION_CALLER, '45s')
-    await accept(applyingHost(workspace), proposalId)
+    vi.useFakeTimers({ toFake: ['Date'], now: Number(record.origin.at) + 1 })
+    try {
+      await accept(applyingHost(workspace), record.id)
+    } finally {
+      vi.useRealTimers()
+    }
 
     const author = authorAt(workspace, 'HEAD')
     // THE POSITIVE AND THE NEGATIVE TOGETHER. The positive alone would pass under an author that
     // named every surface at once; the negatives alone would pass under one that named none. The
     // `cli` negative is the one that makes this a MINTING claim rather than an applying one — the
     // CLI is what accepted this proposal, and its name must not be on the commit.
-    expect(author).toContain(DASHBOARD_FUNCTION_CALLER.surface)
+    expect(author).toBe(AGENT_CONFIG_COMMIT_AUTHOR_BY_SURFACE.dashboard)
     expect(author).not.toContain('proposed by chat')
     expect(author).not.toContain('proposed by the cli')
   })
