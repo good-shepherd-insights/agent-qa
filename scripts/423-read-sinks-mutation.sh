@@ -9,8 +9,8 @@
 # conversion at one sink looks identical to a working page until a marker or a credential is copied
 # out. Both human reads (run detail and step evidence) must restore and THEN sanitize auth state,
 # which is T-405-38; skipping the sanitizer still returns a correct-looking body. The run-detail
-# review controls must stay runnable copy commands rather than routes into the Chat page this
-# milestone removes, and a failed curation chain must keep the rows it had already committed
+# review controls must stay runnable copy commands, and none may route to /chat: the Chat page
+# was removed in Phase 430. A failed curation chain must keep the rows it had already committed
 # (WIN #313). So each leg plants exactly one of those regressions, rebuilds the bundle or server it
 # lives in, drives the BUILT page or the real HTTP adapter, and requires its named cell to red while
 # the other sinks, doors and controls hold. Clipboard, title and DOM are three separate legs so each
