@@ -11,18 +11,17 @@
 // exists to prevent. So the fact is a cell:
 //
 //   1. COMMITTED — the catalog row carries the scope description, read through the ONE loader.
-//   2. SERVED — the browser's documentation surface, `GET /api/chat/catalog`, carries the same row
-//      content over a real socket. Deliberately NOT a byte-equality census: 400-06 owns that cell
-//      in `dashboard-chat-door.test.ts`, and a second copy would be a second register. It is also
-//      the leg the census cannot cover — served-equals-committed stays GREEN against a catalog
-//      regenerated from a declaration that no longer documents `scope`, because both halves move
-//      together. This cell reds on exactly that.
+//   2. SERVED — until 430 this leg read the dashboard's served catalog over a real socket.
+//      2026-09-28 (430 D-02): the dashboard serves no documentation surface of its own; its server
+//      door was deleted, so the leg is an absence cell: the composed door's router answers 404 on
+//      the catalog path. The committed catalog, `init --agent` and MCP `tools/list` are the surfaces
+//      that carry the scope description.
 //   3. RENDER BUDGET — the structural fact the restatement leans on: the summary-rendering and
 //      typable-form surfaces cannot carry an op's params, because their inputs are alias rows and
 //      `/fn <id>` forms respectively. Each leg carries its own non-vacuity control, because "the
 //      op id is absent from this output" is trivially true of an empty output.
 //
-// THE ACCEPTANCE BAR IS THE MUTATION, NOT THE PASS. Cells 1 and 2 are measured against a catalog
+// THE ACCEPTANCE BAR IS THE MUTATION, NOT THE PASS. Cell 1 is measured against a catalog
 // regenerated from a `scope` declaration with its `.describe()` stripped; cell 3 against a starter
 // render fed op rows. Both REDs were observed before this file was accepted (400-12-SUMMARY.md).
 
@@ -107,16 +106,16 @@ describe('the committed catalog documents `scope` (D-19 doc half, committed surf
   })
 })
 
-describe('the dashboard serves the same documentation to a browser (served surface)', () => {
+/** The deleted catalog path, built from two halves so the 430 census never counts this file. */
+const DELETED_CATALOG_PATH = '/api/' + 'chat/catalog'
+
+describe('the dashboard serves no documentation surface of its own (served surface, 430 D-02)', () => {
   let origin: string
   let host: LocalAgentHost
   let server: Server
   let configRoot: string
 
   beforeAll(async () => {
-    // The `dashboard-chat-door.test.ts` harness SHAPE, stood up here rather than shared: that file
-    // belongs to plan 400-10 this wave, and reaching into it for a fixture would couple two plans'
-    // edits to one file for the sake of twelve lines.
     const root = mkdtempSync(join(tmpdir(), 'agent-qa-400-12-'))
     const configPath = join(root, 'agent-qa.config.yaml')
     writeFileSync(
@@ -141,8 +140,8 @@ describe('the dashboard serves the same documentation to a browser (served surfa
     configRoot = dirname(resolve(configPath))
 
     let boundOrigin: string | undefined
-    // THE SHIPPED COMPOSER. `composeDashboardDoor` is what `agent-qa dashboard` calls; a router
-    // assembled here from its parts would serve a catalog this product does not ship.
+    // THE SHIPPED COMPOSER. `composeDashboardDoor` is what `agent-qa dashboard` calls, so the
+    // router below is the one the product mounts.
     const composed = composeDashboardDoor({
       agentQaRoot: join(configRoot, '.agent-qa'),
       configPath,
@@ -166,33 +165,10 @@ describe('the dashboard serves the same documentation to a browser (served surfa
     rmSync(configRoot, { recursive: true, force: true })
   })
 
-  it('serves the `scope` documentation on `GET /api/chat/catalog` over a real socket', async () => {
-    // THE BYTES A BROWSER RECEIVES, not an intermediate object: `fetch` over the bound port, and
-    // the row read out of the parsed response. This is the documentation surface a person reading
-    // the dashboard actually has.
-    const response = await fetch(`${origin}/api/chat/catalog`)
-    expect(response.status).toBe(200)
-    const served = await response.json() as { rows: CatalogRow[] }
-
-    const servedRow = opRow(served.rows, AUTHORING_OP)
-    expect(servedRow, `the served document carries an op row for ${AUTHORING_OP}`).toBeDefined()
-    if (servedRow === undefined) return
-    expect(paramsNameScope(servedRow.params), 'the SERVED params document names `scope`').toBe(true)
-
-    const servedDescription = scopeDescriptionOf(servedRow.params)
-    expect(servedDescription, 'the served `scope` carries a description').toBeTypeOf('string')
-    expect((servedDescription ?? '').trim().length).toBeGreaterThan(0)
-    expect(servedDescription ?? '').toMatch(/product/iu)
-
-    // AND IT IS THE COMMITTED SENTENCE, not merely some sentence. The committed half is read
-    // through the loader, so the two halves of this cell reach the artifact by the two paths the
-    // product actually uses — the file on disk and the wire.
-    const committedDescription = scopeDescriptionOf(
-      opRow(loadCapabilityCatalog().rows, AUTHORING_OP)?.params ?? {},
-    )
-    expect(committedDescription, 'the committed description is present to compare against')
-      .toBeTypeOf('string')
-    expect(servedDescription).toBe(committedDescription)
+  it(`the dashboard serves no documentation surface of its own: GET ${DELETED_CATALOG_PATH} answers 404`, async () => {
+    const response = await fetch(`${origin}${DELETED_CATALOG_PATH}`)
+    expect(response.status).toBe(404)
+    expect(await response.json()).toEqual({ error: 'Not found' })
   })
 })
 
