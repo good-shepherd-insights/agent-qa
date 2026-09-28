@@ -14,7 +14,7 @@ import { HookRegistryManager, isHookRegistryMutationError } from '../hooks/hook-
 import { readJsonBody } from './body-parser.js'
 import { refuseCrossSiteRequest } from './cross-site.js'
 import { tryParseRequestUrl } from './request-url.js'
-import { CHAT_ROUTE_PREFIX, RUN_CONFIRM_ROUTE_PREFIX, createChatRouter } from '../chat/chat-routes.js'
+import { RUN_CONFIRM_ROUTE_PREFIX, createChatRouter } from '../chat/chat-routes.js'
 import { isRunTriggerConfirmScope } from '../chat/confirm-registry.js'
 import type { AgentHost } from '../chat/host.js'
 import {
@@ -604,9 +604,9 @@ function jsonNoCors(res: ServerResponse, data: unknown, status = 200): void {
  * the grant on the ACTUAL response, and that is the one removed. A preflighted variant now gets a
  * permissive OPTIONS followed by a response the browser refuses to hand to the page — it fails
  * closed. Excluding these paths from `cors()` would mean claiming the `/api/runs/` prefix ahead of
- * the shared arm the way the chat door claims its own, which would capture the trigger, cancel,
- * delete, live-url, detail and post-processing routes too: the whole-server posture change this
- * fix is deliberately not making.
+ * the shared arm the way the run-confirm prefix claims its own, which would capture the trigger,
+ * cancel, delete, live-url, detail and post-processing routes too: the whole-server posture change
+ * this fix is deliberately not making.
  */
 function refuseCrossSiteDisplayRead(req: IncomingMessage, res: ServerResponse): boolean {
   if (refuseCrossSiteRequest(req) === undefined) return false
@@ -1819,10 +1819,11 @@ interface RouterDeps {
   authFetch?: typeof globalThis.fetch
   sessionManager?: import('../live-editor/session-manager.js').SessionManager
   /**
-   * The composed agent host this server's chat door dispatches through (400-01, D-01).
+   * The composed agent host (400-01, D-01). It serves run detail, marks, analysis, knowledge,
+   * post-processing and the run-confirm pair.
    *
    * INJECTED, and optional because a router built the legacy two-argument way
-   * (`createRouter(db)`) has none. The chat door then answers 501 by name rather than 404 —
+   * (`createRouter(db)`) has none. Each arm that needs it then answers by name rather than 404 —
    * the route exists, this server was started without a host. See `chat/host.ts` for why the
    * composition happens in the CLI command that starts this server rather than here.
    */
@@ -1900,9 +1901,8 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps): (req: In
   // CR-02 (401-18): the response layer reads run rows through the projection, never raw. The host's
   // own reconciliation and the queue keep `deps.db` — see `withResponseSafeRunReads`.
   const db = withResponseSafeRunReads(deps.db)
-  // The fourth door (400-01). ONE router for the whole `/api/chat/` prefix, built once, and the
-  // same function the conformance adapter and the tracer cell drive — a second mount here would be
-  // a second answer to what the door is.
+  // ONE confirm router, built once (400-01, 401-09). Since 430 D-02 only the run-confirm prefix
+  // reaches it.
   const chatRouter = createChatRouter(deps.agentHost)
   const pluginOAuthSessions = new Map<string, PluginOAuthSession>()
   const withCredentialLock = createCredentialLock()
@@ -1914,7 +1914,7 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps): (req: In
     // shipped process the listener has already refused an unparseable request line, so this arm is
     // defence in depth — but this router is EXPORTED and mounted directly (the conformance suite
     // stands it up on its own `node:http` server), and on that mount an unguarded parse is a live
-    // throw. The refusal is answered before the chat-prefix dispatch and before every route, so no
+    // throw. The refusal is answered before the run-confirm dispatch and before every route, so no
     // frame below ever sees a URL that could not be parsed.
     const url = tryParseRequestUrl(req)
     if (url === undefined) {
@@ -1923,20 +1923,17 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps): (req: In
     }
     const path = url.pathname
 
-    // ---- The fourth door (400-01, D-02) --------------------------------------------------------
+    // ---- The run-confirm prefix (401-09) -----------------------------------------------------
     //
     // Mounted FIRST — ahead of the shared OPTIONS arm as well as every route — and TOTAL over its
-    // prefix. Two reasons, and the second is the load-bearing one. A chat path that fell through
-    // would land in the shared `notFound`, which writes the cross-origin wildcard header this door
-    // deliberately omits. And `cors()` below answers EVERY preflight with
-    // `Access-Control-Allow-Origin: *`: leaving the chat routes behind it would grant any page a
-    // person has open the preflight it needs to POST a turn at their local agent, which is exactly
-    // the header the turn route refuses to write on its own response. The door answers its own
-    // preflight, same-origin.
-    if (path.startsWith(CHAT_ROUTE_PREFIX) || path.startsWith(RUN_CONFIRM_ROUTE_PREFIX)) {
-      // 401-09: the run trigger's confirm surface is a SECOND PREFIX ON THE SAME ROUTER, mounted
-      // here for the identical reason — ahead of the shared `cors()` arm, so no page a person has
-      // open can preflight a route whose whole power is to approve an ask-tier run on their machine.
+    // prefix. `cors()` below answers EVERY preflight with `Access-Control-Allow-Origin: *`, so
+    // leaving these routes behind it would grant any page a person has open the preflight it needs
+    // to approve an ask-tier run on their machine. The confirm router answers its own preflight,
+    // same-origin, and its answers carry no wildcard.
+    //
+    // 2026-09-28 (430 D-02): the conversation prefix is no longer dispatched. Its paths fall to the
+    // generic 404 below, not redirected and not stubbed.
+    if (path.startsWith(RUN_CONFIRM_ROUTE_PREFIX)) {
       chatRouter(req, res)
       return
     }
