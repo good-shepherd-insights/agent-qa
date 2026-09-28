@@ -85,7 +85,6 @@ import {
 } from '@vostride/agent-qa-schema'
 import type {
   CacheableStepInput,
-  ChatSessionEvent,
   ClauseResult,
   CompletedRunHandoff,
   PerTestOutcome,
@@ -480,34 +479,23 @@ function consoleLines(needle: string): string {
  * thing under test. The `unmaskForDisplay` it binds is the production binding's SHAPE — one
  * `unmaskForHumanOutput` call per emit — over this file's one fixture context, which is what lets
  * a cell see a restoration at all. The dashboard's conversation emits it once served were deleted
- * in 430; Plan 10 removes the members only they read.
+ * in 430, and the members only they read left the host with them.
  */
-function dashboardRollCallHost(
-  onSessionEvent: (listener: (sessionId: string, event: ChatSessionEvent) => void) => void = () => {},
-): AgentHost {
+function dashboardRollCallHost(): AgentHost {
   return {
     registry: {},
     caller: { origin: 'human', surface: 'dashboard', scopes: ['read'] } as never,
-    agentAskFunctionId: 'agent.ask',
-    // 404-05: the seam carries three op ids now. This roll-call fixture dispatches only the ask,
-    // so the other two are named and never reached — the shape is what has to be complete.
+    // Every op id is named so the SHAPE is complete; the run host below overrides the ids it
+    // dispatches, the registry and the dispatch itself.
     runsPostProcessingFunctionId: 'runs.postprocessing',
     runsEventsFunctionId: 'runs.events',
-    // 405-01: the seam carries a fourth op id. This fixture dispatches only the ask, so this one
-    // is named and never reached — the SHAPE is what has to be complete.
     runsDetailFunctionId: 'runs.detail',
     runsEvidenceFunctionId: 'runs.evidence',
-    // 405-05: a fifth. Same posture — the SHAPE has to be complete; this fixture reaches only the
-    // ask, and artifact BYTES are masked on every door anyway (D-09: the seam never unmasks a blob).
     runsArtifactFunctionId: 'runs.artifact',
-    // 406-01: a sixth. Same posture — the SHAPE has to be complete; this fixture reaches only the
-    // ask, and the RUN host below is where `analysis.get` is actually dispatched.
     analysisGetFunctionId: 'analysis.get',
     runsMarkFunctionId: 'runs.mark',
     runsMarksHistoryFunctionId: 'runs.marks.history',
     runsMarkPreviewFunctionId: 'runs.mark.preview',
-    // 407-01 (D-05): the sixth dispatched id, widened here so every AgentHost literal in the
-    // workspace still satisfies the interface.
     runsKnowledgeFunctionId: RUNS_KNOWLEDGE_FUNCTION_ID,
     invokeFunction: () => Promise.resolve({
       sessionId: 'chat-20260821-000000-r0ll',
@@ -517,9 +505,6 @@ function dashboardRollCallHost(
       results: FIXTURE.clauseResults,
       denials: [],
     }),
-    foldFunctionResult: () => ({ verdict: { status: 'executed', outcome: '' }, foldLines: [] }),
-    listDeclarations: () => [],
-    onSessionEvent: (listener) => { onSessionEvent(listener); return () => {} },
     unmaskForDisplay: (text: string) => unmaskForHumanOutput(FIXTURE.ctx, text),
   }
 }

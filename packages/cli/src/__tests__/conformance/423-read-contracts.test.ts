@@ -333,7 +333,7 @@ async function openDurableScene() {
     auditSink: { appendExecutionAudit() {}, appendGuardrailAudit() {} } })
   const unmask = createDisplayUnmasker({ agentQaRoot: root, secretStores: () => [store], env: () => ({}), authStatePayloads: () => [] })
   const agentHost = composeDashboardAgentHost({ registry } as LocalAgentHost,
-    { subscribe: () => () => undefined, emit() {} }, undefined, undefined, unmask)
+    undefined, undefined, unmask)
   const doors = await openDoors({ registry, agentHost, db, maskText: text => mask.mask(text) })
   return { root, db, runId, excludedRunId, authPlaceholder, allowedPlaceholder, doors, snapshot,
     async close() {

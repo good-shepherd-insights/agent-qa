@@ -6,9 +6,7 @@ import { basename, resolve, dirname } from 'node:path'
 import { createRequire } from 'node:module'
 import pc from 'picocolors'
 import {
-  AGENT_ASK_FUNCTION_ID,
   ANALYSIS_GET_FUNCTION_ID,
-  foldFunctionResult,
   invokeFunction,
   LiveViewUnavailableError,
   RUNS_ARTIFACT_FUNCTION_ID,
@@ -27,10 +25,8 @@ import {
 import type { ComposeLocalAgentInput, LocalAgentHost } from '@vostride/agent-qa-agent-local'
 import { resolveWorkspacePaths } from '@vostride/agent-qa-core'
 import type {
-  AgentDeclarationRow,
   AgentHost,
   AgentRegistryHandle,
-  AgentResultFold,
   ConfirmRegistry,
   MintLiveUrlInput,
   RunServicePorts,
@@ -38,7 +34,6 @@ import type {
 } from '@vostride/agent-qa-dashboard'
 import { resolveVisionConfig } from '@vostride/agent-qa-model'
 import type {
-  ChatSessionEvent,
   ExecutionContext,
   FunctionCaller,
   FunctionScope,
@@ -73,7 +68,6 @@ import {
   runServiceTokenSecretStore,
   type ResolvedRunServiceToken,
 } from '../composition/run-service-token-resolution.js'
-import { loadCapabilityCatalog } from '../capability-catalog/loader.js'
 import { resolveConfig } from '../config.js'
 // 408 plan 03 (D-03, Open Question 4): the CO-HOSTED MCP endpoint reuses the standalone command's
 // exported listener, masking composition and constants VERBATIM. A value edge from this command to
@@ -136,61 +130,12 @@ export const DASHBOARD_FUNCTION_CALLER: FunctionCaller = Object.freeze({
 })
 
 /**
- * One notification in, however many watchers out (400-01, D-03).
- *
- * IT IS A FAN-OUT AND NOT A BUS, and the distinction is the whole of D-03. A bus is something a
- * producer publishes to; this is handed a record the session log has ALREADY written and copies it
- * to whoever is listening. It holds no history, decides no ordering and can answer no question —
- * the buffering, the ids and the replay all live in the server that serves them, where their
- * bounds belong.
- *
- * A LISTENER'S THROW IS SWALLOWED so one broken watcher cannot silence the others, on the same
- * reasoning the composition's own notify site swallows: this channel is downstream of the durable
- * log, and nothing on it may reach back and affect a turn.
- */
-export interface SessionEventFanOut {
-  emit(sessionId: string, event: ChatSessionEvent): void
-  subscribe(listener: (sessionId: string, event: ChatSessionEvent) => void): () => void
-}
-
-export function createSessionEventFanOut(): SessionEventFanOut {
-  const listeners = new Set<(sessionId: string, event: ChatSessionEvent) => void>()
-  return {
-    emit(sessionId, event) {
-      for (const listener of [...listeners]) {
-        try {
-          listener(sessionId, event)
-        } catch { /* one watcher's failure is not another's, and never the turn's */ }
-      }
-    },
-    subscribe(listener) {
-      listeners.add(listener)
-      return () => { listeners.delete(listener) }
-    },
-  }
-}
-
-/**
- * The composed host, as the dashboard's chat routes consume it (400-01, D-01).
- *
- * THE WHOLE OF THE COMPOSER, and it decides nothing. Every member is either a handle from the host
- * this function was handed or a function the `agent` package exports, bound. There is no listing
- * assembled here, no op id spelled here and no scope decided here — a composer that computed any
- * of those would be a second answer to a question the composition root has already answered, which
- * is the shape `chat/host.ts`'s header refuses at length.
- *
- * PUBLISHED rather than private because the conformance suite composes the door the same way the
- * command does. An adapter that assembled its own seam would be enumerating a door this product
- * does not ship (397 D-01's produced-enumeration law, applied to the composition itself).
- */
-/**
  * The asking conversation an invocation belongs to, read STRUCTURALLY off an `unknown` input.
  *
- * The seam's `input` widened in 404-05 because the door now dispatches three ops, not one — and
- * only `agent.ask` has a `sessionId`. Reading it defensively rather than by type is what keeps a
- * post-processing read from being scoped to a conversation it has nothing to do with, and it is
- * the same posture the door already takes on a FIRST turn, where the id does not exist yet
- * (WINDOWS #192): no asker, no claim.
+ * 2026-09-28, 430: the frame this feeds is the gate posture's, and Phase 432 removes it with the
+ * posture. Until then it stays byte-for-byte in behaviour: an input that carries a `sessionId`
+ * enters that session's frame, and one that carries none enters an empty frame, which is the
+ * fail-closed direction (WINDOWS #192): no asker, no claim.
  */
 function askingSessionOf(input: unknown): string | undefined {
   if (typeof input !== 'object' || input === null) return undefined
@@ -198,12 +143,26 @@ function askingSessionOf(input: unknown): string | undefined {
   return typeof sessionId === 'string' ? sessionId : undefined
 }
 
+/**
+ * The composed host, as the dashboard's run-detail routes and its run-confirm pair consume it
+ * (400-01, D-01; narrowed by 430 D-02).
+ *
+ * THE WHOLE OF THE COMPOSER, and it decides nothing. Every member is either a handle from the host
+ * this function was handed or a function the `agent` package exports, bound. There is no op id
+ * spelled here and no scope decided here — a composer that computed either would be a second
+ * answer to a question the composition root has already answered, which is the shape
+ * `chat/host.ts`'s header refuses at length.
+ *
+ * PUBLISHED rather than private because the conformance suite composes the host the same way the
+ * command does. An adapter that assembled its own seam would be enumerating a door this product
+ * does not ship (397 D-01's produced-enumeration law, applied to the composition itself).
+ */
 export function composeDashboardAgentHost(
   host: LocalAgentHost,
-  sessionEvents: SessionEventFanOut,
   confirms?: ConfirmRegistry,
   /**
-   * The door's ambient asking-session scope, entered around each turn (400-15, gap 3).
+   * The door's ambient asking-session scope, entered around each invocation (400-15, gap 3).
+   * 2026-09-28, 430: the gate posture's frame, kept until Phase 432 removes it.
    *
    * A CALLBACK RATHER THAN THE STORE, so this composer keeps deciding nothing: it is handed a way
    * to run the invocation inside the door's scope and it uses it, exactly as it is handed
@@ -225,7 +184,8 @@ export function composeDashboardAgentHost(
    * THE DEFAULT IS FAIL-CLOSED, NOT THE IDENTITY. A host with no root can restore nothing, so a
    * SCOPED call marks every placeholder as a typed chip — an honest "this host cannot show you
    * that" rather than a raw `<SECRET_1>` a reader would take for a bug. A SCOPE-LESS call is still
-   * the identity, which is chat's unchanged posture (see the seam's own law in `chat/host.ts`).
+   * the identity, which is the run-confirm prompt's posture (see the seam's own law in
+   * `chat/host.ts`).
    */
   unmaskForDisplay?: DisplayUnmask,
   enterRunTriggerScope?: AgentHost['enterRunTriggerScope'],
@@ -236,17 +196,14 @@ export function composeDashboardAgentHost(
       scope === undefined ? text : markUnrestorablePlaceholders(text))
   return {
     registry: host.registry,
-    onSessionEvent: (listener) => sessionEvents.subscribe(listener),
     // 400-03: the SAME registry the composition parks questions in, handed to the routes that
     // serve them. Conditionally spread so a door composed without a confirm channel carries no
     // field at all — the translated no-TTY posture, in one place.
     ...(confirms === undefined ? {} : { confirms }),
     caller: DASHBOARD_FUNCTION_CALLER,
-    agentAskFunctionId: AGENT_ASK_FUNCTION_ID,
-    // 404-05 (D-16/D-18/D-22): the two ids the post-processing routes dispatch, PASSED on
-    // `agentAskFunctionId`'s exact footing. `packages/dashboard-server` may not import this
-    // package (validate:arch), so the ids reach it the only way an id can — as data from the
-    // composition that already knows them.
+    // 404-05 (D-16/D-18/D-22): the two ids the post-processing routes dispatch, PASSED as data.
+    // `packages/dashboard-server` may not import this package (validate:arch), so the ids reach
+    // it the only way an id can — as data from the composition that already knows them.
     runsPostProcessingFunctionId: RUNS_POST_PROCESSING_FUNCTION_ID,
     runsEventsFunctionId: RUNS_EVENTS_FUNCTION_ID,
     // 405-01 (D-03): the third id the run-service routes dispatch, on the same footing and for the
@@ -270,20 +227,14 @@ export function composeDashboardAgentHost(
     runsMarksHistoryFunctionId: RUNS_MARKS_HISTORY_FUNCTION_ID,
     runsMarkPreviewFunctionId: RUNS_MARK_PREVIEW_FUNCTION_ID,
     ...(enterRunTriggerScope === undefined ? {} : { enterRunTriggerScope }),
-    // 400-15: THE ONE PLACE THE ASKING CONVERSATION IS KNOWN AND STILL AHEAD OF EVERYTHING THAT
-    // NEEDS IT. `handleTurn` makes exactly one call here per turn, carrying the browser's
-    // `sessionId`; the gate's context resolver and the confirm port are both further down this same
-    // async chain. Scoping the WHOLE invocation is what makes "who is asking" available to both
-    // without widening either contract.
+    // 400-15: every invocation runs inside the asking-session frame the gate's context resolver
+    // and the confirm port read further down this same async chain. Scoping the WHOLE invocation is
+    // what makes "who is asking" available to both without widening either contract.
     //
-    // `input.sessionId` IS `undefined` ON A FIRST TURN and is passed through as such rather than
-    // recovered: the engine mints the id partway down this call, and a browser cannot have opened a
-    // stream on an id that does not exist yet (WINDOWS #192). No asker, no claim.
-    //
-    // `input` IS `unknown` SINCE 404-05, and the asking-session scoping still reads `sessionId`
-    // off it — structurally, because that is what it always was. `agent.ask` carries one; the two
-    // post-processing reads carry none, and a read with no asker enters no session, which is the
-    // fail-closed direction and exactly what {@link postureFor} already answers for.
+    // 2026-09-28, 430: the frame is the gate posture's, and Phase 432 removes it with the posture.
+    // It stays byte-for-byte in behaviour until then: a non-mark op enters a fresh frame named by
+    // its input's `sessionId`, which the run-detail reads never carry, so they enter an empty
+    // frame and resolve to the fail-closed posture {@link postureFor} already answers for.
     invokeFunction: (
       registry: AgentRegistryHandle,
       functionId: string,
@@ -298,19 +249,6 @@ export function composeDashboardAgentHost(
           askingSessionOf(input),
           () => invokeFunction(registry as FunctionRegistry, functionId, input, caller),
         ),
-    foldFunctionResult: (
-      registry: AgentRegistryHandle,
-      functionId: string,
-      payload: unknown,
-    ): AgentResultFold =>
-      foldFunctionResult(registry as FunctionRegistry, functionId, payload),
-    listDeclarations: (
-      registry: AgentRegistryHandle,
-      caller: FunctionCaller,
-    ): readonly AgentDeclarationRow[] => (registry as FunctionRegistry).list(caller),
-    // 400-06: the ONE loader, called by the door that serves the browser's `/help`. The path is
-    // resolved by `loader.ts` (which ships the file) and never by dashboard-server.
-    readCapabilityCatalog: (): unknown => loadCapabilityCatalog(),
     // The fourth door's display boundary, in `chat.ts`'s `emitHuman` shape and for its law
     // (400-06): "everything a surface prints goes through the masker".
     //
@@ -800,7 +738,6 @@ export interface DashboardDoor {
  * and the injected-host seam — which is the part that must not be written twice.
  */
 export function composeDashboardDoor(input: DashboardDoorInput): DashboardDoor {
-  const sessionEvents = createSessionEventFanOut()
   const confirms = input.confirms
 
   /**
@@ -943,9 +880,6 @@ export function composeDashboardDoor(input: DashboardDoorInput): DashboardDoor {
     // CLI inbox, hours later — so this is the ONLY moment at which the door that proposed can be
     // recorded truthfully.
     mintingSurface: DASHBOARD_FUNCTION_CALLER.surface,
-    // D-03: the door's half of the projection. The composition notifies this once per APPENDED
-    // event; the fan-out is what turns one notification into however many browsers are watching.
-    observeSessionEvent: (sessionId, event) => { sessionEvents.emit(sessionId, event) },
     ...(input.chatModel === undefined
       ? {}
       : {
@@ -1002,7 +936,6 @@ export function composeDashboardDoor(input: DashboardDoorInput): DashboardDoor {
     host,
     agentHost: composeDashboardAgentHost(
       host,
-      sessionEvents,
       confirms,
       (sessionId, run) => askingSessions.run(
         { askingSession: sessionId, reachableByChannelAlone: false },

@@ -122,7 +122,7 @@ async function listen(server: ReturnType<typeof createServer>): Promise<string> 
 // wires them. The display unmasker holds no store, so nothing a read masks can be restored here.
 async function startDoors(f: ReturnType<typeof productionFixture>) {
   const agentHost = composeDashboardAgentHost(
-    f.host, { subscribe: () => () => undefined, emit() {} }, undefined, undefined,
+    f.host, undefined, undefined,
     createDisplayUnmasker({
       agentQaRoot: f.agentQaRoot, secretStores: () => [], env: () => ({}), authStatePayloads: () => [],
     }),
