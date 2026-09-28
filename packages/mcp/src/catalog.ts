@@ -41,7 +41,7 @@
 
 import { McpServer, ProtocolError, ProtocolErrorCode } from '@modelcontextprotocol/server'
 import type { CallToolResult, InputRequiredResult } from '@modelcontextprotocol/server'
-import { invokeFunction } from '@vostride/agent-qa-agent'
+import { invokeFunction, RUNS_ARTIFACT_FUNCTION_ID } from '@vostride/agent-qa-agent'
 import type { FunctionRegistry } from '@vostride/agent-qa-agent'
 import type { FunctionCaller, FunctionScope } from '@vostride/agent-qa-schema'
 
@@ -57,7 +57,7 @@ import {
   compositionOf,
 } from './mapping.js'
 import type { ToolProjection } from './mapping.js'
-import { maskedToolError, maskedToolResult } from './masked-result.js'
+import { decorateRunEvidenceImage, maskedToolError, maskedToolResult } from './masked-result.js'
 import { V1_TOOL_MIGRATION_MAP } from './migration-map.js'
 import type { V1ToolMigrationEntry } from './migration-map.js'
 import { McpProjectionError, toRegisterToolConfig } from './projection.js'
@@ -189,7 +189,7 @@ function resolvedCardId(resolution: unknown): string | undefined {
 }
 
 /**
- * Run one projected call and answer what the op answered.
+ * Run one projected call and answer what the op answered, with the op that answered it.
  *
  * Every branch is `invokeFunction` and argument shuffling. Nothing computes a result, nothing reads
  * a store, nothing decides a policy.
@@ -198,13 +198,13 @@ async function runProjection(
   projection: ToolProjection,
   args: unknown,
   invoke: BoundInvoke,
-): Promise<unknown> {
+): Promise<{ readonly opId: string; readonly output: unknown }> {
   switch (compositionOf(projection)) {
     case 'single':
-      return invoke(projection.ops[0]!, args)
+      return { opId: projection.ops[0]!, output: await invoke(projection.ops[0]!, args) }
     case 'union': {
       const arm = selectFoldArm(projection, args)
-      return invoke(arm.opId, arm.input)
+      return { opId: arm.opId, output: await invoke(arm.opId, arm.input) }
     }
     case 'pipeline': {
       // D-02's one read door: resolve the reference the caller has, then — and only when the
@@ -213,9 +213,9 @@ async function runProjection(
       // address renders rather than the resolver's own rendering of a match.
       const resolution = await invoke(projection.ops[0]!, args)
       const id = resolvedCardId(resolution)
-      if (id === undefined) return resolution
+      if (id === undefined) return { opId: projection.ops[0]!, output: resolution }
       const card = await invoke(projection.ops[1]!, { ref: id })
-      return { ...(resolution as Record<string, unknown>), card }
+      return { opId: projection.ops[1]!, output: { ...(resolution as Record<string, unknown>), card } }
     }
   }
 }
@@ -333,11 +333,16 @@ function createProjectionHandler(
 ) {
   return async (args: unknown): Promise<CallToolResult> => {
     try {
-      const output = await runProjection(projection, args, invoke)
+      const { opId, output } = await runProjection(projection, args, invoke)
       // BOTH channels from ONE masked serialization (396-06). `structuredContent` used to be the
       // raw op output, and a declared credential reached the wire through it verbatim while the
       // text beside it read `<SECRET_0>` — RESEARCH Pitfall 9's own named channel, measured.
-      const result = maskedToolResult(output, maskText)
+      const masked = maskedToolResult(output, maskText)
+      // 431-05 D-07: the image block is decided AFTER masking, from bytes the masked value still
+      // carries unchanged. Deciding it from the raw output would put bytes beside a withheld result.
+      const result = opId === RUNS_ARTIFACT_FUNCTION_ID
+        ? decorateRunEvidenceImage({ result: masked, output, maskText })
+        : masked
       // 408 D-05/D-08/D-09: the watch affordance, on every carrier result, for every host class.
       return decorateCarrierResult({
         result,

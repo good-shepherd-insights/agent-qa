@@ -79,8 +79,8 @@
 
 import type { CallToolResult } from '@modelcontextprotocol/server'
 import { FunctionDeniedError } from '@vostride/agent-qa-agent'
-import { remediesRenderableBy } from '@vostride/agent-qa-schema'
-import type { GateRemedy, RemedyKindFor } from '@vostride/agent-qa-schema'
+import { remediesRenderableBy, RunsArtifactResultSchema } from '@vostride/agent-qa-schema'
+import type { GateRemedy, RemedyKindFor, RunsArtifactResult } from '@vostride/agent-qa-schema'
 
 const MCP_REMEDY_TEXT = {
   'present-bearer-scope': 'present a bearer whose scopes include `knowledge-write`',
@@ -238,5 +238,145 @@ export function maskedToolError(err: unknown, maskText: (text: string) => string
       },
     ],
     isError: true,
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────────────────────
+// THE IMAGE ARM (431-05, D-07 · T-431-10). A complete PNG or JPEG screenshot additionally travels
+// as an MCP image block, so an agent can look at it. The block is ADDED to a result
+// `maskedToolResult` already answered; it never replaces `structuredContent` or its text, and it
+// is only ever derived from bytes the masked structured value still carries unchanged.
+//
+// Masking hides strings. It cannot redact pixels, and nothing here claims to: a screenshot shows
+// what the page showed.
+// ─────────────────────────────────────────────────────────────────────────────────────────────
+
+/** Why an artifact did not travel as an image. Each is a tool error, never a success. */
+export type RunEvidenceImageRefusal =
+  | 'artifact-range-fragment'
+  | 'artifact-not-image'
+  | 'artifact-image-invalid'
+  | 'artifact-image-withheld'
+
+const RUN_EVIDENCE_IMAGE_TYPES: ReadonlySet<string> = new Set(['image/png', 'image/jpeg'])
+
+const PNG_SIGNATURE = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a] as const
+const PNG_IEND_TRAILER = [
+  0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4e, 0x44, 0xae, 0x42, 0x60, 0x82,
+] as const
+const JPEG_START = [0xff, 0xd8, 0xff] as const
+const JPEG_END = [0xff, 0xd9] as const
+
+const CANONICAL_BASE64 = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/
+
+function refusalText(refusal: RunEvidenceImageRefusal, contentType: string | undefined): string {
+  switch (refusal) {
+    case 'artifact-range-fragment':
+      return 'artifact-range-fragment: agent_qa_get_run_evidence returns a screenshot only as one '
+        + 'complete PNG or JPEG image, and this range covers part of one. Call runs.artifact without '
+        + 'a range.'
+    case 'artifact-not-image':
+      return `artifact-not-image: this artifact is ${contentType ?? 'not typed'}, not a PNG or JPEG `
+        + 'screenshot, and agent_qa_get_run_evidence relays no other artifact bytes. Read a step '
+        + 'document through action runs.evidence.'
+    case 'artifact-image-invalid':
+      return 'artifact-image-invalid: the artifact is typed as an image, but its bytes are not one '
+        + 'complete PNG or JPEG, so they were not returned.'
+    case 'artifact-image-withheld':
+      return 'artifact-image-withheld: masking changed the encoded screenshot, so neither the image '
+        + 'nor its bytes were returned.'
+  }
+}
+
+function hasBytesAt(bytes: Uint8Array, expected: readonly number[], offset: number): boolean {
+  if (offset < 0 || bytes.length < offset + expected.length) return false
+  return expected.every((byte, index) => bytes[offset + index] === byte)
+}
+
+function isCompleteImage(contentType: string, bytes: Uint8Array): boolean {
+  if (contentType === 'image/png') {
+    return hasBytesAt(bytes, PNG_SIGNATURE, 0)
+      && hasBytesAt(bytes, PNG_IEND_TRAILER, bytes.length - PNG_IEND_TRAILER.length)
+  }
+  return hasBytesAt(bytes, JPEG_START, 0)
+    && hasBytesAt(bytes, JPEG_END, bytes.length - JPEG_END.length)
+}
+
+/** The bytes of CANONICAL base64 only; anything a strict encoder would not emit is refused. */
+function decodeCanonicalBase64(text: string): Uint8Array | undefined {
+  if (!CANONICAL_BASE64.test(text)) return undefined
+  let binary: string
+  try {
+    binary = atob(text)
+  } catch {
+    return undefined
+  }
+  if (btoa(binary) !== text) return undefined
+  return Uint8Array.from(binary, (char) => char.charCodeAt(0))
+}
+
+// The op types a ranged read by the WHOLE blob's head, so a fragment can say image/png while
+// carrying a middle slice. Only a read that provably covers every byte is a whole image.
+function coversWholeBlob(artifact: RunsArtifactResult): boolean {
+  if (artifact.range === undefined) {
+    return artifact.totalLength === undefined || artifact.totalLength === artifact.byteLength
+  }
+  return artifact.totalLength !== undefined
+    && artifact.range.start === 0
+    && artifact.range.end === artifact.totalLength - 1
+    && artifact.byteLength === artifact.totalLength
+}
+
+/**
+ * Add one image block to the evidence tool's `runs.artifact` answer, after masking.
+ *
+ * `result` is what `maskedToolResult` answered for `output`. A refusal or withheld result is
+ * returned untouched. Anything that is not one complete PNG or JPEG, or whose base64 the masking
+ * changed, becomes a named tool error carrying no bytes at all.
+ */
+export function decorateRunEvidenceImage(input: {
+  readonly result: CallToolResult
+  readonly output: unknown
+  readonly maskText: (text: string) => string
+}): CallToolResult {
+  const { result } = input
+  if (result.isError === true) return result
+
+  const refuse = (refusal: RunEvidenceImageRefusal, contentType?: string): CallToolResult => ({
+    content: [{ type: 'text' as const, text: input.maskText(refusalText(refusal, contentType)) }],
+    isError: true,
+    ...(result._meta === undefined ? {} : { _meta: result._meta }),
+  })
+
+  const parsed = RunsArtifactResultSchema.safeParse(input.output)
+  if (!parsed.success) return refuse('artifact-image-invalid')
+  const artifact = parsed.data
+  if (!RUN_EVIDENCE_IMAGE_TYPES.has(artifact.contentType)) {
+    return refuse('artifact-not-image', artifact.contentType)
+  }
+  if (!coversWholeBlob(artifact)) return refuse('artifact-range-fragment')
+
+  const masked = result.structuredContent as
+    | { readonly bytesBase64?: unknown; readonly contentType?: unknown }
+    | undefined
+  if (masked?.bytesBase64 !== artifact.bytesBase64 || masked.contentType !== artifact.contentType) {
+    return refuse('artifact-image-withheld')
+  }
+
+  const bytes = decodeCanonicalBase64(artifact.bytesBase64)
+  if (
+    bytes === undefined
+    || bytes.length !== artifact.byteLength
+    || !isCompleteImage(artifact.contentType, bytes)
+  ) {
+    return refuse('artifact-image-invalid')
+  }
+
+  return {
+    ...result,
+    content: [
+      ...result.content,
+      { type: 'image' as const, data: artifact.bytesBase64, mimeType: artifact.contentType },
+    ],
   }
 }
