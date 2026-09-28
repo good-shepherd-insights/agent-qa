@@ -2,6 +2,9 @@
 // the `fn` door added 2026-08-20, Phase 399.1 plan 06, D-07; the dashboard door added 2026-08-21,
 // Phase 400 plan 01, D-09/D-12).
 //
+// 2026-09-28 (Phase 430, D-03): four adapters again, for `chat`, `mcp`, `fn` and `run-service`. The
+// dashboard chat door's adapter is removed with the door (430 D-02); the counts above are history.
+//
 // WHAT AN ADAPTER ANSWERS, AND IN WHAT VOCABULARY. `enumerateOpIds()` returns the set of REGISTRY OP
 // IDS a surface can reach, never the surface's own names. D-01 makes the op id the comparison
 // currency of every leg in this phase and of 398's catalogue projection, because the two surfaces
@@ -28,7 +31,6 @@
 // comment.
 
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
-import { createServer as createHttpServer } from 'node:http'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 
@@ -61,8 +63,6 @@ import {
   type ToolProjection,
 } from '@vostride/agent-qa-mcp'
 import {
-  CHAT_CAPABILITIES_ROUTE,
-  createChatRouter,
   RUN_SERVICE_ANALYSIS_TEMPLATE,
   RUN_SERVICE_ARTIFACT_TEMPLATE,
   RUN_SERVICE_DETAIL_TEMPLATE,
@@ -84,7 +84,7 @@ import {
   RunsMarksHistoryResultSchema,
   RunStartAcknowledgementSchema,
 } from '@vostride/agent-qa-schema'
-import type { ExecutionContext, FunctionCaller, FunctionScope } from '@vostride/agent-qa-schema'
+import type { FunctionCaller, FunctionScope } from '@vostride/agent-qa-schema'
 import { Command } from 'commander'
 import { vi } from 'vitest'
 
@@ -98,7 +98,6 @@ import { createRunServiceSessionRegistry } from '../../composition/run-service-s
 import { createFnCommand } from '../../commands/fn.js'
 import { mcpFunctionCaller } from '../../commands/mcp.js'
 import { credentialForBearer, matchBearer, resolveMcpTokens } from '../../composition/mcp-token-resolution.js'
-import { CONFORMANCE_EXECUTION_CONTEXT } from './policy-fixtures.js'
 import {
   RUN_SERVICE_FIXTURE_ENTRY_NAME,
   RUN_SERVICE_FIXTURE_TOKEN,
@@ -112,7 +111,6 @@ export interface SurfaceStray {
     | 'mcp-listed-tool'
     | 'chat-alias-target'
     | 'fn-listed-op'
-    | 'dashboard-listed-op'
     // 402-07's two, and they are two because the run-service door's reach is folded from a ROUTE
     // TABLE rather than from a listing of names. A route the door answers that the binding below
     // does not cover is a door widened without this suite seeing it; a bound op id the registry
@@ -723,152 +721,6 @@ export const fnSurfaceAdapter: SurfaceAdapter = Object.freeze({
   notApplicable: Object.freeze([]),
 })
 
-// ---- The dashboard side (2026-08-21, Phase 400 plan 01, D-09/D-12) ------------------------------
-
-/**
- * A project the dashboard door can be stood up over, and nothing more.
- *
- * The `fn` fixture's own shape and reasoning: `composeDashboardDoor` resolves the configuration
- * before it builds a registry, so a listing taken against a path that does not exist would report a
- * resolution failure rather than a surface. A LISTING consults no store, starts no run and reads no
- * knowledge, so nothing beyond the schema minimum is planted.
- */
-function dashboardListingFixture(): { root: string; configPath: string } {
-  const root = mkdtempSync(join(tmpdir(), 'agent-qa-400-01-dash-'))
-  const configPath = join(root, 'agent-qa.config.yaml')
-  writeFileSync(
-    configPath,
-    `${JSON.stringify({
-      workspace: {
-        testMatch: ['tests/**/*.test.yaml'],
-        suiteMatch: ['suites/**/*.suite.yaml'],
-        hooksFile: 'hooks.yaml',
-        envFile: '.env',
-        secretsFile: '.env.secrets.local',
-      },
-      use: { mobile: { appState: 'reset' } },
-    })}\n`,
-    'utf8',
-  )
-  return { root, configPath }
-}
-
-/**
- * The dashboard door's listing, folded into op ids — PURE, TOTAL and SYNCHRONOUS.
- *
- * Split out from the drive for the reason `expandMcpListedTools` and `chatEnumerationOf` are: the
- * stray branch is the shape 397-09's mutation plants, and a branch reachable only by mutating a
- * shipped file is a branch nobody exercises. The control cell drives this with a synthetic listing.
- *
- * NOTHING HERE STATES AN OP ID. The listing arrives as an argument — parsed from the door's own
- * response bytes — and the comparand arrives as an argument too, so this function's own idea of the
- * product is empty by construction.
- *
- * A STRAY IS COUNTED INTO `opIds` AS WELL AS REPORTED, on `chatEnumerationOf`'s own reasoning: the
- * reverse completeness leg is a subset claim, and a stray excluded from the set it is a member of
- * would leave that leg unable to fire on the very defect it exists for.
- */
-export function dashboardEnumerationOf(
-  listedOpIds: readonly unknown[],
-  registryOpIdSet: ReadonlySet<string>,
-): SurfaceEnumeration {
-  const opIds = new Set<string>()
-  const strays: SurfaceStray[] = []
-  for (const listed of listedOpIds) {
-    if (typeof listed !== 'string' || listed === '') continue
-    opIds.add(listed)
-    if (!registryOpIdSet.has(listed)) {
-      strays.push({ kind: 'dashboard-listed-op', name: listed })
-    }
-  }
-  return { opIds, strays }
-}
-
-/**
- * Stand the shipped dashboard door up on an ephemeral port and hand its origin to one body.
- *
- * A REAL SERVER AND REAL REQUEST BYTES, which is D-09's hybrid seen from its in-process half: the
- * handler under the socket is `createChatRouter`, the exact function `createRouter` mounts, over the
- * exact host `agent-qa dashboard` composes. What is replaced is nothing at all — this is the product
- * with a port number the suite chose.
- *
- * MODEL-FREE by omission, which is the shipped HEADLESS posture rather than a stub: no
- * `chatModel` is supplied, so no cell in this directory can reach a provider and none of them
- * answers differently on a machine with a credential in the environment (Pitfall 3's second road).
- *
- * The workspace, the server and the host are all torn down in a `finally`, so no cell can observe
- * what another left behind.
- */
-export async function withDashboardDoor<Answer>(
-  body: (origin: string) => Promise<Answer>,
-  resolveExecutionContext: () => ExecutionContext = () => CONFORMANCE_EXECUTION_CONTEXT,
-): Promise<Answer> {
-  const fixture = dashboardListingFixture()
-  let boundOrigin: string | undefined
-  const door = composeDashboardDoor({
-    agentQaRoot: join(fixture.root, '.agent-qa'),
-    configPath: fixture.configPath,
-    boundOrigin: () => boundOrigin,
-    resolveExecutionContext,
-  })
-  const server = createHttpServer(createChatRouter(door.agentHost))
-  try {
-    await new Promise<void>((ready) => server.listen(0, '127.0.0.1', ready))
-    const address = server.address()
-    if (address === null || typeof address === 'string') {
-      throw new TypeError('the dashboard door bound no port')
-    }
-    boundOrigin = `http://127.0.0.1:${String(address.port)}`
-    return await body(boundOrigin)
-  } finally {
-    await new Promise<void>((closed) => server.close(() => closed()))
-    await door.host.close()
-    rmSync(fixture.root, { recursive: true, force: true })
-  }
-}
-
-/**
- * What the dashboard door reaches, read off the door's OWN served listing.
- *
- * THE DOOR IS DRIVEN, NOT RE-DERIVED, and that is the whole reason this function stands a server up
- * instead of calling `registryOpIds()`. `GET /api/chat/capabilities` runs the router's path guard,
- * the injected-host seam, `registry.list` under the DOOR'S OWN caller mint and JSON serialisation —
- * four stages, any of which could filter. A comparison against a set this file assembled from the
- * same registry the door lists from would be the table-against-itself shape this file's header
- * refuses by name: it would pass on a door that had stopped listing half the registry, because both
- * sides would have shrunk together.
- *
- * THE CALLER IS THE DOOR'S OWN and is deliberately not overridden, exactly as the `fn` adapter
- * leaves `CLI_FUNCTION_CALLER` alone: the dashboard mint is the CLI chat door's mint with the
- * surface name changed, so it already holds every scope, and a NARROWING of it is a fact about the
- * product this enumeration should report rather than paper over.
- *
- * A listing that answered nothing parseable is returned as an EMPTY enumeration rather than thrown
- * on: the roster leg already asserts no surface enumerates nothing, by name, and a throw here would
- * report the same fact in a voice that does not say which surface it was about.
- */
-export async function enumerateDashboardOpIds(): Promise<SurfaceEnumeration> {
-  const listed = await withDashboardDoor(async (origin) => {
-    const response = await fetch(`${origin}${CHAT_CAPABILITIES_ROUTE}`)
-    if (!response.ok) return []
-    try {
-      const body = await response.json() as { readonly ops?: readonly { readonly id?: unknown }[] }
-      return (body.ops ?? []).map((row) => row.id)
-    } catch {
-      return []
-    }
-  })
-  return dashboardEnumerationOf(listed, new Set(registryOpIds()))
-}
-
-export const dashboardSurfaceAdapter: SurfaceAdapter = Object.freeze({
-  id: 'dashboard',
-  enumerateOpIds: () => enumerateDashboardOpIds(),
-  // WIDE BY CLAIM, not by silence: this door reaches the whole registry census, so there is no
-  // capability class it declines. See {@link SurfaceNotApplicable} for why an empty list is stated.
-  notApplicable: Object.freeze([]),
-})
-
 // ---- The run-service side (2026-08-24, Phase 402 plan 07, D-04) ---------------------------------
 //
 // THE FIFTH DOOR, AND THE FIRST NARROW ONE. `roster.ts`'s 2026-08-16 registration note reserved a
@@ -1002,7 +854,7 @@ export const RUN_SERVICE_ROUTE_BINDINGS: readonly RunServiceRouteBinding[] = Obj
  * file certifying a door that is gone. A bound op id absent from the census is the uncatalogued
  * capability every other row already reports.
  *
- * A STRAY IS COUNTED INTO `opIds` AS WELL AS REPORTED, on `dashboardEnumerationOf`'s own reasoning:
+ * A STRAY IS COUNTED INTO `opIds` AS WELL AS REPORTED, on `chatEnumerationOf`'s own reasoning:
  * the reverse completeness leg is a subset claim, and a stray excluded from the set it belongs to
  * would leave that leg unable to fire on the very defect it exists for.
  */
@@ -1068,8 +920,7 @@ export interface RunServiceRouteProbe {
  * IT IS DELIBERATELY NOT `createRunServiceRoutes` MOUNTED ON A BARE SERVER. 402-01's e2e header
  * names that shortcut and refuses it: the verdict standing between a socket and a run, the ordering
  * against the host's wildcard preflight and its SPA fallback are process-level facts, and a router
- * mounted by hand measures none of them. The dashboard adapter above legitimately does mount a
- * router, because what IT measures is a listing.
+ * mounted by hand measures none of them.
  *
  * MODEL-FREE by omission, which is the shipped headless posture rather than a stub: no `chatModel`
  * is supplied, so nothing here can reach a provider on a machine that has a credential exported.
@@ -1164,7 +1015,7 @@ export async function withRunServiceDoor<Answer>(
  * answered at all.
  *
  * A DOOR THAT ANSWERED NOTHING PARSEABLE yields an empty answered set rather than a throw, on
- * `enumerateDashboardOpIds`'s reasoning: the roster leg already asserts no surface enumerates
+ * `enumerateFnOpIds`'s reasoning: the roster leg already asserts no surface enumerates
  * nothing, by name, and a throw here would report the same fact in a voice that does not say which
  * surface it was about.
  */

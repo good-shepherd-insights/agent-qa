@@ -1,6 +1,6 @@
 // The fourth door's WIRE anchors: the served channel, compared with the in-process seam (400-09).
 //
-// WHAT THE REST OF THIS DIRECTORY CANNOT ASK. `surface-dispatch.ts` drives the dashboard door by
+// WHAT THE REST OF THIS DIRECTORY CANNOT ASK. The seam half below drives the dashboard door by
 // composing `composeDashboardDoor` inside the test process and mounting `createChatRouter` on a
 // `node:http` server it stood up itself. That is the right fidelity for a matrix — it is the shipped
 // composer and the shipped router — and it leaves exactly one question unanswerable from inside:
@@ -28,9 +28,14 @@
 // deterministic resolver route and no provider can be spent against.
 
 import { readFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { createServer as createHttpServer } from 'node:http'
+import { dirname, join, resolve } from 'node:path'
 
+import { CHAT_TURN_ROUTE, createChatRouter } from '@vostride/agent-qa-dashboard'
 import { afterEach, describe, expect, it } from 'vitest'
+
+import { composeDashboardDoor } from '../../commands/dashboard.js'
+import { CONFORMANCE_EXECUTION_CONTEXT } from './policy-fixtures.js'
 
 import {
   CONFORMANCE_DIR,
@@ -43,7 +48,7 @@ import {
   spawnDashboard,
 } from './spawned-chat.js'
 import type { SpawnedDashboard } from './spawned-chat.js'
-import { driveDashboardLines, readRuntimeObservations } from './surface-dispatch.js'
+import { readRuntimeObservations } from './surface-dispatch.js'
 
 afterEach(() => {
   cleanupTempRoots()
@@ -292,20 +297,51 @@ async function driveWire(
 /**
  * The in-process half: the shipped composer and the shipped router, in THIS process.
  *
- * It is handed a project built from the SAME recipe the spawned half gets, in its own temp root.
- * See `driveDashboardLines`'s `fixture` parameter for why that is load-bearing rather than tidy.
+ * It is handed a project built from the SAME recipe the spawned half gets, in its own temp root,
+ * because a receipt's `outcome` is content (`config.get` reports how many entries it resolved), so
+ * two fixture recipes would red on the fixture rather than the door. The project is registered with
+ * the shared temp-root tracker and swept in `afterEach`, never deleted here.
+ *
+ * 2026-09-28 (430-05): this drive moved here from `surface-dispatch.ts` when the roster lost its
+ * dashboard row (430 D-03); this file is its last consumer, and Plan 20 deletes the file whole.
  */
 async function driveSeam(
   lines: readonly string[],
 ): Promise<ReturnType<typeof readRuntimeObservations>> {
   const project = dashboardFixtureProject('seam')
-  const observed = await driveDashboardLines(lines, undefined, { configPath: project.configPath })
-  return {
-    receipts: observed.receipts,
-    results: observed.results,
-    auditRows: observed.auditRows,
-    unhandled: observed.unhandled,
+  const root = dirname(resolve(project.configPath))
+  let boundOrigin: string | undefined
+  const door = composeDashboardDoor({
+    agentQaRoot: join(root, '.agent-qa'),
+    configPath: project.configPath,
+    boundOrigin: () => boundOrigin,
+    resolveExecutionContext: () => CONFORMANCE_EXECUTION_CONTEXT,
+  })
+  const server = createHttpServer(createChatRouter(door.agentHost))
+  try {
+    await new Promise<void>((ready) => server.listen(0, '127.0.0.1', ready))
+    const address = server.address()
+    if (address === null || typeof address === 'string') {
+      throw new TypeError('the dashboard door bound no port')
+    }
+    boundOrigin = `http://127.0.0.1:${String(address.port)}`
+    let sessionId: string | undefined
+    for (const line of lines) {
+      const response = await fetch(`${boundOrigin}${CHAT_TURN_ROUTE}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(
+          sessionId === undefined ? { message: line } : { message: line, sessionId },
+        ),
+      })
+      const body = await response.json() as { result?: { sessionId?: unknown } }
+      if (typeof body.result?.sessionId === 'string') sessionId = body.result.sessionId
+    }
+  } finally {
+    await new Promise<void>((closed) => server.close(() => closed()))
+    await door.host.close()
   }
+  return readRuntimeObservations(join(root, '.agent-qa'))
 }
 
 /** Every event the CHILD's own session log carries, in file order — the durable truth. */
