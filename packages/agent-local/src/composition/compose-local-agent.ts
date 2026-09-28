@@ -2735,10 +2735,11 @@ function chatToolsetHash(registry: FunctionRegistry | undefined): string {
 // scripts/423-feedback-read-mutation.sh. 431 D-06 adds runs.overview, whose test names, step
 // labels and record summaries are stored text, and runs.list, whose test names are the same stored
 // text; OVERVIEW-COLD-SCOPE pins all seven members exactly.
-export const COLD_READ_SCOPE_FUNCTION_IDS = [
+// Frozen at runtime: `as const` alone would let any importer splice masking off for every host.
+export const COLD_READ_SCOPE_FUNCTION_IDS = Object.freeze([
   'runs.postprocessing', 'runs.knowledge', 'runs.evidence', 'runs.marks.history', 'runs.mark.preview',
   'runs.overview', 'runs.list',
-] as const satisfies readonly string[]
+] as const satisfies readonly string[])
 
 export function composeLocalAgent(input: ComposeLocalAgentInput): LocalAgentHost {
   const clock = input.clock ?? SYSTEM_CLOCK

@@ -139,6 +139,7 @@ describe('OVERVIEW-COLD-SCOPE: runs.overview reads stored text under the cold re
       'runs.postprocessing', 'runs.knowledge', 'runs.evidence', 'runs.marks.history',
       'runs.mark.preview', 'runs.overview', 'runs.list',
     ])
+    expect(Object.isFrozen(COLD_READ_SCOPE_FUNCTION_IDS)).toBe(true)
   })
 
   it('masks declared secrets in the cold overview and keeps the rest readable', async () => {
