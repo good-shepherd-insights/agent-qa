@@ -222,7 +222,7 @@
       "v1Name": "agent_qa_validate_test"
     }
   ],
-  "rowCount": 61,
+  "rowCount": 62,
   "rows": [
     {
       "alias": "digest",
@@ -2623,6 +2623,13 @@
       "shortDescription": "Debug and fix failed agent-qa runs"
     },
     {
+      "description": "Use when asked what an agent-qa run did, why a step passed or failed, what a run's screenshots, console or network showed, what knowledge agent-qa learned or served, where a knowledge record came from, or which runs exist. Reads runs, evidence and knowledge through the agent-qa MCP tools or the agent-qa CLI with --json, never through .agent-qa files, SQLite or index files.",
+      "docPath": "packages/cli/skills/agent-qa-knowledge/SKILL.md",
+      "kind": "skill",
+      "name": "agent-qa-knowledge",
+      "shortDescription": "Read agent-qa runs, evidence and knowledge"
+    },
+    {
       "description": "Use when investigating failed agent-qa runs, inspecting artifacts, classifying failures, or comparing recent runs. Prefer agent-qa MCP run/artifact tools and produce evidence-backed triage.",
       "docPath": "packages/cli/skills/agent-qa-result-triage/SKILL.md",
       "kind": "skill",
@@ -2630,5 +2637,5 @@
       "shortDescription": "Triage agent-qa run failures"
     }
   ],
-  "rowsDigest": "25b1c9ff1ea2c818108a0bc265bdefc238cb80a782801544a146a6b93da8038a"
+  "rowsDigest": "7d205b183a128346d9601417341aec9243796efcef5e653cc94c9ed62d0c9f83"
 }
