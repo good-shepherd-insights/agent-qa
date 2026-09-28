@@ -57,19 +57,35 @@ afterEach(() => {
 interface RawResponse {
   /** `0` means NO RESPONSE ARRIVED — the socket closed empty, the connect failed, or time ran out. */
   readonly status: number
+  readonly head: string
   readonly body: string
   /** Why nothing arrived, when nothing arrived. `ECONNREFUSED` here means the process is gone. */
   readonly note: string
 }
 
+function unchunk(body: string): string {
+  let decoded = ''
+  let rest = body
+  for (;;) {
+    const lineEnd = rest.indexOf('\r\n')
+    if (lineEnd === -1) return decoded
+    const size = Number.parseInt(rest.slice(0, lineEnd), 16)
+    if (!Number.isInteger(size) || size === 0) return decoded
+    decoded += rest.slice(lineEnd + 2, lineEnd + 2 + size)
+    rest = rest.slice(lineEnd + 2 + size + 2)
+  }
+}
+
 function parseRaw(raw: string): RawResponse {
-  if (raw === '') return { status: 0, body: '', note: 'the socket closed without a single byte' }
+  if (raw === '') return { status: 0, head: '', body: '', note: 'the socket closed without a single byte' }
   const split = raw.indexOf('\r\n\r\n')
   const head = split === -1 ? raw : raw.slice(0, split)
-  const body = split === -1 ? '' : raw.slice(split + 4)
+  const payload = split === -1 ? '' : raw.slice(split + 4)
+  const body = /^transfer-encoding: chunked\r?$/imu.test(head) ? unchunk(payload) : payload
   const status = Number.parseInt(head.split('\r\n')[0]?.split(' ')[1] ?? '', 10)
   return {
     status: Number.isInteger(status) ? status : 0,
+    head,
     body,
     note: Number.isInteger(status) ? '' : 'the bytes that arrived were not a status line',
   }
@@ -99,7 +115,7 @@ function rawRequest(
       settle(value)
     }
     const timer = setTimeout(
-      () => finish({ status: 0, body: '', note: 'no response within the cell budget' }),
+      () => finish({ status: 0, head: '', body: '', note: 'no response within the cell budget' }),
       options.budgetMs ?? 8_000,
     )
     socket.setEncoding('utf8')
@@ -107,7 +123,7 @@ function rawRequest(
     socket.on('end', () => finish(parseRaw(raw)))
     socket.on('close', () => finish(parseRaw(raw)))
     socket.on('error', (error: Error) => {
-      finish(raw === '' ? { status: 0, body: '', note: error.message } : parseRaw(raw))
+      finish(raw === '' ? { status: 0, head: '', body: '', note: error.message } : parseRaw(raw))
     })
     socket.on('connect', () => {
       const headers: Record<string, string> = {
@@ -128,8 +144,14 @@ function rawRequest(
 
 // ---- the survival instrument -------------------------------------------------------------------
 
-/** The healthy request every cell drives before and after the hostile one. */
-const HEALTHY_LINE = 'GET /api/chat/capabilities'
+/**
+ * The healthy request every cell drives before and after the hostile one.
+ *
+ * 2026-09-28 (430 D-02): re-pointed from the conversation capabilities read, which no longer
+ * routes. `/api/stats` is a plain database read the hermetic dashboard answers 200 with no state;
+ * the app-metadata read would reach the npm registry from a fresh HOME.
+ */
+const HEALTHY_LINE = 'GET /api/stats'
 
 interface Survival {
   /** The healthy drive BEFORE the hostile request — proof the subject was serving. */
@@ -307,20 +329,25 @@ describe('the shipped dashboard process survives a malformed request path', () =
   )
 
   it(
-    's5 — ACCEPTS CONTROL: the chat router still answers a malformed session id 404, and a healthy request 200',
+    's5 — ACCEPTS CONTROL: a deleted chat path answers the shared 404, and a healthy request 200',
     { timeout: 120_000 },
     async () => {
-      // A REFUSE-EVERYTHING FIX PASSES THE FOUR CELLS ABOVE. This one is what it fails. The 404 is
-      // the guard gap round 1 shipped INSIDE `chat-routes.ts`, three frames down; if the guarded
-      // parse or the backstop introduced here swallowed the request earlier, this would stop being
-      // a 404 and the inner guard's reachability would have been quietly eaten by the hoist.
+      // A REFUSE-EVERYTHING FIX PASSES THE FOUR CELLS ABOVE. This one is what it fails: the
+      // malformed path has to travel past the guarded parse and the backstop to the router's
+      // generic 404. Since 430 D-02 no dispatch owns this prefix, so the answer is the shared arm's,
+      // which carries the wildcard grant the removed router never wrote.
       const result = await survive('s5-accepts-control', 'GET /api/chat/sessions/%/events')
       expectSurvived('s5', result)
       expect(
         result.hostile.status,
-        `s5: the chat router's own malformed-id guard no longer decides this request — the frames `
-        + `added above it answered first. body=${JSON.stringify(result.hostile.body)}`,
+        `s5: a deleted path was not answered by the router's generic 404 — the frames above it `
+        + `answered first. body=${JSON.stringify(result.hostile.body)}`,
       ).toBe(404)
+      expect(JSON.parse(result.hostile.body)).toEqual({ error: 'Not found' })
+      expect(
+        result.hostile.head,
+        's5: the 404 carried no wildcard grant, so it did not come from the shared arm',
+      ).toMatch(/^access-control-allow-origin: \*$/imu)
     },
   )
 })
