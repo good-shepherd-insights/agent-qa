@@ -1,37 +1,36 @@
-// The injected-host seam the dashboard's chat door dispatches through (Phase 400 plan 01, D-01).
+// The injected-host seam the dashboard's run-detail routes and its run-confirm pair dispatch through
+// (Phase 400 plan 01, D-01; narrowed by 430 D-02).
 //
 // WHY THIS FILE IS A TYPE AND NOTHING ELSE. D-01 puts the composed agent host in THIS PROCESS —
 // dashboard-server's — and the shortest reading of that is "dashboard-server calls
 // `composeLocalAgent()`". It is also the wrong one. This package has no dependency on `agent`,
 // `agent-local` or `safety` and its ownership contract says so by name; acquiring them would mean
 // re-assembling the ~3,500 lines of port wiring `composeCliLocalAgent` already owns — the run
-// executor, the draft authoring and apply ports, the config editor's four halves, the capability
-// catalog, the masked config reader — and the moment that second assembly exists there are two
-// answers to "what can a conversation do", which is the exact drift the whole function layer was
-// built to abolish (385 D-15, one composition root).
+// executor, the draft authoring and apply ports, the config editor's four halves, the masked config
+// reader — and the moment that second assembly exists there are two answers to "what can this
+// product do", which is the exact drift the whole function layer was built to abolish (385 D-15,
+// one composition root).
 //
 // So the host is composed by `agent-qa dashboard` — the CLI command that starts this server, in the
-// same process — and handed in. The process is the one D-01 names; the assembly is the one the CLI
-// chat door already uses; and this package still names no agent package.
+// same process — and handed in. The process is the one D-01 names, and this package still names no
+// agent package. That standing decision survives 430: the conversation door it was first built for
+// is gone, and the same host now serves run detail, analysis, knowledge, marks, post-processing and
+// the run-confirm pair.
 //
-// WHAT CROSSES THIS SEAM, AND WHY IT IS SHAPED THIS WAY. Everything below is a function the CALLER
-// supplies, not a value this package computes. `invokeFunction` and `foldFunctionResult` are the
-// agent package's own exports, bound by the composer; `registry` and `caller` are opaque handles
-// this package never inspects; and `agentAskFunctionId` is the agent package's `agent.ask`
-// constant, PASSED rather than re-spelled — a string literal here would be a second spelling of an
-// op id, free to drift from the one that dispatches.
+// WHAT CROSSES THIS SEAM, AND WHY IT IS SHAPED THIS WAY. Everything below is a function or a value
+// the CALLER supplies, not one this package computes. `invokeFunction` is the agent package's own
+// export, bound by the composer; `registry` and `caller` are opaque handles this package never
+// inspects; and every op id is the agent package's constant, PASSED rather than re-spelled — a
+// string literal here would be a second spelling of an op id, free to drift from the one that
+// dispatches.
 //
 // THE SEAM CARRIES NO CAPABILITY OF ITS OWN. There is no `runTest`, no `listRuns`, no per-capability
-// verb: the door reaches every capability through one gated invocation of one registered op, which
+// verb: every route reaches its capability through one gated invocation of one registered op, which
 // is 397 D-03's rule ("bespoke per-capability handlers stay off the roster") expressed as a type.
-// A second method here would be a private power with no roster row.
+// A second method here would be a private power with no roster row. `AGENT_HOST_MEMBERS` below
+// states the member set as data, and 430's closed-set cells pin it against the interface both ways.
 
-import type {
-  AgentAskResult,
-  ChatSessionEvent,
-  ClauseReceiptStatus,
-  FunctionCaller,
-} from '@vostride/agent-qa-schema'
+import type { FunctionCaller } from '@vostride/agent-qa-schema'
 
 import type { ConfirmRegistry } from './confirm-registry.js'
 
@@ -47,48 +46,15 @@ import type { ConfirmRegistry } from './confirm-registry.js'
 export type AgentRegistryHandle = object
 
 /**
- * One op result's registry fold, as `foldFunctionResult` produces it (399.1 D-04).
+ * The whole of what the run-detail routes and the run-confirm pair may ask of the process that
+ * started them.
  *
- * FOLDS ARE COMPUTED SERVER-SIDE AND SHIPPED BESIDE THE PAYLOAD, because folding needs the registry
- * and the browser has none. They ADD legibility and can never suppress: the complete masked payload
- * travels whole in `results[]` regardless of what a fold says about it.
- */
-export interface AgentResultFold {
-  readonly verdict: AgentClauseVerdict
-  readonly foldLines: readonly string[]
-}
-
-/**
- * What one op's classifier fold decided, in the CLOSED vocabulary the schema package publishes.
- *
- * `not-run` is excluded because a fold runs over a result, and a clause that did not run produced
- * none — the same exclusion the agent package's own `ClauseVerdict` makes. Spelled over
- * `ClauseReceiptStatus` rather than as a local union of four words, so a fifth member minted by a
- * later phase reaches this door as a compile error instead of as a status the browser cannot name.
- *
- * THIS IS A STRUCTURAL MIRROR, NOT A SECOND CONTRACT. The agent package owns `ClauseVerdict`; this
- * package may not name it, and the composer that binds `foldFunctionResult` assigns the real one to
- * this type — so a shape change there reds at the composition site rather than drifting quietly.
- */
-export interface AgentClauseVerdict {
-  readonly status: Exclude<ClauseReceiptStatus, 'not-run'>
-  readonly outcome: string
-}
-
-/** One capability the door lists, as its declaration names it. */
-export interface AgentDeclarationRow {
-  readonly id: string
-}
-
-/**
- * The whole of what the chat routes may ask of the process that started them.
- *
- * A single object rather than four loose options, because the four members are one decision: they
- * all come from ONE composition, and a server holding an invoke from one host and a registry from
- * another is a state nobody should be able to construct.
+ * A single object rather than loose options, because the members are one decision: they all come
+ * from ONE composition, and a server holding an invoke from one host and a registry from another is
+ * a state nobody should be able to construct.
  */
 export interface AgentHost {
-  /** The composed registry every call and every listing goes through. Opaque here. */
+  /** The composed registry every call goes through. Opaque here. */
   readonly registry: AgentRegistryHandle
   /**
    * The caller this door dispatches as, MINTED by the composition root and never by this package.
@@ -98,20 +64,14 @@ export interface AgentHost {
    * drift vector the parity legs exist to catch, and this package could not type-check one anyway.
    */
   readonly caller: FunctionCaller
-  // 2026-09-28, 430: optional until Plan 10 deletes the chat-only members; nothing reads them
-  // since the chat routes left.
-  /** The agent package's `agent.ask` id, supplied rather than re-spelled. */
-  readonly agentAskFunctionId?: string
   /**
-   * The agent package's `runs.postprocessing` id, on `agentAskFunctionId`'s exact footing (404
-   * D-16/D-18).
+   * The agent package's `runs.postprocessing` id (404 D-16/D-18).
    *
    * SUPPLIED BY THE COMPOSITION, NEVER SPELLED HERE. The post-processing read route dispatches
-   * chip truth through this door for the reason the chat route dispatches a turn through it: the
-   * op id is the agent package's constant, and a string literal in this package would be a second
-   * declaration of a capability's name, free to drift from the spec that answers to it. This
-   * package also may not import `@vostride/agent-qa-agent` (validate:arch), so there is nowhere
-   * here the real constant could come from.
+   * chip truth through this door, and the op id is the agent package's constant: a string literal
+   * in this package would be a second declaration of a capability's name, free to drift from the
+   * spec that answers to it. This package also may not import `@vostride/agent-qa-agent`
+   * (validate:arch), so there is nowhere here the real constant could come from.
    */
   readonly runsPostProcessingFunctionId: string
   /**
@@ -197,11 +157,10 @@ export interface AgentHost {
   /**
    * `invokeFunction`, bound by the composer. THE one door call.
    *
-   * `input` IS `unknown` (404-05). It was `AgentAskInput` while `agent.ask` was the only op this
-   * door dispatched; since 404 the same seam carries `runs.postprocessing` and `runs.events`, whose
-   * inputs are their own strict schemas. Narrowing here would mean this package describing three
-   * other packages' input contracts — and the real `invokeFunction` has always taken `unknown`,
-   * because the op's own schema is what validates it, once, inside the invocation.
+   * `input` IS `unknown` (404-05). Every op this seam carries has its own strict input schema.
+   * Narrowing here would mean this package describing other packages' input contracts — and the
+   * real `invokeFunction` has always taken `unknown`, because the op's own schema is what validates
+   * it, once, inside the invocation.
    */
   invokeFunction(
     registry: AgentRegistryHandle,
@@ -209,50 +168,15 @@ export interface AgentHost {
     input: unknown,
     caller: FunctionCaller,
   ): Promise<unknown>
-  /** `foldFunctionResult`, bound by the composer. */
-  foldFunctionResult?(
-    registry: AgentRegistryHandle,
-    functionId: string,
-    payload: unknown,
-  ): AgentResultFold
   /**
-   * `registry.list`, bound by the composer — what this door can reach, as the registry declares it.
+   * The parked-confirm registry the run trigger's ask-tier questions wait in (400-03,
+   * D-05/D-06/D-07; 401-09 D-11).
    *
-   * THE LISTING ROUTE'S ONLY SOURCE, and the reason the door has a listing route at all: a rostered
-   * surface has to be able to say what it reaches, PRODUCED by driving the door rather than
-   * assembled from a registry the asker could have read itself (397 D-01's produced-enumeration
-   * law). The browser needs the same bytes for `/help` and type-ahead.
-   */
-  listDeclarations?(
-    registry: AgentRegistryHandle,
-    caller: FunctionCaller,
-  ): readonly AgentDeclarationRow[]
-  /**
-   * Watch session events as they are APPENDED to their log (400-01, D-03).
-   *
-   * THE STREAM IS A PROJECTION AND THIS IS WHERE THE PROJECTING STARTS. The listener is called
-   * with a record that is already on the session's JSONL file, so the durable truth and the push
-   * can disagree only by the file being wrong. A dashboard-side event bus that the turn engine
-   * published to directly would be a SECOND producer, free to drift the moment either side grew a
-   * case the other did not — which is the shape D-03 rules out by name.
-   *
-   * THE EVENT IS MASKED, because it is the persisted record: `unmaskForHumanOutput` runs exactly
-   * once, at each surface's own display boundary, and for the dashboard that boundary is the
-   * browser's render (plan 400-06). A frame that carried an unmasked payload would put op-result
-   * credentials on the wire and into whatever a client persists.
-   *
-   * Returns its own unsubscribe, so a caller tears down what it registered and nothing else.
-   */
-  onSessionEvent?(
-    listener: (sessionId: string, event: ChatSessionEvent) => void,
-  ): () => void
-  /**
-   * The parked-confirm registry this door's ask-tier questions wait in (400-03, D-05/D-06/D-07).
-   *
-   * ON THE HOST SEAM BECAUSE BOTH HALVES NEED THE SAME ONE. The composition binds a `chatConfirm`
-   * factory that parks questions in it; the routes push those questions down a browser's SSE
-   * connection and spend their ids on the answer route. A registry created per half would be two
-   * parking lots, and the question would be parked in the one the answer never reaches.
+   * ON THE HOST SEAM BECAUSE BOTH HALVES NEED THE SAME ONE. The composition binds a confirm
+   * factory that parks questions in it; the run-confirm channel pushes those questions down a
+   * browser's SSE connection and the run-confirm answer route spends their ids. A registry created
+   * per half would be two parking lots, and the question would be parked in the one the answer
+   * never reaches.
    *
    * OPTIONAL, AND ABSENT IS THE TRANSLATED TTY POSTURE. A host composed without a confirm channel
    * has nobody to ask — the conformance suite's model-free doors are exactly that — so the
@@ -277,9 +201,9 @@ export interface AgentHost {
    * the safe posture something every future route author has to remember, which is the argument
    * `jsonSameOrigin` already makes one file over about the cross-origin header.
    *
-   * THE PERSISTED RECORD IS NOT TOUCHED. The session JSONL and the replay window hold the masked
-   * form; this runs on the way out, per emitted frame, so nothing durable gains cleartext and the
-   * `unmask` count for any one byte stays exactly one.
+   * THE PERSISTED RECORD IS NOT TOUCHED. Every durable record holds the masked form; this runs on
+   * the way out, per emitted frame, so nothing durable gains cleartext and the `unmask` count for
+   * any one byte stays exactly one.
    *
    * ---- 2026-08-28 (405-10, D-08/D-09/D-10): THE SCOPE, AND WHAT EACH ARM PROMISES ----
    *
@@ -294,10 +218,10 @@ export interface AgentHost {
    * as a visibly-masked chip. The string `<SECRET_` therefore never leaves a scoped call.
    *
    * WITHOUT A SCOPE THE FUNCTION IS THE IDENTITY, and that is a decision rather than an omission.
-   * `chat-routes.ts` calls the one-argument form: a chat turn is not about one run, so there is no
-   * sidecar to match against, and the chat transcript has no chip renderer — a marker emitted
-   * there would put a raw U+241F in front of a person, which is exactly what D-10 forbids. Chat's
-   * display posture is therefore byte-for-byte what 400-06 shipped.
+   * The run-confirm router in `chat-routes.ts` calls the one-argument form: a confirm question is
+   * asked before the run it would start exists, so there is no sidecar to match against, and the
+   * confirm prompt has no chip renderer — a marker emitted there would put a raw U+241F in front
+   * of a person, which is exactly what D-10 forbids.
    *
    * RESTORATION IS OPT-IN, AT THE LOCAL HUMAN ARMS ONLY. `serveRunDetailRead`'s `boundary` option
    * defaults to `'machine'` (masked), so the authed REMOTE door's `/run/:runId/detail` stays masked
@@ -306,38 +230,24 @@ export interface AgentHost {
    * intermediary (405-05's recorded decision). Artifact BYTES are never touched on any door.
    */
   unmaskForDisplay(text: string, scope?: { runId: string }): string
-  /**
-   * The committed capability catalog, as its ONE loader reads it (400-06, RESEARCH Open Q4).
-   *
-   * A FOURTH PROJECTION OF ONE ARTIFACT, not a fifth answer to "what can this product do". The
-   * catalog is PRODUCED from a real composition's declarations and committed; the CLI's `/help`,
-   * its completer and `agent-qa init --agent` all read that same file through
-   * `loadCapabilityCatalog`, and the browser needs the same bytes for the same two jobs. Serving
-   * it is therefore a read of an existing artifact rather than a new source of truth — which is
-   * exactly why this seam hands over a LOADER rather than letting this package walk to a path: the
-   * file's location is resolved by the package that ships it, and a second resolver here would be
-   * a second place for the answer to go stale.
-   *
-   * OPTIONAL, on the `confirms` idiom: a server composed without one answers 501, which is a
-   * different fact from an unrecognised path and a client can act on the difference.
-   */
-  readCapabilityCatalog?(): unknown
 }
 
-/** One executed clause's result, with the fold that makes it legible. */
-export interface ChatTurnFold extends AgentResultFold {
-  readonly functionId: string
-}
-
-/**
- * What `POST /api/chat/turn` answers with.
- *
- * THE TYPED RESULT TRAVELS WHOLE. `result` is the `agent.ask` output verbatim — status, receipts,
- * results, unhandled — because 399.1 D-05 makes `results[]` the structural channel a render reads,
- * and a door that summarised it would be the second render path DASH-01 forbids. `folds` rides
- * BESIDE it, one entry per executed clause in the same order, never merged into the payload.
- */
-export interface ChatTurnResponse {
-  readonly result: AgentAskResult
-  readonly folds: readonly ChatTurnFold[]
-}
+// prettier-ignore
+export const AGENT_HOST_MEMBERS = [
+  'registry',
+  'caller',
+  'runsPostProcessingFunctionId',
+  'runsEventsFunctionId',
+  'runsDetailFunctionId',
+  'runsEvidenceFunctionId',
+  'runsArtifactFunctionId',
+  'analysisGetFunctionId',
+  'runsKnowledgeFunctionId',
+  'runsMarkFunctionId',
+  'runsMarksHistoryFunctionId',
+  'runsMarkPreviewFunctionId',
+  'enterRunTriggerScope',
+  'invokeFunction',
+  'confirms',
+  'unmaskForDisplay',
+] as const satisfies readonly (keyof AgentHost)[]

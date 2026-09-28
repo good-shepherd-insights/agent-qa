@@ -53,11 +53,4 @@ export type {
   ChatRouteRow,
   ChatRouter,
 } from '../chat/chat-routes.js'
-export type {
-  AgentDeclarationRow,
-  AgentHost,
-  AgentRegistryHandle,
-  AgentResultFold,
-  ChatTurnFold,
-  ChatTurnResponse,
-} from '../chat/host.js'
+export type { AgentHost, AgentRegistryHandle } from '../chat/host.js'
