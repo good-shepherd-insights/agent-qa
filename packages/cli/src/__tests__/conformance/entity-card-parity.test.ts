@@ -29,6 +29,10 @@
 // link is the `agentqa://<segment>/{id}` resource template (`mcp/src/resources.ts`), one per kind,
 // and a reference that is not a canonical address for its own kind is a link nothing can
 // dereference.
+//
+// 430 (2026-09-28, D-04): the dashboard renders no card, so the dashboard half of DASH-03 is now the
+// route contract in dashboard-ui's `entity-card.test.ts`: an href minted over an entity's own address
+// by the shared route map, and none for a kind the dashboard does not route.
 
 import { AGENT_QA_OP_CONTRACTS } from '@vostride/agent-qa-mcp'
 import {
