@@ -93,10 +93,18 @@ export const runsListSpec: FunctionSpec<RunsListInput, RunSummary[]> = {
         && (input.test === undefined || namesTest(document, input.test))
       ))
       .sort(compareLatestFinished)
-      .map((document) => toRunSummary(document))
-    const selected = input.target === undefined
-      ? candidates
-      : candidates.filter((row) => recordsTarget(row.recordedTargets, input.target!))
-    return selected.slice(0, limit)
+    const summarize = (documents: readonly CompletedRunHandoff[]): Promise<RunSummary[]> =>
+      Promise.all(documents.map(async (document) => toRunSummary(
+        document,
+        deps.runs.getRecordedTargets === undefined
+          ? { status: 'unknown' }
+          : await deps.runs.getRecordedTargets(document.runId),
+      )))
+
+    const { target } = input
+    if (target === undefined) return summarize(candidates.slice(0, limit))
+    return (await summarize(candidates))
+      .filter((row) => recordsTarget(row.recordedTargets, target))
+      .slice(0, limit)
   },
 }

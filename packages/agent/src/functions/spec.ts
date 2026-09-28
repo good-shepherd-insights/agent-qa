@@ -49,6 +49,7 @@ import type {
   ProposalsInboxPort,
   QuarantineOperationsPort,
   RecordChange,
+  RecordedTargets,
   RiskActionDescriptor,
   RunAnalysisArtifact,
   RunDetailRows,
@@ -599,6 +600,13 @@ export interface RunsReaderPort {
     runId: RunId,
     address: StepEvidenceAddress,
   ): Promise<StepEvidenceLookup>
+  /**
+   * The target names one completed run recorded WHEN IT RAN (431 D-08), never current
+   * configuration. `unknown` when the run has no readable snapshot, including one that vanished
+   * after `list()` answered. Optional: an unbound reader leaves every run unknown, and an unknown
+   * run never matches a requested target. Implementations resolve only runs they enumerate.
+   */
+  getRecordedTargets?(runId: RunId): Promise<RecordedTargets>
 }
 
 /**

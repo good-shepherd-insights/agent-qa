@@ -208,6 +208,7 @@ import type {
   StandingApprovalReader,
 } from '@vostride/agent-qa-safety'
 import {
+  ARTIFACT_FILE,
   FsEventLog,
   FsEvidenceArtifactStore,
   HANDOFF_FILE,
@@ -249,6 +250,7 @@ import type {
   ProposalRecord,
   QuarantineEntryStateName,
   QuarantineLadderState,
+  RecordedTargets,
   RunEventEnvelope,
   RunId,
   RunStartAcknowledgement,
@@ -688,6 +690,40 @@ export const LOCAL_CURATION_CAPABILITIES: LocalCurationCapabilities = Object.fre
   }),
 })
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+function isTargetName(value: unknown): value is string {
+  return typeof value === 'string' && value.trim().length > 0
+}
+
+/**
+ * The target names an artifact snapshot recorded (431 D-08), read out of an UNTRUSTED document:
+ * a single test's resolved definition, or every suite member that recorded one. Any shape it does
+ * not recognise answers `unknown`, so malformed metadata can never read as "recorded no targets".
+ * Only the names cross this seam; no other part of the snapshot does.
+ */
+function recordedTargetsOf(artifact: unknown): RecordedTargets {
+  const source = isRecord(artifact) ? artifact.source : undefined
+  if (!isRecord(source)) return { status: 'unknown' }
+
+  if (source.kind === 'test') {
+    const target = isRecord(source.resolvedDefinition) ? source.resolvedDefinition.target : undefined
+    return isTargetName(target) ? { status: 'recorded', names: [target] } : { status: 'unknown' }
+  }
+  if (source.kind !== 'suite' || !Array.isArray(source.members)) return { status: 'unknown' }
+
+  const names = new Set<string>()
+  for (const member of source.members) {
+    if (!isRecord(member)) return { status: 'unknown' }
+    if (member.target === undefined || member.target === null) continue
+    if (!isTargetName(member.target)) return { status: 'unknown' }
+    names.add(member.target)
+  }
+  return names.size === 0 ? { status: 'unknown' } : { status: 'recorded', names: [...names].sort() }
+}
+
 /**
  * Enumerate `<agentQaRoot>/runs/<slug>/handoff.json`. A project with no runs directory is an
  * ordinary empty result, not an error; an individual unreadable or version-rejected document is
@@ -788,6 +824,32 @@ export function createRunsReader(agentQaRoot: string): RunsReaderPort {
           ? { kind: 'step-not-found' }
           : { kind: 'found', evidence },
       )
+    },
+    /**
+     * Resolved over the ENUMERATED run directories (T-384-08, T-431-01): the caller's id is only
+     * ever compared, never joined onto a path, and the directory must hold a completed handoff
+     * recording that same id, so one run's snapshot can never answer for another. A snapshot that
+     * is absent, unreadable or gone since `list()` answered is `unknown`, never an error.
+     */
+    getRecordedTargets(runId: RunId): Promise<RecordedTargets> {
+      const runsDir = join(agentQaRoot, RUNS_SUBDIR)
+      if (!existsSync(runsDir)) return Promise.resolve({ status: 'unknown' })
+
+      const entry = readdirSync(runsDir, { withFileTypes: true })
+        .find((candidate) => candidate.isDirectory() && candidate.name === runId)
+      if (entry === undefined) return Promise.resolve({ status: 'unknown' })
+
+      try {
+        const runDir = join(runsDir, entry.name)
+        if (loadCompletedRunHandoff(join(runDir, HANDOFF_FILE)).runId !== runId) {
+          return Promise.resolve({ status: 'unknown' })
+        }
+        return Promise.resolve(
+          recordedTargetsOf(JSON.parse(readFileSync(join(runDir, ARTIFACT_FILE), 'utf8'))),
+        )
+      } catch {
+        return Promise.resolve({ status: 'unknown' })
+      }
     },
   }
 }
