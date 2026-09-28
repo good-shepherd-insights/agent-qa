@@ -4,17 +4,22 @@ Inherit the root `agent-qa/AGENTS.md` branding, security, and release rules.
 
 ## Scope
 
-This package owns the Model Context Protocol server, local HTTP transport,
-stdio transport, tool schemas, schema references, and dashboard-backed authoring
-and run tools.
+This package owns the Model Context Protocol server factory, the declared
+tool -> registry op mapping and its projection into tool schemas, masked tool
+results, entity resource templates, the v1 tool migration map, and the loopback
+HTTP face. Every tool is a projection of a function-layer registry op invoked
+through `invokeFunction`; the CLI's `agent-qa mcp` serves it over stdio or HTTP.
 
 ## Read First
 
 - `package.json`
-- `src/server.ts`
-- `src/local-http.ts`
-- `src/schema-reference.ts`
 - `src/index.ts`
+- `src/mapping.ts`
+- `src/projection.ts`
+- `src/catalog.ts`
+- `src/masked-result.ts`
+- `src/http.ts`
+- `DELETION-INVENTORY.md`
 - `src/__tests__/`
 - `references/`
 

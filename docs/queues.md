@@ -35,9 +35,10 @@ tail of a run.
 
 ## agent job queue
 
-The durable, restart-safe background-job substrate: the six agent job kinds, per-kind checkpoints,
+The durable, restart-safe background-job substrate: the five agent job kinds, per-kind checkpoints,
 bounded retry, declared chaining, cooperative cancel, and crash recovery that never re-invokes the
-model. Job lifecycle rows live in sqlite; each checkpoint is published as its own file so that a
+model. The agent job kinds are `chat`, `analyze-run`, `curate-memory`, `consolidate` and
+`propose-improvements`, as the agent package's job kind registry declares them. Job lifecycle rows live in sqlite; each checkpoint is published as its own file so that a
 checkpoint is durable in the same medium as the side effect it guards.
 
 `agent-qa daemon` is the resident drainer: a standing host adopts a fencing epoch and pumps every
