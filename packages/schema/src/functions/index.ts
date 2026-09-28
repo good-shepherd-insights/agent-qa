@@ -140,6 +140,7 @@ export {
   KNOWLEDGE_BUNDLE_SUMMARY_SCHEMA_VERSION,
   KnowledgeBundleSummarySchema,
   KnowledgeBundlesListInputSchema,
+  KnowledgeBundlesListOutputSchema,
 } from './knowledge'
 export type {
   KnowledgeBundleSummary,

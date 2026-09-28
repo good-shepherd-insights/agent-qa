@@ -110,6 +110,9 @@ export const KnowledgeBundleSummarySchema = z.object({
   evidenceIncomplete: z.boolean(),
 }).strict() satisfies z.ZodType<KnowledgeBundleSummary>
 
+// 431 D-04: the listing's whole result, named so the op and the MCP tool share one object.
+export const KnowledgeBundlesListOutputSchema = z.array(KnowledgeBundleSummarySchema)
+
 /**
  * `knowledge.bundles.list` takes no arguments in the seed slice. A `.strict()` empty object
  * rather than `z.void()` so product/status/trust filters become additive fields later

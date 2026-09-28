@@ -4,9 +4,8 @@
 // rather than replacing it. Every trust-shaped field on a row is DERIVED by the v51 trust
 // fold behind the port — this op renders what it is handed and never recomputes trust.
 
-import { KnowledgeBundleSummarySchema, KnowledgeBundlesListInputSchema } from '@vostride/agent-qa-schema'
+import { KnowledgeBundlesListInputSchema, KnowledgeBundlesListOutputSchema } from '@vostride/agent-qa-schema'
 import type { KnowledgeBundleSummary, KnowledgeBundlesListInput } from '@vostride/agent-qa-schema'
-import { z } from 'zod'
 
 import type { ClauseVerdict, FunctionSpec } from '../spec.js'
 
@@ -25,7 +24,7 @@ export const knowledgeBundlesListSpec: FunctionSpec<
   requiredScopes: ['read'],
   resultKind: 'unary',
   input: KnowledgeBundlesListInputSchema,
-  output: z.array(KnowledgeBundleSummarySchema),
+  output: KnowledgeBundlesListOutputSchema,
   risk: { name: `fn:${KNOWLEDGE_BUNDLES_LIST_FUNCTION_ID}`, recognized: true, readOnly: true },
   /**
    * A listing that answered — the count, and nothing out of a bundle (399.1 D-01).

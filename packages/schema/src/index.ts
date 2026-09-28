@@ -1104,6 +1104,7 @@ export {
   KNOWLEDGE_BUNDLE_SUMMARY_SCHEMA_VERSION,
   KnowledgeBundleSummarySchema,
   KnowledgeBundlesListInputSchema,
+  KnowledgeBundlesListOutputSchema,
   MASKED_RESOLVED_CONFIG_SCHEMA_VERSION,
   CONFIG_MASK_PLACEHOLDER,
   MaskedConfigEntrySchema,
