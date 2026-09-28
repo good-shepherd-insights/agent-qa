@@ -869,6 +869,35 @@ describe('BUILT-CLI-RUN-READS: the shipped binary answers the run reads', () => 
     expect(JSON.parse(why.stdout)).toMatchObject({ kind: 'answered', trace: { servedLines: [{ leg: 'dense' }] } })
   }, 60_000)
 
+  it('reads a populated overview and every evidence document through dist/cli.js equal to MCP', async () => {
+    const p = populatedProject()
+    const mcp = await mcpReader(p)
+    const overview = await spawnCollecting(p.root, [CLI_ENTRY, '--config', p.configPath, 'runs', 'overview', p.runId, '--json'])
+    expect(overview.code, overview.stderr).toBe(0)
+    expect(JSON.parse(overview.stdout)).toEqual(await mcp.structured('agent_qa_get_run_overview', { runId: p.runId }))
+    for (const [, flags, input] of DOCUMENT_CASES) {
+      const document = await spawnCollecting(p.root, [CLI_ENTRY, '--config', p.configPath, 'runs', 'evidence', p.runId,
+        '--test', '0', '--step', '0', ...flags, '--json'])
+      expect(document.code, document.stderr).toBe(0)
+      expect(JSON.parse(document.stdout)).toEqual(await mcp.structured('agent_qa_get_run_evidence',
+        { action: 'runs.evidence', runId: p.runId, testIndex: 0, stepIndex: 0, ...input }))
+    }
+  }, 120_000)
+
+  it('leaves overview and evidence documents unbound, creating no database, when the project has none', async () => {
+    const p = populatedProject()
+    for (const suffix of ['', '-wal', '-shm']) rmSync(`${p.dbPath}${suffix}`, { force: true })
+    const overview = await spawnCollecting(p.root, [CLI_ENTRY, '--config', p.configPath, 'runs', 'overview', p.runId, '--json'])
+    expect(overview.code).toBe(1)
+    expect(overview.stdout).toBe('')
+    expect(overview.stderr).toContain('not bound')
+    const document = await spawnCollecting(p.root, [CLI_ENTRY, '--config', p.configPath, 'runs', 'evidence', p.runId,
+      '--test', '0', '--step', '0', '--kind', 'console', '--json'])
+    expect(document.code).toBe(1)
+    expect(document.stderr).toContain('not bound')
+    expect(readdirSync(p.agentQaRoot).filter((name) => name.startsWith('runs.db'))).toEqual([])
+  }, 60_000)
+
   it('exports a screenshot byte for byte through dist/cli.js', async () => {
     const p = populatedProject()
     const out = join(outDir(), 'shot.png')
