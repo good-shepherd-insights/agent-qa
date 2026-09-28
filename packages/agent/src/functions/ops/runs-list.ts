@@ -7,6 +7,7 @@
 import {
   RUNS_LIST_DEFAULT_LIMIT,
   RunsListInputSchema,
+  RunsListOutputContract,
   RunsListOutputSchema,
 } from '@vostride/agent-qa-schema'
 import type {
@@ -74,6 +75,9 @@ export const runsListSpec: FunctionSpec<RunsListInput, RunSummary[]> = {
   // here. The two are the same shape; only one of them is an object a surface can also name, and
   // D-16's whole claim is that the advertised schema and the validated schema are one object.
   output: RunsListOutputSchema,
+  // 431-03 (D-03, A1): the canonical companion, tied to `output` above. It changes only what a
+  // declaration publishes; `output` is still what `invokeFunction` validates with.
+  outputRepresentation: RunsListOutputContract,
   // Read ops declare `readOnly` so the static classifier lands them on the read-only
   // tier — allow in every execution context. The verdict is still computed and audited
   // (D-11): there is no read bypass, only a read classification.

@@ -15,7 +15,7 @@ import type {
 } from '@vostride/agent-qa-safety'
 import type { ExecutionContext, FunctionCaller, FunctionScope } from '@vostride/agent-qa-schema'
 
-import { toSchemaProjection } from './declaration-projection.js'
+import { toOutputProjection, toSchemaProjection } from './declaration-projection.js'
 import type { FunctionBindingStatus } from './spec.js'
 import { agentAskSpec } from './ops/agent-ask.js'
 import { analysisGetSpec } from './ops/analysis-get.js'
@@ -77,6 +77,21 @@ export class DuplicateFunctionIdError extends Error {
   constructor(readonly functionId: string) {
     super(`Duplicate function id: ${functionId}`)
     this.name = 'DuplicateFunctionIdError'
+  }
+}
+
+/**
+ * Thrown at construction when a spec's output companion is tied to a schema other than the one
+ * `invokeFunction` enforces with (431-03, D-03): the declaration would describe one contract while
+ * the gate validated another.
+ */
+export class OutputRepresentationMismatchError extends Error {
+  constructor(readonly functionId: string) {
+    super(
+      `${functionId} declares an outputRepresentation whose runtimeSchema is not its output schema; `
+        + 'the companion must describe the exact object invokeFunction validates with',
+    )
+    this.name = 'OutputRepresentationMismatchError'
   }
 }
 
@@ -579,7 +594,7 @@ function declarationView(spec: FunctionSpec, deps: FunctionDeps): FunctionDeclar
     resultKind: spec.resultKind,
     bindingStatus: resolveBindingStatus(spec, deps),
     input: toSchemaProjection(spec.input),
-    output: toSchemaProjection(spec.output),
+    output: toOutputProjection(spec.output, spec.outputRepresentation),
     risk: Object.freeze({ ...spec.risk }),
   })
 }
@@ -629,6 +644,12 @@ export function createRegistryFromSpecs(
   for (const spec of specs) {
     if (byId.has(spec.id)) {
       throw new DuplicateFunctionIdError(spec.id)
+    }
+    if (
+      spec.outputRepresentation !== undefined
+      && spec.outputRepresentation.runtimeSchema !== spec.output
+    ) {
+      throw new OutputRepresentationMismatchError(spec.id)
     }
     byId.set(spec.id, freezeSpec(spec))
   }

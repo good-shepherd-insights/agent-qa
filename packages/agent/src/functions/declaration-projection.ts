@@ -4,9 +4,19 @@
 // nothing can run and nothing can rewrite. `declarationView` calls it so a listing carries
 // a DESCRIPTION of the contract rather than a handle on the validator that enforces it.
 //
-// Depends on zod alone. It reaches for no port, no host builtin and no sibling module other
+// 2026-09-28 (431-03, D-03 · research A1): the 396 same-object recipe — the schema a surface
+// advertises IS the schema `invokeFunction` validates — now reads as one enforcing schema plus its
+// canonical companion. A branded run id or a preserved `__proto__` variable makes zod's output-mode
+// conversion throw, which is why both sides were projected in input mode below. An op whose output
+// carries such a transform may declare an `OutputContract` whose `runtimeSchema` is its `output`
+// object; the registry checks that identity, and the output side is then read from the companion's
+// explicit output document. Validation is unchanged: the companion's own validate delegates to the
+// same object.
+//
+// Depends on zod and the schema package's contract types alone. It reaches for no port, no host builtin and no sibling module other
 // than the contract types, which is why the surface firewall has nothing to say about it.
 
+import type { OutputContract } from '@vostride/agent-qa-schema'
 import { z } from 'zod'
 
 import type { FunctionSchemaProjection } from './spec.js'
@@ -48,5 +58,18 @@ function deepFreeze<Value>(value: Value, seen: WeakSet<object>): Value {
  */
 export function toSchemaProjection(schema: z.ZodType): FunctionSchemaProjection {
   const projected = z.toJSONSchema(schema, { io: 'input' }) as Record<string, unknown>
+  return deepFreeze(projected, new WeakSet())
+}
+
+/**
+ * Project a declared output: the companion's output document when the spec has one, otherwise
+ * the input-mode projection above.
+ */
+export function toOutputProjection(
+  output: z.ZodType,
+  outputRepresentation: OutputContract | undefined,
+): FunctionSchemaProjection {
+  if (outputRepresentation === undefined) return toSchemaProjection(output)
+  const projected = outputRepresentation['~standard'].jsonSchema.output({ target: 'draft-2020-12' })
   return deepFreeze(projected, new WeakSet())
 }

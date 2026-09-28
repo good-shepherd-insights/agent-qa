@@ -14,6 +14,7 @@ import type { z } from 'zod'
 import type {
   AgentAskInput,
   AgentAskResult,
+  OutputContract,
   ClauseReceiptStatus,
   CompletedRunHandoff,
   CommitReceipt,
@@ -431,6 +432,16 @@ export interface FunctionSpec<Input = unknown, Output = unknown> extends Functio
    * the iterable itself against it would be a category error.
    */
   output: z.ZodType<Output>
+  /**
+   * The canonical output document's companion, for an output zod cannot convert in output mode
+   * (2026-09-28, 431-03 · D-03, research A1).
+   *
+   * OPTIONAL, and it never validates anything: `output` stays the one enforcing schema, and the
+   * registry refuses a companion whose `runtimeSchema` is not that same object. What it changes is
+   * only the declaration's output projection, which is read from the companion's output document
+   * instead of the input-mode conversion.
+   */
+  outputRepresentation?: OutputContract<z.ZodType<Output>>
   /**
    * What THIS invocation is about to cost, in the words a person deciding needs (394-08, D-03).
    *
