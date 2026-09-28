@@ -3,6 +3,7 @@ import { invokeFunction, RUNS_MARK_FUNCTION_ID } from '@vostride/agent-qa-agent'
 import { actionWireSchema, MARKS, RunsMarkOutcomeSchema, type RunsMarkOutcome } from '@vostride/agent-qa-schema'
 import { Command, InvalidArgumentError, Option } from 'commander'
 import { CLI_FUNCTION_CALLER, composeCliLocalAgent } from '../composition/local-agent-host.js'
+import { registerRunReadCommands } from './runs-read.js'
 
 export function renderMarkOutcome(dto: RunsMarkOutcome): string {
   if (dto.kind === 'ambiguous-correction') return `ambiguous correction on ${dto.runId} test ${dto.testIndex}: ${dto.decisionCount} decisions; address a step containing exactly one decision`
@@ -59,5 +60,6 @@ export function createRunsCommand(): Command {
         process.exitCode = 1
       } finally { host?.close() }
     })
+  registerRunReadCommands(command)
   return command
 }
