@@ -5,7 +5,7 @@ import { cpSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, rea
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import * as agent from '@vostride/agent-qa-agent'
-import { createKnowledgeReader, LOCAL_CURATION_CAPABILITIES } from '@vostride/agent-qa-agent-local'
+import { COLD_READ_SCOPE_FUNCTION_IDS, createKnowledgeReader, LOCAL_CURATION_CAPABILITIES } from '@vostride/agent-qa-agent-local'
 import { createConfirmRegistry, createRunServiceRoutes, DashboardDatabase, startServer, type RunServicePorts } from '@vostride/agent-qa-dashboard'
 import { generateRunId } from '@vostride/agent-qa-ids'
 import { AGENT_QA_OP_CONTRACTS, UNPROJECTED_OPS } from '@vostride/agent-qa-mcp'
@@ -1074,6 +1074,10 @@ describe('423-21 feedback reads over both HTTP doors (D-18)', () => {
   // either id from `COLD_READ_SCOPE_FUNCTION_IDS` and this cell reds back to the full redaction it
   // pinned from 423-21 until today (scripts/423-feedback-read-mutation.sh leg F10).
   //
+  // 2026-09-28 (431 D-06): runs.overview joined the same allowlist, so the membership this cell
+  // closes on is six reads, pinned exactly AFTER the behaviour so leg F10 still reds on the doors'
+  // own output first. OVERVIEW-COLD-SCOPE (agent-local) measures the overview's own posture.
+  //
   // THE AMBIENT MASKING RESOLVER IS PUT BACK FIRST, and that line is the measurement rather than
   // hygiene beside it. Every other describe in this file "restores" the process resolver by
   // installing `() => undefined`, which does not restore anything: it PINS the process answer to
@@ -1117,6 +1121,8 @@ describe('423-21 feedback reads over both HTTP doors (D-18)', () => {
     const warmMachine = await read(machine)
     expect(warmMachine.notes).toEqual(['first run-level note', null, masking.mask(`step note ${SECRET}`)])
     expect(JSON.stringify([warmHuman, warmMachine])).not.toContain(SECRET)
+    expect([...COLD_READ_SCOPE_FUNCTION_IDS]).toEqual(['runs.postprocessing', 'runs.knowledge',
+      'runs.evidence', 'runs.marks.history', 'runs.mark.preview', 'runs.overview'])
   }, 180_000)
 
   it('FEEDBACK-HTTP-WRITES-NOTHING: HTTP history and preview leave every store byte-identical and create nothing', async () => {

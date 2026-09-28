@@ -2734,9 +2734,11 @@ function chatToolsetHash(registry: FunctionRegistry | undefined): string {
 // replacing all three with the display marker. ROADMAP SC4 asks the history read for each mark's
 // note, and one mechanism now answers for all five reads. Membership is pinned by
 // HTTP-FEEDBACK-HUMAN-POSTURE (423-feedback-reads.test.ts) through leg F10 of
-// scripts/423-feedback-read-mutation.sh.
-const COLD_READ_SCOPE_FUNCTION_IDS = [
+// scripts/423-feedback-read-mutation.sh. 431 D-06 adds runs.overview, whose test names, step
+// labels and record summaries are stored text; OVERVIEW-COLD-SCOPE pins all six members exactly.
+export const COLD_READ_SCOPE_FUNCTION_IDS = [
   'runs.postprocessing', 'runs.knowledge', 'runs.evidence', 'runs.marks.history', 'runs.mark.preview',
+  'runs.overview',
 ] as const satisfies readonly string[]
 
 export function composeLocalAgent(input: ComposeLocalAgentInput): LocalAgentHost {
