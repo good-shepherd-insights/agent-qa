@@ -66,6 +66,10 @@ export type GateRemedyKind = (typeof GATE_REMEDY_KINDS)[number]
  * borrowing `mcp`, whose projection happens to be empty today — is what keeps that fact true when
  * a fourth kind is minted: a kind that lists `mcp` would otherwise silently start reaching a door
  * nobody decided it for.
+ *
+ * 2026-09-28, 430 D-06: `dashboard` is declared-empty for the same reason. It renders a refusal's
+ * reason only, so it takes no kind; the table below stays total because `cli` and `chat` still
+ * take both kinds it left. Phase 432 removes the remedy layer.
  */
 export const GATE_REMEDY_SURFACES = ['cli', 'chat', 'mcp', 'dashboard', 'run-service'] as const
 
@@ -93,9 +97,9 @@ export interface GateRemedy {
  *
  * THE MEMBERSHIPS ARE READ OFF THE SHIPPED SURFACES, not chosen for symmetry:
  *
- *   `answer-confirm` — needs a human at a port that can answer. The terminal doors have one, chat
- *   has one, the browser gets one. An MCP client does not, which is the precise fact rehearsal 2
- *   measured and the precise reason this table exists.
+ *   `answer-confirm` — needs a human at a port that can answer. The terminal doors have one and
+ *   chat has one. An MCP client does not, which is the precise fact rehearsal 2 measured and the
+ *   precise reason this table exists. The browser renders a reason only (430 D-06).
  *
  *   `trust-session-flag` — `--trust-session` is declared on ONE command, `agent-qa run`, and
  *   `399-runbook-gate.sh --chain` refuses if a second command ever declares it. It is therefore a
@@ -105,9 +109,9 @@ export interface GateRemedy {
  *   is ending the session, so only the surfaces that HAVE a session can render it.
  */
 export const GATE_REMEDY_SURFACES_BY_KIND = {
-  'answer-confirm': ['cli', 'chat', 'dashboard'],
+  'answer-confirm': ['cli', 'chat'],
   'trust-session-flag': ['cli'],
-  'session-pin-final': ['chat', 'dashboard'],
+  'session-pin-final': ['chat'],
   'present-bearer-scope': ['mcp'],
 } as const satisfies Record<GateRemedyKind, readonly GateRemedySurface[]>
 

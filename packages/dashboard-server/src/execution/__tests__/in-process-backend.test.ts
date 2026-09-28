@@ -435,9 +435,9 @@ describe('a refusal is not silence — the completion vocabulary (401-07, D-04/I
     })
     expect(drive.settled[0]!.details.neutralReason).toBe(NEUTRAL_DENIAL_PROSE)
     expect(drive.settled[0]!.details.neutralReason).not.toContain('--trust-session')
-    // The typed half is untouched — it was already right, and it is the control proving this
-    // repair went to the prose channel and nowhere else.
-    expect(drive.settled[0]!.details.remedies).toEqual([{ kind: 'answer-confirm' }])
+    // The typed half is the dashboard projection, which 430 D-06 declared empty: the gate still
+    // mints answer-confirm, and the dashboard receives no remedy.
+    expect(drive.settled[0]!.details.remedies).toEqual([])
   })
 
   it('A REFUSAL WITH NO NEUTRAL FORM IS STILL A REFUSAL — the marker does not depend on the prose', async () => {

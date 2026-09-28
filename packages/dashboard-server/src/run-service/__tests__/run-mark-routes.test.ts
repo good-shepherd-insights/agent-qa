@@ -72,7 +72,7 @@ describe('markRun delegates to the shared gate and feedback port', () => {
         remedies: [{ kind: 'answer-confirm' }, { kind: 'present-bearer-scope' }] }
     })
     const denied = await markRun({ ...f.host, invokeFunction }, RUN_ID, { kind: 'false-fail', note: NOTE })
-    expect(denied).toMatchObject({ status: 403, body: { error: 'mark_denied', remedies: [{ kind: 'answer-confirm' }] } })
+    expect(denied).toMatchObject({ status: 403, body: { error: 'mark_denied', remedies: [] } })
     expect(JSON.stringify(denied)).not.toContain(NOTE)
     invokeFunction.mockImplementation(async () => { throw new Error(NOTE) })
     expect(await markRun({ ...f.host, invokeFunction }, RUN_ID, { kind: 'false-fail', note: NOTE })).toEqual({
@@ -89,11 +89,11 @@ describe('markRun delegates to the shared gate and feedback port', () => {
     expect(f.mark).toHaveBeenCalledExactlyOnceWith({ ...body, runId: RUN_ID })
   })
 
-  it('denies without a frame or with an unwatched scope; only browser remedies survive', async () => {
+  it('denies without a frame or with an unwatched scope; the dashboard receives no remedy', async () => {
     const f = fixture()
     for (const frame of [{}, { confirmScope: mintRunTriggerConfirmScope(), enter: f.enter }]) {
       const result = await markRun(f.host, RUN_ID, { kind: 'false-fail', note: NOTE }, frame)
-      expect(result).toMatchObject({ kind: 'refused', status: 403, body: { error: 'mark_denied', remedies: [{ kind: 'answer-confirm' }] } })
+      expect(result).toMatchObject({ kind: 'refused', status: 403, body: { error: 'mark_denied', remedies: [] } })
       expect(JSON.stringify(result)).not.toContain('present-bearer-scope')
       expect(JSON.stringify(result)).not.toContain(NOTE)
     }
@@ -154,7 +154,7 @@ describe('registered POST /api/runs/:id/mark', () => {
     const url = await socket(fixture().host)
     const denied = await fetch(url, { method: 'POST', body: JSON.stringify({ kind: 'false-fail', note: NOTE }) })
     expect(denied.status).toBe(403)
-    expect(await denied.json()).toMatchObject({ error: 'mark_denied', remedies: [{ kind: 'answer-confirm' }] })
+    expect(await denied.json()).toMatchObject({ error: 'mark_denied', remedies: [] })
     const malformed = await fetch(url, { method: 'POST', body: NOTE })
     expect(malformed.status).toBe(400)
     expect(await malformed.json()).toEqual({ error: 'invalid_mark_input' })
