@@ -328,10 +328,34 @@ describe("AppSidebar", () => {
     }
 
     expect(container.querySelector('a[href="/insights"]')?.getAttribute("data-tour-id")).toBeNull()
-    // 400-06: `/chat` is a primary nav item and deliberately carries NO tour anchor — the product
-    // tour is a fixed, approved sequence and adding a step to it is a decision that belongs to
-    // whoever owns the tour, not to the phase that ships the page.
-    expect(container.querySelector('a[href="/chat"]')?.getAttribute("data-tour-id")).toBeNull()
+    expect(container.querySelector('a[href="/chat"]')).toBeNull()
+  })
+
+  it("SIDEBAR-NAV-EXACT: the primary nav is exactly Runs, Tests, Hooks, Suites, Insights, Config", async () => {
+    await renderSidebar()
+
+    const label = Array.from(container.querySelectorAll("div")).find(
+      (element) => element.childElementCount === 0 && element.textContent === "Navigation",
+    )
+    const group = label?.parentElement
+    expect(group, "the Navigation group was not found").toBeTruthy()
+
+    // 430 (2026-09-28, D-04): exact equality in DOM order, so an item that returns reds wherever
+    // it is inserted.
+    expect(
+      Array.from(group?.querySelectorAll("a") ?? []).map((link) => [
+        link.getAttribute("href"),
+        link.textContent?.trim(),
+      ]),
+    ).toEqual([
+      ["/runs", "Runs"],
+      ["/tests", "Tests"],
+      ["/hooks", "Hooks"],
+      ["/suites", "Suites"],
+      ["/insights", "Insights"],
+      ["/config", "Config"],
+    ])
+    expect(container.querySelector('a[href="/chat"]')).toBeNull()
   })
 
   it("uses a safe grouped feedback mailto body", async () => {
