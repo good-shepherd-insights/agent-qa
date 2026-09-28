@@ -133,7 +133,14 @@ function maskJsonLeaves(value: unknown, maskText: (text: string) => string): unk
       if (Object.hasOwn(masked, maskedKey)) {
         throw new UnmaskableValueError('two keys of one object mask to the same name')
       }
-      masked[maskedKey] = maskJsonLeaves(entry, maskText)
+      // Defined, not assigned: `masked['__proto__'] = …` would set the prototype and drop the key,
+      // and a captured variable may legitimately be named `__proto__` (431-03, T-431-07).
+      Object.defineProperty(masked, maskedKey, {
+        value: maskJsonLeaves(entry, maskText),
+        enumerable: true,
+        writable: true,
+        configurable: true,
+      })
     }
     return masked
   }

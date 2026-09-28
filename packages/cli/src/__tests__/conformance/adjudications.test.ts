@@ -26,7 +26,7 @@
 // `outputSchema` is owned by `packages/mcp`'s own projection suite, which probes the conversion in
 // both directions at server build (RESEARCH Pitfall 9). Re-pinning it here would be the
 // redundant-mechanism trap: two registers over one universe, free to diverge. This file asserts the
-// JOIN — that the two entries name real projected tools and ops — and nothing more.
+// JOIN — that each entry names a real projected tool and op — and nothing more.
 
 import { readFileSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
@@ -194,7 +194,7 @@ function controlTable(rulings: readonly string[]): string {
   return ['prose above', '', header, rule, ...body, '', 'prose below'].join('\n')
 }
 
-// ---- The fourth adjudication: the two degraded output contracts ---------------------------------
+// ---- The fourth adjudication: the degraded output contracts --------------------------------------
 
 const DEGRADED_ANCHOR = '397 DISPOSITION (2026-08-16 · D-20): keep-degraded'
 
@@ -393,11 +393,13 @@ describe('Phase 397 — the inherited adjudications, discharged at their artifac
     })
   })
 
-  describe('D-20\'s fourth adjudication: the two degraded output contracts', () => {
-    it('declares exactly the two entries 397 was named to adjudicate', () => {
+  describe('D-20\'s fourth adjudication: the degraded output contracts', () => {
+    // 2026-09-28 (431-03, D-03/D-07): 397 adjudicated two entries. `agent_qa_list_runs` left the
+    // list when `runs.list` declared its canonical output contract, which converts in output mode;
+    // `packages/mcp`'s probe would now refuse that row as stale. The start acknowledgement stays.
+    it('declares exactly the entry 397 adjudicated that is still degraded', () => {
       expect(DEGRADED_OUTPUT_CONTRACTS.map((entry) => [entry.tool, entry.opId])).toEqual([
         ['agent_qa_start_run', 'runs.start'],
-        ['agent_qa_list_runs', 'runs.list'],
       ])
       for (const entry of DEGRADED_OUTPUT_CONTRACTS) {
         expect(entry.adjudication, entry.tool).toBe('397')

@@ -13,6 +13,13 @@
 // defect. The route taken is the one where the object advertised in `tools/list` and the object
 // `invokeFunction` validates against are the SAME object rather than two derivations of it.
 //
+// 2026-09-28 (431-03, D-03 · research A1): that object may now be a canonical `OutputContract`
+// from `@vostride/agent-qa-schema`. Its `validate` IS the op's runtime schema (the same object
+// `invokeFunction` enforces with) and its output conversion is an explicit document derived from
+// that schema, so a branded run id or an own `__proto__` variable no longer forces a degradation.
+// Nothing here special-cases it: the probe below still asks the SDK's own question in output mode,
+// and still refuses both an undeclared failure and a stale degradation row.
+//
 // ANNOTATIONS ARE DERIVED, AND THEY NEVER ENFORCE. `readOnlyHint` and friends steer a host's UX —
 // whether to auto-approve, whether to warn. They are not a permission system and this file is not a
 // gate: enforcement is `invokeFunction`'s scope check and the policy gate underneath it. Because

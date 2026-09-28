@@ -37,6 +37,7 @@ import {
   DEGRADED_OUTPUT_CONTRACTS,
   UNPROJECTED_OPS,
   withoutDialect,
+  withoutLegacyResultWrap,
 } from '@vostride/agent-qa-mcp'
 import type { JsonDocument, ToolProjection } from '@vostride/agent-qa-mcp'
 import { committedFileText, FunctionScopeSchema } from '@vostride/agent-qa-schema'
@@ -363,7 +364,7 @@ const LEG2_EXCEPTIONS: readonly (readonly [Leg2ExceptionKey, string])[] = Object
   ] as const),
   Object.freeze([
     'degraded-output-contract',
-    'the two tools whose result contract contains a branded transform advertise NO outputSchema '
+    'a tool whose result contract contains a branded transform advertises NO outputSchema '
       + '(mapping.ts DEGRADED_OUTPUT_CONTRACTS). The absence is ASSERTED rather than skipped, in '
       + 'both directions, together with the sentence that tells a caller about it',
   ] as const),
@@ -2429,7 +2430,9 @@ describe('the parity suite ranges the registry census over every rostered surfac
           continue
         }
 
-        const advertisedOutput = withoutDialect(tool!.outputSchema ?? {})
+        // 431-03: a non-object output root (the run list) arrives `{ result }`-wrapped under the
+        // 2025-11-25 codec; the published lens undoes exactly that transport wrap.
+        const advertisedOutput = withoutDialect(withoutLegacyResultWrap(tool!.outputSchema ?? {}))
         expect(
           tool!.outputSchema,
           `${opId} on mcp (output): ${projection.name} advertises no outputSchema and is not a `
@@ -2491,14 +2494,15 @@ describe('the parity suite ranges the registry census over every rostered surfac
     // carrying a declared exception (2026-09-15, 423-21 D-18: the two feedback read tools add one
     // compared input and one compared output each):
     //   inputs  — 26 less the 2 proposal apply doors and 1 pipeline downstream op = 23
-    //   outputs — 26 less the 2 degraded contracts and 1 pipeline downstream op   = 23
+    //   outputs — 26 less the 1 degraded contract and 1 pipeline downstream op    = 24
+    // (2026-09-28, 431-03: `runs.list` left the degraded list with its canonical output contract.)
     const projectedOpCount = AGENT_QA_TOOL_PROJECTIONS.reduce(
       (total, projection) => total + projection.ops.length,
       0,
     )
     const exceptionTotal = [...exceptionsTaken.values()].reduce((total, at) => total + at, 0)
     expect(inputsCompared, 'leg 2 compared a different number of inputs').toBe(23)
-    expect(outputsCompared, 'leg 2 compared a different number of outputs').toBe(23)
+    expect(outputsCompared, 'leg 2 compared a different number of outputs').toBe(24)
     expect(
       inputsCompared + outputsCompared + exceptionTotal,
       'every projected capability must be compared or excepted on BOTH sides — no skip-lists',
@@ -2546,6 +2550,7 @@ describe('the parity suite ranges the registry census over every rostered surfac
         'withoutDialect',
         'stripRedundantObjectStamp',
         'armWithoutDiscriminant',
+        'withoutLegacyResultWrap',
       ]) {
         for (const keyword of definitionKeywords) {
           expect(code, `${file} defines its own ${normaliser} instead of importing the one lens`)

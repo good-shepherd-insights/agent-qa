@@ -1,7 +1,7 @@
 import { getActiveMaskingContext } from '@vostride/agent-qa-safety'
 import {
-  EvidenceDocumentSchema, EvidenceEntrySchema, RunsEvidenceInputSchema, RunsEvidenceResultSchema,
-  sha256hexBytes, utf8Decode, utf8Encode,
+  EvidenceDocumentSchema, EvidenceEntrySchema, RunsEvidenceInputSchema, RunsEvidenceOutputContract,
+  RunsEvidenceResultSchema, sha256hexBytes, utf8Decode, utf8Encode,
 } from '@vostride/agent-qa-schema'
 import type {
   EvidenceDocument, EvidenceEntry, MaskFn, RunDetailRows, RunsEvidenceInput, RunsEvidenceResult,
@@ -51,6 +51,8 @@ export const runsEvidenceSpec: FunctionSpec<RunsEvidenceInput, RunsEvidenceResul
   boundThrough: 'runDetail',
   input: RunsEvidenceInputSchema,
   output: RunsEvidenceResultSchema,
+  // 431-03 (D-03/D-07): the declared output is the canonical document; validation stays `output`.
+  outputRepresentation: RunsEvidenceOutputContract,
   risk: { name: `fn:${RUNS_EVIDENCE_FUNCTION_ID}`, recognized: true, readOnly: true },
   classify(output) {
     return { status: output.outcome === 'read-error' ? 'failed' : 'executed', outcome: output.outcome }

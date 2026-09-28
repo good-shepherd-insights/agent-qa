@@ -49,6 +49,14 @@ import {
   AuthoringVerifyDraftInputSchema,
   AuthoringVerifyDraftOutputSchema,
 } from './authoring'
+import { createOutputContract } from './output-contract'
+import type { OutputContract } from './output-contract'
+import {
+  RunsArtifactInputSchema,
+  RunsArtifactOutputContract,
+  RunsEvidenceInputSchema,
+  RunsEvidenceOutputContract,
+} from './runs'
 
 /**
  * The key whose literal names which arm a fold call is about.
@@ -192,3 +200,54 @@ export type KnowledgeChangeFoldInput = z.infer<typeof KnowledgeChangeFoldInputSc
 export const KnowledgeChangeFoldOutputSchema = foldOutput(
   knowledgeArms.map(() => KnowledgeProposeOutcomeSchema),
 )
+
+// ---- the run evidence read: a step's parsed evidence, or one of its blobs by sha ---------------
+
+/**
+ * Compose a fold's output CONTRACT from its arms' canonical output contracts (431-03).
+ *
+ * The runtime side is `foldOutput` over the arms' own runtime schemas, so validation is still each
+ * arm's exact schema. The document is the arms' own documents under one `anyOf`, in arm order, each
+ * without its dialect marker; one distinct arm is simply that arm's contract.
+ */
+function foldOutputContract(arms: readonly OutputContract[]): OutputContract {
+  const distinct: OutputContract[] = []
+  for (const arm of arms) if (!distinct.includes(arm)) distinct.push(arm)
+  const [only] = distinct
+  if (only !== undefined && distinct.length === 1) return only
+  const members = distinct.map((arm) => {
+    const { $schema: _dialect, ...document } = arm.outputRepresentation
+    return document
+  })
+  return createOutputContract(foldOutput(distinct.map((arm) => arm.runtimeSchema)), {
+    $schema: 'https://json-schema.org/draft/2020-12/schema',
+    anyOf: members,
+  })
+}
+
+const evidenceArms = [
+  // `safeExtend`, not a shape spread: the evidence address carries the ARIA-only sub-action
+  // refinement, and a spread into a fresh object would silently drop it.
+  RunsEvidenceInputSchema.safeExtend({
+    [TOOL_FOLD_DISCRIMINANT]: armLiteral('runs.evidence'),
+  }),
+  RunsArtifactInputSchema.extend({
+    [TOOL_FOLD_DISCRIMINANT]: armLiteral('runs.artifact'),
+  }),
+] as const
+
+/**
+ * D-07's one evidence read over two ops: a recorded row address answers the parsed, masked
+ * document; a sha answers that run's blob. Both arms stay strict.
+ */
+export const RunsEvidenceFoldInputSchema = z.discriminatedUnion(
+  TOOL_FOLD_DISCRIMINANT,
+  evidenceArms,
+)
+
+export type RunsEvidenceFoldInput = z.infer<typeof RunsEvidenceFoldInputSchema>
+
+export const RunsEvidenceFoldOutputContract = foldOutputContract([
+  RunsEvidenceOutputContract,
+  RunsArtifactOutputContract,
+])

@@ -251,11 +251,14 @@ export {
   ConfigChangeFoldOutputSchema,
   KnowledgeChangeFoldInputSchema,
   KnowledgeChangeFoldOutputSchema,
+  RunsEvidenceFoldInputSchema,
+  RunsEvidenceFoldOutputContract,
 } from './tool-folds'
 export type {
   AuthoringRefineFoldInput,
   ConfigChangeFoldInput,
   KnowledgeChangeFoldInput,
+  RunsEvidenceFoldInput,
 } from './tool-folds'
 // 402-01 (D-06/D-13/D-15 · INVK-03): the authed run service's wire vocabulary — the two-arm
 // header verdict, the one error body every refusal answers with, the request shape, the readiness

@@ -1679,6 +1679,8 @@ export {
   ConfigChangeFoldOutputSchema,
   KnowledgeChangeFoldInputSchema,
   KnowledgeChangeFoldOutputSchema,
+  RunsEvidenceFoldInputSchema,
+  RunsEvidenceFoldOutputContract,
 } from './functions/index'
 export type {
   RunsListOutput,
@@ -1689,6 +1691,7 @@ export type {
   AuthoringRefineFoldInput,
   ConfigChangeFoldInput,
   KnowledgeChangeFoldInput,
+  RunsEvidenceFoldInput,
 } from './functions/index'
 
 // 398-01 (D-05 / D-08 · XPLN-01): the capability-catalog row DTOs. Minted here per 384 D-16 —

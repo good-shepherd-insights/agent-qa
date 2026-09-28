@@ -58,6 +58,7 @@ import {
   armWithoutDiscriminant,
   type JsonDocument,
   withoutDialect,
+  withoutLegacyResultWrap,
 } from '../conformance-support.js'
 import { APP_RESOURCE_URI_TEMPLATE } from '../app-resource.js'
 import {
@@ -209,7 +210,7 @@ describe('the advertised schema equals the function layer\'s own projection (D-1
         // exemption: `entities.get` runs inside the resolved arm and contributes no shape of its
         // own, so a document carrying anything of its own here would mean the tool had invented a
         // result envelope — the one thing a pure projection may not do.
-        const advertisedOutput = withoutDialect(tool!.outputSchema)
+        const advertisedOutput = withoutDialect(withoutLegacyResultWrap(tool!.outputSchema))
         const outputOps = composition === 'union' ? projection.ops : [projection.ops[0]!]
         const armOutputs = outputOps.map((opId) => withoutDialect(declared.get(opId)!.output))
         const distinct = armOutputs.filter(
@@ -243,7 +244,9 @@ describe('the advertised schema equals the function layer\'s own projection (D-1
     //   inputs  — 11 single/pipeline/mark tools + 12 fold arms (2 + 7 + 3) = 23
     //   outputs — 16 tools less the 2 declared degradations               = 14
     // 2026-09-15 (423-21 D-18): the two feedback read tools add one input and one output each.
-    expect(checked).toBe(37)
+    // 2026-09-28 (431-03): `agent_qa_list_runs` leaves the degradation list and its output is
+    // compared too, through the 2025-11-25 codec's `{ result }` wrap around its array root.
+    expect(checked).toBe(38)
   })
 
   // IDENTITY, NOT AGREEMENT — and this cell exists because the one above it was measured BLIND to

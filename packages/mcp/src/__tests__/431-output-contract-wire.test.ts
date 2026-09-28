@@ -147,7 +147,10 @@ function probeSpecs(): readonly ProjectedOpSpec[] {
   })
 }
 
-function probeClient(maskText: (text: string) => string = (text) => text): Promise<Client> {
+function probeClient(
+  maskText: (text: string) => string = (text) => text,
+  handled: unknown[] = [],
+): Promise<Client> {
   const advertised: ToolOpContracts = {
     input: schema.RunsEvidenceFoldInputSchema,
     output: schema.RunsEvidenceFoldOutputContract,
@@ -156,6 +159,7 @@ function probeClient(maskText: (text: string) => string = (text) => text): Promi
     const server = new McpServer({ name: 'agent-qa-probe', version: '0.0.0' }, { capabilities: { tools: {} } })
     const config = toRegisterToolConfig(PROBE, probeSpecs(), advertised, maskText)
     server.registerTool(PROBE.name, config, async (args: unknown): Promise<CallToolResult> => {
+      handled.push(args)
       const { [schema.TOOL_FOLD_DISCRIMINANT]: action, ...input } = args as Json
       const answer = action === 'runs.evidence'
         ? schema.RunsEvidenceResultSchema.parse(evidenceAnswer(input))
@@ -173,7 +177,7 @@ describe('OUTPUT-WIRE-PROOF', () => {
     const client = await catalogClient()
     const tool = (await client.listTools()).tools.find((entry) => entry.name === 'agent_qa_list_runs')!
     expect(tool.outputSchema).toBeDefined()
-    expect(withoutLegacyResultWrap(withoutDialect(tool.outputSchema))).toEqual(
+    expect(withoutDialect(withoutLegacyResultWrap(tool.outputSchema))).toEqual(
       withoutDialect(schema.RunsListOutputContract['~standard'].jsonSchema.output(TARGET)),
     )
     expect(tool.description).not.toContain('advertises no outputSchema')
@@ -240,7 +244,8 @@ describe('OUTPUT-WIRE-PROOF', () => {
   })
 
   it('dispatches each full operation id to its own arm and answers an empty collection', async () => {
-    const client = await probeClient()
+    const handled: unknown[] = []
+    const client = await probeClient(undefined, handled)
     const evidence = await client.callTool({
       name: PROBE.name,
       arguments: { action: 'runs.evidence', runId, testIndex: 0, stepIndex: 0, kind: 'console' },
@@ -248,6 +253,7 @@ describe('OUTPUT-WIRE-PROOF', () => {
     expect(((evidence.structuredContent as Json).document as Json).records).toEqual([])
     const artifact = await client.callTool({ name: PROBE.name, arguments: { action: 'runs.artifact', runId, sha } })
     expect((artifact.structuredContent as Json).contentType).toBe('image/png')
+    expect(handled.map((args) => (args as Json).action)).toEqual(['runs.evidence', 'runs.artifact'])
   })
 })
 
@@ -257,7 +263,7 @@ describe('FOLD-REFINEMENT', () => {
 
   it('names exactly the two full operation ids as its arms', () => {
     const arms = schema.RunsEvidenceFoldInputSchema.options.map(
-      (arm: { shape: Record<string, { value: unknown }> }) => arm.shape[schema.TOOL_FOLD_DISCRIMINANT]!.value,
+      (arm) => arm.shape[schema.TOOL_FOLD_DISCRIMINANT].value,
     )
     expect(arms).toEqual(['runs.evidence', 'runs.artifact'])
   })
@@ -282,12 +288,15 @@ describe('FOLD-REFINEMENT', () => {
   })
 
   it('refuses a refined sub-action over the real wire, before the handler runs', async () => {
-    const client = await probeClient()
+    const handled: unknown[] = []
+    const client = await probeClient(undefined, handled)
     const result = await client.callTool({
       name: PROBE.name,
       arguments: { action: 'runs.evidence', runId, testIndex: 0, stepIndex: 0, kind: 'console', subActionIndex: 1 },
     }).catch((err: unknown) => ({ isError: true, content: [{ type: 'text', text: String(err) }] }))
     expect(result.isError).toBe(true)
+    expect(JSON.stringify(result.content)).toContain('Only ARIA evidence addresses a sub-action')
+    expect(handled).toEqual([])
   })
 
   it('validates fold output through the exact runtime schemas of its arms', () => {

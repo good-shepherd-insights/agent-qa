@@ -97,7 +97,7 @@ import {
   RunStartAcknowledgementSchema,
   RunsDigestInputSchema,
   RunsListInputSchema,
-  RunsListOutputSchema,
+  RunsListOutputContract,
   RunsMarkInputSchema,
   RunsMarkOutcomeSchema,
   RunsMarkPreviewResultSchema,
@@ -313,9 +313,11 @@ export const AGENT_QA_OP_CONTRACTS: Readonly<Record<string, ToolOpContracts>> = 
     input: EntitiesGetInputSchema,
     output: EntityCardSchema,
   }),
+  // 2026-09-28 (431-03, D-03/D-07): the canonical list contract — `RunsListOutputSchema` as the
+  // validator, the same object `runs.list` enforces with, plus its explicit output document.
   'runs.list': Object.freeze({
     input: RunsListInputSchema,
-    output: RunsListOutputSchema,
+    output: RunsListOutputContract,
   }),
   'runs.digest': Object.freeze({
     input: RunsDigestInputSchema,
@@ -543,6 +545,10 @@ export function advertisedContracts(
  * THE LIST IS TWO-SIDED. `projection.ts` PROBES the conversion for every tool: an undeclared
  * failure throws, and a declared entry whose contract has since become convertible throws too. So
  * this list cannot silently grow and cannot silently rot.
+ *
+ * 2026-09-28 (431-03): the way off this list is a canonical `OutputContract` from
+ * `@vostride/agent-qa-schema` — the op's own runtime schema as validator, with an explicit output
+ * document — never a narrowed stand-in authored here. `agent_qa_start_run` keeps its row.
  */
 export interface OutputSchemaDegradation {
   readonly tool: string
@@ -573,20 +579,11 @@ export const DEGRADED_OUTPUT_CONTRACTS: readonly OutputSchemaDegradation[] = Obj
     measured: 'Transforms cannot be represented in JSON Schema',
     adjudication: '397',
   }),
-  // 397 DISPOSITION (2026-08-16 · D-20): keep-degraded, on the row above's reasoning and not by
-  // appeal to it. `agent_qa_list_runs` degrades one level down — the transform sits inside
-  // `RunSummarySchema`, an element of the array this op returns — so a caller loses the shape of a
-  // LIST rather than of a single acknowledgement. That is the more tempting one to paper over with
-  // a hand-written array schema, and the same objection answers it: a shape derived by a second
-  // recipe is no longer the object `invokeFunction` validates, and advertising it would make this
-  // tool the one place a client could be told something the gate does not enforce.
-  Object.freeze({
-    tool: 'agent_qa_list_runs',
-    opId: 'runs.list',
-    schema: 'RunsListOutputSchema (over RunSummarySchema)',
-    measured: 'Transforms cannot be represented in JSON Schema',
-    adjudication: '397',
-  }),
+  // 2026-09-28 (431-03, D-03/D-07 · research A1): the `agent_qa_list_runs` row is REMOVED, not
+  // re-ruled. Its objection stands — no hand-written array schema is advertised. What changed is the
+  // contract: `runs.list` now declares `RunsListOutputContract`, whose validator is the same
+  // `RunsListOutputSchema` object and whose output document is derived from the runtime schema's
+  // own output conversion. It converts cleanly, so the probe in `projection.ts` would refuse the row.
 ] as const satisfies readonly OutputSchemaDegradation[])
 
 /**
