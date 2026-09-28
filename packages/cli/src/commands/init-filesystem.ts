@@ -1195,6 +1195,11 @@ export function upsertManagedBlock(
   }
 }
 
+export function preflightManagedBlock(plan: ManagedBlockUpsertPlan): InitPreflightResult {
+  const path = resolve(plan.path)
+  return { path, classification: inspectInitPath(path, plan.root ?? dirname(path)).classification }
+}
+
 export function upsertManagedGitignoreBlock(
   path: string,
   entries: readonly string[] = TARGET_GITIGNORE_ENTRIES,

@@ -24,6 +24,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import {
   ManagedBlockLockRefusal,
   managedBlockLockPath,
+  preflightManagedBlock,
   upsertManagedBlock,
   upsertManagedGitignoreBlock,
   type InitFileResult,
@@ -37,6 +38,7 @@ import {
   type ManagedBlockContent,
   type ManagedBlockRefusalReason,
 } from '../commands/managed-block.js'
+import { buildAgentInstructionPointer } from '../commands/knowledge-guide.js'
 import { composeManagedGitignore, managedGitignoreContent } from '../commands/scaffold-content.js'
 
 interface Variant {
@@ -572,5 +574,82 @@ describe('MANAGED-CONCURRENCY', () => {
       `dist/\n${rendered(managedGitignoreContent(['.agent-qa/']))}\nlocal/\n`,
     )
     expect(writerLeftovers(root)).toEqual([])
+  })
+})
+
+// ---------------------------------------------------------------------------------------------
+// 431-10 · D-18/D-20: the root pointer through the shared writer, and its write-free preflight.
+// ---------------------------------------------------------------------------------------------
+
+describe('MANAGED-POINTER', () => {
+  const POINTER: ManagedBlockContent = {
+    descriptor: AGENT_QA_INIT_MARKDOWN_BLOCK,
+    body: buildAgentInstructionPointer(),
+    target: 'AGENTS.md',
+  }
+  const { start, end } = managedBlockMarkers(AGENT_QA_INIT_MARKDOWN_BLOCK)
+
+  it('applies twice to the same bytes, keeping every outside byte', () => {
+    const absent = ['', USER_PROSE, `head\n${rendered(SKILLS_BLOCK)}\n`]
+    for (const original of absent) {
+      const once = composeManagedBlock(original, POINTER)
+      expect(once.startsWith(original), original).toBe(true)
+      expect(composeManagedBlock(once, POINTER), original).toBe(once)
+    }
+    const prefix = `${USER_PROSE}\r\n`
+    const suffix = '\r\ntail ✓'
+    const once = composeManagedBlock(`${prefix}${start}\r\nstale\r\n${end}${suffix}`, POINTER)
+    expect(once).toBe(`${prefix}${rendered(POINTER)}${suffix}`)
+    expect(composeManagedBlock(once, POINTER)).toBe(once)
+  })
+
+  it('preflights what the writer would refuse, with no lock, temporary or write', () => {
+    const root = tempRoot()
+    const path = join(root, 'AGENTS.md')
+    const cases: { name: string; arrange: () => void; refusal: RegExp | typeof ManagedBlockRefusal }[] = [
+      { name: 'duplicate', arrange: () => writeFileSync(path, `${start}\na\n${end}\n${start}\nb\n${end}\n`), refusal: ManagedBlockRefusal },
+      { name: 'non-UTF-8', arrange: () => writeFileSync(path, Buffer.from([0x63, 0xe9, 0x0a])), refusal: /UTF-8/ },
+      {
+        name: 'hard link',
+        arrange: () => {
+          writeFileSync(path, 'shared\n')
+          linkSync(path, join(root, 'OTHER.md'))
+        },
+        refusal: /hard links/,
+      },
+      {
+        name: 'symbolic link',
+        arrange: () => {
+          writeFileSync(join(root, 'target.md'), 'target\n')
+          symlinkSync(join(root, 'target.md'), path)
+        },
+        refusal: /symbolic link/,
+      },
+    ]
+    for (const { name, arrange, refusal } of cases) {
+      rmSync(root, { recursive: true, force: true })
+      mkdirSync(root)
+      arrange()
+      const before = readdirSync(root).sort().map(entry => [entry, lstatSync(join(root, entry)).ino])
+      expect(() => preflightManagedBlock({ path, root, content: POINTER }), name).toThrow(refusal)
+      expect(readdirSync(root).sort().map(entry => [entry, lstatSync(join(root, entry)).ino]), name).toEqual(before)
+    }
+
+    rmSync(root, { recursive: true, force: true })
+    mkdirSync(root)
+    writeFileSync(path, USER_PROSE)
+    const lock = managedBlockLockPath(path)
+    writeFileSync(lock, 'another writer\n')
+    expect(() => preflightManagedBlock({ path, root, content: POINTER })).toThrow(ManagedBlockLockRefusal)
+    expect(readFileSync(lock, 'utf8')).toBe('another writer\n')
+
+    rmSync(lock)
+    expect(preflightManagedBlock({ path, root, content: POINTER })).toEqual({ path, classification: 'regular' })
+    expect(readFileSync(path, 'utf8')).toBe(USER_PROSE)
+    expect(writerLeftovers(root)).toEqual([])
+    const absentPath = join(root, 'NEW.md')
+    expect(preflightManagedBlock({ path: absentPath, root, content: POINTER }))
+      .toEqual({ path: absentPath, classification: 'missing' })
+    expect(existsSync(absentPath)).toBe(false)
   })
 })

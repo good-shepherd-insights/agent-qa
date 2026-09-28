@@ -51,7 +51,11 @@ import {
   type InitFilesystemHooks,
   type InitPathPlan,
 } from './init-filesystem.js'
-import { buildAgentInstructionPointer, buildKnowledgeAgentGuide } from './knowledge-guide.js'
+import {
+  WRITE_AGENT_INSTRUCTIONS_FLAG,
+  buildAgentInstructionPointer,
+  buildKnowledgeAgentGuide,
+} from './knowledge-guide.js'
 import { AGENT_QA_INIT_MARKDOWN_BLOCK, renderManagedBlock } from './managed-block.js'
 
 // The platform vocabulary and the scaffold's content producers live in `scaffold-content.ts` now
@@ -916,6 +920,10 @@ export function createInitCommand(hooks: InitCommandHooks = {}): Command {
     )
     .option('--skip-install', 'deprecated no-op; setup commands are shown after init')
     .option('--force', 'overwrite existing files')
+    .option(
+      WRITE_AGENT_INSTRUCTIONS_FLAG,
+      'also write the agent-qa pointer block into AGENTS.md at the project root',
+    )
     .option(
       '--agent',
       'print the JSON capability manifest (catalog, v1 migration map, local posture) and exit; '
