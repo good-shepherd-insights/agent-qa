@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url'
 const here = dirname(fileURLToPath(import.meta.url))
 const sourceRoot = join(here, '../../..', 'skills')
 const targetRoot = join(here, '..', 'skills')
-const skillNames = ['agent-qa-authoring', 'agent-qa-result-triage', 'agent-qa-debug-fix']
+const skillNames = ['agent-qa-authoring', 'agent-qa-result-triage', 'agent-qa-debug-fix', 'agent-qa-knowledge']
 
 function rejectGeneratedOrLocalFiles(path) {
   const normalized = path.split('\\').join('/')

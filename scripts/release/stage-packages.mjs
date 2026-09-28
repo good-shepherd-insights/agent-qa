@@ -6,7 +6,13 @@ import { rewriteInternalWorkspaceRanges } from './version.mjs'
 
 const dependencyBlocks = ['dependencies', 'devDependencies', 'peerDependencies', 'optionalDependencies']
 const entryPackageName = 'agent-qa'
-const requiredCliSkills = ['agent-qa-authoring', 'agent-qa-result-triage', 'agent-qa-debug-fix']
+const requiredCliSkills = ['agent-qa-authoring', 'agent-qa-result-triage', 'agent-qa-debug-fix', 'agent-qa-knowledge']
+const requiredCliSkillFiles = {
+  'agent-qa-authoring': ['SKILL.md', 'agents/openai.yaml', 'references/agent-qa-contracts.json'],
+  'agent-qa-result-triage': ['SKILL.md', 'agents/openai.yaml', 'references/triage-categories.md'],
+  'agent-qa-debug-fix': ['SKILL.md', 'agents/openai.yaml'],
+  'agent-qa-knowledge': ['SKILL.md', 'agents/openai.yaml', 'references/knowledge-reads.md'],
+}
 const sourceOnlyScripts = ['prepack', 'prepare', 'prepublishOnly', 'postpack', 'copy:skills']
 
 function rejectGeneratedOrLocalFiles(path) {
@@ -87,6 +93,11 @@ async function stageCliSkills(sourcePackageDir, targetPackageDir) {
     const sourceDir = join(sourceRoot, skillName)
     if (!existsSync(sourceDir)) {
       throw new Error(`missing source CLI skill for staged package: ${skillName}`)
+    }
+    for (const file of requiredCliSkillFiles[skillName]) {
+      const filePath = join(sourceDir, file)
+      if (!existsSync(filePath)) throw new Error(`missing CLI skill file for staged package: ${skillName}/${file}`)
+      if (statSync(filePath).size === 0) throw new Error(`empty CLI skill file for staged package: ${skillName}/${file}`)
     }
     await cp(sourceDir, join(targetRoot, skillName), {
       recursive: true,

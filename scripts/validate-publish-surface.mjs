@@ -27,11 +27,12 @@ const requiredNoticeSnippets = [
   'Apache License, Version 2.0',
   'Third-party dependencies are distributed under their own license terms',
 ]
-const requiredSkills = ['agent-qa-authoring', 'agent-qa-result-triage', 'agent-qa-debug-fix']
+const requiredSkills = ['agent-qa-authoring', 'agent-qa-result-triage', 'agent-qa-debug-fix', 'agent-qa-knowledge']
 const requiredSkillReferences = {
   'agent-qa-authoring': ['references/agent-qa-contracts.json'],
   'agent-qa-result-triage': ['references/triage-categories.md'],
   'agent-qa-debug-fix': [],
+  'agent-qa-knowledge': ['references/knowledge-reads.md'],
 }
 const ownershipContractMarker = '_OWNERSHIP_CONTRACT'
 const forbiddenPackPatterns = [
@@ -225,14 +226,15 @@ function validateNoArchSymbolInDist(errors, records = publicPackageRecords()) {
   }
 }
 
-function validateCopiedSkills(errors) {
-  const skillsRoot = join(root, 'packages/cli/skills')
+function validateCopiedSkills(errors, skillsRoot = join(root, 'packages/cli/skills')) {
   for (const skillName of requiredSkills) {
     const skillDir = join(skillsRoot, skillName)
     assert(existsSync(join(skillDir, 'SKILL.md')), `agent-qa packaged skill missing ${skillName}/SKILL.md`, errors)
     assert(existsSync(join(skillDir, 'agents/openai.yaml')), `agent-qa packaged skill missing ${skillName}/agents/openai.yaml`, errors)
     for (const ref of requiredSkillReferences[skillName]) {
-      assert(existsSync(join(skillDir, ref)), `agent-qa packaged skill missing ${skillName}/${ref}`, errors)
+      const refPath = join(skillDir, ref)
+      assert(existsSync(refPath), `agent-qa packaged skill missing ${skillName}/${ref}`, errors)
+      if (existsSync(refPath)) assert(statSync(refPath).size > 0, `agent-qa packaged skill has empty ${skillName}/${ref}`, errors)
     }
   }
   assert(!existsSync(join(skillsRoot, 'scripts')), 'agent-qa packaged skills must not include skills/scripts', errors)
@@ -429,6 +431,25 @@ function runFixtures() {
       rmSync(temp, { recursive: true, force: true })
     }
   }, 'packaged skill missing')
+
+  expectFixtureFailure('empty packaged skill reference', (errors) => {
+    const temp = mkdtempSync(join(tmpdir(), 'agent-qa-publish-fixture-'))
+    try {
+      for (const skillName of requiredSkills) {
+        const skillDir = join(temp, skillName)
+        mkdirSync(join(skillDir, 'agents'), { recursive: true })
+        writeFileSync(join(skillDir, 'SKILL.md'), `---\nname: ${skillName}\n---\n`)
+        writeFileSync(join(skillDir, 'agents/openai.yaml'), 'interface: {}\n')
+        for (const ref of requiredSkillReferences[skillName]) {
+          mkdirSync(dirname(join(skillDir, ref)), { recursive: true })
+          writeFileSync(join(skillDir, ref), skillName === 'agent-qa-knowledge' ? '' : 'x')
+        }
+      }
+      validateCopiedSkills(errors, temp)
+    } finally {
+      rmSync(temp, { recursive: true, force: true })
+    }
+  }, 'empty agent-qa-knowledge/references/knowledge-reads.md')
 
   expectFixtureFailure('ownership contract marker in dist', (errors) => {
     const temp = mkdtempSync(join(tmpdir(), 'agent-qa-arch-symbol-fixture-'))

@@ -1,8 +1,14 @@
-import { readFileSync, existsSync } from 'node:fs'
+import { readFileSync, existsSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 
 const root = new URL('..', import.meta.url).pathname
-const skills = ['agent-qa-authoring', 'agent-qa-result-triage', 'agent-qa-debug-fix']
+const skills = ['agent-qa-authoring', 'agent-qa-result-triage', 'agent-qa-debug-fix', 'agent-qa-knowledge']
+const requiredReferences = {
+  'agent-qa-authoring': ['references/agent-qa-contracts.json'],
+  'agent-qa-result-triage': ['references/triage-categories.md'],
+  'agent-qa-debug-fix': [],
+  'agent-qa-knowledge': ['references/knowledge-reads.md'],
+}
 
 for (const skill of skills) {
   const dir = join(root, skill)
@@ -15,11 +21,11 @@ for (const skill of skills) {
   if (!body.includes('description: ')) throw new Error(`${skill}: missing frontmatter description`)
   if (!body.includes('agent_qa_')) throw new Error(`${skill}: missing MCP tool guidance`)
   if (body.includes('agentqa_')) throw new Error(`${skill}: stale agentqa_ MCP tool prefix`)
+  for (const reference of requiredReferences[skill]) {
+    const referencePath = join(dir, reference)
+    if (!existsSync(referencePath)) throw new Error(`${skill}: missing ${reference}`)
+    if (statSync(referencePath).size === 0) throw new Error(`${skill}: empty ${reference}`)
+  }
 }
-
-const authoringReference = join(root, 'agent-qa-authoring/references/agent-qa-contracts.json')
-const triageReference = join(root, 'agent-qa-result-triage/references/triage-categories.md')
-if (!existsSync(authoringReference)) throw new Error('agent-qa-authoring: missing contract reference')
-if (!existsSync(triageReference)) throw new Error('agent-qa-result-triage: missing triage reference')
 
 console.log('agent-qa skills pack validation passed')
