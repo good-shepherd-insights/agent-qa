@@ -233,13 +233,17 @@ describe('419 real browser mark confirmation', () => {
     expect(s.pageErrors).toEqual([])
   }, 45_000)
 
-  it('without a confirm channel renders answer-confirm and appends no ledger line', async () => {
+  it('without a confirm channel renders its reason only and appends no ledger line', async () => {
     const s = await scene(true)
     const response = s.page.waitForResponse(response => response.url().endsWith('/mark') && response.request().method() === 'POST')
     const composer = await submit(s.page)
     expect((await response).status()).toBe(403)
-    await composer.locator('[data-feedback-denied]').waitFor()
-    expect(await composer.locator('[data-feedback-denied]').textContent()).toContain('an ask-tier op raises a confirm here that you can answer')
+    const denied = composer.locator('[data-feedback-denied]')
+    await denied.waitFor()
+    const deniedText = await denied.textContent()
+    expect(deniedText).toContain('The safety gate denied this mark.')
+    expect(await denied.locator('[data-remedy-kind]').count()).toBe(0)
+    expect(deniedText).not.toContain('an ask-tier op raises ' + 'a confirm here that you can answer')
     expect(await targetEntries(composer).count()).toBe(0)
     expect(await s.page.locator(TEST_ENTRY).getAttribute('data-feedback-marked')).toBe('false')
     expect(s.rows()).toHaveLength(0)
