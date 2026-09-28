@@ -211,7 +211,6 @@ function hostOver(registry: FunctionRegistry): AgentHost {
   return {
     registry: registry as unknown as AgentRegistryHandle,
     caller: REGISTRY_CALLER,
-    agentAskFunctionId: 'test:planted-ask-op',
     runsPostProcessingFunctionId: 'test:planted-post-processing-op',
     runsEventsFunctionId: 'test:planted-events-op',
     runsDetailFunctionId: RUNS_DETAIL_FUNCTION_ID,
@@ -231,9 +230,6 @@ function hostOver(registry: FunctionRegistry): AgentHost {
       caller: FunctionCaller,
     ): Promise<unknown> =>
       invokeFunction(handle as unknown as FunctionRegistry, functionId, input, caller),
-    foldFunctionResult: () => ({ verdict: { status: 'executed', outcome: 'planted' }, foldLines: [] }),
-    listDeclarations: () => [],
-    onSessionEvent: () => () => undefined,
     unmaskForDisplay: (text: string) => text,
   } as unknown as AgentHost
 }
@@ -1084,7 +1080,6 @@ function seamRecordingHost(projection: unknown): {
     host: {
       registry: {} as unknown as AgentRegistryHandle,
       caller: REGISTRY_CALLER,
-      agentAskFunctionId: 'test:planted-ask-op',
       runsPostProcessingFunctionId: 'test:planted-post-processing-op',
       runsEventsFunctionId: 'test:planted-events-op',
       runsDetailFunctionId: RUNS_DETAIL_FUNCTION_ID,
@@ -1094,9 +1089,6 @@ function seamRecordingHost(projection: unknown): {
       // workspace still satisfies the interface.
       runsKnowledgeFunctionId: RUNS_KNOWLEDGE_FUNCTION_ID,
       invokeFunction: () => Promise.resolve(projection),
-      foldFunctionResult: () => ({ verdict: { status: 'executed', outcome: 'planted' }, foldLines: [] }),
-      listDeclarations: () => [],
-      onSessionEvent: () => () => undefined,
       unmaskForDisplay: (text: string, scope?: { runId: string }): string => {
         calls.push({ text, runId: scope?.runId })
         return text.split('<SECRET_0>').join('sk-restored-value')

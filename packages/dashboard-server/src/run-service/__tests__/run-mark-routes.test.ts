@@ -41,14 +41,12 @@ function fixture() {
   })
   const enter = <T>(id: string, run: () => T): T => frames.run(id, run)
   const host: AgentHost = {
-    agentAskFunctionId: 'test:ask', runsPostProcessingFunctionId: 'test:post',
+    runsPostProcessingFunctionId: 'test:post',
     runsEventsFunctionId: 'test:events', runsDetailFunctionId: 'test:detail',
     runsEvidenceFunctionId: 'test:evidence',
     runsArtifactFunctionId: 'test:artifact', analysisGetFunctionId: 'test:analysis',
     runsKnowledgeFunctionId: 'test:knowledge',
     runsMarksHistoryFunctionId: 'test:marks-history', runsMarkPreviewFunctionId: 'test:mark-preview',
-    foldFunctionResult: () => ({ verdict: { status: 'executed', outcome: 'fixture' }, foldLines: [] }),
-    listDeclarations: () => [], onSessionEvent: () => () => undefined,
     registry, runsMarkFunctionId: RUNS_MARK_FUNCTION_ID, enterRunTriggerScope: enter,
     caller: { surface: 'dashboard', grantedScopes: ['knowledge-write'], safeMode: false, origin: 'human' },
     invokeFunction: (handle, id, input, caller) => invokeFunction(handle as FunctionRegistry, id, input, caller),

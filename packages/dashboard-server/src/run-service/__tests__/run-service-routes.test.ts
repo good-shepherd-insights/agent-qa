@@ -382,7 +382,6 @@ describe('the READ rows dispatch through the injected host (405-05, D-12)', () =
     return {
       registry: {},
       caller: {} as never,
-      agentAskFunctionId: 'test:planted-ask-op',
       runsPostProcessingFunctionId: 'test:planted-post-processing-op',
       runsEventsFunctionId: 'test:planted-events-op',
       runsDetailFunctionId: 'test:planted-run-detail-op',
@@ -397,9 +396,6 @@ describe('the READ rows dispatch through the injected host (405-05, D-12)', () =
         seen.push(functionId)
         return Promise.reject(Object.assign(new Error('planted'), { name }))
       },
-      foldFunctionResult: () => ({ verdict: { status: 'executed', outcome: '' }, foldLines: [] }),
-      listDeclarations: () => [],
-      onSessionEvent: () => () => undefined,
       unmaskForDisplay: (text: string) => text,
     } as unknown as NonNullable<RunServicePorts['agentHost']>
   }
