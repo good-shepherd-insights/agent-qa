@@ -200,7 +200,6 @@ function hostOver(registry: FunctionRegistry): AgentHost {
   return {
     registry: registry as unknown as AgentRegistryHandle,
     caller: REGISTRY_CALLER,
-    agentAskFunctionId: 'test:planted-ask-op',
     runsPostProcessingFunctionId: 'test:planted-post-processing-op',
     runsEventsFunctionId: 'test:planted-events-op',
     runsDetailFunctionId: RUNS_DETAIL_FUNCTION_ID,
@@ -219,9 +218,6 @@ function hostOver(registry: FunctionRegistry): AgentHost {
       caller: FunctionCaller,
     ): Promise<unknown> =>
       invokeFunction(handle as unknown as FunctionRegistry, functionId, input, caller),
-    foldFunctionResult: () => ({ verdict: { status: 'executed', outcome: 'planted' }, foldLines: [] }),
-    listDeclarations: () => [],
-    onSessionEvent: () => () => undefined,
     unmaskForDisplay: (text: string) => text,
   } as unknown as AgentHost
 }

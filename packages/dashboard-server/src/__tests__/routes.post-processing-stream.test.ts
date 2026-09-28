@@ -161,7 +161,6 @@ function plantedHost(read: {
   return {
     registry: REGISTRY,
     caller: CALLER,
-    agentAskFunctionId: 'test:planted-ask-op',
     runsPostProcessingFunctionId: PP_ID,
     runsEventsFunctionId: EVENTS_ID,
     // 405-01: the seam carries a fourth op id. This fixture dispatches only the two above, so
@@ -188,9 +187,6 @@ function plantedHost(read: {
       }
       throw new Error(`the fixture was asked for an id it does not plant: ${functionId}`)
     },
-    foldFunctionResult: () => ({ verdict: { status: 'executed', outcome: 'planted' }, foldLines: [] }),
-    listDeclarations: () => [],
-    onSessionEvent: () => () => undefined,
     unmaskForDisplay: (text) => text,
   }
 }

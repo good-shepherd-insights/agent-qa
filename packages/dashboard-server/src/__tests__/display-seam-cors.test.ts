@@ -115,7 +115,6 @@ function seamHost(): AgentHost {
   return {
     registry: {},
     caller: { kind: 'test' },
-    agentAskFunctionId: 'test:ask',
     runsPostProcessingFunctionId: 'test:post-processing',
     runsEventsFunctionId: 'test:events',
     runsDetailFunctionId: 'test:runs-detail',
@@ -131,9 +130,6 @@ function seamHost(): AgentHost {
       subActions: [],
       tokens: { measuredSteps: 0, unmeasuredSteps: 0 },
     }),
-    foldFunctionResult: () => ({ verdict: { status: 'executed', outcome: 'planted' }, foldLines: [] }),
-    listDeclarations: () => [],
-    onSessionEvent: () => () => undefined,
     unmaskForDisplay: (text: string): string => text,
   } as unknown as AgentHost
 }

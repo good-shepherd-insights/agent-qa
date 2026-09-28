@@ -31,12 +31,11 @@ const DELETED_ROUTES: ReadonlyArray<readonly ['GET' | 'POST', string]> = [
 const RUN_CONFIRM_ANSWER = '/api/run-confirm/answer'
 const RUN_CONFIRM_CHANNEL = '/api/run-confirm/channel'
 
-// Plan 21 sheds the conversation members from this fake and drops the cast.
+// The cast covers a non-FunctionCaller `caller` and the run-service ids these cells never reach.
 function seamHost(): AgentHost {
   return {
     registry: {},
     caller: { kind: 'test' },
-    agentAskFunctionId: 'test:ask',
     runsPostProcessingFunctionId: 'test:post-processing',
     runsEventsFunctionId: 'test:events',
     runsDetailFunctionId: 'test:runs-detail',
@@ -50,9 +49,6 @@ function seamHost(): AgentHost {
       subActions: [],
       tokens: { measuredSteps: 0, unmeasuredSteps: 0 },
     }),
-    foldFunctionResult: () => ({ verdict: { status: 'executed', outcome: 'planted' }, foldLines: [] }),
-    listDeclarations: () => [],
-    onSessionEvent: () => () => undefined,
     unmaskForDisplay: (text: string): string => text,
     confirms: createConfirmRegistry(),
   } as unknown as AgentHost
