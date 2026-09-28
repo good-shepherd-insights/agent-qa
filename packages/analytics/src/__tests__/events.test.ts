@@ -58,7 +58,8 @@ describe('the closed event union — membership is the D-18 list, exactly (ANLY-
       AGENT_QA_TOOL_PROJECTIONS.map((projection) => projection.name).sort(),
     )
     // 2026-09-15, 423-21 D-18: the two feedback read tools joined the mapping.
-    expect(ANALYTICS_MCP_TOOL_NAMES.length).toBe(16)
+    // 2026-09-29, 431-04 D-01: the eight discovery read tools joined it (MX_MAX_TOOLS = 24).
+    expect(ANALYTICS_MCP_TOOL_NAMES.length).toBe(24)
     expect(ANALYTICS_MCP_TOOL_NAMES).toContain('agent_qa_mark_run')
     expect(ANALYTICS_MCP_TOOL_NAMES).toContain('agent_qa_list_knowledge_gates')
     expect(ANALYTICS_MCP_TOOL_NAMES).toContain('agent_qa_get_run_marks')
