@@ -13,7 +13,15 @@
 // suite that never runs — and the arm that matters most (no terminal ⇒ no inline confirm) is
 // exactly the one a real terminal could not exercise.
 
-import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
+import {
+  copyFileSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { PassThrough } from 'node:stream'
@@ -102,6 +110,26 @@ async function runChat(
     log.mockRestore()
     error.mockRestore()
   }
+}
+
+// 430 D-08: a session the dashboard opened before 430, byte for byte as it was written, header
+// tagged `surface: 'dashboard'`. Committed as data and only ever copied out of.
+const DASHBOARD_ERA_FIXTURE = join(__dirname, 'fixtures', 'chat-dashboard-era.jsonl')
+const DASHBOARD_ERA_SESSION_ID = 'chat-20260901-120000-d430'
+const PRE_400_SESSION_ID = 'chat-20260901-120000-p400'
+
+/** Seed the sessions directory with the dashboard-era file and an untagged pre-400 copy of it. */
+function seedDashboardEraSessions(configPath: string): string {
+  const sessions = join(dirname(configPath), '.agent-qa', 'sessions')
+  mkdirSync(sessions, { recursive: true })
+  copyFileSync(DASHBOARD_ERA_FIXTURE, join(sessions, `${DASHBOARD_ERA_SESSION_ID}.jsonl`))
+  const [headerLine, ...events] = readFileSync(DASHBOARD_ERA_FIXTURE, 'utf8').split('\n')
+  const { surface: _surface, ...header } = JSON.parse(headerLine!) as Record<string, unknown>
+  writeFileSync(
+    join(sessions, `${PRE_400_SESSION_ID}.jsonl`),
+    [JSON.stringify({ ...header, sessionId: PRE_400_SESSION_ID }), ...events].join('\n'),
+  )
+  return sessions
 }
 
 function sessionFiles(configPath: string): string[] {
@@ -275,6 +303,47 @@ describe('agent-qa chat (the REPL over one turn engine)', () => {
     // The load-bearing half. A resume path that CREATED the session it could not find would
     // silently start a new conversation while a person believed they were back in an old one.
     expect(sessionFiles(configPath)).toHaveLength(0)
+  })
+
+  it('DASHBOARD-ERA-SESSION-LISTED: --list lists dashboard-era and pre-400 sessions', async () => {
+    const configPath = fixtureWorkspace(roots)
+    const sessions = seedDashboardEraSessions(configPath)
+    const before = new Map(sessionFiles(configPath).map((file) => [
+      file,
+      readFileSync(join(sessions, file)),
+    ]))
+    expect(readFileSync(join(sessions, `${DASHBOARD_ERA_SESSION_ID}.jsonl`), 'utf8'))
+      .toContain('"surface":"dashboard"')
+    expect(readFileSync(join(sessions, `${PRE_400_SESSION_ID}.jsonl`), 'utf8'))
+      .not.toContain('"surface"')
+
+    const listed = await runChat(configPath, ['--list'])
+
+    // Listed as sessions, not as refused files, which would print their names too.
+    expect(listed.stdout).toContain('Chat sessions (2)')
+    expect(listed.stdout).not.toContain('could not be read')
+    expect(listed.stdout).toContain(DASHBOARD_ERA_SESSION_ID)
+    expect(listed.stdout).toContain(PRE_400_SESSION_ID)
+    // The files are the user's: listing reads headers and never migrates, filters or rewrites.
+    expect(sessionFiles(configPath).sort()).toEqual(
+      [`${DASHBOARD_ERA_SESSION_ID}.jsonl`, `${PRE_400_SESSION_ID}.jsonl`],
+    )
+    for (const [file, bytes] of before) {
+      expect(readFileSync(join(sessions, file)).equals(bytes), file).toBe(true)
+    }
+  })
+
+  it('DASHBOARD-ERA-SESSION-REOPENS: --session reopens it and creates no session', async () => {
+    const configPath = fixtureWorkspace(roots)
+    seedDashboardEraSessions(configPath)
+
+    const result = await runChat(configPath, ['--session', DASHBOARD_ERA_SESSION_ID], ['/quit'])
+
+    expect(result.exitCode).not.toBe(1)
+    expect(result.stderr).not.toContain(`No chat session named ${DASHBOARD_ERA_SESSION_ID}`)
+    expect(sessionFiles(configPath).sort()).toEqual(
+      [`${DASHBOARD_ERA_SESSION_ID}.jsonl`, `${PRE_400_SESSION_ID}.jsonl`],
+    )
   })
 
   it('--continue reopens the most recent session rather than opening a new one', async () => {
