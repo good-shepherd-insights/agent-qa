@@ -3852,8 +3852,13 @@ export function composeCliLocalAgent(input: ComposeCliLocalAgentInput): LocalAge
     ?? (runsDbPath !== undefined && existsSync(runsDbPath)
       ? {
           read: async (runId) => {
-            projectRunDetail ??= import('../commands/dashboard.js')
-              .then(({ openProjectRunDetailReader }) => openProjectRunDetailReader(runsDbPath))
+            if (projectRunDetail === undefined) {
+              // A failed open is not remembered: the next read tries again.
+              const pending = import('../commands/dashboard.js')
+                .then(({ openProjectRunDetailReader }) => openProjectRunDetailReader(runsDbPath))
+              projectRunDetail = pending
+              pending.catch(() => { if (projectRunDetail === pending) projectRunDetail = undefined })
+            }
             return (await projectRunDetail).reader.read(runId)
           },
         }

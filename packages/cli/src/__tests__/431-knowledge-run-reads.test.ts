@@ -9,8 +9,8 @@
 import { createHash } from 'node:crypto'
 import { createServer } from 'node:http'
 import {
-  existsSync, linkSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, readlinkSync, rmSync,
-  symlinkSync, writeFileSync,
+  existsSync, linkSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, readlinkSync, renameSync,
+  rmSync, symlinkSync, writeFileSync,
 } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -857,6 +857,24 @@ describe('DEDICATED-READ-VERBS: the manifest table matches the live verbs and st
       }
     }
     expect(SURFACE_ROSTER.map((door) => door.id)).toEqual(['chat', 'mcp', 'fn', 'run-service'])
+  })
+})
+
+describe('RUN-DETAIL-BINDING: the CLI host over the project runs database', () => {
+  it('retries a run-detail open that failed instead of keeping the failure for the host', async () => {
+    const p = populatedProject()
+    runDetailDbPath = undefined
+    const aside = `${p.dbPath}.aside`
+    renameSync(p.dbPath, aside)
+    writeFileSync(p.dbPath, 'not a database')
+    const composed = host.composeCliLocalAgent({ configPath: p.configPath, agentQaRoot: p.agentQaRoot })
+    cleanups.push(() => composed.close())
+    const overview = () => invokeFunction(composed.registry, 'runs.overview', { runId: p.runId },
+      host.CLI_FUNCTION_CALLER)
+    await expect(overview()).rejects.toThrow()
+    rmSync(p.dbPath)
+    renameSync(aside, p.dbPath)
+    await expect(overview()).resolves.toMatchObject({ runId: p.runId, tests: [{ testIndex: 0 }, { testIndex: 1 }] })
   })
 })
 
