@@ -156,3 +156,34 @@ describe('LIST-FN-TRACER: agent-qa fn runs.list reaches real completed-run stora
     expect(fractional.stderr).toContain('FunctionInputError')
   })
 })
+
+describe('DIGEST-LATEST: agent-qa digest picks the newest completion runs.list names first', () => {
+  beforeAll(() => {
+    expect(buildFreshness(), REBUILD_INSTRUCTION).toEqual({ missing: [], stale: [] })
+  })
+
+  afterEach(() => {
+    cleanupTempRoots()
+  })
+
+  it('agrees with runs.list beyond the default cap, against build ordinals, and in a tie', async () => {
+    const target = project('digest-latest')
+    Array.from({ length: 23 }, (_, index) =>
+      complete(target, { endedAt: 10_000 + index * 100, buildOrdinal: 1_000 - index }))
+    const tied = [
+      complete(target, { endedAt: 20_000, buildOrdinal: 5 }),
+      complete(target, { endedAt: 20_000, buildOrdinal: 4 }),
+    ]
+    const newest = [...tied].sort().reverse()[0]
+
+    const digest = await spawnCollecting(target.root, [
+      CLI_ENTRY, '--config', target.configPath, 'digest', '--json',
+    ])
+    const listed = await listRuns(target)
+
+    expect(digest.stderr).toBe('')
+    expect(digest.code).toBe(0)
+    expect((JSON.parse(digest.stdout) as { runId: string }).runId).toBe(newest)
+    expect(listed.rows![0]!.runId).toBe(newest)
+  })
+})
