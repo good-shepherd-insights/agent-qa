@@ -807,6 +807,9 @@ describe('agent-qa fn (generic function invoker)', () => {
       'runs.mark.preview': { requiredScopes: ['read'], resultKind: 'unary', bindingStatus: 'bound' },
       // 423 D-19: bound through the CLI's dedicated read host, read-tier beside the writer.
       'runs.marks.history': { requiredScopes: ['read'], resultKind: 'unary', bindingStatus: 'bound' },
+      // 431 D-06: UNBOUND here on runs.detail's reasoning — both bind through `runDetail`, which only
+      // a composition owning the dashboard projection supplies.
+      'runs.overview': { requiredScopes: ['read'], resultKind: 'unary', bindingStatus: 'unbound' },
       // 403 D-03: UNBOUND from this composition, and that is the honest answer rather than an
       // oversight. `runs.liveurl` mints a viewing credential for a LIVE run, so it binds only where
       // a live-view port exists — `agent-qa dashboard`'s `composeLiveView`. A CLI host with no
