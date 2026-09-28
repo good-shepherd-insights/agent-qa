@@ -92,7 +92,8 @@
     "validate:429-config-ui-mutation": "bash scripts/429-config-ui-mutation.sh",
     "validate:429-config-ui-mutation-selftest": "bash scripts/429-config-ui-mutation-selftest.sh",
     "validate:430-chat-removal-mutation": "bash scripts/430-chat-removal-mutation.sh",
-    "validate:430-chat-removal-mutation-selftest": "bash scripts/430-chat-removal-mutation-selftest.sh"
+    "validate:430-chat-removal-mutation-selftest": "bash scripts/430-chat-removal-mutation-selftest.sh",
+    "validate:431-discovery-imports": "node scripts/431-discovery-import-lint.mjs"
   },
   "pnpm": {
     "onlyBuiltDependencies": [
