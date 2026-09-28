@@ -456,6 +456,105 @@ describe('CLI-RUN-READ-PARITY: runs list, overview and knowledge', () => {
   })
 })
 
+// ---- CLI-KNOWLEDGE-PARITY (07-2) ------------------------------------------------------------------
+
+describe('CLI-KNOWLEDGE-PARITY: knowledge show and brief-why', () => {
+  it('knowledge show --json equals agent_qa_show_knowledge_record and renders provenance, not the body', async () => {
+    const p = populatedProject()
+    const mcp = await mcpReader(p)
+    const shown = json(await cli(p.configPath, ['knowledge', 'show', p.recordId, '--json']))
+    const structured = await mcp.structured('agent_qa_show_knowledge_record', { recordId: p.recordId })
+    expect(shown).toEqual(structured)
+    expect(shown).toMatchObject({ kind: 'found', record: { recordId: p.recordId } })
+    const found = shown as { body: string; summary: string; provenance: { mode: string } }
+    const human = await cli(p.configPath, ['knowledge', 'show', p.recordId])
+    expect(human.exitCode, human.stderr).toBe(0)
+    expect(human.stdout).toContain(`record ${p.recordId}`)
+    expect(human.stdout).toContain(`provenance ${found.provenance.mode}`)
+    expect(human.stdout).toContain(found.summary)
+    expect(found.body.length).toBeGreaterThan(0)
+    expect(human.stdout).not.toContain(found.body)
+  })
+
+  it('knowledge show exits nonzero for a record no bundle carries, with the canonical not-found result', async () => {
+    const p = populatedProject()
+    const mcp = await mcpReader(p)
+    const missing = await cli(p.configPath, ['knowledge', 'show', 'fact-no-such-record', '--json'])
+    expect(missing.exitCode).toBe(1)
+    expect(JSON.parse(missing.stdout)).toEqual(
+      await mcp.structured('agent_qa_show_knowledge_record', { recordId: 'fact-no-such-record' }))
+    expect(missing.stderr).toContain('fact-no-such-record')
+    expect(missing.stderr).toContain('agent-qa knowledge inspect')
+    const human = await cli(p.configPath, ['knowledge', 'show', 'fact-no-such-record'])
+    expect(human.exitCode).toBe(1)
+    expect(human.stdout).toContain('not found')
+  })
+
+  it('brief-why selects the brief by test id, equals agent_qa_explain_brief and keeps the trace in JSON', async () => {
+    const p = populatedProject()
+    const mcp = await mcpReader(p)
+    const first = json(await cli(p.configPath, ['knowledge', 'brief-why', p.runId, '--step', '0', '--test', p.firstTestId, '--json']))
+    expect(first).toEqual(await mcp.structured('agent_qa_explain_brief', { runId: p.runId, stepIndex: 0, testId: p.firstTestId }))
+    expect(first).toMatchObject({ kind: 'answered', trace: { servedLines: [{ recordId: p.recordId, leg: 'lexical', rank: 1 }] } })
+    const second = json(await cli(p.configPath, ['knowledge', 'brief-why', p.runId, '--step', '0', '--test', p.secondTestId, '--json']))
+    expect(second).toEqual(await mcp.structured('agent_qa_explain_brief', { runId: p.runId, stepIndex: 0, testId: p.secondTestId }))
+    expect(second).toMatchObject({ kind: 'answered', trace: { servedLines: [{ recordId: p.recordId, leg: 'dense', rank: 2 }] } })
+    const filtered = json(await cli(p.configPath, [
+      'knowledge', 'brief-why', p.runId, '--step', '0', '--test', p.firstTestId, '--record', 'fact-elsewhere', '--json']))
+    expect(filtered).toEqual(await mcp.structured('agent_qa_explain_brief',
+      { runId: p.runId, stepIndex: 0, testId: p.firstTestId, recordId: 'fact-elsewhere' }))
+    expect(filtered).toMatchObject({ kind: 'answered', trace: { servedLines: [], truncated: [] } })
+
+    const human = await cli(p.configPath, ['knowledge', 'brief-why', p.runId, '--step', '0', '--test', p.firstTestId])
+    expect(human.exitCode, human.stderr).toBe(0)
+    expect(human.stdout).toContain(`run ${p.runId} · test ${p.firstTestId} · step 0`)
+    expect(human.stdout).toContain(`served ${p.recordId} · lexical · rank 1 · score 1.5`)
+    expect(human.stdout).toContain(`agent-qa knowledge show ${p.recordId}`)
+  })
+
+  it('brief-why treats --test as a test id, never an index, and refuses an ambiguous step', async () => {
+    const p = populatedProject()
+    const byIndex = await cli(p.configPath, ['knowledge', 'brief-why', p.runId, '--step', '0', '--test', '1', '--json'])
+    expect(byIndex.exitCode).toBe(1)
+    expect(JSON.parse(byIndex.stdout)).toEqual({ kind: 'no-trace', reason: 'step-not-found' })
+    expect(byIndex.stderr).toContain('agent-qa runs overview')
+    const ambiguous = await cli(p.configPath, ['knowledge', 'brief-why', p.runId, '--step', '0', '--json'])
+    expect(ambiguous.exitCode).toBe(1)
+    expect(ambiguous.stdout).toBe('')
+    expect(ambiguous.stderr).toContain(p.firstTestId)
+    expect(ambiguous.stderr).toContain(p.secondTestId)
+    expect(ambiguous.stderr).toContain('--test')
+  })
+
+  it('brief-why exits nonzero for a missing run and a missing step', async () => {
+    const p = populatedProject()
+    const mcp = await mcpReader(p)
+    const missingRun = generateRunId()
+    const run = await cli(p.configPath, ['knowledge', 'brief-why', missingRun, '--step', '0', '--json'])
+    expect(run.exitCode).toBe(1)
+    expect(JSON.parse(run.stdout)).toEqual(await mcp.structured('agent_qa_explain_brief', { runId: missingRun, stepIndex: 0 }))
+    expect(JSON.parse(run.stdout)).toEqual({ kind: 'no-trace', reason: 'artifact-missing' })
+    const step = await cli(p.configPath, ['knowledge', 'brief-why', p.runId, '--step', '7', '--test', p.firstTestId])
+    expect(step.exitCode).toBe(1)
+    expect(step.stdout).toContain('step-not-found')
+  })
+
+  it.each(['-1', '1.5', 'abc', '9007199254740993'])('brief-why refuses --step %s', async (value) => {
+    const p = populatedProject()
+    const refused = await cli(p.configPath, ['knowledge', 'brief-why', p.runId, '--step', value, '--json'])
+    expect(refused.exitCode).not.toBe(0)
+    expect(refused.stdout).toBe('')
+    expect(refused.stderr).toContain('--step')
+  })
+
+  it('requires --step on brief-why', async () => {
+    const p = populatedProject()
+    const refused = await cli(p.configPath, ['knowledge', 'brief-why', p.runId, '--json'])
+    expect(refused.exitCode).not.toBe(0)
+    expect(refused.stderr).toContain('--step')
+  })
+})
+
 // ---- The built CLI --------------------------------------------------------------------------------
 
 describe('BUILT-CLI-RUN-READS: the shipped binary answers the run reads', () => {
