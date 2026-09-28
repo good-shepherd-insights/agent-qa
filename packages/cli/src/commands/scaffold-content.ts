@@ -25,10 +25,17 @@
 // `buildGitignoreEntries` (init.ts). Those two are a deliberate pair of literal copies pinned
 // against each other by the runtime-versus-defaults agreement test, because `init-filesystem.js` is
 // mocked wholesale by the init suite. Collapsing them onto one constant here would make that test
-// compare a value against itself. This module owns the block's SHAPE — markers, header line,
-// splice and append — and takes the entries as an argument.
+// compare a value against itself. This module owns the block's header line and takes the
+// entries as an argument; markers, in-place splice and append are the shared managed-block
+// writer's (`managed-block.ts`, 431 D-19).
 
 import { parseDocument, stringify } from 'yaml'
+
+import {
+  AGENT_QA_INIT_GITIGNORE_BLOCK,
+  composeManagedBlock,
+  type ManagedBlockContent,
+} from './managed-block.js'
 
 export const SUPPORTED_INIT_PLATFORMS = [
   'web',
@@ -295,60 +302,18 @@ export function buildHooksFile(platform: InitPlatformInput): string {
 }
 
 // ---------------------------------------------------------------------------------------------
-// The managed .gitignore block's SHAPE. Moved from `init-filesystem.ts`, which now delegates.
+// The managed .gitignore block: the hash-comment variant of the shared writer (431 D-19).
 // ---------------------------------------------------------------------------------------------
 
-export const MANAGED_GITIGNORE_START = '# agent-qa init:start'
-export const MANAGED_GITIGNORE_END = '# agent-qa init:end'
-
-export function managedGitignoreBlock(entries: readonly string[]): string {
-  return [
-    MANAGED_GITIGNORE_START,
-    '# Runtime, credential, dependency, and local-only paths managed by agent-qa init.',
-    ...entries,
-    MANAGED_GITIGNORE_END,
-    '',
-  ].join('\n')
-}
-
-export function stripManagedGitignoreBlock(content: string): string {
-  const startCount = content.split(MANAGED_GITIGNORE_START).length - 1
-  const endCount = content.split(MANAGED_GITIGNORE_END).length - 1
-  if (startCount !== endCount || startCount > 1) {
-    throw new Error(
-      'Refusing malformed target .gitignore: expected at most one complete '
-      + 'agent-qa init managed block',
-    )
+export function managedGitignoreContent(entries: readonly string[]): ManagedBlockContent {
+  return {
+    descriptor: AGENT_QA_INIT_GITIGNORE_BLOCK,
+    body: [
+      '# Runtime, credential, dependency, and local-only paths managed by agent-qa init.',
+      ...entries,
+    ],
+    target: 'target .gitignore',
   }
-  if (startCount === 0) return content
-
-  const start = content.indexOf(MANAGED_GITIGNORE_START)
-  const endMarker = content.indexOf(MANAGED_GITIGNORE_END, start)
-  // The counts balance at one and one even when a bad merge inverts the pair, and the
-  // anchored search then reports no match. Splicing at the offset computed from -1 would
-  // cut the file at an arbitrary byte with no relationship to any marker, duplicating the
-  // user's own rules and mangling a line. Refuse instead: this is the ordering property the
-  // count-based refusal above already advertises but does not check.
-  if (endMarker === -1) {
-    throw new Error(
-      'Refusing malformed target .gitignore: the agent-qa init managed '
-      + 'end marker precedes its start marker',
-    )
-  }
-  let end = endMarker + MANAGED_GITIGNORE_END.length
-  if (content.slice(end, end + 2) === '\r\n') end += 2
-  else if (content[end] === '\n') end += 1
-  return content.slice(0, start) + content.slice(end)
-}
-
-export function appendManagedBlockAtEof(content: string, block: string): string {
-  if (content.length === 0) return block
-  const separator = content.endsWith('\n\n')
-    ? ''
-    : content.endsWith('\n')
-      ? '\n'
-      : '\n\n'
-  return `${content}${separator}${block}`
 }
 
 /**
@@ -362,10 +327,7 @@ export function composeManagedGitignore(
   existing: string,
   entries: readonly string[],
 ): string {
-  return appendManagedBlockAtEof(
-    stripManagedGitignoreBlock(existing),
-    managedGitignoreBlock(entries),
-  )
+  return composeManagedBlock(existing, managedGitignoreContent(entries))
 }
 
 // ---------------------------------------------------------------------------------------------
