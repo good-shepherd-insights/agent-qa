@@ -9,8 +9,9 @@
 // or with either loader path unobserved, fails the cell: an inert trap cannot pass.
 //
 // TWO REAL DOORS, BECAUSE ONE CANNOT ANSWER EVERYTHING. The standalone `agent-qa mcp` over stdio is
-// the door a coding agent spawns; it binds no run-detail reader, so `runs.overview` and the
-// `runs.evidence` arm are unbound there by design (asserted as that refusal, never counted). The
+// the door a coding agent spawns; it binds a run-detail reader only over an existing
+// `.agent-qa/runs.db`, and this fixture keeps its database at `dashboard.db`, so `runs.overview`
+// and the `runs.evidence` arm are unbound there (asserted as that refusal, never counted). The
 // dashboard's co-hosted MCP endpoint binds the reader over the dashboard database and answers all
 // eight reads and both evidence arms. Every answer is checked for its populated content, so a
 // refusal or an empty result can never count as a clean load.
@@ -288,8 +289,8 @@ async function driveReads(client: Client, p: Project, reads: readonly Read[]): P
 
 const NEW_TOOLS = [...new Set([...EIGHT_READS.map((read) => read.tool), EVIDENCE_ARM.tool])].sort()
 
-// The standalone door binds no run-detail reader, so the two reads over it are unbound there by
-// design. They are asserted as that named refusal and never counted as a clean read.
+// The fixture has no `.agent-qa/runs.db`, so the standalone door binds no run-detail reader and the
+// two reads over it are unbound. They are asserted as that named refusal and never counted as a clean read.
 const STDIO_UNBOUND: readonly Read[] = [EIGHT_READS.find((read) => read.tool === 'agent_qa_get_run_overview')!, EVIDENCE_ARM]
 const STDIO_READS: readonly Read[] = [...EIGHT_READS.filter((read) => !STDIO_UNBOUND.includes(read)), ARTIFACT_ARM]
 
