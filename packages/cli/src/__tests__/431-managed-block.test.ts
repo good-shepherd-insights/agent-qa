@@ -96,7 +96,7 @@ const ABSENT_FIXTURES = [
   { name: 'already blank-line terminated', original: 'first\n\n', separator: '' },
   {
     name: 'Unicode with BOM',
-    original: '﻿titre ✓ 日本語 👩‍👩‍👧 é\n',
+    original: '\uFEFFtitre ✓ 日本語 👩\u200D👩\u200D👧 e\u0301\n',
     separator: '\n',
   },
 ] as const
@@ -131,7 +131,7 @@ function middleFixtures(variant: Variant): {
     },
     {
       name: 'Unicode prefix and suffix',
-      prefix: '﻿# Überblick ✓ 日本語\n\n👩‍👩‍👧 family é\n',
+      prefix: '\uFEFF# Überblick ✓ 日本語\n\n👩\u200D👩\u200D👧 family e\u0301\n',
       block: [start, 'ancien contenu ✓', end].join('\n'),
       suffix: '\n\n## Nächster Abschnitt 🚀\ntrailing',
     },
@@ -345,7 +345,7 @@ const SKILLS_BLOCK: ManagedBlockContent = {
   body: ['- agent-qa-knowledge: read its SKILL.md'],
   target: 'AGENTS.md',
 }
-const USER_PROSE = '﻿# Project rules ✓\r\n\r\nUse pnpm. 日本語 👩‍👩‍👧\r\nno final newline'
+const USER_PROSE = '\uFEFF# Project rules ✓\r\n\r\nUse pnpm. 日本語 👩\u200D👩\u200D👧\r\nno final newline'
 
 function thrownBy(run: () => unknown): unknown {
   try {
