@@ -64,11 +64,12 @@ type Captured =
   | { state: 'absent'; reason: EvidenceAbsenceReason; evidenceIncomplete?: boolean }
 
 /**
- * Mask first, then cut: truncating before masking could split a declared secret so the mask no
- * longer recognises it. Code points, not UTF-16 units, so a cut never lands inside a pair.
+ * Mask first, then fold line breaks and cut: either one before masking could change a declared
+ * secret so the mask no longer recognises it. Code points, not UTF-16 units, so a cut never lands
+ * inside a pair.
  */
 export function overviewText(raw: string, mask: MaskFn): RunOverviewText {
-  const masked = mask(raw.replace(/\s*[\r\n]+\s*/g, ' '))
+  const masked = mask(raw).replace(/\s*[\r\n]+\s*/g, ' ')
   const points = [...masked]
   if (points.length <= RUN_OVERVIEW_TEXT_MAX_CODE_POINTS) return { text: masked }
   return {

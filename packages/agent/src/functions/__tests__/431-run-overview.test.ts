@@ -757,4 +757,18 @@ describe('OVERVIEW-TRUNCATION: only labels and one-line summaries are cut', () =
     expect(summary).toEqual({ text: `${[...LONG_SUMMARY].slice(0, 160).join('')}…`, truncated: true })
     expect(overview.tests[0]?.name).toEqual({ text: 'Checkout smoke' })
   })
+
+  it('masks a declared multi-line secret before collapsing its line breaks', async () => {
+    const secret = '-----BEGIN KEY-----\nT431-pem-sentinel\n-----END KEY-----'
+    const masking = createMaskingContext()
+    masking.register(secret)
+    setActiveMaskingContextResolver(() => masking)
+    const scene = singleTestScene()
+    scene.document = completed([member(0, 'test-checkout', `Sign with\n${secret}`, [
+      handoffStep(0, `Paste ${secret} into the form`),
+    ])])
+    const result = JSON.stringify(await harness(scene).overview({ runId: RUN_ID }))
+    expect(result).not.toContain('T431-pem-sentinel')
+    expect(result).toContain(JSON.stringify(`Sign with ${masking.mask(secret)}`).slice(1, -1))
+  })
 })
