@@ -100,7 +100,9 @@ FROZEN_MIN_TESTS=129
 # Raised 2026-09-29 (431-08, D-03/D-06): the floor had stood at 50 through ten more registry ops.
 # Measured at this regeneration: 53 registry ops + 5 chat op-aliases + 3 shipped skills = 61 rows,
 # `runs.overview` being the newest. The floor is the exact observed baseline.
-FROZEN_MIN_ROWS=61
+# Raised 2026-09-29 (431-12, D-23): 61 -> 62. The fourth shipped skill, `agent-qa-knowledge`, adds
+# one skill row once copy:skills mirrors it: 53 registry ops + 5 chat op-aliases + 4 shipped skills.
+FROZEN_MIN_ROWS=62
 # The migration section's floor (398-08, D-14). It is SEPARATE from the row floor because it is a
 # separate section with a separate source: a mint that folded every capability correctly and dropped
 # the projected map would clear FROZEN_MIN_ROWS and write a manifest that answers no v1 caller.
