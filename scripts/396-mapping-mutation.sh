@@ -162,8 +162,9 @@ run_leg() {
 
 echo "396-04 mapping.ts bump-guard mutation legs (subject sha256 $PRISTINE_SHA)"
 
-run_leg M1 "${M1_REDS:-6}"
-run_leg M2 "${M2_REDS:-4}"
+# RE-MEASURED 2026-09-28 (431-04): M1 7 and M2 5 — the 24-tool suite adds one named cell to each.
+run_leg M1 "${M1_REDS:-7}"
+run_leg M2 "${M2_REDS:-5}"
 run_leg M3 "${M3_REDS:-4}"
 run_leg M4 "${M4_REDS:-5}"
 
