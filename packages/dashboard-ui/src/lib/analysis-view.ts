@@ -3,10 +3,10 @@
 // Phase 406-01 · DETL-04, D-03 / D-05 / D-10. Grown in 406-06 · D-08 / D-09 / D-10 / D-11 / D-19.
 //
 // THIS FILE COMPOSES NO SENTENCE, AND THAT IS THE POINT. `analysis.get` is THE single producer of
-// a run's verdict sentences (389 D-11): the renderer that writes them lives in
-// `packages/agent/src/analysis/render-sentence.ts`, and every surface — the CLI print, chat, this
-// page — reads its output rather than re-deriving it. A template here would be a second producer
-// of one fact, which is the 405 D-01 anti-pattern restated. What this module does is JOIN: the
+// a run's verdict sentences (389 D-11), written by `packages/agent/src/analysis/render-sentence.ts`.
+// Every surface, the CLI print, CLI chat and this page, reads its output rather than re-deriving it.
+// A template here would be a second producer of one fact, which is the 405 D-01 anti-pattern
+// restated. What this module does is JOIN: the
 // op's `verdicts[]` to the op's `sentences[]` and to its `clusters[]`, keyed by the member handle,
 // into the map the page hands each `MemberGroup`.
 //

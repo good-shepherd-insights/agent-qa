@@ -1,8 +1,8 @@
 // The run button's `[y/a/N]` (Phase 401 plan 09, D-11).
 //
-// THIS IS A RENDER AND NOT APPROVAL MACHINERY, which is `confirm-bubble.tsx`'s first sentence and
-// is just as true here. The question was raised by the policy gate, parked in the server's confirm
-// registry under a single-use scope-bound id, and pushed down this browser's own trigger channel.
+// THIS IS A RENDER AND NOT APPROVAL MACHINERY. The question was raised by the policy gate, parked
+// in the server's confirm registry under a single-use scope-bound id, and pushed down this
+// browser's own trigger channel.
 // What this component does is show it and send one of three words back. It holds no timer, mints no
 // grant and decides nothing — each of those exists exactly once, on the server, where 391's grant
 // machinery and 392's confirm classification live.
@@ -22,12 +22,10 @@
 // channel that can vanish mid-question, not a failure to respond in time. Rendering it as "still
 // waiting" would paper over a decision the system has already made and recorded.
 //
-// A DIALOG HERE, WHERE CHAT USES AN INLINE BUBBLE, AND THE DIFFERENCE IS THE MEDIUM'S. The chat
-// bubble is inline because the cost preview arrived a moment earlier as a `chat_present` frame and
-// is sitting in the transcript directly above it — a modal would cover the disclosure the answer
-// depends on. A run trigger has no transcript to sit in: the person clicked a button on a table and
-// the preview travels WITH the question, on this component. So the disclosure and the answer are in
-// the same frame, which is the same rule reaching the opposite layout.
+// A DIALOG, AND THE DASHBOARD'S ONLY CONFIRM SURFACE. The person clicked a button on a table, so
+// nothing on screen holds a disclosure for them to have read already. The cost preview therefore
+// travels WITH the question, on the same trigger channel, and is shown on this component: the
+// disclosure and the answer it informs are in the same frame.
 
 import { useCallback, useEffect, useRef, useState } from "react"
 
@@ -272,9 +270,8 @@ export function RunConfirmHost() {
             markConfirmClaim()?.onResolved(frame)
             return
           }
-          // ONLY THIS QUESTION'S OWN RESOLUTION (401-14, CR-05) — the keyed semantic the chat
-          // sibling has always applied at its reducer (`use-chat-turn.ts` matches on `confirmId`
-          // before it writes a resolution onto an entry). Without it a stale or overlapping frame
+          // ONLY THIS QUESTION'S OWN RESOLUTION (401-14, CR-05): a resolution is keyed to the
+          // question's own `confirmId` before it is written. Without it a stale or overlapping frame
           // rendered the pending question as resolved with ANOTHER question's answer, and the
           // linger timer below then cleared it — costing the person the chance to answer.
           //

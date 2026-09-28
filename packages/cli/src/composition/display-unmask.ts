@@ -20,12 +20,11 @@
 // splits on. The marker spelling is IMPORTED and never written here: two spellings of one literal
 // across two packages is a drift that fails silently and in the worst direction.
 //
-// A SCOPE-LESS CALL IS THE IDENTITY, AND THAT IS A DECISION RATHER THAN AN OVERSIGHT. Chat calls
-// `host.unmaskForDisplay(text)` with no run scope: a chat turn is not about one run, so there is no
-// sidecar to match against, and `chat-transcript.tsx` has no chip renderer — a marker emitted there
-// would put a raw U+241F in front of a person, which is the very thing D-10 forbids. So chat's
-// display posture is byte-for-byte what 400-06 shipped, and giving chat a scope (or a renderer) is
-// the later owner's move, not a silent one taken here.
+// A SCOPE-LESS CALL IS THE IDENTITY, AND THAT IS A DECISION RATHER THAN AN OVERSIGHT. With no run
+// scope there is no sidecar to match against, and a caller that passes none has no chip renderer
+// either, so a marker emitted there would put a raw U+241F in front of a person, which is the very
+// thing D-10 forbids. The scope-less posture is byte-for-byte what 400-06 shipped; giving such a
+// caller a scope (or a renderer) is the later owner's move, not a silent one taken here.
 //
 // NOTHING HERE PERSISTS, LOGS OR ECHOES A VALUE. The candidate set is built, matched and dropped
 // inside the call. The only file this module WRITES is the host key, and only because
@@ -104,8 +103,8 @@ export function createDisplayUnmasker(input: DisplayUnmaskerInput): DisplayUnmas
   let hostKey: Buffer | undefined
 
   return (text: string, scope?: { runId: string }): string => {
-    // THE SCOPE-LESS PATH, FIRST AND UNCONDITIONALLY. Chat (`chat-routes.ts`'s one-argument call)
-    // is the caller this arm exists for — see the header. Byte-for-byte identity, no read, no throw.
+    // THE SCOPE-LESS PATH, FIRST AND UNCONDITIONALLY. No run scope means no sidecar to match
+    // against — see the header. Byte-for-byte identity, no read, no throw.
     if (scope === undefined) return text
 
     const digests = readMaskingDigests({ root: input.agentQaRoot, runId: scope.runId })

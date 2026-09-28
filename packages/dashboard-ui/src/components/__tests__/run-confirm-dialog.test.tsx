@@ -138,8 +138,8 @@ describe("the run trigger's confirm dialog", () => {
     // spelling of the vocabulary, and it would agree with the server right up until somebody
     // changed one of them — which is the drift this assertion exists to catch.
     expect(offered).toEqual([...CONFIRM_ANSWER_VOCABULARY])
-    // The action's own disclosure travels WITH the question, because a run trigger has no
-    // transcript for a cost preview to have arrived in a moment earlier.
+    // The action's own disclosure travels WITH the question, because nothing on screen holds a
+    // cost preview for the person to have read already.
     expect(host.querySelector("[data-confirm-preview]")?.textContent)
       .toBe("one run against a shared target")
   })
@@ -204,9 +204,8 @@ describe("the run confirm host answers only its own question (401-14, CR-05)", (
   it("a resolution for a DIFFERENT confirm leaves this question pending and answerable", () => {
     // THE DEFECT: `onConfirmResolved` set the resolution from ANY frame, so a stale or overlapping
     // `confirm_resolved` rendered THIS question as resolved with another question's answer — and
-    // the linger timer then cleared it, costing the person their chance to answer. The chat sibling
-    // has always keyed its resolution to the matching `confirmId` (`use-chat-turn.ts`); the run
-    // path is the half of that pair that was left standing.
+    // the linger timer then cleared it, costing the person their chance to answer. A resolution is
+    // now keyed to the question's own `confirmId` before it is written.
     //
     // NOT A SECURITY BYPASS, and the cell does not claim one: `answerRunConfirm` posts the real
     // confirmId and the SERVER decides, so a spurious "approved" render approves nothing. What is
