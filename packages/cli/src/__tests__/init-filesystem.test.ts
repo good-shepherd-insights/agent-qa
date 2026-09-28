@@ -28,6 +28,7 @@ import { createInitCommand, type InitCommandHooks } from '../commands/init.js'
 import {
   KNOWLEDGE_GITIGNORE_PROBES,
   TARGET_GITIGNORE_PROBES,
+  managedBlockLockPath,
   preflightInitPlan,
   upsertManagedGitignoreBlock,
   verifyEffectiveGitignore,
@@ -1627,8 +1628,8 @@ const REFUSAL_WALK_ROOTS = [
 // is asserted over — the point being that it is a WALK, not three sampled cells.
 //
 // Deliberately EXCLUDED, and not a walk failure: `upsertManagedGitignoreBlock`'s
-// pre-publication refusals, including the inverted-marker refusal. They are thrown by
-// `stripManagedGitignoreBlock` BEFORE `writeScaffoldFileAtomic` is called at all, so they
+// pre-publication refusals, including the inverted-marker and occupied-lock refusals. They are
+// thrown by `upsertManagedBlock` BEFORE `writeScaffoldFileAtomic` is called at all, so they
 // are outside the universal's scope by construction and need no disposition — nothing has
 // been published, opened or unlinked when they fire.
 const REFUSAL_PATH_WALK = [
@@ -2159,6 +2160,22 @@ describe('the durable temporary is invisible to a commit', () => {
     expect(TARGET_GITIGNORE_PROBES.filter(
       probe => DURABLE_TEMPORARY_PATTERN.test(probe.path) && probe.expected === 'ignored',
     )).toHaveLength(1)
+  })
+
+  // 431-09: the managed-block writer's per-target lock. An interrupted writer can leave it
+  // behind for the operator to delete, so it sits in the same covered namespace.
+  it('covers a managed-block lock left beside a target with the same managed rule', () => {
+    const root = tempRoot()
+    initializeGit(root)
+    const gitignorePath = join(root, '.gitignore')
+    upsertManagedGitignoreBlock(gitignorePath)
+    for (const target of ['AGENTS.md', '.gitignore']) {
+      const lock = managedBlockLockPath(join(root, target))
+      expect(dirname(lock)).toBe(root)
+      writeFileSync(lock, '')
+      expect(gitIgnores(root, lock.slice(root.length + 1))).toBe(true)
+    }
+    expect(gitIgnores(root, 'AGENTS.md')).toBe(false)
   })
 
   it('proves the same on the knowledge root the tool actually writes', async () => {

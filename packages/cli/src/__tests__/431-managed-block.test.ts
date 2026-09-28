@@ -5,8 +5,29 @@
 // where it stands, never relocated. Malformed or ambiguous markers refuse before any text is
 // produced, because a guess would rewrite bytes nobody handed over.
 
-import { describe, expect, it } from 'vitest'
+import {
+  existsSync,
+  linkSync,
+  lstatSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { afterEach, describe, expect, it } from 'vitest'
 
+import {
+  ManagedBlockLockRefusal,
+  managedBlockLockPath,
+  upsertManagedBlock,
+  upsertManagedGitignoreBlock,
+  type InitFileResult,
+} from '../commands/init-filesystem.js'
 import {
   AGENT_QA_INIT_GITIGNORE_BLOCK,
   AGENT_QA_INIT_MARKDOWN_BLOCK,
@@ -294,5 +315,262 @@ describe('MANAGED-MARKERS', () => {
         'Refusing malformed target .gitignore: the agent-qa init managed '
         + 'end marker precedes its start marker',
       )
+  })
+})
+
+// ---------------------------------------------------------------------------------------------
+// The filesystem half: validated, locked, atomic publication (431-09 Task 2 · EDGE-02).
+// ---------------------------------------------------------------------------------------------
+
+const roots: string[] = []
+
+function tempRoot(): string {
+  const root = mkdtempSync(join(tmpdir(), 'agent-qa-managed-block-'))
+  roots.push(root)
+  return root
+}
+
+afterEach(() => {
+  for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true })
+})
+
+// Lock and publication temporaries share the `.agent-qa-init-` infix; none may survive a call.
+function writerLeftovers(directory: string): string[] {
+  return readdirSync(directory).filter(name => name.includes('.agent-qa-init-'))
+}
+
+const INIT_BLOCK = MARKDOWN.content
+const SKILLS_BLOCK: ManagedBlockContent = {
+  descriptor: { ...AGENT_QA_INIT_MARKDOWN_BLOCK, blockName: 'skills' },
+  body: ['- agent-qa-knowledge: read its SKILL.md'],
+  target: 'AGENTS.md',
+}
+const USER_PROSE = '﻿# Project rules ✓\r\n\r\nUse pnpm. 日本語 👩‍👩‍👧\r\nno final newline'
+
+function thrownBy(run: () => unknown): unknown {
+  try {
+    run()
+  } catch (error) {
+    return error
+  }
+  throw new Error('expected the call to refuse, but it succeeded')
+}
+
+describe('MANAGED-ATOMIC', () => {
+  it('creates, updates and then preserves, keeping every outside byte', () => {
+    const root = tempRoot()
+    const path = join(root, 'AGENTS.md')
+
+    expect(upsertManagedBlock({ path, root, content: INIT_BLOCK })).toEqual({
+      path,
+      outcome: 'created',
+    })
+    expect(readFileSync(path, 'utf8')).toBe(`${rendered(INIT_BLOCK)}\n`)
+
+    writeFileSync(path, USER_PROSE)
+    expect(upsertManagedBlock({ path, root, content: INIT_BLOCK }).outcome).toBe('updated')
+    const once = readFileSync(path)
+    expect(once.toString('utf8')).toBe(`${USER_PROSE}\n\n${rendered(INIT_BLOCK)}\n`)
+
+    expect(upsertManagedBlock({ path, root, content: INIT_BLOCK }).outcome).toBe('preserved')
+    expect(readFileSync(path).equals(once)).toBe(true)
+
+    const middle = `head\r\n${rendered(SKILLS_BLOCK)}\r\n${rendered(INIT_BLOCK)}\r\ntail ✓`
+    writeFileSync(path, middle)
+    upsertManagedBlock({ path, root, content: MARKDOWN.regenerated })
+    expect(readFileSync(path, 'utf8')).toBe(
+      `head\r\n${rendered(SKILLS_BLOCK)}\r\n${rendered(MARKDOWN.regenerated)}\r\ntail ✓`,
+    )
+    expect(writerLeftovers(root)).toEqual([])
+  })
+
+  it('names its lock beside the target, inside the managed temporary namespace', () => {
+    const root = tempRoot()
+    expect(managedBlockLockPath(join(root, 'AGENTS.md')))
+      .toBe(join(root, '.AGENTS.md.agent-qa-init-lock.tmp'))
+  })
+
+  it('refuses a symlink, hardlink, directory, symlinked parent or out-of-root target untouched', () => {
+    const root = tempRoot()
+    const outside = tempRoot()
+    const victim = join(outside, 'victim.md')
+    writeFileSync(victim, 'victim bytes\n')
+
+    const symlinked = join(root, 'linked')
+    mkdirSync(symlinked)
+    symlinkSync(victim, join(symlinked, 'AGENTS.md'))
+
+    const hardlinked = join(root, 'hard')
+    mkdirSync(hardlinked)
+    writeFileSync(join(hardlinked, 'AGENTS.md'), 'shared inode\n')
+    linkSync(join(hardlinked, 'AGENTS.md'), join(hardlinked, 'OTHER.md'))
+
+    const directory = join(root, 'directory')
+    mkdirSync(join(directory, 'AGENTS.md'), { recursive: true })
+
+    const parentLink = join(root, 'parent-link')
+    mkdirSync(parentLink)
+    symlinkSync(outside, join(parentLink, 'docs'))
+
+    const cases = [
+      { root: symlinked, path: join(symlinked, 'AGENTS.md'), pattern: /symbolic link/ },
+      { root: hardlinked, path: join(hardlinked, 'AGENTS.md'), pattern: /hard links/ },
+      { root: directory, path: join(directory, 'AGENTS.md'), pattern: /directory/ },
+      { root: parentLink, path: join(parentLink, 'docs', 'victim.md'), pattern: /symbolic link/ },
+      { root: symlinked, path: join(outside, 'victim.md'), pattern: /must be a file inside/ },
+    ]
+    for (const { root: caseRoot, path, pattern } of cases) {
+      expect(() => upsertManagedBlock({ path, root: caseRoot, content: INIT_BLOCK }), path)
+        .toThrow(pattern)
+      expect(writerLeftovers(caseRoot), path).toEqual([])
+    }
+    expect(readFileSync(victim, 'utf8')).toBe('victim bytes\n')
+    expect(readFileSync(join(hardlinked, 'OTHER.md'), 'utf8')).toBe('shared inode\n')
+    expect(lstatSync(join(hardlinked, 'AGENTS.md')).nlink).toBe(2)
+    expect(lstatSync(join(symlinked, 'AGENTS.md')).isSymbolicLink()).toBe(true)
+    expect(writerLeftovers(outside)).toEqual([])
+  })
+
+  it('leaves the prior file whole when publication fails before the rename', () => {
+    const root = tempRoot()
+    const path = join(root, 'AGENTS.md')
+    writeFileSync(path, USER_PROSE)
+    const abort = (): never => {
+      throw new Error('injected publication abort')
+    }
+
+    expect(() => upsertManagedBlock(
+      { path, root, content: INIT_BLOCK },
+      { beforeAtomicReplacePublish: abort },
+    )).toThrow('injected publication abort')
+    expect(readFileSync(path, 'utf8')).toBe(USER_PROSE)
+    expect(writerLeftovers(root)).toEqual([])
+
+    const absent = join(root, 'NEW.md')
+    expect(() => upsertManagedBlock(
+      { path: absent, root, content: INIT_BLOCK },
+      { beforeExclusivePublish: abort },
+    )).toThrow('injected publication abort')
+    expect(existsSync(absent)).toBe(false)
+    expect(writerLeftovers(root)).toEqual([])
+
+    expect(upsertManagedBlock({ path, root, content: INIT_BLOCK }).outcome).toBe('updated')
+    expect(readFileSync(path, 'utf8')).toBe(`${USER_PROSE}\n\n${rendered(INIT_BLOCK)}\n`)
+  })
+
+  it('refuses malformed markers and non-UTF-8 bytes without writing or leaving a lock', () => {
+    const root = tempRoot()
+    const path = join(root, 'AGENTS.md')
+    const { start, end } = managedBlockMarkers(INIT_BLOCK.descriptor)
+    const duplicate = `${start}\na\n${end}\n${start}\nb\n${end}\n`
+    writeFileSync(path, duplicate)
+    expect(thrownBy(() => upsertManagedBlock({ path, root, content: INIT_BLOCK })))
+      .toBeInstanceOf(ManagedBlockRefusal)
+    expect(readFileSync(path, 'utf8')).toBe(duplicate)
+    expect(writerLeftovers(root)).toEqual([])
+
+    const latin1 = Buffer.from([0x63, 0x61, 0x66, 0xe9, 0x0a])
+    writeFileSync(path, latin1)
+    expect(() => upsertManagedBlock({ path, root, content: INIT_BLOCK })).toThrow(/UTF-8/)
+    expect(readFileSync(path).equals(latin1)).toBe(true)
+    expect(writerLeftovers(root)).toEqual([])
+  })
+})
+
+describe('MANAGED-CONCURRENCY', () => {
+  it('serializes cooperative writers per target and loses no block update', () => {
+    const root = tempRoot()
+    const path = join(root, 'AGENTS.md')
+    writeFileSync(path, USER_PROSE)
+    const succeeded: ManagedBlockContent[] = []
+    let second: unknown
+
+    const first = upsertManagedBlock({ path, root, content: INIT_BLOCK }, {
+      beforeAtomicReplacePublish: () => {
+        try {
+          upsertManagedBlock({ path, root, content: SKILLS_BLOCK })
+          succeeded.push(SKILLS_BLOCK)
+        } catch (error) {
+          second = error
+        }
+      },
+    })
+    succeeded.push(INIT_BLOCK)
+    expect(first.outcome).toBe('updated')
+
+    // Every writer that reported success still has its block on disk.
+    const afterRace = readFileSync(path, 'utf8')
+    for (const content of succeeded) expect(afterRace).toContain(rendered(content))
+    expect(second).toBeInstanceOf(ManagedBlockLockRefusal)
+    expect((second as ManagedBlockLockRefusal).lockPath).toBe(managedBlockLockPath(path))
+    expect((second as Error).message).toContain(managedBlockLockPath(path))
+
+    // The refused writer retries once the lock is released, and both blocks stand.
+    const retried: InitFileResult = upsertManagedBlock({ path, root, content: SKILLS_BLOCK })
+    expect(retried.outcome).toBe('updated')
+    expect(readFileSync(path, 'utf8')).toBe(
+      `${USER_PROSE}\n\n${rendered(INIT_BLOCK)}\n\n${rendered(SKILLS_BLOCK)}\n`,
+    )
+    expect(writerLeftovers(root)).toEqual([])
+  })
+
+  it('refuses an existing lock it did not create and never removes it', () => {
+    const root = tempRoot()
+    const path = join(root, 'AGENTS.md')
+    writeFileSync(path, USER_PROSE)
+    const lock = managedBlockLockPath(path)
+    writeFileSync(lock, 'held by an interrupted writer\n')
+    const inode = lstatSync(lock).ino
+
+    const refusal = thrownBy(() => upsertManagedBlock({ path, root, content: INIT_BLOCK }))
+    expect(refusal).toBeInstanceOf(ManagedBlockLockRefusal)
+    expect((refusal as Error).message).toContain(lock)
+    expect((refusal as Error).message).toMatch(/delete the lock/)
+    expect(readFileSync(lock, 'utf8')).toBe('held by an interrupted writer\n')
+    expect(lstatSync(lock).ino).toBe(inode)
+    expect(readFileSync(path, 'utf8')).toBe(USER_PROSE)
+
+    // A lock that is a symlink is occupied too: never followed, never removed.
+    const outside = tempRoot()
+    const victim = join(outside, 'victim')
+    writeFileSync(victim, 'victim\n')
+    const other = join(root, 'OTHER.md')
+    symlinkSync(victim, managedBlockLockPath(other))
+    expect(thrownBy(() => upsertManagedBlock({ path: other, root, content: INIT_BLOCK })))
+      .toBeInstanceOf(ManagedBlockLockRefusal)
+    expect(lstatSync(managedBlockLockPath(other)).isSymbolicLink()).toBe(true)
+    expect(readFileSync(victim, 'utf8')).toBe('victim\n')
+    expect(existsSync(other)).toBe(false)
+  })
+
+  it('never removes a publication temporary it did not create', () => {
+    const root = tempRoot()
+    const path = join(root, 'AGENTS.md')
+    const foreign = join(root, '.AGENTS.md.agent-qa-init-4242-00000000-0000-4000-8000-000000000000.tmp')
+    writeFileSync(foreign, 'another writer\n')
+    upsertManagedBlock({ path, root, content: INIT_BLOCK })
+    upsertManagedBlock({ path, root, content: MARKDOWN.regenerated })
+    expect(readFileSync(foreign, 'utf8')).toBe('another writer\n')
+    expect(writerLeftovers(root)).toEqual([
+      '.AGENTS.md.agent-qa-init-4242-00000000-0000-4000-8000-000000000000.tmp',
+    ])
+  })
+
+  it('puts the .gitignore upsert on the same locked writer', () => {
+    const root = tempRoot()
+    const path = join(root, '.gitignore')
+    writeFileSync(path, 'dist/\n# agent-qa init:start\nstale\n# agent-qa init:end\nlocal/\n')
+    const lock = join(root, '..gitignore.agent-qa-init-lock.tmp')
+    writeFileSync(lock, '')
+    expect(() => upsertManagedGitignoreBlock(path, ['.agent-qa/'])).toThrow(ManagedBlockLockRefusal)
+    expect(readFileSync(path, 'utf8'))
+      .toBe('dist/\n# agent-qa init:start\nstale\n# agent-qa init:end\nlocal/\n')
+
+    rmSync(lock)
+    expect(upsertManagedGitignoreBlock(path, ['.agent-qa/']).outcome).toBe('updated')
+    expect(readFileSync(path, 'utf8')).toBe(
+      `dist/\n${rendered(managedGitignoreContent(['.agent-qa/']))}\nlocal/\n`,
+    )
+    expect(writerLeftovers(root)).toEqual([])
   })
 })
