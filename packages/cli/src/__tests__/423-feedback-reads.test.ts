@@ -1173,7 +1173,8 @@ describe('423-21 read-op adjudication (D-04/D-18)', () => {
     expect(AGENT_QA_OP_CONTRACTS['runs.evidence']?.input).toBe(contracts['runs.evidence'])
     const registryIds = registryDeclarations().map(entry => entry.id)
     // 2026-09-25 (428 D-07): 52 — editor.liveurl registered, dashboard-only and MCP-unprojected.
-    expect(registryIds).toHaveLength(52)
+    // 2026-09-29 (431-08 D-06): 53 — runs.overview registered, with its own input singleton.
+    expect(registryIds).toHaveLength(53)
     expect(censusDiff(registryIds, Object.keys(contracts))).toEqual({ missing: [], stray: [] })
   })
 

@@ -84,6 +84,7 @@ import {
   RunsListInputSchema,
   RunsMarkInputSchema,
   RunsMarksHistoryInputSchema,
+  RunsOverviewInputSchema,
   RunsPostProcessingInputSchema,
   RunsStartInputSchema,
 } from '@vostride/agent-qa-schema'
@@ -157,6 +158,8 @@ export const OP_INPUT_CONTRACTS = {
   'runs.mark': RunsMarkInputSchema,
   'runs.mark.preview': RunsMarkInputSchema,
   'runs.marks.history': RunsMarksHistoryInputSchema,
+  // 2026-09-29 (431-08, D-06): the run overview, the agent's map of one completed run.
+  'runs.overview': RunsOverviewInputSchema,
   'runs.postprocessing': RunsPostProcessingInputSchema,
   'runs.start': RunsStartInputSchema,
 } as const
@@ -1369,6 +1372,33 @@ export const SCENARIO_TABLE = Object.freeze([
       fn: { reachable: true },
     },
     renderExpect: { markers: ['entries', 'kind', 'runId'] },
+    policyPoints: { grant: 'allow', refuse: 'deny' },
+  }),
+  // 2026-09-29 (431-08, D-06): the overview, projected as agent_qa_get_run_overview, with read
+  // policy points. The fixture records no run under `FIXTURE_RUN_ID`, so every door refuses it as
+  // a missing run; the populated answer is measured in `431-discovery-parity.test.ts`. Markers
+  // are the projection's required fields.
+  scenario({
+    opId: 'runs.overview',
+    input: { runId: FIXTURE_RUN_ID },
+    perSurface: {
+      chat: { reachable: true },
+      mcp: { reachable: { tool: 'agent_qa_get_run_overview' } },
+      fn: { reachable: true },
+    },
+    renderExpect: {
+      markers: [
+        'aggregateVerdict',
+        'buildOrdinal',
+        'endedAt',
+        'learned',
+        'recordedTargets',
+        'runId',
+        'scope',
+        'startedAt',
+        'tests',
+      ],
+    },
     policyPoints: { grant: 'allow', refuse: 'deny' },
   }),
   scenario({
