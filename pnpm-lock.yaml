@@ -507,9 +507,6 @@ importers:
       lucide-react:
         specifier: 1.14.0
         version: 1.14.0(react@19.2.5)
-      marked:
-        specifier: 18.0.3
-        version: 18.0.3
       monaco-editor:
         specifier: 0.55.1
         version: 0.55.1
@@ -3976,11 +3973,6 @@ packages:
   marked@14.0.0:
     resolution: {integrity: sha512-uIj4+faQ+MgHgwUW1l2PsPglZLOLOT1uErt06dAPtx2kjteLAkbsd/0FiYg/MGS+i7ZKLb7w2WClxHkzOOuryQ==}
     engines: {node: '>= 18'}
-    hasBin: true
-
-  marked@18.0.3:
-    resolution: {integrity: sha512-7VT90JOkDeaRWpfjOReRGPEKn0ecdARBkDGL+tT1wZY0efPPqkUxLUSmzy/C7TIylQYJC9STISEsCHrqb/7VIA==}
-    engines: {node: '>= 20'}
     hasBin: true
 
   matcher@3.0.0:
@@ -7819,8 +7811,6 @@ snapshots:
       '@jridgewell/sourcemap-codec': 1.5.5
 
   marked@14.0.0: {}
-
-  marked@18.0.3: {}
 
   matcher@3.0.0:
     dependencies:

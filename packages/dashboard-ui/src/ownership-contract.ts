@@ -21,7 +21,6 @@ export const AGENT_QA_DASHBOARD_UI_EXTERNAL_DEPENDENCIES = [
   'clsx',
   'cmdk',
   'lucide-react',
-  'marked',
   'monaco-editor',
   'motion',
   'radix-ui',
@@ -39,11 +38,10 @@ export const AGENT_QA_DASHBOARD_UI_EXTERNAL_DEPENDENCIES = [
 ] as const
 export const AGENT_QA_DASHBOARD_UI_INTERNAL_DEPENDENCIES = [
   '@vostride/agent-qa-ids',
-  // 400-06: the chat transcript reads the SHIPPED vocabularies rather than copies of them —
-  // `CLAUSE_RECEIPT_STATUSES` (so a fifth status is a compile error at the render map),
-  // `remediesRenderableBy` + `RemedyKindFor<'dashboard'>` (so the per-surface remedy table has
-  // exactly one authority) and the turn/session contracts. Hand-written mirrors of any of those in
-  // this package would be second copies free to drift from the ones that dispatch.
+  // 430 D-04: run detail's views, the entity route map (`ENTITY_DASHBOARD_ROUTES`,
+  // `parseEntityUri`) and api.ts (`GATE_REMEDY_KINDS` and the run, mark and preview schemas) read
+  // the SHIPPED contracts rather than copies of them. Hand-written mirrors in this package would be
+  // second copies free to drift from the ones the server projects.
   '@vostride/agent-qa-schema',
 ] as const
 
