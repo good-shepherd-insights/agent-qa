@@ -335,15 +335,38 @@ describe('agent-qa chat (the REPL over one turn engine)', () => {
 
   it('DASHBOARD-ERA-SESSION-REOPENS: --session reopens it and creates no session', async () => {
     const configPath = fixtureWorkspace(roots)
-    seedDashboardEraSessions(configPath)
+    const sessions = seedDashboardEraSessions(configPath)
+    const before = new Map(sessionFiles(configPath).map((file) => [
+      file,
+      readFileSync(join(sessions, file)),
+    ]))
 
     const result = await runChat(configPath, ['--session', DASHBOARD_ERA_SESSION_ID], ['/quit'])
 
     expect(result.exitCode).not.toBe(1)
     expect(result.stderr).not.toContain(`No chat session named ${DASHBOARD_ERA_SESSION_ID}`)
+    // A resumed session announces its id before the first prompt; a fresh one has none to announce.
+    const output = `${result.stdout}\n${result.stderr}`
+    expect(output).toContain(`session ${DASHBOARD_ERA_SESSION_ID}`)
+    expect(output).not.toContain(`session ${PRE_400_SESSION_ID}`)
     expect(sessionFiles(configPath).sort()).toEqual(
       [`${DASHBOARD_ERA_SESSION_ID}.jsonl`, `${PRE_400_SESSION_ID}.jsonl`],
     )
+    // `/quit` is itself a routed turn, so it lands in the reopened log: the dashboard-era bytes
+    // must survive as an untouched prefix with that turn appended after them, and nothing else moves.
+    const reopened = `${DASHBOARD_ERA_SESSION_ID}.jsonl`
+    for (const [file, bytes] of before) {
+      const after = readFileSync(join(sessions, file))
+      if (file !== reopened) {
+        expect(after.equals(bytes), file).toBe(true)
+        continue
+      }
+      expect(after.subarray(0, bytes.length).equals(bytes), file).toBe(true)
+      const appended = after.subarray(bytes.length).toString('utf8')
+      expect(appended).toContain('"kind":"user_message"')
+      expect(appended).toContain('"text":"/quit"')
+      expect(appended).not.toContain('"sessionId"')
+    }
   })
 
   it('--continue reopens the most recent session rather than opening a new one', async () => {
