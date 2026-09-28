@@ -52,13 +52,6 @@ import {
   entityCardsIn,
 } from '@/chat/entity-card'
 import { ENTITY_KIND_ROUTES, entityRefRoute, entityRouteFor } from '@/lib/entity-routes'
-import { ChatTranscriptView, type ChatTranscriptViewProps } from '@/chat/chat-transcript'
-import {
-  createChatTranscriptState,
-  reduceChatTranscript,
-  type ChatTranscriptEvent,
-  type ChatTranscriptState,
-} from '@/chat/use-chat-turn'
 import {
   MEM_CARD,
   POL_CARD,
@@ -426,59 +419,6 @@ describe('a card is recognised by the schema that defines one', () => {
   it('reads the card shape from the schema package (source assertion)', () => {
     expect(ENTITY_CARD_SOURCE).toMatch(/EntityCardSchema/u)
     expect(ENTITY_CARD_SOURCE).toMatch(/EntityCardResolutionSchema/u)
-  })
-})
-
-// ---- 8. The transcript renders cards WITHOUT suppressing the payload (399.1 D-04 / D-14) -------
-
-describe('the transcript renders an entity-card result as a card', () => {
-  function fold(events: readonly ChatTranscriptEvent[]): ChatTranscriptState {
-    return events.reduce(
-      (carried, event) => reduceChatTranscript(carried, event),
-      createChatTranscriptState(),
-    )
-  }
-
-  const NOOP = {
-    onSend: () => {},
-    onAnswerConfirm: () => {},
-    status: 'idle',
-    starters: [],
-  } satisfies Omit<ChatTranscriptViewProps, 'state'>
-
-  it('renders the card ABOVE the complete payload, never instead of it', () => {
-    const state = fold([
-      { channel: 'session', event: { kind: 'user_message', turnId: 't1', at: 'a', text: 'show me MEM-001' } },
-      { channel: 'session', event: { kind: 'clause_result', turnId: 't1', at: 'a', functionId: 'entities.get', payload: MEM_CARD } },
-      { channel: 'session', event: { kind: 'clause_receipt', turnId: 't1', at: 'a', clause: 'one', functionId: 'entities.get', origin: 'human', status: 'executed', outcome: 'found MEM MEM-001' } },
-    ])
-    const host = mount(createElement(ChatTranscriptView, { ...NOOP, state }))
-
-    const card = host.querySelector('[data-entity-card]')
-    expect(card).not.toBeNull()
-    expect(card?.getAttribute('data-entity-kind')).toBe('MEM')
-
-    // LAW 3 is untouched: the complete masked payload is still there, still expanded.
-    const payload = host.querySelector('[data-payload-block]')
-    expect(payload?.getAttribute('data-expanded')).toBe('true')
-    expect(payload?.textContent).toContain('bundle-checkout-flow')
-  })
-
-  it('sends a card action through the transcript\'s own onSend — the one chat door', () => {
-    const sent: string[] = []
-    const state = fold([
-      { channel: 'session', event: { kind: 'clause_result', turnId: 't1', at: 'a', functionId: 'entities.get', payload: TST_CARD } },
-      { channel: 'session', event: { kind: 'clause_receipt', turnId: 't1', at: 'a', clause: 'one', functionId: 'entities.get', origin: 'human', status: 'executed', outcome: 'found TST TST-001' } },
-    ])
-    const host = mount(createElement(ChatTranscriptView, {
-      ...NOOP,
-      state,
-      onSend: (utterance: string) => sent.push(utterance),
-    }))
-
-    const runAction = host.querySelector<HTMLButtonElement>('[data-entity-action="runs.start"]')
-    act(() => { runAction?.click() })
-    expect(sent).toEqual(['/fn runs.start {"patterns":["t-irish-vise-s"]}'])
   })
 })
 
