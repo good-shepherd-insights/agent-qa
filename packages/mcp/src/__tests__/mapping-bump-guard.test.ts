@@ -29,6 +29,9 @@
 // runs.evidence lands unprojected on runs.detail's completed-run footing.
 // RE-MEASURED 2026-09-25 (428 D-07): sixteen tools; 52 declarations / 26 projected /
 // 26 unprojected. editor.liveurl lands unprojected by ruling — the editor mint is dashboard-only.
+// RE-MEASURED 2026-09-28 (431-04 D-01/D-04/D-10): twenty-four tools; 53 declarations / 35 projected /
+// 18 unprojected. runs.overview arrives projected, and eight previously unprojected reads move over:
+// the five knowledge reads, runs.knowledge, and runs.evidence with runs.artifact behind one fold.
 // The original measurement settles the 41-vs-43 discrepancy the phase
 // context carried — whatever the registry answers IS the denominator, and this suite reds if the
 // two sets ever stop covering it exactly.
@@ -101,6 +104,7 @@ import {
   AGENT_QA_TOOL_PROJECTIONS,
   compositionOf,
   DEGRADED_OUTPUT_CONTRACTS,
+  UNPROJECTED_ADJUDICATIONS,
   UNPROJECTED_OPS,
 } from '../mapping.js'
 import { toRegisterToolConfig } from '../projection.js'
@@ -144,9 +148,16 @@ const projectedOpIds = (): readonly string[] =>
 const PINNED_TOOL_NAMES: readonly string[] = [
   'agent_qa_apply_config_proposal',
   'agent_qa_apply_proposal',
+  'agent_qa_diff_knowledge_records',
+  'agent_qa_explain_brief',
   'agent_qa_get_entity',
   'agent_qa_get_run_digest',
+  'agent_qa_get_run_evidence',
+  'agent_qa_get_run_knowledge',
   'agent_qa_get_run_marks',
+  'agent_qa_get_run_overview',
+  'agent_qa_inspect_knowledge_records',
+  'agent_qa_list_knowledge_bundles',
   'agent_qa_list_knowledge_gates',
   'agent_qa_list_proposals',
   'agent_qa_list_runs',
@@ -155,6 +166,7 @@ const PINNED_TOOL_NAMES: readonly string[] = [
   'agent_qa_propose_config_change',
   'agent_qa_propose_knowledge_change',
   'agent_qa_refine_test',
+  'agent_qa_show_knowledge_record',
   'agent_qa_show_proposal',
   'agent_qa_start_run',
   'agent_qa_write_test',
@@ -164,9 +176,16 @@ const PINNED_TOOL_NAMES: readonly string[] = [
 const PINNED_TOOL_OPS: Readonly<Record<string, readonly string[]>> = {
   agent_qa_apply_config_proposal: ['config.proposal.apply'],
   agent_qa_apply_proposal: ['knowledge.proposal.apply'],
+  agent_qa_diff_knowledge_records: ['knowledge.records.diff'],
+  agent_qa_explain_brief: ['knowledge.brief.why'],
   agent_qa_get_entity: ['entities.resolve', 'entities.get'],
   agent_qa_get_run_digest: ['runs.digest'],
+  agent_qa_get_run_evidence: ['runs.evidence', 'runs.artifact'],
+  agent_qa_get_run_knowledge: ['runs.knowledge'],
   agent_qa_get_run_marks: ['runs.marks.history'],
+  agent_qa_get_run_overview: ['runs.overview'],
+  agent_qa_inspect_knowledge_records: ['knowledge.records.inspect'],
+  agent_qa_list_knowledge_bundles: ['knowledge.bundles.list'],
   agent_qa_list_knowledge_gates: ['knowledge.gates.list'],
   agent_qa_mark_run: ['runs.mark'],
   agent_qa_preview_run_mark: ['runs.mark.preview'],
@@ -187,6 +206,7 @@ const PINNED_TOOL_OPS: Readonly<Record<string, readonly string[]>> = {
     'knowledge.forget.propose',
   ],
   agent_qa_refine_test: ['authoring.draft.edit', 'authoring.draft.verify'],
+  agent_qa_show_knowledge_record: ['knowledge.record.show'],
   agent_qa_show_proposal: ['proposals.show'],
   agent_qa_start_run: ['runs.start'],
   agent_qa_write_test: ['authoring.draft.write'],
@@ -282,6 +302,9 @@ function armSizes(entries: readonly (readonly [string, V1MigrationArm])[]): Reco
   return sizes
 }
 
+/** 2026-09-28 (431-04 D-10): the closed adjudicator vocabulary, pinned beside its runtime tuple. */
+const PINNED_ADJUDICATIONS: readonly string[] = ['397', '398', '405', '408', '428']
+
 /** MCPS-02's stated band. Asserted AT the bound, not implied by the exact pin above it. */
 const MCPS_02_MIN_TOOLS = 8
 /**
@@ -289,16 +312,18 @@ const MCPS_02_MIN_TOOLS = 8
  * MX milestone's decided catalogue. D-18 publishes the two feedback reads here, and PXH-AGENT-04
  * (Phase 431) projects six knowledge reads, so the decided total is 16 + 6. The exact name and op
  * pins above still red on every change; this bound only states how far the owner has decided to go.
+ * 2026-09-28 (431 D-01): the owner widened 431 to the run overview and the evidence fold as well,
+ * so the decided total is 16 + 8.
  */
-const MX_MAX_TOOLS = 22
+const MX_MAX_TOOLS = 24
 
 describe('the pinned catalogue (D-04)', () => {
-  it('declares exactly the pinned sorted tool-name list', () => {
+  it('MCP-NAMES-EXACT: declares exactly the pinned sorted tool-name list', () => {
     const names = AGENT_QA_TOOL_PROJECTIONS.map((projection) => projection.name).sort()
     expect(names).toEqual([...PINNED_TOOL_NAMES])
   })
 
-  it('declares exactly the pinned op set for every tool', () => {
+  it('MCP-OPS-EXACT: declares exactly the pinned op set for every tool', () => {
     const actual: Record<string, readonly string[]> = {}
     for (const projection of AGENT_QA_TOOL_PROJECTIONS) actual[projection.name] = [...projection.ops]
     expect(actual).toEqual(PINNED_TOOL_OPS)
@@ -309,7 +334,7 @@ describe('the pinned catalogue (D-04)', () => {
   // still passes here and reds the exact pin, and a drop to seven reds here.
   it('holds a tool count inside the MCPS-02 band, at both ends', () => {
     const count = AGENT_QA_TOOL_PROJECTIONS.length
-    expect(count).toBe(16)
+    expect(count).toBe(24)
     expect(count).toBeGreaterThanOrEqual(MCPS_02_MIN_TOOLS)
     expect(count).toBeLessThanOrEqual(MX_MAX_TOOLS)
   })
@@ -399,7 +424,7 @@ describe('the projection resolves against the registry, produced not literal', (
 })
 
 describe('the partition law (D-03 / D-15)', () => {
-  it('disposition every registry op exactly once, in exactly one of the two sets', () => {
+  it('MCP-PARTITION: disposition every registry op exactly once, in exactly one of the two sets', () => {
     const registryIds = declarations().map((declaration) => declaration.id).sort()
     const projected = projectedOpIds()
     const unprojected = UNPROJECTED_OPS.map((entry) => entry.opId)
@@ -419,9 +444,10 @@ describe('the partition law (D-03 / D-15)', () => {
     // 2026-09-08, 419 D-19/D-20: mark arrives and gates becomes projected (48/24/24).
     // 2026-09-15, 423-21 D-04/D-18: two feedback reads projected, evidence unprojected (51/26/25).
     // 2026-09-25, 428 D-07: editor.liveurl arrives unprojected (52/26/26).
-    expect(declarations().length).toBe(52)
-    expect(projectedOpIds().length).toBe(26)
-    expect(UNPROJECTED_OPS.length).toBe(26)
+    // 2026-09-28, 431-04 D-01/D-10: runs.overview arrives projected and eight reads move (53/35/18).
+    expect(declarations().length).toBe(53)
+    expect(projectedOpIds().length).toBe(35)
+    expect(UNPROJECTED_OPS.length).toBe(18)
   })
 
   it('lists no op twice in the scoping note', () => {
@@ -429,7 +455,7 @@ describe('the partition law (D-03 / D-15)', () => {
     expect(new Set(ids).size).toBe(ids.length)
   })
 
-  it('gives every unprojected op a non-empty reason and a NAMED adjudicator', () => {
+  it('MCP-ADJUDICATIONS: gives every unprojected op a non-empty reason and a NAMED adjudicator', () => {
     // 2026-08-17 (398 D-09). This cell used to assert `'397'` for every entry, and that literal was
     // right for exactly as long as 397 was the last phase to add an op. `agent.explain` arrived in
     // 398, so a phase that could not have ruled on it would have been recorded as having done so —
@@ -448,14 +474,11 @@ describe('the partition law (D-03 / D-15)', () => {
     // 2026-08-27 (405-01 D-03). The same widening for the same reason, two phases later:
     // `runs.detail` arrived in 405 and 397 could not have ruled on it. Membership is still
     // spelled by op id, so an entry stamped `'405'` because it was easier reds here.
-    const ADJUDICATED_BY_405 = new Set(['runs.artifact', 'runs.detail'])
-    // 2026-08-29 (407-01 D-05). The same widening for the same reason, two phases later:
-    // `runs.knowledge` arrived in 407 and 397 could not have ruled on it. Membership is still
-    // spelled by op id, so an entry stamped `'407'` because it was easier reds here.
-    const ADJUDICATED_BY_407 = new Set(['runs.knowledge'])
-    // 2026-09-15 (423-21 D-04). The same widening for the same reason: `runs.evidence` arrived in
-    // 423 and no earlier phase could have ruled on it. Membership is spelled by op id.
-    const ADJUDICATED_BY_423 = new Set(['runs.evidence'])
+    // 2026-09-28 (431-04 D-10): `runs.artifact` left for the evidence fold; `runs.detail` stays.
+    const ADJUDICATED_BY_405 = new Set(['runs.detail'])
+    // 2026-08-29 (407-01 D-05) and 2026-09-15 (423-21 D-04) added `'407'` for `runs.knowledge` and
+    // `'423'` for `runs.evidence`. 431-04 D-10 projects both, so both literals leave the vocabulary
+    // rather than staying as member-less entries; the cells below pin that they are gone.
     // 2026-09-25 (428 D-07). The same widening for the same reason: `editor.liveurl` arrived in
     // 428, unprojected by ruling. Membership is spelled by op id.
     const ADJUDICATED_BY_428 = new Set(['editor.liveurl'])
@@ -468,7 +491,7 @@ describe('the partition law (D-03 / D-15)', () => {
           ? '408'
           : ADJUDICATED_BY_405.has(opId)
             ? '405'
-            : ADJUDICATED_BY_407.has(opId) ? '407' : ADJUDICATED_BY_423.has(opId) ? '423' : '397'
+            : '397'
     for (const entry of UNPROJECTED_OPS) {
       expect(entry.reason.length, entry.opId).toBeGreaterThan(20)
       expect(entry.adjudication, entry.opId).toBe(expectedAdjudicator(entry.opId))
@@ -493,13 +516,20 @@ describe('the partition law (D-03 / D-15)', () => {
       'the 405-adjudicated pin names entries the scoping note does not carry',
     ).toEqual([...ADJUDICATED_BY_405])
     expect(
-      UNPROJECTED_OPS.filter((entry) => ADJUDICATED_BY_407.has(entry.opId)).map((e) => e.opId),
-      'the 407-adjudicated pin names entries the scoping note does not carry',
-    ).toEqual([...ADJUDICATED_BY_407])
-    expect(
-      UNPROJECTED_OPS.filter((entry) => ADJUDICATED_BY_423.has(entry.opId)).map((e) => e.opId),
-      'the 423-adjudicated pin names entries the scoping note does not carry',
-    ).toEqual([...ADJUDICATED_BY_423])
+      UNPROJECTED_OPS.map((entry) => entry.adjudication as string).filter((a) => a === '407' || a === '423'),
+      "`'407'` and `'423'` left the adjudicator vocabulary with the ops 431 projected",
+    ).toEqual([])
+    // The runtime tuple beside the type is the vocabulary, pinned, and every member is inhabited.
+    expect([...UNPROJECTED_ADJUDICATIONS]).toEqual(PINNED_ADJUDICATIONS)
+    for (const adjudication of UNPROJECTED_ADJUDICATIONS) {
+      expect(
+        UNPROJECTED_OPS.some((entry) => entry.adjudication === adjudication),
+        `'${adjudication}' is in the vocabulary with no member`,
+      ).toBe(true)
+    }
+    for (const entry of UNPROJECTED_OPS) {
+      expect(UNPROJECTED_ADJUDICATIONS as readonly string[], entry.opId).toContain(entry.adjudication)
+    }
     expect(
       UNPROJECTED_OPS.filter((entry) => ADJUDICATED_BY_428.has(entry.opId)).map((e) => e.opId),
       'the 428-adjudicated pin names entries the scoping note does not carry',
@@ -538,6 +568,7 @@ describe('the composed fold contracts answer for the ops the mapping declares', 
       'agent_qa_refine_test',
       'agent_qa_propose_config_change',
       'agent_qa_propose_knowledge_change',
+      'agent_qa_get_run_evidence',
     ])
 
     for (const fold of folds) {
@@ -638,9 +669,10 @@ it('419 D-20 pins the credential-required vocabulary', () => {
 })
 
 // 2026-09-15, 423-21 D-18/D-04: the two feedback reads are read tools with their ops' own strict
-// contracts, and the evidence read is the one new op on the unprojected side.
+// contracts, and the evidence read was the one new op on the unprojected side.
+// 2026-09-28 (431-04 D-07/D-10): the evidence read is now projected through the evidence fold.
 describe('423-21 feedback read tools (D-18)', () => {
-  it('MCP-TWO-TOOLS: two read-only feedback tools over their exact contracts, evidence unprojected, no new write authority', () => {
+  it('MCP-TWO-TOOLS: two read-only feedback tools over their exact contracts, evidence folded, no new write authority', () => {
     const byName = new Map(AGENT_QA_TOOL_PROJECTIONS.map((projection) => [projection.name, projection]))
     const declarationsById = new Map(declarations().map((declaration) => [declaration.id, declaration]))
     const expected = [
@@ -669,11 +701,8 @@ describe('423-21 feedback read tools (D-18)', () => {
     expect(byName.get('agent_qa_mark_run')).toMatchObject({ kind: 'apply', credential: 'required', ops: ['runs.mark'] })
     expect(declarationsById.get('runs.mark')?.requiredScopes).toEqual(['knowledge-write'])
 
-    const evidence = UNPROJECTED_OPS.find((entry) => entry.opId === 'runs.evidence')
-    expect(evidence).toMatchObject({ adjudication: '423' })
-    expect(evidence?.reason).toContain('2026-09-15')
-    expect(evidence?.reason).toContain('mid-flight workflow read')
-    expect(projectedOpIds()).not.toContain('runs.evidence')
+    expect(UNPROJECTED_OPS.find((entry) => entry.opId === 'runs.evidence')).toBeUndefined()
+    expect(byName.get('agent_qa_get_run_evidence')?.ops).toEqual(['runs.evidence', 'runs.artifact'])
     expect(declarationsById.get('runs.evidence')?.requiredScopes).toEqual(['read'])
   })
 })
