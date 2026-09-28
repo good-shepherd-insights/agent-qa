@@ -14,9 +14,7 @@ import { SidebarProvider, SidebarInset } from "@/components/ui/sidebar"
 import { AppSidebar } from "@/components/app-sidebar"
 import { Toaster } from "@/components/ui/sonner"
 import { CommandPalette } from "@/components/command-palette"
-import { ChatPanel } from "@/components/chat-panel"
 import { RunConfirmHost } from "@/components/run-confirm-dialog"
-import { ChatSessionProvider } from "@/chat/chat-session-context"
 import { RouteErrorBoundary } from "@/components/error-boundary"
 import { ProductTourProvider, ProductTourOverlay } from "@/components/product-tour"
 import {
@@ -49,7 +47,6 @@ const ConfigPage = lazy(() => import("@/pages/config"))
 const SuitesPage = lazy(() => import("@/pages/suites"))
 const SuiteEditorPage = lazy(() => import("@/pages/suite-editor"))
 const SuiteViewerPage = lazy(() => import("@/pages/suite-viewer"))
-const ChatPage = lazy(() => import("@/pages/chat"))
 
 const UPDATE_BANNER_ELIGIBLE_PATHS = new Set<string>([
   routes.runs,
@@ -117,10 +114,6 @@ function AppLayout() {
 
   return (
     <SidebarProvider>
-      {/* ONE conversation for the whole app (400-06, D-13). Above the router's `Outlet`, so the
-          panel and the `/chat` page are two mounts of one session and a navigation does not end
-          it. */}
-      <ChatSessionProvider>
       <ProductTourProvider pathname={location.pathname} hideHeader={hideHeader}>
         <AppSidebar />
         <SidebarInset className={cn(hideHeader && "h-svh overflow-hidden", mainScrolls && "h-svh")}>
@@ -142,17 +135,12 @@ function AppLayout() {
         </SidebarInset>
         <ProductTourOverlay />
         <CommandPalette />
-        {/* 400-06 (D-13): the fourth door's SECOND MOUNT, beside the other global overlays. It
-            renders the same `<ChatTranscript />` module `/chat` renders, over the same session —
-            never a second transcript. */}
-        <ChatPanel />
         {/* 401-09 (D-11): the run trigger's confirm channel and its dialog, mounted ONCE beside the
             other global overlays. Being on this page is what makes an ask-tier run askable — there
             are nine places that start a run and the queue dispatches in the same tick one is
             requested, so a channel opened per click would be racing the run's own gate. */}
         <RunConfirmHost />
       </ProductTourProvider>
-      </ChatSessionProvider>
     </SidebarProvider>
   )
 }
@@ -206,21 +194,6 @@ const router = createBrowserRouter([
                 ),
               },
             ],
-          },
-        ],
-      },
-      {
-        path: "chat",
-        handle: { crumb: "Chat" },
-        errorElement: <RouteErrorBoundary />,
-        children: [
-          {
-            index: true,
-            element: (
-              <Suspense fallback={<DetailSkeleton />}>
-                <ChatPage />
-              </Suspense>
-            ),
           },
         ],
       },
