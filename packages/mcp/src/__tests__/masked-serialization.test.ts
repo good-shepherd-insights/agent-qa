@@ -223,6 +223,32 @@ describe('X · the escape classes reach neither channel (CR-01)', () => {
     }
   })
 
+  it('(X9) an own `__proto__` variable in a masked evidence document survives as a key, masked', () => {
+    const masker = seededMasker()
+    try {
+      const records = JSON.parse(
+        `{"__proto__":{"value":${JSON.stringify(`token=${QUOTE_PLANT}`)},"source":"capture"}}`,
+      ) as Record<string, unknown>
+      const output = {
+        address: { runId: 'r_x9', testIndex: 0, stepIndex: 0, kind: 'variables' },
+        outcome: 'ready',
+        document: { schemaVersion: 1, kind: 'variables', records },
+      }
+      const result = maskedToolResult(output, masker.mask)
+
+      expect(result.isError ?? false, renderedText(result)).toBe(false)
+      const masked = (result.structuredContent as { document: { records: Record<string, unknown> } })
+        .document.records
+      expect(Object.hasOwn(masked, '__proto__')).toBe(true)
+      expect(Object.getPrototypeOf(masked)).toBe(Object.prototype)
+      expect(Object.keys(JSON.parse(renderedText(result)).document.records)).toEqual(['__proto__'])
+      expect(leakedWindow(renderedText(result), QUOTE_PLANT)).toBeUndefined()
+      expect(renderedText(result)).toContain('token=')
+    } finally {
+      masker.dispose()
+    }
+  })
+
   it('(X8) HOSTILE CONTROL: an UNREGISTERED value travels the same path verbatim, and the helper '
     + 'finds it', () => {
     const masker = seededMasker()
