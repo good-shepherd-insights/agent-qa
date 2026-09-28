@@ -1,9 +1,6 @@
 import { RUN_EVENT_TYPES, GATE_REMEDY_KINDS, RunsMarkPreviewResultSchema, RunsMarksHistoryResultSchema } from '@vostride/agent-qa-schema'
 import type {
-  AgentAskResult,
   AnalysisGetOutput,
-  ClauseReceiptStatus,
-  ChatSessionEvent,
   PostProcessingDisposition,
   PostProcessingStatus,
   RunDetailProjection,
@@ -1620,37 +1617,27 @@ export async function fetchCapturedVarNames(testId: string): Promise<{ names: st
   return request(`/api/variables/captured/${encodeURIComponent(testId)}`)
 }
 
-// ---- The fourth door: dashboard chat (Phase 400 plan 06, DASH-01) ---------------------------
+// ---- The run and mark confirm door (401-09, D-11; 426-10, D-20) ------------------------------
 //
-// FOUR WRAPPERS AND NO FIFTH. The door is `POST /api/chat/turn`, its stream, the confirm answer and
-// the served capability catalog; there is no per-capability endpoint to wrap because there is no
-// per-capability endpoint at all (397 D-03 — everything crosses one gated `agent.ask`). A helper
-// here named after a capability would be the first inch of the bespoke-handler surface the roster
-// exists to refuse.
-
-
-/** One executed clause's registry fold, as the door computes it beside the payload (399.1 D-04). */
-export interface ChatTurnFold {
-  functionId: string
-  verdict: { status: Exclude<ClauseReceiptStatus, 'not-run'>; outcome: string }
-  foldLines: string[]
-}
-
-/** What `POST /api/chat/turn` answers with — the typed result, whole, plus the folds beside it. */
-export interface ChatTurnResponse {
-  result: AgentAskResult
-  folds: ChatTurnFold[]
-}
+// ONE CHANNEL PER PAGE, TWO SURFACES THAT ANSWER ON IT. The run button's dialog answers a run
+// trigger's question and a mark's composer answers a mark's question; both arrive on the channel
+// below and both answer through `answerRunConfirm`. The registry, the single-use ids, the two DENY
+// reapers and the mint all live on the server.
+//
+// THE ORDER IS FORCED, NOT PREFERRED. The dashboard's queue dispatches a run in the same tick the
+// trigger route enqueues it, so a channel opened after `triggerRun` resolved would be racing the
+// run's own policy gate. The channel is opened first, the server mints the scope on it and
+// announces it as the first frame, and the trigger names that scope.
 
 /**
  * The three answers a browser confirm offers — the TTY's `[y/a/N]`, in a medium with buttons.
  *
- * A VALUE AND A TYPE DERIVED FROM IT, rather than a bare union (401-09). Both confirm surfaces —
- * chat's inline bubble and the run trigger's dialog — render one button per member, and a
- * hand-written list at either render site would be a second spelling of the vocabulary that agreed
- * with the server right up until somebody changed one of them. It mirrors the server's own
- * `CHAT_CONFIRM_ANSWERS`, which the answer routes validate against with a closed `z.enum`, so a
- * fourth answer is a 400 rather than an `undefined` somewhere downstream.
+ * A VALUE AND A TYPE DERIVED FROM IT, rather than a bare union (401-09). The run dialog and the mark
+ * composer render one button per member, and a hand-written list at either render site would be a
+ * second spelling of the vocabulary that agreed with the server right up until somebody changed one
+ * of them. It mirrors the server's own `CHAT_CONFIRM_ANSWERS`, which the answer route validates
+ * against with a closed `z.enum`, so a fourth answer is a 400 rather than an `undefined` somewhere
+ * downstream.
  */
 export const CONFIRM_ANSWER_VOCABULARY = ['accept', 'accept-always', 'deny'] as const
 
@@ -1670,75 +1657,6 @@ export interface ChatConfirmResolvedFrame {
   by: 'answer' | 'timeout' | 'channel-closed'
 }
 
-export async function postChatTurn(input: {
-  message: string
-  sessionId?: string
-}): Promise<ChatTurnResponse> {
-  return postJson<ChatTurnResponse>('/api/chat/turn', input)
-}
-
-/**
- * Answer one outstanding confirm.
- *
- * `sessionId` IS NOT REDUNDANT WITH THE CONFIRM ID and must not be "tidied away": the registry
- * compares it against the session the question was parked for, so an id that leaked somewhere it
- * should not have cannot be spent on somebody else's conversation (T-400-09).
- */
-export async function answerChatConfirm(input: {
-  sessionId: string
-  confirmId: string
-  answer: ChatConfirmAnswer
-}): Promise<{ resolved: boolean; answer: ChatConfirmAnswer }> {
-  return postJson<{ resolved: boolean; answer: ChatConfirmAnswer }>('/api/chat/confirm', input)
-}
-
-/**
- * One row of the COMMITTED capability catalog, as the artifact spells it.
- *
- * The fields are the artifact's own, not a browser-shaped subset: the catalog is produced from a
- * real composition's declarations and the CLI's `/help`, its completer and `init --agent` all read
- * these same rows. A remapping here would be this surface's private idea of the document.
- */
-export interface ChatCapabilityRow {
-  kind: string
-  alias?: string
-  targetOpId?: string
-  opId?: string
-  description?: string
-  docPath?: string | null
-}
-
-export interface ChatCapabilityCatalog {
-  rowCount: number
-  rowsDigest: string
-  rows: ChatCapabilityRow[]
-}
-
-export async function fetchChatCapabilityCatalog(): Promise<ChatCapabilityCatalog> {
-  return request<ChatCapabilityCatalog>('/api/chat/catalog')
-}
-
-/**
- * Watch one conversation.
- *
- * TWO KINDS OF FRAME ON ONE CONNECTION, and the callbacks keep them apart because the SERVER does:
- * session events are a projection of a durable log and carry the `id:` a reconnect spends; confirm
- * frames are transient facts about a question in flight and deliberately carry none (400-03). A
- * consumer that folded them into one handler would be inviting the reconnect to ask for an id no
- * window could hold.
- */
-// ---- The RUN TRIGGER's confirm door (401-09, D-11) -------------------------------------------
-//
-// THE SAME THREE ANSWERS AS CHAT, ON A SURFACE WITH NO CONVERSATION. The registry, the single-use
-// ids, the two DENY reapers and the mint are all the ones the chat confirm already rides; what is
-// different here is only the address a question is delivered to, and that this browser has to ASK
-// to be askable before it triggers anything.
-//
-// THE ORDER IS FORCED, NOT PREFERRED. The dashboard's queue dispatches a run in the same tick the
-// trigger route enqueues it, so a channel opened after `triggerRun` resolved would be racing the
-// run's own policy gate. The channel is opened first, the server mints the scope on it and
-// announces it as the first frame, and the trigger names that scope.
-
 /** The frame a freshly opened trigger channel announces itself with. */
 export interface RunConfirmScopeFrame {
   scopeId: string
@@ -1756,7 +1674,6 @@ export function openRunConfirmChannel(
     onScope?: (frame: RunConfirmScopeFrame) => void
     onConfirmRequest?: (frame: ChatConfirmRequestFrame) => void
     onConfirmResolved?: (frame: ChatConfirmResolvedFrame) => void
-    onPresent?: (text: string) => void
   },
 ): EventSource {
   const source = new EventSource(`${API_BASE}/api/run-confirm/channel`)
@@ -1769,18 +1686,15 @@ export function openRunConfirmChannel(
   source.addEventListener('confirm_resolved', (e) => {
     callbacks.onConfirmResolved?.(JSON.parse((e as MessageEvent).data) as ChatConfirmResolvedFrame)
   })
-  source.addEventListener('chat_present', (e) => {
-    callbacks.onPresent?.((JSON.parse((e as MessageEvent).data) as { text: string }).text)
-  })
   return source
 }
 
 /**
- * Answer one outstanding run-trigger confirm.
+ * Answer one outstanding run or mark confirm.
  *
- * `scopeId` IS NOT REDUNDANT WITH THE CONFIRM ID, on the chat answer route's own reasoning: the
- * registry compares it against the scope the question was parked for, so an id that leaked
- * somewhere it should not have cannot be spent on another browser's question.
+ * `scopeId` IS NOT REDUNDANT WITH THE CONFIRM ID: the registry compares it against the scope the
+ * question was parked for, so an id that leaked somewhere it should not have cannot be spent on
+ * another browser's question.
  */
 export async function answerRunConfirm(input: {
   scopeId: string
@@ -1788,48 +1702,6 @@ export async function answerRunConfirm(input: {
   answer: ChatConfirmAnswer
 }): Promise<{ resolved: boolean; answer: ChatConfirmAnswer }> {
   return postJson<{ resolved: boolean; answer: ChatConfirmAnswer }>('/api/run-confirm/answer', input)
-}
-
-export function subscribeToChatSessionEvents(
-  sessionId: string,
-  callbacks: {
-    onSessionEvent?: (event: ChatSessionEvent) => void
-    onConfirmRequest?: (frame: ChatConfirmRequestFrame) => void
-    onConfirmResolved?: (frame: ChatConfirmResolvedFrame) => void
-    onPresent?: (text: string) => void
-    onOpen?: () => void
-  },
-): EventSource {
-  const source = new EventSource(
-    `${API_BASE}/api/chat/sessions/${encodeURIComponent(sessionId)}/events`,
-  )
-  source.addEventListener('open', () => { callbacks.onOpen?.() })
-
-  // The session-event kinds the door projects. Named rather than caught with a catch-all listener:
-  // `EventSource` has no wildcard, and a `message` handler would only ever see frames the server
-  // sent WITHOUT an `event:` line, which is none of these.
-  const SESSION_EVENT_KINDS = [
-    'user_message', 'stage_outcome', 'clause_receipt', 'clause_result', 'approval_decision',
-    'mark_unhandled', 'model_change', 'active_tools_change', 'compaction', 'aborted',
-    'turn_complete',
-  ] as const
-  for (const kind of SESSION_EVENT_KINDS) {
-    source.addEventListener(kind, (e) => {
-      callbacks.onSessionEvent?.(JSON.parse((e as MessageEvent).data) as ChatSessionEvent)
-    })
-  }
-
-  source.addEventListener('confirm_request', (e) => {
-    callbacks.onConfirmRequest?.(JSON.parse((e as MessageEvent).data) as ChatConfirmRequestFrame)
-  })
-  source.addEventListener('confirm_resolved', (e) => {
-    callbacks.onConfirmResolved?.(JSON.parse((e as MessageEvent).data) as ChatConfirmResolvedFrame)
-  })
-  source.addEventListener('chat_present', (e) => {
-    callbacks.onPresent?.((JSON.parse((e as MessageEvent).data) as { text: string }).text)
-  })
-
-  return source
 }
 
 // ---------------------------------------------------------------------------
