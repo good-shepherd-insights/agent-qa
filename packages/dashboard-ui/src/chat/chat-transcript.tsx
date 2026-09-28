@@ -26,12 +26,7 @@
 
 import { useState, type FormEvent } from "react"
 
-import {
-  remediesRenderableBy,
-  type GateRemedy,
-  type RemedyKindFor,
-} from "@vostride/agent-qa-schema"
-
+import { DenialBlock } from "@/components/run-detail/denial-block"
 import { useChatSession } from "@/chat/chat-session-context"
 import { ChatMarkdown } from "@/chat/chat-markdown"
 import { ConfirmBubble } from "@/chat/confirm-bubble"
@@ -96,23 +91,6 @@ function completionsFor(
   }
   return [...ids].sort().slice(0, 8)
 }
-
-/**
- * How each dashboard-takeable remedy reads in a browser — TOTAL over THAT SET, derived.
- *
- * THE KEY SET IS COMPUTED FROM THE SHIPPED SURFACE TABLE, not listed here. `RemedyKindFor<'dashboard'>`
- * is derived from `GATE_REMEDY_SURFACES_BY_KIND`, so the day a remedy kind is added with
- * `dashboard` among its surfaces, THIS RECORD is missing a required arm and this line fails to
- * compile. A hand-written list of "the kinds the dashboard renders" would be a second copy of that
- * table, free to drift — and the drift presents as a remedy the gate mints for this door and this
- * door silently drops, which is the very defect D-15 closes.
- */
-const DASHBOARD_REMEDY_TEXT = {
-  "answer-confirm":
-    "keep this chat open and re-run it — an ask-tier op raises a confirm here that you can answer",
-  "session-pin-final":
-    "this action class is pinned DENY for this conversation; a pin cannot be lifted, so start a new chat session to run it",
-} as const satisfies Record<RemedyKindFor<"dashboard">, string>
 
 /**
  * The transcript, given everything explicitly.
@@ -409,50 +387,6 @@ function PayloadBlock({
             nothing is an ordinary thing and a person needs to read that rather than a keyword. */}
         {rendered ?? "(no result)"}
       </pre>
-    </div>
-  )
-}
-
-/**
- * A refusal: what was refused, then the ways forward A BROWSER READER CAN ACTUALLY TAKE.
- *
- * THE PROSE IS THE `neutralReason`, NEVER THE CANONICAL `reason` (400 gap round 1, D-15 / #191).
- * The gate mints two sentences from one decision. `reason` is the canonical one — the audit row's
- * text, the bytes `demo/acceptance/399/` published — and on two of its arms it names
- * `--trust-session`, a flag declared on `agent-qa run` and on no other command. 400-02 rendered it
- * here verbatim and recorded the residue: this block had just been taught not to hand a browser
- * reader another surface's remedy, while the paragraph above the remedies did exactly that. The
- * canonical prose belongs to the CLI and to the trail; nothing composes it into this DOM.
- *
- * SO THE WAY OUT REACHES THIS READER THROUGH `remediesRenderableBy("dashboard", …)` AND NOWHERE
- * ELSE. That is the whole shape of the repair: one channel that says what happened, in words any
- * surface can show, and one channel of typed offers each surface filters to what it can honour.
- *
- * AN EMPTY PROJECTION RENDERS NOTHING, and that had to be a decision rather than a fallthrough. A
- * render that reached for a line when it had nothing to offer would re-mint the todo — a reader
- * spending their attention on a way forward that is not there. The reason alone is a complete
- * answer.
- */
-export function DenialBlock({
-  neutralReason,
-  remedies,
-}: {
-  neutralReason: string
-  remedies: readonly GateRemedy[]
-}) {
-  const renderable = remediesRenderableBy("dashboard", remedies)
-  return (
-    <div data-entry="denial" className="flex flex-col gap-1 rounded-md border border-amber-500/40 bg-amber-500/5 px-3 py-2 text-sm">
-      <p className="text-foreground">{neutralReason}</p>
-      {renderable.map((remedy) => (
-        <p
-          key={remedy.kind}
-          data-remedy-kind={remedy.kind}
-          className="text-xs text-muted-foreground"
-        >
-          {DASHBOARD_REMEDY_TEXT[remedy.kind as RemedyKindFor<"dashboard">]}
-        </p>
-      ))}
     </div>
   )
 }

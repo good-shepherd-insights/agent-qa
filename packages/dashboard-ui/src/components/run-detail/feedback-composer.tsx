@@ -10,7 +10,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Textarea } from '@/components/ui/textarea'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { Skeleton } from '@/components/ui/skeleton'
-import { DenialBlock } from '@/chat/chat-transcript'
+import { DenialBlock } from '@/components/run-detail/denial-block'
 import { FeedbackApproval, type FeedbackApprovalProps } from '@/components/run-detail/feedback-approval'
 import { FeedbackHistory, type FeedbackHistoryProps } from '@/components/run-detail/feedback-history'
 import { FeedbackPreview } from '@/components/run-detail/feedback-preview'

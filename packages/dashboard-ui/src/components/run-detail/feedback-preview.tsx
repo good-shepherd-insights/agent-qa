@@ -1,7 +1,7 @@
 import { useId } from 'react'
 import { ChevronRight } from 'lucide-react'
 import type { MarkPreviewKnowledgeRecord, RunsMarkPreviewResult } from '@vostride/agent-qa-schema'
-import { DenialBlock } from '@/chat/chat-transcript'
+import { DenialBlock } from '@/components/run-detail/denial-block'
 import { Button } from '@/components/ui/button'
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible'
 import { Skeleton } from '@/components/ui/skeleton'
