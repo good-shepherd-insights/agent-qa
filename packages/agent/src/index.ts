@@ -196,6 +196,8 @@ export { RUNS_DIGEST_FUNCTION_ID } from './functions/ops/runs-digest.js'
 // stays inside `functions/`: a spec carries its own `invoke`, which is the private power SC1
 // abolishes, so `runs.knowledge` remains reachable only through `invokeFunction`.
 export { RUNS_KNOWLEDGE_FUNCTION_ID } from './functions/ops/runs-knowledge.js'
+// 431 D-06: the run overview's id, on the same footing. The spec stays inside `functions/`.
+export { RUNS_OVERVIEW_FUNCTION_ID } from './functions/ops/runs-overview.js'
 // 392 plan 07: the run LISTING's id, on the same footing. The `status` alias resolves to it, so the
 // composed compound e2e's assertion that the second clause really dispatched there must break when
 // the op is renamed — which it cannot if the test compares against a string it spelled itself

@@ -588,7 +588,7 @@ describe('OVERVIEW-ADDRESS-ROUNDTRIP: every returned address fetches exactly its
           expect(entry.address).toMatchObject({ runId: RUN_ID, testIndex: test.testIndex, stepIndex: step.stepIndex })
           if (entry.state === 'absent') {
             expect(read).toMatchObject({ outcome: 'absent', evidence: { state: 'absent', reason: entry.reason } })
-          } else if (entry.present === false) {
+          } else if ('present' in entry && entry.present === false) {
             expect(read).toMatchObject({ outcome: 'absent', evidence: { evidenceIncomplete: true } })
           } else {
             expect(read.outcome).toBe('ready')

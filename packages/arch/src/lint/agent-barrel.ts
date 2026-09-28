@@ -299,6 +299,8 @@ export const EXPECTED_AGENT_BARREL_VALUE_EXPORTS: readonly string[] = [
   'RUNS_MARK_FUNCTION_ID',
   // 2026-09-15, 423 D-16: identity DATA; the executable preview spec remains private.
   'RUNS_MARK_PREVIEW_FUNCTION_ID',
+  // 431 D-06: the run overview's id; `runsOverviewSpec` stays off this list like every spec.
+  'RUNS_OVERVIEW_FUNCTION_ID',
   'RUNS_POST_PROCESSING_FUNCTION_ID',
   // 393 plan 07, D-02: the run-start op's id. It is the last of the `runs.` constants to be
   // published and the only one published for a reason INSIDE the composition rather than at a

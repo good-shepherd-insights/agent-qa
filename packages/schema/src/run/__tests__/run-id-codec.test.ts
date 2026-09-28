@@ -148,12 +148,14 @@ const RUN_ID_FIELD_VERDICTS: Readonly<
   },
   'functions/runs-overview.ts': {
     hardened: 1,
-    plainString: 1,
+    plainString: 4,
     verdict:
       'hardened here — 2026-09-28 (431 D-06) `RunsOverviewInput.runId` is caller-supplied and is '
       + 'the run whose handoff and projection rows are read; the runs port resolves it against the '
-      + 'runs it enumerates. The plain field is `RunOverviewProjection.runId`, an echo of a '
-      + 'completed run the read already resolved.',
+      + 'runs it enumerates. The four plain fields are OUTPUT echoes of a completed run the read '
+      + 'already resolved: `RunOverviewProjection.runId` and the `runId` of the artifact, evidence '
+      + 'and brief addresses it hands back. Each is re-validated by the branded input codec of '
+      + 'the op that takes it, so none is an input here.',
   },
   'functions/authoring.ts': {
     hardened: 0,
