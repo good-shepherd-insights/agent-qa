@@ -286,6 +286,9 @@ export const CATALOG_DOC_PATHS: readonly (readonly [string, CatalogDocAdjudicati
     // 2026-09-15 (423-21, D-18): the two feedback reads have no shipped documentation page yet.
     Object.freeze(['runs.mark.preview', Object.freeze({ absentReason: CATALOG_DOC_ABSENT_REASON })] as const),
     Object.freeze(['runs.marks.history', Object.freeze({ absentReason: CATALOG_DOC_ABSENT_REASON })] as const),
+    // 2026-09-29 (431-08, D-06): the run overview has no shipped documentation page yet; the
+    // agent guide and skill that name it land later in this phase.
+    Object.freeze(['runs.overview', Object.freeze({ absentReason: CATALOG_DOC_ABSENT_REASON })] as const),
   ])
 
 /**

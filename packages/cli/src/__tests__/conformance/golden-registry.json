@@ -8,7 +8,7 @@
     "conformance suite is red, so a regeneration cannot launder an unrelated failure, and no",
     "test-runner update flag reaches this file."
   ],
-  "opCount": 52,
+  "opCount": 53,
   "rows": [
     {
       "bindingStatusAtRoot": "bound",
@@ -466,8 +466,8 @@
       "inputSchemaDigest": "a7c3ebe968b988c12628029b8918a57799f5dca5392f68fa04ae2136861275f8",
       "outputSchemaDigest": "6055f749cf1889e46e6d51c285a362d7216aa033e3eab849bd03cae3fa40dbc8",
       "partition": {
-        "kind": "unprojected",
-        "reason": "not-mid-flight-read"
+        "kind": "projected",
+        "tool": "agent_qa_explain_brief"
       },
       "requiredScopes": [
         "read"
@@ -486,8 +486,8 @@
       "inputSchemaDigest": "71fc596a20f27da3dec80050e5d1f553eba34aea24c2853b853488a811e6b892",
       "outputSchemaDigest": "21ae68036dfd820d4a3950318400eebcfdb83189df3db3861e9ac70a2f018ad3",
       "partition": {
-        "kind": "unprojected",
-        "reason": "not-mid-flight-read"
+        "kind": "projected",
+        "tool": "agent_qa_list_knowledge_bundles"
       },
       "requiredScopes": [
         "read"
@@ -567,8 +567,8 @@
       "inputSchemaDigest": "3d7f0e0bc33415cdda6cbc7996e50d2c130d39fdc01d75982faa529d72cf3a29",
       "outputSchemaDigest": "efef35363bba4c5deeafb0e82b45eeab7040246faac4154898bbb53e20309961",
       "partition": {
-        "kind": "unprojected",
-        "reason": "not-mid-flight-read"
+        "kind": "projected",
+        "tool": "agent_qa_show_knowledge_record"
       },
       "requiredScopes": [
         "read"
@@ -587,8 +587,8 @@
       "inputSchemaDigest": "13ef772cfc51debbcf88c19eb55fd9cf10405f1de55eae4f51dd4d1060ed4780",
       "outputSchemaDigest": "8f21594263951f2bc970a1ecdf7cc1786e9b7f0e1dae72c992729fc5d51e1525",
       "partition": {
-        "kind": "unprojected",
-        "reason": "not-mid-flight-read"
+        "kind": "projected",
+        "tool": "agent_qa_diff_knowledge_records"
       },
       "requiredScopes": [
         "read"
@@ -607,8 +607,8 @@
       "inputSchemaDigest": "7f51b9afa837665f8dab866e966cf466604c3a6928c3ce714a6a98812f84028e",
       "outputSchemaDigest": "c1cf4fa4a9ee5aaab8da01d30e94ed5afada8c781e684b93bcbb2a574d69ae9f",
       "partition": {
-        "kind": "unprojected",
-        "reason": "not-mid-flight-read"
+        "kind": "projected",
+        "tool": "agent_qa_inspect_knowledge_records"
       },
       "requiredScopes": [
         "read"
@@ -791,8 +791,8 @@
       "inputSchemaDigest": "c8d3f0cdc343b2002a8f54c3511bc03e5e10e86a54638aee1fcf9c9c8d363ac3",
       "outputSchemaDigest": "0944092aae02aab146daf5901b6b41f7b7e844832e4da179aadf999f30d3119a",
       "partition": {
-        "kind": "unprojected",
-        "reason": "not-mid-flight-read"
+        "kind": "projected",
+        "tool": "agent_qa_get_run_evidence"
       },
       "requiredScopes": [
         "read"
@@ -869,10 +869,10 @@
       "classifies": true,
       "id": "runs.evidence",
       "inputSchemaDigest": "f93fb418e51869c67457b37b03d4af0a9b55621d81bac733aa239b599426bb9a",
-      "outputSchemaDigest": "3e9049460e028d48c3a475da54824f85c2722ff205e29b579610d1f64934756d",
+      "outputSchemaDigest": "e50d566692c43be55d3a7431d1a403d3c06d410f20e736a7287a14afb436124d",
       "partition": {
-        "kind": "unprojected",
-        "reason": "not-mid-flight-read"
+        "kind": "projected",
+        "tool": "agent_qa_get_run_evidence"
       },
       "requiredScopes": [
         "read"
@@ -911,8 +911,8 @@
       "inputSchemaDigest": "55df3bfd3c544e0140548637d1539243fb285899b52998dc36a6dbe1989aee6d",
       "outputSchemaDigest": "b72f57104d0c59f19488691e9beb4305524c63a5c2d054ab16075aef428492ef",
       "partition": {
-        "kind": "unprojected",
-        "reason": "not-mid-flight-read"
+        "kind": "projected",
+        "tool": "agent_qa_get_run_knowledge"
       },
       "requiredScopes": [
         "read"
@@ -1021,6 +1021,26 @@
       "resultKind": "unary",
       "risk": {
         "name": "fn:runs.marks.history",
+        "readOnly": true,
+        "recognized": true
+      }
+    },
+    {
+      "bindingStatusAtRoot": "unbound",
+      "classifies": true,
+      "id": "runs.overview",
+      "inputSchemaDigest": "55df3bfd3c544e0140548637d1539243fb285899b52998dc36a6dbe1989aee6d",
+      "outputSchemaDigest": "fd980e0af305a3c82bddbde033a1bbe0fe08eb5f4ead1099331c56491a58ec1a",
+      "partition": {
+        "kind": "projected",
+        "tool": "agent_qa_get_run_overview"
+      },
+      "requiredScopes": [
+        "read"
+      ],
+      "resultKind": "unary",
+      "risk": {
+        "name": "fn:runs.overview",
         "readOnly": true,
         "recognized": true
       }

@@ -222,7 +222,7 @@
       "v1Name": "agent_qa_validate_test"
     }
   ],
-  "rowCount": 60,
+  "rowCount": 61,
   "rows": [
     {
       "alias": "digest",
@@ -1220,7 +1220,7 @@
       },
       "id": "knowledge.brief.why",
       "kind": "op",
-      "mcpUnprojectedReasonKey": "not-mid-flight-read",
+      "mcpTool": "agent_qa_explain_brief",
       "params": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "additionalProperties": false,
@@ -1253,7 +1253,8 @@
         "read"
       ],
       "surfaces": [
-        "chat"
+        "chat",
+        "mcp"
       ]
     },
     {
@@ -1265,7 +1266,7 @@
       },
       "id": "knowledge.bundles.list",
       "kind": "op",
-      "mcpUnprojectedReasonKey": "not-mid-flight-read",
+      "mcpTool": "agent_qa_list_knowledge_bundles",
       "params": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "additionalProperties": false,
@@ -1276,7 +1277,8 @@
         "read"
       ],
       "surfaces": [
-        "chat"
+        "chat",
+        "mcp"
       ]
     },
     {
@@ -1432,7 +1434,7 @@
       },
       "id": "knowledge.record.show",
       "kind": "op",
-      "mcpUnprojectedReasonKey": "not-mid-flight-read",
+      "mcpTool": "agent_qa_show_knowledge_record",
       "params": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "additionalProperties": false,
@@ -1451,7 +1453,8 @@
         "read"
       ],
       "surfaces": [
-        "chat"
+        "chat",
+        "mcp"
       ]
     },
     {
@@ -1465,7 +1468,7 @@
       },
       "id": "knowledge.records.diff",
       "kind": "op",
-      "mcpUnprojectedReasonKey": "not-mid-flight-read",
+      "mcpTool": "agent_qa_diff_knowledge_records",
       "params": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "additionalProperties": false,
@@ -1485,7 +1488,8 @@
         "read"
       ],
       "surfaces": [
-        "chat"
+        "chat",
+        "mcp"
       ]
     },
     {
@@ -1499,7 +1503,7 @@
       },
       "id": "knowledge.records.inspect",
       "kind": "op",
-      "mcpUnprojectedReasonKey": "not-mid-flight-read",
+      "mcpTool": "agent_qa_inspect_knowledge_records",
       "params": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "additionalProperties": false,
@@ -1559,7 +1563,8 @@
         "read"
       ],
       "surfaces": [
-        "chat"
+        "chat",
+        "mcp"
       ]
     },
     {
@@ -1918,7 +1923,7 @@
       "exampleCallAbsentReason": "D-08 (dated 2026-08-17): no example call is derivable for runs.artifact — params.sha constrains its value with the regular expression /^[0-9a-f]{64}$/, and a placeholder cannot be SHOWN to satisfy an arbitrary pattern — an example the shipped contract would reject teaches a caller a shape this product does not have. The explicit absence is the honest state; an example an agent copies and is refused for is worse than a column that says there is none.",
       "id": "runs.artifact",
       "kind": "op",
-      "mcpUnprojectedReasonKey": "not-mid-flight-read",
+      "mcpTool": "agent_qa_get_run_evidence",
       "params": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "additionalProperties": false,
@@ -1960,7 +1965,8 @@
         "read"
       ],
       "surfaces": [
-        "chat"
+        "chat",
+        "mcp"
       ]
     },
     {
@@ -2079,7 +2085,7 @@
       },
       "id": "runs.evidence",
       "kind": "op",
-      "mcpUnprojectedReasonKey": "not-mid-flight-read",
+      "mcpTool": "agent_qa_get_run_evidence",
       "params": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "additionalProperties": false,
@@ -2125,7 +2131,8 @@
         "read"
       ],
       "surfaces": [
-        "chat"
+        "chat",
+        "mcp"
       ]
     },
     {
@@ -2171,7 +2178,7 @@
       },
       "id": "runs.knowledge",
       "kind": "op",
-      "mcpUnprojectedReasonKey": "not-mid-flight-read",
+      "mcpTool": "agent_qa_get_run_knowledge",
       "params": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "additionalProperties": false,
@@ -2189,7 +2196,8 @@
         "read"
       ],
       "surfaces": [
-        "chat"
+        "chat",
+        "mcp"
       ]
     },
     {
@@ -2460,6 +2468,39 @@
       ]
     },
     {
+      "description": "Map one completed run: its tests and steps with verdicts, and the address of everything recorded at each, without bodies, traces or bytes.",
+      "docAbsentReason": "D-07 (dated 2026-08-16): no canonical doc ships for this capability yet. The explicit absence is the honest state — a guessed path would existence-check green and mislead a reader — and the abstention coverage log is the demand signal for writing one.",
+      "docPath": null,
+      "exampleCall": {
+        "arguments": {
+          "runId": "<RUNID>"
+        }
+      },
+      "id": "runs.overview",
+      "kind": "op",
+      "mcpTool": "agent_qa_get_run_overview",
+      "params": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "runId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "runId"
+        ],
+        "type": "object"
+      },
+      "requiredScopes": [
+        "read"
+      ],
+      "surfaces": [
+        "chat",
+        "mcp"
+      ]
+    },
+    {
       "description": "Read one run's post-processing chip statuses from durable job state.",
       "docAnchor": "agent job queue",
       "docPath": "docs/queues.md",
@@ -2589,5 +2630,5 @@
       "shortDescription": "Triage agent-qa run failures"
     }
   ],
-  "rowsDigest": "8ec1f1e9c3955eb1b9f033dffaf1ad2de4e9e7f35823a8f11b424d4afe256432"
+  "rowsDigest": "25b1c9ff1ea2c818108a0bc265bdefc238cb80a782801544a146a6b93da8038a"
 }
