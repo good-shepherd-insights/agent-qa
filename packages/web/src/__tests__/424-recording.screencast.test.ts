@@ -34,7 +34,7 @@ beforeEach(async () => {
 afterEach(async () => {
   await adapter?.cleanup()
   await rm(videoDir, { recursive: true, force: true })
-})
+}, 60_000)
 
 function recording(): RecordingCapability {
   const capability = (adapter as PlatformAdapter<'web'>).recording
