@@ -45,94 +45,15 @@
 import { Link } from "react-router"
 
 import {
-  ENTITY_DASHBOARD_ROUTES,
   ENTITY_IDENTITY_FACT_LABELS,
   EntityCardResolutionSchema,
   EntityCardSchema,
-  parseEntityUri,
   type ActionRef,
   type EntityCard as EntityCardValue,
-  type EntityKind,
   type KeyFact,
 } from "@vostride/agent-qa-schema"
 
-import { routes } from "@/lib/routes"
-
-/**
- * One entity, as much of it as this dashboard can address.
- *
- * `machineId` is OPTIONAL because the two things that name an entity carry different amounts: a
- * card carries its identity key fact, while a bare `agentqa://` reference carries an address and
- * nothing else. A resolver that took only a short-ID would have to invent the machine id for the
- * routes that are keyed by one, which is the guessed link D-10 forbids.
- */
-export interface EntityRouteAddress {
-  readonly kind: EntityKind
-  readonly shortId: string
-  readonly machineId?: string
-}
-
-/** A kind's dashboard route, or `undefined` when this address cannot produce an honest one. */
-export type EntityRouteResolver = (address: EntityRouteAddress) => string | undefined
-
-/**
- * THE kind → dashboard-route map, TOTAL over the card schema's kind union.
- *
- * `as const satisfies Record<EntityKind, …>` is the completeness guarantee, and it is the same move
- * `ENTITY_STATUSES`, `KEY_FACT_PROJECTIONS` and `ENTITY_ACTION_TABLES` make on the producer side: a
- * sixth kind is a compile error here rather than a card that silently renders whichever arm the
- * lookup happened to miss. There is deliberately no fallback and no default.
- *
- * `null` — not an absent key — is how a kind says it has no page here. An absent key would make an
- * intentional unrouted arm read exactly like a kind nobody has looked at yet, and those are the two
- * answers a reviewer needs to be able to tell apart.
- *
- * THE PATHS ARE `lib/routes.ts`'s builders, not strings retyped off the router. `routes.testView` and
- * `routes.runDetail` are the same builders every other page navigates with, so a route rename moves
- * the card's links with it instead of leaving them pointing at a path nothing serves.
- *
- * WHY `TST` AND `RUN` REFUSE WITHOUT A MACHINE ID. `/test/:t_id` and `/runs/:id` are keyed by the
- * machine id — `tests.tsx` navigates with `row.testId`, `run-detail` loads by run id — while an
- * entity's `id` is its PUBLISHED short-ID (`TST-001`), a different address in a different
- * namespace. Putting the short-ID in that slot would render a link that 404s, minted with
- * confidence. `TGT` takes no parameter at all: a target's page is the config surface.
- */
-export const ENTITY_KIND_ROUTES = {
-  TST: ({ machineId }) => (machineId === undefined ? undefined : routes.testView(machineId)),
-  RUN: ({ machineId }) => (machineId === undefined ? undefined : routes.runDetail(machineId)),
-  MEM: null,
-  POL: null,
-  TGT: () => routes.config,
-} as const satisfies Record<EntityKind, EntityRouteResolver | null>
-
-/**
- * The routed/unrouted partition above is the SHIPPED CONTRACT's, checked at compile time.
- *
- * `ENTITY_DASHBOARD_ROUTES` (schema, `entity/dashboard-route.ts`) is the one declaration the
- * conformance scenario table's card cases are also spread from. Without this line the map above and
- * that contract would be two tables agreeing today, and a kind could acquire or lose a page in one
- * of them silently — which is the exact drift a shared declaration exists to prevent. The mapped
- * type below makes a `null` here required wherever the contract says `route: null`, and a resolver
- * required wherever it names a path, so a disagreement is a `tsc` error rather than a card that
- * links somewhere nothing serves.
- *
- * The PATHS themselves are still built with `lib/routes.ts`'s builders (the ones every other page
- * navigates with) and are joined against the contract's templates by `entity-card.test.ts` — a
- * compile-time check can hold the partition, and only a rendered href can hold the shape.
- */
-type RoutePartitionOfContract = {
-  [K in EntityKind]: (typeof ENTITY_DASHBOARD_ROUTES)[K]["route"] extends null
-    ? null
-    : EntityRouteResolver
-}
-const ROUTE_PARTITION_MATCHES_CONTRACT: RoutePartitionOfContract = ENTITY_KIND_ROUTES
-void ROUTE_PARTITION_MATCHES_CONTRACT
-
-/** The route this address resolves to in THIS dashboard, or `undefined` — never a guess. */
-export function entityRouteFor(address: EntityRouteAddress): string | undefined {
-  const resolver = ENTITY_KIND_ROUTES[address.kind]
-  return resolver === null ? undefined : resolver(address)
-}
+import { entityRefRoute, entityRouteFor } from "@/lib/entity-routes"
 
 /**
  * The machine id a card publishes, read off the key fact THE CONTRACT names.
@@ -157,20 +78,6 @@ export function entityCardRoute(card: EntityCardValue): string | undefined {
     shortId: card.id,
     ...(machineId === undefined ? {} : { machineId }),
   })
-}
-
-/**
- * The `agentqa://` reference a key fact carries, resolved to a dashboard route.
- *
- * A reference has no machine id — it is an address and only an address — so the kinds whose routes
- * need one resolve to `undefined` here and the fact renders its URI as text. That is the honest
- * answer: this build can say WHAT the fact points at without being able to say where to click.
- */
-export function entityRefRoute(ref: string): string | undefined {
-  const parsed = parseEntityUri(ref)
-  return parsed === undefined
-    ? undefined
-    : entityRouteFor({ kind: parsed.kind, shortId: parsed.shortId })
 }
 
 /**

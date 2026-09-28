@@ -44,14 +44,13 @@ import {
 } from '@vostride/agent-qa-schema'
 
 import {
-  ENTITY_KIND_ROUTES,
   EntityCard,
   entityCardActionUtterance,
   entityCardMachineId,
   entityCardRoute,
   entityCardsIn,
-  entityRouteFor,
 } from '@/chat/entity-card'
+import { ENTITY_KIND_ROUTES, entityRouteFor } from '@/lib/entity-routes'
 import { ChatTranscriptView, type ChatTranscriptViewProps } from '@/chat/chat-transcript'
 import {
   createChatTranscriptState,

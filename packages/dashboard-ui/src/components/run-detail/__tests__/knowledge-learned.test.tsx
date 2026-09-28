@@ -75,8 +75,8 @@ import {
 // (`ENTITY_KIND_ROUTES.MEM` is null), so the routed-link cell names the one reference it routes; the
 // href still reaches the ledger only through the view's `entityRefRoute` call.
 const routedRefs = vi.hoisted(() => new Map<string, string>())
-vi.mock("@/chat/entity-card", async importOriginal => {
-  const actual = await importOriginal<typeof import("@/chat/entity-card")>()
+vi.mock("@/lib/entity-routes", async importOriginal => {
+  const actual = await importOriginal<typeof import("@/lib/entity-routes")>()
   return { ...actual, entityRefRoute: (ref: string) => routedRefs.get(ref) ?? actual.entityRefRoute(ref) }
 })
 

@@ -55,7 +55,7 @@ import type {
   TraceLine,
 } from '@vostride/agent-qa-schema'
 
-import { entityRefRoute } from '@/chat/entity-card'
+import { entityRefRoute } from '@/lib/entity-routes'
 import {
   BREAKDOWN_NOT_RECORDED_TEXT,
   BREAKDOWN_WITHHELD_TEXT,
@@ -2401,8 +2401,8 @@ function proposalsView(count: number | undefined): ProposalsView | undefined {
   return {
     count,
     line: pendingProposalsLine(count),
-    // No dashboard inbox route exists and this module mints none; the run-detail CTA no longer
-    // targets Chat (423 D-19 · SC5). It carries the terminal command over `proposals.list`.
+    // No dashboard inbox route exists and this module mints none; the run-detail CTA routes to no
+    // chat page (423 D-19 · SC5). It copies the terminal command over `proposals.list`.
     command: PENDING_PROPOSALS_REVIEW_COMMAND,
     copyLabel: COPY_REVIEW_COMMAND_LABEL,
   }
