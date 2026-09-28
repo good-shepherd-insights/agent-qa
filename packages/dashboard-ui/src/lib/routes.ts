@@ -10,7 +10,6 @@ import type { RunStatus } from '@vostride/agent-qa-schema'
 
 export const routes = {
   runs: '/runs',
-  chat: '/chat',
   tests: '/tests',
   testNew: '/tests/new',
   hooks: '/hooks',
