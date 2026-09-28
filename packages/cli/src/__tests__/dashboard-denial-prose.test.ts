@@ -180,7 +180,8 @@ describe('a denial reaching the browser carries prose that surface can read (D-1
       'trust-session-flag',
       'present-bearer-scope',
     ])
+    // 430 D-06: the dashboard's projection is declared empty, so none of them reaches a browser.
     expect(remediesRenderableBy('dashboard', denial!.remedies).map(remedy => remedy.kind))
-      .toEqual(['answer-confirm'])
+      .toEqual([])
   })
 })

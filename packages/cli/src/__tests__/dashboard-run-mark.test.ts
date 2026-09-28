@@ -40,7 +40,7 @@ describe('dashboard runs.mark confirmation through the composed host (419 D-13)'
     const f = fixture()
     expect(f.agentHost.runsMarkFunctionId).toBe(RUNS_MARK_FUNCTION_ID)
     for (const scope of [undefined, f.scope]) {
-      expect(await f.invoke(scope)).toMatchObject({ status: 403, body: { error: 'mark_denied', remedies: [{ kind: 'answer-confirm' }] } })
+      expect(await f.invoke(scope)).toMatchObject({ status: 403, body: { error: 'mark_denied', remedies: [] } })
     }
     expect(f.frames).toEqual([])
   })

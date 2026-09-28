@@ -272,10 +272,10 @@ describe('the dashboard chat door dispatches one utterance end to end', () => {
       neutralReason: expect.stringContaining('session-pin-denied'),
     }])
 
-    // The remedy the gate minted is one a BROWSER can take, which is the whole of D-15: the same
-    // denial projects EMPTY for `mcp`, and the dashboard render runs the same projection.
+    // The gate still mints session-pin-final, and the dashboard's projection of it is empty
+    // (430 D-06): the browser renders the reason only. `mcp` projects empty as before.
     const remedies = turn.result.denials![0]!.remedies
-    expect(remediesRenderableBy('dashboard', remedies)).toEqual([{ kind: 'session-pin-final' }])
+    expect(remediesRenderableBy('dashboard', remedies)).toEqual([])
     expect(remediesRenderableBy('mcp', remedies)).toEqual([])
   })
 
