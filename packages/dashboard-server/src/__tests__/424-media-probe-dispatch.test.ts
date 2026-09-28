@@ -34,7 +34,7 @@ for (const door of ['local', 'remote'] as const) {
           range: { start: 0, end: 0 }, totalLength: 128 }
       })
       const host = { registry: {}, caller: {}, runsArtifactFunctionId: 'synthetic-artifact',
-        invokeFunction, onSessionEvent: () => () => undefined } as unknown as AgentHost
+        invokeFunction } as unknown as AgentHost
       let server: Server
       let path: string
       if (door === 'local') {

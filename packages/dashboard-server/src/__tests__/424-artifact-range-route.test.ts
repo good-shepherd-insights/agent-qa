@@ -36,7 +36,6 @@ beforeEach(async () => {
     runsArtifactFunctionId: RUNS_ARTIFACT_FUNCTION_ID,
     invokeFunction: (handle: AgentRegistryHandle, id: string, input: unknown, caller: FunctionCaller) =>
       invokeFunction(handle as unknown as FunctionRegistry, id, input, caller),
-    onSessionEvent: () => () => undefined,
   } as unknown as AgentHost
   db = new DashboardDatabase({ dbPath: ':memory:' })
   const started = await startServer({ db, port: 0, agentHost: host })

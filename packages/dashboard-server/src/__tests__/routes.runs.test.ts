@@ -1246,7 +1246,6 @@ function seamHost(restoreTo: string = SEAM_RESTORED): {
     agentHost: {
       registry: {},
       caller: { origin: 'human', surface: 'dashboard', scopes: ['read'] },
-      agentAskFunctionId: 'agent.ask',
       runsPostProcessingFunctionId: 'runs.postprocessing',
       runsEventsFunctionId: 'runs.events',
       runsDetailFunctionId: 'runs.detail',
@@ -1256,9 +1255,6 @@ function seamHost(restoreTo: string = SEAM_RESTORED): {
       // workspace still satisfies the interface.
       runsKnowledgeFunctionId: 'runs.knowledge',
       invokeFunction: () => Promise.resolve({}),
-      foldFunctionResult: () => ({ verdict: { status: 'executed', outcome: '' }, foldLines: [] }),
-      listDeclarations: () => [],
-      onSessionEvent: () => () => undefined,
       unmaskForDisplay: (text: string, scope?: { runId: string }): string => {
         calls.push({ text, runId: scope?.runId })
         return text.split(SEAM_PLACEHOLDER).join(restoreTo)
