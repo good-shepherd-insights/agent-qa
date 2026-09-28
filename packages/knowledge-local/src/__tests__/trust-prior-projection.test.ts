@@ -67,6 +67,7 @@ describe('420 neutral prior bundle and SQLite projections', () => {
   })
 
   for (const entry of fixture.cases) {
+    // Three publish-and-rebuild cycles per case, past the package's 15s ceiling under workspace load.
     it(`full rebuild preserves ${entry.name} with absent empty and partial priors`, async () => {
       let original: Record<string, unknown> | undefined
       for (const priors of [undefined, {}, calibrated]) {
@@ -83,7 +84,7 @@ describe('420 neutral prior bundle and SQLite projections', () => {
           expect(row(value.knowledgeRoot).trust).toBe(numerical)
         } finally { rmSync(root, { recursive: true, force: true }) }
       }
-    })
+    }, 60_000)
   }
 
   for (const project of [projectBundleIndexRow, projectBundleIndexRowWithinCurrentAuthority,
