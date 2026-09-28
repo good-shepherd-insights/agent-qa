@@ -23,9 +23,22 @@
 // of forbidden strings — a rule that can only refuse what it can name cannot be driven to zero by
 // naming more things.
 
-import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs'
+import {
+  cpSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs'
+import { tmpdir } from 'node:os'
 import { dirname, join, relative } from 'node:path'
 import { fileURLToPath } from 'node:url'
+
+import type { Command } from 'commander'
 
 import {
   CHAT_DIRECTIVES,
@@ -45,8 +58,20 @@ import {
   typedVerbs,
 } from '../../capability-catalog/chat-discovery.js'
 import { loadCapabilityCatalog } from '../../capability-catalog/loader.js'
+import {
+  DEDICATED_READ_VERBS,
+  INIT_AGENT_INSTRUCTIONS_VERB,
+} from '../../capability-catalog/manifest.js'
+import {
+  AGENT_QUESTION_MAP,
+  buildAgentInstructionPointer,
+  buildKnowledgeAgentGuide,
+  KNOWLEDGE_SKILL_NAME,
+} from '../../commands/knowledge-guide.js'
 import { resolveAgentQaSkillsDirectory } from '../../commands/skills.js'
-import { agentQaRoot, CHAT_ALIAS_PROBES } from './catalog.js'
+import { createAgentQaProgram } from '../../program.js'
+import { agentQaRoot, buildCatalogSkillRows, CHAT_ALIAS_PROBES } from './catalog.js'
+import { SURFACE_ROSTER } from './roster.js'
 
 /** Sorted, so a named RED reads the same on every machine. */
 function sorted(values: Iterable<string>): readonly string[] {
@@ -499,5 +524,427 @@ describe('the chat host\'s discovery UX is a projection of the catalog', () => {
         `a starter prompt carries text no catalog row provided: ${prompt}`,
       ).toBe(true)
     }
+  })
+})
+
+// ---- 431 D-24: every name the published guidance quotes is live ---------------------------------
+//
+// The subjects are the generated guide, the root pointer, and every file of every skill in BOTH the
+// source tree and the packaged mirror `copy:skills` produces. Tool names are checked against the MCP
+// projection and the committed catalog's op rows; CLI invocations are resolved against the real
+// Commander tree (`createAgentQaProgram`) and, for the verbs the capability manifest lists, against
+// the manifest too. A packaged input that is absent or empty is a finding, never a skip.
+
+interface GuidanceSubject {
+  readonly name: string
+  readonly body: string
+}
+
+interface GuidanceInputs {
+  readonly subjects: readonly GuidanceSubject[]
+  readonly findings: readonly string[]
+}
+
+function skillDirectoriesIn(root: string): readonly string[] {
+  if (!existsSync(root)) return []
+  return readdirSync(root)
+    .filter((entry) => {
+      const candidate = join(root, entry)
+      return statSync(candidate).isDirectory() && existsSync(join(candidate, 'SKILL.md'))
+    })
+    .sort()
+}
+
+function subjectName(file: string): string {
+  const root = agentQaRoot()
+  return file.startsWith(`${root}/`) ? relative(root, file) : file
+}
+
+/** Every `references/<file>` a SKILL.md tells an agent to load must sit beside it, non-empty. */
+function referenceFindings(skillDir: string): readonly string[] {
+  const skillMarkdown = join(skillDir, 'SKILL.md')
+  const named = sorted(readFileSync(skillMarkdown, 'utf8').match(/references\/[A-Za-z0-9._-]+/gu) ?? [])
+  const findings: string[] = []
+  for (const reference of named) {
+    const path = join(skillDir, reference)
+    if (!existsSync(path)) findings.push(`${subjectName(skillMarkdown)} names ${reference}, which is missing`)
+    else if (statSync(path).size === 0) findings.push(`${subjectName(skillMarkdown)} names ${reference}, which is empty`)
+  }
+  return findings
+}
+
+function guidanceInputs(sourceRoot: string, packagedRoot: string): GuidanceInputs {
+  const findings: string[] = []
+  const subjects: GuidanceSubject[] = [
+    { name: 'generated guide', body: buildKnowledgeAgentGuide() },
+    { name: 'root pointer', body: buildAgentInstructionPointer().join('\n') },
+  ]
+
+  const sourceSkills = skillDirectoriesIn(sourceRoot)
+  if (sourceSkills.length === 0) findings.push(`no source skill under ${subjectName(sourceRoot)}`)
+  if (!existsSync(packagedRoot)) findings.push(`the packaged skills directory ${subjectName(packagedRoot)} is missing`)
+
+  for (const skill of sourceSkills) {
+    for (const file of filesUnderSkill(join(sourceRoot, skill))) {
+      const packaged = join(packagedRoot, relative(sourceRoot, file))
+      if (statSync(file).size === 0) findings.push(`${subjectName(file)} is empty`)
+      if (!existsSync(packaged)) {
+        findings.push(`${subjectName(packaged)} is missing — run copy:skills`)
+        continue
+      }
+      if (statSync(packaged).size === 0) findings.push(`${subjectName(packaged)} is empty`)
+    }
+  }
+
+  for (const root of [sourceRoot, packagedRoot]) {
+    for (const skill of skillDirectoriesIn(root)) {
+      findings.push(...referenceFindings(join(root, skill)))
+      for (const file of filesUnderSkill(join(root, skill))) {
+        subjects.push({ name: subjectName(file), body: readFileSync(file, 'utf8') })
+      }
+    }
+  }
+  return { subjects, findings }
+}
+
+function liveGuidanceInputs(): GuidanceInputs {
+  return guidanceInputs(join(agentQaRoot(), SKILLS_SOURCE_DIR), join(agentQaRoot(), 'packages', 'cli', 'skills'))
+}
+
+/** The subjects that must each quote at least one tool, and at least one CLI verb. */
+function nameBearing(subject: GuidanceSubject, kind: 'tools' | 'verbs'): boolean {
+  if (subject.name === 'generated guide') return true
+  if (subject.name === 'root pointer') return kind === 'verbs'
+  return subject.name.includes(`/${KNOWLEDGE_SKILL_NAME}/`) && subject.name.endsWith('.md')
+}
+
+interface CensusResult {
+  readonly scanned: number
+  readonly findings: readonly string[]
+}
+
+function toolCensus(subjects: readonly GuidanceSubject[]): CensusResult {
+  const projected = new Map(AGENT_QA_TOOL_PROJECTIONS.map((projection) => [projection.name, projection.ops]))
+  const catalogOps = new Set(
+    loadCapabilityCatalog().rows.flatMap((row) => (row.kind === 'op' ? [row.id] : [])),
+  )
+  const findings: string[] = []
+  let scanned = 0
+  for (const subject of subjects) {
+    const tokens = toolTokensIn(subject.body)
+    scanned += tokens.length
+    if (tokens.length === 0 && nameBearing(subject, 'tools')) {
+      findings.push(`${subject.name}: quotes no agent_qa_* tool — the census would certify nothing`)
+    }
+    for (const token of tokens) {
+      const ops = projected.get(token)
+      if (ops === undefined) {
+        findings.push(`${subject.name}: ${token} is not a projected MCP tool`)
+        continue
+      }
+      for (const op of ops) {
+        if (!catalogOps.has(op)) findings.push(`${subject.name}: ${token} projects ${op}, which the catalog has no row for`)
+      }
+    }
+  }
+  if (scanned === 0) findings.push('no tool name was scanned')
+  return { scanned, findings }
+}
+
+interface Invocation {
+  readonly text: string
+  readonly flags: string[]
+}
+
+const STANDALONE_FLAG = /^--[a-z][a-z0-9-]*(?:\s+<[^>]+>)?$/u
+
+/**
+ * Every `agent-qa …` invocation a document quotes: backtick spans, and lines of fenced blocks.
+ *
+ * A bare flag span (`--since`) that follows an invocation in the same paragraph is that
+ * invocation's flag, which is how the reference lists a verb's options. Prose that merely says
+ * agent-qa is not an invocation.
+ */
+function invocationsIn(body: string): readonly Invocation[] {
+  const invocations: Invocation[] = []
+  const paragraphs: string[] = []
+  let paragraph: string[] = []
+  let fenced = false
+  for (const line of body.split('\n')) {
+    if (line.trim().startsWith('```')) {
+      fenced = !fenced
+      continue
+    }
+    if (fenced) {
+      const at = line.search(/(?:^|\s)agent-qa\s+[a-z]/u)
+      if (at >= 0) invocations.push({ text: line.slice(line.indexOf('agent-qa', at)).trim(), flags: [] })
+      continue
+    }
+    if (line.trim() === '') {
+      paragraphs.push(paragraph.join(' '))
+      paragraph = []
+      continue
+    }
+    paragraph.push(line)
+  }
+  paragraphs.push(paragraph.join(' '))
+
+  for (const text of paragraphs) {
+    let current: Invocation | undefined
+    for (const match of text.matchAll(/`([^`]+)`/gu)) {
+      const span = (match[1] ?? '').trim()
+      if (/^agent-qa\s+[a-z]/u.test(span)) {
+        current = { text: span, flags: [] }
+        invocations.push(current)
+      } else if (current !== undefined && STANDALONE_FLAG.test(span)) {
+        current.flags.push(span)
+      }
+    }
+  }
+  return invocations
+}
+
+function commandPathOf(command: Command): string {
+  const names: string[] = []
+  for (let at: Command | null = command; at?.parent != null; at = at.parent) names.unshift(at.name())
+  return names.join(' ')
+}
+
+function takesValue(command: Command, flag: string): boolean | undefined {
+  const option = command.options.find((entry) => entry.long === flag || entry.short === flag)
+  if (option === undefined) return flag === '--help' ? false : undefined
+  return option.required || option.optional
+}
+
+function resolveInvocation(program: Command, invocation: Invocation): {
+  readonly command?: Command
+  readonly flags: readonly string[]
+  readonly findings: readonly string[]
+} {
+  const tokens = invocation.text.split(/\s+/u).slice(1)
+  const findings: string[] = []
+  let command = program
+  let at = 0
+  while (at < tokens.length && !(tokens[at] ?? '').startsWith('-')) {
+    const name = tokens[at]
+    const child = command.commands.find((entry) => entry.name() === name || entry.aliases().includes(name ?? ''))
+    if (child === undefined) break
+    command = child
+    at += 1
+  }
+  if (command === program) {
+    return { flags: [], findings: [`"${invocation.text}": agent-qa has no command "${tokens[0] ?? ''}"`] }
+  }
+
+  const path = `agent-qa ${commandPathOf(command)}`
+  const flags: string[] = []
+  const positionals: string[] = []
+  for (; at < tokens.length; at += 1) {
+    const token = tokens[at] ?? ''
+    if (!token.startsWith('-')) {
+      positionals.push(token)
+      continue
+    }
+    const flag = token.split('=')[0] ?? token
+    flags.push(flag)
+    const value = takesValue(command, flag)
+    if (value === undefined) {
+      findings.push(`"${invocation.text}": ${path} has no ${flag} option`)
+      if ((tokens[at + 1] ?? '').startsWith('<')) at += 1
+      continue
+    }
+    if (value && !token.includes('=') && at + 1 < tokens.length && !(tokens[at + 1] ?? '').startsWith('-')) at += 1
+  }
+  for (const span of invocation.flags) {
+    const flag = span.split(/\s+/u)[0] ?? span
+    flags.push(flag)
+    if (takesValue(command, flag) === undefined) findings.push(`"${invocation.text}" then \`${span}\`: ${path} has no ${flag} option`)
+  }
+
+  const declared = command.registeredArguments
+  const variadic = declared.at(-1)?.variadic === true
+  if (positionals.length > declared.length && !variadic) {
+    findings.push(
+      command.commands.length > 0
+        ? `"${invocation.text}": ${path} has no subcommand "${positionals[0] ?? ''}"`
+        : `"${invocation.text}": ${path} takes ${declared.length} argument(s), not ${positionals.length}`,
+    )
+  }
+  const required = declared.filter((argument) => argument.required).length
+  if (positionals.length < required) {
+    findings.push(`"${invocation.text}": ${path} requires ${required} argument(s), the guidance gives ${positionals.length}`)
+  }
+  return { command, flags, findings }
+}
+
+function verbCensus(subjects: readonly GuidanceSubject[], program: Command = createAgentQaProgram()): CensusResult {
+  const findings: string[] = []
+  let scanned = 0
+  for (const subject of subjects) {
+    const invocations = invocationsIn(subject.body)
+    scanned += invocations.length
+    if (invocations.length === 0 && nameBearing(subject, 'verbs')) {
+      findings.push(`${subject.name}: quotes no agent-qa invocation — the census would certify nothing`)
+    }
+    for (const invocation of invocations) {
+      const resolved = resolveInvocation(program, invocation)
+      findings.push(...resolved.findings.map((finding) => `${subject.name}: ${finding}`))
+      if (resolved.command === undefined) continue
+      const manifestEntry = DEDICATED_READ_VERBS.find((entry) => entry.verb === commandPathOf(resolved.command!))
+      if (manifestEntry === undefined) continue
+      for (const flag of resolved.flags) {
+        const live = takesValue(resolved.command, flag) !== undefined
+        if (live && flag !== '--help' && !manifestEntry.flags.includes(flag)) {
+          findings.push(`${subject.name}: "${invocation.text}" uses ${flag}, which the manifest's ${manifestEntry.verb} row omits`)
+        }
+      }
+    }
+  }
+  if (scanned === 0) findings.push('no agent-qa invocation was scanned')
+  return { scanned, findings }
+}
+
+/** The manifest's verb rows against the live tree, and the question map's CLI and MCP halves against each other. */
+function manifestFindings(program: Command = createAgentQaProgram()): readonly string[] {
+  const findings: string[] = []
+  const find = (path: string): Command | undefined => path.split(' ').reduce<Command | undefined>(
+    (parent, name) => parent?.commands.find((command) => command.name() === name), program)
+
+  for (const entry of DEDICATED_READ_VERBS) {
+    const live = find(entry.verb)
+    if (live === undefined) {
+      findings.push(`manifest verb "${entry.verb}" is not a live command`)
+      continue
+    }
+    const longs = sorted(live.options.flatMap((option) => (option.long === undefined ? [] : [option.long])))
+    if (JSON.stringify(longs) !== JSON.stringify(sorted(entry.flags))) {
+      findings.push(`manifest verb "${entry.verb}" lists ${sorted(entry.flags).join(' ')}, the live command has ${longs.join(' ')}`)
+    }
+  }
+  const init = find(INIT_AGENT_INSTRUCTIONS_VERB.verb)
+  for (const flag of INIT_AGENT_INSTRUCTIONS_VERB.flags) {
+    if (init?.options.some((option) => option.long === flag) !== true) {
+      findings.push(`manifest init flag ${flag} is not an option of the live init command`)
+    }
+  }
+
+  const projected = new Map(AGENT_QA_TOOL_PROJECTIONS.map((projection) => [projection.name, projection.ops]))
+  for (const row of AGENT_QUESTION_MAP) {
+    const resolved = resolveInvocation(program, { text: row.cli, flags: [] })
+    if (resolved.command === undefined) continue
+    const entry = DEDICATED_READ_VERBS.find((verb) => verb.verb === commandPathOf(resolved.command!))
+    const ops = projected.get(row.mcp) ?? []
+    if (entry !== undefined && !entry.opIds.some((opId) => ops.includes(opId))) {
+      findings.push(`"${row.question}": ${row.cli} invokes ${entry.opIds.join(', ')}, ${row.mcp} projects ${ops.join(', ')}`)
+    }
+  }
+  return findings
+}
+
+describe('LIVE-GUIDANCE: the guide, pointer and every source and packaged skill quote only live names', () => {
+  it('LIVE-GUIDANCE-INPUTS reads the guide, the pointer and both skill trees, with nothing missing or empty', () => {
+    const resolved = resolveAgentQaSkillsDirectory(dirname(fileURLToPath(import.meta.url)))
+    expect(resolved.source, 'agent-qa skills resolves no packaged mirror — run copy:skills').toBe('package')
+
+    const { subjects, findings } = liveGuidanceInputs()
+    expect(findings, 'a guidance input is absent or empty').toEqual([])
+    const packaged = subjects.filter((subject) => subject.name.startsWith('packages/cli/skills/'))
+    const source = subjects.filter((subject) => subject.name.startsWith(`${SKILLS_SOURCE_DIR}/`))
+    expect(source.length, 'no source skill file was read').toBeGreaterThan(0)
+    expect(packaged.length, 'the packaged mirror has a different file count from the source').toBe(source.length)
+    expect(skillDirectoriesIn(resolved.path)).toContain(KNOWLEDGE_SKILL_NAME)
+  })
+
+  it('LIVE-GUIDANCE-INPUTS names a missing or empty packaged reference instead of skipping it', () => {
+    const root = mkdtempSync(join(tmpdir(), 'agent-qa-431-12-census-'))
+    try {
+      const sourceRoot = join(root, 'source')
+      const packagedRoot = join(root, 'packaged')
+      mkdirSync(sourceRoot)
+      cpSync(join(agentQaRoot(), SKILLS_SOURCE_DIR, KNOWLEDGE_SKILL_NAME), join(sourceRoot, KNOWLEDGE_SKILL_NAME), { recursive: true })
+
+      expect(guidanceInputs(sourceRoot, packagedRoot).findings.join('\n')).toMatch(/packaged skills directory .* is missing/u)
+
+      cpSync(sourceRoot, packagedRoot, { recursive: true })
+      expect(guidanceInputs(sourceRoot, packagedRoot).findings).toEqual([])
+
+      const reference = join(packagedRoot, KNOWLEDGE_SKILL_NAME, 'references', 'knowledge-reads.md')
+      writeFileSync(reference, '')
+      expect(guidanceInputs(sourceRoot, packagedRoot).findings).toEqual([
+        `${reference} is empty`,
+        `${join(packagedRoot, KNOWLEDGE_SKILL_NAME, 'SKILL.md')} names references/knowledge-reads.md, which is empty`,
+      ])
+
+      rmSync(reference)
+      expect(guidanceInputs(sourceRoot, packagedRoot).findings).toEqual([
+        `${reference} is missing — run copy:skills`,
+        `${join(packagedRoot, KNOWLEDGE_SKILL_NAME, 'SKILL.md')} names references/knowledge-reads.md, which is missing`,
+      ])
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it('LIVE-GUIDANCE-TOOLS: every agent_qa_* name is a projected tool whose ops the catalog carries', () => {
+    const { subjects } = liveGuidanceInputs()
+    const live = toolCensus(subjects)
+    expect(live.findings, 'the published guidance names a tool that is not live').toEqual([])
+    expect(live.scanned, 'the tool census scanned fewer names than the guide alone quotes')
+      .toBeGreaterThan(AGENT_QUESTION_MAP.length)
+
+    const planted = toolCensus([
+      { name: 'planted', body: 'Call `agent_qa_get_run`, then `agent_qa_get_run_overviews`.' },
+    ])
+    expect(planted.findings, 'the tool census accepts a stale name').toEqual([
+      'planted: agent_qa_get_run is not a projected MCP tool',
+      'planted: agent_qa_get_run_overviews is not a projected MCP tool',
+    ])
+    expect(toolCensus([]).findings).toEqual(['no tool name was scanned'])
+    expect(toolCensus([{ name: 'generated guide', body: 'no tools here' }]).findings)
+      .toEqual(['generated guide: quotes no agent_qa_* tool — the census would certify nothing', 'no tool name was scanned'])
+  })
+
+  it('LIVE-GUIDANCE-VERBS: every agent-qa invocation resolves in the live Commander tree and the manifest', () => {
+    const { subjects } = liveGuidanceInputs()
+    const program = createAgentQaProgram()
+    const live = verbCensus(subjects, program)
+    expect(live.findings, 'the published guidance quotes a CLI verb or flag that is not live').toEqual([])
+    expect(live.scanned, 'the verb census scanned fewer invocations than the guide alone quotes')
+      .toBeGreaterThan(AGENT_QUESTION_MAP.length)
+    expect(manifestFindings(program), 'the capability manifest and the live CLI disagree').toEqual([])
+
+    const planted = verbCensus([{
+      name: 'planted',
+      body: [
+        '`agent-qa runs detail <runId>`',
+        '',
+        '`agent-qa runs overview <runId> --verbose`',
+        '',
+        '`agent-qa knowledge show`',
+        '',
+        'CLI: `agent-qa runs list`, with `--sort`.',
+        '',
+        '```text',
+        'Next: agent-qa knowledge why r-brisk-heron',
+        '```',
+      ].join('\n'),
+    }], program)
+    expect(planted.findings, 'the verb census accepts a stale verb or flag').toEqual([
+      'planted: "agent-qa knowledge why r-brisk-heron": agent-qa knowledge has no subcommand "why"',
+      'planted: "agent-qa runs detail <runId>": agent-qa runs has no subcommand "detail"',
+      'planted: "agent-qa runs overview <runId> --verbose": agent-qa runs overview has no --verbose option',
+      'planted: "agent-qa knowledge show": agent-qa knowledge show requires 1 argument(s), the guidance gives 0',
+      'planted: "agent-qa runs list" then `--sort`: agent-qa runs list has no --sort option',
+    ])
+    expect(verbCensus([], program).findings).toEqual(['no agent-qa invocation was scanned'])
+  })
+
+  it('keeps the dedicated verbs off the four-door roster and the knowledge skill in the catalog source', () => {
+    expect(SURFACE_ROSTER.map((door) => door.id)).toEqual(['chat', 'mcp', 'fn', 'run-service'])
+    const rosterIds = SURFACE_ROSTER.map((door) => door.id)
+    for (const { verb } of DEDICATED_READ_VERBS) expect(rosterIds, verb).not.toContain(verb.split(' ')[0])
+    const skillRows = buildCatalogSkillRows().map((row) => row.name)
+    expect(skillRows, 'the catalog source misses a shipped skill').toEqual([...skillDirectoriesIn(join(agentQaRoot(), SKILLS_SOURCE_DIR))])
+    expect(skillRows).toContain(KNOWLEDGE_SKILL_NAME)
   })
 })
