@@ -2239,6 +2239,16 @@ async function startDashboardBackedServices(
   }
 }
 
+/**
+ * The run-detail reader other CLI hosts bind over a project's existing runs database, so
+ * `runs.detail`, `runs.overview` and `runs.evidence` answer outside the dashboard too.
+ */
+export async function openProjectRunDetailReader(dbPath: string) {
+  const { DashboardDatabase, createDashboardRunDetailReader } = await import('@vostride/agent-qa-dashboard')
+  const db = new DashboardDatabase({ dbPath })
+  return { reader: createDashboardRunDetailReader(db), close: () => db.close() }
+}
+
 export function createDashboardCommand(): Command {
   const cmd = new Command('dashboard')
     .description('Start the dashboard web server')

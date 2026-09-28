@@ -108,6 +108,7 @@ import {
   generateHookId,
   DEFAULT_AGENT_QA_AUTH_STATES_DIR,
   DEFAULT_AGENT_QA_CACHE_DIR,
+  DEFAULT_AGENT_QA_RUNS_DB_PATH,
   parseTestFile,
   parseSuiteFile,
   normalizeAuthStateUse,
@@ -790,9 +791,9 @@ export interface ComposeCliLocalAgentInput {
   /**
    * 405 D-03: the durable run-detail projection read, FORWARDED UNTOUCHED to `composeLocalAgent`.
    *
-   * A pass-through on `liveView`'s exact footing: this host neither creates nor defaults it. Only
-   * the dashboard command composes one — it is the only door that owns a projection database —
-   * and every other caller passes nothing, so `runs.detail` lists `unbound` by name.
+   * The dashboard passes the reader over the database it holds. When nothing is passed, this host
+   * binds a reader over the project's runs database if that file already exists, and leaves
+   * `runs.detail` unbound by name when it does not.
    */
   runDetail?: ComposeLocalAgentInput['runDetail']
   /**
@@ -3777,6 +3778,19 @@ export function createChatConfirmPort(
   }
 }
 
+/** The runs database `agent-qa run` writes and `agent-qa dashboard` reads for this config. */
+function projectRunsDbPath(configPath: string): string {
+  let configured: unknown
+  try {
+    const raw = parseYaml(readFileSync(configPath, 'utf8')) as { services?: { dashboard?: { dbPath?: unknown } } } | null
+    configured = raw?.services?.dashboard?.dbPath
+  } catch {
+    configured = undefined
+  }
+  const dbPath = typeof configured === 'string' && configured.trim() !== '' ? configured.trim() : DEFAULT_AGENT_QA_RUNS_DB_PATH
+  return resolve(dirname(resolve(configPath)), dbPath)
+}
+
 export function composeCliLocalAgent(input: ComposeCliLocalAgentInput): LocalAgentHost & { trustPriorDisclosure: TrustPriorDisclosure } {
   const trustPriors = input.trustPriors ?? trustPriorsForHost({ configPath: input.configPath })
   const resolveTrustPriors = trustPriors.resolve
@@ -3831,6 +3845,20 @@ export function composeCliLocalAgent(input: ComposeCliLocalAgentInput): LocalAge
   // prompt", which is every other CLI invocation.
   const doorConfirm = 'confirm' in input ? input.confirm : createTtyConfirmPort()
 
+  // Opened on first read; the deferred import keeps the dashboard package off every other command.
+  let projectRunDetail: ReturnType<typeof import('../commands/dashboard.js').openProjectRunDetailReader> | undefined
+  const runsDbPath = input.runDetail === undefined ? projectRunsDbPath(input.configPath) : undefined
+  const runDetail: ComposeCliLocalAgentInput['runDetail'] = input.runDetail
+    ?? (runsDbPath !== undefined && existsSync(runsDbPath)
+      ? {
+          read: async (runId) => {
+            projectRunDetail ??= import('../commands/dashboard.js')
+              .then(({ openProjectRunDetailReader }) => openProjectRunDetailReader(runsDbPath))
+            return (await projectRunDetail).reader.read(runId)
+          },
+        }
+      : undefined)
+
   const host = composeLocalAgent({
     readMaskingSources: createColdReadMaskingSources(input.configPath, () => {
       const bridgeSecrets = input.runBridge?.maskingSecrets?.()
@@ -3872,8 +3900,8 @@ export function composeCliLocalAgent(input: ComposeCliLocalAgentInput): LocalAge
     ...(input.dispatchGrants === undefined ? {} : { dispatchGrants: input.dispatchGrants }),
     // 403 D-03: the live-view mint seam, forwarded untouched on the same house rule.
     ...(input.liveView === undefined ? {} : { liveView: input.liveView }),
-    // 405 D-03: the run-detail projection read, forwarded untouched on the same house rule.
-    ...(input.runDetail === undefined ? {} : { runDetail: input.runDetail }),
+    // 405 D-03: the run-detail projection read, spread on the same house rule.
+    ...(runDetail === undefined ? {} : { runDetail }),
     // 393 D-01: the keep-gate evaluator's host half, bound UNCONDITIONALLY on this host — a CLI
     // always has a config path, therefore a checkout root, therefore both verbs. Together with the
     // run executor one line up, this is what makes `authoring.draft.verify` read `bound` in this
@@ -4042,5 +4070,15 @@ export function composeCliLocalAgent(input: ComposeCliLocalAgentInput): LocalAge
     // absent field still defaults to "prompt where there is somebody to prompt".
     ...(doorConfirm === undefined ? {} : { confirm: doorConfirm }),
   })
-  return Object.assign(host, { trustPriorDisclosure: trustPriors.disclosure })
+  const closeHost = host.close.bind(host)
+  return Object.assign(host, {
+    trustPriorDisclosure: trustPriors.disclosure,
+    close: async () => {
+      try {
+        await closeHost()
+      } finally {
+        await projectRunDetail?.then(opened => opened.close(), () => undefined)
+      }
+    },
+  })
 }
