@@ -976,3 +976,282 @@ This section appends to the register; it does not change any earlier deletion or
 WINDOWS 285's constant ARIA stub is fixed by Plan 09: `ARIA-READS-SUB-ACTION` reads the selected sha-addressed document as masked text; `TAB-LOAD-FAILURE-ARIA` proves retry and never-empty behavior. Historical empty documents are not silently substituted for failed loads.
 
 SC1's added run-detail mutation proof is P01/P02/P22 in `scripts/424-playback-mutation.sh`; phase-range git log and diff confirm `scripts/405-run-detail-mutation.sh` and its inventory are unchanged. Database option A refuses unreleased v2 and retains only the locked v3-to-v4 additive step. No old section's historical v2-to-v3 account is rewritten.
+
+## 2026-09-28 — Phase 430: Dashboard Chat removal (PXH-SURF-01..03)
+
+This section appends to the register; it rewrites no earlier section and moves no earlier
+baseline. Phase 430 deleted the dashboard's Chat: the page, the panel, the browser transport, the
+server's five `/api/chat/*` routes and the door composition behind them. It kept what run detail,
+the Run button and mark approval still use, under their old names with narrower shapes. The
+section follows the 2026-09-02 shape (D-12) and adds the one thing no earlier section carries: the
+persisted values the narrowed contract governs (SC4).
+
+### The ruling
+
+> do what ever you fell but the goal is to drop all and simplify things
+
+The owner, verbatim, in the 2026-09-28 Phase 430 discussion (recorded as D-06's ruling in
+`.planning/phases/430-dashboard-chat-removal/430-CONTEXT.md`, and applied to every fork in the
+phase: when a choice was open, deleting won over keeping, and doing less now won over renaming
+what Phase 432 deletes anyway).
+
+> The interactive CLI chat/one-shot ask commands are not removed by this milestone unless separate
+> usage evidence and an explicit decision say so.
+
+The milestone's creation decision of 2026-09-14, verbatim from `spec/v2/product-experience-hardening.md`
+§3.8 (PXH-SURF-02), carried in `.planning/REQUIREMENTS.md` Out of Scope as "Kept by owner decision
+2026-09-14 absent usage evidence" and as SURF-CLI-CHAT-FUT-01. It is why everything CLI chat and
+`ask` read survives this section: the turn engine, the schema's `chat/` contracts, the session
+store and the `chat` job kind.
+
+**D-02 answered the research's open `/api/chat/*` question: the whole server door is deleted, not
+only the browser transport.** The only production caller of those routes was the browser
+transport being deleted (the CLI never called them over HTTP, and MCP never referenced them), and
+a live invocation door without a roster row is exactly what `roster.ts`'s 2026-08-16 registration
+note forbids. Keeping them as a headless API was offered and declined. A deleted route answers
+the router's generic 404, the `routes.ts` precedent for deleted routes: not redirected, not
+stubbed.
+
+### How this inventory is measured
+
+| Instrument | What it claims | Where |
+|---|---|---|
+| the census | 67 removed names, each refused as a two-half raw-text needle, have ZERO occurrences across three path-ruled universes: `dashboard-ui/src` (531 files, 301 production at rest), `dashboard-server/src` (132 files, 53 production) and the door composition file `cli/src/commands/dashboard.ts`. Comments count. Ten named cells hold it honest: `UNIVERSE-LOWER-BOUNDS`, `NO-FILE-UNDER-THE-UI-CHAT-DIRECTORY` with its synthetic `CHAT-DIRECTORY-RULE-CONTROL`, `TOLERATED-NAMES-PRESENT` (14 kept names, each present in one universe's production source), `TOLERATED-NAMES-NOT-NEEDLES`, `DASHBOARD-UI-DECLARES-NO-MARKDOWN-PARSER`, `PLANTED-POSITIVE`, `COMMENTS-COUNT`, `SPLIT-SPELLING-ACCOUNTED` and `SELF-MATCH`. 77 cells in all. | `packages/arch/src/__tests__/430-dashboard-chat-deleted.test.ts` (`pnpm validate:arch`) |
+| the 430 mutation gate | 23 legs, `R01`..`R23`, on the shared 423 engine: each plants one removed member back into its real subject and requires the cell named before the run to go RED, then restores the subject byte-identically. Seven instruments (schema 6 cells, dashboard-server 11, dashboard-ui 54, parity 60, cli 34, agent-local 2, census 77), each count measured from a fresh Vitest JSON report. No leg crosses into a built `dist`. Ends `CHAT_REMOVAL_MUTATION_OK`. | `scripts/430-chat-removal-mutation.sh` (`pnpm run validate:430-chat-removal-mutation`) |
+| its selftest | the hand-written R01..R23 inventory (claims, subjects, reds), both `package.json` registration strings, a neutered leg that must FATAL after a green child, a dirty subject that must be refused, and restore-and-rebuild on fatal, SIGINT, SIGTERM and SIGHUP. 32 checks. | `scripts/430-chat-removal-mutation-selftest.sh` (`pnpm run validate:430-chat-removal-mutation-selftest`) |
+| the closed-set cells (runtime key set beside the type) | `C430-CHAT-ROUTE-TABLE-EXACT` (the two run-confirm rows, and `ChatRouteHandlerName` equal to `'runConfirm' \| 'runConfirmChannel'`), `C430-AGENT-HOST-MEMBERS-EXACT` (`AGENT_HOST_MEMBERS`, declared with `satisfies`, equal to `keyof AgentHost` both ways, and the five removed members `never`), `C430-REMEDY-MEMBERSHIPS-EXACT`, `C430-REMEDY-SURFACES-EXACT` and `C430-DASHBOARD-PROJECTION-EMPTY` (each a runtime and a `.test-d.ts` half), `C430-NO-SESSION-SURFACE-OPTION` (one per composition package), `C430-DELETED-CHAT-ROUTES-SHARED-404` (five cells: 404, `{ error: 'Not found' }` and `Access-Control-Allow-Origin: *`, the header that tells the shared arm from a returning chat router) and `C430-RUN-CONFIRM-PREFIX-STILL-ROUTED`. The roster's exact-list cell "pins the roster at the four surfaces that exist today", `MODULE_FOR_DOOR`'s cell (5) and the unmask roll-call's enrollment cell are the older containers, re-pinned. | `dashboard-server/src/__tests__/430-chat-closed-sets.test.ts` and `.test-d.ts`, `430-chat-routes-deleted.test.ts`; `schema/src/safety/__tests__/430-remedy-memberships.test.ts` and `.test-d.ts`; `agent-local` and `cli` `src/composition/__tests__/430-no-session-surface-option.test-d.ts`; `cli/src/__tests__/conformance/parity.test.ts`, `proposal-author-attribution.test.ts`, `unmask-boundary-rollcall.test.ts` |
+| the absence cells | `NO-CHAT-ROUTE` (`/chat` is not declared and lands on Runs), `SHELL-CHILDREN-EXACT` (the shell's four children, no launcher), `SIDEBAR-NAV-EXACT` (the six-item primary nav), `PALETTE-PAGES-EXACT` (the six palette pages), `TOUR-HAS-NO-CHAT-STEP`, `NO-CARD-MODULE` and `NO-CARD-EXPORT` (no chat directory, and the route module exports only the route map and its two resolvers), `DENIAL-REASON-ONLY` and `DENIAL-NOTHING-INVENTED` (a dashboard refusal is its reason, whatever remedies the wire carries). Against the BUILT bundle in real Chromium: `NO-CHAT-IN-SHIPPED-BUNDLE`, `NO-CHAT-MOUNT-ON-ANY-PAGE` and `NO-CHAT-REMEDY-SENTENCES-IN-BUNDLE` (with a known-answer control, so an empty scan cannot pass). Against the spawned binary: process survival's s5 (a deleted chat path answers the shared 404 and the process keeps serving). | `dashboard-ui/src/components/__tests__/{update-banner,app-sidebar,command-palette,product-tour}.test.tsx`, `dashboard-ui/src/__tests__/entity-card.test.ts`, `dashboard-ui/src/components/run-detail/__tests__/denial-block.test.tsx`; `cli/src/__tests__/conformance/dashboard-dom.test.ts` and `dashboard-process-survival.test.ts` |
+| the dashboard-era session cells | `DASHBOARD-ERA-SESSION-LISTED` and `DASHBOARD-ERA-SESSION-REOPENS`: a committed session file whose header carries `"surface":"dashboard"` is listed by `agent-qa chat --list` and reopened by `--session <id>`, and the sessions directory holds exactly the seeded files, byte-identical, afterwards | `cli/src/__tests__/chat-command.test.ts` over `cli/src/__tests__/fixtures/chat-dashboard-era.jsonl` |
+
+**This file names retired tokens literally, as the 2026-09-02 section explains for the whole
+register.** `DELETION-INVENTORY.md` sits outside every census universe. Inside them, tests spell a
+removed name only as two halves, so the census cannot satisfy its own inventory; the one test that
+spelled a whole needle in its first half (`denial-block.test.tsx:72`) was re-split by 430-12.
+
+### What was deleted
+
+**Both ends of the derivation, stated so it can be re-run.** Baseline `bc9c7e315b1636f73ce068a822abc0d980100182`,
+the parent of Phase 430's first agent-qa commit (`35cb451ae`, 430-01), as `430-01-SUMMARY.md`
+records it. Closing HEAD `d40a867ccd005b3cd24a0be91ca75a118b60b096` (`agent-qa`, branch
+`version-0.2`), the last code commit of the phase and agent-qa HEAD before this section's commit.
+The lists below are DERIVED from `git -C agent-qa diff bc9c7e315..d40a867cc` (`--stat`,
+`--diff-filter=D`, `--diff-filter=A` and the per-file hunks), keyed by token, not transcribed from
+any plan summary: 52 commits, 99 files, +3029/−9688, 17 files deleted and 15 added. The "hits"
+column counts the token's occurrences over `packages/*/src` (`.ts`/`.tsx`, tests and comments
+included) as `hits/files`, at the baseline and at the closing HEAD, each measured with
+`git grep -F -c` at that revision.
+
+#### Files deleted
+
+| File | Lines at baseline | Deleting commit | What carries its claims now |
+|---|---|---|---|
+| `dashboard-ui/src/pages/chat.tsx` | 24 | `524c7cb59` (430-06) | `NO-CHAT-ROUTE`, `NO-CHAT-IN-SHIPPED-BUNDLE`, the census |
+| `dashboard-ui/src/components/chat-panel.tsx` (panel and launcher) | 71 | `524c7cb59` (430-06) | `SHELL-CHILDREN-EXACT`, `NO-CHAT-MOUNT-ON-ANY-PAGE`, the census |
+| `dashboard-ui/src/chat/chat-transcript.tsx` | 458 | `df5146f30` (430-07) | `NO-CARD-MODULE`, the census |
+| `dashboard-ui/src/chat/chat-session-context.tsx` | 115 | `486548429` (430-07) | the same |
+| `dashboard-ui/src/chat/use-chat-turn.ts` | 409 | `486548429` (430-07) | the same |
+| `dashboard-ui/src/chat/confirm-bubble.tsx` | 111 | `486548429` (430-07) | the same |
+| `dashboard-ui/src/chat/receipt-row.tsx` | 114 | `486548429` (430-07) | the same |
+| `dashboard-ui/src/chat/chat-markdown.tsx` | 143 | `486548429` (430-07) | the same, plus the two parser-import needles (D-05) |
+| `dashboard-ui/src/chat/entity-card.tsx` | 327 | `231108c58` (430-07) | `NO-CARD-MODULE`, `NO-CARD-EXPORT`, the census |
+| `dashboard-ui/src/components/observation-markdown.tsx` (already importer-less) | 39 | `177167710` (430-08) | the census, `DASHBOARD-UI-DECLARES-NO-MARKDOWN-PARSER` |
+| `dashboard-ui/src/__tests__/chat-transcript.test.tsx` | 609 | `df5146f30` (430-07) | its DenialBlock cells moved in 430-01, its mount cells became `SHELL-CHILDREN-EXACT` and the bundle cells in 430-06, and the rest is carried by `NO-CARD-MODULE` and the census, family by family, as `430-07-SUMMARY.md` tabulates |
+| `dashboard-ui/src/__tests__/fixtures/entity-cards.ts` | 307 | `231108c58` (430-07) | its only reader was the card render; the MCP half's per-kind coverage stays in `entity-card-parity.test.ts` |
+| `cli/src/__tests__/conformance/hostile-markdown-fixture.ts` | 155 | `6ac417cbb` (430-06) | none needed: no renderer is left to guard (D-05) |
+| `cli/src/__tests__/dashboard-chat-door.test.ts` | 1036 | `0671ed3ec` (430-09) | its surviving claims moved to `dashboard-door-host.test.ts` (430-03); the rest by `C430-DELETED-CHAT-ROUTES-SHARED-404`, `C430-CHAT-ROUTE-TABLE-EXACT` and the census |
+| `cli/src/__tests__/dashboard-confirm-bridge.test.ts` | 1360 | `0671ed3ec` (430-09) | `run-trigger-confirm.test.ts` (DENY ON SILENCE, ALLOW, ALWAYS, CHANNEL VANISH, NO LIVE CHANNEL); `C430-NO-SESSION-SURFACE-OPTION` for the session-surface tag; door security 6a-6i and 6g for the answer route's cross-origin posture |
+| `cli/src/__tests__/dashboard-denial-prose.test.ts` | 186 | `0671ed3ec` (430-09) | `run-mark-browser.e2e.test.ts`, `dashboard-run-mark.test.ts`, `DENIAL-REASON-ONLY` |
+| `cli/src/__tests__/conformance/dashboard-anchors.test.ts` | 563 | `efc30c681` (430-20) | `C430-DELETED-CHAT-ROUTES-SHARED-404`, process survival s5, the census |
+
+The ten production files are 1,811 lines (the whole `dashboard-ui/src/chat/` directory, the page,
+the panel and the orphaned renderer). The directory itself is gone with its last file.
+
+#### Routes deleted
+
+| Route | Dispatch stopped | Handler deleted |
+|---|---|---|
+| `POST /api/chat/turn`, `POST /api/chat/confirm`, `GET /api/chat/capabilities`, `GET /api/chat/catalog`, `GET /api/chat/sessions/:id/events` | `4511077cb` (430-20): `routes.ts` dispatches `/api/run-confirm/` alone, still ahead of `cors()` | `b22137ddc` (430-09): `handleTurn`, `handleConfirm`, `handleCatalog`, `handleCapabilities` and the session-events arm, with the replay window |
+| the `/chat` UI route, its lazy page, the sidebar item and `routes.chat` | `524c7cb59` and `c9e2a4ea0` (430-06) | the same commits |
+
+#### Exports removed
+
+| Token | Where it was exported | Hits (baseline → closing) | Commit |
+|---|---|---|---|
+| `CHAT_ROUTE_PREFIX`, `CHAT_TURN_ROUTE`, `CHAT_CAPABILITIES_ROUTE`, `CHAT_CATALOG_ROUTE`, `CHAT_CONFIRM_ROUTE`, `CHAT_SESSION_EVENTS_TEMPLATE` | `dashboard-server` barrel (`server/index.ts`) and `chat/chat-routes.ts` | 5/4, 8/4, 7/4, 5/3, 6/3, 5/3 → 0 each | `b22137ddc` (430-09) |
+| `CHAT_STREAM_BOUNDS`, `recordStreamedEvent`, type `SessionStreamWindow` (the 512-event, 32-session replay window) | the same | 4/3, 11/4, 9/4 → 0 each | `b22137ddc` (430-09) |
+| types `ChatTurnFold`, `ChatTurnResponse`, `AgentResultFold`, `AgentDeclarationRow` (and the unexported `AgentClauseVerdict`) | `dashboard-server` barrel and `chat/host.ts` | 8/5, 37/8, 6/3, 5/3, 2/1 → 0 each | `8789670a4` (430-10) |
+| `postChatTurn`, `answerChatConfirm`, `subscribeToChatSessionEvents`, `fetchChatCapabilityCatalog`, types `ChatCapabilityRow`, `ChatCapabilityCatalog` and the browser mirrors of `ChatTurnFold` / `ChatTurnResponse` | `dashboard-ui/src/lib/api.ts` | 3/2, 3/2, 3/2, 5/4, 8/3, 7/4 → 0 each | `e7b3c2d43` (430-19) |
+| `openRunConfirmChannel`'s `onPresent` member and its presence-frame listener | `dashboard-ui/src/lib/api.ts` | `chat_present` 7/5 → 2/1 (the server registry still emits the frame; see RETAINED) | `e7b3c2d43` (430-19) |
+| `SessionEventFanOut`, `createSessionEventFanOut` | `cli/src/commands/dashboard.ts` | 4/1, 2/1 → 0 each | `0cbd5efda` (430-10) |
+| `dashboardSurfaceAdapter`, `withDashboardDoor`, `enumerateDashboardOpIds`, `driveDashboardLines`, `driveDashboardDispatch`, the `SurfaceStray` kind `'dashboard-listed-op'` | `cli/src/__tests__/conformance/adapters.ts`, `surface-dispatch.ts` | 3/2, 2/1, 3/1, 5/2, 5/2, 2/1 → 0 each | `b8397f27d` (430-05) |
+
+#### Members removed
+
+| Token | Container (kept, narrowed) | Hits (baseline → closing) | Commit |
+|---|---|---|---|
+| `agentAskFunctionId`, `listDeclarations`, `onSessionEvent`, `readCapabilityCatalog` | `AgentHost` (`dashboard-server/src/chat/host.ts`) | 17/13, 16/15, 21/18, 3/3 → 0 each | optional in `107e6c726` (430-17), fakes shed in `5cc496649`, `49f0e7c0d`, `03ed1fd14` (430-17, 430-21), deleted in `8789670a4` (430-10) |
+| `foldFunctionResult` | the same | 52/24 → 30/10: every remaining hit is the agent package's own fold and its readers (`agent/src/functions`, the turn engine, `agent-local`'s composition, CLI chat's `commands/chat.ts`, the arch barrel lint), all outside the three universes | the same |
+| the `sessionEvents` parameter and the five chat members of the returned host | `composeDashboardAgentHost` | — | `0cbd5efda` (430-10) |
+| `sessionSurface`, `mintingSurface`, the chat-model spread (`chatModel`, `chatModelFor`, `chatAccounting`), `chatPresent`, `observeSessionEvent` | `composeDashboardDoor`'s `composeCliLocalAgent` input | — | `0cbd5efda` (observeSessionEvent), `449836a05` (the rest) (430-10, 430-11) |
+| `chatModel` and the `resolveCliChatCapabilities` call | `DashboardDoorInput` and the dashboard command | `resolveCliChatCapabilities` 18/11 → 16/10: CLI chat and `ask` keep it | `449836a05` (430-11) |
+| `sessionSurface` | `ComposeLocalAgentInput` (agent-local) and `ComposeCliLocalAgentInput` (cli) | 7/3 → 2/2: the two remaining hits are the never-bars that forbid it | `97be25ec0` (430-11) |
+| `remedies` prop, `DASHBOARD_REMEDY_TEXT` and both chat-worded sentences | `DenialBlock` | `DASHBOARD_REMEDY_TEXT` 2/1 → 0 | `407cd46ed` (430-04) |
+| `'dashboard'` in `answer-confirm` and `session-pin-final` | `GATE_REMEDY_SURFACES_BY_KIND` (`schema/src/safety/remedies.ts`) | — | `f94f8a172` (430-15) |
+| the `dashboard` row | `SURFACE_ROSTER` (`cli/src/__tests__/conformance/roster.ts`), now `['chat','mcp','fn','run-service']` | — | `b8397f27d` (430-05) |
+| the `dashboard` entry | `MODULE_FOR_DOOR` (`proposal-author-attribution.test.ts`) | — | `29e3037e7` (430-05) |
+| sinks `dashboard:chat-turn-response`, `dashboard:chat-sse-frame`, `machine:dashboard-chat-replay-window` | the unmask roll-call's `SURFACE_ROLLCALL` | — | `9acadfeca` (430-09) |
+| rows turn, confirm, capabilities, catalog, sessionEvents; `ChatRouteRow.pattern`, `ChatRouteMatch.params`, `ChatRouter.openStreamCount`; `CHAT_SESSION_EVENTS_PATTERN`, `CHAT_STREAM_REPLAY_LIMIT`, `CHAT_STREAM_SESSION_LIMIT`, `ChatTurnRequestSchema`, `ChatConfirmRequestSchema` | `CHAT_ROUTE_TABLE`, `ChatRouteHandlerName` and `createChatRouter` (`chat-routes.ts`, 1041 → 490 lines) | `CHAT_SESSION_EVENTS_PATTERN` 2/1, `CHAT_STREAM_REPLAY_LIMIT` 3/1, `CHAT_STREAM_SESSION_LIMIT` 3/1 → 0 each | `b22137ddc` (430-09) |
+| the lazy `ChatPage`, `<ChatPanel />`, the `ChatSessionProvider` wrapper | `app.tsx` (with `RunConfirmHost` kept inside `ProductTourProvider`) | `ChatSessionProvider` 10/4, `ChatPanel` 4/3, `ChatPage` 7/4 → 0 each | `524c7cb59` (430-06) |
+
+#### The dependency removed
+
+`marked` `18.0.3` left `dashboard-ui/package.json` and the ownership contract's
+`AGENT_QA_DASHBOARD_UI_EXTERNAL_DEPENDENCIES` in one commit, `177167710` (430-08), with the
+`.markdown-preview` stylesheet block. `pnpm install --offline` removed exactly three lockfile
+entries: the `packages/dashboard-ui` importer's `marked`, `packages > marked@18.0.3` and
+`snapshots > marked@18.0.3`. `marked@14.0.0` stays in the lockfile as `monaco-editor`'s own
+dependency; nothing in `dashboard-ui/src` imports a markdown parser.
+
+#### Test cells deleted inside kept files
+
+- `dashboard-door-security.test.ts` 7a (the session-id route's decode guard) and 7b-i (the turn's
+  fold guard): `9acadfeca` (430-09). Carried by `C430-DELETED-CHAT-ROUTES-SHARED-404`, process
+  survival s5 and the `AgentHost` never-bar. 6a-6i, 6g, 7b-ii, 7c and 7d were re-driven onto
+  `POST /api/run-confirm/answer` first (`cfeb9c20e`, `3b129472c`, 430-16).
+- `parity.test.ts`'s three dashboard-door cells and the source-sweep guards that named the door:
+  `b8397f27d` (430-05). Carried by the exact-list roster cell and the census.
+- `dashboard-dom.test.ts`'s transcript, card, two-mount and hostile-markdown cells: `6ac417cbb`
+  (430-06), 980 → 327 lines. Carried by the three bundle absence cells and the census.
+- `entity-card.test.ts`'s 29 card-render cells: `df5146f30` and `231108c58` (430-07). Carried by
+  `NO-CARD-MODULE`, `NO-CARD-EXPORT` and the census; its nine route-map cells survive.
+
+### What was RETAINED, and why
+
+Each row states what, where, why it was kept, and what pins it. No "still there" presence
+assertion was added for any of them beyond `TOLERATED-NAMES-PRESENT`, which exists to keep the
+census's exception list honest rather than to freeze these names.
+
+| Item | Where (file:line at `d40a867cc`) | Why kept | What pins it |
+|---|---|---|---|
+| `AgentHost`, narrowed to sixteen members | `dashboard-server/src/chat/host.ts:56`; `AGENT_HOST_MEMBERS` at `:236` | the whole host seam of run detail, analysis, knowledge, marks, post-processing and the run-confirm pair (400 D-01's in-process host still stands) | `C430-AGENT-HOST-MEMBERS-EXACT`, runtime and type; mutation leg `R11` |
+| the confirm registry | `dashboard-server/src/chat/confirm-registry.ts:246` (`createConfirmRegistry`) | one registry serves run-trigger and mark confirms; only the chat use left. Phase 432 deletes the rest | `run-trigger-confirm.test.ts`, the Run button and mark browser cells |
+| `DenialBlock`, reason-only | `dashboard-ui/src/components/run-detail/denial-block.tsx:4` | run detail renders a mark refusal through it; it moved out of the chat module (430-01) and lost its remedy lines (430-04, D-06) | `DENIAL-REASON-ONLY`, `DENIAL-NOTHING-INVENTED`; legs `R14`, `R15` |
+| `entityRefRoute` with its route map (`ENTITY_KIND_ROUTES`, `entityRouteFor`, the compile-time partition check) | `dashboard-ui/src/lib/entity-routes.ts:22`, `:39`, `:44` | the Knowledge tab links `agentqa://` references through it (430-02) | `ENTITY-REF-ROUTE-RESOLVES`, `ENTITY-ROUTES-MODULE-SHAPE`, `NO-CARD-EXPORT` |
+| the chat-named confirm types: `ChatConfirmAnswer`, `ChatConfirmRequestFrame`, `ChatConfirmResolvedFrame`, `CONFIRM_ANSWER_VOCABULARY` (UI); `CHAT_CONFIRM_ANSWERS`, `ChatConfirmChannelFrame` (server) | `dashboard-ui/src/lib/api.ts:1642-1652`; `confirm-registry.ts:105`, `:148` | they type the run and mark confirms; renaming what 432 deletes is churn | `TOLERATED-NAMES-PRESENT` |
+| `createChatRouter` and `CHAT_ROUTE_TABLE`, narrowed to `POST /api/run-confirm/answer` and `GET /api/run-confirm/channel` | `dashboard-server/src/chat/chat-routes.ts:93`, `:313`; dispatched at `server/routes.ts:1936` | the Run button's confirm pair lives here until Phase 432 deletes it (REQUIREMENTS note 56) | `C430-CHAT-ROUTE-TABLE-EXACT`, `C430-RUN-CONFIRM-PREFIX-STILL-ROUTED`, door security 6a-6i and 6g; legs `R06`-`R08` |
+| the presence frame (`chat_present`) and `present()` in the registry | `confirm-registry.ts:157`, `:357` | still reached on run-trigger and mark scopes by the confirm factory's accept-always failure messages; the browser no longer listens (430-19). Covered by the census's `dashboard-server/src/chat/` path exception | Phase 432 |
+| `CLAUSE_RECEIPT_STATUSES` | `schema/src/chat/turn-receipts.ts:37` | lost its only consumer outside the schema (`use-chat-turn.ts`) but stays the runtime key set beside `ClauseReceiptStatus`, and still backs `AgentAskResult`'s receipt-status enum (`schema/src/chat/agent-ask.ts:23`) | the schema's chat vocabulary cells |
+| the schema's `chat/` contracts | `schema/src/chat/` (`agent-ask.ts`, `session-events.ts`, `session-log-port.ts`, `turn-receipts.ts`, `pin-overlay.ts`, `scenario-expectation.ts`) | CLI chat and `ask` use every one of them; no `schema/src/chat/**` type died (SC3 is met by the door-only DTOs above) | outside the census by D-11 |
+| `DASHBOARD_FUNCTION_CALLER` (`surface: 'dashboard'`) and the commit-author map's `dashboard` entry | `cli/src/commands/dashboard.ts:123`; `cli/src/composition/local-agent-host.ts:2282` | the dashboard is still a caller: run detail reads and marks through the host, and the Run button starts runs | `TOLERATED-NAMES-PRESENT`; `proposal-author-attribution.test.ts` cell (1) |
+| `conformance/spawned-chat.ts` | `cli/src/__tests__/conformance/spawned-chat.ts` (837 lines, 42 importers) | a shared spawn fixture for dashboard, live and run-service suites, despite its name | its importers |
+| `composeDashboardDoor` and `composeDashboardAgentHost`, narrowed | `cli/src/commands/dashboard.ts:734`, `:156` | not door-only (RESEARCH P1): they compose the dashboard's whole `LocalAgentHost`, the run trigger, marks, the run-service door and the co-hosted MCP registry | `TOLERATED-NAMES-PRESENT`; about 30 non-chat suites |
+| `overlayDashboardBaseUrl` | `cli/src/commands/dashboard.ts:296` | not door-only (RESEARCH P5): it wraps the config reader of the host whose registry the co-hosted MCP endpoint serves, so MCP cards carry a url. D-01's line deleting D-16's overlay with the door therefore does not apply | the four card-url cells and the bound-origin cells moved to `dashboard-door-host.test.ts` (430-03) |
+| the posture machinery: the asking-session frame, `askingSessionOf`, the `enterAskingSession` parameter, `watchedAndInFlight`, `reachableByChannelAlone`, `resolveExecutionContext` | `cli/src/commands/dashboard.ts:136`, `:395`, `:429`, `:807` | the gate posture Phase 432 removes (RESEARCH Open Question 2, 430-10); behaviour unchanged, each site carries a dated 430 note | `run-trigger-confirm.test.ts` "THE CONVERSATION RULE IS UNTOUCHED" |
+| `'dashboard'` in `GATE_REMEDY_SURFACES`, declared empty | `schema/src/safety/remedies.ts:74` | the `run-service` precedent: removing it breaks compile at two server projections and a safety cell for no gain, and 432 deletes the layer (430-15) | `C430-REMEDY-SURFACES-EXACT`, `C430-DASHBOARD-PROJECTION-EMPTY`; legs `R12`, `R13` |
+| the session log's own `surface` option and the reader's header guard | `agent-local/src/session/jsonl-session-log.ts:234`, `:335`; `schema/src/chat/session-events.ts:67` | the store's API, not the composition's: `session-surface-tag.test.ts` writes reader-compat fixtures through it, and the reader must keep accepting `surface: 'dashboard'` headers (D-08) | `session-surface-tag.test.ts`, `DASHBOARD-ERA-SESSION-LISTED` |
+| `mintingSurface`, `observeSessionEvent`, `chatPresent` and the chat-model options on both compositions | `agent-local/src/composition/compose-local-agent.ts:2077`; `cli/src/composition/local-agent-host.ts` | `agent-qa chat` and `ask` set them; only the dashboard door's writers went | `C430-NO-SESSION-SURFACE-OPTION`'s kept-options half |
+
+### What degrades, stated plainly
+
+- **A person can no longer converse with the agent in the browser.** No page, panel or launcher
+  exists, and nothing replaces them (product law 5; no notice, no placeholder route). CLI
+  `agent-qa chat` and `ask`, and any MCP host, are where conversation happens.
+- **Dashboard refusals carry no remedy hint.** A denied mark shows its neutral reason and nothing
+  else. The gate still mints remedies; the CLI and chat surfaces still render theirs.
+- **Dashboard-era sessions are reachable only through CLI chat.** `agent-qa chat --list`,
+  `--continue` and `--session <id>` list and reopen them; the dashboard shows none of them.
+- **The markdown link and image hardening lives only in git history.** `chat-markdown.tsx`'s
+  allow-lists (`git show bc9c7e315:packages/dashboard-ui/src/chat/chat-markdown.tsx`) and their
+  XSS cells went with it. A future renderer re-derives both with its own tests.
+- An old `/chat` bookmark lands on Runs through the existing catch-all, with no message (D-07).
+
+### Persisted values the narrowed contract governs
+
+| Persisted value | Disposition | Evidence |
+|---|---|---|
+| Session JSONL, `.agent-qa/sessions/chat-*.jsonl`, including files whose header carries `surface: 'dashboard'` | **Left alone (D-08):** no migration, no deletion and no listing filter; the files are the user's. CLI chat lists and reopens them, reading headers only and never branching on `surface`. The header's optional `surface` field and the reader's guard stay; the only writer of `'dashboard'` (the door's `sessionSurface`) is gone, so no new file carries it. **Named, not fixed (D-09): `user_message.text` and `clause_receipt.clause` may hold typed credentials in cleartext. CLI chat keeps writing such files after this phase. Pre-430 dashboard sessions are part of that population.** The repair needs a chat-session-scoped masking context that does not exist yet; it is owned by `.planning/todos/pending/399.1-transcript-cleartext-masking.md` (v2.1 FIX-S2), which stays pending. Nothing in this phase masks, rewrites or scrubs these files. | `DASHBOARD-ERA-SESSION-LISTED`, `DASHBOARD-ERA-SESSION-REOPENS`; `C430-NO-SESSION-SURFACE-OPTION`; leg `R21` (the census) and `R22` |
+| Routes | **Deleted:** `POST /api/chat/turn`, `POST /api/chat/confirm`, `GET /api/chat/capabilities`, `GET /api/chat/catalog`, `GET /api/chat/sessions/:id/events` (each now the router's generic 404 with the shared wildcard grant), and the `/chat` UI route (falls through to `/runs`). **Retained, owned by Phase 432:** `POST /api/run-confirm/answer` and `GET /api/run-confirm/channel`, in `chat-routes.ts`, dispatched ahead of `cors()`. | `C430-DELETED-CHAT-ROUTES-SHARED-404`, `NO-CHAT-ROUTE`, `NO-CHAT-IN-SHIPPED-BUNDLE`, process survival s5; `C430-RUN-CONFIRM-PREFIX-STILL-ROUTED`, `C430-CHAT-ROUTE-TABLE-EXACT`; legs `R01`, `R06`, `R07`, `R19`, `R20` |
+| Config keys | **None retired.** No config key ever belonged to Chat. `services.dashboard.baseUrl` and `services.dashboard.workspace` (`core/src/schema/services-schema.ts:61`, `:65`) stay: they are 400 D-16's knob for CLI and MCP hosts' card urls, read by `mcp/src/live-link.ts` and the card producer (`agent/src/functions/entity-cards/card-context.ts:28-29`). Only the door's own self-overlay use left with the door; the overlay function itself stays for co-hosted MCP (RETAINED above). | `dashboard-door-host.test.ts` card-url cells |
+| Persisted `'dashboard'` surface values | **Still readable and valid:** the session-header `surface`; proposal `origin.surface: 'dashboard'`; past `approval_decision` events. **Correction to D-08 (RESEARCH P19):** the persisted `origin.surface: 'dashboard'` values were minted only by dashboard-chat config proposals through `mintingSurface`, never by marks (mark-drafted proposals carry no surface). After 430 no writer produces new ones. | `proposal-author-attribution.test.ts` cell (1) (a persisted record with `origin.surface: 'dashboard'`, accepted from the CLI, is still authored as the dashboard), the dashboard-era session cells |
+
+### The instruments that notice a return
+
+- **`pnpm validate:arch`**: the 430 census beside `validate-arch.test.ts` and the earlier
+  censuses. It runs in the workspace's `turbo test`, so a re-added name, path, file or parser
+  import in the three universes REDs by name on the commit that adds it.
+- **`pnpm run validate:430-chat-removal-mutation`**: the bar that proves the census and the
+  closed-set and absence cells are not decoration, 23 legs, each restored byte-identically.
+- **`pnpm run validate:430-chat-removal-mutation-selftest`**: proves the gate fires, that its
+  written inventory matches the legs, and that both scripts stay registered. Like every
+  `validate:*-mutation` script, neither is in CI; both are phase-gate instruments run by hand.
+- **The closed-set cells** (`C430-*`) and **the absence cells** (`NO-CHAT-*`,
+  `SIDEBAR-NAV-EXACT`, `PALETTE-PAGES-EXACT`, `SHELL-CHILDREN-EXACT`, `TOUR-HAS-NO-CHAT-STEP`,
+  `NO-CARD-*`, `DENIAL-REASON-ONLY`), which run in the ordinary package suites.
+
+### Reconciliation
+
+The planning record carries this phase's dated notes in `.planning/REQUIREMENTS.md` § "Phase 430
+reconciliation (2026-09-28)", notes 84-92: the run-confirm routes left in place (84), the
+four-door roster (85), the deleted renderer with `marked` (86), SC3 met by the door-only DTOs (87),
+the emptied dashboard remedy projection (88), the widened census (89), the palette and tour
+clauses met by absence (90), the six WINDOWS/v2.1 dispositions (91: #192, #90 and #195 closed or
+retired, #194 and #217 re-homed to Phase 432, SURF-10's dashboard `@`-mention half withdrawn), and
+RESEARCH's corrections to CONTEXT premises (92). `.planning/WINDOWS.md` carries the matching
+`RECONCILIATION-430` block, and `PROJECT.md`'s PXH-SURF bullet carries a dated correction. The
+spec files stay read-only.
+
+### Gate at the time of writing (2026-09-28)
+
+Run on 2026-09-28 from `agent-qa/` on the closing HEAD `d40a867cc`, between 06:58 and 07:32 UTC, by
+430-14. Each command ran once, in the order below; the exit code is the one the process returned,
+read from `$?` on a redirected run, never inferred from output text. `git status --porcelain` in
+agent-qa was empty before the first command and after the last. Rows 18-24 are the re-runs the
+workspace suite's reds called for; they are not substitutes for row 8, which stays red.
+
+| # | Command | Observed | Exit |
+|---|---|---|---|
+| 1 | `pnpm build` | 22 successful, 22 total (22 cached) | **0** |
+| 2 | `pnpm turbo run build --force` | 22 successful, 22 total, 0 cached | **0** · 25 s |
+| 3 | `pnpm --filter agent-qa exec vitest run` over `ask-command`, `chat-command`, `chat-confirm-wrapper`, `chat-approval-record-census`, `receipt-remedy-render`, `tty-confirm`, `conformance/parity`, `conformance/render-parity`, `conformance/help-census` (`--maxWorkers=1`) | Test Files 9 passed (9) · Tests 259 passed (259) · no type errors | **0** · 32 s |
+| 4 | `pnpm --filter @vostride/agent-qa-agent test` | Test Files 115 passed (115) · Tests 1973 passed (1973) | **0** · 10 s |
+| 5 | `pnpm --filter @vostride/agent-qa-agent-local test` | Test Files 57 passed (57) · Tests 625 passed, 2 skipped (627) | **0** · 36 s |
+| 6 | `pnpm --filter @vostride/agent-qa-mcp test` | Test Files 18 passed (18) · Tests 377 passed (377) | **0** · 6 s |
+| 7 | `pnpm --filter @vostride/agent-qa-safety test` | Test Files 36 passed (36) · Tests 387 passed (387) | **0** · 2 s |
+| 8 | `pnpm test --force` | turbo stopped at `@vostride/agent-qa-mcp#test`: 8 cells `Test timed out in 5000ms` (`token-absence.test.ts` A0, A1, A2, A9, A10; `withdrawn-claim-census.test.ts` W3, W4, W5), 35 of 43 tasks succeeded, 0 cached. The same package passed whole in row 6 | **1** · 104 s |
+| 9 | `pnpm typecheck` | 44 successful, 44 total (44 cached; row 20 is the uncached run) | **0** · 1 s |
+| 10 | `pnpm validate:arch` | Test Files 11 passed (11) · Tests 304 passed (304), the 430 census's 77 among them | **0** · 8 s |
+| 11 | `pnpm run validate:skills` | `agent-qa skills pack validation passed` | **0** |
+| 12 | `pnpm run validate:publish` | `publish surface validation passed (full)`, over the narrowed `@vostride/agent-qa-dashboard` barrel | **0** · 15 s |
+| 13 | `pnpm run validate:430-chat-removal-mutation` | `CHAT_REMOVAL_MUTATION_OK legs=23 named-red=23 byte-identical-restoration=15`, then `REBUILT workspace (pnpm turbo run build --force) exit=0` | **0** · 287 s |
+| 14 | `pnpm build` | 22 successful, 22 total | **0** |
+| 15 | `pnpm run validate:430-chat-removal-mutation-selftest` | TAP `# pass 32`, `# fail 0`; `CHAT_REMOVAL_MUTATION_OK_SELFTEST_OK legs=23 subjects=15` | **0** · 306 s |
+| 16 | `pnpm build` | 22 successful, 22 total | **0** |
+| 17 | `pnpm --filter agent-qa exec vitest run src/commands/__tests__/run-confirm-browser.e2e.test.ts src/commands/__tests__/run-mark-browser.e2e.test.ts --maxWorkers=1` (the Run button and inline mark approval, real Chromium over the built bundle) | Test Files 2 passed (2) · Tests 14 passed (14) | **0** · 83 s |
+| 18 | `pnpm test --force` (re-run, unchanged tree) | turbo stopped at mcp again: 9 cells `Test timed out in 5000ms` (A0, A1, A2, A3, A9, A10, W3, W4, W5), 34 of 43 tasks | **1** · 120 s |
+| 19 | `pnpm test --force --continue` | 46 tasks, 0 cached, 43 succeeded. Reds only in mcp (9 cells, the same two files, 5000 ms timeouts), web (5 cells, `424-recording.screencast.test.ts` REC-WEB-*, `Hook timed out in 10000ms`) and knowledge-local (1 cell, `trust-prior-projection.test.ts` "full rebuild preserves agent-verified-incomplete with absent empty and partial priors", `Test timed out in 15000ms`). Every other package green, among them cli 291 files (4123 passed, 18 skipped), dashboard-server 78 files (1406 passed, 1 skipped), dashboard-ui 230 files (2757), schema 169 files (1959), core 56 files (689), eval-local 70 files (1006) and arch 25 files (439) | **1** · 474 s |
+| 20 | `pnpm turbo run typecheck --force` | 44 successful, 44 total, 0 cached | **0** · 47 s |
+| 21 | `pnpm --filter @vostride/agent-qa-mcp exec vitest run src/__tests__/token-absence.test.ts src/__tests__/withdrawn-claim-census.test.ts` | Test Files 2 passed (2) · Tests 12 passed (12) | **0** · 6 s |
+| 22 | `pnpm --filter @vostride/agent-qa-web exec vitest run src/__tests__/424-recording.screencast.test.ts`, then `pnpm --filter @vostride/agent-qa-web test` | 1 file, 8/8; then 15 files, 268/268 | **0**, **0** · 5 s, 100 s |
+| 23 | `pnpm --filter @vostride/agent-qa-knowledge-local exec vitest run src/__tests__/trust-prior-projection.test.ts`, then `pnpm --filter @vostride/agent-qa-knowledge-local test` | 1 file, 14/14; then 166 files passed, 1 skipped, 1951 passed, 3 skipped | **0**, **0** · 22 s, 233 s |
+| 24 | `pnpm --filter @vostride/agent-qa-mcp test` (after the workspace runs) | 18 files, 377/377 | **0** · 7 s |
+
+**The workspace suite does not exit 0 on this machine, and that is recorded rather than
+explained away.** Every red in rows 8, 18 and 19 is a timeout under full-workspace load, in
+`packages/mcp`, `packages/web` and `packages/knowledge-local`, none of which Phase 430 touched
+(`git diff --stat bc9c7e315..d40a867cc` over the three is empty). Every red file passes alone and
+in its package alone (rows 21-24). They are the same cells 429-36 classified the same way (its
+row 2d, REQUIREMENTS note 80). No cell was loosened and no timeout was raised.
+
+**Cited, not re-run here.** The other gates whose subjects or instruments this phase touched ran
+green in the plan that touched them, on an earlier tree, and are NOT claimed green on `d40a867cc`:
+`validate:426-feedback-mutation` (430-01, 430-04; last at `b2c5c2ad4`),
+`validate:423-read-sinks-mutation`, `validate:427-knowledge-mutation` and
+`validate:425-header-mutation` (430-02, at `bed6de72b`), `validate:428-live-ui-mutation` (430-08,
+at `7b19e5102`), `validate:428-live-contract-mutation` and `validate:429-config-contract-mutation`
+(430-09 at `9acadfeca`, 430-20 at `efc30c681`), `validate:424-recording-mutation` (430-21, at
+`03ed1fd14`), `validate:423-evidence-mutation` (430-10 at `0cbd5efda`, 430-11 at `db4333c9c`) and
+`validate:423-feedback-read-mutation` and `validate:423-curation-mutation` (430-11, at
+`db4333c9c`). The commits after those runs are 430-12's census (with one re-split test string in
+`denial-block.test.tsx`) and 430-13's two scripts and their `package.json` entries.
+
+**Toolchain:** node 24.15.0 · pnpm 10.6.1 · vitest 4.1.5 · turbo 2.9.7.
