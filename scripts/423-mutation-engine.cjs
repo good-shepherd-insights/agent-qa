@@ -27,6 +27,12 @@
 // verified by sha256. A dist rebuilt from mutated source is rebuilt again from the restored tree,
 // and any run that owned a mutated byte ends with a forced workspace build, because a restored
 // source is a turbo cache hit and the spawned-binary suites compare source mtimes against dist.
+//
+// 431-13 ADDITIONS, all opt-in. A leg may name a `group`, selected with `--group <name>` when the
+// gate passes its argv. A leg whose subject is text an instrument reads at run time (a skill file)
+// declares `reads: { root, reference }` in place of an import. An instrument that consumes built
+// output declares `dist: true`, and the workspace is built before its preflight. `<PREFIX>_EVIDENCE`
+// names the evidence directory, which this run must create itself.
 
 const fs = require('node:fs')
 const path = require('node:path')
@@ -93,7 +99,7 @@ function runGate(spec) {
     process.stdout.write(JSON.stringify(legs.map(leg => ({
       id: leg.id, subject: leg.subject, operation: leg.operation, claim: leg.claim,
       reds: leg.reds.map(describeCell), greens: (leg.greens ?? []).map(describeCell),
-      crossing: leg.crossing?.pkg ?? null,
+      crossing: leg.crossing?.pkg ?? null, group: leg.group ?? null,
     })), null, 2) + '\n')
     process.exit(0)
   }
@@ -108,7 +114,39 @@ function runGate(spec) {
     process.exit(1)
   }
 
-  const work = fs.mkdtempSync(path.join(os.tmpdir(), `agent-qa-${spec.slug}-`))
+  let group
+  const argv = [...(spec.argv ?? [])]
+  while (argv.length > 0) {
+    const arg = argv.shift()
+    if (arg !== '--group') {
+      console.error(`FATAL: Unknown argument: ${arg}`)
+      process.exit(1)
+    }
+    if (argv.length === 0) {
+      console.error('FATAL: Missing value for --group')
+      process.exit(1)
+    }
+    group = argv.shift()
+    if (!legs.some(leg => leg.group === group)) {
+      console.error(`FATAL: Unknown group: ${group}`)
+      process.exit(1)
+    }
+  }
+
+  let work
+  const requested = process.env[`${spec.envPrefix}_EVIDENCE`]
+  if (requested === undefined) {
+    work = fs.mkdtempSync(path.join(os.tmpdir(), `agent-qa-${spec.slug}-`))
+  } else {
+    work = path.resolve(requested)
+    try {
+      fs.mkdirSync(work)
+    } catch (error) {
+      if (error.code !== 'EEXIST') throw error
+      console.error(`FATAL: ${work} is occupied — refusing a scratch path this run did not create`)
+      process.exit(1)
+    }
+  }
   console.log(`Evidence: ${work}`)
 
   const subjects = [...new Set(legs.map(leg => leg.subject))]
@@ -179,7 +217,9 @@ function runGate(spec) {
   if (target !== undefined && (!['', 'neutered'].includes(mode) || !legs.some(leg => leg.id === target))) {
     fatal(`Invalid ${legKey}: requires a declared ID and a normal or neutered run`)
   }
-  const activeLegs = target === undefined ? legs : legs.filter(leg => leg.id === target)
+  const activeLegs = legs.filter(leg =>
+    (target === undefined || leg.id === target) && (group === undefined || leg.group === group))
+  if (activeLegs.length === 0) fatal(`${target} is not a leg of group ${group}`)
 
   // ---- arrival --------------------------------------------------------------------------------
   function relativeClosure(pkg, files) {
@@ -253,6 +293,16 @@ function runGate(spec) {
       for (const ref of [...leg.reds, ...(leg.greens ?? []), ...(leg.allowed ?? [])]) {
         if (ref.instrument !== leg.instrument) throw new Error(`${leg.id}: ${describeCell(ref)} is not measured by ${leg.instrument}`)
         if (!instrument.files.includes(ref.file)) throw new Error(`${leg.id}: ${ref.file} is not selected by ${leg.instrument}`)
+      }
+      // A text subject is reached by a path the instrument builds at run time, so the arrival proof
+      // is the root it lies under plus the literal by which the instrument's closure names that root.
+      if (leg.reads !== undefined) {
+        if (!leg.subject.startsWith(leg.reads.root)) throw new Error(`${leg.id}: ${leg.subject} is not under ${leg.reads.root}`)
+        if (!closures.has(leg.instrument)) closures.set(leg.instrument, relativeClosure(instrument.pkg, instrument.files))
+        const reads = [...closures.get(leg.instrument)].some(file => fs.readFileSync(file, 'utf8').includes(leg.reads.reference))
+        if (!reads) throw new Error(`${leg.id}: no ${leg.instrument} closure file reads ${leg.reads.root} by ${leg.reads.reference}`)
+        console.log(`ARRIVAL ${leg.id}: ${leg.subject} is read by ${leg.instrument} under ${leg.reads.root}`)
+        continue
       }
       if (leg.crossing !== undefined) {
         const manifest = JSON.parse(fs.readFileSync(path.join(root, instrument.pkg, 'package.json'), 'utf8'))
@@ -473,6 +523,13 @@ function runGate(spec) {
     }
 
     const used = [...new Set(activeLegs.map(leg => leg.instrument))]
+    if (used.some(name => spec.instruments[name].dist === true)) {
+      const log = path.join(work, 'prebuild.log')
+      const result = spawnSync('pnpm', ['turbo', 'run', 'build'], { cwd: root, encoding: 'utf8' })
+      fs.writeFileSync(log, `${result.stdout ?? ''}${result.stderr ?? ''}`)
+      console.log(`PREBUILT workspace (pnpm turbo run build) exit=${result.status}`)
+      if (result.status !== 0) throw new Error(`the workspace build before the dist-consuming preflight failed — see ${log}`)
+    }
     for (const name of used) checkGreen(await runInstrument(name, `preflight-${name}`))
 
     const ledger = []
@@ -527,7 +584,10 @@ function runGate(spec) {
     if (ownedAny) finalBuild()
     ownedAny = false
     owned.clear()
-    console.log(`${spec.banner} legs=${ledger.length} named-red=${ledger.length} byte-identical-restoration=${subjects.length}`)
+    fs.writeFileSync(path.join(work, 'summary.json'), JSON.stringify({ group: group ?? null, legs: ledger.length,
+      namedRed: ledger.length, namedRedCells: activeLegs.reduce((total, leg) => total + leg.reds.reduce((sum, ref) => sum + ref.count, 0), 0),
+      restoredSubjects: subjects.length, restored: Object.fromEntries(ledger.map(entry => [entry.id, entry.restoredDigest])) }, null, 2) + '\n')
+    console.log(`${spec.banner} legs=${ledger.length} named-red=${ledger.length} byte-identical-restoration=${subjects.length}${group === undefined ? '' : ` group=${group}`}`)
   }
 
   main().catch(error => fatal(error.message))
