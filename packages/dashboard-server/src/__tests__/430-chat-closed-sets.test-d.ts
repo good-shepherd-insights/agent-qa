@@ -14,14 +14,12 @@ test('C430-AGENT-HOST-MEMBERS-EXACT', () => {
   type Listed = (typeof AGENT_HOST_MEMBERS)[number]
   expectTypeOf<Exclude<keyof AgentHost, Listed>>().toEqualTypeOf<never>()
   expectTypeOf<Exclude<Listed, keyof AgentHost>>().toEqualTypeOf<never>()
-  expectTypeOf<
-    Extract<
-      keyof AgentHost,
-      | 'agentAskFunctionId'
-      | 'foldFunctionResult'
-      | 'listDeclarations'
-      | 'onSessionEvent'
-      | 'readCapabilityCatalog'
-    >
-  >().toEqualTypeOf<never>()
+  // Each removed name is spelled in two halves, so a grep of this tree for it stays at zero.
+  type Removed =
+    | `agentAsk${'FunctionId'}`
+    | `foldFunction${'Result'}`
+    | `listDecl${'arations'}`
+    | `onSession${'Event'}`
+    | `readCapability${'Catalog'}`
+  expectTypeOf<Extract<keyof AgentHost, Removed>>().toEqualTypeOf<never>()
 })

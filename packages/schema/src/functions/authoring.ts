@@ -285,9 +285,12 @@ export const AuthoringDraftWriteInputSchema = z.object({
    * type-ahead render `row.description` (the op summary) rather than `params`, and `explain`
    * deliberately withholds params from its prompt (`explain-port.ts:17`, D-10-sanctioned charter
    * design). They project a different FIELD of the same artifact. The surfaces this `.describe()`
-   * actually reaches are the capability catalog row, `init --agent`, MCP `tools/list`, and the
-   * dashboard's served `GET /api/chat/catalog` — the D-19 letter as RATIFIED on 2026-08-22, and
-   * pinned in both directions by `packages/cli/src/__tests__/scope-doc-surfaces.test.ts`.
+   * actually reaches are the committed capability catalog row, `init --agent` and MCP
+   * `tools/list`; a person finds the op itself through `agent-qa fn --list` or the committed
+   * catalog. 2026-09-28 (430 D-02): the dashboard's served catalog, the fourth surface in the D-19
+   * letter RATIFIED on 2026-08-22, was deleted with its server door.
+   * `packages/cli/src/__tests__/scope-doc-surfaces.test.ts` pins the committed leg and the served
+   * leg's absence.
    * Projecting `params` into `/help` and the type-ahead stays open as a Rule-4 design question
    * (WINDOWS #189); it needs resolver-table surgery, not a wider sentence here.
    *
@@ -470,10 +473,11 @@ export const AuthoringFunnelGetInputSchema = z.object({
    * `WINDOW_STAMPED_FUNCTION_IDS` carries this op, so `modelFacingInput()` drops `window` from
    * `required` and the model is told it will be supplied. So this description is not planner
    * guidance at all; it exists for the human-facing surfaces D-19 says were undocumented — which,
-   * as MEASURED by 400-12 (WINDOWS #189), are the capability catalog row, `init --agent`, MCP
-   * `tools/list` and the dashboard's served `GET /api/chat/catalog`. NOT `/help`, `explain` or the
-   * type-ahead: those render `row.description`, or withhold params by charter. See the `scope`
-   * field's doc block above for the full measurement and the D-19 ratification.
+   * as MEASURED by 400-12 (WINDOWS #189) and narrowed by 430 D-02, are the committed capability
+   * catalog row, `init --agent` and MCP `tools/list`, with `agent-qa fn --list` and the committed
+   * catalog as the way a person finds the op. NOT `/help`, `explain` or the type-ahead: those
+   * render `row.description`, or withhold params by charter. See the `scope` field's doc block
+   * above for the full measurement and the D-19 ratification.
    */
   window: AuthoringFunnelWindowSchema.describe(
     'Which drafts to count — a span of history, NOT a product. `{"scope":"session","sessionRef":'
