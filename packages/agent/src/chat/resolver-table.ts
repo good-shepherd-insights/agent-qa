@@ -121,9 +121,10 @@ function argumentAfter(verb: string, clause: string): string | undefined {
  *
  * No body means `{}` — the same default the CLI verb has, because `/fn runs.list` and
  * `agent-qa fn runs.list` are the same request typed at two prompts and a second default would be
- * a second grammar. A body that is not a JSON OBJECT (malformed, an array, a bare word) does not
- * resolve: ops take objects, and guessing an object around whatever was typed is exactly the
- * partial match this table does not do.
+ * a second grammar. For `runs.list` that default is the op's own: the 20 newest completed runs.
+ * A body that is not a JSON OBJECT (malformed, an array, a bare word) does not resolve: ops take
+ * objects, and guessing an object around whatever was typed is exactly the partial match this
+ * table does not do.
  */
 function parseFnBody(body: string | undefined): Record<string, unknown> | undefined {
   if (body === undefined) return {}
@@ -161,10 +162,11 @@ export const CHAT_RESOLVER_TABLE: ChatResolverTable = Object.freeze([
     // ADJUDICATION (the plan asks for it recorded here): the candidates were `runs.list` and
     // `runs.get`. `runs.get` addresses exactly one run BY ID and refuses without one, so it
     // cannot answer a person who typed a bare word — the id is the very thing they did not
-    // supply. `runs.list` takes `{}`, enumerates every completed run in a total order, and is
-    // the only read in the registry whose contract answers "what has happened here lately"
-    // without being told what to look at. `status <run>` is not minted: `digest <run>` already
-    // owns "tell me about that one run", and two verbs for it would be two answers.
+    // supply. `runs.list` takes `{}`, answers the 20 most recently finished runs newest first
+    // (431 D-08), and is the only read in the registry whose contract answers "what has happened
+    // here lately" without being told what to look at. `status <run>` is not minted:
+    // `digest <run>` already owns "tell me about that one run", and two verbs for it would be
+    // two answers.
     resolve: (clause) =>
       isExactly('status')(clause)
         ? { kind: 'op', functionId: RUNS_LIST_FUNCTION_ID, input: {} }

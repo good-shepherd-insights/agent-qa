@@ -273,9 +273,9 @@ describe('agent-qa digest (D-17, the on-demand channel)', () => {
 
     const invocation = await run(ws, ['digest'])
 
-    // `runs.list` orders by runId, and `${OLDER_RUN}` sorts AFTER `${NEWER_RUN}` — so an
-    // implementation that took the last listed row would answer the older run here. The
-    // chronology is what is being pinned.
+    // `${OLDER_RUN}` sorts AFTER `${NEWER_RUN}` by id — so an implementation that picked by
+    // runId rather than by completion would answer the older run here. The chronology is what
+    // is being pinned.
     expect(OLDER_RUN > NEWER_RUN).toBe(true)
     expect(invocation.stdout).toContain(`digest — ${NEWER_RUN}`)
     expect(invocation.stdout).not.toContain(`digest — ${OLDER_RUN}`)

@@ -67,26 +67,13 @@ function proposalsFragment(answer: unknown): string | undefined {
 /**
  * The latest run this project produced, or nothing.
  *
- * `runs.list` answers summaries in whatever order the reader walked, so the latest is CHOSEN here
- * by the run's own ordering fact rather than by trusting a position. `buildOrdinal` is the
- * monotonic one; `endedAt` breaks a tie between two runs of the same build.
+ * `runs.list` owns the chronology (431 D-08): newest finished first, `runId` breaking a tie, so the
+ * banner asks for one row and takes it. Choosing again here would be a second ordering free to
+ * disagree with `agent-qa digest`, which reads the same first row.
  */
 function latestRunId(answer: unknown): string | undefined {
-  if (!Array.isArray(answer) || answer.length === 0) return undefined
-  const summaries = answer as readonly {
-    runId?: string
-    buildOrdinal?: number
-    endedAt?: number
-  }[]
-  let latest = summaries[0]
-  for (const summary of summaries) {
-    const newer =
-      (summary.buildOrdinal ?? 0) > (latest?.buildOrdinal ?? 0)
-      || ((summary.buildOrdinal ?? 0) === (latest?.buildOrdinal ?? 0)
-        && (summary.endedAt ?? 0) > (latest?.endedAt ?? 0))
-    if (newer) latest = summary
-  }
-  return latest?.runId
+  if (!Array.isArray(answer)) return undefined
+  return (answer as readonly { runId?: string }[])[0]?.runId
 }
 
 /**
@@ -117,7 +104,9 @@ export async function composeBanner(
     await readOrNothing(invoke, PROPOSALS_LIST_FUNCTION_ID, { status: 'pending' }, caller),
   )
 
-  const runId = latestRunId(await readOrNothing(invoke, RUNS_LIST_FUNCTION_ID, {}, caller))
+  const runId = latestRunId(
+    await readOrNothing(invoke, RUNS_LIST_FUNCTION_ID, { limit: 1 }, caller),
+  )
   const digest =
     runId === undefined
       ? undefined

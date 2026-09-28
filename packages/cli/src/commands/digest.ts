@@ -53,17 +53,14 @@ function compositionInput(command: Command): { agentQaRoot: string; configPath: 
 }
 
 /**
- * The most recently FINISHED run, chosen over rows already in hand.
+ * The most recently FINISHED run: the first row of a one-row `runs.list`.
  *
- * `runs.list` orders by runId, which is a total order for byte-identical rendering and not a
- * chronology. Picking here is a projection over the op's answer rather than a second query, and
- * the tie-break on runId keeps two runs that ended in the same millisecond from rendering
- * differently on two machines.
+ * The op orders completed runs newest finished first with `runId` breaking a tie (431 D-08), the
+ * same first row the chat banner digests, so this verb asks for exactly one row rather than
+ * re-sorting a capped page it would otherwise have to trust was complete.
  */
 function mostRecent(summaries: readonly RunSummary[]): string {
-  const latest = [...summaries].sort((left, right) =>
-    right.endedAt - left.endedAt
-    || (left.runId < right.runId ? 1 : left.runId > right.runId ? -1 : 0))[0]
+  const latest = summaries[0]
   if (latest === undefined) {
     throw new DigestCommandError(
       'no-runs',
@@ -85,7 +82,7 @@ export function createDigestCommand(): Command {
           await invokeFunction(
             host.registry,
             RUNS_LIST_ID,
-            {},
+            { limit: 1 },
             CLI_FUNCTION_CALLER,
           ) as RunSummary[],
         )
