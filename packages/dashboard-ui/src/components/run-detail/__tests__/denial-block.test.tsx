@@ -69,7 +69,7 @@ const WIRE_REMEDY_LISTS: readonly (readonly GateRemedy[])[] = [
 ]
 
 const REMOVED_REMEDY_SENTENCES = [
-  'keep this chat open ' + 'and re-run it',
+  'keep this ' + 'chat open and re-run it',
   'start a new chat ' + 'session to run it',
 ]
 
