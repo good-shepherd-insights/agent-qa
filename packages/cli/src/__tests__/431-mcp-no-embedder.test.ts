@@ -8,13 +8,12 @@
 // imports (see the trap's header for the measured mechanism). A report with no `installed` line,
 // or with either loader path unobserved, fails the cell: an inert trap cannot pass.
 //
-// TWO REAL DOORS, BECAUSE ONE CANNOT ANSWER EVERYTHING. The standalone `agent-qa mcp` over stdio is
-// the door a coding agent spawns; it binds a run-detail reader only over an existing
-// `.agent-qa/runs.db`, and this fixture keeps its database at `dashboard.db`, so `runs.overview`
-// and the `runs.evidence` arm are unbound there (asserted as that refusal, never counted). The
-// dashboard's co-hosted MCP endpoint binds the reader over the dashboard database and answers all
-// eight reads and both evidence arms. Every answer is checked for its populated content, so a
-// refusal or an empty result can never count as a clean load.
+// TWO REAL DOORS. The standalone `agent-qa mcp` over stdio is the door a coding agent spawns; this
+// fixture keeps its database at the default `.agent-qa/runs.db`, so that door binds its run-detail
+// reader through the lazy dashboard import and answers all eight reads and both evidence arms under
+// the trap. The dashboard's co-hosted MCP endpoint binds the reader through its own entry and
+// answers the same. Every answer is checked for its populated content, so a refusal or an empty
+// result can never count as a clean load.
 //
 // POSITIVE CONTROLS (TRAP-CONTROLS): the same trap, in a fresh process, refuses an ESM import and a
 // CommonJS require of the tokenizer runtime, an import of the inference runtime, a read of a floor
@@ -174,7 +173,7 @@ function discoveryProject(mcpPort: number) {
   const blobs = new FsEvidenceArtifactStore({ root: f.agentQaRoot, runId })
   const { sha } = blobs.persistDecisionScreenshot(PNG)
   const networkRef = blobs.persistEvidenceDocument(NETWORK)
-  const dbPath = join(f.agentQaRoot, 'dashboard.db')
+  const dbPath = join(f.agentQaRoot, 'runs.db')
   const db = new DashboardDatabase({ dbPath })
   db.insertRun({ id: runId, name: 'Discovery fixture', status: 'failed', duration: 1,
     startedAt: new Date(0).toISOString(), endedAt: new Date(1).toISOString() })
@@ -288,11 +287,9 @@ async function driveReads(client: Client, p: Project, reads: readonly Read[]): P
 }
 
 const NEW_TOOLS = [...new Set([...EIGHT_READS.map((read) => read.tool), EVIDENCE_ARM.tool])].sort()
-
-// The fixture has no `.agent-qa/runs.db`, so the standalone door binds no run-detail reader and the
-// two reads over it are unbound. They are asserted as that named refusal and never counted as a clean read.
-const STDIO_UNBOUND: readonly Read[] = [EIGHT_READS.find((read) => read.tool === 'agent_qa_get_run_overview')!, EVIDENCE_ARM]
-const STDIO_READS: readonly Read[] = [...EIGHT_READS.filter((read) => !STDIO_UNBOUND.includes(read)), ARTIFACT_ARM]
+const ALL_READS: readonly Read[] = [...EIGHT_READS, ARTIFACT_ARM, EVIDENCE_ARM]
+const ALL_ANSWERED = [...EIGHT_READS.map((read) => read.tool),
+  'agent_qa_get_run_evidence:runs.artifact', 'agent_qa_get_run_evidence:runs.evidence']
 
 // ---- The cells ------------------------------------------------------------------------------------
 
@@ -316,17 +313,7 @@ describe('COLD-MCP-NO-RUNTIME (D-09 · T-431-13 / T-431-14)', () => {
       await client.connect(transport)
       const listed = (await client.listTools()).tools.map((tool) => tool.name)
       expect(listed).toEqual(expect.arrayContaining(NEW_TOOLS))
-      const answered = await driveReads(client, p, STDIO_READS)
-      expect(answered).toEqual([
-        'agent_qa_list_knowledge_bundles', 'agent_qa_inspect_knowledge_records', 'agent_qa_diff_knowledge_records',
-        'agent_qa_show_knowledge_record', 'agent_qa_explain_brief', 'agent_qa_get_run_knowledge',
-        'agent_qa_get_run_evidence:runs.artifact',
-      ])
-      for (const read of STDIO_UNBOUND) {
-        const result = await client.callTool({ name: read.tool, arguments: read.args(p) }) as unknown as WireResult
-        expect(result.isError).toBe(true)
-        expect(textOf(result)).toMatch(/is declared but not bound in this composition/u)
-      }
+      expect(await driveReads(client, p, ALL_READS)).toEqual(ALL_ANSWERED)
     })
   }, 90_000)
 
@@ -363,9 +350,7 @@ describe('COLD-MCP-NO-RUNTIME (D-09 · T-431-13 / T-431-14)', () => {
       }))
       const listed = (await client.listTools()).tools.map((tool) => tool.name)
       expect(listed).toEqual(expect.arrayContaining(NEW_TOOLS))
-      const answered = await driveReads(client, p, [...EIGHT_READS, ARTIFACT_ARM, EVIDENCE_ARM])
-      expect(answered).toEqual([...EIGHT_READS.map((read) => read.tool),
-        'agent_qa_get_run_evidence:runs.artifact', 'agent_qa_get_run_evidence:runs.evidence'])
+      expect(await driveReads(client, p, ALL_READS)).toEqual(ALL_ANSWERED)
     })
   }, 90_000)
 })
