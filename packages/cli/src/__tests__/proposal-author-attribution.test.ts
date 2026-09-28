@@ -292,13 +292,11 @@ describe('a config-apply commit names the surface that MINTED the proposal', () 
     }
     // 402-07: A DOOR THAT CANNOT MINT A PROPOSAL AT ALL, and the honest answer for it is not a
     // module name. The authed run service reaches `runs.start` and nothing else — its caller is
-    // minted with a LITERAL `['run']` grant rather than a spread of the CLI's (402-01's decision),
-    // so `config.field.set` is refused at the caller band before any proposal exists. Pointing this
-    // row at `dashboard.ts` would pass this census on a `mintingSurface:` that belongs to a
-    // different caller in the same file — a green bought by a coincidence of file layout. So the
-    // exemption is DECLARED, and it is checked rather than asserted: the census re-reads the grant
-    // off the shipped constant, so a later widening of that grant turns this row back into one that
-    // must supply a minting surface.
+    // minted with a LITERAL grant rather than a spread of the CLI's (402-01's decision), so
+    // `config.field.set` is refused at the caller band before any proposal exists. The exemption
+    // stands on that grant alone, so it is DECLARED, and it is checked rather than asserted: the
+    // census re-reads the grant off the shipped constant, so a later widening of that grant turns
+    // this row back into one that must supply a minting surface.
     const CANNOT_MINT: Readonly<Record<string, readonly FunctionScope[]>> = {
       'run-service': RUN_SERVICE_GRANTED_SCOPES,
     }

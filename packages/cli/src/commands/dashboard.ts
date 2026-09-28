@@ -91,9 +91,7 @@ import {
 import type { ComposeCliLocalAgentInput } from '../composition/local-agent-host.js'
 import {
   applyResolvedAuthToModelConfig,
-  resolveCliChatCapabilities,
   resolveModelAuth,
-  type CliChatCapabilities,
   type LLMConfigLike,
 } from '../llm-utils.js'
 import { DEFAULT_ANTHROPIC_MODEL } from '../model-defaults.js'
@@ -107,22 +105,20 @@ export const DASHBOARD_BASE_URL_CONFIG_KEY = 'services.dashboard.baseUrl'
  * `readDashboardUrlBase` is an AND over two keys, not one: a base with no workspace cannot render
  * the pinned `/t/:workspace/:kind/:shortId/:slug` route, so either half alone yields no url base at
  * all. 400-01 supplied `baseUrl` and nothing in this build produced a workspace, which made the
- * whole overlay INERT — every card the dashboard's own conversation rendered came back url-absent
+ * whole overlay INERT — every card the dashboard's host rendered came back url-absent
  * while the overlay's own entry looked perfectly correct. Both halves or neither.
  */
 export const DASHBOARD_WORKSPACE_CONFIG_KEY = 'services.dashboard.workspace'
 
 /**
- * The caller the dashboard door dispatches as (400-01, D-08 / Pitfall 9).
+ * The caller the dashboard dispatches run-detail reads, marks and the Run button as (400-01, D-08;
+ * 430 D-03).
  *
- * DERIVED FROM THE CLI CHAT DOOR'S OWN MINT, with the surface name — attribution only, never a
- * permission input — as the single difference. A hand-typed scope list here is the drift vector
- * D-08 names by name: the parity suite's whole claim about the two interactive doors is that the
- * same utterance refuses, or does not, identically on both, and two lists that agree today are how
- * that stops being true. The spread makes the agreement structural: a seventh scope minted by a
- * later phase reaches this door the day it reaches the CLI's, without anyone remembering to come
- * here. `origin` rides along unchanged and deliberately — a person typed into a browser this
- * machine's own process is serving, which is the same fact `agent-qa chat` mints `human` for.
+ * DERIVED FROM THE CLI'S OWN MINT, with the surface name — attribution only, never a permission
+ * input — as the single difference. The spread keeps the two grants structurally equal: a scope
+ * minted by a later phase reaches the dashboard the day it reaches the CLI. `origin` rides along
+ * unchanged and deliberately — a person clicking in a browser this machine's own process is
+ * serving is the same fact the CLI mints `human` for.
  */
 export const DASHBOARD_FUNCTION_CALLER: FunctionCaller = Object.freeze({
   ...CLI_FUNCTION_CALLER,
@@ -269,8 +265,8 @@ export function composeDashboardAgentHost(
  * ONE MECHANISM, TWO SUPPLIERS. 387 D-10 made the entity card's `url` config-derived and absent by
  * default, read through the masker at `services.dashboard.baseUrl`; that knob stays THE mechanism
  * and is how a CLI or MCP host is pointed at somebody's dashboard. What this adds is the second
- * supplier: a dashboard serving its own in-process conversation knows its own origin, so the cards
- * in that conversation carry working links with no user setup at all.
+ * supplier: a dashboard host knows its own origin, so the cards it serves — to run detail and to
+ * the co-hosted MCP endpoint — carry working links with no user setup at all.
  *
  * THE OPERATOR'S VALUE WINS, and the precedence is deliberate rather than incidental. A configured
  * base is somebody pointing at something — a reverse proxy, a tunnel, a path prefix — and
@@ -359,18 +355,22 @@ function hasVerbatim(masked: MaskedResolvedConfig, key: string): boolean {
 }
 
 /**
- * WHICH CONVERSATION IS ASKING — the one fact the gate's own contract cannot carry (400-15, gap 3).
+ * WHICH SCOPE IS ASKING — the one fact the gate's own contract cannot carry (400-15, gap 3).
+ *
+ * 2026-09-28, 430: the dashboard opens no conversation, so the scopes entered here are run
+ * triggers and the empty frame of a run-detail read. The frame is the gate posture's, and Phase
+ * 432 removes it with the posture.
  *
  * THE GATE HOOK TAKES AN ACTION AND NOTHING ELSE, deliberately, and `invoke.ts` says why beside its
  * own `deny` overlay: a policy engine that read callers would depend on the function layer's
- * vocabulary in order to answer one question. So "which conversation is asking" is narrowed AT THE
- * COMPOSITION BOUNDARY instead — the door scopes each turn, and the two seams that need the answer
- * read it from the ambient scope rather than from a widened contract.
+ * vocabulary in order to answer one question. So "which scope is asking" is narrowed AT THE
+ * COMPOSITION BOUNDARY instead — the door scopes each invocation, and the two seams that need the
+ * answer read it from the ambient scope rather than from a widened contract.
  *
- * ONE SCOPE, TWO READERS, AND BOTH RUN INSIDE THE TURN: `resolveExecutionContext()` is called by
- * `invoke.ts` on its way to `evaluate()`, and the confirm port is called by `evaluate()`'s ask arm.
- * Both are downstream of the one `host.invokeFunction` call `handleTurn` makes, so an
- * `AsyncLocalStorage` set there reaches both across every await between.
+ * ONE SCOPE, TWO READERS, AND BOTH RUN INSIDE THE INVOCATION: `resolveExecutionContext()` is called
+ * by `invoke.ts` on its way to `evaluate()`, and the confirm port is called by `evaluate()`'s ask
+ * arm. Both are downstream of one `host.invokeFunction` call, so an `AsyncLocalStorage` entered
+ * around it reaches both across every await between.
  *
  * PER-DOOR AND NEVER MODULE-GLOBAL. A store hung off the module would be shared by every door
  * composed in this process — the conformance suite composes several — and would be exactly the
@@ -411,10 +411,8 @@ interface AskingSessionScope {
  * asking conversation (400-15), so a question can only ever reach the conversation that asked it or
  * be refused, and widening this posture to concurrent conversations cannot widen who approves.
  *
- * AN UNNAMED ASKER IS HEADLESS BY CONSTRUCTION, which is WINDOWS #192 rather than an oversight: a
- * dashboard conversation's FIRST turn carries no session id — the engine mints it — and a browser
- * cannot hold a stream open on a conversation that does not exist yet. There is nobody to reach, so
- * there is no claim to make.
+ * AN UNNAMED ASKER IS HEADLESS BY CONSTRUCTION, which is WINDOWS #192 rather than an oversight:
+ * with no scope named there is nobody to reach, so there is no claim to make.
  *
  * The vocabulary's ONE consequence is `requiresFailClosed`, so a door that claimed
  * `local-interactive` with nobody reachable would be telling the gate to consult a confirm port
@@ -464,8 +462,8 @@ export function postureFor(
  * ONE VALUE FOR BOTH SCOPES, and the next reader will wonder whether the run-trigger button
  * deserves its own: it does not. A trust source names the SURFACE a person used, not the feature
  * they used it from — somebody clicking "accept" in a browser did the same thing in the same place
- * whether the question came from the chat panel or the run button, and two values would put two
- * words for one human act into a durable audit vocabulary.
+ * whether the question came from a mark or the run button, and two values would put two words for
+ * one human act into a durable audit vocabulary.
  *
  * ONE CONSTANT READ TWICE rather than two literals, for the reason the port itself is one object
  * at both gates (401-09, D-11): the factory below builds the port, and the run gate's forwarder
@@ -496,6 +494,9 @@ export function createDashboardConfirmFactory(input: {
    * knows nothing about doors, and the transcript append fail-safes for a scope no conversation
    * claims. A second factory for the run button would have been a second set of three answers and a
    * second place for them to drift.
+   *
+   * 2026-09-28, 430: the dashboard opens no conversation, so every scope this resolves is a run
+   * trigger's or a mark's. The conversation arms stay as they are until Phase 432 deletes the port.
    */
   readonly resolveConfirmScope: () => string | undefined
 }): NonNullable<ComposeLocalAgentInput['chatConfirm']> {
@@ -624,13 +625,13 @@ export interface DashboardDoorInput {
    * An EXPLICIT OVERRIDE of the context this door's policy decisions are taken in (D-05, spec §2.2).
    *
    * OPTIONAL SINCE 400-13, AND THE ABSENCE IS THE HONEST DEFAULT rather than a convenience. The
-   * per-conversation posture — is there a watched conversation with a turn in flight — can only be
-   * computed INSIDE the composition, because it reads the composed host's own turn state through
-   * the mutable box below. A caller outside cannot answer it, so production used to hand in the
-   * one answer it COULD compute (any channel anywhere) and the door stated a posture it had no way
-   * to know. Absent now means the door derives it from {@link postureFor} over its own
-   * per-conversation watched-and-in-flight predicate and the ambient asking conversation; supplied
-   * is the spec's explicit-override rung, which is the conformance suite's posture and unchanged.
+   * per-scope posture — is a person reachable on the scope being gated — can only be computed
+   * INSIDE the composition, because it reads the composed host's own state through the mutable box
+   * below. A caller outside cannot answer it, so production used to hand in the one answer it
+   * COULD compute (any channel anywhere) and the door stated a posture it had no way to know.
+   * Absent now means the door derives it from {@link postureFor} over its own reachability
+   * predicate and the ambient asking scope; supplied is the spec's explicit-override rung, which is
+   * the conformance suite's posture and unchanged.
    *
    * WHAT IS NOT DEFAULTED IS THE PROCESS. Neither arm ever falls back to TTY and CI markers, which
    * is the ambient reach this seam exists to remove.
@@ -650,20 +651,11 @@ export interface DashboardDoorInput {
    */
   readonly confirms?: ConfirmRegistry
   /**
-   * What this door plans with, ALREADY RESOLVED (CHAT-06 / Pitfall 12).
-   *
-   * Absent composes the shipped HEADLESS posture: every deterministic utterance still routes and
-   * a natural-language one fails the turn closed by name. That is a real posture — a project with
-   * no usable LLM configuration gets a deterministic door rather than no door — and it is also
-   * what the conformance suite composes, deliberately, so no cell can reach a provider.
-   */
-  readonly chatModel?: CliChatCapabilities
-  /**
    * What this door needs back from the runs it triggers (401-07, D-09 — INVK-01).
    *
    * PASSED STRAIGHT THROUGH to `composeCliLocalAgent`, and this composer decides nothing about it —
-   * the same rule that governs `chatModel` and `confirms` above. Absent (the conformance suite's
-   * posture, and any caller that only wants the chat door) composes exactly what it composed before.
+   * the same rule that governs `confirms` above. Absent (the conformance suite's posture, and any
+   * caller that triggers no run) composes exactly what it composed before.
    */
   readonly runBridge?: ComposeCliLocalAgentInput['runBridge']
   /**
@@ -690,18 +682,18 @@ export interface DashboardDoor {
   readonly host: LocalAgentHost
   readonly agentHost: AgentHost
   /**
-   * The posture this door actually decides under FOR A NAMED CONVERSATION — the caller's override,
-   * or the derived one.
+   * The posture this door actually decides under FOR A NAMED SCOPE — the caller's override, or the
+   * derived one.
    *
    * PUBLISHED SO IT CAN BE MEASURED. The derivation lives inside the composition (it reads the
-   * composed host's turn state), so a cell that wanted production's own answer would otherwise have
-   * to write a second copy of the rule — which is the two-spellings failure gap 3 is.
+   * composed host's state), so a cell that wanted production's own answer would otherwise have to
+   * write a second copy of the rule — which is the two-spellings failure gap 3 is.
    *
-   * IT TAKES A SESSION SINCE 400-15, and that is not a convenience: the gate-facing resolver reads
-   * the AMBIENT asker this door scopes around each turn, and nothing outside a turn is inside that
-   * scope — so a zero-arg read from a cell could only ever answer `local-headless`, which would be
-   * a measurement API that agrees with the gate about nothing. Both surfaces resolve through the
-   * same {@link postureFor}; this one names the conversation instead of inheriting it.
+   * IT TAKES A SCOPE SINCE 400-15, and that is not a convenience: the gate-facing resolver reads
+   * the AMBIENT asker this door scopes around each invocation, and nothing outside an invocation is
+   * inside that scope — so a zero-arg read from a cell could only ever answer `local-headless`,
+   * which would be a measurement API that agrees with the gate about nothing. Both surfaces resolve
+   * through the same {@link postureFor}; this one names the scope instead of inheriting it.
    */
   readonly resolveExecutionContext: (
     scopeId: string,
@@ -710,11 +702,11 @@ export interface DashboardDoor {
   /**
    * Run a call inside a RUN TRIGGER's confirm scope (401-09, D-11 / D-07).
    *
-   * THE RUN DOOR'S HALF OF THE SAME NARROWING `invokeFunction` DOES FOR A TURN. The gate's context
-   * resolver and the confirm port are both zero-argument by contract (392-12), so the only way a
-   * caller can tell them who is asking is to be inside the scope when they run. A queued run is not
-   * a turn and never enters the turn wrapper, which is precisely why the interim posture was
-   * `local-headless`; this is the entry that makes a trigger nameable without widening either
+   * THE RUN DOOR'S HALF OF THE SAME NARROWING `invokeFunction` DOES FOR AN INVOCATION. The gate's
+   * context resolver and the confirm port are both zero-argument by contract (392-12), so the only
+   * way a caller can tell them who is asking is to be inside the scope when they run. A queued run
+   * never enters the host's `invokeFunction` wrapper, which is precisely why the interim posture
+   * was `local-headless`; this is the entry that makes a trigger nameable without widening either
    * contract.
    *
    * PUBLISHED BECAUSE THE RUN DOOR IS COMPOSED SEPARATELY. `createDashboardRunDoor` is built BEFORE
@@ -725,17 +717,19 @@ export interface DashboardDoor {
 }
 
 /**
- * Compose the fourth door — ONE composer, for production and for the suite that measures it.
+ * Compose the dashboard's host — ONE composer, for production and for the suites that measure it.
  *
- * PUBLISHED AND SINGULAR, and both halves matter. The conformance adapter enumerates this door and
- * the dispatch driver drives it; if either assembled its own host beside this one, the suite would
- * be measuring a door this product does not ship — the lookalike-assembly failure `spawned-chat.ts`
- * names and `surface-dispatch.ts` refuses by source assertion. So the command below calls this, and
- * so does the suite, and there is no third assembly to disagree with either.
+ * 2026-09-28, 430 D-02: it composes no conversation. What it serves is run detail, the run
+ * trigger, marks, the run-service door and the co-hosted MCP endpoint.
  *
- * IT DECIDES NOTHING ITS CALLER HAS NOT SAID. Model, execution context and bound origin all arrive
- * as inputs; what this function contributes is the wiring — the CLI port set, the base-URL overlay
- * and the injected-host seam — which is the part that must not be written twice.
+ * PUBLISHED AND SINGULAR. The conformance fixtures compose the host through this function; if one
+ * assembled its own host beside this one, the suite would be measuring a host this product does
+ * not ship — the lookalike-assembly failure `spawned-chat.ts` names. So the command below calls
+ * this, and so do the suites, and there is no third assembly to disagree with either.
+ *
+ * IT DECIDES NOTHING ITS CALLER HAS NOT SAID. Execution context and bound origin arrive as inputs;
+ * what this function contributes is the wiring — the CLI port set, the base-URL overlay and the
+ * injected-host seam — which is the part that must not be written twice.
  */
 export function composeDashboardDoor(input: DashboardDoorInput): DashboardDoor {
   const confirms = input.confirms
@@ -807,6 +801,9 @@ export function composeDashboardDoor(input: DashboardDoorInput): DashboardDoor {
   // above because the composed host does not exist yet at composition time. It is asked about a
   // NAMED conversation and about nothing else; `postureFor` is what turns it into a claim about the
   // conversation actually being gated, by asking it of the asker.
+  //
+  // 2026-09-28, 430: this host takes no turn, so the predicate answers false for every scope that
+  // is not a run trigger's. Phase 432 deletes it with the posture.
   const watchedAndInFlight = (sessionId: string): boolean =>
     confirms !== undefined
     && confirms.hasLiveChannel(sessionId)
@@ -864,33 +861,11 @@ export function composeDashboardDoor(input: DashboardDoorInput): DashboardDoor {
       workspaceSegment,
     ),
     resolveExecutionContext,
-    // D-04 (400-03): ONE substrate, tagged. A dashboard conversation rides the exact
-    // `.agent-qa/sessions/chat-*.jsonl` log `agent-qa chat` writes — resume, compaction and the
-    // cleartext-masking adjudication apply once, to one population — and what distinguishes it is
-    // this word on the session HEADER. Never on an event: the grammar's exact-key guard would make
-    // every pre-400 file unreadable (Pitfall 4).
-    //
-    // THE SAME WORD `DASHBOARD_FUNCTION_CALLER.surface` CARRIES, deliberately: the door that
-    // dispatched a turn and the door that opened its session are the same fact, and two spellings
-    // of it would be free to disagree.
     ...(input.runBridge === undefined ? {} : { runBridge: input.runBridge }),
-    sessionSurface: DASHBOARD_FUNCTION_CALLER.surface,
-    // 400-05: the same word again, and again read off the caller rather than typed. A config
-    // proposal minted in a browser is accepted from wherever the person happens to be — often the
-    // CLI inbox, hours later — so this is the ONLY moment at which the door that proposed can be
-    // recorded truthfully.
-    mintingSurface: DASHBOARD_FUNCTION_CALLER.surface,
-    ...(input.chatModel === undefined
-      ? {}
-      : {
-        chatModel: input.chatModel.model,
-        chatModelFor: input.chatModel.modelFor,
-        chatAccounting: input.chatModel.accounting,
-      }),
-    // D-05/D-06/D-07 (400-03): the inline confirm and the mid-turn artifact seam beside it, both
-    // conditionally spread on the composition's own idiom — a door with no confirm channel binds
-    // NEITHER, which leaves the gate's deny-by-default and the engine's render-nothing posture
-    // exactly as plan 400-01 shipped them.
+    // D-05/D-06/D-07 (400-03): the inline confirm, conditionally spread on the composition's own
+    // idiom — a door with no confirm channel binds none, which leaves the gate's deny-by-default
+    // exactly as plan 400-01 shipped it. The run trigger and marks ask through it until Phase 432
+    // deletes it.
     ...(confirms === undefined ? {} : {
       // 400-15: THE TARGET IS THE ASKER, never the process's single watched conversation. The gate
       // above already refuses to claim `local-interactive` for an unwatched asker, so this is the
@@ -909,8 +884,8 @@ export function composeDashboardDoor(input: DashboardDoorInput): DashboardDoor {
       // THE RUN GATE'S HALF OF THE SAME PORT (401-09, D-11). A forwarder rather than a second
       // construction: `chatConfirmPort ?? input.confirm` is what the op registry reads, and this is
       // what `createComposedRunExecution` reads, and both resolve to the one object above. A run
-      // triggered from the button and a `runs.start` typed into the dashboard's own conversation
-      // therefore ask the same way, through the same mint, with the same three answers.
+      // triggered from the button and a mark from run detail therefore ask the same way, through
+      // the same mint, with the same three answers.
       //
       // `false` BEFORE THE COMPOSITION FINISHES is unreachable in practice — nothing can start a
       // run before the host exists — and is the fail-closed direction if it ever were.
@@ -921,13 +896,6 @@ export function composeDashboardDoor(input: DashboardDoorInput): DashboardDoor {
         // to a question this file has already closed once (G-401-17).
         surface: DASHBOARD_CONFIRM_SURFACE,
         ask: async (action) => browserConfirm !== undefined && await browserConfirm.ask(action),
-      },
-      // Pattern 5: cost previews and diffs land in the transcript BEFORE the confirm bubble, on
-      // the same channel and routed to the same conversation. Dropped where no conversation can be
-      // identified, for the reason the confirm is denied there.
-      chatPresent: (text: string) => {
-        const sessionId = askingSession()
-        if (sessionId !== undefined) confirms.present(sessionId, text)
       },
     }),
   })
@@ -1286,7 +1254,7 @@ export async function createDashboardRunDoor(input: {
         // INSIDE THE TRIGGER'S CONFIRM SCOPE (401-09, D-11). The whole invocation, not a part of it:
         // the op-level gate, the run gate and the confirm port are all further down this one call,
         // and an `AsyncLocalStorage` entered here reaches every one of them across every await
-        // between — which is the same mechanism, and the same reason, as the turn wrapper's.
+        // between — the same mechanism, and the same reason, as the host's invocation wrapper.
         const dispatch = (): Promise<unknown> => invokeFunction(
           host.registry as FunctionRegistry,
           'runs.start',
@@ -1295,10 +1263,9 @@ export async function createDashboardRunDoor(input: {
         )
         // A TRIGGER SCOPE OR NOTHING. `isRunTriggerConfirmScope` is checked here as well as at the
         // route that accepted it, and the redundancy is deliberate: this scope is entered under the
-        // CHANNEL-ALONE reachability rule, so a live CHAT conversation named here would have this
-        // run's question written into somebody's transcript and let that conversation's watcher
-        // approve a run they never triggered. Two doors, one refusal, and the one nearest the
-        // decision is this one.
+        // CHANNEL-ALONE reachability rule, so any other scope named here would let whoever holds a
+        // channel on it approve a run they never triggered. Two doors, one refusal, and the one
+        // nearest the decision is this one.
         const scope = opts.confirmScope
         await (
           enterTriggerScope === undefined
@@ -1339,10 +1306,10 @@ export async function createDashboardRunDoor(input: {
  * D-06: the door's capability set is decided here, once, for every holder of every credential.
  *
  * A LIST AND NOT A SPREAD, which is the opposite of {@link DASHBOARD_FUNCTION_CALLER}'s rule and
- * for the opposite reason. That door's claim is parity with the CLI chat door, so its grant must
- * track the CLI's automatically. This door's claim is LEAST PRIVILEGE, so a scope minted tomorrow
- * must NOT reach it by default: the whole point is that a remote token-holder's powers are the
- * ones somebody wrote down.
+ * for the opposite reason. That caller is the CLI's own mint under another surface word, so its
+ * grant must track the CLI's automatically. This door's claim is LEAST PRIVILEGE, so a scope
+ * minted tomorrow must NOT reach it by default: the whole point is that a remote token-holder's
+ * powers are the ones somebody wrote down.
  *
  * Dated note (2026-08-25, Phase 403 plan 03 / D-03, Q3): `read` joins `run`, and this is the diff
  * the 402 wording above pre-authorised in its own words — "the diff that needs `read` is the diff
@@ -1370,7 +1337,7 @@ export const RUN_SERVICE_SURFACE = 'run-service'
 /**
  * Mint the caller for ONE verified request (D-04, Pitfall 4).
  *
- * NEVER `DASHBOARD_FUNCTION_CALLER`. That caller holds the CLI chat door's whole scope set and
+ * NEVER `DASHBOARD_FUNCTION_CALLER`. That caller holds the CLI's whole scope set and
  * mints `origin: 'human'`; reusing it here would hand a remote token every power a person sitting
  * at this machine has, and would tell the gate a person decided something nobody decided.
  *
@@ -1918,22 +1885,13 @@ async function startDashboardBackedServices(
       }
     }
 
-    // ---- The fourth door's host (400-01, D-01/D-05/D-08/D-16) ---------------------------------
+    // ---- The dashboard's host (400-01, D-01/D-05/D-08/D-16; 430 D-02) --------------------------
     //
     // COMPOSED HERE AND HANDED OVER. The host lives in this process, which is the process
     // dashboard-server runs in — D-01's requirement, met without dashboard-server acquiring the
     // agent packages or re-assembling the port set this command already has. It is the SAME
-    // `composeCliLocalAgent` `agent-qa chat` composes, so the two interactive doors answer "what
-    // can a conversation do" once.
-    //
-    // THE MODEL IS BOUND EXACTLY AS `agent-qa chat` BINDS IT. A host composed without it is
-    // HEADLESS by design: every deterministic utterance still routes and every natural-language one
-    // fails the turn closed by name. That posture passes every model-free conformance cell and
-    // refuses every real sentence a person types into the browser, which is precisely the shape of
-    // a green that never ran — so the resolution is paid here, once, when the server opens.
-    // `undefined` stays a real posture: a project with no usable LLM configuration gets a
-    // deterministic door rather than no door.
-    const chatModel = await resolveCliChatCapabilities(configFilePath)
+    // `composeCliLocalAgent` the CLI composes, and it composes no conversation: nothing on the
+    // dashboard takes a turn, so it binds no chat model.
 
     // The bound origin, written once the server has a port and read per configuration lookup. See
     // `overlayDashboardBaseUrl` for why this is a mutable box rather than a value.
@@ -1995,10 +1953,9 @@ async function startDashboardBackedServices(
       // One handle, one writer, one process — and the page's read now crosses the registry
       // instead of reaching into SQLite from inside a route handler.
       runDetail: createDashboardRunDetailReader(db),
-      ...(chatModel === undefined ? {} : { chatModel }),
       // NO `resolveExecutionContext` (400-13). D-05 is answered per RESEARCH Pattern 2 — reuse
       // `local-interactive` rather than minting a fifth vocabulary member — but the answer is a
-      // PER-CONVERSATION fact that only the composition can compute, so production supplies no
+      // PER-SCOPE fact that only the composition can compute, so production supplies no
       // override and takes the derived predicate. What this command used to pass was "any channel
       // anywhere", which is the posture gap 3 measured false. Nothing here reaches
       // `setActiveExecutionContextResolver` either: that setter is a process global and would
