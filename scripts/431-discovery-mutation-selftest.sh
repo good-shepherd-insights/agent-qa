@@ -28,11 +28,23 @@ const BANNER = 'DISCOVERY_MUTATION_OK'
 const MAPPING_SRC = 'packages/mcp/src/mapping.ts'
 const COMPOSE_SRC = 'packages/agent-local/src/composition/compose-local-agent.ts'
 const FLOOR_SRC = 'packages/knowledge-local/src/embedder-floor.ts'
+const KNOWLEDGE_SKILL_SRC = 'skills/agent-qa-knowledge/SKILL.md'
+const GUIDE_SRC = 'packages/cli/src/commands/knowledge-guide.ts'
+const TRIAGE_SKILL_SRC = 'skills/agent-qa-result-triage/SKILL.md'
+const SCAN_SRC = 'packages/knowledge-local/src/bundle-scan.ts'
+const LADDER_SRC = 'packages/knowledge-local/src/serving/policy-ladder.ts'
+const MANAGED_SRC = 'packages/cli/src/commands/managed-block.ts'
+const CATALOG_SRC = 'packages/mcp/src/catalog.ts'
 
 const GUARD = 'src/__tests__/mapping-bump-guard.test.ts'
 const PROJECTION = 'src/__tests__/431-knowledge-projection.test.ts'
 const COLD_SCOPE = 'src/composition/__tests__/431-overview-cold-scope.test.ts'
 const COLD_RUNTIME = 'src/__tests__/431-mcp-no-embedder.test.ts'
+const CENSUS = 'src/__tests__/conformance/help-census.test.ts'
+const INSTRUCTIONS = 'src/__tests__/431-instruction-safety.test.ts'
+const GUIDE_EXCLUSION = 'src/__tests__/431-guide-exclusion.test.ts'
+const MANAGED = 'src/__tests__/431-managed-block.test.ts'
+const IMAGE = 'src/__tests__/431-evidence-image.test.ts'
 
 const expected = [
   { id: 'D01', claim: 'MCP-NAMES-EXACT', subject: MAPPING_SRC,
@@ -57,11 +69,33 @@ const expected = [
       `${COLD_RUNTIME} > the stdio \`agent-qa mcp\` door starts, lists and answers every populated read with no runtime load`,
       `${COLD_RUNTIME} > the dashboard co-hosted MCP door answers every read and both evidence arms with no runtime load`,
     ] },
+  { id: 'D10', claim: 'LIVE-GUIDANCE-TOOLS', subject: KNOWLEDGE_SKILL_SRC,
+    reds: [`${CENSUS} > LIVE-GUIDANCE-TOOLS`, `${CENSUS} > every tool a skill names is one the shipped mapping actually projects`] },
+  { id: 'D11', claim: 'LIVE-GUIDANCE-VERBS', subject: GUIDE_SRC, reds: [`${CENSUS} > LIVE-GUIDANCE-VERBS`] },
+  { id: 'D12', claim: 'INSTRUCTIONS-STRUCTURED-READS', subject: TRIAGE_SKILL_SRC,
+    reds: [`${INSTRUCTIONS} > sends no agent to private runtime files`] },
+  { id: 'D13', claim: 'GUIDE-NOT-INDEXED', subject: SCAN_SRC,
+    reds: [`${GUIDE_EXCLUSION} > indexes only the real bundle while the guide slot holds record-shaped decoys`] },
+  { id: 'D14', claim: 'GUIDE-NOT-SERVED', subject: LADDER_SRC,
+    reds: [`${GUIDE_EXCLUSION} > serves only the authored policy and the real record while the guide slot holds policy decoys`] },
+  { id: 'D15', claim: 'MANAGED-BYTES', subject: MANAGED_SRC,
+    reds: [
+      `${MANAGED} > replaces a middle block in place, keeping every outside byte and the block position (x2)`,
+      `${MANAGED} > regenerates owned content and changes nothing outside the markers (x2)`,
+      `${MANAGED} > leaves a differently named block of the same owner untouched (x2)`,
+    ] },
+  { id: 'D16', claim: 'IMAGE-MASK-WITHHOLD', subject: CATALOG_SRC,
+    reds: [
+      `${IMAGE} > (a) a masking refusal withholds the image and every byte`,
+      `${IMAGE} > (b) masking that altered the encoded bytes withholds the image and the altered result`,
+    ] },
 ]
 
 const GROUPS = {
   D01: 'contracts', D02: 'contracts', D03: 'contracts', D04: 'contracts', D05: 'contracts',
   D06: 'contracts', D07: 'contracts', D08: 'contracts', D09: 'contracts',
+  D10: 'guidance', D11: 'guidance', D12: 'guidance', D13: 'guidance', D14: 'guidance',
+  D15: 'guidance', D16: 'guidance',
 }
 
 runSelftest({
