@@ -6,11 +6,18 @@
 // shipped dashboard reader over the project's runs database. Spawned cells run the built
 // `dist/cli.js`: run `pnpm build` at the repository root first.
 
+import { createHash } from 'node:crypto'
 import { createServer } from 'node:http'
-import { mkdirSync, rmSync, writeFileSync } from 'node:fs'
+import {
+  existsSync, linkSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, readlinkSync, rmSync,
+  symlinkSync, writeFileSync,
+} from 'node:fs'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client'
+import { invokeFunction, RUNS_ARTIFACT_FUNCTION_ID } from '@vostride/agent-qa-agent'
+import { AGENT_QA_TOOL_PROJECTIONS } from '@vostride/agent-qa-mcp'
 import { DashboardDatabase, createDashboardRunDetailReader } from '@vostride/agent-qa-dashboard'
 import { generateRunId, generateTestId } from '@vostride/agent-qa-ids'
 import { FsEvidenceArtifactStore, FsHandoffStore } from '@vostride/agent-qa-runner-local'
@@ -25,6 +32,7 @@ import { createRunsCommand } from '../commands/runs.js'
 import * as host from '../composition/local-agent-host.js'
 import { resolveMcpTokens } from '../composition/mcp-token-resolution.js'
 import { markFixture } from '../gates/__tests__/feedback-fixture.js'
+import { SURFACE_ROSTER } from './conformance/roster.js'
 import {
   CLI_ENTRY,
   REBUILD_INSTRUCTION,
@@ -554,6 +562,286 @@ describe('CLI-KNOWLEDGE-PARITY: knowledge show and brief-why', () => {
     expect(refused.stderr).toContain('--step')
   })
 })
+
+// ---- CLI-EVIDENCE-PARITY, EXPORT-BYTE-IDENTITY, EXPORT-ATOMIC (07-3) -----------------------------
+
+function sha256(bytes: Uint8Array): string {
+  return createHash('sha256').update(bytes).digest('hex')
+}
+
+function outDir(): string {
+  const dir = mkdtempSync(join(tmpdir(), 'agent-qa-431-07-out-'))
+  cleanups.push(() => rmSync(dir, { recursive: true, force: true }))
+  return dir
+}
+
+const DOCUMENT_CASES: readonly [string, string[], Record<string, unknown>, Record<string, unknown>][] = [
+  ['console', ['--kind', 'console'], { kind: 'console' },
+    { outcome: 'ready', document: { kind: 'console', records: [{ text: 'TypeError: price is undefined — 価格' }, {}] } }],
+  ['network', ['--kind', 'network'], { kind: 'network' },
+    { outcome: 'ready', document: { kind: 'network', records: [{ url: 'https://app.test/api/cart?q=ümlaut' }] } }],
+  ['a11y', ['--kind', 'a11y'], { kind: 'a11y' },
+    { outcome: 'absent', evidence: { kind: 'a11y', state: 'absent', reason: 'unsupported' } }],
+  ['variables', ['--kind', 'variables'], { kind: 'variables' },
+    { outcome: 'absent', evidence: { kind: 'variables', state: 'absent', reason: 'empty' } }],
+  ['aria', ['--kind', 'aria', '--sub-action', '0'], { kind: 'aria', subActionIndex: 0 },
+    { outcome: 'ready', document: { kind: 'aria', tree: '- button "Payer ✓"' } }],
+]
+
+describe('CLI-EVIDENCE-PARITY: runs evidence documents over runs.evidence', () => {
+  it.each(DOCUMENT_CASES)('%s --json equals agent_qa_get_run_evidence', async (_label, flags, input, shape) => {
+    const p = populatedProject()
+    const mcp = await mcpReader(p)
+    const fetched = json(await cli(p.configPath, ['runs', 'evidence', p.runId, '--test', '0', '--step', '0', ...flags, '--json']))
+    expect(fetched).toEqual(await mcp.structured('agent_qa_get_run_evidence',
+      { action: 'runs.evidence', runId: p.runId, testIndex: 0, stepIndex: 0, ...input }))
+    expect(fetched).toMatchObject({ address: { runId: p.runId, testIndex: 0, stepIndex: 0, ...input }, ...shape })
+  })
+
+  it('renders a document as an addressed summary and leaves the body to --json', async () => {
+    const p = populatedProject()
+    const consoleHuman = await cli(p.configPath, ['runs', 'evidence', p.runId, '--test', '0', '--step', '0', '--kind', 'console'])
+    expect(consoleHuman.exitCode, consoleHuman.stderr).toBe(0)
+    expect(consoleHuman.stdout).toContain(`console evidence · run ${p.runId} · test 0 · step 0 · ready · 2 records`)
+    expect(consoleHuman.stdout).toContain('--json')
+    expect(consoleHuman.stdout).not.toContain('TypeError: price is undefined')
+    const aria = await cli(p.configPath, ['runs', 'evidence', p.runId, '--test', '0', '--step', '0', '--kind', 'aria', '--sub-action', '0'])
+    expect(aria.stdout).toContain(`aria evidence · run ${p.runId} · test 0 · step 0 · sub-action 0 · ready`)
+    expect(aria.stdout).not.toContain('Payer')
+    const absent = await cli(p.configPath, ['runs', 'evidence', p.runId, '--test', '0', '--step', '0', '--kind', 'a11y'])
+    expect(absent.exitCode).toBe(0)
+    expect(absent.stdout).toContain('absent (unsupported)')
+  })
+
+  it('exits nonzero for an address with no recorded step and for a missing run', async () => {
+    const p = populatedProject()
+    const mcp = await mcpReader(p)
+    const step = await cli(p.configPath, ['runs', 'evidence', p.runId, '--test', '0', '--step', '5', '--kind', 'console', '--json'])
+    expect(step.exitCode).toBe(1)
+    expect(JSON.parse(step.stdout)).toEqual(await mcp.structured('agent_qa_get_run_evidence',
+      { action: 'runs.evidence', runId: p.runId, testIndex: 0, stepIndex: 5, kind: 'console' }))
+    expect(JSON.parse(step.stdout)).toMatchObject({ outcome: 'read-error', code: 'address-not-found' })
+    expect(step.stderr).toContain(`agent-qa runs overview ${p.runId}`)
+    const run = await cli(p.configPath, ['runs', 'evidence', generateRunId(), '--test', '0', '--step', '0', '--kind', 'console'])
+    expect(run.exitCode).toBe(1)
+    expect(run.stdout).toBe('')
+    expect(run.stderr).toContain('agent-qa runs list')
+  })
+
+  it.each([
+    [['--test', '0', '--step', '0', '--kind', 'console', '--screenshot', 'a'.repeat(64), '--out', 'x.png'], 'not both'],
+    [[], '--screenshot'],
+    [['--test', '0', '--kind', 'console'], '--step'],
+    [['--step', '0', '--kind', 'console'], '--test'],
+    [['--test', '0', '--step', '0'], '--kind'],
+    [['--test', '0', '--step', '0', '--kind', 'console', '--sub-action', '0'], '--sub-action'],
+    [['--test', '0', '--step', '0', '--kind', 'console', '--range-start', '0', '--range-end', '1'], 'not both'],
+    [['--test', '0', '--step', '0', '--kind', 'screenshot'], '--kind'],
+    [['--test', '-1', '--step', '0', '--kind', 'console'], '--test'],
+    [['--screenshot', 'a'.repeat(64)], '--out'],
+    [['--out', 'x.png'], '--screenshot'],
+    [['--screenshot', 'not-a-sha', '--out', 'x.png'], '--screenshot'],
+    [['--screenshot', 'a'.repeat(64), '--out', 'x.png', '--range-start', '0'], '--range-end'],
+    [['--screenshot', 'a'.repeat(64), '--out', 'x.png', '--range-end', '3'], '--range-start'],
+    [['--screenshot', 'a'.repeat(64), '--out', 'x.png', '--range-start', '5', '--range-end', '3'], '--range-end'],
+  ])('refuses conflicting or incomplete options %j', async (flags, named) => {
+    const p = populatedProject()
+    const refused = await cli(p.configPath, ['runs', 'evidence', p.runId, ...flags, '--json'])
+    expect(refused.exitCode).not.toBe(0)
+    expect(refused.stdout).toBe('')
+    expect(refused.stderr).toContain(named)
+    expect(existsSync(join(p.root, 'x.png'))).toBe(false)
+  })
+})
+
+describe('EXPORT-BYTE-IDENTITY: runs evidence --screenshot writes the addressed bytes', () => {
+  it('exports a screenshot byte for byte and --json equals the MCP artifact result', async () => {
+    const p = populatedProject()
+    const mcp = await mcpReader(p)
+    const out = join(outDir(), 'shot.png')
+    const exported = await cli(p.configPath, ['runs', 'evidence', p.runId, '--screenshot', p.screenshotSha, '--out', out, '--json'])
+    expect(exported.exitCode, exported.stderr).toBe(0)
+    const canonical = await mcp.call('agent_qa_get_run_evidence', { action: 'runs.artifact', runId: p.runId, sha: p.screenshotSha })
+    expect(canonical.isError ?? false).toBe(false)
+    expect(JSON.parse(exported.stdout)).toEqual(canonical.structuredContent)
+    expect(canonical.content.filter((block) => block.type === 'image').map((block) => block.data)).toEqual([PNG_BASE64])
+    expect(new Uint8Array(readFileSync(out))).toEqual(PNG)
+    expect(sha256(readFileSync(out))).toBe(p.screenshotSha)
+    expect(exported.stderr).toContain(`wrote ${out}`)
+    expect(exported.stderr).toContain('image/png')
+    expect(exported.stdout).not.toContain('wrote')
+
+    const second = join(outDir(), 'again.png')
+    const human = await cli(p.configPath, ['runs', 'evidence', p.runId, '--screenshot', p.screenshotSha, '--out', second])
+    expect(human.exitCode, human.stderr).toBe(0)
+    expect(human.stdout).toContain(`wrote ${second} · image/png · ${String(PNG.length)} bytes · sha256 ${p.screenshotSha}`)
+  })
+
+  it('exports a recording the MCP evidence tool refuses to relay', async () => {
+    const p = populatedProject()
+    const mcp = await mcpReader(p)
+    const out = join(outDir(), 'member-0.webm')
+    const exported = await cli(p.configPath, ['runs', 'evidence', p.runId, '--screenshot', p.recordingSha, '--out', out, '--json'])
+    expect(exported.exitCode, exported.stderr).toBe(0)
+    expect(new Uint8Array(readFileSync(out))).toEqual(WEBM)
+    expect(sha256(readFileSync(out))).toBe(p.recordingSha)
+    expect(JSON.parse(exported.stdout)).toMatchObject({ sha: p.recordingSha, contentType: 'video/webm', byteLength: WEBM.length })
+    const refused = await mcp.call('agent_qa_get_run_evidence', { action: 'runs.artifact', runId: p.runId, sha: p.recordingSha })
+    expect(refused.isError).toBe(true)
+  })
+
+  it('exports an inclusive byte range the function door serves and the MCP tool refuses', async () => {
+    const p = populatedProject()
+    const mcp = await mcpReader(p)
+    const out = join(outDir(), 'slice.bin')
+    const exported = await cli(p.configPath, ['runs', 'evidence', p.runId, '--screenshot', p.recordingSha, '--out', out,
+      '--range-start', '4', '--range-end', '19', '--json'])
+    expect(exported.exitCode, exported.stderr).toBe(0)
+    expect(new Uint8Array(readFileSync(out))).toEqual(WEBM.slice(4, 20))
+    const composed = realCompose({ configPath: p.configPath, agentQaRoot: p.agentQaRoot })
+    cleanups.push(() => composed.close())
+    const functionDoor = await invokeFunction(composed.registry, RUNS_ARTIFACT_FUNCTION_ID,
+      { runId: p.runId, sha: p.recordingSha, range: { start: 4, end: 19 } }, host.CLI_FUNCTION_CALLER)
+    expect(JSON.parse(exported.stdout)).toEqual(functionDoor)
+    expect(functionDoor).toMatchObject({ range: { start: 4, end: 19 }, totalLength: WEBM.length, byteLength: 16 })
+    expect(exported.stderr).toContain(`bytes 4-19 of ${String(WEBM.length)}`)
+    const refused = await mcp.call('agent_qa_get_run_evidence',
+      { action: 'runs.artifact', runId: p.runId, sha: p.screenshotSha, range: { start: 0, end: 7 } })
+    expect(refused.isError).toBe(true)
+    expect(refused.content.map((block) => block.text ?? '').join('')).toContain('artifact-range-fragment')
+  })
+
+  it('exits nonzero and writes nothing for a sha the run does not hold', async () => {
+    const p = populatedProject()
+    const dir = outDir()
+    const refused = await cli(p.configPath, ['runs', 'evidence', p.runId, '--screenshot', 'b'.repeat(64), '--out', join(dir, 'none.png')])
+    expect(refused.exitCode).toBe(1)
+    expect(refused.stdout).toBe('')
+    expect(refused.stderr).toContain('No evidence blob is recorded')
+    expect(readdirSync(dir)).toEqual([])
+  })
+})
+
+describe('EXPORT-ATOMIC: exclusive publication that never overwrites', () => {
+  it('refuses an existing file, a symlink, a hard link and a directory, leaving each unchanged', async () => {
+    const p = populatedProject()
+    const dir = outDir()
+    const existing = join(dir, 'existing.png')
+    writeFileSync(existing, 'keep me')
+    const elsewhere = join(dir, 'elsewhere.txt')
+    writeFileSync(elsewhere, 'target bytes')
+    const link = join(dir, 'link.png')
+    symlinkSync(elsewhere, link)
+    const dangling = join(dir, 'dangling.png')
+    symlinkSync(join(dir, 'nowhere.png'), dangling)
+    const hard = join(dir, 'hard.png')
+    linkSync(elsewhere, hard)
+    const directory = join(dir, 'directory.png')
+    mkdirSync(directory)
+    for (const [destination, kind] of [[existing, 'regular file'], [link, 'symbolic link'], [dangling, 'symbolic link'],
+      [hard, 'hard-linked file'], [directory, 'directory']] as const) {
+      const refused = await cli(p.configPath, ['runs', 'evidence', p.runId, '--screenshot', p.screenshotSha, '--out', destination])
+      expect(refused.exitCode, destination).toBe(1)
+      expect(refused.stderr).toContain(kind)
+      expect(refused.stderr).toContain('not overwritten')
+    }
+    expect(readFileSync(existing, 'utf8')).toBe('keep me')
+    expect(readFileSync(elsewhere, 'utf8')).toBe('target bytes')
+    expect(readlinkSync(link)).toBe(elsewhere)
+    expect(lstatSync(dangling).isSymbolicLink()).toBe(true)
+    expect(existsSync(join(dir, 'nowhere.png'))).toBe(false)
+    expect(lstatSync(hard).nlink).toBe(2)
+    expect(readdirSync(directory)).toEqual([])
+    expect(readdirSync(dir).filter((name) => name.endsWith('.tmp'))).toEqual([])
+  })
+
+  it('creates no parent directory and refuses a symlinked parent', async () => {
+    const p = populatedProject()
+    const dir = outDir()
+    const missing = await cli(p.configPath, ['runs', 'evidence', p.runId, '--screenshot', p.screenshotSha, '--out', join(dir, 'new', 'shot.png')])
+    expect(missing.exitCode).toBe(1)
+    expect(missing.stderr).toContain('does not exist')
+    expect(existsSync(join(dir, 'new'))).toBe(false)
+    mkdirSync(join(dir, 'real'))
+    symlinkSync(join(dir, 'real'), join(dir, 'alias'))
+    const aliased = await cli(p.configPath, ['runs', 'evidence', p.runId, '--screenshot', p.screenshotSha, '--out', join(dir, 'alias', 'shot.png')])
+    expect(aliased.exitCode).toBe(1)
+    expect(aliased.stderr).toContain('symbolic link')
+    expect(readdirSync(join(dir, 'real'))).toEqual([])
+  })
+
+  it('loses a publication race without touching the winner, and cleans only its own temporary', async () => {
+    const { exportArtifactBytes } = await import('../commands/artifact-export.js')
+    const dir = outDir()
+    const destination = join(dir, 'race.png')
+    const foreign = join(dir, '.race.png.agent-qa-export-1-foreign.tmp')
+    writeFileSync(foreign, 'someone else')
+    const winner = Uint8Array.from([1, 2, 3, 4])
+    let owned: string | undefined
+    expect(() => exportArtifactBytes({ destination, bytes: PNG, sha256: sha256(PNG) }, {
+      beforePublish(temporary) {
+        owned = temporary
+        expect(existsSync(temporary)).toBe(true)
+        exportArtifactBytes({ destination, bytes: winner, sha256: sha256(winner) })
+      },
+    })).toThrow(/appeared during export/u)
+    expect(new Uint8Array(readFileSync(destination))).toEqual(winner)
+    expect(owned).toBeDefined()
+    expect(existsSync(owned!)).toBe(false)
+    expect(readFileSync(foreign, 'utf8')).toBe('someone else')
+    expect(readdirSync(dir).sort()).toEqual(['.race.png.agent-qa-export-1-foreign.tmp', 'race.png'])
+  })
+
+  it('leaves no destination and no owned temporary when interrupted before publication', async () => {
+    const { exportArtifactBytes } = await import('../commands/artifact-export.js')
+    const dir = outDir()
+    const destination = join(dir, 'interrupted.png')
+    const foreign = join(dir, '.interrupted.png.agent-qa-export-2-foreign.tmp')
+    writeFileSync(foreign, 'not mine')
+    expect(() => exportArtifactBytes({ destination, bytes: PNG, sha256: sha256(PNG) }, {
+      beforePublish() { throw new Error('SIGINT') },
+    })).toThrow('SIGINT')
+    expect(existsSync(destination)).toBe(false)
+    expect(readdirSync(dir)).toEqual(['.interrupted.png.agent-qa-export-2-foreign.tmp'])
+  })
+
+  it('refuses bytes that do not hash to the address before writing anything', async () => {
+    const { exportArtifactBytes } = await import('../commands/artifact-export.js')
+    const dir = outDir()
+    const destination = join(dir, 'tampered.png')
+    expect(() => exportArtifactBytes({ destination, bytes: PNG, sha256: 'c'.repeat(64) })).toThrow(/sha256/u)
+    expect(readdirSync(dir)).toEqual([])
+  })
+})
+
+describe('DEDICATED-READ-VERBS: the manifest table matches the live verbs and stays off the roster', () => {
+  it('names every new verb, its flags and the ops it invokes', async () => {
+    const { DEDICATED_READ_VERBS } = await import('../capability-catalog/manifest.js')
+    const program = new Command().addCommand(createRunsCommand()).addCommand(createKnowledgeCommand())
+    const live = (path: string) => path.split(' ').reduce<Command | undefined>(
+      (parent, name) => parent?.commands.find((command) => command.name() === name), program)
+    expect(DEDICATED_READ_VERBS.map((entry) => entry.verb)).toEqual([
+      'runs list', 'runs overview', 'runs knowledge', 'runs evidence', 'knowledge show', 'knowledge brief-why',
+    ])
+    const composed = realCompose(fixtureProjectPaths())
+    cleanups.push(() => composed.close())
+    const declared = new Set(composed.registry.list(host.CLI_FUNCTION_CALLER).map((declaration) => declaration.id))
+    const projected = new Set(AGENT_QA_TOOL_PROJECTIONS.flatMap((projection) => [...projection.ops]))
+    for (const entry of DEDICATED_READ_VERBS) {
+      expect(live(entry.verb)?.options.map((option) => option.long), entry.verb).toEqual([...entry.flags])
+      for (const opId of entry.opIds) {
+        expect(declared.has(opId), opId).toBe(true)
+        expect(projected.has(opId), opId).toBe(true)
+      }
+    }
+    expect(SURFACE_ROSTER.map((door) => door.id)).toEqual(['chat', 'mcp', 'fn', 'run-service'])
+  })
+})
+
+function fixtureProjectPaths(): { configPath: string; agentQaRoot: string } {
+  const project = fixtureProject('431-07-registry')
+  return { configPath: project.configPath, agentQaRoot: join(project.root, '.agent-qa') }
+}
 
 // ---- The built CLI --------------------------------------------------------------------------------
 
