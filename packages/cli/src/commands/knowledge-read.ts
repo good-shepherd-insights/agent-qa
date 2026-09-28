@@ -35,15 +35,17 @@ import {
   KnowledgeGatesListResultSchema,
 } from '@vostride/agent-qa-schema'
 import type {
+  BriefWhyResult,
   InspectFilter,
   InspectRecordView,
   KnowledgeBundleSummary,
   KnowledgeGatesListResult,
+  KnowledgeRecordShowResult,
   KnowledgeRecordsDiffOutput,
   KnowledgeRecordsInspectOutput,
   RecordChange,
 } from '@vostride/agent-qa-schema'
-import { Command } from 'commander'
+import { Command, InvalidArgumentError } from 'commander'
 import pc from 'picocolors'
 import { z } from 'zod'
 
@@ -73,6 +75,13 @@ interface BundlesOptions {
   json?: boolean
 }
 
+interface BriefWhyOptions {
+  step: number
+  test?: string
+  record?: string
+  json?: boolean
+}
+
 /**
  * The capability the `bundles` verb is a client of. The id is all this file knows: what
  * enumerates the store, how trust is folded, and which package reads the disk are the
@@ -84,6 +93,8 @@ const KNOWLEDGE_BUNDLES_LIST_ID = 'knowledge.bundles.list'
 const KNOWLEDGE_RECORDS_INSPECT_ID = 'knowledge.records.inspect'
 const KNOWLEDGE_RECORDS_DIFF_ID = 'knowledge.records.diff'
 const KNOWLEDGE_GATES_LIST_ID = 'knowledge.gates.list'
+const KNOWLEDGE_RECORD_SHOW_ID = 'knowledge.record.show'
+const KNOWLEDGE_BRIEF_WHY_ID = 'knowledge.brief.why'
 
 type KnowledgeReadErrorCode =
   | 'invalid-filter'
@@ -348,14 +359,75 @@ function renderGates(dto: KnowledgeGatesListResult): string {
   ].join('\n')
 }
 
-function reportError(action: 'inspect' | 'diff' | 'bundles' | 'gates', error: unknown): void {
+function renderRecordShow(dto: KnowledgeRecordShowResult): string {
+  if (dto.kind === 'not-found') return `record ${dto.recordId}: not found`
+  const { record, provenance } = dto
+  const lines = [
+    `record ${record.recordId} · ${record.kind} · ${record.status} · ${record.product} · scope ${record.scope}`,
+    provenance.mode === 'run-linked'
+      ? `  provenance run-linked · run ${provenance.runId} · test ${provenance.testId}`
+        + ` · step ${String(provenance.stepIndex)} · origin ${provenance.originClass}`
+      : `  provenance standalone · origin ${provenance.originClass} · ${provenance.sourceDescription}`,
+    `  summary: ${dto.summary}`,
+    '',
+    provenance.mode === 'run-linked'
+      ? `Next: agent-qa knowledge brief-why ${provenance.runId} --step ${String(provenance.stepIndex)}`
+        + ` --test ${provenance.testId} --record ${record.recordId}`
+      : `Next: agent-qa knowledge gates ${record.recordId}`,
+  ]
+  return lines.join('\n')
+}
+
+function renderBriefWhy(dto: BriefWhyResult, runId: string, options: BriefWhyOptions): string {
+  const address = `run ${runId}${options.test === undefined ? '' : ` · test ${options.test}`}`
+    + ` · step ${String(options.step)}`
+  if (dto.kind === 'no-trace') {
+    const offered = dto.servedBrief === undefined ? ''
+      : ` · the served brief survived (${String(dto.servedBrief.channel1.length + dto.servedBrief.channel2.length
+        + dto.servedBrief.channel3.length)} lines, in --json)`
+    return `${address} · no trace (${dto.reason})${offered}`
+  }
+  const line = (label: string, entry: BriefWhyTraceLine) =>
+    `  ${label} ${entry.recordId} · ${entry.leg} · rank ${String(entry.rank)} · score ${String(entry.score)}`
+  const lines = [
+    `${address} · trace recorded${dto.servedBriefRef === undefined ? '' : ` · brief ${dto.servedBriefRef}`}`,
+    ...dto.trace.servedLines.map((entry) => line('served', entry)),
+    ...dto.trace.truncated.map((entry) => line('cut', entry)),
+  ]
+  if (dto.trace.servedLines.length + dto.trace.truncated.length === 0) {
+    lines.push(`  ${options.record === undefined ? 'no line' : `record ${options.record}`} took part in this brief`)
+  }
+  const first = dto.trace.servedLines[0] ?? dto.trace.truncated[0]
+  if (first !== undefined) lines.push('', `Next: agent-qa knowledge show ${first.recordId}`)
+  return lines.join('\n')
+}
+
+type BriefWhyTraceLine = Extract<BriefWhyResult, { kind: 'answered' }>['trace']['servedLines'][number]
+
+function parseStepIndex(value: string): number {
+  const step = /^\d+$/.test(value) ? Number(value) : Number.NaN
+  if (!Number.isSafeInteger(step)) throw new InvalidArgumentError('step must be a non-negative integer')
+  return step
+}
+
+type KnowledgeReadAction = 'inspect' | 'diff' | 'bundles' | 'gates' | 'show' | 'brief-why'
+
+function reportError(action: KnowledgeReadAction, error: unknown): void {
   if (error instanceof KnowledgeReadCommandError) {
     console.error(pc.red(`Knowledge ${action} error [${error.code}]: ${error.message}`))
   } else {
+    const hint = error instanceof Error && error.name === 'AmbiguousStepAddressError'
+      ? ' Pass --test <testId> to choose one.'
+      : ''
     console.error(pc.red(
-      `Knowledge ${action} error: ${error instanceof Error ? error.message : String(error)}`,
+      `Knowledge ${action} error: ${error instanceof Error ? error.message : String(error)}${hint}`,
     ))
   }
+  process.exitCode = 1
+}
+
+function reportMissing(action: KnowledgeReadAction, message: string): void {
+  console.error(pc.red(`Knowledge ${action} error [not-found]: ${message}`))
   process.exitCode = 1
 }
 
@@ -448,6 +520,62 @@ export function registerKnowledgeReadCommands(command: Command): void {
         emitHuman(renderGates(dto))
       } catch (error) {
         reportError('gates', error)
+      }
+    })
+
+  command
+    .command('show <recordId>')
+    .description('Show one knowledge record with the provenance that justifies it')
+    .option('--json', 'print the knowledge.record.show result unchanged')
+    .action(async (recordId: string, options: BundlesOptions, cmd: Command) => {
+      try {
+        const dto = await invokeFunction(
+          composeCliLocalAgent(functionLayerInput(cmd)).registry,
+          KNOWLEDGE_RECORD_SHOW_ID,
+          { recordId },
+          CLI_FUNCTION_CALLER,
+        ) as KnowledgeRecordShowResult
+        if (options.json === true) emitJson(dto)
+        else emitHuman(renderRecordShow(dto))
+        if (dto.kind === 'not-found') {
+          reportMissing('show', `no committed record ${recordId}; list record ids with agent-qa knowledge inspect`)
+        }
+      } catch (error) {
+        reportError('show', error)
+      }
+    })
+
+  command
+    .command('brief-why <runId>')
+    .description('Explain why one step\'s served brief said what it said, from its recorded trace')
+    .requiredOption('--step <n>', 'zero-based step index', parseStepIndex)
+    .option('--test <testId>', 'the test id whose step is meant, when the run has several tests')
+    .option('--record <recordId>', 'narrow the trace to one record')
+    .option('--json', 'print the knowledge.brief.why result unchanged')
+    .action(async (runId: string, options: BriefWhyOptions, cmd: Command) => {
+      try {
+        const dto = await invokeFunction(
+          composeCliLocalAgent(functionLayerInput(cmd)).registry,
+          KNOWLEDGE_BRIEF_WHY_ID,
+          {
+            runId,
+            stepIndex: options.step,
+            ...(options.test === undefined ? {} : { testId: options.test }),
+            ...(options.record === undefined ? {} : { recordId: options.record }),
+          },
+          CLI_FUNCTION_CALLER,
+        ) as BriefWhyResult
+        if (options.json === true) emitJson(dto)
+        else emitHuman(renderBriefWhy(dto, runId, options))
+        if (dto.kind === 'no-trace' && dto.reason === 'artifact-missing') {
+          reportMissing('brief-why', `no completed run ${runId} is recorded; run agent-qa runs list to see run ids`)
+        } else if (dto.kind === 'no-trace' && dto.reason === 'step-not-found') {
+          reportMissing('brief-why', `run ${runId} has no step ${String(options.step)}`
+            + `${options.test === undefined ? '' : ` in test ${options.test}`}; run agent-qa runs overview ${runId}`
+            + ' to see its test ids and steps')
+        }
+      } catch (error) {
+        reportError('brief-why', error)
       }
     })
 
