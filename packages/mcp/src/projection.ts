@@ -44,7 +44,7 @@ import type { FunctionScope, RiskActionDescriptor } from '@vostride/agent-qa-sch
 // ONE authoritative spelling of the App address: the module that publishes the template is the
 // module that parses it, and this derivation imports it rather than restating the string.
 import { APP_RESOURCE_URI_TEMPLATE } from './app-resource.js'
-import { compositionOf, DEGRADED_OUTPUT_CONTRACTS } from './mapping.js'
+import { compositionOf, DEGRADED_OUTPUT_CONTRACTS, MAX_RESULT_SIZE_META_KEY } from './mapping.js'
 import type { ToolOpContracts, ToolProjection } from './mapping.js'
 
 /**
@@ -290,6 +290,7 @@ export function toRegisterToolConfig(
     : undefined
 
   const description = describe(projection, specs)
+  const meta = listingMeta(projection)
   return {
     title: projection.name,
     description: maskText(
@@ -309,11 +310,26 @@ export function toRegisterToolConfig(
     // it would point every host at an address the resource codec refuses, which is the tool-rename
     // failure with a URI scheme attached. Nothing interpolated into it comes from a caller, from
     // storage or from a resolved value; the run id never appears here, because this is the
-    // TEMPLATE and a per-call reference is composed downstream.
-    ...(projection.ui === undefined
-      ? {}
-      : { _meta: { ui: { resourceUri: APP_RESOURCE_URI_TEMPLATE } } }),
+    // TEMPLATE and a per-call reference is composed downstream. The result-size hint (431 D-05) is
+    // a declared constant too, and rides the same record (`listingMeta`).
+    ...(meta === undefined ? {} : { _meta: meta }),
   }
+}
+
+/**
+ * The listing `_meta` a projection declares, or `undefined` when it declares none.
+ *
+ * 2026-09-28 (431 D-05): the App reference and the result-size hint are independent members of one
+ * record, so a tool declaring both advertises both; neither replaces the other.
+ */
+function listingMeta(projection: ToolProjection): Record<string, unknown> | undefined {
+  const meta: Record<string, unknown> = {
+    ...(projection.ui === undefined ? {} : { ui: { resourceUri: APP_RESOURCE_URI_TEMPLATE } }),
+    ...(projection.maxResultSizeChars === undefined
+      ? {}
+      : { [MAX_RESULT_SIZE_META_KEY]: projection.maxResultSizeChars }),
+  }
+  return Object.keys(meta).length === 0 ? undefined : meta
 }
 
 /** A projection that cannot be derived honestly, named with the tool it is about. */

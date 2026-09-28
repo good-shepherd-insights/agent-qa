@@ -26,7 +26,7 @@ import type {
 import { afterEach, describe, expect, it } from 'vitest'
 
 import { buildAgentQaMcpServer } from '../catalog.js'
-import { withoutDialect } from '../conformance-support.js'
+import { withoutDialect, withoutLegacyResultWrap } from '../conformance-support.js'
 import {
   advertisedContracts,
   AGENT_QA_COMPOSED_CONTRACTS,
@@ -314,7 +314,10 @@ describe('MCP-TOOLS-ADVERTISED on a real tools/list', () => {
       const tool = tools.get(name)
       expect(tool, name).toBeDefined()
       expect(tool!.outputSchema, `${name} outputSchema`).toBeDefined()
-      expect(withoutDialect(tool!.outputSchema), `${name} output document`).toEqual(outputDocument(contract.output))
+      // The 2025-11-25 codec wraps an array root (the bundle list) in `{ result }`; the published
+      // lens undoes exactly that wrap and nothing else.
+      expect(withoutDialect(withoutLegacyResultWrap(tool!.outputSchema)), `${name} output document`)
+        .toEqual(outputDocument(contract.output))
       expect(tool!.annotations, name).toEqual({ readOnlyHint: true, destructiveHint: false, idempotentHint: true })
       const summaries = contract.ops.map((opId) => declared.get(opId)!.summary)
       if (contract.ops.length === 1) {
@@ -360,8 +363,8 @@ describe('MCP-TOOLS-ADVERTISED on a real tools/list', () => {
 function auditedRegistry(audited: string[], deps: Record<string, unknown> = {}): FunctionRegistry {
   const sink = {
     appendExecutionAudit(row: unknown) {
-      const name = (row as { action?: { name?: unknown } }).action?.name
-      audited.push(typeof name === 'string' ? name : JSON.stringify(row))
+      const action = (row as { action?: unknown }).action
+      audited.push(typeof action === 'string' ? action : JSON.stringify(row))
     },
     appendGuardrailAudit() {},
   } as unknown as CreateFunctionRegistryOptions['auditSink']

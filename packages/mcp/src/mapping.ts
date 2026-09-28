@@ -18,6 +18,12 @@
 // registered; the projected side and the tool count do not move. The editor subject's mint is
 // reachable only through the dashboard door, by ruling.
 //
+// 2026-09-28 (431-04 D-01/D-04/D-10): TWENTY-FOUR tools over THIRTY-FIVE registry ops; the other
+// EIGHTEEN stay in `UNPROJECTED_OPS`, and the registry is fifty-three. `runs.overview` arrives
+// projected, and eight reads move across: the five knowledge reads, `runs.knowledge`, and
+// `runs.evidence` with `runs.artifact` behind one fold. Their prior rulings are kept verbatim in
+// `PROJECTED_RULING_ADDENDA`, each with its dated 431 addendum.
+//
 // 2026-08-17 (398 D-09): the unprojected side moved from nineteen to twenty when `agent.explain`
 // was registered. This sentence is prose and the guard is the mechanism — but the prose is updated
 // in the same change-set anyway, because a header that goes on stating a partition the code stopped
@@ -63,6 +69,8 @@ import {
   AuthoringRefineFoldOutputSchema,
   AuthoringVerifyDraftInputSchema,
   AuthoringVerifyDraftOutputSchema,
+  BriefWhyInputSchema,
+  BriefWhyResultSchema,
   ConfigApplyOutcomeSchema,
   ConfigAuthSetInputSchema,
   ConfigChangeFoldInputSchema,
@@ -81,6 +89,8 @@ import {
   EntityCardSchema,
   KnowledgeAcceptProposeInputSchema,
   KnowledgeApplyOutcomeSchema,
+  KnowledgeBundlesListInputSchema,
+  KnowledgeBundlesListOutputSchema,
   KnowledgeChangeFoldInputSchema,
   KnowledgeChangeFoldOutputSchema,
   KnowledgeForgetProposeInputSchema,
@@ -88,14 +98,29 @@ import {
   KnowledgeGatesListResultSchema,
   KnowledgeProposalApplyInputSchema,
   KnowledgeProposeOutcomeSchema,
+  KnowledgeRecordShowInputSchema,
+  KnowledgeRecordShowResultSchema,
+  KnowledgeRecordsDiffInputSchema,
+  KnowledgeRecordsDiffOutputSchema,
+  KnowledgeRecordsInspectInputSchema,
+  KnowledgeRecordsInspectOutputSchema,
   KnowledgeRejectProposeInputSchema,
   ProposalsListInputSchema,
   ProposalsListOutputSchema,
   ProposalsShowInputSchema,
   ProposalsShowOutputSchema,
   RunDigestSchema,
+  RunKnowledgeProjectionSchema,
+  RunOverviewProjectionSchema,
   RunStartAcknowledgementSchema,
+  RunsArtifactInputSchema,
+  RunsArtifactOutputContract,
   RunsDigestInputSchema,
+  RunsEvidenceFoldInputSchema,
+  RunsEvidenceFoldOutputContract,
+  RunsEvidenceInputSchema,
+  RunsEvidenceOutputContract,
+  RunsKnowledgeInputSchema,
   RunsListInputSchema,
   RunsListOutputContract,
   RunsMarkInputSchema,
@@ -103,6 +128,7 @@ import {
   RunsMarkPreviewResultSchema,
   RunsMarksHistoryInputSchema,
   RunsMarksHistoryResultSchema,
+  RunsOverviewInputSchema,
   RunsStartInputSchema,
   TOOL_FOLD_DISCRIMINANT,
 } from '@vostride/agent-qa-schema'
@@ -132,6 +158,12 @@ export type ToolProjectionKind = 'read' | 'workflow' | 'apply'
  * one arm's contract while the guard reports two arms and agrees with itself.
  */
 export type ToolComposition = 'single' | 'union' | 'pipeline'
+
+/** The tool-listing `_meta` key a host reads as the largest result it should keep (ADX-03). */
+export const MAX_RESULT_SIZE_META_KEY = 'anthropic/maxResultSizeChars'
+
+/** 431 D-05: the size hint the three whole-run reads carry. */
+export const RUN_READ_MAX_RESULT_SIZE_CHARS = 100000
 
 /** One declared tool. */
 export interface ToolProjection {
@@ -186,6 +218,11 @@ export interface ToolProjection {
     readonly resource: 'live-run'
     readonly runIdFrom: 'input' | 'output'
   }
+  /**
+   * 2026-09-28 (431 D-05): the result-size hint, advertised as `_meta[MAX_RESULT_SIZE_META_KEY]`.
+   * Present only on reads whose one-shot answer can outgrow a host's default result budget.
+   */
+  readonly maxResultSizeChars?: number
 }
 
 /** The composition, read off the entry. See {@link ToolComposition}. */
@@ -331,10 +368,49 @@ export const AGENT_QA_OP_CONTRACTS: Readonly<Record<string, ToolOpContracts>> = 
     input: ProposalsShowInputSchema,
     output: ProposalsShowOutputSchema,
   }),
+  // 2026-09-28 (431-04 D-04/D-05/D-07): the eight reads keep their ops' own contracts. The
+  // evidence arms use the canonical output contracts, whose validators are the runtime schemas.
+  'knowledge.bundles.list': Object.freeze({
+    input: KnowledgeBundlesListInputSchema,
+    output: KnowledgeBundlesListOutputSchema,
+  }),
+  'knowledge.records.inspect': Object.freeze({
+    input: KnowledgeRecordsInspectInputSchema,
+    output: KnowledgeRecordsInspectOutputSchema,
+  }),
+  'knowledge.records.diff': Object.freeze({
+    input: KnowledgeRecordsDiffInputSchema,
+    output: KnowledgeRecordsDiffOutputSchema,
+  }),
+  'knowledge.record.show': Object.freeze({
+    input: KnowledgeRecordShowInputSchema,
+    output: KnowledgeRecordShowResultSchema,
+  }),
+  'knowledge.brief.why': Object.freeze({
+    input: BriefWhyInputSchema,
+    output: BriefWhyResultSchema,
+  }),
+  'runs.knowledge': Object.freeze({
+    input: RunsKnowledgeInputSchema,
+    output: RunKnowledgeProjectionSchema,
+  }),
+  'runs.overview': Object.freeze({
+    input: RunsOverviewInputSchema,
+    output: RunOverviewProjectionSchema,
+  }),
+  'runs.evidence': Object.freeze({
+    input: RunsEvidenceInputSchema,
+    output: RunsEvidenceOutputContract,
+  }),
+  'runs.artifact': Object.freeze({
+    input: RunsArtifactInputSchema,
+    output: RunsArtifactOutputContract,
+  }),
 })
 
 /**
- * THE CATALOGUE. Sixteen tools, and the bump guard pins this exact list by name and by op set.
+ * THE CATALOGUE. Twenty-four tools, and the bump guard pins this exact list by name and by op set.
+ * (Sixteen until 2026-09-28; 431 D-01 added the eight discovery reads.)
  *
  * The read side is D-02: one universal entity door plus the three reads a workflow needs mid-flight
  * (runs list, run digest, the proposal inbox). The write side is propose-then-apply and nothing
@@ -429,6 +505,32 @@ export const AGENT_QA_TOOL_PROJECTIONS: readonly ToolProjection[] = Object.freez
     ops: Object.freeze(['knowledge.gates.list']),
     kind: 'read',
   }),
+  // 2026-09-28, 431 D-04: the knowledge reads, named one-to-one with their CLI verbs.
+  Object.freeze({
+    name: 'agent_qa_list_knowledge_bundles',
+    ops: Object.freeze(['knowledge.bundles.list']),
+    kind: 'read',
+  }),
+  Object.freeze({
+    name: 'agent_qa_inspect_knowledge_records',
+    ops: Object.freeze(['knowledge.records.inspect']),
+    kind: 'read',
+  }),
+  Object.freeze({
+    name: 'agent_qa_diff_knowledge_records',
+    ops: Object.freeze(['knowledge.records.diff']),
+    kind: 'read',
+  }),
+  Object.freeze({
+    name: 'agent_qa_show_knowledge_record',
+    ops: Object.freeze(['knowledge.record.show']),
+    kind: 'read',
+  }),
+  Object.freeze({
+    name: 'agent_qa_explain_brief',
+    ops: Object.freeze(['knowledge.brief.why']),
+    kind: 'read',
+  }),
   Object.freeze({
     name: 'agent_qa_get_entity',
     ops: Object.freeze(['entities.resolve', 'entities.get']),
@@ -447,6 +549,28 @@ export const AGENT_QA_TOOL_PROJECTIONS: readonly ToolProjection[] = Object.freez
     // from the CLI, from CI or from the dashboard is watchable through it exactly as an
     // MCP-started one is, because a viewer attaches and never owns. Its runId is on the INPUT.
     ui: Object.freeze({ resource: 'live-run', runIdFrom: 'input' } as const),
+  }),
+  // 2026-09-28, 431 D-05/D-06/D-07: one completed run's whole reads. The overview is the map, run
+  // knowledge the whole used-and-learned projection unchanged, and evidence one addressed document
+  // or blob. All three carry the result-size hint.
+  Object.freeze({
+    name: 'agent_qa_get_run_overview',
+    ops: Object.freeze(['runs.overview']),
+    kind: 'read',
+    maxResultSizeChars: RUN_READ_MAX_RESULT_SIZE_CHARS,
+  }),
+  Object.freeze({
+    name: 'agent_qa_get_run_knowledge',
+    ops: Object.freeze(['runs.knowledge']),
+    kind: 'read',
+    maxResultSizeChars: RUN_READ_MAX_RESULT_SIZE_CHARS,
+  }),
+  Object.freeze({
+    name: 'agent_qa_get_run_evidence',
+    ops: Object.freeze(['runs.evidence', 'runs.artifact']),
+    kind: 'read',
+    discriminant: TOOL_FOLD_DISCRIMINANT,
+    maxResultSizeChars: RUN_READ_MAX_RESULT_SIZE_CHARS,
   }),
   Object.freeze({
     name: 'agent_qa_list_proposals',
@@ -495,6 +619,12 @@ export const AGENT_QA_COMPOSED_CONTRACTS: Readonly<Record<string, ToolOpContract
   agent_qa_propose_knowledge_change: Object.freeze({
     input: KnowledgeChangeFoldInputSchema,
     output: KnowledgeChangeFoldOutputSchema,
+  }),
+  // 2026-09-28 (431-04 D-07): the evidence fold, composed in the schema package from both arms'
+  // canonical contracts and routed by full op id.
+  agent_qa_get_run_evidence: Object.freeze({
+    input: RunsEvidenceFoldInputSchema,
+    output: RunsEvidenceFoldOutputContract,
   }),
   agent_qa_get_entity: Object.freeze({
     input: EntitiesResolveInputSchema,
@@ -642,8 +772,17 @@ export interface UnprojectedOp {
   // WIDENED AGAIN on 2026-09-15 (423-21, D-04) for `runs.evidence`, on the same reasoning: 397
   // could not have ruled on an op registered in 423. Membership is spelled by op id in the guard.
   // WIDENED AGAIN on 2026-09-25 (428 D-07) for `editor.liveurl`, on the same reasoning.
-  readonly adjudication: '397' | '398' | '405' | '407' | '408' | '423' | '428'
+  // NARROWED on 2026-09-28 (431-04 D-10): `'407'` and `'423'` LEAVE. Their only members,
+  // `runs.knowledge` and `runs.evidence`, are projected, and a member-less literal is the hole the
+  // guard's non-vacuity check exists to close (the 408 re-stamp precedent). Their rulings live on in
+  // `PROJECTED_RULING_ADDENDA`.
+  readonly adjudication: UnprojectedAdjudication
 }
+
+/** The closed adjudicator vocabulary as a runtime tuple; the type above is derived from it. */
+export const UNPROJECTED_ADJUDICATIONS = Object.freeze(['397', '398', '405', '408', '428'] as const)
+
+export type UnprojectedAdjudication = (typeof UNPROJECTED_ADJUDICATIONS)[number]
 
 export const UNPROJECTED_OPS: readonly UnprojectedOp[] = Object.freeze([
   Object.freeze({
@@ -702,21 +841,6 @@ export const UNPROJECTED_OPS: readonly UnprojectedOp[] = Object.freeze([
     adjudication: '397',
   }),
   Object.freeze({
-    opId: 'runs.artifact',
-    reason:
-      'D-12/D-13 (dated 2026-08-27, 405-05): not a mid-flight workflow read per D-02 — this '
-      + 'resolves ONE completed run\'s content-addressed evidence blob, and its result is a '
-      + 'base64 body. A `tools/call` round trip is the wrong carriage for bytes: a conversation '
-      + 'cannot render a PNG, and a tool that returned one would spend a context window on a '
-      + 'payload no reader can read. The two HTTP doors are its carriage, and 408\'s embed is the '
-      + 'surface that renders it. Deferred as its own seam, not omitted. '
-      + 'Phase 424 (dated 2026-09-20): the recording fact rides runs.detail; runs.artifact '
-      + 'answers a bounded slice when range is supplied; pulling a whole recording through unary '
-      + 'base64 is permitted and not recommended; no recording tool is projected because the '
-      + 'MX ceiling of 22 is fully allocated.',
-    adjudication: '405',
-  }),
-  Object.freeze({
     opId: 'runs.detail',
     reason:
       'D-03 (dated 2026-08-27, 405-01): not a mid-flight workflow read per D-02 — this is a '
@@ -725,32 +849,6 @@ export const UNPROJECTED_OPS: readonly UnprojectedOp[] = Object.freeze([
       + 'The whole projection of a run is also a large one-shot payload with no shape a '
       + '`tools/call` round trip wants. Deferred as its own seam, not omitted.',
     adjudication: '405',
-  }),
-  Object.freeze({
-    opId: 'runs.knowledge',
-    reason:
-      'D-05 (dated 2026-08-29, 407-01): not a mid-flight workflow read per D-02 — this is a '
-      + "COMPLETED run's used-and-learned projection, read by the durable Knowledge tab, and it is "
-      + 'unprojected on exactly the footing its sibling `runs.detail` is. It carries every step\'s '
-      + "three served brief channels, each one's serve-time retrieval trace and the truncated "
-      + 'candidate ledger beside it, so it is a large one-shot payload with no shape a '
-      + '`tools/call` round trip wants — larger than the step tree, not smaller. A planner '
-      + 'mid-flight also has no use for what a FINISHED run was briefed with; the entity door '
-      + "already renders a record's card and the digest carries what triage needs. Deferred as its "
-      + 'own seam, not omitted.',
-    adjudication: '407',
-  }),
-  Object.freeze({
-    opId: 'runs.evidence',
-    reason:
-      'D-04 (dated 2026-09-15, 423-21): not a mid-flight workflow read per D-02 — this is one '
-      + "COMPLETED run step's parsed evidence document (console, network, variables, accessibility "
-      + 'or ARIA), read by the dashboard evidence tabs, and it is unprojected on exactly the footing '
-      + 'its sibling `runs.detail` is. A network document alone may carry hundreds of records, so it '
-      + 'is a large one-shot payload with no shape a `tools/call` round trip wants, and a planner '
-      + 'mid-flight has no use for a finished step\'s captured traffic. The raw SHA bytes stay on '
-      + '`runs.artifact` and the two HTTP doors. Deferred as its own seam, not omitted.',
-    adjudication: '423',
   }),
   Object.freeze({
     opId: 'runs.liveurl',
@@ -822,31 +920,6 @@ export const UNPROJECTED_OPS: readonly UnprojectedOp[] = Object.freeze([
     reason: 'not a mid-flight workflow read per D-02; 397 adjudicates',
     adjudication: '397',
   }),
-  Object.freeze({
-    opId: 'knowledge.brief.why',
-    reason: 'not a mid-flight workflow read per D-02; 397 adjudicates',
-    adjudication: '397',
-  }),
-  Object.freeze({
-    opId: 'knowledge.bundles.list',
-    reason: 'not a mid-flight workflow read per D-02; 397 adjudicates',
-    adjudication: '397',
-  }),
-  Object.freeze({
-    opId: 'knowledge.record.show',
-    reason: 'not a mid-flight workflow read per D-02; 397 adjudicates',
-    adjudication: '397',
-  }),
-  Object.freeze({
-    opId: 'knowledge.records.diff',
-    reason: 'not a mid-flight workflow read per D-02; 397 adjudicates',
-    adjudication: '397',
-  }),
-  Object.freeze({
-    opId: 'knowledge.records.inspect',
-    reason: 'not a mid-flight workflow read per D-02; 397 adjudicates',
-    adjudication: '397',
-  }),
   // 398 D-09 (dated 2026-08-17): the twentieth entry, and the FIRST op ever dispositioned here that
   // 397 did not rule on — because it did not exist then. Its exclusion is argued rather than scoped,
   // which is why it does not take the mid-flight line: `agent.explain` answers "what can you do",
@@ -864,3 +937,130 @@ export const UNPROJECTED_OPS: readonly UnprojectedOp[] = Object.freeze([
     adjudication: '398',
   }),
 ] as const satisfies readonly UnprojectedOp[])
+
+/**
+ * An op that LEFT `UNPROJECTED_OPS` for the projected side, with the ruling it was held under.
+ *
+ * 2026-09-28 (431-04 D-10). The ruling is kept verbatim and the dated 431 addendum says what
+ * answered it, so the history a reader chased through the scoping note does not vanish when the
+ * entry moves. `ruledBy` is historical provenance, not the live adjudicator vocabulary.
+ */
+export interface ProjectedRuling {
+  readonly opId: string
+  readonly ruledBy: string
+  readonly ruling: string
+  readonly addendum: string
+}
+
+export const PROJECTED_RULING_ADDENDA: readonly ProjectedRuling[] = Object.freeze([
+  Object.freeze({
+    opId: 'knowledge.bundles.list',
+    ruledBy: '397',
+    ruling: 'not a mid-flight workflow read per D-02; 397 adjudicates',
+    addendum:
+      'D-01/D-04 (dated 2026-09-28, 431-04): projected as `agent_qa_list_knowledge_bundles`. A coding agent in a fresh '
+      + 'workspace reads knowledge only through structured channels, so the committed-knowledge '
+      + 'reads are served here rather than left to files; this supersedes the 2026-09-14 decision '
+      + 'that projected the six safe reads only, whose no-search half stands (D-09).',
+  }),
+  Object.freeze({
+    opId: 'knowledge.records.inspect',
+    ruledBy: '397',
+    ruling: 'not a mid-flight workflow read per D-02; 397 adjudicates',
+    addendum:
+      'D-01/D-04 (dated 2026-09-28, 431-04): projected as `agent_qa_inspect_knowledge_records`. A coding agent in a fresh '
+      + 'workspace reads knowledge only through structured channels, so the committed-knowledge '
+      + 'reads are served here rather than left to files; this supersedes the 2026-09-14 decision '
+      + 'that projected the six safe reads only, whose no-search half stands (D-09).',
+  }),
+  Object.freeze({
+    opId: 'knowledge.records.diff',
+    ruledBy: '397',
+    ruling: 'not a mid-flight workflow read per D-02; 397 adjudicates',
+    addendum:
+      'D-01/D-04 (dated 2026-09-28, 431-04): projected as `agent_qa_diff_knowledge_records`. A coding agent in a fresh '
+      + 'workspace reads knowledge only through structured channels, so the committed-knowledge '
+      + 'reads are served here rather than left to files; this supersedes the 2026-09-14 decision '
+      + 'that projected the six safe reads only, whose no-search half stands (D-09).',
+  }),
+  Object.freeze({
+    opId: 'knowledge.record.show',
+    ruledBy: '397',
+    ruling: 'not a mid-flight workflow read per D-02; 397 adjudicates',
+    addendum:
+      'D-01/D-04 (dated 2026-09-28, 431-04): projected as `agent_qa_show_knowledge_record`. A coding agent in a fresh '
+      + 'workspace reads knowledge only through structured channels, so the committed-knowledge '
+      + 'reads are served here rather than left to files; this supersedes the 2026-09-14 decision '
+      + 'that projected the six safe reads only, whose no-search half stands (D-09).',
+  }),
+  Object.freeze({
+    opId: 'knowledge.brief.why',
+    ruledBy: '397',
+    ruling: 'not a mid-flight workflow read per D-02; 397 adjudicates',
+    addendum:
+      'D-01/D-04 (dated 2026-09-28, 431-04): projected as `agent_qa_explain_brief`. A coding agent in a fresh '
+      + 'workspace reads knowledge only through structured channels, so the committed-knowledge '
+      + 'reads are served here rather than left to files; this supersedes the 2026-09-14 decision '
+      + 'that projected the six safe reads only, whose no-search half stands (D-09).',
+  }),
+  Object.freeze({
+    opId: 'runs.knowledge',
+    ruledBy: '407',
+    ruling:
+      'D-05 (dated 2026-08-29, 407-01): not a mid-flight workflow read per D-02 — this is a '
+      + "COMPLETED run's used-and-learned projection, read by the durable Knowledge tab, and it is "
+      + 'unprojected on exactly the footing its sibling `runs.detail` is. It carries every step\'s '
+      + "three served brief channels, each one's serve-time retrieval trace and the truncated "
+      + 'candidate ledger beside it, so it is a large one-shot payload with no shape a '
+      + '`tools/call` round trip wants — larger than the step tree, not smaller. A planner '
+      + 'mid-flight also has no use for what a FINISHED run was briefed with; the entity door '
+      + "already renders a record's card and the digest carries what triage needs. Deferred as its "
+      + 'own seam, not omitted.',
+    addendum:
+      'D-05 (dated 2026-09-28, 431-04): projected as `agent_qa_get_run_knowledge`, answering the '
+      + 'whole `runs.knowledge` projection unchanged; the owner declined a step filter. The size '
+      + 'objection above is answered in these terms: `agent_qa_get_run_overview` is the entry point '
+      + 'that maps a run without bodies, `agent_qa_explain_brief` and '
+      + '`agent_qa_show_knowledge_record` are the drill-down, and the tool carries a '
+      + '100000-character result-size hint so a host keeps the one-shot answer whole.',
+  }),
+  Object.freeze({
+    opId: 'runs.evidence',
+    ruledBy: '423',
+    ruling:
+      'D-04 (dated 2026-09-15, 423-21): not a mid-flight workflow read per D-02 — this is one '
+      + "COMPLETED run step's parsed evidence document (console, network, variables, accessibility "
+      + 'or ARIA), read by the dashboard evidence tabs, and it is unprojected on exactly the footing '
+      + 'its sibling `runs.detail` is. A network document alone may carry hundreds of records, so it '
+      + 'is a large one-shot payload with no shape a `tools/call` round trip wants, and a planner '
+      + 'mid-flight has no use for a finished step\'s captured traffic. The raw SHA bytes stay on '
+      + '`runs.artifact` and the two HTTP doors. Deferred as its own seam, not omitted.',
+    addendum:
+      'D-07 (dated 2026-09-28, 431-04): projected as the `runs.evidence` arm of '
+      + '`agent_qa_get_run_evidence`. A caller asks for ONE step document by the exact address '
+      + '`agent_qa_get_run_overview` supplies, so the answer is one addressed document rather than '
+      + "a run's captured traffic. Masking is unchanged: the op stays on the cold read-scope "
+      + 'allowlist. The tool carries the 100000-character result-size hint.',
+  }),
+  Object.freeze({
+    opId: 'runs.artifact',
+    ruledBy: '405',
+    ruling:
+      'D-12/D-13 (dated 2026-08-27, 405-05): not a mid-flight workflow read per D-02 — this '
+      + 'resolves ONE completed run\'s content-addressed evidence blob, and its result is a '
+      + 'base64 body. A `tools/call` round trip is the wrong carriage for bytes: a conversation '
+      + 'cannot render a PNG, and a tool that returned one would spend a context window on a '
+      + 'payload no reader can read. The two HTTP doors are its carriage, and 408\'s embed is the '
+      + 'surface that renders it. Deferred as its own seam, not omitted. '
+      + 'Phase 424 (dated 2026-09-20): the recording fact rides runs.detail; runs.artifact '
+      + 'answers a bounded slice when range is supplied; pulling a whole recording through unary '
+      + 'base64 is permitted and not recommended; no recording tool is projected because the '
+      + 'MX ceiling of 22 is fully allocated.',
+    addendum:
+      'D-07 (dated 2026-09-28, 431-04): projected as the `runs.artifact` arm of '
+      + '`agent_qa_get_run_evidence`. The blob is addressed by the sha the overview supplies, with no '
+      + 'step-to-sha lookup inside the tool, and the rendering objection is answered by the image '
+      + 'result arm 431-05 adds. The Phase 424 note that the MX ceiling of 22 was fully allocated is '
+      + 'superseded: the ceiling is 24 (D-01).',
+  }),
+] as const satisfies readonly ProjectedRuling[])

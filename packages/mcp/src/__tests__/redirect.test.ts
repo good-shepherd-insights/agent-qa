@@ -102,6 +102,16 @@ const FIXTURE_OP_SCOPES: Readonly<Record<string, readonly FunctionScope[]>> = Ob
   'runs.digest': ['read'],
   'proposals.list': ['read'],
   'proposals.show': ['read'],
+  // 2026-09-28, 431-04 D-04: the eight discovery reads are read-tier.
+  'knowledge.bundles.list': ['read'],
+  'knowledge.records.inspect': ['read'],
+  'knowledge.records.diff': ['read'],
+  'knowledge.record.show': ['read'],
+  'knowledge.brief.why': ['read'],
+  'runs.knowledge': ['read'],
+  'runs.overview': ['read'],
+  'runs.evidence': ['read'],
+  'runs.artifact': ['read'],
 })
 
 /** Every op any shipped projection names — the fixture's own denominator, read from the mapping. */

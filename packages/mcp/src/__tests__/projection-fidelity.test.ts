@@ -246,7 +246,9 @@ describe('the advertised schema equals the function layer\'s own projection (D-1
     // 2026-09-15 (423-21 D-18): the two feedback read tools add one input and one output each.
     // 2026-09-28 (431-03): `agent_qa_list_runs` leaves the degradation list and its output is
     // compared too, through the 2025-11-25 codec's `{ result }` wrap around its array root.
-    expect(checked).toBe(38)
+    // 2026-09-28 (431-04 D-04/D-07): seven single reads add one input and one output each (14), and
+    // the evidence fold adds two arm inputs and one output (3).
+    expect(checked).toBe(55)
   })
 
   // IDENTITY, NOT AGREEMENT — and this cell exists because the one above it was measured BLIND to
@@ -281,7 +283,8 @@ describe('the advertised schema equals the function layer\'s own projection (D-1
       checked += 2
     }
     // 10 non-union, non-apply tools contributing both sides (423-21 D-18 adds the two feedback reads).
-    expect(checked).toBe(20)
+    // 2026-09-28 (431-04 D-04): the seven single discovery reads make it 17.
+    expect(checked).toBe(34)
   })
 
   // Pitfall 3, and the field-level half of D-16's "descriptions live on the zod schemas" clause.
