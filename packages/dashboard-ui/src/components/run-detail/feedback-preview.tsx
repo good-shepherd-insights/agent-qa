@@ -128,7 +128,7 @@ export function FeedbackPreview({
             </div>
           ) : state === 'refused' && read !== undefined && isPreviewRefusal(read) ? (
             <div data-preview-refusal={read.kind}>
-              <DenialBlock neutralReason={previewRefusalText(read)} remedies={[]} />
+              <DenialBlock neutralReason={previewRefusalText(read)} />
             </div>
           ) : state === 'failed' && failure !== undefined ? (
             <FailedRead failure={failure} onRetry={onRetry} />
@@ -144,7 +144,7 @@ const ARM_BLOCK_CLASS = 'rounded-md bg-muted/40 px-3 py-2 text-xs'
 function FailedRead({ failure, onRetry }: { failure: FeedbackReadFailure; onRetry: (() => void) | undefined }) {
   return (
     <div className="space-y-2">
-      <DenialBlock neutralReason={PREVIEW_READ_FAILED_TEXT(feedbackReadFailureReason(failure))} remedies={[]} />
+      <DenialBlock neutralReason={PREVIEW_READ_FAILED_TEXT(feedbackReadFailureReason(failure))} />
       <Button
         variant="outline"
         size="sm"

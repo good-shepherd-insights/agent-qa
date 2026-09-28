@@ -315,7 +315,7 @@ export function FeedbackComposer({
         )}
         {noUniqueAddress ? (
           <div data-feedback-no-address>
-            <DenialBlock neutralReason={NO_UNIQUE_ADDRESS_TEXT} remedies={[]} />
+            <DenialBlock neutralReason={NO_UNIQUE_ADDRESS_TEXT} />
           </div>
         ) : null}
         <fieldset className="space-y-2">
@@ -431,7 +431,7 @@ export function FeedbackComposer({
         )}
         {denial === undefined ? null : (
           <div data-feedback-denied role="alert">
-            <DenialBlock neutralReason={denial.reason} remedies={denial.remedies} />
+            <DenialBlock neutralReason={denial.reason} />
           </div>
         )}
         {approval !== undefined && !approval.settled ? null : (

@@ -16,8 +16,7 @@
 //      count, not result count (`result-render.ts`; 399.1 gap 2).
 //   3. The COMPLETE masked payload renders EXPANDED by default and registry folds render ABOVE it.
 //      Folds add legibility and can never suppress (399.1 D-04, D-14). Collapse is a user toggle.
-//   4. A denial renders the remedies THIS surface can take, through the one published projection
-//      (`remediesRenderableBy`), and nothing it cannot (D-15).
+//   4. A denial renders its neutral reason only (430 D-06).
 //
 // AND ONE THING IT DELIBERATELY DOES NOT DO: it does not unmask. The bytes reaching this component
 // crossed `unmaskForHumanOutput` once already, at the door's own emit, because the masking context
@@ -282,7 +281,7 @@ function TranscriptEntry({
         />
       )
     case "denial":
-      return <DenialBlock neutralReason={entry.denial.neutralReason} remedies={entry.denial.remedies} />
+      return <DenialBlock neutralReason={entry.denial.neutralReason} />
     case "answer":
       return (
         <div data-entry="answer" className="rounded-lg bg-muted/40 px-3 py-2">
