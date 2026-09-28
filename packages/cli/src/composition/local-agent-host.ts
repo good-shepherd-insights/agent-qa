@@ -651,28 +651,18 @@ export interface ComposeCliLocalAgentInput {
   /**
    * Notified after one session event has been appended (400-01, D-03), passed through untouched.
    *
-   * The dashboard door binds it so a browser can watch a turn happen; nothing else does, and an
-   * absent observer is the shipped state for every other CLI invocation. See the shared
-   * composition's own field for why this is an observer over the one log rather than a
-   * replaceable log.
+   * `agent-qa chat` binds it to learn which session is active; an absent observer is the shipped
+   * state for every other CLI invocation. See the shared composition's own field for why this is an
+   * observer over the one log rather than a replaceable log.
    */
   observeSessionEvent?: ComposeLocalAgentInput['observeSessionEvent']
-  /**
-   * Which door opened the sessions this host writes (400-03, D-04), passed through untouched.
-   *
-   * The dashboard door supplies `'dashboard'`; `agent-qa chat` supplies nothing, which is the
-   * pre-400 population's own posture and keeps the CLI's header bytes exactly as they were. See
-   * the shared composition's own field for why the tag lives on the header rather than on events.
-   */
-  sessionSurface?: ComposeLocalAgentInput['sessionSurface']
   /**
    * Which door this host MINTS PROPOSALS as (400-05), passed through untouched.
    *
    * Each door supplies its own `FunctionCaller.surface` — the same record it dispatches with, never
    * a second spelling of the word. Absent records nothing, which is honest and is what the reader
    * calls `unrecorded`; it can never mis-name a door, which is the property that makes an omission
-   * here safe. See the shared composition's own field for why this is the seam and why it is not
-   * `sessionSurface`.
+   * here safe. See the shared composition's own field for why this is the seam.
    */
   mintingSurface?: ComposeLocalAgentInput['mintingSurface']
   /**
@@ -3977,9 +3967,6 @@ export function composeCliLocalAgent(input: ComposeCliLocalAgentInput): LocalAge
     ...(input.observeSessionEvent === undefined
       ? {}
       : { observeSessionEvent: input.observeSessionEvent }),
-    // 400-03, D-04: the session surface tag, conditionally spread on the idiom above so a host
-    // that names no surface writes the untagged header every pre-400 file carries.
-    ...(input.sessionSurface === undefined ? {} : { sessionSurface: input.sessionSurface }),
     ...(input.mintingSurface === undefined ? {} : { mintingSurface: input.mintingSurface }),
     // D-18: when a live daemon holds the writer lease, this host hands it the SAME
     // `knowledge.proposal.apply` envelope over the SAME 386 socket every other capability crosses,
