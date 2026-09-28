@@ -281,12 +281,13 @@ ALLOWED_A2
 # is a cell that observes the planted capability's own effect (a wrong payload, or a refusal that
 # stopped refusing), not a cell knocked over sideways. A name added because a leg happened to red it
 # would be the widening this script forbids; a name added because the suite grew a cell that detects
-# the leg is the measurement the script exists to take. All six must red and nothing else may.
+# the leg is the measurement the script exists to take. All four must red and nothing else may.
+#
+# 2026-09-28 (430-05): the two DASHBOARD titles left with the roster's dashboard row (430 D-03), so
+# B's fan-out is four. Text only: this script is not registered in package.json and was not run.
 cat > "$WORK/allowed.B" <<'ALLOWED_B'
 the parity suite ranges the registry census over every rostered surface refuses at the CHAT SURFACE WALL for every capability, through its own composed dispatch
 the parity suite ranges the registry census over every rostered surface drives a capability through the chat surface's own composed dispatch, model-free
-the parity suite ranges the registry census over every rostered surface refuses at the DASHBOARD SURFACE WALL for every capability, through its own dispatch
-the parity suite ranges the registry census over every rostered surface drives a capability through the dashboard door's own composed dispatch, model-free
 the chat render anchors (399.1, G-399-2) renders a SECOND op's payload too, on the read door chat advertises itself
 the per-surface render anchors (399.1 D-08): in-process ≡ shipped chat: the shipped binary prints the bytes this process renders from its own filed result
 ALLOWED_B

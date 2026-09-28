@@ -333,9 +333,13 @@ ALLOWED_CENSUS
 # fn cells stay green, because `RENDER_DOORS` is its own declared table rather than a projection of
 # the roster. That is a real asymmetry between the two files and it is named here rather than left
 # for somebody to discover under a mutation they cared about.
+#
+# 2026-09-28 (430-05): the title and the ROSTER needle below are re-spelled for the four-door roster
+# (430 D-03), fixing drift that predates 430. Text only: this script is not registered in
+# package.json and was not run.
 cat > "$WORK/allowed.ROSTER" <<'ALLOWED_ROSTER'
 the parity suite ranges the registry census over every rostered surface joins every row fn expectation to the live fn listing, in both directions
-the parity suite ranges the registry census over every rostered surface pins the roster at the three surfaces that exist today
+the parity suite ranges the registry census over every rostered surface pins the roster at the four surfaces that exist today
 ALLOWED_ROSTER
 
 # ── The needles ─────────────────────────────────────────────────────────────────────────────────
@@ -355,7 +359,7 @@ needle_of () {
     # The op the projection lied about, by name.
     CENSUS)  echo "runs.list" ;;
     # The door the roster stopped naming, in the pin's own diff.
-    ROSTER)  echo "[ 'chat', 'mcp', 'fn' ]" ;;
+    ROSTER)  echo "[ 'chat', 'mcp', 'run-service' ]" ;;
   esac
 }
 

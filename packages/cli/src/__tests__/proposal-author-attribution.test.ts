@@ -289,7 +289,6 @@ describe('a config-apply commit names the surface that MINTED the proposal', () 
       chat: 'chat.ts',
       mcp: 'mcp.ts',
       fn: 'fn.ts',
-      dashboard: 'dashboard.ts',
     }
     // 402-07: A DOOR THAT CANNOT MINT A PROPOSAL AT ALL, and the honest answer for it is not a
     // module name. The authed run service reaches `runs.start` and nothing else — its caller is
@@ -304,6 +303,16 @@ describe('a config-apply commit names the surface that MINTED the proposal', () 
       'run-service': RUN_SERVICE_GRANTED_SCOPES,
     }
     expect(SURFACE_ROSTER.length).toBeGreaterThan(0)
+    // 2026-09-28 (430 D-03): the module map is a closed set pinned to the roster, so an entry for a
+    // door that left the roster, or a rostered door with no module, reds here by name.
+    expect(
+      Object.keys(MODULE_FOR_DOOR).sort(),
+      'MODULE_FOR_DOOR must name exactly the rostered doors that CANNOT_MINT does not exempt',
+    ).toEqual(
+      SURFACE_ROSTER.map((entry) => entry.id)
+        .filter((id) => CANNOT_MINT[id] === undefined)
+        .sort(),
+    )
     for (const entry of SURFACE_ROSTER) {
       const exemptGrant = CANNOT_MINT[entry.id]
       if (exemptGrant !== undefined) {
