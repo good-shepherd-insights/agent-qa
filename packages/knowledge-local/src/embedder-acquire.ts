@@ -297,8 +297,8 @@ async function probeCapability({
 >> & Pick<ResolveEmbedderCapabilityOptions, 'probes'>): Promise<CapabilityOutcome> {
   const discoverWorker = probes?.discoverWorker ?? discoverEmbedderWorker
   const nativeFactory = probes?.createNativeEmbedder ?? createNativeEmbedder
-  const floorFactory = probes?.createFloorEmbedder ?? (() => {
-    loadFloorAssets()
+  const floorFactory = probes?.createFloorEmbedder ?? (async () => {
+    await loadFloorAssets()
     return createFloorEmbedder()
   })
 

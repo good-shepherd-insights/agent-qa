@@ -111,9 +111,9 @@ describe('static floor embedder', () => {
     }
   })
 
-  it('memoizes verified default assets for the process lifetime', () => {
-    const first = loadFloorAssets()
-    const second = loadFloorAssets()
+  it('memoizes verified default assets for the process lifetime', async () => {
+    const first = await loadFloorAssets()
+    const second = await loadFloorAssets()
 
     expect(second).toBe(first)
     expect(first).toMatchObject({ vocabularySize: 63_091, dimension: 512 })
@@ -129,7 +129,7 @@ describe('static floor embedder', () => {
     )
   })
 
-  it('refuses a digest-corrupt binary with a typed load error', () => {
+  it('refuses a digest-corrupt binary with a typed load error', async () => {
     const assetsDir = copyAssets()
     const binaryPath = join(assetsDir, 'potion-retrieval-32m.i8bin')
     const file = openSync(binaryPath, 'r+')
@@ -143,13 +143,13 @@ describe('static floor embedder', () => {
       closeSync(file)
     }
 
-    expect(() => loadFloorAssets({ assetsDir })).toThrowError(FloorAssetLoadError)
-    expect(() => loadFloorAssets({ assetsDir })).toThrow(
+    await expect(loadFloorAssets({ assetsDir })).rejects.toBeInstanceOf(FloorAssetLoadError)
+    await expect(loadFloorAssets({ assetsDir })).rejects.toThrow(
       expect.objectContaining({ code: 'digest-mismatch' }),
     )
   })
 
-  it('rejects an invalid fixed-layout header even when its digest is updated', () => {
+  it('rejects an invalid fixed-layout header even when its digest is updated', async () => {
     const assetsDir = copyAssets()
     const binaryName = 'potion-retrieval-32m.i8bin'
     const binaryPath = join(assetsDir, binaryName)
@@ -164,7 +164,7 @@ describe('static floor embedder', () => {
     manifest.files[binaryName]!.sha256 = createHash('sha256').update(bytes).digest('hex')
     writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`)
 
-    expect(() => loadFloorAssets({ assetsDir })).toThrow(
+    await expect(loadFloorAssets({ assetsDir })).rejects.toThrow(
       expect.objectContaining({ code: 'binary-invalid' }),
     )
   })

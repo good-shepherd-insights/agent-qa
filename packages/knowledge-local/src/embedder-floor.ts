@@ -3,7 +3,7 @@ import { existsSync, readFileSync, statSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-import { Tokenizer } from '@huggingface/tokenizers'
+import type { Tokenizer } from '@huggingface/tokenizers'
 
 import type { EmbedderPort } from './embedder-port.js'
 
@@ -33,6 +33,7 @@ export type FloorAssetLoadErrorCode =
   | 'digest-mismatch'
   | 'binary-invalid'
   | 'tokenizer-invalid'
+  | 'tokenizer-runtime-unavailable'
 
 export class FloorAssetLoadError extends Error {
   readonly code: FloorAssetLoadErrorCode
@@ -92,7 +93,8 @@ export interface FloorAssetLoadOptions {
   maxTokens?: number
 }
 
-let memoizedDefaultAssets: FloorAssets | undefined
+let memoizedDefaultAssets: Promise<FloorAssets> | undefined
+let tokenizerRuntime: Promise<typeof import('@huggingface/tokenizers')> | undefined
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
@@ -310,7 +312,22 @@ function parseBinary(bytes: Buffer): Omit<FloorAssets, 'tokenizer'> {
   return { vocabularySize, dimension, scales, weights }
 }
 
-function parseTokenizer(bytes: Buffer): Tokenizer {
+// D-09: the runtime package loads at the first acquisition, never at import, so a host that only
+// reads never resolves it. A failed load is dropped so the next acquisition retries.
+function loadTokenizerRuntime(): Promise<typeof import('@huggingface/tokenizers')> {
+  tokenizerRuntime ??= import('@huggingface/tokenizers').catch((error: unknown) => {
+    tokenizerRuntime = undefined
+    throw new FloorAssetLoadError(
+      'tokenizer-runtime-unavailable',
+      `could not load the floor tokenizer runtime: ${errorMessage(error)}`,
+      { cause: error },
+    )
+  })
+  return tokenizerRuntime
+}
+
+async function parseTokenizer(bytes: Buffer): Promise<Tokenizer> {
+  const { Tokenizer } = await loadTokenizerRuntime()
   try {
     const tokenizerJson: unknown = JSON.parse(bytes.toString('utf8'))
     if (!isRecord(tokenizerJson)) throw new TypeError('tokenizer.json must contain an object')
@@ -324,7 +341,7 @@ function parseTokenizer(bytes: Buffer): Tokenizer {
   }
 }
 
-function loadFloorAssetsFrom(assetsDir: string): FloorAssets {
+async function loadFloorAssetsFrom(assetsDir: string): Promise<FloorAssets> {
   const manifest = readManifest(assetsDir)
   const binaryEntry = manifest.files[BINARY_FILE]!
   const tokenizerEntry = manifest.files[TOKENIZER_FILE]!
@@ -348,21 +365,20 @@ function loadFloorAssetsFrom(assetsDir: string): FloorAssets {
   const tokenizerBytes = readAndVerifyFile(assetsDir, TOKENIZER_FILE, tokenizerEntry)
   readAndVerifyFile(assetsDir, GOLDEN_FILE, goldenEntry)
 
-  return {
-    ...parseBinary(binaryBytes),
-    tokenizer: parseTokenizer(tokenizerBytes),
-  }
+  const binary = parseBinary(binaryBytes)
+  return { ...binary, tokenizer: await parseTokenizer(tokenizerBytes) }
 }
 
-export function loadFloorAssets(options: FloorAssetLoadOptions = {}): FloorAssets {
-  if (options.assetsDir === undefined && memoizedDefaultAssets !== undefined) {
-    return memoizedDefaultAssets
-  }
-  const assetsDir =
-    options.assetsDir ?? join(packageRootFromImportMeta(), 'assets', ASSET_DIRECTORY)
-  const assets = loadFloorAssetsFrom(assetsDir)
-  if (options.assetsDir === undefined) memoizedDefaultAssets = assets
-  return assets
+export function loadFloorAssets(options: FloorAssetLoadOptions = {}): Promise<FloorAssets> {
+  if (options.assetsDir !== undefined) return loadFloorAssetsFrom(options.assetsDir)
+  if (memoizedDefaultAssets !== undefined) return memoizedDefaultAssets
+  const pending = (async () =>
+    loadFloorAssetsFrom(join(packageRootFromImportMeta(), 'assets', ASSET_DIRECTORY)))()
+  memoizedDefaultAssets = pending
+  pending.catch(() => {
+    if (memoizedDefaultAssets === pending) memoizedDefaultAssets = undefined
+  })
+  return pending
 }
 
 function embed(
@@ -421,10 +437,10 @@ export function createFloorEmbedder(options: FloorAssetLoadOptions = {}): Embedd
   }
   return {
     async embedDocument(rendering: string): Promise<Float32Array> {
-      return embed(loadFloorAssets(options), rendering, maxTokens)
+      return embed(await loadFloorAssets(options), rendering, maxTokens)
     },
     async embedQuery(rendering: string): Promise<Float32Array> {
-      return embed(loadFloorAssets(options), rendering, maxTokens)
+      return embed(await loadFloorAssets(options), rendering, maxTokens)
     },
   }
 }
