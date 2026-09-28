@@ -1,6 +1,7 @@
 import { access, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { locateRunsDbPath } from '@vostride/agent-qa-core'
 import { afterEach, describe, expect, it } from 'vitest'
 import { resolveDashboardDbPath } from '../db/runtime-db-path.js'
 
@@ -60,5 +61,25 @@ describe('resolveDashboardDbPath', () => {
 
     await expect(readFile(legacyPath, 'utf-8')).resolves.toBe('legacy-runs')
     await expect(readFile(defaultPath, 'utf-8')).resolves.toBe('current-runs')
+  })
+})
+
+describe('locateRunsDbPath', () => {
+  it('answers what resolveDashboardDbPath would, returning a legacy database in place', async () => {
+    const workspaceDir = await createWorkspace()
+    const legacyPath = join(workspaceDir, '.agent-qa', 'dashboard.db')
+    const defaultPath = join(workspaceDir, '.agent-qa', 'runs.db')
+
+    expect(locateRunsDbPath(workspaceDir)).toBe(defaultPath)
+    expect(locateRunsDbPath(workspaceDir, ' custom/runs.db ')).toBe(join(workspaceDir, 'custom', 'runs.db'))
+
+    await mkdir(join(workspaceDir, '.agent-qa'), { recursive: true })
+    await writeFile(legacyPath, 'legacy-runs')
+    expect(locateRunsDbPath(workspaceDir)).toBe(legacyPath)
+    await expect(readFile(legacyPath, 'utf-8')).resolves.toBe('legacy-runs')
+    await expect(access(defaultPath)).rejects.toMatchObject({ code: 'ENOENT' })
+
+    await writeFile(defaultPath, 'current-runs')
+    expect(locateRunsDbPath(workspaceDir)).toBe(defaultPath)
   })
 })

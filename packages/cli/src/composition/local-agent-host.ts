@@ -108,7 +108,7 @@ import {
   generateHookId,
   DEFAULT_AGENT_QA_AUTH_STATES_DIR,
   DEFAULT_AGENT_QA_CACHE_DIR,
-  DEFAULT_AGENT_QA_RUNS_DB_PATH,
+  locateRunsDbPath,
   parseTestFile,
   parseSuiteFile,
   normalizeAuthStateUse,
@@ -3778,17 +3778,19 @@ export function createChatConfirmPort(
   }
 }
 
-/** The runs database `agent-qa run` writes and `agent-qa dashboard` reads for this config. */
-function projectRunsDbPath(configPath: string): string {
-  let configured: unknown
+/**
+ * The runs database `agent-qa run` writes and `agent-qa dashboard` reads for this config, through
+ * `resolveConfig`'s merge, normalize and parse and the writer's resolver without its legacy rename.
+ * A config those steps refuse is one no run wrote under, so nothing is bound.
+ */
+function projectRunsDbPath(configPath: string): string | undefined {
   try {
-    const raw = parseYaml(readFileSync(configPath, 'utf8')) as { services?: { dashboard?: { dbPath?: unknown } } } | null
-    configured = raw?.services?.dashboard?.dbPath
+    const merged = mergeConfigs(parseYaml(readFileSync(configPath, 'utf8')) ?? {}, loadEnvOverrides(), {})
+    const config = AgentQaConfigSchema.parse(normalizeConfigForValidation(merged))
+    return locateRunsDbPath(dirname(resolve(configPath)), config.services?.dashboard?.dbPath)
   } catch {
-    configured = undefined
+    return undefined
   }
-  const dbPath = typeof configured === 'string' && configured.trim() !== '' ? configured.trim() : DEFAULT_AGENT_QA_RUNS_DB_PATH
-  return resolve(dirname(resolve(configPath)), dbPath)
 }
 
 export function composeCliLocalAgent(input: ComposeCliLocalAgentInput): LocalAgentHost & { trustPriorDisclosure: TrustPriorDisclosure } {
