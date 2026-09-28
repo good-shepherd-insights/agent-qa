@@ -627,6 +627,28 @@ function watchForEscapes(): { readonly escaped: unknown[]; readonly stop: () => 
   }
 }
 
+/** A well-formed run-confirm answer for a question nobody parked. */
+function unparkedAnswer(): string {
+  return JSON.stringify({
+    scopeId: mintRunTriggerConfirmScope(),
+    confirmId: 'confirm-430-16-never-parked',
+    answer: 'accept',
+  })
+}
+
+/**
+ * The router is still answering: a same-origin answer for a confirm nobody parked gets the router's
+ * own JSON refusal, which is only written by a door that is still dispatching.
+ */
+async function expectRouterAnswers(door: DoorFixture, message: string): Promise<void> {
+  const healthy = await driveAnswer(door.port, {
+    'content-type': 'application/json',
+    origin: `http://127.0.0.1:${String(door.port)}`,
+  }, unparkedAnswer())
+  expect(healthy.status, `${message} ${healthy.note ?? ''}`).toBe(404)
+  expect(JSON.parse(healthy.body)).toEqual({ error: 'Unknown or already-answered confirm' })
+}
+
 /** Let a rejection reach the process before a cell claims none did. */
 async function settleEscapes(): Promise<void> {
   await new Promise<void>((done) => setTimeout(done, 100))
@@ -692,8 +714,7 @@ describe('the fourth door outlives every malformed request a socket can carry (g
         .toBe(400)
       expect(JSON.parse(answered.body)).toEqual({ error: 'Invalid request URL' })
 
-      const healthy = await rawRequest(door.port, { method: 'GET', path: '/api/chat/capabilities' })
-      expect(healthy.status, 'the door stopped serving after the unparseable request line').toBe(200)
+      await expectRouterAnswers(door, 'the door stopped serving after the unparseable request line')
 
       await settleEscapes()
       expect(watch.escaped, 'an exception escaped the chat router').toEqual([])
@@ -703,28 +724,34 @@ describe('the fourth door outlives every malformed request a socket can carry (g
   })
 
   it('7d — a throwing SYNCHRONOUS arm is caught by the dispatch boundary', async () => {
+    let calls = 0
     const door = await openDoor({
       wrapHost: (host) => ({
         ...host,
-        listDeclarations: (): never => {
-          throw new Error('400-14 listing fault')
+        unmaskForDisplay: (text: string): string => {
+          calls += 1
+          if (calls === 1) throw new Error('430-16 unmask fault')
+          return host.unmaskForDisplay(text)
         },
       }),
     })
     const watch = watchForEscapes()
     try {
-      // `handleCapabilities` is SYNCHRONOUS, so there is no promise to `.catch` here: a throw goes
-      // straight out of the `request` listener and into `uncaughtException`. Only the `try` around
-      // the whole dispatch can answer this one, which is what makes this cell that guard's own.
-      const answered = await rawRequest(door.port, { method: 'GET', path: '/api/chat/capabilities' })
-      expect(answered.status, `the throwing listing never answered ${answered.note ?? ''}`).toBe(500)
+      // THE MEDIA-TYPE REFUSAL IS WRITTEN BY `dispatch` ITSELF, synchronously and before any
+      // handler runs, so the responder's unmask pass throws inside `dispatch` with no promise to
+      // `.catch`. Only the `try` around the whole dispatch can answer this one, which is what makes
+      // this cell that guard's own: without it the throw leaves the `request` listener as an
+      // `uncaughtException`.
+      const answered = await driveAnswer(door.port, {
+        'content-type': 'text/plain;charset=UTF-8',
+        origin: `http://127.0.0.1:${String(door.port)}`,
+      }, unparkedAnswer())
+      expect(answered.status, `the throwing refusal never answered ${answered.note ?? ''}`).toBe(500)
       expect(JSON.parse(answered.body)).toEqual({
         error: 'The request could not be completed [Error]',
       })
 
-      // And the door is still a door: a real turn still executes after it.
-      const healthy = await driveTurn(door.port, { 'content-type': 'application/json' })
-      expect(healthy.status, 'the door stopped serving after the throwing listing').toBe(200)
+      await expectRouterAnswers(door, 'the door stopped serving after the throwing refusal')
 
       await settleEscapes()
       expect(watch.escaped, 'the exception escaped the chat router').toEqual([])
@@ -779,17 +806,29 @@ describe('the fourth door outlives every malformed request a socket can carry (g
     })
     const watch = watchForEscapes()
     try {
-      // The responder runs OUTSIDE every handler's own try — it is the last thing a turn does. So
-      // nothing but the router boundary can answer this, which is what makes this cell the
+      // The answer handler writes its refusal through the responder AFTER its body read, outside
+      // its only `try`, so the throw is a REJECTION of the handler's promise. Nothing but the
+      // router's `.catch` on that promise can answer it, which is what makes this cell the
       // backstop's own: delete the `.catch` and no response arrives at all.
-      const answered = await driveTurn(door.port, { 'content-type': 'application/json' })
+      const answered = await driveAnswer(
+        door.port,
+        { 'content-type': 'application/json' },
+        unparkedAnswer(),
+      )
       expect(answered.status, `the throwing responder never answered ${answered.note ?? ''}`).toBe(500)
       expect(JSON.parse(answered.body)).toEqual({
         error: 'The request could not be completed [Error]',
       })
 
-      const healthy = await rawRequest(door.port, { method: 'GET', path: '/api/chat/capabilities' })
+      // And the door is still a door: an outstanding run confirm is still answerable after it.
+      const parked = parkRunConfirm(door)
+      const healthy = await driveAnswer(
+        door.port,
+        { 'content-type': 'application/json' },
+        parked.body(),
+      )
       expect(healthy.status, 'the door stopped serving after the throwing responder').toBe(200)
+      expect(await parked.outcome).toBe('accept')
 
       await settleEscapes()
       expect(watch.escaped, 'the rejection escaped the chat router').toEqual([])

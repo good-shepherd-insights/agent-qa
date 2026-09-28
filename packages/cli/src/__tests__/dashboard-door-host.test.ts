@@ -203,7 +203,8 @@ describe('the door is composed once, and mounted where the server serves it', ()
       .filter((line) => !line.trimStart().startsWith('//'))
       .join('\n')
     expect(source).toContain('createChatRouter(deps.agentHost)')
-    expect(source).toContain('CHAT_ROUTE_PREFIX')
+    // 430: the run-confirm prefix is the one the dispatch keeps reading once the chat prefix goes.
+    expect(source).toMatch(/path\.startsWith\(RUN_CONFIRM_ROUTE_PREFIX\)/)
   })
 })
 
