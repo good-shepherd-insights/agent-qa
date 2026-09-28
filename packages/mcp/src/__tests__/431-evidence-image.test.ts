@@ -9,6 +9,9 @@
 // MUTATION SUBJECT (observed 2026-09-28, restored byte for byte):
 //   M1 catalog.ts builds the image from the raw output and appends it after masking, whatever the
 //      masked result was                                          -> IMAGE-MASK-WITHHOLD (a) reds
+//   M4 catalog.ts keeps the first server's masker for every later server -> EVIDENCE-ISOLATION reds
+//
+// Masking hides strings and never pixels. These cells prove which bytes travel, not image privacy.
 
 import { createHash } from 'node:crypto'
 
@@ -308,4 +311,123 @@ describe('IMAGE-MASK-WITHHOLD (T-431-10)', () => {
       expectNoBytes(result, bytes)
     })
   }
+})
+
+// ---- EVIDENCE-ISOLATION (431-05 task 2 · EDGE-18 · T-431-12) ------------------------------------
+//
+// One registry, two callers, as the loopback host builds them: a server per request, each with
+// its own caller and masker. The masked secrets are part of each run's id, so a response masked
+// by the wrong caller's masker, or carrying the other run's bytes, is visible on the wire.
+
+const ALPHA_SECRET = 'alphasecret43105'
+const BETA_SECRET = 'betasecret43105'
+const ALPHA = `r_${ALPHA_SECRET}`
+const BETA = `r_${BETA_SECRET}`
+
+function maskerFor(secret: string): { readonly mask: (text: string) => string; readonly dispose: () => void } {
+  const context = createMaskingContext()
+  context.register(secret)
+  return { mask: (text) => context.mask(text), dispose: () => context.dispose() }
+}
+
+describe('EVIDENCE-ISOLATION (EDGE-18)', () => {
+  it('interleaved callers keep their own run, bytes and masking', async () => {
+    const registry = registryOver(blobsOf({ [ALPHA]: [PNG], [BETA]: [JPEG] }))
+    const alphaMask = maskerFor(ALPHA_SECRET)
+    const betaMask = maskerFor(BETA_SECRET)
+    try {
+      const alpha = await connect(registry, alphaMask.mask)
+      const beta = await connect(registry, betaMask.mask)
+      const calls = Array.from({ length: 16 }, (_, index) => index % 2 === 0
+        ? fetchArtifact(alpha, PNG, undefined, ALPHA).then((result) => ['alpha', result] as const)
+        : fetchArtifact(beta, JPEG, undefined, BETA).then((result) => ['beta', result] as const))
+
+      for (const [who, result] of await Promise.all(calls)) {
+        const [own, other, ownSecret, otherSecret, mimeType] = who === 'alpha'
+          ? [PNG, JPEG, ALPHA_SECRET, BETA_SECRET, 'image/png']
+          : [JPEG, PNG, BETA_SECRET, ALPHA_SECRET, 'image/jpeg']
+        const wire = JSON.stringify(result)
+        expect(result.isError ?? false, texts(result).join('\n')).toBe(false)
+        expect(images(result)).toEqual([{ type: 'image', data: encode(own), mimeType }])
+        expect(result.structuredContent).toMatchObject({ sha: shaOf(own), bytesBase64: encode(own) })
+        expect(wire, `${who} carried its own run id unmasked`).not.toContain(ownSecret)
+        expect(wire, `${who} carried the other run's id`).not.toContain(otherSecret)
+        expect(wire).not.toContain(shaOf(other))
+        expect(leakedWindow(wire, encode(other)), `${who} carried the other run's bytes`).toBeUndefined()
+      }
+    } finally {
+      alphaMask.dispose()
+      betaMask.dispose()
+    }
+  })
+
+  it('another run\'s sha, an unknown run and a deleted blob are named misses, never other bytes', async () => {
+    const blobs = blobsOf({ [ALPHA]: [PNG], [BETA]: [JPEG] })
+    const client = await connect(registryOver(blobs))
+
+    const crossRun = await fetchArtifact(client, JPEG, undefined, ALPHA)
+    expect(crossRun.isError).toBe(true)
+    expect(texts(crossRun).join('\n')).toContain('No evidence blob is recorded for run')
+    expectNoBytes(crossRun, JPEG)
+
+    const unknown = await fetchArtifact(client, PNG, undefined, 'r_never-recorded')
+    expect(unknown.isError).toBe(true)
+    expect(texts(unknown).join('\n')).toMatch(/r_never-recorded/)
+    expectNoBytes(unknown, PNG)
+
+    const before = await fetchArtifact(client, PNG, undefined, ALPHA)
+    expect(images(before)).toHaveLength(1)
+    blobs.get(ALPHA)!.delete(shaOf(PNG))
+    const after = await fetchArtifact(client, PNG, undefined, ALPHA)
+    expect(after.isError).toBe(true)
+    expect(texts(after).join('\n')).toContain('No evidence blob is recorded for run')
+    expectNoBytes(after, PNG)
+    expectNoBytes(after, JPEG)
+  })
+
+  it('a blob deleted while another caller\'s read is in flight answers the named miss', async () => {
+    const blobs = blobsOf({ [ALPHA]: [PNG], [BETA]: [JPEG] })
+    let release!: () => void
+    const gate = new Promise<void>((resolve) => { release = resolve })
+    const gated: Blobs = new Map([[ALPHA, blobs.get(ALPHA)!], [BETA, blobs.get(BETA)!]])
+    const registry = createFunctionRegistry({
+      deps: {
+        evidenceBlobs: {
+          read: async (runId: RunId, sha: string) => {
+            if (String(runId) === ALPHA) await gate
+            return lookup(gated, runId, sha)
+          },
+        },
+      } as unknown as FunctionDeps,
+      auditSink,
+    })
+    const alpha = await connect(registry)
+    const beta = await connect(registry)
+
+    const pending = fetchArtifact(alpha, PNG, undefined, ALPHA)
+    const betaResult = await fetchArtifact(beta, JPEG, undefined, BETA)
+    gated.get(ALPHA)!.delete(shaOf(PNG))
+    release()
+    const alphaResult = await pending
+
+    expect(images(betaResult)).toEqual([{ type: 'image', data: JPEG_BASE64, mimeType: 'image/jpeg' }])
+    expect(alphaResult.isError).toBe(true)
+    expect(texts(alphaResult).join('\n')).toContain('No evidence blob is recorded for run')
+    expectNoBytes(alphaResult, PNG)
+    expectNoBytes(alphaResult, JPEG)
+  })
+
+  it('a refusal keeps the existing result metadata', () => {
+    const output = {
+      runId: RUN, sha: shaOf(PNG), contentType: 'image/png', byteLength: 16, bytesBase64: encode(PNG.slice(0, 16)),
+      totalLength: PNG.length, range: { start: 0, end: 15 },
+    }
+    const withMeta: CallToolResult = { ...maskedToolResult(output, identity), _meta: { 'agent-qa/probe': 1 } }
+    const refused = decorateRunEvidenceImage({ result: withMeta, output, maskText: identity })
+
+    expect(refused.isError).toBe(true)
+    expect(refused._meta).toEqual({ 'agent-qa/probe': 1 })
+    expect(refused.structuredContent).toBeUndefined()
+    expect(refused.content).toHaveLength(1)
+  })
 })
