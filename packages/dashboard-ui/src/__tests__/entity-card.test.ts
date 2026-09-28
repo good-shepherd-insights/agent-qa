@@ -39,6 +39,7 @@ import {
   ENTITY_IDENTITY_FACT_LABELS,
   ENTITY_KINDS,
   isRoutedEntityKind,
+  parseEntityUri,
   type EntityCard as EntityCardValue,
   type EntityKind,
 } from '@vostride/agent-qa-schema'
@@ -50,7 +51,7 @@ import {
   entityCardRoute,
   entityCardsIn,
 } from '@/chat/entity-card'
-import { ENTITY_KIND_ROUTES, entityRouteFor } from '@/lib/entity-routes'
+import { ENTITY_KIND_ROUTES, entityRefRoute, entityRouteFor } from '@/lib/entity-routes'
 import { ChatTranscriptView, type ChatTranscriptViewProps } from '@/chat/chat-transcript'
 import {
   createChatTranscriptState,
@@ -352,6 +353,36 @@ describe('agentqa:// references resolve through the same map', () => {
     // Fabricated at the REFERENCE level, not the card level: a key fact may point at any kind, and
     // an unrouted target must read as an address rather than as somewhere to click.
     expect(entityRouteFor({ kind: 'MEM', shortId: 'MEM-001', machineId: 'b-1' })).toBeUndefined()
+  })
+})
+
+// ---- 6b. The route module outlives the card ---------------------------------------------------
+
+const ENTITY_ROUTES_SOURCE = executableSource(
+  readFileSync(resolvePath(import.meta.dirname, '../lib/entity-routes.ts'), 'utf8'),
+)
+
+describe('the entity route module stands on its own (430 D-01)', () => {
+  it('ENTITY-REF-ROUTE-RESOLVES: a bare reference routes only where its address suffices', () => {
+    expect(entityRefRoute('agentqa://target/TGT-checkout-v2')).toBe('/config')
+    // Both parse, so an undefined below is the route map's answer and not a parse refusal.
+    expect(parseEntityUri('agentqa://memory/MEM-001')).toBeDefined()
+    expect(parseEntityUri('agentqa://test/TST-001')).toBeDefined()
+    expect(entityRefRoute('agentqa://memory/MEM-001')).toBeUndefined()
+    expect(entityRefRoute('agentqa://test/TST-001')).toBeUndefined()
+    expect(parseEntityUri('agentqa://target/MEM-001')).toBeUndefined()
+    expect(entityRefRoute('agentqa://target/MEM-001')).toBeUndefined()
+    expect(entityRefRoute('https://example.test/config')).toBeUndefined()
+  })
+
+  it('ENTITY-ROUTES-MODULE-SHAPE: imports only the schema and the route builders, and holds no network path', () => {
+    const specifiers = [
+      ...ENTITY_ROUTES_SOURCE.matchAll(/\bfrom\s+['"]([^'"]+)['"]|\bimport\s*\(?\s*['"]([^'"]+)['"]/gu),
+    ].map((match) => match[1] ?? match[2])
+    expect([...new Set(specifiers)].sort()).toEqual(['@/lib/routes', '@vostride/agent-qa-schema'])
+    expect(ENTITY_ROUTES_SOURCE).not.toMatch(/\bfetch\s*\(/u)
+    expect(ENTITY_ROUTES_SOURCE).not.toMatch(/\bEventSource\b/u)
+    expect(ENTITY_ROUTES_SOURCE).not.toMatch(/\bXMLHttpRequest\b/u)
   })
 })
 
