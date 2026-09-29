@@ -1210,6 +1210,81 @@ describe('AgentQaConfigSchema — safety.trustMode (D-15)', () => {
   })
 })
 
+// 432 D-18: production is a config declaration. A target may declare `environment: production`,
+// and only the top-level boolean `allowProduction` opts in; absence and false never do.
+describe('AgentQaConfigSchema — production declarations (432 D-18)', () => {
+  const productionTarget = { platform: 'web', url: 'https://shop.example.com', environment: 'production' }
+
+  it('C432-PRODUCTION-CONFIG: allowProduction is optional, and absent stays absent rather than defaulting', () => {
+    const result = AgentQaConfigSchema.safeParse(withWorkspace({}))
+    expect(result.success).toBe(true)
+    if (!result.success) return
+    expect(Object.keys(result.data)).not.toContain('allowProduction')
+    expect(result.data.allowProduction).toBeUndefined()
+  })
+
+  it('C432-PRODUCTION-CONFIG: allowProduction accepts exactly false and true', () => {
+    for (const allowProduction of [false, true]) {
+      const result = AgentQaConfigSchema.safeParse(withWorkspace({
+        allowProduction,
+        registry: { targets: { shop: productionTarget } },
+      }))
+      expect(result.success, String(allowProduction)).toBe(true)
+      if (!result.success) continue
+      expect(result.data.allowProduction).toBe(allowProduction)
+      expect(result.data.registry?.targets?.shop?.environment).toBe('production')
+    }
+  })
+
+  it('C432-PRODUCTION-CONFIG: allowProduction refuses null, strings and other non-booleans', () => {
+    for (const allowProduction of [null, 'true', 'false', 'yes', '', 1, 0, {}, []]) {
+      const result = AgentQaConfigSchema.safeParse(withWorkspace({ allowProduction }))
+      expect(result.success, JSON.stringify(allowProduction)).toBe(false)
+      if (result.success) continue
+      expect(result.error.issues.map(issue => issue.path.join('.')), JSON.stringify(allowProduction))
+        .toContain('allowProduction')
+    }
+  })
+
+  it('C432-PRODUCTION-CONFIG: a target declares production, beside local, shared and undeclared', () => {
+    for (const environment of ['local', 'shared', 'production', undefined] as const) {
+      const target = environment === undefined
+        ? { platform: 'web', url: 'https://shop.example.com' }
+        : { ...productionTarget, environment }
+      const result = TargetSchema.safeParse(target)
+      expect(result.success, String(environment)).toBe(true)
+      if (!result.success) continue
+      if (environment === undefined) expect(Object.keys(result.data)).not.toContain('environment')
+      else expect(result.data.environment).toBe(environment)
+    }
+  })
+
+  it('C432-PRODUCTION-CONFIG: a target refuses malformed environment spellings', () => {
+    for (const environment of ['Production', 'prod', 'staging', ' production', '', null, true]) {
+      const result = TargetSchema.safeParse({ ...productionTarget, environment })
+      expect(result.success, JSON.stringify(environment)).toBe(false)
+      if (result.success) continue
+      expect(result.error.issues.map(issue => issue.path.join('.'))).toContain('environment')
+    }
+  })
+
+  it('C432-PRODUCTION-CONFIG: misplaced or misspelled opt-ins get the normal unrecognized-key error', () => {
+    const cases: readonly [Record<string, unknown>, string, string][] = [
+      [{ allowProd: true }, '', 'allowProd'],
+      [{ allowproduction: true }, '', 'allowproduction'],
+      [{ registry: { targets: { shop: { ...productionTarget, allowProduction: true } } } }, 'registry.targets.shop', 'allowProduction'],
+    ]
+    for (const [config, path, key] of cases) {
+      const result = AgentQaConfigSchema.safeParse(withWorkspace(config))
+      expect(result.success, key).toBe(false)
+      if (result.success) continue
+      const unrecognized = result.error.issues.filter(issue => issue.code === 'unrecognized_keys')
+      expect(unrecognized.map(issue => issue.path.join('.')), key).toEqual([path])
+      expect((unrecognized[0] as { keys: string[] }).keys).toEqual([key])
+    }
+  })
+})
+
 // D-03 (Phase 372): eval substrate params — judge names a registry.llms entry;
 // strict so unknown eval subkeys are rejected; optional so pre-372 configs still parse.
 describe('AgentQaConfigSchema — eval block (D-03)', () => {

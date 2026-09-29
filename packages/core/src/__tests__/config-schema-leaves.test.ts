@@ -1,6 +1,6 @@
 // 2026-09-26, 429-03 D-06/D-08: the published config schema's leaves, walked structurally and
 // pinned against the masking map's keys, so a new schema leaf reds here until it is classified.
-import { CONFIG_SCHEMA_LEAVES } from '@vostride/agent-qa-schema'
+import { CONFIG_MASKING_MAP, CONFIG_SCHEMA_LEAVES, classifyConfigPath } from '@vostride/agent-qa-schema'
 import { describe, expect, it } from 'vitest'
 
 import { AgentQaConfigSchema } from '../schema/config-schema.js'
@@ -85,5 +85,17 @@ describe('config schema leaves', () => {
     ]) {
       expect(walked).toContain(witness)
     }
+  })
+
+  // 432-02: the additive step of the D-18 cutover. The interim count is measured from the live
+  // schema (100 before plus allowProduction); 432-22 re-pins 92 when the retired leaves leave.
+  it('C432-PRODUCTION-CONFIG: allowProduction is one plain top-level leaf of the walked schema', () => {
+    const walked = schemaLeaves()
+    expect(walked).toContain('allowProduction')
+    expect(walked).toContain('registry.targets.*.environment')
+    expect(walked.filter((leaf) => leaf.split('.')[0] === 'allowProduction')).toEqual(['allowProduction'])
+    expect(CONFIG_MASKING_MAP.allowProduction).toBe('plain')
+    expect(classifyConfigPath(['allowProduction'])).toBe('plain')
+    expect(walked).toHaveLength(101)
   })
 })
