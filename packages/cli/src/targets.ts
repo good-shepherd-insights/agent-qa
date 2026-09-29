@@ -9,8 +9,8 @@ export interface ResolvedTarget {
   appPackage?: string
   appActivity?: string
   device?: string
-  /** D-06 (phase 401): the target's declared environment; `undefined` means undeclared. */
-  environment?: 'local' | 'shared'
+  /** D-06 (phase 401), 432 D-18: the target's declared environment; `undefined` means undeclared. */
+  environment?: 'local' | 'shared' | 'production'
 }
 
 export interface TargetSummary {
@@ -26,7 +26,7 @@ interface TargetEntry {
   appActivity?: string
   url?: string
   device?: string
-  environment?: 'local' | 'shared'
+  environment?: 'local' | 'shared' | 'production'
 }
 
 export function resolveTarget(

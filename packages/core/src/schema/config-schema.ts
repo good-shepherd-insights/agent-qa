@@ -44,6 +44,9 @@ const AgentQaConfigSchemaInner = z.object({
   use: UseSchema.optional(),
   plugins: PluginsSchema.optional(),
   analytics: AnalyticsSchema.optional(),
+  // 432 D-18: the one production opt-in. Optional with no default: its consumer reads absence as
+  // false, so only an explicit `true` in the validated config authorizes a production target.
+  allowProduction: z.boolean().optional(),
   // D-15 config half: explicit opt-in trusted-ask mode (the CLI flag half is plan 362-06).
   // Strict so unknown safety subkeys are rejected — no implicit/unscoped trust channel (§2.3).
   safety: z.object({ trustMode: z.boolean().optional() }).strict().optional(),

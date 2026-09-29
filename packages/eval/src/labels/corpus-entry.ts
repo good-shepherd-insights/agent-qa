@@ -120,9 +120,10 @@ export function isProbeGeneratorKind(kind: GeneratorKind): kind is ProbeGenerato
 
 /**
  * Which environment the source run executed against (414 D-04). Optional
- * and never fabricated; 418 reads it for validity down-weighting.
+ * and never fabricated; 418 reads it for validity down-weighting. 432 D-18
+ * adds the declared `production` class.
  */
-export type TargetEnvironment = 'shared' | 'local'
+export type TargetEnvironment = 'shared' | 'local' | 'production'
 
 /**
  * 2026-09-12, 422-22 (D-05/D-09/D-11): THE PERSISTED DECLARATION LEDGER for the adversarial split.

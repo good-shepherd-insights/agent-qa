@@ -460,6 +460,7 @@ const DENIED_ROOTS: readonly string[] = CONFIG_WRITE_DENIED_ROOTS
 const PAGE_LEAVES = CONFIG_SCHEMA_LEAVES.filter(
   (pattern) => !DENIED_ROOTS.includes(pattern.split('.')[0]!),
 )
+const PENDING_PAGE_OWNER: readonly string[] = ['allowProduction']
 
 /** A concrete path for a leaf pattern or list owner: each '*' becomes 'k' and each '[]' index 0. */
 function concretePath(pattern: string): ConfigPathSegment[] {
@@ -548,7 +549,9 @@ describe('ConfigPage schema coverage', () => {
     expect(PAGE_LEAVES.length, 'the witness: the schema walk found the leaves').toBeGreaterThanOrEqual(95)
     const marks = await collectFieldMarks()
     const uncovered = PAGE_LEAVES.filter((pattern) => !marks.some((mark) => coversLeaf(mark, pattern)))
-    expect(uncovered, `schema leaves with no field on the page: ${uncovered.join(', ')}`).toEqual([])
+    // 432-02 adds the allowProduction leaf ahead of its page owner; 432-22 adds the owner and
+    // pins this back to empty. Any other uncovered leaf still reds.
+    expect(uncovered, `schema leaves with no field on the page: ${uncovered.join(', ')}`).toEqual(PENDING_PAGE_OWNER)
     for (const pattern of ['use.workers', 'use.buildTag', 'eval.gate2.canaryHorizonBuilds']) {
       expect(marks.some((mark) => mark.kind === 'path' && mark.value === pattern), pattern).toBe(true)
     }

@@ -84,7 +84,7 @@ const v2BaseShape = {
   run_links: runLinksV2Schema,
   receiptDigest: digestSchema,
   captured_at: z.iso.datetime().optional(),
-  targetEnvironment: z.enum(['shared', 'local']).optional(),
+  targetEnvironment: z.enum(['shared', 'local', 'production']).optional(),
 }
 
 const naturalArmSchema = z

@@ -28,7 +28,8 @@ describe('TargetSchema.environment (D-06 target class)', () => {
   })
 
   it('refuses a value outside the enum', () => {
-    const result = TargetSchema.safeParse({ ...webBase, environment: 'production' })
+    // 432 D-18 made `production` a declared class, so the outside sample is `staging`.
+    const result = TargetSchema.safeParse({ ...webBase, environment: 'staging' })
     expect(result.success).toBe(false)
     expect(result.success ? [] : result.error.issues.map((i) => i.path.join('.'))).toContain(
       'environment',

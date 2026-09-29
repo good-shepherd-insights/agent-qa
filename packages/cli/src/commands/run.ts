@@ -229,7 +229,8 @@ export function resolveMemberTargetFacts(
     if (!targetNames.includes(targetName)) targetNames.push(targetName)
     try {
       const resolved = resolveTarget(config, targetName)
-      declaredClasses.push(resolved.environment)
+      // 432-02: until 432-03's production refusal owns this class, production folds as shared.
+      declaredClasses.push(resolved.environment === 'production' ? 'shared' : resolved.environment)
       // D-04: web targets only. A mobile member contributes no URL and therefore receives no
       // baseline — the device-session-create failure is the equivalent environment signal there.
       probeUrls.push(resolved.platform === 'web' && resolved.url ? resolved.url : undefined)

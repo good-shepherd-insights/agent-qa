@@ -27,6 +27,7 @@ export const MASKING_CLASSES = [
  * the two env-var names.
  */
 export const CONFIG_MASKING_MAP = Object.freeze({
+  'allowProduction': 'plain',
   'analytics.passRateScope.attributes.*': 'secret',
   'analytics.passRateScope.attributes.*.regex': 'secret',
   'analytics.privacy': 'plain',

@@ -31,7 +31,9 @@ export const TargetSchema = z.object({
   // gate's descriptor builder is the single place that decides undeclared means shared. A default
   // here would make silence and an honest `shared` indistinguishable at every later reader, and
   // `.strict()` above is what turns a typoed key into a refusal rather than a silent undeclared.
-  environment: z.enum(['local', 'shared']).optional(),
+  // 432 D-18: `production` is the third declared class; only top-level `allowProduction: true`
+  // opts a run into it.
+  environment: z.enum(['local', 'shared', 'production']).optional(),
 }).strict().superRefine((val, ctx) => {
   if (val.platform === 'web' && !val.url) {
     ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'Web targets must have a url' })
