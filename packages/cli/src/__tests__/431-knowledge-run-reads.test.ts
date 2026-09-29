@@ -885,17 +885,22 @@ describe('RUN-DETAIL-BINDING: the CLI host over the project runs database', () =
     await expect(overview()).resolves.toMatchObject({ runId: p.runId, tests: [{ testIndex: 0 }, { testIndex: 1 }] })
   })
 
-  it('binds a legacy dashboard.db the writer would still use, and never renames it', async () => {
+  it('never opens a legacy dashboard.db, and reads runs.db in the same host once the writer renames it', async () => {
     const p = populatedProject()
     runDetailDbPath = undefined
     const legacy = join(p.agentQaRoot, 'dashboard.db')
     renameSync(p.dbPath, legacy)
     const composed = host.composeCliLocalAgent({ configPath: p.configPath, agentQaRoot: p.agentQaRoot })
     cleanups.push(() => composed.close())
-    await expect(invokeFunction(composed.registry, 'runs.overview', { runId: p.runId }, host.CLI_FUNCTION_CALLER))
-      .resolves.toMatchObject({ runId: p.runId, tests: [{ steps: [{ capture: { state: 'recorded' } }] }, {}] })
+    const overview = () => invokeFunction(composed.registry, 'runs.overview', { runId: p.runId },
+      host.CLI_FUNCTION_CALLER)
+    await expect(overview())
+      .resolves.toMatchObject({ runId: p.runId, tests: [{ steps: [{ capture: { state: 'unavailable' } }] }, {}] })
     expect(existsSync(legacy)).toBe(true)
     expect(existsSync(p.dbPath)).toBe(false)
+    renameSync(legacy, p.dbPath)
+    await expect(overview())
+      .resolves.toMatchObject({ runId: p.runId, tests: [{ steps: [{ capture: { state: 'recorded' } }] }, {}] })
   })
 })
 
