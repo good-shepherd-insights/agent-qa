@@ -2,6 +2,7 @@ import {
   DELTA_ORIGINS,
   type Delta,
   type DeltaOrigin,
+  type ExecutionContext,
   type ScopeKey,
 } from '@vostride/agent-qa-schema'
 import { describe, expect, it } from 'vitest'
@@ -11,6 +12,7 @@ import {
   AUTHORED_CHECKPOINT_SCHEMA_VERSION,
   authoredCheckpointSchema,
   parseAuthoredCheckpoint,
+  resolveDispositionProfile,
 } from '../../index.js'
 
 const scope: ScopeKey = { tier: 'product', key: 'storefront' }
@@ -183,6 +185,29 @@ describe('the drain authored-checkpoint boundary admits origins from a total tab
   for (const origin of DELTA_ORIGINS) {
     it(`the SHARED structural schema still accepts ${origin} (it is not the drain boundary)`, () => {
       expect(() => authoredCheckpointSchema.parse(checkpointOf(noopDelta(origin)))).not.toThrow()
+    })
+  }
+})
+
+describe('the authored checkpoint keeps the run\'s actual execution context (D-08)', () => {
+  const CONTEXTS = ['local-interactive', 'local-headless', 'ci', 'cloud'] as const satisfies
+    readonly ExecutionContext[]
+
+  for (const executionContext of CONTEXTS) {
+    it(`round-trips ${executionContext} authorship and resolves a mode-only profile`, () => {
+      const fixture = {
+        schemaVersion: AUTHORED_CHECKPOINT_SCHEMA_VERSION,
+        deltas: [{ kind: 'Noop', origin: 'agent', scope, citedIds: [] }],
+        neighborIds: [],
+        preconditions: [],
+        authorship: { path: 'llm', model: { id: 'curator-model' }, executionContext },
+      }
+
+      expect(parseAuthoredCheckpoint(fixture).authorship.executionContext).toBe(executionContext)
+      expect(
+        Object.keys(resolveDispositionProfile(executionContext)),
+        'the profile decides authority only; it never carries a substitute context',
+      ).toEqual(['mode'])
     })
   }
 })

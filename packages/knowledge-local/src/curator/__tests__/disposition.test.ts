@@ -11,6 +11,7 @@ import {
   type CompareAndSet,
   type Delta,
   type DeltaOrigin,
+  type ExecutionContext,
   type MeasurementBaseline,
   type MeasurementObservation,
   type RecordId,
@@ -301,10 +302,10 @@ describe('Curator author contract (CUR-01/SAFE-01)', () => {
   })
 
   it('maps all SAFE-01 execution contexts to their authority mode', () => {
-    expect(resolveDispositionProfile('local-interactive')).toEqual({
-      mode: 'drain-to-active',
-    })
-    for (const executionContext of ['ci', 'cloud', 'local-headless'] as const) {
+    for (const executionContext of ['local-interactive', 'local-headless'] as const) {
+      expect(resolveDispositionProfile(executionContext)).toEqual({ mode: 'drain-to-active' })
+    }
+    for (const executionContext of ['ci', 'cloud'] as const) {
       expect(resolveDispositionProfile(executionContext)).toEqual({ mode: 'propose-only' })
     }
   })
@@ -680,6 +681,144 @@ describe('disposeDelta deterministic authority (CUR-01/SAFE-01)', () => {
       original: delta,
       delta: expect.objectContaining({ kind: expect.any(String) }),
     })
+  })
+})
+
+describe('automatic curation disposition by execution context (D-08)', () => {
+  const primary: Anchor = { t: 'el', role: 'button', name: 'Place order' }
+  const page: Anchor = { t: 'page', route: '/checkout' }
+  const LOCAL_CONTEXTS = ['local-interactive', 'local-headless'] as const
+  const REMOTE_CONTEXTS = ['ci', 'cloud'] as const
+  const ALL_CONTEXTS = [...LOCAL_CONTEXTS, ...REMOTE_CONTEXTS] as const
+
+  function publishCandidate(anchors: Anchor[], createdAtOrdinal = 40): { id: RecordId } {
+    const published = publishBundle(
+      {
+        knowledgeRoot,
+        productKey: 'storefront',
+        auditBaseDir: join(root, '.agent-qa'),
+        commitArtifacts: 'none',
+      },
+      {
+        draft: makeBundleDraftFixture({ anchors, scope }),
+        discriminant: makeDiscriminantFixture(),
+        originClass: 'agent-verified',
+        createdAtOrdinal,
+        screenStates: [],
+        initialEvents: [],
+        relations: [],
+        provenance: { mode: 'standalone', sourceDescription: 'context matrix candidate' },
+        artifacts: [],
+      },
+    )
+    if (published.kind !== 'published') throw new Error(`expected publish, got ${published.kind}`)
+    return { id: published.id }
+  }
+
+  function disposeIn(
+    executionContext: ExecutionContext,
+    delta: Delta,
+    neighborIds: RecordId[],
+    preconditions: CompareAndSet[],
+  ) {
+    const parsed = authoredCheckpointSchema.parse({
+      schemaVersion: AUTHORED_CHECKPOINT_SCHEMA_VERSION,
+      deltas: [delta],
+      neighborIds,
+      preconditions,
+      authorship: { path: 'llm', model: { id: 'curator-model' }, executionContext },
+    })
+    const sliced = sliceAuthoredCheckpoint(parsed)[0]!
+    const outcome = disposeDelta({
+      delta,
+      checkpoint: sliced,
+      profile: resolveDispositionProfile(executionContext),
+      knowledgeRoot,
+      candidate: candidate([primary, page]),
+      drainState: drainState(),
+    })
+    expect(sliced.authorship.executionContext, 'disposition never rewrites the run context')
+      .toBe(executionContext)
+    return outcome
+  }
+
+  function agentDeprecate(targetId: RecordId, status: string): Extract<Delta, { kind: 'Deprecate' }> {
+    return {
+      kind: 'Deprecate',
+      origin: 'agent',
+      scope,
+      citedIds: [targetId],
+      precondition: [observed(targetId, 40, status)],
+      targetId,
+      reason: 'newer evidence contradicts this record',
+    }
+  }
+
+  function statusOf(dir: string): string {
+    const loaded = loadBundle(dir)
+    if (loaded.kind !== 'loaded') throw new Error('expected loaded record')
+    return deriveBundleTrust(loaded.bundle).status
+  }
+
+  it.each(LOCAL_CONTEXTS)('%s automatic curation applies Supersede and Deprecate directly', (context) => {
+    // Both local contexts are the same arm; local-headless is the background worker (D-08).
+    const { id: victimId } = publishActive([primary, page])
+    const supersede = supersedeDelta(victimId, [primary, page], observed(victimId))
+    expect(disposeIn(context, supersede, [victimId], [observed(victimId)]))
+      .toMatchObject({ kind: 'apply', delta: supersede })
+
+    const target = publishCandidate([{ t: 'el', role: 'link', name: 'Stale help' }, page])
+    const deprecate = agentDeprecate(target.id, 'candidate')
+    expect(disposeIn(context, deprecate, [target.id], deprecate.precondition!))
+      .toMatchObject({ kind: 'apply', delta: deprecate })
+  })
+
+  it('C432-CURATION-CONTEXT: automatic ci and cloud curation keeps Supersede and Deprecate proposed', () => {
+    for (const context of REMOTE_CONTEXTS) {
+      knowledgeRoot = join(root, `agent-qa-knowledge-${context}`)
+      const { id: victimId, dir: victimDir } = publishActive([primary, page])
+      const supersede = supersedeDelta(victimId, [primary, page], observed(victimId))
+      const proposed = disposeIn(context, supersede, [victimId], [observed(victimId)])
+      expect(proposed, `${context} Supersede must stay a proposed candidate`).toMatchObject({
+        kind: 'downgraded',
+        reason: 'propose-only',
+        original: supersede,
+        delta: { kind: 'Add', bundle: supersede.newBundle },
+      })
+      expect(proposed).toHaveProperty('relationIntents', [
+        { type: 'proposed-supersession-of', targetId: victimId },
+      ])
+      expect(statusOf(victimDir)).toBe('active')
+
+      const target = publishCandidate([{ t: 'el', role: 'link', name: `Stale ${context}` }, page])
+      const deprecate = agentDeprecate(target.id, 'candidate')
+      expect(
+        disposeIn(context, deprecate, [target.id], deprecate.precondition!),
+        `${context} Deprecate must stay a clarification unknown`,
+      ).toMatchObject({
+        kind: 'downgraded',
+        reason: 'propose-only',
+        original: deprecate,
+        delta: { kind: 'MintUnknown', conflict: { kind: 'clarification' } },
+      })
+    }
+  })
+
+  it.each(ALL_CONTEXTS)('%s keeps existing validation for invalid automatic deltas', (context) => {
+    const { id: victimId, dir: victimDir } = publishActive([primary, page])
+    const activeDeprecate = agentDeprecate(victimId, 'active')
+    expect(disposeIn(context, activeDeprecate, [victimId], activeDeprecate.precondition!))
+      .toMatchObject({ kind: 'downgraded', reason: 'autonomous-deprecate', original: activeDeprecate })
+
+    const stale = observed(victimId, 39)
+    const staleSupersede = supersedeDelta(victimId, [primary, page], stale)
+    expect(disposeIn(context, staleSupersede, [victimId], [stale]))
+      .toEqual({ kind: 'requeue-resynthesis', reason: 'compare-and-set' })
+
+    const uncited = supersedeDelta(victimId, [primary, page], observed(victimId))
+    expect(disposeIn(context, uncited, [], [observed(victimId)]))
+      .toMatchObject({ kind: 'downgraded', reason: 'cited-id-integrity', original: uncited })
+    expect(statusOf(victimDir)).toBe('active')
   })
 })
 
