@@ -69,11 +69,41 @@ function hashTree(root: string): string {
   return digest.digest('hex')
 }
 
+/**
+ * Canonical bundle bytes only: every file under `memory/` except the derived index. Lease
+ * acquisition bumps `.epoch` and re-projection rewrites `memory/index`; neither is an effect of
+ * the change itself, so "lands once" is measured over what a retry could actually duplicate.
+ */
+function canonicalFiles(knowledgeRoot: string): string[] {
+  const found: string[] = []
+  const memory = join(knowledgeRoot, 'memory')
+  const walk = (dir: string): void => {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      const path = join(dir, entry.name)
+      if (entry.isDirectory()) {
+        if (path !== join(memory, 'index')) walk(path)
+        continue
+      }
+      found.push(`${relative(knowledgeRoot, path)}:${createHash('sha256').update(readFileSync(path)).digest('hex')}`)
+    }
+  }
+  walk(memory)
+  return found.sort()
+}
+
 /** The direct writer, asserted present before it is called so its absence is an assertion. */
 async function explicit(input: ApplyExplicitReviewInput): Promise<ExplicitReviewResult> {
   const writer = (review as Record<string, unknown>).applyExplicitReview
   expect(writer, 'the direct explicit review writer is exported').toBeTypeOf('function')
   return await (writer as (input: ApplyExplicitReviewInput) => Promise<ExplicitReviewResult>)(input)
+}
+
+/** A refusal becomes a value, so the witness fails on its own assertion and prints the reason. */
+async function settled(input: ApplyExplicitReviewInput): Promise<ExplicitReviewResult | { outcome: 'refused'; reason: string }> {
+  return await explicit(input).catch((error: unknown) => ({
+    outcome: 'refused' as const,
+    reason: error instanceof Error ? `${error.name}: ${(error as { reason?: string }).reason ?? error.message}` : String(error),
+  }))
 }
 
 describe('432 direct explicit knowledge writer (D-04, D-05, D-08, D-09, D-11)', () => {
@@ -159,7 +189,7 @@ describe('432 direct explicit knowledge writer (D-04, D-05, D-08, D-09, D-11)', 
       useRoot(context)
 
       const victim = publish(`checkout ${context}`)
-      const marked = await explicit({ ...base(context), request: { verb: 'mark', input: markInput(victim) } })
+      const marked = await settled({ ...base(context), request: { verb: 'mark', input: markInput(victim) } })
       expect(marked, `${context} mark lands in the call`).toMatchObject({ outcome: 'applied', verb: 'mark',
         changeId: `prop_${OPERATION}` })
       if (marked.outcome !== 'applied') throw new Error('mark did not apply')
@@ -185,7 +215,7 @@ describe('432 direct explicit knowledge writer (D-04, D-05, D-08, D-09, D-11)', 
       ]))
 
       const accepted = publish(`accept ${context}`)
-      const accept = await explicit({ ...base(context), request: { verb: 'accept',
+      const accept = await settled({ ...base(context), request: { verb: 'accept',
         input: { target: { grain: 'record', recordId: accepted } } } })
       expect(accept, `${context} accept lands in the call`).toMatchObject({ outcome: 'applied', verb: 'accept',
         recordIds: [accepted] })
@@ -193,19 +223,19 @@ describe('432 direct explicit knowledge writer (D-04, D-05, D-08, D-09, D-11)', 
         origin: 'user', evidenceToken: `review-accept:prop_${OPERATION}` }))
 
       const rejected = publish(`reject ${context}`)
-      const reject = await explicit({ ...base(context), request: { verb: 'reject',
+      const reject = await settled({ ...base(context), request: { verb: 'reject',
         input: { target: { grain: 'record', recordId: rejected }, reason: 'wrong button' } } })
       expect(reject, `${context} reject lands in the call`).toMatchObject({ outcome: 'applied', verb: 'reject',
         recordIds: [rejected] })
       expect(status(rejected)).toBe('deprecated')
 
       const forgotten = publish(`forget ${context}`)
-      const forget = await explicit({ ...base(context), now: () => 1_700_000_000_000, request: { verb: 'forget',
+      const forget = await settled({ ...base(context), now: () => 1_700_000_000_000, request: { verb: 'forget',
         input: { target: { grain: 'record', recordId: forgotten } } } })
       expect(forget, `${context} forget lands in the call`).toMatchObject({ outcome: 'applied', verb: 'forget',
         recordIds: [forgotten], forgetReceipt: { proposalId: `prop_${OPERATION}`,
           tombstonedRecords: [{ recordId: forgotten }], projectionsScrubbed: ['fts', 'vec', 'graph'],
-          resultingBundleStatus: 'forgotten', forgottenAt: 1_700_000_000_000 } })
+          resultingBundleStatus: 'tombstoned', forgottenAt: 1_700_000_000_000 } })
       expect(status(forgotten)).toBe('deprecated')
 
       expect(existsSync(join(agentQaRoot, 'proposals')), `${context} writes no inbox envelope`).toBe(false)
@@ -224,8 +254,12 @@ describe('432 direct explicit knowledge writer (D-04, D-05, D-08, D-09, D-11)', 
     expect(status(recordId)).toBe('superseded')
     expect(readGateReceipts(bundle(recordId).dir, recordId)).toEqual([expect.objectContaining({ gate: 3,
       producedBy: { opId: 'knowledge.change.apply' }, policyApproval: { proposalId: `prop_${OPERATION}`, recordId } })])
+    const files = canonicalFiles(knowledgeRoot)
     const again = await explicit({ ...base('ci'), request: { verb: 'accept', input: { target: { grain: 'record', recordId } } } })
-    expect(again).toEqual(result)
+    if (result.outcome !== 'applied' || result.commitReceipt?.policy === undefined) throw new Error('policy did not apply')
+    expect(again, 'a retry recovers the same approval and says the shelf was left unchanged').toEqual({ ...result,
+      commitReceipt: { ...result.commitReceipt, policy: { ...result.commitReceipt.policy, outcome: 'unchanged' } } })
+    expect(canonicalFiles(knowledgeRoot)).toEqual(files)
     expect(existsSync(join(agentQaRoot, 'proposals'))).toBe(false)
   })
 
@@ -266,12 +300,12 @@ describe('432 direct explicit knowledge writer (D-04, D-05, D-08, D-09, D-11)', 
     }
 
     const victim = publish('egress checkout')
-    const memory = join(knowledgeRoot, 'memory')
-    const before = hashTree(memory)
+    const before = canonicalFiles(knowledgeRoot)
     await expect(explicit({ ...base('ci'), request: { verb: 'mark',
       input: markInput(victim, { body: `Use the admin key ${AWS_KEY}` }) } }))
       .rejects.toMatchObject({ outcome: { kind: 'withheld', reason: 'egress-blocked' } })
-    expect(hashTree(memory), 'egress refusal leaves the store byte-identical').toBe(before)
+    expect(canonicalFiles(knowledgeRoot), 'egress refusal leaves every committed byte unchanged').toEqual(before)
+    expect(enumerateBundleDirs(knowledgeRoot)).toHaveLength(2)
     expect(status(victim)).toBe('candidate')
     expect(acquireWriterLease(knowledgeRoot).kind, 'the refused write released its lease').toBe('acquired')
   })
@@ -281,30 +315,30 @@ describe('432 direct explicit knowledge writer (D-04, D-05, D-08, D-09, D-11)', 
     const request = { verb: 'mark' as const, input: markInput(victim) }
     const first = await explicit({ ...base('ci'), request })
     if (first.outcome !== 'applied') throw new Error('mark did not apply')
-    const afterFirst = hashTree(knowledgeRoot)
+    const afterFirst = canonicalFiles(knowledgeRoot)
     const second = await explicit({ ...base('ci'), request })
     expect(second, 'a retry answers the same applied record ids and receipt').toEqual(first)
-    expect(hashTree(knowledgeRoot), 'a retry adds no second effect').toBe(afterFirst)
+    expect(canonicalFiles(knowledgeRoot), 'a retry adds no second effect').toEqual(afterFirst)
     expect(enumerateBundleDirs(knowledgeRoot)).toHaveLength(2)
 
     const accepted = publish('retried accept')
     const acceptRequest = { verb: 'accept' as const, input: { target: { grain: 'record' as const, recordId: accepted } } }
     const acceptFirst = await explicit({ ...base('ci'), request: acceptRequest })
-    const acceptTree = hashTree(knowledgeRoot)
+    const acceptTree = canonicalFiles(knowledgeRoot)
     expect(await explicit({ ...base('ci'), request: acceptRequest })).toEqual(acceptFirst)
-    expect(hashTree(knowledgeRoot)).toBe(acceptTree)
+    expect(canonicalFiles(knowledgeRoot)).toEqual(acceptTree)
     expect(bundle(accepted).bundle.events.filter(event => event.type === 'confirmed'
       && event.evidenceToken === `review-accept:prop_${OPERATION}`)).toHaveLength(1)
 
     const forgotten = publish('retried forget')
     const forgetRequest = { verb: 'forget' as const, input: { target: { grain: 'record' as const, recordId: forgotten } } }
     const forgetFirst = await explicit({ ...base('ci'), request: forgetRequest })
-    const forgetTree = hashTree(knowledgeRoot)
+    const forgetTree = canonicalFiles(knowledgeRoot)
     const forgetAgain = await explicit({ ...base('ci'), request: forgetRequest })
     expect(forgetAgain).toMatchObject({ outcome: 'applied', recordIds: [forgotten],
       forgetReceipt: { tombstonedRecords: [{ recordId: forgotten }], projectionsScrubbed: [] } })
     expect(forgetFirst.outcome === 'applied' && forgetFirst.recordIds).toEqual([forgotten])
-    expect(hashTree(knowledgeRoot), 'an already-forgotten target is not destroyed twice').toBe(forgetTree)
+    expect(canonicalFiles(knowledgeRoot), 'an already-forgotten target is not destroyed twice').toEqual(forgetTree)
     expect(bundle(forgotten).bundle.events.filter(event => event.type === 'deprecated')).toHaveLength(1)
 
     const replacement = first.recordIds[0]!
@@ -325,16 +359,39 @@ describe('432 direct explicit knowledge writer (D-04, D-05, D-08, D-09, D-11)', 
     expect(status(victim)).toBe('superseded')
   })
 
+  it.each(['Add', 'Confirm'] as const)('a retried %s-shaped mark lands its fix once and answers the same receipt', async kind => {
+    const target = publish(`retried ${kind} checkout`)
+    const input = markInput(target)
+    const delta = input.plan.deltas[0]!
+    const shared = { origin: delta.origin, scope: delta.scope, citedIds: delta.citedIds,
+      evidenceToken: asEvidenceToken(`mark:${input.mark.markId}`) }
+    const request = { verb: 'mark' as const, input: { ...input, plan: { ...input.plan, deltas: [kind === 'Add'
+      ? { ...shared, kind: 'Add' as const, bundle: makeBundleDraftFixture({ kind: 'caution', scope: SCOPE,
+        anchors: [ANCHOR], summary: 'Avoid stale checkout state' }) }
+      : { ...shared, kind: 'Confirm' as const, targetId: asRecordId(target) }] } } }
+    const first = await explicit({ ...base('ci'), request })
+    if (first.outcome !== 'applied') throw new Error('mark did not apply')
+    const fixed = first.recordIds[0]!
+    expect(first.commitReceipt?.promoted).toEqual([{ candidateId: fixed, promotionPath: 'user-sovereign' }])
+    const files = canonicalFiles(knowledgeRoot)
+    expect(await explicit({ ...base('ci'), request }), 'the same ids, ordinal and Gate-3 digest').toEqual(first)
+    expect(canonicalFiles(knowledgeRoot), 'no second confirmation, gate receipt or promotion').toEqual(files)
+    expect(bundle(fixed).bundle.events.filter(event => event.type === 'confirmed')).toHaveLength(1)
+    expect(readGateReceipts(bundle(fixed).dir, fixed)?.filter(line => 'gate' in line && line.gate === 3)).toHaveLength(1)
+  })
+
   it('recovers an interrupted mark on retry without a second lineage transition', async () => {
     const victim = publish('interrupted checkout')
     const request = { verb: 'mark' as const, input: markInput(victim) }
-    let calls = 0
+    // The posture resolver is consulted by the gates; it fails only once the fix is durable, so
+    // the write stops between the committed supersession and its promotion.
     await expect(explicit({ ...base('cloud'), request, resolvePromotionPosture: () => {
-      calls += 1
-      throw new Error('injected interruption after the fix committed')
+      if (status(victim) === 'superseded') throw new Error('injected interruption after the fix committed')
+      return undefined
     } })).rejects.toThrow('injected interruption')
-    expect(calls).toBeGreaterThan(0)
     expect(status(victim)).toBe('superseded')
+    const interrupted = listBundles(knowledgeRoot).find(row => row.bundleId !== victim)!
+    expect(bundle(interrupted.bundleId).bundle.events.some(event => event.type === 'promoted')).toBe(false)
     const retried = await explicit({ ...base('cloud'), request })
     if (retried.outcome !== 'applied') throw new Error('retry did not apply')
     expect(retried.commitReceipt?.promoted).toEqual([{ candidateId: retried.recordIds[0], promotionPath: 'user-sovereign' }])
@@ -344,7 +401,7 @@ describe('432 direct explicit knowledge writer (D-04, D-05, D-08, D-09, D-11)', 
 
   it('answers a typed target-not-found for every verb, and refuses a malformed request before any write', async () => {
     publish('present checkout')
-    const before = hashTree(knowledgeRoot)
+    const before = canonicalFiles(knowledgeRoot)
     const missing = { grain: 'record' as const, recordId: 'fact-missing-0123456789abcdef' }
     const bundleRef = { grain: 'bundle' as const, shortId: 'MEM-999' }
     for (const target of [missing, bundleRef]) {
@@ -358,11 +415,14 @@ describe('432 direct explicit knowledge writer (D-04, D-05, D-08, D-09, D-11)', 
           .toEqual({ outcome: 'target-not-found', verb: request.verb, changeId: `prop_${OPERATION}`, target })
       }
     }
+    expect(canonicalFiles(knowledgeRoot)).toEqual(before)
+    // Malformed input is refused before a lease is even asked for: not one byte moves, .epoch included.
+    const whole = hashTree(knowledgeRoot)
     await expect(explicit({ ...base('ci'), request: { verb: 'reject',
       input: { target: missing, reason: '' } } })).rejects.toThrow()
     await expect(explicit({ ...base('ci'), operationId: '../escape', request: { verb: 'forget',
       input: { target: missing } } })).rejects.toBeInstanceOf(TypeError)
-    expect(hashTree(knowledgeRoot)).toBe(before)
+    expect(hashTree(knowledgeRoot)).toBe(whole)
     expect(existsSync(join(agentQaRoot, 'proposals'))).toBe(false)
   })
 
@@ -390,7 +450,7 @@ describe('432 direct explicit knowledge writer (D-04, D-05, D-08, D-09, D-11)', 
         citedIds: [asRecordId(automaticVictim)], victimId: asRecordId(automaticVictim),
         evidenceToken: asEvidenceToken('automatic-ci-supersede'),
         newBundle: makeBundleDraftFixture({ kind: 'fact', subtype: 'navigational', scope: SCOPE,
-          anchors: [{ t: 'el', role: 'Link', name: 'Automatic' }], summary: 'Automatic replacement' }) }])
+          anchors: [ANCHOR], summary: 'Automatic replacement' }) }])
       await expect(automatic.promote(asRecordId(automaticVictim)))
         .rejects.toMatchObject({ reason: 'propose-only' })
     } finally {

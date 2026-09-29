@@ -22,18 +22,43 @@
 // held by somebody alive" arrives here as an ordinary `held` outcome, and the caller delegates.
 // There is no code path in this file that acquires when a live holder exists, because there is no
 // second acquisition primitive for one to use.
+//
+// THE DIRECT DOOR (432-06, D-04/D-05). `applyExplicitReview` applies a validated mark, accept,
+// reject or forget in the call: no envelope is claimed, reloaded or published, and the caller's
+// stable operation identity replaces the proposal id as the change identity. Both doors share
+// the arms below, the writer lease, delta validation, bundle egress and every promotion gate.
+// An explicit change is authority in every execution context, so both doors write through the
+// store's narrow explicit entry, which skips only the automatic propose-only downgrade and keeps
+// the actual ExecutionContext on every durable record. The proposal door stays only until its
+// remaining callers move.
 
 import { existsSync } from 'node:fs'
 import { join, relative } from 'node:path'
-import { asEvidenceToken, asRecordId, canonicalJson, deriveMarkStepId, stampReceiptDigest } from '@vostride/agent-qa-schema'
+import {
+  KnowledgeAcceptInputSchema,
+  KnowledgeForgetInputSchema,
+  KnowledgeMarkInputSchema,
+  KnowledgeRejectInputSchema,
+  ProposalIdSchema,
+  asEvidenceToken,
+  asRecordId,
+  canonicalJson,
+  deriveMarkStepId,
+  stampReceiptDigest,
+} from '@vostride/agent-qa-schema'
 
 import type {
   Delta,
   CommitReceipt,
+  ExecutionContext,
   Gate3Receipt,
   ForgetReceiptV1,
+  KnowledgeMarkInput,
   KnowledgeProjection,
   KnowledgeProposalV1,
+  KnowledgeReviewVerb,
+  KnowledgeTargetRef,
+  MarkProposalStamp,
   ProposalOrigin,
   ResolvePromotionPosture,
   TrustPriorTable,
@@ -41,15 +66,19 @@ import type {
 
 import { deriveBundleTrust, loadBundle, readGateReceipts } from '../bundle-read.js'
 import { enumerateBundleDirs } from '../bundle-scan.js'
-import { createLocalKnowledgeStore, KnowledgePromotionError } from '../curator/knowledge-store.js'
+import {
+  createExplicitReviewStore,
+  KnowledgePromotionError,
+  syntheticEvidenceToken,
+} from '../curator/knowledge-store.js'
 import { snapshotTrustPriors } from '../promotion-gate-input.js'
 import { diffSince } from '../diff-since.js'
-import { resolveDispositionProfile } from '../curator/author-contract.js'
 import { materializePolicy, policyShelfPath, PolicyTextRefusedError } from '../policy/materialize.js'
 import { acquireWriterLease, releaseLease, withCurrentWriterAuthority } from '../lease/writer-lease.js'
 import type { WriterLease } from '../lease/writer-lease.js'
 import { memoryStatusForBundle } from '../memory-status.js'
-import { FORGET_SCRUBBED_PROJECTIONS } from './propose-review.js'
+import { FORGET_SCRUBBED_PROJECTIONS, resolveReviewTarget, reviewDeltasFor } from './propose-review.js'
+import type { ProposeReviewRequest, ResolveBundleShortId } from './propose-review.js'
 import {
   ProposalNotFoundError,
   claimPendingProposal,
@@ -230,6 +259,49 @@ export interface ApplyReviewInput {
 }
 
 /**
+ * One review change, whichever door it came through: a claimed proposal envelope, or a validated
+ * direct request (432-06). `id` is the receipt identity — the proposal id on the proposal door,
+ * the id derived from the caller's stable operation identity on the direct door.
+ */
+interface ReviewChange {
+  readonly id: string
+  readonly verb: KnowledgeReviewVerb
+  readonly deltas: readonly Delta[]
+  readonly mark?: MarkProposalStamp
+}
+
+/** The write context both doors share. The execution context is the actual one, never spoofed. */
+interface ReviewWriter {
+  readonly agentQaRoot: string
+  readonly knowledgeRoot: string
+  readonly executionContext: ExecutionContext
+  /** Stamped as a Gate-3 receipt's `producedBy.opId`: the op that made this explicit change. */
+  readonly opId: string
+  readonly resolvePromotionPosture?: ResolvePromotionPosture
+  readonly resolveTrustPriors?: () => TrustPriorTable | undefined
+  readonly now?: () => number
+}
+
+interface WriterAuthority {
+  readonly leaseId: string
+  readonly epoch: number
+}
+
+/** What a review change did to the store, before any door-specific publication. */
+type ReviewEffect =
+  | {
+      readonly kind: 'applied'
+      readonly recordIds: readonly string[]
+      readonly commitReceipt?: CommitReceipt
+      readonly forgetReceipt?: ForgetReceiptV1
+      /** A recovered policy approval is published inside the holder's authority. */
+      readonly publishFenced?: true
+    }
+  | { readonly kind: 'policy-materialize-refused' }
+
+const PROPOSAL_APPLY_OP_ID = 'knowledge.proposal.apply'
+
+/**
  * The delta kind a review verb emits when it means "this record stops standing".
  *
  * BOTH `reject` and `forget` emit it (propose-review.ts:183-195 — identical `Deprecate` deltas
@@ -237,7 +309,7 @@ export interface ApplyReviewInput {
  * either verb's name.
  *
  * WHAT THE GUARD BELOW IS, and the previous version of this comment got it wrong, so it is
- * stated plainly: it is an IDEMPOTENCY short-circuit. A deprecating proposal over an already
+ * stated plainly: it is an IDEMPOTENCY short-circuit. A deprecating change over an already
  * tombstoned target has nothing left to destroy, and the honest answer is a receipt naming the
  * state that already holds rather than a second destructive change (FUNC-04's adjacency edge,
  * D-19's "nothing silently partial").
@@ -256,9 +328,9 @@ export interface ApplyReviewInput {
  */
 const DEPRECATE_DELTA_KIND = 'Deprecate'
 
-/** Whether a proposal's deltas — as WRITTEN DOWN, read back off disk — deprecate anything. */
-function deprecatesRecords(proposal: KnowledgeProposalV1): boolean {
-  return proposal.deltas.some((delta) => delta.kind === DEPRECATE_DELTA_KIND)
+/** Whether a change's deltas deprecate anything. */
+function deprecatesRecords(change: ReviewChange): boolean {
+  return change.deltas.some((delta) => delta.kind === DEPRECATE_DELTA_KIND)
 }
 
 function locateRecord(knowledgeRoot: string, recordId: string) {
@@ -279,7 +351,7 @@ function locateRecord(knowledgeRoot: string, recordId: string) {
 }
 
 /**
- * Whether every record a deprecating proposal addresses is ALREADY tombstoned.
+ * Whether every record a deprecating change addresses is ALREADY tombstoned.
  *
  * `every`, not `some`: a bundle-grained verb over a partially-tombstoned set still has work to
  * do, and treating it as complete would be the silent partiality D-19 forbids.
@@ -289,8 +361,8 @@ function locateRecord(knowledgeRoot: string, recordId: string) {
  * both were dead weight — and the shared one is `satisfies Record<BundleStatus, …>`, which makes
  * a fifth member a compile error here instead of a status that silently reads as untombstoned.
  */
-function alreadyTombstoned(knowledgeRoot: string, proposal: KnowledgeProposalV1): boolean {
-  const ids = targetRecordIds(proposal)
+function alreadyTombstoned(knowledgeRoot: string, change: ReviewChange): boolean {
+  const ids = targetRecordIds(change)
   if (ids.length === 0) return false
   return ids.every((recordId) => {
     const located = locateRecord(knowledgeRoot, recordId)
@@ -298,13 +370,53 @@ function alreadyTombstoned(knowledgeRoot: string, proposal: KnowledgeProposalV1)
   })
 }
 
-/** Every record id a proposal's deltas name — the enumeration a forget receipt is built over. */
-function targetRecordIds(proposal: KnowledgeProposalV1): string[] {
+/** Every record id a change's deltas name — the enumeration a forget receipt is built over. */
+function targetRecordIds(change: ReviewChange): string[] {
   const ids = new Set<string>()
-  for (const delta of proposal.deltas as readonly (Delta & { targetId?: string })[]) {
+  for (const delta of change.deltas as readonly (Delta & { targetId?: string })[]) {
     if (typeof delta.targetId === 'string') ids.add(delta.targetId)
   }
   return [...ids].sort()
+}
+
+/**
+ * The effects of a Confirm or Add change that already landed (432-06 retry), or `undefined`.
+ *
+ * Each delta's committed event carries an evidence token derived from the delta itself, but the
+ * curation job id that dedups the append is derived from the build ordinal, so a retried change
+ * would land as a second, distinct event. A plain read: the caller already holds the writer
+ * lease, so nothing can land in between, and entering the authority fence here would move lease
+ * bookkeeping on a change that then refuses. Partial effects are refused by type, exactly as a
+ * partial supersession is.
+ */
+function landedEffects(
+  knowledgeRoot: string,
+  change: ReviewChange,
+): { recordIds: string[]; ordinal: number } | undefined {
+  if (change.deltas.length === 0
+    || !change.deltas.every(delta => delta.kind === 'Confirm' || delta.kind === 'Add')) return undefined
+  const found: { id: string; ordinal: number }[] = []
+  for (const delta of change.deltas) {
+    const token = syntheticEvidenceToken(delta)
+    const hits = delta.kind === 'Confirm'
+      ? (locateRecord(knowledgeRoot, delta.targetId)?.bundle.events ?? [])
+        .filter(event => event.type === 'confirmed' && event.evidenceToken === token)
+        .map(event => ({ id: delta.targetId as string, ordinal: event.buildOrdinal }))
+      : enumerateBundleDirs(knowledgeRoot).flatMap(entry => {
+        const loaded = loadBundle(entry.dir)
+        if (loaded.kind !== 'loaded') return []
+        return loaded.bundle.events
+          .filter(event => event.type === 'confirmed' && event.evidenceToken === token)
+          .map(event => ({ id: loaded.bundle.manifest.id as string, ordinal: event.buildOrdinal }))
+      })
+    if (hits.length > 1) throw new ProposalTargetVanishedError(change.id)
+    if (hits.length === 1) found.push(hits[0]!)
+  }
+  if (found.length === 0) return undefined
+  if (found.length !== change.deltas.length || new Set(found.map(row => row.ordinal)).size !== 1) {
+    throw new ProposalTargetVanishedError(change.id)
+  }
+  return { recordIds: [...new Set(found.map(row => row.id))].sort(), ordinal: found[0]!.ordinal }
 }
 
 /**
@@ -324,26 +436,26 @@ function targetRecordIds(proposal: KnowledgeProposalV1): string[] {
  */
 function assembleForgetReceipt(
   knowledgeRoot: string,
-  proposal: KnowledgeProposalV1,
+  change: ReviewChange,
   forgottenAt: number,
   projectionsScrubbed: readonly KnowledgeProjection[],
 ): ForgetReceiptV1 {
   const tombstonedRecords: ForgetReceiptV1['tombstonedRecords'] = []
   let resultingBundleStatus: ForgetReceiptV1['resultingBundleStatus'] = 'forgotten'
-  for (const recordId of targetRecordIds(proposal)) {
+  for (const recordId of targetRecordIds(change)) {
     const located = locateRecord(knowledgeRoot, recordId)
     if (located === undefined) {
       // Tombstone-never-destroy (§7.7): the bundle file survives a forget, so a record that
       // cannot be read back after the commit is a fact about the STORE, not about this verb, and
       // reporting a tombstone for it would be the receipt asserting work nobody can verify.
-      throw new ProposalTargetVanishedError(proposal.proposalId)
+      throw new ProposalTargetVanishedError(change.id)
     }
     tombstonedRecords.push({ recordId, provenance: located.provenance })
     resultingBundleStatus = memoryStatusForBundle(located.status)
   }
   return {
     schemaVersion: 1,
-    proposalId: proposal.proposalId,
+    proposalId: change.id,
     tombstonedRecords,
     projectionsScrubbed: [...projectionsScrubbed],
     resultingBundleStatus,
@@ -352,40 +464,41 @@ function assembleForgetReceipt(
 }
 
 function reviewStore(
-  input: ApplyReviewInput,
-  proposal: KnowledgeProposalV1,
-  lease: { readonly leaseId: string; readonly epoch: number },
+  writer: ReviewWriter,
+  change: ReviewChange,
+  lease: WriterAuthority,
   sourceBuildOrdinal?: number,
 ) {
-  return createLocalKnowledgeStore({
-    knowledgeRoot: input.knowledgeRoot,
-    auditBaseDir: input.agentQaRoot,
-    executionContext: input.executionContext ?? 'local-interactive',
+  return createExplicitReviewStore({
+    knowledgeRoot: writer.knowledgeRoot,
+    auditBaseDir: writer.agentQaRoot,
+    executionContext: writer.executionContext,
     epoch: lease.epoch,
     writerLeaseId: lease.leaseId,
-    ...(proposal.mark === undefined ? {} : { sourceRunId: proposal.mark.runId }),
+    ...(change.mark === undefined ? {} : { sourceRunId: change.mark.runId }),
     ...(sourceBuildOrdinal === undefined ? {} : { sourceBuildOrdinal }),
-    ...(input.resolvePromotionPosture === undefined
+    ...(writer.resolvePromotionPosture === undefined
       ? {}
-      : { resolvePromotionPosture: input.resolvePromotionPosture }),
-    ...(input.resolveTrustPriors === undefined
+      : { resolvePromotionPosture: writer.resolvePromotionPosture }),
+    ...(writer.resolveTrustPriors === undefined
       ? {}
-      : { resolveTrustPriors: input.resolveTrustPriors }),
+      : { resolveTrustPriors: writer.resolveTrustPriors }),
   })
 }
 
 async function commitInProcess(
-  input: ApplyReviewInput,
-  proposal: KnowledgeProposalV1,
-  lease: { readonly leaseId: string; readonly epoch: number },
+  writer: ReviewWriter,
+  change: ReviewChange,
+  lease: WriterAuthority,
   sourceBuildOrdinal?: number,
 ) {
-  const store = reviewStore(input, proposal, lease, sourceBuildOrdinal)
+  const store = reviewStore(writer, change, lease, sourceBuildOrdinal)
   // THE one write path. Not `proposeDeltas` (which is the propose-only disposition profile and
   // would commit nothing), not a direct append, not a projection call — `commit`, exactly as any
-  // curation write reaches it.
+  // curation write reaches it, through the store's explicit entry: a person's change is not
+  // downgraded by the automatic propose-only profile, and every other check still applies.
   // 419-COMMIT-DOOR: commitInProcess
-  await store.commit([...proposal.deltas])
+  await store.commit([...change.deltas])
   return store
 }
 
@@ -403,8 +516,8 @@ function currentOrdinal(knowledgeRoot: string): number {
 }
 
 /** commit() returns void: read the committed additions/confirmations, excluding retired victims. */
-function readBackCommittedIds(knowledgeRoot: string, preOrdinal: number, proposal: KnowledgeProposalV1): string[] {
-  const ids = new Set(proposal.deltas.flatMap(delta => delta.kind === 'Confirm' ? [delta.targetId] : []))
+function readBackCommittedIds(knowledgeRoot: string, preOrdinal: number, change: ReviewChange): string[] {
+  const ids = new Set(change.deltas.flatMap(delta => delta.kind === 'Confirm' ? [delta.targetId] : []))
   // diffSince projects surviving events and receipts into change/identity; it does not fold trust.
   for (const row of diffSince({ knowledgeRoot, sinceOrdinal: preOrdinal })) {
     if (row.change === 'added' || row.change === 'confirmed' || row.change === 'superseded') {
@@ -417,38 +530,37 @@ function readBackCommittedIds(knowledgeRoot: string, preOrdinal: number, proposa
   }).sort()
 }
 
-function mintGate3Receipt(candidateId: string, proposal: KnowledgeProposalV1, producedAtOrdinal: number): Gate3Receipt {
-  if (proposal.mark === undefined) throw new TypeError('mark proposal has no mark stamp')
+function mintGate3Receipt(
+  candidateId: string, writer: ReviewWriter, change: ReviewChange, producedAtOrdinal: number,
+): Gate3Receipt {
+  if (change.mark === undefined) throw new TypeError('mark change has no mark stamp')
   return stampReceiptDigest({
     schemaVersion: 1, gate: 3, candidateId, verdict: 'pass', producedAtOrdinal,
-    producedBy: { opId: 'knowledge.proposal.apply' }, runId: proposal.mark.runId,
-    ...(proposal.mark.stepIndex === undefined ? {} : {
-      stepId: deriveMarkStepId(proposal.mark.testIndex, proposal.mark.stepIndex),
+    producedBy: { opId: writer.opId }, runId: change.mark.runId,
+    ...(change.mark.stepIndex === undefined ? {} : {
+      stepId: deriveMarkStepId(change.mark.testIndex, change.mark.stepIndex),
     }),
-    mark: proposal.mark.kind,
+    mark: change.mark.kind,
   })
 }
 
 async function applyMarkArm(
-  input: ApplyReviewInput, proposal: KnowledgeProposalV1,
-  authority: { readonly leaseId: string; readonly epoch: number }, origin: ProposalOrigin | undefined,
-): Promise<ApplyReviewResult> {
-  if (resolveDispositionProfile(input.executionContext ?? 'local-interactive').mode === 'propose-only') {
-    throw new KnowledgePromotionError(asRecordId(proposal.proposalId), 'propose-only')
-  }
-  const recovered = completedMarkSupersession(input, proposal, authority)
-  const preOrdinal = currentOrdinal(input.knowledgeRoot)
+  writer: ReviewWriter, change: ReviewChange, authority: WriterAuthority,
+): Promise<ReviewEffect> {
+  const recovered = completedMarkSupersession(writer, change, authority)
+    ?? landedEffects(writer.knowledgeRoot, change)
+  const preOrdinal = currentOrdinal(writer.knowledgeRoot)
   const store = recovered === undefined
-    ? await commitInProcess(input, proposal, authority, preOrdinal + 1)
-    : reviewStore(input, proposal, authority)
-  const recordIds = recovered?.recordIds ?? readBackCommittedIds(input.knowledgeRoot, preOrdinal, proposal)
-  const committedAtOrdinal = recovered?.ordinal ?? currentOrdinal(input.knowledgeRoot)
+    ? await commitInProcess(writer, change, authority, preOrdinal + 1)
+    : reviewStore(writer, change, authority)
+  const recordIds = recovered?.recordIds ?? readBackCommittedIds(writer.knowledgeRoot, preOrdinal, change)
+  const committedAtOrdinal = recovered?.ordinal ?? currentOrdinal(writer.knowledgeRoot)
   const commitReceipt: CommitReceipt = {
-    schemaVersion: 1, proposalId: proposal.proposalId, markId: proposal.mark!.markId,
+    schemaVersion: 1, proposalId: change.id, markId: change.mark!.markId,
     committedAtOrdinal, recordIds, gate3: [], promoted: [], held: [],
   }
   for (const candidateId of recordIds) {
-    const receipt = mintGate3Receipt(candidateId, proposal, committedAtOrdinal)
+    const receipt = mintGate3Receipt(candidateId, writer, change, committedAtOrdinal)
     try {
       const outcome = await store.promote(asRecordId(candidateId), [receipt])
       if (outcome.promotionPath !== undefined) {
@@ -462,22 +574,19 @@ async function applyMarkArm(
     }
     commitReceipt.gate3.push({ candidateId, receiptDigest: receipt.receiptDigest })
   }
-  const applied: KnowledgeProposalV1 = { ...proposal, status: 'applied' }
-  publishAppliedProposal(input.agentQaRoot, { proposal: applied, commitReceipt, ...decisionTrail(input, origin) })
-  return { outcome: 'applied', proposal: applied, commitReceipt }
+  return { kind: 'applied', recordIds, commitReceipt }
 }
 
 /** A retry is not another lineage transition. Recover exact mark Supersede effects before commit. */
 function completedMarkSupersession(
-  input: ApplyReviewInput, proposal: KnowledgeProposalV1,
-  authority: { readonly leaseId: string; readonly epoch: number },
+  writer: ReviewWriter, change: ReviewChange, authority: WriterAuthority,
 ): { recordIds: string[]; ordinal: number } | undefined {
-  if (proposal.deltas.length === 0 || !proposal.deltas.every(delta => delta.kind === 'Supersede')) return undefined
-  return withCurrentWriterAuthority(input.knowledgeRoot, authority, () => {
+  if (change.deltas.length === 0 || !change.deltas.every(delta => delta.kind === 'Supersede')) return undefined
+  return withCurrentWriterAuthority(writer.knowledgeRoot, authority, () => {
     const found: { id: string; ordinal: number }[] = []
-    for (const delta of proposal.deltas) {
+    for (const delta of change.deltas) {
       if (delta.kind !== 'Supersede') throw new Error('Expected mark Supersede')
-      const victim = locateRecord(input.knowledgeRoot, delta.victimId)
+      const victim = locateRecord(writer.knowledgeRoot, delta.victimId)
       const matches = victim?.bundle.events.filter(row => row.type === 'superseded'
         && row.evidenceToken === delta.evidenceToken) ?? []
       if (matches.length === 0) {
@@ -485,10 +594,10 @@ function completedMarkSupersession(
         continue
       }
       const event = matches.length === 1 ? matches[0] : undefined
-      if (event?.type !== 'superseded' || delta.evidenceToken !== `mark:${proposal.mark!.markId}`) {
-        throw new ProposalTargetVanishedError(proposal.proposalId)
+      if (event?.type !== 'superseded' || delta.evidenceToken !== `mark:${change.mark!.markId}`) {
+        throw new ProposalTargetVanishedError(change.id)
       }
-      const replacement = locateRecord(input.knowledgeRoot, event.byRecordId)
+      const replacement = locateRecord(writer.knowledgeRoot, event.byRecordId)
       if (replacement === undefined || memoryStatusForBundle(replacement.status) === 'tombstoned'
         || replacement.bundle.frontmatter.kind !== delta.newBundle.kind
         || replacement.bundle.frontmatter.subtype !== delta.newBundle.subtype
@@ -500,94 +609,85 @@ function completedMarkSupersession(
         || !replacement.bundle.relations.relations.some(row => row.type === 'supersedes' && row.targetId === delta.victimId
           && row.addedAtOrdinal === event.buildOrdinal && row.curationJobId === event.curationJobId)
         || !victim!.bundle.events.some(row => row.type === 'window-close' && row.closedAtOrdinal === event.buildOrdinal
-          && row.curationJobId === event.curationJobId)) throw new ProposalTargetVanishedError(proposal.proposalId)
+          && row.curationJobId === event.curationJobId)) throw new ProposalTargetVanishedError(change.id)
       found.push({ id: event.byRecordId, ordinal: event.buildOrdinal })
     }
     if (found.length === 0) return undefined
-    if (found.length !== proposal.deltas.length || new Set(found.map(row => row.ordinal)).size !== 1) {
-      throw new ProposalTargetVanishedError(proposal.proposalId)
+    if (found.length !== change.deltas.length || new Set(found.map(row => row.ordinal)).size !== 1) {
+      throw new ProposalTargetVanishedError(change.id)
     }
     return { recordIds: [...new Set(found.map(row => row.id))].sort(), ordinal: found[0]!.ordinal }
   })
 }
 
 async function applyPolicyArm(
-  input: ApplyReviewInput, proposal: KnowledgeProposalV1,
-  authority: { readonly leaseId: string; readonly epoch: number }, origin: ProposalOrigin | undefined,
+  writer: ReviewWriter, change: ReviewChange, authority: WriterAuthority,
   recordId: string, record: NonNullable<ReturnType<typeof locateRecord>>,
-): Promise<ApplyReviewResult> {
-  if (resolveDispositionProfile(input.executionContext ?? 'local-interactive').mode === 'propose-only') {
-    throw new KnowledgePromotionError(asRecordId(recordId), 'propose-only')
-  }
+): Promise<ReviewEffect> {
   if (memoryStatusForBundle(record.status) === 'tombstoned') {
-    return recoverPolicyArm(input, proposal, authority, origin, recordId)
+    return recoverPolicyArm(writer, change, authority, recordId)
   }
   const { bundle } = record
   const scope = bundle.frontmatter.scope
   let materialized
   try {
-    materialized = materializePolicy({ knowledgeRoot: input.knowledgeRoot, recordId,
+    materialized = materializePolicy({ knowledgeRoot: writer.knowledgeRoot, recordId,
       scope: scope.tier === 'global' ? 'global' : scope.key, ruleText: bundle.body,
-      title: bundle.summary, auditBaseDir: input.agentQaRoot, writerAuthority: authority })
+      title: bundle.summary, auditBaseDir: writer.agentQaRoot, writerAuthority: authority })
   } catch (error) {
     if (!(error instanceof PolicyTextRefusedError)) throw error
   }
   if (materialized === undefined || materialized.kind === 'egress-blocked') {
-    restorePendingProposal(input.agentQaRoot, proposal.proposalId)
-    return { outcome: 'policy-materialize-refused', proposal }
+    return { kind: 'policy-materialize-refused' }
   }
   const reference: Delta = {
     kind: 'Supersede', origin: 'user', scope, citedIds: [asRecordId(recordId)],
-    victimId: asRecordId(recordId), evidenceToken: asEvidenceToken(`policy-materialize:${proposal.proposalId}`),
+    victimId: asRecordId(recordId), evidenceToken: asEvidenceToken(`policy-materialize:${change.id}`),
     newBundle: { kind: 'policy', summary: bundle.body.split('\n')[0] ?? bundle.summary,
       body: `${materialized.relPath}#agent-qa:policy ${recordId}`,
       anchors: bundle.frontmatter.anchors.map(({ raw }) => raw), scope,
       distilledEvidenceRef: { id: recordId, sha: bundle.manifest.contentHashes['record.md']! },
       originStage: 'run-curation' },
   }
-  const preOrdinal = currentOrdinal(input.knowledgeRoot)
-  const store = await commitInProcess(input, { ...proposal, deltas: [...proposal.deltas, reference] },
+  const preOrdinal = currentOrdinal(writer.knowledgeRoot)
+  const store = await commitInProcess(writer, { ...change, deltas: [...change.deltas, reference] },
     authority, preOrdinal + 1)
   // Select the replacement by lifecycle/identity; the DTO's computed trust is never consumed.
-  const superseded = diffSince({ knowledgeRoot: input.knowledgeRoot, sinceOrdinal: preOrdinal })
+  const superseded = diffSince({ knowledgeRoot: writer.knowledgeRoot, sinceOrdinal: preOrdinal })
     .find(row => row.recordId === recordId && row.change === 'superseded')
   const replacement = superseded?.byRecordId === undefined ? undefined
-    : locateRecord(input.knowledgeRoot, superseded.byRecordId)
+    : locateRecord(writer.knowledgeRoot, superseded.byRecordId)
   if (replacement?.bundle.frontmatter.kind !== 'policy' || replacement.bundle.body !== reference.newBundle.body) {
-    throw new ProposalTargetVanishedError(proposal.proposalId)
+    throw new ProposalTargetVanishedError(change.id)
   }
-  const committedAtOrdinal = currentOrdinal(input.knowledgeRoot)
+  const committedAtOrdinal = currentOrdinal(writer.knowledgeRoot)
   const receipt = stampReceiptDigest({ schemaVersion: 1, gate: 3, candidateId: recordId,
     verdict: 'pass', producedAtOrdinal: committedAtOrdinal,
-    producedBy: { opId: 'knowledge.proposal.apply' },
-    policyApproval: { proposalId: proposal.proposalId, recordId },
+    producedBy: { opId: writer.opId },
+    policyApproval: { proposalId: change.id, recordId },
   } as const)
   await store.recordGateReceipt(receipt)
-  const commitReceipt: CommitReceipt = { schemaVersion: 1, proposalId: proposal.proposalId,
+  const commitReceipt: CommitReceipt = { schemaVersion: 1, proposalId: change.id,
     committedAtOrdinal, recordIds: [recordId], gate3: [{ candidateId: recordId, receiptDigest: receipt.receiptDigest }],
     promoted: [], held: [], policy: { recordId, scope: scope.tier === 'global' ? 'global' : scope.key,
       relPath: materialized.relPath, outcome: materialized.kind } }
-  const applied: KnowledgeProposalV1 = { ...proposal, status: 'applied' }
-  publishAppliedProposal(input.agentQaRoot, { proposal: applied, commitReceipt, ...decisionTrail(input, origin) })
-  return { outcome: 'applied', proposal: applied, commitReceipt }
+  return { kind: 'applied', recordIds: [recordId], commitReceipt }
 }
 
-/** Recover only this proposal's fully committed effects; a closed target alone proves nothing. */
+/** Recover only this change's fully committed effects; a closed target alone proves nothing. */
 async function recoverPolicyArm(
-  input: ApplyReviewInput, proposal: KnowledgeProposalV1,
-  authority: { readonly leaseId: string; readonly epoch: number }, origin: ProposalOrigin | undefined,
-  recordId: string,
-): Promise<ApplyReviewResult> {
-  const committed = withCurrentWriterAuthority(input.knowledgeRoot, authority, () => {
-    const victim = locateRecord(input.knowledgeRoot, recordId)
-    const token = `policy-materialize:${proposal.proposalId}`
+  writer: ReviewWriter, change: ReviewChange, authority: WriterAuthority, recordId: string,
+): Promise<ReviewEffect> {
+  const committed = withCurrentWriterAuthority(writer.knowledgeRoot, authority, () => {
+    const victim = locateRecord(writer.knowledgeRoot, recordId)
+    const token = `policy-materialize:${change.id}`
     const events = victim?.bundle.events.filter(event => event.type === 'superseded' && event.evidenceToken === token)
     const event = events?.length === 1 ? events[0] : undefined
-    if (victim === undefined || event?.type !== 'superseded') throw new ProposalTargetVanishedError(proposal.proposalId)
-    const replacement = locateRecord(input.knowledgeRoot, event.byRecordId)
+    if (victim === undefined || event?.type !== 'superseded') throw new ProposalTargetVanishedError(change.id)
+    const replacement = locateRecord(writer.knowledgeRoot, event.byRecordId)
     const scope = victim.bundle.frontmatter.scope
     const shelfScope = scope.tier === 'global' ? 'global' : scope.key
-    const relPath = relative(input.knowledgeRoot, policyShelfPath(input.knowledgeRoot, shelfScope))
+    const relPath = relative(writer.knowledgeRoot, policyShelfPath(writer.knowledgeRoot, shelfScope))
     if (replacement?.bundle.frontmatter.kind !== 'policy'
       || memoryStatusForBundle(replacement.status) === 'tombstoned'
       || replacement.bundle.body !== `${relPath}#agent-qa:policy ${recordId}`
@@ -599,40 +699,92 @@ async function recoverPolicyArm(
         && row.addedAtOrdinal === event.buildOrdinal && row.curationJobId === event.curationJobId)
       || !victim.bundle.events.some(row => row.type === 'window-close' && row.closedAtOrdinal === event.buildOrdinal
         && row.curationJobId === event.curationJobId)
-      || !proposal.deltas.every(delta => delta.kind === 'Confirm' && delta.targetId === recordId
+      || !change.deltas.every(delta => delta.kind === 'Confirm' && delta.targetId === recordId
         && victim.bundle.events.some(row => row.type === 'confirmed' && row.evidenceToken === delta.evidenceToken
-          && row.buildOrdinal === event.buildOrdinal))) throw new ProposalTargetVanishedError(proposal.proposalId)
+          && row.buildOrdinal === event.buildOrdinal))) throw new ProposalTargetVanishedError(change.id)
     const receipt = stampReceiptDigest({ schemaVersion: 1, gate: 3, candidateId: recordId,
       verdict: 'pass', producedAtOrdinal: event.buildOrdinal,
-      producedBy: { opId: 'knowledge.proposal.apply' },
-      policyApproval: { proposalId: proposal.proposalId, recordId },
+      producedBy: { opId: writer.opId },
+      policyApproval: { proposalId: change.id, recordId },
     } as const)
     const gates = readGateReceipts(victim.dir, recordId)
     if (gates === undefined && existsSync(join(victim.dir, 'evidence/gates.jsonl'))) {
       throw new Error('Policy approval evidence is unreadable')
     }
     const prior = (gates ?? []).filter(row => 'gate' in row && row.gate === 3
-      && row.policyApproval?.proposalId === proposal.proposalId)
+      && row.policyApproval?.proposalId === change.id)
     if (prior.length > 1 || (prior.length === 1 && canonicalJson(prior[0]) !== canonicalJson(receipt))) {
       throw new Error('Policy approval evidence does not match the committed supersession')
     }
     return { victim, shelfScope, relPath, receipt, hasReceipt: prior.length === 1 }
   })
-  const materialized = materializePolicy({ knowledgeRoot: input.knowledgeRoot, recordId,
+  const materialized = materializePolicy({ knowledgeRoot: writer.knowledgeRoot, recordId,
     scope: committed.shelfScope, ruleText: committed.victim.bundle.body,
-    title: committed.victim.bundle.summary, auditBaseDir: input.agentQaRoot,
+    title: committed.victim.bundle.summary, auditBaseDir: writer.agentQaRoot,
     writerAuthority: authority, existingOnly: true })
   if (materialized.kind !== 'unchanged') throw new Error('Committed policy section is unavailable')
-  if (!committed.hasReceipt) await reviewStore(input, proposal, authority).recordGateReceipt(committed.receipt)
-  const commitReceipt: CommitReceipt = { schemaVersion: 1, proposalId: proposal.proposalId,
+  if (!committed.hasReceipt) await reviewStore(writer, change, authority).recordGateReceipt(committed.receipt)
+  const commitReceipt: CommitReceipt = { schemaVersion: 1, proposalId: change.id,
     committedAtOrdinal: committed.receipt.producedAtOrdinal, recordIds: [recordId],
     gate3: [{ candidateId: recordId, receiptDigest: committed.receipt.receiptDigest }], promoted: [], held: [],
     policy: { recordId, scope: committed.shelfScope, relPath: committed.relPath, outcome: materialized.kind } }
-  const applied: KnowledgeProposalV1 = { ...proposal, status: 'applied' }
-  withCurrentWriterAuthority(input.knowledgeRoot, authority, () => {
-    publishAppliedProposal(input.agentQaRoot, { proposal: applied, commitReceipt, ...decisionTrail(input, origin) })
-  })
-  return { outcome: 'applied', proposal: applied, commitReceipt }
+  return { kind: 'applied', recordIds: [recordId], commitReceipt, publishFenced: true }
+}
+
+/**
+ * Apply one change under authority the caller already holds. Shared by both doors; publishes
+ * nothing, so the proposal door adds its envelope afterwards and the direct door adds none.
+ */
+async function writeReviewChange(
+  writer: ReviewWriter, change: ReviewChange, authority: WriterAuthority,
+): Promise<ReviewEffect> {
+  if (change.verb === 'mark') return await applyMarkArm(writer, change, authority)
+  if (change.verb === 'accept') {
+    for (const recordId of targetRecordIds(change)) {
+      const record = locateRecord(writer.knowledgeRoot, recordId)
+      if (record?.bundle.frontmatter.kind === 'policy') {
+        return await applyPolicyArm(writer, change, authority, recordId, record)
+      }
+    }
+  }
+  // FUNC-04's adjacency edge, decided BEFORE the commit rather than hoped for after it.
+  //
+  // Deprecating an already-tombstoned record must be "a receipt naming the already-tombstoned
+  // state, never a second destructive change", and that is ALL this branch does. Idempotency
+  // lives here, over the target's STATE rather than only over the change id, because rejecting
+  // the same record twice is the most ordinary repetition a review invites.
+  //
+  // CORRECTED, because the earlier version of this comment claimed more than it delivers: this
+  // branch is NOT what stops an unauthored clone being minted. It cannot be — it is reachable
+  // only for a change that deprecates, and round 1's verifier reproduced the identical mint
+  // through `accept`, whose `Confirm` never enters here. The mint is the curator's response to
+  // a cited-id-integrity failure, and it is refused at that check now, for every review delta
+  // of every kind, by `UserDeltaCitationIntegrityError`. What is true and worth keeping: the
+  // clone really is a verbatim copy of the target's anchors, scope and summary republished as
+  // a fresh `candidate`, which `isEligibleCandidate` (serving/brief-selection.ts:142-151)
+  // re-admits into serving — that is why the refusal, not merely a no-op, is the right answer.
+  if (deprecatesRecords(change) && alreadyTombstoned(writer.knowledgeRoot, change)) {
+    const recordIds = targetRecordIds(change)
+    // reject carries no receipt on any path; the record ids are the whole answer.
+    if (change.verb !== 'forget') return { kind: 'applied', recordIds }
+    // WR-02: no commit ran on this branch, so no projection was rebuilt and no recall row was
+    // removed. The scrub list is EMPTY because that is what happened.
+    const forgetReceipt = assembleForgetReceipt(writer.knowledgeRoot, change, (writer.now ?? Date.now)(), [])
+    return { kind: 'applied', recordIds, forgetReceipt }
+  }
+
+  if (landedEffects(writer.knowledgeRoot, change) === undefined) {
+    await commitInProcess(writer, change, authority)
+  }
+  const recordIds = targetRecordIds(change)
+  if (change.verb !== 'forget') return { kind: 'applied', recordIds }
+  const forgetReceipt = assembleForgetReceipt(
+    writer.knowledgeRoot,
+    change,
+    (writer.now ?? Date.now)(),
+    FORGET_SCRUBBED_PROJECTIONS,
+  )
+  return { kind: 'applied', recordIds, forgetReceipt }
 }
 
 /**
@@ -709,10 +861,13 @@ async function settleClaim(
  * untrue; this makes it structural, and it fires BEFORE the claim so a rejected input never
  * renames a proposal it is not going to apply.
  */
-function assertSingleWritePath(input: ApplyReviewInput): void {
+function assertSingleWritePath(
+  input: { readonly writerAuthority?: unknown; readonly delegate?: unknown },
+  entry: 'applyReview' | 'applyExplicitReview',
+): void {
   if (input.writerAuthority !== undefined && input.delegate !== undefined) {
     throw new TypeError(
-      'applyReview received both `writerAuthority` and `delegate`. A leaseholder never ' +
+      `${entry} received both \`writerAuthority\` and \`delegate\`. A leaseholder never ` +
         'delegates: holding the writer lease is exactly what makes an in-process commit the ' +
         'only available path, so supply one or the other and never both.',
     )
@@ -723,7 +878,7 @@ function assertSingleWritePath(input: ApplyReviewInput): void {
  * Apply a minted proposal. Race-safe, idempotent, receipt-bearing.
  */
 export async function applyReview(input: ApplyReviewInput): Promise<ApplyReviewResult> {
-  assertSingleWritePath(input)
+  assertSingleWritePath(input, 'applyReview')
   const priors = snapshotTrustPriors(input.resolveTrustPriors?.())
   input = { ...input, ...(input.resolveTrustPriors === undefined ? {} : { resolveTrustPriors: () => priors }) }
   const claim = await settleClaim(input)
@@ -759,7 +914,8 @@ export async function applyReview(input: ApplyReviewInput): Promise<ApplyReviewR
     if (input.delegate === undefined) {
       throw new ApplyDelegateUnavailableError(input.proposalId, acquired.holder)
     }
-    return await withBoundedWait(input, input.delegate)
+    const delegate = input.delegate
+    return await withBoundedWait(input.proposalId, input.delegateTimeoutMs, () => delegate(input.proposalId))
   }
   if (acquired.kind !== 'acquired') {
     restorePendingProposal(input.agentQaRoot, input.proposalId)
@@ -795,86 +951,56 @@ function decisionTrail(
   }
 }
 
+/** The proposal door's writer: its execution context defaults to the interactive host. */
+function proposalWriter(input: ApplyReviewInput): ReviewWriter {
+  return {
+    agentQaRoot: input.agentQaRoot,
+    knowledgeRoot: input.knowledgeRoot,
+    executionContext: input.executionContext ?? 'local-interactive',
+    opId: PROPOSAL_APPLY_OP_ID,
+    ...(input.resolvePromotionPosture === undefined
+      ? {}
+      : { resolvePromotionPosture: input.resolvePromotionPosture }),
+    ...(input.resolveTrustPriors === undefined ? {} : { resolveTrustPriors: input.resolveTrustPriors }),
+    ...(input.now === undefined ? {} : { now: input.now }),
+  }
+}
+
+function proposalChange(proposal: KnowledgeProposalV1): ReviewChange {
+  return {
+    id: proposal.proposalId,
+    verb: proposal.verb,
+    deltas: proposal.deltas,
+    ...(proposal.mark === undefined ? {} : { mark: proposal.mark }),
+  }
+}
+
 /** The commit-and-receipt half, shared by the acquiring path and the already-holding one. */
 async function commitAndPublish(
   input: ApplyReviewInput,
   proposal: KnowledgeProposalV1,
-  authority: { readonly leaseId: string; readonly epoch: number },
+  authority: WriterAuthority,
   origin: ProposalOrigin | undefined,
 ): Promise<ApplyReviewResult> {
   try {
-    if (proposal.verb === 'mark') return await applyMarkArm(input, proposal, authority, origin)
-    if (proposal.verb === 'accept') {
-      for (const recordId of targetRecordIds(proposal)) {
-        const record = locateRecord(input.knowledgeRoot, recordId)
-        if (record?.bundle.frontmatter.kind === 'policy') {
-          return await applyPolicyArm(input, proposal, authority, origin, recordId, record)
-        }
-      }
+    const effect = await writeReviewChange(proposalWriter(input), proposalChange(proposal), authority)
+    if (effect.kind === 'policy-materialize-refused') {
+      restorePendingProposal(input.agentQaRoot, proposal.proposalId)
+      return { outcome: 'policy-materialize-refused', proposal }
     }
-    // FUNC-04's adjacency edge, decided BEFORE the commit rather than hoped for after it.
-    //
-    // Deprecating an already-tombstoned record must be "a receipt naming the already-tombstoned
-    // state, never a second destructive change", and that is ALL this branch does. Idempotency
-    // lives here, over the target's STATE rather than only over the proposal id, because
-    // rejecting the same record twice is the most ordinary repetition a review queue invites.
-    //
-    // CORRECTED, because the earlier version of this comment claimed more than it delivers: this
-    // branch is NOT what stops an unauthored clone being minted. It cannot be — it is reachable
-    // only for a proposal that deprecates, and round 1's verifier reproduced the identical mint
-    // through `accept`, whose `Confirm` never enters here. The mint is the curator's response to
-    // a cited-id-integrity failure, and it is refused at that check now, for every review delta
-    // of every kind, by `UserDeltaCitationIntegrityError`. What is true and worth keeping: the
-    // clone really is a verbatim copy of the target's anchors, scope and summary republished as
-    // a fresh `candidate`, which `isEligibleCandidate` (serving/brief-selection.ts:142-151)
-    // re-admits into serving — that is why the refusal, not merely a no-op, is the right answer.
-    if (deprecatesRecords(proposal) && alreadyTombstoned(input.knowledgeRoot, proposal)) {
-      const already: KnowledgeProposalV1 = { ...proposal, status: 'applied' }
-      if (proposal.verb !== 'forget') {
-        // reject carries no receipt on any path; the applied record is the whole answer.
-        publishAppliedProposal(input.agentQaRoot, {
-          proposal: already,
-          ...decisionTrail(input, origin),
-        })
-        return { outcome: 'applied', proposal: already }
-      }
-      // WR-02: no commit ran on this branch, so no projection was rebuilt and no recall row was
-      // removed. The scrub list is EMPTY because that is what happened.
-      const receipt = assembleForgetReceipt(
-        input.knowledgeRoot,
-        proposal,
-        (input.now ?? Date.now)(),
-        [],
-      )
-      publishAppliedProposal(input.agentQaRoot, {
-        proposal: already,
-        forgetReceipt: receipt,
-        ...decisionTrail(input, origin),
-      })
-      return { outcome: 'applied', proposal: already, forgetReceipt: receipt }
-    }
-
-    await commitInProcess(input, proposal, authority)
-    const forgottenAt = (input.now ?? Date.now)()
-    const forgetReceipt = proposal.verb === 'forget'
-      ? assembleForgetReceipt(
-          input.knowledgeRoot,
-          proposal,
-          forgottenAt,
-          FORGET_SCRUBBED_PROJECTIONS,
-        )
-      : undefined
     const applied: KnowledgeProposalV1 = { ...proposal, status: 'applied' }
-    publishAppliedProposal(input.agentQaRoot, {
+    const receipts = {
+      ...(effect.commitReceipt === undefined ? {} : { commitReceipt: effect.commitReceipt }),
+      ...(effect.forgetReceipt === undefined ? {} : { forgetReceipt: effect.forgetReceipt }),
+    }
+    const publish = () => publishAppliedProposal(input.agentQaRoot, {
       proposal: applied,
-      ...(forgetReceipt === undefined ? {} : { forgetReceipt }),
+      ...receipts,
       ...decisionTrail(input, origin),
     })
-    return {
-      outcome: 'applied',
-      proposal: applied,
-      ...(forgetReceipt === undefined ? {} : { forgetReceipt }),
-    }
+    if (effect.publishFenced === true) withCurrentWriterAuthority(input.knowledgeRoot, authority, publish)
+    else publish()
+    return { outcome: 'applied', proposal: applied, ...receipts }
   } catch (error) {
     restorePendingProposal(input.agentQaRoot, input.proposalId)
     throw error
@@ -886,27 +1012,197 @@ async function commitAndPublish(
  *
  * `Promise.race` against a timer rather than an abort signal, because the transport is injected and
  * this module cannot assume it is cancellable. The consequence is stated rather than hidden: a
- * wedged holder's answer may still arrive after the refusal, and it is discarded — the proposal is
- * pending either way, so the worst case is a retry that finds the work already done and receives
- * the already-applied receipt. A hang has no such worst case.
+ * wedged holder's answer may still arrive after the refusal, and it is discarded — nothing was
+ * applied here either way, so the worst case is a retry that finds the work already done. A hang
+ * has no such worst case.
  */
-async function withBoundedWait(
-  input: ApplyReviewInput,
-  delegate: ApplyDelegate,
-): Promise<ApplyReviewResult> {
-  const timeoutMs = input.delegateTimeoutMs ?? APPLY_DELEGATE_TIMEOUT_MS
+async function withBoundedWait<T>(
+  changeId: string,
+  delegateTimeoutMs: number | undefined,
+  call: () => Promise<T>,
+): Promise<T> {
+  const timeoutMs = delegateTimeoutMs ?? APPLY_DELEGATE_TIMEOUT_MS
   let timer: ReturnType<typeof setTimeout> | undefined
   try {
     return await Promise.race([
-      delegate(input.proposalId),
+      call(),
       new Promise<never>((_resolve, reject) => {
         timer = setTimeout(
-          () => reject(new ApplyDelegateTimeoutError(input.proposalId, timeoutMs)),
+          () => reject(new ApplyDelegateTimeoutError(changeId, timeoutMs)),
           timeoutMs,
         )
       }),
     ])
   } finally {
     if (timer !== undefined) clearTimeout(timer)
+  }
+}
+
+// ---- 432-06: the direct door ------------------------------------------------------------------
+
+/** A validated mark, accept, reject or forget, in the shape the review verbs already take. */
+export type ExplicitReviewRequest = ProposeReviewRequest
+
+/** What the writer-lease holder is handed: the same request and the same stable identity. */
+export interface ExplicitReviewDelegation {
+  readonly request: ExplicitReviewRequest
+  readonly operationId: string
+}
+
+/**
+ * Hand the direct request to the leaseholder and wait bounded for its answer (D-18 carried to
+ * direct inputs). Injected, never built here, exactly like {@link ApplyDelegate}.
+ */
+export type ExplicitReviewDelegate = (delegation: ExplicitReviewDelegation) => Promise<ExplicitReviewResult>
+
+export interface ApplyExplicitReviewInput {
+  readonly agentQaRoot: string
+  readonly knowledgeRoot: string
+  readonly request: ExplicitReviewRequest
+  /**
+   * The caller's stable identity for this change, such as a mark intent's UUID. A retry with the
+   * same identity is the same change: its evidence tokens, receipts and record ids repeat.
+   */
+  readonly operationId: string
+  /** The op making the change, stamped on Gate-3 receipts as `producedBy.opId`. */
+  readonly opId: string
+  /** The caller's actual context. Recorded as-is; explicit authority never rewrites it. */
+  readonly executionContext: ExecutionContext
+  readonly resolveBundleShortId?: ResolveBundleShortId
+  readonly delegate?: ExplicitReviewDelegate
+  readonly writerAuthority?: WriterAuthority
+  readonly resolvePromotionPosture?: ResolvePromotionPosture
+  readonly resolveTrustPriors?: () => TrustPriorTable | undefined
+  readonly now?: () => number
+  readonly delegateTimeoutMs?: number
+}
+
+export type ExplicitReviewResult =
+  | {
+      readonly outcome: 'applied'
+      readonly verb: KnowledgeReviewVerb
+      readonly changeId: string
+      /** The records the change added, confirmed or tombstoned, read back after the write. */
+      readonly recordIds: readonly string[]
+      readonly commitReceipt?: CommitReceipt
+      readonly forgetReceipt?: ForgetReceiptV1
+    }
+  | {
+      readonly outcome: 'target-not-found'
+      readonly verb: KnowledgeReviewVerb
+      readonly changeId: string
+      readonly target: KnowledgeTargetRef
+    }
+  | {
+      readonly outcome: 'policy-materialize-refused'
+      readonly verb: KnowledgeReviewVerb
+      readonly changeId: string
+    }
+
+/** Validate at the boundary, before any lease is asked for or any request is delegated. */
+function validatedRequest(request: ExplicitReviewRequest): ExplicitReviewRequest {
+  switch (request.verb) {
+    case 'accept':
+      return { verb: 'accept', input: KnowledgeAcceptInputSchema.parse(request.input) }
+    case 'reject':
+      return { verb: 'reject', input: KnowledgeRejectInputSchema.parse(request.input) }
+    case 'forget':
+      return { verb: 'forget', input: KnowledgeForgetInputSchema.parse(request.input) }
+    case 'mark':
+      return { verb: 'mark', input: KnowledgeMarkInputSchema.parse(request.input) }
+    default:
+      throw new TypeError('an explicit knowledge change names accept, reject, forget or mark')
+  }
+}
+
+/**
+ * The change identity receipts carry, derived from the caller's operation identity. It keeps the
+ * receipt id shape, so the same UUID a mark intent already holds names the same change here.
+ */
+function explicitChangeId(operationId: string): string {
+  const parsed = typeof operationId === 'string'
+    ? ProposalIdSchema.safeParse(`prop_${operationId.toLowerCase()}`)
+    : undefined
+  if (parsed?.success !== true) {
+    throw new TypeError(
+      'operationId must be a stable identity of letters, digits and single hyphens, such as a UUID',
+    )
+  }
+  return parsed.data
+}
+
+async function applyExplicitAsHolder(
+  writer: ReviewWriter,
+  request: ExplicitReviewRequest,
+  changeId: string,
+  authority: WriterAuthority,
+  resolveBundleShortId: ResolveBundleShortId | undefined,
+): Promise<ExplicitReviewResult> {
+  const target = request.input.target
+  const resolved = resolveReviewTarget(writer.knowledgeRoot, target, resolveBundleShortId)
+  if (resolved === undefined) return { outcome: 'target-not-found', verb: request.verb, changeId, target }
+  const change: ReviewChange = {
+    id: changeId,
+    verb: request.verb,
+    deltas: reviewDeltasFor(request, resolved, changeId),
+    ...(request.verb === 'mark' ? { mark: (request.input as KnowledgeMarkInput).mark } : {}),
+  }
+  const effect = await writeReviewChange(writer, change, authority)
+  if (effect.kind === 'policy-materialize-refused') {
+    return { outcome: 'policy-materialize-refused', verb: request.verb, changeId }
+  }
+  return {
+    outcome: 'applied',
+    verb: request.verb,
+    changeId,
+    recordIds: [...effect.recordIds],
+    ...(effect.commitReceipt === undefined ? {} : { commitReceipt: effect.commitReceipt }),
+    ...(effect.forgetReceipt === undefined ? {} : { forgetReceipt: effect.forgetReceipt }),
+  }
+}
+
+/**
+ * Apply an explicit knowledge change in the call (432-06, D-04/D-05/D-09/D-11).
+ *
+ * No envelope is written, claimed or reloaded. Lease routing is the proposal door's: a holder
+ * commits with its own authority, a free lease is acquired and released, and a live holder is
+ * handed the same validated request and identity, bounded, and is never stolen from. Retrying
+ * the same `operationId` lands nothing twice and answers the same record ids.
+ */
+export async function applyExplicitReview(input: ApplyExplicitReviewInput): Promise<ExplicitReviewResult> {
+  assertSingleWritePath(input, 'applyExplicitReview')
+  const request = validatedRequest(input.request)
+  const changeId = explicitChangeId(input.operationId)
+  if (typeof input.opId !== 'string' || input.opId.length === 0) {
+    throw new TypeError('applyExplicitReview needs the op id that makes the change')
+  }
+  const priors = snapshotTrustPriors(input.resolveTrustPriors?.())
+  const writer: ReviewWriter = {
+    agentQaRoot: input.agentQaRoot,
+    knowledgeRoot: input.knowledgeRoot,
+    executionContext: input.executionContext,
+    opId: input.opId,
+    ...(input.resolvePromotionPosture === undefined
+      ? {}
+      : { resolvePromotionPosture: input.resolvePromotionPosture }),
+    ...(input.resolveTrustPriors === undefined ? {} : { resolveTrustPriors: () => priors }),
+    ...(input.now === undefined ? {} : { now: input.now }),
+  }
+  if (input.writerAuthority !== undefined) {
+    return await applyExplicitAsHolder(writer, request, changeId, input.writerAuthority,
+      input.resolveBundleShortId)
+  }
+  const acquired = acquireWriterLease(input.knowledgeRoot)
+  if (acquired.kind === 'held') {
+    const delegate = input.delegate
+    if (delegate === undefined) throw new ApplyDelegateUnavailableError(changeId, acquired.holder)
+    return await withBoundedWait(changeId, input.delegateTimeoutMs,
+      () => delegate({ request, operationId: input.operationId }))
+  }
+  if (acquired.kind !== 'acquired') throw acquired.error
+  try {
+    return await applyExplicitAsHolder(writer, request, changeId, acquired, input.resolveBundleShortId)
+  } finally {
+    releaseLease({ knowledgeRoot: input.knowledgeRoot, leaseId: acquired.leaseId })
   }
 }

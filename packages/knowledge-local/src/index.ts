@@ -743,12 +743,20 @@ export {
   ProposalRejectedError,
   ProposalTargetVanishedError,
   applyReview,
+  // 432-06 D-04/D-05: the direct door — a validated explicit change applied in the call, with
+  // no envelope, in every execution context. The explicit store entry beneath it stays internal.
+  applyExplicitReview,
 } from './review/apply-review.js'
 export type {
   ApplyDelegate,
+  ApplyExplicitReviewInput,
   ApplyOutcomeKind,
   ApplyReviewInput,
   ApplyReviewResult,
+  ExplicitReviewDelegate,
+  ExplicitReviewDelegation,
+  ExplicitReviewRequest,
+  ExplicitReviewResult,
 } from './review/apply-review.js'
 export {
   PROPOSALS_DIR_NAME,

@@ -49,8 +49,8 @@ it.each(['after-supersede', 'after-gate3'])('resumes %s without another Confirm 
   const f = await fixture()
   try {
     const input = f.propose()
-    const originalFactory = stores.createLocalKnowledgeStore
-    if (boundary === 'after-supersede') vi.spyOn(stores, 'createLocalKnowledgeStore').mockImplementation(config => {
+    const originalFactory = stores.createExplicitReviewStore
+    if (boundary === 'after-supersede') vi.spyOn(stores, 'createExplicitReviewStore').mockImplementation(config => {
       const store = originalFactory(config)
       return { ...store, async recordGateReceipt() { throw new Error('injected after Supersede') } }
     })

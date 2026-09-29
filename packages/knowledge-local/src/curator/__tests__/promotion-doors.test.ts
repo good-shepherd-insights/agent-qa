@@ -219,7 +219,7 @@ describe('416 promotion doors share receipt authority', () => {
     const proposal = proposeReview({ agentQaRoot: auditBaseDir, knowledgeRoot,
       request: { verb: 'accept', input: { target: { grain: 'record', recordId: seeded.published.id } } } })
     if (proposal.kind !== 'proposed') throw new Error('expected review proposal')
-    const factory = vi.spyOn(knowledgeStore, 'createLocalKnowledgeStore')
+    const factory = vi.spyOn(knowledgeStore, 'createExplicitReviewStore')
     const resolver = vi.fn(bound)
     await applyReview({ agentQaRoot: auditBaseDir, knowledgeRoot, proposalId: proposal.proposal.proposalId,
       resolvePromotionPosture: resolver })

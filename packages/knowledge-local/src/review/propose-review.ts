@@ -106,7 +106,7 @@ export type ProposeReviewOutcome =
   | { readonly kind: 'proposed'; readonly proposal: KnowledgeProposalV1 }
   | { readonly kind: 'target-not-found'; readonly target: KnowledgeTargetRef }
 
-interface ResolvedTarget {
+export interface ResolvedReviewTarget {
   readonly recordId: string
   readonly product: string
   readonly scope: ScopeKey
@@ -125,11 +125,11 @@ interface ResolvedTarget {
  * rather than by an enumeration that could miss one — and the moment a bundle carries more than
  * one record, this function is where that enumeration lands.
  */
-function resolveTarget(
+export function resolveReviewTarget(
   knowledgeRoot: string,
   target: KnowledgeTargetRef,
   resolveBundleShortId?: ResolveBundleShortId,
-): ResolvedTarget | undefined {
+): ResolvedReviewTarget | undefined {
   const machineId = target.grain === 'record'
     ? target.recordId
     : resolveBundleShortId?.(target.shortId)
@@ -178,11 +178,15 @@ function resolveTarget(
  * on the next projection. A new kind would have been a SECOND write vocabulary reaching the same
  * machinery — and the destructive verb, `purgeRecord`, is D-14's true-delete exemption which
  * forget is explicitly not (D-19).
+ *
+ * `changeId` is the stable identity of the change: a proposal id on the proposal path, the id
+ * derived from the caller's operation identity on the direct path (432-06). Accept's evidence
+ * token and forget's reason are derived from it, so a retried change is the same change.
  */
-function deltasFor(
+export function reviewDeltasFor(
   request: ProposeReviewRequest,
-  resolved: ResolvedTarget,
-  proposalId: string,
+  resolved: ResolvedReviewTarget,
+  changeId: string,
 ): Delta[] {
   const envelope = {
     origin: 'user' as const,
@@ -211,10 +215,10 @@ function deltasFor(
         ...envelope,
         kind: 'Confirm',
         targetId: asRecordId(resolved.recordId),
-        // The evidence for a human accept IS the proposal: it is the durable, addressable record
-        // of who decided what, and deriving the token from it makes the confirmation replay-safe
-        // (a second apply of the same proposal is the same token, which the append dedups).
-        evidenceToken: `review-accept:${proposalId}`,
+        // The evidence for a human accept IS the change identity: deriving the token from it
+        // makes the confirmation replay-safe (a second apply of the same change is the same
+        // token, which the append dedups).
+        evidenceToken: `review-accept:${changeId}`,
       } as Delta]
     case 'reject':
       return [{
@@ -228,12 +232,12 @@ function deltasFor(
         ...envelope,
         kind: 'Deprecate',
         targetId: asRecordId(resolved.recordId),
-        reason: `forget:${proposalId}`,
+        reason: `forget:${changeId}`,
       } as Delta]
   }
 }
 
-function forgetPreview(resolved: ResolvedTarget): ForgetPreview {
+function forgetPreview(resolved: ResolvedReviewTarget): ForgetPreview {
   return {
     tombstonedRecords: [{ recordId: resolved.recordId, provenance: resolved.provenance }],
     projectionsToScrub: [...FORGET_SCRUBBED_PROJECTIONS],
@@ -251,7 +255,7 @@ export function proposeReview(input: ProposeReviewInput): ProposeReviewOutcome {
     throw new TypeError('a knowledge review request must carry a target ref')
   }
 
-  const resolved = resolveTarget(input.knowledgeRoot, target, input.resolveBundleShortId)
+  const resolved = resolveReviewTarget(input.knowledgeRoot, target, input.resolveBundleShortId)
   if (resolved === undefined) return { kind: 'target-not-found', target }
 
   const proposalId = mintProposalId(input.randomUuid ?? randomUUID)
@@ -261,7 +265,7 @@ export function proposeReview(input: ProposeReviewInput): ProposeReviewOutcome {
     proposalId,
     verb: input.request.verb,
     targetRef: target,
-    deltas: deltasFor(input.request, resolved, proposalId),
+    deltas: reviewDeltasFor(input.request, resolved, proposalId),
     ...(input.request.verb === 'mark' ? { mark: (input.request.input as KnowledgeMarkInput).mark,
       wording: (input.request.input as KnowledgeMarkInput).plan.wording } : {}),
     ...(input.request.verb === 'forget' ? { receiptPreview: forgetPreview(resolved) } : {}),

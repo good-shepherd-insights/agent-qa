@@ -263,7 +263,11 @@ function draft(delta: Delta): BundleDraft | undefined {
   return undefined
 }
 
-function syntheticEvidenceToken(delta: Delta): string {
+/**
+ * @internal The evidence token the port bridge stamps on a delta's committed event. Exported
+ * only so the review writer can recognise an explicit change that already landed (432-06).
+ */
+export function syntheticEvidenceToken(delta: Delta): string {
   if (delta.kind === 'Confirm' || delta.kind === 'Supersede') return delta.evidenceToken
   return sha256hex(canonicalJson({ delta, source: 'knowledge-port' }))
 }
@@ -452,6 +456,30 @@ function unreachableCanaryOutcome(outcome: never): never {
 }
 
 /**
+ * Who is asking for this write. `automatic` is the curator and the agent port, whose authority
+ * follows the run's execution context (432 D-08: ci/cloud stay proposed). `explicit` is a
+ * person's mark, accept, reject or forget, which is authority in every context (D-04/D-05).
+ */
+type WriteAuthority = 'automatic' | 'explicit'
+
+const EXPLICIT_PROFILE: DispositionProfile = Object.freeze({ mode: 'drain-to-active' })
+
+/**
+ * The one place write authority becomes a disposition profile. Explicit authority skips only the
+ * automatic propose-only downgrade: the store still records the actual execution context, and
+ * delta validation, bundle egress and every promotion gate apply unchanged.
+ */
+function dispositionProfileFor(
+  config: CreateLocalKnowledgeStoreConfig,
+  authority: WriteAuthority,
+): DispositionProfile {
+  return authority === 'explicit' ? EXPLICIT_PROFILE : resolveDispositionProfile(config.executionContext)
+}
+
+/** The write face an explicit review needs: commit, gated promotion and gate receipts only. */
+export type ExplicitReviewStore = Pick<KnowledgePort, 'commit' | 'promote' | 'recordGateReceipt'>
+
+/**
  * Realizes the agent write port over the canonical mutation path. D-08 propose-only is a
  * disposition profile inside commitCurationDelta, never a second mutation path. Because the port
  * carries bare deltas, this bridge materializes the smallest queue/checkpoint envelope and resolves
@@ -459,6 +487,25 @@ function unreachableCanaryOutcome(outcome: never): never {
  */
 export function createLocalKnowledgeStore(
   config: CreateLocalKnowledgeStoreConfig,
+): KnowledgePort {
+  return buildLocalKnowledgeStore(config, 'automatic')
+}
+
+/**
+ * @internal The narrow explicit-authority entry for the review writer (432-06). Not on the
+ * package barrel: only `applyReview` / `applyExplicitReview` construct it, under the caller's
+ * writer lease. Canary and proposal-only doors are deliberately absent from its face.
+ */
+export function createExplicitReviewStore(
+  config: CreateLocalKnowledgeStoreConfig,
+): ExplicitReviewStore {
+  const { commit, promote, recordGateReceipt } = buildLocalKnowledgeStore(config, 'explicit')
+  return { commit, promote, recordGateReceipt }
+}
+
+function buildLocalKnowledgeStore(
+  config: CreateLocalKnowledgeStoreConfig,
+  authority: WriteAuthority,
 ): KnowledgePort {
   const priors = snapshotTrustPriors(config.resolveTrustPriors?.())
   const operation = config.operations?.commitCurationDelta ?? commitCurationDelta
@@ -513,12 +560,16 @@ export function createLocalKnowledgeStore(
    * append and projection below is irreversible canonical work, so the whole gate-and-write
    * body lives in one section rather than re-entering the fence per unit.
    */
-  function promoteWithinCurrentAuthority(candidateId: RecordId): PromotionOutcome {
+  function promoteWithinCurrentAuthority(
+    candidateId: RecordId,
+    profile: DispositionProfile = dispositionProfileFor(config, 'automatic'),
+  ): PromotionOutcome {
     /**
      * D-17: later callers add evidence first, then ask this same gate to judge it. The
-     * execution posture is deliberately resolved at call time, and no override input exists.
+     * execution posture is resolved at call time; canary evidence is always automatic, and
+     * only `promote` passes the store's own authority.
      */
-    if (resolveDispositionProfile(config.executionContext).mode === 'propose-only') {
+    if (profile.mode === 'propose-only') {
       throw new KnowledgePromotionError(candidateId, 'propose-only')
     }
 
@@ -744,7 +795,7 @@ export function createLocalKnowledgeStore(
     },
     commit(deltas: Delta[]): Promise<void> {
       // 419-COMMIT-DOOR: curator disposition
-      return commitWithProfile(deltas, resolveDispositionProfile(config.executionContext))
+      return commitWithProfile(deltas, dispositionProfileFor(config, authority))
     },
     async recordCanaryOutcome(outcome: CanaryOutcome): Promise<void> {
       const resolved = resolveTruth(config.knowledgeRoot, outcome.candidateId, priors)
@@ -885,7 +936,8 @@ export function createLocalKnowledgeStore(
     },
     async promote(candidateId: RecordId, receipts?: readonly GateReceipt[]): Promise<PromotionOutcome> {
       return withCurrentWriterAuthority(config.knowledgeRoot, currentAuthority(config), () => {
-        if (resolveDispositionProfile(config.executionContext).mode === 'propose-only') {
+        const profile = dispositionProfileFor(config, authority)
+        if (profile.mode === 'propose-only') {
           throw new KnowledgePromotionError(candidateId, 'propose-only')
         }
         const resolved = resolveTruth(config.knowledgeRoot, candidateId, priors)
@@ -901,7 +953,7 @@ export function createLocalKnowledgeStore(
         const appendConfig = bundleStoreConfig(resolved.product)
         for (const receipt of validated) checkedAppend(candidateId, appendGateReceipt(appendConfig, candidateId, receipt))
         try {
-          return promoteWithinCurrentAuthority(candidateId)
+          return promoteWithinCurrentAuthority(candidateId, profile)
         } catch (error) {
           reportHold(error)
           throw error
