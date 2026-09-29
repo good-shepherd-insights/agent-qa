@@ -1349,7 +1349,7 @@ export function disposeDelta(input: DisposeDeltaInput): DispositionOutcome {
     )
   ) {
     // D-02 flat invariant: propose-only has zero exceptions. Even deterministically confirmed
-    // drift remains a candidate plus proposed-supersession relation in CI/cloud/headless contexts.
+    // drift remains a candidate plus proposed-supersession relation in CI and cloud contexts.
     const fallback = dispositionInput.delta.kind === 'Supersede'
       ? addCandidate(dispositionInput.delta)
       : mintUnknown(dispositionInput.delta, 'propose-only', 'clarification')

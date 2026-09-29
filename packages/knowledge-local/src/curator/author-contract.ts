@@ -89,16 +89,19 @@ export interface DispositionProfile {
   mode: 'drain-to-active' | 'propose-only'
 }
 
-/** Resolve the SAFE-01 authority table from the run's already-captured execution context. */
+/**
+ * Resolve automatic curation authority from the run's already-captured execution context.
+ * Local work applies directly (432 D-08); CI and cloud stay proposed for the rolling-PR flow.
+ */
 export function resolveDispositionProfile(
   executionContext: ExecutionContext,
 ): DispositionProfile {
   switch (executionContext) {
     case 'local-interactive':
+    case 'local-headless':
       return { mode: 'drain-to-active' }
     case 'ci':
     case 'cloud':
-    case 'local-headless':
       return { mode: 'propose-only' }
     default: {
       const exhaustive: never = executionContext
