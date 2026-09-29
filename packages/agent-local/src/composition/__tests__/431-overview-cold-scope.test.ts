@@ -187,7 +187,10 @@ describe('OVERVIEW-COLD-SCOPE: runs.overview reads stored text under the cold re
     try {
       const rows = await listed(cold, {})
       expect(rows.map((row) => row.tests.map((test) => test.testName))).toEqual([[REDACTED]])
-      expect(await listed(cold, { test: 'login' })).toEqual([])
+      await expect(listed(cold, { test: 'login' }))
+        .rejects.toThrow(/masking sources could not be loaded[\s\S]*filter by test id/)
+      await expect(listed(cold, { test: SENTINEL.slice(0, 12) }))
+        .rejects.toThrow(/masking sources could not be loaded[\s\S]*filter by test id/)
       expect((await listed(cold, { test: 'test-login' })).map((row) => row.runId)).toEqual([RUN_ID])
     } finally {
       await cold.close()
