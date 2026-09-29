@@ -590,6 +590,95 @@ describe('authoring reaches the production boundary on both chains (432-04, D-18
     })
   })
 
+  describe('authoring edges (432-04, D-18)', () => {
+    /** A suite the draft proposes to join, holding one existing test on `neighbourTarget`. */
+    function suiteWith(neighbourTarget: string): string {
+      const neighbour = 'tests/neighbour.yaml'
+      mkdirSync(join(workspace, 'tests'), { recursive: true })
+      writeFileSync(join(workspace, neighbour), draftDocument(neighbourTarget, [WORKING_STEP]), 'utf8')
+      const suite = 'suites/mixed.suite.yaml'
+      mkdirSync(join(workspace, 'suites'), { recursive: true })
+      writeFileSync(join(workspace, suite), stringifyYaml({ name: 'mixed', tests: [neighbour] }), 'utf8')
+      return suite
+    }
+
+    it('EDGE-04: a production draft proposed into a suite of local tests is refused naming only its own target', async () => {
+      const config = project()
+      const targetSuitePath = suiteWith(LOCAL_TARGET)
+      const draftPath = shelve(draftDocument(PROD_TARGET))
+      const core = coreBackedExecution({ workspace, agentQaRoot, config })
+      const host = compose({ execution: core.port, config })
+
+      const refusal = await refusalOf(invokeFunction(
+        host.registry,
+        AUTHORING_DRAFT_VERIFY_FUNCTION_ID,
+        { draftPath, targetSuitePath },
+        HUMAN,
+      ))
+
+      expectProductionRefusal(refusal, PROD_TARGET)
+      expect((refusal as RunDeniedError).reason).not.toContain(`"${LOCAL_TARGET}"`)
+      expect(core.record.reached.map((request) => request.patterns)).toEqual([[draftPath]])
+      expect(core.record.assembled).toEqual([])
+    })
+
+    it('EDGE-04: a local draft proposed into a suite holding a production test runs, because its gate runs drive only the draft', async () => {
+      const config = project()
+      const targetSuitePath = suiteWith(PROD_TARGET)
+      const draftPath = shelve(draftDocument(LOCAL_TARGET, [WORKING_STEP, REPAIRED_STEP]))
+      const core = coreBackedExecution({ workspace, agentQaRoot, config })
+      const host = compose({ execution: core.port, config })
+
+      await invokeFunction(
+        host.registry,
+        AUTHORING_DRAFT_VERIFY_FUNCTION_ID,
+        { draftPath, targetSuitePath },
+        HUMAN,
+      )
+
+      expect(core.record.refused).toEqual([])
+      expect(core.record.assembled).toHaveLength(DRAFT_STABILITY_RUNS_N)
+      for (const request of core.record.assembled) expect(request.patterns).toEqual([draftPath])
+      // Not vacuous: a gate run that named the suite would have carried its production member.
+      expect(declarationFor(workspace, config, { patterns: [targetSuitePath] }).productionTargetNames)
+        .toEqual([PROD_TARGET])
+    })
+
+    it.each([
+      ['false', false],
+      ['the string "true"', 'true'],
+      ['1', 1],
+    ])('only the literal true opts in: allowProduction %s refuses a production draft', async (_label, optIn) => {
+      const config = project(optIn)
+      const draftPath = shelve(draftDocument(PROD_TARGET))
+      const core = coreBackedExecution({ workspace, agentQaRoot, config })
+      const host = compose({ execution: core.port, config })
+
+      const refusal = await refusalOf(invokeFunction(
+        host.registry,
+        AUTHORING_DRAFT_VERIFY_FUNCTION_ID,
+        { draftPath },
+        HUMAN,
+      ))
+
+      expectProductionRefusal(refusal, PROD_TARGET)
+      expect(core.record.assembled).toEqual([])
+    })
+
+    it('the verification request carries no opt-in of its own: the gate runs name the draft and the markers only', async () => {
+      const config = project()
+      const draftPath = shelve(draftDocument(PROD_TARGET))
+      const core = coreBackedExecution({ workspace, agentQaRoot, config })
+      const host = compose({ execution: core.port, config })
+
+      await refusalOf(invokeFunction(host.registry, AUTHORING_DRAFT_VERIFY_FUNCTION_ID, { draftPath }, HUMAN))
+
+      expect(Object.keys(core.record.reached[0] ?? {}).sort()).toEqual(
+        ['excludedFromOutcomes', 'gateRun', 'patterns'],
+      )
+    })
+  })
+
   describe('C432-AUTHORING-PRODUCTION-REPAIR — repair and the repaired draft meet the core refusal', () => {
     it('C432-AUTHORING-PRODUCTION-REPAIR: the repair probe is refused at the core once the opt-in is gone', async () => {
       const config = project(true)

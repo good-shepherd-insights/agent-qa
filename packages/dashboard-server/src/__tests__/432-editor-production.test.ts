@@ -222,7 +222,7 @@ function appium(): Appium {
  * The project config, written as a person would write it. `optIn` is the literal text of the
  * top-level `allowProduction` line, or absent.
  */
-async function writeConfig(optIn?: string): Promise<void> {
+async function writeConfig(optIn?: string, extraTargets: readonly string[] = []): Promise<void> {
   const lines = [
     'workspace:',
     '  testMatch:',
@@ -259,6 +259,7 @@ async function writeConfig(optIn?: string): Promise<void> {
     '      platform: ios',
     '      bundleId: com.example.app',
     '      environment: shared',
+    ...extraTargets,
     '',
   ]
   await writeFile(configPath, lines.join('\n'), 'utf-8')
@@ -442,6 +443,22 @@ async function postSession(
   })
 }
 
+async function deleteSession(served: Served, sessionId: string): Promise<number> {
+  return await new Promise((resolve, reject) => {
+    const req = httpRequest({
+      host: '127.0.0.1',
+      port: served.port,
+      method: 'DELETE',
+      path: `/api/live-editor/sessions/${encodeURIComponent(sessionId)}`,
+    }, (res) => {
+      res.resume()
+      res.on('end', () => resolve(res.statusCode ?? 0))
+    })
+    req.on('error', reject)
+    req.end()
+  })
+}
+
 function doorBody(
   platform: Platform,
   targetName: string,
@@ -525,4 +542,183 @@ describe('C432-EDITOR-PRODUCTION — the live editor refuses a declared producti
       expectSetupEffects(platform, served.lease, TARGETS[platform].production, { hooks: false })
     },
   )
+})
+
+describe('the live editor production boundary: edges and retained controls (432-04, D-18)', () => {
+  it('EDGE-05: a raw URL with no target name is not production, even when it is a production target\'s URL', async () => {
+    const served = await serve()
+
+    const answer = await postSession(served, { platform: 'web', url: PROD_URL, headless: true })
+
+    expect(answer.status).toBe(201)
+    expect(effects.navigations).toEqual([PROD_URL])
+  })
+
+  it('a target name the config does not declare is not production', async () => {
+    const lease = appium()
+    const session = new LiveSession('undeclared', { appiumManager: lease.manager as never, configManager, configPath })
+
+    await session.initialize({ ...sessionConfig('web', 'nowhere'), url: LOCAL_URL })
+
+    expect(effects.adapterSetups).toEqual(['web'])
+    await session.cleanup()
+  })
+
+  it.each(['__proto__', 'constructor', 'toString'])(
+    'a prototype-shaped name (%s) is not a declared target and does not throw',
+    async (name) => {
+      const lease = appium()
+      const session = new LiveSession(`proto-${name}`, { appiumManager: lease.manager as never, configManager, configPath })
+
+      await session.initialize({ ...sessionConfig('web', name), url: LOCAL_URL })
+
+      expect(effects.adapterSetups).toEqual(['web'])
+      await session.cleanup()
+    },
+  )
+
+  it('the request cannot author the environment or the opt-in', async () => {
+    const served = await serve()
+
+    const answer = await postSession(served, {
+      ...doorBody('web', TARGETS.web.production),
+      environment: 'local',
+      allowProduction: true,
+      production: { productionTargetNames: [] },
+    })
+
+    expect(answer.status).toBe(403)
+    expectProductionRefusal(answer.body.error as string, TARGETS.web.production)
+    expect(served.created).toEqual([])
+    expectNoSetupEffects(served.lease)
+  })
+
+  it.each([
+    ['false', 'false'],
+    ['the string "true"', '"true"'],
+    ['1', '1'],
+    ['yes', 'yes'],
+  ])('only the literal true opts in: allowProduction %s refuses as its absence does', async (_label, optIn) => {
+    await writeConfig(optIn)
+    const lease = appium()
+    const session = new LiveSession('not-opted-in', { appiumManager: lease.manager as never, configManager, configPath })
+
+    const refusal = await refusalOf(session.initialize(sessionConfig('web', TARGETS.web.production)))
+
+    expectProductionRefusal(refusal?.message, TARGETS.web.production)
+    expectNoSetupEffects(lease)
+  })
+
+  it('a padded target name is the same target: refused', async () => {
+    const served = await serve()
+
+    const answer = await postSession(served, doorBody('android', `  ${TARGETS.android.production}  `))
+
+    expect(answer.status).toBe(403)
+    expectProductionRefusal(answer.body.error as string, TARGETS.android.production)
+    expectNoSetupEffects(served.lease)
+  })
+
+  it('EDGE-06: control and bidi characters in a declared name are replaced, and the refusal stays one line', async () => {
+    const hostile = 'prod\u202eweb\nnext'
+    await writeConfig(undefined, [
+      `    ${JSON.stringify(hostile)}:`,
+      '      platform: web',
+      `      url: ${PROD_URL}`,
+      '      environment: production',
+    ])
+    const lease = appium()
+    const session = new LiveSession('hostile', { appiumManager: lease.manager as never, configManager, configPath })
+
+    const refusal = await refusalOf(session.initialize({ ...sessionConfig('web', hostile), url: PROD_URL }))
+
+    expect(refusal?.message).toContain(OPT_IN_LINE)
+    expect(refusal?.message).not.toContain('\u202e')
+    expect(refusal?.message.split('\n')).toHaveLength(1)
+    expectNoSetupEffects(lease)
+  })
+
+  it('initialize honours the door\'s finding: a caller cannot clear it, and only the config opts in', async () => {
+    const lease = appium()
+    const cleared = new LiveSession('cleared', { appiumManager: lease.manager as never, configManager, configPath })
+    // A caller that claims the target is not production is still refused: the config is read again.
+    const refusal = await refusalOf(cleared.initialize({
+      ...sessionConfig('web', TARGETS.web.production),
+      production: { productionTargetNames: [] },
+    }))
+    expectProductionRefusal(refusal?.message, TARGETS.web.production)
+
+    // A finding the door made stays a refusal when the config read now has no opt-in, even for a
+    // session whose own target the config reads as local.
+    const kept = new LiveSession('kept', { appiumManager: lease.manager as never, configManager, configPath })
+    const keptRefusal = await refusalOf(kept.initialize({
+      ...sessionConfig('web', TARGETS.web.local),
+      production: { productionTargetNames: [TARGETS.web.production] },
+    }))
+    expectProductionRefusal(keptRefusal?.message, TARGETS.web.production)
+    expectNoSetupEffects(lease)
+  })
+
+  it('the opt-in withdrawn between the door and initialize: refused with 403, and the session is never held', async () => {
+    await writeConfig('true')
+    const served = await serve()
+    const read = configManager.readWithRevision.bind(configManager)
+    let reads = 0
+    configManager.readWithRevision = async () => {
+      const answer = await read()
+      reads += 1
+      // The door's own read saw the opt-in; the person removes it before anything else reads.
+      if (reads === 1) await writeConfig()
+      return answer
+    }
+
+    const answer = await postSession(served, doorBody('ios', TARGETS.ios.production, { hooks: false }))
+
+    expect(answer.status).toBe(403)
+    expectProductionRefusal(answer.body.error as string, TARGETS.ios.production)
+    expect(served.created).toHaveLength(1)
+    expect(served.manager.size).toBe(0)
+    expect(served.manager.listSessions()).toEqual([])
+    expectNoSetupEffects(served.lease)
+  })
+
+  it('SessionManager.createSession refuses and holds nothing: no subject, no idle timer, no number', async () => {
+    const registered: string[] = []
+    const lease = appium()
+    const manager = new SessionManager({
+      appiumManager: lease.manager as never,
+      configManager,
+      configPath,
+      liveEditorSubjects: {
+        register: (sessionId: string) => { registered.push(sessionId) },
+        unregister: () => {},
+      } as never,
+    })
+    const entity = { type: 'test' as const, id: 't_fixture' }
+
+    const refusal = await refusalOf(manager.createSession(sessionConfig('android', TARGETS.android.production), entity))
+
+    expectProductionRefusal(refusal?.message, TARGETS.android.production)
+    expect(manager.size).toBe(0)
+    expect(registered).toEqual([])
+    expect(manager.getCounter(entity)).toBe(0)
+    expectNoSetupEffects(lease)
+  })
+
+  it('cleanup is retained: after a refusal, a local mobile session starts and its end releases Appium and the adapter', async () => {
+    const served = await serve()
+    const refused = await postSession(served, doorBody('android', TARGETS.android.production))
+    expect(refused.status).toBe(403)
+
+    const started = await postSession(served, doorBody('android', TARGETS.android.local, { hooks: false }))
+    expect(started.status).toBe(201)
+    const sessionId = started.body.sessionId as string
+    expect(served.manager.size).toBe(1)
+    expect(served.lease.leases).toEqual([sessionId])
+
+    expect(await deleteSession(served, sessionId)).toBe(200)
+    expect(served.manager.size).toBe(0)
+    expect(effects.adapterCleanups).toEqual(['android'])
+    expect(served.lease.releases).toEqual([sessionId])
+  })
 })
