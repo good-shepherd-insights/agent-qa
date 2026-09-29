@@ -388,9 +388,14 @@ export class DashboardDatabase {
   constructor({ dbPath = DASHBOARD_DB_PATH_FALLBACK }: { dbPath?: string } = {}) {
     mkdirSync(dirname(dbPath), { recursive: true })
     this.db = createDashboardSqliteDatabase(dbPath)
-    this.db.pragma('journal_mode = WAL')
-    this.db.pragma('busy_timeout = 5000')
-    this.runMigrations()
+    try {
+      this.db.pragma('journal_mode = WAL')
+      this.db.pragma('busy_timeout = 5000')
+      this.runMigrations()
+    } catch (error) {
+      this.db.close()
+      throw error
+    }
   }
 
   private runMigrations(): void {
