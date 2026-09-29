@@ -18,6 +18,8 @@
 //   configApply     — git, and the person's own history. A host fact by definition.
 //   configProposals — persisting the envelope is `knowledge-local`'s `writePendingProposalRecord`,
 //                     one package away, exactly as `AuthoringProposalsWritePortLike` is.
+//   configWrite     — 2026-09-30, 432-07: the direct writer. Its transaction is the dashboard's
+//                     config file transaction, which this package cannot name either.
 //
 // THE READ IS RAW BYTES ON PURPOSE (D-17). A port that answered text would put a decode between the
 // file and the digest taken over it, which is 394's CR-02 defect class in its original form: two
@@ -37,8 +39,12 @@ import type {
 
 import type {
   ConfigApplyOutcome,
+  ConfigChange,
+  ConfigPathSegment,
   ConfigProposalApplyableV1,
   ConfigProposalV1,
+  ConfigWriteIssue,
+  ConfigWriteRefusal,
 } from '@vostride/agent-qa-schema'
 
 /** A dotted config path's new value. The three scalar shapes a config field can hold. */
@@ -323,6 +329,81 @@ export interface ConfigProposalsWritePortLike {
      */
     readonly payload: ConfigProposalV1
   }): Promise<{ readonly proposalId: string }>
+}
+
+/**
+ * What a direct field change did to the config yaml (2026-09-30, 432-07 D-05/D-07).
+ *
+ * `applied` names the revision the change merged onto, which is the file as it stood in the
+ * change's own turn and so includes any outside edit made meanwhile. A refusal wrote nothing.
+ */
+export type ConfigFieldWriteOutcome =
+  | {
+    readonly kind: 'applied'
+    /** The config member, workspace-relative. */
+    readonly file: string
+    readonly revision: string
+    readonly baseRevision: string
+  }
+  | {
+    readonly kind: 'refused'
+    readonly file: string
+    readonly error: Exclude<ConfigWriteRefusal, 'write_failed'>
+    readonly issues?: readonly ConfigWriteIssue[]
+    /** The field an `expect` found changed. */
+    readonly path?: readonly ConfigPathSegment[]
+  }
+
+/** One whole file a generated change replaces or creates, and the bytes it was built from. */
+export interface ConfigFilePublication {
+  /** Workspace-relative, as the host's identity mint spells it. */
+  readonly path: string
+  /** sha256 of the bytes the change was built from; absent means the file must not exist. */
+  readonly baseDigest?: string
+  readonly bytes: Uint8Array
+}
+
+/**
+ * What a multi-file publication actually did (432-07 D-05/D-07).
+ *
+ * `refused` is decided before any write. `interrupted` is a later failure, and `written` names
+ * exactly the files that now hold their new bytes. There is no rollback and no journal: the files
+ * are plain edits a person reverts with git.
+ */
+export type ConfigFilePublishOutcome =
+  | { readonly kind: 'published'; readonly written: readonly string[] }
+  | {
+    readonly kind: 'refused'
+    readonly reason: 'no-files' | 'outside-workspace' | 'duplicate-path' | 'file-changed'
+    readonly path?: string
+    readonly written: readonly []
+  }
+  | {
+    readonly kind: 'interrupted'
+    readonly written: readonly string[]
+    readonly failed: {
+      readonly path: string
+      readonly reason: 'file-changed' | 'write-failed'
+      readonly message?: string
+    }
+    readonly unwritten: readonly string[]
+  }
+
+/**
+ * The direct config writer (2026-09-30, 432-07 D-05/D-07): generated changes publish in the call
+ * that made them, with no proposal and no git.
+ *
+ * FIELD CHANGES STAY FIELD CHANGES until the host rereads the file in that path's write turn, the
+ * turn the dashboard's own autosave takes, so an outside edit to another field is kept and a stale
+ * `expect` refuses. Whole files (a hooks file, the managed `.gitignore` block, a scaffold) are
+ * checked against the digest they were built from and written one at a time, each atomically.
+ * The queue is per process; nothing here claims a cross-process lock.
+ */
+export interface ConfigWritePortLike {
+  applyFields(request: { readonly changes: readonly ConfigChange[] }): Promise<ConfigFieldWriteOutcome>
+  publishFiles(request: {
+    readonly files: readonly ConfigFilePublication[]
+  }): Promise<ConfigFilePublishOutcome>
 }
 
 /**

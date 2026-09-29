@@ -37,11 +37,13 @@ describe('optional function dep keys (419 GATE3-01)', () => {
       'capabilityCatalog',
       'feedback',
       'feedbackReads',
+      'configWrite',
     ])
   })
 
-  it('has exactly 29 optional bindings', () => {
-    expect(OPTIONAL_FUNCTION_DEP_KEYS).toHaveLength(29)
+  // 2026-09-30, 432-07: configWrite, the direct config writer, is the thirtieth binding.
+  it('has exactly 30 optional bindings', () => {
+    expect(OPTIONAL_FUNCTION_DEP_KEYS).toHaveLength(30)
   })
 })
 
@@ -53,6 +55,7 @@ const EXPECTED_BINDINGS = [
   'draftEvaluation', 'authoringRead', 'authoringScope', 'draftShelf', 'authoringFunnel', 'draftApply',
   'authoringProposals', 'configFiles', 'configValidate', 'configApply', 'configProposals', 'configScan',
   'configUndoSource', 'scaffoldContent', 'capabilityCatalog', 'feedback', 'feedbackReads',
+  'configWrite',
 ]
 
 describe('C423-FEEDBACK-BINDINGS-EXACT', () => {

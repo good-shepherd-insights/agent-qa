@@ -67,6 +67,7 @@ import type {
   ConfigUndoSourcePortLike,
   ConfigValidatePortLike,
   EntityDirectoryPort,
+  FunctionDeps,
   FunctionRegistry,
   JobIdSource,
   JobKindRegistry,
@@ -1891,6 +1892,11 @@ export interface ComposeLocalAgentInput {
    * honest catalogue answer for a host that can edit a configuration but cannot create one.
    */
   readonly scaffoldContent?: ConfigScaffoldContentPortLike
+  /**
+   * 2026-09-30, 432-07 D-05/D-07: the direct config writer. Host-supplied because its transaction
+   * is the dashboard's config file transaction, shared per path with the dashboard's own writes.
+   */
+  readonly configWrite?: FunctionDeps['configWrite']
   /**
    * 2026-08-17 (398 D-09 / D-11 · XPLN-02): the four host halves `agent.explain` needs — the
    * committed capability catalog as data, the model's citation over it, and the two coverage hooks.
@@ -3785,6 +3791,7 @@ export function composeLocalAgent(input: ComposeLocalAgentInput): LocalAgentHost
       ...(input.scaffoldContent === undefined
         ? {}
         : { scaffoldContent: input.scaffoldContent }),
+      ...(input.configWrite === undefined ? {} : { configWrite: input.configWrite }),
       // THE PROPOSAL WRITE IS BOUND HERE AND NOT HANDED IN, unlike its three neighbours, because
       // this composition already owns the durable proposals store — the same `mintProposalId` and
       // `writePendingProposalRecord` the authoring arm above uses, over the same `agentQaRoot`. A

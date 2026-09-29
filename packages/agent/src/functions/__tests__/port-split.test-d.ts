@@ -183,6 +183,7 @@ expectTypeOf<KnowledgeReaderPort>().not.toMatchTypeOf<KnowledgeReviewPort>()
 // would have to answer that verb with something. Optional, it is instead an honest `unbound`.
 // 2026-09-08, 419 GATE3-01: feedback is the twenty-eighth member, pinned BY NAME.
 // 2026-09-15, 423 D-19: feedbackReads is the twenty-ninth, a read-only port beside the writer.
+// 2026-09-30, 432-07 D-05/D-07: configWrite is the thirtieth, the direct config writer.
 expectTypeOf<OptionalFunctionDepKey>()
   .toEqualTypeOf<
     | 'liveView'
@@ -214,6 +215,7 @@ expectTypeOf<OptionalFunctionDepKey>()
     | 'capabilityCatalog'
     | 'feedback'
     | 'feedbackReads'
+    | 'configWrite'
   >()
 
 // Every member of that union must actually be an optional member of the deps record — the half
@@ -277,7 +279,7 @@ type HandSpelledOptionalDepKey =
   | 'standingGrants' | 'chatTurn' | 'draftEvaluation' | 'authoringRead' | 'authoringScope'
   | 'draftShelf' | 'authoringFunnel' | 'draftApply' | 'authoringProposals' | 'configFiles'
   | 'configValidate' | 'configApply' | 'configProposals' | 'configScan' | 'configUndoSource'
-  | 'scaffoldContent' | 'capabilityCatalog' | 'feedback' | 'feedbackReads'
+  | 'scaffoldContent' | 'capabilityCatalog' | 'feedback' | 'feedbackReads' | 'configWrite'
 
 describe('C423-FEEDBACK-BINDINGS-EXACT', () => {
   test('pins the optional dep key union and its runtime roster in both directions', () => {

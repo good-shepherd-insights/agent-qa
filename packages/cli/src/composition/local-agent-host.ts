@@ -39,12 +39,13 @@ import {
   openSync,
   readdirSync,
   readFileSync,
+  realpathSync,
   renameSync,
   rmSync,
   statSync,
   writeFileSync,
 } from 'node:fs'
-import { dirname, resolve } from 'node:path'
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { createInterface } from 'node:readline'
 import { z } from 'zod'
 
@@ -68,6 +69,7 @@ import type {
   ConfigValidation,
   ConfigValidationIssue,
   DraftApplyPortLike,
+  FunctionDeps,
   JobModelCapability,
   KnowledgeReaderPort,
   PostRunJobCapabilities,
@@ -150,6 +152,7 @@ import type {
 import { buildScaffoldFileSet } from '../commands/scaffold-content.js'
 import { TARGET_GITIGNORE_ENTRIES } from '../commands/init-filesystem.js'
 import {
+  CONFIG_REVISION_ABSENT,
   CONFIG_SET_DEFAULT_HOOKS_FILE,
   KnowledgeApplyOutcomeSchema,
   base64Decode,
@@ -3229,6 +3232,135 @@ export function createConfigApplyPort(configPath: string): ConfigApplyPortLike {
   }
 }
 
+type ConfigWritePort = NonNullable<FunctionDeps['configWrite']>
+type ConfigFilePublishOutcome = Awaited<ReturnType<ConfigWritePort['publishFiles']>>
+
+// True when the file, or the nearest ancestor that exists, resolves inside the real config
+// directory, so a symlink cannot carry a publication out of the workspace.
+function resolvesInsideWorkspace(realConfigDir: string, absolutePath: string): boolean {
+  let probe = absolutePath
+  let rest = ''
+  for (;;) {
+    let real: string
+    try {
+      real = realpathSync(probe)
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+      const parent = dirname(probe)
+      if (parent === probe) return false
+      rest = rest === '' ? basename(probe) : join(basename(probe), rest)
+      probe = parent
+      continue
+    }
+    const inside = relative(realConfigDir, rest === '' ? real : join(real, rest))
+    return inside !== '' && !isAbsolute(inside) && inside.split(sep)[0] !== '..'
+  }
+}
+
+async function dashboardConfigManager(path: string) {
+  const { ConfigManager } = await import('@vostride/agent-qa-dashboard')
+  return new ConfigManager(path)
+}
+
+/**
+ * The direct config writer (2026-09-30, 432-07 D-05/D-07), beside the one-commit apply above until
+ * the config ops switch over to it.
+ *
+ * FIELD CHANGES go through the dashboard's `ConfigManager`, whose transaction rereads the file in
+ * the config path's shared write turn: a co-hosted dashboard autosave and this writer take turns,
+ * an outside edit to another field is kept, and a stale `expect` refuses. WHOLE FILES are checked
+ * first (inside the workspace, not repeated, digest unchanged) and then written one by one, each
+ * atomically and over the digest it was built from; a later failure reports exactly the files
+ * already written. Nothing here runs git, stages or commits, so a dirty tree, staged work and a
+ * directory with no repository are all ordinary.
+ *
+ * The dashboard package is imported when a write happens, not when a host is composed.
+ */
+export function createConfigWritePort(configPath: string): ConfigWritePort {
+  const absoluteConfigPath = resolve(configPath)
+  const configDir = dirname(absoluteConfigPath)
+  const configIdentity = workspaceRelativeIdentityPath(configDir, absoluteConfigPath)
+
+  return {
+    async applyFields({ changes }) {
+      const outcome = await (await dashboardConfigManager(absoluteConfigPath)).applyChanges(changes)
+      if (outcome.kind === 'ok') {
+        return {
+          kind: 'applied',
+          file: configIdentity,
+          revision: outcome.revision,
+          baseRevision: outcome.baseRevision,
+        }
+      }
+      return {
+        kind: 'refused',
+        file: configIdentity,
+        error: outcome.error,
+        ...(outcome.issues === undefined ? {} : { issues: outcome.issues }),
+        ...(outcome.path === undefined ? {} : { path: outcome.path }),
+      }
+    },
+
+    async publishFiles({ files }): Promise<ConfigFilePublishOutcome> {
+      if (files.length === 0) return { kind: 'refused', reason: 'no-files', written: [] }
+      const realConfigDir = realpathSync(configDir)
+      const planned: { identity: string; absolutePath: string; expected: string; bytes: Uint8Array }[] = []
+      for (const file of files) {
+        let identity: string
+        try {
+          identity = workspaceRelativeIdentityPath(configDir, file.path)
+        } catch {
+          return { kind: 'refused', reason: 'outside-workspace', path: file.path, written: [] }
+        }
+        if (planned.some((entry) => entry.identity === identity)) {
+          return { kind: 'refused', reason: 'duplicate-path', path: file.path, written: [] }
+        }
+        const absolutePath = resolve(configDir, identity)
+        if (!resolvesInsideWorkspace(realConfigDir, absolutePath)) {
+          return { kind: 'refused', reason: 'outside-workspace', path: file.path, written: [] }
+        }
+        const existing = readTargetIfPresent(absolutePath)
+        if ((existing === undefined ? undefined : sha256hexBytes(existing)) !== file.baseDigest) {
+          return { kind: 'refused', reason: 'file-changed', path: file.path, written: [] }
+        }
+        planned.push({
+          identity,
+          absolutePath,
+          expected: file.baseDigest ?? CONFIG_REVISION_ABSENT,
+          bytes: file.bytes,
+        })
+      }
+
+      const written: string[] = []
+      for (const [index, file] of planned.entries()) {
+        const unwritten = planned.slice(index + 1).map((entry) => entry.identity)
+        let replaced: Awaited<ReturnType<Awaited<ReturnType<typeof dashboardConfigManager>>['replaceDocument']>>
+        try {
+          const manager = await dashboardConfigManager(file.absolutePath)
+          replaced = await manager.replaceDocument(file.expected, file.bytes)
+        } catch (error) {
+          return {
+            kind: 'interrupted',
+            written,
+            failed: { path: file.identity, reason: 'write-failed', message: errorText(error) },
+            unwritten,
+          }
+        }
+        if (replaced.kind === 'refused') {
+          return {
+            kind: 'interrupted',
+            written,
+            failed: { path: file.identity, reason: 'file-changed' },
+            unwritten,
+          }
+        }
+        written.push(file.identity)
+      }
+      return { kind: 'published', written }
+    },
+  }
+}
+
 /**
  * One committed blob's RAW BYTES, or `undefined` if that revision has no such path (395-06, D-17).
  *
@@ -3943,6 +4075,9 @@ export function composeCliLocalAgent(input: ComposeCliLocalAgentInput): LocalAge
     // filesystem and no repository — it is a pure render of the one producer `agent-qa init` writes
     // from — so there is no host posture in which a CLI has it unavailable.
     scaffoldContent: createScaffoldContentPort(),
+    // 432-07 D-05/D-07: the direct config writer, bound beside the apply port until the config ops
+    // switch over to it.
+    configWrite: createConfigWritePort(input.configPath),
     // 398 D-09/D-11 · XPLN-02: the catalog port `agent.explain` binds through, constructed HERE
     // and bound unconditionally — a CLI always ships beside the committed capability catalog, so
     // there is no CLI posture in which the capability is genuinely unavailable. Binding it here is

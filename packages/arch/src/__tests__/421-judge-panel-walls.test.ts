@@ -55,8 +55,12 @@ describe('421 judge panel walls', () => {
     expect(findSetMismatchOffenders('judge-dependency-edge', [...declared, 'new-sdk'], declared))
       .toEqual(['judge-dependency-edge: unexpected new-sdk'])
   })
+  // Re-blessed once, 2026-09-30 (Phase 432 plan 07, D-05/D-07): the ledger gained exactly one
+  // pair, packages/cli/src/composition/local-agent-host.ts -> @vostride/agent-qa-dashboard, for
+  // the direct config writer the plan binds through the CLI's existing dashboard dependency. No
+  // judge-panel or eval-local edge was added; the digest was recomputed from that ledger.
   it('retains the exact existing firewall ledger and rejects new direct/aliased/dynamic CLI imports', () => {
-    expect(digest(read('packages/arch/src/lint/surface-firewall-ledger.ts'))).toBe('33be3af90770bf9d5d297a69e762b05d8658525a67e8a801d164acae70c08c82')
+    expect(digest(read('packages/arch/src/lint/surface-firewall-ledger.ts'))).toBe('ca594bc8826ace6f621c3fd0a454b233d07ccab1274e160fe4206f382031cdea')
     for (const text of ["import { loadJudgeCalibrationEvidence as data } from '@vostride/agent-qa-eval-local'",
       "const data = await import('@vostride/agent-qa-eval-local')"]) {
       const hits = calibrationImports({ file: 'packages/cli/src/judge-new.ts', text })

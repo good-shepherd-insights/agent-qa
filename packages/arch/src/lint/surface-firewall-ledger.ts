@@ -214,6 +214,15 @@ export const SURFACE_FIREWALL_LEDGER: readonly SurfaceLedgerEntry[] = [
     reason: 'the CLI half of the local host resolves and masks configuration directly; joins the typed config action class',
   },
   {
+    // 2026-09-30 (Phase 432 plan 07, D-05/D-07): the direct config writer reaches the dashboard's
+    // config file transaction so the dashboard and a co-hosted writer take turns on one path. Lazily
+    // imported at write time; no second copy of the transaction exists in this package.
+    file: 'packages/cli/src/composition/local-agent-host.ts',
+    specifier: '@vostride/agent-qa-dashboard',
+    clearedBy: 'M5',
+    reason: 'the direct config writer shares the dashboard config transaction; rewired when the dashboards enter the firewall in M5',
+  },
+  {
     file: 'packages/cli/src/config.ts',
     specifier: '@vostride/agent-qa-core',
     clearedBy: '395',

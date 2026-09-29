@@ -98,10 +98,21 @@ function serializeConfigWrite<T>(path: string, work: () => Promise<T>): Promise<
   return (serialize as typeof serializeConfigWrite)(path, work)
 }
 
-function holdQueue(path: string): { held: Promise<void>; release: () => void } {
+// Resolves once the test holds the path's write turn; nothing queued behind it runs until release.
+async function holdQueue(path: string): Promise<{ held: Promise<void>; release: () => void }> {
   let release!: () => void
-  const held = serializeConfigWrite(path, () => new Promise<void>((resolve) => { release = resolve }))
+  let entered!: () => void
+  const holding = new Promise<void>((resolve) => { entered = resolve })
+  const held = serializeConfigWrite(path, () => new Promise<void>((resolve) => {
+    release = resolve
+    entered()
+  }))
+  await holding
   return { held, release: () => release() }
+}
+
+function settle(ms = 25): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
 async function waitFor(condition: () => boolean, what: string): Promise<void> {
@@ -158,12 +169,16 @@ afterEach(() => {
 describe('C432-CONFIG-OUTSIDE-EDIT: a generated change merges onto the file as it is at its turn', () => {
   it('a field change queued behind another writer keeps the outside edit made while it waited', async () => {
     const port = writePort()
-    const { held, release } = holdQueue(configPath)
+    const { held, release } = await holdQueue(configPath)
     const pending = port.applyFields({
       changes: [{ op: 'set', path: ['use', 'timeout', 'step'], value: '45s' }],
     })
-    const outside = SEEDED_CONFIG.replace('parallel: false', 'parallel: true')
-      + '# Added by the owner while the change waited.\n'
+    // The change is now waiting in the queue; the owner edits the file before its turn comes.
+    await settle()
+    const outside = SEEDED_CONFIG.replace(
+      '  parallel: false',
+      '  # Added by the owner while the change waited.\n  parallel: true',
+    )
     writeFileSync(configPath, outside)
     release()
     await held
@@ -370,7 +385,7 @@ describe('C432-CONFIG-DIRECT: whole-file publications are checked, atomic and tr
 
   it('a file that changes during publication stops it, naming what was written and what was not', async () => {
     writeFileSync(join(root, 'b.yaml'), 'b: 1\n')
-    const { held, release } = holdQueue(join(root, 'b.yaml'))
+    const { held, release } = await holdQueue(join(root, 'b.yaml'))
     const pending = writePort().publishFiles({
       files: [
         { path: 'a.yaml', bytes: utf8('a: 2\n') },

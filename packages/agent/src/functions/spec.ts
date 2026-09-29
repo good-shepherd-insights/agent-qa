@@ -70,6 +70,7 @@ import type {
   ConfigScaffoldContentPortLike,
   ConfigUndoSourcePortLike,
   ConfigValidatePortLike,
+  ConfigWritePortLike,
 } from '../config-mutation/ports.js'
 import type { CapabilityCatalogPort } from '../explain/port.js'
 import type { EvaluateDraftPorts } from '../authoring/verify-draft.js'
@@ -162,6 +163,7 @@ export type OptionalFunctionDepKey =
   | 'capabilityCatalog'
   | 'feedback' // 2026-09-08, 419 GATE3-01: the Gate-3 mark port
   | 'feedbackReads' // 2026-09-15, 423 D-19/D-16: read-only mark history and preview, no writer authority
+  | 'configWrite' // 2026-09-30, 432-07 D-05/D-07: the direct config writer, no proposal and no git
 
 /**
  * 419 GATE3-01: the union previously had only a type-level pin, invisible to vitest.
@@ -197,6 +199,7 @@ export const OPTIONAL_FUNCTION_DEP_KEYS = [
   'capabilityCatalog',
   'feedback',
   'feedbackReads',
+  'configWrite',
 ] as const satisfies readonly OptionalFunctionDepKey[]
 
 type ExactlyEqual<A, B> = [A] extends [B] ? ([B] extends [A] ? true : false) : false
@@ -1454,6 +1457,12 @@ export interface FunctionDeps {
    * absence makes exactly one op unavailable, and it says so by name.
    */
   scaffoldContent?: ConfigScaffoldContentPortLike
+  /**
+   * 2026-09-30, 432-07 D-05/D-07: the direct config writer. Field changes merge in the config
+   * path's shared write turn and whole files publish over the digest they were built from. No
+   * proposal is filed and no git process runs.
+   */
+  configWrite?: ConfigWritePortLike
   /**
    * 2026-08-17 (398 D-09/D-11 · XPLN-02): the four host halves one `explain` needs — the committed
    * catalog as data, the model's citation over it, and the two coverage hooks.

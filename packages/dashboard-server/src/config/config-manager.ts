@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto'
 import { chmod, lstat, readFile, realpath, writeFile, mkdir, rename, rm, stat } from 'node:fs/promises'
-import { basename, dirname, join } from 'node:path'
+import { realpathSync } from 'node:fs'
+import { basename, dirname, join, resolve } from 'node:path'
 import { isDeepStrictEqual } from 'node:util'
 import {
   Document,
@@ -51,6 +52,11 @@ export type ConfigPrior =
 
 export type ConfigPriors = readonly ConfigPrior[]
 
+/** A whole-document replacement, checked against the bytes the caller read (432-07 D-05). */
+export type ReplaceDocumentOutcome =
+  | { kind: 'ok'; revision: string; baseRevision: string }
+  | { kind: 'refused'; error: 'file_changed'; revision: string }
+
 export type RestorePriorsOutcome =
   | { kind: 'ok'; revision: string }
   | { kind: 'refused'; error: 'undo_conflict' | 'file_invalid' }
@@ -90,6 +96,46 @@ export function carriesMaskPlaceholder(value: unknown): boolean {
     return Object.values(value as Record<string, unknown>).some(carriesMaskPlaceholder)
   }
   return false
+}
+
+// 2026-09-30, 432-07 D-05 (EDGE-12): one write queue per resolved config path, shared by every
+// ConfigManager and direct writer in this process, so the dashboard and a co-hosted writer never
+// read the same bytes and drop each other's field. Kept on globalThis so a second copy of this
+// module still joins the same queue. It is not a cross-process lock.
+const CONFIG_WRITE_QUEUES = Symbol.for('agent-qa.config-write-queues')
+
+function configWriteQueues(): Map<string, Promise<void>> {
+  const holder = globalThis as { [CONFIG_WRITE_QUEUES]?: Map<string, Promise<void>> }
+  holder[CONFIG_WRITE_QUEUES] ??= new Map()
+  return holder[CONFIG_WRITE_QUEUES]
+}
+
+// The file itself when it exists, so a symlink and a directory alias share its queue; otherwise
+// its real directory, so a file created by the first writer keeps the key the second one used.
+function configWriteQueueKey(configPath: string): string {
+  const absolute = resolve(configPath)
+  try {
+    return realpathSync(absolute)
+  } catch {
+    try {
+      return join(realpathSync(dirname(absolute)), basename(absolute))
+    } catch {
+      return absolute
+    }
+  }
+}
+
+/** Run `work` in this path's turn. The queue moves on however `work` settles. */
+export function serializeConfigWrite<T>(configPath: string, work: () => Promise<T>): Promise<T> {
+  const queues = configWriteQueues()
+  const key = configWriteQueueKey(configPath)
+  const next = (queues.get(key) ?? Promise.resolve()).then(work)
+  const tail = next.then(() => undefined, () => undefined)
+  queues.set(key, tail)
+  void tail.then(() => {
+    if (queues.get(key) === tail) queues.delete(key)
+  })
+  return next
 }
 
 function isMissingFile(err: unknown): boolean {
@@ -210,13 +256,25 @@ export class ConfigManager {
     return this.serialized(() => this.restorePriorsOnce(priors))
   }
 
-  // The per-instance mutex: each transaction chains onto the tail, released however it settles.
-  private writeChain: Promise<void> = Promise.resolve()
+  // 432-07 D-05: a generated whole-file change (a scaffold, a hooks file) publishes only over the
+  // bytes it was built from, read again in this path's turn. Anything else is somebody's edit.
+  async replaceDocument(expectedRevision: string, content: Uint8Array): Promise<ReplaceDocumentOutcome> {
+    return this.serialized(async () => {
+      let revision: string
+      try {
+        revision = createHash('sha256').update(await readFile(this.configPath)).digest('hex')
+      } catch (err: unknown) {
+        if (!isMissingFile(err)) throw err
+        revision = CONFIG_REVISION_ABSENT
+      }
+      if (revision !== expectedRevision) return { kind: 'refused', error: 'file_changed', revision }
+      await this.writeAtomic(content)
+      return { kind: 'ok', revision: createHash('sha256').update(content).digest('hex'), baseRevision: revision }
+    })
+  }
 
   private serialized<T>(work: () => Promise<T>): Promise<T> {
-    const next = this.writeChain.then(work)
-    this.writeChain = next.then(() => undefined, () => undefined)
-    return next
+    return serializeConfigWrite(this.configPath, work)
   }
 
   private async restorePriorsOnce(priors: ConfigPriors): Promise<RestorePriorsOutcome> {
@@ -357,7 +415,7 @@ export class ConfigManager {
 
   // 429-05 Pitfall 8 / Pattern 1 step 6: the temp file sits beside the real file, keeps its mode
   // (chmod, because writeFile's mode is filtered by the umask), and replaces it in one rename.
-  private async writeAtomic(content: string): Promise<void> {
+  private async writeAtomic(content: string | Uint8Array): Promise<void> {
     const target = await this.writeTarget()
     const directory = dirname(target)
     const tempPath = join(directory, `.${basename(target)}.${process.pid}.${randomUUID()}.tmp`)
