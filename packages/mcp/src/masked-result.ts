@@ -197,8 +197,9 @@ export function maskJsonDocument(
  * Mask once, and answer both channels from the one masked value.
  *
  * `structuredContent` IS the masked value and `content` is its serialization, which is the whole
- * point: the object a machine reads and the text a person reads cannot disagree about what was
- * hidden, because there is only one masking and one document.
+ * point: the object a machine reads and the text a person reads agree about what was hidden,
+ * because there is only one masking and one document. One exception: the evidence image arm
+ * replaces `bytesBase64` in the text with a marker, while `structuredContent` keeps the bytes.
  */
 export function maskedToolResult(
   output: unknown,
