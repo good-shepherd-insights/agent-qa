@@ -533,14 +533,24 @@ describe('MANAGED-CONCURRENCY', () => {
     expect(readFileSync(path, 'utf8')).toBe(`${saved}\n${rendered(INIT_BLOCK)}\n`)
   })
 
-  it.skipIf(process.platform === 'win32')('keeps the target permission bits when it replaces the file', () => {
+  // The owner-only mode path removes the destination when its post-rename confirmation fails,
+  // which here would delete a save that replaced the file in that window.
+  it.skipIf(process.platform === 'win32')('replaces the file at the writer default mode, never through the owner-only mode path', () => {
     const root = tempRoot()
+    const probe = join(root, 'default-mode-probe')
+    writeFileSync(probe, '')
+    const defaultMode = lstatSync(probe).mode & 0o777
+    rmSync(probe)
     for (const mode of [0o600, 0o640, 0o664]) {
       const path = join(root, `AGENTS-${mode.toString(8)}.md`)
       writeFileSync(path, USER_PROSE)
       chmodSync(path, mode)
-      expect(upsertManagedBlock({ path, root, content: INIT_BLOCK }).outcome).toBe('updated')
-      expect(lstatSync(path).mode & 0o777).toBe(mode)
+      const modeApplied: string[] = []
+      expect(upsertManagedBlock({ path, root, content: INIT_BLOCK }, {
+        afterTemporaryModeApply: (temporary) => { modeApplied.push(temporary) },
+      }).outcome).toBe('updated')
+      expect(modeApplied).toEqual([])
+      expect(lstatSync(path).mode & 0o777).toBe(defaultMode)
     }
     expect(writerLeftovers(root)).toEqual([])
   })
