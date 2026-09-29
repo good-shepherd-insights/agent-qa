@@ -89,7 +89,7 @@ const instruments = {
   instructions: { pkg: 'packages/cli', files: [INSTRUCTIONS_T], typecheck: false, count: 9, dist: true },
   'guide-exclusion': { pkg: 'packages/knowledge-local', files: [GUIDE_T], typecheck: false, count: 4 },
   managed: { pkg: 'packages/cli', files: [MANAGED_T], typecheck: false, count: 58 },
-  image: { pkg: 'packages/mcp', files: [IMAGE_T], typecheck: false, count: 19 },
+  image: { pkg: 'packages/mcp', files: [IMAGE_T], typecheck: false, count: 20 },
 }
 
 const guard = (name, count) => cell('mcp-guard', GUARD_T, name, count)

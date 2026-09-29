@@ -242,13 +242,11 @@ export function maskedToolError(err: unknown, maskText: (text: string) => string
 }
 
 // ─────────────────────────────────────────────────────────────────────────────────────────────
-// THE IMAGE ARM (431-05, D-07 · T-431-10). A complete PNG or JPEG screenshot additionally travels
-// as an MCP image block, so an agent can look at it. The block is ADDED to a result
-// `maskedToolResult` already answered; it never replaces `structuredContent` or its text, and it
-// is only ever derived from bytes the masked structured value still carries unchanged.
-//
-// Masking hides strings. It cannot redact pixels, and nothing here claims to: a screenshot shows
-// what the page showed.
+// THE IMAGE ARM (431-05, D-07 · T-431-10). A complete PNG or JPEG screenshot also travels as an
+// MCP image block, added after masking from bytes the masked value still carries unchanged.
+// `structuredContent` is never changed. The text keeps every field except the bytes, which it
+// names as attached image content (owner decision 2026-09-29, review WR-06).
+// Masking hides strings, never pixels: a screenshot shows what the page showed.
 // ─────────────────────────────────────────────────────────────────────────────────────────────
 
 /** Why an artifact did not travel as an image. Each is a tool error, never a success. */
@@ -259,6 +257,8 @@ export type RunEvidenceImageRefusal =
   | 'artifact-image-withheld'
 
 const RUN_EVIDENCE_IMAGE_TYPES: ReadonlySet<string> = new Set(['image/png', 'image/jpeg'])
+
+export const RUN_EVIDENCE_IMAGE_TEXT_MARKER = '[image attached as image content]'
 
 const PNG_SIGNATURE = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a] as const
 const PNG_IEND_TRAILER = [
@@ -372,10 +372,11 @@ export function decorateRunEvidenceImage(input: {
     return refuse('artifact-image-invalid')
   }
 
+  const text = JSON.stringify({ ...masked, bytesBase64: RUN_EVIDENCE_IMAGE_TEXT_MARKER })
   return {
     ...result,
     content: [
-      ...result.content,
+      ...result.content.map((block) => (block.type === 'text' ? { type: 'text' as const, text } : block)),
       { type: 'image' as const, data: artifact.bytesBase64, mimeType: artifact.contentType },
     ],
   }
