@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from 'node:fs'
+import { existsSync, mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, expect, it } from 'vitest'
@@ -9,7 +9,7 @@ import { enumerateBundleDirs } from '../../bundle-scan.js'
 import { createLocalKnowledgeStore } from '../../curator/knowledge-store.js'
 import { applyFeedback } from '../../feedback/apply-feedback.js'
 import { acquireWriterLease, releaseLease } from '../../lease/writer-lease.js'
-import { applyReview } from '../apply-review.js'
+import { applyExplicitReview, applyReview } from '../apply-review.js'
 import { proposeReview } from '../propose-review.js'
 
 const roots: string[] = []
@@ -128,5 +128,78 @@ it.each([false, true])('commits a real same-kind same-anchor floor replacement b
   expect(corrected.commitReceipt?.promoted).toEqual([{ candidateId: nextId, promotionPath: 'user-sovereign' }])
   expect(bundles().find(row => row.bundle.manifest.id === replacementId)!.bundle.events)
     .toEqual(expect.arrayContaining([expect.objectContaining({ type: 'superseded', byRecordId: nextId })]))
+  expect(bundles()).toHaveLength(3)
+})
+
+it('applies the same real floor replacement through the direct writer in ci, once per operation, and a later mark supersedes it (432-06)', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'mark-supersession-direct-'))
+  roots.push(root)
+  const knowledgeRoot = join(root, 'knowledge')
+  const agentQaRoot = join(root, '.agent-qa')
+  scaffoldKnowledgeRoot(knowledgeRoot)
+  const draft = makeBundleDraftFixture({ anchors: [{ t: 'page', route: '/products' }] })
+  const lease = acquireWriterLease(knowledgeRoot)
+  if (lease.kind !== 'acquired') throw new Error('fixture lease unavailable')
+  try {
+    const store = createLocalKnowledgeStore({ knowledgeRoot, auditBaseDir: agentQaRoot,
+      executionContext: 'local-interactive', writerLeaseId: lease.leaseId, epoch: lease.epoch,
+      sourceBuildOrdinal: 6 })
+    await store.commit([{ kind: 'Add', origin: 'user', scope: draft.scope, citedIds: [], bundle: draft }])
+  } finally { releaseLease({ knowledgeRoot, leaseId: lease.leaseId }) }
+  const bundles = () => enumerateBundleDirs(knowledgeRoot).map(entry => {
+    const loaded = loadBundle(entry.dir)
+    if (loaded.kind !== 'loaded') throw new Error('bundle must load through the real guard')
+    return { dir: entry.dir, bundle: loaded.bundle }
+  })
+  const recordId = bundles()[0]!.bundle.manifest.id
+  const runId = asRunId('mark-supersession-direct-run')
+  const mark = { markId: 'mark_2123456789ab', runId, runSlug: 'mark-supersession-direct-run',
+    testIndex: 0, stepIndex: 0, kind: 'false-fail' as const }
+  const handoff: CompletedRunHandoff = { schemaVersion: 7, runId, scope: draft.scope,
+    buildOrdinal: 7, executionContext: 'ci', aggregateVerdict: 'failed',
+    configDigests: { suiteConfigDigest: '', testConfigDigest: '' }, startedAt: 0, endedAt: 1,
+    tests: [{ testId: 'products', testName: 'Products', filePath: 'products.yaml',
+      testIndex: 0, outcome: 'failed', steps: [{ stepIndex: 0,
+      stepText: 'Open products', cacheStatus: 'miss', servedBrief: { scope: draft.scope,
+        asOfBuild: 6, budget: 200, truncation: '', briefDigest: 'brief', channel2: [], channel3: [],
+        channel1: [{ id: asRecordId(recordId), kind: 'fact', summary: draft.summary,
+          trust: 1, status: 'candidate', servedAsCanary: false, tier: '1' }] },
+      subActions: [{ plan: 'Open products', plannedAction: { type: 'delay', ms: 1 },
+        stateBefore: makeScreenStateFixture(), result: { success: true } }],
+      verifierVerdict: { pass: false, reasoning: 'Products were shown despite the failed verdict' },
+    }] }] }
+  const plan = applyFeedback({ mark, handoff, resolvedStepIndex: 0, served: [{ recordId, ...draft }] })
+  if (plan.kind !== 'knowledge') throw new Error('expected knowledge floor')
+  const direct = (operationId: string, markId: string, fixPlan: typeof plan) => applyExplicitReview({
+    agentQaRoot, knowledgeRoot, executionContext: 'ci', opId: 'runs.mark', operationId,
+    request: { verb: 'mark', input: { target: fixPlan.target, plan: fixPlan,
+      mark: { markId, runId, testIndex: 0, stepIndex: 0, kind: mark.kind, fix: fixPlan.fix } } } })
+  const result = await direct('0b1c2d3e-4f50-4a61-8b72-9c83d4e5f607', mark.markId, plan)
+  if (result.outcome !== 'applied') throw new Error('expected the direct fix to apply')
+  const replacementId = result.recordIds[0]!
+  expect(replacementId).not.toBe(recordId)
+  expect(result.commitReceipt).toMatchObject({ held: [], promoted: [{ candidateId: replacementId,
+    promotionPath: 'user-sovereign' }] })
+  const replacement = bundles().find(row => row.bundle.manifest.id === replacementId)!
+  expect(replacement.bundle.provenance).toMatchObject({ authorship: { executionContext: 'ci' } })
+  expect(readGateReceipts(replacement.dir, replacementId)).toEqual(expect.arrayContaining([
+    expect.objectContaining({ gate: 3, producedBy: { opId: 'runs.mark' }, runId }),
+  ]))
+  expect(existsSync(join(agentQaRoot, 'proposals')), 'no inbox envelope on the direct door').toBe(false)
+  expect(await direct('0b1c2d3e-4f50-4a61-8b72-9c83d4e5f607', mark.markId, plan)).toEqual(result)
+  expect(bundles()).toHaveLength(2)
+  const delta = plan.deltas[0]!
+  if (delta.kind !== 'Supersede') throw new Error('expected supersession')
+  const nextMark = { ...mark, markId: 'mark_3123456789ab', note: 'Use the product list heading' }
+  const nextPlan = applyFeedback({ mark: nextMark, handoff, resolvedStepIndex: 0,
+    served: [{ recordId: replacementId, ...delta.newBundle }] })
+  if (nextPlan.kind !== 'knowledge') throw new Error('expected subsequent knowledge floor')
+  const corrected = await direct('1c2d3e4f-5061-4b72-8c83-9d94e5f60718', nextMark.markId, nextPlan)
+  if (corrected.outcome !== 'applied') throw new Error('expected the later fix to apply')
+  const nextId = corrected.recordIds[0]!
+  expect(new Set([recordId, replacementId, nextId]).size).toBe(3)
+  expect(bundles().find(row => row.bundle.manifest.id === replacementId)!.bundle.events)
+    .toEqual(expect.arrayContaining([expect.objectContaining({ type: 'promoted' }),
+      expect.objectContaining({ type: 'superseded', byRecordId: nextId })]))
   expect(bundles()).toHaveLength(3)
 })

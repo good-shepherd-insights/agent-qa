@@ -25,6 +25,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { publishBundle, type BundleStoreConfig } from '../../bundle-publish.test-helper.js'
 import { loadBundle, readGateReceipts } from '../../bundle-read.js'
 import { enumerateBundleDirs } from '../../bundle-scan.js'
+import { UserDeltaCitationIntegrityError } from '../../curator/disposition.js'
 import { createLocalKnowledgeStore } from '../../curator/knowledge-store.js'
 import { acquireWriterLease, releaseLease } from '../../lease/writer-lease.js'
 import { listBundles } from '../../list-bundles.js'
@@ -378,6 +379,43 @@ describe('432 direct explicit knowledge writer (D-04, D-05, D-08, D-09, D-11)', 
     expect(canonicalFiles(knowledgeRoot), 'no second confirmation, gate receipt or promotion').toEqual(files)
     expect(bundle(fixed).bundle.events.filter(event => event.type === 'confirmed')).toHaveLength(1)
     expect(readGateReceipts(bundle(fixed).dir, fixed)?.filter(line => 'gate' in line && line.gate === 3)).toHaveLength(1)
+  })
+
+  it('explicit ci authority keeps every promotion gate: an unavailable posture holds the fix as a candidate', async () => {
+    const victim = publish('held checkout')
+    const result = await explicit({ ...base('ci'), request: { verb: 'mark', input: markInput(victim) },
+      resolvePromotionPosture: () => ({ kind: 'unavailable', replayGateAvailable: false, refusals: ['floor missing'] }) })
+    if (result.outcome !== 'applied') throw new Error('mark did not apply')
+    const replacement = result.recordIds[0]!
+    expect(result.commitReceipt).toMatchObject({ promoted: [],
+      held: [{ candidateId: replacement, reason: 'posture-unavailable' }] })
+    expect(result.commitReceipt?.gate3).toHaveLength(1)
+    expect(status(replacement), 'a held fix is committed but not promoted').toBe('candidate')
+    expect(bundle(replacement).bundle.events.some(event => event.type === 'promoted')).toBe(false)
+  })
+
+  it('an explicit accept over a tombstoned target refuses by type and moves no committed byte', async () => {
+    const recordId = publish('tombstoned accept')
+    const rejected = await explicit({ ...base('ci'), request: { verb: 'reject',
+      input: { target: { grain: 'record', recordId }, reason: 'first decision' } } })
+    expect(rejected).toMatchObject({ outcome: 'applied', recordIds: [recordId] })
+    const files = canonicalFiles(knowledgeRoot)
+    const bundles = listBundles(knowledgeRoot)
+    await expect(explicit({ ...base('ci'), operationId: LATER_OPERATION, request: { verb: 'accept',
+      input: { target: { grain: 'record', recordId } } } })).rejects.toBeInstanceOf(UserDeltaCitationIntegrityError)
+    expect(canonicalFiles(knowledgeRoot)).toEqual(files)
+    expect(listBundles(knowledgeRoot), 'no unauthored clone is minted').toEqual(bundles)
+  })
+
+  it('a retried reject deprecates once and answers the same record ids', async () => {
+    const recordId = publish('retried reject')
+    const request = { verb: 'reject' as const, input: { target: { grain: 'record' as const, recordId }, reason: 'stale' } }
+    const first = await explicit({ ...base('cloud'), request })
+    const files = canonicalFiles(knowledgeRoot)
+    expect(await explicit({ ...base('cloud'), request })).toEqual(first)
+    expect(canonicalFiles(knowledgeRoot)).toEqual(files)
+    expect(bundle(recordId).bundle.events.filter(event => event.type === 'deprecated')).toHaveLength(1)
+    expect(first).toEqual({ outcome: 'applied', verb: 'reject', changeId: `prop_${OPERATION}`, recordIds: [recordId] })
   })
 
   it('recovers an interrupted mark on retry without a second lineage transition', async () => {
