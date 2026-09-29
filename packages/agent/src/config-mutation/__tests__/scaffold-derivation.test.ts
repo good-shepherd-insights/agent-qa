@@ -320,10 +320,11 @@ describe('the hostname gate is the never-guess boundary, as a parse (D-15)', () 
       baseUrl: 'https://evil.example',
       targetName: 'evil-example',
     })
-    // A port is authority, not host.
+    // A port is authority, not host — and since 432 D-20 (#134) an explicit port is kept on the
+    // base URL rather than dropped, so the target addresses the origin that was typed.
     expect(parseHostnameToken('https://booking.com:8443/')).toMatchObject({
       domain: 'booking.com',
-      baseUrl: 'https://booking.com',
+      baseUrl: 'https://booking.com:8443',
     })
   })
 })

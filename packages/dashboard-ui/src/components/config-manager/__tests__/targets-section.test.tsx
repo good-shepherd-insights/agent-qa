@@ -30,6 +30,10 @@ import {
   NO_TARGETS_TEXT,
   SAVE_SETTING_LABEL,
   SETTLE_DELAY_MS,
+  TARGET_ENVIRONMENT_HINTS,
+  TARGET_ENVIRONMENT_LABELS,
+  TARGET_ENVIRONMENT_UNDECLARED_LABEL,
+  TARGET_FIELD_LABELS,
   TARGET_URL_REQUIRED_ERROR,
   deleteActionName,
   deviceMatchSettingLabel,
@@ -390,5 +394,105 @@ describe('TargetsSection and DevicesSection (429-22 Task 1)', () => {
     expect(section('targets')!.querySelector('[data-target-draft]')).toBeNull()
     expect(targetRow('checkout')).not.toBeNull()
     expect(hook!.draftTabs.has('targets')).toBe(false)
+  })
+
+  it('C432-TARGET-CREATE-UI: the add row offers Undeclared, Local, Shared and Production with one line each, keeps typed labels, and saves the class', async () => {
+    await mount()
+
+    await click(buttonIn(section('targets'), ADD_TARGET_LABEL))
+    const draft = section('targets')!.querySelector('[data-target-draft]') as HTMLElement
+    const group = draft.querySelector('[data-target-environment]') as HTMLElement | null
+    expect(group).not.toBeNull()
+    expect(group!.querySelector('legend')?.textContent).toBe(TARGET_FIELD_LABELS.environment)
+
+    const choices = ['undeclared', 'local', 'shared', 'production'] as const
+    const labels = {
+      undeclared: TARGET_ENVIRONMENT_UNDECLARED_LABEL,
+      local: TARGET_ENVIRONMENT_LABELS.local,
+      shared: TARGET_ENVIRONMENT_LABELS.shared,
+      production: TARGET_ENVIRONMENT_LABELS.production,
+    }
+    expect(Array.from(group!.querySelectorAll('[data-environment-choice]')).map((item) =>
+      item.getAttribute('data-environment-choice'))).toEqual([...choices])
+    for (const choice of choices) {
+      const item = group!.querySelector(`[data-environment-choice="${choice}"]`) as HTMLElement
+      expect(item.textContent).toContain(labels[choice])
+      const radio = item.querySelector('[role="radio"]') as HTMLElement
+      const hint = document.getElementById(radio.getAttribute('aria-describedby') ?? '')
+      expect(hint?.textContent).toBe(TARGET_ENVIRONMENT_HINTS[choice])
+    }
+    expect(TARGET_ENVIRONMENT_HINTS.production).toContain('allowProduction: true')
+    const radioFor = (choice: (typeof choices)[number]) =>
+      group!.querySelector(`[data-environment-choice="${choice}"] [role="radio"]`) as HTMLElement
+    expect(radioFor('undeclared').getAttribute('aria-checked')).toBe('true')
+
+    // A class chosen before the row is valid writes nothing and keeps what was typed.
+    const name = draft.querySelector('input[name="name"]') as HTMLInputElement
+    await type(name, 'checkout-ünïcode')
+    await click(radioFor('local'))
+    expect(applyConfigChanges).not.toHaveBeenCalled()
+    expect((draft.querySelector('input[name="name"]') as HTMLInputElement).value).toBe('checkout-ünïcode')
+    expect(radioFor('local').getAttribute('aria-checked')).toBe('true')
+    expect(document.activeElement).toBe(radioFor('local'))
+
+    // The label the file would refuse is held with its error, never rewritten.
+    await pressEnter(draft.querySelector('input[name="name"]') as HTMLInputElement)
+    expect(applyConfigChanges).not.toHaveBeenCalled()
+    expect((draft.querySelector('input[name="name"]') as HTMLInputElement).value).toBe('checkout-ünïcode')
+    expect(draft.querySelector('[data-draft-field="name"] [data-field-error]')).not.toBeNull()
+
+    await type(draft.querySelector('input[name="name"]') as HTMLInputElement, 'checkout')
+    await type(draft.querySelector('input[name="url"]') as HTMLInputElement, 'http://localhost:3000')
+    expect(radioFor('local').getAttribute('aria-checked')).toBe('true')
+
+    const saved = {
+      registry: {
+        targets: {
+          ...records.registry.targets,
+          checkout: { platform: 'web', url: 'http://localhost:3000', environment: 'production' },
+        },
+        devices: records.registry.devices,
+      },
+    }
+    vi.mocked(fetchConfig).mockResolvedValue(answer(saved) as never)
+    await click(radioFor('production'))
+
+    expect(vi.mocked(applyConfigChanges).mock.calls).toEqual([
+      [[{
+        op: 'set',
+        path: ['registry', 'targets', 'checkout'],
+        value: { platform: 'web', url: 'http://localhost:3000', environment: 'production' },
+      }]],
+    ])
+    await flush()
+    expect(section('targets')!.querySelector('[data-target-draft]')).toBeNull()
+
+    // The saved declaration, read back through the row's own environment field.
+    await click(rowHeader(targetRow('checkout')))
+    const environment = fieldInput(['registry', 'targets', 'checkout', 'environment'])
+    expect(environment?.textContent).toContain(TARGET_ENVIRONMENT_LABELS.production)
+  })
+
+  it('C432-TARGET-CREATE-UI: Undeclared saves no environment key, and the compact row wraps its choices', async () => {
+    await mount()
+
+    await click(buttonIn(section('targets'), ADD_TARGET_LABEL))
+    const draft = section('targets')!.querySelector('[data-target-draft]') as HTMLElement
+    const group = draft.querySelector('[data-target-environment] [role="radiogroup"]') as HTMLElement | null
+    expect(group).not.toBeNull()
+    expect(group?.className).toContain('flex-wrap')
+
+    const radio = (choice: string) =>
+      draft.querySelector(`[data-environment-choice="${choice}"] [role="radio"]`) as HTMLElement
+    await click(radio('shared'))
+    await click(radio('undeclared'))
+    await type(draft.querySelector('input[name="name"]') as HTMLInputElement, 'plain')
+    const url = draft.querySelector('input[name="url"]') as HTMLInputElement
+    await type(url, 'https://plain.example.com')
+    await pressEnter(url)
+
+    expect(vi.mocked(applyConfigChanges).mock.calls).toEqual([
+      [[{ op: 'set', path: ['registry', 'targets', 'plain'], value: { platform: 'web', url: 'https://plain.example.com' } }]],
+    ])
   })
 })

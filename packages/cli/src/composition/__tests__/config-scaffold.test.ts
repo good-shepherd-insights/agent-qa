@@ -51,6 +51,16 @@
 // (13b) hooks left be  — a merge that composed the scaffold's hooks template over a hooks file a
 //                        person already wrote. That is the same wholesale overwrite
 //                        `already-configured` refuses for the config yaml, one file over.
+//
+// 432-05 (D-19, D-20 · PXH-SAFE-03) adds three named families over the same real ports:
+//
+//   C432-SCAFFOLD-LLMS          — #130: a scaffold that drops `registry.llms` or `use.llm`, on either
+//                                 the from-zero producer or the zero-target merge, or that "repairs"
+//                                 an inconsistent selection instead of letting validation refuse it.
+//   C432-LOCALHOST-ORIGIN       — #134: the local demo app's own address, scaffolded from zero, with
+//                                 its http scheme and port kept and the config valid.
+//   C432-TARGET-CREATE-ENVIRONMENT — a create whose class does not reach the committed file, or one
+//                                 that overwrites an existing target.
 
 import { spawnSync } from 'node:child_process'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
@@ -94,6 +104,7 @@ import {
   createConfigValidatePort,
   createScaffoldContentPort,
 } from '../local-agent-host.js'
+import { HN_TOP_STORY_HOOK_ID, buildScaffoldFileSet } from '../../commands/scaffold-content.js'
 
 const HUMAN: FunctionCaller = {
   surface: 'test',
@@ -860,5 +871,227 @@ describe('the config dir is NOT the repository root (395-11 · CR-03\'s create d
       const gitignore = readFileSync(join(configDir, '.gitignore'), 'utf8')
       expect(gitignore.startsWith(SEEDED_GITIGNORE)).toBe(true)
       expect(gitignore).toContain('# agent-qa init:start')
+    })
+})
+
+/** A config with one target and a model, for the create cells. */
+const ONE_TARGET_CONFIG = `registry:
+  llms:
+    - name: judge
+      provider: openai-subscription
+      model: gpt-5.6-terra
+  targets:
+    shop:
+      platform: web
+      url: https://shop.example.com
+use:
+  llm: judge
+`
+
+async function createTarget(
+  registry: ReturnType<typeof registryFor>,
+  input: Record<string, unknown>,
+): Promise<ConfigProposeOutput> {
+  return await invokeFunction(registry, 'config.target.create', input, HUMAN) as ConfigProposeOutput
+}
+
+function seedOneTargetConfig(): void {
+  writeFileSync(configPath, ONE_TARGET_CONFIG)
+  git('add', '--', CONFIG_FILE)
+  git('commit', '--quiet', '-m', 'the project configures one target')
+}
+
+type ParsedConfig = {
+  registry?: {
+    llms?: { name: string }[]
+    targets?: Record<string, Record<string, unknown>>
+  }
+  use?: { llm?: string }
+}
+
+describe('C432-TARGET-CREATE-ENVIRONMENT: the class reaches the committed file (D-19)', () => {
+  it('C432-TARGET-CREATE-ENVIRONMENT: a production create commits its declaration, read back through the shipped schema',
+    async () => {
+      seedOneTargetConfig()
+      const registry = registryFor({ confirm: true })
+      const id = proposedId(await createTarget(registry, {
+        name: 'stage',
+        platform: 'web',
+        url: 'http://localhost:3000',
+        environment: 'production',
+      }))
+      const accepted = await invokeFunction(
+        registry, 'proposals.accept', { proposalId: id }, HUMAN,
+      ) as ProposalsAcceptOutput
+      expect(accepted.apply.outcome).toBe('applied')
+
+      const parsed = AgentQaConfigSchema.safeParse(parseYaml(readFileSync(configPath, 'utf8')))
+      expect(parsed.success ? null : JSON.stringify(parsed.error?.issues)).toBeNull()
+      const written = parseYaml(readFileSync(configPath, 'utf8')) as ParsedConfig
+      expect(written.registry?.targets?.stage)
+        .toEqual({ platform: 'web', url: 'http://localhost:3000', environment: 'production' })
+      expect(written.registry?.targets?.shop).toEqual({ platform: 'web', url: 'https://shop.example.com' })
+    })
+
+  it('C432-TARGET-CREATE-ENVIRONMENT: a duplicate create is refused and the file is untouched', async () => {
+    seedOneTargetConfig()
+    const before = readFileSync(configPath, 'utf8')
+    const answer = await createTarget(registryFor({ confirm: true }), {
+      name: 'shop',
+      platform: 'web',
+      url: 'https://other.example.com',
+      environment: 'local',
+    })
+
+    expect(answer).toMatchObject({ outcome: 'refused', reason: 'target-exists' })
+    expect(readFileSync(configPath, 'utf8')).toBe(before)
+    expect(existsSync(join(agentQaRoot, 'proposals'))).toBe(false)
+  })
+
+  it('C432-TARGET-CREATE-ENVIRONMENT: a Unicode label the registry refuses is blocked by validation, not rewritten',
+    async () => {
+      seedOneTargetConfig()
+      const answer = await createTarget(registryFor({ confirm: true }), {
+        name: 'straße',
+        platform: 'web',
+        url: 'https://strasse.example.com',
+        environment: 'shared',
+      })
+
+      expect(answer).toMatchObject({ outcome: 'blocked', blockedReason: 'schema-fail' })
+      expect(readFileSync(configPath, 'utf8')).toBe(ONE_TARGET_CONFIG)
+    })
+})
+
+describe('C432-LOCALHOST-ORIGIN: the local demo app scaffolds from zero (D-20 · #134)', () => {
+  it('C432-LOCALHOST-ORIGIN: http://127.0.0.1:8931 keeps its scheme and port and validates', async () => {
+    const registry = registryFor({ confirm: true })
+    const id = proposedId(await scaffold(registry, 'http://127.0.0.1:8931/form.html'))
+    const payload = storedApplyable(id)
+
+    const derived = parseYaml(utf8Decode(base64Decode(
+      payload.files.find((file) => file.path === CONFIG_FILE)?.newContentBase64 as string,
+    ))) as ParsedConfig
+    expect(AgentQaConfigSchema.safeParse(derived).success).toBe(true)
+    expect(derived.registry?.targets).toEqual({
+      'ip-127-0-0-1-8931': { platform: 'web', url: 'http://127.0.0.1:8931' },
+    })
+    expect(payload.summaryLine)
+      .toBe('configure this project for http://127.0.0.1:8931 as target ip-127-0-0-1-8931')
+  })
+
+  it('C432-LOCALHOST-ORIGIN: localhost and bracketed IPv6 loopback scaffold with their ports', async () => {
+    for (const [domain, name, url] of [
+      ['localhost:5173', 'localhost-5173', 'https://localhost:5173'],
+      ['http://[::1]:3000', 'ipv6-loopback-3000', 'http://[::1]:3000'],
+    ] as const) {
+      const id = proposedId(await scaffold(registryFor({ confirm: true }), domain))
+      const derived = parseYaml(utf8Decode(base64Decode(
+        storedApplyable(id).files.find((file) => file.path === CONFIG_FILE)?.newContentBase64 as string,
+      ))) as ParsedConfig
+      expect(derived.registry?.targets, domain).toEqual({ [name]: { platform: 'web', url } })
+      expect(AgentQaConfigSchema.safeParse(derived).success, domain).toBe(true)
+    }
+  })
+})
+
+describe('C432-SCAFFOLD-LLMS: the scaffold keeps the model registry and its selection (D-20 · #130)', () => {
+  it('C432-SCAFFOLD-LLMS: the zero-target merge commits every model entry and the selected model',
+    async () => {
+      seedZeroTargetConfig()
+      const registry = registryFor({ confirm: true })
+      const id = proposedId(await scaffold(registry, 'http://localhost:3000'))
+      const accepted = await invokeFunction(
+        registry, 'proposals.accept', { proposalId: id }, HUMAN,
+      ) as ProposalsAcceptOutput
+      expect(accepted.apply.outcome).toBe('applied')
+
+      const onDisk = parseYaml(readFileSync(configPath, 'utf8')) as ParsedConfig
+      const parsed = AgentQaConfigSchema.safeParse(onDisk)
+      expect(parsed.success ? null : JSON.stringify(parsed.error?.issues)).toBeNull()
+      expect(onDisk.registry?.llms).toEqual([
+        { name: 'judge', provider: 'openai-subscription', model: 'gpt-5.6-terra' },
+      ])
+      expect(onDisk.use?.llm).toBe('judge')
+      expect(onDisk.registry?.targets).toEqual({
+        'localhost-3000': { platform: 'web', url: 'http://localhost:3000' },
+      })
+      // Unrelated files are left as they were, and the managed block is an upsert.
+      expect(readFileSync(join(root, 'README.md'), 'utf8')).toBe('a project that has never run agent-qa\n')
+      expect(readFileSync(join(root, '.gitignore'), 'utf8').startsWith(SEEDED_GITIGNORE)).toBe(true)
+    })
+
+  it('C432-SCAFFOLD-LLMS: the merge does not repair an inconsistent selection — validation refuses it', async () => {
+    writeFileSync(configPath, ZERO_TARGET_CONFIG.replace('  llm: judge\n', '  llm: ghost\n'))
+    git('add', '--', CONFIG_FILE)
+    git('commit', '--quiet', '-m', 'a selection naming no registered model')
+
+    const answer = await scaffold(registryFor({ confirm: true }), 'booking.com')
+    expect(answer).toMatchObject({ outcome: 'blocked', blockedReason: 'schema-fail' })
+  })
+
+  it('C432-SCAFFOLD-LLMS: the from-zero producer writes the model entries it is given, with a coherent selection',
+    () => {
+      const entries = [
+        { name: 'judge', provider: 'openai-subscription', model: 'gpt-5.6-terra' },
+        { name: 'planner', provider: 'anthropic', model: 'claude-sonnet' },
+      ]
+      const files = buildScaffoldFileSet({
+        cacheDir: '.agent-qa/cache',
+        authStatesDir: '.agent-qa/auth-states',
+        targetName: 'booking-com',
+        baseUrl: 'https://booking.com',
+        gitignoreEntries: ['.env'],
+        llmEntries: entries,
+      })
+      const config = parseYaml(files.find((file) => file.path === CONFIG_FILE)?.text as string) as ParsedConfig
+      expect(config.registry?.llms).toEqual(entries)
+      expect(config.use?.llm).toBe('judge')
+      const parsed = AgentQaConfigSchema.safeParse(config)
+      expect(parsed.success ? null : JSON.stringify(parsed.error?.issues)).toBeNull()
+      // The hooks file keeps its canonical id, and the managed block is present.
+      expect(files.find((file) => file.path === 'hooks.yaml')?.text).toContain(HN_TOP_STORY_HOOK_ID)
+      expect(files.find((file) => file.path === '.gitignore')?.text).toContain('# agent-qa init:start')
+
+      const selected = buildScaffoldFileSet({
+        cacheDir: '.agent-qa/cache',
+        authStatesDir: '.agent-qa/auth-states',
+        targetName: 'booking-com',
+        baseUrl: 'https://booking.com',
+        gitignoreEntries: ['.env'],
+        llmEntries: entries,
+        selectedLlm: 'planner',
+      })
+      const chosen = parseYaml(selected.find((file) => file.path === CONFIG_FILE)?.text as string) as ParsedConfig
+      expect(chosen.use?.llm).toBe('planner')
+      expect(AgentQaConfigSchema.safeParse(chosen).success).toBe(true)
+
+      const incoherent = buildScaffoldFileSet({
+        cacheDir: '.agent-qa/cache',
+        authStatesDir: '.agent-qa/auth-states',
+        targetName: 'booking-com',
+        baseUrl: 'https://booking.com',
+        gitignoreEntries: ['.env'],
+        llmEntries: entries,
+        selectedLlm: 'ghost',
+      })
+      const refused = parseYaml(incoherent.find((file) => file.path === CONFIG_FILE)?.text as string) as ParsedConfig
+      expect(refused.use?.llm).toBe('ghost')
+      expect(AgentQaConfigSchema.safeParse(refused).success).toBe(false)
+    })
+
+  it('C432-SCAFFOLD-LLMS: with no model given, the from-zero config carries no model half and still validates',
+    () => {
+      const files = buildScaffoldFileSet({
+        cacheDir: '.agent-qa/cache',
+        authStatesDir: '.agent-qa/auth-states',
+        targetName: 'booking-com',
+        baseUrl: 'https://booking.com',
+        gitignoreEntries: ['.env'],
+      })
+      const config = parseYaml(files.find((file) => file.path === CONFIG_FILE)?.text as string) as ParsedConfig
+      expect(Object.hasOwn(config.registry ?? {}, 'llms')).toBe(false)
+      expect(Object.hasOwn(config.use ?? {}, 'llm')).toBe(false)
+      expect(AgentQaConfigSchema.safeParse(config).success).toBe(true)
     })
 })
