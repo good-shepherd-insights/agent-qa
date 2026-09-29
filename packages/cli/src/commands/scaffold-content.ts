@@ -144,6 +144,8 @@ export function buildTargets(
  */
 export interface ScaffoldConfigFacts {
   readonly llmEntries: readonly Record<string, unknown>[]
+  /** `use.llm`. Defaults to the first entry's name; schema validation refuses one naming no entry. */
+  readonly selectedLlm?: string
   readonly usesSubscriptionAuth: boolean
   /** `services.cache.dir`. A host default, so a host supplies it. */
   readonly cacheDir: string
@@ -191,7 +193,9 @@ export function buildScaffoldConfig(
       logging: { level: 'warn' },
     },
     registry: {
-      llms: [...facts.llmEntries],
+      // THE MODEL HALF IS WRITTEN ONLY WHEN THERE IS A MODEL (432 D-20, #130). `init` always has
+      // one; a scaffold given none writes neither key, rather than writing and then deleting them.
+      ...(facts.llmEntries.length === 0 ? {} : { llms: [...facts.llmEntries] }),
       targets: buildTargets(platform, facts.targets),
     },
     ...(facts.usesSubscriptionAuth
@@ -208,7 +212,9 @@ export function buildScaffoldConfig(
       planner: { maxSubActions: 10, previousStepCount: 5 },
       logCapture: { console: true, network: true },
       parallel: false,
-      llm: (facts.llmEntries[0]?.name as string | undefined) ?? 'default',
+      ...(facts.llmEntries.length === 0
+        ? {}
+        : { llm: facts.selectedLlm ?? (facts.llmEntries[0]?.name as string | undefined) ?? 'default' }),
     },
   }
 
@@ -349,6 +355,14 @@ export interface ScaffoldContentInput {
   readonly baseUrl: string
   /** The managed block's rules, supplied by the caller — see this file's header. */
   readonly gitignoreEntries: readonly string[]
+  /**
+   * The model registry entries the from-zero config carries, already resolved (432 D-20, #130).
+   * Absent or empty, the config has no model half at all. Merge mode ignores it: the person's own
+   * `registry.llms` and `use.llm` are kept byte-for-byte by the one-entry insert.
+   */
+  readonly llmEntries?: readonly Record<string, unknown>[]
+  /** `use.llm` for the from-zero config; defaults to the first entry's name. */
+  readonly selectedLlm?: string
   /** What the project's `.gitignore` holds right now, or absent when it has none. */
   readonly existingGitignore?: string
   /**
@@ -414,11 +428,12 @@ export interface ScaffoldContentFile {
  * classifier's `out-of-set-path` rule read that same enumeration, so a fourth file here would be
  * flagged cross-boundary on its own path and refused by an apply that could not scope to it.
  *
- * NO LLM ENTRY, AND THAT IS THE HONEST DERIVATION RATHER THAN AN OMISSION (D-13). The utterance
- * carried a domain; it did not carry a provider, a model or an API base. `registry.llms` is
- * optional and `use.llm` is only checked when present, so the config this produces validates — and
- * a person reading the proposal sees a project configured for the site they named and for nothing
- * they did not say. `init` is the path that ASKS, and it still passes its answers in.
+ * NO INVENTED LLM ENTRY, AND NONE DROPPED (D-13 · 432 D-20, #130). The utterance carried a domain;
+ * it did not carry a provider, a model or an API base, so a scaffold given no model writes no
+ * model half — `registry.llms` is optional and `use.llm` is only checked when present, so the
+ * config validates. Entries a caller does hand over are written with a coherent `use.llm`, never
+ * removed, and an inconsistent selection is left for schema validation to refuse. `init` is the
+ * path that ASKS, and it still passes its answers in.
  *
  * PLATFORM IS `web`, STATED. A hostname is a web origin; there is no mobile fact in a domain token.
  *
@@ -453,21 +468,13 @@ export function buildScaffoldFileSet(input: ScaffoldContentInput): readonly Scaf
   }
 
   const config = buildScaffoldConfig('web', {
-    llmEntries: [],
+    llmEntries: input.llmEntries ?? [],
+    ...(input.selectedLlm === undefined ? {} : { selectedLlm: input.selectedLlm }),
     usesSubscriptionAuth: false,
     cacheDir: input.cacheDir,
     authStatesDir: input.authStatesDir,
     targets: { [input.targetName]: { platform: 'web', url: input.baseUrl } },
   })
-  // NO LLM ENTRY AND NO `use.llm`, removed rather than never written so the ONE config shape above
-  // stays one shape. `registry.llms: []` beside `use.llm: default` is what the shared builder emits
-  // for an empty list, and `AgentQaConfigSchema` refuses a `use.llm` naming no registered entry —
-  // so leaving them would be a scaffold that cannot validate, which is exactly the failure this
-  // plan was told to prove does not happen.
-  const registry = config.registry as Record<string, unknown>
-  delete registry.llms
-  const use = config.use as Record<string, unknown>
-  delete use.llm
 
   return [
     { path: SCAFFOLD_CONFIG_FILE, text: renderScaffoldConfigYaml(config) },

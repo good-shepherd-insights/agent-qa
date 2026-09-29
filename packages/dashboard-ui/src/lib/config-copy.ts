@@ -718,9 +718,21 @@ export const TARGET_PLATFORM_LABELS = {
 export const TARGET_ENVIRONMENT_LABELS = {
   local: 'Local',
   shared: 'Shared',
-} as const satisfies Record<'local' | 'shared', string>
+  production: 'Production',
+} as const satisfies Record<'local' | 'shared' | 'production', string>
 
 export const TARGET_ENVIRONMENT_PLACEHOLDER = 'Not declared'
+
+/** The add-target row's choice for a target that declares no environment. */
+export const TARGET_ENVIRONMENT_UNDECLARED_LABEL = 'Undeclared'
+
+/** One line under each add-target environment choice. */
+export const TARGET_ENVIRONMENT_HINTS = {
+  undeclared: 'Treated as non-production.',
+  local: 'Runs against this machine.',
+  shared: 'A shared non-production target.',
+  production: 'Runs need allowProduction: true in the config.',
+} as const satisfies Record<'undeclared' | 'local' | 'shared' | 'production', string>
 
 export const TARGET_FIELD_LABELS = {
   name: 'Name',

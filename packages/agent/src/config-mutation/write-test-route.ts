@@ -50,8 +50,11 @@
 
 import { parseHostnameToken } from './hostname-gate.js'
 
-/** Everything a hostname and a registry key CAN hold. Splitting on the complement yields words. */
-const TOKEN_SPLIT = /[^A-Za-z0-9.:/?=&@_-]+/
+/**
+ * A word: either a bracketed IPv6 origin (432 D-20), whose brackets must survive, or a run of what
+ * a hostname and a registry key CAN hold. Everything else separates words.
+ */
+const TOKEN = /(?:[A-Za-z][A-Za-z0-9+.-]*:\/\/)?\[[0-9A-Fa-f:.]+\][A-Za-z0-9.:/?=&@_-]*|[A-Za-z0-9.:/?=&@_-]+/g
 
 export type WriteTestRoute =
   | {
@@ -86,7 +89,7 @@ export function resolveWriteTestRoute(input: {
   readonly intent: string
   readonly configuredTargetNames: readonly string[]
 }): WriteTestRoute {
-  const tokens = input.intent.split(TOKEN_SPLIT).filter((token) => token.length > 0)
+  const tokens = input.intent.match(TOKEN) ?? []
   const configured = new Set(input.configuredTargetNames)
 
   for (const token of tokens) {
@@ -106,7 +109,10 @@ export function resolveWriteTestRoute(input: {
     // that had a perfectly good authoring dispatch ended in `already-configured` for a site nobody
     // named. The scaffold arm is the from-zero path and this is where it says so.
     if (configured.size > 0) return { kind: 'passthrough' }
-    return { kind: 'scaffold', domain: verdict.domain, targetName: verdict.targetName }
+    // The scaffold op re-parses what it is handed, so a kept scheme or port travels as the base URL
+    // (432 D-20). A plain derivation still travels as the bare domain it always did.
+    const domain = verdict.baseUrl === `https://${verdict.domain}` ? verdict.domain : verdict.baseUrl
+    return { kind: 'scaffold', domain, targetName: verdict.targetName }
   }
 
   // A project with targets can author against them without being told which; a project with none

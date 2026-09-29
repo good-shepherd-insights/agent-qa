@@ -281,7 +281,7 @@
       "bindingStatusAtRoot": "bound",
       "classifies": true,
       "id": "config.target.create",
-      "inputSchemaDigest": "6d48e4d685f01a4e0fa39a090594bc548ba55a93d21748eb5da4a2b611e3334d",
+      "inputSchemaDigest": "bea8916e07b1a61666cc9689dc86921d8ad8d5628057f2c142f33ea0c0096768",
       "outputSchemaDigest": "7a8846c253dbbbc0db25847d005710df759dcd7d500f92d70889e7e13c02100d",
       "partition": {
         "kind": "projected",

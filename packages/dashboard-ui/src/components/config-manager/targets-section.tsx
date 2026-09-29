@@ -20,6 +20,7 @@ import {
 } from "@/components/config-manager/record-list"
 import { Button } from "@/components/ui/button"
 import { Label } from "@/components/ui/label"
+import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import {
   configFieldControlId,
@@ -34,8 +35,10 @@ import {
   NO_TARGETS_TEXT,
   TARGET_APP_PATH_ERROR,
   TARGET_APP_SUMMARY_PREFIX,
+  TARGET_ENVIRONMENT_HINTS,
   TARGET_ENVIRONMENT_LABELS,
   TARGET_ENVIRONMENT_PLACEHOLDER,
+  TARGET_ENVIRONMENT_UNDECLARED_LABEL,
   TARGET_FIELD_LABELS,
   TARGET_NAME_FORMAT_ERROR,
   TARGET_NAME_REQUIRED_ERROR,
@@ -75,9 +78,21 @@ const PLATFORM_OPTIONS = (Object.keys(TARGET_PLATFORM_LABELS) as TargetPlatform[
   value,
   label: TARGET_PLATFORM_LABELS[value],
 }))
-const ENVIRONMENT_OPTIONS = (Object.keys(TARGET_ENVIRONMENT_LABELS) as (keyof typeof TARGET_ENVIRONMENT_LABELS)[]).map(
+type TargetEnvironment = keyof typeof TARGET_ENVIRONMENT_LABELS
+const ENVIRONMENT_OPTIONS = (Object.keys(TARGET_ENVIRONMENT_LABELS) as TargetEnvironment[]).map(
   (value) => ({ value, label: TARGET_ENVIRONMENT_LABELS[value] }),
 )
+// The add row's choices: undeclared first, stored as the draft's empty string.
+const ENVIRONMENT_CHOICES = ["undeclared", ...(Object.keys(TARGET_ENVIRONMENT_LABELS) as TargetEnvironment[])] as const
+type EnvironmentChoice = (typeof ENVIRONMENT_CHOICES)[number]
+const ENVIRONMENT_CHOICE_LABELS: Record<EnvironmentChoice, string> = {
+  undeclared: TARGET_ENVIRONMENT_UNDECLARED_LABEL,
+  ...TARGET_ENVIRONMENT_LABELS,
+}
+
+function isEnvironment(value: string): value is TargetEnvironment {
+  return value in TARGET_ENVIRONMENT_LABELS
+}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value)
@@ -311,11 +326,20 @@ interface TargetDraft extends Record<string, string> {
   bundleId: string
   appPackage: string
   appActivity: string
+  environment: string
 }
 
 type DraftKey = "name" | "platform" | "url" | "bundleId" | "appPackage" | "appActivity"
 
-const EMPTY_DRAFT: TargetDraft = { name: "", platform: "web", url: "", bundleId: "", appPackage: "", appActivity: "" }
+const EMPTY_DRAFT: TargetDraft = {
+  name: "",
+  platform: "web",
+  url: "",
+  bundleId: "",
+  appPackage: "",
+  appActivity: "",
+  environment: "",
+}
 
 function draftErrors(draft: TargetDraft, takenNames: ReadonlySet<string>): Partial<Record<DraftKey, string>> {
   const errors: Partial<Record<DraftKey, string>> = {}
@@ -330,9 +354,10 @@ function draftErrors(draft: TargetDraft, takenNames: ReadonlySet<string>): Parti
 function draftValue(draft: TargetDraft): TargetEntry {
   const platform: TargetPlatform = isPlatform(draft.platform) ? draft.platform : "web"
   const set = (key: DraftKey) => (draft[key].trim() === "" ? {} : { [key]: draft[key].trim() })
-  if (platform === "web") return { platform, ...set("url") }
-  if (platform === "ios") return { platform, ...set("bundleId") }
-  return { platform, ...set("appPackage"), ...set("appActivity") }
+  const environment = isEnvironment(draft.environment) ? { environment: draft.environment } : {}
+  if (platform === "web") return { platform, ...set("url"), ...environment }
+  if (platform === "ios") return { platform, ...set("bundleId"), ...environment }
+  return { platform, ...set("appPackage"), ...set("appActivity"), ...environment }
 }
 
 interface AddTargetRowProps {
@@ -431,6 +456,34 @@ function AddTargetRow({ initial, takenNames, onHold, onDiscard, onAdded }: AddTa
           {text("appActivity", TARGET_FIELD_LABELS.appActivity, ".MainActivity")}
         </>
       ) : null}
+      <fieldset data-target-environment className="space-y-2">
+        <legend className="text-sm font-medium">{TARGET_FIELD_LABELS.environment}</legend>
+        <RadioGroup
+          className="flex flex-wrap gap-x-6 gap-y-2"
+          value={isEnvironment(draft.environment) ? draft.environment : "undeclared"}
+          onValueChange={(value) => {
+            const next = { ...draft, environment: isEnvironment(value) ? value : "" }
+            change(next)
+            void settle(next, false)
+          }}
+        >
+          {ENVIRONMENT_CHOICES.map((choice) => {
+            const itemId = `${baseId}-environment-${choice}`
+            const hintId = `${itemId}-hint`
+            return (
+              <Label key={choice} htmlFor={itemId} data-environment-choice={choice} className="items-start font-normal">
+                <RadioGroupItem id={itemId} value={choice} aria-describedby={hintId} className="mt-0.5" />
+                <span className="min-w-0 space-y-1">
+                  <span className="block text-sm font-medium leading-normal">{ENVIRONMENT_CHOICE_LABELS[choice]}</span>
+                  <span id={hintId} className="block text-xs text-muted-foreground break-words">
+                    {TARGET_ENVIRONMENT_HINTS[choice]}
+                  </span>
+                </span>
+              </Label>
+            )
+          })}
+        </RadioGroup>
+      </fieldset>
       <Button type="button" variant="ghost" size="sm" onClick={onDiscard}>
         {DISCARD_TARGET_LABEL}
       </Button>

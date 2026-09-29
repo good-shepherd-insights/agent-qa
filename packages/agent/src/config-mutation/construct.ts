@@ -289,8 +289,13 @@ export async function constructConfigTargetCreateProposal(
 
   // THE HOUSE STYLE, AS ONE BLOCK. `demo/init/agent-qa.config.yaml` writes a web target as
   // `name: { platform, url }`, and writing it as one structured value rather than as two scalar sets
-  // means one parse, one rendered block, and a diff a person reads as the addition it is.
-  const entry: ConfigStructuredValue = { platform: input.platform, url: input.url }
+  // means one parse, one rendered block, and a diff a person reads as the addition it is. The class
+  // (432 D-19) is written only when declared: undeclared stays visibly undeclared, never defaulted.
+  const entry: ConfigStructuredValue = {
+    platform: input.platform,
+    url: input.url,
+    ...(input.environment === undefined ? {} : { environment: input.environment }),
+  }
   let bytes = (await deps.configFiles.setField({
     ...(target.bytes === undefined ? {} : { bytes: target.bytes }),
     path: entryPath,
@@ -315,7 +320,8 @@ export async function constructConfigTargetCreateProposal(
   return await fileConfigProposal({
     action: input.action,
     subject: `create target ${input.name}`,
-    summaryLine: `create ${input.platform} target ${input.name} at ${input.url}`,
+    summaryLine: `create ${input.platform} target ${input.name} at ${input.url}`
+      + (input.environment === undefined ? '' : ` (${input.environment})`),
     fieldEdits,
     addsHook: false,
     candidate: candidateSet(set, [{ path: target.path, bytes }]),

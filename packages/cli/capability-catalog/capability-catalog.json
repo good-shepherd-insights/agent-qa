@@ -873,6 +873,14 @@
             "minLength": 1,
             "type": "string"
           },
+          "environment": {
+            "enum": [
+              "local",
+              "shared",
+              "production"
+            ],
+            "type": "string"
+          },
           "name": {
             "minLength": 1,
             "type": "string"
@@ -2637,5 +2645,5 @@
       "shortDescription": "Triage agent-qa run failures"
     }
   ],
-  "rowsDigest": "7d205b183a128346d9601417341aec9243796efcef5e653cc94c9ed62d0c9f83"
+  "rowsDigest": "2ece9fa99bea4fe08ee1ee1b28643bf8f1d170ba7c7fc06433457e9526612cf6"
 }

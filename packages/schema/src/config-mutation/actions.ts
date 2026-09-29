@@ -35,6 +35,17 @@ export const CONFIG_HOOK_RUNTIMES = ['node', 'bun', 'python', 'bash'] as const
 export type ConfigHookRuntime = (typeof CONFIG_HOOK_RUNTIMES)[number]
 
 /**
+ * The classes a target may declare at creation (432 D-19).
+ *
+ * Spelled here for the reason {@link CONFIG_HOOK_RUNTIMES} is: the words match `core`'s
+ * `TargetSchema.environment`, and whole-config validation refuses any drift before a proposal
+ * exists. Absent means undeclared, which is non-production (D-18).
+ */
+export const CONFIG_TARGET_ENVIRONMENTS = ['local', 'shared', 'production'] as const
+
+export type ConfigTargetEnvironment = (typeof CONFIG_TARGET_ENVIRONMENTS)[number]
+
+/**
  * `config.target.create` — add a web target to `registry.targets`.
  *
  * `platform` IS A LITERAL, NOT AN ENUM OF THREE. The mobile platforms need a device profile, an app
@@ -50,6 +61,8 @@ export const ConfigTargetCreateInputSchema = z.object({
   url: z.string().min(1),
   /** A REFERENCE to a configured auth state by name (D-11). */
   authStateName: z.string().min(1).optional(),
+  /** The target's class (432 D-19). Omitted means undeclared; production runs need allowProduction. */
+  environment: z.enum(CONFIG_TARGET_ENVIRONMENTS).optional(),
 }).strict()
 
 export type ConfigTargetCreateInput = z.infer<typeof ConfigTargetCreateInputSchema>

@@ -875,7 +875,15 @@ describe('the config dir is NOT the repository root (395-11 · CR-03\'s create d
 })
 
 /** A config with one target and a model, for the create cells. */
-const ONE_TARGET_CONFIG = `registry:
+const ONE_TARGET_CONFIG = `workspace:
+  testMatch:
+    - tests/**/*.yaml
+  suiteMatch:
+    - suites/**/*.suite.yaml
+  hooksFile: hooks.yaml
+  envFile: .env
+  secretsFile: .env.secrets.local
+registry:
   llms:
     - name: judge
       provider: openai-subscription
@@ -886,6 +894,8 @@ const ONE_TARGET_CONFIG = `registry:
       url: https://shop.example.com
 use:
   llm: judge
+  mobile:
+    appState: preserve
 `
 
 async function createTarget(
@@ -959,6 +969,10 @@ describe('C432-TARGET-CREATE-ENVIRONMENT: the class reaches the committed file (
       })
 
       expect(answer).toMatchObject({ outcome: 'blocked', blockedReason: 'schema-fail' })
+      // Refused for the label and nothing else: the registry key rule, in the validator's words.
+      expect(answer.outcome === 'blocked' && answer.validationIssues).toEqual([
+        'agent-qa.config.yaml: registry.targets.straße: Invalid key in record',
+      ])
       expect(readFileSync(configPath, 'utf8')).toBe(ONE_TARGET_CONFIG)
     })
 })
@@ -1028,13 +1042,14 @@ describe('C432-SCAFFOLD-LLMS: the scaffold keeps the model registry and its sele
 
     const answer = await scaffold(registryFor({ confirm: true }), 'booking.com')
     expect(answer).toMatchObject({ outcome: 'blocked', blockedReason: 'schema-fail' })
+    expect(answer.outcome === 'blocked' && answer.validationIssues?.join('\n')).toContain('ghost')
   })
 
   it('C432-SCAFFOLD-LLMS: the from-zero producer writes the model entries it is given, with a coherent selection',
     () => {
       const entries = [
         { name: 'judge', provider: 'openai-subscription', model: 'gpt-5.6-terra' },
-        { name: 'planner', provider: 'anthropic', model: 'claude-sonnet' },
+        { name: 'planner', provider: 'anthropic-subscription', model: 'claude-sonnet-4-6' },
       ]
       const files = buildScaffoldFileSet({
         cacheDir: '.agent-qa/cache',

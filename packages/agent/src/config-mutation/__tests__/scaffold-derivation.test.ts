@@ -104,8 +104,9 @@ const REJECTED = [
   'not_a_domain.x',
   // A dot and legal labels, and a TLD that is one character. Accepted by "has a dot and labels".
   'a.x',
-  // A dot and legal labels, and a NUMERIC final label. An IPv4 address is not a hostname, and a
-  // gate that only checked label syntax would scaffold `https://192.168.0.1`.
+  // A dot and legal labels, and a NUMERIC final label. A non-loopback IPv4 address is not a
+  // hostname, and a gate that only checked label syntax would scaffold `https://192.168.0.1`. Since
+  // 432 D-20 only loopback literals are admitted — see 432-target-create.test.ts.
   '192.168.0.1',
   // Leading and trailing hyphens — legal characters in the wrong position.
   '-lead.com',
