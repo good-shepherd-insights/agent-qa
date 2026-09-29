@@ -680,6 +680,44 @@ describe('C432-PRODUCTION-PRODUCERS — the host runs.start door and the daemon 
   }, 120_000)
 })
 
+describe('C432-PRODUCTION-OPTIN — no request field and no CLI flag can opt in', () => {
+  it('C432-PRODUCTION-OPTIN: a runs.start request naming allowProduction is refused and nothing runs', async () => {
+    await withTarget(async (target) => {
+      const fixture = productionProject({ origin: target.origin, optIn: 'absent' })
+      pinEmptyBrowsers(fixture)
+      const { registry } = composeCliLocalAgent({
+        agentQaRoot: fixture.agentQaRoot,
+        configPath: fixture.configPath,
+        resolveExecutionContext: () => 'local-interactive',
+      })
+
+      const refusal = await caught(() => invokeFunction(
+        registry,
+        'runs.start',
+        { patterns: [fixture.tests.prodEu], allowProduction: true } as never,
+        CLI_FUNCTION_CALLER,
+      ))
+
+      // The strict request shape has no such field, so the caller is refused by the codec before
+      // any config is read; it never becomes an opt-in.
+      expect(refusal).toBeInstanceOf(Error)
+      expect(String(refusal)).toMatch(/allowProduction/)
+      expectNothingTouched(fixture, target)
+    })
+  }, 120_000)
+
+  it('C432-PRODUCTION-OPTIN: an --allow-production flag is not an option of agent-qa run', async () => {
+    await withTarget(async (target) => {
+      const fixture = productionProject({ origin: target.origin, optIn: 'absent' })
+      const { status, stderr } = await runCli(fixture, '--allow-production', fixture.tests.prodEu)
+
+      expect(status).not.toBe(0)
+      expect(stderr).toMatch(/unknown option '--allow-production'/)
+      expectNothingTouched(fixture, target)
+    })
+  }, 120_000)
+})
+
 /** Spawn the built CLI in the project, exactly as a person would type it. */
 async function runCli(
   fixture: ProductionProject,
