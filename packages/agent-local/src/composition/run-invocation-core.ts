@@ -7,6 +7,7 @@
 //   refuse unhonourable request fields
 //     → resolve the run id
 //     → resolve the target's declared class (a config read; no network)
+//     → refuse a production target the config has not opted into (432-03, D-18)
 //     → build the risk descriptor
 //     → THE ONE evaluate()
 //     → deny ⇒ throw RunDeniedError and touch NOTHING else
@@ -51,7 +52,7 @@ import type { PostVerdictPort, RunConfig } from '@vostride/agent-qa-runner'
 
 import { buildRunAuditSink, buildRunPorts, runDirFor } from './run-composition.js'
 import type { RunExecutionContext, RunPersistencePorts } from './run-composition.js'
-import { buildRunDisclosure, buildRunRiskDescriptor } from './run-risk.js'
+import { buildProductionRefusal, buildRunDisclosure, buildRunRiskDescriptor } from './run-risk.js'
 import type { RunTargetClass } from './run-risk.js'
 
 /**
@@ -215,6 +216,62 @@ export interface RunTargetDeclaration {
    * here as an empty list rather than as a list of invented names.
    */
   readonly targetNames: readonly string[]
+  /**
+   * The members' targets DECLARED `environment: production`, in first-appearance member order
+   * (432-03, D-18). Repeats are allowed; the refusal names each target once.
+   *
+   * REQUIRED, so a door that forgets it does not compile. It comes from the SAME resolution as
+   * `targetClass` and `targetNames`, which is what keeps a mixed run from hiding a production member
+   * behind its siblings.
+   */
+  readonly productionTargetNames: readonly string[]
+  /**
+   * The config's top-level `allowProduction`, read from the same config the targets resolved
+   * against. Only the literal `true` opts in; absence and `false` do not. No request field and no
+   * CLI flag reaches this.
+   */
+  readonly allowProduction?: boolean
+}
+
+/**
+ * Refuse a run that drives a production target the config has not opted into (432-03, D-18).
+ *
+ * A production CLASS with no names still refuses, so a producer that folded the class but lost the
+ * names fails closed. The refusal is a plain `RunDeniedError`: the sentence from
+ * `buildProductionRefusal`, no remedies, and the same sentence as its surface-neutral reason.
+ *
+ * EXPORTED because a producer that must acquire a device or an adapter before the core runs (the
+ * suite half) calls it first, so production is refused before that acquisition too.
+ */
+export function refuseProductionWithoutOptIn(
+  runId: string,
+  declaration: Pick<RunTargetDeclaration, 'productionTargetNames' | 'allowProduction'> & {
+    readonly targetClass?: RunTargetClass
+  },
+): void {
+  const production =
+    declaration.productionTargetNames.length > 0 || declaration.targetClass === 'production'
+  if (!production || declaration.allowProduction === true) return
+  const reason = buildProductionRefusal(declaration.productionTargetNames)
+  throw new RunDeniedError(runId, reason, [], reason)
+}
+
+/**
+ * The identity refusals, asked against the run's own directory (401-20, CR-04).
+ *
+ * EXPORTED for the same producers `refuseProductionWithoutOptIn` is: a door that refuses production
+ * ahead of the core asks these first, so a duplicate or unminted id keeps its own refusal on every
+ * path.
+ */
+export function refuseUnavailableRunId(input: {
+  readonly configDir: string
+  readonly runId: string
+  readonly isMintedRunId: (value: string) => boolean
+}): void {
+  if (!input.isMintedRunId(input.runId)) throw new RunIdNotMintedError(input.runId)
+  if (existsSync(runDirFor({ configDir: input.configDir, runId: input.runId }))) {
+    throw new RunIdAlreadyInUseError(input.runId)
+  }
 }
 
 /** What the assembler is handed: everything the core resolved, and nothing it did not. */
@@ -404,10 +461,11 @@ export function createRunInvocationCore(
       // A refusal that half-wrote into somebody else's run directory would be the defect
       // performing itself.
       if (request.runId !== undefined) {
-        if (!options.isMintedRunId(request.runId)) throw new RunIdNotMintedError(request.runId)
-        if (existsSync(runDirFor({ configDir, runId: request.runId }))) {
-          throw new RunIdAlreadyInUseError(request.runId)
-        }
+        refuseUnavailableRunId({
+          configDir,
+          runId: request.runId,
+          isMintedRunId: options.isMintedRunId,
+        })
       }
       const runId = request.runId ?? options.mintRunId()
 
@@ -416,6 +474,12 @@ export function createRunInvocationCore(
       // describe it to whoever is asked.
       const declaration = await options.resolveTargetDeclaration(request)
       const targetClass = declaration.targetClass
+
+      // (3a) PRODUCTION, BEFORE ANY EFFECT (432-03, D-18). Above the audit sink, the gate, the
+      // persistence ports and assembly, so a refused production run leaves no run directory, no
+      // audit row, no probe, no build ordinal and no adapter. It asks nothing and offers nothing:
+      // the config opts in, or the run does not start.
+      refuseProductionWithoutOptIn(runId, declaration)
 
       const auditSink =
         options.auditSink ??

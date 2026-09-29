@@ -17,6 +17,8 @@ import type {
 } from '@vostride/agent-qa-safety'
 
 import {
+  ALLOW_PRODUCTION_OPT_IN,
+  buildProductionRefusal,
   buildRunDisclosure,
   buildRunRiskDescriptor,
   RUN_START_RISK_ACTION_NAME,
@@ -449,5 +451,67 @@ describe('no document byte in a target name can add, erase or overwrite a prompt
     expect(classifyRisk(hostile).riskTier).toBe(
       classifyRisk(buildRunRiskDescriptor('local')).riskTier,
     )
+  })
+})
+
+
+// ---- the production class (432-03, D-18) --------------------------------------------------------
+//
+// Production never reaches the gate unless the config opts in, and an opted-in production run
+// still meets the gate as shared. The refusal a door shows is one plain sentence, built here.
+
+/** What the disclosure says when the fold answered `production`. Spelled as a literal. */
+const PRODUCTION_CLAUSE = 'declared: at least one target production'
+
+describe('the production class classifies as shared and is disclosed as production', () => {
+  it('maps a production-declared target to mutating-shared, never local', () => {
+    expect(buildRunRiskDescriptor('production')).toEqual({
+      name: 'run:start',
+      recognized: true,
+      declaredTier: 'mutating-shared',
+    })
+    expect(classifyRisk(buildRunRiskDescriptor('production')).riskTier).toBe('mutating-shared')
+  })
+
+  it('the production fold answer states its own clause and no other', () => {
+    const sentence = buildRunDisclosure('production', ['prod-eu', 'local-one'])
+
+    expect(sentence).toContain(PRODUCTION_CLAUSE)
+    for (const other of [LOCAL_CLAUSE, SHARED_CLAUSE, UNDECLARED_CLAUSE]) {
+      expect(sentence).not.toContain(other)
+    }
+  })
+})
+
+describe('buildProductionRefusal — the one plain sentence every door shows', () => {
+  it('names the target and the exact line to add, and nothing a person could answer', () => {
+    const refusal = buildProductionRefusal(['prod-eu'])
+
+    expect(ALLOW_PRODUCTION_OPT_IN).toBe('allowProduction: true')
+    expect(refusal).toContain('"prod-eu"')
+    expect(refusal).toContain('allowProduction: true')
+    expect(refusal).not.toMatch(/\[y\/N\]|--trust-session|approve|grant/i)
+    expect(refusal.split('\n')).toHaveLength(1)
+  })
+
+  it('names every production target once, in first-occurrence order', () => {
+    const refusal = buildProductionRefusal(['prod-b', 'prod-a', 'prod-b'])
+
+    expect(refusal.split('"prod-b"')).toHaveLength(2)
+    expect(refusal.indexOf('"prod-b"')).toBeLessThan(refusal.indexOf('"prod-a"'))
+  })
+
+  it('keeps a Unicode name exactly and replaces what a terminal would act on', () => {
+    expect(buildProductionRefusal(['prod-日本-🚀'])).toContain('"prod-日本-🚀"')
+    const scrubbed = buildProductionRefusal(['prod\r\u202eevil'])
+    expect(scrubbed).not.toMatch(/[\r\u202e]/)
+    expect(scrubbed).toContain('\uFFFD')
+  })
+
+  it('an empty name list is still a sentence naming the line to add', () => {
+    const refusal = buildProductionRefusal([])
+
+    expect(refusal.length).toBeGreaterThan(0)
+    expect(refusal).toContain('allowProduction: true')
   })
 })

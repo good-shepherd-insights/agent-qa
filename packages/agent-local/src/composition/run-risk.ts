@@ -10,15 +10,19 @@
 // never anything else shaped like a CLI type — agent-local must not import the CLI, and the input
 // being a bare union is what keeps that true by construction.
 
-import { scrubDisclosureFragment } from '@vostride/agent-qa-schema'
+import { scrubDisclosureFragment, scrubDisclosureText } from '@vostride/agent-qa-schema'
 import type { RiskActionDescriptor } from '@vostride/agent-qa-schema'
 
 /**
  * A target's declared environment, as the config carries it (`TargetSchema.environment`).
  *
  * `undefined` is a first-class member and means UNDECLARED — not "unknown, assume harmless".
+ *
+ * `production` (432-03, D-18) outranks every other class in a fold. A production run is refused
+ * before the gate unless the config opts in (`refuseProductionWithoutOptIn`); one that is opted in
+ * still meets the gate as shared, never as local.
  */
-export type RunTargetClass = 'local' | 'shared' | undefined
+export type RunTargetClass = 'local' | 'shared' | 'production' | undefined
 
 /**
  * The action name the CORE-level run gate classifies.
@@ -126,11 +130,13 @@ export function buildRunDisclosure(
   const declaration =
     targetClass === 'local'
       ? 'declared: every target local'
-      : targetClass === 'shared'
-        ? 'declared: at least one target shared'
-        : targetNames.length === 0
-          ? 'declared: nothing at all, which classifies as shared'
-          : 'declared: at least one target undeclared, which classifies as shared'
+      : targetClass === 'production'
+        ? 'declared: at least one target production'
+        : targetClass === 'shared'
+          ? 'declared: at least one target shared'
+          : targetNames.length === 0
+            ? 'declared: nothing at all, which classifies as shared'
+            : 'declared: at least one target undeclared, which classifies as shared'
   const targets = renderTargetNames(targetNames)
   return `Start a run against ${targets} (${declaration}).`
 }
@@ -167,4 +173,37 @@ function renderTargetNames(targetNames: readonly string[]): string {
   const tail = overflow > 0 ? ` and ${overflow} more` : ''
   if (targetNames.length === 1) return `target ${named[0]!}`
   return `targets ${named.join(', ')}${tail}`
+}
+
+/** The one line a config adds to run against production (432-03, D-18). */
+export const ALLOW_PRODUCTION_OPT_IN = 'allowProduction: true'
+
+/**
+ * The distinct names, in first-occurrence order. Two members driving one target are one target to
+ * the person reading a refusal; the order is the members' own, never a re-sort.
+ */
+export function distinctInFirstOccurrenceOrder(names: readonly string[]): string[] {
+  return [...new Set(names)]
+}
+
+/**
+ * The production refusal, as the one plain sentence every door shows (432-03, D-18).
+ *
+ * It names the production targets and the line to add, and nothing else: no remedy, no prompt, no
+ * flag. Each name keeps its exact spelling apart from the characters a terminal or a browser acts
+ * on, which are replaced, so the sentence stays one line on every channel.
+ */
+export function buildProductionRefusal(productionTargetNames: readonly string[]): string {
+  const names = distinctInFirstOccurrenceOrder(productionTargetNames)
+    .map((name) => `"${scrubDisclosureText(name)}"`)
+  const subject =
+    names.length === 0
+      ? 'A target this run drives is'
+      : names.length === 1
+        ? `Target ${names[0]!} is`
+        : `Targets ${names.join(', ')} are`
+  return (
+    `${subject} declared environment: production, and this config does not allow production runs. `
+    + `Add ${ALLOW_PRODUCTION_OPT_IN} at the top level of agent-qa.config.yaml to allow them.`
+  )
 }

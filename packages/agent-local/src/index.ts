@@ -102,6 +102,8 @@ export type { ConstructKnowledgeReaderInput } from './composition/knowledge-read
 export {
   createRunInvocationCore,
   REFUSED_RUN_REQUEST_FIELDS,
+  refuseProductionWithoutOptIn,
+  refuseUnavailableRunId,
   RunDeniedError,
   RunIdAlreadyInUseError,
   RunIdNotMintedError,
@@ -144,7 +146,13 @@ export {
   writeMaskingDigests,
 } from './composition/run-drive-vocabulary.js'
 export type { MaskingDigestEntry, MaskingDigestsFile } from './composition/run-drive-vocabulary.js'
-export { buildRunDisclosure, buildRunRiskDescriptor, RUN_START_RISK_ACTION_NAME } from './composition/run-risk.js'
+export {
+  ALLOW_PRODUCTION_OPT_IN,
+  buildProductionRefusal,
+  buildRunDisclosure,
+  buildRunRiskDescriptor,
+  RUN_START_RISK_ACTION_NAME,
+} from './composition/run-risk.js'
 export type { RunTargetClass } from './composition/run-risk.js'
 // 401-08 (D-08): the dispatch-scoped grant overlay. Published because a composition ROOT — not
 // only `composeLocalAgent` — may own the dispatch scope: the 394 authoring confirm is answered at

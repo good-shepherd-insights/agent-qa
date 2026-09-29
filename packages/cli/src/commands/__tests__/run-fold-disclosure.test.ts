@@ -23,13 +23,14 @@ import { foldMostRestrictiveTargetClass } from '../run.js'
 const ALL_LOCAL_CLAUSE = 'declared: every target local'
 
 /**
- * Every member set over the three declarations, up to length two, plus the empty set.
+ * Every member set over the declarations, up to length two, plus the empty set. (432-03 added
+ * `production`, the fourth declaration, so the enumeration still ranges the whole type.)
  *
  * Enumerated rather than sampled: the set is small enough to be complete, and a sampled corpus is
  * how the one combination that mislabels stays unmeasured — `[shared, undefined]` is exactly the
  * combination UAT test 4 found, and it is the one a hand-picked list is most likely to skip.
  */
-const DECLARATIONS: readonly RunTargetClass[] = ['local', 'shared', undefined]
+const DECLARATIONS: readonly RunTargetClass[] = ['local', 'shared', 'production', undefined]
 const MEMBER_SETS: readonly (readonly RunTargetClass[])[] = [
   [],
   ...DECLARATIONS.map((one) => [one]),
@@ -41,6 +42,16 @@ function namesFor(members: readonly RunTargetClass[]): string[] {
 }
 
 describe('no member set with a shared or undeclared member can render the all-local sentence', () => {
+  it('a production member makes the fold production and the sentence says so (432-03, D-18)', () => {
+    for (const members of [['production'], ['local', 'production'], [undefined, 'production', 'shared']] as const) {
+      const folded = foldMostRestrictiveTargetClass(members)
+      expect(folded, JSON.stringify(members)).toBe('production')
+      const sentence = buildRunDisclosure(folded, namesFor(members))
+      expect(sentence).toContain('declared: at least one target production')
+      expect(sentence).not.toContain(ALL_LOCAL_CLAUSE)
+    }
+  })
+
   it.each(MEMBER_SETS.map((members) => ({ members, label: JSON.stringify(members) })))(
     'members $label',
     ({ members }) => {
@@ -76,8 +87,9 @@ describe('no member set with a shared or undeclared member can render the all-lo
  * THE ARM THE ENUMERATION ABOVE CANNOT REACH (401-19, WR-02).
  *
  * `MEMBER_SETS` ranges `RunTargetClass`, which is the whole domain the TYPE admits — and the whole
- * domain the CONFIG can produce, because `environment: production` is refused at config load. This
- * arm is about the input that arrives anyway.
+ * domain the CONFIG can produce, because any other `environment` is refused at config load. This
+ * arm is about the input that arrives anyway. (432-03: `production` joined the enum and outranks
+ * every class in the fold, so the stranger here is `staging`, which the enum still refuses.)
  *
  * IT IS THE LIBRARY-EMBEDDING SCENARIO, AND IT CANNOT BE DRIVEN THROUGH A SHIPPED DOOR. Saying so
  * is the point: `resolveTarget` reads `(config as any).registry?.targets` and returns
@@ -88,7 +100,7 @@ describe('no member set with a shared or undeclared member can render the all-lo
  * directly against the exported fold for exactly that reason.
  */
 describe('a declaration the enum forbids takes the fail-closed answer, never `local` (401-19, WR-02)', () => {
-  const STRANGER = 'production' as unknown as RunTargetClass
+  const STRANGER = 'staging' as unknown as RunTargetClass
 
   it('a stranger beside a local member does not make the invocation local', () => {
     expect(foldMostRestrictiveTargetClass(['local', STRANGER])).toBeUndefined()

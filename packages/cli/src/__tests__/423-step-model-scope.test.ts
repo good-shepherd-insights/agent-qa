@@ -172,7 +172,7 @@ async function executePath(path: 'DIRECT' | 'SUITE' | 'COMPOSED', options: { mis
           effectiveLogLevel: 'silent', suiteFiles: [suiteFile],
           preflight: {
             definitions: new Map([[suiteFile, { 'suite-id': generateSuiteId(), name: 'Observed suite', target: 'fixture', tests: [{ test: 'one.yaml', id: testId }] }]]),
-            preloadedTests: new Map([[filePath, { fileContent, parseResult: { tests: [test], errors: [] } }]]), product: 'usage-fixture',
+            preloadedTests: new Map([[filePath, { fileContent, parseResult: { tests: [test], errors: [] } }]]), product: 'usage-fixture', productionTargetNames: [],
           },
           variableContext: { envFileVars: {}, inlineVars: {}, cliVars: {}, userRunAttributes: {}, secretStore, secretRedactor },
         } as SuiteRunMemberProductionInput)
@@ -180,7 +180,7 @@ async function executePath(path: 'DIRECT' | 'SUITE' | 'COMPOSED', options: { mis
     produced.bindRunContext({ maskingContext: masking, safetyHooks: undefined as never })
     const core = createRunInvocationCore({
       configPath: configFilePath, agentQaRoot: join(project, '.agent-qa'), executionContext: 'ci',
-      resolveTargetDeclaration: () => ({ targetClass: 'local', targetNames: ['fixture'] }),
+      resolveTargetDeclaration: () => ({ targetClass: 'local', targetNames: ['fixture'], productionTargetNames: [] }),
       mintRunId: () => runId, isMintedRunId: () => true,
       assembleRun: async context => {
         const assembly = await assembleCliRun({ ...context, knowledgeRoot: produced.knowledgeRoot, maskingContext: masking,

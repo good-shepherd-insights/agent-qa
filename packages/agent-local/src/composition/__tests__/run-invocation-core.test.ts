@@ -129,6 +129,8 @@ function makeCore(input: CoreInput): ReturnType<typeof createRunInvocationCore> 
     resolveTargetDeclaration: () => ({
       targetClass: input.targetClass,
       targetNames: input.targetNames ?? [FAKE_TARGET_NAME],
+      // 432-03: no member of these cells is production; the production arm has its own suite.
+      productionTargetNames: [],
     }),
     assembleRun: input.assemble ?? recordingAssembler().assemble,
     ...(input.trustMode === undefined && input.credential === undefined
@@ -529,6 +531,20 @@ describe('the core hygiene census (D-02 / D-07, pinned to the core file)', () =>
     expect(pin).toContain("'packages/agent-local/src/composition/run-invocation-core.ts':")
   })
 
+  it('the production refusal sits above the audit sink, the ONE evaluate() and assembly (432-03, D-18)', () => {
+    const code = stripComments(readFileSync(CORE_SOURCE_PATH, 'utf8'))
+    const execute = code.slice(code.indexOf('async execute(request: RunsStartInput)'))
+    const refusal = execute.indexOf('refuseProductionWithoutOptIn(runId, declaration)')
+    // Non-vacuity: the call is in the execute body, once.
+    expect(refusal).toBeGreaterThan(0)
+    expect(execute.split('refuseProductionWithoutOptIn(').length - 1).toBe(1)
+    expect(refusal).toBeGreaterThan(execute.indexOf('options.resolveTargetDeclaration(request)'))
+    expect(refusal).toBeLessThan(execute.indexOf('buildRunAuditSink('))
+    expect(refusal).toBeLessThan(execute.indexOf('await evaluate('))
+    expect(refusal).toBeLessThan(execute.indexOf('buildRunPorts('))
+    expect(refusal).toBeLessThan(execute.indexOf('options.assembleRun('))
+  })
+
   it('the gate has already decided by the time assembly is reached (the ordering, from inside)', async () => {
     // The deny cells prove assembly is NOT reached. This proves the converse leg: when it IS
     // reached, the decision is already made and already recorded — so nothing assembly does (the
@@ -660,7 +676,7 @@ describe('the invocation core — the identity step refuses before anything (CR-
       isMintedRunId: FIXTURE_MINTED_RUN_ID,
       resolveTargetDeclaration: () => {
         declarations.push(1)
-        return { targetClass: 'local', targetNames: [FAKE_TARGET_NAME] }
+        return { targetClass: 'local', targetNames: [FAKE_TARGET_NAME], productionTargetNames: [] }
       },
       assembleRun: assembler.assemble,
     })

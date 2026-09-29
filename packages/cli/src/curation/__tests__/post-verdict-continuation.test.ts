@@ -82,7 +82,7 @@ it.each(['settles', 'host deadline expires', 'abort', 'detached tail', 'framewor
       configDigests: { suiteConfigDigest: 'suite', testConfigDigest: 'test' },
       product: fixture.targetName, configDir: fixture.project, configFilePath: fixture.configPath,
       knowledgeRoot: join(fixture.project, 'knowledge'), targetClass: 'local',
-      targetNames: [fixture.targetName], memberProbeUrls: [],
+      targetNames: [fixture.targetName], productionTargetNames: [], allowProduction: false, memberProbeUrls: [],
       bindRunContext: ({ maskingContext }) => { dispose = vi.spyOn(maskingContext, 'dispose') }, applyAssembly: () => undefined,
       bindSession: () => undefined, takeFrameworkError: () => mode === 'framework error' ? new Error('fixture framework failure') : undefined,
       getCurationModelDeps: () => undefined,

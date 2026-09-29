@@ -35,6 +35,8 @@ import { resolveRunQuarantineSnapshot } from '@vostride/agent-qa-agent-local'
 // with the assembler hand-off, the masking context, the audit sink, the safety-hook runner and the
 // safety scope, into the ONE in-process drive both of this door's paths now call.
 import {
+  refuseProductionWithoutOptIn,
+  refuseUnavailableRunId,
   RunDeniedError,
   RunIdAlreadyInUseError,
   RunIdNotMintedError,
@@ -172,11 +174,17 @@ export function requireSingleInvocationProduct(
  * UNDECLARED OUTRANKS SHARED, and the order below says so. Both classify as shared downstream, so
  * the tier is the same either way; what differs is the SENTENCE a person approves, which names an
  * undeclared member as undeclared rather than calling it a declared shared one (401-15, WR-06).
+ *
+ * PRODUCTION OUTRANKS EVERYTHING (432-03, D-18). One production member makes the invocation
+ * production, which the core refuses unless the config opts in. The production NAMES travel beside
+ * the class (`MemberTargetFacts.productionTargetNames`), because a class alone cannot say which
+ * members of a mixed run are the production ones.
  */
 export function foldMostRestrictiveTargetClass(
   declared: readonly RunTargetClass[],
 ): RunTargetClass {
   if (declared.length === 0) return undefined
+  if (declared.includes('production')) return 'production'
   if (declared.every((declaration) => declaration === 'local')) return 'local'
   if (declared.includes(undefined)) return undefined
   if (declared.includes('shared')) return 'shared'
@@ -204,6 +212,12 @@ export interface MemberTargetFacts {
   readonly probeUrls: readonly (string | undefined)[]
   /** The DISTINCT declared names, in first-appearance member order (401-14, W-1). */
   readonly targetNames: readonly string[]
+  /**
+   * The DISTINCT names whose resolved target declares `environment: production`, in first-appearance
+   * member order (432-03, D-18). Every production member of a mixed run is here; a member whose
+   * target does not resolve is undeclared, and undeclared is not production.
+   */
+  readonly productionTargetNames: readonly string[]
   /** The first member whose target resolved — the invocation's product when nothing else names it. */
   readonly firstResolvedProduct?: string
 }
@@ -215,6 +229,7 @@ export function resolveMemberTargetFacts(
   const declaredClasses: RunTargetClass[] = []
   const probeUrls: (string | undefined)[] = []
   const targetNames: string[] = []
+  const productionTargetNames: string[] = []
   let firstResolvedProduct: string | undefined
 
   for (const targetName of memberTargetNames) {
@@ -229,8 +244,11 @@ export function resolveMemberTargetFacts(
     if (!targetNames.includes(targetName)) targetNames.push(targetName)
     try {
       const resolved = resolveTarget(config, targetName)
-      // 432-02: until 432-03's production refusal owns this class, production folds as shared.
-      declaredClasses.push(resolved.environment === 'production' ? 'shared' : resolved.environment)
+      declaredClasses.push(resolved.environment)
+      // 432-03 (D-18): the class is the config's declaration, never the URL's spelling.
+      if (resolved.environment === 'production' && !productionTargetNames.includes(targetName)) {
+        productionTargetNames.push(targetName)
+      }
       // D-04: web targets only. A mobile member contributes no URL and therefore receives no
       // baseline — the device-session-create failure is the equivalent environment signal there.
       probeUrls.push(resolved.platform === 'web' && resolved.url ? resolved.url : undefined)
@@ -247,6 +265,7 @@ export function resolveMemberTargetFacts(
     declaredClasses,
     probeUrls,
     targetNames,
+    productionTargetNames,
     ...(firstResolvedProduct === undefined ? {} : { firstResolvedProduct }),
   }
 }
@@ -2152,6 +2171,12 @@ export interface SuitePreflight {
   readonly definitions: Map<string, SuiteDefinition>
   readonly preloadedTests: Map<string, PreloadedSuiteTest>
   readonly product: string | undefined
+  /**
+   * The suites' production targets, in member order, before anything is prepared (432-03, D-18).
+   * Suite preparation acquires devices, Appium and adapters, so the production refusal has to be
+   * decided from the parse alone.
+   */
+  readonly productionTargetNames: readonly string[]
 }
 
 export type PreloadedSuiteTest = {
@@ -2171,6 +2196,9 @@ export async function resolveSuitePreflight(input: {
   const definitions = new Map<string, SuiteDefinition>()
   const preloadedTests = new Map<string, PreloadedSuiteTest>()
   const suiteProductMembers: InvocationProductMember[] = []
+  // Each member's target in member order: the suite's own when it names one, since that is what
+  // every member is patched to, and otherwise each test's.
+  const memberTargetNames: (string | undefined)[] = []
 
   for (const suiteFile of input.suiteFiles) {
     const suite = await parseSuiteFile(suiteFile)
@@ -2188,6 +2216,8 @@ export async function resolveSuitePreflight(input: {
       const fileContent = await readFile(absolutePath, 'utf-8')
       const parseResult = parseTestFile(fileContent, absolutePath)
       preloadedTests.set(absolutePath, { fileContent, parseResult })
+      if (suite.target !== undefined) memberTargetNames.push(suite.target)
+      else memberTargetNames.push(...parseResult.tests.map((test) => test.target))
 
       if (suite.target === undefined) {
         const test = parseResult.errors.length === 0 ? parseResult.tests[0] : undefined
@@ -2205,6 +2235,7 @@ export async function resolveSuitePreflight(input: {
     definitions,
     preloadedTests,
     product: requireSingleInvocationProduct(suiteProductMembers),
+    productionTargetNames: resolveMemberTargetFacts(input.config, memberTargetNames).productionTargetNames,
   }
 }
 
@@ -2286,6 +2317,18 @@ export async function produceSuiteRunMembers(
   const parsedSuiteDefinitions = input.preflight.definitions
   const preloadedSuiteTests = input.preflight.preloadedTests
   const preflightRunProduct = input.preflight.product
+
+  // 432-03 (D-18): PRODUCTION IS REFUSED BEFORE ANY SUITE IS PREPARED. Preparation acquires a
+  // device, Appium and an adapter, so waiting for the core would refuse after those effects. The
+  // identity refusals are asked first, so a duplicate or unminted id keeps its own refusal here as
+  // it does in the core; both are the core's own functions, so there is one spelling of each.
+  if (input.preflight.productionTargetNames.length > 0 && config.allowProduction !== true) {
+    refuseUnavailableRunId({ configDir, runId, isMintedRunId: isMintedCliRunId })
+    refuseProductionWithoutOptIn(runId, {
+      productionTargetNames: input.preflight.productionTargetNames,
+      allowProduction: config.allowProduction,
+    })
+  }
 
   const { parseTestFile, patchTestForSuite } = await import('@vostride/agent-qa-core')
   // 401-04: `startRun` is NOT among these — every path reaches it through the invocation core.
@@ -3401,6 +3444,8 @@ export async function produceSuiteRunMembers(
     knowledgeRoot,
     targetClass: suiteTargetClass,
     targetNames: suiteTargetNames,
+    productionTargetNames: suiteTargetFacts.productionTargetNames,
+    allowProduction: config.allowProduction === true,
     memberProbeUrls: suiteTargetFacts.probeUrls,
     concurrency: resolveRunConcurrencyConfig(
       config.use as Record<string, unknown> | undefined,
@@ -3558,6 +3603,16 @@ export interface ProducedCliRunMembers {
    * DISPLAY-ONLY. It reaches the gate through `RiskActionDescriptor.disclosure` and nowhere else.
    */
   readonly targetNames: readonly string[]
+  /**
+   * The DISTINCT production-declared names, in first-appearance member order, from the SAME pass as
+   * `targetClass` and `targetNames` (432-03, D-18). The core refuses on these before any effect.
+   */
+  readonly productionTargetNames: readonly string[]
+  /**
+   * The resolved config's top-level `allowProduction`, as a boolean: `true` only when the config
+   * the members were resolved against says so. Read from that config and nowhere else.
+   */
+  readonly allowProduction: boolean
   /**
    * ONE ENTRY PER MEMBER, in `members` order: the URL whose health reading belongs to THAT member,
    * or `undefined` for a member no probe applies to (401-19, WR-04).
@@ -4391,6 +4446,8 @@ export async function produceDirectRunMembers(
     knowledgeRoot: resolveKnowledgeRoot(config.knowledge, configDir),
     targetClass: singleTargetClass,
     targetNames: directTargetNames,
+    productionTargetNames: directTargetFacts.productionTargetNames,
+    allowProduction: config.allowProduction === true,
     memberProbeUrls: directTargetFacts.probeUrls,
     concurrency: resolveRunConcurrencyConfig(
       config.use as Record<string, unknown> | undefined,

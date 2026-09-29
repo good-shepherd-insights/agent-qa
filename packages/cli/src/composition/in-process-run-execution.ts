@@ -601,9 +601,15 @@ export async function runInProcessCliRun(
     // folded the class, so the disclosure a person approves on describes the members whose classes
     // decided the tier. This door composes no preview prose of its own — `buildRunDisclosure` in
     // `agent-local` is the one spelling, and the core is its one consumer.
+    //
+    // 432-03 (D-18): the production names and the opt-in ride the same produced object, so the
+    // core refuses on the members the class was folded over and on the config those members were
+    // resolved against. Nothing on the request or this drive's options can set either.
     resolveTargetDeclaration: () => ({
       targetClass: produced.targetClass,
       targetNames: produced.targetNames,
+      productionTargetNames: produced.productionTargetNames,
+      allowProduction: produced.allowProduction,
     }),
     assembleRun: async (assemblyContext) => {
       const assembly = await assembleCliRun({
