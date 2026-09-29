@@ -30,7 +30,8 @@ import type { EvidenceBlobLookup, FunctionCaller, RunId } from '@vostride/agent-
 import { afterEach, describe, expect, it } from 'vitest'
 
 import { buildAgentQaMcpServer } from '../catalog.js'
-import { decorateRunEvidenceImage, maskedToolResult } from '../masked-result.js'
+import { MAX_RESULT_SIZE_META_KEY, RUN_READ_MAX_RESULT_SIZE_CHARS } from '../mapping.js'
+import { decorateRunEvidenceImage, maskedToolResult, RUN_EVIDENCE_IMAGE_TEXT_MARKER } from '../masked-result.js'
 
 const TOOL = 'agent_qa_get_run_evidence'
 
@@ -165,7 +166,11 @@ describe('IMAGE-PNG / IMAGE-JPEG (D-07)', () => {
       expect(result.structuredContent).toEqual({
         runId: RUN, sha: shaOf(bytes), contentType: mimeType, byteLength: bytes.length, bytesBase64: base64,
       })
-      expect(JSON.parse(texts(result)[0]!)).toEqual(result.structuredContent)
+      const [text] = texts(result)
+      expect(JSON.parse(text!)).toEqual({
+        ...(result.structuredContent as Record<string, unknown>), bytesBase64: RUN_EVIDENCE_IMAGE_TEXT_MARKER,
+      })
+      expect(text).not.toContain(base64)
       const [image] = images(result)
       expect(image).toEqual({ type: 'image', data: base64, mimeType })
       expect(decode(image!.data!)).toEqual(bytes)
@@ -174,7 +179,7 @@ describe('IMAGE-PNG / IMAGE-JPEG (D-07)', () => {
 })
 
 describe('IMAGE-JSON-PARITY', () => {
-  it('the decorated result carries exactly the masked op result on both channels', async () => {
+  it('structuredContent carries exactly the masked op result, and the text carries it with the bytes replaced by the marker', async () => {
     const registry = registryOver(blobsOf({ [RUN]: [PNG] }))
     const mask = (text: string) => text.split(RUN).join('<SECRET_RUN>')
     const client = await connect(registry, mask)
@@ -184,9 +189,39 @@ describe('IMAGE-JSON-PARITY', () => {
     const expected = maskedToolResult(output, mask)
     expect(expected.isError ?? false).toBe(false)
     expect(result.structuredContent).toEqual(expected.structuredContent)
-    expect(result.content.filter((block) => block.type !== 'image')).toEqual(expected.content)
+    expect(result.content.filter((block) => block.type !== 'image')).toEqual([{
+      type: 'text',
+      text: JSON.stringify({
+        ...(expected.structuredContent as Record<string, unknown>), bytesBase64: RUN_EVIDENCE_IMAGE_TEXT_MARKER,
+      }),
+    }])
     expect(texts(result)[0]).not.toContain(RUN)
     expect(images(result)).toEqual([{ type: 'image', data: PNG_BASE64, mimeType: 'image/png' }])
+  })
+
+  it('IMAGE-TEXT-SIZE: a real-size screenshot\'s text stays far under the size hint while structuredContent keeps the op result', async () => {
+    const size = 200_000
+    const big = new Uint8Array(size)
+    big.set(PNG.subarray(0, 8), 0)
+    for (let at = 8; at < size - 12; at += 1) big[at] = (at * 131 + 17) & 0xff
+    big.set(PNG.subarray(PNG.length - 12), size - 12)
+    const bigBase64 = Buffer.from(big).toString('base64')
+    const registry = registryOver(blobsOf({ [RUN]: [big] }))
+    const client = await connect(registry)
+
+    const { tools } = await client.listTools()
+    const hint = tools.find((tool) => tool.name === TOOL)?._meta?.[MAX_RESULT_SIZE_META_KEY]
+    expect(hint).toBe(RUN_READ_MAX_RESULT_SIZE_CHARS)
+
+    const result = await fetchArtifact(client, big)
+    expect(result.isError ?? false, texts(result).join('\n').slice(0, 200)).toBe(false)
+    const [text] = texts(result)
+    expect(text!.length).toBeLessThan(1000)
+    expect(text!.length).toBeLessThan(hint as number)
+    expect(text).not.toContain(bigBase64.slice(0, 64))
+    const output = await invokeFunction(registry, 'runs.artifact', { runId: RUN, sha: shaOf(big) }, reader)
+    expect(result.structuredContent).toEqual(output)
+    expect(images(result)).toEqual([{ type: 'image', data: bigBase64, mimeType: 'image/png' }])
   })
 
   it('a range covering the whole image is a complete image, with range and total length unchanged', async () => {
@@ -216,7 +251,9 @@ describe('IMAGE-JSON-PARITY', () => {
 
     expect(decorated._meta).toEqual({ 'agent-qa/probe': { kept: true } })
     expect(decorated.structuredContent).toBe(masked.structuredContent)
-    expect(decorated.content.slice(0, 1)).toEqual(masked.content)
+    expect(decorated.content[0]).toEqual({
+      type: 'text', text: JSON.stringify({ ...output, bytesBase64: RUN_EVIDENCE_IMAGE_TEXT_MARKER }),
+    })
     expect(decorated.content[1]).toEqual({ type: 'image', data: PNG_BASE64, mimeType: 'image/png' })
   })
 })
