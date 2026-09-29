@@ -792,8 +792,8 @@ export interface ComposeCliLocalAgentInput {
    * 405 D-03: the durable run-detail projection read, FORWARDED UNTOUCHED to `composeLocalAgent`.
    *
    * The dashboard passes the reader over the database it holds. When nothing is passed, this host
-   * binds a reader over the project's runs database if that file already exists, and leaves
-   * `runs.detail` unbound by name when it does not.
+   * binds a reader whenever its config names a runs database; a read made before that file exists
+   * answers not recorded. A config the resolver refuses binds nothing.
    */
   runDetail?: ComposeLocalAgentInput['runDetail']
   /**
@@ -3847,14 +3847,15 @@ export function composeCliLocalAgent(input: ComposeCliLocalAgentInput): LocalAge
   // prompt", which is every other CLI invocation.
   const doorConfirm = 'confirm' in input ? input.confirm : createTtyConfirmPort()
 
-  // Opened on first read; the deferred import keeps the dashboard package off every other command.
+  // Bound whenever the config names a runs database; a read before that file exists answers not recorded and opens or creates nothing.
   let projectRunDetail: ReturnType<typeof import('../commands/dashboard.js').openProjectRunDetailReader> | undefined
   const runsDbPath = input.runDetail === undefined ? projectRunsDbPath(input.configPath) : undefined
   const runDetail: ComposeCliLocalAgentInput['runDetail'] = input.runDetail
-    ?? (runsDbPath !== undefined && existsSync(runsDbPath)
+    ?? (runsDbPath !== undefined
       ? {
           read: async (runId) => {
             if (projectRunDetail === undefined) {
+              if (!existsSync(runsDbPath)) return undefined
               // A failed open is not remembered: the next read tries again.
               const pending = import('../commands/dashboard.js')
                 .then(({ openProjectRunDetailReader }) => openProjectRunDetailReader(runsDbPath))
