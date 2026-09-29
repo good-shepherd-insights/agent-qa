@@ -16,6 +16,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client'
+import { StdioClientTransport } from '@modelcontextprotocol/client/stdio'
 import { invokeFunction, RUNS_ARTIFACT_FUNCTION_ID } from '@vostride/agent-qa-agent'
 import { AGENT_QA_TOOL_PROJECTIONS } from '@vostride/agent-qa-mcp'
 import { DashboardDatabase, createDashboardRunDetailReader } from '@vostride/agent-qa-dashboard'
@@ -987,4 +988,68 @@ describe('BUILT-CLI-RUN-READS: the shipped binary answers the run reads', () => 
       expect(readdirSync(dir)).toEqual(['contended.webm'])
     }
   }, 120_000)
+})
+
+describe('RUN-DETAIL-LATE-DATABASE: one stdio agent-qa mcp session reads a runs database that appears after it started', () => {
+  beforeAll(() => {
+    expect(buildFreshness(), REBUILD_INSTRUCTION).toEqual({ missing: [], stale: [] })
+  })
+
+  it('answers the overview and both evidence arms, populated, in the same session once the database appears', async () => {
+    const p = populatedProject()
+    const aside = (suffix: string) => join(p.agentQaRoot, `pending-runs-database${suffix}`)
+    const moved = ['-wal', '-shm', ''].filter((suffix) => existsSync(`${p.dbPath}${suffix}`))
+    for (const suffix of moved) renameSync(`${p.dbPath}${suffix}`, aside(suffix))
+    const databaseEntries = () => readdirSync(p.agentQaRoot).filter((name) => name.startsWith('runs.db'))
+    expect(databaseEntries()).toEqual([])
+
+    const env = Object.fromEntries(Object.entries(process.env)
+      .filter((entry): entry is [string, string] => typeof entry[1] === 'string'))
+    const transport = new StdioClientTransport({
+      command: process.execPath, args: [CLI_ENTRY, '--config', p.configPath, 'mcp'], cwd: p.root, env, stderr: 'pipe',
+    })
+    let stderr = ''
+    transport.stderr?.on('data', (chunk: Buffer) => { stderr += chunk.toString('utf8') })
+    const client = new Client({ name: 'agent-qa-431-15-late-db', version: '0.0.0' })
+    cleanups.push(async () => {
+      await client.close().catch(() => {})
+      await transport.close().catch(() => {})
+    })
+    await client.connect(transport)
+    const call = async (name: string, args: Record<string, unknown>) =>
+      await client.callTool({ name, arguments: args }) as unknown as WireResult
+    const textOf = (result: WireResult) =>
+      result.content.filter((block) => block.type === 'text').map((block) => block.text ?? '').join('\n')
+    const why = (result: WireResult) => `${textOf(result).slice(0, 400)}\nstderr: ${stderr.slice(0, 400)}`
+    const overviewArgs = { runId: p.runId }
+    const consoleArgs = { action: 'runs.evidence', runId: p.runId, testIndex: 0, stepIndex: 0, kind: 'console' }
+
+    const early = await call('agent_qa_get_run_overview', overviewArgs)
+    expect(early.isError ?? false, why(early)).toBe(false)
+    expect(textOf(early), why(early)).not.toContain('not bound')
+    expect(early.structuredContent, why(early))
+      .toMatchObject({ tests: [{ testIndex: 0, steps: [{ stepIndex: 0, capture: { state: 'unavailable' } }] }, {}] })
+    const earlyDocument = await call('agent_qa_get_run_evidence', consoleArgs)
+    expect(earlyDocument.isError, why(earlyDocument)).toBe(true)
+    expect(textOf(earlyDocument), why(earlyDocument)).toContain('No completed run recorded for id')
+    expect(textOf(earlyDocument), why(earlyDocument)).not.toContain('not bound')
+    expect(databaseEntries()).toEqual([])
+
+    for (const suffix of moved) renameSync(aside(suffix), `${p.dbPath}${suffix}`)
+
+    const late = await call('agent_qa_get_run_overview', overviewArgs)
+    expect(late.isError ?? false, why(late)).toBe(false)
+    expect(late.structuredContent, why(late))
+      .toMatchObject({ tests: [{ testIndex: 0, steps: [{ stepIndex: 0, capture: { state: 'recorded' } }] }, {}] })
+    const lateDocument = await call('agent_qa_get_run_evidence', consoleArgs)
+    expect(lateDocument.isError ?? false, why(lateDocument)).toBe(false)
+    expect(lateDocument.structuredContent, why(lateDocument)).toMatchObject({
+      outcome: 'ready', document: { kind: 'console', records: [{ level: 'error' }, { level: 'warning' }] },
+    })
+    expect((lateDocument.structuredContent as { document: { records: unknown[] } }).document.records).toHaveLength(2)
+    const image = await call('agent_qa_get_run_evidence', { action: 'runs.artifact', runId: p.runId, sha: p.screenshotSha })
+    expect(image.isError ?? false, why(image)).toBe(false)
+    expect(image.content.filter((block) => block.type === 'image'))
+      .toEqual([{ type: 'image', data: PNG_BASE64, mimeType: 'image/png' }])
+  }, 90_000)
 })
