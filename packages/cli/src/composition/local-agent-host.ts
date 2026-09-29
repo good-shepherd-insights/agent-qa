@@ -108,7 +108,7 @@ import {
   generateHookId,
   DEFAULT_AGENT_QA_AUTH_STATES_DIR,
   DEFAULT_AGENT_QA_CACHE_DIR,
-  locateRunsDbPath,
+  DEFAULT_AGENT_QA_RUNS_DB_PATH,
   parseTestFile,
   parseSuiteFile,
   normalizeAuthStateUse,
@@ -3779,15 +3779,17 @@ export function createChatConfirmPort(
 }
 
 /**
- * The runs database `agent-qa run` writes and `agent-qa dashboard` reads for this config, through
- * `resolveConfig`'s merge, normalize and parse and the writer's resolver without its legacy rename.
- * A config those steps refuse is one no run wrote under, so nothing is bound.
+ * The runs database `agent-qa run` writes and `agent-qa dashboard` reads for this config: the
+ * configured path, else the default. A legacy dashboard.db is never bound here, because the writer
+ * renames it and a reader holding it open across that rename would read a moved WAL database; it
+ * answers not recorded until a writer has renamed it. A config `resolveConfig` refuses binds nothing.
  */
 function projectRunsDbPath(configPath: string): string | undefined {
   try {
     const merged = mergeConfigs(parseYaml(readFileSync(configPath, 'utf8')) ?? {}, loadEnvOverrides(), {})
     const config = AgentQaConfigSchema.parse(normalizeConfigForValidation(merged))
-    return locateRunsDbPath(dirname(resolve(configPath)), config.services?.dashboard?.dbPath)
+    const configured = config.services?.dashboard?.dbPath?.trim()
+    return resolve(dirname(resolve(configPath)), configured || DEFAULT_AGENT_QA_RUNS_DB_PATH)
   } catch {
     return undefined
   }

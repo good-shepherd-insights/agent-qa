@@ -14,7 +14,7 @@ export interface ResolveDashboardDbPathOptions {
   configuredDbPath?: string
 }
 
-// The writer's resolver: the reader's `locateRunsDbPath`, plus the one-time legacy rename.
+// The writer's resolver: `locateRunsDbPath`, plus the one-time legacy rename.
 export function resolveDashboardDbPath({
   configDir,
   configuredDbPath,

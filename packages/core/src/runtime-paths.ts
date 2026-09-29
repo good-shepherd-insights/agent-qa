@@ -12,8 +12,8 @@ export const LEGACY_AGENT_QA_DASHBOARD_DB_PATH = '.agent-qa/dashboard.db'
 
 /**
  * The runs database a config names, without migrating anything: the configured path, else the
- * default, else a legacy dashboard.db nothing has renamed yet. The dashboard's resolver renames
- * that legacy file on top of this; a reader must not.
+ * default, else a legacy dashboard.db nothing has renamed yet. The writer's resolver renames that
+ * legacy file on top of this; the CLI reader binds only the configured or default path.
  */
 export function locateRunsDbPath(configDir: string, configuredDbPath?: string): string {
   const configured = configuredDbPath?.trim()
