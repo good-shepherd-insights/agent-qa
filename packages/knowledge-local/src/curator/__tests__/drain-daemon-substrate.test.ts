@@ -395,7 +395,8 @@ describe('drainQueue daemon substrate', () => {
     })
     expect(author).toHaveBeenCalledOnce()
     expect(author.mock.calls[0]?.[0].executionContext).toBe('local-headless')
-    expect(statusesBySummary()).toEqual({ 'legacy-checkout selector': 'candidate' })
+    // 432 D-08: the local-headless fallback drains to active, so the promotion floor runs.
+    expect(statusesBySummary()).toEqual({ 'legacy-checkout selector': 'active' })
     expect(listQueuedCandidates(knowledgeRoot)).toEqual([])
     expect(readJobState(knowledgeRoot, candidateId).kind).toBe('absent')
   })
