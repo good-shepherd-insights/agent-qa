@@ -297,7 +297,7 @@ describe('apply — one commit path, receipts at the boundary, race-safe consump
   it.each(['fact', 'caution'] as const)('419 confirmed %s fix commits user content and one sovereign Gate-3 receipt', async kind => {
     const recordId = publish('checkout button')
     const proposalId = proposeMark(recordId, kind, kind === 'caution')
-    const create = vi.spyOn(knowledgeStore, 'createLocalKnowledgeStore')
+    const create = vi.spyOn(knowledgeStore, 'createExplicitReviewStore')
     try {
       const result = await applyReview({ agentQaRoot, knowledgeRoot, proposalId })
       expect(create.mock.calls[0]?.[0].executionContext).toBe('local-interactive')
@@ -361,13 +361,23 @@ describe('apply — one commit path, receipts at the boundary, race-safe consump
       event.type === 'confirmed' && event.origin === 'user' && event.buildOrdinal === 101)).toBe(true)
   })
 
-  it('419 propose-only mark application refuses before commit or Gate-3 writes', async () => {
-    const proposalId = proposeMark(publish('CI checkout'), 'caution', true)
-    const before = hashTree(join(knowledgeRoot, 'memory'))
-    await expect(applyReview({ agentQaRoot, knowledgeRoot, proposalId, executionContext: 'ci' }))
-      .rejects.toMatchObject({ reason: 'propose-only' })
-    expect(hashTree(join(knowledgeRoot, 'memory'))).toBe(before)
-    expect(readPendingProposal(agentQaRoot, proposalId)).toBeDefined()
+  // 432 D-04 replaces the 419 propose-only refusal: an explicit mark is authority in every
+  // context, so the CI apply commits and promotes while the record keeps its actual context.
+  it('419 mark application in ci commits under the actual context and promotes through the sovereign gate', async () => {
+    const recordId = publish('CI checkout')
+    const proposalId = proposeMark(recordId)
+    const result = applyReview({ agentQaRoot, knowledgeRoot, proposalId, executionContext: 'ci' })
+    await expect(result).resolves.toMatchObject({ outcome: 'applied' })
+    const receipt = (await result).commitReceipt!
+    const id = receipt.recordIds[0]!
+    expect(id).not.toBe(recordId)
+    expect(receipt.promoted).toEqual([{ candidateId: id, promotionPath: 'user-sovereign' }])
+    expect(rowsFor(recordId)[0]?.status).toBe('superseded')
+    expect(rowsFor(id)[0]?.status).toBe('active')
+    const entry = enumerateBundleDirs(knowledgeRoot).map(found => loadBundle(found.dir))
+      .find(loaded => loaded.kind === 'loaded' && loaded.bundle.manifest.id === id)
+    expect(entry?.kind === 'loaded' && entry.bundle.provenance).toMatchObject({ authorship: { executionContext: 'ci' } })
+    expect(readAppliedProposal(agentQaRoot, proposalId)?.commitReceipt).toEqual(receipt)
   })
 
   function publishPolicy(body = 'Dismiss the cookie banner before checkout') {
