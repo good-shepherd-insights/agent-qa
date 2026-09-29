@@ -190,6 +190,24 @@ const HARNESS_EMISSION_CEILING = 12
 interface ProbeScript {
   /** One entry per probe, in order. `undefined` models a probe whose record is unreadable. */
   readonly probes: readonly (readonly MemberFixture[] | undefined)[]
+  /**
+   * Probe indices the run boundary refuses (432-04, D-18): `start` throws {@link RunRefusal} for
+   * them, as the host's run core does for a production target the config has not opted into.
+   */
+  readonly refuseProbes?: readonly number[]
+  /** The final stability gate is refused the same way: its gate runs never start. */
+  readonly refuseVerify?: boolean
+}
+
+/**
+ * The refusal the host's run boundary raises. `agent` may not import the host, so this stands in
+ * for its `RunDeniedError`: what repair must do with it is the same for any refusal a start throws.
+ */
+class RunRefusal extends Error {
+  constructor() {
+    super('Target "prod-form" is declared environment: production, and this config does not allow production runs.')
+    this.name = 'RunRefusal'
+  }
 }
 
 interface Harness {
@@ -306,6 +324,7 @@ function harness(
     async start(input: RunsStartInput) {
       const index = startInputs.length
       startInputs.push(input)
+      if (script.refuseProbes?.includes(index) === true) throw new RunRefusal()
       const runId = `r_probe-${index}`
       const members = script.probes[index]
       // A RUN'S MEMBERS CARRY THE PATH IT WAS POINTED AT. The probe runs the STAGED candidate, whose
@@ -363,6 +382,7 @@ function harness(
     },
     verifyDraft(input: { draftPath: string; draftMode?: true }): Promise<DraftReceipt> {
       verifyCalls.push(input.draftMode === true ? 1 : 0)
+      if (script.refuseVerify === true) return Promise.reject(new RunRefusal())
       return Promise.resolve(FINAL_RECEIPT)
     },
   }
@@ -696,6 +716,39 @@ describe('one receipt per draft, and one disposition derivation', () => {
         stabilityRunsCompleted: bench.receipt.stabilityRunsCompleted,
       }),
     )
+  })
+})
+
+// 432-04 (D-18): a probe is a run, and so is the repaired draft's final verification. Both go
+// through the run port, so the host's run boundary (a production target without the config's
+// opt-in) refuses them. Repair does not catch that refusal: it reaches the caller at once, and
+// nothing after it is asked, patched, probed or verified.
+describe('a refusal at the run boundary ends repair where it lands', () => {
+  it('a refused probe reaches the caller, and repair asks for no further patch and verifies nothing', async () => {
+    const { repairDraft } = await loadRepair()
+    const bench = harness(
+      [emit(OUTSIDE_PREFIX), emit(OUTSIDE_PREFIX)],
+      { probes: [passingProbe(), passingProbe()], refuseProbes: [0] },
+    )
+
+    await expect(repairDraft(repairRoute(), bench.deps as never)).rejects.toBeInstanceOf(RunRefusal)
+
+    expect(bench.startInputs).toHaveLength(1)
+    expect(bench.promptsSeen).toHaveLength(1)
+    expect(bench.appliedSets).toHaveLength(1)
+    expect(bench.verifyCalls).toEqual([])
+  })
+
+  it('a passing probe returns to verifyDraft, and a refusal there reaches the caller with no receipt', async () => {
+    const { repairDraft } = await loadRepair()
+    const bench = harness([emit(OUTSIDE_PREFIX)], { probes: [passingProbe()], refuseVerify: true })
+
+    await expect(repairDraft(repairRoute(), bench.deps as never)).rejects.toBeInstanceOf(RunRefusal)
+
+    // The probe ran, then the final gate was asked for once, without the draft-mode marker.
+    expect(bench.startInputs).toHaveLength(1)
+    expect(bench.verifyCalls).toEqual([0])
+    expect(bench.promptsSeen).toHaveLength(1)
   })
 })
 

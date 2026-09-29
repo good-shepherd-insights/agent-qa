@@ -64,7 +64,7 @@
 // 401-12 shipped a fixture that read `auditRows: []` on both legs because it died at config
 // validation: a perfect vacuous green.
 
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 
 import { describe, expect, it } from 'vitest'
@@ -343,6 +343,69 @@ describe('one human ask, N gated runs, driven from the authoring loop (D-08 · U
       expect(grantsLedgerBytes(fixture)).toEqual(ledgerBefore)
     } finally {
       releaseProbes?.()
+      await target.close()
+    }
+  }, 300_000)
+
+  // 432-04 (D-18): the same composed chain, with the fixture's one target declared production and
+  // no opt-in. The confirm approves EVERYTHING, so the old run gate cannot be what stops a run: the
+  // only refusal left on the path is the core's production refusal, reached from the loop's first
+  // gate run. Nothing starts — no run directory, no gate row, no knock on the target — and the
+  // person is asked exactly once, for the authoring dispatch, never for a run.
+  it('a production target refuses the loop at its first gate run: no run starts and the target is never reached', async () => {
+    const target = new CountingTarget()
+    await target.listen()
+    try {
+      const fixture = createInProcessFixture({ origin: target.origin, environment: 'shared' })
+      const shared = readFileSync(fixture.configPath, 'utf8')
+      const production = shared.replace('      environment: shared\n', '      environment: production\n')
+      expect(production).not.toBe(shared)
+      writeFileSync(fixture.configPath, production)
+      process.env.PLAYWRIGHT_BROWSERS_PATH = join(fixture.project, 'no-browsers')
+
+      const asked: string[] = []
+      const { registry } = composeCliLocalAgent({
+        agentQaRoot: fixture.agentQaRoot,
+        configPath: fixture.configPath,
+        resolveExecutionContext: () => 'local-interactive',
+        confirm: {
+          surface: 'tty-prompt',
+          ask: (action: RiskActionDescriptor) => {
+            asked.push(action.name)
+            return true
+          },
+        },
+        model: () => ({
+          modelId: 'fixture:authoring-dispatch-chain',
+          generate: () => Promise.resolve({ text: MODEL_DOCUMENT }),
+        }) as never,
+      })
+
+      let thrown: unknown
+      try {
+        await invokeFunction(
+          registry,
+          'authoring.draft.write',
+          { intent: 'Check that submitting the in-process thing shows the confirmation banner' },
+          CLI_FUNCTION_CALLER,
+        )
+      } catch (error) {
+        thrown = error
+      }
+
+      expect(thrown).toBeInstanceOf(RunDeniedError)
+      const denial = thrown as RunDeniedError
+      expect(denial.reason).toContain(`"${IN_PROCESS_TARGET_NAME}"`)
+      expect(denial.reason).toContain('environment: production')
+      expect(denial.reason).toContain('allowProduction: true')
+      expect(denial.remedies).toEqual([])
+      // The one ask was the dispatch's; no run was ever put to the person.
+      expect(asked).toEqual([THE_ONE_ASK])
+      // Nothing started: no run directory, so no gate row, and nobody knocked on the target.
+      expect(runDirs(fixture)).toEqual([])
+      expect(gateRows(fixture)).toEqual([])
+      expect(target.hits).toEqual([])
+    } finally {
       await target.close()
     }
   }, 300_000)
