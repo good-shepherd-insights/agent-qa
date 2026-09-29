@@ -495,4 +495,45 @@ describe('TargetsSection and DevicesSection (429-22 Task 1)', () => {
       [[{ op: 'set', path: ['registry', 'targets', 'plain'], value: { platform: 'web', url: 'https://plain.example.com' } }]],
     ])
   })
+
+  it('C432-TARGET-CREATE-UI: an existing production target reads back as Production when its row is edited', async () => {
+    vi.mocked(fetchConfig).mockResolvedValue(answer({
+      registry: {
+        targets: {
+          ...records.registry.targets,
+          live: { platform: 'web', url: 'https://live.example.com', environment: 'production' },
+        },
+        devices: records.registry.devices,
+      },
+    }) as never)
+    await mount()
+
+    await click(rowHeader(targetRow('live')))
+    expect(fieldInput(['registry', 'targets', 'live', 'environment'])?.textContent)
+      .toContain(TARGET_ENVIRONMENT_LABELS.production)
+    // The URL typed in the same row is kept while the class is shown, and saved as one leaf.
+    const url = fieldInput(['registry', 'targets', 'live', 'url'])
+    await type(url, 'https://live-2.example.com')
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(SETTLE_DELAY_MS)
+    })
+    await flush()
+    expect(vi.mocked(applyConfigChanges).mock.calls).toEqual([
+      [[{ op: 'set', path: ['registry', 'targets', 'live', 'url'], value: 'https://live-2.example.com' }]],
+    ])
+  })
+
+  it('C432-TARGET-CREATE-UI: the chosen class is held with the draft, beside the typed name', async () => {
+    await mount()
+
+    await click(buttonIn(section('targets'), ADD_TARGET_LABEL))
+    const draft = section('targets')!.querySelector('[data-target-draft]') as HTMLElement
+    await click(draft.querySelector('[data-environment-choice="shared"] [role="radio"]') as HTMLElement)
+    await type(draft.querySelector('input[name="name"]') as HTMLInputElement, 'phone')
+    // The held draft is what a tab change restores, so the class must be part of it.
+    expect(JSON.parse(String(hook!.valueOf({ segments: ['registry', 'targets'], tab: 'targets' })))).toMatchObject({
+      name: 'phone',
+      environment: 'shared',
+    })
+  })
 })

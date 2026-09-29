@@ -1009,6 +1009,36 @@ describe('C432-LOCALHOST-ORIGIN: the local demo app scaffolds from zero (D-20 ·
   })
 })
 
+describe('C432-LOCALHOST-ORIGIN: retries and rewritten spellings (D-20 · #134)', () => {
+  it('C432-LOCALHOST-ORIGIN: a second scaffold of an applied local origin is refused, and the file is kept',
+    async () => {
+      const registry = registryFor({ confirm: true })
+      const id = proposedId(await scaffold(registry, 'http://localhost:3000'))
+      const accepted = await invokeFunction(
+        registry, 'proposals.accept', { proposalId: id }, HUMAN,
+      ) as ProposalsAcceptOutput
+      expect(accepted.apply.outcome).toBe('applied')
+      const applied = readFileSync(configPath, 'utf8')
+
+      const again = await scaffold(registry, 'http://localhost:3000')
+      expect(again).toMatchObject({
+        outcome: 'refused',
+        reason: 'already-configured',
+        candidates: ['localhost-3000'],
+      })
+      expect(readFileSync(configPath, 'utf8')).toBe(applied)
+    })
+
+  it('C432-LOCALHOST-ORIGIN: a spelling the parser would rewrite into loopback proposes nothing', async () => {
+    for (const domain of ['http://127.1:3000', 'http://2130706433/', 'ftp://localhost']) {
+      const answer = await scaffold(registryFor({ confirm: true }), domain)
+      expect(answer, domain).toMatchObject({ outcome: 'refused', reason: 'not-a-hostname' })
+    }
+    expect(existsSync(join(agentQaRoot, 'proposals'))).toBe(false)
+    expect(existsSync(configPath)).toBe(false)
+  })
+})
+
 describe('C432-SCAFFOLD-LLMS: the scaffold keeps the model registry and its selection (D-20 · #130)', () => {
   it('C432-SCAFFOLD-LLMS: the zero-target merge commits every model entry and the selected model',
     async () => {

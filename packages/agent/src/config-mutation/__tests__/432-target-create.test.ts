@@ -232,6 +232,33 @@ describe('C432-TARGET-CREATE-ENVIRONMENT: a target declares its class at creatio
     expect(candidateTarget(test.filed[0], 'strasse')).toEqual({ platform: 'web', url: 'https://a.example' })
   })
 
+  it('C432-TARGET-CREATE-ENVIRONMENT: the class sits beside an auth binding and is named in the summary line', async () => {
+    const test = harness()
+    const answer = await create(test, {
+      name: 'checkout',
+      platform: 'web',
+      url: 'https://checkout.example.com',
+      authStateName: 'buyer',
+      environment: 'production',
+    })
+
+    expect(answer.outcome === 'proposed' && answer.summaryLine)
+      .toBe('create web target checkout at https://checkout.example.com (production)')
+    expect(candidateTarget(test.filed[0], 'checkout')).toMatchObject({ environment: 'production' })
+    const file = test.filed[0]?.payloadKind === 'applyable'
+      ? test.filed[0].files.find((member) => member.path === CONFIG_FILE)
+      : undefined
+    const parsed = parseYaml(utf8Decode(base64Decode(file?.newContentBase64 as string))) as {
+      use?: { authState?: string }
+    }
+    expect(parsed.use?.authState).toBe('buyer')
+    // An undeclared create keeps the summary line it always had.
+    const plain = harness()
+    const undeclared = await create(plain, { name: 'checkout', platform: 'web', url: 'https://checkout.example.com' })
+    expect(undeclared.outcome === 'proposed' && undeclared.summaryLine)
+      .toBe('create web target checkout at https://checkout.example.com')
+  })
+
   it('C432-TARGET-CREATE-ENVIRONMENT: the input admits exactly the three classes, optionally', () => {
     const base = { name: 'checkout', platform: 'web', url: 'https://checkout.example.com' }
     for (const environment of ['local', 'shared', 'production']) {
