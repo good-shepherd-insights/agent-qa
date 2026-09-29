@@ -1081,6 +1081,59 @@ describe('C432-CONFIG-PATH-QUEUE: co-hosted writers of one config path share one
     expect(saved).toContain('# The owner keeps this comment.')
   })
 
+  it('the PATCH autosave route and a co-hosted writer overlap on one path and every change lands', async () => {
+    const coHosted = new ConfigManager(configPath)
+    const [llm, appState, ...targets] = await Promise.all([
+      patchConfig([{ op: 'set', path: ['use', 'llm'], value: 'gpt-5.6' }]),
+      patchConfig([{ op: 'set', path: ['use', 'mobile', 'appState'], value: 'reset' }]),
+      ...Array.from({ length: 10 }, (_, index) => coHosted.applyChanges([targetChange(10 + index)])),
+    ])
+    expect([llm.status, appState.status], llm.body + appState.body).toEqual([200, 200])
+    expect(targets.map((outcome) => outcome.kind)).toEqual(Array.from({ length: 10 }, () => 'ok'))
+    const saved = await readFile(configPath, 'utf-8')
+    const parsed = parseYaml(saved) as { use: { llm: string; mobile: { appState: string } } }
+    expect(parsed.use).toMatchObject({ llm: 'gpt-5.6', mobile: { appState: 'reset' } })
+    expect(Object.keys(targetsOf(saved)).sort()).toEqual(
+      Array.from({ length: 10 }, (_, index) => `t${10 + index}`).sort(),
+    )
+  })
+
+  it('a write that fails inside its turn rejects, writes nothing, and the next writer still gets the path', async () => {
+    await chmod(dir, 0o555)
+    let failed: Promise<unknown>
+    try {
+      failed = new ConfigManager(configPath).applyChanges([targetChange(6)])
+      await expect(failed).rejects.toMatchObject({ code: 'EACCES' })
+    } finally {
+      await chmod(dir, 0o755)
+    }
+    expect(await readFile(configPath, 'utf-8')).toBe(QUEUE_CONFIG)
+    expect((await manager.applyChanges([targetChange(7)])).kind).toBe('ok')
+    expect(Object.keys(targetsOf(await readFile(configPath, 'utf-8')))).toEqual(['t7'])
+    expect((await readdir(dir)).filter((name) => name.endsWith('.tmp'))).toEqual([])
+  })
+
+  it('a whole-document replacement publishes only over the revision it was built from', async () => {
+    const replacement = new TextEncoder().encode(QUEUE_CONFIG.replace('llm: planner', 'llm: gpt-5.6'))
+    const current = createHash('sha256').update(QUEUE_CONFIG).digest('hex')
+    expect(await manager.replaceDocument('absent', replacement)).toEqual({
+      kind: 'refused', error: 'file_changed', revision: current,
+    })
+    expect(await manager.replaceDocument('0'.repeat(64), replacement)).toEqual({
+      kind: 'refused', error: 'file_changed', revision: current,
+    })
+    expect(await readFile(configPath, 'utf-8')).toBe(QUEUE_CONFIG)
+    expect(await manager.replaceDocument(current, replacement)).toEqual({
+      kind: 'ok', baseRevision: current, revision: createHash('sha256').update(replacement).digest('hex'),
+    })
+    expect(await readFile(configPath, 'utf-8')).toBe(QUEUE_CONFIG.replace('llm: planner', 'llm: gpt-5.6'))
+
+    const created = join(dir, 'nested', 'hooks.yaml')
+    expect(await new ConfigManager(created).replaceDocument('absent', new TextEncoder().encode('hooks: []\n')))
+      .toMatchObject({ kind: 'ok', baseRevision: 'absent' })
+    expect(await readFile(created, 'utf-8')).toBe('hooks: []\n')
+  })
+
   it('a queued write through a symlinked config keeps the link, the destination mode and the comments', async () => {
     const realPath = join(dir, 'real.config.yaml')
     const linkPath = join(dir, 'linked.config.yaml')

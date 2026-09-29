@@ -28,6 +28,7 @@ import { join } from 'node:path'
 
 import type { FunctionDeps } from '@vostride/agent-qa-agent'
 import * as dashboard from '@vostride/agent-qa-dashboard'
+import { CONFIG_MASK_PLACEHOLDER } from '@vostride/agent-qa-schema'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import * as host from '../local-agent-host.js'
@@ -247,6 +248,39 @@ describe('C432-CONFIG-PATH-QUEUE: the direct writer and the dashboard manager sh
     expect(readFileSync(configPath, 'utf8')).toBe(SEEDED_CONFIG.replace('step: 30s', 'step: 40s'))
   })
 
+  it('a refused stale expectation succeeds on retry once it names the value the file now holds', async () => {
+    const port = writePort()
+    expect((await new dashboard.ConfigManager(configPath).applyChanges([
+      { op: 'set', path: ['use', 'timeout', 'step'], value: '40s' },
+    ])).kind).toBe('ok')
+    const stale = await port.applyFields({
+      changes: [
+        { op: 'expect', path: ['use', 'timeout', 'step'], value: '30s' },
+        { op: 'set', path: ['use', 'timeout', 'step'], value: '50s' },
+      ],
+    })
+    expect(stale).toMatchObject({ kind: 'refused', error: 'field_changed' })
+    const retried = await port.applyFields({
+      changes: [
+        { op: 'expect', path: ['use', 'timeout', 'step'], value: '40s' },
+        { op: 'set', path: ['use', 'timeout', 'step'], value: '50s' },
+      ],
+    })
+    expect(retried.kind).toBe('applied')
+    expect(readFileSync(configPath, 'utf8')).toBe(SEEDED_CONFIG.replace('step: 30s', 'step: 50s'))
+  })
+
+  it('a whole-file publication of the config built before a co-hosted change refuses and keeps that change', async () => {
+    const generated = SEEDED_CONFIG.replace('appState: reset', 'appState: preserve')
+    expect((await new dashboard.ConfigManager(configPath).applyChanges([
+      { op: 'set', path: ['use', 'timeout', 'step'], value: '40s' },
+    ])).kind).toBe('ok')
+    expect(await writePort().publishFiles({
+      files: [{ path: CONFIG_FILE, baseDigest: sha(SEEDED_CONFIG), bytes: utf8(generated) }],
+    })).toEqual({ kind: 'refused', reason: 'file-changed', path: CONFIG_FILE, written: [] })
+    expect(readFileSync(configPath, 'utf8')).toBe(SEEDED_CONFIG.replace('step: 30s', 'step: 40s'))
+  })
+
   it('a queued transaction that fails releases the direct writer behind it', async () => {
     const port = writePort()
     const failed = serializeConfigWrite(configPath, async () => {
@@ -367,6 +401,31 @@ describe('C432-CONFIG-DIRECT: whole-file publications are checked, atomic and tr
     expect(existsSync(join(root, 'hooks.yaml'))).toBe(false)
     expect(readFileSync(join(root, '.gitignore'), 'utf8')).toBe('owner bytes\n')
     expect(readFileSync(configPath, 'utf8')).toBe(SEEDED_CONFIG)
+  })
+
+  it('the transaction\'s own refusals pass through the direct writer and write nothing', async () => {
+    const port = writePort()
+    const invalid = await port.applyFields({
+      changes: [{ op: 'set', path: ['use', 'parallel'], value: 'sometimes' }],
+    })
+    expect(invalid).toMatchObject({ kind: 'refused', file: CONFIG_FILE, error: 'validation_failed' })
+    expect(invalid.kind === 'refused' ? invalid.issues?.map((issue) => issue.path) : undefined)
+      .toContainEqual(['use', 'parallel'])
+    expect(await port.applyFields({
+      changes: [{ op: 'set', path: ['registry', 'llms', { name: 'absent' }, 'model'], value: 'x' }],
+    })).toEqual({ kind: 'refused', file: CONFIG_FILE, error: 'path_not_found' })
+    expect(await port.applyFields({
+      changes: [{ op: 'set', path: ['workspace', 'secretsFile'], value: CONFIG_MASK_PLACEHOLDER }],
+    })).toMatchObject({ kind: 'refused', error: 'mask_written_back' })
+    expect(readFileSync(configPath, 'utf8')).toBe(SEEDED_CONFIG)
+    expect(tempFiles(root)).toEqual([])
+  })
+
+  it('a new file in a new directory inside the workspace is created there', async () => {
+    expect(await writePort().publishFiles({
+      files: [{ path: 'config/hooks/extra.yaml', bytes: utf8(HOOKS_FILE) }],
+    })).toEqual({ kind: 'published', written: ['config/hooks/extra.yaml'] })
+    expect(readFileSync(join(root, 'config', 'hooks', 'extra.yaml'), 'utf8')).toBe(HOOKS_FILE)
   })
 
   it('a publication through a symlink keeps the link and the destination mode', async () => {
