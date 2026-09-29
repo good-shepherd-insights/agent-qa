@@ -44,6 +44,12 @@ export {
   isConfigSchemaPath,
   MASKING_CLASSES,
 } from './masking'
+// 432 D-18: the production refusal's one sentence, shared by the run core and the live editor.
+export {
+  ALLOW_PRODUCTION_OPT_IN,
+  buildProductionRefusal,
+  distinctInFirstOccurrenceOrder,
+} from './production'
 export type { BrowserConfig } from './browser'
 export { appStateSchema, browserConfigSchema, viewportSchema } from './browser'
 export type { DeviceConfig } from './device'

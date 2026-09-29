@@ -10,7 +10,7 @@
 // never anything else shaped like a CLI type — agent-local must not import the CLI, and the input
 // being a bare union is what keeps that true by construction.
 
-import { scrubDisclosureFragment, scrubDisclosureText } from '@vostride/agent-qa-schema'
+import { scrubDisclosureFragment } from '@vostride/agent-qa-schema'
 import type { RiskActionDescriptor } from '@vostride/agent-qa-schema'
 
 /**
@@ -175,35 +175,11 @@ function renderTargetNames(targetNames: readonly string[]): string {
   return `targets ${named.join(', ')}${tail}`
 }
 
-/** The one line a config adds to run against production (432-03, D-18). */
-export const ALLOW_PRODUCTION_OPT_IN = 'allowProduction: true'
-
-/**
- * The distinct names, in first-occurrence order. Two members driving one target are one target to
- * the person reading a refusal; the order is the members' own, never a re-sort.
- */
-export function distinctInFirstOccurrenceOrder(names: readonly string[]): string[] {
-  return [...new Set(names)]
-}
-
-/**
- * The production refusal, as the one plain sentence every door shows (432-03, D-18).
- *
- * It names the production targets and the line to add, and nothing else: no remedy, no prompt, no
- * flag. Each name keeps its exact spelling apart from the characters a terminal or a browser acts
- * on, which are replaced, so the sentence stays one line on every channel.
- */
-export function buildProductionRefusal(productionTargetNames: readonly string[]): string {
-  const names = distinctInFirstOccurrenceOrder(productionTargetNames)
-    .map((name) => `"${scrubDisclosureText(name)}"`)
-  const subject =
-    names.length === 0
-      ? 'A target this run drives is'
-      : names.length === 1
-        ? `Target ${names[0]!} is`
-        : `Targets ${names.join(', ')} are`
-  return (
-    `${subject} declared environment: production, and this config does not allow production runs. `
-    + `Add ${ALLOW_PRODUCTION_OPT_IN} at the top level of agent-qa.config.yaml to allow them.`
-  )
-}
+// 432-04: the production refusal moved to schema, so the dashboard live editor (which may not
+// import this package) shows the same sentence. Re-exported here so every existing consumer of
+// this module keeps its import.
+export {
+  ALLOW_PRODUCTION_OPT_IN,
+  buildProductionRefusal,
+  distinctInFirstOccurrenceOrder,
+} from '@vostride/agent-qa-schema'

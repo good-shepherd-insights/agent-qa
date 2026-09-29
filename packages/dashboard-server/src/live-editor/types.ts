@@ -192,9 +192,20 @@ export interface SessionState {
   terminalError: string | null
 }
 
+/**
+ * What the create door found the current config declares about the session's target (432 D-18).
+ *
+ * It can only add a refusal: `initialize` refuses any name here unless the config it reads itself
+ * opts in. There is deliberately no opt-in field, so nothing a caller passes can allow production.
+ */
+export interface LiveProductionFinding {
+  readonly productionTargetNames: readonly string[]
+}
+
 export interface LiveSessionConfig {
   platform: 'web' | 'android' | 'ios'
   targetName?: string
+  production?: LiveProductionFinding
   llmConfig: LiveSessionLLMConfig
   authFetch?: typeof globalThis.fetch
   envVars?: Record<string, string>

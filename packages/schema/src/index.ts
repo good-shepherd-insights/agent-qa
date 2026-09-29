@@ -88,8 +88,11 @@ export type {
   WebPlatformConfig,
 } from './config/index'
 export {
+  // 432 D-18: the production refusal's one sentence (the run core and the live editor).
+  ALLOW_PRODUCTION_OPT_IN,
   appStateSchema,
   browserConfigSchema,
+  buildProductionRefusal,
   classifyConfigPath,
   CONFIG_ACTION_REFUSALS,
   CONFIG_MASKING_MAP,
@@ -108,6 +111,7 @@ export {
   ConfigWriteRequestSchema,
   DEFAULT_PARALLEL_WORKERS,
   deviceConfigSchema,
+  distinctInFirstOccurrenceOrder,
   isConfigSchemaPath,
   isPageWritableConfigPath,
   MASKING_CLASSES,
