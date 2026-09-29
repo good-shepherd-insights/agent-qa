@@ -522,4 +522,18 @@ describe('DEDICATED-CLI-PARITY: the six dedicated verbs are sugar over their ops
       rmSync(out, { recursive: true, force: true })
     }
   }, 120_000)
+
+  it('KNOWLEDGE-LIST-JSON: agent-qa knowledge inspect and diff --json print the records and changes of their MCP answers', async () => {
+    const records = jsonOf(await cli(p.configPath, ['knowledge', 'inspect', '--json']))
+    const inspected = (await mcp.call('knowledge.records.inspect', { filter: {} })).structured as { records: unknown[] }
+    expect(records).toEqual(inspected.records)
+    expect(inspected.records.length).toBeGreaterThan(0)
+    expect(JSON.stringify(records)).toContain(p.recordId)
+
+    const changes = jsonOf(await cli(p.configPath, ['knowledge', 'diff', '0', '--json']))
+    const diffed = (await mcp.call('knowledge.records.diff', { sinceOrdinal: 0 })).structured as { changes: unknown[] }
+    expect(changes).toEqual(diffed.changes)
+    expect(diffed.changes.length).toBeGreaterThan(0)
+    expect(JSON.stringify(changes)).toContain(p.recordId)
+  }, 120_000)
 })

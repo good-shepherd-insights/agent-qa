@@ -2,8 +2,9 @@
 
 Load this when `SKILL.md`'s workflow is not enough: what the words in an answer mean, and a sample
 call and answer for every read. Ids in the samples are illustrative; use the ones your reads
-return. Every CLI verb takes `--json`, which prints exactly what the matching MCP tool returns.
-Test, step and sub-action numbers are zero-based.
+return. Every CLI verb takes `--json`, which prints what the matching MCP tool answers, except that
+`agent-qa knowledge inspect` and `agent-qa knowledge diff <build>` print only the `records` and
+`changes` array of that answer. Test, step and sub-action numbers are zero-based.
 
 ## Record kinds
 

@@ -27,9 +27,10 @@ Get the whole picture first, then fetch only the piece the question needs.
    When a read says absent, withheld, not recorded or read error, say so and what it limits.
 
 Test, step and sub-action numbers are zero-based, exactly as the overview prints them. Without
-MCP, run the CLI verb from the project root; `--json` prints the same answer as the tool, and
-`agent-qa runs evidence <runId> --screenshot <sha> --out <file>` writes a screenshot to a new
-file you then open with your image viewer.
+MCP, run the CLI verb from the project root. `--json` prints what the tool answers, except that
+`agent-qa knowledge inspect` and `agent-qa knowledge diff <build>` print only the `records` and
+`changes` array of that answer. `agent-qa runs evidence <runId> --screenshot <sha> --out <file>`
+writes a screenshot to a new file you then open with your image viewer.
 
 ## Questions → tools and verbs
 
