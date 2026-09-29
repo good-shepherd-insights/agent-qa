@@ -86,7 +86,7 @@ import { createHash } from 'node:crypto'
 import { CONFIG_MASK_PLACEHOLDER } from '@vostride/agent-qa-schema'
 import { ConfigManager } from '../config/config-manager.js'
 import { createRouter } from '../server/routes.js'
-import { writeFile, readFile, mkdir, rm } from 'node:fs/promises'
+import { chmod, lstat, mkdir, readdir, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { parse as parseYaml, stringify as stringifyYaml } from 'yaml'
@@ -958,5 +958,142 @@ describe('ConfigManager map-masked read (429-06)', () => {
     expect(config.registry.providers.farm.accessKey).toBe(CONFIG_MASK_PLACEHOLDER)
     expect(config.workspace.envFile).toBe('plain-anchor.env')
     expect(JSON.stringify(read)).not.toContain('DO-NOT-LEAK')
+  })
+})
+
+// 2026-09-30, 432-07 D-05/D-07 (EDGE-12): the transaction queue belongs to the resolved config path,
+// so every ConfigManager in this process (the dashboard's and a co-hosted direct writer's) takes
+// turns. It is not a cross-process lock.
+describe('C432-CONFIG-PATH-QUEUE: co-hosted writers of one config path share one queue', () => {
+  const QUEUE_CONFIG = writeConfig(
+    ['# The owner keeps this comment.'],
+    WRITE_BASE_LINES,
+    WRITE_MODELS_LINES,
+    WRITE_USE_LINES,
+  )
+
+  type Targets = Record<string, { platform: string; url: string }>
+
+  function targetsOf(text: string): Targets {
+    return (parseYaml(text) as { registry: { targets?: Targets } }).registry.targets ?? {}
+  }
+
+  function targetChange(index: number) {
+    return {
+      op: 'set' as const,
+      path: ['registry', 'targets', `t${index}`],
+      value: { platform: 'web', url: `http://127.0.0.1:${4100 + index}/` },
+    }
+  }
+
+  beforeEach(async () => {
+    await writeFile(configPath, QUEUE_CONFIG)
+  })
+
+  it('two managers, one through a directory alias, merge every overlapping disjoint write', async () => {
+    const alias = `${dir}-alias`
+    await symlink(dir, alias)
+    try {
+      const first = new ConfigManager(configPath)
+      const second = new ConfigManager(join(alias, 'agent-qa.config.yaml'))
+      const outcomes = await Promise.all(
+        Array.from({ length: 24 }, (_, index) =>
+          (index % 2 === 0 ? first : second).applyChanges([targetChange(index)])),
+      )
+      expect(outcomes.map((outcome) => outcome.kind)).toEqual(Array.from({ length: 24 }, () => 'ok'))
+      const saved = await readFile(configPath, 'utf-8')
+      expect(Object.keys(targetsOf(saved)).sort()).toEqual(
+        Array.from({ length: 24 }, (_, index) => `t${index}`).sort(),
+      )
+      expect(saved).toContain('# The owner keeps this comment.')
+    } finally {
+      await rm(alias, { force: true })
+    }
+  })
+
+  it('a stale same-field expectation from the second writer refuses once the first has changed it', async () => {
+    const first = new ConfigManager(configPath)
+    const second = new ConfigManager(configPath)
+    const [landed, stale] = await Promise.all([
+      first.applyChanges([
+        { op: 'expect', path: ['use', 'llm'], value: 'planner' },
+        { op: 'set', path: ['use', 'llm'], value: 'gpt-5.6' },
+      ]),
+      second.applyChanges([
+        { op: 'expect', path: ['use', 'llm'], value: 'planner' },
+        { op: 'set', path: ['use', 'llm'], value: 'planner' },
+        targetChange(1),
+      ]),
+    ])
+    expect(landed.kind).toBe('ok')
+    expect(stale).toEqual({ kind: 'refused', error: 'field_changed', path: ['use', 'llm'] })
+    const saved = parseYaml(await readFile(configPath, 'utf-8')) as { use: { llm: string } }
+    expect(saved.use.llm).toBe('gpt-5.6')
+    expect(targetsOf(await readFile(configPath, 'utf-8'))).toEqual({})
+  })
+
+  it('a transaction that fails releases the queue for the writers behind it', async () => {
+    const { serializeConfigWrite } = await import('../config/config-manager.js')
+    expect(typeof serializeConfigWrite).toBe('function')
+    const failed = serializeConfigWrite(configPath, async () => {
+      throw new Error('queued failure')
+    })
+    const successor = new ConfigManager(configPath).applyChanges([targetChange(2)])
+    await expect(failed).rejects.toThrow('queued failure')
+    expect((await successor).kind).toBe('ok')
+    expect(Object.keys(targetsOf(await readFile(configPath, 'utf-8')))).toEqual(['t2'])
+  })
+
+  it('a queued write reads the file inside its turn, so an outside edit made while it waited survives', async () => {
+    const { serializeConfigWrite } = await import('../config/config-manager.js')
+    expect(typeof serializeConfigWrite).toBe('function')
+    let release!: () => void
+    const held = serializeConfigWrite(configPath, () => new Promise<void>((resolve) => { release = resolve }))
+    const queued = manager.applyChanges([targetChange(3)])
+    const outside = QUEUE_CONFIG.replace('appState: preserve', 'appState: reset') + '# Added outside.\n'
+    await writeFile(configPath, outside)
+    release()
+    await held
+    const outcome = await queued
+    expect(outcome.kind).toBe('ok')
+    if (outcome.kind !== 'ok') return
+    const saved = await readFile(configPath, 'utf-8')
+    expect(outcome.baseRevision).toBe(createHash('sha256').update(outside).digest('hex'))
+    expect(saved).toContain('appState: reset')
+    expect(saved).toContain('# Added outside.')
+    expect(Object.keys(targetsOf(saved))).toEqual(['t3'])
+  })
+
+  it('dashboard Undo still restores its own field after a co-hosted writer changed a different one', async () => {
+    const dashboard = new ConfigManager(configPath)
+    const coHosted = new ConfigManager(configPath)
+    const change = await dashboard.applyChanges(
+      [{ op: 'set', path: ['use', 'mobile', 'appState'], value: 'reset' }],
+      { capturePriors: true },
+    )
+    expect(change.kind).toBe('ok')
+    if (change.kind !== 'ok' || change.priors === undefined) throw new Error('fixture: priors')
+    expect((await coHosted.applyChanges([targetChange(4)])).kind).toBe('ok')
+    expect(await dashboard.restorePriors(change.priors)).toMatchObject({ kind: 'ok' })
+    const saved = await readFile(configPath, 'utf-8')
+    expect(saved).toContain('appState: preserve')
+    expect(Object.keys(targetsOf(saved))).toEqual(['t4'])
+    expect(saved).toContain('# The owner keeps this comment.')
+  })
+
+  it('a queued write through a symlinked config keeps the link, the destination mode and the comments', async () => {
+    const realPath = join(dir, 'real.config.yaml')
+    const linkPath = join(dir, 'linked.config.yaml')
+    await writeFile(realPath, QUEUE_CONFIG)
+    await chmod(realPath, 0o600)
+    await symlink(realPath, linkPath)
+    const outcome = await new ConfigManager(linkPath).applyChanges([targetChange(5)])
+    expect(outcome.kind).toBe('ok')
+    expect((await lstat(linkPath)).isSymbolicLink()).toBe(true)
+    expect((await stat(realPath)).mode & 0o777).toBe(0o600)
+    const saved = await readFile(realPath, 'utf-8')
+    expect(saved).toContain('# The owner keeps this comment.')
+    expect(Object.keys(targetsOf(saved))).toEqual(['t5'])
+    expect((await readdir(dir)).filter((name) => name.endsWith('.tmp'))).toEqual([])
   })
 })

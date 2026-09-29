@@ -36,7 +36,7 @@
 //                       write.
 
 import { spawnSync } from 'node:child_process'
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -74,6 +74,7 @@ import {
   createConfigFilesPort,
   createConfigValidatePort,
 } from '../local-agent-host.js'
+import * as hostModule from '../local-agent-host.js'
 
 const HUMAN: FunctionCaller = {
   surface: 'test',
@@ -495,5 +496,25 @@ describe('the config tracer: propose, accept, ONE byte-matched commit', () => {
 
     expect(readFileSync(configPath, 'utf8')).toBe(SEEDED_CONFIG)
     expect(commitCount()).toBe(1)
+  })
+})
+
+// 2026-09-30, 432-07 D-05/D-07: the direct writer publishes the tracer's field edit in one call,
+// beside the proposal path above until 432-11 switches the ops over.
+describe('C432-CONFIG-DIRECT: the tracer edit through the direct writer', () => {
+  it('publishes the field edit byte-matched with its comments, files no proposal and makes no commit', async () => {
+    const create = (hostModule as Record<string, unknown>).createConfigWritePort
+    expect(typeof create, 'the direct config writer is exported').toBe('function')
+    const port = (create as (path: string) => NonNullable<FunctionDeps['configWrite']>)(configPath)
+
+    const outcome = await port.applyFields({
+      changes: [{ op: 'set', path: ['use', 'timeout', 'step'], value: '45s' }],
+    })
+
+    expect(outcome).toMatchObject({ kind: 'applied', file: 'agent-qa.config.yaml' })
+    expect(readFileSync(configPath, 'utf8')).toBe(SEEDED_CONFIG.replace('step: 30s', 'step: 45s'))
+    expect(commitCount()).toBe(1)
+    expect(git('status', '--porcelain').stdout.trim()).toBe('M agent-qa.config.yaml')
+    expect(existsSync(join(agentQaRoot, 'proposals'))).toBe(false)
   })
 })

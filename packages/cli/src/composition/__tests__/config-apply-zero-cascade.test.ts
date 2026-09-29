@@ -38,12 +38,13 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import { invokeFunction } from '@vostride/agent-qa-agent'
-import type { JobModelCapability } from '@vostride/agent-qa-agent'
+import type { FunctionDeps, JobModelCapability } from '@vostride/agent-qa-agent'
 import type { ConfigProposeOutput, ProposalsAcceptOutput } from '@vostride/agent-qa-schema'
 import { runSafetyScope } from '@vostride/agent-qa-safety-local'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import { CLI_FUNCTION_CALLER, composeCliLocalAgent } from '../local-agent-host.js'
+import * as hostModule from '../local-agent-host.js'
 
 const CONFIG_FILE = 'agent-qa.config.yaml'
 
@@ -198,6 +199,47 @@ describe('CFGM-03 / D-06: an accepted config apply cascades into nothing', () =>
         mkdirSync(join(agentQaRoot, 'runs', 'run_zero_cascade_probe'), { recursive: true })
         expect(runDirectories()).not.toEqual(runsBefore)
         expect(runDirectories()).toContain('run_zero_cascade_probe')
+      } finally {
+        await host.close()
+      }
+    })
+})
+
+// 2026-09-30, 432-07 D-05/D-07: the same absence for the direct writer. A config change is a file
+// edit and nothing else: it starts no run and enqueues no job, and it makes no commit either.
+describe('C432-CONFIG-DIRECT: a direct config write cascades into nothing', () => {
+  it('(Z4) the job store and the runs directory are unchanged across a direct write, and the probe still sees an enqueue',
+    async () => {
+      const host = composeCliLocalAgent({
+        agentQaRoot,
+        configPath,
+        confirm: { surface: 'tty-prompt', ask: () => true },
+        model: () => TEST_MODEL,
+      })
+      try {
+        const jobs = await host.jobs()
+        const create = (hostModule as Record<string, unknown>).createConfigWritePort
+        expect(typeof create, 'the direct config writer is exported').toBe('function')
+        const port = (create as (path: string) => NonNullable<FunctionDeps['configWrite']>)(configPath)
+
+        const before = await jobs.store.dumpState()
+        const runsBefore = runDirectories()
+
+        const outcome = await port.applyFields({
+          changes: [{ op: 'set', path: ['use', 'timeout', 'step'], value: '45s' }],
+        })
+
+        expect(outcome.kind).toBe('applied')
+        expect(readFileSync(configPath, 'utf8')).toBe(SEEDED_CONFIG.replace('step: 30s', 'step: 45s'))
+        expect(commitCount()).toBe(1)
+
+        const after = await jobs.store.dumpState()
+        expect(after).toEqual(before)
+        expect(after.jobs).toHaveLength(0)
+        expect(runDirectories()).toEqual(runsBefore)
+
+        await jobs.queue.enqueue('analyze-run', { runId: 'run_direct_probe' }, 'direct-config-probe')
+        expect((await jobs.store.dumpState()).jobs).toHaveLength(1)
       } finally {
         await host.close()
       }

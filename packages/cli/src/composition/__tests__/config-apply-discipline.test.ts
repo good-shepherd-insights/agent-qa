@@ -54,7 +54,7 @@
 //                        human-first discipline holds only when configDir IS the repository root.
 
 import { spawnSync } from 'node:child_process'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -101,6 +101,7 @@ import {
   createConfigValidatePort,
 } from '../local-agent-host.js'
 import type { GitApplyExec } from '../local-agent-host.js'
+import * as hostModule from '../local-agent-host.js'
 
 const HUMAN: FunctionCaller = {
   surface: 'test',
@@ -991,5 +992,98 @@ describe('the config dir is NOT the repository root (395-11 · CR-03)', () => {
     expect(filesIn('HEAD~1')).toEqual(['sub/dir/agent-qa.config.yaml'])
     expect(filesIn('HEAD')).toEqual(['sub/dir/agent-qa.config.yaml'])
     expect(trackedPaths().filter((path) => path.includes('sub/dir/sub'))).toEqual([])
+  })
+})
+
+// 2026-09-30, 432-07 D-07: the direct writer beside the discipline above. A person in the middle of
+// something is not refused and nothing is committed for them: their dirty bytes, their staged work
+// and the repository's HEAD stay exactly as they were, and a multi-file publication that stops part
+// way says which files it wrote.
+describe('C432-NO-GIT-COMMIT: the direct writer leaves a person\'s work and history alone', () => {
+  function directPort(): NonNullable<FunctionDeps['configWrite']> {
+    const create = (hostModule as Record<string, unknown>).createConfigWritePort
+    expect(typeof create, 'the direct config writer is exported').toBe('function')
+    return (create as (path: string) => NonNullable<FunctionDeps['configWrite']>)(configPath)
+  }
+
+  function repository(): { head: string; index: string; staged: string; commits: number } {
+    return {
+      head: git('rev-parse', 'HEAD').stdout.trim(),
+      index: git('ls-files', '--stage').stdout,
+      staged: git('diff', '--cached', '--name-status').stdout,
+      commits: commitCount(),
+    }
+  }
+
+  it('a dirty config set member and unrelated staged content are valid; HEAD and the index do not move', async () => {
+    const humanEdit = SEEDED_CONFIG.replace('test: 90m', 'test: 45m')
+    writeFileSync(configPath, humanEdit)
+    writeFileSync(join(root, '.gitignore'), `${SEEDED_GITIGNORE}scratch/\n`)
+    writeFileSync(join(root, 'notes.md'), 'a staged note\n')
+    git('add', '--', 'notes.md')
+    const before = repository()
+
+    const port = directPort()
+    expect((await port.applyFields({
+      changes: [{ op: 'set', path: ['use', 'timeout', 'step'], value: '45s' }],
+    })).kind).toBe('applied')
+    expect(await port.publishFiles({
+      files: [{
+        path: '.gitignore',
+        baseDigest: sha256hexBytes(utf8Encode(`${SEEDED_GITIGNORE}scratch/\n`)),
+        bytes: utf8Encode(`${SEEDED_GITIGNORE}scratch/\nnode_modules/\n`),
+      }],
+    })).toEqual({ kind: 'published', written: ['.gitignore'] })
+
+    expect(repository()).toEqual(before)
+    expect(before.staged).toBe('M\tnotes.md\n')
+    expect(readFileSync(configPath, 'utf8')).toBe(humanEdit.replace('step: 30s', 'step: 45s'))
+    expect(porcelain().sort()).toEqual(['M .gitignore', 'M agent-qa.config.yaml', 'M  notes.md'].sort())
+  })
+
+  it('at sub/dir the direct writer publishes the configDir-relative member and commits nothing', async () => {
+    seedSubdirLayout()
+    const before = repository()
+
+    const outcome = await directPort().applyFields({
+      changes: [{ op: 'set', path: ['use', 'timeout', 'step'], value: '45s' }],
+    })
+
+    expect(outcome).toMatchObject({ kind: 'applied', file: 'agent-qa.config.yaml' })
+    expect(repository()).toEqual(before)
+    expect(porcelain()).toEqual(['M sub/dir/agent-qa.config.yaml'])
+    expect(trackedPaths().filter((path) => path.includes('sub/dir/sub'))).toEqual([])
+  })
+
+  it('a two-file publication whose second write fails keeps the first, names both, and commits nothing', async () => {
+    const before = repository()
+    const locked = join(root, 'locked')
+    mkdirSync(locked)
+    chmodSync(locked, 0o555)
+    let outcome: unknown
+    try {
+      outcome = await directPort().publishFiles({
+        files: [
+          {
+            path: '.gitignore',
+            baseDigest: sha256hexBytes(utf8Encode(SEEDED_GITIGNORE)),
+            bytes: utf8Encode(`${SEEDED_GITIGNORE}node_modules/\n`),
+          },
+          { path: 'locked/hooks.yaml', bytes: utf8Encode('hooks: []\n') },
+        ],
+      })
+    } finally {
+      chmodSync(locked, 0o755)
+    }
+
+    expect(outcome).toMatchObject({
+      kind: 'interrupted',
+      written: ['.gitignore'],
+      failed: { path: 'locked/hooks.yaml', reason: 'write-failed' },
+      unwritten: [],
+    })
+    expect(readFileSync(join(root, '.gitignore'), 'utf8')).toBe(`${SEEDED_GITIGNORE}node_modules/\n`)
+    expect(existsSync(join(locked, 'hooks.yaml'))).toBe(false)
+    expect(repository()).toEqual(before)
   })
 })
