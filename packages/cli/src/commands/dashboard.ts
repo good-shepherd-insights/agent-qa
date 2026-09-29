@@ -671,8 +671,8 @@ export interface DashboardDoorInput {
    *
    * PASSED STRAIGHT THROUGH to `composeCliLocalAgent`, on the same rule as `runBridge` and
    * `liveView` above — this composer decides nothing about it and constructs no database. Absent,
-   * `composeCliLocalAgent` binds the project's runs database reader whenever the config names one;
-   * a read before that file exists answers not recorded.
+   * `composeCliLocalAgent` binds a reader over the configured or default runs database path whenever
+   * the config parses; a read before that file exists answers not recorded in the runs database.
    */
   readonly runDetail?: ComposeCliLocalAgentInput['runDetail']
 }

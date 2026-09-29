@@ -1921,8 +1921,9 @@ export interface ComposeLocalAgentInput {
    * through from the host — this composition decides nothing about it and constructs no database.
    *
    * OPTIONAL because a host may have no projection to read, and then `runs.detail` lists `unbound`
-   * BY NAME. The CLI host binds the project's runs database reader whenever its config names one
-   * (a read before that file exists answers not recorded); the dashboard passes its own handle.
+   * BY NAME. The CLI host binds a reader over the configured or default runs database path whenever
+   * its config parses (a read before that file exists answers not recorded in the runs database);
+   * the dashboard passes its own handle.
    */
   readonly runDetail?: RunDetailReaderPort
   /**

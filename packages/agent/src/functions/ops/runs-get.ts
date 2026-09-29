@@ -26,11 +26,19 @@ export const RUNS_GET_FUNCTION_ID = 'runs.get'
  * distinguishable from a run that exists and recorded no member tests.
  */
 export class RunNotFoundError extends Error {
-  constructor(readonly runId: string) {
-    super(`No completed run recorded for id: ${runId}`)
+  constructor(readonly runId: string, where = '') {
+    super(`No completed run recorded for id: ${runId}${where}`)
     this.name = 'RunNotFoundError'
   }
 }
+
+/**
+ * Where `runs.detail` and `runs.evidence` looked. A run `runs.list` lists can still be missing
+ * there, because only a run recorded with the dashboard reporter or by `agent-qa dashboard` is.
+ */
+export const IN_RUNS_DATABASE = ' in the runs database, which holds only runs recorded with the dashboard '
+  + 'reporter or by agent-qa dashboard'
+
 
 function toRunTestDetail(
   test: PerTestOutcome,

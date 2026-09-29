@@ -8,7 +8,7 @@ import type {
 } from '@vostride/agent-qa-schema'
 import { FunctionNotBoundError } from '../spec.js'
 import type { FunctionSpec } from '../spec.js'
-import { RunNotFoundError } from './runs-get.js'
+import { IN_RUNS_DATABASE, RunNotFoundError } from './runs-get.js'
 
 export const RUNS_EVIDENCE_FUNCTION_ID = 'runs.evidence'
 
@@ -72,7 +72,7 @@ export const runsEvidenceSpec: FunctionSpec<RunsEvidenceInput, RunsEvidenceResul
     })
     let rows: RunDetailRows | undefined
     try { rows = await detail.read(address.runId) } catch { return error('storage-read-failed') }
-    if (rows === undefined) throw new RunNotFoundError(String(address.runId))
+    if (rows === undefined) throw new RunNotFoundError(String(address.runId), IN_RUNS_DATABASE)
     if (rows.runId !== address.runId) return error('ref-not-owned')
     const steps = rows.steps.filter(row => row.testIndex === address.testIndex && row.stepIndex === address.stepIndex)
     if (steps.length === 0) return error('address-not-found')

@@ -783,11 +783,11 @@ describe('agent-qa fn (generic function invoker)', () => {
       // 405-05 D-12/D-13: BOUND here: a run's evidence blobs live under the runtime root EVERY
       // local host has.
       'runs.artifact': { requiredScopes: ['read'], resultKind: 'unary', bindingStatus: 'bound' },
-      // 431-15: bound — this host binds the project's runs database reader whenever the config names one; a read before that file exists answers not recorded.
+      // 431-15: bound — this host binds a reader over the configured or default runs database path whenever the config parses; a read before that file exists answers not recorded in it.
       'runs.detail': { requiredScopes: ['read'], resultKind: 'unary', bindingStatus: 'bound' },
       'runs.digest': { requiredScopes: ['read'], resultKind: 'unary', bindingStatus: 'bound' },
       'runs.events': { requiredScopes: ['read'], resultKind: 'stream', bindingStatus: 'bound' },
-      // 431-15: bound — this host binds the project's runs database reader whenever the config names one; a read before that file exists answers not recorded.
+      // 431-15: bound — this host binds a reader over the configured or default runs database path whenever the config parses; a read before that file exists answers not recorded in it.
       'runs.evidence': { requiredScopes: ['read'], resultKind: 'unary', bindingStatus: 'bound' },
       'runs.get': { requiredScopes: ['read'], resultKind: 'unary', bindingStatus: 'bound' },
       // 407-01 D-05: `bound` rather than `unbound`, and that is the row worth reading. The op
@@ -800,7 +800,7 @@ describe('agent-qa fn (generic function invoker)', () => {
       'runs.mark.preview': { requiredScopes: ['read'], resultKind: 'unary', bindingStatus: 'bound' },
       // 423 D-19: bound through the CLI's dedicated read host, read-tier beside the writer.
       'runs.marks.history': { requiredScopes: ['read'], resultKind: 'unary', bindingStatus: 'bound' },
-      // 431-15: bound — this host binds the project's runs database reader whenever the config names one; a read before that file exists answers not recorded.
+      // 431-15: bound — this host binds a reader over the configured or default runs database path whenever the config parses; a read before that file exists answers not recorded in it.
       'runs.overview': { requiredScopes: ['read'], resultKind: 'unary', bindingStatus: 'bound' },
       // 403 D-03: UNBOUND from this composition, and that is the honest answer rather than an
       // oversight. `runs.liveurl` mints a viewing credential for a LIVE run, so it binds only where

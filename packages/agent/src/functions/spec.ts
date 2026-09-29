@@ -977,7 +977,7 @@ export interface PostProcessingReaderPort {
  * wearing a correct one's clothes.
  */
 export interface RunDetailReaderPort {
-  /** One run's projected rows, or `undefined` when no such run is recorded. */
+  /** One run's projected rows, or `undefined` when the runs database holds no such run or does not exist yet. */
   read(runId: RunId): Promise<RunDetailRows | undefined>
 }
 
@@ -1170,8 +1170,8 @@ export interface FunctionDeps {
    * 405 D-03: the durable run-detail projection read. See {@link RunDetailReaderPort} — absent
    * means this host owns no dashboard projection database, and `runs.detail` refuses BY NAME
    * rather than answering an empty run about a projection it cannot observe. The CLI host binds it
-   * whenever its config names a runs database (a read before that file exists answers not
-   * recorded); the dashboard passes its own handle.
+   * over the configured or default runs database path whenever its config parses (a read before
+   * that file exists answers not recorded in the runs database); the dashboard passes its own handle.
    */
   runDetail?: RunDetailReaderPort
   /**

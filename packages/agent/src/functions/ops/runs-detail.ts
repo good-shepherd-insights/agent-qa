@@ -36,7 +36,7 @@ import type {
 import { FunctionNotBoundError } from '../spec.js'
 import type { ClauseVerdict, EvidenceBlobReaderPort, FunctionSpec } from '../spec.js'
 import { annotatePresence } from './evidence-presence.js'
-import { RunNotFoundError } from './runs-get.js'
+import { IN_RUNS_DATABASE, RunNotFoundError } from './runs-get.js'
 
 /**
  * All lowercase and two segments, because D-15's id taxonomy is pinned as
@@ -178,7 +178,7 @@ export const runsDetailSpec: FunctionSpec<RunsDetailInput, RunDetailProjection> 
     // answer — which is how a page ends up rendering "unknown run" and "run not found" from the
     // same door depending on which read it tried first.
     if (rows === undefined) {
-      throw new RunNotFoundError(String(input.runId))
+      throw new RunNotFoundError(String(input.runId), IN_RUNS_DATABASE)
     }
 
     // 419 D-11/D-15: the ledger is append-only; only its latest ordinal per member/step
