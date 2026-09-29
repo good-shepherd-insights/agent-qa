@@ -377,6 +377,14 @@ describe('CLI-RUN-READ-PARITY: runs list, overview and knowledge', () => {
     }
     const visible = json(await cli(project.configPath, ['runs', 'list', '--test', 'LOGIN AS', '--json']))
     expect((visible as { runId: string }[]).map((row) => row.runId)).toEqual([runId])
+
+    rmSync(join(project.root, '.env.secrets.local'))
+    const unmaskable = await cli(project.configPath, ['runs', 'list', '--test', 'LOGIN AS', '--json'])
+    expect(unmaskable.exitCode).toBe(1)
+    expect(unmaskable.stdout).toBe('')
+    expect(unmaskable.stderr).toMatch(/masking sources could not be loaded[\s\S]*filter by test id/)
+    const byId = json(await cli(project.configPath, ['runs', 'list', '--test', 't-login', '--json']))
+    expect((byId as { runId: string }[]).map((row) => row.runId)).toEqual([runId])
   })
 
   it.each([

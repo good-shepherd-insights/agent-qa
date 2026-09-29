@@ -249,7 +249,8 @@ describe('LIST-ROWS: every row names all of its tests', () => {
     setActiveMaskingContextResolver(() => undefined)
     const [cold] = await reader.list({})
     expect(cold!.tests[0]!.testName).toBe(maskedMarker('secret'))
-    expect(await reader.list({ test: 'login' })).toEqual([])
+    await expect(reader.list({ test: 'login' }))
+      .rejects.toThrow(/masking sources could not be loaded[\s\S]*filter by test id/)
     expect((await reader.list({ test: 't-login' })).map((listed) => listed.runId)).toEqual(['run-secret'])
   })
 
