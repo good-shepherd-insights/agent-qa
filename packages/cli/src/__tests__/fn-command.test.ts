@@ -780,22 +780,15 @@ describe('agent-qa fn (generic function invoker)', () => {
       },
       // 391 D-16: BOUND on every local host, through the same proposals-inbox dep the four
       // `proposals.` verbs use. Read-tier, so it survives safe mode.
-      // 405 D-03: UNBOUND from this composition, and that is the honest answer rather than an
-      // oversight — the same shape `runs.liveurl` carries below and for the same kind of reason.
-      // The run-detail projection lives in the dashboard's SQLite database, which only
-      // `agent-qa dashboard` holds; a plain CLI host has handoff documents and no projection at
-      // all, so it says so BY NAME rather than answering an empty run.
-      // 405-05 D-12/D-13: BOUND here, and the CONTRAST with `runs.detail` one line down is the
-      // point rather than an inconsistency. Both are 405 reads about one run, and they bind in
-      // different places because they read different things: a run's projected step tree lives in
-      // a dashboard database only `agent-qa dashboard` holds, while its evidence blobs live under
-      // the runtime root EVERY local host has. So a plain CLI host can resolve a ref and cannot
-      // render a step tree, and it says exactly that.
+      // 405-05 D-12/D-13: BOUND here: a run's evidence blobs live under the runtime root EVERY
+      // local host has.
       'runs.artifact': { requiredScopes: ['read'], resultKind: 'unary', bindingStatus: 'bound' },
-      'runs.detail': { requiredScopes: ['read'], resultKind: 'unary', bindingStatus: 'unbound' },
+      // 431-15: bound — this host binds the project's runs database reader whenever the config names one; a read before that file exists answers not recorded.
+      'runs.detail': { requiredScopes: ['read'], resultKind: 'unary', bindingStatus: 'bound' },
       'runs.digest': { requiredScopes: ['read'], resultKind: 'unary', bindingStatus: 'bound' },
       'runs.events': { requiredScopes: ['read'], resultKind: 'stream', bindingStatus: 'bound' },
-      'runs.evidence': { requiredScopes: ['read'], resultKind: 'unary', bindingStatus: 'unbound' },
+      // 431-15: bound — this host binds the project's runs database reader whenever the config names one; a read before that file exists answers not recorded.
+      'runs.evidence': { requiredScopes: ['read'], resultKind: 'unary', bindingStatus: 'bound' },
       'runs.get': { requiredScopes: ['read'], resultKind: 'unary', bindingStatus: 'bound' },
       // 407-01 D-05: `bound` rather than `unbound`, and that is the row worth reading. The op
       // declares no optional-dep binding key — its substrate is the REQUIRED runs port — so unlike
@@ -807,9 +800,8 @@ describe('agent-qa fn (generic function invoker)', () => {
       'runs.mark.preview': { requiredScopes: ['read'], resultKind: 'unary', bindingStatus: 'bound' },
       // 423 D-19: bound through the CLI's dedicated read host, read-tier beside the writer.
       'runs.marks.history': { requiredScopes: ['read'], resultKind: 'unary', bindingStatus: 'bound' },
-      // 431 D-06: UNBOUND here on runs.detail's reasoning — both bind through `runDetail`, which only
-      // a composition owning the dashboard projection supplies.
-      'runs.overview': { requiredScopes: ['read'], resultKind: 'unary', bindingStatus: 'unbound' },
+      // 431-15: bound — this host binds the project's runs database reader whenever the config names one; a read before that file exists answers not recorded.
+      'runs.overview': { requiredScopes: ['read'], resultKind: 'unary', bindingStatus: 'bound' },
       // 403 D-03: UNBOUND from this composition, and that is the honest answer rather than an
       // oversight. `runs.liveurl` mints a viewing credential for a LIVE run, so it binds only where
       // a live-view port exists — `agent-qa dashboard`'s `composeLiveView`. A CLI host with no

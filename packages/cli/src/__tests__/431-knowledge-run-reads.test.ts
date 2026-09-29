@@ -947,17 +947,19 @@ describe('BUILT-CLI-RUN-READS: the shipped binary answers the run reads', () => 
     }
   }, 120_000)
 
-  it('leaves overview and evidence documents unbound, creating no database, when the project has none', async () => {
+  it('answers overview and refuses evidence documents by run, creating no database, when the project has none', async () => {
     const p = populatedProject()
     for (const suffix of ['', '-wal', '-shm']) rmSync(`${p.dbPath}${suffix}`, { force: true })
     const overview = await spawnCollecting(p.root, [CLI_ENTRY, '--config', p.configPath, 'runs', 'overview', p.runId, '--json'])
-    expect(overview.code).toBe(1)
-    expect(overview.stdout).toBe('')
-    expect(overview.stderr).toContain('not bound')
+    expect(overview.code, overview.stderr).toBe(0)
+    expect(overview.stderr).not.toContain('not bound')
+    expect((JSON.parse(overview.stdout) as { tests: { steps: { capture: { state: string } }[] }[] })
+      .tests[0]!.steps[0]!.capture.state).toBe('unavailable')
     const document = await spawnCollecting(p.root, [CLI_ENTRY, '--config', p.configPath, 'runs', 'evidence', p.runId,
       '--test', '0', '--step', '0', '--kind', 'console', '--json'])
     expect(document.code).toBe(1)
-    expect(document.stderr).toContain('not bound')
+    expect(document.stderr).toContain('No completed run recorded for id')
+    expect(document.stderr).not.toContain('not bound')
     expect(readdirSync(p.agentQaRoot).filter((name) => name.startsWith('runs.db'))).toEqual([])
   }, 60_000)
 

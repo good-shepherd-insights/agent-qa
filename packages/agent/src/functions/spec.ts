@@ -1170,7 +1170,8 @@ export interface FunctionDeps {
    * 405 D-03: the durable run-detail projection read. See {@link RunDetailReaderPort} — absent
    * means this host owns no dashboard projection database, and `runs.detail` refuses BY NAME
    * rather than answering an empty run about a projection it cannot observe. The CLI host binds it
-   * over the project's runs database when that file exists; the dashboard binds its own handle.
+   * whenever its config names a runs database (a read before that file exists answers not
+   * recorded); the dashboard passes its own handle.
    */
   runDetail?: RunDetailReaderPort
   /**

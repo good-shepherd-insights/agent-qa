@@ -670,9 +670,9 @@ export interface DashboardDoorInput {
    * 405 D-03: the durable run-detail projection read `runs.detail` binds through.
    *
    * PASSED STRAIGHT THROUGH to `composeCliLocalAgent`, on the same rule as `runBridge` and
-   * `liveView` above — this composer decides nothing about it and constructs no database. Absent
-   * (the conformance suite's posture, and any door composed without a dashboard database) lists
-   * `runs.detail` `unbound` BY NAME.
+   * `liveView` above — this composer decides nothing about it and constructs no database. Absent,
+   * `composeCliLocalAgent` binds the project's runs database reader whenever the config names one;
+   * a read before that file exists answers not recorded.
    */
   readonly runDetail?: ComposeCliLocalAgentInput['runDetail']
 }

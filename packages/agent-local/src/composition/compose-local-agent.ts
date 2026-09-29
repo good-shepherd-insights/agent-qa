@@ -1920,9 +1920,9 @@ export interface ComposeLocalAgentInput {
    * 405 D-03: the durable run-detail projection read `runs.detail` binds through, handed straight
    * through from the host — this composition decides nothing about it and constructs no database.
    *
-   * OPTIONAL because the absence is a genuine host fact: a project with no runs database has no
-   * projection to read, so `runs.detail` lists `unbound` BY NAME. The CLI host supplies a reader
-   * over the project's runs database when that file exists, and the dashboard over its own handle.
+   * OPTIONAL because a host may have no projection to read, and then `runs.detail` lists `unbound`
+   * BY NAME. The CLI host binds the project's runs database reader whenever its config names one
+   * (a read before that file exists answers not recorded); the dashboard passes its own handle.
    */
   readonly runDetail?: RunDetailReaderPort
   /**
