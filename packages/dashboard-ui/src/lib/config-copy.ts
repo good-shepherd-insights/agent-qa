@@ -723,8 +723,11 @@ export const TARGET_ENVIRONMENT_LABELS = {
 
 export const TARGET_ENVIRONMENT_PLACEHOLDER = 'Not declared'
 
-/** The add-target row's choice for a target that declares no environment. */
-export const TARGET_ENVIRONMENT_UNDECLARED_LABEL = 'Undeclared'
+/** The add-target row's environment choices: undeclared first, then the declared classes. */
+export const TARGET_ENVIRONMENT_CHOICE_LABELS = {
+  undeclared: 'Undeclared',
+  ...TARGET_ENVIRONMENT_LABELS,
+} as const satisfies Record<'undeclared' | 'local' | 'shared' | 'production', string>
 
 /** One line under each add-target environment choice. */
 export const TARGET_ENVIRONMENT_HINTS = {

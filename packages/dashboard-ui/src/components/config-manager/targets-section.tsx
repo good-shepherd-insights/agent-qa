@@ -35,10 +35,10 @@ import {
   NO_TARGETS_TEXT,
   TARGET_APP_PATH_ERROR,
   TARGET_APP_SUMMARY_PREFIX,
+  TARGET_ENVIRONMENT_CHOICE_LABELS,
   TARGET_ENVIRONMENT_HINTS,
   TARGET_ENVIRONMENT_LABELS,
   TARGET_ENVIRONMENT_PLACEHOLDER,
-  TARGET_ENVIRONMENT_UNDECLARED_LABEL,
   TARGET_FIELD_LABELS,
   TARGET_NAME_FORMAT_ERROR,
   TARGET_NAME_REQUIRED_ERROR,
@@ -83,12 +83,7 @@ const ENVIRONMENT_OPTIONS = (Object.keys(TARGET_ENVIRONMENT_LABELS) as TargetEnv
   (value) => ({ value, label: TARGET_ENVIRONMENT_LABELS[value] }),
 )
 // The add row's choices: undeclared first, stored as the draft's empty string.
-const ENVIRONMENT_CHOICES = ["undeclared", ...(Object.keys(TARGET_ENVIRONMENT_LABELS) as TargetEnvironment[])] as const
-type EnvironmentChoice = (typeof ENVIRONMENT_CHOICES)[number]
-const ENVIRONMENT_CHOICE_LABELS: Record<EnvironmentChoice, string> = {
-  undeclared: TARGET_ENVIRONMENT_UNDECLARED_LABEL,
-  ...TARGET_ENVIRONMENT_LABELS,
-}
+const ENVIRONMENT_CHOICES = Object.keys(TARGET_ENVIRONMENT_CHOICE_LABELS) as (keyof typeof TARGET_ENVIRONMENT_CHOICE_LABELS)[]
 
 function isEnvironment(value: string): value is TargetEnvironment {
   return value in TARGET_ENVIRONMENT_LABELS
@@ -474,7 +469,7 @@ function AddTargetRow({ initial, takenNames, onHold, onDiscard, onAdded }: AddTa
               <Label key={choice} htmlFor={itemId} data-environment-choice={choice} className="items-start font-normal">
                 <RadioGroupItem id={itemId} value={choice} aria-describedby={hintId} className="mt-0.5" />
                 <span className="min-w-0 space-y-1">
-                  <span className="block text-sm font-medium leading-normal">{ENVIRONMENT_CHOICE_LABELS[choice]}</span>
+                  <span className="block text-sm font-medium leading-normal">{TARGET_ENVIRONMENT_CHOICE_LABELS[choice]}</span>
                   <span id={hintId} className="block text-xs text-muted-foreground break-words">
                     {TARGET_ENVIRONMENT_HINTS[choice]}
                   </span>

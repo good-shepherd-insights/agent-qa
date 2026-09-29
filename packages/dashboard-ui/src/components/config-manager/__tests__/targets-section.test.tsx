@@ -30,9 +30,9 @@ import {
   NO_TARGETS_TEXT,
   SAVE_SETTING_LABEL,
   SETTLE_DELAY_MS,
+  TARGET_ENVIRONMENT_CHOICE_LABELS,
   TARGET_ENVIRONMENT_HINTS,
   TARGET_ENVIRONMENT_LABELS,
-  TARGET_ENVIRONMENT_UNDECLARED_LABEL,
   TARGET_FIELD_LABELS,
   TARGET_URL_REQUIRED_ERROR,
   deleteActionName,
@@ -406,12 +406,8 @@ describe('TargetsSection and DevicesSection (429-22 Task 1)', () => {
     expect(group!.querySelector('legend')?.textContent).toBe(TARGET_FIELD_LABELS.environment)
 
     const choices = ['undeclared', 'local', 'shared', 'production'] as const
-    const labels = {
-      undeclared: TARGET_ENVIRONMENT_UNDECLARED_LABEL,
-      local: TARGET_ENVIRONMENT_LABELS.local,
-      shared: TARGET_ENVIRONMENT_LABELS.shared,
-      production: TARGET_ENVIRONMENT_LABELS.production,
-    }
+    const labels = TARGET_ENVIRONMENT_CHOICE_LABELS
+    expect(labels.undeclared).toBe('Undeclared')
     expect(Array.from(group!.querySelectorAll('[data-environment-choice]')).map((item) =>
       item.getAttribute('data-environment-choice'))).toEqual([...choices])
     for (const choice of choices) {
