@@ -1,8 +1,9 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { isCanonicalRunId } from '@vostride/agent-qa-ids'
-import { existsSync, mkdtempSync, rmSync } from 'node:fs'
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { DatabaseSync } from 'node:sqlite'
 import { DashboardDatabase, runSqliteMigrations } from '../db/database.js'
 import { createDashboardSqliteDatabase } from '../db/sqlite.js'
 import { SCHEMA_VERSION, MIGRATIONS } from '../db/schema.js'
@@ -37,6 +38,20 @@ function columnNames(tableName: string): string[] {
 }
 
 describe('DashboardDatabase', () => {
+  it('closes the connection it opened when the file is not a database, so a retried open leaks nothing', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'agent-qa-db-open-failure-'))
+    const close = vi.spyOn(DatabaseSync.prototype, 'close')
+    try {
+      const dbPath = join(dir, 'runs.db')
+      writeFileSync(dbPath, 'not a database\n')
+      expect(() => new DashboardDatabase({ dbPath })).toThrow(/not a database/)
+      expect(close).toHaveBeenCalledTimes(1)
+    } finally {
+      close.mockRestore()
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
   it('SUITE-DURATION-READ projects complete member work for detail and paginated lists without rewriting history', () => {
     const durations = [31631.826750000007, 38765.66812499997, 35742.61929200002]
     const id = insertSampleRun({ duration: durations[2], parallel: true })
