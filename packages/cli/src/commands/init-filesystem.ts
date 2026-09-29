@@ -1218,8 +1218,8 @@ export function preflightManagedBlock(plan: ManagedBlockUpsertPlan): InitPreflig
  *
  * Cooperative writers serialize per target on an exclusively created sibling lock. Under it the
  * target is classified and read again, composed, and published through `writeScaffoldFileAtomic`,
- * so a failure leaves either the prior file or the complete new one. A replacement keeps the
- * target's permission bits and refuses if the target changed since it was read. An existing lock refuses
+ * so a failure leaves either the prior file or the complete new one. A replacement takes the
+ * writer's default mode and refuses if the target changed since it was read. An existing lock refuses
  * with `ManagedBlockLockRefusal`; only a lock this call created (same inode) is removed, and it
  * never touches a temporary it did not create.
  */
@@ -1236,8 +1236,10 @@ export function upsertManagedBlock(
     const { existing, candidate, read } = composeManagedBlockTarget(path, inspection, plan.content)
     if (candidate === existing) return { path, outcome: 'preserved' }
     if (read === undefined) return writeScaffoldFileAtomic({ path, root, content: candidate }, hooks)
+    // No `mode`: the owner-only path removes the destination when its post-rename confirmation
+    // fails, which would delete a concurrent save. The file takes the writer's default mode.
     return writeScaffoldFileAtomic(
-      { path, root, content: candidate, force: true, mode: inspection.permissions },
+      { path, root, content: candidate, force: true },
       {
         ...hooks,
         beforeAtomicReplacePublish: (target) => {
