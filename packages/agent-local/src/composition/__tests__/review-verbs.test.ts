@@ -10,7 +10,7 @@
 // takes the writer lease and really reaches the Curator's `commit()`, and the store is really
 // re-read afterwards.
 
-import { mkdtempSync, rmSync } from 'node:fs'
+import { existsSync, mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -21,8 +21,10 @@ import {
 } from '@vostride/agent-qa-agent'
 import type { EntityDirectoryPort, FunctionRegistry } from '@vostride/agent-qa-agent'
 import {
+  acquireWriterLease,
   appendGrantLedgerEvents,
   createStandingApprovalReader,
+  releaseLease,
   publishBundleForTest,
   type BundleStoreConfig,
 } from '@vostride/agent-qa-knowledge-local'
@@ -371,6 +373,141 @@ describe('the mutating review verbs bind, refuse and commit by name', () => {
     expect(after.card.id).toBe(address)
     expect(after.card.status).toBe('tombstoned')
     expect(after.card.status).not.toBe('active')
+  })
+
+  // ---- 432-12 (D-04/D-05/D-09): the direct change, bound over the explicit writer ---------------
+
+  const EXECUTION_CONTEXTS = ['local-interactive', 'local-headless', 'ci', 'cloud'] as const
+
+  /** The same composition, with the context and delegation a host would hand it. */
+  function directRegistry(
+    context: (typeof EXECUTION_CONTEXTS)[number],
+    extra: Record<string, unknown> = {},
+  ): FunctionRegistry {
+    return createFunctionRegistry({
+      deps: {
+        runs: createRunsReader(agentQaRoot),
+        knowledge: createKnowledgeReader(() => knowledgeRoot),
+        config: { getMasked: () => Promise.resolve(MASKED_CONFIG) },
+        entities: STUB_ENTITIES,
+        knowledgeReview: createKnowledgeReview({
+          agentQaRoot,
+          resolveKnowledgeRoot: () => knowledgeRoot,
+          resolveExecutionContext: () => context,
+          ...extra,
+        } as Parameters<typeof createKnowledgeReview>[0]),
+      },
+      auditSink: { appendExecutionAudit() {}, appendGuardrailAudit() {} } as never,
+      resolveExecutionContext: () => context,
+    })
+  }
+
+  async function settle(call: Promise<unknown>): Promise<{ value?: unknown; error?: unknown }> {
+    try {
+      return { value: await call }
+    } catch (error) {
+      return { error }
+    }
+  }
+
+  it('C432-KNOWLEDGE-DIRECT-BINDING: forget applies through the direct writer in all four contexts, filing nothing', async () => {
+    for (const context of EXECUTION_CONTEXTS) {
+      rmSync(root, { recursive: true, force: true })
+      const recordId = publish()
+      const host = directRegistry(context)
+
+      const outcome = await settle(invokeFunction(
+        host, 'knowledge.forget', { target: { grain: 'record', recordId } }, CALLER,
+      ))
+
+      expect(outcome.error, `forget in ${context}`).toBeUndefined()
+      expect(outcome.value, context).toMatchObject({
+        outcome: 'applied', verb: 'forget', recordIds: [recordId],
+        forgetReceipt: { resultingBundleStatus: 'tombstoned' },
+      })
+      expect(await statuses(host), context).toEqual(['deprecated'])
+      // No envelope, claim or inbox: the change is the call.
+      expect(existsSync(join(agentQaRoot, 'proposals')), context).toBe(false)
+    }
+  })
+
+  it('C432-KNOWLEDGE-DIRECT-BINDING: reject deprecates in the call and accept answers the records it changed', async () => {
+    const rejected = publish()
+    const host = directRegistry('ci')
+    const reject = await settle(invokeFunction(host, 'knowledge.reject', {
+      target: { grain: 'record', recordId: rejected }, reason: 'the button moved',
+    }, CALLER))
+    expect(reject.error).toBeUndefined()
+    expect(reject.value).toMatchObject({ outcome: 'applied', verb: 'reject', recordIds: [rejected] })
+    expect(await statuses(host)).toEqual(['deprecated'])
+
+    const missing = await settle(invokeFunction(host, 'knowledge.accept', {
+      target: { grain: 'record', recordId: 'rec-not-in-this-store' },
+    }, CALLER))
+    expect(missing.value).toMatchObject({
+      outcome: 'target-not-found',
+      target: { grain: 'record', recordId: 'rec-not-in-this-store' },
+    })
+    expect(existsSync(join(agentQaRoot, 'proposals'))).toBe(false)
+  })
+
+  it('C432-KNOWLEDGE-DIRECT-BINDING: a retried identity lands once and answers the same records', async () => {
+    const recordId = publish()
+    const host = directRegistry('local-headless')
+    const operationId = '0b6e3c1d-9a24-4f5e-8c71-2d4f6a8b0c13'
+    const input = { target: { grain: 'record', recordId }, operationId }
+
+    const first = await settle(invokeFunction(host, 'knowledge.forget', input, CALLER))
+    const retry = await settle(invokeFunction(host, 'knowledge.forget', input, CALLER))
+
+    expect(first.error).toBeUndefined()
+    expect(retry.error).toBeUndefined()
+    expect(first.value).toMatchObject({ outcome: 'applied', operationId, recordIds: [recordId] })
+    expect((retry.value as { recordIds?: unknown }).recordIds)
+      .toEqual((first.value as { recordIds?: unknown }).recordIds)
+    expect(await statuses(host)).toEqual(['deprecated'])
+  })
+
+  it('C432-KNOWLEDGE-DIRECT-BINDING: a held lease hands the current writer the direct request, with no claimed file', async () => {
+    const recordId = publish()
+    const lease = acquireWriterLease(knowledgeRoot)
+    if (lease.kind !== 'acquired') throw new Error(`fixture lease not acquired: ${lease.kind}`)
+    try {
+      const delegated: unknown[] = []
+      const operationId = 'c6a1e2f3-4b5d-4e6f-8a7b-9c0d1e2f3a4b'
+      const host = directRegistry('local-interactive', {
+        knowledgeChangeDelegate: (delegation: unknown) => {
+          delegated.push(delegation)
+          return Promise.resolve({
+            outcome: 'applied', verb: 'reject', changeId: `prop_${operationId}`, recordIds: [recordId],
+          })
+        },
+      })
+
+      const outcome = await settle(invokeFunction(host, 'knowledge.reject', {
+        target: { grain: 'record', recordId }, reason: 'stale', operationId,
+      }, CALLER))
+
+      expect(outcome.error).toBeUndefined()
+      expect(delegated).toEqual([{
+        request: { verb: 'reject', input: { target: { grain: 'record', recordId }, reason: 'stale' } },
+        operationId,
+      }])
+      expect(outcome.value).toEqual({
+        outcome: 'applied', verb: 'reject', operationId, recordIds: [recordId],
+      })
+      // The holder commits, not this host: nothing moved here and nothing was filed or claimed.
+      expect(await statuses(host)).toEqual(['candidate'])
+      expect(existsSync(join(agentQaRoot, 'proposals'))).toBe(false)
+
+      // With no delegate, a held lease refuses by name and is never stolen.
+      const undelegated = await settle(invokeFunction(directRegistry('local-interactive'),
+        'knowledge.reject', { target: { grain: 'record', recordId }, reason: 'stale' }, CALLER))
+      expect((undelegated.error as Error | undefined)?.name).toBe('ApplyDelegateUnavailableError')
+      expect(await statuses(host)).toEqual(['candidate'])
+    } finally {
+      releaseLease({ knowledgeRoot, leaseId: lease.leaseId })
+    }
   })
 
   it('answers a typed not-found through the function layer, never a throw', async () => {

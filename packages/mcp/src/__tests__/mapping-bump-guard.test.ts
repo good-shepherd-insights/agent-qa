@@ -706,3 +706,112 @@ describe('423-21 feedback read tools (D-18)', () => {
     expect(declarationsById.get('runs.evidence')?.requiredScopes).toEqual(['read'])
   })
 })
+
+// 2026-09-30 (432-12, D-05/D-02): the catalogue after the apply round is gone. The two change tools
+// are renamed and write in the call; the four proposal apply/list/show tools and the config undo
+// arm leave, with no alias. Their ops are dispositioned on the unprojected side until 432-17
+// deletes them from the registry.
+const TWENTY_TOOL_NAMES: readonly string[] = [
+  'agent_qa_change_config',
+  'agent_qa_change_knowledge',
+  'agent_qa_diff_knowledge_records',
+  'agent_qa_explain_brief',
+  'agent_qa_get_entity',
+  'agent_qa_get_run_digest',
+  'agent_qa_get_run_evidence',
+  'agent_qa_get_run_knowledge',
+  'agent_qa_get_run_marks',
+  'agent_qa_get_run_overview',
+  'agent_qa_inspect_knowledge_records',
+  'agent_qa_list_knowledge_bundles',
+  'agent_qa_list_knowledge_gates',
+  'agent_qa_list_runs',
+  'agent_qa_mark_run',
+  'agent_qa_preview_run_mark',
+  'agent_qa_refine_test',
+  'agent_qa_show_knowledge_record',
+  'agent_qa_start_run',
+  'agent_qa_write_test',
+]
+
+const RETIRED_TOOL_NAMES: readonly string[] = [
+  'agent_qa_apply_config_proposal',
+  'agent_qa_apply_proposal',
+  'agent_qa_list_proposals',
+  'agent_qa_propose_config_change',
+  'agent_qa_propose_knowledge_change',
+  'agent_qa_show_proposal',
+]
+
+describe('C432-MCP-TWENTY-TOOLS: twenty tools, the change tools renamed, no proposal round', () => {
+  it('C432-MCP-TWENTY-TOOLS: declares exactly twenty tools by name, and none of the retired names', () => {
+    const names = AGENT_QA_TOOL_PROJECTIONS.map((projection) => projection.name).sort()
+    expect(names).toEqual([...TWENTY_TOOL_NAMES])
+    expect(names).toHaveLength(20)
+    for (const retired of RETIRED_TOOL_NAMES) expect(names, retired).not.toContain(retired)
+    // No retired name comes back as a v1 redirect target either: the rename is not an alias.
+    for (const entry of V1_TOOL_MIGRATION_MAP) {
+      if (entry.v2Tool !== undefined) expect(RETIRED_TOOL_NAMES, entry.v1Name).not.toContain(entry.v2Tool)
+    }
+  })
+
+  it('C432-MCP-TWENTY-TOOLS: the change tools fold the direct ops, and no tool projects an apply or proposal op', () => {
+    const byName = new Map(AGENT_QA_TOOL_PROJECTIONS.map((projection) => [projection.name, projection]))
+    expect(byName.get('agent_qa_change_knowledge')).toMatchObject({
+      ops: ['knowledge.accept', 'knowledge.reject', 'knowledge.forget'], kind: 'workflow',
+    })
+    expect(byName.get('agent_qa_change_config')).toMatchObject({
+      ops: [
+        'config.field.set', 'config.target.create', 'config.target.edit',
+        'config.auth.set', 'config.hook.add', 'config.project.scaffold',
+      ],
+      kind: 'workflow',
+    })
+    const projected = projectedOpIds()
+    for (const opId of [
+      'config.undo.propose', 'config.proposal.apply', 'knowledge.proposal.apply',
+      'proposals.list', 'proposals.show', 'proposals.accept', 'proposals.reject',
+    ]) expect(projected, opId).not.toContain(opId)
+    expect(projected.filter((opId) => opId.endsWith('.propose'))).toEqual([])
+    // The mark door is the only `apply` kind left, and it has no confirmation envelope.
+    expect(AGENT_QA_TOOL_PROJECTIONS.filter((p) => p.kind === 'apply').map((p) => p.name))
+      .toEqual(['agent_qa_mark_run'])
+  })
+})
+
+describe('C432-RUNTIME-SETS: the actual registry partition after the cutover', () => {
+  it('C432-RUNTIME-SETS: 53 registered ops, 30 projected by twenty tools, 23 dispositioned', () => {
+    const registryIds = declarations().map((declaration) => declaration.id).sort()
+    const projected = [...projectedOpIds()].sort()
+    const unprojected = UNPROJECTED_OPS.map((entry) => entry.opId).sort()
+    expect(registryIds).toHaveLength(53)
+    expect(projected).toHaveLength(30)
+    expect(unprojected).toEqual([
+      'agent.ask',
+      'agent.explain',
+      'analysis.get',
+      'authoring.funnel.get',
+      'config.get',
+      'config.proposal.apply',
+      'config.undo.propose',
+      'editor.liveurl',
+      'grants.list',
+      'grants.revoke',
+      'knowledge.proposal.apply',
+      'proposals.accept',
+      'proposals.list',
+      'proposals.reject',
+      'proposals.show',
+      'quarantine.add',
+      'quarantine.list',
+      'quarantine.release',
+      'runs.detail',
+      'runs.events',
+      'runs.get',
+      'runs.liveurl',
+      'runs.postprocessing',
+    ])
+    expect([...projected, ...unprojected].sort()).toEqual(registryIds)
+    expect(registryIds.filter((id) => id.endsWith('.propose') && id.startsWith('knowledge.'))).toEqual([])
+  })
+})

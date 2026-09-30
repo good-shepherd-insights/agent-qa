@@ -26,7 +26,7 @@ import { describe, expect, it } from 'vitest'
 import { z } from 'zod'
 
 import { FunctionNotBoundError, invokeFunction } from '../invoke.js'
-import { createRegistryFromSpecs, resolveBindingStatus } from '../registry.js'
+import { createFunctionRegistry, createRegistryFromSpecs, resolveBindingStatus } from '../registry.js'
 import type { FunctionDeps, FunctionSpec, KnowledgeReviewPort } from '../spec.js'
 import { knowledgeProposalApplySpec } from '../ops/knowledge-proposal-apply.js'
 
@@ -176,6 +176,51 @@ describe('the knowledgeReview optional dep', () => {
     // disagreement between a listing and a dispatch that one shared `resolveBindingStatus`
     // exists to make impossible.
     expect(await invokeFunction(registry, FIXTURE_ID, {}, CALLER)).toBe('reached-the-port')
+  })
+
+  // 432-12 (D-05): the three knowledge changes bind through the SAME optional dep, and reach its
+  // direct member. A host with no write port lists them unbound by name and refuses them by name.
+  it('C432-KNOWLEDGE-DIRECT-BINDING: the three changes are unbound without the port and reach its direct change with it', async () => {
+    const reached: unknown[] = []
+    const directPort = {
+      propose: () => Promise.reject(new Error('a direct change never proposes')),
+      apply: () => Promise.reject(new Error('a direct change never applies a proposal')),
+      change: (request: { verb: string }) => {
+        reached.push(request)
+        return Promise.resolve({
+          outcome: 'applied', verb: request.verb,
+          operationId: '1e2d3c4b-5a69-4786-9504-a3b2c1d0e9f8', recordIds: ['rec-1'],
+        })
+      },
+    } as unknown as KnowledgeReviewPort
+    const writer: FunctionCaller = { ...CALLER, grantedScopes: ['read', 'knowledge-write'] }
+    const sink = capturingSink()
+    const readOnly = createFunctionRegistry({ deps: deps(), auditSink: sink, resolveExecutionContext: CONTEXT })
+    const bound = createFunctionRegistry({
+      deps: deps({ knowledgeReview: directPort }), auditSink: sink, resolveExecutionContext: CONTEXT,
+    })
+    const inputs = {
+      'knowledge.accept': { target: { grain: 'record', recordId: 'rec-1' } },
+      'knowledge.reject': { target: { grain: 'record', recordId: 'rec-1' }, reason: 'wrong' },
+      'knowledge.forget': { target: { grain: 'record', recordId: 'rec-1' } },
+    } as const
+
+    for (const [id, input] of Object.entries(inputs)) {
+      const listedReadOnly = readOnly.list(writer).find((row) => row.id === id)
+      const listedBound = bound.list(writer).find((row) => row.id === id)
+      expect(listedReadOnly?.bindingStatus, `${id} without a port`).toBe('unbound')
+      expect(listedBound?.bindingStatus, `${id} with a port`).toBe('bound')
+
+      const refused = await invokeFunction(readOnly, id, input, writer).then(
+        () => undefined, (thrown: unknown) => thrown,
+      )
+      expect(refused, id).toBeInstanceOf(FunctionNotBoundError)
+      const answered = await invokeFunction(bound, id, input, writer).then(
+        (value) => value, (thrown: unknown) => thrown,
+      )
+      expect(answered, id).toMatchObject({ outcome: 'applied', verb: id.split('.')[1] })
+    }
+    expect(reached.map((request) => (request as { verb: string }).verb)).toEqual(['accept', 'reject', 'forget'])
   })
 
   it('answers the binding question the same way for a listing and for a dispatch', () => {
