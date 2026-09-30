@@ -71,6 +71,7 @@ import { fileURLToPath } from 'node:url'
 import { createFunctionRegistry, invokeFunction } from '@vostride/agent-qa-agent'
 import type { FunctionDeps } from '@vostride/agent-qa-agent'
 import { AgentQaConfigSchema } from '@vostride/agent-qa-core'
+import * as dashboard from '@vostride/agent-qa-dashboard'
 import {
   createProposalsInbox,
   mintProposalId,
@@ -104,6 +105,7 @@ import {
   createConfigValidatePort,
   createScaffoldContentPort,
 } from '../local-agent-host.js'
+import * as host from '../local-agent-host.js'
 import { HN_TOP_STORY_HOOK_ID, buildScaffoldFileSet } from '../../commands/scaffold-content.js'
 
 const HUMAN: FunctionCaller = {
@@ -1138,5 +1140,133 @@ describe('C432-SCAFFOLD-LLMS: the scaffold keeps the model registry and its sele
       expect(Object.hasOwn(config.registry ?? {}, 'llms')).toBe(false)
       expect(Object.hasOwn(config.use ?? {}, 'llm')).toBe(false)
       expect(AgentQaConfigSchema.safeParse(config).success).toBe(true)
+    })
+})
+
+// ---- 432-11 D-05/D-07: the scaffold publishes every file in the call, and says what happened ---
+//
+// C432-CONFIG-SIX-OPS          through the real ports and the real direct writer: a from-zero
+//                              scaffold writes .gitignore, the config and the hooks file before it
+//                              answers, commits nothing and files nothing.
+// C432-CONFIG-MULTIFILE-TRUTH  a file that changes between the preflight and its own turn stops the
+//                              publication there: the answer names the file already written, the one
+//                              that refused and the one never reached, and the disk agrees.
+
+let directFiled = 0
+
+function directRegistry() {
+  const deps = {
+    runs: {
+      list: () => Promise.resolve([]),
+      get: () => Promise.resolve(undefined),
+      readEvents: () => Promise.resolve([]),
+      readStepEvidence: () => Promise.resolve({ kind: 'run-not-recorded' } as const),
+    },
+    config: {
+      getMasked: () => Promise.resolve({
+        schemaVersion: MASKED_RESOLVED_CONFIG_SCHEMA_VERSION,
+        configPath: CONFIG_FILE,
+        entries: [],
+      }),
+    },
+    configFiles: createConfigFilesPort(configPath),
+    configValidate: createConfigValidatePort(),
+    configScan: { scan: (parts: Parameters<typeof scanConstructedArtifact>[0]) => scanConstructedArtifact(parts, {}) },
+    scaffoldContent: createScaffoldContentPort(),
+    configWrite: (host as Record<string, unknown>).createConfigWritePort === undefined
+      ? undefined
+      : ((host as Record<string, unknown>).createConfigWritePort as (path: string) => unknown)(configPath),
+    configProposals: {
+      put: () => {
+        directFiled += 1
+        return Promise.resolve({ proposalId: `prop-direct-${directFiled}` })
+      },
+    },
+  } as unknown as FunctionDeps
+  return createFunctionRegistry({
+    deps,
+    auditSink: { appendExecutionAudit() {}, appendGuardrailAudit() {} },
+    resolveExecutionContext: () => 'local-interactive',
+  })
+}
+
+async function waitUntil(condition: () => boolean): Promise<boolean> {
+  const deadline = Date.now() + 5_000
+  while (!condition()) {
+    if (Date.now() > deadline) return false
+    await new Promise((resolve) => setTimeout(resolve, 5))
+  }
+  return true
+}
+
+describe('C432-CONFIG-SIX-OPS: the scaffold writes every file before it answers', () => {
+  it('C432-CONFIG-SIX-OPS: a from-zero scaffold publishes three files, commits nothing and files nothing',
+    async () => {
+      const before = commitCount()
+      const answer = await invokeFunction(
+        directRegistry(), 'config.project.scaffold', { domain: 'booking.com' }, HUMAN,
+      ) as Record<string, unknown>
+
+      expect(answer).toMatchObject({
+        outcome: 'applied',
+        files: ['.gitignore', CONFIG_FILE, 'hooks.yaml'],
+      })
+      expect(commitCount()).toBe(before)
+      expect(directFiled).toBe(0)
+      expect(readFileSync(join(root, '.gitignore'), 'utf8').startsWith(SEEDED_GITIGNORE)).toBe(true)
+      expect(AgentQaConfigSchema.safeParse(parseYaml(readFileSync(configPath, 'utf8'))).success).toBe(true)
+      expect(readFileSync(join(root, 'hooks.yaml'), 'utf8')).toContain(HN_TOP_STORY_HOOK_ID)
+      expect(existsSync(join(agentQaRoot, 'proposals'))).toBe(false)
+    })
+})
+
+describe('C432-CONFIG-MULTIFILE-TRUTH: a partial publication reports exactly what it wrote', () => {
+  it('C432-CONFIG-MULTIFILE-TRUTH: the config changing in its turn stops the scaffold after .gitignore',
+    async () => {
+      const serialize = (dashboard as Record<string, unknown>).serializeConfigWrite as
+        | (<T>(path: string, work: () => Promise<T>) => Promise<T>)
+        | undefined
+      expect(typeof serialize, 'the per-path config queue is exported').toBe('function')
+      if (serialize === undefined) return
+
+      // Hold the config path's write turn, so the scaffold's config write waits behind it.
+      let release!: () => void
+      let entered!: () => void
+      const holding = new Promise<void>((resolve) => { entered = resolve })
+      const held = serialize(configPath, () => new Promise<void>((resolve) => {
+        release = resolve
+        entered()
+      }))
+      await holding
+
+      const pending = invokeFunction(
+        directRegistry(), 'config.project.scaffold', { domain: 'booking.com' }, HUMAN,
+      ) as Promise<Record<string, unknown>>
+      let answeredEarly = false
+      void pending.then(() => { answeredEarly = true }, () => { answeredEarly = true })
+      const gitignoreWritten = await waitUntil(() =>
+        answeredEarly || readFileSync(join(root, '.gitignore'), 'utf8') !== SEEDED_GITIGNORE)
+      expect(gitignoreWritten && !answeredEarly, 'the scaffold wrote .gitignore and is waiting its turn')
+        .toBe(true)
+
+      // Somebody writes a config while the scaffold waits for that file's turn.
+      const outside = 'workspace:\n  hooksFile: hooks.yaml\n'
+      writeFileSync(configPath, outside)
+      release()
+      await held
+
+      const answer = await pending
+      expect(answer).toMatchObject({
+        outcome: 'interrupted',
+        written: ['.gitignore'],
+        failed: { path: CONFIG_FILE, reason: 'file-changed' },
+        unwritten: ['hooks.yaml'],
+      })
+      // The disk agrees with the answer, file by file, and nothing was rolled back or invented.
+      expect(readFileSync(join(root, '.gitignore'), 'utf8').startsWith(SEEDED_GITIGNORE)).toBe(true)
+      expect(readFileSync(join(root, '.gitignore'), 'utf8')).not.toBe(SEEDED_GITIGNORE)
+      expect(readFileSync(configPath, 'utf8')).toBe(outside)
+      expect(existsSync(join(root, 'hooks.yaml'))).toBe(false)
+      expect(existsSync(join(agentQaRoot, 'proposals'))).toBe(false)
     })
 })

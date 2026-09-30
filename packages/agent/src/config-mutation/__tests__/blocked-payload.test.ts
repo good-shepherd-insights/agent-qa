@@ -74,3 +74,60 @@ describe('applyablePayload — the funnel every config apply passes through', ()
     expect(applyablePayload(applyable)).toBe(applyable)
   })
 })
+
+// ---- 432-11 D-05: the direct answer is its own contract ---------------------------------------
+//
+// C432-CONFIG-BLOCKED-NO-WRITE  the blocked arm of the direct answer carries the report and no
+//                               record reference; a stored proposal payload is not a direct answer.
+// C432-CONFIG-APPLIED-OUTPUT    the applied arm requires the files and fields that were written.
+
+describe('C432-CONFIG-BLOCKED-NO-WRITE: the direct answer names no record', () => {
+  it('C432-CONFIG-BLOCKED-NO-WRITE: a blocked answer parses without a proposal id and refuses one', async () => {
+    const schema = await import('@vostride/agent-qa-schema') as Record<string, unknown>
+    const contract = schema.ConfigChangeOutputSchema as
+      | { safeParse(value: unknown): { success: boolean } }
+      | undefined
+    expect(contract, 'the direct config answer is exported beside the proposal one').toBeDefined()
+    if (contract === undefined) return
+
+    const report = {
+      outcome: 'blocked',
+      summaryLine: 'set registry.providers.farm.accessKey — blocked: the proposed change would write a secret',
+      blockedReason: 'guardrail-hit',
+      paths: ['agent-qa.config.yaml'],
+      scanFindings: blocked.payloadKind === 'blocked' ? blocked.scanFindings : [],
+    }
+    expect(contract.safeParse(report).success).toBe(true)
+    expect(contract.safeParse({ ...report, proposalId: 'prop-1' }).success).toBe(false)
+    // A stored payload of either arm is not an answer an operation can give.
+    expect(contract.safeParse(blocked).success).toBe(false)
+    expect(contract.safeParse(applyable).success).toBe(false)
+  })
+})
+
+describe('C432-CONFIG-APPLIED-OUTPUT: the applied answer names what was written', () => {
+  it('C432-CONFIG-APPLIED-OUTPUT: files and fields are required and non-empty', async () => {
+    const schema = await import('@vostride/agent-qa-schema') as Record<string, unknown>
+    const contract = schema.ConfigChangeOutputSchema as
+      | { safeParse(value: unknown): { success: boolean } }
+      | undefined
+    expect(contract, 'the direct config answer is exported beside the proposal one').toBeDefined()
+    if (contract === undefined) return
+
+    const applied = {
+      outcome: 'applied',
+      summaryLine: 'set use.parallel to true',
+      files: ['agent-qa.config.yaml'],
+      fields: ['use.parallel'],
+      crossBoundary: false,
+      crossBoundaryReasons: [],
+      shownDiff: '--- a/agent-qa.config.yaml\n+++ b/agent-qa.config.yaml\n@@ -1 +1 @@\n-  parallel: false\n+  parallel: true\n',
+    }
+    expect(contract.safeParse(applied).success).toBe(true)
+    expect(contract.safeParse({ ...applied, files: [] }).success).toBe(false)
+    expect(contract.safeParse({ ...applied, fields: [] }).success).toBe(false)
+    const { files: _files, ...withoutFiles } = applied
+    expect(contract.safeParse(withoutFiles).success).toBe(false)
+    expect(contract.safeParse({ ...applied, outcome: 'proposed', proposalId: 'prop-1' }).success).toBe(false)
+  })
+})

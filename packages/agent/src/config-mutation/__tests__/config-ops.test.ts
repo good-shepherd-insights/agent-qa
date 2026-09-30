@@ -34,8 +34,12 @@
 //                          pipeline that validated, diffed or scanned "the config" fails here while
 //                          passing every other describe.
 
+import { createHash } from 'node:crypto'
+
 import { isSecretAdjacentConfigField, utf8Decode, utf8Encode } from '@vostride/agent-qa-schema'
 import type {
+  ConfigChange,
+  ConfigChangeOutput,
   ConfigProposalV1,
   ConfigProposeOutput,
   FunctionCaller,
@@ -46,10 +50,17 @@ import { describe, expect, it } from 'vitest'
 import { Document as YamlDocument, isMap, isScalar, isSeq, parseDocument } from 'yaml'
 
 import { invokeFunction } from '../../functions/invoke.js'
+import { configProjectScaffoldSpec } from '../../functions/ops/config-project-scaffold.js'
 import { createFunctionRegistry } from '../../functions/registry.js'
 import type { FunctionDeps } from '../../functions/spec.js'
 import { configFieldSetSummaryLine } from '../construct.js'
-import type { ConfigPathFacts, ConfigStructuredValue } from '../ports.js'
+import type {
+  ConfigFieldWriteOutcome,
+  ConfigFilePublication,
+  ConfigFilePublishOutcome,
+  ConfigPathFacts,
+  ConfigStructuredValue,
+} from '../ports.js'
 
 const CONFIG_FILE = 'agent-qa.config.yaml'
 const HOOKS_FILE = 'hooks.yaml'
@@ -117,10 +128,20 @@ interface Validated {
   readonly files: readonly { path: string; text?: string }[]
 }
 
+/** One call the direct writer received: field changes, or whole files with their base digests. */
+type Written =
+  | { readonly kind: 'fields'; readonly changes: readonly ConfigChange[] }
+  | {
+    readonly kind: 'files'
+    readonly files: readonly { path: string; baseDigest?: string; text: string }[]
+  }
+
 interface Harness {
   readonly deps: FunctionDeps
   readonly filed: Filed[]
   readonly validated: Validated[]
+  /** Every call the direct writer (`configWrite`) received, in order. */
+  readonly written: Written[]
   scans: () => number
 }
 
@@ -135,17 +156,22 @@ interface Harness {
  * validator handed only the config yaml would return `ok` for a hooks file full of nonsense.
  */
 function harness(options: {
-  readonly config?: string
+  readonly config?: string | null
   readonly hooks?: string | undefined
   readonly seeds?: MaskingSeedSources
+  /** What the direct writer answers for whole files; published in full when absent. */
+  readonly publish?: (paths: readonly string[]) => ConfigFilePublishOutcome
+  /** What the direct writer answers for field changes; applied to the config file when absent. */
+  readonly applyFields?: () => ConfigFieldWriteOutcome
 } = {}): Harness {
   const bytes = new Map<string, Uint8Array | undefined>([
-    [CONFIG_FILE, utf8Encode(options.config ?? CONFIG)],
+    [CONFIG_FILE, options.config === null ? undefined : utf8Encode(options.config ?? CONFIG)],
     [HOOKS_FILE, options.hooks === undefined ? undefined : utf8Encode(options.hooks)],
     ['.gitignore', utf8Encode('.agent-qa/\n')],
   ])
   const filed: Filed[] = []
   const validated: Validated[] = []
+  const written: Written[] = []
   let scanCount = 0
 
   const documentFor = (input?: Uint8Array): YamlDocument =>
@@ -237,9 +263,60 @@ function harness(options: {
         return scanConstructedArtifact(parts, options.seeds ?? {})
       },
     },
+    // 432-11: the direct writer. It records what it was handed and answers as the host port does;
+    // what the host does with those changes is measured against real files in `cli`.
+    configWrite: {
+      applyFields: ({ changes }: { changes: readonly ConfigChange[] }) => {
+        written.push({ kind: 'fields', changes })
+        return Promise.resolve(options.applyFields?.() ?? {
+          kind: 'applied' as const,
+          file: CONFIG_FILE,
+          revision: 'revision-after',
+          baseRevision: 'revision-before',
+        })
+      },
+      publishFiles: ({ files }: { files: readonly ConfigFilePublication[] }) => {
+        written.push({
+          kind: 'files',
+          files: files.map((file) => ({
+            path: file.path,
+            ...(file.baseDigest === undefined ? {} : { baseDigest: file.baseDigest }),
+            text: utf8Decode(file.bytes),
+          })),
+        })
+        const paths = files.map((file) => file.path)
+        return Promise.resolve(options.publish?.(paths) ?? { kind: 'published' as const, written: paths })
+      },
+    },
+    // The scaffold's content, as the host producer renders it: a config, a hooks file and the
+    // managed .gitignore block appended to what the project already has.
+    scaffoldContent: {
+      render: (input: { targetName: string; baseUrl: string; existingGitignore?: Uint8Array }) =>
+        Promise.resolve([
+          {
+            path: CONFIG_FILE,
+            bytes: utf8Encode(
+              `registry:\n  targets:\n    ${input.targetName}:\n      platform: web\n`
+              + `      url: ${input.baseUrl}\n`,
+            ),
+          },
+          { path: HOOKS_FILE, bytes: utf8Encode('hooks: []\n') },
+          {
+            path: '.gitignore',
+            bytes: utf8Encode(
+              `${input.existingGitignore === undefined ? '' : utf8Decode(input.existingGitignore)}`
+              + '.agent-qa/cache/\n',
+            ),
+          },
+        ]),
+    },
   } as unknown as FunctionDeps
 
-  return { deps, filed, validated, scans: () => scanCount }
+  return { deps, filed, validated, written, scans: () => scanCount }
+}
+
+function sha256(text: string): string {
+  return createHash('sha256').update(text).digest('hex')
 }
 
 function registryFor(test: Harness) {
@@ -840,4 +917,315 @@ describe('the config action class is CLOSED, and the registry is where that is l
     }
     expect(test.filed).toHaveLength(0)
   })
+})
+
+// ---- 432-11 D-05/D-07: every config operation writes in the call that asked for it ------------
+//
+// C432-CONFIG-THREE-OPS     config.field.set, config.target.create and config.target.edit hand
+//                           their field changes to the direct writer and answer what it wrote.
+// C432-CONFIG-SIX-OPS       config.auth.set, config.hook.add and config.project.scaffold do too:
+//                           the auth binding as field changes, the hooks file and the scaffold as
+//                           whole files carrying the digest they were built from.
+// C432-CONFIG-MULTIFILE-TRUTH a publication that fails part way reports exactly the files already
+//                           written, the one that failed and the ones never reached.
+//
+// Nothing reaches the proposal store on any of these roads.
+
+async function change(test: Harness, id: string, input: unknown): Promise<ConfigChangeOutput> {
+  return await invokeFunction(registryFor(test), id, input, CALLER) as ConfigChangeOutput
+}
+
+function addedLines(diff: string): string[] {
+  return diff.split('\n').filter((line) => line.startsWith('+') && !line.startsWith('+++'))
+}
+
+describe('C432-CONFIG-THREE-OPS: field, target create and target edit write in the call', () => {
+  it('C432-CONFIG-THREE-OPS: config.field.set writes the field and answers what it changed', async () => {
+    const test = harness()
+    const answer = await change(test, 'config.field.set', { path: 'use.parallel', value: true })
+
+    expect(answer).toMatchObject({
+      outcome: 'applied',
+      summaryLine: configFieldSetSummaryLine('use.parallel', true),
+      files: [CONFIG_FILE],
+      fields: ['use.parallel'],
+    })
+    expect(answer).not.toHaveProperty('proposalId')
+    expect(test.written).toEqual([
+      { kind: 'fields', changes: [{ op: 'set', path: ['use', 'parallel'], value: true }] },
+    ])
+    if (answer.outcome !== 'applied') throw new Error('unreachable')
+    expect(addedLines(answer.shownDiff)).toEqual(['+  parallel: true'])
+    expect(test.filed).toHaveLength(0)
+  })
+
+  it('C432-CONFIG-THREE-OPS: config.target.create writes the entry only while the name is still free',
+    async () => {
+      const test = harness()
+      const answer = await change(test, 'config.target.create', {
+        name: 'basket',
+        platform: 'web',
+        url: 'https://basket.example.com',
+        environment: 'production',
+        authStateName: 'basket-default',
+      })
+
+      expect(answer).toMatchObject({
+        outcome: 'applied',
+        files: [CONFIG_FILE],
+        fields: [
+          'registry.targets.basket.platform',
+          'registry.targets.basket.url',
+          'registry.targets.basket.environment',
+          'use.authState',
+        ],
+      })
+      // The expect comes first, so a target someone else created meanwhile refuses the write
+      // rather than being replaced by it.
+      expect(test.written).toEqual([{
+        kind: 'fields',
+        changes: [
+          { op: 'expect', path: ['registry', 'targets', 'basket'], value: null },
+          {
+            op: 'set',
+            path: ['registry', 'targets', 'basket'],
+            value: { platform: 'web', url: 'https://basket.example.com', environment: 'production' },
+          },
+          { op: 'set', path: ['use', 'authState'], value: 'basket-default' },
+        ],
+      }])
+      expect(test.filed).toHaveLength(0)
+    })
+
+  it('C432-CONFIG-THREE-OPS: config.target.edit writes the changed url and nothing else', async () => {
+    const test = harness()
+    const answer = await change(test, 'config.target.edit', {
+      name: 'shop',
+      changes: { url: 'https://shop.example.com/basket' },
+    })
+
+    expect(answer).toMatchObject({
+      outcome: 'applied',
+      files: [CONFIG_FILE],
+      fields: ['registry.targets.shop.url'],
+    })
+    expect(test.written).toEqual([{
+      kind: 'fields',
+      changes: [
+        { op: 'set', path: ['registry', 'targets', 'shop', 'url'], value: 'https://shop.example.com/basket' },
+      ],
+    }])
+    expect(test.filed).toHaveLength(0)
+  })
+
+  it('C432-CONFIG-THREE-OPS: a request refusal writes nothing and files nothing', async () => {
+    const collision = harness()
+    const refused = await change(collision, 'config.target.create', {
+      name: 'shop',
+      platform: 'web',
+      url: 'https://shop.example.com',
+    })
+    expect(refused).toMatchObject({ outcome: 'refused', reason: 'target-exists' })
+
+    const missing = harness()
+    const notFound = await change(missing, 'config.target.edit', {
+      name: 'shpo',
+      changes: { url: 'https://shop.example.com/basket' },
+    })
+    expect(notFound).toMatchObject({ outcome: 'refused', reason: 'target-not-found', candidates: ['shop'] })
+
+    for (const test of [collision, missing]) {
+      expect(test.written).toEqual([])
+      expect(test.filed).toEqual([])
+    }
+  })
+
+  it('C432-CONFIG-THREE-OPS: the same value twice is no change, and the writer is not called', async () => {
+    const test = harness()
+    const answer = await change(test, 'config.field.set', { path: 'use.parallel', value: false })
+    expect(answer).toEqual({ outcome: 'no-change', path: 'set use.parallel' })
+    expect(test.written).toEqual([])
+    expect(test.filed).toEqual([])
+  })
+
+  it('C432-CONFIG-THREE-OPS: a create the transaction refuses answers the refusal and claims nothing',
+    async () => {
+      // The name was free when the call read the file and taken by the time the write took its
+      // turn: the transaction's expect refuses, and the answer says the file moved.
+      const test = harness({
+        applyFields: () => ({
+          kind: 'refused',
+          file: CONFIG_FILE,
+          error: 'field_changed',
+          path: ['registry', 'targets', 'basket'],
+        }),
+      })
+      const answer = await change(test, 'config.target.create', {
+        name: 'basket',
+        platform: 'web',
+        url: 'https://basket.example.com',
+      })
+      expect(answer).toMatchObject({ outcome: 'refused', reason: 'field-changed' })
+      if (answer.outcome !== 'refused') throw new Error('unreachable')
+      expect(answer.detail).toContain('registry.targets.basket')
+      expect(answer.detail).toContain('nothing was written')
+      expect(test.filed).toEqual([])
+    })
+})
+
+describe('C432-CONFIG-SIX-OPS: auth, hook and scaffold write in the call as well', () => {
+  it('C432-CONFIG-SIX-OPS: config.auth.set binds the state and appends the plugin as field changes',
+    async () => {
+      const test = harness()
+      const answer = await change(test, 'config.auth.set', {
+        target: 'shop',
+        authStateName: 'shop-default',
+        pluginPackage: '@acme/auth',
+      })
+
+      expect(answer).toMatchObject({
+        outcome: 'applied',
+        files: [CONFIG_FILE],
+        fields: ['use.authState', 'plugins.auth.0.package'],
+        crossBoundaryReasons: ['secret-adjacent-field'],
+      })
+      expect(test.written).toEqual([{
+        kind: 'fields',
+        changes: [
+          { op: 'set', path: ['use', 'authState'], value: 'shop-default' },
+          { op: 'append', path: ['plugins', 'auth'], value: { package: '@acme/auth' } },
+        ],
+      }])
+      expect(test.filed).toHaveLength(0)
+    })
+
+  it('C432-CONFIG-SIX-OPS: config.auth.set refuses a credential before anything is written', async () => {
+    const test = harness()
+    const answer = await change(test, 'config.auth.set', {
+      target: 'shop',
+      authStateName: 'AKIAQWERTYUIOPASDFGH',
+    })
+    expect(answer).toMatchObject({ outcome: 'refused', reason: 'refs-only' })
+    expect(test.written).toEqual([])
+  })
+
+  it('C432-CONFIG-SIX-OPS: config.hook.add publishes the hooks file over the bytes it was built from',
+    async () => {
+      const test = harness({ hooks: HOOKS })
+      const answer = await change(test, 'config.hook.add', {
+        name: 'Seed the cart',
+        runtime: 'node',
+        file: 'scripts/seed.mjs',
+      })
+
+      expect(answer).toMatchObject({
+        outcome: 'applied',
+        files: [HOOKS_FILE],
+        crossBoundaryReasons: ['hook-added'],
+      })
+      if (answer.outcome !== 'applied') throw new Error('unreachable')
+      expect(answer.fields).toContain('hooks.1.id')
+      expect(answer.fields).toContain('hooks.1.file')
+
+      expect(test.written).toHaveLength(1)
+      const call = test.written[0]
+      if (call?.kind !== 'files') throw new Error('expected a whole-file publication')
+      expect(call.files.map((file) => file.path)).toEqual([HOOKS_FILE])
+      expect(call.files[0]?.baseDigest).toBe(sha256(HOOKS))
+      // The canonical id is the port's, the committed hook is kept, and the new one follows it.
+      expect(call.files[0]?.text.startsWith(HOOKS)).toBe(true)
+      expect(call.files[0]?.text).toContain(`id: ${MINTED_HOOK_ID}`)
+      expect(test.filed).toHaveLength(0)
+    })
+
+  it('C432-CONFIG-SIX-OPS: a hooks file that does not exist yet is published with no base digest',
+    async () => {
+      const test = harness({ hooks: undefined })
+      const answer = await change(test, 'config.hook.add', {
+        name: 'Seed the cart',
+        runtime: 'bash',
+        file: 'scripts/seed.sh',
+      })
+      expect(answer).toMatchObject({ outcome: 'applied', files: [HOOKS_FILE] })
+      const call = test.written[0]
+      if (call?.kind !== 'files') throw new Error('expected a whole-file publication')
+      expect(call.files[0]).not.toHaveProperty('baseDigest')
+      expect(call.files[0]?.text).toContain('timeout: 30s')
+    })
+
+  it('C432-CONFIG-SIX-OPS: config.project.scaffold publishes every file of the scaffold in one call',
+    async () => {
+      const test = harness({ config: null })
+      const answer = await change(test, 'config.project.scaffold', { domain: 'booking.com' })
+
+      expect(answer).toMatchObject({
+        outcome: 'applied',
+        files: ['.gitignore', CONFIG_FILE, HOOKS_FILE],
+        fields: ['registry.targets.booking.platform', 'registry.targets.booking.url'],
+      })
+      const call = test.written[0]
+      if (call?.kind !== 'files') throw new Error('expected a whole-file publication')
+      // Every file is checked against what the call read: the project's own .gitignore by its
+      // digest, and the two new files by their absence.
+      expect(call.files.map((file) => [file.path, file.baseDigest])).toEqual([
+        ['.gitignore', sha256('.agent-qa/\n')],
+        [CONFIG_FILE, undefined],
+        [HOOKS_FILE, undefined],
+      ])
+      expect(call.files[0]?.text).toBe('.agent-qa/\n.agent-qa/cache/\n')
+      expect(test.written).toHaveLength(1)
+      expect(test.filed).toHaveLength(0)
+    })
+})
+
+describe('C432-CONFIG-MULTIFILE-TRUTH: a partial publication is reported as exactly what happened', () => {
+  it('C432-CONFIG-MULTIFILE-TRUTH: a failure after the first file names the written, failed and unreached files',
+    async () => {
+      const test = harness({
+        config: null,
+        publish: (paths) => ({
+          kind: 'interrupted',
+          written: [paths[0]!],
+          failed: { path: paths[1]!, reason: 'write-failed', message: 'EACCES' },
+          unwritten: paths.slice(2),
+        }),
+      })
+      const answer = await change(test, 'config.project.scaffold', { domain: 'booking.com' })
+
+      expect(answer).toMatchObject({
+        outcome: 'interrupted',
+        written: ['.gitignore'],
+        failed: { path: CONFIG_FILE, reason: 'write-failed' },
+        unwritten: [HOOKS_FILE],
+      })
+      if (answer.outcome !== 'interrupted') throw new Error('unreachable')
+      expect(answer.detail).toContain('.gitignore')
+      expect(answer.detail).toContain(CONFIG_FILE)
+      // Nothing claims success: the verdict is a failure and no applied file list exists.
+      expect(answer).not.toHaveProperty('files')
+      expect(configProjectScaffoldSpec.classify(answer).status).toBe('failed')
+      expect(test.filed).toHaveLength(0)
+    })
+
+  it('C432-CONFIG-MULTIFILE-TRUTH: a file that changed before any write refuses and nothing is written',
+    async () => {
+      const test = harness({
+        hooks: HOOKS,
+        publish: (paths) => ({
+          kind: 'refused',
+          reason: 'file-changed',
+          path: paths[0]!,
+          written: [],
+        }),
+      })
+      const answer = await change(test, 'config.hook.add', {
+        name: 'Seed the cart',
+        runtime: 'node',
+        file: 'scripts/seed.mjs',
+      })
+      expect(answer).toMatchObject({ outcome: 'refused', reason: 'file-changed' })
+      if (answer.outcome !== 'refused') throw new Error('unreachable')
+      expect(answer.detail).toContain(HOOKS_FILE)
+      expect(answer.detail).toContain('nothing was written')
+    })
 })

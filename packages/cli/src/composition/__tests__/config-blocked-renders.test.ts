@@ -478,3 +478,66 @@ hooks:
       expect(shown).not.toContain(marker)
     })
 })
+
+// ---- 432-11 D-05: a blocked change is an answer in the call, and nothing is kept ---------------
+//
+// C432-CONFIG-BLOCKED-NO-WRITE  through the production composition: both blocked roads answer the
+//                               report with no record reference, write no proposal file anywhere
+//                               under the runtime root, leave the config byte-for-byte as it was, and
+//                               `proposals list` has nothing to show. A clean change beside it is
+//                               written in the same call.
+
+function proposalFiles(): string[] {
+  const dir = join(agentQaRoot, 'proposals')
+  try {
+    return readdirSync(dir).filter((name) => name.endsWith('.json'))
+  } catch {
+    return []
+  }
+}
+
+describe('C432-CONFIG-BLOCKED-NO-WRITE: a blocked change is refused in the call and leaves no record', () => {
+  it('C432-CONFIG-BLOCKED-NO-WRITE: a guardrail hit answers the report, files nothing and writes nothing',
+    async () => {
+      writeFileSync(configPath, configText({ note: SEEDED_SECRET }))
+      const answer = await propose({ path: 'use.timeout.step', value: '45s' }) as Record<string, unknown>
+
+      expect(answer).toMatchObject({ outcome: 'blocked', blockedReason: 'guardrail-hit' })
+      expect(answer).not.toHaveProperty('proposalId')
+      expect(JSON.stringify(answer)).toContain(SEEDED_FINGERPRINT)
+      for (const window of windows(SEEDED_SECRET)) expect(JSON.stringify(answer)).not.toContain(window)
+
+      expect(proposalFiles()).toEqual([])
+      expect(persistedText(agentQaRoot)).not.toContain('guardrail-hit')
+      expect(readFileSync(configPath, 'utf8')).toBe(configText({ note: SEEDED_SECRET }))
+      expect(await cli(['proposals', 'list'])).not.toContain('blocked')
+    })
+
+  it('C432-CONFIG-BLOCKED-NO-WRITE: a schema failure answers position-only issues and files nothing',
+    async () => {
+      const marker = 'zeta-nine-deploy-marker'
+      writeFileSync(configPath, configText({ note: 'no secret in this file' }))
+      writeFileSync(join(root, HOOKS_FILE), `# project hooks\nhooks:\n  - name: nightly\n    note: ${marker}: oops\n`)
+      const answer = await propose({ path: 'use.timeout.step', value: '45s' }) as Record<string, unknown>
+
+      expect(answer).toMatchObject({ outcome: 'blocked', blockedReason: 'schema-fail' })
+      expect(answer).not.toHaveProperty('proposalId')
+      expect(JSON.stringify(answer)).not.toContain(marker)
+      expect(proposalFiles()).toEqual([])
+      expect(readFileSync(configPath, 'utf8')).toBe(configText({ note: 'no secret in this file' }))
+    })
+
+  it('C432-CONFIG-BLOCKED-NO-WRITE: CONTROL: the same edit on a clean config is written in the call', async () => {
+    writeFileSync(configPath, configText({ note: 'no secret in this file' }))
+    const answer = await propose({ path: 'use.timeout.step', value: '45s' }) as Record<string, unknown>
+
+    expect(answer).toMatchObject({
+      outcome: 'applied',
+      files: [CONFIG_FILE],
+      fields: ['use.timeout.step'],
+    })
+    expect(readFileSync(configPath, 'utf8'))
+      .toBe(configText({ note: 'no secret in this file' }).replace('step: 30s', 'step: 45s'))
+    expect(proposalFiles()).toEqual([])
+  })
+})

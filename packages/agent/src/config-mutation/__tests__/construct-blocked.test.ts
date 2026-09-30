@@ -589,3 +589,134 @@ hooks:
       expect(JSON.stringify(test.filed)).not.toContain(HOOKS_SECRET.slice(0, 8))
     })
 })
+
+// ---- 432-11 D-05/D-07: a blocked construction is an answer, never a record -------------------
+//
+// C432-CONFIG-BLOCKED-NO-WRITE  both blocked roads answer a typed refusal with the same report,
+//                               and nothing reaches the proposal store or the direct writer.
+// C432-CONFIG-APPLIED-OUTPUT    a clean change is written in the call, and the answer names the
+//                               files and fields it changed, validated by the direct contract.
+
+/** The harness above plus a direct writer that records every call it receives. */
+function directHarness(options: Parameters<typeof harness>[0]) {
+  const test = harness(options)
+  const writes: unknown[] = []
+  const deps = {
+    ...test.deps,
+    configWrite: {
+      applyFields: (request: unknown) => {
+        writes.push(request)
+        return Promise.resolve({
+          kind: 'applied' as const,
+          file: CONFIG_FILE,
+          revision: 'revision-after',
+          baseRevision: 'revision-before',
+        })
+      },
+      publishFiles: (request: unknown) => {
+        writes.push(request)
+        return Promise.resolve({ kind: 'published' as const, written: [CONFIG_FILE] })
+      },
+    },
+  } as unknown as FunctionDeps
+  return { test, deps, writes }
+}
+
+describe('C432-CONFIG-BLOCKED-NO-WRITE: a blocked change is refused in the call and nothing is kept', () => {
+  it('C432-CONFIG-BLOCKED-NO-WRITE: schema-fail answers its issues, files no record and writes nothing',
+    async () => {
+      const { test, deps, writes } = directHarness({
+        config: CLEAN_CONFIG,
+        validation: {
+          ok: false,
+          issues: [{ path: CONFIG_FILE, message: 'use.parallel: expected boolean, received string' }],
+        },
+      })
+
+      const answer = await configFieldSetSpec.invoke({ path: 'parallel', value: 'yes please' }, deps)
+
+      expect(answer).toEqual({
+        outcome: 'blocked',
+        summaryLine: 'set parallel — blocked: the resulting configuration is not valid',
+        blockedReason: 'schema-fail',
+        paths: [CONFIG_FILE],
+        validationIssues: [`${CONFIG_FILE}: use.parallel: expected boolean, received string`],
+      })
+      expect(test.filed).toEqual([])
+      expect(writes).toEqual([])
+    })
+
+  it('C432-CONFIG-BLOCKED-NO-WRITE: guardrail-hit answers the fingerprint only, files nothing, writes nothing',
+    async () => {
+      const { test, deps, writes } = directHarness({ config: CLEAN_CONFIG })
+
+      const answer = await configFieldSetSpec.invoke({ path: 'envFile', value: PLANTED }, deps)
+
+      expect(answer).toMatchObject({ outcome: 'blocked', blockedReason: 'guardrail-hit' })
+      expect(answer).not.toHaveProperty('proposalId')
+      const serialized = JSON.stringify(answer)
+      expect(serialized).toContain(PLANTED_FINGERPRINT)
+      for (const window of windows(PLANTED)) expect(serialized).not.toContain(window)
+      expect(test.filed).toEqual([])
+      expect(writes).toEqual([])
+      expect(test.scans()).toBe(2)
+    })
+
+  it('C432-CONFIG-BLOCKED-NO-WRITE: a secret in an unchanged member blocks before validation, still with no record',
+    async () => {
+      const { test, deps, writes } = directHarness({
+        config: CLEAN_CONFIG,
+        hooks: `hooks:\n  - name: deploy\n    token: ${HOOKS_SECRET}\n`,
+      })
+
+      const answer = await configFieldSetSpec.invoke({ path: 'step', value: '45s' }, deps)
+
+      expect(answer).toMatchObject({ outcome: 'blocked', blockedReason: 'guardrail-hit', paths: [HOOKS_FILE] })
+      expect(test.validations()).toBe(0)
+      expect(test.filed).toEqual([])
+      expect(writes).toEqual([])
+    })
+})
+
+describe('C432-CONFIG-APPLIED-OUTPUT: the answer is what was written', () => {
+  it('C432-CONFIG-APPLIED-OUTPUT: a clean change names its file, its field and its diff', async () => {
+    const { test, deps, writes } = directHarness({ config: CLEAN_CONFIG })
+
+    const answer = await configFieldSetSpec.invoke({ path: 'use.timeout.step', value: '45s' }, deps)
+
+    expect(answer).toMatchObject({
+      outcome: 'applied',
+      summaryLine: 'set use.timeout.step to 45s',
+      files: [CONFIG_FILE],
+      fields: ['use.timeout.step'],
+      crossBoundary: false,
+      crossBoundaryReasons: [],
+    })
+    expect(answer).not.toHaveProperty('proposalId')
+    expect((answer as { shownDiff?: string }).shownDiff).toContain('+    step: 45s')
+    expect(writes).toEqual([
+      { changes: [{ op: 'set', path: ['use', 'timeout', 'step'], value: '45s' }] },
+    ])
+    expect(test.filed).toEqual([])
+  })
+
+  it('C432-CONFIG-APPLIED-OUTPUT: the file named is the one the writer reports, not the one the call read',
+    async () => {
+      const { deps } = directHarness({ config: CLEAN_CONFIG })
+      const renamed = {
+        ...deps,
+        configWrite: {
+          ...deps.configWrite,
+          applyFields: () => Promise.resolve({
+            kind: 'applied' as const,
+            file: 'sub/agent-qa.config.yaml',
+            revision: 'revision-after',
+            baseRevision: 'revision-before',
+          }),
+        },
+      } as unknown as FunctionDeps
+
+      const answer = await configFieldSetSpec.invoke({ path: 'use.timeout.step', value: '45s' }, renamed)
+      expect(answer).toMatchObject({ outcome: 'applied', files: ['sub/agent-qa.config.yaml'] })
+    })
+})

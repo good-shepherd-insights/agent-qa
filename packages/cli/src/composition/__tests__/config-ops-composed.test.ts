@@ -21,7 +21,8 @@
 // reads only the config yaml — the state this code was in before 395-05 — and (H1) reds on any id
 // this codebase did not mint, including a hand-formatted `h_` string that looks right.
 
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { spawnSync } from 'node:child_process'
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -40,9 +41,16 @@ import type {
   FunctionCaller,
 } from '@vostride/agent-qa-schema'
 import { scanConstructedArtifact } from '@vostride/agent-qa-safety'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { Command } from 'commander'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { createConfigFilesPort, createConfigValidatePort } from '../local-agent-host.js'
+import { createFnCommand } from '../../commands/fn.js'
+import {
+  CLI_FUNCTION_CALLER,
+  composeCliLocalAgent,
+  createConfigFilesPort,
+  createConfigValidatePort,
+} from '../local-agent-host.js'
 
 const HUMAN: FunctionCaller = {
   surface: 'test',
@@ -333,5 +341,159 @@ describe('the 395-05 actions over the real ports (D-01)', () => {
     expect(payload.files[0]?.changeKind).toBe('add')
     expect(payload.files[0]?.baseDigest).toBeUndefined()
     expect(candidateText()).toContain('timeout: 30s')
+  })
+})
+
+// ---- 432-11 D-05/D-07: all six config operations write in the call, on the real host -----------
+//
+// C432-CONFIG-SIX-OPS  scaffold, target create, target edit, field set, auth set and hook add, in
+//                      one workspace, through the composed CLI host and through `agent-qa fn`.
+//                      Each call changes the files on disk before it answers; nothing is filed as a
+//                      proposal; a dirty repository's HEAD, index and staged work do not move, and a
+//                      directory with no repository is an ordinary workspace.
+
+/** A configuration with a model and no targets, the project a scaffold merges into. */
+const ZERO_TARGET_CONFIG = `# agent-qa Configuration
+workspace:
+  testMatch:
+    - tests/**/*.yaml
+  suiteMatch:
+    - suites/**/*.suite.yaml
+  hooksFile: hooks.yaml
+  envFile: .env
+  secretsFile: .env.secrets.local
+
+registry:
+  llms:
+    - name: judge
+      provider: openai-subscription
+      model: gpt-5.6-terra
+
+use:
+  llm: judge
+  mobile:
+    appState: preserve
+  parallel: false
+`
+
+const SIX_OPS: readonly (readonly [string, Record<string, unknown>])[] = [
+  ['config.project.scaffold', { domain: 'booking.com' }],
+  ['config.target.create', { name: 'basket', platform: 'web', url: 'https://basket.example.com' }],
+  ['config.target.edit', { name: 'basket', changes: { url: 'https://basket.example.com/cart' } }],
+  ['config.field.set', { path: 'use.parallel', value: true }],
+  ['config.auth.set', { target: 'basket', authStateName: 'basket-default' }],
+  ['config.hook.add', { name: 'Seed the cart', runtime: 'node', file: 'scripts/seed.mjs' }],
+]
+
+function gitIn(cwd: string, ...args: string[]): string {
+  const result = spawnSync('git', args, { cwd, encoding: 'utf8' })
+  if (result.error !== undefined) throw result.error
+  if (result.status !== 0) throw new Error(`git ${args.join(' ')} exited ${result.status}: ${result.stderr}`)
+  return result.stdout
+}
+
+function repositorySnapshot(cwd: string) {
+  return {
+    head: gitIn(cwd, 'rev-parse', 'HEAD').trim(),
+    index: gitIn(cwd, 'ls-files', '--stage'),
+    staged: gitIn(cwd, 'diff', '--cached', '--name-status'),
+    commits: gitIn(cwd, 'rev-list', '--count', 'HEAD').trim(),
+  }
+}
+
+async function viaHost(id: string, input: unknown): Promise<Record<string, unknown>> {
+  const composed = composeCliLocalAgent({ agentQaRoot: join(root, '.agent-qa'), configPath })
+  try {
+    return await invokeFunction(composed.registry, id, input, CLI_FUNCTION_CALLER) as Record<string, unknown>
+  } finally {
+    await composed.close()
+  }
+}
+
+async function viaFn(id: string, input: unknown): Promise<Record<string, unknown>> {
+  const stdout: string[] = []
+  const log = vi.spyOn(console, 'log').mockImplementation((...values: unknown[]) => {
+    stdout.push(values.map(String).join(' '))
+  })
+  const error = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+  const priorExit = process.exitCode
+  process.exitCode = undefined
+  try {
+    const program = new Command()
+      .option('--config <path>', 'config file path')
+      .addCommand(createFnCommand())
+    program.exitOverride()
+    await program.parseAsync([
+      'node', 'agent-qa', '--config', configPath, 'fn', id, '--json', '--input', JSON.stringify(input),
+    ])
+    expect(process.exitCode, `${id} exited cleanly`).toBeUndefined()
+    return JSON.parse(stdout.join('\n')) as Record<string, unknown>
+  } finally {
+    process.exitCode = priorExit
+    log.mockRestore()
+    error.mockRestore()
+  }
+}
+
+async function runAllSix(door: typeof viaHost): Promise<void> {
+  for (const [id, input] of SIX_OPS) {
+    const before = readFileSync(configPath, 'utf8')
+    const answer = await door(id, input)
+    expect(answer.outcome, `${id}: ${JSON.stringify(answer)}`).toBe('applied')
+    expect(answer, id).not.toHaveProperty('proposalId')
+    const files = answer.files as string[]
+    expect(files.length, id).toBeGreaterThan(0)
+    // The answer names what is now on disk: a config change moved the config file's bytes.
+    if (files.includes('agent-qa.config.yaml')) {
+      expect(readFileSync(configPath, 'utf8'), id).not.toBe(before)
+    }
+  }
+
+  const config = readFileSync(configPath, 'utf8')
+  expect(config).toContain('booking-com:')
+  expect(config).toContain('url: https://basket.example.com/cart')
+  expect(config).toContain('parallel: true')
+  expect(config).toContain('authState: basket-default')
+  expect(config).toContain('# agent-qa Configuration')
+  const hooks = readFileSync(join(root, 'hooks.yaml'), 'utf8')
+  expect(hooks).toContain('name: Seed the cart')
+  expect(hooks).toContain('name: Fetch first HN story')
+  expect(existsSync(join(root, '.gitignore'))).toBe(true)
+  // No proposal record anywhere under the runtime root.
+  expect(existsSync(join(root, '.agent-qa', 'proposals'))
+    ? readdirSync(join(root, '.agent-qa', 'proposals')).filter((name) => name.endsWith('.json'))
+    : []).toEqual([])
+}
+
+describe('C432-CONFIG-SIX-OPS: every config operation writes in the call through the real host', () => {
+  it('C432-CONFIG-SIX-OPS: all six through the composed host in a dirty repository leave git alone',
+    async () => {
+      writeFileSync(configPath, ZERO_TARGET_CONFIG)
+      gitIn(root, 'init', '--quiet')
+      gitIn(root, 'config', 'user.name', 'agent-qa six ops test')
+      gitIn(root, 'config', 'user.email', 'six-ops-test@example.invalid')
+      gitIn(root, 'config', 'commit.gpgsign', 'false')
+      gitIn(root, 'add', '--', 'agent-qa.config.yaml', 'hooks.yaml')
+      gitIn(root, 'commit', '--quiet', '-m', 'seed')
+      // Dirty: an uncommitted edit to the config and unrelated staged work.
+      writeFileSync(configPath, ZERO_TARGET_CONFIG.replace('  parallel: false', '  # mine\n  parallel: false'))
+      writeFileSync(join(root, 'notes.md'), 'staged by the owner\n')
+      gitIn(root, 'add', '--', 'notes.md')
+      const before = repositorySnapshot(root)
+
+      await runAllSix(viaHost)
+
+      expect(repositorySnapshot(root)).toEqual(before)
+      expect(readFileSync(configPath, 'utf8')).toContain('  # mine\n')
+    })
+
+  it('C432-CONFIG-SIX-OPS: all six through agent-qa fn in a directory with no repository', async () => {
+    writeFileSync(configPath, ZERO_TARGET_CONFIG)
+    expect(spawnSync('git', ['rev-parse', '--git-dir'], { cwd: root, encoding: 'utf8' }).status)
+      .not.toBe(0)
+
+    await runAllSix(viaFn)
+
+    expect(existsSync(join(root, '.git'))).toBe(false)
   })
 })
