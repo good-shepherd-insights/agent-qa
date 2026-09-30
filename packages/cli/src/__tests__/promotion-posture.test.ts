@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { existsSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync, cpSync } from 'node:fs'
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync, cpSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -8,9 +8,8 @@ import { createReplayGatePortForHost } from '../gates/replay-gate-host.js'
 import type { PromotionPostureCandidate, ResolvePromotionPosture } from '@vostride/agent-qa-schema'
 import { asEvidenceToken, evaluatePromotionGate, stampReceiptDigest } from '@vostride/agent-qa-schema'
 import { latestBuildOrdinal, LOCAL_CURATION_CAPABILITIES } from '@vostride/agent-qa-agent-local'
-import { acquireWriterLease, appendGateReceipt, buildGateInconsistencyProposal,
-  createLocalKnowledgeStore, deriveBundleTrust, fileGateInconsistencyProposal, loadBundle,
-  proposalsDir, publishBundleForTest, rejectPendingProposal } from '@vostride/agent-qa-knowledge-local'
+import { acquireWriterLease, appendGateReceipt, createLocalKnowledgeStore, deriveBundleTrust, loadBundle,
+  publishBundleForTest } from '@vostride/agent-qa-knowledge-local'
 import { readCommittedCorpus, readGatePostureFor } from '@vostride/agent-qa-eval-local'
 import { createPanelIdentity } from '@vostride/agent-qa-eval'
 import { resolveEvalSession, resolveGateProfileIdentity } from '../eval-session-composition.js'
@@ -161,7 +160,9 @@ describe('buildPromotionPostureResolver', () => {
     expect(f.gate().verdict).toEqual({ verdict: 'hold', reason: 'gate2-receipt-required' })
   })
 
-  it('418 real pending and claimed review holds clean newer receipts until rejected, then promotes', async () => {
+  // 2026-09-30, 432-10 D-05/D-22: re-spelled. The hold comes from the contradictory standing
+  // receipts alone; the legacy inbox beside them (pending, claimed or corrupt) is never read.
+  it('418 contradictory standing receipts hold gate-inconsistent until newer clean receipts promote, without reading the legacy inbox', async () => {
     const f = await rarePath({ now: 15 })
     const knowledgeRoot = join(f.dir, 'knowledge')
     const agentQaRoot = join(f.dir, '.agent-qa')
@@ -190,9 +191,18 @@ describe('buildPromotionPostureResolver', () => {
       benefit: 'exercised-harmed', stateValidity: 'valid' })
     appendGateReceipt(appendConfig, seeded.id, g1)
     appendGateReceipt(appendConfig, seeded.id, g2)
-    const proposal = buildGateInconsistencyProposal({ candidateId: seeded.id, scope: candidate.scope,
-      shape: 'gate1-pass-gate2-fail', gate1Digest: g1.receiptDigest, gate2Digest: g2.receiptDigest, proposedAt: 10 })
-    fileGateInconsistencyProposal(agentQaRoot, proposal, { at: 10 })
+    const inbox = join(agentQaRoot, 'proposals')
+    mkdirSync(inbox, { recursive: true })
+    const legacy = JSON.stringify({ schemaVersion: 1, proposalId: 'prop_0123456789abcdef', verb: 'accept',
+      targetRef: { grain: 'record', recordId: seeded.id },
+      deltas: [{ kind: 'Deprecate', origin: 'system', scope: candidate.scope, citedIds: [seeded.id],
+        targetId: seeded.id, reason: `gate-inconsistent:gate1-pass-gate2-fail:${g1.receiptDigest}:${g2.receiptDigest}` }],
+      proposedAt: 10, status: 'pending' })
+    writeFileSync(join(inbox, 'prop_0123456789abcdef.json'), legacy)
+    writeFileSync(join(inbox, `prop_1123456789abcdef.json.claimed.${process.pid}`), legacy)
+    writeFileSync(join(inbox, 'prop_corrupt.json'), '{bad')
+    const inboxBytes = () => readdirSync(inbox).sort().map(name => [name, readFileSync(join(inbox, name), 'utf8')])
+    const before = inboxBytes()
     const replay = vi.fn(() => { throw new Error('automatic replay forbidden') })
     const resolved = await subject!.buildPromotionPostureResolver({ configPath: f.configPath,
       knowledgeRoot, agentQaRoot, currentBuildOrdinal: 15, replayGate: { runReplayGate: replay },
@@ -205,34 +215,20 @@ describe('buildPromotionPostureResolver', () => {
     const store = createLocalKnowledgeStore({ knowledgeRoot, auditBaseDir: agentQaRoot,
       writerLeaseId: lease.leaseId, epoch: lease.epoch, executionContext: 'local-interactive',
       sourceBuildOrdinal: 15, resolvePromotionPosture: resolved.resolve })
+    // The posture reads, including the corrupt file beside them, and carries no inbox marker.
+    expect(resolved.resolve(currentCandidate)).toMatchObject({ kind: 'resolved', canary: { kind: 'provided' } })
+    expect(resolved.resolve(currentCandidate)).not.toHaveProperty('canary.inconsistency')
+    await expect(store.promote(seeded.id)).rejects.toMatchObject({ reason: 'gate-inconsistent' })
     const { receiptDigest: _old, ...g2body } = g2
     await store.recordGateReceipt(stampReceiptDigest({ ...body, candidateId: seeded.id, producedAtOrdinal: 12 }))
     await store.recordGateReceipt(stampReceiptDigest({ ...g2body, producedAtOrdinal: 13,
       verdict: 'pass', benefit: 'exercised-benefited', attributedObservationId: 'new-clean-benefit' }))
-    const holds = async () => {
-      expect(resolved.resolve(currentCandidate)).toMatchObject({ canary: { rarePathEligible: false,
-        inconsistency: { pending: true, proposalId: proposal.proposalId } } })
-      await expect(store.promote(seeded.id)).rejects.toMatchObject({ reason: 'gate-inconsistent' })
-    }
-    await holds()
-    // The storage suite drives claimPendingProposal itself and its read interleaves;
-    // this package exercises the same durable names without importing writer internals.
-    const pendingPath = join(proposalsDir(agentQaRoot), `${proposal.proposalId}.json`)
-    const claimedPath = `${pendingPath}.claimed.${process.pid}`
-    renameSync(pendingPath, claimedPath)
-    await holds()
-    renameSync(claimedPath, pendingPath)
-    await holds()
-    rejectPendingProposal(agentQaRoot, proposal.proposalId, { at: 20 })
-    expect(resolved.resolve(currentCandidate)).not.toHaveProperty('canary.inconsistency')
     await expect(store.promote(seeded.id)).resolves.toMatchObject({ promotionPath: 'gate1+gate2' })
     const loaded = loadBundle(seeded.dir)
     if (loaded.kind !== 'loaded') throw new Error(loaded.kind)
     expect(deriveBundleTrust(loaded.bundle).status).toBe('active')
     expect(replay).not.toHaveBeenCalled()
-    // A corrupt pending record must become unavailable, never a cleared flag.
-    writeFileSync(join(proposalsDir(agentQaRoot), 'prop_corrupt.json'), '{bad')
-    expect(resolved.resolve(currentCandidate)).toMatchObject({ kind: 'unavailable' })
+    expect(inboxBytes()).toEqual(before)
   })
 
   it.each([

@@ -531,7 +531,7 @@ describe('422-16 D-20 — flipped evidence emits harm independently of the class
         quarantine: { kind: 'not-evaluated', reason: 'not-requested' },
       }),
       drainQueue: async () => ({
-        kind: 'drained', jobsProcessed: 0, committed: 0, inconsistenciesFiled: 0,
+        kind: 'drained', jobsProcessed: 0, committed: 0,
         downgraded: 0, withheld: 0, quarantined: 0, requeued: 0, failures: 0,
         failureDetails: [], noops: 0, noopDetails: [], remaining: 0,
         remainingWork: { queued: 0, claimedNonterminal: 0, quarantined: 0 },

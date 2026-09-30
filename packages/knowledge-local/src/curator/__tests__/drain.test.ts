@@ -245,7 +245,7 @@ describe('drainQueue one-shot serialized engine (CUR-03/CUR-04)', () => {
     const lifecycle = vi.fn()
     try {
       const report = await drainQueue({
-        knowledgeRoot, auditBaseDir, agentQaRoot: auditBaseDir, author,
+        knowledgeRoot, auditBaseDir, author,
         executionContext: 'local-interactive', policy, maintenance: 'skip',
         onJobLifecycle: lifecycle,
       })
@@ -258,8 +258,9 @@ describe('drainQueue one-shot serialized engine (CUR-03/CUR-04)', () => {
       if (version === 2) expect(received.mock.calls[0]![0]).not.toHaveProperty('ablation')
       expect(create).toHaveBeenCalledWith(expect.objectContaining({
         sourceJobId: entryId, sourceRunId: payload.runId, sourceBuildOrdinal: 43,
-        agentQaRoot: auditBaseDir,
       }))
+      // 2026-09-30, 432-10 D-05/D-22: the canary store is handed no proposals root.
+      expect(create.mock.calls[0]![0]).not.toHaveProperty('agentQaRoot')
       expect(lifecycle).toHaveBeenCalledWith({ kind: 'job-completed', candidateId: entryId })
       expect(listQueuedCandidates(knowledgeRoot)).toEqual([])
       mkdirSync(queuedDir, { recursive: true })
@@ -293,10 +294,11 @@ describe('drainQueue one-shot serialized engine (CUR-03/CUR-04)', () => {
       operations: noWriterPass(),
     })
 
+    // 2026-09-30, 432-10 D-05: the drain files no gate-inconsistency proposals, so the count left.
+    expect(report).not.toHaveProperty('inconsistenciesFiled')
     expect(report).toMatchObject({
       kind: 'handed-off',
       jobsProcessed: 0,
-      inconsistenciesFiled: 0,
       committed: 0,
       writerPass: { kind: 'skipped', reason: 'lease-held' },
       holder: { leaseId: holder.leaseId, epoch: holder.epoch },
@@ -738,9 +740,9 @@ describe('drainQueue one-shot serialized engine (CUR-03/CUR-04)', () => {
       },
     })
 
+    expect(report).not.toHaveProperty('inconsistenciesFiled')
     expect(report).toMatchObject({
       kind: 'aborted',
-      inconsistenciesFiled: 0,
       jobsProcessed: 1,
       committed: 1,
       writerPass: { kind: 'skipped', reason: 'aborted' },

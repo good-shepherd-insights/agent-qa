@@ -41,6 +41,7 @@ expectTypeOf<Extract<PromotionPath, 'gate1-and-gate2'>>().toEqualTypeOf<never>()
 import { GATE_INCONSISTENCY_SHAPES } from '../knowledge/promotion-gate'
 import type { PromotionCanaryPosture, GateInconsistencyShape } from '../knowledge/promotion-gate'
 expectTypeOf<keyof PromotionCanaryPosture>().toEqualTypeOf<
-  'kind' | 'attributedRows' | 'rarePathEligible' | 'inconsistency'
+  'kind' | 'attributedRows' | 'rarePathEligible'
 >()
 expectTypeOf<Exclude<GateInconsistencyShape, (typeof GATE_INCONSISTENCY_SHAPES)[number]>>().toEqualTypeOf<never>()
+// 2026-09-30, 432-10 D-05/D-22: 'inconsistency' left the canary posture with the inbox marker.

@@ -435,11 +435,11 @@ describe('418 D-17 — gate-inconsistent precedes the v51 evidence holds and eve
     expect(evaluatePromotionGate(neverConfirmed(contradiction(), { status: 'active' })))
       .toEqual({ verdict: 'hold', reason: 'not-candidate' })
   })
-  it('keeps sovereign above contradictory receipts and a pending proposal on never-confirmed input', () => {
+  // 2026-09-30, 432-10 D-22: the pending-proposal half of this claim left with the inbox.
+  it('keeps sovereign above contradictory receipts on never-confirmed input', () => {
     const g3 = receipt(3, 'pass')
     expect(evaluatePromotionGate(neverConfirmed([...contradiction(), g3], {
-      gatePosture: resolvedPosture({ canary: { kind: 'provided', rarePathEligible: false,
-        inconsistency: { pending: true, proposalId: 'pending-inconsistency' } } }),
+      gatePosture: resolvedPosture({ canary: { kind: 'provided', rarePathEligible: false } }),
     }))).toEqual({ verdict: 'promote', promotionPath: 'user-sovereign',
       citedReceiptDigests: [g3.receiptDigest] })
   })
@@ -483,11 +483,12 @@ describe('418 D-17 — gate-inconsistent precedes the v51 evidence holds and eve
       receipt(1, 'pass', 5, { corpusDigest }), receipt(2, 'fail', 6, { corpusDigest }),
     ]))).toEqual(inconsistent)
   })
-  it('holds a pending proposal on never-confirmed input even with clean ordered pass receipts', () => {
+  // 2026-09-30, 432-10 D-05/D-22: re-spelled. No pending proposal holds clean receipts any
+  // more; a never-confirmed candidate with clean ordered passes reaches its evidence hold.
+  it('does not hold clean ordered pass receipts as inconsistent on never-confirmed input', () => {
     expect(evaluatePromotionGate(neverConfirmed([receipt(1, 'pass'), receipt(2, 'pass', 6)], {
-      gatePosture: resolvedPosture({ canary: { kind: 'provided', rarePathEligible: false,
-        inconsistency: { pending: true, proposalId: 'pending-inconsistency' } } }),
-    }))).toEqual(inconsistent)
+      gatePosture: resolvedPosture({ canary: { kind: 'provided', rarePathEligible: false } }),
+    }))).toEqual({ verdict: 'hold', reason: 'no-confirmed-evidence' })
   })
   it('still promotes ordered pass plus pass on confirmed input with both cited digests', () => {
     const g1 = receipt(1, 'pass')
@@ -694,8 +695,7 @@ describe('419 D-04 sovereign confirmation with harmful canary evidence', () => {
     confirmedOutcomeEvidenceTokens: [],
     gateReceipts: [receipt(1, 'pass'), receipt(2, 'fail', 6), g3],
     gatePosture: resolvedPosture({
-      canary: { kind: 'provided', attributedRows: 1, rarePathEligible: false,
-        inconsistency: { pending: true, proposalId: 'harmful-canary' } },
+      canary: { kind: 'provided', attributedRows: 1, rarePathEligible: false },
     }),
   })
 

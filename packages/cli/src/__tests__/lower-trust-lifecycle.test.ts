@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -6,7 +6,6 @@ import { LOCAL_CURATION_CAPABILITIES } from '@vostride/agent-qa-agent-local'
 import {
   acquireWriterLease, appendOutcomeEvent, createLocalKnowledgeStore, deriveBundleTrust,
   loadBundle, openKnowledgeReader, publishBundleForTest, readGateReceipts,
-  buildGateInconsistencyProposal, fileGateInconsistencyProposal,
 } from '@vostride/agent-qa-knowledge-local'
 import { asEvidenceToken, stampReceiptDigest, survivingOutcomeEvents, type CanaryOutcome } from '@vostride/agent-qa-schema'
 import { buildPromotionPostureResolver } from '../curation/promotion-posture.js'
@@ -101,7 +100,7 @@ describe('418 lower-trust active lifecycle through real store, resolver and serv
       candidateId: f.seeded.id, scope })).not.toHaveProperty('lowerTrustActiveGate1Digest')
   })
 
-  it.each(['rollback', 'stale receipt', 'negative', 'stale negative', 'pending inconsistency'] as const)
+  it.each(['rollback', 'stale receipt', 'negative', 'stale negative'] as const)
   ('revalidates lower-trust authority against %s', async defect => {
     const f = await setup()
     f.advance()
@@ -119,12 +118,6 @@ describe('418 lower-trust active lifecycle through real store, resolver and serv
         return value?.kind === 'resolved' ? { ...value, corpusDigest: 'f'.repeat(64) } : value
       }
       expected = 'receipt-stale'
-    } else if (defect === 'pending inconsistency') {
-      fileGateInconsistencyProposal(f.appendConfig.auditBaseDir,
-        buildGateInconsistencyProposal({ candidateId: f.seeded.id, scope,
-          shape: 'gate1-pass-gate2-fail', gate1Digest: f.gate1().receiptDigest,
-          gate2Digest: 'd'.repeat(64), proposedAt: 10 }), { at: 10 })
-      expected = 'gate-inconsistent'
     } else {
       await f.store().recordCanaryOutcome({ ...f.outcome('rode-along'), runOutcome: 'negative',
         benefit: 'exercised-harmed', stateValidity: defect === 'negative' ? 'valid' : 'stale' })
@@ -135,6 +128,25 @@ describe('418 lower-trust active lifecycle through real store, resolver and serv
       resolvePromotionPosture: f.posture.resolve })
     await expect(store.promote(f.seeded.id)).rejects.toMatchObject({ reason: expected })
     expect(survivingOutcomeEvents(f.read().events).filter(row => row.type === 'promoted')).toHaveLength(0)
+    expect(f.replay).not.toHaveBeenCalled()
+  })
+  // 2026-09-30, 432-10 D-05/D-22: re-spelled from the former 'pending inconsistency' row. A
+  // leftover pending file no longer revalidates lower-trust authority away: it is never read.
+  it('keeps lower-trust authority beside a legacy pending inconsistency file, which is never read', async () => {
+    const f = await setup()
+    f.advance()
+    const inbox = join(f.appendConfig.auditBaseDir, 'proposals')
+    mkdirSync(inbox, { recursive: true })
+    writeFileSync(join(inbox, 'prop_0123456789abcdef.json'), JSON.stringify({ schemaVersion: 1,
+      proposalId: 'prop_0123456789abcdef', verb: 'accept', targetRef: { grain: 'record', recordId: f.seeded.id },
+      deltas: [{ kind: 'Deprecate', origin: 'system', scope, citedIds: [f.seeded.id], targetId: f.seeded.id,
+        reason: `gate-inconsistent:gate1-pass-gate2-fail:${f.gate1().receiptDigest}:${'d'.repeat(64)}` }],
+      proposedAt: 10, status: 'pending' }))
+    const store = createLocalKnowledgeStore({ ...f.storeConfig, sourceBuildOrdinal: 16,
+      resolvePromotionPosture: f.posture.resolve })
+    await expect(store.promote(f.seeded.id)).resolves.toMatchObject({ kind: 'already-active' })
+    expect(deriveBundleTrust(f.read()).status).toBe('active')
+    expect(readdirSync(inbox)).toEqual(['prop_0123456789abcdef.json'])
     expect(f.replay).not.toHaveBeenCalled()
   })
   it.each(['repeat promote', 'rode-along'] as const)('retains at-cap authority after %s, then upgrades once on credit', async action => {

@@ -1,4 +1,4 @@
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { asEvidenceToken, stampReceiptDigest, type CanaryOutcome } from '@vostride/agent-qa-schema'
@@ -9,9 +9,6 @@ import { canaryPostureFactsFor, lowerTrustSharesFor, standingReceiptDigestsFor }
 import { completeGate1Receipt, createPromotionFloorFixture, resolvedPromotionPosture } from '../curator/__tests__/fixtures/promotion-floor-fixture.js'
 import { createLocalKnowledgeStore } from '../curator/knowledge-store.js'
 import { acquireWriterLease } from '../lease/writer-lease.js'
-import { buildGateInconsistencyProposal, fileGateInconsistencyProposal } from '../review/gate-inconsistency.js'
-import { claimPendingProposal, publishAppliedProposal, rejectPendingProposal, restorePendingProposal,
-  proposalsDir } from '../review/proposals-store.js'
 
 describe('418 bundle-local canary posture facts', () => {
   let root: string
@@ -31,32 +28,37 @@ describe('418 bundle-local canary posture facts', () => {
     return { ...published, pass }
   }
   const read = (candidateId: string) => canaryPostureFactsFor({ knowledgeRoot, candidateId, scope })
-  it.each(['applied', 'rejected'] as const)('reads pending and claimed flags without writing and clears after %s', state => {
+  // 2026-09-30, 432-10 D-05/D-22: re-spelled. The legacy inbox is never read, so no file state
+  // (pending, claimed, applied, rejected) adds a flag, and the facts never write under it.
+  it.each([
+    ['pending', (id: string) => `${id}.json`],
+    ['claimed', (id: string) => `${id}.json.claimed.${process.pid}`],
+    ['applied', (id: string) => `${id}.applied.json`],
+    ['rejected', (id: string) => `${id}.rejected.json`],
+  ] as const)('432 a legacy %s inconsistency file adds no flag and is never written', (_state, name) => {
     const planted = seed()
     const agentQaRoot = join(root, '.agent-qa')
-    const proposal = buildGateInconsistencyProposal({ candidateId: planted.id, scope,
-      shape: 'gate1-pass-gate2-fail', gate1Digest: planted.pass.receiptDigest, gate2Digest: 'd'.repeat(64), proposedAt: 10 })
-    fileGateInconsistencyProposal(agentQaRoot, proposal, { at: 10 })
-    const facts = () => canaryPostureFactsFor({ knowledgeRoot, candidateId: planted.id, scope, agentQaRoot })
-    expect(facts()).toMatchObject({ pendingInconsistency: { proposalId: proposal.proposalId } })
+    const dir = plantLegacyInbox(agentQaRoot, planted.id, planted.pass.receiptDigest)
+    const pending = join(dir, 'prop_0123456789abcdef.json')
+    const legacy = join(dir, name('prop_0123456789abcdef'))
+    if (legacy !== pending) renameSync(pending, legacy)
+    const bytes = readFileSync(legacy, 'utf8')
+    const legacyInput = { knowledgeRoot, candidateId: planted.id, scope, agentQaRoot }
+    expect(canaryPostureFactsFor(legacyInput)).toEqual(read(planted.id))
     expect(read(planted.id)).not.toHaveProperty('pendingInconsistency')
-    claimPendingProposal(agentQaRoot, proposal.proposalId)
-    expect(facts()).toMatchObject({ pendingInconsistency: { proposalId: proposal.proposalId } })
-    if (state === 'applied') publishAppliedProposal(agentQaRoot, { proposal })
-    else {
-      restorePendingProposal(agentQaRoot, proposal.proposalId)
-      rejectPendingProposal(agentQaRoot, proposal.proposalId, { at: 20 })
-    }
-    expect(facts()).not.toHaveProperty('pendingInconsistency')
+    expect(readdirSync(dir)).toEqual([name('prop_0123456789abcdef')])
+    expect(readFileSync(legacy, 'utf8')).toBe(bytes)
   })
-  it('refuses corrupt pending proposal data instead of reporting a cleared flag', () => {
+  // 2026-09-30, 432-10 D-22: re-spelled. A corrupt legacy file used to fail the read closed; it is
+  // no longer read at all, so it neither throws nor reports a flag.
+  it('432 a corrupt legacy proposal file is never read, so it neither throws nor flags', () => {
     const planted = seed()
     const agentQaRoot = join(root, '.agent-qa')
-    const proposal = buildGateInconsistencyProposal({ candidateId: planted.id, scope,
-      shape: 'gate1-pass-gate2-fail', gate1Digest: planted.pass.receiptDigest, gate2Digest: 'd'.repeat(64), proposedAt: 10 })
-    fileGateInconsistencyProposal(agentQaRoot, proposal, { at: 10 })
-    writeFileSync(join(proposalsDir(agentQaRoot), `${proposal.proposalId}.json`), '{bad')
-    expect(() => canaryPostureFactsFor({ knowledgeRoot, candidateId: planted.id, scope, agentQaRoot })).toThrow()
+    const dir = plantLegacyInbox(agentQaRoot, planted.id, planted.pass.receiptDigest)
+    writeFileSync(join(dir, 'prop_0123456789abcdef.json'), '{bad')
+    const legacyInput = { knowledgeRoot, candidateId: planted.id, scope, agentQaRoot }
+    expect(() => canaryPostureFactsFor(legacyInput)).not.toThrow()
+    expect(canaryPostureFactsFor(legacyInput)).toEqual(read(planted.id))
   })
   it('reads the standing pass and corpus digest without inventing attribution', () => {
     const planted = seed()

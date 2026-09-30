@@ -179,8 +179,6 @@ interface DrainReportBase {
   deprecated?: number
   /** Optional for fault-injection fakes; the real drain always sets this measurement. */
   promotions?: readonly DrainPromotionOutcome[]
-  /** Number of newly filed reviews; every drain outcome carries an explicit measurement. */
-  inconsistenciesFiled: number
   downgraded: number
   withheld: number
   quarantined: number
@@ -245,8 +243,6 @@ export interface DrainOptions {
   /** A per-run reader request, independent of which queued jobs this drain claims. */
   sourceRunId?: string
   observationIds?: readonly string[]
-  /** 2026-09-07, 418 D-19: proposals store root; production hosts bind this in Plan 05. */
-  agentQaRoot?: string
   knowledgeRoot: string
   auditBaseDir: string
   /** `unbounded` is reserved for a standing host whose process lifetime is the boundary. */
@@ -384,7 +380,6 @@ function emptyReport(): MutableDrainReport {
     committed: 0,
     deprecated: 0,
     promotions: [],
-    inconsistenciesFiled: 0,
     downgraded: 0,
     withheld: 0,
     quarantined: 0,
@@ -1010,7 +1005,6 @@ export async function drainQueue(options: DrainOptions): Promise<DrainReport> {
             sourceBuildOrdinal: canaryOutcome.buildOrdinal,
             sourceRunId: canaryOutcome.runId,
             sourceJobId: claimed.candidateId,
-            ...(options.agentQaRoot === undefined ? {} : { agentQaRoot: options.agentQaRoot }),
             policy: options.policy,
             writerLeaseId: lease.leaseId,
             ...(priors === undefined ? {} : { resolveTrustPriors: () => priors }),
@@ -1018,11 +1012,6 @@ export async function drainQueue(options: DrainOptions): Promise<DrainReport> {
               ? {}
               : { resolvePromotionPosture: options.resolvePromotionPosture }),
             onPromotionOutcome: outcome => result.promotions.push(outcome),
-            onInconsistencyFiled: outcome => {
-              if (outcome.kind === 'filed') {
-                result.inconsistenciesFiled += 1
-              }
-            },
             /**
              * CR-02: the terminal transition joins the canary tail's own held section through
              * the within-held form. Calling the fenced writeJobState here would re-enter

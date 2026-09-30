@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -46,9 +46,7 @@ import { canaryOutcomeObservationId } from '../disposition.js'
 import { createLocalKnowledgeStore } from '../knowledge-store.js'
 import { assemblePromotionGateInput } from '../commit.js'
 import { appendGateReceipt, appendOutcomeEvent } from '../../bundle-append.js'
-import { pendingGateInconsistencyFor } from '../../review/gate-inconsistency.js'
-import { proposalsDir, readPendingProposal, rejectPendingProposal } from '../../review/proposals-store.js'
-import { applyReview } from '../../review/apply-review.js'
+import { proposalsDir } from '../../review/proposals-store.js'
 import { rebuildIndex } from '../../index-rebuild.js'
 import { openKnowledgeReader } from '../../index-reader.js'
 import { completeGate1Receipt, resolvedPromotionPosture } from './fixtures/promotion-floor-fixture.js'
@@ -202,10 +200,9 @@ describe('canary outcome deterministic disposition (PROM-02/D-22)', () => {
     return { bundle: result.bundle, trust: deriveBundleTrust(result.bundle) }
   }
 
-  async function drainContradiction(withRoot = true) {
+  async function drainContradiction() {
     const author = vi.fn<CuratorAuthor>(async () => ({ kind: 'fallback-required', reason: 'no-model' }))
     const report = await drainQueue({ knowledgeRoot, auditBaseDir,
-      ...(withRoot ? { agentQaRoot: auditBaseDir } : {}),
       resolvePromotionPosture: () => resolvedPromotionPosture(),
       author, executionContext: 'local-interactive', policy })
     expect(report.failures).toBe(0)
@@ -213,7 +210,9 @@ describe('canary outcome deterministic disposition (PROM-02/D-22)', () => {
     return report
   }
 
-  it.each([true, false])('SC5 shape 1 — never-confirmed candidate with standing Gate-1 pass and first valid harm, proposals root=%s', async withRoot => {
+  // 2026-09-30, 432-10 D-05/D-22: re-spelled. The drain no longer takes a proposals root and
+  // files no gate-inconsistency proposal; the hold is read from the standing receipts alone.
+  it('SC5 shape 1 — never-confirmed candidate with standing Gate-1 pass and first valid harm holds gate-inconsistent and files nothing', async () => {
     const published = seedCandidate()
     expect(loaded(published.dir).trust.counters.confirmed).toBe(0)
     const g1 = completeGate1Receipt(published.id, { producedAtOrdinal: 42 })
@@ -221,34 +220,27 @@ describe('canary outcome deterministic disposition (PROM-02/D-22)', () => {
     const harm: CanaryOutcome = { ...outcome(published.id, 'negative'), benefit: 'exercised-harmed',
       stateValidity: 'valid', corpusDigest: 'c'.repeat(64) }
     enqueueCanaryOutcome(knowledgeRoot, harm)
-    const report = await drainContradiction(withRoot)
+    const report = await drainContradiction()
     expect(report.promotions).toContainEqual({ candidateId: published.id, promotionHoldReason: 'gate-inconsistent' })
     expect(report.promotions).not.toContainEqual(expect.objectContaining({ promotionHoldReason: 'no-confirmed-evidence' }))
-    expect(report.inconsistenciesFiled).toBe(withRoot ? 1 : 0)
+    expect(report).not.toHaveProperty('inconsistenciesFiled')
     const result = loaded(published.dir)
     expect(result.bundle.events.filter(event => event.type === 'contradicted')).toHaveLength(1)
     expect(result.trust.counters.confirmed).toBe(0)
     expect(result.trust.status).not.toBe('deprecated')
     const g2 = readGateReceipts(published.dir, published.id)!.find(line => !isPromotionReceipt(line) && line.gate === 2)!
     expect(g2).toMatchObject({ verdict: 'fail', benefit: 'exercised-harmed' })
-    if (!withRoot) {
-      expect(existsSync(proposalsDir(auditBaseDir))).toBe(false)
-      return
-    }
-    const pending = pendingGateInconsistencyFor({ agentQaRoot: auditBaseDir, candidateId: published.id })!
-    expect(pending.shape).toBe('gate1-pass-gate2-fail')
-    expect(readPendingProposal(auditBaseDir, pending.proposalId)?.deltas[0]).toMatchObject({
-      kind: 'Deprecate', reason: `gate-inconsistent:gate1-pass-gate2-fail:${g1.receiptDigest}:${g2.receiptDigest}` })
-    expect(readdirSync(proposalsDir(auditBaseDir))).toHaveLength(1)
+    expect(existsSync(proposalsDir(auditBaseDir))).toBe(false)
+    // A replayed harm holds again, still from the receipts, and still files nothing.
     enqueueCanaryOutcome(knowledgeRoot, harm)
-    expect((await drainContradiction()).inconsistenciesFiled).toBe(0)
-    expect(readdirSync(proposalsDir(auditBaseDir))).toHaveLength(1)
-    expect(rejectPendingProposal(auditBaseDir, pending.proposalId, { at: Date.now() }).kind).toBe('rejected')
-    expect(pendingGateInconsistencyFor({ agentQaRoot: auditBaseDir, candidateId: published.id })).toBeUndefined()
+    expect((await drainContradiction()).promotions).toContainEqual({ candidateId: published.id,
+      promotionHoldReason: 'gate-inconsistent' })
+    expect(existsSync(proposalsDir(auditBaseDir))).toBe(false)
     const gateInput = assemblePromotionGateInput({ knowledgeRoot, bundleDir: published.dir,
       bundle: loaded(published.dir).bundle,
       resolvePromotionPosture: () => resolvedPromotionPosture() })
     expect(evaluatePromotionGate(gateInput)).toMatchObject({ reason: 'gate-inconsistent' })
+    expect(loaded(published.dir).trust.status).not.toBe('deprecated')
   })
 
   it('SC5 specificity — never-confirmed candidate without Gate-1 remains no-confirmed-evidence and files nothing', async () => {
@@ -257,10 +249,11 @@ describe('canary outcome deterministic disposition (PROM-02/D-22)', () => {
       stateValidity: 'valid', corpusDigest: 'c'.repeat(64) })
     const report = await drainContradiction()
     expect(report.promotions).toContainEqual({ candidateId: published.id, promotionHoldReason: 'no-confirmed-evidence' })
-    expect(report.inconsistenciesFiled).toBe(0)
     expect(existsSync(proposalsDir(auditBaseDir))).toBe(false)
   })
 
+  // 2026-09-30, 432-10 D-05: re-spelled. The held-out contradiction still holds; with no proposal
+  // to accept, the record is not deprecated automatically and stays a candidate.
   it.each([true, false])('SC5 shape 2 — real drain of credited benefit beside Gate-1 fail, held-out=%s', async heldOut => {
     const published = seedCandidate()
     const base = completeGate1Receipt(published.id, { producedAtOrdinal: 42, verdict: 'fail' })
@@ -274,16 +267,8 @@ describe('canary outcome deterministic disposition (PROM-02/D-22)', () => {
     const report = await drainContradiction()
     expect(report.promotions).toContainEqual({ candidateId: published.id,
       promotionHoldReason: heldOut ? 'gate-inconsistent' : 'gate-failed' })
-    expect(report.inconsistenciesFiled).toBe(heldOut ? 1 : 0)
-    const pending = pendingGateInconsistencyFor({ agentQaRoot: auditBaseDir, candidateId: published.id })
-    if (!heldOut) { expect(pending).toBeUndefined(); return }
-    expect(pending?.shape).toBe('gate2-pass-gate1-heldout-fail')
-    expect(loaded(published.dir).trust.status).not.toBe('deprecated')
-    await applyReview({ agentQaRoot: auditBaseDir, knowledgeRoot, proposalId: pending!.proposalId })
-    expect(loaded(published.dir).trust.status).toBe('deprecated')
-    expect(pendingGateInconsistencyFor({ agentQaRoot: auditBaseDir, candidateId: published.id })).toBeUndefined()
-    expect(rejectPendingProposal(auditBaseDir, pending!.proposalId, { at: Date.now() }).kind).toBe('already-applied')
-    expect(loaded(published.dir).trust.status).toBe('deprecated')
+    expect(existsSync(proposalsDir(auditBaseDir))).toBe(false)
+    expect(loaded(published.dir).trust.status).toBe('candidate')
   })
 
   it('commits a positive attributed outcome before promoting with the schema evidence recipe', async () => {

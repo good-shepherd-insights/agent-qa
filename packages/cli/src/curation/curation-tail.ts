@@ -772,8 +772,6 @@ export async function curateCompletedRun(
         ...(input.resolvePromotionPosture === undefined ? {} : { resolvePromotionPosture: input.resolvePromotionPosture }),
         knowledgeRoot: input.knowledgeRoot,
         auditBaseDir: input.agentQaRoot,
-        // 418 D-19: proposals and audit share the config-relative runtime root.
-        agentQaRoot: input.agentQaRoot,
         author,
         executionContext: input.handoff.executionContext,
         policy: input.policy,
@@ -791,10 +789,8 @@ export async function curateCompletedRun(
         const elapsedSeconds = Math.max(0, Math.floor((Date.now() - tailStartedAtMs) / 1_000))
         input.log.info?.(`curation: drained inline (${elapsedSeconds}s)`)
       }
+      // 2026-09-30, 432-10 D-05: a gate-inconsistent hold is its held line; nothing is filed.
       for (const entry of drain.promotions ?? []) input.log.info?.(renderPromotionLine(entry))
-      if (drain.inconsistenciesFiled > 0) {
-        input.log.info?.(`curation: filed ${drain.inconsistenciesFiled} gate-inconsistency proposal(s); review with agent-qa proposals list`)
-      }
       // A commit noop is visible but never fatal (G-381-1): legitimate reasons such as
       // evidence-token dedup would otherwise wedge a healthy tail into the retry loop.
       // The complete predicate below is deliberately unchanged.

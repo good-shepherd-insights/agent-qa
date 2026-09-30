@@ -49,11 +49,12 @@ export interface PromotionJudgePosture {
     offendingPair?: readonly [string, string]
   }
 }
+// 2026-09-30, 432-10 D-05/D-22: the pending-review marker left with the proposal inbox; the
+// gate-inconsistent hold is read from standing receipts alone.
 export interface PromotionCanaryPosture {
   kind: 'provided' | 'not-provided'
   attributedRows?: number
   rarePathEligible: boolean
-  inconsistency?: { pending: true; proposalId: string }
 }
 export interface PromotionPostureScope {
   partition: string
@@ -293,9 +294,8 @@ export function evaluatePromotionGate(input: PromotionGateInput): PromotionGateV
   // by 416's kind/status/window and gate-set precedence. Fourteen holds precede
   // promoteVia, which also floors without posture: a never-confirmed candidate's first
   // live harm must report its contradiction before no-confirmed-evidence can mask it.
-  if (posture?.kind === 'resolved' && posture.canary.inconsistency?.pending === true) {
-    return hold('gate-inconsistent')
-  }
+  // 2026-09-30, 432-10 D-05/D-22: the pending-proposal hold left with the inbox (thirteen holds
+  // now); this evidence check is the one gate-inconsistent hold.
   if (detectGateInconsistency(standing) !== undefined) return hold('gate-inconsistent')
   if (input.withheld) return hold('withheld')
   if (input.needsEnrichment) return hold('needs-enrichment')

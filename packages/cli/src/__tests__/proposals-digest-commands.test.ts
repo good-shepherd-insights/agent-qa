@@ -22,8 +22,6 @@ import {
   proposeReview,
   publishBundleForTest,
   readGrantLedger,
-  buildGateInconsistencyProposal,
-  fileGateInconsistencyProposal,
   proposalsDir,
   writePendingProposalRecord,
 } from '@vostride/agent-qa-knowledge-local'
@@ -353,11 +351,19 @@ describe('agent-qa proposals (D-17, the decision surface)', () => {
 
   it.each(['gate1-pass-gate2-fail', 'gate2-pass-gate1-heldout-fail'] as const)
   ('418 renders %s in plain text with candidate, receipts and human decision consequences', async shape => {
+    // 2026-09-30, 432-10 D-05/D-22: nothing files these any more; a pre-432 file left on disk is
+    // planted byte-for-byte and still renders until the proposals command itself goes.
     const ws = workspace()
-    const proposal = buildGateInconsistencyProposal({ candidateId: asRecordId('fact-checkout'),
-      scope: { tier: 'product', key: 'digest-cmd' }, shape,
-      gate1Digest: 'a'.repeat(64), gate2Digest: 'b'.repeat(64), proposedAt: Date.now() })
-    fileGateInconsistencyProposal(ws.agentQaRoot, proposal, { at: Date.now() })
+    const candidateId = asRecordId('fact-checkout')
+    const proposal = { schemaVersion: 1, proposalId: 'prop_0123456789abcdef', verb: 'accept',
+      targetRef: { grain: 'record', recordId: candidateId },
+      deltas: [{ kind: 'Deprecate', origin: 'system', scope: { tier: 'product', key: 'digest-cmd' },
+        citedIds: [candidateId], targetId: candidateId,
+        reason: `gate-inconsistent:${shape}:${'a'.repeat(64)}:${'b'.repeat(64)}` }],
+      proposedAt: Date.now(), status: 'pending' }
+    mkdirSync(proposalsDir(ws.agentQaRoot), { recursive: true })
+    writeFileSync(join(proposalsDir(ws.agentQaRoot), `${proposal.proposalId}.json`),
+      `${JSON.stringify(proposal, undefined, 2)}\n`)
     const shown = await run(ws, ['proposals', 'show', proposal.proposalId])
     expect(shown.stdout).toContain(shape === 'gate1-pass-gate2-fail'
       ? 'gate-inconsistent — replay passed but the live canary failed'

@@ -135,14 +135,15 @@ export async function buildPromotionPostureResolver(input: {
           ? input.currentBuildOrdinal(candidate.product) : input.currentBuildOrdinal)
         if (!validOrdinal(currentBuildOrdinal)) noticeNoOrdinal()
         else notices.splice(0, notices.length)
+        // 2026-09-30, 432-10 D-05/D-22: bundle evidence only; the legacy inbox is never read and
+        // no longer vetoes the rare path. A contradiction in the standing receipts is held by the
+        // pure gate before the rare path is considered.
         const facts = input.knowledgeRoot === undefined ? undefined : input.canaryFacts?.({
           knowledgeRoot: input.knowledgeRoot, candidateId: candidate.id, scope: candidate.scope,
-          ...(input.agentQaRoot === undefined ? {} : { agentQaRoot: input.agentQaRoot }),
         })
         const canary: PromotionCanaryPosture = {
           kind: facts === undefined ? 'not-provided' : 'provided',
           rarePathEligible: facts?.kind === 'found' && facts.gate1PassOrdinal !== undefined
-            && facts.pendingInconsistency === undefined
             && validOrdinal(currentBuildOrdinal)
             && currentBuildOrdinal >= facts.gate1PassOrdinal
             // 2026-09-08, 418 D-16: quiet horizon/cap govern NEW admission. An active
@@ -155,8 +156,6 @@ export async function buildPromotionPostureResolver(input: {
                 && (facts.latestAttributionOrdinal === undefined || facts.latestAttributionOrdinal <= facts.gate1PassOrdinal)
                 && (facts.latestGate2Ordinal === undefined || facts.latestGate2Ordinal <= facts.gate1PassOrdinal)
                 && facts.lowerTrustActiveInScope < caps.maxLowerTrustPerScope)),
-          ...(facts?.kind === 'found' && facts.pendingInconsistency !== undefined
-            ? { inconsistency: { pending: true, proposalId: facts.pendingInconsistency.proposalId } } : {}),
         }
         // The eval reader's canary census has a different contract (attributedRows
         // plus skippedBundles). Eligibility is our candidate DATA, returned below.

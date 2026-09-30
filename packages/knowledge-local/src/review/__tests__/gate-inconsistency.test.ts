@@ -1,117 +1,162 @@
-import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
-import * as fs from 'node:fs'
+// 2026-09-30, 432-10 D-05/D-08/D-22: re-spelled in place. The 418 gate-inconsistency proposal
+// (its identity, filing, claim/decision flag and inbox read) is deleted; each cell below carries
+// the claim that survives it: contradictory standing receipts hold promotion as gate-inconsistent
+// through the real store, nothing is filed, and the legacy inbox is never read.
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { asRecordId, KnowledgeProposalV1Schema, ProposalIdSchema } from '@vostride/agent-qa-schema'
+import { asEvidenceToken, stampReceiptDigest, type CanaryOutcome, type GateReceipt } from '@vostride/agent-qa-schema'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { buildGateInconsistencyProposal, fileGateInconsistencyProposal, gateInconsistencyProposalId,
-  pendingGateInconsistencyFor } from '../gate-inconsistency.js'
-import { claimPendingProposal, proposalsDir, publishAppliedProposal, readPendingProposal,
-  readProposal, rejectPendingProposal, restorePendingProposal } from '../proposals-store.js'
+import { appendOutcomeEvent } from '../../bundle-append.js'
+import { deriveBundleTrust, loadBundle } from '../../bundle-read.js'
+import { createLocalKnowledgeStore } from '../../curator/knowledge-store.js'
+import { completeGate1Receipt, createPromotionFloorFixture, resolvedPromotionPosture }
+  from '../../curator/__tests__/fixtures/promotion-floor-fixture.js'
+import { acquireWriterLease } from '../../lease/writer-lease.js'
 
-vi.mock('node:fs', async importOriginal => {
-  const actual = await importOriginal<typeof fs>()
-  return { ...actual, readFileSync: vi.fn(actual.readFileSync) }
-})
+const DIGEST = 'c'.repeat(64)
 
-describe('418 gate inconsistency proposal durability', () => {
+function gate2(candidateId: string, verdict: 'pass' | 'fail', producedAtOrdinal: number): GateReceipt {
+  return stampReceiptDigest({
+    schemaVersion: 1, gate: 2, candidateId, verdict, producedAtOrdinal,
+    producedBy: { opId: 'test' }, attributedObservationId: `observation-${producedAtOrdinal}`,
+    corpusVersion: { corpusDigest: DIGEST },
+    benefit: verdict === 'fail' ? 'exercised-harmed' : 'exercised-benefited', stateValidity: 'valid',
+  })
+}
+
+describe('432 evidence-based gate inconsistency hold (D-05, D-22)', () => {
   let root: string
-  const input = { candidateId: asRecordId('fact-checkout'), scope: { tier: 'product', key: 'storefront' } as const,
-    shape: 'gate1-pass-gate2-fail' as const, gate1Digest: 'a'.repeat(64), gate2Digest: 'b'.repeat(64), proposedAt: 10 }
-  const proposal = () => buildGateInconsistencyProposal(input)
-  const file = () => fileGateInconsistencyProposal(root, proposal(), { at: 10 })
-  const pending = () => pendingGateInconsistencyFor({ agentQaRoot: root, candidateId: input.candidateId })
-  beforeEach(() => { root = mkdtempSync(join(tmpdir(), 'gate-inconsistency-')) })
-  afterEach(() => { vi.restoreAllMocks(); rmSync(root, { recursive: true, force: true }) })
+  let knowledgeRoot: string
+  let agentQaRoot: string
+  let fixture: ReturnType<typeof createPromotionFloorFixture>
+  const onPromotionOutcome = vi.fn()
+  beforeEach(() => {
+    root = mkdtempSync(join(tmpdir(), '432-gate-inconsistency-'))
+    knowledgeRoot = join(root, 'knowledge')
+    agentQaRoot = join(root, '.agent-qa')
+    fixture = createPromotionFloorFixture({ knowledgeRoot, auditBaseDir: agentQaRoot })
+    onPromotionOutcome.mockReset()
+  })
+  afterEach(() => rmSync(root, { recursive: true, force: true }))
 
-  it('derives stable schema-valid identity from candidate and both receipts, without authorship', () => {
-    expect(ProposalIdSchema.parse(gateInconsistencyProposalId(input))).toBe(proposal().proposalId)
-    expect(gateInconsistencyProposalId({ ...input, proposedAt: 20 } as typeof input)).toBe(proposal().proposalId)
-    expect(gateInconsistencyProposalId({ ...input, gate2Digest: 'c'.repeat(64) })).not.toBe(proposal().proposalId)
-    expect(KnowledgeProposalV1Schema.parse(proposal())).toEqual(proposal())
-    expect(proposal().deltas[0]).toMatchObject({ kind: 'Deprecate', origin: 'system' })
-    expect(proposal().deltas[0]).not.toHaveProperty('authorship')
+  function store() {
+    const lease = acquireWriterLease(knowledgeRoot)
+    const authority = lease.kind === 'acquired' ? { writerLeaseId: lease.leaseId, epoch: lease.epoch }
+      : lease.kind === 'held' ? { writerLeaseId: lease.holder.leaseId, epoch: lease.holder.epoch }
+        : undefined
+    if (authority === undefined) throw new Error(lease.kind)
+    return createLocalKnowledgeStore({ knowledgeRoot, auditBaseDir: agentQaRoot,
+      executionContext: 'local-interactive', sourceBuildOrdinal: 43, ...authority,
+      resolvePromotionPosture: () => resolvedPromotionPosture(), onPromotionOutcome })
+  }
+
+  /** A confirmed candidate with a standing Gate-1 pass: only the Gate-2 evidence decides. */
+  async function confirmedCandidate(name: string) {
+    const { published, draft } = fixture.publishHeldCandidate(name)
+    expect(appendOutcomeEvent(fixture.outcomeAppendConfig(), published.id, { type: 'confirmed',
+      evidenceToken: asEvidenceToken(`confirm-${name}`), curationJobId: `confirm-${name}`, buildOrdinal: 42 }))
+      .toEqual({ kind: 'appended' })
+    const port = store()
+    await port.recordGateReceipt(completeGate1Receipt(published.id, { producedAtOrdinal: 10 }))
+    return { ...published, anchor: draft.anchors[0]!, port }
+  }
+
+  function status(dir: string) {
+    const loaded = loadBundle(dir)
+    if (loaded.kind !== 'loaded') throw new Error(loaded.kind)
+    return deriveBundleTrust(loaded.bundle).status
+  }
+
+  // Replaces: "derives stable schema-valid identity from candidate and both receipts". The hold
+  // needs no identity: it is recomputed from the standing receipts on every promotion call.
+  it('C432-INCONSISTENCY-HOLD: contradictory standing receipts hold promotion gate-inconsistent through the store', async () => {
+    const candidate = await confirmedCandidate('contradicted')
+    await candidate.port.recordGateReceipt(gate2(candidate.id, 'fail', 11))
+    await expect(candidate.port.promote(candidate.id)).rejects.toMatchObject({ reason: 'gate-inconsistent' })
+    expect(onPromotionOutcome).toHaveBeenLastCalledWith({ candidateId: candidate.id,
+      promotionHoldReason: 'gate-inconsistent' })
+    expect(status(candidate.dir)).toBe('candidate')
   })
 
-  it('files once, reads by candidate, and leaves every persisted byte unchanged on re-file', () => {
-    expect(file()).toEqual({ kind: 'filed', proposalId: proposal().proposalId })
-    const path = join(proposalsDir(root), `${proposal().proposalId}.json`)
-    const bytes = readFileSync(path, 'utf8')
-    expect(file()).toEqual({ kind: 'already-filed', state: 'pending' })
-    expect(readFileSync(path, 'utf8')).toBe(bytes)
-    expect(readdirSync(proposalsDir(root))).toHaveLength(1)
-    expect(pending()).toEqual({ proposalId: proposal().proposalId, shape: input.shape,
-      gate1Digest: input.gate1Digest, gate2Digest: input.gate2Digest })
-    expect(pendingGateInconsistencyFor({ agentQaRoot: root, candidateId: 'another-candidate' })).toBeUndefined()
+  // Replaces: "files once, reads by candidate, and leaves every persisted byte unchanged on re-file".
+  it('files nothing: repeated contradictory canary evidence holds each time without creating an inbox', async () => {
+    const candidate = await confirmedCandidate('repeated')
+    const harm = (runId: string, buildOrdinal: number): CanaryOutcome => ({ candidateId: candidate.id,
+      runOutcome: 'negative', benefit: 'exercised-harmed', stateValidity: 'valid', runId,
+      testId: 'checkout::harm', testIndex: 0, buildOrdinal, stepIndex: 1, briefDigest: `brief-${runId}`,
+      attribution: 'The served checkout hypothesis was exercised and harmed.',
+      exercisedAnchor: candidate.anchor, corpusDigest: DIGEST })
+    await candidate.port.recordCanaryOutcome(harm('run-harm-1', 43))
+    await candidate.port.recordCanaryOutcome(harm('run-harm-2', 44))
+    expect(onPromotionOutcome.mock.calls.map(([report]) => report)).toEqual([
+      { candidateId: candidate.id, promotionHoldReason: 'gate-inconsistent' },
+      { candidateId: candidate.id, promotionHoldReason: 'gate-inconsistent' },
+    ])
+    expect(existsSync(join(agentQaRoot, 'proposals'))).toBe(false)
+    expect(status(candidate.dir)).not.toBe('deprecated')
   })
 
-  it('measures the existing readProposal blind spot but neither remints nor clears during a real claim', () => {
-    file()
-    expect(claimPendingProposal(root, proposal().proposalId).kind).toBe('consumed')
-    expect(readProposal(root, proposal().proposalId)).toBeUndefined()
-    const names = readdirSync(proposalsDir(root))
-    expect(names).toEqual([`${proposal().proposalId}.json.claimed.${process.pid}`])
-    expect(file()).toEqual({ kind: 'already-filed', state: 'claimed' })
-    expect(pending()?.proposalId).toBe(proposal().proposalId)
-    expect(readPendingProposal(root, proposal().proposalId)).toBeUndefined()
-    expect(readdirSync(proposalsDir(root))).toEqual(names)
-    restorePendingProposal(root, proposal().proposalId)
-    expect(file()).toEqual({ kind: 'already-filed', state: 'pending' })
-    expect(pending()?.proposalId).toBe(proposal().proposalId)
+  // Replaces: "retains applied/rejected after claim resolution, clears only the flag". No human
+  // decision clears the hold any more; newer clean evidence is the only thing that does.
+  it('newer clean evidence alone clears the hold, and the record is never deprecated automatically', async () => {
+    const candidate = await confirmedCandidate('cleared')
+    await candidate.port.recordGateReceipt(gate2(candidate.id, 'fail', 11))
+    await expect(candidate.port.promote(candidate.id)).rejects.toMatchObject({ reason: 'gate-inconsistent' })
+    expect(status(candidate.dir)).toBe('candidate')
+    await candidate.port.recordGateReceipt(gate2(candidate.id, 'pass', 12))
+    await expect(candidate.port.promote(candidate.id)).resolves.toMatchObject({ kind: 'promoted',
+      promotionPath: 'gate1+gate2' })
+    expect(status(candidate.dir)).toBe('active')
   })
 
-  it.each(['applied', 'rejected'] as const)('retains %s after claim resolution, clears only the flag and never remints', state => {
-    file()
-    expect(claimPendingProposal(root, proposal().proposalId).kind).toBe('consumed')
-    expect(pending()).toBeDefined()
-    if (state === 'applied') publishAppliedProposal(root, { proposal: proposal() })
-    else {
-      restorePendingProposal(root, proposal().proposalId)
-      expect(rejectPendingProposal(root, proposal().proposalId, { at: 20 }).kind).toBe('rejected')
-    }
-    const names = readdirSync(proposalsDir(root))
-    const bytes = names.map(name => readFileSync(join(proposalsDir(root), name), 'utf8'))
-    expect(pending()).toBeUndefined()
-    expect(file()).toEqual({ kind: 'already-filed', state })
-    expect(readdirSync(proposalsDir(root))).toEqual(names)
-    expect(names.map(name => readFileSync(join(proposalsDir(root), name), 'utf8'))).toEqual(bytes)
+  // Replaces: "measures the existing readProposal blind spot", "refuses a decided path carrying
+  // another proposal" and "re-reads when a claim becomes applied/rejected/restored". The legacy
+  // inbox is left on disk and never read, whatever state or shape its files are in.
+  it('never reads the legacy inbox: pending, claimed, decided or corrupt files neither hold clean receipts nor clear a contradiction', async () => {
+    const clean = await confirmedCandidate('clean')
+    const held = await confirmedCandidate('held')
+    const dir = join(agentQaRoot, 'proposals')
+    mkdirSync(dir, { recursive: true })
+    const legacy = (candidateId: string) => JSON.stringify({ schemaVersion: 1,
+      proposalId: 'prop_0123456789abcdef', verb: 'accept', targetRef: { grain: 'record', recordId: candidateId },
+      deltas: [{ kind: 'Deprecate', origin: 'system', scope: { tier: 'product', key: 'storefront' },
+        citedIds: [candidateId], targetId: candidateId,
+        reason: `gate-inconsistent:gate1-pass-gate2-fail:${'a'.repeat(64)}:${'b'.repeat(64)}` }],
+      proposedAt: 10, status: 'pending' })
+    writeFileSync(join(dir, 'prop_0123456789abcdef.json'), legacy(clean.id))
+    writeFileSync(join(dir, `prop_1123456789abcdef.json.claimed.${process.pid}`), legacy(clean.id))
+    writeFileSync(join(dir, 'prop_2123456789abcdef.rejected.json'), JSON.stringify({ proposal: { status: 'rejected' } }))
+    writeFileSync(join(dir, 'prop_3123456789abcdef.applied.json'), legacy(held.id))
+    writeFileSync(join(dir, 'prop_4123456789abcdef.json'), '{bad')
+    const before = readdirSync(dir).sort().map(name => [name, readFileSync(join(dir, name), 'utf8')])
+    await clean.port.recordGateReceipt(gate2(clean.id, 'pass', 11))
+    await expect(clean.port.promote(clean.id)).resolves.toMatchObject({ promotionPath: 'gate1+gate2' })
+    await held.port.recordGateReceipt(gate2(held.id, 'fail', 11))
+    await expect(held.port.promote(held.id)).rejects.toMatchObject({ reason: 'gate-inconsistent' })
+    expect(readdirSync(dir).sort().map(name => [name, readFileSync(join(dir, name), 'utf8')])).toEqual(before)
   })
 
-  it('rejects path-shaped proposal ids before filing', () => {
-    expect(() => fileGateInconsistencyProposal(root, { ...proposal(), proposalId: '../escape' }, { at: 10 })).toThrow()
-    expect(readdirSync(root)).toEqual([])
+  // Replaces: "rejects path-shaped proposal ids before filing". No id is minted, so there is no
+  // path to shape; the held-out contradiction is held from the receipts instead.
+  it('holds the held-out shape: a Gate-2 pass beside a Gate-1 failure that harmed a held-out row', async () => {
+    const candidate = await confirmedCandidate('held-out')
+    const base = completeGate1Receipt(candidate.id, { producedAtOrdinal: 12, verdict: 'fail' })
+    const { receiptDigest: _digest, ...body } = base
+    await candidate.port.recordGateReceipt(stampReceiptDigest({ ...body, harmed: [{ cassetteId: 'heldout-neighbour',
+      decisionOrdinal: 0, origin: 'gate-set' as const, axes: ['headline' as const],
+      split: 'held-out', verdictPresent: true }] }))
+    await candidate.port.recordGateReceipt(gate2(candidate.id, 'pass', 13))
+    await expect(candidate.port.promote(candidate.id)).rejects.toMatchObject({ reason: 'gate-inconsistent' })
   })
 
-  it('refuses a decided path carrying another proposal rather than clearing the flag', () => {
-    file()
-    writeFileSync(join(proposalsDir(root), `${proposal().proposalId}.applied.json`), JSON.stringify({
-      proposal: { ...proposal(), proposalId: 'prop_another', status: 'applied' },
-    }))
-    expect(pending).toThrow('Proposal path and payload id disagree')
-    expect(file).toThrow('Proposal path and payload id disagree')
-  })
-
-  it.each(['restore', 'applied', 'rejected'] as const)('re-reads when a claim becomes %s between listing and content read', async transition => {
-    file()
-    claimPendingProposal(root, proposal().proposalId)
-    const originalRead = (await vi.importActual<typeof fs>('node:fs')).readFileSync
-    let transitions = 0
-    const reader = vi.mocked(fs.readFileSync).mockImplementation(((...args: Parameters<typeof fs.readFileSync>) => {
-      if (String(args[0]).endsWith(`.json.claimed.${process.pid}`) && transitions === 0) {
-        transitions += 1
-        if (transition === 'applied') publishAppliedProposal(root, { proposal: proposal() })
-        else {
-          restorePendingProposal(root, proposal().proposalId)
-          if (transition === 'rejected') rejectPendingProposal(root, proposal().proposalId, { at: 20 })
-        }
-      }
-      return originalRead(...args)
-    }) as typeof fs.readFileSync)
-    expect(file()).toEqual({ kind: 'already-filed', state: transition === 'restore' ? 'pending' : transition })
-    reader.mockImplementation(originalRead)
-    expect(transitions).toBe(1)
-    expect(pending()?.proposalId).toBe(transition === 'restore' ? proposal().proposalId : undefined)
-    expect(readdirSync(proposalsDir(root)).filter(name => name === `${proposal().proposalId}.json`))
-      .toHaveLength(transition === 'restore' ? 1 : 0)
+  it('keeps a sovereign Gate-3 pass above the contradiction', async () => {
+    const candidate = await confirmedCandidate('sovereign')
+    await candidate.port.recordGateReceipt(gate2(candidate.id, 'fail', 11))
+    const g3 = stampReceiptDigest({ schemaVersion: 1, gate: 3, candidateId: candidate.id, verdict: 'pass',
+      producedAtOrdinal: 12, producedBy: { opId: 'test' }, runId: 'run-mark', mark: 'confirmed-bug' })
+    await candidate.port.recordGateReceipt(g3)
+    await expect(candidate.port.promote(candidate.id)).resolves.toMatchObject({ kind: 'promoted',
+      promotionPath: 'user-sovereign', citedReceiptDigests: [g3.receiptDigest] })
   })
 })

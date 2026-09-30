@@ -429,7 +429,6 @@ function successfulOperations(
     drainQueue: vi.fn(async () => ({
       kind: 'drained' as const,
       jobsProcessed: 0,
-      inconsistenciesFiled: 0,
       committed: 0,
       downgraded: 0,
       withheld: 0,
@@ -476,7 +475,6 @@ function handedOffDrainReport() {
       heartbeatAtMs: 0,
     },
     jobsProcessed: 0,
-    inconsistenciesFiled: 0,
     committed: 0,
     downgraded: 0,
     withheld: 0,
@@ -495,17 +493,22 @@ function handedOffDrainReport() {
 }
 
 describe('runCurationTail post-verdict fold (CUR-03/CUR-05)', () => {
-  it.each([0, 1])('418 discloses only newly filed inconsistency proposals: %s', async count => {
+  // 2026-09-30, 432-10 D-05/D-24: re-spelled. Nothing is filed any more, so a gate-inconsistent
+  // hold is disclosed only as its held line, with no proposal count or review command.
+  it.each([0, 1])('418 discloses a gate-inconsistent hold only as its held line, never a proposal: %s', async count => {
     const info = vi.fn()
     const operations = successfulOperations()
     const drain = operations.drainQueue!
     const drainQueue = vi.fn(async (...args: Parameters<typeof drain>) => ({
-      ...await drain(...args), inconsistenciesFiled: count,
+      ...await drain(...args),
+      promotions: Array.from({ length: count }, () => ({ candidateId: 'c-held',
+        promotionHoldReason: 'gate-inconsistent' as const })),
     }))
     await runCurationTail(baseOptions({ ...operations, drainQueue }, { log: { warn: vi.fn(), info } }))
-    const lines = info.mock.calls.map(([line]) => String(line)).filter(line => line.includes('gate-inconsistency proposal'))
-    expect(lines).toEqual(count === 0 ? [] : [
-      'curation: filed 1 gate-inconsistency proposal(s); review with agent-qa proposals list',
+    const lines = info.mock.calls.map(([line]) => String(line))
+    expect(lines.filter(line => /proposal|review with/.test(line))).toEqual([])
+    expect(lines.filter(line => line.includes('gate-inconsistent'))).toEqual(count === 0 ? [] : [
+      'curation: c-held held: gate-inconsistent',
     ])
   })
 
@@ -538,7 +541,7 @@ describe('runCurationTail post-verdict fold (CUR-03/CUR-05)', () => {
   it('threads the synchronous resolver and prints every promotion in report order', async () => {
     const info = vi.fn()
     const resolver = vi.fn(() => undefined)
-    const drainQueue = vi.fn(async () => ({
+    const drainQueue = vi.fn(async (_options: object) => ({
       ...handedOffDrainReport(),
       promotions: [
         { candidateId: 'c1', promotionPath: 'deterministic-verdict-floor' as const },
@@ -548,7 +551,9 @@ describe('runCurationTail post-verdict fold (CUR-03/CUR-05)', () => {
     await runCurationTail(baseOptions(successfulOperations({ drainQueue }), {
       resolvePromotionPosture: resolver, log: { warn: vi.fn(), info },
     }))
-    expect(drainQueue).toHaveBeenCalledWith(expect.objectContaining({ resolvePromotionPosture: resolver, agentQaRoot, auditBaseDir: agentQaRoot }))
+    expect(drainQueue).toHaveBeenCalledWith(expect.objectContaining({ resolvePromotionPosture: resolver, auditBaseDir: agentQaRoot }))
+    // 2026-09-30, 432-10 D-05/D-22: the drain is handed no proposals root.
+    expect(drainQueue.mock.calls[0]![0]).not.toHaveProperty('agentQaRoot')
     expect(info.mock.calls.map(([message]) => message).filter(message => message.startsWith('curation: '))).toEqual([
       'curation: handed to daemon (pid 4242)',
       'curation: c1 promoted via deterministic-verdict-floor',
@@ -688,7 +693,6 @@ describe('runCurationTail post-verdict fold (CUR-03/CUR-05)', () => {
         return {
           kind: 'drained',
           jobsProcessed: 0,
-          inconsistenciesFiled: 0,
           committed: 0,
           downgraded: 0,
           withheld: 0,
@@ -792,7 +796,6 @@ describe('runCurationTail post-verdict fold (CUR-03/CUR-05)', () => {
           heartbeatAtMs: 0,
         },
         jobsProcessed: 0,
-        inconsistenciesFiled: 0,
         committed: 0,
         downgraded: 0,
         withheld: 0,
@@ -1064,7 +1067,6 @@ describe('runCurationTail post-verdict fold (CUR-03/CUR-05)', () => {
           return {
             kind: 'drained',
             jobsProcessed: 0,
-            inconsistenciesFiled: 0,
             committed: 0,
             downgraded: 0,
             withheld: 0,
@@ -1129,7 +1131,6 @@ describe('runCurationTail post-verdict fold (CUR-03/CUR-05)', () => {
         return {
           kind: aborted ? 'aborted' as const : 'drained' as const,
           jobsProcessed: 0,
-          inconsistenciesFiled: 0,
           committed: 0,
           downgraded: 0,
           withheld: 0,
@@ -1744,7 +1745,6 @@ describe('verdict-first CLI tail wiring (CUR-03)', () => {
       return {
         kind: 'aborted' as const,
         jobsProcessed: 0,
-        inconsistenciesFiled: 0,
         committed: 0,
         downgraded: 0,
         withheld: 0,

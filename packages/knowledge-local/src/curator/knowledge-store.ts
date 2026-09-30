@@ -6,7 +6,6 @@ import {
   asRecordId,
   canonicalJson,
   deriveEvidenceToken,
-  detectGateInconsistency,
   evaluatePromotionGate,
   eventDedupKey,
   foldBundleTrust,
@@ -53,7 +52,6 @@ import {
 import { readCurrentEpoch, withCurrentWriterAuthority } from '../lease/writer-lease.js'
 import { claimedCandidateDir } from '../queue/queue-layout.js'
 import { snapshotTrustPriors } from '../promotion-gate-input.js'
-import { buildGateInconsistencyProposal, fileGateInconsistencyProposal } from '../review/gate-inconsistency.js'
 import {
   CURATION_QUEUE_SCHEMA_VERSION,
   artifactFreeCaptureReceipt,
@@ -117,14 +115,11 @@ export interface CreateLocalKnowledgeStoreConfig {
   sourceRunId?: string
   /** 2026-09-07, 418 D-07: queue entry identity stamped as producedBy.jobId. */
   sourceJobId?: string
-  /** 2026-09-07, 418 D-19: proposals store root for inconsistency reports. */
-  agentQaRoot?: string
   screenStates?: readonly ScreenState[]
   resolvePromotionPosture?: ResolvePromotionPosture
   /** Resolved once at construction; only neutral immutable data reaches folds and projections. */
   resolveTrustPriors?: () => TrustPriorTable | undefined
   onPromotionOutcome?: (report: PromotionOutcomeReport) => void
-  onInconsistencyFiled?: (result: ReturnType<typeof fileGateInconsistencyProposal>) => void
   /** Fault-injection seam; production callers must omit it. */
   canaryAuthorityHooks?: CanaryAuthorityHooks
   /**
@@ -536,25 +531,6 @@ function buildLocalKnowledgeStore(
     }
   }
 
-  // 2026-09-08, 418 D-17/D-19: door 2 only, AFTER the one routine reported its hold.
-  function reportCanaryHold(error: unknown, outcome: CanaryOutcome): void {
-    reportHold(error)
-    if (!expectedPromotionHold(error) || error.reason !== 'gate-inconsistent'
-      || config.agentQaRoot === undefined) return
-    const current = resolveTruth(config.knowledgeRoot, outcome.candidateId, priors)
-    if (current === undefined) throw new KnowledgePromotionError(outcome.candidateId, 'not-found')
-    const standing = (readGateReceipts(current.bundleDir, outcome.candidateId) ?? [])
-      .filter((line): line is GateReceipt => !isPromotionReceipt(line))
-    const found = detectGateInconsistency(standing)
-    if (found === undefined) return // An older pending proposal alone may be holding clean receipts.
-    const now = Date.now()
-    const result = fileGateInconsistencyProposal(config.agentQaRoot,
-      buildGateInconsistencyProposal({ candidateId: outcome.candidateId,
-        scope: current.bundle.frontmatter.scope, ...found, proposedAt: now }),
-      { runId: outcome.runId, at: now })
-    config.onInconsistencyFiled?.(result)
-  }
-
   /**
    * @internal The caller must already hold withCurrentWriterAuthority for this root. Every
    * append and projection below is irreversible canonical work, so the whole gate-and-write
@@ -849,7 +825,8 @@ function buildLocalKnowledgeStore(
               // A gate hold or propose-only posture means "not yet". The durable Confirm remains
               // valid evidence and must not turn a crash replay into a permanently failing job.
               if (!expectedPromotionHold(error)) throw error
-              reportCanaryHold(error, outcome)
+              // 2026-09-30, 432-10 D-05: the hold is reported from evidence and nothing is filed.
+              reportHold(error)
             }
             config.onCanaryTailWithinCurrentAuthority?.()
           })
@@ -916,7 +893,7 @@ function buildLocalKnowledgeStore(
                 promoteWithinCurrentAuthority(outcome.candidateId)
               } catch (error) {
                 if (!expectedPromotionHold(error)) throw error
-                reportCanaryHold(error, outcome)
+                reportHold(error)
               }
             }
             config.canaryAuthorityHooks?.beforeIndexProjection?.()

@@ -5,7 +5,6 @@ import {
 } from '@vostride/agent-qa-schema'
 import { deriveBundleTrust, readGateReceipts } from '../bundle-read.js'
 import { enumerateMaintenanceBundleDirs, loadMaintenanceBundle } from '../maintenance-scan.js'
-import { pendingGateInconsistencyFor, type PendingGateInconsistency } from '../review/gate-inconsistency-read.js'
 
 export type CanaryPostureFacts = {
   kind: 'found'
@@ -17,7 +16,6 @@ export type CanaryPostureFacts = {
   latestGate2Ordinal?: number
   activeInScope: number
   lowerTrustActiveInScope: number
-  pendingInconsistency?: PendingGateInconsistency
 } | { kind: 'not-found' }
 
 export interface StandingReceiptDigest {
@@ -45,8 +43,10 @@ function latest(ordinals: number[]): number | undefined {
   return ordinals.length === 0 ? undefined : Math.max(...ordinals)
 }
 
+// 2026-09-30, 432-10 D-05/D-22: bundle evidence only. The legacy proposal inbox is never read;
+// a contradiction in the standing receipts is held by the promotion gate itself.
 export function canaryPostureFactsFor(input: {
-  knowledgeRoot: string; candidateId: string; scope: ScopeKey; agentQaRoot?: string
+  knowledgeRoot: string; candidateId: string; scope: ScopeKey
   resolveTrustPriors?: () => TrustPriorTable | undefined
 }): CanaryPostureFacts {
   const id = asRecordId(input.candidateId)
@@ -73,11 +73,8 @@ export function canaryPostureFactsFor(input: {
   const latestGate2Ordinal = latest(receipts.filter(row => row.gate === 2).map(row => row.producedAtOrdinal))
   const active = rows.filter(row => row.active && row.product === candidate.product
     && row.bundle.frontmatter.scope.tier === 'product' && row.bundle.frontmatter.scope.key === scope.key)
-  const pendingInconsistency = input.agentQaRoot === undefined ? undefined
-    : pendingGateInconsistencyFor({ agentQaRoot: input.agentQaRoot, candidateId: id })
   return {
     kind: 'found',
-    ...(pendingInconsistency === undefined ? {} : { pendingInconsistency }),
     ...(pass === undefined ? {} : { gate1PassOrdinal: pass.producedAtOrdinal, gate1PassDigest: pass.receiptDigest }),
     ...(lowerTrustActiveGate1Digest === undefined ? {} : { lowerTrustActiveGate1Digest }),
     ...(latestAttributionOrdinal === undefined ? {} : { latestAttributionOrdinal }),
