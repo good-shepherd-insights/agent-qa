@@ -1,174 +1,115 @@
-// Accepting a `test-draft` really commits it — the op, the route and the host in one process
-// (394-10, D-05/D-06 · WTST-01).
+// A final authored test is written straight to its target (432 D-06/D-07), over the CLI host's
+// real writer, a real workspace and — where a repository exists — a real git repository.
 //
-// WHY THIS FILE IS IN `packages/cli`. The one-commit apply lives at the CLI host because it needs
-// `workspaceRelativeIdentityPath` from `@vostride/agent-qa-core`, which neither `agent` nor
-// `agent-local` may name — so this is the only place where `proposals.accept` and a real git
-// repository can be in the same process. The op's own contract (which port each kind reaches, what
-// it reports, who it refuses) is measured where the op lives, in
-// `packages/agent/src/functions/__tests__/proposals-accept.test.ts`.
+// RE-SPELLED IN PLACE, 2026-09-30. This file used to prove that ACCEPTING a `test-draft` proposal
+// wrote it and made one commit of one file (394-10). Nothing waits for acceptance now and agent-qa
+// makes no commits, so every claim here keeps its subject — the bytes that land at the target — and
+// measures the direct write instead: the exact bytes, the workspace boundary and the source-digest
+// guard the old apply checked, no commit, no index change, success in a dirty tree and without git,
+// no bytes for a rejected draft, and a failed write reported as not written.
 //
-// THE INBOX IS A DOUBLE, AND THAT IS A MEASUREMENT RATHER THAN A CONVENIENCE. Nothing on any host
-// in this build persists a `test-draft` record: `writePendingProposal` takes a
-// `KnowledgeProposalV1`, `extractStoredProposal` refuses every other kind BY NAME, and
-// `envelopeAt`/`envelopeOf` in the same store are typed to the knowledge arm alone. So a
-// `test-draft` envelope cannot come off disk today, and a cell that waited for one would be waiting
-// for a store nobody has built. What IS real here is everything downstream of the envelope: the
-// registered op, the gate, the route, the bound port, the workspace, and the git repository the
-// commit lands in.
+// WHY THIS FILE IS IN `packages/cli`. The writer needs `workspaceRelativeIdentityPath` from
+// `@vostride/agent-qa-core`, which neither `agent` nor `agent-local` may name, so the CLI host is the
+// only place the loop, the real writer and a real repository can be in one process.
 
 import { createHash } from 'node:crypto'
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { spawnSync } from 'node:child_process'
 
-import { createFunctionRegistry, invokeFunction } from '@vostride/agent-qa-agent'
-import type { FunctionDeps } from '@vostride/agent-qa-agent'
-import {
-  FunctionScopeSchema,
-  MASKED_RESOLVED_CONFIG_SCHEMA_VERSION,
-} from '@vostride/agent-qa-schema'
-import type {
-  FunctionCaller,
-  ProposalInboxEntryDto,
-  ProposalsAcceptOutput,
-  ProposalsRejectOutput,
-} from '@vostride/agent-qa-schema'
+import { runAuthoringLoop } from '@vostride/agent-qa-agent'
+import type { DraftShelfPortLike } from '@vostride/agent-qa-agent'
+import type { AuthoringBrief, DraftDisposition, DraftReceipt } from '@vostride/agent-qa-schema'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
-import { createTestDraftApplyPort } from '../composition/local-agent-host.js'
+import * as localHost from '../composition/local-agent-host.js'
 
-const PROPOSAL_ID = 'prop_aaaaaaaa-bbbb'
 const DRAFT_PATH = 'tests/.agent-qa-drafts/abc123.yaml'
 const TARGET_PATH = 'tests/the-coupon-banner-appears.yaml'
 
-const DRAFT_BYTES = `name: The coupon banner appears
+// UTF-8 beyond ASCII, and one byte that is not UTF-8 at all inside a comment: a writer that went
+// through a string anywhere would turn the last into U+FFFD and fail the byte comparison.
+const DRAFT_BYTES = Buffer.concat([
+  Buffer.from('# café ✓ — checks the coupon banner, byte '),
+  Buffer.from([0xff]),
+  Buffer.from(`
+name: The coupon banner appears
 target: local-form
 steps:
   - Open the cart
   - Apply the coupon FREESHIP
   - Verify the coupon banner is visible
-`
+`),
+])
 
-const HUMAN: FunctionCaller = {
-  surface: 'test',
-  grantedScopes: [...FunctionScopeSchema.options],
-  safeMode: false,
-  origin: 'human',
+interface PublishRequest {
+  readonly draftPath: string
+  readonly targetPath: string
+  readonly sourceDigest?: string
+}
+
+type Publish = (input: {
+  readonly configPath: string
+  readonly request: PublishRequest
+  readonly writeTarget?: (absolutePath: string, bytes: Buffer) => void
+}) => unknown
+
+/** The writer under test, reached by name so an absent export is an assertion rather than a crash. */
+function publisher(): Publish {
+  const publish = (localHost as Record<string, unknown>)['publishAuthoredTest']
+  expect(typeof publish).toBe('function')
+  return publish as Publish
 }
 
 let root: string
 let configPath: string
 
-function git(...args: string[]): { status: number | null; stdout: string } {
+function sha256(bytes: Buffer | string): string {
+  return createHash('sha256').update(bytes).digest('hex')
+}
+
+function git(...args: string[]): string {
   const result = spawnSync('git', args, { cwd: root, encoding: 'utf8' })
   if (result.error !== undefined) throw result.error
   if (result.status !== 0) {
-    // 395-24 · WR-12 — a `git` that ran and failed must not return quietly; see
-    // validate-resolution-surface.test.ts for the full note.
     throw new Error(`git ${args.join(' ')} exited ${result.status}: ${result.stderr}`)
   }
-  return { status: result.status, stdout: result.stdout }
+  return result.stdout
 }
 
-function headStatPaths(): string[] {
-  return git('show', '--stat', '--name-only', '--format=', 'HEAD').stdout
-    .split('\n').map((line) => line.trim()).filter((line) => line.length > 0)
-}
-
-function testDraftEntry(
-  overrides: Partial<Extract<ProposalInboxEntryDto['envelope'], { kind: 'test-draft' }>> = {},
-): ProposalInboxEntryDto {
+/** Everything a commit or a stage would move, read before and after the write. */
+function repositorySnapshot(): Record<string, string> {
   return {
-    applyInFlight: false,
-    envelope: {
-      id: PROPOSAL_ID,
-      kind: 'test-draft',
-      status: 'pending',
-      evidenceRefs: [],
-      payload: {
-        schemaVersion: 1,
-        draftRef: {
-          filePath: DRAFT_PATH,
-          testId: 't_coupon',
-          testName: 'The coupon banner appears',
-          contentDigest: createHash('sha256').update(DRAFT_BYTES).digest('hex'),
-        },
-        targetPath: TARGET_PATH,
-        disposition: 'keep-eligible',
-        runsPreviewed: 9,
-        runsConsumed: 3,
-        repairIterations: 0,
-        summaryLine: 'The coupon banner appears — keep-eligible',
-      },
-      ...overrides,
-    },
+    head: git('rev-parse', 'HEAD').trim(),
+    count: git('rev-list', '--count', 'HEAD').trim(),
+    index: git('ls-files', '--stage'),
+    cached: git('diff', '--cached', '--name-status'),
   }
 }
 
-function registryFor(entry: ProposalInboxEntryDto, options: { bindApply?: boolean } = {}) {
-  const rejected: string[] = []
-  const deps: FunctionDeps = {
-    runs: {
-      list: () => Promise.resolve([]),
-      get: () => Promise.resolve(undefined),
-      readEvents: () => Promise.resolve([]),
-      readStepEvidence: () => Promise.resolve({ kind: 'run-not-recorded' } as const),
-    },
-    knowledge: {
-      listBundles: () => Promise.resolve([]),
-      inspectRecords: () => Promise.resolve([]),
-      diffSince: () => Promise.resolve([]),
-      showRecord: ({ recordId }) =>
-        Promise.resolve({ kind: 'not-found', schemaVersion: 1, recordId } as const),
-    },
-    entities: {
-      resolve: () => Promise.resolve({ kind: 'none' as const, reason: 'no-match' as const }),
-      get: () => Promise.resolve(undefined),
-    },
-    config: {
-      getMasked: () => Promise.resolve({
-        schemaVersion: MASKED_RESOLVED_CONFIG_SCHEMA_VERSION,
-        configPath: 'agent-qa.config.yaml',
-        entries: [],
-      }),
-    },
-    proposalsInbox: {
-      list: () => Promise.resolve([entry]),
-      show: ({ proposalId }) => Promise.resolve(
-        proposalId === entry.envelope.id
-          ? { kind: 'found' as const, entry }
-          : { kind: 'not-found' as const, proposalId },
-      ),
-      reject: ({ proposalId }) => {
-        rejected.push(proposalId)
-        return Promise.resolve({ outcome: 'rejected' as const, entry })
-      },
-      // 394-18: the decision half. The real inbox records it in the durable store; this fake only
-      // has to be total over the port, and the composed cells below assert the commit itself.
-      recordApplied: () => Promise.resolve({ outcome: 'recorded' as const }),
-    },
-    // THE REAL ONE, over the real workspace and the real repository.
-    ...(options.bindApply === false ? {} : { draftApply: createTestDraftApplyPort(configPath) }),
-  }
-
-  return {
-    rejected,
-    registry: createFunctionRegistry({
-      deps,
-      auditSink: { appendExecutionAudit() {}, appendGuardrailAudit() {} },
-      // The production door for an accept: `mutating-shared` is an ask in every context, and this
-      // is the arm the CLI host binds. Without it the call denies before dispatching anything, and
-      // every cell below would pass while measuring nothing.
-      resolveExecutionContext: () => 'local-interactive',
-      confirm: { surface: 'tty-prompt', ask: () => true },
-    }),
-  }
+function initRepository(): void {
+  git('init', '--quiet')
+  git('config', 'user.name', 'agent-qa direct write test')
+  git('config', 'user.email', 'direct-write-test@example.invalid')
+  git('config', 'commit.gpgsign', 'false')
+  writeFileSync(join(root, '.gitignore'), 'tests/.agent-qa-drafts/\n')
+  writeFileSync(join(root, 'README.md'), 'seeded\n')
+  git('add', '--', '.gitignore', 'README.md', 'agent-qa.config.yaml')
+  git('commit', '--quiet', '-m', 'seed')
 }
 
 beforeEach(() => {
-  root = mkdtempSync(join(tmpdir(), 'test-draft-accept-'))
+  root = mkdtempSync(join(tmpdir(), 'test-direct-write-'))
   configPath = join(root, 'agent-qa.config.yaml')
   writeFileSync(
     configPath,
@@ -179,83 +120,257 @@ beforeEach(() => {
   )
   mkdirSync(join(root, 'tests', '.agent-qa-drafts'), { recursive: true })
   writeFileSync(join(root, DRAFT_PATH), DRAFT_BYTES)
-
-  git('init', '--quiet')
-  git('config', 'user.name', 'agent-qa accept test')
-  git('config', 'user.email', 'accept-test@example.invalid')
-  git('config', 'commit.gpgsign', 'false')
-  writeFileSync(join(root, '.gitignore'), 'tests/.agent-qa-drafts/\n')
-  writeFileSync(join(root, 'README.md'), 'seeded\n')
-  git('add', '--', '.gitignore', 'README.md', 'agent-qa.config.yaml')
-  git('commit', '--quiet', '-m', 'seed')
 })
 
 afterEach(() => {
   rmSync(root, { recursive: true, force: true })
 })
 
-describe('accepting a test-draft writes it and commits it', () => {
-  it('puts the draft at its target path and adds exactly ONE commit of exactly ONE file', async () => {
-    const built = registryFor(testDraftEntry())
+describe('C432-TEST-DIRECT-BYTES: a final authored test is written directly to its target', () => {
+  it('C432-TEST-DIRECT-BYTES: writes the draft bytes exactly, and HEAD, the index and the history do not move', () => {
+    initRepository()
+    const before = repositorySnapshot()
 
-    const answer = await invokeFunction(
-      built.registry,
-      'proposals.accept',
-      { proposalId: PROPOSAL_ID },
-      HUMAN,
-    ) as ProposalsAcceptOutput
+    const outcome = publisher()({
+      configPath,
+      request: { draftPath: DRAFT_PATH, targetPath: TARGET_PATH },
+    })
 
-    expect(answer.apply.outcome).toBe('applied')
-    expect(readFileSync(join(root, TARGET_PATH), 'utf8')).toBe(DRAFT_BYTES)
-    expect(headStatPaths()).toEqual([TARGET_PATH])
-    expect(git('rev-list', '--count', 'HEAD').stdout.trim()).toBe('2')
-    expect(git('log', '-1', '--format=%B', 'HEAD').stdout).toContain(PROPOSAL_ID)
-    expect(answer.apply).toMatchObject({ applied: { kind: 'test-draft' } })
+    expect(outcome).toEqual({
+      kind: 'written',
+      filePath: TARGET_PATH,
+      contentDigest: sha256(DRAFT_BYTES),
+    })
+    expect(readFileSync(join(root, TARGET_PATH)).equals(DRAFT_BYTES)).toBe(true)
+    expect(repositorySnapshot()).toEqual(before)
+    // A plain uncommitted edit: `git status` shows it and `git restore`/deleting it reverts it.
+    expect(git('status', '--porcelain', '--', TARGET_PATH).trim()).toBe(`?? ${TARGET_PATH}`)
+    // No sibling temp is left beside the written test.
+    expect(readdirSync(join(root, 'tests')).sort())
+      .toEqual(['.agent-qa-drafts', 'the-coupon-banner-appears.yaml'])
   })
 
-  it('refuses BY NAME when the host binds no apply, and leaves the repository untouched', async () => {
-    const built = registryFor(testDraftEntry(), { bindApply: false })
+  it("C432-TEST-DIRECT-BYTES: writes into a dirty tree and leaves a person's staged and unstaged work alone", () => {
+    initRepository()
+    writeFileSync(join(root, 'README.md'), 'seeded\nstaged edit\n')
+    git('add', '--', 'README.md')
+    writeFileSync(join(root, 'README.md'), 'seeded\nstaged edit\nunstaged edit\n')
+    writeFileSync(join(root, 'notes.txt'), 'untracked\n')
+    const before = repositorySnapshot()
 
-    await expect(invokeFunction(
-      built.registry,
-      'proposals.accept',
-      { proposalId: PROPOSAL_ID },
-      HUMAN,
-    )).rejects.toThrow(/declared but not bound/)
+    const outcome = publisher()({
+      configPath,
+      request: { draftPath: DRAFT_PATH, targetPath: TARGET_PATH },
+    })
 
-    expect(git('rev-list', '--count', 'HEAD').stdout.trim()).toBe('1')
-    expect(git('status', '--porcelain').stdout.trim()).toBe('')
+    expect(outcome).toMatchObject({ kind: 'written', filePath: TARGET_PATH })
+    expect(readFileSync(join(root, TARGET_PATH)).equals(DRAFT_BYTES)).toBe(true)
+    expect(repositorySnapshot()).toEqual(before)
+    expect(git('diff', '--cached', '--name-only').trim()).toBe('README.md')
+    expect(readFileSync(join(root, 'README.md'), 'utf8'))
+      .toBe('seeded\nstaged edit\nunstaged edit\n')
   })
 
-  it('leaves the working tree and the history untouched when the draft is REJECTED', async () => {
-    const built = registryFor(testDraftEntry())
+  it('C432-TEST-DIRECT-BYTES: writes with no repository and no git on PATH', () => {
+    const savedPath = process.env['PATH']
+    process.env['PATH'] = ''
+    let outcome: unknown
+    try {
+      outcome = publisher()({
+        configPath,
+        request: { draftPath: DRAFT_PATH, targetPath: TARGET_PATH },
+      })
+    } finally {
+      process.env['PATH'] = savedPath
+    }
 
-    const answer = await invokeFunction(
-      built.registry,
-      'proposals.reject',
-      { proposalId: PROPOSAL_ID },
-      HUMAN,
-    ) as ProposalsRejectOutput
-
-    expect(answer.outcome).toBe('rejected')
-    expect(built.rejected).toEqual([PROPOSAL_ID])
-    expect(git('status', '--porcelain').stdout.trim()).toBe('')
-    expect(git('rev-list', '--count', 'HEAD').stdout.trim()).toBe('1')
+    expect(outcome).toMatchObject({ kind: 'written', filePath: TARGET_PATH })
+    expect(readFileSync(join(root, TARGET_PATH)).equals(DRAFT_BYTES)).toBe(true)
+    expect(existsSync(join(root, '.git'))).toBe(false)
   })
 
-  it('refuses a target a person has uncommitted work at, with nothing written and nothing committed', async () => {
-    writeFileSync(join(root, TARGET_PATH), 'name: mine, not yet committed\nsteps:\n  - Open\n')
-    const built = registryFor(testDraftEntry())
+  it('C432-TEST-DIRECT-BYTES: refuses a target that is no longer what was read, and writes nothing', () => {
+    const theirs = Buffer.from('name: mine, not yet committed\nsteps:\n  - Open\n')
+    writeFileSync(join(root, TARGET_PATH), theirs)
 
-    await expect(invokeFunction(
-      built.registry,
-      'proposals.accept',
-      { proposalId: PROPOSAL_ID },
-      HUMAN,
-    )).rejects.toThrow(/uncommitted work/)
+    // A NEW test claims the target is absent; a file there is somebody else's.
+    expect(publisher()({
+      configPath,
+      request: { draftPath: DRAFT_PATH, targetPath: TARGET_PATH },
+    })).toEqual({ kind: 'not-written', targetPath: TARGET_PATH, reason: 'target-changed' })
+    // An EDIT claims the bytes it read; a digest of anything else is refused the same way.
+    expect(publisher()({
+      configPath,
+      request: { draftPath: DRAFT_PATH, targetPath: TARGET_PATH, sourceDigest: sha256('other') },
+    })).toEqual({ kind: 'not-written', targetPath: TARGET_PATH, reason: 'target-changed' })
+    expect(readFileSync(join(root, TARGET_PATH)).equals(theirs)).toBe(true)
 
-    expect(readFileSync(join(root, TARGET_PATH), 'utf8'))
-      .toBe('name: mine, not yet committed\nsteps:\n  - Open\n')
-    expect(git('rev-list', '--count', 'HEAD').stdout.trim()).toBe('1')
+    // The digest of exactly what is there is the edit that goes through.
+    expect(publisher()({
+      configPath,
+      request: { draftPath: DRAFT_PATH, targetPath: TARGET_PATH, sourceDigest: sha256(theirs) },
+    })).toMatchObject({ kind: 'written', filePath: TARGET_PATH })
+    expect(readFileSync(join(root, TARGET_PATH)).equals(DRAFT_BYTES)).toBe(true)
+  })
+
+  it('C432-TEST-DIRECT-BYTES: refuses a target outside the workspace, including through a symlink', () => {
+    const outside = mkdtempSync(join(tmpdir(), 'test-direct-write-outside-'))
+    try {
+      symlinkSync(outside, join(root, 'tests', 'escape'))
+
+      expect(publisher()({
+        configPath,
+        request: { draftPath: DRAFT_PATH, targetPath: '../escaped.yaml' },
+      })).toMatchObject({ kind: 'not-written', reason: 'outside-workspace' })
+      expect(publisher()({
+        configPath,
+        request: { draftPath: DRAFT_PATH, targetPath: 'tests/escape/escaped.yaml' },
+      })).toMatchObject({ kind: 'not-written', reason: 'outside-workspace' })
+
+      expect(readdirSync(outside)).toEqual([])
+      expect(existsSync(join(root, '..', 'escaped.yaml'))).toBe(false)
+    } finally {
+      rmSync(outside, { recursive: true, force: true })
+    }
+  })
+
+  it('C432-TEST-DIRECT-BYTES: a failed write is reported as not written, never as success', () => {
+    const outcome = publisher()({
+      configPath,
+      request: { draftPath: DRAFT_PATH, targetPath: TARGET_PATH },
+      writeTarget: () => {
+        throw new Error('EIO: i/o error, write')
+      },
+    })
+
+    expect(outcome).toEqual({
+      kind: 'not-written',
+      targetPath: TARGET_PATH,
+      reason: 'write-failed',
+      detail: 'EIO: i/o error, write',
+    })
+    expect(existsSync(join(root, TARGET_PATH))).toBe(false)
+    expect(readdirSync(join(root, 'tests'))).toEqual(['.agent-qa-drafts'])
+  })
+})
+
+// ---- the loop over this host's real writer ----------------------------------------------------
+
+const MODEL_DOCUMENT = `name: Confirm the coupon banner
+test-id: t_dose-warm-pea-sharp-hong-tested-lari-sat-import-slow
+target: local-form
+steps:
+  - Open the cart
+  - Verify the coupon banner says "Free shipping"
+`
+
+const EMPTY_BRIEF: AuthoringBrief = {
+  exemplars: [],
+  procedures: [],
+  facts: [],
+  cautions: [],
+  coverage: {},
+  truncation: 'none',
+  admissions: [],
+}
+
+function receiptFor(
+  draft: { readonly filePath: string; readonly testId: string; readonly testName: string;
+    readonly contentDigest: string },
+  disposition: DraftDisposition,
+  pass: boolean,
+): DraftReceipt {
+  return {
+    schemaVersion: 1,
+    draftRef: {
+      filePath: draft.filePath,
+      testId: draft.testId,
+      testName: draft.testName,
+      contentDigest: draft.contentDigest,
+    },
+    gates: {
+      executesDefinitive: { pass: true, runRefs: [], indefinitiveRunRefs: [] },
+      stableVerdict: { pass, runRefs: [], distinctOutcomes: [], earlyStopped: false },
+      addsValue: { pass: true, novelElementCount: 1, comparedTestCount: 0 },
+      falsifiableAssertion: { pass: true, assertionStepCount: 1, falsifiableAssertionCount: 1 },
+    },
+    stepTable: [],
+    gateRuns: [],
+    addsValueFinding: { novelElements: [], comparedTests: [] },
+    stabilityRunsRequested: 3,
+    stabilityRunsCompleted: 3,
+    disposition,
+    evaluatedAt: 1,
+  }
+}
+
+type AuthoringPort = ReturnType<typeof localHost.createDraftAuthoringPort>
+
+function loopDeps(disposition: DraftDisposition, pass: boolean) {
+  const authoring: AuthoringPort = localHost.createDraftAuthoringPort(configPath)
+  const publish = (authoring as unknown as Record<string, unknown>)['publishDraft'] as
+    | ((request: PublishRequest) => Promise<unknown>)
+    | undefined
+  const shelf = {
+    model: () => Promise.resolve({
+      modelId: 'fixture:direct-write',
+      generate: (request: { readonly system?: string }) => Promise.resolve({
+        text: (request.system ?? '').includes('authoring.draft.write — refine')
+          ? 'no changes'
+          : MODEL_DOCUMENT,
+      }),
+    }),
+    write: (contents: string) => authoring.stageDraft(contents),
+    applyPatches: () => Promise.reject(new Error('no repair in this cell')),
+    runs: {
+      start: () => Promise.reject(new Error('the scripted verify starts no run')),
+      get: () => Promise.resolve(undefined),
+    },
+    verifyDraft: async (input: { readonly draftPath: string }) => {
+      const parsed = await authoring.parseDraft(input.draftPath)
+      if (parsed.kind !== 'parsed') throw new Error(`unparsed draft: ${parsed.kind}`)
+      return receiptFor(parsed.draft, disposition, pass)
+    },
+    publish: (request: PublishRequest) =>
+      publish === undefined ? Promise.reject(new Error('no writer')) : publish(request),
+  } as unknown as DraftShelfPortLike
+  const read = {
+    getAuthoringBrief: () => Promise.resolve(EMPTY_BRIEF),
+    suiteTextCorpus: () => Promise.resolve([]),
+    configuredTargetNames: () => Promise.resolve(['local-form']),
+  }
+  return { read, shelf }
+}
+
+const LOOP_TARGET = 'tests/confirm-the-coupon-banner.yaml'
+
+describe('C432-TEST-DIRECT-BYTES: the loop writes a final draft through this host, or does not', () => {
+  it('C432-TEST-DIRECT-BYTES: a keep-eligible final draft lands at its target, byte for byte', async () => {
+    initRepository()
+    const before = repositorySnapshot()
+
+    const result = await runAuthoringLoop(
+      { intent: 'Check the coupon banner', scope: { tier: 'product', key: 'local-form' } },
+      loopDeps('keep-eligible', true),
+    )
+
+    expect(result.outcome.kind).toBe('drafted')
+    expect(existsSync(join(root, LOOP_TARGET))).toBe(true)
+    expect(readFileSync(join(root, LOOP_TARGET), 'utf8')).toBe(MODEL_DOCUMENT)
+    expect(repositorySnapshot()).toEqual(before)
+  })
+
+  it('C432-TEST-DIRECT-BYTES: a rejected final draft leaves no bytes at its target', async () => {
+    initRepository()
+    const before = repositorySnapshot()
+
+    await runAuthoringLoop(
+      { intent: 'Check the coupon banner', scope: { tier: 'product', key: 'local-form' } },
+      loopDeps('rejected', false),
+    ).catch((error: unknown) => error)
+
+    expect(existsSync(join(root, LOOP_TARGET))).toBe(false)
+    expect(readdirSync(join(root, 'tests')).sort()).toEqual(['.agent-qa-drafts'])
+    expect(repositorySnapshot()).toEqual(before)
   })
 })

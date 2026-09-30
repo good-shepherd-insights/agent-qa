@@ -22,6 +22,8 @@ import {
   DraftReceiptSchema,
   type DraftReceipt,
 } from '../draft-receipt'
+import * as dispositionModule from '../disposition'
+import * as receiptModule from '../draft-receipt'
 import { AuthoringVerifyDraftInputSchema } from '../../functions/authoring'
 
 const ALL_TRUE = {
@@ -253,6 +255,138 @@ describe('DraftReceiptSchema (393 D-19, WTST-02)', () => {
 
   it('refuses a disposition outside the vocabulary', () => {
     expect(() => DraftReceiptSchema.parse({ ...FULL_RECEIPT, disposition: 'keep' })).toThrow()
+  })
+})
+
+// 2026-09-30, 432 D-06 (EDGE-09): the never-auto-keep rule is superseded. The disposition stays as
+// the verification report; what it now decides is whether the final draft is written to its target.
+type WritesTarget = (disposition: string) => boolean
+type ParseSchema = { safeParse(value: unknown): { success: boolean } }
+
+function writesTarget(): WritesTarget {
+  const predicate = (dispositionModule as Record<string, unknown>)['draftDispositionWritesTarget']
+  expect(typeof predicate).toBe('function')
+  return predicate as WritesTarget
+}
+
+function writtenReceiptSchema(): ParseSchema {
+  const schema = (receiptModule as Record<string, unknown>)['WrittenTestReceiptSchema']
+  expect(schema).toBeDefined()
+  return schema as ParseSchema
+}
+
+const WRITTEN_FILE = {
+  kind: 'written',
+  filePath: 'tests/accept-control.yaml',
+  contentDigest: 'sha256:0f1e2d3c',
+} as const
+
+const MIXED_GATES = {
+  executesDefinitive: true,
+  stableVerdict: false,
+  addsValue: true,
+  falsifiableAssertion: false,
+} as const
+
+describe('EDGE-09: exactly keep-eligible, proposal-only and unverified final drafts are written (432 D-06)', () => {
+  it('writes a target for exactly keep-eligible, proposal-only and unverified; never for rejected', () => {
+    const predicate = writesTarget()
+    expect(DRAFT_DISPOSITIONS.filter((disposition) => predicate(disposition)))
+      .toEqual(['keep-eligible', 'proposal-only', 'unverified'])
+    expect(predicate('rejected')).toBe(false)
+    expect((dispositionModule as Record<string, unknown>)['DRAFT_WRITTEN_DISPOSITIONS'])
+      .toEqual(['keep-eligible', 'proposal-only', 'unverified'])
+  })
+
+  it('writes every evaluation the table does not reject, over every gate combination and run count', () => {
+    const predicate = writesTarget()
+    const flags = [true, false] as const
+    let cases = 0
+    for (const executesDefinitive of flags) {
+      for (const stableVerdict of flags) {
+        for (const addsValue of flags) {
+          for (const falsifiableAssertion of flags) {
+            const gates = { executesDefinitive, stableVerdict, addsValue, falsifiableAssertion }
+            const allPass = executesDefinitive && stableVerdict && addsValue && falsifiableAssertion
+            for (const requested of [1, DRAFT_STABILITY_RUNS_N]) {
+              for (let completed = 0; completed <= requested; completed += 1) {
+                const disposition = computeDraftDisposition({
+                  gates,
+                  stabilityRunsRequested: requested,
+                  stabilityRunsCompleted: completed,
+                })
+                expect(predicate(disposition)).toBe(requested === 1 || allPass)
+                cases += 1
+              }
+            }
+          }
+        }
+      }
+    }
+    expect(cases).toBe(16 * (2 + DRAFT_STABILITY_RUNS_N + 1))
+  })
+
+  it('keeps the disposition and all four gate booleans on a written-test receipt', () => {
+    const schema = writtenReceiptSchema()
+    for (const disposition of ['keep-eligible', 'proposal-only', 'unverified'] as const) {
+      expect(schema.safeParse({ file: WRITTEN_FILE, disposition, gates: ALL_TRUE }).success)
+        .toBe(true)
+    }
+    // Draft mode writes an unverified draft whatever its booleans said, and the receipt says so.
+    expect(schema.safeParse({ file: WRITTEN_FILE, disposition: 'unverified', gates: MIXED_GATES })
+      .success).toBe(true)
+    const { falsifiableAssertion: _dropped, ...threeGates } = ALL_TRUE
+    expect(schema.safeParse({ file: WRITTEN_FILE, disposition: 'keep-eligible', gates: threeGates })
+      .success).toBe(false)
+    expect(schema.safeParse({
+      file: WRITTEN_FILE,
+      disposition: 'keep-eligible',
+      gates: { ...ALL_TRUE, verdict: true },
+    }).success).toBe(false)
+  })
+
+  it('cannot say a rejected draft was written, nor call a written draft rejected', () => {
+    const schema = writtenReceiptSchema()
+    expect(schema.safeParse({ file: WRITTEN_FILE, disposition: 'rejected', gates: MIXED_GATES })
+      .success).toBe(false)
+    expect(schema.safeParse({
+      file: { kind: 'not-written', targetPath: WRITTEN_FILE.filePath, reason: 'rejected' },
+      disposition: 'rejected',
+      gates: MIXED_GATES,
+    }).success).toBe(true)
+    expect(schema.safeParse({
+      file: { kind: 'not-written', targetPath: WRITTEN_FILE.filePath, reason: 'rejected' },
+      disposition: 'keep-eligible',
+      gates: ALL_TRUE,
+    }).success).toBe(false)
+  })
+
+  it('reports a write that did not land as not written, with its reason', () => {
+    const schema = writtenReceiptSchema()
+    for (const reason of ['outside-workspace', 'target-changed', 'write-failed'] as const) {
+      expect(schema.safeParse({
+        file: { kind: 'not-written', targetPath: WRITTEN_FILE.filePath, reason, detail: 'EACCES' },
+        disposition: 'keep-eligible',
+        gates: ALL_TRUE,
+      }).success).toBe(true)
+    }
+    expect(schema.safeParse({
+      file: { kind: 'not-written', targetPath: WRITTEN_FILE.filePath, reason: 'accepted' },
+      disposition: 'keep-eligible',
+      gates: ALL_TRUE,
+    }).success).toBe(false)
+  })
+
+  it('projects the four gate booleans off a receipt, one per gate, without collapsing them', () => {
+    const project = (receiptModule as Record<string, unknown>)['draftGateBooleans']
+    expect(typeof project).toBe('function')
+    const parsed = DraftReceiptSchema.parse(FULL_RECEIPT)
+    const failed = {
+      ...parsed.gates,
+      stableVerdict: { ...parsed.gates.stableVerdict, pass: false },
+      falsifiableAssertion: { ...parsed.gates.falsifiableAssertion, pass: false },
+    }
+    expect((project as (gates: unknown) => unknown)(failed)).toEqual(MIXED_GATES)
   })
 })
 

@@ -141,9 +141,14 @@ function changedLines(before: string, after: string): { removed: number[]; added
   return { removed, added }
 }
 
-function harness(emission: string) {
+function harness(emission: string, options: { readonly beforeAnswer?: () => void } = {}) {
   const authoring = createDraftAuthoringPort(configPath)
   let runStarts = 0
+  // 432 D-06: the host's direct writer, reached through the port by name so a baseline without it
+  // is an assertion failure rather than a crash.
+  const publishDraft = (authoring as unknown as Record<string, unknown>)['publishDraft'] as
+    | ((request: unknown) => Promise<unknown>)
+    | undefined
 
   const deps = {
     entities: {
@@ -153,7 +158,10 @@ function harness(emission: string) {
     draftShelf: {
       model: () => Promise.resolve({
         modelId: 'fixture:edit-e2e',
-        generate: () => Promise.resolve({ text: emission }),
+        generate: () => {
+          options.beforeAnswer?.()
+          return Promise.resolve({ text: emission })
+        },
       }),
       write: (contents: string) => authoring.stageDraft(contents),
       // THE REAL APPLIER, reached exactly as the composition root reaches it.
@@ -164,6 +172,8 @@ function harness(emission: string) {
         get: () => { throw new Error('authoring.draft.edit reads no runs') },
       },
       verifyDraft: () => { throw new Error('authoring.draft.edit re-runs no gates') },
+      publish: (request: unknown) =>
+        publishDraft === undefined ? Promise.reject(new Error('no writer')) : publishDraft(request),
     },
     draftEvaluation: {
       resolveDraft: (path: string) => authoring.parseDraft(path),
@@ -182,8 +192,12 @@ function harness(emission: string) {
   }
 }
 
-async function runEdit(emission: string, intent: string): Promise<AuthoringDraftEditOutput> {
-  const bench = harness(emission)
+async function runEdit(
+  emission: string,
+  intent: string,
+  options: { readonly beforeAnswer?: () => void } = {},
+): Promise<AuthoringDraftEditOutput> {
+  const bench = harness(emission, options)
   return await invokeFunction(
     bench.registry,
     AUTHORING_DRAFT_EDIT_FUNCTION_ID,
@@ -223,10 +237,11 @@ describe('an edit changes only the lines its pointers address', () => {
     expect(afterLines[6]).toBe(beforeLines[6])
     expect(afterLines[7]).toContain('and the banner is shown')
 
-    // …and the committed file itself is UNTOUCHED. This op proposes; plan 10's apply is what
-    // writes to a repository.
-    expect(readFileSync(join(root, TEST_PATH), 'utf8')).toBe(COMMITTED)
-    expect(result.draftRef.filePath.startsWith(SHELF_DIR)).toBe(true)
+    // 2026-09-30, 432 D-06: re-spelled in place. This used to assert the edited file UNTOUCHED
+    // because the edit only proposed. The edit now lands in the file it edited, so the same
+    // byte-confinement claim holds for the file on disk, and the answer points at that file.
+    expect(readFileSync(join(root, TEST_PATH), 'utf8')).toBe(after)
+    expect(result.draftRef.filePath).toBe(TEST_PATH)
     expect(result.editedFrom.boundBy).toBe('exact-ref')
   })
 
@@ -268,5 +283,48 @@ describe('an edit changes only the lines its pointers address', () => {
     expect(readdirSync(join(root, 'tests')).filter((entry) => entry === '.agent-qa-drafts'))
       .toEqual([])
     expect(readFileSync(join(root, TEST_PATH), 'utf8')).toBe(COMMITTED)
+  })
+})
+
+describe('C432-TEST-REFINE-WRITTEN: refine edits and verifies the written test itself', () => {
+  const EMISSION = JSON.stringify({
+    thoughts: 'the total is what the coupon changes',
+    patches: [{ op: 'replace', path: '/steps/2', value: 'Verify the total is 0.00 and the banner is shown' }],
+  })
+
+  it('C432-TEST-REFINE-WRITTEN: an edit lands in the written file, and verify resolves that same path', async () => {
+    const result = await runEdit(EMISSION, 'also mention the banner in the total assertion')
+
+    const onDisk = readFileSync(join(root, TEST_PATH))
+    const digest = createHash('sha256').update(onDisk).digest('hex')
+    expect((result as Record<string, unknown>)['written']).toEqual({
+      kind: 'written',
+      filePath: TEST_PATH,
+      contentDigest: digest,
+    })
+    expect(result.draftRef).toMatchObject({ filePath: TEST_PATH, contentDigest: digest })
+
+    // The verify arm is handed `draftRef.filePath`; what it resolves there is the edited test.
+    const resolved = await createDraftAuthoringPort(configPath).parseDraft(result.draftRef.filePath)
+    expect(resolved.kind).toBe('parsed')
+    if (resolved.kind !== 'parsed') throw new Error('unreachable')
+    expect(resolved.draft.filePath).toBe(TEST_PATH)
+    expect(resolved.draft.contentDigest).toBe(digest)
+    expect(resolved.draft.steps.at(-1)).toBe('Verify the total is 0.00 and the banner is shown')
+  })
+
+  it('C432-TEST-REFINE-WRITTEN: refuses to overwrite a written test that changed after it was read', async () => {
+    const theirs = COMMITTED.replace('Open the cart', 'Open the cart from the header')
+    const result = await runEdit(EMISSION, 'also mention the banner in the total assertion', {
+      // A person saves the file while the model is thinking.
+      beforeAnswer: () => writeFileSync(join(root, TEST_PATH), theirs),
+    })
+
+    expect((result as Record<string, unknown>)['written']).toEqual({
+      kind: 'not-written',
+      targetPath: TEST_PATH,
+      reason: 'target-changed',
+    })
+    expect(readFileSync(join(root, TEST_PATH), 'utf8')).toBe(theirs)
   })
 })

@@ -40,7 +40,6 @@ import {
   AUTHORING_DRAFT_VERIFY_FUNCTION_ID,
   AUTHORING_DRAFT_WRITE_FUNCTION_ID,
   AUTHORING_FUNNEL_GET_FUNCTION_ID,
-  PROPOSALS_ACCEPT_FUNCTION_ID,
   RUNS_DIGEST_FUNCTION_ID,
   FunctionDeniedError,
   FunctionNotBoundError,
@@ -77,7 +76,6 @@ import type {
   CompletedRunHandoff,
   DraftReceipt,
   MemberTestOutcome,
-  ProposalsAcceptOutput,
   RunDigest,
   ElementInfo,
   FunctionCaller,
@@ -92,14 +90,12 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import { composeLocalAgent } from '../composition/compose-local-agent.js'
 import type {
-  ComposeLocalAgentInput,
   DraftAuthoringPort,
   DraftParseOutcome,
   DraftStageOutcome,
   LocalAgentHost,
   RunExecutionPort,
 } from '../composition/compose-local-agent.js'
-import type { TestDraftApplyRequestLike } from '@vostride/agent-qa-agent'
 
 const MASKED_CONFIG: MaskedResolvedConfig = {
   schemaVersion: MASKED_RESOLVED_CONFIG_SCHEMA_VERSION,
@@ -598,6 +594,11 @@ function exampleTargetCopyingModel(): {
 
 const SHELF_DIR = 'tests/.agent-qa-drafts'
 
+/** The written-test receipt on the op's answer (432 D-06), read as data. */
+function writtenOf(result: AuthoringDraftWriteOutput): unknown {
+  return (result as Record<string, unknown>)['written']
+}
+
 /**
  * The host's draft-authoring capability, over a REAL temp workspace.
  *
@@ -681,6 +682,31 @@ function draftAuthoring(workspace: string, suiteText: readonly {
       mkdirSync(dirname(absolute), { recursive: true })
       writeFileSync(absolute, contents, 'utf8')
       return Promise.resolve(described)
+    },
+
+    // 432 D-06: the direct writer, over the same real workspace. It keeps the host's two guards —
+    // the target must still hold the bytes the caller read (absent for a new test) and the bytes
+    // written are the shelf's own — and runs nothing else. The CLI's real writer has its own cells.
+    publishDraft(request) {
+      const target = join(workspace, request.targetPath)
+      const found = existsSync(target)
+        ? createHash('sha256').update(readFileSync(target)).digest('hex')
+        : undefined
+      if (found !== request.sourceDigest) {
+        return Promise.resolve({
+          kind: 'not-written' as const,
+          targetPath: request.targetPath,
+          reason: 'target-changed' as const,
+        })
+      }
+      const bytes = readFileSync(join(workspace, request.draftPath))
+      mkdirSync(dirname(target), { recursive: true })
+      writeFileSync(target, bytes)
+      return Promise.resolve({
+        kind: 'written' as const,
+        filePath: request.targetPath,
+        contentDigest: createHash('sha256').update(bytes).digest('hex'),
+      })
     },
 
     parseDraft(filePath: string): Promise<DraftParseOutcome> {
@@ -776,14 +802,12 @@ describe('authoring.draft.write end to end through the composition root', () => 
     readonly authoring?: DraftAuthoringPort
     readonly model?: () => JobModelCapability
     readonly confirm?: ConfirmPort
-    readonly draftApply?: ComposeLocalAgentInput['draftApply']
   }): LocalAgentHost {
     const host = composeLocalAgent({
       agentQaRoot,
       mintQuarantineIdentityPath: (filePath: string) => filePath,
       config: { getMasked: () => Promise.resolve(MASKED_CONFIG) },
       knowledgeRoot: () => join(root, 'agent-qa-knowledge'),
-      ...(input.draftApply === undefined ? {} : { draftApply: input.draftApply }),
       model: input.model ?? (() => scriptedModel().capability()),
       // An APPROVING confirm by default, so every case that is not about the gate keeps measuring
       // what it was written to measure. The decline arm is a cell of its own, and it supplies its
@@ -870,13 +894,12 @@ describe('authoring.draft.write end to end through the composition root', () => 
     expect(readdirSync(join(agentQaRoot, 'draft-receipts'))).toEqual([`${shelfDigest}.json`])
   })
 
-  it('proposes a KEEP-ELIGIBLE draft without writing it — the accepted stage is the human (D-05)', async () => {
-    // THE HALF OF D-05 THAT IS AN ABSENCE. A keep-eligible draft is the one the loop is most
-    // confident about, which is exactly the one a route that auto-wrote would write — and a route
-    // that wrote here would make the funnel's `accepted` stage meaningless and would be the private
-    // write power the L10 posture abolishes. So the claim is measured as nothing having happened:
-    // the arm names where accepting WOULD write, that path does not exist, and the suite directory
-    // still holds only the file this fixture put there.
+  // 2026-09-30, 432 D-06: re-spelled in place. It pinned the retired never-auto-keep rule — a
+  // keep-eligible draft proposed and left unwritten until a person accepted it. The claim is now the
+  // opposite write and it is measured the same way, on disk: the draft's bytes are at the target the
+  // loop's own recipe names, the receipt says so with the disposition and all four gate booleans,
+  // and nothing was filed for anybody to accept.
+  it('C432-TEST-WRITE-DISPOSITION: writes a KEEP-ELIGIBLE draft to its target with its receipt', async () => {
     const executor = fixtureExecutor(agentQaRoot)
     const host = compose({
       executor: executor.port,
@@ -892,19 +915,98 @@ describe('authoring.draft.write end to end through the composition root', () => 
     )) as AuthoringDraftWriteOutput
 
     expect(result.receipt?.disposition).toBe('keep-eligible')
-
-    // Where accepting WOULD write, computed through the loop's OWN recipe rather than by spelling a
-    // path here — a literal would go on passing the day the recipe changed, which is precisely when
-    // this claim stops being about the right file.
     const targetPath = authoredSuiteTargetPath(
       result.draftRef?.filePath ?? '',
       result.draftRef?.testName ?? '',
     )
     expect(targetPath).toBe('tests/confirm-the-local-account-form-page-heading.yaml')
-    expect(existsSync(join(workspace, targetPath))).toBe(false)
-    // The suite directory holds what the fixture put there and nothing else: the shelf, and no new
-    // test file beside it.
+    const shelfBytes = readFileSync(join(workspace, result.draftRef?.filePath ?? 'missing'))
+    expect(existsSync(join(workspace, targetPath))).toBe(true)
+    expect(readFileSync(join(workspace, targetPath)).equals(shelfBytes)).toBe(true)
+    expect(readdirSync(join(workspace, 'tests')).sort())
+      .toEqual(['.agent-qa-drafts', 'confirm-the-local-account-form-page-heading.yaml'])
+    expect(writtenOf(result)).toEqual({
+      file: {
+        kind: 'written',
+        filePath: targetPath,
+        contentDigest: result.draftRef?.contentDigest,
+      },
+      disposition: 'keep-eligible',
+      gates: {
+        executesDefinitive: true,
+        stableVerdict: true,
+        addsValue: true,
+        falsifiableAssertion: true,
+      },
+    })
+    expect(listProposalEnvelopes(agentQaRoot, { now: Date.now() })).toEqual([])
+  })
+
+  it('C432-TEST-WRITE-DISPOSITION: writes an UNVERIFIED draft-mode draft, saying it is unverified', async () => {
+    const executor = fixtureExecutor(agentQaRoot)
+    const host = compose({
+      executor: executor.port,
+      authoring: draftAuthoring(workspace),
+      model: scriptedModel().capability,
+    })
+
+    const result = (await invokeFunction(
+      host.registry,
+      AUTHORING_DRAFT_WRITE_FUNCTION_ID,
+      { intent: INTENT, scope: SCOPE, draftMode: true },
+      HUMAN,
+    )) as AuthoringDraftWriteOutput
+
+    expect(result.outcome).toBe('drafted')
+    expect(result.receipt?.disposition).toBe('unverified')
+    expect(executor.startInputs).toHaveLength(1)
+    const targetPath = 'tests/confirm-the-local-account-form-page-heading.yaml'
+    expect(existsSync(join(workspace, targetPath))).toBe(true)
+    expect(writtenOf(result)).toEqual({
+      file: { kind: 'written', filePath: targetPath, contentDigest: result.draftRef?.contentDigest },
+      disposition: 'unverified',
+      gates: {
+        executesDefinitive: true,
+        stableVerdict: true,
+        addsValue: true,
+        falsifiableAssertion: true,
+      },
+    })
+  })
+
+  // THE MUTATION WITNESS (432 B08). A flip across the stability runs fails gate 2, so the receipt is
+  // `rejected`, and a rejected final draft is never written — whatever the loop then does with it.
+  // The claim is measured on disk and on the answer, so a loop that let `rejected` into its final
+  // write reds here on the target's existence even if something later in the call threw.
+  it('C432-TEST-WRITE-DISPOSITION: never writes a REJECTED draft to its target', async () => {
+    const executor = fixtureExecutor(agentQaRoot, () => FIXED_RUN_IDENTITY, ['passed', 'failed'])
+    const host = compose({
+      executor: executor.port,
+      authoring: draftAuthoring(workspace),
+      model: scriptedModel().capability,
+    })
+
+    const answer = await invokeFunction(
+      host.registry,
+      AUTHORING_DRAFT_WRITE_FUNCTION_ID,
+      { intent: INTENT, scope: SCOPE },
+      HUMAN,
+    ).then((value) => value as AuthoringDraftWriteOutput, (error: unknown) => error)
+
+    const receipts = readdirSync(join(agentQaRoot, 'draft-receipts'))
+    expect(receipts).toHaveLength(1)
+    const receipt = JSON.parse(
+      readFileSync(join(agentQaRoot, 'draft-receipts', receipts[0] as string), 'utf8'),
+    ) as DraftReceipt
+    expect(receipt.disposition).toBe('rejected')
+    expect(receipt.gates.stableVerdict.pass).toBe(false)
+    expect(existsSync(join(workspace, 'tests/confirm-the-local-account-form-page-heading.yaml')))
+      .toBe(false)
     expect(readdirSync(join(workspace, 'tests'))).toEqual(['.agent-qa-drafts'])
+    if (!(answer instanceof Error)) {
+      expect(answer.outcome).not.toBe('drafted')
+      expect(writtenOf(answer)).toBeUndefined()
+    }
   })
 
   it('lists as bound on a composed host, off the declarations rather than CLI stdout', () => {
@@ -1415,15 +1517,13 @@ describe('authoring.draft.write end to end through the composition root', () => 
     expect(model.requests).toHaveLength(0)
   })
 
-  // ---- 394-18: the outcome becomes a proposal, the proposal becomes a decision, the decision
-  // becomes a NUMBER (WINDOWS 99 / 102 · WTST-05) ------------------------------------------------
+  // ---- 394-18, re-spelled 2026-09-30 for 432 D-06: the outcome is a written file ----------------
   //
-  // EVERY ENVELOPE BELOW IS MINTED THROUGH THE PRODUCTION WRITE PATH. Not one is a type literal:
-  // `authoring.draft.write` runs on the composed host, its bound proposals port is the real
-  // `writePendingProposalRecord`, and what these cells read back comes out of the real store's own
-  // listing. That is the whole point — the funnel's `accepted` stage was structurally 0 because
-  // nothing could mint one, so a corpus of hand-written envelopes would have measured a population
-  // production is incapable of producing, which is exactly the defect being closed.
+  // These four cells pinned the proposal a drafted outcome used to file, the digest line that
+  // proposal rendered, the funnel's human-acceptance stage and the refusal on a host that could not
+  // file one. Nothing waits for acceptance now: the drafted outcome IS the written test, so each cell
+  // keeps its subject and measures the direct write instead, still through the production path and
+  // still read back off disk and off the stores rather than off the op's answer.
 
   /** A model that answers a DIFFERENT valid document per call, so each draft is its own digest. */
   function varyingModel(): { capability: () => JobModelCapability; count: () => number } {
@@ -1450,24 +1550,7 @@ describe('authoring.draft.write end to end through the composition root', () => 
     }
   }
 
-  /** Records what an accept asked the host to commit; answers as the real one-commit apply does. */
-  function recordingApply(): {
-    port: NonNullable<ComposeLocalAgentInput['draftApply']>
-    calls: TestDraftApplyRequestLike[]
-  } {
-    const calls: TestDraftApplyRequestLike[] = []
-    return {
-      calls,
-      port: {
-        apply: (request: TestDraftApplyRequestLike) => {
-          calls.push(request)
-          return Promise.resolve({ filePath: request.targetPath, commit: `c0ffee${calls.length}` })
-        },
-      },
-    }
-  }
-
-  it('files the drafted outcome as a test-draft envelope a person can read out of the store', async () => {
+  it('C432-TEST-WRITE-DISPOSITION: files no proposal for a drafted outcome; the written file is the answer', async () => {
     const executor = fixtureExecutor(agentQaRoot)
     const host = compose({
       executor: executor.port,
@@ -1483,24 +1566,16 @@ describe('authoring.draft.write end to end through the composition root', () => 
     )) as AuthoringDraftWriteOutput
 
     expect(result.outcome).toBe('drafted')
-    // READ BACK THROUGH THE STORE'S OWN LISTING, not off the op's answer — which deliberately does
-    // not carry the proposal at all.
-    const entries = listProposalEnvelopes(agentQaRoot, { now: Date.now() })
-    expect(entries).toHaveLength(1)
-    const envelope = entries[0]?.envelope
-    expect(envelope?.kind).toBe('test-draft')
-    expect(envelope?.status).toBe('pending')
-    expect(envelope?.origin?.emittedBy).toBe(AUTHORING_DRAFT_WRITE_FUNCTION_ID)
-    if (envelope?.kind !== 'test-draft') throw new Error('unreachable')
-    // The payload joins the receipt the same invocation answered with: one artifact, two readers.
-    expect(envelope.payload.draftRef.contentDigest).toBe(result.receipt?.draftRef.contentDigest)
-    expect(envelope.payload.runsPreviewed).toBe(result.fanOut?.previewed.total)
-    expect(envelope.payload.runsConsumed).toBe(result.fanOut?.consumedTotal)
-    // ATTRIBUTED TO A RUN THIS HOST REALLY RECORDED — the receipt's last gate run.
-    expect(envelope.origin?.runId).toBe(result.receipt?.gateRuns.at(-1)?.runId)
+    expect(listProposalEnvelopes(agentQaRoot, { now: Date.now() })).toEqual([])
+    // The written bytes join the receipt the same invocation answered with: one artifact.
+    const target = 'tests/confirm-the-local-account-form-page-heading.yaml'
+    const written = readFileSync(join(workspace, target))
+    expect(createHash('sha256').update(written).digest('hex'))
+      .toBe(result.receipt?.draftRef.contentDigest)
+    expect(result.fanOut.consumedTotal).toBe(DRAFT_STABILITY_RUNS_N)
   })
 
-  it("renders the digest's test-draft line off that persisted envelope", async () => {
+  it("C432-TEST-WRITE-DISPOSITION: the digest mints no test-draft proposal row for a written draft", async () => {
     const executor = fixtureExecutor(agentQaRoot)
     const host = compose({
       executor: executor.port,
@@ -1523,21 +1598,13 @@ describe('authoring.draft.write end to end through the composition root', () => 
       HUMAN,
     )) as RunDigest
 
-    // SC-5 artifact 3. The line existed since 394-06 and had never rendered on any host, because
-    // `proposalsMintedThisRun` attributes rows by `origin.runId` and nothing could write an
-    // envelope carrying one. BOTH figures, which is the pairing WTST-08 exists for.
-    expect(digest.proposalsMintedThisRun).toHaveLength(1)
-    const row = digest.proposalsMintedThisRun[0]
-    expect(row?.summaryLine).toContain('test draft')
-    expect(row?.summaryLine).toContain(
-      `${result.fanOut?.consumedTotal} run(s) of up to ${result.fanOut?.previewed.total} previewed`,
-    )
-    // A PENDING proposal is owed a decision, and the digest says which one.
-    expect(row?.requiredDecision).not.toBe('pending')
-    expect(digest.pendingProposalCount).toBe(1)
+    expect(digest.proposalsMintedThisRun).toEqual([])
+    expect(digest.pendingProposalCount).toBe(0)
+    expect(existsSync(join(workspace, 'tests/confirm-the-local-account-form-page-heading.yaml')))
+      .toBe(true)
   })
 
-  it('counts an ACCEPTED draft through the shipped projection, and raises the acceptance flag', async () => {
+  it('C432-TEST-WRITE-DISPOSITION: twelve drafts are twelve written files, and none waits to be accepted', async () => {
     // The gate-run fixture reports on whichever draft the run was actually handed, read off the
     // staged bytes — so twelve distinct drafts are twelve distinct members and twelve distinct
     // novel elements, and gate 3 is being asked a real question rather than a rigged one.
@@ -1546,16 +1613,13 @@ describe('authoring.draft.write end to end through the composition root', () => 
       return { testName: staged.name, elementName: `heading ${staged.name}` }
     })
     const model = varyingModel()
-    const applied = recordingApply()
     const host = compose({
       executor: executor.port,
       authoring: draftAuthoring(workspace),
       model: model.capability,
-      draftApply: applied.port,
     })
 
-    // TWELVE drafts, each authored through the registered op against a distinct document, so the
-    // population the funnel reports on is one this host really produced.
+    const written: string[] = []
     for (let index = 0; index < 12; index += 1) {
       const result = (await invokeFunction(
         host.registry,
@@ -1564,23 +1628,13 @@ describe('authoring.draft.write end to end through the composition root', () => 
         HUMAN,
       )) as AuthoringDraftWriteOutput
       expect(result.outcome).toBe('drafted')
+      expect(writtenOf(result)).toMatchObject({ file: { kind: 'written' } })
+      written.push((writtenOf(result) as { file: { filePath: string } }).file.filePath)
     }
 
-    const pending = listProposalEnvelopes(agentQaRoot, { now: Date.now() })
-    expect(pending).toHaveLength(12)
-
-    // ELEVEN human decisions, each through the SHIPPED accept — the protected, human-origin verb
-    // with its own confirm, not a store write this cell performs.
-    for (const entry of pending.slice(0, 11)) {
-      const answer = (await invokeFunction(
-        host.registry,
-        PROPOSALS_ACCEPT_FUNCTION_ID,
-        { proposalId: entry.envelope.id },
-        HUMAN,
-      )) as ProposalsAcceptOutput
-      expect(answer.apply.outcome).toBe('applied')
-    }
-    expect(applied.calls).toHaveLength(11)
+    expect(new Set(written).size).toBe(12)
+    for (const path of written) expect(existsSync(join(workspace, path))).toBe(true)
+    expect(listProposalEnvelopes(agentQaRoot, { now: Date.now() })).toEqual([])
 
     const funnel = (await invokeFunction(
       host.registry,
@@ -1589,31 +1643,15 @@ describe('authoring.draft.write end to end through the composition root', () => 
       HUMAN,
     )) as AuthoringFunnelGetOutput
 
-    // 394-12 leg B's frozen expectation, now answerable: `built` was already real, and `accepted`
-    // was the stage that could not move off 0 on any host.
+    // `built` is still the receipts this host minted. `accepted` counted human decisions on filed
+    // drafts; none is filed now, so it has nothing to count and the acceptance flag cannot fire.
     expect(funnel.stages.built).toBe(12)
-    expect(funnel.stages.accepted).toBe(11)
-    // THE FLAG REACHES A SURFACE THROUGH THE SHIPPED PROJECTION (D-13). 11 of 12 is 91.7%, strictly
-    // above the 9/10 ceiling, over a population at or above the 10-draft floor.
-    expect(funnel.acceptanceFailure).toBe(true)
-    expect(funnel.line).toContain('ACCEPTANCE FAILURE')
-    expect(funnel.line).toContain('11 accepted')
-
-    // THE TWO-SIDED CONTROL, over the SAME produced population: a window of five is below the
-    // draft floor, so the flag stays silent and the line says why. A flag that fired here would be
-    // one that fires on every high-keep-rate answer rather than on a judgeable one.
-    const narrow = (await invokeFunction(
-      host.registry,
-      AUTHORING_FUNNEL_GET_FUNCTION_ID,
-      { window: { scope: 'last-n', n: 5 } },
-      HUMAN,
-    )) as AuthoringFunnelGetOutput
-    expect(narrow.stages.built).toBe(5)
-    expect(narrow.acceptanceFailure).toBe(false)
+    expect(funnel.stages.accepted).toBe(0)
+    expect(funnel.acceptanceFailure).toBe(false)
   })
 
-  it('refuses to author at all on a host that cannot FILE what it authors', async () => {
-    // The composition binds the proposals port with the loop's two halves, so this is the same
+  it('refuses to author at all on a host that cannot WRITE what it authors', async () => {
+    // The composition binds the writer with the loop's two halves, so this is the same
     // conditional-spread absence every other optional capability answers with — and it is checked
     // BEFORE any run is spent, which the executor's empty record is the evidence for.
     const executor = fixtureExecutor(agentQaRoot)
@@ -1629,6 +1667,7 @@ describe('authoring.draft.write end to end through the composition root', () => 
     expect(failure).toBeInstanceOf(FunctionNotBoundError)
     expect(executor.startInputs).toHaveLength(0)
     expect(listProposalEnvelopes(agentQaRoot, { now: Date.now() })).toEqual([])
+    expect(readdirSync(workspace)).toEqual([])
   })
 
   // ---- the composed stability read (394-19 · WINDOWS 107) ------------------------------------
