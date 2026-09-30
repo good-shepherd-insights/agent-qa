@@ -32,12 +32,10 @@ import type {
   RunStartAcknowledgement,
   RunsStartInput,
 } from '@vostride/agent-qa-schema'
-import { STANDING_APPROVAL_SCOPE } from '@vostride/agent-qa-schema'
 import type {
   AuditSink,
   ExecutionAuditRow,
   GuardrailAuditRow,
-  StandingApprovalReader,
 } from '@vostride/agent-qa-safety'
 import { describe, expect, it } from 'vitest'
 
@@ -321,21 +319,8 @@ function capturingSink(): CapturedSink {
   }
 }
 
-/**
- * A composition where every ask is already standing-approved (391).
- *
- * The claims in this file are about BINDING, and 391 raised `knowledge.proposal.apply` to the ask
- * tier — so without this, an ask-tier capability would be refused by the GATE before the binding
- * check ever ran, and the loop below would be measuring policy while reporting on bindings. The
- * grant is built from the action's own name, which is the string `grantCovers` compares, so it
- * covers whatever the registry happens to list rather than a class spelled here.
- *
- * It is a control, not a bypass: the real gate still runs and still writes its audit row; what
- * changes is which arm of the ask ladder answers.
- */
-const EVERY_ASK_STANDING_APPROVED: StandingApprovalReader = {
-  grantsFor: (action) => [{ actionClass: action.name, scope: STANDING_APPROVAL_SCOPE }],
-}
+// 432-13: no standing-approval control is needed. The claims in this file are about BINDING, and
+// with no op gate an ask-tier capability reaches the binding check directly.
 
 function registryWith(
   runInvocation: RunInvocationPort | undefined,
@@ -344,7 +329,6 @@ function registryWith(
   return createFunctionRegistry({
     deps: deps(runInvocation === undefined ? {} : { runInvocation }),
     resolveExecutionContext: () => options.context ?? 'local-interactive',
-    standingApprovalReader: () => EVERY_ASK_STANDING_APPROVED,
     auditSink: options.auditSink ?? {
       appendExecutionAudit() {},
       appendGuardrailAudit() {},
@@ -443,6 +427,10 @@ describe('bindingStatus is a fact about a COMPOSITION, computed (D-16)', () => {
   })
 })
 
+// RE-SPELLED 2026-09-30 (432-13, D-15). 'allows AND runs in every execution context, fail-closed
+// ones included' keeps its claim (the op dispatches everywhere) and loses its audit-row half: no
+// gate decides it. 'would lose the DISPATCH on a mutating-shared descriptor — the counterfactual'
+// inverts: with no gate, even a mutating-shared descriptor dispatches in ci.
 describe('mutating-local, proven through a DISPATCH (Pitfall 10 / D-16)', () => {
   it('allows AND runs in every execution context, fail-closed ones included', async () => {
     for (const context of EVERY_CONTEXT) {
@@ -456,24 +444,14 @@ describe('mutating-local, proven through a DISPATCH (Pitfall 10 / D-16)', () => 
         RUN_CALLER,
       ) as RunStartAcknowledgement
 
-      // The op RAN — this is the half the pre-385 suite could not assert, because the
-      // binding check refused right after the allow and nothing downstream could tell an
-      // allow that dispatches from one that does not.
       expect(recorder.requests(), context).toHaveLength(1)
       expect(acknowledgement.runId, context).toBe('run-alpha')
-      expect(audit.rows(), context).toHaveLength(1)
-      expect(audit.rows()[0], context).toMatchObject({
-        action: 'fn:runs.start',
-        riskTier: 'mutating-local',
-        verdict: 'allow',
-      })
+      // 432-13: no op gate, so no decision row.
+      expect(audit.rows(), context).toEqual([])
     }
   })
 
-  it('would lose the DISPATCH on a mutating-shared descriptor — the counterfactual', async () => {
-    // risk-classification.test.ts proves the descriptor alone denies in ci. What this adds is
-    // the consequence: the run never starts. The executor is asked for nothing, so the CI
-    // authoring loop the tier exists to protect would have no run at all.
+  it('C432-INVOKE-DIRECT: keeps the DISPATCH even on a mutating-shared descriptor in ci', async () => {
     const recorder = recordingInvocation()
     const shared: FunctionSpec = {
       ...(runsStartSpec as FunctionSpec),
@@ -486,8 +464,8 @@ describe('mutating-local, proven through a DISPATCH (Pitfall 10 / D-16)', () => 
     })
 
     await expect(invokeFunction(registry, RUNS_START_FUNCTION_ID, {}, RUN_CALLER))
-      .rejects.toMatchObject({ name: 'FunctionDeniedError' })
-    expect(recorder.requests()).toEqual([])
+      .resolves.toMatchObject({ runId: 'run-alpha' })
+    expect(recorder.requests()).toHaveLength(1)
   })
 })
 

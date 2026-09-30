@@ -121,12 +121,19 @@ import type { ScenarioClass, ScenarioExpectationKind, ScenarioLane } from '@vost
  *      if it routes to prose the UTTERANCE is what gets re-authored (392-09's precedent), never the
  *      assertion.
  *
- * DENOMINATORS AT THIS VERSION: 11 hermetic, 8 live. One canonical line, parsed by
+ * v10 — 432 plan 13, TWO RETIREMENTS, and the size does not move. `/pin` and the bare `proposals`
+ *      inbox alias left chat resolution with the op gate and the proposal inbox (D-05/D-14), so
+ *      `deterministic/pin` and `deterministic/proposals` no longer name a table row. Each is KEPT and
+ *      re-authored as a `fail_closed` absence cell ("re-spelled, never deleted"): the retired verb is
+ *      an unroutable clause that refuses by name with zero executions. Both leave the hermetic
+ *      `should_execute` denominator, taking it from 11 to 9; the live denominator is unmoved.
+ *
+ * DENOMINATORS AT THIS VERSION: 9 hermetic, 8 live. One canonical line, parsed by
  * `scenario-manifest.test.ts` and compared against the counts the list below actually has, so this
  * header cannot go on claiming numbers the corpus stopped having. Every other assertion in that
  * file reads the LIST, which is exactly why the header needed its own.
  */
-export const SCENARIO_CORPUS_VERSION = 9
+export const SCENARIO_CORPUS_VERSION = 10
 
 /**
  * One admitted scenario.
@@ -156,13 +163,14 @@ export const SCENARIO_CORPUS: readonly ScenarioCorpusEntry[] = Object.freeze([
   entry({ id: 'status', class: 'deterministic', lane: 'hermetic', kind: 'should_execute' }),
   entry({ id: 'test-ref', class: 'deterministic', lane: 'hermetic', kind: 'should_execute' }),
   entry({ id: 'digest', class: 'deterministic', lane: 'hermetic', kind: 'should_execute' }),
-  entry({ id: 'proposals', class: 'deterministic', lane: 'hermetic', kind: 'should_execute' }),
+  // 432-13: the inbox alias is retired; the cell is its measured absence (v10).
+  entry({ id: 'proposals', class: 'deterministic', lane: 'hermetic', kind: 'fail_closed' }),
   entry({ id: 'fn', class: 'deterministic', lane: 'hermetic', kind: 'should_execute' }),
-  // The four directives. `executed: 0` on a `should_execute` arm is the SHAPE, not a compromise:
-  // a directive names no capability, so it crosses the function layer zero times on a turn that
-  // did exactly what was asked (392-08's flip).
+  // The directives. `executed: 0` on a `should_execute` arm is the SHAPE, not a compromise: a
+  // directive names no capability, so it crosses the function layer zero times on a turn that did
+  // exactly what was asked (392-08's flip). 432-13 retired `/pin`; its cell is its absence (v10).
   entry({ id: 'model', class: 'deterministic', lane: 'hermetic', kind: 'should_execute' }),
-  entry({ id: 'pin', class: 'deterministic', lane: 'hermetic', kind: 'should_execute' }),
+  entry({ id: 'pin', class: 'deterministic', lane: 'hermetic', kind: 'fail_closed' }),
   entry({ id: 'help', class: 'deterministic', lane: 'hermetic', kind: 'should_execute' }),
   entry({ id: 'quit', class: 'deterministic', lane: 'hermetic', kind: 'should_execute' }),
   // --- deterministic: the three stage-1 edge scenarios (392-02) ---------------------------------

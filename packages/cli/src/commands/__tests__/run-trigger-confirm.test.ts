@@ -1,5 +1,10 @@
 // THE RUN TRIGGER'S BROWSER CONFIRM (Phase 401 plan 09 — D-11 / D-15 / D-16, INVK-02).
 //
+// SINCE 432-13 (D-14/D-15) the run button's run asks nobody: there is no op gate and no run gate on
+// this road, so no `confirm_request` frame is ever raised for a run, whether or not the triggering
+// browser holds its channel. The first describe was re-spelled to pin that absence; the scope
+// read/write hardening and the trigger-interactivity rule below are unchanged. History kept.
+//
 // WHAT IS UNDER TEST is the whole path a person's click reaches: `POST /api/runs/trigger` →
 // the shipped `JobQueue` → the injected run door → `invokeFunction(runs.start)` → the real op-level
 // gate → the in-process drive → the core's ONE `evaluate()` → the ask arm → the SHIPPED confirm
@@ -314,18 +319,6 @@ async function openRunConfirmStream(scene: Scene): Promise<LiveStream> {
   }
 }
 
-async function answerRunConfirm(
-  scene: Scene,
-  input: { scopeId: string; confirmId: string; answer: string },
-): Promise<{ status: number; body: unknown }> {
-  const response = await fetch(`${scene.origin}/api/run-confirm/answer`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify(input),
-  })
-  return { status: response.status, body: await response.json() }
-}
-
 async function waitFor(assertion: () => void, timeoutMs = 180_000): Promise<void> {
   const startedAt = Date.now()
   let lastError: unknown
@@ -342,102 +335,40 @@ async function waitFor(assertion: () => void, timeoutMs = 180_000): Promise<void
   throw new Error('Timed out waiting for assertion')
 }
 
-function confirmRequestOf(frame: SseFrame): { confirmId: string; actionClass: string; preview?: string } {
-  return JSON.parse(frame.data) as { confirmId: string; actionClass: string; preview?: string }
+/** The execution context the run published on its own `runStarted` envelope. */
+function startedContext(scene: Scene, runId: string): unknown {
+  const started = scene.buffered(runId).find((event) => event['type'] === 'runStarted') as
+    { payload?: { executionContext?: unknown } } | undefined
+  return started?.payload?.executionContext
 }
 
-function resolutionOf(frame: SseFrame): { confirmId: string; answer: string; by: string } {
-  return JSON.parse(frame.data) as { confirmId: string; answer: string; by: string }
-}
-
+// RE-SPELLED 2026-09-30 (432-13, D-14/D-15, C432-DOOR-NONPRODUCTION). Every cell in this describe
+// measured the ask the run button used to raise: deny on silence, accept, accept-always and its
+// standing approval, the channel vanishing mid-question, and the headless fail-closed arm. The
+// run is not asked about any more, so each cell now drives the same scene and pins that it starts
+// without a question — and the production refusal is the one thing that still stops a click.
 describe('an ask-tier run-button run asks the browser that triggered it (D-11)', () => {
-  it('DENY ON SILENCE — asked, unanswered, reaped, and the run never started (D-16 third door)', async () => {
+  it('DENY ON SILENCE — nothing is asked, so nothing is reaped: the run starts with the channel open', async () => {
     const target = new CountingTarget()
     await target.listen()
     try {
-      // NO `environment:` LINE AT ALL — the D-06 undeclared case, which classifies SHARED and is
-      // therefore the one tier that reaches a confirm. The allow control below changes the ANSWER
-      // and nothing else about this scene.
       const fixture = createInProcessFixture({ origin: target.origin })
-      // The window is short because this cell pays for it in wall clock.
       const scene = await openScene({ fixture, timeoutMs: 1_500 })
-      // THE BROWSER BECOMES ASKABLE FIRST, then clicks Run naming itself.
       const stream = await openRunConfirmStream(scene)
       const runId = await triggerRun(scene, stream.scopeId)
 
-      // THE QUESTION REACHED THE WIRE. Asserted BEFORE anything about how it resolved, because
-      // "denied" is trivially true of a question that was never raised — which is exactly what the
-      // pre-plan build did here.
-      const raised = confirmRequestOf(
-        await stream.waitFor((frame) => frame.event === 'confirm_request'),
-      )
-      expect(raised.actionClass).toBe('run:start')
-      expect(raised.confirmId).toBeTruthy()
-      // AND THE QUESTION SAYS WHAT IT IS ASKING ABOUT (401-14, W-1 / D-11). The frame's `preview`
-      // IS the action's own `disclosure` (`confirm-registry.ts`), so this asserts the descriptor
-      // the CORE built at its one `evaluate()` call — not a prop a cell handed a component. Before
-      // this plan the field was `undefined` on every run:start ever raised: a person was asked to
-      // approve a run against a shared target and was told only the action class.
-      expect(raised.preview, 'the ask carried no preview — approve WHAT?').toBeTruthy()
-      // The target's own name, read off the FIXTURE's definition rather than retyped here, so a
-      // rename cannot leave this cell agreeing with a string nothing produces.
-      expect(raised.preview).toContain(fixture.targetName)
-      // AND THE DECLARATION THE GATE DECIDED UNDER, honestly: this fixture declares no
-      // `environment:`, which D-06 classifies SHARED — the tier that is why anybody is being asked
-      // at all. 401-15 (WR-06): the clause ATTRIBUTES that ("at least one target undeclared")
-      // rather than asserting an environment for the whole member set, so pin the clause and not
-      // the bare word, which an asserting sentence would satisfy too.
-      expect(raised.preview).toContain(
-        'declared: at least one target undeclared, which classifies as shared',
-      )
-      expect(raised.preview).not.toContain('environment: ')
-      // AND IT IS PARKED IN THE SHIPPED REGISTRY'S OWN LOT — not in a second one this door built.
-      expect(scene.confirms.pendingCount()).toBe(1)
-
-      // Nobody answers. The registry's window closes.
-      const resolved = resolutionOf(
-        await stream.waitFor((frame) => frame.event === 'confirm_resolved'),
-      )
-      expect(resolved.confirmId).toBe(raised.confirmId)
-      expect(resolved.answer).toBe('deny')
-      // THE DENY CAME FROM THE REAPER, said by the registry rather than inferred here.
-      expect(resolved.by).toBe('timeout')
-      expect(scene.confirms.pendingCount()).toBe(0)
-
       await waitFor(() => { expect(scene.settled()).toHaveLength(1) })
-      const settled = scene.settled()[0]!
 
-      // (a) the audit row's OUTCOME field, never a message substring
-      const rows = runStartRows(fixture)
-      expect(rows).toHaveLength(1)
-      const row = rows[0]!
-      expect(row.outcome).toBe('prompted-denied')
-      expect(row.riskTier).toBe('mutating-shared')
-      // The door really did claim interactivity — and honestly, because a browser was holding the
-      // channel. `fail-closed-denied` here would be the 401-07 interim posture, not this plan.
-      expect(row.executionContext).toBe('local-interactive')
-      // (b) THE RUN NEVER STARTED — `runStarted` is seq 1 of any run that began at all
-      expect(eventTypes(fixture)).toEqual([])
-      // (c) the durable assembly side effect never happened
-      expect(buildOrdinalsExist(fixture)).toBe(false)
-      // (d) nobody knocked on the target
-      expect(target.hits).toEqual([])
-      // (e) THE REASON ON THE SURFACE THE CALLER SEES, read BACK off the row rather than typed
-      //     here — which pins the door to RENDERING the gate's decision rather than composing one.
-      expect(settled.status).toBe('failed')
-      expect(String(settled.details['reason'])).toContain(row.reason)
-
-      // D-15, re-spelled 432-09: the refusal is a plain reason. The gate still mints answer-confirm,
-      // and the settle carries no remedy member at all (C432-PLAIN-REFUSAL).
-      expect(settled.details).not.toHaveProperty('remedies')
-
-      // A DENIAL IS NOT A RUN, and the claim is structural now rather than a count of bookends: no
-      // session was ever named, so there are no envelopes at all. The pair this used to compare
-      // against was minted by the backend around the run, not published by it (405-07, D-19).
-      expect(scene.buffered(runId)).toEqual([])
-      expect(settled.details['refusedBeforeStart']).toBe(true)
-      // And the op-level gate left its own row, on one click, exactly as the allow arm does.
-      expect(opAuditRows(fixture).filter((r) => r.action === 'fn:runs.start')).toHaveLength(1)
+      expect(stream.frames.filter((frame) => frame.event === 'confirm_request')).toEqual([])
+      expect(scene.confirms.pendingCount()).toBe(0)
+      expect(runStartRows(fixture)).toEqual([])
+      expect(opAuditRows(fixture).filter((r) => r.action === 'fn:runs.start')).toEqual([])
+      expect(eventTypes(fixture)).toContain('runStarted')
+      expect(buildOrdinalsExist(fixture)).toBe(true)
+      expect(target.hits).toEqual(['/in-process-thing'])
+      expect(scene.buffered(runId).map((event) => event['type'])).toContain('runStarted')
+      // The browser holds its channel, so the trigger still claims interactivity honestly.
+      expect(startedContext(scene, runId)).toBe('local-interactive')
 
       await stream.close()
     } finally {
@@ -445,49 +376,30 @@ describe('an ask-tier run-button run asks the browser that triggered it (D-11)',
     }
   }, 240_000)
 
-  it('THE ALLOW CONTROL — one thing different (the answer), and the run happens', async () => {
-    // THE DENY-ON-SILENCE CELL'S PAIR, and it differs in EXACTLY ONE thing: somebody clicked Yes.
-    // Same undeclared target, same tier, same scope, same channel. Without this control a fix that
-    // denied every trigger — or a confirm port that could only ever say no — would satisfy every
-    // assertion in the cell above.
+  it('THE ALLOW CONTROL — one thing different (a production declaration), and the click is refused unasked', async () => {
     const target = new CountingTarget()
     await target.listen()
     try {
-      const fixture = createInProcessFixture({ origin: target.origin })
+      const fixture = createInProcessFixture({ origin: target.origin, environment: 'production' })
       const scene = await openScene({ fixture, timeoutMs: 60_000 })
       const stream = await openRunConfirmStream(scene)
       const runId = await triggerRun(scene, stream.scopeId)
 
-      const raised = confirmRequestOf(
-        await stream.waitFor((frame) => frame.event === 'confirm_request'),
-      )
-      const answered = await answerRunConfirm(scene, {
-        scopeId: stream.scopeId,
-        confirmId: raised.confirmId,
-        answer: 'accept',
-      })
-      expect(answered.status).toBe(200)
-      // SINGLE USE: the id is spent by the answer that spent it, so a leaked id cannot be replayed
-      // onto whatever question is outstanding next.
-      expect((await answerRunConfirm(scene, {
-        scopeId: stream.scopeId,
-        confirmId: raised.confirmId,
-        answer: 'accept',
-      })).status).toBe(404)
-
       await waitFor(() => { expect(scene.settled()).toHaveLength(1) })
+      const settled = scene.settled()[0]!
 
-      const rows = runStartRows(fixture)
-      expect(rows).toHaveLength(1)
-      // THE ROW A PERSON READS: an ask that really was put in front of somebody, and answered.
-      expect(rows[0]!.outcome).toBe('prompted-approved')
-      expect(rows[0]!.executionContext).toBe('local-interactive')
-      // And all five artifacts of a run that HAPPENED, each the negation of the denial cell's.
-      expect(eventTypes(fixture)).toContain('runStarted')
-      expect(buildOrdinalsExist(fixture)).toBe(true)
-      expect(target.hits).toEqual(['/in-process-thing'])
-      expect(scene.buffered(runId).map((event) => event['type'])).toContain('runStarted')
-      expect(scene.db.getRun(runId)?.status).not.toBe('pending')
+      expect(stream.frames.filter((frame) => frame.event === 'confirm_request')).toEqual([])
+      expect(scene.confirms.pendingCount()).toBe(0)
+      expect(runStartRows(fixture)).toEqual([])
+      expect(eventTypes(fixture)).toEqual([])
+      expect(buildOrdinalsExist(fixture)).toBe(false)
+      expect(target.hits).toEqual([])
+      expect(settled.status).toBe('failed')
+      expect(String(settled.details['reason'])).toContain(`"${fixture.targetName}"`)
+      expect(String(settled.details['reason'])).toContain('allowProduction: true')
+      expect(settled.details).not.toHaveProperty('remedies')
+      expect(scene.buffered(runId)).toEqual([])
+      expect(settled.details['refusedBeforeStart']).toBe(true)
 
       await stream.close()
     } finally {
@@ -496,10 +408,8 @@ describe('an ask-tier run-button run asks the browser that triggered it (D-11)',
   }, 240_000)
 
   it('CR-02 — the queue still addresses the triggering browser, and no read-path response hands the scope back (401-18)', async () => {
-    // THE TWO HALVES OF ONE RULING, ON ONE RUN. The strip had to go on the RESPONSE path because the
-    // queue consumer reads `meta.confirmScope` off the PERSISTED row to decide which browser to ask;
-    // a strip at `mapRunRow` would have closed the leak by deleting the feature. So this cell drives
-    // the shipped trigger → queue → confirm → run chain and then reads the run back over HTTP.
+    // HALF ONE, re-spelled: the scope still rides the persisted row (the queue reads it to decide
+    // the trigger's posture), which the run's own `runStarted` context shows. HALF TWO unchanged.
     const target = new CountingTarget()
     await target.listen()
     try {
@@ -508,32 +418,16 @@ describe('an ask-tier run-button run asks the browser that triggered it (D-11)',
       const stream = await openRunConfirmStream(scene)
       const runId = await triggerRun(scene, stream.scopeId)
 
-      // HALF ONE — THE FEATURE IS ALIVE. A question reached THIS browser's stream, which only
-      // happens because the queue read the scope off the row it persisted. Asserted as ARRIVAL
-      // before anything is claimed about it.
-      const raised = confirmRequestOf(
-        await stream.waitFor((frame) => frame.event === 'confirm_request'),
-      )
-      expect(raised.confirmId, 'the queue never asked the browser that triggered the run').toBeTruthy()
-      const answered = await answerRunConfirm(scene, {
-        scopeId: stream.scopeId,
-        confirmId: raised.confirmId,
-        answer: 'accept',
-      })
-      expect(answered.status).toBe(200)
       await waitFor(() => { expect(scene.settled()).toHaveLength(1) })
-      expect(runStartRows(fixture)[0]?.outcome).toBe('prompted-approved')
-      // And the value really is on the row — the read projection is a projection, not a delete.
+      expect(startedContext(scene, runId)).toBe('local-interactive')
       expect(scene.db.getRun(runId)?.metadata?.confirmScope).toBe(stream.scopeId)
 
-      // HALF TWO — THE LEAK IS CLOSED, on the same run, over the real wire, at both doors.
       for (const path of [`/api/runs/${runId}`, '/api/runs']) {
         const response = await fetch(`${scene.origin}${path}`)
         expect(response.status).toBe(200)
         const body = await response.text()
         expect(body, `${path} still hands out the confirm scope`).not.toContain(stream.scopeId)
       }
-      // The detail response really did serve THIS run — an empty body would satisfy the above.
       const detail = await (await fetch(`${scene.origin}/api/runs/${runId}`)).json() as {
         run: { id: string; metadata: Record<string, unknown> | null }
       }
@@ -546,12 +440,7 @@ describe('an ask-tier run-button run asks the browser that triggered it (D-11)',
     }
   }, 240_000)
 
-  it('ALWAYS — the one mint records a standing approval, and the NEXT run is not asked', async () => {
-    // THE `a` ARM, END TO END. What makes this cell worth its wall clock is the SECOND run: a
-    // ledger line proves a write happened, and only a second ask proves the write is what the gate
-    // reads. The grant is minted through the composition's own `standingGrants.record` — the same
-    // instance `proposals.accept --always` mints through, with its protected-class refusal and its
-    // committed ledger — because this door contributes three answers and a socket, never a mint.
+  it('ALWAYS — there is no mint to make: two runs on one channel both start, and neither is asked', async () => {
     const target = new CountingTarget()
     await target.listen()
     try {
@@ -560,93 +449,48 @@ describe('an ask-tier run-button run asks the browser that triggered it (D-11)',
       const stream = await openRunConfirmStream(scene)
 
       const firstRun = await triggerRun(scene, stream.scopeId)
-      const raised = confirmRequestOf(
-        await stream.waitFor((frame) => frame.event === 'confirm_request'),
-      )
-      expect(raised.actionClass).toBe('run:start')
-      expect((await answerRunConfirm(scene, {
-        scopeId: stream.scopeId,
-        confirmId: raised.confirmId,
-        answer: 'accept-always',
-      })).status).toBe(200)
       await waitFor(() => { expect(scene.settled()).toHaveLength(1) })
-      expect(runStartRows(fixture).map((row) => row.outcome)).toEqual(['prompted-approved'])
-
-      // THE SECOND RUN, ON THE SAME CHANNEL. The channel stays open deliberately: if the grant were
-      // not in force this run WOULD be asked, and a cell that closed the channel first would
-      // instead be measuring the fail-closed arm and calling it a standing approval.
       const secondRun = await triggerRun(scene, stream.scopeId)
       await waitFor(() => { expect(scene.settled()).toHaveLength(2) })
 
-      const rows = runStartRows(fixture)
-      expect(rows).toHaveLength(2)
-      // The first run is the one that was asked; the second is the one the grant covered.
-      expect(rows[0]!.outcome).toBe('prompted-approved')
-      // SATISFIED BY THE GATE'S OWN STANDING-APPROVAL READ PATH, which is the assertion a ledger
-      // line cannot make: `trustSource` is written by `resolveAsk`, three rungs above the confirm.
-      expect(rows[1]!.outcome).toBe('proceeded')
-      expect(rows[1]!.trustSource).toBe('standing-approval')
-      // AND NOBODY WAS ASKED A SECOND TIME. One question on this channel, ever.
-      expect(
-        stream.frames.filter((frame) => frame.event === 'confirm_request'),
-        'the standing approval did not stop the ask recurring',
-      ).toHaveLength(1)
-      expect(scene.confirms.pendingCount()).toBe(0)
-
       expect(firstRun).not.toBe(secondRun)
+      expect(stream.frames.filter((frame) => frame.event === 'confirm_request')).toEqual([])
+      expect(runStartRows(fixture)).toEqual([])
+      for (const runId of [firstRun, secondRun]) {
+        expect(scene.buffered(runId).map((event) => event['type'])).toContain('runStarted')
+      }
+      expect(existsSync(join(fixture.project, 'agent-qa-knowledge', 'grants.jsonl'))).toBe(false)
+
       await stream.close()
     } finally {
       await target.close()
     }
   }, 300_000)
 
-  it('CHANNEL VANISH — closing the tab denies at once, not at the window', async () => {
-    // A SIXTY-SECOND WINDOW, far past this cell's own budget for the assertions after the close. If
-    // the disconnect reaper were removed the cell could only pass by waiting out the timer, which
-    // it does not have time to do — so a green here is the reaper and cannot be the timeout. That
-    // is the difference between this cell and the deny-on-silence one, which is the whole reason
-    // both exist.
+  it('CHANNEL VANISH — closing the tab denies nothing: the run it triggered still starts', async () => {
     const target = new CountingTarget()
     await target.listen()
     try {
       const fixture = createInProcessFixture({ origin: target.origin })
       const scene = await openScene({ fixture, timeoutMs: 60_000 })
       const stream = await openRunConfirmStream(scene)
-      await triggerRun(scene, stream.scopeId)
-
-      await stream.waitFor((frame) => frame.event === 'confirm_request')
-      expect(scene.confirms.pendingCount()).toBe(1)
-
-      const closedAt = Date.now()
+      const runId = await triggerRun(scene, stream.scopeId)
       await stream.close()
 
-      await waitFor(() => { expect(scene.settled()).toHaveLength(1) }, 15_000)
-      expect(
-        Date.now() - closedAt,
-        'the denial arrived on the window rather than on the close',
-      ).toBeLessThan(30_000)
+      await waitFor(() => { expect(scene.settled()).toHaveLength(1) })
 
-      const rows = runStartRows(fixture)
-      expect(rows.map((row) => row.outcome)).toEqual(['prompted-denied'])
       expect(scene.confirms.pendingCount()).toBe(0)
-      expect(eventTypes(fixture)).toEqual([])
-      expect(target.hits).toEqual([])
+      expect(runStartRows(fixture)).toEqual([])
+      expect(eventTypes(fixture)).toContain('runStarted')
+      expect(scene.buffered(runId).map((event) => event['type'])).toContain('runStarted')
     } finally {
       await target.close()
     }
   }, 240_000)
 
-  it('NO LIVE CHANNEL — the trigger is headless, nobody is asked, and the ask fails closed (Pitfall 3)', async () => {
-    // THE HONEST-CLAIM RULE'S OTHER ARM, and it is the SAME scene as the cell above with one thing
-    // different: nobody opened the confirm channel. The person clicked run and navigated away, or
-    // the queue's slot freed after they closed the tab. There is nobody to ask, so the door must
-    // not claim it asked.
-    //
-    // THIS IS ALSO THE PRE-PLAN BUILD'S BEHAVIOUR FOR EVERY TRIGGER (401-07's interim posture), so
-    // it is the baseline the cell above measures the delta against: asked-then-denied, versus
-    // never-asked. It passes before this plan and after it, for two different reasons — which is
-    // why it is not the cell that proves anything on its own, and why it is here anyway: a fix that
-    // answered `local-interactive` for every trigger would red exactly this line.
+  it('NO LIVE CHANNEL — the trigger is headless, nobody is asked, and the run starts (Pitfall 3)', async () => {
+    // The honest-claim rule's other arm survives: with nobody holding a channel the trigger does
+    // not claim interactivity. It no longer decides whether the run may start.
     const target = new CountingTarget()
     await target.listen()
     try {
@@ -656,21 +500,12 @@ describe('an ask-tier run-button run asks the browser that triggered it (D-11)',
 
       await waitFor(() => { expect(scene.settled()).toHaveLength(1) })
 
-      const rows = runStartRows(fixture)
-      expect(rows).toHaveLength(1)
-      const row = rows[0]!
-      // `prompted-denied` here would be the door claiming it showed somebody a question.
-      expect(row.outcome).toBe('fail-closed-denied')
-      expect(row.executionContext).toBe('local-headless')
-      expect(row.riskTier).toBe('mutating-shared')
-      // NOTHING WAS EVER PARKED. The registry denies a scope with no channel WITHOUT parking, so a
-      // trigger nobody is watching cannot leave a question waiting for an answer that cannot come.
+      expect(runStartRows(fixture)).toEqual([])
       expect(scene.confirms.pendingCount()).toBe(0)
-      expect(eventTypes(fixture)).toEqual([])
-      expect(buildOrdinalsExist(fixture)).toBe(false)
-      expect(target.hits).toEqual([])
-      expect(String(scene.settled()[0]!.details['reason'])).toContain(row.reason)
-      void runId
+      expect(eventTypes(fixture)).toContain('runStarted')
+      expect(buildOrdinalsExist(fixture)).toBe(true)
+      expect(target.hits).toEqual(['/in-process-thing'])
+      expect(startedContext(scene, runId)).toBe('local-headless')
     } finally {
       await target.close()
     }

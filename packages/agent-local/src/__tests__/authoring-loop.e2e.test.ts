@@ -41,7 +41,6 @@ import {
   AUTHORING_DRAFT_WRITE_FUNCTION_ID,
   AUTHORING_FUNNEL_GET_FUNCTION_ID,
   RUNS_DIGEST_FUNCTION_ID,
-  FunctionDeniedError,
   FunctionNotBoundError,
   FunctionScopeError,
   authoringFanOutBound,
@@ -1421,9 +1420,14 @@ describe('authoring.draft.write end to end through the composition root', () => 
     expect(model.requests).toHaveLength(2)
   })
 
-  // ---- D-03's dispatch confirm: one ask, before anything, carrying the fan-out preview ---------
+  // ---- D-03's dispatch confirm, RETIRED (432-13, D-14) --------------------------------------------
+  //
+  // RE-SPELLED 2026-09-30. `authoring.draft.write` used to ask ONCE at dispatch, carrying the fan-out
+  // preview, and a headless host could not author at all. There is no op gate now: a supplied old
+  // confirm port is never invoked, a declining one declines nothing, and a headless host authors. The
+  // fan-out bound itself is still one function (`authoringFanOutBound`), measured below.
 
-  it('asks EXACTLY ONCE at dispatch, before the brief is read, carrying the fan-out preview', async () => {
+  it('C432-INVOKE-DIRECT: dispatches without asking — a supplied old confirm port is never invoked', async () => {
     const executor = fixtureExecutor(agentQaRoot)
     const model = scriptedModel()
     const confirm = recordingConfirm(true)
@@ -1442,25 +1446,11 @@ describe('authoring.draft.write end to end through the composition root', () => 
     )) as AuthoringDraftWriteOutput
 
     expect(result.outcome).toBe('drafted')
-    // ONE ask for a loop that spent three child processes. D-03: one approval starts the loop,
-    // which then runs unattended — a count of 2 here would be a suspended mid-loop approval state
-    // by another name, and 3 would be one prompt per run.
-    expect(confirm.actions).toHaveLength(1)
+    expect(confirm.actions).toEqual([])
     expect(executor.startInputs).toHaveLength(DRAFT_STABILITY_RUNS_N)
-
-    // THE NUMBER IS COMPARED AGAINST THE FUNCTION, NEVER AGAINST A LITERAL. A hard-coded 9 would
-    // pass just as happily against a second arithmetic that had drifted from the one the report
-    // reads, which is the single-source claim's whole content.
-    const bound = authoringFanOutBound({})
-    expect(confirm.actions[0]?.disclosure).toBe(renderFanOutPreview(bound))
-    expect(confirm.actions[0]?.disclosure).toContain(`up to ${bound.total} runs`)
-
-    // The ask is about THIS action class, and the class name is untouched by the disclosure — it is
-    // the same string a standing grant would have to match and the audit row records.
-    expect(confirm.actions[0]?.name).toBe(`fn:${AUTHORING_DRAFT_WRITE_FUNCTION_ID}`)
   })
 
-  it('previews the DRAFT-MODE bound, which is smaller — so the preview is not one fixed number', async () => {
+  it('the DRAFT-MODE bound is smaller, and neither bound is put to anybody as a question', async () => {
     const executor = fixtureExecutor(agentQaRoot)
     const confirm = recordingConfirm(true)
     const host = compose({
@@ -1476,17 +1466,15 @@ describe('authoring.draft.write end to end through the composition root', () => 
       HUMAN,
     )
 
-    // The other side of the discriminator. Without it, a disclosure hard-coded to the default bound
-    // would pass the cell above — and the two N terms would be untested at the one surface where a
-    // person reads them, because in the default configuration they are equal.
     const draftBound = authoringFanOutBound({ draftMode: true })
     expect(draftBound.initialN).toBe(1)
     expect(draftBound.finalN).toBe(DRAFT_STABILITY_RUNS_N)
     expect(draftBound.total).toBeLessThan(authoringFanOutBound({}).total)
-    expect(confirm.actions[0]?.disclosure).toBe(renderFanOutPreview(draftBound))
+    expect(renderFanOutPreview(draftBound)).toContain(`up to ${draftBound.total} runs`)
+    expect(confirm.actions).toEqual([])
   })
 
-  it('declines: a typed refusal, ZERO runs started, and an empty shelf', async () => {
+  it('C432-INVOKE-DIRECT: a DECLINING old port declines nothing — the loop runs and drafts', async () => {
     const executor = fixtureExecutor(agentQaRoot)
     const model = scriptedModel()
     const confirm = recordingConfirm(false)
@@ -1497,27 +1485,19 @@ describe('authoring.draft.write end to end through the composition root', () => 
       confirm: confirm.port,
     })
 
-    const failure = await invokeFunction(
+    const result = (await invokeFunction(
       host.registry,
       AUTHORING_DRAFT_WRITE_FUNCTION_ID,
       { intent: INTENT, scope: SCOPE },
       HUMAN,
-    ).then(() => undefined, (error: unknown) => error as FunctionDeniedError)
+    )) as AuthoringDraftWriteOutput
 
-    expect(failure).toBeInstanceOf(FunctionDeniedError)
-    expect(failure?.reason).toContain('prompted-denied')
-    // A decline COSTS NOTHING: no run, no model call, nothing on the shelf. Asserting only the
-    // typed refusal would pass for a loop that ran to completion and then threw.
-    expect(confirm.actions).toHaveLength(1)
-    expect(executor.startInputs).toHaveLength(0)
-    expect(model.requests).toHaveLength(0)
-    expect(readdirSync(workspace)).toEqual([])
+    expect(result.outcome).toBe('drafted')
+    expect(confirm.actions).toEqual([])
+    expect(executor.startInputs).toHaveLength(DRAFT_STABILITY_RUNS_N)
   })
 
-  it('DENIES in a fail-closed context, by name — the cost of the ask tier, stated', async () => {
-    // The tier raise's real consequence, pinned rather than discovered later: a non-interactive
-    // host — CI, the daemon — cannot author, because an ask nobody can answer is a deny. The gate's
-    // own reason names the ways out, so this cell asserts the reason and not merely the throw.
+  it('C432-INVOKE-DIRECT: AUTHORS in a headless context — there is no ask tier left to deny it', async () => {
     setActiveExecutionContextResolver(() => 'local-headless')
     const executor = fixtureExecutor(agentQaRoot)
     const confirm = recordingConfirm(true)
@@ -1527,20 +1507,16 @@ describe('authoring.draft.write end to end through the composition root', () => 
       confirm: confirm.port,
     })
 
-    const failure = await invokeFunction(
+    const result = (await invokeFunction(
       host.registry,
       AUTHORING_DRAFT_WRITE_FUNCTION_ID,
       { intent: INTENT, scope: SCOPE },
       HUMAN,
-    ).then(() => undefined, (error: unknown) => error as FunctionDeniedError)
+    )) as AuthoringDraftWriteOutput
 
-    expect(failure).toBeInstanceOf(FunctionDeniedError)
-    expect(failure?.reason).toContain('fail-closed')
-    expect(failure?.reason).toContain('--trust-session')
-    // The confirm was never REACHED — the fail-closed arm returns before the prompt, so a person
-    // is not asked a question whose answer could not be honoured anyway.
+    expect(result.outcome).toBe('drafted')
     expect(confirm.actions).toEqual([])
-    expect(executor.startInputs).toHaveLength(0)
+    expect(executor.startInputs).toHaveLength(DRAFT_STABILITY_RUNS_N)
   })
 
   it('refuses an empty intent at the contract, before a model is ever asked', async () => {

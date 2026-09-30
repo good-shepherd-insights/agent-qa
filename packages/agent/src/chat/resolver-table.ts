@@ -27,7 +27,6 @@
 import { parseShortId } from '@vostride/agent-qa-schema'
 
 import { ENTITIES_RESOLVE_FUNCTION_ID } from '../functions/ops/entities-ids.js'
-import { PROPOSALS_LIST_FUNCTION_ID } from '../functions/ops/proposals-list.js'
 import { RUNS_DIGEST_FUNCTION_ID } from '../functions/ops/runs-digest.js'
 import { RUNS_LIST_FUNCTION_ID } from '../functions/ops/runs-list.js'
 import { RUNS_START_FUNCTION_ID } from '../functions/ops/runs-start.js'
@@ -35,13 +34,15 @@ import { RUNS_START_FUNCTION_ID } from '../functions/ops/runs-start.js'
 /**
  * The session-scoped directives: canon that maps to NO registry op.
  *
- * Closed and spelled once. `/model` and `/pin` change how THIS SESSION behaves (D-04's model
- * override and its `model_change` event, D-21's deny-only pin overlay); `/help` and `/quit` are
- * REPL chrome. None of them is a capability, which is why none of them has a function id — and
- * they are in the table anyway, because the table is the vocabulary a person types and the
- * meta-test demands a scenario for every row of it.
+ * Closed and spelled once. `/model` changes how THIS SESSION behaves (D-04's model override and its
+ * `model_change` event); `/help` and `/quit` are REPL chrome. None of them is a capability, which is
+ * why none of them has a function id — and they are in the table anyway, because the table is the
+ * vocabulary a person types and the meta-test demands a scenario for every row of it.
+ *
+ * 432-13 (D-14): `/pin` is gone. It was a session deny overlay over the op gate, and there is no op
+ * gate; a clause spelled `/pin …` is now an ordinary clause nothing in the table resolves.
  */
-export const CHAT_DIRECTIVES = ['model', 'pin', 'help', 'quit'] as const
+export const CHAT_DIRECTIVES = ['model', 'help', 'quit'] as const
 
 export type ChatDirectiveName = (typeof CHAT_DIRECTIVES)[number]
 
@@ -201,34 +202,14 @@ export const CHAT_RESOLVER_TABLE: ChatResolverTable = Object.freeze([
       return { kind: 'op', functionId: RUNS_DIGEST_FUNCTION_ID, input: { runId: reference } }
     },
   }),
-  rule({
-    alias: 'proposals',
-    // No filter: "proposals" with nothing after it is the whole inbox, which is the question a
-    // person asking that word has. The op's `status`/`kind` filters stay reachable through `/fn`,
-    // which is the entire argument for `/fn` existing.
-    resolve: (clause) =>
-      isExactly('proposals')(clause)
-        ? { kind: 'op', functionId: PROPOSALS_LIST_FUNCTION_ID, input: {} }
-        : undefined,
-  }),
+  // 432-13 (D-05/D-14): the `proposals` inbox alias is gone. Changes apply in the call, so there is
+  // no pending-decision inbox to route a bare word to; a pre-432 record stays readable through
+  // `/fn proposals.list` until the inbox is deleted.
   rule({
     alias: 'model',
     resolve: (clause) => {
       const name = argumentAfter('/model', clause)
       return name === undefined ? undefined : { kind: 'directive', directive: 'model', argument: name }
-    },
-  }),
-  rule({
-    alias: 'pin',
-    // Deterministic-resolver-only, never LLM-mediated (391 D-07). A pin is a policy tightening,
-    // and the one thing a model must not be able to reach is the machinery that decides what it
-    // is allowed to reach — even in the tightening direction, because a mechanism reachable in
-    // one direction is a mechanism.
-    resolve: (clause) => {
-      const actionClass = argumentAfter('/pin', clause)
-      return actionClass === undefined
-        ? undefined
-        : { kind: 'directive', directive: 'pin', argument: actionClass }
     },
   }),
   rule({
@@ -357,7 +338,6 @@ export const CHAT_HELP_ENTRIES: readonly ChatHelpEntry[] = Object.freeze([
   // was advertising a guess the resolver refuses to make. The argument-contract cell in
   // `help-census.test.ts` is what now holds the two together.
   Object.freeze({ alias: 'digest', syntax: 'digest <run>', summary: "that run's digest" }),
-  Object.freeze({ alias: 'proposals', syntax: 'proposals', summary: 'the pending-decision inbox' }),
   Object.freeze({
     alias: 'fn',
     syntax: '/fn <op> [json]',
@@ -367,11 +347,6 @@ export const CHAT_HELP_ENTRIES: readonly ChatHelpEntry[] = Object.freeze([
     alias: 'model',
     syntax: '/model <name>',
     summary: 'switch the model for this session',
-  }),
-  Object.freeze({
-    alias: 'pin',
-    syntax: '/pin <class>',
-    summary: 'deny an action class for the rest of this session (never loosens)',
   }),
   Object.freeze({ alias: 'help', syntax: '/help', summary: 'this list' }),
   Object.freeze({ alias: 'quit', syntax: '/quit', summary: 'end the session' }),

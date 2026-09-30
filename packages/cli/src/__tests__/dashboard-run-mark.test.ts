@@ -1,11 +1,12 @@
 // The real composition must preserve the route's asking frame through AgentHost.invokeFunction.
+// 432-13: there is no asking frame left to preserve; the cells below pin that the route dispatches.
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import { createConfirmRegistry, markRun, mintRunTriggerConfirmScope, type ChatConfirmChannelFrame } from '@vostride/agent-qa-dashboard'
 import { RUNS_MARK_FUNCTION_ID } from '@vostride/agent-qa-agent'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it } from 'vitest'
 
 import { composeDashboardDoor } from '../commands/dashboard.js'
 
@@ -35,43 +36,26 @@ function fixture() {
   return { ...door, confirms, frames, channels, scope, open, invoke }
 }
 
+// RE-SPELLED 2026-09-30 (432-13, D-14/D-15). The route used to park on the named run channel and
+// deny an absent or unwatched scope, even under config trustMode. The composed host asks nobody now:
+// the mark dispatches with or without a scope, with or without a watched channel, and no confirm
+// frame is ever raised. The absent fixture run is what answers, which proves the op was reached.
 describe('dashboard runs.mark confirmation through the composed host (419 D-13)', () => {
-  it('binds the actual op id and denies absent/unwatched scope despite config trustMode', async () => {
+  it('binds the actual op id and dispatches with an absent or unwatched scope, raising no frame', async () => {
     const f = fixture()
     expect(f.agentHost.runsMarkFunctionId).toBe(RUNS_MARK_FUNCTION_ID)
     for (const scope of [undefined, f.scope]) {
-      // 432-09 (D-15): the refusal body is a plain reason and nothing else.
-      expect(await f.invoke(scope)).toMatchObject({ status: 403, body: { error: 'mark_denied', reason: 'The safety gate denied this mark.' } })
-      expect(Object.keys((await f.invoke(scope) as { body: object }).body).sort()).toEqual(['error', 'reason'])
+      expect(await f.invoke(scope)).toMatchObject({ kind: 'ok', body: { kind: 'run-not-found' } })
     }
     expect(f.frames).toEqual([])
+    expect(f.confirms.pendingCount()).toBe(0)
   })
 
-  it.each(['accept', 'deny', 'disconnect'] as const)('parks on the named run channel and handles %s', async answer => {
+  it('dispatches on a WATCHED run channel too, and never parks on it', async () => {
     const f = fixture()
     f.open()
-    const pending = f.invoke(f.scope)
-    await vi.waitFor(() => expect(f.frames.some(row => row.frame.kind === 'confirm_request')).toBe(true))
-    const request = f.frames.find(row => row.frame.kind === 'confirm_request')!
-    expect(request.scope).toBe(f.scope)
-    if (request.frame.kind !== 'confirm_request') throw new Error('missing request')
-    expect(request.frame.request.actionClass).toBe(`fn:${RUNS_MARK_FUNCTION_ID}`)
-    expect(f.confirms.pendingCount()).toBe(1)
-    // A different watched scope cannot answer this request, and no frame means no authority
-    // even while the first invocation is parked. This also checks AsyncLocalStorage isolation.
-    const other = mintRunTriggerConfirmScope()
-    const closeOther = f.confirms.openChannel(other)
-    expect(f.confirms.answer({ scopeId: other, confirmId: request.frame.request.confirmId, answer: 'accept' })).toEqual({ kind: 'unknown-confirm' })
-    expect(await f.invoke()).toMatchObject({ status: 403, body: { error: 'mark_denied' } })
-    closeOther()
-    if (answer === 'disconnect') f.channels[0]!()
-    else f.confirms.answer({ scopeId: f.scope, confirmId: request.frame.request.confirmId, answer })
-    const result = await pending
-    if (answer === 'accept') {
-      // Feedback is actually bound: after explicit approval it reports the absent fixture run.
-      expect(result).toMatchObject({ kind: 'ok', body: { kind: 'run-not-found' } })
-    } else expect(result).toMatchObject({ status: 403, body: { error: 'mark_denied' } })
+    expect(await f.invoke(f.scope)).toMatchObject({ kind: 'ok', body: { kind: 'run-not-found' } })
+    expect(f.frames.filter(row => row.frame.kind === 'confirm_request')).toEqual([])
     expect(f.confirms.pendingCount()).toBe(0)
-    expect(f.confirms.answer({ scopeId: f.scope, confirmId: request.frame.request.confirmId, answer: 'accept' })).toEqual({ kind: 'unknown-confirm' })
   })
 })

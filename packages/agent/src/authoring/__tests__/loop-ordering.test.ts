@@ -21,7 +21,6 @@
 // logs are asserted against each other. A self-report that claimed `compile` before `dedup` while
 // the deps fired the other way fails the second cell even if it satisfies the first.
 
-import { NO_STANDING_APPROVALS } from '@vostride/agent-qa-safety'
 import {
   DRAFT_STABILITY_RUNS_N,
   MASKED_RESOLVED_CONFIG_SCHEMA_VERSION,
@@ -540,9 +539,6 @@ describe('the loop has exactly one public entry', () => {
     const registry = createFunctionRegistry({
       deps: minimalDeps(),
       resolveExecutionContext: () => 'local-interactive',
-      // The no-grants reader, and it costs this cell nothing: `list` consults no gate, so the
-      // question here is only which ids the catalogue holds.
-      standingApprovalReader: () => NO_STANDING_APPROVALS,
       auditSink: { appendExecutionAudit() {}, appendGuardrailAudit() {} },
     })
 

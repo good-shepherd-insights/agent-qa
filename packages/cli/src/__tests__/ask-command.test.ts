@@ -155,9 +155,11 @@ describe('agent-qa ask (the one-shot chat verb)', () => {
     for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true })
   })
 
+  // 432-13: the bare `proposals` alias left the resolver table with the inbox route (C432-CHAT-DIRECT);
+  // the same op is reached through the generic `/fn` passthrough, which is still deterministic.
   it('D-24: routes a deterministic utterance through agent.ask and renders the receipt', async () => {
     const configPath = fixtureWorkspace(roots)
-    const result = await runAsk(configPath, ['proposals'])
+    const result = await runAsk(configPath, ['/fn proposals.list'])
 
     expect(result.stderr).toBe('')
     expect(result.exitCode).toBeUndefined()
@@ -183,12 +185,15 @@ describe('agent-qa ask (the one-shot chat verb)', () => {
     // printing `outcome`: the functionId and the clause are separate fields, and neither of them
     // is this sentence.
     const configPath = fixtureWorkspace(roots)
-    const result = await runAsk(configPath, ['proposals'])
+    const result = await runAsk(configPath, ['/fn proposals.list'])
 
     expect(result.stdout).toContain('0 proposal(s) in the inbox')
   })
 
   it('(A3) binds a presentation port on the SAME stream its confirm prompts on', async () => {
+    // 432-13: no confirm prompts on this stream any more (the door builds none); the presentation
+    // port is still bound to stdout, which is the half of this claim that survives.
+    //
     // 395-22 · CR-03 · CFGM-05. `composeCliLocalAgent` supplies `createTtyConfirmPort()` whenever
     // this process has two TTYs, so at a terminal this command DOES ask a person to approve gated
     // work — and until this plan it bound no surface to show them what they were approving. Round
@@ -200,7 +205,7 @@ describe('agent-qa ask (the one-shot chat verb)', () => {
     // downstream is the shared composition's. So the cell asserts the argument, and then asserts
     // what the argument DOES — a binding present but inert would pass the first half alone.
     const configPath = fixtureWorkspace(roots)
-    await runAsk(configPath, ['proposals'])
+    await runAsk(configPath, ['/fn proposals.list'])
 
     expect(compositionInputs).toHaveLength(1)
     const chatPresent = compositionInputs[0]?.chatPresent

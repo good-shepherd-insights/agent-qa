@@ -91,8 +91,12 @@ describe('the corpus manifest is versioned and internally coherent', () => {
     // v9 IS 398-07's EXPLAIN ARRIVAL, an admission on v8's shape: two `planner/` cells for a
     // capability that did not exist in v8's build, so the size rises to 26 AND the live denominator
     // rises to 8 — both, together, which is what distinguishes this from a flip.
+    //
+    // v10 IS 432-13's TWO RETIREMENTS: `pin` and `proposals` stay in the corpus as `fail_closed`
+    // absence cells, so the size is unchanged at 26 and the hermetic denominator falls to 9 — a flip
+    // in the other direction, stated rather than slipped through.
     expect(SCENARIO_CORPUS.length).toBe(26)
-    expect(SCENARIO_CORPUS_VERSION).toBe(9)
+    expect(SCENARIO_CORPUS_VERSION).toBe(10)
     // The denominators the ceiling is computed over, pinned per lane. Every gap-round cell is
     // `fail_closed` precisely so these two numbers did NOT move — a corpus round that quietly grew
     // the denominator would report a better rate for having done work (the treadmill law). What
@@ -104,7 +108,7 @@ describe('the corpus manifest is versioned and internally coherent', () => {
     const denominator = (lane: string): number =>
       SCENARIO_CORPUS.filter((entry) => entry.lane === lane && entry.kind === 'should_execute')
         .length
-    expect(denominator('hermetic')).toBe(11)
+    expect(denominator('hermetic')).toBe(9)
     expect(denominator('live')).toBe(8)
   })
 

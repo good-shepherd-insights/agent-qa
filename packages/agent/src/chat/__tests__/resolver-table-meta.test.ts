@@ -46,6 +46,11 @@ const EDGE_SCENARIOS = [
   // D-08: an op id no registry knows comes back named, from `invokeFunction` rather than a check
   // inside the table.
   'fn-unknown-op',
+  // 432-13 (D-05/D-14): two RETIRED aliases, kept as measured absences. `/pin` and the bare
+  // `proposals` inbox left the table; each cell pins that the clause is now unroutable and the
+  // turn refuses by name with zero executions ("re-spelled, never deleted").
+  'pin',
+  'proposals',
 ] as const
 
 /**

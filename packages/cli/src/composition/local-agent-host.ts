@@ -359,43 +359,30 @@ export function createColdReadMaskingSources(
 }
 
 /**
- * The chat / `fn` / MCP door's run execution: the ONE in-process, policy-gated drive (401-05).
+ * The chat / `fn` / MCP door's run execution: the ONE in-process drive (401-05).
  *
  * D-01 — THIS RETIRED THE SECOND SPAWN FAMILY, and 401-10 deleted what was left of it. The retired
- * `createCliRunExecution` re-entered `agent-qa run` as a child process; every field a caller could not express became a `--` operand
- * and every policy denial died in the child's stderr. That is not a theory: 401-06 measured the
- * daemon's identical wire handing callers `RunProducedNoEventsError` while the gate's real reason
- * and its remedies were lost. This door hands the caller `RunDeniedError` with the row's reason
- * intact, because the gate ran in this process.
+ * `createCliRunExecution` re-entered `agent-qa run` as a child process; every field a caller could
+ * not express became a `--` operand and every refusal died in the child's stderr. This door hands
+ * the caller the core's refusal with its reason intact, because the run starts in this process.
  *
- * D-07 — THE POSTURE TRAVELS EXPLICITLY, AND IT IS THIS DOOR'S OWN ANSWER. `executionContext` and
- * the confirm port are resolved HERE and handed over; the core never sniffs. Both are resolved the
- * same way the op-level gate at this host resolves them, so the two gates a single `runs.start`
- * crosses cannot disagree about who is asking:
+ * D-07 — THE POSTURE TRAVELS EXPLICITLY, AND IT IS THIS DOOR'S OWN ANSWER. `executionContext` is
+ * `input.resolveExecutionContext` when the host supplied one and this process's real TTY/CI
+ * detection otherwise, which is exactly what `agent-qa run` resolves. The run records it.
  *
- *   - the context is `input.resolveExecutionContext` when the host supplied one — the dashboard
- *     door's live-confirm-channel answer (Pitfall 3) — and this process's real TTY/CI detection
- *     otherwise, which is exactly what `agent-qa run` resolves for the same gate;
- *   - the confirm is the host's own port, read by FIELD PRESENCE rather than by value (396-01
- *     D-09), so the MCP host's `confirm: undefined` REFUSES the prompt at this gate too rather
- *     than falling back to a tty write on the JSON-RPC channel.
+ * NOTHING ASKS (432-13, D-01/D-14/D-15). No confirm port, session trust or standing-approval reader
+ * reaches the drive: a non-production run starts in one call from every context, and production
+ * is refused by the core before any effect unless the config opts in. The `gate` argument the
+ * composition still hands this port (the dispatch-grant overlay) is not read; 432-18 deletes it.
  *
- * THE DOOR READS ITS OWN PREFLIGHT, for the reason the daemon's does: `config.safety.trustMode` is
- * a project-level opt-in the retired child honoured because the child read the config itself, and
- * letting it stop reaching the gate here would be a one-sided tightening nobody ratified. The
- * resolved inputs are then handed to the drive through `inputs`, so the config, the env file and
- * the secrets file are read once rather than twice.
- *
- * `reader` ARRIVES PER CALL SINCE 401-08 (D-08), through the port's own optional `gate` argument.
- * The composition resolves it — the durable grant ledger unioned with any open dispatch scope —
- * because which approvals are in force is a fact about the moment a run starts, not about the
- * moment this door was built, and because this file may name neither the ledger nor `safety`.
+ * THE DOOR READS ITS OWN PREFLIGHT so the config, the env file and the secrets file are read once
+ * rather than twice: the resolved inputs are handed to the drive through `inputs`.
  *
  * WHAT IS DELIBERATELY ABSENT, each because an option nothing reads is a stub with a type on it:
  * `produceMembers` (the default
  * dispatcher is MODE-AWARE, which is what makes an argument-less request and a suite pattern both
- * work at this door), `afterVerdict` (a `runs.start` ack is a START, not an outcome — there is no
- * door-level fold to apply), and `trust.credential` (402's parameter).
+ * work at this door) and `afterVerdict` (a `runs.start` ack is a START, not an outcome — there is
+ * no door-level fold to apply).
  *
  * ═══ 2026-08-26 — Phase 404 D-05: WHAT `afterVerdict`'s ABSENCE USED TO COST ═══
  *
@@ -423,30 +410,22 @@ export function createColdReadMaskingSources(
  *
  * IT IS ACQUIRED THROUGH A DEFERRED IMPORT, and that is load-bearing rather than stylistic.
  * `composition/in-process-run-execution.ts` imports `commands/run.js`'s producers statically — the
- * surface firewall's only legal route for that vocabulary — and `commands/run.ts` imports THIS file
- * for `createTtyConfirmPort`. A static import back would close that cycle at module-evaluation
- * time; an ESM cycle survives only while every edge is call-time. Both of the drive's own call
- * sites and the daemon's composition defer for the same reason.
+ * surface firewall's only legal route for that vocabulary — and a static import back from here would
+ * close a cycle at module-evaluation time; an ESM cycle survives only while every edge is call-time.
+ * Both of the drive's own call sites and the daemon's composition defer for the same reason.
  */
 function createComposedRunExecution(input: {
   readonly trustPriors: ReturnType<typeof trustPriorsForHost>
   readonly configPath: string
   readonly agentQaRoot: string
   readonly resolveExecutionContext: ComposeLocalAgentInput['resolveExecutionContext']
-  readonly confirm: ComposeLocalAgentInput['confirm']
   readonly runBridge?: ComposeCliLocalAgentInput['runBridge']
 }): RunExecutionPort {
   const selectTrustPriors = bindTrustPriorsToConfig(input)
   return {
-    // `gate` is the composition's answer to the run gate's standing-approvals question, resolved
-    // per call and handed down here (401-08, D-08). This door does not resolve it and must not:
-    // the grant ledger and the dispatch overlay are `agent-local`/`safety` vocabulary, and this
-    // file's surface-firewall ledger has exactly one entry and only ever shrinks. It is FORWARDED
-    // and nothing else — the type comes from the port it implements, so no safety type is named.
-    async execute(
-      request: RunsStartInput,
-      gate?: Parameters<RunExecutionPort['execute']>[1],
-    ): Promise<{ runId: RunId }> {
+    // 432-13: the port's second argument (the retired run gate's standing-approval reader) is not
+    // taken. Nothing asks, so there is no approval for a reader to satisfy.
+    async execute(request: RunsStartInput): Promise<{ runId: RunId }> {
       const { resolveRunInvocationInputs } = await import('../commands/run.js')
       const {
         refuseUnhonourableRequestFields,
@@ -484,7 +463,6 @@ function createComposedRunExecution(input: {
             agentQaRoot: input.agentQaRoot,
             executionContext:
               (input.resolveExecutionContext?.() ?? resolveRunExecutionContext()) as RunExecutionContext,
-            trust: { trustMode: inputs.config.safety?.trustMode === true },
             // 422-14 (D-18): the pre-analysis circularity arbiter, composed from the ONE builder
             // the daemon composes from too. Parity is a property of there being a single
             // construction site rather than a claim a reviewer re-derives by reading two literals
@@ -497,10 +475,6 @@ function createComposedRunExecution(input: {
                 agentQaRoot: input.agentQaRoot,
               }),
             },
-            ...(input.confirm === undefined ? {} : { confirm: input.confirm }),
-            // Conditionally spread on this file's own house rule: an absent authority must be an
-            // ABSENT field, so the gate's `NO_STANDING_APPROVALS` default lives in one place.
-            ...(gate?.reader === undefined ? {} : { reader: gate.reader }),
             inputs,
             // THE LOCAL CAPTURE FIRST, THEN THE HOST'S BRIDGE (401-07). The capture is what the
             // `catch` below reads to tell a run that STARTED from one that never did, so it can
@@ -591,8 +565,8 @@ function createComposedRunExecution(input: {
       } catch (error) {
         // ONE NARROW CATCH, AND IT CONVERTS EXACTLY ONE THING (D-03).
         //
-        // Everything raised before a session exists — a denial, a refused field, an input error, a
-        // crash — re-throws untouched. What is converted is a run that STARTED and then surfaced a
+        // Everything raised before a session exists — a production refusal, a refused field, an
+        // input error, a crash — re-throws untouched. What is converted is a run that STARTED and then surfaced a
         // member's framework error: the drive re-raises that to preserve `agent-qa run`'s exit-2
         // contract, but this door is answering `runs.start`, whose ack is a START and not an
         // outcome. The retired child said the same thing by ignoring its own exit code —
@@ -623,12 +597,9 @@ export interface ComposeCliLocalAgentInput {
   /** The project's runtime root, i.e. `<configDir>/.agent-qa`. */
   agentQaRoot: string
   /**
-   * How this invocation asks a person to confirm an ask-tier capability (391 PROP-01).
-   *
-   * Defaults to {@link createTtyConfirmPort}, which answers `undefined` when this process has no
-   * terminal — so the default is "prompt where there is somebody to prompt, and nowhere else".
-   * Overridable on the same optional-operation idiom `runExecution` and `model` use, so the
-   * prompt's behaviour can be driven without a real tty behind it.
+   * UNREAD SINCE 432-13 (D-14). This was how an invocation asked a person to confirm an ask-tier
+   * capability, defaulting to a terminal prompt; nothing asks any more, so no default is built and
+   * a supplied port is not forwarded. 432-16 removes the field with {@link createTtyConfirmPort}.
    */
   confirm?: ComposeLocalAgentInput['confirm']
   /**
@@ -641,12 +612,8 @@ export interface ComposeCliLocalAgentInput {
    */
   dispatchGrants?: ComposeLocalAgentInput['dispatchGrants']
   /**
-   * How a chat SESSION asks (392 plan 08, D-03).
-   *
-   * A factory handed the composition's own grant mint and session-log sink, passed through
-   * untouched: this host decides whether there is a person to ask, and the shared composition
-   * decides what an approval and a session event ARE. Absent leaves the plain one-form confirm
-   * above in place, which is every non-chat CLI invocation.
+   * UNREAD SINCE 432-13 (D-14). This was how a chat session asked; nothing asks any more, so the
+   * factory is not forwarded. 432-16 removes the field with {@link createChatConfirmPort}.
    */
   chatConfirm?: ComposeLocalAgentInput['chatConfirm']
   /**
@@ -3725,7 +3692,10 @@ function readTargetIfPresent(absolutePath: string): Buffer | undefined {
 }
 
 /**
- * The terminal confirmation the gate's ask arm reaches when nothing else satisfied it (391 PROP-01).
+ * The terminal confirmation the gate's ask arm reached when nothing else satisfied it (391 PROP-01).
+ *
+ * NO DOOR BUILDS THIS SINCE 432-13 (D-14): the op gate and the run gate are gone, so nothing asks.
+ * The factory and its chat extension below stay until 432-16 deletes them with their fixtures.
  *
  * ANSWERS `undefined` WHEN THERE IS NO TERMINAL, and that is the whole binding rule rather than a
  * convenience. An absent confirm leaves `evaluate()`'s own deny-by-default in place, which is the
@@ -3885,6 +3855,8 @@ export interface CreateChatConfirmPortOptions extends ChatConfirmBindings {
 
 /**
  * Build the chat REPL's confirmation, or nothing when there is no terminal.
+ *
+ * NO DOOR BUILDS THIS SINCE 432-13 (D-14); `agent-qa chat` composes no confirm. 432-16 deletes it.
  *
  * The binding rule is the one-form port's, verbatim and for its reason: BOTH streams are checked,
  * and an absent port leaves `evaluate()`'s deny-by-default in place — which is what keeps a
@@ -4078,18 +4050,10 @@ export function composeCliLocalAgent(input: ComposeCliLocalAgentInput): LocalAge
     const config = await resolveConfig({ configPath: input.configPath, loadAuthPlugins: false })
     return resolveKnowledgeRoot(config.knowledge, dirname(resolve(input.configPath)))
   }
-  // THE DOOR'S CONFIRM, RESOLVED ONCE FOR BOTH GATES (401-05, D-07).
-  //
-  // It was resolved inline in the `composeLocalAgent` literal below until this host gained a second
-  // gate to answer for. Two resolutions of "is there somebody at this door" would be free to
-  // disagree — and the way they would disagree is the dangerous direction: the op-level gate
-  // refusing to prompt while the run gate wrote a tty prompt onto a JSON-RPC connection.
-  //
-  // 396-01 D-09's rule is preserved exactly, because it is the whole reason this is a hoist rather
-  // than a `??`: the FIELD's presence is read, not its value. `confirm: undefined` (the MCP host)
-  // REFUSES to ask at both gates; an absent field defaults to "prompt where there is somebody to
-  // prompt", which is every other CLI invocation.
-  const doorConfirm = 'confirm' in input ? input.confirm : createTtyConfirmPort()
+  // 432-13 (D-14): NO CONFIRM IS BUILT. This host used to resolve one door confirm for the op gate
+  // and the run gate — a terminal prompt by default. Both gates are gone, so nothing is resolved,
+  // defaulted or forwarded, and a supplied `confirm` / `chatConfirm` is ignored until 432-16
+  // removes the fields.
 
   // Bound whenever the config parses; a read before the runs database exists answers not recorded in it and opens or creates nothing.
   let projectRunDetail: ReturnType<typeof import('../commands/dashboard.js').openProjectRunDetailReader> | undefined
@@ -4144,7 +4108,6 @@ export function composeCliLocalAgent(input: ComposeCliLocalAgentInput): LocalAge
       configPath: input.configPath,
       agentQaRoot: input.agentQaRoot,
       resolveExecutionContext: input.resolveExecutionContext,
-      confirm: doorConfirm,
       ...(input.runBridge === undefined ? {} : { runBridge: input.runBridge }),
     }),
     // D-08 (401-08): forwarded untouched, conditionally spread on this literal's own house rule.
@@ -4310,7 +4273,6 @@ export function composeCliLocalAgent(input: ComposeCliLocalAgentInput): LocalAge
             proposeGate1MaxPerJob: () => resolveProposeGate1MaxPerJob(input.configPath),
           },
         }),
-    ...(input.chatConfirm === undefined ? {} : { chatConfirm: input.chatConfirm }),
     ...(input.chatPresent === undefined ? {} : { chatPresent: input.chatPresent }),
     // 392 plan 09, CHAT-06: the chat model arrives ALREADY BUILT, through `createModel` at the
     // resolution one layer up. Conditionally spread on the `confirm` precedent, so a host without
@@ -4323,15 +4285,6 @@ export function composeCliLocalAgent(input: ComposeCliLocalAgentInput): LocalAge
     // `?? deterministicOverrideStrategy` is where the safe default lives and a present-undefined
     // field would be a second place it could be decided.
     ...(input.chatReconcile === undefined ? {} : { chatReconcile: input.chatReconcile }),
-    // 391 PROP-01: conditionally spread, so a host with no terminal leaves the field ABSENT and the
-    // gate's own deny-by-default is what answers — in exactly one place.
-    //
-    // 396-01 D-09: the resolution reads the FIELD's presence and not its value, which is what lets
-    // a host REFUSE the prompt rather than only fail to have one. Under `??` those were the same
-    // answer, and for the MCP host they must not be: its stdout is the JSON-RPC channel, so a tty
-    // prompt written there does not go unanswered, it breaks every client on the connection. An
-    // absent field still defaults to "prompt where there is somebody to prompt".
-    ...(doorConfirm === undefined ? {} : { confirm: doorConfirm }),
   })
   const closeHost = host.close.bind(host)
   return Object.assign(host, {

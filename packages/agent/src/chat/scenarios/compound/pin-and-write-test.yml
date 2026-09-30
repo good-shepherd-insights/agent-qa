@@ -1,3 +1,8 @@
+# 432-13 (D-14): `/pin` IS NO LONGER A DIRECTIVE. Both clauses are now unrouted text in the hermetic
+# lane, so the turn still refuses whole with zero executions — and the side-effect assertion this
+# cell was admitted to make bite (no `approval_decision`, no verb-sourced `model_change`) now holds
+# by construction: no turn writes an approval row at all.
+#
 # THE CR-04 PROBE, ADMITTED AS A PERMANENT CELL (392-11, gap round).
 #
 # A DIRECTIVE PLUS AN UNROUTABLE CLAUSE. Run through the shipped stack this returned `fail_closed`
@@ -25,5 +30,5 @@ utterance: /pin fn:runs.start and write a test for 2FA
 expect:
   kind: fail_closed
   executed: 0
-  namesClause: write a test for 2FA
+  namesClause: /pin fn:runs.start
   emitsSessionEvent: mark_unhandled

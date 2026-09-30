@@ -81,7 +81,7 @@ const MINT_IDENTITY = (filePath: string): string => filePath
  * whether they ran. Two different ops rather than one alias twice, so a receipt that crossed files
  * is legible as the wrong op in the wrong conversation.
  */
-const UTTERANCE_A = 'proposals'
+const UTTERANCE_A = '/fn proposals.list'
 const UTTERANCE_B = 'status'
 
 describe('two sessions, overlapping turns, two intact files (CHAT-05 / CR-01)', () => {
@@ -272,7 +272,7 @@ describe('two sessions, overlapping turns, two intact files (CHAT-05 / CR-01)', 
 /** The class a person pins, in the NORMALISED spelling the holder records and the gate compares. */
 const PINNED_CLASS = `fn:${PROPOSALS_LIST_FUNCTION_ID}`
 
-describe('a pin belongs to the conversation that typed it (W-03)', () => {
+describe('a typed /pin reaches no conversation (W-03; /pin retired 432-13)', () => {
   let root: string
   let agentQaRoot: string
   const hosts: LocalAgentHost[] = []
@@ -310,35 +310,28 @@ describe('a pin belongs to the conversation that typed it (W-03)', () => {
   }
 
   /**
-   * NO OVERLAP IS NEEDED, and that is the sharpest thing about this case: the leak is not a race.
-   * The pin holder is one object for the whole composition, so a pin typed in session A is in force
-   * for session B on a turn that starts minutes later — and, on a daemon, for every conversation
-   * that host ever serves again. `proposals` is the canon alias whose op answers honestly in a bare
-   * temp project (392-07's adjudication), and it is the same class `pin-composed-differential`
-   * proves the single-session direction on, so this case extends that proof rather than starting a
-   * second one.
+   * RE-SPELLED 2026-09-30 (432-13, D-14) from 'denies the session that pinned it and NOT a second
+   * session on the same host'. `/pin` is no longer a directive, so no conversation can deny anything
+   * to itself or to a sibling: the typed `/pin` is an unroutable clause (this host binds no planner,
+   * so the turn refuses by name), and BOTH sessions keep running the op. The W-03 isolation claim
+   * survives in its strongest form — one conversation's turn changes nothing another can do.
    */
-  it('denies the session that pinned it and NOT a second session on the same host', async () => {
+  it('C432-CHAT-DIRECT: a typed /pin denies nothing, in the session that typed it or in a second one', async () => {
     const host = compose()
-    const a = await ask(host, 'proposals')
-    const b = await ask(host, 'proposals')
+    const a = await ask(host, '/fn proposals.list')
+    const b = await ask(host, '/fn proposals.list')
     expect(a.sessionId).not.toBe(b.sessionId)
-    // Both sessions could run the op before the pin, so a refusal below is the pin and nothing else.
     expect(a.receipts[0]?.status).toBe('executed')
     expect(b.receipts[0]?.status).toBe('executed')
 
     const pinned = await ask(host, `/pin ${PROPOSALS_LIST_FUNCTION_ID}`, a.sessionId)
-    expect(pinned.answer ?? '').toContain(PINNED_CLASS)
+    expect(pinned.status).toBe('fail_closed')
+    expect(pinned.answer ?? '').not.toContain(PINNED_CLASS)
+    expect(pinned.unhandled?.clause).toBe(`/pin ${PROPOSALS_LIST_FUNCTION_ID}`)
 
-    // The companion direction, asserted FIRST so a fix that simply stopped pinning anything cannot
-    // pass this case: the pin still bites the conversation that typed it.
-    const afterA = await ask(host, 'proposals', a.sessionId)
-    expect(afterA.receipts[0]?.status).toBe('failed')
-    expect(afterA.receipts[0]?.outcome).toContain('FunctionDenied')
-
-    // The claim. Session B never pinned anything, and nothing it asks for should be refused because
-    // somebody else's conversation did.
-    const afterB = await ask(host, 'proposals', b.sessionId)
+    const afterA = await ask(host, '/fn proposals.list', a.sessionId)
+    expect(afterA.receipts.map((receipt) => receipt.status)).toEqual(['executed'])
+    const afterB = await ask(host, '/fn proposals.list', b.sessionId)
     expect(afterB.receipts.map((receipt) => receipt.status)).toEqual(['executed'])
   })
 
@@ -347,7 +340,7 @@ describe('a pin belongs to the conversation that typed it (W-03)', () => {
     // reaches the same registry through the same gate with a caller that names no chat session. A
     // chat pin that could refuse those would be a conversation reconfiguring the host.
     const host = compose()
-    const opened = await ask(host, 'proposals')
+    const opened = await ask(host, '/fn proposals.list')
     await ask(host, `/pin ${PROPOSALS_LIST_FUNCTION_ID}`, opened.sessionId)
 
     await expect(

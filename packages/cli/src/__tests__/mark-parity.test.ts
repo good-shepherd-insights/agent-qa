@@ -1,4 +1,7 @@
 // Four shipped doors over byte-identical scratch runs, with independent durable ledgers.
+//
+// 432-13 (D-14/D-15): no door asks. The terminal stream is still handed to the fn and CLI doors and
+// must stay empty; the HTTP door is posted to with no confirmation channel open at all.
 import { cpSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { createServer } from 'node:http'
 import { tmpdir } from 'node:os'
@@ -114,7 +117,7 @@ async function mcpDoor(scene: Scratch) {
   return { writer: await connect(true), anonymous: await connect(false) }
 }
 
-/** Real SSE frames, held before the POST and answered through the production answer route. */
+/** The production HTTP door, posted to with no confirmation channel open (432-13). */
 async function dashboardDoor(scene: Scratch, input: { runId: string; kind: 'false-fail' | 'confirmed-bug' }) {
   const db = new DashboardDatabase({ dbPath: ':memory:' })
   const confirms = createConfirmRegistry({ timeoutMs: 20_000 })
@@ -126,55 +129,16 @@ async function dashboardDoor(scene: Scratch, input: { runId: string; kind: 'fals
   const address = server.server.address()
   if (!address || typeof address === 'string') throw new Error('dashboard did not bind')
   const origin = `http://127.0.0.1:${address.port}`
-  const controller = new AbortController()
-  const response = await fetch(`${origin}/api/run-confirm/channel`, { signal: controller.signal })
-  expect(response.status).toBe(200)
-  if (!response.body) throw new Error('confirmation stream had no body')
-  const reader = response.body.getReader()
-  const decoder = new TextDecoder()
-  const frames: Array<{ event?: string; data: string }> = []
-  let raw = ''
-  const pump = (async () => {
-    try {
-      for (;;) {
-        const chunk = await reader.read()
-        if (chunk.done) return
-        raw += decoder.decode(chunk.value, { stream: true })
-        const parts = raw.split('\n\n')
-        raw = parts.pop() ?? ''
-        for (const part of parts) {
-          const lines = part.split('\n')
-          frames.push({ event: lines.find(line => line.startsWith('event: '))?.slice(7),
-            data: lines.find(line => line.startsWith('data: '))?.slice(6) ?? '' })
-        }
-      }
-    } catch (error) { if (!controller.signal.aborted) throw error }
-  })()
-  closers.push(async () => { controller.abort(); await pump })
-  async function frame(event: string) {
-    await vi.waitFor(() => expect(frames.some(item => item.event === event)).toBe(true), { timeout: 10_000 })
-    return JSON.parse(frames.find(item => item.event === event)!.data)
-  }
-  const { scopeId } = await frame('confirm_scope')
-  const pending = fetch(`${origin}/api/runs/${encodeURIComponent(input.runId)}/mark`, {
+  const marked = await fetch(`${origin}/api/runs/${encodeURIComponent(input.runId)}/mark`, {
     method: 'POST', headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ kind: input.kind, confirmScope: scopeId }),
+    body: JSON.stringify({ kind: input.kind }),
   })
-  const request = await frame('confirm_request')
-  expect(JSON.stringify(request)).toContain('fn:runs.mark')
-  expect(existsSync(scene.ledger)).toBe(false)
-  const answer = await fetch(`${origin}/api/run-confirm/answer`, {
-    method: 'POST', headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ scopeId, confirmId: request.confirmId, answer: 'accept' }),
-  })
-  expect(answer.status).toBe(200)
-  const marked = await pending
   expect(marked.status).toBe(200)
   return receiptOf(await marked.json())
 }
 
 describe('419 mark receipt parity across the four sovereign doors', () => {
-  it.each(['false-fail', 'confirmed-bug'] as const)('%s receipts agree across fn, CLI, declared MCP and confirmed HTTP', async kind => {
+  it.each(['false-fail', 'confirmed-bug'] as const)('%s receipts agree across fn, CLI, declared MCP and HTTP, none of them asked', async kind => {
     const template = markFixture()
     closers.push(() => rmSync(template.root, { recursive: true, force: true }))
     const scenes = [scratch(template), scratch(template), scratch(template), scratch(template)] as const
@@ -184,7 +148,7 @@ describe('419 mark receipt parity across the four sovereign doors', () => {
       resolveExecutionContext: () => 'local-interactive' })
     closers.push(() => fnHost.close())
     const fn = receiptOf(await invokeFunction(fnHost.registry, RUNS_MARK_FUNCTION_ID, input, host.CLI_FUNCTION_CALLER))
-    expect(tty.prompt()).toContain('fn:runs.mark')
+    expect(tty.prompt()).toBe('')
 
     const cliTty = terminalConfirmation()
     const compose = host.composeCliLocalAgent
@@ -197,7 +161,7 @@ describe('419 mark receipt parity across the four sovereign doors', () => {
       const program = new Command().exitOverride().option('--config <path>').addCommand(createRunsCommand())
       await program.parseAsync(['--config', scenes[1].configPath, 'runs', 'mark', input.runId, '--kind', kind, '--json'], { from: 'user' })
       expect(errors.mock.calls).toEqual([])
-      expect(cliTty.prompt()).toContain('fn:runs.mark')
+      expect(cliTty.prompt()).toBe('')
       cli = receiptOf(JSON.parse(String(output.mock.calls.at(-1)?.[0])))
     } finally { spy.mockRestore(); output.mockRestore(); errors.mockRestore() }
 

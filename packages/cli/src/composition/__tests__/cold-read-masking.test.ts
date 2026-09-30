@@ -247,9 +247,10 @@ describe('Wave 18 cold read masking recovery', () => {
       const read = cold(p)
       const first = await read.read()
       // Measured after the first read, which opens the published job store (SQLite sidecars).
-      // Every invocation appends one execution audit row by design; nothing else may change.
+      // Until 432-13 every invocation appended one execution audit row; no op gate writes one now,
+      // so the second read must add none. Nothing else may change either.
       const audit = join(p.agentQaRoot, 'execution_audit.jsonl')
-      const auditRows = () => readFileSync(audit, 'utf8').split('\n').filter(Boolean).length
+      const auditRows = () => existsSync(audit) ? readFileSync(audit, 'utf8').split('\n').filter(Boolean).length : 0
       const settled = fixtureBytes(p.root, AUDIT_LOG)
       const settledRows = auditRows()
       expect(first).not.toHaveProperty('curationSnapshotWithheld')
@@ -259,7 +260,7 @@ describe('Wave 18 cold read masking recovery', () => {
       ])
       expect(await read.read()).toEqual(first)
       expect(fixtureBytes(p.root, AUDIT_LOG)).toEqual(settled)
-      expect(auditRows()).toBe(settledRows + 1)
+      expect(auditRows()).toBe(settledRows)
       expect(read.host.jobs).not.toHaveBeenCalled()
     },
   )

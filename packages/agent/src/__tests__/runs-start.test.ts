@@ -185,20 +185,17 @@ describe('runs.start is visibly unbound, never silently missing', () => {
     expect(unbound).not.toBeInstanceOf(UnknownFunctionError)
   })
 
-  it('audits the attempt: the gate verdict precedes the binding refusal (D-11)', async () => {
+  // RE-SPELLED 2026-09-30 (432-13, D-15) from 'audits the attempt: the gate verdict precedes the
+  // binding refusal (D-11)'. No gate decides the attempt; the binding refusal is the whole answer,
+  // named, and no decision row is written.
+  it('C432-INVOKE-DIRECT: an unbound attempt refuses by name and records no decision row', async () => {
     const audit = capturingSink()
 
-    await invokeFunction(registryWithRunsStart(audit.sink), 'runs.start', {}, RUN_CALLER)
-      .catch(() => undefined)
+    const thrown = await invokeFunction(registryWithRunsStart(audit.sink), 'runs.start', {}, RUN_CALLER)
+      .catch((error: unknown) => error)
 
-    // An unbound capability someone TRIED to run is exactly the thing an audit trail must
-    // record; skipping the gate for it would leave the attempt invisible.
-    expect(audit.executionRows()).toHaveLength(1)
-    expect(audit.executionRows()[0]).toMatchObject({
-      action: 'fn:runs.start',
-      riskTier: 'mutating-local',
-      verdict: 'allow',
-    })
+    expect(thrown).toBeInstanceOf(FunctionNotBoundError)
+    expect(audit.executionRows()).toEqual([])
   })
 
   it('refuses a caller lacking the run scope before it ever reaches the binding check', async () => {

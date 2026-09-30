@@ -51,20 +51,18 @@ interface Recorder {
   readonly declarations: number[]
   readonly sessions: RunSession[]
   readonly postVerdicts: string[]
-  readonly asked: string[]
 }
 
 function recorder(): Recorder {
-  return { assembled: [], declarations: [], sessions: [], postVerdicts: [], asked: [] }
+  return { assembled: [], declarations: [], sessions: [], postVerdicts: [] }
 }
 
 /**
  * The core with every effect it can reach instrumented: the assembler (probe, ordinal, adapters),
- * the post-verdict factory, the session hook and the confirm port.
+ * the post-verdict factory and the session hook.
  *
- * THE GATE IS SET TO ALLOW. The context is interactive, the confirm port says yes and trust mode is
- * on, so the ONLY thing that can stop a production run in these cells is the production refusal.
- * A cell that relied on the existing gate denying would be measuring the gate.
+ * NOTHING ELSE CAN REFUSE (432-13). The core has no approval gate, confirm port or session trust
+ * any more, so the ONLY thing that can stop a run in these cells is the production refusal.
  */
 function core(
   declaration: RunTargetDeclaration,
@@ -77,14 +75,6 @@ function core(
     executionContext: 'local-interactive',
     mintRunId,
     isMintedRunId: MINTED,
-    trust: { trustMode: true },
-    confirm: {
-      surface: 'tty-prompt',
-      ask: async (action: { name: string }) => {
-        record.asked.push(action.name)
-        return true
-      },
-    } as Parameters<typeof createRunInvocationCore>[0]['confirm'],
     resolveTargetDeclaration: () => {
       record.declarations.push(1)
       return declaration
@@ -127,13 +117,12 @@ async function refusalOf(run: Promise<unknown>): Promise<unknown> {
   }
 }
 
-/** Every effect a refused run must not have: assembly, a run directory, a session, a step, a prompt. */
+/** Every effect a refused run must not have: assembly, a run directory, a session, a step. */
 function expectNoEffects(record: Recorder): void {
   expect(record.assembled, 'assembly (probe, ordinal, adapters) ran for a refused run').toEqual([])
   expect(existsSync(runsRoot()), 'a run directory exists for a refused run').toBe(false)
   expect(record.sessions).toEqual([])
   expect(record.postVerdicts).toEqual([])
-  expect(record.asked, 'the existing gate was consulted before the refusal').toEqual([])
 }
 
 describe('C432-PRODUCTION-BEFORE-EFFECTS — a declared production member refuses before anything', () => {

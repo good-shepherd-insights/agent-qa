@@ -505,13 +505,11 @@ async function observeMark(context_: BrowserContext, origin: string, runId: stri
     const response = page.waitForResponse(reply => reply.url().endsWith('/mark') && reply.request().method() === 'POST')
       .catch(() => undefined)
     await composer.locator('[data-feedback-submit]').click()
-    const approval = composer.locator('[data-feedback-approval]')
-    await approval.waitFor({ timeout: 10_000 })
-    harvest.approvalSeen = true
+    // 432-13: the mark is sent on the click; `approvalSeen` records whether an approval group rendered.
+    const reply = await response
+    harvest.approvalSeen = await composer.locator('[data-feedback-approval]').count() > 0
     harvest.dialogCountAtApproval = await page.evaluate(() =>
       document.querySelectorAll('[role="dialog"],[aria-modal]').length)
-    await approval.locator('[data-confirm-answer="accept"]').click()
-    const reply = await response
     if (reply === undefined) throw new Error('mark route returned no response')
     harvest.responseBody = await reply.json()
     if (reply.status() >= 500) {
@@ -1389,18 +1387,20 @@ describe('the shipped dashboard paints a RED run\'s authored verdict, its eviden
     ).toEqual(before.provenances)
   })
 
-  it('(4a) the header entry opens the composer; false-fail, previewed, sent and approved inline, lands in history', () => {
+  // RE-SPELLED 2026-09-30 (432-13): was '... sent and approved inline, lands in history'. The mark
+  // is sent with no approval: none renders and no question reaches the channel.
+  it('(4a) the header entry opens the composer; false-fail, previewed, sent with no approval, lands in history', () => {
     driveOk()
     const mark = recorded.mark
     expect(mark, `the mark drive was never observed.${context()}`).toBeDefined()
     expect(mark!.failure, context()).toBeUndefined()
     expect(mark!.scopeSeen, context()).toBe(true)
     expect(mark!.previewStatus, context()).toBe(200)
-    expect(mark!.approvalSeen, context()).toBe(true)
-    // 426 D-20: the approval sits beside the evidence, never over it.
+    expect(mark!.approvalSeen, context()).toBe(false)
+    // 426 D-20 survives as: nothing covers the evidence.
     expect(mark!.dialogCountAtApproval, context()).toBe(0)
     expect(mark!.responseStatus, context()).toBe(200)
-    expect(mark!.confirmFrames.some(frame => frame.event === 'confirm_request' && frame.data.includes('fn:runs.mark')), context()).toBe(true)
+    expect(mark!.confirmFrames.some(frame => frame.event === 'confirm_request'), context()).toBe(false)
     // Literals, because dashboard-ui publishes no library entry: CHOICE_LABELS['false-fail'] and
     // dispositionText's no-draftable-fix arm in lib/feedback-view.ts.
     expect(mark!.historyChoice, context()).toBe('This should have passed')

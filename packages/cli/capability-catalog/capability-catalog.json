@@ -222,7 +222,7 @@
       "v1Name": "agent_qa_validate_test"
     }
   ],
-  "rowCount": 62,
+  "rowCount": 61,
   "rows": [
     {
       "alias": "digest",
@@ -231,14 +231,6 @@
       "docPath": "docs/queues.md",
       "kind": "alias",
       "targetOpId": "runs.digest"
-    },
-    {
-      "alias": "proposals",
-      "description": "List every proposal awaiting, or already carrying, a human decision.",
-      "docAbsentReason": "D-07 (dated 2026-08-16): no canonical doc ships for this capability yet. The explicit absence is the honest state — a guessed path would existence-check green and mislead a reader — and the abstention coverage log is the demand signal for writing one.",
-      "docPath": null,
-      "kind": "alias",
-      "targetOpId": "proposals.list"
     },
     {
       "alias": "run",
@@ -2646,5 +2638,5 @@
       "shortDescription": "Triage agent-qa run failures"
     }
   ],
-  "rowsDigest": "cdab3f8289b3f63163f97e1407823a1e9aad88a439bab2531a1d80ba166cf4c2"
+  "rowsDigest": "91a13cb066cf9d0e3f8d0bdcb703f182e06b1ef4d2869696bc9c62ae606f29b9"
 }

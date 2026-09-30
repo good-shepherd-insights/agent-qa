@@ -242,11 +242,9 @@ export interface ConformanceRegistryOptions {
    * laptop and another on a runner, in cells whose entire job is to state what the verdict IS.
    */
   readonly resolveExecutionContext?: CreateFunctionRegistryOptions['resolveExecutionContext']
-  /** The standing-approval reader the ask arm consults. Absent leaves the gate's no-grants reader. */
-  readonly standingApprovalReader?: CreateFunctionRegistryOptions['standingApprovalReader']
-  /** The confirm the ask arm reaches. Absent leaves the gate's deny-by-default confirm. */
-  readonly confirm?: CreateFunctionRegistryOptions['confirm']
-  /** Where `evaluate()` writes its execution-audit row; absent discards it. */
+  // 432-13 (D-14/D-15): no standing-approval reader and no confirm — `invokeFunction` asks nobody,
+  // and the registry no longer accepts either.
+  /** The composition's audit sink; absent discards. No op gate writes through it since 432-13. */
   readonly auditSink?: CreateFunctionRegistryOptions['auditSink']
 }
 
@@ -276,10 +274,6 @@ export function conformanceRegistry(options: ConformanceRegistryOptions = {}): F
     ...(options.resolveExecutionContext === undefined
       ? {}
       : { resolveExecutionContext: options.resolveExecutionContext }),
-    ...(options.standingApprovalReader === undefined
-      ? {}
-      : { standingApprovalReader: options.standingApprovalReader }),
-    ...(options.confirm === undefined ? {} : { confirm: options.confirm }),
   })
 }
 
@@ -471,9 +465,8 @@ export const CHAT_RESOLVER_PROBES: readonly ResolverProbe[] = Object.freeze([
   Object.freeze({ alias: 'status', clause: 'status', role: 'capability-alias' }),
   Object.freeze({ alias: 'test-ref', clause: 'test 42', role: 'capability-alias' }),
   Object.freeze({ alias: 'digest', clause: 'digest r_conformance', role: 'capability-alias' }),
-  Object.freeze({ alias: 'proposals', clause: 'proposals', role: 'capability-alias' }),
   Object.freeze({ alias: 'model', clause: '/model a-model', role: 'directive' }),
-  Object.freeze({ alias: 'pin', clause: '/pin an-action-class', role: 'directive' }),
+  // 432-13 (C432-CHAT-DIRECT): the `proposals` alias and the `/pin` directive left the table.
   Object.freeze({ alias: 'fn', clause: '/fn runs.list {}', role: 'generic-passthrough' }),
   Object.freeze({ alias: 'help', clause: '/help', role: 'directive' }),
   Object.freeze({ alias: 'quit', clause: '/quit', role: 'directive' }),

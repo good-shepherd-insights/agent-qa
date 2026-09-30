@@ -1,18 +1,12 @@
 // The function registry (Phase 384, FUNC-01 / FUNC-03).
 //
 // The registry OWNS the specs and hands out declaration views only. Its internals —
-// the spec map, the injected deps, the audit sink, and the execution-context resolver
-// — live in a module-private WeakMap that only `invokeFunction` reads. A surface holding
-// a `FunctionRegistry` therefore has exactly one way to run a capability, and that way
-// crosses the gate.
+// the spec map, the injected deps and the host's read scope — live in a module-private
+// WeakMap that only `invokeFunction` reads. A surface holding a `FunctionRegistry`
+// therefore has exactly one way to run a capability: `invokeFunction`'s validated dispatch.
+// Since 432-13 that path asks nobody (no gate, confirm port, grant reader or deny overlay).
 
-import { getActiveExecutionContext } from '@vostride/agent-qa-safety'
-import type {
-  AuditSink,
-  ConfirmPort,
-  SessionDenyOverlay,
-  StandingApprovalReader,
-} from '@vostride/agent-qa-safety'
+import type { AuditSink } from '@vostride/agent-qa-safety'
 import type { ExecutionContext, FunctionCaller, FunctionScope } from '@vostride/agent-qa-schema'
 
 import { toOutputProjection, toSchemaProjection } from './declaration-projection.js'
@@ -100,16 +94,17 @@ export class OutputRepresentationMismatchError extends Error {
  *
  * The type-level requirement below binds only the callers `tsc` gets to see. This is the
  * same guarantee stated as a RUNTIME property, so it also holds for an in-workspace cast
- * and for a plain-JS consumer of the published package. It is deliberately a REFUSAL and
- * not a default: silently substituting a no-op sink would make the unaudited composition
- * the one that constructs quietly, which is exactly the fast path D-11 abolishes.
+ * and for a plain-JS consumer of the published package.
+ *
+ * 432-13: `invokeFunction` no longer writes an execution-audit row (there is no op gate), so the
+ * sink is a construction contract only. It stays until 432-19 narrows the audit contract to the
+ * guardrail rows and removes the execution-audit writer.
  */
 export class MissingAuditSinkError extends Error {
   constructor(readonly detail: string) {
     super(
       `createRegistryFromSpecs requires a usable AuditSink (D-11): ${detail}. ` +
-        'The policy gate is the single audit author, so a registry built without one would ' +
-        'arm every registered capability with no execution-audit trail at all.',
+        'Every composition names the sink its audit rows land in.',
     )
     this.name = 'MissingAuditSinkError'
   }
@@ -392,86 +387,24 @@ const BUILT_IN_FUNCTION_SPECS: readonly FunctionSpec[] = [
   authoringDraftEditSpec as FunctionSpec,
 ]
 
-/**
- * A session deny overlay asked about the CALLER as well as the action (392 plan 13, W-03).
- *
- * The action half is safety's own {@link SessionDenyOverlay} parameter, read off that type rather
- * than re-spelled, so the adaptation at `invoke.ts`'s single `evaluate()` call-site cannot drift
- * from the descriptor the gate actually compares. `packages/safety` is untouched: this is a
- * function layer contract that NARROWS to safety's on its way to the one gate call (384 FUNC-03).
- *
- * Deny-only in both arguments. The return is a boolean whose only true branch writes a deny, and
- * the caller's session id can select WHICH deny set is consulted and nothing else — so a caller
- * carrying no session, or one naming a session this host never opened, gets the empty set.
- */
-export type CallerScopedDenyOverlay = (
-  action: Parameters<SessionDenyOverlay>[0],
-  caller: FunctionCaller,
-) => boolean
-
 export interface CreateFunctionRegistryOptions {
   /** Host-owned lifetime around an authorized unary read; absent preserves ambient scope. */
   withReadScope?: (functionId: string, invoke: () => Promise<unknown>) => Promise<unknown>
   /** Host-backed implementations the ops read through; built at the composition root. */
   deps: FunctionDeps
   /**
-   * Sink `evaluate()` appends its execution-audit row to. The gate is the single audit
-   * author (v48): the function layer passes the sink and never writes a row itself.
+   * The composition's audit sink.
    *
-   * REQUIRED, on the same discipline `FunctionDeps` uses (see spec.ts): a composition that
-   * omits it fails to typecheck rather than quietly arming the whole capability set with no
-   * audit trail. An optional sink made the unaudited composition the EASIEST one to write,
-   * which is the fast path D-11 exists to forbid.
-   *
-   * Required at RUNTIME too, and that is the load-bearing half: `createRegistryFromSpecs`
-   * throws {@link MissingAuditSinkError} when the sink is absent or its two append methods
-   * are not callable. A type binds only the callers the compiler sees; the refusal binds a
-   * cast and a plain-JS consumer of the published package as well.
+   * REQUIRED, on the same discipline `FunctionDeps` uses (see spec.ts), and required at RUNTIME
+   * too: `createRegistryFromSpecs` throws {@link MissingAuditSinkError} when the sink is absent or
+   * its two append methods are not callable. Since 432-13 no op gate writes through it; 432-19
+   * narrows it with the execution-audit writer.
    */
   auditSink: AuditSink
   /**
-   * Resolves the standing-approval reader the gate's ask arm consults (391, PROP-01).
-   *
-   * A RESOLVER rather than the reader itself, because the two ends have incompatible timing: the
-   * gate's port answers synchronously, while the local composition learns its knowledge root
-   * asynchronously. Awaiting the resolver once per invocation, inside `invokeFunction`'s own async
-   * body, is what lets a synchronous reader be built over an asynchronously-resolved root without
-   * either side pretending to be the other. It is resolved on EVERY invocation rather than cached
-   * here, so a composition may hand back a reader over whatever the root currently is.
-   *
-   * OPTIONAL, and its absence is the shipped default: `evaluate()` falls back to the no-grants
-   * reader, so a composition that omits this behaves exactly as every composition did before grants
-   * existed.
+   * The host's execution-context answer. Unread since 432-13 — no op gate decides in a context any
+   * more — and kept so hosts keep one spelling of it until the permission wave narrows this type.
    */
-  standingApprovalReader?: () => StandingApprovalReader | Promise<StandingApprovalReader>
-  /**
-   * The interactive confirmation the gate's ask arm reaches when nothing else satisfied it.
-   *
-   * OPTIONAL, and its absence means `evaluate()`'s deny-by-default confirm. Note that the arm is
-   * only reachable in a `local-interactive` context at all — every other context fail-closes first
-   * — so a host with no terminal is right to omit it.
-   */
-  confirm?: ConfirmPort
-  /**
-   * The session-scoped DENY overlay the gate consults before its ladder (392 D-21, plan 08/13).
-   *
-   * TIGHTEN-ONLY BY TYPE: the hook answers a boolean whose only true branch writes a deny, so
-   * "a session loosened something" is not a state this seam can represent.
-   *
-   * IT IS ASKED WHICH SESSION IS CALLING (392 plan 13, W-03). The overlay used to be a property
-   * of "the composition's session", which is a fact no composition serving more than one
-   * conversation actually has — so a `/pin` typed in one conversation denied that action class
-   * for every later caller until the process restarted. The caller travels with the question
-   * rather than the ANSWER travelling with the caller: `caller.sessionId` is composition-minted,
-   * the overlay is deny-only, and an absent or foreign id can therefore only ever produce FEWER
-   * denials. Nothing here is a permission a caller could claim.
-   *
-   * OPTIONAL, and its absence is the shipped default: `evaluate()` runs its ladder untouched. It
-   * follows `confirm`'s precedent exactly — conditionally spread below, so an absent dependency is
-   * an ABSENT field rather than a present `undefined` one.
-   */
-  deny?: CallerScopedDenyOverlay
-  /** Defaults to safety's ambient resolver; injected in tests for determinism. */
   resolveExecutionContext?: () => ExecutionContext
 }
 
@@ -488,11 +421,6 @@ interface RegistryInternals {
   withReadScope?: CreateFunctionRegistryOptions['withReadScope']
   specs: ReadonlyMap<string, FunctionSpec>
   deps: FunctionDeps
-  auditSink: AuditSink
-  standingApprovalReader?: () => StandingApprovalReader | Promise<StandingApprovalReader>
-  confirm?: ConfirmPort
-  deny?: CallerScopedDenyOverlay
-  resolveExecutionContext: () => ExecutionContext
 }
 
 const REGISTRY_INTERNALS = new WeakMap<FunctionRegistry, RegistryInternals>()
@@ -600,12 +528,12 @@ function declarationView(spec: FunctionSpec, deps: FunctionDeps): FunctionDeclar
 }
 
 /**
- * Refuse a construction that cannot produce an audit trail (BL-03 / D-11).
+ * Refuse a construction that names no usable audit sink (BL-03 / D-11).
  *
  * One check at the ONE seam that populates the internals record, covering the three live
  * routes together: the field omitted or cast past the type, and a hollow object whose
  * append methods are absent or not callable. The methods are probed rather than the shape
- * asserted, because what the gate needs at dispatch time is two things it can call.
+ * asserted.
  */
 function requireAuditSink(supplied: AuditSink | undefined | null): AuditSink {
   if (supplied === undefined || supplied === null) {
@@ -636,9 +564,8 @@ export function createRegistryFromSpecs(
   specs: readonly FunctionSpec[],
   options: CreateFunctionRegistryOptions,
 ): FunctionRegistry {
-  // Before anything is registered: a registry that cannot audit must not come to exist,
-  // rather than come to exist and dispatch silently.
-  const auditSink = requireAuditSink(options.auditSink as AuditSink | undefined | null)
+  // Before anything is registered: a composition that names no usable sink does not come to exist.
+  requireAuditSink(options.auditSink as AuditSink | undefined | null)
 
   const byId = new Map<string, FunctionSpec>()
   for (const spec of specs) {
@@ -673,16 +600,6 @@ export function createRegistryFromSpecs(
     ...(options.withReadScope === undefined ? {} : { withReadScope: options.withReadScope }),
     specs: byId,
     deps: options.deps,
-    auditSink,
-    // Conditionally spread rather than assigned through: an absent gate dependency must be an
-    // ABSENT field and not a present `undefined` one, so the gate's own defaulting is what decides
-    // the no-grants and deny-confirm behaviour, in exactly one place.
-    ...(options.standingApprovalReader === undefined
-      ? {}
-      : { standingApprovalReader: options.standingApprovalReader }),
-    ...(options.confirm === undefined ? {} : { confirm: options.confirm }),
-    ...(options.deny === undefined ? {} : { deny: options.deny }),
-    resolveExecutionContext: options.resolveExecutionContext ?? getActiveExecutionContext,
   })
 
   return registry

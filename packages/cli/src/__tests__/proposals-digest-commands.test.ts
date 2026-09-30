@@ -418,21 +418,15 @@ describe('agent-qa proposals (D-17, the decision surface)', () => {
     expect(grants.stdout).toContain('No standing approvals are in force.')
     expect(grants.exitCode).toBeUndefined()
 
-    // …and the WRITE verb beside it opens no fourth door. `grants.revoke` is `mutating-shared`
-    // AND a member of the protected class set, so no standing approval can ever satisfy it: the
-    // only ways through are session trust, a matching credential, or `local-interactive` plus a
-    // bound confirm. A test process is headless with no terminal, so the gate refuses BEFORE
-    // the ledger is touched — and the refusal is reported by name with the way forward in it.
-    //
-    // This is the assertion that makes `grants list` above a claim about a READ rather than
-    // about a permissive surface: the same command tree, the same caller mint, one verb through
-    // and one refused, on the tier each declares.
+    // …and the WRITE verb beside it. RE-SPELLED 2026-09-30 (432-13, C432-INVOKE-DIRECT): this was
+    // the gate refusing `grants.revoke` headless with a `--trust-session` remedy. No gate runs now,
+    // so the verb reaches its implementation, which answers the named absence for an id nothing
+    // was minted under — and the ledger, having nothing to revoke, is left as it was.
     const revoked = await run(ws, ['proposals', 'grants', 'revoke', 'grant_nothing_here'])
-    expect(revoked.stdout).toBe('')
-    expect(revoked.stderr).toContain('FunctionDeniedError')
-    expect(revoked.stderr).toContain('fail-closed: ask in local-headless without trust')
-    expect(revoked.stderr).toContain('--trust-session')
-    expect(revoked.exitCode).toBe(1)
+    expect(revoked.stderr).not.toContain('FunctionDeniedError')
+    expect(revoked.stderr).not.toContain('--trust-session')
+    expect(revoked.stdout).toContain('No standing approval is in force under grant_nothing_here.')
+    expect(revoked.exitCode).toBeUndefined()
 
     // The intact direction of the damage report: nothing was corrupted, so nothing is warned
     // about. Without this the warning case below would be satisfied by a rendering that printed

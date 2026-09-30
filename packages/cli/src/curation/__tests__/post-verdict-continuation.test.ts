@@ -73,7 +73,7 @@ it.each(['settles', 'host deadline expires', 'abort', 'detached tail', 'framewor
     configPath: fixture.configPath, agentQaRoot: fixture.agentQaRoot,
     postVerdictSignal: abort.signal,
     ...(mode === 'detached tail' ? { postRunTail: detached } : {}),
-    executionContext: 'local-headless', trust: { trustMode: true },
+    executionContext: 'local-headless',
     onSession: (value) => { session = value; void value.done.then(() => { runnerSettled = true }) },
     produceMembers: async () => ({
       members: [{ testId: fixture.directTestId, name: 'checkout', filePath: 'tests/direct.yaml' }],
@@ -706,7 +706,7 @@ async function commandSignalFixture(mode: 'direct' | 'suite', timing: 'post-verd
   vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] })
   const program = new Command().option('--config <path>').addCommand(createRunCommand())
   const parsing = program.parseAsync(['--config', f.input.configPath, 'run',
-    mode === 'suite' ? f.input.suitePattern : f.input.testPattern, '--trust-session', '--detach'], { from: 'user' })
+    mode === 'suite' ? f.input.suitePattern : f.input.testPattern, '--detach'], { from: 'user' })
   void parsing.catch(() => undefined)
   try {
     await (timing === 'active-run' ? executing.promise : reserved.promise)
@@ -760,7 +760,7 @@ it('CR-11 actual --all command freezes an earlier suite failure into a passing d
     } finally { await produced.finalize?.() }
   })
   const program = new Command().option('--config <path>').addCommand(createRunCommand())
-  await expect(program.parseAsync(['--config', f.input.configPath, 'run', '--all', '--trust-session', '--detach'],
+  await expect(program.parseAsync(['--config', f.input.configPath, 'run', '--all', '--detach'],
     { from: 'user' })).rejects.toThrow('fixture command exit')
   expect(codes).toEqual([1, 1])
   expect(exit.mock.calls[0]![0]).toBe(1)
@@ -827,7 +827,7 @@ it.each((['direct', 'suite'] as const).flatMap(mode =>
   })
   const program = new Command().option('--config <path>').addCommand(createRunCommand())
   await expect(program.parseAsync(['--config', f.input.configPath, 'run',
-    mode === 'suite' ? f.input.suitePattern : f.input.testPattern, '--trust-session', '--detach'], { from: 'user' }))
+    mode === 'suite' ? f.input.suitePattern : f.input.testPattern, '--detach'], { from: 'user' }))
     .rejects.toThrow('fixture command exit')
   expect(execution).toHaveBeenCalledTimes(1)
   expect(composed).toHaveBeenCalledTimes(1)

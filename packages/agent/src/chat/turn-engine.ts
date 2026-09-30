@@ -23,11 +23,13 @@
 // the verdict, and that is the property `compound/` scenarios pin as `executed == 0`.
 //
 // EVERY EFFECT, NOT ONLY THE DISPATCHED ONES (392-11, CR-04). A session DIRECTIVE mutates the
-// session rather than the project — `/pin` writes an irrevocable overlay entry and an
-// `approval_decision` row, `/model` overrides the model — and those effects used to happen above
-// stage 2, so a refused turn could tell a person "nothing in the request was carried out" while
-// its pin was already in force. The binding question ("can this build carry this out at all") is
-// pure and stays early; the carrying-out sits below the verdict with everything else.
+// session rather than the project — `/model` overrides the model — and those effects used to happen
+// above stage 2, so a refused turn could tell a person "nothing in the request was carried out"
+// while a directive was already in force. The binding question ("can this build carry this out at
+// all") is pure and stays early; the carrying-out sits below the verdict with everything else.
+//
+// NO TURN WRITES AN APPROVAL (432-13, D-14). The `/pin` directive and its `approval_decision` row are
+// gone with the op gate; `approval_decision` stays a readable kind for sessions written before 432.
 //
 // THIS ENGINE NEVER BRANCHES ON `caller.surface`. The anti-pattern is named in `invoke.ts:28-29`
 // and it is the thing the function layer exists to abolish; what varies per stage here is the
@@ -100,16 +102,15 @@ export interface TurnEngineDeps {
    */
   readonly config?: (sessionId: string) => ChatConfigState | Promise<ChatConfigState>
   /**
-   * The session directives, where a host binds any, RESOLVED PER SESSION (D-04 / D-21 / CR-02).
+   * The session directives, where a host binds any, RESOLVED PER SESSION (D-04 / CR-02).
    *
    * Absent, or absent for one directive, means the refusal arm below names it. That is not a
-   * degraded mode: a build that recognises `/pin` and cannot carry it out should say so, and the
+   * degraded mode: a build that recognises `/model` and cannot carry it out should say so, and the
    * `mark_unhandled` row it leaves is what makes the gap countable.
    *
-   * A FACTORY, because every one of these mutates a session: `/model` moves the model this
-   * conversation plans under, `/pin` writes into this conversation's deny set, `/quit` asks THIS
-   * loop to end. Handlers bound once per composition would carry those effects to whoever asked
-   * next, which is W-03 for `/pin` and the same shape for the other three.
+   * A FACTORY, because a directive mutates a session: `/model` moves the model this conversation
+   * plans under, `/quit` asks THIS loop to end. Handlers bound once per composition would carry
+   * those effects to whoever asked next (W-03).
    */
   readonly directives?: (sessionId: string) => ChatDirectiveHandlers
   /**
@@ -309,7 +310,7 @@ interface DirectiveEntry {
  * Is this directive CARRYABLE by this build — asked without carrying anything out (CR-04).
  *
  * A PURE READ OF `deps.directives`, and that purity is the whole reason this check may sit where
- * the execution loop used to. A build that recognises `/pin` and binds no handler should say so
+ * the execution loop used to. A build that recognises `/model` and binds no handler should say so
  * early, by name, before a model is ever consulted; but "say so early" is a statement about the
  * REFUSAL, not a licence to mutate a session before the verdict that authorises it. Splitting the
  * question from the act is what lets both properties hold at once.
@@ -325,8 +326,6 @@ function directiveBindingRefusal(
     switch (entry.directive) {
       case 'model':
         return handlers?.model !== undefined && entry.argument !== undefined
-      case 'pin':
-        return handlers?.pin !== undefined && entry.argument !== undefined
       case 'help':
         return handlers?.help !== undefined
       case 'quit':
@@ -339,19 +338,11 @@ function directiveBindingRefusal(
 /**
  * Carry out one session directive.
  *
- * TWO EVENTS ARE BORN HERE and both go through the vocabulary that already owns them. `/model`
+ * ONE EVENT IS BORN HERE and it goes through the vocabulary that already owns it. `/model`
  * produces its `model_change` through `diffChatConfig` — the SAME function the per-turn config
  * re-read calls, with `source: 'verb'` instead of `'config_reread'` — because a person switching
  * models and a file changing underneath a session are different FACTS and not different events
- * (392-07). `/pin` produces an `approval_decision` with `source: 'verb'`, for the mirror reason:
- * a person pre-denying an action class for the rest of a conversation and a person refusing one
- * question at a gate are both approval decisions about a class, and the field is what keeps them
- * apart in a record several surfaces read.
- *
- * THE CLASS LOGGED IS THE ONE `pin()` RETURNED, never the one typed (392-05's law). A person types
- * `proposals.accept` and what actually denies is `fn:proposals.accept`; logging the request rather
- * than the effect is how the silent-no-op trap reappears in the record after the code stopped
- * having it.
+ * (392-07). No directive writes an `approval_decision` (432-13).
  */
 async function runDirective(
   deps: TurnEngineDeps,
@@ -391,22 +382,6 @@ async function runDirective(
         }
         return { kind: 'handled', text: outcome.line }
       }
-      case 'pin': {
-        if (handlers?.pin === undefined || entry.argument === undefined) return notBound()
-        const actionClass = await handlers.pin(entry.argument)
-        await context.append({
-          kind: 'approval_decision',
-          turnId: context.turnId,
-          at: context.now(),
-          actionClass,
-          decision: 'deny',
-          source: 'verb',
-        })
-        return {
-          kind: 'handled',
-          text: `pinned: ${actionClass} is denied for the rest of this session`,
-        }
-      }
       case 'help': {
         if (handlers?.help === undefined) return notBound()
         return { kind: 'handled', text: handlers.help() }
@@ -417,10 +392,9 @@ async function runDirective(
       }
     }
   } catch (error) {
-    // A handler that REFUSED — `/pin` against a class this host does not declare is the shipped
+    // A handler that REFUSED — a `/model` naming a model this host cannot resolve is the shipped
     // case — is a clause this build could not carry out, so it takes the engine's one refusal path
-    // and leaves the same countable row. The message is the refusal's own, because the overlay
-    // knows what is pinnable and re-deriving it here would be a second answer to that question.
+    // and leaves the same countable row. The message is the refusal's own.
     return { kind: 'refused', reason: error instanceof Error ? error.message : String(error) }
   }
 }
@@ -612,11 +586,11 @@ async function runTurnThrough(
   // not travel `invokeFunction` and why a model may never reach one (391 D-07: the mechanism
   // deciding what a model may do is the one mechanism it must not touch, even in the
   // tightening direction). A directive with no handler still refuses the whole turn by name,
-  // through the same `refuse()` every other refusal takes, so a build that recognises `/pin`
+  // through the same `refuse()` every other refusal takes, so a build that recognises `/model`
   // and cannot carry it out leaves a countable row rather than a silent no-op (D-08 / D-15).
   //
   // WHAT MOVED, AND WHY. This loop USED TO CARRY THE DIRECTIVES OUT here, above stage 2 —
-  // which put an irrevocable pin and an `approval_decision` row on the log of a turn that then
+  // which put a directive's effect and its row on the log of a turn that then
   // got refused, under a message reading "nothing in the request was carried out"
   // (392-VERIFICATION CR-04). D-10's pre-flight atomicity was applied only to `invokeFunction`
   // dispatches; it is now applied to every effect a turn can have. What stays here is the
@@ -631,9 +605,9 @@ async function runTurnThrough(
   // The binding loop above asks "can this build carry this out at all"; this one asks "will THIS
   // argument be accepted", and both are asked of every entry before any entry is carried out.
   // Without it the execution loop below applied directives one at a time and returned on the first
-  // refusal — so `/pin fn:runs.start and /pin nonsense.notacapability` recorded the first pin,
-  // irrevocably, and left its `approval_decision` row on the log of a turn that then told the
-  // person nothing in the request was carried out (392-VERIFICATION round 2). Moving the loop
+  // refusal — so a turn whose SECOND directive was refused kept the first one's effect and its row
+  // on the log of a turn that then told the person nothing in the request was carried out
+  // (392-VERIFICATION round 2; the shipped case was two `/pin`s, retired in 432-13). Moving the loop
   // below the verdict closed the single-directive case and left the BATCH open; a batch is atomic
   // or it is not, and D-10 has no reading under which the second half of a request may undo only
   // the second half.
@@ -727,10 +701,10 @@ async function runTurnThrough(
   //
   // Reachable only from here, by the same control-flow discrimination stage 4 uses: the verdict
   // is a discriminated union, the `unhandled` arm returned above, and this loop lives on the
-  // other side of that return. There is no arrangement of these statements in which a pin is
-  // recorded, a model is overridden or an `approval_decision` row is written on a turn that got
-  // refused. A handler that THROWS here — `/pin` against a class this host does not declare —
-  // still routes through `refuse()`, so a refusal at this depth stays as countable as any other.
+  // other side of that return. There is no arrangement of these statements in which a model is
+  // overridden on a turn that got refused. A handler that THROWS here — a `/model` this host cannot
+  // resolve — still routes through `refuse()`, so a refusal at this depth stays as countable as any
+  // other.
   //
   // AND THAT SENTENCE IS TRUE OF A BATCH ONLY BECAUSE OF THE PRE-FLIGHT ABOVE (392-14). Read
   // alone, this loop applies entries one at a time and returns on the first refusal — which is
@@ -741,8 +715,8 @@ async function runTurnThrough(
   //
   // TWO CONSEQUENCES, ACCEPTED. A same-turn `/model` now applies AFTER the verdict, so this
   // turn's planner call ran under the previous model; that is the fail-safe direction, and the
-  // alternative is an effect preceding the verdict. And the verb-sourced `model_change` /
-  // `approval_decision` rows now follow this turn's `stage_outcome` rows — every event carries
+  // alternative is an effect preceding the verdict. And the verb-sourced `model_change` rows now
+  // follow this turn's `stage_outcome` rows — every event carries
   // `turnId` and `at`, so no reader's ordering claim rests on which came first within a turn.
   const directiveLines: string[] = []
   for (const entry of directives) {

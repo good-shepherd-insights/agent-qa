@@ -5,8 +5,8 @@
 // lifecycle, the masking seed pipeline, the stamped audit sink, the safety-hook registration and
 // the member run-config assembly are the same code, moved. What changed is WHERE it lives and what
 // it is allowed to assume, and only one thing was actually taken away — the readline default on the
-// confirm seam, which is now a required presentation port (see presentation-ports.ts for the rule
-// that decided every symbol's side of the line).
+// confirm seam, which became a presentation port (see presentation-ports.ts for the rule that
+// decided every symbol's side of the line). Since 432-13 nothing reads that port: a run asks nobody.
 //
 // Why it moved: 386's daemon has to build a real RunConfig without importing a CLI. A composition
 // that lives inside one surface is a composition every other host has to re-derive, and two hosts
@@ -19,13 +19,12 @@
 
 import { createHash } from 'node:crypto'
 import { dirname, isAbsolute, resolve } from 'node:path'
-import { performance } from 'node:perf_hooks'
 import {
   createMaskingContext,
   registerFirstPartySafetyHooks,
   seedMaskingContext,
 } from '@vostride/agent-qa-safety'
-import type { AuditSink, ConfirmPort, SafetyHookRunner } from '@vostride/agent-qa-safety'
+import type { AuditSink, SafetyHookRunner } from '@vostride/agent-qa-safety'
 import { detectExecutionContext, JsonlAuditSink } from '@vostride/agent-qa-safety-local'
 import { guardToolOutput } from '@vostride/agent-qa-model'
 import type { TokenAccounting } from '@vostride/agent-qa-model'
@@ -805,8 +804,7 @@ export function buildRunMaskingContext(input: {
 
 // ---- (7) per-run stamped audit sink — stampAuditSink / buildRunAuditSink (D-12/D-13) ---------
 //
-// D-13: `evaluate()` stays the single execution-audit author (untouched); the run stamps
-// correlation at ONE composition-root site — a thin wrapper that injects runId + the resolved
+// D-13: the run stamps correlation at ONE composition-root site — a thin wrapper that injects runId + the resolved
 // executionContext into every row before append so rows are self-describing (SEAM-02 is literal
 // in the row, no joins). The stamp WINS over any pre-existing row field (RESEARCH Open Q3): spread
 // the row FIRST, stamp AFTER. D-12: the sink is a JsonlAuditSink rooted at the SAME
@@ -863,72 +861,42 @@ export function runDirFor(input: { configDir: string; runId: string }): string {
   return resolve(input.configDir, '.agent-qa', RUNS_SUBDIR, slugBranch(input.runId))
 }
 
-// ---- (8) per-run safety-hooks registrar (D-01/D-15/D-10/D-11) --------------------------------
+// ---- (8) per-run safety-hooks registrar (D-01/D-11; approval removed 432-13) ---------------------
 //
 // D-01: the loop's SafetyHookRunner is a SECOND, per-run registerFirstPartySafetyHooks() invocation
 // at the composition root with DIRECT deps (the model registry's deps-less call stays untouched).
-// It carries the stamped per-run sink, a pause-timing ConfirmPort decorator, the resolved execution
-// context, and the D-15 trust flag. D-10: the decorator measures each awaited confirm and accumulates
-// the elapsed ms into a closure counter exposed as `confirmPausedMs` — the run-budget supplier 362-06
-// wires into RunPorts.confirmPausedMs so human decision time never counts against the app under test.
-// D-11: NO reader is passed — the no-standing-approvals default is reached by omission (the standing-
-// approval WRITE side is M4's).
+// It carries the stamped per-run sink and the resolved execution context, so the masking and
+// guardrail middleware and their audit rows are the run's own.
 //
-// The ONE substantive change the dissection made anywhere: the confirm port is now REQUIRED. It used
-// to default to a readline prompt, and a default that reaches for a terminal is the single thing a
-// composition a daemon shares cannot carry — an unattended drainer would block on a question nobody
-// can see. The CLI supplies its readline confirm, decorated for human output, at its own call site.
+// 432-13 (D-14/D-15): NOTHING IN A RUN ASKS. The host's presentation confirm, its human decorator and
+// the session trust flag are no longer read, and no confirm port is handed to the registrar — the
+// in-test tool actions it gates are allowed or restricted by their own class and never reach an ask.
+// The declared input shape stays until 432-14 narrows the presentation contract with its last
+// producer; `confirmPausedMs` answers 0 because no run waits on a person.
 
 export interface BuildRunSessionSafetyHooksInput {
   auditSink: AuditSink
   executionContext: RunExecutionContext
+  /** Unread since 432-13: no run asks, so there is no ask for trust to satisfy. */
   trustMode: boolean
-  /** The host's presentation ports; `confirm` is mandatory, human decoration optional. */
+  /** Unread since 432-13; 432-14 removes it with the presentation confirm contract. */
   presentation: RunPresentationPorts
 }
 
 /**
  * Perform the D-01 per-run `registerFirstPartySafetyHooks` invocation and return the loop's
- * `SafetyHookRunner` plus the D-10 confirm-pause supplier. The host's confirm is wrapped in a
- * timing decorator whose accumulated awaited-ms is exposed via `confirmPausedMs()`. `trustMode`
- * flows through as `GateTrust.trustMode` (D-15). No `reader` is supplied so the
- * no-standing-approvals default holds by omission (D-11).
+ * `SafetyHookRunner`. No confirm port, trust flag or standing-approval reader reaches the registrar
+ * (432-13), so no in-run action can wait on a person; `confirmPausedMs` therefore reports 0.
  */
 export function buildRunSessionSafetyHooks(
   input: BuildRunSessionSafetyHooksInput,
 ): { safetyHooks: SafetyHookRunner; confirmPausedMs: () => number } {
-  let pausedMs = 0
-  const baseConfirm = input.presentation.confirm
-  const timedConfirm: ConfirmPort = {
-    // THE WRAPPED PORT'S SURFACE, FORWARDED (G-401-17). A decorator names no surface of its own:
-    // it does not ask anybody anything, it measures how long the port underneath took to be
-    // answered. Substituting a literal here — or letting the field be optional and defaulted —
-    // would turn an honest browser row back into a terminal row with no compile error to catch it,
-    // because a wrapper that lies about its surface still satisfies the type.
-    surface: baseConfirm.surface,
-    ask: async (action) => {
-      const start = performance.now()
-      try {
-        return await baseConfirm.ask(action)
-      } finally {
-        pausedMs += performance.now() - start
-      }
-    },
-  }
-
-  // The host decoration composes OVER the timing decorator, preserving the nesting this pipeline
-  // has always had: whatever a host does to render the question, the measured interval is still the
-  // one that ends when the person answers.
-  const confirm = input.presentation.decorateConfirmForHuman?.(timedConfirm) ?? timedConfirm
-
   const { registry } = registerFirstPartySafetyHooks({
     auditSink: input.auditSink,
-    confirm,
     resolveExecutionContext: () => input.executionContext,
-    trust: { trustMode: input.trustMode },
   })
 
-  return { safetyHooks: registry, confirmPausedMs: () => pausedMs }
+  return { safetyHooks: registry, confirmPausedMs: () => 0 }
 }
 
 // ---- (9) member-run-config builder — the D-05 cutover onto runMemberTest (363-11) ------------

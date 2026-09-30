@@ -216,8 +216,11 @@ describe('runs.events replay', () => {
   })
 })
 
-describe('runs.events through invokeFunction (D-11 uniform gating)', () => {
-  it('audits the invocation BEFORE the first event is yielded', async () => {
+describe('runs.events through invokeFunction (D-11 one dispatch path)', () => {
+  // RE-SPELLED 2026-09-30 (432-13, D-15) from 'audits the invocation BEFORE the first event is
+  // yielded'. There is no op gate, so a stream dispatch records no decision; what survives is that
+  // every event reaches the caller through the one dispatch path.
+  it('C432-INVOKE-DIRECT: a stream dispatch writes no audit row and yields every event', async () => {
     const spy = eventsDeps({ events: FIVE_EVENTS })
     const audit = capturingSink()
     const registry = createRegistryFromSpecs([runsEventsSpec], {
@@ -228,18 +231,10 @@ describe('runs.events through invokeFunction (D-11 uniform gating)', () => {
 
     const result = await invokeFunction(registry, 'runs.events', { runId: RUN_ID }, READ_CALLER)
 
-    // The row exists while the stream is still un-consumed: the gate verdict precedes
-    // every byte a caller can observe.
-    expect(audit.executionRows()).toHaveLength(1)
-    expect(audit.executionRows()[0]).toMatchObject({
-      action: 'fn:runs.events',
-      riskTier: 'read-only',
-      verdict: 'allow',
-    })
-
+    expect(audit.executionRows()).toEqual([])
     const events = await drain(result as FunctionStream<RunEventEnvelope>)
     expect(events.map((event) => event.seq)).toEqual([1, 2, 3, 4, 5])
-    expect(audit.executionRows()).toHaveLength(1)
+    expect(audit.executionRows()).toEqual([])
   })
 
   it('returns the async iterable itself rather than a zod-parsed unary DTO', async () => {

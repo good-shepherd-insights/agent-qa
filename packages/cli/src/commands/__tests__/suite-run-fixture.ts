@@ -112,7 +112,7 @@ export class CountingTarget {
 }
 
 /** A target's `environment:` declaration — `undefined` writes NO declaration at all (D-06). */
-export type FixtureEnvironment = 'local' | 'shared' | undefined
+export type FixtureEnvironment = 'local' | 'shared' | 'production' | undefined
 
 export interface SuiteFixture {
   /** The project directory, real-pathed (macOS `/var` → `/private/var`) so scrubbing is exact. */

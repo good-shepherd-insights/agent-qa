@@ -461,11 +461,14 @@ const EVERY_ENTITY_CARD_KIND: EntityCardRenderExpectation = { kinds: ENTITY_KIND
  * that set is DERIVED (`policy-fixtures.ts`) and asserted set-equal to the rows carrying the key in
  * both directions. Hand-picking it was the available shortcut and is exactly what D-11's discretion
  * clause forbids.
+ *
+ * Its VALUE is `direct` since 432-13 (D-14/D-15): the function door no longer asks, so a capability
+ * the classifier would ask about is dispatched directly, like every other.
  */
 export interface PolicyPointExpectations {
   readonly grant: 'allow'
   readonly refuse: 'deny'
-  readonly ask?: 'ask'
+  readonly ask?: 'direct'
 }
 
 /** One capability, as the suite drives it. */
@@ -632,7 +635,7 @@ export const SCENARIO_TABLE = Object.freeze([
       fn: { reachable: true },
     },
     renderExpect: { markers: ['fanOut', 'outcome'] },
-    policyPoints: { grant: 'allow', refuse: 'deny', ask: 'ask' },
+    policyPoints: { grant: 'allow', refuse: 'deny', ask: 'direct' },
   }),
   // 394-07 D-12: the window is REQUIRED and closed, so `{}` would report an input error.
   // `all-time` is the arm with no further field, which is the honest sample for a fixture that has
@@ -769,7 +772,7 @@ export const SCENARIO_TABLE = Object.freeze([
       fn: { reachable: true },
     },
     renderExpect: { markers: ['commits', 'files', 'outcome'] },
-    policyPoints: { grant: 'allow', refuse: 'deny', ask: 'ask' },
+    policyPoints: { grant: 'allow', refuse: 'deny', ask: 'direct' },
   }),
   // 395-05 D-01: PARSING inputs on the rows above reasoning.
   scenario({
@@ -906,7 +909,7 @@ export const SCENARIO_TABLE = Object.freeze([
       fn: { reachable: true },
     },
     renderExpect: { markers: ['grant', 'outcome'] },
-    policyPoints: { grant: 'allow', refuse: 'deny', ask: 'ask' },
+    policyPoints: { grant: 'allow', refuse: 'deny', ask: 'direct' },
   }),
   // 387-08: valid INPUTS for capabilities most compositions cannot run — `invokeFunction` validates
   // before it consults the binding.
@@ -998,7 +1001,7 @@ export const SCENARIO_TABLE = Object.freeze([
       fn: { reachable: true },
     },
     renderExpect: { markers: ['outcome', 'proposal'] },
-    policyPoints: { grant: 'allow', refuse: 'deny', ask: 'ask' },
+    policyPoints: { grant: 'allow', refuse: 'deny', ask: 'direct' },
   }),
   // 387: the record id names nothing in this fixture and the typed miss is the correct answer.
   scenario({
@@ -1075,7 +1078,7 @@ export const SCENARIO_TABLE = Object.freeze([
       fn: { reachable: true },
     },
     renderExpect: { markers: ['apply', 'grant'] },
-    policyPoints: { grant: 'allow', refuse: 'deny', ask: 'ask' },
+    policyPoints: { grant: 'allow', refuse: 'deny', ask: 'direct' },
   }),
   // 391 PROP-03: `list` genuinely takes the empty query — both filters are optional and absent means
   // everything.
@@ -1352,7 +1355,7 @@ export const SCENARIO_TABLE = Object.freeze([
       fn: { reachable: true },
     },
     renderExpect: { markers: ['receipt', 'kind'] },
-    policyPoints: { grant: 'allow', refuse: 'deny', ask: 'ask' },
+    policyPoints: { grant: 'allow', refuse: 'deny', ask: 'direct' },
   }),
   // 2026-09-15, 423-21 D-16/D-18: the consequence preview. runs.mark's exact input, answered
   // read-tier: READ policy points (the postprocessing row's), never the writer's ask. Its markers

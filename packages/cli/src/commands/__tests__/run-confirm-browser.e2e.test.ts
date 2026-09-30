@@ -6,6 +6,11 @@
 
 // THE RUN TRIGGER'S CONFIRM LOOP, CLOSED THROUGH A REAL BROWSER (Phase 401, UAT item 15 / Truth 6).
 //
+// SINCE 432-13 (D-14/D-15) there is no loop to close: the run button's run asks nobody, so the
+// browser holds its scope channel and no question ever arrives on it. Both cells were re-spelled to
+// drive the same real clicks and pin that absence on the wire and in the rendered DOM. The dialog
+// component itself is deleted by a later plan. History below kept as written.
+//
 // WHAT WAS UNVERIFIED, AND WHY IT STAYED THAT WAY. 401-09 built both halves of this loop and could
 // measure neither end against the other: the SERVER end is driven end-to-end by
 // `run-trigger-confirm.test.ts` over `fetch`-parsed SSE, and the DIALOG's render is driven in jsdom
@@ -63,7 +68,6 @@ import { parse as parseYaml } from 'yaml'
 import { composeDashboardDoor, createDashboardRunDoor } from '../dashboard.js'
 import {
   CountingTarget,
-  IN_PROCESS_TARGET_NAME,
   auditRows,
   buildOrdinalsExist,
   createInProcessFixture,
@@ -91,17 +95,6 @@ const UI_DIR = join(PACKAGES_ROOT, 'dashboard-ui', 'dist')
  * is captured before any scene has run and restored around the one launch.
  */
 const BROWSERS_PATH_AT_LOAD = process.env.PLAYWRIGHT_BROWSERS_PATH
-
-/**
- * The sentence the person is asked to approve, SPELLED OUT rather than derived.
- *
- * The target NAME comes from the fixture's own one definition (401-14's rule: an assertion that
- * spelled the name itself would assert a string nothing produces the day somebody renames it), and
- * the rest is a literal — because deriving it from `buildRunDisclosure` would be an expectation
- * that changes with the producer, and mutation 1 in this file's ledger would then red nothing.
- */
-const EXPECTED_PREVIEW =
-  `Start a run against target "${IN_PROCESS_TARGET_NAME}" (declared: at least one target shared).`
 
 // ---- the recorder the page carries -------------------------------------------------------------
 
@@ -223,32 +216,6 @@ async function waitForFrame(
     if (Date.now() >= deadline) {
       throw new Error(
         `no SSE frame satisfied the predicate within ${String(budgetMs)}ms; the page saw `
-        + JSON.stringify(wire.frames.map((frame) => frame.event)),
-      )
-    }
-    await page.waitForTimeout(50)
-  }
-}
-
-/**
- * Wait until the page's own recorder satisfies a predicate over the WHOLE wire. No sleeps.
- *
- * `waitForFrame` answers "did one frame like this arrive"; this answers "is the page's history in
- * this state yet" — which is what a claim about two questions coexisting needs, since neither of
- * the two frames alone says anything about the other.
- */
-async function waitForWire(
-  page: Page,
-  predicate: (wire: PageWire) => boolean,
-  budgetMs = 90_000,
-): Promise<PageWire> {
-  const deadline = Date.now() + budgetMs
-  for (;;) {
-    const wire = await readWire(page)
-    if (predicate(wire)) return wire
-    if (Date.now() >= deadline) {
-      throw new Error(
-        `the page's wire never reached the expected state within ${String(budgetMs)}ms; it saw `
         + JSON.stringify(wire.frames.map((frame) => frame.event)),
       )
     }
@@ -472,141 +439,27 @@ afterEach(async () => {
   while (openScenes.length > 0) await openScenes.pop()!.close()
 })
 
+/** The execution context the run published on its own `runStarted` envelope. */
+function startedContext(scene: Scene, runId: string): unknown {
+  const started = scene.buffered(runId).find((event) => event['type'] === 'runStarted') as
+    { payload?: { executionContext?: unknown } } | undefined
+  return started?.payload?.executionContext
+}
+
 describe('the run trigger confirm loop, closed through a real browser (UAT item 15, Truth 6)', () => {
-  it('SINGLE CONFIRM — the EventSource carries the scope, the dialog names the target and the environment class, and answering it starts the run', async () => {
+  // RE-SPELLED 2026-09-30 (432-13): was 'SINGLE CONFIRM — ... the dialog names the target and the
+  // environment class, and answering it starts the run'. Clicking Run now starts the run with no
+  // question: the scope still rides the trigger (the run claims `local-interactive`), and neither
+  // the wire nor the DOM ever carries a confirm.
+  it('SINGLE CONFIRM — the EventSource carries the scope, and clicking Run starts the run with no dialog', async () => {
     const target = new CountingTarget()
     await target.listen()
     try {
-      // `environment: shared` — the DECLARED shared case, so the sentence a person reads is the
-      // one UAT item 15 quotes. (The undeclared case reads "undeclared, which classifies as
-      // shared", which is a different, equally deliberate sentence.)
       const fixture = createInProcessFixture({ origin: target.origin, environment: 'shared' })
-      // 45s: long enough that nothing here races a person's click (the answer lands in ~2s),
-      // short enough that a build in which the answer never arrives resolves inside this cell.
       const scene = await openScene({ fixture, timeoutMs: 45_000 })
       const { page, scopeId } = await openDashboard(scene)
-
-      await selectTest(page, 'direct.yaml')
-      await clickRunLocal(page)
-
-      // THE FRAME FIRST. If no question ever reached this browser there is nothing downstream to
-      // read, and a dialog assertion here would report "empty" for a question never asked.
-      await waitForFrame(page, (frame) => frame.event === 'confirm_request')
-      const raised = confirmRequests(await readWire(page))
-      expect(raised, 'exactly one question should have reached this browser').toHaveLength(1)
-      expect(
-        raised[0]!.preview,
-        'the question the SERVER pushed carried no disclosure',
-      ).toBe(EXPECTED_PREVIEW)
-      expect(raised[0]!.actionClass).toBe('run:start')
-
-      // WHAT THE PERSON SEES, read back off the rendered DOM.
-      const dialog = page.locator('[data-run-confirm-dialog]')
-      await dialog.waitFor({ state: 'visible', timeout: 60_000 })
-      expect(await dialog.getAttribute('data-confirm-id')).toBe(raised[0]!.confirmId)
-      const preview = dialog.locator('[data-confirm-preview]')
-      await preview.waitFor({ state: 'visible' })
-      expect(
-        (await preview.textContent())?.trim(),
-        'the dialog did not tell the person which target, or how shared it is',
-      ).toBe(EXPECTED_PREVIEW)
-      expect(await dialog.locator('[data-confirm-answer]').count()).toBe(3)
-
-      await dialog.locator('[data-confirm-answer="accept"]').click()
-
-      // A RESOLUTION ARRIVED — asserted as ARRIVAL first and read for its CONTENT last, which is
-      // this file's rule everywhere: a question that resolved and a question that never came back
-      // must not produce the same failure, and the run's own artifacts below are only meaningful
-      // once something closed the question.
-      await waitForFrame(page, (frame) => frame.event === 'confirm_resolved')
-
-      // AND THE RUN REALLY STARTED — read off the run's own artifacts, never the UI's optimism.
-      await waitFor(() => { expect(scene.settled()).toHaveLength(1) })
-      const rows = runStartRows(fixture)
-      expect(rows).toHaveLength(1)
-      // ARRIVAL BEFORE CLAIM, this file's rule applied to the ROW: a `run:start` decision really
-      // was taken and classified, which is what separates "the gate answered" from "nothing ever
-      // reached the gate". Without it, a never-got-there would read like a denial to every
-      // assertion below, because an absent field and a refused one are both `undefined`.
-      expect(rows[0]!.riskTier).toBeTruthy()
-      expect(rows[0]!.outcome).toBe('prompted-approved')
-      // The honest interactive claim: this row says a browser really was holding the channel the
-      // trigger named, which is only true because `setRunConfirmScope` ran in the page.
-      expect(rows[0]!.executionContext).toBe('local-interactive')
-      // AND THE ROW NAMES WHO ACTUALLY ANSWERED (G-401-17). This assertion was carried here as
-      // RECORDED, NOT ENDORSED for two plans: the row said `tty-prompt` for a person clicking a
-      // button in Chromium, because rung (e) of the gate's ladder hardcoded the mechanism it
-      // expected rather than recording the surface the composition declared. It is now the positive
-      // claim, read off the run's own audit row after a real click in a real browser — and its
-      // controls are the two TERMINAL scenes in `run-risk.test.ts` and
-      // `sovereignty-differentials.test.ts`, which still assert `tty-prompt` and would red together
-      // with this one if a blanket rename had swept every site instead of a fix landing.
-      expect(rows[0]!.trustSource).toBe('browser-click')
-      expect(eventTypes(fixture)).toContain('runStarted')
-      expect(buildOrdinalsExist(fixture)).toBe(true)
-      expect(target.hits, 'the approved run never touched the target').toContain('/in-process-thing')
       expect(scopeId).toMatch(/^run-trigger:/)
 
-      // ONLY NOW, the resolution's CONTENT: it was this question, answered by a person, accepted.
-      const resolved = confirmResolutions(await readWire(page))
-      expect(resolved).toHaveLength(1)
-      expect(resolved[0]).toMatchObject({
-        confirmId: raised[0]!.confirmId,
-        answer: 'accept',
-        by: 'answer',
-      })
-
-      // The person is told it was approved, before the dialog clears.
-      const shots = (await readWire(page)).dialogs.filter((shot) => shot.present)
-      expect(
-        shots.some((shot) => shot.confirmId === raised[0]!.confirmId && shot.resolution === 'accept'),
-        'the dialog never rendered the approval the server sent back',
-      ).toBe(true)
-    } finally {
-      await target.close()
-    }
-  }, 300_000)
-
-  it('OVERLAPPING CONFIRMS — the arriving question WAITS, the one on screen resolves on itself, and the waiting one is raised afterwards and dies visibly (G-401-15)', async () => {
-    // THE RULING THIS CELL MEASURES (UAT test 1, 2026-08-23): QUEUE overlapping confirms — B waits
-    // behind A; A stays answerable and resolves normally. Before 401-16 this cell measured the
-    // DEFECT: within about a second the dialog's `data-confirm-id` became B, A's confirmId was
-    // nowhere in `document.body.innerHTML`, and when A's `confirm_resolved` arrived thirty seconds
-    // later on this very socket 401-14's keyed guard correctly dropped it, so NOTHING RENDERED. The
-    // person clicked Run twice, answered once, got one run, and was never told the other was
-    // refused. That is gap G-401-15, and the assertions below are the repaired shape of it.
-    //
-    // `parallelRuns` IS WHAT MAKES OVERLAP REACHABLE AT ALL, and finding that out was half the
-    // original measurement: `JobQueue.findNextEligible` gives a NON-parallel web run exclusive
-    // access to every slot, so two default-configured dashboard runs reach their gates strictly one
-    // after the other and their questions never coexist. With `use.parallel` — the config's own
-    // shipped knob — both runs are eligible at once and both gates ask.
-    //
-    // WHY THE *SECOND* QUESTION IS THE ONE LEFT UNANSWERED, stated because it looks like a
-    // softening of the gap and is not. Both windows start when their own question is parked, about
-    // a second apart, so a question that waits behind another is raised one linger AFTER the first
-    // one closes — which under the queued behaviour makes the FIRST question the one a person can
-    // still answer and the SECOND the one that can run out of window while they read the outcome.
-    // The claim the gap was filed for is "a question that resolves unanswered is SEEN to have been
-    // refused", and it is asserted here on the question that actually dies that way.
-    const target = new CountingTarget()
-    await target.listen()
-    try {
-      const fixture = createInProcessFixture({
-        origin: target.origin,
-        environment: 'shared',
-        parallelRuns: true,
-      })
-      // 30s: long enough that the SECOND question provably arrives inside the FIRST one's window
-      // (the gap measured between the two triggers is ~1s) and still has most of its own window
-      // left when the queue drains it one linger later; short enough that this cell pays for the
-      // second question's death in seconds rather than the two-minute default.
-      const scene = await openScene({ fixture, timeoutMs: 30_000 })
-      const { page } = await openDashboard(scene)
-
-      // WHICH RUN IS WHICH, read off the trigger route's own responses in the order the browser
-      // made them. Without this the cell could say "one run died" but not "the run whose question
-      // was never answered is the one that died", which is the whole of what a person loses here.
       const triggeredRunIds: string[] = []
       page.on('response', (response) => {
         if (!response.url().endsWith('/api/runs/trigger')) return
@@ -622,206 +475,71 @@ describe('the run trigger confirm loop, closed through a real browser (UAT item 
       await selectTest(page, 'direct.yaml')
       await clickRunLocal(page)
 
-      const dialog = page.locator('[data-run-confirm-dialog]')
-      await dialog.waitFor({ state: 'visible', timeout: 60_000 })
-      const firstId = await dialog.getAttribute('data-confirm-id')
-      expect(firstId, 'the first question never reached the browser').toBeTruthy()
-      expect(await dialog.locator('[data-confirm-answer]').count()).toBe(3)
-      expect(await dialog.getAttribute('data-confirm-resolution')).toBeNull()
+      await waitFor(() => { expect(scene.settled()).toHaveLength(1) })
+      await waitFor(() => { expect(triggeredRunIds).toHaveLength(1) })
+      const runId = triggeredRunIds[0]!
 
-      // ... and now a second ask-tier run is started while the first is still on screen. The SAME
-      // selection is run again, which is the shortest true story: a person clicked Run twice.
-      await clickRunLocal(page)
-
-      // ARRIVAL FIRST, ALWAYS. The second question's identity is read off the WIRE and not off the
-      // DOM, because under the ruled behaviour it is never rendered at this point — and a cell that
-      // waited for the DOM to change would be waiting for the defect.
-      const afterSecond = await waitForWire(
-        page,
-        (wire) => confirmRequests(wire).length >= 2,
-        90_000,
-      )
-      const asked = confirmRequests(afterSecond)
-      expect(asked, 'the second question never reached this browser').toHaveLength(2)
-      expect(asked[0]!.confirmId).toBe(firstId)
-      const secondId = asked[1]!.confirmId
-      expect(
-        confirmResolutions(afterSecond).map((frame) => frame.confirmId),
-        'the first question had already resolved before the second arrived, so these two never '
-        + 'overlapped in the browser and nothing below is about overlapping confirms',
-      ).not.toContain(firstId)
-
-      // WHAT THE PERSON SEES: still exactly one dialog, still the FIRST question, still answerable.
-      // This is the assertion the shipped code failed — it rendered the second question here.
-      expect(await dialog.count()).toBe(1)
-      expect(
-        await dialog.getAttribute('data-confirm-id'),
-        'the arriving question replaced the one being asked',
-      ).toBe(firstId)
-      expect(
-        await dialog.locator('[data-confirm-answer]').count(),
-        'the question on screen stopped being answerable when the next one arrived',
-      ).toBe(3)
-      expect(await dialog.getAttribute('data-confirm-resolution')).toBeNull()
-      expect(
-        await page.evaluate((id) => document.body.innerHTML.includes(id), secondId),
-        'the waiting question was rendered — it is meant to be waiting, not stacked',
-      ).toBe(false)
-
-      // The person answers the question they were asked FIRST, which they still can.
-      await dialog.locator('[data-confirm-answer="accept"]').click()
-      await waitForFrame(page, (frame) => {
-        if (frame.event !== 'confirm_resolved') return false
-        return (JSON.parse(frame.data) as { confirmId: string }).confirmId === firstId
-      }, 90_000)
-
-      // AND THE WAITING QUESTION IS RAISED ONLY AFTERWARDS, under its OWN confirmId, answerable.
-      await page.waitForFunction(
-        (id) => {
-          const el = document.querySelector('[data-run-confirm-dialog]')
-          return el !== null && el.getAttribute('data-confirm-id') === id
-        },
-        secondId,
-        { timeout: 60_000 },
-      )
-      expect(
-        await dialog.locator('[data-confirm-answer]').count(),
-        'the question that had been waiting was raised without its answers',
-      ).toBe(3)
-      expect(await dialog.getAttribute('data-confirm-resolution')).toBeNull()
-
-      // THE ORDER, read off the whole render history rather than off the two snapshots above: the
-      // first state carrying the second question came AFTER a state that carried the first
-      // question's own answer. A queue that raised the next question early would satisfy every
-      // assertion so far and fail this one.
-      const historyAtDrain = (await readWire(page)).dialogs.filter((shot) => shot.present)
-      const approvedAt = historyAtDrain
-        .findIndex((shot) => shot.confirmId === firstId && shot.resolution === 'accept')
-      const raisedAt = historyAtDrain.findIndex((shot) => shot.confirmId === secondId)
-      expect(approvedAt, 'the first question never rendered the approval the server sent back')
-        .toBeGreaterThanOrEqual(0)
-      expect(raisedAt, 'the waiting question was never rendered at all').toBeGreaterThanOrEqual(0)
-      expect(raisedAt, 'the waiting question was raised before the first one had been answered')
-        .toBeGreaterThan(approvedAt)
-
-      // NOBODY ANSWERS THE SECOND QUESTION. It dies at its own window, the server says so on this
-      // very socket — and THE PERSON IS TOLD, which is the exact thing that never happened in the
-      // measured failure.
-      const secondDeath = await waitForFrame(page, (frame) => {
-        if (frame.event !== 'confirm_resolved') return false
-        return (JSON.parse(frame.data) as { confirmId: string }).confirmId === secondId
-      }, 90_000)
-      expect(JSON.parse(secondDeath.data)).toMatchObject({
-        confirmId: secondId,
-        answer: 'deny',
-        by: 'timeout',
-      })
-      await page.waitForFunction(
-        (id) => {
-          const el = document.querySelector('[data-run-confirm-dialog]')
-          return el !== null
-            && el.getAttribute('data-confirm-id') === id
-            && el.getAttribute('data-confirm-resolution') !== null
-        },
-        secondId,
-        { timeout: 60_000 },
-      )
-      // The product's own timeout sentence, on the page, while the resolved dialog lingers.
-      expect(
-        await page.evaluate(() => document.body.innerText),
-        'the page never told the person the second run was denied on silence',
-      ).toContain('denied — nobody answered before the window closed')
-
-      // AND OVER THE WHOLE RENDER HISTORY, not one snapshot, because "the person was told" is a
-      // claim about everything the DOM ever held.
-      const rendered = (await readWire(page)).dialogs.filter((shot) => shot.present)
-      const toldAbout = rendered
-        .filter((shot) => shot.confirmId === secondId && shot.resolution != null)
-      expect(
-        toldAbout,
-        'no rendered state carried the unanswered question together with its resolution',
-      ).not.toEqual([])
-      expect(toldAbout.map((shot) => shot.resolvedBy)).toContain('timeout')
-      expect(
-        toldAbout.map((shot) => shot.outcome),
-      ).toContain('denied — nobody answered before the window closed')
-      expect(
-        toldAbout.every((shot) => shot.answers?.length === 0),
-        'a question the server had already refused was still offering answers',
-      ).toBe(true)
-
-      // THE TWO RUNS' FINAL OUTCOMES, mapped to the two triggers. One person, one "Yes", two runs:
-      // the one they answered ran, and the one whose window ran out while they read the answer was
-      // refused — and, unlike before, refused where they could see it.
-      await waitFor(() => { expect(triggeredRunIds).toHaveLength(2) })
-      const [runA, runB] = triggeredRunIds as [string, string]
-      await waitFor(() => { expect(scene.settled()).toHaveLength(2) })
-      expect(
-        scene.buffered(runA).map((event) => event['type']),
-        'the run whose question the person answered never started',
-      ).toContain('runStarted')
-      expect(
-        scene.buffered(runB).map((event) => event['type']),
-        'the run whose question was never answered started anyway',
-      ).not.toContain('runStarted')
-      const deniedSettle = scene.settled().find((entry) => entry.runId === runB)
-      expect(deniedSettle, 'the refused run never settled').toBeDefined()
-      // 432-09 (D-15): the settle is plain facts; no remedy member is carried at all.
-      expect(
-        deniedSettle!.details,
-        'the refused run carried a remedy to the dashboard',
-      ).not.toHaveProperty('remedies')
-      // ARRIVAL BEFORE CLAIM, this file's rule applied to the REFUSED run's own audit row. A
-      // `run:start` decision really was taken for run B and really was classified — which is what
-      // separates "the gate refused it" from "nothing ever reached the gate". Without this the
-      // assertions below would read the same for a run that never got there, because an absent
-      // field and a refused one are both `undefined`.
-      const deniedDecision = runStartRows(fixture).find((row) => row.runId === runB)
-      expect(deniedDecision, 'no run:start decision was ever recorded for the refused run').toBeDefined()
-      expect(deniedDecision!.riskTier, 'the refused run was never classified').toBeTruthy()
-      expect(deniedDecision!.outcome).toBe('prompted-denied')
-
-      // WHAT THE REFUSED RUN'S RECORD SAYS. These two assertions were carried as RECORDED, NOT
-      // ENDORSED across 401-16's rewrite of this cell (found afterwards at lines 771 and 784) and
-      // are the POSITIVE CLAIM now (401-18, G-401-16):
-      //
-      //   * `failureSummary` — the line a runs list shows — said a PROCESS EXITED. No process
-      //     exited; the gate refused before anything started. It now names the refusal, because
-      //     the settle carries `refusedBeforeStart` as a fact instead of leaving the host's
-      //     reconciliation to guess from a regex over the diagnostic lines.
-      //   * the record's account of WHY offered `--trust-session`, a flag declared on one CLI
-      //     command, to somebody who was sitting in a browser. It is the gate's surface-neutral
-      //     sentence now — the one `buildDecisionNeutralReason` has composed since 400's gap round
-      //     and the chat door has rendered ever since, which this door was not reading.
-      //
-      // THE TYPED REMEDY ASSERTION ABOVE IS UNCHANGED, and it is now this pair's control: it was
-      // already correct, so a repair that swept the whole channel instead of the prose half would
-      // have had to disturb it.
-      const deniedRun = scene.db.getRun(runB)
-      expect(deniedRun?.status).toBe('failed')
-      expect(
-        deniedRun?.failureSummary,
-        'the refused run is still summarised as a process that exited',
-      ).toContain('Refused before the run started')
-      expect(deniedRun?.failureSummary).not.toContain('Process exited')
-      expect(
-        deniedRun?.errorLog,
-        'the record of WHY the run never happened',
-      ).toContain('prompted-denied')
-      expect(
-        `${deniedRun?.failureSummary ?? ''}\n${deniedRun?.errorLog ?? ''}`,
-        'a CLI flag is still offered as the way forward to somebody in a browser',
-      ).not.toContain('--trust-session')
-
-      // AND THE APPROVED RUN REALLY STARTED — read off the run's own artifacts, never the UI's
-      // optimism. `target.hits` is a MEMBERSHIP assertion and never a count: `playwright-core`
-      // caches its browsers root, so `openScene`'s empty-browsers pin is inert here and an
-      // approved run drives a real browser at the counting target.
+      expect(runStartRows(fixture)).toEqual([])
       expect(eventTypes(fixture)).toContain('runStarted')
       expect(buildOrdinalsExist(fixture)).toBe(true)
-      expect(target.hits, 'the approved run never touched the target').toContain('/in-process-thing')
-      const outcomes = runStartRows(fixture).map((row) => row.outcome).sort()
-      expect(outcomes).toEqual(['prompted-approved', 'prompted-denied'])
+      expect(target.hits, 'the run never touched the target').toContain('/in-process-thing')
+      expect(startedContext(scene, runId)).toBe('local-interactive')
+
+      const wire = await readWire(page)
+      expect(confirmRequests(wire), 'a question reached this browser').toEqual([])
+      expect(confirmResolutions(wire)).toEqual([])
+      expect(wire.dialogs.filter((shot) => shot.present), 'a confirm dialog was rendered').toEqual([])
+      expect(scene.confirms.pendingCount()).toBe(0)
+    } finally {
+      await target.close()
+    }
+  }, 300_000)
+
+  // RE-SPELLED 2026-09-30 (432-13): was 'OVERLAPPING CONFIRMS — the arriving question WAITS ...'
+  // (G-401-15). Two clicks now start two runs and no question is raised, queued or reaped.
+  it('OVERLAPPING CONFIRMS — two clicks start two runs, and no question is raised, queued or reaped (G-401-15)', async () => {
+    const target = new CountingTarget()
+    await target.listen()
+    try {
+      const fixture = createInProcessFixture({
+        origin: target.origin,
+        environment: 'shared',
+        parallelRuns: true,
+      })
+      const scene = await openScene({ fixture, timeoutMs: 30_000 })
+      const { page } = await openDashboard(scene)
+
+      const triggeredRunIds: string[] = []
+      page.on('response', (response) => {
+        if (!response.url().endsWith('/api/runs/trigger')) return
+        void response.json().then(
+          (body: unknown) => {
+            const runId = (body as { runId?: string }).runId
+            if (typeof runId === 'string') triggeredRunIds.push(runId)
+          },
+          () => undefined,
+        )
+      })
+
+      await selectTest(page, 'direct.yaml')
+      await clickRunLocal(page)
+      await clickRunLocal(page)
+
+      await waitFor(() => { expect(triggeredRunIds).toHaveLength(2) })
+      await waitFor(() => { expect(scene.settled()).toHaveLength(2) })
+      for (const runId of triggeredRunIds) {
+        expect(scene.buffered(runId).map((event) => event['type']), `${runId} never started`)
+          .toContain('runStarted')
+      }
+      expect(runStartRows(fixture)).toEqual([])
+
+      const wire = await readWire(page)
+      expect(confirmRequests(wire)).toEqual([])
+      expect(confirmResolutions(wire)).toEqual([])
+      expect(wire.dialogs.filter((shot) => shot.present)).toEqual([])
+      expect(
+        await page.evaluate(() => document.body.innerText),
+      ).not.toContain('denied — nobody answered before the window closed')
     } finally {
       await target.close()
     }

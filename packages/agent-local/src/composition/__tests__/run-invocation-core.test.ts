@@ -1,11 +1,15 @@
 // The in-process invocation core, driven through its production factory (Phase 401 plan 03, D-02).
 //
 // WHAT THIS FILE MEASURES, and what it deliberately does not. The core's job is an ORDER —
-// refuse, identify, classify, gate, assemble, start, await — so every cell here is about the order
-// or about what the order lets through. The member EXECUTOR is a double, because a real one needs a
-// browser and a model; everything else is the shipped path: the real `createRunInvocationCore`, the
-// real `evaluate()`, the real `startRun`, the real `FsEventLog`/`FsHandoffStore` under a real
-// `<configDir>/.agent-qa` root, and a real `JsonlAuditSink` reading back off disk.
+// refuse, identify, refuse production, assemble, start, await — so every cell here is about the
+// order or about what the order lets through. The member EXECUTOR is a double, because a real one
+// needs a browser and a model; everything else is the shipped path: the real
+// `createRunInvocationCore`, the real `startRun`, the real `FsEventLog`/`FsHandoffStore` under a
+// real `<configDir>/.agent-qa` root, and a real `JsonlAuditSink` reading back off disk.
+//
+// 2026-09-30 (432-13, D-14/D-15): THE CORE ASKS NOBODY. The run-start `evaluate()`, its confirm port
+// and its session trust are gone; production is the one refusal of a well-formed request. The deny
+// leg below is re-spelled as starts in every context, and the gate census as the gate's absence.
 //
 // THE ROOT IS THE ONE THE EVIDENCE CHECK READS (RESEARCH Pitfall 5). `createLocalRunInvocation`
 // verifies a run happened by reading `buildRunPorts({ configDir: dirname(agentQaRoot) })`. If the
@@ -22,8 +26,7 @@ import { fileURLToPath } from 'node:url'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import type { ExecutionAuditRow } from '@vostride/agent-qa-safety'
-import type { RunEventEnvelope, RunSession, TrustCredential } from '@vostride/agent-qa-schema'
-import { remediesRenderableBy } from '@vostride/agent-qa-schema'
+import type { RunEventEnvelope, RunSession } from '@vostride/agent-qa-schema'
 
 import { buildRunPorts } from '../run-composition.js'
 import type { RunExecutionContext } from '../run-composition.js'
@@ -109,9 +112,6 @@ interface CoreInput {
   /** What this run's members DECLARE. Defaults to the one name every cell here resolves against. */
   targetNames?: readonly string[]
   executionContext?: RunExecutionContext
-  trustMode?: boolean
-  credential?: TrustCredential
-  confirm?: (action: { name: string; disclosure?: string }) => Promise<boolean>
   assemble?: (context: RunAssemblyContext) => RunConfig
   onSession?: (session: RunSession) => void
   mintRunId?: () => string
@@ -133,24 +133,6 @@ function makeCore(input: CoreInput): ReturnType<typeof createRunInvocationCore> 
       productionTargetNames: [],
     }),
     assembleRun: input.assemble ?? recordingAssembler().assemble,
-    ...(input.trustMode === undefined && input.credential === undefined
-      ? {}
-      : {
-          trust: {
-            ...(input.trustMode === undefined ? {} : { trustMode: input.trustMode }),
-            ...(input.credential === undefined ? {} : { credential: input.credential }),
-          },
-        }),
-    ...(input.confirm === undefined
-      ? {}
-      : {
-          confirm: {
-            // A TERMINAL double, declared (G-401-17): every scene in this suite is a CLI run, and
-            // the browser's own scene is measured in a real browser rather than mimed here.
-            surface: 'tty-prompt',
-            ask: input.confirm,
-          } as Parameters<typeof createRunInvocationCore>[0]['confirm'],
-        }),
     ...(input.onSession === undefined ? {} : { onSession: input.onSession }),
   })
 }
@@ -179,7 +161,7 @@ function artifactDigests(runDir: string): Record<string, string> {
   return digests
 }
 
-/** Every execution-audit row the run dir holds, parsed off the jsonl the gate really wrote. */
+/** Every execution-audit row the run dir holds (432-13: the core writes none; in-run hooks may). */
 function recordedAuditRows(runId: string): ExecutionAuditRow[] {
   const slug = runId.replaceAll('/', '-')
   const path = join(agentQaRoot(), 'runs', slug, 'execution_audit.jsonl')
@@ -191,7 +173,9 @@ function recordedAuditRows(runId: string): ExecutionAuditRow[] {
 }
 
 describe('the invocation core — the allow leg, end to end (D-02)', () => {
-  it('runs a local-declared target through gate → assembly → startRun → handoff, under the production root', async () => {
+  // RE-SPELLED 2026-09-30 (432-13): 'runs a local-declared target through gate → assembly → startRun
+  // → handoff, under the production root'. There is no gate step and no gate row.
+  it('runs a local-declared target through assembly → startRun → handoff, under the production root', async () => {
     const assembler = recordingAssembler()
     const sessions: RunSession[] = []
     const core = makeCore({
@@ -224,11 +208,9 @@ describe('the invocation core — the allow leg, end to end (D-02)', () => {
     const slug = String(started.runId).replaceAll('/', '-')
     expect(existsSync(join(agentQaRoot(), 'runs', slug, 'handoff.json'))).toBe(true)
 
-    // ONE gate row, on the core-level action, allowed. `mutating-local` allows in EVERY context —
-    // this cell runs in `ci` on purpose, because that is the D-05 guarantee CI depends on.
+    // No run-start decision row: nothing decided. This cell runs in `ci` on purpose.
     const rows = recordedAuditRows(String(started.runId))
-    expect(rows.filter((row) => row.action === RUN_START_RISK_ACTION_NAME)).toHaveLength(1)
-    expect(rows.find((row) => row.action === RUN_START_RISK_ACTION_NAME)?.outcome).toBe('proceeded')
+    expect(rows.filter((row) => row.action === RUN_START_RISK_ACTION_NAME)).toEqual([])
   })
 
   it('carries the request markers onto the run and only the literal true (INVK-06 chain, shortened)', async () => {
@@ -323,8 +305,15 @@ describe('C432-PRODUCTION-BEFORE-EFFECTS — production is the one refusal left 
   })
 })
 
-describe('the invocation core — the deny leg (D-16 criterion 3, at the unit)', () => {
-  it('fails closed for a shared target in a non-interactive context and starts NOTHING', async () => {
+// RE-SPELLED 2026-09-30 (432-13, D-14/D-15) from 'the invocation core — the deny leg (D-16
+// criterion 3, at the unit)'. Each former denial cell keeps its fixture and now proves the run
+// STARTS; the allow-controls (trust, credential, answered confirm) and the prompted-denial cell have
+// nothing left to control and are folded into C432-PRODUCTION-BEFORE-EFFECTS above (every
+// non-production class starts in every context). 'the descriptor the ONE evaluate() builds carries
+// a disclosure naming the target' lost its consumer with the confirm port; the disclosure recipe's
+// own content stays pinned in `run-risk.test.ts`.
+describe('the invocation core — the former deny leg starts (432-13)', () => {
+  it('starts a shared target in a non-interactive context, with no row and no remedies', async () => {
     const assembler = recordingAssembler()
     const sessions: RunSession[] = []
     const core = makeCore({
@@ -333,117 +322,31 @@ describe('the invocation core — the deny leg (D-16 criterion 3, at the unit)',
       onSession: (session) => sessions.push(session),
     })
 
-    const denial = await core.execute({}).catch((error: unknown) => error)
+    const started = await core.execute({})
 
-    expect(denial).toBeInstanceOf(RunDeniedError)
-    const denied = denial as RunDeniedError
-
-    // (a) the audit row — the assertion this cell turns on. `outcome` is a field of the record the
-    // gate writes on EVERY decision; a message substring is what a stub can also produce.
-    const rows = recordedAuditRows(denied.runId)
-    expect(rows.map((row) => row.outcome)).toEqual(['fail-closed-denied'])
-    expect(rows[0].action).toBe(RUN_START_RISK_ACTION_NAME)
-    expect(rows[0].riskTier).toBe('mutating-shared')
-
-    // (b) NO ASSEMBLY. The probe, the build-ordinal advance and the quarantine fold all live behind
-    // this port, so a call count of zero is the whole "no side effects" claim in one number.
-    expect(assembler.calls).toHaveLength(0)
-
-    // (c) no run, by the same reader the composition's evidence check uses.
-    expect(recordedEvents(denied.runId)).toHaveLength(0)
-    expect(sessions).toHaveLength(0)
-
-    // (d) the structured remedies a door renders — never a sentence this core composed.
-    expect(denied.remedies.map((remedy) => remedy.kind)).toEqual([
-      'answer-confirm',
-      'trust-session-flag',
-      'present-bearer-scope',
-    ])
-    expect(remediesRenderableBy('run-service', denied.remedies)).toEqual([])
-    expect(denied.neutralReason).not.toContain('--trust-session')
+    expect(recordedAuditRows(String(started.runId))).toEqual([])
+    expect(assembler.calls).toHaveLength(1)
+    expect(recordedEvents(String(started.runId))[0]?.type).toBe('runStarted')
+    expect(sessions).toHaveLength(1)
   })
 
-  it('fails closed for an UNDECLARED target too — silence is not permission (D-06)', async () => {
+  it('starts an UNDECLARED target too — undeclared is not production (D-18)', async () => {
     const assembler = recordingAssembler()
     const core = makeCore({ targetClass: undefined, assemble: assembler.assemble })
 
-    const denial = (await core.execute({}).catch((error: unknown) => error)) as RunDeniedError
+    const started = await core.execute({})
 
-    expect(denial).toBeInstanceOf(RunDeniedError)
-    expect(recordedAuditRows(denial.runId).map((row) => row.outcome)).toEqual([
-      'fail-closed-denied',
-    ])
-    expect(assembler.calls).toHaveLength(0)
+    expect(assembler.calls).toHaveLength(1)
+    expect(recordedEvents(String(started.runId))[0]?.type).toBe('runStarted')
   })
 
-  it('the allow-controls on the same door: trust mode, a scoped credential, and an answered confirm', async () => {
-    for (const control of ['trust-mode', 'credential', 'confirm'] as const) {
-      const assembler = recordingAssembler()
-      const core = makeCore({
-        targetClass: 'shared',
-        assemble: assembler.assemble,
-        mintRunId: () => `run_${control}`,
-        ...(control === 'trust-mode' ? { trustMode: true } : {}),
-        ...(control === 'credential'
-          ? { credential: { scope: { project: 'local-workspace' } } as TrustCredential }
-          : {}),
-        ...(control === 'confirm'
-          ? { executionContext: 'local-interactive' as const, confirm: async () => true }
-          : {}),
-      })
-
-      const started = await core.execute({})
-
-      expect(assembler.calls, `${control} should have reached assembly`).toHaveLength(1)
-      expect(recordedAuditRows(String(started.runId))[0].verdict).toBe('allow')
-      expect(recordedEvents(String(started.runId))[0].type).toBe('runStarted')
-    }
-  })
-
-  it('an interactive confirm that says NO denies, and still starts nothing', async () => {
-    const assembler = recordingAssembler()
-    const core = makeCore({
-      targetClass: 'shared',
-      executionContext: 'local-interactive',
-      confirm: async () => false,
-      assemble: assembler.assemble,
-    })
-
-    const denial = (await core.execute({}).catch((error: unknown) => error)) as RunDeniedError
-
-    expect(denial).toBeInstanceOf(RunDeniedError)
-    expect(recordedAuditRows(denial.runId).map((row) => row.outcome)).toEqual(['prompted-denied'])
-    expect(assembler.calls).toHaveLength(0)
-    expect(recordedEvents(denial.runId)).toHaveLength(0)
-  })
-
-  it('the descriptor the ONE evaluate() builds carries a disclosure naming the target (401-14, W-1)', async () => {
-    // THE PARAMETER USED TO BE DEAD. `buildRunRiskDescriptor(targetClass, disclosure?)` had exactly
-    // one production call-site — the core's — and it passed one argument, so `disclosure` was
-    // `undefined` on every run:start any surface ever raised. This cell reads the descriptor off
-    // the CONFIRM PORT, which is the same object the gate hands a person's door (`gate.ts` calls
-    // `confirm.ask(action)`), so it measures what a browser's frame is built from rather than what a
-    // helper returns when a cell calls it directly.
-    const asked: { name: string; disclosure?: string }[] = []
-    const core = makeCore({
-      targetClass: 'shared',
-      targetNames: [FAKE_TARGET_NAME, 'a-second-target'],
-      executionContext: 'local-interactive',
-      confirm: async (action) => { asked.push(action); return true },
-    })
-
-    await core.execute({})
-
-    expect(asked).toHaveLength(1)
-    const disclosure = asked[0]!.disclosure
-    expect(disclosure, 'the gate was asked with no disclosure — approve WHAT?').toBeTruthy()
-    // EVERY declared name, not just the first: a run whose second member drives something else is
-    // exactly the run a person needs the whole list for (the same fold-over-all-members reasoning
-    // 401-12 applied to the CLASS, reaching the sentence the class is explained in).
-    expect(disclosure).toContain(FAKE_TARGET_NAME)
-    expect(disclosure).toContain('a-second-target')
-    // And the class the gate decided under, in the sentence the person reads.
-    expect(disclosure).toContain('shared')
+  it('the source asks nobody: no evaluate, confirm, trust or reader member remains', () => {
+    const code = stripComments(readFileSync(CORE_SOURCE_PATH, 'utf8'))
+    expect(code).not.toMatch(/\bevaluate\s*\(/)
+    expect(code).not.toMatch(/options\.(confirm|trust|reader)\b/)
+    expect(code).not.toMatch(/readonly (confirm|trust|reader)\?/)
+    // Non-vacuity: the stripped file still holds the core.
+    expect(code).toContain('export function createRunInvocationCore(')
   })
 })
 
@@ -494,8 +397,8 @@ describe('the invocation core — the refused request fields (D-07 / Pitfall 7)'
 // ---------------------------------------------------------------------------------------------
 // The hygiene census (plan 03, Task 3).
 //
-// The three cells above measure BEHAVIOUR. These measure the two properties behaviour cannot show
-// on its own: that the gate is called from exactly ONE place in this file, and that the file never
+// The cells above measure BEHAVIOUR. These measure the properties behaviour cannot show on its own:
+// that the file calls no gate at all (432-13; it used to call exactly one), and that it never
 // reaches for ambient process state. Both are claims about the SOURCE, so both are asserted against
 // the source — and each scan is self-checked against its own known members first, because a census
 // whose predicate cannot see the thing it forbids is green at rest.
@@ -580,23 +483,26 @@ describe('the core hygiene census (D-02 / D-07, pinned to the core file)', () =>
     }
   })
 
-  it('exactly ONE evaluate() call-site lives in the core', () => {
+  // RE-SPELLED 2026-09-30 (432-13, D-03) from 'exactly ONE evaluate() call-site lives in the core'.
+  // The call-site and its pin entry left together; the build refuses the file acquiring it again.
+  it('C432-PRODUCTION-BEFORE-EFFECTS: NO evaluate() call-site lives in the core, and the pin no longer names it', () => {
     const code = stripComments(readFileSync(CORE_SOURCE_PATH, 'utf8'))
-    const calls = code.match(/\bevaluate\s*\(/g) ?? []
-    expect(calls).toHaveLength(1)
+    expect(code.match(/\bevaluate\s*\(/g) ?? []).toEqual([])
+    expect(code).not.toContain('@vostride/agent-qa-safety\'\nimport { evaluate')
 
-    // The count is a property of this file; WHICH files may hold gate power at all is a property of
-    // the workspace, and the build already enforces it. Asserted here so removing the pin entry
-    // fails the core's own suite as well as `validate:arch` — read as TEXT rather than imported,
-    // because agent-local does not depend on the arch package and must not start.
+    // Read as TEXT rather than imported, because agent-local does not depend on the arch package.
     const pin = readFileSync(
       join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..', '..', 'arch', 'src', 'lint', 'evaluate-pin.ts'),
       'utf8',
     )
-    expect(pin).toContain("'packages/agent-local/src/composition/run-invocation-core.ts':")
+    expect(pin).not.toContain("'packages/agent-local/src/composition/run-invocation-core.ts':")
+    // Non-vacuity: the pin file is the one that still names the surviving acquisitions.
+    expect(pin).toContain("'packages/safety/src/policy/gate-hook.ts':")
   })
 
-  it('the production refusal sits above the audit sink, the ONE evaluate() and assembly (432-03, D-18)', () => {
+  // RE-SPELLED 2026-09-30 (432-13): '... above the audit sink, the ONE evaluate() and assembly'. There
+  // is no evaluate() to sit above; the refusal still precedes the sink, the ports and assembly.
+  it('the production refusal sits above the audit sink and assembly (432-03, D-18)', () => {
     const code = stripComments(readFileSync(CORE_SOURCE_PATH, 'utf8'))
     const execute = code.slice(code.indexOf('async execute(request: RunsStartInput)'))
     const refusal = execute.indexOf('refuseProductionWithoutOptIn(runId, declaration)')
@@ -605,16 +511,15 @@ describe('the core hygiene census (D-02 / D-07, pinned to the core file)', () =>
     expect(execute.split('refuseProductionWithoutOptIn(').length - 1).toBe(1)
     expect(refusal).toBeGreaterThan(execute.indexOf('options.resolveTargetDeclaration(request)'))
     expect(refusal).toBeLessThan(execute.indexOf('buildRunAuditSink('))
-    expect(refusal).toBeLessThan(execute.indexOf('await evaluate('))
+    expect(execute.indexOf('await evaluate(')).toBe(-1)
     expect(refusal).toBeLessThan(execute.indexOf('buildRunPorts('))
     expect(refusal).toBeLessThan(execute.indexOf('options.assembleRun('))
   })
 
-  it('the gate has already decided by the time assembly is reached (the ordering, from inside)', async () => {
-    // The deny cells prove assembly is NOT reached. This proves the converse leg: when it IS
-    // reached, the decision is already made and already recorded — so nothing assembly does (the
-    // probe, the ordinal advance) can precede the verdict. The assembler reads the run's audit
-    // trail at the moment it is called; a gate moved below assembly would find it empty.
+  // RE-SPELLED 2026-09-30 (432-13) from 'the gate has already decided by the time assembly is
+  // reached (the ordering, from inside)'. Nothing decides a non-production run, so the assembler
+  // finds no decision row: the run's audit trail is empty when assembly is reached.
+  it('nothing has been decided or recorded by the time assembly is reached (the ordering, from inside)', async () => {
     let rowsVisibleToAssembly: ExecutionAuditRow[] = []
     const inner = recordingAssembler()
     const core = makeCore({
@@ -628,8 +533,9 @@ describe('the core hygiene census (D-02 / D-07, pinned to the core file)', () =>
 
     await core.execute({})
 
-    expect(rowsVisibleToAssembly.map((row) => row.outcome)).toEqual(['proceeded'])
-    expect(rowsVisibleToAssembly[0].action).toBe(RUN_START_RISK_ACTION_NAME)
+    expect(rowsVisibleToAssembly).toEqual([])
+    // Non-vacuity: assembly really was reached.
+    expect(inner.calls).toHaveLength(1)
   })
 })
 
@@ -679,10 +585,10 @@ describe('the invocation core — the identity step refuses before anything (CR-
 
     expect(started.runId).toBe('run_a_minted_shape')
     expect(assembler.calls).toHaveLength(1)
-    // The row the refusal cell above says is ABSENT is the row this one reads back — which is what
-    // makes that absence a decision rather than a harness that never arrived.
-    expect(recordedAuditRows('run_a_minted_shape').map((row) => row.action))
-      .toContain(RUN_START_RISK_ACTION_NAME)
+    // The run directory the refusal cell above says is ABSENT is the one this run wrote — which is
+    // what makes that absence a decision rather than a harness that never arrived. (432-13: read
+    // off the run's own events, since no run-start decision row is written any more.)
+    expect(recordedEvents('run_a_minted_shape')[0]?.type).toBe('runStarted')
   })
 
   it('the predicate is ASKED about the caller-named id, and only about that one', async () => {
@@ -709,9 +615,11 @@ describe('the invocation core — the identity step refuses before anything (CR-
     await core.execute({ runId: victimId as never })
     const runDir = join(agentQaRoot(), 'runs', victimId)
     const before = artifactDigests(runDir)
-    // Non-vacuity: the victim really has the three artifacts a collision would tamper with.
+    // Non-vacuity: the victim really has the artifacts a collision would tamper with. (432-13: no
+    // run-start decision row, so no `execution_audit.jsonl` is written for a run with no in-run
+    // tool action.)
     expect(Object.keys(before).sort()).toEqual(
-      expect.arrayContaining(['events.jsonl', 'execution_audit.jsonl', 'handoff.json']),
+      expect.arrayContaining(['events.jsonl', 'handoff.json']),
     )
 
     const second = makeCore({ targetClass: 'local' })
@@ -722,13 +630,13 @@ describe('the invocation core — the identity step refuses before anything (CR-
     expect(artifactDigests(runDir)).toEqual(before)
   })
 
-  it('the collision refusal lands ABOVE the gate — no second row, no second event, no assembly', async () => {
+  it('the collision refusal lands ABOVE assembly — no row, no second event, no assembly', async () => {
     const victimId = 'run_the_second_victim'
     await makeCore({ targetClass: 'local' }).execute({ runId: victimId as never })
 
     const rowsBefore = recordedAuditRows(victimId).length
     const eventsBefore = recordedEvents(victimId).length
-    expect(rowsBefore).toBe(1)
+    expect(rowsBefore).toBe(0)
     expect(eventsBefore).toBeGreaterThan(0)
 
     const assembler = recordingAssembler()
@@ -750,8 +658,8 @@ describe('the invocation core — the identity step refuses before anything (CR-
       RunIdAlreadyInUseError,
     )
 
-    // The refusal is above the DECLARATION resolve, which is itself above the gate — so nothing
-    // between the request and the run's own directory was even consulted.
+    // The refusal is above the DECLARATION resolve — so nothing between the request and the run's
+    // own directory was even consulted.
     expect(declarations).toEqual([])
     expect(assembler.calls).toEqual([])
     expect(recordedAuditRows(victimId)).toHaveLength(rowsBefore)
@@ -803,7 +711,7 @@ describe('the invocation core — the identity step refuses before anything (CR-
     // — which is the half a source assertion cannot make and a type can.
   })
 
-  it('NO defensive catch was added on the gate path (D-03, re-run as a census)', () => {
+  it('NO defensive catch was added on the start path (D-03, re-run as a census)', () => {
     const source = readFileSync(
       join(dirname(fileURLToPath(import.meta.url)), '..', 'run-invocation-core.ts'),
       'utf8',
@@ -814,6 +722,6 @@ describe('the invocation core — the identity step refuses before anything (CR-
     expect(code).not.toMatch(/\bcatch\b/)
     expect(code).not.toMatch(/\.catch\s*\(/)
     // Non-vacuity: the stripper left the file's actual code behind.
-    expect(code).toContain('const policy = await evaluate(')
+    expect(code).toContain('refuseProductionWithoutOptIn(runId, declaration)')
   })
 })

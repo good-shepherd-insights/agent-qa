@@ -67,7 +67,7 @@ const PROJECT_SCOPE: TrustScope = { project: 'acme' }
 
 interface WorkspaceInput {
   /** `undefined` writes NO declaration, which classifies the run's target as shared. */
-  readonly environment?: 'local'
+  readonly environment?: 'local' | 'production'
   readonly trustScope?: TrustScope
   /**
    * Mask this text through each started run's OWN masking context (402-06, #224).
@@ -353,9 +353,12 @@ describe('the refusal census: every route on the table, every failure class (D-0
 // `scopeMatches(credential.scope, actionScope)` BEFORE it consults the standing-approval reader,
 // and `actionScope` is the pinned `STANDING_APPROVAL_SCOPE` constant.
 
+// RE-SPELLED 2026-09-30 (432-13, D-14/D-18). No gate weighs the run over this door any more: an
+// undeclared target starts under either declared scope, and the one refusal left is an un-opted-in
+// production target, which answers the same typed 403 this describe always measured.
 describe('a credential whose scope does not satisfy the gate is DENIED over the wire', () => {
   it('answers 403 with the typed denial, and no run is recorded', async () => {
-    const service = await openRunService({ trustScope: PROJECT_SCOPE })
+    const service = await openRunService({ trustScope: PROJECT_SCOPE, environment: 'production' })
     const response = await fetch(`${service.origin}/run`, {
       method: 'POST',
       headers: { Authorization: `Bearer ${TOKEN}`, 'Content-Type': 'application/json' },
@@ -386,7 +389,7 @@ describe('a credential whose scope does not satisfy the gate is DENIED over the 
   }, 60_000)
 
   it('still 404s the stream for the run that was never started', async () => {
-    const service = await openRunService({ trustScope: PROJECT_SCOPE })
+    const service = await openRunService({ trustScope: PROJECT_SCOPE, environment: 'production' })
     await fetch(`${service.origin}/run`, {
       method: 'POST',
       headers: { Authorization: `Bearer ${TOKEN}`, 'Content-Type': 'application/json' },
@@ -401,36 +404,21 @@ describe('a credential whose scope does not satisfy the gate is DENIED over the 
     expect(await stream.json()).toEqual({ error: 'unknown_run' })
   }, 60_000)
 
-  it('WINDOWS #227 — the declared scope makes NO difference: the gate never sees it', async () => {
-    // THE MEASUREMENT 402-01 ASKED FOR, and it corrects that plan's account of the gap.
-    //
-    // `STANDING_APPROVAL_SCOPE` is not an arbitrary second value. It is the EXACT constant
-    // `run-invocation-core.ts` passes as `actionScope` to its one `evaluate()` call, and
-    // `resolveAsk` allows an ask-tier action when `scopeMatches(credential.scope, actionScope)` —
-    // a check it makes BEFORE consulting the standing-approval reader. So if the declared scope
-    // reached the gate at all, THIS token would lift THIS run, and the two cells would differ.
-    //
-    // They do not. The credential reaches `FunctionCaller.credential` and stops there:
-    // `RunExecutionPort.execute(request, gate?)` carries `{ reader }` and nothing else, and the
-    // CLI's composed implementation passes `trust: { trustMode }` with no `credential` key. 402-01
-    // recorded the gap as "nothing issues a scoped standing approval for it to satisfy"; the
-    // measured cause is one layer earlier and stronger — no scope could satisfy it, because
-    // `evaluate()` is never handed one from this door.
-    const service = await openRunService({ trustScope: STANDING_APPROVAL_SCOPE })
-    const response = await fetch(`${service.origin}/run`, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${TOKEN}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ patterns: ['tests/probe.test.yaml'] }),
-    })
-    expect(response.status).toBe(403)
-    const body = (await response.json()) as Record<string, unknown>
-    expect(body.error).toBe('run_denied')
-    // The gate's own words for what happened: fail-closed in this context, at this tier. Not
-    // "wrong scope" — the scope was never weighed.
-    expect(body.neutralReason).toContain('fail-closed')
-    expect(body.neutralReason).toContain('mutating-shared')
-    expect(runsThatProducedEvents(service.configDir)).toEqual([])
-  }, 60_000)
+  it('WINDOWS #227 — the declared scope makes NO difference: an undeclared target starts under either', async () => {
+    // 402's measurement was that the declared scope never reached `evaluate()`. There is no
+    // `evaluate()` on this road since 432-13, so both scopes start the same undeclared run.
+    for (const trustScope of [PROJECT_SCOPE, STANDING_APPROVAL_SCOPE]) {
+      const service = await openRunService({ trustScope })
+      const response = await fetch(`${service.origin}/run`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${TOKEN}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ patterns: ['tests/probe.test.yaml'] }),
+      })
+      expect(response.status, JSON.stringify(trustScope)).toBe(202)
+      const ack = (await response.json()) as { runId?: string }
+      expect(typeof ack.runId).toBe('string')
+    }
+  }, 180_000)
 
   it('THE TIER CONTROL — the same request against a LOCAL target is acked and recorded', async () => {
     // ONE FIELD DIFFERENT from the denial cell: the target's declared environment. This is what

@@ -559,7 +559,9 @@ describe('daemon /invoke endpoint tracer', () => {
       functionId: 'config.get',
       input: {},
     })).resolves.toEqual(MASKED_CONFIG)
-    expect(readFileSync(join(agentQaRoot, 'execution_audit.jsonl'), 'utf8')).toContain('config.get')
+    // 432-13: the op gate's row was this cell's witness that the route dispatched through
+    // `invokeFunction`; no row is written now, and the masked answer above is the dispatch's own.
+    expect(existsSync(join(agentQaRoot, 'execution_audit.jsonl'))).toBe(false)
   })
 
   it.runIf(process.platform !== 'win32')('recovers a dead Unix socket left by a crashed process', async () => {
@@ -942,7 +944,12 @@ describe('daemon /invoke endpoint semantic parity', () => {
     })
   })
 
-  it('surfaces the real fail-closed ask denial with exactly the gate audit row', async () => {
+  // RE-SPELLED 2026-09-30 (432-13, C432-INVOKE-DIRECT). Was 'surfaces the real fail-closed ask
+  // denial with exactly the gate audit row': the daemon's `local-headless` posture failed an
+  // ask-tier op closed, identically in process and over the wire. No gate runs now, so the same
+  // ask-tier op DISPATCHES identically on both sides and neither writes a row. The wire half of the
+  // retired claim (the neutral reason crossing `wireError`) has no producer left to carry.
+  it('dispatches an ask-tier op identically in process and over the wire, with no audit row', async () => {
     const semantic = await semanticModules()
     const { registry, auditRows } = await registryFixture([
       {
@@ -961,46 +968,22 @@ describe('daemon /invoke endpoint semantic parity', () => {
       },
     ])
 
-    const inProcess = await capturedRejection(
+    await expect(
       semantic.invokeFunction(registry, 'synthetic.ask', {}, DAEMON_FUNCTION_CALLER),
-    )
-    expect(inProcess).toBeInstanceOf(semantic.FunctionDeniedError)
-    const inProcessRows = auditRows.splice(0)
-    expect(inProcessRows).toHaveLength(1)
+    ).resolves.toEqual({ ok: true })
+    expect(auditRows.splice(0)).toEqual([])
 
     const { agentQaRoot } = await startRegistryServer(
       'ask-deny',
       registry,
       semantic.startInvokeServer,
     )
-    const overWire = await capturedRejection(semantic.invokeViaDaemon({
+    await expect(semantic.invokeViaDaemon({
       agentQaRoot,
       functionId: 'synthetic.ask',
       input: {},
-    }))
-    expect(overWire).toBeInstanceOf(semantic.FunctionDeniedError)
-    expect(overWire).toMatchObject({
-      functionId: 'synthetic.ask',
-      reason: expect.stringContaining('mutating-shared'),
-    })
-    expect(overWire.message).toContain('re-run locally')
-
-    // 400 gap round 1 (D-15 prose half), and it is the WIRE half of a two-sided contract: the
-    // gate mints a surface-neutral reason beside the canonical one, `wireError` carries it across
-    // by the enumerable-own-property spread, and `rehydrateFunctionError` reads it back. A read
-    // side that dropped it would leave every daemon-routed browser denial rendering the CLI's flag
-    // while the direct one renders neutral prose — the fork this cell exists to refuse.
-    const wireDenial = overWire as FunctionDeniedError
-    const localDenial = inProcess as FunctionDeniedError
-    expect(wireDenial.neutralReason).toEqual(localDenial.neutralReason)
-    expect(wireDenial.neutralReason).not.toContain('--trust-session')
-    expect(wireDenial.neutralReason).not.toContain('re-run')
-    // Beside it, unchanged: the canonical sentence the audit row and the runbook publish.
-    expect(wireDenial.reason).toContain('--trust-session')
-
-    const wireRows = auditRows.splice(0)
-    expect(wireRows).toHaveLength(1)
-    expect(wireRows).toEqual(inProcessRows)
+    })).resolves.toEqual({ ok: true })
+    expect(auditRows.splice(0)).toEqual([])
   })
 })
 

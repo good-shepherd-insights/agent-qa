@@ -301,7 +301,6 @@ import {
   readMaskingDigests,
   resolveMaskingHostKey,
 } from '@vostride/agent-qa-agent-local'
-import type { RiskActionDescriptor } from '@vostride/agent-qa-schema'
 import { parseTestFile } from '@vostride/agent-qa-core'
 import { memberStepText } from '@vostride/agent-qa-runner'
 
@@ -383,19 +382,21 @@ describe('a door holding only a RunsStartInput gets a policy-gated run, in proce
       // The gate allowed it, so the baseline probe knocked — the converse of the denial control.
       expect(target.hits).toEqual(['/in-process-thing'])
       expect(buildOrdinalsExist(fixture as never)).toBe(true)
-      expect(auditRows(fixture as never).map((row) => row.outcome)).toContain('proceeded')
+      // 432-13: the start is not asked about, so it leaves no approval row.
+      expect(auditRows(fixture as never)).toEqual([])
     } finally {
       await target.close()
     }
   }, 120_000)
 
-  it('THE DENIAL CONTROL — one field different, and all five artifacts say refused', async () => {
+  // RE-SPELLED 2026-09-30 (432-13): was `environment: 'shared'`, refused by the run gate. A shared
+  // target now starts (C432-DOOR-NONPRODUCTION), so the one field that still refuses is a production
+  // declaration the config has not opted into.
+  it('THE DENIAL CONTROL — one field different, and all artifacts say refused', async () => {
     const target = new CountingTarget()
     await target.listen()
     try {
-      // `environment: 'shared'` instead of `'local'`. Same URL, same test, same everything else:
-      // the D-06 declaration is the axis, and D-05's classifier decides what the class means.
-      const fixture = createInProcessFixture({ origin: target.origin, environment: 'shared' })
+      const fixture = createInProcessFixture({ origin: target.origin, environment: 'production' })
       let session: RunSession | undefined
       const port = createInProcessCliRunExecution({
         ...fixtureOptions(fixture),
@@ -411,10 +412,8 @@ describe('a door holding only a RunsStartInput gets a policy-gated run, in proce
       }
 
       expect(denial).toBeInstanceOf(RunDeniedError)
-      // (a) the audit row's OUTCOME field, never a message substring
-      const rows = auditRows(fixture as never)
-      expect(rows).toHaveLength(1)
-      expect(rows[0]!.outcome).toBe('fail-closed-denied')
+      // (a) no approval row: the production refusal is not a gate decision
+      expect(auditRows(fixture as never)).toEqual([])
       // (b) no run events — `runStarted` is seq 1 of any run that began at all
       expect(eventTypes(fixture as never)).toEqual([])
       expect(session).toBeUndefined()
@@ -422,9 +421,9 @@ describe('a door holding only a RunsStartInput gets a policy-gated run, in proce
       expect(buildOrdinalsExist(fixture as never)).toBe(false)
       // (d) nobody knocked on the target
       expect(target.hits).toEqual([])
-      // (e) the reason the caller sees is READ BACK off the row, not typed into this cell — which
-      // is what pins the door to rendering the gate's decision instead of composing its own.
-      expect((denial as RunDeniedError).reason).toBe(rows[0]!.reason)
+      // (e) the reason names the production target
+      expect((denial as RunDeniedError).reason).toContain(fixture.targetName)
+      expect((denial as RunDeniedError).reason).toMatch(/production/i)
     } finally {
       await target.close()
     }
@@ -480,7 +479,9 @@ describe('a door holding only a RunsStartInput gets a policy-gated run, in proce
       // and it is written beside the config whose target declaration it read — so this is the
       // assertion that a dropped `configPath` could not survive: the classification would have come
       // off the composition's project instead.
-      expect(auditRows(named as never).map((row) => row.outcome)).toEqual(['proceeded'])
+      // RE-SPELLED 2026-09-30 (432-13): the gate's audit row is gone, so the witness that the
+      // request's config was read is the named project's production declaration refusing below.
+      expect(auditRows(named as never)).toEqual([])
       expect(auditRows(composed as never)).toEqual([])
 
       // AND THE RUN'S DURABLE EVIDENCE FOLLOWS `agentQaRoot`, WHICH THE REQUEST CANNOT NAME. This
@@ -493,9 +494,37 @@ describe('a door holding only a RunsStartInput gets a policy-gated run, in proce
       expect(eventTypes(named as never)).toEqual([])
       expect(buildOrdinalsExist(composed as never)).toBe(true)
       expect(buildOrdinalsExist(named as never)).toBe(false)
-      // One run, one id, both halves — not two runs.
-      expect(runDirs(named as never).map((dir) => dir.split('/').pop()))
-        .toEqual(runDirs(composed as never).map((dir) => dir.split('/').pop()))
+      // One run, one id — not two runs. RE-SPELLED 2026-09-30 (432-13): the named project's half
+      // was the gate's audit row, written under ITS run dir; no row is written now, so the named
+      // project holds no run dir at all and the whole run is the composed project's.
+      expect(runDirs(named as never)).toEqual([])
+      expect(runDirs(composed as never)).toHaveLength(1)
+    } finally {
+      await target.close()
+    }
+  }, 120_000)
+
+  it('THE REQUEST NAMES THE CONFIG — a production declaration in the NAMED config refuses (432-13)', async () => {
+    // The witness the retired audit row gave: the declaration read is the request's config's. The
+    // composed config is `local`, the named one `production`; only a port that read the named config
+    // refuses.
+    const target = new CountingTarget()
+    await target.listen()
+    try {
+      const composed = createInProcessFixture({ origin: target.origin, environment: 'local' })
+      const named = createInProcessFixture({ origin: target.origin, environment: 'production' })
+      let denial: unknown
+      try {
+        await runInProcessCliRun(
+          { ...fixtureOptions(composed), executionContext: 'local-headless' },
+          { configPath: named.configPath, patterns: [named.testPattern] },
+        )
+      } catch (err) {
+        denial = err
+      }
+      expect(denial).toBeInstanceOf(RunDeniedError)
+      expect(eventTypes(composed as never)).toEqual([])
+      expect(target.hits).toEqual([])
     } finally {
       await target.close()
     }
@@ -575,86 +604,48 @@ describe('a door holding only a RunsStartInput gets a policy-gated run, in proce
   }, 120_000)
 })
 
-describe('D-07: the INJECTED execution context beats a varied ambient, on both arms (401-11)', () => {
-  it('ARM A — ambient says local-interactive, injected says ci: fail-closed, confirm never asked', async () => {
+// RE-SPELLED 2026-09-30 (432-13). The D-07 pair used the run gate as its discriminator: an ambient
+// read would have prompted where the injected context failed closed, and the reverse. The run gate is
+// gone, so a non-production start no longer varies with the context at all — which is the claim the
+// pair now pins, both ways round. The injected context is still what the run carries
+// (`resolveExecutionContext: () => input.executionContext` in run-composition); its only reader until
+// 432-19 is the in-run gate hook, which no action of this fixture reaches.
+describe('C432-DOOR-NONPRODUCTION: a shared target starts whatever the injected or ambient context (432-13)', () => {
+  it.each([
+    { ambient: 'local-interactive', injected: 'ci' },
+    { ambient: 'ci', injected: 'local-interactive' },
+  ] as const)('ambient $ambient, injected $injected: the run starts and knocks once', async ({ ambient, injected }) => {
     const target = new CountingTarget()
     await target.listen()
     try {
-      // The ambient is pinned to the value that would ALLOW after a prompt.
-      pinAmbientExecutionContext('local-interactive')
+      pinAmbientExecutionContext(ambient)
       const fixture = createInProcessFixture({ origin: target.origin, environment: 'shared' })
-      let confirmCalls = 0
       let denial: unknown
       try {
         await runInProcessCliRun(
-          {
-            ...fixtureOptions(fixture),
-            executionContext: 'ci',
-            confirm: { surface: 'tty-prompt', ask: () => { confirmCalls += 1; return true } },
-          },
+          { ...fixtureOptions(fixture), executionContext: injected },
           { patterns: [fixture.testPattern] },
         )
       } catch (err) {
         denial = err
       }
 
-      expect(denial).toBeInstanceOf(RunDeniedError)
-      expect(auditRows(fixture as never)[0]!.outcome).toBe('fail-closed-denied')
-      // THE SECOND DISCRIMINATOR. A module that read the ambient would have PROMPTED and proceeded
-      // — a completely different outcome, and the call count is what tells the two apart.
-      expect(confirmCalls).toBe(0)
-      expect(target.hits).toEqual([])
-      expect(buildOrdinalsExist(fixture as never)).toBe(false)
-    } finally {
-      await target.close()
-    }
-  }, 120_000)
-
-  it('ARM B — ambient says ci, injected says local-interactive: the confirm IS asked and it proceeds', async () => {
-    const target = new CountingTarget()
-    await target.listen()
-    try {
-      pinAmbientExecutionContext('ci')
-      // AGAINST THE SHARED-DECLARED TARGET, and that is load-bearing: against a `local` target the
-      // outcome is `proceeded` with call count 0 whatever the context, so an arm written to match
-      // observation would prove nothing.
-      const fixture = createInProcessFixture({ origin: target.origin, environment: 'shared' })
-      let confirmCalls = 0
-      try {
-        await runInProcessCliRun(
-          {
-            ...fixtureOptions(fixture),
-            executionContext: 'local-interactive',
-            confirm: { surface: 'tty-prompt', ask: () => { confirmCalls += 1; return true } },
-          },
-          { patterns: [fixture.testPattern] },
-        )
-      } catch { /* the member's framework error; the gate decision is what this cell reads */ }
-
-      expect(confirmCalls).toBe(1)
-      expect(auditRows(fixture as never).map((row) => row.outcome)).toContain('prompted-approved')
-      // A module that read the ambient would have failed closed and touched nothing.
+      expect(denial).not.toBeInstanceOf(RunDeniedError)
       expect(eventTypes(fixture as never)).toContain('runStarted')
       expect(target.hits).toEqual(['/in-process-thing'])
+      expect(auditRows(fixture as never)).toEqual([])
     } finally {
       await target.close()
     }
   }, 120_000)
 })
 
-describe('the descriptor the CLI door hands the gate names every target it will drive (401-14, W-1)', () => {
-  it('a TWO-TARGET invocation is previewed with BOTH declared names and the class it was folded to', async () => {
-    // THE DOOR'S OWN ROAD, not the core's. `run-invocation-core.test.ts` measures the disclosure
-    // over a FAKE resolver, so a producer that supplied only the first member's name would leave
-    // that cell green — measured, by mutating `resolveTargetDeclaration` to
-    // `produced.targetNames.slice(0, 1)`: 15/15 still passed. This cell is what that mutation reds,
-    // because the whole chain is in its road: the CLI producer's collection loop → the one
-    // production resolver → the core's single `evaluate()` → the descriptor the confirm port is
-    // handed. That port is where a browser's `preview` frame is built from.
-    //
-    // THE SECOND TARGET IS DECLARED `local` AND THE FIRST `shared`, so the run is asked about for
-    // the FIRST member's reason and the fold's most-restrictive-wins answer is unchanged. What
-    // varies from every other cell in this file is only the number of declared NAMES.
+// RE-SPELLED 2026-09-30 (432-13). This cell read the disclosure the confirm port was handed, and the
+// port was its only consumer; no door asks about a run any more. What stays true on the door's own
+// road is the reach half: a two-target invocation drives BOTH declared targets. The disclosure text
+// itself keeps its unit cells beside `buildRunDisclosure` until 432-18/19 retire it.
+describe('the CLI door drives every target a two-target invocation names (401-14, W-1; 432-13)', () => {
+  it('a TWO-TARGET shared invocation starts and probes both declared targets', async () => {
     const target = new CountingTarget()
     await target.listen()
     try {
@@ -663,36 +654,19 @@ describe('the descriptor the CLI door hands the gate names every target it will 
         environment: 'shared',
         secondTarget: true,
       })
-      const asked: { name: string; disclosure?: string }[] = []
+      let denial: unknown
       try {
         await runInProcessCliRun(
-          {
-            ...fixtureOptions(fixture),
-            executionContext: 'local-interactive',
-            confirm: {
-              surface: 'tty-prompt',
-              ask: (action: RiskActionDescriptor) => { asked.push(action); return true },
-            },
-          },
+          { ...fixtureOptions(fixture), executionContext: 'local-interactive' },
           { patterns: [fixture.testPattern, fixture.secondTestPattern!] },
         )
-      } catch { /* the members' framework errors; the descriptor is what this cell reads */ }
+      } catch (err) {
+        denial = err
+      }
 
-      // ASKED AT ALL, FIRST. A cell that went straight to the disclosure would report "no names"
-      // for an invocation that was refused before the gate — `requireSingleInvocationProduct` is
-      // one line away and is exactly the refusal the fixture's shared `product:` exists to avoid.
-      expect(asked, 'the gate never asked — nothing below measures a disclosure').toHaveLength(1)
-      const disclosure = asked[0]!.disclosure
-      expect(disclosure, 'the ask carried no preview — approve WHAT?').toBeTruthy()
-      // BOTH names, read off the fixture's own definitions.
-      expect(disclosure).toContain(fixture.targetName)
-      expect(disclosure).toContain(fixture.secondTargetName!)
-      // And the DECLARATION the fold attributed, which the second target's `local` did not
-      // lower (401-15, WR-06). Pinned as the whole clause rather than the bare word `shared`: an
-      // asserting clause ("environment: shared") contains that word too, so the substring alone
-      // could not tell the honest sentence from the one UAT test 4 refused.
-      expect(disclosure).toContain('declared: at least one target shared')
-      expect(disclosure).not.toContain('environment: ')
+      expect(denial).not.toBeInstanceOf(RunDeniedError)
+      expect(eventTypes(fixture as never)).toContain('runStarted')
+      expect([...target.hits].sort()).toEqual(['/in-process-thing', '/the-second-thing'])
     } finally {
       await target.close()
     }
@@ -735,7 +709,7 @@ describe('the run-start baseline is taken PER MEMBER and deduped by URL (401-19,
         )
       } catch { /* the members' framework errors; who was knocked on is what this cell reads */ }
 
-      expect(auditRows(fixture as never).map((row) => row.outcome)).toContain('proceeded')
+      expect(auditRows(fixture as never)).toEqual([])
       expect([...target.hits].sort()).toEqual(['/in-process-thing', '/the-second-thing'])
     } finally {
       await target.close()
@@ -768,7 +742,7 @@ describe('the run-start baseline is taken PER MEMBER and deduped by URL (401-19,
         )
       } catch { /* as above */ }
 
-      expect(auditRows(fixture as never).map((row) => row.outcome)).toContain('proceeded')
+      expect(auditRows(fixture as never)).toEqual([])
       expect(target.hits).toEqual(['/in-process-thing'])
     } finally {
       await target.close()
@@ -808,7 +782,7 @@ describe('the run-start baseline is taken PER MEMBER and deduped by URL (401-19,
         )
       } catch { /* as above */ }
 
-      expect(auditRows(fixture as never).map((row) => row.outcome)).toContain('proceeded')
+      expect(auditRows(fixture as never)).toEqual([])
       expect(target.hits).toEqual(['/in-process-thing'])
     } finally {
       await target.close()

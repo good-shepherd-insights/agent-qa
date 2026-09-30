@@ -743,7 +743,8 @@ describe('contextual feedback on the shipped bundle (426-16, 426-17)', () => {
       // failure key keeps the approval drive below independent of it.
       try { await driveLayout(fixture.browser, url) } catch (error) { failures.layout = String(error) }
 
-      // SC4 through approval (D-20): a real mark from the header entry, approved inline.
+      // SC4 (D-20): a real mark from the header entry. 432-13: recorded on the click, with no
+      // approval group — `approvalInComposer` and `rowsAtApproval` are read right after the reply.
       const ledger = join(fixture.project.agentQaRoot, RUNS_SUBDIR, slugBranch(runId), 'marks.jsonl')
       const rows = () => existsSync(ledger)
         ? readFileSync(ledger, 'utf8').trim().split('\n').filter(Boolean).map(line => MarkReceiptSchema.parse(JSON.parse(line)))
@@ -777,14 +778,12 @@ describe('contextual feedback on the shipped bundle (426-16, 426-17)', () => {
       await markComposer.locator('[data-feedback-preview][data-preview-current="true"]').waitFor({ timeout: 15_000 })
       const response = markPage.waitForResponse(reply => reply.url().endsWith('/mark') && reply.request().method() === 'POST')
       await markComposer.locator('[data-feedback-submit]').click()
-      const approval = markPage.getByRole('group', { name: APPROVAL_TITLE })
-      await approval.waitFor({ timeout: 10_000 })
+      const reply = await response
       const dialogs = await modalCount(markPage)
       const hostDialogs = await markPage.evaluate(() => document.querySelectorAll('[data-run-confirm-dialog]').length)
-      const approvalInComposer = await markComposer.locator('[data-feedback-approval]').count()
+      const approvalInComposer = await markPage.getByRole('group', { name: APPROVAL_TITLE }).count()
+        + await markComposer.locator('[data-feedback-approval]').count()
       const rowsAtApproval = rows().length
-      await markPage.locator('[data-feedback-approval] [data-confirm-answer="accept"]').click()
-      const reply = await response
       const parsed = RunsMarkOutcomeSchema.parse(await reply.json())
       const entries = markComposer.locator('[data-feedback-history="target"] [data-history-entry]')
       await markComposer.locator('[data-feedback-history="target"] [data-history-entry][data-history-new]').waitFor({ timeout: 15_000 })
@@ -857,13 +856,13 @@ describe('contextual feedback on the shipped bundle (426-16, 426-17)', () => {
     expect(markPath, JSON.stringify(failures)).toBeDefined()
     const where = JSON.stringify(markPath)
     expect(markPath!.gate.safety, `the fixture config must not pre-approve the mark: ${where}`).toBeNull()
-    expect(markPath!.frames.some(frame => frame.event === 'confirm_request' && frame.data.includes('fn:runs.mark')), where).toBe(true)
-    // T-426-16-01: the approval was asked before any ledger row existed.
-    expect(markPath!.rowsAtApproval, where).toBe(0)
+    // RE-SPELLED 2026-09-30 (432-13, D-14/D-15): no question reaches the channel and no approval
+    // group renders — the mark is one click, and the ledger holds its row as the reply lands.
+    expect(markPath!.frames.some(frame => frame.event === 'confirm_request'), where).toBe(false)
+    expect(markPath!.rowsAtApproval, where).toBe(1)
     expect(markPath!.dialogs, where).toBe(0)
-    // RESEARCH A1: the page's own mark confirm renders in the composer, never in the app-wide host.
     expect(markPath!.hostDialogs, where).toBe(0)
-    expect(markPath!.approvalInComposer, where).toBe(1)
+    expect(markPath!.approvalInComposer, where).toBe(0)
     expect(markPath!.status, where).toBe(200)
     expect(markPath!.outcome?.kind, where).toBe('marked')
     expect(markPath!.rows, where).toHaveLength(1)

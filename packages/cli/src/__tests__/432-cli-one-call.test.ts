@@ -177,7 +177,7 @@ describe('C432-CLI-ONE-CALL — runs mark applies its fix in the one call (432-1
     ]))
 
     expect(stdinReads).toEqual([])
-    expect(printed.stdout).toMatch(/^marked false-fail on .* · applied fact: changed mem_/)
+    expect(printed.stdout).toMatch(/^marked false-fail on .* · applied fact: changed \S+ · receipt mark_/)
     expect(printed.stdout).not.toMatch(/proposal|accept|apply it|--yes/i)
   })
 })

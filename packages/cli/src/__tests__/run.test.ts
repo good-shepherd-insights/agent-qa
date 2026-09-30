@@ -1139,10 +1139,12 @@ describe('run command — product-scoped handoff preflight', () => {
 // ask whether those cells are green because they declared, or because the gate is inert and the
 // declaration is decoration. This cell answers it in the same harness, with the same command, by
 // changing exactly one field.
+// RE-SPELLED 2026-09-30 (432-13, D-01/D-18). The control used to be an UNDECLARED target denied
+// fail-closed by the run gate. That run starts now (C432-HEADLESS-START), so the one-field control
+// is a PRODUCTION declaration the config has not opted into — the only refusal left — beside the
+// undeclared target that now reaches the member runner.
 describe('run command — the gate the declarations above are satisfying (401-03)', () => {
-  it('an UNDECLARED target denies fail-closed and never reaches the member runner', async () => {
-    // The same fixture shape the declared cells use — one discovered test, one member — so the
-    // ONLY difference between this cell and its green neighbours is the missing declaration.
+  const oneMember = (): void => {
     mockGlob.mockResolvedValue(['tests/a.yaml'])
     mockParseAllTests.mockResolvedValue({ tests: [makeTest({ target: 'test-app' })], errors: [] })
     mockRunMemberTest.mockResolvedValue({
@@ -1152,25 +1154,45 @@ describe('run command — the gate the declarations above are satisfying (401-03
       steps: [],
       duration: 100,
     })
+  }
+
+  it('a PRODUCTION target without the opt-in is refused and never reaches the member runner', async () => {
+    oneMember()
     mockResolveTarget.mockReturnValue({
       name: 'test-app',
       product: 'test-app',
       platform: 'web',
       url: 'https://example.com',
-      // and no `environment`. Silence is not permission.
+      environment: 'production',
     })
 
     await runCommand('tests/**/*.yaml')
 
     expect(mockRunMemberTest).not.toHaveBeenCalled()
-    // Assembly is behind the gate, so the build-ordinal counter is untouched as well.
     expect(mockNextBuildOrdinal).not.toHaveBeenCalled()
     expect(exitSpy).toHaveBeenCalledWith(2)
-    // The person is told what was refused, in the gate's own words, with the way forward.
     const rendered = errorSpy.mock.calls.map((call: unknown[]) => String(call[0])).join('\n')
     expect(rendered).toContain('Run denied')
-    expect(rendered).toContain('mutating-shared')
-    expect(rendered).toContain('agent-qa run --trust-session')
+    expect(rendered).toContain('"test-app"')
+    expect(rendered).toContain('allowProduction: true')
+    expect(rendered).not.toContain('--trust-session')
+  })
+
+  it('an UNDECLARED target now reaches the member runner, with no prompt and no refusal', async () => {
+    oneMember()
+    mockResolveTarget.mockReturnValue({
+      name: 'test-app',
+      product: 'test-app',
+      platform: 'web',
+      url: 'https://example.com',
+    })
+
+    await runCommand('tests/**/*.yaml')
+
+    expect(mockRunMemberTest).toHaveBeenCalledTimes(1)
+    expect(exitSpy).toHaveBeenCalledWith(0)
+    const rendered = errorSpy.mock.calls.map((call: unknown[]) => String(call[0])).join('\n')
+    expect(rendered).not.toContain('Run denied')
   })
 })
 

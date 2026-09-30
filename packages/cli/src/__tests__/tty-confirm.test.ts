@@ -90,8 +90,18 @@ describe('the CLI binds a confirmation exactly where there is somebody to ask', 
     expect(daemonHost).not.toContain('confirm:')
     expect(daemonHost).not.toContain('createTtyConfirmPort')
   })
-})
 
+  // 432-13 (D-01/D-14): the factory survives until 432-16, but `agent-qa run` no longer binds it.
+  it('is bound by no run door since 432-13', () => {
+    const run = readFileSync(join(__dirname, '..', 'commands', 'run.ts'), 'utf8')
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .split('\n')
+      .filter((line) => !line.trimStart().startsWith('//'))
+      .join('\n')
+    expect(run).toContain('createRunCommand')
+    expect(run).not.toContain('createTtyConfirmPort')
+  })
+})
 
 // ---- THE CHANNEL A PERSON READS (401-15, WR-01 / T-401-G5) -------------------------------------
 //

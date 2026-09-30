@@ -1,4 +1,10 @@
-// The four directives, measured through the REAL composition (Phase 392 plan 08, D-04/D-21/D-23).
+// The directives, measured through the REAL composition (Phase 392 plan 08, D-04/D-21/D-23).
+//
+// 2026-09-30 (432-13, D-14): `/pin` IS GONE. It was a session deny overlay over the op gate, and there
+// is no op gate. Its four cells are re-spelled as the verb's absence (C432-CHAT-DIRECT): a typed
+// `/pin` is an unroutable clause that refuses by name, pins nothing, publishes nothing to live state
+// and writes no `approval_decision`. The chat confirm seam cell is re-spelled as the factory never
+// being called. `/model`, `/help`, `/quit` and the live state are unchanged.
 //
 // WHAT THIS FILE EXISTS TO CATCH is a directive that is handled and reaches nothing. Every one of
 // them is a mechanism whose failure mode is a confirmation line and no effect: a `/pin` recorded
@@ -141,76 +147,56 @@ describe('the composed session directives reach something (D-04 / D-21 / RESEARC
       .map((line) => JSON.parse(line) as ChatSessionEvent)
   }
 
-  describe('/pin reaches the gate — the two-sided differential (D-21 / T-392-28)', () => {
-    it('ALLOWS the op before the pin and REFUSES the same op after it, in the pinning session',
+  // RE-SPELLED 2026-09-30 (432-13) from '/pin reaches the gate — the two-sided differential (D-21 /
+  // T-392-28)'. Each cell keeps its utterance and now proves the retired verb reaches nothing.
+  describe('C432-CHAT-DIRECT — a typed /pin reaches nothing (432-13)', () => {
+    it('C432-CHAT-DIRECT: the op runs before and after a typed /pin, in the same session and outside it',
       async () => {
         const host = compose()
-        const opened = await ask(host, 'proposals')
-        // THE CALLER IS IN THE CONVERSATION (392 plan 13, W-03). The overlay is asked whose pin,
-        // so the differential's two arms are the same caller before and after — a session-less
-        // caller either side would be measuring a different question. This case used to ask with
-        // one, and its red arm passing was the leak: a `/pin` typed in a conversation denied the
-        // class for every caller on the host, which is what the last assertion now forbids.
+        const opened = await ask(host, '/fn proposals.list')
         const inSession: FunctionCaller = { ...HUMAN, sessionId: opened.sessionId }
 
-        // The GREEN side. Without it the red side proves nothing: an op refused on a host where it
-        // was never reachable is a fact about the host, not about the pin.
         await expect(
           invokeFunction(host.registry, PROPOSALS_LIST_FUNCTION_ID, {}, inSession),
         ).resolves.toBeDefined()
 
         const pinned = await ask(host, `/pin ${PROPOSALS_LIST_FUNCTION_ID}`, opened.sessionId)
-        expect(pinned.status).toBe('completed')
+        expect(pinned.status).toBe('fail_closed')
 
         await expect(
           invokeFunction(host.registry, PROPOSALS_LIST_FUNCTION_ID, {}, inSession),
-        ).rejects.toThrow(/session-pin-denied/)
-
-        // The scope control the pin needs as much as the deny: a caller in NO conversation — every
-        // typed CLI verb, MCP call and background job on this host — is untouched by it.
+        ).resolves.toBeDefined()
         await expect(
           invokeFunction(host.registry, PROPOSALS_LIST_FUNCTION_ID, {}, HUMAN),
         ).resolves.toBeDefined()
       })
 
-    it('logs the NORMALISED class, as a verb-sourced approval decision (392-05)', async () => {
+    it('C432-CHAT-DIRECT: a typed /pin writes NO approval_decision row', async () => {
       const host = compose()
-      // Typed BARE. What denies is `fn:proposals.list`, and a log carrying the typed form would be
-      // a record of the request rather than of the effect — the shape 391-05's trap reappears in.
       const result = await ask(host, `/pin ${PROPOSALS_LIST_FUNCTION_ID}`)
 
-      const decisions = sessionEvents(result.sessionId).filter(
-        (event) => event.kind === 'approval_decision',
-      )
-      expect(decisions).toEqual([
-        expect.objectContaining({
-          actionClass: `fn:${PROPOSALS_LIST_FUNCTION_ID}`,
-          decision: 'deny',
-          source: 'verb',
-        }),
-      ])
-      expect(result.answer).toContain(`fn:${PROPOSALS_LIST_FUNCTION_ID}`)
+      expect(
+        sessionEvents(result.sessionId).filter((event) => event.kind === 'approval_decision'),
+      ).toEqual([])
+      expect(result.answer ?? '').not.toContain(`fn:${PROPOSALS_LIST_FUNCTION_ID}`)
     })
 
-    it('executes NOTHING on a directive turn, and publishes the pin to live state', async () => {
+    it('C432-CHAT-DIRECT: executes NOTHING on a /pin turn, and publishes no pin to live state', async () => {
       const host = compose()
       const result = await ask(host, `/pin ${PROPOSALS_LIST_FUNCTION_ID}`)
 
-      // A directive names no capability: zero receipts is the shape, not an accident of the fixture.
       expect(result.receipts).toEqual([])
-      expect(host.chat.stateFor(result.sessionId)?.pinnedActionClasses).toEqual([
-        `fn:${PROPOSALS_LIST_FUNCTION_ID}`,
-      ])
+      expect(host.chat.stateFor(result.sessionId)?.pinnedActionClasses ?? []).toEqual([])
     })
 
-    it('refuses BY NAME when the class names nothing this host declares', async () => {
+    it('refuses BY NAME as an unroutable clause, leaving one countable row', async () => {
       const host = compose()
-      // The shipped refusal (392-05, property 2). It travels the engine's ONE refusal path, so it
-      // leaves the same countable `mark_unhandled` row every other refused clause does.
+      // The clause is not a directive any more, so a headless host refuses it as it refuses any
+      // other unrouted text: by name, through the engine's ONE refusal path.
       const result = await ask(host, '/pin config-write')
 
       expect(result.status).toBe('fail_closed')
-      expect(result.unhandled?.reason).toContain('fn:config-write')
+      expect(result.unhandled?.clause).toBe('/pin config-write')
       const unhandled = sessionEvents(result.sessionId).filter(
         (event) => event.kind === 'mark_unhandled',
       )
@@ -303,7 +289,7 @@ describe('the composed session directives reach something (D-04 / D-21 / RESEARC
       const host = compose()
       // An ordinary turn FIRST, so the before-state is read off the same session the `/quit` turn
       // will move (392 plan 13: the state is per session, and an unopened session has none).
-      const opened = await ask(host, 'proposals')
+      const opened = await ask(host, '/fn proposals.list')
       expect(host.chat.stateFor(opened.sessionId)?.closing).toBe(false)
 
       const result = await ask(host, '/quit', opened.sessionId)
@@ -314,7 +300,7 @@ describe('the composed session directives reach something (D-04 / D-21 / RESEARC
       expect(host.chat.stateFor(opened.sessionId)?.closing).toBe(true)
       // And it moved THAT conversation only: a second session on the same host is not closing
       // because somebody else typed `/quit`.
-      const other = await ask(host, 'proposals')
+      const other = await ask(host, '/fn proposals.list')
       expect(host.chat.stateFor(other.sessionId)?.closing).toBe(false)
     })
   })
@@ -322,7 +308,7 @@ describe('the composed session directives reach something (D-04 / D-21 / RESEARC
   describe('the live turn state (RESEARCH Open Q2)', () => {
     it('carries the conversation forward across turns, and names no turn between them', async () => {
       const host = compose()
-      const first = await ask(host, 'proposals')
+      const first = await ask(host, '/fn proposals.list')
 
       // Between turns there is nothing in flight, which is what makes an abort a no-op rather
       // than a row on a turn that already completed.
@@ -339,7 +325,7 @@ describe('the composed session directives reach something (D-04 / D-21 / RESEARC
 
     it('abortActiveTurn is a no-op between turns', async () => {
       const host = compose()
-      const result = await ask(host, 'proposals')
+      const result = await ask(host, '/fn proposals.list')
 
       await host.chat.abortActiveTurn()
 
@@ -365,7 +351,7 @@ describe('the composed session directives reach something (D-04 / D-21 / RESEARC
         },
       })
 
-      const opened = await ask(host, 'proposals')
+      const opened = await ask(host, '/fn proposals.list')
       sessionId = opened.sessionId
       const result = await ask(host, '/model fixture:second-model', sessionId)
 
@@ -380,35 +366,23 @@ describe('the composed session directives reach something (D-04 / D-21 / RESEARC
     })
   })
 
-  describe('the chat confirm seam (D-03)', () => {
-    it('is handed a mint and a decision sink, and its absence leaves the port absent', async () => {
-      let bindings: ChatConfirmBindings | undefined
+  // RE-SPELLED 2026-09-30 (432-13, D-14) from 'the chat confirm seam (D-03) — is handed a mint and a
+  // decision sink, and its absence leaves the port absent'. Nothing asks, so the composition never
+  // calls a supplied factory, and a turn leaves no `approval_decision` row.
+  describe('the chat confirm seam is retired (432-13)', () => {
+    it('C432-CHAT-DIRECT: a supplied chat-confirm factory is never called, and no decision row is written', async () => {
+      let calls = 0
       const host = compose({
-        chatConfirm: (given) => {
-          bindings = given
-          // `undefined` is the non-TTY answer, and the arm that matters: it leaves `confirm`
-          // absent so `evaluate()`'s own deny-by-default is what answers (D-03, unchanged).
+        chatConfirm: () => {
+          calls += 1
           return undefined
         },
       })
 
-      const result = await ask(host, 'proposals')
+      const result = await ask(host, '/fn proposals.list')
 
-      expect(bindings).toBeDefined()
-      expect(typeof bindings?.recordStandingApproval).toBe('function')
-      expect(typeof bindings?.onDecision).toBe('function')
-      // The sink writes onto the SAME session log the engine writes, stamped with the turn in
-      // flight — so a decision row can be placed by a reader folding the log linearly.
-      //
-      // AND IT NAMES ITS CONVERSATION (401-01, D-13). The id here is a REAL one — the session this
-      // host just answered a turn in — so the empty result below is the sink's turn guard rather
-      // than an unknown id falling off the front: that turn has RETURNED, nothing is in flight on
-      // it, and a decision that belongs to no turn is a row no reader could place.
-      await bindings?.onDecision({
-        actionClass: 'fn:x',
-        decision: 'accept',
-        sessionId: result.sessionId,
-      })
+      expect(result.status).toBe('completed')
+      expect(calls).toBe(0)
       expect(sessionEvents(result.sessionId).filter((e) => e.kind === 'approval_decision'))
         .toEqual([])
     })

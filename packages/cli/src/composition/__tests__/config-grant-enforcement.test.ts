@@ -1,6 +1,11 @@
 // D-02's three-tier approval, enforced TWO-SIDED and measured on the production composition
 // (395-07 · CFGM-01 · spec/v2 §4.3, spec/v2/execution-safety.md §2.4).
 //
+// 2026-09-30, 432-13 (D-14/D-15): neither verb is gated any more. `proposals.accept` and
+// `config.proposal.apply` reach their routes headless with no ask, so the controls that measured the
+// gate stopping them (M0, R3) and the confirm spies (M1, M2) were re-spelled to that. The mint and
+// read sides are the ops' own and still answer as before where a grant is involved.
+//
 // 2026-09-30, 432-11 D-05: `config.field.set` writes in the call and files nothing, so the two
 // fixture proposals are pre-432 records on disk (`filePre432ConfigProposal`). Their flags are still
 // PRODUCED by the shipped classifier: the same change is made directly in a scratch copy of the
@@ -349,30 +354,30 @@ afterEach(() => {
 })
 
 describe('D-02 mint side: accept-with-always never pre-approves a flagged proposal', () => {
-  it('(M0) CONTROL: headless, the accept is fail-closed-denied before any of this is reached',
+  // RE-SPELLED 2026-09-30 (432-13): was '... headless, the accept is fail-closed-denied before any
+  // of this is reached'. No gate stands in front of the route now: headless, the accept reaches
+  // the mint side, which still refuses the flagged proposal while the apply half lands.
+  it('(M0) CONTROL: headless, the accept reaches the route with no ask, and the mint still refuses',
     async () => {
       await mintGrant(UNRELATED_CLASS)
       const proposalId = await flaggedProposalId()
       const before = ledgerBytes()
 
-      // `fn:proposals.accept` is `mutating-shared` AND protected, so no grant can satisfy it and a
-      // headless context has no other rung. This is what the interactive scoping in every other
-      // mint cell is a way IN to — and the reason those cells are not measuring nothing.
       const host = composeCliLocalAgent({ agentQaRoot, configPath })
+      let answer: { apply: { outcome: string }; grant: { kind: string } }
       try {
-        await expect(
-          runSafetyScope({ executionContext: 'local-headless' }, async () =>
-            await invokeFunction(
-              host.registry, 'proposals.accept', { proposalId, always: true }, CLI_FUNCTION_CALLER,
-            )),
-        ).rejects.toMatchObject({ name: 'FunctionDeniedError' })
+        answer = await runSafetyScope({ executionContext: 'local-headless' }, async () =>
+          await invokeFunction(
+            host.registry, 'proposals.accept', { proposalId, always: true }, CLI_FUNCTION_CALLER,
+          )) as typeof answer
       } finally {
         await host.close()
       }
 
+      expect(answer.apply.outcome).toBe('applied')
+      expect(answer.grant.kind).toBe('cross-boundary')
       expect(ledgerBytes()).toBe(before)
-      expect(readFileSync(configPath, 'utf8')).toBe(SEEDED_CONFIG)
-      expect(commitCount()).toBe(1)
+      expect(commitCount()).toBe(2)
     })
 
   it('(M1) refuses the mint, applies anyway, and leaves the ledger byte-identical', async () => {
@@ -386,8 +391,8 @@ describe('D-02 mint side: accept-with-always never pre-approves a flagged propos
 
     const { answer, confirmCalls } = await acceptAlways(proposalId)
 
-    // The ask really happened. Without this the refusal could be a gate that stopped asking.
-    expect(confirmCalls).toBe(1)
+    // 432-13: nobody is asked; the refusal below is the mint's own.
+    expect(confirmCalls).toBe(0)
 
     // THE APPLY HALF SURVIVES THE REFUSAL. Pitfall 9: refusals come back beside the receipt, never
     // instead of it — the person asked for the change and got it, and one commit exists to prove it.
@@ -413,7 +418,7 @@ describe('D-02 mint side: accept-with-always never pre-approves a flagged propos
 
     const { answer, confirmCalls } = await acceptAlways(proposalId)
 
-    expect(confirmCalls).toBe(1)
+    expect(confirmCalls).toBe(0)
     expect(answer.apply.outcome).toBe('applied')
 
     // THE CLASS IS GRANTABLE. This is what makes (M1) a statement about the PROPOSAL: a mint that
@@ -431,17 +436,18 @@ describe('D-02 mint side: accept-with-always never pre-approves a flagged propos
 })
 
 describe('D-02 read side: a covering grant never satisfies a flagged proposal', () => {
-  it('(R3) CONTROL: with NO grant, the same flagged apply is fail-closed-denied', async () => {
+  // RE-SPELLED 2026-09-30 (432-13): was '... with NO grant, the same flagged apply is
+  // fail-closed-denied'. The gate that stopped it is gone, and the op's read side only weighs a
+  // grant that exists — so with none, the flagged apply applies directly. (R1)'s refusal is still
+  // the op's own, which this control now shows by contrast. 432-17 removes the apply op itself.
+  it('(R3) CONTROL: with NO grant, the same flagged apply now applies directly', async () => {
     const proposalId = await flaggedProposalId()
     expect(ledgerBytes()).toBeUndefined()
 
-    // This is the read cells' own setup, measured: headless + no grant = the gate stops it. So
-    // whatever gets past the gate in (R1)/(R2) got past it on the standing approval and on nothing
-    // else, and (R1)'s refusal is demonstrably NOT this one.
-    await expect(applyHeadless(proposalId)).rejects.toMatchObject({ name: 'FunctionDeniedError' })
+    await expect(applyHeadless(proposalId)).resolves.toBeDefined()
 
-    expect(readFileSync(configPath, 'utf8')).toBe(SEEDED_CONFIG)
-    expect(commitCount()).toBe(1)
+    expect(readFileSync(configPath, 'utf8')).toContain('envFile: .env.staging')
+    expect(commitCount()).toBe(2)
   })
 
   it('(R1) the covering grant does not match: the flagged apply refuses, committing nothing',

@@ -51,14 +51,13 @@ import {
   CURRENT_HANDOFF_SCHEMA_VERSION,
   FunctionScopeSchema,
   MASKED_RESOLVED_CONFIG_SCHEMA_VERSION,
-  STANDING_APPROVAL_SCOPE,
 } from '@vostride/agent-qa-schema'
 import type {
   CompletedRunHandoff,
   ExecutionContext,
   FunctionCaller,
 } from '@vostride/agent-qa-schema'
-import type { AuditSink, StandingApprovalReader } from '@vostride/agent-qa-safety'
+import type { AuditSink } from '@vostride/agent-qa-safety'
 import { describe, expect, it } from 'vitest'
 
 import { invokeFunction } from '../functions/invoke.js'
@@ -80,6 +79,8 @@ type RetirementDestination =
   | 'retained → declaration-immutability'
   /** Its content is now a column of the committed golden ledger. */
   | 'folded → golden ledger'
+  /** Retained here until its subject was deleted; the row keeps the census whole (432-13). */
+  | 'retired → subject deleted'
 
 interface RetirementRow {
   /** The block's name, VERBATIM as it read in the pre-deletion file. */
@@ -253,10 +254,11 @@ const RETIREMENT_REGISTER: readonly RetirementRow[] = Object.freeze([
   Object.freeze({
     block: 'EVERY_ASK_STANDING_APPROVED',
     kind: 'constant',
-    destination: 'retained here',
+    destination: 'retired → subject deleted',
     reason:
-      'without it an ask-tier capability is refused at the GATE before the binding check, and a '
-      + 'policy verdict would be reported as a binding one',
+      'retained here until 432-13 (without it an ask-tier capability was refused at the GATE '
+      + 'before the binding check); the op gate is gone, so the dispatch leg reaches the binding '
+      + 'check directly and the control has nothing left to control',
   }),
   Object.freeze({
     block: 'registry',
@@ -429,23 +431,10 @@ function noOpSink(): AuditSink {
   }
 }
 
-/**
- * A composition where every ask is already standing-approved (391).
- *
- * Without it, an ask-tier capability would be refused by the GATE before the binding check ran, and
- * the dispatch leg would be asserting a policy verdict while claiming to assert a binding one. The
- * grant is built from the action's own name, so it covers whatever the registry lists rather than a
- * class spelled here, and the real gate still runs.
- */
-const EVERY_ASK_STANDING_APPROVED: StandingApprovalReader = {
-  grantsFor: (action) => [{ actionClass: action.name, scope: STANDING_APPROVAL_SCOPE }],
-}
-
 function registry() {
   return createFunctionRegistry({
     deps: fakeDeps(),
     auditSink: noOpSink(),
-    standingApprovalReader: () => EVERY_ASK_STANDING_APPROVED,
     resolveExecutionContext: FIXED_CONTEXT,
   })
 }

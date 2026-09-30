@@ -36,12 +36,11 @@ import type {
   KnowledgeProposalV1,
   ProposalInboxEntryDto,
   ProposalsAcceptOutput,
-  RiskActionDescriptor,
   StandingGrantsPort,
 } from '@vostride/agent-qa-schema'
 import { describe, expect, it } from 'vitest'
 
-import { FunctionDeniedError, FunctionNotBoundError, FunctionOriginError, invokeFunction } from '../invoke.js'
+import { FunctionNotBoundError, FunctionOriginError, invokeFunction } from '../invoke.js'
 import { KNOWLEDGE_PROPOSAL_APPLY_FUNCTION_ID } from '../ops/knowledge-proposal-apply.js'
 import {
   APPLY_ACTION_CLASS_FOR_PROPOSAL_KIND,
@@ -207,7 +206,6 @@ interface Host {
   grants: ReturnType<typeof recordingGrants>
   review: ReturnType<typeof recordingReview>
   draftApply: ReturnType<typeof recordingDraftApply>
-  confirmed: RiskActionDescriptor[]
   /** The proposal ids the accept asked the inbox to CLOSE (394-18). */
   recordedApplied: string[]
 }
@@ -224,7 +222,6 @@ function host(options: {
     : recordingGrants(options.grantAnswer)
   const review = recordingReview()
   const draftApply = recordingDraftApply()
-  const confirmed: RiskActionDescriptor[] = []
   const recordedApplied: string[] = []
   const entry = options.entry ?? inboxEntry()
 
@@ -277,21 +274,13 @@ function host(options: {
     grants,
     review,
     draftApply,
-    confirmed,
     recordedApplied,
+    // 432-13 (D-14): no confirm port — `invokeFunction` asks nobody, so the accept dispatches on
+    // the call alone in every context.
     registry: createFunctionRegistry({
       deps,
       auditSink: { appendExecutionAudit() {}, appendGuardrailAudit() {} },
       resolveExecutionContext: () => options.context ?? 'local-interactive',
-      // THE DOOR, bound explicitly. A spy rather than `() => true` so every case that dispatches
-      // also proves the ask arm was consulted, and consulted about the right action.
-      confirm: {
-        surface: 'tty-prompt',
-        ask: (action: RiskActionDescriptor) => {
-          confirmed.push(action)
-          return true
-        },
-      },
     }),
   }
 }
@@ -317,9 +306,6 @@ describe('proposals.accept — plain applies, always escalates (D-01)', () => {
     // NOT "the mint declined" — the mint was never asked. That is the difference between a rule
     // enforced in the mint and a rule enforced at the decision, and D-01 is the second one.
     expect(built.grants.calls).toEqual([])
-    // The evidence that the gate's ask arm actually ran, rather than the tier having been lowered
-    // or the verdict having come from somewhere else.
-    expect(built.confirmed.map((action) => action.name)).toEqual([`fn:${PROPOSALS_ACCEPT_FUNCTION_ID}`])
   })
 
   it('records exactly one grant on the always form, for the class the apply actually used', async () => {
@@ -413,11 +399,10 @@ describe('proposals.accept — who may decide (D-06)', () => {
       const built = host()
 
       await expect(accept(built, input, AGENT)).rejects.toBeInstanceOf(FunctionOriginError)
-      // The refusal is PRE-DISPATCH: nothing applied, nothing minted, and the gate was never even
-      // consulted (the origin check sits in the pre-gate band, after scopes).
+      // The refusal is PRE-DISPATCH: nothing applied and nothing minted (the origin check sits in
+      // the refusal band, after scopes).
       expect(built.review.applied).toEqual([])
       expect(built.grants.calls).toEqual([])
-      expect(built.confirmed).toEqual([])
     }
   })
 
@@ -443,21 +428,20 @@ describe('proposals.accept — who may decide (D-06)', () => {
 })
 
 describe('proposals.accept — the door, and what happens without it', () => {
-  it('denies in a fail-closed context, applying nothing and minting nothing', async () => {
-    // THE CONTROL that keeps every case above meaningful. If the ask were not real — if the tier
-    // were lower, or the gate were being skipped — this call would succeed exactly like the others.
-    // It also states the shipped posture plainly: under the daemon and in CI an accept with no
-    // credential DENIES, and the ways through are a terminal confirmation or session trust.
-    const built = host({ context: 'local-headless' })
+  // RE-SPELLED 2026-09-30 (432-13, D-14) from 'denies in a fail-closed context, applying nothing
+  // and minting nothing'. The op gate is gone: a headless or CI accept of a pre-432 record applies
+  // in the one call, with no confirmation and no credential.
+  it.each(['local-headless', 'ci'] as const)(
+    'C432-INVOKE-DIRECT: applies in a %s context with no confirmation',
+    async (context) => {
+      const built = host({ context })
 
-    await expect(accept(built, { proposalId: PROPOSAL_ID, always: true }))
-      .rejects.toBeInstanceOf(FunctionDeniedError)
-    expect(built.review.applied).toEqual([])
-    expect(built.grants.calls).toEqual([])
-    // The prompt was never reached: fail-closed fires ahead of it, which is the arm every
-    // non-interactive host lands on.
-    expect(built.confirmed).toEqual([])
-  })
+      await expect(accept(built, { proposalId: PROPOSAL_ID }))
+        .resolves.toMatchObject({ apply: { outcome: 'applied' } })
+      expect(built.review.applied).toEqual([PROPOSAL_ID])
+      expect(built.grants.calls).toEqual([])
+    },
+  )
 })
 
 describe('the decision is RECORDED where the apply is not itself a commit (394-18)', () => {

@@ -1,6 +1,6 @@
 // 423 Gap 1: runs.evidence over the production composition. No test installs a masking resolver;
 // every read below reaches its masking context only through the host's own cold read scope.
-import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { createServer } from 'node:http'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -180,7 +180,9 @@ describe('423 production read posture', () => {
     expect(await f.read('network')).toEqual(network)
     expect(await f.read('variables')).toEqual(variables)
     expect(fixtureBytes(f.root)).toEqual(before)
-    expect(readFileSync(join(f.agentQaRoot, 'execution_audit.jsonl'), 'utf8')).not.toContain(SECRET)
+    // 432-13: no op gate writes this file any more; if anything else does, it still holds no secret.
+    const auditPath = join(f.agentQaRoot, 'execution_audit.jsonl')
+    expect(existsSync(auditPath) ? readFileSync(auditPath, 'utf8') : '').not.toContain(SECRET)
   })
 
   it('COLD-EVIDENCE-HTTP serves readable masked evidence on the human and bearer doors and immutable bytes on the sha route', async () => {

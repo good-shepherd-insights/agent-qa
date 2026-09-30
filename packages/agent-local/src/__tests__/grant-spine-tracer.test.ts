@@ -1,5 +1,10 @@
 // The standing-grant spine, end to end through the real composition (Phase 391, PROP-01 / D-11).
 //
+// 2026-09-30 (432-13, D-14/D-15): THE SPINE HAS NO READER. `invokeFunction` has no gate, so no grant
+// is consulted: the headless apply commits with no grant, and appending a grant or a revoke changes
+// nothing about it. The two cells are re-spelled as that absence; the ledger's own append-only
+// property (both events survive, in order) is unchanged. 432-18 deletes the ledger.
+//
 // WHAT THIS FILE PROVES, and why it is one file rather than three. Before 391 no standing approval
 // could be consumed through the function layer at all, for two independent reasons that would each
 // have hidden the other:
@@ -38,7 +43,6 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import {
-  FunctionDeniedError,
   createFunctionRegistry,
   invokeFunction,
 } from '@vostride/agent-qa-agent'
@@ -46,7 +50,6 @@ import type { FunctionRegistry } from '@vostride/agent-qa-agent'
 import type { AuditSink, ExecutionAuditRow, GuardrailAuditRow } from '@vostride/agent-qa-safety'
 import {
   appendGrantLedgerEvents,
-  createStandingApprovalReader,
   grantsLedgerPath,
   publishBundleForTest,
   type BundleStoreConfig,
@@ -106,7 +109,7 @@ function capturingSink(): AuditSink & { rows: ExecutionAuditRow[] } {
   }
 }
 
-describe('a committed standing grant is consumed by the shipped gate, and a revoke takes it back', () => {
+describe('a committed standing grant is consumed by nothing (432-13)', () => {
   let root: string
   let knowledgeRoot: string
   let agentQaRoot: string
@@ -182,7 +185,6 @@ describe('a committed standing grant is consumed by the shipped gate, and a revo
         }),
       },
       auditSink: sink,
-      standingApprovalReader: () => createStandingApprovalReader({ knowledgeRoot }),
       resolveExecutionContext: () => 'local-headless',
     })
   }
@@ -215,41 +217,28 @@ describe('a committed standing grant is consumed by the shipped gate, and a revo
     })
   }
 
-  it('refuses the apply with no grant, commits it with one, and refuses it again after the revoke', async () => {
+  // RE-SPELLED 2026-09-30 (432-13) from 'refuses the apply with no grant, commits it with one, and
+  // refuses it again after the revoke'. The apply commits with no grant at all, and the grant and
+  // revoke append to a ledger nothing reads.
+  it('C432-INVOKE-DIRECT: commits the headless apply with no grant, and the ledger is never consulted', async () => {
     const recordId = publish()
     const registry = host()
     const actionClass = coveredActionClass(registry)
-
-    // The tier raise is what makes the ask reachable at all. Asserted from the declaration rather
-    // than assumed, because every leg below is meaningless at the mutating-local floor: that tier
-    // ALLOWS in every context, so all three legs would pass identically and prove nothing.
     expect(actionClass).toBe(`fn:${APPLY_FUNCTION_ID}`)
-    expect(
-      registry.list(CALLER).find((entry) => entry.id === APPLY_FUNCTION_ID)?.risk.declaredTier,
-    ).toBe('mutating-shared')
 
-    // A REAL proposal, minted through the propose verb, which stays at the local floor and is
-    // therefore unaffected by any of this — a proposal commits nothing.
     const proposalId = await propose(registry, recordId)
 
-    // ── LEG 1: no grant recorded. The ledger file does not even exist yet.
-    await expect(
-      invokeFunction(registry, APPLY_FUNCTION_ID, { proposalId }, CALLER),
-    ).rejects.toBeInstanceOf(FunctionDeniedError)
-    const denied = sink.rows.at(-1)
-    expect(denied?.action).toBe(actionClass)
-    expect(denied?.riskTier).toBe('mutating-shared')
-    expect(denied?.verdict).toBe('deny')
-    expect(denied?.outcome).toBe('fail-closed-denied')
-    expect(denied?.trustSource).toBeUndefined()
+    // ── LEG 1: no grant recorded, no ledger file — and the apply commits in the call.
+    const applied = (await invokeFunction(
+      registry,
+      APPLY_FUNCTION_ID,
+      { proposalId },
+      CALLER,
+    )) as KnowledgeApplyOutcomeDto
+    expect(applied.outcome).toBe('applied')
+    expect(sink.rows).toEqual([])
 
-    // Nothing dispatched, so the proposal is still there to be applied by leg 2. A refusal that had
-    // consumed the proposal would make leg 2 unable to tell an allow from an already-applied.
-    await expect(
-      invokeFunction(registry, APPLY_FUNCTION_ID, { proposalId }, CALLER),
-    ).rejects.toBeInstanceOf(FunctionDeniedError)
-
-    // ── LEG 2: the grant, through the real append API, addressed by id.
+    // ── LEG 2/3: a grant and then its revoke, through the real append API. Neither is read.
     append([
       {
         schemaVersion: CURRENT_GRANT_LEDGER_SCHEMA_VERSION,
@@ -261,25 +250,6 @@ describe('a committed standing grant is consumed by the shipped gate, and a revo
         proposalId,
       },
     ])
-
-    const applied = (await invokeFunction(
-      registry,
-      APPLY_FUNCTION_ID,
-      { proposalId },
-      CALLER,
-    )) as KnowledgeApplyOutcomeDto
-    // Dispatch was reached and the Curator's one commit path really ran.
-    expect(applied.outcome).toBe('applied')
-
-    const allowed = sink.rows.at(-1)
-    expect(allowed?.action).toBe(actionClass)
-    expect(allowed?.verdict).toBe('allow')
-    expect(allowed?.outcome).toBe('proceeded')
-    // The whole point: the ask was satisfied by the ledger, not by trust mode, not by a credential,
-    // and not by a prompt.
-    expect(allowed?.trustSource).toBe('standing-approval')
-
-    // ── LEG 3: the revoke, addressed by the SAME grant id and nothing else.
     append([
       {
         schemaVersion: CURRENT_GRANT_LEDGER_SCHEMA_VERSION,
@@ -289,20 +259,14 @@ describe('a committed standing grant is consumed by the shipped gate, and a revo
       },
     ])
 
-    // The proposal is applied now, so this call has a perfectly good already-applied answer waiting
-    // for it — and never reaches it, because the gate runs before dispatch. That is the assertion:
-    // the refusal below can only be the gate's.
+    // The proposal is applied now, so the same call answers its already-applied arm: the answer is
+    // dispatch's, and no gate row precedes it.
     await expect(
       invokeFunction(registry, APPLY_FUNCTION_ID, { proposalId }, CALLER),
-    ).rejects.toBeInstanceOf(FunctionDeniedError)
-    const refusedAgain = sink.rows.at(-1)
-    expect(refusedAgain?.verdict).toBe('deny')
-    expect(refusedAgain?.outcome).toBe('fail-closed-denied')
-    expect(refusedAgain?.trustSource).toBeUndefined()
+    ).resolves.toBeDefined()
+    expect(sink.rows).toEqual([])
 
-    // The committed artifact holds BOTH events, in the order they happened. A revoke that had
-    // rewritten or removed the grant line would leave a reviewer unable to see that an approval was
-    // ever given.
+    // The committed artifact still holds BOTH events, in the order they happened.
     const committed = readFileSync(grantsLedgerPath(knowledgeRoot), 'utf8')
       .split('\n')
       .filter((line) => line.trim().length > 0)
@@ -311,10 +275,10 @@ describe('a committed standing grant is consumed by the shipped gate, and a revo
     expect(committed.map((event) => event.grantId)).toEqual([GRANT_ID, GRANT_ID])
   }, 60_000)
 
-  it('leaves the apply refused when a grant covers a DIFFERENT action class', async () => {
-    // The negative that makes leg 2 above mean something. If any widening — a prefix, a family, a
-    // substring — had crept into either the reader's filter or the gate's match, this grant would
-    // satisfy the apply and the exact-match rule (D-04) would be a comment rather than a behaviour.
+  // RE-SPELLED 2026-09-30 (432-13) from 'leaves the apply refused when a grant covers a DIFFERENT
+  // action class'. No grant is matched against anything, so a neighbouring class leaves the apply
+  // committing exactly as no grant does.
+  it('commits the apply whatever class a committed grant names', async () => {
     const recordId = publish()
     const registry = host()
     const proposalId = await propose(registry, recordId)
@@ -325,16 +289,18 @@ describe('a committed standing grant is consumed by the shipped gate, and a revo
         kind: 'grant',
         at: GRANTED_AT,
         grantId: 'grant_tracer_neighbouring_class',
-        // A real sibling op's class, and a strict prefix of nothing: the point is that it is not
-        // the apply's class, and that near-miss is the only thing separating it from leg 2's grant.
         actionClass: 'fn:knowledge.forget',
         scope: STANDING_APPROVAL_SCOPE,
       },
     ])
 
-    await expect(
-      invokeFunction(registry, APPLY_FUNCTION_ID, { proposalId }, CALLER),
-    ).rejects.toBeInstanceOf(FunctionDeniedError)
-    expect(sink.rows.at(-1)?.outcome).toBe('fail-closed-denied')
+    const applied = (await invokeFunction(
+      registry,
+      APPLY_FUNCTION_ID,
+      { proposalId },
+      CALLER,
+    )) as KnowledgeApplyOutcomeDto
+    expect(applied.outcome).toBe('applied')
+    expect(sink.rows).toEqual([])
   }, 60_000)
 })

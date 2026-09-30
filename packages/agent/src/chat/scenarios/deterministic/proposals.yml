@@ -1,12 +1,16 @@
-# The tracer's alias, and still the whole inbox: `proposals` with nothing after it is the
-# question the word asks. The op's status/kind filters stay reachable through `/fn`, which is
-# the entire argument for `/fn` existing.
+# 432-13 (D-05/D-14): THE `proposals` INBOX ALIAS IS GONE, and this cell now measures its absence.
+#
+# Changes apply in the call, so there is no pending-decision inbox for a bare word to route to. The
+# table no longer resolves `proposals`; the hermetic lane's tripwire planner cannot route it either,
+# so the turn refuses by name with zero executions. A pre-432 record stays readable through
+# `/fn proposals.list` until the inbox is deleted. The id is kept so the retired route stays a
+# committed, measured absence rather than a deleted file.
 id: proposals
 class: deterministic
 lane: hermetic
 utterance: proposals
 expect:
-  kind: should_execute
-  executed: 1
-  ops:
-    - proposals.list
+  kind: fail_closed
+  executed: 0
+  namesClause: proposals
+  emitsSessionEvent: mark_unhandled

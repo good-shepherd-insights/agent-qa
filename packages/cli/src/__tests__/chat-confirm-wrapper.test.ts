@@ -263,3 +263,30 @@ describe('the chat confirm renders 391 two forms and mints through nothing of it
     expect(source).toContain('[y/a/N]')
   })
 })
+
+// 432-13 (D-14/D-15, C432-CHAT-DIRECT): the factory above survives until 432-16 deletes it, but no
+// door builds it. The chat command and the CLI host are read as source, comments stripped, so their
+// own history notes may still name what the code must not call.
+describe('no chat door constructs the chat confirm since 432-13', () => {
+  function code(...segments: string[]): string {
+    return readFileSync(join(__dirname, '..', ...segments), 'utf8')
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .split('\n')
+      .filter((line) => !line.trimStart().startsWith('//'))
+      .join('\n')
+  }
+
+  it('commands/chat.ts neither imports nor calls createChatConfirmPort', () => {
+    const chat = code('commands', 'chat.ts')
+    expect(chat).toContain('createChatCommand')
+    expect(chat).not.toContain('createChatConfirmPort')
+    expect(chat).not.toMatch(/chatConfirm\s*:/)
+  })
+
+  it('the CLI host forwards no confirm port into the composition', () => {
+    const host = code('composition', 'local-agent-host.ts')
+    expect(host).toContain('export function composeCliLocalAgent')
+    expect(host).not.toMatch(/\bconfirm:\s*input\.confirm\b/)
+    expect(host).not.toMatch(/\bchatConfirm:\s*input\.chatConfirm\b/)
+  })
+})

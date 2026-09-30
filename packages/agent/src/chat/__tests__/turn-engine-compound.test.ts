@@ -145,9 +145,7 @@ interface Harness {
   readonly invocations: Invocation[]
   readonly ordering: string[]
   readonly plannerCalls: number
-  /** What `/pin` was actually asked to record. EMPTY is the CR-04 assertion (392-11). */
-  readonly pinCalls: string[]
-  /** What `/model` was actually asked to switch to. */
+  /** What `/model` was actually asked to switch to. EMPTY is the CR-04 assertion (392-11). */
   readonly modelCalls: string[]
   runTurn(input: AgentAskInput): Promise<AgentAskResult>
 }
@@ -160,21 +158,19 @@ interface HarnessOptions {
   /**
    * Bind SPY directive handlers, plus the config thunk the `/model` event path needs.
    *
-   * A directive's side effects are the pin overlay mutation, the model override and the two events
-   * they produce — none of which is observable through the invoke spy, because a directive never
-   * travels the function layer. So CR-04's claim ("nothing happened on a refused turn") needs its
-   * own seat, and this is it.
+   * A directive's side effects are the model override and the event it produces — neither of
+   * which is observable through the invoke spy, because a directive never travels the function
+   * layer. So CR-04's claim ("nothing happened on a refused turn") needs its own seat, and this is
+   * it. (432-13: `/pin` is gone; its handler seat went with it.)
    */
   readonly directives?: boolean
   /**
-   * The `/pin` argument the spy handler REFUSES, by throwing before it records (392-14, E3).
+   * The `/model` argument the spy REFUSES in its pre-flight (392-14, E3; `/pin` until 432-13).
    *
-   * The composed host's holder does exactly this: `pin-overlay.ts` raises `ChatPinError` for a
-   * class no registered op answers to, and the engine's catch turns that into the refusal path.
-   * The fixture needs its own copy because the claim under test is about the ORDER a batch is
-   * applied in, and a batch needs a second directive that says no.
+   * The composed host resolves a named model in `validate` and throws for one it cannot resolve,
+   * and the engine turns that into the refusal path. A batch needs a second directive that says no.
    */
-  readonly unpinnable?: string
+  readonly unresolvableModel?: string
   /**
    * What the invoke seat ANSWERS, per function id (394-14).
    *
@@ -256,7 +252,6 @@ function harness(options: HarnessOptions = {}): Harness {
   const log = memoryLog()
   const invocations: Invocation[] = []
   const ordering: string[] = []
-  const pinCalls: string[] = []
   const modelCalls: string[] = []
   let plannerCalls = 0
   // The model the session is under RIGHT NOW. The `/model` handler moves it and the config thunk
@@ -327,32 +322,15 @@ function harness(options: HarnessOptions = {}): Harness {
           // ignores the id and the spies stay the same objects — what is under test here is the
           // ORDER effects happen in, and the per-session keying has its own composed differential.
           directives: (): ChatDirectiveHandlers => ({
-            // THE BATCH PRE-FLIGHT, mirroring the composition: it asks the same question `pin`
-            // answers and records NOTHING, so a turn whose second directive is unpinnable is
+            // THE BATCH PRE-FLIGHT, mirroring the composition: it asks the same question `model`
+            // answers and records NOTHING, so a turn whose second directive is unresolvable is
             // refused before the first one is applied. A fixture whose validate accepted
             // everything would leave the engine's new pass unexercised on the arm it exists for.
             validate: (directive, argument): void => {
               ordering.push('directive:validate')
-              if (directive === 'pin' && argument === options.unpinnable) {
-                throw new Error(
-                  `Cannot pin "${argument ?? ''}": "fn:${argument ?? ''}" is not an action class `
-                    + 'this host declares',
-                )
+              if (directive === 'model' && argument === options.unresolvableModel) {
+                throw new Error(`Cannot switch to "${argument ?? ''}": this host cannot resolve it`)
               }
-            },
-            pin: (actionClass: string): string => {
-              // Throws BEFORE recording, exactly as the shipped holder does: a refused pin leaves
-              // no entry, so `pinCalls` measures what was actually carried out rather than what
-              // was attempted.
-              if (actionClass === options.unpinnable) {
-                throw new Error(
-                  `Cannot pin "${actionClass}": "fn:${actionClass}" is not an action class this `
-                    + 'host declares',
-                )
-              }
-              ordering.push('directive:pin')
-              pinCalls.push(actionClass)
-              return actionClass
             },
             model: (name: string): ChatModelDirectiveOutcome => {
               ordering.push('directive:model')
@@ -384,7 +362,6 @@ function harness(options: HarnessOptions = {}): Harness {
     log,
     invocations,
     ordering,
-    pinCalls,
     modelCalls,
     get plannerCalls() {
       return plannerCalls
@@ -401,7 +378,7 @@ describe('turn engine stage 3/4: atomicity, ordered execution, receipts, per-sta
   describe('D-10 — a fail-closed verdict costs the turn everything and executes nothing', () => {
     it('performs ZERO invocations when a clause is unroutable', async () => {
       const run = harness()
-      const result = await run.runTurn({ message: 'proposals and write a test for two factor auth' })
+      const result = await run.runTurn({ message: '/fn proposals.list and write a test for two factor auth' })
 
       expect(result.status).toBe('fail_closed')
       // The measurement D-10 is actually about. Not "the failing clause was skipped" — the
@@ -413,7 +390,7 @@ describe('turn engine stage 3/4: atomicity, ordered execution, receipts, per-sta
 
     it('appends a mark_unhandled event naming the clause (D-15/D-18)', async () => {
       const run = harness()
-      await run.runTurn({ message: 'proposals and write a test for two factor auth' })
+      await run.runTurn({ message: '/fn proposals.list and write a test for two factor auth' })
 
       const unhandled = run.log.events.find((event) => event.kind === 'mark_unhandled')
       expect(unhandled).toBeDefined()
@@ -450,7 +427,7 @@ describe('turn engine stage 3/4: atomicity, ordered execution, receipts, per-sta
           ],
         },
       })
-      const result = await run.runTurn({ message: 'proposals and file an issue for it' })
+      const result = await run.runTurn({ message: '/fn proposals.list and file an issue for it' })
 
       expect(result.status).toBe('fail_closed')
       expect(run.invocations).toHaveLength(0)
@@ -460,27 +437,31 @@ describe('turn engine stage 3/4: atomicity, ordered execution, receipts, per-sta
 
   // CR-04, the gap round (392-11). THE DIRECTIVE LOOP USED TO RUN BEFORE THE VERDICT, so a turn
   // whose second clause was unroutable returned `fail_closed` — with the message "nothing in the
-  // request was carried out" — while the pin it named was already recorded, irrevocably, and an
-  // `approval_decision` row was already on the append-only log. Every existing case in this file
-  // measured effects through the INVOKE spy, and a directive never travels the function layer, so
-  // `executed == 0` stayed true through the defect. These cases measure the other seat.
+  // request was carried out" — while the directive it named was already in force. Every existing
+  // case in this file measured effects through the INVOKE spy, and a directive never travels the
+  // function layer, so `executed == 0` stayed true through the defect. These cases measure the
+  // other seat. (432-13: the shipped probe was `/pin`, now an ordinary unroutable clause; the
+  // effectful directive left is `/model`, and no turn writes an `approval_decision` row.)
   describe('CR-04 — no directive side effect precedes the reconciliation verdict (D-10)', () => {
-    it('records NO pin when the turn is refused, though it names one', async () => {
+    // RE-SPELLED 2026-09-30 (432-13) from 'records NO pin when the turn is refused, though it names
+    // one'. `/pin` is no longer a directive, so the same utterance is two unroutable clauses; the
+    // claim that survives is that a refused turn leaves no approval row and invokes nothing.
+    it('records NO approval row when a turn naming the retired /pin is refused', async () => {
       const run = harness({ directives: true })
       const result = await run.runTurn({
         message: '/pin fn:runs.start and write a test for 2FA',
       })
 
       // ONE assertion over three facts, deliberately: the STATUS was already right before this fix
-      // and the two effects were already wrong, so a suite that asserted them in sequence would
-      // report the defect one line at a time and hide how the three read together.
+      // and the effects were already wrong, so a suite that asserted them in sequence would report
+      // the defect one line at a time and hide how the facts read together.
       expect({
         status: result.status,
-        pinned: run.pinCalls,
+        invoked: run.invocations.length,
         approvalDecisions: run.log.events.filter((event) => event.kind === 'approval_decision')
           .length,
-      }).toEqual({ status: 'fail_closed', pinned: [], approvalDecisions: 0 })
-      expect(result.unhandled?.clause).toBe('write a test for 2FA')
+      }).toEqual({ status: 'fail_closed', invoked: 0, approvalDecisions: 0 })
+      expect(result.unhandled?.clause).toBe('/pin fn:runs.start')
     })
 
     it('applies NO model override when the turn is refused', async () => {
@@ -498,16 +479,18 @@ describe('turn engine stage 3/4: atomicity, ordered execution, receipts, per-sta
       }).toEqual({ status: 'fail_closed', switched: [], verbModelChanges: 0 })
     })
 
+    // RE-SPELLED 2026-09-30 (432-13): the directive carried out is `/model`, and the op beside it
+    // is reached through `/fn` now that the `proposals` alias is gone.
     it('still carries the directive out on the execute arm, and its line still leads', async () => {
       const run = harness({ directives: true })
-      const result = await run.runTurn({ message: '/pin fn:runs.start and proposals' })
+      const result = await run.runTurn({ message: '/model claude-fast and /fn proposals.list' })
 
       expect(result.status).toBe('completed')
-      expect(run.pinCalls).toEqual(['fn:runs.start'])
-      expect(run.log.events.filter((event) => event.kind === 'approval_decision')).toHaveLength(1)
+      expect(run.modelCalls).toEqual(['claude-fast'])
+      expect(run.log.events.filter((event) => event.kind === 'approval_decision')).toHaveLength(0)
       expect(run.invocations.map((call) => call.functionId)).toEqual([PROPOSALS_LIST])
-      // Directive lines lead the answer — the person asked for the pin FIRST (D-11's order).
-      expect(result.answer?.split('\n')[0]).toContain('fn:runs.start')
+      // Directive lines lead the answer — the person asked for the model switch FIRST (D-11).
+      expect(result.answer?.split('\n')[0]).toContain('model: claude-fast')
     })
 
     it('completes a turn that is ENTIRELY directives, emitting the verb-sourced event', async () => {
@@ -551,23 +534,25 @@ describe('turn engine stage 3/4: atomicity, ordered execution, receipts, per-sta
   // them in sequence. A refusal that carried something out is worse than a refusal that lied about
   // it, because the person is told the session is unchanged and it is not.
   describe('E3 — the directive BATCH is refused whole: no earlier directive survives a later one', () => {
-    it('records NO pin when a LATER directive in the same turn refuses', async () => {
-      const run = harness({ directives: true, unpinnable: 'nonsense.notacapability' })
+    // RE-SPELLED 2026-09-30 (432-13) from 'records NO pin when a LATER directive in the same turn
+    // refuses': the batch is two `/model` directives, the second of which the pre-flight refuses.
+    it('applies NO earlier directive when a LATER directive in the same turn refuses', async () => {
+      const run = harness({ directives: true, unresolvableModel: 'nonsense-model' })
       const result = await run.runTurn({
-        message: '/pin fn:runs.start and /pin nonsense.notacapability',
+        message: '/model claude-fast and /model nonsense-model',
       })
 
       expect({
         status: result.status,
-        pinned: run.pinCalls,
+        switched: run.modelCalls,
         approvalDecisions: run.log.events.filter((event) => event.kind === 'approval_decision')
           .length,
-      }).toEqual({ status: 'fail_closed', pinned: [], approvalDecisions: 0 })
-      expect(result.unhandled?.clause).toBe('/pin nonsense.notacapability')
+      }).toEqual({ status: 'fail_closed', switched: [], approvalDecisions: 0 })
+      expect(result.unhandled?.clause).toBe('/model nonsense-model')
     })
 
-    it('applies NO model override when a LATER directive in the same turn refuses', async () => {
-      const run = harness({ directives: true, unpinnable: 'nonsense.notacapability' })
+    it('applies NO model override when a LATER clause in the same turn refuses', async () => {
+      const run = harness({ directives: true, unresolvableModel: 'nonsense-model' })
       const result = await run.runTurn({
         message: '/model claude-fast and /pin nonsense.notacapability',
       })
@@ -591,13 +576,11 @@ describe('turn engine stage 3/4: atomicity, ordered execution, receipts, per-sta
 
       expect({
         status: result.status,
-        pinned: run.pinCalls,
         approvalDecisions: run.log.events.filter((event) => event.kind === 'approval_decision')
           .length,
         unhandled: result.unhandled?.clause,
       }).toEqual({
         status: 'fail_closed',
-        pinned: [],
         approvalDecisions: 0,
         unhandled: '/pin fn:runs.start',
       })
@@ -643,11 +626,11 @@ describe('turn engine stage 3/4: atomicity, ordered execution, receipts, per-sta
   describe('D-11 — utterance order, stop on failure, receipts for every clause', () => {
     it('executes table-bound clauses in utterance order', async () => {
       const run = harness()
-      const result = await run.runTurn({ message: 'proposals and status' })
+      const result = await run.runTurn({ message: '/fn proposals.list and status' })
 
       expect(result.status).toBe('completed')
       expect(run.invocations.map((call) => call.functionId)).toEqual([PROPOSALS_LIST, RUNS_LIST])
-      expect(result.receipts.map((receipt) => receipt.clause)).toEqual(['proposals', 'status'])
+      expect(result.receipts.map((receipt) => receipt.clause)).toEqual(['/fn proposals.list', 'status'])
     })
 
     it('stops the chain on a runtime failure and reports executed/failed/not-run', async () => {
@@ -656,7 +639,7 @@ describe('turn engine stage 3/4: atomicity, ordered execution, receipts, per-sta
         planned: { toolCalls: [{ toolName: toToolName(RUNS_DIGEST), input: { runId: 'RUN-1' } }] },
       })
       const result = await run.runTurn({
-        message: 'proposals and status and summarise the last failure',
+        message: '/fn proposals.list and status and summarise the last failure',
       })
 
       expect(result.status).toBe('failed')
@@ -671,7 +654,7 @@ describe('turn engine stage 3/4: atomicity, ordered execution, receipts, per-sta
 
     it('carries the function layer refusal NAME verbatim on the failed receipt', async () => {
       const run = harness({ failOn: RUNS_LIST })
-      const result = await run.runTurn({ message: 'proposals and status' })
+      const result = await run.runTurn({ message: '/fn proposals.list and status' })
 
       expect(result.receipts[1]).toMatchObject({
         status: 'failed',
@@ -682,7 +665,7 @@ describe('turn engine stage 3/4: atomicity, ordered execution, receipts, per-sta
 
     it('logs a clause_receipt per clause, not only for the ones that ran', async () => {
       const run = harness({ failOn: PROPOSALS_LIST })
-      await run.runTurn({ message: 'proposals and status' })
+      await run.runTurn({ message: '/fn proposals.list and status' })
 
       const receipts = run.log.events.filter((event) => event.kind === 'clause_receipt')
       expect(receipts.map((event) => event.status)).toEqual(['failed', 'not-run'])
@@ -711,7 +694,7 @@ describe('turn engine stage 3/4: atomicity, ordered execution, receipts, per-sta
       // wrapper answers `failed`/`unclassifiable-result` as a RETURN. Scripting a verdict literal
       // into the invoke seat would have pinned a verdict no producer can emit.
       const run = harness({ results: { [PROPOSALS_LIST]: { inbox: 'not the contract' } } })
-      const result = await run.runTurn({ message: 'proposals and status' })
+      const result = await run.runTurn({ message: '/fn proposals.list and status' })
 
       // NON-VACUITY: the first clause really did come back with the fail-closed verdict rather than
       // dying on the way, so the three assertions below are about the STOP GATE and not about a
@@ -753,7 +736,7 @@ describe('turn engine stage 3/4: atomicity, ordered execution, receipts, per-sta
         },
         results: { [AUTHORING_DRAFT_WRITE_FUNCTION_ID]: AUTHORING_REFUSED_RESULT },
       })
-      const result = await run.runTurn({ message: `${AUTHORING_UTTERANCE} and proposals` })
+      const result = await run.runTurn({ message: `${AUTHORING_UTTERANCE} and /fn proposals.list` })
 
       // NON-VACUITY: the refusal arm really was reached, through the op's own declared classifier.
       expect(result.receipts[0]).toMatchObject({
@@ -785,7 +768,7 @@ describe('turn engine stage 3/4: atomicity, ordered execution, receipts, per-sta
 
     it('appends ONE clause_result per clause that RAN, carrying the payload verbatim', async () => {
       const run = harness()
-      const result = await run.runTurn({ message: 'proposals and status' })
+      const result = await run.runTurn({ message: '/fn proposals.list and status' })
 
       expect(result.status).toBe('completed')
       const persisted = run.log.events.filter((event) => event.kind === 'clause_result')
@@ -810,7 +793,7 @@ describe('turn engine stage 3/4: atomicity, ordered execution, receipts, per-sta
         planned: { toolCalls: [{ toolName: toToolName(RUNS_DIGEST), input: { runId: 'RUN-1' } }] },
       })
       const result = await run.runTurn({
-        message: 'proposals and status and summarise the last failure',
+        message: '/fn proposals.list and status and summarise the last failure',
       })
 
       expect(result.receipts.map((receipt) => receipt.status))
@@ -825,7 +808,7 @@ describe('turn engine stage 3/4: atomicity, ordered execution, receipts, per-sta
       // a sentence; the territory travels beside it. A payload that had leaked onto the receipt
       // would be the prohibition this whole vocabulary is built on, satisfied by a sibling kind.
       const run = harness()
-      await run.runTurn({ message: 'proposals and status' })
+      await run.runTurn({ message: '/fn proposals.list and status' })
 
       for (const event of run.log.events.filter((row) => row.kind === 'clause_receipt')) {
         expect(Object.keys(event).sort()).toEqual([
@@ -840,7 +823,7 @@ describe('turn engine stage 3/4: atomicity, ordered execution, receipts, per-sta
       const run = harness({
         planned: { toolCalls: [{ toolName: toToolName(RUNS_DIGEST), input: { runId: 'RUN-1' } }] },
       })
-      const result = await run.runTurn({ message: 'proposals and summarise the last failure' })
+      const result = await run.runTurn({ message: '/fn proposals.list and summarise the last failure' })
 
       expect(result.status).toBe('completed')
       expect(run.invocations.map((call) => call.caller.origin)).toEqual(['human', 'agent'])
@@ -851,7 +834,7 @@ describe('turn engine stage 3/4: atomicity, ordered execution, receipts, per-sta
       const run = harness({
         planned: { toolCalls: [{ toolName: toToolName(RUNS_DIGEST), input: { runId: 'RUN-1' } }] },
       })
-      await run.runTurn({ message: 'proposals and summarise the last failure' })
+      await run.runTurn({ message: '/fn proposals.list and summarise the last failure' })
 
       const origins = run.log.events
         .filter((event) => event.kind === 'clause_receipt')
@@ -869,7 +852,7 @@ describe('turn engine stage 3/4: atomicity, ordered execution, receipts, per-sta
         plan: input.mapped.map((resolved) => ({ ...resolved, source: 'planner' as const })),
       })
       const run = harness({ reconcile: smuggling })
-      await run.runTurn({ message: 'proposals' })
+      await run.runTurn({ message: '/fn proposals.list' })
 
       expect(run.invocations.map((call) => call.caller.origin)).toEqual(['agent'])
     })
@@ -954,14 +937,14 @@ describe('turn engine stage 3/4: atomicity, ordered execution, receipts, per-sta
 
     it('never consults the planner when stage 1 resolved every clause', async () => {
       const run = harness({ planned: { toolCalls: [] } })
-      await run.runTurn({ message: 'proposals and status' })
+      await run.runTurn({ message: '/fn proposals.list and status' })
 
       expect(run.plannerCalls).toBe(0)
     })
 
     it('opens with the user message, closes with the boundary, and fsyncs once', async () => {
       const run = harness()
-      await run.runTurn({ message: 'proposals and status' })
+      await run.runTurn({ message: '/fn proposals.list and status' })
 
       const kinds = kindsOf(run.log.events)
       expect(kinds[0]).toBe('user_message')
@@ -1132,7 +1115,7 @@ describe('D-18 exception — the authoring receipt carries the fan-out report (3
     const run = harness({
       results: { [PROPOSALS_LIST]: { ...PROPOSALS_LIST_RESULT, fanOut: HAPPY_REPORT } },
     })
-    const result = await run.runTurn({ message: 'proposals' })
+    const result = await run.runTurn({ message: '/fn proposals.list' })
 
     expect(result.receipts[0]?.outcome).toBe('0 proposal(s) in the inbox')
     expect(result.receipts[0]?.outcome).not.toContain(FAN_OUT_PHRASES.reportLead)
@@ -1218,7 +1201,7 @@ describe('the authoring sessionRef stamp (394-17)', () => {
     // stamp applied to every invocation would pass both cells above and red this one.
     const run = harness({ results: { [PROPOSALS_LIST]: { ok: true } } })
 
-    await run.runTurn({ message: 'proposals' })
+    await run.runTurn({ message: '/fn proposals.list' })
 
     expect(run.invocations[0]?.functionId).toBe(PROPOSALS_LIST)
     expect(run.invocations[0]?.input).not.toHaveProperty('sessionRef')
@@ -1322,7 +1305,7 @@ describe('the authoring funnel window stamp (394-19)', () => {
   it('stamps NO window onto any other op — the blast radius, both stamps', async () => {
     const run = harness({ results: { [PROPOSALS_LIST]: { ok: true } } })
 
-    await run.runTurn({ message: 'proposals' })
+    await run.runTurn({ message: '/fn proposals.list' })
 
     expect(run.invocations[0]?.input).not.toHaveProperty('window')
     expect(run.invocations[0]?.input).not.toHaveProperty('sessionRef')

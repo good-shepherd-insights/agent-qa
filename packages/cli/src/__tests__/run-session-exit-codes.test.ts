@@ -114,9 +114,11 @@ describe('both CLI run paths exit through the verdict map (T-361-08)', () => {
 // the member executor, wires `--trust-session`, and disposes the context LAST (Pitfall 8). The
 // identity mint (`buildIdentityMasking()`) no longer feeds the suite path's RunConfig.masking.
 describe('the suite path seeds a real run MaskingContext inside runSafetyScope (SEAM-01/03, 362-06)', () => {
-  it('registers the --trust-session flag and reads config.safety?.trustMode', () => {
-    expect(runSource).toContain('--trust-session')
-    expect(runSource).toContain('config.safety?.trustMode')
+  // RE-SPELLED 2026-09-30 (432-13, D-14/D-15): was 'registers the --trust-session flag and reads
+  // config.safety?.trustMode'. Nothing asks, so there is nothing for trust to satisfy.
+  it('registers no --trust-session flag and reads no config.safety?.trustMode', () => {
+    expect(runSource).not.toMatch(/\.option\(\s*'--trust-session'/)
+    expect(runSource).not.toContain('config.safety?.trustMode')
   })
 
   it('wraps at least one run body in runSafetyScope with a real seeded run MaskingContext', () => {
@@ -245,10 +247,12 @@ describe('the single-test path activates the seams with no identity mint remaini
     expect(runSource).toContain('safetyHooks: singleSafetyHooks')
   })
 
-  it('routes trust to the gate only via --trust-session / config.safety.trustMode (no env-var bypass, D-15)', () => {
-    expect(count(runSource, 'opts.trustSession === true || config.safety?.trustMode === true')).toBeGreaterThanOrEqual(2)
-    // And the drive reads trust from its options and from nowhere else.
-    expect(driveSource).toContain('options.trust?.trustMode === true')
+  // RE-SPELLED 2026-09-30 (432-13): was 'routes trust to the gate only via --trust-session /
+  // config.safety.trustMode'. No trust reaches a run at all now; the env-var guards stay.
+  it('routes no trust to a run: no flag, no config read, no env var (432-13)', () => {
+    expect(count(runSource, 'opts.trustSession')).toBe(0)
+    expect(driveSource).not.toContain('options.trust')
+    expect(driveSource).toContain('trustMode: false')
     // No env var feeds trustMode — guard against a smuggled AGENT_QA_TRUST-style implicit grant.
     expect(runSource).not.toMatch(/trustMode:\s*[^,\n)]*process\.env/)
     expect(runSource).not.toMatch(/process\.env\.[A-Z_]*TRUST/)

@@ -1,58 +1,46 @@
-// The one policy-gated in-process run invocation core (Phase 401, D-02).
+// The one in-process run invocation core (Phase 401, D-02; approval removed 432-13).
 //
 // WHAT THIS FILE IS. Every local run trigger — `agent-qa run`, the chat/MCP `runs.start` op, the
 // daemon drainer, the dashboard's run button — resolves to ONE function here. It owns the ORDER a
-// run is started in, and the order is the whole point:
+// run is started in:
 //
 //   refuse unhonourable request fields
-//     → resolve the run id
+//     → resolve the run id (refuse an unminted or colliding one)
 //     → resolve the target's declared class (a config read; no network)
 //     → refuse a production target the config has not opted into (432-03, D-18)
-//     → build the risk descriptor
-//     → THE ONE evaluate()
-//     → deny ⇒ throw RunDeniedError and touch NOTHING else
-//     → allow ⇒ persistence ports → assemble → startRun → onSession → await the run
+//     → persistence ports → assemble → startRun → onSession → await the run
 //
-// THE GATE DECIDES BEFORE ANYTHING TOUCHES THE TARGET. Assembly is where the run-start baseline
-// probe lives (it fetches the target URL) and where the build-ordinal counter is advanced (a
-// durable write), and assembly is called from exactly one line below — after the verdict. A denied
-// run therefore leaves no probe, no ordinal bump, no run directory events and no browser: the only
-// trace it leaves is its execution-audit row, which is the trace a denial is supposed to leave.
-// This is a STRUCTURAL property rather than a promise — `assembleRun` is a port this file calls
-// once, and `run-invocation-core.test.ts` asserts a recording assembler is never invoked on deny.
+// NOTHING ASKS (432-13, D-01/D-14/D-15). There is no approval ladder, no confirm port and no session
+// trust here any more: a non-production run starts in every execution context, and production is
+// refused in plain words unless the same config says `allowProduction: true`. Every refusal still
+// lands BEFORE assembly — assembly is where the run-start baseline probe fetches the target and
+// where the build-ordinal counter is advanced — so a refused run leaves no probe, no ordinal bump, no
+// run directory and no browser. `assembleRun` is a port this file calls once, below every refusal.
 //
-// EXACTLY ONE evaluate() CALL-SITE, AND THE BUILD ENFORCES IT. This file is the third entry in
-// `packages/arch/src/lint/evaluate-pin.ts`'s named set (FUNC-02 / D-12 / SC2): a fourth file in
-// this workspace that acquires the gate fails `pnpm validate:arch`, and an entry that stops
-// acquiring it fails as stale. The pin polices which FILES may hold gate power; the count of
-// call-sites INSIDE this file is pinned by the core's own suite.
+// THE ONE `startRun` OWNER. `packages/arch/src/lint/startrun-pin.ts` pins this file as the only
+// production file that starts a run in-process.
 //
 // IT NEVER READS AMBIENT CONTEXT (D-07). There is no `resolveRunExecutionContext()` call here, no
 // `getActiveExecutionContext`, no ALS read, no `process.env` sniff for who is asking. The door
-// that knows supplies `executionContext`, the confirm port, and the trust — because that is what
-// keeps this seam RPC-shaped for 402's authed service, and because a core that resolved its own
-// context would answer "am I interactive?" for a machine rather than for a caller. A daemon
-// serving a browser and a terminal on the same machine need different answers.
+// that knows supplies `executionContext`, and the run records it: a daemon serving a browser and a
+// terminal on the same machine carries two different answers.
 
 import { existsSync } from 'node:fs'
 import { dirname } from 'node:path'
 
-import { evaluate } from '@vostride/agent-qa-safety'
-import type { AuditSink, ConfirmPort, StandingApprovalReader } from '@vostride/agent-qa-safety'
-import { STANDING_APPROVAL_SCOPE } from '@vostride/agent-qa-schema'
+import type { AuditSink } from '@vostride/agent-qa-safety'
 import type {
   GateRemedy,
   RunId,
   RunSession,
   RunsStartInput,
-  TrustCredential,
 } from '@vostride/agent-qa-schema'
 import { startRun } from '@vostride/agent-qa-runner'
 import type { PostVerdictPort, RunConfig } from '@vostride/agent-qa-runner'
 
 import { buildRunAuditSink, buildRunPorts, runDirFor } from './run-composition.js'
 import type { RunExecutionContext, RunPersistencePorts } from './run-composition.js'
-import { buildProductionRefusal, buildRunDisclosure, buildRunRiskDescriptor } from './run-risk.js'
+import { buildProductionRefusal } from './run-risk.js'
 import type { RunTargetClass } from './run-risk.js'
 
 /**
@@ -84,11 +72,10 @@ export type {
  * (`local-agent-host.ts`). This core can express both — and honouring either would be the defect
  * RESEARCH Pitfall 7 names:
  *
- *   `executionContext` — a caller that could name the context its own run is evaluated in could
- *     claim `local-interactive` from a CI job and walk past the fail-closed arm. The gate's context
- *     comes from the composition (D-07) and from nowhere else. The FIELD survives on the contract
- *     as the label a run RECORDS, and it is refused here until some door has a use for recording a
- *     label that differs from the context it was decided in.
+ *   `executionContext` — the context a run records comes from the composition that owns the door
+ *     (D-07) and from nowhere else. The FIELD survives on the contract as the label a run RECORDS,
+ *     and it is refused here until some door has a use for recording a label that differs from the
+ *     context it was started in.
  *
  *   `scope` — resolves from the config's own target/product resolution. Accepting an override
  *     would let a caller address one product's run ledger while running another's.
@@ -114,7 +101,7 @@ export class RunRequestFieldRefusedError extends Error {
       `agent-qa cannot start a run with: ${refusedFields.join(', ')}. ` +
         'scope resolves from the config the run is started against, and executionContext is ' +
         'supplied by the composition that owns the door — a caller-named execution context ' +
-        'would be a caller naming the terms of its own authorization.',
+        'would be a caller relabelling where its run came from.',
     )
     this.name = 'RunRequestFieldRefusedError'
   }
@@ -155,7 +142,7 @@ export class RunIdNotMintedError extends Error {
  * acknowledgment law makes that worse rather than better: `runs.start` reads every ack field back
  * off the run's durable record specifically so a host cannot fabricate one, and a colliding id
  * satisfies that read with a PRIOR run's record. So the refusal has to land before the record is
- * touched at all — which is why it sits in the identity step, above the gate and above assembly.
+ * touched at all — which is why it sits in the identity step, above assembly.
  *
  * THE TEST IS THE RUN'S OWN DIRECTORY, derived through `runDirFor` — the same composition
  * `buildRunAuditSink` uses — because every artifact a collision could tamper with lives inside it.
@@ -174,14 +161,12 @@ export class RunIdAlreadyInUseError extends Error {
 }
 
 /**
- * The policy gate refused this run, carrying the decision's own three fields.
+ * This run was refused before it started, carrying the refusal's own three fields.
  *
- * REASON, REMEDIES AND NEUTRAL REASON TRAVEL TOGETHER, on `FunctionDeniedError`'s shape (400 D-15).
- * The reason is the canonical prose that also lands in the execution-audit row; the remedies are
- * structured data each door projects for its own reader (`remediesRenderableBy`), and the neutral
- * reason is the same decision said without naming any surface's affordance. A door renders; it
- * never composes a denial sentence of its own, or Phase 399's defect returns — one surface's
- * instructions shown to a reader on another.
+ * Since 432-13 the one producer is the production refusal (`refuseProductionWithoutOptIn`): its
+ * reason is the plain sentence naming the target and the config line, it carries no remedies, and
+ * its neutral reason is the same sentence. The shape stays `FunctionDeniedError`'s (400 D-15) until
+ * 432-19 removes the remedy vocabulary; a door renders the reason and never composes its own.
  */
 export class RunDeniedError extends Error {
   constructor(
@@ -199,21 +184,18 @@ export class RunDeniedError extends Error {
  * What one resolution of this request's targets answers (401-14).
  *
  * THE CLASS AND THE NAMES COME BACK TOGETHER because they are two renderings of ONE pass over the
- * run's members: `targetClass` is the most-restrictive fold that decides the tier, `targetNames`
- * the declared names of the members it folded over. A door that answered them from two passes
- * could hand the gate a tier resolved from one reading of the config and a preview resolved from
- * another, and the person approving would be reading a sentence about a different run.
+ * run's members: `targetClass` is the most-restrictive fold over them, `targetNames` the declared
+ * names of the members it folded over. A door that answered them from two passes could refuse on
+ * one reading of the config while the run it describes came from another.
  */
 export interface RunTargetDeclaration {
-  /** The DECLARED class the gate classifies — a config read, never a probe (D-06). */
+  /** The DECLARED class of the run's members — a config read, never a probe (D-06). */
   readonly targetClass: RunTargetClass
   /**
    * The distinct declared target names, in first-appearance member order.
    *
-   * DISPLAY-ONLY (T-401-G3b). It reaches the classifier through nothing: the descriptor carries it
-   * inside `disclosure`, which `RiskActionDescriptor`'s own schema law puts outside classification.
-   * Members that declare no target contribute nothing, which is how an all-undeclared run arrives
-   * here as an empty list rather than as a list of invented names.
+   * DISPLAY-ONLY (T-401-G3b). Members that declare no target contribute nothing, which is how an
+   * all-undeclared run arrives here as an empty list rather than as a list of invented names.
    */
   readonly targetNames: readonly string[]
   /**
@@ -280,9 +262,9 @@ export interface RunAssemblyContext {
   readonly runId: string
   /** The caller's request, refused fields already rejected. */
   readonly request: RunsStartInput
-  /** The context the gate decided in — the same value, so a run cannot record a different one. */
+  /** The context the door carried — the same value, so a run cannot record a different one. */
   readonly executionContext: RunExecutionContext
-  /** The per-run stamped audit sink the gate wrote its row to. ONE sink per run, not two. */
+  /** The per-run stamped audit sink the run's guardrail rows land in. ONE sink per run, not two. */
   readonly auditSink: AuditSink
   /** The durable ports, rooted at `<configDir>/.agent-qa` (Pitfall 5 — the evidence check's root). */
   readonly ports: RunPersistencePorts
@@ -290,7 +272,7 @@ export interface RunAssemblyContext {
   readonly configDir: string
   /** The config file this run resolves against (request override honoured). */
   readonly configPath: string
-  /** The declared class the gate classified. Handed over so an assembler need not re-resolve it. */
+  /** The declared class the door resolved. Handed over so an assembler need not re-resolve it. */
   readonly targetClass: RunTargetClass
 }
 
@@ -305,7 +287,7 @@ export interface RunAssemblyContext {
  *
  * EVERYTHING WITH A SIDE EFFECT BELONGS HERE, not in the door's pre-flight: the baseline probe
  * (network), the build-ordinal advance (a durable write), the quarantine fold. This function is
- * called after the verdict, so a denial costs the target nothing.
+ * called below every refusal, so a refused run costs the target nothing.
  */
 export type RunAssembler = (context: RunAssemblyContext) => Promise<RunConfig> | RunConfig
 
@@ -315,12 +297,11 @@ export interface RunInvocationCoreOptions {
   /** The project's runtime root, i.e. `<configDir>/.agent-qa`. */
   readonly agentQaRoot: string
   /**
-   * The context every gate decision at this door is taken in (D-07).
+   * The context this door's runs are started in and record (D-07).
    *
-   * CALLER-RESOLVED, NEVER SNIFFED. The CLI resolves its TTY posture, the dashboard host claims
-   * interactive only while a confirm channel is live (Pitfall 3), CI passes its own. A core that
-   * detected this itself would be answering a question about the machine when the question is
-   * about the door.
+   * CALLER-RESOLVED, NEVER SNIFFED. The CLI resolves its TTY posture, the daemon carries
+   * `local-headless`, CI passes its own. A core that detected this itself would be answering a
+   * question about the machine when the question is about the door.
    */
   readonly executionContext: RunExecutionContext
   /**
@@ -328,24 +309,19 @@ export interface RunInvocationCoreOptions {
    *
    * INJECTED BECAUSE THE CONFIG LIVES BEHIND THE DOOR, not because any of it is negotiable. Target
    * resolution needs the CLI's `resolveTarget`/`AgentQaConfig` vocabulary, which this package may
-   * not name. The resolver's `targetClass` is a bare `'local' | 'shared' | undefined` — it cannot
-   * name a risk TIER, and `buildRunRiskDescriptor` (not the door) decides what a class means.
-   * `undefined` is undeclared and classifies shared.
+   * not name. `undefined` is undeclared, which is not production.
    *
-   * ONE RESOLUTION, TWO FIELDS, AND THAT IS THE POINT OF THE SHAPE. `targetNames` is DISPLAY-ONLY
-   * — it reaches the descriptor through `disclosure`, which the classifier never reads — but it
-   * must describe the same members the class was folded over, so it travels back from the same
-   * pass rather than from a second call a door made later. Two resolutions of "what is this run
-   * about to drive" are free to disagree, and a preview that disagreed with the tier a person is
-   * being asked about is worse than no preview at all.
+   * ONE RESOLUTION, ALL FIELDS, AND THAT IS THE POINT OF THE SHAPE. The class, the names, the
+   * production members and the opt-in come back from one pass, so the production refusal is asked
+   * about the members the run will actually drive.
    *
    * Must not touch the target, and must not probe. A resolver that read a URL would put a network
-   * call before the gate, which is the one ordering this file exists to hold.
+   * call before the production refusal, which is the one ordering this file exists to hold.
    */
   readonly resolveTargetDeclaration: (
     request: RunsStartInput,
   ) => RunTargetDeclaration | Promise<RunTargetDeclaration>
-  /** Build the `RunConfig`. Called ONLY on an allow verdict. */
+  /** Build the `RunConfig`. Called ONLY once every refusal has passed. */
   readonly assembleRun: RunAssembler
   /**
    * Mint a run id when the request carries none.
@@ -371,21 +347,8 @@ export interface RunInvocationCoreOptions {
    */
   readonly isMintedRunId: (value: string) => boolean
   /**
-   * Session trust for this invocation. `trustMode` is `--trust-session`/`config.safety.trustMode`
-   * parity; `credential` is the POLICY-FUT-01 parameter 402's authed service fills in.
-   */
-  readonly trust?: { readonly trustMode?: boolean; readonly credential?: TrustCredential }
-  /**
-   * How this door asks a person. ABSENT LEAVES THE GATE'S `DENY_CONFIRM` DEFAULT, which is the
-   * correct behaviour for a door with nobody at it — the conditional-spread idiom below is what
-   * keeps "no confirm port" from becoming "confirm port that is undefined".
-   */
-  readonly confirm?: ConfirmPort
-  /** The standing-approval read side. The D-08 dispatch-grant overlay slots in here (plan 08). */
-  readonly reader?: StandingApprovalReader
-  /**
-   * The per-run audit sink. Absent ⇒ built here from the run's own dir, so the gate's row lands
-   * beside the run's events. A door that already built one (the CLI needs it for `runSafetyScope`
+   * The per-run audit sink. Absent ⇒ built here from the run's own dir, so the run's guardrail rows
+   * land beside its events. A door that already built one (the CLI needs it for `runSafetyScope`
    * before it calls in) passes the SAME instance rather than making a second one.
    */
   readonly auditSink?: AuditSink
@@ -406,8 +369,8 @@ export interface RunInvocationCoreOptions {
    * the daemon door forgot: a door that supplies no factory gets a run whose wire honestly reads
    * `detached`, and a door that supplies one cannot then forget to wire it in.
    *
-   * Called ONCE per run, after the gate has allowed and the persistence ports exist, so a denied
-   * run never composes one. Absent ⇒ no `postVerdict` member reaches `RunConfig.ports` at all
+   * Called ONCE per run, after every refusal has passed and the persistence ports exist, so a
+   * refused run never composes one. Absent ⇒ no `postVerdict` member reaches `RunConfig.ports` at all
    * (conditional spread, never an `undefined` field), and the shell reports `detached` with no
    * warning — which is the truth about a host from which nothing will be drained.
    */
@@ -418,7 +381,7 @@ export interface RunInvocationCoreOptions {
 }
 
 /**
- * The one policy-gated in-process execution core.
+ * The one in-process run execution core.
  *
  * Returns a `RunExecutionPort` (the shape `createLocalRunInvocation` binds `runs.start` over), so
  * the op's evidence check — read the run's own event log back, refuse an empty one — applies to
@@ -455,11 +418,10 @@ export function createRunInvocationCore(
       //   FREEDOM — does it already name a run? Asked against the run's OWN directory, through the
       //     same `runDirFor` the audit sink is rooted at.
       //
-      // ORDER IS THE CONTROL. Both refusals sit above the declaration resolve, above the audit
-      // sink, above the gate and above assembly — so a refused request leaves no audit row, no run
-      // directory, no build-ordinal bump and, above all, not one byte changed in the run it named.
-      // A refusal that half-wrote into somebody else's run directory would be the defect
-      // performing itself.
+      // ORDER IS THE CONTROL. Both refusals sit above the declaration resolve, above the audit sink
+      // and above assembly — so a refused request leaves no audit row, no run directory, no
+      // build-ordinal bump and, above all, not one byte changed in the run it named. A refusal that
+      // half-wrote into somebody else's run directory would be the defect performing itself.
       if (request.runId !== undefined) {
         refuseUnavailableRunId({
           configDir,
@@ -470,15 +432,14 @@ export function createRunInvocationCore(
       const runId = request.runId ?? options.mintRunId()
 
       // (3) The declaration, from the config itself. Cheap, and it must stay cheap: this is the
-      // last thing that happens before the gate. The class decides the tier; the names only
-      // describe it to whoever is asked.
+      // last thing that happens before a run may be refused.
       const declaration = await options.resolveTargetDeclaration(request)
       const targetClass = declaration.targetClass
 
-      // (3a) PRODUCTION, BEFORE ANY EFFECT (432-03, D-18). Above the audit sink, the gate, the
-      // persistence ports and assembly, so a refused production run leaves no run directory, no
-      // audit row, no probe, no build ordinal and no adapter. It asks nothing and offers nothing:
-      // the config opts in, or the run does not start.
+      // (3a) PRODUCTION, BEFORE ANY EFFECT (432-03, D-18). Above the audit sink, the persistence
+      // ports and assembly, so a refused production run leaves no run directory, no audit row, no
+      // probe, no build ordinal and no adapter. It asks nothing and offers nothing: the config opts
+      // in, or the run does not start. Since 432-13 it is the only refusal of a well-formed request.
       refuseProductionWithoutOptIn(runId, declaration)
 
       const auditSink =
@@ -489,36 +450,7 @@ export function createRunInvocationCore(
           executionContext: options.executionContext,
         })
 
-      // (4) THE ONE GATE CALL. Mirrors `invoke.ts`'s shipped call-site down to the conditional
-      // spreads, with the one difference D-07 requires: the context is the composition's, never a
-      // resolver this file reached for. `actionScope` is the pinned constant both the grant mint
-      // and this call read — a caller-named scope could widen any grant into a match.
-      const policy = await evaluate(
-        // 401-14 (W-1): the descriptor carries a DISCLOSURE. This parameter had exactly one
-        // production call-site — this one — and it passed nothing, so every run:start ever put
-        // in front of a person said `run:start` and no more: approve a run against a shared
-        // target, without being told which target. The preview the browser renders IS this
-        // string (`confirm-registry.ts` — the frame's `preview` is the action's `disclosure`).
-        buildRunRiskDescriptor(targetClass, buildRunDisclosure(targetClass, declaration.targetNames)),
-        options.executionContext,
-        {
-          actionScope: STANDING_APPROVAL_SCOPE,
-          ...(options.trust?.trustMode === undefined ? {} : { trustMode: options.trust.trustMode }),
-          ...(options.trust?.credential === undefined
-            ? {}
-            : { credential: options.trust.credential }),
-        },
-        {
-          auditSink,
-          ...(options.reader === undefined ? {} : { reader: options.reader }),
-          ...(options.confirm === undefined ? {} : { confirm: options.confirm }),
-        },
-      )
-      if (policy.verdict === 'deny') {
-        throw new RunDeniedError(runId, policy.reason, policy.remedies, policy.neutralReason)
-      }
-
-      // (5) Assembly — the first line that may touch the target, and it is below the verdict.
+      // (4) Assembly — the first line that may touch the target, and it is below every refusal.
       const ports = buildRunPorts({ configDir, runId })
       // 404 D-05/D-10: the post-verdict step, built ONCE per run and spread into the ports the
       // assembler receives — so it rides the same hop `handoffStore` does and reaches
@@ -538,7 +470,7 @@ export function createRunInvocationCore(
         targetClass,
       })
 
-      // (6) Start. The markers ride straight from the request onto the RunConfig — the chain that
+      // (5) Start. The markers ride straight from the request onto the RunConfig — the chain that
       // used to be request → port → argv → command flag → RunConfig is now request → RunConfig,
       // and only the literal `true` carries (a `false` is a refusal, not a synonym for absence).
       // `runId` is stamped over whatever the assembler returned so the id this call acknowledges

@@ -169,7 +169,7 @@ describe('the composed compound turn: complete, or loud (CHAT-01 / D-10 / D-11 /
     // all need a reference that would have to be seeded first, and seeding one would put fixture
     // construction between the utterance and the assertion. Two DIFFERENT ops rather than the same
     // alias twice, so the order assertion has something to be wrong about.
-    const UTTERANCE = 'proposals and status'
+    const UTTERANCE = '/fn proposals.list and status'
 
     it('plans and executes exactly two clauses, in utterance order, with the planner untouched', async () => {
       const tripwire = plannerTripwire('fixture:never-called')
@@ -188,7 +188,7 @@ describe('the composed compound turn: complete, or loud (CHAT-01 / D-10 / D-11 /
         PROPOSALS_LIST_FUNCTION_ID,
         RUNS_LIST_FUNCTION_ID,
       ])
-      expect(result.receipts.map((receipt) => receipt.clause)).toEqual(['proposals', 'status'])
+      expect(result.receipts.map((receipt) => receipt.clause)).toEqual(['/fn proposals.list', 'status'])
       // The centre of the claim: a model was bound and was never reached.
       expect(tripwire.calls()).toBe(0)
     })
@@ -243,7 +243,7 @@ describe('the composed compound turn: complete, or loud (CHAT-01 / D-10 / D-11 /
       // No model bound: the headless posture, where an unresolved clause has nowhere left to go.
       const host = compose()
 
-      const result = await ask(host, 'proposals and write a test for two factor auth')
+      const result = await ask(host, '/fn proposals.list and write a test for two factor auth')
 
       expect(result.status).toBe('fail_closed')
       // The clause that COULD have run did not. This is the assertion `compound/` scenarios pin
@@ -256,7 +256,7 @@ describe('the composed compound turn: complete, or loud (CHAT-01 / D-10 / D-11 /
     it('records the refusal as a mark_unhandled event (D-15 field rate)', async () => {
       const host = compose()
 
-      const result = await ask(host, 'proposals and write a test for two factor auth')
+      const result = await ask(host, '/fn proposals.list and write a test for two factor auth')
       const events = sessionEvents(result.sessionId)
 
       expect(events.filter((event) => event.kind === 'mark_unhandled')).toHaveLength(1)
@@ -271,13 +271,13 @@ describe('the composed compound turn: complete, or loud (CHAT-01 / D-10 / D-11 /
   describe('D-04 — config drift is an event', () => {
     it('emits model_change with from/to when a session reopens under a different model', async () => {
       const first = compose({ chatModel: plannerTripwire('fixture:model-a').model })
-      const opened = await ask(first, 'proposals')
+      const opened = await ask(first, '/fn proposals.list')
       await first.close()
       hosts.splice(hosts.indexOf(first), 1)
 
       // The SAME session, re-opened by a host whose re-read configuration resolves another model.
       const second = compose({ chatModel: plannerTripwire('fixture:model-b').model })
-      const resumed = await ask(second, 'proposals', opened.sessionId)
+      const resumed = await ask(second, '/fn proposals.list', opened.sessionId)
 
       expect(resumed.sessionId).toBe(opened.sessionId)
       const drift = sessionEvents(opened.sessionId).filter((event) => event.kind === 'model_change')
@@ -292,8 +292,8 @@ describe('the composed compound turn: complete, or loud (CHAT-01 / D-10 / D-11 /
 
     it('emits nothing when the same host reopens the same session', async () => {
       const host = compose({ chatModel: plannerTripwire('fixture:model-a').model })
-      const opened = await ask(host, 'proposals')
-      await ask(host, 'proposals', opened.sessionId)
+      const opened = await ask(host, '/fn proposals.list')
+      await ask(host, '/fn proposals.list', opened.sessionId)
 
       const events = sessionEvents(opened.sessionId)
       expect(events.filter((event) => event.kind === 'model_change')).toHaveLength(0)
@@ -314,11 +314,11 @@ describe('the composed compound turn: complete, or loud (CHAT-01 / D-10 / D-11 /
       }
       const host = compose({ chatAccounting: accounting as unknown as ChatTokenAccounting })
 
-      const opened = await ask(host, 'proposals')
+      const opened = await ask(host, '/fn proposals.list')
       // Turn 1 replayed an empty conversation, so nothing could be compacted and nothing is logged.
       expect(sessionEvents(opened.sessionId).filter((e) => e.kind === 'compaction')).toHaveLength(0)
 
-      await ask(host, 'proposals', opened.sessionId)
+      await ask(host, '/fn proposals.list', opened.sessionId)
       const events = sessionEvents(opened.sessionId)
       const compactions = events.filter((event) => event.kind === 'compaction')
       expect(compactions).toHaveLength(1)
@@ -342,7 +342,7 @@ describe('the composed compound turn: complete, or loud (CHAT-01 / D-10 / D-11 /
       })
       const host = compose({ chatReconcile: refuseEverything })
 
-      const result = await ask(host, 'proposals')
+      const result = await ask(host, '/fn proposals.list')
 
       expect(result.status).toBe('fail_closed')
       expect(result.unhandled?.reason).toBe('the injected strategy refused')
@@ -351,7 +351,7 @@ describe('the composed compound turn: complete, or loud (CHAT-01 / D-10 / D-11 /
     it('uses the shipped override when the option is absent, so absence is the safe default', async () => {
       const host = compose()
 
-      const result = await ask(host, 'proposals')
+      const result = await ask(host, '/fn proposals.list')
 
       expect(result.status).toBe('completed')
       expect(result.receipts[0]).toMatchObject({ functionId: PROPOSALS_LIST_FUNCTION_ID })

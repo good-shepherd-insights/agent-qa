@@ -251,6 +251,9 @@ describe('the CLI run-session module exports presentation ONLY (385-08 / D-13)',
 // the timing and the host hands its decoration in, which is precisely the seam where that order can
 // invert without anything failing to compile. Pinned observably: the live seam burns wall-clock in
 // `pauseLive`, so if the decoration ever ends up INSIDE the timing, that burn lands in the total.
+// RE-SPELLED 2026-09-30 (432-13): neither decorator is built any more — the run hooks read no
+// presentation confirm — so the host decoration never runs and nothing is ever timed. The claim that
+// survives is the one this cell guarded: host rendering never lands in `confirmPausedMs()`.
 describe('human decoration composes OUTSIDE the pause timing (385-08 / D-10 / D-11)', () => {
   it('does not count the host prompt rendering against the measured human pause', async () => {
     const PAUSE_BURN_MS = 60
@@ -271,19 +274,20 @@ describe('human decoration composes OUTSIDE the pause timing (385-08 / D-10 / D-
       appendGuardrailAudit() { /* no-op */ },
     }
 
+    let asked = 0
     const { safetyHooks, confirmPausedMs } = buildRunSafetyHooks({
       auditSink,
       executionContext: 'local-interactive',
       trustMode: false,
-      confirm: { surface: 'tty-prompt', ask: async () => true },
+      confirm: { surface: 'tty-prompt', ask: async () => { asked += 1; return true } },
       maskingContext: ctx,
       live,
     })
 
-    const result = await safetyHooks.runToolCallAsync({ name: 'delete_record', recognized: true })
-    expect(result.action).toBe('allow')
+    await safetyHooks.runToolCallAsync({ name: 'delete_record', recognized: true })
 
-    // The burn happened — the decoration really did run — but it is not in the measured total.
-    expect(confirmPausedMs()).toBeLessThan(PAUSE_BURN_MS / 2)
+    // The port was never asked, so no decoration ran and nothing was timed.
+    expect(asked).toBe(0)
+    expect(confirmPausedMs()).toBe(0)
   })
 })

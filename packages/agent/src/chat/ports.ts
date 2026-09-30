@@ -206,11 +206,9 @@ export interface CallerMint {
   /**
    * The session is minted ONTO the caller (392 plan 13, W-03).
    *
-   * Origin says WHO is acting; the session says WHICH CONVERSATION they are acting in, and the
-   * gate's deny overlay needs the second to answer "is this class pinned for this session". Both
-   * are composition-minted for the same reason: a caller that could name its own session could
-   * shed a pin by naming a different one — which the deny-only overlay makes harmless, and which
-   * is still not a power a caller should be handed.
+   * Origin says WHO is acting; the session says WHICH CONVERSATION they are acting in. Both are
+   * composition-minted: a caller that could name its own session could attribute its calls to a
+   * conversation it is not in. (432-13: the session deny overlay that also read it is gone.)
    */
   forStage(stage: ChatBindingStage, sessionId: string): FunctionCaller
 }
@@ -321,22 +319,20 @@ export interface ChatModelDirectiveOutcome {
 }
 
 /**
- * The session directives, as handlers a composition binds (D-04 / D-21).
+ * The session directives, as handlers a composition binds (D-04).
  *
  * EVERY MEMBER IS OPTIONAL, and an absent one is not a gap: the engine's refusal arm names an
- * unbound directive by name, which is the honest answer for a build that recognises `/pin` and
+ * unbound directive by name, which is the honest answer for a build that recognises `/model` and
  * cannot carry it out. A host that binds none behaves exactly as every host did before this seam
  * existed.
  *
- * A HANDLER MAY THROW, AND THROWING IS AN ANSWER. `/pin nonsense` is a recognised directive whose
- * ARGUMENT names nothing this host has, and the overlay refuses it by name rather than accepting a
- * pin that would then deny nothing. That refusal travels the engine's ONE refusal path, so it
- * leaves the same `mark_unhandled` row every other refused clause does.
+ * A HANDLER MAY THROW, AND THROWING IS AN ANSWER. That refusal travels the engine's ONE refusal
+ * path, so it leaves the same `mark_unhandled` row every other refused clause does.
+ *
+ * 432-13 (D-14): `/pin` and its handler are gone with the op gate they tightened.
  */
 export interface ChatDirectiveHandlers {
   readonly model?: (name: string) => ChatModelDirectiveOutcome | Promise<ChatModelDirectiveOutcome>
-  /** Records the pin and returns the NORMALISED class actually recorded (392-05's law). */
-  readonly pin?: (actionClass: string) => string | Promise<string>
   readonly help?: () => string
   readonly quit?: () => string
   /**
@@ -344,19 +340,15 @@ export interface ChatDirectiveHandlers {
    *
    * The engine runs this over EVERY collected directive and only then applies the first one, so a
    * throw here refuses the whole turn with zero effects. That is D-10's own shape — reconciliation
-   * completes before the first side effect — applied to the one class of effect it did not yet
-   * cover: a directive BATCH. Applying entries one at a time and returning on the first refusal
-   * left the earlier entry's irrevocable pin and its `approval_decision` row standing on a turn
-   * the person was told carried nothing out (392-VERIFICATION round 2, E3/E3b).
+   * completes before the first side effect — applied to a directive BATCH.
    *
    * IT MUTATES NOTHING, and that is the member's whole contract. Asking whether a directive CAN be
-   * carried out is a different act from carrying it out, exactly as `directiveBindingRefusal` is —
-   * a `validate` that recorded a pin or applied an override would be the defect wearing the fix's
-   * name. Resolving and caching a value the apply will reuse is permitted, because a cache is not
-   * a session's state; recording into the session's own deny set is not.
+   * carried out is a different act from carrying it out, exactly as `directiveBindingRefusal` is.
+   * Resolving and caching a value the apply will reuse is permitted, because a cache is not a
+   * session's state.
    *
    * OPTIONAL, so a host that publishes none is exactly as safe as it was: `runDirective`'s catch
-   * remains the belt, and the only thing such a host loses is the batch guarantee it never had.
+   * remains the belt, and the only thing such a host loses is the batch guarantee.
    */
   readonly validate?: (
     directive: ChatDirectiveName,

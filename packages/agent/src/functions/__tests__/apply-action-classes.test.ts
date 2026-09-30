@@ -38,7 +38,6 @@ import type {
   ProposalInboxEntryDto,
   ProposalKind,
   ProposalsAcceptOutput,
-  RiskActionDescriptor,
   StandingGrantsPort,
 } from '@vostride/agent-qa-schema'
 import type { AuditSink } from '@vostride/agent-qa-safety'
@@ -313,7 +312,6 @@ describe('accept-with-always over a test-draft — the refusal is the protected 
   it('applies the draft, asks the mint for the TABLE’s class, and is refused as protected', async () => {
     const grants = protectionHonestGrants()
     const draftApply = recordingDraftApply()
-    const confirmed: RiskActionDescriptor[] = []
     const entry = testDraftEntry()
 
     const registry = createFunctionRegistry({
@@ -332,17 +330,8 @@ describe('accept-with-always over a test-draft — the refusal is the protected 
         draftApply: draftApply.port,
       },
       auditSink: noOpSink(),
-      // `mutating-shared` asks in EVERY context, and two of the gate's five doors are permanently
-      // shut for this op (no trust mode through `invokeFunction`, no standing approval over a
-      // protected class). The interactive door is the production path the CLI binds.
+      // 432-13 (D-14): no confirm port. `invokeFunction` asks nobody.
       resolveExecutionContext: () => 'local-interactive',
-      confirm: {
-        surface: 'tty-prompt',
-        ask: (action: RiskActionDescriptor) => {
-          confirmed.push(action)
-          return true
-        },
-      },
     })
 
     const answer = await invokeFunction(
@@ -365,8 +354,6 @@ describe('accept-with-always over a test-draft — the refusal is the protected 
       kind: 'protected-class',
       actionClass: PROPOSALS_ACCEPT_ACTION_CLASS,
     })
-    // The ask arm really ran, and ran about this action.
-    expect(confirmed.map((action) => action.name)).toEqual([PROPOSALS_ACCEPT_ACTION_CLASS])
   })
 
   it('the accept stays protected and human-origin — the resolution does not unprotect it', () => {

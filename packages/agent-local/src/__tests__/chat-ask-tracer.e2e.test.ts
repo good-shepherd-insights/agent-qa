@@ -66,7 +66,10 @@ const MODEL: JobModelCapability = {
 
 const MINT_IDENTITY = (filePath: string): string => filePath
 
-describe('the 392 tracer: agent-qa ask "proposals", end to end over the composed host', () => {
+// 432-13 (D-05/D-14): the tracer's utterance was the bare `proposals` alias, which left chat
+// resolution with the inbox. The same op is reached through the one `/fn` branch, and every claim
+// below (table resolution, human origin, the durable JSONL shape, resume) is unchanged.
+describe('the 392 tracer: agent-qa ask "/fn proposals.list", end to end over the composed host', () => {
   let root: string
   let agentQaRoot: string
   let host: LocalAgentHost
@@ -111,15 +114,15 @@ describe('the 392 tracer: agent-qa ask "proposals", end to end over the composed
     return readFileSync(path, 'utf8').split('\n').filter((line) => line !== '')
   }
 
-  it('CHAT-01/D-06: the deterministic table resolves "proposals" and the clause executes', async () => {
-    const result = await ask('proposals')
+  it('CHAT-01/D-06: the deterministic table resolves "/fn proposals.list" and the clause executes', async () => {
+    const result = await ask('/fn proposals.list')
 
     expect(result.status).toBe('completed')
     expect(result.receipts).toHaveLength(1)
     // The id is IMPORTED, never a literal: an op renamed at its declaration must break this
     // assertion rather than leave it agreeing with a string nothing dispatches any more.
     expect(result.receipts[0]).toMatchObject({
-      clause: 'proposals',
+      clause: '/fn proposals.list',
       functionId: PROPOSALS_LIST_FUNCTION_ID,
       status: 'executed',
       // RESEARCH Pitfall 1: a stage-1 table hit is a person typing, so the composition mints
@@ -131,7 +134,7 @@ describe('the 392 tracer: agent-qa ask "proposals", end to end over the composed
   })
 
   it('CHAT-05/D-18: the turn is on disk as JSONL with a versioned header and a boundary marker', async () => {
-    const result = await ask('proposals')
+    const result = await ask('/fn proposals.list')
     const lines = sessionLines(result.sessionId)
 
     const header = JSON.parse(lines[0]!) as ChatSessionHeader
@@ -189,10 +192,10 @@ describe('the 392 tracer: agent-qa ask "proposals", end to end over the composed
   })
 
   it('CHAT-05/D-17: a second turn appends to the same session rather than rewriting it', async () => {
-    const first = await ask('proposals')
+    const first = await ask('/fn proposals.list')
     const afterFirst = sessionLines(first.sessionId)
 
-    const second = await ask('proposals', first.sessionId)
+    const second = await ask('/fn proposals.list', first.sessionId)
     expect(second.sessionId).toBe(first.sessionId)
 
     const afterSecond = sessionLines(first.sessionId)
@@ -203,7 +206,7 @@ describe('the 392 tracer: agent-qa ask "proposals", end to end over the composed
   })
 
   it('D-17/T-392-01: an unknown session id is a typed refusal, never a fresh create', async () => {
-    await expect(ask('proposals', 'chat-19700101-000000-zzzz')).rejects.toThrow(
+    await expect(ask('/fn proposals.list', 'chat-19700101-000000-zzzz')).rejects.toThrow(
       /chat-19700101-000000-zzzz/,
     )
   })

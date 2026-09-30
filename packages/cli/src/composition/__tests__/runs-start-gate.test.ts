@@ -1,5 +1,9 @@
 // THE FN/CHAT/MCP DOOR'S `runs.start` GATE (Phase 401 plan 05 — D-01/D-05/D-06/D-07/D-16).
 //
+// SINCE 432-13 there is no gate on this road: the op-level gate and the core's `evaluate()` are
+// gone, and the one refusal left is an un-opted-in production target. The history below is kept
+// as written; the cells were re-spelled where they measured a decision that no longer exists.
+//
 // WHAT IS UNDER TEST is the door a caller actually reaches: `composeCliLocalAgent` → the 384
 // registry → `invokeFunction` → the REAL op-level gate → the bound run invocation → this host's
 // DEFAULT run execution → the in-process drive → the core's ONE `evaluate()`. Nothing on that path
@@ -22,7 +26,7 @@
 // is paired with an allow control differing in EXACTLY ONE field.
 
 import { createHash } from 'node:crypto'
-import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, readdirSync, statSync } from 'node:fs'
 import { dirname, join, relative, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { Readable, Writable } from 'node:stream'
@@ -36,17 +40,14 @@ import {
   RunIdAlreadyInUseError,
   RunIdNotMintedError,
 } from '@vostride/agent-qa-agent-local'
-import type { RunInvocationCoreOptions } from '@vostride/agent-qa-agent-local'
 import {
   getActiveExecutionContext,
   setActiveExecutionContextResolver,
 } from '@vostride/agent-qa-safety'
-import { STANDING_APPROVAL_SCOPE } from '@vostride/agent-qa-schema'
 import type { RunStartAcknowledgement, RunsStartInput } from '@vostride/agent-qa-schema'
 
 import { CLI_FUNCTION_CALLER, composeCliLocalAgent } from '../local-agent-host.js'
 import type { ComposeCliLocalAgentInput } from '../local-agent-host.js'
-import { runInProcessCliRun } from '../in-process-run-execution.js'
 import {
   CountingTarget,
   auditRows,
@@ -58,7 +59,8 @@ import {
 import type { AuditRow } from './in-process-run-fixture.js'
 
 /**
- * The audit row, plus the one field this plan's cells turn on.
+ * The audit row, plus the one field this plan's cells turned on. Since 432-13 no row is written on
+ * this road at all; the type stays because `opAuditRows` still reads the file to say so.
  *
  * `trustSource` is what `resolveAsk` stamps when a standing approval, a credential or session trust
  * carried an ask — the ONLY trace a consumed grant leaves on a row, and therefore the whole of the
@@ -102,7 +104,7 @@ function pinEmptyBrowsersRoot(fixture: Fixture): void {
 async function invokeRunsStart(
   fixture: Fixture,
   request: RunsStartInput,
-  door: Partial<Pick<ComposeCliLocalAgentInput, 'resolveExecutionContext' | 'confirm'>> = {},
+  door: Partial<Pick<ComposeCliLocalAgentInput, 'resolveExecutionContext'>> = {},
 ): Promise<RunStartAcknowledgement> {
   pinEmptyBrowsersRoot(fixture)
   const { registry } = composeCliLocalAgent({
@@ -122,20 +124,13 @@ async function invokeRunsStart(
 async function invokeRunsStartOutcome(
   fixture: Fixture,
   request: RunsStartInput,
-  door: Partial<Pick<ComposeCliLocalAgentInput, 'resolveExecutionContext' | 'confirm'>> = {},
+  door: Partial<Pick<ComposeCliLocalAgentInput, 'resolveExecutionContext'>> = {},
 ): Promise<{ ack?: RunStartAcknowledgement; error?: unknown }> {
   try {
     return { ack: await invokeRunsStart(fixture, request, door) }
   } catch (error) {
     return { error }
   }
-}
-
-/** The one run-gate row. Exactly one, or the cell is reading a run it did not mean to. */
-function theRunGateRow(fixture: Fixture): GateAuditRow {
-  const rows = (auditRows(fixture) as GateAuditRow[]).filter((row) => row.action === 'run:start')
-  expect(rows).toHaveLength(1)
-  return rows[0]!
 }
 
 // ---- ambient channels, varied against the door's own answer (D-07) ---------------------------
@@ -208,16 +203,19 @@ describe('C432-DOOR-NONPRODUCTION — the host door starts a non-production run 
   )
 })
 
-describe('the fn/MCP door refuses an ungated run and acks a gated one (401-05, D-16)', () => {
-  it('THE FN-DOOR DENIAL — an UNDECLARED target from a fail-closed context, five artifacts', async () => {
+// RE-SPELLED 2026-09-30 (432-13). This describe was the run gate's five-artifact denial and its
+// allow control, the D-07 crossing pair, the MCP posture (`confirm: undefined` refuses to ask), the
+// two-gates adjacency cell and the grant-name mechanism pair. Every one of them measured a decision
+// that no longer exists: the op carries no gate (C432-INVOKE-DIRECT), the run core evaluates nothing
+// (C432-PRODUCTION-BEFORE-EFFECTS), and no door builds a confirm port. What survives is the one
+// refusal left and its five artifacts, paired with an allow control differing in one field, plus the
+// stdout-silence half of the MCP posture — which is now a property of every door, not of a flag.
+describe('the fn/MCP door refuses only an un-opted-in production run (401-05, D-16; 432-13)', () => {
+  it('THE FN-DOOR DENIAL — a PRODUCTION target the config has not opted into, five artifacts', async () => {
     const target = new CountingTarget()
     await target.listen()
     try {
-      // No `environment:` line at all — the D-06 undeclared case, which classifies SHARED. The
-      // allow control below writes `environment: local` and changes nothing else.
-      const fixture = createInProcessFixture({ origin: target.origin })
-      // The ambient says "there is a person here". The door says otherwise, and the door is what
-      // the gate reads.
+      const fixture = createInProcessFixture({ origin: target.origin, environment: 'production' })
       pinAmbient('local-interactive', false)
 
       const { ack, error } = await invokeRunsStartOutcome(
@@ -227,44 +225,30 @@ describe('the fn/MCP door refuses an ungated run and acks a gated one (401-05, D
       )
 
       expect(ack).toBeUndefined()
-      // THE TYPED REFUSAL RECEIPT, asserted on its FIELDS. The op does not re-wrap it (D-05:
-      // `runs-start.ts` is untouched), and it does not need to: `RunDeniedError` already carries
-      // the gate's reason, its STRUCTURED remedies and the surface-neutral reason, which is the
-      // whole of what a receipt is for.
       expect(error).toBeInstanceOf(RunDeniedError)
       const denial = error as RunDeniedError
-      expect(denial.remedies.length).toBeGreaterThan(0)
-      for (const remedy of denial.remedies) {
-        expect(typeof remedy.kind).toBe('string')
-        expect(remedy.kind.length).toBeGreaterThan(0)
-      }
       expect(denial.neutralReason.length).toBeGreaterThan(0)
-
-      // (a) the audit row's OUTCOME field, never a message substring
-      const row = theRunGateRow(fixture)
-      expect(row.outcome).toBe('fail-closed-denied')
-      expect(row.verdict).toBe('deny')
-      expect(row.riskTier).toBe('mutating-shared')
-      expect(row.executionContext).toBe('local-headless')
-      // (b) THE RUN NEVER STARTED — `runStarted` is seq 1 of any run that began at all
+      // (a) no decision row at either gate
+      expect(auditRows(fixture)).toEqual([])
+      expect(opAuditRows(fixture)).toEqual([])
+      // (b) the run never started
       expect(eventTypes(fixture)).toEqual([])
       // (c) the durable assembly side effect never happened
       expect(buildOrdinalsExist(fixture)).toBe(false)
       // (d) nobody knocked on the target
       expect(target.hits).toEqual([])
-      // (e) the reason the caller sees is READ BACK off the row, not typed into this cell — which
-      // pins the door to RENDERING the gate's decision rather than composing one of its own.
-      expect(denial.reason).toBe(row.reason)
+      // (e) the reason names the production target
+      expect(denial.reason).toContain(fixture.targetName)
     } finally {
       await target.close()
     }
   }, 120_000)
 
-  it('THE ALLOW CONTROL — one field different (environment: local) and the run is acknowledged', async () => {
+  it('THE ALLOW CONTROL — one field different (environment: shared) and the run is acknowledged', async () => {
     const target = new CountingTarget()
     await target.listen()
     try {
-      const fixture = createInProcessFixture({ origin: target.origin, environment: 'local' })
+      const fixture = createInProcessFixture({ origin: target.origin, environment: 'shared' })
       pinAmbient('local-interactive', false)
 
       const { ack, error } = await invokeRunsStartOutcome(
@@ -274,104 +258,25 @@ describe('the fn/MCP door refuses an ungated run and acks a gated one (401-05, D
       )
 
       expect(error).toBeUndefined()
-      expect(ack).toBeDefined()
-      // THE ACK IS READ OFF THE DURABLE RECORD, which is the op's own anti-fabrication law: the
-      // run id it names has a run directory, and its `testCount` is the member set that record
-      // carries rather than the request's pattern count.
       expect(typeof ack!.runId).toBe('string')
-      expect(ack!.runId.length).toBeGreaterThan(0)
       expect(ack!.testCount).toBe(1)
       expect(runDirs(fixture).map((dir) => dir.split('/').pop())).toContain(ack!.runId)
-
-      const row = theRunGateRow(fixture)
-      expect(row.outcome).toBe('proceeded')
-      expect(row.riskTier).toBe('mutating-local')
       expect(eventTypes(fixture)).toContain('runStarted')
       expect(buildOrdinalsExist(fixture)).toBe(true)
       expect(target.hits).toEqual(['/in-process-thing'])
+      expect(auditRows(fixture)).toEqual([])
+      expect(opAuditRows(fixture)).toEqual([])
     } finally {
       await target.close()
     }
   }, 120_000)
 
-  it('THE D-07 CROSSING — the door’s injected context beats BOTH varied ambients', async () => {
+  it('THE MCP POSTURE — a door on a live terminal starts the run and writes NOTHING to stdout', async () => {
+    // The stdout-silence half of the retired posture cell. Writing a prompt onto the process whose
+    // stdout is the JSON-RPC channel breaks the connection; since 432-13 no door can prompt at all,
+    // and this measures it on a terminal that would have accepted the bytes.
     const target = new CountingTarget()
     await target.listen()
-    try {
-      const fixture = createInProcessFixture({ origin: target.origin, environment: 'shared' })
-      // Every ambient channel says "interactive, not CI". A confirm port is present and WOULD
-      // approve. If anything on this path read the ambient, the outcome would be
-      // `prompted-approved` and the run would have started.
-      pinAmbient('local-interactive', false)
-      let confirmCalls = 0
-
-      const { error } = await invokeRunsStartOutcome(
-        fixture,
-        { patterns: [fixture.testPattern] },
-        {
-          resolveExecutionContext: () => 'local-headless',
-          confirm: { surface: 'tty-prompt', ask: () => { confirmCalls += 1; return true } },
-        },
-      )
-
-      expect(error).toBeInstanceOf(RunDeniedError)
-      expect(theRunGateRow(fixture).outcome).toBe('fail-closed-denied')
-      // THE DISCRIMINATOR. `fail-closed-denied` is reached BEFORE the confirm is consulted; a door
-      // that had resolved `local-interactive` would have asked and been told yes.
-      expect(confirmCalls).toBe(0)
-      expect(eventTypes(fixture)).toEqual([])
-      expect(target.hits).toEqual([])
-    } finally {
-      await target.close()
-    }
-  }, 120_000)
-
-  it('THE CROSSING’S OTHER ARM — injected local-interactive over an ambient CI asks, and proceeds', async () => {
-    const target = new CountingTarget()
-    await target.listen()
-    try {
-      const fixture = createInProcessFixture({ origin: target.origin, environment: 'shared' })
-      // Both ambients now say CI — including the CI MARKER, which is what this door's own
-      // `resolveRunExecutionContext()` fallback reads. The door says interactive.
-      pinAmbient('ci', true)
-      let confirmCalls = 0
-
-      const { error } = await invokeRunsStartOutcome(
-        fixture,
-        { patterns: [fixture.testPattern] },
-        {
-          resolveExecutionContext: () => 'local-interactive',
-          confirm: { surface: 'tty-prompt', ask: () => { confirmCalls += 1; return true } },
-        },
-      )
-
-      // The run STARTED, so whatever came back is not a denial.
-      expect(error).not.toBeInstanceOf(RunDeniedError)
-      expect(confirmCalls).toBe(1)
-      const row = theRunGateRow(fixture)
-      expect(row.outcome).toBe('prompted-approved')
-      expect(row.executionContext).toBe('local-interactive')
-      expect(eventTypes(fixture)).toContain('runStarted')
-    } finally {
-      await target.close()
-    }
-  }, 120_000)
-
-  it('THE MCP POSTURE — `confirm: undefined` refuses to ask, and writes NOTHING to stdout', async () => {
-    const target = new CountingTarget()
-    await target.listen()
-    // A TTY ON BOTH ENDS, and it is the whole discriminator.
-    //
-    // 396-01 D-09's rule is that the confirm FIELD's presence is read, not its value:
-    // `confirm: undefined` REFUSES to ask, where an absent field would default to a tty prompt.
-    // Under vitest that distinction is invisible for free — `createTtyConfirmPort()` sees no
-    // terminal and answers `undefined` either way, so a cell run on the real streams passes under
-    // a door that had collapsed the rule back into `??`. Measured: it does.
-    //
-    // So both streams are replaced with a terminal that ENDS IMMEDIATELY. The default port would
-    // now build, write its prompt, and refuse on EOF — the same verdict — which is exactly why the
-    // assertion is on the BYTES rather than on the verdict. Writing a prompt onto the one process
-    // whose stdout is the JSON-RPC channel does not go unanswered; it breaks the connection.
     const realStdin = process.stdin
     const realStdout = process.stdout
     const written: string[] = []
@@ -392,177 +297,17 @@ describe('the fn/MCP door refuses an ungated run and acks a gated one (401-05, D
         outcome = await invokeRunsStartOutcome(
           fixture,
           { patterns: [fixture.testPattern] },
-          { resolveExecutionContext: () => 'local-interactive', confirm: undefined },
+          { resolveExecutionContext: () => 'local-interactive' },
         )
       } finally {
         Object.defineProperty(process, 'stdin', { value: realStdin, configurable: true })
         Object.defineProperty(process, 'stdout', { value: realStdout, configurable: true })
       }
 
-      expect(outcome.error).toBeInstanceOf(RunDeniedError)
-      // `prompted-denied`, not `fail-closed-denied`: the context IS interactive, and what refused
-      // is the gate's own `DENY_CONFIRM` default standing in for a door that will not ask.
-      expect(theRunGateRow(fixture).outcome).toBe('prompted-denied')
-      // NOT ONE BYTE. This is the assertion a `??` reading of the field cannot satisfy.
-      expect(written).toEqual([])
-      expect(eventTypes(fixture)).toEqual([])
-      expect(target.hits).toEqual([])
-    } finally {
-      await target.close()
-    }
-  }, 120_000)
-})
-
-describe('the two gates touch and never merge (401-05, INVK-02 adjacency edge)', () => {
-  it('ONE CALL, TWO ROWS, TWO FILES, TWO ACTION NAMES', async () => {
-    const target = new CountingTarget()
-    await target.listen()
-    try {
-      const fixture = createInProcessFixture({ origin: target.origin, environment: 'local' })
-      pinAmbient('local-headless', false)
-
-      const { ack } = await invokeRunsStartOutcome(
-        fixture,
-        { patterns: [fixture.testPattern] },
-        { resolveExecutionContext: () => 'local-headless' },
-      )
-      expect(ack).toBeDefined()
-
-      // THE OP-LEVEL ROW, in the composition's own sink at `<agentQaRoot>/execution_audit.jsonl`.
-      const opRows = opAuditRows(fixture).filter((row) => row.action === 'fn:runs.start')
-      expect(opRows).toHaveLength(1)
-      expect(opRows[0]!.riskTier).toBe('mutating-local')
-      expect(opRows[0]!.verdict).toBe('allow')
-      expect(opRows[0]!.outcome).toBe('proceeded')
-
-      // THE CORE-LEVEL ROW, in the RUN's own directory. A different action, a different tier
-      // decision, a different file.
-      const runRow = theRunGateRow(fixture)
-      expect(runRow.action).toBe('run:start')
-      expect(runRow.runId).toBe(ack!.runId)
-
-      // Neither file carries the other's action. This is the "never merge" half, and it is asserted
-      // as a set relation rather than by counting one file: a single sink serving both gates would
-      // satisfy any per-file count you cared to write.
-      expect(opAuditRows(fixture).map((row) => row.action)).not.toContain('run:start')
-      expect(auditRows(fixture).map((row) => row.action)).not.toContain('fn:runs.start')
-    } finally {
-      await target.close()
-    }
-  }, 120_000)
-
-  it('THE MECHANISM — with a LIVE reader at the run gate, the grant NAME is the whole difference', async () => {
-    // WHY THIS CELL EXISTS, and why it composes the drive directly rather than the host.
-    //
-    // The isolation claim is `grantCovers` → `grant.actionClass === action.name`. At the shipped
-    // door neither gate can consume a grant at all: the op's `mutating-local` tier never reaches
-    // `resolveAsk`, and this door passes NO `reader` to the run gate (the D-08 overlay is plan
-    // 08's, and nothing mints a `run:start` grant today). So a cell that only drove the door would
-    // measure "no grant is ever consumed anywhere" and pass under a `grantCovers` that matched on
-    // a prefix, a family, or nothing at all.
-    //
-    // Here the reader is LIVE and deliberately does NOT filter — it returns its one grant for every
-    // action it is asked about — so the only thing that can refuse a name mismatch is `grantCovers`
-    // itself. The two arms differ in ONE string.
-    const readerServing = (actionClass: string): RunInvocationCoreOptions['reader'] => ({
-      grantsFor: () => [{ actionClass, scope: STANDING_APPROVAL_SCOPE }],
-    })
-
-    const arm = async (actionClass: string): Promise<{ fixture: Fixture; error?: unknown }> => {
-      const target = new CountingTarget()
-      await target.listen()
-      try {
-        const fixture = createInProcessFixture({ origin: target.origin, environment: 'shared' })
-        pinEmptyBrowsersRoot(fixture)
-        try {
-          await runInProcessCliRun(
-            {
-              configPath: fixture.configPath,
-              agentQaRoot: fixture.agentQaRoot,
-              executionContext: 'local-headless',
-              reader: readerServing(actionClass),
-            },
-            { patterns: [fixture.testPattern] },
-          )
-          return { fixture }
-        } catch (error) {
-          return { fixture, error }
-        }
-      } finally {
-        await target.close()
-      }
-    }
-
-    // THE OP'S NAME does not satisfy the run gate. The grant is present, readable and in scope.
-    const opNamed = await arm('fn:runs.start')
-    expect(opNamed.error).toBeInstanceOf(RunDeniedError)
-    const deniedRow = theRunGateRow(opNamed.fixture)
-    expect(deniedRow.outcome).toBe('fail-closed-denied')
-    expect(deniedRow.trustSource).toBeUndefined()
-    expect(eventTypes(opNamed.fixture)).toEqual([])
-
-    // THE RUN GATE'S OWN NAME does. Same reader, same scope, same fixture shape, same context —
-    // one string different, and the ask resolves through the standing approval.
-    const runNamed = await arm('run:start')
-    expect(runNamed.error).not.toBeInstanceOf(RunDeniedError)
-    const allowedRow = theRunGateRow(runNamed.fixture)
-    expect(allowedRow.outcome).toBe('proceeded')
-    expect(allowedRow.trustSource).toBe('standing-approval')
-    expect(eventTypes(runNamed.fixture)).toContain('runStarted')
-  }, 240_000)
-
-  it('THE CONVERSE — a COMMITTED `run:start` grant is not consumed at the op gate', async () => {
-    const target = new CountingTarget()
-    await target.listen()
-    try {
-      const fixture = createInProcessFixture({ origin: target.origin, environment: 'local' })
-      pinAmbient('local-headless', false)
-
-      // A REAL ledger line, in the file the op gate's own `createStandingApprovalReader` reads —
-      // not a stub. `grants.jsonl` is a committed artifact a human can write by hand, and a
-      // hand-written line folds exactly like a minted one, which is the reader's own stated model.
-      const knowledgeRoot = join(fixture.project, 'agent-qa-knowledge')
-      mkdirSync(knowledgeRoot, { recursive: true })
-      writeFileSync(
-        join(knowledgeRoot, 'grants.jsonl'),
-        `${JSON.stringify({
-          schemaVersion: 1,
-          kind: 'grant',
-          at: '2026-08-23T00:00:00.000Z',
-          grantId: 'g_401_05_converse',
-          actionClass: 'run:start',
-          scope: STANDING_APPROVAL_SCOPE,
-        })}\n`,
-      )
-      // The reader the op gate uses is the SHIPPED one, and its exact-match filter is measured
-      // here rather than assumed: asked about the op's action it answers with nothing, asked about
-      // the run gate's it answers with the grant. So the file is live in both directions.
-      const { createStandingApprovalReader } = await import('@vostride/agent-qa-knowledge-local')
-      const reader = createStandingApprovalReader({ knowledgeRoot })
-      expect(reader.grantsFor(
-        { name: 'fn:runs.start', recognized: true },
-        STANDING_APPROVAL_SCOPE,
-      )).toEqual([])
-      expect(reader.grantsFor(
-        { name: 'run:start', recognized: true },
-        STANDING_APPROVAL_SCOPE,
-      )).toEqual([{ actionClass: 'run:start', scope: STANDING_APPROVAL_SCOPE }])
-
-      const { ack } = await invokeRunsStartOutcome(
-        fixture,
-        { patterns: [fixture.testPattern] },
-        { resolveExecutionContext: () => 'local-headless' },
-      )
-      expect(ack).toBeDefined()
-
-      // The op gate allowed on its DECLARED TIER and on nothing else. A grant consumed here would
-      // have stamped `trustSource: 'standing-approval'` on this row — the field `resolveAsk` sets
-      // and the only trace a consumed grant leaves.
-      const opRows = opAuditRows(fixture).filter((row) => row.action === 'fn:runs.start')
-      expect(opRows).toHaveLength(1)
-      expect(opRows[0]!.outcome).toBe('proceeded')
-      expect(opRows[0]!.trustSource).toBeUndefined()
-      expect(opRows[0]!.riskTier).toBe('mutating-local')
+      expect(outcome.error).toBeUndefined()
+      expect(outcome.ack).toBeDefined()
+      expect(written.join('')).not.toMatch(/\[y\/N\]|approve|confirm/i)
+      expect(eventTypes(fixture)).toContain('runStarted')
     } finally {
       await target.close()
     }
@@ -570,12 +315,13 @@ describe('the two gates touch and never merge (401-05, INVK-02 adjacency edge)',
 })
 
 describe('the empty-input and suite edges of a bare runs.start (401-05, INVK-02)', () => {
-  it('AN ARGUMENT-LESS runs.start RESOLVES THE CONFIGURED DEFAULT SET — and denies on class alone', async () => {
+  // RE-SPELLED 2026-09-30 (432-13): was '... and denies on class alone' over an undeclared target.
+  // An undeclared target now starts; production is the class that still refuses an empty request.
+  it('AN ARGUMENT-LESS runs.start RESOLVES THE CONFIGURED DEFAULT SET — and refuses production on it', async () => {
     const target = new CountingTarget()
     await target.listen()
     try {
-      // No patterns, no credential, no trust, an EMPTY request object — and an undeclared target.
-      const fixture = createInProcessFixture({ origin: target.origin })
+      const fixture = createInProcessFixture({ origin: target.origin, environment: 'production' })
       pinAmbient('local-interactive', false)
 
       const { error } = await invokeRunsStartOutcome(
@@ -585,11 +331,10 @@ describe('the empty-input and suite edges of a bare runs.start (401-05, INVK-02)
       )
 
       expect(error).toBeInstanceOf(RunDeniedError)
-      expect(theRunGateRow(fixture).outcome).toBe('fail-closed-denied')
       expect(eventTypes(fixture)).toEqual([])
       expect(buildOrdinalsExist(fixture)).toBe(false)
       expect(target.hits).toEqual([])
-      expect((error as RunDeniedError).reason).toBe(theRunGateRow(fixture).reason)
+      expect((error as RunDeniedError).reason).toContain(fixture.targetName)
     } finally {
       await target.close()
     }
@@ -615,7 +360,6 @@ describe('the empty-input and suite edges of a bare runs.start (401-05, INVK-02)
       // or none, would still have produced an ack.
       expect(ack!.testCount).toBe(2)
       expect(eventTypes(fixture)).toContain('runStarted')
-      expect(theRunGateRow(fixture).outcome).toBe('proceeded')
     } finally {
       await target.close()
     }
@@ -669,10 +413,8 @@ describe('the empty-input and suite edges of a bare runs.start (401-05, INVK-02)
       expect(runDirs(fixture)).toEqual([])
       expect(buildOrdinalsExist(fixture)).toBe(false)
       expect(target.hits).toEqual([])
-      // Not even the OP gate's row exists for a request refused this early? It does — the op gate
-      // ran and allowed, because the refusal is the RUN seam's and the op's own tier is unrelated.
-      // Asserted so the boundary between the two is stated rather than left to be inferred.
-      expect(opAuditRows(fixture).map((row) => row.action)).toEqual(['fn:runs.start'])
+      // 432-13: the op has no gate, so no op row either.
+      expect(opAuditRows(fixture)).toEqual([])
       expect(auditRows(fixture)).toEqual([])
     } finally {
       await target.close()
@@ -722,9 +464,8 @@ describe('the typed door refuses a malformed or colliding run id (CR-04)', () =>
       expect(runDirs(fixture)).toEqual([])
       expect(existsSync(join(fixture.project, '.agent-qa', 'runs', 'escape'))).toBe(false)
       expect(target.hits).toEqual([])
-      // THE DISCRIMINATOR between this cell and the next: the codec refuses at PARSE, so the op's
-      // own gate never ran and there is no `fn:runs.start` row. That is what makes "the schema door
-      // and the core door are two different refusals" a measurement rather than a claim.
+      // 432-13: the op-gate row that discriminated this cell from the next is gone with the gate;
+      // the next cell's typed `RunIdNotMintedError` is what tells the two refusals apart now.
       expect(opAuditRows(fixture)).toEqual([])
     } finally {
       await target.close()
@@ -748,8 +489,8 @@ describe('the typed door refuses a malformed or colliding run id (CR-04)', () =>
       expect(error).toBeInstanceOf(RunIdNotMintedError)
       expect((error as Error).message).toContain('not-a-minted-id')
       // It passed the CODEC — `not-a-minted-id` is a perfectly good path segment — so the op DID
-      // run and its own gate DID record a row. The run itself never started.
-      expect(opAuditRows(fixture).map((row) => row.action)).toEqual(['fn:runs.start'])
+      // run (432-13: with no gate row). The run itself never started.
+      expect(opAuditRows(fixture)).toEqual([])
       expect(runDirs(fixture)).toEqual([])
       expect(buildOrdinalsExist(fixture)).toBe(false)
       expect(target.hits).toEqual([])

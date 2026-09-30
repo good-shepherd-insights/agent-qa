@@ -1260,7 +1260,8 @@ describe('423-21 read-op adjudication (D-04/D-18)', () => {
       expect(declaration.risk, opId).toMatchObject({ readOnly: true })
       expect(declaration.requiresHumanOrigin, opId).not.toBe(true)
     }
-    expect(scenarioRowFor('runs.mark')?.policyPoints).toEqual({ grant: 'allow', refuse: 'deny', ask: 'ask' })
+    // 432-13: the ask point's value is `direct` — the classifier would ask, the door does not.
+    expect(scenarioRowFor('runs.mark')?.policyPoints).toEqual({ grant: 'allow', refuse: 'deny', ask: 'direct' })
     expect(declarationOf('runs.mark').requiredScopes).toEqual(['knowledge-write'])
   })
 })

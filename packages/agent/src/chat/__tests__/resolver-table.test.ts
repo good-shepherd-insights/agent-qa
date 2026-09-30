@@ -31,15 +31,14 @@ function aliasOf(clause: string): string | undefined {
 }
 
 describe('CHAT_RESOLVER_TABLE — the closed canon (D-06)', () => {
+  // 432-13 (D-05/D-14): `proposals` and `pin` left the canon with the inbox and the op gate.
   it('is exactly the D-06 canon: no more aliases, no fewer', () => {
     expect(CHAT_RESOLVER_TABLE.map((rule) => rule.alias)).toEqual([
       'run',
       'status',
       'test-ref',
       'digest',
-      'proposals',
       'model',
-      'pin',
       'fn',
       'help',
       'quit',
@@ -66,8 +65,8 @@ describe('C432-CHAT-DIRECT — chat resolution carries no approval route (432-13
     expect([...CHAT_DIRECTIVES]).toEqual(['model', 'help', 'quit'])
     expect(CHAT_RESOLVER_TABLE.map((rule) => rule.alias)).not.toContain('pin')
     expect(CHAT_RESOLVER_TABLE.map((rule) => rule.alias)).not.toContain('proposals')
-    expect(CHAT_HELP_ENTRIES.map((entry) => entry.alias)).toEqual(
-      CHAT_RESOLVER_TABLE.map((rule) => rule.alias),
+    expect(CHAT_HELP_ENTRIES.map((entry) => entry.alias).sort()).toEqual(
+      CHAT_RESOLVER_TABLE.map((rule) => rule.alias).sort(),
     )
   })
 
@@ -125,8 +124,11 @@ describe('resolveClause — the op-bound canon', () => {
     })
   })
 
-  it('binds bare `proposals` to the whole inbox', () => {
-    expect(resolve('proposals')).toEqual({
+  // RE-SPELLED 2026-09-30 (432-13) from 'binds bare `proposals` to the whole inbox': the alias is
+  // gone, and a pre-432 record stays reachable through the one `/fn` branch.
+  it('binds no bare `proposals` alias; the inbox read is reached through /fn', () => {
+    expect(resolve('proposals')).toBeUndefined()
+    expect(resolve('/fn proposals.list')).toEqual({
       kind: 'op',
       functionId: PROPOSALS_LIST_FUNCTION_ID,
       input: {},
@@ -135,7 +137,7 @@ describe('resolveClause — the op-bound canon', () => {
 
   it('is case-insensitive on the verb a person typed', () => {
     expect(resolve('STATUS')).toEqual(resolve('status'))
-    expect(resolve('Proposals')).toEqual(resolve('proposals'))
+    expect(resolve('Digest RUN-9')).toEqual(resolve('digest RUN-9'))
   })
 })
 
@@ -178,18 +180,16 @@ describe('resolveClause — the /fn passthrough (D-06)', () => {
   })
 })
 
-describe('resolveClause — the directive canon (D-04 / D-21)', () => {
-  it('resolves /model and /pin to directives that name NO registry op', () => {
+describe('resolveClause — the directive canon (D-04)', () => {
+  // RE-SPELLED 2026-09-30 (432-13) from 'resolves /model and /pin to directives that name NO
+  // registry op': `/pin` is no longer a directive.
+  it('resolves /model to a directive that names NO registry op, and /pin to nothing', () => {
     expect(resolve('/model claude-opus-5')).toEqual({
       kind: 'directive',
       directive: 'model',
       argument: 'claude-opus-5',
     })
-    expect(resolve('/pin config-write')).toEqual({
-      kind: 'directive',
-      directive: 'pin',
-      argument: 'config-write',
-    })
+    expect(resolve('/pin config-write')).toBeUndefined()
   })
 
   it('resolves the REPL chrome verbs, which take no argument', () => {
@@ -211,7 +211,7 @@ describe('resolveClause — binary resolution, no partial matches (CHAT-01 bound
     ['run', 'a verb missing its required argument'],
     ['digest', 'a digest with no run named'],
     ['/model', 'a directive missing its required argument'],
-    ['/pin', 'a pin missing its action class'],
+    ['/pin', 'the retired pin verb, bare (432-13)'],
     ['test', 'a test-ref with nothing referenced'],
     ['show me the digest', 'ordinary prose that mentions a canonical word'],
     ['status please', 'a bare verb with anything at all after it'],

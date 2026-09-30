@@ -1,5 +1,10 @@
 // The CLI door's SUITE path denies fail-closed too (Phase 401 plan 04, D-02 / D-16, T-401-11).
 //
+// SINCE 432-13 (D-01/D-14/D-18) the suite path, like the test path, refuses only an un-opted-in
+// production target. The gate row (a), its remedies and `--trust-session` are gone; the cells were
+// re-spelled onto the production refusal, which keeps artifacts (b)–(d) and the exit code 2. The
+// history below is kept as written.
+//
 // Plan 03 gated `agent-qa run <test>`. This file is about the other half of the same door:
 // `agent-qa run <suite>`, which until plan 04 assembled and started a run of its own with no gate
 // anywhere near it. The elevation-of-privilege threat the phase registers (T-401-11, severity high)
@@ -80,85 +85,43 @@ function fixtureFor(environment: FixtureEnvironment): SuiteFixture {
   return fixture
 }
 
-describe('the CLI suite path denies fail-closed and the run never starts (D-16, T-401-11)', () => {
-  it.each<[string, FixtureEnvironment]>([
-    ['shared-declared', 'shared'],
-    ['undeclared', undefined],
-  ])(
-    'a no-tty suite run against a %s target with no trust is refused before anything happens',
-    async (_label, environment) => {
-      const fixture = fixtureFor(environment)
-
-      const result = await runCli(fixture, fixture.suitePattern)
-
-      // (a) the gate's own record, asserted on the field rather than on prose.
-      const gateRows = auditRows(fixture).filter((row) => row.action === 'run:start')
-      expect(gateRows).toHaveLength(1)
-      expect(gateRows[0].outcome).toBe('fail-closed-denied')
-      expect(gateRows[0].verdict).toBe('deny')
-      // An UNDECLARED target reaches the same tier as a declared shared one — D-06, at this door.
-      expect(gateRows[0].riskTier).toBe('mutating-shared')
-
-      // (b) no run began.
-      expect(eventTypes(fixture)).toEqual([])
-
-      // (c) no assembly. The build-ordinal advance is assembly's durable trace, and on the suite
-      // path it used to be resolved a hundred lines ABOVE the run — moving it behind the verdict is
-      // most of what this migration is.
-      expect(buildOrdinalsExist(fixture)).toBe(false)
-
-      // (d) and nobody knocked.
-      expect(target.hits).toEqual([])
-
-      // (e) the person saw the decision, and saw it in the gate's own words.
-      expect(result.stderr).toContain(gateRows[0].reason)
-      expect(result.stderr).toContain('re-run on an interactive terminal')
-      expect(result.stderr).toContain('agent-qa run --trust-session')
-
-      // …and the exit, last. `2` is this command's "no verdict was produced"; `1` would read as a
-      // failing suite, which is the one thing a denial must never look like.
-      expect(result.status).toBe(2)
-    },
-    180_000,
-  )
-
-  it('the allow control: the same door, the same no-tty invocation, one field of config different', async () => {
-    const fixture = fixtureFor('local')
+describe('the CLI suite path refuses an un-opted-in production run and it never starts (D-16, D-18)', () => {
+  // RE-SPELLED 2026-09-30 (432-13): was a no-tty suite run against a shared or undeclared target
+  // refused by the run gate. Those start now; production is the class that still refuses.
+  it('a no-tty suite run against a production target with no opt-in is refused before anything happens', async () => {
+    const fixture = fixtureFor('production')
 
     const result = await runCli(fixture, fixture.suitePattern)
 
-    const gateRows = auditRows(fixture).filter((row) => row.action === 'run:start')
-    expect(gateRows).toHaveLength(1)
-    expect(gateRows[0].verdict).toBe('allow')
-    expect(gateRows[0].outcome).toBe('proceeded')
-    // D-05's CI guarantee: `mutating-local` allows in EVERY context, with no credential at all.
-    expect(gateRows[0].riskTier).toBe('mutating-local')
-
-    // The run really started — the artifacts the denial legs proved absent are present here.
-    expect(eventTypes(fixture)[0]).toBe('runStarted')
-    expect(buildOrdinalsExist(fixture)).toBe(true)
-    // …including the knock. An allowed run DOES probe its target, which is what makes the denial
-    // legs' empty counter a measurement rather than a server nobody would have called anyway.
-    expect(target.hits).toContain('/suite-thing')
-
-    // And nothing rendered a denial. (This run ends in an unrelated downstream failure — the
-    // fixture's model base URL is unreachable by construction — which is exactly why the gate half
-    // is asserted on the gate's own artifacts rather than on the exit code.)
-    expect(result.stderr).not.toContain('Run denied')
+    // (a) no decision row: the production refusal is not a gate decision
+    expect(auditRows(fixture)).toEqual([])
+    // (b) no run began
+    expect(eventTypes(fixture)).toEqual([])
+    // (c) no assembly
+    expect(buildOrdinalsExist(fixture)).toBe(false)
+    // (d) and nobody knocked
+    expect(target.hits).toEqual([])
+    // (e) the person saw the refusal, naming the target and the opt-in
+    expect(result.stderr).toContain('Run denied')
+    expect(result.stderr).toContain('"suite-thing"')
+    expect(result.stderr).toContain('allowProduction: true')
+    expect(result.stderr).not.toMatch(/--trust-session|re-run on an interactive terminal/)
+    expect(result.status).toBe(2)
   }, 180_000)
 
-  it('--trust-session is the way through on the SAME shared target (the second allow control)', async () => {
-    const fixture = fixtureFor('shared')
+  it.each<[string, FixtureEnvironment]>([
+    ['local-declared', 'local'],
+    ['shared-declared', 'shared'],
+    ['undeclared', undefined],
+  ])('the allow control: a no-tty suite run against a %s target starts', async (_label, environment) => {
+    const fixture = fixtureFor(environment)
 
-    const result = await runCli(fixture, fixture.suitePattern, '--trust-session')
+    const result = await runCli(fixture, fixture.suitePattern)
 
-    const gateRows = auditRows(fixture).filter((row) => row.action === 'run:start')
-    expect(gateRows).toHaveLength(1)
-    expect(gateRows[0].verdict).toBe('allow')
-    expect(gateRows[0].outcome).toBe('proceeded')
-    // The tier did NOT move — trust satisfies the ask, it does not reclassify the action.
-    expect(gateRows[0].riskTier).toBe('mutating-shared')
+    expect(auditRows(fixture).filter((row) => row.action === 'run:start')).toEqual([])
     expect(eventTypes(fixture)[0]).toBe('runStarted')
+    expect(buildOrdinalsExist(fixture)).toBe(true)
+    expect(target.hits).toContain('/suite-thing')
     expect(result.stderr).not.toContain('Run denied')
   }, 180_000)
 })

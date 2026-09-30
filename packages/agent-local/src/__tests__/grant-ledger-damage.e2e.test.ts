@@ -1,6 +1,12 @@
 // A damaged grant ledger authorizes NOTHING, proven through the composed host
 // (Phase 391 plan 08, closing 391-VERIFICATION gap 2).
 //
+// 2026-09-30 (432-13, D-14/D-15): NO LEDGER AUTHORIZES ANYTHING NOW. `invokeFunction` has no gate,
+// so the headless invocation below is dispatched whatever the ledger holds — intact, revoked or
+// damaged — and no decision row is written. The three invocation cells are re-spelled as that; the
+// reader's own refusal of a damaged file, the listing's report and the write verbs' damage refusal
+// are unchanged (432-18 deletes the ledger with them).
+//
 // The verifier measured the defect with a throwaway probe: a git conflict marker fused onto the
 // REVOKE line leaves `refusedLines` non-empty, the fold still hands back the grant, and a headless
 // invocation the withdrawn approval used to satisfy goes on being satisfied by it — with no human
@@ -31,7 +37,6 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import {
-  FunctionDeniedError,
   createFunctionRegistry,
   invokeFunction,
 } from '@vostride/agent-qa-agent'
@@ -178,7 +183,6 @@ describe('a grant ledger the build cannot fully read authorizes nothing', () => 
         standingGrants: grantVerbs(),
       },
       auditSink: sink,
-      standingApprovalReader: () => createStandingApprovalReader({ knowledgeRoot }),
       resolveExecutionContext: () => context,
       // No confirm arm at all: in a headless context there is nothing to prompt, so the only thing
       // that can produce an allow below is the committed ledger.
@@ -216,7 +220,6 @@ describe('a grant ledger the build cannot fully read authorizes nothing', () => 
       await invokeFunction(registry, APPLY_ID, { proposalId: PROBE_PROPOSAL_ID }, HUMAN)
       return 'allowed'
     } catch (error) {
-      if (error instanceof FunctionDeniedError) return 'denied'
       // The op body ran, which is only reachable once the gate has ALLOWED — so this is the
       // affirmative answer to the authorization question, arriving as the apply's own complaint
       // about a target that was never minted.
@@ -275,28 +278,26 @@ describe('a grant ledger the build cannot fully read authorizes nothing', () => 
     writeFileSync(path, lines.join('\n'), 'utf8')
   }
 
-  it('CASE 1 — intact ledger, grant in force: the headless invocation is ALLOWED', async () => {
+  // RE-SPELLED 2026-09-30 (432-13): 'CASE 1 — intact ledger, grant in force: the headless invocation
+  // is ALLOWED'. Still dispatched; no row says what satisfied it, because nothing was asked.
+  it('CASE 1 — intact ledger, grant in force: the headless invocation is dispatched, with no row', async () => {
     const headless = host('local-headless')
     await recordApplyGrant(headless)
 
     expect(await headlessApply(headless)).toBe('allowed')
-
-    const row = sink.rows.at(-1)
-    expect(row?.action).toBe(applyClass(headless))
-    expect(row?.verdict).toBe('allow')
-    // The phase in one field: a decision a person recorded is what satisfied a headless ask.
-    expect(row?.trustSource).toBe('standing-approval')
+    expect(sink.rows).toEqual([])
   })
 
-  it('CASE 2 — intact ledger, the grant revoked: the same invocation is fail-closed-denied', async () => {
+  // RE-SPELLED 2026-09-30 (432-13) from '... the grant revoked: the same invocation is
+  // fail-closed-denied'. The revoke is recorded and read by nothing: the invocation is dispatched.
+  it('CASE 2 — intact ledger, the grant revoked: the same invocation is still dispatched', async () => {
     const headless = host('local-headless')
     const grantId = await recordApplyGrant(headless)
     const revoked = await grantVerbs().revoke({ grantId })
     expect(revoked.outcome).toBe('revoked')
 
-    expect(await headlessApply(headless)).toBe('denied')
-    expect(sink.rows.at(-1)?.outcome).toBe('fail-closed-denied')
-    expect(sink.rows.at(-1)?.trustSource).toBeUndefined()
+    expect(await headlessApply(headless)).toBe('allowed')
+    expect(sink.rows).toEqual([])
   })
 
   describe('CASE 3 — the revoke line damaged in place', () => {
@@ -328,11 +329,11 @@ describe('a grant ledger the build cannot fully read authorizes nothing', () => 
       expect(reader.grantsFor(action(applyClass(headless)), STANDING_APPROVAL_SCOPE)).toEqual([])
     })
 
-    it('and the headless invocation is fail-closed-denied, with no trust source on the row', async () => {
-      expect(await headlessApply(headless)).toBe('denied')
-
-      expect(sink.rows.at(-1)?.outcome).toBe('fail-closed-denied')
-      expect(sink.rows.at(-1)?.trustSource).toBeUndefined()
+    // RE-SPELLED 2026-09-30 (432-13) from 'and the headless invocation is fail-closed-denied, with
+    // no trust source on the row'. The damaged file is read by nothing at dispatch.
+    it('and the headless invocation is dispatched regardless, with no row', async () => {
+      expect(await headlessApply(headless)).toBe('allowed')
+      expect(sink.rows).toEqual([])
     })
 
     it('and `grants.list` carries the explanation the denial does not', async () => {

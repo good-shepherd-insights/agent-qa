@@ -1,5 +1,13 @@
 // D-08's DISPATCH GRANT AT THE REAL RUN GATE (Phase 401 plan 08 — RESEARCH Pitfall 6).
 //
+// RE-SPELLED 2026-09-30 (432-13, D-14/D-15). The run gate this file measured is gone: the run core
+// evaluates nothing and the door forwards no reader, so a dispatch grant has nothing to satisfy. A
+// shared-target run starts in the fail-closed `local-headless` context with the dispatch open, closed
+// or never opened, from inside the dispatch's call tree or outside it — and no `run:start` row, and
+// therefore no `trustSource`, is written in any of them. The overlay itself survives until its own
+// deletion plan; what is kept here is that it still mints nothing durable. The history below is
+// kept as written.
+//
 // WHAT IS UNDER TEST is the whole shipped path: `composeCliLocalAgent` → the 384 registry →
 // `invokeFunction` → the op gate → the bound run invocation → the composition's per-run grant
 // resolution → this host's default in-process drive → the core's ONE `evaluate()`. Nothing is
@@ -73,12 +81,6 @@ function runGateRowsPerDir(fixture: Fixture): GateAuditRow[][] {
   })
 }
 
-function theRunGateRow(fixture: Fixture): GateAuditRow {
-  const rows = (auditRows(fixture) as GateAuditRow[]).filter((row) => row.action === 'run:start')
-  expect(rows).toHaveLength(1)
-  return rows[0]!
-}
-
 /** The durable ledger this overlay must never write. */
 function grantsLedgerBytes(fixture: Fixture): string | undefined {
   const path = join(fixture.project, 'agent-qa-knowledge', 'grants.jsonl')
@@ -146,55 +148,37 @@ function pinAmbient(value: 'ci' | 'local-interactive' | 'local-headless', ciMark
 }
 
 describe('one human ask, N gated runs, every one of them gated (D-08)', () => {
-  it('THE ORDERING EDGE — an open dispatch satisfies TWO ask-tier runs in a fail-closed context', async () => {
+  /** The start artifacts every arm below asserts, identically. */
+  function expectStartedWithNoDecision(fixture: Fixture, outcome: { ack?: RunStartAcknowledgement; error?: unknown }): void {
+    expect(outcome.error, `runs.start refused: ${String(outcome.error)}`).toBeUndefined()
+    expect(outcome.error).not.toBeInstanceOf(RunDeniedError)
+    expect(outcome.ack?.runId).toMatch(/^r_/)
+    expect(runGateRowsPerDir(fixture).flat()).toEqual([])
+    expect((auditRows(fixture) as GateAuditRow[]).map((row) => row.trustSource).filter(Boolean)).toEqual([])
+  }
+
+  it('THE ORDERING EDGE — two shared runs inside an open dispatch start, with no decision row', async () => {
     const target = new CountingTarget()
     await target.listen()
     try {
-      // `shared` is the ask tier; `local-headless` is fail-closed. Without the grant this run
-      // denies at step (d), which is exactly what the negative control below measures.
       const fixture = createInProcessFixture({ origin: target.origin, environment: 'shared' })
       pinAmbient('local-interactive', false)
       const dispatchGrants = createDispatchGrants()
       const ledgerBefore = grantsLedgerBytes(fixture)
 
-      // 401-13: the two runs are started INSIDE the dispatch's own scope, which is what makes them
-      // the dispatch's OWN gate-runs rather than merely concurrent with it. Every await between
-      // here and `grantsFor` — `invokeFunction`, the op gate, the bound invocation, the async
-      // `resolveRunGrants`, the core's `evaluate()` — is inside this callback's async tree, and a
-      // green here is the measurement that the scope reaches all of them.
       const { first, second } = await dispatchGrants.within(async () => {
         const firstRun = await invokeRunsStart(fixture, dispatchGrants, { patterns: [fixture.testPattern] })
         const secondRun = await invokeRunsStart(fixture, dispatchGrants, { patterns: [fixture.testPattern] })
         return { first: firstRun, second: secondRun }
       })
 
-      expect(first.error).toBeUndefined()
-      expect(second.error).toBeUndefined()
+      expectStartedWithNoDecision(fixture, first)
+      expectStartedWithNoDecision(fixture, second)
       expect(first.ack?.runId).not.toBe(second.ack?.runId)
-
-      // N RUNS, N ROWS, EACH IN ITS OWN FILE. Not one row with a count on it and not a single
-      // aggregate: D-08's sentence is that every child run is still gated and attributable, so the
-      // proof is one `run:start` decision per run dir.
-      const perDir = runGateRowsPerDir(fixture).filter((rows) => rows.length > 0)
-      expect(perDir).toHaveLength(2)
-      for (const rows of perDir) {
-        expect(rows).toHaveLength(1)
-        expect(rows[0]!.outcome).toBe('proceeded')
-        expect(rows[0]!.verdict).toBe('allow')
-        // THE ATTRIBUTION. `standing-approval` is what `resolveAsk` stamps at step (c) — so this
-        // is not merely "the run was allowed", it is "the run was allowed BY THE GRANT". A run
-        // allowed on its tier would read `proceeded` with no `trustSource` at all.
-        expect(rows[0]!.trustSource).toBe('standing-approval')
-        expect(rows[0]!.riskTier).toBe('mutating-shared')
-        expect(rows[0]!.executionContext).toBe('local-headless')
-      }
-
-      // NO STRUCTURAL BYPASS. Two rows exist because two runs called `evaluate()`; a grant that
-      // made a run skip the gate would leave the run dirs with events and NO decision in them.
       expect(eventTypes(fixture)).toContain('runStarted')
+      expect(buildOrdinalsExist(fixture)).toBe(true)
 
-      // THE ONE-MINT LAW. `grants.jsonl` has exactly one writer and this overlay is not it: the
-      // dispatch grant lives in memory and dies with the closure.
+      // THE ONE-MINT LAW still holds: the overlay writes nothing durable.
       expect(grantsLedgerBytes(fixture)).toEqual(ledgerBefore)
       expect(dispatchGrants.openScopes).toBe(0)
     } finally {
@@ -202,45 +186,26 @@ describe('one human ask, N gated runs, every one of them gated (D-08)', () => {
     }
   }, 300_000)
 
-  it('THE SAME RUN WITHOUT THE DISPATCH — fail-closed, on all five artifacts', async () => {
+  it('THE SAME RUN WITHOUT THE DISPATCH — starts too: there was never a grant to need', async () => {
     const target = new CountingTarget()
     await target.listen()
     try {
-      // Everything above, minus `dispatchGrants.open()`. One field different.
       const fixture = createInProcessFixture({ origin: target.origin, environment: 'shared' })
       pinAmbient('local-interactive', false)
       const dispatchGrants = createDispatchGrants()
 
-      const { ack, error } = await invokeRunsStart(
-        fixture,
-        dispatchGrants,
-        { patterns: [fixture.testPattern] },
-      )
+      const outcome = await invokeRunsStart(fixture, dispatchGrants, { patterns: [fixture.testPattern] })
 
-      expect(ack).toBeUndefined()
-      expect(error).toBeInstanceOf(RunDeniedError)
-      const denial = error as RunDeniedError
-      expect(denial.remedies.length).toBeGreaterThan(0)
-
-      // (a) the row's OUTCOME field, never a message substring
-      const row = theRunGateRow(fixture)
-      expect(row.outcome).toBe('fail-closed-denied')
-      expect(row.verdict).toBe('deny')
-      expect(row.trustSource).toBeUndefined()
-      // (b) no run events — nothing started
-      expect(eventTypes(fixture)).toEqual([])
-      // (c) the build-ordinal ledger did not advance
-      expect(buildOrdinalsExist(fixture)).toBe(false)
-      // (d) nobody knocked on the target
-      expect(target.hits).toEqual([])
-      // (e) the reason the caller sees is the row's own, read BACK off it rather than typed here
-      expect(denial.reason).toBe(row.reason)
+      expectStartedWithNoDecision(fixture, outcome)
+      expect(eventTypes(fixture)).toContain('runStarted')
+      expect(buildOrdinalsExist(fixture)).toBe(true)
+      expect(target.hits).toEqual(['/in-process-thing'])
     } finally {
       await target.close()
     }
   }, 300_000)
 
-  it('THE GRANT DIES WITH THE DISPATCH — the same run denies again once the scope closes', async () => {
+  it('THE GRANT DIES WITH THE DISPATCH — and the run after it starts all the same', async () => {
     const target = new CountingTarget()
     await target.listen()
     try {
@@ -248,46 +213,25 @@ describe('one human ask, N gated runs, every one of them gated (D-08)', () => {
       pinAmbient('local-interactive', false)
       const dispatchGrants = createDispatchGrants()
 
-      // The dispatch happened and ENDED. T-401-22: an approval that outlived its dispatch would be
-      // an elevation with no expiry, and since 401-13 the scope's own `finally` is what closes it —
-      // the loop can no longer forget to.
       await dispatchGrants.within(async () => {
         expect(dispatchGrants.openScopes).toBe(1)
         await Promise.resolve()
       })
       expect(dispatchGrants.openScopes).toBe(0)
 
-      const { ack, error } = await invokeRunsStart(
-        fixture,
-        dispatchGrants,
-        { patterns: [fixture.testPattern] },
-      )
+      const outcome = await invokeRunsStart(fixture, dispatchGrants, { patterns: [fixture.testPattern] })
 
-      expect(ack).toBeUndefined()
-      expect(error).toBeInstanceOf(RunDeniedError)
-      const row = theRunGateRow(fixture)
-      expect(row.outcome).toBe('fail-closed-denied')
-      expect(row.trustSource).toBeUndefined()
-      expect(eventTypes(fixture)).toEqual([])
-      expect(buildOrdinalsExist(fixture)).toBe(false)
-      expect(target.hits).toEqual([])
+      expectStartedWithNoDecision(fixture, outcome)
+      expect(eventTypes(fixture)).toContain('runStarted')
     } finally {
       await target.close()
     }
   }, 300_000)
 
-  it('AN UNRELATED CALLER DURING AN OPEN DISPATCH — refused, on all five artifacts (CR-03)', async () => {
-    // THE CELL THIS FILE NEVER HAD, and the one the verification gap is about. Its RED is recorded
-    // verbatim in 401-13's SUMMARY: on the pre-fix overlay this exact scene produced
-    //   {"outcome":"proceeded","verdict":"allow","trustSource":"standing-approval",
-    //    "riskTier":"mutating-shared","executionContext":"local-headless"}
-    // — a caller that had approved nothing collecting a row byte-identical to one that had, which
-    // is what made the widening unattributable in the record.
-    //
-    // NOT AN EXPIRY MEASUREMENT. The dispatch is parked on an externally-released promise and
-    // `openScopes` is asserted to be 1 at the moment the outsider is refused, so the denial cannot
-    // be explained by "the dispatch had already ended" — the difference is the CALLER and nothing
-    // else. `THE GRANT DIES WITH THE DISPATCH` above is where expiry is measured.
+  it('AN UNRELATED CALLER DURING AN OPEN DISPATCH — starts, and no row borrows the dispatch (CR-03)', async () => {
+    // CR-03's claim was that an outsider could not collect a row byte-identical to the dispatch's
+    // own. With no row written at all, there is nothing to borrow; the dispatch is held open while
+    // the outsider's run starts so the scope is provably live throughout.
     const target = new CountingTarget()
     await target.listen()
     let release: (() => void) | undefined
@@ -303,45 +247,11 @@ describe('one human ask, N gated runs, every one of them gated (D-08)', () => {
       await Promise.resolve()
       expect(dispatchGrants.openScopes).toBe(1)
 
-      // The outsider: an async context that never entered the scope above. Nothing about this call
-      // differs from the positive arm's two except where it was made from.
-      const { ack, error } = await invokeRunsStart(
-        fixture,
-        dispatchGrants,
-        { patterns: [fixture.testPattern] },
-      )
+      const outcome = await invokeRunsStart(fixture, dispatchGrants, { patterns: [fixture.testPattern] })
 
-      // THE GATE WAS REACHED, asserted BEFORE any verdict claim. "Denied" and "never got there"
-      // produce the same-looking absence on every one of the five artifacts below, and 401-12
-      // shipped a fixture an hour ago that read `auditRows: []` on both legs because it died at
-      // config validation. A `run:start` row carrying a real `riskTier` is the proof that the
-      // decision under test was actually taken.
-      const row = theRunGateRow(fixture)
-      expect(row.riskTier).toBe('mutating-shared')
-      expect(row.executionContext).toBe('local-headless')
-
-      // AND THE DISPATCH IS STILL OPEN as the denial lands.
       expect(dispatchGrants.openScopes).toBe(1)
-
-      // The five artifacts (401-03 Mutation B), never an exit code or a message substring.
-      expect(ack).toBeUndefined()
-      expect(error).toBeInstanceOf(RunDeniedError)
-      const denial = error as RunDeniedError
-      expect(denial.remedies.length).toBeGreaterThan(0)
-      // (a) the row's OUTCOME field — and NO attribution on it, which is the repudiation half
-      expect(row.outcome).toBe('fail-closed-denied')
-      expect(row.verdict).toBe('deny')
-      expect(row.trustSource).toBeUndefined()
-      // (b) no run events — nothing started
-      expect(eventTypes(fixture)).toEqual([])
-      // (c) the build-ordinal ledger did not advance
-      expect(buildOrdinalsExist(fixture)).toBe(false)
-      // (d) nobody knocked on the target
-      expect(target.hits).toEqual([])
-      // (e) the reason the caller sees is the row's own, read BACK off it rather than typed here
-      expect(denial.reason).toBe(row.reason)
-
-      // The overlay minted nothing durable while refusing, either.
+      expectStartedWithNoDecision(fixture, outcome)
+      expect(eventTypes(fixture)).toContain('runStarted')
       expect(grantsLedgerBytes(fixture)).toEqual(ledgerBefore)
 
       release!()

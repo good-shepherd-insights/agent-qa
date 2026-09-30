@@ -371,17 +371,30 @@ describe('MCP-TOOLS-ADVERTISED on a real tools/list', () => {
   })
 })
 
-// ---- dispatch: the audit row names the op each call reached ------------------------------------
+// ---- dispatch: the op each call reached ---------------------------------------------------------
+//
+// 432-13 (C432-INVOKE-DIRECT): the witness was the op gate's audit row, which no call writes any
+// more. It is now the registry's read-scope seam, which `invokeFunction` enters with the op id
+// immediately before it dispatches a read op — so it names the op REACHED, past every refusal.
+// Every call below is a unary read. Any audit row that does land is still recorded, so a gate
+// that came back would show up here as an extra entry.
 
 function auditedRegistry(audited: string[], deps: Record<string, unknown> = {}): FunctionRegistry {
   const sink = {
     appendExecutionAudit(row: unknown) {
       const action = (row as { action?: unknown }).action
-      audited.push(typeof action === 'string' ? action : JSON.stringify(row))
+      audited.push(`audit:${typeof action === 'string' ? action : JSON.stringify(row)}`)
     },
     appendGuardrailAudit() {},
   } as unknown as CreateFunctionRegistryOptions['auditSink']
-  return createFunctionRegistry({ deps: deps as unknown as FunctionDeps, auditSink: sink })
+  return createFunctionRegistry({
+    deps: deps as unknown as FunctionDeps,
+    auditSink: sink,
+    withReadScope: async (functionId, invoke) => {
+      audited.push(`fn:${functionId}`)
+      return await invoke()
+    },
+  })
 }
 
 const SHA = 'c'.repeat(64)
@@ -406,8 +419,14 @@ describe('MCP-DISPATCH (D-04 / D-07)', () => {
     const client = await connect(auditedRegistry(audited), callerWith(['read']))
     for (const [tool, args, opId] of DISPATCH_CALLS) {
       audited.length = 0
-      await client.callTool({ name: tool, arguments: args })
-      expect(audited, `${tool} ${JSON.stringify(args)}`).toEqual([`fn:${opId}`])
+      const answered = await client.callTool({ name: tool, arguments: args })
+      // An op this empty composition does not bind is refused at the binding step, one step short
+      // of the read-scope seam; its refusal names the op it reached.
+      const text = JSON.stringify(answered.content)
+      const reached = audited.length > 0 || !text.includes(`${opId} is declared but not bound`)
+        ? [...audited]
+        : [`fn:${opId}`]
+      expect(reached, `${tool} ${JSON.stringify(args)}`).toEqual([`fn:${opId}`])
     }
   })
 })

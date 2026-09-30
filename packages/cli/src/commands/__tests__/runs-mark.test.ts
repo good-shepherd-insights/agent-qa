@@ -17,18 +17,20 @@ describe('runs mark thin client', () => {
     return new Command().exitOverride().option('--config <path>').addCommand(runs)
   }
 
-  it('tracer: confirmed-bug goes through the real function gate and accepted terminal confirmation', async () => {
+  // RE-SPELLED 2026-09-30 (432-13, D-14/D-15). The tracer answered a `[y/N]` prompt on a terminal
+  // stream and asserted the prompt named `fn:runs.mark`; the no-TTY cell asserted `Denied runs.mark`
+  // even under configured trustMode. `runs mark` asks nobody now: the terminal stream is handed to
+  // the door and never written, and the no-TTY mark applies with the one call.
+  it('tracer: confirmed-bug goes through the real function door with no confirmation asked', async () => {
     const f = markFixture(); root = f.root
-    const input = new PassThrough()
     let prompt = ''
     const terminal = new Writable({ write(chunk, _encoding, done) {
       prompt += String(chunk)
-      if (String(chunk).includes('[y/N]')) queueMicrotask(() => input.write('y\n'))
       done()
     } })
     const compose = host.composeCliLocalAgent
     vi.spyOn(host, 'composeCliLocalAgent').mockImplementation(options => compose({ ...options,
-      confirm: host.createTtyConfirmPort({ isTty: true, input, output: terminal }),
+      confirm: host.createTtyConfirmPort({ isTty: true, input: new PassThrough(), output: terminal }),
       resolveExecutionContext: () => 'local-interactive',
     }))
     const output = vi.spyOn(console, 'log').mockImplementation(() => {})
@@ -37,18 +39,20 @@ describe('runs mark thin client', () => {
     await program().parseAsync(['--config', f.configPath, 'runs', 'mark', f.handoff.runId, '--kind', 'confirmed-bug',
       '--corrected-action', JSON.stringify(correctedAction), '--json'], { from: 'user' })
     expect(errors.mock.calls).toEqual([])
-    expect(prompt).toContain('fn:runs.mark')
+    expect(prompt).toBe('')
     const result = RunsMarkOutcomeSchema.parse(JSON.parse(String(output.mock.calls.at(-1)?.[0])))
     expect(result).toMatchObject({ kind: 'marked', receipt: { ordinal: 1, origin: 'user', correctedAction, disposition: { kind: 'confirmed-bug' } } })
     expect(readFileSync(join(f.runDir, 'marks.jsonl'), 'utf8').trim().split('\n')).toHaveLength(1)
   })
 
-  it('denies no-TTY marks even under configured trustMode without a credential or confirmation', async () => {
+  it('applies a no-TTY mark with no credential and no confirmation (432-13)', async () => {
     const f = markFixture(); root = f.root
     const errors = vi.spyOn(console, 'error').mockImplementation(() => {})
+    vi.spyOn(console, 'log').mockImplementation(() => {})
     await program().parseAsync(['--config', f.configPath, 'runs', 'mark', f.handoff.runId, '--kind', 'confirmed-bug'], { from: 'user' })
-    expect(String(errors.mock.calls[0]?.[0])).toContain('Denied runs.mark')
-    expect(process.exitCode).toBe(1)
+    expect(errors.mock.calls).toEqual([])
+    expect(process.exitCode).not.toBe(1)
+    expect(readFileSync(join(f.runDir, 'marks.jsonl'), 'utf8').trim().split('\n')).toHaveLength(1)
   })
 
   it('refuses confirmed-pass with the three supported kinds before any op runs', async () => {

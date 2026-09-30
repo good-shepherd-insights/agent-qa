@@ -1,3 +1,9 @@
+// 2026-09-30 (432-13, D-15): NO PRODUCTION PATH EVALUATES THE RUN DESCRIPTOR ANY MORE. The run core
+// refuses production and starts everything else; the op gate is gone from `invokeFunction`. The
+// descriptor, disclosure and gate cells below are UNIT facts about the recipe and the still-shipped
+// safety gate, kept as they stand until 432-19 retires the ladder they were built for — none of
+// them claims a run or an op is gated. The production refusal cells (D-18) are the live ones.
+
 import { describe, expect, it, vi } from 'vitest'
 
 import { RUNS_START_FUNCTION_ID } from '@vostride/agent-qa-agent'

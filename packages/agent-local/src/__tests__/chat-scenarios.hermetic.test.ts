@@ -358,10 +358,10 @@ describe('the hermetic lane: the frozen deterministic corpus over the real compo
     // `pin-and-pin-nonsense` / `run-42-and-delete-root-empty-answer`, and 392-15's
     // `run-42-and-summarise-extra-call`.
     expect(HERMETIC_CORPUS.length).toBe(17)
-    // THE DENOMINATOR DID NOT MOVE. All four hermetic compound cells are `fail_closed`, so the
-    // rate reported after this round is a rate over the same eleven cells it was before it — a
-    // round that grew its own denominator would report a better number for having done work.
-    expect(HERMETIC_DENOMINATOR).toBe(11)
+    // THE DENOMINATOR. All four hermetic compound cells are `fail_closed`, so no round grew it for
+    // doing work. 432-13 (corpus v10) moved it DOWN, deliberately: the retired `pin` and `proposals`
+    // aliases stay as `fail_closed` absence cells, taking the should_execute count from 11 to 9.
+    expect(HERMETIC_DENOMINATOR).toBe(9)
   })
 
   it.each(HERMETIC_CORPUS.map((entry) => [`${entry.class}/${entry.id}`, entry] as const))(

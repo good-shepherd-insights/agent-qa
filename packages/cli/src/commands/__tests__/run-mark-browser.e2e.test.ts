@@ -1,6 +1,9 @@
 /// <reference lib="dom" />
 // Real Chromium, shipped UI and the composed mark/confirmation/detail routes. No provider calls.
 // An absent browser or stale build fails, never skips. Each cell owns an independent ledger.
+// 432-13 (D-14/D-15): a mark asks nobody. The first three cells, the draft-retention matrix and the
+// themes cell were re-spelled from approve/deny/no-channel onto the one-click mark; the approval
+// group is asserted never to render. The composer's approval component is deleted by a later plan.
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { chromium, type Browser, type BrowserContext, type Page, type Locator } from 'playwright-core'
@@ -35,7 +38,6 @@ const ACTION = '{"type":"click","ref":"e-continue"}'
 const APPROVAL_TITLE = 'Approval needed to record this mark'
 const EXPECTATION_LABEL = 'Corrected expectation (optional)'
 const ACTION_LABEL = 'Corrected action JSON (optional)'
-const SENDING_STATUS = 'Sending feedback…'
 const DRAFT_KEPT_STATUS = 'Draft kept. Check the message above before sending again.'
 const CHOICE_LABELS = { 'false-fail': 'This should have passed', 'false-pass': 'This should have failed',
   'confirmed-bug': 'This is a real product bug' } as const
@@ -210,20 +212,19 @@ async function submit(page: Page, door: Door = 'test', kind = 'confirmed-bug') {
 }
 
 describe('419 real browser mark confirmation', () => {
-  it('asks on /api/run-confirm/channel; accept appends one receipt and refetches its history', async () => {
+  // RE-SPELLED 2026-09-30 (432-13): was 'asks on /api/run-confirm/channel; accept appends one
+  // receipt and refetches its history'. One click records it; nothing is asked on the channel.
+  it('records on one click with no approval; appends one receipt and refetches its history', async () => {
     const s = await scene()
     await s.page.waitForFunction(() => (window as unknown as { markWire: Wire[] }).markWire.some(frame => frame.event === 'confirm_scope' && frame.url === '/api/run-confirm/channel'))
     expect(s.rows()).toHaveLength(0)
     const composer = await submit(s.page)
-    await approval(s.page).waitFor()
-    expect(await composer.locator('[data-feedback-approval]').textContent()).toContain('runs.mark')
-    expect(await s.page.locator('[role="dialog"], [aria-modal]').count()).toBe(0)
-    expect(s.rows()).toHaveLength(0)
-    expect(await s.page.evaluate(() => (window as unknown as { markWire: Wire[] }).markWire.some(frame => frame.event === 'confirm_request' && frame.data.includes('fn:runs.mark')))).toBe(true)
-    await composer.locator('[data-feedback-approval] [data-confirm-answer="accept"]').click()
     const recorded = await recordedSentence(composer)
     await settled(composer, recorded)
     expect(await status(composer).textContent()).toBe(recorded)
+    expect(await approval(s.page).count()).toBe(0)
+    expect(await s.page.locator('[role="dialog"], [aria-modal]').count()).toBe(0)
+    expect(await s.page.evaluate(() => (window as unknown as { markWire: Wire[] }).markWire.some(frame => frame.event === 'confirm_request'))).toBe(false)
     expect(await targetEntries(composer).count()).toBe(1)
     expect(await entryChoice(targetEntries(composer).first())).toBe(CHOICE_LABELS['confirmed-bug'])
     expect(await targetEntries(composer).first().getAttribute('data-history-active')).toBe('true')
@@ -233,43 +234,42 @@ describe('419 real browser mark confirmation', () => {
     expect(s.pageErrors).toEqual([])
   }, 45_000)
 
-  it('without a confirm channel renders its reason only and appends no ledger line', async () => {
+  // RE-SPELLED 2026-09-30 (432-13): was 'without a confirm channel renders its reason only and
+  // appends no ledger line'. The channel is not needed: the mark is recorded without it.
+  it('without a confirm channel still records the mark, with no refusal rendered', async () => {
     const s = await scene(true)
     const response = s.page.waitForResponse(response => response.url().endsWith('/mark') && response.request().method() === 'POST')
     const composer = await submit(s.page)
-    expect((await response).status()).toBe(403)
-    const denied = composer.locator('[data-feedback-denied]')
-    await denied.waitFor()
-    const deniedText = await denied.textContent()
-    expect(deniedText).toContain('The safety gate denied this mark.')
-    expect(await denied.locator('[data-remedy-kind]').count()).toBe(0)
-    expect(deniedText).not.toContain('an ask-tier op raises ' + 'a confirm here that you can answer')
-    expect(await targetEntries(composer).count()).toBe(0)
-    expect(await s.page.locator(TEST_ENTRY).getAttribute('data-feedback-marked')).toBe('false')
-    expect(s.rows()).toHaveLength(0)
+    expect((await response).status()).toBe(200)
+    await settled(composer, await recordedSentence(composer))
+    expect(await composer.locator('[data-feedback-denied]').count()).toBe(0)
+    expect(await targetEntries(composer).count()).toBe(1)
+    await s.page.locator(`${TEST_ENTRY}[data-feedback-marked="true"]`).waitFor()
+    expect(s.rows()).toHaveLength(1)
     expect(s.confirms.pendingCount()).toBe(0)
     expect(s.pageErrors).toEqual([])
   }, 45_000)
 
-  it('deny renders the typed denial and appends no ledger line', async () => {
+  // RE-SPELLED 2026-09-30 (432-13): was 'deny renders the typed denial and appends no ledger
+  // line'. There is no deny to give: no approval group renders and nothing is parked.
+  it('offers no deny: the approval group never renders and nothing is parked', async () => {
     const s = await scene()
-    await s.page.waitForFunction(() => (window as unknown as { markWire: Wire[] }).markWire.some(frame => frame.event === 'confirm_scope'))
+    await waitChannel(s.page)
     const composer = await submit(s.page)
-    await approval(s.page).waitFor()
-    await composer.locator('[data-feedback-approval] [data-confirm-answer="deny"]').click()
-    await composer.locator('[data-feedback-denied]').waitFor()
-    expect(await composer.locator('[data-feedback-denied]').textContent()).toContain('The safety gate denied this mark.')
-    expect(await targetEntries(composer).count()).toBe(0)
-    expect(await s.page.locator(TEST_ENTRY).getAttribute('data-feedback-marked')).toBe('false')
-    expect(s.rows()).toHaveLength(0)
+    await settled(composer, await recordedSentence(composer))
+    expect(await approval(s.page).count()).toBe(0)
+    expect(await composer.locator('[data-feedback-approval] [data-confirm-answer]').count()).toBe(0)
+    expect(s.rows()).toHaveLength(1)
     expect(s.confirms.pendingCount()).toBe(0)
     expect(s.pageErrors).toEqual([])
   }, 45_000)
 
+  // RE-SPELLED 2026-09-30 (432-13): the 'deny' and 'no-channel' failures no longer exist — both
+  // record the mark — so the retention matrix ranges the two failures that still keep a draft.
   for (const door of ['test', 'step'] as const) {
-    it.each(['deny', 'no-channel', 'transport', 'refetch'])('retains the ' + door + ' draft after %s with actual ledger accounting', async failure => {
-      const s = await scene(failure === 'no-channel')
-      if (failure !== 'no-channel') await waitChannel(s.page)
+    it.each(['transport', 'refetch'])('retains the ' + door + ' draft after %s with actual ledger accounting', async failure => {
+      const s = await scene()
+      await waitChannel(s.page)
       const composer = await fillDraft(s.page, door)
       expect(s.rows()).toHaveLength(0)
       let accepted = false
@@ -280,15 +280,9 @@ describe('419 real browser mark confirmation', () => {
       }
       await tabTo(s.page, `${COMPOSER} [data-feedback-submit]`)
       await s.page.keyboard.press('Enter')
-      if (failure === 'deny' || failure === 'refetch') {
-        await approval(s.page).waitFor()
-        await expectDraft(composer)
-        expect(await status(composer).textContent()).toBe(SENDING_STATUS)
-        await tabTo(s.page, `[data-feedback-approval] [data-confirm-answer="${failure === 'deny' ? 'deny' : 'accept'}"]`)
-        await s.page.keyboard.press('Enter')
-      }
       await settled(composer, DRAFT_KEPT_STATUS)
       await expectDraft(composer)
+      expect(await approval(s.page).count()).toBe(0)
       expect(await composer.locator('[data-feedback-denied]').getAttribute('role')).toBe('alert')
       expect(await status(composer).textContent()).toBe(DRAFT_KEPT_STATUS)
       expect(s.rows()).toHaveLength(failure === 'refetch' ? 1 : 0)
@@ -297,19 +291,15 @@ describe('419 real browser mark confirmation', () => {
         expect(await s.page.locator(DOORS[door].entry).getAttribute('data-feedback-marked')).toBe('false')
       }
       healthy(s)
-      if (failure === 'transport' || failure === 'refetch') {
-        await s.page.unroute(failure === 'transport' ? '**/mark' : '**/detail')
-        // Explicit retry traverses real confirmation; already-marked remains one ledger row.
-        await composer.locator('[data-feedback-submit]').click()
-        await approval(s.page).waitFor()
-        await composer.locator('[data-feedback-approval] [data-confirm-answer="accept"]').click()
-        const recorded = await recordedSentence(composer)
-        await settled(composer, recorded)
-        expect(s.rows()).toHaveLength(1)
-        expect(await composer.locator('[data-feedback-note]').inputValue()).toBe('')
-        expect(await s.page.locator(DOORS[door].entry).getAttribute('data-feedback-marked')).toBe('true')
-        healthy(s)
-      }
+      await s.page.unroute(failure === 'transport' ? '**/mark' : '**/detail')
+      // Explicit retry, with no confirmation; already-marked remains one ledger row.
+      await composer.locator('[data-feedback-submit]').click()
+      const recorded = await recordedSentence(composer)
+      await settled(composer, recorded)
+      expect(s.rows()).toHaveLength(1)
+      expect(await composer.locator('[data-feedback-note]').inputValue()).toBe('')
+      expect(await s.page.locator(DOORS[door].entry).getAttribute('data-feedback-marked')).toBe('true')
+      healthy(s)
     }, 45_000)
   }
 
@@ -361,15 +351,15 @@ describe('419 real browser mark confirmation', () => {
       if (RECHECK_DIR) expect(existsSync(join(RECHECK_DIR, `marks-${theme}.png`))).toBe(true)
     }
     expect(s.rows()).toHaveLength(0)
-    const composer = await submit(s.page, 'test', 'false-fail')
-    await approval(s.page).waitFor()
-    expect(await composer.locator('[data-feedback-approval]').textContent()).toContain(APPROVAL_TITLE)
-    expect(await s.page.locator('[role="dialog"], [aria-modal]').count()).toBe(0)
-    await retainCapture(s.page, 'mark-confirmation.png')
-    if (RECHECK_DIR) expect(existsSync(join(RECHECK_DIR, 'mark-confirmation.png'))).toBe(true)
-    await tabTo(s.page, '[data-feedback-approval] [data-confirm-answer="accept"]')
+    // 432-13: no approval group is rendered, so the mark is sent with Enter on the submit control.
+    const composer = await openComposer(s.page, 'test')
+    await choice(composer, 'false-fail').click()
+    await previewCurrent(composer)
+    await tabTo(s.page, `${COMPOSER} [data-feedback-submit]`)
     await s.page.keyboard.press('Enter')
     await settled(composer, await recordedSentence(composer))
+    expect(await approval(s.page).count()).toBe(0)
+    expect(await s.page.locator('[role="dialog"], [aria-modal]').count()).toBe(0)
     expect(s.rows()).toHaveLength(1)
     expect(await composer.locator('[data-feedback-note]').inputValue()).toBe('')
     // RE-SPELLED 432-09 (D-04/D-25) from '423 D-19: the drafted receipt's review control copies a
@@ -383,8 +373,6 @@ describe('419 real browser mark confirmation', () => {
     expect(await status(composer).textContent()).toBe('')
     expect(await choice(composer, 'confirmed-bug').getAttribute('aria-checked')).toBe('true')
     await composer.locator('[data-feedback-submit]').click()
-    await approval(s.page).waitFor()
-    await composer.locator('[data-feedback-approval] [data-confirm-answer="accept"]').click()
     await settled(composer, await recordedSentence(composer))
     expect(s.rows()).toHaveLength(2)
     expect(s.rows().map(row => row.stepIndex)).toEqual([undefined, 0])
@@ -406,7 +394,7 @@ describe('419 real browser mark confirmation', () => {
       chromium: browser.version(), executable: chromium.executablePath(),
       freshness: buildFreshness(DASHBOARD_ANCHORED_BUILDS), measurements,
       pageErrors: s.pageErrors, outsideLoopback: s.outsideLoopback,
-      keyboard: 'Tab and Enter reached both doors and the inline accept/deny controls',
+      keyboard: 'Tab and Enter reached both doors and the submit control (no approval controls since 432-13)',
       finalMarks: s.rows().map(({ kind, ordinal, stepIndex }) => ({ kind, ordinal, stepIndex })),
       ownerPersonallyTested: false, assistiveTechnology: 'unverified',
     }, null, 2))

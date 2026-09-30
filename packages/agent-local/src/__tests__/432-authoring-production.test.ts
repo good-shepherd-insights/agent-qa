@@ -270,12 +270,7 @@ function coreBackedExecution(input: {
     executionContext: 'local-interactive',
     mintRunId: () => `run_authoring_${String(++minted)}`,
     isMintedRunId: (value) => /^run_[a-z0-9_]+$/.test(value),
-    // THE GATE IS SET TO ALLOW, so the only thing that can refuse a run here is production.
-    trust: { trustMode: true },
-    confirm: {
-      surface: 'tty-prompt',
-      ask: async () => true,
-    } as Parameters<typeof createRunInvocationCore>[0]['confirm'],
+    // 432-13: the core asks nobody, so the only thing that can refuse a run here is production.
     resolveTargetDeclaration: (request) => {
       record.reached.push(request)
       return declarationFor(input.workspace, input.config, request)

@@ -54,7 +54,6 @@ import type { runInProcessCliRun as RunInProcessCliRun } from '../composition/in
 // It lives in a leaf module rather than in `in-process-run-execution.ts` because that module
 // imports this one's producers — see `cli-run-input-error.ts`'s header.
 import { CliRunInputError } from '../composition/cli-run-input-error.js'
-import { createTtyConfirmPort } from '../composition/local-agent-host.js'
 import { denialDetailLines } from './receipt-line.js'
 import {
   buildMemberRunConfig,
@@ -567,7 +566,6 @@ export interface RunOptions {
   device?: string
   var?: string[]
   runAttr?: string[]
-  trustSession?: boolean
   maxAblations?: number
   detach?: boolean
   gateRun?: boolean
@@ -1857,11 +1855,9 @@ async function executeSuites(
     }))
   }
 
-  // The door's own confirm channel for the RUN-START gate (D-07). `undefined` on a piped or
-  // redirected stdio — this door does not claim a person is present because the process is running
-  // somewhere a person once was.
-  const runStartConfirm = createTtyConfirmPort()
-  const trustMode = opts.trustSession === true || config.safety?.trustMode === true
+  // 432-13 (D-01/D-14): NOTHING ASKS. This door builds no confirm channel and carries no session
+  // trust: a non-production suite starts at a terminal, on a piped stdio and in CI alike, and the
+  // core refuses production before any effect unless the config opts in.
 
   // 401-11 (D-01/D-02): THE SUITE PATH IS A CALLER OF THE SAME ONE IN-PROCESS DRIVE the single-test
   // path calls. With this, `createRunInvocationCore` is composed in exactly ONE place in the whole
@@ -1874,8 +1870,6 @@ async function executeSuites(
         configPath: configFilePath,
         agentQaRoot: resolvePath(configDir, '.agent-qa'),
         executionContext,
-        trust: { trustMode },
-        ...(runStartConfirm === undefined ? {} : { confirm: runStartConfirm }),
         // The members this door already produced — the SAME suite factory the default dispatcher
         // reaches for a suite pattern, handed over rather than re-run.
         produceMembers: async () => produced,
@@ -4501,7 +4495,8 @@ export function createRunCommand(): Command {
     .option('--device <name>', 'Override the mobile test/suite device for this run')
     .option('--var <kv...>', 'set variable KEY=VALUE (repeatable)')
     .option('--run-attr <kv...>', 'attach run attribute KEY=VALUE; repeatable')
-    .option('--trust-session', 'treat every ask-tier policy decision in this session as trusted (execution-safety §2.3 session.trustMode; explicit opt-in, session-scoped)')
+    // 432-13 (D-14): `--trust-session` is gone — nothing asks, so there is nothing to trust past.
+    // Commander refuses it as an unknown option.
     .option('--max-ablations <n>', 'maximum canary ablations per run', parseIntegerFlag('--max-ablations'))
     .option('--detach', 'skip the post-verdict knowledge curation tail')
     // 402-03 (D-12): the config knob's flag half. ORDINARY OVERRIDES — they ride the same
@@ -4910,8 +4905,8 @@ export function createRunCommand(): Command {
         // call. The drive owns the ORDER and the run-scoped machinery every door needs identically —
         // the ONE masking context, the ONE audit sink, the safety-hook runner, the safety scope, the
         // assembler hand-off and the verdict map. This door supplies what only a door can answer: its
-        // TTY posture, its trust flag, its confirm channel, its members, its reporters, and what to
-        // do after the verdict.
+        // TTY posture, its members, its reporters, and what to do after the verdict. (432-13: no
+        // trust flag and no confirm channel — nothing asks.)
         //
         // WHAT STAYS HERE, DELIBERATELY: signal registration and the grace timer, `activeRunSession`
         // (through `onSession`), the reporters and their flush ordering, `releaseAppium()`, closing
@@ -4939,12 +4934,6 @@ export function createRunCommand(): Command {
           ),
         }))
 
-        // The door's own confirm channel for the RUN-START gate (D-07). `undefined` on a piped or
-        // redirected stdio — this door does not claim a person is present because the process is
-        // running somewhere a person once was.
-        const runStartConfirm = createTtyConfirmPort()
-        const singleTrustMode = opts.trustSession === true || config.safety?.trustMode === true
-
         const { runInProcessCliRun } = await import('../composition/in-process-run-execution.js')
         let singleExit: number
         try {
@@ -4953,11 +4942,6 @@ export function createRunCommand(): Command {
               configPath: configFilePath,
               agentQaRoot: resolvePath(configDir, '.agent-qa'),
               executionContext: singleExecutionContext,
-              trust: { trustMode: singleTrustMode },
-              // Absent on a piped/redirected stdio, which leaves the gate's DENY_CONFIRM default in
-              // place — the fail-closed arm is reached before the confirm arm anyway, so this port
-              // only ever speaks where there is somebody to answer it.
-              ...(runStartConfirm === undefined ? {} : { confirm: runStartConfirm }),
               inputs,
               // The members this door already produced. The SAME producer a bare-request door
               // reaches through `produceMembersFromPatterns` — handed over rather than re-run,

@@ -26,7 +26,6 @@ import {
   invokeFunction,
 } from '@vostride/agent-qa-agent'
 import type { FunctionDeps } from '@vostride/agent-qa-agent'
-import { NO_STANDING_APPROVALS } from '@vostride/agent-qa-safety'
 import type {
   AuthoringDraftEditOutput,
   FunctionCaller,
@@ -185,7 +184,6 @@ function harness(emission: string, options: { readonly beforeAnswer?: () => void
     registry: createFunctionRegistry({
       deps,
       resolveExecutionContext: () => 'local-interactive',
-      standingApprovalReader: () => NO_STANDING_APPROVALS,
       auditSink: { appendExecutionAudit() {}, appendGuardrailAudit() {} },
     }),
     runStarts: () => runStarts,

@@ -1,39 +1,15 @@
-// THE COMPOSED `/pin` DIFFERENTIAL (Phase 392 plan 10, D-21).
+// THE COMPOSED `/pin` DIFFERENTIAL (Phase 392 plan 10, D-21), RE-SPELLED AS ITS ABSENCE (432-13).
 //
-// 392-05 proved the pin at the GATE: an overlay handed to `evaluate()` denies. This file proves the
-// COMPOSED claim, which is a different one and the one a person actually experiences — that typing
-// `/pin <class>` into a conversation makes the very next turn asking for that capability come back
-// refused, through `invokeFunction`, with a row in the execution audit. Between those two claims sit
-// three things a gate-level test cannot see: the directive handler, the overlay's live view of the
-// session's pin set, and the conditional threading at `invoke.ts`'s single `evaluate()` call-site.
+// 392-05/392-10 proved that typing `/pin <class>` made the very next turn asking for that capability
+// come back refused through `invokeFunction`, with a `session-pin-denied` row in the execution audit.
+// 432-13 (D-14/D-15) removed the op gate the pin overlay tightened and `/pin` from chat resolution,
+// so the same three arms now prove the retired verb reaches nothing: the op executes before AND
+// after a typed `/pin`, the scope control is unchanged, no row is written at the file the
+// composition writes, and no `approval_decision` lands in the session.
 //
-// THREE ARMS, ONE COMPOSITION, ONE SESSION, and the sameness is the whole design. A differential
-// whose arms are different hosts is comparing two assemblies; these arms are the SAME assembly at
-// three moments of one conversation, so the only thing that changed between them is the pin.
-//
-//   1. no pin        — `proposals` executes.
-//   2. after the pin — the SAME utterance is REFUSED through `invokeFunction`, the receipt carries
-//                      the named refusal, and a `session-pin-denied` row lands in the audit file.
-//   3. scope control — a DIFFERENT capability's class is still executable under the same pin. A
-//                      pin that denied everything would pass arms 1 and 2 and be a catastrophe.
-//
-// THE MINT-REFUSAL ARM IS N/A BY DESIGN, stated here rather than left as an unexplained absence.
-// Two-sided differentials for a policy surface normally pair "the tightening was recorded" against
-// "the loosening was refused". `/pin` has no loosening side to refuse: the holder publishes `pin`,
-// `list` and `asGateDeny` and no unpin, the DTO carries a deny list and no allow list, and the gate
-// hook's only true branch writes a deny. So the pair here is pin-active against pin-absent on the
-// same op, which is what D-21 names, plus the scope control that keeps "denies" from meaning
-// "denies everything".
-//
-// THE AUDIT ROW IS ASSERTED AT THE FILE THE COMPOSITION WRITES. `composeLocalAgent` binds
-// `JsonlAuditSink(agentQaRoot)`, so `execution_audit.jsonl` under the runtime root IS the seam —
-// not a spy standing in for it. A refusal that returned the right message and recorded nothing
-// would be exactly the repudiation gap the gate's row placement exists to close.
-//
-// THE PLANNER IS BOUND AND MUST GO UNTOUCHED. Every utterance here is table-canonical, so a model
-// was bound that counts and throws: a host with no model could not call one however wrong its
-// routing was, and an absence cannot prove a skip. It also rules out a reading in which the refusal
-// came from somewhere other than the gate.
+// THE PLANNER IS BOUND AND COUNTS. Every canonical utterance still goes untouched by it; the `/pin`
+// clause is now unrouted text, so it is the ONE utterance that reaches the planner, which throws —
+// and the turn fails closed by name.
 
 import { mkdirSync, mkdtempSync, existsSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -117,7 +93,7 @@ interface AuditRow {
   readonly reason: string
 }
 
-describe('D-21: the session pin, proved through the composed stack', () => {
+describe('D-21 retired: a typed /pin reaches nothing through the composed stack (432-13)', () => {
   let root: string
   let agentQaRoot: string
   let host: LocalAgentHost
@@ -171,93 +147,62 @@ describe('D-21: the session pin, proved through the composed stack', () => {
       .map((line) => JSON.parse(line) as AuditRow)
   }
 
-  it('all three arms: execute, then deny-with-audit-row, then the scope control', async () => {
-    // ---- ARM 1: no pin. The op executes, and the audit records an ordinary allow.
-    const before = await ask('proposals')
+  // RE-SPELLED 2026-09-30 (432-13) from 'all three arms: execute, then deny-with-audit-row, then the
+  // scope control'.
+  it('C432-CHAT-DIRECT: all three arms execute, before and after a typed /pin, with no audit row', async () => {
+    // ---- ARM 1: no pin. The op executes; no gate records a decision.
+    const before = await ask('/fn proposals.list')
     expect(before.status).toBe('completed')
     expect(before.receipts.map((receipt) => receipt.functionId)).toEqual([
       PROPOSALS_LIST_FUNCTION_ID,
     ])
     expect(before.receipts[0]?.status).toBe('executed')
-    const allowRow = auditRows().find((row) => row.action === PINNED_CLASS)
-    expect(allowRow?.verdict).toBe('allow')
 
-    // ---- The pin itself, typed into the SAME session.
+    // ---- The retired verb, typed into the SAME session: an unroutable clause, refused by name.
     const pinned = await ask(`/pin ${PROPOSALS_LIST_FUNCTION_ID}`, before.sessionId)
-    expect(pinned.status).toBe('completed')
-    // A directive names no capability, so it invokes nothing — and it is the NORMALISED class the
-    // answer and the log both carry (392-05's law): the person typed a bare op id and what denies
-    // is the `fn:`-prefixed risk name. Recording the request rather than the effect is how the
-    // silent-no-op trap reappears in a record several surfaces render.
+    expect(pinned.status).toBe('fail_closed')
     expect(pinned.receipts).toEqual([])
-    expect(pinned.answer ?? '').toContain(PINNED_CLASS)
-    const decision = sessionEvents(before.sessionId).find(
-      (event) => event.kind === 'approval_decision',
-    )
-    expect(decision).toMatchObject({
-      actionClass: PINNED_CLASS,
-      decision: 'deny',
-      source: 'verb',
-    })
+    expect(pinned.answer ?? '').not.toContain(PINNED_CLASS)
+    expect(
+      sessionEvents(before.sessionId).filter((event) => event.kind === 'approval_decision'),
+    ).toEqual([])
 
-    // ---- ARM 2: the SAME utterance, same session, same composition. Now refused.
-    const after = await ask('proposals', before.sessionId)
-    expect(after.status).toBe('failed')
-    // The clause was ROUTED — this is not a routing failure wearing a refusal's clothes. It reached
-    // the capability's own gate and was turned away there.
-    expect(after.receipts.map((receipt) => receipt.functionId)).toEqual([
-      PROPOSALS_LIST_FUNCTION_ID,
-    ])
-    expect(after.receipts[0]?.status).toBe('failed')
-    expect(after.receipts[0]?.outcome).toContain('FunctionDenied')
+    // ---- ARM 2: the SAME utterance, same session, same composition. Still executes.
+    const after = await ask('/fn proposals.list', before.sessionId)
+    expect(after.status).toBe('completed')
+    expect(after.receipts[0]?.status).toBe('executed')
 
-    // The audit row for the deny, at the file the composition writes. `session-pin-denied` is its
-    // own outcome value rather than a generic block, so an operator reading the trail can tell a
-    // conversation's own pin apart from a tier decision.
-    const denyRow = auditRows().find((row) => row.outcome === 'session-pin-denied')
-    expect(denyRow).toBeDefined()
-    expect(denyRow?.action).toBe(PINNED_CLASS)
-    expect(denyRow?.verdict).toBe('deny')
-
-    // ---- ARM 3: the scope control. A DIFFERENT class is untouched by the pin.
+    // ---- ARM 3: the scope control, unchanged.
     const other = await ask('status', before.sessionId)
     expect(other.status).toBe('completed')
     expect(other.receipts.map((receipt) => receipt.functionId)).toEqual([RUNS_LIST_FUNCTION_ID])
     expect(other.receipts[0]?.status).toBe('executed')
-    expect(
-      auditRows().filter(
-        (row) => row.action === UNPINNED_CLASS && row.outcome === 'session-pin-denied',
-      ),
-    ).toEqual([])
 
-    // Every utterance above is table-canonical, so the bound model must have gone untouched. A
-    // deny that came from anywhere other than the gate would show up here.
-    expect(tripwire.calls()).toBe(0)
+    // No decision row of any kind at the file the composition writes.
+    expect(auditRows()).toEqual([])
+    // Only the unroutable `/pin` clause reached the planner.
+    expect(tripwire.calls()).toBe(1)
   })
 
-  it('the pin is a LIVE view: a second class pinned mid-session denies from the next turn', async () => {
-    // Property 3 of the holder, composed: `asGateDeny()` reads the set at call time, and the
-    // composition binds the hook ONCE for the session. A snapshot taken at bind time would be empty
-    // forever — the silent no-op 391-05 measured, arriving by a different road.
+  // RE-SPELLED 2026-09-30 (432-13) from 'the pin is a LIVE view: a second class pinned mid-session
+  // denies from the next turn'. There is no pin set to be live.
+  it('C432-CHAT-DIRECT: a /pin typed mid-session denies nothing on the next turn', async () => {
     const opened = await ask('status')
     expect(opened.receipts[0]?.status).toBe('executed')
 
     await ask(`/pin ${RUNS_LIST_FUNCTION_ID}`, opened.sessionId)
     const after = await ask('status', opened.sessionId)
 
-    expect(after.receipts[0]?.status).toBe('failed')
+    expect(after.receipts[0]?.status).toBe('executed')
     expect(auditRows().some((row) => row.action === UNPINNED_CLASS
-      && row.outcome === 'session-pin-denied')).toBe(true)
+      && row.outcome === 'session-pin-denied')).toBe(false)
   })
 
-  it('a pin against a class this host does not declare is REFUSED, not accepted', async () => {
-    // The other half of the silent-no-op law: a pin recorded against a name nothing answers to
-    // would be accepted and then deny nothing for the rest of the conversation, which is worse
-    // than an error because the person believes it worked.
+  it('a /pin against a class this host does not declare is refused by name, like any unrouted clause', async () => {
     const refused = await ask('/pin nonsense.notacapability')
 
     expect(refused.status).toBe('fail_closed')
-    expect(refused.unhandled?.reason ?? '').toContain('nonsense.notacapability')
+    expect(refused.unhandled?.clause).toBe('/pin nonsense.notacapability')
     // And it left a countable row, like every other refusal (D-15).
     expect(
       sessionEvents(refused.sessionId).filter((event) => event.kind === 'mark_unhandled'),

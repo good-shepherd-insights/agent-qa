@@ -677,7 +677,6 @@ export const CHAT_ALIAS_PROBES: readonly ChatAliasProbe[] = Object.freeze([
   Object.freeze({ alias: 'status', clause: 'status', expects: 'op' } as const),
   Object.freeze({ alias: 'test-ref', clause: 'test checkout flow', expects: 'op' } as const),
   Object.freeze({ alias: 'digest', clause: 'digest run_2f8c1a', expects: 'op' } as const),
-  Object.freeze({ alias: 'proposals', clause: 'proposals', expects: 'op' } as const),
   Object.freeze({
     alias: 'model',
     clause: '/model claude-sonnet',
@@ -686,12 +685,7 @@ export const CHAT_ALIAS_PROBES: readonly ChatAliasProbe[] = Object.freeze([
       'a session directive: it changes how THIS session behaves and maps to no registry op, so a '
       + 'catalog row would advertise a capability that does not exist',
   } as const),
-  Object.freeze({
-    alias: 'pin',
-    clause: '/pin write',
-    expects: 'directive',
-    reason: 'a session directive (a deny-only policy overlay), not a capability',
-  } as const),
+  // 432-13 (C432-CHAT-DIRECT): the `proposals` alias and the `/pin` directive left the table.
   Object.freeze({
     alias: 'fn',
     clause: '/fn runs.list',

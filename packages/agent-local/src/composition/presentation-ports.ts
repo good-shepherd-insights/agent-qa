@@ -40,8 +40,11 @@ export interface AttachableRunSession {
 }
 
 /**
- * The presentation capabilities the host-neutral run composition consumes directly. Deliberately
- * small: it carries what the composition actually calls, not everything a host owns. Reporter
+ * The presentation capabilities a host hands the run composition.
+ *
+ * 432-13 (D-14): THE CONFIRM MEMBERS ARE UNREAD. A run asks nobody, so `buildRunSessionSafetyHooks`
+ * no longer reads `confirm` or `decorateConfirmForHuman`; 432-14 removes both with the last host
+ * producer. Deliberately small: it carries what the composition calls, not everything a host owns. Reporter
  * attachment and the live seam are NOT fields here because the composition never touches them —
  * the host does, over the vocabulary declared above, which is why that vocabulary lives in this
  * file even though nothing in the composition reads it.

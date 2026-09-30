@@ -62,7 +62,8 @@ export interface InProcessFixture {
 export interface InProcessFixtureInput {
   readonly origin: string
   /** `undefined` writes NO declaration at all — which is the undeclared case (D-06). */
-  readonly environment?: 'local' | 'shared' | undefined
+  // 'production' since 432-13: with the run gate gone, production is the one refusal left to vary.
+  readonly environment?: 'local' | 'shared' | 'production' | undefined
   /** Omit the env file, so the input preflight has a real refusal to make. */
   readonly omitEnvFile?: boolean
   /** Omit the hooks file. */

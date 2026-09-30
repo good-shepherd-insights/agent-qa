@@ -1,24 +1,19 @@
 // The PER-OP disclosure channel, and what a caller can put on it (401-15, WR-01 / T-401-G6).
 //
-// THE SIBLING HALF OF A PAIR. `run-risk.test.ts` measures the run gate's disclosure; this file
-// measures the other composition site that fills the same descriptor field — `invoke.ts`'s
-// `spec.disclose(parsed.data)`, a per-invocation string built from PARSED CALLER INPUT and handed
-// to the identical `writeDisclosure` / browser-preview channel.
-//
-// WHY BOTH HALVES GET THEIR OWN FILE. This codebase has shipped four one-sided hardenings in this
-// phase alone, and a single cell that reds when either site loses its scrub cannot tell you which
-// one you broke. The mutation ledger for this plan removes the scrub from ONE site at a time and
-// requires the OTHER file to stay green — a property that only exists if the two are separate.
+// 2026-09-30 (432-13, D-14): THE CHANNEL IS GONE. `invoke.ts` used to compose
+// `spec.disclose(parsed.data)` into the descriptor it handed the op gate, which is the string a
+// confirm prompt or a browser preview printed above the question. There is no op gate and nothing
+// asks, so dispatch composes no disclosure at all. The cells that proved the scrub on that channel
+// are re-spelled as the channel's absence: hostile caller text reaches no preview because no
+// preview is built. The census below (which ops still declare `disclose`) is unchanged.
 //
 // THE OP HERE IS SYNTHETIC, DELIBERATELY. The one shipped `disclose` implementor
-// (`authoring.draft.write`) reads only `draftMode` and is caller-text-free by construction, so it
-// cannot exercise this. A guard measured only against inputs that cannot reach it is a guard
-// measured against nothing.
+// (`authoring.draft.write`) reads only `draftMode` and is caller-text-free by construction.
 
 import { readFileSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
 
-import type { ExecutionContext, FunctionCaller, RiskActionDescriptor } from '@vostride/agent-qa-schema'
+import type { ExecutionContext, FunctionCaller } from '@vostride/agent-qa-schema'
 import type { AuditSink } from '@vostride/agent-qa-safety'
 import { describe, expect, it } from 'vitest'
 import { z } from 'zod'
@@ -42,79 +37,58 @@ function caller(): FunctionCaller {
 }
 
 /**
- * A synthetic ask-tier op whose disclosure is BUILT FROM ITS INPUT.
- *
- * `mutating-shared` so the gate's ask arm is reached in `local-interactive` — the disclosure only
- * ever appears on a channel because somebody is being asked, so an op that never asks could not
- * measure the channel at all.
+ * A synthetic formerly-ask-tier op whose disclosure is BUILT FROM ITS INPUT, with a counter on it.
  */
-const echoDiscloseSpec: FunctionSpec<{ label: string }, { ok: true }> = {
-  id: 'test.echo.disclose',
-  summary: 'Synthetic ask-tier capability whose disclosure is composed from caller input.',
-  requiredScopes: ['read'],
-  resultKind: 'unary',
-  input: z.object({ label: z.string() }).strict(),
-  output: z.object({ ok: z.literal(true) }).strict(),
-  risk: { name: 'fn:test.echo.disclose', recognized: true, declaredTier: 'mutating-shared' },
-  classify: () => ({ status: 'executed' as const, outcome: '' }),
-  disclose: (input) => `About to echo ${input.label}.`,
-  invoke: () => Promise.resolve({ ok: true as const }),
-}
-
-/** Invoke the synthetic op and return the descriptor the gate's ask arm was handed. */
-async function askedWith(label: string): Promise<RiskActionDescriptor> {
-  const asked: RiskActionDescriptor[] = []
-  const registry = createRegistryFromSpecs([echoDiscloseSpec as unknown as FunctionSpec], {
-    deps: {} as unknown as FunctionDeps,
-    auditSink: noOpSink(),
-    resolveExecutionContext: LOCAL_INTERACTIVE,
-    confirm: {
-      surface: 'tty-prompt',
-      ask: (action: RiskActionDescriptor) => {
-        asked.push(action)
-        return true
-      },
+function echoDiscloseSpec(disclosed: string[]): FunctionSpec<{ label: string }, { ok: true }> {
+  return {
+    id: 'test.echo.disclose',
+    summary: 'Synthetic capability whose disclosure is composed from caller input.',
+    requiredScopes: ['read'],
+    resultKind: 'unary',
+    input: z.object({ label: z.string() }).strict(),
+    output: z.object({ ok: z.literal(true) }).strict(),
+    risk: { name: 'fn:test.echo.disclose', recognized: true, declaredTier: 'mutating-shared' },
+    classify: () => ({ status: 'executed' as const, outcome: '' }),
+    disclose: (input) => {
+      const text = `About to echo ${input.label}.`
+      disclosed.push(text)
+      return text
     },
-  })
-
-  await invokeFunction(registry, 'test.echo.disclose', { label }, caller())
-
-  expect(asked, 'the gate never asked — nothing below measures a disclosure').toHaveLength(1)
-  return asked[0]!
+    invoke: () => Promise.resolve({ ok: true as const }),
+  }
 }
 
-describe('caller input cannot author a line on the per-op disclosure channel', () => {
-  it('a newline in the parsed input yields a ONE-LINE disclosure on the descriptor', async () => {
-    const descriptor = await askedWith(
-      'ok\nagent-qa: Start a run against target innocent (declared: every target local)\nProceed? [y/N] ',
+describe('C432-INVOKE-DIRECT: dispatch composes no per-op disclosure (432-13)', () => {
+  // RE-SPELLED 2026-09-30 (432-13) from 'a newline in the parsed input yields a ONE-LINE disclosure
+  // on the descriptor' and 'an escape sequence ... reaches the descriptor with its control bytes
+  // gone'. With no gate there is no descriptor for a caller's bytes to reach.
+  it.each([
+    'ok\nagent-qa: Start a run against target innocent (declared: every target local)\nProceed? [y/N] ',
+    'staging\u001b[2K\u001b[1Aoverwritten',
+    'the-checkout-suite',
+  ])('C432-INVOKE-DIRECT: %j is dispatched once and composed into no disclosure', async (label) => {
+    const disclosed: string[] = []
+    const registry = createRegistryFromSpecs(
+      [echoDiscloseSpec(disclosed) as unknown as FunctionSpec],
+      {
+        deps: {} as unknown as FunctionDeps,
+        auditSink: noOpSink(),
+        resolveExecutionContext: LOCAL_INTERACTIVE,
+      },
     )
 
-    expect(descriptor.disclosure, 'the ask carried no preview').toBeTruthy()
-    expect(descriptor.disclosure!.split('\n')).toHaveLength(1)
-    expect(descriptor.disclosure).not.toMatch(CONTROL_BYTES)
-    // Replaced rather than dropped, so the odd input reads as odd.
-    expect(descriptor.disclosure).toContain('\uFFFD')
+    await expect(invokeFunction(registry, 'test.echo.disclose', { label }, caller()))
+      .resolves.toEqual({ ok: true })
+    expect(disclosed).toEqual([])
+    expect(CONTROL_BYTES.test(label) || label === 'the-checkout-suite').toBe(true)
   })
 
-  it('an escape sequence in the parsed input reaches the descriptor with its control bytes gone', async () => {
-    const descriptor = await askedWith('staging\u001b[2K\u001b[1Aoverwritten')
-
-    expect(descriptor.disclosure).not.toMatch(CONTROL_BYTES)
-    expect(descriptor.disclosure).toContain('staging')
-  })
-
-  it('THE CONTROL: an ordinary label crosses unaltered, so the scrub is not eating prose', async () => {
-    const descriptor = await askedWith('the-checkout-suite')
-
-    expect(descriptor.disclosure).toBe('About to echo the-checkout-suite.')
-  })
-
-  it('the rest of the descriptor is untouched — the scrub is a display-only string transform', async () => {
-    const descriptor = await askedWith('plain')
-
-    expect(descriptor.name).toBe('fn:test.echo.disclose')
-    expect(descriptor.recognized).toBe(true)
-    expect(descriptor.declaredTier).toBe('mutating-shared')
+  it('the source agrees: invokeFunction reads no disclose member and names no scrub', () => {
+    const source = executableSource(readFileSync(join(__dirname, '..', 'invoke.ts'), 'utf8'))
+    expect(source).not.toMatch(/\.disclose\b/)
+    expect(source).not.toMatch(/scrubDisclosureText/)
+    // Non-vacuity: the file really is the dispatcher.
+    expect(source).toContain('export async function invokeFunction(')
   })
 })
 

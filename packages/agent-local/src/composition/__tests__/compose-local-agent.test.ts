@@ -339,12 +339,13 @@ describe('composeLocalAgent (D-15)', () => {
     expect(configReads).toBe(1)
   })
 
-  it('leaves a real audit row at the project root for every invocation', async () => {
-    await invokeFunction(host.registry, 'config.get', {}, CALLER)
+  // RE-SPELLED 2026-09-30 (432-13, D-15) from 'leaves a real audit row at the project root for every
+  // invocation'. The op gate that wrote that row is gone: an invocation dispatches and decides
+  // nothing, so the composition writes no execution-audit file for it.
+  it('C432-INVOKE-DIRECT: writes NO execution-audit row at the project root for an invocation', async () => {
+    await expect(invokeFunction(host.registry, 'config.get', {}, CALLER)).resolves.toBeDefined()
 
-    const auditPath = join(agentQaRoot, 'execution_audit.jsonl')
-    expect(existsSync(auditPath)).toBe(true)
-    expect(readFileSync(auditPath, 'utf8')).toContain('config.get')
+    expect(existsSync(join(agentQaRoot, 'execution_audit.jsonl'))).toBe(false)
   })
 
   // ---- the durable half -----------------------------------------------------------------
@@ -808,17 +809,13 @@ describe('composeLocalAgent (D-15)', () => {
       // A CLI host whose async config resolution rejects, plus one analysis.get over a run
       // with >=2 verdicts. The op must RESOLVE with the explicit no-history clause in every
       // sentence, zero unhandled rejections may fire, and the resolver is consulted exactly
-      // three times.
+      // twice.
       //
-      // THE THREE ARE TWO DIFFERENT MECHANISMS and the number is a SUM, so read it as one:
-      //   2 — the recurrence provider: prime's mint plus ONE re-mint by the first join after
-      //       the rejection reset. The second join in the same synchronous loop reuses the
-      //       in-flight promise, and THAT is the single-flight property this case pins. It is
-      //       still pinned: a regression there pushes the total to four, not to three.
-      //   1 — the 391 standing-approval binding, which resolves the root once per invocation
-      //       to build the grant reader the gate's ask arm consults. Its resolution failure is
-      //       swallowed into the no-grants reader (see the binding's comment), which is why a
-      //       rejecting resolver still leaves this read rendering rather than throwing.
+      // THE TWO ARE THE RECURRENCE PROVIDER: prime's mint plus ONE re-mint by the first join after
+      // the rejection reset. The second join in the same synchronous loop reuses the in-flight
+      // promise, and THAT is the single-flight property this case pins: a regression there pushes
+      // the total to three. (Until 432-13 a third call was the op gate's per-invocation
+      // standing-approval reader; the gate and that resolution are gone.)
       const runId = 'run_rejecting_resolver'
       plantHandoff(twoFailureHandoff(runId, 1))
 
@@ -849,7 +846,7 @@ describe('composeLocalAgent (D-15)', () => {
           expect(entry.sentence).toContain('no failure history is recorded for this test')
         }
         expect(orphaned).toEqual([])
-        expect(resolverCalls).toBe(3)
+        expect(resolverCalls).toBe(2)
       } finally {
         process.removeListener('unhandledRejection', capture)
         await rejectingHost.close()

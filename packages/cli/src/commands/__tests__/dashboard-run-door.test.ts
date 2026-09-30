@@ -1,5 +1,10 @@
 // THE DASHBOARD RUN DOOR (Phase 401 plan 07 — D-01/D-09/D-10/D-12, INVK-01).
 //
+// SINCE 432-13 (D-14/D-15/D-18) neither gate on this road exists: the queued run is dispatched with
+// no op-level decision and no run-level `evaluate()`, so no row is written at either. The one
+// refusal left is an un-opted-in production target, which the denial cell now drives; the posture
+// cell reads the context off the run's own `runStarted` payload. History below kept as written.
+//
 // WHAT IS UNDER TEST is the whole door a browser click reaches: the queue's backend →
 // `createDashboardRunDoor`'s starter → the shipped `invokeFunction` → the 384 registry → the REAL
 // op-level gate → the composed host's default run execution → the in-process drive → the core's ONE
@@ -192,7 +197,8 @@ function pinAmbient(value: 'ci' | 'local-interactive' | 'local-headless', ciMark
 }
 
 describe('a dashboard-triggered run is one more caller of runs.start (401-07, D-10 / INVK-01)', () => {
-  it('THE ALLOW ARM — the run happens IN PROCESS, and BOTH gates left a row', async () => {
+  // RE-SPELLED 2026-09-30 (432-13): was '... and BOTH gates left a row'.
+  it('THE ALLOW ARM — the run happens IN PROCESS, and NEITHER gate leaves a row', async () => {
     const target = new CountingTarget()
     await target.listen()
     try {
@@ -212,13 +218,9 @@ describe('a dashboard-triggered run is one more caller of runs.start (401-07, D-
       expect(target.hits).toEqual(['/in-process-thing'])
       expect(buildOrdinalsExist(fixture)).toBe(true)
 
-      // (b) TWO GATES, TWO ROWS, TWO FILES, TWO ACTION NAMES — no dashboard carve-out (D-10)
-      const opRows = opAuditRows(fixture).filter((row) => row.action === 'fn:runs.start')
-      const runRows = (auditRows(fixture) as AuditRow[]).filter((row) => row.action === 'run:start')
-      expect(opRows).toHaveLength(1)
-      expect(runRows).toHaveLength(1)
-      expect(runRows[0]!.outcome).toBe('proceeded')
-      expect(runRows[0]!.riskTier).toBe('mutating-local')
+      // (b) NO ROW AT EITHER GATE — and still no dashboard carve-out: no door writes one (D-10)
+      expect(opAuditRows(fixture).filter((row) => row.action === 'fn:runs.start')).toEqual([])
+      expect((auditRows(fixture) as AuditRow[]).filter((row) => row.action === 'run:start')).toEqual([])
 
       // (c) the run's own envelopes reached the door's subscribers, whole and in seq order
       const envelopes = driven.envelopes(runId)
@@ -237,13 +239,13 @@ describe('a dashboard-triggered run is one more caller of runs.start (401-07, D-
     }
   }, 180_000)
 
-  it('THE DENIAL — one field different (no `environment`), five artifacts, and the reason REACHES the dashboard', async () => {
+  // RE-SPELLED 2026-09-30 (432-13): was 'THE DENIAL — one field different (no `environment`)'. An
+  // undeclared target starts now; the one field that still refuses is a production declaration.
+  it('THE DENIAL — one field different (`environment: production`), five artifacts, and the reason REACHES the dashboard', async () => {
     const target = new CountingTarget()
     await target.listen()
     try {
-      // No `environment:` line at all — the D-06 undeclared case, which classifies SHARED. The cell
-      // above writes `environment: local` and changes nothing else.
-      const fixture = createInProcessFixture({ origin: target.origin })
+      const fixture = createInProcessFixture({ origin: target.origin, environment: 'production' })
       const driven = await composeDoor(fixture)
       const runId = enqueue(driven.db, 'the parity test')
 
@@ -253,27 +255,18 @@ describe('a dashboard-triggered run is one more caller of runs.start (401-07, D-
         source: 'dashboard',
       })
 
-      // (a) the audit row's OUTCOME field, never a message substring
-      const runRows = (auditRows(fixture) as AuditRow[]).filter((row) => row.action === 'run:start')
-      expect(runRows).toHaveLength(1)
-      const row = runRows[0]!
-      expect(row.outcome).toBe('fail-closed-denied')
-      expect(row.riskTier).toBe('mutating-shared')
-      // (b) THE RUN NEVER STARTED — `runStarted` is seq 1 of any run that began at all
+      // (a) no decision row: the production refusal is not a gate decision
+      expect(auditRows(fixture)).toEqual([])
+      // (b) THE RUN NEVER STARTED
       expect(eventTypes(fixture)).toEqual([])
       // (c) the durable assembly side effect never happened
       expect(buildOrdinalsExist(fixture)).toBe(false)
       // (d) nobody knocked on the target
       expect(target.hits).toEqual([])
-      // (e) THE REASON ON THE SURFACE THE CALLER SEES, read BACK off the row rather than typed
-      //     here — which pins the door to RENDERING the gate's decision rather than composing one.
-      //     This is the whole user-visible win: on the retiring wire this field said "Process
-      //     exited before test completed".
+      // (e) THE REASON ON THE SURFACE THE CALLER SEES names the target and the opt-in
       expect(settled.status).toBe('failed')
-      expect(settled.details.reason).toContain(row.reason)
-      // A DENIAL IS NOT A RUN, and the claim is now structural rather than a count of bookends: no
-      // session was ever named, so there are no envelopes at all. The synthetic `run-start` /
-      // `run-complete` pair this used to compare against was minted by the backend, not by the run.
+      expect(settled.details.reason).toContain(`"${fixture.targetName}"`)
+      expect(settled.details.reason).toContain('allowProduction: true')
       expect(driven.envelopes(runId)).toEqual([])
       expect(settled.details.refusedBeforeStart).toBe(true)
     } finally {
@@ -286,18 +279,17 @@ describe('a dashboard-triggered run is one more caller of runs.start (401-07, D-
     await target.listen()
     try {
       const fixture = createInProcessFixture({ origin: target.origin, environment: 'local' })
-      // Both ambient channels say a person is here: the process-global the OP gate falls back to,
-      // and the CI marker the door's own fallback reads. Neither reaches this decision — a queued
-      // run is not a turn, so it never enters the asking-session scope, so `postureFor` sees no
-      // asker. That is the interim posture holding by CONSTRUCTION rather than by configuration.
       pinAmbient('local-interactive', true)
       const driven = await composeDoor(fixture)
       const runId = enqueue(driven.db, 'the parity test')
 
       await runThroughQueue(driven, { runId, args: [fixture.testPattern], source: 'dashboard' })
 
-      const row = (auditRows(fixture) as AuditRow[]).find((r) => r.action === 'run:start')!
-      expect(row.executionContext).toBe('local-headless')
+      // RE-SPELLED 2026-09-30 (432-13): read off the run's own `runStarted` payload, since the
+      // `run:start` row that carried it is no longer written.
+      const started = driven.envelopes(runId).find((event) => event.type === 'runStarted') as
+        { payload?: { executionContext?: string } } | undefined
+      expect(started?.payload?.executionContext).toBe('local-headless')
     } finally {
       await target.close()
     }

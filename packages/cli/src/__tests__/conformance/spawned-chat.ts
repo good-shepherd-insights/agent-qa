@@ -302,8 +302,11 @@ export async function spawnCollecting(
   })
 }
 
-/** The utterance both halves type: the deterministic resolver route, which reaches no model. */
-export const CHAT_ANCHOR_UTTERANCE = 'proposals'
+/**
+ * The utterance both halves type: the deterministic resolver route, which reaches no model.
+ * 432-13: the bare `proposals` alias is gone (C432-CHAT-DIRECT); the passthrough reaches the same op.
+ */
+export const CHAT_ANCHOR_UTTERANCE = '/fn proposals.list'
 
 /**
  * Drive the SHIPPED binary's chat command over a real pipe, and wait for it to exit.

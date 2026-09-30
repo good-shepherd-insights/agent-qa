@@ -418,7 +418,6 @@ describe('C432-MIXED-SUITE-PRODUCTION — a suite keeps every production member'
           configPath: fixture.configPath,
           agentQaRoot: fixture.agentQaRoot,
           executionContext: 'local-interactive',
-          trust: { trustMode: true },
         },
         { patterns: [...fixture.mixedSuites] },
       ))
@@ -469,9 +468,8 @@ describe('C432-PRODUCTION-BEFORE-EFFECTS — the in-process drive refuses before
         {
           configPath: fixture.configPath,
           agentQaRoot: fixture.agentQaRoot,
-          // The existing gate would allow this run: interactive, trusted. Only production refuses.
+          // 432-13: nothing else can refuse this run; only production does.
           executionContext: 'local-interactive',
-          trust: { trustMode: true },
           produceMembers: realProducerWithFakeEffects(effects),
         },
         { patterns: [fixture.tests.local, fixture.tests.prodUs, fixture.tests.undeclared, fixture.tests.prodEu] },
@@ -502,7 +500,6 @@ describe('C432-PRODUCTION-BEFORE-EFFECTS — the in-process drive refuses before
           configPath: fixture.configPath,
           agentQaRoot: fixture.agentQaRoot,
           executionContext: 'local-interactive',
-          trust: { trustMode: true },
           produceMembers: realProducerWithFakeEffects(effects),
         },
         { patterns: [fixture.tests.prodEu] },
@@ -528,7 +525,6 @@ describe('C432-PRODUCTION-BEFORE-EFFECTS — the in-process drive refuses before
             configPath: fixture.configPath,
             agentQaRoot: fixture.agentQaRoot,
             executionContext: 'local-interactive',
-            trust: { trustMode: true },
             produceMembers: realProducerWithFakeEffects(effects),
           },
           { patterns: [fixture.tests.prodEu] },
@@ -555,7 +551,6 @@ describe('C432-PRODUCTION-BEFORE-EFFECTS — the in-process drive refuses before
             configPath: fixture.configPath,
             agentQaRoot: fixture.agentQaRoot,
             executionContext: 'local-interactive',
-            trust: { trustMode: true },
           },
           { patterns, runId: victimId as never },
         ))
@@ -579,7 +574,6 @@ describe('C432-PRODUCTION-BEFORE-EFFECTS — the in-process drive refuses before
             configPath: fixture.configPath,
             agentQaRoot: fixture.agentQaRoot,
             executionContext: 'local-interactive',
-            trust: { trustMode: true },
           },
           { patterns: [fixture.tests.prodEu, fixture.tests.prodEuAgain] },
         )) as RunDeniedError)
@@ -775,10 +769,12 @@ describe('C432-PRODUCTION-CLI-EXIT — `agent-qa run` refuses with exit 2 and on
   }, 120_000)
 
 
-  it('the control: with allowProduction true and the existing gate satisfied, the run reaches the target', async () => {
+  // RE-SPELLED 2026-09-30 (432-13): '... with allowProduction true and the existing gate satisfied
+  // ...'. There is no gate to satisfy and no `--trust-session`: the opt-in alone lets the run start.
+  it('the control: with allowProduction true the run reaches the target, with no other flag', async () => {
     await withTarget(async (target) => {
       const fixture = productionProject({ origin: target.origin, optIn: 'true' })
-      const { stderr } = await runCli(fixture, '--trust-session', fixture.tests.prodEu)
+      const { stderr } = await runCli(fixture, fixture.tests.prodEu)
 
       expect(stderr).not.toContain(OPT_IN_LINE)
       expect(target.hits).toEqual(['/prod-eu'])

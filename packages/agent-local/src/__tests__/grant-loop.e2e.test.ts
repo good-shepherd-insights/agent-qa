@@ -1,5 +1,12 @@
 // THE grant loop, end to end over one composition and one committed ledger (Phase 391, PROP-01).
 //
+// 2026-09-30 (432-13, D-14/D-15): THE LOOP HAS NO CONSUMER. `invokeFunction` reads no standing
+// approval, asks no confirm port and writes no decision row, so a headless apply commits whatever
+// the ledger says. What survives here is the MINT side (the always form writes one grant event, the
+// plain form writes none, revoke appends rather than rewrites, both events survive) and the origin
+// refusal; the cells that measured the gate consuming a grant are re-spelled as the ledger being
+// unread at dispatch. 432-18 deletes the grant ops and the ledger with this file's remaining claims.
+//
 // 391-01's tracer proved the READ half — a grant appended by hand through the real append API is
 // consumed by the shipped gate, and a revoke takes it back. This file closes the loop by removing
 // the hand: every event in `grants.jsonl` below is authored by a person accepting a proposal, and
@@ -33,7 +40,6 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import {
-  FunctionDeniedError,
   FunctionOriginError,
   createFunctionRegistry,
   invokeFunction,
@@ -43,7 +49,6 @@ import {
   appendGrantLedgerEvents,
   createGrantOperations,
   createProposalsInbox,
-  createStandingApprovalReader,
   grantsLedgerPath,
   publishBundleForTest,
 } from '@vostride/agent-qa-knowledge-local'
@@ -66,7 +71,6 @@ import type {
   ProposalsAcceptOutput,
   ProposalsListOutput,
   ProposalsShowOutput,
-  RiskActionDescriptor,
 } from '@vostride/agent-qa-schema'
 import type { AuditSink, ExecutionAuditRow, GuardrailAuditRow } from '@vostride/agent-qa-safety'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
@@ -122,7 +126,6 @@ describe('the grant loop: a person accepts with always, and a later headless app
   let knowledgeRoot: string
   let agentQaRoot: string
   let sink: ReturnType<typeof capturingSink>
-  let confirmed: RiskActionDescriptor[]
 
   beforeEach(() => {
     root = mkdtempSync(join(tmpdir(), 'grant-loop-'))
@@ -130,7 +133,6 @@ describe('the grant loop: a person accepts with always, and a later headless app
     agentQaRoot = join(root, '.agent-qa')
     mkdirSync(agentQaRoot, { recursive: true })
     sink = capturingSink()
-    confirmed = []
   })
 
   afterEach(() => {
@@ -207,15 +209,8 @@ describe('the grant loop: a person accepts with always, and a later headless app
         }),
       },
       auditSink: sink,
-      standingApprovalReader: () => createStandingApprovalReader({ knowledgeRoot }),
+      // 432-13: no standing-approval reader and no confirm port — `invokeFunction` asks nobody.
       resolveExecutionContext: () => context,
-      confirm: {
-        surface: 'tty-prompt',
-        ask: (action: RiskActionDescriptor) => {
-          confirmed.push(action)
-          return true
-        },
-      },
     })
   }
 
@@ -247,7 +242,10 @@ describe('the grant loop: a person accepts with always, and a later headless app
     })
   }
 
-  it('mints on the always form only, and the mint is what lets a headless apply commit', async () => {
+  // RE-SPELLED 2026-09-30 (432-13) from 'mints on the always form only, and the mint is what lets a
+  // headless apply commit'. The mint half survives; a headless apply now commits with or without
+  // the grant, and no decision row names what satisfied it because nothing is asked.
+  it('mints on the always form only, and a headless apply commits whatever the ledger holds', async () => {
     const interactive = host('local-interactive')
     const headless = host('local-headless')
 
@@ -273,8 +271,6 @@ describe('the grant loop: a person accepts with always, and a later headless app
     // The strongest form of "mints nothing": not an empty ledger — no ledger. And it is only
     // meaningful because leg 3 below shows the SAME verb on the SAME host does write one.
     expect(existsSync(grantsLedgerPath(knowledgeRoot))).toBe(false)
-    // The ask arm really ran for this decision, rather than the tier having been lowered.
-    expect(confirmed.map((action) => action.name)).toContain(`fn:${ACCEPT_ID}`)
 
     // ── LEG 3: accept WITH ALWAYS. One grant event, produced class, provenance carried.
     const secondProposal = await propose(interactive, publish('two'))
@@ -323,8 +319,8 @@ describe('the grant loop: a person accepts with always, and a later headless app
     expect(shownAfter.entry.envelope.id).toBe(secondProposal)
     expect(shownAfter.entry.envelope.status).toBe('applied')
 
-    // ── LEG 4: the loop closing. A THIRD proposal, applied HEADLESS — where no prompt exists and
-    // fail-closed would otherwise deny. The only thing that can satisfy this ask is the ledger.
+    // ── LEG 4: a THIRD proposal, applied HEADLESS. It commits in the call; nothing asked and no
+    // decision row was written, so the grant above was not what let it through (432-13).
     const thirdProposal = await propose(headless, publish('three'))
     const headlessApply = (await invokeFunction(
       headless,
@@ -333,15 +329,9 @@ describe('the grant loop: a person accepts with always, and a later headless app
       HUMAN,
     )) as KnowledgeApplyOutcomeDto
     expect(headlessApply.outcome).toBe('applied')
+    expect(sink.rows).toEqual([])
 
-    const allowed = sink.rows.at(-1)
-    expect(allowed?.action).toBe(applyClassName)
-    expect(allowed?.verdict).toBe('allow')
-    // The whole point of the phase in one field: what satisfied the ask was a decision a person
-    // made through `proposals.accept`, not trust mode, not a credential, and not a prompt.
-    expect(allowed?.trustSource).toBe('standing-approval')
-
-    // ── LEG 5: revoke, and the same headless apply is refused again.
+    // ── LEG 5: revoke, and the same headless apply STILL commits — the ledger is not read.
     const revoked = (await invokeFunction(
       interactive,
       GRANTS_REVOKE_ID,
@@ -351,23 +341,24 @@ describe('the grant loop: a person accepts with always, and a later headless app
     expect(revoked.outcome).toBe('revoked')
 
     const fourthProposal = await propose(headless, publish('four'))
-    await expect(
-      invokeFunction(headless, APPLY_ID, { proposalId: fourthProposal }, HUMAN),
-    ).rejects.toBeInstanceOf(FunctionDeniedError)
-    expect(sink.rows.at(-1)?.outcome).toBe('fail-closed-denied')
-    expect(sink.rows.at(-1)?.trustSource).toBeUndefined()
+    const afterRevoke = (await invokeFunction(
+      headless,
+      APPLY_ID,
+      { proposalId: fourthProposal },
+      HUMAN,
+    )) as KnowledgeApplyOutcomeDto
+    expect(afterRevoke.outcome).toBe('applied')
+    expect(sink.rows).toEqual([])
 
     // BOTH events survive, in order. A revoke that rewrote or removed the grant line would leave a
     // reviewer unable to see that an approval was ever given.
     expect(committedEvents().map((event) => event.kind)).toEqual(['grant', 'revoke'])
   }, 120_000)
 
-  it('admits the exactly-equal grant line and no adjacent one', async () => {
-    // D-04's exact-match rule, driven as a differential rather than asserted as a property of
-    // `grantCovers`. Three committed lines go in that are each one small step away from the line
-    // leg 3 mints; then the exactly-equal line goes in after them. The subject is the same
-    // headless `knowledge.proposal.apply` throughout, so the ONLY variable across the two verdicts
-    // is what the ledger says.
+  // RE-SPELLED 2026-09-30 (432-13) from 'admits the exactly-equal grant line and no adjacent one'.
+  // The lines still append and list; no line is READ at dispatch, so the adjacent lines and the
+  // exact one leave the headless apply equally unaffected — it commits either way.
+  it('reads no grant line at dispatch: adjacent and exact lines alike leave the apply committing', async () => {
     const interactive = host('local-interactive')
     const headless = host('local-headless')
 
@@ -433,18 +424,17 @@ describe('the grant loop: a person accepts with always, and a later headless app
       'grant_scope_superset',
     ])
 
-    const refusedProposal = await propose(headless, publish('adjacent'))
-    await expect(
-      invokeFunction(headless, APPLY_ID, { proposalId: refusedProposal }, HUMAN),
-    ).rejects.toBeInstanceOf(FunctionDeniedError)
-    // Fail-closed, with no trust source: the ask arm consulted the reader, got nothing that covered
-    // this action, and fell through. Three approvals in the file and none of them applied.
-    expect(sink.rows.at(-1)?.action).toBe(exactClass)
-    expect(sink.rows.at(-1)?.outcome).toBe('fail-closed-denied')
-    expect(sink.rows.at(-1)?.trustSource).toBeUndefined()
+    const adjacentProposal = await propose(headless, publish('adjacent'))
+    const adjacentApply = (await invokeFunction(
+      headless,
+      APPLY_ID,
+      { proposalId: adjacentProposal },
+      HUMAN,
+    )) as KnowledgeApplyOutcomeDto
+    expect(adjacentApply.outcome).toBe('applied')
+    expect(sink.rows).toEqual([])
 
-    // ── THE ADMITTED SIDE. Without it the three assertions above are indistinguishable from an ask
-    // that nothing could ever have satisfied — a headless apply denies with an EMPTY ledger too.
+    // ── THE EXACT LINE, appended after them: the same outcome, and still no decision row.
     expect(
       appendGrantLedgerEvents(
         knowledgeRoot,
@@ -470,8 +460,7 @@ describe('the grant loop: a person accepts with always, and a later headless app
       HUMAN,
     )) as KnowledgeApplyOutcomeDto
     expect(applied.outcome).toBe('applied')
-    expect(sink.rows.at(-1)?.verdict).toBe('allow')
-    expect(sink.rows.at(-1)?.trustSource).toBe('standing-approval')
+    expect(sink.rows).toEqual([])
   }, 120_000)
 
   it('refuses an agent-origin accept and revoke, leaving the committed ledger untouched', async () => {
@@ -485,9 +474,8 @@ describe('the grant loop: a person accepts with always, and a later headless app
       invokeFunction(interactive, GRANTS_REVOKE_ID, { grantId: 'grant_anything' }, AGENT),
     ).rejects.toBeInstanceOf(FunctionOriginError)
 
-    // Pre-dispatch: nothing applied, nothing minted, and the gate was never consulted.
+    // Pre-dispatch: nothing applied and nothing minted.
     expect(existsSync(grantsLedgerPath(knowledgeRoot))).toBe(false)
-    expect(confirmed).toEqual([])
 
     // The proposal is still pending, so the refusal consumed nothing — and the SAME caller reaches
     // the read verbs on the same host, which is what makes the refusal specific to the decision
@@ -511,23 +499,31 @@ describe('the grant loop: a person accepts with always, and a later headless app
     expect(accepted.grant.kind).toBe('recorded')
   }, 120_000)
 
-  it('denies both decision verbs in a fail-closed context, whatever is in the ledger', async () => {
-    // The control that keeps the door honest. `fn:proposals.accept` and `fn:grants.revoke` are
-    // members of the closed protected set, so no grant can ever satisfy their own asks — and with
-    // no prompt available there is nothing left. This is the shipped posture for CI and the daemon.
+  // RE-SPELLED 2026-09-30 (432-13) from 'denies both decision verbs in a fail-closed context,
+  // whatever is in the ledger'. With no op gate a headless accept applies in the call and a headless
+  // revoke answers by the ledger's own content; no decision row is written for either.
+  it('C432-INVOKE-DIRECT: both decision verbs run in a headless context with no confirmation', async () => {
     const interactive = host('local-interactive')
     const headless = host('local-headless')
     const proposalId = await propose(interactive, publish('closed'))
 
-    await expect(
-      invokeFunction(headless, ACCEPT_ID, { proposalId, always: true }, HUMAN),
-    ).rejects.toBeInstanceOf(FunctionDeniedError)
-    await expect(
-      invokeFunction(headless, GRANTS_REVOKE_ID, { grantId: 'grant_anything' }, HUMAN),
-    ).rejects.toBeInstanceOf(FunctionDeniedError)
+    const accepted = (await invokeFunction(
+      headless,
+      ACCEPT_ID,
+      { proposalId },
+      HUMAN,
+    )) as ProposalsAcceptOutput
+    expect(accepted.apply.outcome).toBe('applied')
+    const revoked = (await invokeFunction(
+      headless,
+      GRANTS_REVOKE_ID,
+      { grantId: 'grant_anything' },
+      HUMAN,
+    )) as GrantsRevokeOutput
+    expect(revoked.outcome).not.toBe('revoked')
     expect(existsSync(grantsLedgerPath(knowledgeRoot))).toBe(false)
+    expect(sink.rows).toEqual([])
 
-    // Reading is unaffected — the refusals above are about the two verbs that DECIDE.
     const grants = (await invokeFunction(headless, GRANTS_LIST_ID, {}, HUMAN)) as GrantsListOutput
     expect(grants.grants).toEqual([])
   }, 120_000)

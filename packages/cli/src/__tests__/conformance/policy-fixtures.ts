@@ -26,13 +26,16 @@
 // pinned constant below is the recorded output of that run, and `parity.test.ts` asserts the two
 // are equal on every execution, so classifier drift reds by name rather than silently re-scoping
 // which capabilities ask a person before they act.
+//
+// SINCE 432-13 (D-14/D-15) the ask set names what the classifier WOULD ask about; the function door
+// asks nobody and dispatches these directly. The scenario rows carry them as the `direct` policy
+// point, and the standing-approval reader that got a leg past the ask is gone with the ask.
 
 import type { FunctionDeclaration } from '@vostride/agent-qa-agent'
 import { CHAT_RESOLVER_CALLER } from '@vostride/agent-qa-agent-local'
 import { evaluate, NO_STANDING_APPROVALS } from '@vostride/agent-qa-safety'
-import type { StandingApprovalReader } from '@vostride/agent-qa-safety'
 import type { ExecutionContext, FunctionCaller, FunctionScope } from '@vostride/agent-qa-schema'
-import type { RiskActionDescriptor, TrustScope } from '@vostride/agent-qa-schema'
+import type { RiskActionDescriptor } from '@vostride/agent-qa-schema'
 
 import { mcpFunctionCaller } from '../../commands/mcp.js'
 
@@ -166,27 +169,6 @@ export function surfaceInertCallers(
     mcp: Object.freeze({ ...shaped.mcp, origin: shaped.chat.origin, safeMode: shaped.chat.safeMode }),
   }
 }
-
-/**
- * A standing-approval reader that pre-approves whatever action it is ASKED about.
- *
- * BUILT FROM THE ACTION'S OWN NAME AND THE CALL'S OWN SCOPE — the produced-not-literal idiom
- * `parity-coverage.test.ts` established for `EVERY_ASK_STANDING_APPROVED`. A reader holding a list
- * of pre-written action classes would be a second copy of the risk names, free to fall behind the
- * declarations and then to leave a capability's grant point silently measuring an ask instead.
- *
- * Its ONLY use is the grant point of an ask-capable capability: a cell that must get PAST the ask
- * to see where dispatch lands. Every cell that measures the ask ITSELF uses
- * {@link NO_STANDING_APPROVALS}, which is the gate's own default.
- */
-export const EVERY_ASK_STANDING_APPROVED: StandingApprovalReader = Object.freeze({
-  // Explicitly typed rather than contextually: `Object.freeze` is generic and infers from its
-  // argument, so a member written inside it loses the annotation the interface would have supplied
-  // — the same trap `resolver-table.ts` names at its `rule()` helper.
-  grantsFor: (action: RiskActionDescriptor, actionScope: TrustScope) => [
-    { scope: actionScope, actionClass: action.name },
-  ],
-})
 
 /** The minimum an op needs to be classified: its id and the risk descriptor it declares. */
 export interface RiskClassifiable {

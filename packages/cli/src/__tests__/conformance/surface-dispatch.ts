@@ -76,11 +76,10 @@ export interface DriveChatDispatchInput {
   /** The op's own typed invocation fixture; the scenario row's `input`. */
   readonly input: unknown
   /**
-   * Action classes to `/pin` DENY before the op is asked for, each `fn:<opId>`.
+   * Action classes to type as `/pin <class>` before the op is asked for, each `fn:<opId>`.
    *
-   * The refuse-direction wall's mechanism. See {@link driveChatDispatch} for why this is the
-   * refusal the chat surface can be made to produce, and `parity.test.ts` for the cell that pins
-   * the reason.
+   * Until 432-13 this was the refuse-direction wall's mechanism. `/pin` is no longer a directive,
+   * so these lines reach the resolver as unknown clauses; `parity.test.ts` drives them to pin that.
    */
   readonly pinBefore?: readonly string[]
   /** The context every policy decision in this drive is taken in. Injected, never ambient. */
@@ -215,7 +214,10 @@ function readJsonLines(path: string): readonly Record<string, unknown>[] {
  * by typing. What this function contributes is the workspace, the typed lines and the reading of
  * what the surface wrote down. It decides nothing about verdicts.
  *
- * WHY `pinBefore` IS THE REFUSE-DIRECTION MECHANISM, and this is worth reading once because it is a
+ * SINCE 432-13 (C432-CHAT-DIRECT) `/pin` is gone and nothing on this road refuses a capability; the
+ * paragraphs below record why `pinBefore` WAS the refuse-direction mechanism until then.
+ *
+ * WHY `pinBefore` WAS THE REFUSE-DIRECTION MECHANISM, and this is worth reading once because it is a
  * measured fact about the product rather than a choice made here. The MCP surface can be handed a
  * caller that lacks a scope, so its refuse wall is a scope refusal. The chat surface cannot:
  * `CHAT_STAGE_SCOPES` is the WHOLE closed scope union, both stage callers hold every member, and
@@ -299,9 +301,8 @@ export async function driveChatLines(
         createChatCommand({
           input: stdin,
           output: stdoutStream,
-          // No terminal, which is the honest posture for a suite and the one that keeps an
-          // ask-tier capability from being approved by anything: `createChatConfirmPort` answers
-          // `undefined` without a tty, leaving the gate's own deny-by-default confirm in place.
+          // No terminal, which is the honest posture for a suite. Since 432-13 nothing on the chat
+          // road reads it: no confirm port is built and no capability asks.
           isTty: false,
           chatCapabilities: async () => undefined,
           // COLLECTED, NEVER REGISTERED. The default registration puts a SIGINT listener on the

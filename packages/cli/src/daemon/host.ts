@@ -682,13 +682,11 @@ async function composeDaemonRunExecution(input: {
       // The request may name another config; the drive resolves against exactly this expression, so
       // a preflight read here that used a different one would resolve a different project.
       const configPath = request.configPath ?? input.configPath
-      // THE DOOR READS ITS OWN PREFLIGHT, for two reasons that are both about this host rather than
-      // about speed. (1) `config.safety.trustMode` is a project-level opt-in every other door
-      // honours, and the retired child honoured it because it read the config itself; dropping it
-      // here would have been a one-sided tightening nobody ratified. (2) the preflight's non-fatal
-      // warnings default to `console.warn`, and a daemon's diagnostics belong in the daemon's own
-      // log rather than on a console nothing is reading. `inputs` is then handed to the drive, so
-      // the config and the secrets file are read once and not twice.
+      // THE DOOR READS ITS OWN PREFLIGHT, because the preflight's non-fatal warnings default to
+      // `console.warn`, and a daemon's diagnostics belong in the daemon's own log rather than on a
+      // console nothing is reading. `inputs` is then handed to the drive, so the config and the
+      // secrets file are read once and not twice. (432-13: the preflight's `safety.trustMode` is no
+      // longer read — nothing asks, so there is no approval for trust to satisfy.)
       const inputs = await resolveRunInvocationInputs({
         configPath,
         ...(request.patterns === undefined ? {} : { patterns: request.patterns }),
@@ -707,20 +705,17 @@ async function composeDaemonRunExecution(input: {
             resolveTrustPriors: trustPriors.resolve,
             configPath,
             agentQaRoot: input.agentQaRoot,
-            // D-07: THE POSTURE TRAVELS EXPLICITLY, and this literal is the whole of truth 1. The
-            // startup `pinLocalHeadlessExecutionContext()` STAYS — it is the op-level gate's
-            // default and answers a different question — but the run gate reads THIS value, so a
-            // varied ambient cannot move the decision. Asserted, not asserted-about, in
+            // D-07: THE POSTURE TRAVELS EXPLICITLY. The startup `pinLocalHeadlessExecutionContext()`
+            // STAYS — it is this process's detected context — and every dispatched run records
+            // THIS value, so a varied ambient cannot move it. Asserted in
             // `__tests__/daemon-run-execution.test.ts`.
             executionContext: 'local-headless',
-            // NO `confirm`, and the absence is the posture: there is nobody at a daemon, so
-            // ask-tier work with no credential meets the gate's `DENY_CONFIRM` default and fails
-            // closed BY CONSTRUCTION (T-401-15). A port that answered would be a daemon approving
-            // on a human's behalf.
+            // 432-13 (D-01/D-14): NO APPROVAL POSTURE. The worker injects no confirm and no trust:
+            // nothing asks, so a non-production run it is handed starts, and the core refuses a
+            // production one before any effect unless the config opts in.
             //
             // NO `subscribers` either — D-04. The typed bus event log is the run's record; a
             // reporter here would be the console tee under another name.
-            trust: { trustMode: inputs.config.safety?.trustMode === true },
             inputs,
             // ═══ 2026-08-26 — Phase 404 D-05/D-09: THIS DOOR HANDS OVER ITS OWN LEASE ═══
             //
@@ -770,8 +765,8 @@ async function composeDaemonRunExecution(input: {
         return { runId: asRunId(finished.runId) }
       } catch (error) {
         if (error instanceof RunDeniedError) {
-          // A refused run is a failed JOB and never a crashed daemon; the denial itself travels on
-          // to the caller with the gate's own reason.
+          // A refused run is a failed JOB and never a crashed daemon; the refusal itself travels on
+          // to the caller with the core's own reason.
           recordRunOutcome(error.runId, 'failed')
           throw error
         }

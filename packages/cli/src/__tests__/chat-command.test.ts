@@ -176,7 +176,7 @@ describe('agent-qa chat (the REPL over one turn engine)', () => {
         resolveIdentity: async () => ({ distinctId: 'u_chat-cell', runtimeContext: 'user' }),
       })
 
-    await runChat(configPath, [], ['proposals', 'nonsense that routes nowhere', '/quit'], {
+    await runChat(configPath, [], ['/fn proposals.list', 'nonsense that routes nowhere', '/quit'], {
       composeAnalytics: compose,
     })
 
@@ -210,7 +210,7 @@ describe('agent-qa chat (the REPL over one turn engine)', () => {
 
   it('runs one turn end to end and closes on /quit', async () => {
     const configPath = fixtureWorkspace(roots)
-    const result = await runChat(configPath, [], ['proposals', '/quit'])
+    const result = await runChat(configPath, [], ['/fn proposals.list', '/quit'])
 
     expect(result.stderr).toBe('')
     // The receipt line names the op that actually ran, which is the visible difference between a
@@ -240,7 +240,7 @@ describe('agent-qa chat (the REPL over one turn engine)', () => {
     // printing `outcome`: the functionId and the clause are separate fields, and neither of them
     // is this sentence.
     const configPath = fixtureWorkspace(roots)
-    const result = await runChat(configPath, [], ['proposals', '/quit'])
+    const result = await runChat(configPath, [], ['/fn proposals.list', '/quit'])
 
     expect(result.stdout).toContain('0 proposal(s) in the inbox')
   })
@@ -283,7 +283,7 @@ describe('agent-qa chat (the REPL over one turn engine)', () => {
 
   it('--list reports the sessions and the files it could not read', async () => {
     const configPath = fixtureWorkspace(roots)
-    await runChat(configPath, [], ['proposals', '/quit'])
+    await runChat(configPath, [], ['/fn proposals.list', '/quit'])
 
     const listed = await runChat(configPath, ['--list'])
 
@@ -371,10 +371,10 @@ describe('agent-qa chat (the REPL over one turn engine)', () => {
 
   it('--continue reopens the most recent session rather than opening a new one', async () => {
     const configPath = fixtureWorkspace(roots)
-    await runChat(configPath, [], ['proposals', '/quit'])
+    await runChat(configPath, [], ['/fn proposals.list', '/quit'])
     expect(sessionFiles(configPath)).toHaveLength(1)
 
-    await runChat(configPath, ['--continue'], ['proposals', '/quit'])
+    await runChat(configPath, ['--continue'], ['/fn proposals.list', '/quit'])
 
     expect(sessionFiles(configPath)).toHaveLength(1)
   })

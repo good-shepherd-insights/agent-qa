@@ -1,35 +1,19 @@
-// `invokeFunction` — THE surface-capability gate call-site (Phase 384, FUNC-01 / D-11).
+// `invokeFunction` — the single dispatch path every surface crosses (Phase 384, FUNC-01).
 //
-// Two legitimate gate domains exist in this repo: in-run TOOL actions, gated by safety's
-// own `createPolicyGateToolCallHook`; and surface CAPABILITIES, gated here. Nothing else
-// may import `evaluate` (the arch pin asserts the exact file set).
+// 2026-09-30 (432-13, D-01/D-14/D-15): THERE IS NO OP GATE. The surface-capability `evaluate()`
+// call that used to sit here — the ask ladder, its confirm port, the standing-approval reader and the
+// chat session's deny overlay — is gone, and so is its `EVALUATE_PIN` entry. An op a caller may
+// invoke runs once, in every execution context, and no execution-audit row is written for it.
 //
-// Uniform gating (D-11): every DISPATCHED invocation — reads included — computes a verdict,
-// and `evaluate()` writes its execution-audit row through the injected sink. There is no
-// fast path, in either sense: no op skips the gate, and no registry that could skip the
-// sink can be constructed. That second clause is a RUNTIME property, not a promise the type
-// checker makes to compiled callers only — `createRegistryFromSpecs` throws
-// `MissingAuditSinkError` when the sink is absent or its two append methods are not
-// callable, so a registry which exists at all has a usable sink, and every invocation this
-// file dispatches therefore lands an execution-audit row. A read bypass would turn scope
-// enforcement into a second gate in disguise and would leave read capabilities unauditable.
+// What stays is everything that is not an approval: the unknown-id refusal, input validation, the
+// declared scope and origin checks (retired with the permission wave, 432-20/39), the binding
+// check, the host's read scope, dispatch, and output validation for unary results.
 //
-// What is NOT audited in 384, deliberately: the three refusals raised BEFORE the gate —
-// unknown id, invalid input, and missing scopes — throw without writing a row, and the
-// row `evaluate()` does write carries no caller identity. Both are real gaps, both are
-// scoped work rather than oversights: refusal rows and caller attribution on the audit row
-// are owned by Phases 386 and 396. The order this file implements is pinned by
-// two-caller-parity.test.ts, which asserts a scope-refused caller leaves no audit row —
-// so moving the scope check is a decision those phases make, not a local edit.
-//
-// Caller-as-data (FUNC-03): the caller record is read in exactly three places in this file —
-// the scope subset check below, the actor-origin check beside it (391 D-06), and the
-// credential passthrough into the gate — plus the registry's safe-mode listing filter.
-// `if (caller.surface === 'cli')` is the anti-pattern this layer exists to make impossible,
-// and the origin check is what keeps the self-grant rule from being written that way.
+// Caller-as-data (FUNC-03): the caller record is read in exactly two places in this file — the
+// scope subset check and the actor-origin check beside it (391 D-06) — plus the registry's safe-mode
+// listing filter. `if (caller.surface === 'cli')` is the anti-pattern this layer exists to make
+// impossible, and the origin check is what keeps the self-grant rule from being written that way.
 
-import { evaluate } from '@vostride/agent-qa-safety'
-import { STANDING_APPROVAL_SCOPE, scrubDisclosureText } from '@vostride/agent-qa-schema'
 import type {
   FunctionCaller,
   FunctionCallerOrigin,
@@ -80,7 +64,7 @@ export class FunctionScopeError extends Error {
  *
  * Mirrors {@link FunctionScopeError} deliberately, because it is the same KIND of refusal: a
  * caller-capability check against a composition-minted field, decided from op-declared data
- * before the gate is consulted. What a caller does next differs though, which is why it is a
+ * before anything is dispatched. What a caller does next differs though, which is why it is a
  * distinct class rather than a scope error with a different message — a missing scope is
  * something a composition could grant, and a missing human is not.
  */
@@ -99,9 +83,12 @@ export class FunctionOriginError extends Error {
 }
 
 /**
- * The policy gate returned `deny` for this invocation.
+ * An invocation was refused with a decision's own reason.
  *
- * `remedies` CARRIES THE GATE'S OWN ANSWER TO "now what" (400 D-15), unprojected. Each surface
+ * NO GATE RAISES THIS SINCE 432-13; the class stays for the doors and wire codecs that still
+ * reconstruct it, and 432-19 narrows it with the remedy vocabulary.
+ *
+ * `remedies` CARRIES A DECISION'S OWN ANSWER TO "now what" (400 D-15), unprojected. Each surface
  * applies `remediesRenderableBy` at its render; this class does not choose for them, because it
  * cannot know which door it will be caught on — the same object reaches a terminal, a chat
  * transcript, an MCP client and the daemon's wire, and the whole finding
@@ -150,13 +137,12 @@ function issueSummary(issues: readonly { path: PropertyKey[]; message: string }[
  *   2. validate the input      — malformed input never reaches an implementation
  *   3. scope subset check      — computed here from composition-minted grants
  *   4. actor-origin check      — op-declared, against the composition-minted origin (391 D-06)
- *   5. evaluate()              — verdict + audit row, for every op without exception
- *   6. binding check           — a declared-but-unbound op refuses AFTER it is audited
- *   7. dispatch                — the only place a spec implementation ever runs
- *   8. validate the output     — unary results honour their declared contract
+ *   5. binding check           — a declared-but-unbound op refuses by name
+ *   6. dispatch                — the only place a spec implementation ever runs
+ *   7. validate the output     — unary results honour their declared contract
  *
- * Stream ops (D-08) run through the SAME steps: the gate verdict and its audit row are
- * therefore computed before a single event can be observed.
+ * Stream ops (D-08) run through the SAME steps. Nothing between the refusals and dispatch asks
+ * anybody anything (432-13).
  */
 export async function invokeFunction(
   registry: FunctionRegistry,
@@ -182,105 +168,22 @@ export async function invokeFunction(
     throw new FunctionScopeError(functionId, missingScopes)
   }
 
-  // 391 D-06: the actor-origin check, placed HERE and not elsewhere — the choice is stated
-  // because it is a choice, and because the file's order is a pinned contract.
-  //
-  // It sits in the pre-gate band beside the scope check because it is the same kind of thing: a
-  // caller-capability question answered from op-declared data and a composition-minted field,
-  // with no dependency touched and no implementation reachable. It therefore inherits that
-  // band's audit posture — no row — which is the same gap 384 named for the other three
-  // pre-gate refusals and which the same phases own closing. It comes AFTER the scope check so
-  // the cheaper, more actionable refusal wins: a caller told which scopes it lacks has
-  // something to do about it, and being told "this needs a human" first would have buried that.
+  // 391 D-06: the actor-origin check, beside the scope check because it is the same kind of thing:
+  // a caller-capability question answered from op-declared data and a composition-minted field,
+  // with no dependency touched and no implementation reachable. It comes AFTER the scope check so
+  // the cheaper, more actionable refusal wins.
   //
   // Two fields are read and neither is `surface`. `if (caller.surface === 'chat')` would have
   // been the same behaviour today and the wrong mechanism forever: it makes the rule a property
-  // of where a call came from rather than of what the op is, so a new surface arrives
-  // unprotected and an op that stops needing a human keeps being refused.
+  // of where a call came from rather than of what the op is.
   if (spec.requiresHumanOrigin === true && caller.origin !== 'human') {
     throw new FunctionOriginError(functionId, caller.origin)
   }
 
-  // 391 PROP-01: the ask arm's two dependencies, resolved here because this is the only place the
-  // gate is ever called from. Before this, the call passed neither — and it also passed no action
-  // scope, which the gate defaults to the empty object. An empty scope matches NOTHING on either
-  // side of the comparison, so a standing approval was structurally unconsumable through this layer
-  // whatever a reader returned. The scope below is the ONE pinned constant both the mint and this
-  // call-site read; neither ever re-spells it, because the match demands byte equality.
-  //
-  // The scope is COMPOSITION-supplied, never caller input. A caller that could name the scope its
-  // own action is evaluated under could widen any grant into a match by claiming the grant's scope.
-  const reader =
-    internals.standingApprovalReader === undefined
-      ? undefined
-      : await internals.standingApprovalReader()
-  // 394-08 D-03 / WTST-08: the per-invocation DISCLOSURE, composed here because this is the only
-  // place that holds both the spec and the parsed input at the moment the gate is called.
-  //
-  // IT IS A MESSAGE AND NOTHING ELSE. The descriptor handed to `evaluate` is `spec.risk` with one
-  // extra display-only field: the name, the tier flags and the recognition are copied unchanged, so
-  // the classification, the audit row, the standing-grant match and the session deny overlay all
-  // see exactly what they saw before. Spread CONDITIONALLY, so an op with nothing to disclose hands
-  // the gate the identical object it always did rather than one carrying `disclosure: undefined`.
-  //
-  // AND IT IS SCRUBBED (401-15, WR-01 / T-401-G6). `spec.disclose` composes its string from PARSED
-  // CALLER INPUT, and the field it fills lands on the line directly above a `[y/N]` prompt and in a
-  // browser's confirm preview. A newline in a caller's string is a line that caller wrote on a
-  // security channel; an escape sequence is a line it erased. The scrub is `schema`'s, published
-  // beside the `disclosure` field's own law, and it is applied HERE — at the composition site —
-  // for the reason the run gate's half is: the two channels this string reaches do not share a
-  // writer, so a writer-side guard would cover one of them. Ops are trusted to compose prose; they
-  // are not trusted to have sanitised somebody else's bytes, and the one shipped implementor being
-  // caller-text-free today is a property of today's op set rather than a property of this seam.
-  const action = spec.disclose === undefined
-    ? spec.risk
-    : { ...spec.risk, disclosure: scrubDisclosureText(spec.disclose(parsed.data)) }
-  const policy = await evaluate(
-    action,
-    internals.resolveExecutionContext(),
-    {
-      actionScope: STANDING_APPROVAL_SCOPE,
-      ...(caller.credential === undefined ? {} : { credential: caller.credential }),
-    },
-    {
-      auditSink: internals.auditSink,
-      ...(reader === undefined ? {} : { reader }),
-      ...(internals.confirm === undefined ? {} : { confirm: internals.confirm }),
-      // 392 D-21 / plan 13: the session's deny overlay, threaded at the ONE `evaluate()` call-site
-      // there is. Conditionally spread like its neighbours — an absent overlay must leave the
-      // gate's ladder untouched, and a present-but-undefined field would be a second place the
-      // default lives.
-      //
-      // THE ADAPTATION IS THE WHOLE OF W-03'S FIX AT THIS LAYER, and it is three tokens wide on
-      // purpose. The composition's overlay wants to know WHICH SESSION is asking, so that a pin
-      // belongs to the conversation that typed it; `evaluate()`'s hook takes an action and nothing
-      // else. Closing over the caller here narrows the wider contract to the narrower one at the
-      // boundary, which is why `gate.ts` and `SessionDenyOverlay` are byte-identical after this
-      // change. A `sessionId` on the descriptor, or a gate that read callers, would have made the
-      // policy engine depend on the function layer's vocabulary in order to answer one question.
-      ...(() => {
-        const overlay = internals.deny
-        return overlay === undefined
-          ? {}
-          : { deny: (action: Parameters<typeof overlay>[0]) => overlay(action, caller) }
-      })(),
-    },
-  )
-  if (policy.verdict === 'deny') {
-    throw new FunctionDeniedError(
-      functionId,
-      policy.reason,
-      policy.remedies,
-      policy.neutralReason,
-    )
-  }
-
-  // Binding is checked AFTER the gate on purpose (D-09/D-11): an attempt to run a
-  // capability this composition cannot run is exactly the kind of thing an audit trail
-  // must record. The DECLARATION is authoritative — an op this composition reports as
-  // `unbound` never dispatches, whatever its implementation happens to do — and it is the
-  // SAME `resolveBindingStatus` a listing renders, so what a caller was shown and what the
-  // gate enforces cannot disagree (D-16).
+  // The DECLARATION is authoritative — an op this composition reports as `unbound` never
+  // dispatches, whatever its implementation happens to do — and it is the SAME
+  // `resolveBindingStatus` a listing renders, so what a caller was shown and what dispatch
+  // enforces cannot disagree (D-16).
   if (resolveBindingStatus(spec, internals.deps) === 'unbound') {
     throw new FunctionNotBoundError(functionId)
   }
@@ -293,7 +196,6 @@ export async function invokeFunction(
 
   // A stream result IS the declared async iterable and passes through untouched: the
   // spec's `output` describes one ELEMENT, so parsing the iterable against it would be a
-  // category error. Elements carry their own resume token, and the gate verdict above
-  // already landed an audit row before anything could be yielded (D-08 / D-11).
+  // category error. Elements carry their own resume token.
   return spec.resultKind === 'unary' ? spec.output.parse(result) : result
 }

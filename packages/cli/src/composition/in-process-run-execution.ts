@@ -8,12 +8,13 @@
 // unexported inside `run.ts`'s command body. 401-06 halted on exactly that wall.
 //
 // So this module is the assembly side of D-02: the composition that turns a bare `RunsStartInput`
-// into a started, policy-gated, in-process run. A door supplies its own posture and gets a run —
-// without spawning `agent-qa run`, and without naming a single CLI option.
+// into a started in-process run. A door supplies its own posture and gets a run — without spawning
+// `agent-qa run`, and without naming a single CLI option.
 //
-// IT COMPOSES THE CORE; IT DOES NOT GATE. `evaluate()` is acquired in exactly one file in this
-// workspace and `packages/arch/src/lint/evaluate-pin.ts` fails the build on a second. This module
-// hands the core the door's `executionContext`/`trust`/`confirm` and lets the core own the ORDER.
+// IT COMPOSES THE CORE AND ASKS NOBODY (432-13, D-14/D-15). This module hands the core the door's
+// `executionContext` and lets the core own the ORDER; the core refuses production before any
+// effect and starts everything else. No confirm port, session trust or approval reader exists on
+// this seam any more.
 //
 // IT READS NO AMBIENT EXECUTION CONTEXT (D-07). There is no `resolveRunExecutionContext()` call
 // here, no `getActiveExecutionContext`, no TTY sniff: `executionContext` is a REQUIRED option with
@@ -38,22 +39,20 @@
 // (T-401-31). A library that can terminate its caller is a boundary of its own.
 //
 // A NON-ZERO EXIT CODE IS NOT AN ERROR. A failing suite exits non-zero and is a perfectly real run.
-// This module throws only `RunDeniedError`, `RunRequestFieldRefusedError` and `CliRunInputError`.
+// This module throws only `RunDeniedError` (the production refusal), `RunRequestFieldRefusedError`
+// and `CliRunInputError`.
 
 import { asRunId, resolveEffectiveWorkers } from '@vostride/agent-qa-schema'
 import type {
   QuarantineAppliedEntry,
   RunSession,
   RunsStartInput,
-  TrustCredential,
 } from '@vostride/agent-qa-schema'
-// The confirm port and the standing-approval reader are `@vostride/agent-qa-safety` vocabulary,
-// which a cli file written after 2026-07-28 may not name (FUNC-02, and the ledger only shrinks).
-// They are reachable WITHOUT naming that package by indexing the core's own options type, which the
-// composition root publishes — and indexing is stronger than a re-export would be: this door's
-// `confirm` is BY CONSTRUCTION the thing the core accepts, so the two cannot drift apart.
+// `@vostride/agent-qa-safety` vocabulary is not nameable from a cli file written after 2026-07-28
+// (FUNC-02, and the ledger only shrinks); the audit sink type is reached by indexing the core's own
+// options type, which the composition root publishes.
 //
-// `runSafetyScope` and `mapVerdictToExitCode` reach this file the same way, through the
+// `runSafetyScope` and `mapVerdictToExitCode` reach this file through the
 // composition root's `run-drive-vocabulary` module (401-11) — the drive RUNS the run, so it has to
 // install the run's safety scope and map its verdict, and both of those live in packages this file
 // may not name directly.
@@ -197,23 +196,14 @@ export interface InProcessCliRunExecutionOptions {
   /** `<configDir>/.agent-qa` — the root the function layer's evidence check reads (Pitfall 5). */
   readonly agentQaRoot: string
   /**
-   * The context EVERY gate decision at this door is taken in.
+   * The context this door's runs start in and record.
    *
    * NO DEFAULT AND NO AMBIENT FALLBACK (D-07). A door that supplies nothing does not get a guess;
    * it gets a type error. That is what keeps this seam RPC-shaped for 402's authed service, and it
-   * is why an injected value BEATS a varied process-global — asserted on both arms in
+   * is why an injected value BEATS a varied process-global — asserted in
    * `in-process-run-execution.test.ts`.
    */
   readonly executionContext: RunExecutionContext
-  /** `--trust-session` / `config.safety.trustMode` parity; `credential` is 402's parameter. */
-  readonly trust?: { readonly trustMode?: boolean; readonly credential?: TrustCredential }
-  /**
-   * How this door asks a person. Conditionally spread, NEVER passed as `undefined` — absent leaves
-   * the gate's `DENY_CONFIRM` default, which is the honest posture for a door with nobody at it.
-   */
-  readonly confirm?: RunInvocationCoreOptions['confirm']
-  /** The standing-approval read side; the D-08 dispatch-grant overlay slots in here (plan 08). */
-  readonly reader?: RunInvocationCoreOptions['reader']
   /** Fired with the started session — the D-09 bridge hook 401-07 consumes. */
   readonly onSession?: (session: RunSession) => void
   /** Freeze the door's completed result before any asynchronous post-verdict work. */
@@ -372,7 +362,7 @@ export interface InProcessCliRunExecutionOptions {
 }
 
 /**
- * Run ONE policy-gated `agent-qa` run, in this process.
+ * Run ONE `agent-qa` run, in this process.
  *
  * The order is the load-bearing part, and every step of it is somebody's answer rather than this
  * function's opinion:
@@ -382,7 +372,7 @@ export interface InProcessCliRunExecutionOptions {
  *   3. produce members and an executor — mode-aware by default, overridable by a door with its own;
  *   4. build the ONE masking context, audit sink and safety-hook runner, and bind them back into
  *      the producer's closures;
- *   5. compose the core, which owns the gate/assemble/start order;
+ *   5. compose the core, which owns the refuse/assemble/start order;
  *   6. inside the run's safety scope: execute, await `done`, finalise, flush, re-surface a member's
  *      framework error, map the verdict, and let the door's tail have the last word on the code.
  *
@@ -512,12 +502,12 @@ export async function runInProcessCliRun(
    * already exists, and this drive always supplies its id. A write between the seed and
    * `core.execute` therefore mints that directory itself and the run refuses to start with
    * `RunIdAlreadyInUseError` — the sidecar would have made the run impossible. `onSession` is the
-   * earliest legal moment: the id has passed both refusals, the gate has allowed the run, and the
-   * run dir exists because `runStarted` is already in it.
+   * earliest legal moment: the id has passed both refusals, production has not refused the run, and
+   * the run dir exists because `runStarted` is already in it.
    *
-   * A REFUSED OR DENIED RUN GETS NO SIDECAR. `closeOutRun` also runs on those paths, and a run
-   * that never started has no run of its own to describe — so the write is gated on the session,
-   * keeping the denial's artifact set exactly what the gate wrote.
+   * A REFUSED RUN GETS NO SIDECAR. `closeOutRun` also runs on those paths, and a run that never
+   * started has no run of its own to describe — so the write is conditional on the session, keeping
+   * a refused run's artifact set empty.
    *
    * IT NEVER FAILS THE RUN (T-405-09, the T-367-17 idiom). The run's record is its event log; this
    * sidecar is display convenience for a later read. A host that cannot write it — read-only root,
@@ -552,12 +542,13 @@ export async function runInProcessCliRun(
     runId,
     executionContext: options.executionContext,
   })
-  const trustMode = options.trust?.trustMode === true
   const live = createLivePauseController()
   const { safetyHooks, confirmPausedMs } = buildRunSafetyHooks({
     auditSink,
     executionContext: options.executionContext,
-    trustMode,
+    // 432-13: nothing in a run asks, so there is no ask for session trust to satisfy. The declared
+    // input stays until 432-14 narrows the hook contract with its last producer.
+    trustMode: false,
     maskingContext,
     live,
   })
@@ -591,16 +582,11 @@ export async function runInProcessCliRun(
     // compile error.
     isMintedRunId: isMintedCliRunId,
     auditSink,
-    ...(options.trust === undefined ? {} : { trust: options.trust }),
-    ...(options.confirm === undefined ? {} : { confirm: options.confirm }),
-    ...(options.reader === undefined ? {} : { reader: options.reader }),
     // A CONFIG READ, NEVER A PROBE. The producer resolved the declared class before anything could
-    // touch a target, and `buildRunRiskDescriptor` — not this door — decides what a class means.
+    // touch a target.
     //
-    // ONE RESOLUTION ANSWERS BOTH FIELDS (401-14). The names come off the SAME producer pass that
-    // folded the class, so the disclosure a person approves on describes the members whose classes
-    // decided the tier. This door composes no preview prose of its own — `buildRunDisclosure` in
-    // `agent-local` is the one spelling, and the core is its one consumer.
+    // ONE RESOLUTION ANSWERS EVERY FIELD (401-14). The names come off the SAME producer pass that
+    // folded the class.
     //
     // 432-03 (D-18): the production names and the opt-in ride the same produced object, so the
     // core refuses on the members the class was folded over and on the config those members were
@@ -755,7 +741,7 @@ export async function runInProcessCliRun(
     { maskingContext, auditSink, executionContext: options.executionContext },
     async (): Promise<CliRunOutcome> => {
       try {
-        // The core refuses, gates, assembles, starts and awaits the run. A denial throws
+        // The core refuses, assembles, starts and awaits the run. A production refusal throws
         // `RunDeniedError` from inside here, before a single run event exists.
         await core.execute({ ...request, runId: asRunId(runId) })
         const session = startedSession

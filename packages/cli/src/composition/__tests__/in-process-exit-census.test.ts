@@ -412,13 +412,14 @@ describe('(iii) every failure door answers with a value, and none of them kills 
   it('THE NON-INPUT CONTROL — a gate denial is a RunDeniedError, not a CliRunInputError', async () => {
     // Without this, every row above could pass over a path that answered EVERY failure with a
     // `CliRunInputError`, which would be a door that had stopped telling refusals apart.
+    // 432-13: the denial left to drive is the production refusal; a shared target starts now.
     const target = new CountingTarget()
     await target.listen()
     const spy = vi.spyOn(process, 'exit').mockImplementation((() => {
       throw new Error(MARKER)
     }) as never)
     try {
-      const fixture = createInProcessFixture({ origin: target.origin, environment: 'shared' })
+      const fixture = createInProcessFixture({ origin: target.origin, environment: 'production' })
       const browsers = join(fixture.project, 'no-browsers')
       if (!existsSync(browsers)) mkdirSync(browsers, { recursive: true })
       process.env.PLAYWRIGHT_BROWSERS_PATH = browsers

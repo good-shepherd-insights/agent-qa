@@ -6,7 +6,8 @@
 //
 //   1. THE POSTURE IS CARRIED, NOT SNIFFED (D-07). The daemon hands the drive an EXPLICIT
 //      `local-headless` and no confirm port, so ask-tier work with no credential fails closed BY
-//      CONSTRUCTION. The old wire decided in the CHILD, whose context came from the child's own
+//      CONSTRUCTION. (Since 432-13 nothing asks: the carried posture is what the ack reports, and
+//      the one refusal left is an un-opted-in production target, whatever the posture.) The old wire decided in the CHILD, whose context came from the child's own
 //      ambient — which is why the retired cell asserted `executionContext: 'ci'` when
 //      `GITHUB_ACTIONS` was set. So the cell below VARIES the ambient and requires the injected
 //      value to win. A cell that passed because the ambient default happened to be
@@ -120,7 +121,7 @@ interface DaemonProject {
 /** A run project the daemon will serve from, plus the empty browsers root the member fails on. */
 function daemonProject(input: {
   origin: string
-  environment: 'local' | 'shared'
+  environment: 'local' | 'shared' | 'production'
   declareUninstalledAuthPlugin?: boolean
 }): DaemonProject {
   const fixture = createInProcessFixture({
@@ -318,16 +319,13 @@ describe('the daemon dispatches runs through the in-process core (401-06, INVK-0
         // THE MEMBER RAN. Without this a dispatch that assembled zero members would pass on
         // `runStarted` alone — which is the suite half's own failure mode.
         expect(events).toContain('testStarted')
-        // The gate allowed it, so the run-start baseline probe knocked: the converse of the denial.
+        // The run started, so the run-start baseline probe knocked: the converse of the denial.
         expect(target.hits).toEqual(['/in-process-thing'])
         expect(buildOrdinalsExist(fixture as never)).toBe(true)
 
-        // D-07, THE ALLOW ARM: the row records the context the daemon CARRIED.
-        const rows = auditRows(fixture as never)
-        expect(rows.map((row) => row.outcome)).toContain('proceeded')
-        expect(rows.map((row) => row.executionContext)).toEqual(
-          rows.map(() => 'local-headless'),
-        )
+        // RE-SPELLED 2026-09-30 (432-13): the D-07 allow arm read the gate row's context. No row is
+        // written now; the carried context is the ack's `executionContext`, asserted above.
+        expect(auditRows(fixture as never)).toEqual([])
 
         // D-04: THE ABSENCE, read off the directory listing rather than off the code path.
         const files = runDirFiles(fixture)
@@ -387,40 +385,36 @@ describe('the daemon dispatches runs through the in-process core (401-06, INVK-0
     180_000,
   )
 
+  // RE-SPELLED 2026-09-30 (432-13). Was 'DENIAL — ask-tier work denies fail-closed under the
+  // daemon's EXPLICIT carriage' over a shared target; that run starts now (C432-DAEMON-DIRECT
+  // below). The denial moves to the one class still refused, with the ambient still varied.
   it(
-    'DENIAL — ask-tier work denies fail-closed under the daemon\'s EXPLICIT carriage, with the ambient varied against it',
+    'DENIAL — an un-opted-in production run is refused under the daemon\'s carriage, with the ambient varied against it',
     async () => {
       const target = new CountingTarget()
       await target.listen()
       try {
-        // ONE FIELD DIFFERENT from the parity cell: `environment: shared` instead of `local`.
-        const project = daemonProject({ origin: target.origin, environment: 'shared' })
+        // ONE FIELD DIFFERENT from the parity cell: `environment: production` instead of `local`.
+        const project = daemonProject({ origin: target.origin, environment: 'production' })
         const { fixture } = project
         const { acknowledged, refusal } = await dispatchThroughDaemon({
           project,
           patterns: [fixture.suitePattern],
-          // THE CROSSING. `local-interactive` is the ambient under which this exact input would
-          // have been PROMPTED — and, with no confirm port, recorded `prompted-denied`. The row
-          // below says `fail-closed-denied`, which only the injected `local-headless` produces.
           varyAmbient: 'local-interactive',
         })
 
-        // (a) the audit row's OUTCOME field, never a message substring
-        const rows = auditRows(fixture as never)
-        expect(rows).toHaveLength(1)
-        expect(rows[0]!.outcome).toBe('fail-closed-denied')
-        // …and the context it decided in is the one the daemon carried, not the one in the air.
-        expect(rows[0]!.executionContext).toBe('local-headless')
-        // (b) no run events — `runStarted` is seq 1 of any run that began at all
+        // (a) no decision row
+        expect(auditRows(fixture as never)).toEqual([])
+        // (b) no run events
         expect(eventTypes(fixture as never)).toEqual([])
         // (c) the durable assembly side effect never happened
         expect(buildOrdinalsExist(fixture as never)).toBe(false)
         // (d) nobody knocked on the target
         expect(target.hits).toEqual([])
-        // (e) the reason the CALLER sees, read back off the row rather than typed in here — which
-        // pins the door to rendering the gate's decision instead of composing its own.
+        // (e) the reason the CALLER sees names the production target and the opt-in
         expect(acknowledged).toBeUndefined()
-        expect(String((refusal as Error | undefined)?.message)).toContain(rows[0]!.reason)
+        expect(String((refusal as Error | undefined)?.message)).toContain(fixture.targetName)
+        expect(String((refusal as Error | undefined)?.message)).toContain('allowProduction: true')
 
         // The daemon recorded the refused job HONESTLY: a typed denial, not a crash.
         const completions = readDaemonEvents(fixture.agentQaRoot)
@@ -434,42 +428,44 @@ describe('the daemon dispatches runs through the in-process core (401-06, INVK-0
     180_000,
   )
 
+  // RE-SPELLED 2026-09-30 (432-13). Was 'THE CROSSING IS REAL — the same input under
+  // local-interactive records prompted-denied': the discriminating pair was the gate's two deny
+  // arms. With no gate there is nothing for the context to change on a non-production run, and the
+  // production refusal does not read it either — which is what this cell now measures, at the drive.
   it(
-    'THE CROSSING IS REAL — the same input under local-interactive records prompted-denied, not fail-closed-denied',
+    'THE CROSSING IS GONE — under local-interactive the production refusal is the same refusal, and a shared run starts',
     async () => {
-      // WHY THIS CELL EXISTS. The denial above is only a D-07 measurement while the ambient it
-      // defeats would genuinely have produced something else. Against a `local` target the outcome
-      // is `proceeded` in every context; against `ci` it is `fail-closed-denied` in every context.
-      // So the discriminating pair is `local-headless` vs `local-interactive`, and this is the OTHER
-      // side of it, measured on the same fixture shape with the same absent confirm port.
-      //
-      // DRIVEN AT THE DRIVE, deliberately. The claim here is about the gate's own arms, not about
-      // what a daemon does — the daemon cannot be asked to carry `local-interactive`, because
-      // carrying `local-headless` is the thing under test one cell up.
       const target = new CountingTarget()
       await target.listen()
       try {
-        const { fixture } = daemonProject({ origin: target.origin, environment: 'shared' })
         const { runInProcessCliRun } = await import('../../composition/in-process-run-execution.js')
-        let denial: unknown
-        try {
-          await runInProcessCliRun(
-            {
-              configPath: fixture.configPath,
-              agentQaRoot: fixture.agentQaRoot,
-              executionContext: 'local-interactive',
-            },
-            { patterns: [fixture.suitePattern] },
-          )
-        } catch (error) {
-          denial = error
+        const drive = async (environment: 'shared' | 'production'): Promise<{ fixture: ReturnType<typeof daemonProject>['fixture']; denial: unknown }> => {
+          const { fixture } = daemonProject({ origin: target.origin, environment })
+          let denial: unknown
+          try {
+            await runInProcessCliRun(
+              {
+                configPath: fixture.configPath,
+                agentQaRoot: fixture.agentQaRoot,
+                executionContext: 'local-interactive',
+              },
+              { patterns: [fixture.suitePattern] },
+            )
+          } catch (error) {
+            denial = error
+          }
+          return { fixture, denial }
         }
 
-        expect(denial).toBeDefined()
-        const rows = auditRows(fixture as never)
-        expect(rows).toHaveLength(1)
-        expect(rows[0]!.outcome).toBe('prompted-denied')
-        expect(rows[0]!.executionContext).toBe('local-interactive')
+        const production = await drive('production')
+        expect((production.denial as { name?: string } | undefined)?.name).toBe('RunDeniedError')
+        expect(eventTypes(production.fixture as never)).toEqual([])
+        expect(auditRows(production.fixture as never)).toEqual([])
+
+        const shared = await drive('shared')
+        expect((shared.denial as { name?: string } | undefined)?.name).not.toBe('RunDeniedError')
+        expect(eventTypes(shared.fixture as never)).toContain('runStarted')
+        expect(auditRows(shared.fixture as never)).toEqual([])
       } finally {
         await target.close()
       }

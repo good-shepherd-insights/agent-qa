@@ -28,7 +28,6 @@ import {
   createChatCompactionHook,
   createChatState,
   createFunctionRegistry,
-  createPinOverlay,
   createPlannerStage,
   createRealJobKindRegistry,
   createTurnEngine,
@@ -49,7 +48,6 @@ import type {
   ChatConfigState,
   ChatDirectiveHandlers,
   ChatLanguageModel,
-  ChatPinOverlayHolder,
   ChatStateContainer,
   ChatStateSnapshot,
   ChatTokenAccounting,
@@ -205,7 +203,6 @@ import {
 import type {
   ConfirmPort,
   MaskingSeedSources,
-  SessionDenyOverlay,
   StandingApprovalReader,
 } from '@vostride/agent-qa-safety'
 import {
@@ -229,7 +226,6 @@ import {
   guardRunAnalysisArtifact,
   maskPayloadStrings,
   sha256hex16,
-  STANDING_APPROVAL_SCOPE,
 } from '@vostride/agent-qa-schema'
 import type {
   AuthoringBrief,
@@ -2180,16 +2176,9 @@ export interface ComposeLocalAgentInput {
     | Promise<PostRunJobCapabilities['analysisTokenBudget']>
     | PostRunJobCapabilities['analysisTokenBudget']
   /**
-   * How this host asks a human to confirm an ask-tier capability (391 PROP-01), on the same
-   * optional-operation idiom `runExecution` and `applyDelegate` use.
-   *
-   * OPTIONAL, and the optionality is a real report about a real difference between hosts: a
-   * terminal can ask and a daemon cannot. Absent, the gate keeps its deny-by-default confirm, which
-   * is also the only correct answer for a host with nobody to ask. Note that the arm is reachable
-   * only in a `local-interactive` context to begin with — every other context fail-closes before
-   * the prompt — so a headless host loses nothing by omitting it.
-   *
-   * No host binds it yet; the CLI's terminal confirmation is plan 04's.
+   * UNREAD SINCE 432-13 (D-14/D-15). This was how a host asked a person to confirm an ask-tier
+   * capability; the op gate that asked is gone, so nothing in this composition reads it. 432-16
+   * removes the field with the last host factories that still build one.
    */
   readonly confirm?: ConfirmPort
   /**
@@ -2310,13 +2299,9 @@ export interface ComposeLocalAgentInput {
    */
   readonly chatModelFor?: (name: string) => ChatLanguageModel | Promise<ChatLanguageModel>
   /**
-   * The interactive confirmation for a chat session, built over the composition's own mint (D-03).
-   *
-   * A FACTORY rather than a port, because the two halves of an inline confirm belong to different
-   * layers: whether a person is on the other end of this process is a fact only a SURFACE knows,
-   * and what a standing approval and a session event ARE is a fact only this composition knows.
-   * The factory is handed the second and returns the first, or `undefined` where there is nobody
-   * to ask — which leaves `confirm` absent and the gate's deny-by-default in place, unchanged.
+   * UNREAD SINCE 432-13 (D-14). This was the factory for a chat session's inline confirm; nothing
+   * asks any more, so the composition no longer calls it and writes no `approval_decision` row.
+   * 432-16 removes the field with the host factories.
    */
   readonly chatConfirm?: (bindings: ChatConfirmBindings) => ConfirmPort | undefined
   /**
@@ -2919,7 +2904,6 @@ export function composeLocalAgent(input: ComposeLocalAgentInput): LocalAgentHost
   // single container had; what changed is that it is one per conversation instead of one per host.
   interface ChatSessionScope {
     readonly state: ChatStateContainer
-    readonly pins: ChatPinOverlayHolder
   }
   const chatScopes = new Map<string, ChatSessionScope>()
   const chatScopeFor = (sessionId: string): ChatSessionScope => {
@@ -2933,10 +2917,7 @@ export function composeLocalAgent(input: ComposeLocalAgentInput): LocalAgentHost
       // which is also what its header will say. A container seeded from another session's override
       // would make one conversation's verb the next conversation's opening posture.
       state: createChatState({ activeModel: composedChatModelName }),
-      // The holder validates a typed class against the registry's OWN declared risk names, so it
-      // cannot exist before the registry does (392-05, property 2). One per session is what makes
-      // the deny set die with the conversation rather than with the process.
-      pins: createPinOverlay(composedRegistry, CHAT_RESOLVER_CALLER),
+      // 432-13 (D-14): no pin holder. `/pin` left chat resolution with the op gate it tightened.
     }
     chatScopes.set(sessionId, scope)
     return scope
@@ -3029,30 +3010,6 @@ export function composeLocalAgent(input: ComposeLocalAgentInput): LocalAgentHost
       if (entry.turnIds.has(turnId)) return entry.handle
     }
     return undefined
-  }
-
-  // 392 D-21 / plan 05 / plan 13: the gate hook, answering from the PINNING SESSION's holder.
-  //
-  // The hook is still bound once, unconditionally, into the registry — a person types `/pin` in the
-  // middle of a conversation and there is no second binding moment — and it still reads the set
-  // LIVE rather than a snapshot (391-05's silent no-op). What plan 13 adds is the only question it
-  // was missing: WHOSE pin. `caller.sessionId` is composition-minted, and the two absent cases both
-  // answer `false`, which is "no opinion" and never "allow":
-  //
-  //   - a caller carrying NO session — every typed CLI verb, MCP call and background job — is not
-  //     in a conversation, and a chat pin that refused those would be one person's `/pin` quietly
-  //     reconfiguring the host.
-  //   - a caller naming a session this composition never opened has an empty deny set, because that
-  //     is what a session nobody here is holding actually has.
-  //
-  // The direction is unchanged and unchangeable: this hook can only ever return `true` for a class
-  // the naming session pinned, so scoping it can subtract denials and never add a grant.
-  const chatDeny = (action: Parameters<SessionDenyOverlay>[0], caller: FunctionCaller): boolean => {
-    if (caller.sessionId === undefined) return false
-    // `get`, never `chatScopeFor`: asking whether a session has pinned something must not CREATE
-    // that session. A read that minted a scope would let any caller name any string into existence.
-    const scope = chatScopes.get(caller.sessionId)
-    return scope?.pins.asGateDeny()(action) ?? false
   }
 
   // 392 plan 04/07: stage 2, assembled LAZILY over the registry this call is about to produce.
@@ -3162,34 +3119,25 @@ export function composeLocalAgent(input: ComposeLocalAgentInput): LocalAgentHost
     },
     ...(chatPlanner === undefined ? {} : { planner: chatPlanner }),
     ...(chatCompaction === undefined ? {} : { compaction: chatCompaction }),
-    // 392 plan 08: the four directive handlers, which is what turns the engine's
+    // 392 plan 08: the directive handlers, which is what turns the engine's
     // `directive recognised but no handler` refusal from the shipped behaviour into an
     // unreachable arm on this host. `/help` and `/quit` are REPL chrome and answer in prose;
-    // `/model` and `/pin` change what the session is, and each returns the EFFECT it had.
+    // `/model` changes what the session is and returns the EFFECT it had. (432-13: `/pin` is gone.)
     //
-    // RESOLVED PER SESSION (plan 13, CR-02 / W-03). Every one of the four mutates a conversation
-    // rather than the project, so the handler set is built over the scope of the session running
-    // the turn: `/model` moves that conversation's model, `/pin` writes into that conversation's
-    // deny set, `/quit` asks that loop to end.
+    // RESOLVED PER SESSION (plan 13, CR-02 / W-03). Each one acts on a conversation rather than the
+    // project, so the handler set is built over the scope of the session running the turn:
+    // `/model` moves that conversation's model and `/quit` asks that loop to end.
     directives: (sessionId) => ({
       // THE BATCH PRE-FLIGHT (392-14, E3/E3b). The engine asks this of EVERY directive of a turn
-      // before it applies the first one, so `/pin fn:runs.start and /pin nonsense.notacapability`
-      // refuses with neither pin recorded and no `approval_decision` row — the shape the round-2
-      // verification measured surviving on a `fail_closed` turn. Both effectful directives are
-      // covered here; a member left out would silently return the engine to per-entry atomicity
-      // for that directive alone.
+      // before it applies the first one, so a refused later directive leaves an earlier one
+      // unapplied.
       //
-      // IT APPLIES NOTHING. `/pin` asks the holder's pure `classFor` rather than `pin`, so no
-      // entry reaches the deny set and no event is appended. `/model` RESOLVES the model and
-      // caches it under its name — a cache is not the session's state, and the session's own
-      // `activeModel` is left exactly where it was. The resolution is also the only part of
-      // `/model` that can fail, so caching it here is what makes the later apply unable to throw
-      // after an earlier directive has already been carried out.
+      // IT APPLIES NOTHING. `/model` RESOLVES the model and caches it under its name — a cache is
+      // not the session's state, and the session's own `activeModel` is left exactly where it was.
+      // The resolution is also the only part of `/model` that can fail, so caching it here is what
+      // makes the later apply unable to throw after an earlier directive has already been carried
+      // out.
       validate: async (directive, argument) => {
-        if (directive === 'pin' && argument !== undefined) {
-          chatScopeFor(sessionId).pins.classFor(argument)
-          return
-        }
         if (directive === 'model' && argument !== undefined && input.chatModelFor !== undefined) {
           chatModelsByName.set(argument, await input.chatModelFor(argument))
         }
@@ -3215,15 +3163,6 @@ export function composeLocalAgent(input: ComposeLocalAgentInput): LocalAgentHost
         }
         scope.state.setActiveModel(name)
         return { from, to: name, line: `model: ${from} → ${name}` }
-      },
-      // RETURNS the normalised class, which is what the engine logs (392-05's law): a person types
-      // `proposals.accept`, what denies is `fn:proposals.accept`, and a record of the request
-      // rather than the effect is how the silent no-op reappears in the log.
-      pin: (actionClass) => {
-        const scope = chatScopeFor(sessionId)
-        const normalised = scope.pins.pin(actionClass)
-        scope.state.setPinnedActionClasses(scope.pins.list().deniedActionClasses)
-        return normalised
       },
       help: () => CHAT_HELP_TEXT,
       quit: () => {
@@ -3269,10 +3208,8 @@ export function composeLocalAgent(input: ComposeLocalAgentInput): LocalAgentHost
     mintTurnId: () => `turn-${randomUUID()}`,
   })
 
-  // Hoisted out of the deps literal so the chat confirm's `always` arm can mint through the SAME
-  // instance (plan 08, T-392-26). ONE grants port per composition: a wrapper that built a second
-  // one would have a second answer to which approvals are in force, and it would be the answer a
-  // person's `a` keystroke went into.
+  // ONE grants port per composition (plan 08, T-392-26). Since 432-13 its only consumer is the
+  // `standingGrants` dep of the pre-432 grant ops; 432-18 deletes both.
   const standingGrants = createGrantOperations({
     resolveKnowledgeRoot: input.knowledgeRoot,
     auditBaseDir: input.agentQaRoot,
@@ -3282,13 +3219,10 @@ export function composeLocalAgent(input: ComposeLocalAgentInput): LocalAgentHost
       : { resolveWriterAuthority: input.resolveWriterAuthority }),
   })
 
-  // ONE DURABLE READ, TWO GATES (401-08). Hoisted out of the `standingApprovalReader` literal below
-  // on 401-05's own precedent for the confirm port: this composition now crosses TWO gates that ask
-  // the grants question — the op gate through `invoke.ts`, and the run gate behind
-  // `runExecution` — and two inline resolutions of "which approvals are in force" would be free to
-  // disagree. They read the same ledger, per invocation, through this one closure. The doc block at
-  // the `standingApprovalReader` binding states why the resolution is per call and why a failure
-  // folds to the no-grants reader; both properties live here now and nowhere else.
+  // THE DURABLE GRANT READ (401-08), per invocation, folding a resolution failure to the no-grants
+  // reader. 432-13: no gate reads it — the op gate and the run gate are gone — so its one remaining
+  // consumer is the run door's `resolveRunGrants`, which the host no longer forwards anywhere.
+  // 432-18 deletes both with the ledger.
   const resolveDurableApprovals = async (): Promise<StandingApprovalReader> => {
     try {
       return createStandingApprovalReader({ knowledgeRoot: await input.knowledgeRoot() })
@@ -3313,53 +3247,6 @@ export function composeLocalAgent(input: ComposeLocalAgentInput): LocalAgentHost
   const authoringLoopHost = input.draftAuthoring !== undefined && input.runExecution !== undefined
     ? input.draftAuthoring
     : undefined
-
-  // 392 D-03: the chat surface's inline confirm, built by the host over this composition's mint and
-  // this session's log. `undefined` where there is nobody to ask, which leaves `confirm` absent and
-  // the gate's deny-by-default in place — the v48 posture D-03 says is unchanged for non-TTY.
-  const chatConfirmPort = input.chatConfirm?.({
-    recordStandingApproval: (actionClass) => standingGrants.record({
-      actionClass,
-      // The ONE pinned constant both the mint and the gate's own ask arm read. Composition-supplied
-      // and never caller input: a caller that could name the scope its action is evaluated under
-      // could widen any grant into a match by claiming the grant's scope.
-      scope: STANDING_APPROVAL_SCOPE,
-    }),
-    onDecision: async (decision) => {
-      // Appended to the SAME session log the engine writes, and stamped with the turn in flight —
-      // an ask-tier gate is only ever reached from inside a turn, so a decision with no turn id
-      // would be a row no reader could place. `source: 'gate'` is what keeps it distinguishable
-      // from the `/pin` verb's own decision row.
-      //
-      // WHICH TURN, ASKED OF THE CONVERSATION THAT DECIDED (401-01, D-13). This used to count the
-      // turns in flight across the whole composition and write no row unless there was exactly one
-      // — a process-global uniqueness rule standing in for a caller the port claimed it could not
-      // name. That rationale stopped being true at 400-15: the door resolves its asking session and
-      // delivers it, so the decision names its own conversation and the honest question is a
-      // per-conversation one. Counting was not merely redundant, it was WRONG: any second
-      // conversation with a turn in flight — watched or not, ask-tier or not — deleted a real
-      // human approval from the transcript of the person who gave it (NEW-AUDIT-01).
-      //
-      // THE FAIL-SAFE DIRECTION IS UNCHANGED. No scope for this id, or no turn active on it, means
-      // this decision cannot be placed in a conversation; it gets NO ROW rather than a guessed one,
-      // because a row in the wrong conversation IS the defect and an absent row is not.
-      const turnId = chatScopes.get(decision.sessionId)?.state.read().activeTurnId
-      if (turnId === undefined) return
-      // The session whose file already carries this turn (392-12). Absent means no open session
-      // here recorded it — a row would have to be guessed into somebody's conversation, and a
-      // guess is the defect that refactor removed.
-      const session = chatSessionHoldingTurn(turnId)
-      if (session === undefined) return
-      await session.append({
-        kind: 'approval_decision',
-        turnId,
-        at: clock.now(),
-        actionClass: decision.actionClass,
-        decision: decision.decision,
-        source: 'gate',
-      })
-    },
-  })
 
   // 394-07 D-12/D-14 · WTST-05: the honesty funnel's reads, assembled ONCE and handed to both
   // consumers — the `authoring.funnel.get` op below, and the gate-2 flip consultation the draft
@@ -3977,60 +3864,9 @@ export function composeLocalAgent(input: ComposeLocalAgentInput): LocalAgentHost
       },
     },
     auditSink: new JsonlAuditSink(input.agentQaRoot),
-    // 391 PROP-01 / D-11: the real standing-approval reader, over the SAME committed knowledge root
-    // the quarantine ledger and the review verbs serve from. Bound HERE and therefore on BOTH hosts,
-    // for the 385 D-15 reason a second binding site is never acceptable: two bindings would be two
-    // answers to the question of which approvals are in force.
-    //
-    // Rebuilt per invocation over a freshly resolved root, rather than closed over one resolved
-    // once. Resolving once would be a cache of a fact this composition does not own — the CLI
-    // resolves its root asynchronously and per call — and a stale root would read approvals from a
-    // knowledge tree the invocation is not serving from.
-    //
-    // A RESOLUTION FAILURE FOLDS TO THE NO-GRANTS READER, swallowed HERE and nowhere else, the same
-    // posture the recurrence provider above takes. Two reasons, and the second is the one that
-    // matters. The honest one: a host that cannot resolve a knowledge root has no grant ledger, so
-    // "no standing approvals" is the true answer and the ask it fails to satisfy denies — the safe
-    // direction. The load-bearing one: this resolver runs on EVERY invocation, including reads that
-    // never reach the ask arm, so a propagating failure here would take a whole composition's read
-    // capabilities down with the knowledge root. That is measured rather than hypothetical — three
-    // analysis-binding cases in this package's own suite hand `composeLocalAgent` a rejecting and a
-    // sync-throwing root resolver on purpose, and assert the analysis read still renders its
-    // no-history clause. Reads must not start depending on a root only the ask arm needs.
-    //
-    // 401-08: the resolution itself is hoisted to `resolveDurableApprovals` above, because the run
-    // gate now asks the same question through `createLocalRunInvocation`. THE OP GATE READS THE
-    // LEDGER AND NOTHING ELSE — the dispatch overlay is deliberately NOT unioned in here. A
-    // dispatch grant names `run:start`, and `grantCovers` matches on the exact action name, so
-    // unioning it would change no verdict at this gate; what it WOULD change is 401-05's measured
-    // property that the two gates' grant sets are separate objects, and a separation that holds
-    // only because of a name comparison is weaker than one that holds because the grant was never
-    // handed over.
-    standingApprovalReader: resolveDurableApprovals,
-    // Conditionally spread like its neighbours: an absent confirmation authority must be an ABSENT
-    // field, so the gate's own deny-by-default is what answers, in one place.
-    //
-    // A chat confirm WINS over a plain one where a host supplied both, because it is the same
-    // decision with one more form on it — never a second prompt, and never both.
-    //
-    // THE SURFACE TRAVELS WITH WHICHEVER PORT WINS (G-401-17), and it does so structurally rather
-    // than by anything this line remembers to do. Two ports meet here and one is chosen at
-    // composition time; the surface is a property OF the chosen object, so the row can only ever
-    // name the port that actually answered. A surface resolved beside this `??` — a separate
-    // field, a host-supplied literal — would be a second fact free to disagree with the first, and
-    // the way it would disagree is a chat confirm answered in a browser recorded as a terminal.
-    ...(() => {
-      const confirm = chatConfirmPort ?? input.confirm
-      return confirm === undefined ? {} : { confirm }
-    })(),
-    // 392 D-21 / T-392-28: the session pin overlay, threaded to the ONE `evaluate()` call-site
-    // there is. Bound unconditionally rather than conditionally spread, and the difference from
-    // its neighbours is real: `confirm` and the approvals reader are absent when a host has no
-    // such AUTHORITY, whereas the overlay is a composition-owned object that always exists and
-    // whose emptiness is DATA. An empty overlay denies nothing by its own contract, which is the
-    // gate's ladder untouched — and the hook has to be in place before the first turn, because a
-    // person types `/pin` in the middle of a session and there is no second binding moment.
-    deny: chatDeny,
+    // 432-13 (D-14/D-15): no standing-approval reader, confirm port or session deny overlay reaches
+    // the registry — `invokeFunction` asks nobody. The grant reader stays only for the run door's
+    // `resolveRunGrants`, which 432-18 deletes with the ledger.
     // 400-01 (D-05): the host's own execution-context answer, forwarded UNTOUCHED to the option the
     // registry has published since 384. Conditionally spread on this block's own house rule — an
     // absent host answer must be an ABSENT field, never a present `undefined` — so the registry's

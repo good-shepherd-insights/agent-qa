@@ -1,5 +1,12 @@
 // D-08's WHOLE CHAIN, DRIVEN FROM THE AUTHORING LOOP (Phase 401 — UAT item 9, review finding WR-03).
 //
+// RE-SPELLED 2026-09-30 (432-13, D-14/D-15). The chain below ended in the run core's `evaluate()`
+// reading the dispatch grant; neither the op gate nor the run gate exists any more. What this file
+// still drives end to end is the same composed road — `authoring.draft.write` → the loop → its gate
+// runs → `runs.start` → the in-process drive — and it now pins that nobody is asked anywhere on it,
+// that the loop still spends its gate runs, that a run started from outside the dispatch starts the
+// same way, and that the overlay still mints nothing durable. The history below is kept as written.
+//
 // WHAT WAS UNMEASURED BEFORE THIS FILE. Two cells shipped in 401-13 and neither of them drives the
 // segment D-08's benefit actually rests on:
 //
@@ -80,9 +87,6 @@ import { CLI_FUNCTION_CALLER, composeCliLocalAgent } from '../local-agent-host.j
 import { CountingTarget, createInProcessFixture, runDirs } from './in-process-run-fixture.js'
 import { IN_PROCESS_TARGET_NAME } from './in-process-run-fixture.js'
 
-/** The one action a person approves here — D-03's single ask, spelled as the gate names it. */
-const THE_ONE_ASK = 'fn:authoring.draft.write'
-
 /**
  * The draft the fixture model returns.
  *
@@ -146,21 +150,13 @@ describe('one human ask, N gated runs, driven from the authoring loop (D-08 · U
   it('THE STORE SURVIVES EVERY PRODUCTION FRAME — and reaches nobody outside the dispatch', async () => {
     const target = new CountingTarget()
     await target.listen()
-    let releaseProbes: (() => void) | undefined
     try {
       const fixture = createInProcessFixture({ origin: target.origin, environment: 'shared' })
-      // An empty browsers root, so a member's failure is a property of the fixture and not of the
-      // machine. The runs still START, which is the only thing the run gate decides about.
       process.env.PLAYWRIGHT_BROWSERS_PATH = join(fixture.project, 'no-browsers')
 
-      // ONE overlay, shared by both compositions. This is the shape `compose-local-agent`'s own
-      // doc names: a composition root that wants ONE dispatch scope across the agents it composes.
       const dispatchGrants: DispatchGrants = createDispatchGrants()
       const ledgerBefore = grantsLedgerBytes(fixture)
 
-      // THE PROBE HOST. Composed ONCE, before the dispatch opens, so nothing about the probe's own
-      // construction can be inside anybody's async tree. `local-headless` with no confirm port: an
-      // ask this host cannot satisfy at step (c) is fail-closed at step (d).
       const { registry: probeRegistry } = composeCliLocalAgent({
         agentQaRoot: fixture.agentQaRoot,
         configPath: fixture.configPath,
@@ -182,126 +178,50 @@ describe('one human ask, N gated runs, driven from the authoring loop (D-08 · U
         }
       }
 
-      let signalDispatchLive: (() => void) | undefined
-      const dispatchLive = new Promise<void>((resolve) => { signalDispatchLive = resolve })
-      const probesDone = new Promise<void>((resolve) => { releaseProbes = resolve })
-      let flushes = 0
-      let insider: ProbeResult | undefined
-      let openScopesAtInsider = -1
-
+      // A confirm that records every ask and refuses it: since 432-13 it must never be consulted.
       const asked: string[] = []
       const { registry } = composeCliLocalAgent({
         agentQaRoot: fixture.agentQaRoot,
         configPath: fixture.configPath,
         dispatchGrants,
         resolveExecutionContext: () => 'local-interactive',
-        // Approves the ONE ask and refuses everything else — see the header. This is the control
-        // that makes a lost store a red rather than a silent second prompt.
         confirm: {
           surface: 'tty-prompt',
           ask: (action: RiskActionDescriptor) => {
             asked.push(action.name)
-            return action.name === THE_ONE_ASK
+            return false
           },
         },
         model: () => ({
           modelId: 'fixture:authoring-dispatch-chain',
           generate: () => Promise.resolve({ text: MODEL_DOCUMENT }),
         }) as never,
-        runBridge: {
-          // The shipped subscriber seam, used to HOLD A FRAME STILL and for nothing else. The
-          // drive awaits this `flush()` at the end of a run, so parking here parks the dispatch
-          // inside its own call tree with `openScopes` at 1 and both probes still to take.
-          subscribers: () => ({
-            flush: async (): Promise<void> => {
-              flushes += 1
-              if (flushes !== 1) return
-              // THE INSIDER. The same probe host, driven from inside the dispatch's own tree.
-              insider = await probe()
-              openScopesAtInsider = dispatchGrants.openScopes
-              signalDispatchLive!()
-              await probesDone
-            },
-          }),
-        },
       })
 
-      const authoring = invokeFunction(
+      const answered = await invokeFunction(
         registry,
         'authoring.draft.write',
         { intent: 'Check that submitting the in-process thing shows the confirmation banner' },
         CLI_FUNCTION_CALLER,
-      ) as Promise<{ readonly receipt: { readonly gateRuns: readonly { readonly runId: string }[] } }>
-      const settled = authoring.then(
-        (value) => ({ value }),
-        (thrown: unknown) => ({ thrown }),
-      )
-
-      // The window opens when a gate run parks. A dispatch that ended first would make every
-      // assertion below vacuous, so that race is a LOUD failure rather than a skipped probe.
-      await Promise.race([
-        dispatchLive,
-        settled.then(() => {
-          // THE GUARD REPORTS WHY. A lost store denies the FIRST gate run, so no run ever reaches
-          // `flush` and the window never opens — this is the shape a continuity break takes here,
-          // and a bare "window never opened" would send a reader looking at the harness instead of
-          // at the chain. The two facts that discriminate are the confirm ledger and the rows.
-          throw new Error(
-            'the dispatch closed before the probe window opened — asks: '
-            + `${JSON.stringify(asked)}; run:start rows: `
-            + JSON.stringify(gateRows(fixture).map((row) => ({
-              outcome: row.outcome, trustSource: row.trustSource, context: row.executionContext,
-            }))),
-          )
-        }),
-      ])
-
-      const hitsBeforeProbe = target.hits.length
-      const openBeforeProbe = dispatchGrants.openScopes
-      const outsider = await probe()
-      const openAfterProbe = dispatchGrants.openScopes
-      const hitsAfterProbe = target.hits.length
-      releaseProbes!()
-      releaseProbes = undefined
-
-      const result = await settled as {
-        readonly value?: { readonly receipt: { readonly gateRuns: readonly { readonly runId: string }[] } }
-        readonly thrown?: unknown
+      ) as {
+        readonly outcome: string
+        readonly draftRef?: { readonly filePath: string; readonly testName: string }
+        readonly receipt: { readonly disposition: string; readonly gateRuns: readonly { readonly runId: string }[] }
+        readonly written?: { readonly file: { readonly kind: string; readonly filePath?: string } }
       }
-      expect(result.thrown).toBeUndefined()
-      const gateRunIds = result.value!.receipt.gateRuns.map((run) => run.runId)
+      const gateRunIds = answered.receipt.gateRuns.map((run) => run.runId)
 
-      // ---- (1) ONE HUMAN ASK -------------------------------------------------------------------
-      // The dispatch confirm fired exactly once, and `run:start` was never put to a person at all.
-      // A chain that lost the store would show N more entries here, every one of them `run:start`.
-      expect(asked).toEqual([THE_ONE_ASK])
+      // ---- (1) NOBODY WAS ASKED ----------------------------------------------------------------
+      expect(asked).toEqual([])
 
-      // ---- (2) N GATE RUNS, EVERY ONE OF THEM ATTRIBUTED ---------------------------------------
-      // The loop actually spent runs — an empty receipt would make the rest of this cell vacuous.
+      // ---- (2) N GATE RUNS, AND NO DECISION ROW FOR ANY OF THEM --------------------------------
       expect(gateRunIds.length).toBeGreaterThanOrEqual(DRAFT_STABILITY_RUNS_N)
+      expect(gateRows(fixture)).toEqual([])
       for (const runId of gateRunIds) {
-        const row = rowFor(fixture, runId)
-        // REACHED before decided: a real tier on a row that exists.
-        expect(row.riskTier).toBe('mutating-shared')
-        expect(row.outcome).toBe('proceeded')
-        expect(row.verdict).toBe('allow')
-        // THE ATTRIBUTION, and the whole of D-08's claim: allowed BY THE GRANT, at step (c). A run
-        // allowed by the confirm would read `prompted-approved`/`tty-prompt`; one that fell past
-        // (c) with this confirm port would read `prompted-denied`.
-        expect(row.trustSource).toBe('standing-approval')
-        expect(row.executionContext).toBe('local-interactive')
+        expect(runDirs(fixture).map((dir) => dir.split('/').pop())).toContain(runId)
       }
 
       // ---- (2b) 432 D-06: THE FINAL WRITE, THROUGH THE REAL HOST WRITER ------------------------
-      // The same normal-verification chain ends in the loop's final write. The final receipt
-      // decides: a draft its gates did not reject is at its target byte for byte, one they rejected
-      // is not, and an invocation that stopped or refused writes nothing at all.
-      const answered = result.value as unknown as {
-        readonly outcome: string
-        readonly draftRef?: { readonly filePath: string; readonly testName: string }
-        readonly receipt: { readonly disposition: string }
-        readonly written?: { readonly file: { readonly kind: string; readonly filePath?: string } }
-      }
       const suiteTarget = authoredSuiteTargetPath(
         answered.draftRef?.filePath ?? 'tests/.agent-qa-drafts/none.yaml',
         answered.draftRef?.testName ?? 'none',
@@ -320,57 +240,17 @@ describe('one human ask, N gated runs, driven from the authoring loop (D-08 · U
         expect(existsSync(join(fixture.project, suiteTarget))).toBe(false)
       }
 
-      // ---- (3) THE TWO CALLERS, AT ONE INSTANT -------------------------------------------------
-      // The dispatch was open for both, and open at 1 — so no answer below is explained by expiry.
-      expect(openScopesAtInsider).toBe(1)
-      expect(openBeforeProbe).toBe(1)
-      expect(openAfterProbe).toBe(1)
-
-      // THE INSIDER. Same host, same overlay, `local-headless` — the context that fail-closes —
-      // and it PROCEEDS, on the grant, because the call was made inside the dispatch's own tree.
-      // This is what proves the store reaches all the way through a gate run's own frames.
-      expect(insider?.error).toBeUndefined()
-      const insiderRow = rowFor(fixture, insider!.ack!.runId)
-      expect(insiderRow.riskTier).toBe('mutating-shared')
-      expect(insiderRow.executionContext).toBe('local-headless')
-      expect(insiderRow.outcome).toBe('proceeded')
-      expect(insiderRow.trustSource).toBe('standing-approval')
-
-      // THE OUTSIDER. Everything above, differing in exactly one thing: where the call was made
-      // from. The five denial artifacts (401-03 Mutation B), never an exit code or a message.
-      expect(outsider.ack).toBeUndefined()
-      expect(outsider.error).toBeInstanceOf(RunDeniedError)
-      const denial = outsider.error as RunDeniedError
-      expect(denial.remedies.length).toBeGreaterThan(0)
-      const outsiderRow = gateRows(fixture).find((row) => row.outcome === 'fail-closed-denied')!
-      // (a) reached, then refused — and NO attribution on the row, which is the repudiation half
-      expect(outsiderRow.riskTier).toBe('mutating-shared')
-      expect(outsiderRow.executionContext).toBe('local-headless')
-      expect(outsiderRow.verdict).toBe('deny')
-      expect(outsiderRow.trustSource).toBeUndefined()
-      // (b) the refusal reached the caller as the row's OWN reason, read back off it
-      expect(denial.reason).toBe(outsiderRow.reason)
-      // (c) nothing was started for it — no run dir of its own carries an event
-      expect(gateRows(fixture).filter((row) => row.runId === outsiderRow.runId)).toHaveLength(1)
-      // (d) nobody knocked on the target on its behalf. A DELTA rather than an absolute: the
-      //     dispatch's own runs are live in this same project and do knock.
-      expect(hitsAfterProbe).toBe(hitsBeforeProbe)
-      // (e) it never became a human ask either — the confirm ledger is still the one entry
-      expect(asked).toEqual([THE_ONE_ASK])
-
-      // ---- (4) THE GRANT DIES WITH THE DISPATCH ------------------------------------------------
+      // ---- (3) A RUN FROM OUTSIDE THE DISPATCH STARTS THE SAME WAY -----------------------------
       expect(dispatchGrants.openScopes).toBe(0)
-      const afterClose = await probe()
-      expect(afterClose.ack).toBeUndefined()
-      expect(afterClose.error).toBeInstanceOf(RunDeniedError)
-      const afterCloseRows = gateRows(fixture).filter((row) => row.outcome === 'fail-closed-denied')
-      expect(afterCloseRows).toHaveLength(2)
-      for (const row of afterCloseRows) expect(row.trustSource).toBeUndefined()
+      const outsider = await probe()
+      expect(outsider.error).toBeUndefined()
+      expect(outsider.error).not.toBeInstanceOf(RunDeniedError)
+      expect(outsider.ack?.runId).toMatch(/^r_/)
+      expect(gateRows(fixture)).toEqual([])
 
       // THE ONE-MINT LAW. `grants.jsonl` has exactly one writer and this overlay is not it.
       expect(grantsLedgerBytes(fixture)).toEqual(ledgerBefore)
     } finally {
-      releaseProbes?.()
       await target.close()
     }
   }, 300_000)
@@ -378,8 +258,8 @@ describe('one human ask, N gated runs, driven from the authoring loop (D-08 · U
   // 432-04 (D-18): the same composed chain, with the fixture's one target declared production and
   // no opt-in. The confirm approves EVERYTHING, so the old run gate cannot be what stops a run: the
   // only refusal left on the path is the core's production refusal, reached from the loop's first
-  // gate run. Nothing starts — no run directory, no gate row, no knock on the target — and the
-  // person is asked exactly once, for the authoring dispatch, never for a run.
+  // gate run. Nothing starts — no run directory, no gate row, no knock on the target — and since
+  // 432-13 the person is not asked at all.
   it('a production target refuses the loop at its first gate run: no run starts and the target is never reached', async () => {
     const target = new CountingTarget()
     await target.listen()
@@ -427,8 +307,8 @@ describe('one human ask, N gated runs, driven from the authoring loop (D-08 · U
       expect(denial.reason).toContain('environment: production')
       expect(denial.reason).toContain('allowProduction: true')
       expect(denial.remedies).toEqual([])
-      // The one ask was the dispatch's; no run was ever put to the person.
-      expect(asked).toEqual([THE_ONE_ASK])
+      // 432-13: not even the dispatch is put to the person now.
+      expect(asked).toEqual([])
       // Nothing started: no run directory, so no gate row, and nobody knocked on the target.
       expect(runDirs(fixture)).toEqual([])
       expect(gateRows(fixture)).toEqual([])

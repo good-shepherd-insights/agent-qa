@@ -184,7 +184,6 @@ describe('the mutating review verbs bind, refuse and commit by name', () => {
       // knowledge root the verbs serve from, and each case records the approval it needs through
       // `approveApply` below. The alternative — a stub that says yes — would have made three cases
       // about binding quietly depend on a policy fixture nothing else in the repo uses.
-      standingApprovalReader: () => createStandingApprovalReader({ knowledgeRoot }),
       resolveExecutionContext: () => 'local-interactive',
     })
   }

@@ -301,14 +301,15 @@ describe('an interrupted gate run leaves nothing a full rebuild can reconstruct 
         //
         // Without this, "the interrupted run contributed nothing" and "the interrupted run never
         // started" read identically, and this phase has produced that exact false green three
-        // times. The interrupted GATE run reached the execution-policy gate and was allowed
-        // through it, on its own durable audit record, carrying a non-empty risk tier.
-        const gateRows = auditRows(fixture).filter((row) => row.action === 'run:start')
-        expect(gateRows.map((row) => row.runId).sort()).toEqual([runA, runB, runC].sort())
-        const rowA = gateRows.find((row) => row.runId === runA)!
-        expect(rowA.riskTier).not.toBe('')
-        expect(rowA.verdict).toBe('allow')
-        expect(rowA.outcome).toBe('proceeded')
+        // times. RE-SPELLED 2026-09-30 (432-13): the reach witness was the run gate's `run:start`
+        // row, which no start writes any more; it is now each run's own first event.
+        expect(auditRows(fixture).filter((row) => row.action === 'run:start')).toEqual([])
+        for (const dir of [dirA, dirB, runC]) {
+          const first = readFileSync(join(fixture.agentQaRoot, 'runs', dir, 'events.jsonl'), 'utf8')
+            .split('\n')
+            .find((line) => line.trim() !== '')
+          expect((JSON.parse(first!) as { type: string }).type, `${dir} never started`).toBe('runStarted')
+        }
 
         // ---- (4) THE ABSENCE, ASSERTED ON DISK RATHER THAN INFERRED ---------------------------
         //
@@ -322,8 +323,9 @@ describe('an interrupted gate run leaves nothing a full rebuild can reconstruct 
           // the kind this cell pins — an interrupted run's sidecar, written when its session
           // started — and it carries no contribution a rebuild could count: only HMAC digests of
           // the placeholders the run minted, keyed by a host-local key.
+          // 432-13: `execution_audit.jsonl` was the run gate's row; a start writes none now.
           expect(readdirSync(runDir).sort())
-            .toEqual(['artifact.json', 'events.jsonl', 'execution_audit.jsonl', 'masking-digests.json'])
+            .toEqual(['artifact.json', 'events.jsonl', 'masking-digests.json'])
           expect(readFileSync(join(runDir, 'events.jsonl'), 'utf8').trim()).not.toBe('')
         }
         expect(existsSync(join(fixture.agentQaRoot, 'runs', runC, HANDOFF_FILE))).toBe(true)
@@ -463,7 +465,7 @@ describe('an interrupted gate run leaves nothing a full rebuild can reconstruct 
           // started — and it carries no contribution a rebuild could count: only HMAC digests of
           // the placeholders the run minted, keyed by a host-local key.
           expect(readdirSync(runDir).sort())
-            .toEqual(['artifact.json', 'events.jsonl', 'execution_audit.jsonl', 'masking-digests.json'])
+            .toEqual(['artifact.json', 'events.jsonl', 'masking-digests.json'])
           expect(readFileSync(join(runDir, 'events.jsonl'), 'utf8')).toBe(residueBefore.get(dir))
         }
 

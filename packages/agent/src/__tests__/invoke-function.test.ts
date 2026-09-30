@@ -1,9 +1,10 @@
-// The invoke pipeline's load-bearing order, typed refusals, and uniform gating
-// (Phase 384, Plan 01 — FUNC-01 / FUNC-03 / D-11).
+// The invoke pipeline's load-bearing order and typed refusals (Phase 384, Plan 01 — FUNC-01 /
+// FUNC-03 / D-11).
 //
-// The gate is NOT stubbed: `invokeFunction` calls the real `evaluate` from
-// @vostride/agent-qa-safety, so "read ops classify read-only → allow, and are audited
-// anyway" is proven against the shipped classifier rather than against a fake.
+// 2026-09-30 (432-13, D-14/D-15): THERE IS NO OP GATE. `invokeFunction` no longer calls
+// `evaluate`, so nothing is classified, asked or audited at dispatch. The cells that measured the
+// gate's uniform audit are re-spelled as its absence (C432-INVOKE-DIRECT); the refusals that are
+// not approvals — unknown id, invalid input, scope, origin, binding — stay measured unchanged.
 
 import {
   CURRENT_HANDOFF_SCHEMA_VERSION,
@@ -39,7 +40,9 @@ import type { FunctionDeps, FunctionSpec } from '../functions/spec.js'
 const FIXED_CONTEXT: () => ExecutionContext = () => 'local-interactive'
 
 describe('read invocation scope', () => {
-  it('READ-SCOPE surrounds awaited read dispatch after the gate and preserves output validation', async () => {
+  // RE-SPELLED 2026-09-30 (432-13): 'READ-SCOPE surrounds awaited read dispatch after the gate and
+  // preserves output validation'. The scope still surrounds the dispatch; no gate row precedes it.
+  it('READ-SCOPE surrounds awaited read dispatch and preserves output validation', async () => {
     const events: string[] = []
     const sink = capturingSink()
     const spec: FunctionSpec = {
@@ -55,7 +58,7 @@ describe('read invocation scope', () => {
       ...registryOptions({ auditSink: sink.sink }),
       withReadScope: async (functionId: string, invoke: () => Promise<unknown>) => {
         expect(functionId).toBe('runs.list')
-        expect(sink.executionRows()).toHaveLength(1)
+        expect(sink.executionRows()).toHaveLength(0)
         events.push('enter')
         try { return await invoke() } finally { events.push('dispose') }
       },
@@ -279,7 +282,7 @@ describe('invokeFunction pipeline', () => {
 
     await expect(refusal).rejects.toBeInstanceOf(FunctionScopeError)
     await expect(refusal).rejects.toMatchObject({ missingScopes: ['read'] })
-    // The scope check precedes the gate, so nothing dispatched and nothing was audited.
+    // The scope check precedes dispatch, so nothing dispatched and nothing was audited.
     expect(deps.listCalls()).toBe(0)
     expect(audit.executionRows()).toHaveLength(0)
   })
@@ -325,7 +328,10 @@ describe('invokeFunction pipeline', () => {
     ).resolves.toEqual({ ok: true })
   })
 
-  it('audits every successful read invocation exactly once (D-11 uniform gating)', async () => {
+  // RE-SPELLED 2026-09-30 (432-13) from 'audits every successful read invocation exactly once (D-11
+  // uniform gating)'. The read still dispatches exactly once; no gate decides it, so no row records
+  // a decision.
+  it('C432-INVOKE-DIRECT: a read dispatches exactly once and writes no execution-audit row', async () => {
     const deps = spyDeps([handoff('run-beta', 12), handoff('run-alpha', 11)])
     const audit = capturingSink()
     const registry = createRegistryFromSpecs(
@@ -337,13 +343,7 @@ describe('invokeFunction pipeline', () => {
 
     expect(result.map((summary) => summary.runId)).toEqual(['run-beta', 'run-alpha'])
     expect(deps.listCalls()).toBe(1)
-    const rows = audit.executionRows()
-    expect(rows).toHaveLength(1)
-    expect(rows[0]).toMatchObject({
-      action: 'fn:runs.list',
-      riskTier: 'read-only',
-      verdict: 'allow',
-    })
+    expect(audit.executionRows()).toEqual([])
   })
 
   it('yields an empty list when the injected reader has no runs', async () => {

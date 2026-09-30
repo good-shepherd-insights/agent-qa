@@ -1,5 +1,10 @@
 // The D-16 CLI door: `agent-qa run` denies fail-closed, on the binary a person actually runs.
 //
+// SINCE 432-13 (D-01/D-14/D-18) the only thing this door refuses is a production target the config
+// has not opted into. The run gate, its `run:start` row, its remedies and `--trust-session` are gone;
+// the cells below that measured them were re-spelled onto the production refusal, which keeps the
+// same no-effects-before-refusal artifacts (b)–(d). The history below is kept as written.
+//
 // Phase 401 plan 03, Task 2 — INVK-02 criterion 3's CLI leg. Criterion 3 says a run against a
 // shared or undeclared environment, started with no trust from a context with nobody at it, must
 // NOT HAPPEN — and that the denial is what the caller sees. Both halves are measured here, and
@@ -160,6 +165,16 @@ beforeEach(() => {
       `      url: ${probeOrigin}/multi-shared`,
       '      environment: shared',
       '      product: one-product',
+      // 432-13: the production targets, the one class this door still refuses without the opt-in.
+      '    prod-thing:',
+      '      platform: web',
+      `      url: ${probeOrigin}/prod-thing`,
+      '      environment: production',
+      '    multi-prod:',
+      '      platform: web',
+      `      url: ${probeOrigin}/multi-prod`,
+      '      environment: production',
+      '      product: one-product',
       'use:',
       '  mobile:',
       '    appState: preserve',
@@ -173,6 +188,7 @@ beforeEach(() => {
   for (const target of [
     'shared-thing', 'undeclared-thing', 'local-thing',
     'multi-local-a', 'multi-local-b', 'multi-shared',
+    'prod-thing', 'multi-prod',
   ]) {
     writeFileSync(
       join(project, 'tests', `${target}.yaml`),
@@ -312,177 +328,91 @@ describe('C432-HEADLESS-START — CI with a non-TTY stdin starts the run (432-13
   )
 })
 
-describe('the CLI door denies fail-closed and the run never starts (D-16, INVK-02 criterion 3)', () => {
-  it.each(['shared-thing', 'undeclared-thing'])(
-    'a no-tty run against a %s target with no trust is refused before anything happens',
-    async (target) => {
-      const result = await runCli(`tests/${target}.yaml`)
+// RE-SPELLED 2026-09-30 (432-13). This describe was the run gate's fail-closed denial of a shared or
+// undeclared target (now C432-HEADLESS-START above), its allow control, and `--trust-session` as the
+// way through. The denial moves to the one class still refused; the gate row it read is gone, so
+// the reason the person sees is asserted against the refusal's own wording instead.
+describe('the CLI door refuses an un-opted-in production run and it never starts (D-16, D-18)', () => {
+  it('a no-tty run against a production target with no opt-in is refused before anything happens', async () => {
+    const result = await runCli('tests/prod-thing.yaml')
 
-      // (a) the gate's own record, asserted on the field rather than on prose.
-      const gateRows = auditRows().filter((row) => row.action === 'run:start')
-      expect(gateRows).toHaveLength(1)
-      expect(gateRows[0].outcome).toBe('fail-closed-denied')
-      expect(gateRows[0].verdict).toBe('deny')
-      // An UNDECLARED target reaches the same tier as a declared shared one — D-06, at the door.
-      expect(gateRows[0].riskTier).toBe('mutating-shared')
-
-      // (b) no run began. `runStarted` is seq 1 of every run that exists.
-      expect(eventTypes()).toEqual([])
-
-      // (c) no assembly. The build-ordinal advance is assembly's durable trace.
-      expect(buildOrdinalsExist()).toBe(false)
-
-      // (c2) AND NOBODY KNOCKED. The run-start baseline probe fetches the target's URL, and it now
-      // lives inside assembly — so an unauthorized run costs the environment not one request. This
-      // is the ordering claim measured on the target's own side rather than inferred from ours.
-      expect(probeHits).toEqual([])
-
-      // (d) the person saw the decision, and saw it in the gate's own words.
-      expect(result.stderr).toContain(gateRows[0].reason)
-      // The remedies a CLI reader can act on, rendered from the structured vocabulary rather than
-      // from a sentence this door wrote. Both `answer-confirm` and `trust-session-flag` are minted
-      // for a fail-closed decision, and the flag arm names the command it is declared on.
-      expect(result.stderr).toContain('re-run on an interactive terminal')
-      expect(result.stderr).toContain('agent-qa run --trust-session')
-
-      // …and a non-zero exit, listed LAST because on its own it proves nothing: this command exits
-      // non-zero for a failing suite too. It is here so a denial can never be mistaken for success.
-      expect(result.status).not.toBe(0)
-    },
-  )
+    // (a) no decision row: the production refusal is not a gate decision
+    expect(auditRows()).toEqual([])
+    // (b) no run began
+    expect(eventTypes()).toEqual([])
+    // (c) no assembly
+    expect(buildOrdinalsExist()).toBe(false)
+    // (c2) and nobody knocked
+    expect(probeHits).toEqual([])
+    // (d) the person saw the refusal, naming the target and the opt-in
+    expect(result.stderr).toContain('Run denied')
+    expect(result.stderr).toContain('"prod-thing"')
+    expect(result.stderr).toContain('allowProduction: true')
+    expect(`${result.stdout}\n${result.stderr}`).not.toMatch(RETIRED_APPROVAL_TEXT)
+    expect(result.status).not.toBe(0)
+  }, 180_000)
 
   it('the allow control: the same door, the same no-tty invocation, one byte of config different', async () => {
     const result = await runCli('tests/local-thing.yaml')
 
-    const gateRows = auditRows().filter((row) => row.action === 'run:start')
-    expect(gateRows).toHaveLength(1)
-    expect(gateRows[0].verdict).toBe('allow')
-    expect(gateRows[0].outcome).toBe('proceeded')
-    // D-05's CI guarantee: `mutating-local` allows in EVERY context, with no credential at all.
-    expect(gateRows[0].riskTier).toBe('mutating-local')
-
-    // The run really started — the artifacts the denial legs proved absent are present here.
+    expect(auditRows().filter((row) => row.action === 'run:start')).toEqual([])
     expect(eventTypes()[0]).toBe('runStarted')
     expect(buildOrdinalsExist()).toBe(true)
-    // …including the knock. An allowed run DOES probe its target, which is what makes the denial
-    // legs' empty counter a measurement rather than a server nobody would have called anyway.
     expect(probeHits).toContain('/local-thing')
-
-    // And nothing rendered a denial. (This run ends in an unrelated downstream failure — no model
-    // provider is configured in the fixture — which is exactly why the gate half is asserted on the
-    // gate's own artifacts rather than on the exit code.)
     expect(result.stderr).not.toContain('Run denied')
   }, 180_000)
 
-  it('--trust-session is the way through on the SAME shared target (the second allow control)', async () => {
+  it('--trust-session is no longer an option: Commander refuses it and no run starts', async () => {
     const result = await runCli('tests/shared-thing.yaml', '--trust-session')
 
-    const gateRows = auditRows().filter((row) => row.action === 'run:start')
-    expect(gateRows).toHaveLength(1)
-    expect(gateRows[0].verdict).toBe('allow')
-    expect(gateRows[0].outcome).toBe('proceeded')
-    // The tier did NOT move — trust satisfies the ask, it does not reclassify the action.
-    expect(gateRows[0].riskTier).toBe('mutating-shared')
-    expect(eventTypes()[0]).toBe('runStarted')
-    expect(result.stderr).not.toContain('Run denied')
+    expect(result.stderr).toContain("unknown option '--trust-session'")
+    expect(runDirs()).toEqual([])
+    expect(probeHits).toEqual([])
+    expect(result.status).not.toBe(0)
   }, 180_000)
 })
 
 /**
- * THE REACH GUARD. Every multi-member arm calls this BEFORE it asserts anything about a verdict.
- *
- * A multi-member fixture has more ways to never arrive at the gate than a single-member one — the
- * mixed-product refusal, a parse error, a discovery miss — and every one of them leaves the same
- * empty artifacts a denial leaves. The verifier's own first CR-01 probe was vacuous in exactly this
- * way. So: the `run:start` row must EXIST and must carry a non-empty `riskTier`. A fixture that
- * stopped short of the classification fails here, loudly, instead of reading like a clean denial.
- */
-function reachedGate(): AuditRow {
-  const gateRows = auditRows().filter((row) => row.action === 'run:start')
-  expect(gateRows).toHaveLength(1)
-  expect(typeof gateRows[0].riskTier).toBe('string')
-  expect(gateRows[0].riskTier.length).toBeGreaterThan(0)
-  return gateRows[0]
-}
-
-/**
- * The denial surface of a multi-member arm — the same five artifacts the single-member cells use,
+ * The refusal surface of a multi-member arm — the same artifacts the single-member cell uses,
  * asserted identically, so the ONLY thing that varies between the two order arms below is the order
- * of two filenames on a command line.
+ * of two filenames on a command line. 432-13: the gate row and its reach guard are gone; the
+ * production refusal names the member, which is what proves the fold saw it.
  */
 async function expectMultiMemberDenial(...args: string[]): Promise<void> {
   const result = await runCli(...args)
 
-  // Reach first: this arm measured the classification, not a preflight refusal.
-  const gateRow = reachedGate()
-
-  // (a) one shared member makes the WHOLE invocation shared — most restrictive wins.
-  expect(gateRow.riskTier).toBe('mutating-shared')
-  expect(gateRow.verdict).toBe('deny')
-  expect(gateRow.outcome).toBe('fail-closed-denied')
-
-  // (b) no run began, (c) no assembly, (c2) and neither target was knocked on — including the
-  // LOCAL one, which a `filtered[0]`-classified allow would have driven.
+  expect(result.stderr).toContain('Run denied')
+  expect(result.stderr).toContain('"multi-prod"')
+  expect(auditRows()).toEqual([])
   expect(eventTypes()).toEqual([])
   expect(buildOrdinalsExist()).toBe(false)
   expect(probeHits).toEqual([])
-
-  // (d) the person saw the gate's own reason.
-  expect(result.stderr).toContain(gateRow.reason)
   expect(result.status).not.toBe(0)
 }
 
 /**
  * 401-12 (CR-01): THE DIRECT DOOR CLASSIFIES THE WHOLE INVOCATION, NOT ITS FIRST ARGUMENT.
  *
- * Every denial cell above drives ONE member, which is structurally why nothing caught this: the
- * direct path derived its class from `filtered[0]` alone while the suite path folded
- * most-restrictive-wins over every member (run.ts:3121-3145). Same config, same two members, same
- * piped stdio, no trust — and ARGUMENT ORDER decided authorization.
- *
- * THE RED BASELINE, measured on the PRE-FIX build (submodule `553f179b`, `pnpm build` then this
- * file) by driving `dist/cli.js` on the fixture above. Verbatim, both orders:
- *
- *   $ agent-qa run tests/multi-local-a.yaml tests/multi-shared.yaml     ← THE DEFECT
- *     auditRows  : [{"action":"run:start","riskTier":"mutating-local","verdict":"allow","outcome":"proceeded"}]
- *     events     : ["runStarted","testStarted","testFinished","verdict","runFinished"]
- *     probeHits  : ["/multi-local-a"]
- *     ordinals   : {"one-product":1}
- *     runDirFiles: ["artifact.json","events.jsonl","execution_audit.jsonl","handoff.json"]
- *
- *   $ agent-qa run tests/multi-shared.yaml tests/multi-local-a.yaml     ← same set, other order
- *     auditRows  : [{"action":"run:start","riskTier":"mutating-shared","verdict":"deny","outcome":"fail-closed-denied"}]
- *     events     : []   probeHits: []   ordinals: ABSENT
- *
- * and in this file, on that build: `AssertionError: expected 'mutating-local' to be
- * 'mutating-shared'`. The RED lands on the CLASSIFICATION, not on reach — `reachedGate()` passed,
- * so the arm did arrive at the gate and found the fold absent. That is the defect, measured.
+ * The direct path once derived its class from `filtered[0]` alone, so argument order decided
+ * authorization (red baseline on submodule `553f179b`: `expected 'mutating-local' to be
+ * 'mutating-shared'`). RE-SPELLED 2026-09-30 (432-13): a shared member no longer refuses anything,
+ * so the member that makes the whole invocation refused is a PRODUCTION one, in both orders.
  */
 describe('a multi-member direct invocation is classified as a whole (401-12, CR-01, D-05/D-06)', () => {
-  // Both orders of the SAME two files. If the fold is real, order cannot matter; if the class comes
-  // from `filtered[0]`, exactly one of these two passes — which is the shape of the defect.
-  it('a no-tty two-member run is refused when the shared member is LAST', async () => {
-    await expectMultiMemberDenial('tests/multi-local-a.yaml', 'tests/multi-shared.yaml')
+  it('a no-tty two-member run is refused when the production member is LAST', async () => {
+    await expectMultiMemberDenial('tests/multi-local-a.yaml', 'tests/multi-prod.yaml')
   }, 180_000)
 
-  it('a no-tty two-member run is refused when the shared member is FIRST', async () => {
-    await expectMultiMemberDenial('tests/multi-shared.yaml', 'tests/multi-local-a.yaml')
+  it('a no-tty two-member run is refused when the production member is FIRST', async () => {
+    await expectMultiMemberDenial('tests/multi-prod.yaml', 'tests/multi-local-a.yaml')
   }, 180_000)
 
-  it('the multi-member allow control: two members, both declared local, still proceeds', async () => {
-    const result = await runCli('tests/multi-local-a.yaml', 'tests/multi-local-b.yaml')
+  it('the multi-member allow control: a local and a shared member together still proceed', async () => {
+    const result = await runCli('tests/multi-local-a.yaml', 'tests/multi-shared.yaml')
 
-    const gateRow = reachedGate()
-
-    // A fold that answered `shared` for every multi-member set would deny everything and pass both
-    // arms above while breaking every legitimate multi-test invocation. This is what forbids that.
-    expect(gateRow.riskTier).toBe('mutating-local')
-    expect(gateRow.verdict).toBe('allow')
-    expect(gateRow.outcome).toBe('proceeded')
+    expect(auditRows().filter((row) => row.action === 'run:start')).toEqual([])
     expect(eventTypes()[0]).toBe('runStarted')
     expect(buildOrdinalsExist()).toBe(true)
-    // (This run then dies at the framework error the fixture has no model provider for — exactly as
-    // the single-member allow control above does. The gate half is what is asserted.)
     expect(result.stderr).not.toContain('Run denied')
   }, 180_000)
 })
@@ -497,7 +427,7 @@ describe('a multi-member direct invocation is classified as a whole (401-12, CR-
 // would be one-sided hardening on exactly the shape this phase has shipped repeatedly.
 //
 // WHY AN ABSENT RUN DIRECTORY IS THE CORRECT EVIDENCE HERE, and not the never-got-there failure
-// mode. Every denial cell above asserts a `run:start` row EXISTS before believing its verdict,
+// mode. Every denial cell above asserted a `run:start` row EXISTS before believing its verdict (until 432-13),
 // because a deny and a run that never reached the gate are otherwise the same empty directory.
 // These refusals land ABOVE the gate by design, so there is no row and the absence IS the claim.
 // What discriminates them from a broken invocation is the paired control: the same binary, the
@@ -559,7 +489,8 @@ describe('the environment door cannot name a malformed or colliding run id (CR-0
     const before = digestsUnder(victimDir)
     // Non-vacuity: the victim really holds the artifacts a collision would tamper with.
     expect(Object.keys(before)).toContain('events.jsonl')
-    expect(Object.keys(before)).toContain('execution_audit.jsonl')
+    // 432-13: `execution_audit.jsonl` was the gate row's file; the start writes none now.
+    expect(Object.keys(before)).toContain('handoff.json')
     const hitsAfterFirst = [...probeHits]
 
     const second = await runCliWithEnv({ AGENT_QA_RUN_ID: victimId }, 'tests/local-thing.yaml')

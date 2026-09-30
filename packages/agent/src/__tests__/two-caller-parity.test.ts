@@ -21,8 +21,9 @@
 //   2. The registry is a single module-scope instance, shared by every caller in the file.
 //      "One shared path" is therefore structural here, not a claim in a comment.
 //
-// The gate is NOT stubbed: `invokeFunction` calls the real `evaluate`, so what a caller is
-// refused for is decided by the shipped classifier and the shipped policy ladder.
+// 2026-09-30 (432-13, D-14/D-15): there is no op gate. What a caller is refused for is decided by
+// the input contract, the scope and origin checks and the binding check; nothing else is asked and
+// no decision row is written. The credential axis below is re-spelled accordingly.
 
 import { evaluate } from '@vostride/agent-qa-safety'
 import type { AuditSink, ExecutionAuditRow, GuardrailAuditRow } from '@vostride/agent-qa-safety'
@@ -42,7 +43,6 @@ import { beforeEach, describe, expect, it } from 'vitest'
 import { z } from 'zod'
 
 import {
-  FunctionDeniedError,
   FunctionInputError,
   FunctionNotBoundError,
   FunctionOriginError,
@@ -391,19 +391,10 @@ describe('one shared path: the same op, the same dispatch, for both callers', ()
     expect(resultA.map((summary) => summary.runId)).toEqual(['run-beta', 'run-alpha'])
     expect(resultB).toEqual(resultA)
 
-    // Uniform gating (D-11): one row each, naming the same descriptor and the same tier.
-    expect(rowsA).toHaveLength(1)
-    expect(rowsB).toHaveLength(1)
-    expect(rowsA[0]).toMatchObject({
-      action: 'fn:runs.list',
-      riskTier: 'read-only',
-      verdict: 'allow',
-    })
-    // The shipped row shape carries NO caller field at all, so "the rows differ only in
-    // attribution-shaped fields" is today, literally, "the rows are identical". Asserted as
-    // an equality rather than a subset check on purpose: if attribution is ever added to
-    // the row, this is the line that forces the addition to be justified rather than
-    // absorbed silently.
+    // 432-13: no op gate, so neither caller's dispatch writes a decision row — the trails are
+    // identical because both are empty. Asserted as an equality, so a row that appeared for one
+    // caller and not the other would be a caller difference that is not data.
+    expect(rowsA).toEqual([])
     expect(rowsB).toEqual(rowsA)
   })
 
@@ -455,7 +446,7 @@ describe('safe mode filters the listing and enforces nothing (FUNC-03)', () => {
 
   it('changes nothing about enforcement: safe mode alone alters no invocation outcome', async () => {
     // A_SAFE differs from A ONLY in safeMode, and runs.start is hidden from its listing.
-    // It nonetheless reaches exactly A's refusal — the binding check, after the gate.
+    // It nonetheless reaches exactly A's refusal — the binding check.
     await expect(invokeFunction(REGISTRY, 'runs.start', {}, CALLER_A))
       .rejects.toBeInstanceOf(FunctionNotBoundError)
     const rowsA = audit.take()
@@ -464,7 +455,7 @@ describe('safe mode filters the listing and enforces nothing (FUNC-03)', () => {
       .rejects.toBeInstanceOf(FunctionNotBoundError)
     const rowsSafe = audit.take()
 
-    expect(rowsA).toHaveLength(1)
+    expect(rowsA).toEqual([])
     expect(rowsSafe).toEqual(rowsA)
   })
 
@@ -474,7 +465,7 @@ describe('safe mode filters the listing and enforces nothing (FUNC-03)', () => {
     // Not "unknown", not "hidden": the scope subset check, computed server-side.
     await expect(refusal).rejects.toBeInstanceOf(FunctionScopeError)
     await expect(refusal).rejects.toMatchObject({ missingScopes: ['run'] })
-    // The scope check precedes the gate, so a refused caller leaves no audit row — the
+    // The scope check precedes dispatch, so a refused caller leaves no audit row — the
     // same ordering the pipeline suite pins, observed here from the caller's side.
     expect(audit.take()).toEqual([])
   })
@@ -514,8 +505,8 @@ describe('a claimed scope is not a held scope (SC3 / T-384-13)', () => {
       await expect(invokeFunction(REGISTRY, 'runs.start', payload, CALLER_C))
         .rejects.toBeInstanceOf(FunctionInputError)
     }
-    // Input validation precedes both the subset check and the gate, so none of these
-    // attempts is auditable as an execution at all.
+    // Input validation precedes the subset check, so none of these attempts is auditable as
+    // an execution at all.
     expect(audit.take()).toEqual([])
   })
 
@@ -566,24 +557,19 @@ describe('the credential flows to the gate untouched (D-13)', () => {
     askAudit.take()
   })
 
-  it('never reads or rewrites it: A and B are refused identically at an ask-tier action', async () => {
+  // RE-SPELLED 2026-09-30 (432-13) from 'never reads or rewrites it: A and B are refused
+  // identically at an ask-tier action'. With no op gate the formerly ask-tier action is served;
+  // the claim that survives is that holding a credential and holding none reach the identical
+  // outcome, and the layer leaves the credential as it found it.
+  it('C432-INVOKE-DIRECT: never reads or rewrites it — A and B are served identically at a formerly ask-tier action', async () => {
     await expect(invokeFunction(askRegistry, 'synthetic.ask', {}, CALLER_A))
-      .rejects.toBeInstanceOf(FunctionDeniedError)
+      .resolves.toEqual({ ok: true })
     const rowsA = askAudit.take()
     await expect(invokeFunction(askRegistry, 'synthetic.ask', {}, CALLER_B))
-      .rejects.toBeInstanceOf(FunctionDeniedError)
+      .resolves.toEqual({ ok: true })
     const rowsB = askAudit.take()
 
-    expect(rowsA).toHaveLength(1)
-    expect(rowsA[0]).toMatchObject({
-      action: 'fn:synthetic.ask',
-      riskTier: 'mutating-shared',
-      verdict: 'deny',
-      outcome: 'prompted-denied',
-    })
-    // The layer contributes nothing of its own to the credential's fate: holding one and
-    // holding none reach the identical gate outcome, because the layer passes the field
-    // through and the GATE decides what it is worth.
+    expect(rowsA).toEqual([])
     expect(rowsB).toEqual(rowsA)
     // And the object itself comes back out the way it went in — same reference, same value.
     expect(CALLER_A.credential).toBe(CREDENTIAL)
@@ -701,18 +687,17 @@ describe('a declared human-origin requirement is enforced uniformly (391 D-06)',
       .resolves.toEqual({ ok: true })
   })
 
-  it('refuses BEFORE the gate: an origin-refused caller leaves no audit row', async () => {
-    // The placement claim, measured rather than stated. The origin check sits beside the scope
-    // check in the pre-gate band, so it inherits that band's audit posture exactly — the same
-    // gap 384 named for the other three pre-gate refusals, and the same phases own closing it.
+  // RE-SPELLED 2026-09-30 (432-13) from 'refuses BEFORE the gate: an origin-refused caller leaves
+  // no audit row'. The refusal still precedes dispatch; with no op gate the admitted side writes no
+  // row either, and it is the dispatch count that tells the two apart.
+  it('refuses BEFORE dispatch: an origin-refused caller leaves no audit row and runs nothing', async () => {
     await expect(invokeFunction(originRegistry, 'synthetic.human-only', {}, CALLER_A_AGENT))
       .rejects.toBeInstanceOf(FunctionOriginError)
     expect(originAudit.take()).toEqual([])
 
-    // And the admitted side DOES audit, so the emptiness above is about the refusal rather
-    // than about this registry never auditing anything.
-    await invokeFunction(originRegistry, 'synthetic.human-only', {}, CALLER_A)
-    expect(originAudit.take()).toHaveLength(1)
+    await expect(invokeFunction(originRegistry, 'synthetic.human-only', {}, CALLER_A))
+      .resolves.toEqual({ ok: true })
+    expect(originAudit.take()).toEqual([])
   })
 
   it('refuses AFTER the scope check: a caller missing both is told about scopes first', async () => {

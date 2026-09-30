@@ -1,5 +1,11 @@
 // The run gate's action descriptor (Phase 401, D-05 + D-06).
 //
+// 2026-09-30 (432-13, D-15): THE RUN GATE IS GONE and nothing in production evaluates this
+// descriptor any more; the core refuses production and nothing else. The declaration vocabulary
+// (`RunTargetClass`, the fold's classes) and the production refusal sentence below are live. The
+// descriptor and disclosure recipes stay as the risk vocabulary's run entry until 432-19 retires the
+// ladder they were built for.
+//
 // ONE recipe, in one file, because the alternative measured badly before: a descriptor built at
 // each call site is a classification each host can spell differently, and the whole point of the
 // gate at `startRun` is that every host's run is classified the same way.
@@ -19,8 +25,8 @@ import type { RiskActionDescriptor } from '@vostride/agent-qa-schema'
  * `undefined` is a first-class member and means UNDECLARED — not "unknown, assume harmless".
  *
  * `production` (432-03, D-18) outranks every other class in a fold. A production run is refused
- * before the gate unless the config opts in (`refuseProductionWithoutOptIn`); one that is opted in
- * still meets the gate as shared, never as local.
+ * before any effect unless the config opts in (`refuseProductionWithoutOptIn`); one that is opted
+ * in starts like any other run (432-13).
  */
 export type RunTargetClass = 'local' | 'shared' | 'production' | undefined
 
@@ -80,8 +86,8 @@ export function buildRunRiskDescriptor(
  *
  * ONE SPELLING, HERE, for `buildRunRiskDescriptor`'s own reason: a preview composed at each door
  * is a preview each door can word differently, and the whole point of one gate at `startRun` is
- * that every host's run is described to a person the same way. There is exactly one production
- * consumer — the core's single `evaluate()` call-site — and no door composes its own prose.
+ * that every host's run is described to a person the same way. Its one production consumer, the
+ * core's `evaluate()` call-site, left in 432-13; no door composes its own prose.
  *
  * DISPLAY-ONLY, UNDER THE SAME LAW AS THE FIELD IT FILLS. `RiskActionDescriptor.disclosure` is
  * never read by the classifier, so nothing here can move an action up or down the ladder: this

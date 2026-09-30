@@ -1,5 +1,10 @@
 // The answering surface survives the two places it can be lost (G-401-17).
 //
+// SINCE 432-13 (D-14/D-15) neither place exists on a shipped road: run composition no longer reads
+// the presentation confirm, and no door hands the op gate a port because there is no op gate. Both
+// describes were re-spelled to measure that absence the same way — by driving the seam and reading
+// what landed on disk — with a port that records being asked. The history below is kept as written.
+//
 // The gate now records the surface the composition DECLARED rather than the mechanism rung (e) used
 // to hardcode. Declaring it is a compile obligation — `packages/safety/src/ports/__tests__/
 // confirm-surface.test-d.ts` pins that half — but two things can still carry an honest declaration
@@ -37,11 +42,6 @@ import { buildRunSafetyHooks } from '../run-session-composition.js'
 
 const ASK_TIER_ACTION = { name: 'delete_record', recognized: true } as const
 
-/** A confirm binding that approves, declaring the surface it is standing in for. */
-function approving(surface: 'tty-prompt' | 'browser-click'): ConfirmPort {
-  return { surface, ask: () => true }
-}
-
 function auditRowsAt(dir: string): ExecutionAuditRow[] {
   return readFileSync(join(dir, 'execution_audit.jsonl'), 'utf8')
     .trim()
@@ -49,14 +49,26 @@ function auditRowsAt(dir: string): ExecutionAuditRow[] {
     .map((line) => JSON.parse(line) as ExecutionAuditRow)
 }
 
+/** A confirm binding that records being asked, declaring the surface it stands in for. */
+function recording(surface: 'tty-prompt' | 'browser-click', calls: string[]): ConfirmPort {
+  return { surface, ask: (action) => { calls.push(`${surface}:${action.name}`); return true } }
+}
+
+function auditRowsIfAny(dir: string): ExecutionAuditRow[] {
+  try {
+    return auditRowsAt(dir)
+  } catch {
+    return []
+  }
+}
+
+// RE-SPELLED 2026-09-30 (432-13). Was 'a %s port behind two decorators still lands its own surface
+// on the row': `buildRunSessionSafetyHooks` no longer reads `presentation.confirm`, so no decorator
+// stack is built over the port and the port is never asked. The in-run hook still classifies the
+// action and records its own decision; what it cannot do any more is reach a person.
 describe('a decorator forwards the surface of the port it wraps', () => {
-  // DRIVEN END TO END through the CLI's own `buildRunSafetyHooks`, which is the assembly both
-  // `startRun` sites call. That composition stacks BOTH shipped run-path decorators over whatever
-  // port it is handed — the pause-timing one in `run-composition.ts` and, because a masking context
-  // is supplied, the unmasking one in this package — and hands the result to the gate. So the row
-  // read off disk below has been through two wrappers, and either dropping the surface reds it.
   it.each(['tty-prompt', 'browser-click'] as const)(
-    'a %s port behind two decorators still lands its own surface on the row',
+    'a %s port handed to the run hooks is never asked, and no prompted row lands',
     async (surface) => {
       const configDir = mkdtempSync(join(tmpdir(), 'confirm-surface-'))
       const runId = `r_decorated-${surface}`
@@ -65,27 +77,23 @@ describe('a decorator forwards the surface of the port it wraps', () => {
         runId,
         executionContext: 'local-interactive',
       })
+      const calls: string[] = []
 
       const { safetyHooks, confirmPausedMs } = buildRunSafetyHooks({
         auditSink,
         executionContext: 'local-interactive',
         trustMode: false,
-        confirm: approving(surface),
-        // Supplied so the SECOND decorator is in the stack. Without it `decorateConfirmForHuman` is
-        // absent and only the timing wrapper runs, which would measure one of the two chances.
+        confirm: recording(surface, calls),
         maskingContext: createMaskingContext(),
       })
 
-      const result = await safetyHooks.runToolCallAsync({ ...ASK_TIER_ACTION })
-      expect(result.action).toBe('allow')
+      await safetyHooks.runToolCallAsync({ ...ASK_TIER_ACTION })
 
-      // THE DECORATORS REALLY RAN. A stack that had been bypassed would leave this at zero, and the
-      // cell would then be asserting the surface of an undecorated port.
-      expect(confirmPausedMs()).toBeGreaterThan(0)
-
-      const rows = auditRowsAt(join(resolve(configDir, '.agent-qa'), RUNS_SUBDIR, slugBranch(runId)))
-      expect(rows).toHaveLength(1)
-      expect(rows[0]).toMatchObject({ outcome: 'prompted-approved', trustSource: surface })
+      expect(calls).toEqual([])
+      expect(confirmPausedMs()).toBe(0)
+      const rows = auditRowsIfAny(join(resolve(configDir, '.agent-qa'), RUNS_SUBDIR, slugBranch(runId)))
+      expect(rows.filter((row) => row.outcome === 'prompted-approved')).toEqual([])
+      expect(rows.map((row) => row.trustSource)).not.toContain(surface)
     },
   )
 })
@@ -132,25 +140,21 @@ describe('the two-port seam names the port that actually answered', () => {
     } finally {
       await host.close()
     }
-    return auditRowsAt(ws.agentQaRoot)
+    return auditRowsIfAny(ws.agentQaRoot)
   }
 
-  it('records the CHAT port when a chat confirm is bound — it wins the ??', async () => {
-    const rows = await revokeThrough({
-      chat: approving('browser-click'),
-      door: approving('tty-prompt'),
+  // RE-SPELLED 2026-09-30 (432-13): the `??` seam is gone. `composeCliLocalAgent` forwards neither
+  // port and `invokeFunction` asks nobody, so neither arm is consulted and the op writes no row.
+  it('asks NEITHER port, whichever is bound, and writes no prompted row', async () => {
+    const calls: string[] = []
+    const withChat = await revokeThrough({
+      chat: recording('browser-click', calls),
+      door: recording('tty-prompt', calls),
     })
+    const doorOnly = await revokeThrough({ door: recording('tty-prompt', calls) })
 
-    const asked = rows.filter((row) => row.outcome === 'prompted-approved')
-    expect(asked).toHaveLength(1)
-    expect(asked[0]!.trustSource).toBe('browser-click')
-  })
-
-  it('records the DOOR port when no chat confirm is bound — the other arm of the same ??', async () => {
-    const rows = await revokeThrough({ door: approving('tty-prompt') })
-
-    const asked = rows.filter((row) => row.outcome === 'prompted-approved')
-    expect(asked).toHaveLength(1)
-    expect(asked[0]!.trustSource).toBe('tty-prompt')
+    expect(calls).toEqual([])
+    expect(withChat.filter((row) => row.outcome === 'prompted-approved')).toEqual([])
+    expect(doorOnly.filter((row) => row.outcome === 'prompted-approved')).toEqual([])
   })
 })

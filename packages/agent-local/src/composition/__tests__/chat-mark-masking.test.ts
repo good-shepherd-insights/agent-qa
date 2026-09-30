@@ -65,7 +65,9 @@ it.each([true, false])('projects real mark chat with active masking=%s and prese
     }) as AgentAskResult
     expect(result.status).toBe('completed')
     expect(mark).toHaveBeenCalledExactlyOnceWith(input)
-    expect(confirm).toHaveBeenCalled()
+    // 432-13 (D-14): the mark is dispatched in the one call; a supplied old confirm port is never
+    // invoked.
+    expect(confirm).not.toHaveBeenCalled()
     expect(model).not.toHaveBeenCalled()
     expect(JSON.stringify(canonical)).toBe(canonicalBytes)
     expect(canonical.note).toBe(canary)

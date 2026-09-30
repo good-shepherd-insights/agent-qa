@@ -14,7 +14,7 @@ import type {
 } from '@vostride/agent-qa-schema'
 import { describe, expect, it, vi } from 'vitest'
 
-import { FunctionDeniedError, FunctionNotBoundError, FunctionScopeError, invokeFunction } from '../invoke.js'
+import { FunctionNotBoundError, FunctionScopeError, invokeFunction } from '../invoke.js'
 import { RUNS_MARK_FUNCTION_ID, runsMarkSpec } from '../ops/runs-mark.js'
 import { runsDetailSpec } from '../ops/runs-detail.js'
 import { createFunctionRegistry } from '../registry.js'
@@ -115,15 +115,14 @@ describe('runs.mark registration and binding (419 GATE3-01)', () => {
   })
 })
 
-describe('no-TTY gate on the actual mark op (419 D-13/D-20)', () => {
-  it('refuses an uncredentialed MCP agent with all three actionable remedy kinds', async () => {
-    const { port, mark } = stub()
-    const error = await invokeFunction(host(port), RUNS_MARK_FUNCTION_ID, INPUT, CALLER).catch(error => error)
-    expect(error).toBeInstanceOf(FunctionDeniedError)
-    expect((error as FunctionDeniedError).remedies.map(remedy => remedy.kind)).toEqual([
-      'answer-confirm', 'trust-session-flag', 'present-bearer-scope',
-    ])
-    expect(mark).not.toHaveBeenCalled()
+// RE-SPELLED 2026-09-30 (432-13, D-04/D-14) from 'no-TTY gate on the actual mark op (419
+// D-13/D-20)'. The op gate is gone: a mark from a no-TTY caller reaches the port once, whatever
+// credential it carries or lacks, and nobody is asked.
+describe('C432-INVOKE-DIRECT — the mark op reaches its port in one call (432-13)', () => {
+  it('C432-INVOKE-DIRECT: an uncredentialed MCP agent reaches the port once, with no refusal', async () => {
+    const { port, mark, outcome } = stub()
+    expect(await invokeFunction(host(port), RUNS_MARK_FUNCTION_ID, INPUT, CALLER)).toEqual(outcome)
+    expect(mark.mock.calls).toEqual([[INPUT]])
   })
 
   it('lets the same MCP agent reach the port once with the exact standing scope', async () => {
@@ -132,12 +131,12 @@ describe('no-TTY gate on the actual mark op (419 D-13/D-20)', () => {
     expect(mark.mock.calls).toEqual([[INPUT]])
   })
 
-  it('denies a mismatched credential without reaching the port', async () => {
-    const { port, mark } = stub()
-    await expect(invokeFunction(host(port), RUNS_MARK_FUNCTION_ID, INPUT, {
+  it('C432-INVOKE-DIRECT: a mismatched credential is not consulted, and the port is reached once', async () => {
+    const { port, mark, outcome } = stub()
+    expect(await invokeFunction(host(port), RUNS_MARK_FUNCTION_ID, INPUT, {
       ...CALLER, credential: { scope: { project: 'another-workspace' } },
-    })).rejects.toBeInstanceOf(FunctionDeniedError)
-    expect(mark).not.toHaveBeenCalled()
+    })).toEqual(outcome)
+    expect(mark.mock.calls).toEqual([[INPUT]])
   })
 })
 

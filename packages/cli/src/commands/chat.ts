@@ -11,11 +11,14 @@
 // needs no special case in the adapter and why a routing change cannot be right in one surface and
 // wrong in the other.
 //
-// THE CANON IS CONSULTED IN EXACTLY ONE PLACE, and it is not here. `/help`, `/quit`, `/model` and
-// `/pin` are resolver table entries, so they travel the same turn entry as any other utterance and
-// the engine's handlers carry them out. This file never matches a `/` prefix of its own: a REPL
+// THE CANON IS CONSULTED IN EXACTLY ONE PLACE, and it is not here. `/help`, `/quit` and `/model`
+// are resolver table entries, so they travel the same turn entry as any other utterance and the
+// engine's handlers carry them out. This file never matches a `/` prefix of its own: a REPL
 // that recognised `/quit` itself would be a second list of what chat understands, free to disagree
 // with the one that actually routes. `/quit` is observed through the live state the engine mutates.
+//
+// NOTHING ASKS (432-13, D-14). A typed line is carried out by its turn; there is no inline confirm
+// and no `[y/a/N]` decision prompt. The REPL reads only the lines a person types.
 //
 // EVERYTHING PRINTED CROSSES THE MASKER. A turn result is composed from op results, and an op
 // result is exactly the kind of value a masked configuration read can put a credential into
@@ -54,7 +57,6 @@ import type { CliAnalyticsHost } from '../composition/analytics-host.js'
 import {
   CLI_FUNCTION_CALLER,
   composeCliLocalAgent,
-  createChatConfirmPort,
 } from '../composition/local-agent-host.js'
 import { resolveCliChatCapabilities } from '../llm-utils.js'
 import type { CliChatCapabilities } from '../llm-utils.js'
@@ -91,6 +93,7 @@ interface ChatOptions {
 export interface ChatCommandDeps {
   input?: NodeJS.ReadableStream
   output?: NodeJS.WritableStream
+  /** Unread since 432-13: it decided whether an inline confirm was built, and none is. */
   isTty?: boolean
   onInterruptHandler?: (handler: () => Promise<void>) => void
   /**
@@ -300,20 +303,12 @@ export function createChatCommand(deps: ChatCommandDeps = {}): Command {
         const sessionId = resolveSessionId(composition.agentQaRoot, options)
 
         /**
-         * WHICH CONVERSATION THIS REPL IS IN, held from here so the confirm port composed below
-         * can ask (401-01, D-13).
+         * WHICH CONVERSATION THIS REPL IS IN (401-01, D-13).
          *
-         * DECLARED BEFORE THE HOST because the port is built with the host and must close over a
-         * box rather than a value — `--session` seeds it, and a fresh conversation has no id at
-         * all until the engine mints one on the first turn.
-         *
-         * KEPT CURRENT BY THE COMPOSITION'S OWN NOTIFICATION, not by the turn's return value
-         * alone. A confirm is raised MID-TURN, so on the first turn of a fresh conversation the
-         * returned `result.sessionId` arrives strictly after the approval that needed it, and a
-         * resolver reading only that would drop the row for every REPL conversation's first
-         * approval. `observeSessionEvent` fires on each durable append — including the ones the
-         * engine writes before any clause dispatches — so by the time a gate reaches a confirm the
-         * id is in hand, and it is the composition's own answer rather than this file's guess.
+         * `--session` seeds it, and a fresh conversation has no id at all until the engine mints
+         * one on the first turn. KEPT CURRENT BY THE COMPOSITION'S OWN NOTIFICATION as well as by
+         * the turn's return value: `observeSessionEvent` fires on each durable append, so the id is
+         * the composition's own answer rather than this file's guess.
          */
         let activeSessionId = sessionId
 
@@ -379,28 +374,16 @@ export function createChatCommand(deps: ChatCommandDeps = {}): Command {
               chatModelFor: chatModel.modelFor,
               chatAccounting: chatModel.accounting,
             }),
-          // D-03: the three-way inline confirm, built over the composition's OWN grants mint and
-          // this session's log. It answers `undefined` where there is nobody to ask, which leaves
-          // `confirm` absent and the gate's deny-by-default in place — v48 unchanged.
-          chatConfirm: (bindings) => createChatConfirmPort({
-            ...bindings,
-            // 401-01 (D-13): the conversation the decision is recorded against, answered per
-            // decision from this REPL's own open-session state. The dashboard answers the same
-            // question with `resolveTargetSession`; neither door guesses, and neither counts.
-            resolveSessionId: () => activeSessionId,
-            ...(deps.isTty === undefined ? {} : { isTty: deps.isTty }),
-            ...(deps.input === undefined ? {} : { input: deps.input }),
-            ...(deps.output === undefined ? {} : { output: deps.output }),
-          }),
+          // 432-13 (D-14): no chat confirm is built. The composition asks nobody, so a turn's
+          // clauses run once and the session log gains no `approval_decision` row.
+          //
           // 401-01 (D-13): the composition's own notification that a conversation has appended an
           // event, which is how the box above learns its id DURING the first turn rather than
           // after it. Nothing else is done with it here — the REPL renders from the turn result.
           observeSessionEvent: (id) => { activeSessionId = id },
-          // 395-13, D-14: the mid-turn render, on THE SAME STREAM the confirm prompt one line up
-          // and this file's own turn output write to. That is the entire requirement — a proposal
-          // rendered anywhere else is a proposal the person answering the prompt is not reading —
-          // and it is why the stream is resolved here rather than defaulted inside the engine,
-          // which has no streams.
+          // 395-13, D-14: the mid-turn render, on THE SAME STREAM this file's own turn output
+          // writes to, which is why the stream is resolved here rather than defaulted inside the
+          // engine, which has no streams.
           //
           // UNCONDITIONAL, INCLUDING UNDER PIPED STDIN. A scripted session is still a transcript
           // somebody reads, and it is the surface the live lane greps; suppressing the render for

@@ -7,8 +7,12 @@
 // constructs its own caller, so a composition that withholds a grant is invisible to all of them.
 // The refusal that reached a person named a scope and said nothing about authoring at all.
 //
+// 2026-09-30 (432-13, D-14/D-15): THERE IS NO OP GATE. Cells 2 and 4 are re-spelled: the scope
+// check still passes for both holders of `test-write`, and the invocation now reaches the BINDING
+// check (this registry binds nothing) instead of a confirm or a fail-closed refusal.
+//
 // WHAT THE CELLS BELOW MEASURE, AND WHAT THEY DELIBERATELY DO NOT. They measure WHICH CALLERS
-// REACH THE GATE, and what the gate then answers — never a claim that a grant widened it. Cell 1
+// REACH DISPATCH, and where the call then stops — never a claim that a grant widened it. Cell 1
 // pins the CLI's grants set-equal to the vocabulary; cell 2 drives `authoring.draft.write` from the
 // CLI's interactive context to the confirm. Cell 3 pins LIST MEMBERSHIP on the daemon record (its
 // own comment argues why membership rather than set equality); cell 4 drives the write op from the
@@ -22,13 +26,11 @@ import {
   AUTHORING_DRAFT_EDIT_FUNCTION_ID,
   AUTHORING_DRAFT_WRITE_FUNCTION_ID,
   createFunctionRegistry,
-  FunctionDeniedError,
   FunctionNotBoundError,
   FunctionScopeError,
   invokeFunction,
 } from '@vostride/agent-qa-agent'
 import type { FunctionDeps } from '@vostride/agent-qa-agent'
-import { NO_STANDING_APPROVALS } from '@vostride/agent-qa-safety'
 import { FunctionScopeSchema } from '@vostride/agent-qa-schema'
 import type {
   AuthoringDraftEditInput,
@@ -39,7 +41,6 @@ import { describe, expect, it } from 'vitest'
 
 import { CLI_FUNCTION_CALLER } from '../composition/local-agent-host.js'
 import { DAEMON_FUNCTION_CALLER } from '../daemon/server.js'
-import type { ConfirmPort } from '@vostride/agent-qa-safety'
 
 /**
  * A brief the op's `.strict()` input contract accepts, and nothing more.
@@ -63,24 +64,12 @@ const EDIT_BRIEF: AuthoringDraftEditInput = {
   intent: 'also assert the cart badge reads 1',
 }
 
-/**
- * A registry over NO dependencies, at a chosen execution context.
- *
- * `confirm` is threaded so the interactive cell can drive the ask arm to a decision a person
- * could have made, rather than relying on `evaluate()`'s default deny-confirm and then claiming
- * the prompt was reached.
- */
-function benchAt(ctx: ExecutionContext, ask?: () => boolean) {
-  const confirm: ConfirmPort | undefined = ask === undefined
-    ? undefined
-    // A TERMINAL double: this bench's interactive cell stands in for a CLI (G-401-17).
-    : { surface: 'tty-prompt', ask }
+/** A registry over NO dependencies, at a chosen execution context (432-13: nothing asks). */
+function benchAt(ctx: ExecutionContext) {
   return createFunctionRegistry({
     deps: {} as unknown as FunctionDeps,
     resolveExecutionContext: () => ctx,
-    standingApprovalReader: () => NO_STANDING_APPROVALS,
     auditSink: { appendExecutionAudit() {}, appendGuardrailAudit() {} },
-    ...(confirm === undefined ? {} : { confirm }),
   })
 }
 
@@ -89,10 +78,9 @@ async function errorFrom(
   caller: Parameters<typeof invokeFunction>[3],
   functionId: string,
   input: unknown,
-  confirm?: () => boolean,
 ): Promise<unknown> {
   try {
-    await invokeFunction(benchAt(ctx, confirm), functionId, input, caller)
+    await invokeFunction(benchAt(ctx), functionId, input, caller)
   } catch (error: unknown) {
     return error
   }
@@ -102,9 +90,8 @@ async function errorFrom(
 async function refusalFrom(
   ctx: ExecutionContext,
   caller: Parameters<typeof invokeFunction>[3],
-  confirm?: () => boolean,
 ): Promise<unknown> {
-  return errorFrom(ctx, caller, AUTHORING_DRAFT_WRITE_FUNCTION_ID, BRIEF, confirm)
+  return errorFrom(ctx, caller, AUTHORING_DRAFT_WRITE_FUNCTION_ID, BRIEF)
 }
 
 describe('CLI_FUNCTION_CALLER', () => {
@@ -119,18 +106,14 @@ describe('CLI_FUNCTION_CALLER', () => {
     )
   })
 
-  it('reaches the gate for authoring.draft.write — the refusal is the confirm, not the scope list', async () => {
-    // The person declines at the prompt. What matters is WHICH refusal arrives: a
-    // `FunctionDeniedError` carrying `prompted-denied` means the scope check passed and the
-    // invocation reached D-03's first decision point, which is where the fan-out preview is read
-    // and the decision is a person's. A `FunctionScopeError` here would mean the loop is
-    // unreachable from the CLI for a reason that has nothing to do with authoring.
-    const error = await refusalFrom('local-interactive', CLI_FUNCTION_CALLER, () => false)
+  // RE-SPELLED 2026-09-30 (432-13) from 'reaches the gate for authoring.draft.write — the refusal
+  // is the confirm, not the scope list'. The scope check still passes; with no gate the call
+  // reaches the binding check, which this dependency-free registry refuses by name.
+  it('reaches the binding check for authoring.draft.write — the scope list passes, nothing asks', async () => {
+    const error = await refusalFrom('local-interactive', CLI_FUNCTION_CALLER)
 
     expect(error).not.toBeInstanceOf(FunctionScopeError)
-    expect(error).toBeInstanceOf(FunctionDeniedError)
-    expect((error as FunctionDeniedError).reason).toContain('prompted-denied')
-    expect((error as FunctionDeniedError).reason).toContain('mutating-shared')
+    expect(error).toBeInstanceOf(FunctionNotBoundError)
   })
 })
 
@@ -142,19 +125,14 @@ describe('DAEMON_FUNCTION_CALLER', () => {
     expect(DAEMON_FUNCTION_CALLER.grantedScopes).toContain('test-write')
   })
 
-  it('is still refused for authoring.draft.write — by the gate, for its tier', async () => {
-    // THE GRANT IS NOT AN ESCALATION, MEASURED RATHER THAN ARGUED. `local-headless` is the context
-    // the daemon composes (`daemon-endpoint.test.ts` mints the same one), and `resolveAsk` reaches
-    // `requiresFailClosed` before it reaches any confirm — so a background job holding the scope
-    // is refused exactly as it was before, with the gate's own reason naming the tier and the ways
-    // out. What the grant changed is the HONESTY of the refusal, not its verdict.
+  // RE-SPELLED 2026-09-30 (432-13, D-14/D-15) from 'is still refused for authoring.draft.write —
+  // by the gate, for its tier'. There is no fail-closed arm: the daemon's `local-headless` call
+  // passes the scope check and reaches the binding check exactly as the CLI's does.
+  it('C432-INVOKE-DIRECT: reaches the binding check for authoring.draft.write from local-headless', async () => {
     const error = await refusalFrom('local-headless', DAEMON_FUNCTION_CALLER)
 
     expect(error).not.toBeInstanceOf(FunctionScopeError)
-    expect(error).toBeInstanceOf(FunctionDeniedError)
-    expect((error as FunctionDeniedError).reason).toContain('fail-closed')
-    expect((error as FunctionDeniedError).reason).toContain('declared tier: mutating-shared')
-    expect((error as FunctionDeniedError).reason).toContain('--trust-session')
+    expect(error).toBeInstanceOf(FunctionNotBoundError)
   })
 
   it('is ALLOWED past both control points for authoring.draft.edit — the second holder of test-write', async () => {
@@ -175,7 +153,6 @@ describe('DAEMON_FUNCTION_CALLER', () => {
     )
 
     expect(error).not.toBeInstanceOf(FunctionScopeError)
-    expect(error).not.toBeInstanceOf(FunctionDeniedError)
     expect(error).toBeInstanceOf(FunctionNotBoundError)
   })
 })

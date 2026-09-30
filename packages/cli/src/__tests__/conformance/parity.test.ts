@@ -68,7 +68,6 @@ import {
   conformanceResolveExecutionContext,
   coveringCallerFor,
   deriveAskCapableOpIds,
-  EVERY_ASK_STANDING_APPROVED,
   refusingCallerFor,
   surfaceInertCallers,
   surfaceShapedCallers,
@@ -919,12 +918,12 @@ describe('the parity suite ranges the registry census over every rostered surfac
     // scenario table is the ONE place those live now. Restating them agent-side would have rebuilt
     // the second denominator this plan just retired.
     //
-    // The caller is minted per declaration off its own `requiredScopes` with a human origin, and the
-    // ask tier is standing-approved, so nothing here can be refused on an axis that precedes the
-    // binding check and be mistaken for a binding refusal (the 387-08 measurement).
+    // The caller is minted per declaration off its own `requiredScopes` with a human origin, so
+    // nothing here can be refused on an axis that precedes the binding check and be mistaken for a
+    // binding refusal (the 387-08 measurement). 432-13: no standing approval is needed any more —
+    // no ask stands between the scope check and the binding check.
     const registry = conformanceRegistry({
       resolveExecutionContext: conformanceResolveExecutionContext,
-      standingApprovalReader: () => EVERY_ASK_STANDING_APPROVED,
     })
     const unbound = registry
       .list(CONFORMANCE_CENSUS_CALLER)
@@ -1308,7 +1307,7 @@ describe('the parity suite ranges the registry census over every rostered surfac
       expect(
         scenarioRowFor(opId)?.policyPoints.ask,
         `${opId}: the shipped classifier can ask for this capability and no scenario row says so`,
-      ).toBe('ask')
+      ).toBe('direct')
     }
   })
 
@@ -1392,37 +1391,29 @@ describe('the parity suite ranges the registry census over every rostered surfac
     // (391 D-06), so a receipt stamped `human` cannot have been planned by a model.
     expect(outcome.receipt?.origin, 'proposals.list on chat: the receipt must come from the '
       + 'deterministic route, or a model planned this call').toBe('human')
-    // THE GATE SAW *THIS* CALL — and that is a differential, not a presence check.
+    // THIS CALL WAS DISPATCHED — a differential, not a presence check.
     //
-    // 397-09 MEASURED THE PRESENCE CHECK VACUOUS FOR THIS OP, which is why it is written this way.
-    // The first spelling asserted only that SOME `fn:proposals.list` row existed after the drive,
-    // and called that "the observation the D-14 ungated mutation has to be able to break". It could
-    // not break it: `chat/banner.ts` invokes `proposals.list` (with `{ status: 'pending' }`)
-    // through the same gate when the session OPENS, so a row for this action class is written on
-    // every drive whatever the clause does. Rerouting the clause's dispatch around `invokeFunction`
-    // left that row untouched and the cell stayed green — a capability outside the gate, with this
-    // cell reporting that the gate had seen it. The cell was green for a reason nobody chose.
-    //
-    // The fix is a two-drive differential rather than a bigger claim about one drive: a drive of a
-    // DIFFERENT capability establishes what the session's own opening reads write by themselves,
-    // and this drive must write STRICTLY MORE. `config.get` is the baseline subject because the
-    // banner's three opening reads are `proposals.list`, `runs.list` and `runs.digest`, and it is
-    // none of them — so its drive contributes nothing to the count being compared.
+    // RE-SPELLED 2026-09-30 (432-13). This read the gate's `fn:proposals.list` rows against a
+    // `config.get` baseline, because the banner's opening reads write rows of their own (397-09's
+    // measured vacuity). No gate writes a row since 432-13, so the differential moves to the
+    // clause's own RESULT record: the opening reads are not clauses and file none, so a drive of
+    // `config.get` files no `proposals.list` result and this drive files exactly one.
     const baselineRow = scenarioRowFor('config.get')
     expect(baselineRow, 'the scenario table no longer carries config.get').toBeDefined()
     const baselineDrive = await driveChatDispatch({
       opId: 'config.get',
       input: baselineRow!.input,
     })
-    const rowsFrom = (drive: typeof outcome): number =>
-      drive.auditRows.filter((auditRow) => auditRow.action === pinClassFor('proposals.list')).length
-    const openingReads = rowsFrom(baselineDrive)
+    const resultsFrom = (drive: typeof outcome): number =>
+      drive.results.filter((result) => result.functionId === 'proposals.list').length
+    expect(resultsFrom(baselineDrive), 'a config.get drive filed a proposals.list result').toBe(0)
     expect(
-      rowsFrom(outcome),
-      `proposals.list on chat: this drive must add a gate row of its own beyond the `
-        + `${openingReads} the session's opening reads write by themselves — otherwise the clause `
-        + 'dispatched outside the gate and this cell would still be green',
-    ).toBeGreaterThan(openingReads)
+      resultsFrom(outcome),
+      'proposals.list on chat: the clause filed no result of its own, so it did not dispatch',
+    ).toBe(1)
+    // …and no approval row was written for it (C432-CHAT-DIRECT).
+    expect(outcome.auditRows.filter((auditRow) => auditRow.action === pinClassFor('proposals.list')))
+      .toEqual([])
   })
 
   it('drives the chat surface with no provider credential in the environment at all', async () => {
@@ -1589,47 +1580,32 @@ describe('the parity suite ranges the registry census over every rostered surfac
     }
   }, 120_000)
 
-  it('refuses at the CHAT SURFACE WALL for every capability, through its own composed dispatch', async () => {
-    // WALL TWO of two for chat, asserted in its own cell over its own producer: no expression in
-    // this body touches `invokeFunction`, and no expression in the gate-wall cell above touches a
-    // driver. D-11 asks for two walls, and two walls averaged into one assertion is one wall.
-    //
-    // WHAT PRODUCES THIS SIDE: the shipped `agent-qa chat` REPL, typed at. The refusal observed is
-    // `FunctionDeniedError` — the class `invokeFunction` throws when and only when the gate
-    // returned `deny` — carried to the surface in the receipt a person reads, and corroborated by
-    // the gate's own execution-audit row naming the action class and the outcome that produced it.
-    // A capability rerouted around `invokeFunction` (D-14's ungated mutation) cannot be pinned: it
-    // would execute, this cell would see `executed`, and it would red by name.
-    for (const row of SCENARIO_TABLE) {
-      const outcome = await driveChatDispatch({
-        opId: row.opId,
-        input: row.input,
-        pinBefore: [pinClassFor(row.opId)],
-      })
-      expect(
-        outcome.unhandled,
-        `${row.opId} on chat (surface wall): the generic route did not resolve the clause, so this `
-          + 'drive never reached a dispatch and its refusal would be a routing failure',
-      ).toEqual([])
-      expect(
-        outcome.receipt?.status,
-        `${row.opId} on chat (surface wall): the surface did not refuse a pinned capability`,
-      ).toBe('failed')
-      expect(
-        outcome.receipt?.outcome,
-        `${row.opId} on chat (surface wall): the refusal must be the gate's own — an input or `
-          + 'unknown-id refusal would look the same to a person and mean the gate never ran',
-      ).toBe('FunctionDeniedError')
-      const denials = outcome.auditRows.filter(
-        (auditRow) => auditRow.action === pinClassFor(row.opId) && auditRow.verdict === 'deny',
-      )
-      expect(
-        denials.map((auditRow) => auditRow.outcome),
-        `${row.opId} on chat (surface wall): the gate wrote no deny row for this action class, so `
-          + 'nothing attributes the surface\'s refusal to the gate',
-      ).toContain('session-pin-denied')
-    }
-  }, 300_000)
+  // RE-SPELLED 2026-09-30 (432-13, C432-CHAT-DIRECT). The chat surface wall was `/pin`: a session
+  // deny overlay the gate consulted, producing `FunctionDeniedError` and a `session-pin-denied` row.
+  // `/pin` and the overlay's only reader are gone, and a chat caller holds every scope (the cell
+  // below), so the chat surface has no per-capability refusal left to drive. What this cell pins now
+  // is that absence, through the surface's own dispatch: `/pin fn:<id>` is not a directive, and the
+  // capability typed after it is not refused by anything a pin could have set.
+  it('refuses at the CHAT SURFACE WALL for no capability: /pin is unhandled and nothing is denied', async () => {
+    const opId = 'proposals.list'
+    const row = scenarioRowFor(opId)
+    const outcome = await driveChatDispatch({
+      opId,
+      input: row!.input,
+      pinBefore: [pinClassFor(opId)],
+    })
+    expect(
+      outcome.unhandled,
+      `${opId} on chat: /pin must reach the resolver as an unknown clause, not as a directive`,
+    ).toEqual([`/pin ${pinClassFor(opId)}`])
+    expect(outcome.receipt?.status, `${opId} on chat: the capability after /pin did not run`)
+      .toBe('executed')
+    expect(outcome.receipt?.outcome).not.toBe('FunctionDeniedError')
+    expect(
+      outcome.auditRows.filter((auditRow) => auditRow.verdict === 'deny'),
+      `${opId} on chat: a deny row was written, so something on the surface still refuses`,
+    ).toEqual([])
+  }, 120_000)
 
   it('refuses at the MCP SURFACE WALL for every projected capability: no door under the short grant', async () => {
     // WALL TWO of two for MCP, over its own producer. The MCP surface CAN be handed a caller short
@@ -1681,24 +1657,24 @@ describe('the parity suite ranges the registry census over every rostered surfac
     }
   }, 300_000)
 
-  it('records WHY the chat surface wall is a pin rather than a short grant', async () => {
+  it('records WHY the chat surface has no wall since /pin left', async () => {
     // THE MEASUREMENT BEHIND THE DESIGN, pinned so it cannot go stale silently. Both chat stage
     // callers hold `CHAT_STAGE_SCOPES`, and that constant is the WHOLE closed scope union — so "a
     // chat caller missing a required scope" is not a state this product can be in, and the chat
-    // surface wall could not be a scope refusal however it were written. The day chat narrows its
-    // grants, this cell reds and the wall above should be revisited.
+    // surface wall could not be a scope refusal however it were written. It was a pin until 432-13
+    // (C432-CHAT-DIRECT). The day chat narrows its grants, this cell reds and a scope wall on the
+    // chat surface becomes assertable.
     expect(
       sorted(CHAT_STAGE_SCOPES),
       'the chat stage callers no longer hold every scope — a scope-refused chat caller is now a '
         + 'state this product can be in, and the chat surface wall should assert it directly',
     ).toEqual(sorted(FunctionScopeSchema.options))
-    // And the pin route reaches every capability, which is what lets the wall above range the whole
-    // census: the pin is validated against the registry's own risk names.
+    // Every capability's risk name is still `fn:<id>`: the in-run gate hook and the audit reader
+    // compare these bytes until 432-19, so a capability spelled otherwise would read as unrecognised.
     for (const declaration of registryDeclarations()) {
       expect(
         declaration.risk.name,
-        `${declaration.id}: /pin normalises to fn:<id> and compares exact bytes, so a capability `
-          + 'whose risk name is spelled otherwise is unpinnable and unwalled',
+        `${declaration.id}: the risk name must be fn:<id>`,
       ).toBe(pinClassFor(declaration.id))
     }
   })
@@ -1739,150 +1715,73 @@ describe('the parity suite ranges the registry census over every rostered surfac
 
   // ---- The ASK points: verdict parity, handling per contract (2026-08-16, D-11) -----------------
   //
-  // THE DIVERGENCE BELOW IS DESIGNED, AND IT IS ASSERTED RATHER THAN AVERAGED AWAY. D-11's clause
-  // is verdict parity, NOT handling parity: the gate must reach the same `ask` for a capability
-  // whichever surface asks, and then each surface answers it the way its own contract says. Chat
-  // pauses at a confirm seam and refuses when there is nobody to ask; MCP's apply tools refuse and
-  // TEACH the second call (396 D-11), and its other ask-tier tools refuse in band off the gate.
-  // A cell that demanded one shared HANDLING would be asserting a false symmetry, and the way it
-  // would be satisfied is by removing one of the two contracts.
+  // RE-SPELLED 2026-09-30 (432-13, D-14/D-15, C432-INVOKE-DIRECT). D-11's verdict parity was the
+  // ask being REACHED identically on both surfaces' callers, each surface then handling it its own
+  // way (chat paused at a confirm seam, MCP refused in band). `invokeFunction` no longer evaluates
+  // anything, so there is no ask to reach: the capabilities the classifier WOULD ask about are the
+  // `direct` policy point, and the parity that survives is that both surfaces' callers land at the
+  // same step past the scope check — derived from this composition's binding status — with no
+  // standing approval, no confirm and no context changing where.
 
-  it('reaches the ask for every ask-capable capability, identically on both surfaces\' callers', async () => {
-    // VERDICT PARITY (D-11's third policy point), at the gate. `evaluate` never RETURNS the string
-    // `ask` — it resolves one — so "the verdict is ask" is only readable off behaviour: the confirm
-    // port is reached on exactly the path where the base verdict was `ask` and no trust, credential
-    // or standing grant satisfied it. Each side is a separate `invokeFunction` call under its own
-    // surface's caller record.
+  it('dispatches every ask-capable capability directly, identically on both surfaces\' callers', async () => {
     const askCapable = new Set(ASK_CAPABLE_OP_IDS)
     for (const declaration of registryDeclarations()) {
       const row = scenarioRowFor(declaration.id as ScenarioOpId)
       const callers = surfaceInertCallers(declaration.requiredScopes)
-      const consulted = { chat: false, mcp: false }
-      const answers = {
-        chat: await gateAnswerFor(declaration.id, row!.input, callers.chat, {
-          resolveExecutionContext: conformanceResolveExecutionContext,
-          confirm: { surface: 'tty-prompt', ask: () => { consulted.chat = true; return false } },
-        }),
-        mcp: await gateAnswerFor(declaration.id, row!.input, callers.mcp, {
-          resolveExecutionContext: conformanceResolveExecutionContext,
-          confirm: { surface: 'tty-prompt', ask: () => { consulted.mcp = true; return false } },
-        }),
-      }
+      const onChat = await gateAnswerFor(declaration.id, row!.input, callers.chat)
+      const onMcp = await gateAnswerFor(declaration.id, row!.input, callers.mcp)
       expect(
-        consulted.mcp,
-        `${declaration.id}: the two surfaces disagree about whether this capability asks a person `
-          + 'first — an ask on one surface and a silent proceed on the other is the divergence D-11 '
-          + 'forbids',
-      ).toBe(consulted.chat)
-      // …and which way that shared answer went is the derived ask set, in both directions, so the
-      // cell cannot pass by never reaching a confirm at all.
-      expect(
-        consulted.chat,
-        `${declaration.id}: the shipped classifier's ask set and the confirm this call reached `
-          + 'disagree',
-      ).toBe(askCapable.has(declaration.id))
+        onMcp.kind,
+        `${declaration.id}: the two surfaces' callers land at different steps`,
+      ).toBe(onChat.kind)
+      expect(onChat.kind, `${declaration.id}: nothing may deny a call since 432-13`)
+        .not.toBe('gate-denied')
       if (askCapable.has(declaration.id)) {
-        // Nothing approved it, so the ask resolves to a denial — and the capability does not run.
-        expect(answers.chat.kind, `${declaration.id} on chat: an unapproved ask must not proceed`)
-          .toBe('gate-denied')
-        expect(answers.mcp.kind, `${declaration.id} on mcp: an unapproved ask must not proceed`)
-          .toBe('gate-denied')
+        const direct = declaration.bindingStatus === 'unbound' ? 'allowed-unbound' : 'allowed-dispatched'
+        expect(
+          onChat.kind,
+          `${declaration.id}: an ask-capable capability did not reach step `
+            + `${direct === 'allowed-unbound' ? 'binding' : 'dispatch'} with no approval`,
+        ).toBe(direct)
       }
     }
   }, 120_000)
 
-  it('gets PAST the ask on a standing approval, identically on both surfaces\' callers', async () => {
-    // The ask set's own GRANT point. A capability whose every measurement stops at an unapproved ask
-    // has had its dispatch path measured nowhere, so this is the cell that proves the gate ALLOWS —
-    // through the standing-approval arm, built from the action's own name rather than a list.
-    //
-    // THE CONFIRM THROWS. If the grant did not cover the action and the ladder fell through to the
-    // prompt, this cell would otherwise report an allow that a confirm had produced.
-    // THE CONFIRM RECORDS RATHER THAN THROWS, deliberately: a throw here would be swallowed by
-    // `gateAnswerFor`'s dispatch-time arm and read as an ALLOW, which is the answer this guard
-    // exists to refuse. The flag is checked after each call.
+  it('lands an ask-capable call at the same step in a fail-closed context as in an interactive one', async () => {
+    // The context control, re-spelled: `ci` used to fail an ask closed before the confirm. Nothing
+    // reads the context on this road now, so both contexts must answer alike.
     for (const opId of ASK_CAPABLE_OP_IDS) {
       const declaration = registryDeclarations().find((candidate) => candidate.id === opId)
       const row = scenarioRowFor(opId as ScenarioOpId)
       const callers = surfaceInertCallers(declaration!.requiredScopes)
-      const consulted = { chat: false, mcp: false }
-      const optionsFor = (side: 'chat' | 'mcp'): ConformanceRegistryOptions => ({
-        resolveExecutionContext: conformanceResolveExecutionContext,
-        // A RESOLVER, which is the port's shape — a reader handed in directly is not callable and
-        // `invokeFunction` would throw where the gate expects a value, which this suite's own
-        // classifier would then read as a dispatch. Measured, not assumed: that was the first
-        // spelling here and it made the cell green for the wrong reason.
-        standingApprovalReader: () => EVERY_ASK_STANDING_APPROVED,
-        confirm: { surface: 'tty-prompt', ask: () => { consulted[side] = true; return false } },
+      const interactive = await gateAnswerFor(opId, row!.input, callers.chat)
+      const failClosed = await gateAnswerFor(opId, row!.input, callers.chat, {
+        resolveExecutionContext: () => 'ci',
       })
-      const onChat = await gateAnswerFor(opId, row!.input, callers.chat, optionsFor('chat'))
-      const onMcp = await gateAnswerFor(opId, row!.input, callers.mcp, optionsFor('mcp'))
-      expect(
-        consulted,
-        `${opId}: the standing approval did not cover this action class, so the ladder fell through `
-          + 'to the confirm — this cell would have measured a prompt while claiming a grant',
-      ).toEqual({ chat: false, mcp: false })
-      // WHERE a call that got past the ask lands is DERIVED from this composition's own binding
-      // status, not asserted loosely as "somewhere past the gate". The looser form is what let the
-      // first spelling of this cell pass while the reader port was mis-shaped: a gate port that
-      // throws surfaces here as a dispatch-time error, i.e. as `allowed-dispatched`, and a cell
-      // that accepted either answer accepted a broken gate as a granted one.
-      const pastAsk = declaration!.bindingStatus === 'unbound'
-        ? 'allowed-unbound'
-        : 'allowed-dispatched'
-      expect(
-        onChat.kind,
-        `${opId} on chat: a standing approval covering this action class did not get the call past `
-          + `the ask and on to step ${pastAsk === 'allowed-unbound' ? '6' : '7'}`,
-      ).toBe(pastAsk)
-      expect(onMcp.kind, `${opId}: the two surfaces resolve the same ask differently under the same `
-        + 'standing approval').toBe(onChat.kind)
+      expect(failClosed.kind, `${opId}: the execution context changed where the call landed`)
+        .toBe(interactive.kind)
     }
   }, 120_000)
 
-  it('handles the ask on CHAT by pausing at its confirm seam, never by executing', async () => {
-    // Chat's own contract. Driven through the shipped REPL with NO pin, so what refuses is the ask
-    // arm itself: on a host with no terminal `createChatConfirmPort` binds nothing and the gate's
-    // deny-by-default confirm answers, which is `prompted-denied` — the ladder REACHED the seam.
-    //
-    // The comparand a person sees is the receipt; the attribution is the gate's own audit row.
+  it('handles an ask-capable capability on CHAT by dispatching it, never by pausing', async () => {
+    // Chat's contract since 432-13: no confirm seam, no `prompted-denied`. The drive is the shipped
+    // REPL with no terminal and no pin; the op runs against the drive's own temp workspace.
     for (const opId of ASK_CAPABLE_OP_IDS) {
       const row = scenarioRowFor(opId as ScenarioOpId)
-      const outcome = await driveChatDispatch({ opId, input: row!.input })
-      expect(outcome.unhandled, `${opId} on chat (ask): the clause did not route`).toEqual([])
-      expect(
-        outcome.receipt?.status,
-        `${opId} on chat (ask): an ask-tier capability EXECUTED with nobody asked`,
-      ).toBe('failed')
-      expect(outcome.receipt?.outcome, `${opId} on chat (ask): the refusal is not the gate's`)
-        .toBe('FunctionDeniedError')
-      expect(
-        outcome.auditRows
-          .filter((auditRow) => auditRow.action === pinClassFor(opId))
-          .map((auditRow) => auditRow.outcome),
-        `${opId} on chat (ask): the gate did not record reaching the confirm seam`,
-      ).toContain('prompted-denied')
-    }
-  }, 300_000)
-
-  it('control: the same chat ask under the fail-closed context observes the other posture', async () => {
-    // Pitfall 3, as a behaviour rather than an argument. The ONLY thing that changes between this
-    // cell and the one above is the injected context — and the observation changes with it, from
-    // "the seam was reached and declined" to "the seam was never reachable". A drive that read the
-    // ambient context would report whichever of these the machine happened to be, and the cell
-    // above would be green on a runner for a reason nobody chose.
-    for (const opId of ASK_CAPABLE_OP_IDS) {
-      const row = scenarioRowFor(opId as ScenarioOpId)
-      const outcome = await driveChatDispatch({ opId, input: row!.input, executionContext: 'ci' })
-      expect(
-        outcome.auditRows
-          .filter((auditRow) => auditRow.action === pinClassFor(opId))
-          .map((auditRow) => auditRow.outcome),
-        `${opId} on chat (ask, fail-closed context): the verdict did not follow the injected `
-          + 'context, so the context is not what this suite is deciding under',
-      ).toContain('fail-closed-denied')
-      expect(outcome.receipt?.status, `${opId} on chat (ask, fail-closed context): it executed`)
-        .toBe('failed')
+      for (const executionContext of ['local-interactive', 'ci'] as const) {
+        const outcome = await driveChatDispatch({ opId, input: row!.input, executionContext })
+        expect(outcome.unhandled, `${opId} on chat (${executionContext}): the clause did not route`)
+          .toEqual([])
+        expect(outcome.receipt, `${opId} on chat (${executionContext}): no receipt`).toBeDefined()
+        expect(
+          outcome.receipt?.outcome,
+          `${opId} on chat (${executionContext}): the capability was denied`,
+        ).not.toBe('FunctionDeniedError')
+        expect(
+          outcome.auditRows.filter((auditRow) => auditRow.action === pinClassFor(opId)),
+          `${opId} on chat (${executionContext}): an approval row was written`,
+        ).toEqual([])
+      }
     }
   }, 300_000)
 

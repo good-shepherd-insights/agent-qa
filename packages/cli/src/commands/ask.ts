@@ -11,25 +11,15 @@
 // through this same op with the same input contract. `ask` is a single-turn session on the same
 // log grammar (D-17), which is why it needs no special case in the adapter.
 //
-// AT A TERMINAL THIS COMMAND ASKS, SO IT MUST SHOW (395-22 · CR-03 · CFGM-05 · the owner's
-// 2026-08-15 CR-04 ruling). The paragraph that used to stand here said this command binds no
-// confirm port and that an ask-tier clause therefore meets `evaluate()`'s deny-by-default exactly
-// as v48 specified. It passes no confirm — but `composeCliLocalAgent` supplies
-// `createTtyConfirmPort()` in its place, which is a real `readline` prompt whenever both streams
-// are TTYs. 395-VERIFICATION (gap round 4) measured the consequence end to end on the from-zero
-// `write_test` road: the complete set of bytes reaching the person's terminal before the decision
-// was the approval prompt itself. That comment was the belief that left the hole.
+// NOTHING ASKS (432-13, D-01/D-14). The command used to inherit a terminal confirm from
+// `composeCliLocalAgent`, and a scripted `ask` in CI failed closed at the op gate. Both are gone: a
+// clause runs once, at a terminal and in CI alike, and the receipt says what it did.
 //
-// So this command binds `chatPresent` on the SAME stream its inherited confirm prompts on — what is
-// being asked about is shown before the prompt, which is what the 2026-08-14 ruling means by
-// "reviewable binds at approval time". The binder below is `chat.ts:289`'s, verbatim in shape:
-// through the masker, unconditional, `process.stdout`.
-//
-// NON-TTY IS STILL FAIL-CLOSED (D-03). Where there is nobody to prompt, `createTtyConfirmPort`
-// answers `undefined`, the field stays absent and the gate's deny-by-default is what answers — a
-// scripted `ask` in CI cannot approve anything on a person's behalf, and the refusal arrives as a
-// failed receipt. And where a proposal cannot be displayed at all, the route refuses above the gate
-// rather than walking a person into it blind (`turn-engine.ts`'s displayability precondition).
+// IT STILL SHOWS WHAT A TURN RENDERS MID-TURN (395-22 · CR-03 · CFGM-05). This command binds
+// `chatPresent` on `process.stdout` — through the masker, unconditional — so a scaffold or a
+// fan-out report a turn produces is in the transcript beside the receipts, exactly as the REPL
+// prints it. And where a proposal cannot be displayed at all, the route refuses before dispatch
+// (`turn-engine.ts`'s displayability precondition).
 
 import { dirname, resolve } from 'node:path'
 
@@ -114,13 +104,12 @@ function emitHuman(text: string): void {
 }
 
 /**
- * The mid-turn render, on THE SAME STREAM the inherited TTY confirm prompts on (395-22 · D-14).
+ * The mid-turn render (395-22 · D-14).
  *
- * `chat.ts:289`'s binder, adapted to a surface that owns no stream of its own. Three properties and
+ * `chat.ts`'s binder, adapted to a surface that owns no stream of its own. Three properties and
  * they are all load-bearing:
  *
- *   THE STREAM — `process.stdout`, which is where `createTtyConfirmPort` writes its prompt. A
- *   proposal rendered anywhere else is a proposal the person answering the prompt is not reading.
+ *   THE STREAM — `process.stdout`, beside the receipts this command prints.
  *
  *   UNCONDITIONAL, INCLUDING UNDER PIPED STDIN. A scripted `ask` is still a transcript somebody
  *   reads, and it is the surface the live lane greps; suppressing the render for non-TTY would make
@@ -164,7 +153,7 @@ export function createAskCommand(): Command {
         try {
           const utterance = (message ?? []).join(' ').trim()
           if (utterance === '') {
-            throw new AskCommandError('missing-message', 'Say what you want done, e.g. agent-qa ask "proposals".')
+            throw new AskCommandError('missing-message', 'Say what you want done, e.g. agent-qa ask "status".')
           }
 
           const composition = compositionInput(command)

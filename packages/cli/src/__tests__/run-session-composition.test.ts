@@ -450,32 +450,40 @@ describe('buildRunSafetyHooks (D-01/D-15/D-10 — per-run registrar invocation)'
     expect(row.outcome).toBe('fail-closed-denied')
   })
 
-  it('allows the same dispatch under session trustMode (D-15)', async () => {
-    const configDir = mkdtempSync(join(tmpdir(), 'run-hooks-'))
-    const runId = 'r_hooks-trust'
-    const auditSink = buildRunAuditSink({ configDir, runId, executionContext: 'ci' })
-    const { safetyHooks } = buildRunSafetyHooks({ auditSink, executionContext: 'ci', trustMode: true })
-
-    const result = await safetyHooks.runToolCallAsync({ name: 'delete_record', recognized: true })
-    expect(result.action).toBe('allow')
-
-    const line = readFileSync(
-      join(resolve(configDir, '.agent-qa'), RUNS_SUBDIR, slugBranch(runId), 'execution_audit.jsonl'),
-      'utf-8',
-    ).trim()
-    const row = JSON.parse(line) as Record<string, unknown>
-    expect(row.outcome).toBe('proceeded')
-    expect(row.trustSource).toBe('session-trust-mode')
+  // RE-SPELLED 2026-09-30 (432-13, D-15): was 'allows the same dispatch under session trustMode'.
+  // Trust no longer reaches the in-run hook, so the flag changes nothing: the dispatch answers
+  // exactly as it does without it. (In-test action names carry no soft-destructive verb, so no
+  // shipped run reaches this arm; `delete_record` is the synthetic probe that does.)
+  it('ignores session trustMode: the same dispatch answers as it does without it (432-13)', async () => {
+    const answer = async (trustMode: boolean) => {
+      const configDir = mkdtempSync(join(tmpdir(), 'run-hooks-'))
+      const runId = `r_hooks-trust-${String(trustMode)}`
+      const auditSink = buildRunAuditSink({ configDir, runId, executionContext: 'ci' })
+      const { safetyHooks } = buildRunSafetyHooks({ auditSink, executionContext: 'ci', trustMode })
+      const result = await safetyHooks.runToolCallAsync({ name: 'delete_record', recognized: true })
+      const line = readFileSync(
+        join(resolve(configDir, '.agent-qa'), RUNS_SUBDIR, slugBranch(runId), 'execution_audit.jsonl'),
+        'utf-8',
+      ).trim()
+      const row = JSON.parse(line) as Record<string, unknown>
+      return { action: result.action, outcome: row.outcome, trustSource: row.trustSource }
+    }
+    const trusted = await answer(true)
+    expect(trusted).toEqual(await answer(false))
+    expect(trusted.trustSource).toBeUndefined()
   })
 
-  it('accumulates awaited confirm time; confirmPausedMs() reports the running total (D-10)', async () => {
+  // RE-SPELLED 2026-09-30 (432-13, D-10): was 'accumulates awaited confirm time'. No confirm is
+  // handed to the registrar, so the port is never asked and no time is ever paused.
+  it('never asks the confirm it is handed; confirmPausedMs() stays 0 (432-13)', async () => {
     const configDir = mkdtempSync(join(tmpdir(), 'run-hooks-'))
     const runId = 'r_hooks-pause'
     const auditSink = buildRunAuditSink({ configDir, runId, executionContext: 'local-interactive' })
+    let asked = 0
     const confirm: ConfirmPort = {
       surface: 'tty-prompt',
       ask: async () => {
-        await new Promise((r) => setTimeout(r, 10))
+        asked += 1
         return true
       },
     }
@@ -486,14 +494,10 @@ describe('buildRunSafetyHooks (D-01/D-15/D-10 — per-run registrar invocation)'
       confirm,
     })
 
-    expect(confirmPausedMs()).toBe(0)
-    const first = await safetyHooks.runToolCallAsync({ name: 'delete_record', recognized: true })
-    expect(first.action).toBe('allow')
-    const afterOne = confirmPausedMs()
-    expect(afterOne).toBeGreaterThan(0)
-
     await safetyHooks.runToolCallAsync({ name: 'delete_record', recognized: true })
-    expect(confirmPausedMs()).toBeGreaterThanOrEqual(afterOne)
+    await safetyHooks.runToolCallAsync({ name: 'delete_record', recognized: true })
+    expect(asked).toBe(0)
+    expect(confirmPausedMs()).toBe(0)
   })
 })
 

@@ -109,7 +109,7 @@ describe('clause_result persists the MASKED payload, on the real file (399.1-05)
         mintTurnId: () => 'turn-1',
       })
 
-      const result = await engine.runTurn({ message: 'proposals' })
+      const result = await engine.runTurn({ message: '/fn proposals.list' })
       expect(result.status).toBe('completed')
       expect(result.results).toHaveLength(1)
 
@@ -167,7 +167,7 @@ describe('clause_result persists the MASKED payload, on the real file (399.1-05)
         mintTurnId: () => 'turn-1',
       })
 
-      const result = await engine.runTurn({ message: 'proposals' })
+      const result = await engine.runTurn({ message: '/fn proposals.list' })
       const sessionId = String((result as { sessionId?: string }).sessionId)
 
       const reopened = await sessionLog.open(sessionId)

@@ -152,7 +152,6 @@ function registry() {
     deps,
     auditSink: { appendExecutionAudit() {}, appendGuardrailAudit() {} },
     resolveExecutionContext: () => 'local-interactive',
-    confirm: { surface: 'tty-prompt', ask: () => true },
   })
 }
 

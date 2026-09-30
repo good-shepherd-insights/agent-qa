@@ -1,3 +1,7 @@
+# 432-13 (D-14): `/pin` IS NO LONGER A DIRECTIVE. Neither clause resolves, so the turn refuses
+# whole with zero executions and no `approval_decision` row; the batch arm this cell was admitted
+# for is now carried by the `/model` directive cells in `turn-engine-compound.test.ts`.
+#
 # THE E3 PROBE, ADMITTED AS A PERMANENT CELL (392-14, second gap round).
 #
 # TWO DIRECTIVES, THE SECOND OF WHICH REFUSES. This is the verifier's own probe verbatim. Run
@@ -27,5 +31,5 @@ utterance: /pin fn:runs.start and /pin nonsense.notacapability
 expect:
   kind: fail_closed
   executed: 0
-  namesClause: nonsense.notacapability
+  namesClause: /pin fn:runs.start
   emitsSessionEvent: mark_unhandled

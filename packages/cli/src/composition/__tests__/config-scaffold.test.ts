@@ -725,7 +725,9 @@ async function composedScaffoldId(): Promise<string> {
 }
 
 describe('config.proposal.apply reaches its own answer from ZERO (395-12 · SC-5\'s third arm)', () => {
-  it('(14) applies a from-zero scaffold as ONE commit, with the confirm OBSERVED asked', async () => {
+  // RE-SPELLED 2026-09-30 (432-13, D-14/D-15): was '... with the confirm OBSERVED asked'. The
+  // apply verb asks nobody now; the scaffold lands as one commit with the confirm never called.
+  it('(14) applies a from-zero scaffold as ONE commit, with no confirm asked', async () => {
     const id = await composedScaffoldId()
     const before = commitCount()
 
@@ -742,9 +744,7 @@ describe('config.proposal.apply reaches its own answer from ZERO (395-12 · SC-5
     expect(error?.message ?? null).toBeNull()
     expect((answer as { outcome?: string }).outcome).toBe('applied')
 
-    // THE ASK WAS REACHED. Asserted as a call count, because a fold that skipped the ask arm
-    // entirely would also produce `applied` — and would be the elevation this fold must not be.
-    expect(confirmCalls).toBeGreaterThanOrEqual(1)
+    expect(confirmCalls).toBe(0)
 
     expect(commitCount()).toBe(before + 1)
     expect(headFiles()).toEqual(['.gitignore', CONFIG_FILE, 'hooks.yaml'])
@@ -771,31 +771,24 @@ describe('config.proposal.apply reaches its own answer from ZERO (395-12 · SC-5
     expect(existsSync(configPath)).toBe(false)
   })
 
-  it('(14b) refuses on a NO answer from zero — no commit, and the proposal still pending',
-    async () => {
-      const id = await composedScaffoldId()
-      const before = commitCount()
+  // RE-SPELLED 2026-09-30 (432-13): was '(14b) refuses on a NO answer from zero'. A NO answer has
+  // nobody to come from — the confirm is never consulted — so the same scaffold applies. 432-17
+  // removes the apply verb with the rest of the proposal round.
+  it('(14b) a NO-answering confirm is never consulted: the scaffold applies from zero', async () => {
+    const id = await composedScaffoldId()
+    const before = commitCount()
 
-      const { answer, error, confirmCalls } = await invokeComposed({
-        functionId: 'config.proposal.apply',
-        payload: { proposalId: id },
-        confirmAnswer: false,
-      })
-      expect(answer, 'a NO answer must not apply').toBeUndefined()
-      expect(error?.message).toMatch(/prompted-denied|fail-closed/)
-      // The ask was REACHED and its answer HONOURED. A fold that bypassed the ask arm would have
-      // applied here despite the NO, which is the elevation this pair measures.
-      expect(confirmCalls).toBeGreaterThanOrEqual(1)
-
-      // ZERO COMMITS, no config on disk, and the proposal still in the store — the case the folded
-      // gate still REJECTS, which is what makes the deny-safe claim a measurement.
-      expect(commitCount()).toBe(before)
-      expect(existsSync(configPath)).toBe(false)
-      // `storedApplyable` throws with the record's own summary line if the store no longer holds
-      // an applyable config proposal at that id — so this reads the pending record back off DISK
-      // rather than asserting a field on something this cell built.
-      expect(storedApplyable(id).payloadKind).toBe('applyable')
+    const { answer, error, confirmCalls } = await invokeComposed({
+      functionId: 'config.proposal.apply',
+      payload: { proposalId: id },
+      confirmAnswer: false,
     })
+    expect(error?.message ?? null).toBeNull()
+    expect((answer as { outcome?: string }).outcome).toBe('applied')
+    expect(confirmCalls).toBe(0)
+    expect(commitCount()).toBe(before + 1)
+    expect(existsSync(configPath)).toBe(true)
+  })
 })
 
 describe('the config dir is NOT the repository root (395-11 · CR-03\'s create direction)', () => {

@@ -42,6 +42,10 @@
 // fields: a clean fold that committed nothing now records its five zero buckets.
 // Phase 432-09 D-25 removes the `proposals: 0 pending` clause from the exit line in those
 // same two stderr fields: nothing waits on a human, so the line counts no proposal.
+// Phase 432-13 D-14 removes the run gate: a start writes no `run:start` decision, so the golden
+// inventory's `execution_audit.jsonl` is not written by these runs any more. It is a declared
+// REMOVAL, subtracted from the golden side only and asserted absent on the actual side, so the file
+// coming back undeclared still reds. The historical capture was not regenerated.
 // 418 CR-02 additionally requires one strict originating-run canary-policy.json per
 // produced handoff. The capture helper checks its exact contents and run identity;
 // the inventory below adds its explicit cardinality, without filtering the file.
@@ -86,6 +90,9 @@ function goldenFor(id: string): ParityReading {
 const observedRunDirFiles = new Set<string>()
 let invocationsMeasured = 0
 
+/** Golden run-dir members a later phase stopped writing on purpose — see the header. */
+const RETIRED_RUN_DIR_FILES: readonly string[] = ['execution_audit.jsonl']
+
 describe('agent-qa run parity across the in-process extraction (401-11)', () => {
   it('the instrument itself is real: the shipped binary exists and the scrubber is the generator’s', () => {
     // Without this, a missing dist would make every reading below an identical empty transcript —
@@ -126,8 +133,10 @@ describe('agent-qa run parity across the in-process extraction (401-11)', () => 
         // THE ONE FILTERED AXIS — see the header. Subtracted from BOTH sides, so a removal from
         // the golden inventory and an undeclared addition each still red.
         const policyFiles = Array(invocation.id === 'all' ? 2 : 1).fill('canary-policy.json')
+        for (const retired of RETIRED_RUN_DIR_FILES) expect(actual.runDirFiles).not.toContain(retired)
+        const expectedFiles = expected.runDirFiles.filter((name) => !RETIRED_RUN_DIR_FILES.includes(name))
         expect(withoutDeclaredRunDirAdditions(actual.runDirFiles))
-          .toEqual(withoutDeclaredRunDirAdditions([...expected.runDirFiles, ...policyFiles].sort()))
+          .toEqual(withoutDeclaredRunDirAdditions([...expectedFiles, ...policyFiles].sort()))
         expect(actual.exitCode).toBe(expected.exitCode)
       },
       180_000,

@@ -1,32 +1,29 @@
 // The evaluate() named-set pin (Phase 384, FUNC-02 / D-12 / SC2).
 //
-// Three — and only three — legitimate gate domains exist in this repo:
+// 2026-09-30 (432-13, D-03/D-15): TWO acquisitions remain, and both are the in-run tool-action
+// domain:
 //
-//   1. IN-RUN TOOL ACTIONS. safety's own policy gate hook adapts the v48 gate into the
-//      async tool_call attachment point the first-party registrar wires.
-//   2. SURFACE CAPABILITIES. agent's `invokeFunction` is the single dispatch path every
-//      surface crosses, and it gates every invocation without exception (D-11).
-//   3. RUN INVOCATION (2026-08-23, Phase 401 D-02). agent-local's run invocation core is
-//      the one place a run may be STARTED in-process, and it classifies the run against
-//      the declared class of the environment it drives — a different question from
-//      domain 2's "may this caller invoke this op", asked about a different action name.
+//   1. IN-RUN TOOL ACTIONS. safety's own policy gate hook adapts the v48 gate into the async
+//      tool_call attachment point the first-party registrar wires.
 //
-// Plus the export seam: safety's package barrel republishes the symbol so domains 2 and 3
-// can reach it at all. Four files, enumerated below. A FIFTH is a second gate call-site,
-// which SC2 makes build-impossible rather than review-caught.
+// Plus the export seam: safety's package barrel republishes the symbol. The former surface-
+// capability domain (agent's `invokeFunction`) and run-invocation domain (agent-local's run
+// invocation core) stopped acquiring the gate when nothing asked for approval any more, and their
+// entries left in the same change. 432-19 removes these two with the gate's providers. A THIRD file
+// that acquires the gate fails the build.
 //
 // WHAT COUNTS AS ACQUISITION, and why the obvious detector is wrong.
 //
-// The three real files use THREE DIFFERENT syntactic forms, and one of them is not an
-// import statement at all — the safety barrel re-EXPORTS the symbol. A detector keyed on
-// the import keyword finds two of three and then reports the barrel as a stale entry,
-// failing the build for exactly the wrong reason. Both keywords count here.
+// The pinned files use two syntactic forms, and a former call-site used a third: the safety barrel
+// re-EXPORTS the symbol, the hook imports it relatively, and a package-specifier import is what any
+// new call-site outside safety would write. A detector keyed on the import keyword alone would report
+// the barrel as a stale entry, failing the build for exactly the wrong reason. Both keywords count.
 //
 // Detection keys on module STATEMENTS, never on call tokens. `page.evaluate(...)` and
 // `asserter.evaluate(...)` are all over this codebase; a token scan would drown the pin
 // in noise and teach everyone to ignore it.
 
-/** The safety package's published name — the specifier domain 2 acquires the symbol by. */
+/** The safety package's published name — the specifier a package-level acquisition names. */
 export const SAFETY_PACKAGE_SPECIFIER = '@vostride/agent-qa-safety'
 
 /** The gate module itself, repo-relative and extensionless. Domain 1's target. */
@@ -42,19 +39,14 @@ export const EVALUATE_SYMBOL = 'evaluate'
  * phase that adds one must state a rationale in the same commit.
  *
  * Test files are OUT OF SCOPE by construction, not by exception: the scan is fed through
- * `sourceFilesFor`, which drops `__tests__`. Five test files across agent, cli and safety
- * legitimately exercise the shipped gate and classifier; none of them is a call-site in
- * the sense this pin polices.
+ * `sourceFilesFor`, which drops `__tests__`. Test files that exercise the shipped gate and
+ * classifier are not call-sites in the sense this pin polices.
  */
 export const EVALUATE_PIN: Readonly<Record<string, string>> = {
   'packages/safety/src/policy/gate-hook.ts':
-    'Domain 1 (2026-07-28): the v48 in-run TOOL-ACTION gate. Adapts the gate into the async tool_call hook the first-party registrar wires; performs zero audit work of its own.',
+    'Domain 1 (2026-07-28): the v48 in-run TOOL-ACTION gate. Adapts the gate into the async tool_call hook the first-party registrar wires; performs zero audit work of its own. Retained through 432-13; 432-19 removes it with the gate.',
   'packages/safety/src/index.ts':
-    'The export seam (2026-07-28): re-export only. Nothing in this file calls the gate; it republishes the symbol so the surface-capability domain can acquire it across a package boundary at all.',
-  'packages/agent/src/functions/invoke.ts':
-    'Domain 2 (2026-07-28): the surface-CAPABILITY gate. The single dispatch path every surface crosses, gating every invocation including reads (D-11), so scope enforcement never becomes a second gate in disguise.',
-  'packages/agent-local/src/composition/run-invocation-core.ts':
-    'Domain 3 (2026-08-23, Phase 401 D-02): the RUN-INVOCATION gate. Starting a run is not a tool action and not a surface capability — the op-level `fn:runs.start` gate classifies the request to start one, and this classifies the RUN, against the declared class of the environment it is about to drive (`run:start`, D-05/D-06). It is the only place a run may begin in-process, so a fourth entry in this map for a run path would be a second answer to "may this run happen".',
+    'The export seam (2026-07-28): re-export only. Nothing in this file calls the gate. Retained through 432-13 beside the hook; 432-19 removes it with the gate.',
 }
 
 export interface EvaluatePinSource {
