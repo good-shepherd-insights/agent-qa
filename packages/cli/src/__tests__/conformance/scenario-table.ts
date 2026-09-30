@@ -580,7 +580,10 @@ export const SCENARIO_TABLE = Object.freeze([
       mcp: { reachable: { tool: 'agent_qa_refine_test' } },
       fn: { reachable: true },
     },
-    renderExpect: { markers: ['draftRef', 'editedFrom', 'patches', 'proposal', 'thoughts'] },
+    // 2026-09-30, 432 D-06: `written` — the edit lands in the file it edited, and says so.
+    renderExpect: {
+      markers: ['draftRef', 'editedFrom', 'patches', 'proposal', 'thoughts', 'written'],
+    },
     policyPoints: { grant: 'allow', refuse: 'deny' },
   }),
   // 393 D-01: the path is well-formed, carries the extension the op requires, and names nothing in

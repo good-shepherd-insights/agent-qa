@@ -120,6 +120,7 @@ async function driveCompile() {
     applyPatches: () => Promise.reject(new Error('a zero-patch round never reaches the applier')),
     runs: fakeRunPort({ runs: [] }),
     verifyDraft: (): Promise<DraftReceipt> => Promise.reject(new Error('verify is out of scope here')),
+    publish: () => Promise.reject(new Error('nothing is verified here, so nothing is written')),
   }
 
   await runAuthoringLoop({ intent: INTENT, scope: SCOPE }, { read, shelf })

@@ -133,7 +133,7 @@ describe('419 feedback host', () => {
     const draftRef = { filePath: 'tests/draft.yaml', testId: member.testId!, testName: member.testName, contentDigest: 'draft-digest' }
     const edited: AuthoringDraftEditOutput = { draftRef, editedFrom: { filePath: member.filePath, testName: member.testName, boundBy: 'exact-ref' }, patches: [], thoughts: 'Correct assertion', proposal: {
       schemaVersion: 1, draftRef, targetPath: member.filePath, sourceDigest: 'original-digest', disposition: 'unverified', runsPreviewed: 0, runsConsumed: 0, repairIterations: 0, summaryLine: 'Correct assertion',
-    } }
+    }, written: { kind: 'written', filePath: member.filePath, contentDigest: 'draft-digest' } }
     const invokeAuthoringDraftEdit = vi.fn(async () => edited)
     const port = createFeedbackPortForHost({ ...f.deps, invokeAuthoringDraftEdit })
     const result = await port.mark({ runId: f.handoff.runId, kind: 'false-fail' })

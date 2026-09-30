@@ -397,6 +397,29 @@ function draftAuthoring(workspace: string, config: Project): DraftAuthoringPort 
           : { kind: 'unparsable', reason: described.reason },
       )
     },
+    // 432 D-06: the direct writer, over the same temp workspace: a new test's target must be
+    // absent, an edit's must still hold the bytes read, and the shelf bytes are what is written.
+    publishDraft(request) {
+      const target = join(workspace, request.targetPath)
+      const found = existsSync(target)
+        ? createHash('sha256').update(readFileSync(target)).digest('hex')
+        : undefined
+      if (found !== request.sourceDigest) {
+        return Promise.resolve({
+          kind: 'not-written' as const,
+          targetPath: request.targetPath,
+          reason: 'target-changed' as const,
+        })
+      }
+      const bytes = readFileSync(join(workspace, request.draftPath))
+      mkdirSync(dirname(target), { recursive: true })
+      writeFileSync(target, bytes)
+      return Promise.resolve({
+        kind: 'written' as const,
+        filePath: request.targetPath,
+        contentDigest: createHash('sha256').update(bytes).digest('hex'),
+      })
+    },
     suiteTextCorpus: () => Promise.resolve([]),
     configuredTargetNames: () => Promise.resolve(Object.keys(config.targets)),
   }

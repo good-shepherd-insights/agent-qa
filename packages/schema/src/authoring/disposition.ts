@@ -1,10 +1,13 @@
 // The draft disposition: ONE derivation site (Phase 393, D-18).
 //
 // A draft receipt reports four independent gate booleans (WTST-02). The disposition is what
-// those booleans plus the stability-run counts MEAN for keeping the draft, and it is computed
-// here — once — so that 394's accept flow consumes a value it is structurally unable to
-// re-derive. The never-auto-keep rule therefore lives in the vocabulary itself rather than in
-// whichever caller happens to remember it, which is the whole point of putting it in `schema`.
+// those booleans plus the stability-run counts MEAN, and it is computed here — once — so that no
+// consumer can re-derive its own answer.
+//
+// 2026-09-30, 432 D-06: the never-auto-keep rule is superseded. The disposition stays as the
+// verification report, and what it now decides is whether the final draft is WRITTEN to its test
+// path: `keep-eligible`, `proposal-only` and `unverified` are written, `rejected` is not. That
+// decision is `draftDispositionWritesTarget` below, beside the table it reads.
 //
 // THE TABLE (contract, not implementation detail), evaluated in this order:
 //   1. `stabilityRunsRequested === 1` (draft mode) → 'unverified', UNCONDITIONALLY — including
@@ -14,15 +17,15 @@
 //   2. any gate boolean false → 'rejected'. Early-stopped stability runs (D-17 stops on the
 //      first verdict flip) arrive here with `stabilityRunsCompleted` below N and must still
 //      read 'rejected': the flip already proved instability, and the unrun runs would only
-//      re-prove it. Letting the short count win would turn a proven-unstable draft into a
-//      proposal.
+//      re-prove it. Letting the short count win would write a proven-unstable draft.
 //   3. all four true AND `stabilityRunsCompleted >= DRAFT_STABILITY_RUNS_N` → 'keep-eligible'.
-//   4. all four true with fewer completed runs → 'proposal-only'. A short evaluation is never
-//      auto-kept; it becomes a proposal carrying its receipt (394).
+//   4. all four true with fewer completed runs → 'proposal-only'. The name is historical: a short
+//      evaluation used to become a proposal. Since 432 D-06 it is written like the others, and
+//      the name tells the reader the evaluation was short.
 
 /**
- * The closed disposition vocabulary. 394's accept flow and the proposal envelope branch on
- * these exact names; renaming one after 394 ships is a cross-phase migration, not a rename.
+ * The closed disposition vocabulary. Stored receipts and the written-test receipt carry these
+ * exact names; renaming one is a migration of durable records, not a rename.
  */
 export const DRAFT_DISPOSITIONS = [
   'keep-eligible',
@@ -104,4 +107,26 @@ export function computeDraftDisposition(input: DraftDispositionInput): DraftDisp
   }
 
   return input.stabilityRunsCompleted >= DRAFT_STABILITY_RUNS_N ? 'keep-eligible' : 'proposal-only'
+}
+
+/**
+ * The dispositions whose final draft is written to its target (432 D-06, EDGE-09).
+ *
+ * Every disposition except `rejected`: the gates either said yes (`keep-eligible`), said yes over
+ * too few runs (`proposal-only`), or were not given enough runs to say anything (`unverified`).
+ * Only `rejected` is a gate saying no, and a rejected draft stays on the private shelf.
+ */
+export const DRAFT_WRITTEN_DISPOSITIONS = [
+  'keep-eligible',
+  'proposal-only',
+  'unverified',
+] as const satisfies readonly DraftDisposition[]
+
+export type DraftWrittenDisposition = (typeof DRAFT_WRITTEN_DISPOSITIONS)[number]
+
+/** Whether a final draft with this disposition is written to its target. */
+export function draftDispositionWritesTarget(
+  disposition: DraftDisposition,
+): disposition is DraftWrittenDisposition {
+  return (DRAFT_WRITTEN_DISPOSITIONS as readonly DraftDisposition[]).includes(disposition)
 }

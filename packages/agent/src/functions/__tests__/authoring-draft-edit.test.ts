@@ -54,6 +54,7 @@ interface Bench {
   readonly deps: FunctionDeps
   readonly applied: TestEditPatchSet[]
   readonly prompts: string[]
+  readonly published: Parameters<DraftShelfPortLike['publish']>[0][]
 }
 
 interface BenchOptions {
@@ -61,11 +62,13 @@ interface BenchOptions {
   readonly resolution?: EntityResolution
   readonly resolveDraft?: DraftEvaluationPort['resolveDraft']
   readonly apply?: DraftShelfPortLike['applyPatches']
+  readonly publish?: DraftShelfPortLike['publish']
 }
 
 function bench(options: BenchOptions = {}): Bench {
   const applied: TestEditPatchSet[] = []
   const prompts: string[] = []
+  const published: Parameters<DraftShelfPortLike['publish']>[0][] = []
 
   const shelf: DraftShelfPortLike = {
     model: () => Promise.resolve({
@@ -98,6 +101,15 @@ function bench(options: BenchOptions = {}): Bench {
     verifyDraft: () => {
       throw new Error('authoring.draft.edit re-runs no gates — authoring.draft.verify exists for that')
     },
+    // 432 D-06: the direct writer. Records what it was asked to write; answers as the host does.
+    publish: (request) => {
+      published.push(request)
+      return options.publish?.(request) ?? Promise.resolve({
+        kind: 'written' as const,
+        filePath: request.targetPath,
+        contentDigest: 'digest-edited',
+      })
+    },
   }
 
   const draftEvaluation: DraftEvaluationPort = {
@@ -117,7 +129,7 @@ function bench(options: BenchOptions = {}): Bench {
     draftEvaluation,
   } as unknown as FunctionDeps
 
-  return { deps, applied, prompts }
+  return { deps, applied, prompts, published }
 }
 
 async function edit(

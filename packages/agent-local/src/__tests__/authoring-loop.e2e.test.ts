@@ -991,7 +991,10 @@ describe('authoring.draft.write end to end through the composition root', () => 
       AUTHORING_DRAFT_WRITE_FUNCTION_ID,
       { intent: INTENT, scope: SCOPE },
       HUMAN,
-    ).then((value) => value as AuthoringDraftWriteOutput, (error: unknown) => error)
+    ).then(
+      (value) => value as AuthoringDraftWriteOutput,
+      (error: unknown) => (error instanceof Error ? error : new Error(String(error))),
+    )
 
     const receipts = readdirSync(join(agentQaRoot, 'draft-receipts'))
     expect(receipts).toHaveLength(1)

@@ -336,6 +336,11 @@ function draftAuthoring(options: {
     stageDraft() {
       return Promise.reject(new Error('no draft is authored from a keep-gate evaluation'))
     },
+    // 432 D-06: the direct writer. A verify writes nothing — it judges the file at the path it is
+    // handed — so reaching this would be a verify that wrote.
+    publishDraft(): Promise<never> {
+      return Promise.reject(new Error('a keep-gate evaluation writes no test file'))
+    },
   }
 }
 

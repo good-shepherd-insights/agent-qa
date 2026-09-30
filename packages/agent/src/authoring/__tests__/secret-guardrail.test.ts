@@ -166,6 +166,7 @@ function keepEligibleReceipt(draft: ParsedDraftLike): DraftReceipt {
 function loopOver(steps: readonly string[], testName = TEST_NAME) {
   const draft: ParsedDraftLike = { ...draftWithSteps(steps), testName }
   const verified: string[] = []
+  const published: string[] = []
 
   const read: AuthoringReadPortLike = {
     // 394-33 WR-07: the `target` vocabulary, present because the port requires it.
@@ -191,9 +192,17 @@ function loopOver(steps: readonly string[], testName = TEST_NAME) {
       verified.push(input.draftPath)
       return Promise.resolve(keepEligibleReceipt(draft))
     },
+    publish: (request) => {
+      published.push(request.targetPath)
+      return Promise.resolve({
+        kind: 'written' as const,
+        filePath: request.targetPath,
+        contentDigest: draft.contentDigest,
+      })
+    },
   }
 
-  return { verified, deps: { read, shelf } }
+  return { verified, published, deps: { read, shelf } }
 }
 
 describe('a pasted credential never reaches an inbox', () => {
@@ -213,8 +222,9 @@ describe('a pasted credential never reaches an inbox', () => {
       expect((refusal as DraftSecretRefusedError).location).toBe('step 2')
       expect((refusal as DraftSecretRefusedError).stepIndex).toBe(1)
       // NO PROPOSAL, and the proof is that stage 4 was never entered: no gate run, no receipt on
-      // disk, no envelope, nobody asked.
+      // disk, no envelope, nobody asked — and since 432 D-06, nothing written into the suite.
       expect(loop.verified).toEqual([])
+      expect(loop.published).toEqual([])
     })
   }
 
@@ -231,6 +241,7 @@ describe('a pasted credential never reaches an inbox', () => {
     expect((refusal as DraftSecretRefusedError).location).toBe('the test name')
     expect((refusal as DraftSecretRefusedError).stepIndex).toBeUndefined()
     expect(loop.verified).toEqual([])
+    expect(loop.published).toEqual([])
   })
 
   it('never repeats the matched value, nor any run of it longer than four characters', () => {

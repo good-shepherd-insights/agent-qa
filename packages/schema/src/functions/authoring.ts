@@ -14,7 +14,12 @@
 import { z } from 'zod'
 
 import { AuthoringFunnelSchema } from '../authoring/funnel'
-import { DraftReceiptSchema, DraftRefSchema } from '../authoring/draft-receipt'
+import {
+  DraftReceiptSchema,
+  DraftRefSchema,
+  TestFileWriteSchema,
+  WrittenTestReceiptSchema,
+} from '../authoring/draft-receipt'
 import { FanOutReportSchema } from '../authoring/fan-out'
 import { PatchOpSchema } from '../authoring/patch-ops'
 import { RunEvidenceRefSchema, TestDraftProposalV1Schema } from '../authoring/proposal-arms'
@@ -402,6 +407,12 @@ export const AuthoringDraftWriteOutputSchema = z.object({
    * is the one ambiguity a disclosure may not have.
    */
   fanOut: FanOutReportSchema,
+  /**
+   * The final draft's written-test receipt (432 D-06): which file was written, or why none was,
+   * with the disposition and the four gate booleans. Present exactly on `drafted` and `repaired`;
+   * a `rejected` final draft is reported here as not written.
+   */
+  written: WrittenTestReceiptSchema.optional(),
 }).strict()
 
 export type AuthoringDraftWriteOutput = z.infer<typeof AuthoringDraftWriteOutputSchema>
@@ -546,7 +557,11 @@ export type AuthoringDraftEditInput = z.infer<typeof AuthoringDraftEditInputSche
  * the whole argument for reusing it rather than writing a second one.
  */
 export const AuthoringDraftEditOutputSchema = z.object({
-  /** The edited draft, staged on the shelf. Nothing is written to the committed suite here. */
+  /**
+   * The edited test. Since 432 D-06 the edit is written to the file it edited, and this ref points
+   * at that file, so the verify arm reads the written test; it stays on the shelf copy only when
+   * the write did not land (see `written`).
+   */
   draftRef: DraftRefSchema,
   /** The committed test this edit was applied to, as the binder resolved it. */
   editedFrom: z.object({
@@ -559,8 +574,16 @@ export const AuthoringDraftEditOutputSchema = z.object({
   patches: z.array(PatchOpSchema),
   /** The model's own account of the change, stored as prose so nothing downstream parses it. */
   thoughts: z.string(),
-  /** The `test-draft` arm this edit lands on 391's envelope as. */
+  /**
+   * The `test-draft` arm describing this edit. 432-17 retires the arm with the envelope; the edit
+   * itself is already written (see `written`) and waits for nobody.
+   */
   proposal: TestDraftProposalV1Schema,
+  /**
+   * What the edit did to the file it edited (432 D-06): written over the exact bytes it read, or
+   * not written because that file changed, left the workspace, or could not be written.
+   */
+  written: TestFileWriteSchema,
 }).strict()
 
 export type AuthoringDraftEditOutput = z.infer<typeof AuthoringDraftEditOutputSchema>

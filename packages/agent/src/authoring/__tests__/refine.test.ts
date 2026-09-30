@@ -131,6 +131,7 @@ function harness(options: HarnessOptions): Harness {
       get: () => Promise.resolve(undefined),
     },
     verifyDraft: () => Promise.reject(new Error('the refinement round verifies nothing')),
+    publish: () => Promise.reject(new Error('the refinement round writes no test file')),
   }
 
   return { deps: { read, shelf }, briefQueries, prompts, applied, wholeDocumentWrites }

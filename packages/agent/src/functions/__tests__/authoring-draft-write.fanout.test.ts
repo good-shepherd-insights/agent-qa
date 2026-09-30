@@ -113,9 +113,12 @@ interface SuiteText {
  */
 function deps(options: {
   readonly suiteText?: readonly SuiteText[]
-  /** Leave the FILE half unbound — the host that can author and has nowhere to put the result. */
+  /** Leave the retired proposals port unbound — since 432 D-06 nothing consults it. */
   readonly unboundProposals?: true
+  /** Leave the shelf unbound — the host with no write half at all. */
+  readonly unboundShelf?: true
   readonly filed?: AuthoringProposalWrite[]
+  readonly published?: { readonly draftPath: string; readonly targetPath: string }[]
 } = {}): FunctionDeps {
   const documents = new Map<string, { endedAt: number }>()
   GATE_RUN_IDS.forEach((runId, index) => documents.set(runId, { endedAt: 100 + index }))
@@ -135,6 +138,15 @@ function deps(options: {
       draft: candidate,
     }),
     verifyDraft: () => Promise.resolve(ACCEPTED),
+    // 432 D-06: the direct writer the loop's final write reaches. It starts no run.
+    publish: (request: { readonly draftPath: string; readonly targetPath: string }) => {
+      options.published?.push(request)
+      return Promise.resolve({
+        kind: 'written' as const,
+        filePath: request.targetPath,
+        contentDigest: DRAFT.contentDigest,
+      })
+    },
   }
 
   const filed = options.filed ?? []
@@ -148,7 +160,7 @@ function deps(options: {
         },
       },
     }),
-    draftShelf: shelf,
+    ...(options.unboundShelf === true ? {} : { draftShelf: shelf }),
     authoringRead: {
       getAuthoringBrief: () => Promise.resolve({
         scope: { tier: 'product', key: 'local-form' },
@@ -222,61 +234,65 @@ describe('the op carries the fan-out report it computed (SC-5, the reporting hal
     expect(output.fanOut?.exceedsPreview).toBe(false)
   })
 
-  it('the PROPOSAL stays off the wire — the report is the only exception the contract makes', async () => {
+  it('no PROPOSAL rides the wire — only the report and the written-test receipt ride', async () => {
     const output = await carried()
 
-    // The control for the three cells above. The op discards `outcome.proposal` as well, and that
-    // discard is the schema's no-payload-arms prohibition working — the proposal reaches people
-    // through 391's inbox. A fix that had widened the contract to "carry what the loop returned"
-    // would pass every cell above and red this one.
+    // The control for the three cells above. A fix that had widened the contract to "carry what
+    // the loop returned" would pass every cell above and red this one. 2026-09-30, 432 D-06: the
+    // written-test receipt joins the report — the file written and how well it was verified.
     expect(output).not.toHaveProperty('proposal')
     expect(output).not.toHaveProperty('stages')
-    expect(Object.keys(output).sort()).toEqual(['draftRef', 'fanOut', 'outcome', 'receipt'])
+    expect(Object.keys(output).sort())
+      .toEqual(['draftRef', 'fanOut', 'outcome', 'receipt', 'written'])
   })
 })
 
-describe('the proposal is PERSISTED before this op answers (394-18 · WINDOWS 99)', () => {
-  it('files exactly one test-draft proposal, attributed to this op, on a drafted invocation', async () => {
+// 2026-09-30, 432 D-06: re-spelled in place. These cells pinned the proposal 394-18 filed before
+// the op answered. The drafted outcome is now written, not filed, so each keeps its subject — what
+// the op does with a drafted outcome before it answers — and measures the write.
+describe('the drafted outcome is WRITTEN before this op answers (432 D-06, was 394-18)', () => {
+  it('writes the drafted outcome once through the shelf and files no proposal', async () => {
     const filed: AuthoringProposalWrite[] = []
+    const published: { readonly draftPath: string; readonly targetPath: string }[] = []
 
-    const output = await authoringDraftWriteSpec.invoke(INPUT, deps({ filed }))
+    const output = AuthoringDraftWriteOutputSchema.parse(
+      await authoringDraftWriteSpec.invoke(INPUT, deps({ filed, published })),
+    )
 
-    expect((output as { outcome: string }).outcome).toBe('drafted')
-    // ONE proposal, of the kind the loop produced, carrying the payload the loop built. Until this
-    // plan the op answered `drafted` and dropped `outcome.proposal` on the floor, so the artifact
-    // D-05 says every draft earns a decision on reached no store on any host.
-    expect(filed.length).toBe(1)
-    expect(filed[0]?.kind).toBe('test-draft')
-    expect(filed[0]?.emittedBy).toBe('authoring.draft.write')
-    expect(filed[0]?.payload.draftRef.testName).toBe(DRAFT.testName)
-    // ATTRIBUTED TO THE RUN THE RECEIPT ALREADY NAMES — the LAST gate run, which is the same run
-    // stage 5 routes on. `runs.digest` attributes its rows by this field, so a proposal carrying
-    // none renders nowhere and a proposal carrying the wrong one renders in a stranger's digest.
-    expect(filed[0]?.runId).toBe(GATE_RUN_IDS.at(-1))
+    expect(output.outcome).toBe('drafted')
+    expect(filed).toEqual([])
+    expect(published).toHaveLength(1)
+    expect(published[0]?.draftPath).toBe(DRAFT.filePath)
+    expect(output.written?.file).toEqual({
+      kind: 'written',
+      filePath: published[0]?.targetPath,
+      contentDigest: DRAFT.contentDigest,
+    })
+    expect(output.written?.disposition).toBe(ACCEPTED.disposition)
   })
 
-  it('a stage-2 REFUSAL files nothing — the arm has no proposal, and inventing one would be a lie', async () => {
-    // The two-sided control. A persist call written outside the outcome narrow would file a
-    // proposal for an invocation that authored nothing, and every cell above would still pass.
+  it('a stage-2 REFUSAL writes nothing and files nothing — the arm has no draft', async () => {
+    // The two-sided control. A write outside the outcome narrow would put a file in the suite for
+    // an invocation that authored nothing, and every cell above would still pass.
     const filed: AuthoringProposalWrite[] = []
+    const published: { readonly draftPath: string; readonly targetPath: string }[] = []
 
     const output = await authoringDraftWriteSpec.invoke(
       INPUT,
-      deps({ suiteText: DUPLICATE_SUITE, filed }),
+      deps({ suiteText: DUPLICATE_SUITE, filed, published }),
     )
 
     expect((output as { outcome: string }).outcome).toBe('refused')
     expect(filed).toEqual([])
+    expect(published).toEqual([])
   })
 
-  it('a host that cannot FILE refuses by name, before a single run is spent', async () => {
-    // FAIL-CLOSED AT THE TOP. The check sits with the read/write halves rather than beside the
-    // persist call, because an invocation that authored a draft and spent up to nine child runs
-    // before discovering it had nowhere to file the result would have paid full price for an
-    // artifact nobody can ever decide on.
+  it('a host that cannot WRITE refuses by name, before a single run is spent', async () => {
+    // FAIL-CLOSED AT THE TOP. The writer rides the shelf, so a host without the write half is
+    // refused with the read/write check, never after up to nine child runs.
     let caught: unknown
     try {
-      await authoringDraftWriteSpec.invoke(INPUT, deps({ unboundProposals: true }))
+      await authoringDraftWriteSpec.invoke(INPUT, deps({ unboundShelf: true }))
     } catch (error) {
       caught = error
     }
@@ -284,5 +300,17 @@ describe('the proposal is PERSISTED before this op answers (394-18 · WINDOWS 99
     expect(typeof FunctionNotBoundError).toBe('function')
     expect(caught).toBeInstanceOf(FunctionNotBoundError)
     expect((caught as Error).message).toContain('authoring.draft.write')
+  })
+
+  it('no longer needs the retired proposals port — a host without it still writes', async () => {
+    const published: { readonly draftPath: string; readonly targetPath: string }[] = []
+
+    const output = await authoringDraftWriteSpec.invoke(
+      INPUT,
+      deps({ unboundProposals: true, published }),
+    )
+
+    expect((output as { outcome: string }).outcome).toBe('drafted')
+    expect(published).toHaveLength(1)
   })
 })

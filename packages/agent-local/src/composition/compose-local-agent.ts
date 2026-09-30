@@ -256,6 +256,7 @@ import type {
   RunId,
   RunStartAcknowledgement,
   TestEditPatchSet,
+  TestFileWrite,
   RunsStartInput,
   ScopeKey,
   SessionLogPort,
@@ -1384,6 +1385,22 @@ export interface DraftAuthoringPort {
     draft: ParsedDraftDescriptor,
     patchSet: TestEditPatchSet,
   ): Promise<DraftStageOutcome>
+  /**
+   * 432 D-06/D-07: write a staged draft's bytes to its test path — the direct final-test writer.
+   *
+   * AT THE HOST for its neighbours' reason: the workspace identity mint lives in
+   * `@vostride/agent-qa-core`. The host checks the boundary and that the target still holds the
+   * bytes the caller read (absent for a new test), writes through a sibling temp and a rename, runs
+   * no git, and answers `not-written` with its reason whenever the bytes did not land.
+   */
+  publishDraft(request: DraftPublishRequest): Promise<TestFileWrite>
+}
+
+/** One draft to write: its shelf path, its target, and what the target held when it was read. */
+export interface DraftPublishRequest {
+  readonly draftPath: string
+  readonly targetPath: string
+  readonly sourceDigest?: string
 }
 
 /**
@@ -3679,6 +3696,9 @@ export function composeLocalAgent(input: ComposeLocalAgentInput): LocalAgentHost
           // yaml CST and neither `agent` nor this package may depend on `core`. Same seam,
           // same reason and same shape as `stageDraft` right above it.
           applyPatches: (draft, patchSet) => authoringLoopHost.applyPatchesToDraft(draft, patchSet),
+          // 432 D-06/D-07: the direct writer the loop's final write and the edit op reach. Same seam
+          // and same reason as the two verbs above: the boundary check needs `core`.
+          publish: (request) => authoringLoopHost.publishDraft(request),
           // 394-06: stage 5's evidence reader and the repair arm's probe runner. The reader is
           // the same `runsReader` the gate evaluator is bound to — a second reader would be a
           // second answer to what one run recorded — and the starter dispatches the REGISTERED
@@ -3726,8 +3746,11 @@ export function composeLocalAgent(input: ComposeLocalAgentInput): LocalAgentHost
             ) as DraftReceipt
           },
         },
-        // 394-18 D-05/D-11 · WTST-05: where a finished loop outcome becomes something a person can
-        // find. Inside the SAME conditional spread as the two loop halves, on their own stated
+        // 394-18 D-05/D-11 · WTST-05: where a finished loop outcome became something a person could
+        // find. Since 432 D-06 `authoring.draft.write` writes the final draft itself and files
+        // nothing, so no op reaches this port; 432-17 deletes it with the proposal store.
+        //
+        // Inside the SAME conditional spread as the two loop halves, on their own stated
         // reasoning: a host that can author a draft and cannot file it is not a degraded author, it
         // is a host whose `authoring.draft.write` must say `unbound` by name — and the op refuses on
         // this key at the invoke exactly as it refuses on the other two.
@@ -3770,12 +3793,10 @@ export function composeLocalAgent(input: ComposeLocalAgentInput): LocalAgentHost
       // so the class an accept-with-always asks the mint for is `fn:proposals.accept` — a member of
       // the closed protected set — and the mint refuses it as `protected-class` beside the
       // successful apply (394-16, resolving CR-04). No standing-approval path over draft accepts
-      // exists until a registered apply op carrying its own class lands. SECOND: keep-eligible
-      // NEVER auto-writes. Every draft proposes, keep-eligible included; it renders as
-      // recommended-accept with its receipt, and the funnel's accepted stage IS the human decision.
-      // A route that wrote on keep-eligible would make that stage meaningless and would be exactly
-      // the private write power the L10 posture abolishes — which is why this port is reached from
-      // `proposals.accept` and from no path the loop can take.
+      // exists until a registered apply op carrying its own class lands. SECOND (superseded
+      // 2026-09-30 by 432 D-06): keep-eligible used to NEVER auto-write. The loop and the edit op
+      // now write their final drafts through `draftShelf.publish` and file nothing, so this port is
+      // reached only by accepting an older proposal; 432-16/432-17 delete it with the inbox.
       ...(input.draftApply === undefined ? {} : { draftApply: input.draftApply }),
       // 395-01 D-01/D-03/D-17 · CFGM-01/03/04: the config editor's host half, each spread on its
       // OWN condition rather than as one bundle. A host that can read config files and cannot

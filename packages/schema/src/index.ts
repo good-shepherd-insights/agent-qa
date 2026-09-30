@@ -1261,6 +1261,24 @@ export type {
   StepClassificationRow,
 } from './authoring/index'
 
+// 432 D-06/D-07: the direct write of a final authored test. Which dispositions are written, what
+// the writer reports for one file, and the written-test receipt with the four gate booleans.
+export {
+  DRAFT_WRITTEN_DISPOSITIONS,
+  DraftGateBooleansSchema,
+  TEST_FILE_NOT_WRITTEN_REASONS,
+  TEST_FILE_WRITE_REFUSALS,
+  TestFileWriteSchema,
+  WrittenTestReceiptSchema,
+  draftDispositionWritesTarget,
+  draftGateBooleans,
+} from './authoring/index'
+export type {
+  DraftWrittenDisposition,
+  TestFileWrite,
+  WrittenTestReceipt,
+} from './authoring/index'
+
 // 394 (WTST-07, D-20): the RFC-6902 `{thoughts, patches}` edit vocabulary and the pinned
 // editable-region fence. The CST applier in `core` is its only mutating consumer.
 export {

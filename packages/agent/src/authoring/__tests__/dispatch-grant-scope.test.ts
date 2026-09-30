@@ -158,6 +158,12 @@ function bench(input: {
       if (input.failVerify === true) throw new Error('the evaluator could not judge this draft')
       return keepEligibleReceipt(runIds)
     },
+    // 432 D-06: the final write. It starts no run, so it sits outside what this file measures.
+    publish: (request: { readonly targetPath: string }) => Promise.resolve({
+      kind: 'written' as const,
+      filePath: request.targetPath,
+      contentDigest: DRAFT.contentDigest,
+    }),
   }
 
   return {

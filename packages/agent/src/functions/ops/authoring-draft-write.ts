@@ -140,11 +140,11 @@ export const authoringDraftWriteSpec: FunctionSpec<
   //
   // THIS OP IS GENUINELY DIFFERENT, and it differs in the two ways that decide a tier. It SPENDS a
   // person's compute and model budget on their own machine — up to nine full child `agent-qa run`
-  // processes against their application (D-10) — and from plan 10 the artifact it produces is
-  // committed. So here the ask is the POINT rather than an obstacle: WTST-08's owner decision was
-  // preview and honest reporting with NO enforced budget, which makes the disclosure at this confirm
-  // the only control there is. An op that asked nobody would be an unbounded fan-out with a comment
-  // about how expensive it is.
+  // processes against their application (D-10) — and since 432 D-06 the artifact it produces is
+  // written straight into their suite. So here the ask is the POINT rather than an obstacle:
+  // WTST-08's owner decision was preview and honest reporting with NO enforced budget, which makes
+  // the disclosure at this confirm the only control there is. An op that asked nobody would be an
+  // unbounded fan-out with a comment about how expensive it is.
   //
   // WHAT THE RAISE COSTS, STATED RATHER THAN DISCOVERED. A fail-closed context — CI, the daemon,
   // any non-interactive host — now DENIES this op by name, and the gate's own reason line names the
@@ -214,7 +214,7 @@ export const authoringDraftWriteSpec: FunctionSpec<
    *
    * IT IS ADMITTED BY THE CHARTER RATHER THAN EXCEPTED FROM IT. D-18 says the receipt is a MAP, and
    * `FanOutReport` is counts, run REFERENCES and one boolean — no draft body, no receipt payload, no
-   * step evidence. The proposal itself rides 391's envelope into the inbox and does not appear here.
+   * step evidence. The written file and its receipt ride the op's `written` field, not this line.
    *
    * IT IS ONE FIELD ON ONE OP, AND NOW BY CONSTRUCTION. That used to be enforced by an id
    * comparison inside a shared function — a claim a later edit could widen by deleting one line. It
@@ -246,7 +246,19 @@ export const authoringDraftWriteSpec: FunctionSpec<
     }
     const authored = output.draftRef?.testName
     const named = authored === undefined ? output.outcome : `${output.outcome} ${authored}`
-    return { status: 'executed', outcome: `${named}${spent}` }
+    // 432 D-06: the written file is part of the claim. A draft the writer refused or failed to
+    // write is not reported as executed — the author asked for a test file and did not get one.
+    const file = output.written?.file
+    if (file?.kind === 'not-written' && file.reason !== 'rejected') {
+      return {
+        status: file.reason === 'write-failed' ? 'failed' : 'refused',
+        outcome: `${named} — not written: ${file.reason}${spent}`,
+      }
+    }
+    const wrote = file === undefined
+      ? ''
+      : file.kind === 'written' ? ` — wrote ${file.filePath}` : ' — not written: rejected'
+    return { status: 'executed', outcome: `${named}${wrote}${spent}` }
   },
   async invoke(input, deps) {
     // `invokeFunction` already refused this composition on `draftShelf`, so reaching here with no
@@ -254,17 +266,16 @@ export const authoringDraftWriteSpec: FunctionSpec<
     // either way (384, D-09).
     const shelf = deps.draftShelf
     const read = deps.authoringRead
-    const proposals = deps.authoringProposals
-    // ALL THREE halves, by the SAME name. `boundThrough` names one key, and a host missing the read
+    // BOTH halves, by the SAME name. `boundThrough` names one key, and a host missing the read
     // half would otherwise list this op `bound` and then serve an EMPTY brief — a draft compiled
     // against nothing this project knows, indistinguishable at the caller from one compiled
     // against everything it knows. That is the answer this check exists to make impossible.
     //
-    // THE FILE HALF IS CHECKED HERE, BEFORE ANY RUN IS SPENT (394-18). An invocation that authored
-    // a draft, spent up to nine child processes verifying it and only then discovered it had
-    // nowhere to file the result would have answered `drafted` about an artifact nobody can ever
-    // decide on — 394-12's C2 red re-created, and paid for at full price. Fail-closed at the top.
-    if (shelf === undefined || read === undefined || proposals === undefined) {
+    // THE FILE HALF RIDES THE SHELF (432 D-06). The writer is `draftShelf.publish`, so a host that
+    // can author is a host that can write what it authored — checked here, before any run is spent,
+    // by the shelf's presence. 394-18's separate proposals port is no longer consulted: nothing is
+    // filed for anybody to accept.
+    if (shelf === undefined || read === undefined) {
       throw new FunctionNotBoundError(AUTHORING_DRAFT_WRITE_FUNCTION_ID)
     }
 
@@ -312,58 +323,27 @@ export const authoringDraftWriteSpec: FunctionSpec<
     // surface told `refused` with no `refusal` could report that something matched but never say
     // what, and re-invoking is the only continuation this stateless design offers.
     //
-    // THE FAN-OUT REPORT RIDES OUT; THE PROPOSAL DOES NOT (394-14 · WTST-08). `outcome.proposal`
-    // reaches people through 391's inbox and putting it here would mint a second place to read one
-    // artifact — the prohibition the output schema's own header states. The report is the recorded
-    // exception to that paragraph and the argument is written there: it is counts and run refs
+    // THE FAN-OUT REPORT RIDES OUT (394-14 · WTST-08). The report is the recorded exception to the
+    // output schema's no-payload rule and the argument is written there: it is counts and run refs
     // about the run budget, and WTST-08's owner decision made the honest report the second half of
     // the only control this op has. It is carried on EVERY arm the loop answers with a routing,
     // refusals included, because "this invocation ran nothing" is a number a caller is entitled to.
     const outcome = result.outcome
     const dedup = result.dedup
 
-    // THE PROPOSAL IS PERSISTED BEFORE THIS OP ANSWERS (394-18, closing WINDOWS 99).
-    //
-    // D-05 says every draft earns a human decision, and until this line the loop built the artifact
-    // and dropped it on the floor: the funnel's `accepted` stage was structurally 0 on every host
-    // because nothing ever put an envelope where a person could decide on it. The refused arm has
-    // no proposal and persists nothing, which is the honest answer rather than an omission — a
-    // stage-2 refusal ends the invocation with no draft, no receipt and no gate-run (D-04).
-    //
-    // THE STOPPED ARM PERSISTS NOTHING EITHER (411 D-10/D-12). A correctly-failing draft is already
-    // on the shelf with its receipt — it IS the regression test for the defect — and its verdict
-    // rides this result's `stop` arm, so there is nothing left to mint and minting one would be a
-    // second place to read one artifact. That the store is empty after such an invocation is
-    // measured ON THE STORE by `authoring-draft-write.stop.test.ts`, never inferred from the return.
-    //
-    // 2026-09-02 (Phase 411): the proposal arm for a correctly-failing draft left with the
-    // Issue-slot cleanup — see `DELETION-INVENTORY.md`.
-    //
-    // A FAILURE HERE LEAVES THIS INVOCATION, and that is the fail-closed direction. Answering
-    // `drafted` while the artifact reached no store would tell a person to go and look in an inbox
-    // that will never hold it, which is the wrong answer wearing a correct one's clothes.
-    //
-    // THE ATTRIBUTION IS THIS OP'S ID AND THE RUN THE RECEIPT ALREADY NAMES. `origin.at` is stamped
-    // by the host, which owns the clock (nothing in this package reads one). `runId` is the LAST
-    // gate run on the receipt — the SAME run stage 5 routes on, borrowed rather than chosen afresh,
-    // because an invocation spends up to nine and picking a different one here would make the
-    // proposal's attribution and the routing's evidence two answers to one question. It is absent
-    // when the receipt names no run at all, which `runs.digest` reads as what it is.
-    if (outcome.kind === 'drafted' || outcome.kind === 'repaired') {
-      const runId = outcome.receipt.gateRuns.at(-1)?.runId
-      const attribution = {
-        emittedBy: AUTHORING_DRAFT_WRITE_FUNCTION_ID,
-        ...(runId === undefined ? {} : { runId }),
-      }
-      await proposals.put({ kind: 'test-draft', ...attribution, payload: outcome.proposal })
-    }
-
+    // THE FINAL DRAFT IS ALREADY WRITTEN BY THE TIME THIS OP ANSWERS (432 D-06, superseding
+    // 394-18's proposal filing). The loop wrote it — or, for a rejected final receipt, did not — and
+    // the written-test receipt rides out on the `drafted` and `repaired` arms. Nothing is filed for a
+    // person to accept, and the stopped and refused arms write nothing (411 D-10/D-12, D-04).
     return {
       outcome: outcome.kind,
       fanOut: result.fanOut,
       ...(outcome.draftRef === undefined ? {} : { draftRef: outcome.draftRef }),
       ...(outcome.receipt === undefined ? {} : { receipt: outcome.receipt }),
       ...(outcome.kind === 'stopped' ? { stop: projectStop(outcome) } : {}),
+      ...(outcome.kind === 'drafted' || outcome.kind === 'repaired'
+        ? { written: outcome.written }
+        : {}),
       ...(dedup.kind === 'duplicate'
         ? {
           refusal: {

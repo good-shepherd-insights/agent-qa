@@ -15,7 +15,8 @@
 
 import { z } from 'zod'
 
-import { DRAFT_DISPOSITIONS } from './disposition'
+import { DRAFT_DISPOSITIONS, draftDispositionWritesTarget } from './disposition'
+import type { DraftGateBooleans } from './disposition'
 
 /**
  * Bumping this is a breaking change to a durable store. The record schema pins the literal, so
@@ -191,8 +192,7 @@ export const DRAFT_GATE_NAMES = [
 export type DraftGateName = (typeof DRAFT_GATE_NAMES)[number]
 
 /**
- * The durable receipt (D-19). The op returns this AND persists it; 394's proposal envelope
- * later carries it as evidence refs.
+ * The durable receipt (D-19). The op returns this AND persists it.
  *
  * `disposition` is the value `computeDraftDisposition` produced for this receipt's own gates
  * and counts. It is stored rather than recomputed at read time so the answer a consumer sees
@@ -229,3 +229,91 @@ export const DraftReceiptSchema = z.object({
 }).strict()
 
 export type DraftReceipt = z.infer<typeof DraftReceiptSchema>
+
+// ---- the written test (432 D-06/D-07) ----------------------------------------------------------
+//
+// A final draft is written straight to its test path unless its gates rejected it. What the
+// author is told is which file was written — or why none was — beside how well the draft was
+// verified: the disposition and the four gate booleans, never collapsed into one verdict.
+
+/** The four gate booleans on their own, as a written-test receipt carries them. */
+export const DraftGateBooleansSchema = z.object({
+  executesDefinitive: z.boolean(),
+  stableVerdict: z.boolean(),
+  addsValue: z.boolean(),
+  falsifiableAssertion: z.boolean(),
+}).strict()
+
+/** The four booleans off a receipt's gate results, one per gate. */
+export function draftGateBooleans(gates: DraftGateResults): DraftGateBooleans {
+  return {
+    executesDefinitive: gates.executesDefinitive.pass,
+    stableVerdict: gates.stableVerdict.pass,
+    addsValue: gates.addsValue.pass,
+    falsifiableAssertion: gates.falsifiableAssertion.pass,
+  }
+}
+
+/**
+ * Why a writer left the target alone. `target-changed` covers both a new test whose path is now
+ * taken and an edit whose file no longer holds the bytes it was built from.
+ */
+export const TEST_FILE_WRITE_REFUSALS = [
+  'outside-workspace',
+  'target-changed',
+  'write-failed',
+] as const
+
+/** Why no bytes reached the target: the gates rejected the draft, or the writer refused. */
+export const TEST_FILE_NOT_WRITTEN_REASONS = ['rejected', ...TEST_FILE_WRITE_REFUSALS] as const
+
+/**
+ * What happened at one test file: written (workspace-relative path and the digest of the exact
+ * bytes written), or not written with the reason. A failed write is never reported as written.
+ */
+export const TestFileWriteSchema = z.discriminatedUnion('kind', [
+  z.object({
+    kind: z.literal('written'),
+    filePath: z.string().min(1),
+    contentDigest: z.string().min(1),
+  }).strict(),
+  z.object({
+    kind: z.literal('not-written'),
+    targetPath: z.string().min(1),
+    reason: z.enum(TEST_FILE_NOT_WRITTEN_REASONS),
+    /** The writer's own error text for `write-failed`; absent otherwise. */
+    detail: z.string().optional(),
+  }).strict(),
+])
+
+export type TestFileWrite = z.infer<typeof TestFileWriteSchema>
+
+/**
+ * The written-test receipt: the file, the disposition and the four gate booleans.
+ *
+ * A `rejected` disposition and a `rejected` not-written reason come together or not at all, and a
+ * written file never carries a rejected disposition (EDGE-09).
+ */
+export const WrittenTestReceiptSchema = z.object({
+  file: TestFileWriteSchema,
+  disposition: z.enum(DRAFT_DISPOSITIONS),
+  gates: DraftGateBooleansSchema,
+}).strict().superRefine((receipt, ctx) => {
+  if (receipt.file.kind === 'written' && !draftDispositionWritesTarget(receipt.disposition)) {
+    ctx.addIssue({
+      code: 'custom',
+      path: ['file'],
+      message: `a ${receipt.disposition} draft is never written`,
+    })
+  }
+  const rejectedReason = receipt.file.kind === 'not-written' && receipt.file.reason === 'rejected'
+  if (rejectedReason !== (receipt.disposition === 'rejected')) {
+    ctx.addIssue({
+      code: 'custom',
+      path: ['file', 'reason'],
+      message: 'only a rejected disposition leaves its draft unwritten as rejected',
+    })
+  }
+})
+
+export type WrittenTestReceipt = z.infer<typeof WrittenTestReceiptSchema>

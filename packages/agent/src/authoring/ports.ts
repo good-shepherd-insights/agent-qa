@@ -26,6 +26,7 @@ import type {
   RunsStartInput,
   ScopeKey,
   TestEditPatchSet,
+  TestFileWrite,
 } from '@vostride/agent-qa-schema'
 
 import type { JobModelCapability } from '../jobs/record-llm-authorship.js'
@@ -360,6 +361,29 @@ export interface DraftShelfPortLike {
    * the loop exists to produce.
    */
   verifyDraft(input: AuthoringVerifyDraftInput): Promise<DraftReceipt>
+  /**
+   * Write a staged draft's bytes to its test path (432 D-06/D-07). The direct final-test writer.
+   *
+   * ON THIS BUNDLE because it is not independently bindable either: a host that can stage a draft
+   * on its shelf is the host that can put those bytes in its suite. The host keeps the guards the
+   * old accept kept — the target must lie inside the workspace and still hold the bytes the caller
+   * read (`sourceDigest`, absent for a new test) — writes through a sibling temp and a rename, and
+   * runs no git. A write that did not land answers `not-written` with its reason, never `written`.
+   *
+   * THE LOOP DECIDES WHETHER TO CALL IT, from the disposition (`draftDispositionWritesTarget`); the
+   * writer never sees one. A rejected draft is simply never handed to it.
+   */
+  publish(request: TestFilePublishRequestLike): Promise<TestFileWrite>
+}
+
+/** One final draft to write: the shelf copy, where it goes, and what that path held when read. */
+export interface TestFilePublishRequestLike {
+  /** The staged draft's workspace-relative shelf path — where the bytes come from. */
+  readonly draftPath: string
+  /** Where they go. Boundary-checked at the host by the identity mint and the real path. */
+  readonly targetPath: string
+  /** The digest of the bytes the caller read at `targetPath`; absent means it must not exist. */
+  readonly sourceDigest?: string
 }
 
 /**

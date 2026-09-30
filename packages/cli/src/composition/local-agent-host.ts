@@ -173,6 +173,7 @@ import type {
   RunsStartInput,
   ScopeKey,
   TestEditPatchSet,
+  TestFileWrite,
 } from '@vostride/agent-qa-schema'
 
 import {
@@ -1215,6 +1216,11 @@ export function createDraftAuthoringPort(configPath: string): DraftAuthoringPort
       return await this.stageDraft(rendered)
     },
 
+    /** 432 D-06/D-07: the direct final-test writer — see {@link publishAuthoredTest}. */
+    publishDraft(request): Promise<TestFileWrite> {
+      return Promise.resolve(publishAuthoredTest({ configPath, request }))
+    },
+
     /**
      * The authored-test universe as text — gate 3's text-lane population before the derived index
      * subtracts the identities it has evidence for (D-16).
@@ -1437,6 +1443,97 @@ function writeFileAtomically(path: string, contents: string | Buffer): void {
     throw error
   }
   fsyncDirectory(dirname(path))
+}
+
+export interface PublishAuthoredTestInput {
+  /** The project's config file; its directory is the workspace root. */
+  readonly configPath: string
+  readonly request: {
+    /** The staged draft's workspace-relative shelf path — where the bytes come from. */
+    readonly draftPath: string
+    /** Where they go. */
+    readonly targetPath: string
+    /** The digest of the bytes the caller read at `targetPath`; absent means it must not exist. */
+    readonly sourceDigest?: string
+  }
+  /** Injected for tests; defaults to {@link writeFileAtomically}. */
+  readonly writeTarget?: (absolutePath: string, bytes: Buffer) => void
+}
+
+/**
+ * Write a final authored test straight to its target (432 D-06/D-07). No git, no commit, no stage.
+ *
+ * THE GUARDS ARE THE ONES THE RETIRED ONE-COMMIT APPLY CHECKED, minus the ones that were about git.
+ * The target's boundary is `workspaceRelativeIdentityPath` plus the real path, so neither `..` nor a
+ * symlinked directory carries a write out of the workspace. The target must still hold exactly the
+ * bytes the caller read — raw bytes, never their decoding (394-29's rule) — or, for a new test, not
+ * exist at all. There is no dirty-tree refusal and no need for a repository: the result is a plain
+ * uncommitted edit that `git status` shows and `git restore` or deleting the file reverts.
+ *
+ * THE WRITE IS {@link writeFileAtomically}: a sibling temp, fsync, rename, the temp removed on
+ * every failure. So a failed write leaves the target as it was, and it is answered as `not-written`
+ * with the writer's own error text — never as `written`.
+ *
+ * WHAT IS NOT CLAIMED: the digest re-check and the rename are not one atomic step, and nothing here
+ * locks against a concurrent writer between them — the same lock-free assumption the apply made.
+ */
+export function publishAuthoredTest(input: PublishAuthoredTestInput): TestFileWrite {
+  const { request } = input
+  const configDir = dirname(resolve(input.configPath))
+  const writeTarget = input.writeTarget ?? writeFileAtomically
+  const refused = (
+    reason: 'outside-workspace' | 'target-changed' | 'write-failed',
+    detail?: string,
+  ): TestFileWrite => ({
+    kind: 'not-written',
+    targetPath: request.targetPath,
+    reason,
+    ...(detail === undefined ? {} : { detail }),
+  })
+
+  let identityPath: string
+  let absoluteTarget: string
+  let absoluteDraft: string
+  try {
+    identityPath = workspaceRelativeIdentityPath(configDir, request.targetPath)
+    absoluteTarget = resolve(configDir, identityPath)
+    absoluteDraft = resolve(configDir, workspaceRelativeIdentityPath(configDir, request.draftPath))
+    const realConfigDir = realpathSync(configDir)
+    if (
+      !resolvesInsideWorkspace(realConfigDir, absoluteTarget)
+      || !resolvesInsideWorkspace(realConfigDir, absoluteDraft)
+    ) {
+      return refused('outside-workspace')
+    }
+  } catch {
+    return refused('outside-workspace')
+  }
+
+  let draftBytes: Buffer
+  let existing: Buffer | undefined
+  try {
+    draftBytes = readFileSync(absoluteDraft)
+    existing = readTargetIfPresent(absoluteTarget)
+  } catch (error) {
+    return refused('write-failed', errorText(error))
+  }
+
+  const foundDigest = existing === undefined
+    ? undefined
+    : createHash('sha256').update(existing).digest('hex')
+  if (foundDigest !== request.sourceDigest) return refused('target-changed')
+
+  try {
+    mkdirSync(dirname(absoluteTarget), { recursive: true })
+    writeTarget(absoluteTarget, draftBytes)
+  } catch (error) {
+    return refused('write-failed', errorText(error))
+  }
+  return {
+    kind: 'written',
+    filePath: identityPath,
+    contentDigest: createHash('sha256').update(draftBytes).digest('hex'),
+  }
 }
 
 export interface DraftShelf {

@@ -76,7 +76,7 @@
       "classifies": true,
       "id": "authoring.draft.edit",
       "inputSchemaDigest": "b5bc4308dc584cb69cd94b97ff8ff3bec0975bdbcc9004c7d96f28e5cd562c7a",
-      "outputSchemaDigest": "51d740df7ecf868d63b3b106059fea562fb744e3f8ed91c9443e4048bf7deb57",
+      "outputSchemaDigest": "2bc17671581ba292c79d8fb0f5506a20e565d3acb6a1cef04238d58713086e22",
       "partition": {
         "kind": "projected",
         "tool": "agent_qa_refine_test"
@@ -119,7 +119,7 @@
       "discloses": true,
       "id": "authoring.draft.write",
       "inputSchemaDigest": "2d98bde1d977b1e9928d3613fa0fa97b7e3d765a6e9b1c43bf23214e8adf03ed",
-      "outputSchemaDigest": "54bdc9c8568d4cb33f6c8dbc39b1d24e9189620fe55b35ec320ecaeb1bb3f1a6",
+      "outputSchemaDigest": "aaca3f5b3cd4fcc52cf378a1940c8a05ab87e5cdd3ed2ddd6b81d609b7c26f59",
       "partition": {
         "kind": "projected",
         "tool": "agent_qa_write_test"

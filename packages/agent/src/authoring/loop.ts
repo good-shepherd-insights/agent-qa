@@ -45,12 +45,13 @@ import {
   scan,
 } from '@vostride/agent-qa-safety'
 import {
-  CURRENT_AUTHORING_PROPOSAL_SCHEMA_VERSION,
   DRAFT_STABILITY_RUNS_N,
   authoredSuiteTargetPath,
   NO_RUNS_FAN_OUT_BOUND,
   buildFanOutReport,
   computeFanOutBound,
+  draftDispositionWritesTarget,
+  draftGateBooleans,
 } from '@vostride/agent-qa-schema'
 import type {
   AuthoringBrief,
@@ -62,7 +63,7 @@ import type {
   FanOutBound,
   FanOutReport,
   ScopeKey,
-  TestDraftProposalV1,
+  WrittenTestReceipt,
 } from '@vostride/agent-qa-schema'
 
 import {
@@ -131,22 +132,28 @@ export const AUTHORING_COMPILE_AGENT_CONTEXT =
  * union that grew an arm per plan would make plans 04-06 changes to the shape every consumer
  * branches on rather than new cases behind a discriminant they already read.
  *
- * The `stopped` arm carries the ROUTE and the abandonment facts and never a proposal — the op
+ * The `stopped` arm carries the ROUTE and the abandonment facts and writes nothing — the op
  * projects the result's `stop` payload from it (411 D-05).
+ *
+ * 2026-09-30, 432 D-06: the `drafted` and `repaired` arms carry the WRITTEN-TEST RECEIPT where they
+ * used to carry a proposal for a person to accept. The final draft is written to its target unless
+ * its final receipt is `rejected`, and the receipt says which file was written or why none was.
  */
 export type AuthoringLoopOutcome =
   | {
       readonly kind: 'drafted'
       readonly draftRef: DraftRef
       readonly receipt: DraftReceipt
-      readonly proposal: TestDraftProposalV1
+      readonly written: WrittenTestReceipt
     }
   | { readonly kind: 'refused'; readonly draftRef?: DraftRef; readonly receipt?: DraftReceipt }
   | {
       readonly kind: 'repaired'
       readonly draftRef: DraftRef
       readonly receipt: DraftReceipt
-      readonly proposal: TestDraftProposalV1
+      readonly written: WrittenTestReceipt
+      /** Repair iterations spent reaching the repaired draft, fenced ones included. */
+      readonly repairIterations: number
     }
   | {
       readonly kind: 'stopped'
@@ -401,14 +408,14 @@ export class DraftSecretRefusedError extends Error {
  * Refuse a draft whose content carries a raw credential literal — BEFORE it is verified, and
  * therefore long before an envelope exists (T-394-43).
  *
- * WHY HERE RATHER THAN AT `testDraftProposal`, which is where the plan's word "proposal
- * construction" points. Measured: `DraftReceipt.stepTable[].stepText` is verbatim step text and the
- * receipt is PERSISTED (`.agent-qa/draft-receipts/<digest>.json`), and stage 4 spends
- * `DRAFT_STABILITY_RUNS_N` real child runs typing that text into a real browser. A scan performed
- * after stage 4 would therefore fire only once the credential had already been written to a durable
- * file on disk and driven through a live application. The requirement is that no human is ever
- * asked to accept such a draft; screening here satisfies it AND closes the two earlier exposures a
- * later screen cannot.
+ * WHY HERE RATHER THAN AT THE FINAL WRITE (`writeFinalDraft`), which is where the plan's word
+ * "proposal construction" pointed before 432 D-06. Measured: `DraftReceipt.stepTable[].stepText` is
+ * verbatim step text and the receipt is PERSISTED (`.agent-qa/draft-receipts/<digest>.json`), and
+ * stage 4 spends `DRAFT_STABILITY_RUNS_N` real child runs typing that text into a real browser. A
+ * scan performed after stage 4 would therefore fire only once the credential had already been
+ * written to a durable file on disk and driven through a live application. The requirement is that
+ * no human is ever asked to accept such a draft; screening here satisfies it AND closes the two
+ * earlier exposures a later screen cannot.
  *
  * IT SCANS THE DRAFT AS PARSED, not the model's raw emission, and it scans THREE LOCATIONS: the
  * test name, the `context` block, and every step. Those are the three `EDITABLE_POINTER_ROOTS`, so
@@ -465,21 +472,18 @@ export class AuthoringLoopUnroutableEvidenceError extends Error {
 }
 
 /**
- * The dispositions stage 5 answers `drafted` for — the gates did not say no.
+ * THE FINAL-WRITE BRANCH (432 D-06, EDGE-09): whether a final draft is written to its target.
  *
- * `unverified` joins the two that were here in the tracer, and the reason is D-05 rather than
- * convenience: it is what a DRAFT-MODE evaluation is forced to (rule 1 of the disposition table),
- * and a draft-mode run is a caller deliberately asking for one cheap run. Such a draft is not a
- * stop — no run said the application is wrong — and it is not repairable — no mechanics evidence
- * exists to repair against. It is a draft nobody has verified, which is exactly what the test-draft
- * arm's `disposition` field says out loud, so it proposes and a human decides. `rejected` is the
- * only disposition that routes, because it is the only one a gate actually refused.
+ * It is also the set stage 5 answers `drafted` for, because the two are one fact: the gates did
+ * not say no. `unverified` is what a DRAFT-MODE evaluation is forced to (rule 1 of the disposition
+ * table), and such a draft is neither a stop — no run said the application is wrong — nor
+ * repairable — no mechanics evidence exists to repair against — so it is written, and its receipt
+ * says it is unverified. `rejected` is the only disposition that routes and the only one never
+ * written, because it is the only one a gate actually refused.
  */
-const DRAFTED_DISPOSITIONS: readonly DraftDisposition[] = [
-  'keep-eligible',
-  'proposal-only',
-  'unverified',
-]
+function writesFinalDraft(disposition: DraftDisposition): boolean {
+  return draftDispositionWritesTarget(disposition)
+}
 
 /** The draft's identity as the receipt and both envelope arms spell it. */
 function draftRefOf(draft: ParsedDraftLike): DraftRef {
@@ -492,35 +496,32 @@ function draftRefOf(draft: ParsedDraftLike): DraftRef {
 }
 
 /**
- * The test-draft envelope arm for a draft that reached a receipt (D-05).
+ * Write the final draft, or say why it was not written (432 D-06/D-07).
  *
- * `runsConsumed` is read off the REPORT — the distinct run ids this invocation actually started —
- * and never off the bound. WTST-08's honesty half is that the preview promises a number before
- * dispatch and the proposal reports what was spent; a figure derived from the bound would make the
- * two agree by construction and measure nothing. `runsPreviewed` is the bound itself, carried
- * beside it so the comparison is available to whoever reads the arm rather than to nobody.
+ * The target is derived from where the DRAFT already sits (394-10's recipe). There is deliberately
+ * no `sourceDigest`: a loop-authored draft is a NEW file (D-02 — creation is not an edit), so the
+ * writer re-checks the target as still absent. That is the collision guard for two drafts whose
+ * names slug the same way, and it fails toward `target-changed` rather than an overwrite.
+ *
+ * The receipt carries the disposition and the four gate booleans whatever happened to the file, so
+ * the author always learns how well the draft was verified beside where it went.
  */
-function testDraftProposal(
-  draftRef: DraftRef,
+async function writeFinalDraft(
+  draft: ParsedDraftLike,
   receipt: DraftReceipt,
-  repairIterations: number,
-  fanOut: FanOutReport,
-): TestDraftProposalV1 {
-  return {
-    schemaVersion: CURRENT_AUTHORING_PROPOSAL_SCHEMA_VERSION,
-    draftRef,
-    // WHERE ACCEPTING WILL WRITE IT, derived from where the DRAFT already sits (394-10, D-06).
-    // There is deliberately no `sourceDigest` beside it: a loop-authored draft is a NEW file
-    // (D-02 — creation is not an edit), and an absent digest is what the apply re-checks as the
-    // claim that the target still does not exist. That is the collision guard for two drafts
-    // whose names slug the same way, and it fails toward a refusal rather than an overwrite.
-    targetPath: authoredSuiteTargetPath(draftRef.filePath, draftRef.testName),
-    disposition: receipt.disposition,
-    runsPreviewed: fanOut.previewed.total,
-    runsConsumed: fanOut.consumedTotal,
-    repairIterations,
-    summaryLine: `${draftRef.testName} — ${receipt.disposition}`,
+  shelf: DraftShelfPortLike,
+): Promise<WrittenTestReceipt> {
+  const gates = draftGateBooleans(receipt.gates)
+  const targetPath = authoredSuiteTargetPath(draft.filePath, draft.testName)
+  if (!writesFinalDraft(receipt.disposition)) {
+    return {
+      file: { kind: 'not-written', targetPath, reason: 'rejected' },
+      disposition: receipt.disposition,
+      gates,
+    }
   }
+  const file = await shelf.publish({ draftPath: draft.filePath, targetPath })
+  return { file, disposition: receipt.disposition, gates }
 }
 
 /**
@@ -780,16 +781,15 @@ export async function routeAfterVerify(
   // durably written — a tally maintained here could drift from the evidence a person later reads.
   const gateRuns = await consumedGateRuns(receipt, deps.shelf.runs)
 
-  if (DRAFTED_DISPOSITIONS.includes(receipt.disposition)) {
-    const fanOut = buildFanOutReport({ previewed, runs: gateRuns })
+  if (writesFinalDraft(receipt.disposition)) {
     return {
       outcome: {
         kind: 'drafted',
         draftRef,
         receipt,
-        proposal: testDraftProposal(draftRef, receipt, 0, fanOut),
+        written: await writeFinalDraft(draft, receipt, deps.shelf),
       },
-      fanOut,
+      fanOut: buildFanOutReport({ previewed, runs: gateRuns }),
     }
   }
 
@@ -848,7 +848,10 @@ export async function routeAfterVerify(
         kind: 'repaired',
         draftRef: repairedRef,
         receipt: repaired.receipt,
-        proposal: testDraftProposal(repairedRef, repaired.receipt, repaired.iterations, fanOut),
+        // The repaired draft's FINAL receipt decides, exactly as a first-pass one does: a final
+        // stability gate that rejects it leaves it on the shelf, reported as not written.
+        written: await writeFinalDraft(repaired.draft, repaired.receipt, deps.shelf),
+        repairIterations: repaired.iterations,
       },
       fanOut,
     }
@@ -995,11 +998,11 @@ async function runAuthoringLoopDispatch(
   const { stages, previewed, dedup, draft, refinement } = carried
 
   stages.push('verify')
-  // WHERE ACCEPTING WOULD WRITE IT, computed ONCE for the whole invocation through the SAME
-  // exported recipe the proposal arm uses (`testDraftProposal`'s `targetPath`) — so the suite the
-  // stability read consults and the suite an accept would join cannot disagree (394-19, D-14).
+  // WHERE THE FINAL WRITE WILL PUT IT, computed ONCE for the whole invocation through the SAME
+  // exported recipe the final write uses (`writeFinalDraft`'s `targetPath`) — so the suite the
+  // stability read consults and the suite the draft is written into cannot disagree (394-19, D-14).
   // ONE DERIVATION IS ONLY ENOUGH BECAUSE THE INPUT THAT MOVES DOES NOT REACH THE ANSWER: this value
-  // is derived here from the PRE-repair draft and recomputed at the proposal from the REPAIRED ref,
+  // is derived here from the PRE-repair draft and recomputed at the write from the REPAIRED draft,
   // whose shelf path is a DIFFERENT file — repair re-stages every patched candidate under its new
   // digest — and `authoredSuiteTargetPath` drops that filename, keeping only the suite directory and
   // a slug of the test NAME. The name is therefore the one input a repair could move the target

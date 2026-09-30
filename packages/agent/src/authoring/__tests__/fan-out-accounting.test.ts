@@ -232,6 +232,12 @@ function bench(input: {
       if (receipt === undefined) throw new Error('the bench was asked for a receipt it has none of')
       return Promise.resolve(receipt)
     },
+    // 432 D-06: the final write. It starts no run, so it cannot move a single figure below.
+    publish: (request: { readonly targetPath: string }) => Promise.resolve({
+      kind: 'written' as const,
+      filePath: request.targetPath,
+      contentDigest: 'written',
+    }),
   }
 
   return {
@@ -363,7 +369,10 @@ describe('the loop cannot exceed the bound its own dispatch confirm rendered', (
     ])
   })
 
-  it('reports the two figures TOGETHER on the proposal arm a person reads', async () => {
+  // 2026-09-30, 432 D-06: re-spelled in place. The proposal arm these figures rode is gone — the
+  // repaired draft is written, not proposed — so the same two figures are read off the report the
+  // invocation answers with, and the iteration count off the repaired arm itself.
+  it('reports the two figures TOGETHER on the repaired arm a person reads', async () => {
     const harness = bench({
       emissions: [
         MODEL_DOCUMENT,
@@ -377,12 +386,13 @@ describe('the loop cannot exceed the bound its own dispatch confirm rendered', (
 
     const result = await runAuthoringLoop(LOOP_INPUT, harness.deps)
 
-    const proposal = result.outcome.kind === 'repaired' ? result.outcome.proposal : undefined
-    expect(proposal?.runsPreviewed).toBe(authoringFanOutBound(LOOP_INPUT).total)
-    expect(proposal?.runsConsumed).toBe(9)
+    expect(result.outcome.kind).toBe('repaired')
+    expect(result.fanOut.previewed.total).toBe(authoringFanOutBound(LOOP_INPUT).total)
+    expect(result.fanOut.consumedTotal).toBe(9)
     // The repair iteration count is a SEPARATE fact and not the run count: it is how many attempts
     // were made, and attempts and runs are exactly what a fenced iteration separates.
-    expect(proposal?.repairIterations).toBe(REPAIR_ITERATION_CAP)
+    const iterations = result.outcome.kind === 'repaired' ? result.outcome.repairIterations : -1
+    expect(iterations).toBe(REPAIR_ITERATION_CAP)
   })
 })
 

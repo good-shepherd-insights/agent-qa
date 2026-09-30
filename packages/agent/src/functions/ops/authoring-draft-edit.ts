@@ -38,12 +38,13 @@
 // keeping", and folding it in would fire a nine-run fan-out on every one-line edit — the cost
 // WTST-08's preview exists to keep a person in charge of. One verb per question. A caller who wants
 // gate coverage over the edited draft invokes the verify op with the returned `draftRef.filePath`,
-// which is a shelf path that op already accepts.
+// which since 432 D-06 is the written test file itself.
 //
-// THE PROPOSAL IS THE END OF THIS OP. Nothing is written to the committed suite here: the edited
-// document is staged on the draft shelf and lands as a `test-draft` arm on 391's envelope. Plan
-// 10's one-commit apply is what turns an accepted proposal into a repository change, which is the
-// shipped propose-plus-apply posture rather than a new rule for this verb.
+// THE WRITE IS THE END OF THIS OP (432 D-06/D-07, superseding 394's propose-plus-apply). The edited
+// document is staged on the draft shelf, then written over the file it edited through the shelf's
+// direct writer — guarded by the digest of the bytes this op read, so a file that changed in the
+// meantime is refused rather than overwritten. No git, no proposal waiting for a person. The answer
+// points at the written file, so `agent_qa_refine_test`'s verify arm judges the test as written.
 
 import {
   AuthoringDraftEditInputSchema,
@@ -189,9 +190,8 @@ export const authoringDraftEditSpec: FunctionSpec<
   // `mutating-shared` because it spends up to nine child `agent-qa run` processes of a person's
   // compute (D-10), which is a cost only a person can consent to — so an ask nobody can answer is
   // the right answer for an unattended host. This op takes ONE model call, starts zero runs, and
-  // writes only to the gitignored draft shelf; the artifact it produces is a proposal that a human
-  // still has to accept before anything reaches the repository. Raising it to the ask tier would
-  // deny every edit in CI and the daemon while protecting a decision the inbox already protects.
+  // writes one file — the test it edited, over the exact bytes it read (432 D-06). Raising it to the
+  // ask tier would deny every edit in CI and the daemon for a change `git diff` already shows.
   //
   // The mechanics: `recognized: true` with no `readOnly` puts the classifier's floor at
   // mutating-local, `declaredTier` states that tier rather than relying on the floor, and the name
@@ -209,9 +209,17 @@ export const authoringDraftEditSpec: FunctionSpec<
    * and the honest report of it is what was edited and how much changed.
    */
   classify(output): ClauseVerdict {
+    const file = output.written
+    if (file.kind === 'not-written') {
+      return {
+        status: file.reason === 'write-failed' ? 'failed' : 'refused',
+        outcome: `not edited ${output.editedFrom.testName} — ${file.reason}`,
+      }
+    }
     return {
       status: 'executed',
-      outcome: `edited ${output.editedFrom.testName} — ${output.patches.length} patch op(s) staged`,
+      outcome: `edited ${output.editedFrom.testName} — ${output.patches.length} patch op(s) written `
+        + `to ${file.filePath}`,
     }
   },
   async invoke(input, deps) {
@@ -305,12 +313,24 @@ export const authoringDraftEditSpec: FunctionSpec<
     //    literal arrives here.
     screenDraftForCredentials(staged.draft)
 
-    const draftRef = {
+    const stagedRef = {
       filePath: staged.draft.filePath,
       testId: staged.draft.testId,
       testName: staged.draft.testName,
       contentDigest: staged.draft.contentDigest,
     }
+
+    // 7. THE WRITE (432 D-06/D-07), over the file this op read, and only if it still holds exactly
+    //    the bytes it read. The parser, the patch schema, the region fence and the credential screen
+    //    above have all passed by now; the writer adds the workspace boundary and the digest guard.
+    const written = await shelf.publish({
+      draftPath: staged.draft.filePath,
+      targetPath: identity.filePath,
+      sourceDigest: resolution.draft.contentDigest,
+    })
+    const draftRef = written.kind === 'written'
+      ? { ...stagedRef, filePath: written.filePath }
+      : stagedRef
 
     return {
       draftRef,
@@ -321,9 +341,10 @@ export const authoringDraftEditSpec: FunctionSpec<
       },
       patches: parsed.data.patches,
       thoughts: parsed.data.thoughts,
+      written,
       proposal: {
         schemaVersion: CURRENT_AUTHORING_PROPOSAL_SCHEMA_VERSION,
-        draftRef,
+        draftRef: stagedRef,
         // THE EDIT'S TARGET IS THE FILE IT EDITED, and its digest is the bytes this op read out of
         // that file moments ago (394-10, T-394-44). This is the arm's `sourceDigest`-PRESENT case
         // and the loop's write path is the absent one — between them the apply's re-check has both

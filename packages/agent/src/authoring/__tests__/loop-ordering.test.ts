@@ -146,6 +146,7 @@ function observedLoop() {
   const refineCalls: string[] = []
   const compileRequests: JobModelRequest[] = []
   const written: string[] = []
+  const published: string[] = []
 
   const shelf: DraftShelfPortLike = {
     model: () => Promise.resolve({
@@ -211,6 +212,17 @@ function observedLoop() {
         },
       )
     },
+    // 432 D-06: the final write. Not a stage name of its own — it is the tail of `route`, so it can
+    // only happen once `verify` has been observed.
+    publish(request) {
+      expect(observed.at(-1)).toBe('verify')
+      published.push(request.targetPath)
+      return Promise.resolve({
+        kind: 'written' as const,
+        filePath: request.targetPath,
+        contentDigest: STAGED_DRAFT.contentDigest,
+      })
+    },
   }
 
   return {
@@ -220,6 +232,7 @@ function observedLoop() {
     refineQueries,
     compileRequests,
     written,
+    published,
     deps: { read, shelf },
   }
 }

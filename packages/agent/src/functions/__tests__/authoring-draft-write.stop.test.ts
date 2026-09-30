@@ -157,6 +157,7 @@ function routedRun() {
  */
 function deps(options: {
   readonly filed?: AuthoringProposalWrite[]
+  readonly published?: string[]
   /** Answer the keep-eligible receipt instead — the two-sided `drafted` control. */
   readonly drafted?: true
 } = {}): FunctionDeps {
@@ -179,6 +180,15 @@ function deps(options: {
       draft: candidate,
     }),
     verifyDraft: () => Promise.resolve(options.drafted === true ? ACCEPTED : REJECTED_RECEIPT),
+    // 432 D-06: the direct writer. A stopped invocation must never reach it.
+    publish: (request: { readonly targetPath: string }) => {
+      options.published?.push(request.targetPath)
+      return Promise.resolve({
+        kind: 'written' as const,
+        filePath: request.targetPath,
+        contentDigest: DRAFT.contentDigest,
+      })
+    },
   }
 
   const filed = options.filed ?? []
@@ -219,13 +229,16 @@ async function carried(hostDeps: FunctionDeps) {
 describe('the app-broken branch reports the verdict and stops (411 WTST-11)', () => {
   it("a stop writes NO envelope of any kind — the proposals store is read after the invocation, never the loop's return", async () => {
     const filed: AuthoringProposalWrite[] = []
-    const hostDeps = deps({ filed })
+    const published: string[] = []
+    const hostDeps = deps({ filed, published })
     const output = await carried(hostDeps)
 
     expect(output.outcome).toBe('stopped')
     // THE STORE, LISTED AFTER THE INVOCATION. Not `output`, and not the loop's arm: the claim is
-    // about what reached the inbox, and only the port that writes it can answer that.
+    // about what reached the inbox, and only the port that writes it can answer that. Since 432
+    // D-06 the same holds for the suite: a stopped draft is never written.
     expect(filed).toEqual([])
+    expect(published).toEqual([])
 
     // IDEMPOTENCY: a second app-broken invocation against the SAME host writes zero envelopes too.
     // Nothing about a stop is recorded, so there is no second-time path that could differ.
@@ -280,14 +293,16 @@ describe('the app-broken branch reports the verdict and stops (411 WTST-11)', ()
 
   it('carries the stop payload only on a stopped invocation — a drafted one has no stop key', async () => {
     const filed: AuthoringProposalWrite[] = []
-    const output = await carried(deps({ filed, drafted: true }))
+    const published: string[] = []
+    const output = await carried(deps({ filed, published, drafted: true }))
 
     expect(output.outcome).toBe('drafted')
     expect('stop' in output).toBe(false)
     // THE TWO-SIDED CONTROL, restated here so the zero above is a statement about the stop branch
-    // rather than about an inert port that files nothing on any arm.
-    expect(filed.length).toBe(1)
-    expect(filed[0]?.kind).toBe('test-draft')
+    // rather than about an inert writer that writes nothing on any arm. 2026-09-30, 432 D-06: the
+    // drafted arm is WRITTEN rather than filed, so the control counts the write.
+    expect(published).toHaveLength(1)
+    expect(filed).toEqual([])
   })
 
   it('classify keeps the status executed and spells the new outcome word', async () => {

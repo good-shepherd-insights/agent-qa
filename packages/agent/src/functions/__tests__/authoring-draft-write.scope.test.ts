@@ -124,6 +124,11 @@ function harness(options: { readonly unboundDeriver?: true } = {}): {
       applyPatches: (candidate: ParsedDraftLike) =>
         Promise.resolve({ kind: 'staged' as const, draft: candidate }),
       verifyDraft: () => Promise.resolve(ACCEPTED),
+      publish: (request: { readonly targetPath: string }) => Promise.resolve({
+        kind: 'written' as const,
+        filePath: request.targetPath,
+        contentDigest: DRAFT.contentDigest,
+      }),
     },
     authoringRead: {
       getAuthoringBrief: (_intent: string, scope: ScopeKey) => {

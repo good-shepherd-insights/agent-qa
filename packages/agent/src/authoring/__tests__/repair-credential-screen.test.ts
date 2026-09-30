@@ -240,6 +240,8 @@ function harness(emissions: readonly string[], probes: readonly ProbeVerdict[]):
       verifiedPaths.push(input.draftPath)
       return Promise.resolve(FINAL_RECEIPT)
     },
+    // Repair returns a repaired draft; the loop, not repair, writes it. Never reached here.
+    publish: () => Promise.reject(new Error('repair writes no test file')),
   }
 
   return {
@@ -412,6 +414,7 @@ describe('the context root is inside the gate the doc block claims covers the dr
         get: () => { throw new Error('authoring.draft.edit reads no runs') },
       },
       verifyDraft: () => { throw new Error('authoring.draft.edit re-runs no gates') },
+      publish: () => { throw new Error('a draft carrying a credential is never written') },
     }
     const draftEvaluation: DraftEvaluationPort = {
       resolveDraft: () => Promise.resolve({ kind: 'parsed' as const, draft: target }),

@@ -27,6 +27,22 @@ export type {
   StepClassificationRow,
 } from './draft-receipt'
 
+// 432 D-06/D-07: the direct write of a final authored test.
+export {
+  DRAFT_WRITTEN_DISPOSITIONS,
+  draftDispositionWritesTarget,
+} from './disposition'
+export type { DraftWrittenDisposition } from './disposition'
+export {
+  DraftGateBooleansSchema,
+  TEST_FILE_NOT_WRITTEN_REASONS,
+  TEST_FILE_WRITE_REFUSALS,
+  TestFileWriteSchema,
+  WrittenTestReceiptSchema,
+  draftGateBooleans,
+} from './draft-receipt'
+export type { TestFileWrite, WrittenTestReceipt } from './draft-receipt'
+
 // 394 (WTST-07, D-20): the RFC-6902 edit vocabulary. Deliberately NOT the unified-diff `patch/`
 // vocabulary — see the header of `patch-ops.ts` for why the two are not unified.
 export {
