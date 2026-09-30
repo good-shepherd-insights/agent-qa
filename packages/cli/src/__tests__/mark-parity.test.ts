@@ -6,7 +6,6 @@ import { cpSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } 
 import { createServer } from 'node:http'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { PassThrough, Writable } from 'node:stream'
 import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client'
 import { invokeFunction, RUNS_MARK_FUNCTION_ID } from '@vostride/agent-qa-agent'
 import { AgentQaConfigSchema, resolveWorkspacePaths } from '@vostride/agent-qa-core'
@@ -59,17 +58,17 @@ function scratch(template: ReturnType<typeof markFixture>) {
 }
 type Scratch = ReturnType<typeof scratch>
 
+/**
+ * 2026-10-01 (432-16): the terminal confirm factory is deleted and neither composition input
+ * declares a confirm. The port below records any ask and is smuggled past the type as an excess
+ * field, so "none of them asked" stays a measurement rather than a consequence of passing nothing.
+ */
 function terminalConfirmation() {
-  const input = new PassThrough()
   let prompt = ''
-  const output = new Writable({ write(chunk, _encoding, done) {
-    prompt += String(chunk)
-    if (String(chunk).includes('[y/N]')) queueMicrotask(() => input.write('y\n'))
-    done()
-  } })
-  closers.push(() => { input.destroy(); output.destroy() })
   return {
-    confirm: host.createTtyConfirmPort({ isTty: true, input, output }),
+    smuggled: {
+      confirm: { surface: 'tty-prompt', ask: (action: { name: string }) => { prompt += action.name; return true } },
+    } as object,
     prompt: () => prompt,
   }
 }
@@ -87,7 +86,7 @@ async function mcpDoor(scene: Scratch) {
   const declarations: Parameters<typeof resolveMcpTokens>[0] = [{ name: 'writer', tokenEnvVar: 'AGENT_QA_PARITY_WRITER', scopes: ['knowledge-write'] }]
   scene.config.services = { ...scene.config.services, mcp: { tokens: [...declarations], stdio: { grantConfigWrite: false } } }
   writeFileSync(scene.configPath, JSON.stringify(scene.config))
-  const composed = host.composeCliLocalAgent({ configPath: scene.configPath, agentQaRoot: scene.agentQaRoot, confirm: undefined,
+  const composed = host.composeCliLocalAgent({ configPath: scene.configPath, agentQaRoot: scene.agentQaRoot,
     resolveExecutionContext: () => 'local-headless' })
   closers.push(() => composed.close())
   const tokens = resolveMcpTokens(declarations, { AGENT_QA_PARITY_WRITER: token })
@@ -143,7 +142,7 @@ describe('419 mark receipt parity across the four sovereign doors', () => {
     const scenes = [scratch(template), scratch(template), scratch(template), scratch(template)] as const
     const input = { runId: template.handoff.runId, kind }
     const tty = terminalConfirmation()
-    const fnHost = host.composeCliLocalAgent({ configPath: scenes[0].configPath, agentQaRoot: scenes[0].agentQaRoot, confirm: tty.confirm,
+    const fnHost = host.composeCliLocalAgent({ configPath: scenes[0].configPath, agentQaRoot: scenes[0].agentQaRoot, ...tty.smuggled,
       resolveExecutionContext: () => 'local-interactive' })
     closers.push(() => fnHost.close())
     const fn = receiptOf(await invokeFunction(fnHost.registry, RUNS_MARK_FUNCTION_ID, input, host.CLI_FUNCTION_CALLER))
@@ -152,7 +151,7 @@ describe('419 mark receipt parity across the four sovereign doors', () => {
     const cliTty = terminalConfirmation()
     const compose = host.composeCliLocalAgent
     const spy = vi.spyOn(host, 'composeCliLocalAgent').mockImplementation(options => compose({ ...options,
-      confirm: cliTty.confirm, resolveExecutionContext: () => 'local-interactive' }))
+      ...cliTty.smuggled, resolveExecutionContext: () => 'local-interactive' }))
     const output = vi.spyOn(console, 'log').mockImplementation(() => {})
     const errors = vi.spyOn(console, 'error').mockImplementation(() => {})
     let cli: MarkReceipt

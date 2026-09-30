@@ -1,12 +1,10 @@
 // 2026-09-30, 432-11 D-05: a config proposal as the pre-432 pipeline filed it, written to disk.
 //
 // The six config operations now write in the call and file nothing. Proposal records written
-// before that still sit in `.agent-qa/proposals/`, and `proposals.accept` / `config.proposal.apply`
-// still read and apply them until 432-16/17 delete that path. The suites that measure the apply
-// path therefore start from such a record. This helper writes one the way the old pipeline did:
-// the same comment-preserving yaml edit, the same diff primitive, the same digests and the same
-// durable store, so the apply's freshness, byte-equality and attribution checks are measured
-// against the record shape they were written for.
+// before that still sit in `.agent-qa/proposals/`. Since 432-16 no host binds the config apply port
+// that applied them, so `proposals.accept` / `config.proposal.apply` refuse such a record by name;
+// the suites that measure that refusal start from a record this helper writes the way the old
+// pipeline did. 432-17 deletes the verbs, and this helper with them.
 
 import { mintProposalId, writePendingProposalRecord } from '@vostride/agent-qa-knowledge-local'
 import type { ConfigStructuredValue } from '@vostride/agent-qa-agent'

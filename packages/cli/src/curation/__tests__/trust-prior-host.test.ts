@@ -102,7 +102,7 @@ it('copies both noisy origins and their separate counts without admitting gold o
 
 it('production local host loads once and refuses malformed calibration before composition', async () => {
   writeArtifact(fixture())
-  const host = composeCliLocalAgent({ configPath: join(root, 'agent-qa.config.yaml'), agentQaRoot: join(root, '.agent-qa'), confirm: undefined })
+  const host = composeCliLocalAgent({ configPath: join(root, 'agent-qa.config.yaml'), agentQaRoot: join(root, '.agent-qa') })
   try {
     const input = vi.mocked(composeLocalAgent).mock.calls.at(-1)![0]
     expect(input.resolveTrustPriors?.()).toEqual(fixture().priors)
@@ -110,7 +110,7 @@ it('production local host loads once and refuses malformed calibration before co
     writeArtifact(fixture(0.25))
     expect(input.resolveTrustPriors?.()).toEqual(fixture().priors)
   } finally { await host.close() }
-  const replacement = composeCliLocalAgent({ configPath: join(root, 'agent-qa.config.yaml'), agentQaRoot: join(root, '.agent-qa'), confirm: undefined })
+  const replacement = composeCliLocalAgent({ configPath: join(root, 'agent-qa.config.yaml'), agentQaRoot: join(root, '.agent-qa') })
   try {
     expect(vi.mocked(composeLocalAgent).mock.calls.at(-1)![0].resolveTrustPriors?.()).toEqual(fixture(0.25).priors)
     expect(replacement.trustPriorDisclosure.digest).toBe(fixture(0.25).generationId)
@@ -215,7 +215,7 @@ it('composed local run forwards its snapshot through the in-process producer dis
   rmSync(root, { recursive: true, force: true }); root = f.project
   writeArtifact(fixture())
   const produce = vi.spyOn(run, 'produceMembersFromPatterns').mockRejectedValue(new Error('captured producer boundary'))
-  const host = composeCliLocalAgent({ configPath: f.configPath, agentQaRoot: join(root, '.agent-qa'), confirm: undefined })
+  const host = composeCliLocalAgent({ configPath: f.configPath, agentQaRoot: join(root, '.agent-qa') })
   try {
     const input = vi.mocked(composeLocalAgent).mock.calls.at(-1)![0]
     writeArtifact(fixture(0.25))

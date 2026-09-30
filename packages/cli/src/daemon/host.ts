@@ -13,7 +13,6 @@ import { bindTrustPriorsToConfig, trustPriorsForHost } from '../curation/trust-p
 
 import type {
   ConfigReaderPort,
-  DraftApplyPortLike,
   JobModelCapability,
 } from '@vostride/agent-qa-agent'
 import {
@@ -576,21 +575,6 @@ async function resolveDraftAuthoring(
   if (configPath === undefined) return undefined
   const { createDraftAuthoringPort } = await import('../composition/local-agent-host.js')
   return createDraftAuthoringPort(configPath)
-}
-
-/**
- * The one-commit apply, on the same deferred-import seam and the same absent-means-unbound rule
- * (394-10, D-06).
- *
- * A DAEMON THAT CANNOT RESOLVE A CHECKOUT ROOT CANNOT COMMIT ANYTHING, and omitting the field makes
- * an accept of a `test-draft` refuse BY NAME rather than report a write that did not happen.
- */
-async function resolveDraftApply(
-  configPath: string | undefined,
-): Promise<DraftApplyPortLike | undefined> {
-  if (configPath === undefined) return undefined
-  const { createTestDraftApplyPort } = await import('../composition/local-agent-host.js')
-  return createTestDraftApplyPort(configPath)
 }
 
 /**
@@ -2222,7 +2206,6 @@ export async function runDaemonHost(input: DaemonHostOptions): Promise<number> {
     }
 
     const draftAuthoring = await resolveDraftAuthoring(input.configPath)
-    const draftApply = await resolveDraftApply(input.configPath)
     localAgent = operations.composeLocalAgent({
       ...(input.configPath === undefined ? {} : {
         readMaskingSources: (await import('../composition/local-agent-host.js'))
@@ -2316,7 +2299,7 @@ export async function runDaemonHost(input: DaemonHostOptions): Promise<number> {
         // nothing and releases nothing — a holder that re-acquires is told `held` by itself, and
         // one that released would end its own authority mid-drain.
         //
-        // CONDITIONAL ON `configPath`, on the `draftAuthoring`/`draftApply` idiom below: a legacy
+        // CONDITIONAL ON `configPath`, on the `draftAuthoring` idiom below: a legacy
         // daemon with no configuration has no eval root by construction (see the trust-prior
         // validation at startup), and inventing a path for it would compose a screening leg that
         // can only ever answer `posture-unavailable`. A host that bound no gate did not screen —
@@ -2345,15 +2328,8 @@ export async function runDaemonHost(input: DaemonHostOptions): Promise<number> {
       // compose the same root. Conditionally spread, so a daemon with no workspace lists the
       // capability `unbound` BY NAME rather than binding one that cannot resolve a draft path.
       ...(draftAuthoring === undefined ? {} : { draftAuthoring }),
-      // 394-10 D-06 / 394-16: bound on its OWN condition, and bound here so both hosts compose the
-      // same root rather than because a daemon accept can reach it. `DAEMON_FUNCTION_CALLER` is
-      // `origin: 'agent'` (server.ts:105) and `proposals.accept` declares `requiresHumanOrigin`, so
-      // a via-daemon accept is refused pre-dispatch, before any grant is consulted — and the class
-      // an accept-with-always would ask for is `fn:proposals.accept`, which is protected, so no
-      // standing approval can satisfy it either. The binding is kept rather than dropped: an op
-      // listed `unbound` on one host and bound on the other would be a second answer to what this
-      // composition owns, which is the 385 D-15 rule the root exists to hold.
-      ...(draftApply === undefined ? {} : { draftApply }),
+      // 432-16 (D-07): no one-commit test-draft apply is bound here or on the CLI host — agent-qa
+      // makes no git commits — so both hosts list the pre-432 accept's test-draft route unbound.
       // 387-08 D-18 / D-5: this process IS the writer-lease holder, so an apply it performs hands
       // in the authority it already owns rather than asking for a lease it cannot be granted
       // twice — a holder that calls `acquireWriterLease` is told `held` by itself and then has

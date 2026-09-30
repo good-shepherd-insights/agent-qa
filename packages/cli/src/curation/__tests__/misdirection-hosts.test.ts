@@ -279,7 +279,6 @@ async function terminalRunOptions() {
   const host = composeCliLocalAgent({
     configPath: created.configPath,
     agentQaRoot: created.agentQaRoot,
-    confirm: undefined,
     config: TEST_CONFIG,
     model: () => TEST_MODEL,
   })

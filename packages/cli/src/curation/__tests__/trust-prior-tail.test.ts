@@ -149,7 +149,7 @@ it.each([false, true])('carries the selected local snapshot into its delayed tai
   const selectedArtifact = otherProject ? artifact(selected.project, 0.5) : old
   const drive = vi.spyOn(driveModule, 'runInProcessCliRun').mockResolvedValue({ runId: 'fixture-run' } as never)
   const composed = vi.spyOn(tailModule, 'composeCliPostRunTail').mockReturnValue({ drain: vi.fn(async () => undefined), finish: vi.fn(async () => undefined), report: vi.fn() })
-  const host = composeCliLocalAgent({ configPath: f.configPath, agentQaRoot: f.agentQaRoot, confirm: undefined })
+  const host = composeCliLocalAgent({ configPath: f.configPath, agentQaRoot: f.agentQaRoot })
   try {
     const local = vi.mocked(composeLocalAgent).mock.calls.at(-1)![0]
     artifact(f.project, 0.25)

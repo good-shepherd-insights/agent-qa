@@ -572,7 +572,6 @@ describe('agent-qa proposals accept --always, over a grant ledger the build cann
     const host = composeCliLocalAgent({
       agentQaRoot: ws.agentQaRoot,
       configPath: ws.configPath,
-      confirm: { surface: 'tty-prompt', ask: () => true },
     })
     try {
       return await runSafetyScope({ executionContext: 'local-interactive' }, async () =>

@@ -55,7 +55,8 @@ it.each([true, false])('projects real mark chat with active masking=%s and prese
     model,
     feedback: { mark, marksFor: async () => [] },
     resolveExecutionContext: () => 'local-interactive',
-    confirm: { surface: 'tty-prompt', ask: confirm },
+    // 432-16 (D-14): the input declares no confirm; the spy is smuggled past the type.
+    ...{ confirm: { surface: 'tty-prompt', ask: confirm } } as object,
     observeSessionEvent: (_sessionId, event) => { observed.push(event) },
   })
   try {

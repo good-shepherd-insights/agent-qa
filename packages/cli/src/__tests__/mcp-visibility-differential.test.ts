@@ -140,7 +140,6 @@ beforeAll(async () => {
   const host = composeCliLocalAgent({
     agentQaRoot: where.agentQaRoot,
     configPath: where.configPath,
-    confirm: undefined,
   })
 
   // Produced, not literal, on the credential side too: the entries go through the SHIPPED resolver

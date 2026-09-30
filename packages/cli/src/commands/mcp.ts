@@ -382,13 +382,9 @@ export function createMcpCommand(): Command {
           // config change is a distinct door from the two interactive ones, and the person who
           // later accepts it in their inbox is entitled to know which asked.
           mintingSurface: MCP_FUNCTION_CALLER.surface,
-          // 396-01 D-09: the confirm port is REFUSED, not merely unsupplied. The field is present
-          // and `undefined`, which this composition root reads as "this host must never ask" —
-          // absent would default to a tty prompt, and on the one process whose stdout IS the
-          // JSON-RPC channel a prompt written there does not go unanswered, it breaks the
-          // connection. An ask-tier capability therefore fails closed here, which is the correct
-          // answer for a caller with nobody behind it.
-          confirm: undefined,
+          // 432-16 (D-14): no confirm port exists to refuse. 396-01 D-09 passed `confirm: undefined`
+          // here so the host would never write a prompt onto the JSON-RPC stdout; the host has no
+          // prompt and no such field now.
           // `applyDelegate` is deliberately NOT passed. The composition root's own default is
           // already a closure over `invokeViaDaemon` — the same socket every other capability
           // crosses — so an apply that needs a lease a running daemon holds is handed to that

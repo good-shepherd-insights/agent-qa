@@ -50,7 +50,6 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { CHAT_SESSIONS_SUBDIR } from '../session/jsonl-session-log.js'
 import { composeLocalAgent } from '../composition/compose-local-agent.js'
 import type {
-  ChatConfirmBindings,
   LocalAgentHost,
 } from '../composition/compose-local-agent.js'
 
@@ -110,7 +109,8 @@ describe('the composed session directives reach something (D-04 / D-21 / RESEARC
     options: {
       chatModel?: ChatLanguageModel
       chatModelFor?: (name: string) => ChatLanguageModel | Promise<ChatLanguageModel>
-      chatConfirm?: (bindings: ChatConfirmBindings) => undefined
+      // 432-16: the composition declares no `chatConfirm`; a factory arrives here as an excess field.
+      chatConfirm?: (bindings: unknown) => undefined
     } = {},
   ): LocalAgentHost {
     const composed = composeLocalAgent({

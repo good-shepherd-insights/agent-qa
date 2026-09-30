@@ -58,11 +58,9 @@ import type {
   ReconcileStrategy,
   AnalysisArtifactReaderPort,
   ClockPort,
-  ConfigApplyPortLike,
   ConfigFilesPortLike,
   ConfigReaderPort,
   ConfigScaffoldContentPortLike,
-  ConfigUndoSourcePortLike,
   ConfigValidatePortLike,
   EntityDirectoryPort,
   FunctionDeps,
@@ -74,7 +72,6 @@ import type {
   KnowledgeReaderPort,
   PostRunJobCapabilities,
   RecurrenceLadder,
-  DraftApplyPortLike,
   RecurrenceProvider,
   RunInvocationPort,
   RunsReaderPort,
@@ -201,7 +198,6 @@ import {
   setActiveExecutionContextResolver,
 } from '@vostride/agent-qa-safety'
 import type {
-  ConfirmPort,
   MaskingSeedSources,
   StandingApprovalReader,
 } from '@vostride/agent-qa-safety'
@@ -244,7 +240,6 @@ import type {
   ResolvePromotionPosture,
   FunctionCaller,
   FunctionScope,
-  GrantRecordOutcome,
   JobKind,
   ProposalRecord,
   QuarantineEntryStateName,
@@ -1943,26 +1938,16 @@ export interface ComposeLocalAgentInput {
    * CHECKOUT ROOT, and neither this package nor `agent` may name `@vostride/agent-qa-core`.
    */
   readonly draftAuthoring?: DraftAuthoringPort
-  /**
-   * 394-10 D-06 / WTST-01: the one-commit apply an accepted `test-draft` reaches.
-   *
-   * Host-supplied for the reason `mintQuarantineIdentityPath` and `draftAuthoring` are: writing a
-   * file into a suite and committing it needs the CHECKOUT ROOT and `workspaceRelativeIdentityPath`,
-   * and neither this package nor `agent` may name `@vostride/agent-qa-core`.
-   *
-   * DELIBERATELY NOT GATED ON `runExecution` the way `draftAuthoring` is. A host that cannot start
-   * runs can still hold a person's accept — committing a draft somebody already decided about needs
-   * a checkout root and nothing else — so folding it into `authoringLoopHost` would have made an
-   * accept refuse on a host that is perfectly able to honour it.
-   */
-  readonly draftApply?: DraftApplyPortLike
+  // 432-16 (D-07): `draftApply`, `configApply` and `configUndoSource` are gone from this input. They
+  // were the one-commit test-draft apply, the one-commit config apply and the git-history read the
+  // config undo proposed from; agent-qa makes no git commits, so no host supplies them and the
+  // pre-432 verbs that named them answer unbound until 432-17 deletes the verbs.
   /**
    * 395-01 D-03/D-17 · CFGM-01/04: the committed config file SET as RAW BYTES, plus the
    * comment-preserving field edit over them.
    *
-   * Host-supplied for `draftApply`'s reason and one more of its own: the edit is `yaml`'s Document
-   * API, and neither this package nor `agent` may name that dependency under their ownership
-   * contracts. The CLI host already depends on it and already owns the file format.
+   * Host-supplied because the edit is `yaml`'s Document API, and neither this package nor `agent`
+   * may name that dependency under their ownership contracts. The CLI host already depends on it and already owns the file format.
    */
   readonly configFiles?: ConfigFilesPortLike
   /**
@@ -1973,25 +1958,9 @@ export interface ComposeLocalAgentInput {
    */
   readonly configValidate?: ConfigValidatePortLike
   /**
-   * 395-01 CFGM-03: the ONE commit an accepted config proposal makes in a person's own history.
-   *
-   * Host-supplied for `draftApply`'s reason, and NOT gated on anything beside it for the same
-   * reason that one is not gated on `runExecution`: committing a change somebody already decided
-   * about needs a checkout root and nothing else.
-   */
-  readonly configApply?: ConfigApplyPortLike
-  /**
-   * 395-06 D-07 · CFGM-03: the repository's own account of the last agent configuration commit.
-   *
-   * A SEPARATE OPTIONAL BINDING, not a verb on `configApply`. Its absence leaves
-   * `config.undo.propose` — and only that op — unbound, which is the honest catalogue answer for a
-   * host that can commit configuration but cannot read what it committed.
-   */
-  readonly configUndoSource?: ConfigUndoSourcePortLike
-  /**
    * 395-08 D-04 · CFGM-05: the shared scaffold CONTENT, rendered by the host that owns it.
    *
-   * A SEPARATE OPTIONAL BINDING for `configUndoSource`'s reason. The substance lives beside
+   * A SEPARATE OPTIONAL BINDING. The substance lives beside
    * `init`'s own write path in `packages/cli`, which neither this package nor `packages/agent` may
    * import; its absence leaves `config.project.scaffold` — and only that op — unbound, which is the
    * honest catalogue answer for a host that can edit a configuration but cannot create one.
@@ -2176,12 +2145,6 @@ export interface ComposeLocalAgentInput {
     | Promise<PostRunJobCapabilities['analysisTokenBudget']>
     | PostRunJobCapabilities['analysisTokenBudget']
   /**
-   * UNREAD SINCE 432-13 (D-14/D-15). This was how a host asked a person to confirm an ask-tier
-   * capability; the op gate that asked is gone, so nothing in this composition reads it. 432-16
-   * removes the field with the last host factories that still build one.
-   */
-  readonly confirm?: ConfirmPort
-  /**
    * The context every policy decision in this composition's registry is taken in (400-01, D-05).
    *
    * INJECTED RATHER THAN PINNED ON THE PROCESS, and that is the whole reason this field exists.
@@ -2299,18 +2262,10 @@ export interface ComposeLocalAgentInput {
    */
   readonly chatModelFor?: (name: string) => ChatLanguageModel | Promise<ChatLanguageModel>
   /**
-   * UNREAD SINCE 432-13 (D-14). This was the factory for a chat session's inline confirm; nothing
-   * asks any more, so the composition no longer calls it and writes no `approval_decision` row.
-   * 432-16 removes the field with the host factories.
-   */
-  readonly chatConfirm?: (bindings: ChatConfirmBindings) => ConfirmPort | undefined
-  /**
-   * Where a chat session PRINTS a mid-turn artifact a person must read before deciding (395-13,
-   * D-14).
+   * Where a chat session PRINTS a mid-turn artifact a person reads (395-13, D-14).
    *
-   * A PLAIN FUNCTION rather than `chatConfirm`'s factory, and the difference is the whole of what
-   * this seam is: a confirm needs this composition's grant mint and session log to mean anything,
-   * while printing needs nothing from here at all. The surface is handed text and writes it.
+   * A PLAIN FUNCTION: printing needs nothing from this composition. The surface is handed text and
+   * writes it. (432-16 deleted the `chatConfirm` factory that used to sit beside it.)
    *
    * PASSED THROUGH UNTOUCHED to the turn engine's `present`. Absent ⇒ the engine renders nothing
    * mid-turn, which is every host that is not a REPL — and no gate, receipt or session row moves.
@@ -2318,47 +2273,10 @@ export interface ComposeLocalAgentInput {
   readonly chatPresent?: (text: string) => void | Promise<void>
 }
 
-/**
- * What a chat confirm wrapper is handed (plan 08, T-392-26).
- *
- * The mint is a CLOSURE OVER THIS COMPOSITION'S OWN `StandingGrantsPort` — the same instance
- * `proposals.accept --always` records through, with its protected-class refusal, its
- * already-granted fold, its writer lease and its committed ledger. A surface that wrote a grant
- * itself would be a second mint with none of those, and the file it produced would look right.
- */
-export interface ChatConfirmBindings {
-  recordStandingApproval: (actionClass: string) => Promise<GrantRecordOutcome>
-  onDecision: (decision: ChatApprovalDecisionRecord) => void | Promise<void>
-}
-
-/**
- * What the session log records about one decision — the ONE declaration of it (401-01, D-13).
- *
- * DECLARED HERE AND NOWHERE ELSE. The cli surface used to carry a structurally-mirrored copy of
- * this interface, and the two were free to drift the moment either producer changed. `cli` may
- * import `agent-local` and the reverse is forbidden, so this is where the canon lives; the census
- * cell beside the confirm suites reds if a second declaration is ever minted (the promote's
- * companion invariant, on the one-sided-hardening class phases 388/390/392 and 400-17 disproved).
- *
- * `sessionId` IS REQUIRED, AND ITS REQUIREDNESS IS THE FIX. The writer below used to infer the
- * conversation by counting turns in flight, which meant a person's approval vanished from their own
- * transcript whenever a second conversation happened to be mid-turn (NEW-AUDIT-01, measured
- * deterministic at 400-17). The caller is already resolved at every door — the dashboard scopes an
- * asking session around each turn, the REPL holds its own — so the id is delivered rather than
- * guessed, and an optional field would have let the drop persist on whichever door forgot to fill
- * it in.
- */
-export interface ChatApprovalDecisionRecord {
-  /** The `fn:`-prefixed class the GATE produced, never one a surface spelled (D-04 / 391-05). */
-  readonly actionClass: string
-  readonly decision: 'accept' | 'accept-always' | 'deny'
-  /**
-   * The conversation whose watcher answered. Resolved by the door that asked, never from a request
-   * payload: a caller that could name the conversation a decision is recorded against could write
-   * one person's approval into another person's transcript.
-   */
-  readonly sessionId: string
-}
+// 432-16 (D-14/D-15): `ChatConfirmBindings` and `ChatApprovalDecisionRecord` are deleted with the
+// chat confirm they served. Nothing asks, so no grant is minted from chat and no `approval_decision`
+// row is written; sessions written before 432 still carry such rows and the session guard in
+// `schema/src/chat/session-events.ts` still reads them.
 
 /**
  * The live chat session a host holds beside the registry (plan 08, RESEARCH Open Q2).
@@ -2960,9 +2878,9 @@ export function composeLocalAgent(input: ComposeLocalAgentInput): LocalAgentHost
 
   // 392-12 / CR-01: WHICH SESSIONS ARE OPEN RIGHT NOW, and which turns each of them has recorded.
   //
-  // The engine owns a session for the length of a turn, but two writers here are OUTSIDE a turn's
-  // call stack and still belong to one: the confirm port's `onDecision`, reached from inside the
-  // gate during dispatch, and `chat.abortActiveTurn`, reached from a signal handler. Both used to
+  // The engine owns a session for the length of a turn, but a writer here is OUTSIDE a turn's
+  // call stack and still belongs to one: `chat.abortActiveTurn`, reached from a signal handler
+  // (the confirm port's `onDecision` was the other until 432-16 deleted it). Both used to
   // append through the adapter, which — while the adapter had one descriptor — meant "whichever
   // session opened last". They now write through the handle of the session whose file already
   // carries the turn in question, and the ATTRIBUTION IS THE LOG'S OWN: every event carries a
@@ -3779,30 +3697,13 @@ export function composeLocalAgent(input: ComposeLocalAgentInput): LocalAgentHost
           },
         },
       }),
-      // 394-10 D-05/D-06: the ONE write to a user's git history this product makes, bound as the
-      // host handed it and spread on its OWN condition rather than the loop's.
+      // 432-16 (D-07): no test-draft or config commit port and no undo source is bound — agent-qa
+      // makes no git commits. The final authored test is written through `draftShelf.publish`.
       //
-      // D-05's two halves, recorded where the binding is. FIRST: every test-draft accept is an
-      // individual human decision. The write reaches this port with no gate evaluation of its own,
-      // so the class an accept-with-always asks the mint for is `fn:proposals.accept` — a member of
-      // the closed protected set — and the mint refuses it as `protected-class` beside the
-      // successful apply (394-16, resolving CR-04). No standing-approval path over draft accepts
-      // exists until a registered apply op carrying its own class lands. SECOND (superseded
-      // 2026-09-30 by 432 D-06): keep-eligible used to NEVER auto-write. The loop and the edit op
-      // now write their final drafts through `draftShelf.publish` and file nothing, so this port is
-      // reached only by accepting an older proposal; 432-16/432-17 delete it with the inbox.
-      ...(input.draftApply === undefined ? {} : { draftApply: input.draftApply }),
       // 395-01 D-01/D-03/D-17 · CFGM-01/03/04: the config editor's host half, each spread on its
-      // OWN condition rather than as one bundle. A host that can read config files and cannot
-      // commit is a real host — the daemon before it holds a checkout root is one — and reporting
-      // the whole config story absent because one of four is missing is exactly the state
-      // `unbound` exists to distinguish from a capability that never existed.
+      // OWN condition rather than as one bundle, so a host missing one reports that one `unbound`.
       ...(input.configFiles === undefined ? {} : { configFiles: input.configFiles }),
       ...(input.configValidate === undefined ? {} : { configValidate: input.configValidate }),
-      ...(input.configApply === undefined ? {} : { configApply: input.configApply }),
-      ...(input.configUndoSource === undefined
-        ? {}
-        : { configUndoSource: input.configUndoSource }),
       ...(input.scaffoldContent === undefined
         ? {}
         : { scaffoldContent: input.scaffoldContent }),

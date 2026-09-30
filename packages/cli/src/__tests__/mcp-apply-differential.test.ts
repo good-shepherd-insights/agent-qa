@@ -257,7 +257,7 @@ beforeEach(() => {
   git('add', '--', '.gitignore', CONFIG_FILE)
   git('commit', '--quiet', '-m', 'seed')
 
-  host = composeCliLocalAgent({ agentQaRoot, configPath, confirm: undefined })
+  host = composeCliLocalAgent({ agentQaRoot, configPath })
   masking = composeMcpMasking({ tokens: [], env: {} })
 })
 

@@ -45,7 +45,7 @@ async function harness(trustMode: boolean) {
   writeFileSync(fixture.configPath, JSON.stringify(config))
   const host = composeCliLocalAgent({
     agentQaRoot: fixture.agentQaRoot, configPath: fixture.configPath,
-    confirm: undefined, resolveExecutionContext: () => 'local-headless',
+    resolveExecutionContext: () => 'local-headless',
   })
   cleanups.push(() => host.close())
   const tokens = resolveMcpTokens(config.services!.mcp!.tokens, {

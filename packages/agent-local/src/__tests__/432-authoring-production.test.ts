@@ -482,7 +482,6 @@ describe('authoring reaches the production boundary on both chains (432-04, D-18
       model: input.model ?? (() => {
         throw new Error('this case authors nothing, so no model is resolved')
       }),
-      confirm: { surface: 'tty-prompt', ask: () => true },
       runExecution: input.execution,
       draftAuthoring: draftAuthoring(workspace, input.config),
     })

@@ -185,13 +185,17 @@ describe('one human ask, N gated runs, driven from the authoring loop (D-08 · U
         configPath: fixture.configPath,
         dispatchGrants,
         resolveExecutionContext: () => 'local-interactive',
-        confirm: {
-          surface: 'tty-prompt',
-          ask: (action: RiskActionDescriptor) => {
-            asked.push(action.name)
-            return false
+        // 432-16 (D-14): the input declares no confirm, so the recording port is smuggled past the
+        // type; nothing may read it.
+        ...{
+          confirm: {
+            surface: 'tty-prompt',
+            ask: (action: RiskActionDescriptor) => {
+              asked.push(action.name)
+              return false
+            },
           },
-        },
+        } as object,
         model: () => ({
           modelId: 'fixture:authoring-dispatch-chain',
           generate: () => Promise.resolve({ text: MODEL_DOCUMENT }),
@@ -276,13 +280,17 @@ describe('one human ask, N gated runs, driven from the authoring loop (D-08 · U
         agentQaRoot: fixture.agentQaRoot,
         configPath: fixture.configPath,
         resolveExecutionContext: () => 'local-interactive',
-        confirm: {
-          surface: 'tty-prompt',
-          ask: (action: RiskActionDescriptor) => {
-            asked.push(action.name)
-            return true
+        // 432-16 (D-14): the input declares no confirm, so the recording port is smuggled past the
+        // type; nothing may read it.
+        ...{
+          confirm: {
+            surface: 'tty-prompt',
+            ask: (action: RiskActionDescriptor) => {
+              asked.push(action.name)
+              return true
+            },
           },
-        },
+        } as object,
         model: () => ({
           modelId: 'fixture:authoring-dispatch-chain',
           generate: () => Promise.resolve({ text: MODEL_DOCUMENT }),

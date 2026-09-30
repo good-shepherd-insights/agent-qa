@@ -257,7 +257,7 @@
       }
     },
     {
-      "bindingStatusAtRoot": "bound",
+      "bindingStatusAtRoot": "unbound",
       "classifies": true,
       "id": "config.proposal.apply",
       "inputSchemaDigest": "cf1854b304be80b60d4100ea341a031fef65230ac16e9563eae88bd151cd0e7d",
@@ -318,7 +318,7 @@
       }
     },
     {
-      "bindingStatusAtRoot": "bound",
+      "bindingStatusAtRoot": "unbound",
       "classifies": true,
       "id": "config.undo.propose",
       "inputSchemaDigest": "71fc596a20f27da3dec80050e5d1f553eba34aea24c2853b853488a811e6b892",

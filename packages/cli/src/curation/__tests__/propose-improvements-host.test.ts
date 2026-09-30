@@ -274,7 +274,6 @@ describe('the terminal host BINDS the proposal stage rather than declaring it (4
     composeCliLocalAgent({
       configPath: join(root, 'agent-qa.config.yaml'),
       agentQaRoot: join(root, '.agent-qa'),
-      confirm: undefined,
       config: TEST_CONFIG,
       model: () => TEST_MODEL,
       postRun: {
@@ -316,7 +315,6 @@ describe('the terminal host BINDS the proposal stage rather than declaring it (4
     composeCliLocalAgent({
       configPath: join(root, 'agent-qa.config.yaml'),
       agentQaRoot: join(root, '.agent-qa'),
-      confirm: undefined,
       config: TEST_CONFIG,
       model: () => TEST_MODEL,
       postRun: {

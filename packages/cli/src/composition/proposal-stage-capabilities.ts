@@ -1,9 +1,10 @@
 // The proposal stage's host-owned capabilities (Phase 422 plan 09, D-01/D-09/D-10/D-13..D-15).
 //
 // A MODULE OF ITS OWN, and the reason is measured rather than aesthetic. `daemon/host.ts` composes
-// these too, and importing them from `composition/local-agent-host.ts` would pull four thousand
-// lines of terminal-host machinery — yaml document editing, a readline confirm port, a child
-// spawn, the config apply/scaffold surface — into the daemon's module graph. The daemon's own
+// these too, and importing them from `composition/local-agent-host.ts` would pull thousands of
+// lines of terminal-host machinery — yaml document editing, the draft shelf and the config
+// write/scaffold surface — into the daemon's module graph. (The readline confirm port and the
+// git child spawns of the one-commit apply it also carried were deleted by 432-16.) The daemon's own
 // child-process tracers load this package's SOURCE under Node's strip-only TypeScript loader, and
 // that graph is where the cost stops being theoretical: it is loaded for real, in a real child, on
 // every daemon startup those cells drive.

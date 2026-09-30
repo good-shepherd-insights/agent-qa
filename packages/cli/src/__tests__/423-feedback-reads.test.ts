@@ -489,7 +489,7 @@ describe('423-18 marks history registration and host binding (D-19)', () => {
     expect(Reflect.get(agent, 'runsMarksHistorySpec')).toBeUndefined()
 
     const s = coldScene()
-    const composed = host.composeCliLocalAgent({ configPath: s.configPath, agentQaRoot: s.agentQaRoot, confirm: undefined,
+    const composed = host.composeCliLocalAgent({ configPath: s.configPath, agentQaRoot: s.agentQaRoot,
       resolveExecutionContext: () => 'local-headless' })
     closers.push(() => composed.close())
     expect(composed.registry.list(host.CLI_FUNCTION_CALLER).find(entry => entry.id === HISTORY)).toMatchObject({
@@ -524,7 +524,7 @@ describe('423-18 marks history registration and host binding (D-19)', () => {
     expect(process.exitCode).toBeUndefined()
     const viaFn = expectMaskedOrdinalHistory(JSON.parse(stdout.join('\n')))
 
-    const composed = host.composeCliLocalAgent({ configPath: s.configPath, agentQaRoot: s.agentQaRoot, confirm: undefined,
+    const composed = host.composeCliLocalAgent({ configPath: s.configPath, agentQaRoot: s.agentQaRoot,
       resolveExecutionContext: () => 'local-headless' })
     closers.push(() => composed.close())
     const viaRegistry = expectMaskedOrdinalHistory(
@@ -896,7 +896,7 @@ describe('423-19 runs.mark.preview registration and composed invocation (D-16)',
     expect(Reflect.get(agent, 'runsMarkPreviewSpec')).toBeUndefined()
 
     const s = coldScene()
-    const composed = host.composeCliLocalAgent({ configPath: s.configPath, agentQaRoot: s.agentQaRoot, confirm: undefined,
+    const composed = host.composeCliLocalAgent({ configPath: s.configPath, agentQaRoot: s.agentQaRoot,
       resolveExecutionContext: () => 'local-headless' })
     closers.push(() => composed.close())
     expect(composed.registry.list(host.CLI_FUNCTION_CALLER).find(entry => entry.id === PREVIEW)).toMatchObject({
@@ -941,7 +941,7 @@ describe('423-19 runs.mark.preview registration and composed invocation (D-16)',
     expect(process.exitCode).toBeUndefined()
     const viaFn = expectColdMaskedPreview(JSON.parse(stdout.join('\n')))
 
-    const composed = host.composeCliLocalAgent({ configPath: s.configPath, agentQaRoot: s.agentQaRoot, confirm: undefined,
+    const composed = host.composeCliLocalAgent({ configPath: s.configPath, agentQaRoot: s.agentQaRoot,
       resolveExecutionContext: () => 'local-headless' })
     closers.push(() => composed.close())
     const viaRegistry = expectColdMaskedPreview(await agent.invokeFunction(composed.registry, PREVIEW, input(), host.CLI_FUNCTION_CALLER))
@@ -966,7 +966,7 @@ describe('423-19 runs.mark.preview registration and composed invocation (D-16)',
   it('PREVIEW-LEDGER-CORRUPT-PARITY: preview reads the ledger once, and a corrupt ledger fails it with runs.mark\'s own typed error', async () => {
     const s = coldScene()
     const composed = host.composeCliLocalAgent({ configPath: s.configPath, agentQaRoot: s.agentQaRoot,
-      confirm: { surface: 'tty-prompt', ask: async () => true }, resolveExecutionContext: () => 'local-interactive' })
+      resolveExecutionContext: () => 'local-interactive' })
     closers.push(() => composed.close())
     const failureOf = async (opId: string) => await agent.invokeFunction(composed.registry, opId, input(), host.CLI_FUNCTION_CALLER)
       .then(result => { throw new Error(`${opId} answered ${JSON.stringify(result)} over a corrupt ledger`) }, (error: unknown) => error)

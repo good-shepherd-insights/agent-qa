@@ -4,9 +4,11 @@
 // 2026-09-30, 432-11 D-05/D-07/D-14: THE SCAFFOLD WRITES IN THE CALL through the real direct writer:
 // no proposal, no confirm, no commit. The cells below that pinned the proposal, the confirm and the
 // one-commit apply are re-spelled in place to the direct write — the goldens are the answer's own
-// `shownDiff`, the bytes are read off disk, and the commit count does not move. The
-// `config.proposal.apply` from-zero arm (14) is still shipped for records already on disk until
-// 432-17, so it starts from a pre-432 scaffold record written by `filePre432ConfigProposal`.
+// `shownDiff`, the bytes are read off disk, and the commit count does not move.
+//
+// 2026-10-01, 432-16 D-07: no host binds a config apply port or an undo source any more, so the
+// `config.proposal.apply` from-zero arm (14)-(14b) refuses a pre-432 scaffold record by name and
+// writes and commits nothing, and the undo (11) answers unbound.
 //
 // THE PRODUCER IS PRODUCTION'S. `createScaffoldContentPort` is the same factory
 // `composeCliLocalAgent` binds, over `commands/scaffold-content.ts` — the one module `agent-qa init`
@@ -94,7 +96,6 @@ import {
 } from '@vostride/agent-qa-schema'
 import type {
   ConfigChangeOutput,
-  ConfigProposeOutput,
   FunctionCaller,
   ProposalRecord,
 } from '@vostride/agent-qa-schema'
@@ -106,9 +107,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   CLI_FUNCTION_CALLER,
   composeCliLocalAgent,
-  createConfigApplyPort,
   createConfigFilesPort,
-  createConfigUndoSourcePort,
   createConfigValidatePort,
   createConfigWritePort,
   createScaffoldContentPort,
@@ -199,12 +198,6 @@ function commitCount(): number {
   return Number(git('rev-list', '--count', 'HEAD').stdout.trim())
 }
 
-function headFiles(): string[] {
-  return git('show', '--stat', '--name-only', '--format=', 'HEAD').stdout
-    .split('\n').map((line) => line.trim()).filter((line) => line.length > 0)
-    .sort()
-}
-
 function storedRecord(proposalId: string): ProposalRecord {
   return JSON.parse(
     readFileSync(join(agentQaRoot, 'proposals', `${proposalId}.json`), 'utf8'),
@@ -274,8 +267,7 @@ function registryFor(options: { readonly confirm?: boolean } = {}) {
     proposalsInbox: inbox,
     configFiles: createConfigFilesPort(configPath),
     configValidate: createConfigValidatePort(),
-    configApply: createConfigApplyPort(configPath),
-    configUndoSource: createConfigUndoSourcePort(configPath),
+    // 432-16 (D-07): no config apply port and no undo source — the production host binds neither.
     // THE REAL PRODUCER. Not a double, and not a copy — the factory the CLI composition binds.
     scaffoldContent: createScaffoldContentPort(),
     // 432-11: THE REAL DIRECT WRITER the scaffold publishes through.
@@ -526,19 +518,18 @@ describe('the scaffold writes exactly the bytes it shows, in the call (CFGM-03/C
 
 describe('undoing a scaffold is WINDOWS 128\'s case, measured (D-07 · 395-06)', () => {
   it('(11) a direct scaffold leaves no agent commit, so the undo has nothing to take back', async () => {
-    // 432-11 D-07/D-09: the scaffold's files are plain edits a person reverts with git. There is no
-    // agent configuration commit for `config.undo.propose` to locate, so it refuses by name and
-    // files and commits nothing — the files stay exactly as the scaffold wrote them.
+    // 432-11 D-07/D-09: the scaffold's files are plain edits a person reverts with git.
+    // RE-SPELLED 2026-10-01 (432-16): the undo used to find no agent commit and refuse
+    // `no-agent-commit`; its git-history source is no longer bound, so it refuses unbound by name
+    // before reading any history, and files and commits nothing.
     const registry = registryFor({ confirm: true })
     applied(await scaffold(registry, 'booking.com'))
     const written = readFileSync(configPath, 'utf8')
 
     const before = commitCount()
-    const undone = await invokeFunction(
-      registry, 'config.undo.propose', {}, HUMAN,
-    ) as ConfigProposeOutput
+    await expect(invokeFunction(registry, 'config.undo.propose', {}, HUMAN))
+      .rejects.toMatchObject({ name: 'FunctionNotBoundError' })
 
-    expect(undone).toMatchObject({ outcome: 'refused', reason: 'no-agent-commit' })
     expect(commitCount()).toBe(before)
     expect(readFileSync(configPath, 'utf8')).toBe(written)
     expect(existsSync(join(agentQaRoot, 'proposals'))).toBe(false)
@@ -685,10 +676,12 @@ async function invokeComposed(input: {
   readonly confirmCalls: number
 }> {
   const ask = vi.fn(() => input.confirmAnswer)
+  // 432-16 (D-14): the input declares no confirm; one smuggled past the type is never read.
+  const smuggledConfirm = { confirm: { surface: 'tty-prompt', ask } }
   const host = composeCliLocalAgent({
     agentQaRoot,
     configPath,
-    confirm: { surface: 'tty-prompt', ask },
+    ...smuggledConfirm,
   })
   try {
     const answer = await runSafetyScope({ executionContext: 'local-interactive' }, async () =>
@@ -725,69 +718,60 @@ async function composedScaffoldId(): Promise<string> {
 }
 
 describe('config.proposal.apply reaches its own answer from ZERO (395-12 · SC-5\'s third arm)', () => {
-  // RE-SPELLED 2026-09-30 (432-13, D-14/D-15): was '... with the confirm OBSERVED asked'. The
-  // apply verb asks nobody now; the scaffold lands as one commit with the confirm never called.
-  it('(14) applies a from-zero scaffold as ONE commit, with no confirm asked', async () => {
+  // RE-SPELLED 2026-09-30 (432-13, D-14/D-15): was '... with the confirm OBSERVED asked'.
+  // RE-SPELLED 2026-10-01 (432-16, D-07): was '(14) applies a from-zero scaffold as ONE commit, with
+  // no confirm asked'. The composed CLI host binds no config apply port, so the verb refuses by name
+  // before it reads the record or the (absent) config — never the pre-fix `Config file not found`.
+  it('(14) a pre-432 from-zero scaffold record is refused unbound, and nothing is written or committed', async () => {
     const id = await composedScaffoldId()
     const before = commitCount()
 
-    // RED PRE-FIX: this line threw `Config file not found: <root>/agent-qa.config.yaml`, from
-    // `loadRequiredConfigFile ← resolveConfig ← resolveKnowledgeRoot ← grants.list ←
-    // coveringGrantInForce ← applyConfigProposalById`.
-    const { answer, error, confirmCalls } = await invokeComposed({
+    const { error, confirmCalls } = await invokeComposed({
       functionId: 'config.proposal.apply',
       payload: { proposalId: id },
       confirmAnswer: true,
     })
-    // Named rather than swallowed: a fault here fails with the message it failed with, which is
-    // how the pre-fix RED direction was read off this very cell.
-    expect(error?.message ?? null).toBeNull()
-    expect((answer as { outcome?: string }).outcome).toBe('applied')
-
+    expect(error?.name).toBe('FunctionNotBoundError')
+    expect(error?.message).not.toContain('Config file not found')
     expect(confirmCalls).toBe(0)
 
-    expect(commitCount()).toBe(before + 1)
-    expect(headFiles()).toEqual(['.gitignore', CONFIG_FILE, 'hooks.yaml'])
-    expect(git('log', '-1', '--format=%B').stdout).toContain(`Agent-QA-Proposal: ${id}`)
-    // And the project really is configured afterwards — the sentence's far end.
-    const written = parseYaml(readFileSync(configPath, 'utf8')) as {
-      registry?: { targets?: Record<string, { url?: string }> }
-    }
-    expect(written.registry?.targets?.['booking-com']?.url).toBe('https://booking.com')
+    expect(commitCount()).toBe(before)
+    expect(existsSync(configPath)).toBe(false)
+    expect(existsSync(join(root, 'hooks.yaml'))).toBe(false)
   })
 
-  it('(14a) answers the verb\'s own not-found refusal for an unknown id, from zero', async () => {
+  // RE-SPELLED 2026-10-01 (432-16): was answering the verb's own not-found refusal. The unbound
+  // refusal comes first now, so an unknown id is refused the same way, still never by the config
+  // throw.
+  it('(14a) an unknown id is refused unbound too, from zero, never by the config throw', async () => {
     const before = commitCount()
     const { error } = await invokeComposed({
       functionId: 'config.proposal.apply',
       payload: { proposalId: 'prop_00000000-0000-4000-8000-000000000000' },
       confirmAnswer: true,
     })
-    // The verb's OWN typed refusal — not the config throw, and not a fold that answered `applied`
-    // for an id nothing filed.
-    expect(error?.message).toContain('no proposal with that id exists')
+    expect(error?.name).toBe('FunctionNotBoundError')
     expect(error?.message).not.toContain('Config file not found')
     expect(commitCount()).toBe(before)
     expect(existsSync(configPath)).toBe(false)
   })
 
-  // RE-SPELLED 2026-09-30 (432-13): was '(14b) refuses on a NO answer from zero'. A NO answer has
-  // nobody to come from — the confirm is never consulted — so the same scaffold applies. 432-17
-  // removes the apply verb with the rest of the proposal round.
-  it('(14b) a NO-answering confirm is never consulted: the scaffold applies from zero', async () => {
+  // RE-SPELLED 2026-09-30 (432-13): was '(14b) refuses on a NO answer from zero'.
+  // RE-SPELLED 2026-10-01 (432-16): the scaffold no longer applies either way; a smuggled NO confirm
+  // is still never consulted.
+  it('(14b) a NO-answering confirm is never consulted, and the record is refused unbound', async () => {
     const id = await composedScaffoldId()
     const before = commitCount()
 
-    const { answer, error, confirmCalls } = await invokeComposed({
+    const { error, confirmCalls } = await invokeComposed({
       functionId: 'config.proposal.apply',
       payload: { proposalId: id },
       confirmAnswer: false,
     })
-    expect(error?.message ?? null).toBeNull()
-    expect((answer as { outcome?: string }).outcome).toBe('applied')
+    expect(error?.name).toBe('FunctionNotBoundError')
     expect(confirmCalls).toBe(0)
-    expect(commitCount()).toBe(before + 1)
-    expect(existsSync(configPath)).toBe(true)
+    expect(commitCount()).toBe(before)
+    expect(existsSync(configPath)).toBe(false)
   })
 })
 

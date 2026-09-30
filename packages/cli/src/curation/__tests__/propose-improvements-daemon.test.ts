@@ -334,7 +334,6 @@ function terminalPostRun(resolveClaimAuthority?: () => { leaseId: string; epoch:
   composeCliLocalAgent({
     configPath: join(root, 'agent-qa.config.yaml'),
     agentQaRoot: join(root, '.agent-qa'),
-    confirm: undefined,
     config: TEST_CONFIG,
     model: () => TEST_MODEL,
     postRun: {

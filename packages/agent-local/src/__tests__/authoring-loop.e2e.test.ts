@@ -808,10 +808,9 @@ describe('authoring.draft.write end to end through the composition root', () => 
       config: { getMasked: () => Promise.resolve(MASKED_CONFIG) },
       knowledgeRoot: () => join(root, 'agent-qa-knowledge'),
       model: input.model ?? (() => scriptedModel().capability()),
-      // An APPROVING confirm by default, so every case that is not about the gate keeps measuring
-      // what it was written to measure. The decline arm is a cell of its own, and it supplies its
-      // own port — a default that denied would have turned every unrelated cell into a gate test.
-      confirm: input.confirm ?? { surface: 'tty-prompt', ask: () => true },
+      // 2026-10-01 (432-16, D-14): the composition input declares no confirm. A supplied port is
+      // smuggled past the type so the C432-INVOKE-DIRECT cells still measure that nothing reads it.
+      ...{ confirm: input.confirm ?? { surface: 'tty-prompt', ask: () => true } } as object,
       ...(input.executor === undefined ? {} : { runExecution: input.executor }),
       ...(input.authoring === undefined ? {} : { draftAuthoring: input.authoring }),
     })

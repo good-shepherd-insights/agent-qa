@@ -341,7 +341,7 @@ async function openWorkspace(configBody: string): Promise<void> {
   process.env[ENV_VAR] = ENV_PLANT
   process.env[ECHO_VAR] = ECHO_PLANT
 
-  host = composeCliLocalAgent({ agentQaRoot, configPath, confirm: undefined })
+  host = composeCliLocalAgent({ agentQaRoot, configPath })
 
   // PRODUCED THROUGH THE SHIPPED RESOLVER, not typed: what the masker is seeded with is what a real
   // start would have produced from a real config and a real environment.

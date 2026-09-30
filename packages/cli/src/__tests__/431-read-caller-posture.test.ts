@@ -89,7 +89,7 @@ async function httpHost() {
   const p = project()
   const host = composeCliLocalAgent({
     agentQaRoot: p.agentQaRoot, configPath: p.configPath,
-    confirm: undefined, resolveExecutionContext: () => 'local-headless',
+    resolveExecutionContext: () => 'local-headless',
   })
   cleanups.push(() => host.close())
   const tokens = resolveMcpTokens(p.config.services!.mcp!.tokens, TOKEN_ENV)

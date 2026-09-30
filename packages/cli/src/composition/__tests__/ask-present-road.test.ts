@@ -202,7 +202,8 @@ describe('agent-qa ask, at a terminal, over a project with nothing to test again
       const host = composeCliLocalAgent({
         agentQaRoot,
         configPath,
-        confirm,
+        // 432-16 (D-14): the input declares no confirm; the spy is smuggled past the type.
+        ...{ confirm } as object,
         chatModel: planner.model as never,
       })
 
@@ -259,7 +260,8 @@ describe('agent-qa ask, at a terminal, over a project with nothing to test again
       const host = composeCliLocalAgent({
         agentQaRoot,
         configPath,
-        confirm,
+        // 432-16 (D-14): the input declares no confirm; the spy is smuggled past the type.
+        ...{ confirm } as object,
         chatPresent: (text: string) => {
           events.push('present')
           rendered.push(text)

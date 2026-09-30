@@ -636,6 +636,9 @@ describe('C432-CONFIG-MULTIFILE-TRUTH: a whole-file write that meets an outside 
     })
 })
 
+// RE-SPELLED 2026-10-01 (432-16, D-07): the undo's git-history source is no longer bound on the CLI
+// host, so it refuses unbound by name instead of answering the proposal union's `no-agent-commit`
+// refusal. The claim it guarded — nothing is written, committed or filed — is unchanged.
 describe('retained control: config.undo.propose still files its own proposal until 432-17', () => {
   it('the undo answers the proposal union and, with no agent commit, refuses by name and writes nothing', async () => {
     gitIn(root, 'init', '--quiet')
@@ -647,9 +650,7 @@ describe('retained control: config.undo.propose still files its own proposal unt
     // A direct change first: it makes no agent commit, so there is still nothing to undo.
     expect(await viaHost('config.field.set', { path: 'use.parallel', value: true }))
       .toMatchObject({ outcome: 'applied' })
-    const answer = await viaHost('config.undo.propose', {}) as { outcome: string; reason?: string }
-    expect(answer.outcome).toBe('refused')
-    expect(answer.reason).toBe('no-agent-commit')
+    await expect(viaHost('config.undo.propose', {})).rejects.toMatchObject({ name: 'FunctionNotBoundError' })
     expect(readFileSync(configPath, 'utf8')).toBe(SEEDED_CONFIG.replace('parallel: false', 'parallel: true'))
     expect(gitIn(root, 'rev-list', '--count', 'HEAD').trim()).toBe('1')
     expect(existsSync(join(root, '.agent-qa', 'proposals'))).toBe(false)

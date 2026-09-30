@@ -339,9 +339,10 @@ const PINNED_VOCABULARY_HOLDERS = [
   'dashboard-server/src/execution/appium-manager.ts',
   // THE DAEMON-OWNED EMBEDDER WORKER — design-of-record, the other child INVK-01 keeps.
   'cli/src/daemon/host.ts',
-  // GIT PLUMBING, never a run: `spawnSync('git', …)` behind an injected exec seam. This is the
-  // file the retirement emptied, so its shape pin is the tightest one in this census.
-  'cli/src/composition/local-agent-host.ts',
+  // 2026-10-01 (432-16, D-07): `cli/src/composition/local-agent-host.ts` LEFT this set. It held git
+  // plumbing (`spawnSync('git', …)` behind an injected exec seam) for the one-commit applies and the
+  // undo source; agent-qa makes no git commits and reads no history now, so it holds no child
+  // vocabulary at all. Its shape pin below says so.
   // `exec('open <url>')` — the operator's own browser, opened once when `agent-qa dashboard` boots.
   'cli/src/commands/dashboard.ts',
 ].sort()
@@ -560,18 +561,17 @@ describe('(4) ALLOWED IS NOT UNEXAMINED — a shape pin per survivor', () => {
     expect(source).not.toContain('process.argv')
   })
 
-  it('THE EMPTIED HOST holds git plumbing only — no `spawn`, no entry script, no argv', () => {
+  // RE-SPELLED 2026-10-01 (432-16): was 'THE EMPTIED HOST holds git plumbing only'. The git
+  // plumbing went with the one-commit applies and the undo source; the host launches nothing.
+  it('THE EMPTIED HOST launches nothing — no `child_process`, no git, no entry script, no argv', () => {
     // The tightest pin in this census, because this is the file `createCliRunExecution` lived in
     // and therefore the likeliest place for a re-mint to land.
     const source = read('cli/src/composition/local-agent-host.ts')
-    expect(source).toContain("import { spawnSync } from 'node:child_process'")
-    expect(source).not.toMatch(/\bspawn\s*\(/)
+    expect(source).not.toContain('node:child_process')
+    expect(source).not.toMatch(/\bspawn(?:Sync)?\s*\(/)
     expect(source).not.toContain('process.execPath')
     expect(source).not.toContain('process.argv')
-    // Every launch call it makes is a git read behind the injected exec seam.
-    for (const span of launchSpans(source)) {
-      expect(span, 'a launch call in the emptied host that is not a git read').toMatch(/['"]git['"]|GitApplyExec|exec\b/)
-    }
+    expect(launchSpans(source)).toEqual([])
   })
 
   it('THE DASHBOARD COMMAND opens a URL in the operator\u2019s browser', () => {

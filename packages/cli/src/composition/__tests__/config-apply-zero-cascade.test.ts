@@ -23,10 +23,13 @@
 //                                 runs" names two observables, and a cell that watched only the
 //                                 queue would miss an apply that started a run directly.
 //
-// THE APPLY IS ASSERTED TO HAVE HAPPENED FIRST, and that ordering is the third thing keeping this
-// honest: an empty delta across an accept that refused, denied or found nothing is not a fact about
-// cascading. The commit count moves from 1 to 2 and the committed bytes carry the change before any
-// absence below is read.
+// THE CHANGE IS ASSERTED TO HAVE HAPPENED FIRST, and that ordering is the third thing keeping this
+// honest: an empty delta across a change that refused or found nothing is not a fact about
+// cascading. The written bytes carry the change before any absence below is read.
+//
+// 2026-10-01, 432-16 D-07: (Z1)-(Z3) used to drive a pre-432 record through `proposals.accept`,
+// which committed it. No host binds that apply now; the same absences are measured across the
+// direct `config.field.set`, which makes no commit (the count stays 1).
 //
 // THE HOST IS THE PRODUCTION ONE and the store is the real sqlite queue `composeLocalAgent` opens —
 // the same handle a post-run tail would enqueue through. A double would have made this cell a
@@ -39,13 +42,12 @@ import { join } from 'node:path'
 
 import { invokeFunction } from '@vostride/agent-qa-agent'
 import type { FunctionDeps, JobModelCapability } from '@vostride/agent-qa-agent'
-import type { ConfigChangeOutput, ProposalsAcceptOutput } from '@vostride/agent-qa-schema'
+import type { ConfigChangeOutput } from '@vostride/agent-qa-schema'
 import { runSafetyScope } from '@vostride/agent-qa-safety-local'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import { CLI_FUNCTION_CALLER, composeCliLocalAgent } from '../local-agent-host.js'
 import * as hostModule from '../local-agent-host.js'
-import { filePre432ConfigProposal } from './pre-432-config-proposal.js'
 
 const CONFIG_FILE = 'agent-qa.config.yaml'
 
@@ -134,7 +136,6 @@ describe('CFGM-03 / D-06: an accepted config apply cascades into nothing', () =>
       const host = composeCliLocalAgent({
         agentQaRoot,
         configPath,
-        confirm: { surface: 'tty-prompt', ask: () => true },
         model: () => TEST_MODEL,
       })
       try {
@@ -144,30 +145,23 @@ describe('CFGM-03 / D-06: an accepted config apply cascades into nothing', () =>
         // the kind of change it is looking for.
         const jobs = await host.jobs()
 
-        // 432-11: the config ops no longer file proposals; the accept path serves the records
-        // already on disk, so this cell starts from one written as the old pipeline wrote it.
-        const proposed = await filePre432ConfigProposal({
-          configPath,
-          agentQaRoot,
-          edits: [{ path: 'use.timeout.step', value: '45s' }],
-        })
-
+        // RE-SPELLED 2026-10-01 (432-16, D-07): the change is the direct one. The pre-432 accept
+        // this cell drove made a commit through a config apply port no host binds any more.
         const before = await jobs.store.dumpState()
         const runsBefore = runDirectories()
 
-        const accepted = await runSafetyScope({ executionContext: 'local-interactive' }, async () =>
+        const changed = await runSafetyScope({ executionContext: 'local-interactive' }, async () =>
           await invokeFunction(
             host.registry,
-            'proposals.accept',
-            { proposalId: proposed.proposalId },
+            'config.field.set',
+            { path: 'use.timeout.step', value: '45s' },
             CLI_FUNCTION_CALLER,
-          ) as ProposalsAcceptOutput)
+          ) as ConfigChangeOutput)
 
-        // THE APPLY REALLY HAPPENED. Everything below is an absence, and an absence across an
-        // accept that did nothing is not a statement about cascading.
-        expect(accepted.apply.outcome).toBe('applied')
-        expect(accepted.apply).toMatchObject({ applied: { kind: 'config' } })
-        expect(commitCount()).toBe(2)
+        // THE CHANGE REALLY HAPPENED. Everything below is an absence, and an absence across a
+        // change that did nothing is not a statement about cascading.
+        expect(changed.outcome).toBe('applied')
+        expect(commitCount()).toBe(1)
         expect(readFileSync(configPath, 'utf8'))
           .toBe(SEEDED_CONFIG.replace('step: 30s', 'step: 45s'))
 
@@ -214,7 +208,6 @@ describe('C432-CONFIG-DIRECT: a direct config write cascades into nothing', () =
       const host = composeCliLocalAgent({
         agentQaRoot,
         configPath,
-        confirm: { surface: 'tty-prompt', ask: () => true },
         model: () => TEST_MODEL,
       })
       try {

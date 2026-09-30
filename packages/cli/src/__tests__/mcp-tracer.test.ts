@@ -79,7 +79,6 @@ describe('the MCP tracer: one projected tool, end to end on the v2 SDK', () => {
     const host = composeCliLocalAgent({
       agentQaRoot: where.agentQaRoot,
       configPath: where.configPath,
-      confirm: undefined,
     })
 
     // The masker is the required dep; identity here because this cell is about the round trip and
@@ -145,7 +144,6 @@ describe('the MCP tracer: one projected tool, end to end on the v2 SDK', () => {
     const host = composeCliLocalAgent({
       agentQaRoot: where.agentQaRoot,
       configPath: where.configPath,
-      confirm: undefined,
     })
     // 396-05: the handler takes a per-request deps RESOLVER, because the HTTP face varies by
     // caller. A host with one fixed caller passes the degenerate resolver.

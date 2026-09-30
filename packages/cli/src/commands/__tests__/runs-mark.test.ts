@@ -1,6 +1,5 @@
 import { readFileSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
-import { PassThrough, Writable } from 'node:stream'
 import { Command } from 'commander'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { asRunId, RunsMarkOutcomeSchema } from '@vostride/agent-qa-schema'
@@ -23,14 +22,12 @@ describe('runs mark thin client', () => {
   // the door and never written, and the no-TTY mark applies with the one call.
   it('tracer: confirmed-bug goes through the real function door with no confirmation asked', async () => {
     const f = markFixture(); root = f.root
+    // 2026-10-01 (432-16): there is no terminal confirm factory any more. A port that records any
+    // ask is smuggled past the input type, which no longer declares one; nothing may read it.
     let prompt = ''
-    const terminal = new Writable({ write(chunk, _encoding, done) {
-      prompt += String(chunk)
-      done()
-    } })
     const compose = host.composeCliLocalAgent
     vi.spyOn(host, 'composeCliLocalAgent').mockImplementation(options => compose({ ...options,
-      confirm: host.createTtyConfirmPort({ isTty: true, input: new PassThrough(), output: terminal }),
+      ...{ confirm: { surface: 'tty-prompt', ask: (action: { name: string }) => { prompt += action.name; return true } } } as object,
       resolveExecutionContext: () => 'local-interactive',
     }))
     const output = vi.spyOn(console, 'log').mockImplementation(() => {})

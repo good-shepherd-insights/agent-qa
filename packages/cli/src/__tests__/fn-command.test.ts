@@ -621,10 +621,12 @@ describe('agent-qa fn (generic function invoker)', () => {
         resultKind: 'unary',
         bindingStatus: 'bound',
       },
+      // 432-16 (D-07): UNBOUND. The CLI host binds no config apply port — agent-qa makes no git
+      // commits — so the pre-432 verb is listed by name and refuses unbound until 432-17 deletes it.
       'config.proposal.apply': {
         requiredScopes: ['config-write'],
         resultKind: 'unary',
-        bindingStatus: 'bound',
+        bindingStatus: 'unbound',
       },
       // 395-05 D-01: the rest of the closed action class, BOUND on this composition for the reason
       // above — the CLI host binds the config ports unconditionally. Both carry `config-write` and
@@ -640,13 +642,12 @@ describe('agent-qa fn (generic function invoker)', () => {
         resultKind: 'unary',
         bindingStatus: 'bound',
       },
-      // 395-06 D-07: BOUND, because the CLI host binds `configUndoSource` unconditionally beside
-      // the other config ports. Its being LISTED at all is the checkable half of "undo rides the
-      // one write path" — a person reading this catalogue sees a propose verb and no revert verb.
+      // 432-16 (D-07): UNBOUND. Its git-history source (`configUndoSource`) is deleted with the
+      // commits it read, so the verb is listed by name and refuses unbound until 432-17 deletes it.
       'config.undo.propose': {
         requiredScopes: ['config-write'],
         resultKind: 'unary',
-        bindingStatus: 'bound',
+        bindingStatus: 'unbound',
       },
       // BOUND because `entities` is a REQUIRED FunctionDeps port (387-01 D-4): this
       // composition supplies an entity directory, so both read at the `read` tier.

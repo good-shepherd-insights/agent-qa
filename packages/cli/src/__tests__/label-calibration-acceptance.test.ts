@@ -44,15 +44,9 @@ beforeEach(() => {
   vi.spyOn(globalThis, 'fetch').mockImplementation(() => { throw new Error('external provider forbidden') })
   vi.spyOn(model, 'createModel').mockImplementation(() => { throw new Error('model creation forbidden') })
   const compose = host.composeCliLocalAgent
-  vi.spyOn(host, 'composeCliLocalAgent').mockImplementation(options => {
-    const input = new PassThrough(), output = new Writable({ write(chunk, _encoding, done) {
-      if (String(chunk).includes('[y/N]')) queueMicrotask(() => input.write('y\n'))
-      done()
-    } })
-    terminals.push(input, output)
-    return compose({ ...options, resolveExecutionContext: () => 'local-interactive',
-      confirm: host.createTtyConfirmPort({ isTty: true, input, output }) })
-  })
+  // 2026-10-01 (432-16): the terminal confirm that answered `y` here is deleted; nothing asks.
+  vi.spyOn(host, 'composeCliLocalAgent').mockImplementation(options =>
+    compose({ ...options, resolveExecutionContext: () => 'local-interactive' }))
 })
 afterEach(() => {
   expect(globalThis.fetch).not.toHaveBeenCalled()
