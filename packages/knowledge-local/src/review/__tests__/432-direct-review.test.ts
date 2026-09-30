@@ -185,6 +185,10 @@ describe('432 direct explicit knowledge writer (D-04, D-05, D-08, D-09, D-11)', 
     return listBundles(knowledgeRoot).find(row => row.bundleId === recordId)?.status
   }
 
+  // 2026-10-01 (432-14): an explicit per-test timeout, on 432-09's label-calibration precedent. The
+  // cell drives four contexts through a real writer lease and promotion gates (about 4 s alone); in
+  // the forced workspace gate beside the rest of this package it took 17-20 s and reached vitest's
+  // 15 s default in three consecutive runs. The claim is unchanged.
   it('C432-EXPLICIT-ALL-CONTEXTS: explicit mark, accept, reject and forget apply in every execution context, including explicit CI promotion', async () => {
     for (const context of EXECUTION_CONTEXTS) {
       useRoot(context)
@@ -241,7 +245,7 @@ describe('432 direct explicit knowledge writer (D-04, D-05, D-08, D-09, D-11)', 
 
       expect(existsSync(join(agentQaRoot, 'proposals')), `${context} writes no inbox envelope`).toBe(false)
     }
-  })
+  }, 120_000)
 
   it('explicit policy accept materializes in ci under the actual context', async () => {
     const recordId = publish('Dismiss the cookie banner', 'policy')
