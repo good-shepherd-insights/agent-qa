@@ -17,6 +17,8 @@ import {
   computeProposalEnvelopeStatus,
   isProposalKind,
   isProtectedActionClass,
+  KnowledgeChangeOutputSchema,
+  KnowledgeProposalV1Schema,
 } from '../index'
 import type { ProposalRecord } from '../index'
 
@@ -251,5 +253,33 @@ describe('the protected-class set (D-05/D-07)', () => {
     expect(isProtectedActionClass(undefined)).toBe(false)
     expect(isProtectedActionClass(null)).toBe(false)
     expect(isProtectedActionClass({ toString: () => 'fn:grants.revoke' })).toBe(false)
+  })
+})
+
+// 2026-09-30, 432-12 (D-05/D-22): the knowledge change ops apply in the call and file nothing. A
+// pre-432 envelope on disk still names the retired propose op as its emitter, and the reader keeps
+// parsing it; the direct change receipt is not an envelope and refuses to be read as one.
+describe('pre-432 knowledge envelopes stay readable; the direct receipt is not one (432-12)', () => {
+  it('C432-KNOWLEDGE-CHANGE-OPS: parses a pre-432 envelope whose emitter is a retired propose op', () => {
+    for (const emittedBy of ['knowledge.accept.propose', 'knowledge.reject.propose', 'knowledge.forget.propose']) {
+      const parsed = ProposalRecordSchema.safeParse({ ...record, origin: { ...record.origin, emittedBy } })
+      expect(parsed.success, emittedBy).toBe(true)
+    }
+  })
+
+  it('C432-KNOWLEDGE-CHANGE-OPS: an applied change receipt carries no proposal fields and no envelope parses as one', () => {
+    const receipt = {
+      outcome: 'applied', verb: 'forget', operationId: '8e7d6c5b-4a39-4281-9706-f5e4d3c2b1a0',
+      recordIds: ['rec-1'],
+    }
+    expect(KnowledgeChangeOutputSchema.safeParse(receipt).success).toBe(true)
+    for (const extra of [{ proposalId: 'prop_aaaaaaaa-bbbb' }, { status: 'pending' }, { deltas: [] }]) {
+      expect(KnowledgeChangeOutputSchema.safeParse({ ...receipt, ...extra }).success, JSON.stringify(extra))
+        .toBe(false)
+    }
+    expect(KnowledgeChangeOutputSchema.safeParse(record).success).toBe(false)
+    expect(KnowledgeChangeOutputSchema.safeParse(knowledgePayload).success).toBe(false)
+    // …and the retained envelope payload does not accept a receipt either: the two never cross.
+    expect(KnowledgeProposalV1Schema.safeParse(receipt).success).toBe(false)
   })
 })

@@ -33,6 +33,7 @@ import {
   ConfigApplyOutcomeSchema,
   ConfigApplyReceiptsSchema,
   ConfigAuthSetInputSchema,
+  ConfigChangeOutputSchema,
   ConfigFieldSetInputSchema,
   ConfigHookAddInputSchema,
   ConfigProjectScaffoldInputSchema,
@@ -50,6 +51,7 @@ import {
   isSecretAdjacentConfigField,
 } from '../constants'
 import { renderConfigDiff } from '../diff-digest'
+import { ConfigChangeFoldInputSchema, ConfigChangeFoldOutputSchema } from '../../functions/tool-folds'
 import {
   CURRENT_CONFIG_PROPOSAL_SCHEMA_VERSION,
   ConfigProposalApplyableV1Schema,
@@ -450,5 +452,22 @@ describe('the secret-adjacent field set is roots, and matching is by subtree (D-
   it('the wildcard matches one segment, never a prefix of a longer name', () => {
     expect(isSecretAdjacentConfigField('registry.targetsOther.shop.authState')).toBe(false)
     expect(isSecretAdjacentConfigField('workspace.envFileBackup')).toBe(false)
+  })
+})
+
+// 2026-09-30, 432-12 (D-05/D-09): the config change tool folds the six direct actions only. The undo
+// arm left with the proposal round, so the fold answers the one change contract and an undo call is
+// not an arm of it. The undo input itself stays parseable until 432-17 deletes the op.
+describe('C432-MCP-TWENTY-TOOLS: the config change fold has six arms and no undo arm', () => {
+  it('C432-MCP-TWENTY-TOOLS: advertises the direct change contract alone and refuses the undo arm', () => {
+    expect(ConfigChangeFoldOutputSchema).toBe(ConfigChangeOutputSchema)
+    expect(ConfigChangeFoldInputSchema.safeParse({ action: 'config.undo.propose' }).success).toBe(false)
+    expect(ConfigChangeFoldInputSchema.safeParse({
+      action: 'config.field.set', path: 'use.timeout.step', value: '45s',
+    }).success).toBe(true)
+    expect(ConfigChangeFoldInputSchema.safeParse({
+      action: 'config.field.set', path: 'use.timeout.step', value: '45s', confirmed: true,
+    }).success).toBe(false)
+    expect(ConfigUndoProposeInputSchema.safeParse({}).success).toBe(true)
   })
 })

@@ -148,6 +148,21 @@ describe('the protected action classes name real registered ops', () => {
       }
     })
 
+  // 2026-09-30, 432-12 (D-01/D-05): the three knowledge changes apply in the call. Their classes are
+  // not protected, and they sit at the recognized local mutating floor — the tier that allows in
+  // every execution context — so no gate asks before a change lands. The retired propose classes
+  // name no registered op at all.
+  it('C432-KNOWLEDGE-CHANGE-OPS: the three change classes are unprotected, local-tier and ask nobody', () => {
+    const listed = declarations()
+    for (const id of ['knowledge.accept', 'knowledge.reject', 'knowledge.forget']) {
+      const declaration = listed.find((row) => row.id === id)
+      expect(declaration, id).toBeDefined()
+      expect(PROTECTED_ACTION_CLASSES as readonly string[], id).not.toContain(declaration!.risk.name)
+      expect(classifyRisk(declaration!.risk).riskTier, id).toBe('mutating-local')
+      expect(listed.filter((row) => row.risk.name === `fn:${id}.propose`), `${id}.propose`).toEqual([])
+    }
+  })
+
   it('no registered op classifies as `restricted` today — a FORWARD RED, not a rule', () => {
     // NOT a property anybody should preserve. It is a measurement of the catalogue as it stands,
     // pinned so that the day it stops being true, somebody is told.

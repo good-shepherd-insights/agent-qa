@@ -511,6 +511,66 @@ describe('the mutating review verbs bind, refuse and commit by name', () => {
     }
   })
 
+  it('C432-KNOWLEDGE-CHANGE-OPS: concurrent calls with one identity land once, and distinct changes all land', async () => {
+    const shared = publish('Checkout')
+    const other = publish('Payment')
+    const host = directRegistry('local-headless')
+    const operationId = '5d4c3b2a-1f0e-4d9c-8b7a-6f5e4d3c2b1a'
+
+    // Two callers racing the SAME change: the lease serializes them and the identity makes the
+    // second a replay. A distinct change beside them lands on its own.
+    const [first, second, distinct] = await Promise.all([
+      settle(invokeFunction(host, 'knowledge.forget', {
+        target: { grain: 'record', recordId: shared }, operationId,
+      }, CALLER)),
+      settle(invokeFunction(host, 'knowledge.forget', {
+        target: { grain: 'record', recordId: shared }, operationId,
+      }, CALLER)),
+      settle(invokeFunction(host, 'knowledge.reject', {
+        target: { grain: 'record', recordId: other }, reason: 'the button moved',
+      }, CALLER)),
+    ])
+
+    for (const outcome of [first, second, distinct]) expect(outcome.error).toBeUndefined()
+    expect(first.value).toMatchObject({ outcome: 'applied', operationId, recordIds: [shared] })
+    expect((second.value as { recordIds?: unknown }).recordIds)
+      .toEqual((first.value as { recordIds?: unknown }).recordIds)
+    expect(distinct.value).toMatchObject({ outcome: 'applied', verb: 'reject', recordIds: [other] })
+    expect(await statuses(host)).toEqual(['deprecated', 'deprecated'])
+    expect(existsSync(join(agentQaRoot, 'proposals'))).toBe(false)
+  })
+
+  it('C432-KNOWLEDGE-CHANGE-OPS: an accept over a forgotten record refuses by type, and nothing moves', async () => {
+    const recordId = publish()
+    const host = directRegistry('local-interactive')
+    const forgotten = await settle(invokeFunction(host, 'knowledge.forget', {
+      target: { grain: 'record', recordId },
+    }, CALLER))
+    expect(forgotten.error).toBeUndefined()
+
+    const accepted = await settle(invokeFunction(host, 'knowledge.accept', {
+      target: { grain: 'record', recordId },
+    }, CALLER))
+    expect((accepted.error as Error | undefined)?.name).toBe('UserDeltaCitationIntegrityError')
+    expect(await statuses(host)).toEqual(['deprecated'])
+  })
+
+  it('C432-KNOWLEDGE-CHANGE-OPS: a caller holding only the local default grant changes knowledge with no standing approval', async () => {
+    // No `standingApprovalReader`, no grant in the ledger and no credential: the direct change is at
+    // the local mutating floor, so the gate allows it in every context (D-01) — unlike the pre-432
+    // apply, which this file still has to approve before it commits.
+    const recordId = publish()
+    const tokenless: FunctionCaller = {
+      surface: 'mcp', grantedScopes: ['read', 'knowledge-write'], safeMode: false, origin: 'agent',
+    }
+    const outcome = await settle(invokeFunction(directRegistry('ci'), 'knowledge.forget', {
+      target: { grain: 'record', recordId },
+    }, tokenless))
+    expect(outcome.error).toBeUndefined()
+    expect(outcome.value).toMatchObject({ outcome: 'applied', verb: 'forget', recordIds: [recordId] })
+    expect(existsSync(join(knowledgeRoot, 'grants.jsonl'))).toBe(false)
+  })
+
   it('answers a typed not-found through the function layer, never a throw', async () => {
     publish()
     const host = registry(true)

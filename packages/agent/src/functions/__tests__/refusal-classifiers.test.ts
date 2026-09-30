@@ -21,6 +21,7 @@ import {
   AuthoringDraftWriteOutputSchema,
   ConfigChangeOutputSchema,
   ConfigProposeOutputSchema,
+  KnowledgeChangeOutputSchema,
   ProposalsAcceptOutputSchema,
   buildFanOutReport,
   computeFanOutBound,
@@ -30,6 +31,7 @@ import type {
   AuthoringDraftWriteOutput,
   ConfigChangeOutput,
   ConfigProposeOutput,
+  KnowledgeChangeOutput,
   ProposalsAcceptOutput,
 } from '@vostride/agent-qa-schema'
 import { describe, expect, it } from 'vitest'
@@ -44,6 +46,9 @@ import { configProjectScaffoldSpec } from '../ops/config-project-scaffold.js'
 import { configTargetCreateSpec } from '../ops/config-target-create.js'
 import { configTargetEditSpec } from '../ops/config-target-edit.js'
 import { configUndoProposeSpec } from '../ops/config-undo-propose.js'
+import { knowledgeAcceptSpec } from '../ops/knowledge-accept-propose.js'
+import { knowledgeForgetSpec } from '../ops/knowledge-forget-propose.js'
+import { knowledgeRejectSpec } from '../ops/knowledge-reject-propose.js'
 import { proposalsAcceptSpec } from '../ops/proposals-accept.js'
 import { createRegistryFromSpecs } from '../registry.js'
 import type { FunctionRegistry } from '../registry.js'
@@ -318,6 +323,42 @@ describe('399.1 D-01/D-02 — the config-mutation family folds its own refusal a
       const verdict = spec.classify?.(noChange as never)
       expect(verdict?.status, spec.id).toBe('executed')
       expect(verdict?.outcome, spec.id).toContain('use.buildTag')
+    }
+  })
+})
+
+// ---- the knowledge changes: applied, absent or refused (432-12, D-05) ---------------------------
+
+const KNOWLEDGE_CHANGE_OPS: readonly FunctionSpec<never, KnowledgeChangeOutput>[] = [
+  knowledgeAcceptSpec,
+  knowledgeRejectSpec,
+  knowledgeForgetSpec,
+] as unknown as readonly FunctionSpec<never, KnowledgeChangeOutput>[]
+
+const OPERATION_ID = '2c4e6a8b-0d1f-4a3b-8c5d-7e9f1a2b3c4d'
+
+describe('C432-KNOWLEDGE-CHANGE-OPS: the three knowledge changes fold their own answer', () => {
+  it('C432-KNOWLEDGE-CHANGE-OPS: an applied change is executed, a typed absence is executed, and a writer refusal is refused', () => {
+    for (const spec of KNOWLEDGE_CHANGE_OPS) {
+      const verb = spec.id.split('.')[1] as 'accept' | 'reject' | 'forget'
+      const applied = KnowledgeChangeOutputSchema.parse({
+        outcome: 'applied', verb, operationId: OPERATION_ID, recordIds: ['rec-1', 'rec-2'],
+      })
+      const absent = KnowledgeChangeOutputSchema.parse({
+        outcome: 'target-not-found', verb, operationId: OPERATION_ID,
+        target: { grain: 'record', recordId: 'rec-missing' },
+      })
+      const refused = KnowledgeChangeOutputSchema.parse({
+        outcome: 'refused', verb, operationId: OPERATION_ID, reason: 'policy-materialize-refused',
+      })
+      expect(spec.classify?.(applied as never), spec.id)
+        .toEqual({ status: 'executed', outcome: `${verb} applied: 2 record(s) changed` })
+      expect(spec.classify?.(absent as never), spec.id)
+        .toEqual({ status: 'executed', outcome: 'target-not-found: nothing was changed' })
+      expect(spec.classify?.(refused as never), spec.id)
+        .toEqual({ status: 'refused', outcome: 'policy-materialize-refused: nothing was changed' })
+      // The receipt carries no proposal: nothing on it names an id a person must decide on.
+      expect(spec.classify?.(applied as never)?.outcome, spec.id).not.toMatch(/prop_|propos/)
     }
   })
 })
