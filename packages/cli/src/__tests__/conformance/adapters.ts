@@ -942,7 +942,7 @@ export async function withRunServiceDoor<Answer>(
   // answer 503 `agent_host_unavailable`, which is a fact about a composition that forgot a port
   // rather than about the door this file is enumerating.
   const { createDashboardRunDetailReader } = await import('@vostride/agent-qa-dashboard')
-  const { agentHost, host, enterRunTriggerScope } = composeDashboardDoor({
+  const { agentHost, host } = composeDashboardDoor({
     agentQaRoot: join(configDir, '.agent-qa'),
     configPath: fixture.configPath,
     boundOrigin: () => boundOrigin,
@@ -951,7 +951,6 @@ export async function withRunServiceDoor<Answer>(
     runBridge: runDoor.runBridge,
   })
   runDoor.bindHost(host)
-  runDoor.bindTriggerScope(enterRunTriggerScope)
   const runService = composeRunServicePorts({
     entries: [{
       name: RUN_SERVICE_FIXTURE_ENTRY_NAME,

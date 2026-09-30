@@ -275,13 +275,18 @@ describe('human decoration composes OUTSIDE the pause timing (385-08 / D-10 / D-
     }
 
     let asked = 0
+    // 2026-10-01 (432-14, D-03): the hooks input declares none of these any more; they arrive only
+    // as excess fields smuggled past the type, and nothing reads them.
+    const smuggled = {
+      trustMode: false,
+      confirm: { surface: 'tty-prompt' as const, ask: async () => { asked += 1; return true } },
+      maskingContext: ctx,
+      live,
+    }
     const { safetyHooks, confirmPausedMs } = buildRunSafetyHooks({
       auditSink,
       executionContext: 'local-interactive',
-      trustMode: false,
-      confirm: { surface: 'tty-prompt', ask: async () => { asked += 1; return true } },
-      maskingContext: ctx,
-      live,
+      ...smuggled,
     })
 
     await safetyHooks.runToolCallAsync({ name: 'delete_record', recognized: true })

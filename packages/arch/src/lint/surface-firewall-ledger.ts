@@ -379,12 +379,6 @@ export const SURFACE_FIREWALL_LEDGER: readonly SurfaceLedgerEntry[] = [
     reason: 'the 1035-line in-CLI run session composition; superseded by composeLocalAgent()',
   },
   {
-    file: 'packages/cli/src/run-session-composition.ts',
-    specifier: '@vostride/agent-qa-safety-local',
-    clearedBy: '386',
-    reason: 'the 1035-line in-CLI run session composition; superseded by composeLocalAgent()',
-  },
-  {
     file: 'packages/cli/src/targets.ts',
     specifier: '@vostride/agent-qa-core',
     clearedBy: '395',

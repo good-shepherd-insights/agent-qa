@@ -38,6 +38,8 @@ type Frame = { event: string; data: string }
 type MarkPath = {
   gate: { safety: unknown; trustModeRemoved: boolean }
   frames: Frame[]
+  /** 432-14: run-confirm streams the page opened; the channel is deleted, so none. */
+  confirmChannels: number
   dialogs: number
   hostDialogs: number
   approvalInComposer: number
@@ -752,11 +754,14 @@ describe('contextual feedback on the shipped bundle (426-16, 426-17)', () => {
       const markContext = await fixture.browser.newContext({ viewport: DESKTOP })
       await markContext.addInitScript(() => {
         const frames: Array<{ event: string; data: string }> = []
+        const channels: string[] = []
         ;(window as unknown as { markFrames: typeof frames }).markFrames = frames
+        ;(window as unknown as { markChannels: typeof channels }).markChannels = channels
         const Native = window.EventSource
         class RecordedChannel extends Native {
           constructor(url: string | URL, init?: EventSourceInit) {
             super(url, init)
+            if (String(url).includes('run-confirm')) channels.push(String(url))
             if (String(url).includes('/api/run-confirm/channel')) {
               for (const event of ['confirm_scope', 'confirm_request', 'confirm_resolved']) {
                 this.addEventListener(event, frame => frames.push({ event, data: (frame as MessageEvent<string>).data }))
@@ -770,9 +775,8 @@ describe('contextual feedback on the shipped bundle (426-16, 426-17)', () => {
       const recordedFrames = async () => await markPage.evaluate(() =>
         (window as unknown as { markFrames: Array<{ event: string; data: string }> }).markFrames)
       await markPage.goto(url)
-      await markPage.waitForFunction(() => (window as unknown as { markFrames: Array<{ event: string }> }).markFrames
-        .some(frame => frame.event === 'confirm_scope'), undefined, { timeout: 10_000 })
-      await markPage.locator('[data-feedback-entry="test"]').click()
+      // 432-14 (D-14): no confirm stream opens, so the page is ready when its entry is.
+      await markPage.locator('[data-feedback-entry="test"]').click({ timeout: 10_000 })
       const markComposer = markPage.locator('[data-feedback-composer]')
       await markComposer.locator('[data-feedback-choice] [role="radio"]').first().click()
       await markComposer.locator('[data-feedback-preview][data-preview-current="true"]').waitFor({ timeout: 15_000 })
@@ -789,7 +793,9 @@ describe('contextual feedback on the shipped bundle (426-16, 426-17)', () => {
       await markComposer.locator('[data-feedback-history="target"] [data-history-entry][data-history-new]').waitFor({ timeout: 15_000 })
       const newEntryMarkId = await markComposer.locator('[data-feedback-history="target"] [data-history-entry][data-history-new]').getAttribute('data-mark-id')
       const newEntryFirst = await entries.first().getAttribute('data-history-new') === 'true'
-      markPath = { gate, frames: await recordedFrames(), dialogs, hostDialogs, approvalInComposer, rowsAtApproval,
+      const confirmChannels = (await markPage.evaluate(() =>
+        (window as unknown as { markChannels: string[] }).markChannels)).length
+      markPath = { gate, frames: await recordedFrames(), confirmChannels, dialogs, hostDialogs, approvalInComposer, rowsAtApproval,
         status: reply.status(),
         outcome: { kind: parsed.kind, ...('receipt' in parsed ? { markId: parsed.receipt.markId } : {}) },
         rows: rows().map(({ markId, kind, origin, testIndex, stepIndex, disposition, gold }) =>
@@ -859,6 +865,8 @@ describe('contextual feedback on the shipped bundle (426-16, 426-17)', () => {
     // RE-SPELLED 2026-09-30 (432-13, D-14/D-15): no question reaches the channel and no approval
     // group renders — the mark is one click, and the ledger holds its row as the reply lands.
     expect(markPath!.frames.some(frame => frame.event === 'confirm_request'), where).toBe(false)
+    // 432-14 (D-14): and the page holds no confirm stream at all.
+    expect(markPath!.confirmChannels, where).toBe(0)
     expect(markPath!.rowsAtApproval, where).toBe(1)
     expect(markPath!.dialogs, where).toBe(0)
     expect(markPath!.hostDialogs, where).toBe(0)

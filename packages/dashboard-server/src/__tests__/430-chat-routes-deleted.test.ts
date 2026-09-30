@@ -3,8 +3,9 @@
  *
  * Its five routes answer the router's generic 404, not redirected and not stubbed. That 404 is
  * told apart from a returning conversation router by the wildcard origin header: the shared
- * `json()` writer grants it, and the confirm router's own responder never does. The run-confirm
- * pair beside it keeps its dispatch, still ahead of `cors()`, so it answers with no grant.
+ * `json()` writer grants it, and a dedicated router's own responder never does. 2026-10-01
+ * (432-14, D-14): the run-confirm pair beside it is deleted too, and its two paths now answer
+ * exactly what a never-served path answers (C432-CONFIRM-ROUTES-404).
  *
  * Every deleted path is built from two halves so the 430 census never counts this file.
  */
@@ -12,7 +13,6 @@
 import { createServer, request as httpRequest, type Server } from 'node:http'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 
-import { createConfirmRegistry } from '../chat/confirm-registry.js'
 import type { AgentHost } from '../chat/host.js'
 import { DashboardDatabase } from '../db/database.js'
 import { createRouter } from '../server/routes.js'
@@ -50,7 +50,6 @@ function seamHost(): AgentHost {
       tokens: { measuredSteps: 0, unmeasuredSteps: 0 },
     }),
     unmaskForDisplay: (text: string): string => text,
-    confirms: createConfirmRegistry(),
   } as unknown as AgentHost
 }
 

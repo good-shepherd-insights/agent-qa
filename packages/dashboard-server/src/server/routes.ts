@@ -19,8 +19,6 @@ import {
 } from '../live-editor/live-session.js'
 import { refuseCrossSiteRequest } from './cross-site.js'
 import { tryParseRequestUrl } from './request-url.js'
-import { RUN_CONFIRM_ROUTE_PREFIX, createChatRouter } from '../chat/chat-routes.js'
-import { isRunTriggerConfirmScope } from '../chat/confirm-registry.js'
 import type { AgentHost } from '../chat/host.js'
 import {
   classifyProviderError,
@@ -609,9 +607,9 @@ function jsonNoCors(res: ServerResponse, data: unknown, status = 200): void {
  * the grant on the ACTUAL response, and that is the one removed. A preflighted variant now gets a
  * permissive OPTIONS followed by a response the browser refuses to hand to the page — it fails
  * closed. Excluding these paths from `cors()` would mean claiming the `/api/runs/` prefix ahead of
- * the shared arm the way the run-confirm prefix claims its own, which would capture the trigger,
- * cancel, delete, live-url, detail and post-processing routes too: the whole-server posture change
- * this fix is deliberately not making.
+ * the shared arm the way the run-confirm prefix used to claim its own (deleted in 432-14), which
+ * would capture the trigger, cancel, delete, live-url, detail and post-processing routes too: the
+ * whole-server posture change this fix is deliberately not making.
  */
 function refuseCrossSiteDisplayRead(req: IncomingMessage, res: ServerResponse): boolean {
   if (refuseCrossSiteRequest(req) === undefined) return false
@@ -1236,8 +1234,8 @@ async function normalizeDashboardSuitePath(
  * IT IS EMPTY, AND THE EMPTINESS IS THE DERIVATION'S ANSWER, not a placeholder. Every key that ever
  * appears in a run's `metadata` is written by this server: `args`/`isSuite` by the enqueue routes,
  * `timeout`/`timeoutSource`/`timeoutBaseMs`/`timeoutBufferMs` by `toExecutionTimeoutMetadata`,
- * `confirmScope` by `/api/runs/trigger` after `isRunTriggerConfirmScope`, and
- * `suiteIndex`/`farmSessionUrl`/`runDevice` by the CLI runner. A caller's OWN labels have their own
+ * `confirmScope` by `/api/runs/trigger` until 432-14 deleted the run-confirm pair (a row written
+ * before then may still carry it), and `suiteIndex`/`farmSessionUrl`/`runDevice` by the CLI runner. A caller's OWN labels have their own
  * first-class door on this route — `attributes`, validated by `buildRunRequestAttributes` and
  * persisted in its own column. There is nothing left for a client to legitimately put here.
  *
@@ -1256,7 +1254,13 @@ async function normalizeDashboardSuitePath(
  */
 export const CLIENT_WRITABLE_QUEUED_RUN_METADATA_KEYS: ReadonlySet<string> = new Set<string>([])
 
-/** The `metadata` keys this SERVER writes onto a run row — never a client. */
+/**
+ * The `metadata` keys this SERVER writes onto a run row — never a client.
+ *
+ * `confirmScope` stays on the list after 432-14 (D-14, D-22): nothing writes it now, but a row this
+ * server wrote before then can still hold it, and it is still the server's key rather than one a
+ * client may claim.
+ */
 export const SERVER_OWNED_RUN_METADATA_KEYS: ReadonlySet<string> = new Set<string>([
   'args',
   'confirmScope',
@@ -1281,8 +1285,7 @@ type QueuedRunMetadataResult =
  * ONE MECHANISM, NOT TWO. A filter that quietly deletes what it will not accept and a validator
  * that rejects it are the same decision made twice, and the version that keeps both is the version
  * where one of them stops being reached. This is the validator; the admitted subset it returns is
- * what reaches `enqueue`. A caller that sends a key the server owns learns so, the way
- * `/api/runs/trigger` already tells a caller its `confirmScope` was not minted here.
+ * what reaches `enqueue`. A caller that sends a key the server owns learns so.
  */
 function sanitizeQueuedRunMetadata(metadata: unknown): QueuedRunMetadataResult {
   if (metadata === undefined || metadata === null) return { ok: true, metadata: {} }
@@ -1550,15 +1553,15 @@ function assertRunReadsAccountedFor(db: DashboardDatabase, wrapped: ReadonlySet<
  * writes the strip into. This is the choke point they all pass through, so a door added next phase
  * is covered by construction rather than by remembering.
  *
- * AND WHY NOT `mapRunRow`, WHICH IS THE OTHER CHOKE POINT. The queue consumer reads
- * `meta.confirmScope` off the persisted row to address the browser that triggered the run
- * (`server.ts`); stripping at the DB→row boundary would delete the feature instead of closing the
- * leak. `server.ts` and `job-queue.ts` hold the RAW handle and are untouched — this projection
- * exists only inside `createRouter`, which is exactly the layer that serializes.
+ * AND WHY NOT `mapRunRow`, WHICH IS THE OTHER CHOKE POINT. The queue consumer reads the
+ * persisted row's own metadata to dispatch the run (`server.ts`); stripping at the DB→row boundary
+ * would take from that reader what only a RESPONSE must not carry. `server.ts` and `job-queue.ts`
+ * hold the RAW handle and are untouched — this projection exists only inside `createRouter`, which
+ * is exactly the layer that serializes.
  *
- * THE PERSISTED VALUE IS NEVER TOUCHED. This is a read projection; the write at the trigger route
- * still stores the scope, and `run-trigger-confirm.test.ts` holds the cell proving a queued run
- * still starts against the browser that asked for it.
+ * THE PERSISTED VALUE IS NEVER TOUCHED. This is a read projection. 2026-10-01 (432-14, D-14/D-22):
+ * the trigger no longer writes a confirm scope and the queue consumer no longer reads one; a row
+ * written before then may still hold it, and this projection keeps it from leaving.
  *
  * AND IT FAILS LOUDLY RATHER THAN TRANSPARENTLY (401-23, WR-08). `Object.create(db, {…})` forwards
  * everything it does not override, so before this an unlisted — or merely NEW — run-reading method
@@ -1824,8 +1827,8 @@ interface RouterDeps {
   authFetch?: typeof globalThis.fetch
   sessionManager?: import('../live-editor/session-manager.js').SessionManager
   /**
-   * The composed agent host (400-01, D-01). It serves run detail, marks, analysis, knowledge,
-   * post-processing and the run-confirm pair.
+   * The composed agent host (400-01, D-01). It serves run detail, marks, analysis, knowledge and
+   * post-processing. (The run-confirm pair it also served is deleted, 432-14.)
    *
    * INJECTED, and optional because a router built the legacy two-argument way
    * (`createRouter(db)`) has none. Each arm that needs it then answers by name rather than 404 —
@@ -1906,9 +1909,6 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps): (req: In
   // CR-02 (401-18): the response layer reads run rows through the projection, never raw. The host's
   // own reconciliation and the queue keep `deps.db` — see `withResponseSafeRunReads`.
   const db = withResponseSafeRunReads(deps.db)
-  // ONE confirm router, built once (400-01, 401-09). Since 430 D-02 only the run-confirm prefix
-  // reaches it.
-  const chatRouter = createChatRouter(deps.agentHost)
   const pluginOAuthSessions = new Map<string, PluginOAuthSession>()
   const withCredentialLock = createCredentialLock()
   const connectsInFlight = createConnectInFlight()
@@ -1919,8 +1919,8 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps): (req: In
     // shipped process the listener has already refused an unparseable request line, so this arm is
     // defence in depth — but this router is EXPORTED and mounted directly (the conformance suite
     // stands it up on its own `node:http` server), and on that mount an unguarded parse is a live
-    // throw. The refusal is answered before the run-confirm dispatch and before every route, so no
-    // frame below ever sees a URL that could not be parsed.
+    // throw. The refusal is answered before every route, so no frame below ever sees a URL that
+    // could not be parsed.
     const url = tryParseRequestUrl(req)
     if (url === undefined) {
       json(res, { error: 'Bad Request' }, 400)
@@ -1928,20 +1928,10 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps): (req: In
     }
     const path = url.pathname
 
-    // ---- The run-confirm prefix (401-09) -----------------------------------------------------
-    //
-    // Mounted FIRST — ahead of the shared OPTIONS arm as well as every route — and TOTAL over its
-    // prefix. `cors()` below answers EVERY preflight with `Access-Control-Allow-Origin: *`, so
-    // leaving these routes behind it would grant any page a person has open the preflight it needs
-    // to approve an ask-tier run on their machine. The confirm router answers its own preflight,
-    // same-origin, and its answers carry no wildcard.
-    //
-    // 2026-09-28 (430 D-02): the conversation prefix is no longer dispatched. Its paths fall to the
-    // generic 404 below, not redirected and not stubbed.
-    if (path.startsWith(RUN_CONFIRM_ROUTE_PREFIX)) {
-      chatRouter(req, res)
-      return
-    }
+    // 2026-10-01 (432-14, D-14): the run-confirm prefix is no longer dispatched. It was mounted
+    // here, ahead of the shared OPTIONS arm, so its answers carried no wildcard grant. Its two paths
+    // now fall to the same arms as any path this server does not serve — the shared preflight and
+    // the generic 404 — not redirected and not stubbed.
 
     // 429-01 D-19: the field-merge config write, ahead of the shared OPTIONS arm so its answers
     // never pass through the wildcard grant.
@@ -2229,10 +2219,7 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps): (req: In
         jsonNoCors(res, { error: 'invalid_mark_input' }, 400)
         return
       }
-      registerRunMarkRoute(req, res, {
-        host: deps.agentHost, runId, boundary: 'human',
-        enterRunTriggerScope: deps.agentHost.enterRunTriggerScope,
-      })
+      registerRunMarkRoute(req, res, { host: deps.agentHost, runId, boundary: 'human' })
       return
     }
 
@@ -2887,26 +2874,15 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps): (req: In
         json(res, { error: 'Queue not available' }, 503)
         return
       }
-      readJsonBody<{ file?: string; patterns?: string[]; tags?: unknown; noCache?: boolean; local?: boolean; triggerSource?: unknown; confirmScope?: unknown }>(req)
+      readJsonBody<{ file?: string; patterns?: string[]; tags?: unknown; noCache?: boolean; local?: boolean; triggerSource?: unknown }>(req)
         .then(async (body) => {
           if (body.tags !== undefined) {
             json(res, { error: 'tags are not supported for dashboard-triggered runs' }, 400)
             return
           }
-          // 401-09 (D-11): WHICH BROWSER TO ASK, if this run turns out to be ask-tier. Refused by
-          // name unless it is a confirm scope minted on `/api/run-confirm/channel` — a caller that
-          // could name a live CHAT conversation here would have a run's question delivered into
-          // somebody's transcript and answered by whoever is watching it.
-          //
-          // THIS IS NOT A CLAIM ABOUT CONTEXT (Pitfall 7). It names an ADDRESS; whether anyone is
-          // there is decided by the gate's own read of `hasLiveChannel` at evaluate time, and a
-          // scope nobody is holding open makes the run `local-headless` exactly as if the field had
-          // been absent. There is no value a caller can put here that claims interactivity.
-          if (body.confirmScope !== undefined
-            && (typeof body.confirmScope !== 'string' || !isRunTriggerConfirmScope(body.confirmScope))) {
-            json(res, { error: 'confirmScope must be a confirm scope minted by this server' }, 400)
-            return
-          }
+          // 2026-10-01 (432-14, D-14): the click is the whole request. The confirm scope this body
+          // used to name, and the validation and persistence that went with it, are deleted with the
+          // run-confirm pair; nothing on this road asks a browser anything.
           const triggerSource = parseDashboardRunTriggerSource(body.triggerSource)
           if (!triggerSource.ok) {
             json(res, { error: triggerSource.error }, 400)
@@ -3008,7 +2984,6 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps): (req: In
             metadata: {
               args,
               isSuite: isSuite || undefined,
-              ...(typeof body.confirmScope === 'string' ? { confirmScope: body.confirmScope } : {}),
               ...toExecutionTimeoutMetadata(executionTimeout),
             },
           })

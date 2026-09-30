@@ -10,7 +10,6 @@ const {
   mockDashboardDatabase,
   mockResolveDashboardDbPath,
   mockStartServer,
-  mockCreateConfirmRegistry,
   mockCreateDashboardRunIngest,
   mockCreateInProcessExecutionBackend,
 } = vi.hoisted(() => ({
@@ -20,9 +19,6 @@ const {
     configuredDbPath || '.agent-qa/runs.db',
   ),
   mockStartServer: vi.fn(),
-  // 400-03: the confirm registry the command creates through this same import. A mock missing it
-  // does not fail as a missing assertion — the command throws on the destructure, exits 2, and
-  // every cell below then measures a command that never ran.
   // 401-07: the run door composes both of these through the SAME lazy import. A mock missing
   // either does not fail as a missing assertion — `createDashboardRunDoor` throws on the
   // destructure, the command exits 2, and every cell below then measures a command that never ran.
@@ -38,15 +34,6 @@ const {
     on: vi.fn(),
     removeListener: vi.fn(),
   })),
-  mockCreateConfirmRegistry: vi.fn(() => ({
-    openChannel: vi.fn(() => vi.fn()),
-    hasLiveChannel: vi.fn(() => false),
-    subscribe: vi.fn(() => vi.fn()),
-    request: vi.fn(async () => 'deny' as const),
-    present: vi.fn(),
-    answer: vi.fn(() => ({ kind: 'unknown-confirm' as const })),
-    pendingCount: vi.fn(() => 0),
-  })),
 }))
 
 vi.mock('../config.js', () => ({
@@ -54,21 +41,15 @@ vi.mock('../config.js', () => ({
 }))
 
 vi.mock('@vostride/agent-qa-dashboard', async () => {
-  // 401-09: `createDashboardRunDoor` destructures `isRunTriggerConfirmScope` from this same lazily
-  // imported package, so a mock without it throws at the destructure and every cell below dies
-  // before it asserts — the identical failure 400-03 and 401-07 both left a note about here.
-  //
-  // THE REAL PREDICATE, TAKEN FROM THE MODULE THAT OWNS THE NAMESPACE. A hand-written
-  // `startsWith('run-trigger:')` here would be a second spelling of the prefix, living in a test —
-  // which is the one place a drift would not be noticed. What this file mocks is a web server, and
-  // that is all it should mock.
+  // What this file mocks is a web server, and that is all it should mock: the in-memory helpers
+  // the command destructures from the same lazily imported package are the real ones. (Until
+  // 432-14 that included the run-confirm scope predicate and the confirm registry, both deleted.)
   const actual = await vi.importActual<typeof import('@vostride/agent-qa-dashboard')>('@vostride/agent-qa-dashboard')
   return {
     DashboardDatabase: mockDashboardDatabase,
-    createConfirmRegistry: mockCreateConfirmRegistry,
     createDashboardRunIngest: mockCreateDashboardRunIngest,
     createInProcessExecutionBackend: mockCreateInProcessExecutionBackend,
-    // 404-05: THE REAL RELAY, on `isRunTriggerConfirmScope`'s own reasoning one line down. The
+    // 404-05: THE REAL RELAY, on the reasoning above. The
     // command destructures it from this same lazily imported package, so a mock without it leaves
     // `createPostProcessingRelay()` a call on `undefined` — which the command's own catch turns
     // into `process.exit`, and every cell in this file dies before it asserts. It is also not a
@@ -86,7 +67,6 @@ vi.mock('@vostride/agent-qa-dashboard', async () => {
     // destructures it from this package and calls it beside the run registry; it is an in-memory
     // `Map` with no server, no socket and no browser in it.
     createLiveEditorSubjects: actual.createLiveEditorSubjects,
-    isRunTriggerConfirmScope: actual.isRunTriggerConfirmScope,
     resolveDashboardDbPath: mockResolveDashboardDbPath,
     startServer: mockStartServer,
   }
@@ -215,15 +195,14 @@ describe('createDashboardCommand', () => {
     expect(mockDashboardDatabase).toHaveBeenCalled()
     expect(mockStartServer).toHaveBeenCalled()
 
-    // 400-03: ONE registry, reaching BOTH halves. The command creates it, the composition parks
-    // ask-tier questions in it, and the server is handed the same instance through the agent host —
-    // a server started without it would serve a confirm route with nothing behind it.
-    expect(mockCreateConfirmRegistry).toHaveBeenCalledTimes(1)
+    // RE-SPELLED 2026-10-01 (432-14, D-14): was '400-03: ONE registry, reaching BOTH halves'. The
+    // command creates no confirm registry now, so the host it hands the server carries none.
     const started = mockStartServer.mock.calls[0]?.[0] as {
-      agentHost?: { confirms?: unknown }
+      agentHost?: Record<string, unknown>
       executionBackend?: unknown
     }
-    expect(started.agentHost?.confirms).toBe(mockCreateConfirmRegistry.mock.results[0]?.value)
+    expect(started.agentHost).toBeDefined()
+    expect(started.agentHost).not.toHaveProperty('con' + 'firms')
 
     // 401-07 (INVK-01): the SAME shape, one line down, for the run door. The command composes the
     // backend here — where the agent packages are nameable — and hands it over; a server started

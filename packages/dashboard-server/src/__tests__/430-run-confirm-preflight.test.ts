@@ -129,7 +129,7 @@ describe('C432-DASHBOARD-CROSS-SITE', () => {
     'C432-DASHBOARD-CROSS-SITE: %s %s refuses a page on another origin with no grant and no dispatch',
     async (method, path) => {
       invocations.length = 0
-      for (const headers of [
+      const hostile: Array<Record<string, string>> = [
         { origin: 'https://evil.example', 'content-type': 'text/plain;charset=UTF-8' },
         { origin: 'https://evil.example', 'content-type': 'application/json' },
         { origin: 'null', 'content-type': 'application/json' },
@@ -138,7 +138,8 @@ describe('C432-DASHBOARD-CROSS-SITE', () => {
           'sec-fetch-site': 'cross-site',
           'content-type': 'application/json',
         },
-      ]) {
+      ]
+      for (const headers of hostile) {
         const body = method === 'DELETE' ? undefined : JSON.stringify({ kind: 'false-fail' })
         const answer = await send(method, path, headers, body)
         expect(answer.status, `${JSON.stringify(headers)} answered ${String(answer.status)}`).toBe(403)
@@ -151,10 +152,11 @@ describe('C432-DASHBOARD-CROSS-SITE', () => {
 
   it('C432-DASHBOARD-CROSS-SITE: the same mark door still dispatches once for its own page and a local client', async () => {
     invocations.length = 0
-    for (const headers of [
+    const admitted: Array<Record<string, string>> = [
       { origin: `http://127.0.0.1:${String(port)}`, 'content-type': 'application/json' },
       { 'content-type': 'application/json' },
-    ]) {
+    ]
+    for (const headers of admitted) {
       const answer = await send('POST', '/api/runs/run-432-14/mark', headers, JSON.stringify({ kind: 'false-fail' }))
       expect(answer.status).toBe(200)
       expect(JSON.parse(answer.body)).toEqual({ kind: 'run-not-found', runId: 'run-432-14' })

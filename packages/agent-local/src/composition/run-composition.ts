@@ -6,7 +6,8 @@
 // the member run-config assembly are the same code, moved. What changed is WHERE it lives and what
 // it is allowed to assume, and only one thing was actually taken away — the readline default on the
 // confirm seam, which became a presentation port (see presentation-ports.ts for the rule that
-// decided every symbol's side of the line). Since 432-13 nothing reads that port: a run asks nobody.
+// decided every symbol's side of the line). Since 432-13 nothing reads that port: a run asks nobody,
+// and 432-14 deleted the port with its last producer.
 //
 // Why it moved: 386's daemon has to build a real RunConfig without importing a CLI. A composition
 // that lives inside one surface is a composition every other host has to re-derive, and two hosts
@@ -102,7 +103,6 @@ import {
 } from './knowledge-budgets.js'
 import { constructKnowledgeReader } from './knowledge-reader.js'
 import type { ConstructKnowledgeReaderInput } from './knowledge-reader.js'
-import type { RunPresentationPorts } from './presentation-ports.js'
 
 // ---- Local structural types -----------------------------------------------------------------
 
@@ -871,16 +871,13 @@ export function runDirFor(input: { configDir: string; runId: string }): string {
 // 432-13 (D-14/D-15): NOTHING IN A RUN ASKS. The host's presentation confirm, its human decorator and
 // the session trust flag are no longer read, and no confirm port is handed to the registrar — the
 // in-test tool actions it gates are allowed or restricted by their own class and never reach an ask.
-// The declared input shape stays until 432-14 narrows the presentation contract with its last
-// producer; `confirmPausedMs` answers 0 because no run waits on a person.
+// 432-14 (D-03): the input narrows to what the registrar reads. The presentation contract and the
+// trust flag are deleted with their last producer; `confirmPausedMs` answers 0 because no run waits
+// on a person.
 
 export interface BuildRunSessionSafetyHooksInput {
   auditSink: AuditSink
   executionContext: RunExecutionContext
-  /** Unread since 432-13: no run asks, so there is no ask for trust to satisfy. */
-  trustMode: boolean
-  /** Unread since 432-13; 432-14 removes it with the presentation confirm contract. */
-  presentation: RunPresentationPorts
 }
 
 /**

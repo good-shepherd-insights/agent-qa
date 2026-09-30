@@ -410,33 +410,25 @@ describe('JobQueue', () => {
 // ---- G-401-18-CR01 (401-23, T-401-G24): the belt at the one writer both doors go through -------
 //
 // The PRIMARY control is the `/api/queue/enqueue` allowlist, which does not admit `confirmScope` as
-// a client-writable key at all. This is what survives the NEXT writer. A confirm scope names which
-// browser a run's question is delivered to, so a value this server did not mint is an address into
-// somebody else's dialog — and until 401-23 the queue door planted one with none of the validation
-// `/api/runs/trigger` applies.
+// a client-writable key at all. Until 432-14 the queue also refused a confirm scope this server did
+// not mint, because a scope named which browser a run's question was delivered to.
+//
+// RE-SPELLED 2026-10-01 (432-14, D-14): the question, the dialog and every reader of the scope are
+// deleted, so the queue attaches no meaning to the key. The belt's surviving claims are carried
+// where the value could still leave or be planted: the enqueue route refuses every client-supplied
+// metadata key (`routes.test.ts`), and every run-reading response strips it off a row written
+// before 432-14 (`routes.runs.test.ts`). What is pinned here is that the queue no longer interprets
+// it: the row is written once, whole, with no throw.
 
 describe('JobQueue refuses a confirm scope this server did not mint', () => {
-  it('throws on a foreign-shaped confirmScope, and writes no row', () => {
+  it('a retired confirm-scope key no longer throws: the row and its artifact are written once', () => {
     const before = db.getRuns({ limit: 100 }).length
-    expect(() => queue.enqueue({ name: 'planted', metadata: { confirmScope: 'chat-1730000000-abc' } }))
-      .toThrow(/minted by this server/)
-    // NOT MERELY REFUSED — nothing was half-written. `insertPendingRun` runs before
-    // `insertRunArtifact`, so a check placed after either one would leave an orphan.
-    expect(db.getRuns({ limit: 100 })).toHaveLength(before)
-  })
-
-  it('throws on a non-string confirmScope', () => {
-    expect(() => queue.enqueue({ name: 'planted', metadata: { confirmScope: { toString: () => 'run-trigger:x' } } }))
-      .toThrow(/minted by this server/)
-  })
-
-  it('ADMITS a scope of the shape this server mints — the feature is validated, not deleted', () => {
-    const runId = queue.enqueue({
-      name: 'trigger',
-      metadata: { confirmScope: 'run-trigger:2f1d0f2a-6f1e-4a2b-9c3d-5e6f70819200' },
-    })
-    expect(db.getRun(runId)?.metadata?.confirmScope)
-      .toBe('run-trigger:2f1d0f2a-6f1e-4a2b-9c3d-5e6f70819200')
+    for (const value of ['chat-1730000000-abc', { toString: () => 'run-trigger:x' }, 'run-trigger:2f1d0f2a-6f1e-4a2b-9c3d-5e6f70819200']) {
+      const runId = queue.enqueue({ name: 'retired', metadata: { ['confirm' + 'Scope']: value } })
+      expect(db.getRun(runId)).toBeDefined()
+      expect(db.getRunArtifact(runId)).not.toBeNull()
+    }
+    expect(db.getRuns({ limit: 100 })).toHaveLength(before + 3)
   })
 
   it('a run with no confirmScope at all is unaffected — the no-op control', () => {

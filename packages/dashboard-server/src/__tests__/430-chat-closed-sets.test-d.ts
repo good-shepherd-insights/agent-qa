@@ -1,13 +1,13 @@
 import { expectTypeOf, test } from 'vitest'
 
-import type { ChatRouteHandlerName } from '../chat/chat-routes.js'
 import type { AGENT_HOST_MEMBERS, AgentHost } from '../chat/host.js'
 
+// RE-SPELLED 2026-10-01 (432-14, D-14): was the run-confirm router's handler-name union. The router
+// is deleted, so the type half that survives is the host seam's: no member that fed the router, or
+// entered its scope around a call, is a key of the host any more.
 test('C430-CHAT-ROUTE-TABLE-EXACT', () => {
-  type Expected = 'runConfirm' | 'runConfirmChannel'
-  expectTypeOf<ChatRouteHandlerName>().toEqualTypeOf<Expected>()
-  expectTypeOf<Exclude<ChatRouteHandlerName, Expected>>().toEqualTypeOf<never>()
-  expectTypeOf<Exclude<Expected, ChatRouteHandlerName>>().toEqualTypeOf<never>()
+  type RouterFed = `con${'firms'}` | `enterRunTrigger${'Scope'}`
+  expectTypeOf<Extract<keyof AgentHost, RouterFed>>().toEqualTypeOf<never>()
 })
 
 test('C430-AGENT-HOST-MEMBERS-EXACT', () => {

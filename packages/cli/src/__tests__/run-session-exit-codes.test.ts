@@ -249,10 +249,12 @@ describe('the single-test path activates the seams with no identity mint remaini
 
   // RE-SPELLED 2026-09-30 (432-13): was 'routes trust to the gate only via --trust-session /
   // config.safety.trustMode'. No trust reaches a run at all now; the env-var guards stay.
+  // 2026-10-01 (432-14, D-03): the hooks input no longer declares trust, so the drive passes none —
+  // not even the constant `false` it handed the unread field.
   it('routes no trust to a run: no flag, no config read, no env var (432-13)', () => {
     expect(count(runSource, 'opts.trustSession')).toBe(0)
     expect(driveSource).not.toContain('options.trust')
-    expect(driveSource).toContain('trustMode: false')
+    expect(driveSource).not.toContain('trustMode')
     // No env var feeds trustMode — guard against a smuggled AGENT_QA_TRUST-style implicit grant.
     expect(runSource).not.toMatch(/trustMode:\s*[^,\n)]*process\.env/)
     expect(runSource).not.toMatch(/process\.env\.[A-Z_]*TRUST/)

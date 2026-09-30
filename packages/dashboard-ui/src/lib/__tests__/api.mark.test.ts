@@ -1,18 +1,19 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { markRun, MarkDeniedError, setRunConfirmScope } from '../api'
+import { markRun, MarkDeniedError } from '../api'
 
-afterEach(() => { setRunConfirmScope(undefined); vi.unstubAllGlobals() })
+afterEach(() => { vi.unstubAllGlobals() })
 describe('419 mark API scope and outcomes', () => {
-  it.each([undefined, 'run-trigger:server-minted'])('sends only the existing scope %s and the supplied mark address', async scope => {
+  // RE-SPELLED 2026-10-01 (432-14, D-14): was 'sends only the existing scope %s and the supplied mark
+  // address'. The page holds no scope any more, so the claim that survives is the second half: one
+  // request carrying exactly the supplied mark address and nothing else.
+  it('sends only the supplied mark address, in one request', async () => {
     const outcome = { kind: 'run-not-found', runId: 'opaque/id' }
     const fetchMock = vi.fn(async () => new Response(JSON.stringify(outcome)))
     vi.stubGlobal('fetch', fetchMock)
-    setRunConfirmScope(scope)
     expect(await markRun('opaque/id', { kind: 'confirmed-bug', testId: 'member', stepIndex: 2 })).toEqual(outcome)
     expect(fetchMock).toHaveBeenCalledExactlyOnceWith('/api/runs/opaque%2Fid/mark', {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({
         kind: 'confirmed-bug', testId: 'member', stepIndex: 2,
-        ...(scope === undefined ? {} : { confirmScope: scope }),
       }),
     })
   })

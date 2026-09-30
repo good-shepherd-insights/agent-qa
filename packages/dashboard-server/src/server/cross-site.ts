@@ -1,13 +1,14 @@
-// The same-site predicate is mounted on two of this server's capability doors: the chat door's
-// mutating arm and the `live-url` mint route; CR-01 records the remaining posture in a filed
-// WINDOWS row owned by the phase that takes whole-server CORS posture, not as solved here.
+// The same-site predicate every same-site capability door of this server shares: the mark door,
+// the config and credential writes, the live editor and the `live-url` mint routes. CR-01 records
+// the remaining posture in a filed WINDOWS row owned by the phase that takes whole-server CORS
+// posture, not as solved here.
 //
 // WHY THIS FILE EXISTS. The predicate below was written for the chat door in 400-14 and lived
-// private inside `chat/chat-routes.ts`. Phase 403's verification found the live-url MINT door
+// private inside that door's router. Phase 403's verification found the live-url MINT door
 // standing open with the identical shape of hole, and a second door needs the identical answer:
 // two spellings of "is this cross-site" is two policies, free to disagree the first time either is
-// edited. The chat door now imports what it used to define, so its one call site reads the same
-// bytes it always did.
+// edited. The chat door, and later the run-confirm pair that inherited its router, were deleted
+// (430 D-02, 432-14 D-14); the predicate stayed here, rung for rung.
 //
 // THE POLICY IS UNCHANGED BY THE MOVE. What follows is the chat door's recorded policy verbatim,
 // rung for rung, comment for comment.
@@ -68,9 +69,7 @@ export function refuseNonLoopbackHost(req: IncomingMessage): string | undefined 
  *
  * WHY THIS LIVES HERE AND NOT IN `body-parser.ts`. That parser also serves the legacy read routes
  * whose wildcard-CORS posture is Phase 402's re-platform question. Widening it here would change
- * the posture of routes this phase does not own; `chat/chat-routes.ts` already keeps its own
- * responder and its own preflight for exactly that reason, and this was the third member of that
- * set before it moved here to be shared.
+ * the posture of routes this phase does not own.
  */
 export function refuseCrossSiteRequest(req: IncomingMessage): string | undefined {
   const hostRefusal = refuseNonLoopbackHost(req)

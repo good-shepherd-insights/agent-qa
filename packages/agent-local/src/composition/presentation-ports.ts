@@ -10,17 +10,15 @@
 // lives here while the construction stays in the host.
 //
 // Consequence worth naming: types cross into this package, constructions that only a terminal host
-// needs do not. `createLivePauseController` and the human-output unmasking confirm decorator stay in
-// the CLI for exactly that reason — a daemon binds no live line and must never unmask for a human.
+// needs do not. `createLivePauseController` stays in the CLI for exactly that reason — a daemon
+// binds no live line.
 
-import type { ConfirmPort } from '@vostride/agent-qa-safety'
 import type { RunEventEnvelope } from '@vostride/agent-qa-schema'
 
 /**
- * The console pause/resume seam shared between a host's live reporter and the confirm decorator
- * that has to flush the live line before a question is asked. The composition only ever holds it
+ * The console pause/resume seam a host's live reporter binds. The composition only ever holds it
  * and passes it down; the implementation, and the decision to have one at all, is the host's.
- * Guards swallow their own errors so a reporter fault never blocks a prompt.
+ * Guards swallow their own errors so a reporter fault never blocks the run.
  */
 export interface LivePauseController {
   pauseLive(): void
@@ -39,28 +37,8 @@ export interface AttachableRunSession {
   subscribe(fromSeq: number | undefined, handler: (envelope: RunEventEnvelope) => void): () => void
 }
 
-/**
- * The presentation capabilities a host hands the run composition.
- *
- * 432-13 (D-14): THE CONFIRM MEMBERS ARE UNREAD. A run asks nobody, so `buildRunSessionSafetyHooks`
- * no longer reads `confirm` or `decorateConfirmForHuman`; 432-14 removes both with the last host
- * producer. Deliberately small: it carries what the composition calls, not everything a host owns. Reporter
- * attachment and the live seam are NOT fields here because the composition never touches them —
- * the host does, over the vocabulary declared above, which is why that vocabulary lives in this
- * file even though nothing in the composition reads it.
- */
-export interface RunPresentationPorts {
-  /**
-   * The human confirm channel. Required, with no default: the default that used to live at this
-   * seam was a readline prompt, and a headless host silently inheriting a terminal prompt is a
-   * hang, not a fallback. A host with no human supplies a policy port instead.
-   */
-  confirm: ConfirmPort
-  /**
-   * A host wrapper applied OUTSIDE the composition's pause-timing decorator, for hosts that render
-   * the prompt to a person. The nesting is the point and is why this is a hook rather than a second
-   * confirm field: timing has to sit closest to the awaited answer so it measures the human's
-   * deliberation and not the host's rendering. A host with no human omits it.
-   */
-  decorateConfirmForHuman?: (timedConfirm: ConfirmPort) => ConfirmPort
-}
+// 2026-10-01 (432-14, D-03/D-14): `RunPresentationPorts` is deleted. It carried the human confirm
+// channel and the host's human-decoration hook, which 432-13 stopped reading and whose last host
+// producer (the CLI's `buildRunSafetyHooks`) stops supplying here. Nothing in a run asks a person,
+// so the composition is handed no presentation capability at all; the reporter and live-line
+// vocabulary above is what a host still attaches over.

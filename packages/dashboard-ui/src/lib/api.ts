@@ -407,10 +407,8 @@ export async function markRun(
   body: Omit<RunsMarkInput, 'runId'>,
 ): Promise<RunsMarkOutcome> {
   try {
-    return await postJson(`/api/runs/${encodeURIComponent(runId)}/mark`, {
-      ...body,
-      ...(currentRunConfirmScope === undefined ? {} : { confirmScope: currentRunConfirmScope }),
-    })
+    // 432-14 (D-14): the validated body, as written — one request, no scope, nothing to wait on.
+    return await postJson(`/api/runs/${encodeURIComponent(runId)}/mark`, body)
   } catch (error) {
     if (error instanceof ApiError && error.status === 403 && error.payload?.error === 'mark_denied') {
       const refusal = MarkRefusalSchema.safeParse(error.payload)
@@ -447,8 +445,8 @@ function feedbackReadFailure(error: unknown): FeedbackReadFailure {
 /**
  * `POST /api/runs/:id/mark-preview` — runs.mark's plan for this exact input (426 D-16, 423 D-18).
  *
- * The route parses the body with the strict `RunsMarkInputSchema`, so the body carries `runId` and
- * never `confirmScope`: this is a read, and markRun's body builder is deliberately not reused.
+ * The route parses the body with the strict `RunsMarkInputSchema`, so the body carries `runId`:
+ * this is a read, and markRun's body is deliberately not reused.
  */
 export async function fetchMarkPreview(
   runId: string,
@@ -695,25 +693,8 @@ export async function fetchActiveExecutions(): Promise<{ executions: ActiveExecu
   return request('/api/execution/active')
 }
 
-/**
- * The confirm scope this page is currently askable on, or nothing (401-09, D-11).
- *
- * A MODULE-LEVEL BOX AND NOT A PARAMETER, and the reason is what the value MEANS. It is not a
- * property of any one trigger — it is "which browser is asking", which is a property of this page,
- * and this page has one person in front of it. There are nine call sites that start a run (the runs
- * table, the tests table, the suites table, three editors, two viewers, the rerun button); threading
- * a scope through all of them would be nine places to forget, and forgetting means an ask-tier run
- * silently falls back to `local-headless` and denies with nobody asked. Registered once by
- * {@link RunConfirmHost}, read here, and cleared when the channel closes.
- *
- * ABSENT IS THE HONEST DEFAULT: no channel, no claim, and the run fails closed by name.
- */
-let currentRunConfirmScope: string | undefined
-
-/** Set by the confirm host when its channel opens; cleared when it closes. */
-export function setRunConfirmScope(scopeId: string | undefined): void {
-  currentRunConfirmScope = scopeId
-}
+// 2026-10-01 (432-14, D-14): the page-level confirm scope box that stood here is deleted with the
+// run-confirm channel that filled it. No run or mark names the browser that sent it.
 
 /**
  * The run could not be STARTED because this process is not in a state to start one (402-08).
@@ -835,10 +816,7 @@ async function assertRunReadiness(): Promise<void> {
  */
 export async function triggerRun(opts: { file?: string; patterns?: string[]; noCache?: boolean; local?: boolean }): Promise<{ runId: string; status: string }> {
   await assertRunReadiness()
-  return postJson('/api/runs/trigger', {
-    ...opts,
-    ...(currentRunConfirmScope === undefined ? {} : { confirmScope: currentRunConfirmScope }),
-  })
+  return postJson('/api/runs/trigger', opts)
 }
 
 /** What {@link openRunStream} accepts: which member to watch, and what to do with the frames. */
@@ -1611,92 +1589,9 @@ export async function fetchCapturedVarNames(testId: string): Promise<{ names: st
   return request(`/api/variables/captured/${encodeURIComponent(testId)}`)
 }
 
-// ---- The run and mark confirm door (401-09, D-11; 426-10, D-20) ------------------------------
-//
-// ONE CHANNEL PER PAGE, TWO SURFACES THAT ANSWER ON IT. The run button's dialog answers a run
-// trigger's question and a mark's composer answers a mark's question; both arrive on the channel
-// below and both answer through `answerRunConfirm`. The registry, the single-use ids, the two DENY
-// reapers and the mint all live on the server.
-//
-// THE ORDER IS FORCED, NOT PREFERRED. The dashboard's queue dispatches a run in the same tick the
-// trigger route enqueues it, so a channel opened after `triggerRun` resolved would be racing the
-// run's own policy gate. The channel is opened first, the server mints the scope on it and
-// announces it as the first frame, and the trigger names that scope.
-
-/**
- * The three answers a browser confirm offers — the TTY's `[y/a/N]`, in a medium with buttons.
- *
- * A VALUE AND A TYPE DERIVED FROM IT, rather than a bare union (401-09). The run dialog and the mark
- * composer render one button per member, and a hand-written list at either render site would be a
- * second spelling of the vocabulary that agreed with the server right up until somebody changed one
- * of them. It mirrors the server's own `CHAT_CONFIRM_ANSWERS`, which the answer route validates
- * against with a closed `z.enum`, so a fourth answer is a 400 rather than an `undefined` somewhere
- * downstream.
- */
-export const CONFIRM_ANSWER_VOCABULARY = ['accept', 'accept-always', 'deny'] as const
-
-export type ChatConfirmAnswer = (typeof CONFIRM_ANSWER_VOCABULARY)[number]
-
-export interface ChatConfirmRequestFrame {
-  confirmId: string
-  actionClass: string
-  preview?: string
-}
-
-export interface ChatConfirmResolvedFrame {
-  kind: 'confirm_resolved'
-  confirmId: string
-  answer: ChatConfirmAnswer
-  /** WHY it resolved — a person, or one of the two silences. Rendered, never inferred. */
-  by: 'answer' | 'timeout' | 'channel-closed'
-}
-
-/** The frame a freshly opened trigger channel announces itself with. */
-export interface RunConfirmScopeFrame {
-  scopeId: string
-}
-
-/**
- * Become askable, and stay askable until this connection closes.
- *
- * `onScope` FIRES BEFORE ANY QUESTION CAN ARRIVE, because the server writes the scope frame before
- * it registers the channel. A caller that triggered a run before this fired would be triggering as
- * an unaskable browser, which is why {@link setRunConfirmScope} is what the host calls from here.
- */
-export function openRunConfirmChannel(
-  callbacks: {
-    onScope?: (frame: RunConfirmScopeFrame) => void
-    onConfirmRequest?: (frame: ChatConfirmRequestFrame) => void
-    onConfirmResolved?: (frame: ChatConfirmResolvedFrame) => void
-  },
-): EventSource {
-  const source = new EventSource(`${API_BASE}/api/run-confirm/channel`)
-  source.addEventListener('confirm_scope', (e) => {
-    callbacks.onScope?.(JSON.parse((e as MessageEvent).data) as RunConfirmScopeFrame)
-  })
-  source.addEventListener('confirm_request', (e) => {
-    callbacks.onConfirmRequest?.(JSON.parse((e as MessageEvent).data) as ChatConfirmRequestFrame)
-  })
-  source.addEventListener('confirm_resolved', (e) => {
-    callbacks.onConfirmResolved?.(JSON.parse((e as MessageEvent).data) as ChatConfirmResolvedFrame)
-  })
-  return source
-}
-
-/**
- * Answer one outstanding run or mark confirm.
- *
- * `scopeId` IS NOT REDUNDANT WITH THE CONFIRM ID: the registry compares it against the scope the
- * question was parked for, so an id that leaked somewhere it should not have cannot be spent on
- * another browser's question.
- */
-export async function answerRunConfirm(input: {
-  scopeId: string
-  confirmId: string
-  answer: ChatConfirmAnswer
-}): Promise<{ resolved: boolean; answer: ChatConfirmAnswer }> {
-  return postJson<{ resolved: boolean; answer: ChatConfirmAnswer }>('/api/run-confirm/answer', input)
-}
+// 2026-10-01 (432-14, D-14): the run and mark confirm door that stood here — the answer vocabulary,
+// the channel frames, `openRunConfirmChannel` and `answerRunConfirm` — is deleted with the server's
+// run-confirm pair. Runs and marks are one request each (`triggerRun`, `markRun`).
 
 // ---------------------------------------------------------------------------
 // Post-processing chips: one read, a poll floor, and a push channel that only triggers

@@ -40,9 +40,9 @@
  * measured as zero, so no homonym is accused and no filter is needed to spare one.
  *
  * THE TOLERATED NAMES ARE A POSITIVE CONTROL, NEVER A FILTER. D-11 keeps a short list of
- * chat-flavoured names the tree legitimately holds: the confirm pieces a later phase deletes, the
- * router that still serves the run-confirm rows, the door's composition seams, the denial block and
- * the entity route helper. They are not excluded from anything. One cell asserts BY NAME that each
+ * chat-flavoured names the tree legitimately holds: the door's composition seams, the host seam, the
+ * denial block and the entity route helper. (The confirm pieces and the router that served the
+ * run-confirm rows were on it until 432-14 deleted them, D-14.) They are not excluded from anything. One cell asserts BY NAME that each
  * is present at rest in the production source of its universe, and another that no needle is a
  * substring of any of them, so no needle was ever narrowed around a kept name. A needle that
  * started matching a kept name would RED that cell rather than hide behind an exception.
@@ -222,15 +222,9 @@ const EVERY_NEEDLE: NeedleEntry[] = [
 ]
 
 /** The kept names (D-11), each with the universe whose production source must still spell it. */
+// 2026-10-01 (432-14, D-14): the confirm vocabulary, the channel frames, the confirm router and its
+// table are deleted with the run-confirm pair, so they leave this list rather than being excused.
 const TOLERATED: ReadonlyArray<readonly [string, 'ui' | 'server' | 'door']> = [
-  ['ChatConfirmAnswer', 'ui'],
-  ['ChatConfirmRequestFrame', 'ui'],
-  ['ChatConfirmResolvedFrame', 'ui'],
-  ['CONFIRM_ANSWER_VOCABULARY', 'ui'],
-  ['CHAT_CONFIRM_ANSWERS', 'server'],
-  ['ChatConfirmChannelFrame', 'server'],
-  ['createChatRouter', 'server'],
-  ['CHAT_ROUTE_TABLE', 'server'],
   ['composeDashboardDoor', 'door'],
   ['composeDashboardAgentHost', 'door'],
   ['DASHBOARD_FUNCTION_CALLER', 'door'],

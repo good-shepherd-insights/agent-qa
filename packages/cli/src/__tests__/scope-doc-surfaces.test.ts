@@ -14,7 +14,8 @@
 //   2. SERVED — until 430 this leg read the dashboard's served catalog over a real socket.
 //      2026-09-28 (430 D-02): the dashboard serves no documentation surface of its own; its server
 //      door was deleted, so the leg is an absence cell: the composed door's router answers 404 on
-//      the catalog path. The committed catalog, `init --agent` and MCP `tools/list` are the surfaces
+//      the catalog path. 2026-10-01 (432-14): the router is the dashboard's shipped one, since the
+//      run-confirm router this leg used to mount is deleted too. The committed catalog, `init --agent` and MCP `tools/list` are the surfaces
 //      that carry the scope description.
 //   3. RENDER BUDGET — the structural fact the restatement leans on: the summary-rendering and
 //      typable-form surfaces cannot carry an op's params, because their inputs are alias rows and
@@ -32,7 +33,7 @@ import { dirname, join, resolve } from 'node:path'
 
 import { CHAT_HELP_ENTRIES, CHAT_HELP_TEXT } from '@vostride/agent-qa-agent'
 import type { LocalAgentHost } from '@vostride/agent-qa-agent-local'
-import { createChatRouter } from '@vostride/agent-qa-dashboard'
+import { createRouter, DashboardDatabase } from '@vostride/agent-qa-dashboard'
 import type { CapabilityCatalog, CatalogRow } from '@vostride/agent-qa-schema'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 
@@ -149,7 +150,10 @@ describe('the dashboard serves no documentation surface of its own (served surfa
       resolveExecutionContext: () => 'local-interactive',
     })
     host = composed.host
-    server = createServer(createChatRouter(composed.agentHost))
+    server = createServer(createRouter({
+      db: new DashboardDatabase({ dbPath: ':memory:' }),
+      agentHost: composed.agentHost,
+    }))
     await new Promise<void>((ready) => server.listen(0, '127.0.0.1', ready))
     const address = server.address()
     if (address === null || typeof address === 'string') {

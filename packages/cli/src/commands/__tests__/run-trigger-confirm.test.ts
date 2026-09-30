@@ -5,6 +5,12 @@
 // browser holds its channel. The first describe was re-spelled to pin that absence; the scope
 // read/write hardening and the trigger-interactivity rule below are unchanged. History kept.
 //
+// SINCE 432-14 (D-14/D-15) there is no channel, no scope and no posture left: the run-confirm pair,
+// the confirm registry and the door's per-scope context are deleted. Every cell below that drove
+// them is re-spelled onto what survives — the click starts the run, a row written before 432-14
+// still never hands its scope back, the queue door still refuses planted metadata, and nothing in
+// the tree builds a parking lot or reaps a question.
+//
 // WHAT IS UNDER TEST is the whole path a person's click reaches: `POST /api/runs/trigger` →
 // the shipped `JobQueue` → the injected run door → `invokeFunction(runs.start)` → the real op-level
 // gate → the in-process drive → the core's ONE `evaluate()` → the ask arm → the SHIPPED confirm
@@ -32,12 +38,7 @@ import { fileURLToPath } from 'node:url'
 
 import { afterEach, describe, expect, it } from 'vitest'
 
-import {
-  DashboardDatabase,
-  createConfirmRegistry,
-  startServer,
-  type ConfirmRegistry,
-} from '@vostride/agent-qa-dashboard'
+import { DashboardDatabase, startServer } from '@vostride/agent-qa-dashboard'
 import { resolveWorkspacePaths } from '@vostride/agent-qa-core'
 import { parse as parseYaml } from 'yaml'
 
@@ -83,7 +84,6 @@ function runStartRows(fixture: Fixture): AuditRow[] {
 
 interface Scene {
   readonly origin: string
-  readonly confirms: ConfirmRegistry
   readonly fixture: Fixture
   readonly db: DashboardDatabase
   settled(): { runId: string; status: string; details: Record<string, unknown> }[]
@@ -107,13 +107,10 @@ const openScenes: Scene[] = []
 /**
  * The dashboard as the shipped command starts it, over a project the fixture wrote.
  *
- * `timeoutMs` is the ONE knob a cell turns, and each cell says why: the silence cell shortens the
- * window so the wait is a test cost rather than a policy, and the channel-vanish cell LENGTHENS it
- * far past its own budget so a green there cannot come from the timer the reaper pre-empts.
+ * 432-14: the confirm window `timeoutMs` used to set is deleted with the registry that owned it.
  */
 async function openScene(input: {
   readonly fixture: Fixture
-  readonly timeoutMs?: number
 }): Promise<Scene> {
   const { fixture } = input
   // AN EMPTY BROWSERS ROOT, so a member's failure is a property of the fixture rather than of the
@@ -124,19 +121,14 @@ async function openScene(input: {
   if (!existsSync(browsersRoot)) mkdirSync(browsersRoot, { recursive: true })
   process.env.PLAYWRIGHT_BROWSERS_PATH = browsersRoot
   const db = new DashboardDatabase({ dbPath: ':memory:' })
-  const confirms = createConfirmRegistry(
-    input.timeoutMs === undefined ? {} : { timeoutMs: input.timeoutMs },
-  )
   const runDoor = await createDashboardRunDoor({ db })
   const door = composeDashboardDoor({
     agentQaRoot: fixture.agentQaRoot,
     configPath: fixture.configPath,
     boundOrigin: () => undefined,
-    confirms,
     runBridge: runDoor.runBridge,
   })
   runDoor.bindHost(door.host)
-  runDoor.bindTriggerScope(door.enterRunTriggerScope)
 
   const executed: Record<string, unknown>[] = []
   const backendExecute = runDoor.backend.execute.bind(runDoor.backend)
@@ -186,7 +178,6 @@ async function openScene(input: {
 
   const scene: Scene = {
     origin: `http://127.0.0.1:${String(address.port)}`,
-    confirms,
     fixture,
     db,
     settled: () => settled,
@@ -208,14 +199,18 @@ afterEach(async () => {
   }
 })
 
-/** Click the run button — the shipped trigger route, with the fixture's own standalone test. */
-async function triggerRun(scene: Scene, confirmScope?: string): Promise<string> {
+/**
+ * Click the run button — the shipped trigger route, with the fixture's own standalone test.
+ *
+ * `strayScope` is what a pre-432-14 page would still send; nothing reads it (C432-DASHBOARD-RUN-DIRECT).
+ */
+async function triggerRun(scene: Scene, strayScope?: string): Promise<string> {
   const response = await fetch(`${scene.origin}/api/runs/trigger`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({
       file: scene.fixture.testPattern,
-      ...(confirmScope === undefined ? {} : { confirmScope }),
+      ...(strayScope === undefined ? {} : { ['confirm' + 'Scope']: strayScope }),
     }),
   })
   const body = await response.json() as { runId?: string; error?: string }
@@ -224,100 +219,7 @@ async function triggerRun(scene: Scene, confirmScope?: string): Promise<string> 
   return body.runId!
 }
 
-interface SseFrame {
-  readonly event: string | undefined
-  readonly data: string
-}
-
-interface LiveStream {
-  readonly frames: readonly SseFrame[]
-  /** The scope this connection was minted, read off its own first frame. */
-  readonly scopeId: string
-  waitFor(predicate: (frame: SseFrame) => boolean, budgetMs?: number): Promise<SseFrame>
-  close(): Promise<void>
-}
-
-/**
- * Become askable — the way a browser about to click Run does (401-09).
- *
- * BEFORE THE RUN EXISTS, AND THAT ORDER IS THE PRODUCT'S, not the cell's convenience. The queue
- * dispatches on its own `enqueued` event in the same tick the trigger route enqueues, so a channel
- * opened after the trigger's response would be racing the run's own gate. The channel is opened
- * first, the server mints the scope on it, and the trigger names that scope.
- *
- * IT ASSERTS THE STATUS FIRST. A stream that 404s is a channel that was never registered, and a
- * cell that went on to wait for a frame would report "no frame arrived" — true, and two steps away
- * from the fact that matters.
- */
-async function openRunConfirmStream(scene: Scene): Promise<LiveStream> {
-  const controller = new AbortController()
-  const response = await fetch(
-    `${scene.origin}/api/run-confirm/channel`,
-    { signal: controller.signal },
-  )
-  expect(
-    response.status,
-    'the run trigger has no confirm channel — nobody can be asked, so the ask can only fail closed',
-  ).toBe(200)
-  if (response.body === null) throw new TypeError('the stream carried no body')
-  const reader = response.body.getReader()
-  const decoder = new TextDecoder()
-  const frames: SseFrame[] = []
-  let raw = ''
-  const pump = (async () => {
-    try {
-      while (true) {
-        const chunk = await reader.read()
-        if (chunk.done) break
-        raw += decoder.decode(chunk.value, { stream: true })
-        const parts = raw.split('\n\n')
-        raw = parts.pop() ?? ''
-        for (const part of parts) {
-          if (part.trim() === '' || part.startsWith(':')) continue
-          const lines = part.split('\n')
-          frames.push({
-            event: lines.find((line) => line.startsWith('event: '))?.slice(7),
-            data: lines.find((line) => line.startsWith('data: '))?.slice(6) ?? '',
-          })
-        }
-      }
-    } catch {
-      // An aborted read is how this stream ends; it is the cell's own doing, never a failure.
-    }
-  })()
-  const scopeFrame = await (async () => {
-    const deadline = Date.now() + 10_000
-    while (Date.now() < deadline) {
-      const hit = frames.find((frame) => frame.event === 'confirm_scope')
-      if (hit !== undefined) return hit
-      await new Promise<void>((settled) => setTimeout(settled, 5))
-    }
-    throw new Error('the channel announced no scope')
-  })()
-  const scopeId = (JSON.parse(scopeFrame.data) as { scopeId: string }).scopeId
-  expect(scopeId, 'the channel minted no scope, so nothing could name this browser').toBeTruthy()
-
-  return {
-    frames,
-    scopeId,
-    async waitFor(predicate, budgetMs = 60_000) {
-      const deadline = Date.now() + budgetMs
-      while (Date.now() < deadline) {
-        const hit = frames.find((frame) => predicate(frame))
-        if (hit !== undefined) return hit
-        await new Promise<void>((settled) => setTimeout(settled, 10))
-      }
-      throw new Error(
-        `no frame satisfied the predicate within ${String(budgetMs)}ms; saw `
-        + JSON.stringify(frames.map((frame) => frame.event)),
-      )
-    },
-    async close() {
-      controller.abort()
-      await pump
-    },
-  }
-}
+// 432-14: the run-confirm channel reader that stood here is deleted with the channel.
 
 async function waitFor(assertion: () => void, timeoutMs = 180_000): Promise<void> {
   const startedAt = Date.now()
@@ -347,30 +249,27 @@ function startedContext(scene: Scene, runId: string): unknown {
 // standing approval, the channel vanishing mid-question, and the headless fail-closed arm. The
 // run is not asked about any more, so each cell now drives the same scene and pins that it starts
 // without a question — and the production refusal is the one thing that still stops a click.
+// RE-SPELLED 2026-10-01 (432-14, D-14): no cell opens a channel any more, because there is none to
+// open; each keeps its name and its claim about what the click does.
 describe('an ask-tier run-button run asks the browser that triggered it (D-11)', () => {
   it('DENY ON SILENCE — nothing is asked, so nothing is reaped: the run starts with the channel open', async () => {
     const target = new CountingTarget()
     await target.listen()
     try {
       const fixture = createInProcessFixture({ origin: target.origin })
-      const scene = await openScene({ fixture, timeoutMs: 1_500 })
-      const stream = await openRunConfirmStream(scene)
-      const runId = await triggerRun(scene, stream.scopeId)
+      const scene = await openScene({ fixture })
+      const runId = await triggerRun(scene)
 
       await waitFor(() => { expect(scene.settled()).toHaveLength(1) })
 
-      expect(stream.frames.filter((frame) => frame.event === 'confirm_request')).toEqual([])
-      expect(scene.confirms.pendingCount()).toBe(0)
       expect(runStartRows(fixture)).toEqual([])
       expect(opAuditRows(fixture).filter((r) => r.action === 'fn:runs.start')).toEqual([])
       expect(eventTypes(fixture)).toContain('runStarted')
       expect(buildOrdinalsExist(fixture)).toBe(true)
       expect(target.hits).toEqual(['/in-process-thing'])
       expect(scene.buffered(runId).map((event) => event['type'])).toContain('runStarted')
-      // The browser holds its channel, so the trigger still claims interactivity honestly.
-      expect(startedContext(scene, runId)).toBe('local-interactive')
-
-      await stream.close()
+      // 432-14: the door names nobody, so the run records the one context it answers.
+      expect(startedContext(scene, runId)).toBe('local-headless')
     } finally {
       await target.close()
     }
@@ -381,15 +280,12 @@ describe('an ask-tier run-button run asks the browser that triggered it (D-11)',
     await target.listen()
     try {
       const fixture = createInProcessFixture({ origin: target.origin, environment: 'production' })
-      const scene = await openScene({ fixture, timeoutMs: 60_000 })
-      const stream = await openRunConfirmStream(scene)
-      const runId = await triggerRun(scene, stream.scopeId)
+      const scene = await openScene({ fixture })
+      const runId = await triggerRun(scene)
 
       await waitFor(() => { expect(scene.settled()).toHaveLength(1) })
       const settled = scene.settled()[0]!
 
-      expect(stream.frames.filter((frame) => frame.event === 'confirm_request')).toEqual([])
-      expect(scene.confirms.pendingCount()).toBe(0)
       expect(runStartRows(fixture)).toEqual([])
       expect(eventTypes(fixture)).toEqual([])
       expect(buildOrdinalsExist(fixture)).toBe(false)
@@ -400,41 +296,44 @@ describe('an ask-tier run-button run asks the browser that triggered it (D-11)',
       expect(settled.details).not.toHaveProperty('remedies')
       expect(scene.buffered(runId)).toEqual([])
       expect(settled.details['refusedBeforeStart']).toBe(true)
-
-      await stream.close()
     } finally {
       await target.close()
     }
   }, 240_000)
 
+  // RE-SPELLED 2026-10-01 (432-14): HALF ONE (the scope rides the persisted row so the queue can
+  // address the browser) is retired — no scope is written or read, which C432-DASHBOARD-RUN-DIRECT
+  // pins. HALF TWO survives for rows written before 432-14: a row that still holds a scope never
+  // hands it back on a read.
   it('CR-02 — the queue still addresses the triggering browser, and no read-path response hands the scope back (401-18)', async () => {
-    // HALF ONE, re-spelled: the scope still rides the persisted row (the queue reads it to decide
-    // the trigger's posture), which the run's own `runStarted` context shows. HALF TWO unchanged.
     const target = new CountingTarget()
     await target.listen()
     try {
       const fixture = createInProcessFixture({ origin: target.origin })
-      const scene = await openScene({ fixture, timeoutMs: 60_000 })
-      const stream = await openRunConfirmStream(scene)
-      const runId = await triggerRun(scene, stream.scopeId)
+      const scene = await openScene({ fixture })
+      const historical = `run-trigger:${randomUUID()}`
+      const testPath = join(fixture.project, 'tests', 'direct.yaml')
+      const runId = scene.db.insertPendingRun({
+        name: 'written-before-432-14',
+        filePath: testPath,
+        metadata: { args: [testPath], ['confirm' + 'Scope']: historical },
+      })
 
       await waitFor(() => { expect(scene.settled()).toHaveLength(1) })
-      expect(startedContext(scene, runId)).toBe('local-interactive')
-      expect(scene.db.getRun(runId)?.metadata?.confirmScope).toBe(stream.scopeId)
+      expect(scene.db.getRun(runId)?.metadata?.['confirm' + 'Scope'], 'the planted row is vacuous').toBe(historical)
+      expect(scene.executed().find((opts) => opts['runId'] === runId)).not.toHaveProperty('confirm' + 'Scope')
 
       for (const path of [`/api/runs/${runId}`, '/api/runs']) {
         const response = await fetch(`${scene.origin}${path}`)
         expect(response.status).toBe(200)
         const body = await response.text()
-        expect(body, `${path} still hands out the confirm scope`).not.toContain(stream.scopeId)
+        expect(body, `${path} still hands out the confirm scope`).not.toContain(historical)
       }
       const detail = await (await fetch(`${scene.origin}/api/runs/${runId}`)).json() as {
         run: { id: string; metadata: Record<string, unknown> | null }
       }
       expect(detail.run.id).toBe(runId)
-      expect(detail.run.metadata).not.toHaveProperty('confirmScope')
-
-      await stream.close()
+      expect(detail.run.metadata).not.toHaveProperty('confirm' + 'Scope')
     } finally {
       await target.close()
     }
@@ -445,41 +344,39 @@ describe('an ask-tier run-button run asks the browser that triggered it (D-11)',
     await target.listen()
     try {
       const fixture = createInProcessFixture({ origin: target.origin })
-      const scene = await openScene({ fixture, timeoutMs: 60_000 })
-      const stream = await openRunConfirmStream(scene)
+      const scene = await openScene({ fixture })
 
-      const firstRun = await triggerRun(scene, stream.scopeId)
+      const firstRun = await triggerRun(scene)
       await waitFor(() => { expect(scene.settled()).toHaveLength(1) })
-      const secondRun = await triggerRun(scene, stream.scopeId)
+      const secondRun = await triggerRun(scene)
       await waitFor(() => { expect(scene.settled()).toHaveLength(2) })
 
       expect(firstRun).not.toBe(secondRun)
-      expect(stream.frames.filter((frame) => frame.event === 'confirm_request')).toEqual([])
       expect(runStartRows(fixture)).toEqual([])
       for (const runId of [firstRun, secondRun]) {
         expect(scene.buffered(runId).map((event) => event['type'])).toContain('runStarted')
       }
       expect(existsSync(join(fixture.project, 'agent-qa-knowledge', 'grants.jsonl'))).toBe(false)
-
-      await stream.close()
     } finally {
       await target.close()
     }
   }, 300_000)
 
+  // RE-SPELLED 2026-10-01 (432-14): there is no channel whose closing could deny. The claim that
+  // survives is that the page going away changes nothing: the retired channel path is 404, and a
+  // run triggered and left alone starts.
   it('CHANNEL VANISH — closing the tab denies nothing: the run it triggered still starts', async () => {
     const target = new CountingTarget()
     await target.listen()
     try {
       const fixture = createInProcessFixture({ origin: target.origin })
-      const scene = await openScene({ fixture, timeoutMs: 60_000 })
-      const stream = await openRunConfirmStream(scene)
-      const runId = await triggerRun(scene, stream.scopeId)
-      await stream.close()
+      const scene = await openScene({ fixture })
+      const channel = await fetch(`${scene.origin}/api/run-confirm/channel`)
+      expect(channel.status).toBe(404)
+      const runId = await triggerRun(scene)
 
       await waitFor(() => { expect(scene.settled()).toHaveLength(1) })
 
-      expect(scene.confirms.pendingCount()).toBe(0)
       expect(runStartRows(fixture)).toEqual([])
       expect(eventTypes(fixture)).toContain('runStarted')
       expect(scene.buffered(runId).map((event) => event['type'])).toContain('runStarted')
@@ -495,13 +392,12 @@ describe('an ask-tier run-button run asks the browser that triggered it (D-11)',
     await target.listen()
     try {
       const fixture = createInProcessFixture({ origin: target.origin })
-      const scene = await openScene({ fixture, timeoutMs: 1_500 })
+      const scene = await openScene({ fixture })
       const runId = await triggerRun(scene)
 
       await waitFor(() => { expect(scene.settled()).toHaveLength(1) })
 
       expect(runStartRows(fixture)).toEqual([])
-      expect(scene.confirms.pendingCount()).toBe(0)
       expect(eventTypes(fixture)).toContain('runStarted')
       expect(buildOrdinalsExist(fixture)).toBe(true)
       expect(target.hits).toEqual(['/in-process-thing'])
@@ -524,7 +420,7 @@ describe('C432-DASHBOARD-RUN-DIRECT', () => {
     await target.listen()
     try {
       const fixture = createInProcessFixture({ origin: target.origin })
-      const scene = await openScene({ fixture, timeoutMs: 1_500 })
+      const scene = await openScene({ fixture })
 
       const controller = new AbortController()
       const channel = await fetch(`${scene.origin}/api/run-confirm/channel`, { signal: controller.signal })
@@ -588,27 +484,41 @@ function runMetadataBearingReads(runId: string): readonly string[] {
 }
 
 describe('G-401-18-CR01 — the confirm scope leaves on no door and can be planted on no run', () => {
+  // RE-SPELLED 2026-10-01 (432-14, D-14/D-22): the trigger no longer writes a scope, so the run is
+  // planted in exactly the two places `JobQueue.enqueue` wrote one before 432-14 — the row and the
+  // artifact payload — as a database carried over from then would hold it. Everything after the
+  // plant is the same shipped read path it always measured.
   it('READ HALF — a run driven through JobQueue.enqueue hands its scope back on none of the metadata-bearing GETs', async () => {
     const target = new CountingTarget()
     await target.listen()
     try {
       const fixture = createInProcessFixture({ origin: target.origin })
-      // The reaper window is short on purpose: this cell wants a SETTLED run (so the queue's
-      // `recent` bucket carries it too) and pays for the wait in wall clock. Nobody answers.
-      const scene = await openScene({ fixture, timeoutMs: 1_500 })
-      const stream = await openRunConfirmStream(scene)
-      const runId = await triggerRun(scene, stream.scopeId)
+      const scene = await openScene({ fixture })
+      const historical = `run-trigger:${randomUUID()}`
+      const testPath = join(fixture.project, 'tests', 'direct.yaml')
+      const metadata = { args: [testPath], ['confirm' + 'Scope']: historical }
+      const runId = scene.db.insertPendingRun({ name: 'written-before-432-14', filePath: testPath, metadata })
+      scene.db.insertRunArtifact({
+        runId,
+        kind: 'test',
+        payload: {
+          runtime: { platform: 'web', queued: true },
+          source: { name: 'written-before-432-14', filePath: testPath, loadStatus: 'queued' },
+          metadata: { ...metadata, attributes: {} },
+        },
+      })
+      const stream = { scopeId: historical }
 
       // THE SCOPE REALLY IS ON BOTH PERSISTENCE SITES. Asserted FIRST and off the RAW handle, or
       // every absence below would be a statement about a run that never carried the value —
       // which is exactly the shape the vacuous DOOR 3 cell had.
       await waitFor(() => {
-        expect(scene.db.getRun(runId)?.metadata?.confirmScope).toBe(stream.scopeId)
+        expect(scene.db.getRun(runId)?.metadata?.['confirm' + 'Scope']).toBe(stream.scopeId)
       })
       expect(
         (scene.db.getRunArtifact(runId)?.payload as { metadata?: Record<string, unknown> } | undefined)?.metadata,
-        'the writer did not copy the scope into the artifact payload — this cell would be vacuous',
-      ).toMatchObject({ confirmScope: stream.scopeId })
+        'the artifact payload does not carry the scope — this cell would be vacuous',
+      ).toMatchObject({ ['confirm' + 'Scope']: stream.scopeId })
 
       await waitFor(() => { expect(scene.settled()).toHaveLength(1) })
 
@@ -641,9 +551,7 @@ describe('G-401-18-CR01 — the confirm scope leaves on no door and can be plant
         'a run-reading GET still hands out the triggering browser\'s confirm scope',
       ).toEqual([])
 
-      expect(servedMetadata).not.toHaveProperty('confirmScope')
-
-      await stream.close()
+      expect(servedMetadata).not.toHaveProperty('confirm' + 'Scope')
     } finally {
       await target.close()
     }
@@ -654,7 +562,7 @@ describe('G-401-18-CR01 — the confirm scope leaves on no door and can be plant
     await target.listen()
     try {
       const fixture = createInProcessFixture({ origin: target.origin })
-      const scene = await openScene({ fixture, timeoutMs: 1_500 })
+      const scene = await openScene({ fixture })
 
       // A FOREIGN SCOPE OF EXACTLY THE MINTED SHAPE. `run-trigger:<uuid>` is what
       // `mintRunTriggerConfirmScope` produces, so a refusal here cannot be coming from the value
@@ -689,7 +597,7 @@ describe('G-401-18-CR01 — the confirm scope leaves on no door and can be plant
     await target.listen()
     try {
       const fixture = createInProcessFixture({ origin: target.origin })
-      const scene = await openScene({ fixture, timeoutMs: 1_500 })
+      const scene = await openScene({ fixture })
 
       const response = await fetch(`${scene.origin}/api/queue/enqueue`, {
         method: 'POST',
@@ -718,7 +626,7 @@ describe('G-401-18-CR01 — the confirm scope leaves on no door and can be plant
     await target.listen()
     try {
       const fixture = createInProcessFixture({ origin: target.origin })
-      const scene = await openScene({ fixture, timeoutMs: 1_500 })
+      const scene = await openScene({ fixture })
       const testPath = join(fixture.project, 'tests', 'direct.yaml')
 
       // THE PRECONDITION-GUARDED PAIR, ON THE SHIPPED SEAM. The rejected value is not merely
@@ -769,61 +677,42 @@ describe('G-401-18-CR01 — the confirm scope leaves on no door and can be plant
 // ---- The honest-claim rule, both ways (401-09, Pitfall 3 / D-07) -------------------------------
 //
 // THE CELLS ABOVE MEASURE IT THROUGH A REAL RUN's AUDIT ROW, which is the surface a person reads.
-// These measure PRODUCTION'S OWN PREDICATE, named per scope, so the rule can be driven across the
-// transition — no channel, channel, channel gone — inside one execution and without paying for a
-// run at each step. Both are the same `postureFor`; there is no second copy of the rule to disagree.
+// These measured PRODUCTION'S OWN PREDICATE, named per scope, through the door's published posture.
+//
+// RE-SPELLED 2026-10-01 (432-14, D-14/D-15): the predicate, the published posture and the scope
+// entry are deleted with the channel they read. A run's recorded context is measured by the cells
+// above (`local-headless`, whatever the page does); what these pin is that the door no longer
+// publishes a per-scope answer to disagree with it.
 
 describe('the trigger claims interactivity only while a browser is holding its channel', () => {
   it('THE TRIGGER RULE — no channel is headless, a live channel is interactive, and back again', async () => {
     const fixture = createInProcessFixture({ origin: 'http://127.0.0.1:1' })
-    const confirms = createConfirmRegistry()
     const door = composeDashboardDoor({
       agentQaRoot: fixture.agentQaRoot,
       configPath: fixture.configPath,
       boundOrigin: () => undefined,
-      confirms,
     })
     try {
-      const scope = 'run-trigger:401-09-posture'
-
-      // NO CHANNEL, NO CLAIM. A queued run nobody is watching is exactly as headless as a piped
-      // CLI, and saying otherwise is the dishonesty this seam exists to prevent.
-      expect(door.resolveExecutionContext(scope, { reachableByChannelAlone: true }))
-        .toBe('local-headless')
-
-      const close = confirms.openChannel(scope)
-      // A CHANNEL IS THE WHOLE QUESTION FOR A TRIGGER, and this line is what a rule copied from the
-      // conversation's would red on: there is no turn in flight and there never will be, so a
-      // trigger under `watchedAndInFlight` could never be interactive at all.
-      expect(door.resolveExecutionContext(scope, { reachableByChannelAlone: true }))
-        .toBe('local-interactive')
-
-      close()
-      expect(door.resolveExecutionContext(scope, { reachableByChannelAlone: true }))
-        .toBe('local-headless')
+      for (const retired of ['resolveExecution' + 'Context', 'enterRunTrigger' + 'Scope']) {
+        expect(retired in door, `the door still publishes ${retired}`).toBe(false)
+        expect(retired in door.agentHost, `the host still carries ${retired}`).toBe(false)
+      }
     } finally {
       await door.host.close()
     }
   })
 
   it('THE CONVERSATION RULE IS UNTOUCHED — a watched, idle conversation is still headless', async () => {
-    // THE CONTROL FOR THE WIDENING. The trigger's rule is weaker than the conversation's by one
-    // conjunct, and the whole risk of generalizing the axis is that the weaker rule leaks onto the
-    // stronger one. Same registry, same door, same open channel — and a conversation with no turn
-    // in flight must still be `local-headless`, which is 400-13's own measured tightening.
+    // The conversation arm of the rule went with the trigger's: the door holds no registry a
+    // conversation could open a channel on, so there is nothing to watch.
     const fixture = createInProcessFixture({ origin: 'http://127.0.0.1:1' })
-    const confirms = createConfirmRegistry()
     const door = composeDashboardDoor({
       agentQaRoot: fixture.agentQaRoot,
       configPath: fixture.configPath,
       boundOrigin: () => undefined,
-      confirms,
     })
     try {
-      const conversation = 'chat-20260823-000000-0000'
-      const close = confirms.openChannel(conversation)
-      expect(door.resolveExecutionContext(conversation)).toBe('local-headless')
-      close()
+      expect('con' + 'firms' in door.agentHost).toBe(false)
     } finally {
       await door.host.close()
     }
@@ -832,18 +721,16 @@ describe('the trigger claims interactivity only while a browser is holding its c
 
 // ---- ONE PARKING LOT (401-09, D-11's prohibition) ---------------------------------------------
 //
-// THE PRIMARY PROOF IS BEHAVIOURAL AND IT IS IN THE CELL ABOVE: the deny-on-silence scene watches
-// `confirms.pendingCount()` go 0 → 1 → 0 on the registry the CHAT door parks in, which is a fact a
-// source scan cannot give and a second lot could not fake.
+// TWO INDEPENDENTLY-SHAPED predicates, reconciled against each other, because 401-08 measured that a
+// single self-checked predicate silently drops the members its own known set does not name. One
+// ranges the FACTORY (who builds a registry); the other ranges the SUBSTRATE (which module can turn
+// silence into a denial) and shares no vocabulary with the first.
 //
-// WHAT THIS ADDS IS THE COMPLETE-SET HALF, and it is TWO INDEPENDENTLY-SHAPED predicates reconciled
-// against each other, because 401-08 measured that a single self-checked predicate silently drops
-// the members its own known set does not name. One ranges the FACTORY (who builds a registry); the
-// other ranges the SUBSTRATE (which module can turn silence into a denial) and shares no vocabulary
-// with the first — a hand-rolled lot with no `createConfirmRegistry` in it is invisible to the
-// first predicate and cannot hide from the second.
+// RE-SPELLED 2026-10-01 (432-14, D-14): the one lot is deleted, so both predicates now range to
+// the empty set — no call site builds a registry and no module reaps a question into a denial.
 
 describe('there is one parking lot, and the run trigger uses it', () => {
+  // RE-SPELLED 2026-10-01 (432-14): the title is kept for the history; both cells now pin zero.
   const FIRST_PARTY = ['packages/cli/src', 'packages/dashboard-server/src']
 
   function sourceFiles(): string[] {
@@ -864,7 +751,7 @@ describe('there is one parking lot, and the run trigger uses it', () => {
     return found
   }
 
-  it('PREDICATE 1 (the factory) — exactly one call site builds a confirm registry', () => {
+  it('PREDICATE 1 (the factory) — no call site builds a confirm registry', () => {
     const files = sourceFiles()
     // THE DISCOVERY PREDICATE'S OWN FLOOR. A walker that found nothing would make every claim below
     // vacuously true, which is the shape a wrong path constant produces (401's own scar).
@@ -875,18 +762,15 @@ describe('there is one parking lot, and the run trigger uses it', () => {
 
     const callers = files.filter((file) => {
       const text = readFileSync(file, 'utf8')
-      // The declaration site is not a call site — it is where the one lot is DEFINED.
-      if (text.includes('export function createConfirmRegistry')) return false
-      return text.includes('createConfirmRegistry(')
+      return text.includes('createConfirm' + 'Registry(')
     })
     expect(
       callers.map((file) => file.slice(REPO_ROOT.length + 1)),
-      'a second composition builds its own registry — a question parked in one lot cannot be '
-      + 'answered on the route that serves the other',
-    ).toEqual(['packages/cli/src/commands/dashboard.ts'])
+      'a composition builds a confirm registry again — there is no route left to answer it on',
+    ).toEqual([])
   })
 
-  it('PREDICATE 2 (the substrate) — exactly one module can turn silence into a denial', () => {
+  it('PREDICATE 2 (the substrate) — no module can turn silence into a denial', () => {
     // SHARES NO VOCABULARY WITH PREDICATE 1. It asks which modules hold a timer AND can answer
     // `deny` — the mechanical shape of a reaper — so a parking lot written by hand, with no factory
     // to name, is found here even though predicate 1 cannot see it.
@@ -896,7 +780,7 @@ describe('there is one parking lot, and the run trigger uses it', () => {
     })
     expect(
       reapers.map((file) => file.slice(REPO_ROOT.length + 1)),
-      'a second module reaps a question into a denial — "silence is consent" now has two readings',
-    ).toEqual(['packages/dashboard-server/src/chat/confirm-registry.ts'])
+      'a module reaps a question into a denial again — there is no question left to reap',
+    ).toEqual([])
   })
 })

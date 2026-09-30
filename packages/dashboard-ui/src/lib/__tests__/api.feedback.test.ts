@@ -5,14 +5,13 @@ import {
   RunsMarksHistoryResultSchema,
   type MarkHistoryEntry,
 } from '@vostride/agent-qa-schema'
-import { fetchMarkPreview, fetchMarksHistory, setRunConfirmScope } from '../api'
+import { fetchMarkPreview, fetchMarksHistory } from '../api'
 
 const RUN_ID = generateRunId()
 const TEST_ID = generateTestId()
 const ENCODED = encodeURIComponent(RUN_ID)
 
 afterEach(() => {
-  setRunConfirmScope(undefined)
   vi.unstubAllGlobals()
 })
 
@@ -59,10 +58,10 @@ function respond(status: number, body: unknown) {
 }
 
 describe('426-01 feedback read clients', () => {
+  // 432-14: the page holds no confirm scope to leak; the body is still exactly the preview input.
   it('PREVIEW-CLIENT-BODY posts runId and never the confirm scope, and returns the parsed read', async () => {
     const fetchMock = respond(200, CONSEQUENCES)
     vi.stubGlobal('fetch', fetchMock)
-    setRunConfirmScope('scope-x')
     const read = await fetchMarkPreview(RUN_ID, { kind: 'false-fail', testId: TEST_ID, stepIndex: 2 })
     expect(fetchMock).toHaveBeenCalledTimes(1)
     const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit]

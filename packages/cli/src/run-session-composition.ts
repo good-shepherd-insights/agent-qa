@@ -3,8 +3,9 @@
 // Until this phase this module was 1035 lines and held the whole composition. The host-neutral
 // majority now lives in the local agent package's composition subtree, beside where every other
 // host will reach it, and this file holds ONLY the part that a terminal is required to run: the
-// reporter attachment, the live-line seam those reporters own, the human-output unmasking confirm
-// decorator, and the readline default the CLI — and only the CLI — is entitled to assume.
+// reporter attachment, the live-line seam those reporters own and the human-output unmasking confirm
+// decorator. 2026-10-01 (432-14, D-03/D-14): the readline default is gone — nothing in a run asks,
+// so the CLI hands the per-run registrar no confirm channel at all.
 //
 // There is deliberately NO compatibility re-export here. A module that re-published the moved
 // symbols would let every call site keep naming this path, and then nothing would have moved except
@@ -18,7 +19,6 @@
 import { unmaskForHumanOutput } from '@vostride/agent-qa-safety'
 import type { AuditSink, ConfirmPort, SafetyHookRunner } from '@vostride/agent-qa-safety'
 import type { QuarantineAppliedEntry } from '@vostride/agent-qa-schema'
-import { createReadlineConfirm } from '@vostride/agent-qa-safety-local'
 import { buildRunSessionSafetyHooks } from '@vostride/agent-qa-agent-local'
 import type {
   AttachableRunSession,
@@ -107,37 +107,21 @@ export function buildUnmaskingConfirm(input: {
 }
 
 /**
- * The CLI's assembly of the per-run safety hooks. It supplies the two things the host-neutral
- * registrar refuses to assume — a confirm channel (readline unless the caller injects one, D-15)
- * and the human-output unmasking decorator over it (D-11) — and then delegates. The signature is
- * unchanged from before the dissection, so both startRun sites and the eval path call it exactly as
- * they did; what moved is the registration underneath.
+ * The CLI's assembly of the per-run safety hooks.
  *
- * The unmask decorator is handed over as the human-decoration hook rather than applied here, so it
- * still composes OVER the composition's pause-timing decorator exactly as it did before the
- * dissection — timing measures the human's deliberation, not the unmask call.
+ * 2026-10-01 (432-14, D-03/D-14): IT SUPPLIES NOTHING THE REGISTRAR DOES NOT READ. It used to add
+ * the two things the host-neutral registrar refused to assume — a confirm channel (readline unless
+ * the caller injected one) and the human-output unmasking decorator over it — plus the session
+ * trust flag. 432-13 stopped the registrar reading all three; this is their last producer, so they
+ * are gone here too, and the call carries the run's audit sink and context and nothing else.
  */
 export function buildRunSafetyHooks(input: {
   auditSink: AuditSink
   executionContext: RunExecutionContext
-  trustMode: boolean
-  confirm?: ConfirmPort
-  /** The run MaskingContext — when supplied, the ask-tier prompt is unmasked for the human (D-11). */
-  maskingContext?: RunMaskingContext
-  /** Console pause/resume seam so the live TTY line is flushed around the readline question (Pitfall 4). */
-  live?: LivePauseController
 }): { safetyHooks: SafetyHookRunner; confirmPausedMs: () => number } {
-  const maskingContext = input.maskingContext
   return buildRunSessionSafetyHooks({
     auditSink: input.auditSink,
     executionContext: input.executionContext,
-    trustMode: input.trustMode,
-    presentation: {
-      confirm: input.confirm ?? createReadlineConfirm(),
-      decorateConfirmForHuman: maskingContext
-        ? (timedConfirm) => buildUnmaskingConfirm({ base: timedConfirm, maskingContext, live: input.live })
-        : undefined,
-    },
   })
 }
 

@@ -207,7 +207,8 @@ describe('426-02 choice order and meaning', () => {
 
   it('CLOSED-SETS-RUNTIME: the outcome classes and composer states are exactly the published sets', () => {
     expect(FEEDBACK_OUTCOME_CLASSES).toEqual(['passed', 'failed'])
-    expect(FEEDBACK_COMPOSER_STATES).toEqual(['composing', 'submitting', 'awaiting-approval', 'recorded', 'retained'])
+    // 432-14 (D-14): no state for a mark waiting on an approval.
+    expect(FEEDBACK_COMPOSER_STATES).toEqual(['composing', 'submitting', 'recorded', 'retained'])
     expect(Object.keys(FEEDBACK_CHOICE_ORDER).sort()).toEqual([...FEEDBACK_OUTCOME_CLASSES].sort())
     for (const cls of FEEDBACK_OUTCOME_CLASSES) {
       expect([...FEEDBACK_CHOICE_ORDER[cls]].sort()).toEqual([...MARKS].sort())

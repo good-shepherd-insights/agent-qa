@@ -156,7 +156,7 @@ async function openRunService(input: WorkspaceInput = {}): Promise<ServiceFixtur
   const runDoor = await createDashboardRunDoor({ db })
   let boundOrigin: string | undefined
   const observe = input.observeMasking
-  const { agentHost, host, enterRunTriggerScope } = composeDashboardDoor({
+  const { agentHost, host } = composeDashboardDoor({
     agentQaRoot: join(configDir, '.agent-qa'),
     configPath,
     boundOrigin: () => boundOrigin,
@@ -171,7 +171,6 @@ async function openRunService(input: WorkspaceInput = {}): Promise<ServiceFixtur
         },
   })
   runDoor.bindHost(host)
-  runDoor.bindTriggerScope(enterRunTriggerScope)
 
   const runService = composeRunServicePorts({
     entries: [{
@@ -880,14 +879,13 @@ describe('the door never forwards a caller’s run id, even with its own check b
     const { DashboardDatabase } = await import('@vostride/agent-qa-dashboard')
     const db = new DashboardDatabase({ dbPath: join(configDir, 'refusal.db') })
     const runDoor = await createDashboardRunDoor({ db })
-    const { host, enterRunTriggerScope } = composeDashboardDoor({
+    const { host } = composeDashboardDoor({
       agentQaRoot: join(configDir, '.agent-qa'),
       configPath,
       boundOrigin: () => 'http://127.0.0.1:1',
       runBridge: runDoor.runBridge,
     })
     runDoor.bindHost(host)
-    runDoor.bindTriggerScope(enterRunTriggerScope)
     const composition = composeRunServicePorts({
       entries: [{ name: 'ci', tokenEnvVar: TOKEN_VAR, trustScope: PROJECT_SCOPE }],
       env: { [TOKEN_VAR]: TOKEN },

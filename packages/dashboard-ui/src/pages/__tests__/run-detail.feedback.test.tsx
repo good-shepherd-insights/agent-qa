@@ -16,7 +16,6 @@ import { generateRunId, generateTestId } from '@vostride/agent-qa-ids'
 import RunDetailPage from '@/pages/run-detail'
 import {
   MarkDeniedError,
-  setRunConfirmScope,
   type FeedbackReadFailure,
   type MarkPreviewRead,
   type MarksHistoryRead,
@@ -63,11 +62,8 @@ import {
   TECHNICAL_DETAILS_LABEL,
   formatMarkTime,
   replacesLine,
-  approvalWaitingLabel,
   feedbackDefaultLayout,
 } from '@/lib/feedback-view'
-import { markConfirmClaim } from '@/lib/mark-confirm-route'
-import { RESOLUTION_TEXT } from '@/components/run-confirm-dialog'
 import { memberDisplayName, memberHandleLabel } from '@/lib/run-detail-view'
 import { CORRECTED_ACTION_EXAMPLE, CORRECTED_ACTION_LABEL } from '@/components/run-detail/mark-correction-fields'
 
@@ -398,7 +394,6 @@ afterEach(() => {
   root = null
   if (container) container.remove()
   container = null
-  setRunConfirmScope(undefined)
   vi.unstubAllGlobals()
   vi.resetAllMocks()
 })
@@ -458,7 +453,6 @@ describe('426-01 contextual feedback tracer', () => {
       bodies.set(url, body)
       return new Response(JSON.stringify(url.endsWith('/mark-preview') ? CONSEQUENCES : { kind: 'marked', receipt }))
     }))
-    setRunConfirmScope('scope-x')
     await renderAt(`/runs/${RUN_ID}`)
     await click('[data-feedback-entry="test"]')
 
@@ -475,9 +469,10 @@ describe('426-01 contextual feedback tracer', () => {
     expect(previewBody).toBeDefined()
     expect(markBody).toBeDefined()
     expect(previewBody!.runId).toBe(RUN_ID)
-    expect(markBody!.confirmScope).toBe('scope-x')
+    // 432-14 (D-14): the page holds no confirm scope, so the mark body carries none to remove.
+    expect(markBody).not.toHaveProperty('confirm' + 'Scope')
     const { runId: _runId, ...previewRest } = previewBody!
-    const { note: _note, confirmScope: _scope, ...markRest } = markBody!
+    const { note: _note, ...markRest } = markBody!
     expect(previewRest).toEqual(markRest)
     expect(previewRest).toEqual({ kind: FEEDBACK_CHOICE_ORDER.failed[0], testId: TEST_ID })
   })
@@ -1628,7 +1623,8 @@ describe('426-08 the note and the correction in the composer', () => {
     expect(previews).toHaveLength(2)
     expect(marks).toHaveLength(1)
     const { runId: _runId, ...previewRest } = previews[1]!
-    const { note, confirmScope: _scope, ...markRest } = marks[0]!
+    const { note, ...markRest } = marks[0]!
+    expect(marks[0]).not.toHaveProperty('confirm' + 'Scope')
     expect(note).toBe('seen on staging')
     expect(previewRest).toEqual(markRest)
     expect(previewRest).toMatchObject({ correctedExpectation: 'The cart shows 2 items', correctedAction: { type: 'click', ref: 'e1' } })
@@ -1879,8 +1875,6 @@ describe('432-09 no review command, and nothing reaches the clipboard', () => {
 // is in flight the page holds the confirm channel's claim, so the question lands in the composer's
 // footer instead of the app shell's floating card — and it is page state, so closing the composer or
 // looking at another address does not strand it.
-const MARK_FRAME = { confirmId: 'mark-confirm-7', actionClass: 'fn:runs.mark', preview: 'Record this mark on step 3 of this run.' }
-
 function settleable() {
   let resolve!: (value: unknown) => void
   let reject!: (reason: unknown) => void
@@ -1888,121 +1882,88 @@ function settleable() {
   return { promise, resolve, reject }
 }
 
+// RE-SPELLED 2026-10-01 (432-14, D-14): the mark's approval — the question in the composer, the
+// claim on the page's confirm channel, the waiting link and the awaiting-approval state — is
+// deleted. Each cell keeps its subject (what the page shows while one mark is in flight, across a
+// close, across addresses, after a refusal and across a run change) and pins the one-request path.
 describe('426-10 the mark approval is answered in the composer', () => {
   beforeEach(() => {
     fetchRunDetailMock.mockResolvedValue(fourSteps)
   })
 
-  async function submitAwaitingApproval() {
+  async function submitInFlight() {
     const sent = settleable()
     markRunMock.mockReturnValue(sent.promise)
     const before = markRunMock.mock.calls.length
     await openAndLand({ kind: 'read', result: CONSEQUENCES_STEP_3 })
     await click('[data-feedback-submit]')
     expect(markRunMock.mock.calls.length - before).toBe(1)
-    const claim = markConfirmClaim()
-    expect(claim, 'no claim while this page has a mark in flight').toBeDefined()
-    const answer = vi.fn()
-    await act(async () => { claim!.onRequest(MARK_FRAME, answer) })
     await flushRender()
-    return { sent, answer, claim: claim! }
+    return { sent }
   }
 
-  const region = () => q('[data-feedback-approval]')
+  const approvalSurface = () => q('[data-feedback-approval], [data-confirm-answer], [data-confirm-outcome], [data-feedback-approval-waiting]')
   const state = () => q('[data-feedback-composer]')!.getAttribute('data-feedback-state')
 
-  it('APPROVAL-INLINE-END-TO-END: the question replaces Send feedback, is answered in place, and gives way to the outcome', async () => {
+  it('APPROVAL-INLINE-END-TO-END: one submit is one mark, in flight with no question, then recorded', async () => {
     const marked = projection({ ...fourSteps, members: [{ ...fourSteps.members[0]!, marks: [receipt] }] })
     fetchRunDetailMock.mockImplementation(async () => markRunMock.mock.calls.length > 0 ? marked : fourSteps)
-    const { sent, answer, claim } = await submitAwaitingApproval()
-    expect(q('[data-feedback-submit]'), 'Send feedback still shows beside the question').toBeNull()
-    expect(region(), 'no approval region in the composer').not.toBeNull()
-    expect(region()!.getAttribute('role')).toBe('group')
-    expect(region()!.getAttribute('data-confirm-id')).toBe(MARK_FRAME.confirmId)
-    expect(q('[data-feedback-composer]')!.contains(region())).toBe(true)
-    expect(state()).toBe('awaiting-approval')
+    const { sent } = await submitInFlight()
+    expect(state()).toBe('submitting')
+    expect(q('[data-feedback-submit]'), 'Send feedback left the composer while the mark was in flight').not.toBeNull()
+    expect(approvalSurface()).toBeNull()
     expect(document.querySelectorAll('[role="dialog"], [aria-modal], [inert]')).toHaveLength(0)
-
-    await click('[data-confirm-answer="accept"]')
-    expect(answer).toHaveBeenCalledExactlyOnceWith('accept')
-
-    await act(async () => { claim.onResolved({ kind: 'confirm_resolved', confirmId: MARK_FRAME.confirmId, answer: 'accept', by: 'answer' }) })
-    await flushRender()
-    expect(region()?.querySelector('[data-confirm-outcome]')?.textContent).toBe(`approved — ${RESOLUTION_TEXT.answer}`)
-    expect(region()!.querySelectorAll('[data-confirm-answer]')).toHaveLength(0)
-    expect(state()).toBe('awaiting-approval')
 
     await act(async () => sent.resolve({ kind: 'marked', receipt }))
     await flushRender()
     expect(state()).toBe('recorded')
-    expect(region(), 'the question outlived the mark it asked about').toBeNull()
-    expect(q('[data-feedback-submit]')).not.toBeNull()
+    expect(markRunMock).toHaveBeenCalledTimes(1)
+    expect(approvalSurface()).toBeNull()
   })
 
-  it('APPROVAL-SURVIVES-CLOSE: closing the composer mid-question and reopening shows the same question', async () => {
-    await submitAwaitingApproval()
-    expect(region()!.getAttribute('data-confirm-id')).toBe(MARK_FRAME.confirmId)
+  it('APPROVAL-SURVIVES-CLOSE: closing the composer mid-flight and reopening shows the same mark still in flight', async () => {
+    const marked = projection({ ...fourSteps, members: [{ ...fourSteps.members[0]!, marks: [receipt] }] })
+    fetchRunDetailMock.mockImplementation(async () => markRunMock.mock.calls.length > 0 ? marked : fourSteps)
+    const { sent } = await submitInFlight()
     await click('[data-feedback-close]')
     expect(q('[data-feedback-composer]')).toBeNull()
     await click('[data-feedback-entry="test"]')
-    expect(region(), 'the question was lost when the composer closed').not.toBeNull()
-    expect(region()!.getAttribute('data-confirm-id')).toBe(MARK_FRAME.confirmId)
-    expect(state()).toBe('awaiting-approval')
+    expect(state()).toBe('submitting')
+    expect(approvalSurface()).toBeNull()
+    await act(async () => sent.resolve({ kind: 'marked', receipt }))
+    await flushRender()
+    expect(state()).toBe('recorded')
+    expect(markRunMock).toHaveBeenCalledTimes(1)
   })
 
-  it('APPROVAL-WAITING-LINK: another address links back to the waiting question, and the link returns to it', async () => {
-    await submitAwaitingApproval()
+  it('APPROVAL-WAITING-LINK: another address shows no waiting link, because nothing waits', async () => {
+    await submitInFlight()
     await openStep('0:1')
-    expect(region()).toBeNull()
-    const link = q('[data-feedback-approval-waiting]')
-    expect(link, 'no link back to the waiting question').not.toBeNull()
-    expect(link!.textContent).toBe(approvalWaitingLabel('this test'))
-    expect(container!.querySelectorAll('[data-feedback-unsent-draft="0:run"]')).toHaveLength(0)
-
-    await click('[data-feedback-approval-waiting]')
-    expect(composerTarget()).toBe('0:run')
-    expect(region()?.getAttribute('data-confirm-id')).toBe(MARK_FRAME.confirmId)
+    expect(composerTarget()).toBe('0:1')
+    expect(approvalSurface()).toBeNull()
     expect(q('[data-feedback-approval-waiting]')).toBeNull()
   })
 
-  it('APPROVAL-DENIAL-LINE-STAYS: a question denied on silence keeps its line above the retained denial until the next edit', async () => {
-    const { sent, claim } = await submitAwaitingApproval()
-    await act(async () => { claim.onResolved({ kind: 'confirm_resolved', confirmId: MARK_FRAME.confirmId, answer: 'deny', by: 'timeout' }) })
-    await flushRender()
-    await act(async () => sent.reject(new MarkDeniedError({ reason: 'Confirmation was denied' })))
+  it('APPROVAL-DENIAL-LINE-STAYS: a refused mark keeps its denial and Send feedback, and no question line', async () => {
+    const { sent } = await submitInFlight()
+    await act(async () => sent.reject(new MarkDeniedError({ reason: 'The mark could not be recorded here.' })))
     await flushRender()
     expect(state()).toBe('retained')
-    const outcome = region()?.querySelector('[data-confirm-outcome]')
-    expect(outcome?.textContent).toBe(RESOLUTION_TEXT.timeout)
-    const denied = q('[data-feedback-denied]')
-    expect(denied).not.toBeNull()
-    expect(outcome!.compareDocumentPosition(denied!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
-    expect(q('[data-feedback-submit]'), 'a settled question still hides Send feedback').not.toBeNull()
-
-    await typeNote('try again')
-    expect(region()).toBeNull()
+    expect(q('[data-feedback-denied]')?.textContent).toContain('The mark could not be recorded here.')
+    expect(q('[data-confirm-outcome]')).toBeNull()
+    expect(q('[data-feedback-submit]')).not.toBeNull()
   })
 
-  it('CLAIM-RELEASED-AFTER-MARK: the claim is gone once the mark settles either way, and on a run change', async () => {
-    expect(markConfirmClaim()).toBeUndefined()
-    const recorded = await submitAwaitingApproval()
-    await act(async () => recorded.sent.resolve({ kind: 'marked', receipt }))
-    await flushRender()
-    expect(markConfirmClaim(), 'the claim outlived a recorded mark').toBeUndefined()
-    unmountPage()
-
-    const refused = await submitAwaitingApproval()
-    await act(async () => refused.sent.reject(new MarkDeniedError({ reason: 'Confirmation was denied' })))
-    await flushRender()
-    expect(markConfirmClaim(), 'the claim outlived a refused mark').toBeUndefined()
-    unmountPage()
-
+  it('CLAIM-RELEASED-AFTER-MARK: a mark that settles after the page moved to another run changes nothing there', async () => {
     const RUN_B = generateRunId()
     fetchRunDetailMock.mockImplementation(async (id: string) => ({ ...fourSteps, runId: id }))
-    await submitAwaitingApproval()
+    const { sent } = await submitInFlight()
     await act(async () => { navigateTo!(`/runs/${RUN_B}`) })
     await flushRender()
-    expect(markConfirmClaim(), 'the claim outlived the run it was registered for').toBeUndefined()
+    await act(async () => sent.resolve({ kind: 'marked', receipt }))
+    await flushRender()
+    expect(q('[data-feedback-composer]'), 'the old run\'s mark opened a composer on the new run').toBeNull()
+    expect(markRunMock).toHaveBeenCalledTimes(1)
   })
 })
 

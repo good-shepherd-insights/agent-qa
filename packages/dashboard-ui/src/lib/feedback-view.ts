@@ -405,10 +405,11 @@ export function hasUniqueAddress(detail: Pick<RunDetailProjection, 'members'> | 
   return Boolean(member.testId) && members.filter((entry) => entry.testId === member.testId).length === 1
 }
 
+// 2026-10-01 (432-14, D-14): the state a mark sat in while its approval was asked is deleted with
+// the approval. A submission is composing, in flight, recorded or retained, and nothing else.
 export type FeedbackComposerState =
   | 'composing'
   | 'submitting'
-  | 'awaiting-approval'
   | 'recorded'
   | 'retained'
 
@@ -416,7 +417,6 @@ export type FeedbackComposerState =
 export const FEEDBACK_COMPOSER_STATES = [
   'composing',
   'submitting',
-  'awaiting-approval',
   'recorded',
   'retained',
 ] as const satisfies readonly FeedbackComposerState[]
@@ -1092,9 +1092,4 @@ export function historyTargetLabel(
   }
   const member = detail?.members.find((candidate) => candidate.testIndex === entry.testIndex) ?? { testIndex: entry.testIndex }
   return { prefix: '', name: memberDisplayName(member), suffix: ` ${memberHandleLabel(entry.testIndex)} · whole test` }
-}
-
-/** The composer's link back to an address whose mark approval is still waiting (426-10, D-20). */
-export function approvalWaitingLabel(targetLabel: string): string {
-  return `Approval waiting: ${targetLabel}`
 }

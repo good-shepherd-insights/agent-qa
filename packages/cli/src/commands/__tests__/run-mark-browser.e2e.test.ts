@@ -318,10 +318,11 @@ describe('419 real browser mark confirmation', () => {
   it('C432-BROWSER-MARK-ONE-SUBMIT: one submit is one mark request, and a reload shows the applied change', async () => {
     const s = await scene()
     await noConfirmChannel(s.page)
-    const composer = await submit(s.page)
+    // false-fail is the choice whose fix the fixture's mark host applies (the themes cell's own).
+    const composer = await submit(s.page, 'test', 'false-fail')
     await settled(composer, await recordedSentence(composer))
     expect(s.marks, 'one submit did not send exactly one mark request').toHaveLength(1)
-    expect(s.marks[0]).toMatchObject({ kind: 'confirmed-bug' })
+    expect(s.marks[0]).toMatchObject({ kind: 'false-fail' })
     expect(s.marks[0]).not.toHaveProperty('confirm' + 'Scope')
     expect(s.rows()).toHaveLength(1)
 
@@ -330,7 +331,7 @@ describe('419 real browser mark confirmation', () => {
     const reopened = await openComposer(s.page, 'test')
     const entry = targetEntries(reopened).first()
     await entry.waitFor()
-    expect(await entryChoice(entry)).toBe(CHOICE_LABELS['confirmed-bug'])
+    expect(await entryChoice(entry)).toBe(CHOICE_LABELS['false-fail'])
     const applied = entry.locator('[data-history-applied]')
     expect(['knowledge', 'test-file']).toContain(await applied.getAttribute('data-history-applied'))
     expect(await s.page.locator('[data-history-review], [data-review-command]').count()).toBe(0)

@@ -1,5 +1,5 @@
-// The injected-host seam the dashboard's run-detail routes and its run-confirm pair dispatch through
-// (Phase 400 plan 01, D-01; narrowed by 430 D-02).
+// The injected-host seam the dashboard's run-detail and mark routes dispatch through (Phase 400 plan
+// 01, D-01; narrowed by 430 D-02 and 432-14 D-14).
 //
 // WHY THIS FILE IS A TYPE AND NOTHING ELSE. D-01 puts the composed agent host in THIS PROCESS —
 // dashboard-server's — and the shortest reading of that is "dashboard-server calls
@@ -14,8 +14,9 @@
 // So the host is composed by `agent-qa dashboard` — the CLI command that starts this server, in the
 // same process — and handed in. The process is the one D-01 names, and this package still names no
 // agent package. That standing decision survives 430: the conversation door it was first built for
-// is gone, and the same host now serves run detail, analysis, knowledge, marks, post-processing and
-// the run-confirm pair.
+// is gone, and the same host now serves run detail, analysis, knowledge, marks and post-processing.
+// 2026-10-01 (432-14, D-14): the run-confirm pair it also served is deleted, and with it the two
+// members only that pair read.
 //
 // WHAT CROSSES THIS SEAM, AND WHY IT IS SHAPED THIS WAY. Everything below is a function or a value
 // the CALLER supplies, not one this package computes. `invokeFunction` is the agent package's own
@@ -32,8 +33,6 @@
 
 import type { FunctionCaller } from '@vostride/agent-qa-schema'
 
-import type { ConfirmRegistry } from './confirm-registry.js'
-
 /**
  * The composed function registry, OPAQUE to this package.
  *
@@ -46,8 +45,7 @@ import type { ConfirmRegistry } from './confirm-registry.js'
 export type AgentRegistryHandle = object
 
 /**
- * The whole of what the run-detail routes and the run-confirm pair may ask of the process that
- * started them.
+ * The whole of what the run-detail and mark routes may ask of the process that started them.
  *
  * A single object rather than loose options, because the members are one decision: they all come
  * from ONE composition, and a server holding an invoke from one host and a registry from another is
@@ -152,8 +150,6 @@ export interface AgentHost {
   readonly runsMarksHistoryFunctionId: string
   /** 2026-09-15, 423-21 D-18: the read-tier mark consequence preview id. */
   readonly runsMarkPreviewFunctionId: string
-  /** Names the run-confirm channel; the door still proves reachability at gate evaluation. */
-  readonly enterRunTriggerScope?: <T>(scopeId: string, run: () => T) => T
   /**
    * `invokeFunction`, bound by the composer. THE one door call.
    *
@@ -168,22 +164,6 @@ export interface AgentHost {
     input: unknown,
     caller: FunctionCaller,
   ): Promise<unknown>
-  /**
-   * The parked-confirm registry the run trigger's ask-tier questions wait in (400-03,
-   * D-05/D-06/D-07; 401-09 D-11).
-   *
-   * ON THE HOST SEAM BECAUSE BOTH HALVES NEED THE SAME ONE. The composition binds a confirm
-   * factory that parks questions in it; the run-confirm channel pushes those questions down a
-   * browser's SSE connection and the run-confirm answer route spends their ids. A registry created
-   * per half would be two parking lots, and the question would be parked in the one the answer
-   * never reaches.
-   *
-   * OPTIONAL, AND ABSENT IS THE TRANSLATED TTY POSTURE. A host composed without a confirm channel
-   * has nobody to ask — the conformance suite's model-free doors are exactly that — so the
-   * composition binds no confirm port and the gate's own deny-by-default answers every ask-tier
-   * call, unchanged. The answer route reports 501 for the same reason.
-   */
-  readonly confirms?: ConfirmRegistry
   /**
    * Restore masked placeholders in bytes on their way to a PERSON (400-06, the standing v52 law).
    *
@@ -218,10 +198,9 @@ export interface AgentHost {
    * as a visibly-masked chip. The string `<SECRET_` therefore never leaves a scoped call.
    *
    * WITHOUT A SCOPE THE FUNCTION IS THE IDENTITY, and that is a decision rather than an omission.
-   * The run-confirm router in `chat-routes.ts` calls the one-argument form: a confirm question is
-   * asked before the run it would start exists, so there is no sidecar to match against, and the
-   * confirm prompt has no chip renderer — a marker emitted there would put a raw U+241F in front
-   * of a person, which is exactly what D-10 forbids.
+   * A text that names no run has no sidecar to match against, and a surface with no chip renderer
+   * would put a raw U+241F in front of a person, which is exactly what D-10 forbids. (Until 432-14
+   * the run-confirm router was the one-argument caller; it is deleted.)
    *
    * RESTORATION IS OPT-IN, AT THE LOCAL HUMAN ARMS ONLY. `serveRunDetailRead`'s `boundary` option
    * defaults to `'machine'` (masked), so the authed REMOTE door's `/run/:runId/detail` stays masked
@@ -246,8 +225,6 @@ export const AGENT_HOST_MEMBERS = [
   'runsMarkFunctionId',
   'runsMarksHistoryFunctionId',
   'runsMarkPreviewFunctionId',
-  'enterRunTriggerScope',
   'invokeFunction',
-  'confirms',
   'unmaskForDisplay',
 ] as const satisfies readonly (keyof AgentHost)[]

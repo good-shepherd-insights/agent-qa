@@ -14,7 +14,6 @@ import { SidebarProvider, SidebarInset } from "@/components/ui/sidebar"
 import { AppSidebar } from "@/components/app-sidebar"
 import { Toaster } from "@/components/ui/sonner"
 import { CommandPalette } from "@/components/command-palette"
-import { RunConfirmHost } from "@/components/run-confirm-dialog"
 import { RouteErrorBoundary } from "@/components/error-boundary"
 import { ProductTourProvider, ProductTourOverlay } from "@/components/product-tour"
 import {
@@ -135,11 +134,6 @@ function AppLayout() {
         </SidebarInset>
         <ProductTourOverlay />
         <CommandPalette />
-        {/* 401-09 (D-11): the run trigger's confirm channel and its dialog, mounted ONCE beside the
-            other global overlays. Being on this page is what makes an ask-tier run askable — there
-            are nine places that start a run and the queue dispatches in the same tick one is
-            requested, so a channel opened per click would be racing the run's own gate. */}
-        <RunConfirmHost />
       </ProductTourProvider>
     </SidebarProvider>
   )

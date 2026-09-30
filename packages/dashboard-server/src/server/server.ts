@@ -560,10 +560,8 @@ export async function startServer(opts: StartServerOptions): Promise<{
       runId: run.id,
       args,
       source: meta.isSuite ? 'suite' : 'dashboard',
-      // 401-09 (D-11): the browser that triggered this run, if it said so and is still there. Read
-      // off the queued row's own metadata for the reason `args` is — the row is persisted, and the
-      // queue is what decides WHEN a run starts, so the trigger's fact has to survive the wait.
-      ...(typeof meta.confirmScope === 'string' ? { confirmScope: meta.confirmScope } : {}),
+      // 2026-10-01 (432-14, D-14): no confirm scope is read off the row any more. The browser that
+      // triggered a run is not asked anything, so nothing about it has to survive the wait.
       attributes: run.attributes,
       // T-401-G26 (401-23): a persisted row's timeout is VALIDATED at the seam that consumes it.
       // `in-process-backend.ts:211` reads `opts.timeout ?? defaultTimeout` and validates AFTER, so

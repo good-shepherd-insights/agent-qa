@@ -105,10 +105,7 @@ async function startFixture(
   const unmask = createDisplayUnmasker({
     agentQaRoot: root, secretStores: () => [store], env: () => ({}), authStatePayloads: () => [],
   })
-  const agentHost = composeDashboardAgentHost(
-    { registry } as LocalAgentHost,
-    undefined, undefined, unmask,
-  )
+  const agentHost = composeDashboardAgentHost({ registry } as LocalAgentHost, unmask)
   const started = await startServer({
     db, port: 0, agentHost,
     ...(display === undefined ? {} : { uiDir: join(PACKAGES_ROOT, 'dashboard-ui', 'dist') }),

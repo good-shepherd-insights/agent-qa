@@ -3,7 +3,9 @@
 // SINCE 432-13 (D-14/D-15) neither place exists on a shipped road: run composition no longer reads
 // the presentation confirm, and no door hands the op gate a port because there is no op gate. Both
 // describes were re-spelled to measure that absence the same way — by driving the seam and reading
-// what landed on disk — with a port that records being asked. The history below is kept as written.
+// what landed on disk — with a port that records being asked. SINCE 432-14 (D-03) the run hooks
+// cannot even be handed a port: the presentation confirm contract and its CLI producer are deleted.
+// The history below is kept as written.
 //
 // The gate now records the surface the composition DECLARED rather than the mechanism rung (e) used
 // to hardcode. Declaring it is a compile obligation — `packages/safety/src/ports/__tests__/
@@ -29,7 +31,6 @@ import { join, resolve } from 'node:path'
 import { invokeFunction } from '@vostride/agent-qa-agent'
 import { buildRunAuditSink } from '@vostride/agent-qa-agent-local'
 import { RUNS_SUBDIR, slugBranch } from '@vostride/agent-qa-runner-local'
-import { createMaskingContext } from '@vostride/agent-qa-safety'
 import type { ConfirmPort, ExecutionAuditRow } from '@vostride/agent-qa-safety'
 import { runSafetyScope } from '@vostride/agent-qa-safety-local'
 import { describe, expect, it } from 'vitest'
@@ -66,6 +67,9 @@ function auditRowsIfAny(dir: string): ExecutionAuditRow[] {
 // on the row': `buildRunSessionSafetyHooks` no longer reads `presentation.confirm`, so no decorator
 // stack is built over the port and the port is never asked. The in-run hook still classifies the
 // action and records its own decision; what it cannot do any more is reach a person.
+// RE-SPELLED 2026-10-01 (432-14, D-03): the hook input no longer declares a confirm port, a masking
+// decorator or trust, so a port can only be smuggled past the type as an excess field. The cell
+// does exactly that and pins that nothing reads it.
 describe('a decorator forwards the surface of the port it wraps', () => {
   it.each(['tty-prompt', 'browser-click'] as const)(
     'a %s port handed to the run hooks is never asked, and no prompted row lands',
@@ -79,12 +83,11 @@ describe('a decorator forwards the surface of the port it wraps', () => {
       })
       const calls: string[] = []
 
+      const smuggled = { confirm: recording(surface, calls), trustMode: true }
       const { safetyHooks, confirmPausedMs } = buildRunSafetyHooks({
         auditSink,
         executionContext: 'local-interactive',
-        trustMode: false,
-        confirm: recording(surface, calls),
-        maskingContext: createMaskingContext(),
+        ...smuggled,
       })
 
       await safetyHooks.runToolCallAsync({ ...ASK_TIER_ACTION })

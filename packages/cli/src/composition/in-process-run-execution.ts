@@ -543,14 +543,11 @@ export async function runInProcessCliRun(
     executionContext: options.executionContext,
   })
   const live = createLivePauseController()
+  // 432-13/432-14: nothing in a run asks, so the registrar is handed the run's audit sink and context
+  // and nothing else — no confirm channel, no human decorator, no session trust.
   const { safetyHooks, confirmPausedMs } = buildRunSafetyHooks({
     auditSink,
     executionContext: options.executionContext,
-    // 432-13: nothing in a run asks, so there is no ask for session trust to satisfy. The declared
-    // input stays until 432-14 narrows the hook contract with its last producer.
-    trustMode: false,
-    maskingContext,
-    live,
   })
   produced.bindRunContext({ maskingContext, safetyHooks })
 

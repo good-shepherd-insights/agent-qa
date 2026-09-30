@@ -1,4 +1,6 @@
-// 2026-09-08, 419 D-13: the browser mark door dispatches the same gated op as the CLI.
+// 2026-09-08, 419 D-13: the browser mark door dispatches the same op as the CLI.
+// 2026-10-01, 432-14 (D-14): one request, one dispatch. The confirm scope it used to carry, and the
+// frame it entered around the call, are deleted with the run-confirm pair.
 import type { IncomingMessage, ServerResponse } from 'node:http'
 
 import {
@@ -7,7 +9,6 @@ import {
   type RunsMarkOutcome,
 } from '@vostride/agent-qa-schema'
 
-import { isRunTriggerConfirmScope } from '../chat/confirm-registry.js'
 import type { AgentHost } from '../chat/host.js'
 import { unmaskTreeForDisplay } from '../masking/display-tree.js'
 import { readJsonBody } from '../server/body-parser.js'
@@ -24,38 +25,27 @@ export type RunMarkOutcome =
     readonly body: MarkRefusal
   }
 
-export interface RunMarkFrame {
-  readonly confirmScope?: string
-  readonly enter?: AgentHost['enterRunTriggerScope']
-}
-
-/** Address comes from the route; the body may never replace it or claim a caller identity. */
+/**
+ * Address comes from the route; the body may never replace it or claim a caller identity. The body
+ * is the op's own strict input minus `runId`, so a field the op does not declare is refused here
+ * before anything is dispatched.
+ */
 export async function markRun(
   host: AgentHost,
   runId: string,
   body: unknown,
-  frame: RunMarkFrame = {},
 ): Promise<RunMarkOutcome> {
   if (typeof body !== 'object' || body === null || Array.isArray(body)) {
     return { kind: 'refused', status: 400, body: { error: 'invalid_mark_input' } }
   }
-  const { confirmScope, ...input } = body as Record<string, unknown>
-  const scope = frame.confirmScope ?? confirmScope
-  if (scope !== undefined && (typeof scope !== 'string' || !isRunTriggerConfirmScope(scope))) {
-    return { kind: 'refused', status: 400, body: {
-      error: 'confirmScope must be a confirm scope minted by this server',
-    } }
-  }
+  const input = body as Record<string, unknown>
   const parsed = RunsMarkInputSchema.safeParse({ ...input, runId })
   if (!parsed.success || 'runId' in input) {
     return { kind: 'refused', status: 400, body: { error: 'invalid_mark_input' } }
   }
   try {
-    const run = () => host.invokeFunction(
+    const result = await host.invokeFunction(
       host.registry, host.runsMarkFunctionId, parsed.data, host.caller,
-    )
-    const result = await (
-      scope !== undefined && frame.enter !== undefined ? frame.enter(scope, run) : run()
     )
     return { kind: 'ok', body: result as RunsMarkOutcome }
   } catch (error) {
@@ -79,7 +69,6 @@ export function registerRunMarkRoute(
     readonly host: AgentHost
     readonly runId: string
     readonly boundary?: 'human' | 'machine'
-    readonly enterRunTriggerScope?: AgentHost['enterRunTriggerScope']
   },
 ): void {
   if (deps.boundary === 'human' && refuseCrossSiteRequest(req) !== undefined) {
@@ -87,7 +76,7 @@ export function registerRunMarkRoute(
     return
   }
   void readJsonBody<unknown>(req).then(async (body) => {
-    const outcome = await markRun(deps.host, deps.runId, body, { enter: deps.enterRunTriggerScope })
+    const outcome = await markRun(deps.host, deps.runId, body)
     if (outcome.kind === 'refused') {
       respondJson(res, outcome.status, outcome.body)
       return

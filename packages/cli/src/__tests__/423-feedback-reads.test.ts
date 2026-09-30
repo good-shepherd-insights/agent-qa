@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import * as agent from '@vostride/agent-qa-agent'
 import { COLD_READ_SCOPE_FUNCTION_IDS, createKnowledgeReader, LOCAL_CURATION_CAPABILITIES } from '@vostride/agent-qa-agent-local'
-import { createConfirmRegistry, createRunServiceRoutes, DashboardDatabase, startServer, type RunServicePorts } from '@vostride/agent-qa-dashboard'
+import { createRunServiceRoutes, DashboardDatabase, startServer, type RunServicePorts } from '@vostride/agent-qa-dashboard'
 import { generateRunId } from '@vostride/agent-qa-ids'
 import { AGENT_QA_OP_CONTRACTS, UNPROJECTED_OPS } from '@vostride/agent-qa-mcp'
 import { createMaskingContext, setActiveMaskingContextResolver } from '@vostride/agent-qa-safety'
@@ -530,8 +530,7 @@ describe('423-18 marks history registration and host binding (D-19)', () => {
     const viaRegistry = expectMaskedOrdinalHistory(
       await agent.invokeFunction(composed.registry, HISTORY, { runId: template.runId }, host.CLI_FUNCTION_CALLER))
 
-    const door = composeDashboardDoor({ configPath: s.configPath, agentQaRoot: s.agentQaRoot, boundOrigin: () => undefined,
-      confirms: createConfirmRegistry({ timeoutMs: 1_000 }) })
+    const door = composeDashboardDoor({ configPath: s.configPath, agentQaRoot: s.agentQaRoot, boundOrigin: () => undefined })
     closers.push(() => door.host.close())
     expect(door.host.registry.list(DASHBOARD_FUNCTION_CALLER).find(entry => entry.id === HISTORY)?.bindingStatus).toBe('bound')
     const viaDashboard = expectMaskedOrdinalHistory(
@@ -947,8 +946,7 @@ describe('423-19 runs.mark.preview registration and composed invocation (D-16)',
     closers.push(() => composed.close())
     const viaRegistry = expectColdMaskedPreview(await agent.invokeFunction(composed.registry, PREVIEW, input(), host.CLI_FUNCTION_CALLER))
 
-    const door = composeDashboardDoor({ configPath: s.configPath, agentQaRoot: s.agentQaRoot, boundOrigin: () => undefined,
-      confirms: createConfirmRegistry({ timeoutMs: 1_000 }) })
+    const door = composeDashboardDoor({ configPath: s.configPath, agentQaRoot: s.agentQaRoot, boundOrigin: () => undefined })
     closers.push(() => door.host.close())
     expect(door.host.registry.list(DASHBOARD_FUNCTION_CALLER).find(entry => entry.id === PREVIEW)?.bindingStatus).toBe('bound')
     const viaDashboard = expectColdMaskedPreview(await agent.invokeFunction(door.host.registry, PREVIEW, input(), DASHBOARD_FUNCTION_CALLER))
@@ -1020,8 +1018,7 @@ describe('423-21 feedback reads over both HTTP doors (D-18)', () => {
     writeFileSync(join(root, '.env.secrets.local'), `HISTORY_SYNTHETIC_TOKEN=${SECRET}\n`)
     const agentQaRoot = join(root, '.agent-qa')
     const configPath = join(root, 'agent-qa.config.yaml')
-    const door = composeDashboardDoor({ configPath, agentQaRoot, boundOrigin: () => undefined,
-      confirms: createConfirmRegistry({ timeoutMs: 1_000 }) })
+    const door = composeDashboardDoor({ configPath, agentQaRoot, boundOrigin: () => undefined })
     closers.push(() => door.host.close())
     const db = new DashboardDatabase({ dbPath: ':memory:' })
     closers.push(() => db.close())

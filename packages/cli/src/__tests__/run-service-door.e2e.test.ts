@@ -132,14 +132,13 @@ async function openRunService(options: {
   const db = new DashboardDatabase({ dbPath: join(configDir, 'dashboard.db') })
   const runDoor = await createDashboardRunDoor({ db })
   let boundOrigin: string | undefined
-  const { agentHost, host, enterRunTriggerScope } = composeDashboardDoor({
+  const { agentHost, host } = composeDashboardDoor({
     agentQaRoot: join(configDir, '.agent-qa'),
     configPath,
     boundOrigin: () => boundOrigin,
     runBridge: runDoor.runBridge,
   })
   runDoor.bindHost(host)
-  runDoor.bindTriggerScope(enterRunTriggerScope)
 
   const runService = composeRunServicePorts({
     entries: options.declareToken === false

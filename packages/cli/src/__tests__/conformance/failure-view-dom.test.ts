@@ -452,7 +452,8 @@ interface MarkHarvest {
   hostileElements: number
   approvalSeen: boolean
   dialogCountAtApproval?: number
-  scopeSeen: boolean
+  /** 432-14: how many run-confirm streams the page opened. The channel is deleted, so zero. */
+  confirmChannels: number
   previewStatus?: number
   responseStatus?: number
   responseBody?: unknown
@@ -466,16 +467,19 @@ interface MarkHarvest {
 async function observeMark(context_: BrowserContext, origin: string, runId: string, runDir: string): Promise<MarkHarvest> {
   const page = await context_.newPage()
   const harvest: MarkHarvest = { historyChoice: null, historyDisposition: null, elapsedMs: 0, rows: [],
-    hostileElements: 0, approvalSeen: false, scopeSeen: false, confirmFrames: [], markedAtWithinDrive: false }
+    hostileElements: 0, approvalSeen: false, confirmChannels: 0, confirmFrames: [], markedAtWithinDrive: false }
   const started = Date.now()
   try {
     await page.addInitScript(() => {
       const frames: Array<{ event: string; data: string }> = []
+      const channels: string[] = []
       ;(window as unknown as { markFrames: typeof frames }).markFrames = frames
+      ;(window as unknown as { markChannels: typeof channels }).markChannels = channels
       const Native = window.EventSource
       class RecordedChannel extends Native {
         constructor(url: string | URL, init?: EventSourceInit) {
           super(url, init)
+          if (String(url).includes('run-confirm')) channels.push(String(url))
           if (String(url) === '/api/run-confirm/channel') {
             for (const event of ['confirm_scope', 'confirm_request', 'confirm_resolved']) {
               this.addEventListener(event, frame => frames.push({ event,
@@ -492,11 +496,7 @@ async function observeMark(context_: BrowserContext, origin: string, runId: stri
       if (reply.url().endsWith('/mark-preview')) harvest.previewStatus = reply.status()
     })
     await page.goto(`${origin}/runs/${encodeURIComponent(runId)}`)
-    // Presence is the actual app-wide SSE frame, not page load or a visible control.
-    await page.waitForFunction(() =>
-      (window as unknown as { markFrames: Array<{ event: string }> }).markFrames
-        .some(frame => frame.event === 'confirm_scope'), undefined, { timeout: 10_000 })
-    harvest.scopeSeen = true
+    // 432-14 (D-14): the page opens no confirm stream any more, so presence is the entry itself.
     await page.locator('[data-feedback-entry="test"]').click({ timeout: 10_000 })
     const composer = page.locator('[data-feedback-composer]')
     await composer.locator('[data-feedback-choice="false-fail"] [role="radio"]').click({ timeout: 10_000 })
@@ -508,6 +508,8 @@ async function observeMark(context_: BrowserContext, origin: string, runId: stri
     // 432-13: the mark is sent on the click; `approvalSeen` records whether an approval group rendered.
     const reply = await response
     harvest.approvalSeen = await composer.locator('[data-feedback-approval]').count() > 0
+    harvest.confirmChannels = (await page.evaluate(() =>
+      (window as unknown as { markChannels: string[] }).markChannels)).length
     harvest.dialogCountAtApproval = await page.evaluate(() =>
       document.querySelectorAll('[role="dialog"],[aria-modal]').length)
     if (reply === undefined) throw new Error('mark route returned no response')
@@ -1394,7 +1396,8 @@ describe('the shipped dashboard paints a RED run\'s authored verdict, its eviden
     const mark = recorded.mark
     expect(mark, `the mark drive was never observed.${context()}`).toBeDefined()
     expect(mark!.failure, context()).toBeUndefined()
-    expect(mark!.scopeSeen, context()).toBe(true)
+    // 432-14: was `scopeSeen` — the page held the confirm channel. It holds none now.
+    expect(mark!.confirmChannels, context()).toBe(0)
     expect(mark!.previewStatus, context()).toBe(200)
     expect(mark!.approvalSeen, context()).toBe(false)
     // 426 D-20 survives as: nothing covers the evidence.

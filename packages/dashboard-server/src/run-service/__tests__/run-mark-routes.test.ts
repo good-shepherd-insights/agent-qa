@@ -1,4 +1,3 @@
-import { AsyncLocalStorage } from 'node:async_hooks'
 import { createServer } from 'node:http'
 import type { AddressInfo } from 'node:net'
 
@@ -6,7 +5,6 @@ import { createFunctionRegistry, invokeFunction, RUNS_MARK_FUNCTION_ID, type Fun
 import { asRunId, MarkRefusalSchema, type RunsMarkInput, type RunsMarkOutcome } from '@vostride/agent-qa-schema'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { mintRunTriggerConfirmScope } from '../../chat/confirm-registry.js'
 import type { AgentHost } from '../../chat/host.js'
 import { DashboardDatabase } from '../../db/database.js'
 import { startServer } from '../../server/server.js'
@@ -24,8 +22,6 @@ const closers: Array<() => Promise<void>> = []
 afterEach(async () => { for (const close of closers.splice(0)) await close() })
 
 function fixture() {
-  const scope = mintRunTriggerConfirmScope()
-  const frames = new AsyncLocalStorage<string>()
   const mark = vi.fn(async (_input: RunsMarkInput) => outcome)
   const deps: FunctionDeps = {
     runs: { list: async () => [], get: async () => undefined, readEvents: async () => [], readStepEvidence: async () => ({ kind: 'run-not-recorded' }) },
@@ -34,13 +30,12 @@ function fixture() {
     config: { getMasked: async () => ({ schemaVersion: 1, configPath: 'agent-qa.config.yaml', entries: [] }) },
     feedback: { mark, marksFor: async () => [] },
   }
-  // 432-13 (D-14): no confirm port — `invokeFunction` asks nobody, so the frame's context no longer
-  // decides whether a mark lands.
+  // 432-13 (D-14): no confirm port — `invokeFunction` asks nobody. 432-14: no frame is entered
+  // around the call either, so the registry answers one context for every mark.
   const registry = createFunctionRegistry({ deps,
-    resolveExecutionContext: () => frames.getStore() === scope ? 'local-interactive' : 'local-headless',
+    resolveExecutionContext: () => 'local-headless',
     auditSink: { appendExecutionAudit() {}, appendGuardrailAudit() {} },
   })
-  const enter = <T>(id: string, run: () => T): T => frames.run(id, run)
   const host: AgentHost = {
     runsPostProcessingFunctionId: 'test:post',
     runsEventsFunctionId: 'test:events', runsDetailFunctionId: 'test:detail',
@@ -48,12 +43,12 @@ function fixture() {
     runsArtifactFunctionId: 'test:artifact', analysisGetFunctionId: 'test:analysis',
     runsKnowledgeFunctionId: 'test:knowledge',
     runsMarksHistoryFunctionId: 'test:marks-history', runsMarkPreviewFunctionId: 'test:mark-preview',
-    registry, runsMarkFunctionId: RUNS_MARK_FUNCTION_ID, enterRunTriggerScope: enter,
+    registry, runsMarkFunctionId: RUNS_MARK_FUNCTION_ID,
     caller: { surface: 'dashboard', grantedScopes: ['knowledge-write'], safeMode: false, origin: 'human' },
     invokeFunction: (handle, id, input, caller) => invokeFunction(handle as FunctionRegistry, id, input, caller),
     unmaskForDisplay: (text: string) => text.replaceAll('<SECRET_0>', NOTE),
   }
-  return { host, scope, enter, mark }
+  return { host, mark }
 }
 
 async function socket(host?: AgentHost) {
@@ -83,21 +78,23 @@ describe('markRun delegates to the shared gate and feedback port', () => {
   })
 
   // RE-SPELLED 2026-09-30 (432-13, D-04/D-14) from 'enters the named frame, asks, and forwards all
-  // input fields': the frame is entered and every field forwarded; nothing asks.
-  it('enters the named frame and forwards all input fields, asking nobody', async () => {
+  // input fields': the frame is entered and every field forwarded; nothing asks. 432-14: there is no
+  // frame to enter; every field is forwarded in the one call.
+  it('forwards all input fields in one call, asking nobody', async () => {
     const f = fixture()
     const body = { kind: 'false-fail', note: NOTE, correctedExpectation: 'must fail', stepIndex: 2, testId: 'member',
       correctedAction: { type: 'click', ref: 'e-correct' } }
-    expect(await markRun(f.host, RUN_ID, body, { confirmScope: f.scope, enter: f.enter })).toEqual({ kind: 'ok', body: outcome })
+    expect(await markRun(f.host, RUN_ID, body)).toEqual({ kind: 'ok', body: outcome })
     expect(f.mark).toHaveBeenCalledExactlyOnceWith({ ...body, runId: RUN_ID })
   })
 
   // RE-SPELLED 2026-09-30 (432-13) from 'denies without a frame or with an unwatched scope; the
-  // dashboard receives no remedy'. No gate decides the mark, so it lands either way.
+  // dashboard receives no remedy'. No gate decides the mark, so it lands either way. 432-14: the
+  // frame and scope are gone; two marks are two dispatches.
   it('C432-INVOKE-DIRECT: lands the mark without a frame or with an unwatched scope', async () => {
     const f = fixture()
-    for (const frame of [{}, { confirmScope: mintRunTriggerConfirmScope(), enter: f.enter }]) {
-      const result = await markRun(f.host, RUN_ID, { kind: 'false-fail', note: NOTE }, frame)
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const result = await markRun(f.host, RUN_ID, { kind: 'false-fail', note: NOTE })
       expect(result).toEqual({ kind: 'ok', body: outcome })
     }
     expect(f.mark).toHaveBeenCalledTimes(2)
@@ -115,12 +112,12 @@ describe('registered POST /api/runs/:id/mark', () => {
     const f = fixture()
     const unmaskForDisplay = vi.fn((text: string) => text)
     const server = createServer((req, res) => registerRunMarkRoute(req, res, {
-      host: { ...f.host, unmaskForDisplay }, runId: RUN_ID, enterRunTriggerScope: f.enter,
+      host: { ...f.host, unmaskForDisplay }, runId: RUN_ID,
     }))
     await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve))
     closers.push(() => new Promise<void>(resolve => server.close(() => resolve())))
     const response = await fetch(`http://127.0.0.1:${String((server.address() as AddressInfo).port)}`, {
-      method: 'POST', body: JSON.stringify({ kind: 'false-fail', confirmScope: f.scope }),
+      method: 'POST', body: JSON.stringify({ kind: 'false-fail' }),
     })
     expect(response.status).toBe(200)
     expect(await response.json()).toEqual(outcome)
@@ -129,18 +126,21 @@ describe('registered POST /api/runs/:id/mark', () => {
 
   it('reaches the real router and restores successful receipt text before JSON serialization', async () => {
     const f = fixture()
-    const response = await fetch(await socket(f.host), { method: 'POST', body: JSON.stringify({ kind: 'false-fail', confirmScope: f.scope }) })
+    const response = await fetch(await socket(f.host), { method: 'POST', body: JSON.stringify({ kind: 'false-fail' }) })
     expect(response.status).toBe(200)
     expect(response.headers.get('access-control-allow-origin')).toBeNull()
     expect(await response.json()).toEqual({ ...outcome, receipt: { ...outcome.receipt, note: NOTE } })
     expect(f.mark).toHaveBeenCalledOnce()
   })
 
-  it.each(['chat:abc', null, 7])('rejects invalid confirmScope %j', async confirmScope => {
+  // RE-SPELLED 2026-10-01 (432-14, D-14) from 'rejects invalid confirmScope'. The scope field is
+  // deleted, so every value of it — the minted shape included — is a field the op does not declare,
+  // refused by the op's strict input before dispatch, with no reflection of the value.
+  it.each(['run-trigger:5f8c6e2a-1b1d-4c3e-9a3f-7d2e1c0b9a88', 'chat:abc', null, 7])('rejects invalid confirmScope %j', async confirmScope => {
     const f = fixture()
-    const response = await fetch(await socket(f.host), { method: 'POST', body: JSON.stringify({ kind: 'false-fail', note: NOTE, confirmScope }) })
+    const response = await fetch(await socket(f.host), { method: 'POST', body: JSON.stringify({ kind: 'false-fail', note: NOTE, ['confirm' + 'Scope']: confirmScope }) })
     expect(response.status).toBe(400)
-    expect(await response.json()).toEqual({ error: 'confirmScope must be a confirm scope minted by this server' })
+    expect(await response.json()).toEqual({ error: 'invalid_mark_input' })
     expect(f.mark).not.toHaveBeenCalled()
   })
 

@@ -10,47 +10,7 @@ export {
   tryParseRequestUrl,
 } from './request-url.js'
 
-// The run-confirm router (401-09; narrowed by 430 D-02, removed in Phase 432). The router and the
-// injected-host seam are published because the CLI command that starts this server composes the
-// host, and the door-security suite drives the router. 400-14: the route TABLE, the safe-method set
-// and the matcher are published beside them, because gap 6's guards are applied to the method above
-// the table rather than to each arm — and the only way a cell can prove that ranges the COMPLETE
-// set of mutating routes is to enumerate the table dispatch itself reads.
-export {
-  CHAT_ROUTE_TABLE,
-  CHAT_SAFE_METHODS,
-  createChatRouter,
-  isMutatingChatRequest,
-  matchChatRoute,
-  RUN_CONFIRM_ANSWER_ROUTE,
-  RUN_CONFIRM_CHANNEL_ROUTE,
-  RUN_CONFIRM_ROUTE_PREFIX,
-  RUN_CONFIRM_SCOPE_FRAME_KIND,
-} from '../chat/chat-routes.js'
-// The confirm bridge (400-03). The registry is created by the command that composes the door — the
-// composition parks questions in it and the routes serve them — so both its factory and its
-// vocabulary are published.
-export {
-  CHAT_CONFIRM_ANSWERS,
-  CHAT_CONFIRM_TIMEOUT_MS,
-  createConfirmRegistry,
-  isRunTriggerConfirmScope,
-  mintRunTriggerConfirmScope,
-  RUN_TRIGGER_CONFIRM_SCOPE_PREFIX,
-} from '../chat/confirm-registry.js'
-export type {
-  ChatConfirmAnswer,
-  ChatConfirmAnswerOutcome,
-  ChatConfirmChannelFrame,
-  ChatConfirmRequest,
-  ConfirmRegistry,
-  ConfirmScopeId,
-  CreateConfirmRegistryOptions,
-} from '../chat/confirm-registry.js'
-export type {
-  ChatRouteHandlerName,
-  ChatRouteMatch,
-  ChatRouteRow,
-  ChatRouter,
-} from '../chat/chat-routes.js'
+// The injected-host seam, published because the CLI command that starts this server composes the
+// host. 2026-10-01 (432-14, D-14): the run-confirm router, its route table and the confirm registry
+// that were published beside it are deleted.
 export type { AgentHost, AgentRegistryHandle } from '../chat/host.js'

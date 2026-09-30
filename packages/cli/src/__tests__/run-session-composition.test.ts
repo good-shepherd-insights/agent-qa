@@ -435,7 +435,7 @@ describe('buildRunSafetyHooks (D-01/D-15/D-10 — per-run registrar invocation)'
     const configDir = mkdtempSync(join(tmpdir(), 'run-hooks-'))
     const runId = 'r_hooks-deny'
     const auditSink = buildRunAuditSink({ configDir, runId, executionContext: 'ci' })
-    const { safetyHooks } = buildRunSafetyHooks({ auditSink, executionContext: 'ci', trustMode: false })
+    const { safetyHooks } = buildRunSafetyHooks({ auditSink, executionContext: 'ci' })
 
     const result = await safetyHooks.runToolCallAsync({ name: 'delete_record', recognized: true })
     expect(result.action).toBe('deny')
@@ -454,12 +454,15 @@ describe('buildRunSafetyHooks (D-01/D-15/D-10 — per-run registrar invocation)'
   // Trust no longer reaches the in-run hook, so the flag changes nothing: the dispatch answers
   // exactly as it does without it. (In-test action names carry no soft-destructive verb, so no
   // shipped run reaches this arm; `delete_record` is the synthetic probe that does.)
+  // 2026-10-01 (432-14, D-03): the input no longer declares trust, so the flag can only arrive as an
+  // excess field smuggled past the type — and the answer is still the one without it.
   it('ignores session trustMode: the same dispatch answers as it does without it (432-13)', async () => {
     const answer = async (trustMode: boolean) => {
       const configDir = mkdtempSync(join(tmpdir(), 'run-hooks-'))
       const runId = `r_hooks-trust-${String(trustMode)}`
       const auditSink = buildRunAuditSink({ configDir, runId, executionContext: 'ci' })
-      const { safetyHooks } = buildRunSafetyHooks({ auditSink, executionContext: 'ci', trustMode })
+      const smuggled = { trustMode }
+      const { safetyHooks } = buildRunSafetyHooks({ auditSink, executionContext: 'ci', ...smuggled })
       const result = await safetyHooks.runToolCallAsync({ name: 'delete_record', recognized: true })
       const line = readFileSync(
         join(resolve(configDir, '.agent-qa'), RUNS_SUBDIR, slugBranch(runId), 'execution_audit.jsonl'),
@@ -475,6 +478,8 @@ describe('buildRunSafetyHooks (D-01/D-15/D-10 — per-run registrar invocation)'
 
   // RE-SPELLED 2026-09-30 (432-13, D-10): was 'accumulates awaited confirm time'. No confirm is
   // handed to the registrar, so the port is never asked and no time is ever paused.
+  // 2026-10-01 (432-14, D-03): the CLI producer no longer declares a confirm either; a port can only
+  // be smuggled in as an excess field, and it is still never asked.
   it('never asks the confirm it is handed; confirmPausedMs() stays 0 (432-13)', async () => {
     const configDir = mkdtempSync(join(tmpdir(), 'run-hooks-'))
     const runId = 'r_hooks-pause'
@@ -487,11 +492,11 @@ describe('buildRunSafetyHooks (D-01/D-15/D-10 — per-run registrar invocation)'
         return true
       },
     }
+    const smuggled = { confirm, trustMode: false }
     const { safetyHooks, confirmPausedMs } = buildRunSafetyHooks({
       auditSink,
       executionContext: 'local-interactive',
-      trustMode: false,
-      confirm,
+      ...smuggled,
     })
 
     await safetyHooks.runToolCallAsync({ name: 'delete_record', recognized: true })

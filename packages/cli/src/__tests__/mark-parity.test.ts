@@ -10,7 +10,7 @@ import { PassThrough, Writable } from 'node:stream'
 import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client'
 import { invokeFunction, RUNS_MARK_FUNCTION_ID } from '@vostride/agent-qa-agent'
 import { AgentQaConfigSchema, resolveWorkspacePaths } from '@vostride/agent-qa-core'
-import { DashboardDatabase, createConfirmRegistry, startServer } from '@vostride/agent-qa-dashboard'
+import { DashboardDatabase, startServer } from '@vostride/agent-qa-dashboard'
 import { slugBranch } from '@vostride/agent-qa-runner-local'
 import { MarkReceiptSchema, RunsMarkOutcomeSchema, type MarkReceipt } from '@vostride/agent-qa-schema'
 import { Command } from 'commander'
@@ -120,8 +120,7 @@ async function mcpDoor(scene: Scratch) {
 /** The production HTTP door, posted to with no confirmation channel open (432-13). */
 async function dashboardDoor(scene: Scratch, input: { runId: string; kind: 'false-fail' | 'confirmed-bug' }) {
   const db = new DashboardDatabase({ dbPath: ':memory:' })
-  const confirms = createConfirmRegistry({ timeoutMs: 20_000 })
-  const door = composeDashboardDoor({ ...scene, boundOrigin: () => undefined, confirms })
+  const door = composeDashboardDoor({ ...scene, boundOrigin: () => undefined })
   const server = await startServer({ db, port: 0, configPath: scene.configPath,
     workspacePaths: resolveWorkspacePaths({ config: scene.config, configPath: scene.configPath }),
     agentHost: door.agentHost })

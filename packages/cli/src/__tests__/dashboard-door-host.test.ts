@@ -188,11 +188,12 @@ describe('the door is composed once, and mounted where the server serves it', ()
     expect(DASHBOARD_FUNCTION_CALLER.surface).toBe('dashboard')
   })
 
+  // RE-SPELLED 2026-10-01 (432-14, D-14): was a pin that `routes.ts` mounted the run-confirm router
+  // the security corpus stood up itself. That router is deleted and the corpus now drives the
+  // shipped `startServer`, so the claim that survives is the "no second door" half: the shipped
+  // router dispatches no run-confirm prefix and mounts no router of its own beside its routes, and
+  // the mark arm reaches the one mark route.
   it('mounts the SAME router the cells above drive (no second door)', () => {
-    // A SOURCE assertion, because this is the one property these cells cannot observe by driving:
-    // they stand up `createChatRouter` themselves, so a `routes.ts` that mounted a second,
-    // divergent handler would leave every cell above green while the shipped server served
-    // something else. `parity.test.ts`'s own comment-stripped source idiom.
     const routesPath = resolve(
       dirname(fileURLToPath(import.meta.url)),
       '../../../dashboard-server/src/server/routes.ts',
@@ -202,9 +203,10 @@ describe('the door is composed once, and mounted where the server serves it', ()
       .split('\n')
       .filter((line) => !line.trimStart().startsWith('//'))
       .join('\n')
-    expect(source).toContain('createChatRouter(deps.agentHost)')
-    // 430: the run-confirm prefix is the one the dispatch keeps reading once the chat prefix goes.
-    expect(source).toMatch(/path\.startsWith\(RUN_CONFIRM_ROUTE_PREFIX\)/)
+    expect(source).not.toContain('createChat' + 'Router')
+    expect(source).not.toContain('RUN_CONFIRM_' + 'ROUTE_PREFIX')
+    expect(source).not.toContain('/api/run-' + 'confirm')
+    expect(source.split('registerRunMarkRoute(').length - 1, 'the mark arm is not the one route').toBe(1)
   })
 })
 

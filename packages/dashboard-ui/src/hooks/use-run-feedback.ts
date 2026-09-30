@@ -4,23 +4,18 @@ import type { FeedbackComposerProps } from '@/components/run-detail/feedback-com
 import type { FeedbackEntryButtonProps } from '@/components/run-detail/feedback-entry'
 import type { StepTreeFeedback } from '@/components/run-detail/step-tree'
 import { parseCorrectedAction } from '@/components/run-detail/mark-correction-fields'
-import type { RunConfirmDialogProps } from '@/components/run-confirm-dialog'
 import {
   fetchMarkPreview,
   fetchMarksHistory,
-  type ChatConfirmAnswer,
-  type ChatConfirmRequestFrame,
   type MarkPreviewRead,
   type MarksHistoryRead,
 } from '@/lib/api'
-import { claimMarkConfirms } from '@/lib/mark-confirm-route'
 import type { MarkDenial, OnMark } from '@/lib/analysis-view'
 import {
   DRAFT_KEPT_STATUS,
   EMPTY_DRAFT,
   PREVIEW_DEBOUNCE_MS,
   SENDING_STATUS,
-  approvalWaitingLabel,
   correctedActionField,
   correctedActionGate,
   decidesCorrectedActionGate,
@@ -75,17 +70,8 @@ interface AddressOutcome {
 
 const COMPOSING: AddressOutcome = { state: 'composing', status: '' }
 
-/**
- * A mark question the confirm channel handed this page (426-10, D-20). Page state, so it survives the
- * composer closing; `settled` keeps a denied or timed-out line above the retained denial.
- */
-interface PendingApproval {
-  address: string
-  frame: ChatConfirmRequestFrame
-  answer: (answer: ChatConfirmAnswer) => void
-  resolution?: RunConfirmDialogProps['resolution']
-  settled?: boolean
-}
+// 2026-10-01 (432-14, D-14): the pending mark approval this page held (426-10, D-20) is deleted with
+// the confirm channel that raised it. A submission is one request; its answer is the only outcome.
 
 function targetOfAddress(address: string): FeedbackTarget {
   const [testIndex, stepIndex] = address.split(':')
@@ -161,8 +147,6 @@ export function useRunFeedback({
   const historyGeneration = useRef(0)
   const previewTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
   const submission = useRef<object | undefined>(undefined)
-  const [approval, setApproval] = useState<PendingApproval>()
-  const releaseClaim = useRef<(() => void) | undefined>(undefined)
   const runRef = useRef(runId)
   const detailRef = useRef(detail)
   useEffect(() => { detailRef.current = detail }, [detail])
@@ -181,9 +165,6 @@ export function useRunFeedback({
     setHistory(undefined)
     clearTimeout(previewTimer.current)
     submission.current = undefined
-    releaseClaim.current?.()
-    releaseClaim.current = undefined
-    setApproval(undefined)
     opener.current = null
     setOpen(false)
     setTarget(null)
@@ -198,8 +179,6 @@ export function useRunFeedback({
       previewGeneration.current += 1
       historyGeneration.current += 1
       clearTimeout(previewTimer.current)
-      releaseClaim.current?.()
-      releaseClaim.current = undefined
     }
   }, [runId])
 
@@ -218,8 +197,8 @@ export function useRunFeedback({
   const address = target === null ? undefined : feedbackAddress(target)
   const draft = (address === undefined ? undefined : drafts.get(address)) ?? EMPTY_DRAFT
   const { state, status } = (address === undefined ? undefined : outcomes.get(address)) ?? COMPOSING
-  // While the question is asked the mark is still in flight, and the draft it sends stays as sent.
-  const busy = state === 'submitting' || state === 'awaiting-approval'
+  // While the mark is in flight the draft it sends stays as sent.
+  const busy = state === 'submitting'
   const setOutcome = (key: string, next: AddressOutcome) => setOutcomes((previous) => new Map(previous).set(key, next))
   const gateFor = (forAddress: string | undefined, kind: Mark | undefined) =>
     correctedActionGate({
@@ -349,10 +328,9 @@ export function useRunFeedback({
     back?.focus()
   }
 
-  // A form edit returns the address to composing, and a settled question's line goes with it.
+  // A form edit returns the address to composing.
   const composeAt = (key: string) => {
     setOutcome(key, COMPOSING)
-    setApproval((previous) => (previous?.address === key && previous.settled ? undefined : previous))
   }
 
   const editNote = (note: string) => {
@@ -387,34 +365,10 @@ export function useRunFeedback({
       next.delete(address)
       return next
     })
-    setApproval((previous) => (previous?.address === address ? undefined : previous))
-    // D-20 / RESEARCH A1: one mark in flight per page, so a mark question on the one channel while
-    // this submission waits is this submission's.
-    const release = claimMarkConfirms({
-      onRequest: (frame, answer) => {
-        if (submission.current !== request) return
-        setApproval({ address, frame, answer })
-        setOutcome(address, { state: 'awaiting-approval', status: SENDING_STATUS })
-      },
-      onResolved: (frame) => {
-        setApproval((previous) =>
-          previous?.frame.confirmId === frame.confirmId
-            ? { ...previous, resolution: { answer: frame.answer, by: frame.by } }
-            : previous,
-        )
-      },
-    })
-    releaseClaim.current = release
+    // 432-14 (D-14): the validated body goes out once, directly; nothing waits on an approval.
     try {
       const result = await onMark(submitted.testIndex, submitted.stepIndex, draft.kind, draft.note || undefined, correction)
       if (submission.current !== request) return
-      setApproval((previous) =>
-        previous?.address !== address
-          ? previous
-          : result === 'retained' && previous.resolution !== undefined
-            ? { ...previous, settled: true }
-            : undefined,
-      )
       if (result === 'refreshed') {
         setDrafts((previous) => {
           const next = new Map(previous)
@@ -430,8 +384,6 @@ export function useRunFeedback({
         setOutcome(address, COMPOSING)
       }
     } finally {
-      release()
-      if (releaseClaim.current === release) releaseClaim.current = undefined
       if (submission.current === request) submission.current = undefined
     }
   }
@@ -489,19 +441,9 @@ export function useRunFeedback({
     member: other.stepIndex !== undefined && other.testIndex === target?.testIndex ? undefined : placeMember(other.testIndex),
   })
 
-  // D-20: a question still waiting at another address is one link away, in place of its draft link.
-  const approvalHere = approval !== undefined && approval.address === address ? approval : undefined
-  const waitingElsewhere = approval !== undefined && approval.address !== address && !approval.settled ? approval : undefined
-  const approvalWaiting = waitingElsewhere === undefined
-    ? undefined
-    : {
-        label: approvalWaitingLabel(placeText(placeOf(targetOfAddress(waitingElsewhere.address)))),
-        onOpen: () => retarget(targetOfAddress(waitingElsewhere.address)),
-      }
-
   // D-09: every other address holding a non-empty draft is one link away.
   const unsentDrafts = [...drafts]
-    .filter(([key, entry]) => key !== address && key !== waitingElsewhere?.address && !isDraftEmpty(entry))
+    .filter(([key, entry]) => key !== address && !isDraftEmpty(entry))
     .map(([key]) => {
       const other = targetOfAddress(key)
       return { address: key, label: unsentDraftLabel(placeOf(other)), onOpen: () => retarget(other) }
@@ -526,17 +468,6 @@ export function useRunFeedback({
         testSwitcher,
         pinned,
         unsentDrafts,
-        approvalWaiting,
-        approval: approvalHere === undefined
-          ? undefined
-          : {
-              confirmId: approvalHere.frame.confirmId,
-              actionClass: approvalHere.frame.actionClass,
-              ...(approvalHere.frame.preview === undefined ? {} : { preview: approvalHere.frame.preview }),
-              ...(approvalHere.resolution === undefined ? {} : { resolution: approvalHere.resolution }),
-              settled: approvalHere.settled === true,
-              onAnswer: approvalHere.answer,
-            },
         note: draft.note,
         onNoteChange: editNote,
         expectation: draft.expectation,

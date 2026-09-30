@@ -205,7 +205,6 @@ describe('SEAM-02/04 stamped-audit integration proof (production helpers)', () =
     const { safetyHooks } = buildRunSafetyHooks({
       auditSink,
       executionContext: 'ci',
-      trustMode: false,
     })
 
     const result = await safetyHooks.runToolCallAsync({ name: 'delete_record', recognized: true })

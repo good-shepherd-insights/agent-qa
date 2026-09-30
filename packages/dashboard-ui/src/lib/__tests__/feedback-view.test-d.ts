@@ -40,8 +40,9 @@ test('C426-CHOICE-ORDER-SHAPE', () => {
   expectTypeOf<Exclude<Mark, Order['passed'][number]>>().toEqualTypeOf<never>()
 })
 
+// 432-14 (D-14): the approval state is deleted; the exact set is the four that remain.
 test('C426-COMPOSER-STATES-EXACT', () => {
-  type Expected = 'composing' | 'submitting' | 'awaiting-approval' | 'recorded' | 'retained'
+  type Expected = 'composing' | 'submitting' | 'recorded' | 'retained'
   expectTypeOf<FeedbackComposerState>().toEqualTypeOf<Expected>()
   expectTypeOf<(typeof FEEDBACK_COMPOSER_STATES)[number]>().toEqualTypeOf<Expected>()
   expectTypeOf<Exclude<FeedbackComposerState, (typeof FEEDBACK_COMPOSER_STATES)[number]>>().toEqualTypeOf<never>()

@@ -40,7 +40,6 @@ import {
 } from '@vostride/agent-qa-agent-local'
 import { AUTH_STATE_REDACTION_MARKER } from '@vostride/agent-qa-core'
 import {
-  createConfirmRegistry,
   createDashboardRunDetailReader,
   createRunServiceRoutes,
   DashboardDatabase,
@@ -332,8 +331,7 @@ async function openDurableScene() {
   const registry = createFunctionRegistry({ deps, resolveExecutionContext: () => 'local-interactive',
     auditSink: { appendExecutionAudit() {}, appendGuardrailAudit() {} } })
   const unmask = createDisplayUnmasker({ agentQaRoot: root, secretStores: () => [store], env: () => ({}), authStatePayloads: () => [] })
-  const agentHost = composeDashboardAgentHost({ registry } as LocalAgentHost,
-    undefined, undefined, unmask)
+  const agentHost = composeDashboardAgentHost({ registry } as LocalAgentHost, unmask)
   const doors = await openDoors({ registry, agentHost, db, maskText: text => mask.mask(text) })
   return { root, db, runId, excludedRunId, authPlaceholder, allowedPlaceholder, doors, snapshot,
     async close() {
@@ -358,8 +356,7 @@ async function openFeedbackScene() {
   const agentQaRoot = join(root, '.agent-qa')
   const configPath = join(root, 'agent-qa.config.yaml')
   writeFileSync(join(root, '.env.secrets.local'), `READ_CONTRACT_TOKEN=${AUTH_TOKEN}\n`)
-  const door = composeDashboardDoor({ configPath, agentQaRoot, boundOrigin: () => undefined,
-    confirms: createConfirmRegistry({ timeoutMs: 1_000 }) })
+  const door = composeDashboardDoor({ configPath, agentQaRoot, boundOrigin: () => undefined })
   const db = new DashboardDatabase({ dbPath: ':memory:' })
   const doors = await openDoors({ registry: door.host.registry, agentHost: door.agentHost, db, maskText: text => text })
   return { root, runId, receipt: marked.receipt, doors,

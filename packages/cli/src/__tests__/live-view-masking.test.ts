@@ -152,7 +152,7 @@ async function openFixture(order: BinderOrder): Promise<Fixture> {
   const composedLiveView = liveView ?? bindLiveView()
   const runService = runServiceFirst ?? bindRunService()
 
-  const { agentHost, host, enterRunTriggerScope } = composeDashboardDoor({
+  const { agentHost, host } = composeDashboardDoor({
     agentQaRoot: join(configDir, '.agent-qa'),
     configPath,
     boundOrigin: () => boundOrigin,
@@ -166,7 +166,6 @@ async function openFixture(order: BinderOrder): Promise<Fixture> {
     },
   })
   runDoor.bindHost(host)
-  runDoor.bindTriggerScope(enterRunTriggerScope)
 
   const started = await startServer({
     db,
