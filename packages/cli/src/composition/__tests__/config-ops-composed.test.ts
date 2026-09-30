@@ -30,6 +30,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import { createFunctionRegistry, invokeFunction } from '@vostride/agent-qa-agent'
+import * as dashboard from '@vostride/agent-qa-dashboard'
 import type { FunctionDeps } from '@vostride/agent-qa-agent'
 import { isCanonicalHookId } from '@vostride/agent-qa-ids'
 import {
@@ -499,5 +500,159 @@ describe('C432-CONFIG-SIX-OPS: every config operation writes in the call through
     await runAllSix(viaFn)
 
     expect(existsSync(join(root, '.git'))).toBe(false)
+  })
+})
+
+// ---- 432-11: edges, retries and retained controls on the real host --------------------------------
+//
+// Each cell holds a path's write turn through the shared per-path queue, so an outside edit lands
+// after the op read the file and before its write takes its turn — the window the transaction and
+// the whole-file digest check exist for.
+
+async function holdTurn(path: string): Promise<{ held: Promise<void>; release: () => void }> {
+  const serialize = (dashboard as Record<string, unknown>).serializeConfigWrite as
+    <T>(path: string, work: () => Promise<T>) => Promise<T>
+  expect(typeof serialize, 'the per-path config queue is exported').toBe('function')
+  let release!: () => void
+  let entered!: () => void
+  const holding = new Promise<void>((resolve) => { entered = resolve })
+  const held = serialize(path, () => new Promise<void>((resolve) => {
+    release = resolve
+    entered()
+  }))
+  await holding
+  return { held, release: () => release() }
+}
+
+function settle(ms = 50): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+describe('C432-CONFIG-THREE-OPS: the direct write meets an outside edit in its own turn', () => {
+  it('C432-CONFIG-THREE-OPS: a field set keeps an outside edit to another field, and its diff is its own',
+    async () => {
+      const { held, release } = await holdTurn(configPath)
+      const pending = call('config.field.set', { path: 'use.parallel', value: true })
+      await settle()
+      // The owner edits another field while the change waits for its turn.
+      const outside = SEEDED_CONFIG.replace('    appState: reset', '    appState: preserve')
+      writeFileSync(configPath, outside)
+      release()
+      await held
+
+      const answer = await pending
+      expect(answer).toMatchObject({ outcome: 'applied', files: ['agent-qa.config.yaml'], fields: ['use.parallel'] })
+      if (answer.outcome !== 'applied') throw new Error('unreachable')
+      // The diff is the change as built from the file the call read — its context still shows the
+      // value the call read — so the outside edit is not in it; the file holds both.
+      expect(answer.shownDiff).toContain('+  parallel: true')
+      expect(answer.shownDiff).not.toContain('appState: preserve')
+      expect(readFileSync(configPath, 'utf8')).toBe(outside.replace('parallel: false', 'parallel: true'))
+    })
+
+  it('C432-CONFIG-THREE-OPS: a create whose name is taken while it waits refuses, keeps the outside target, and a retry says why',
+    async () => {
+      const { held, release } = await holdTurn(configPath)
+      const pending = call('config.target.create', {
+        name: 'shop',
+        platform: 'web',
+        url: 'https://shop.example.com',
+      })
+      await settle()
+      const outside = SEEDED_CONFIG.replace(
+        '      url: http://127.0.0.1:8931/form.html\n',
+        '      url: http://127.0.0.1:8931/form.html\n    shop:\n      platform: web\n      url: https://owner.example.com\n',
+      )
+      writeFileSync(configPath, outside)
+      release()
+      await held
+
+      const answer = await pending
+      expect(answer).toMatchObject({ outcome: 'refused', reason: 'field-changed' })
+      if (answer.outcome !== 'refused') throw new Error('unreachable')
+      expect(answer.detail).toContain('registry.targets.shop')
+      // NOT REPLACED: the owner's target is exactly as they wrote it.
+      expect(readFileSync(configPath, 'utf8')).toBe(outside)
+
+      // THE RETRY reads the file again and gives the request-level answer.
+      const retry = await call('config.target.create', {
+        name: 'shop',
+        platform: 'web',
+        url: 'https://shop.example.com',
+      })
+      expect(retry).toMatchObject({ outcome: 'refused', reason: 'target-exists' })
+      expect(readFileSync(configPath, 'utf8')).toBe(outside)
+      expect(filed).toHaveLength(0)
+    })
+})
+
+describe('C432-CONFIG-MULTIFILE-TRUTH: a whole-file write that meets an outside edit says exactly what happened', () => {
+  it('C432-CONFIG-MULTIFILE-TRUTH: a hooks file edited while the write waited is not overwritten, and a retry lands on the edit',
+    async () => {
+      const hooksPath = join(root, 'hooks.yaml')
+      const { held, release } = await holdTurn(hooksPath)
+      const pending = call('config.hook.add', {
+        name: 'Seed the cart',
+        runtime: 'node',
+        file: 'scripts/seed.mjs',
+      })
+      await settle()
+      const outside = `${SEEDED_HOOKS}  - id: h_birch-cedar-dune-elm-fern-grove-heath-iris-juniper-kelp\n    name: Owner hook\n    runtime: bash\n    file: scripts/owner.sh\n    timeout: 10s\n`
+      writeFileSync(hooksPath, outside)
+      release()
+      await held
+
+      const answer = await pending
+      // NOTHING WRITTEN, AND THE ANSWER SAYS SO: the only file stopped at its own turn.
+      expect(answer).toMatchObject({
+        outcome: 'interrupted',
+        written: [],
+        failed: { path: 'hooks.yaml', reason: 'file-changed' },
+        unwritten: [],
+      })
+      expect(readFileSync(hooksPath, 'utf8')).toBe(outside)
+
+      // THE RETRY builds over the owner's file and keeps their hook.
+      const retry = await call('config.hook.add', {
+        name: 'Seed the cart',
+        runtime: 'node',
+        file: 'scripts/seed.mjs',
+      })
+      expect(retry).toMatchObject({ outcome: 'applied', files: ['hooks.yaml'] })
+      const hooks = readFileSync(hooksPath, 'utf8')
+      expect(hooks.startsWith(outside)).toBe(true)
+      expect(hooks).toContain('name: Seed the cart')
+      expect(filed).toHaveLength(0)
+    })
+
+  it('C432-CONFIG-MULTIFILE-TRUTH: CONTROL: with no outside edit the same hook is written whole, first time',
+    async () => {
+      const answer = await call('config.hook.add', {
+        name: 'Seed the cart',
+        runtime: 'node',
+        file: 'scripts/seed.mjs',
+      })
+      expect(answer).toMatchObject({ outcome: 'applied', files: ['hooks.yaml'] })
+      expect(readFileSync(join(root, 'hooks.yaml'), 'utf8').startsWith(SEEDED_HOOKS)).toBe(true)
+    })
+})
+
+describe('retained control: config.undo.propose still files its own proposal until 432-17', () => {
+  it('the undo answers the proposal union and, with no agent commit, refuses by name and writes nothing', async () => {
+    gitIn(root, 'init', '--quiet')
+    gitIn(root, 'config', 'user.name', 'agent-qa undo control')
+    gitIn(root, 'config', 'user.email', 'undo-control@example.invalid')
+    gitIn(root, 'config', 'commit.gpgsign', 'false')
+    gitIn(root, 'add', '--', 'agent-qa.config.yaml', 'hooks.yaml')
+    gitIn(root, 'commit', '--quiet', '-m', 'seed')
+    // A direct change first: it makes no agent commit, so there is still nothing to undo.
+    expect(await viaHost('config.field.set', { path: 'use.parallel', value: true }))
+      .toMatchObject({ outcome: 'applied' })
+    const answer = await viaHost('config.undo.propose', {}) as { outcome: string; reason?: string }
+    expect(answer.outcome).toBe('refused')
+    expect(answer.reason).toBe('no-agent-commit')
+    expect(readFileSync(configPath, 'utf8')).toBe(SEEDED_CONFIG.replace('parallel: false', 'parallel: true'))
+    expect(gitIn(root, 'rev-list', '--count', 'HEAD').trim()).toBe('1')
+    expect(existsSync(join(root, '.agent-qa', 'proposals'))).toBe(false)
   })
 })
