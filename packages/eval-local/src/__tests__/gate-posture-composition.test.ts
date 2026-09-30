@@ -1,3 +1,4 @@
+import { chmodSync, mkdirSync, writeFileSync } from 'node:fs'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -184,5 +185,29 @@ describe('readGatePostureFor (414 D-15, ROOT-10)', () => {
     // A refused manifest is a manifest that is not there: the posture still answers.
     expect(result.posture.partition).toEqual({ kind: 'absent' })
     expect(result.posture.gateSetNonEmpty).toBe(true)
+  })
+
+  // 2026-09-30, 432-10 D-05/D-22: the gate posture never opens the legacy proposal inbox, so a
+  // pending, corrupt or unreadable one beside the runtime root changes nothing.
+  it('432 reads the same posture beside a pending, corrupt or unreadable legacy proposal inbox', () => {
+    const agentQaRoot = join(outDir, '.agent-qa')
+    mkdirSync(agentQaRoot, { recursive: true })
+    const read = () => readGatePostureFor({ committedRoot: root, agentQaRoot,
+      scope: { tier: 'product', key: PRODUCT }, minimumGateSet: 1,
+      judge: { plannerModelId: PLANNER_MODEL_ID }, canary: { kind: 'not-provided' } })
+    const before = read()
+    const inbox = join(agentQaRoot, 'proposals')
+    mkdirSync(inbox)
+    writeFileSync(join(inbox, 'prop_0123456789abcdef.json'), JSON.stringify({ schemaVersion: 1,
+      proposalId: 'prop_0123456789abcdef', verb: 'accept', status: 'pending' }))
+    writeFileSync(join(inbox, 'prop_fedcba9876543210.json'), '{bad')
+    expect(read()).toEqual(before)
+    chmodSync(inbox, 0o000)
+    try {
+      expect(read()).toEqual(before)
+      expect(read().posture.canary).toEqual({ kind: 'not-provided' })
+    } finally {
+      chmodSync(inbox, 0o755)
+    }
   })
 })

@@ -40,14 +40,14 @@ describe('432 evidence-based gate inconsistency hold (D-05, D-22)', () => {
   })
   afterEach(() => rmSync(root, { recursive: true, force: true }))
 
-  function store() {
+  function store(executionContext: 'local-interactive' | 'ci' = 'local-interactive') {
     const lease = acquireWriterLease(knowledgeRoot)
     const authority = lease.kind === 'acquired' ? { writerLeaseId: lease.leaseId, epoch: lease.epoch }
       : lease.kind === 'held' ? { writerLeaseId: lease.holder.leaseId, epoch: lease.holder.epoch }
         : undefined
     if (authority === undefined) throw new Error(lease.kind)
     return createLocalKnowledgeStore({ knowledgeRoot, auditBaseDir: agentQaRoot,
-      executionContext: 'local-interactive', sourceBuildOrdinal: 43, ...authority,
+      executionContext, sourceBuildOrdinal: 43, ...authority,
       resolvePromotionPosture: () => resolvedPromotionPosture(), onPromotionOutcome })
   }
 
@@ -158,5 +158,25 @@ describe('432 evidence-based gate inconsistency hold (D-05, D-22)', () => {
     await candidate.port.recordGateReceipt(g3)
     await expect(candidate.port.promote(candidate.id)).resolves.toMatchObject({ kind: 'promoted',
       promotionPath: 'user-sovereign', citedReceiptDigests: [g3.receiptDigest] })
+  })
+
+  // Retained control (D-08): automatic canary promotion in CI stays proposed. The harm is kept as
+  // evidence, nothing is promoted, filed or deprecated, and no hold is reported for propose-only.
+  it('keeps automatic CI canary promotion proposed: contradictory evidence is recorded, nothing is filed', async () => {
+    const { published, draft } = fixture.publishHeldCandidate('ci')
+    const port = store('ci')
+    await port.recordGateReceipt(completeGate1Receipt(published.id, { producedAtOrdinal: 10 }))
+    await port.recordCanaryOutcome({ candidateId: published.id, runOutcome: 'negative',
+      benefit: 'exercised-harmed', stateValidity: 'valid', runId: 'run-ci-harm', testId: 'checkout::harm',
+      testIndex: 0, buildOrdinal: 43, stepIndex: 1, briefDigest: 'brief-ci-harm',
+      attribution: 'The served checkout hypothesis was exercised and harmed.',
+      exercisedAnchor: draft.anchors[0]!, corpusDigest: DIGEST })
+    expect(onPromotionOutcome).not.toHaveBeenCalled()
+    await expect(port.promote(published.id)).rejects.toMatchObject({ reason: 'propose-only' })
+    expect(existsSync(join(agentQaRoot, 'proposals'))).toBe(false)
+    expect(status(published.dir)).toBe('candidate')
+    const loaded = loadBundle(published.dir)
+    if (loaded.kind !== 'loaded') throw new Error(loaded.kind)
+    expect(loaded.bundle.events.filter(event => event.type === 'contradicted')).toHaveLength(1)
   })
 })
