@@ -73,7 +73,7 @@ import { invokeFunction } from '@vostride/agent-qa-agent'
 import { RunDeniedError, createDispatchGrants } from '@vostride/agent-qa-agent-local'
 import type { DispatchGrants } from '@vostride/agent-qa-agent-local'
 import { generateTestId } from '@vostride/agent-qa-ids'
-import { DRAFT_STABILITY_RUNS_N } from '@vostride/agent-qa-schema'
+import { DRAFT_STABILITY_RUNS_N, authoredSuiteTargetPath } from '@vostride/agent-qa-schema'
 import type { RiskActionDescriptor } from '@vostride/agent-qa-schema'
 
 import { CLI_FUNCTION_CALLER, composeCliLocalAgent } from '../local-agent-host.js'
@@ -290,6 +290,34 @@ describe('one human ask, N gated runs, driven from the authoring loop (D-08 · U
         // (c) with this confirm port would read `prompted-denied`.
         expect(row.trustSource).toBe('standing-approval')
         expect(row.executionContext).toBe('local-interactive')
+      }
+
+      // ---- (2b) 432 D-06: THE FINAL WRITE, THROUGH THE REAL HOST WRITER ------------------------
+      // The same normal-verification chain ends in the loop's final write. The final receipt
+      // decides: a draft its gates did not reject is at its target byte for byte, one they rejected
+      // is not, and an invocation that stopped or refused writes nothing at all.
+      const answered = result.value as unknown as {
+        readonly outcome: string
+        readonly draftRef?: { readonly filePath: string; readonly testName: string }
+        readonly receipt: { readonly disposition: string }
+        readonly written?: { readonly file: { readonly kind: string; readonly filePath?: string } }
+      }
+      const suiteTarget = authoredSuiteTargetPath(
+        answered.draftRef?.filePath ?? 'tests/.agent-qa-drafts/none.yaml',
+        answered.draftRef?.testName ?? 'none',
+      )
+      if (answered.outcome === 'drafted' || answered.outcome === 'repaired') {
+        const writes = answered.receipt.disposition !== 'rejected'
+        expect(answered.written?.file.kind).toBe(writes ? 'written' : 'not-written')
+        expect(existsSync(join(fixture.project, suiteTarget))).toBe(writes)
+        if (writes) {
+          expect(answered.written?.file.filePath).toBe(suiteTarget)
+          expect(readFileSync(join(fixture.project, suiteTarget))
+            .equals(readFileSync(join(fixture.project, answered.draftRef!.filePath)))).toBe(true)
+        }
+      } else {
+        expect(answered.written).toBeUndefined()
+        expect(existsSync(join(fixture.project, suiteTarget))).toBe(false)
       }
 
       // ---- (3) THE TWO CALLERS, AT ONE INSTANT -------------------------------------------------

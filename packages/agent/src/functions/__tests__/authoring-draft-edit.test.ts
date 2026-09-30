@@ -228,6 +228,7 @@ describe('every way an edit can be wrong is a named refusal that proposes nothin
     // THE WHOLE SET, including the legitimate op ahead of the refused one. A per-op check would
     // already have staged the first patch before it refused the second (T-394-36).
     expect(benched.applied).toEqual([])
+    expect(benched.published).toEqual([])
   })
 
   it('refuses a name the resolver would not bind, before a model is ever called', async () => {
@@ -303,6 +304,7 @@ describe('every way an edit can be wrong is a named refusal that proposes nothin
 
     expect(refusal).toBeInstanceOf(EditPatchSetUnparsableError)
     expect(benched.applied).toEqual([])
+    expect(benched.published).toEqual([])
   })
 
   it('refuses a patched document that no longer parses, and stages nothing', async () => {
@@ -317,5 +319,81 @@ describe('every way an edit can be wrong is a named refusal that proposes nothin
 
     expect(refusal).toBeInstanceOf(EditResultUnparsableError)
     expect((refusal as EditResultUnparsableError).message).toContain('nothing was staged')
+    expect(benched.published).toEqual([])
+  })
+})
+
+// ---- 432 D-06: refine edits the written test itself ----------------------------------------------
+
+describe('C432-TEST-REFINE-WRITTEN: the edit is written over the file it read', () => {
+  it('C432-TEST-REFINE-WRITTEN: writes the edited draft over the file it read, guarded by its digest', async () => {
+    const benched = bench()
+
+    const result = await edit(benched)
+
+    // ONE write: the staged shelf copy, over the very file this op resolved, claiming the bytes it
+    // read — so a file that moved on in the meantime is refused, never overwritten.
+    expect(benched.published).toEqual([{
+      draftPath: 'tests/.agent-qa-drafts/digest-edited.yaml',
+      targetPath: TARGET.filePath,
+      sourceDigest: TARGET.contentDigest,
+    }])
+    expect(result.written).toEqual({
+      kind: 'written',
+      filePath: TARGET.filePath,
+      contentDigest: 'digest-edited',
+    })
+    // The verify arm is handed THIS path, so it judges the test as written.
+    expect(result.draftRef).toEqual({
+      filePath: TARGET.filePath,
+      testId: TARGET.testId,
+      testName: TARGET.testName,
+      contentDigest: 'digest-edited',
+    })
+    expect(AuthoringDraftEditOutputSchema.safeParse(result).success).toBe(true)
+    expect(authoringDraftEditSpec.classify?.(result)).toEqual({
+      status: 'executed',
+      outcome: `edited ${TARGET.testName} — 1 patch op(s) written to ${TARGET.filePath}`,
+    })
+  })
+
+  it('C432-TEST-REFINE-WRITTEN: a file that changed since it was read is refused, and says so', async () => {
+    const benched = bench({
+      publish: (request) => Promise.resolve({
+        kind: 'not-written' as const,
+        targetPath: request.targetPath,
+        reason: 'target-changed' as const,
+      }),
+    })
+
+    const result = await edit(benched)
+
+    expect(result.written).toEqual({
+      kind: 'not-written',
+      targetPath: TARGET.filePath,
+      reason: 'target-changed',
+    })
+    // Nothing landed, so the answer still points at the shelf copy rather than claiming the file.
+    expect(result.draftRef.filePath).toBe('tests/.agent-qa-drafts/digest-edited.yaml')
+    expect(authoringDraftEditSpec.classify?.(result)).toEqual({
+      status: 'refused',
+      outcome: `not edited ${TARGET.testName} — target-changed`,
+    })
+  })
+
+  it('C432-TEST-REFINE-WRITTEN: a write that failed is reported failed, never executed', async () => {
+    const benched = bench({
+      publish: (request) => Promise.resolve({
+        kind: 'not-written' as const,
+        targetPath: request.targetPath,
+        reason: 'write-failed' as const,
+        detail: 'EACCES: permission denied',
+      }),
+    })
+
+    const result = await edit(benched)
+
+    expect(result.written).toMatchObject({ kind: 'not-written', reason: 'write-failed' })
+    expect(authoringDraftEditSpec.classify?.(result)?.status).toBe('failed')
   })
 })

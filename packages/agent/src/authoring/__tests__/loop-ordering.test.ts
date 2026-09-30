@@ -25,12 +25,17 @@ import { NO_STANDING_APPROVALS } from '@vostride/agent-qa-safety'
 import {
   DRAFT_STABILITY_RUNS_N,
   MASKED_RESOLVED_CONFIG_SCHEMA_VERSION,
+  WrittenTestReceiptSchema,
+  authoredSuiteTargetPath,
 } from '@vostride/agent-qa-schema'
 import type {
   AuthoringBrief,
+  DraftDisposition,
+  DraftGateBooleans,
   DraftReceipt,
   FunctionCaller,
   ScopeKey,
+  TestFileWrite,
 } from '@vostride/agent-qa-schema'
 import { describe, expect, it } from 'vitest'
 
@@ -42,7 +47,12 @@ import {
   fakeFingerprintIndex,
   fakeRunPort,
 } from './evidence-fixtures.js'
-import { AUTHORING_LOOP_STAGES, runAuthoringLoop } from '../loop.js'
+import {
+  AUTHORING_LOOP_STAGES,
+  AuthoringLoopUnroutableEvidenceError,
+  routeAfterVerify,
+  runAuthoringLoop,
+} from '../loop.js'
 import type { AuthoringLoopStage } from '../loop.js'
 import type { JobModelRequest } from '../../jobs/record-llm-authorship.js'
 import { AUTHORING_REFINE_AGENT_CONTEXT } from '../refine.js'
@@ -548,5 +558,168 @@ describe('the loop has exactly one public entry', () => {
     // hand the chat planner, which binds every registered op 1:1, a way to run that stage on its
     // own; this line is what refuses that edit, in the same change that makes it.
     expect(authoringIds).toEqual([...EXPECTED_AUTHORING_IDS])
+  })
+})
+
+// ---- 432 D-06 (EDGE-09): the final write, one disposition at a time -----------------------------
+//
+// Stage 5 is driven directly with a receipt per disposition, so each arm of the rule is measured
+// on its own: which final drafts reach the writer, what they ask it to write, and that the receipt
+// the loop answers with keeps the disposition and all four gate booleans exactly as evaluated.
+
+const ALL_PASS: DraftGateBooleans = {
+  executesDefinitive: true,
+  stableVerdict: true,
+  addsValue: true,
+  falsifiableAssertion: true,
+}
+
+const MIXED: DraftGateBooleans = {
+  executesDefinitive: true,
+  stableVerdict: false,
+  addsValue: false,
+  falsifiableAssertion: true,
+}
+
+function scriptedReceipt(
+  disposition: DraftDisposition,
+  gates: DraftGateBooleans,
+  runs: { readonly requested: number; readonly completed: number },
+): DraftReceipt {
+  return {
+    schemaVersion: 1,
+    draftRef: {
+      filePath: STAGED_DRAFT.filePath,
+      testId: STAGED_DRAFT.testId,
+      testName: STAGED_DRAFT.testName,
+      contentDigest: STAGED_DRAFT.contentDigest,
+    },
+    gates: {
+      executesDefinitive: { pass: gates.executesDefinitive, runRefs: [], indefinitiveRunRefs: [] },
+      stableVerdict: {
+        pass: gates.stableVerdict,
+        runRefs: [],
+        distinctOutcomes: [],
+        earlyStopped: false,
+      },
+      addsValue: { pass: gates.addsValue, novelElementCount: 0, comparedTestCount: 0 },
+      falsifiableAssertion: {
+        pass: gates.falsifiableAssertion,
+        assertionStepCount: 1,
+        falsifiableAssertionCount: gates.falsifiableAssertion ? 1 : 0,
+      },
+    },
+    stepTable: [],
+    gateRuns: [],
+    addsValueFinding: { novelElements: [], comparedTests: [] },
+    stabilityRunsRequested: runs.requested,
+    stabilityRunsCompleted: runs.completed,
+    disposition,
+    evaluatedAt: 1_700_000_000_000,
+  }
+}
+
+function writerShelf(answer?: (targetPath: string) => TestFileWrite) {
+  const requests: { draftPath: string; targetPath: string; sourceDigest?: string }[] = []
+  const shelf: DraftShelfPortLike = {
+    model: () => Promise.reject(new Error('stage 5 calls no model')),
+    write: () => Promise.reject(new Error('stage 5 stages nothing')),
+    applyPatches: () => Promise.reject(new Error('these receipts never reach repair')),
+    runs: fakeRunPort({ runs: [] }),
+    verifyDraft: () => Promise.reject(new Error('stage 5 is handed its receipt')),
+    publish(request) {
+      requests.push({ ...request })
+      return Promise.resolve(answer?.(request.targetPath) ?? {
+        kind: 'written',
+        filePath: request.targetPath,
+        contentDigest: STAGED_DRAFT.contentDigest,
+      })
+    },
+  }
+  const read: AuthoringReadPortLike = {
+    getAuthoringBrief: () => Promise.reject(new Error('stage 5 reads no brief')),
+    suiteTextCorpus: () => Promise.reject(new Error('stage 5 screens nothing')),
+    configuredTargetNames: () => Promise.reject(new Error('stage 5 serves no vocabulary')),
+  }
+  return { requests, deps: { read, shelf } }
+}
+
+const FINAL_TARGET = authoredSuiteTargetPath(STAGED_DRAFT.filePath, STAGED_DRAFT.testName)
+
+describe('EDGE-09: exactly the non-rejected final dispositions are written (432 D-06)', () => {
+  const written: readonly {
+    readonly disposition: DraftDisposition
+    readonly gates: DraftGateBooleans
+    readonly runs: { readonly requested: number; readonly completed: number }
+  }[] = [
+    { disposition: 'keep-eligible', gates: ALL_PASS, runs: { requested: 3, completed: 3 } },
+    { disposition: 'proposal-only', gates: ALL_PASS, runs: { requested: 3, completed: 2 } },
+    // Draft mode writes whatever the booleans said, and the receipt carries them unchanged.
+    { disposition: 'unverified', gates: MIXED, runs: { requested: 1, completed: 1 } },
+  ]
+
+  for (const row of written) {
+    it(`writes a ${row.disposition} final draft once, as a new file, keeping all four booleans`, async () => {
+      const host = writerShelf()
+      const receipt = scriptedReceipt(row.disposition, row.gates, row.runs)
+
+      const routed = await routeAfterVerify(STAGED_DRAFT, receipt, host.deps)
+
+      expect(routed.outcome.kind).toBe('drafted')
+      // One write, of the shelf copy, to the loop's own target recipe, claiming the target absent.
+      expect(host.requests).toEqual([{ draftPath: STAGED_PATH, targetPath: FINAL_TARGET }])
+      const answer = routed.outcome.kind === 'drafted' ? routed.outcome.written : undefined
+      expect(answer).toEqual({
+        file: { kind: 'written', filePath: FINAL_TARGET, contentDigest: STAGED_DRAFT.contentDigest },
+        disposition: row.disposition,
+        gates: row.gates,
+      })
+      expect(WrittenTestReceiptSchema.safeParse(answer).success).toBe(true)
+    })
+  }
+
+  it('never hands a rejected final draft to the writer', async () => {
+    const host = writerShelf()
+    const receipt = scriptedReceipt('rejected', MIXED, { requested: 3, completed: 3 })
+
+    // A rejected receipt ROUTES; with no run evidence the router refuses by name. Either way the
+    // writer is never reached.
+    const outcome = await routeAfterVerify(STAGED_DRAFT, receipt, host.deps)
+      .then(() => undefined, (error: unknown) => error)
+
+    expect(outcome).toBeInstanceOf(AuthoringLoopUnroutableEvidenceError)
+    expect(host.requests).toEqual([])
+  })
+
+  it('reports a write that did not land as not written, keeping the verification facts', async () => {
+    for (const reason of ['target-changed', 'outside-workspace', 'write-failed'] as const) {
+      const host = writerShelf((targetPath) => ({
+        kind: 'not-written',
+        targetPath,
+        reason,
+        ...(reason === 'write-failed' ? { detail: 'EIO' } : {}),
+      }))
+      const receipt = scriptedReceipt('keep-eligible', ALL_PASS, { requested: 3, completed: 3 })
+
+      const routed = await routeAfterVerify(STAGED_DRAFT, receipt, host.deps)
+
+      expect(host.requests).toHaveLength(1)
+      const answer = routed.outcome.kind === 'drafted' ? routed.outcome.written : undefined
+      expect(answer?.file).toMatchObject({ kind: 'not-written', targetPath: FINAL_TARGET, reason })
+      expect(answer?.disposition).toBe('keep-eligible')
+      expect(answer?.gates).toEqual(ALL_PASS)
+      expect(WrittenTestReceiptSchema.safeParse(answer).success).toBe(true)
+    }
+  })
+
+  it('writes only after verify, as the tail of route, in a full loop', async () => {
+    const loop = observedLoop()
+
+    const result = await runAuthoringLoop({ intent: INTENT, scope: SCOPE }, loop.deps)
+
+    expect(result.stages).toEqual([...AUTHORING_LOOP_STAGES])
+    expect(loop.published).toEqual([FINAL_TARGET])
+    expect(result.outcome.kind === 'drafted' ? result.outcome.written.file.kind : undefined)
+      .toBe('written')
   })
 })

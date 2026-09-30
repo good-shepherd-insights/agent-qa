@@ -149,6 +149,7 @@ interface Bench {
   readonly startInputs: RunsStartInput[]
   readonly startedRunIds: string[]
   readonly verifyCalls: number
+  readonly published: string[]
 }
 
 /**
@@ -170,6 +171,7 @@ function bench(input: {
   let emitted = 0
   let verified = 0
   const state = { verifyCalls: 0 }
+  const published: string[] = []
 
   // The evaluation's own gate runs, on record before the loop starts — exactly as a real
   // `authoring.draft.verify` would have left them, since the verify op is what takes them.
@@ -233,16 +235,20 @@ function bench(input: {
       return Promise.resolve(receipt)
     },
     // 432 D-06: the final write. It starts no run, so it cannot move a single figure below.
-    publish: (request: { readonly targetPath: string }) => Promise.resolve({
-      kind: 'written' as const,
-      filePath: request.targetPath,
-      contentDigest: 'written',
-    }),
+    publish: (request: { readonly targetPath: string }) => {
+      published.push(request.targetPath)
+      return Promise.resolve({
+        kind: 'written' as const,
+        filePath: request.targetPath,
+        contentDigest: 'written',
+      })
+    },
   }
 
   return {
     startInputs,
     startedRunIds,
+    published,
     get verifyCalls() {
       return state.verifyCalls
     },
@@ -393,6 +399,44 @@ describe('the loop cannot exceed the bound its own dispatch confirm rendered', (
     // were made, and attempts and runs are exactly what a fenced iteration separates.
     const iterations = result.outcome.kind === 'repaired' ? result.outcome.repairIterations : -1
     expect(iterations).toBe(REPAIR_ITERATION_CAP)
+  })
+
+  // 432 D-06 (EDGE-09), the repaired arm: the FINAL receipt decides the write, exactly as a
+  // first-pass one does. A repair that reached a passing probe but whose final stability gate
+  // rejected the candidate is reported as repaired and NOT written — its bytes stay on the shelf.
+  it('writes a repaired draft only when its final gate did not reject it', async () => {
+    const rejectedFinal = receiptFor('rejected', ['r_final-0', 'r_final-1', 'r_final-2'], 'digest-0+1')
+    const refused = bench({
+      emissions: [MODEL_DOCUMENT, JSON.stringify(OUTSIDE_PREFIX)],
+      verifyReceipts: [REJECTED, rejectedFinal],
+      probes: [[passingMember()]],
+    })
+    const kept = bench({
+      emissions: [MODEL_DOCUMENT, JSON.stringify(OUTSIDE_PREFIX)],
+      verifyReceipts: [REJECTED, REPAIRED],
+      probes: [[passingMember()]],
+    })
+
+    const refusedResult = await runAuthoringLoop(LOOP_INPUT, refused.deps)
+    const keptResult = await runAuthoringLoop(LOOP_INPUT, kept.deps)
+
+    expect(refusedResult.outcome.kind).toBe('repaired')
+    expect(refused.published).toEqual([])
+    const refusedWrite = refusedResult.outcome.kind === 'repaired'
+      ? refusedResult.outcome.written
+      : undefined
+    expect(refusedWrite?.file).toMatchObject({ kind: 'not-written', reason: 'rejected' })
+    expect(refusedWrite?.disposition).toBe('rejected')
+
+    expect(keptResult.outcome.kind).toBe('repaired')
+    expect(kept.published).toHaveLength(1)
+    const keptWrite = keptResult.outcome.kind === 'repaired' ? keptResult.outcome.written : undefined
+    expect(keptWrite?.file).toEqual({
+      kind: 'written',
+      filePath: kept.published[0],
+      contentDigest: 'written',
+    })
+    expect(keptWrite?.disposition).toBe('keep-eligible')
   })
 })
 

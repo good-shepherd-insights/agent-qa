@@ -119,6 +119,8 @@ function deps(options: {
   readonly unboundShelf?: true
   readonly filed?: AuthoringProposalWrite[]
   readonly published?: { readonly draftPath: string; readonly targetPath: string }[]
+  /** How the writer answers; written by default. */
+  readonly writeFails?: true
 } = {}): FunctionDeps {
   const documents = new Map<string, { endedAt: number }>()
   GATE_RUN_IDS.forEach((runId, index) => documents.set(runId, { endedAt: 100 + index }))
@@ -141,6 +143,14 @@ function deps(options: {
     // 432 D-06: the direct writer the loop's final write reaches. It starts no run.
     publish: (request: { readonly draftPath: string; readonly targetPath: string }) => {
       options.published?.push(request)
+      if (options.writeFails === true) {
+        return Promise.resolve({
+          kind: 'not-written' as const,
+          targetPath: request.targetPath,
+          reason: 'write-failed' as const,
+          detail: 'ENOSPC: no space left on device',
+        })
+      }
       return Promise.resolve({
         kind: 'written' as const,
         filePath: request.targetPath,
@@ -312,5 +322,23 @@ describe('the drafted outcome is WRITTEN before this op answers (432 D-06, was 3
 
     expect((output as { outcome: string }).outcome).toBe('drafted')
     expect(published).toHaveLength(1)
+  })
+
+  it('a drafted outcome whose write failed is reported failed, never executed', async () => {
+    const output = AuthoringDraftWriteOutputSchema.parse(
+      await authoringDraftWriteSpec.invoke(INPUT, deps({ writeFails: true })),
+    )
+
+    expect(output.outcome).toBe('drafted')
+    expect(output.written?.file).toMatchObject({ kind: 'not-written', reason: 'write-failed' })
+    const verdict = authoringDraftWriteSpec.classify?.(output)
+    expect(verdict?.status).toBe('failed')
+    expect(verdict?.outcome).toContain('not written: write-failed')
+    // …and the written arm is the control: the same invocation that lands is executed.
+    const landed = AuthoringDraftWriteOutputSchema.parse(
+      await authoringDraftWriteSpec.invoke(INPUT, deps()),
+    )
+    expect(authoringDraftWriteSpec.classify?.(landed)?.status).toBe('executed')
+    expect(authoringDraftWriteSpec.classify?.(landed)?.outcome).toContain(' — wrote tests/')
   })
 })

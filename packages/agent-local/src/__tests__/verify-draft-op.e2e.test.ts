@@ -414,6 +414,34 @@ describe('authoring.draft.verify end to end through the composition root', () =>
     expect(persisted).toEqual(receipt)
   })
 
+  // 432 D-06: refine_test's verify arm is handed the WRITTEN test's path, not a shelf copy. The
+  // accept control lives at a suite path, so this is that call: the receipt, every gate run and the
+  // stored receipt name the written file, and the verify writes nothing (the writer rejects if it
+  // is ever reached).
+  it('C432-TEST-REFINE-WRITTEN: verifies the written test at its suite path, and writes nothing', async () => {
+    const executor = fixtureExecutor(agentQaRoot, ['passed', 'passed', 'passed'])
+    const host = compose({ executor: executor.port, authoring: draftAuthoring() })
+
+    const receipt = (await invokeFunction(
+      host.registry,
+      AUTHORING_DRAFT_VERIFY_FUNCTION_ID,
+      { draftPath: ACCEPT_CONTROL.filePath },
+      HUMAN,
+    )) as DraftReceipt
+
+    expect(ACCEPT_CONTROL.filePath.startsWith('tests/.agent-qa-drafts/')).toBe(false)
+    expect(receipt.draftRef).toEqual({
+      filePath: ACCEPT_CONTROL.filePath,
+      testId: ACCEPT_CONTROL.testId,
+      testName: ACCEPT_CONTROL.testName,
+      contentDigest: ACCEPT_CONTROL.contentDigest,
+    })
+    expect(executor.startInputs.map((started) => started.patterns))
+      .toEqual([[ACCEPT_CONTROL.filePath], [ACCEPT_CONTROL.filePath], [ACCEPT_CONTROL.filePath]])
+    expect(readdirSync(join(agentQaRoot, 'draft-receipts')))
+      .toEqual([`${ACCEPT_CONTROL.contentDigest}.json`])
+  })
+
   it('forces unverified in draft mode, on one run rather than the pinned N (D-18/SC3)', async () => {
     const executor = fixtureExecutor(agentQaRoot, ['passed', 'passed', 'passed'])
     const host = compose({ executor: executor.port, authoring: draftAuthoring() })

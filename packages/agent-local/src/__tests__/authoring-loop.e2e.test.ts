@@ -974,6 +974,47 @@ describe('authoring.draft.write end to end through the composition root', () => 
     })
   })
 
+  // THE RETRY EDGE. Authoring the same test twice mints the same bytes and the same target, and the
+  // second final write finds the first one there: a NEW test claims its target is absent, so it is
+  // refused as `target-changed` and the file already written is left exactly as it was.
+  it('C432-TEST-WRITE-DISPOSITION: a second identical draft does not overwrite the first written test', async () => {
+    const executor = fixtureExecutor(agentQaRoot)
+    const host = compose({
+      executor: executor.port,
+      authoring: draftAuthoring(workspace),
+      model: scriptedModel().capability,
+    })
+    const target = join(workspace, 'tests/confirm-the-local-account-form-page-heading.yaml')
+
+    const first = (await invokeFunction(
+      host.registry,
+      AUTHORING_DRAFT_WRITE_FUNCTION_ID,
+      { intent: INTENT, scope: SCOPE },
+      HUMAN,
+    )) as AuthoringDraftWriteOutput
+    expect(writtenOf(first)).toMatchObject({ file: { kind: 'written' } })
+    writeFileSync(target, `${readFileSync(target, 'utf8')}# kept by a person\n`)
+    const edited = readFileSync(target)
+
+    const second = (await invokeFunction(
+      host.registry,
+      AUTHORING_DRAFT_WRITE_FUNCTION_ID,
+      { intent: INTENT, scope: SCOPE },
+      HUMAN,
+    )) as AuthoringDraftWriteOutput
+
+    expect(second.outcome).toBe('drafted')
+    expect(writtenOf(second)).toMatchObject({
+      file: {
+        kind: 'not-written',
+        targetPath: 'tests/confirm-the-local-account-form-page-heading.yaml',
+        reason: 'target-changed',
+      },
+      disposition: 'keep-eligible',
+    })
+    expect(readFileSync(target).equals(edited)).toBe(true)
+  })
+
   // THE MUTATION WITNESS (432 B08). A flip across the stability runs fails gate 2, so the receipt is
   // `rejected`, and a rejected final draft is never written — whatever the loop then does with it.
   // The claim is measured on disk and on the answer, so a loop that let `rejected` into its final
