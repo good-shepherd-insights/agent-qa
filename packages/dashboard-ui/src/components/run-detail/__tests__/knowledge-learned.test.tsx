@@ -7,7 +7,7 @@
 // while the real mount path is broken, and the cell would never know.
 //
 // THE DOM CONTRACT IS THE SUBJECT, not the styling. `data-learned-state`, `data-learned-count-line`,
-// `data-record-change` (the bucket word since 427 D-15) and `data-pending-proposals` are what the
+// and `data-record-change` (the bucket word since 427 D-15) are what the
 // Playwright cells address on the built bundle, so every one of them is pinned here in the cheap
 // medium first. Record ids no longer ride on a row: they read in Retrieval details'
 // `dl[data-ledger-changes]`, whose class assertions (`text-primary` on a routed reference,
@@ -43,7 +43,6 @@ import {
   BUCKET_MEANINGS,
   CHANGES_NOT_AVAILABLE_TEXT,
   CHANGES_PENDING_TEXT,
-  COPY_REVIEW_COMMAND_LABEL,
   CHANGES_UNREADABLE_TEXT,
   COUNTS_NOT_RECORDED_SENTENCE,
   CURATION_FAILED_PARTIAL_TEXT,
@@ -51,22 +50,18 @@ import {
   MEMORY_CHANGES_HEADING,
   NO_MEMORY_CHANGES_SENTENCE,
   OPEN_QUESTION_NOTE,
-  PENDING_PROPOSALS_REVIEW_COMMAND,
   PROPOSED_NOTE,
   RECONCILIATION_UNATTRIBUTED_TEXT,
   RECORD_UNREADABLE_LEAD,
-  REVIEW_COMMAND_COPIED_TEXT,
   SHOW_FULL_RECORD_LABEL,
   STORE_READ_INCOMPLETE_TEXT,
   WAS_PREFIX,
   learnedView,
-  pendingProposalsLine,
   projectKnowledgeView,
   reconciliationCountText,
   sinceThisRunHeading,
   type LearnedRowView,
   type LearnedView,
-  type ProposalsView,
 } from "@/lib/knowledge-view"
 
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
@@ -102,8 +97,8 @@ function mount(element: ReactElement): HTMLElement {
   return container
 }
 
-function render(view: LearnedView, proposals?: ProposalsView): HTMLElement {
-  return mount(<KnowledgeLearned view={view} proposals={proposals} />)
+function render(view: LearnedView): HTMLElement {
+  return mount(<KnowledgeLearned view={view} />)
 }
 
 type LedgerChange = Extract<RunKnowledgeProjection, { kind: "ready" }>["learned"]["changes"][number]
@@ -816,100 +811,21 @@ describe("a partial read is painted beside the rows, and beneath an unsettled se
   })
 })
 
-describe("the proposals line is a count and a door (D-11, T-407-22)", () => {
-  const proposals: ProposalsView = {
-    count: 3,
-    line: pendingProposalsLine(3),
-    command: PENDING_PROPOSALS_REVIEW_COMMAND,
-    copyLabel: COPY_REVIEW_COMMAND_LABEL,
-  }
-
-  function proposalsBlock(host: HTMLElement) {
-    const block = host.querySelector<HTMLElement>("div[data-pending-proposals]")
-    return {
-      block,
-      line: block?.querySelector<HTMLElement>(":scope > p") ?? null,
-      code: block?.querySelector<HTMLElement>("code[data-pending-proposals-command]") ?? null,
-      cta: block?.querySelector<HTMLButtonElement>("button[data-review-proposals]") ?? null,
-    }
-  }
-
-  // RE-SPELLED 427-09 from 'stamps the count on the line and renders the single CTA as the runnable
-  // review command (423 D-19)': the line names the project as its scope, the command reads beside
-  // an icon-only copy button (D-18).
-  it("PROPOSALS-PROJECT-SCOPE: the line counts the whole project, and the command reads beside an icon copy button", async () => {
-    const host = render({ state: "done", countLine: legacyCurationPairText(0, 0), sentence: NO_MEMORY_CHANGES_SENTENCE, rows: [] }, proposals)
-    const { block, line, code, cta } = proposalsBlock(host)
-
-    expect(block?.getAttribute("data-pending-proposals")).toBe("3")
-    expect(line?.textContent).toBe("3 proposals waiting for review in this project")
-    expect(line?.textContent).toBe(pendingProposalsLine(3))
-    expect(code?.textContent).toBe(PENDING_PROPOSALS_REVIEW_COMMAND)
-    // E6 overflow: the command wraps inside its code element while the 24px button stays beside it.
-    expect(code?.className).toContain("wrap-anywhere")
-    expect(code?.parentElement).toBe(cta?.parentElement)
-    expect(code?.parentElement?.className).toContain("items-center")
-    expect(cta?.className).toContain("size-6")
-
-    expect(host.querySelector("[data-pending-proposals] a")).toBeNull()
-    expect(cta?.getAttribute("href")).toBeNull()
-    expect(cta?.getAttribute("data-review-command")).toBe(PENDING_PROPOSALS_REVIEW_COMMAND)
-    expect(cta?.getAttribute("aria-label")).toBe(`${COPY_REVIEW_COMMAND_LABEL}: ${PENDING_PROPOSALS_REVIEW_COMMAND}`)
-    // The name already leads with the label, so no title repeats it as a description (G-427-1).
-    for (const attribute of ["title", "aria-describedby", "aria-description"]) expect(cta?.hasAttribute(attribute), attribute).toBe(false)
-    // Only the Copy glyph shows; the command rides as sr-only text, so the control's text still names it.
-    const children = [...(cta?.children ?? [])]
-    expect(children.map(child => child.tagName.toLowerCase())).toEqual(["span", "svg"])
-    expect(children[0]?.className).toBe("sr-only")
-    expect(children[0]?.textContent).toBe(PENDING_PROPOSALS_REVIEW_COMMAND)
-    expect(children[1]?.getAttribute("aria-hidden")).toBe("true")
-    expect(cta?.textContent).toBe(PENDING_PROPOSALS_REVIEW_COMMAND)
-
-    const writeText = vi.fn(async (_text: string) => undefined)
-    Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText } })
-    await act(async () => { cta?.click() })
-    expect(writeText).toHaveBeenCalledExactlyOnceWith(PENDING_PROPOSALS_REVIEW_COMMAND)
-    expect(cta?.getAttribute("data-copy-status")).toBe("copied")
-    expect(cta?.querySelector("svg")?.getAttribute("class")).toContain("text-emerald-500")
-    const status = host.querySelector("[data-review-command-status]")
-    expect(status?.getAttribute("aria-live")).toBe("polite")
-    expect(status?.textContent).toBe(REVIEW_COMMAND_COPIED_TEXT)
-  })
-
-  it("says so when the clipboard is unavailable, and keeps the command readable on the control", async () => {
-    Object.defineProperty(navigator, "clipboard", { configurable: true, value: undefined })
-    const host = render({ state: "done", countLine: legacyCurationPairText(0, 0), sentence: NO_MEMORY_CHANGES_SENTENCE, rows: [] }, proposals)
-    const { code, cta } = proposalsBlock(host)
-    await act(async () => { cta?.click() })
-    expect(cta?.getAttribute("data-copy-status")).toBe("failed")
-    const status = host.querySelector("[data-review-command-status]")
-    expect(status?.getAttribute("role")).toBe("status")
-    expect(status?.getAttribute("aria-live")).toBe("polite")
-    expect(status?.textContent)
-      .toBe("Could not copy the review command. Run: agent-qa proposals list --status pending")
-    expect(code?.textContent).toBe(PENDING_PROPOSALS_REVIEW_COMMAND)
-    expect(cta?.textContent).toContain(PENDING_PROPOSALS_REVIEW_COMMAND)
-  })
-
-  it("renders NO line and NO attribute when the page passed no proposals — a zero is not news", () => {
-    const host = render({ state: "done", countLine: legacyCurationPairText(0, 0), sentence: NO_MEMORY_CHANGES_SENTENCE, rows: [] })
+// RE-SPELLED 432-09 (D-25) from 'the proposals line is a count and a door (D-11, T-407-22)': the half
+// shows what changed; no pending-proposals line, review command or copy control is rendered, in any state.
+describe("no pending-proposals line or review command is rendered (432-09 D-25)", () => {
+  it.each([
+    ["done", { state: "done", countLine: legacyCurationPairText(0, 0), sentence: NO_MEMORY_CHANGES_SENTENCE, rows: [] }],
+    ["pending", { state: "pending", sentence: CHANGES_PENDING_TEXT, rows: [] }],
+  ] as const)("C432-NO-REVIEW-CTA: a %s half renders no proposals line, command or copy button", (_state, view) => {
+    const host = render(view as LearnedView)
 
     expect(host.querySelector("[data-pending-proposals]")).toBeNull()
     expect(host.querySelector("[data-pending-proposals-command]")).toBeNull()
     expect(host.querySelector("[data-review-proposals]")).toBeNull()
-  })
-
-  it("shows the proposals line beside an unsettled half — the inbox is not this run's chain", () => {
-    const one: ProposalsView = { ...proposals, count: 1, line: pendingProposalsLine(1) }
-    const host = render({ state: "pending", sentence: CHANGES_PENDING_TEXT, rows: [] }, one)
-    const { block, line, code, cta } = proposalsBlock(host)
-
-    expect(stateOf(host)).toBe("pending")
-    expect(host.querySelector("[data-learned-reconciliation]")).toBeNull()
-    expect(block?.getAttribute("data-pending-proposals")).toBe("1")
-    expect(line?.textContent).toBe("1 proposal waiting for review in this project")
-    expect(code?.textContent).toBe(PENDING_PROPOSALS_REVIEW_COMMAND)
-    expect(cta?.getAttribute("data-review-command")).toBe(PENDING_PROPOSALS_REVIEW_COMMAND)
+    expect(host.querySelector("[data-review-command]")).toBeNull()
+    expect(host.querySelector("button")).toBeNull()
+    expect(host.textContent).not.toMatch(/proposals? waiting|agent-qa proposals|review command/i)
   })
 })
 

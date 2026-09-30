@@ -9,14 +9,14 @@ export const RUNS_MARK_FUNCTION_ID = 'runs.mark'
 
 export const runsMarkSpec: FunctionSpec<RunsMarkInput, RunsMarkOutcome> = {
   id: RUNS_MARK_FUNCTION_ID,
-  summary: 'Mark a run or step false-fail / false-pass / confirmed-bug: freeze the marked decision as gold, triage, draft a fix proposal.',
+  summary: 'Mark a run or step false-fail / false-pass / confirmed-bug: freeze the marked decision as gold, triage, and apply the fix (a knowledge change or a test edit) in the call.',
   requiredScopes: ['knowledge-write'],
   resultKind: 'unary',
   boundThrough: 'feedback',
   input: RunsMarkInputSchema,
   output: RunsMarkOutcomeSchema,
-  // D-13: a mark writes the committed eval root and files a proposal. The dashboard proves
-  // presence by asking, so mutating-local would understate its risk.
+  // D-13: a mark writes the committed eval root and, since 432-09, applies its fix to knowledge or
+  // a test file. mutating-local would understate its risk.
   // No requiresHumanOrigin: MCP callers have origin agent; D-20 makes the bearer the grant.
   risk: {
     name: `fn:${RUNS_MARK_FUNCTION_ID}`,

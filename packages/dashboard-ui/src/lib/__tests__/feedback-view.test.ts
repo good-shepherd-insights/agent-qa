@@ -18,7 +18,6 @@ import type {
 } from '@vostride/agent-qa-schema'
 import {
   MARK_PREVIEW_REFUSALS,
-  MARK_PROPOSAL_STATES,
   RunsMarkPreviewResultSchema,
   RunsMarksHistoryResultSchema,
 } from '@vostride/agent-qa-schema'
@@ -31,6 +30,7 @@ import {
   CHOICE_LEGEND,
   CHOICE_MEANINGS,
   CONTENT_ABSENCE_TEXT,
+  DISPOSITION_TEXT,
   DRAFT_WORDING_NOT_SHOWN_TEXT,
   FEEDBACK_CHOICE_ORDER,
   FEEDBACK_COMPOSER_STATES,
@@ -42,7 +42,7 @@ import {
   PREVIEW_IDLE_TEXT,
   PREVIEW_LINE_LABELS,
   PREVIEW_UPDATING_TEXT,
-  PROPOSAL_DRAFT_TEXT,
+  PREVIEW_FIX_TEXT,
   RECORD_EFFECT_TEXT,
   UNREADABLE_RECORD_TEXT,
   SUBMIT_REASON_ALREADY_MARKED,
@@ -62,7 +62,12 @@ import {
   alreadyMarkedText,
   feedbackReadFailureReason,
   previewRefusalText,
+  dispositionText,
   quarantinedText,
+  APPLIED_KNOWLEDGE_PREFIX,
+  APPLIED_TEST_FILE_PREFIX,
+  APPLIED_UNAVAILABLE_TEXT,
+  appliedRecordUnavailableText,
   ADD_CORRECTION_LABEL,
   TECHNICAL_DETAILS_LABEL,
   TECHNICAL_DETAILS_ROW_LABELS,
@@ -84,7 +89,7 @@ import {
   groundTruthLine,
   knowledgeLine,
   labelsLine,
-  proposalDraftText,
+  previewFixText,
   recordEffectLine,
   replacesLine,
   resolvedStepText,
@@ -107,7 +112,6 @@ import {
   HISTORY_EMPTY_TEXT,
   HISTORY_READ_FAILED_TEXT,
   HISTORY_RETRY_ACCESSIBLE_NAME,
-  PROPOSAL_STATE_TEXT,
   REPLACEMENT_EXPLANATION,
   correctedPresenceText,
   feedbackHistoryState,
@@ -115,7 +119,6 @@ import {
   historyStateText,
   historyTargetLabel,
   historyTitle,
-  proposalStateText,
   replacedByText,
   runHistoryLabel,
   FEEDBACK_LAYOUTS,
@@ -427,7 +430,7 @@ describe('426-06 the preview names what the mark will do', () => {
     }
     expect(PREVIEW_IDLE_TEXT).toBe('Choose an option above to see what this will do.')
     expect(PREVIEW_UPDATING_TEXT).toBe('Updating…')
-    expect(PREVIEW_LINE_LABELS).toEqual({ result: 'Result', labels: 'Eval labels', knowledge: 'Knowledge', proposals: 'Proposals' })
+    expect(PREVIEW_LINE_LABELS).toEqual({ result: 'Result', labels: 'Eval labels', knowledge: 'Knowledge', change: 'Change' })
   })
 
   it('PREVIEW-RESULT-LINE: the step number, both verdicts and the quoted reasoning; an empty reasoning drops the quote', () => {
@@ -477,25 +480,29 @@ describe('426-06 the preview names what the mark will do', () => {
     })
   })
 
-  it('PREVIEW-PROPOSAL-LINE: each draft kind reads its sentence, and the drafted wording is never offered', () => {
+  // RE-SPELLED 432-09 (D-04) from 'PREVIEW-PROPOSAL-LINE: each draft kind reads its sentence, and the
+  // drafted wording is never offered': the fix is applied on send, so each line says what will change.
+  it('PREVIEW-CHANGE-LINE: each fix kind reads what will change, and its wording is never offered', () => {
     const checked = { servedRecords: 0, procedureReads: 0, assertionDrift: false }
     const target = { grain: 'record' as const, recordId: 'rec-1' }
-    expect(proposalDraftText({ kind: 'knowledge', fix: 'fact', target })).toBe('A knowledge fact will be drafted for your review')
-    expect(proposalDraftText({ kind: 'knowledge', fix: 'caution', target })).toBe('A caution will be drafted for your review')
-    expect(proposalDraftText({ kind: 'knowledge', fix: 'procedure-hint', target })).toBe('A procedure hint will be drafted for your review')
-    expect(proposalDraftText({ kind: 'test-edit', testRef: 'tests/checkout.yaml' })).toBe('A test edit will be drafted for your review')
-    expect(proposalDraftText({ kind: 'no-draftable-fix', checked })).toBe('No fix can be drafted from this run')
-    expect(proposalDraftText({ kind: 'confirmed-bug' }))
-      .toBe('Nothing is drafted — a real product bug needs a product fix, not a test or knowledge change')
-    expect(PROPOSAL_DRAFT_TEXT['test-edit']).toBe('A test edit will be drafted for your review')
-    expect(DRAFT_WORDING_NOT_SHOWN_TEXT).toBe("The drafted wording isn't shown here — it's written after you send.")
+    expect(previewFixText({ kind: 'knowledge', fix: 'fact', target })).toBe('A knowledge fact will be added')
+    expect(previewFixText({ kind: 'knowledge', fix: 'caution', target })).toBe('A caution will be added')
+    expect(previewFixText({ kind: 'knowledge', fix: 'procedure-hint', target })).toBe('A procedure hint will be added')
+    expect(previewFixText({ kind: 'test-edit', testRef: 'tests/checkout.yaml' })).toBe('The test file will be edited')
+    expect(previewFixText({ kind: 'no-draftable-fix', checked })).toBe('No fix can be made from this run')
+    expect(previewFixText({ kind: 'confirmed-bug' }))
+      .toBe('Nothing changes — a real product bug needs a product fix, not a test or knowledge change')
+    expect(PREVIEW_FIX_TEXT['test-edit']).toBe('The test file will be edited')
+    expect(DRAFT_WORDING_NOT_SHOWN_TEXT).toBe("The exact wording isn't shown here — it's written when you send.")
+    for (const text of [PREVIEW_FIX_TEXT['test-edit'], PREVIEW_FIX_TEXT['no-draftable-fix'], PREVIEW_FIX_TEXT['confirmed-bug'],
+      ...Object.values(PREVIEW_FIX_TEXT.knowledge)]) expect(text).not.toMatch(/review|proposal|draft/i)
   })
 
-  it('PREVIEW-REPLACES-LINE: the earlier mark by ordinal and time, the withdrawal clause, and no guessed time', () => {
-    expect(replacesLine(2, '14:05', true)).toBe('Replaces your earlier mark (#2, 14:05) and withdraws its proposal')
-    expect(replacesLine(2, '14:05', false)).toBe('Replaces your earlier mark (#2, 14:05)')
-    expect(replacesLine(2, undefined, false)).toBe('Replaces your earlier mark (#2)')
-    expect(replacesLine(2, undefined, true)).toBe('Replaces your earlier mark (#2) and withdraws its proposal')
+  // RE-SPELLED 432-09 (D-11) from 'PREVIEW-REPLACES-LINE: the earlier mark by ordinal and time, the
+  // withdrawal clause, and no guessed time': nothing is withdrawn; the earlier change stays.
+  it('PREVIEW-REPLACES-LINE: the earlier mark by ordinal and time, that its change stays, and no guessed time', () => {
+    expect(replacesLine(2, '14:05')).toBe('Replaces your earlier mark (#2, 14:05); what it changed stays')
+    expect(replacesLine(2, undefined)).toBe('Replaces your earlier mark (#2); what it changed stays')
   })
 })
 
@@ -507,13 +514,13 @@ describe('426-07 the special arms and the failed read', () => {
 
   it('PREVIEW-QUARANTINED: each quarantine class names its cause inside the locked sentence', () => {
     expect(quarantinedText('timeout')).toBe(
-      'This test failed from a timeout, so your mark is recorded but quarantined — no labels, knowledge or proposals change.',
+      'This test failed from a timeout, so your mark is recorded but quarantined — no labels, knowledge or tests change.',
     )
     expect(quarantinedText('flake')).toBe(
-      'This test failed from a flaky run, so your mark is recorded but quarantined — no labels, knowledge or proposals change.',
+      'This test failed from a flaky run, so your mark is recorded but quarantined — no labels, knowledge or tests change.',
     )
     expect(quarantinedText('environment')).toBe(
-      'This test failed from an environment problem, so your mark is recorded but quarantined — no labels, knowledge or proposals change.',
+      'This test failed from an environment problem, so your mark is recorded but quarantined — no labels, knowledge or tests change.',
     )
   })
 
@@ -782,21 +789,21 @@ describe('426-09 the history copy', () => {
     expect(HISTORY_RETRY_ACCESSIBLE_NAME.startsWith(RETRY_LABEL)).toBe(true)
   })
 
-  it('HISTORY-PROPOSAL-COPY: each proposal state reads its phrase after Proposal:, and an apply in flight reads being applied', () => {
-    expect(PROPOSAL_STATE_TEXT).toEqual({
-      pending: 'waiting for review',
-      expired: 'expired',
-      applied: 'applied',
-      rejected: 'rejected',
-      missing: 'not found',
-      corrupt: 'unreadable',
+  // RE-SPELLED 432-09 (D-25) from 'HISTORY-PROPOSAL-COPY: each proposal state reads its phrase after
+  // Proposal:, and an apply in flight reads being applied': history says what an applied fix changed.
+  it('HISTORY-APPLIED-COPY: an applied fix says what it changed; a historical draft says its change was not recorded', () => {
+    expect(APPLIED_KNOWLEDGE_PREFIX).toBe('Changed knowledge: ')
+    expect(APPLIED_TEST_FILE_PREFIX).toBe('Edited the test file ')
+    expect(APPLIED_UNAVAILABLE_TEXT).toBe('What this mark changed was not recorded.')
+    expect(appliedRecordUnavailableText('mem_1')).toBe('mem_1 (content unavailable)')
+    expect(dispositionText({ kind: 'drafted', fix: 'fact', proposalId: 'prop_x', proposalKind: 'knowledge' }))
+      .toBe('Recorded — a fix was drafted before fixes applied directly')
+    expect(DISPOSITION_TEXT.applied).toEqual({
+      fact: 'Recorded — a knowledge fact was added',
+      caution: 'Recorded — a caution was added',
+      'procedure-hint': 'Recorded — a procedure hint was added',
+      'test-edit': 'Recorded — the test file was edited',
     })
-    expect(Object.keys(PROPOSAL_STATE_TEXT).sort()).toEqual([...MARK_PROPOSAL_STATES].sort())
-    expect(proposalStateText({ state: 'pending', applyInFlight: false })).toBe('Proposal: waiting for review')
-    expect(proposalStateText({ state: 'pending', applyInFlight: true })).toBe('Proposal: being applied')
-    expect(proposalStateText({ state: 'expired', applyInFlight: true })).toBe('Proposal: being applied')
-    expect(proposalStateText({ state: 'missing' })).toBe('Proposal: not found')
-    expect(proposalStateText({ state: 'corrupt' })).toBe('Proposal: unreadable')
   })
 
   it('HISTORY-TARGET-LABEL: a step entry names its number, total and step; a whole-test entry names its test and handle', () => {

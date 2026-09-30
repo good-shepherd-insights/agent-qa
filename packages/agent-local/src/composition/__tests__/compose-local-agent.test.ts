@@ -226,7 +226,13 @@ describe('composeLocalAgent (D-15)', () => {
     } finally { await bound.close() }
   })
 
-  it.each(['knowledge', 'test-draft'] as const)('419 withdrawPendingProposal rejects pending %s once then returns not-pending', async proposalKind => {
+  // RE-SPELLED 432-09 (D-04/D-11/D-22) from '419 withdrawPendingProposal rejects pending %s once then
+  // returns not-pending': a mark applies its fix directly, so there is no filing and nothing to
+  // withdraw; a legacy pending proposal is left exactly as it was.
+  it.each(['knowledge', 'test-draft'] as const)('the curation capabilities neither file nor withdraw a mark %s proposal, and leave a legacy one untouched', async proposalKind => {
+    const capabilities = LOCAL_CURATION_CAPABILITIES as unknown as Record<string, unknown>
+    expect(capabilities.withdrawPendingProposal).toBeUndefined()
+    expect(capabilities.fileMarkTestDraft).toBeUndefined()
     const proposalId = mintProposalId(randomUUID)
     const payload = proposalKind === 'knowledge' ? {
       schemaVersion: 1, proposalId, verb: 'accept', targetRef: { grain: 'record', recordId: 'record-fixture' }, deltas: [], proposedAt: Date.now(), status: 'pending',
@@ -235,11 +241,10 @@ describe('composeLocalAgent (D-15)', () => {
     }
     writePendingProposalRecord(agentQaRoot, { schemaVersion: 1, id: proposalId, kind: proposalKind,
       origin: { emittedBy: 'runs.mark', at: Date.now() }, payload } as Parameters<typeof writePendingProposalRecord>[1])
-    const input = { agentQaRoot, proposalId, proposalKind, reason: 'superseded by mark_0123456789ab' }
-    await expect(LOCAL_CURATION_CAPABILITIES.withdrawPendingProposal(input)).resolves.toBe('withdrawn')
-    const envelope = showProposalEnvelope(agentQaRoot, proposalId, { now: Date.now() })
-    expect(envelope?.envelope).toMatchObject({ id: proposalId, kind: proposalKind, status: 'rejected' })
-    await expect(LOCAL_CURATION_CAPABILITIES.withdrawPendingProposal(input)).resolves.toBe('not-pending')
+    const before = readFileSync(join(agentQaRoot, 'proposals', `${proposalId}.json`), 'utf8')
+    expect(showProposalEnvelope(agentQaRoot, proposalId, { now: Date.now() })?.envelope)
+      .toMatchObject({ id: proposalId, kind: proposalKind, status: 'pending' })
+    expect(readFileSync(join(agentQaRoot, 'proposals', `${proposalId}.json`), 'utf8')).toBe(before)
   })
 
   it('416 promotes through the caller held lease and records one floor line', async () => {

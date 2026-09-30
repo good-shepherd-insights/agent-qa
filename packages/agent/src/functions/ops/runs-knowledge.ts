@@ -22,10 +22,10 @@
 // render (406 D-17's `EvidenceIncomplete`); a refusal would make that state indistinguishable
 // from a broken read.
 //
-// THE THREE SIBLING OPS ARE INVOKED, NOT REIMPLEMENTED (391's rule). The curation word is the
-// same word `runs.postprocessing` serves, the change list is the same list
-// `knowledge.records.diff` serves, and the proposal count is the same count `runs.digest` serves
-// — by CALLING them with this call's deps rather than by a comment promising not to diverge. The
+// THE SIBLING OPS ARE INVOKED, NOT REIMPLEMENTED (391's rule). The curation word is the same word
+// `runs.postprocessing` serves and the change list is the same list `knowledge.records.diff`
+// serves — by CALLING them with this call's deps rather than by a comment promising not to diverge.
+// 2026-09-30, 432-09 (D-25): no pending-proposal count is joined; the tab shows what changed. The
 // specs are module-internal, so this is composition inside the layer and not a dispatch path
 // around `invokeFunction`'s gate: every external caller still arrives through the pipeline.
 
@@ -62,7 +62,6 @@ import type {
 
 import type { ClauseVerdict, FunctionDeps, FunctionSpec, KnowledgeReaderPort } from '../spec.js'
 import { knowledgeRecordsDiffSpec } from './knowledge-records-diff.js'
-import { runsDigestSpec } from './runs-digest.js'
 import { projectPostProcessingChips, runsPostProcessingSpec } from './runs-post-processing.js'
 
 /**
@@ -344,8 +343,8 @@ export const runsKnowledgeSpec: FunctionSpec<RunsKnowledgeInput, RunKnowledgePro
   // NO OPTIONAL-DEP BINDING KEY IS DECLARED ON THIS SPEC AT ALL, and the absence is a claim about
   // the op's substrate rather than an oversight. Its truth is the RUNS port, and that port is
   // REQUIRED — so, exactly like `knowledge.brief.why`, there is no composition that lists this
-  // verb and then cannot run it. The three optional deps it consults (`postProcessing`,
-  // `proposalsInbox`, and the reader's `canaryAttributions`) only ENRICH the Learned half; binding
+  // verb and then cannot run it. The optional deps it consults (`postProcessing` and the reader's
+  // `canaryAttributions`) only ENRICH the Learned half; binding
   // this op to any of them would leave a host with no queue database unable to see what its own
   // runs used, which is the majority of this projection. Pinned by a cell, and by the grep in the
   // plan's own acceptance criteria — which is why the declaration keyword is not spelled anywhere
@@ -553,10 +552,6 @@ export const runsKnowledgeSpec: FunctionSpec<RunsKnowledgeInput, RunKnowledgePro
       ? undefined
       : joinedChanges.filter((row) => !recordedBySnapshot(row, curationSnapshot, mask))
 
-    const digest = deps.proposalsInbox === undefined
-      ? undefined
-      : await runsDigestSpec.invoke({ runId: input.runId }, deps)
-
     return {
       kind: 'ready',
       runId,
@@ -592,7 +587,6 @@ export const runsKnowledgeSpec: FunctionSpec<RunsKnowledgeInput, RunKnowledgePro
         // byte this DTO does not have (the layer's own no-null idiom).
         ...(scanIncomplete ? { scanIncomplete: true as const } : {}),
       },
-      ...(digest === undefined ? {} : { pendingProposalCount: digest.pendingProposalCount }),
     }
   },
 }

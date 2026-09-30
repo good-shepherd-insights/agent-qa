@@ -1,24 +1,27 @@
-// 2026-09-15, 423 D-19: the read-only half of the feedback host. It reads the mark ledger and
-// observes each drafted proposal through the store's classifier, and never takes the run lock,
-// reaps a claim, touches an in-flight intent or creates a directory.
+// 2026-09-15, 423 D-19: the read-only half of the feedback host. It reads the mark ledger and never
+// takes the run lock, touches an in-flight intent or creates a directory.
+// 2026-09-30, 432-09 (D-04/D-22/D-25): each applied knowledge fix joins the records it changed
+// through the knowledge store's batch read. No proposal store is read, readable or not.
 // 2026-09-15, 423 D-16/D-17: preview runs runs.mark's shared plan with the same guarantees, and
 // takes only read capabilities: no lease, ledger transaction, freeze, wording model or writer.
 import { existsSync } from 'node:fs'
-import { join } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
 import type { KnowledgeReaderPort } from '@vostride/agent-qa-agent'
-import { LOCAL_KNOWLEDGE_PROBES } from '@vostride/agent-qa-agent-local'
-import { RunsMarkInputSchema, type FeedbackReadsPort, type MarkHistoryReadEntry, type MarkPreviewBasis, type MarkProposalCurrent, type MarkReceipt, type RunsMarkPreviewResult } from '@vostride/agent-qa-schema'
-import type { ResolveTrustPriors } from '../curation/trust-priors.js'
-import { FsMarkLedger, HANDOFF_FILE, MarkLedgerCorruptError, RUNS_SUBDIR, slugBranch } from '../eval-session-composition.js'
+import { createKnowledgeReader } from '@vostride/agent-qa-agent-local'
+import { projectRecordContent, RunsMarkInputSchema, type FeedbackReadsPort, type KnowledgeRecordShowResult, type MarkHistoryChangedRecord, type MarkHistoryReadEntry, type MarkPreviewBasis, type MarkReceipt, type RunsMarkPreviewResult } from '@vostride/agent-qa-schema'
+import { resolveConfiguredKnowledgeRoot } from '../config.js'
+import { trustPriorsForHost, type ResolveTrustPriors } from '../curation/trust-priors.js'
+import { FsMarkLedger, HANDOFF_FILE, MarkLedgerCorruptError, resolveEvalSession, RUNS_SUBDIR, slugBranch } from '../eval-session-composition.js'
 import { previewMarkConsequences, type MarkPlanBasis, type MarkPlanCuration } from './feedback-plan.js'
 
 export interface FeedbackReadsHostDeps {
   agentQaRoot: string
-  now?: () => number
-  isProcessAlive?: (pid: number) => boolean
-  /** The project config that locates the knowledge root. Without it the host binds history only. */
+  /**
+   * The project config that locates the knowledge root. Without it the host binds history only, and
+   * a changed record keeps its id with the named absence `not-bound`.
+   */
   configPath?: string
-  /** Read halves only: the preview's type admits no append, withdrawal, draft filing or lease. */
+  /** Read halves only: the preview's type admits no append, fix, lease or model call. */
   curation?: MarkPlanCuration
   reader?: KnowledgeReaderPort
   resolveTrustPriors?: ResolveTrustPriors
@@ -29,38 +32,43 @@ export interface FeedbackReadsHostDeps {
 const basisOf = (basis: MarkPlanBasis): MarkPreviewBasis => ({ ledgerOrdinal: basis.ledgerOrdinal,
   ...(basis.priorOrdinal === undefined ? {} : { priorMarkOrdinal: basis.priorOrdinal }) })
 
-/** Only an unparseable file is a corrupt proposal; filesystem and host failures propagate. */
-function isUnparseableProposal(error: unknown): boolean {
-  return error instanceof SyntaxError || (error as Error | undefined)?.name === 'ZodError'
-    // The store's named refusal for a kind no schema in this build can read.
-    || (error instanceof TypeError && error.message.includes('proposal of unknown kind'))
+/** The knowledge ids an applied fix names, or none for every other disposition. */
+function changedRecordIdsOf(receipt: MarkReceipt): readonly string[] | undefined {
+  const { disposition } = receipt
+  return disposition.kind === 'applied' && disposition.change.kind === 'knowledge' ? disposition.change.recordIds : undefined
 }
 
 export function createFeedbackReadsPortForHost(deps: FeedbackReadsHostDeps): FeedbackReadsPort {
-  function proposalOf(receipt: MarkReceipt, now: number): MarkProposalCurrent | undefined {
-    if (receipt.disposition.kind !== 'drafted') return undefined
-    const { proposalId, proposalKind } = receipt.disposition
-    let observed
+  /**
+   * One batch read over every record the ledger's applied fixes changed (423 D-20's join). A host
+   * with no config binds no read (`not-bound`); an unfinished scan is `scan-incomplete` for all.
+   */
+  async function joinChangedRecords(recordIds: readonly string[]): Promise<(recordId: string) => MarkHistoryChangedRecord> {
+    const absent = (reason: 'not-found' | 'scan-incomplete' | 'not-bound') => (recordId: string) =>
+      ({ recordId, contentAbsence: { reason } })
+    if (deps.configPath === undefined) return absent('not-bound')
+    if (recordIds.length === 0) return absent('not-found')
+    const configPath = deps.configPath
+    const reader = deps.reader ?? await (async () => {
+      const session = await resolveEvalSession({ configPath, keyOnly: true })
+      const knowledgeRoot = resolveConfiguredKnowledgeRoot(session.config, dirname(resolve(configPath)))
+      return createKnowledgeReader(() => knowledgeRoot, undefined, undefined,
+        deps.resolveTrustPriors ?? trustPriorsForHost({ configPath }).resolve)
+    })()
+    const showRecords = reader.showRecords
+    if (showRecords === undefined) return absent('not-bound')
+    let results: readonly KnowledgeRecordShowResult[]
     try {
-      observed = LOCAL_KNOWLEDGE_PROBES.observeProposalEnvelope(deps.agentQaRoot, proposalId, {
-        now, ...(deps.isProcessAlive === undefined ? {} : { isProcessAlive: deps.isProcessAlive }) })
+      results = await showRecords.call(reader, { recordIds: [...new Set(recordIds)] })
     } catch (error) {
-      if (!isUnparseableProposal(error)) throw error
-      return { state: 'corrupt' }
+      if (!(error instanceof Error && error.name === 'KnowledgeMaintenanceScanError')) throw error
+      return absent('scan-incomplete')
     }
-    if (observed === undefined) return { state: 'missing' }
-    const { envelope, applyInFlight } = observed
-    // An id that names a different kind of proposal is not the draft this receipt recorded.
-    if (envelope.kind !== proposalKind) return { state: 'corrupt' }
-    switch (envelope.status) {
-      case 'pending':
-      case 'expired':
-        return { state: envelope.status, applyInFlight }
-      case 'applied':
-      case 'rejected':
-        return { state: envelope.status, ...(envelope.decision === undefined ? {} : { decision: envelope.decision }) }
-      default:
-        return envelope.status satisfies never
+    const found = new Map(results.flatMap(result => result.kind === 'found'
+      ? [[result.record.recordId, projectRecordContent(result)] as const] : []))
+    return recordId => {
+      const recordContent = found.get(recordId)
+      return recordContent === undefined ? { recordId, contentAbsence: { reason: 'not-found' } } : { recordId, recordContent }
     }
   }
 
@@ -103,7 +111,6 @@ export function createFeedbackReadsPortForHost(deps: FeedbackReadsHostDeps): Fee
             decisionOrdinal: label.decisionOrdinal, sourceCassetteId: label.sourceCassetteId, channel: label.channel,
             ...(label.correction === undefined ? {} : { correction: { verdict: label.correction.verdict } }) })),
           knowledge: previewed.knowledge, draft: previewed.draft,
-          ...(previewed.withdraws === undefined ? {} : { withdraws: previewed.withdraws }),
           latest: previewed.latest, basis: basisOf(previewed.basis) }
       default:
         return previewed satisfies never
@@ -121,10 +128,10 @@ export function createFeedbackReadsPortForHost(deps: FeedbackReadsHostDeps): Fee
         if (error instanceof MarkLedgerCorruptError) return { kind: 'ledger-corrupt', line: error.line }
         return { kind: 'ledger-unavailable' }
       }
-      const now = (deps.now ?? Date.now)()
+      const joinFor = await joinChangedRecords(receipts.flatMap(receipt => changedRecordIdsOf(receipt) ?? []))
       const entries: MarkHistoryReadEntry[] = receipts.map(receipt => {
-        const proposal = proposalOf(receipt, now)
-        return proposal === undefined ? { receipt } : { receipt, proposal }
+        const recordIds = changedRecordIdsOf(receipt)
+        return recordIds === undefined ? { receipt } : { receipt, changedRecords: recordIds.map(joinFor) }
       })
       return { kind: 'history', entries }
     },

@@ -226,7 +226,7 @@
   "rows": [
     {
       "alias": "digest",
-      "description": "Compose one run's digest: verdicts, chain, proposals awaiting a decision, counts.",
+      "description": "Compose one run's digest: verdicts, chain, the changes its marks applied, counts.",
       "docAnchor": "Reading stage outcomes",
       "docPath": "docs/queues.md",
       "kind": "alias",
@@ -2010,7 +2010,7 @@
       ]
     },
     {
-      "description": "Compose one run's digest: verdicts, chain, proposals awaiting a decision, counts.",
+      "description": "Compose one run's digest: verdicts, chain, the changes its marks applied, counts.",
       "docAnchor": "Reading stage outcomes",
       "docPath": "docs/queues.md",
       "exampleCall": {
@@ -2297,7 +2297,7 @@
       ]
     },
     {
-      "description": "Mark a run or step false-fail / false-pass / confirmed-bug: freeze the marked decision as gold, triage, draft a fix proposal.",
+      "description": "Mark a run or step false-fail / false-pass / confirmed-bug: freeze the marked decision as gold, triage, and apply the fix (a knowledge change or a test edit) in the call.",
       "docAbsentReason": "D-07 (dated 2026-08-16): no canonical doc ships for this capability yet. The explicit absence is the honest state — a guessed path would existence-check green and mislead a reader — and the abstention coverage log is the demand signal for writing one.",
       "docPath": null,
       "exampleCall": {
@@ -2370,7 +2370,7 @@
       ]
     },
     {
-      "description": "Preview what runs.mark would do for this exact input: its refusals, resolved step, labels, the knowledge records it reaches with their content and evidence effects, and draft kind, without writing.",
+      "description": "Preview what runs.mark would do for this exact input: its refusals, resolved step, labels, the knowledge records it reaches with their content and evidence effects, and the fix it would apply, without writing.",
       "docAbsentReason": "D-07 (dated 2026-08-16): no canonical doc ships for this capability yet. The explicit absence is the honest state — a guessed path would existence-check green and mislead a reader — and the abstention coverage log is the demand signal for writing one.",
       "docPath": null,
       "exampleCall": {
@@ -2443,7 +2443,7 @@
       ]
     },
     {
-      "description": "Read every mark on a run in ordinal order with supersession and each drafted proposal's current state.",
+      "description": "Read every mark on a run in ordinal order with supersession and what each applied fix changed.",
       "docAbsentReason": "D-07 (dated 2026-08-16): no canonical doc ships for this capability yet. The explicit absence is the honest state — a guessed path would existence-check green and mislead a reader — and the abstention coverage log is the demand signal for writing one.",
       "docPath": null,
       "exampleCall": {
@@ -2645,5 +2645,5 @@
       "shortDescription": "Triage agent-qa run failures"
     }
   ],
-  "rowsDigest": "2ece9fa99bea4fe08ee1ee1b28643bf8f1d170ba7c7fc06433457e9526612cf6"
+  "rowsDigest": "9d60809430a4a167ba4bcde8f2887815d75397176e4b82fcf6fe85ae7e942f32"
 }

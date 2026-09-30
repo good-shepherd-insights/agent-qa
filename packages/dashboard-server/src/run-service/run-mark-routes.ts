@@ -3,8 +3,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http'
 
 import {
   RunsMarkInputSchema,
-  remediesRenderableBy,
-  type GateRemedy,
+  type MarkRefusal,
   type RunsMarkOutcome,
 } from '@vostride/agent-qa-schema'
 
@@ -21,11 +20,8 @@ export type RunMarkOutcome =
   | {
     readonly kind: 'refused'
     readonly status: 403
-    readonly body: {
-      readonly error: 'mark_denied'
-      readonly reason: string
-      readonly remedies: readonly GateRemedy[]
-    }
+    /** 2026-09-30, 432-09 (D-15): a plain reason, and nothing a caller must act on. */
+    readonly body: MarkRefusal
   }
 
 export interface RunMarkFrame {
@@ -64,13 +60,11 @@ export async function markRun(
     return { kind: 'ok', body: result as RunsMarkOutcome }
   } catch (error) {
     // Realm-independent classification: dashboard-server cannot import the agent package.
-    if (typeof error === 'object' && error !== null && 'name' in error
-      && error.name === 'FunctionDeniedError' && 'remedies' in error && Array.isArray(error.remedies)) {
+    if (typeof error === 'object' && error !== null && 'name' in error && error.name === 'FunctionDeniedError') {
       return { kind: 'refused', status: 403, body: {
         error: 'mark_denied',
         // Closed prose avoids reflecting a note, corrected expectation or provider error.
         reason: 'The safety gate denied this mark.',
-        remedies: remediesRenderableBy('dashboard', error.remedies as GateRemedy[]),
       } }
     }
     return refusalFor(error)

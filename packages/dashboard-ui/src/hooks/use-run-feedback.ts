@@ -170,7 +170,7 @@ export function useRunFeedback({
   useEffect(() => {
     if (markDenial === undefined) return
     setDenials((previous) =>
-      new Map(previous).set(feedbackAddress(markDenial), { reason: markDenial.reason, remedies: markDenial.remedies }),
+      new Map(previous).set(feedbackAddress(markDenial), { reason: markDenial.reason }),
     )
   }, [markDenial])
 

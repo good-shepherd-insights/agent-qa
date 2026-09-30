@@ -160,6 +160,22 @@ describe('mark outcome classifications omit producer text', () => {
       status: 'executed', outcome: 'already marked: identical repeat, prior receipt returned',
     })
   })
+
+  // 432-09 (D-04): an applied fix classifies by its governed kind only; the ids, path and note it
+  // changed stay on the receipt and never reach the receipt line.
+  it('classifies an applied fix by kind alone, never by the records or file it changed', () => {
+    const knowledge = receipt({ disposition: { kind: 'applied', fix: 'fact',
+      change: { kind: 'knowledge', changeId: 'prop_0123456789ab', recordIds: ['mem_private_record'] } } })
+    const file = receipt({ disposition: { kind: 'applied', fix: 'test-edit',
+      change: { kind: 'test-file', filePath: 'tests/private-path.yaml', contentDigest: 'abc' } } })
+    for (const value of [knowledge, file]) {
+      const verdict = runsMarkSpec.classify!({ kind: 'marked', receipt: value })
+      expect(verdict).toEqual({ status: 'executed', outcome: 'marked false-fail · applied' })
+      expect(verdict.outcome).not.toMatch(/private|prop_/)
+    }
+    expect(runsMarkSpec.summary).toContain('apply the fix')
+    expect(runsMarkSpec.summary).not.toMatch(/proposal/)
+  })
 })
 
 describe('runs.detail mark projection (419 D-11/D-15)', () => {

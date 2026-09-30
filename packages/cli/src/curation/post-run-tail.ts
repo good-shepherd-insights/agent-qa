@@ -1483,18 +1483,20 @@ export function digestFetchCommand(runId: string): string {
 }
 
 /**
- * The exit line's D-17 suffix: what is waiting on a human, and the one command that shows it.
+ * The exit line's D-17 suffix: what this run's marks changed, and the one command that shows it.
  *
- * The COUNT is dropped when the digest could not be read, and the pointer is not. Printing a
- * fabricated `0 pending` would be the one wrong answer that makes a person stop checking their
- * inbox; printing the command regardless is honest, because it is exactly what they should run
- * to find out. The failure itself was already warned about one line up.
+ * 2026-09-30, 432-09 (D-04/D-25): nothing waits on a human, so the suffix no longer counts pending
+ * proposals. It names the fixes this run's marks applied when the digest read its ledger and there
+ * were any. The count is dropped when the digest could not be read or the ledger was not read, and
+ * the pointer is not: printing the command regardless is honest, because it is exactly what a person
+ * should run to find out. The failure itself was already warned about one line up.
  */
 export function renderDigestPointer(runId: string, digest: RunDigest | undefined): string {
-  const pending = digest === undefined
+  const changes = digest?.markChanges?.length ?? 0
+  const applied = changes === 0
     ? ''
-    : `proposals: ${digest.pendingProposalCount} pending${SUMMARY_SEPARATOR}`
-  return `${SUMMARY_SEPARATOR}${pending}digest: ${digestFetchCommand(runId)}`
+    : `marks: ${changes} change${changes === 1 ? '' : 's'} applied${SUMMARY_SEPARATOR}`
+  return `${SUMMARY_SEPARATOR}${applied}digest: ${digestFetchCommand(runId)}`
 }
 
 /**

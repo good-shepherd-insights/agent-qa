@@ -28,8 +28,6 @@ import { setActiveMaskingContextResolver } from '@vostride/agent-qa-safety'
 import {
   CURRENT_HANDOFF_SCHEMA_VERSION,
   MarkReceiptSchema,
-  ProposalsListInputSchema,
-  ProposalsShowInputSchema,
   maskedMarker,
   type CompletedRunHandoff,
   type MarkReceipt,
@@ -39,7 +37,6 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { chromium, type Browser, type Page } from 'playwright-core'
 
 import { composeDashboardAgentHost } from '../../commands/dashboard.js'
-import { createProposalsCommand } from '../../commands/proposals.js'
 import { createDisplayUnmasker } from '../../composition/display-unmask.js'
 import { matchServiceBearer } from '../../composition/run-service-token-resolution.js'
 import { PACKAGES_ROOT } from './spawned-chat.js'
@@ -324,37 +321,39 @@ describe('423 rendered run-detail sinks', () => {
   })
 })
 
-// 423 D-19 · SC5: run detail's review controls re-homed off `routes.chat`. The three controls that
+// 423 D-19 · SC5: run detail's review controls re-homed off `routes.chat`. The three places that
 // used to navigate to Chat (member mark, step mark, Knowledge proposals CTA) are driven on the
-// built bundle over real registry reads, by keyboard, and what they copy is parsed by the shipped
-// `agent-qa proposals` command tree. Since 426 D-22 the two mark pointers are the composer history's
-// review controls, opened from the header entry and the step trigger. Scoped to the routed page's own `<main>` (inside the sidebar
+// built bundle over real registry reads, by keyboard. Since 426 D-22 the two mark pointers live in
+// the composer history, opened from the header entry and the step trigger; since 432-09 (D-25) all
+// three show what changed and offer no review command. Scoped to the routed page's own `<main>` (inside the sidebar
 // inset): the global sidebar's
 // Chat entry is 430's removal, not this plan's.
-const MEMBER_PROPOSAL = 'prop_member-423-24'
-const STEP_PROPOSAL = 'prop_step-423-24'
+// 2026-09-30, 432-09 (D-25): each mark applied a knowledge fix, and history joins the changed record.
+const MEMBER_RECORD = 'mem_member-423-24'
+const STEP_RECORD = 'mem_step-423-24'
 
-function draftedReceipt(runId: string, ordinal: number, proposalId: string, stepIndex?: number): MarkReceipt {
+function appliedReceipt(runId: string, ordinal: number, recordId: string, stepIndex?: number): MarkReceipt {
   return MarkReceiptSchema.parse({
     schemaVersion: 1, markId: `mark_${String(ordinal).padStart(12, '0')}`, runId, testIndex: 0,
     ...(stepIndex === undefined ? {} : { stepIndex }), runSlug: 'read-sink-review', kind: 'false-fail',
     origin: 'user', ordinal, markedAt: ordinal,
-    disposition: { kind: 'drafted', fix: 'fact', proposalId, proposalKind: 'knowledge' },
+    disposition: { kind: 'applied', fix: 'fact', change: { kind: 'knowledge', changeId: 'prop_0123456789ab', recordIds: [recordId] } },
     gold: [], evidence: { confirmed: 0, overturned: 0 },
   })
 }
+const changedRecord = (recordId: string) => [{ recordId, contentAbsence: { reason: 'not-bound' as const } }]
 
 function reviewDeps(runId: string): Partial<FunctionDeps> {
   return {
     feedback: {
-      marksFor: async () => [draftedReceipt(runId, 1, MEMBER_PROPOSAL), draftedReceipt(runId, 2, STEP_PROPOSAL, 0)],
+      marksFor: async () => [appliedReceipt(runId, 1, MEMBER_RECORD), appliedReceipt(runId, 2, STEP_RECORD, 0)],
       mark: async () => { throw new Error('read-only review fixture') },
     },
-    // A drafted receipt carries its proposal's current state (the MarkHistoryEntry join).
+    // An applied receipt carries the records its fix changed (the MarkHistoryEntry join).
     feedbackReads: {
       history: async () => ({ kind: 'history', entries: [
-        { receipt: draftedReceipt(runId, 1, MEMBER_PROPOSAL), proposal: { state: 'pending', applyInFlight: false } },
-        { receipt: draftedReceipt(runId, 2, STEP_PROPOSAL, 0), proposal: { state: 'pending', applyInFlight: false } },
+        { receipt: appliedReceipt(runId, 1, MEMBER_RECORD), changedRecords: changedRecord(MEMBER_RECORD) },
+        { receipt: appliedReceipt(runId, 2, STEP_RECORD, 0), changedRecords: changedRecord(STEP_RECORD) },
       ] }),
     },
     runs: {
@@ -363,25 +362,11 @@ function reviewDeps(runId: string): Partial<FunctionDeps> {
         : undefined,
     },
     knowledge: { diffSince: async () => [] },
+    // 432-09: a bound inbox with a pending proposal must not surface anywhere on the page.
     proposalsInbox: {
       list: async () => [{ envelope: { status: 'pending' } }, { envelope: { status: 'applied' } }],
     },
   } as unknown as Partial<FunctionDeps>
-}
-
-/** Parse a copied command with the SHIPPED command tree; only the action bodies are replaced. */
-async function parseProposalsCommand(command: string): Promise<{ name: string; args: unknown[] }> {
-  const tokens = command.split(' ')
-  expect(tokens.slice(0, 2)).toEqual(['agent-qa', 'proposals'])
-  const proposals = createProposalsCommand().exitOverride()
-  let captured: { name: string; args: unknown[] } | undefined
-  for (const sub of proposals.commands) {
-    sub.exitOverride()
-    sub.action((...args: unknown[]) => { captured = { name: sub.name(), args: args.slice(0, -1) } })
-  }
-  await proposals.parseAsync(tokens.slice(2), { from: 'user' })
-  if (captured === undefined) throw new Error(`no proposals subcommand accepted: ${command}`)
-  return captured
 }
 
 async function tabTo(page: Page, selector: string): Promise<void> {
@@ -422,62 +407,39 @@ describe('423 run-detail review pointers', () => {
     await fixture?.close()
   })
 
-  it('NO-CHAT-TARGET: no run-detail target is routes.chat, and all three controls copy a runnable review command by keyboard', async () => {
+  // RE-SPELLED 432-09 (D-25) from 'NO-CHAT-TARGET: no run-detail target is routes.chat, and all three
+  // controls copy a runnable review command by keyboard': the three places that offered a review
+  // command now show what changed and offer none, reached the same way by keyboard.
+  it('NO-CHAT-TARGET: no run-detail target is routes.chat, and the three former review places show applied changes with no review command', async () => {
     const chatPath = '/chat'
     const pathOf = (target: string) => new URL(target, fixture.origin).pathname
     const detailPath = pathOf(page.url())
     const navigatedBefore = navigations.length
-
-    // The drafted receipts' review pointers live in the composer's history for the open target (426 D-22).
-    type Control = { open?: { selector: string; address: string }; selector: string; expected: string; target: string; key: string }
-    const review = '[data-feedback-history="target"] [data-history-review]'
-    const controls: Control[] = [
-      { open: { selector: '[data-feedback-entry="test"]', address: '0:run' }, selector: review, expected: `agent-qa proposals show ${MEMBER_PROPOSAL}`, target: MEMBER_PROPOSAL, key: 'Enter' },
-      { open: { selector: '[data-step-id="0:0"] [data-feedback-entry="step"]', address: '0:0' }, selector: review, expected: `agent-qa proposals show ${STEP_PROPOSAL}`, target: STEP_PROPOSAL, key: 'Space' },
-    ]
     expect((await regionTargets(page)).map(pathOf)).not.toContain(chatPath)
 
-    const drive = async (control: Control) => {
-      if (control.open !== undefined) {
-        await tabTo(page, control.open.selector)
-        await page.keyboard.press('Enter')
-        await page.waitForSelector(`[data-feedback-composer][data-feedback-target="${control.open.address}"] ${control.selector}`)
-        expect((await regionTargets(page)).map(pathOf)).not.toContain(chatPath)
-      }
-      const element = page.locator(control.selector)
-      expect(await element.evaluate(node => node.tagName)).toBe('BUTTON')
-      expect(await element.getAttribute('href')).toBeNull()
-      expect(await element.getAttribute('data-review-command')).toContain(control.target)
-      expect(await element.getAttribute('data-review-command')).toBe(control.expected)
-      expect(await element.getAttribute('aria-label')).toContain(control.expected)
-      expect(await element.textContent()).toContain(control.expected)
-
-      await page.evaluate(() => { (window as unknown as { copied?: string }).copied = undefined })
-      await tabTo(page, control.selector)
-      await page.keyboard.press(control.key)
-      await expect.poll(() => page.evaluate(() => (window as unknown as { copied?: string }).copied)).toBe(control.expected)
-      expect(await element.evaluate(node => node === document.activeElement)).toBe(true)
-      expect(await element.getAttribute('data-copy-status')).toBe('copied')
-
-      const parsed = await parseProposalsCommand(control.expected)
-      if (control.target === 'pending') {
-        expect(parsed.name).toBe('list')
-        const status = (parsed.args[0] as { status?: string }).status
-        expect(ProposalsListInputSchema.parse({ status })).toEqual({ status: 'pending' })
-      } else {
-        expect(parsed.name).toBe('show')
-        expect(ProposalsShowInputSchema.parse({ proposalId: parsed.args[0] })).toEqual({ proposalId: control.target })
-      }
+    // The two mark histories, opened from the header entry and the step trigger (426 D-22).
+    const opens = [
+      { selector: '[data-feedback-entry="test"]', address: '0:run', record: MEMBER_RECORD },
+      { selector: '[data-step-id="0:0"] [data-feedback-entry="step"]', address: '0:0', record: STEP_RECORD },
+    ]
+    for (const open of opens) {
+      await tabTo(page, open.selector)
+      await page.keyboard.press('Enter')
+      const applied = `[data-feedback-composer][data-feedback-target="${open.address}"] [data-feedback-history="target"] [data-history-applied="knowledge"]`
+      await page.waitForSelector(applied)
+      expect(await page.locator(applied).textContent()).toBe(`Changed knowledge: ${open.record} (content unavailable)`)
+      expect(await page.locator('[data-history-review], [data-review-command]').count()).toBe(0)
+      expect((await regionTargets(page)).map(pathOf)).not.toContain(chatPath)
     }
-    for (const control of controls) await drive(control)
 
     // The composer stops key propagation by design, so the page shortcut is pressed from the tree.
     await page.locator('[role="treeitem"][aria-selected="true"] > button').focus()
     await page.keyboard.press('m')
-    await page.waitForSelector('[data-review-proposals]')
-    expect(await page.locator('[data-pending-proposals]').getAttribute('data-pending-proposals')).toBe('1')
+    await page.waitForSelector('[data-learned-state]')
+    expect(await page.locator('[data-pending-proposals], [data-review-proposals], [data-review-command]').count()).toBe(0)
+    expect(await page.locator('main main').textContent()).not.toMatch(/agent-qa proposals|waiting for review/)
+    expect(await page.evaluate(() => (window as unknown as { copied?: string }).copied)).toBeUndefined()
     expect((await regionTargets(page)).map(pathOf)).not.toContain(chatPath)
-    await drive({ selector: '[data-review-proposals]', expected: 'agent-qa proposals list --status pending', target: 'pending', key: 'Enter' })
 
     // Viewer state (`?tab=knowledge` from the `m` shortcut) may change; the page never leaves run detail.
     expect(pathOf(page.url())).toBe(detailPath)

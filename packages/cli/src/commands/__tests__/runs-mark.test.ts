@@ -3,9 +3,9 @@ import { join } from 'node:path'
 import { PassThrough, Writable } from 'node:stream'
 import { Command } from 'commander'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { RunsMarkOutcomeSchema } from '@vostride/agent-qa-schema'
+import { asRunId, RunsMarkOutcomeSchema } from '@vostride/agent-qa-schema'
 import { markFixture } from '../../gates/__tests__/feedback-fixture.js'
-import { createRunsCommand } from '../runs.js'
+import { createRunsCommand, renderMarkOutcome } from '../runs.js'
 import * as host from '../../composition/local-agent-host.js'
 
 describe('runs mark thin client', () => {
@@ -55,5 +55,23 @@ describe('runs mark thin client', () => {
     const cmd = program().configureOutput({ writeErr: () => {} })
     await expect(cmd.parseAsync(['runs', 'mark', 'unused', '--kind', 'confirmed-pass'], { from: 'user' }))
       .rejects.toThrow(/false-fail.*false-pass.*confirmed-bug/)
+  })
+
+  // 432-09 (D-04/D-22): the terminal receipt names what the fix changed; a pre-432 drafted receipt
+  // read back from a ledger says it was drafted and names no proposal to act on.
+  it('renders an applied receipt with the records or file it changed, and a historical draft without a proposal id', () => {
+    const base = { schemaVersion: 1 as const, markId: 'mark_0123456789ab', runId: asRunId('run-render'), runSlug: 'run-render',
+      testIndex: 0, kind: 'false-fail' as const, origin: 'user' as const, ordinal: 2, markedAt: 0, gold: [],
+      evidence: { confirmed: 1, overturned: 0 } }
+    expect(renderMarkOutcome({ kind: 'marked', receipt: { ...base, disposition: { kind: 'applied', fix: 'fact',
+      change: { kind: 'knowledge', changeId: 'prop_0123456789ab', recordIds: ['mem_a', 'mem_b'] } } } }))
+      .toBe('marked false-fail on run-render test 0 · applied fact: changed mem_a, mem_b · receipt mark_0123456789ab #2')
+    expect(renderMarkOutcome({ kind: 'marked', receipt: { ...base, stepIndex: 3, disposition: { kind: 'applied', fix: 'test-edit',
+      change: { kind: 'test-file', filePath: 'tests/checkout.yaml', contentDigest: 'abc' } } } }))
+      .toBe('marked false-fail on run-render test 0 step 3 · applied test-edit: wrote tests/checkout.yaml · receipt mark_0123456789ab #2')
+    const historical = renderMarkOutcome({ kind: 'marked', receipt: { ...base, disposition: { kind: 'drafted', fix: 'fact',
+      proposalId: 'prop_0123456789ab', proposalKind: 'knowledge' } } })
+    expect(historical).toContain('drafted: fact (recorded before fixes applied directly)')
+    expect(historical).not.toContain('prop_')
   })
 })

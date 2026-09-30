@@ -40,8 +40,9 @@
 // a daemon may not have picked up for hours (404's posture text exists for exactly that reason).
 // A shimmer would promise an arrival nobody has scheduled.
 //
-// `data-learned-state`, `data-learned-count-line`, `data-record-change` (the bucket word, 427 D-15)
-// and `data-pending-proposals` ARE THE CELL CONTRACT, never the visible text. The jsdom cells here
+// `data-learned-state`, `data-learned-count-line` and `data-record-change` (the bucket word, 427
+// D-15) ARE THE CELL CONTRACT, never the visible text. 432-09 (D-25): no pending-proposals line or
+// review command remains; the half shows what changed. The jsdom cells here
 // and the Playwright cells on the built bundle both address attributes, so a copy change moves
 // `lib/knowledge-view.ts` and nothing else.
 //
@@ -57,7 +58,6 @@ import { useId } from "react"
 import { Archive, Check, CornerDownRight, Inbox, Plus, Replace, type LucideIcon } from "lucide-react"
 import type { CurationBucket } from "@vostride/agent-qa-schema"
 
-import { ReviewCommandButton } from "@/components/id-badge"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { KnowledgeRecordBody, RecordApplicability } from "./knowledge-record-body"
 import { MaskedText } from "./masked-text"
@@ -69,7 +69,6 @@ import {
   sinceThisRunHeading,
   type LearnedRowView,
   type LearnedView,
-  type ProposalsView,
 } from "@/lib/knowledge-view"
 
 /** A half heading: 16px/500 — explicitly `font-medium`, because the global `h4` rule is 600. */
@@ -93,18 +92,8 @@ const BUCKET_GLYPHS: Record<CurationBucket, LucideIcon> = {
  * deprecated 1` says what the frozen row recorded; `Change records for this run are not available
  * yet.` says none of it reached this run's change log. Dropping either would leave a reader unable
  * to tell an unattributed change from a run that changed nothing.
- *
- * `proposals` IS A SIBLING, NOT A MEMBER (D-11). A pending proposal outlives the curation that
- * produced it, so its line renders under every state — including `pending` and `failed`, where the
- * half above it has nothing to list but the inbox still has something waiting.
  */
-export function KnowledgeLearned({
-  view,
-  proposals,
-}: {
-  view: LearnedView
-  proposals?: ProposalsView | undefined
-}) {
+export function KnowledgeLearned({ view }: { view: LearnedView }) {
   const headingId = useId()
   const curationRows = view.rows.filter(row => row.section !== "since-then")
   const laterRows = view.rows.filter(row => row.section === "since-then")
@@ -225,28 +214,6 @@ export function KnowledgeLearned({
         <p data-learned-read-note className="text-xs text-muted-foreground">
           {view.readNote}
         </p>
-      )}
-
-      {proposals === undefined ? null : (
-        <div data-pending-proposals={String(proposals.count)} className="space-y-1 pt-2">
-          <p className="text-sm text-muted-foreground tabular-nums">{proposals.line}</p>
-          {/*
-            THE CTA IS A RUNNABLE COMMAND, NOT A ROUTE (423 D-19 · SC5, 427 D-18). No dashboard inbox
-            exists, so the command reads in its own <code> and an icon button beside it copies it;
-            `copyLabel` leads the button's accessible name. Both come from `lib/knowledge-view.ts`.
-          */}
-          <div className="flex items-center gap-1">
-            <code data-pending-proposals-command className="font-mono text-xs text-muted-foreground wrap-anywhere">
-              {proposals.command}
-            </code>
-            <ReviewCommandButton
-              data-review-proposals
-              variant="icon"
-              command={proposals.command}
-              label={proposals.copyLabel}
-            />
-          </div>
-        </div>
       )}
     </section>
   )

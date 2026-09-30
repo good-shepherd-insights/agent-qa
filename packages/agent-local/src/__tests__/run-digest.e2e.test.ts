@@ -7,20 +7,18 @@
 // declared output contract before this file ever sees it.
 //
 // TWO RUNS, ALWAYS. A single-run fixture is structurally incapable of noticing a run-scoping
-// defect — every proposal belongs to the only run there is, so a filter that did nothing would
+// defect — every change belongs to the only run there is, so a filter that did nothing would
 // pass — and that exact blind spot shipped a cross-instance attribution bug in phase 388 that
-// roughly thirty-five differentials did not see. So the corpus carries proposals under two run
-// ids, and the absence claim is asserted in BOTH directions: run B's proposal is missing from
-// run A's digest, and PRESENT in run B's, from the same store on the same call pair.
+// roughly thirty-five differentials did not see. So the ledger carries applied fixes under two run
+// ids, and the absence claim is asserted in BOTH directions.
 //
-// PRODUCED THROUGH THE PRODUCTION PATH, NEVER LITERAL. Every proposal below is minted by an
-// `invokeFunction` call on a shipped propose op, against a real published record, with the run on
-// the op's own input contract — the exact bytes a run-scoped caller sends. Nothing here reaches
-// the store seam and nothing hand-composes an origin: a corpus assembled at a seam production
-// never reaches can pin an input the producer cannot make, and a differential over impossible
-// fixtures cannot tell a vacuous corpus from a real closure (391-VERIFICATION Gap 1(c)).
+// 2026-09-30, 432-09 (D-04/D-05/D-22/D-25): RE-SPELLED IN PLACE. The digest reads the fixes a run's
+// marks applied from that run's own ledger (through the read-only feedback port), and never reads
+// the proposals inbox. Proposals are still minted below through the shipped propose ops, against
+// real published records, precisely so every cell can assert they appear in NO digest: a digest
+// that still listed or counted them would red here, and a sealed legacy tree changes nothing.
 
-import { mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
+import { chmodSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -37,16 +35,19 @@ import {
   asRunId,
   CURRENT_HANDOFF_SCHEMA_VERSION,
   FunctionScopeSchema,
+  MarkReceiptSchema,
   MASKED_RESOLVED_CONFIG_SCHEMA_VERSION,
 } from '@vostride/agent-qa-schema'
 import type {
   AnalysisGetOutput,
   Anchor,
   CompletedRunHandoff,
+  FeedbackReadsPort,
   FunctionCaller,
   KnowledgeProposeOutcomeDto,
+  MarkDisposition,
+  MarkReceipt,
   MaskedResolvedConfig,
-  ProposalsListOutput,
   RunDigest,
   Verdict,
 } from '@vostride/agent-qa-schema'
@@ -110,6 +111,29 @@ function failingVerdict(perTest: number): Verdict {
   } as Verdict
 }
 
+const markIdOf = (ordinal: number) => `mark_${ordinal.toString(16).padStart(12, '0')}`
+const KNOWLEDGE_FIX = (recordIds: string[]): MarkDisposition =>
+  ({ kind: 'applied', fix: 'fact', change: { kind: 'knowledge', changeId: 'prop_0123456789ab', recordIds } })
+const TEST_FIX: MarkDisposition = { kind: 'applied', fix: 'test-edit',
+  change: { kind: 'test-file', filePath: 'tests/checkout.yaml', contentDigest: 'b'.repeat(64) } }
+
+/** One ledger receipt as the mark writer stores it, validated against its own schema. */
+function receipt(runId: string, ordinal: number, disposition: MarkDisposition, stepIndex?: number): MarkReceipt {
+  return MarkReceiptSchema.parse({
+    schemaVersion: 1, markId: markIdOf(ordinal), runId, runSlug: slugBranch(runId), testIndex: 0,
+    ...(stepIndex === undefined ? {} : { stepIndex }),
+    kind: disposition.kind === 'confirmed-bug' ? 'confirmed-bug' : 'false-fail', origin: 'user', ordinal,
+    markedAt: 1_000 + ordinal, disposition, gold: [], evidence: { confirmed: 0, overturned: 0 },
+  })
+}
+
+/** The read-only history port over hand-built ledgers, keyed by run, as a host binds it. */
+function ledgerReads(byRun: Record<string, readonly MarkReceipt[]>): FeedbackReadsPort {
+  return {
+    history: async (runId) => ({ kind: 'history', entries: (byRun[runId] ?? []).map((value) => ({ receipt: value })) }),
+  }
+}
+
 /**
  * A completed run with TWO failing members, so the analysis floor resolves two verdicts and the
  * cluster fold has something to fold. A zero-failure handoff would have made the verdict-section
@@ -157,13 +181,23 @@ describe('the per-run digest, over the composed host (PROP-04 / D-16 / D-18)', (
   const hosts: LocalAgentHost[] = []
   let ordinal = 10
 
+  // Two runs' ledgers: A applied a knowledge fix and a test edit around a confirmed bug; B one fix.
+  const LEDGERS = {
+    [RUN_A]: [
+      receipt(RUN_A, 1, KNOWLEDGE_FIX(['mem_a1', 'mem_a2'])),
+      receipt(RUN_A, 2, { kind: 'confirmed-bug', confirmedRecords: 1 }),
+      receipt(RUN_A, 3, TEST_FIX, 0),
+    ],
+    [RUN_B]: [receipt(RUN_B, 1, KNOWLEDGE_FIX(['mem_b1']))],
+  }
+
   beforeEach(() => {
     root = mkdtempSync(join(tmpdir(), 'run-digest-e2e-'))
     agentQaRoot = join(root, '.agent-qa')
     knowledgeRoot = join(root, 'agent-qa-knowledge')
     mkdirSync(agentQaRoot, { recursive: true })
     for (const runId of [RUN_A, RUN_B, RUN_EMPTY]) writeHandoff(runId)
-    host = compose()
+    host = compose(ledgerReads(LEDGERS))
     ordinal = 10
   })
 
@@ -178,13 +212,14 @@ describe('the per-run digest, over the composed host (PROP-04 / D-16 / D-18)', (
     writeFileSync(join(runDir, HANDOFF_FILE), `${JSON.stringify(fixtureHandoff(runId))}\n`, 'utf8')
   }
 
-  function compose(): LocalAgentHost {
+  function compose(feedbackReads?: FeedbackReadsPort): LocalAgentHost {
     const composed = composeLocalAgent({
       mintQuarantineIdentityPath: MINT_IDENTITY,
       agentQaRoot,
       config: { getMasked: () => Promise.resolve(MASKED_CONFIG) },
       knowledgeRoot: () => knowledgeRoot,
       model: () => MODEL,
+      ...(feedbackReads === undefined ? {} : { feedbackReads }),
     })
     hosts.push(composed)
     return composed
@@ -269,183 +304,131 @@ describe('the per-run digest, over the composed host (PROP-04 / D-16 / D-18)', (
     )) as RunDigest
   }
 
-  it('lists exactly the proposals attributed to the run, and the OTHER run\'s in its own digest',
+  // RE-SPELLED 432-09 from 'lists exactly the proposals attributed to the run, and the OTHER run's
+  // in its own digest': the run's section is now the fixes its marks applied.
+  it('lists exactly the fixes the run\'s marks applied, and the OTHER run\'s in its own digest',
     async () => {
-      const firstOfA = await proposeForRun(RUN_A, 'checkout button')
-      const secondOfA = await proposeForRun(RUN_A, 'payment button')
-      const onlyOfB = await proposeForRun(RUN_B, 'coupon field')
+      const minted = await proposeForRun(RUN_A, 'checkout button')
 
       const digestA = await digest(RUN_A)
       const digestB = await digest(RUN_B)
 
-      // Direction one: A's digest carries exactly A's two, and B's is absent from it.
-      expect(digestA.proposalsMintedThisRun.map((row) => row.id))
-        .toEqual([firstOfA, secondOfA])
-      expect(digestA.proposalsMintedThisRun.map((row) => row.id)).not.toContain(onlyOfB)
-
-      // Direction two, and it is what makes direction one a claim about the FILTER rather than
-      // about the store: the same proposal, from the same store, on the same call pair, IS in
-      // run B's digest. Without this leg an absence assertion passes on a digest that lists
-      // nothing at all.
-      expect(digestB.proposalsMintedThisRun.map((row) => row.id)).toEqual([onlyOfB])
-      expect(digestB.proposalsMintedThisRun.map((row) => row.id)).not.toContain(firstOfA)
-
-      // The COUNT is store-wide on both, which is what the exit-line pointer carries: three
-      // proposals are waiting on a human, whichever run you asked about.
-      expect(digestA.pendingProposalCount).toBe(3)
-      expect(digestB.pendingProposalCount).toBe(3)
-      // …and the rendered lines say the same thing the sections do, on both halves.
-      expect(digestA.lines.some((line) => line.includes('2 minted this run · 3 pending overall')))
-        .toBe(true)
-      expect(digestB.lines.some((line) => line.includes('1 minted this run · 3 pending overall')))
-        .toBe(true)
+      // Direction one: A's digest carries exactly A's two applied fixes, in ledger order.
+      expect(digestA.markChanges).toEqual([
+        { markId: markIdOf(1), ordinal: 1, fix: 'fact', change: { kind: 'knowledge', changeId: 'prop_0123456789ab', recordIds: ['mem_a1', 'mem_a2'] } },
+        { markId: markIdOf(3), ordinal: 3, fix: 'test-edit', change: { kind: 'test-file', filePath: 'tests/checkout.yaml', contentDigest: 'b'.repeat(64) } },
+      ])
+      // Direction two: B's one fix is in B's digest and not in A's, from the same port.
+      expect(digestB.markChanges?.map((row) => row.change)).toEqual([{ kind: 'knowledge', changeId: 'prop_0123456789ab', recordIds: ['mem_b1'] }])
+      expect(JSON.stringify(digestA)).not.toContain('mem_b1')
+      // …and the rendered lines say the same thing the sections do.
+      expect(digestA.lines).toEqual(expect.arrayContaining([
+        'marks — 2 changes applied:',
+        `  ${markIdOf(1)}  fact: 2 records changed`,
+        `  ${markIdOf(3)}  test-edit: wrote tests/checkout.yaml`,
+      ]))
+      expect(digestB.lines).toContain('marks — 1 change applied:')
+      // A minted proposal is in NO digest: nothing is listed, counted or owed a decision.
+      for (const rendered of [JSON.stringify(digestA), JSON.stringify(digestB)]) {
+        expect(rendered).not.toContain(minted)
+        expect(rendered).not.toMatch(/proposal/i)
+      }
     })
 
-  it('renders a run with no attributed proposals as zeros, not as an error (edge PROP-04/empty)',
+  it('renders a run whose marks changed nothing as "no changes applied", not as an error (edge PROP-04/empty)',
     async () => {
-      // The store is NOT empty — two proposals exist, both belonging to another run. That is
-      // what makes this the zero-ATTRIBUTION arm rather than the zero-store arm, and the two
-      // fail differently: a filter that returned everything would pass on an empty store.
+      // Proposals exist in the store, both belonging to another run: they change nothing here.
       await proposeForRun(RUN_A, 'checkout button')
       await proposeForRun(RUN_A, 'payment button')
 
       const empty = await digest(RUN_EMPTY)
 
       expect(empty.runId).toBe(RUN_EMPTY)
-      expect(empty.proposalsMintedThisRun).toEqual([])
-      expect(empty.pendingProposalCount).toBe(2)
+      expect(empty.markChanges).toEqual([])
       expect(empty.candidates).toEqual({ curated: 0, deprecated: 0 })
       expect(empty.quarantine).toEqual({ quarantined: 0, expired: 0, refs: [] })
-      expect(empty.lines.some((line) => line.includes('none minted this run'))).toBe(true)
+      expect(empty.lines).toContain('marks — no changes applied')
     })
 
-  it('batches ALL THREE propose ops under ONE run, which is what "per-run" means (SC3)',
+  it('lists no proposal from any of the three propose ops under any run (432-09 D-05)',
     async () => {
-      // The batching noun is the RUN, not the emitter. Three different proposal-emitting job
-      // types serve one run — exactly PROP-04's "multiple proposal-emitting job types" — and the
-      // digest groups them under one heading rather than firing three times. If the grouping key
-      // were `emittedBy`, this case would need three digests to say the same thing.
       const forgotten = (await mintForRun(RUN_A, 'checkout button', FORGET_PROPOSE_ID)).proposalId
       const accepted = (await mintForRun(RUN_A, 'payment button', ACCEPT_PROPOSE_ID)).proposalId
       const rejected = (await mintForRun(
         RUN_A, 'coupon field', REJECT_PROPOSE_ID, { reason: 'superseded' },
       )).proposalId
-      // The cross-run control, minted through the same op as one of the three above, so its
-      // absence below is about the RUN and not about the verb.
       const foreign = (await mintForRun(RUN_B, 'shipping field', ACCEPT_PROPOSE_ID)).proposalId
 
-      const digestA = await digest(RUN_A)
-      expect(digestA.proposalsMintedThisRun.map((row) => row.id))
-        .toEqual([forgotten, accepted, rejected])
-      expect(digestA.proposalsMintedThisRun.map((row) => row.id)).not.toContain(foreign)
-      expect(digestA.runAttributionAvailable).toBe(true)
-      expect(digestA.lines.some((line) =>
-        line.includes('3 minted this run · 4 pending overall'))).toBe(true)
-
-      // Direction two: the fourth is in ITS run's digest, from the same store on the same call
-      // pair, which is what makes the absence above a claim about the filter.
-      expect((await digest(RUN_B)).proposalsMintedThisRun.map((row) => row.id)).toEqual([foreign])
+      for (const runId of [RUN_A, RUN_B, RUN_EMPTY]) {
+        const rendered = JSON.stringify(await digest(runId))
+        for (const id of [forgotten, accepted, rejected, foreign]) expect(rendered, runId).not.toContain(id)
+      }
+      expect((await digest(RUN_A)).markChanges?.map((row) => row.markId)).toEqual([markIdOf(1), markIdOf(3)])
     })
 
-  it('says attribution is UNAVAILABLE rather than "none minted" when nothing carries a run',
+  it('says the ledger was NOT READ, rather than "no changes", on a host that binds no feedback reads',
     async () => {
-      // A non-empty store where NOT ONE entry carries attribution — the 387-era shape, and the
-      // shape every host produced before a producer wrote the key. The affirmative "none minted
-      // this run" would be a claim the digest cannot measure, sitting next to a pending count
-      // that contradicts it in the same line (T-391-21).
+      // Without the read port the digest cannot measure anything about the ledger, and an
+      // affirmative "no changes applied" would be a claim it cannot make.
       await proposeForRun(undefined, 'legacy button')
-      await proposeForRun(undefined, 'older button')
+      const unbound = compose()
 
-      const digestA = await digest(RUN_A)
+      const digestA = await digest(RUN_A, unbound)
 
-      expect(digestA.runAttributionAvailable).toBe(false)
-      expect(digestA.proposalsMintedThisRun).toEqual([])
-      expect(digestA.pendingProposalCount).toBe(2)
-      expect(digestA.lines.some((line) =>
-        line === 'proposals — run attribution unavailable · 2 pending overall')).toBe(true)
-      // …and the sentence it replaces is ABSENT, which is the whole of the claim: an honesty
-      // branch that added a line without removing the falsehood would pass a presence check.
-      expect(digestA.lines.some((line) => line.includes('none minted this run'))).toBe(false)
+      expect(digestA).not.toHaveProperty('markChanges')
+      expect(digestA.lines).toContain('marks — ledger not read here')
+      expect(digestA.lines.some((line) => line.includes('no changes applied'))).toBe(false)
     })
 
-  it('still says "none minted" on an EMPTY store, where the claim is measurable and true',
+  it('still says "no changes applied" on a read ledger with nothing applied, where the claim is measurable and true',
     async () => {
-      // The vacuous case is the honest one: nothing is waiting, so "none minted this run · 0
-      // pending overall" is true and does not contradict itself. This is what keeps the branch
-      // above a statement about UNPOPULATED ATTRIBUTION rather than about an empty list.
-      const empty = await digest(RUN_EMPTY)
+      const confirmedOnly = compose(ledgerReads({ [RUN_EMPTY]: [receipt(RUN_EMPTY, 1, { kind: 'confirmed-bug', confirmedRecords: 0 })] }))
+      const empty = await digest(RUN_EMPTY, confirmedOnly)
 
-      expect(empty.runAttributionAvailable).toBe(true)
-      expect(empty.lines.some((line) =>
-        line === 'proposals — none minted this run · 0 pending overall')).toBe(true)
+      expect(empty.markChanges).toEqual([])
+      expect(empty.lines).toContain('marks — no changes applied')
     })
 
-  it('renders a DECIDED proposal\'s status in the decision slot, never a decision to make (WR-05)',
+  it('C432-READS-INBOX-UNREAD: a decided, pending or sealed legacy proposal tree changes nothing in any digest',
     async () => {
       const declined = await proposeForRun(RUN_A, 'checkout button')
-      const stillPending = await proposeForRun(RUN_A, 'payment button')
-
-      // Through the shipped decision verb, human-origin — the path a person actually takes.
+      await proposeForRun(RUN_A, 'payment button')
       const outcome = (await invokeFunction(
-        host.registry,
-        'proposals.reject',
-        { proposalId: declined, reason: 'not this one' },
-        HUMAN,
+        host.registry, 'proposals.reject', { proposalId: declined, reason: 'not this one' }, HUMAN,
       )) as { outcome: string }
       expect(outcome.outcome).toBe('rejected')
+      const expected = await digest(RUN_A)
 
-      const digestA = await digest(RUN_A)
-      const rows = new Map(digestA.proposalsMintedThisRun.map((row) => [row.id, row]))
-
-      // A proposal nobody can act on any more must not be listed as one somebody owes an answer
-      // to: the slot carries what BECAME of it.
-      expect(rows.get(declined)?.requiredDecision).toBe('rejected')
-      // …beside a sibling that IS still waiting, which is what makes the first assertion about
-      // the STATUS rather than about the column having been emptied.
-      expect(rows.get(stillPending)?.requiredDecision).toBe('accept or reject')
-      expect(digestA.lines.some((line) =>
-        line.includes(declined.slice(0, 12)) && line.endsWith('— rejected'))).toBe(true)
+      const proposals = join(agentQaRoot, 'proposals')
+      const before = readdirSync(proposals).sort()
+      chmodSync(proposals, 0o000)
+      try {
+        expect(await digest(RUN_A)).toEqual(expected)
+        expect(await digest(RUN_B)).toMatchObject({ markChanges: [{ markId: markIdOf(1) }] })
+      } finally { chmodSync(proposals, 0o700) }
+      expect(readdirSync(proposals).sort()).toEqual(before)
     })
 
-  it('carries an unattributed proposal in NO run\'s digest, and still counts it as pending',
+  it('counts no proposal, attributed or not (432-09 D-25)',
     async () => {
-      // A 387-era mint — no origin at all, which the store deliberately still accepts. It is
-      // waiting on a human (so it counts) and belongs to no run (so it is listed nowhere).
       await proposeForRun(undefined, 'legacy button')
-      const attributed = await proposeForRun(RUN_A, 'checkout button')
+      await proposeForRun(RUN_A, 'checkout button')
 
-      const digestA = await digest(RUN_A)
-      expect(digestA.proposalsMintedThisRun.map((row) => row.id)).toEqual([attributed])
-      expect(digestA.pendingProposalCount).toBe(2)
-      expect((await digest(RUN_B)).proposalsMintedThisRun).toEqual([])
+      for (const runId of [RUN_A, RUN_B]) {
+        const value = await digest(runId)
+        expect(value).not.toHaveProperty('pendingProposalCount')
+        expect(value).not.toHaveProperty('proposalsMintedThisRun')
+        expect(value).not.toHaveProperty('runAttributionAvailable')
+      }
     })
 
-  it('orders the listing minted-at then id, stably across renders (edge PROP-04/ordering)',
+  it('orders the applied fixes by ledger ordinal, stably across renders (edge PROP-04/ordering)',
     async () => {
-      const first = await proposeForRun(RUN_A, 'first button')
-      const second = await proposeForRun(RUN_A, 'second button')
-      const third = await proposeForRun(RUN_A, 'third button')
-
       const once = await digest(RUN_A)
       const twice = await digest(RUN_A)
       // Stable across renders — a table a person is reading must not reshuffle under them.
-      expect(twice.proposalsMintedThisRun).toEqual(once.proposalsMintedThisRun)
-      expect(once.proposalsMintedThisRun.map((row) => row.id)).toEqual([first, second, third])
-
-      // …and it is the STORE's law rather than a second sort here: the digest's order is the
-      // enumeration's order, filtered. Compared against `proposals.list` through the same
-      // registry, so the claim is about two ops agreeing and not about this file's expectation.
-      const listed = (await invokeFunction(
-        host.registry,
-        'proposals.list',
-        {},
-        HUMAN,
-      )) as ProposalsListOutput
-      expect(once.proposalsMintedThisRun.map((row) => row.id)).toEqual(
-        listed.entries
-          .filter((entry) => entry.envelope.origin?.runId === RUN_A)
-          .map((entry) => entry.envelope.id),
-      )
+      expect(twice.markChanges).toEqual(once.markChanges)
+      expect(once.markChanges?.map((row) => row.ordinal)).toEqual([1, 3])
     })
 
   it('carries the analysis op\'s OWN cluster views, sentence bytes included (D-18 / 389 D-05)',
@@ -507,63 +490,20 @@ describe('the per-run digest, over the composed host (PROP-04 / D-16 / D-18)', (
       })
     })
 
-  it('carries refs and counts and NO receipt bytes, on a forget proposal that has them (D-18)',
+  // RE-SPELLED 432-09 from 'carries refs and counts and NO receipt bytes, on a forget proposal that
+  // has them (D-18)': the refs are now an applied fix's record ids and written path.
+  it('carries refs and counts and NO record content for an applied fix (D-18)',
     async () => {
-      const { proposalId, recordId } = await mintForRun(RUN_A, 'checkout button')
-      // A second real record, published and never proposed about — the control that makes the
-      // absence claims below about WHAT THE DIGEST SELECTS rather than about an empty store.
-      const untouchedRecordId = publish('unrelated button')
-      const digestA = await digest(RUN_A)
-      const row = digestA.proposalsMintedThisRun[0]
+      const { recordId } = await mintForRun(RUN_A, 'checkout button')
+      const withContent = compose(ledgerReads({ [RUN_A]: [receipt(RUN_A, 1, KNOWLEDGE_FIX([recordId]))] }))
+      const digestA = await digest(RUN_A, withContent)
 
-      expect(row?.id).toBe(proposalId)
-      // The short form is a PREFIX of the full id — a display value, never a second address.
-      expect(proposalId.startsWith(row?.shortId ?? ' ')).toBe(true)
-      expect(row?.requiredDecision).toBe('accept or reject')
-      // Counts, not contents: the summary names the verb, the target ref and how much would
-      // move — and the forget's tombstone COUNT, never the tombstoned record ids.
-      expect(row?.summaryLine).toContain('forget ')
-      expect(row?.summaryLine).toMatch(/\d+ delta/u)
-      expect(row?.summaryLine).toMatch(/\d+ to tombstone/u)
-
-      // The prohibition, measured against the proposal's OWN receipt rather than a generic
-      // scan: whatever `proposals.show` renders as evidence must not be in these bytes.
-      //
-      // WHERE THE LINE ACTUALLY FALLS, measured rather than assumed. A record-grain forget
-      // tombstones exactly its target, so the ONE record id in the preview is also the target
-      // REF — and a ref is the thing D-18 explicitly admits ("refs and counts only"). The
-      // prohibition is about the receipt's own bytes: the provenance each tombstone carries,
-      // the projection set the scrub would touch, and the record's content. Those are what
-      // `proposals.show` exists to serve and what a terminal, a chat and a dashboard must not
-      // be handed by default.
-      const shown = (await invokeFunction(
-        host.registry,
-        'proposals.show',
-        { proposalId },
-        HUMAN,
-      )) as { kind: string; entry?: { envelope: { payload: { receiptPreview?: unknown } } } }
-      const preview = shown.entry?.envelope.payload.receiptPreview as {
-        tombstonedRecords: { recordId: string; provenance: unknown }[]
-        projectionsToScrub: string[]
-      } | undefined
-      expect(preview?.tombstonedRecords.length).toBeGreaterThan(0)
-      expect(preview?.projectionsToScrub.length).toBeGreaterThan(0)
-
+      expect(digestA.markChanges).toEqual([{ markId: markIdOf(1), ordinal: 1, fix: 'fact',
+        change: { kind: 'knowledge', changeId: 'prop_0123456789ab', recordIds: [recordId] } }])
+      expect(digestA.lines).toContain(`  ${markIdOf(1)}  fact: 1 record changed`)
       const rendered = JSON.stringify(digestA)
-      for (const record of preview?.tombstonedRecords ?? []) {
-        // The only record id the digest names is the one it names as the TARGET REF.
-        expect(record.recordId).toBe(recordId)
-        // Its provenance — the bundle, the run and the step the record came from — is not.
-        expect(rendered).not.toContain(JSON.stringify(record.provenance))
-        expect(rendered).not.toContain('digest-e2e')
-      }
-      // The receipt's own structure never crosses: neither key, and neither the projection set
-      // nor the record's body text a reader would go to `show` for.
-      expect(rendered).not.toContain('tombstonedRecords')
-      expect(rendered).not.toContain('projectionsToScrub')
+      // The record's body and provenance never cross: a digest names the id, never the content.
       expect(rendered).not.toContain('advances to the payment page')
-      // …and a record this proposal is not about is absent, which is what makes the three
-      // absence claims above about selection rather than about an empty store.
-      expect(rendered).not.toContain(untouchedRecordId)
+      expect(rendered).not.toContain('digest-e2e')
     })
 })

@@ -91,7 +91,7 @@ export function TabKnowledge({ view, stepRefs }: { view: KnowledgeView | undefin
     <div data-knowledge-state="ready" className="px-3 py-4 space-y-6">
       <KnowledgeUsed view={view.used} stepRefs={stepRefs} />
       <KnowledgeEffect view={view.effect} stepRefs={stepRefs} testNames={stepRefs?.testNames} />
-      <KnowledgeLearned view={view.learned} proposals={view.proposals} />
+      <KnowledgeLearned view={view.learned} />
       <RetrievalDetails ledger={view.ledger} />
     </div>
   )

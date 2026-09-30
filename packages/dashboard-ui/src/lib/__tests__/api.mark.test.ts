@@ -16,11 +16,13 @@ describe('419 mark API scope and outcomes', () => {
       }),
     })
   })
-  it('retains typed denial and canonical remedies on the real helper', async () => {
+  // RE-SPELLED 432-09 (D-15) from 'retains typed denial and canonical remedies on the real helper':
+  // the denial is a plain reason, and the typed error carries nothing a reader must act on.
+  it('retains the typed denial as a plain reason on the real helper, and carries no remedies', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ error: 'mark_denied',
-      reason: 'The safety gate denied this mark.', remedies: [{ kind: 'answer-confirm' }] }), { status: 403 })))
-    await expect(markRun('run', { kind: 'false-fail' })).rejects.toEqual(new MarkDeniedError({
-      reason: 'The safety gate denied this mark.', remedies: [{ kind: 'answer-confirm' }],
-    }))
+      reason: 'The mark could not be recorded here.' }), { status: 403 })))
+    const denied = await markRun('run', { kind: 'false-fail' }).catch((error: unknown) => error)
+    expect(denied).toEqual(new MarkDeniedError({ reason: 'The mark could not be recorded here.' }))
+    expect(denied).not.toHaveProperty('remedies')
   })
 })

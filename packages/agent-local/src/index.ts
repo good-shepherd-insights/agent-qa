@@ -205,6 +205,8 @@ export type {
 // barrel; `host.jobs()` hands back the store the host itself opened, which is the one arbitrated
 // opening rather than a second one.
 export {
+  // 432-09 (D-04): an explicit knowledge change applied in the call, used by the mark host.
+  applyKnowledgeChange,
   composeLocalAgent,
   createKnowledgeReader,
   createKnowledgeReview,
@@ -250,8 +252,13 @@ export { COLD_READ_SCOPE_FUNCTION_IDS } from './composition/compose-local-agent.
 
 export type {
   ApplyDelegate,
+  ApplyKnowledgeChangeInput,
   ApplyReviewResult,
   CandidateProsePosture,
+  ExplicitReviewDelegate,
+  ExplicitReviewDelegation,
+  ExplicitReviewRequest,
+  ExplicitReviewResult,
   // 401-01 D-13: the ONE declaration of what a session log records about an approval decision.
   // Published because the cli's TTY confirm wrapper produces this record and the dashboard's
   // browser confirm produces it too — a surface that could not name it would have to spell its own
@@ -276,7 +283,6 @@ export type {
   LocalAgentHost,
   LocalAgentJobs,
   LocalCurationCapabilities,
-  WithdrawPendingProposalInput,
   ServedRecordFacts,
   MarkTriage,
   ApplyFeedbackInput,

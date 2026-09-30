@@ -55,7 +55,7 @@ import {
   feedbackRecordedText,
   markGlyphLabel,
   pinnedTargetText,
-  proposalDraftText,
+  previewFixText,
   resolvedStepText,
   showStepLabel,
   switchTargetLabel,
@@ -294,12 +294,14 @@ const initial = projection({
   members: [member(0, { testId: TEST_ID, outcome: 'failed', marks: [] })],
   steps: [step(0, 0, 'Open cart')],
 })
+// 432-09 (D-04): a mark's receipt names the knowledge it changed; history joins that record.
 const receipt: RunDetailMemberMark = {
   markId: 'mark_0123456789ab',
   kind: 'false-fail',
   ordinal: 1,
-  disposition: { kind: 'drafted', fix: 'fact', proposalId: 'prop_0123456789ab', proposalKind: 'knowledge' },
+  disposition: { kind: 'applied', fix: 'fact', change: { kind: 'knowledge', changeId: 'prop_0123456789ab', recordIds: ['mem_page_1'] } },
 }
+const CHANGED = [{ recordId: 'mem_page_1', contentAbsence: { reason: 'not-bound' as const } }]
 const refreshed = projection({
   ...initial,
   members: [{ ...initial.members[0]!, marks: [receipt] }],
@@ -1028,7 +1030,7 @@ describe('426-05 the retained draft, per address', () => {
     await click('[data-feedback-entry="test"]')
     await pickFirstChoiceAndLandPreview(Promise.resolve({ kind: 'read', result: CONSEQUENCES }))
     await typeNote('keep this note')
-    markRunMock.mockRejectedValue(new MarkDeniedError({ reason, remedies: [] }))
+    markRunMock.mockRejectedValue(new MarkDeniedError({ reason }))
     await click('[data-feedback-submit]')
     await flushRender()
     expect(markRunMock).toHaveBeenCalledTimes(1)
@@ -1225,9 +1227,9 @@ describe('426-06 the preview on screen is exact', () => {
     await flushRender()
     expect(previewSection().getAttribute('data-preview-state')).toBe('consequences')
     expect(previewSection().getAttribute('data-preview-current')).toBe('true')
-    const proposals = q('[data-preview-line="proposals"]')
-    expect(proposals, 'the preview lines are not on the page').not.toBeNull()
-    expect(proposals!.textContent).toBe(proposalDraftText({ kind: 'confirmed-bug' }))
+    const change = q('[data-preview-line="change"]')
+    expect(change, 'the preview lines are not on the page').not.toBeNull()
+    expect(change!.textContent).toBe(previewFixText({ kind: 'confirmed-bug' }))
     expect(q('[data-feedback-submit]')!.getAttribute('aria-disabled')).toBe('false')
   })
 
@@ -1761,12 +1763,12 @@ describe('426-09 the receipt shows in history', () => {
     markId: historyMarkId(2),
     kind: FEEDBACK_CHOICE_ORDER.failed[0],
     ordinal: 2,
-    disposition: { kind: 'drafted', fix: 'caution', proposalId: 'prop_0123456789ab', proposalKind: 'knowledge' },
+    disposition: { kind: 'applied', fix: 'caution', change: { kind: 'knowledge', changeId: 'prop_0123456789ab', recordIds: ['mem_page_1'] } },
   }
   const before = historyOf([{ n: 1, kind: 'confirmed-bug', disposition: { kind: 'confirmed-bug', confirmedRecords: 0 } }])
   const after = historyOf([
     { n: 1, kind: 'confirmed-bug', disposition: { kind: 'confirmed-bug', confirmedRecords: 0 }, active: false, supersededBy: RECEIPT.markId },
-    { n: 2, kind: RECEIPT.kind, supersedes: PRIOR, disposition: RECEIPT.disposition, proposal: { state: 'pending', applyInFlight: false } },
+    { n: 2, kind: RECEIPT.kind, supersedes: PRIOR, disposition: RECEIPT.disposition, changedRecords: CHANGED },
   ])
 
   it('RECEIPT-SHOWS-IN-HISTORY: the composer stays open, the form resets, and the new mark leads the target list, scrolled into view', async () => {
@@ -1810,7 +1812,7 @@ describe('426-09 the receipt shows in history', () => {
 describe('426-09 the preview names its times from history', () => {
   const PRIOR = 'mark_0123456789ab'
   const SUPERSEDES = previewOf({ latest: { kind: 'supersedes', markId: PRIOR, ordinal: 1 }, basis: { ledgerOrdinal: 1, priorMarkOrdinal: 1 } })
-  const loaded = historyOf([{ n: 1, markId: PRIOR, markedAt: T_MARK, disposition: receipt.disposition, proposal: { state: 'pending', applyInFlight: false } }])
+  const loaded = historyOf([{ n: 1, markId: PRIOR, markedAt: T_MARK, disposition: receipt.disposition, changedRecords: CHANGED }])
 
   beforeEach(() => {
     fetchRunDetailMock.mockResolvedValue(fourSteps)
@@ -1819,7 +1821,7 @@ describe('426-09 the preview names its times from history', () => {
   it('ARM-TIMES-FROM-HISTORY: with history loaded, the replaces and already-said lines name the earlier mark\'s time', async () => {
     fetchMarksHistoryMock.mockResolvedValue(loaded)
     await openAndLand({ kind: 'read', result: SUPERSEDES })
-    expect(q('[data-preview-line="replaces"]')?.textContent).toBe(replacesLine(1, formatMarkTime(T_MARK), false))
+    expect(q('[data-preview-line="replaces"]')?.textContent).toBe(replacesLine(1, formatMarkTime(T_MARK)))
     unmountPage()
 
     await openAndLand({ kind: 'read', result: ALREADY_MARKED })
@@ -1829,7 +1831,7 @@ describe('426-09 the preview names its times from history', () => {
   it('ARM-TIMES-FROM-HISTORY: before history loads, or when the earlier mark is not in it, both lines drop the time', async () => {
     fetchMarksHistoryMock.mockReturnValue(new Promise(() => {}))
     await openAndLand({ kind: 'read', result: SUPERSEDES })
-    expect(q('[data-preview-line="replaces"]')?.textContent).toBe(replacesLine(1, undefined, false))
+    expect(q('[data-preview-line="replaces"]')?.textContent).toBe(replacesLine(1, undefined))
     unmountPage()
 
     await openAndLand({ kind: 'read', result: ALREADY_MARKED })
@@ -1838,18 +1840,20 @@ describe('426-09 the preview names its times from history', () => {
 
     fetchMarksHistoryMock.mockResolvedValue(historyOf([{ n: 1, stepIndex: 2 }]))
     await openAndLand({ kind: 'read', result: SUPERSEDES })
-    expect(q('[data-preview-line="replaces"]')?.textContent).toBe(replacesLine(1, undefined, false))
+    expect(q('[data-preview-line="replaces"]')?.textContent).toBe(replacesLine(1, undefined))
   })
 })
 
-describe('426-09 only the review command reaches the clipboard', () => {
-  it('HISTORY-COPIES-ONLY-COMMAND: the review control copies exactly its command; typing a note or opening details writes nothing', async () => {
+// RE-SPELLED 432-09 (D-25) from '426-09 only the review command reaches the clipboard': no review
+// command remains, so nothing on the page writes the clipboard, and history names what changed.
+describe('432-09 no review command, and nothing reaches the clipboard', () => {
+  it('C432-NO-REVIEW-CTA: history names the applied change with no review control; typing a note or opening details writes nothing', async () => {
     const writeText = vi.fn(async () => undefined)
     Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true })
     try {
       fetchRunDetailMock.mockResolvedValue(fourSteps)
       fetchMarksHistoryMock.mockResolvedValue(
-        historyOf([{ n: 1, note: 'the coupon field vanished', disposition: receipt.disposition, proposal: { state: 'pending', applyInFlight: false } }]),
+        historyOf([{ n: 1, note: 'the coupon field vanished', disposition: receipt.disposition, changedRecords: CHANGED }]),
       )
       await renderAt(`/runs/${RUN_ID}`)
       const title = document.title
@@ -1859,14 +1863,11 @@ describe('426-09 only the review command reaches the clipboard', () => {
         if (button.textContent === TECHNICAL_DETAILS_LABEL) await act(async () => { button.click() })
       }
       await flushRender()
+      expect(q('[data-feedback-history="target"] [data-history-review]')).toBeNull()
+      expect(q('[data-review-command]')).toBeNull()
+      expect(q('[data-feedback-history="target"] [data-history-applied="knowledge"]')?.textContent)
+        .toBe('Changed knowledge: mem_page_1 (content unavailable)')
       expect(writeText).not.toHaveBeenCalled()
-      expect(document.title).toBe(title)
-
-      const review = q<HTMLButtonElement>('[data-feedback-history="target"] [data-history-review]')
-      expect(review, 'no review command in the target history').not.toBeNull()
-      await act(async () => { review!.click() })
-      await flushRender()
-      expect(writeText.mock.calls).toEqual([['agent-qa proposals show prop_0123456789ab']])
       expect(document.title).toBe(title)
     } finally {
       delete (navigator as { clipboard?: unknown }).clipboard
@@ -1968,7 +1969,7 @@ describe('426-10 the mark approval is answered in the composer', () => {
     const { sent, claim } = await submitAwaitingApproval()
     await act(async () => { claim.onResolved({ kind: 'confirm_resolved', confirmId: MARK_FRAME.confirmId, answer: 'deny', by: 'timeout' }) })
     await flushRender()
-    await act(async () => sent.reject(new MarkDeniedError({ reason: 'Confirmation was denied', remedies: [] })))
+    await act(async () => sent.reject(new MarkDeniedError({ reason: 'Confirmation was denied' })))
     await flushRender()
     expect(state()).toBe('retained')
     const outcome = region()?.querySelector('[data-confirm-outcome]')
@@ -1991,7 +1992,7 @@ describe('426-10 the mark approval is answered in the composer', () => {
     unmountPage()
 
     const refused = await submitAwaitingApproval()
-    await act(async () => refused.sent.reject(new MarkDeniedError({ reason: 'Confirmation was denied', remedies: [] })))
+    await act(async () => refused.sent.reject(new MarkDeniedError({ reason: 'Confirmation was denied' })))
     await flushRender()
     expect(markConfirmClaim(), 'the claim outlived a refused mark').toBeUndefined()
     unmountPage()

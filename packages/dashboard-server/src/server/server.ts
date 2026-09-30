@@ -368,9 +368,7 @@ export async function startServer(opts: StartServerOptions): Promise<{
           // browser. Where the rejection carries no neutral form — an unrecognised request field, an
           // input error — its own message is used, which names no surface's affordance either.
           //
-          // WHAT A PERSON CAN DO ABOUT IT does not live in this sentence at all: it is the typed
-          // `details.remedies`, already projected for this surface by the backend, which the run
-          // record and the live envelope both carry.
+          // 2026-09-30, 432-09 (D-15): the refusal is this plain sentence. No remedy list rides it.
           dbStatus = 'failed'
           refusalProse = details.neutralReason ?? details.reason
           failureSummary = refusalProse

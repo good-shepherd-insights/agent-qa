@@ -3,20 +3,31 @@ import { join } from 'node:path'
 
 import { canonicalJson } from '@vostride/agent-qa-eval'
 import { HANDOFF_FILE, RUNS_SUBDIR, slugBranch } from '@vostride/agent-qa-runner-local'
-import { AuthoringDraftEditOutputSchema, ImprovementPlanSchema, MarkReceiptSchema, markAddressKey, type MarkAddress, type MarkReceipt } from '@vostride/agent-qa-schema'
+import { ImprovementPlanSchema, MarkReceiptSchema, markAddressKey, type MarkAddress, type MarkReceipt } from '@vostride/agent-qa-schema'
 import { z } from 'zod'
 import { acquireMarkLock } from './mark-lock.js'
 
 export const MARKS_LEDGER_FILE = 'marks.jsonl'
 export const MARKS_LEDGER_LOCK_FILE = 'marks.jsonl.lock'
+/**
+ * 2026-09-30, 432-09 (D-04/D-11): the resumable mark. `operationId` is the stable identity every
+ * effect of this mark carries (the knowledge change id derives from it), so a retry at any stage
+ * lands the same fix once. `applied` is the last stage: the fix is published and the receipt is
+ * next, and only the receipt remains to be written. The applied change itself rides the mark's
+ * own disposition, so there is one record of what changed.
+ */
+export const MARK_INTENT_STAGES = ['prepared', 'evidence', 'applied'] as const
 const intentSchema = z.object({
   schemaVersion: z.literal(1), mark: MarkReceiptSchema,
-  stage: z.enum(['prepared', 'evidence', 'drafted']),
-  proposalUuid: z.uuid(),
+  stage: z.enum(MARK_INTENT_STAGES),
+  operationId: z.uuid(),
   plan: ImprovementPlanSchema.optional(),
-  testDraft: AuthoringDraftEditOutputSchema.optional(),
-}).strict()
-type MarkIntent = z.infer<typeof intentSchema>
+}).strict().superRefine((intent, ctx) => {
+  if (intent.stage === 'applied' && intent.mark.disposition.kind === 'drafted') {
+    ctx.addIssue({ code: 'custom', path: ['mark', 'disposition'], message: 'a mark applies its fix; it never files a draft' })
+  }
+})
+export type MarkIntent = z.infer<typeof intentSchema>
 
 function atomicPublish(path: string, text: string): void {
   const staged = `${path}.pending`
@@ -123,7 +134,7 @@ export class FsMarkLedger {
   }
 
   /** Private resumable state is admitted only while this run's existing lock is held. */
-  prepareIntent(mark: MarkReceipt, proposalUuid: string): MarkIntent {
+  prepareIntent(mark: MarkReceipt, operationId: string): MarkIntent {
     if (!this.inTransaction) throw new Error('mark intent requires the run transaction')
     const prior = this.intentValue
     if (prior !== undefined) {
@@ -135,7 +146,7 @@ export class FsMarkLedger {
       }
       return prior
     }
-    return this.checkpointIntent({ schemaVersion: 1, mark, proposalUuid, stage: 'prepared' })
+    return this.checkpointIntent({ schemaVersion: 1, mark, operationId, stage: 'prepared' })
   }
 
   checkpointIntent(value: MarkIntent): MarkIntent {
@@ -175,7 +186,7 @@ export class FsMarkLedger {
       if (receipt.runId !== this.runId || receipt.runSlug !== this.runSlug) {
         throw new Error('mark receipt does not belong to this run ledger')
       }
-      if (this.intentValue !== undefined && (this.intentValue.stage !== 'drafted'
+      if (this.intentValue !== undefined && (this.intentValue.stage !== 'applied'
         || canonicalJson(this.intentValue.mark) !== canonicalJson(receipt))) {
         throw new MarkLedgerCorruptError(nextOrdinal)
       }

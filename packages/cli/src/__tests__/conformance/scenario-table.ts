@@ -1182,15 +1182,14 @@ export const SCENARIO_TABLE = Object.freeze([
       mcp: { reachable: { tool: 'agent_qa_get_run_digest' } },
       fn: { reachable: true },
     },
+    // 2026-09-30 (432-09, D-05/D-25): the proposal members are gone; the digest carries the fixes a
+    // run's marks applied (`markChanges`), read from the run's own ledger where a host binds it.
     renderExpect: {
       markers: [
         'candidates',
         'chain',
         'lines',
-        'pendingProposalCount',
-        'proposalsMintedThisRun',
         'quarantine',
-        'runAttributionAvailable',
         'runId',
         'verdictClusters',
       ],

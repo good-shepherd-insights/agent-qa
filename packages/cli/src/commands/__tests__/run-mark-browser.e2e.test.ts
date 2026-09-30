@@ -372,11 +372,13 @@ describe('419 real browser mark confirmation', () => {
     await settled(composer, await recordedSentence(composer))
     expect(s.rows()).toHaveLength(1)
     expect(await composer.locator('[data-feedback-note]').inputValue()).toBe('')
-    // 423 D-19: the drafted receipt's review control copies a runnable CLI command, never a chat route.
-    const link = targetEntries(composer).first().locator('[data-history-review]')
-    expect(await link.getAttribute('href')).toBeNull()
-    expect(await link.getAttribute('data-review-command')).toMatch(/^agent-qa proposals (show prop_[a-z0-9-]+|list --status pending)$/)
-    expect(await link.isVisible()).toBe(true)
+    // RE-SPELLED 432-09 (D-04/D-25) from '423 D-19: the drafted receipt's review control copies a
+    // runnable CLI command': the mark applied its fix, so the entry states what changed, as text,
+    // and offers no review control or link.
+    const applied = targetEntries(composer).first().locator('[data-history-applied]')
+    expect(['knowledge', 'test-file']).toContain(await applied.getAttribute('data-history-applied'))
+    expect(await applied.isVisible()).toBe(true)
+    expect(await composer.locator('[data-history-review], [data-review-command], a[href]').count()).toBe(0)
     await openComposer(s.page, 'step')
     expect(await status(composer).textContent()).toBe('')
     expect(await choice(composer, 'confirmed-bug').getAttribute('aria-checked')).toBe('true')
@@ -394,8 +396,8 @@ describe('419 real browser mark confirmation', () => {
     await openComposer(s.page, 'test')
     expect(await entryChoice(targetEntries(composer).first())).toBe(CHOICE_LABELS['false-fail'])
     const detailUrl = s.page.url()
-    await link.click()
-    await s.page.waitForFunction(() => document.querySelector('[data-feedback-history="target"] [data-history-review]')?.getAttribute('data-copy-status') !== 'idle')
+    await applied.click()
+    expect(await s.page.locator('[data-history-review], [data-review-command]').count()).toBe(0)
     expect(s.page.url()).toBe(detailUrl)
     expect(s.pageErrors).toEqual([])
     expect(s.outsideLoopback).toEqual([])

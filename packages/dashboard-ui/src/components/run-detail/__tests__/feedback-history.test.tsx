@@ -8,7 +8,7 @@
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import type { RunDetailProjection } from '@vostride/agent-qa-schema'
+import type { MarkDisposition, MarkHistoryChangedRecord, RunDetailProjection } from '@vostride/agent-qa-schema'
 import { MARKS, RunsMarksHistoryResultSchema } from '@vostride/agent-qa-schema'
 import { generateRunId } from '@vostride/agent-qa-ids'
 
@@ -43,17 +43,18 @@ const markId = (n: number) => `mark_${n.toString(16).padStart(12, '0')}`
 const T = (minute: number) => Date.UTC(2026, 8, 23, 10, minute)
 
 const NO_FIX = { kind: 'no-draftable-fix', checked: { servedRecords: 0, procedureReads: 0, assertionDrift: false } } as const
-const applied = (recordIds: readonly string[] = ['mem_caution_1']) =>
-  ({ kind: 'applied', fix: 'caution', change: { kind: 'knowledge', changeId: 'prop_0123456789ab', recordIds: [...recordIds] } }) as const
+const applied = (recordIds: readonly string[] = ['mem_caution_1']): MarkDisposition =>
+  ({ kind: 'applied', fix: 'caution', change: { kind: 'knowledge', changeId: 'prop_0123456789ab', recordIds: [...recordIds] } })
 const CAUTION = {
   content: 'The coupon field refuses expired codes.',
   summary: 'coupon refused',
   kind: 'caution',
-  applicability: { product: 'shop', scope: 'shop', anchors: [], openedAtOrdinal: 1 },
+  applicability: { product: 'shop', scope: 'shop', anchors: [] as string[], openedAtOrdinal: 1 },
   currentStatus: 'active',
-  currentTrust: { confirmations: 1, contradictions: 0, evidenceTokens: [], lastEventOrdinal: 1 },
+  currentTrust: { confirmations: 1, contradictions: 0, evidenceTokens: [] as string[], lastEventOrdinal: 1 },
 } as const
-const changed = (content: string = CAUTION.content) => [{ recordId: 'mem_caution_1', recordContent: { ...CAUTION, content } }]
+const changed = (content: string = CAUTION.content): MarkHistoryChangedRecord[] =>
+  [{ recordId: 'mem_caution_1', recordContent: { ...CAUTION, content } }]
 
 type EntryInput = Record<string, unknown> & { n: number }
 

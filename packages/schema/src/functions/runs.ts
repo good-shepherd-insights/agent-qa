@@ -1160,9 +1160,9 @@ export type RunKnowledgeCanaryAttribution = z.infer<typeof RunKnowledgeCanaryAtt
  * than from a handoff version — a version says when a run happened, not what was bound to it.
  *
  * NO `null` ANYWHERE. Absence is an absent key throughout (the layer's own idiom): `counts` is
- * missing when the frozen notification row did not record both numbers, `pendingProposalCount`
- * is missing when this host owns no proposals inbox, and neither reads as a zero somebody
- * measured.
+ * missing when the frozen notification row did not record both numbers, and does not read as a
+ * zero somebody measured. 2026-09-30, 432-09 (D-25): the ready arm carries no pending-proposal
+ * count; the tab shows what changed, never what awaits review.
  */
 export const RunKnowledgeProjectionSchema = z.discriminatedUnion('kind', [
   z.object({
@@ -1224,7 +1224,6 @@ export const RunKnowledgeProjectionSchema = z.discriminatedUnion('kind', [
        */
       scanIncomplete: z.literal(true).optional(),
     }).strict(),
-    pendingProposalCount: z.number().int().nonnegative().optional(),
   }).strict(),
 ])
 

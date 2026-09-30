@@ -4,6 +4,7 @@ import { createHash } from 'node:crypto'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { LOCAL_CURATION_CAPABILITIES } from '@vostride/agent-qa-agent-local'
 import * as agentLocal from '@vostride/agent-qa-agent-local'
+import type { ApplyKnowledgeChangeInput, ExplicitReviewDelegation } from '@vostride/agent-qa-agent-local'
 import { asEvidenceToken, asRecordId, type AuthoringDraftEditOutput, type ImprovementPlan, type MarkReceipt } from '@vostride/agent-qa-schema'
 import { wordImprovementPlan } from '../feedback-wording.js'
 import { createFeedbackPortForHost } from '../feedback-host.js'
@@ -12,7 +13,7 @@ import { markFixture, files, loadBundle, bundles, canonicalKnowledge } from './f
 const { appendOutcomeEvent } = await import(new URL('../../../../knowledge-local/src/bundle-append.js', import.meta.url).href)
 const { applyExplicitReview } = await import(new URL('../../../../knowledge-local/src/review/apply-review.js', import.meta.url).href)
 
-type ApplyChange = (input: Record<string, unknown>) => Promise<{ outcome: string; recordIds?: readonly string[] }>
+type ApplyChange = typeof agentLocal.applyKnowledgeChange
 /** The host's own direct knowledge writer, reached by name so a missing export fails as an assertion. */
 function realApply(): ApplyChange {
   const apply = (agentLocal as Record<string, unknown>).applyKnowledgeChange
@@ -196,7 +197,7 @@ describe('419 feedback host', () => {
     const f = testBugFixture(); root = f.root
     const member = f.handoff.tests[0]!
     const edited = writtenEdit(member.filePath!, member.testName!, member.testId!)
-    const refused: AuthoringDraftEditOutput = { ...edited, written: { kind: 'not-written', reason: 'target-changed' } }
+    const refused: AuthoringDraftEditOutput = { ...edited, written: { kind: 'not-written', targetPath: member.filePath!, reason: 'target-changed' } }
     const invokeAuthoringDraftEdit = vi.fn<() => Promise<AuthoringDraftEditOutput>>()
       .mockResolvedValueOnce(refused).mockResolvedValueOnce(edited)
     const port = createFeedbackPortForHost({ ...f.deps, invokeAuthoringDraftEdit })
@@ -350,7 +351,7 @@ describe('432-09 marks apply their fix once and return an applied receipt', () =
     const real = realApply()
     let publications = 0
     let failPublication = checkpoint === 'after fix publication'
-    const applyKnowledgeChange = vi.fn(async (input: Record<string, unknown>) => {
+    const applyKnowledgeChange = vi.fn(async (input: ApplyKnowledgeChangeInput) => {
       const answer = await real(input)
       publications += 1
       if (failPublication) { failPublication = false; throw new Error('injected crash after publication') }
@@ -417,7 +418,7 @@ describe('432-09 marks apply their fix once and return an applied receipt', () =
     const real = realApply()
     let holder: { leaseId: string; epoch: number } | undefined
     // The holder appears after gold and evidence, exactly when the fix asks for the lease.
-    const applyKnowledgeChange = vi.fn(async (input: Record<string, unknown>) => {
+    const applyKnowledgeChange = vi.fn(async (input: ApplyKnowledgeChangeInput) => {
       const lease = LOCAL_CURATION_CAPABILITIES.maintenance.acquireWriterLease(f.knowledgeRoot)
       if (lease.kind !== 'acquired') throw new Error('expected authority')
       holder = { leaseId: lease.leaseId, epoch: lease.epoch }
@@ -436,8 +437,8 @@ describe('432-09 marks apply their fix once and return an applied receipt', () =
       releaseHolder()
 
       // With a delegate bound, the held lease routes the same request and identity to its holder.
-      const delegations: { request: unknown; operationId: string }[] = []
-      const knowledgeChangeDelegate = vi.fn(async (delegation: { request: unknown; operationId: string }) => {
+      const delegations: ExplicitReviewDelegation[] = []
+      const knowledgeChangeDelegate = vi.fn(async (delegation: ExplicitReviewDelegation) => {
         delegations.push(delegation)
         return await applyExplicitReview({ agentQaRoot: f.agentQaRoot, knowledgeRoot: f.knowledgeRoot,
           request: delegation.request, operationId: delegation.operationId, opId: 'runs.mark',

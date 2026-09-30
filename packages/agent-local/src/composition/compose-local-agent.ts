@@ -96,7 +96,6 @@ import {
   createProposalsInbox,
   createQuarantineOperations,
   mintProposalId,
-  observeProposalEnvelope,
   writePendingProposalRecord,
   createStandingApprovalReader,
   QUARANTINE_FLAG_FLOOR,
@@ -165,17 +164,15 @@ import {
   type EntityIndexSweepReport,
   type ResolveEntityRefDeps,
   applyReview,
+  applyExplicitReview,
   appendMarkEvidence,
   triageMark,
   servedIdsOn,
   procedureReadOn,
   applyFeedback,
-  pendingProposalExists,
-  showProposalEnvelope,
   enumerateBundleDirs,
   loadBundle,
   verifyBundleIntegrity,
-  rejectPendingProposal,
   createAuthoringReader,
   openAddressingLedger as openAddressingLedgerForReview,
   proposeReview,
@@ -183,12 +180,15 @@ import {
 } from '@vostride/agent-qa-knowledge-local'
 import type {
   ApplyDelegate,
+  ExplicitReviewDelegate,
+  ExplicitReviewRequest,
+  ExplicitReviewResult,
   ProposeReviewRequest,
   CreateLocalKnowledgeStoreConfig,
 } from '@vostride/agent-qa-knowledge-local'
 import type { KnowledgeReviewPort } from '@vostride/agent-qa-agent'
 import type { FeedbackPort, FeedbackReadsPort } from '@vostride/agent-qa-schema'
-import type { ArtifactRef, TestDraftProposalV1 } from '@vostride/agent-qa-schema'
+import type { ArtifactRef } from '@vostride/agent-qa-schema'
 import type { ServedRecordFacts } from '@vostride/agent-qa-knowledge-local'
 export type { ServedRecordFacts, MarkTriage, ApplyFeedbackInput } from '@vostride/agent-qa-knowledge-local'
 import { ReplayIncompleteError, SecretStore } from '@vostride/agent-qa-runner'
@@ -333,8 +333,6 @@ export interface LocalKnowledgeProbeCapabilities {
   readonly classifyIndexFace: typeof classifyIndexFace
   readonly foldRetrievalRung: typeof foldRetrievalRung
   readonly indexDbPath: typeof indexDbPath
-  /** 2026-09-15, 423 D-19: one proposal's current state without the listing's reap. */
-  readonly observeProposalEnvelope: typeof observeProposalEnvelope
   readonly readEmbedderWorkerRegistration: typeof readEmbedderWorkerRegistration
   readonly readWriterLease: typeof readWriterLease
   readonly resolveEmbedderCapability: typeof resolveEmbedderCapability
@@ -344,7 +342,6 @@ export const LOCAL_KNOWLEDGE_PROBES: LocalKnowledgeProbeCapabilities = Object.fr
   classifyIndexFace,
   foldRetrievalRung,
   indexDbPath,
-  observeProposalEnvelope,
   readEmbedderWorkerRegistration,
   readWriterLease,
   resolveEmbedderCapability,
@@ -365,6 +362,12 @@ export type {
 export type {
   ApplyDelegate,
   ApplyReviewResult,
+  // 432-09: the direct change's vocabulary. A delegate receives the validated request and its stable
+  // identity, never a proposal id to reload.
+  ExplicitReviewDelegate,
+  ExplicitReviewDelegation,
+  ExplicitReviewRequest,
+  ExplicitReviewResult,
 } from '@vostride/agent-qa-knowledge-local'
 
 export type {
@@ -548,13 +551,6 @@ function promoteWithReceipts(input: PromoteWithReceiptsInput): Promise<Promotion
   return receiptWriter(input).promote(input.candidateId, input.receipts)
 }
 
-export interface WithdrawPendingProposalInput {
-  agentQaRoot: string
-  proposalId: string
-  proposalKind: 'knowledge' | 'test-draft'
-  reason: string
-}
-
 /** Internal facts only: public showRecord deliberately omits bundle construction fields. */
 function readFeedbackRecord(input: { knowledgeRoot: string; recordId: string; evidenceRef?: ArtifactRef }): ServedRecordFacts | undefined {
   const matches = enumerateBundleDirs(input.knowledgeRoot).flatMap(entry => {
@@ -574,38 +570,8 @@ function readFeedbackRecord(input: { knowledgeRoot: string; recordId: string; ev
     originStage: 'run-curation' }
 }
 
-function fileMarkTestDraft(input: { agentQaRoot: string; runId: string; proposal: TestDraftProposalV1;
-  identity?: { uuid: string; at: number } }): string {
-  const proposalId = mintProposalId(input.identity === undefined ? randomUUID : () => input.identity!.uuid)
-  if (input.identity !== undefined) {
-    const existing = showProposalEnvelope(input.agentQaRoot, proposalId, { now: input.identity.at })
-    if (existing !== undefined) {
-      if (existing.envelope.kind !== 'test-draft' || existing.envelope.origin?.runId !== input.runId
-        || existing.envelope.origin?.emittedBy !== 'runs.mark') throw new Error('Mark draft identity conflict')
-      return proposalId
-    }
-  }
-  writePendingProposalRecord(input.agentQaRoot, { schemaVersion: CURRENT_PROPOSAL_RECORD_SCHEMA_VERSION,
-    id: proposalId, kind: 'test-draft', origin: { emittedBy: 'runs.mark', runId: input.runId, at: input.identity?.at ?? Date.now() },
-    payload: input.proposal })
-  return proposalId
-}
-
-async function withdrawPendingProposal(input: WithdrawPendingProposalInput): Promise<'withdrawn' | 'not-pending'> {
-  if (!pendingProposalExists(input.agentQaRoot, input.proposalId)) return 'not-pending'
-  const pending = showProposalEnvelope(input.agentQaRoot, input.proposalId, { now: Date.now() })
-  if (pending === undefined) return 'not-pending'
-  if (pending.envelope.kind !== input.proposalKind) throw new Error('Superseded proposal kind does not match the mark receipt')
-  // The existing generic rejection primitive handles knowledge AND test-draft records.
-  const result = rejectPendingProposal(input.agentQaRoot, input.proposalId, { at: Date.now(), reason: input.reason })
-  if (result.kind === 'apply-in-flight') throw new Error('Superseded proposal is being applied; retry after its decision settles')
-  return result.kind === 'rejected' ? 'withdrawn' : 'not-pending'
-}
-
 export interface LocalCurationCapabilities {
   readonly readFeedbackRecord: typeof readFeedbackRecord
-  readonly fileMarkTestDraft: typeof fileMarkTestDraft
-  readonly withdrawPendingProposal: typeof withdrawPendingProposal
   readonly appendMarkEvidence: typeof appendMarkEvidence
   /**
    * 2026-09-15, 423 D-16/D-17: the lease-free planning half appendMarkEvidence executes, so a
@@ -654,8 +620,6 @@ export interface LocalCurationCapabilities {
 
 export const LOCAL_CURATION_CAPABILITIES: LocalCurationCapabilities = Object.freeze({
   readFeedbackRecord,
-  fileMarkTestDraft,
-  withdrawPendingProposal,
   appendMarkEvidence,
   planMarkEvidence,
   projectMarkEvidenceOutcome,
@@ -975,6 +939,57 @@ export function createKnowledgeReview(input: CreateKnowledgeReviewInput): Knowle
         ...(result.commitReceipt === undefined ? {} : { commitReceipt: result.commitReceipt }),
       }
     },
+  }
+}
+
+// ---- 432-09: an explicit knowledge change, applied in the call (D-04/D-11) ------------------------
+
+export interface ApplyKnowledgeChangeInput {
+  readonly agentQaRoot: string
+  readonly knowledgeRoot: string
+  readonly request: ExplicitReviewRequest
+  /** The caller's stable identity for this change: a retry with the same identity lands nothing twice. */
+  readonly operationId: string
+  /** The op making the change, stamped on its Gate-3 receipts. */
+  readonly opId: string
+  /** The caller's actual context, recorded as-is. An explicit change applies in every context. */
+  readonly executionContext: ExecutionContext
+  readonly resolveTrustPriors?: CreateLocalKnowledgeStoreConfig['resolveTrustPriors']
+  readonly resolvePromotionPosture?: () => Promise<ResolvePromotionPosture | undefined>
+  /**
+   * How this host reaches a live writer-lease holder. The holder receives exactly the validated
+   * request and identity, bounded; the lease is never taken. Absent, a held lease refuses by name.
+   */
+  readonly delegate?: ExplicitReviewDelegate
+  /** The lease this host already holds, when it is the holder. Exclusive with {@link delegate}. */
+  readonly writerAuthority?: { readonly leaseId: string; readonly epoch: number }
+}
+
+/**
+ * Apply one explicit knowledge change through the direct writer (432-06), with this host's short-id
+ * resolver. Nothing is filed: the change is committed, or it is refused by type.
+ */
+export async function applyKnowledgeChange(input: ApplyKnowledgeChangeInput): Promise<ExplicitReviewResult> {
+  const posture = await input.resolvePromotionPosture?.()
+  const ledger = openAddressingLedgerForReview({
+    path: join(input.agentQaRoot, ADDRESSING_LEDGER_DB_FILE),
+  })
+  try {
+    return await applyExplicitReview({
+      agentQaRoot: input.agentQaRoot,
+      knowledgeRoot: input.knowledgeRoot,
+      request: input.request,
+      operationId: input.operationId,
+      opId: input.opId,
+      executionContext: input.executionContext,
+      resolveBundleShortId: (shortId) => ledger.lookupByShortId(shortId)?.machineId,
+      ...(input.resolveTrustPriors === undefined ? {} : { resolveTrustPriors: input.resolveTrustPriors }),
+      ...(posture === undefined ? {} : { resolvePromotionPosture: posture }),
+      ...(input.delegate === undefined ? {} : { delegate: input.delegate }),
+      ...(input.writerAuthority === undefined ? {} : { writerAuthority: input.writerAuthority }),
+    })
+  } finally {
+    ledger.close()
   }
 }
 

@@ -17,10 +17,10 @@
 // that fires once") answered by a shape rather than by a throttle.
 //
 // REFS AND COUNTS ONLY (D-18, T-391-17). Nothing on this DTO carries evidence bytes, receipt
-// bytes, rationale prose or masked content: a proposal is a short id, a one-line summary built
-// from its own refs and delta COUNT, and the decision it is waiting for; candidates and
-// quarantine are counts plus identity refs. Full receipts are one `proposals.show` away, which
-// is a verb with its own gate. That is a privacy boundary rather than a size budget — this
+// bytes, rationale prose or masked content: a mark change is its mark id, its fix and the ids or
+// workspace path it changed; candidates and quarantine are counts plus identity refs. 2026-09-30,
+// 432-09 (D-05/D-22): the digest reads applied mark changes from this run's own ledger and never
+// reads a proposal store. That is a privacy boundary rather than a size budget — this
 // value is rendered directly by a terminal, a chat and a dashboard, and a payload that COULD
 // carry a secret would need a masking boundary at each of them.
 
@@ -28,6 +28,8 @@ import { z } from 'zod'
 
 import { AnalysisClusterViewSchema } from '../functions/analysis-get'
 import type { AnalysisClusterView } from '../functions/analysis-get'
+import { MARK_FIX_KINDS, MarkAppliedChangeSchema } from '../functions/feedback'
+import type { MarkAppliedChange, MarkFixKind } from '../functions/feedback'
 import { runIdSchema } from '../run/run-id'
 import { POST_PROCESSING_CHIP_STATUSES, PostProcessingExclusionSchema } from './post-processing-status'
 import type { PostProcessingChipStatus, PostProcessingExclusionReason } from './post-processing-status'
@@ -41,23 +43,17 @@ export const RunsDigestInputSchema = z.object({
 export type RunsDigestInput = z.infer<typeof RunsDigestInputSchema>
 
 /**
- * One proposal this run minted, as a person meets it in a digest (D-18).
+ * One fix a mark on this run applied, read from the run's own mark ledger (432-09, D-04).
  *
- * FOUR FIELDS, and the pair of ids is the only one that looks redundant and is not. `shortId`
- * is what the rendered line carries so a list of five stays readable; `id` is the key every
- * decision verb takes, so a surface built on this DTO can offer "accept" without a second
- * lookup. Dropping `id` would have made the digest a thing you read and then had to go and
- * re-enumerate to act on, and dropping `shortId` would have put a uuid in every line.
- *
- * `summaryLine` is composed from the proposal's own refs and COUNTS — never from its deltas'
- * content, never from a forget receipt's tombstones. `requiredDecision` names what the human
- * owes it, in the vocabulary of the verbs that discharge it.
+ * The receipt's applied change VERBATIM: record ids for a knowledge fix, the written workspace path
+ * and its byte digest for a test edit. In ledger order; a later mark on the same address does not
+ * remove an earlier change, because the earlier fix was never retracted (D-11).
  */
-export interface RunDigestProposalRow {
-  id: string
-  shortId: string
-  summaryLine: string
-  requiredDecision: string
+export interface RunDigestMarkChange {
+  markId: string
+  ordinal: number
+  fix: MarkFixKind
+  change: MarkAppliedChange
 }
 
 /**
@@ -140,32 +136,23 @@ export interface RunDigest {
   runId: string
   verdictClusters: AnalysisClusterView[]
   chain: RunDigestChainOutcomes
-  /** Ordered by the proposals store's own law — minted-at, then id. Never re-sorted here. */
-  proposalsMintedThisRun: RunDigestProposalRow[]
-  /** Across the WHOLE store, not just this run: what is waiting on a human right now. */
-  pendingProposalCount: number
   /**
-   * Whether an empty {@link proposalsMintedThisRun} is a MEASUREMENT or an absence of data.
-   *
-   * True when the store is empty (nothing was minted, which is measurable and true) or when at
-   * least one entry carries run attribution (so the filter had a populated key to range over).
-   * False means no entry in a NON-EMPTY store carries a run, so the digest cannot distinguish
-   * a run that minted nothing (a measurement) from a store where nobody wrote down which run
-   * minted what (an absence of data) — and it says exactly that rather than picking the
-   * affirmative negative and hoping (T-391-21).
+   * The fixes this run's marks applied, in ledger order. ABSENT where this host reads no mark
+   * ledger or the ledger could not be read — an empty list is a measurement ("no mark changed
+   * anything"), and an unread ledger is not.
    */
-  runAttributionAvailable: boolean
+  markChanges?: RunDigestMarkChange[]
   candidates: RunDigestCandidateReport
   quarantine: RunDigestQuarantineReport
   lines: string[]
 }
 
-export const RunDigestProposalRowSchema = z.object({
-  id: z.string().min(1),
-  shortId: z.string().min(1),
-  summaryLine: z.string().min(1),
-  requiredDecision: z.string().min(1),
-}).strict() satisfies z.ZodType<RunDigestProposalRow>
+export const RunDigestMarkChangeSchema = z.object({
+  markId: z.string().min(1),
+  ordinal: z.number().int().positive(),
+  fix: z.enum(MARK_FIX_KINDS),
+  change: MarkAppliedChangeSchema,
+}).strict() satisfies z.ZodType<RunDigestMarkChange>
 
 /**
  * The chip enums are CONSTRUCTED from the exported vocabulary rather than respelled (C13), so a
@@ -200,9 +187,7 @@ export const RunDigestSchema = z.object({
   runId: z.string(),
   verdictClusters: z.array(AnalysisClusterViewSchema),
   chain: RunDigestChainOutcomesSchema,
-  proposalsMintedThisRun: z.array(RunDigestProposalRowSchema),
-  pendingProposalCount: z.number().int().nonnegative(),
-  runAttributionAvailable: z.boolean(),
+  markChanges: z.array(RunDigestMarkChangeSchema).optional(),
   candidates: RunDigestCandidateReportSchema,
   quarantine: RunDigestQuarantineReportSchema,
   lines: z.array(z.string()),

@@ -63,7 +63,6 @@ import {
   RECONCILIATION_UNATTRIBUTED_TEXT,
   RECORD_CONTENT_NOT_RECORDED_LEAD,
   REPLAY_FACT,
-  COPY_REVIEW_COMMAND_LABEL,
   HINT_FACT,
   STEP_NOT_FOUND_TEXT,
   STEP_NO_BRIEF_TEXT,
@@ -85,7 +84,6 @@ import {
   cutCandidates,
   cutCandidatesLabel,
   learnedView,
-  pendingProposalsLine,
   planSourceSentence,
   planSourceView,
   projectKnowledgeView,
@@ -969,18 +967,11 @@ describe('419 promotion projection copies receipt attribution', () => {
   })
 })
 
-/**
- * The proposals line, read where it LIVES — the `ready` arm, beside `learned` and not inside it.
- *
- * The inbox is not this run's chain (D-11): a pending proposal outlives the curation that produced
- * it, so it hangs off the tab rather than off a half whose state is a curation word.
- */
-function proposalsFrom(
-  overrides: Partial<Extract<RunKnowledgeProjection, { kind: 'ready' }>> = {},
-) {
+/** The ready view, or a named failure: 432-09 cells read that no proposals member survives. */
+function readyView(overrides: Partial<Extract<RunKnowledgeProjection, { kind: 'ready' }>> = {}) {
   const view = projectKnowledgeView(ready(overrides))
   if (view.state !== 'ready') throw new Error(`expected ready, got ${view.state}`)
-  return view.proposals
+  return view
 }
 
 describe('the Learned half mirrors the curation word and NEVER renders blank (D-12)', () => {
@@ -1826,71 +1817,34 @@ describe('a partial read decorates the answer, it never replaces it (REVIEW CR-0
   })
 })
 
-describe('the proposals line is a COUNT and a door, never any proposal content (D-11)', () => {
-  it('renders no proposals member at all when the op bound no inbox', () => {
-    expect(proposalsFrom({ curation: { status: 'done', counts: { curated: 1, deprecated: 0 } } }))
-      .toBeUndefined()
-  })
-
-  it('renders no proposals member when the inbox answered zero — a zero is not news', () => {
-    expect(proposalsFrom({
-      curation: { status: 'done', counts: { curated: 1, deprecated: 0 } },
-      pendingProposalCount: 0,
-    })).toBeUndefined()
-  })
-
-  it('says one proposal waits for review in this project, and hands over the runnable command to copy', () => {
-    expect(proposalsFrom({
-      curation: { status: 'done', counts: { curated: 1, deprecated: 0 } },
-      pendingProposalCount: 1,
-    })).toEqual({
-      count: 1,
-      line: '1 proposal waiting for review in this project',
-      command: 'agent-qa proposals list --status pending',
-      copyLabel: COPY_REVIEW_COMMAND_LABEL,
-    })
-  })
-
-  // RE-SPELLED 427-09 from 'says many proposals await in the plural': the count is the project's,
-  // never this run's, and the line says so (D-18).
-  it('PROPOSALS-PROJECT-SCOPE: says many proposals wait in the plural, and names the project as their scope', () => {
-    expect(proposalsFrom({
-      curation: { status: 'done', counts: { curated: 1, deprecated: 0 } },
-      pendingProposalCount: 3,
-    })?.line).toBe('3 proposals waiting for review in this project')
-    expect(pendingProposalsLine(3)).toBe('3 proposals waiting for review in this project')
-    expect(pendingProposalsLine(1)).toBe('1 proposal waiting for review in this project')
-    expect(pendingProposalsLine(3)).not.toMatch(/this run/)
-  })
-
-  it('shows the proposals line even while curation is unsettled — the inbox is not this run\'s chain', () => {
-    expect(proposalsFrom({ curation: { status: 'pending' }, pendingProposalCount: 2 })?.count).toBe(2)
-    expect(learnedFrom({ curation: { status: 'pending' } }).state).toBe('pending')
-  })
-
-  it('carries no proposal CONTENT anywhere in the view — a count and a door, nothing else (T-407-22)', () => {
-    const proposals = proposalsFrom({
-      curation: { status: 'done', counts: { curated: 1, deprecated: 0 } },
-      pendingProposalCount: 2,
-    })
-    expect(Object.keys(proposals ?? {}).sort()).toEqual(['command', 'copyLabel', 'count', 'line'])
+// RE-SPELLED 432-09 (D-25) from 'the proposals line is a COUNT and a door, never any proposal content
+// (D-11)': the tab shows what changed, so no ready view carries a proposals member, a count or a
+// review command, whatever the curation word — and a legacy count on the wire is not projected.
+describe('no ready view carries a pending-proposals line or a review command (432-09 D-25)', () => {
+  it.each([
+    ['done', { curation: { status: 'done' as const, counts: { curated: 1, deprecated: 0 } } }],
+    ['pending', { curation: { status: 'pending' as const } }],
+    ['a legacy count on the wire', { curation: { status: 'done' as const }, pendingProposalCount: 3 } as never],
+  ])('renders no proposals member on %s', (_name, overrides) => {
+    const view = readyView(overrides)
+    expect('proposals' in view).toBe(false)
+    expect(JSON.stringify(view)).not.toMatch(/agent-qa proposals|waiting for review/)
   })
 })
 
 describe('the ready arm carries the Learned half so the tab does not have to build one', () => {
-  it('fills `learned` on every ready view, and `proposals` only when there are any', () => {
+  it('fills `learned` on every ready view, and never a `proposals` member (432-09)', () => {
     const view = projectKnowledgeView(ready({
       curation: { status: 'done', counts: { curated: 2, deprecated: 1 } },
       learned: { changes: [change('confirmed', 'MEM-001')], canaryAttributions: [] },
-      pendingProposalCount: 4,
     }))
     if (view.state !== 'ready') throw new Error('expected ready')
     expect(view.learned?.state).toBe('done')
     expect(view.learned?.rows.length).toBe(1)
-    expect(view.proposals?.count).toBe(4)
+    expect('proposals' in view).toBe(false)
   })
 
-  it('omits `proposals` from the ready arm when the read carried no pending count', () => {
+  it('omits `proposals` from the ready arm on every read', () => {
     const view = projectKnowledgeView(ready({ curation: { status: 'running' } }))
     if (view.state !== 'ready') throw new Error('expected ready')
     expect('proposals' in view).toBe(false)
@@ -1907,7 +1861,6 @@ describe('the 407-09 copy is published as constants, like every sentence before 
     expect(COUNTS_NOT_RECORDED_SENTENCE).toBe('Counts not recorded for this run.')
     expect(CHANGES_NOT_AVAILABLE_TEXT).toBe('Change records for this run are not available yet.')
     expect(NO_MEMORY_CHANGES_SENTENCE).toBe('Post-run processing finished and changed nothing in memory.')
-    expect(COPY_REVIEW_COMMAND_LABEL).toBe('Copy review command')
     expect(RECONCILIATION_UNATTRIBUTED_TEXT).toBe("The difference could not be attributed to this run's rows.")
     expect(new Set([
       CHANGES_PENDING_TEXT,

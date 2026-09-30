@@ -248,7 +248,8 @@ function deps(options: DepsOptions = {}): FunctionDeps {
     ...(options.bindProposalsInbox === true
       ? {
           proposalsInbox: {
-            list: () => Promise.resolve([]),
+            // 432-09: a bound inbox is never read by this projection.
+            list: () => Promise.reject(new Error('runs.knowledge must not list the proposals inbox')),
             show: () => Promise.resolve({ kind: 'not-found' } as never),
             reject: () => Promise.resolve({ outcome: 'not-found' } as never),
             recordApplied: () => Promise.resolve({ outcome: 'not-found' } as never),
@@ -1046,17 +1047,20 @@ describe('a partial attribution walk raises the flag by CONTRACT, and the op emi
   })
 })
 
-describe('the proposals line rides only where an inbox is bound (D-11)', () => {
+// RE-SPELLED 432-09 (D-25) from 'the proposals line rides only where an inbox is bound (D-11)': the tab
+// shows what changed and never what awaits review, so no host joins a pending-proposal count.
+describe('no pending-proposal count rides the projection, inbox bound or not (432-09 D-25)', () => {
   it('carries no pendingProposalCount key on a host with no inbox', async () => {
     const result = await ready()
 
     expect('pendingProposalCount' in result).toBe(false)
   })
 
-  it('carries the count from runs.digest when the inbox is bound', async () => {
+  it('carries no pendingProposalCount key and never lists the inbox when one is bound', async () => {
     const result = await ready({ bindProposalsInbox: true })
 
-    expect(result.pendingProposalCount).toBe(0)
+    expect('pendingProposalCount' in result).toBe(false)
+    expect(runsKnowledgeSpec.output.safeParse({ ...result, pendingProposalCount: 0 }).success).toBe(false)
   })
 })
 

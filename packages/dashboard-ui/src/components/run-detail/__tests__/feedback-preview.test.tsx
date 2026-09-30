@@ -37,7 +37,7 @@ import {
   groundTruthLine,
   knowledgeLine,
   labelsLine,
-  proposalDraftText,
+  previewFixText,
   recordEffectLine,
   replacesLine,
   showRecordsLabel,
@@ -64,7 +64,7 @@ function content(text: string) {
 
 const overturn = (token: string) => ({ direction: 'overturn', overturnsEvidenceToken: token, overturnsCurationJobId: 'job-curate-1' })
 
-/** A false-fail superseding mark #2: one served record confirmed, a knowledge fact drafted, a proposal withdrawn. */
+/** A false-fail superseding mark #2: one served record confirmed and a knowledge fact to be added (432-09). */
 function falseFail(over: Record<string, unknown> = {}): RunsMarkPreviewResult {
   return RunsMarkPreviewResultSchema.parse({
     kind: 'consequences',
@@ -93,7 +93,6 @@ function falseFail(over: Record<string, unknown> = {}): RunsMarkPreviewResult {
       evidence: { confirmed: 1, overturned: 0 },
     },
     draft: { kind: 'knowledge', fix: 'fact', target: { grain: 'record', recordId: 'rec-target-beta' } },
-    withdraws: { proposalId: 'prop-secret-gamma', proposalKind: 'knowledge' },
     ...over,
   })
 }
@@ -187,10 +186,10 @@ describe('426-06 the What this will do section', () => {
     const dl = section().querySelector('dl')!
     expect(dl.className).toContain('grid-cols-[auto_1fr]')
     expect([...dl.querySelectorAll('dt')].map((dt) => dt.textContent)).toEqual([
-      PREVIEW_LINE_LABELS.result, PREVIEW_LINE_LABELS.labels, PREVIEW_LINE_LABELS.knowledge, PREVIEW_LINE_LABELS.proposals,
+      PREVIEW_LINE_LABELS.result, PREVIEW_LINE_LABELS.labels, PREVIEW_LINE_LABELS.knowledge, PREVIEW_LINE_LABELS.change,
     ])
     const dds = [...dl.querySelectorAll('dd')]
-    expect(dds.map((dd) => dd.getAttribute('data-preview-line'))).toEqual(['result', 'labels', 'knowledge', 'proposals'])
+    expect(dds.map((dd) => dd.getAttribute('data-preview-line'))).toEqual(['result', 'labels', 'knowledge', 'change'])
     for (const dd of dds) {
       expect(dd.className).toContain('break-words')
       expect(dd.textContent?.trim()).not.toBe('')
@@ -200,10 +199,10 @@ describe('426-06 the What this will do section', () => {
     expect(line('labels')!.textContent).toBe(labelsLine(1))
     expect(line('knowledge')!.textContent).toContain(knowledgeLine(read.knowledge.evidence, 1))
     expect(line('knowledge')!.textContent).toContain(showRecordsLabel(1))
-    expect(line('proposals')!.textContent).toBe(proposalDraftText(read.draft) + DRAFT_WORDING_NOT_SHOWN_TEXT)
+    expect(line('change')!.textContent).toBe(previewFixText(read.draft) + DRAFT_WORDING_NOT_SHOWN_TEXT)
 
     await openRecords()
-    for (const secret of ['rec-served-alpha', 'rec-target-beta', 'prop-secret-gamma', PRIOR_MARK_ID, 'cas-secret-source',
+    for (const secret of ['rec-served-alpha', 'rec-target-beta', PRIOR_MARK_ID, 'cas-secret-source',
       String(DECISION_ORDINAL), TEST_ID, RUN_ID]) {
       expect(visibleText(), `visible text carries ${secret}`).not.toContain(secret)
     }
@@ -211,16 +210,16 @@ describe('426-06 the What this will do section', () => {
 
   it('PREVIEW-FOUR-LINES: empty facts each read a sentence and no dd renders empty', () => {
     const read = falseFail({
-      latest: { kind: 'first' }, basis: { ledgerOrdinal: 0 }, withdraws: undefined, groundTruth: [], labels: [],
+      latest: { kind: 'first' }, basis: { ledgerOrdinal: 0 }, groundTruth: [], labels: [],
       knowledge: { servedRecordIds: [], appendsEvidence: false, records: [], evidence: { confirmed: 0, overturned: 0 } },
       draft: { kind: 'no-draftable-fix', checked: { servedRecords: 0, procedureReads: 0, assertionDrift: false } },
     })
     render({ state: 'consequences', current: true, read })
-    for (const name of ['result', 'labels', 'knowledge', 'proposals']) expect(line(name), `no ${name} line`).not.toBeNull()
+    for (const name of ['result', 'labels', 'knowledge', 'change']) expect(line(name), `no ${name} line`).not.toBeNull()
     expect(line('result')!.textContent).toBe('No step verdict changes.')
     expect(line('labels')!.textContent).toBe('No eval labels change')
     expect(line('knowledge')!.textContent).toBe('No knowledge records are reached')
-    expect(line('proposals')!.textContent).toBe('No fix can be drafted from this run')
+    expect(line('change')!.textContent).toBe('No fix can be made from this run')
     expect(line('replaces')).toBeNull()
     expect([...container.querySelectorAll('button')].some((button) => button.textContent?.startsWith('Show records'))).toBe(false)
   })
@@ -245,7 +244,7 @@ describe('426-06 the What this will do section', () => {
     expect(line('result')!.querySelectorAll(':scope > *')).toHaveLength(2)
     expect(line('result')!.textContent).toContain('with your corrected action')
     expect(line('labels')!.textContent).toBe(labelsLine(3))
-    expect(line('proposals')!.textContent).toBe(proposalDraftText(read.draft) + DRAFT_WORDING_NOT_SHOWN_TEXT)
+    expect(line('change')!.textContent).toBe(previewFixText(read.draft) + DRAFT_WORDING_NOT_SHOWN_TEXT)
   })
 
   it('PREVIEW-UNREADABLE-RECORD: an unreadable record keeps its li, reads its absence and the unreadable sentence', async () => {
@@ -257,16 +256,19 @@ describe('426-06 the What this will do section', () => {
     expect(unreadable!.textContent).toBe(CONTENT_ABSENCE_TEXT['scan-incomplete'] + UNREADABLE_RECORD_TEXT)
   })
 
-  it('PREVIEW-REPLACES-LINE: a superseding mark reads the replaced ordinal, the time when given, and the withdrawal', () => {
+  // RE-SPELLED 432-09 (D-11) from 'PREVIEW-REPLACES-LINE: a superseding mark reads the replaced
+  // ordinal, the time when given, and the withdrawal': a later mark withdraws nothing it applied.
+  it('PREVIEW-REPLACES-LINE: a superseding mark reads the replaced ordinal, the time when given, and that its change stays', () => {
     render({ state: 'consequences', current: true, read: falseFail(), replacesTime: '14:05' })
     const replaces = line('replaces')
     expect(replaces, 'no replaces line').not.toBeNull()
     expect(replaces!.tagName).toBe('P')
-    expect(replaces!.textContent).toBe(replacesLine(2, '14:05', true))
-    expect(replaces!.textContent).toContain(' and withdraws its proposal')
+    expect(replaces!.textContent).toBe(replacesLine(2, '14:05'))
+    expect(replaces!.textContent).toContain('what it changed stays')
+    expect(replaces!.textContent).not.toMatch(/withdraw|proposal/)
 
-    render({ state: 'consequences', current: true, read: falseFail({ withdraws: undefined }) })
-    expect(line('replaces')!.textContent).toBe('Replaces your earlier mark (#2)')
+    render({ state: 'consequences', current: true, read: falseFail() })
+    expect(line('replaces')!.textContent).toBe('Replaces your earlier mark (#2); what it changed stays')
   })
 
   it('PREVIEW-MASKED-ESCAPED: hostile reasoning and record content stay text and create no element', async () => {

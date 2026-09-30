@@ -40,7 +40,9 @@ describe('dashboard runs.mark confirmation through the composed host (419 D-13)'
     const f = fixture()
     expect(f.agentHost.runsMarkFunctionId).toBe(RUNS_MARK_FUNCTION_ID)
     for (const scope of [undefined, f.scope]) {
-      expect(await f.invoke(scope)).toMatchObject({ status: 403, body: { error: 'mark_denied', remedies: [] } })
+      // 432-09 (D-15): the refusal body is a plain reason and nothing else.
+      expect(await f.invoke(scope)).toMatchObject({ status: 403, body: { error: 'mark_denied', reason: 'The safety gate denied this mark.' } })
+      expect(Object.keys((await f.invoke(scope) as { body: object }).body).sort()).toEqual(['error', 'reason'])
     }
     expect(f.frames).toEqual([])
   })

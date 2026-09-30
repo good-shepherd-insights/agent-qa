@@ -3,7 +3,7 @@ import { trustPriorsForHost, type ResolveTrustPriors } from '../curation/trust-p
 import type { KnowledgeReaderPort } from '@vostride/agent-qa-agent'
 import type { FeedbackPort } from '@vostride/agent-qa-schema'
 import { RUNS_MARK_FUNCTION_ID } from '@vostride/agent-qa-agent'
-import { createKnowledgeReader, createKnowledgeReview, LOCAL_CURATION_CAPABILITIES, type LocalCurationCapabilities } from '@vostride/agent-qa-agent-local'
+import { applyKnowledgeChange, createKnowledgeReader, LOCAL_CURATION_CAPABILITIES, type ExplicitReviewDelegate, type LocalCurationCapabilities } from '@vostride/agent-qa-agent-local'
 import { RunsMarkInputSchema, type AuthoringDraftEditInput, type AuthoringDraftEditOutput, type MarkReceipt, type RunsMarkOutcome } from '@vostride/agent-qa-schema'
 import { resolveConfiguredKnowledgeRoot } from '../config.js'
 import { wordImprovementPlan } from './feedback-wording.js'
@@ -17,13 +17,29 @@ export interface FeedbackHostDeps {
   configPath: string
   agentQaRoot: string
   invokeAuthoringDraftEdit?: (input: AuthoringDraftEditInput) => Promise<AuthoringDraftEditOutput>
-  curation?: Pick<LocalCurationCapabilities, 'appendMarkEvidence' | 'triageMark' | 'servedIdsOn' | 'procedureReadOn' | 'applyFeedback' | 'withdrawPendingProposal' | 'readFeedbackRecord' | 'fileMarkTestDraft'> & {
+  /** The direct knowledge writer a mark's fix goes through (432-09). Injectable so a cell can fault it. */
+  applyKnowledgeChange?: typeof applyKnowledgeChange
+  /**
+   * How this host reaches a live writer-lease holder with a mark's fix: the holder is handed the
+   * validated request and the mark's stable identity, bounded, and the lease is never taken. A host
+   * that binds none refuses by name when the lease is held, and a retry resumes from the intent.
+   */
+  knowledgeChangeDelegate?: ExplicitReviewDelegate
+  curation?: Pick<LocalCurationCapabilities, 'appendMarkEvidence' | 'triageMark' | 'servedIdsOn' | 'procedureReadOn' | 'applyFeedback' | 'readFeedbackRecord'> & {
     maintenance: Pick<LocalCurationCapabilities['maintenance'], 'acquireWriterLease' | 'releaseLease'>
   }
   reader?: KnowledgeReaderPort
   now?: () => number
   randomUuid: () => string
   word?: typeof wordImprovementPlan
+}
+
+/** The fix's target left the store between planning and publication; gold and evidence stand, no receipt. */
+export class MarkFixNotAppliedError extends Error {
+  constructor(readonly reason: string) {
+    super(`Mark fix was not applied (${reason}); gold and evidence landed, no mark receipt appended. Retry the mark.`)
+    this.name = 'MarkFixNotAppliedError'
+  }
 }
 
 export class FeedbackFreezeRefusedError extends Error {
@@ -74,9 +90,12 @@ export function createFeedbackPortForHost(deps: FeedbackHostDeps): FeedbackPort 
           mark.disposition = { kind: 'quarantined', class: planned.class }
           return mark
         }
+        // 432-09 (D-04/D-11): the intent's operation identity is every effect's identity, so a retry
+        // from any checkpoint (after gold, after evidence, after publication, before the receipt)
+        // lands the same fix once. Order is gold, evidence, fix, receipt.
         let intent = ledger.prepareIntent(mark, deps.randomUuid())
         mark = intent.mark
-        if (intent.stage !== 'drafted') {
+        if (intent.stage !== 'applied') {
         const session = await resolveEvalSession({ configPath: deps.configPath, keyOnly: true })
         const configDir = dirname(resolve(deps.configPath))
         const frozen = freezeGoldenTrajectory({ agentQaRoot: deps.agentQaRoot,
@@ -117,33 +136,32 @@ export function createFeedbackPortForHost(deps: FeedbackHostDeps): FeedbackPort 
             member, canDraftTestEdit: deps.invokeAuthoringDraftEdit !== undefined })
           if (draft.kind === 'knowledge') {
             const knowledgePlan = draft.plan
-            const review = createKnowledgeReview({ agentQaRoot: deps.agentQaRoot, resolveKnowledgeRoot: () => knowledgeRoot,
-              resolveTrustPriors,
-              proposalIdentity: { uuid: intent.proposalUuid, at: mark.markedAt } })
-            const proposed = await review.propose({ verb: 'mark', input: { target: knowledgePlan.target,
-              mark: { runId: mark.runId, testIndex: mark.testIndex,
-                ...(mark.stepIndex === undefined ? {} : { stepIndex: mark.stepIndex }),
-                markId: mark.markId, kind: mark.kind, fix: knowledgePlan.fix }, plan: knowledgePlan } },
-            { emittedBy: RUNS_MARK_FUNCTION_ID, runId: mark.runId })
-            if (proposed.kind !== 'proposed') throw new Error('Mark draft target disappeared; gold/evidence landed, no mark receipt appended')
-            mark.disposition = { kind: 'drafted', fix: knowledgePlan.fix, proposalId: proposed.proposal.proposalId, proposalKind: 'knowledge' }
+            // The same identity on every attempt: the writer reads a landed change back rather than
+            // landing it twice, and a held lease goes to its holder with this exact request.
+            const applied = await (deps.applyKnowledgeChange ?? applyKnowledgeChange)({
+              agentQaRoot: deps.agentQaRoot, knowledgeRoot, operationId: intent.operationId,
+              opId: RUNS_MARK_FUNCTION_ID, executionContext: session.executionContext, resolveTrustPriors,
+              request: { verb: 'mark', input: { target: knowledgePlan.target,
+                mark: { runId: mark.runId, testIndex: mark.testIndex,
+                  ...(mark.stepIndex === undefined ? {} : { stepIndex: mark.stepIndex }),
+                  markId: mark.markId, kind: mark.kind, fix: knowledgePlan.fix }, plan: knowledgePlan } },
+              ...(deps.knowledgeChangeDelegate === undefined ? {} : { delegate: deps.knowledgeChangeDelegate }),
+            })
+            if (applied.outcome !== 'applied') throw new MarkFixNotAppliedError(applied.outcome)
+            mark.disposition = { kind: 'applied', fix: knowledgePlan.fix,
+              change: { kind: 'knowledge', changeId: applied.changeId, recordIds: [...applied.recordIds] } }
           } else if (draft.kind === 'test-edit') {
-            // decideMarkDraft admits a test edit only when this host binds the authoring edit.
-            const edited = intent.testDraft ?? await deps.invokeAuthoringDraftEdit!({ testRef: draft.plan.testRef, intent: draft.plan.intent })
-            intent = ledger.checkpointIntent({ ...intent, mark, testDraft: edited })
-            const proposalId = curation.fileMarkTestDraft({ agentQaRoot: deps.agentQaRoot, runId: mark.runId, proposal: edited.proposal,
-              identity: { uuid: intent.proposalUuid, at: mark.markedAt } })
-            mark.disposition = { kind: 'drafted', fix: 'test-edit', proposalId, proposalKind: 'test-draft' }
+            // decideMarkDraft admits a test edit only when this host binds the authoring edit, which
+            // writes the edited file itself, guarded by the digest it read (432-08).
+            const edited = await deps.invokeAuthoringDraftEdit!({ testRef: draft.plan.testRef, intent: draft.plan.intent })
+            if (edited.written.kind !== 'written') throw new MarkFixNotAppliedError(edited.written.reason)
+            mark.disposition = { kind: 'applied', fix: 'test-edit',
+              change: { kind: 'test-file', filePath: edited.written.filePath, contentDigest: edited.written.contentDigest } }
           } else {
             mark.disposition = { kind: 'no-draftable-fix', checked: draft.checked }
           }
         }
-        ledger.checkpointIntent({ ...intent, mark, stage: 'drafted' })
-        }
-        if (planned.withdraws !== undefined) {
-          await curation.withdrawPendingProposal({ agentQaRoot: deps.agentQaRoot,
-            proposalId: planned.withdraws.proposalId, proposalKind: planned.withdraws.proposalKind,
-            reason: `superseded by ${mark.markId}` })
+        ledger.checkpointIntent({ ...intent, mark, stage: 'applied' })
         }
         return mark
       })

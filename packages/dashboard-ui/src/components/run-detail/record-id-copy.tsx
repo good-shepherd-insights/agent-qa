@@ -1,6 +1,6 @@
 // 427 · D-19 / E8 — the copy button beside every record id in Retrieval details.
 //
-// The status logic is ReviewCommandButton's, not IdBadge's: the check shows only after a write
+// The status logic is its own, not IdBadge's: the check shows only after a write
 // resolved, and a missing clipboard or a rejected write is announced as a failure that spells the
 // id out, so it can still be selected by hand. Only the id string the view holds is written.
 

@@ -50,14 +50,14 @@ import type {
   PostProcessingChipStatus,
   Mark,
   RunsMarkInput,
-  GateRemedy,
   RunDetailMemberMark,
   RunDetailProjection,
 } from '@vostride/agent-qa-schema'
 
 export type OnMark = (testIndex: number, stepIndex: number | undefined, kind: Mark, note?: string,
   correction?: Pick<RunsMarkInput, 'correctedExpectation' | 'correctedAction'>) => Promise<'refreshed' | 'retained' | 'stale'>
-export interface MarkDenial { reason: string; remedies: readonly GateRemedy[] }
+/** 432-09 (D-15): a refused mark, as a plain reason. */
+export interface MarkDenial { reason: string }
 
 /** The provenance chip when the model authored this verdict (D-10). */
 export const LLM_VERDICT_LABEL = 'LLM verdict'

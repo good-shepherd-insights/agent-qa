@@ -1,11 +1,12 @@
-// 2026-09-15, 423 D-19: every mark on a run in ordinal order, with read-time supersession and
-// the drafted proposal's current state. Pure observation through the feedbackReads port.
+// 2026-09-15, 423 D-19: every mark on a run in ordinal order, with read-time supersession. Pure
+// observation through the feedbackReads port. 2026-09-30, 432-09 (D-04/D-25): each applied knowledge
+// fix carries the records it changed, read now; nothing is read from a proposal store.
 import { getActiveMaskingContext } from '@vostride/agent-qa-safety'
 import {
-  RunsMarksHistoryInputSchema, RunsMarksHistoryResultSchema, markAddressKey, maskedMarker,
+  RunsMarksHistoryInputSchema, RunsMarksHistoryResultSchema, markAddressKey, maskRecordContent, maskedMarker,
 } from '@vostride/agent-qa-schema'
 import type {
-  MarkHistoryEntry, MarkProposalCurrent, MarkReceipt, MaskFn, RunsMarksHistoryInput, RunsMarksHistoryResult,
+  MarkHistoryChangedRecord, MarkHistoryEntry, MarkReceipt, MaskFn, RunsMarksHistoryInput, RunsMarksHistoryResult,
 } from '@vostride/agent-qa-schema'
 
 import { FunctionNotBoundError } from '../spec.js'
@@ -13,13 +14,14 @@ import type { ClauseVerdict, FunctionSpec } from '../spec.js'
 
 export const RUNS_MARKS_HISTORY_FUNCTION_ID = 'runs.marks.history'
 
-function maskProposal(proposal: MarkProposalCurrent, mask: MaskFn): MarkProposalCurrent {
-  if ((proposal.state !== 'applied' && proposal.state !== 'rejected') || proposal.decision?.reason === undefined) return proposal
-  return { ...proposal, decision: { ...proposal.decision, reason: mask(proposal.decision.reason) } }
+// Joined record content is masked exactly as runs.knowledge masks it; ids and absences stay structural.
+function maskChangedRecord(record: MarkHistoryChangedRecord, mask: MaskFn): MarkHistoryChangedRecord {
+  return record.recordContent === undefined ? record
+    : { ...record, recordContent: maskRecordContent(record.recordContent, mask) }
 }
 
-// Only free text crosses the mask. Ids, kinds, counts and addresses stay structural.
-function projectEntry(receipt: MarkReceipt, proposal: MarkProposalCurrent | undefined,
+// Only free text crosses the mask. Ids, kinds, counts, paths and addresses stay structural.
+function projectEntry(receipt: MarkReceipt, changedRecords: readonly MarkHistoryChangedRecord[] | undefined,
   supersededBy: string | undefined, mask: MaskFn): MarkHistoryEntry {
   return {
     markId: receipt.markId,
@@ -46,13 +48,13 @@ function projectEntry(receipt: MarkReceipt, proposal: MarkProposalCurrent | unde
     ...(receipt.supersedes === undefined ? {} : { supersedes: receipt.supersedes }),
     active: supersededBy === undefined,
     ...(supersededBy === undefined ? {} : { supersededBy }),
-    ...(proposal === undefined ? {} : { proposal: maskProposal(proposal, mask) }),
+    ...(changedRecords === undefined ? {} : { changedRecords: changedRecords.map(record => maskChangedRecord(record, mask)) }),
   }
 }
 
 export const runsMarksHistorySpec: FunctionSpec<RunsMarksHistoryInput, RunsMarksHistoryResult> = {
   id: RUNS_MARKS_HISTORY_FUNCTION_ID,
-  summary: 'Read every mark on a run in ordinal order with supersession and each drafted proposal\'s current state.',
+  summary: 'Read every mark on a run in ordinal order with supersession and what each applied fix changed.',
   requiredScopes: ['read'],
   resultKind: 'unary',
   boundThrough: 'feedbackReads',
@@ -99,7 +101,7 @@ export const runsMarksHistorySpec: FunctionSpec<RunsMarksHistoryInput, RunsMarks
     return RunsMarksHistoryResultSchema.parse({
       kind: 'history',
       runId,
-      entries: read.entries.map((entry, index) => projectEntry(entry.receipt, entry.proposal, supersededBy[index], mask)),
+      entries: read.entries.map((entry, index) => projectEntry(entry.receipt, entry.changedRecords, supersededBy[index], mask)),
     })
   },
 }

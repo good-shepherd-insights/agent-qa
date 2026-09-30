@@ -173,7 +173,6 @@ function buildProjection(runId: string, steps: RealStep[], world: World): Extrac
     steps: projectionSteps,
     curation: world === 'pending' ? { status: 'pending' } : { status: 'done', counts: { curated: 4, deprecated: 1 } },
     learned,
-    pendingProposalCount: 3,
   })
   if (parsed.kind !== 'ready') throw new Error('the capture projection must be ready')
   return parsed
@@ -727,6 +726,8 @@ describe('the Knowledge tab on the shipped bundle at three geometries (427-13)',
     const reached = new Set(focused.map(entry => entry.id))
     const where = (group: string) => `${group}: ${JSON.stringify(focused.map(entry => `${entry.tag}:${entry.label ?? ''}`))}`
     for (const [group, ids] of Object.entries(inventory)) {
+      // 432-09 (D-25): the proposals group is the one retired member; its absence is asserted below.
+      if (group === 'proposals') continue
       expect(ids.length, `no ${group} on the page`).toBeGreaterThan(0)
       for (const id of ids) expect(reached.has(id), where(`${group} ${String(id)} never took focus`)).toBe(true)
     }
@@ -761,12 +762,9 @@ describe('the Knowledge tab on the shipped bundle at three geometries (427-13)',
       expect(occurrences(`${name} ${description}`, meaning[id]!), `${control}: meaning announced other than once`).toBe(1)
     }
     for (const id of inventory.stepRefs) expect(labels[id], 'a step reference\'s accessible name').toMatch(/^Go to /)
-    for (const id of inventory.proposals) {
-      const entry = byId.get(id)!
-      expect(labels[id]).toMatch(/^Copy review command/)
-      expect(entry.ax.name.startsWith('Copy review command: '), JSON.stringify(entry.ax)).toBe(true)
-      expect(entry.ax.description, `the copy button's description: ${JSON.stringify(entry.ax)}`).toBe('')
-    }
+    // 432-09 (D-25): the tab shows what changed; no pending-proposals line or review copy control remains.
+    expect(inventory.proposals).toEqual([])
+    expect(Object.values(labels).filter(label => label?.startsWith('Copy review command'))).toEqual([])
     for (const id of inventory.recordIdCopies) expect(labels[id]).toMatch(/^Copy record id /)
     // Tab shows a trigger's tooltip unless the focus had to scroll the pane: Radix closes a tooltip
     // when an ancestor scrolls, and the browser's focus scroll lands a frame after the open. The

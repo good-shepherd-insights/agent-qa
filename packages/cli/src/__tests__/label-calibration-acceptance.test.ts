@@ -200,7 +200,7 @@ it('adopts a real prior generation in new bundle/index hosts and matches report,
       readPostProcessingStatus: async (): Promise<PostProcessingStatus> => ({ runId: f.handoff.runId,
         chips: { analysis: 'done', curation: mode === 'failed' ? 'failed' : 'pending' },
         ...(mode === 'done' || mode === 'failed' ? { notification } : {}) }),
-      readRunDigest: async () => ({ pendingProposalCount: 0 }),
+      readRunDigest: async () => ({ markChanges: [] }),
     } as unknown as PostRunTailOperations
     const tail = composeCliPostRunTail({ runId: f.handoff.runId, configDir: f.root, configFilePath: f.configPath,
       knowledgeConfig: { dir: 'agent-qa-knowledge' }, auditSink: {} as never,
@@ -251,10 +251,14 @@ it('adopts a real prior generation in new bundle/index hosts and matches report,
   expect(current.message).toContain(formatTrustPriorDisclosure(fresh.disclosure))
   expect(bytes(f.root)).toEqual(beforeDoctor)
   await f.mark(20)
-  const beforeStale = bytes(f.root), stale = await doctor()
+  // 432-09 (D-04): the marks now commit their fixes, and that commit leaves the index database
+  // checkpointed with no WAL sidecars. The doctor's read-open recreates SQLite's transient -wal/-shm
+  // files beside it, which are not content; every other byte, the database included, is unchanged.
+  const content = (root: string) => bytes(root).filter(([path]) => !/knowledge\.db-(?:wal|shm)$/.test(path!))
+  const beforeStale = content(f.root), stale = await doctor()
   expect(stale.message).toContain('goldDigest stale')
   expect(stale.message).toContain(publication.artifact.generationId)
-  expect(bytes(f.root)).toEqual(beforeStale)
+  expect(content(f.root)).toEqual(beforeStale)
   expect(buildTrustPriorsResolver({ ...f, inspectCalibration: true })).toMatchObject({ kind: 'ready', calibration: expect.stringContaining('stale') })
 })
 

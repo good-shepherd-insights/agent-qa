@@ -537,9 +537,9 @@ describe('423 typed evidence HTTP doors', () => {
 // ---- 423-21 (D-18): the two feedback reads on both HTTP doors ---------------------------------
 //
 // The routes format nothing: the registry's own ops answer through a file-backed read port, so the
-// HTTP bodies are compared with a direct invocation of the same registry. The real ledger and
-// proposals-store host lives in the CLI, whose 423-feedback-reads suite drives these same routes
-// over its real stores.
+// HTTP bodies are compared with a direct invocation of the same registry. The real ledger host
+// lives in the CLI, whose 423-feedback-reads suite drives these same routes over its real stores.
+// 2026-09-30, 432-09: the first mark applied a knowledge fix, and its changed record is joined.
 
 const FEEDBACK_NOTE_SECRET = 'synthetic-423-21-note-token'
 const FEEDBACK_AUTH_TOKEN = 'synthetic-423-21-cookie-token'
@@ -554,7 +554,7 @@ function feedbackReceipts(): MarkReceipt[] {
     origin: 'user' as const, gold: [], evidence: { confirmed: 0, overturned: 0 } }
   return [
     { ...base, markId: FIRST_MARK, kind: 'false-fail', ordinal: 1, markedAt: 1, note: `note ${FEEDBACK_NOTE_SECRET}`,
-      disposition: { kind: 'drafted', fix: 'fact', proposalId: 'proposal-423-21', proposalKind: 'knowledge' } },
+      disposition: { kind: 'applied', fix: 'fact', change: { kind: 'knowledge', changeId: 'prop_0123456789ab', recordIds: ['mem_423_21'] } } },
     { ...base, markId: SECOND_MARK, kind: 'confirmed-bug', ordinal: 2, markedAt: 2, supersedes: FIRST_MARK,
       disposition: { kind: 'confirmed-bug', confirmedRecords: 0 } },
   ]
@@ -582,8 +582,8 @@ function fileFeedbackReads(root: string, calls: string[], options: { withPreview
       calls.push('history')
       if (!existsSync(runDir(runId))) return { kind: 'run-not-found' }
       const receipts = JSON.parse(readFileSync(join(runDir(runId), 'marks.json'), 'utf8')) as MarkReceipt[]
-      return { kind: 'history', entries: receipts.map(receipt => receipt.disposition.kind === 'drafted'
-        ? { receipt, proposal: { state: 'pending' as const, applyInFlight: false } } : { receipt }) }
+      return { kind: 'history', entries: receipts.map(receipt => receipt.disposition.kind === 'applied'
+        ? { receipt, changedRecords: [{ recordId: 'mem_423_21', contentAbsence: { reason: 'not-bound' as const } }] } : { receipt }) }
     },
     ...(options.withPreview === false ? {} : {
       preview: async (input: RunsMarkInput) => {
@@ -675,7 +675,7 @@ describe('423-21 feedback reads on both HTTP doors (D-18)', () => {
     // A cold registry holds no masking authority for this read, so free text is fully redacted.
     expect(RunsMarksHistoryResultSchema.parse(expected)).toMatchObject({ kind: 'history', entries: [
       { markId: FIRST_MARK, note: maskedMarker('secret'), active: false, supersededBy: SECOND_MARK,
-        proposal: { state: 'pending', applyInFlight: false } },
+        changedRecords: [{ recordId: 'mem_423_21', contentAbsence: { reason: 'not-bound' } }] },
       { markId: SECOND_MARK, active: true, supersedes: FIRST_MARK },
     ] })
     f.seen.length = 0

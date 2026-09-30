@@ -17,8 +17,6 @@ import type {
   MarkPreviewKnowledge,
   MarkPreviewKnowledgeRecord,
   MarkPreviewLabel,
-  MarkProposalCurrent,
-  MarkProposalState,
   MarkQuarantineClass,
   MemberTestOutcome,
   RunDetailMember,
@@ -603,23 +601,28 @@ export function markGlyphLabel(kind: Mark): string {
   return `Marked: ${CHOICE_LABELS[kind]}`
 }
 
+// 2026-09-30, 432-09 (D-04/D-25): a mark applies its fix in the call, so a receipt says what was
+// added or edited. `drafted` is a pre-432 receipt read back from an existing ledger.
 export const DISPOSITION_TEXT = {
-  drafted: {
-    fact: 'Recorded — a knowledge fact was drafted for review',
-    caution: 'Recorded — a caution was drafted for review',
-    'procedure-hint': 'Recorded — a procedure hint was drafted for review',
-    'test-edit': 'Recorded — a test edit was drafted for review',
+  applied: {
+    fact: 'Recorded — a knowledge fact was added',
+    caution: 'Recorded — a caution was added',
+    'procedure-hint': 'Recorded — a procedure hint was added',
+    'test-edit': 'Recorded — the test file was edited',
   } satisfies Record<MarkFixKind, string>,
+  drafted: 'Recorded — a fix was drafted before fixes applied directly',
   'no-draftable-fix': 'Recorded — no fix could be drafted',
-  'confirmed-bug': 'Recorded — kept as a real product bug; no fix drafted',
+  'confirmed-bug': 'Recorded — kept as a real product bug; nothing changed',
 } as const
 
 export function dispositionText(disposition: MarkDisposition): string {
   switch (disposition.kind) {
     case 'quarantined':
       return `Recorded — quarantined (${disposition.class})`
+    case 'applied':
+      return DISPOSITION_TEXT.applied[disposition.fix]
     case 'drafted':
-      return DISPOSITION_TEXT.drafted[disposition.fix]
+      return DISPOSITION_TEXT.drafted
     case 'no-draftable-fix':
       return DISPOSITION_TEXT['no-draftable-fix']
     case 'confirmed-bug':
@@ -678,7 +681,7 @@ export const PREVIEW_LINE_LABELS = {
   result: 'Result',
   labels: 'Eval labels',
   knowledge: 'Knowledge',
-  proposals: 'Proposals',
+  change: 'Change',
 } as const
 
 const VERDICT_WORD = { pass: 'passed', fail: 'failed' } as const
@@ -751,43 +754,47 @@ export const CONTENT_ABSENCE_TEXT = {
   'not-bound': "Record content isn't available on this host",
 } satisfies Record<RunKnowledgeContentAbsence['reason'], string>
 
-export const PROPOSAL_DRAFT_TEXT = {
+// 432-09 (D-04): the preview says what sending will change, in the future tense of an applied fix.
+export const PREVIEW_FIX_TEXT = {
   knowledge: {
-    fact: 'A knowledge fact will be drafted for your review',
-    caution: 'A caution will be drafted for your review',
-    'procedure-hint': 'A procedure hint will be drafted for your review',
+    fact: 'A knowledge fact will be added',
+    caution: 'A caution will be added',
+    'procedure-hint': 'A procedure hint will be added',
   } satisfies Record<Extract<MarkPreviewDraft, { kind: 'knowledge' }>['fix'], string>,
-  'test-edit': 'A test edit will be drafted for your review',
-  'no-draftable-fix': 'No fix can be drafted from this run',
-  'confirmed-bug': 'Nothing is drafted — a real product bug needs a product fix, not a test or knowledge change',
+  'test-edit': 'The test file will be edited',
+  'no-draftable-fix': 'No fix can be made from this run',
+  'confirmed-bug': 'Nothing changes — a real product bug needs a product fix, not a test or knowledge change',
 } as const
 
-export function proposalDraftText(draft: MarkPreviewDraft): string {
+export function previewFixText(draft: MarkPreviewDraft): string {
   switch (draft.kind) {
     case 'knowledge':
-      return PROPOSAL_DRAFT_TEXT.knowledge[draft.fix]
+      return PREVIEW_FIX_TEXT.knowledge[draft.fix]
     case 'test-edit':
-      return PROPOSAL_DRAFT_TEXT['test-edit']
+      return PREVIEW_FIX_TEXT['test-edit']
     case 'no-draftable-fix':
-      return PROPOSAL_DRAFT_TEXT['no-draftable-fix']
+      return PREVIEW_FIX_TEXT['no-draftable-fix']
     case 'confirmed-bug':
-      return PROPOSAL_DRAFT_TEXT['confirmed-bug']
+      return PREVIEW_FIX_TEXT['confirmed-bug']
     default:
       return draft satisfies never
   }
 }
 
-/** The preview never calls the model, so a drafted fix is named but its wording is not shown. */
-export const DRAFT_WORDING_NOT_SHOWN_TEXT = "The drafted wording isn't shown here — it's written after you send."
+/** The preview never calls the model, so the fix is named but its wording is not shown. */
+export const DRAFT_WORDING_NOT_SHOWN_TEXT = "The exact wording isn't shown here — it's written when you send."
 
 export function draftHasWording(draft: MarkPreviewDraft): boolean {
   return draft.kind === 'knowledge' || draft.kind === 'test-edit'
 }
 
-/** The time is the history entry's own; without history the clause drops rather than guessing. */
-export function replacesLine(ordinal: number, time: string | undefined, withdraws: boolean): string {
+/**
+ * The time is the history entry's own; without history the clause drops rather than guessing.
+ * 432-09 (D-11): a later mark replaces the earlier one's gold case, and what it changed stays.
+ */
+export function replacesLine(ordinal: number, time: string | undefined): string {
   const at = time === undefined ? `#${String(ordinal)}` : `#${String(ordinal)}, ${time}`
-  return `Replaces your earlier mark (${at})${withdraws ? ' and withdraws its proposal' : ''}`
+  return `Replaces your earlier mark (${at}); what it changed stays`
 }
 
 export type MarkTargetReason = Extract<RunsMarkPreviewResult, { kind: 'consequences' }>['resolvedStep']['reason']
@@ -821,7 +828,7 @@ export const QUARANTINE_CAUSE_TEXT = {
 } satisfies Record<MarkQuarantineClass, string>
 
 export function quarantinedText(cls: MarkQuarantineClass): string {
-  return `This test failed from ${QUARANTINE_CAUSE_TEXT[cls]}, so your mark is recorded but quarantined — no labels, knowledge or proposals change.`
+  return `This test failed from ${QUARANTINE_CAUSE_TEXT[cls]}, so your mark is recorded but quarantined — no labels, knowledge or tests change.`
 }
 
 /** The time is the prior mark's history entry; without history the parenthetical drops. */
@@ -924,8 +931,8 @@ export function basisDetailText(basis: MarkPreviewBasis): string {
   return `ledger ordinal ${String(basis.ledgerOrdinal)}${prior}`
 }
 
-// D-22: the history. Each entry is one receipt; its disposition is what happened then, and its
-// proposal state is read now.
+// D-22: the history. Each entry is one receipt; its disposition is what happened then. 432-09
+// (D-25): an applied fix states in one line what it changed, and nothing is offered for review.
 
 export type FeedbackHistoryState =
   | 'loading'
@@ -985,20 +992,53 @@ export function correctedPresenceText(corrected: MarkHistoryEntry['corrected']):
   return undefined
 }
 
-export const PROPOSAL_STATE_TEXT = {
-  pending: 'waiting for review',
-  expired: 'expired',
-  applied: 'applied',
-  rejected: 'rejected',
-  missing: 'not found',
-  corrupt: 'unreadable',
-} satisfies Record<MarkProposalState, string>
+/** What one history line shows about an applied fix: the changed record content, or the written file. */
+export type AppliedChangeView =
+  | { kind: 'knowledge'; records: { recordId: string; content?: string }[] }
+  | { kind: 'test-file'; filePath: string }
+  /** A pre-432 drafted receipt: its change was never recorded, and none is invented. */
+  | { kind: 'unavailable' }
 
-export const PROPOSAL_APPLYING_TEXT = 'being applied'
+export const APPLIED_KNOWLEDGE_PREFIX = 'Changed knowledge: '
+export const APPLIED_TEST_FILE_PREFIX = 'Edited the test file '
+export const APPLIED_UNAVAILABLE_TEXT = 'What this mark changed was not recorded.'
 
-export function proposalStateText(proposal: MarkProposalCurrent): string {
-  const applying = (proposal.state === 'pending' || proposal.state === 'expired') && proposal.applyInFlight
-  return `Proposal: ${applying ? PROPOSAL_APPLYING_TEXT : PROPOSAL_STATE_TEXT[proposal.state]}`
+export function appliedRecordUnavailableText(recordId: string): string {
+  return `${recordId} (content unavailable)`
+}
+
+/** Projected from the receipt and its joined records; every other disposition changed nothing. */
+export function appliedChangeView(
+  entry: Pick<MarkHistoryEntry, 'disposition' | 'changedRecords'>,
+): AppliedChangeView | undefined {
+  const { disposition } = entry
+  if (disposition.kind === 'drafted') return { kind: 'unavailable' }
+  if (disposition.kind !== 'applied') return undefined
+  if (disposition.change.kind === 'test-file') return { kind: 'test-file', filePath: disposition.change.filePath }
+  const joined = new Map((entry.changedRecords ?? []).map((record) => [record.recordId, record.recordContent?.content]))
+  return {
+    kind: 'knowledge',
+    records: disposition.change.recordIds.map((recordId) => {
+      const content = joined.get(recordId)
+      return content === undefined ? { recordId } : { recordId, content }
+    }),
+  }
+}
+
+/** The line as plain text: the record content quoted, or the id with its absence, one line in all. */
+export function appliedChangeText(view: AppliedChangeView): string {
+  switch (view.kind) {
+    case 'knowledge':
+      return APPLIED_KNOWLEDGE_PREFIX + view.records
+        .map((record) => (record.content === undefined ? appliedRecordUnavailableText(record.recordId) : `“${record.content}”`))
+        .join('; ')
+    case 'test-file':
+      return APPLIED_TEST_FILE_PREFIX + view.filePath
+    case 'unavailable':
+      return APPLIED_UNAVAILABLE_TEXT
+    default:
+      return view satisfies never
+  }
 }
 
 export const HISTORY_EMPTY_TEXT = {

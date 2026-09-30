@@ -3,7 +3,7 @@ import { createServer } from 'node:http'
 import type { AddressInfo } from 'node:net'
 
 import { createFunctionRegistry, invokeFunction, RUNS_MARK_FUNCTION_ID, type FunctionDeps, type FunctionRegistry } from '@vostride/agent-qa-agent'
-import { asRunId, type RunsMarkInput, type RunsMarkOutcome } from '@vostride/agent-qa-schema'
+import { asRunId, MarkRefusalSchema, type RunsMarkInput, type RunsMarkOutcome } from '@vostride/agent-qa-schema'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { mintRunTriggerConfirmScope } from '../../chat/confirm-registry.js'
@@ -70,8 +70,11 @@ describe('markRun delegates to the shared gate and feedback port', () => {
         remedies: [{ kind: 'answer-confirm' }, { kind: 'present-bearer-scope' }] }
     })
     const denied = await markRun({ ...f.host, invokeFunction }, RUN_ID, { kind: 'false-fail', note: NOTE })
-    expect(denied).toMatchObject({ status: 403, body: { error: 'mark_denied', remedies: [] } })
+    // C432-PLAIN-REFUSAL (432-09 D-15): the refusal is exactly a plain reason, whatever the error carried.
+    expect(denied).toEqual({ kind: 'refused', status: 403, body: { error: 'mark_denied', reason: 'The safety gate denied this mark.' } })
+    expect(MarkRefusalSchema.parse((denied as { body: unknown }).body)).toEqual({ error: 'mark_denied', reason: 'The safety gate denied this mark.' })
     expect(JSON.stringify(denied)).not.toContain(NOTE)
+    expect(JSON.stringify(denied)).not.toContain('remedies')
     invokeFunction.mockImplementation(async () => { throw new Error(NOTE) })
     expect(await markRun({ ...f.host, invokeFunction }, RUN_ID, { kind: 'false-fail', note: NOTE })).toEqual({
       kind: 'refused', status: 500, body: { error: 'read_failed', reason: 'Error' },
@@ -91,7 +94,8 @@ describe('markRun delegates to the shared gate and feedback port', () => {
     const f = fixture()
     for (const frame of [{}, { confirmScope: mintRunTriggerConfirmScope(), enter: f.enter }]) {
       const result = await markRun(f.host, RUN_ID, { kind: 'false-fail', note: NOTE }, frame)
-      expect(result).toMatchObject({ kind: 'refused', status: 403, body: { error: 'mark_denied', remedies: [] } })
+      expect(result).toMatchObject({ kind: 'refused', status: 403, body: { error: 'mark_denied' } })
+      expect(Object.keys((result as { body: object }).body).sort()).toEqual(['error', 'reason'])
       expect(JSON.stringify(result)).not.toContain('present-bearer-scope')
       expect(JSON.stringify(result)).not.toContain(NOTE)
     }
@@ -152,7 +156,7 @@ describe('registered POST /api/runs/:id/mark', () => {
     const url = await socket(fixture().host)
     const denied = await fetch(url, { method: 'POST', body: JSON.stringify({ kind: 'false-fail', note: NOTE }) })
     expect(denied.status).toBe(403)
-    expect(await denied.json()).toMatchObject({ error: 'mark_denied', remedies: [] })
+    expect(await denied.json()).toEqual({ error: 'mark_denied', reason: 'The safety gate denied this mark.' })
     const malformed = await fetch(url, { method: 'POST', body: NOTE })
     expect(malformed.status).toBe(400)
     expect(await malformed.json()).toEqual({ error: 'invalid_mark_input' })

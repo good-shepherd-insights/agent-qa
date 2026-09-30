@@ -333,7 +333,7 @@ export {
   PostProcessingStageDetailSchema,
   RunDigestCandidateReportSchema,
   RunDigestChainOutcomesSchema,
-  RunDigestProposalRowSchema,
+  RunDigestMarkChangeSchema,
   RunDigestQuarantineReportSchema,
   RunDigestSchema,
   RunNotificationSchemaError,
@@ -352,7 +352,7 @@ export type {
   RunDigest,
   RunDigestCandidateReport,
   RunDigestChainOutcomes,
-  RunDigestProposalRow,
+  RunDigestMarkChange,
   RunDigestQuarantineReport,
   RunNotification,
   RunNotificationOutcome,
@@ -1809,29 +1809,31 @@ export { BriefLineSchema } from './brief/guard-lossless-served-brief'
 // 2026-09-08, 419 D-06: the Gate-3 feedback contracts
 export {
   MARK_QUARANTINE_CLASSES, MARK_FIX_KINDS, MARK_DISPOSITIONS,
+  // 2026-09-30, 432-09: the applied fix, the historical drafted receipt and the plain mark refusal
+  MARK_HISTORICAL_DISPOSITIONS, MARK_APPLIED_CHANGE_KINDS, MarkAppliedChangeSchema, MarkRefusalSchema,
   MARK_RECEIPT_SCHEMA_VERSION, IMPROVEMENT_PLAN_SCHEMA_VERSION, COMMIT_RECEIPT_SCHEMA_VERSION,
   NoDraftableFixCheckedSchema, MarkDispositionSchema, MarkAddressSchema, MarkReceiptSchema,
   RunsMarkInputSchema, RunsMarkOutcomeSchema, ImprovementPlanKnowledgeSchema,
   ImprovementPlanSchema, CommitReceiptSchema, RunDetailMemberMarkSchema, deriveMarkStepId,
   // 2026-09-15, 423 D-19: marks history
-  markAddressKey, MARK_PROPOSAL_STATES, MARKS_HISTORY_OUTCOMES, MarkProposalCurrentSchema,
+  markAddressKey, MARKS_HISTORY_OUTCOMES, MarkHistoryChangedRecordSchema,
   RunsMarksHistoryInputSchema, MarkHistoryEntrySchema, RunsMarksHistoryResultSchema,
   // 2026-09-15, 423 D-16/D-17: mark consequence preview
   MARK_PREVIEW_REFUSALS, MARK_PREVIEW_OUTCOMES, MARK_TARGET_REASONS, MARK_GOLD_CHANNELS,
   MARK_PREVIEW_LATEST_KINDS, MARK_PREVIEW_DRAFT_KINDS, MarkPreviewBasisSchema, MarkPreviewLatestSchema,
   MarkPreviewGroundTruthSchema, MarkPreviewLabelSchema, MarkPreviewKnowledgeSchema, MarkPreviewDraftSchema,
-  MarkPreviewWithdrawalSchema, RunsMarkPreviewResultSchema,
+  RunsMarkPreviewResultSchema,
   MARK_PREVIEW_EVIDENCE_DIRECTIONS, MARK_PREVIEW_RECORD_EVIDENCE_KINDS, MarkPreviewEvidenceEffectSchema,
   MarkPreviewKnowledgeRecordSchema,
 } from './functions/feedback'
 export type {
   MarkQuarantineClass, MarkFixKind, MarkDisposition, NoDraftableFixChecked, MarkAddress,
   MarkReceipt, RunsMarkInput, RunsMarkOutcome, ImprovementPlanKnowledge, ImprovementPlan,
-  CommitReceipt, RunDetailMemberMark, FeedbackPort,
-  MarkProposalState, MarkProposalCurrent, RunsMarksHistoryInput, MarkHistoryEntry,
+  CommitReceipt, RunDetailMemberMark, FeedbackPort, MarkAppliedChange, MarkRefusal,
+  MarkHistoryChangedRecord, RunsMarksHistoryInput, MarkHistoryEntry,
   RunsMarksHistoryResult, MarkHistoryReadEntry, MarkHistoryRead, FeedbackReadsPort,
   MarkPreviewBasis, MarkPreviewLatest, MarkPreviewGroundTruth, MarkPreviewLabel, MarkPreviewKnowledge,
-  MarkPreviewDraft, MarkPreviewWithdrawal, RunsMarkPreviewResult, MarkPreviewEvidenceEffect,
+  MarkPreviewDraft, RunsMarkPreviewResult, MarkPreviewEvidenceEffect,
   MarkPreviewKnowledgeRecord,
 } from './functions/feedback'
 // 2026-09-15, 423 D-20/D-17: the one read-time record join, shared by runs.knowledge and runs.mark.preview

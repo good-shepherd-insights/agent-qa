@@ -47,8 +47,7 @@
 
 import { EventEmitter } from 'node:events'
 
-import { GATE_REMEDY_KINDS, remediesRenderableBy } from '@vostride/agent-qa-schema'
-import type { GateRemedy, RunEventEnvelope, RunSession } from '@vostride/agent-qa-schema'
+import type { RunEventEnvelope, RunSession } from '@vostride/agent-qa-schema'
 
 import type {
   ExecuteOptions,
@@ -311,13 +310,11 @@ export class InProcessExecutionBackend extends EventEmitter implements Execution
 
   private settle(handle: RunHandle, error?: unknown): void {
     if (handle.timeoutTimer) clearTimeout(handle.timeoutTimer)
-    let remedies: readonly GateRemedy[] | undefined
-    // 401-18 (G-401-16): the two facts the host used to have to guess at. Declared beside
-    // `remedies` because they travel with it — one decision, three projections of it.
+    // 401-18 (G-401-16): the two facts the host used to have to guess at. 2026-09-30, 432-09 (D-15):
+    // a refusal settles as these plain facts; no remedy list is projected or carried.
     let refusedBeforeStart = false
     let neutralReason: string | undefined
     if (error !== undefined) {
-      remedies = dashboardRemediesOf(error)
       neutralReason = dashboardNeutralReasonOf(error)
       const message = error instanceof Error ? error.message : String(error)
       for (const line of message.split('\n')) handle.output.push(line)
@@ -338,7 +335,7 @@ export class InProcessExecutionBackend extends EventEmitter implements Execution
     }
 
     // 405-07 (D-19): a synthetic `run-complete` frame was pushed here, carrying the same status,
-    // duration, reason and remedies the settle details below carry. It existed because the retired
+    // duration and reason the settle details below carry. It existed because the retired
     // feed and the host's reconciliation were two different readers of the same fact. There is one
     // reader now, so the fact is stated once.
     //
@@ -347,7 +344,6 @@ export class InProcessExecutionBackend extends EventEmitter implements Execution
     // shape of the injection (`startServer`'s `agentHost` precedent).
     const details: RunSettledDetails = {
       ...(handle.completionReason === undefined ? {} : { reason: handle.completionReason }),
-      ...(remedies === undefined ? {} : { remedies }),
       ...(refusedBeforeStart ? { refusedBeforeStart: true as const } : {}),
       ...(neutralReason === undefined ? {} : { neutralReason }),
       output: [...handle.output],
@@ -362,49 +358,9 @@ export class InProcessExecutionBackend extends EventEmitter implements Execution
 }
 
 /**
- * The typed remedies a rejection is carrying, projected for the browser (401-09, D-15).
- *
- * READ STRUCTURALLY OFF THE ERROR RATHER THAN BY CLASS, and that is not a shortcut. The error is a
- * `RunDeniedError` minted in `agent-local`, and this package may not import `agent`, `agent-local`
- * or `safety` — `pnpm validate:arch` is the mechanical proof. What it MAY name is the remedy
- * vocabulary itself, which lives in `schema` precisely because four packages render it.
- *
- * VALIDATED AGAINST THE CLOSED VOCABULARY, so an arbitrary object that happened to carry a
- * `remedies` array cannot put an unrenderable kind on a browser's screen. A kind this build does
- * not know is dropped rather than passed through: the render table is total over the vocabulary,
- * and a stranger in it is a value with no arm.
- *
- * THE PROJECTION HAPPENS HERE, ONCE. `remediesRenderableBy` is the ONE filter (T-400-06); a
- * consumer that filtered again would be a second opinion about what this surface can offer, and one
- * that did not filter at all would show a browser `--trust-session`, which is declared on exactly
- * one CLI command and is the unreachable-remedy defect the vocabulary exists to close.
- */
-function dashboardRemediesOf(error: unknown): readonly GateRemedy[] | undefined {
-  if (typeof error !== 'object' || error === null) return undefined
-  const carried = (error as { remedies?: unknown }).remedies
-  if (!Array.isArray(carried)) return undefined
-  const known = new Set<string>(GATE_REMEDY_KINDS)
-  const remedies: GateRemedy[] = []
-  for (const entry of carried as unknown[]) {
-    if (typeof entry !== 'object' || entry === null) continue
-    const kind = (entry as { kind?: unknown }).kind
-    if (typeof kind !== 'string' || !known.has(kind)) continue
-    const params = (entry as { params?: unknown }).params
-    remedies.push({
-      kind: kind as GateRemedy['kind'],
-      ...(typeof params === 'object' && params !== null
-        ? { params: params as Readonly<Record<string, string>> }
-        : {}),
-    })
-  }
-  return remediesRenderableBy('dashboard', remedies)
-}
-
-/**
  * The surface-neutral prose a rejection is carrying, if it carries any (401-18, G-401-16).
  *
- * READ STRUCTURALLY, ON `dashboardRemediesOf`'s EXACT PRECEDENT, and for the same architectural
- * reason: the rejection is minted in `agent-local` or `agent`, and this package may not import
+ * READ STRUCTURALLY, because the rejection is minted in `agent-local` or `agent`, and this package may not import
  * `agent`, `agent-local` or `safety` — `pnpm validate:arch` is the mechanical proof. So the field is
  * read off the value, never through a class test.
  *
@@ -418,9 +374,8 @@ function dashboardRemediesOf(error: unknown): readonly GateRemedy[] | undefined 
  * rejection's own message for those, which is what it should show.
  *
  * VALIDATED AS FAR AS PROSE CAN BE: a non-empty string, or nothing. There is no closed vocabulary
- * to check it against — unlike the remedies, whose kinds live in `schema` precisely because they
- * are data — so what this refuses is a non-string and an empty one, and it passes through no
- * instructions of its own.
+ * to check it against, so what this refuses is a non-string and an empty one, and it passes
+ * through no instructions of its own.
  */
 function dashboardNeutralReasonOf(error: unknown): string | undefined {
   if (typeof error !== 'object' || error === null) return undefined

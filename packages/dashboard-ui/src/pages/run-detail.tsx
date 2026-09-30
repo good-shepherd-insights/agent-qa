@@ -190,7 +190,7 @@ export default function RunDetailPage() {
     // The wire addresses members by testId. Never silently mark a different member when a
     // suite has no unique testId for the selected row.
     if (detail.members.length > 1 && (!member.testId || detail.members.filter(entry => entry.testId === member.testId).length !== 1)) {
-      setMarkDenial({ ...address, reason: 'This member has no unique mark address.', remedies: [] })
+      setMarkDenial({ ...address, reason: 'This member has no unique mark address.' })
       return 'retained'
     }
     const request = {}
@@ -216,15 +216,15 @@ export default function RunDetailPage() {
             ?.marks?.find(entry => entry.stepIndex === stepIndex)
           : undefined
         if (addressed?.markId === outcome.receipt.markId && addressed.ordinal === outcome.receipt.ordinal && addressed.kind === outcome.receipt.kind && addressed.kind === kind) return 'refreshed'
-        setMarkDenial({ ...address, reason: 'The matching mark receipt could not be refreshed. Reload this run before trying again.', remedies: [] })
+        setMarkDenial({ ...address, reason: 'The matching mark receipt could not be refreshed. Reload this run before trying again.' })
       } else {
-        setMarkDenial({ ...address, reason: `Mark refused: ${outcome.kind}.`, remedies: [] })
+        setMarkDenial({ ...address, reason: `Mark refused: ${outcome.kind}.` })
       }
       return 'retained'
     } catch (error) {
       if (!isCurrent()) return 'stale'
-      if (error instanceof MarkDeniedError) setMarkDenial({ ...address, reason: error.reason, remedies: error.remedies })
-      else setMarkDenial({ ...address, reason: 'Could not complete the mark or refresh its receipt. Reload this run before trying again.', remedies: [] })
+      if (error instanceof MarkDeniedError) setMarkDenial({ ...address, reason: error.reason })
+      else setMarkDenial({ ...address, reason: 'Could not complete the mark or refresh its receipt. Reload this run before trying again.' })
       return 'retained'
     } finally {
       if (isCurrent()) {

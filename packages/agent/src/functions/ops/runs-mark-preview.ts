@@ -38,7 +38,7 @@ function maskResult(result: RunsMarkPreviewResult, mask: MaskFn): RunsMarkPrevie
 
 export const runsMarkPreviewSpec: FunctionSpec<RunsMarkInput, RunsMarkPreviewResult> = {
   id: RUNS_MARK_PREVIEW_FUNCTION_ID,
-  summary: 'Preview what runs.mark would do for this exact input: its refusals, resolved step, labels, the knowledge records it reaches with their content and evidence effects, and draft kind, without writing.',
+  summary: 'Preview what runs.mark would do for this exact input: its refusals, resolved step, labels, the knowledge records it reaches with their content and evidence effects, and the fix it would apply, without writing.',
   requiredScopes: ['read'],
   resultKind: 'unary',
   boundThrough: 'feedbackReads',
@@ -48,7 +48,7 @@ export const runsMarkPreviewSpec: FunctionSpec<RunsMarkInput, RunsMarkPreviewRes
   classify(output): ClauseVerdict {
     switch (output.kind) {
       case 'consequences':
-        return { status: 'executed', outcome: `preview: ${output.markKind} would draft ${output.draft.kind} over ${output.markedDecisionCount} ${output.markedDecisionCount === 1 ? 'decision' : 'decisions'} (nothing written)` }
+        return { status: 'executed', outcome: `preview: ${output.markKind} would apply ${output.draft.kind} over ${output.markedDecisionCount} ${output.markedDecisionCount === 1 ? 'decision' : 'decisions'} (nothing written)` }
       case 'quarantined':
         return { status: 'executed', outcome: `preview: ${output.markKind} would be quarantined as ${output.class} (nothing written)` }
       case 'already-marked':

@@ -1,4 +1,4 @@
-import { RUN_EVENT_TYPES, GATE_REMEDY_KINDS, RunsMarkPreviewResultSchema, RunsMarksHistoryResultSchema } from '@vostride/agent-qa-schema'
+import { RUN_EVENT_TYPES, MarkRefusalSchema, RunsMarkPreviewResultSchema, RunsMarksHistoryResultSchema } from '@vostride/agent-qa-schema'
 import type {
   AnalysisGetOutput,
   PostProcessingDisposition,
@@ -13,7 +13,6 @@ import type {
   RunsEvidenceInput,
   RunsEvidenceResult,
   RunsMarkInput,
-  GateRemedy,
   RunsMarkOutcome,
   RunsMarkPreviewResult,
   RunsMarksHistoryResult,
@@ -393,14 +392,13 @@ export async function fetchRunEvidence(input: RunsEvidenceInput): Promise<RunEvi
   }
 }
 
+/** 432-09 (D-15): a refused mark is a plain reason, with nothing the reader must act on. */
 export class MarkDeniedError extends Error {
   readonly reason: string
-  readonly remedies: readonly GateRemedy[]
-  constructor(denial: { reason: string; remedies: readonly GateRemedy[] }) {
+  constructor(denial: { reason: string }) {
     super(denial.reason)
     this.name = 'MarkDeniedError'
     this.reason = denial.reason
-    this.remedies = denial.remedies
   }
 }
 
@@ -415,13 +413,9 @@ export async function markRun(
     })
   } catch (error) {
     if (error instanceof ApiError && error.status === 403 && error.payload?.error === 'mark_denied') {
-      const remedies = Array.isArray(error.payload.remedies)
-        ? error.payload.remedies.filter((value): value is GateRemedy =>
-          typeof value === 'object' && value !== null && GATE_REMEDY_KINDS.some(kind => kind === value.kind))
-        : []
+      const refusal = MarkRefusalSchema.safeParse(error.payload)
       throw new MarkDeniedError({
-        reason: typeof error.payload.reason === 'string' ? error.payload.reason : 'The safety gate denied this mark.',
-        remedies,
+        reason: refusal.success ? refusal.data.reason : 'The safety gate denied this mark.',
       })
     }
     throw error

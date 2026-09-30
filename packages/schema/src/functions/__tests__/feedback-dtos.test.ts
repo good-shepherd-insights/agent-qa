@@ -51,7 +51,8 @@ describe('Gate-3 neutral feedback contracts (419)', () => {
   })
   it('pins the quarantine, disposition and fix vocabularies in declaration order', () => {
     expect(MARK_QUARANTINE_CLASSES).toEqual(['flake', 'environment', 'timeout'])
-    expect(MARK_DISPOSITIONS).toEqual(['quarantined', 'drafted', 'no-draftable-fix', 'confirmed-bug'])
+    // 2026-09-30, 432-09: the writer applies a fix; `drafted` is only read back (MARK_HISTORICAL_DISPOSITIONS).
+    expect(MARK_DISPOSITIONS).toEqual(['quarantined', 'applied', 'no-draftable-fix', 'confirmed-bug'])
     expect(MARK_FIX_KINDS).toEqual(['fact', 'caution', 'procedure-hint', 'test-edit'])
   })
 
@@ -101,6 +102,8 @@ describe('Gate-3 neutral feedback contracts (419)', () => {
 
   it('round-trips every disposition and refuses extra nested fields', () => {
     const dispositions = [receipt.disposition,
+      { kind: 'applied', fix: 'fact', change: { kind: 'knowledge', changeId: 'prop_alpha-bravo', recordIds: ['mem_1'] } },
+      { kind: 'applied', fix: 'test-edit', change: { kind: 'test-file', filePath: 'checkout.yaml', contentDigest: 'abc' } },
       { kind: 'drafted', fix: 'fact', proposalId: 'prop_alpha-bravo', proposalKind: 'knowledge' },
       { kind: 'no-draftable-fix', checked }, { kind: 'confirmed-bug', confirmedRecords: 1 },
     ]

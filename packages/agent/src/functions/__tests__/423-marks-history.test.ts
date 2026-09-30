@@ -2,7 +2,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createMaskingContext, setActiveMaskingContextResolver } from '@vostride/agent-qa-safety'
 import { MarkReceiptSchema, RunsMarksHistoryResultSchema, asRunId, maskedMarker } from '@vostride/agent-qa-schema'
-import type { FunctionCaller, MarkProposalCurrent, MarkReceipt, RunId } from '@vostride/agent-qa-schema'
+import type { FunctionCaller, MarkHistoryChangedRecord, MarkReceipt, RunId } from '@vostride/agent-qa-schema'
 import { invokeFunction } from '../invoke.js'
 import { runsMarksHistorySpec } from '../ops/runs-marks-history.js'
 import { createRegistryFromSpecs } from '../registry.js'
@@ -14,8 +14,7 @@ const resultSchema = () => RunsMarksHistoryResultSchema
 
 const runId = asRunId('run-423-marks-history')
 type Address = { testIndex: number; stepIndex?: number; testId?: string }
-type ProposalState = MarkProposalCurrent
-type ReadEntry = { receipt: MarkReceipt; proposal?: ProposalState }
+type ReadEntry = { receipt: MarkReceipt; changedRecords?: MarkHistoryChangedRecord[] }
 
 const markIdOf = (ordinal: number) => `mark_${ordinal.toString(16).padStart(12, '0')}`
 
@@ -33,15 +32,23 @@ function receipt(ordinal: number, address: Address, overrides: Partial<MarkRecei
   })
 }
 
-const WITHDRAWN: ProposalState = { state: 'rejected', decision: { decision: 'rejected', at: 42, reason: `superseded by ${markIdOf(3)}` } }
-const PENDING: ProposalState = { state: 'pending', applyInFlight: false }
-const MISSING: ProposalState = { state: 'missing' }
+// 2026-09-30, 432-09: applied receipts, with the records a knowledge fix changed joined by the host.
+const CONTENT = {
+  content: 'The saved banner appears after checkout.', summary: 'saved banner', kind: 'fact',
+  applicability: { product: 'shop', scope: 'shop', anchors: [], openedAtOrdinal: 1 },
+  currentStatus: 'active',
+  currentTrust: { confirmations: 1, contradictions: 0, evidenceTokens: [], lastEventOrdinal: 1 },
+} as const satisfies MarkHistoryChangedRecord['recordContent']
+const knowledgeFix = (fix: 'fact' | 'caution', recordIds: string[]) =>
+  ({ kind: 'applied', fix, change: { kind: 'knowledge', changeId: 'prop_0123456789ab', recordIds } }) as const
+const FOUND = (recordId: string): MarkHistoryChangedRecord => ({ recordId, recordContent: { ...CONTENT, applicability: { ...CONTENT.applicability, anchors: [] } } })
+const GONE = (recordId: string): MarkHistoryChangedRecord => ({ recordId, contentAbsence: { reason: 'not-found' } })
 
 // Sequence A: run0, step 0:2, run0, run1, step 0:2, run0. Writer-shaped `supersedes` links.
 function sequenceA(): ReadEntry[] {
   return [
     { receipt: receipt(1, { testIndex: 0 }, { note: 'first run-level mark',
-      disposition: { kind: 'drafted', fix: 'fact', proposalId: 'proposal-a1', proposalKind: 'knowledge' } }), proposal: WITHDRAWN },
+      disposition: knowledgeFix('fact', ['mem_a1', 'mem_a1b']) }), changedRecords: [FOUND('mem_a1'), GONE('mem_a1b')] },
     { receipt: receipt(2, { testIndex: 0, stepIndex: 2 }, { kind: 'false-pass', correctedExpectation: 'the banner reads saved',
       disposition: { kind: 'no-draftable-fix', checked: { servedRecords: 1, procedureReads: 0, assertionDrift: true } } }) },
     { receipt: receipt(3, { testIndex: 0 }, { kind: 'confirmed-bug', supersedes: markIdOf(1),
@@ -50,12 +57,13 @@ function sequenceA(): ReadEntry[] {
       gold: [{ cassetteId: 'cassette-3', sourceCassetteId: 'source-3', channel: 'user-mark' }],
       evidence: { confirmed: 2, overturned: 0 } }) },
     { receipt: receipt(4, { testIndex: 1, testId: 'checkout' }, { kind: 'false-fail',
-      disposition: { kind: 'drafted', fix: 'test-edit', proposalId: 'proposal-a4', proposalKind: 'test-draft' } }), proposal: PENDING },
+      disposition: { kind: 'applied', fix: 'test-edit', change: { kind: 'test-file', filePath: 'tests/checkout.yaml', contentDigest: 'abc' } } }) },
     { receipt: receipt(5, { testIndex: 0, stepIndex: 2 }, { supersedes: markIdOf(2),
       correctedAction: { type: 'navigate', to: 'url', url: 'https://example.test/cart' } as MarkReceipt['correctedAction'],
       evidence: { confirmed: 0, overturned: 1 } }) },
+    // A pre-432 receipt read back from an existing ledger: it filed a proposal, and nothing is joined for it.
     { receipt: receipt(6, { testIndex: 0 }, { supersedes: markIdOf(3), note: 'latest run-level mark',
-      disposition: { kind: 'drafted', fix: 'caution', proposalId: 'proposal-a6', proposalKind: 'knowledge' } }), proposal: MISSING },
+      disposition: { kind: 'drafted', fix: 'caution', proposalId: 'proposal-a6', proposalKind: 'knowledge' } }) },
   ]
 }
 
@@ -159,19 +167,24 @@ describe('423-36 runs.marks.history contract (D-19)', () => {
     for (const entry of result.entries) expect(entry.active).toBe(!('supersededBy' in entry))
   })
 
-  it('SUPERSEDED-BY: drafted receipts carry the current proposal state beside their historical disposition', async () => {
+  // RE-SPELLED 432-09 from 'SUPERSEDED-BY: drafted receipts carry the current proposal state beside
+  // their historical disposition': a receipt now carries what its applied fix changed.
+  it('SUPERSEDED-BY: applied knowledge receipts carry the records they changed beside their historical disposition', async () => {
     const result = await read(sequenceA())
     const byOrdinal = new Map(result.entries.map(entry => [entry.ordinal, entry]))
-    expect(byOrdinal.get(1)).toMatchObject({ disposition: { kind: 'drafted', proposalId: 'proposal-a1' }, proposal: WITHDRAWN })
-    expect(byOrdinal.get(4)).toMatchObject({ disposition: { kind: 'drafted', proposalId: 'proposal-a4' }, proposal: PENDING })
-    expect(byOrdinal.get(6)).toMatchObject({ disposition: { kind: 'drafted', proposalId: 'proposal-a6' }, proposal: MISSING })
-    for (const ordinal of [2, 3, 5]) expect(Object.keys(byOrdinal.get(ordinal)!)).not.toContain('proposal')
-    // A drafted receipt with no joined state, or a joined state on a non-drafted receipt, is refused.
+    expect(byOrdinal.get(1)).toMatchObject({ disposition: knowledgeFix('fact', ['mem_a1', 'mem_a1b']),
+      changedRecords: [FOUND('mem_a1'), GONE('mem_a1b')] })
+    expect(byOrdinal.get(4)).toMatchObject({ disposition: { kind: 'applied', change: { kind: 'test-file', filePath: 'tests/checkout.yaml' } } })
+    expect(byOrdinal.get(6)).toMatchObject({ disposition: { kind: 'drafted', proposalId: 'proposal-a6' } })
+    for (const ordinal of [2, 3, 4, 5, 6]) expect(Object.keys(byOrdinal.get(ordinal)!)).not.toContain('changedRecords')
+    for (const entry of result.entries) expect(Object.keys(entry)).not.toContain('proposal')
+    // An applied knowledge receipt with no join, a join naming other records, or a join on any other
+    // disposition is refused.
     const [, second, third] = sequenceA()
-    const unjoined = { receipt: receipt(1, { testIndex: 0 }, {
-      disposition: { kind: 'drafted', fix: 'fact', proposalId: 'proposal-x', proposalKind: 'knowledge' } }) }
+    const unjoined = { receipt: receipt(1, { testIndex: 0 }, { disposition: knowledgeFix('fact', ['mem_x']) }) }
     await expect(read([unjoined])).rejects.toThrow()
-    await expect(read([{ receipt: receipt(1, { testIndex: 0 }), proposal: PENDING }, second!, third!])).rejects.toThrow()
+    await expect(read([{ ...unjoined, changedRecords: [FOUND('mem_other')] }])).rejects.toThrow()
+    await expect(read([{ receipt: receipt(1, { testIndex: 0 }), changedRecords: [FOUND('mem_x')] }, second!, third!])).rejects.toThrow()
   })
 
   it('HISTORY-EMPTY: an unmarked run answers an empty history, distinct from a missing run', async () => {
@@ -225,7 +238,9 @@ describe('423-36 runs.marks.history contract (D-19)', () => {
     await expect(invokeFunction(unbound, 'runs.marks.history', { runId }, caller)).rejects.toBeInstanceOf(spec.FunctionNotBoundError)
   })
 
-  it('HISTORY-MASK: note, root-cause producer and proposal decision reason cross the live mask; identities do not', async () => {
+  // RE-SPELLED 432-09 from 'HISTORY-MASK: note, root-cause producer and proposal decision reason cross
+  // the live mask; identities do not': the joined record content crosses the mask in its place.
+  it('HISTORY-MASK: note, root-cause producer and changed record content cross the live mask; identities do not', async () => {
     const masking = createMaskingContext()
     masking.register('synthetic-sensitive-token')
     setActiveMaskingContextResolver(() => masking)
@@ -233,22 +248,23 @@ describe('423-36 runs.marks.history contract (D-19)', () => {
     const entries: ReadEntry[] = [
       { receipt: receipt(1, { testIndex: 0, testId: 'member-a' }, { note: `note ${secret}`,
         rootCause: { class: 'app_bug', producer: `producer ${secret}` },
-        disposition: { kind: 'drafted', fix: 'fact', proposalId: 'proposal-m1', proposalKind: 'knowledge' } }),
-      proposal: { state: 'rejected', decision: { decision: 'rejected', at: 7, reason: `withdrawn ${secret}` } } },
+        disposition: knowledgeFix('fact', ['mem_m1']) }),
+      changedRecords: [{ recordId: 'mem_m1', recordContent: { ...CONTENT, applicability: { ...CONTENT.applicability, anchors: [] }, content: `content ${secret}` } }] },
     ]
     const result = await read(entries)
     const [entry] = result.entries
     expect(entry).toMatchObject({
       markId: markIdOf(1), testId: 'member-a', note: masking.mask(`note ${secret}`),
       rootCause: { class: 'app_bug', producer: masking.mask(`producer ${secret}`) },
-      disposition: { proposalId: 'proposal-m1' },
-      proposal: { state: 'rejected', decision: { reason: masking.mask(`withdrawn ${secret}`) } },
+      disposition: knowledgeFix('fact', ['mem_m1']),
+      changedRecords: [{ recordId: 'mem_m1', recordContent: { content: masking.mask(`content ${secret}`) } }],
     })
     expect(JSON.stringify(result)).not.toContain(secret)
 
     setActiveMaskingContextResolver(() => undefined)
     const unmaskable = await read(entries)
     expect(unmaskable.entries[0]).toMatchObject({ markId: markIdOf(1), note: maskedMarker('secret'),
-      rootCause: { producer: maskedMarker('secret') }, proposal: { decision: { reason: maskedMarker('secret') } } })
+      rootCause: { producer: maskedMarker('secret') },
+      changedRecords: [{ recordId: 'mem_m1', recordContent: { content: maskedMarker('secret') } }] })
   })
 })

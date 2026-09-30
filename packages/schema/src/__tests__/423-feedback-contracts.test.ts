@@ -1,7 +1,9 @@
 import { describe, expect, test } from 'vitest'
 
 import {
+  MARK_APPLIED_CHANGE_KINDS,
   MARK_DISPOSITIONS,
+  MARK_HISTORICAL_DISPOSITIONS,
   MARK_GOLD_CHANNELS,
   MARK_PREVIEW_DRAFT_KINDS,
   MARK_PREVIEW_EVIDENCE_DIRECTIONS,
@@ -9,7 +11,6 @@ import {
   MARK_PREVIEW_RECORD_EVIDENCE_KINDS,
   MARK_PREVIEW_OUTCOMES,
   MARK_PREVIEW_REFUSALS,
-  MARK_PROPOSAL_STATES,
   MARK_QUARANTINE_CLASSES,
   MARK_TARGET_REASONS,
   MARKS,
@@ -19,7 +20,8 @@ import {
   MarkPreviewEvidenceEffectSchema,
   MarkPreviewKnowledgeRecordSchema,
   MarkPreviewLatestSchema,
-  MarkProposalCurrentSchema,
+  MarkAppliedChangeSchema,
+  MarkHistoryChangedRecordSchema,
   RunsMarkOutcomeSchema,
   RunsMarkPreviewResultSchema,
   RunsMarksHistoryResultSchema,
@@ -29,9 +31,8 @@ import {
 // Independent vocabularies, spelled by hand so no expected list is derived from production.
 // Plan 423-23 owns the mutation script; C423-FEEDBACK-RESULTS-EXACT is its required RED cell.
 const HISTORY_OUTCOMES = ['history', 'run-not-found', 'ledger-corrupt', 'ledger-unavailable'] as const
-// The runtime list follows the envelope's status order; the schema arms pair the in-flight states first.
-const PROPOSAL_STATES = ['pending', 'applied', 'rejected', 'expired', 'missing', 'corrupt'] as const
-const PROPOSAL_STATE_ARMS = ['pending', 'expired', 'applied', 'rejected', 'missing', 'corrupt'] as const
+// 2026-09-30, 432-09: an applied fix names a knowledge change or a written test file.
+const APPLIED_CHANGE_KINDS = ['knowledge', 'test-file'] as const
 const REFUSALS = ['run-not-found', 'member-not-found', 'step-not-found', 'ambiguous-address', 'ambiguous-correction'] as const
 const PREVIEW_OUTCOMES = ['consequences', 'quarantined', 'already-marked', ...REFUSALS] as const
 const MARK_OUTCOMES = ['marked', 'already-marked', ...REFUSALS] as const
@@ -44,7 +45,9 @@ const EVIDENCE_DIRECTIONS = ['confirm', 'overturn'] as const
 const RECORD_EVIDENCE_KINDS = ['effects', 'unreadable'] as const
 // 2026-09-15, 423-25: the inherited 419 vocabularies the quarantined and already-marked arms carry.
 const QUARANTINE_CLASSES = ['flake', 'environment', 'timeout'] as const
-const DISPOSITIONS = ['quarantined', 'drafted', 'no-draftable-fix', 'confirmed-bug'] as const
+// 2026-09-30, 432-09: the writer's vocabulary is `applied`; `drafted` is a readable pre-432 receipt.
+const DISPOSITIONS = ['quarantined', 'applied', 'no-draftable-fix', 'confirmed-bug'] as const
+const HISTORICAL_DISPOSITIONS = ['drafted'] as const
 
 const runId = asRunId('run-feedback-contract')
 type Options = { options: readonly { shape: Record<string, { value?: unknown }> }[] }
@@ -57,13 +60,9 @@ const HISTORY_CASES: Record<(typeof HISTORY_OUTCOMES)[number], unknown> = {
   'ledger-unavailable': { kind: 'ledger-unavailable', runId },
 }
 
-const PROPOSAL_CASES: Record<(typeof PROPOSAL_STATES)[number], unknown> = {
-  pending: { state: 'pending', applyInFlight: true },
-  expired: { state: 'expired', applyInFlight: false },
-  applied: { state: 'applied' },
-  rejected: { state: 'rejected', decision: { decision: 'rejected', at: 9, reason: 'withdrawn' } },
-  missing: { state: 'missing' },
-  corrupt: { state: 'corrupt' },
+const APPLIED_CASES: Record<(typeof APPLIED_CHANGE_KINDS)[number], unknown> = {
+  knowledge: { kind: 'knowledge', changeId: 'prop_0123456789ab', recordIds: ['mem_1'] },
+  'test-file': { kind: 'test-file', filePath: 'tests/checkout.yaml', contentDigest: 'abc123' },
 }
 
 const member = { testIndex: 0 }
@@ -101,15 +100,20 @@ describe('C423-FEEDBACK-RESULTS-EXACT', () => {
     }
   })
 
-  test('pins the current proposal states: runtime list, schema arms and parser', () => {
-    expect([...MARK_PROPOSAL_STATES]).toEqual([...PROPOSAL_STATES])
-    expect(armsOf(MarkProposalCurrentSchema, 'state')).toEqual([...PROPOSAL_STATE_ARMS])
-    for (const state of PROPOSAL_STATES) {
-      expect(MarkProposalCurrentSchema.safeParse(PROPOSAL_CASES[state]).success, state).toBe(true)
+  // RE-SPELLED 432-09 from 'pins the current proposal states: runtime list, schema arms and parser':
+  // history joins what an applied fix changed; no proposal state is read or carried.
+  test('pins the applied change kinds and the changed-record join: runtime list, schema arms and parser', () => {
+    expect([...MARK_APPLIED_CHANGE_KINDS]).toEqual([...APPLIED_CHANGE_KINDS])
+    expect(armsOf(MarkAppliedChangeSchema, 'kind')).toEqual([...APPLIED_CHANGE_KINDS])
+    for (const kind of APPLIED_CHANGE_KINDS) {
+      expect(MarkAppliedChangeSchema.safeParse(APPLIED_CASES[kind]).success, kind).toBe(true)
     }
-    for (const unknown of ['accepted', 'withdrawn', 'draft']) {
-      expect(MarkProposalCurrentSchema.safeParse({ state: unknown }).success, unknown).toBe(false)
+    for (const unknown of ['proposal', 'pending', 'test-draft']) {
+      expect(MarkAppliedChangeSchema.safeParse({ kind: unknown }).success, unknown).toBe(false)
     }
+    expect(MarkAppliedChangeSchema.safeParse({ kind: 'knowledge', changeId: 'not-a-change-id', recordIds: [] }).success).toBe(false)
+    expect(MarkHistoryChangedRecordSchema.safeParse({ recordId: 'mem_1', contentAbsence: { reason: 'not-found' } }).success).toBe(true)
+    expect(MarkHistoryChangedRecordSchema.safeParse({ recordId: 'mem_1' }).success, 'content or its absence').toBe(false)
   })
 
   test('pins the preview outcome arms: runtime list, schema arms and parser', () => {
@@ -171,20 +175,25 @@ describe('C423-FEEDBACK-RESULTS-EXACT', () => {
     expect(RunsMarkPreviewResultSchema.safeParse({ ...base, class: 'unclassified' }).success).toBe(false)
 
     expect([...MARK_DISPOSITIONS]).toEqual([...DISPOSITIONS])
-    expect(armsOf(MarkDispositionSchema, 'kind')).toEqual([...DISPOSITIONS])
+    expect([...MARK_HISTORICAL_DISPOSITIONS]).toEqual([...HISTORICAL_DISPOSITIONS])
+    expect(armsOf(MarkDispositionSchema, 'kind')).toEqual([...DISPOSITIONS, ...HISTORICAL_DISPOSITIONS])
     const alreadyMarked = previewArms.find(option => option.shape.kind!.value === 'already-marked')!
     const prior = alreadyMarked.shape.prior as unknown as { shape: { disposition: unknown } }
     expect(prior.shape.disposition).toBe(MarkDispositionSchema)
     const repeat = PREVIEW_CASES['already-marked'] as { prior: Record<string, unknown> } & Record<string, unknown>
-    const cases: Record<(typeof DISPOSITIONS)[number], unknown> = {
+    const cases: Record<(typeof DISPOSITIONS)[number] | (typeof HISTORICAL_DISPOSITIONS)[number], unknown> = {
       quarantined: { kind: 'quarantined', class: 'flake' },
+      applied: { kind: 'applied', fix: 'fact', change: APPLIED_CASES.knowledge },
       drafted: { kind: 'drafted', fix: 'fact', proposalId: 'proposal-1', proposalKind: 'knowledge' },
       'no-draftable-fix': { kind: 'no-draftable-fix', checked: { servedRecords: 0, procedureReads: 0, assertionDrift: false } },
       'confirmed-bug': { kind: 'confirmed-bug', confirmedRecords: 0 },
     }
-    for (const kind of DISPOSITIONS) {
+    for (const kind of [...DISPOSITIONS, ...HISTORICAL_DISPOSITIONS]) {
       expect(RunsMarkPreviewResultSchema.safeParse({ ...repeat, prior: { ...repeat.prior, disposition: cases[kind] } }).success, kind).toBe(true)
     }
+    // A test edit writes a file and every other fix changes knowledge.
+    expect(MarkDispositionSchema.safeParse({ kind: 'applied', fix: 'test-edit', change: APPLIED_CASES.knowledge }).success).toBe(false)
+    expect(MarkDispositionSchema.safeParse({ kind: 'applied', fix: 'caution', change: APPLIED_CASES['test-file'] }).success).toBe(false)
     expect(RunsMarkPreviewResultSchema.safeParse({ ...repeat, prior: { ...repeat.prior, disposition: { kind: 'withdrawn' } } }).success).toBe(false)
   })
 })

@@ -398,7 +398,9 @@ async function digestThroughTheOp(f: Fixture, runId: string): Promise<RunDigest>
 const DIGEST_BLOCK_PREFIX = 'digest — '
 
 describe('SC3 — one heartbeat, N proposals, ONE digest, ONE notify row (PROP-04)', () => {
-  it('renders exactly one digest for the run, listing exactly its own proposals', async () => {
+  // RE-SPELLED 432-09 (D-05/D-25) from 'renders exactly one digest for the run, listing exactly its
+  // own proposals': the one render stands; the digest now lists and counts no proposal of any run.
+  it('renders exactly one digest for the run, and lists no proposal of any run', async () => {
     const f = fixture()
     // Three proposals mint into ONE store while one run's chain is about to drain: two belong
     // to this run, one to another. Forty events would have produced forty notifications under
@@ -423,24 +425,19 @@ describe('SC3 — one heartbeat, N proposals, ONE digest, ONE notify row (PROP-0
 
     const block = printed[0] as string
     expect(block.startsWith(`${DIGEST_BLOCK_PREFIX}${RUN_ID}`)).toBe(true)
-    // …and it lists exactly this run's two, by the short ids the digest renders.
-    expect(block).toContain('proposals — 2 minted this run · 3 pending overall')
-    expect(block).toContain(first.slice(0, 12))
-    expect(block).toContain(second.slice(0, 12))
-    // The cross-instance control, direction one: the other run's proposal is NOT here.
-    expect(block).not.toContain(foreign.slice(0, 12))
-    expect(block).not.toContain(foreign)
+    // …and it names none of the three minted proposals: nothing is listed, counted or owed a
+    // decision. This host binds no mark-ledger read, and the marks section says so.
+    expect(block).toContain('marks — ledger not read here')
+    for (const id of [first, second, foreign]) {
+      expect(block).not.toContain(id.slice(0, 12))
+      expect(block).not.toContain(id)
+    }
+    expect(block).not.toMatch(/proposal|pending overall/)
 
-    // Direction two, which is what makes direction one a claim about the FILTER rather than
-    // about a digest that happened to list nothing: the same proposal, from the same store, IS
-    // in the other run's digest, and this run's two are absent from it.
+    // The other run's digest, from the same store, names none of them either.
     const otherDigest = await digestThroughTheOp(f, OTHER_RUN)
-    expect(otherDigest.proposalsMintedThisRun.map((row) => row.id)).toEqual([foreign])
-    expect(otherDigest.proposalsMintedThisRun.map((row) => row.id))
-      .not.toContain(first)
-    // The store-wide count is the same on both — it is what is waiting on a human, not what
-    // this run produced — which is exactly the number the exit line carries.
-    expect(otherDigest.pendingProposalCount).toBe(3)
+    expect(JSON.stringify(otherDigest)).not.toMatch(/prop_/)
+    expect(otherDigest).not.toHaveProperty('pendingProposalCount')
   })
 
   it('leaves the durable notify row a single, unwidened, guard-passing record (D-16)', async () => {
@@ -496,14 +493,15 @@ describe('SC3 — one heartbeat, N proposals, ONE digest, ONE notify row (PROP-0
       expect(digest.lines.some((line) => line === 'candidates — 2 curated · 1 deprecated'))
         .toBe(true)
 
-      // …and they are REPORTED, not offered for decision. The three candidates this run staged
-      // are candidate-status truth in bundles and the KREV verbs are how they are reviewed, so
-      // the inbox section lists exactly the ONE envelope proposal and nothing else.
-      expect(digest.proposalsMintedThisRun).toHaveLength(1)
-      expect(digest.pendingProposalCount).toBe(1)
+      // …and they are REPORTED, not offered for decision. 432-09 (D-25): no proposal section
+      // remains, so the one minted envelope is listed and counted nowhere.
+      expect(digest).not.toHaveProperty('proposalsMintedThisRun')
+      expect(digest).not.toHaveProperty('pendingProposalCount')
     })
 
-  it('renders the zero-proposal arm as zeros, and its exit line reads 0 pending', async () => {
+  // RE-SPELLED 432-09 (D-25) from 'renders the zero-proposal arm as zeros, and its exit line reads 0
+  // pending': the exit line carries no proposal count, and the run's own sections read zero.
+  it('renders the zero arm as zeros, and its exit line carries no proposal count', async () => {
     const f = fixture()
     // The store is NOT empty: two proposals exist, both belonging to the OTHER run. That makes
     // this the zero-ATTRIBUTION arm rather than the zero-store arm, and the two fail
@@ -531,16 +529,15 @@ describe('SC3 — one heartbeat, N proposals, ONE digest, ONE notify row (PROP-0
     expect(lines.filter((line) => line.startsWith(DIGEST_BLOCK_PREFIX))).toHaveLength(0)
     const exitLine = lines.find((line) => line.startsWith('post-processing —'))
     expect(exitLine).toBeDefined()
-    // The count is the STORE-WIDE pending total — two, both another run's — and the command is
-    // the exact one a person pastes.
-    expect(exitLine).toContain(`proposals: 2 pending · digest: ${digestFetchCommand(EMPTY_RUN)}`)
+    // No proposal is waiting on anyone, so the line carries only the exact command a person pastes.
+    expect(exitLine).toContain(` · digest: ${digestFetchCommand(EMPTY_RUN)}`)
+    expect(exitLine).not.toContain('proposals:')
 
     // …and the digest this run WOULD render is all zeros for its own sections, without error.
     const digest = await digestThroughTheOp(f, EMPTY_RUN)
-    expect(digest.proposalsMintedThisRun).toEqual([])
+    expect(digest).not.toHaveProperty('proposalsMintedThisRun')
     expect(digest.candidates).toEqual({ curated: 0, deprecated: 0 })
     expect(digest.quarantine).toEqual({ quarantined: 0, expired: 0, refs: [] })
-    expect(digest.lines.some((line) => line.includes('none minted this run · 2 pending overall')))
-      .toBe(true)
+    expect(digest.lines).toContain('marks — ledger not read here')
   })
 })

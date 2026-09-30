@@ -12,7 +12,11 @@ export function renderMarkOutcome(dto: RunsMarkOutcome): string {
     const r = dto.receipt
     const d = r.disposition
     const disposition = d.kind === 'quarantined' ? `quarantined: ${d.class}`
-      : d.kind === 'drafted' ? `drafted: ${d.fix} → proposal ${d.proposalId}`
+      : d.kind === 'applied' ? (d.change.kind === 'knowledge'
+        ? `applied ${d.fix}: ${d.change.recordIds.length === 0 ? 'no record changed' : `changed ${d.change.recordIds.join(', ')}`}`
+        : `applied ${d.fix}: wrote ${d.change.filePath}`)
+      // A pre-432 receipt read back from an existing ledger; no writer produces it now.
+      : d.kind === 'drafted' ? `drafted: ${d.fix} (recorded before fixes applied directly)`
       : d.kind === 'no-draftable-fix' ? 'no draftable fix'
       : `confirmed-bug: ${d.confirmedRecords} record(s) confirmed`
     return `marked ${r.kind} on ${r.runId} test ${r.testIndex}${r.stepIndex === undefined ? '' : ` step ${r.stepIndex}`} · ${disposition} · receipt ${r.markId} #${r.ordinal}`
@@ -26,7 +30,7 @@ export function renderMarkOutcome(dto: RunsMarkOutcome): string {
 export function createRunsCommand(): Command {
   const command = new Command('runs').description('Review recorded runs')
   command.command('mark <runId>')
-    .description('Mark a recorded outcome and draft a proposed correction when attributable')
+    .description('Mark a recorded outcome and apply its correction when attributable')
     .addOption(new Option('--kind <kind>', 'user mark').choices([...MARKS]).makeOptionMandatory())
     .option('--test <testId>', 'address one test in a multi-test run')
     .option('--step <n>', 'zero-based step index', value => {

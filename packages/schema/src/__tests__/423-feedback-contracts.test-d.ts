@@ -1,27 +1,30 @@
 import { describe, expectTypeOf, test } from 'vitest'
 
 import type {
+  MARK_APPLIED_CHANGE_KINDS,
+  MARK_DISPOSITIONS,
   MARK_GOLD_CHANNELS,
+  MARK_HISTORICAL_DISPOSITIONS,
   MARK_PREVIEW_DRAFT_KINDS,
   MARK_PREVIEW_EVIDENCE_DIRECTIONS,
   MARK_PREVIEW_LATEST_KINDS,
   MARK_PREVIEW_RECORD_EVIDENCE_KINDS,
   MARK_PREVIEW_OUTCOMES,
   MARK_PREVIEW_REFUSALS,
-  MARK_PROPOSAL_STATES,
   MARK_TARGET_REASONS,
   MARKS,
   MARKS_HISTORY_OUTCOMES,
 } from '../index'
 import type {
   Mark,
+  MarkAppliedChange,
+  MarkDisposition,
+  MarkHistoryEntry,
   MarkPreviewDraft,
   MarkPreviewEvidenceEffect,
   MarkPreviewKnowledgeRecord,
   MarkPreviewLabel,
   MarkPreviewLatest,
-  MarkProposalCurrent,
-  MarkProposalState,
   RunsMarkOutcome,
   RunsMarkPreviewResult,
   RunsMarksHistoryResult,
@@ -30,7 +33,8 @@ import type {
 // Independent literal unions: no expected vocabulary is derived from production.
 // Plan 423-23 owns the mutation script; C423-FEEDBACK-RESULTS-EXACT is its required RED cell.
 type HistoryOutcome = 'history' | 'run-not-found' | 'ledger-corrupt' | 'ledger-unavailable'
-type ProposalState = 'pending' | 'expired' | 'applied' | 'rejected' | 'missing' | 'corrupt'
+type AppliedChangeKind = 'knowledge' | 'test-file'
+type WrittenDisposition = 'quarantined' | 'applied' | 'no-draftable-fix' | 'confirmed-bug'
 type Refusal = 'run-not-found' | 'member-not-found' | 'step-not-found' | 'ambiguous-address' | 'ambiguous-correction'
 type PreviewOutcome = 'consequences' | 'quarantined' | 'already-marked' | Refusal
 type MarkOutcome = 'marked' | 'already-marked' | Refusal
@@ -48,12 +52,15 @@ describe('C423-FEEDBACK-RESULTS-EXACT', () => {
     >().toEqualTypeOf<never>()
   })
 
-  test('pins the six current proposal states in both directions', () => {
-    expectTypeOf<MarkProposalCurrent['state']>().toEqualTypeOf<ProposalState>()
-    expectTypeOf<MarkProposalState>().toEqualTypeOf<ProposalState>()
-    expectTypeOf<Exclude<MarkProposalState, (typeof MARK_PROPOSAL_STATES)[number]>>().toEqualTypeOf<never>()
-    expectTypeOf<Exclude<(typeof MARK_PROPOSAL_STATES)[number], MarkProposalCurrent['state']>>().toEqualTypeOf<never>()
-    expectTypeOf<Extract<ProposalState, 'accepted' | 'withdrawn'>>().toEqualTypeOf<never>()
+  // RE-SPELLED 432-09 from 'pins the six current proposal states in both directions': an applied
+  // fix names what changed, and history carries no proposal state at all.
+  test('pins the applied change kinds, the written dispositions and the absent proposal state', () => {
+    expectTypeOf<MarkAppliedChange['kind']>().toEqualTypeOf<AppliedChangeKind>()
+    expectTypeOf<(typeof MARK_APPLIED_CHANGE_KINDS)[number]>().toEqualTypeOf<AppliedChangeKind>()
+    expectTypeOf<(typeof MARK_DISPOSITIONS)[number]>().toEqualTypeOf<WrittenDisposition>()
+    expectTypeOf<MarkDisposition['kind']>().toEqualTypeOf<WrittenDisposition | (typeof MARK_HISTORICAL_DISPOSITIONS)[number]>()
+    expectTypeOf<Extract<keyof MarkHistoryEntry, 'proposal'>>().toEqualTypeOf<never>()
+    expectTypeOf<Extract<keyof Extract<RunsMarkPreviewResult, { kind: 'consequences' }>, 'withdraws'>>().toEqualTypeOf<never>()
   })
 
   test('pins the eight preview outcome arms in both directions', () => {

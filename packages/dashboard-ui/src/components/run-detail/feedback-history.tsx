@@ -5,12 +5,13 @@ import { markAddressKey } from '@vostride/agent-qa-schema'
 import { Button } from '@/components/ui/button'
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible'
 import { Skeleton } from '@/components/ui/skeleton'
-import { ReviewCommandButton } from '@/components/id-badge'
 import { MaskedText } from '@/components/run-detail/masked-text'
 import type { MarksHistoryRead } from '@/lib/api'
-import { COPY_REVIEW_COMMAND_LABEL, proposalReviewCommand } from '@/lib/knowledge-view'
 import {
   ACTIVE_TEXT,
+  APPLIED_KNOWLEDGE_PREFIX,
+  APPLIED_TEST_FILE_PREFIX,
+  APPLIED_UNAVAILABLE_TEXT,
   CHOICE_LABELS,
   HISTORY_EMPTY_TEXT,
   HISTORY_READ_FAILED_TEXT,
@@ -18,6 +19,8 @@ import {
   HISTORY_TITLE_TEXT,
   REPLACEMENT_EXPLANATION,
   RETRY_LABEL,
+  appliedChangeView,
+  appliedRecordUnavailableText,
   correctedPresenceText,
   dispositionText,
   feedbackHistoryState,
@@ -26,7 +29,6 @@ import {
   historyStateText,
   historyTargetLabel,
   historyTitle,
-  proposalStateText,
   replacedByText,
   runHistoryLabel,
   type FeedbackEntryScope,
@@ -177,7 +179,7 @@ function HistoryEntry({
 }) {
   const time = formatMarkTime(entry.markedAt)
   const corrected = correctedPresenceText(entry.corrected)
-  const { disposition, proposal } = entry
+  const applied = appliedChangeView(entry)
   return (
     <li
       data-history-entry
@@ -215,20 +217,48 @@ function HistoryEntry({
         </p>
       )}
       {corrected === undefined ? null : <p>{corrected}</p>}
-      <p data-history-disposition>{dispositionText(disposition)}</p>
-      {disposition.kind === 'drafted' && proposal !== undefined ? (
-        <>
-          <p data-history-proposal-state={proposal.state}>{proposalStateText(proposal)}</p>
-          <div>
-            <ReviewCommandButton
-              data-history-review
-              command={proposalReviewCommand(disposition.proposalId)}
-              label={COPY_REVIEW_COMMAND_LABEL}
-              className="font-mono text-xs text-muted-foreground hover:text-foreground"
-            />
-          </div>
-        </>
-      ) : null}
+      <p data-history-disposition>{dispositionText(entry.disposition)}</p>
+      {applied === undefined ? null : <AppliedLine applied={applied} />}
     </li>
   )
+}
+
+/**
+ * What an applied fix changed, in one line (432-09 · D-25): the changed record content, or the
+ * written test file. Record content and paths are producer text and render as text nodes.
+ */
+function AppliedLine({ applied }: { applied: NonNullable<ReturnType<typeof appliedChangeView>> }) {
+  switch (applied.kind) {
+    case 'knowledge':
+      return (
+        <p data-history-applied="knowledge" className="break-words">
+          {APPLIED_KNOWLEDGE_PREFIX}
+          {applied.records.map((record, index) => (
+            <span key={record.recordId} data-history-applied-record={record.recordId}>
+              {index === 0 ? null : '; '}
+              {record.content === undefined ? (
+                appliedRecordUnavailableText(record.recordId)
+              ) : (
+                <>
+                  {'“'}
+                  <MaskedText text={record.content} />
+                  {'”'}
+                </>
+              )}
+            </span>
+          ))}
+        </p>
+      )
+    case 'test-file':
+      return (
+        <p data-history-applied="test-file" className="break-words">
+          {APPLIED_TEST_FILE_PREFIX}
+          <code className="font-mono">{applied.filePath}</code>
+        </p>
+      )
+    case 'unavailable':
+      return <p data-history-applied="unavailable">{APPLIED_UNAVAILABLE_TEXT}</p>
+    default:
+      return applied satisfies never
+  }
 }

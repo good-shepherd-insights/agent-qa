@@ -25,7 +25,7 @@ export {
 export {
   RunDigestCandidateReportSchema,
   RunDigestChainOutcomesSchema,
-  RunDigestProposalRowSchema,
+  RunDigestMarkChangeSchema,
   RunDigestQuarantineReportSchema,
   RunDigestSchema,
   RunsDigestInputSchema,
@@ -34,7 +34,7 @@ export type {
   RunDigest,
   RunDigestCandidateReport,
   RunDigestChainOutcomes,
-  RunDigestProposalRow,
+  RunDigestMarkChange,
   RunDigestQuarantineReport,
   RunsDigestInput,
 } from './run-digest'

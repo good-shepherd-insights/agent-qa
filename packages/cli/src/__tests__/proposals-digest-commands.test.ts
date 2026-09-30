@@ -262,10 +262,12 @@ describe('agent-qa digest (D-17, the on-demand channel)', () => {
     expect(invocation.exitCode).toBeUndefined()
     // The whole claim, as one comparison: the printed bytes ARE the op's lines.
     expect(invocation.stdout).toBe(digest.lines.join('\n'))
-    // Non-vacuity — the digest has real sections to have printed, including the proposal
-    // this fixture minted through the shipped seam.
+    // Non-vacuity — the digest has real sections to have printed. 432-09 (D-05/D-25): the
+    // proposal this fixture minted through the shipped seam is listed and counted nowhere; the
+    // marks section reads this run's own (empty) ledger.
     expect(digest.lines.length).toBeGreaterThan(3)
-    expect(invocation.stdout).toContain('1 minted this run')
+    expect(invocation.stdout).toContain('marks — no changes applied')
+    expect(invocation.stdout).not.toMatch(/proposal|minted/)
   })
 
   it('digests the most recently FINISHED run when none is named', async () => {
@@ -288,7 +290,8 @@ describe('agent-qa digest (D-17, the on-demand channel)', () => {
     const parsed = JSON.parse(invocation.stdout) as RunDigest
     expect(parsed.runId).toBe(NEWER_RUN)
     expect(parsed.chain).toEqual({ analysis: 'pending', curation: 'pending' })
-    expect(parsed.pendingProposalCount).toBe(0)
+    expect(parsed.markChanges).toEqual([])
+    expect(parsed).not.toHaveProperty('pendingProposalCount')
   })
 
   it('reports a run that never happened as an error, and sets a non-zero exit code', async () => {

@@ -29,7 +29,7 @@ import {
   groundTruthLine,
   knowledgeLine,
   labelsLine,
-  proposalDraftText,
+  previewFixText,
   recordEffectLine,
   replacesLine,
   showRecordsLabel,
@@ -164,7 +164,7 @@ function FailedRead({ failure, onRetry }: { failure: FeedbackReadFailure; onRetr
 }
 
 function ConsequenceLines({ read, replacesTime }: { read: Consequences; replacesTime: string | undefined }) {
-  const { groundTruth, labels, knowledge, draft, latest, withdraws } = read
+  const { groundTruth, labels, knowledge, draft, latest } = read
   return (
     <div className="space-y-2">
       <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-2 text-xs">
@@ -210,15 +210,15 @@ function ConsequenceLines({ read, replacesTime }: { read: Consequences; replaces
           )}
         </dd>
 
-        <dt className="font-medium text-muted-foreground">{PREVIEW_LINE_LABELS.proposals}</dt>
-        <dd data-preview-line="proposals" className="space-y-1 break-words text-foreground">
-          <p>{proposalDraftText(draft)}</p>
+        <dt className="font-medium text-muted-foreground">{PREVIEW_LINE_LABELS.change}</dt>
+        <dd data-preview-line="change" className="space-y-1 break-words text-foreground">
+          <p>{previewFixText(draft)}</p>
           {draftHasWording(draft) ? <p className="text-muted-foreground">{DRAFT_WORDING_NOT_SHOWN_TEXT}</p> : null}
         </dd>
       </dl>
       {latest.kind === 'supersedes' ? (
         <p data-preview-line="replaces" className="text-xs text-foreground">
-          {replacesLine(latest.ordinal, replacesTime, withdraws !== undefined)}
+          {replacesLine(latest.ordinal, replacesTime)}
         </p>
       ) : null}
     </div>

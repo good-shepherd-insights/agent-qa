@@ -47,7 +47,6 @@ vi.mock('../gates/feedback-wording.js', async importOriginal => {
     return await actual.wordImprovementPlan(...args) } }
 })
 
-const { claimPendingProposal, showProposalEnvelope } = await import(new URL('../../../knowledge-local/src/review/proposals-store.js', import.meta.url).href)
 const { runsMarksHistorySpec } = await import(new URL('../../../agent/src/functions/ops/runs-marks-history.js', import.meta.url).href)
 const { runsMarkPreviewSpec } = await import(new URL('../../../agent/src/functions/ops/runs-mark-preview.js', import.meta.url).href)
 const { showRecords } = await import(new URL('../../../knowledge-local/src/show-records.js', import.meta.url).href)
@@ -58,15 +57,12 @@ const refuse = (name: string) => () => { throw new Error(`preview must not call 
 /** Every writer, lease and draft capability throws; only the deterministic reads remain. */
 function readOnlyCuration() {
   return { ...LOCAL_CURATION_CAPABILITIES,
-    appendMarkEvidence: refuse('appendMarkEvidence'), withdrawPendingProposal: refuse('withdrawPendingProposal'),
-    fileMarkTestDraft: refuse('fileMarkTestDraft'),
+    appendMarkEvidence: refuse('appendMarkEvidence'),
     maintenance: { ...LOCAL_CURATION_CAPABILITIES.maintenance,
       acquireWriterLease: refuse('acquireWriterLease'), releaseLease: refuse('releaseLease') } }
 }
 
 const hashes = (dir: string) => files(dir).map(path => [path, createHash('sha256').update(readFileSync(path)).digest('hex')])
-const proposalStatus = (agentQaRoot: string, proposalId: string) =>
-  showProposalEnvelope(agentQaRoot, proposalId, { now: Date.now() }).envelope.status
 
 describe('423-35 shared mark consequence plan (D-16)', () => {
   const roots: string[] = []
@@ -161,13 +157,17 @@ describe('423-35 shared mark consequence plan (D-16)', () => {
     expect(previewed).toEqual(await port.mark(learnable))
   })
 
-  it('PRIOR-WITHDRAWAL: only a new completing effect withdraws the prior draft; repeats, refusals and quarantine do not', async () => {
+  // RE-SPELLED 432-09 (D-11) from 'PRIOR-WITHDRAWAL: only a new completing effect withdraws the prior
+  // draft; repeats, refusals and quarantine do not': no mark withdraws anything now. A superseding
+  // mark replaces the prior gold case and the prior applied fix stays, on every arm.
+  it('PRIOR-FIX-STAYS: no preview or superseding mark withdraws the prior applied fix; repeats, refusals and quarantine change nothing', async () => {
     const f = fixture()
     const runId = f.handoff.runId
     const port = createFeedbackPortForHost(f.deps)
     const first = await port.mark({ runId, kind: 'false-fail' })
-    if (first.kind !== 'marked' || first.receipt.disposition.kind !== 'drafted') throw new Error('expected a drafted mark')
-    const { proposalId, proposalKind } = first.receipt.disposition
+    if (first.kind !== 'marked' || first.receipt.disposition.kind !== 'applied'
+      || first.receipt.disposition.change.kind !== 'knowledge') throw new Error('expected an applied knowledge fix')
+    const { recordIds } = first.receipt.disposition.change
     const before = hashes(f.root)
     const repeated = await preview(f.previewDeps, { runId, kind: 'false-fail', note: 'only the note moved' })
     expect(repeated).toMatchObject({ kind: 'already-marked' })
@@ -184,15 +184,16 @@ describe('423-35 shared mark consequence plan (D-16)', () => {
     expect(quarantined).not.toHaveProperty('withdraws')
     expect(await createFeedbackPortForHost({ ...f.deps, ...copy }).mark({ runId, kind: 'confirmed-bug' }))
       .toMatchObject({ kind: 'marked', receipt: { disposition: { kind: 'quarantined' }, supersedes: first.receipt.markId } })
-    expect(proposalStatus(copy.agentQaRoot, proposalId)).toBe('pending')
 
     const effect = await preview(f.previewDeps, { runId, kind: 'confirmed-bug' })
-    expect(effect).toMatchObject({ kind: 'consequences', withdraws: { proposalId, proposalKind },
-      latest: { kind: 'supersedes', markId: first.receipt.markId, ordinal: 1 } })
+    expect(effect).toMatchObject({ kind: 'consequences', latest: { kind: 'supersedes', markId: first.receipt.markId, ordinal: 1 } })
+    expect(effect).not.toHaveProperty('withdraws')
     expect(hashes(f.root)).toEqual(before)
-    expect(proposalStatus(f.agentQaRoot, proposalId)).toBe('pending')
     expect(await port.mark({ runId, kind: 'confirmed-bug' })).toMatchObject({ kind: 'marked', receipt: { supersedes: first.receipt.markId } })
-    expect(proposalStatus(f.agentQaRoot, proposalId)).toBe('rejected')
+    const knowledgeRoot = join(f.root, 'agent-qa-knowledge')
+    const stored = await createKnowledgeReader(() => knowledgeRoot).showRecords!({ recordIds: [...recordIds] })
+    expect(stored.map(result => result.kind), 'the prior applied fix is still in the store').toEqual(recordIds.map(() => 'found'))
+    expect(existsSync(join(f.agentQaRoot, 'proposals')), 'nothing is filed or withdrawn').toBe(false)
   })
 
   it('MARK-PLAN-PARITY: the previewed step, labels, served evidence and draft target are the ones the writer lands', async () => {
@@ -211,7 +212,8 @@ describe('423-35 shared mark consequence plan (D-16)', () => {
     expect(previewed.labels.map(label => [label.channel, label.sourceCassetteId]))
       .toEqual(written.receipt.gold.map(item => [item.channel, item.sourceCassetteId]))
     expect(written.receipt.evidence.confirmed).toBe(1)
-    expect(written.receipt.disposition).toMatchObject({ kind: 'drafted', fix: 'fact', proposalKind: 'knowledge' })
+    // 432-09: the previewed knowledge fix is the one the writer applies, on the previewed target.
+    expect(written.receipt.disposition).toMatchObject({ kind: 'applied', fix: 'fact', change: { kind: 'knowledge' } })
   })
 })
 
@@ -291,7 +293,7 @@ describe('423-18 read-only marks history host (D-19)', () => {
     // An in-flight intent is exactly what a writer would clean up.
     writeFileSync(join(s.runDir, 'mark-intent.json'), '{"stage":"prepared"}\n')
     const before = tree(s.root)
-    const reads = readsFor({ agentQaRoot: s.agentQaRoot, configPath: s.configPath, isProcessAlive: () => false })
+    const reads = readsFor({ agentQaRoot: s.agentQaRoot, configPath: s.configPath })
     const result = await historyOf(reads, template.runId)
     expect(result).toMatchObject({ kind: 'history', runId: template.runId, entries: [
       { markId: first.markId, ordinal: 1, active: false, supersededBy: second.markId, disposition: { kind: 'applied' } },
@@ -471,11 +473,13 @@ describe('423-18 marks history registration and host binding (D-19)', () => {
     const result = RunsMarksHistoryResultSchema.parse(value)
     const entries = historyEntries(result)
     const [first, second, third] = template.receipts as [MarkReceipt, MarkReceipt, MarkReceipt]
-    expect(entries.map(entry => [entry.markId, entry.ordinal, entry.active, entry.supersededBy ?? null, entry.proposal?.state ?? null]))
-      .toEqual([[first.markId, 1, false, second.markId, 'rejected'], [second.markId, 2, true, null, null], [third.markId, 3, true, null, 'pending']])
+    expect(entries.map(entry => [entry.markId, entry.ordinal, entry.active, entry.supersededBy ?? null, entry.disposition.kind]))
+      .toEqual([[first.markId, 1, false, second.markId, 'applied'], [second.markId, 2, true, null, 'confirmed-bug'], [third.markId, 3, true, null, 'applied']])
     // A cold host holds no masking authority for this read, so every free-text field is fully redacted.
     expect(entries.map(entry => entry.note ?? null)).toEqual([maskedMarker('secret'), null, maskedMarker('secret')])
-    expect(entries[0]!.proposal).toMatchObject({ state: 'rejected', decision: { reason: maskedMarker('secret') } })
+    // 432-09: the applied fix's records are joined by id, and their content crosses the same mask.
+    expect(entries[0]!.changedRecords!.map(record => record.recordId)).toEqual(changedRecordIdsOf(first))
+    expect(entries[0]!).not.toHaveProperty('proposal')
     expect(JSON.stringify(result)).not.toContain(SECRET)
     return result
   }
@@ -1046,11 +1050,11 @@ describe('423-21 feedback reads over both HTTP doors (D-18)', () => {
     const s = await httpScene()
     const before = storeMaps(s.stores)
     const viaRegistry = await agent.invokeFunction(s.door.host.registry, HISTORY, { runId: template.runId }, DASHBOARD_FUNCTION_CALLER)
-    const viaOp = await historyOf(createFeedbackReadsPortForHost({ agentQaRoot: s.agentQaRoot }), template.runId)
+    const viaOp = await historyOf(createFeedbackReadsPortForHost({ agentQaRoot: s.agentQaRoot, configPath: s.configPath }), template.runId)
     expect(viaRegistry).toEqual(viaOp)
     const entries = historyEntries(RunsMarksHistoryResultSchema.parse(viaRegistry))
-    expect(entries.map(entry => [entry.ordinal, entry.active, entry.proposal?.state ?? null]))
-      .toEqual([[1, false, 'rejected'], [2, true, null], [3, true, 'pending']])
+    expect(entries.map(entry => [entry.ordinal, entry.active, entry.disposition.kind]))
+      .toEqual([[1, false, 'applied'], [2, true, 'confirmed-bug'], [3, true, 'applied']])
     for (const door of s.doors) {
       const response = await fetch(`${door.base}/${template.runId}/marks`, { headers: door.headers })
       expect(response.status, door.name).toBe(200)
@@ -1120,9 +1124,18 @@ describe('423-21 feedback reads over both HTTP doors (D-18)', () => {
     // The cold scope masks the FRESH span it resolved from this project's secrets file straight to
     // the display marker, so both doors read alike: the bearer door has no recorded placeholder to
     // keep here, because nothing was masked when the note was written.
+    // 432-09 (D-04): the template's two false-fail marks applied their fixes, so the store now holds
+    // those records and this false-pass preview reaches them after the served one. Their content is
+    // the floor-worded fix, and the user's note inside it crosses the same mask as the note itself.
+    const appliedFix = (note: string) => 'false-fail / fact: Click Continue\n'
+      + 'Overturned verifier reading: The recorded state advanced\n'
+      + 'Superseded claim: Held checkout marked selector\n'
+      + `User note: ${note}`
+    const content = ['The Held checkout marked button was resolved and verified.',
+      appliedFix('first run-level note'), appliedFix(`step note ${redacted}`)]
     const cold = { notes: ['first run-level note', null, `step note ${redacted}`],
       reasoning: ['The recorded state advanced'],
-      content: ['The Held checkout marked button was resolved and verified.'] }
+      content }
     const coldHuman = await read(human)
     const coldMachine = await read(machine)
     expect(coldHuman).toEqual(cold)
@@ -1135,7 +1148,7 @@ describe('423-21 feedback reads over both HTTP doors (D-18)', () => {
     const warmHuman = await read(human)
     expect(warmHuman.notes).toEqual(['first run-level note', null, `step note ${redacted}`])
     expect(warmHuman.reasoning).toEqual(['The recorded state advanced'])
-    expect(warmHuman.content).toEqual(['The Held checkout marked button was resolved and verified.'])
+    expect(warmHuman.content).toEqual(content)
     // The bearer door keeps the recorded placeholder instead of a display chip.
     const warmMachine = await read(machine)
     expect(warmMachine.notes).toEqual(['first run-level note', null, masking.mask(`step note ${SECRET}`)])
@@ -1147,9 +1160,9 @@ describe('423-21 feedback reads over both HTTP doors (D-18)', () => {
   it('FEEDBACK-HTTP-WRITES-NOTHING: HTTP history and preview leave every store byte-identical and create nothing', async () => {
     const s = await httpScene()
     const runDir = join(s.agentQaRoot, 'runs', template.runSlug)
-    // A claimed proposal is exactly what a reaping listing would rename.
-    const [, , third] = template.receipts as [MarkReceipt, MarkReceipt, MarkReceipt]
-    expect(claimPendingProposal(s.agentQaRoot, proposalIdOf(third))).toMatchObject({ kind: 'consumed' })
+    // 432-09 (D-22): a legacy proposal tree is left as it is; neither door opens or reaps it.
+    mkdirSync(join(s.agentQaRoot, 'proposals'), { recursive: true })
+    writeFileSync(join(s.agentQaRoot, 'proposals', 'prop_0123456789ab.json.claim-1'), '{"legacy":true}')
     const before = storeMaps(s.stores)
     const unknown = asRunId(generateRunId())
     for (const door of s.doors) {

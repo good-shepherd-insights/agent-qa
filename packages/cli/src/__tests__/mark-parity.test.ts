@@ -222,7 +222,7 @@ describe('419 mark receipt parity across the four sovereign doors', () => {
       expect(durable.ordinal).toBe(1)
       expect(durable.gold.map(item => item.channel)).toEqual(['user-mark'])
       expect(durable.evidence.confirmed).toBe(1)
-      expect(durable.disposition.kind).toBe(kind === 'false-fail' ? 'drafted' : 'confirmed-bug')
+      expect(durable.disposition.kind).toBe(kind === 'false-fail' ? 'applied' : 'confirmed-bug')
     }
   }, 60_000)
 })

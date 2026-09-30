@@ -30,7 +30,6 @@ interface RunnerInstance {
   refuseRun: (runId: string, details: {
     reason: string
     neutralReason?: string
-    remedies?: readonly { kind: string }[]
   }) => void
 }
 
@@ -83,14 +82,12 @@ class FakeExecutionBackend extends EventEmitter {
   refuseRun = (runId: string, details: {
     reason: string
     neutralReason?: string
-    remedies?: readonly { kind: string }[]
   }): void => {
     this.emit('run-settled', runId, 'failed', {
       output: details.reason.split('\n'),
       reason: details.reason,
       refusedBeforeStart: true,
       ...(details.neutralReason === undefined ? {} : { neutralReason: details.neutralReason }),
-      ...(details.remedies === undefined ? {} : { remedies: details.remedies }),
     })
   }
 
@@ -469,7 +466,6 @@ describe('dashboard Appium ownership', () => {
       reason: 'Run denied: prompted-denied: declared tier: mutating-shared: the interactive prompt'
         + ' was declined; re-run and approve, or opt in with --trust-session',
       neutralReason: NEUTRAL_REFUSAL_PROSE,
-      remedies: [{ kind: 'answer-confirm' }],
     })
 
     const stored = currentDb!.getRun(run.runId)
@@ -496,7 +492,6 @@ describe('dashboard Appium ownership', () => {
       reason: 'Run denied: prompted-denied: declared tier: mutating-shared: the interactive prompt'
         + ' was declined; re-run and approve, or opt in with --trust-session',
       neutralReason: NEUTRAL_REFUSAL_PROSE,
-      remedies: [{ kind: 'answer-confirm' }],
     })
 
     const stored = currentDb!.getRun(run.runId)
@@ -517,7 +512,7 @@ describe('dashboard Appium ownership', () => {
     const runner = currentRunner()
     await waitFor(() => expect(runner.execute).toHaveBeenCalledTimes(1))
 
-    // No neutral form, no remedies — an unrecognised request field is not a gate decision. It is
+    // No neutral form — an unrecognised request field is not a gate decision. It is
     // still a run that never started, and the record has to say so.
     runner.refuseRun(run.runId, {
       reason: 'The dashboard run door does not honour --headed.',

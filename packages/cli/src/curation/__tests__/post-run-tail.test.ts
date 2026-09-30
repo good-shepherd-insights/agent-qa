@@ -252,18 +252,22 @@ function digestOutput(analysis: AnalysisGetOutput = analysisOutput()): RunDigest
     runId,
     verdictClusters: analysis.clusters,
     chain: { analysis: 'done', curation: 'pending' },
-    proposalsMintedThisRun: [],
-    pendingProposalCount: 2,
-    // The op computes this; a fixture that carried `false` here would be pinning the tail's
-    // print against the attribution-unavailable wording, which is a different claim.
-    runAttributionAvailable: true,
+    // 432-09: the fixes this run's marks applied, read from its own ledger; no proposal is counted.
+    markChanges: [
+      { markId: 'mark_000000000001', ordinal: 1, fix: 'fact',
+        change: { kind: 'knowledge', changeId: 'prop_0123456789ab', recordIds: ['mem_1'] } },
+      { markId: 'mark_000000000002', ordinal: 2, fix: 'test-edit',
+        change: { kind: 'test-file', filePath: 'tests/checkout.yaml', contentDigest: 'abc' } },
+    ],
     candidates: { curated: 0, deprecated: 0 },
     quarantine: { quarantined: 0, expired: 0, refs: [] },
     lines: [
       `digest — ${runId}`,
       ...(block === '' ? [] : [block]),
       'chain — analysis: done · curation: pending',
-      'proposals — none minted this run · 2 pending overall',
+      'marks — 2 changes applied:',
+      '  mark_000000000001  fact: 1 record changed',
+      '  mark_000000000002  test-edit: wrote tests/checkout.yaml',
       'candidates — 0 curated · 0 deprecated',
       'quarantine — 0 quarantined · 0 expired',
     ],
@@ -433,7 +437,7 @@ describe('the digest block — in-process analyze-run completed (D-17, over 389 
     // itself is one line down, so a fetch command would be noise (the D-17 either/or).
     expect(lines[0]).toBe('post-processing — analysis: done · curation: pending · trust priors: provisional')
     expect(lines[0]).not.toContain('agent-qa digest')
-    expect(lines[0]).not.toContain('pending overall')
+    expect(lines[0]).not.toContain('changes applied')
 
     // The block IS the op result's lines, joined and printed — nothing added, nothing
     // reordered, nothing annotated.
@@ -452,8 +456,8 @@ describe('the digest block — in-process analyze-run completed (D-17, over 389 
     // renderer, never a local composer.
     expect(block).toContain(CLUSTER_SENTENCE)
     expect(block).toContain(SINGLETON_SENTENCE)
-    // …and the digest carries what the sentence block never could: what is waiting on a human.
-    expect(block).toContain('2 pending overall')
+    // …and the digest carries what the sentence block never could: what this run's marks changed.
+    expect(block).toContain('marks — 2 changes applied:')
     expect(h.readRunDigest).toHaveBeenCalledTimes(1)
     expect(h.readRunDigest.mock.calls[0]![1]).toBe(runId)
   })
@@ -539,7 +543,7 @@ describe('the digest block — in-process analyze-run completed (D-17, over 389 
     expect(lines).toHaveLength(2)
     expect(lines[0]).toBe('post-processing — analysis: done · curation: pending · trust priors: provisional')
     expect(lines[1]).not.toContain('analysis — ')
-    expect(lines[1]).toContain('2 pending overall')
+    expect(lines[1]).toContain('marks — 2 changes applied:')
   })
 
   it('a failed digest read costs the BLOCK and nothing else — warned, never thrown', async () => {
@@ -576,7 +580,7 @@ describe('the extended exit line — everything else gets count + command (D-17,
     expect(lines).toEqual([
       'post-processing — analysis: pending · curation: pending'
       + ' · trust priors: provisional'
-        + ` · proposals: 2 pending · digest: ${FETCH_COMMAND}`,
+        + ` · marks: 2 changes applied · digest: ${FETCH_COMMAND}`,
     ])
     // The digest IS read on this leg — the count on the line is its answer, not a guess — and
     // exactly once, because the pointer and the (unprinted) block share one read.
@@ -597,7 +601,7 @@ describe('the extended exit line — everything else gets count + command (D-17,
       // The literal verb and the run's id, per the acceptance criterion.
       expect(line).toContain('agent-qa digest')
       expect(line).toContain(runId)
-      expect(line).toContain(`proposals: 2 pending · digest: ${FETCH_COMMAND}`)
+      expect(line).toContain(`marks: 2 changes applied · digest: ${FETCH_COMMAND}`)
       expect(line).not.toContain(CLUSTER_SENTENCE)
       expect(h.readRunDigest).toHaveBeenCalledTimes(1)
     })
@@ -621,7 +625,7 @@ describe('the extended exit line — everything else gets count + command (D-17,
 
     const lines = h.info.mock.calls.map(([message]) => String(message))
     expect(lines).toHaveLength(1)
-    expect(lines[0]).toContain(`proposals: 2 pending · digest: ${FETCH_COMMAND}`)
+    expect(lines[0]).toContain(`marks: 2 changes applied · digest: ${FETCH_COMMAND}`)
     expect(lines[0]).not.toContain(CLUSTER_SENTENCE)
   })
 
@@ -640,14 +644,14 @@ describe('the extended exit line — everything else gets count + command (D-17,
 
       const lines = h.info.mock.calls.map(([message]) => String(message))
       expect(lines).toHaveLength(1)
-      expect(lines[0]).toContain(`proposals: 2 pending · digest: ${FETCH_COMMAND}`)
+      expect(lines[0]).toContain(`marks: 2 changes applied · digest: ${FETCH_COMMAND}`)
       expect(lines[0]).not.toContain(CLUSTER_SENTENCE)
     })
 
   it('keeps the POINTER and drops the COUNT when the digest could not be read', async () => {
-    // A fabricated `0 pending` would be the one wrong answer that makes a person stop checking
-    // their inbox; the command is printed regardless, because it is exactly what they should
-    // run to find out. The failure itself is warned one line up.
+    // A fabricated count would be a claim about a ledger nobody read; the command is printed
+    // regardless, because it is exactly what a person should run to find out. The failure itself
+    // is warned one line up. (432-09: the count is applied mark changes, never pending proposals.)
     const h = harness({
       lease: { kind: 'held', holder: { pid: 4242 } } as never,
       readRunDigest: vi.fn(async () => {
@@ -660,10 +664,10 @@ describe('the extended exit line — everything else gets count + command (D-17,
 
     const line = String(h.info.mock.calls[0]![0])
     expect(line).toContain(`digest: ${FETCH_COMMAND}`)
-    // `pending` on its own appears in the chip vocabulary; what must be absent is the
-    // proposals CLAUSE, which is the only place this line would state a count it never read.
+    // `pending` on its own appears in the chip vocabulary; what must be absent is the marks
+    // CLAUSE, which is the only place this line would state a count it never read.
     expect(line).not.toContain('proposals:')
-    expect(line).not.toContain('pending overall')
+    expect(line).not.toContain('marks:')
     expect(String(h.warn.mock.calls[0]![0])).toContain('the digest could not be composed')
   })
 })

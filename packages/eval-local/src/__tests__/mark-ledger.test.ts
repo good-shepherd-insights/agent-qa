@@ -104,19 +104,20 @@ describe('FsMarkLedger', () => {
     expect(await ledger.append(record)).toMatchObject({ ordinal: 1 })
   })
   it('resumes a strictly validated intent at the same ordinal and rejects a different request', async () => {
-    const proposalUuid = '01234567-89ab-4def-8123-456789abcdef'
+    const operationId = '01234567-89ab-4def-8123-456789abcdef'
     await expect(ledger.transact(async ordinal => {
-      ledger.prepareIntent({ ...record, ordinal }, proposalUuid)
+      ledger.prepareIntent({ ...record, ordinal }, operationId)
       throw new Error('after intent')
     })).rejects.toThrow('after intent')
     await expect(ledger.transact(async ordinal => {
-      ledger.prepareIntent({ ...record, ordinal, kind: 'false-pass' }, proposalUuid)
+      ledger.prepareIntent({ ...record, ordinal, kind: 'false-pass' }, operationId)
       return undefined
     })).rejects.toThrow('unfinished mark')
     const recovered = await ledger.transact(async ordinal => {
-      const intent = ledger.prepareIntent({ ...record, markId: 'mark_abcdef012345', ordinal }, proposalUuid)
+      const intent = ledger.prepareIntent({ ...record, markId: 'mark_abcdef012345', ordinal }, operationId)
       expect(intent.mark.markId).toBe(record.markId)
-      ledger.checkpointIntent({ ...intent, stage: 'drafted' })
+      expect(intent.operationId, 'the first attempt\'s identity is the retry\'s').toBe(operationId)
+      ledger.checkpointIntent({ ...intent, stage: 'applied' })
       return intent.mark
     })
     expect(recovered).toMatchObject({ ordinal: 1, markId: record.markId })

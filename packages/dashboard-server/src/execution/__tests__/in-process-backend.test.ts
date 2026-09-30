@@ -435,9 +435,11 @@ describe('a refusal is not silence — the completion vocabulary (401-07, D-04/I
     })
     expect(drive.settled[0]!.details.neutralReason).toBe(NEUTRAL_DENIAL_PROSE)
     expect(drive.settled[0]!.details.neutralReason).not.toContain('--trust-session')
-    // The typed half is the dashboard projection, which 430 D-06 declared empty: the gate still
-    // mints answer-confirm, and the dashboard receives no remedy.
-    expect(drive.settled[0]!.details.remedies).toEqual([])
+    // C432-PLAIN-REFUSAL (432-09 D-15): the rejection still carries a remedy list, and the settle
+    // is plain facts only — no remedy member is projected or carried at all.
+    expect(drive.settled[0]!.details).not.toHaveProperty('remedies')
+    expect(Object.keys(drive.settled[0]!.details).sort())
+      .toEqual(['neutralReason', 'output', 'reason', 'refusedBeforeStart'])
   })
 
   it('A REFUSAL WITH NO NEUTRAL FORM IS STILL A REFUSAL — the marker does not depend on the prose', async () => {
@@ -452,7 +454,7 @@ describe('a refusal is not silence — the completion vocabulary (401-07, D-04/I
     expect(drive.settled[0]!.details.refusedBeforeStart).toBe(true)
     expect(drive.settled[0]!.details.neutralReason).toBeUndefined()
     expect(drive.settled[0]!.details.reason).toContain('does not honour --headed')
-    expect(drive.settled[0]!.details.remedies).toBeUndefined()
+    expect(drive.settled[0]!.details).not.toHaveProperty('remedies')
   })
 
   it('A POST-START FAILURE IS NOT MARKED A REFUSAL — the scope control', async () => {
@@ -610,7 +612,7 @@ describe('the spawn vocabulary is gone from this module (401-07, INVK-01 source 
     expect(code).not.toContain('FunctionDeniedError')
     expect(code).not.toMatch(REFUSAL_CLASS_CHECK)
     expect(code).not.toMatch(REGEX_OVER_MESSAGE)
-    // What it DOES: reads the field off the value, exactly as `dashboardRemediesOf` reads remedies.
+    // What it DOES: reads the field off the value, structurally.
     expect(code).toContain('neutralReason?: unknown')
     expect(code).toContain('handle.session === undefined')
     // NON-VACUITY, BEFORE THE VERDICT ABOVE IS WORTH ANYTHING: both predicates must fire on the

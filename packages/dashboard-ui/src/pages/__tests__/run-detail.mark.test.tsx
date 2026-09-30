@@ -504,7 +504,7 @@ describe('419-15 scoped draft lifecycle', () => {
       const base = failure === 'wrong-member'
         ? { ...initial, members: [...initial.members, member(8, { testId: generateTestId(), marks: [] })] }
         : initial
-      if (failure === 'denied' || failure === 'no-channel') markRunMock.mockRejectedValue(new MarkDeniedError({ reason: failure, remedies: [{ kind: 'answer-confirm' }] }))
+      if (failure === 'denied' || failure === 'no-channel') markRunMock.mockRejectedValue(new MarkDeniedError({ reason: failure }))
       else if (failure === 'transport') markRunMock.mockRejectedValue(new Error('offline'))
       else if (failure === 'ambiguous-correction' || failure === 'run-not-found') markRunMock.mockResolvedValue({ kind: failure })
       else {
@@ -570,8 +570,8 @@ describe('419-15 scoped draft lifecycle', () => {
   it('keeps a second member draft and denial isolated across subsequent submissions', async () => {
     const secondId = generateTestId()
     fetchRunDetailMock.mockResolvedValue({ ...initial, members: [...initial.members, member(8, { testId: secondId, marks: [] })], steps: [...initial.steps, step(8, 2, 'Other cart')] })
-    markRunMock.mockRejectedValueOnce(new MarkDeniedError({ reason: 'First member denied', remedies: [] }))
-      .mockRejectedValueOnce(new MarkDeniedError({ reason: 'Second member denied', remedies: [] }))
+    markRunMock.mockRejectedValueOnce(new MarkDeniedError({ reason: 'First member denied' }))
+      .mockRejectedValueOnce(new MarkDeniedError({ reason: 'Second member denied' }))
     await renderAt(`/runs/${RUN_ID}`)
     const first = memberTarget(7)
     const second = memberTarget(8)
@@ -617,7 +617,7 @@ describe('419-15 scoped draft lifecycle', () => {
     await openComposer(STEP_TARGET)
     expect(statusText()).toBe('')
     await expectDraft(STEP_TARGET)
-    await act(async () => post.reject(new MarkDeniedError({ reason: 'Denied here', remedies: [] })))
+    await act(async () => post.reject(new MarkDeniedError({ reason: 'Denied here' })))
     await flushRender()
     expect(inComposer('[data-feedback-denied]')).toBeNull()
     expect(statusText()).toBe('')
@@ -754,7 +754,7 @@ describe('419 page mark post/refetch', () => {
     expect(container!.textContent).not.toContain(feedbackRecordedText(marked.disposition))
   })
   it('renders a typed denial as its reason only, without a refetch or invented mark', async () => {
-    markRunMock.mockRejectedValue(new MarkDeniedError({ reason: 'The safety gate denied this mark.', remedies: [{ kind: 'answer-confirm' }] }))
+    markRunMock.mockRejectedValue(new MarkDeniedError({ reason: 'The safety gate denied this mark.' }))
     await renderAt(`/runs/${RUN_ID}`)
     await openComposer(TEST_TARGET)
     const reads = fetchRunDetailMock.mock.calls.length
@@ -778,7 +778,7 @@ describe('419 page mark post/refetch', () => {
     expect(headerEntry()?.getAttribute('data-feedback-marked')).toBe('false')
   })
   it('sends the durable step address and renders denial only at that step', async () => {
-    markRunMock.mockRejectedValue(new MarkDeniedError({ reason: 'Denied', remedies: [] }))
+    markRunMock.mockRejectedValue(new MarkDeniedError({ reason: 'Denied' }))
     await renderAt(`/runs/${RUN_ID}`)
     await send(STEP_TARGET, 'confirmed-bug')
     expect(markRunMock).toHaveBeenCalledExactlyOnceWith(RUN_ID, { kind: 'confirmed-bug', testId: TEST_ID, stepIndex: 2 })

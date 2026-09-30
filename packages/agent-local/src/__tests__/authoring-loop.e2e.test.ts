@@ -1642,8 +1642,10 @@ describe('authoring.draft.write end to end through the composition root', () => 
       HUMAN,
     )) as RunDigest
 
-    expect(digest.proposalsMintedThisRun).toEqual([])
-    expect(digest.pendingProposalCount).toBe(0)
+    // 432-09: the digest lists no proposal of any kind, and counts none.
+    expect(digest).not.toHaveProperty('proposalsMintedThisRun')
+    expect(digest).not.toHaveProperty('pendingProposalCount')
+    expect(JSON.stringify(digest)).not.toMatch(/proposal/i)
     expect(existsSync(join(workspace, 'tests/confirm-the-local-account-form-page-heading.yaml')))
       .toBe(true)
   })

@@ -27,7 +27,6 @@
 import {
   CURATION_BREAKDOWN_BUCKETS,
   CURATION_BUCKET_PRECEDENCE,
-  ProposalIdSchema,
   RecordAnchorsSchema,
   TRACE_TRUNCATION_TOP_K,
   formatEntityUri,
@@ -1230,51 +1229,6 @@ export function reconciliationCountText(counted: number, shown: number): string 
 }
 
 /**
- * The runnable review command for every pending proposal (423 D-19 · SC5).
- *
- * `agent-qa proposals list` is the terminal door over the registry's `proposals.list` op. There is
- * no dashboard inbox and this module mints no route, so the CTA hands a reader the command itself.
- */
-export const PENDING_PROPOSALS_REVIEW_COMMAND = 'agent-qa proposals list --status pending'
-
-/**
- * The runnable review command for one drafted proposal, over the `proposals.show` op.
- *
- * ONLY A CANONICAL ID IS INTERPOLATED. The mark receipt's `proposalId` is a plain string on the
- * wire; a value that is not a `prop_` id (a masked marker, or anything with shell metacharacters)
- * never reaches a copied command, and the reader is pointed at the pending list instead.
- */
-export function proposalReviewCommand(proposalId: string): string {
-  return ProposalIdSchema.safeParse(proposalId).success
-    ? `agent-qa proposals show ${proposalId}`
-    : PENDING_PROPOSALS_REVIEW_COMMAND
-}
-
-/** The accessible purpose of a mark's review control; the command itself follows it. */
-export const COPY_REVIEW_COMMAND_LABEL = 'Copy review command'
-
-/** Announced when the review command reached the clipboard. */
-export const REVIEW_COMMAND_COPIED_TEXT = 'Review command copied to the clipboard'
-
-/** Announced when it did not, with the command spelled out so it can still be run. */
-export function reviewCommandCopyFailedText(command: string): string {
-  return `Could not copy the review command. Run: ${command}`
-}
-
-/**
- * The pending-proposals line (D-11; re-copied by 427 D-18).
- *
- * THE COUNT IS THE PROJECT'S, NOT THIS RUN'S. `pendingProposalCount` is read across the whole
- * workspace inbox, so the line names that scope rather than letting a run page read it as its own.
- * The singular is its own sentence, which is why this is a function and not a template with an `s`.
- */
-export function pendingProposalsLine(count: number): string {
-  return count === 1
-    ? '1 proposal waiting for review in this project'
-    : `${String(count)} proposals waiting for review in this project`
-}
-
-/**
  * The change kinds the Learned half paints — FIVE of the record's six (D-10, widened by 407-15).
  *
  * `added` IS WHAT THE RUN TAUGHT THE STORE. 407-04 stamps `sourceRunId` onto the synthetic `added`
@@ -1867,16 +1821,6 @@ export interface LearnedView {
   readonly curationSnapshot?: LearnedSnapshotView
 }
 
-/** The pending-proposals line: a COUNT and a door, never any proposal content (D-11). */
-export interface ProposalsView {
-  readonly count: number
-  readonly line: string
-  /** A runnable CLI command (423 D-19), never a route: there is no dashboard proposals inbox. */
-  readonly command: string
-  /** The copy button's accessible purpose; the command follows it in the accessible name (D-18). */
-  readonly copyLabel: string
-}
-
 /** The rung that served THIS run, if the evidence recorded one (D-13). */
 export interface RungView {
   readonly rung: RetrievalRung
@@ -1902,7 +1846,6 @@ export type KnowledgeView =
       readonly ledger: LedgerView
       readonly rung?: RungView
       readonly learned: LearnedView
-      readonly proposals?: ProposalsView
     }
 
 /** The per-step ledger Retrieval details holds — the shipped summary line and step rows, moved (D-19). */
@@ -2387,28 +2330,6 @@ export function learnedView(
 }
 
 /**
- * The pending-proposals line, or nothing at all (D-11).
- *
- * TWO ABSENCES COLLAPSE HERE, AND THAT IS DELIBERATE. `undefined` means this host owns no
- * proposals inbox; `0` means the inbox answered and there is nothing waiting. Both render no line,
- * because a line reading "0 proposals awaiting your decision" is a nag about an empty queue — and
- * a reader who has nothing to decide does not need to be told which of the two reasons applies.
- *
- * THE PANEL CARRIES NO PROPOSAL CONTENT (T-407-22). A count and a door; the inbox owns the rest.
- */
-function proposalsView(count: number | undefined): ProposalsView | undefined {
-  if (count === undefined || count === 0) return undefined
-  return {
-    count,
-    line: pendingProposalsLine(count),
-    // No dashboard inbox route exists and this module mints none; the run-detail CTA routes to no
-    // chat page (423 D-19 · SC5). It copies the terminal command over `proposals.list`.
-    command: PENDING_PROPOSALS_REVIEW_COMMAND,
-    copyLabel: COPY_REVIEW_COMMAND_LABEL,
-  }
-}
-
-/**
  * The read, as the tab — or as the named state that stopped there being one.
  *
  * FOUR ARMS, AND THREE OF THEM ARE ABSENCES. That ratio is the point: `runs.knowledge` answers
@@ -2459,8 +2380,7 @@ export function projectKnowledgeView(read: KnowledgeRead): KnowledgeView {
   }
   const effect = effectSectionView(projection)
 
-  const proposals = proposalsView(projection.pendingProposalCount)
-
+  // 432-09 (D-25): the tab shows what changed; no pending-proposals line or review command remains.
   return {
     state: 'ready',
     used,
@@ -2468,7 +2388,6 @@ export function projectKnowledgeView(read: KnowledgeRead): KnowledgeView {
     ledger: { summary, steps, changes: changeLedgerViews(projection) },
     ...(rung === undefined ? {} : { rung }),
     learned: learnedView(projection),
-    ...(proposals === undefined ? {} : { proposals }),
   }
 }
 

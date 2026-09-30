@@ -40,10 +40,10 @@ function consequences(overrides: Record<string, unknown> = {}) {
   }
 }
 
+// 2026-09-30, 432-09 (D-11): a superseding mark replaces the prior gold case and withdraws nothing.
 const SUPERSEDING = {
   latest: { kind: 'supersedes', markId: 'mark_00000000000a', ordinal: 3 },
   basis: { ledgerOrdinal: 4, priorMarkOrdinal: 3 },
-  withdraws: { proposalId: 'proposal-prior', proposalKind: 'knowledge' },
 }
 
 const quarantined = (overrides: Record<string, unknown> = {}) => ({
@@ -156,7 +156,7 @@ describe('423-37 runs.mark.preview contract (D-16/D-17)', () => {
     const superseding = await previewOf(consequences(SUPERSEDING))
     expect(superseding.result.basis).toEqual({ ledgerOrdinal: 4, priorMarkOrdinal: 3 })
     expect(superseding.result.latest).toEqual({ kind: 'supersedes', markId: 'mark_00000000000a', ordinal: 3 })
-    expect(superseding.result.withdraws).toEqual({ proposalId: 'proposal-prior', proposalKind: 'knowledge' })
+    expect(superseding.result).not.toHaveProperty('withdraws')
 
     const repeat = await previewOf(alreadyMarked())
     expect(repeat.result).toEqual(alreadyMarked())
@@ -168,7 +168,8 @@ describe('423-37 runs.mark.preview contract (D-16/D-17)', () => {
     expect(parse(consequences({ ...SUPERSEDING, basis: { ledgerOrdinal: 4, priorMarkOrdinal: 2 } }))).toBe(false)
     expect(parse(consequences({ ...SUPERSEDING, basis: { ledgerOrdinal: 2, priorMarkOrdinal: 3 } }))).toBe(false)
     expect(parse(consequences({ basis: { ledgerOrdinal: 0, priorMarkOrdinal: 0 } }))).toBe(false)
-    expect(parse(consequences({ withdraws: SUPERSEDING.withdraws }))).toBe(false)
+    expect(parse(consequences({ ...SUPERSEDING, withdraws: { proposalId: 'proposal-prior', proposalKind: 'knowledge' } })),
+      'a preview carries no withdrawal').toBe(false)
     expect(parse(quarantined({ basis: { ledgerOrdinal: 2, priorMarkOrdinal: 1 } }))).toBe(false)
     expect(parse(alreadyMarked({ basis: { ledgerOrdinal: 4 } }))).toBe(false)
     expect(parse(alreadyMarked({ basis: { ledgerOrdinal: 4, priorMarkOrdinal: 2 } }))).toBe(false)

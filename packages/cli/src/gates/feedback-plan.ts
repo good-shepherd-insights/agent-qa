@@ -63,7 +63,6 @@ export function isIdenticalRepeat(prior: MarkReceipt, input: RunsMarkInput): boo
 export interface MarkPlanBasis { ledgerOrdinal: number; priorOrdinal?: number }
 export type MarkLatest = { kind: 'first' } | { kind: 'supersedes'; markId: string; ordinal: number }
 export interface MarkResolvedStep { stepIndex: number; reason: GoldenTrajectoryTarget['reason'] }
-export interface MarkWithdrawal { proposalId: string; proposalKind: 'knowledge' | 'test-draft' }
 
 export type MarkFeedbackPlan =
   | { kind: 'already-marked'; receipt: MarkReceipt; basis: MarkPlanBasis }
@@ -71,8 +70,6 @@ export type MarkFeedbackPlan =
   | { kind: 'quarantined'; class: MarkQuarantineClass; resolvedStep: MarkResolvedStep; latest: MarkLatest; basis: MarkPlanBasis }
   | { kind: 'effects'; targets: GoldenTrajectoryTarget[]; resolvedStep: MarkResolvedStep; decisionCount: number
     knowledge: { servedRecordIds: string[]; appendsEvidence: boolean }
-    /** Only a mark that completes a new effect withdraws; repeats, refusals and quarantine never do. */
-    withdraws?: MarkWithdrawal
     latest: MarkLatest; basis: MarkPlanBasis }
 
 export interface PlanMarkFeedbackInput {
@@ -107,8 +104,7 @@ export function planMarkFeedback({ input, handoff, member, address, prior, ledge
   const servedRecordIds = resolution.targets.flatMap(item => curation.servedIdsOn(member.steps[item.stepIndex]!))
   return { kind: 'effects', targets: resolution.targets, resolvedStep, decisionCount: resolution.decisionCount,
     knowledge: { servedRecordIds, appendsEvidence: servedRecordIds.length > 0 || input.kind === 'false-pass' },
-    ...(prior?.disposition.kind === 'drafted' ? { withdraws: { proposalId: prior.disposition.proposalId,
-      proposalKind: prior.disposition.proposalKind } } : {}),
+    // 432-09 (D-11): a later mark replaces the earlier one's gold case and retracts nothing it applied.
     latest, basis }
 }
 
@@ -144,7 +140,7 @@ export type MarkDraftDecision =
   | { kind: 'test-edit'; plan: Extract<ImprovementPlan, { kind: 'test-edit' }> }
   | { kind: 'no-draftable-fix'; checked: NoDraftableFixChecked }
 
-/** A test edit is drafted only by a host that can invoke the authoring edit; otherwise it records drift. */
+/** A test edit is applied only by a host that can invoke the authoring edit; otherwise it records drift. */
 export function decideMarkDraft(plan: ImprovementPlan, input: { servedRecords: number; procedureRead: boolean
   member: MarkMember; canDraftTestEdit: boolean }): MarkDraftDecision {
   if (plan.kind === 'knowledge') return { kind: 'knowledge', plan }
@@ -171,7 +167,7 @@ export type MarkConsequencePreview =
     groundTruth: MarkGroundTruthPreview[]; labels: MarkLabelPreviewItem[]
     /** Unmasked: the op masks joined content and evidence tokens at its boundary. */
     knowledge: MarkPreviewKnowledge
-    draft: MarkDraftPreview; withdraws?: MarkWithdrawal; latest: MarkLatest; basis: MarkPlanBasis }
+    draft: MarkDraftPreview; latest: MarkLatest; basis: MarkPlanBasis }
 
 export interface MarkPreviewDeps {
   configPath: string
@@ -278,6 +274,5 @@ export async function previewMarkConsequences(deps: MarkPreviewDeps, raw: unknow
         : { kind: 'no-draftable-fix', checked: decided.checked }
   }
   return { kind: 'consequences', member: previewMember, resolvedStep: plan.resolvedStep, decisionCount: plan.decisionCount,
-    groundTruth: labels.groundTruth, labels: labels.labels, knowledge, draft,
-    ...(plan.withdraws === undefined ? {} : { withdraws: plan.withdraws }), latest: plan.latest, basis: plan.basis }
+    groundTruth: labels.groundTruth, labels: labels.labels, knowledge, draft, latest: plan.latest, basis: plan.basis }
 }
