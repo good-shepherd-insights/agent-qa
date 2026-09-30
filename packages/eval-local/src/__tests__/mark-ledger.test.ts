@@ -124,6 +124,47 @@ describe('FsMarkLedger', () => {
     expect(ledger.read()).toEqual([recovered])
     expect(existsSync(join(dir, 'mark-intent.json'))).toBe(false)
   })
+  // 2026-09-30, 432-09 (D-04/D-22): the intent names a stable operation identity and an `applied`
+  // stage; a pre-432 intent that names a proposal or a drafted stage is refused before any effect.
+  it.each([
+    ['a proposalUuid', { proposalUuid: '01234567-89ab-4def-8123-456789abcdef', stage: 'evidence' }],
+    ['the drafted stage', { operationId: '01234567-89ab-4def-8123-456789abcdef', stage: 'drafted' }],
+    ['a stored test draft', { operationId: '01234567-89ab-4def-8123-456789abcdef', stage: 'evidence', testDraft: {} }],
+  ])('refuses a pre-432 intent carrying %s before invoking any side effect', async (_name, legacy) => {
+    writeFileSync(join(dir, 'mark-intent.json'), JSON.stringify({ schemaVersion: 1, mark: { ...record, ordinal: 1 }, ...legacy }))
+    const fn = vi.fn(async () => record)
+    await expect(ledger.transact(fn)).rejects.toThrow(MarkLedgerCorruptError)
+    expect(fn).not.toHaveBeenCalled()
+    expect(ledger.read()).toEqual([])
+  })
+
+  it('an applied intent resumes straight to its receipt, value for value, and an applied fix is never a draft', async () => {
+    const operationId = '11111111-2222-4333-8444-555555555555'
+    const applied = { ...record, disposition: { kind: 'applied' as const, fix: 'test-edit' as const,
+      change: { kind: 'test-file' as const, filePath: 'tests/naïve-café.yaml', contentDigest: 'a'.repeat(64) } } }
+    await expect(ledger.transact(async ordinal => {
+      const intent = ledger.prepareIntent({ ...applied, ordinal }, operationId)
+      ledger.checkpointIntent({ ...intent, stage: 'applied' })
+      throw new Error('crash before the receipt')
+    })).rejects.toThrow('crash before the receipt')
+    const resumed = await ledger.transact(async ordinal => {
+      const intent = ledger.prepareIntent({ ...record, ordinal }, '99999999-2222-4333-8444-555555555555')
+      expect(intent.stage).toBe('applied')
+      expect(intent.operationId, 'the first attempt\'s identity survives the crash').toBe(operationId)
+      return intent.mark
+    })
+    expect(resumed).toEqual({ ...applied, ordinal: 1 })
+    expect(JSON.parse(readFileSync(join(dir, MARKS_LEDGER_FILE), 'utf8').trim())).toEqual(resumed)
+    // A drafted disposition cannot be checkpointed as applied.
+    await expect(ledger.transact(async ordinal => {
+      const intent = ledger.prepareIntent({ ...record, markId: 'mark_abcdef012345', ordinal,
+        disposition: { kind: 'drafted', fix: 'fact', proposalId: 'prop_0123456789ab', proposalKind: 'knowledge' } }, operationId)
+      ledger.checkpointIntent({ ...intent, stage: 'applied' })
+      return intent.mark
+    })).rejects.toThrow()
+    expect(ledger.read()).toHaveLength(1)
+  })
+
   it('refuses malformed intent bytes before invoking any side effect', async () => {
     writeFileSync(join(dir, 'mark-intent.json'), JSON.stringify({ schemaVersion: 1, mark: record, extra: true }))
     const fn = vi.fn(async () => record)

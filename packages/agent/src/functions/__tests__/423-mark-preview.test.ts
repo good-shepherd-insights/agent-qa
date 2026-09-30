@@ -206,6 +206,8 @@ describe('423-37 runs.mark.preview contract (D-16/D-17)', () => {
       expect(verdict.status).toBe('executed')
       expect(verdict.outcome).toMatch(/^preview: /)
       expect(verdict.outcome).toMatch(/nothing written/)
+      // 432-09 (D-04): a preview speaks of what runs.mark will apply, never of a draft for review.
+      expect(verdict.outcome).not.toMatch(/\bdrafts?\b|\breview\b|proposal/)
     }
     const parse = (value: unknown) => resultSchema().safeParse(value).success
     expect(parse(consequences({ prospective: false }))).toBe(false)
