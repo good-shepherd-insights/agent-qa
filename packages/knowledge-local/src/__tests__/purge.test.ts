@@ -721,6 +721,53 @@ describe('DCAY-05 sovereign purge', () => {
     ).toBe(false)
   })
 
+  it('C432-PURGE-DRIFT: a refused stale preview leaves the store whole and a fresh preview purges every copy', async () => {
+    const anchors = [
+      { t: 'el', role: 'button', name: 'Preview drift retry target' },
+      { t: 'page', route: '/purge/affected-set/drift-retry' },
+      { t: 'platform', platform: 'web' },
+    ] satisfies Anchor[]
+    const first = publishForProduct(PRODUCT, 'affected-set-drift-retry', anchors)
+    await knowledgeLocal.rebuildIndex({ knowledgeRoot })
+    const stalePreview = purgePlanningApi().purgeAffectedSetFingerprint(
+      purgePlanningApi().resolvePurgeAffectedSet({ knowledgeRoot, recordId: first.id }),
+    )
+    const drifted = publishForProduct(
+      'purge-drift-retry-second-product',
+      'affected-set-drift-retry',
+      anchors,
+    )
+    expect(drifted.id).toBe(first.id)
+
+    expect(() => purgeApi().purgeRecord({
+      knowledgeRoot,
+      recordId: first.id,
+      initiator: 'user',
+      expectedAffectedSetFingerprint: stalePreview,
+    })).toThrow('purge target set changed after the preview')
+    expect(existsSync(first.dir)).toBe(true)
+    expect(existsSync(drifted.dir)).toBe(true)
+    expect(recordsRowPresent(first.id)).toBe(true)
+
+    const freshPlan = purgePlanningApi().resolvePurgeAffectedSet({
+      knowledgeRoot,
+      recordId: first.id,
+    })
+    expect(freshPlan.bundles.map(({ product }) => product).sort()).toEqual(
+      [PRODUCT, 'purge-drift-retry-second-product'].sort(),
+    )
+    const outcome = purgeApi().purgeRecord({
+      knowledgeRoot,
+      recordId: first.id,
+      initiator: 'user',
+      expectedAffectedSetFingerprint: purgePlanningApi().purgeAffectedSetFingerprint(freshPlan),
+    })
+    expect(outcome.kind).toBe('purged')
+    expect(existsSync(first.dir)).toBe(false)
+    expect(existsSync(drifted.dir)).toBe(false)
+    expect(recordsRowPresent(first.id)).toBe(false)
+  })
+
   describe('fail-closed true-delete verification', () => {
     const lineageId = 'a'.repeat(64)
 

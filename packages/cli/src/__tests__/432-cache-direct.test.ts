@@ -238,6 +238,24 @@ describe('432 cache purge executes declared intent', () => {
     })
   })
 
+  it('C432-CACHE-NO-PROMPT: purge --test clears the branch-namespaced cache with no prompt', async () => {
+    const workspace = workspaceFixture(roots)
+    seedEntry(workspace.cacheDir, 'main', 'a1b2c3d4e5f60718')
+    seedEntry(workspace.cacheDir, 'feature-x', '1122334455667788')
+    const testPath = join(workspace.root, 'tests', 'login.yaml')
+    mkdirSync(join(workspace.root, 'tests'), { recursive: true })
+    writeFileSync(testPath, 'url: https://example.com\nsteps:\n  - Click login\n')
+
+    const result = await invoke(workspace, ['purge', '--test', testPath])
+
+    expect(result.exitCode).toBeUndefined()
+    expect(result.stdout).toContain('Purged 2 cached plans for login.yaml')
+    expect(readdirSync(workspace.cacheDir)).toEqual([])
+    expect(readFileSync(testPath, 'utf8')).toContain('Click login')
+    expect(harness.readlineCalls).toEqual([])
+    expect(result.stdinTouches).toEqual([])
+  })
+
   it('reports an empty or absent cache as success without asking', async () => {
     const empty = workspaceFixture(roots)
     mkdirSync(empty.cacheDir, { recursive: true })

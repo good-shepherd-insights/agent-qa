@@ -409,6 +409,55 @@ describe('432 maintenance commands execute declared intent', () => {
       }
     })
 
+    it('C432-MAINTENANCE-NO-PROMPTS: a campaign rollback applies across products with no flag', async () => {
+      const alpha = 'maintenance-direct-campaign-alpha'
+      const beta = 'maintenance-direct-campaign-beta'
+      const workspace = workspaceFixture(roots, { [alpha]: 7, [beta]: 11 })
+      const first = seedBundle(workspace, { product: alpha, createdAtOrdinal: 7 })
+      const second = seedBundle(workspace, { product: beta, createdAtOrdinal: 11 })
+
+      const result = await invoke(workspace, [
+        'rollback', '--from-build', '7', '--to-build', '11', '--json',
+      ])
+
+      expect(result.exitCode).toBeUndefined()
+      expect(JSON.parse(result.stdout)).toMatchObject({ inverseCount: 2 })
+      expect(harness.rollbackCampaignCalls).toBe(1)
+      expect(deprecatedBy(first.dir)).toBe(1)
+      expect(deprecatedBy(second.dir)).toBe(1)
+      expect(harness.readlineCalls).toEqual([])
+      expect(result.stdinTouches).toEqual([])
+    })
+
+    it('a live writer lease still refuses rollback and purge before any effect, with no prompt', async () => {
+      const workspace = workspaceFixture(roots)
+      const bundle = seedBundle(workspace)
+      const holder = '66666666-6666-4666-8666-666666666666'
+      writeFileSync(join(workspace.knowledgeRoot, '.epoch'), '7\n', 'utf8')
+      writeFileSync(join(workspace.knowledgeRoot, '.lease'), `${JSON.stringify({
+        leaseId: holder,
+        pid: 4343,
+        epoch: 7,
+        heartbeatAtMs: Date.now() + 60_000,
+      })}\n`, 'utf8')
+      const before = snapshot(workspace.knowledgeRoot)
+
+      for (const args of [
+        ['rollback', '--job', CURATION_JOB_ID, '--json'],
+        ['purge', bundle.id, '--json'],
+      ]) {
+        const result = await invoke(workspace, args)
+        expect(result.exitCode, args[0]).toBe(1)
+        expect(result.stdout, args[0]).toBe('')
+        expect(result.stderr, args[0]).toContain('refusal [writer-lease-held]')
+        expect(result.stderr, args[0]).toContain(holder)
+      }
+      expect(snapshot(workspace.knowledgeRoot)).toEqual(before)
+      expect(harness.rollbackCurationJobCalls).toBe(0)
+      expect(harness.purgeRecordCalls).toBe(0)
+      expect(harness.readlineCalls).toEqual([])
+    })
+
     it('keeps typed refusals for an invalid, empty or unknown purge target and a missing rollback selector', async () => {
       const workspace = workspaceFixture(roots)
       const bundle = seedBundle(workspace)
