@@ -1116,9 +1116,12 @@ describe('423-21 feedback reads over both HTTP doors (D-18)', () => {
       const history = RunsMarksHistoryResultSchema.parse(await (await fetch(`${door.base}/${template.runId}/marks`, { headers: door.headers })).json())
       const preview = consequencesOf(RunsMarkPreviewResultSchema.parse(
         await (await post(`${door.base}/${template.runId}/mark-preview`, previewBody(), door.headers)).json()))
+      // The served record leads; the correlated unserved records follow in record-id order, and the
+      // two applied fixes' ids are minted per run, so their relative order is compared as a set.
+      const [served, ...unserved] = preview.knowledge.records.map(record => record.recordContent?.content ?? null)
       return { notes: historyEntries(history).map(entry => entry.note ?? null),
         reasoning: preview.groundTruth.map(item => item.recordedVerdict.reasoning),
-        content: preview.knowledge.records.map(record => record.recordContent?.content ?? null) }
+        content: [served, ...unserved.sort()] }
     }
     const redacted = maskedMarker('secret')
     // The cold scope masks the FRESH span it resolved from this project's secrets file straight to
@@ -1132,7 +1135,7 @@ describe('423-21 feedback reads over both HTTP doors (D-18)', () => {
       + 'Superseded claim: Held checkout marked selector\n'
       + `User note: ${note}`
     const content = ['The Held checkout marked button was resolved and verified.',
-      appliedFix('first run-level note'), appliedFix(`step note ${redacted}`)]
+      ...[appliedFix('first run-level note'), appliedFix(`step note ${redacted}`)].sort()]
     const cold = { notes: ['first run-level note', null, `step note ${redacted}`],
       reasoning: ['The recorded state advanced'],
       content }

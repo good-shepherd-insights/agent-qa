@@ -113,6 +113,12 @@ async function fixture() {
   return { ...f, committedRoot: join(f.root, 'agent-qa-eval'), mark, calibrate }
 }
 
+// 432-09 (D-04): each of these cells drives twenty-plus real marks, and every mark now commits its
+// fix to the knowledge store (10.4 s and 9.0 s alone on the 432-09 tree). Under a forced workspace
+// run the first cell outlived the 30 s default (twice), and the next cell then read an extra line on
+// its captured stdout while the timed-out drive was still running. The budget is the cell's own.
+const MARK_DRIVE_TIMEOUT_MS = 120_000
+
 it('drives sovereign gold through no-gold, 19/20/21, preview, commit, repeat and explicit replacement', async () => {
   const f = await fixture(), noGoldBytes = bytes(f.root)
   const empty = (await f.calibrate()).dto
@@ -160,7 +166,7 @@ it('drives sovereign gold through no-gold, 19/20/21, preview, commit, repeat and
   const finalBytes = bytes(f.root)
   expect((await f.calibrate(['--commit', '--replace'])).dto).toEqual({ ...replacement, kind: 'unchanged', refreshedCount: 0 })
   expect(bytes(f.root)).toEqual(finalBytes)
-})
+}, MARK_DRIVE_TIMEOUT_MS)
 
 it('adopts a real prior generation in new bundle/index hosts and matches report, doctor and preserved old-host identities', async () => {
   const f = await fixture()
@@ -260,7 +266,7 @@ it('adopts a real prior generation in new bundle/index hosts and matches report,
   expect(stale.message).toContain(publication.artifact.generationId)
   expect(content(f.root)).toEqual(beforeStale)
   expect(buildTrustPriorsResolver({ ...f, inspectCalibration: true })).toMatchObject({ kind: 'ready', calibration: expect.stringContaining('stale') })
-})
+}, MARK_DRIVE_TIMEOUT_MS)
 
 it('keeps all eleven own-profile comparison rows and legacy exits through real fresh/saved gate commands', async () => {
   // These model calls use in-process fixture languageModels; the external fetch port still throws.
