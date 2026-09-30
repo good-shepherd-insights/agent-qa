@@ -5,12 +5,11 @@
 // up with no harness change. A union op carrying a mode string would have projected as one tool
 // whose real vocabulary lives inside a string field nothing validates.
 //
-// IT COMMITS NOTHING, WHICH IS WHY IT CARRIES NO `declaredTier`. The `knowledge.proposal.apply`
-// header states the argument for its own three propose siblings and it holds verbatim here: "a
-// proposal commits nothing, so gating it would be asking about the request rather than the act."
-// The floor for `recognized: true` with `readOnly: false` is `mutating-local`, and that is the
-// honest classification of writing a proposal file into this machine's own runtime root. The RAISE
-// lives on `config.proposal.apply`, which is where the person's git history changes.
+// IT WRITES IN THE CALL AND COMMITS NOTHING (2026-09-30, 432-11 D-05/D-07). The change is
+// constructed, scanned and validated exactly as before, and then published through the direct
+// writer rather than filed as a proposal: the answer names the files and fields it changed. A
+// blocked change is answered with its report and nothing is kept. No git runs; the change is a
+// plain edit a person sees in `git diff` and reverts with `git restore`.
 //
 // `requiredScopes: ['config-write']` — already a member of the closed `FunctionScopeSchema` union,
 // so this costs no vocabulary extension and gives 396's safe-mode hard tool filter the key it
@@ -23,24 +22,24 @@
 // things. The guards are whole-input by construction — post-mutation validation of the ENTIRE
 // config in the pipeline, and D-02's per-value classifier when 395-04 lands it.
 
-import { ConfigFieldSetInputSchema, ConfigProposeOutputSchema } from '@vostride/agent-qa-schema'
-import type { ConfigFieldSetInput, ConfigProposeOutput } from '@vostride/agent-qa-schema'
+import { ConfigChangeOutputSchema, ConfigFieldSetInputSchema } from '@vostride/agent-qa-schema'
+import type { ConfigChangeOutput, ConfigFieldSetInput } from '@vostride/agent-qa-schema'
 
-import { classifyConfigProposeOutput } from './config-propose-verdict.js'
-import { constructConfigFieldSetProposal } from '../../config-mutation/construct.js'
+import { classifyConfigChangeOutput } from './config-propose-verdict.js'
+import { changeConfigField } from '../../config-mutation/construct.js'
 import { FunctionNotBoundError } from '../spec.js'
 import type { FunctionSpec } from '../spec.js'
 
 export const CONFIG_FIELD_SET_FUNCTION_ID = 'config.field.set'
 
-export const configFieldSetSpec: FunctionSpec<ConfigFieldSetInput, ConfigProposeOutput> = {
+export const configFieldSetSpec: FunctionSpec<ConfigFieldSetInput, ConfigChangeOutput> = {
   id: CONFIG_FIELD_SET_FUNCTION_ID,
-  summary: 'Propose setting one configuration field, as a reviewable diff awaiting a decision.',
+  summary: 'Set one configuration field, written in this call.',
   requiredScopes: ['config-write'],
   resultKind: 'unary',
   input: ConfigFieldSetInputSchema,
-  output: ConfigProposeOutputSchema,
-  boundThrough: 'configFiles',
+  output: ConfigChangeOutputSchema,
+  boundThrough: 'configWrite',
   risk: {
     name: `fn:${CONFIG_FIELD_SET_FUNCTION_ID}`,
     recognized: true,
@@ -55,29 +54,28 @@ export const configFieldSetSpec: FunctionSpec<ConfigFieldSetInput, ConfigPropose
    * `refused` on this door and `executed` on the next one the first time somebody edited one copy.
    * The arms, and the reasoning for which of them is `refused`, are documented at the fold.
    */
-  classify: classifyConfigProposeOutput,
-  async invoke(input, deps): Promise<ConfigProposeOutput> {
-    // FOUR DEPS, ONE `boundThrough`, on `proposals.accept`'s stated arrangement. The declared name
-    // is the one whose absence means "this host has no config files at all"; the other three are
-    // checked here, by name, so an in-layer caller holding the spec gets the same refusal a gate
-    // caller would.
+  classify: classifyConfigChangeOutput,
+  async invoke(input, deps): Promise<ConfigChangeOutput> {
+    // FOUR DEPS, ONE `boundThrough`. The declared name is the direct writer (432-11): a host that
+    // cannot publish a config change cannot run this op. The other three are checked here, by
+    // name, so an in-layer caller holding the spec gets the same refusal a gate caller would.
     //
     // `configScan` IS IN THAT LIST AND ITS ABSENCE REFUSES (395-04, CFGM-02). A construction that
-    // cannot scan must not surface a diff: the alternative is a guardrail that silently stops
-    // existing whenever a host forgets one line of wiring, which is the permissive direction a
-    // security control may not fail in.
-    const { configFiles, configValidate, configProposals, configScan } = deps
+    // cannot scan must not write: the alternative is a guardrail that silently stops existing
+    // whenever a host forgets one line of wiring, which is the permissive direction a security
+    // control may not fail in.
+    const { configFiles, configValidate, configScan, configWrite } = deps
     if (
       configFiles === undefined
       || configValidate === undefined
-      || configProposals === undefined
       || configScan === undefined
+      || configWrite === undefined
     ) {
       throw new FunctionNotBoundError(CONFIG_FIELD_SET_FUNCTION_ID)
     }
-    return await constructConfigFieldSetProposal(
+    return await changeConfigField(
       { action: CONFIG_FIELD_SET_FUNCTION_ID, path: input.path, value: input.value },
-      { configFiles, configValidate, configProposals, configScan },
+      { configFiles, configValidate, configScan, configWrite },
     )
   },
 }

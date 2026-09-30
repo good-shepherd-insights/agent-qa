@@ -29,6 +29,7 @@ import { z } from 'zod'
 
 import {
   ConfigAuthSetInputSchema,
+  ConfigChangeOutputSchema,
   ConfigFieldSetInputSchema,
   ConfigHookAddInputSchema,
   ConfigProjectScaffoldInputSchema,
@@ -172,8 +173,16 @@ export const ConfigChangeFoldInputSchema = z.discriminatedUnion(
 
 export type ConfigChangeFoldInput = z.infer<typeof ConfigChangeFoldInputSchema>
 
+/**
+ * 2026-09-30, 432-11 D-05: the six config operations answer what they wrote, and
+ * `config.undo.propose` still answers a proposal until 432-17 deletes it, so the advertised output
+ * is the union of those two contracts, arm by arm.
+ */
 export const ConfigChangeFoldOutputSchema = foldOutput(
-  configArms.map(() => ConfigProposeOutputSchema),
+  configArms.map((arm) =>
+    arm.shape[TOOL_FOLD_DISCRIMINANT].value === 'config.undo.propose'
+      ? ConfigProposeOutputSchema
+      : ConfigChangeOutputSchema),
 )
 
 // ---- `agent_qa_propose_knowledge_change`: accept, reject, forget --------------------------------

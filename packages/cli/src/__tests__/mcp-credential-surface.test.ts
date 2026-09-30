@@ -141,7 +141,7 @@
 
 import { createHash } from 'node:crypto'
 import { spawnSync } from 'node:child_process'
-import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -663,11 +663,12 @@ describe('F · the controls, and the bound they measure', () => {
       })
       const outcome = answer.structuredContent as { outcome?: string; shownDiff?: string }
 
-      // WRITTEN AS IT IS, NOT AS IT SHOULD BE. The proposal is produced; the diff's context lines
+      // WRITTEN AS IT IS, NOT AS IT SHOULD BE. The change is written (432-11: in the call); the
+      // diff's context lines
       // carry a neighbouring `providerHeaders.X-Client-Auth` value; and the value is neither
       // seeded, nor credential-shaped, nor under a key the shipped census enumerates — so nothing
       // on this road recognises it.
-      expect(outcome.outcome, rendered(answer)).toBe('proposed')
+      expect(outcome.outcome, rendered(answer)).toBe('applied')
       expect(leakedWindow(outcome.shownDiff ?? '', OPAQUE_HEADER_PLANT), 'the bound closed — '
         + 'update this cell and the ledger, and tell 397').toBeDefined()
 
@@ -694,7 +695,7 @@ describe('G · redaction lands on credentials, not on the config (v1 M2 / P2 re-
         value: '45s',
       })
       const outcome = answer.structuredContent as { outcome?: string; shownDiff?: string }
-      expect(outcome.outcome, rendered(answer)).toBe('proposed')
+      expect(outcome.outcome, rendered(answer)).toBe('applied')
 
       // An ordinary config change renders its ordinary bytes: the diff is a diff, not a marker.
       expect(outcome.shownDiff).toContain('step: 30s')
@@ -710,27 +711,42 @@ describe('G · redaction lands on credentials, not on the config (v1 M2 / P2 re-
 describe('H · nothing persisted carries a planted byte', () => {
   it('(H1) no proposal record on disk contains a window of any plant', async () => {
     await headless(async () => {
-      await call('agent_qa_propose_config_change', {
-        action: 'config.field.set',
-        path: 'workspace.hooksFile',
-        value: CONFIG_PLANT,
-      })
-      await call('agent_qa_propose_config_change', {
-        action: 'config.field.set',
-        path: 'workspace.hooksFile',
-        value: ENV_PLANT,
-      })
+      const configBefore = readFileSync(configPath, 'utf8')
+      const answers = [
+        await call('agent_qa_propose_config_change', {
+          action: 'config.field.set',
+          path: 'workspace.hooksFile',
+          value: CONFIG_PLANT,
+        }),
+        await call('agent_qa_propose_config_change', {
+          action: 'config.field.set',
+          path: 'workspace.hooksFile',
+          value: ENV_PLANT,
+        }),
+      ]
+      // The integrity half: both calls really reached the guardrail and were blocked, so the
+      // absences below are about two refusals that saw the plants, not about calls that did nothing.
+      for (const answer of answers) {
+        expect((answer.structuredContent as { outcome?: string }).outcome, rendered(answer))
+          .toBe('blocked')
+      }
 
-      const dir = join(agentQaRoot, 'proposals')
-      const records = readdirSync(dir)
-      // The integrity half: records really were written, so an empty directory cannot pass this.
-      expect(records.length, 'no record was persisted — this cell measures nothing')
-        .toBeGreaterThanOrEqual(2)
-
-      for (const name of records) {
-        const body = readFileSync(join(dir, name), 'utf8')
+      // 432-11 D-05: a blocked change is answered and never kept. No proposal record exists, the
+      // config is byte-for-byte what it was, and nothing under the runtime root carries a plant.
+      expect(existsSync(join(agentQaRoot, 'proposals'))).toBe(false)
+      expect(readFileSync(configPath, 'utf8')).toBe(configBefore)
+      const persisted: string[] = []
+      const walk = (dir: string): void => {
+        for (const entry of readdirSync(dir, { withFileTypes: true })) {
+          const full = join(dir, entry.name)
+          if (entry.isDirectory()) walk(full)
+          else persisted.push(readFileSync(full, 'utf8'))
+        }
+      }
+      walk(agentQaRoot)
+      for (const body of [...persisted, readFileSync(configPath, 'utf8')]) {
         for (const plant of [ENV_PLANT, TOKEN_PLANT, CONFIG_PLANT]) {
-          expect(leakedWindow(body, plant), `${name} persisted ${plant}`).toBeUndefined()
+          expect(leakedWindow(body, plant), `persisted ${plant}`).toBeUndefined()
         }
       }
     })

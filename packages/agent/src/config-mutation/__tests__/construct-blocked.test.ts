@@ -1,6 +1,11 @@
 // The BLOCKED posture, end to end through the real pipeline (Phase 395-04, CFGM-01/02 · D-09/D-10/
 // D-12).
 //
+// 2026-09-30, 432-11 D-05: a blocked change is ANSWERED and nothing is kept. The cells below that
+// once read the filed record read the answer itself, and assert that nothing reached the store or
+// the direct writer. The report's contents — which road, which file, which fingerprint, and never
+// a window of the value — are the same claims as before.
+//
 // THE SCAN AND THE DIFF PRIMITIVE ARE THE PRODUCTION ONES. `scanConstructedArtifact` is imported
 // from `packages/safety` and `renderConfigDiff` from `packages/schema`; the doubles are the three
 // host facts this layer may not touch — bytes on disk, the yaml edit, and the store. That split is
@@ -16,8 +21,8 @@
 //
 // WHAT MAKES EACH CELL RED — the acceptance bar is the implementation it must fail on:
 //
-//   (1) schema-fail       — the pre-395-04 pipeline: a bare typed refusal that filed nothing. The
-//                           cell asserts a RECORD reached the store, so "return an error" fails it.
+//   (1) schema-fail       — a refusal that carried no report. The cell asserts the validator's
+//                           issues reach the answer, and that nothing is filed or written.
 //   (2) guardrail-hit     — the scan call site removed, or its findings ignored. This is the cell
 //                           `scripts/395-scan-mutation.sh` reds on purpose.
 //   (3) non-disclosure    — a blocked record built from the applyable one (diff bytes retained), a
@@ -59,8 +64,8 @@ import {
   utf8Encode,
 } from '@vostride/agent-qa-schema'
 import type {
+  ConfigChangeOutput,
   ConfigProposalV1,
-  ConfigProposeOutput,
   ProposalEnvelope,
   ProposalsAcceptOutput,
 } from '@vostride/agent-qa-schema'
@@ -74,10 +79,10 @@ import type { FunctionDeps } from '../../functions/spec.js'
 import {
   BlockedConfigProposalError,
   applyablePayload,
+  changeConfigField,
   configFieldSetSummaryLine,
-  constructConfigFieldSetProposal,
 } from '../construct.js'
-import type { ConstructConfigProposalDeps } from '../construct.js'
+import type { ConstructConfigChangeDeps } from '../construct.js'
 import type { ConfigFieldValue } from '../ports.js'
 
 const CONFIG_FILE = 'agent-qa.config.yaml'
@@ -153,14 +158,12 @@ use:
     test: 90m
 `
 
-interface Filed {
-  readonly payload: ConfigProposalV1
-  readonly emittedBy: string
-}
-
 interface Harness {
-  readonly deps: ConstructConfigProposalDeps
-  readonly filed: Filed[]
+  readonly deps: ConstructConfigChangeDeps
+  /** Every proposal the pipeline tried to file. 432-11: it never files one. */
+  readonly filed: unknown[]
+  /** Every call the direct writer received. */
+  readonly written: unknown[]
   /** How many times the scan was actually called — the non-vacuity counter for every absence. */
   scans: () => number
   /**
@@ -196,12 +199,14 @@ function harness(options: {
     | { ok: false; issues: readonly { path: string; message: string }[] }
     | { ok: true }
 }): Harness {
-  const filed: Filed[] = []
+  const filed: unknown[] = []
+  const written: unknown[] = []
   let scanCount = 0
   let validateCount = 0
 
   return {
     filed,
+    written,
     scans: () => scanCount,
     validations: () => validateCount,
     deps: {
@@ -250,10 +255,19 @@ function harness(options: {
           return Promise.resolve(options.validation ?? { ok: true })
         },
       },
-      configProposals: {
-        put: (record) => {
-          filed.push({ payload: record.payload, emittedBy: record.emittedBy })
-          return Promise.resolve({ proposalId: `prop-${filed.length}` })
+      configWrite: {
+        applyFields: (request) => {
+          written.push(request)
+          return Promise.resolve({
+            kind: 'applied' as const,
+            file: CONFIG_FILE,
+            revision: 'revision-after',
+            baseRevision: 'revision-before',
+          })
+        },
+        publishFiles: (request) => {
+          written.push(request)
+          return Promise.resolve({ kind: 'published' as const, written: [CONFIG_FILE] })
         },
       },
       configScan: {
@@ -269,8 +283,8 @@ function harness(options: {
 async function propose(
   test: Harness,
   input: { path: string; value: ConfigFieldValue },
-): Promise<ConfigProposeOutput> {
-  return await constructConfigFieldSetProposal(
+): Promise<ConfigChangeOutput> {
+  return await changeConfigField(
     { action: 'config.field.set', path: input.path, value: input.value },
     test.deps,
   )
@@ -284,7 +298,7 @@ function windows(secret: string): string[] {
 }
 
 describe('the blocked posture: one posture, two reasons (CFGM-01 · D-10)', () => {
-  it('(1) files a BLOCKED record when the whole config no longer validates', async () => {
+  it('(1) answers BLOCKED when the whole config no longer validates, and keeps nothing', async () => {
     const test = harness({
       config: CLEAN_CONFIG,
       validation: {
@@ -298,25 +312,19 @@ describe('the blocked posture: one posture, two reasons (CFGM-01 · D-10)', () =
     expect(answer.outcome).toBe('blocked')
     if (answer.outcome !== 'blocked') throw new Error('unreachable')
     expect(answer.blockedReason).toBe('schema-fail')
-    expect(answer.proposalId).toBe('prop-1')
-
-    // A RECORD REACHED THE STORE. The pre-395-04 pipeline answered and filed nothing, so this line
-    // is what the change is: a person can find the refusal where they find everything else.
-    expect(test.filed).toHaveLength(1)
-    const payload = test.filed[0]?.payload
-    expect(payload?.payloadKind).toBe('blocked')
-    if (payload?.payloadKind !== 'blocked') throw new Error('unreachable')
-    // 395-10: the persisted string is the port's PAIR joined — the file the issue is about, then
-    // the validator's own sentence. The record shape is unchanged (`string[]`); what changed is that
-    // the file is no longer guessed at from what the proposal diffed.
-    expect(payload.validationIssues)
+    // 395-10: the answered string is the port's PAIR joined — the file the issue is about, then
+    // the validator's own sentence — so the file is not guessed at from what the change diffed.
+    expect(answer.validationIssues)
       .toEqual([`${CONFIG_FILE}: use.parallel: expected boolean, received string`])
-    expect(payload.paths).toEqual([CONFIG_FILE])
-    // The two reasons are kept apart in the RECORD, not only in the return value.
-    expect(payload.scanFindings).toBeUndefined()
+    expect(answer.paths).toEqual([CONFIG_FILE])
+    // The two reasons are kept apart in the answer.
+    expect(answer.scanFindings).toBeUndefined()
+    // 432-11: NOTHING IS KEPT OR WRITTEN. The report is the answer.
+    expect(test.filed).toHaveLength(0)
+    expect(test.written).toHaveLength(0)
   })
 
-  it('(2) files a BLOCKED record when the proposed change would write a secret', async () => {
+  it('(2) answers BLOCKED when the change would write a secret, and keeps nothing', async () => {
     const test = harness({ config: CLEAN_CONFIG })
 
     const answer = await propose(test, { path: 'envFile', value: PLANTED })
@@ -327,15 +335,15 @@ describe('the blocked posture: one posture, two reasons (CFGM-01 · D-10)', () =
     expect(answer.scanFindings?.map((finding) => finding.path)).toEqual([CONFIG_FILE])
     expect(answer.scanFindings?.[0]?.detector).toBe('awsKey')
     expect(answer.validationIssues).toBeUndefined()
-    expect(test.filed).toHaveLength(1)
+    expect(test.filed).toHaveLength(0)
+    expect(test.written).toHaveLength(0)
   })
 
-  it('(3) the persisted record carries no diff, no content, and no window of the secret', async () => {
+  it('(3) the blocked answer carries no diff, no content, and no window of the secret', async () => {
     const test = harness({ config: CLEAN_CONFIG })
-    await propose(test, { path: 'envFile', value: PLANTED })
+    const payload = await propose(test, { path: 'envFile', value: PLANTED })
 
-    const payload = test.filed[0]?.payload
-    if (payload?.payloadKind !== 'blocked') throw new Error('expected a blocked payload')
+    if (payload.outcome !== 'blocked') throw new Error('expected a blocked answer')
     const serialized = JSON.stringify(payload)
 
     // THE INTEGRITY HALF FIRST, so the absence below is a fact about a channel that demonstrably
@@ -347,17 +355,16 @@ describe('the blocked posture: one posture, two reasons (CFGM-01 · D-10)', () =
     // THE ABSENCE, WINDOWED — a partial disclosure fails too.
     for (const window of windows(PLANTED)) expect(serialized).not.toContain(window)
 
-    // STRUCTURAL, not incidental: there are no fields for these on a blocked payload at all.
+    // STRUCTURAL, not incidental: there are no fields for these on a blocked answer at all.
     expect(serialized).not.toContain('shownDiff')
     expect(serialized).not.toContain('newContentBase64')
+    expect(test.filed).toHaveLength(0)
   })
 
   it('(4) the blocked summary line drops the value the applyable one would print', async () => {
     const test = harness({ config: CLEAN_CONFIG })
-    await propose(test, { path: 'envFile', value: PLANTED })
-
-    const payload = test.filed[0]?.payload
-    if (payload?.payloadKind !== 'blocked') throw new Error('expected a blocked payload')
+    const payload = await propose(test, { path: 'envFile', value: PLANTED })
+    if (payload.outcome !== 'blocked') throw new Error('expected a blocked answer')
 
     // THE CHANNEL CAN CARRY IT. The applyable line — the one this pipeline writes for a change that
     // passed — really does print the value, which is correct for a change nobody refused. That is
@@ -397,7 +404,8 @@ describe('the blocked posture: one posture, two reasons (CFGM-01 · D-10)', () =
     expect(answer.summaryLine).toContain('already carries a secret')
     expect(answer.summaryLine).toContain(CONFIG_FILE)
     expect(answer.scanFindings?.[0]?.redactedFingerprint).toBe(COMMITTED_FINGERPRINT)
-    expect(JSON.stringify(test.filed)).not.toContain(COMMITTED_SECRET.slice(0, 8))
+    expect(JSON.stringify(answer)).not.toContain(COMMITTED_SECRET.slice(0, 8))
+    expect(test.filed).toHaveLength(0)
   })
 
   it('(5b) a secret the change itself introduces is NOT described as already committed', () => {
@@ -445,14 +453,14 @@ describe('the blocked posture: one posture, two reasons (CFGM-01 · D-10)', () =
     const answer = await propose(both, { path: 'envFile', value: PLANTED })
     if (answer.outcome !== 'blocked') throw new Error('unreachable')
     expect(answer.blockedReason).toBe('guardrail-hit')
-    expect(JSON.stringify(both.filed)).not.toContain(PLANTED.slice(0, 8))
+    expect(JSON.stringify(answer)).not.toContain(PLANTED.slice(0, 8))
   })
 
-  it('(7) a clean change is proposed, and carries the classifier\'s per-value verdict', async () => {
+  it('(7) a clean change is written, and carries the classifier\'s per-value verdict', async () => {
     const innocuous = harness({ config: CLEAN_CONFIG })
     const answer = await propose(innocuous, { path: 'use.timeout.step', value: '45s' })
-    expect(answer.outcome).toBe('proposed')
-    if (answer.outcome !== 'proposed') throw new Error('unreachable')
+    expect(answer.outcome).toBe('applied')
+    if (answer.outcome !== 'applied') throw new Error('unreachable')
     expect(answer.crossBoundary).toBe(false)
     expect(answer.crossBoundaryReasons).toEqual([])
 
@@ -460,13 +468,13 @@ describe('the blocked posture: one posture, two reasons (CFGM-01 · D-10)', () =
     // `false` unconditionally cannot produce.
     const moved = harness({ config: CLEAN_CONFIG })
     const flagged = await propose(moved, { path: 'url', value: 'https://shop.evil.example/cart' })
-    if (flagged.outcome !== 'proposed') throw new Error('unreachable')
+    if (flagged.outcome !== 'applied') throw new Error('unreachable')
     expect(flagged.crossBoundary).toBe(true)
     expect(flagged.crossBoundaryReasons).toEqual(['new-origin'])
 
     const same = harness({ config: CLEAN_CONFIG })
     const unflagged = await propose(same, { path: 'url', value: 'https://shop.example.com/basket' })
-    if (unflagged.outcome !== 'proposed') throw new Error('unreachable')
+    if (unflagged.outcome !== 'applied') throw new Error('unreachable')
     expect(unflagged.crossBoundary).toBe(false)
     expect(unflagged.crossBoundaryReasons).toEqual([])
   })
@@ -525,17 +533,17 @@ describe('the blocked posture: one posture, two reasons (CFGM-01 · D-10)', () =
     expect(() => applyablePayload(blocked)).toThrow(BlockedConfigProposalError)
   })
 
-  it('(9) a composition with no scan bound cannot propose at all', async () => {
+  it('(9) a composition with no scan bound cannot change the config at all', async () => {
     const test = harness({ config: CLEAN_CONFIG })
     const deps = {
       configFiles: test.deps.configFiles,
       configValidate: test.deps.configValidate,
-      configProposals: test.deps.configProposals,
+      configWrite: test.deps.configWrite,
     } as unknown as FunctionDeps
 
     await expect(configFieldSetSpec.invoke({ path: 'use.timeout.step', value: '45s' }, deps))
       .rejects.toThrow(FunctionNotBoundError)
-    expect(test.filed).toHaveLength(0)
+    expect(test.written).toHaveLength(0)
   })
 
   it('(10) the scan really runs on every construction — the counter behind every absence', async () => {
@@ -586,7 +594,8 @@ hooks:
       // that scanned wide but still validated first — or that validated and then re-worded what it
       // got back — would fail here even with every assertion above passing.
       expect(test.validations()).toBe(0)
-      expect(JSON.stringify(test.filed)).not.toContain(HOOKS_SECRET.slice(0, 8))
+      expect(JSON.stringify(answer)).not.toContain(HOOKS_SECRET.slice(0, 8))
+      expect(test.filed).toHaveLength(0)
     })
 })
 

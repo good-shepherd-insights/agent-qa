@@ -40,6 +40,8 @@ import {
   ConfigTargetCreateInputSchema,
   ConfigTargetEditInputSchema,
   ConfigUndoProposeInputSchema,
+  // 2026-09-30, 432-11: the blocked vocabulary moved beside the direct answer that also carries it.
+  CONFIG_BLOCKED_REASONS,
 } from '../actions'
 import { base64Encode } from '../base64'
 import {
@@ -49,7 +51,6 @@ import {
 } from '../constants'
 import { renderConfigDiff } from '../diff-digest'
 import {
-  CONFIG_BLOCKED_REASONS,
   CURRENT_CONFIG_PROPOSAL_SCHEMA_VERSION,
   ConfigProposalApplyableV1Schema,
   ConfigProposalBlockedV1Schema,

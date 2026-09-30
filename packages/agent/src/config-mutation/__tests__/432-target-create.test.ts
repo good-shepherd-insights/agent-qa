@@ -4,28 +4,25 @@
 //
 //   C432-TARGET-CREATE-ENVIRONMENT — a create that accepts the class but drops it on the way into
 //     the registry entry, a create that defaults an undeclared target to some class, or a create that
-//     lets a second declaration overwrite an existing target. Read back from the candidate bytes the
-//     proposal carries, never from the input.
+//     lets a second declaration overwrite an existing target. Read back from the bytes the direct
+//     writer published (432-11: the create writes in the call), never from the input.
 //   C432-LOCALHOST-ORIGIN — a gate that still needs a dot and an alphabetic TLD (every local spelling
 //     refused), one that upgrades an explicit http to https or drops an explicit port, and one that
 //     widens into guessing: non-loopback IPs, obfuscated loopback spellings and non-web schemes stay
 //     refused. The write_test route and the scaffold op are measured too, because a derivation the
 //     gate gets right can still be lost if a caller hands on only the host.
 
-import { base64Decode, utf8Decode, utf8Encode } from '@vostride/agent-qa-schema'
+import { utf8Decode, utf8Encode } from '@vostride/agent-qa-schema'
 import {
   ConfigProjectScaffoldInputSchema,
   ConfigTargetCreateInputSchema,
 } from '@vostride/agent-qa-schema'
-import type { ConfigProposalV1, ConfigProposeOutput } from '@vostride/agent-qa-schema'
+import type { ConfigChange, ConfigChangeOutput } from '@vostride/agent-qa-schema'
 import { scanConstructedArtifact } from '@vostride/agent-qa-safety'
 import { describe, expect, it } from 'vitest'
 import { Document as YamlDocument, isMap, isScalar, isSeq, parse as parseYaml, parseDocument } from 'yaml'
 
-import {
-  constructConfigProjectScaffoldProposal,
-  constructConfigTargetCreateProposal,
-} from '../construct.js'
+import { createConfigTarget, scaffoldConfigProject } from '../construct.js'
 import type { ConstructConfigScaffoldDeps } from '../construct.js'
 import { parseHostnameToken } from '../hostname-gate.js'
 import type { ConfigPathFacts, ConfigStructuredValue } from '../ports.js'
@@ -49,9 +46,27 @@ use:
 
 interface Harness {
   readonly deps: ConstructConfigScaffoldDeps
-  readonly filed: ConfigProposalV1[]
+  /** The files as the direct writer left them. */
+  readonly bytes: Map<string, Uint8Array | undefined>
+  /** How many publications the direct writer received. */
+  readonly writes: () => number
   readonly rendered: { targetName: string; baseUrl: string }[]
   readonly reads: () => number
+}
+
+/** The config transaction's field operations, applied to in-memory bytes with the real yaml calls. */
+function applyChanges(input: Uint8Array | undefined, changes: readonly ConfigChange[]): Uint8Array {
+  const document = input === undefined ? new YamlDocument({}) : parseDocument(utf8Decode(input))
+  for (const change of changes) {
+    const path = change.path as (string | number)[]
+    if (change.op === 'set') document.setIn(path, document.createNode(change.value))
+    if (change.op === 'append') {
+      const existing = document.getIn(path, true)
+      if (isSeq(existing)) existing.add(document.createNode(change.value))
+      else document.setIn(path, document.createNode([change.value]))
+    }
+  }
+  return utf8Encode(document.toString())
 }
 
 function harness(options: { readonly config?: string } = {}): Harness {
@@ -60,14 +75,15 @@ function harness(options: { readonly config?: string } = {}): Harness {
     [HOOKS_FILE, undefined],
     ['.gitignore', utf8Encode('.agent-qa/\n')],
   ])
-  const filed: ConfigProposalV1[] = []
   const rendered: { targetName: string; baseUrl: string }[] = []
   let reads = 0
+  let writes = 0
   const documentFor = (input?: Uint8Array): YamlDocument =>
     input === undefined ? new YamlDocument({}) : parseDocument(utf8Decode(input))
 
   return {
-    filed,
+    bytes,
+    writes: () => writes,
     rendered,
     reads: () => reads,
     deps: {
@@ -115,10 +131,21 @@ function harness(options: { readonly config?: string } = {}): Harness {
         mintHookId: () => 'h_minted-by-the-port',
       },
       configValidate: { validate: () => Promise.resolve({ ok: true }) },
-      configProposals: {
-        put: (record) => {
-          filed.push(record.payload)
-          return Promise.resolve({ proposalId: `prop-${filed.length}` })
+      configWrite: {
+        applyFields: ({ changes }) => {
+          writes += 1
+          bytes.set(CONFIG_FILE, applyChanges(bytes.get(CONFIG_FILE), changes))
+          return Promise.resolve({
+            kind: 'applied' as const,
+            file: CONFIG_FILE,
+            revision: 'revision-after',
+            baseRevision: 'revision-before',
+          })
+        },
+        publishFiles: ({ files }) => {
+          writes += 1
+          for (const file of files) bytes.set(file.path, file.bytes)
+          return Promise.resolve({ kind: 'published' as const, written: files.map((file) => file.path) })
         },
       },
       configScan: { scan: (parts) => scanConstructedArtifact(parts, {}) },
@@ -138,24 +165,22 @@ function harness(options: { readonly config?: string } = {}): Harness {
   }
 }
 
-/** The target entry as the candidate config bytes carry it, parsed back rather than assumed. */
-function candidateTarget(payload: ConfigProposalV1 | undefined, name: string): Record<string, unknown> {
-  if (payload?.payloadKind !== 'applyable') throw new Error(`expected an applyable proposal`)
-  const file = payload.files.find((member) => member.path === CONFIG_FILE)
-  const parsed = parseYaml(utf8Decode(base64Decode(file?.newContentBase64 as string))) as {
+/** The target entry as the written config bytes carry it, parsed back rather than assumed. */
+function writtenTarget(test: Harness, name: string): Record<string, unknown> {
+  const parsed = parseYaml(utf8Decode(test.bytes.get(CONFIG_FILE) as Uint8Array)) as {
     registry?: { targets?: Record<string, Record<string, unknown>> }
   }
   const entry = parsed.registry?.targets?.[name]
-  if (entry === undefined) throw new Error(`the candidate carries no target ${name}`)
+  if (entry === undefined) throw new Error(`the written config carries no target ${name}`)
   return entry
 }
 
 async function create(
   test: Harness,
   input: Record<string, unknown>,
-): Promise<ConfigProposeOutput> {
+): Promise<ConfigChangeOutput> {
   const parsed = ConfigTargetCreateInputSchema.parse(input)
-  return await constructConfigTargetCreateProposal({ action: CREATE, ...parsed }, test.deps)
+  return await createConfigTarget({ action: CREATE, ...parsed }, test.deps)
 }
 
 describe('C432-TARGET-CREATE-ENVIRONMENT: a target declares its class at creation (D-19)', () => {
@@ -169,14 +194,14 @@ describe('C432-TARGET-CREATE-ENVIRONMENT: a target declares its class at creatio
         environment,
       })
 
-      expect(answer.outcome).toBe('proposed')
-      expect(candidateTarget(test.filed[0], 'checkout')).toEqual({
+      expect(answer.outcome).toBe('applied')
+      expect(writtenTarget(test, 'checkout')).toEqual({
         platform: 'web',
         url: 'https://checkout.example.com',
         environment,
       })
       // The existing target, and its own declaration, are untouched by the create.
-      expect(candidateTarget(test.filed[0], 'shop')).toEqual({
+      expect(writtenTarget(test, 'shop')).toEqual({
         platform: 'web',
         url: 'https://shop.example.com/cart',
         environment: 'shared',
@@ -188,7 +213,7 @@ describe('C432-TARGET-CREATE-ENVIRONMENT: a target declares its class at creatio
     const test = harness()
     await create(test, { name: 'checkout', platform: 'web', url: 'https://checkout.example.com' })
 
-    const entry = candidateTarget(test.filed[0], 'checkout')
+    const entry = writtenTarget(test, 'checkout')
     expect(entry).toEqual({ platform: 'web', url: 'https://checkout.example.com' })
     expect(Object.hasOwn(entry, 'environment')).toBe(false)
   })
@@ -203,7 +228,7 @@ describe('C432-TARGET-CREATE-ENVIRONMENT: a target declares its class at creatio
     })
 
     expect(answer).toMatchObject({ outcome: 'refused', reason: 'target-exists', candidates: ['shop'] })
-    expect(test.filed).toHaveLength(0)
+    expect(test.writes()).toBe(0)
     // A second attempt is refused the same way: nothing was written by the first.
     await expect(create(test, {
       name: 'shop',
@@ -211,7 +236,8 @@ describe('C432-TARGET-CREATE-ENVIRONMENT: a target declares its class at creatio
       url: 'https://shop.example.com/cart',
       environment: 'local',
     })).resolves.toMatchObject({ outcome: 'refused', reason: 'target-exists' })
-    expect(test.filed).toHaveLength(0)
+    expect(test.writes()).toBe(0)
+    expect(writtenTarget(test, 'shop')).toMatchObject({ environment: 'shared' })
   })
 
   it('C432-TARGET-CREATE-ENVIRONMENT: the collision check is exact, so a Unicode label is its own name', async () => {
@@ -227,9 +253,9 @@ describe('C432-TARGET-CREATE-ENVIRONMENT: a target declares its class at creatio
 
     // No folding of ß onto ss, and the label reaches the entry exactly as typed. Whether the
     // registry's slug rule then accepts it is whole-config validation's call, measured in cli.
-    expect(answer.outcome).toBe('proposed')
-    expect(candidateTarget(test.filed[0], 'straße')).toMatchObject({ environment: 'local' })
-    expect(candidateTarget(test.filed[0], 'strasse')).toEqual({ platform: 'web', url: 'https://a.example' })
+    expect(answer.outcome).toBe('applied')
+    expect(writtenTarget(test, 'straße')).toMatchObject({ environment: 'local' })
+    expect(writtenTarget(test, 'strasse')).toEqual({ platform: 'web', url: 'https://a.example' })
   })
 
   it('C432-TARGET-CREATE-ENVIRONMENT: the class sits beside an auth binding and is named in the summary line', async () => {
@@ -242,20 +268,17 @@ describe('C432-TARGET-CREATE-ENVIRONMENT: a target declares its class at creatio
       environment: 'production',
     })
 
-    expect(answer.outcome === 'proposed' && answer.summaryLine)
+    expect(answer.outcome === 'applied' && answer.summaryLine)
       .toBe('create web target checkout at https://checkout.example.com (production)')
-    expect(candidateTarget(test.filed[0], 'checkout')).toMatchObject({ environment: 'production' })
-    const file = test.filed[0]?.payloadKind === 'applyable'
-      ? test.filed[0].files.find((member) => member.path === CONFIG_FILE)
-      : undefined
-    const parsed = parseYaml(utf8Decode(base64Decode(file?.newContentBase64 as string))) as {
+    expect(writtenTarget(test, 'checkout')).toMatchObject({ environment: 'production' })
+    const parsed = parseYaml(utf8Decode(test.bytes.get(CONFIG_FILE) as Uint8Array)) as {
       use?: { authState?: string }
     }
     expect(parsed.use?.authState).toBe('buyer')
     // An undeclared create keeps the summary line it always had.
     const plain = harness()
     const undeclared = await create(plain, { name: 'checkout', platform: 'web', url: 'https://checkout.example.com' })
-    expect(undeclared.outcome === 'proposed' && undeclared.summaryLine)
+    expect(undeclared.outcome === 'applied' && undeclared.summaryLine)
       .toBe('create web target checkout at https://checkout.example.com')
   })
 
@@ -354,14 +377,14 @@ describe('C432-LOCALHOST-ORIGIN: the hostname gate admits local origins by parsi
 
   it('C432-LOCALHOST-ORIGIN: the scaffold op hands the content port the kept scheme and port', async () => {
     const test = harness({ config: 'workspace:\n  hooksFile: hooks.yaml\n' })
-    const answer = await constructConfigProjectScaffoldProposal(
+    const answer = await scaffoldConfigProject(
       { action: 'config.project.scaffold', domain: 'http://127.0.0.1:8931/form.html' },
       test.deps,
     )
 
-    expect(answer.outcome).toBe('proposed')
+    expect(answer.outcome).toBe('applied')
     expect(test.rendered).toEqual([{ targetName: 'ip-127-0-0-1-8931', baseUrl: 'http://127.0.0.1:8931' }])
-    expect(answer.outcome === 'proposed' && answer.summaryLine)
+    expect(answer.outcome === 'applied' && answer.summaryLine)
       .toBe('configure this project for http://127.0.0.1:8931 as target ip-127-0-0-1-8931')
   })
 

@@ -660,12 +660,13 @@ export const SCENARIO_TABLE = Object.freeze([
       fn: { reachable: true },
     },
     renderExpect: {
+      // 432-11 D-05: the op writes in the call and answers the files and fields it changed.
       markers: [
         'crossBoundary',
         'crossBoundaryReasons',
+        'fields',
         'files',
         'outcome',
-        'proposalId',
         'shownDiff',
         'summaryLine',
       ],
@@ -681,12 +682,13 @@ export const SCENARIO_TABLE = Object.freeze([
       fn: { reachable: true },
     },
     renderExpect: {
+      // 432-11 D-05: the op writes in the call and answers the files and fields it changed.
       markers: [
         'crossBoundary',
         'crossBoundaryReasons',
+        'fields',
         'files',
         'outcome',
-        'proposalId',
         'shownDiff',
         'summaryLine',
       ],
@@ -713,12 +715,13 @@ export const SCENARIO_TABLE = Object.freeze([
       fn: { reachable: true },
     },
     renderExpect: {
+      // 432-11 D-05: the op writes in the call and answers the files and fields it changed.
       markers: [
         'crossBoundary',
         'crossBoundaryReasons',
+        'fields',
         'files',
         'outcome',
-        'proposalId',
         'shownDiff',
         'summaryLine',
       ],
@@ -736,12 +739,13 @@ export const SCENARIO_TABLE = Object.freeze([
       fn: { reachable: true },
     },
     renderExpect: {
+      // 432-11 D-05: the op writes in the call and answers the files and fields it changed.
       markers: [
         'crossBoundary',
         'crossBoundaryReasons',
+        'fields',
         'files',
         'outcome',
-        'proposalId',
         'shownDiff',
         'summaryLine',
       ],
@@ -769,12 +773,13 @@ export const SCENARIO_TABLE = Object.freeze([
       fn: { reachable: true },
     },
     renderExpect: {
+      // 432-11 D-05: the op writes in the call and answers the files and fields it changed.
       markers: [
         'crossBoundary',
         'crossBoundaryReasons',
+        'fields',
         'files',
         'outcome',
-        'proposalId',
         'shownDiff',
         'summaryLine',
       ],
@@ -790,12 +795,13 @@ export const SCENARIO_TABLE = Object.freeze([
       fn: { reachable: true },
     },
     renderExpect: {
+      // 432-11 D-05: the op writes in the call and answers the files and fields it changed.
       markers: [
         'crossBoundary',
         'crossBoundaryReasons',
+        'fields',
         'files',
         'outcome',
-        'proposalId',
         'shownDiff',
         'summaryLine',
       ],

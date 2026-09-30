@@ -811,7 +811,7 @@ describe('the other person-visible yaml-parse roads report position-only (395-18
 })
 
 describe('the controls: the guard fires on the FAULT, and on nothing else (395-14)', () => {
-  it('(F6) a WELL-FORMED config still proposes — the guard fired zero times', async () => {
+  it('(F6) a WELL-FORMED config still changes — the guard fired zero times', async () => {
     seedConfig(WELL_FORMED_CONFIG)
 
     const { answer, error } = await invokeComposed({
@@ -822,7 +822,8 @@ describe('the controls: the guard fires on the FAULT, and on nothing else (395-1
     // Named rather than swallowed: a catch that had started eating healthy loads would fail here
     // with the message it failed with.
     expect(error?.message ?? null).toBeNull()
-    expect((answer as { outcome?: string }).outcome).toBe('proposed')
+    // 432-11 D-05: a healthy load reaches the direct write, which lands in the call.
+    expect((answer as { outcome?: string }).outcome).toBe('applied')
   })
 
   it('(F7) the same fault with NO credential anywhere still reports its position', async () => {

@@ -1,4 +1,10 @@
-// The write_test → scaffold → confirm → author handoff, in ONE turn (395-08, D-14/D-15 · CFGM-05).
+// The write_test → scaffold → author handoff, in ONE turn (395-08, D-14/D-15 · CFGM-05).
+//
+// 2026-09-30, 432-11 D-05/D-14: THE SCAFFOLD WRITES IN ITS OWN CALL. There is no proposal, no
+// `config.proposal.apply` and no confirm between the scaffold and the authoring dispatch; the
+// receipt of what was written is rendered where a surface exists, and a surface that is absent or
+// broken no longer stops the turn. The cells that pinned the confirm are re-spelled in place to the
+// direct behaviour: the chain is scaffold then author, and a scaffold that did not write stops it.
 //
 // THE SEAM THE PLAN NAMED DOES NOT EXIST, AND THIS FILE IS WHERE THAT WAS RESOLVED. The plan says
 // to branch "where the chat turn resolves a write_test request's target against
@@ -17,18 +23,16 @@
 //   (R2) configured     — a route that scaffolded a target the project already declares. The
 //                         utterance names `booking.com`, the project declares `booking-com`, and
 //                         the only invocation must be the authoring one.
-//   (R3) scaffold+apply — a chain that authored without configuring, or one that configured
+//   (R3) scaffold+author— a chain that authored without configuring, or one that configured
 //                         without authoring. Asserted as an ORDERED list of invocations, so a
 //                         turn that did the right things in the wrong order fails too.
-//   (R4) the confirm    — D-14's pause, proven REACHED. The apply seat is a spy and the cell
-//                         asserts it was CALLED, because a turn that never reached a confirm also
-//                         completes. Its integrity half: the authoring dispatch is asserted to
-//                         come AFTER it in the same `ordering` array.
-//   (R5) reject         — a chain that authored anyway after the person declined. The apply seat
-//                         throws the gate's own refusal name, and the cell asserts ZERO authoring
-//                         invocations and a `fail_closed` turn.
-//   (R6) non-TTY        — the same shape as (R5) with the gate's fail-closed refusal, and the
-//                         answer must name the missing configuration rather than the tier.
+//   (R4) no confirm     — 432-11: the scaffold's own call wrote the files, so no apply verb is
+//                         invoked between it and the authoring dispatch.
+//   (R5) interrupted    — a chain that authored anyway after the scaffold's write stopped part way.
+//                         The cell asserts ZERO authoring invocations and a `fail_closed` turn
+//                         carrying the scaffold's own account of what it wrote.
+//   (R6) headless       — no surface to render on is not a reason to stop: the receipt is logged and
+//                         the chain authors, as every other host does.
 //   (R7) refusal        — a route that guessed. An unconfigured project asked for "the checkout
 //                         flow" invokes NOTHING at all — not even the scaffold — and the refusal
 //                         names both continuations without echoing the words back as an origin.
@@ -69,9 +73,9 @@ import type {
 import type {
   ConfigFilesPortLike,
   ConfigPathFacts,
-  ConfigProposalsWritePortLike,
   ConfigScaffoldContentPortLike,
   ConfigValidatePortLike,
+  ConfigWritePortLike,
 } from '../../config-mutation/ports.js'
 import { AUTHORING_DRAFT_WRITE_FUNCTION_ID } from '../../functions/ops/authoring-draft-write.js'
 import {
@@ -86,7 +90,7 @@ import {
 import { CHAT_RESOLVER_TABLE } from '../resolver-table.js'
 import { deterministicOverrideStrategy } from '../reconcile.js'
 import { splitClauses } from '../clause-split.js'
-import { WRITE_TEST_UNDISPLAYABLE_DETAIL, createTurnEngine } from '../turn-engine.js'
+import { createTurnEngine } from '../turn-engine.js'
 import type { TurnEngineDeps } from '../turn-engine.js'
 import { toToolName } from '../tool-names.js'
 import type { ChatBindingStage, PlannerStagePort } from '../ports.js'
@@ -96,11 +100,6 @@ const PLANNER_CALLER: FunctionCaller = {
   grantedScopes: ['read', 'run', 'config-write', 'test-write'],
   safeMode: false,
   origin: 'agent',
-}
-
-/** The gate's own refusal name, so a scripted denial is the shape production raises. */
-class FunctionDeniedError extends Error {
-  override readonly name = 'FunctionDeniedError'
 }
 
 function memoryLog(): SessionLogPort & { readonly events: ChatSessionEvent[] } {
@@ -241,35 +240,16 @@ function inspectFacts(configText: string, paths: readonly string[]): readonly Co
   })
 }
 
-interface FiledProposal {
-  readonly proposalId: string
-  readonly summaryLine: string
+/** One publication the direct writer received (432-11): the files, by path. */
+interface Published {
   readonly paths: readonly string[]
 }
 
 interface ScaffoldOpFixture {
   readonly deps: Parameters<typeof configProjectScaffoldSpec.invoke>[1]
-  /** Every proposal the REAL op filed, so a cell reads what it actually proposed. */
-  readonly filed: FiledProposal[]
-  /**
-   * The store read BY ID — the ports-level `agent-qa proposals show <id>` (395-19 · CR-04).
-   *
-   * The owner's ruling turns on the difference between a turn that LOSES a person's work and one
-   * that declines to ask them about it: a refused route must leave the proposal recoverable under
-   * the id the op answered with. `filed` alone cannot say that — it is the writer's own array, and
-   * reading position 0 out of it proves nothing about reaching the record the way a person would.
-   * This is the lookup that surface performs, over the same records the port persisted.
-   */
-  show(proposalId: string): FiledProposal | undefined
+  /** Every publication the REAL op made, so a cell reads what it actually wrote. */
+  readonly published: Published[]
 }
-
-/**
- * The id this in-memory store mints.
- *
- * Fixed rather than sequential because two cells already pin the apply's input as
- * `{ proposalId: 'prop-scaffold' }`; what 395-19 adds is that the SAME id reads back out.
- */
-const SCAFFOLD_PROPOSAL_ID = 'prop-scaffold'
 
 function scaffoldOpFixture(options: {
   /** The committed configuration, or absent for a project that has none at all. */
@@ -277,7 +257,7 @@ function scaffoldOpFixture(options: {
   /** The committed hooks file, or absent when the project has none. */
   readonly hooksText?: string
 } = {}): ScaffoldOpFixture {
-  const filed: FiledProposal[] = []
+  const published: Published[] = []
 
   const configFiles: ConfigFilesPortLike = {
     read: () => Promise.resolve({
@@ -343,32 +323,26 @@ function scaffoldOpFixture(options: {
     },
   }
 
-  const configProposals: ConfigProposalsWritePortLike = {
-    put: (record) => {
-      filed.push({
-        proposalId: SCAFFOLD_PROPOSAL_ID,
-        summaryLine: record.payload.summaryLine,
-        paths: record.payload.payloadKind === 'applyable'
-          ? record.payload.files.map((file) => file.path)
-          : [...record.payload.paths],
-      })
-      return Promise.resolve({ proposalId: SCAFFOLD_PROPOSAL_ID })
+  const configWrite: ConfigWritePortLike = {
+    applyFields: () => Promise.reject(new Error('the scaffold publishes whole files')),
+    publishFiles: ({ files }) => {
+      published.push({ paths: files.map((file) => file.path) })
+      return Promise.resolve({ kind: 'published' as const, written: files.map((file) => file.path) })
     },
   }
 
   return {
-    show: (proposalId: string) => filed.find((entry) => entry.proposalId === proposalId),
     deps: {
       configFiles,
       configValidate,
-      configProposals,
+      configWrite,
       // THE REAL SCAN with an EMPTY seed set, on `config-apply.test.ts`'s stated reasoning: the
       // function is production's, the seeds are not, because a cell whose verdict depended on the
       // developer's exported variables would be measuring the machine.
       configScan: { scan: (parts) => scanConstructedArtifact(parts, {}) },
       scaffoldContent,
     } as Parameters<typeof configProjectScaffoldSpec.invoke>[1],
-    filed,
+    published,
   }
 }
 
@@ -392,7 +366,6 @@ function harness(options: {
    * the scaffold actually answers, so it is the one cell that may not be told the answer.
    */
   readonly realScaffold?: ScaffoldOpFixture
-  readonly denyApply?: string
   /**
    * Bind NO presentation port, which is every headless host (395-13).
    *
@@ -439,12 +412,12 @@ function harness(options: {
         ) as Promise<unknown>
       }
       return Promise.resolve(options.scaffoldAnswer ?? {
-        outcome: 'proposed',
-        proposalId: 'prop-scaffold',
+        outcome: 'applied',
         summaryLine: 'configure this project for https://booking.com as target booking-com',
+        files: ['.gitignore', 'agent-qa.config.yaml', 'hooks.yaml'],
+        fields: ['registry.targets.booking-com.platform', 'registry.targets.booking-com.url'],
         crossBoundary: true,
         crossBoundaryReasons: ['new-origin'],
-        files: ['.gitignore', 'agent-qa.config.yaml', 'hooks.yaml'],
         shownDiff: '--- /dev/null\n+++ b/agent-qa.config.yaml\n',
       })
     }
@@ -467,12 +440,6 @@ function harness(options: {
     invoke: async (functionId, input) => {
       ordering.push(functionId)
       inputs.push({ functionId, input })
-      if (functionId === options.denyApply) {
-        throw new FunctionDeniedError(
-          'Denied config.proposal.apply: fail-closed: this project has no agent-qa configuration '
-          + 'and there is nobody to ask',
-        )
-      }
       const answer = await answerFor(functionId, input)
       answers.push({ functionId, answer })
       // 399.1: the envelope, carrying the legacy verdict — these cells are about the write-test
@@ -590,7 +557,7 @@ describe('the write_test route is deterministic and narrow (D-15)', () => {
   })
 })
 
-describe('one turn: detect, scaffold, confirm, apply, author (D-14 · CFGM-05)', () => {
+describe('one turn: detect, scaffold, author (D-14 · CFGM-05; 432-11 D-05)', () => {
   it('(R1) dispatches authoring untouched for an ordinary request in a configured project', async () => {
     const test = harness({ targets: ['shop'] })
     const result = await test.runTurn({ message: 'write a test for the login flow' })
@@ -608,72 +575,69 @@ describe('one turn: detect, scaffold, confirm, apply, author (D-14 · CFGM-05)',
     expect(test.ordering).toEqual([AUTHORING_DRAFT_WRITE_FUNCTION_ID])
   })
 
-  it('(R3/R4) scaffolds through the REAL op, reaches the confirm, and authors AFTER it', async () => {
+  it('(R3/R4) scaffolds through the REAL op, which writes in its own call, and authors AFTER it', async () => {
     // THE FIXTURE IS THE FIX (395-12). An EMPTY configured set, and a committed configuration that
-    // declares a model and ZERO targets — the class that can reach a chat turn at all, and the
-    // class the scaffold used to refuse. The invocation reaches `configProjectScaffoldSpec` and
-    // `constructConfigProjectScaffoldProposal` for real; nothing here tells it what to answer.
-    //
-    // RED ON PRE-FIX HEAD, BY THE MEASURED MECHANISM: the real op answered `refused` /
-    // `already-configured` for the config file's mere EXISTENCE, and `routeWriteTest` converted
-    // that into a whole-turn refusal — cell (R8)'s shape, arriving on the happy path.
+    // declares a model and ZERO targets — the class that can reach a chat turn at all. The
+    // invocation reaches `configProjectScaffoldSpec` and `scaffoldConfigProject` for real; nothing
+    // here tells it what to answer.
     const scaffoldOp = scaffoldOpFixture({ configText: ZERO_TARGET_CONFIG })
     const test = harness({ targets: [], realScaffold: scaffoldOp })
     const result = await test.runTurn({ message: 'write a test for booking.com checkout' })
 
     expect(result.status).toBe('completed')
-    // The op really PROPOSED, and what it filed is the merge: the person's configuration modified
-    // beside the two files this project does not have. Read off the filed record rather than off
-    // the turn, so a chain that completed on some other answer cannot satisfy it.
-    expect(scaffoldOp.filed).toHaveLength(1)
-    expect(scaffoldOp.filed[0]?.summaryLine)
-      .toBe('configure this project for https://booking.com as target booking-com')
-    expect([...(scaffoldOp.filed[0]?.paths ?? [])].sort())
+    // The op really WROTE, once, and what it wrote is the merge: the person's configuration beside
+    // the two files this project does not have. Read off the writer rather than off the turn, so a
+    // chain that completed on some other answer cannot satisfy it.
+    expect(scaffoldOp.published).toHaveLength(1)
+    expect([...(scaffoldOp.published[0]?.paths ?? [])].sort())
       .toEqual(['.gitignore', 'agent-qa.config.yaml', 'hooks.yaml'])
-    // THE ORDER IS THE CLAIM. Scaffold, then the gated apply — which is where the shipped v48/392
-    // inline confirm pauses this chain — and only then the authoring dispatch. A turn that did all
-    // three in a different order fails here.
+    // THE ORDER IS THE CLAIM: the scaffold, then the authoring dispatch against the target that
+    // now exists. (R4) 432-11: nothing in between — no apply verb, so no confirm.
     expect(test.ordering).toEqual([
       CONFIG_PROJECT_SCAFFOLD_FUNCTION_ID,
-      CONFIG_PROPOSAL_APPLY_FUNCTION_ID,
       AUTHORING_DRAFT_WRITE_FUNCTION_ID,
     ])
-    // (R4) THE CONFIRM WAS REACHED, as a fact about the apply having been INVOKED rather than as an
-    // inference from the turn completing. `config.proposal.apply` is the gated verb; a chain that
-    // wrote the configuration without crossing it would show no such invocation here.
-    expect(test.inputs.map((call) => call.functionId))
-      .toContain(CONFIG_PROPOSAL_APPLY_FUNCTION_ID)
-    // The domain handed to the scaffold is the one the gate derived from the utterance, and the
-    // apply names the proposal the scaffold answered with — not an id this engine invented.
+    expect(test.ordering).not.toContain(CONFIG_PROPOSAL_APPLY_FUNCTION_ID)
+    // The domain handed to the scaffold is the one the gate derived from the utterance.
     expect(test.inputs[0]?.input).toEqual({ domain: 'booking.com' })
-    expect(test.inputs[1]?.input).toEqual({ proposalId: 'prop-scaffold' })
+    // The receipt names what was written, in the op's own file list.
+    const receipt = test.events.find((event) =>
+      event.kind === 'clause_receipt'
+      && (event as { functionId: string }).functionId === CONFIG_PROJECT_SCAFFOLD_FUNCTION_ID) as
+      { status: string; outcome: string } | undefined
+    expect(receipt?.status).toBe('executed')
+    expect(receipt?.outcome).toMatch(/^applied: /)
+    for (const path of ['.gitignore', 'agent-qa.config.yaml', 'hooks.yaml']) {
+      expect(receipt?.outcome, path).toContain(path)
+    }
   })
 
-  it('(R5/R6) authors NOTHING when the confirm is declined or the host is non-TTY', async () => {
-    // TARGETS EMPTY SINCE 395-12 (WR-05): a project that declares targets now PASSES THROUGH a
-    // hostname token, so `['other-site']` would route authoring and this cell would measure
-    // nothing. The from-zero class is the one in which a scaffold is offered at all.
-    const test = harness({ targets: [], denyApply: CONFIG_PROPOSAL_APPLY_FUNCTION_ID })
+  it('(R5/R6) authors NOTHING when the scaffold\'s write stopped part way, and says where', async () => {
+    // TARGETS EMPTY SINCE 395-12 (WR-05): the from-zero class is the one in which a scaffold is
+    // offered at all. 432-11: there is no confirm to decline; the one way the chain stops after the
+    // scaffold is that the scaffold did not finish writing.
+    const detail = 'wrote .gitignore, then stopped: agent-qa.config.yaml changed after this call read '
+      + 'it, and hooks.yaml was not reached. Nothing was rolled back; the written files hold the new bytes.'
+    const test = harness({
+      targets: [],
+      scaffoldAnswer: {
+        outcome: 'interrupted',
+        summaryLine: 'configure this project for https://booking.com as target booking-com',
+        written: ['.gitignore'],
+        failed: { path: 'agent-qa.config.yaml', reason: 'file-changed' },
+        unwritten: ['hooks.yaml'],
+        detail,
+      },
+    })
     const result = await test.runTurn({ message: 'write a test for booking.com checkout' })
 
     expect(result.status).toBe('fail_closed')
-    // The scaffold was proposed and the apply refused. NOTHING was authored — a person who declined
-    // a configuration change is not left with a draft against a project that still has none.
-    expect(test.ordering).toEqual([
-      CONFIG_PROJECT_SCAFFOLD_FUNCTION_ID,
-      CONFIG_PROPOSAL_APPLY_FUNCTION_ID,
-    ])
+    expect(test.ordering).toEqual([CONFIG_PROJECT_SCAFFOLD_FUNCTION_ID])
     expect(test.ordering).not.toContain(AUTHORING_DRAFT_WRITE_FUNCTION_ID)
-    // The answer names the missing configuration, which is the v48 posture's own sentence carried
-    // through rather than re-worded here.
-    expect(result.unhandled?.reason).toContain('no agent-qa configuration')
-    // 395-13: THE RENDER HAPPENED AND THE REFUSAL STILL STANDS. Showing a person what they are
-    // being asked about is not a step toward doing it — the proposal reached the surface exactly
-    // once, then the apply was refused and nothing was authored. A render that suppressed itself on
-    // the declined road would hide the one thing a person needs in order to decline for a reason.
-    expect(test.presented).toHaveLength(1)
-    expect(test.presented[0]?.orderingAtRender)
-      .not.toContain(CONFIG_PROPOSAL_APPLY_FUNCTION_ID)
+    // The answer is the scaffold's own account of what it wrote, carried through verbatim.
+    expect(result.unhandled?.reason).toBe(detail)
+    // Nothing was rendered as a receipt of a change that did not complete.
+    expect(test.presented).toEqual([])
   })
 
   it('(R7) refuses an unconfigured project with no hostname, and invokes nothing at all', async () => {
@@ -692,10 +656,7 @@ describe('one turn: detect, scaffold, confirm, apply, author (D-14 · CFGM-05)',
   })
 
   it('(R8) reports the scaffold\'s own refusal and dispatches nothing', async () => {
-    // TARGETS EMPTY, AND THE REFUSAL IS ONE THE REAL OP CAN PRODUCE HERE (395-12). Two fixture
-    // moves, one reason: WR-05 means a target-declaring project passes a hostname through, and
-    // `already-configured` is a refusal a ZERO-target project can no longer earn — a canned answer
-    // no shipped build could produce is exactly the vacuity (R3/R4) was repaired for. 395-02's
+    // TARGETS EMPTY, AND THE REFUSAL IS ONE THE REAL OP CAN PRODUCE HERE (395-12). 395-02's
     // `unrenderable-diff` is reachable from zero: it is what the op answers when the project's own
     // `.gitignore` holds bytes that are not valid UTF-8.
     const test = harness({
@@ -716,11 +677,9 @@ describe('one turn: detect, scaffold, confirm, apply, author (D-14 · CFGM-05)',
   it('(R10 · WR-05) passes a hostname-shaped NON-SITE token through in a configured project',
     async () => {
       // RED, MEASURED BY MUTATION rather than quoted from history: with WR-05's precondition
-      // removed, `readme.md` parses as a hostname and this turn's ordering becomes
-      // `[config.project.scaffold, config.proposal.apply, authoring.draft.write]` — it scaffolds
-      // and COMMITS a target for `readme-md`, a site nobody named. Before 395-12 narrowed
-      // `already-configured` the same route ended that turn in a refusal instead; either way what
-      // is lost is 394's plain authoring dispatch, which is what this cell pins.
+      // removed, `readme.md` parses as a hostname and this turn scaffolds and WRITES a target for
+      // `readme-md`, a site nobody named. What is lost is 394's plain authoring dispatch, which is
+      // what this cell pins.
       const scaffoldOp = scaffoldOpFixture({ configText: ZERO_TARGET_CONFIG })
       const test = harness({ targets: ['shop'], realScaffold: scaffoldOp })
       const message = 'write a test that checks the readme.md rendering'
@@ -729,24 +688,21 @@ describe('one turn: detect, scaffold, confirm, apply, author (D-14 · CFGM-05)',
       expect(result.status).toBe('completed')
       // EXACTLY WHAT 394 SHIPS — and the reference is PRODUCED rather than typed. The same message
       // is driven through a host that binds no vocabulary at all (cell (R9)'s class), where the
-      // route provably does not run, and the two dispatches are compared whole. A literal here
-      // would have to re-spell the engine's own `sessionRef` stamp, and would then agree with
-      // itself the day that stamp changed; this comparison cannot.
+      // route provably does not run, and the two dispatches are compared whole.
       const unrouted = harness()
       await unrouted.runTurn({ message })
       expect(test.ordering).toEqual([AUTHORING_DRAFT_WRITE_FUNCTION_ID])
       expect(test.inputs).toEqual(unrouted.inputs)
       expect(test.inputs).toHaveLength(1)
       expect((test.inputs[0]?.input as { intent?: string }).intent).toBe(message)
-      // And the scaffold op was never reached at all, so nothing was filed on the way past.
-      expect(scaffoldOp.filed).toHaveLength(0)
+      // And the scaffold op was never reached at all, so nothing was written on the way past.
+      expect(scaffoldOp.published).toHaveLength(0)
     })
 
   it('(R11) ONE utterance, TWO project classes: zero targets scaffolds, one target passes through',
     async () => {
       // THE CORPUS DISCIPLINE R7 established, applied to the scaffold arm: the same words against
       // both classes in one cell, so the route's decision is measured as a property of the PROJECT.
-      // A route keyed on the wording makes both halves agree; a constant fails one of them.
       const message = 'write a test for booking.com checkout'
 
       const fromZero = scaffoldOpFixture({ configText: ZERO_TARGET_CONFIG })
@@ -755,35 +711,25 @@ describe('one turn: detect, scaffold, confirm, apply, author (D-14 · CFGM-05)',
       expect(zeroResult.status).toBe('completed')
       expect(zero.ordering).toEqual([
         CONFIG_PROJECT_SCAFFOLD_FUNCTION_ID,
-        CONFIG_PROPOSAL_APPLY_FUNCTION_ID,
         AUTHORING_DRAFT_WRITE_FUNCTION_ID,
       ])
-      expect(fromZero.filed).toHaveLength(1)
+      expect(fromZero.published).toHaveLength(1)
 
       const configuredOp = scaffoldOpFixture({ configText: ZERO_TARGET_CONFIG })
       const configured = harness({ targets: ['shop'], realScaffold: configuredOp })
       const configuredResult = await configured.runTurn({ message })
       expect(configuredResult.status).toBe('completed')
       expect(configured.ordering).toEqual([AUTHORING_DRAFT_WRITE_FUNCTION_ID])
-      expect(configuredOp.filed).toHaveLength(0)
+      expect(configuredOp.published).toHaveLength(0)
     })
 
-  it('(R12) renders THIS proposal — summary, files, true diff — AFTER the scaffold and BEFORE the apply',
+  it('(R12) renders THIS change — summary, files, true diff — AFTER the scaffold wrote it and BEFORE authoring',
     async () => {
-      // SC-5's FIRST CLAUSE, AS AN ORDERING CLAIM (395-13, D-14 · CFGM-05). 395-VERIFICATION drove
-      // this exact road under a real pty and found the person answering `fn:config.proposal.apply
-      // needs your approval` with zero diff markers, zero mention of the config file, the target
-      // name or the summary line anywhere they could read. "Reviewable" was ruled to bind AT
-      // APPROVAL TIME, so the claim is not that the bytes eventually appear — it is that they are
-      // on the surface BEFORE the verb that commits them is invoked.
-      //
-      // TWO NAMED RED DIRECTIONS, both measured by mutation rather than argued:
-      //   M-R1 render-absent      — the `engine.present` call deleted. Reds on the empty recorder.
-      //   M-R2 render-after-apply — the same call moved below the apply invoke. Reds on the
-      //                             snapshot, which then carries `config.proposal.apply`.
+      // 432-11: the render is a RECEIPT of a change already on disk, shown once, between the write
+      // and the authoring dispatch that builds on it.
       //
       // THE REAL OP ANSWERS IT. Nothing here tells the scaffold what to say, so what is compared is
-      // the proposal this chain actually produced.
+      // the change this chain actually made.
       const scaffoldOp = scaffoldOpFixture({ configText: ZERO_TARGET_CONFIG })
       const test = harness({ targets: [], realScaffold: scaffoldOp })
       const result = await test.runTurn({ message: 'write a test for booking.com checkout' })
@@ -791,23 +737,18 @@ describe('one turn: detect, scaffold, confirm, apply, author (D-14 · CFGM-05)',
       expect(result.status).toBe('completed')
       expect(test.ordering).toEqual([
         CONFIG_PROJECT_SCAFFOLD_FUNCTION_ID,
-        CONFIG_PROPOSAL_APPLY_FUNCTION_ID,
         AUTHORING_DRAFT_WRITE_FUNCTION_ID,
       ])
 
-      // EXACTLY ONE render. A turn that rendered twice would be a person shown the same proposal in
-      // two places, either of which could be the stale one.
+      // EXACTLY ONE render.
       expect(test.presented).toHaveLength(1)
       const render = test.presented[0]
 
-      // THE ORDERING, read off the snapshot taken AT RENDER TIME rather than inferred from the
-      // finished turn: at the moment these bytes reached the surface the scaffold had run and the
-      // apply had NOT. A render that arrived after the commit satisfies neither half.
-      expect(render?.orderingAtRender).toContain(CONFIG_PROJECT_SCAFFOLD_FUNCTION_ID)
-      expect(render?.orderingAtRender).not.toContain(CONFIG_PROPOSAL_APPLY_FUNCTION_ID)
+      // THE ORDERING, read off the snapshot taken AT RENDER TIME: the scaffold had written and the
+      // authoring dispatch had not started.
+      expect(render?.orderingAtRender).toEqual([CONFIG_PROJECT_SCAFFOLD_FUNCTION_ID])
 
-      // THE CONTENT IS THIS PROPOSAL'S, taken from the op's OWN resolved answer. A literal here
-      // would agree with itself the day the derivation changed; this comparison cannot.
+      // THE CONTENT IS THIS CHANGE'S, taken from the op's OWN resolved answer.
       const answer = test.answers.find(
         (row) => row.functionId === CONFIG_PROJECT_SCAFFOLD_FUNCTION_ID,
       )?.answer as {
@@ -818,24 +759,19 @@ describe('one turn: detect, scaffold, confirm, apply, author (D-14 · CFGM-05)',
         readonly crossBoundary: boolean
         readonly crossBoundaryReasons: readonly string[]
       }
-      expect(answer.outcome).toBe('proposed')
+      expect(answer.outcome).toBe('applied')
       expect(render?.text).toContain(answer.summaryLine)
       expect(answer.files.length).toBeGreaterThan(0)
       for (const path of answer.files) expect(render?.text, path).toContain(path)
 
-      // THE TRUE `shownDiff`, BYTE FOR BYTE AND UNTRUNCATED — never a re-derivation (F-02's
-      // compounding). These are the same bytes the record stores and D-19 byte-compares at apply,
-      // so what a person reads here cannot drift from what an accept commits. `endsWith` is the
-      // untruncated half: the diff is the tail of the render verbatim, not a reflowed excerpt.
+      // THE TRUE `shownDiff`, BYTE FOR BYTE AND UNTRUNCATED — never a re-derivation.
       expect(answer.shownDiff).toContain(SCAFFOLD_CONFIG_FILE)
       expect(answer.shownDiff.split('\n').length).toBeGreaterThan(3)
       expect(render?.text).toContain(answer.shownDiff)
       expect(render?.text.endsWith(answer.shownDiff)).toBe(true)
 
       // AND THE RENDER IS EXACTLY THE DECLARED PARTS, in order, with nothing invented on the way to
-      // the person. FOUR NOW AND NOT THREE (399.1 RC-2): the boundary verdict leads, and it is
-      // composed HERE from the op's own two fields rather than quoted, so this equality still fails
-      // on any byte the engine adds that no producer filed. (R20) owns the boundary claim itself.
+      // the person: the boundary line, the summary, the files, the diff.
       const boundaryLine = 'CROSSES A TRUST BOUNDARY — crossBoundary: true; '
         + `crossBoundaryReasons: ${answer.crossBoundaryReasons.join(', ')}`
       expect(answer.crossBoundary).toBe(true)
@@ -843,273 +779,148 @@ describe('one turn: detect, scaffold, confirm, apply, author (D-14 · CFGM-05)',
         .toBe([boundaryLine, answer.summaryLine, ...answer.files, answer.shownDiff].join('\n'))
     })
 
-  it('(R13′) an UNBOUND present REFUSES the route: nothing is displayed, so nothing is offered',
+  it('(R13′) an UNBOUND present does not stop the route: the change is written and authoring follows',
     async () => {
-      // MATRIX CELL: present=undefined × all fields present × the shipped `ask` host shape
-      // (395-22 · CR-03 · the owner's 2026-08-15 CR-04 ruling, completed on the UNBOUND arm).
-      //
-      // WHAT THIS CELL USED TO ASSERT, AND WHY IT IS GONE. (R13) pinned the absent port as a chain
-      // that CONTINUES: `expect(test.ordering).toEqual([scaffold, apply, draft.write])` plus
-      // `status === 'completed'`. 395-VERIFICATION (gap round 4) drove exactly this shape through
-      // the PRODUCTION composition — `composeCliLocalAgent` + `agent.ask` + the shipped
-      // `createTtyConfirmPort` — and measured the complete set of bytes reaching a person's
-      // terminal before the decision: one line, the approval prompt itself. That is verbatim the
-      // state the owner ruled against on the THROWS arm one round earlier, reached through the
-      // unbound door instead of the throwing one, and this cell ASSERTED IT AS CORRECT. A corpus
-      // that pins the defect cannot see the defect; that is why the assertions are DELETED rather
-      // than relaxed.
-      //
-      // WHAT REPLACES THEM IS (R14)/(R15)'s REFUSAL-EFFECT SET, deliberately duplicated rather than
-      // shared (D-395-19-D's recorded posture): three arms of one port are three claims, and a
-      // helper would let one arm's regression hide inside another's green.
-      //
-      // NOTE THE ONE ASSERTION THIS ARM OWNS ALONE: `presented` is empty because there is no port
-      // to attempt on — the refusal happens at the PRECONDITION, above the render, which is what
-      // makes displayability a property of the proposal rather than a side effect of a call.
+      // 432-11 D-14: the render used to be a PRECONDITION of an approval (395-22 · CR-03). There is
+      // no approval now: the scaffold wrote the files in its own call, so a host with no surface —
+      // every headless `ask` — logs the receipt and authors, exactly as a host with one does.
       const scaffoldOp = scaffoldOpFixture({ configText: ZERO_TARGET_CONFIG })
       const test = harness({ targets: [], realScaffold: scaffoldOp, noPresent: true })
       const result = await test.runTurn({ message: 'write a test for booking.com checkout' })
 
-      // NOTHING WAS DISPLAYED, and nothing was attempted: no port, no render.
       expect(test.presented).toEqual([])
-
-      // NO CONFIRM WAS EVER OFFERED. `config.proposal.apply` is the gated verb whose invocation IS
-      // the confirm, so its absence from the recorded ordering is the fact that nobody was asked.
-      // The exact array first so a fourth invocation cannot slip in, then by name so the failure
-      // message says which verb.
-      expect(test.ordering).toEqual([CONFIG_PROJECT_SCAFFOLD_FUNCTION_ID])
+      expect(result.status).toBe('completed')
+      expect(test.ordering).toEqual([
+        CONFIG_PROJECT_SCAFFOLD_FUNCTION_ID,
+        AUTHORING_DRAFT_WRITE_FUNCTION_ID,
+      ])
       expect(test.ordering).not.toContain(CONFIG_PROPOSAL_APPLY_FUNCTION_ID)
-      expect(test.ordering).not.toContain(AUTHORING_DRAFT_WRITE_FUNCTION_ID)
+      expect(scaffoldOp.published).toHaveLength(1)
 
-      // THE TURN DOES NOT PRETEND IT SUCCEEDED, and it carries the arm's own sentence — the fixed
-      // literal every displayability refusal shares. One refusal vocabulary: a person who was shown
-      // nothing is told the same thing whether the surface broke or was never there.
-      expect(result.status).toBe('fail_closed')
-      expect(result.unhandled?.reason).toBe(WRITE_TEST_UNDISPLAYABLE_DETAIL)
-      expect(result.unhandled?.reason).not.toBe(WRITE_TEST_UNCONFIGURED_DETAIL)
-
-      // THE SESSION RECORD TESTIFIES TO THE SAME THING: the scaffold's receipt is there, the
-      // authoring dispatch's is not, and no `completed` turn was written.
+      // THE SESSION RECORD CARRIES THE RECEIPT: the scaffold's, naming the files it wrote, then the
+      // authoring dispatch's.
       const receipted = test.events
         .filter((event) => event.kind === 'clause_receipt')
         .map((event) => (event as { functionId: string }).functionId)
       expect(receipted).toContain(CONFIG_PROJECT_SCAFFOLD_FUNCTION_ID)
-      expect(receipted).not.toContain(AUTHORING_DRAFT_WRITE_FUNCTION_ID)
+      expect(receipted).toContain(AUTHORING_DRAFT_WRITE_FUNCTION_ID)
       expect(receipted).not.toContain(CONFIG_PROPOSAL_APPLY_FUNCTION_ID)
-      expect(test.events.some(
-        (event) => event.kind === 'turn_complete'
-          && (event as { status: string }).status === 'completed',
-      )).toBe(false)
-
-      // NO WORK IS LOST: the route refuses the TURN, not the PROPOSAL. Filed exactly once, and it
-      // reads back out of the store under the id the op answered with — the ports-level
-      // `agent-qa proposals show <id>` the refusal sentence points a person at.
-      expect(scaffoldOp.filed).toHaveLength(1)
-      const proposalId = (test.answers.find(
-        (row) => row.functionId === CONFIG_PROJECT_SCAFFOLD_FUNCTION_ID,
-      )?.answer as { readonly proposalId?: string } | undefined)?.proposalId
-      expect(proposalId).toBe(SCAFFOLD_PROPOSAL_ID)
-      const shown = scaffoldOp.show(proposalId ?? '')
-      expect(shown?.summaryLine).toBe(scaffoldOp.filed[0]?.summaryLine)
-      expect(shown?.paths.length ?? 0).toBeGreaterThan(0)
     })
 
   // -----------------------------------------------------------------------------------------------
-  // (R16)-(R19) — THE PER-FIELD DISPLAYABILITY MATRIX (395-22).
+  // (R16)-(R19) — THE PER-FIELD RECEIPT MATRIX (395-22, re-spelled by 432-11).
   //
-  // WHY A CANNED ANSWER HERE AND A REAL OP ABOVE. The real scaffold op cannot produce a proposed
-  // answer with a missing or empty display field — `ConfigProposeOutputSchema`'s proposed arm
-  // requires `summaryLine`/`files` non-empty and, as of this plan, `shownDiff` too. That collapse is
-  // the POINT and it is stated rather than assumed: on the op road these states are unrepresentable
-  // by construction, and (S1) in the schema package measures that. These cells exist because the
-  // engine's precondition covers every host and every future op, not just today's one producer — so
-  // they drive the harness's stub producer, which is this unit file's own corpus idiom.
-  //
-  // THE PRESENT PORT IS HEALTHY IN ALL FOUR. That is what separates them from (R13′): the surface
-  // works, and the refusal is about the PROPOSAL having nothing to show — displayability as a
-  // property of the artifact rather than of the port.
+  // A receipt renders what the answer has. The one field the route cannot do without is the file
+  // list: an `applied` answer that names no file wrote nothing a test could be authored against,
+  // so it stops the turn. The display fields are rendered when present and skipped when absent or
+  // empty, and none of them stops a turn whose files are already written.
   // -----------------------------------------------------------------------------------------------
 
-  /** The stub producer's proposed answer, minus whichever field a cell is measuring. */
+  /** The stub producer's applied answer, minus whichever field a cell is measuring. */
   const DISPLAYABLE_ANSWER = {
-    outcome: 'proposed',
-    proposalId: 'prop-scaffold',
+    outcome: 'applied',
     summaryLine: 'configure this project for https://booking.com as target booking-com',
+    files: ['.gitignore', 'agent-qa.config.yaml', 'hooks.yaml'],
+    fields: ['registry.targets.booking-com.platform', 'registry.targets.booking-com.url'],
     crossBoundary: true,
     crossBoundaryReasons: ['new-origin'],
-    files: ['.gitignore', 'agent-qa.config.yaml', 'hooks.yaml'],
     shownDiff: '--- /dev/null\n+++ b/agent-qa.config.yaml\n',
   } as const
 
-  /**
-   * The refusal-effect set of (R13′), asserted over a healthy-port run (395-22).
-   *
-   * SHARED HERE AND NOT ABOVE, deliberately: (R13′)/(R14)/(R15) are three arms of the PORT and each
-   * repeats its assertions so one arm's regression cannot hide in another's green. (R16)-(R19) are
-   * four coordinates of ONE field-shape mechanism driven through one producer, so what varies
-   * between them is the input and not the claim — and a helper is the honest spelling of that.
-   */
-  async function expectUndisplayableRefusal(scaffoldAnswer: unknown): Promise<void> {
+  /** A receipt missing a display field still renders the rest and the turn authors. */
+  async function expectReceiptWithout(scaffoldAnswer: Record<string, unknown>): Promise<string> {
     const test = harness({ targets: [], scaffoldAnswer })
     const result = await test.runTurn({ message: 'write a test for booking.com checkout' })
 
-    // THE RENDER WAS NEVER ATTEMPTED. The port is bound and healthy, so an empty recorder can only
-    // mean the refusal sat ABOVE the call — the precondition rather than a failed render.
-    expect(test.presented).toEqual([])
-    expect(test.ordering).toEqual([CONFIG_PROJECT_SCAFFOLD_FUNCTION_ID])
-    expect(test.ordering).not.toContain(CONFIG_PROPOSAL_APPLY_FUNCTION_ID)
-    expect(test.ordering).not.toContain(AUTHORING_DRAFT_WRITE_FUNCTION_ID)
-    expect(result.status).toBe('fail_closed')
-    expect(result.unhandled?.reason).toBe(WRITE_TEST_UNDISPLAYABLE_DETAIL)
-
-    const receipted = test.events
-      .filter((event) => event.kind === 'clause_receipt')
-      .map((event) => (event as { functionId: string }).functionId)
-    expect(receipted).toContain(CONFIG_PROJECT_SCAFFOLD_FUNCTION_ID)
-    expect(receipted).not.toContain(AUTHORING_DRAFT_WRITE_FUNCTION_ID)
+    expect(result.status).toBe('completed')
+    expect(test.ordering).toEqual([
+      CONFIG_PROJECT_SCAFFOLD_FUNCTION_ID,
+      AUTHORING_DRAFT_WRITE_FUNCTION_ID,
+    ])
+    expect(test.presented).toHaveLength(1)
+    const text = test.presented[0]?.text ?? ''
+    for (const path of DISPLAYABLE_ANSWER.files) expect(text, path).toContain(path)
+    // No blank line stands in for the missing part (the diff's own trailing newline aside).
+    expect(text.startsWith('\n')).toBe(false)
+    expect(text).not.toContain('\n\n')
+    return text
   }
 
-  it('(R16) a proposal with NO summary line is not displayable, so it is not offered', async () => {
-    // MATRIX CELL: summaryLine absent × present=healthy.
+  it('(R16) a receipt with NO summary line renders the rest, and the turn authors', async () => {
     const { summaryLine: _summaryLine, ...withoutSummary } = DISPLAYABLE_ANSWER
-    await expectUndisplayableRefusal(withoutSummary)
+    const text = await expectReceiptWithout(withoutSummary)
+    expect(text).not.toContain(DISPLAYABLE_ANSWER.summaryLine)
   })
 
-  it('(R17) a proposal with NO file list is not displayable, so it is not offered', async () => {
-    // MATRIX CELL: files absent × present=healthy.
+  it('(R17) an answer with NO file list wrote nothing to author against, so the turn stops', async () => {
     const { files: _files, ...withoutFiles } = DISPLAYABLE_ANSWER
-    await expectUndisplayableRefusal(withoutFiles)
+    const test = harness({ targets: [], scaffoldAnswer: withoutFiles })
+    const result = await test.runTurn({ message: 'write a test for booking.com checkout' })
+
+    expect(result.status).toBe('fail_closed')
+    expect(test.ordering).toEqual([CONFIG_PROJECT_SCAFFOLD_FUNCTION_ID])
+    expect(test.presented).toEqual([])
+    expect(result.unhandled?.reason).toBe(WRITE_TEST_UNCONFIGURED_DETAIL)
   })
 
-  it('(R18) a proposal with NO rendered diff is not displayable, so it is not offered', async () => {
-    // MATRIX CELL: shownDiff absent × present=healthy.
+  it('(R18) a receipt with NO rendered diff renders the rest, and the turn authors', async () => {
     const { shownDiff: _shownDiff, ...withoutDiff } = DISPLAYABLE_ANSWER
-    await expectUndisplayableRefusal(withoutDiff)
+    const text = await expectReceiptWithout(withoutDiff)
+    expect(text).not.toContain('+++ b/')
   })
 
-  it('(R19) an EMPTY rendered diff is not a display either — presence is not the test', async () => {
-    // MATRIX CELL: shownDiff === '' × present=healthy. THE SHARPEST OF THE FOUR, because it is the
-    // one a presence-only guard passes: the field is there, the render happens, and the person is
-    // shown a summary line above nothing at all and then asked to approve. `.min(1)` on the schema's
-    // proposed arm ((S1)) collapses this on the op road; this cell is the engine's own answer, which
-    // is what covers every other producer.
-    await expectUndisplayableRefusal({ ...DISPLAYABLE_ANSWER, shownDiff: '' })
+  it('(R19) an EMPTY rendered diff adds no blank line to the receipt', async () => {
+    const text = await expectReceiptWithout({ ...DISPLAYABLE_ANSWER, shownDiff: '' })
+    expect(text).toContain(DISPLAYABLE_ANSWER.summaryLine)
+    // The receipt ends with the last file: the empty diff contributed no line at all.
+    expect(text.endsWith('hooks.yaml')).toBe(true)
   })
 
-  it('(R14) a present that THROWS REFUSES the route: no confirm is offered, the proposal stays filed and readable',
+  it('(R14) a present that THROWS does not decide the turn: the change is written and authoring follows',
     async () => {
-      // THE PORT'S THIRD STATE, RE-RULED (395-19 · CR-04 · owner ruling 2026-08-15). (R12) pins
-      // bound-and-healthy, (R13) pins absent, and this pair pins bound-and-BROKEN — the state a
-      // real host reaches the moment its stream closes under it.
-      //
-      // WHAT THIS CELL USED TO ASSERT, AND WHY IT IS GONE. 395-17 made the failure inert (RULING 2:
-      // no host binding may take the turn's process down) and then let the chain CONTINUE into
-      // `config.proposal.apply`'s confirm — asking a person to approve a configuration change they
-      // had just been shown nothing of. The cell PINNED that continuation as an EQUALITY with the
-      // healthy run: `JSON.stringify(broken.events) === JSON.stringify(healthy.events)`, plus an
-      // apply-after-scaffold ordering on the broken road. That equality is the corpus-blindness
-      // class this phase keeps reproducing — it froze "the person was never shown the diff" as
-      // INDISTINGUISHABLE from "the person was shown the diff", which is the one difference SC-4
-      // exists to notice. The owner named it and ruled the route must REFUSE. Both assertions are
-      // DELETED, not relaxed.
-      //
-      // WHAT REPLACES THEM IS THE REFUSAL'S EFFECTS. The healthy run stays in the cell, but as the
-      // NON-VACUITY CONTROL rather than as an equality target: the same road over the same fixture
-      // class DOES reach the apply, so the broken road's missing apply is a divergence this cell
-      // produced and not a road that never got there.
+      // THE PORT'S THIRD STATE, bound and BROKEN. 395-17's RULING 2 stands: no host binding may take
+      // the turn down. 432-11: the render is a receipt of a change already written, so its failure
+      // no longer refuses the turn either — the healthy run and the broken run dispatch the same.
       const message = 'write a test for booking.com checkout'
 
       const healthyOp = scaffoldOpFixture({ configText: ZERO_TARGET_CONFIG })
       const healthy = harness({ targets: [], realScaffold: healthyOp })
       const healthyResult = await healthy.runTurn({ message })
       expect(healthyResult.status).toBe('completed')
-      // THE CONTROL, stated as an assertion so it cannot rot into an assumption: on a working
-      // surface this exact road reaches the gated verb.
-      expect(healthy.ordering).toContain(CONFIG_PROPOSAL_APPLY_FUNCTION_ID)
 
       const brokenOp = scaffoldOpFixture({ configText: ZERO_TARGET_CONFIG })
       const broken = harness({
         targets: [], realScaffold: brokenOp, presentFailure: 'throws',
       })
-      // AWAITED PLAINLY, AND THAT IS RULING 2's HALF, UNCHANGED. A rejection here fails the cell:
-      // the try/catch in `routeWriteTest` stays, so a broken display port still cannot decide a
-      // turn by killing it. What changed above the catch's `return` is only where control goes.
       const brokenResult = await broken.runTurn({ message })
 
-      // THE RENDER WAS ATTEMPTED, EXACTLY ONCE, in the place (R12) puts it. An arm that skipped the
-      // call rather than refusing on its failure would show zero attempts here, and this cell would
-      // then be measuring a road nobody travels.
+      // THE RENDER WAS ATTEMPTED, EXACTLY ONCE, where (R12) puts it.
       expect(broken.presented).toHaveLength(1)
       expect(broken.presented[0]?.orderingAtRender)
         .toEqual([CONFIG_PROJECT_SCAFFOLD_FUNCTION_ID])
 
-      // NO CONFIRM WAS EVER OFFERED — the ruling's whole content. `config.proposal.apply` is the
-      // gated verb whose invocation IS the confirm, so its absence from the recorded ordering is
-      // the fact that nobody was asked. Asserted as an exact array so a fourth invocation cannot
-      // slip in, and again by name so the failure message says which verb.
-      expect(broken.ordering).toEqual([CONFIG_PROJECT_SCAFFOLD_FUNCTION_ID])
-      expect(broken.ordering).not.toContain(CONFIG_PROPOSAL_APPLY_FUNCTION_ID)
-      expect(broken.ordering).not.toContain(AUTHORING_DRAFT_WRITE_FUNCTION_ID)
-
-      // THE TURN DOES NOT PRETEND IT SUCCEEDED. The refusal surfaces the way every other stop arm
-      // in this route surfaces — (R7)'s and (R8)'s shape: a `fail_closed` turn carrying a sentence.
-      expect(brokenResult.status).toBe('fail_closed')
-      expect(brokenResult.unhandled?.reason ?? '').not.toBe('')
-      // AND THE SENTENCE IS THE ARM'S OWN, twice over. Not the route's generic unconfigured detail,
-      // which is what a `stop` that set no reason would fall back to — that fallback would tell a
-      // person to name a site when the site was already resolved and proposed. And not derived from
-      // the broken port: a refusal quoting `the pipe closed` would hand the display surface a voice
-      // in the turn through the error path RULING 2 closed (T-395-53). The WORDING is the source's
-      // to choose; these two are the properties the cell owns.
-      expect(brokenResult.unhandled?.reason).not.toBe(WRITE_TEST_UNCONFIGURED_DETAIL)
-      expect(brokenResult.unhandled?.reason).not.toContain(PRESENT_FAILURE_ERROR)
-
-      // THE SESSION RECORD TESTIFIES TO THE SAME THING. The scaffold's receipt is there — the
-      // proposal was filed and receipted before the render was attempted — and no receipt for the
-      // authoring dispatch exists, so the log cannot be read as a turn that did the work.
-      const receipted = broken.events
-        .filter((event) => event.kind === 'clause_receipt')
-        .map((event) => (event as { functionId: string }).functionId)
-      expect(receipted).toContain(CONFIG_PROJECT_SCAFFOLD_FUNCTION_ID)
-      expect(receipted).not.toContain(AUTHORING_DRAFT_WRITE_FUNCTION_ID)
-      // The apply half is VACUOUS TODAY and kept deliberately as a forward pin: the route's apply
-      // invoke writes no receipt on either road, so this passes on the healthy one too. It is here
-      // so that the day a confirm receipt IS written, it cannot be written from this state.
-      expect(receipted).not.toContain(CONFIG_PROPOSAL_APPLY_FUNCTION_ID)
-      expect(broken.events.some(
-        (event) => event.kind === 'turn_complete'
-          && (event as { status: string }).status === 'completed',
-      )).toBe(false)
-
-      // NO WORK IS LOST: the route refuses the TURN, not the PROPOSAL. It was filed exactly once,
-      // and it reads back out of the store under the id the op answered with — the ports-level
-      // `agent-qa proposals show <id>`, which is the continuation the refusal points a person at.
-      expect(brokenOp.filed).toHaveLength(1)
-      const proposalId = (broken.answers.find(
-        (row) => row.functionId === CONFIG_PROJECT_SCAFFOLD_FUNCTION_ID,
-      )?.answer as { readonly proposalId?: string } | undefined)?.proposalId
-      expect(proposalId).toBe(SCAFFOLD_PROPOSAL_ID)
-      const shown = brokenOp.show(proposalId ?? '')
-      expect(shown?.summaryLine).toBe(brokenOp.filed[0]?.summaryLine)
-      expect(shown?.paths.length ?? 0).toBeGreaterThan(0)
+      expect(brokenResult.status).toBe('completed')
+      expect(broken.ordering).toEqual(healthy.ordering)
+      expect(broken.ordering).toEqual([
+        CONFIG_PROJECT_SCAFFOLD_FUNCTION_ID,
+        AUTHORING_DRAFT_WRITE_FUNCTION_ID,
+      ])
+      expect(brokenOp.published).toHaveLength(1)
+      // The broken port gains no voice in the turn: its error reaches no result and no event.
+      expect(JSON.stringify(brokenResult)).not.toContain(PRESENT_FAILURE_ERROR)
+      expect(JSON.stringify(broken.events)).not.toContain(PRESENT_FAILURE_ERROR)
     })
 
-  it('(R15) a present that REJECTS refuses it too — the port type\'s other arm',
+  it('(R15) a present that REJECTS does not decide it either — the port type\'s other arm',
     async () => {
-      // THE TWIN, over `Promise<void>` (395-17's arm split, 395-19's ruling). The port is
-      // `(text) => void | Promise<void>`, and an arm covering only the synchronous throw would be a
-      // half-fix whose hole is exactly the shape a real async writer takes. One await covers both,
-      // and this cell is what says so — now about the REFUSAL rather than about the swallow.
-      //
-      // ITS ASSERTIONS ARE (R14)'s, REPEATED RATHER THAN SHARED, because the two arms are two
-      // claims: a helper would let one arm's regression hide inside the other's green.
+      // THE TWIN, over `Promise<void>`. One await covers both arms of the port's type, and this
+      // cell is what says so. Its assertions are (R14)'s, repeated rather than shared.
       const message = 'write a test for booking.com checkout'
 
       const healthyOp = scaffoldOpFixture({ configText: ZERO_TARGET_CONFIG })
       const healthy = harness({ targets: [], realScaffold: healthyOp })
       const healthyResult = await healthy.runTurn({ message })
       expect(healthyResult.status).toBe('completed')
-      expect(healthy.ordering).toContain(CONFIG_PROPOSAL_APPLY_FUNCTION_ID)
 
       const brokenOp = scaffoldOpFixture({ configText: ZERO_TARGET_CONFIG })
       const broken = harness({
@@ -1121,63 +932,25 @@ describe('one turn: detect, scaffold, confirm, apply, author (D-14 · CFGM-05)',
       expect(broken.presented[0]?.orderingAtRender)
         .toEqual([CONFIG_PROJECT_SCAFFOLD_FUNCTION_ID])
 
-      expect(broken.ordering).toEqual([CONFIG_PROJECT_SCAFFOLD_FUNCTION_ID])
-      expect(broken.ordering).not.toContain(CONFIG_PROPOSAL_APPLY_FUNCTION_ID)
-      expect(broken.ordering).not.toContain(AUTHORING_DRAFT_WRITE_FUNCTION_ID)
-
-      expect(brokenResult.status).toBe('fail_closed')
-      expect(brokenResult.unhandled?.reason ?? '').not.toBe('')
-      expect(brokenResult.unhandled?.reason).not.toBe(WRITE_TEST_UNCONFIGURED_DETAIL)
-      expect(brokenResult.unhandled?.reason).not.toContain(PRESENT_FAILURE_ERROR)
-
-      const receipted = broken.events
-        .filter((event) => event.kind === 'clause_receipt')
-        .map((event) => (event as { functionId: string }).functionId)
-      expect(receipted).toContain(CONFIG_PROJECT_SCAFFOLD_FUNCTION_ID)
-      expect(receipted).not.toContain(AUTHORING_DRAFT_WRITE_FUNCTION_ID)
-      expect(receipted).not.toContain(CONFIG_PROPOSAL_APPLY_FUNCTION_ID)
-      expect(broken.events.some(
-        (event) => event.kind === 'turn_complete'
-          && (event as { status: string }).status === 'completed',
-      )).toBe(false)
-
-      expect(brokenOp.filed).toHaveLength(1)
-      const proposalId = (broken.answers.find(
-        (row) => row.functionId === CONFIG_PROJECT_SCAFFOLD_FUNCTION_ID,
-      )?.answer as { readonly proposalId?: string } | undefined)?.proposalId
-      expect(proposalId).toBe(SCAFFOLD_PROPOSAL_ID)
-      const shown = brokenOp.show(proposalId ?? '')
-      expect(shown?.summaryLine).toBe(brokenOp.filed[0]?.summaryLine)
-      expect(shown?.paths.length ?? 0).toBeGreaterThan(0)
+      expect(brokenResult.status).toBe('completed')
+      expect(broken.ordering).toEqual(healthy.ordering)
+      expect(brokenOp.published).toHaveLength(1)
+      expect(JSON.stringify(brokenResult)).not.toContain(PRESENT_FAILURE_ERROR)
+      expect(JSON.stringify(broken.events)).not.toContain(PRESENT_FAILURE_ERROR)
     })
 
 
   // -----------------------------------------------------------------------------------------------
-  // (R20)/(R21) — RC-2: THE BOUNDARY A PERSON IS NEVER TOLD ABOUT (399.1, criterion 4).
+  // (R20)/(R21) — RC-2: THE BOUNDARY A PERSON IS TOLD ABOUT (399.1, criterion 4).
   //
-  // The pre-confirm render above was built to answer "what does this change do" and it answers it
-  // well — summary, files, the true diff. It never answered "does this change cross a trust
-  // boundary", because the narrowing that reads the proposed arm stopped at the four fields the
-  // display needed and `crossBoundary`/`crossBoundaryReasons` were not among them. So the one place
-  // in chat where a person authorises a configuration write showed them a diff and then asked for
-  // approval with the boundary verdict — the field the grant machinery refuses a standing approval
-  // ON — dropped on the floor. `demo/acceptance/399/ACCEPTANCE.md` §9 item 2 is the witness.
-  //
-  // THE FIELDS ARE NOT OPTIONAL ON THE PRODUCER. `ConfigProposeOutputSchema`'s proposed arm requires
-  // both, so this is a READER-side drop and not a producer gap — which is why (R20) drives the REAL
-  // op and compares against what it actually filed rather than against a literal.
+  // The receipt says what the change does and whether it crosses a trust boundary — a new origin,
+  // a hook this project will run — verbatim off the op's own two fields.
   // -----------------------------------------------------------------------------------------------
 
-  it('(R20) tells the person the proposal CROSSES A BOUNDARY, and why, before the confirm is offered',
+  it('(R20) tells the person the change CROSSES A BOUNDARY, and why, above the rest of the receipt',
     async () => {
-      // THE REAL OP ANSWERS IT (produced-not-literal). A scaffold files a target that did not exist,
-      // so the classifier's own verdict is `new-origin` — and this cell reads that verdict off the
-      // op's answer rather than restating it, so the day the classification changes the assertion
-      // follows it instead of disagreeing with it.
-      //
-      // NAMED RED DIRECTION, measured: with the two members removed from the narrowing (or the
-      // boundary line dropped from the join) the presented text carries no boundary verdict at all
-      // and every assertion below reds — which is the state this file measured before the fix.
+      // THE REAL OP ANSWERS IT (produced-not-literal). A scaffold writes a target that did not
+      // exist, so the classifier's own verdict is `new-origin`.
       const scaffoldOp = scaffoldOpFixture({ configText: ZERO_TARGET_CONFIG })
       const test = harness({ targets: [], realScaffold: scaffoldOp })
       const result = await test.runTurn({ message: 'write a test for booking.com checkout' })
@@ -1186,9 +959,8 @@ describe('one turn: detect, scaffold, confirm, apply, author (D-14 · CFGM-05)',
       expect(test.presented).toHaveLength(1)
       const render = test.presented[0]
 
-      // BEFORE THE GATED VERB, not merely somewhere in the turn. The whole claim of criterion 4 is
-      // that the boundary reaches the person while the decision is still theirs to make.
-      expect(render?.orderingAtRender).not.toContain(CONFIG_PROPOSAL_APPLY_FUNCTION_ID)
+      // Before the authoring dispatch builds on the change.
+      expect(render?.orderingAtRender).not.toContain(AUTHORING_DRAFT_WRITE_FUNCTION_ID)
 
       const answer = test.answers.find(
         (row) => row.functionId === CONFIG_PROJECT_SCAFFOLD_FUNCTION_ID,
@@ -1198,38 +970,26 @@ describe('one turn: detect, scaffold, confirm, apply, author (D-14 · CFGM-05)',
         readonly crossBoundaryReasons: readonly string[]
         readonly summaryLine: string
       }
-      expect(answer.outcome).toBe('proposed')
+      expect(answer.outcome).toBe('applied')
       expect(answer.crossBoundary).toBe(true)
       expect(answer.crossBoundaryReasons.length).toBeGreaterThan(0)
 
-      // BOTH FIELDS, IN THE BYTES THE PERSON READS. The verdict by name, and every reason VERBATIM
-      // off the payload — never a paraphrase, because a paraphrase is a second answer to "why" that
-      // is free to disagree with the record the grant machinery reads.
+      // BOTH FIELDS, IN THE BYTES THE PERSON READS, every reason VERBATIM off the answer.
       expect(render?.text).toContain('crossBoundary: true')
       expect(render?.text).toContain('crossBoundaryReasons:')
       for (const reason of answer.crossBoundaryReasons) {
         expect(render?.text, reason).toContain(reason)
       }
 
-      // ABOVE THE REST OF THE JOIN. A boundary warning printed under a forty-line diff is one a
-      // person scrolls past; the ordering inside the render is part of the disclosure.
+      // ABOVE THE REST OF THE JOIN.
       const boundaryAt = render?.text.indexOf('crossBoundary: true') ?? -1
       const summaryAt = render?.text.indexOf(answer.summaryLine) ?? -1
       expect(boundaryAt).toBeGreaterThanOrEqual(0)
       expect(summaryAt).toBeGreaterThan(boundaryAt)
     })
 
-  it('(R21) adds NO boundary line to a proposal that crosses none — the common path stays quiet',
+  it('(R21) adds NO boundary line to a change that crosses none — the common path stays quiet',
     async () => {
-      // THE OTHER COORDINATE, and the one that keeps the fix from being "always warn". A warning
-      // printed on every proposal is a warning nobody reads, and this cell is what forbids the
-      // cheapest possible green.
-      //
-      // A CANNED PRODUCER, for (R16)-(R19)'s stated reason: today's ONE producer of this route is
-      // the scaffold, which files a target that did not exist and is therefore always
-      // `new-origin`. `crossBoundary: false` is representable on the schema's proposed arm and any
-      // future producer of a non-crossing proposal reaches this same engine road — so the cell
-      // drives the stub producer, which covers the engine's rule rather than one op's habit.
       const test = harness({
         targets: [],
         scaffoldAnswer: { ...DISPLAYABLE_ANSWER, crossBoundary: false, crossBoundaryReasons: [] },
@@ -1245,8 +1005,7 @@ describe('one turn: detect, scaffold, confirm, apply, author (D-14 · CFGM-05)',
       expect(text).not.toContain('CROSSES A TRUST BOUNDARY')
       for (const reason of CROSS_BOUNDARY_REASONS) expect(text, reason).not.toContain(reason)
 
-      // AND THE REST OF THE DISCLOSURE IS UNTOUCHED — the quiet path is quiet about the boundary,
-      // not about the change.
+      // AND THE REST OF THE RECEIPT IS UNTOUCHED.
       expect(text).toContain(DISPLAYABLE_ANSWER.summaryLine)
       expect(text).toContain(DISPLAYABLE_ANSWER.shownDiff)
     })

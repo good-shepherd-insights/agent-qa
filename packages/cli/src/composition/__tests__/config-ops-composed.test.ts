@@ -1,5 +1,8 @@
 // The four 395-05 actions over the REAL ports and a REAL file (395-05 · CFGM-01/02 · D-01/D-02/D-11).
 //
+// 2026-09-30, 432-11 D-05/D-07: the actions WRITE IN THE CALL through the real direct writer, so
+// the cells read the change back off the file on disk rather than out of a filed proposal.
+//
 // WHY THIS FILE EXISTS BESIDE `agent`'s `config-ops.test.ts`, AND WHY EITHER ALONE WOULD BE WEAKER.
 // That file drives the real ops through the real pipeline with a yaml DOUBLE — a double built from
 // the same library and the same calls the shipped port makes, which is as close as `packages/agent`
@@ -32,12 +35,10 @@ import { isCanonicalHookId } from '@vostride/agent-qa-ids'
 import {
   FunctionScopeSchema,
   MASKED_RESOLVED_CONFIG_SCHEMA_VERSION,
-  base64Decode,
-  utf8Decode,
 } from '@vostride/agent-qa-schema'
 import type {
+  ConfigChangeOutput,
   ConfigProposalV1,
-  ConfigProposeOutput,
   FunctionCaller,
 } from '@vostride/agent-qa-schema'
 import { scanConstructedArtifact } from '@vostride/agent-qa-safety'
@@ -50,6 +51,7 @@ import {
   composeCliLocalAgent,
   createConfigFilesPort,
   createConfigValidatePort,
+  createConfigWritePort,
 } from '../local-agent-host.js'
 
 const HUMAN: FunctionCaller = {
@@ -134,8 +136,9 @@ function registry() {
     // whether a developer exported a token is a cell that measures the machine.
     configScan: { scan: (parts: Parameters<typeof scanConstructedArtifact>[0]) =>
       scanConstructedArtifact(parts, {}) },
-    // The store is 395-01's proven ground and is not this file's subject; what matters here is that
-    // the PAYLOAD reaching it is the one the real ports produced.
+    // 432-11: THE REAL DIRECT WRITER, over the real workspace.
+    configWrite: createConfigWritePort(configPath),
+    // Nothing should reach the store any more; it is still bound so a filing would be seen.
     configProposals: {
       put: (record: { kind: string; emittedBy: string; payload: ConfigProposalV1 }) => {
         filed.push(record)
@@ -152,17 +155,13 @@ function registry() {
   })
 }
 
-async function call(id: string, input: unknown): Promise<ConfigProposeOutput> {
-  return await invokeFunction(registry(), id, input, HUMAN) as ConfigProposeOutput
+async function call(id: string, input: unknown): Promise<ConfigChangeOutput> {
+  return await invokeFunction(registry(), id, input, HUMAN) as ConfigChangeOutput
 }
 
-/** The candidate bytes the store was handed, decoded — never a string the test built. */
-function candidateText(index = 0): string {
-  const payload = filed[0]?.payload
-  if (payload?.payloadKind !== 'applyable') throw new Error('expected an applyable payload')
-  const file = payload.files[index]
-  if (file === undefined) throw new Error(`no file at ${index}`)
-  return utf8Decode(base64Decode(file.newContentBase64))
+/** The bytes the direct writer left on disk for a workspace file — never a string the test built. */
+function writtenText(path = 'agent-qa.config.yaml'): string {
+  return readFileSync(join(root, path), 'utf8')
 }
 
 beforeEach(() => {
@@ -178,20 +177,20 @@ afterEach(() => {
 })
 
 describe('the 395-05 actions over the real ports (D-01)', () => {
-  it('(C1) creates a target as one house-style block, and the file on disk is untouched', async () => {
+  it('(C1) creates a target as one house-style block, written to the file in the call', async () => {
     const answer = await call('config.target.create', {
       name: 'shop',
       platform: 'web',
       url: 'https://shop.example.com',
     })
-    expect(answer.outcome).toBe('proposed')
-    if (answer.outcome !== 'proposed') throw new Error('unreachable')
+    expect(answer.outcome).toBe('applied')
+    if (answer.outcome !== 'applied') throw new Error('unreachable')
 
     expect(answer.crossBoundaryReasons).toEqual(['new-origin'])
-    expect(candidateText()).toContain('    shop:\n      platform: web\n      url: https://shop.example.com')
-    // NOTHING WAS WRITTEN. A proposal is an artifact, not an edit — the git commit happens only
-    // after somebody accepts, through a port this path never reaches.
-    expect(readFileSync(configPath, 'utf8')).toBe(SEEDED_CONFIG)
+    expect(answer.files).toEqual(['agent-qa.config.yaml'])
+    // WRITTEN, IN THE CALL, AS ONE BLOCK — and nothing was filed (432-11 D-05).
+    expect(writtenText()).toContain('    shop:\n      platform: web\n      url: https://shop.example.com')
+    expect(filed).toHaveLength(0)
   })
 
   it('(C2) refuses a collision, with candidates read off the REAL document', async () => {
@@ -207,6 +206,7 @@ describe('the 395-05 actions over the real ports (D-01)', () => {
     // parse of something else, and on one that returned nothing at all.
     expect(answer.candidates).toEqual(['local-form'])
     expect(filed).toHaveLength(0)
+    expect(writtenText()).toBe(SEEDED_CONFIG)
   })
 
   it('(C3) every comment in the committed file survives a structured write', async () => {
@@ -215,7 +215,7 @@ describe('the 395-05 actions over the real ports (D-01)', () => {
       platform: 'web',
       url: 'https://shop.example.com',
     })
-    const content = candidateText()
+    const content = writtenText()
     for (const comment of [
       '# agent-qa Configuration',
       '# File discovery and project settings',
@@ -232,15 +232,16 @@ describe('the 395-05 actions over the real ports (D-01)', () => {
       name: 'local-form',
       changes: { url: 'http://127.0.0.1:8931/other.html' },
     })
-    if (near.outcome !== 'proposed') throw new Error('unreachable')
+    if (near.outcome !== 'applied') throw new Error('unreachable')
     expect(near.crossBoundaryReasons).toEqual([])
 
-    filed = []
+    // The second edit starts from the seeded file again, so both compare against the same origin.
+    writeFileSync(configPath, SEEDED_CONFIG)
     const far = await call('config.target.edit', {
       name: 'local-form',
       changes: { url: 'http://127.0.0.1:9999/form.html' },
     })
-    if (far.outcome !== 'proposed') throw new Error('unreachable')
+    if (far.outcome !== 'applied') throw new Error('unreachable')
     // A DIFFERENT PORT IS A DIFFERENT ORIGIN, which is the case a host-only comparison misses.
     expect(far.crossBoundaryReasons).toEqual(['new-origin'])
   })
@@ -264,14 +265,15 @@ describe('the 395-05 actions over the real ports (D-01)', () => {
       runtime: 'node',
       file: 'scripts/seed.mjs',
     })
-    expect(answer.outcome).toBe('proposed')
-    if (answer.outcome !== 'proposed') throw new Error('unreachable')
+    expect(answer.outcome).toBe('applied')
+    if (answer.outcome !== 'applied') throw new Error('unreachable')
 
     // THE ONE FILE THIS ACTION TOUCHES, and it is not the config yaml.
     expect(answer.files).toEqual(['hooks.yaml'])
     expect(answer.crossBoundaryReasons).toEqual(['hook-added'])
+    expect(writtenText()).toBe(SEEDED_CONFIG)
 
-    const content = candidateText()
+    const content = writtenText('hooks.yaml')
     const ids = content.split('\n')
       .filter((line) => line.includes('id: h_'))
       .map((line) => line.slice(line.indexOf('h_')).trim())
@@ -302,7 +304,7 @@ describe('the 395-05 actions over the real ports (D-01)', () => {
     expect(answer.validationIssues?.join(' ')).toContain('Invalid duration format')
   })
 
-  it('(H3) CONTROL: the same hook with a readable duration is proposed', async () => {
+  it('(H3) CONTROL: the same hook with a readable duration is written', async () => {
     // WITHOUT THIS, (H2) would pass against a validator that refuses every hooks file. The control
     // is what makes the refusal a fact about the duration rather than about the file.
     const answer = await call('config.hook.add', {
@@ -311,7 +313,8 @@ describe('the 395-05 actions over the real ports (D-01)', () => {
       file: 'scripts/seed.mjs',
       timeout: '45s',
     })
-    expect(answer.outcome).toBe('proposed')
+    expect(answer.outcome).toBe('applied')
+    expect(writtenText('hooks.yaml')).toContain('timeout: 45s')
   })
 
   it('(H4) a duplicate hook NAME is refused by the hooks schema, not by this code', async () => {
@@ -334,13 +337,12 @@ describe('the 395-05 actions over the real ports (D-01)', () => {
       runtime: 'bash',
       file: 'scripts/seed.sh',
     })
-    expect(answer.outcome).toBe('proposed')
-    if (answer.outcome !== 'proposed') throw new Error('unreachable')
-    const payload = filed[0]?.payload
-    if (payload?.payloadKind !== 'applyable') throw new Error('unreachable')
-    expect(payload.files[0]?.changeKind).toBe('add')
-    expect(payload.files[0]?.baseDigest).toBeUndefined()
-    expect(candidateText()).toContain('timeout: 30s')
+    expect(answer.outcome).toBe('applied')
+    if (answer.outcome !== 'applied') throw new Error('unreachable')
+    // CREATED: the file did not exist, and now holds the one hook with the default timeout.
+    expect(answer.files).toEqual(['hooks.yaml'])
+    expect(answer.shownDiff).toContain('--- /dev/null')
+    expect(writtenText('hooks.yaml')).toContain('timeout: 30s')
   })
 })
 
@@ -381,7 +383,9 @@ const SIX_OPS: readonly (readonly [string, Record<string, unknown>])[] = [
   ['config.target.create', { name: 'basket', platform: 'web', url: 'https://basket.example.com' }],
   ['config.target.edit', { name: 'basket', changes: { url: 'https://basket.example.com/cart' } }],
   ['config.field.set', { path: 'use.parallel', value: true }],
-  ['config.auth.set', { target: 'basket', authStateName: 'basket-default' }],
+  // The committed `use` block has no `authState` key (a per-test override only), so the auth op's
+  // road through whole-config validation is the plugin declaration.
+  ['config.auth.set', { target: 'basket', pluginPackage: '@acme/agent-qa-auth' }],
   ['config.hook.add', { name: 'Seed the cart', runtime: 'node', file: 'scripts/seed.mjs' }],
 ]
 
@@ -453,7 +457,7 @@ async function runAllSix(door: typeof viaHost): Promise<void> {
   expect(config).toContain('booking-com:')
   expect(config).toContain('url: https://basket.example.com/cart')
   expect(config).toContain('parallel: true')
-  expect(config).toContain('authState: basket-default')
+  expect(config).toContain('- package: "@acme/agent-qa-auth"')
   expect(config).toContain('# agent-qa Configuration')
   const hooks = readFileSync(join(root, 'hooks.yaml'), 'utf8')
   expect(hooks).toContain('name: Seed the cart')

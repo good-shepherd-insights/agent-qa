@@ -1,5 +1,10 @@
 // The closed action class, one describe per action (Phase 395-05, D-01/D-02/D-11 · CFGM-01).
 //
+// 2026-09-30, 432-11 D-05/D-07: every action WRITES IN THE CALL through the direct writer. The
+// writer double below applies field changes with the same yaml calls the config transaction makes
+// and stores whole files as published, so each cell reads the change back from what was written
+// rather than from a filed proposal. The per-action edges are unchanged.
+//
 // WHAT IS REAL HERE AND WHAT IS A DOUBLE. The OPS are real and are driven through `invoke` with
 // composed deps — never through a hand-built proposal literal, because a literal proposal is a
 // fixture asserting that somebody typed it correctly. The diff primitive, the classifier and the
@@ -41,7 +46,6 @@ import type {
   ConfigChange,
   ConfigChangeOutput,
   ConfigProposalV1,
-  ConfigProposeOutput,
   FunctionCaller,
 } from '@vostride/agent-qa-schema'
 import { scanConstructedArtifact } from '@vostride/agent-qa-safety'
@@ -142,7 +146,24 @@ interface Harness {
   readonly validated: Validated[]
   /** Every call the direct writer (`configWrite`) received, in order. */
   readonly written: Written[]
+  /** A file's text as the direct writer left it. */
+  text: (path: string) => string | undefined
   scans: () => number
+}
+
+/** The config transaction's field operations, applied with the real yaml calls it makes. */
+function applyFieldChanges(input: Uint8Array | undefined, changes: readonly ConfigChange[]): Uint8Array {
+  const document = input === undefined ? new YamlDocument({}) : parseDocument(utf8Decode(input))
+  for (const change of changes) {
+    const path = change.path as (string | number)[]
+    if (change.op === 'set') document.setIn(path, document.createNode(change.value))
+    if (change.op === 'append') {
+      const existing = document.getIn(path, true)
+      if (isSeq(existing)) existing.add(document.createNode(change.value))
+      else document.setIn(path, document.createNode([change.value]))
+    }
+  }
+  return utf8Encode(document.toString())
 }
 
 /**
@@ -268,7 +289,10 @@ function harness(options: {
     configWrite: {
       applyFields: ({ changes }: { changes: readonly ConfigChange[] }) => {
         written.push({ kind: 'fields', changes })
-        return Promise.resolve(options.applyFields?.() ?? {
+        const scripted = options.applyFields?.()
+        if (scripted !== undefined) return Promise.resolve(scripted)
+        bytes.set(CONFIG_FILE, applyFieldChanges(bytes.get(CONFIG_FILE), changes))
+        return Promise.resolve({
           kind: 'applied' as const,
           file: CONFIG_FILE,
           revision: 'revision-after',
@@ -285,7 +309,10 @@ function harness(options: {
           })),
         })
         const paths = files.map((file) => file.path)
-        return Promise.resolve(options.publish?.(paths) ?? { kind: 'published' as const, written: paths })
+        const scripted = options.publish?.(paths)
+        if (scripted !== undefined) return Promise.resolve(scripted)
+        for (const file of files) bytes.set(file.path, file.bytes)
+        return Promise.resolve({ kind: 'published' as const, written: paths })
       },
     },
     // The scaffold's content, as the host producer renders it: a config, a hooks file and the
@@ -312,7 +339,17 @@ function harness(options: {
     },
   } as unknown as FunctionDeps
 
-  return { deps, filed, validated, written, scans: () => scanCount }
+  return {
+    deps,
+    filed,
+    validated,
+    written,
+    text: (path) => {
+      const content = bytes.get(path)
+      return content === undefined ? undefined : utf8Decode(content)
+    },
+    scans: () => scanCount,
+  }
 }
 
 function sha256(text: string): string {
@@ -332,15 +369,8 @@ async function call(
   test: Harness,
   id: string,
   input: unknown,
-): Promise<ConfigProposeOutput> {
-  return await invokeFunction(registryFor(test), id, input, CALLER) as ConfigProposeOutput
-}
-
-/** The applyable payload the store was handed, narrowed — never the value a cell constructed. */
-function applyable(test: Harness) {
-  const payload = test.filed[0]?.payload
-  if (payload?.payloadKind !== 'applyable') throw new Error('expected an applyable payload')
-  return payload
+): Promise<ConfigChangeOutput> {
+  return await invokeFunction(registryFor(test), id, input, CALLER) as ConfigChangeOutput
 }
 
 /** Every 8-character window of a value — a PARTIAL disclosure is the tempting middle ground. */
@@ -351,37 +381,37 @@ function windows(value: string): string[] {
 }
 
 /**
- * The CFGM-01 sentence, asserted the same way for every action.
+ * The CFGM-01 sentence, asserted the same way for every action (432-11: now about a write).
  *
  * ONE HELPER RATHER THAN FIVE COPIES, so the shared claim reads identically and the per-op describes
- * contain only what is NOT shared. The claim: the proposal carries the unified diff of the committed
- * files, the receipts a later apply re-checks are present, and the envelope kind is `config`.
+ * contain only what is NOT shared. The claim: the answer carries the unified diff of the files as
+ * the call read them, the change reached the direct writer exactly once, the files the answer names
+ * are the ones written, and nothing was filed.
  */
-function assertTheCfgm01Sentence(test: Harness, answer: ConfigProposeOutput, options: {
+function assertTheCfgm01Sentence(test: Harness, answer: ConfigChangeOutput, options: {
   readonly action: string
   readonly files: readonly string[]
 }): void {
-  expect(answer.outcome).toBe('proposed')
-  if (answer.outcome !== 'proposed') throw new Error('unreachable')
+  expect(answer.outcome, options.action).toBe('applied')
+  if (answer.outcome !== 'applied') throw new Error('unreachable')
 
-  expect(test.filed).toHaveLength(1)
-  expect(test.filed[0]?.kind).toBe('config')
-  expect(test.filed[0]?.emittedBy).toBe(options.action)
-
-  const payload = applyable(test)
-  expect(payload.action).toBe(options.action)
-  expect(payload.files.map((file) => file.path)).toEqual(options.files)
-  // THE DIFF OF THE COMMITTED FILES, not a description of the change: the rendered text carries the
-  // unified-diff framing, and it is the SAME text the answer returns to a surface.
+  expect(test.filed).toHaveLength(0)
+  expect(test.written).toHaveLength(1)
+  expect(answer.files).toEqual(options.files)
+  // THE DIFF OF THE FILES AS READ, not a description of the change: the rendered text carries the
+  // unified-diff framing.
   expect(answer.shownDiff).toContain(`--- a/${options.files[0]}`)
   expect(answer.shownDiff).toContain(`+++ b/${options.files[0]}`)
   expect(answer.shownDiff).toContain('@@')
-  // THE RECEIPTS: the bytes and their digests, which is what CFGM-04's apply re-checks.
-  expect(payload.shownDiffBase64.length).toBeGreaterThan(0)
-  expect(payload.shownDiffDigest).toMatch(/^[0-9a-f]{64}$/)
-  for (const file of payload.files) {
-    expect(file.newContentBase64.length).toBeGreaterThan(0)
-    if (file.changeKind === 'modify') expect(file.baseDigest).toMatch(/^[0-9a-f]{64}$/)
+  // Whole files carry the digest of the bytes they were built from; field changes do not need one.
+  const call = test.written[0]
+  if (call?.kind === 'files') {
+    for (const file of call.files) {
+      expect(file.text.length).toBeGreaterThan(0)
+      if (test.text(file.path) !== undefined && file.baseDigest !== undefined) {
+        expect(file.baseDigest).toMatch(/^[0-9a-f]{64}$/)
+      }
+    }
   }
   // VALIDATION RAN, over the candidate this op produced — see the harness header.
   expect(test.validated).toHaveLength(1)
@@ -391,6 +421,7 @@ describe('config.field.set — the shared baseline (395-01/04 own its own edges)
   it('carries the diff, the receipts and the config kind', async () => {
     const test = harness()
     const answer = await call(test, 'config.field.set', { path: 'use.parallel', value: true })
+    expect(test.text(CONFIG_FILE)).toContain('parallel: true')
     assertTheCfgm01Sentence(test, answer, {
       action: 'config.field.set',
       files: [CONFIG_FILE],
@@ -435,7 +466,8 @@ describe('config.target.create — a create is never an upsert (CFGM-01 adjacenc
     expect(answer.outcome).toBe('blocked')
     if (answer.outcome !== 'blocked') throw new Error('unreachable')
     expect(answer.blockedReason).toBe('schema-fail')
-    expect(test.filed[0]?.payload.payloadKind).toBe('blocked')
+    expect(test.filed).toHaveLength(0)
+    expect(test.written).toHaveLength(0)
   })
 
   it('THE EDGE: an existing name is a typed collision, and nothing is filed', async () => {
@@ -453,9 +485,10 @@ describe('config.target.create — a create is never an upsert (CFGM-01 adjacenc
     // a second round of it.
     expect(answer.detail).toContain('config.target.edit')
     expect(answer.candidates).toEqual(['shop'])
-    // NO PROPOSAL, and no diff was ever rendered: this reds on a create that merged, that
-    // overwrote, or that filed a blocked record for a request nobody needs to review.
+    // NOTHING WRITTEN, and no diff was ever rendered: this reds on a create that merged, that
+    // overwrote, or that answered a blocked report for a request that is simply wrong.
     expect(test.filed).toHaveLength(0)
+    expect(test.written).toHaveLength(0)
     expect(test.scans()).toBe(0)
   })
 
@@ -466,9 +499,9 @@ describe('config.target.create — a create is never an upsert (CFGM-01 adjacenc
       platform: 'web',
       url: 'https://basket.example.com',
     })
-    if (answer.outcome !== 'proposed') throw new Error('unreachable')
+    if (answer.outcome !== 'applied') throw new Error('unreachable')
 
-    // THE ADDED LINES ARE THE WHOLE BLOCK AND NOTHING ELSE — a proposal that rewrote the file would
+    // THE ADDED LINES ARE THE WHOLE BLOCK AND NOTHING ELSE — a change that rewrote the file would
     // show the whole document as changed, which is the reviewability CFGM-01 is about.
     const added = answer.shownDiff.split('\n').filter((line) => line.startsWith('+') && !line.startsWith('+++'))
     expect(added).toEqual([
@@ -479,11 +512,10 @@ describe('config.target.create — a create is never an upsert (CFGM-01 adjacenc
     const removed = answer.shownDiff.split('\n').filter((line) => line.startsWith('-') && !line.startsWith('---'))
     expect(removed).toEqual([])
 
-    // AND THE COMMENTS SURVIVE, asserted against the candidate the store was handed rather than
-    // against the diff — the diff only shows a window, and the claim is about the whole file.
-    const content = utf8Decode(Uint8Array.from(
-      Buffer.from(applyable(test).files[0]!.newContentBase64, 'base64'),
-    ))
+    // AND THE COMMENTS SURVIVE, asserted against the file as written rather than against the
+    // diff — the diff only shows a window, and the claim is about the whole file.
+    const content = test.text(CONFIG_FILE) ?? ''
+    expect(content).toContain('    basket:\n      platform: web\n      url: https://basket.example.com')
     expect(content).toContain('# agent-qa Configuration')
     expect(content).toContain('# Optional: add more web or mobile targets here.')
     expect(content).toContain('# How runs behave by default.')
@@ -496,7 +528,7 @@ describe('config.target.create — a create is never an upsert (CFGM-01 adjacenc
       platform: 'web',
       url: 'https://basket.example.com',
     })
-    if (first.outcome !== 'proposed') throw new Error('unreachable')
+    if (first.outcome !== 'applied') throw new Error('unreachable')
     expect(first.crossBoundary).toBe(true)
     expect(first.crossBoundaryReasons).toEqual(['new-origin'])
 
@@ -507,7 +539,7 @@ describe('config.target.create — a create is never an upsert (CFGM-01 adjacenc
       url: 'https://basket.example.com',
       authStateName: 'basket-default',
     })
-    if (second.outcome !== 'proposed') throw new Error('unreachable')
+    if (second.outcome !== 'applied') throw new Error('unreachable')
     // BOTH REASONS, in the pinned vocabulary's order rather than the order they were found.
     expect(second.crossBoundaryReasons).toEqual(['secret-adjacent-field', 'new-origin'])
   })
@@ -551,6 +583,7 @@ describe('config.target.edit — never guess, and decide from the VALUE (D-02/D-
     // refusal that says only "no such target" — and on a `setIn` that would have CREATED `shpo`.
     expect(answer.candidates).toEqual(['shop'])
     expect(test.filed).toHaveLength(0)
+    expect(test.written).toHaveLength(0)
   })
 
   it('THE EDGE: one FIXED path, two values, two different cross-boundary answers', async () => {
@@ -562,7 +595,7 @@ describe('config.target.edit — never guess, and decide from the VALUE (D-02/D-
       name: 'shop',
       changes: { url: 'https://shop.example.com/basket' },
     })
-    if (near.outcome !== 'proposed') throw new Error('unreachable')
+    if (near.outcome !== 'applied') throw new Error('unreachable')
     expect(near.crossBoundary).toBe(false)
     expect(near.crossBoundaryReasons).toEqual([])
 
@@ -571,7 +604,7 @@ describe('config.target.edit — never guess, and decide from the VALUE (D-02/D-
       name: 'shop',
       changes: { url: 'https://shop.evil.example/cart' },
     })
-    if (far.outcome !== 'proposed') throw new Error('unreachable')
+    if (far.outcome !== 'applied') throw new Error('unreachable')
     expect(far.crossBoundary).toBe(true)
     expect(far.crossBoundaryReasons).toEqual(['new-origin'])
 
@@ -595,7 +628,7 @@ describe('config.auth.set — refs only, refused on the INPUT (D-11, ratified as
       action: 'config.auth.set',
       files: [CONFIG_FILE],
     })
-    if (answer.outcome !== 'proposed') throw new Error('unreachable')
+    if (answer.outcome !== 'applied') throw new Error('unreachable')
     expect(answer.crossBoundaryReasons).toEqual(['secret-adjacent-field'])
     // THE DIFF CONTAINS A REFERENCE AND NOTHING ELSE: a name, at the one path this configuration
     // binds an auth state.
@@ -621,12 +654,12 @@ describe('config.auth.set — refs only, refused on the INPUT (D-11, ratified as
       target: 'shop',
       pluginPackage: '@acme/auth',
     })
-    if (answer.outcome !== 'proposed') throw new Error('unreachable')
-    const content = utf8Decode(Uint8Array.from(
-      Buffer.from(applyable(withPlugins).files[0]!.newContentBase64, 'base64'),
-    ))
+    if (answer.outcome !== 'applied') throw new Error('unreachable')
+    const content = withPlugins.text(CONFIG_FILE) ?? ''
     // BOTH declarations, in order. This reds on a write at a fixed index (the existing one is gone)
     // and on writing the whole sequence back (the existing one is gone too, differently).
+    expect(content.indexOf('@vostride/agent-qa-subscription-auth'))
+      .toBeLessThan(content.indexOf('@acme/auth'))
     expect(content).toContain('- package: "@vostride/agent-qa-subscription-auth"')
     expect(content).toContain('- package: "@acme/auth"')
     expect(answer.crossBoundaryReasons).toEqual(['secret-adjacent-field'])
@@ -648,9 +681,10 @@ describe('config.auth.set — refs only, refused on the INPUT (D-11, ratified as
     expect(answer.detail).toContain('authStateName')
     expect(answer.detail).toContain('workspace.envFile')
 
-    // ZERO STORE DELTA — the difference from `config.field.set`, which FILES a blocked record for a
-    // secret. This reds on a pipeline that treated the two dispositions as one.
+    // ZERO STORE AND WRITE DELTA. The refusal is decided on the input, before anything is
+    // constructed, so the scan of a candidate never ran and nothing was written.
     expect(test.filed).toHaveLength(0)
+    expect(test.written).toHaveLength(0)
 
     // THE ABSENCE, WINDOWED — and it is not vacuous, because the line below proves this codebase's
     // summary channel really does print values it is given.
@@ -681,7 +715,7 @@ describe('config.auth.set — refs only, refused on the INPUT (D-11, ratified as
       target: 'shop',
       authStateName: 'shop-default',
     })
-    expect(proposed.outcome).toBe('proposed')
+    expect(proposed.outcome).toBe('applied')
   })
 
   it('KNOWN BOUND: a credential that is ALSO a legal reference, unnamed and unseeded, is admitted',
@@ -696,7 +730,7 @@ describe('config.auth.set — refs only, refused on the INPUT (D-11, ratified as
         target: 'shop',
         authStateName: password,
       })
-      expect(answer.outcome).toBe('proposed')
+      expect(answer.outcome).toBe('applied')
 
       // AND THE PAIRED HALF, which is the structural answer and the reason the seeded gate exists:
       // seed the SAME value and it is refused with no new pattern written anywhere.
@@ -772,6 +806,8 @@ describe('config.hook.add — the one action that writes another file (D-02)', (
     })
 
     const call1 = test.validated[0]
+    expect(test.text(HOOKS_FILE)).toContain('Seed the cart')
+    expect(test.text(CONFIG_FILE)).toBe(CONFIG)
     expect(call1).toBeDefined()
     // The candidate is the whole SET, and the hooks member carries the new entry. This reds on a
     // pipeline that validated only the config yaml — which would have passed every other describe
@@ -807,7 +843,7 @@ describe('config.hook.add — the one action that writes another file (D-02)', (
       timeout: '45s',
       network: false,
     })
-    if (answer.outcome !== 'proposed') throw new Error('unreachable')
+    if (answer.outcome !== 'applied') throw new Error('unreachable')
 
     // STATED, NEVER INFERRED (D-02). A hook is code this project will run, so the flag is
     // unconditional — it does not depend on what the hook does or where its file lives.
@@ -835,12 +871,14 @@ describe('config.hook.add — the one action that writes another file (D-02)', (
       runtime: 'node',
       file: 'scripts/seed.mjs',
     })
-    if (answer.outcome !== 'proposed') throw new Error('unreachable')
+    if (answer.outcome !== 'applied') throw new Error('unreachable')
 
-    const payload = applyable(test)
-    expect(payload.files[0]?.changeKind).toBe('add')
-    // An added file has no base digest, because there is no base — a fact, not an omission.
-    expect(payload.files[0]?.baseDigest).toBeUndefined()
+    const publication = test.written[0]
+    if (publication?.kind !== 'files') throw new Error('expected a whole-file publication')
+    // A created file has no base digest, because there is no base — a fact, not an omission.
+    expect(publication.files[0]?.path).toBe(HOOKS_FILE)
+    expect(publication.files[0]?.baseDigest).toBeUndefined()
+    expect(test.text(HOOKS_FILE)).toContain('Seed the cart')
     // The default timeout is written, because `HookDefinitionSchema` requires one and the DTO makes
     // it optional. A hook proposed without a duration would be refused at the next run.
     expect(answer.shownDiff).toContain('+    timeout: 30s')
@@ -892,7 +930,7 @@ describe('the config action class is CLOSED, and the registry is where that is l
     }
   })
 
-  it('every propose op refuses by name when no scan is bound (CFGM-02, fail closed)', async () => {
+  it('every config op refuses by name when no scan is bound (CFGM-02, fail closed)', async () => {
     // THE ABSENCE MUST REFUSE, for all four new ops and not only for the one 395-04 measured. A
     // guardrail that quietly stops existing when one composition line is missing is the permissive
     // direction a security control may not fail in.
@@ -915,6 +953,35 @@ describe('the config action class is CLOSED, and the registry is where that is l
     for (const [id, input] of samples) {
       await expect(invokeFunction(registry, id, input, CALLER), id).rejects.toThrow(/not bound/i)
     }
+    expect(test.filed).toHaveLength(0)
+    expect(test.written).toHaveLength(0)
+  })
+
+  it('every config op names the direct writer as its binding and refuses by name without it', async () => {
+    // 432-11 D-05: the direct writer is what these ops cannot run without. A host that does not
+    // bind it lists the five field and file ops unbound, and every one of the six refuses by name
+    // rather than filing the change somewhere else.
+    const test = harness({ config: null })
+    const { configWrite: _dropped, ...withoutWriter } = test.deps as unknown as Record<string, unknown>
+    const registry = createFunctionRegistry({
+      deps: withoutWriter as unknown as FunctionDeps,
+      auditSink: { appendExecutionAudit() {}, appendGuardrailAudit() {} },
+      resolveExecutionContext: () => 'local-interactive',
+      confirm: { surface: 'tty-prompt', ask: () => true },
+    })
+    const status = new Map(registry.list(CALLER).map((entry) => [entry.id, entry.bindingStatus]))
+    for (const id of [
+      'config.field.set',
+      'config.target.create',
+      'config.target.edit',
+      'config.auth.set',
+      'config.hook.add',
+    ]) {
+      expect(status.get(id), id).toBe('unbound')
+    }
+    await expect(
+      invokeFunction(registry, 'config.project.scaffold', { domain: 'booking.com' }, CALLER),
+    ).rejects.toThrow(/not bound/i)
     expect(test.filed).toHaveLength(0)
   })
 })
@@ -1161,7 +1228,7 @@ describe('C432-CONFIG-SIX-OPS: auth, hook and scaffold write in the call as well
       expect(answer).toMatchObject({
         outcome: 'applied',
         files: ['.gitignore', CONFIG_FILE, HOOKS_FILE],
-        fields: ['registry.targets.booking.platform', 'registry.targets.booking.url'],
+        fields: ['registry.targets.booking-com.platform', 'registry.targets.booking-com.url'],
       })
       const call = test.written[0]
       if (call?.kind !== 'files') throw new Error('expected a whole-file publication')

@@ -21,6 +21,8 @@
 
 import { z } from 'zod'
 
+import { CROSS_BOUNDARY_REASONS } from './constants'
+
 /**
  * The runtimes a hook may declare.
  *
@@ -228,3 +230,134 @@ export const ConfigApplyOutcomeSchema = z.discriminatedUnion('outcome', [
 ])
 
 export type ConfigApplyOutcome = z.infer<typeof ConfigApplyOutcomeSchema>
+
+// ---- 2026-09-30, 432-11 D-05/D-07: what a config change did, answered in the call ------------------
+//
+// The six config operations write their change before they answer. There is no proposal, no
+// inbox record and no second call to apply it: the answer is either what was written, a refusal
+// that wrote nothing, or an interruption that names exactly the files already written.
+
+/**
+ * Why a change was blocked: the resulting configuration would not validate, or it would carry a
+ * secret. The report names what was found and never the value. Nothing is written or kept.
+ */
+export const CONFIG_BLOCKED_REASONS = ['schema-fail', 'guardrail-hit'] as const
+
+export type ConfigBlockedReason = (typeof CONFIG_BLOCKED_REASONS)[number]
+
+/**
+ * One thing the guardrail scan found, described so a person can act without the value being shown.
+ * `redactedFingerprint` is a stable, non-reversing marker, so two findings can be compared without
+ * either carrying the value.
+ */
+export const ConfigScanFindingSchema = z.object({
+  /** Workspace-relative path of the file the finding is in. */
+  path: z.string().min(1),
+  /** The config path or diff line label, when the detector can name one. */
+  field: z.string().min(1).optional(),
+  /** Which detector fired, in the safety package's own vocabulary. */
+  detector: z.string().min(1),
+  /** A short, non-reversing marker for the matched value. NEVER the value. */
+  redactedFingerprint: z.string().min(1),
+}).strict()
+
+export type ConfigScanFinding = z.infer<typeof ConfigScanFindingSchema>
+
+/**
+ * Why a config change was refused with nothing written.
+ *
+ * The first seven are facts about the request, decided before any file is touched:
+ *
+ *   target-exists         — a create names a target the registry already holds; a create never
+ *                           replaces one.
+ *   target-not-found      — an edit or an auth binding names a target that is not configured; the
+ *                           refusal lists the configured names.
+ *   refs-only             — the input carried something that is not a reference (a credential);
+ *                           the value is never quoted.
+ *   unsupported-reference — a legal reference this configuration has nowhere to record.
+ *   not-a-hostname        — the scaffold's token does not parse as a hostname.
+ *   already-configured    — the scaffold would replace targets the project already declares.
+ *   unrenderable-diff     — the change's bytes differ but render as nothing a person could read.
+ *
+ * The last three are facts about the files at the moment of writing:
+ *
+ *   file-changed          — a whole file differs from the bytes the change was built from.
+ *   field-changed         — a field the change depends on changed since the call read it (a
+ *                           target created meanwhile under the same name).
+ *   write-refused         — the config transaction refused the change on the file as it now
+ *                           stands (it no longer validates, parses or resolves).
+ */
+export const CONFIG_CHANGE_REFUSAL_REASONS = [
+  'target-exists',
+  'target-not-found',
+  'refs-only',
+  'unsupported-reference',
+  'not-a-hostname',
+  'already-configured',
+  'unrenderable-diff',
+  'file-changed',
+  'field-changed',
+  'write-refused',
+] as const
+
+export type ConfigChangeRefusalReason = (typeof CONFIG_CHANGE_REFUSAL_REASONS)[number]
+
+/**
+ * What one config operation did, answered after it wrote (432-11 D-05/D-07).
+ *
+ *   applied     — the change is on disk. `files` are the workspace-relative files written, in write
+ *                 order; `fields` are the config fields the change set; `shownDiff` is the diff of
+ *                 the change against the files as this call read them. An outside edit to another
+ *                 field, merged in the write's own turn, is kept and is not part of this diff.
+ *   blocked     — the change would not validate or would carry a secret. It carries the report and
+ *                 never the change; nothing was written and nothing was kept.
+ *   no-change   — the configuration already holds the value.
+ *   refused     — the request or the files at write time refused the change; nothing was written.
+ *   interrupted — a multi-file change stopped part way. `written` hold their new bytes, `failed`
+ *                 did not, `unwritten` were never reached. Nothing is rolled back: the files are
+ *                 plain edits a person reverts with git.
+ */
+export const ConfigChangeOutputSchema = z.discriminatedUnion('outcome', [
+  z.object({
+    outcome: z.literal('applied'),
+    summaryLine: z.string().min(1),
+    files: z.array(z.string().min(1)).min(1),
+    fields: z.array(z.string().min(1)).min(1),
+    /** Whether the change adds a hook, a new origin, a secret-adjacent field or an out-of-set file. */
+    crossBoundary: z.boolean(),
+    crossBoundaryReasons: z.array(z.enum(CROSS_BOUNDARY_REASONS)),
+    shownDiff: z.string().min(1),
+  }).strict(),
+  z.object({
+    outcome: z.literal('blocked'),
+    /** What was attempted, never what was found. */
+    summaryLine: z.string().min(1),
+    blockedReason: z.enum(CONFIG_BLOCKED_REASONS),
+    paths: z.array(z.string().min(1)).min(1),
+    scanFindings: z.array(ConfigScanFindingSchema).optional(),
+    /** Whole-config validation issues, in the validator's own words, reduced to position for YAML. */
+    validationIssues: z.array(z.string().min(1)).optional(),
+  }).strict(),
+  z.object({ outcome: z.literal('no-change'), path: z.string().min(1) }).strict(),
+  z.object({
+    outcome: z.literal('refused'),
+    reason: z.enum(CONFIG_CHANGE_REFUSAL_REASONS),
+    /** What was refused and what to do instead. Names fields and files, never a value. */
+    detail: z.string().min(1),
+    /** The configured names a caller could have meant. */
+    candidates: z.array(z.string().min(1)).optional(),
+  }).strict(),
+  z.object({
+    outcome: z.literal('interrupted'),
+    summaryLine: z.string().min(1),
+    written: z.array(z.string().min(1)),
+    failed: z.object({
+      path: z.string().min(1),
+      reason: z.enum(['file-changed', 'write-failed']),
+    }).strict(),
+    unwritten: z.array(z.string().min(1)),
+    detail: z.string().min(1),
+  }).strict(),
+])
+
+export type ConfigChangeOutput = z.infer<typeof ConfigChangeOutputSchema>

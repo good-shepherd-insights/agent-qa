@@ -1,6 +1,13 @@
 // Scaffold from zero, through the REAL producer, on a real repository (395-08 · CFGM-05 · D-04/
 // D-13/D-14/D-15).
 //
+// 2026-09-30, 432-11 D-05/D-07/D-14: THE SCAFFOLD WRITES IN THE CALL through the real direct writer:
+// no proposal, no confirm, no commit. The cells below that pinned the proposal, the confirm and the
+// one-commit apply are re-spelled in place to the direct write — the goldens are the answer's own
+// `shownDiff`, the bytes are read off disk, and the commit count does not move. The
+// `config.proposal.apply` from-zero arm (14) is still shipped for records already on disk until
+// 432-17, so it starts from a pre-432 scaffold record written by `filePre432ConfigProposal`.
+//
 // THE PRODUCER IS PRODUCTION'S. `createScaffoldContentPort` is the same factory
 // `composeCliLocalAgent` binds, over `commands/scaffold-content.ts` — the one module `agent-qa init`
 // renders its own scaffold from. So what these cells pin is what a person actually gets, and D-04's
@@ -86,10 +93,10 @@ import {
   utf8Decode,
 } from '@vostride/agent-qa-schema'
 import type {
+  ConfigChangeOutput,
   ConfigProposeOutput,
   FunctionCaller,
   ProposalRecord,
-  ProposalsAcceptOutput,
 } from '@vostride/agent-qa-schema'
 import { scanConstructedArtifact } from '@vostride/agent-qa-safety'
 import { runSafetyScope } from '@vostride/agent-qa-safety-local'
@@ -103,8 +110,10 @@ import {
   createConfigFilesPort,
   createConfigUndoSourcePort,
   createConfigValidatePort,
+  createConfigWritePort,
   createScaffoldContentPort,
 } from '../local-agent-host.js'
+import { filePre432ConfigProposal } from './pre-432-config-proposal.js'
 import * as host from '../local-agent-host.js'
 import { HN_TOP_STORY_HOOK_ID, buildScaffoldFileSet } from '../../commands/scaffold-content.js'
 
@@ -269,6 +278,8 @@ function registryFor(options: { readonly confirm?: boolean } = {}) {
     configUndoSource: createConfigUndoSourcePort(configPath),
     // THE REAL PRODUCER. Not a double, and not a copy — the factory the CLI composition binds.
     scaffoldContent: createScaffoldContentPort(),
+    // 432-11: THE REAL DIRECT WRITER the scaffold publishes through.
+    configWrite: createConfigWritePort(configPath),
     // The REAL scan with an EMPTY seed set, on `config-apply.test.ts`'s stated reasoning: the
     // function is production's, the seeds are not, because a cell whose verdict depends on the
     // developer's exported variables measures the machine.
@@ -311,17 +322,23 @@ function registryFor(options: { readonly confirm?: boolean } = {}) {
 async function scaffold(
   registry: ReturnType<typeof registryFor>,
   domain: string,
-): Promise<ConfigProposeOutput> {
+): Promise<ConfigChangeOutput> {
   return await invokeFunction(
     registry, 'config.project.scaffold', { domain }, HUMAN,
-  ) as ConfigProposeOutput
+  ) as ConfigChangeOutput
 }
 
-function proposedId(answer: ConfigProposeOutput): string {
-  if (answer.outcome !== 'proposed') {
-    throw new Error(`expected a proposal, got ${JSON.stringify(answer)}`)
+/** The applied answer, or the answer itself in the failure message. */
+function applied(answer: ConfigChangeOutput): Extract<ConfigChangeOutput, { outcome: 'applied' }> {
+  if (answer.outcome !== 'applied') {
+    throw new Error(`expected a direct write, got ${JSON.stringify(answer)}`)
   }
-  return answer.proposalId
+  return answer
+}
+
+/** The config as the scaffold wrote it, parsed off disk. */
+function writtenConfig(): ParsedConfig {
+  return parseYaml(readFileSync(configPath, 'utf8')) as ParsedConfig
 }
 
 /**
@@ -389,32 +406,26 @@ afterEach(() => {
 })
 
 describe('the pinned config set answers for a project that has no config file (D-02/D-05)', () => {
-  it('(1) enumerates three members, and the apply commits exactly those it touches', async () => {
+  it('(1) enumerates three members, and the scaffold writes exactly those it touches', async () => {
     // THE SHIPPED ENUMERATION, ASKED DIRECTLY. A project with no config file names no hooks file
     // either, so the answer comes from the default — which is the enumeration's own business and
     // not this test's. Read back rather than typed, so a member added later reds here first.
     expect(enumerateConfigFileSet({ configFile: CONFIG_FILE }))
       .toEqual(['.gitignore', CONFIG_FILE, 'hooks.yaml'])
 
-    const registry = registryFor({ confirm: true })
-    const id = proposedId(await scaffold(registry, 'booking.com'))
-    const payload = storedApplyable(id)
-
-    // The proposal's own file set IS the enumeration. A scaffold that wrote a fourth file would be
-    // flagged `out-of-set-path` and refused by an apply that cannot scope to it.
-    expect([...payload.files.map((file) => file.path)].sort())
-      .toEqual([...enumerateConfigFileSet({ configFile: CONFIG_FILE })])
-
     const before = commitCount()
-    const accepted = await invokeFunction(
-      registry, 'proposals.accept', { proposalId: id }, HUMAN,
-    ) as ProposalsAcceptOutput
-    expect(accepted.apply.outcome).toBe('applied')
+    const answer = applied(await scaffold(registryFor(), 'booking.com'))
 
-    // ONE commit — the tree is clean apart from files the proposal creates, so there is nothing
-    // for D-05's human-first preserve commit to hold. Its pathspec agrees with the enumeration.
-    expect(commitCount()).toBe(before + 1)
-    expect(headFiles()).toEqual(['.gitignore', CONFIG_FILE, 'hooks.yaml'])
+    // The written file set IS the enumeration. A scaffold that wrote a fourth file would be
+    // flagged `out-of-set-path` and would be writing outside the pinned set.
+    expect([...answer.files].sort())
+      .toEqual([...enumerateConfigFileSet({ configFile: CONFIG_FILE })])
+    for (const path of answer.files) expect(existsSync(join(root, path)), path).toBe(true)
+
+    // NO COMMIT (D-07): the three files are plain edits git shows as changed and new.
+    expect(commitCount()).toBe(before)
+    expect(git('status', '--porcelain').stdout.split('\n').filter(Boolean).sort())
+      .toEqual([' M .gitignore', `?? ${CONFIG_FILE}`, '?? hooks.yaml'])
   })
 })
 
@@ -428,23 +439,17 @@ describe('the derivation is byte-pinned through the real producer (D-13/D-16)', 
     },
   ]) {
     it(`(2/3) ${row.domain} → exactly the committed golden bytes`, async () => {
-      const registry = registryFor({ confirm: true })
-      const answer = await scaffold(registry, row.domain)
-      const id = proposedId(answer)
-      const payload = storedApplyable(id)
-
-      // (4) APPLYABLE, from the record on disk. `storedApplyable` throws with the blocked record's
-      // own summary line otherwise, so a scaffold whose derived config the shipped schema refuses
-      // fails here naming the reason rather than failing somewhere downstream.
-      expect(payload.payloadKind).toBe('applyable')
+      // (4) APPLIED. `applied` throws with the blocked answer's own report otherwise, so a scaffold
+      // whose derived config the shipped schema refuses fails here naming the reason.
+      const answer = applied(await scaffold(registryFor(), row.domain))
 
       // THE GOLDEN. Every byte of the rendered diff — the config yaml, the hooks file and the
       // gitignore upsert — compared against a file produced by this same op and reviewed.
-      golden(row.golden, utf8Decode(base64Decode(payload.shownDiffBase64)))
+      golden(row.golden, answer.shownDiff)
 
       // And the derived facts are IN those bytes, stated separately so a golden somebody
       // regenerated without reading still has to carry the derivation.
-      const shown = utf8Decode(base64Decode(payload.shownDiffBase64))
+      const shown = answer.shownDiff
       expect(shown).toContain(`url: https://${row.domain}`)
       expect(shown).toContain(`    ${row.targetName}:`)
       // NO AUTH BINDING ON THE TARGET, and no auth plugin declaration. The utterance carried a
@@ -453,64 +458,50 @@ describe('the derivation is byte-pinned through the real producer (D-13/D-16)', 
       // legitimately carries `services.authState.dir` — a directory setting, not a credential
       // binding — and an absence assertion over the whole text would have been wrong about which
       // fact it was making. The presence half is the keyset itself: exactly `platform` and `url`.
-      const derived = parseYaml(
-        utf8Decode(base64Decode(
-          payload.files.find((file) => file.path === CONFIG_FILE)?.newContentBase64 as string,
-        )),
-      ) as { registry?: { targets?: Record<string, Record<string, unknown>> }; plugins?: unknown }
+      const derived = parseYaml(readFileSync(configPath, 'utf8')) as {
+        registry?: { targets?: Record<string, Record<string, unknown>> }
+        plugins?: unknown
+      }
       expect(Object.keys(derived.registry?.targets?.[row.targetName] ?? {}).sort())
         .toEqual(['platform', 'url'])
       expect(derived.plugins).toBeUndefined()
-      expect(payload.summaryLine)
+      expect(answer.summaryLine)
         .toBe(`configure this project for https://${row.domain} as target ${row.targetName}`)
 
-      // ALWAYS CROSS-BOUNDARY (D-14/D-02) — computed, and therefore never satisfiable by a standing
-      // grant from either side after 395-07.
-      expect(payload.crossBoundary).toBe(true)
-      expect(payload.crossBoundaryReasons).toContain('new-origin')
+      // ALWAYS CROSS-BOUNDARY (D-14/D-02) — computed by the classifier, reported on the receipt.
+      expect(answer.crossBoundary).toBe(true)
+      expect(answer.crossBoundaryReasons).toContain('new-origin')
     })
   }
 
   it('(4) the derived config parses through the SHIPPED AgentQaConfigSchema', async () => {
-    // The half `payloadKind: applyable` alone would not give: this reads the bytes the apply is
-    // about to write and parses them with `core`'s own schema. A pipeline that stopped validating
-    // would still answer `applyable`, and this cell is what notices.
-    const registry = registryFor({ confirm: true })
-    const id = proposedId(await scaffold(registry, 'booking.com'))
-    const payload = storedApplyable(id)
-    const config = payload.files.find((file) => file.path === CONFIG_FILE)
-    expect(config).toBeDefined()
+    // The half `applied` alone would not give: this reads the bytes the scaffold wrote and parses
+    // them with `core`'s own schema. A pipeline that stopped validating would still answer
+    // `applied`, and this cell is what notices.
+    applied(await scaffold(registryFor(), 'booking.com'))
+    expect(existsSync(configPath)).toBe(true)
 
-    const parsed = AgentQaConfigSchema.safeParse(
-      parseYaml(utf8Decode(base64Decode(config?.newContentBase64 as string))),
-    )
+    const parsed = AgentQaConfigSchema.safeParse(parseYaml(readFileSync(configPath, 'utf8')))
     expect(parsed.success ? null : JSON.stringify(parsed.error?.issues)).toBeNull()
   })
 })
 
-describe('the accepted scaffold commits exactly the bytes it showed (CFGM-03/CFGM-04 · D-14)', () => {
-  it('(5/6/7) confirms, commits, and APPENDS the managed block to the project\'s own gitignore',
+describe('the scaffold writes exactly the bytes it shows, in the call (CFGM-03/CFGM-04 · D-14)', () => {
+  it('(5/6/7) writes with no confirm asked, and APPENDS the managed block to the project\'s own gitignore',
     async () => {
-      const registry = registryFor({ confirm: true })
-      const id = proposedId(await scaffold(registry, 'booking.com'))
-      const payload = storedApplyable(id)
+      const answer = applied(await scaffold(registryFor({ confirm: true }), 'booking.com'))
 
-      const accepted = await invokeFunction(
-        registry, 'proposals.accept', { proposalId: id }, HUMAN,
-      ) as ProposalsAcceptOutput
-      expect(accepted.apply.outcome).toBe('applied')
+      // (7) 432-11 D-14: NO CONFIRM. The spy is bound and was never asked.
+      expect(confirms).toBe(0)
 
-      // (7) THE CONFIRM WAS REACHED. Asserted as a call count on a spy, because a turn that never
-      // reached a confirm also completes — which is the failure mode a "the accept succeeded"
-      // assertion cannot see.
-      expect(confirms).toBeGreaterThan(0)
-
-      // (5) The bytes on disk are the payload's bytes, decoded from the record READ BACK OFF DISK
-      // rather than from anything this test built.
-      for (const file of payload.files) {
-        expect(readFileSync(join(root, file.path), 'utf8'))
-          .toBe(utf8Decode(base64Decode(file.newContentBase64)))
-      }
+      // (5) The bytes on disk are the bytes the answer's diff describes: every added line of the
+      // new config is in the file.
+      const added = answer.shownDiff.split('\n')
+        .filter((line) => line.startsWith('+') && !line.startsWith('+++'))
+        .map((line) => line.slice(1))
+      expect(added.length).toBeGreaterThan(0)
+      const onDisk = answer.files.map((path) => readFileSync(join(root, path), 'utf8')).join('\n')
+      for (const line of added) expect(onDisk, line).toContain(line)
 
       // (6) THE UPSERT. The project's own rules survive and the managed block is appended — the
       // half a "the block is present" assertion would miss entirely.
@@ -520,53 +511,37 @@ describe('the accepted scaffold commits exactly the bytes it showed (CFGM-03/CFG
       expect(gitignore).toContain('# agent-qa init:end')
 
       // And the config really is a working configuration for the site that was named.
-      const written = parseYaml(readFileSync(configPath, 'utf8')) as {
-        registry?: { targets?: Record<string, { url?: string }> }
-      }
-      expect(written.registry?.targets?.['booking-com']?.url).toBe('https://booking.com')
+      expect(writtenConfig().registry?.targets?.['booking-com']?.url).toBe('https://booking.com')
     })
 
-  it('(8) fails closed with no confirm bound, and commits nothing', async () => {
-    const registry = registryFor()
-    const id = proposedId(await scaffold(registry, 'booking.com'))
-
+  it('(8) needs no confirm: with none bound the scaffold still writes, and commits nothing', async () => {
     const before = commitCount()
-    // THE V48 POSTURE: with no confirm bound the gate DENIES by name rather than answering. The
-    // refusal names the tier it was denied at, so a build that silently proceeded would fail here
-    // on the absence of a throw rather than on a message.
-    await expect(invokeFunction(registry, 'proposals.accept', { proposalId: id }, HUMAN))
-      .rejects.toThrow(/prompted-denied|fail-closed/)
+    applied(await scaffold(registryFor(), 'booking.com'))
 
     expect(commitCount()).toBe(before)
-    expect(existsSync(configPath)).toBe(false)
+    expect(existsSync(configPath)).toBe(true)
+    expect(existsSync(join(agentQaRoot, 'proposals'))).toBe(false)
   })
 })
 
 describe('undoing a scaffold is WINDOWS 128\'s case, measured (D-07 · 395-06)', () => {
-  it('(11) refuses `undo-needs-delete` — the scaffold is the delete gap the undo names', async () => {
-    // 395-06 filed `undo-needs-delete` naming 395-08 as its owner, on the reasoning that this plan
-    // "meets the whole-new-file case from the other direction". It does — from the CREATE side —
-    // and this cell is what turns that entry from a hypothetical into a measured one: a scaffold
-    // applies, its commit carries the D-06 trailer, so it IS the next undo's source, and reversing
-    // it would DELETE two files this write path can only propose CONTENT for.
+  it('(11) a direct scaffold leaves no agent commit, so the undo has nothing to take back', async () => {
+    // 432-11 D-07/D-09: the scaffold's files are plain edits a person reverts with git. There is no
+    // agent configuration commit for `config.undo.propose` to locate, so it refuses by name and
+    // files and commits nothing — the files stay exactly as the scaffold wrote them.
     const registry = registryFor({ confirm: true })
-    const id = proposedId(await scaffold(registry, 'booking.com'))
-    const accepted = await invokeFunction(
-      registry, 'proposals.accept', { proposalId: id }, HUMAN,
-    ) as ProposalsAcceptOutput
-    expect(accepted.apply.outcome).toBe('applied')
+    applied(await scaffold(registry, 'booking.com'))
+    const written = readFileSync(configPath, 'utf8')
 
     const before = commitCount()
     const undone = await invokeFunction(
       registry, 'config.undo.propose', {}, HUMAN,
     ) as ConfigProposeOutput
 
-    expect(undone).toMatchObject({ outcome: 'refused', reason: 'undo-needs-delete' })
-    // It names both created files, and it commits and files nothing — refused WHOLE rather than
-    // applied by halves, which is the property 395-06 wrote the refusal for.
-    expect(undone.outcome === 'refused' && undone.detail).toContain(CONFIG_FILE)
-    expect(undone.outcome === 'refused' && undone.detail).toContain('hooks.yaml')
+    expect(undone).toMatchObject({ outcome: 'refused', reason: 'no-agent-commit' })
     expect(commitCount()).toBe(before)
+    expect(readFileSync(configPath, 'utf8')).toBe(written)
+    expect(existsSync(join(agentQaRoot, 'proposals'))).toBe(false)
   })
 })
 
@@ -595,10 +570,11 @@ describe('a project that already has a configuration is refused, not overwritten
       expect(readFileSync(configPath, 'utf8')).toBe(before)
     })
 
-  it('(10) refuses a token that is not a hostname, and proposes nothing', async () => {
+  it('(10) refuses a token that is not a hostname, and writes nothing', async () => {
     const answer = await scaffold(registryFor({ confirm: true }), 'the checkout flow')
     expect(answer).toMatchObject({ outcome: 'refused', reason: 'not-a-hostname' })
     expect(existsSync(join(agentQaRoot, 'proposals'))).toBe(false)
+    expect(existsSync(configPath)).toBe(false)
   })
 })
 
@@ -612,20 +588,19 @@ describe('a configuration with ZERO declared targets is MERGED, never replaced (
       // rather than about the serializer's spacing.
       expect(String(parseDocument(ZERO_TARGET_CONFIG))).toBe(ZERO_TARGET_CONFIG)
 
-      const registry = registryFor({ confirm: true })
+      const before = commitCount()
       // RED PRE-FIX: `refused` / `already-configured`, because the predicate was keyed on the config
       // FILE existing. This project declares no target at all — there is nothing to overwrite.
-      const id = proposedId(await scaffold(registry, 'booking.com'))
-      const payload = storedApplyable(id)
+      const answer = applied(await scaffold(registryFor({ confirm: true }), 'booking.com'))
 
-      const configChange = payload.files.find((file) => file.path === CONFIG_FILE)
-      expect(configChange?.changeKind).toBe('modify')
+      // The config was MODIFIED, not created: its old side is in the diff.
+      expect(answer.shownDiff).toContain(`--- a/${CONFIG_FILE}`)
 
       // THE MERGE, MEASURED BY SUBTRACTION. Removing the inserted entry's exact text from the
-      // emitted document must leave the committed bytes untouched — the LLM entry, both comment
+      // written document must leave the committed bytes untouched — the LLM entry, both comment
       // blocks, the blank lines and the key order. A whole-file render fails this by every line it
       // rewrote, which is precisely the overwrite `already-configured` existed to prevent.
-      const merged = utf8Decode(base64Decode(configChange?.newContentBase64 as string))
+      const merged = readFileSync(configPath, 'utf8')
       expect(merged).toContain(INSERTED_TARGET_ENTRY)
       expect(merged.replace(INSERTED_TARGET_ENTRY, '')).toBe(ZERO_TARGET_CONFIG)
       expect(merged).toContain('provider: openai-subscription')
@@ -636,40 +611,25 @@ describe('a configuration with ZERO declared targets is MERGED, never replaced (
       const parsedConfig = AgentQaConfigSchema.safeParse(parseYaml(merged))
       expect(parsedConfig.success ? null : JSON.stringify(parsedConfig.error?.issues)).toBeNull()
 
-      const before = commitCount()
-      const accepted = await invokeFunction(
-        registry, 'proposals.accept', { proposalId: id }, HUMAN,
-      ) as ProposalsAcceptOutput
-      expect(accepted.apply.outcome).toBe('applied')
-      expect(confirms).toBeGreaterThan(0)
-
-      // ONE commit whose files are exactly the changed members: the config it merged into, the
-      // hooks file this project did not have, and the gitignore upsert.
-      expect(commitCount()).toBe(before + 1)
-      expect(headFiles()).toEqual(['.gitignore', CONFIG_FILE, 'hooks.yaml'])
-      expect(readFileSync(configPath, 'utf8')).toBe(merged)
+      // The written files are exactly the changed members: the config it merged into, the hooks
+      // file this project did not have, and the gitignore upsert — with no confirm and no commit.
+      expect([...answer.files].sort()).toEqual(['.gitignore', CONFIG_FILE, 'hooks.yaml'])
+      expect(confirms).toBe(0)
+      expect(commitCount()).toBe(before)
     })
 
   it('(13b) leaves a hooks file the project ALREADY has out of the candidate entirely', async () => {
     seedZeroTargetConfig({ hooks: SEEDED_HOOKS })
 
-    const registry = registryFor({ confirm: true })
-    const id = proposedId(await scaffold(registry, 'booking.com'))
-    const payload = storedApplyable(id)
+    const answer = applied(await scaffold(registryFor({ confirm: true }), 'booking.com'))
 
     // NOT A MEMBER OF THE CHANGE SET AT ALL. The scaffold's hooks template is content for a project
-    // that has none; proposing it over a file a person wrote would be the widest silent overwrite
+    // that has none; writing it over a file a person wrote would be the widest silent overwrite
     // this op could still make after the narrowing — one file over from the one it stopped making.
-    expect(payload.files.map((file) => file.path).sort()).toEqual(['.gitignore', CONFIG_FILE])
+    expect([...answer.files].sort()).toEqual(['.gitignore', CONFIG_FILE])
     // `addsHook` is STATED (D-02), so it must stop being stated when no hook is added.
-    expect(payload.crossBoundaryReasons).not.toContain('hook-added')
-
-    const accepted = await invokeFunction(
-      registry, 'proposals.accept', { proposalId: id }, HUMAN,
-    ) as ProposalsAcceptOutput
-    expect(accepted.apply.outcome).toBe('applied')
+    expect(answer.crossBoundaryReasons).not.toContain('hook-added')
     expect(readFileSync(join(root, 'hooks.yaml'), 'utf8')).toBe(SEEDED_HOOKS)
-    expect(headFiles()).toEqual(['.gitignore', CONFIG_FILE])
   })
 })
 
@@ -741,16 +701,27 @@ async function invokeComposed(input: {
   }
 }
 
-/** File a real from-zero scaffold proposal through the production composition. */
+/**
+ * A pre-432 from-zero scaffold proposal on disk (432-11: the op writes in the call and files none).
+ *
+ * The content is the REAL producer's for `booking.com`, composed with the project's own
+ * `.gitignore`, and the record carries the verdict the classifier gave every scaffold: a new origin
+ * and a hook added.
+ */
 async function composedScaffoldId(): Promise<string> {
-  const host = composeCliLocalAgent({ agentQaRoot, configPath })
-  try {
-    return proposedId(await invokeFunction(
-      host.registry, 'config.project.scaffold', { domain: 'booking.com' }, CLI_FUNCTION_CALLER,
-    ) as ConfigProposeOutput)
-  } finally {
-    await host.close()
-  }
+  const rendered = await createScaffoldContentPort().render({
+    targetName: 'booking-com',
+    baseUrl: 'https://booking.com',
+    existingGitignore: Uint8Array.from(readFileSync(join(root, '.gitignore'))),
+  })
+  return (await filePre432ConfigProposal({
+    configPath,
+    agentQaRoot,
+    action: 'config.project.scaffold',
+    files: rendered,
+    summaryLine: 'configure this project for https://booking.com as target booking-com',
+    crossBoundaryReasons: ['hook-added', 'new-origin'],
+  })).proposalId
 }
 
 describe('config.proposal.apply reaches its own answer from ZERO (395-12 · SC-5\'s third arm)', () => {
@@ -831,37 +802,24 @@ describe('the config dir is NOT the repository root (395-11 · CR-03\'s create d
   it('(12) a from-zero scaffold at sub/dir lands its three members THERE, once each, in one commit',
     async () => {
       const configDir = relocateToSubdir()
-      const registry = registryFor({ confirm: true })
-      const id = proposedId(await scaffold(registry, 'booking.com'))
-      const payload = storedApplyable(id)
+      const before = commitCount()
+      const answer = applied(await scaffold(registryFor({ confirm: true }), 'booking.com'))
 
-      // The proposal's own paths are configDir-relative — the vocabulary the pinned set, the apply
-      // pathspec and the classifier all speak. A payload that had carried repo-root-relative paths
-      // here would be CR-03's defect arriving from the create direction.
-      expect([...payload.files.map((file) => file.path)].sort())
+      // The answer's paths are configDir-relative — the vocabulary the pinned set, the writer and
+      // the classifier all speak. Repo-root-relative paths here would be CR-03's defect arriving
+      // from the create direction.
+      expect([...answer.files].sort())
         .toEqual([...enumerateConfigFileSet({ configFile: CONFIG_FILE })])
 
-      const before = commitCount()
-      const accepted = await invokeFunction(
-        registry, 'proposals.accept', { proposalId: id }, HUMAN,
-      ) as ProposalsAcceptOutput
-      expect(accepted.apply.outcome).toBe('applied')
-
-      // ONE commit, and its file list is git's own — repo-root-relative, so the sub/dir prefix
-      // appears EXACTLY ONCE per member. A doubled prefix is what an apply resolving a
-      // repo-root-relative path against configDir produces, and it is the damage this cell names.
-      expect(commitCount()).toBe(before + 1)
-      expect(headFiles()).toEqual([
-        'sub/dir/.gitignore', `sub/dir/${CONFIG_FILE}`, 'sub/dir/hooks.yaml',
-      ])
+      // NO COMMIT, and git sees each member EXACTLY ONCE under sub/dir. A doubled prefix is what a
+      // writer resolving a repo-root-relative path against configDir produces.
+      expect(commitCount()).toBe(before)
+      expect(git('status', '--porcelain', '--untracked-files=all').stdout.split('\n').filter(Boolean).sort())
+        .toEqual([' M sub/dir/.gitignore', `?? sub/dir/${CONFIG_FILE}`, '?? sub/dir/hooks.yaml'])
       expect(existsSync(join(configDir, 'sub'))).toBe(false)
 
-      // THE BYTES LANDED WHERE THE PAYLOAD SAID, resolved against the CONFIG dir, and the config
-      // is a working one where it landed rather than merely present.
-      for (const file of payload.files) {
-        expect(readFileSync(join(configDir, file.path), 'utf8'))
-          .toBe(utf8Decode(base64Decode(file.newContentBase64)))
-      }
+      // THE BYTES LANDED IN THE CONFIG dir, and the config is a working one where it landed.
+      for (const path of answer.files) expect(existsSync(join(configDir, path)), path).toBe(true)
       const written = parseYaml(readFileSync(configPath, 'utf8')) as {
         registry?: { targets?: Record<string, { url?: string }> }
       }
@@ -903,8 +861,8 @@ use:
 async function createTarget(
   registry: ReturnType<typeof registryFor>,
   input: Record<string, unknown>,
-): Promise<ConfigProposeOutput> {
-  return await invokeFunction(registry, 'config.target.create', input, HUMAN) as ConfigProposeOutput
+): Promise<ConfigChangeOutput> {
+  return await invokeFunction(registry, 'config.target.create', input, HUMAN) as ConfigChangeOutput
 }
 
 function seedOneTargetConfig(): void {
@@ -922,20 +880,15 @@ type ParsedConfig = {
 }
 
 describe('C432-TARGET-CREATE-ENVIRONMENT: the class reaches the committed file (D-19)', () => {
-  it('C432-TARGET-CREATE-ENVIRONMENT: a production create commits its declaration, read back through the shipped schema',
+  it('C432-TARGET-CREATE-ENVIRONMENT: a production create writes its declaration, read back through the shipped schema',
     async () => {
       seedOneTargetConfig()
-      const registry = registryFor({ confirm: true })
-      const id = proposedId(await createTarget(registry, {
+      applied(await createTarget(registryFor({ confirm: true }), {
         name: 'stage',
         platform: 'web',
         url: 'http://localhost:3000',
         environment: 'production',
       }))
-      const accepted = await invokeFunction(
-        registry, 'proposals.accept', { proposalId: id }, HUMAN,
-      ) as ProposalsAcceptOutput
-      expect(accepted.apply.outcome).toBe('applied')
 
       const parsed = AgentQaConfigSchema.safeParse(parseYaml(readFileSync(configPath, 'utf8')))
       expect(parsed.success ? null : JSON.stringify(parsed.error?.issues)).toBeNull()
@@ -981,18 +934,14 @@ describe('C432-TARGET-CREATE-ENVIRONMENT: the class reaches the committed file (
 
 describe('C432-LOCALHOST-ORIGIN: the local demo app scaffolds from zero (D-20 · #134)', () => {
   it('C432-LOCALHOST-ORIGIN: http://127.0.0.1:8931 keeps its scheme and port and validates', async () => {
-    const registry = registryFor({ confirm: true })
-    const id = proposedId(await scaffold(registry, 'http://127.0.0.1:8931/form.html'))
-    const payload = storedApplyable(id)
+    const answer = applied(await scaffold(registryFor({ confirm: true }), 'http://127.0.0.1:8931/form.html'))
 
-    const derived = parseYaml(utf8Decode(base64Decode(
-      payload.files.find((file) => file.path === CONFIG_FILE)?.newContentBase64 as string,
-    ))) as ParsedConfig
+    const derived = writtenConfig()
     expect(AgentQaConfigSchema.safeParse(derived).success).toBe(true)
     expect(derived.registry?.targets).toEqual({
       'ip-127-0-0-1-8931': { platform: 'web', url: 'http://127.0.0.1:8931' },
     })
-    expect(payload.summaryLine)
+    expect(answer.summaryLine)
       .toBe('configure this project for http://127.0.0.1:8931 as target ip-127-0-0-1-8931')
   })
 
@@ -1001,10 +950,12 @@ describe('C432-LOCALHOST-ORIGIN: the local demo app scaffolds from zero (D-20 ·
       ['localhost:5173', 'localhost-5173', 'https://localhost:5173'],
       ['http://[::1]:3000', 'ipv6-loopback-3000', 'http://[::1]:3000'],
     ] as const) {
-      const id = proposedId(await scaffold(registryFor({ confirm: true }), domain))
-      const derived = parseYaml(utf8Decode(base64Decode(
-        storedApplyable(id).files.find((file) => file.path === CONFIG_FILE)?.newContentBase64 as string,
-      ))) as ParsedConfig
+      // Each spelling scaffolds a project from zero, so the previous one's files are cleared.
+      rmSync(configPath, { force: true })
+      rmSync(join(root, 'hooks.yaml'), { force: true })
+      writeFileSync(join(root, '.gitignore'), SEEDED_GITIGNORE)
+      applied(await scaffold(registryFor({ confirm: true }), domain))
+      const derived = writtenConfig()
       expect(derived.registry?.targets, domain).toEqual({ [name]: { platform: 'web', url } })
       expect(AgentQaConfigSchema.safeParse(derived).success, domain).toBe(true)
     }
@@ -1015,12 +966,8 @@ describe('C432-LOCALHOST-ORIGIN: retries and rewritten spellings (D-20 · #134)'
   it('C432-LOCALHOST-ORIGIN: a second scaffold of an applied local origin is refused, and the file is kept',
     async () => {
       const registry = registryFor({ confirm: true })
-      const id = proposedId(await scaffold(registry, 'http://localhost:3000'))
-      const accepted = await invokeFunction(
-        registry, 'proposals.accept', { proposalId: id }, HUMAN,
-      ) as ProposalsAcceptOutput
-      expect(accepted.apply.outcome).toBe('applied')
-      const applied = readFileSync(configPath, 'utf8')
+      applied(await scaffold(registry, 'http://localhost:3000'))
+      const written = readFileSync(configPath, 'utf8')
 
       const again = await scaffold(registry, 'http://localhost:3000')
       expect(again).toMatchObject({
@@ -1028,10 +975,10 @@ describe('C432-LOCALHOST-ORIGIN: retries and rewritten spellings (D-20 · #134)'
         reason: 'already-configured',
         candidates: ['localhost-3000'],
       })
-      expect(readFileSync(configPath, 'utf8')).toBe(applied)
+      expect(readFileSync(configPath, 'utf8')).toBe(written)
     })
 
-  it('C432-LOCALHOST-ORIGIN: a spelling the parser would rewrite into loopback proposes nothing', async () => {
+  it('C432-LOCALHOST-ORIGIN: a spelling the parser would rewrite into loopback writes nothing', async () => {
     for (const domain of ['http://127.1:3000', 'http://2130706433/', 'ftp://localhost']) {
       const answer = await scaffold(registryFor({ confirm: true }), domain)
       expect(answer, domain).toMatchObject({ outcome: 'refused', reason: 'not-a-hostname' })
@@ -1042,15 +989,10 @@ describe('C432-LOCALHOST-ORIGIN: retries and rewritten spellings (D-20 · #134)'
 })
 
 describe('C432-SCAFFOLD-LLMS: the scaffold keeps the model registry and its selection (D-20 · #130)', () => {
-  it('C432-SCAFFOLD-LLMS: the zero-target merge commits every model entry and the selected model',
+  it('C432-SCAFFOLD-LLMS: the zero-target merge writes every model entry and the selected model',
     async () => {
       seedZeroTargetConfig()
-      const registry = registryFor({ confirm: true })
-      const id = proposedId(await scaffold(registry, 'http://localhost:3000'))
-      const accepted = await invokeFunction(
-        registry, 'proposals.accept', { proposalId: id }, HUMAN,
-      ) as ProposalsAcceptOutput
-      expect(accepted.apply.outcome).toBe('applied')
+      applied(await scaffold(registryFor({ confirm: true }), 'http://localhost:3000'))
 
       const onDisk = parseYaml(readFileSync(configPath, 'utf8')) as ParsedConfig
       const parsed = AgentQaConfigSchema.safeParse(onDisk)

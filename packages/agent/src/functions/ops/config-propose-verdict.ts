@@ -1,4 +1,8 @@
-// The clause verdict for `ConfigProposeOutput` — one union, one fold (399.1-03 · D-01/D-02).
+// The clause verdicts for the config answers — one union, one fold each (399.1-03 · D-01/D-02).
+//
+// 2026-09-30, 432-11 D-05: six of the seven ops now answer `ConfigChangeOutput`, what they wrote in
+// the call, and fold through `classifyConfigChangeOutput`. `config.undo.propose` still answers
+// `ConfigProposeOutput` until 432-17 deletes it.
 //
 // SEVEN OPS ANSWER WITH THIS UNION and there is exactly one fold over it, because seven copies of
 // one mapping is the drift this project refuses everywhere else it has a shared vocabulary: a later
@@ -16,7 +20,7 @@
 // IT DECIDES NOTHING. The gate has run, the op has run, the audit row is written. This is the
 // REPORT, and its only job is to stop the report saying `executed` over a refusal.
 
-import type { ConfigProposeOutput } from '@vostride/agent-qa-schema'
+import type { ConfigChangeOutput, ConfigProposeOutput } from '@vostride/agent-qa-schema'
 
 import type { ClauseVerdict } from '../spec.js'
 
@@ -47,5 +51,27 @@ export function classifyConfigProposeOutput(output: ConfigProposeOutput): Clause
       return { status: 'executed', outcome: `no change: ${output.path} already holds that value` }
     case 'proposed':
       return { status: 'executed', outcome: `proposed ${output.proposalId}` }
+  }
+}
+
+/**
+ * Fold one `ConfigChangeOutput` into the verdict its own arm states (432-11 D-05/D-07).
+ *
+ * `applied` and `no-change` are `executed`: the file holds the change. `blocked` and `refused` are
+ * `refused`, with their own reason, and nothing was written. `interrupted` is `failed`: some files
+ * hold the change and one did not, so success is the one thing this report must not say.
+ */
+export function classifyConfigChangeOutput(output: ConfigChangeOutput): ClauseVerdict {
+  switch (output.outcome) {
+    case 'applied':
+      return { status: 'executed', outcome: `applied: ${output.files.join(', ')}` }
+    case 'no-change':
+      return { status: 'executed', outcome: `no change: ${output.path} already holds that value` }
+    case 'blocked':
+      return { status: 'refused', outcome: output.blockedReason }
+    case 'refused':
+      return { status: 'refused', outcome: output.reason }
+    case 'interrupted':
+      return { status: 'failed', outcome: `interrupted at ${output.failed.path}: ${output.failed.reason}` }
   }
 }

@@ -39,12 +39,13 @@ import { join } from 'node:path'
 
 import { invokeFunction } from '@vostride/agent-qa-agent'
 import type { FunctionDeps, JobModelCapability } from '@vostride/agent-qa-agent'
-import type { ConfigProposeOutput, ProposalsAcceptOutput } from '@vostride/agent-qa-schema'
+import type { ConfigChangeOutput, ProposalsAcceptOutput } from '@vostride/agent-qa-schema'
 import { runSafetyScope } from '@vostride/agent-qa-safety-local'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import { CLI_FUNCTION_CALLER, composeCliLocalAgent } from '../local-agent-host.js'
 import * as hostModule from '../local-agent-host.js'
+import { filePre432ConfigProposal } from './pre-432-config-proposal.js'
 
 const CONFIG_FILE = 'agent-qa.config.yaml'
 
@@ -143,13 +144,13 @@ describe('CFGM-03 / D-06: an accepted config apply cascades into nothing', () =>
         // the kind of change it is looking for.
         const jobs = await host.jobs()
 
-        const proposed = await invokeFunction(
-          host.registry,
-          'config.field.set',
-          { path: 'use.timeout.step', value: '45s' },
-          CLI_FUNCTION_CALLER,
-        ) as ConfigProposeOutput
-        if (proposed.outcome !== 'proposed') throw new Error(`fixture: ${proposed.outcome}`)
+        // 432-11: the config ops no longer file proposals; the accept path serves the records
+        // already on disk, so this cell starts from one written as the old pipeline wrote it.
+        const proposed = await filePre432ConfigProposal({
+          configPath,
+          agentQaRoot,
+          edits: [{ path: 'use.timeout.step', value: '45s' }],
+        })
 
         const before = await jobs.store.dumpState()
         const runsBefore = runDirectories()
@@ -237,6 +238,19 @@ describe('C432-CONFIG-DIRECT: a direct config write cascades into nothing', () =
         expect(after).toEqual(before)
         expect(after.jobs).toHaveLength(0)
         expect(runDirectories()).toEqual(runsBefore)
+
+        // 432-11: the op itself, through the composed host, cascades into nothing either.
+        const answer = await invokeFunction(
+          host.registry,
+          'config.field.set',
+          { path: 'use.timeout.test', value: '60m' },
+          CLI_FUNCTION_CALLER,
+        ) as ConfigChangeOutput
+        expect(answer).toMatchObject({ outcome: 'applied', files: [CONFIG_FILE] })
+        expect(readFileSync(configPath, 'utf8')).toContain('test: 60m')
+        expect(await jobs.store.dumpState()).toEqual(before)
+        expect(runDirectories()).toEqual(runsBefore)
+        expect(commitCount()).toBe(1)
 
         await jobs.queue.enqueue('analyze-run', { runId: 'run_direct_probe' }, 'direct-config-probe')
         expect((await jobs.store.dumpState()).jobs).toHaveLength(1)

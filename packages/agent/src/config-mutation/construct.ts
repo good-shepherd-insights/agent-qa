@@ -1,5 +1,11 @@
-// The proposal construction pipeline (Phase 395, CFGM-01 / CFGM-02 / CFGM-04 · D-01 / D-03 / D-09 /
-// D-10 / D-11 / D-12 / D-17).
+// The config change construction pipeline (Phase 395, CFGM-01 / CFGM-02 / CFGM-04 · D-01 / D-03 /
+// D-09 / D-10 / D-11 / D-12 / D-17).
+//
+// 2026-09-30, 432-11 D-05/D-07: THE SIX CONFIG OPERATIONS WRITE IN THE CALL. Step 7 below is now a
+// publication through the direct writer (`configWrite`): field changes through the config
+// transaction, whole files over the digest they were built from. A blocked change is answered as a
+// refusal carrying its report, and nothing is filed or written. Only `config.undo.propose` still
+// files a proposal, until 432-17 deletes it. Nothing here runs git.
 //
 // SEVEN STEPS IN ONE ORDER, AND THE ORDER IS THE CONTRACT:
 //
@@ -23,7 +29,8 @@
 //      the config yaml alone: `config.hook.add` changes only the hooks file, and a validator that
 //      never saw it would have declared valid the one artifact that proposal wrote.
 //   6. CLASSIFY cross-boundary-ness from the actual VALUES (D-02), through `computeCrossBoundary`.
-//   7. MINT the envelope and persist it through the 391 store.
+//   7. PUBLISH through the direct writer and answer what it wrote (432-11). The undo alone still
+//      mints an envelope and files it through the 391 store.
 //
 // FIVE OPS, ONE PIPELINE, AND THE SPLIT BETWEEN THEM IS THE POINT (395-05, D-01). Steps 3 to 7 are
 // `fileConfigProposal` and every action reaches them: what a `config.target.create` and a
@@ -64,9 +71,8 @@
 // and `blockedReason` is what tells them apart. A refusal that returned a message and filed nothing
 // would leave the inbox with no trace that the agent had tried.
 //
-// NOTHING HERE COMMITS. The proposal is the artifact; the git commit happens only after a person
-// accepts, through a port this module cannot reach. That is L10's one write path expressed as a
-// module boundary rather than as a rule somebody has to remember.
+// NOTHING HERE COMMITS. The direct writer publishes files and runs no git; a person reviews and
+// reverts the change with their own tools (D-07).
 //
 // PURE OVER PORTS. Every host fact — bytes, the yaml edit, the document's shape, the scan's seeds,
 // validation, the store — arrives as a dependency, so the pipeline is drivable end to end with no
@@ -83,6 +89,9 @@ import {
 } from '@vostride/agent-qa-schema'
 import type {
   ConfigAuthSetInput,
+  ConfigChange,
+  ConfigChangeOutput,
+  ConfigDiffChanged,
   ConfigDiffFileInput,
   ConfigHookAddInput,
   ConfigProposalApplyableV1,
@@ -105,6 +114,8 @@ import { HOSTNAME_GATE_REFUSAL_DETAIL, parseHostnameToken } from './hostname-gat
 import type {
   ConfigFieldValue,
   ConfigFileBytes,
+  ConfigFieldWriteOutcome,
+  ConfigFilePublishOutcome,
   ConfigFileSet,
   ConfigFilesPortLike,
   ConfigScaffoldContentPortLike,
@@ -113,6 +124,7 @@ import type {
   ConfigStructuredValue,
   ConfigUndoSourcePortLike,
   ConfigValidatePortLike,
+  ConfigWritePortLike,
 } from './ports.js'
 
 /** Where the committed configuration binds a stored auth state. See {@link AUTH_STATE_CONFIG_PATH}. */
@@ -134,18 +146,41 @@ export interface ConstructConfigFieldSetInput {
   readonly value: ConfigFieldValue
 }
 
+/**
+ * What the six config operations need (432-11 D-05/D-07): the files, the validator, the scan and
+ * the direct writer that publishes the change in the call.
+ */
+export interface ConstructConfigChangeDeps {
+  readonly configFiles: ConfigFilesPortLike
+  readonly configValidate: ConfigValidatePortLike
+  /**
+   * REQUIRED, not optional, and the difference is CFGM-02. A composition that cannot scan cannot
+   * safely construct: the alternative to refusing here is a pipeline that writes a change with no
+   * guardrail in front of it whenever a host forgot one line of wiring, which is precisely the
+   * silent-permissive direction a security control may not fail in.
+   */
+  readonly configScan: ConfigScanPortLike
+  readonly configWrite: ConfigWritePortLike
+}
+
+/** What `config.undo.propose` still needs until 432-17 deletes it: the store instead of the writer. */
 export interface ConstructConfigProposalDeps {
   readonly configFiles: ConfigFilesPortLike
   readonly configValidate: ConfigValidatePortLike
   readonly configProposals: ConfigProposalsWritePortLike
-  /**
-   * REQUIRED, not optional, and the difference is CFGM-02. A composition that cannot scan cannot
-   * safely construct: the alternative to refusing here is a pipeline that renders a diff to a person
-   * with no guardrail in front of it whenever a host forgot one line of wiring, which is precisely
-   * the silent-permissive direction a security control may not fail in.
-   */
   readonly configScan: ConfigScanPortLike
 }
+
+/**
+ * How a checked change is published (432-11 D-05/D-07).
+ *
+ * `fields` hands the change to the config transaction as field operations, so it merges onto the
+ * file as it stands in its own write turn and keeps an outside edit to another field. `files`
+ * publishes each changed file whole, over the digest it was built from.
+ */
+export type ConfigPublication =
+  | { readonly kind: 'fields'; readonly changes: readonly ConfigChange[] }
+  | { readonly kind: 'files' }
 
 /**
  * Everything steps 3 to 7 are allowed to know about the change one op decided to make.
@@ -206,16 +241,16 @@ export function configBlockedSummaryLine(subject: string, detail: string): strin
 }
 
 /**
- * Construct, validate, scan and file a `config.field.set` proposal.
+ * Construct, scan, validate and write a `config.field.set` change in the call (432-11).
  *
- * ANSWERS A TYPED RESULT for every ordinary outcome rather than throwing. `blocked` is a filed
- * proposal a person can find; `no-change` is a set of a value the config already holds, which is
- * neither an error nor a decision anybody should be asked to make.
+ * ANSWERS A TYPED RESULT for every ordinary outcome rather than throwing. `blocked` is a refusal
+ * carrying the report, with nothing written or kept; `no-change` is a set of a value the config
+ * already holds, which is neither an error nor a write.
  */
-export async function constructConfigFieldSetProposal(
+export async function changeConfigField(
   input: ConstructConfigFieldSetInput,
-  deps: ConstructConfigProposalDeps,
-): Promise<ConfigProposeOutput> {
+  deps: ConstructConfigChangeDeps,
+): Promise<ConfigChangeOutput> {
   // (1) CFGM-04: re-read at proposal time. Everything below is about these bytes and no others.
   const set = await deps.configFiles.read()
   const target = requireConfigFile(set)
@@ -228,7 +263,7 @@ export async function constructConfigFieldSetProposal(
     value: input.value,
   })
 
-  return await fileConfigProposal({
+  return await publishConfigChange({
     action: input.action,
     subject: `set ${input.path}`,
     summaryLine: configFieldSetSummaryLine(input.path, input.value),
@@ -242,11 +277,14 @@ export async function constructConfigFieldSetProposal(
     // from a path would be the per-op map D-02 refused.
     addsHook: false,
     candidate: candidateSet(set, [{ path: target.path, bytes: edit.bytes }]),
+  }, {
+    kind: 'fields',
+    changes: [{ op: 'set', path: configSegments(input.path), value: input.value }],
   }, set, deps)
 }
 
 /**
- * Construct a `config.target.create` proposal — and refuse a collision rather than merging one.
+ * Create a target in the call — and refuse a collision rather than merging one.
  *
  * A CREATE IS NEVER AN UPSERT, and this is CFGM-01's adjacency edge. `setIn` at an occupied path
  * REPLACES what is there, silently and comment-destructively: a person who asked to add a target
@@ -254,10 +292,10 @@ export async function constructConfigFieldSetProposal(
  * mobile fields of the one they already had, rendered as a diff they would have to read line by line
  * to notice. The refusal names the existing target and points at the op that edits one.
  */
-export async function constructConfigTargetCreateProposal(
+export async function createConfigTarget(
   input: ConfigTargetCreateInput & { readonly action: string },
-  deps: ConstructConfigProposalDeps,
-): Promise<ConfigProposeOutput> {
+  deps: ConstructConfigChangeDeps,
+): Promise<ConfigChangeOutput> {
   const set = await deps.configFiles.read()
   const target = requireConfigFile(set)
   const entryPath = `${TARGETS_PATH}.${input.name}`
@@ -303,6 +341,13 @@ export async function constructConfigTargetCreateProposal(
   })).bytes
 
   const fieldEdits: CrossBoundaryFieldEdit[] = flattenScalarEdits(entryPath, entry, undefined)
+  // THE NAME MUST STILL BE FREE WHEN THE WRITE TAKES ITS TURN. The collision check above read the
+  // file at the start of the call; the expect makes the transaction refuse, rather than replace, a
+  // target somebody created under this name in between.
+  const changes: ConfigChange[] = [
+    { op: 'expect', path: configSegments(entryPath), value: null },
+    { op: 'set', path: configSegments(entryPath), value: entry },
+  ]
   if (input.authStateName !== undefined) {
     const bound = await deps.configFiles.setField({
       bytes,
@@ -315,9 +360,10 @@ export async function constructConfigTargetCreateProposal(
       ...(bound.previousValue === undefined ? {} : { oldValue: bound.previousValue }),
       newValue: input.authStateName,
     })
+    changes.push({ op: 'set', path: configSegments(AUTH_STATE_CONFIG_PATH), value: input.authStateName })
   }
 
-  return await fileConfigProposal({
+  return await publishConfigChange({
     action: input.action,
     subject: `create target ${input.name}`,
     summaryLine: `create ${input.platform} target ${input.name} at ${input.url}`
@@ -325,21 +371,21 @@ export async function constructConfigTargetCreateProposal(
     fieldEdits,
     addsHook: false,
     candidate: candidateSet(set, [{ path: target.path, bytes }]),
-  }, set, deps)
+  }, { kind: 'fields', changes }, set, deps)
 }
 
 /**
- * Construct a `config.target.edit` proposal — and refuse an absent target by NAME.
+ * Edit a target in the call — and refuse an absent target by NAME.
  *
  * THE REFUSAL LISTS THE CONFIGURED NAMES (387's never-guess posture, D-15's line). An edit of a
  * target nobody configured is almost always a near-miss — `shop` for `shop-web` — and a refusal that
  * says only "no such target" makes the next call another guess. The names are already readable
  * through `config.get`, so listing them discloses nothing.
  */
-export async function constructConfigTargetEditProposal(
+export async function editConfigTarget(
   input: ConfigTargetEditInput & { readonly action: string },
-  deps: ConstructConfigProposalDeps,
-): Promise<ConfigProposeOutput> {
+  deps: ConstructConfigChangeDeps,
+): Promise<ConfigChangeOutput> {
   const set = await deps.configFiles.read()
   const target = requireConfigFile(set)
   const entryPath = `${TARGETS_PATH}.${input.name}`
@@ -372,8 +418,9 @@ export async function constructConfigTargetEditProposal(
 
   let bytes = target.bytes
   const fieldEdits: CrossBoundaryFieldEdit[] = []
+  const changes: ConfigChange[] = []
   // ORDERED, AND THE ORDER IS FIXED HERE RATHER THAN BY THE INPUT'S KEY ORDER. Two calls asking for
-  // the same two changes must produce the same bytes, or the diff a person approves depends on how a
+  // the same two changes must produce the same bytes, or the diff a person reads depends on how a
   // model happened to serialise its arguments.
   for (const [path, value] of [
     [`${entryPath}.url`, input.changes.url],
@@ -391,11 +438,12 @@ export async function constructConfigTargetEditProposal(
       ...(edited.previousValue === undefined ? {} : { oldValue: edited.previousValue }),
       newValue: value,
     })
+    changes.push({ op: 'set', path: configSegments(path), value })
   }
 
   if (bytes === undefined) throw new TypeError('the config file has no bytes to edit')
 
-  return await fileConfigProposal({
+  return await publishConfigChange({
     action: input.action,
     subject: `edit target ${input.name}`,
     summaryLine: `edit target ${input.name}: ${fieldEdits.map((edit) =>
@@ -403,11 +451,11 @@ export async function constructConfigTargetEditProposal(
     fieldEdits,
     addsHook: false,
     candidate: candidateSet(set, [{ path: target.path, bytes }]),
-  }, set, deps)
+  }, { kind: 'fields', changes }, set, deps)
 }
 
 /**
- * Construct a `config.auth.set` proposal — references only, refused on the INPUT (D-11).
+ * Bind a target's auth in the call — references only, refused on the INPUT (D-11).
  *
  * WHAT IT WRITES, AND WHERE, IS A FACT ABOUT THIS PRODUCT'S CONFIGURATION SCHEMA RATHER THAN A
  * CHOICE. The committed configuration has exactly one place that binds a stored auth state and it is
@@ -423,10 +471,10 @@ export async function constructConfigTargetEditProposal(
  * here is what lets the op refuse a binding for a target nobody configured — a typed not-found with
  * the configured names, rather than a proposal that would bind an identity to nothing.
  */
-export async function constructConfigAuthSetProposal(
+export async function setConfigAuth(
   input: ConfigAuthSetInput & { readonly action: string },
-  deps: ConstructConfigProposalDeps,
-): Promise<ConfigProposeOutput> {
+  deps: ConstructConfigChangeDeps,
+): Promise<ConfigChangeOutput> {
   const set = await deps.configFiles.read()
   const target = requireConfigFile(set)
 
@@ -479,6 +527,7 @@ export async function constructConfigAuthSetProposal(
 
   let bytes = target.bytes
   const fieldEdits: CrossBoundaryFieldEdit[] = []
+  const changes: ConfigChange[] = []
 
   if (input.authStateName !== undefined) {
     const bound = await deps.configFiles.setField({
@@ -492,6 +541,7 @@ export async function constructConfigAuthSetProposal(
       ...(bound.previousValue === undefined ? {} : { oldValue: bound.previousValue }),
       newValue: input.authStateName,
     })
+    changes.push({ op: 'set', path: configSegments(AUTH_STATE_CONFIG_PATH), value: input.authStateName })
   }
 
   if (input.pluginPackage !== undefined) {
@@ -508,11 +558,14 @@ export async function constructConfigAuthSetProposal(
     })
     bytes = appended.bytes
     fieldEdits.push(...flattenScalarEdits(`${AUTH_PLUGINS_PATH}.${at}`, declaration, undefined))
+    // AN APPEND IN THE WRITE'S OWN TURN, so a declaration somebody added meanwhile is kept and this
+    // one lands after it rather than over it.
+    changes.push({ op: 'append', path: configSegments(AUTH_PLUGINS_PATH), value: declaration })
   }
 
   if (bytes === undefined) throw new TypeError('the config file has no bytes to edit')
 
-  return await fileConfigProposal({
+  return await publishConfigChange({
     action: input.action,
     subject: `bind auth for target ${input.target}`,
     summaryLine: `bind auth for target ${input.target}: ${fieldEdits.map((edit) =>
@@ -520,11 +573,11 @@ export async function constructConfigAuthSetProposal(
     fieldEdits,
     addsHook: false,
     candidate: candidateSet(set, [{ path: target.path, bytes }]),
-  }, set, deps)
+  }, { kind: 'fields', changes }, set, deps)
 }
 
 /**
- * Construct a `config.hook.add` proposal — the one action that writes a file other than the config.
+ * Add a hook in the call — the one action that writes a file other than the config.
  *
  * A HOOK IS CODE THIS PROJECT WILL RUN, which is why `addsHook` is STATED here rather than inferred
  * from a path (D-02) and why every hook addition is cross-boundary regardless of what it contains.
@@ -540,10 +593,10 @@ export async function constructConfigAuthSetProposal(
  * gets one created — which is the whole-new-file case the scan already handles, arriving before
  * 395-08's scaffold needs it.
  */
-export async function constructConfigHookAddProposal(
+export async function addConfigHook(
   input: ConfigHookAddInput & { readonly action: string },
-  deps: ConstructConfigProposalDeps,
-): Promise<ConfigProposeOutput> {
+  deps: ConstructConfigChangeDeps,
+): Promise<ConfigChangeOutput> {
   const set = await deps.configFiles.read()
   const hooksMember = set.files.find((file) => file.path === set.hooksFile)
   if (hooksMember === undefined) {
@@ -574,7 +627,10 @@ export async function constructConfigHookAddProposal(
     value: existing.present ? entry : [entry],
   })
 
-  return await fileConfigProposal({
+  // THE HOOKS FILE IS PUBLISHED WHOLE, over the digest of the bytes it was built from. It is not
+  // the config yaml, so the config transaction cannot merge it; a hooks file somebody edited since
+  // this call read it refuses the write instead.
+  return await publishConfigChange({
     action: input.action,
     subject: `add hook ${input.name}`,
     summaryLine: `add ${input.runtime} hook ${input.name} running ${input.file}`,
@@ -582,7 +638,7 @@ export async function constructConfigHookAddProposal(
     // STATED, NOT INFERRED (D-02). This is the op that adds hooks; nothing has to guess.
     addsHook: true,
     candidate: candidateSet(set, [{ path: hooksMember.path, bytes: written.bytes }]),
-  }, set, deps)
+  }, { kind: 'files' }, set, deps)
 }
 
 /**
@@ -592,12 +648,18 @@ export async function constructConfigHookAddProposal(
  * only action that renders content it did not compute from the committed file, so widening the
  * shared bundle would make six ops bind a port none of them can reach.
  */
-export interface ConstructConfigScaffoldDeps extends ConstructConfigProposalDeps {
+export interface ConstructConfigScaffoldDeps extends ConstructConfigChangeDeps {
   readonly scaffoldContent: ConfigScaffoldContentPortLike
 }
 
 /**
- * Configure a project from zero, as ONE reviewable proposal (D-04/D-13/D-15 · CFGM-05).
+ * Configure a project from zero, in ONE call (D-04/D-13/D-15 · CFGM-05; 432-11 D-05/D-07).
+ *
+ * EVERY FILE IS PUBLISHED WHOLE, AND EVERY ONE IS CHECKED FIRST. The config, the hooks file and the
+ * managed `.gitignore` block each carry the digest of the bytes this call read (or the fact that
+ * the file was absent), and the direct writer checks all of them before it writes any. A file that
+ * changes after that check stops the publication at that file: the answer names the files already
+ * written, the one that refused and the ones never reached, and nothing is rolled back.
  *
  * THE GATE RUNS FIRST AND IT IS THE SECURITY PROPERTY (D-15). Nothing below is reached by a token
  * that is not a hostname, and the refusal names both continuations rather than a candidate. The
@@ -642,10 +704,10 @@ export interface ConstructConfigScaffoldDeps extends ConstructConfigProposalDeps
  * letting it escape as a fault is the difference between "this project's .gitignore is not text I
  * can show you a diff of" and a stack trace in a chat turn.
  */
-export async function constructConfigProjectScaffoldProposal(
+export async function scaffoldConfigProject(
   input: ConfigProjectScaffoldInput & { readonly action: string },
   deps: ConstructConfigScaffoldDeps,
-): Promise<ConfigProposeOutput> {
+): Promise<ConfigChangeOutput> {
   const verdict = parseHostnameToken(input.domain)
   if (verdict.kind === 'not-a-hostname') {
     return { outcome: 'refused', reason: 'not-a-hostname', detail: HOSTNAME_GATE_REFUSAL_DETAIL }
@@ -688,7 +750,7 @@ export async function constructConfigProjectScaffoldProposal(
       reason: 'unrenderable-diff',
       detail:
         `${gitignore.path} holds bytes that are not valid UTF-8, so appending the managed block to `
-        + 'it would rewrite parts of the file you did not ask to change. Nothing has been proposed.',
+        + 'it would rewrite parts of the file you did not ask to change. Nothing has been written.',
     }
   }
 
@@ -718,7 +780,7 @@ export async function constructConfigProjectScaffoldProposal(
   })
 
   try {
-    return await fileConfigProposal({
+    return await publishConfigChange({
       action: input.action,
       subject: `scaffold ${verdict.targetName}`,
       summaryLine: `configure this project for ${verdict.baseUrl} as target ${verdict.targetName}`,
@@ -734,16 +796,15 @@ export async function constructConfigProjectScaffoldProposal(
       // ago — see `addsHook`'s derivation above.
       addsHook,
       candidate: candidateSet(set, [...rendered]),
-    }, set, deps)
+    }, { kind: 'files' }, set, deps)
   } catch (error) {
     if (!(error instanceof UnrenderableConfigDiffError)) throw error
     return {
       outcome: 'refused',
       reason: 'unrenderable-diff',
       detail:
-        `the bytes proposed for ${error.paths.join(', ')} differ from what is on disk, but the diff `
-        + 'of them renders as nothing — you would be asked to approve a blank page. Nothing has '
-        + 'been proposed.',
+        `the bytes for ${error.paths.join(', ')} differ from what is on disk, but the diff of them `
+        + 'renders as nothing a person could read. Nothing has been written.',
     }
   }
 }
@@ -922,10 +983,10 @@ const ENV_FILE_CONFIG_PATH = 'workspace.envFile'
  * disclosure one field to the left that `configBlockedSummaryLine` exists to close.
  */
 function refuseNonReferences(
-  deps: ConstructConfigProposalDeps,
+  deps: { readonly configScan: ConfigScanPortLike },
   action: string,
   entries: readonly { field: string; kind: ConfigReferenceKind; value: string }[],
-): ConfigProposeOutput | undefined {
+): ConfigChangeOutput | undefined {
   if (entries.length === 0) return undefined
 
   const report = deps.configScan.scan(entries.map((entry) => ({
@@ -965,19 +1026,41 @@ const REFS_ONLY_LAW =
   + 'configuration safe to read. Put the secret in the environment file the configuration names at '
   + 'workspace.envFile (or the secrets file at workspace.secretsFile) and pass its NAME here.'
 
+/** What the blocked report says, before it is answered (direct) or filed (the undo). */
+interface BlockedReport {
+  readonly blockedReason: ConfigProposalBlockedV1['blockedReason']
+  readonly detail: string
+  readonly paths: readonly string[]
+  readonly scanFindings?: readonly ConfigScanFinding[]
+  readonly validationIssues?: readonly string[]
+}
+
+/** A candidate that passed the scan and validation, with everything publication and filing need. */
+interface CheckedCandidate {
+  readonly rendered: ConfigDiffChanged
+  readonly files: readonly (ConfigProposalFile & { readonly bytes: Uint8Array })[]
+  readonly crossBoundary: boolean
+  readonly crossBoundaryReasons: readonly ConfigProposalApplyableV1['crossBoundaryReasons'][number][]
+}
+
+type CandidateCheck =
+  | { readonly kind: 'no-change' }
+  | { readonly kind: 'blocked'; readonly report: BlockedReport }
+  | { readonly kind: 'ready'; readonly checked: CheckedCandidate }
+
 /**
- * Steps 3 to 7, for every action (395-05).
+ * Steps 3 to 6, for every action (395-05): render, scan, validate, classify.
  *
  * WHAT ARRIVES IS A CANDIDATE SET, NOT A FILE. `renderConfigDiff` is handed exactly the members
- * whose bytes differ, so a proposal's `files` list is a statement about what changed rather than
- * about which files were considered — and the digests recorded per file are the ones an apply will
- * re-check.
+ * whose bytes differ, so a change's `files` list is a statement about what changed rather than
+ * about which files were considered — and the digests recorded per file are the ones publication
+ * re-checks. Step 7 is the caller's: the six config operations publish (432-11), the undo files.
  */
-async function fileConfigProposal(
+async function checkConfigCandidate(
   plan: ConfigMutationPlan,
   set: ConfigFileSet,
-  deps: ConstructConfigProposalDeps,
-): Promise<ConfigProposeOutput> {
+  deps: { readonly configScan: ConfigScanPortLike; readonly configValidate: ConfigValidatePortLike },
+): Promise<CandidateCheck> {
   const committed = new Map(set.files.map((file) => [file.path, file]))
   const diffInput: ConfigDiffFileInput[] = []
   for (const member of plan.candidate) {
@@ -990,17 +1073,17 @@ async function fileConfigProposal(
       newBytes: member.bytes,
     })
   }
-  if (diffInput.length === 0) return { outcome: 'no-change', path: plan.subject }
+  if (diffInput.length === 0) return { kind: 'no-change' }
 
-  // (3) THE ONE PRIMITIVE. The apply recomputes through this same export and byte-compares (D-19).
+  // (3) THE ONE PRIMITIVE. Publication re-checks the digests it records here (D-17/D-19).
   const rendered = renderConfigDiff(diffInput)
 
   // 395-02: THE PRIMITIVE IS THE AUTHORITY ON WHETHER ANYTHING CHANGED, and this narrowing is where
   // that authority is taken. The byte comparison above answers the same question earlier and more
   // cheaply — which is why it stays: it lets a set of a value the config already holds skip the
   // whole rest of the pipeline — but the answer that reaches a person comes from the same function
-  // the apply will call, so the two halves cannot disagree about what "no change" means.
-  if (rendered.outcome === 'unchanged') return { outcome: 'no-change', path: plan.subject }
+  // that renders the diff, so the two halves cannot disagree about what "no change" means.
+  if (rendered.outcome === 'unchanged') return { kind: 'no-change' }
 
   const digestsByPath = new Map(rendered.perFileDigests.map((digest) => [digest.path, digest]))
   const wholeFiles = rendered.changes
@@ -1010,7 +1093,7 @@ async function fileConfigProposal(
       bytes: plan.candidate.find((member) => member.path === change.path)?.bytes,
     }))
 
-  // (4) CFGM-02, BEFORE ANYTHING SURFACES AND BEFORE ANYTHING IS FILED, AND OVER EVERYTHING STEP
+  // (4) CFGM-02, BEFORE ANYTHING SURFACES AND BEFORE ANYTHING IS WRITTEN, AND OVER EVERYTHING STEP
   // (5) WILL READ. The candidate set is handed in beside the rendered artifact — see `scanParts`.
   const scanned = deps.configScan.scan(scanParts(rendered.changes, wholeFiles, plan.candidate))
   if (scanned.findings.length > 0) {
@@ -1028,23 +1111,25 @@ async function fileConfigProposal(
     )
     const paths = [...new Set(scanned.findings.map((finding) => finding.label))]
 
-    return await fileBlocked(deps, plan, {
-      blockedReason: 'guardrail-hit',
-      // NAMING A FILE IS NOT QUOTING A VALUE. The blocked line's rule is "what was attempted, never
-      // what was found", and D-12 asks for one more fact than that: a person whose block is caused
-      // by bytes they committed months ago needs to be told so, or they will keep re-trying an edit
-      // that was never the problem. A path is a reference — the same class of fact `paths` already
-      // carries — and the value itself appears nowhere.
-      detail: carriedOver
-        ? `your configuration already carries a secret at ${paths.join(', ')}`
-        : `the proposed change would write a secret into ${paths.join(', ')}`,
-      paths: paths.length > 0 ? paths : diffInput.map((file) => file.path),
-      scanFindings: dedupeFindings(scanned.findings.map(toSchemaFinding)),
-    })
+    return {
+      kind: 'blocked',
+      report: {
+        blockedReason: 'guardrail-hit',
+        // NAMING A FILE IS NOT QUOTING A VALUE. The blocked line's rule is "what was attempted,
+        // never what was found", and D-12 asks for one more fact than that: a person whose block
+        // is caused by bytes they committed months ago needs to be told so, or they will keep
+        // re-trying an edit that was never the problem.
+        detail: carriedOver
+          ? `your configuration already carries a secret at ${paths.join(', ')}`
+          : `the proposed change would write a secret into ${paths.join(', ')}`,
+        paths: paths.length > 0 ? paths : diffInput.map((file) => file.path),
+        scanFindings: dedupeFindings(scanned.findings.map(toSchemaFinding)),
+      },
+    }
   }
 
   // (5) CFGM-01: the WHOLE candidate SET — and every member of it was scanned WHOLE at step (4),
-  // which is the property that makes the validator's own words safe to persist. It is a statement
+  // which is the property that makes the validator's own words safe to answer. It is a statement
   // about RANGE and not about order (395-10): the same set object is handed to both steps, so the
   // validator cannot read a byte the scan did not.
   const validation = await deps.configValidate.validate({
@@ -1053,30 +1138,26 @@ async function fileConfigProposal(
     files: plan.candidate,
   })
   if (!validation.ok) {
-    // WR-11: THE RECORD NAMES THE FILE THE ISSUE IS ABOUT, unioned with the files this proposal
-    // diffed. It used to name the diffed files alone, which pointed a person at the wrong one every
-    // time the refusal came from a member the proposal never touched — an already-invalid committed
-    // hooks file refuses every config proposal (see the validate port's header), and the person was
-    // handed the one file that was fine. Both halves are kept: the diffed paths say what was being
-    // changed, the implicated ones say where to look.
+    // WR-11: THE REPORT NAMES THE FILE THE ISSUE IS ABOUT, unioned with the files this change
+    // diffed. Both halves are kept: the diffed paths say what was being changed, the implicated
+    // ones say where to look.
     const implicated = validation.issues.map((issue) => issue.path)
-    return await fileBlocked(deps, plan, {
-      blockedReason: 'schema-fail',
-      detail: 'the resulting configuration is not valid',
-      paths: [...new Set([...implicated, ...diffInput.map((file) => file.path)])],
-      // JOINED HERE AND NOWHERE ELSE. The persisted shape is `string[]` and stays that way — every
-      // render of a blocked record reads it — so the split the port now carries is a fact about the
-      // PIPELINE's inputs rather than a schema change rippling out to four surfaces.
-      //
-      // Non-empty by contract; a validator that refused without saying why would leave a person with
-      // nothing to act on, so an empty list is turned into the one honest sentence available.
-      validationIssues: validation.issues.length > 0
-        ? validation.issues.map((issue) => `${issue.path}: ${issue.message}`)
-        : ['the configuration was refused by whole-config validation, which reported no detail'],
-    })
+    return {
+      kind: 'blocked',
+      report: {
+        blockedReason: 'schema-fail',
+        detail: 'the resulting configuration is not valid',
+        paths: [...new Set([...implicated, ...diffInput.map((file) => file.path)])],
+        // Non-empty by contract; a validator that refused without saying why would leave a person
+        // with nothing to act on, so an empty list is turned into the one honest sentence available.
+        validationIssues: validation.issues.length > 0
+          ? validation.issues.map((issue) => `${issue.path}: ${issue.message}`)
+          : ['the configuration was refused by whole-config validation, which reported no detail'],
+      },
+    }
   }
 
-  const files: ConfigProposalFile[] = rendered.changes.map((change) => {
+  const files = rendered.changes.map((change) => {
     const digests = digestsByPath.get(change.path)
     const bytes = plan.candidate.find((member) => member.path === change.path)?.bytes
     if (digests === undefined || bytes === undefined) {
@@ -1087,13 +1168,14 @@ async function fileConfigProposal(
       changeKind: change.changeKind,
       ...(digests.oldDigest === undefined ? {} : { baseDigest: digests.oldDigest }),
       newContentBase64: base64Encode(bytes),
+      bytes,
     }
   })
 
   // (6) D-02, PER VALUE. The classifier compares the value each edit wrote against the one it
   // replaced, and reads the pinned file set from the PORT'S OWN enumeration rather than a second
   // list — `set.files` is what `enumerateConfigFileSet` answered for this workspace, so the
-  // out-of-set rule and the apply's scope cannot disagree about which files are config.
+  // out-of-set rule and the writer's scope cannot disagree about which files are config.
   const classified = computeCrossBoundary({
     fieldEdits: plan.fieldEdits,
     addsHook: plan.addsHook,
@@ -1101,19 +1183,202 @@ async function fileConfigProposal(
     pinnedFileSet: set.files.map((file) => file.path),
   })
 
+  return {
+    kind: 'ready',
+    checked: {
+      rendered,
+      files,
+      crossBoundary: classified.crossBoundary,
+      crossBoundaryReasons: [...classified.reasons],
+    },
+  }
+}
+
+/**
+ * Step 7 for the six config operations: publish in the call (432-11 D-05/D-07).
+ *
+ * A BLOCKED CHANGE IS ANSWERED AND NOTHING IS KEPT. The report carries no diff and no content, and
+ * nothing reaches a store or the writer. A clean change goes to the direct writer: field changes
+ * through the config transaction, whole files over their digests. The answer is what the writer
+ * reports — the files it wrote, a refusal that wrote nothing, or the exact point a multi-file
+ * publication stopped at.
+ */
+async function publishConfigChange(
+  plan: ConfigMutationPlan,
+  publication: ConfigPublication,
+  set: ConfigFileSet,
+  deps: ConstructConfigChangeDeps,
+): Promise<ConfigChangeOutput> {
+  const check = await checkConfigCandidate(plan, set, deps)
+  if (check.kind === 'no-change') return { outcome: 'no-change', path: plan.subject }
+  if (check.kind === 'blocked') return blockedAnswer(plan, check.report)
+
+  const { checked } = check
+  const applied = (files: readonly string[]): ConfigChangeOutput => ({
+    outcome: 'applied',
+    summaryLine: plan.summaryLine,
+    files: [...files],
+    fields: [...new Set(plan.fieldEdits.map((edit) => edit.configPath))],
+    crossBoundary: checked.crossBoundary,
+    crossBoundaryReasons: [...checked.crossBoundaryReasons],
+    shownDiff: utf8Decode(checked.rendered.diffBytes),
+  })
+
+  if (publication.kind === 'fields') {
+    // FIELD CHANGES REACH ONLY THE CONFIG FILE. A candidate that changed any other member cannot be
+    // expressed as config-field operations, and publishing half of it would be a silent drop.
+    const stray = checked.files.find((file) => file.path !== set.configFile)
+    if (stray !== undefined) {
+      throw new TypeError(
+        `${plan.action} changed ${stray.path}, which a config field change cannot write`,
+      )
+    }
+    const outcome = await deps.configWrite.applyFields({ changes: publication.changes })
+    return outcome.kind === 'applied' ? applied([outcome.file]) : fieldWriteRefusal(outcome)
+  }
+
+  const outcome = await deps.configWrite.publishFiles({
+    files: checked.files.map((file) => ({
+      path: file.path,
+      ...(file.baseDigest === undefined ? {} : { baseDigest: file.baseDigest }),
+      bytes: file.bytes,
+    })),
+  })
+  switch (outcome.kind) {
+    case 'published':
+      return applied(outcome.written)
+    case 'refused':
+      return fileWriteRefusal(outcome)
+    case 'interrupted':
+      return interruptedAnswer(plan, outcome)
+  }
+}
+
+/** The blocked report as the direct answer: the report, never the change, and no record. */
+function blockedAnswer(plan: ConfigMutationPlan, report: BlockedReport): ConfigChangeOutput {
+  return {
+    outcome: 'blocked',
+    summaryLine: configBlockedSummaryLine(plan.subject, report.detail),
+    blockedReason: report.blockedReason,
+    paths: [...report.paths],
+    ...(report.scanFindings === undefined ? {} : { scanFindings: [...report.scanFindings] }),
+    ...(report.validationIssues === undefined
+      ? {}
+      : { validationIssues: [...report.validationIssues] }),
+  }
+}
+
+/** Why the config transaction refused, in words that name no value. */
+const FIELD_WRITE_REFUSAL_WORDS: Readonly<Record<
+  Exclude<Extract<ConfigFieldWriteOutcome, { kind: 'refused' }>['error'], 'field_changed'>,
+  string
+>> = {
+  invalid_write_input: 'the change set is malformed',
+  file_invalid: 'the file is not readable as YAML',
+  path_not_found: 'a path the change names no longer resolves',
+  validation_failed: 'the configuration it would produce is not valid',
+  mask_written_back: 'a value carries the mask placeholder',
+  path_not_writable: 'a path the change names cannot be written',
+}
+
+function fieldWriteRefusal(
+  outcome: Extract<ConfigFieldWriteOutcome, { kind: 'refused' }>,
+): ConfigChangeOutput {
+  if (outcome.error === 'field_changed') {
+    const field = (outcome.path ?? [])
+      .map((segment) => (typeof segment === 'object' ? segment.name : String(segment)))
+      .join('.')
+    return {
+      outcome: 'refused',
+      reason: 'field-changed',
+      detail:
+        `${field === '' ? 'a field this change depends on' : field} changed in ${outcome.file} after `
+        + 'this call read it, so nothing was written. Read the configuration again and ask again.',
+    }
+  }
+  const at = outcome.issues === undefined || outcome.issues.length === 0
+    ? ''
+    : ` (at ${outcome.issues.map((issue) => issue.path.join('.')).join(', ')})`
+  return {
+    outcome: 'refused',
+    reason: 'write-refused',
+    detail:
+      `${outcome.file} refused this change as it now stands: ${FIELD_WRITE_REFUSAL_WORDS[outcome.error]}`
+      + `${at}, so nothing was written.`,
+  }
+}
+
+function fileWriteRefusal(
+  outcome: Extract<ConfigFilePublishOutcome, { kind: 'refused' }>,
+): ConfigChangeOutput {
+  const file = outcome.path ?? 'a file of this change'
+  if (outcome.reason === 'file-changed') {
+    return {
+      outcome: 'refused',
+      reason: 'file-changed',
+      detail:
+        `${file} changed after this call read it, so nothing was written. Read the configuration `
+        + 'again and ask again.',
+    }
+  }
+  const words = {
+    'no-files': 'there was no file to write',
+    'outside-workspace': `${file} is outside the workspace`,
+    'duplicate-path': `${file} is named twice`,
+  }[outcome.reason]
+  return {
+    outcome: 'refused',
+    reason: 'write-refused',
+    detail: `${words}, so nothing was written.`,
+  }
+}
+
+function interruptedAnswer(
+  plan: ConfigMutationPlan,
+  outcome: Extract<ConfigFilePublishOutcome, { kind: 'interrupted' }>,
+): ConfigChangeOutput {
+  const written = outcome.written.length === 0 ? 'nothing' : outcome.written.join(', ')
+  const unwritten = outcome.unwritten.length === 0 ? 'no other file' : outcome.unwritten.join(', ')
+  const stopped = outcome.failed.reason === 'file-changed'
+    ? 'changed after this call read it'
+    : 'could not be written'
+  return {
+    outcome: 'interrupted',
+    summaryLine: plan.summaryLine,
+    written: [...outcome.written],
+    failed: { path: outcome.failed.path, reason: outcome.failed.reason },
+    unwritten: [...outcome.unwritten],
+    detail:
+      `wrote ${written}, then stopped: ${outcome.failed.path} ${stopped}, and ${unwritten} was not `
+      + 'reached. Nothing was rolled back; the written files hold the new bytes.',
+  }
+}
+
+/**
+ * Step 7 for `config.undo.propose` until 432-17 deletes it: file the proposal it constructed.
+ */
+async function fileConfigProposal(
+  plan: ConfigMutationPlan,
+  set: ConfigFileSet,
+  deps: ConstructConfigProposalDeps,
+): Promise<ConfigProposeOutput> {
+  const check = await checkConfigCandidate(plan, set, deps)
+  if (check.kind === 'no-change') return { outcome: 'no-change', path: plan.subject }
+  if (check.kind === 'blocked') return await fileBlocked(deps, plan, check.report)
+
+  const { checked } = check
   const payload: ConfigProposalApplyableV1 = {
     schemaVersion: CURRENT_CONFIG_PROPOSAL_SCHEMA_VERSION,
     payloadKind: 'applyable',
     action: plan.action,
     summaryLine: plan.summaryLine,
-    files,
-    shownDiffBase64: base64Encode(rendered.diffBytes),
-    shownDiffDigest: rendered.diffDigest,
-    crossBoundary: classified.crossBoundary,
-    crossBoundaryReasons: [...classified.reasons],
+    files: checked.files.map(({ bytes: _bytes, ...file }) => file),
+    shownDiffBase64: base64Encode(checked.rendered.diffBytes),
+    shownDiffDigest: checked.rendered.diffDigest,
+    crossBoundary: checked.crossBoundary,
+    crossBoundaryReasons: [...checked.crossBoundaryReasons],
   }
 
-  // (7) Into the 391 store, through the same envelope every other proactive write rides.
   const { proposalId } = await deps.configProposals.put({
     kind: 'config',
     emittedBy: plan.action,
@@ -1126,8 +1391,8 @@ async function fileConfigProposal(
     summaryLine: payload.summaryLine,
     crossBoundary: payload.crossBoundary,
     crossBoundaryReasons: [...payload.crossBoundaryReasons],
-    files: files.map((file) => file.path),
-    shownDiff: utf8Decode(rendered.diffBytes),
+    files: payload.files.map((file) => file.path),
+    shownDiff: utf8Decode(checked.rendered.diffBytes),
   }
 }
 
@@ -1195,13 +1460,7 @@ function scanParts(
 async function fileBlocked(
   deps: ConstructConfigProposalDeps,
   plan: ConfigMutationPlan,
-  report: {
-    readonly blockedReason: ConfigProposalBlockedV1['blockedReason']
-    readonly detail: string
-    readonly paths: readonly string[]
-    readonly scanFindings?: readonly ConfigScanFinding[]
-    readonly validationIssues?: readonly string[]
-  },
+  report: BlockedReport,
 ): Promise<ConfigProposeOutput> {
   const payload: ConfigProposalBlockedV1 = {
     schemaVersion: CURRENT_CONFIG_PROPOSAL_SCHEMA_VERSION,
@@ -1294,6 +1553,14 @@ function flattenScalarEdits(
   }
   return Object.entries(value as { readonly [key: string]: ConfigStructuredValue })
     .flatMap(([key, item]) => flattenScalarEdits(`${basePath}.${key}`, item, undefined))
+}
+
+/**
+ * A dotted config path as the config transaction's segments, split exactly as the yaml edit above
+ * splits it, so the construction and the publication address the same field.
+ */
+function configSegments(path: string): string[] {
+  return path.split('.')
 }
 
 /** One path's facts out of the port's answer, by NAME — never by the index a caller assumed. */

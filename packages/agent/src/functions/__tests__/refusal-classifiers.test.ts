@@ -19,6 +19,7 @@ import { join } from 'node:path'
 
 import {
   AuthoringDraftWriteOutputSchema,
+  ConfigChangeOutputSchema,
   ConfigProposeOutputSchema,
   ProposalsAcceptOutputSchema,
   buildFanOutReport,
@@ -27,6 +28,7 @@ import {
 } from '@vostride/agent-qa-schema'
 import type {
   AuthoringDraftWriteOutput,
+  ConfigChangeOutput,
   ConfigProposeOutput,
   ProposalsAcceptOutput,
 } from '@vostride/agent-qa-schema'
@@ -88,6 +90,59 @@ const proposed: ConfigProposeOutput = ConfigProposeOutputSchema.parse({
 })
 
 const noChange: ConfigProposeOutput = ConfigProposeOutputSchema.parse({
+  outcome: 'no-change',
+  path: 'use.buildTag',
+})
+
+// 2026-09-30, 432-11 D-05: six of the seven ops answer what they WROTE. Their blocked and refused
+// arms carry the same report with no record reference, and two arms are new: applied and
+// interrupted. `config.undo.propose` still answers the proposal union until 432-17 deletes it.
+
+const directBlockedByGuardrail: ConfigChangeOutput = ConfigChangeOutputSchema.parse({
+  outcome: 'blocked',
+  summaryLine: 'set use.buildTag — blocked: the proposed change would write a secret',
+  blockedReason: 'guardrail-hit',
+  paths: ['agent-qa.config.yaml'],
+  scanFindings: [
+    { path: 'agent-qa.config.yaml', detector: 'apiKey', redactedFingerprint: '6a8bb9dac7013904' },
+  ],
+})
+
+const directBlockedBySchema: ConfigChangeOutput = ConfigChangeOutputSchema.parse({
+  outcome: 'blocked',
+  summaryLine: 'set use.authState — blocked: the resulting configuration is invalid',
+  blockedReason: 'schema-fail',
+  paths: ['agent-qa.config.yaml'],
+  validationIssues: ['agent-qa.config.yaml: use: Unrecognized key: "authState"'],
+})
+
+const directRefusedOutright: ConfigChangeOutput = ConfigChangeOutputSchema.parse({
+  outcome: 'refused',
+  reason: 'target-not-found',
+  detail: 'no target named "staging" is configured',
+  candidates: ['local', 'ci'],
+})
+
+const applied: ConfigChangeOutput = ConfigChangeOutputSchema.parse({
+  outcome: 'applied',
+  summaryLine: 'set use.buildTag to probe-build-tag-v1',
+  files: ['agent-qa.config.yaml'],
+  fields: ['use.buildTag'],
+  crossBoundary: false,
+  crossBoundaryReasons: [],
+  shownDiff: '--- a/agent-qa.config.yaml\n+++ b/agent-qa.config.yaml\n',
+})
+
+const interrupted: ConfigChangeOutput = ConfigChangeOutputSchema.parse({
+  outcome: 'interrupted',
+  summaryLine: 'configure this project for https://booking.com as target booking-com',
+  written: ['.gitignore'],
+  failed: { path: 'agent-qa.config.yaml', reason: 'file-changed' },
+  unwritten: ['hooks.yaml'],
+  detail: 'wrote .gitignore, then stopped: agent-qa.config.yaml changed after this call read it',
+})
+
+const directNoChange: ConfigChangeOutput = ConfigChangeOutputSchema.parse({
   outcome: 'no-change',
   path: 'use.buildTag',
 })
@@ -163,22 +218,26 @@ const acceptExpired = acceptOutput({
   },
 })
 
-// ---- the config-mutation family: one union, seven ops -------------------------------------------
+// ---- the config-mutation family: seven ops, two unions ------------------------------------------
 
 /**
- * The seven ops that answer with `ConfigProposeOutput`.
+ * The six ops that answer with `ConfigChangeOutput` (432-11), and the one that still answers with
+ * `ConfigProposeOutput` until 432-17.
  *
  * SPELLED AS THE SPECS THEMSELVES rather than as ids looked up in a registry, so an op that stops
  * declaring a classifier is a compile-adjacent red here and not a row that quietly reports the
  * legacy verdict.
  */
-const CONFIG_PROPOSE_OPS: readonly FunctionSpec<never, ConfigProposeOutput>[] = [
+const CONFIG_CHANGE_OPS: readonly FunctionSpec<never, ConfigChangeOutput>[] = [
   configAuthSetSpec,
   configFieldSetSpec,
   configHookAddSpec,
   configProjectScaffoldSpec,
   configTargetCreateSpec,
   configTargetEditSpec,
+] as unknown as readonly FunctionSpec<never, ConfigChangeOutput>[]
+
+const CONFIG_PROPOSE_OPS: readonly FunctionSpec<never, ConfigProposeOutput>[] = [
   configUndoProposeSpec,
 ] as unknown as readonly FunctionSpec<never, ConfigProposeOutput>[]
 
@@ -186,13 +245,17 @@ describe('399.1 D-01/D-02 — the config-mutation family folds its own refusal a
   it('declares a classifier on every one of the seven ops sharing the union', () => {
     // Non-vacuity for every cell below: a spec with no classifier reports the LEGACY verdict, and
     // `executed` is exactly what this phase exists to stop it saying over a refusal.
-    expect(CONFIG_PROPOSE_OPS).toHaveLength(7)
-    for (const spec of CONFIG_PROPOSE_OPS) {
+    expect(CONFIG_CHANGE_OPS.length + CONFIG_PROPOSE_OPS.length).toBe(7)
+    for (const spec of [...CONFIG_CHANGE_OPS, ...CONFIG_PROPOSE_OPS]) {
       expect(spec.classify, `${spec.id} declares no classifier`).toBeTypeOf('function')
     }
   })
 
   it('folds the guardrail block to refused, carrying the guardrail’s own reason', () => {
+    for (const spec of CONFIG_CHANGE_OPS) {
+      expect(spec.classify?.(directBlockedByGuardrail as never), spec.id)
+        .toEqual({ status: 'refused', outcome: 'guardrail-hit' })
+    }
     for (const spec of CONFIG_PROPOSE_OPS) {
       expect(spec.classify?.(blockedByGuardrail as never), spec.id)
         .toEqual({ status: 'refused', outcome: 'guardrail-hit' })
@@ -200,15 +263,23 @@ describe('399.1 D-01/D-02 — the config-mutation family folds its own refusal a
   })
 
   it('folds the validation block to refused, and says which road it came in by', () => {
+    // The two blocked reasons must not collapse: a person cannot tell a refused security control
+    // from an invalid config if both render the same word (the G-399-2 three-outcome reading).
+    for (const spec of CONFIG_CHANGE_OPS) {
+      expect(spec.classify?.(directBlockedBySchema as never), spec.id)
+        .toEqual({ status: 'refused', outcome: 'schema-fail' })
+    }
     for (const spec of CONFIG_PROPOSE_OPS) {
-      // The two blocked reasons must not collapse: a person cannot tell a refused security control
-      // from an invalid config if both render the same word (the G-399-2 three-outcome reading).
       expect(spec.classify?.(blockedBySchema as never), spec.id)
         .toEqual({ status: 'refused', outcome: 'schema-fail' })
     }
   })
 
   it('folds the outright refusal to refused with the refusal’s own reason', () => {
+    for (const spec of CONFIG_CHANGE_OPS) {
+      expect(spec.classify?.(directRefusedOutright as never), spec.id)
+        .toEqual({ status: 'refused', outcome: 'target-not-found' })
+    }
     for (const spec of CONFIG_PROPOSE_OPS) {
       expect(spec.classify?.(refusedOutright as never), spec.id)
         .toEqual({ status: 'refused', outcome: 'target-not-found' })
@@ -216,13 +287,33 @@ describe('399.1 D-01/D-02 — the config-mutation family folds its own refusal a
   })
 
   it('folds a filed proposal to executed, naming the id a person decides on', () => {
+    // 432-11: only the undo still files one.
     for (const spec of CONFIG_PROPOSE_OPS) {
       expect(spec.classify?.(proposed as never), spec.id)
         .toEqual({ status: 'executed', outcome: 'proposed prop_proposed' })
     }
   })
 
+  it('C432-CONFIG-APPLIED-OUTPUT: folds an applied change to executed, naming the files it wrote', () => {
+    for (const spec of CONFIG_CHANGE_OPS) {
+      expect(spec.classify?.(applied as never), spec.id)
+        .toEqual({ status: 'executed', outcome: 'applied: agent-qa.config.yaml' })
+    }
+  })
+
+  it('C432-CONFIG-MULTIFILE-TRUTH: folds an interrupted publication to failed, never executed', () => {
+    for (const spec of CONFIG_CHANGE_OPS) {
+      expect(spec.classify?.(interrupted as never), spec.id)
+        .toEqual({ status: 'failed', outcome: 'interrupted at agent-qa.config.yaml: file-changed' })
+    }
+  })
+
   it('folds no-change to executed — nothing failed and nothing was declined', () => {
+    for (const spec of CONFIG_CHANGE_OPS) {
+      const verdict = spec.classify?.(directNoChange as never)
+      expect(verdict?.status, spec.id).toBe('executed')
+      expect(verdict?.outcome, spec.id).toContain('use.buildTag')
+    }
     for (const spec of CONFIG_PROPOSE_OPS) {
       const verdict = spec.classify?.(noChange as never)
       expect(verdict?.status, spec.id).toBe('executed')

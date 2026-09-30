@@ -25,7 +25,7 @@
 //   (S3) already-configured  — a scaffold that overwrote a DECLARED TARGET REGISTRY. Since 395-12
 //                              the predicate is the registry rather than the file: the double
 //                              answers a config that declares `shop` and the cell asserts NOTHING
-//                              was filed, and that the refusal names what it will not replace.
+//                              was written, and that the refusal names what it will not replace.
 //  (S3b) the narrowing       — a predicate still keyed on the file EXISTING. The double answers a
 //                              config file that declares NO targets, and the op must reach the
 //                              content port in MERGE mode carrying the person's own bytes. Its
@@ -38,8 +38,9 @@
 //                              off `computeCrossBoundary`'s own output through the real pipeline,
 //                              and the reasons are asserted by MEMBERSHIP so a classifier that
 //                              started flagging everything for one reason still fails the pair.
-//   (S6) one diff, three     — a scaffold that filed a proposal per file. CFGM-05's sentence is
-//        files                 "ONE reviewable diff"; the cell counts the store's records.
+//   (S6) one diff, three     — a scaffold that published file by file in separate calls. CFGM-05's
+//        files                 sentence is ONE diff; since 432-11 it is one publication of all
+//                              three files, and the cell counts the direct writer's calls.
 //   (S7) unbound scan        — a propose op that constructed anyway with no scan bound. The
 //                              permissive direction a security control may not fail in — and this
 //                              op is the sharpest case, because D-12 says the scan reads WHOLE NEW
@@ -65,11 +66,11 @@
 import { isMap, isScalar, parseDocument } from 'yaml'
 
 import { utf8Decode, utf8Encode } from '@vostride/agent-qa-schema'
-import type { ConfigProposalV1, ConfigProposeOutput } from '@vostride/agent-qa-schema'
+import type { ConfigChangeOutput } from '@vostride/agent-qa-schema'
 import { scanConstructedArtifact } from '@vostride/agent-qa-safety'
 import { describe, expect, it } from 'vitest'
 
-import { constructConfigProjectScaffoldProposal } from '../construct.js'
+import { scaffoldConfigProject } from '../construct.js'
 import {
   HOSTNAME_GATE_REFUSAL_DETAIL,
   parseHostnameToken,
@@ -126,9 +127,9 @@ const REJECTED = [
   '   ',
 ] as const
 
-interface Filed {
-  readonly payload: ConfigProposalV1
-  readonly emittedBy: string
+/** One publication the direct writer received: the files, by path, and what they carry. */
+interface Published {
+  readonly files: readonly { path: string; baseDigest?: string; text: string }[]
 }
 
 /** What the content port was asked for — including 395-12's merge mode, when it is present. */
@@ -145,7 +146,7 @@ interface RenderedCall {
 }
 
 interface Harness {
-  readonly filed: Filed[]
+  readonly published: Published[]
   readonly rendered: RenderedCall[]
   readonly scanned: string[]
   readonly deps: ConstructConfigScaffoldDeps
@@ -170,7 +171,7 @@ function harness(options: {
     | { ok: false; issues: readonly { path: string; message: string }[] }
     | { ok: true }
 } = {}): Harness {
-  const filed: Filed[] = []
+  const published: Published[] = []
   const rendered: RenderedCall[] = []
   const scanned: string[] = []
 
@@ -187,7 +188,7 @@ function harness(options: {
   ]
 
   return {
-    filed,
+    published,
     rendered,
     scanned,
     deps: {
@@ -239,10 +240,19 @@ function harness(options: {
       configValidate: {
         validate: () => Promise.resolve(options.validation ?? { ok: true }),
       },
-      configProposals: {
-        put: (record) => {
-          filed.push({ payload: record.payload, emittedBy: record.emittedBy })
-          return Promise.resolve({ proposalId: `prop-${filed.length}` })
+      configWrite: {
+        applyFields: () => {
+          throw new Error('config.project.scaffold publishes whole files, never field changes')
+        },
+        publishFiles: ({ files }) => {
+          published.push({
+            files: files.map((file) => ({
+              path: file.path,
+              ...(file.baseDigest === undefined ? {} : { baseDigest: file.baseDigest }),
+              text: utf8Decode(file.bytes),
+            })),
+          })
+          return Promise.resolve({ kind: 'published' as const, written: files.map((file) => file.path) })
         },
       },
       configScan: {
@@ -279,8 +289,8 @@ function harness(options: {
   }
 }
 
-async function scaffold(test: Harness, domain: string): Promise<ConfigProposeOutput> {
-  return await constructConfigProjectScaffoldProposal({ action: ACTION, domain }, test.deps)
+async function scaffold(test: Harness, domain: string): Promise<ConfigChangeOutput> {
+  return await scaffoldConfigProject({ action: ACTION, domain }, test.deps)
 }
 
 describe('the hostname gate is the never-guess boundary, as a parse (D-15)', () => {
@@ -348,7 +358,7 @@ describe('config.project.scaffold refuses rather than guessing (D-15 · CFGM-05)
     // of what D-15 forbids. The integrity half is above: the detail is asserted non-empty and to
     // carry two specific sentences, so this absence is not an absence over nothing.
     expect(answer.outcome === 'refused' && answer.detail).not.toContain('checkout')
-    expect(test.filed).toHaveLength(0)
+    expect(test.published).toHaveLength(0)
   })
 
   it('(S2) refuses ABOVE the re-read — a guess costs the filesystem nothing', async () => {
@@ -361,7 +371,7 @@ describe('config.project.scaffold refuses rather than guessing (D-15 · CFGM-05)
     expect(test.rendered).toHaveLength(0)
   })
 
-  it('(S3) refuses a project that DECLARES targets, and files nothing', async () => {
+  it('(S3) refuses a project that DECLARES targets, and writes nothing', async () => {
     // A DESIGNED FIXTURE BREAK (395-12). This fixture was `workspace:\n  hooksFile: …` — a config
     // file declaring no targets at all — so it measured "a config file exists". The predicate it
     // pins now is the narrowed one: a target registry this scaffold would replace.
@@ -379,10 +389,10 @@ describe('config.project.scaffold refuses rather than guessing (D-15 · CFGM-05)
     expect(answer.outcome === 'refused' && answer.detail).toContain(CONFIG_FILE)
     expect(answer.outcome === 'refused' && answer.detail).toContain('config.target.create')
     expect(answer.outcome === 'refused' && answer.candidates).toEqual(['shop'])
-    // NOTHING WAS RENDERED AND NOTHING WAS FILED. The refusal is above the content port, so a
+    // NOTHING WAS RENDERED AND NOTHING WAS WRITTEN. The refusal is above the content port, so a
     // project with a target registry cannot have a replacement one built for it at all.
     expect(test.rendered).toHaveLength(0)
-    expect(test.filed).toHaveLength(0)
+    expect(test.published).toHaveLength(0)
   })
 
   it('(S3b) MERGES a config file that declares no targets, carrying the person\'s own bytes',
@@ -394,7 +404,7 @@ describe('config.project.scaffold refuses rather than guessing (D-15 · CFGM-05)
       const test = harness({ configBytes })
       const answer = await scaffold(test, 'booking.com')
 
-      expect(answer.outcome).toBe('proposed')
+      expect(answer.outcome).toBe('applied')
       // The content port was reached in MERGE mode, holding the committed bytes UNCHANGED and the
       // pinned set's own path vocabulary. A producer handed a path it re-derived could name a file
       // outside the set; a producer handed no bytes could only render a whole replacement.
@@ -406,7 +416,10 @@ describe('config.project.scaffold refuses rather than guessing (D-15 · CFGM-05)
         // This fixture's hooks member has no bytes, so the scaffold still adds one.
         hooksPresent: false,
       })
-      expect(test.filed).toHaveLength(1)
+      expect(test.published).toHaveLength(1)
+      // The person's config is published over the digest of the bytes the call read.
+      const config = test.published[0]?.files.find((file) => file.path === CONFIG_FILE)
+      expect(config?.baseDigest).toMatch(/^[0-9a-f]{64}$/)
     })
 
   it('(S9) answers UNRENDERABLE as data rather than letting it escape as a fault', async () => {
@@ -421,11 +434,11 @@ describe('config.project.scaffold refuses rather than guessing (D-15 · CFGM-05)
     const answer = await scaffold(test, 'booking.com')
 
     expect(answer).toMatchObject({ outcome: 'refused', reason: 'unrenderable-diff' })
-    expect(test.filed).toHaveLength(0)
+    expect(test.published).toHaveLength(0)
   })
 })
 
-describe('the scaffold proposal is one diff over the whole set (CFGM-05 · D-04/D-14)', () => {
+describe('the scaffold is one diff, published whole, over the whole set (CFGM-05 · D-04/D-14)', () => {
   it('(S4) hands the content port the GATE\'S derivation and nothing else', async () => {
     const test = harness()
     await scaffold(test, 'HTTPS://Booking.com/rooms')
@@ -443,28 +456,24 @@ describe('the scaffold proposal is one diff over the whole set (CFGM-05 · D-04/
     expect(test.rendered[0]?.existingGitignore).toBe('dist/\n')
   })
 
-  it('(S5/S6) files ONE proposal, applyable, cross-boundary with computed reasons', async () => {
+  it('(S5/S6) publishes ONE change, applied, cross-boundary with computed reasons', async () => {
     const test = harness()
     const answer = await scaffold(test, 'booking.com')
 
-    expect(answer.outcome).toBe('proposed')
-    // CFGM-05's sentence is ONE reviewable diff. Three files, one record.
-    expect(test.filed).toHaveLength(1)
-    expect(answer.outcome === 'proposed' && answer.files.sort())
+    expect(answer.outcome).toBe('applied')
+    // CFGM-05's sentence is ONE diff. Three files, one publication.
+    expect(test.published).toHaveLength(1)
+    expect(test.published[0]?.files.map((file) => file.path))
       .toEqual(['.gitignore', CONFIG_FILE, 'hooks.yaml'])
-
-    // APPLYABLE, NOT BLOCKED. This is the WINDOWS-129 shape stated as a cell: an op whose derived
-    // artifact cannot pass the pipeline's own validation has no success path at all, and the way
-    // that is discovered is by asserting the arm rather than the absence of a throw.
-    const payload = test.filed[0]?.payload
-    expect(payload?.payloadKind).toBe('applyable')
+    expect(answer.outcome === 'applied' && [...answer.files].sort())
+      .toEqual(['.gitignore', CONFIG_FILE, 'hooks.yaml'])
 
     // THE FLAG IS READ OFF THE CLASSIFIER, not set by this op. `new-origin` because the scaffold
     // writes a base URL where the committed configuration had none, and `hook-added` because the
     // scaffolded hooks file declares a hook this project would then run. Asserted by MEMBERSHIP so
     // a classifier that started flagging everything for one reason still fails the pair.
-    expect(answer.outcome === 'proposed' && answer.crossBoundary).toBe(true)
-    const reasons = answer.outcome === 'proposed' ? answer.crossBoundaryReasons : []
+    expect(answer.outcome === 'applied' && answer.crossBoundary).toBe(true)
+    const reasons = answer.outcome === 'applied' ? answer.crossBoundaryReasons : []
     expect(reasons).toContain('new-origin')
     expect(reasons).toContain('hook-added')
   })
@@ -495,11 +504,11 @@ describe('the scaffold proposal is one diff over the whole set (CFGM-05 · D-04/
     const test = harness()
     const { configScan: _dropped, ...withoutScan } = test.deps
     await expect(
-      constructConfigProjectScaffoldProposal(
+      scaffoldConfigProject(
         { action: ACTION, domain: 'booking.com' },
         withoutScan as ConstructConfigScaffoldDeps,
       ),
     ).rejects.toThrow()
-    expect(test.filed).toHaveLength(0)
+    expect(test.published).toHaveLength(0)
   })
 })

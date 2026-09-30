@@ -1,5 +1,10 @@
 // The write path at the wire: propose, refuse, confirm, ONE commit, replay (396-06 · MCPS-03 · D-11).
 //
+// 2026-09-30, 432-11 D-05: the config tool WRITES IN THE CALL now (section 1). The apply doors this
+// file measures still serve the proposal records already on disk until 432-12/17 delete them, so
+// sections 2-7 start from a record written by `filePre432ConfigProposal` exactly as the old propose
+// path wrote it.
+//
 // WHAT THIS FILE IS FOR, and how it differs from the suite one layer down. `apply-refusal.test.ts`
 // proved the handler HERMETICALLY: a recording invoke double, no store, no repository, no protocol.
 // That is the right bar for a primitive and it cannot answer the only question a person actually has
@@ -68,7 +73,7 @@
 // session — the `proposal_id` is the cross-call handle), SEP-2575 (stateless per-request servers).
 
 import { spawnSync } from 'node:child_process'
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -81,6 +86,7 @@ import { runSafetyScope } from '@vostride/agent-qa-safety-local'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import { composeMcpMasking, mcpFunctionCaller } from '../commands/mcp.js'
+import { filePre432ConfigProposal } from '../composition/__tests__/pre-432-config-proposal.js'
 import { composeCliLocalAgent } from '../composition/local-agent-host.js'
 import { resolveStdioScopes } from '../composition/mcp-token-resolution.js'
 
@@ -282,16 +288,18 @@ function rendered(result: ToolResult): string {
   return (result.content ?? []).map((block) => block.text ?? '').join('\n')
 }
 
-/** File a config proposal through the SHIPPED propose tool and answer its id. */
-async function proposeConfigChange(session: Session, value = '45s'): Promise<string> {
-  const result = await call(session, 'agent_qa_propose_config_change', {
-    action: 'config.field.set',
-    path: 'use.timeout.step',
-    value,
-  })
-  const structured = result.structuredContent as { outcome?: string; proposalId?: string }
-  expect(structured.outcome, rendered(result)).toBe('proposed')
-  return structured.proposalId!
+/**
+ * A pre-432 config proposal on disk, as the old propose tool filed it, and its id.
+ *
+ * 432-11: the config tool writes in the call and files nothing, so the apply doors measured here
+ * are driven over the records already on disk.
+ */
+async function proposeConfigChange(_session: Session, value = '45s'): Promise<string> {
+  return (await filePre432ConfigProposal({
+    configPath,
+    agentQaRoot,
+    edits: [{ path: 'use.timeout.step', value }],
+  })).proposalId
 }
 
 beforeEach(async () => {
@@ -351,22 +359,27 @@ async function driven(era: Era, cell: (session: Session) => Promise<void>): Prom
   })
 }
 
-describe('1 · proposing commits nothing', () => {
-  it('files a pending proposal and leaves the repository exactly where it was', async () => {
+describe('1 · changing writes in the call and commits nothing', () => {
+  it('writes the change on the first call, files nothing, and leaves history exactly where it was', async () => {
     await driven(LEGACY, async (session) => {
       const before = commitCount()
-      const proposalId = await proposeConfigChange(session)
+      const result = await call(session, 'agent_qa_propose_config_change', {
+        action: 'config.field.set',
+        path: 'use.timeout.step',
+        value: '45s',
+      })
+      const structured = result.structuredContent as { outcome?: string; files?: string[] }
 
-      // The one-write-path law as an observation rather than a rule: the propose tool is a
-      // `workflow` entry, and workflow entries commit nothing, ever.
-      expect(commitCount(), 'proposing must not commit').toBe(before)
-      expect(porcelain(), 'proposing must not dirty the working tree').toBe('')
+      // 432-11 D-05: ONE CALL, applied, and the answer names the file it wrote.
+      expect(structured.outcome, rendered(result)).toBe('applied')
+      expect(structured.files).toEqual([CONFIG_FILE])
+      expect(lastFrame(session)).toContain('applied')
 
-      // The proposal really is addressable through the SAME wire — read back through the shipped
-      // read tool rather than off disk, because a caller has no disk.
-      const shown = await call(session, 'agent_qa_show_proposal', { proposalId })
-      expect((shown.structuredContent as { kind?: string }).kind, rendered(shown)).toBe('found')
-      expect(lastFrame(session)).toContain(proposalId)
+      // D-07: a plain edit git shows as modified; no commit, and no proposal record.
+      expect(commitCount(), 'changing must not commit').toBe(before)
+      expect(porcelain()).toBe(`M ${CONFIG_FILE}`)
+      expect(readFileSync(configPath, 'utf8')).toContain('step: 45s')
+      expect(existsSync(join(agentQaRoot, 'proposals'))).toBe(false)
     })
   })
 })

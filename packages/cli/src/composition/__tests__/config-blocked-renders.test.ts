@@ -1,6 +1,12 @@
 // CFGM-02's acceptance, measured on RENDERS through the production composition (395-04 · D-09/D-10/
 // D-12).
 //
+// 2026-09-30, 432-11 D-05: a blocked change is ANSWERED and nothing is kept, so there is no record
+// for `proposals list` / `proposals show` to render. The surfaces a person reads are now the answer
+// itself and the runtime root, which must hold nothing about the block. The cells below keep their
+// claims — the seeded half, context lines, range, position-only parse errors, the HOME control —
+// over those surfaces.
+//
 // CFGM-02's sentence is about what a person can SEE, so this file drives the surfaces a person
 // drives: `agent-qa proposals list` and `agent-qa proposals show`, through `createProposalsCommand`,
 // over a real workspace, with `composeCliLocalAgent` building the host. Nothing here is stubbed —
@@ -52,18 +58,17 @@
 //                       blocking earlier. It also pins WR-11: the record's `paths` must name the
 //                       file the issue is about, which pre-395-10 it did not.
 
-import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import { invokeFunction } from '@vostride/agent-qa-agent'
 import { renderConfigDiff, utf8Decode, utf8Encode } from '@vostride/agent-qa-schema'
-import type { ConfigProposeOutput, ProposalsAcceptOutput } from '@vostride/agent-qa-schema'
-import { runSafetyScope } from '@vostride/agent-qa-safety-local'
+import type { ConfigChangeOutput } from '@vostride/agent-qa-schema'
 import { Command } from 'commander'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { createProposalsCommand, renderAccept } from '../../commands/proposals.js'
+import { createProposalsCommand } from '../../commands/proposals.js'
 import { CLI_FUNCTION_CALLER, composeCliLocalAgent } from '../local-agent-host.js'
 
 /**
@@ -156,6 +161,7 @@ hooks:
  */
 function persistedText(dir: string): string {
   const out: string[] = []
+  if (!existsSync(dir)) return ''
   for (const entry of readdirSync(dir)) {
     const full = join(dir, entry)
     out.push(full)
@@ -213,11 +219,11 @@ async function cli(args: readonly string[]): Promise<string> {
   }
 }
 
-/** Propose through the PRODUCTION composition — the one that binds the scan's seeds. */
+/** Change through the PRODUCTION composition — the one that binds the scan's seeds. */
 async function propose(input: {
   readonly path: string
   readonly value: string
-}): Promise<ConfigProposeOutput> {
+}): Promise<ConfigChangeOutput> {
   const host = composeCliLocalAgent({ agentQaRoot, configPath })
   try {
     return await invokeFunction(
@@ -225,7 +231,7 @@ async function propose(input: {
       'config.field.set',
       input,
       CLI_FUNCTION_CALLER,
-    ) as ConfigProposeOutput
+    ) as ConfigChangeOutput
   } finally {
     await host.close()
   }
@@ -269,33 +275,30 @@ describe('CFGM-02 on the surfaces a person reads (D-10/D-12)', () => {
     expect(answer.scanFindings?.[0]?.path).toBe(CONFIG_FILE)
   })
 
-  it('(B,C) list and show name the file and the reason, and carry no window of the secret',
+  it('(B,C) the answer names the file, the reason and the field, and carries no window of the secret',
     async () => {
       writeFileSync(configPath, configText({ note: SEEDED_SECRET }))
       const answer = await propose({ path: 'use.timeout.step', value: '45s' })
-      if (answer.outcome !== 'blocked') throw new Error('expected a blocked proposal')
-
+      if (answer.outcome !== 'blocked') throw new Error('expected a blocked answer')
+      const returned = JSON.stringify(answer)
       const listed = await cli(['proposals', 'list'])
-      const shown = await cli(['proposals', 'show', answer.proposalId])
 
-      // THE CHANNEL DEMONSTRABLY WORKS: both surfaces really rendered this proposal, so the absence
-      // below is a fact about what they print rather than about a command that printed nothing.
-      expect(listed).toContain(answer.proposalId.slice(0, 8))
-      expect(listed).toContain('blocked')
-      expect(shown).toContain('BLOCKED')
-      expect(shown).toContain('guardrail-hit')
-      expect(shown).toContain(CONFIG_FILE)
-      expect(shown).toContain('seeded-secret')
-      expect(shown).toContain('use.timeout.step')
+      // THE CHANNEL DEMONSTRABLY WORKS: the answer names the reason, the file, the detector and the
+      // field attempted, so the absence below is a fact about what it carries.
+      expect(returned).toContain('guardrail-hit')
+      expect(returned).toContain(CONFIG_FILE)
+      expect(returned).toContain('seeded-secret')
+      expect(returned).toContain('use.timeout.step')
 
-      // AND NEITHER CARRIES THE VALUE, NOR ANY EIGHT-CHARACTER RUN OF IT.
+      // AND NEITHER THE ANSWER NOR THE INBOX CARRIES THE VALUE, NOR ANY EIGHT-CHARACTER RUN OF IT.
       for (const window of windows(SEEDED_SECRET)) {
+        expect(returned).not.toContain(window)
         expect(listed).not.toContain(window)
-        expect(shown).not.toContain(window)
       }
-      // No diff reached a surface either — there is none stored to reach one.
-      expect(shown).not.toContain('--- a/')
-      expect(shown).not.toContain('+++ b/')
+      // No diff reached a surface, and there is no record for the inbox to list.
+      expect(returned).not.toContain('--- a/')
+      expect(returned).not.toContain('+++ b/')
+      expect(listed).not.toContain('guardrail-hit')
     })
 
   it('(D) CONTROL: a config value equal to an ordinary env value does NOT block', async () => {
@@ -311,55 +314,26 @@ describe('CFGM-02 on the surfaces a person reads (D-10/D-12)', () => {
 
     const answer = await propose({ path: 'use.timeout.step', value: '45s' })
 
-    expect(answer.outcome).toBe('proposed')
-    if (answer.outcome !== 'proposed') throw new Error('unreachable')
+    expect(answer.outcome).toBe('applied')
+    if (answer.outcome !== 'applied') throw new Error('unreachable')
     expect(answer.shownDiff).toContain('+    step: 45s')
     expect(answer.crossBoundary).toBe(false)
+    expect(readFileSync(configPath, 'utf8')).toContain('step: 45s')
   })
 
-  it('(E) accepting the blocked proposal answers not-applyable and commits nothing', async () => {
+  it('(E) a blocked change leaves nothing to accept, and the config exactly where it was', async () => {
+    // 432-11: the block is an answer, not a record. There is no id to accept, the inbox holds
+    // nothing, and the person's config is byte-for-byte what they left.
     writeFileSync(configPath, configText({ note: SEEDED_SECRET }))
     const answer = await propose({ path: 'use.timeout.step', value: '45s' })
-    if (answer.outcome !== 'blocked') throw new Error('expected a blocked proposal')
+    if (answer.outcome !== 'blocked') throw new Error('expected a blocked answer')
 
-    // THE PRODUCTION COMPOSITION, with the gate SATISFIED rather than avoided. `proposals.accept`
-    // is `mutating-shared`, so a headless process is fail-closed-denied before the route is
-    // reached — and a denial would answer a question about the gate instead of about the blocked
-    // payload. The context scoping and the injected confirm are the same two lines
-    // `proposals-digest-commands.test.ts` uses for the same reason.
-    const host = composeCliLocalAgent({
-      agentQaRoot,
-      configPath,
-      confirm: { surface: 'tty-prompt', ask: () => true },
-    })
-    let accepted: ProposalsAcceptOutput
-    try {
-      accepted = await runSafetyScope({ executionContext: 'local-interactive' }, async () =>
-        await invokeFunction(
-          host.registry,
-          'proposals.accept',
-          { proposalId: answer.proposalId },
-          CLI_FUNCTION_CALLER,
-        ) as ProposalsAcceptOutput)
-    } finally {
-      await host.close()
-    }
-
-    // IT RESOLVED. A throw here would be the defect: `applyablePayload` refusing by name is the
-    // port's invariant, and letting it escape would report this surface's ordinary answer as a
-    // fault, discarding the id and the reason with it.
-    expect(accepted.apply.outcome).toBe('not-applyable')
-    if (accepted.apply.outcome !== 'not-applyable') throw new Error('unreachable')
-    expect(accepted.apply.proposalId).toBe(answer.proposalId)
-    expect(accepted.apply.reason).toBe('guardrail-hit')
-    expect(accepted.grant.kind).toBe('not-requested')
-
-    // The person's config is exactly where they left it, and the render says why without quoting.
+    expect(answer).not.toHaveProperty('proposalId')
+    expect(existsSync(join(agentQaRoot, 'proposals'))
+      ? readdirSync(join(agentQaRoot, 'proposals')).filter((name) => name.endsWith('.json'))
+      : []).toEqual([])
     expect(readFileSync(configPath, 'utf8')).toBe(configText({ note: SEEDED_SECRET }))
-    const rendered = renderAccept(accepted)
-    expect(rendered).toContain('not-applyable')
-    expect(rendered).toContain('guardrail-hit')
-    for (const window of windows(SEEDED_SECRET)) expect(rendered).not.toContain(window)
+    for (const window of windows(SEEDED_SECRET)) expect(JSON.stringify(answer)).not.toContain(window)
   })
 
   it('(F) a secret in an UNCHANGED set member blocks, and no surface carries a window of it',
@@ -405,23 +379,20 @@ describe('CFGM-02 on the surfaces a person reads (D-10/D-12)', () => {
 
       const returned = JSON.stringify(answer)
       const persisted = persistedText(agentQaRoot)
-      const shown = await cli(['proposals', 'show', answer.proposalId])
 
-      // THE PRESENCE HALVES, PER SURFACE, BEFORE ANY ABSENCE. Each of the three demonstrably
-      // rendered THIS block, about THIS file, from a report that observed THOSE bytes — so the
-      // windowed absence below is a fact about what they print rather than about three channels
-      // that printed nothing.
-      for (const surface of [returned, persisted, shown]) {
-        expect(surface).toContain('guardrail-hit')
-        expect(surface).toContain(HOOKS_FILE)
-        expect(surface).toContain(SEEDED_FINGERPRINT)
-      }
+      // THE PRESENCE HALF, BEFORE ANY ABSENCE. The answer demonstrably reports THIS block, about
+      // THIS file, from a report that observed THOSE bytes — so the windowed absence below is a
+      // fact about what it carries. 432-11: nothing about the block is persisted at all.
+      expect(returned).toContain('guardrail-hit')
+      expect(returned).toContain(HOOKS_FILE)
+      expect(returned).toContain(SEEDED_FINGERPRINT)
+      expect(persisted).not.toContain('guardrail-hit')
+      expect(persisted).not.toContain(SEEDED_FINGERPRINT)
 
-      // AND NONE OF THE THREE CARRIES ANY EIGHT-CHARACTER RUN OF THE VALUE.
+      // AND NEITHER CARRIES ANY EIGHT-CHARACTER RUN OF THE VALUE.
       for (const window of windows(SEEDED_SECRET)) {
         expect(returned).not.toContain(window)
         expect(persisted).not.toContain(window)
-        expect(shown).not.toContain(window)
       }
     })
 
@@ -462,20 +433,17 @@ hooks:
 
       const returned = JSON.stringify(answer)
       const persisted = persistedText(agentQaRoot)
-      const shown = await cli(['proposals', 'show', answer.proposalId])
 
-      // PRESENCE FIRST, PER SURFACE: each really rendered this refusal, its reason, and the issue
-      // about this file. The absence below is therefore about what they print.
-      for (const surface of [returned, persisted, shown]) {
-        expect(surface).toContain('schema-fail')
-        expect(surface).toContain(HOOKS_FILE)
-        expect(surface).toContain('not readable as YAML at line')
-      }
+      // PRESENCE FIRST: the answer really reports this refusal, its reason, and the issue about
+      // this file. 432-11: nothing is persisted about it.
+      expect(returned).toContain('schema-fail')
+      expect(returned).toContain(HOOKS_FILE)
+      expect(returned).toContain('not readable as YAML at line')
+      expect(persisted).not.toContain('schema-fail')
 
-      // AND NONE OF THEM CARRIES THE SOURCE LINE'S TEXT.
+      // AND NEITHER CARRIES THE SOURCE LINE'S TEXT.
       expect(returned).not.toContain(marker)
       expect(persisted).not.toContain(marker)
-      expect(shown).not.toContain(marker)
     })
 })
 

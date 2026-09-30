@@ -75,6 +75,7 @@ import {
   ConfigAuthSetInputSchema,
   ConfigChangeFoldInputSchema,
   ConfigChangeFoldOutputSchema,
+  ConfigChangeOutputSchema,
   ConfigFieldSetInputSchema,
   ConfigHookAddInputSchema,
   ConfigProjectScaffoldInputSchema,
@@ -296,27 +297,27 @@ export const AGENT_QA_OP_CONTRACTS: Readonly<Record<string, ToolOpContracts>> = 
   }),
   'config.field.set': Object.freeze({
     input: ConfigFieldSetInputSchema,
-    output: ConfigProposeOutputSchema,
+    output: ConfigChangeOutputSchema,
   }),
   'config.target.create': Object.freeze({
     input: ConfigTargetCreateInputSchema,
-    output: ConfigProposeOutputSchema,
+    output: ConfigChangeOutputSchema,
   }),
   'config.target.edit': Object.freeze({
     input: ConfigTargetEditInputSchema,
-    output: ConfigProposeOutputSchema,
+    output: ConfigChangeOutputSchema,
   }),
   'config.auth.set': Object.freeze({
     input: ConfigAuthSetInputSchema,
-    output: ConfigProposeOutputSchema,
+    output: ConfigChangeOutputSchema,
   }),
   'config.hook.add': Object.freeze({
     input: ConfigHookAddInputSchema,
-    output: ConfigProposeOutputSchema,
+    output: ConfigChangeOutputSchema,
   }),
   'config.project.scaffold': Object.freeze({
     input: ConfigProjectScaffoldInputSchema,
-    output: ConfigProposeOutputSchema,
+    output: ConfigChangeOutputSchema,
   }),
   'config.undo.propose': Object.freeze({
     input: ConfigUndoProposeInputSchema,

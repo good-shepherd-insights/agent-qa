@@ -1,5 +1,10 @@
 // Who a config-apply commit says proposed it (Phase 400 plan 05, DASH-01).
 //
+// 2026-09-30, 432-11 D-05: no door mints a config proposal any more — the config operations write
+// in the call. The apply path still reads the records already on disk until 432-16/17 delete it,
+// so every cell starts from a persisted record: the legacy fixture, or one written by
+// `filePre432ConfigProposal` with the minting surface a door used to stamp on it.
+//
 // THE DEFECT THIS FILE MEASURES. `applyConfigProposalAsOneCommit` wrote every agent commit under a
 // single constant — `agent-qa (proposed by chat) <agent-qa@local>` — whatever surface had actually
 // minted the proposal. Before this phase that was imprecise: three of the four doors could mint a
@@ -44,6 +49,7 @@ import {
   composeCliLocalAgent,
   CLI_FUNCTION_CALLER,
 } from '../composition/local-agent-host.js'
+import { filePre432ConfigProposal } from '../composition/__tests__/pre-432-config-proposal.js'
 import { SURFACE_ROSTER } from './conformance/roster.js'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
@@ -140,22 +146,19 @@ function authorAt(workspace: Workspace, rev: string): string {
   return workspace.git('log', '-1', '--format=%an <%ae>', rev).trim()
 }
 
-/** Mint one config proposal on a composed host, returning its id. */
-async function mint(
-  registry: Parameters<typeof invokeFunction>[0],
-  caller: FunctionCaller,
-  value: string,
-): Promise<string> {
-  const proposed = await invokeFunction(
-    registry,
-    'config.field.set',
-    { path: 'use.timeout.step', value },
-    caller,
-  ) as { outcome: string; proposalId?: string }
-  if (proposed.outcome !== 'proposed' || proposed.proposalId === undefined) {
-    throw new Error(`expected a proposal, got ${JSON.stringify(proposed)}`)
-  }
-  return proposed.proposalId
+/**
+ * One config proposal as a door with this minting surface filed it before 432-11, returning its id.
+ *
+ * The record is written the way the old pipeline wrote it, with `origin.surface` set to the word
+ * the door supplied; no door files one now.
+ */
+async function mint(workspace: Workspace, surface: string, value: string): Promise<string> {
+  return (await filePre432ConfigProposal({
+    configPath: workspace.configPath,
+    agentQaRoot: workspace.agentQaRoot,
+    edits: [{ path: 'use.timeout.step', value }],
+    surface,
+  })).proposalId
 }
 
 /**
@@ -226,15 +229,7 @@ describe('a config-apply commit names the surface that MINTED the proposal', () 
     const workspace = seedWorkspace()
     // THE WORD `agent-qa chat` ITSELF SUPPLIES, imported rather than re-typed. A literal `'chat'`
     // here would agree with the door today and be free to disagree with it forever after.
-    const { registry } = composeCliLocalAgent({
-      agentQaRoot: workspace.agentQaRoot,
-      configPath: workspace.configPath,
-      mintingSurface: CHAT_DOOR_SURFACE,
-      resolveExecutionContext: () => 'local-interactive',
-      confirm: { surface: 'tty-prompt', ask: () => true },
-    })
-
-    const proposalId = await mint(registry, CLI_FUNCTION_CALLER, '45s')
+    const proposalId = await mint(workspace, CHAT_DOOR_SURFACE, '45s')
     await accept(applyingHost(workspace), proposalId)
 
     // THE CONTROL, and it is honest about being one: this arm was green against the hardcoded
@@ -252,15 +247,7 @@ describe('a config-apply commit names the surface that MINTED the proposal', () 
     // A WORD FROM THE FUTURE, carrying the two characters that structure a git author field. A
     // reader that rendered the stored surface into `Name <email>` would let a record rewrite the
     // field it is being read into; the map's unrecognised arm is what makes that unreachable.
-    const { registry } = composeCliLocalAgent({
-      agentQaRoot: workspace.agentQaRoot,
-      configPath: workspace.configPath,
-      mintingSurface: 'voice> <someone-else@example.invalid',
-      resolveExecutionContext: () => 'local-interactive',
-      confirm: { surface: 'tty-prompt', ask: () => true },
-    })
-
-    const proposalId = await mint(registry, CLI_FUNCTION_CALLER, '45s')
+    const proposalId = await mint(workspace, 'voice> <someone-else@example.invalid', '45s')
 
     // THE RECORD STILL HOLDS THE WORD IT WAS GIVEN, read off disk BEFORE the accept moves it out
     // of the pending directory. The reading side is closed; the writing side is not, which is what

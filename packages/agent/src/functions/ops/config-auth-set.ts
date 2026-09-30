@@ -1,5 +1,10 @@
 // `config.auth.set` — refs only, ratified as law (Phase 395-05, D-11 · CFGM-01/CFGM-02).
 //
+// 2026-09-30, 432-11 D-05/D-07: THIS OP WRITES IN THE CALL. It is constructed, scanned and validated
+// as described below and then published through the direct writer; the answer names the files and
+// fields it changed, a blocked change is answered with its report and nothing is kept, and no git
+// runs. Where the paragraphs below say "proposal", read the change this call writes.
+//
 // `config-field-set.ts`'s header carries the arguments for the tier, the scope and the one-op-per-
 // action shape; they are not restated. What is different about this one is the law it enforces and
 // where it enforces it.
@@ -28,24 +33,24 @@
 // walked past by inventing a credential family nobody listed — and the residue where both miss is
 // recorded as a KNOWN BOUND cell rather than described as closed.
 
-import { ConfigAuthSetInputSchema, ConfigProposeOutputSchema } from '@vostride/agent-qa-schema'
-import type { ConfigAuthSetInput, ConfigProposeOutput } from '@vostride/agent-qa-schema'
+import { ConfigChangeOutputSchema, ConfigAuthSetInputSchema } from '@vostride/agent-qa-schema'
+import type { ConfigChangeOutput, ConfigAuthSetInput } from '@vostride/agent-qa-schema'
 
-import { classifyConfigProposeOutput } from './config-propose-verdict.js'
-import { constructConfigAuthSetProposal } from '../../config-mutation/construct.js'
+import { classifyConfigChangeOutput } from './config-propose-verdict.js'
+import { setConfigAuth } from '../../config-mutation/construct.js'
 import { FunctionNotBoundError } from '../spec.js'
 import type { FunctionSpec } from '../spec.js'
 
 export const CONFIG_AUTH_SET_FUNCTION_ID = 'config.auth.set'
 
-export const configAuthSetSpec: FunctionSpec<ConfigAuthSetInput, ConfigProposeOutput> = {
+export const configAuthSetSpec: FunctionSpec<ConfigAuthSetInput, ConfigChangeOutput> = {
   id: CONFIG_AUTH_SET_FUNCTION_ID,
-  summary: 'Propose pointing a target at a stored auth state or an auth plugin, by NAME only.',
+  summary: 'Point a target at a stored auth state or auth plugin by NAME, written in this call.',
   requiredScopes: ['config-write'],
   resultKind: 'unary',
   input: ConfigAuthSetInputSchema,
-  output: ConfigProposeOutputSchema,
-  boundThrough: 'configFiles',
+  output: ConfigChangeOutputSchema,
+  boundThrough: 'configWrite',
   risk: {
     name: `fn:${CONFIG_AUTH_SET_FUNCTION_ID}`,
     recognized: true,
@@ -54,28 +59,28 @@ export const configAuthSetSpec: FunctionSpec<ConfigAuthSetInput, ConfigProposeOu
   /**
    * This op's own union, folded into a clause verdict (2026-08-20, Phase 399.1 D-01/D-02).
    *
-   * THE FOLD IS SHARED BECAUSE THE UNION IS. Seven ops answer with `ConfigProposeOutput`, and a
+   * THE FOLD IS SHARED BECAUSE THE UNION IS. Six ops answer with `ConfigChangeOutput` (432-11), and a
    * per-op copy of the mapping would be a guardrail refusal that reports `refused` on some doors
    * and `executed` on others the first time one copy is edited. See `config-propose-verdict.ts`
    * for why `blocked` and `refused` are the same status and different words.
    */
-  classify: classifyConfigProposeOutput,
-  async invoke(input, deps): Promise<ConfigProposeOutput> {
+  classify: classifyConfigChangeOutput,
+  async invoke(input, deps): Promise<ConfigChangeOutput> {
     // The same four-way guard its siblings carry, including `configScan` (395-04, CFGM-02) — and on
     // this op the scan is not only defence in depth for the rendered artifact: it is half of the
     // D-11 input check itself, so an unbound scan here would remove a gate rather than weaken one.
-    const { configFiles, configValidate, configProposals, configScan } = deps
+    const { configFiles, configValidate, configScan, configWrite } = deps
     if (
       configFiles === undefined
       || configValidate === undefined
-      || configProposals === undefined
       || configScan === undefined
+      || configWrite === undefined
     ) {
       throw new FunctionNotBoundError(CONFIG_AUTH_SET_FUNCTION_ID)
     }
-    return await constructConfigAuthSetProposal(
+    return await setConfigAuth(
       { action: CONFIG_AUTH_SET_FUNCTION_ID, ...input },
-      { configFiles, configValidate, configProposals, configScan },
+      { configFiles, configValidate, configScan, configWrite },
     )
   },
 }

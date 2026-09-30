@@ -1,5 +1,10 @@
 // The tracer, proven end to end on a real git repository (395-01 · CFGM-01/03/04 · D-01/D-17/D-19).
 //
+// 2026-09-30, 432-11 D-05/D-07: `config.field.set` WRITES IN THE CALL and files nothing, so cells
+// (a)/(a2) now measure the direct write. The accept path (b)-(g) is still shipped for the proposal
+// records already on disk until 432-16/17 delete it; those cells start from such a record, written
+// by `filePre432ConfigProposal` exactly as the old pipeline wrote it.
+//
 // ONE UTTERANCE-SHAPED INPUT TRAVELS THE WHOLE PATH: `config.field.set` constructs a proposal from
 // bytes it re-read off disk, whole-config validation runs before anything surfaces, the envelope is
 // PERSISTED in the real 391 proposals store, `proposals.accept` routes it, and the CLI apply port
@@ -59,7 +64,7 @@ import {
 } from '@vostride/agent-qa-schema'
 import type {
   ConfigApplyOutcome,
-  ConfigProposeOutput,
+  ConfigChangeOutput,
   FunctionCaller,
   ProposalRecord,
   ProposalsAcceptOutput,
@@ -73,8 +78,10 @@ import {
   createConfigApplyPort,
   createConfigFilesPort,
   createConfigValidatePort,
+  createConfigWritePort,
 } from '../local-agent-host.js'
 import * as hostModule from '../local-agent-host.js'
+import { filePre432ConfigProposal } from './pre-432-config-proposal.js'
 
 const HUMAN: FunctionCaller = {
   surface: 'test',
@@ -218,6 +225,8 @@ function registryFor(options: { readonly bindApply?: boolean } = {}) {
     // which sets the variable it depends on.
     configScan: { scan: (parts) => scanConstructedArtifact(parts, {}) },
     ...(options.bindApply === false ? {} : { configApply: createConfigApplyPort(configPath) }),
+    // 432-11: the direct writer the config operations publish through.
+    configWrite: createConfigWritePort(configPath),
     // The REAL store write, through the same two verbs `composeLocalAgent` binds — so the envelope
     // this path files is one the inbox below really reads back off disk.
     configProposals: {
@@ -245,16 +254,20 @@ function registryFor(options: { readonly bindApply?: boolean } = {}) {
   })
 }
 
-async function propose(
+async function change(
   registry: ReturnType<typeof registryFor>,
   input: { path: string; value: string | number | boolean },
-): Promise<ConfigProposeOutput> {
-  return await invokeFunction(registry, 'config.field.set', input, HUMAN) as ConfigProposeOutput
+): Promise<ConfigChangeOutput> {
+  return await invokeFunction(registry, 'config.field.set', input, HUMAN) as ConfigChangeOutput
 }
 
-function proposedId(answer: ConfigProposeOutput): string {
-  if (answer.outcome !== 'proposed') throw new Error(`expected a proposal, got ${answer.outcome}`)
-  return answer.proposalId
+/** A pre-432 proposal record for the tracer edit, filed as the old pipeline filed it. */
+async function pre432Proposal(): Promise<string> {
+  return (await filePre432ConfigProposal({
+    configPath,
+    agentQaRoot,
+    edits: [{ path: 'use.timeout.step', value: '45s' }],
+  })).proposalId
 }
 
 beforeEach(() => {
@@ -281,59 +294,49 @@ afterEach(() => {
 })
 
 describe('the config tracer: propose, accept, ONE byte-matched commit', () => {
-  it('(a) files a kind:config envelope carrying the diff bytes and the base digest', async () => {
-    const answer = await propose(registryFor(), { path: 'use.timeout.step', value: '45s' })
-    expect(answer.outcome).toBe('proposed')
+  it('(a) writes the edit in the call, answering the diff of the bytes it read and filing nothing', async () => {
+    const seededDigest = sha256hexBytes(Uint8Array.from(readFileSync(configPath)))
+    const answer = await change(registryFor(), { path: 'use.timeout.step', value: '45s' })
+    expect(answer.outcome).toBe('applied')
+    if (answer.outcome !== 'applied') throw new Error('unreachable')
 
-    const id = proposedId(answer)
-    const record = storedRecord(id)
-    expect(record.kind).toBe('config')
+    expect(answer.summaryLine).toBe('set use.timeout.step to 45s')
+    expect(answer.files).toEqual(['agent-qa.config.yaml'])
+    expect(answer.fields).toEqual(['use.timeout.step'])
 
-    const payload = storedConfigPayload(id)
-    expect(payload.action).toBe('config.field.set')
-    expect(payload.summaryLine).toBe('set use.timeout.step to 45s')
-    expect(payload.files.map((file) => file.path)).toEqual(['agent-qa.config.yaml'])
-    expect(payload.files[0]?.changeKind).toBe('modify')
+    // The rendered diff really is a diff of this change against the file as it was.
+    expect(answer.shownDiff).toContain('--- a/agent-qa.config.yaml')
+    expect(answer.shownDiff).toContain('-    step: 30s')
+    expect(answer.shownDiff).toContain('+    step: 45s')
 
-    // THE BASE DIGEST IS A CLAIM ABOUT THE COMMITTED FILE, and it is checked against the file
-    // rather than against the number the pipeline also produced — CFGM-04's re-read law measured
-    // from outside the producer.
-    expect(payload.files[0]?.baseDigest)
-      .toBe(sha256hexBytes(Uint8Array.from(readFileSync(configPath))))
+    // THE FILE MOVED IN THE CALL, by exactly the edit, off the bytes that were there.
+    expect(seededDigest).not.toBe(sha256hexBytes(Uint8Array.from(readFileSync(configPath))))
+    expect(readFileSync(configPath, 'utf8')).toBe(SEEDED_CONFIG.replace('step: 30s', 'step: 45s'))
 
-    // The rendered diff really is a diff of this change, and its digest really is over its bytes.
-    const shown = utf8Decode(base64Decode(payload.shownDiffBase64))
-    expect(shown).toContain('--- a/agent-qa.config.yaml')
-    expect(shown).toContain('-    step: 30s')
-    expect(shown).toContain('+    step: 45s')
-    expect(payload.shownDiffDigest).toBe(sha256hexBytes(base64Decode(payload.shownDiffBase64)))
-
-    // PROPOSING COMMITS NOTHING. The L10 one-write-path law, as an observation rather than a rule.
+    // NO RECORD AND NO COMMIT (D-07): a plain edit git shows as modified.
+    expect(existsSync(join(agentQaRoot, 'proposals'))).toBe(false)
     expect(commitCount()).toBe(1)
-    expect(git('status', '--porcelain', '--', 'agent-qa.config.yaml').stdout.trim()).toBe('')
+    expect(git('status', '--porcelain', '--', 'agent-qa.config.yaml').stdout.trim())
+      .toBe('M agent-qa.config.yaml')
   })
 
   it('(a2) refuses a mutation that breaks the WHOLE config, before anything surfaces', async () => {
     // CFGM-01: validation runs before any APPLYABLE proposal exists. `use.parallel` is a boolean in
     // the schema, so a string there is a candidate config that does not validate.
     //
-    // 395-04 turned this answer from a bare refusal into a filed BLOCKED record — one posture, two
-    // reasons — so the assertion moved with it rather than being deleted. The claim it protects is
-    // unchanged and is the one that matters: nothing a person could ACCEPT was ever produced.
-    const answer = await propose(registryFor(), { path: 'use.parallel', value: 'yes please' })
+    // 432-11: the blocked answer is the report, and nothing is kept — no record, no write. The claim
+    // it protects is unchanged: nothing a person could accept or apply was ever produced.
+    const answer = await change(registryFor(), { path: 'use.parallel', value: 'yes please' })
 
     expect(answer.outcome).toBe('blocked')
     if (answer.outcome !== 'blocked') throw new Error('unreachable')
     expect(answer.blockedReason).toBe('schema-fail')
     expect(answer.validationIssues?.length ?? 0).toBeGreaterThan(0)
     expect((answer.validationIssues ?? []).join('\n')).toContain('use.parallel')
-    // THE RECORD IS BLOCKED ON DISK, not merely reported as blocked in a return value — and it has
-    // no payload to apply, which is the structural half of D-10 read back from the store.
-    const record = storedRecord(answer.proposalId)
-    if (record.kind !== 'config') throw new Error('stored record is not a config proposal')
-    expect(record.payload.payloadKind).toBe('blocked')
-    expect(JSON.stringify(record.payload)).not.toContain('shownDiffBase64')
-    expect(JSON.stringify(record.payload)).not.toContain('newContentBase64')
+    // NO RECORD ON DISK and no content in the answer, which is the structural half of D-10.
+    expect(existsSync(join(agentQaRoot, 'proposals'))).toBe(false)
+    expect(JSON.stringify(answer)).not.toContain('shownDiff')
+    expect(JSON.stringify(answer)).not.toContain('newContentBase64')
     // NOTHING WAS WRITTEN AND NOTHING WAS COMMITTED.
     expect(readFileSync(configPath, 'utf8')).toBe(SEEDED_CONFIG)
     expect(commitCount()).toBe(1)
@@ -341,7 +344,7 @@ describe('the config tracer: propose, accept, ONE byte-matched commit', () => {
 
   it('(b) accepting adds exactly ONE commit of exactly the config file, byte-matched', async () => {
     const registry = registryFor()
-    const id = proposedId(await propose(registry, { path: 'use.timeout.step', value: '45s' }))
+    const id = await pre432Proposal()
 
     // The bytes the proposal PROMISED, decoded from the record ON DISK. Read before the accept, so
     // the comparison below cannot be the apply's own variable compared against itself — the
@@ -384,7 +387,7 @@ describe('the config tracer: propose, accept, ONE byte-matched commit', () => {
 
   it('(c) accepting the SAME proposal twice answers already-applied and commits nothing more', async () => {
     const registry = registryFor()
-    const id = proposedId(await propose(registry, { path: 'use.timeout.step', value: '45s' }))
+    const id = await pre432Proposal()
 
     const first = await invokeFunction(
       registry, 'proposals.accept', { proposalId: id }, HUMAN,
@@ -414,7 +417,7 @@ describe('the config tracer: propose, accept, ONE byte-matched commit', () => {
 
   it('(d) an out-of-band edit between propose and accept refuses, writing nothing', async () => {
     const registry = registryFor()
-    const id = proposedId(await propose(registry, { path: 'use.timeout.step', value: '45s' }))
+    const id = await pre432Proposal()
 
     // The human edits the file themselves, and COMMITS it — so the tree is clean and the ONLY
     // thing that can refuse this apply is the digest re-check. A dirty-tree refusal would pass
@@ -440,7 +443,7 @@ describe('the config tracer: propose, accept, ONE byte-matched commit', () => {
 
   it('(e) the comments survive the applied mutation, verbatim and in place', async () => {
     const registry = registryFor()
-    const id = proposedId(await propose(registry, { path: 'use.timeout.step', value: '45s' }))
+    const id = await pre432Proposal()
     await invokeFunction(registry, 'proposals.accept', { proposalId: id }, HUMAN)
 
     const committed = readFileSync(configPath, 'utf8')
@@ -464,7 +467,7 @@ describe('the config tracer: propose, accept, ONE byte-matched commit', () => {
     // the record the port is handed. The stored `shownDiff` bytes are left alone, which is what
     // makes the comparison the thing that fires.
     const registry = registryFor()
-    const id = proposedId(await propose(registry, { path: 'use.timeout.step', value: '45s' }))
+    const id = await pre432Proposal()
 
     const payload = storedConfigPayload(id)
     const widened = utf8Decode(base64Decode(payload.files[0]!.newContentBase64))
@@ -487,8 +490,7 @@ describe('the config tracer: propose, accept, ONE byte-matched commit', () => {
   })
 
   it('(g) an unbound apply refuses BY NAME and leaves the repository untouched', async () => {
-    const proposing = registryFor()
-    const id = proposedId(await propose(proposing, { path: 'use.timeout.step', value: '45s' }))
+    const id = await pre432Proposal()
 
     const hostWithoutApply = registryFor({ bindApply: false })
     await expect(invokeFunction(hostWithoutApply, 'proposals.accept', { proposalId: id }, HUMAN))
@@ -499,8 +501,8 @@ describe('the config tracer: propose, accept, ONE byte-matched commit', () => {
   })
 })
 
-// 2026-09-30, 432-07 D-05/D-07: the direct writer publishes the tracer's field edit in one call,
-// beside the proposal path above until 432-11 switches the ops over.
+// 2026-09-30, 432-07 D-05/D-07: the direct writer publishes the tracer's field edit in one call.
+// 432-11 switched `config.field.set` onto it; cell (a) above is the op's own road.
 describe('C432-CONFIG-DIRECT: the tracer edit through the direct writer', () => {
   it('publishes the field edit byte-matched with its comments, files no proposal and makes no commit', async () => {
     const create = (hostModule as Record<string, unknown>).createConfigWritePort

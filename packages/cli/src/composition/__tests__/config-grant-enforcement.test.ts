@@ -1,6 +1,12 @@
 // D-02's three-tier approval, enforced TWO-SIDED and measured on the production composition
 // (395-07 · CFGM-01 · spec/v2 §4.3, spec/v2/execution-safety.md §2.4).
 //
+// 2026-09-30, 432-11 D-05: `config.field.set` writes in the call and files nothing, so the two
+// fixture proposals are pre-432 records on disk (`filePre432ConfigProposal`). Their flags are still
+// PRODUCED by the shipped classifier: the same change is made directly in a scratch copy of the
+// workspace and its answer's verdict is what the record carries. The grant machinery these cells
+// measure is deleted by 432-18.
+//
 // THE TWO SIDES ARE TWO MECHANISMS IN TWO FILES, and this suite is arranged so that each one's
 // cells stay green when the other is severed. That disjointness is the claim — 391 D-05 spends two
 // guards on one rule because neither subsumes the other, and a suite whose cells all red under
@@ -74,7 +80,7 @@
 // fact; see the plan SUMMARY's Known Stubs for who closes it.
 
 import { spawnSync } from 'node:child_process'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -83,7 +89,7 @@ import { createGrantOperations, grantsLedgerPath } from '@vostride/agent-qa-know
 import { STANDING_APPROVAL_SCOPE } from '@vostride/agent-qa-schema'
 import type {
   ConfigApplyOutcome,
-  ConfigProposeOutput,
+  ConfigChangeOutput,
   ProposalRecord,
   ProposalsAcceptOutput,
 } from '@vostride/agent-qa-schema'
@@ -91,6 +97,7 @@ import { runSafetyScope } from '@vostride/agent-qa-safety-local'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { CLI_FUNCTION_CALLER, composeCliLocalAgent } from '../local-agent-host.js'
+import { filePre432ConfigProposal } from './pre-432-config-proposal.js'
 
 /** The grantable class, READ off the shipped op rather than typed (391 D-04). */
 const CONFIG_APPLY_CLASS = 'fn:config.proposal.apply'
@@ -194,18 +201,46 @@ function storedRecord(proposalId: string): ProposalRecord {
   return JSON.parse(readFileSync(pendingProposalPath(proposalId), 'utf8')) as ProposalRecord
 }
 
-/** Propose through the PRODUCTION composition, headless — proposing asks nobody. */
+/**
+ * A pre-432 proposal for this change, carrying the verdict the SHIPPED classifier gives it.
+ *
+ * The verdict is read off a direct write of the same change through the production composition,
+ * made in a scratch copy of the workspace so the real one is untouched; the record is then filed
+ * over the real workspace exactly as the old pipeline filed it.
+ */
 async function propose(input: {
   readonly path: string
   readonly value: string
-}): Promise<ConfigProposeOutput> {
-  const host = composeCliLocalAgent({ agentQaRoot, configPath })
+}): Promise<{ proposalId: string; crossBoundary: boolean; crossBoundaryReasons: readonly string[] }> {
+  const scratch = mkdtempSync(join(tmpdir(), 'grant-enforcement-classify-'))
+  let answer: ConfigChangeOutput
   try {
-    return await invokeFunction(
-      host.registry, 'config.field.set', input, CLI_FUNCTION_CALLER,
-    ) as ConfigProposeOutput
+    copyFileSync(configPath, join(scratch, CONFIG_FILE))
+    const host = composeCliLocalAgent({
+      agentQaRoot: join(scratch, '.agent-qa'),
+      configPath: join(scratch, CONFIG_FILE),
+    })
+    try {
+      answer = await invokeFunction(
+        host.registry, 'config.field.set', input, CLI_FUNCTION_CALLER,
+      ) as ConfigChangeOutput
+    } finally {
+      await host.close()
+    }
   } finally {
-    await host.close()
+    rmSync(scratch, { recursive: true, force: true })
+  }
+  if (answer.outcome !== 'applied') throw new Error(`fixture: ${answer.outcome}`)
+  const filed = await filePre432ConfigProposal({
+    configPath,
+    agentQaRoot,
+    edits: [input],
+    crossBoundaryReasons: answer.crossBoundaryReasons,
+  })
+  return {
+    proposalId: filed.proposalId,
+    crossBoundary: filed.payload.crossBoundary,
+    crossBoundaryReasons: filed.payload.crossBoundaryReasons,
   }
 }
 
@@ -230,7 +265,6 @@ async function flaggedProposalId(): Promise<string> {
   // writable and secret-adjacent, because a flagged fixture that could never be proposed would
   // make every cell below a measurement of nothing.
   const answer = await propose({ path: 'workspace.envFile', value: '.env.staging' })
-  if (answer.outcome !== 'proposed') throw new Error(`fixture: ${answer.outcome}`)
   expect(answer.crossBoundary).toBe(true)
   expect(answer.crossBoundaryReasons).toContain('secret-adjacent-field')
   return answer.proposalId
@@ -238,7 +272,6 @@ async function flaggedProposalId(): Promise<string> {
 
 async function inScopeProposalId(): Promise<string> {
   const answer = await propose({ path: 'use.timeout.step', value: '45s' })
-  if (answer.outcome !== 'proposed') throw new Error(`fixture: ${answer.outcome}`)
   expect(answer.crossBoundary).toBe(false)
   expect(answer.crossBoundaryReasons).toEqual([])
   return answer.proposalId

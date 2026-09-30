@@ -608,7 +608,7 @@
       ]
     },
     {
-      "description": "Propose pointing a target at a stored auth state or an auth plugin, by NAME only.",
+      "description": "Point a target at a stored auth state or auth plugin by NAME, written in this call.",
       "docAbsentReason": "D-07 (dated 2026-08-16): no canonical doc ships for this capability yet. The explicit absence is the honest state — a guessed path would existence-check green and mislead a reader — and the abstention coverage log is the demand signal for writing one.",
       "docPath": null,
       "exampleCall": {
@@ -654,7 +654,7 @@
       ]
     },
     {
-      "description": "Propose setting one configuration field, as a reviewable diff awaiting a decision.",
+      "description": "Set one configuration field, written in this call.",
       "docAbsentReason": "D-07 (dated 2026-08-16): no canonical doc ships for this capability yet. The explicit absence is the honest state — a guessed path would existence-check green and mislead a reader — and the abstention coverage log is the demand signal for writing one.",
       "docPath": null,
       "exampleCall": {
@@ -726,7 +726,7 @@
       ]
     },
     {
-      "description": "Propose declaring a hook in the hooks file, as a reviewable diff awaiting a decision.",
+      "description": "Declare a hook in the hooks file, written in this call.",
       "docAbsentReason": "D-07 (dated 2026-08-16): no canonical doc ships for this capability yet. The explicit absence is the honest state — a guessed path would existence-check green and mislead a reader — and the abstention coverage log is the demand signal for writing one.",
       "docPath": null,
       "exampleCall": {
@@ -784,7 +784,7 @@
       ]
     },
     {
-      "description": "Propose configuring this project for a site from zero — config, hooks and gitignore as one reviewable diff.",
+      "description": "Configure this project for a site from zero — config, hooks and gitignore, written in this call.",
       "docAbsentReason": "D-07 (dated 2026-08-16): no canonical doc ships for this capability yet. The explicit absence is the honest state — a guessed path would existence-check green and mislead a reader — and the abstention coverage log is the demand signal for writing one.",
       "docPath": null,
       "exampleCall": {
@@ -852,7 +852,7 @@
       ]
     },
     {
-      "description": "Propose adding a web target to the registry, as a reviewable diff awaiting a decision.",
+      "description": "Add a web target to the registry, written in this call.",
       "docAbsentReason": "D-07 (dated 2026-08-16): no canonical doc ships for this capability yet. The explicit absence is the honest state — a guessed path would existence-check green and mislead a reader — and the abstention coverage log is the demand signal for writing one.",
       "docPath": null,
       "exampleCall": {
@@ -910,7 +910,7 @@
       ]
     },
     {
-      "description": "Propose changing a configured target's URL or auth binding, as a reviewable diff.",
+      "description": "Change a configured target's URL or auth binding, written in this call.",
       "docAbsentReason": "D-07 (dated 2026-08-16): no canonical doc ships for this capability yet. The explicit absence is the honest state — a guessed path would existence-check green and mislead a reader — and the abstention coverage log is the demand signal for writing one.",
       "docPath": null,
       "exampleCall": {
@@ -2645,5 +2645,5 @@
       "shortDescription": "Triage agent-qa run failures"
     }
   ],
-  "rowsDigest": "9d60809430a4a167ba4bcde8f2887815d75397176e4b82fcf6fe85ae7e942f32"
+  "rowsDigest": "e007340b8b26f0239d4f3fdca11494c4f80854086fb373c925dbe2e086c73cf4"
 }

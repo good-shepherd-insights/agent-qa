@@ -1,5 +1,11 @@
 // The apply discipline, on real repositories (395-06 · CFGM-03/CFGM-04 · D-05/D-06/D-07/D-18/D-19).
 //
+// 2026-09-30, 432-11 D-05: the config operations write in the call and file nothing. The accept
+// path measured here serves the proposal records already on disk until 432-16/17 delete it, so
+// every apply cell starts from a record written by `filePre432ConfigProposal` exactly as the old
+// pipeline wrote it; `config.undo.propose` still files its own. Cell (7)'s recovery is now the
+// direct write the refusal names.
+//
 // WHAT THIS FILE MEASURES THAT `config-apply.test.ts` DOES NOT. That one proves the tracer: one
 // proposal, one clean tree, one commit. This one is about the arrangements where a PERSON is in the
 // middle of something — uncommitted work at the file the agent is about to write, an edit that
@@ -32,8 +38,8 @@
 //   (6) no mutation    — the preserve commit moved ABOVE the freshness check. That ordering makes
 //                        a refused apply commit the person's work on its way to doing nothing, and
 //                        this is the only cell that can tell the two orders apart.
-//   (7) re-propose     — a construction that did not re-read (CFGM-04). The new `baseDigest` is
-//                        compared against a sha256 computed in this test from the file on disk.
+//   (7) recovery       — a direct write that did not re-read, or wrote over the human's committed
+//                        line. The base is compared against a sha256 of the human's own bytes.
 //   (8) rollback       — any statement of the write sequence left outside the protected region,
 //                        and — the multi-file half — a rollback that stops at the first failure.
 //   (9) idempotency    — an `already-applied` answer that dropped the human-first commit from the
@@ -79,6 +85,7 @@ import {
   utf8Encode,
 } from '@vostride/agent-qa-schema'
 import type {
+  ConfigChangeOutput,
   ConfigProposalApplyableV1,
   ConfigProposeOutput,
   FunctionCaller,
@@ -99,9 +106,11 @@ import {
   createConfigFilesPort,
   createConfigUndoSourcePort,
   createConfigValidatePort,
+  createConfigWritePort,
 } from '../local-agent-host.js'
 import type { GitApplyExec } from '../local-agent-host.js'
 import * as hostModule from '../local-agent-host.js'
+import { filePre432ConfigProposal } from './pre-432-config-proposal.js'
 
 const HUMAN: FunctionCaller = {
   surface: 'test',
@@ -282,6 +291,8 @@ function registryFor(overrides: Partial<FunctionDeps> = {}) {
     configScan: { scan: (parts) => scanConstructedArtifact(parts, {}) },
     configApply: createConfigApplyPort(configPath),
     configUndoSource: createConfigUndoSourcePort(configPath),
+    // 432-11: the direct writer the config operations publish through.
+    configWrite: createConfigWritePort(configPath),
     // 400-05: THIS FIXTURE DECLARES NO DOOR, and that is a real posture rather than an oversight —
     // it is the shape of every proposal minted before the minting surface was recorded at all. So
     // the author these cells assert is the honest `unrecorded` arm, which gives them incidental
@@ -321,6 +332,14 @@ async function call(
   input: unknown,
 ): Promise<ConfigProposeOutput> {
   return await invokeFunction(registry, id, input, HUMAN) as ConfigProposeOutput
+}
+
+/**
+ * A pre-432 `config.field.set` proposal over the config as it stands, filed as the old pipeline
+ * filed it (432-11: the op now writes in the call; the accept path serves records already on disk).
+ */
+async function proposeField(input: { path: string; value: string | number | boolean }): Promise<string> {
+  return (await filePre432ConfigProposal({ configPath, agentQaRoot, edits: [input] })).proposalId
 }
 
 function proposedId(answer: ConfigProposeOutput): string {
@@ -363,9 +382,7 @@ describe('D-05: the human commits first, and the agent commits only what was app
     writeFileSync(configPath, humanEdit)
 
     const registry = registryFor()
-    const id = proposedId(await call(registry, 'config.field.set', {
-      path: 'use.timeout.step', value: '45s',
-    }))
+    const id = await proposeField({ path: 'use.timeout.step', value: '45s' })
     const before = commitCount()
 
     await accept(registry, id)
@@ -403,9 +420,7 @@ describe('D-05: the human commits first, and the agent commits only what was app
   it('(1b) the receipt names both commits, human first, and they are the commits git holds', async () => {
     writeFileSync(configPath, SEEDED_CONFIG.replace('test: 90m', 'test: 45m'))
     const registry = registryFor()
-    const id = proposedId(await call(registry, 'config.field.set', {
-      path: 'use.timeout.step', value: '45s',
-    }))
+    const id = await proposeField({ path: 'use.timeout.step', value: '45s' })
 
     const answer = await accept(registry, id) as {
       apply: { outcome: string; applied?: { kind: string; outcome: { commits: { role: string; hash: string }[] } } }
@@ -431,9 +446,7 @@ describe('D-05: the human commits first, and the agent commits only what was app
     writeFileSync(join(root, 'notes.md'), 'a scratch note, edited\n')
 
     const registry = registryFor()
-    const id = proposedId(await call(registry, 'config.field.set', {
-      path: 'use.timeout.step', value: '45s',
-    }))
+    const id = await proposeField({ path: 'use.timeout.step', value: '45s' })
     await accept(registry, id)
 
     // Neither commit names them...
@@ -494,8 +507,8 @@ describe('CFGM-04: a concurrent human edit always beats the agent (D-18)', () =>
     const registry = registryFor()
     // BOTH PROPOSALS ARE MINTED AGAINST THE SAME PRE-STATE, which is what makes them a race rather
     // than a sequence: B's `baseDigest` describes bytes A is about to replace.
-    const a = proposedId(await call(registry, 'config.field.set', { path: 'use.timeout.step', value: '45s' }))
-    const b = proposedId(await call(registry, 'config.field.set', { path: 'use.timeout.test', value: '10m' }))
+    const a = await proposeField({ path: 'use.timeout.step', value: '45s' })
+    const b = await proposeField({ path: 'use.timeout.test', value: '10m' })
     expect(storedApplyablePayload(a).files[0]?.baseDigest)
       .toBe(storedApplyablePayload(b).files[0]?.baseDigest)
 
@@ -515,7 +528,7 @@ describe('CFGM-04: a concurrent human edit always beats the agent (D-18)', () =>
 
   it('(5) the stale refusal names the file, the fact, and a recovery command that EXISTS', async () => {
     const registry = registryFor()
-    const id = proposedId(await call(registry, 'config.field.set', { path: 'use.timeout.step', value: '45s' }))
+    const id = await proposeField({ path: 'use.timeout.step', value: '45s' })
 
     const humanEdit = SEEDED_CONFIG.replace('test: 90m', 'test: 20m')
     writeFileSync(configPath, humanEdit)
@@ -566,7 +579,7 @@ describe('CFGM-04: a concurrent human edit always beats the agent (D-18)', () =>
     // re-check, this apply refuses AND leaves a commit behind — "your apply was refused, and it
     // committed your work". Here the person's bytes must still be sitting uncommitted afterwards.
     const registry = registryFor()
-    const id = proposedId(await call(registry, 'config.field.set', { path: 'use.timeout.step', value: '45s' }))
+    const id = await proposeField({ path: 'use.timeout.step', value: '45s' })
 
     const humanEdit = SEEDED_CONFIG.replace('test: 90m', 'test: 20m')
     writeFileSync(configPath, humanEdit)
@@ -587,30 +600,27 @@ describe('CFGM-04: a concurrent human edit always beats the agent (D-18)', () =>
     expect(indexEntry('agent-qa.config.yaml')).toBe(indexBefore)
   })
 
-  it('(7) re-proposing after a stale refusal reads the human\'s bytes — the new digest is over THEM', async () => {
+  it('(7) the named recovery after a stale refusal lands on the human\'s bytes, not over them', async () => {
     const registry = registryFor()
-    const stale = proposedId(await call(registry, 'config.field.set', { path: 'use.timeout.step', value: '45s' }))
+    const stale = await proposeField({ path: 'use.timeout.step', value: '45s' })
 
     const humanEdit = SEEDED_CONFIG.replace('test: 90m', 'test: 20m')
     writeFileSync(configPath, humanEdit)
     git('commit', '--quiet', '-m', 'human shortens the test timeout', '--', 'agent-qa.config.yaml')
     await expect(accept(registry, stale)).rejects.toMatchObject({ name: 'ConfigApplyStaleError' })
 
-    // THE NAMED RECOVERY, PERFORMED BY THE PERSON — never by the refusal (D-18).
-    const fresh = await call(registry, 'config.field.set', { path: 'use.timeout.step', value: '45s' })
-    const id = proposedId(fresh)
+    // THE NAMED RECOVERY, PERFORMED BY THE PERSON — never by the refusal (D-18). Since 432-11 the
+    // recovery the refusal names, `agent-qa fn config.field.set`, writes the change in the call,
+    // over the bytes on disk now: the human's committed line is kept.
+    const beforeRecovery = sha256hexBytes(Uint8Array.from(readFileSync(configPath)))
+    const fresh = await invokeFunction(
+      registry, 'config.field.set', { path: 'use.timeout.step', value: '45s' }, HUMAN,
+    ) as ConfigChangeOutput
+    if (fresh.outcome !== 'applied') throw new Error(`expected a direct write, got ${fresh.outcome}`)
 
-    // COMPUTED IN THIS TEST FROM THE FILE ON DISK, not read back out of the record the pipeline
-    // also produced. A construction that skipped the re-read would carry the pre-edit digest here.
-    expect(storedApplyablePayload(id).files[0]?.baseDigest)
-      .toBe(sha256hexBytes(Uint8Array.from(readFileSync(configPath))))
-
-    // AND THE HUMAN'S LINE IS IN THE DIFF a person is asked to approve.
-    if (fresh.outcome !== 'proposed') throw new Error('unreachable')
+    // THE HUMAN'S LINE IS IN THE CONTEXT OF THE DIFF the answer carries, and the base was their bytes.
     expect(fresh.shownDiff).toContain('test: 20m')
-
-    // The fresh proposal applies cleanly, over the human's committed state.
-    await accept(registry, id)
+    expect(beforeRecovery).toBe(sha256hexBytes(utf8Encode(humanEdit)))
     expect(readFileSync(configPath, 'utf8')).toBe(humanEdit.replace('step: 30s', 'step: 45s'))
   })
 })
@@ -709,7 +719,7 @@ describe('CFGM-03 idempotency: the retry gets the ORIGINAL receipt, both commits
   it('(9) a second apply of a two-commit proposal answers already-applied naming human AND agent', async () => {
     writeFileSync(configPath, SEEDED_CONFIG.replace('test: 90m', 'test: 45m'))
     const registry = registryFor()
-    const id = proposedId(await call(registry, 'config.field.set', { path: 'use.timeout.step', value: '45s' }))
+    const id = await proposeField({ path: 'use.timeout.step', value: '45s' })
     await accept(registry, id)
 
     const humanHash = git('rev-parse', '--short', 'HEAD~1').stdout.trim()
@@ -734,7 +744,7 @@ describe('CFGM-03 idempotency: the retry gets the ORIGINAL receipt, both commits
     // is not the preserve subject, so a receipt that named it would be claiming somebody else's
     // commit as part of this apply.
     const registry = registryFor()
-    const id = proposedId(await call(registry, 'config.field.set', { path: 'use.timeout.step', value: '45s' }))
+    const id = await proposeField({ path: 'use.timeout.step', value: '45s' })
     await accept(registry, id)
     const agentHash = git('rev-parse', '--short', 'HEAD').stdout.trim()
 
@@ -765,9 +775,7 @@ describe('D-07: undo is a proposal, and it rides the one gated write path', () =
     const registry = registryFor()
     const original = Uint8Array.from(readFileSync(configPath))
 
-    await accept(registry, proposedId(await call(
-      registry, 'config.field.set', { path: 'use.timeout.step', value: '45s' },
-    )))
+    await accept(registry, await proposeField({ path: 'use.timeout.step', value: '45s' }))
     expect(Uint8Array.from(readFileSync(configPath))).not.toEqual(original)
 
     const undo = await call(registry, 'config.undo.propose', {})
@@ -785,9 +793,7 @@ describe('D-07: undo is a proposal, and it rides the one gated write path', () =
 
   it('(12) an intervening human commit SURFACES inside the revert diff instead of colliding', async () => {
     const registry = registryFor()
-    await accept(registry, proposedId(await call(
-      registry, 'config.field.set', { path: 'use.timeout.step', value: '45s' },
-    )))
+    await accept(registry, await proposeField({ path: 'use.timeout.step', value: '45s' }))
 
     // The human edits a DIFFERENT line of the same file, and commits it.
     const current = readFileSync(configPath, 'utf8')
@@ -824,9 +830,7 @@ describe('D-07: undo is a proposal, and it rides the one gated write path', () =
     const registry = registryFor()
     const original = readFileSync(configPath, 'utf8')
 
-    await accept(registry, proposedId(await call(
-      registry, 'config.field.set', { path: 'use.timeout.step', value: '45s' },
-    )))
+    await accept(registry, await proposeField({ path: 'use.timeout.step', value: '45s' }))
     const mutated = readFileSync(configPath, 'utf8')
 
     await accept(registry, proposedId(await call(registry, 'config.undo.propose', {})))
@@ -862,9 +866,7 @@ describe('the config dir is NOT the repository root (395-11 · CR-03)', () => {
     const registry = registryFor()
     const original = Uint8Array.from(readFileSync(configPath))
 
-    await accept(registry, proposedId(await call(
-      registry, 'config.field.set', { path: 'use.timeout.step', value: '45s' },
-    )))
+    await accept(registry, await proposeField({ path: 'use.timeout.step', value: '45s' }))
     const mutated = Uint8Array.from(readFileSync(configPath))
     expect(mutated).not.toEqual(original)
 
@@ -933,9 +935,7 @@ describe('the config dir is NOT the repository root (395-11 · CR-03)', () => {
       configUndoSource: createConfigUndoSourcePort(configPath, strayExec),
     })
 
-    await accept(registry, proposedId(await call(
-      registry, 'config.field.set', { path: 'use.timeout.step', value: '45s' },
-    )))
+    await accept(registry, await proposeField({ path: 'use.timeout.step', value: '45s' }))
     const commitsBefore = commitCount()
     const filedBefore = await invokeFunction(registry, 'proposals.list', {}, HUMAN)
 
@@ -965,9 +965,7 @@ describe('the config dir is NOT the repository root (395-11 · CR-03)', () => {
     writeFileSync(configPath, humanEdit)
 
     const registry = registryFor()
-    const id = proposedId(await call(registry, 'config.field.set', {
-      path: 'use.timeout.step', value: '45s',
-    }))
+    const id = await proposeField({ path: 'use.timeout.step', value: '45s' })
     const before = commitCount()
 
     await accept(registry, id)

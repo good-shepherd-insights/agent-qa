@@ -27,11 +27,12 @@
 // the fix lands, and a marker that vanished under the fix would red these cells for the wrong
 // reason at GREEN time. The echoed clause is stable across both revisions and unique per cell.
 //
-// EXPECTATIONS ARE READ OFF THE RECORD THE RUN ITSELF FILED (produced-not-literal; 390-03's law).
+// EXPECTATIONS ARE READ OFF THE ANSWER THE RUN ITSELF GAVE (produced-not-literal; 390-03's law).
 // Not one blocked reason, detector name, validation issue or diff line is spelled in this file.
-// Each cell drives the binary, opens the `.agent-qa/proposals` record that drive produced, parses it
-// with the SHIPPED contract, and asks whether those bytes reached the terminal. A cell carrying its
-// own copy of an expected string keeps passing after the thing it claims to be about has changed.
+// Each cell drives the binary, reads the op's own answer off the session log the child wrote,
+// parses it with the SHIPPED contract, and asks whether those bytes reached the terminal. 2026-09-30,
+// 432-11 D-05: the answer used to be read off the proposal record the drive filed; the config op now
+// writes in the call and files nothing, so the child's own clause_result is the record.
 //
 // NO CREDENTIAL, REAL OR OTHERWISE. The guardrail cell plants a SYNTHETIC value with an `sk-PROBE-`
 // prefix and a body of zeroes — enough for the detector to fire, and nothing that exists anywhere.
@@ -50,8 +51,8 @@ import { Client } from '@modelcontextprotocol/client'
 import { StdioClientTransport } from '@modelcontextprotocol/client/stdio'
 import { AGENT_ASK_FUNCTION_ID, CONFIG_FIELD_SET_FUNCTION_ID } from '@vostride/agent-qa-agent'
 import { maskedToolResult } from '@vostride/agent-qa-mcp'
-import { ConfigProposalV1Schema } from '@vostride/agent-qa-schema'
-import type { ConfigProposalV1 } from '@vostride/agent-qa-schema'
+import { ConfigChangeOutputSchema } from '@vostride/agent-qa-schema'
+import type { ConfigChangeOutput } from '@vostride/agent-qa-schema'
 import { afterEach, describe, expect, it } from 'vitest'
 
 import { renderFnResult } from '../../commands/fn.js'
@@ -131,29 +132,28 @@ interface RenderReading {
    * still below every starter prompt; it is not a search of stdout.
    */
   readonly receiptLine: string
-  /** The proposal this very drive filed, parsed with the shipped contract. */
-  readonly filed: ConfigProposalV1
+  /** The answer this very drive's op gave, off the child's session log, parsed with the contract. */
+  readonly answer: ConfigChangeOutput
   readonly stdout: string
   readonly stderr: string
 }
 
 /**
- * The ONE record `.agent-qa/proposals` holds after a drive, parsed rather than read as JSON.
+ * The ONE `config.field.set` answer the child logged after a drive, parsed rather than read as JSON.
  *
  * PARSED WITH THE SHIPPED SCHEMA so a cell cannot build its expectation out of a shape the product
- * does not actually produce, and so a record that stopped conforming is a red here rather than an
- * `undefined` quietly reaching a `toContain`.
+ * does not actually produce, and so an answer that stopped conforming is a red here rather than an
+ * `undefined` quietly reaching a `toContain`. Nothing is filed any more (432-11), and the drive's
+ * runtime root is asserted to hold no proposal record.
  */
-function filedProposal(root: string): ConfigProposalV1 {
-  const dir = join(root, '.agent-qa', 'proposals')
-  expect(existsSync(dir), `the drive filed no proposals directory under ${dir}`).toBe(true)
-  const files = readdirSync(dir).filter((name) => name.endsWith('.json')).sort()
-  expect(files, 'the drive filed something other than exactly one proposal record').toHaveLength(1)
-  const envelope = JSON.parse(readFileSync(join(dir, files[0]!), 'utf8')) as { payload?: unknown }
-  const parsed = ConfigProposalV1Schema.safeParse(envelope.payload)
+function changeAnswer(root: string): ConfigChangeOutput {
+  expect(existsSync(join(root, '.agent-qa', 'proposals')), 'the drive filed a proposal record')
+    .toBe(false)
+  const result = childClauseResult(root, CONFIG_FIELD_SET_FUNCTION_ID)
+  const parsed = ConfigChangeOutputSchema.safeParse(result.payload)
   expect(
     parsed.success ? [] : parsed.error.issues.map((issue) => issue.path.join('.')),
-    'the filed record does not parse against the shipped config-proposal contract',
+    'the logged answer does not parse against the shipped config-change contract',
   ).toEqual([])
   if (!parsed.success) throw new Error('unreachable: the assertion above has already failed')
   return parsed.data
@@ -205,7 +205,7 @@ async function driveFieldSet(label: string, path: string, value: string): Promis
       outcome.stdout.lastIndexOf('\n', markerIndex) + 1,
       lineEnd === -1 ? undefined : lineEnd,
     ),
-    filed: filedProposal(fixture.root),
+    answer: changeAnswer(fixture.root),
     stdout: outcome.stdout,
     stderr: outcome.stderr,
   }
@@ -238,17 +238,17 @@ describe('the chat render anchors (399.1, G-399-2)', () => {
       // and WHAT the scan found — both read off the record this drive just filed.
       const reading = await driveFieldSet('guardrail', SETTABLE_PATH, PLANTED_SECRET)
 
-      expect(reading.filed.payloadKind, 'the guardrail cell did not reach the blocked arm')
+      expect(reading.answer.outcome, 'the guardrail cell did not reach the blocked arm')
         .toBe('blocked')
-      if (reading.filed.payloadKind !== 'blocked') return
+      if (reading.answer.outcome !== 'blocked') return
 
-      expect(reading.filed.blockedReason, 'the guardrail cell reached the wrong blocked road')
+      expect(reading.answer.blockedReason, 'the guardrail cell reached the wrong blocked road')
         .toBe('guardrail-hit')
       expect(reading.slice, withheld('guardrail', reading))
-        .toContain(asRendered(reading.filed.blockedReason))
+        .toContain(asRendered(reading.answer.blockedReason))
 
-      const findings = reading.filed.scanFindings ?? []
-      expect(findings.length, 'the blocked record carried no scan findings to look for').toBeGreaterThan(0)
+      const findings = reading.answer.scanFindings ?? []
+      expect(findings.length, 'the blocked answer carried no scan findings to look for').toBeGreaterThan(0)
       for (const finding of findings) {
         expect(reading.slice, withheld('guardrail', reading)).toContain(asRendered(finding.detector))
         expect(reading.slice, withheld('guardrail', reading)).toContain(asRendered(finding.path))
@@ -267,22 +267,22 @@ describe('the chat render anchors (399.1, G-399-2)', () => {
     async () => {
       const reading = await driveFieldSet('schema-fail', UNSETTABLE_PATH, BENIGN_VALUE)
 
-      expect(reading.filed.payloadKind, 'the schema-fail cell did not reach the blocked arm')
+      expect(reading.answer.outcome, 'the schema-fail cell did not reach the blocked arm')
         .toBe('blocked')
-      if (reading.filed.payloadKind !== 'blocked') return
+      if (reading.answer.outcome !== 'blocked') return
 
       // The benign value is what keeps these two arms apart: the scan runs first, so a credential
       // here would have landed `guardrail-hit` and this cell would be measuring the one above.
       expect(
-        reading.filed.blockedReason,
+        reading.answer.blockedReason,
         'the schema-fail cell landed on the scan road instead of the validation road — see '
         + 'UNSETTABLE_PATH above for why its value must stay benign',
       ).toBe('schema-fail')
       expect(reading.slice, withheld('schema-fail', reading))
-        .toContain(asRendered(reading.filed.blockedReason))
+        .toContain(asRendered(reading.answer.blockedReason))
 
-      const issues = reading.filed.validationIssues ?? []
-      expect(issues.length, 'the blocked record carried no validation issues to look for')
+      const issues = reading.answer.validationIssues ?? []
+      expect(issues.length, 'the blocked answer carried no validation issues to look for')
         .toBeGreaterThan(0)
       for (const issue of issues) {
         expect(reading.slice, withheld('schema-fail', reading)).toContain(asRendered(issue))
@@ -290,72 +290,73 @@ describe('the chat render anchors (399.1, G-399-2)', () => {
     }, 180_000)
 
   it('prints the reviewable diff when the mutation is genuinely proposed', async () => {
+    // 432-11: "genuinely proposed" now means genuinely WRITTEN — the success arm is `applied`.
     const reading = await driveFieldSet('success', SETTABLE_PATH, BENIGN_VALUE)
 
-    expect(reading.filed.payloadKind, 'the success cell did not reach the applyable arm')
-      .toBe('applyable')
-    if (reading.filed.payloadKind !== 'applyable') return
+    expect(reading.answer.outcome, 'the success cell did not reach the applied arm')
+      .toBe('applied')
+    if (reading.answer.outcome !== 'applied') return
 
     expect(reading.slice, withheld('success', reading))
-      .toContain(asRendered(reading.filed.summaryLine))
+      .toContain(asRendered(reading.answer.summaryLine))
+    for (const path of reading.answer.files) {
+      expect(reading.slice, withheld('success', reading)).toContain(asRendered(path))
+    }
 
     // THE WHOLE DIFF, not a line of it (D-04). The default render is `JSON.stringify(payload, null,
     // 2)` precisely so it is structurally incapable of withholding a field, and a cell that settled
     // for one recognisable line would pass against a hand-picked field join — which is the RC-2
     // drop-site shape this phase's prohibition exists to forbid.
-    const shownDiff = Buffer.from(reading.filed.shownDiffBase64, 'base64').toString('utf8')
-    expect(shownDiff.length, 'the filed record carried an empty diff to look for').toBeGreaterThan(0)
+    const shownDiff = reading.answer.shownDiff
+    expect(shownDiff.length, 'the answer carried an empty diff to look for').toBeGreaterThan(0)
     expect(reading.slice, withheld('success', reading)).toContain(asRendered(shownDiff))
   }, 180_000)
 
   it('renders a SECOND op\'s payload too, on the read door chat advertises itself', async () => {
-    // THE PER-DOOR RENDER CELL (RESEARCH Pitfall 4), and a D-11 witness: `proposals.list` is one of
-    // the five filed witnesses, and it is the one the probe singled out — chat advertises
-    // `proposals` in its own starter prompts, and answers `proposals.list completed`. A person told
-    // a mutation "completed" who goes looking for it in the inbox chat offered them is told
-    // "completed" a second time.
+    // THE PER-DOOR RENDER CELL (RESEARCH Pitfall 4). A render that worked for exactly one op id
+    // would be the hardcoded shape this phase demotes (criterion 6); this cell reds if the
+    // mechanism is `config.field.set` special-casing wearing a general name.
     //
-    // TWO TURNS IN ONE SESSION, so the second turn has something real to list: the first files a
-    // proposal, the second asks for the inbox. The payload searched for is the FIRST turn's filed
-    // summary line, read off disk — so this cell cannot pass on an empty inbox rendered honestly.
-    //
-    // WHY A SECOND OP AT ALL: a render that worked for exactly one op id would be the hardcoded
-    // shape this phase demotes (criterion 6). This cell reds if the mechanism is `config.field.set`
-    // special-casing wearing a general name.
+    // 432-11 D-05: the second op was `proposals.list`, reading the proposal the first turn filed.
+    // The first turn now WRITES the config in the call, so the second op is the configuration read
+    // door, `config.get`, and the payload searched for is the value the first turn wrote — so this
+    // cell cannot pass on a read that rendered an unchanged config honestly.
     expect(buildFreshness(), REBUILD_INSTRUCTION).toEqual({ missing: [], stale: [] })
     const fixture = fixtureProject('399-1-render-inbox')
-    const listClause = '/fn proposals.list {}'
+    const readClause = '/fn config.get {}'
     const outcome = await driveChatSpawned(
       fixture.root,
       fixture.configPath,
-      `${utteranceFor(SETTABLE_PATH, BENIGN_VALUE)}\n${listClause}`,
+      `${utteranceFor(SETTABLE_PATH, BENIGN_VALUE)}\n${readClause}`,
     )
 
     expect(
       { code: outcome.code, signal: outcome.signal, stderr: outcome.stderr.trim().slice(0, 600) },
-      'the spawned chat binary did not exit cleanly for the inbox cell',
+      'the spawned chat binary did not exit cleanly for the second-op cell',
     ).toMatchObject({ code: 0, signal: null })
 
-    const markerIndex = outcome.stdout.indexOf(listClause)
+    const markerIndex = outcome.stdout.indexOf(readClause)
     expect(
       markerIndex,
-      `the spawned chat binary never echoed "${listClause}"; its stdout was `
+      `the spawned chat binary never echoed "${readClause}"; its stdout was `
       + `${JSON.stringify(outcome.stdout.slice(0, 900))}`,
     ).toBeGreaterThanOrEqual(0)
     expect(
-      outcome.stdout.lastIndexOf(listClause),
-      `"${listClause}" occurs more than once in the child's stdout, so the post-marker slice this `
+      outcome.stdout.lastIndexOf(readClause),
+      `"${readClause}" occurs more than once in the child's stdout, so the post-marker slice this `
       + 'cell searches is not the one turn it means',
     ).toBe(markerIndex)
 
-    const slice = outcome.stdout.slice(markerIndex + listClause.length)
-    const filed = filedProposal(fixture.root)
+    const slice = outcome.stdout.slice(markerIndex + readClause.length)
+    const written = changeAnswer(fixture.root)
+    expect(written.outcome, 'the first turn did not write its change').toBe('applied')
+    expect(readFileSync(fixture.configPath, 'utf8')).toContain(BENIGN_VALUE)
     expect(
       slice,
-      'the shipped chat binary listed the inbox and printed nothing that is in it. post-marker '
-      + `stdout: ${JSON.stringify(slice.slice(0, 900))}; child stderr: `
+      'the shipped chat binary read the configuration and printed nothing the first turn wrote. '
+      + `post-marker stdout: ${JSON.stringify(slice.slice(0, 900))}; child stderr: `
       + `${JSON.stringify(outcome.stderr.trim().slice(0, 300))}`,
-    ).toContain(asRendered(filed.summaryLine))
+    ).toContain(asRendered(BENIGN_VALUE))
   }, 180_000)
 
   it('reports each arm\'s own VERDICT WORD on the receipt line, refusals and success alike',
@@ -376,14 +377,14 @@ describe('the chat render anchors (399.1, G-399-2)', () => {
       const schemaFail = await driveFieldSet('verdict-schema-fail', UNSETTABLE_PATH, BENIGN_VALUE)
       const proposed = await driveFieldSet('verdict-proposed', SETTABLE_PATH, BENIGN_VALUE)
 
-      // NON-VACUITY FIRST: the three drives really reached the two blocked arms and the applyable
+      // NON-VACUITY FIRST: the three drives really reached the two blocked arms and the applied
       // one. Without this, a fixture that landed three identical arms would satisfy every pin below
       // while measuring one arm three times.
       expect(
-        [guardrail, schemaFail, proposed].map((reading) => reading.filed.payloadKind),
-        'the three drives did not reach two blocked arms and the applyable arm, so the verdict '
+        [guardrail, schemaFail, proposed].map((reading) => reading.answer.outcome),
+        'the three drives did not reach two blocked arms and the applied arm, so the verdict '
         + 'words below would be pinning whatever this fixture happened to produce',
-      ).toEqual(['blocked', 'blocked', 'applyable'])
+      ).toEqual(['blocked', 'blocked', 'applied'])
 
       // D-01's decision, arm by arm. `blocked` is `refused` because the CONTROL WORKED and nothing
       // happened; `applyable` is `executed` because a proposal really was filed. The success arm is
@@ -402,7 +403,7 @@ describe('the chat render anchors (399.1, G-399-2)', () => {
       ).toBe('refused')
       expect(
         verdictWord(proposed),
-        'a proposal really was filed and the receipt does not read `executed`. the line the person '
+        'a change really was written and the receipt does not read `executed`. the line the person '
         + `read: ${JSON.stringify(proposed.receiptLine)}`,
       ).toBe('executed')
     }, 300_000)
@@ -506,9 +507,9 @@ describe('the chat render anchors (399.1, G-399-2)', () => {
     const success = await driveFieldSet('distinct-success', SETTABLE_PATH, BENIGN_VALUE)
 
     const filedOutcomes = [guardrail, schemaFail, success].map((reading) =>
-      reading.filed.payloadKind === 'blocked'
-        ? `${reading.filed.payloadKind}/${reading.filed.blockedReason}`
-        : reading.filed.payloadKind,
+      reading.answer.outcome === 'blocked'
+        ? `${reading.answer.outcome}/${reading.answer.blockedReason}`
+        : reading.answer.outcome,
     )
     expect(
       new Set(filedOutcomes).size,
@@ -519,7 +520,7 @@ describe('the chat render anchors (399.1, G-399-2)', () => {
     const readings: readonly { readonly label: string; readonly slice: string }[] = [
       { label: 'guardrail-hit', slice: guardrail.slice },
       { label: 'schema-fail', slice: schemaFail.slice },
-      { label: 'applyable', slice: success.slice },
+      { label: 'applied', slice: success.slice },
     ]
     for (const left of readings) {
       for (const right of readings) {

@@ -29,6 +29,7 @@
 
 import { z } from 'zod'
 
+import { CONFIG_BLOCKED_REASONS, ConfigScanFindingSchema } from './actions'
 import { CROSS_BOUNDARY_REASONS } from './constants'
 
 /** Version 1: the first shape. No config proposal exists on disk anywhere yet. */
@@ -113,17 +114,9 @@ export const ConfigProposalApplyableV1Schema = z.object({
 
 export type ConfigProposalApplyableV1 = z.infer<typeof ConfigProposalApplyableV1Schema>
 
-/**
- * Why a proposal is blocked. One POSTURE, two reasons (CFGM-01 / D-10).
- *
- * TWO REASONS AND NOT TWO POSTURES: a schema failure and a guardrail hit arrive by different roads
- * and mean different things to a person, but they produce the same artifact — a record that names
- * what was found and carries no payload to apply. Splitting them into two shapes would give every
- * surface two things to render for one decision that is always "there is nothing here to accept".
- */
-export const CONFIG_BLOCKED_REASONS = ['schema-fail', 'guardrail-hit'] as const
-
-export type ConfigBlockedReason = (typeof CONFIG_BLOCKED_REASONS)[number]
+// `CONFIG_BLOCKED_REASONS` and `ConfigScanFindingSchema` moved to `actions.ts` on 2026-09-30 (432-11):
+// the direct config answer carries the same report, and the stored blocked arm below reads them
+// from there until the proposal payloads are deleted.
 
 /**
  * Why a propose call produced NO PROPOSAL AT ALL (Phase 395-05).
@@ -186,28 +179,6 @@ export const CONFIG_REFUSAL_REASONS = [
 ] as const
 
 export type ConfigRefusalReason = (typeof CONFIG_REFUSAL_REASONS)[number]
-
-/**
- * One thing the guardrail scan found, described so a person can act without the value being shown.
- *
- * `redactedFingerprint` IS THE WHOLE DESIGN OF THIS SHAPE. A finding that quoted the secret would
- * reintroduce, in the block record, exactly the leak the block exists to prevent — and the block
- * record is persisted, so it would outlive the proposal it refused. A stable non-reversing
- * fingerprint lets two findings be compared ("this is the same value as in your other file")
- * without either of them carrying it.
- */
-export const ConfigScanFindingSchema = z.object({
-  /** Workspace-relative path of the file the finding is in. */
-  path: z.string().min(1),
-  /** The config path or diff line label, when the detector can name one. */
-  field: z.string().min(1).optional(),
-  /** Which detector fired, in the safety package's own vocabulary (D-09). */
-  detector: z.string().min(1),
-  /** A short, non-reversing marker for the matched value. NEVER the value. */
-  redactedFingerprint: z.string().min(1),
-}).strict()
-
-export type ConfigScanFinding = z.infer<typeof ConfigScanFindingSchema>
 
 /**
  * The blocked arm: a change that will not be offered, and the report of why.

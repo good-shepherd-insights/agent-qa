@@ -1,6 +1,11 @@
 // `agent-qa ask` at a terminal: what a person is SHOWN before they are asked (395-22 · CFGM-05 ·
 // SC-5 · the owner's 2026-08-15 CR-04 ruling, completed on the UNBOUND-present arm).
 //
+// 2026-09-30, 432-11 D-05/D-14: THE SCAFFOLD WRITES IN ITS OWN CALL and nothing asks. There is no
+// apply to approve, so the render is a receipt of a change already on disk and a missing surface no
+// longer stops the turn. Both cells are re-spelled in place: (A2) a headless ask configures and
+// authors with no prompt, (A1) a bound surface is shown the change after it was written.
+//
 // THIS FILE IS 395-VERIFICATION's SCRATCH CELL MADE PERMANENT. Gap round 4 wrote one acceptance
 // cell, drove `agent.ask` through the PRODUCTION composition — `composeCliLocalAgent` plus the
 // shipped confirm, only the streams substituted — over a real git repository holding a config with
@@ -37,7 +42,7 @@
 // `write_test` clause, which is the same nondeterminism SC-5's own live lane lives with. Nothing
 // here asserts what a model WOULD emit — the claim is about what the route does with a clause.
 
-import { mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { spawnSync } from 'node:child_process'
@@ -58,17 +63,6 @@ const CONFIG_FILE = 'agent-qa.config.yaml'
 
 /** The utterance the round-4 verification drove, verbatim. */
 const UTTERANCE = 'write a test for booking.com checkout'
-
-/**
- * The fixed sentence every displayability refusal carries (`WRITE_TEST_UNDISPLAYABLE_DETAIL`).
- *
- * A FRAGMENT AND NOT THE WHOLE LITERAL, and not the imported constant either: `packages/agent`'s
- * barrel does not publish it, and a CLI cell that reached around the barrel would be asserting
- * through a door no shipped surface has. What this file owns is the PROPERTY a person reads — that
- * they were told they are never asked to accept a change they were not shown. The wording beyond
- * this clause is the source's to choose, and `write-test-scaffold-route.test.ts` pins it exactly.
- */
-const NEVER_ASKED = 'never asked to accept a change you were not shown'
 
 /**
  * A configuration that declares an LLM and NO TARGETS — SC-5's serving class (395-12).
@@ -153,6 +147,15 @@ function scriptedWriteTestPlanner(): { model: unknown; calls: () => number } {
   return { model, calls: () => reached }
 }
 
+/** The target the scaffold wrote into the config on disk, if any. */
+function configuredBooking(): boolean {
+  try {
+    return readFileSync(configPath, 'utf8').includes('booking-com:')
+  } catch {
+    return false
+  }
+}
+
 /** Every proposal record the composition durably filed, read the way a person's inbox reads them. */
 function filedProposals(): string[] {
   const dir = join(agentQaRoot, 'proposals')
@@ -187,14 +190,14 @@ afterEach(() => {
 })
 
 describe('agent-qa ask, at a terminal, over a project with nothing to test against', () => {
-  it('(A2) with NO presentation port bound the route REFUSES — the confirm is never reached',
+  it('(A2) with NO presentation port bound the scaffold still writes and the turn authors — nothing asks',
     async () => {
       // THE SHIPPED PRE-FIX SHAPE, EXACTLY. `ask.ts` bound no `chatPresent` and passed no confirm,
       // so `composeCliLocalAgent` supplied `createTtyConfirmPort()` — a real prompt a person can
       // answer. Here the confirm is a SPY standing in for that prompt and nothing else is
       // substituted: the same registry, the same route, the same op, the same durable store.
       const planner = scriptedWriteTestPlanner()
-      const ask = vi.fn(() => true)
+      const ask = vi.fn((_action: unknown) => true)
       const confirm: ConfirmPort = { surface: 'tty-prompt', ask }
       const host = composeCliLocalAgent({
         agentQaRoot,
@@ -219,22 +222,18 @@ describe('agent-qa ask, at a terminal, over a project with nothing to test again
       // whose confirm count is zero because nothing happened would prove nothing at all.
       expect(planner.calls()).toBeGreaterThanOrEqual(1)
 
-      // THE WHOLE RULING, AS A CALL COUNT. `config.proposal.apply` is the gated verb whose
-      // invocation IS the prompt, so zero calls is the fact that nobody was asked to approve a
-      // configuration change they had been shown nothing of.
-      expect(ask.mock.calls.length).toBe(0)
+      // 432-11 D-14: NO PROMPT ABOUT THE CONFIGURATION. There is no apply verb to be asked about;
+      // whatever the gate still asks until 432-13 removes it, none of it names a config op.
+      const askedAbout = ask.mock.calls.map((call) => JSON.stringify(call))
+      expect(askedAbout.filter((asked) => asked.includes('config.'))).toEqual([])
 
-      // AND THE TURN SAYS SO. `fail_closed` carrying the refusal's own sentence — not the route's
-      // generic unconfigured detail, which would tell a person to name a site they already named.
-      expect(result.status).toBe('fail_closed')
-      expect(result.unhandled?.reason ?? '').toContain(NEVER_ASKED)
-
-      // NOTHING IS LOST: the route refuses the TURN, not the PROPOSAL. Exactly one record is filed
-      // and it is on disk under the id the refusal points a person at.
-      expect(filedProposals()).toHaveLength(1)
+      // THE CONFIG WAS WRITTEN AND THE TURN WENT ON TO AUTHOR against it; nothing was filed.
+      expect(configuredBooking()).toBe(true)
+      expect(result.status).not.toBe('fail_closed')
+      expect(filedProposals()).toHaveLength(0)
     })
 
-  it('(A1) with the port bound the proposal is RENDERED before the confirm is asked',
+  it('(A1) with the port bound the change is RENDERED once it is written, and nothing asks for it',
     async () => {
       // THE GUARD-ACCEPTS CONTROL, and it carries two claims at once.
       //
@@ -251,6 +250,7 @@ describe('agent-qa ask, at a terminal, over a project with nothing to test again
       const planner = scriptedWriteTestPlanner()
       const events: string[] = []
       const rendered: string[] = []
+      const configuredAtRender: boolean[] = []
       const ask = vi.fn(() => {
         events.push('confirm')
         return true
@@ -263,6 +263,7 @@ describe('agent-qa ask, at a terminal, over a project with nothing to test again
         chatPresent: (text: string) => {
           events.push('present')
           rendered.push(text)
+          configuredAtRender.push(configuredBooking())
         },
         chatModel: planner.model as never,
       })
@@ -279,15 +280,14 @@ describe('agent-qa ask, at a terminal, over a project with nothing to test again
         await host.close()
       }
 
-      // THE RENDER HAPPENED, EXACTLY ONCE, AND THE PROMPT CAME AFTER IT. Index comparison over the
-      // one list: a turn that rendered after asking would put `confirm` first, and a turn that never
-      // rendered would have no `present` at all.
+      // THE RENDER HAPPENED, EXACTLY ONCE, FIRST, AND AFTER THE WRITE: at the moment the receipt
+      // reached the surface, the configuration it describes was already on disk. Nothing asked
+      // before it (432-11 D-14).
       expect(rendered).toHaveLength(1)
       expect(events.indexOf('present')).toBe(0)
-      expect(events.indexOf('confirm')).toBeGreaterThan(events.indexOf('present'))
-      expect(ask.mock.calls.length).toBeGreaterThanOrEqual(1)
+      expect(configuredAtRender).toEqual([true])
 
-      // AND WHAT WAS RENDERED IS THIS PROPOSAL: its summary line, the config file it touches, and a
+      // AND WHAT WAS RENDERED IS THIS CHANGE: its summary line, the config file it touched, and a
       // true unified diff. Asserted as properties of the real op's own answer rather than as a
       // literal, so a re-derived or truncated render reds here.
       const text = rendered[0] ?? ''
@@ -299,6 +299,6 @@ describe('agent-qa ask, at a terminal, over a project with nothing to test again
       // AND THE TURN PROCEEDED: the far end of SC-5's sentence — authoring runs against the project
       // the person just configured, and the configuration really is on disk.
       expect(result.status).not.toBe('fail_closed')
-      expect(filedProposals()).toHaveLength(1)
+      expect(filedProposals()).toHaveLength(0)
     })
 })

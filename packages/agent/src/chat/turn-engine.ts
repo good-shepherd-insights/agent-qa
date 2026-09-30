@@ -49,7 +49,6 @@ import type {
 import { FunctionDeniedError } from '../functions/invoke.js'
 import { AUTHORING_DRAFT_WRITE_FUNCTION_ID } from '../functions/ops/authoring-draft-write.js'
 import { CONFIG_PROJECT_SCAFFOLD_FUNCTION_ID } from '../functions/ops/config-project-scaffold.js'
-import { CONFIG_PROPOSAL_APPLY_FUNCTION_ID } from '../functions/ops/config-proposal-apply.js'
 import {
   WRITE_TEST_UNCONFIGURED_DETAIL,
   resolveWriteTestRoute,
@@ -147,39 +146,15 @@ export interface TurnEngineDeps {
    */
   readonly configuredTargets?: () => Promise<readonly string[]>
   /**
-   * Where a mid-turn artifact a PERSON must read BEFORE deciding is written (395-13, D-14 · CFGM-05).
+   * Where a mid-turn artifact a person should read is written (395-13 · CFGM-05).
    *
-   * DISPLAY-ONLY, and that is a contract rather than a description. Nothing handed to this port
-   * enters an authorization decision: `classifyRisk`, the gate's `evaluate` and
-   * `FunctionSpec.disclose` read the identical action they always did, and the descriptor the gate
-   * receives is untouched. A seam that fed the gate would be I/O placed between a caller and its
-   * own authorization decision, which `spec.ts` forbids by name one file over.
+   * DISPLAY-ONLY. Nothing handed to this port enters a decision, and nothing waits on it.
    *
-   * ABSENT ⇒ THE `write_test` SCAFFOLD ROUTE REFUSES, AND THAT IS MEASURED RATHER THAN ASSERTED
-   * (395-22 · CR-03). This paragraph used to say the opposite — that an absent port is a posture
-   * and not a degraded mode, and that every headless host and every `agent.ask` caller alike still
-   * meets the gate's refusal unchanged. 395-VERIFICATION (gap round 4) drove `agent.ask`
-   * through the production composition and measured that sentence FALSE: `composeCliLocalAgent`
-   * binds `input.confirm ?? createTtyConfirmPort()` regardless of this port, so at a terminal an
-   * unbound `present` is not a host that fails closed — it is a host that PROMPTS, having shown the
-   * person nothing. The complete set of bytes reaching their terminal before the decision was the
-   * approval prompt itself.
-   *
-   * A confirm a person can approve must never be reachable for a change they were not shown, so
-   * `routeWriteTest` now treats displayability as a PRECONDITION of the gated apply: no port, or
-   * nothing worth printing, and the route stops with `WRITE_TEST_UNDISPLAYABLE_DETAIL` above the
-   * render. The proposal stays filed and readable under its own id. The gate's deny-by-default is
-   * still not this seam's to move in either direction — what changed is that the route no longer
-   * walks a person INTO the gate blind. A host that binds no surface and never reaches this route
-   * is untouched, which is every non-chat CLI invocation.
-   *
-   * IT EXISTS BECAUSE THE ONE CHAIN THAT ASKS FOR AN APPROVAL MID-TURN HAD NOTHING TO SHOW.
-   * `routeWriteTest` invokes `config.proposal.apply` — a gated verb — from inside a turn, so the
-   * shipped v48/392 confirm pauses the chain at a point where no surface had yet been given the
-   * proposal. D-14 is one sentence with two halves: *the scaffold proposal renders inline, the
-   * shipped confirm pauses the chain*. The second half shipped in 395-08; 395-VERIFICATION measured
-   * the first half absent (zero diff markers, zero mention of the file, the target or the summary
-   * line anywhere a person could read), and this is that half.
+   * 2026-09-30, 432-11 D-05/D-14: the `write_test` scaffold route writes the configuration in the
+   * scaffold call itself, so what this port shows is a receipt of a change already on disk: the
+   * summary, the files written and the diff. It is no longer a precondition of an approval, because
+   * there is no approval. An absent port, or one that fails, does not stop the turn; the clause
+   * receipt still names the files the scaffold wrote.
    */
   readonly present?: (text: string) => void | Promise<void>
   readonly now: () => string
@@ -279,24 +254,6 @@ function refusalName(error: unknown): string {
 function refusalMessage(error: unknown): string {
   return error instanceof Error && error.message !== '' ? error.message : refusalName(error)
 }
-
-/**
- * What a person is told when the scaffold proposal could NOT BE DISPLAYED (395-19 · CR-04).
- *
- * A FIXED LITERAL, AND THAT IS PART OF THE RULE. Nothing here is derived from the failed render —
- * not the caught error, not anything the broken port produced — because a refusal that quoted the
- * display surface would hand that surface a voice in the turn through the error path, which is the
- * one thing the guard around the render exists to deny (T-395-53).
- *
- * IT NAMES THE CONTINUATION because the route refuses the TURN and not the PROPOSAL: the record is
- * already durable under its own id when this arm is reached, so nothing a person asked for is lost
- * — it is waiting behind `proposals show`, which is the surface they would review it on anyway.
- */
-export const WRITE_TEST_UNDISPLAYABLE_DETAIL =
-  'The configuration change could not be displayed, so it was not offered for approval — you are '
-  + 'never asked to accept a change you were not shown. Nothing is lost: the proposal is still '
-  + 'filed. Run `agent-qa proposals list` to find it, `agent-qa proposals show <id>` to read it, '
-  + 'and `agent-qa proposals accept <id>` to apply it.'
 
 /**
  * The boundary verdict, ABOVE the change it is a verdict about (399.1, RC-2, criterion 4).
@@ -806,16 +763,9 @@ async function runTurnThrough(
    * model emitted, and it fires after an LLM call and a compilation. This asks a different question,
    * about the REQUEST, and it asks it before anything is spent.
    *
-   * THE CONFIRM IS THE SHIPPED ONE (D-14). There is no new suspended-approval state here and no
-   * second approval surface: `config.proposal.apply` is a gated verb, so the v48/392 inline confirm
-   * pauses THIS chain at THIS point, and a non-TTY host fails it closed by the gate's own posture.
-   * On approval the apply commits and control returns to the loop below, which dispatches authoring
-   * in the same turn against the target that now exists.
-   *
-   * IT NEVER RIDES A STANDING GRANT, AND THAT IS COMPUTED RATHER THAN ARRANGED. A scaffold proposal
-   * is always cross-boundary (a created target is a new origin), so 395-07's two-sided enforcement
-   * refuses a covering grant on the way in — the chain gets an individual human decision or it gets
-   * nothing.
+   * 2026-09-30, 432-11 D-05/D-14: NO CONFIRM. The scaffold writes the configuration in its own
+   * call, the receipt is shown where a surface exists, and control returns to the loop below, which
+   * dispatches authoring in the same turn against the target that now exists.
    */
   async function routeWriteTest(
     engine: TurnEngineDeps,
@@ -838,43 +788,32 @@ async function runTurnThrough(
     }
 
     // OP CALLS OP (392 D-24), through the same binding every other dispatch crosses — so the
-    // scaffold is gated, audited and receipted exactly as a directly-asked-for one would be.
-    let proposed: unknown
+    // scaffold is audited and receipted exactly as a directly-asked-for one would be.
+    //
+    // 2026-09-30, 432-11 D-05/D-14: THE SCAFFOLD WRITES IN THIS CALL. There is no proposal to show
+    // and no apply to ask about afterwards: the answer is what was written, and the route goes on
+    // to author against it.
+    let scaffolded: unknown
     try {
-      // THE PAYLOAD, off the classified envelope (399.1). This route reads the proposal the scaffold
-      // FILED — a summary line, a file list and a rendered diff it must show a person before it may
-      // ask them to approve anything — and a verdict has no part in that reading. The narrowing
-      // below is what decides whether the proposal is displayable at all.
-      proposed = (await engine.invoke(
+      scaffolded = (await engine.invoke(
         CONFIG_PROJECT_SCAFFOLD_FUNCTION_ID, { domain: route.domain }, caller,
       )).payload
     } catch (error) {
       writeTestRefusal = refusalMessage(error)
       return 'stop'
     }
-    // THE NARROWING READS THE PROPOSED ARM'S OWN FIELDS (395-13). It used to stop at three, and the
-    // three it stopped at were the ones a MACHINE needs — which is exactly why nothing a person
-    // could read ever left this function.
-    const answer = proposed as {
+    const answer = scaffolded as {
       outcome?: string
-      proposalId?: string
       detail?: string
       summaryLine?: string
       files?: readonly string[]
       shownDiff?: string
-      // RC-2 (399.1, criterion 4). The narrowing used to stop one field short of the only question
-      // the person is actually being asked: this write crosses a trust boundary, or it does not.
-      // Both are REQUIRED on `ConfigProposeOutputSchema`'s proposed arm, so their absence from the
-      // pre-confirm text was a reader-side drop — `demo/acceptance/399/ACCEPTANCE.md` §9 item 2.
-      // Optional HERE and not there, because this cast is the engine's own contract with every
-      // future producer, and a producer that files no verdict must reach the quiet path rather
-      // than a crash.
       crossBoundary?: boolean
       crossBoundaryReasons?: readonly string[]
     }
-    if (answer.outcome !== 'proposed' || answer.proposalId === undefined) {
-      // A refusal or a blocked record. Both are answers a person can act on, and neither is a
-      // reason to author a test against a project that is still unconfigured.
+    if (answer.outcome !== 'applied' || answer.files === undefined || answer.files.length === 0) {
+      // A refusal, a blocked change or an interrupted write. Each carries its own sentence where it
+      // has one, and none is a configuration to author a test against.
       writeTestRefusal = answer.detail ?? WRITE_TEST_UNCONFIGURED_DETAIL
       return 'stop'
     }
@@ -887,108 +826,26 @@ async function runTurnThrough(
       functionId: CONFIG_PROJECT_SCAFFOLD_FUNCTION_ID,
       origin: caller.origin,
       status: 'executed',
-      outcome: `proposed ${answer.proposalId}`,
+      outcome: `applied: ${answer.files.join(', ')}`,
     })
 
-    // D-14's FIRST HALF (395-13 · the SC-5 gap): the person about to be asked whether to apply this
-    // proposal is shown WHAT it applies, BEFORE the verb that applies it is invoked. The ordering is
-    // the whole claim — a render that arrived after the apply would be a receipt, and "reviewable"
-    // was ruled to bind at approval time.
-    //
-    // THE OP'S OWN BYTES, NEVER A RE-DERIVATION. `shownDiff` is the rendered text whose bytes the
-    // proposal record stores and D-19 byte-compares at apply, so what is read here cannot drift from
-    // what an accept commits. Composing a second diff from the same inputs would be a second answer
-    // to "what is about to happen", and the road where it would matter most is the one where the
-    // merge silently rewrites bytes it promised not to touch (F-02).
-    //
-    // ENTIRELY DOWNSTREAM OF THE CONSTRUCTION SCAN. These are the bytes CFGM-02's scan ranged over
-    // the WHOLE candidate set including context lines (D-12); the `blocked` arm carries no diff by
-    // construction and the route already returned above on any non-`proposed` outcome, so there is
-    // no arm of this function on which unscanned bytes reach a surface.
-    // DISPLAYABILITY IS A PRECONDITION OF THE APPLY, NOT A SIDE EFFECT OF A BOUND PORT (395-22 ·
-    // CR-03 · the owner's 2026-08-15 CR-04 ruling, completed). This used to be a field-presence
-    // GUARD around the render: satisfy it and the proposal was shown, miss it and control fell
-    // straight through to the gated apply below. 395-19 put the CR-04 refusal inside that guard,
-    // which closed the arm where a bound port THROWS and left open the arm where no port is bound
-    // at all — and `agent-qa ask` is that arm on a terminal: no `present`, a real
-    // `createTtyConfirmPort` confirm, the route bound unconditionally. 395-VERIFICATION (round 4)
-    // drove it through the production composition and measured the complete set of bytes reaching
-    // the person before the decision: one line, the approval prompt itself.
-    //
-    // SO THE CONDITION IS INVERTED AND HOISTED. Every way a proposal can fail to be displayable —
-    // no surface to print on, or nothing worth printing — produces the stop verdict HERE, above the
-    // render, and only a proposal that survives this can reach `engine.invoke(
-    // CONFIG_PROPOSAL_APPLY_FUNCTION_ID, …)`. That covers every host and every future producer
-    // rather than the two arms a verifier happened to drive, which is this phase's own
-    // sibling-input law applied to the guard's whole input set.
-    //
-    // EMPTINESS COUNTS AS ABSENCE, and that is the arm a presence-only check passes: an empty
-    // `shownDiff` renders a summary line above nothing at all and then asks for approval. The
-    // schema's proposed arm carries `.min(1)` as of this plan, so the real op cannot produce it —
-    // this is the engine's own answer, independent of any one producer's contract.
-    //
-    // ONE REFUSAL VOCABULARY. `WRITE_TEST_UNDISPLAYABLE_DETAIL` is reused verbatim for every arm
-    // rather than split into siblings: its sentence — you are never asked to accept a change you
-    // were not shown, and the proposal is still filed — is true of all of them, and a person who
-    // saw nothing does not need to be told which internal reason produced the nothing.
+    // THE RECEIPT, SHOWN WHERE A SURFACE EXISTS. The op's own summary, files and diff, never a
+    // re-derivation. Best effort: the change is already on disk and nothing waits on this render,
+    // so a surface that is absent or fails leaves the turn to continue.
     const present = engine.present
-    if (
-      present === undefined
-      || answer.summaryLine === undefined || answer.summaryLine === ''
-      || answer.files === undefined || answer.files.length === 0
-      || answer.shownDiff === undefined || answer.shownDiff === ''
-    ) {
-      writeTestRefusal = WRITE_TEST_UNDISPLAYABLE_DETAIL
-      return 'stop'
-    }
-
-    {
-      // INERT BY CONSTRUCTION, NOT BY LUCK (395-17 · CR-03 · RULING 2). D-14 says this port is
-      // display-only and absent-safe; that sentence is a claim about the port's THIRD state too —
-      // bound, and broken — and until this guard it was false there: the exception escaped
-      // `routeWriteTest` from a call site outside the dispatch try and took `runTurn` down with it.
-      // The try STAYS, and one await covers both arms of `(text) => void | Promise<void>` — the
-      // synchronous throw and the rejected promise — so no host binding can distinguish itself by
-      // which way its stream fails, and none can decide a turn by dying.
-      //
-      // BUT A TURN MAY NOT PRETEND A DISCLOSURE HAPPENED (395-19 · CR-04 · owner ruling
-      // 2026-08-15), and that is what this catch used to do. It swallowed by decision D-395-17-A,
-      // and the apply invoke below then ran unconditionally — so a host whose display had failed
-      // walked straight into `config.proposal.apply`'s confirm, asking a person to approve a
-      // configuration change they had been shown NOTHING of. SUPERSEDED: reviewability is this
-      // phase's thesis and SC-4 forbids an approval that silently widens scope; a blind confirm is
-      // the sharpest violation of it there is, and a bookkeeping receipt would have RECORDED the
-      // omission rather than PREVENTED it.
-      //
-      // SO THE ROUTE REFUSES, exactly as its other stop arms do. This costs the person nothing: the
-      // proposal was filed and receipted above, it stays reviewable under its own id, and the
-      // sentence points at the surface that reads it. The refusal is the TURN's, never the
-      // PROPOSAL's — and it is a fixed literal, so the broken port contributes no bytes to it.
+    if (present !== undefined) {
       try {
         await present(
-          [...crossBoundaryLines(answer), answer.summaryLine, ...answer.files, answer.shownDiff]
-            .join('\n'),
+          [
+            ...crossBoundaryLines(answer),
+            ...(answer.summaryLine === undefined ? [] : [answer.summaryLine]),
+            ...answer.files,
+            ...(answer.shownDiff === undefined ? [] : [answer.shownDiff]),
+          ].filter((part) => part !== '').join('\n'),
         )
       } catch {
-        writeTestRefusal = WRITE_TEST_UNDISPLAYABLE_DETAIL
-        return 'stop'
+        // The display is a receipt, not a gate; its failure contributes nothing to the turn.
       }
-    }
-
-    try {
-      await engine.invoke(
-        CONFIG_PROPOSAL_APPLY_FUNCTION_ID, { proposalId: answer.proposalId }, caller,
-      )
-    } catch (error) {
-      // The confirm was declined, or the host is non-TTY and the gate failed it closed. Either way
-      // the configuration was not written, so nothing may be authored against it.
-      //
-      // THE MESSAGE AND NOT THE NAME. A receipt carries `refusalName` because a receipt is a map,
-      // but this string is what a PERSON reads as the answer to what they asked for, and
-      // `FunctionDeniedError` on its own tells them nothing about which decision they are being
-      // told about. The directives path takes the message for the same reason one file up.
-      writeTestRefusal = refusalMessage(error)
-      return 'stop'
     }
     return 'proceed'
   }
