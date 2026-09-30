@@ -333,6 +333,9 @@ const BOUND_OP_INPUTS: Readonly<Record<string, unknown>> = {
   'knowledge.record.show': { recordId: 'rec-not-in-this-fixture' },
   'knowledge.records.diff': { sinceOrdinal: 0 },
   'knowledge.records.inspect': { filter: {} },
+  // 432-09 (D-05/D-25): bound under these ports because the digest no longer needs the proposals
+  // inbox; its substrate is the REQUIRED runs port, and the mark ledger it reads is optional.
+  'runs.digest': { runId: FIXTURE_RUN_ID },
   'runs.events': { runId: FIXTURE_RUN_ID },
   'runs.get': { runId: FIXTURE_RUN_ID },
   // 407-01 D-05: bound under these ports because its substrate is the REQUIRED runs port — it

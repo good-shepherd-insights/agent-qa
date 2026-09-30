@@ -427,9 +427,9 @@ describe('an ask-tier run-button run asks the browser that triggered it (D-11)',
       expect(settled.status).toBe('failed')
       expect(String(settled.details['reason'])).toContain(row.reason)
 
-      // D-15: the STRUCTURED remedies, projected for this surface. 430 D-06 declared the
-      // dashboard's projection empty, so the gate's answer-confirm reaches this door as nothing.
-      expect(settled.details['remedies']).toEqual([])
+      // D-15, re-spelled 432-09: the refusal is a plain reason. The gate still mints answer-confirm,
+      // and the settle carries no remedy member at all (C432-PLAIN-REFUSAL).
+      expect(settled.details).not.toHaveProperty('remedies')
 
       // A DENIAL IS NOT A RUN, and the claim is structural now rather than a count of bookends: no
       // session was ever named, so there are no envelopes at all. The pair this used to compare

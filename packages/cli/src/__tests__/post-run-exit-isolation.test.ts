@@ -499,9 +499,10 @@ describe('JOBQ-06 — an induced post-processing failure is invisible to the ver
     expect(cleanLines[0]).toContain(`post-processing done for ${RUN_ID}`)
     expect(cleanLines[1]).toBe(`digest — ${RUN_ID}`)
     expect(cleanLines[2]).toBe('analysis — 2 distinct problems:')
-    // The sections D-18 names, all present and all counts: nothing is waiting on a human in
-    // this fixture, and the digest says so rather than omitting the line.
-    expect(cleanSuffix).toContain('proposals — none minted this run · 0 pending overall')
+    // The sections D-18 names, all present and all counts. 432-09 (D-25): nothing waits on a
+    // human; this host reads no mark ledger, and the digest says so rather than omitting the line.
+    expect(cleanSuffix).toContain('marks — ledger not read here')
+    expect(cleanSuffix).not.toMatch(/pending overall|minted this run/)
     expect(cleanSuffix).toContain('candidates — ')
     expect(cleanSuffix).toContain('quarantine — 0 quarantined · 0 expired')
     expect(cleanSuffix).not.toBe(failedSuffix)
@@ -600,7 +601,7 @@ describe('JOBQ-06 — the structural halves', () => {
         'post-processing — analysis: pending · curation: pending'
         // 389 D-12: nothing drained under --detach, so the line carries the fetch command.
         + ' · trust priors: provisional'
-        + ` · proposals: 0 pending · digest: ${digestFetchCommand(RUN_ID)}`,
+        + ` · digest: ${digestFetchCommand(RUN_ID)}`,
       ])
     })
 

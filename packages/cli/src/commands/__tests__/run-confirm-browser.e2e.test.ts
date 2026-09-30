@@ -766,10 +766,11 @@ describe('the run trigger confirm loop, closed through a real browser (UAT item 
       ).not.toContain('runStarted')
       const deniedSettle = scene.settled().find((entry) => entry.runId === runB)
       expect(deniedSettle, 'the refused run never settled').toBeDefined()
+      // 432-09 (D-15): the settle is plain facts; no remedy member is carried at all.
       expect(
-        deniedSettle!.details['remedies'],
-        'the refused run carried a remedy to the dashboard (430 D-06 declares none)',
-      ).toEqual([])
+        deniedSettle!.details,
+        'the refused run carried a remedy to the dashboard',
+      ).not.toHaveProperty('remedies')
       // ARRIVAL BEFORE CLAIM, this file's rule applied to the REFUSED run's own audit row. A
       // `run:start` decision really was taken for run B and really was classified — which is what
       // separates "the gate refused it" from "nothing ever reached the gate". Without this the

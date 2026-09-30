@@ -489,7 +489,7 @@ describe('a starved own-chain is reported as backlog-exhausted, never a bare pen
         // 389 D-12: a starved chain completed no analyze-run, so the line carries the fetch
         // command — the sentence stays one copy-paste away whoever drains the backlog.
         + ' · trust priors: provisional'
-        + ` · proposals: 0 pending · digest: ${digestFetchCommand(RUN_B)}`,
+        + ` · digest: ${digestFetchCommand(RUN_B)}`,
       ])
       // The posture is the TAIL's, never the DTO's — the same rule the daemon parenthetical obeys.
       expect(JSON.stringify(status)).not.toContain('queued behind other runs')

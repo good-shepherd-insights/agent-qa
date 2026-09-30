@@ -15,10 +15,11 @@ vi.mock('@vostride/agent-qa-agent-local', async original => {
   return { ...actual, composeLocalAgent: vi.fn(actual.composeLocalAgent),
     openRunKnowledgeComposition: vi.fn(actual.openRunKnowledgeComposition),
     createKnowledgeReader: vi.fn(actual.createKnowledgeReader),
-    createKnowledgeReview: vi.fn(actual.createKnowledgeReview) }
+    // 432-09: a mark's fix goes through the direct writer, which receives the same priors resolver.
+    applyKnowledgeChange: vi.fn(actual.applyKnowledgeChange) }
 })
 import { readLabelCalibration } from '@vostride/agent-qa-eval-local'
-import { composeLocalAgent, createKnowledgeReader, createKnowledgeReview, openRunKnowledgeComposition, LOCAL_CURATION_CAPABILITIES } from '@vostride/agent-qa-agent-local'
+import { applyKnowledgeChange, composeLocalAgent, createKnowledgeReader, openRunKnowledgeComposition, LOCAL_CURATION_CAPABILITIES } from '@vostride/agent-qa-agent-local'
 import { composeCliLocalAgent } from '../../composition/local-agent-host.js'
 import { createReplayGateHost, createReplayGatePortForHost } from '../../gates/replay-gate-host.js'
 import { createFeedbackPortForHost } from '../../gates/feedback-host.js'
@@ -131,7 +132,7 @@ it('feedback mark reader and review reuse composition data after artifact replac
   const result = await port.mark({ runId: f.handoff.runId, kind: 'false-fail' })
   expect(result.kind).toBe('marked')
   const readResolver = vi.mocked(createKnowledgeReader).mock.calls.at(-1)![3]
-  const reviewResolver = vi.mocked(createKnowledgeReview).mock.calls.at(-1)![0].resolveTrustPriors
+  const reviewResolver = vi.mocked(applyKnowledgeChange).mock.calls.at(-1)![0].resolveTrustPriors
   expect(readResolver?.()).toEqual(fixture().priors)
   expect(reviewResolver).toBe(readResolver)
   expect(readFileSync(join(root, 'agent-qa-eval/labels/calibration.json'), 'utf8')).toBe(before)

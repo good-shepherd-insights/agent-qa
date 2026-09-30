@@ -40,6 +40,8 @@
 // stderr fields. All other historical data and the six exact comparisons are retained.
 // Phase 427-04 D-24 adds the recorded all-zero curation line to those same two stderr
 // fields: a clean fold that committed nothing now records its five zero buckets.
+// Phase 432-09 D-25 removes the `proposals: 0 pending` clause from the exit line in those
+// same two stderr fields: nothing waits on a human, so the line counts no proposal.
 // 418 CR-02 additionally requires one strict originating-run canary-policy.json per
 // produced handoff. The capture helper checks its exact contents and run identity;
 // the inventory below adds its explicit cardinality, without filtering the file.

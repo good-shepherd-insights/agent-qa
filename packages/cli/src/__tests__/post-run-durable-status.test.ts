@@ -103,7 +103,7 @@ describePosix('post-processing status survives a closed socket (SC4, ANLZ-05)', 
         // line says `0 pending` rather than omitting the clause — the count is READ, so its
         // absence would mean the digest could not be composed.
         + ' · trust priors: provisional'
-        + ` · proposals: 0 pending · digest: agent-qa digest "${RUN_ID}"`,
+        + ` · digest: agent-qa digest "${RUN_ID}"`,
       ])
       expect(tail.warn).toEqual([])
 
