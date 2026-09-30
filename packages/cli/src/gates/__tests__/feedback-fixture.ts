@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -9,6 +9,7 @@ import { asRunId, asRecordId, type CompletedRunHandoff } from '@vostride/agent-q
 const { makeLocalV2Handoff, LOCAL_FIXTURE_BLOB_BYTES } = await import(new URL('../../../../eval-local/src/__tests__/fixtures/local-handoff-fixture.js', import.meta.url).href)
 const { createPromotionFloorFixture } = await import(new URL('../../../../knowledge-local/src/curator/__tests__/fixtures/promotion-floor-fixture.js', import.meta.url).href)
 export const { loadBundle } = await import(new URL('../../../../knowledge-local/src/bundle-read.js', import.meta.url).href)
+const { enumerateBundleDirs } = await import(new URL('../../../../knowledge-local/src/bundle-scan.js', import.meta.url).href)
 
 export function markFixture() {
   const root = mkdtempSync(join(tmpdir(), '419-mark-host-'))
@@ -39,3 +40,22 @@ export function files(root: string): string[] {
   return readdirSync(root, { withFileTypes: true }).flatMap(entry => entry.isDirectory() ? files(join(root, entry.name)) : [join(root, entry.name)]).sort()
 }
 
+
+/** Every bundle in the store, loaded through the real guard. */
+export function bundles(knowledgeRoot: string): { dir: string; id: string; bundle: any }[] {
+  return (enumerateBundleDirs(knowledgeRoot) as { dir: string }[]).map(entry => {
+    const loaded = loadBundle(entry.dir)
+    if (loaded.kind !== 'loaded') throw new Error('bundle must load through the real guard')
+    return { dir: entry.dir, id: loaded.bundle.manifest.id as string, bundle: loaded.bundle }
+  })
+}
+
+/**
+ * The committed knowledge bytes (432-06's idiom): canonical files under memory/, excluding the
+ * re-projected index. Lease bookkeeping and index rebuilds are not effects of a change.
+ */
+export function canonicalKnowledge(knowledgeRoot: string): string[][] {
+  const memory = join(knowledgeRoot, 'memory')
+  return files(memory).filter(path => !path.startsWith(join(memory, 'index')))
+    .map(path => [path, createHash('sha256').update(readFileSync(path)).digest('hex')])
+}

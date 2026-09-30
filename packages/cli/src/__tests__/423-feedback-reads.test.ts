@@ -1,7 +1,7 @@
 // 2026-09-15, 423 D-16: the consequence plan runs.mark consumes, previewed with no write.
 import { createHash } from 'node:crypto'
 import { createServer, type Server } from 'node:http'
-import { cpSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { chmodSync, cpSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import * as agent from '@vostride/agent-qa-agent'
@@ -215,7 +215,9 @@ describe('423-35 shared mark consequence plan (D-16)', () => {
   })
 })
 
-// 2026-09-15, 423 D-19: marks history over the real ledger and proposals store, observed with no write.
+// 2026-09-15, 423 D-19: marks history over the real ledger, observed with no write.
+// 2026-09-30, 432-09 (D-04/D-22/D-25): history projects each mark's applied change and never reads
+// the retired proposal inbox, readable or not.
 const SECRET = 'synthetic-423-18-history-token'
 type HistoryReadsDeps = FeedbackReadsHostDeps
 
@@ -238,14 +240,16 @@ function historyEntries(result: RunsMarksHistoryResult) {
   return result.entries
 }
 
-function proposalIdOf(receipt: MarkReceipt): string {
-  if (receipt.disposition.kind !== 'drafted') throw new Error('expected a drafted receipt')
-  return receipt.disposition.proposalId
+function changedRecordIdsOf(receipt: MarkReceipt): readonly string[] {
+  if (receipt.disposition.kind !== 'applied' || receipt.disposition.change.kind !== 'knowledge') {
+    throw new Error('expected an applied knowledge change')
+  }
+  return receipt.disposition.change.recordIds
 }
 
 type MarkedTemplate = { root: string; runSlug: string; runId: RunId; receipts: MarkReceipt[] }
 
-/** Three real marks: a drafted run-level mark, its confirmed-bug successor (which withdraws the draft), and a drafted step mark. */
+/** Three real marks: an applied run-level fix, its confirmed-bug successor (which retracts nothing), and an applied step fix. */
 async function markedTemplate(roots: string[]): Promise<MarkedTemplate> {
   const f = markFixture(); roots.push(f.root)
   const runId = f.handoff.runId
@@ -260,7 +264,7 @@ async function markedTemplate(roots: string[]): Promise<MarkedTemplate> {
     if (outcome.kind !== 'marked') throw new Error(`fixture mark refused: ${outcome.kind}`)
     receipts.push(outcome.receipt)
   }
-  expect(receipts.map(receipt => receipt.disposition.kind)).toEqual(['drafted', 'confirmed-bug', 'drafted'])
+  expect(receipts.map(receipt => receipt.disposition.kind)).toEqual(['applied', 'confirmed-bug', 'applied'])
   return { root: f.root, runSlug: f.runDir.split('/').at(-1)!, runId, receipts }
 }
 
@@ -277,24 +281,24 @@ describe('423-18 read-only marks history host (D-19)', () => {
     cpSync(template.root, root, { recursive: true })
     const agentQaRoot = join(root, '.agent-qa')
     const runDir = join(agentQaRoot, 'runs', template.runSlug)
-    return { root, agentQaRoot, runDir, ledger: join(runDir, 'marks.jsonl'), proposals: join(agentQaRoot, 'proposals') }
+    return { root, agentQaRoot, runDir, configPath: join(root, 'agent-qa.config.yaml'),
+      ledger: join(runDir, 'marks.jsonl'), proposals: join(agentQaRoot, 'proposals') }
   }
 
-  it('HISTORY-WRITES-NOTHING: history leaves ledger, intent, gold, knowledge and proposals byte-identical and creates nothing', async () => {
+  it('HISTORY-WRITES-NOTHING: history leaves ledger, intent, gold and knowledge byte-identical and creates nothing', async () => {
     const s = scene()
     const [first, second, third] = template.receipts as [MarkReceipt, MarkReceipt, MarkReceipt]
-    // An in-flight intent and an orphaned claim are exactly what a writer or a listing would clean up.
+    // An in-flight intent is exactly what a writer would clean up.
     writeFileSync(join(s.runDir, 'mark-intent.json'), '{"stage":"prepared"}\n')
-    expect(claimPendingProposal(s.agentQaRoot, proposalIdOf(third))).toMatchObject({ kind: 'consumed' })
     const before = tree(s.root)
-    const reads = readsFor({ agentQaRoot: s.agentQaRoot, isProcessAlive: () => false })
+    const reads = readsFor({ agentQaRoot: s.agentQaRoot, configPath: s.configPath, isProcessAlive: () => false })
     const result = await historyOf(reads, template.runId)
     expect(result).toMatchObject({ kind: 'history', runId: template.runId, entries: [
-      { markId: first.markId, ordinal: 1, active: false, supersededBy: second.markId, proposal: { state: 'rejected' } },
+      { markId: first.markId, ordinal: 1, active: false, supersededBy: second.markId, disposition: { kind: 'applied' } },
       { markId: second.markId, ordinal: 2, active: true, supersedes: first.markId },
-      { markId: third.markId, ordinal: 3, active: true, stepIndex: 0, proposal: { state: 'pending', applyInFlight: false } },
+      { markId: third.markId, ordinal: 3, active: true, stepIndex: 0, disposition: { kind: 'applied' } },
     ] })
-    expect(historyEntries(result)[1]).not.toHaveProperty('proposal')
+    expect(historyEntries(result)[1]).not.toHaveProperty('changedRecords')
     expect(await historyOf(reads, template.runId)).toEqual(result)
     expect(tree(s.root)).toEqual(before)
 
@@ -316,86 +320,87 @@ describe('423-18 read-only marks history host (D-19)', () => {
     expect(existsSync(dirname(absentRoot))).toBe(false)
   })
 
-  it('PROPOSAL-CURRENT/MISSING: drafted receipts join the store classifier state; missing never reads as pending', async () => {
+  // RE-SPELLED 432-09 from 'PROPOSAL-CURRENT/MISSING: drafted receipts join the store classifier
+  // state; missing never reads as pending': history now joins the records each fix changed.
+  it('C432-MARK-HISTORY-APPLIED: each applied fix joins the records it changed, read now; an unbound or missing record is a typed absence', async () => {
     const s = scene()
     const [first, , third] = template.receipts as [MarkReceipt, MarkReceipt, MarkReceipt]
-    const now = Date.now()
-    const reads = (extra: Partial<HistoryReadsDeps> = {}) => readsFor({ agentQaRoot: s.agentQaRoot, now: () => now, ...extra })
-
-    const current = historyEntries(await historyOf(reads(), template.runId))
-    expect(current.map(entry => [entry.disposition.kind, entry.proposal?.state ?? null]))
-      .toEqual([['drafted', 'rejected'], ['confirmed-bug', null], ['drafted', 'pending']])
-    // The historical disposition keeps the drafted proposal id even though its proposal is now rejected.
+    const current = historyEntries(await historyOf(readsFor({ agentQaRoot: s.agentQaRoot, configPath: s.configPath }), template.runId))
+    expect(current.map(entry => entry.disposition.kind)).toEqual(['applied', 'confirmed-bug', 'applied'])
+    // The receipt's own applied change is carried verbatim, precise ids and all.
     expect(current[0]!.disposition).toEqual(first.disposition)
-    const shown = showProposalEnvelope(s.agentQaRoot, proposalIdOf(third), { now })
-    expect(current[2]!.proposal).toEqual({ state: shown.envelope.status, applyInFlight: shown.applyInFlight })
-    expect(current[2]!.proposal).toEqual({ state: 'pending', applyInFlight: false })
+    expect(current[2]!.disposition).toEqual(third.disposition)
+    expect(current[0]!.changedRecords!.map(record => record.recordId)).toEqual(changedRecordIdsOf(first))
+    expect(current[2]!.changedRecords!.map(record => record.recordId)).toEqual(changedRecordIdsOf(third))
+    for (const record of [...current[0]!.changedRecords!, ...current[2]!.changedRecords!]) {
+      expect(record.recordContent?.content, record.recordId).toEqual(expect.any(String))
+      expect(record).not.toHaveProperty('contentAbsence')
+    }
+    expect(current[1]).not.toHaveProperty('changedRecords')
 
-    const later = now + 365 * 24 * 60 * 60 * 1000
-    expect(historyEntries(await historyOf(reads({ now: () => later }), template.runId))[2]!.proposal)
-      .toEqual({ state: 'expired', applyInFlight: false })
+    // A host with no knowledge root binds no batch read: the ids stay, the content is a named absence.
+    const unbound = historyEntries(await historyOf(readsFor({ agentQaRoot: s.agentQaRoot }), template.runId))
+    expect(unbound[0]!.changedRecords).toEqual(changedRecordIdsOf(first).map(recordId => ({ recordId, contentAbsence: { reason: 'not-bound' } })))
 
-    expect(claimPendingProposal(s.agentQaRoot, proposalIdOf(third))).toMatchObject({ kind: 'consumed' })
-    expect(historyEntries(await historyOf(reads(), template.runId))[2]!.proposal).toEqual({ state: 'pending', applyInFlight: true })
-    const claimed = tree(s.root)
-    expect(historyEntries(await historyOf(reads({ isProcessAlive: () => false }), template.runId))[2]!.proposal)
-      .toEqual({ state: 'pending', applyInFlight: false })
-    expect(tree(s.root)).toEqual(claimed)
-
-    rmSync(s.proposals, { recursive: true, force: true })
-    const missing = historyEntries(await historyOf(reads(), template.runId))
-    expect(missing.map(entry => entry.proposal)).toEqual([{ state: 'missing' }, undefined, { state: 'missing' }])
-    expect(missing.map(entry => entry.disposition.kind)).toEqual(['drafted', 'confirmed-bug', 'drafted'])
-    expect(existsSync(s.proposals)).toBe(false)
+    // A record gone from the store keeps its id and reads not-found, never an invented content.
+    rmSync(join(s.root, 'agent-qa-knowledge'), { recursive: true, force: true })
+    const missing = historyEntries(await historyOf(readsFor({ agentQaRoot: s.agentQaRoot, configPath: s.configPath }), template.runId))
+    expect(missing[0]!.changedRecords).toEqual(changedRecordIdsOf(first).map(recordId => ({ recordId, contentAbsence: { reason: 'not-found' } })))
+    expect(missing.map(entry => entry.disposition.kind)).toEqual(['applied', 'confirmed-bug', 'applied'])
   })
 
-  it('WITHDRAWAL-REASON: the withdrawn proposal carries its decision reason, and every free-text field crosses the mask', async () => {
+  it('C432-READS-INBOX-UNREAD: an unreadable legacy proposal tree changes no history and is never opened or written', async () => {
+    const clean = scene()
+    const expected = await historyOf(readsFor({ agentQaRoot: clean.agentQaRoot, configPath: clean.configPath }), template.runId)
     const s = scene()
-    const [first, second, third] = template.receipts as [MarkReceipt, MarkReceipt, MarkReceipt]
-    const reads = readsFor({ agentQaRoot: s.agentQaRoot })
+    // Seed exactly what a pre-432 workspace leaves behind: a garbled envelope, a claim and an unreadable directory.
+    mkdirSync(join(s.proposals, 'claimed'), { recursive: true })
+    writeFileSync(join(s.proposals, 'prop_0123456789ab.json'), '{"not":"a proposal"')
+    writeFileSync(join(s.proposals, 'claimed', 'prop_0123456789ab.json'), '\u0000garbled')
+    const sealed = join(s.proposals, 'sealed')
+    mkdirSync(sealed)
+    writeFileSync(join(sealed, 'prop_fedcba987654.json'), '{}')
+    const before = tree(s.root)
+    // Sealed: any open, stat or listing under the legacy tree now fails, so a reader that touched it could not answer.
+    chmodSync(s.proposals, 0o000)
+    try {
+      const reads = readsFor({ agentQaRoot: s.agentQaRoot, configPath: s.configPath })
+      expect(await historyOf(reads, template.runId)).toEqual(expected)
+      expect(await historyOf(reads, template.runId)).toEqual(expected)
+    } finally { chmodSync(s.proposals, 0o700) }
+    expect(tree(s.root), 'the legacy tree and every store are left exactly as they were').toEqual(before)
+  })
+
+  // RE-SPELLED 432-09 from 'WITHDRAWAL-REASON: the withdrawn proposal carries its decision reason,
+  // and every free-text field crosses the mask': nothing is withdrawn; the joined content is masked.
+  it('HISTORY-MASKED: every free-text field and every joined record content crosses the mask', async () => {
+    const s = scene()
+    const [first, , third] = template.receipts as [MarkReceipt, MarkReceipt, MarkReceipt]
+    const reads = readsFor({ agentQaRoot: s.agentQaRoot, configPath: s.configPath })
     const raw = await reads.history(template.runId)
     if (raw.kind !== 'history') throw new Error('expected a history read')
-    expect(raw.entries[0]!.proposal).toEqual({ state: 'rejected',
-      decision: { decision: 'rejected', at: expect.any(Number), reason: `superseded by ${second.markId}` } })
     expect(raw.entries[0]!.receipt).toEqual(first)
+    const content = raw.entries[0]!.changedRecords![0]!.recordContent!.content
 
     const masking = createMaskingContext()
     masking.register(SECRET)
     setActiveMaskingContextResolver(() => masking)
     const masked = await historyOf(reads, template.runId)
     const entries = historyEntries(masked)
-    expect(entries[0]).toMatchObject({ note: masking.mask('first run-level note'),
-      proposal: { state: 'rejected', decision: { reason: masking.mask(`superseded by ${second.markId}`) } } })
+    expect(entries[0]).toMatchObject({ note: masking.mask('first run-level note') })
+    expect(entries[0]!.changedRecords![0]!.recordContent!.content).toBe(masking.mask(content))
     expect(entries[2]).toMatchObject({ markId: third.markId, note: masking.mask(`step note ${SECRET}`) })
     expect(JSON.stringify(masked)).not.toContain(SECRET)
 
     setActiveMaskingContextResolver(() => undefined)
     const unmaskable = historyEntries(await historyOf(reads, template.runId))
-    expect(unmaskable[0]).toMatchObject({ note: maskedMarker('secret'), proposal: { decision: { reason: maskedMarker('secret') } } })
+    expect(unmaskable[0]!.note).toBe(maskedMarker('secret'))
+    expect(unmaskable[0]!.changedRecords![0]!.recordContent!.content).toBe(maskedMarker('secret'))
     expect(unmaskable[2]!.note).toBe(maskedMarker('secret'))
-    expect(JSON.stringify(unmaskable)).not.toContain('superseded by')
+    expect(JSON.stringify(unmaskable)).not.toContain(content)
   })
 
-  it('HISTORY-CORRUPT: corrupt ledgers and proposals are typed failures that leave their bytes in place', async () => {
-    const proposalScene = scene()
-    const third = template.receipts[2]!
-    writeFileSync(join(proposalScene.proposals, `${proposalIdOf(third)}.json`), '{"not":"a proposal"')
-    const proposalBefore = tree(proposalScene.root)
-    const entries = historyEntries(await historyOf(readsFor({ agentQaRoot: proposalScene.agentQaRoot }), template.runId))
-    expect(entries.map(entry => entry.proposal?.state ?? null)).toEqual(['rejected', null, 'corrupt'])
-    expect(tree(proposalScene.root)).toEqual(proposalBefore)
-
-    // A receipt whose drafted id names a proposal of another kind is not joined as that proposal.
-    const kindScene = scene()
-    const ledgerLines = readFileSync(kindScene.ledger, 'utf8').split('\n')
-    const drafted = JSON.parse(ledgerLines[2]!) as MarkReceipt
-    ledgerLines[2] = JSON.stringify({ ...drafted, disposition: { ...drafted.disposition, proposalKind: 'test-draft', fix: 'test-edit' } })
-    writeFileSync(kindScene.ledger, ledgerLines.join('\n'))
-    const kindBefore = tree(kindScene.root)
-    expect(historyEntries(await historyOf(readsFor({ agentQaRoot: kindScene.agentQaRoot }), template.runId))
-      .map(entry => entry.proposal?.state ?? null)).toEqual(['rejected', null, 'corrupt'])
-    expect(tree(kindScene.root)).toEqual(kindBefore)
-
+  it('HISTORY-CORRUPT: corrupt ledgers are typed failures that leave their bytes in place', async () => {
     const torn = scene()
     writeFileSync(torn.ledger, readFileSync(torn.ledger, 'utf8').slice(0, -1))
     const tornBefore = tree(torn.root)
@@ -419,6 +424,19 @@ describe('423-18 read-only marks history host (D-19)', () => {
     expect(await historyOf(readsFor({ agentQaRoot: unreadable.agentQaRoot }), template.runId))
       .toEqual({ kind: 'ledger-unavailable', runId: template.runId })
     expect(tree(unreadable.root)).toEqual(unreadableBefore)
+  })
+
+  it('HISTORY-HISTORICAL-DRAFT: a pre-432 drafted receipt stays readable, and what it changed is not invented', async () => {
+    const s = scene()
+    const lines = readFileSync(s.ledger, 'utf8').split('\n')
+    const original = JSON.parse(lines[2]!) as MarkReceipt
+    const historical = { ...original, disposition: { kind: 'drafted', fix: 'fact', proposalId: 'prop_0123456789ab', proposalKind: 'knowledge' } }
+    lines[2] = JSON.stringify(historical)
+    writeFileSync(s.ledger, lines.join('\n'))
+    const entries = historyEntries(await historyOf(readsFor({ agentQaRoot: s.agentQaRoot, configPath: s.configPath }), template.runId))
+    expect(entries[2]!.disposition).toEqual(historical.disposition)
+    expect(entries[2]).not.toHaveProperty('changedRecords')
+    expect(existsSync(s.proposals)).toBe(false)
   })
 })
 

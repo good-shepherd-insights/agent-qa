@@ -2,27 +2,27 @@
 // WHAT HAPPENED AND WHAT COUNTS (426-09 · D-22, D-23).
 //
 // The pinned target's marks come first, newest first; the whole ledger is one collapsed disclosure
-// away with each entry naming its target. Latest-mark-wins replacement is explained once, a drafted
-// proposal names its current state and offers its review command as a button, and every way the
-// history read can fail renders as itself — never as "no feedback". Fixtures are schema-parsed.
+// away with each entry naming its target. Latest-mark-wins replacement is explained once, an applied
+// fix states in one line what it changed (432-09 · D-25), and every way the history read can fail
+// renders as itself — never as "no feedback". Fixtures are schema-parsed.
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import type { MarkProposalCurrent, RunDetailProjection } from '@vostride/agent-qa-schema'
+import type { RunDetailProjection } from '@vostride/agent-qa-schema'
 import { MARKS, RunsMarksHistoryResultSchema } from '@vostride/agent-qa-schema'
 import { generateRunId } from '@vostride/agent-qa-ids'
 
 import { FeedbackHistory, type FeedbackHistoryProps } from '../feedback-history'
 import type { FeedbackReadFailure, MarksHistoryRead } from '@/lib/api'
-import { COPY_REVIEW_COMMAND_LABEL } from '@/lib/knowledge-view'
 import {
   ACTIVE_TEXT,
   CHOICE_LABELS,
   HISTORY_EMPTY_TEXT,
   HISTORY_READ_FAILED_TEXT,
   HISTORY_RETRY_ACCESSIBLE_NAME,
-  PROPOSAL_STATE_TEXT,
   REPLACEMENT_EXPLANATION,
+  appliedChangeText,
+  appliedChangeView,
   correctedPresenceText,
   dispositionText,
   feedbackPartsText,
@@ -43,8 +43,17 @@ const markId = (n: number) => `mark_${n.toString(16).padStart(12, '0')}`
 const T = (minute: number) => Date.UTC(2026, 8, 23, 10, minute)
 
 const NO_FIX = { kind: 'no-draftable-fix', checked: { servedRecords: 0, procedureReads: 0, assertionDrift: false } } as const
-const drafted = (proposalId = 'prop_0123456789ab') =>
-  ({ kind: 'drafted', fix: 'caution', proposalId, proposalKind: 'knowledge' }) as const
+const applied = (recordIds: readonly string[] = ['mem_caution_1']) =>
+  ({ kind: 'applied', fix: 'caution', change: { kind: 'knowledge', changeId: 'prop_0123456789ab', recordIds: [...recordIds] } }) as const
+const CAUTION = {
+  content: 'The coupon field refuses expired codes.',
+  summary: 'coupon refused',
+  kind: 'caution',
+  applicability: { product: 'shop', scope: 'shop', anchors: [], openedAtOrdinal: 1 },
+  currentStatus: 'active',
+  currentTrust: { confirmations: 1, contradictions: 0, evidenceTokens: [], lastEventOrdinal: 1 },
+} as const
+const changed = (content: string = CAUTION.content) => [{ recordId: 'mem_caution_1', recordContent: { ...CAUTION, content } }]
 
 type EntryInput = Record<string, unknown> & { n: number }
 
@@ -101,8 +110,8 @@ const TWO_ON_STEP = ledger([
     supersedes: markId(1),
     note: 'The coupon should have been refused',
     corrected: { expectation: true, action: false },
-    disposition: drafted(),
-    proposal: { state: 'pending', applyInFlight: false },
+    disposition: applied(),
+    changedRecords: changed(),
   },
 ])
 
@@ -174,7 +183,7 @@ describe('426-09 the target list and the run list', () => {
     expect(newer.textContent).toContain(ACTIVE_TEXT)
     expect(newer.textContent).toContain('“The coupon should have been refused”')
     expect(newer.textContent).toContain(correctedPresenceText({ expectation: true, action: false }))
-    expect(newer.querySelector('[data-history-disposition]')?.textContent).toBe(dispositionText(drafted()))
+    expect(newer.querySelector('[data-history-disposition]')?.textContent).toBe(dispositionText(applied()))
 
     const older = entryOf(target, markId(1))!
     expect(older.getAttribute('data-history-active')).toBe('false')
@@ -222,44 +231,55 @@ describe('426-09 latest-mark-wins is explained once', () => {
   })
 })
 
-describe('426-09 a drafted proposal names its state and its review command', () => {
-  const APPLYING = 'being applied'
-  const cases: [string, MarkProposalCurrent][] = [
-    ['pending', { state: 'pending', applyInFlight: false }],
-    ['pending, apply in flight', { state: 'pending', applyInFlight: true }],
-    ['expired', { state: 'expired', applyInFlight: false }],
-    ['expired, apply in flight', { state: 'expired', applyInFlight: true }],
-    ['applied', { state: 'applied' }],
-    ['rejected', { state: 'rejected' }],
-    ['missing', { state: 'missing' }],
-    ['corrupt', { state: 'corrupt' }],
-  ]
-
-  it.each(cases)('HISTORY-PROPOSAL-STATES: %s reads Proposal: and its phrase', (_name, proposal) => {
-    mount({ read: ledger([{ n: 1, stepIndex: 1, disposition: drafted(), proposal }, { n: 2, stepIndex: 2 }]) })
-    const line = q('[data-feedback-history="target"] [data-history-proposal-state]')
-    const phrase = 'applyInFlight' in proposal && proposal.applyInFlight ? APPLYING : PROPOSAL_STATE_TEXT[proposal.state]
-    expect(line?.getAttribute('data-history-proposal-state')).toBe(proposal.state)
-    expect(line?.textContent).toBe(`Proposal: ${phrase}`)
+// RE-SPELLED 432-09 from '426-09 a drafted proposal names its state and its review command': a mark
+// applies its fix in the call, so the entry says what changed and offers nothing to review (D-25).
+describe('432-09 an applied fix says in one line what it changed', () => {
+  it('C432-APPLIED-HISTORY-DOM: the knowledge line carries the changed record content, the file line the written path, both as text', () => {
+    const file = { kind: 'applied', fix: 'test-edit', change: { kind: 'test-file', filePath: 'tests/checkout.yaml', contentDigest: 'abc' } } as const
+    mount({
+      read: ledger([
+        { n: 1, stepIndex: 1, disposition: applied(['mem_caution_1', 'mem_gone']), changedRecords: [...changed(), { recordId: 'mem_gone', contentAbsence: { reason: 'not-found' } }] },
+        { n: 2, stepIndex: 1, disposition: file, active: true },
+        { n: 3, stepIndex: 1, disposition: { kind: 'drafted', fix: 'fact', proposalId: 'prop_0123456789ab', proposalKind: 'knowledge' } },
+      ].map((entry, index, all) => index < all.length - 1 ? { ...entry, active: false, supersededBy: markId(entry.n + 1) } : entry)),
+    })
+    const target = q('[data-feedback-history="target"]')
+    const line = (n: number) => entryOf(target, markId(n))!.querySelector('[data-history-applied]')
+    const knowledge = line(1)!
+    expect(knowledge.getAttribute('data-history-applied')).toBe('knowledge')
+    expect(knowledge.textContent).toBe(appliedChangeText(appliedChangeView({ disposition: applied(['mem_caution_1', 'mem_gone']),
+      changedRecords: [...changed(), { recordId: 'mem_gone', contentAbsence: { reason: 'not-found' } }] })!))
+    expect(knowledge.textContent).toContain(CAUTION.content)
+    const written = line(2)!
+    expect(written.getAttribute('data-history-applied')).toBe('test-file')
+    expect(written.textContent).toBe('Edited the test file tests/checkout.yaml')
+    expect(written.querySelector('code')?.textContent).toBe('tests/checkout.yaml')
+    // A pre-432 drafted receipt never recorded its change: the line says so rather than inventing one.
+    expect(line(3)!.getAttribute('data-history-applied')).toBe('unavailable')
+    expect(line(3)!.textContent).toBe('What this mark changed was not recorded.')
+    expect([1, 2, 3].map(n => entryOf(target, markId(n))!.querySelectorAll('[data-history-applied]').length)).toEqual([1, 1, 1])
   })
 
-  it('HISTORY-PROPOSAL-STATES: an entry that drafted nothing has no proposal line and no review command', () => {
-    mount({ read: ledger([{ n: 1, stepIndex: 1 }]) })
+  it('C432-APPLIED-HISTORY-DOM: an entry that changed nothing has no applied line, and hostile record content stays text', () => {
+    mount({ read: ledger([{ n: 1, stepIndex: 1 }, { n: 2, stepIndex: 2, disposition: { kind: 'confirmed-bug', confirmedRecords: 1 } }]) })
+    expect(q('[data-history-applied]')).toBeNull()
+    act(() => root.unmount())
+    container.remove()
+
+    mount({ read: ledger([{ n: 1, stepIndex: 1, disposition: applied(), changedRecords: changed(HOSTILE) }]) })
+    expect(container.querySelector('img')).toBeNull()
+    expect(q('[data-history-applied]')!.textContent).toContain(HOSTILE)
+    expect((globalThis as { __pwned?: boolean }).__pwned).toBeUndefined()
+  })
+
+  it('C432-NO-REVIEW-CTA: no entry carries a proposal state, a review command or a copy control, and nothing under the history is a link', () => {
+    mount()
+    openRunList()
     expect(q('[data-history-proposal-state]')).toBeNull()
     expect(q('[data-history-review]')).toBeNull()
-  })
-
-  it('HISTORY-REVIEW-COMMAND: the exact review command in mono, on a button that copies it; nothing under the history is a link', () => {
-    mount()
-    const review = q<HTMLButtonElement>('[data-feedback-history="target"] button[data-history-review]')
-    expect(review).not.toBeNull()
-    expect(review!.getAttribute('data-review-command')).toBe('agent-qa proposals show prop_0123456789ab')
-    expect(review!.textContent).toContain('agent-qa proposals show prop_0123456789ab')
-    expect(review!.className).toContain('font-mono')
-    expect(review!.getAttribute('aria-label')).toBe(`${COPY_REVIEW_COMMAND_LABEL}: agent-qa proposals show prop_0123456789ab`)
-    const proposal = review!.closest('[data-history-entry]')!.querySelector('[data-history-proposal-state]')!
-    expect(proposal.compareDocumentPosition(review!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
-    openRunList()
+    expect(q('[data-review-command]')).toBeNull()
+    expect(container.querySelectorAll('button[data-history-entry] , [data-history-entry] button')).toHaveLength(0)
+    expect(container.textContent).not.toMatch(/review|proposal/i)
     expect(container.querySelectorAll('[data-feedback-history] a, [data-feedback-history] [href]')).toHaveLength(0)
     expect(container.querySelectorAll('a')).toHaveLength(0)
   })

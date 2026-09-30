@@ -1,15 +1,55 @@
-import { readFileSync, rmSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 import { createHash } from 'node:crypto'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { LOCAL_CURATION_CAPABILITIES } from '@vostride/agent-qa-agent-local'
-import { asEvidenceToken, asRecordId, type AuthoringDraftEditOutput, type ImprovementPlan } from '@vostride/agent-qa-schema'
+import * as agentLocal from '@vostride/agent-qa-agent-local'
+import { asEvidenceToken, asRecordId, type AuthoringDraftEditOutput, type ImprovementPlan, type MarkReceipt } from '@vostride/agent-qa-schema'
 import { wordImprovementPlan } from '../feedback-wording.js'
 import { createFeedbackPortForHost } from '../feedback-host.js'
-import { markFixture, files, loadBundle } from './feedback-fixture.js'
+import { markFixture, files, loadBundle, bundles, canonicalKnowledge } from './feedback-fixture.js'
 
-const { readPendingProposal, showProposalEnvelope, decidePendingProposal } = await import(new URL('../../../../knowledge-local/src/review/proposals-store.js', import.meta.url).href)
 const { appendOutcomeEvent } = await import(new URL('../../../../knowledge-local/src/bundle-append.js', import.meta.url).href)
+const { applyExplicitReview } = await import(new URL('../../../../knowledge-local/src/review/apply-review.js', import.meta.url).href)
+
+type ApplyChange = (input: Record<string, unknown>) => Promise<{ outcome: string; recordIds?: readonly string[] }>
+/** The host's own direct knowledge writer, reached by name so a missing export fails as an assertion. */
+function realApply(): ApplyChange {
+  const apply = (agentLocal as Record<string, unknown>).applyKnowledgeChange
+  expect(typeof apply, 'agent-local exports the direct knowledge change').toBe('function')
+  return apply as ApplyChange
+}
+
+function applied(receipt: MarkReceipt) {
+  expect(receipt.disposition.kind, 'the mark applied its fix').toBe('applied')
+  if (receipt.disposition.kind !== 'applied') throw new Error('unreachable')
+  return receipt.disposition
+}
+
+function testBugFixture() {
+  const f = markFixture()
+  const member = f.handoff.tests[0]!
+  member.steps[0]!.servedBrief.channel3 = []
+  member.rootCause = { class: 'test_bug', producer: 'deterministic-classifier', confidence: 1, evidence: { citedSteps: [0], citedAnchors: [], citedArtifacts: [], rationale: 'Assertion drift' }, memoryMisdirectionRuledOut: true, perTest: 0 }
+  f.save()
+  return f
+}
+
+/** An edit that wrote the member's file: the digest is of the exact UTF-8 bytes it wrote. */
+function writtenEdit(filePath: string, testName: string, testId: string, text = 'steps:\n  - naïve café ✓ — 日本\n'): AuthoringDraftEditOutput {
+  const contentDigest = createHash('sha256').update(Buffer.from(text, 'utf8')).digest('hex')
+  const draftRef = { filePath, testId, testName, contentDigest }
+  return { draftRef, editedFrom: { filePath, testName, boundBy: 'exact-ref' }, patches: [], thoughts: 'Correct assertion', proposal: {
+    schemaVersion: 1, draftRef, targetPath: filePath, sourceDigest: 'original-digest', disposition: 'unverified', runsPreviewed: 0, runsConsumed: 0, repairIterations: 0, summaryLine: 'Correct assertion',
+  }, written: { kind: 'written', filePath, contentDigest } }
+}
+
+/** Blocks the ledger's one atomic append, so the mark fails after every effect and before its receipt. */
+function blockReceipt(runDir: string) {
+  const staged = join(runDir, 'marks.jsonl.pending')
+  mkdirSync(staged)
+  return () => rmSync(staged, { recursive: true, force: true })
+}
 
 describe('419 feedback host', () => {
   let root: string | undefined
@@ -32,27 +72,36 @@ describe('419 feedback host', () => {
       .toMatchObject({ kind: 'already-marked' })
   })
 
-  it('draft false-fail files a real mark fact proposal with user Supersede and floor wording', async () => {
+  // RE-SPELLED 432-09 from 'draft false-fail files a real mark fact proposal with user Supersede and
+  // floor wording': the same floor-worded user Supersede now lands in the call (D-04).
+  it('draft false-fail applies a real mark fact as a user Supersede with floor wording', async () => {
     const f = markFixture(); root = f.root
     let worded: ImprovementPlan | undefined
     const word = vi.fn<typeof wordImprovementPlan>(async input => { worded = await wordImprovementPlan(input); return worded })
     const port = createFeedbackPortForHost({ ...f.deps, word })
     const result = await port.mark({ runId: f.handoff.runId, kind: 'false-fail' })
-    expect(result).toMatchObject({ kind: 'marked', receipt: { disposition: { kind: 'drafted', fix: 'fact', proposalKind: 'knowledge' }, evidence: { confirmed: 1 } } })
-    if (result.kind !== 'marked' || result.receipt.disposition.kind !== 'drafted') throw new Error('expected draft')
-    const proposal = readPendingProposal(f.agentQaRoot, result.receipt.disposition.proposalId)
-    expect(proposal).toMatchObject({ verb: 'mark', wording: 'floor', mark: { markId: result.receipt.markId }, deltas: [{ kind: 'Supersede', victimId: f.published.id, origin: 'user' }] })
-    expect(proposal.deltas).toHaveLength(1)
+    expect(result).toMatchObject({ kind: 'marked', receipt: { disposition: { kind: 'applied', fix: 'fact', change: { kind: 'knowledge' } }, evidence: { confirmed: 1 } } })
+    if (result.kind !== 'marked') throw new Error('expected a mark')
+    const { change } = applied(result.receipt)
+    if (change.kind !== 'knowledge') throw new Error('expected a knowledge change')
+    const [replacementId] = change.recordIds
+    expect(replacementId).toBeDefined()
+    expect(replacementId).not.toBe(f.published.id)
+    const victim = bundles(f.knowledgeRoot).find(row => row.id === f.published.id)!
+    expect(victim.bundle.events).toContainEqual(expect.objectContaining({ type: 'superseded', byRecordId: replacementId }))
     expect(worded).toMatchObject({ wording: 'floor' })
     expect(result.receipt.gold).toHaveLength(1)
+    expect(existsSync(join(f.agentQaRoot, 'proposals')), 'nothing is filed for review').toBe(false)
     const before = hashes(root)
     expect(await port.mark({ runId: f.handoff.runId, kind: 'false-fail' })).toEqual({ kind: 'already-marked', receipt: result.receipt })
     expect(hashes(root)).toEqual(before)
     expect(word).toHaveBeenCalledOnce()
     const next = await port.mark({ runId: f.handoff.runId, kind: 'confirmed-bug' })
     expect(next).toMatchObject({ kind: 'marked', receipt: { supersedes: result.receipt.markId } })
-    expect(showProposalEnvelope(f.agentQaRoot, result.receipt.disposition.proposalId, { now: Date.now() }).envelope.status).toBe('rejected')
+    // D-11: the later mark replaces the gold case and retracts nothing it applied.
+    expect(bundles(f.knowledgeRoot).map(row => row.id)).toContain(replacementId)
   })
+
   it('resumes the same frozen mark after a real busy knowledge lease without cleanup or a new ordinal', async () => {
     const f = markFixture(); root = f.root
     const lease = LOCAL_CURATION_CAPABILITIES.maintenance.acquireWriterLease(f.knowledgeRoot)
@@ -63,30 +112,31 @@ describe('419 feedback host', () => {
     } finally { LOCAL_CURATION_CAPABILITIES.maintenance.releaseLease({ knowledgeRoot: f.knowledgeRoot, leaseId: lease.leaseId }) }
     const goldBefore = hashes(join(root, 'agent-qa-eval'))
     const result = await createFeedbackPortForHost(f.deps).mark({ runId: f.handoff.runId, kind: 'false-fail' })
-    expect(result).toMatchObject({ kind: 'marked', receipt: { ordinal: 1, evidence: { confirmed: 1 }, disposition: { kind: 'drafted' } } })
+    expect(result).toMatchObject({ kind: 'marked', receipt: { ordinal: 1, evidence: { confirmed: 1 }, disposition: { kind: 'applied' } } })
     expect(hashes(join(root, 'agent-qa-eval'))).toEqual(goldBefore)
     expect(readFileSync(join(f.runDir, 'marks.jsonl'), 'utf8').trim().split('\n')).toHaveLength(1)
     expect(files(f.runDir).some(path => path.endsWith('mark-intent.json'))).toBe(false)
     expect(await createFeedbackPortForHost(f.deps).mark({ runId: f.handoff.runId, kind: 'false-fail' }))
       .toMatchObject({ kind: 'already-marked' })
   })
-  it('resumes after proposal publication and before receipt with stable proposals, evidence and gold', async () => {
+
+  // RE-SPELLED 432-09 from 'resumes after proposal publication and before receipt with stable
+  // proposals, evidence and gold': the stable effect is now the applied fix, not a filed proposal.
+  it('resumes after fix publication and before receipt with one applied fix, evidence and gold', async () => {
     const f = markFixture(); root = f.root
     await createFeedbackPortForHost(f.deps).mark({ runId: f.handoff.runId, kind: 'false-fail' })
-    const curation = { ...LOCAL_CURATION_CAPABILITIES,
-      withdrawPendingProposal: vi.fn(async () => { throw new Error('injected withdrawal failure') }) }
-    await expect(createFeedbackPortForHost({ ...f.deps, curation }).mark({ runId: f.handoff.runId, kind: 'false-pass' }))
-      .rejects.toThrow('injected withdrawal failure')
+    const unblock = blockReceipt(f.runDir)
+    await expect(createFeedbackPortForHost(f.deps).mark({ runId: f.handoff.runId, kind: 'false-pass' })).rejects.toThrow()
+    unblock()
     const goldBefore = hashes(join(root, 'agent-qa-eval'))
-    const proposalIds = files(join(f.agentQaRoot, 'proposals')).filter(path => path.endsWith('.json'))
-      .map(path => JSON.parse(readFileSync(path, 'utf8')).id).sort()
+    const knowledgeBefore = canonicalKnowledge(f.knowledgeRoot)
     const word = vi.fn<typeof wordImprovementPlan>()
     const result = await createFeedbackPortForHost({ ...f.deps, word }).mark({ runId: f.handoff.runId, kind: 'false-pass' })
-    expect(result).toMatchObject({ kind: 'marked', receipt: { ordinal: 2, disposition: { kind: 'drafted' } } })
+    expect(result).toMatchObject({ kind: 'marked', receipt: { ordinal: 2 } })
     expect(word).not.toHaveBeenCalled()
     expect(hashes(join(root, 'agent-qa-eval'))).toEqual(goldBefore)
-    expect(files(join(f.agentQaRoot, 'proposals')).filter(path => path.endsWith('.json'))
-      .map(path => { const doc = JSON.parse(readFileSync(path, 'utf8')); return doc.id ?? doc.record?.id ?? doc.proposal?.proposalId }).sort()).toEqual(proposalIds)
+    expect(canonicalKnowledge(f.knowledgeRoot)).toEqual(knowledgeBefore)
+    expect(existsSync(join(f.agentQaRoot, 'proposals'))).toBe(false)
     expect(readFileSync(join(f.runDir, 'marks.jsonl'), 'utf8').trim().split('\n')).toHaveLength(2)
   })
 
@@ -102,7 +152,7 @@ describe('419 feedback host', () => {
         curationJobId: 'fixture-job', buildOrdinal: 45, observationId: `${f.handoff.runId}:test-0:step-0` })
     } finally { LOCAL_CURATION_CAPABILITIES.maintenance.releaseLease({ knowledgeRoot: f.knowledgeRoot, leaseId: lease.leaseId }) }
     const result = await createFeedbackPortForHost(f.deps).mark({ runId: f.handoff.runId, kind: 'false-pass' })
-    expect(result).toMatchObject({ kind: 'marked', receipt: { disposition: { kind: 'drafted', fix: 'caution' }, evidence: { overturned: 1 } } })
+    expect(result).toMatchObject({ kind: 'marked', receipt: { disposition: { kind: 'applied', fix: 'caution' }, evidence: { overturned: 1 } } })
     if (result.kind !== 'marked') throw new Error('expected mark')
     expect(result.receipt.gold.map(item => item.channel)).toContain('overturned-verdict')
     expect(loadBundle(f.published.dir).bundle.events).toContainEqual(expect.objectContaining({ type: 'overturned' }))
@@ -124,29 +174,37 @@ describe('419 feedback host', () => {
     expect(loadBundle(f.published.dir).bundle.events).toContainEqual(expect.objectContaining({ type: 'overturned' }))
   })
 
-  it('draft test_bug invokes authoring edit and files its real pending test-draft identity', async () => {
-    const f = markFixture(); root = f.root
+  // RE-SPELLED 432-09 from 'draft test_bug invokes authoring edit and files its real pending
+  // test-draft identity': the edit writes the file in the call, and the receipt names that file.
+  it('draft test_bug invokes authoring edit and records the test file it wrote', async () => {
+    const f = testBugFixture(); root = f.root
     const member = f.handoff.tests[0]!
-    member.steps[0]!.servedBrief.channel3 = []
-    member.rootCause = { class: 'test_bug', producer: 'deterministic-classifier', confidence: 1, evidence: { citedSteps: [0], citedAnchors: [], citedArtifacts: [], rationale: 'Assertion drift' }, memoryMisdirectionRuledOut: true, perTest: 0 }
-    f.save()
-    const draftRef = { filePath: 'tests/draft.yaml', testId: member.testId!, testName: member.testName, contentDigest: 'draft-digest' }
-    const edited: AuthoringDraftEditOutput = { draftRef, editedFrom: { filePath: member.filePath, testName: member.testName, boundBy: 'exact-ref' }, patches: [], thoughts: 'Correct assertion', proposal: {
-      schemaVersion: 1, draftRef, targetPath: member.filePath, sourceDigest: 'original-digest', disposition: 'unverified', runsPreviewed: 0, runsConsumed: 0, repairIterations: 0, summaryLine: 'Correct assertion',
-    }, written: { kind: 'written', filePath: member.filePath, contentDigest: 'draft-digest' } }
+    const edited = writtenEdit(member.filePath!, member.testName!, member.testId!)
     const invokeAuthoringDraftEdit = vi.fn(async () => edited)
     const port = createFeedbackPortForHost({ ...f.deps, invokeAuthoringDraftEdit })
     const result = await port.mark({ runId: f.handoff.runId, kind: 'false-fail' })
     expect(invokeAuthoringDraftEdit).toHaveBeenCalledWith({ testRef: `${member.filePath}::${member.testName}`, intent: expect.any(String) })
-    expect(result).toMatchObject({ kind: 'marked', receipt: { disposition: { kind: 'drafted', fix: 'test-edit', proposalKind: 'test-draft' } } })
-    if (result.kind !== 'marked' || result.receipt.disposition.kind !== 'drafted') throw new Error('expected test draft')
-    const id = result.receipt.disposition.proposalId
-    expect(showProposalEnvelope(f.agentQaRoot, id, { now: Date.now() }).envelope).toMatchObject({ id, kind: 'test-draft', status: 'pending' })
-    // The existing decision store records a confirmed draft; a later mark leaves it standing.
-    expect(decidePendingProposal(f.agentQaRoot, id, { decision: 'applied', at: Date.now() }).kind).toBe('decided')
-    const before = files(join(f.agentQaRoot, 'proposals')).map(path => readFileSync(path, 'utf8'))
+    expect(result).toMatchObject({ kind: 'marked', receipt: { disposition: { kind: 'applied', fix: 'test-edit',
+      change: { kind: 'test-file', filePath: member.filePath, contentDigest: edited.written.kind === 'written' ? edited.written.contentDigest : '' } } } })
+    expect(existsSync(join(f.agentQaRoot, 'proposals')), 'nothing is filed for review').toBe(false)
+    // A later mark leaves the written file's fix standing and invokes no second edit.
     await port.mark({ runId: f.handoff.runId, kind: 'confirmed-bug' })
-    expect(files(join(f.agentQaRoot, 'proposals')).map(path => readFileSync(path, 'utf8'))).toEqual(before)
+    expect(invokeAuthoringDraftEdit).toHaveBeenCalledOnce()
+  })
+
+  it('a test edit that was not written leaves no receipt, and the retry edits again', async () => {
+    const f = testBugFixture(); root = f.root
+    const member = f.handoff.tests[0]!
+    const edited = writtenEdit(member.filePath!, member.testName!, member.testId!)
+    const refused: AuthoringDraftEditOutput = { ...edited, written: { kind: 'not-written', reason: 'target-changed' } }
+    const invokeAuthoringDraftEdit = vi.fn<() => Promise<AuthoringDraftEditOutput>>()
+      .mockResolvedValueOnce(refused).mockResolvedValueOnce(edited)
+    const port = createFeedbackPortForHost({ ...f.deps, invokeAuthoringDraftEdit })
+    await expect(port.mark({ runId: f.handoff.runId, kind: 'false-fail' })).rejects.toThrow('target-changed')
+    expect(existsSync(join(f.runDir, 'marks.jsonl'))).toBe(false)
+    const result = await port.mark({ runId: f.handoff.runId, kind: 'false-fail' })
+    expect(result).toMatchObject({ kind: 'marked', receipt: { ordinal: 1, disposition: { kind: 'applied', fix: 'test-edit' } } })
+    expect(invokeAuthoringDraftEdit).toHaveBeenCalledTimes(2)
   })
 
   it('draft no-draftable-fix names the empty resolved evidence without filing a fallback', async () => {
@@ -161,7 +219,7 @@ describe('419 feedback host', () => {
     expect(result).toMatchObject({ kind: 'marked', receipt: { disposition: { kind: 'no-draftable-fix', checked: { servedRecords: 0, procedureReads: 0, assertionDrift: false, rootCause: 'app_bug' } } } })
     if (result.kind !== 'marked') throw new Error('expected mark')
     expect(result.receipt.gold).toHaveLength(1)
-    expect(files(join(f.agentQaRoot, 'proposals'))).toEqual([])
+    expect(existsSync(join(f.agentQaRoot, 'proposals'))).toBe(false)
     expect(invokeAuthoringDraftEdit).not.toHaveBeenCalled()
   })
 
@@ -173,7 +231,7 @@ describe('419 feedback host', () => {
     const result = await createFeedbackPortForHost(f.deps).mark({ runId: f.handoff.runId, kind: 'false-fail' })
     expect(result).toMatchObject({ kind: 'marked', receipt: { disposition: { kind: 'quarantined', class: klass }, rootCause: { class: klass, producer: 'deterministic-classifier' }, gold: [], evidence: { confirmed: 0, overturned: 0 } } })
     expect([hashes(f.knowledgeRoot), hashes(join(root, 'agent-qa-eval'))]).toEqual(before)
-    expect(files(join(f.agentQaRoot, 'proposals'))).toEqual([])
+    expect(existsSync(join(f.agentQaRoot, 'proposals'))).toBe(false)
     expect(readFileSync(join(f.runDir, 'marks.jsonl'), 'utf8').trim().split('\n')).toHaveLength(1)
   })
 
@@ -238,6 +296,188 @@ describe('419 feedback host', () => {
     expect(lines).toEqual([result.receipt])
     expect(await port.marksFor(f.handoff.runId)).toEqual(lines)
     expect(loadBundle(f.published.dir).bundle.events).toContainEqual(expect.objectContaining({ type: 'confirmed', evidenceToken: `mark:${result.receipt.markId}` }))
-    expect(files(join(f.agentQaRoot, 'proposals'))).toEqual([])
+    expect(existsSync(join(f.agentQaRoot, 'proposals'))).toBe(false)
+  })
+})
+
+// 2026-09-30, 432-09 (D-04/D-07/D-10/D-11/D-22): a mark lands gold, evidence and its applied fix
+// before the receipt, and every fault checkpoint recovers to exactly one applied fix.
+describe('432-09 marks apply their fix once and return an applied receipt', () => {
+  let root: string | undefined
+  afterEach(() => { if (root) rmSync(root, { recursive: true, force: true }) })
+  const hashes = (dir: string) => files(dir).map(path => [path, createHash('sha256').update(readFileSync(path)).digest('hex')])
+
+  it('C432-MARK-APPLIED-RECEIPT: the receipt names the records or test file changed, exactly as stored, and nothing is filed', async () => {
+    const f = markFixture(); root = f.root
+    const result = await createFeedbackPortForHost(f.deps).mark({ runId: f.handoff.runId, kind: 'false-fail' })
+    if (result.kind !== 'marked') throw new Error('expected a mark')
+    const disposition = applied(result.receipt)
+    expect(disposition).toMatchObject({ fix: 'fact', change: { kind: 'knowledge' } })
+    if (disposition.change.kind !== 'knowledge') throw new Error('expected knowledge')
+    const intentUuid = disposition.change.changeId.replace(/^prop_/, '')
+    expect(disposition.change.changeId).toMatch(/^prop_[0-9a-f-]{36}$/)
+    expect(intentUuid).toHaveLength(36)
+    const stored = new Set(bundles(f.knowledgeRoot).map(row => row.id))
+    expect(disposition.change.recordIds.length).toBeGreaterThan(0)
+    for (const recordId of disposition.change.recordIds) expect(stored.has(recordId), recordId).toBe(true)
+    // EDGE-10: the receipt is the stored line, value for value; no ordinal or address is re-derived.
+    const line = readFileSync(join(f.runDir, 'marks.jsonl'), 'utf8').trim()
+    expect(JSON.parse(line)).toEqual(result.receipt)
+    expect(Number.isInteger(result.receipt.ordinal) && result.receipt.ordinal === 1).toBe(true)
+    expect([result.receipt.testIndex, result.receipt.stepIndex]).toEqual([f.handoff.tests[0]!.testIndex, undefined])
+    expect(existsSync(join(f.agentQaRoot, 'proposals')), 'no inbox envelope').toBe(false)
+    expect(existsSync(join(f.runDir, 'mark-intent.json'))).toBe(false)
+
+    // The test-file arm keeps the digest of the exact UTF-8 bytes the edit wrote.
+    const t = testBugFixture()
+    try {
+      const member = t.handoff.tests[0]!
+      const edited = writtenEdit(member.filePath!, member.testName!, member.testId!)
+      const marked = await createFeedbackPortForHost({ ...t.deps, invokeAuthoringDraftEdit: async () => edited })
+        .mark({ runId: t.handoff.runId, kind: 'false-fail' })
+      if (marked.kind !== 'marked') throw new Error('expected a mark')
+      const written = edited.written.kind === 'written' ? edited.written : undefined
+      expect(applied(marked.receipt)).toEqual({ kind: 'applied', fix: 'test-edit',
+        change: { kind: 'test-file', filePath: member.filePath, contentDigest: written!.contentDigest } })
+      expect(readFileSync(join(t.runDir, 'marks.jsonl'), 'utf8')).toContain(`"contentDigest":"${written!.contentDigest}"`)
+      expect(existsSync(join(t.agentQaRoot, 'proposals'))).toBe(false)
+    } finally { rmSync(t.root, { recursive: true, force: true }) }
+  })
+
+  const checkpoints = ['after gold', 'after evidence', 'after fix publication', 'before receipt'] as const
+  it.each(checkpoints)('C432-MARK-RETRY-ONCE: a knowledge mark interrupted %s lands its fix exactly once on retry', async checkpoint => {
+    const f = markFixture(); root = f.root
+    const real = realApply()
+    let publications = 0
+    let failPublication = checkpoint === 'after fix publication'
+    const applyKnowledgeChange = vi.fn(async (input: Record<string, unknown>) => {
+      const answer = await real(input)
+      publications += 1
+      if (failPublication) { failPublication = false; throw new Error('injected crash after publication') }
+      return answer
+    })
+    let failWording = checkpoint === 'after evidence'
+    const word = vi.fn<typeof wordImprovementPlan>(async input => {
+      if (failWording) { failWording = false; throw new Error('injected crash after evidence') }
+      return await wordImprovementPlan(input)
+    })
+    const deps = { ...f.deps, applyKnowledgeChange, word }
+    let release = () => {}
+    if (checkpoint === 'after gold') {
+      const lease = LOCAL_CURATION_CAPABILITIES.maintenance.acquireWriterLease(f.knowledgeRoot)
+      if (lease.kind !== 'acquired') throw new Error('expected authority')
+      release = () => LOCAL_CURATION_CAPABILITIES.maintenance.releaseLease({ knowledgeRoot: f.knowledgeRoot, leaseId: lease.leaseId })
+    }
+    if (checkpoint === 'before receipt') release = blockReceipt(f.runDir)
+    await expect(createFeedbackPortForHost(deps).mark({ runId: f.handoff.runId, kind: 'false-fail' })).rejects.toThrow()
+    release()
+    expect(existsSync(join(f.runDir, 'marks.jsonl')), 'no receipt before the retry').toBe(false)
+    const gold = hashes(join(root, 'agent-qa-eval'))
+    const knowledge = canonicalKnowledge(f.knowledgeRoot)
+    const callsBefore = applyKnowledgeChange.mock.calls.length
+
+    const result = await createFeedbackPortForHost(deps).mark({ runId: f.handoff.runId, kind: 'false-fail' })
+    expect(result).toMatchObject({ kind: 'marked', receipt: { ordinal: 1, evidence: { confirmed: 1 }, disposition: { kind: 'applied', fix: 'fact' } } })
+    expect(hashes(join(root, 'agent-qa-eval')), 'gold froze once').toEqual(gold)
+    if (checkpoint === 'after fix publication' || checkpoint === 'before receipt') {
+      expect(canonicalKnowledge(f.knowledgeRoot), 'the published fix is not published again').toEqual(knowledge)
+    }
+    if (checkpoint === 'before receipt') {
+      expect(applyKnowledgeChange.mock.calls.length, 'a persisted applied fix is read back, never re-applied').toBe(callsBefore)
+    }
+    expect(publications, 'one publication per attempt that reached it').toBe(checkpoint === 'after fix publication' ? 2 : 1)
+    if (result.kind !== 'marked') throw new Error('expected a mark')
+    const { change } = applied(result.receipt)
+    if (change.kind !== 'knowledge') throw new Error('expected knowledge')
+    const victim = bundles(f.knowledgeRoot).find(row => row.id === f.published.id)!
+    expect(victim.bundle.events.filter((event: { type: string }) => event.type === 'superseded')).toHaveLength(1)
+    expect(victim.bundle.events.filter((event: { type: string; evidenceToken?: string }) =>
+      event.type === 'confirmed' && event.evidenceToken === `mark:${result.receipt.markId}`), 'evidence once').toHaveLength(1)
+    expect(bundles(f.knowledgeRoot)).toHaveLength(2)
+    expect(readFileSync(join(f.runDir, 'marks.jsonl'), 'utf8').trim().split('\n')).toHaveLength(1)
+    expect(await createFeedbackPortForHost(deps).mark({ runId: f.handoff.runId, kind: 'false-fail' }))
+      .toEqual({ kind: 'already-marked', receipt: result.receipt })
+  })
+
+  it('C432-MARK-RETRY-ONCE: a test-edit mark interrupted before its receipt reuses the written file without a second edit', async () => {
+    const f = testBugFixture(); root = f.root
+    const member = f.handoff.tests[0]!
+    const edited = writtenEdit(member.filePath!, member.testName!, member.testId!)
+    const invokeAuthoringDraftEdit = vi.fn(async () => edited)
+    const unblock = blockReceipt(f.runDir)
+    await expect(createFeedbackPortForHost({ ...f.deps, invokeAuthoringDraftEdit }).mark({ runId: f.handoff.runId, kind: 'false-fail' })).rejects.toThrow()
+    unblock()
+    const result = await createFeedbackPortForHost({ ...f.deps, invokeAuthoringDraftEdit }).mark({ runId: f.handoff.runId, kind: 'false-fail' })
+    expect(result).toMatchObject({ kind: 'marked', receipt: { ordinal: 1, disposition: { kind: 'applied', change: { kind: 'test-file', filePath: member.filePath } } } })
+    expect(invokeAuthoringDraftEdit, 'the file is written once').toHaveBeenCalledOnce()
+  })
+
+  it('C432-MARK-LEASE-RECOVERY: a fix that finds the writer lease held refuses by name, hands a delegate the validated request, and never steals the lease', async () => {
+    const f = markFixture(); root = f.root
+    const real = realApply()
+    let holder: { leaseId: string; epoch: number } | undefined
+    // The holder appears after gold and evidence, exactly when the fix asks for the lease.
+    const applyKnowledgeChange = vi.fn(async (input: Record<string, unknown>) => {
+      const lease = LOCAL_CURATION_CAPABILITIES.maintenance.acquireWriterLease(f.knowledgeRoot)
+      if (lease.kind !== 'acquired') throw new Error('expected authority')
+      holder = { leaseId: lease.leaseId, epoch: lease.epoch }
+      return await real(input)
+    })
+    const releaseHolder = () => {
+      if (holder !== undefined) LOCAL_CURATION_CAPABILITIES.maintenance.releaseLease({ knowledgeRoot: f.knowledgeRoot, leaseId: holder.leaseId })
+      holder = undefined
+    }
+    try {
+      await expect(createFeedbackPortForHost({ ...f.deps, applyKnowledgeChange }).mark({ runId: f.handoff.runId, kind: 'false-fail' }))
+        .rejects.toThrow('writer lease for this knowledge root is held')
+      expect(existsSync(join(f.runDir, 'marks.jsonl'))).toBe(false)
+      expect(existsSync(join(f.runDir, 'mark-intent.json')), 'the intent survives for the retry').toBe(true)
+      const lineageBefore = bundles(f.knowledgeRoot).map(row => row.id)
+      releaseHolder()
+
+      // With a delegate bound, the held lease routes the same request and identity to its holder.
+      const delegations: { request: unknown; operationId: string }[] = []
+      const knowledgeChangeDelegate = vi.fn(async (delegation: { request: unknown; operationId: string }) => {
+        delegations.push(delegation)
+        return await applyExplicitReview({ agentQaRoot: f.agentQaRoot, knowledgeRoot: f.knowledgeRoot,
+          request: delegation.request, operationId: delegation.operationId, opId: 'runs.mark',
+          executionContext: 'local-interactive', writerAuthority: holder })
+      })
+      const result = await createFeedbackPortForHost({ ...f.deps, applyKnowledgeChange, knowledgeChangeDelegate })
+        .mark({ runId: f.handoff.runId, kind: 'false-fail' })
+      expect(result).toMatchObject({ kind: 'marked', receipt: { ordinal: 1, evidence: { confirmed: 1 }, disposition: { kind: 'applied', fix: 'fact' } } })
+      expect(knowledgeChangeDelegate).toHaveBeenCalledOnce()
+      expect(Object.keys(delegations[0]!).sort()).toEqual(['operationId', 'request'])
+      expect(delegations[0]!.request).toMatchObject({ verb: 'mark', input: { mark: { kind: 'false-fail' } } })
+      if (result.kind !== 'marked') throw new Error('expected a mark')
+      const { change } = applied(result.receipt)
+      if (change.kind !== 'knowledge') throw new Error('expected knowledge')
+      expect(change.changeId).toBe(`prop_${delegations[0]!.operationId}`)
+      expect(bundles(f.knowledgeRoot).map(row => row.id)).toEqual(expect.arrayContaining(lineageBefore))
+      // The lease was never taken from its holder: it is still the holder's to release.
+      expect(LOCAL_CURATION_CAPABILITIES.maintenance.acquireWriterLease(f.knowledgeRoot).kind).toBe('held')
+    } finally { releaseHolder() }
+  })
+
+  it('C432-MARK-LATEST-WINS: a new mark on the address replaces its gold, and the earlier applied fix stays readable', async () => {
+    const f = markFixture(); root = f.root
+    const port = createFeedbackPortForHost(f.deps)
+    const first = await port.mark({ runId: f.handoff.runId, kind: 'false-fail' })
+    if (first.kind !== 'marked') throw new Error('expected a mark')
+    const { change } = applied(first.receipt)
+    if (change.kind !== 'knowledge') throw new Error('expected knowledge')
+    const second = await port.mark({ runId: f.handoff.runId, kind: 'false-fail', note: 'The coupon field was hidden' })
+    expect(second).toMatchObject({ kind: 'already-marked' })
+    const third = await port.mark({ runId: f.handoff.runId, kind: 'confirmed-bug' })
+    if (third.kind !== 'marked') throw new Error('expected a re-mark')
+    expect(third.receipt).toMatchObject({ ordinal: 2, supersedes: first.receipt.markId })
+    expect(third.receipt.gold[0]!.cassetteId).toContain('-gold-m02')
+    expect(await port.marksFor(f.handoff.runId), 'the latest mark is the one that counts').toEqual([third.receipt])
+    const ids = bundles(f.knowledgeRoot).map(row => row.id)
+    for (const recordId of change.recordIds) expect(ids, 'the earlier fix is not retracted').toContain(recordId)
+    const ledger = readFileSync(join(f.runDir, 'marks.jsonl'), 'utf8').trim().split('\n').map(line => JSON.parse(line) as MarkReceipt)
+    expect(ledger.map(receipt => receipt.disposition.kind)).toEqual(['applied', 'confirmed-bug'])
+    expect(ledger[0]).toEqual(first.receipt)
+    expect(existsSync(join(f.agentQaRoot, 'proposals')), 'no withdrawal is written anywhere').toBe(false)
   })
 })
