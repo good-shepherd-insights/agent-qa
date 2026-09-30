@@ -19,9 +19,12 @@
 // TESTS ARE EXCLUDED FROM THE SCAN because the discrimination cell below writes the defective shape
 // on purpose — as a string, so it is not even a file the walker could reach.
 
-import { readFileSync, readdirSync, statSync } from 'node:fs'
+import { mkdtempSync, readFileSync, readdirSync, rmSync, statSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { dirname, join, relative, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
+
+import { createJsonlSessionLog } from '@vostride/agent-qa-agent-local'
 
 import {
   CURRENT_CHAT_SESSION_SCHEMA_VERSION,
@@ -170,6 +173,43 @@ describe('ChatApprovalDecisionRecord has exactly one declaration, in the composi
       },
     ]) {
       expect(guardChatSessionEvent(row, CURRENT_CHAT_SESSION_SCHEMA_VERSION)).toEqual(row)
+    }
+  })
+
+  // 432-16 task 2: the same rows, read back through the shipped JSONL session log rather than the
+  // bare guard — a pre-432 conversation re-opens whole, with no line refused.
+  it('C432-NO-APPROVAL-WRITER: a pre-432 session holding approval_decision rows re-opens with no refused line', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'approval-history-'))
+    try {
+      const log = createJsonlSessionLog({
+        root,
+        now: () => '2026-09-01T10:00:00.000Z',
+        model: () => 'fixture:model',
+        toolsetHash: () => 'fixture-toolset',
+      })
+      const rows = [
+        { kind: 'user_message', turnId: 'turn-1', at: '2026-09-01T10:00:00.000Z', text: 'apply it' },
+        {
+          kind: 'approval_decision', turnId: 'turn-1', at: '2026-09-01T10:00:01.000Z',
+          actionClass: 'fn:knowledge.proposal.apply', decision: 'accept-always', source: 'gate',
+        },
+        { kind: 'turn_complete', turnId: 'turn-1', at: '2026-09-01T10:00:02.000Z', status: 'completed' },
+      ] as const
+      const opened = await log.open()
+      const sessionId = opened.header.sessionId
+      for (const row of rows) await opened.append(row as never)
+      await opened.turnBoundary()
+      await opened.close()
+
+      const reopened = await log.open(sessionId)
+      try {
+        expect(reopened.refusedLines).toEqual([])
+        expect(reopened.events.filter((event) => event.kind === 'approval_decision')).toEqual([rows[1]])
+      } finally {
+        await reopened.close()
+      }
+    } finally {
+      rmSync(root, { recursive: true, force: true })
     }
   })
 

@@ -16,8 +16,11 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import { invokeFunction } from '@vostride/agent-qa-agent'
+import { Command } from 'commander'
 import type { ComposeLocalAgentInput } from '@vostride/agent-qa-agent-local'
-import { describe, expect, expectTypeOf, it } from 'vitest'
+import { describe, expect, expectTypeOf, it, vi } from 'vitest'
+
+import { createFnCommand } from '../commands/fn.js'
 
 import * as cliHost from '../composition/local-agent-host.js'
 import {
@@ -143,6 +146,37 @@ describe('the CLI binds a confirmation exactly where there is somebody to ask', 
       expect(listeners()).toEqual(before)
       expect(readFileSync(configPath, 'utf8')).toContain('step: 45s')
     } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  // 432-16 task 2: the same one-call claim through the real `agent-qa fn` door, with stdin as the
+  // test runner leaves it (not a terminal): the change lands and nothing waits for an answer.
+  it('C432-NO-CONFIRM-PORTS: `agent-qa fn` applies a change without a terminal, in one call', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'tty-confirm-fn-door-'))
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {})
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const exitCode = process.exitCode
+    try {
+      const configPath = join(root, 'agent-qa.config.yaml')
+      writeFileSync(configPath, VALID_CONFIG)
+      expect(process.stdin.isTTY === true).toBe(false)
+      const before = ['data', 'readable', 'keypress'].map((event) => process.stdin.listenerCount(event))
+      const program = new Command().option('--config <path>').addCommand(createFnCommand())
+      program.exitOverride()
+      await program.parseAsync([
+        'node', 'agent-qa', '--config', configPath, 'fn', 'config.field.set', '--json',
+        '--input', JSON.stringify({ path: 'use.timeout.step', value: '45s' }),
+      ])
+      expect(error.mock.calls).toEqual([])
+      expect(process.exitCode ?? 0).toBe(0)
+      expect(readFileSync(configPath, 'utf8')).toContain('step: 45s')
+      expect(['data', 'readable', 'keypress'].map((event) => process.stdin.listenerCount(event)))
+        .toEqual(before)
+    } finally {
+      process.exitCode = exitCode
+      log.mockRestore()
+      error.mockRestore()
       rmSync(root, { recursive: true, force: true })
     }
   })

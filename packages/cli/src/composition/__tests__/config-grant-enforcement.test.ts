@@ -244,6 +244,27 @@ describe('a config change applies in the call and records no approval (D-05, D-1
     expect(ledgerLines()).toHaveLength(1)
     expect(commitCount()).toBe(1)
   })
+
+  // 432-16 task 2: the retry edge. A repeated flagged change is the same change: it answers
+  // no-change, writes nothing, and still records no approval.
+  it('C432-NO-GIT-COMMIT: (M1b) retrying the flagged change answers no-change and records nothing', async () => {
+    await mintGrant(UNRELATED_CLASS)
+    const before = ledgerBytes()
+    await change(FLAGGED)
+    const once = readFileSync(configPath, 'utf8')
+
+    const host = composeCliLocalAgent({ agentQaRoot, configPath })
+    try {
+      const again = await invokeFunction(host.registry, 'config.field.set', FLAGGED, CLI_FUNCTION_CALLER) as ConfigChangeOutput
+      expect(again.outcome).toBe('no-change')
+    } finally {
+      await host.close()
+    }
+
+    expect(readFileSync(configPath, 'utf8')).toBe(once)
+    expect(ledgerBytes()).toBe(before)
+    expect(commitCount()).toBe(1)
+  })
 })
 
 describe('C432-NO-CONFIG-UNDO-PORT: the pre-432 apply and undo verbs are unbound on the CLI host', () => {
@@ -283,6 +304,20 @@ describe('C432-NO-CONFIG-UNDO-PORT: the pre-432 apply and undo verbs are unbound
       : []).toEqual([])
     expect(readFileSync(configPath, 'utf8')).toBe(SEEDED_CONFIG)
     expect(commitCount()).toBe(1)
+  })
+
+  it('C432-NO-CONFIG-UNDO-PORT: an unknown id is refused unbound before any record is read', async () => {
+    const host = composeCliLocalAgent({ agentQaRoot, configPath })
+    try {
+      await expect(invokeFunction(
+        host.registry, 'config.proposal.apply', { proposalId: 'prop_00000000-0000-4000-8000-000000000000' },
+        CLI_FUNCTION_CALLER,
+      )).rejects.toMatchObject({ name: 'FunctionNotBoundError' })
+    } finally {
+      await host.close()
+    }
+    expect(existsSync(join(agentQaRoot, 'proposals'))).toBe(false)
+    expect(readFileSync(configPath, 'utf8')).toBe(SEEDED_CONFIG)
   })
 })
 

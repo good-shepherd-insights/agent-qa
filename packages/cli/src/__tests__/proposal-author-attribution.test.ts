@@ -28,9 +28,9 @@ import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-import { invokeFunction } from '@vostride/agent-qa-agent'
+import { invokeFunction, RUNS_MARK_FUNCTION_ID } from '@vostride/agent-qa-agent'
 import type { FunctionCaller, FunctionScope } from '@vostride/agent-qa-schema'
-import { FunctionScopeSchema } from '@vostride/agent-qa-schema'
+import { FunctionScopeSchema, RunsMarkOutcomeSchema } from '@vostride/agent-qa-schema'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { CHAT_DOOR_SURFACE } from '../commands/chat.js'
@@ -39,6 +39,7 @@ import { mcpFunctionCaller } from '../commands/mcp.js'
 import * as cliHost from '../composition/local-agent-host.js'
 import { composeCliLocalAgent, CLI_FUNCTION_CALLER } from '../composition/local-agent-host.js'
 import { filePre432ConfigProposal } from '../composition/__tests__/pre-432-config-proposal.js'
+import { markFixture } from '../gates/__tests__/feedback-fixture.js'
 import { SURFACE_ROSTER } from './conformance/roster.js'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
@@ -334,6 +335,81 @@ describe('C432-NO-GIT-COMMIT: a config change has no author because it makes no 
     const bare = seedWorkspace({ repository: false })
     expect((await changeStep(DOORS[0] as Door, bare)).outcome).toBe('applied')
     expect(readFileSync(bare.configPath, 'utf8')).toBe(SEEDED_CONFIG.replace('step: 30s', 'step: 45s'))
+  })
+})
+
+// 432-16 task 2: the other two publications D-07 names — an authored test and a mark's fix — and
+// the retry edge of a config change, each read back off git.
+describe('C432-NO-GIT-COMMIT: every publication leaves the history alone (D-04, D-06, D-07)', () => {
+  it('C432-NO-GIT-COMMIT: a mark lands its gold, evidence and knowledge fix and leaves HEAD, the index and the history alone', async () => {
+    const f = markFixture()
+    roots.push(f.root)
+    const git = (...args: string[]): string => execFileSync('git', args, { cwd: f.root, encoding: 'utf8' })
+    writeFileSync(join(f.root, '.gitignore'), '.agent-qa/\n')
+    git('init', '--quiet')
+    git('config', 'user.name', 'A Person')
+    git('config', 'user.email', 'a-person@example.invalid')
+    git('config', 'commit.gpgsign', 'false')
+    // The knowledge root is committed, as a project's is; the runtime root is not.
+    git('add', '--', '.gitignore', CONFIG_FILE, 'agent-qa-knowledge')
+    git('commit', '--quiet', '-m', 'seed')
+    const state = (): Record<string, string> => ({
+      head: git('rev-parse', 'HEAD').trim(),
+      count: git('rev-list', '--count', 'HEAD').trim(),
+      index: git('ls-files', '--stage'),
+      cached: git('diff', '--cached', '--name-status'),
+    })
+    const before = state()
+
+    const host = composeCliLocalAgent({
+      agentQaRoot: f.agentQaRoot,
+      configPath: f.configPath,
+      resolveExecutionContext: () => 'local-headless',
+    })
+    let outcome: ReturnType<typeof RunsMarkOutcomeSchema.parse>
+    try {
+      outcome = RunsMarkOutcomeSchema.parse(await invokeFunction(
+        host.registry, RUNS_MARK_FUNCTION_ID, { runId: f.handoff.runId, kind: 'false-fail' }, CLI_FUNCTION_CALLER,
+      ))
+    } finally {
+      await host.close()
+    }
+
+    expect(outcome.kind).toBe('marked')
+    if (outcome.kind !== 'marked') throw new Error('unreachable')
+    // The fix was applied in the call — and applied as an uncommitted change under the knowledge root.
+    expect(outcome.receipt.disposition.kind).toBe('applied')
+    expect(state()).toEqual(before)
+    expect(git('status', '--porcelain', '--', 'agent-qa-knowledge').trim()).not.toBe('')
+    expect(git('log', '--format=%an <%ae>')).not.toContain('agent-qa')
+  })
+
+  it('C432-NO-GIT-COMMIT: an authored test is written to its target and leaves HEAD, the index and the history alone', () => {
+    const workspace = seedWorkspace()
+    mkdirSync(join(workspace.root, 'tests', '.agent-qa-drafts'), { recursive: true })
+    writeFileSync(join(workspace.root, 'tests', '.agent-qa-drafts', 'draft.yaml'), 'name: a drafted test\n')
+    const before = repositoryState(workspace)
+
+    expect(cliHost.publishAuthoredTest({
+      configPath: workspace.configPath,
+      request: { draftPath: 'tests/.agent-qa-drafts/draft.yaml', targetPath: 'tests/drafted.yaml' },
+    })).toMatchObject({ kind: 'written', filePath: 'tests/drafted.yaml' })
+
+    expect(repositoryState(workspace)).toEqual(before)
+    expect(workspace.git('status', '--porcelain', '--', 'tests/drafted.yaml').trim()).toBe('?? tests/drafted.yaml')
+  })
+
+  it('C432-NO-GIT-COMMIT: retrying the same config change answers no-change and still commits nothing', async () => {
+    const workspace = seedWorkspace()
+    const before = repositoryState(workspace)
+    const door = DOORS[0] as Door
+
+    expect((await changeStep(door, workspace)).outcome).toBe('applied')
+    const once = readFileSync(workspace.configPath, 'utf8')
+    expect((await changeStep(door, workspace)).outcome).toBe('no-change')
+
+    expect(readFileSync(workspace.configPath, 'utf8')).toBe(once)
+    expect(repositoryState(workspace)).toEqual(before)
   })
 })
 
