@@ -19,7 +19,6 @@ import { randomUUID } from 'node:crypto'
 import { readdirSync } from 'node:fs'
 import { userInfo } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
-import { createInterface } from 'node:readline'
 import { buildPromotionPostureResolver, promotionPostureResolverForHost, renderPromotionLine } from '../curation/promotion-posture.js'
 import { createReplayGatePortForHost } from '../gates/replay-gate-host.js'
 
@@ -109,12 +108,10 @@ interface RollbackOptions {
   toBuild?: string
   anchorCluster?: string
   originClass?: string
-  yes?: boolean
   json?: boolean
 }
 
 interface PurgeOptions {
-  confirm?: string
   json?: boolean
 }
 
@@ -165,11 +162,6 @@ export interface KnowledgePaths {
 
 type OutputStream = 'stdout' | 'stderr'
 
-interface PromptDestination {
-  name: OutputStream
-  stream: typeof process.stdout | typeof process.stderr
-}
-
 type MaintainErrorCode =
   | 'invalid-selector'
   | 'invalid-ordinal'
@@ -201,12 +193,9 @@ type RollbackSelector =
       originClass?: OriginClass
     }
 
-type RollbackExecutionOutcome =
-  | { kind: 'aborted' }
-  | { kind: 'completed'; report: RollbackReport }
+type RollbackExecutionOutcome = { kind: 'completed'; report: RollbackReport }
 
 type PurgeExecutionOutcome =
-  | { kind: 'aborted' }
   | { kind: 'completed'; receipt: PurgeReceipt; alreadyPurged: boolean }
   | { kind: 'failed' }
 
@@ -928,24 +917,9 @@ async function withWriterLease<T>(
   }
 }
 
-function promptDestination(json: boolean): PromptDestination {
-  return json
-    ? { name: 'stderr', stream: process.stderr }
-    : { name: 'stdout', stream: process.stdout }
-}
-
-function canPromptInteractively(destination: PromptDestination): boolean {
-  return process.stdin.isTTY === true && destination.stream.isTTY === true
-}
-
-function promptForAnswer(question: string, destination: PromptDestination): Promise<string> {
-  const readline = createInterface({ input: process.stdin, output: destination.stream })
-  return new Promise((resolveAnswer) => {
-    readline.question(question, (answer) => {
-      readline.close()
-      resolveAnswer(answer)
-    })
-  })
+// The preview leaves stdout free for `--json`, whose stdout carries only the typed result.
+function previewStream(json: boolean): OutputStream {
+  return json ? 'stderr' : 'stdout'
 }
 
 function renderRebuildReport(report: RebuildReport): string {
@@ -1182,7 +1156,7 @@ function assertPreviewUnchanged(verb: 'rollback' | 'purge', before: string, afte
   if (before === after) return
   throw new KnowledgeMaintainCommandError(
     'preview-changed',
-    `authorized ${verb} target changed before writer authority was acquired; rerun the command`,
+    `${verb} target changed after the preview; rerun the command to see the new preview`,
   )
 }
 
@@ -1259,37 +1233,17 @@ export function registerKnowledgeMaintainCommands(command: Command): void {
     .option('--to-build <n>', 'campaign upper build ordinal (inclusive)')
     .option('--anchor-cluster <key>', 'campaign canonical 64-hex anchor cluster key')
     .option('--origin-class <class>', 'campaign origin: user|agent-verified|agent-observed|import')
-    .option('--yes', 'approve the preview without an interactive prompt')
     .option('--json', 'output the typed RollbackReport as masked JSON')
     .action(async (options: RollbackOptions, rollbackCommand: Command) => {
       try {
         const selector = rollbackSelector(options)
         const paths = await resolveKnowledgePaths(rollbackCommand)
-        const prompt = promptDestination(options.json === true)
+        // Running the command is the intent (Phase 432 D-14). The preview is still resolved and
+        // shown outside the lease, and the lease rechecks it before the first write.
         const previewInput = rollbackInput(selector, paths, 0)
         const previewAffected = resolveRollbackAffectedSet(previewInput)
         const previewFingerprint = rollbackPreviewFingerprint(previewAffected)
-        emitHuman(renderRollbackPreview(previewAffected), prompt.name)
-
-        if (options.yes !== true) {
-          if (!canPromptInteractively(prompt)) {
-            emitHuman(
-              pc.red(
-                'knowledge rollback: refusal [confirmation-required]: '
-                + 'non-interactive use requires --yes',
-              ),
-              'stderr',
-            )
-            process.exitCode = 1
-            return
-          }
-          const answer = await promptForAnswer('Apply this rollback? (y/N) ', prompt)
-          if (answer.trim().toLowerCase() !== 'y') {
-            emitHuman(pc.dim('Rollback aborted.'), prompt.name)
-            process.exitCode = 1
-            return
-          }
-        }
+        emitHuman(renderRollbackPreview(previewAffected), previewStream(options.json === true))
 
         const leaseResult = await withWriterLease(
           'rollback',
@@ -1315,7 +1269,7 @@ export function registerKnowledgeMaintainCommands(command: Command): void {
             return { kind: 'completed', report }
           },
         )
-        if (leaseResult.kind === 'refused' || leaseResult.value.kind === 'aborted') return
+        if (leaseResult.kind === 'refused') return
         if (options.json === true) emitJson(leaseResult.value.report)
         else emitHuman(renderRollbackReport(leaseResult.value.report))
       } catch (error) {
@@ -1327,57 +1281,19 @@ export function registerKnowledgeMaintainCommands(command: Command): void {
     .command('purge')
     .description('Irreversibly purge a knowledge record from local store surfaces')
     .argument('<record-id>', 'record id to purge')
-    .option('--confirm <id>', 'confirm non-interactively by repeating the exact record id')
     .option('--json', 'output the typed PurgeReceipt as masked JSON')
     .action(async (recordIdValue: string, options: PurgeOptions, purgeCommand: Command) => {
       try {
         const recordId = asRecordId(recordIdValue)
         const paths = await resolveKnowledgePaths(purgeCommand)
-        const prompt = promptDestination(options.json === true)
+        // The explicit record id is the whole selection (Phase 432 D-14): no repeated id, no
+        // prompt. A target that changes between this preview and the lease is refused below.
         const preview = resolvePurgeAffectedSet({
           knowledgeRoot: paths.knowledgeRoot,
           recordId,
         })
         const previewFingerprint = purgeAffectedSetFingerprint(preview)
-        emitHuman(renderPurgePreview(preview), prompt.name)
-
-        if (options.confirm !== undefined) {
-          if (options.confirm !== recordId) {
-            emitHuman(
-              pc.red(
-                'knowledge purge: refusal [confirmation-mismatch]: '
-                + '--confirm must exactly match the record id',
-              ),
-              'stderr',
-            )
-            process.exitCode = 1
-            return
-          }
-        } else {
-          if (!canPromptInteractively(prompt)) {
-            emitHuman(
-              pc.red(
-                'knowledge purge: refusal [confirmation-required]: '
-                + 'non-interactive use requires --confirm <record-id>',
-              ),
-              'stderr',
-            )
-            process.exitCode = 1
-            return
-          }
-          const answer = await promptForAnswer(
-            `Type ${recordId} to confirm irreversible purge: `,
-            prompt,
-          )
-          if (answer !== recordId) {
-            emitHuman(
-              pc.red('knowledge purge: refusal [confirmation-mismatch]: record id did not match'),
-              'stderr',
-            )
-            process.exitCode = 1
-            return
-          }
-        }
+        emitHuman(renderPurgePreview(preview), previewStream(options.json === true))
 
         const leaseResult = await withWriterLease(
           'purge',

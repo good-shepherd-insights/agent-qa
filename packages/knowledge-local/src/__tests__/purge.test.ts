@@ -699,7 +699,11 @@ describe('DCAY-05 sovereign purge', () => {
       caught = error
     }
     expect(caught).toBeInstanceOf(purgePlanningApi().PurgeTargetChangedError)
-    expect(caught).toMatchObject({ code: 'purge-target-changed' })
+    // 2026-10-01 (432-15, D-14): the fingerprint is the caller's preview, not a confirmation.
+    expect(caught).toMatchObject({
+      code: 'purge-target-changed',
+      message: 'purge target set changed after the preview',
+    })
     expect(existsSync(first.dir)).toBe(true)
     expect(existsSync(drifted.dir)).toBe(true)
     expect(recordsRowPresent(first.id)).toBe(true)

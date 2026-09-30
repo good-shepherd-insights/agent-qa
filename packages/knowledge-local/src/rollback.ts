@@ -98,7 +98,7 @@ interface RollbackBaseInput {
   resolvedAtOrdinal: number
   /** Governed maintenance callers fence this exact lease at every mutation boundary. */
   writerAuthority?: WriterLeaseAuthority
-  /** Confirmation fingerprint revalidated by the mutator immediately before its first write. */
+  /** Preview fingerprint revalidated by the mutator immediately before its first write. */
   expectedAffectedSetFingerprint?: string
   hooks?: RollbackHooks
 }
@@ -177,7 +177,7 @@ export class RollbackPlanChangedError extends Error {
   readonly actualFingerprint: string
 
   constructor(expectedFingerprint: string, actualFingerprint: string) {
-    super('rollback affected set changed before mutation; confirm the new preview')
+    super('rollback affected set changed before mutation; rerun to see the new preview')
     this.expectedFingerprint = expectedFingerprint
     this.actualFingerprint = actualFingerprint
   }

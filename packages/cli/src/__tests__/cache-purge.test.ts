@@ -62,20 +62,21 @@ describe('purgeTest', () => {
 })
 
 describe('purgeAll', () => {
-  it('deletes all cache-key entries across branch namespaces with force=true', async () => {
+  // 2026-10-01 (432-15, D-14): re-spelled from "…with force=true"; purgeAll has no force flag.
+  it('deletes all cache-key entries across branch namespaces', async () => {
     const { purgeAll } = await import('../commands/cache.js')
     const cacheDir = join(TMP_DIR, 'cache')
     for (let i = 0; i < 3; i++) await seedEntry(cacheDir, 'main', `key${i}0000000000000`)
     for (let i = 0; i < 2; i++) await seedEntry(cacheDir, 'feature-y', `keyf${i}000000000000`)
 
-    const count = await purgeAll(cacheDir, true)
+    const count = await purgeAll(cacheDir)
     expect(count).toBe(5)
     expect(await readdir(cacheDir)).toEqual([])
   })
 
   it('returns 0 for non-existent cache dir', async () => {
     const { purgeAll } = await import('../commands/cache.js')
-    const count = await purgeAll(join(TMP_DIR, 'nonexistent'), true)
+    const count = await purgeAll(join(TMP_DIR, 'nonexistent'))
     expect(count).toBe(0)
   })
 
@@ -84,7 +85,7 @@ describe('purgeAll', () => {
     const cacheDir = join(TMP_DIR, 'empty-cache')
     await mkdir(cacheDir, { recursive: true })
 
-    const count = await purgeAll(cacheDir, true)
+    const count = await purgeAll(cacheDir)
     expect(count).toBe(0)
   })
 
@@ -113,7 +114,7 @@ use:
     const originalCwd = process.cwd()
     process.chdir(TMP_DIR)
     try {
-      await parent.parseAsync(['node', 'test', 'cache', 'purge', '--all', '--force'])
+      await parent.parseAsync(['node', 'test', 'cache', 'purge', '--all'])
     } finally {
       process.chdir(originalCwd)
     }

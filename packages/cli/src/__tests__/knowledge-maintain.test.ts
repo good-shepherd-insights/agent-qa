@@ -46,13 +46,13 @@ import { promotionHostProof } from './promotion-host-proof.js'
 import type { ResolvePromotionPosture } from '@vostride/agent-qa-schema'
 
 const commandHarness = vi.hoisted(() => ({
-  promptAnswers: [] as string[],
   promptCalls: [] as Array<{
     input: 'stdin' | 'other'
     output: 'stdout' | 'stderr' | 'other'
     question: string
   }>,
-  promptHook: undefined as (() => void) | undefined,
+  // Runs as the writer lease is acquired: after the preview, before the under-lease recheck.
+  leaseAcquireHook: undefined as (() => void) | undefined,
   rebuildIndexHook: undefined as ((input: Record<string, unknown>) => Promise<unknown>) | undefined,
   authorityRefreshHook: undefined as (
     (authority: Record<string, unknown>, call: number) => void
@@ -128,10 +128,9 @@ vi.mock('node:readline', async (importOriginal) => {
           question,
         })
         output.write(question)
-        commandHarness.promptHook?.()
-        const answer = commandHarness.promptAnswers.shift()
-        if (answer === undefined) throw new Error(`missing prompt answer for ${question}`)
-        resolveAnswer(answer)
+        // Phase 432 D-14: maintenance never asks. A prompt that is still wired is declined, so it
+        // fails on outcome assertions rather than hanging the worker.
+        resolveAnswer('n')
       },
     })),
   }
@@ -143,6 +142,10 @@ vi.mock('@vostride/agent-qa-knowledge-local', async (importOriginal) => {
   >()
   return {
     ...actual,
+    acquireWriterLease: vi.fn((...args: Parameters<typeof actual.acquireWriterLease>) => {
+      commandHarness.leaseAcquireHook?.()
+      return actual.acquireWriterLease(...args)
+    }),
     drainQueue: vi.fn((...args: Parameters<typeof actual.drainQueue>) => {
       commandHarness.drainQueueCalls += 1
       commandHarness.drainInputs.push(args[0] as unknown as Record<string, unknown>)
@@ -634,9 +637,8 @@ describe('knowledge maintenance commands', () => {
     originalStdoutIsTty = process.stdout.isTTY
     originalStderrIsTty = process.stderr.isTTY
     setTerminalTopology({ stdin: false, stdout: false, stderr: false })
-    commandHarness.promptAnswers.splice(0)
     commandHarness.promptCalls.splice(0)
-    commandHarness.promptHook = undefined
+    commandHarness.leaseAcquireHook = undefined
     commandHarness.rebuildIndexHook = undefined
     commandHarness.authorityRefreshHook = undefined
     commandHarness.authorityRefreshCalls = 0
@@ -1286,48 +1288,53 @@ describe('knowledge maintenance commands', () => {
     ].join('\n'))
   })
 
-  it('fails closed without non-interactive confirmation and preserves committed bundle bytes', async () => {
+  // 2026-10-01 (432-15, D-14): re-spelled from "fails closed without non-interactive
+  // confirmation". Running the command is the intent; the refusal it pinned no longer exists.
+  it('applies rollback and purge non-interactively with no confirmation step', async () => {
     const workspace = fixtureWorkspace(roots)
     const bundle = seedBundle(workspace)
     const before = snapshotFiles(bundle.dir)
 
     const rollback = await invoke(workspace, ['rollback', '--job', CURATION_JOB_ID])
-    expect(rollback.exitCode).toBe(1)
-    expect(rollback.stderr).toContain('knowledge rollback: refusal [confirmation-required]')
-    expect(snapshotFiles(bundle.dir)).toEqual(before)
+    expect(rollback.exitCode).toBeUndefined()
+    expect(rollback.stderr).not.toContain('refusal')
+    expect(rollback.stdout).toContain('Rollback complete')
+    expect(snapshotFiles(bundle.dir)).not.toEqual(before)
 
     const purge = await invoke(workspace, ['purge', bundle.id])
-    expect(purge.exitCode).toBe(1)
-    expect(purge.stderr).toContain('knowledge purge: refusal [confirmation-required]')
-    expect(snapshotFiles(bundle.dir)).toEqual(before)
+    expect(purge.exitCode).toBeUndefined()
+    expect(purge.stderr).not.toContain('refusal')
+    expect(purge.stdout).toContain('Purge complete')
+    expect(existsSync(bundle.dir)).toBe(false)
+    expect(commandHarness.promptCalls).toEqual([])
   })
 
-  it('refuses piped stdin even when stdout is a TTY without invoking destructive mutators', async () => {
+  // 2026-10-01 (432-15, D-14): re-spelled from "refuses piped stdin even when stdout is a TTY".
+  // Piped stdin is never read; each destructive mutator runs exactly once.
+  it('never reads piped stdin when stdout is a TTY and invokes each mutator once', async () => {
     const workspace = fixtureWorkspace(roots)
     const bundle = seedBundle(workspace)
-    const before = snapshotFiles(bundle.dir)
     setTerminalTopology({ stdin: false, stdout: true, stderr: true })
 
     const rollback = await invoke(workspace, ['rollback', '--job', CURATION_JOB_ID])
-    expect(rollback.exitCode).toBe(1)
-    expect(rollback.stderr).toContain('knowledge rollback: refusal [confirmation-required]')
+    expect(rollback.exitCode).toBeUndefined()
 
     const purge = await invoke(workspace, ['purge', bundle.id])
-    expect(purge.exitCode).toBe(1)
-    expect(purge.stderr).toContain('knowledge purge: refusal [confirmation-required]')
+    expect(purge.exitCode).toBeUndefined()
 
     expect(commandHarness.promptCalls).toEqual([])
-    expect(commandHarness.rollbackCurationJobCalls).toBe(0)
+    expect(commandHarness.rollbackCurationJobCalls).toBe(1)
     expect(commandHarness.rollbackCampaignCalls).toBe(0)
-    expect(commandHarness.purgeRecordCalls).toBe(0)
-    expect(snapshotFiles(bundle.dir)).toEqual(before)
+    expect(commandHarness.purgeRecordCalls).toBe(1)
+    expect(existsSync(bundle.dir)).toBe(false)
   })
 
-  it('keeps interactive rollback JSON stdout parseable while prompting on stderr', async () => {
+  // 2026-10-01 (432-15, D-14): re-spelled from "…while prompting on stderr"; the preview keeps
+  // stderr, and no prompt is written anywhere.
+  it('keeps interactive rollback JSON stdout parseable while previewing on stderr', async () => {
     const workspace = fixtureWorkspace(roots)
     seedBundle(workspace)
     setTerminalTopology({ stdin: true, stdout: true, stderr: true })
-    commandHarness.promptAnswers.push('y')
 
     const result = await invoke(workspace, [
       'rollback',
@@ -1342,14 +1349,8 @@ describe('knowledge maintenance commands', () => {
       affected: { mintedBundleIds: expect.any(Array) },
     })
     expect(result.stderr).toContain('Rollback preview')
-    expect(result.stderr).toContain('Apply this rollback? (y/N) ')
     expect(result.stdout).not.toContain('Rollback preview')
-    expect(result.stdout).not.toContain('Apply this rollback?')
-    expect(commandHarness.promptCalls).toEqual([{
-      input: 'stdin',
-      output: 'stderr',
-      question: 'Apply this rollback? (y/N) ',
-    }])
+    expect(commandHarness.promptCalls).toEqual([])
     expect(commandHarness.rollbackCurationJobCalls).toBe(1)
     expect(commandHarness.rollbackCurationJobInputs[0]?.writerAuthority).toMatchObject({
       knowledgeRoot: workspace.knowledgeRoot,
@@ -1367,7 +1368,7 @@ describe('knowledge maintenance commands', () => {
     seedBundle(workspace)
 
     const result = await invoke(workspace, [
-      'rollback', '--job', CURATION_JOB_ID, '--yes', '--json',
+      'rollback', '--job', CURATION_JOB_ID, '--json',
     ])
 
     expect(result.exitCode).toBeUndefined()
@@ -1384,7 +1385,6 @@ describe('knowledge maintenance commands', () => {
       'rollback',
       '--job',
       CURATION_JOB_ID,
-      '--yes',
       '--json',
     ])
 
@@ -1404,7 +1404,7 @@ describe('knowledge maintenance commands', () => {
   it('retries the same completed rollback without changing bundle or counter bytes', async () => {
     const workspace = fixtureWorkspace(roots)
     const bundle = seedBundle(workspace, { createdAtOrdinal: BUILD_ORDINAL })
-    const args = ['rollback', '--job', CURATION_JOB_ID, '--yes', '--json'] as const
+    const args = ['rollback', '--job', CURATION_JOB_ID, '--json'] as const
 
     const first = await invoke(workspace, args)
     expect(first.exitCode).toBeUndefined()
@@ -1449,7 +1449,6 @@ describe('knowledge maintenance commands', () => {
       '7',
       '--to-build',
       '11',
-      '--yes',
       '--json',
     ])
 
@@ -1488,7 +1487,6 @@ describe('knowledge maintenance commands', () => {
       'rollback',
       '--job',
       'missing-counter-job',
-      '--yes',
       '--json',
     ])
     expect(missing.exitCode).toBe(1)
@@ -1517,7 +1515,6 @@ describe('knowledge maintenance commands', () => {
       'rollback',
       '--job',
       'exhausted-counter-job',
-      '--yes',
       '--json',
     ])
     expect(exhausted.exitCode).toBe(1)
@@ -1532,11 +1529,12 @@ describe('knowledge maintenance commands', () => {
     )
   })
 
-  it('keeps interactive purge JSON stdout parseable while prompting on stderr', async () => {
+  // 2026-10-01 (432-15, D-14): re-spelled from "…while prompting on stderr"; the preview keeps
+  // stderr, and no prompt is written anywhere.
+  it('keeps interactive purge JSON stdout parseable while previewing on stderr', async () => {
     const workspace = fixtureWorkspace(roots)
     const bundle = seedBundle(workspace)
     setTerminalTopology({ stdin: true, stdout: true, stderr: true })
-    commandHarness.promptAnswers.push(bundle.id)
 
     const result = await invoke(workspace, ['purge', bundle.id, '--json'])
 
@@ -1546,14 +1544,8 @@ describe('knowledge maintenance commands', () => {
       purgedAtOrdinal: BUILD_ORDINAL + 1,
     })
     expect(result.stderr).toContain(`Purge preview for ${bundle.id}`)
-    expect(result.stderr).toContain(`Type ${bundle.id} to confirm irreversible purge: `)
     expect(result.stdout).not.toContain('Purge preview')
-    expect(result.stdout).not.toContain('Type ')
-    expect(commandHarness.promptCalls).toEqual([{
-      input: 'stdin',
-      output: 'stderr',
-      question: `Type ${bundle.id} to confirm irreversible purge: `,
-    }])
+    expect(commandHarness.promptCalls).toEqual([])
     expect(commandHarness.purgeRecordCalls).toBe(1)
     expect(commandHarness.purgeRecordInputs[0]?.writerAuthority).toMatchObject({
       knowledgeRoot: workspace.knowledgeRoot,
@@ -1607,8 +1599,6 @@ describe('knowledge maintenance commands', () => {
       const result = await invoke(workspace, [
         'purge',
         bundle.id,
-        '--confirm',
-        bundle.id,
         '--json',
       ])
 
@@ -1648,8 +1638,6 @@ describe('knowledge maintenance commands', () => {
     const result = await invoke(workspace, [
       'purge',
       primary.id,
-      '--confirm',
-      primary.id,
       '--json',
     ])
 
@@ -1674,8 +1662,6 @@ describe('knowledge maintenance commands', () => {
     const bundle = seedBundle(workspace)
     const args = [
       'purge',
-      bundle.id,
-      '--confirm',
       bundle.id,
       '--json',
     ] as const
@@ -1709,8 +1695,6 @@ describe('knowledge maintenance commands', () => {
       const result = await invoke(workspace, [
         'purge',
         bundle.id,
-        '--confirm',
-        bundle.id,
         '--json',
       ])
 
@@ -1730,9 +1714,9 @@ describe('knowledge maintenance commands', () => {
   })
 
   it('renders every product bundle tree and receipt-named path in the purge preview', async () => {
-    const workspace = fixtureWorkspace(roots)
-    const primary = seedBundle(workspace)
     const secondaryProduct = 'maintenance-z-non-servable-copy'
+    const workspace = fixtureWorkspace(roots, { [PRODUCT]: BUILD_ORDINAL, [secondaryProduct]: 6 })
+    const primary = seedBundle(workspace)
     const secondary = seedBundle(workspace, {
       product: secondaryProduct,
       scopeProduct: PRODUCT,
@@ -1755,33 +1739,41 @@ describe('knowledge maintenance commands', () => {
       }),
     ).kind).toBe('appended')
     setTerminalTopology({ stdin: true, stdout: true, stderr: true })
-    commandHarness.promptAnswers.push(`${primary.id}-abort`)
+    const expectedPaths = [
+      ...expectedBundlePaths(workspace, primary.dir),
+      ...expectedBundlePaths(workspace, secondary.dir),
+    ]
+    let stderrAtLease = ''
+    commandHarness.leaseAcquireHook = () => {
+      stderrAtLease = (process.stderr.write as unknown as { mock: { calls: unknown[][] } })
+        .mock.calls.map(([chunk]) => String(chunk)).join('')
+    }
 
     const result = await invoke(workspace, ['purge', primary.id, '--json'])
 
-    expect(result.exitCode).toBe(1)
-    expect(result.stdout).toBe('')
-    for (const path of [
-      ...expectedBundlePaths(workspace, primary.dir),
-      ...expectedBundlePaths(workspace, secondary.dir),
-    ]) {
-      expect(result.stderr).toContain(path)
+    // 2026-10-01 (432-15, D-14): the preview is rendered before the writer lease is taken, and the
+    // purge then completes; there is no answer to abort it with.
+    expect(result.exitCode).toBeUndefined()
+    for (const path of expectedPaths) {
+      expect(stderrAtLease).toContain(path)
     }
-    expect(result.stderr).toContain(relative(workspace.knowledgeRoot, primary.dir))
-    expect(result.stderr).toContain(relative(workspace.knowledgeRoot, secondary.dir))
-    expect(commandHarness.purgeRecordCalls).toBe(0)
-    expect(existsSync(primary.dir)).toBe(true)
-    expect(existsSync(secondary.dir)).toBe(true)
+    expect(stderrAtLease).toContain(relative(workspace.knowledgeRoot, primary.dir))
+    expect(stderrAtLease).toContain(relative(workspace.knowledgeRoot, secondary.dir))
+    expect(commandHarness.purgeRecordCalls).toBe(1)
+    expect(commandHarness.promptCalls).toEqual([])
+    expect(existsSync(primary.dir)).toBe(false)
+    expect(existsSync(secondary.dir)).toBe(false)
   })
 
-  it('refuses purge target drift after exact-id authorization and before mutation', async () => {
+  // 2026-10-01 (432-15, D-14): re-spelled from "…after exact-id authorization"; the drift lands
+  // between the preview and the writer lease.
+  it('refuses purge target drift after the preview and before mutation', async () => {
     const workspace = fixtureWorkspace(roots)
     const primary = seedBundle(workspace)
     const driftProduct = 'maintenance-z-purge-drift'
     let drifted: { id: string; dir: string } | undefined
     setTerminalTopology({ stdin: true, stdout: true, stderr: true })
-    commandHarness.promptAnswers.push(primary.id)
-    commandHarness.promptHook = () => {
+    commandHarness.leaseAcquireHook = () => {
       drifted = seedBundle(workspace, {
         product: driftProduct,
         scopeProduct: PRODUCT,
@@ -1800,47 +1792,55 @@ describe('knowledge maintenance commands', () => {
     expect(existsSync(drifted!.dir)).toBe(true)
   })
 
-  it('keeps JSON stdout empty and returns non-success when interactive answers refuse', async () => {
+  // 2026-10-01 (432-15, D-14): re-spelled from "…when interactive answers refuse". No answer can
+  // refuse any more; the surviving refusals (an invalid selector, an unknown record) keep JSON
+  // stdout empty and return non-success.
+  it('keeps JSON stdout empty and returns non-success when rollback or purge refuses', async () => {
     const rollbackWorkspace = fixtureWorkspace(roots)
     seedBundle(rollbackWorkspace)
     setTerminalTopology({ stdin: true, stdout: true, stderr: true })
-    commandHarness.promptAnswers.push('n')
 
     const rollback = await invoke(rollbackWorkspace, [
       'rollback',
       '--job',
       CURATION_JOB_ID,
+      '--origin-class',
+      'user',
       '--json',
     ])
     expect(rollback.exitCode).toBe(1)
     expect(rollback.stdout).toBe('')
+    expect(rollback.stderr).toContain('knowledge rollback: error [invalid-selector]')
     expect(commandHarness.rollbackCurationJobCalls).toBe(0)
 
     const purgeWorkspace = fixtureWorkspace(roots)
     const bundle = seedBundle(purgeWorkspace)
-    commandHarness.promptAnswers.push(`${bundle.id}-mismatch`)
+    const unknownId = 'f'.repeat(64)
 
-    const purge = await invoke(purgeWorkspace, ['purge', bundle.id, '--json'])
+    const purge = await invoke(purgeWorkspace, ['purge', unknownId, '--json'])
     expect(purge.exitCode).toBe(1)
     expect(purge.stdout).toBe('')
-    expect(purge.stderr).toContain('knowledge purge: refusal [confirmation-mismatch]')
-    expect(commandHarness.purgeRecordCalls).toBe(0)
+    expect(purge.stderr).toContain(`knowledge purge: error [not-found]: record ${unknownId}`)
+    expect(existsSync(bundle.dir)).toBe(true)
+    expect(commandHarness.promptCalls).toEqual([])
   })
 
-  it('requires the exact purge id, rejects --yes, and emits the persisted receipt verbatim', async () => {
+  // 2026-10-01 (432-15, D-14): re-spelled from "requires the exact purge id, rejects --yes…".
+  // The repeated-id confirmation is gone: --confirm is now as unknown as --yes.
+  it('rejects the retired --confirm and --yes options and emits the persisted receipt verbatim', async () => {
     const workspace = fixtureWorkspace(roots)
     const bundle = seedBundle(workspace)
     const before = snapshotFiles(bundle.dir)
 
-    const mismatch = await invoke(workspace, [
+    const retired = await invoke(workspace, [
       'purge',
       bundle.id,
       '--confirm',
-      `${bundle.id}-mismatch`,
+      bundle.id,
       '--json',
     ])
-    expect(mismatch.exitCode).toBe(1)
-    expect(mismatch.stderr).toContain('knowledge purge: refusal [confirmation-mismatch]')
+    expect(retired.commanderError?.code).toBe('commander.unknownOption')
+    expect(retired.stderr).toContain("unknown option '--confirm'")
     expect(snapshotFiles(bundle.dir)).toEqual(before)
 
     const bypass = await invoke(workspace, ['purge', bundle.id, '--yes'])
@@ -1850,8 +1850,6 @@ describe('knowledge maintenance commands', () => {
 
     const exact = await invoke(workspace, [
       'purge',
-      bundle.id,
-      '--confirm',
       bundle.id,
       '--json',
     ])
@@ -1875,8 +1873,8 @@ describe('knowledge maintenance commands', () => {
 
     const invocations = [
       ['rebuild-index', '--json'],
-      ['rollback', '--job', CURATION_JOB_ID, '--yes', '--json'],
-      ['purge', bundle.id, '--confirm', bundle.id, '--json'],
+      ['rollback', '--job', CURATION_JOB_ID, '--json'],
+      ['purge', bundle.id, '--json'],
     ] as const
 
     for (const args of invocations) {
@@ -1918,13 +1916,15 @@ describe('knowledge maintenance commands', () => {
     })
   })
 
-  it('holds no writer lease while rollback and purge await human authorization', async () => {
+  // 2026-10-01 (432-15, D-14): re-spelled from "…while rollback and purge await human
+  // authorization". Nothing awaits; the preview is still resolved before any lease is held.
+  it('holds no writer lease while rollback and purge resolve their previews', async () => {
     const rollbackWorkspace = fixtureWorkspace(roots)
     seedBundle(rollbackWorkspace)
     setTerminalTopology({ stdin: true, stdout: true, stderr: true })
-    commandHarness.promptAnswers.push('y')
-    commandHarness.promptHook = () => {
-      expect(existsSync(join(rollbackWorkspace.knowledgeRoot, '.lease'))).toBe(false)
+    const leaseSeen: boolean[] = []
+    commandHarness.leaseAcquireHook = () => {
+      leaseSeen.push(existsSync(join(rollbackWorkspace.knowledgeRoot, '.lease')))
     }
     expect((await invoke(rollbackWorkspace, [
       'rollback', '--job', CURATION_JOB_ID, '--json',
@@ -1932,14 +1932,17 @@ describe('knowledge maintenance commands', () => {
 
     const purgeWorkspace = fixtureWorkspace(roots)
     const bundle = seedBundle(purgeWorkspace)
-    commandHarness.promptAnswers.push(bundle.id)
-    commandHarness.promptHook = () => {
-      expect(existsSync(join(purgeWorkspace.knowledgeRoot, '.lease'))).toBe(false)
+    commandHarness.leaseAcquireHook = () => {
+      leaseSeen.push(existsSync(join(purgeWorkspace.knowledgeRoot, '.lease')))
     }
     expect((await invoke(purgeWorkspace, ['purge', bundle.id, '--json'])).exitCode).toBeUndefined()
+    expect(leaseSeen).toEqual([false, false])
+    expect(commandHarness.promptCalls).toEqual([])
   })
 
-  it('rejects an authorized rollback when the under-lease target fingerprint changes', async () => {
+  // 2026-10-01 (432-15, D-14): re-spelled from "rejects an authorized rollback…"; nothing is
+  // authorized any more, and the fingerprint recheck under the lease is what survives.
+  it('rejects a rollback when the under-lease target fingerprint changes', async () => {
     const driftProduct = 'preview-drift-product'
     const workspace = fixtureWorkspace(roots, {
       [PRODUCT]: BUILD_ORDINAL,
@@ -1947,8 +1950,7 @@ describe('knowledge maintenance commands', () => {
     })
     seedBundle(workspace)
     setTerminalTopology({ stdin: true, stdout: true, stderr: true })
-    commandHarness.promptAnswers.push('y')
-    commandHarness.promptHook = () => {
+    commandHarness.leaseAcquireHook = () => {
       seedBundle(workspace, { product: driftProduct, createdAtOrdinal: 6 })
     }
 
@@ -1959,7 +1961,9 @@ describe('knowledge maintenance commands', () => {
     expect(commandHarness.rollbackCurationJobCalls).toBe(0)
   })
 
-  it('rejects a promotion added while the rollback preview awaits authorization', async () => {
+  // 2026-10-01 (432-15, D-14): re-spelled from "…while the rollback preview awaits authorization";
+  // the promotion now lands between the preview and the writer lease.
+  it('rejects a promotion added between the rollback preview and the writer lease', async () => {
     const workspace = fixtureWorkspace(roots)
     const baseJob = 'promotion-preview-base-job'
     const bundle = seedBundle(workspace, { curationJobId: baseJob, createdAtOrdinal: 5 })
@@ -1986,8 +1990,7 @@ describe('knowledge maintenance commands', () => {
       origin: 'agent-verified',
     })).toEqual({ kind: 'appended' })
     setTerminalTopology({ stdin: true, stdout: true, stderr: true })
-    commandHarness.promptAnswers.push('y')
-    commandHarness.promptHook = () => {
+    commandHarness.leaseAcquireHook = () => {
       expect(appendOutcomeEvent(config, asRecordId(bundle.id), {
         type: 'promoted',
         evidenceToken: asEvidenceToken('promotion-preview-late-promotion'),
@@ -2067,7 +2070,7 @@ describe('knowledge maintenance commands', () => {
     }
 
     const result = await invoke(workspace, [
-      'rollback', '--job', CURATION_JOB_ID, '--yes', '--json',
+      'rollback', '--job', CURATION_JOB_ID, '--json',
     ])
 
     expect(result.exitCode).toBe(1)

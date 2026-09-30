@@ -2,7 +2,6 @@ import { Command } from 'commander'
 import pc from 'picocolors'
 import { readdir, rm, stat } from 'node:fs/promises'
 import { join, resolve, basename } from 'node:path'
-import { createInterface } from 'node:readline'
 import { DEFAULT_AGENT_QA_CACHE_DIR } from '@vostride/agent-qa-core'
 import { resolveConfig } from '../config.js'
 
@@ -85,23 +84,11 @@ export async function purgeTest(_testPath: string, cacheDir: string): Promise<nu
   return removeCacheEntries(resolve(cacheDir))
 }
 
-export async function purgeAll(cacheDir: string, force: boolean): Promise<number> {
+// Running `cache purge --all` is the intent (Phase 432 D-14): there is no confirmation step.
+export async function purgeAll(cacheDir: string): Promise<number> {
   const resolvedDir = resolve(cacheDir)
   const total = await countCacheEntries(resolvedDir)
   if (total === 0) return 0
-
-  if (!force) {
-    const rl = createInterface({ input: process.stdin, output: process.stdout })
-    const answer = await new Promise<string>((res) => {
-      rl.question(`About to delete ${total} cached plans. Continue? (y/N) `, res)
-    })
-    rl.close()
-    if (answer.toLowerCase() !== 'y') {
-      console.log('Aborted.')
-      return 0
-    }
-  }
-
   return removeCacheEntries(resolvedDir)
 }
 
@@ -113,7 +100,6 @@ export function createCacheCommand(): Command {
     .description('Clear cached action plans')
     .option('--test <path>', 'purge cache for a specific test file')
     .option('--all', 'purge all cached plans')
-    .option('--force', 'skip confirmation prompt')
     .action(async (opts) => {
       if (!opts.test && !opts.all) {
         console.error(pc.red('Specify --test <path> or --all'))
@@ -135,7 +121,7 @@ export function createCacheCommand(): Command {
           console.log(pc.green(`Purged ${count} cached plans for ${basename(opts.test)}`))
         }
       } else if (opts.all) {
-        const count = await purgeAll(cacheDir, !!opts.force)
+        const count = await purgeAll(cacheDir)
         if (count === 0) {
           console.log(pc.dim('No cached plans found'))
         } else {

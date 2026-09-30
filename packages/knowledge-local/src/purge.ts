@@ -84,7 +84,8 @@ export interface PurgeAffectedQueueTarget {
 
 /**
  * Content-free, deterministic statement of every local surface one purge operation will affect.
- * This is the single planning shape shared by preview, confirmation, and destructive execution.
+ * This is the single planning shape shared by preview, the under-lease recheck, and destructive
+ * execution.
  */
 export interface PurgeAffectedSet {
   recordId: string
@@ -188,7 +189,7 @@ export interface PurgeRecordInput {
   purgedAtOrdinal?: number
   /** Governed maintenance callers fence this exact lease at every mutation boundary. */
   writerAuthority?: WriterLeaseAuthority
-  /** Fingerprint confirmed by the caller; drift must fail before any mutation. */
+  /** Fingerprint of the caller's preview; drift must fail before any mutation. */
   expectedAffectedSetFingerprint?: string
   /** Test/chaos seam between purge phases; production callers omit it (commit.ts precedent). */
   hooks?: {
@@ -227,7 +228,7 @@ export class PurgeTargetChangedError extends Error {
     readonly expectedFingerprint: string,
     readonly actualFingerprint: string,
   ) {
-    super('purge target set changed after confirmation')
+    super('purge target set changed after the preview')
     this.name = 'PurgeTargetChangedError'
   }
 }
@@ -1392,7 +1393,7 @@ function resumeFromIntent(input: PurgeRecordInput, intent: PurgeIntent): PurgeRe
 export function purgeRecord(input: PurgeRecordInput): PurgeRecordOutcome {
   assertInput(input)
 
-  // Preview and execution share this one resolution. The caller's confirmed fingerprint is
+  // Preview and execution share this one resolution. The caller's preview fingerprint is
   // checked before checkpoint publication, durable intent creation, or destructive mutation.
   const resolved = resolvePurgeTargets(input.knowledgeRoot, input.recordId)
   assertExpectedAffectedSet(input.expectedAffectedSetFingerprint, resolved.affectedSet)

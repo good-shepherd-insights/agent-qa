@@ -467,7 +467,12 @@ describe('432 maintenance commands execute declared intent', () => {
       expect(harness.purgeRecordCalls).toBe(0)
       expect(existsSync(primary.dir)).toBe(true)
       expect(existsSync(drifted!.dir)).toBe(true)
-      expect(snapshot(workspace.knowledgeRoot)).toEqual(knowledgeBefore)
+      // Only the writer lease's own top-level bookkeeping (.epoch, .lease, .writer-authority.*) may
+      // move; no store byte changes.
+      const withoutLease = (files: Record<string, string>) => Object.fromEntries(
+        Object.entries(files).filter(([path]) => !/^\.[^/]+$/u.test(path)),
+      )
+      expect(withoutLease(snapshot(workspace.knowledgeRoot))).toEqual(withoutLease(knowledgeBefore))
       for (const path of purgeReceiptPaths(workspace, primary.id)) expect(existsSync(path)).toBe(false)
       expect(harness.readlineCalls).toEqual([])
     })
