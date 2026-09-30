@@ -5,7 +5,9 @@
 // describes were re-spelled to measure that absence the same way — by driving the seam and reading
 // what landed on disk — with a port that records being asked. SINCE 432-14 (D-03) the run hooks
 // cannot even be handed a port: the presentation confirm contract and its CLI producer are deleted.
-// The history below is kept as written.
+// SINCE 432-16 (D-14/D-15) the composition cannot be handed one either: `confirm` and `chatConfirm`
+// are gone from both composition inputs, so the second describe smuggles its ports past the type as
+// excess fields and pins that nothing reads them. The history below is kept as written.
 //
 // The gate now records the surface the composition DECLARED rather than the mechanism rung (e) used
 // to hardcode. Declaring it is a compile obligation — `packages/safety/src/ports/__tests__/
@@ -122,11 +124,15 @@ describe('the two-port seam names the port that actually answered', () => {
   }): Promise<ExecutionAuditRow[]> {
     const ws = workspace()
     const chat = input.chat
+    // 432-16: neither input declares these any more, so they can only arrive as excess fields.
+    const smuggled = {
+      confirm: input.door,
+      ...(chat === undefined ? {} : { chatConfirm: () => chat }),
+    }
     const host = composeCliLocalAgent({
       agentQaRoot: ws.agentQaRoot,
       configPath: ws.configPath,
-      confirm: input.door,
-      ...(chat === undefined ? {} : { chatConfirm: () => chat }),
+      ...smuggled,
     })
     try {
       await runSafetyScope({ executionContext: 'local-interactive' }, async () => {
@@ -148,6 +154,7 @@ describe('the two-port seam names the port that actually answered', () => {
 
   // RE-SPELLED 2026-09-30 (432-13): the `??` seam is gone. `composeCliLocalAgent` forwards neither
   // port and `invokeFunction` asks nobody, so neither arm is consulted and the op writes no row.
+  // 2026-10-01 (432-16): the ports are smuggled as excess fields; the claim is unchanged.
   it('asks NEITHER port, whichever is bound, and writes no prompted row', async () => {
     const calls: string[] = []
     const withChat = await revokeThrough({

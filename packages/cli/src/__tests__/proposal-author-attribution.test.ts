@@ -1,84 +1,56 @@
 // Who a config-apply commit says proposed it (Phase 400 plan 05, DASH-01).
 //
 // 2026-09-30, 432-11 D-05: no door mints a config proposal any more — the config operations write
-// in the call. The apply path still reads the records already on disk until 432-16/17 delete it,
-// so every cell starts from a persisted record: the legacy fixture, or one written by
-// `filePre432ConfigProposal` with the minting surface a door used to stamp on it.
+// in the call. The apply path still read the records already on disk until 432-16/17.
 //
-// THE DEFECT THIS FILE MEASURES. `applyConfigProposalAsOneCommit` wrote every agent commit under a
-// single constant — `agent-qa (proposed by chat) <agent-qa@local>` — whatever surface had actually
-// minted the proposal. Before this phase that was imprecise: three of the four doors could mint a
-// config change and one of them was named. With the dashboard door shipping in 400-01 it became
-// actively wrong, and it is wrong in the one place a repository is supposed to be authoritative:
-// `git log --author` is what a person filters on when they want to know where a change came from.
+// 2026-10-01, 432-16 D-07: agent-qa MAKES NO GIT COMMITS, so there is no author to attribute. The
+// one-commit config apply, its human-first preserve commit, the `Agent-QA-Proposal:` trailer and
+// the per-surface author map are deleted, and the CLI host binds no config apply port. The cells
+// that read the author off `git log` are re-spelled as the claim that replaces them: a config
+// change from every door — the co-hosted MCP endpoint included — writes the file and leaves HEAD,
+// the index and the history where they were, and a pre-432 record handed to the old accept verb
+// is refused by name without touching the file or the history.
 //
-// WHAT IS DRIVEN, AND WHY NOTHING BELOW IS A LOOKALIKE. Every cell composes a REAL host through
-// `composeCliLocalAgent`, mints a proposal through the shipped `config.field.set` op (or, for the
-// dashboard and legacy arms, writes a persisted record the shipped propose path produced), accepts
-// it through the shipped `proposals.accept` op, and then reads the author off the repository with
-// `git log`. Not off a receipt: a receipt is this product's account
-// of what it did, and the whole subject here is whether that account and git's agree.
-//
-// MORE THAN ONE SURFACE IS DRIVEN, DELIBERATELY. A suite that only ever drove `chat` was green
-// against the hardcoded constant for five phases; that is how the constant shipped as the only
-// author in the first place. Per-surface attribution is a claim about a DIFFERENCE, so the cells
-// have to produce the difference.
+// 430-REVIEW WR-01 IS CLOSED BY DELETION. It was a config proposal minted over the co-hosted MCP
+// endpoint committing under an unrecorded surface: the dashboard's composition supplied no minting
+// surface, so the commit's author read `unrecorded` although a known door had asked. The comment
+// this file used to carry beside cell (1) said stored `origin.surface: 'dashboard'` values came
+// only from dashboard-chat proposals; that was wrong, since co-hosted MCP proposals reached the same
+// composition with no surface at all. Neither kind of record is applied or attributed now.
 //
 // MODEL-FREE. `chatModel` is unsupplied on every composition here, which is the shipped headless
 // posture rather than a stub — `config.field.set` is a deterministic op and reaches no provider.
-//
-// THE EXECUTION CONTEXT IS INJECTED (400-01's seam), never pinned on the process, so no cell here
-// leaks a posture into a sibling.
 
 import { execFileSync } from 'node:child_process'
-import { mkdtempSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
+import type { Dirent } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import { invokeFunction } from '@vostride/agent-qa-agent'
 import type { FunctionCaller, FunctionScope } from '@vostride/agent-qa-schema'
-import { describe, expect, it, vi } from 'vitest'
+import { FunctionScopeSchema } from '@vostride/agent-qa-schema'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { CHAT_DOOR_SURFACE } from '../commands/chat.js'
-import { DASHBOARD_FUNCTION_CALLER, RUN_SERVICE_GRANTED_SCOPES } from '../commands/dashboard.js'
-import {
-  AGENT_CONFIG_COMMIT_AUTHOR_BY_SURFACE,
-  AGENT_CONFIG_COMMIT_AUTHOR_UNRECOGNISED,
-  AGENT_CONFIG_COMMIT_AUTHOR_UNRECORDED,
-  composeCliLocalAgent,
-  CLI_FUNCTION_CALLER,
-} from '../composition/local-agent-host.js'
+import { composeDashboardDoor, RUN_SERVICE_GRANTED_SCOPES } from '../commands/dashboard.js'
+import { mcpFunctionCaller } from '../commands/mcp.js'
+import * as cliHost from '../composition/local-agent-host.js'
+import { composeCliLocalAgent, CLI_FUNCTION_CALLER } from '../composition/local-agent-host.js'
 import { filePre432ConfigProposal } from '../composition/__tests__/pre-432-config-proposal.js'
 import { SURFACE_ROSTER } from './conformance/roster.js'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
+const PACKAGES_ROOT = join(HERE, '..', '..', '..')
 
 /**
- * The legacy envelope's bytes, PRODUCED BY THE SHIPPED PROPOSE PATH before this plan changed it.
- *
- * PROVENANCE, because a fixture nobody can trace is a claim rather than evidence. This file is the
- * verbatim `.agent-qa/proposals/<id>.json` a real `composeCliLocalAgent` host wrote when
- * `config.field.set` was driven against {@link SEEDED_CONFIG} at commit `b87b4f48` — the tip of
- * `version-0.2` before plan 400-05 changed a byte. It was copied out of the temp workspace unedited;
- * `legacy fixture` cell (3a) below re-checks that claim mechanically by asserting the record still
- * parses through the SHIPPED reader and carries no `surface` anywhere in its origin.
- *
- * NOT A HAND-WRITTEN TYPE LITERAL, and the distinction is 390's produced-not-literal law: a literal
- * can pin a shape the producer cannot emit, and a legacy-compatibility cell built on one would be
- * measuring an envelope that never existed. The whole question this fixture answers is "what does a
- * proposal minted before this change actually look like on disk".
+ * A pre-432 config proposal's bytes, as the shipped propose path wrote them at commit `b87b4f48`
+ * (plan 400-05). No `surface` is recorded in its origin.
  */
 const LEGACY_FIXTURE = join(HERE, 'fixtures', 'legacy-config-proposal.json')
 
-/**
- * A committed project a config proposal can be minted against.
- *
- * `config-apply-discipline.test.ts`'s seed, verbatim, so a fixture produced against one file is
- * replayable against the other: the proposal's `baseDigest` is a claim about THESE bytes, and a
- * legacy record replayed into a workspace seeded with different ones would refuse at the freshness
- * re-check for a reason that has nothing to do with attribution.
- */
+/** `config-apply-discipline.test.ts`'s seed, so the legacy record's `baseDigest` matches it. */
 const SEEDED_CONFIG = `# agent-qa Configuration
 
 # File discovery and project settings
@@ -115,6 +87,8 @@ use:
   parallel: false
 `
 
+const CONFIG_FILE = 'agent-qa.config.yaml'
+
 interface Workspace {
   readonly root: string
   readonly configPath: string
@@ -122,174 +96,325 @@ interface Workspace {
   git(...args: string[]): string
 }
 
-function seedWorkspace(): Workspace {
+const roots: string[] = []
+
+afterEach(() => {
+  for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true })
+})
+
+function seedWorkspace(options: { readonly repository?: boolean } = {}): Workspace {
   const root = mkdtempSync(join(tmpdir(), 'proposal-author-'))
-  const configPath = join(root, 'agent-qa.config.yaml')
+  roots.push(root)
+  const configPath = join(root, CONFIG_FILE)
   const agentQaRoot = join(root, '.agent-qa')
   const git = (...args: string[]): string =>
     execFileSync('git', args, { cwd: root, encoding: 'utf8' })
 
   writeFileSync(configPath, SEEDED_CONFIG)
-  writeFileSync(join(root, '.gitignore'), '.agent-qa/\n')
+  if (options.repository === false) return { root, configPath, agentQaRoot, git }
+  writeFileSync(join(root, '.gitignore'), '.agent-qa/\nagent-qa-knowledge/\n')
   git('init', '--quiet')
   git('config', 'user.name', 'A Person')
   git('config', 'user.email', 'a-person@example.invalid')
   git('config', 'commit.gpgsign', 'false')
-  git('add', '--', '.gitignore', 'agent-qa.config.yaml')
+  git('add', '--', '.gitignore', CONFIG_FILE)
   git('commit', '--quiet', '-m', 'seed')
 
   return { root, configPath, agentQaRoot, git }
 }
 
-/** The author git holds for one commit — never the receipt's account of it. */
-function authorAt(workspace: Workspace, rev: string): string {
-  return workspace.git('log', '-1', '--format=%an <%ae>', rev).trim()
+/** What git holds, read off git: the tip, the history length, the index and what is staged. */
+function repositoryState(workspace: Workspace): Record<string, string> {
+  return {
+    head: workspace.git('rev-parse', 'HEAD').trim(),
+    count: workspace.git('rev-list', '--count', 'HEAD').trim(),
+    index: workspace.git('ls-files', '--stage'),
+    cached: workspace.git('diff', '--cached', '--name-status'),
+  }
+}
+
+/** Every caller that can change configuration, spelled as its door spells itself. */
+const ALL_SCOPES = [...FunctionScopeSchema.options] as readonly FunctionScope[]
+
+interface Door {
+  readonly name: string
+  readonly caller: FunctionCaller
+  readonly compose: (workspace: Workspace) => {
+    readonly registry: Parameters<typeof invokeFunction>[0]
+    close(): Promise<void>
+  }
 }
 
 /**
- * One config proposal as a door with this minting surface filed it before 432-11, returning its id.
- *
- * The record is written the way the old pipeline wrote it, with `origin.surface` set to the word
- * the door supplied; no door files one now.
+ * The doors a config change arrives through. The co-hosted MCP endpoint is the dashboard door's
+ * own registry (`composeDashboardDoor`, which `mountCoHostedMcp` serves) called by an MCP caller;
+ * that composition supplies no minting surface, which is the WR-01 arrangement.
  */
-async function mint(workspace: Workspace, surface: string, value: string): Promise<string> {
-  return (await filePre432ConfigProposal({
-    configPath: workspace.configPath,
-    agentQaRoot: workspace.agentQaRoot,
-    edits: [{ path: 'use.timeout.step', value }],
-    surface,
-  })).proposalId
+const DOORS: readonly Door[] = [
+  {
+    name: 'cli',
+    caller: CLI_FUNCTION_CALLER,
+    compose: (workspace) => composeCliLocalAgent({
+      agentQaRoot: workspace.agentQaRoot,
+      configPath: workspace.configPath,
+      mintingSurface: CLI_FUNCTION_CALLER.surface,
+    }),
+  },
+  {
+    name: 'chat',
+    caller: { ...CLI_FUNCTION_CALLER, surface: CHAT_DOOR_SURFACE },
+    compose: (workspace) => composeCliLocalAgent({
+      agentQaRoot: workspace.agentQaRoot,
+      configPath: workspace.configPath,
+      mintingSurface: CHAT_DOOR_SURFACE,
+    }),
+  },
+  {
+    name: 'mcp',
+    caller: mcpFunctionCaller(ALL_SCOPES),
+    compose: (workspace) => composeCliLocalAgent({
+      agentQaRoot: workspace.agentQaRoot,
+      configPath: workspace.configPath,
+      mintingSurface: 'mcp',
+    }),
+  },
+  {
+    name: 'co-hosted mcp',
+    caller: mcpFunctionCaller(ALL_SCOPES),
+    compose: (workspace) => composeDashboardDoor({
+      agentQaRoot: workspace.agentQaRoot,
+      configPath: workspace.configPath,
+      boundOrigin: () => undefined,
+    }).host,
+  },
+]
+
+async function changeStep(door: Door, workspace: Workspace): Promise<{ outcome: string }> {
+  const host = door.compose(workspace)
+  try {
+    return await invokeFunction(
+      host.registry, 'config.field.set', { path: 'use.timeout.step', value: '45s' }, door.caller,
+    ) as { outcome: string }
+  } finally {
+    await host.close()
+  }
 }
 
-/**
- * THE APPLYING HOST, AND IT IS THE SAME ONE IN EVERY CELL BELOW — deliberately.
- *
- * The claim under test is that attribution follows the surface that MINTED a proposal, so holding
- * the applying surface fixed while varying the minting one is what isolates that axis. A cell that
- * minted and applied on the same host could not tell a correct implementation from one that read
- * the applying surface, which is the wrong answer that would look right on three doors out of four.
- *
- * It is `agent-qa`'s own CLI composition because that is where a person actually accepts a
- * proposal: `proposals.accept` declares `requiresHumanOrigin`, and this is the host that mints
- * `human`.
- */
-function applyingHost(workspace: Workspace): Parameters<typeof invokeFunction>[0] {
-  return composeCliLocalAgent({
+/** The pre-432 accept, from the host where a person used to accept proposals. */
+async function acceptPre432(workspace: Workspace, proposalId: string): Promise<unknown> {
+  const host = composeCliLocalAgent({
     agentQaRoot: workspace.agentQaRoot,
     configPath: workspace.configPath,
     resolveExecutionContext: () => 'local-interactive',
-    confirm: { surface: 'tty-prompt', ask: () => true },
-  }).registry
+  })
+  try {
+    return await invokeFunction(
+      host.registry, 'proposals.accept', { proposalId }, CLI_FUNCTION_CALLER,
+    )
+  } finally {
+    await host.close()
+  }
 }
 
-async function accept(
-  registry: Parameters<typeof invokeFunction>[0],
-  proposalId: string,
-): Promise<unknown> {
-  return await invokeFunction(registry, 'proposals.accept', { proposalId }, CLI_FUNCTION_CALLER)
+/** Product source with comments removed, so history notes may name what the code must not do. */
+function code(path: string): string {
+  return readFileSync(path, 'utf8')
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .split('\n')
+    .filter((line) => !line.trimStart().startsWith('//'))
+    .join('\n')
 }
 
-describe('a config-apply commit names the surface that MINTED the proposal', () => {
-  it('(1) a dashboard-minted proposal is attributed to the dashboard, though the CLI applied it', async () => {
-    const workspace = seedWorkspace()
-    // A PERSISTED RECORD, not a live mint (430 D-08, RESEARCH P18/P19). The stored
-    // `origin.surface: 'dashboard'` values were written by dashboard-chat config proposals, and no
-    // shipped door writes new ones, so the claim is that CLI apply still reads the old ones. The
-    // envelope carries no digest over `origin`, so setting the surface on the legacy bytes yields
-    // a record this build accepts.
-    const record = JSON.parse(readFileSync(LEGACY_FIXTURE, 'utf8')) as {
-      id: string
-      origin: Record<string, unknown>
+/**
+ * A git argv that makes history: `commit` or `add` followed by one of their own flags or the `--`
+ * separator. The curation drain's `'commit'` stage name is followed by an ordinary argument and is
+ * not matched.
+ */
+const GIT_HISTORY_ARGV = /['"](?:commit|add|update-index)['"]\s*,\s*['"]--?[a-z-]*['"]/u
+
+function historyWritingSources(): string[] {
+  const hits: string[] = []
+  const walk = (dir: string, relative: string): void => {
+    for (const entry of readdirSorted(dir)) {
+      if (entry.name === '__tests__' || entry.name === 'node_modules' || entry.name === 'dist') continue
+      const full = join(dir, entry.name)
+      const rel = `${relative}/${entry.name}`
+      if (entry.isDirectory()) walk(full, rel)
+      else if (/\.[cm]?tsx?$/u.test(entry.name) && !/\.test(?:-d)?\.[cm]?tsx?$/u.test(entry.name)) {
+        if (GIT_HISTORY_ARGV.test(code(full))) hits.push(rel)
+      }
     }
-    record.origin.surface = 'dashboard'
+  }
+  for (const pkg of readdirSorted(PACKAGES_ROOT)) {
+    if (!pkg.isDirectory()) continue
+    const src = join(PACKAGES_ROOT, pkg.name, 'src')
+    try {
+      walk(src, `${pkg.name}/src`)
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+    }
+  }
+  return hits
+}
+
+function readdirSorted(dir: string): Dirent[] {
+  return readdirSync(dir, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))
+}
+
+describe('C432-NO-GIT-COMMIT: a config change has no author because it makes no commit (D-07)', () => {
+  it('C432-NO-GIT-COMMIT: the CLI host exports no commit, preserve-commit, trailer or author machinery', () => {
+    const exported = Object.keys(cliHost)
+    for (const name of [
+      'applyConfigProposalAsOneCommit',
+      'applyTestDraftAsOneCommit',
+      'createConfigApplyPort',
+      'createTestDraftApplyPort',
+      'HUMAN_FIRST_COMMIT_SUBJECT',
+      'AGENT_CONFIG_PROPOSAL_TRAILER_KEY',
+      'AGENT_CONFIG_COMMIT_AUTHOR_BY_SURFACE',
+      'AGENT_CONFIG_COMMIT_AUTHOR_UNRECORDED',
+      'AGENT_CONFIG_COMMIT_AUTHOR_UNRECOGNISED',
+      'CONFIG_COMMIT_AUTHOR_SURFACES',
+      'agentConfigCommitAuthor',
+      'runGitAdd',
+      'runGitCommit',
+      'runGitHeadHash',
+      'runGitStatusPorcelain',
+      'captureIndexEntry',
+      'restoreIndexEntry',
+      'APPLY_GIT_TIMEOUT_MS',
+    ]) {
+      expect(exported, name).not.toContain(name)
+    }
+    // The direct writers that replaced them are what the host exports instead.
+    expect(exported).toContain('createConfigWritePort')
+    expect(exported).toContain('publishAuthoredTest')
+  })
+
+  it('C432-NO-GIT-COMMIT: no product source passes git a commit, add or update-index argv', () => {
+    // The matcher sees the shapes the deleted apply used, and not the drain's stage name.
+    expect(GIT_HISTORY_ARGV.test("['commit', '--quiet', '-m', message, '--', targetPath]")).toBe(true)
+    expect(GIT_HISTORY_ARGV.test("'commit', '--quiet', '-m', message,")).toBe(true)
+    expect(GIT_HISTORY_ARGV.test("exec('git', ['add', '--', targetPath]")).toBe(true)
+    expect(GIT_HISTORY_ARGV.test("['update-index', '--index-info']")).toBe(true)
+    expect(GIT_HISTORY_ARGV.test("recordFailure(report, 'commit', outcome.reason, job.candidateId)"))
+      .toBe(false)
+
+    expect(historyWritingSources()).toEqual([])
+  })
+
+  it.each(DOORS.map((door) => [door.name, door] as const))(
+    'C432-NO-GIT-COMMIT: a config change over the %s door writes the file and leaves HEAD, the index and the history alone',
+    async (_name, door) => {
+      const workspace = seedWorkspace()
+      const before = repositoryState(workspace)
+
+      const answer = await changeStep(door, workspace)
+
+      expect(answer.outcome).toBe('applied')
+      expect(readFileSync(workspace.configPath, 'utf8'))
+        .toBe(SEEDED_CONFIG.replace('step: 30s', 'step: 45s'))
+      expect(repositoryState(workspace)).toEqual(before)
+      expect(workspace.git('status', '--porcelain').trim()).toBe(`M ${CONFIG_FILE}`)
+      expect(workspace.git('log', '--format=%an <%ae>')).not.toContain('agent-qa')
+    },
+  )
+
+  it('C432-NO-GIT-COMMIT: a config change lands in a dirty tree and in a directory with no repository', async () => {
+    const dirty = seedWorkspace()
+    writeFileSync(join(dirty.root, 'notes.md'), 'a person\'s own work\n')
+    writeFileSync(join(dirty.root, '.gitignore'), '.agent-qa/\nagent-qa-knowledge/\n# edited\n')
+    dirty.git('add', '--', '.gitignore')
+    const before = repositoryState(dirty)
+
+    expect((await changeStep(DOORS[0] as Door, dirty)).outcome).toBe('applied')
+    expect(repositoryState(dirty)).toEqual(before)
+    expect(dirty.git('diff', '--cached', '--name-only').trim()).toBe('.gitignore')
+
+    const bare = seedWorkspace({ repository: false })
+    expect((await changeStep(DOORS[0] as Door, bare)).outcome).toBe('applied')
+    expect(readFileSync(bare.configPath, 'utf8')).toBe(SEEDED_CONFIG.replace('step: 30s', 'step: 45s'))
+  })
+})
+
+describe('a pre-432 config record is never applied or committed (D-07, D-22)', () => {
+  // RE-SPELLED 2026-10-01 (432-16): cells (1)-(4) accepted a stored record and read its author off
+  // `git log` — a dashboard-surfaced record (1), a chat-minted one (2), an unrecognised surface (4)
+  // and a legacy record with none (3). The CLI host binds no config apply port now, so each of them
+  // is refused by name before any file or ref moves. 432-17 deletes the accept verb itself.
+  const LEGACY_RECORD = JSON.parse(readFileSync(LEGACY_FIXTURE, 'utf8')) as {
+    id: string
+    origin: Record<string, unknown>
+  }
+
+  function plantLegacy(workspace: Workspace, surface?: string): string {
+    const record = structuredClone(LEGACY_RECORD)
+    if (surface !== undefined) record.origin.surface = surface
     mkdirSync(join(workspace.agentQaRoot, 'proposals'), { recursive: true })
     writeFileSync(
       join(workspace.agentQaRoot, 'proposals', `${record.id}.json`),
       `${JSON.stringify(record, null, 2)}\n`,
     )
+    return record.id
+  }
 
-    vi.useFakeTimers({ toFake: ['Date'], now: Number(record.origin.at) + 1 })
-    try {
-      await accept(applyingHost(workspace), record.id)
-    } finally {
-      vi.useRealTimers()
-    }
+  it.each([
+    ['(1) a dashboard-surfaced record', 'dashboard'],
+    ['(3) a legacy record with no surface', undefined],
+    ['(4) a record naming a surface this build does not know', 'voice> <someone-else@example.invalid'],
+  ] as const)('C432-NO-GIT-COMMIT: %s is refused unbound, and the file and history stay put',
+    async (_label, surface) => {
+      const workspace = seedWorkspace()
+      const id = plantLegacy(workspace, surface)
+      // The legacy bytes record no surface at all, which is what made them a legacy envelope.
+      expect(Object.keys(LEGACY_RECORD.origin)).not.toContain('surface')
+      const before = repositoryState(workspace)
 
-    const author = authorAt(workspace, 'HEAD')
-    // THE POSITIVE AND THE NEGATIVE TOGETHER. The positive alone would pass under an author that
-    // named every surface at once; the negatives alone would pass under one that named none. The
-    // `cli` negative is the one that makes this a MINTING claim rather than an applying one — the
-    // CLI is what accepted this proposal, and its name must not be on the commit.
-    expect(author).toBe(AGENT_CONFIG_COMMIT_AUTHOR_BY_SURFACE.dashboard)
-    expect(author).not.toContain('proposed by chat')
-    expect(author).not.toContain('proposed by the cli')
-  })
+      vi.useFakeTimers({ toFake: ['Date'], now: Number(LEGACY_RECORD.origin.at) + 1 })
+      try {
+        await expect(acceptPre432(workspace, id)).rejects.toMatchObject({ name: 'FunctionNotBoundError' })
+      } finally {
+        vi.useRealTimers()
+      }
 
-  it('(2) a chat-minted proposal is still attributed to chat', async () => {
+      expect(readFileSync(workspace.configPath, 'utf8')).toBe(SEEDED_CONFIG)
+      expect(repositoryState(workspace)).toEqual(before)
+      expect(workspace.git('status', '--porcelain').trim()).toBe('')
+    })
+
+  it('C432-NO-GIT-COMMIT: (2) a chat-minted record is refused unbound, and the file and history stay put', async () => {
     const workspace = seedWorkspace()
-    // THE WORD `agent-qa chat` ITSELF SUPPLIES, imported rather than re-typed. A literal `'chat'`
-    // here would agree with the door today and be free to disagree with it forever after.
-    const proposalId = await mint(workspace, CHAT_DOOR_SURFACE, '45s')
-    await accept(applyingHost(workspace), proposalId)
+    const { proposalId } = await filePre432ConfigProposal({
+      configPath: workspace.configPath,
+      agentQaRoot: workspace.agentQaRoot,
+      edits: [{ path: 'use.timeout.step', value: '45s' }],
+      surface: CHAT_DOOR_SURFACE,
+    })
+    const before = repositoryState(workspace)
 
-    // THE CONTROL, and it is honest about being one: this arm was green against the hardcoded
-    // constant too, because the hardcode said `chat`. What it guards is that naming the other
-    // three doors did not cost the one door that was already named correctly. Its non-vacuity is
-    // established by mutation (see the SUMMARY's ledger), not by its own colour — and by the
-    // `cli` negative below, which the hardcode could not have satisfied by accident.
-    const author = authorAt(workspace, 'HEAD')
-    expect(author).toBe(AGENT_CONFIG_COMMIT_AUTHOR_BY_SURFACE.chat)
-    expect(author).not.toContain('proposed by the cli')
+    await expect(acceptPre432(workspace, proposalId)).rejects.toMatchObject({ name: 'FunctionNotBoundError' })
+
+    expect(readFileSync(workspace.configPath, 'utf8')).toBe(SEEDED_CONFIG)
+    expect(repositoryState(workspace)).toEqual(before)
   })
+})
 
-  it('(4) a surface this build does not recognise is named as such, never interpolated', async () => {
-    const workspace = seedWorkspace()
-    // A WORD FROM THE FUTURE, carrying the two characters that structure a git author field. A
-    // reader that rendered the stored surface into `Name <email>` would let a record rewrite the
-    // field it is being read into; the map's unrecognised arm is what makes that unreachable.
-    const proposalId = await mint(workspace, 'voice> <someone-else@example.invalid', '45s')
-
-    // THE RECORD STILL HOLDS THE WORD IT WAS GIVEN, read off disk BEFORE the accept moves it out
-    // of the pending directory. The reading side is closed; the writing side is not, which is what
-    // keeps a record written by a later build parseable here at all.
-    const stored = JSON.parse(readFileSync(
-      join(workspace.agentQaRoot, 'proposals', `${proposalId}.json`), 'utf8',
-    )) as { origin: { surface?: string } }
-    expect(stored.origin.surface).toBe('voice> <someone-else@example.invalid')
-
-    await accept(applyingHost(workspace), proposalId)
-
-    const author = authorAt(workspace, 'HEAD')
-    expect(author).toBe(AGENT_CONFIG_COMMIT_AUTHOR_UNRECOGNISED)
-    // PRESENCE IS NOT ABSENCE. Something WAS recorded; saying `unrecorded` would report the wrong
-    // fact, and this is the negative that keeps the two arms from collapsing into one.
-    expect(author).not.toBe(AGENT_CONFIG_COMMIT_AUTHOR_UNRECORDED)
-    expect(author).not.toContain('someone-else@example.invalid')
-  })
-
+describe('every rostered door still supplies a minting surface', () => {
   it('(5) every rostered door supplies a minting surface — the census, over the roster itself', () => {
-    // THE COMPLETE SET IS THE CONFORMANCE ROSTER'S, not a list kept here. `SURFACE_ROSTER` is what
-    // this phase treats as the set of invocation doors, so a fifth door added there without a
-    // module named below throws rather than passing quietly — the census cannot be greener than
-    // its own discovery predicate, so the predicate is the product's own enumeration.
+    // RETAINED 2026-10-01 (432-16): nothing reads the surface for attribution any more, but the
+    // doors still stamp it on the composition, and 432-17 removes it with the proposal record it
+    // lands on. The census stays until then so a door cannot silently stop supplying it.
     const MODULE_FOR_DOOR: Readonly<Record<string, string>> = {
       chat: 'chat.ts',
       mcp: 'mcp.ts',
       fn: 'fn.ts',
     }
-    // 402-07: A DOOR THAT CANNOT MINT A PROPOSAL AT ALL, and the honest answer for it is not a
-    // module name. The authed run service reaches `runs.start` and nothing else — its caller is
-    // minted with a LITERAL grant rather than a spread of the CLI's (402-01's decision), so
-    // `config.field.set` is refused at the caller band before any proposal exists. The exemption
-    // stands on that grant alone, so it is DECLARED, and it is checked rather than asserted: the
-    // census re-reads the grant off the shipped constant, so a later widening of that grant turns
-    // this row back into one that must supply a minting surface.
+    // 402-07: the authed run service reaches `runs.start` and nothing else, so it cannot change
+    // configuration; the exemption is re-read off its shipped grant.
     const CANNOT_MINT: Readonly<Record<string, readonly FunctionScope[]>> = {
       'run-service': RUN_SERVICE_GRANTED_SCOPES,
     }
     expect(SURFACE_ROSTER.length).toBeGreaterThan(0)
-    // 2026-09-28 (430 D-03): the module map is a closed set pinned to the roster, so an entry for a
-    // door that left the roster, or a rostered door with no module, reds here by name.
     expect(
       Object.keys(MODULE_FOR_DOOR).sort(),
       'MODULE_FOR_DOOR must name exactly the rostered doors that CANNOT_MINT does not exempt',
@@ -301,9 +426,6 @@ describe('a config-apply commit names the surface that MINTED the proposal', () 
     for (const entry of SURFACE_ROSTER) {
       const exemptGrant = CANNOT_MINT[entry.id]
       if (exemptGrant !== undefined) {
-        // The exemption's own premise, measured: a door that cannot write configuration cannot
-        // author a proposal. `config-write` appearing in this grant is what makes the row need a
-        // minting surface again, and this is where it would be caught.
         expect(
           [...exemptGrant],
           `${entry.id}: exempt from the minting-surface census only while it cannot write config`,
@@ -321,37 +443,5 @@ describe('a config-apply commit names the surface that MINTED the proposal', () 
       expect(`${entry.id}: ${source.includes('mintingSurface:') ? 'supplies' : 'omits'}`)
         .toBe(`${entry.id}: supplies`)
     }
-  })
-
-  it('(3) a legacy proposal — no surface recorded — applies, and is NOT attributed to chat', async () => {
-    const workspace = seedWorkspace()
-    const bytes = readFileSync(LEGACY_FIXTURE, 'utf8')
-    const record = JSON.parse(bytes) as { id: string; origin: Record<string, unknown> }
-    // (3a) THE FIXTURE'S OWN CLAIM, re-checked mechanically rather than asserted in prose: these
-    // bytes record no minting surface, which is what makes them a legacy envelope at all.
-    expect(Object.keys(record.origin)).not.toContain('surface')
-    expect(bytes).not.toContain('"surface"')
-
-    mkdirSync(join(workspace.agentQaRoot, 'proposals'), { recursive: true })
-    writeFileSync(join(workspace.agentQaRoot, 'proposals', `${record.id}.json`), bytes)
-
-    // IT STILL APPLIES. A read-side hardening that refused envelopes minted before the write-side
-    // mint existed would turn a working entry point into a poisoned one — the one-sided-fix
-    // regression this project has minted three times.
-    expect(typeof record.origin.at).toBe('number')
-    vi.useFakeTimers({ toFake: ['Date'], now: Number(record.origin.at) + 1 })
-    try {
-      const applied = await accept(applyingHost(workspace), record.id)
-      expect(JSON.stringify(applied)).toContain('applied')
-    } finally {
-      vi.useRealTimers()
-    }
-
-    // AND IT IS ATTRIBUTED HONESTLY. Not `chat` — that is the fabrication this plan closes — and
-    // not any other surface either: nothing recorded one, so nothing may claim one.
-    const author = authorAt(workspace, 'HEAD')
-    expect(author).not.toContain('proposed by chat')
-    expect(author).not.toContain(DASHBOARD_FUNCTION_CALLER.surface)
-    expect(author).toBe(AGENT_CONFIG_COMMIT_AUTHOR_UNRECORDED)
   })
 })

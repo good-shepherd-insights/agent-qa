@@ -1,25 +1,20 @@
-// THE COMPLETE SET OF `ChatApprovalDecisionRecord` DECLARATIONS IN THIS REPOSITORY — and there is
-// exactly one of them (401-01, D-13's companion invariant).
+// THE COMPLETE SET OF `ChatApprovalDecisionRecord` DECLARATIONS IN THIS REPOSITORY (401-01, D-13's
+// companion invariant) — and since 432-16 there are none.
 //
-// WHY A CENSUS AND NOT A LINE PIN. The defect this file guards is not a wrong line, it is a SECOND
-// SPELLING. Until 401-01 this type was declared twice — once in the composition root and once,
-// structurally mirrored, in the cli's confirm wrapper — and the two were free to drift the moment
-// either producer changed. That is what left NEW-AUDIT-01 half-closed: hardening one declaration
-// leaves the other standing, and the drop persists on whichever door reads the un-hardened one.
-// Phases 388, 390, 392 and 400-17 each paid for the same class. So the subject here is the SET.
+// WHY A CENSUS AND NOT A LINE PIN. The defect this file guarded was not a wrong line, it was a
+// SECOND SPELLING: until 401-01 this type was declared twice, once in the composition root and once
+// in the cli's confirm wrapper, and the two were free to drift. So the subject here is the SET.
 //
-// THE PROMOTE IS WHAT IS PINNED, NOT MERELY THE COUNT. One declaration is not enough on its own:
-// two spellings could be collapsed into the WRONG package and the count would still read 1, while
-// `agent-local` — which may not import `cli` — would be left importing nothing and re-minting its
-// own. So the surviving declaration's package is asserted by name.
+// 2026-10-01, 432-16 (D-14/D-15, D-22): THE WRITER IS DELETED. The record was what the chat
+// confirm's decision sink appended to a conversation's log as an `approval_decision` row. The chat
+// confirm, its bindings and the record are gone, so the census's expected set is now EMPTY
+// (C432-NO-APPROVAL-WRITER), no product source constructs an `approval_decision` event, and the
+// row stays readable: a session written before 432 still parses through the shipped guard.
 //
 // THE DISCOVERY PREDICATE IS THE PART MOST LIKELY TO BE VACUOUS, so it is asserted rather than
-// trusted (the require-anchor census's own lesson). A scan that walked zero directories, or a
-// matcher that matched nothing, would report "exactly one... " — no, it would report zero, but a
-// scan that silently walked a wrong-but-existing root and a matcher that could not see a
-// declaration at all are indistinguishable from a clean tree by their VERDICT. Both are therefore
-// asserted: a floor on the files scanned, and a discrimination cell that runs the same matcher over
-// a synthetic source carrying a second declaration and proves it is SEEN.
+// trusted: a floor on the files scanned, and a discrimination cell that runs the same matcher over
+// a synthetic source carrying a declaration and proves it is SEEN. An empty set from a walk that
+// read nothing would otherwise look exactly like the clean tree it claims.
 //
 // TESTS ARE EXCLUDED FROM THE SCAN because the discrimination cell below writes the defective shape
 // on purpose — as a string, so it is not even a file the walker could reach.
@@ -28,6 +23,10 @@ import { readFileSync, readdirSync, statSync } from 'node:fs'
 import { dirname, join, relative, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
+import {
+  CURRENT_CHAT_SESSION_SCHEMA_VERSION,
+  guardChatSessionEvent,
+} from '@vostride/agent-qa-schema'
 import { describe, expect, it } from 'vitest'
 
 const TESTS_DIR = dirname(fileURLToPath(import.meta.url))
@@ -43,8 +42,8 @@ const PACKAGES_ROOT = resolve(TESTS_DIR, '..', '..', '..')
  */
 const MINIMUM_SOURCES_SCANNED = 500
 
-/** The package the canonical declaration must live in — `cli` may import it, never the reverse. */
-const CANONICAL_PACKAGE = 'agent-local'
+/** The two packages the record used to cross: the composition root and the cli that imported it. */
+const CROSSED_PACKAGES = ['agent-local', 'cli']
 
 /**
  * Both ways TypeScript declares this name: `interface X {` and `type X =`.
@@ -68,6 +67,14 @@ interface ScannedSource {
   /** Relative to `packages/`, so a failure message reads the same on every machine. */
   readonly relPath: string
   readonly source: string
+}
+
+function stripComments(source: string): string {
+  return source
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .split('\n')
+    .filter((line) => !line.trimStart().startsWith('//'))
+    .join('\n')
 }
 
 /** Every product `.ts` file under `packages/​*​/src`. */
@@ -108,6 +115,9 @@ function scanProductSources(packagesRoot: string = PACKAGES_ROOT): ScannedSource
   return found
 }
 
+/** An `approval_decision` event built by product code: the writer this phase deletes. */
+const APPROVAL_EVENT_WRITE = /kind:\s*['"]approval_decision['"]/u
+
 describe('ChatApprovalDecisionRecord has exactly one declaration, in the composition root', () => {
   const scanned = scanProductSources()
 
@@ -119,26 +129,51 @@ describe('ChatApprovalDecisionRecord has exactly one declaration, in the composi
       [...new Set(scanned.map((entry) => entry.pkg))],
       'the walker did not reach both packages this type crosses, so its verdict is about a tree '
       + 'that is not the one under test',
-    ).toEqual(expect.arrayContaining([CANONICAL_PACKAGE, 'cli']))
+    ).toEqual(expect.arrayContaining(CROSSED_PACKAGES))
   })
 
-  it('declares the record in exactly one place, and that place is agent-local', () => {
+  // RE-SPELLED 2026-10-01 (432-16): was 'declares the record in exactly one place, and that place
+  // is agent-local'. The one declaration went with the chat confirm that wrote it.
+  it('C432-NO-APPROVAL-WRITER: declares the record nowhere — no approval writer contract survives', () => {
     const sites = scanned.flatMap((entry) =>
       declarationLines(entry.source).map((line) => `${entry.relPath}:${String(line)}`))
 
     expect(
       sites,
-      'a second declaration of the approval-decision record was minted; two structurally-mirrored '
-      + 'spellings of one contract drift the moment either producer changes, which is the shape '
-      + 'that left NEW-AUDIT-01 half-closed',
-    ).toHaveLength(1)
-    expect(
-      sites[0],
-      'the surviving declaration moved out of the composition root; `cli` may import `agent-local` '
-      + 'and never the reverse, so a canon that lives anywhere else forces a second one',
-    ).toContain(`${CANONICAL_PACKAGE}/src/`)
+      'an approval-decision record was declared again; nothing asks, so nothing may record an answer',
+    ).toEqual([])
   })
 
+  it('C432-NO-APPROVAL-WRITER: no product source builds an approval_decision event', () => {
+    expect(APPROVAL_EVENT_WRITE.test("await log.append({ kind: 'approval_decision', turnId })"))
+      .toBe(true)
+    // The schema declares the kind and its key set as a READER; neither is a construction.
+    expect(APPROVAL_EVENT_WRITE.test("  approval_decision: ['actionClass', 'at', 'decision']"))
+      .toBe(false)
+    const writers = scanned
+      .filter((entry) => APPROVAL_EVENT_WRITE.test(stripComments(entry.source)))
+      .map((entry) => entry.relPath)
+    expect(writers).toEqual([])
+  })
+
+  it('C432-NO-APPROVAL-WRITER: a historical approval_decision row still parses through the shipped guard', () => {
+    // D-22 / 430 D-08: sessions written before 432 carry these rows, and the guard throws on an
+    // unknown kind, so the kind stays readable with no writer behind it.
+    for (const row of [
+      {
+        kind: 'approval_decision', turnId: 'turn-1', at: '2026-09-01T10:00:00.000Z',
+        actionClass: 'fn:knowledge.proposal.apply', decision: 'accept-always', source: 'gate',
+      },
+      {
+        kind: 'approval_decision', turnId: 'turn-2', at: '2026-09-01T10:01:00.000Z',
+        actionClass: 'fn:runs.start', decision: 'deny', source: 'verb',
+      },
+    ]) {
+      expect(guardChatSessionEvent(row, CURRENT_CHAT_SESSION_SCHEMA_VERSION)).toEqual(row)
+    }
+  })
+
+  // RETAINED: the matcher must still see a declaration, or the empty set above certifies nothing.
   it('SEES a second declaration, and stays quiet about an import of the first', () => {
     // THE MUTATION BAR. Without this cell the census could be a matcher that never matches, which
     // is indistinguishable from a clean tree by its verdict alone. The bar is the implementation

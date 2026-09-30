@@ -1,5 +1,5 @@
-// Delegate-and-wait: apply is synchronous from the caller's seat in BOTH lease states (387-08,
-// D-18 — the 386 D-14 drain contract applied to `knowledge.proposal.apply`).
+// Delegate-and-wait: a knowledge change is synchronous from the caller's seat in BOTH lease states
+// (387-08, D-18 — the 386 D-14 drain contract).
 //
 // The lease-held case is the load-bearing one and it is run over a REAL unix socket: a real
 // `startInvokeServer`, a real registration, a real `invokeViaDaemon`, the real `/invoke` route
@@ -10,31 +10,27 @@
 // process ANSWERS; it must be shown never to have taken the lease, so the holder's lease id and
 // epoch are read before and after and the delegator's own acquisition is asserted to be refused
 // throughout.
+//
+// 2026-10-01, 432-16 (D-05/D-15): RE-SPELLED AS DIRECT CHANGES. The first describe used to hand a
+// pre-432 forget PROPOSAL to `knowledge.proposal.apply`, record a standing approval first so the
+// ask-tier apply would pass the gate, and route the proposal id through `applyDelegate`. The gate
+// and the approval are gone and a change files no proposal, so each of its three claims is now
+// measured on the direct `knowledge.forget` change: in-process when the lease is free, handed to
+// the live holder with its operation identity when it is not, and bounded rather than hanging.
 
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import { KNOWLEDGE_PROPOSAL_APPLY_FUNCTION_ID, invokeFunction } from '@vostride/agent-qa-agent'
+import { invokeFunction } from '@vostride/agent-qa-agent'
 import type { ConfigReaderPort, JobModelCapability } from '@vostride/agent-qa-agent'
 import { composeLocalAgent } from '@vostride/agent-qa-agent-local'
 import type { LocalAgentHost } from '@vostride/agent-qa-agent-local'
-import { appendGrantLedgerEvents } from '@vostride/agent-qa-knowledge-local'
-import {
-  CURRENT_GRANT_LEDGER_SCHEMA_VERSION,
-  FunctionScopeSchema,
-  STANDING_APPROVAL_SCOPE,
-} from '@vostride/agent-qa-schema'
-import type {
-  FunctionCaller,
-  KnowledgeApplyOutcomeDto,
-  KnowledgeChangeOutput,
-} from '@vostride/agent-qa-schema'
+import { FunctionScopeSchema } from '@vostride/agent-qa-schema'
+import type { FunctionCaller, KnowledgeChangeOutput } from '@vostride/agent-qa-schema'
 import { afterEach, describe, expect, it } from 'vitest'
 
-import { filePre432KnowledgeProposal } from '../composition/__tests__/pre-432-knowledge-proposal.js'
 import { delegateKnowledgeChangeViaDaemon } from '../composition/local-agent-host.js'
-import { invokeViaDaemon } from '../daemon/client.js'
 import { startInvokeServer, type InvokeServerHandle } from '../daemon/server.js'
 import {
   DAEMON_REGISTRATION_SCHEMA_VERSION,
@@ -151,63 +147,36 @@ async function seedRecord(where: Fixture): Promise<string> {
   return outcome.id
 }
 
-/**
- * Record the standing approval the ask-tier apply requires (391 D-02/D-04).
- *
- * 391 raised `knowledge.proposal.apply` to `mutating-shared`, so in a headless context — which is
- * every context here — the apply now fail-closes without a covering grant. These cases are about
- * LEASE ROUTING, not policy, so the approval is recorded first and the routing claim is measured
- * exactly as before.
- *
- * The class is read off the op's own declaration and the event goes through the real append API:
- * the gate compares that exact string with `===`, and a literal typed here would keep covering a
- * name the op had stopped carrying.
- */
-function grantApply(where: Fixture, agent: LocalAgentHost): void {
-  const declaration = agent.registry
-    .list(CALLER)
-    .find((entry) => entry.id === KNOWLEDGE_PROPOSAL_APPLY_FUNCTION_ID)
-  if (declaration === undefined) throw new Error('the apply op is not registered')
-  const outcome = appendGrantLedgerEvents(
-    where.knowledgeRoot,
-    [{
-      schemaVersion: CURRENT_GRANT_LEDGER_SCHEMA_VERSION,
-      kind: 'grant',
-      at: '2026-08-07T12:00:00.000Z',
-      grantId: 'grant_apply_delegate',
-      actionClass: declaration.risk.name,
-      scope: STANDING_APPROVAL_SCOPE,
-    }],
-    { auditBaseDir: where.agentQaRoot },
-  )
-  if (outcome.kind !== 'appended') throw new Error(`grant append refused: ${outcome.kind}`)
-}
-
-/** 432-12: a pre-432 forget proposal on disk; the change ops apply in the call and file none. */
-async function proposeForget(where: Fixture, recordId: string): Promise<string> {
-  return await filePre432KnowledgeProposal({
-    agentQaRoot: where.agentQaRoot,
-    knowledgeRoot: where.knowledgeRoot,
-    verb: 'forget',
-    target: { grain: 'record', recordId },
+/** The daemon registration and `/invoke` server a live lease holder answers on. */
+async function serveHolder(where: Fixture, registry: LocalAgentHost['registry']): Promise<void> {
+  writeDaemonRegistration(where.agentQaRoot, {
+    schemaVersion: DAEMON_REGISTRATION_SCHEMA_VERSION,
+    instanceId: INSTANCE_ID,
+    pid: process.pid,
+    socketPath: where.socketPath,
+    startedAtMs: Date.now(),
   })
+  servers.push(await startInvokeServer({
+    socketPath: where.socketPath,
+    registry,
+    identity: { schemaVersion: 1, instanceId: INSTANCE_ID, pid: process.pid },
+  }))
 }
 
-describe('knowledge.proposal.apply routes by lease state (D-18)', () => {
+describe('a knowledge change routes by lease state (D-18)', () => {
+  // RE-SPELLED 2026-10-01 (432-16): was the pre-432 forget proposal applied through
+  // `knowledge.proposal.apply` after a recorded standing approval.
   it('commits in-process when no daemon holds the lease (v51 one-shot posture)', async () => {
     const where = fixture('free')
     const recordId = await seedRecord(where)
     const agent = host(where)
-    grantApply(where, agent)
 
-    const applied = await invokeFunction(
-      agent.registry,
-      KNOWLEDGE_PROPOSAL_APPLY_FUNCTION_ID,
-      { proposalId: await proposeForget(where, recordId) },
-      CALLER,
-    ) as KnowledgeApplyOutcomeDto
+    const applied = await invokeFunction(agent.registry, 'knowledge.forget', {
+      target: { grain: 'record', recordId },
+    }, CALLER) as KnowledgeChangeOutput
 
     expect(applied.outcome).toBe('applied')
+    if (applied.outcome !== 'applied') throw new Error('unreachable')
     expect(applied.forgetReceipt?.tombstonedRecords.map((row) => row.recordId)).toEqual([recordId])
 
     const rows = await invokeFunction(agent.registry, 'knowledge.bundles.list', {}, CALLER) as {
@@ -216,6 +185,9 @@ describe('knowledge.proposal.apply routes by lease state (D-18)', () => {
     expect(rows.map((row) => row.status)).toEqual(['deprecated'])
   })
 
+  // RE-SPELLED 2026-10-01 (432-16): the delegator used to be handed a proposal id through
+  // `applyDelegate`; it now binds the CLI host's shipped change delegate and hands the change op and
+  // its identity over.
   it('delegates over the 386 socket to a live holder and never takes the lease', async () => {
     const where = fixture('held')
     const recordId = await seedRecord(where)
@@ -230,53 +202,36 @@ describe('knowledge.proposal.apply routes by lease state (D-18)', () => {
     const holderHost = host(where, {
       resolveWriterAuthority: () => ({ leaseId: held.leaseId, epoch: held.epoch }),
     })
-
-    writeDaemonRegistration(where.agentQaRoot, {
-      schemaVersion: DAEMON_REGISTRATION_SCHEMA_VERSION,
-      instanceId: INSTANCE_ID,
-      pid: process.pid,
-      socketPath: where.socketPath,
-      startedAtMs: Date.now(),
-    })
-    const server = await startInvokeServer({
-      socketPath: where.socketPath,
-      registry: holderHost.registry,
-      identity: { schemaVersion: 1, instanceId: INSTANCE_ID, pid: process.pid },
-    })
-    servers.push(server)
+    await serveHolder(where, holderHost.registry)
 
     // The delegating process: a second composition over the same roots, with the CLI's own
-    // transport injected. It is handed the proposal id and nothing else — no lease, no epoch,
-    // no store handle. There is nothing here it could steal with.
-    const delegated: string[] = []
+    // delegate. It holds no lease, no epoch and no store handle — nothing it could steal with.
+    const shipped = delegateKnowledgeChangeViaDaemon({
+      agentQaRoot: where.agentQaRoot,
+      resolveKnowledgeRoot: () => where.knowledgeRoot,
+    })
+    const delegated: unknown[] = []
     const caller = host(where, {
-      applyDelegate: async (proposalId) => {
-        delegated.push(proposalId)
-        const answer = await invokeViaDaemon({
-          agentQaRoot: where.agentQaRoot,
-          knowledgeRoot: where.knowledgeRoot,
-          functionId: KNOWLEDGE_PROPOSAL_APPLY_FUNCTION_ID,
-          input: { proposalId },
-        })
-        return answer as never
+      knowledgeChangeDelegate: async (delegation) => {
+        delegated.push(delegation)
+        return await shipped(delegation)
       },
     })
-
-    grantApply(where, caller)
-    const proposalId = await proposeForget(where, recordId)
+    const operationId = '2f6c1a8e-4b3d-4c5e-9a7f-0d1e2c3b4a59'
     const leaseBefore = readWriterLease(where.knowledgeRoot)
 
-    const applied = await invokeFunction(
-      caller.registry,
-      KNOWLEDGE_PROPOSAL_APPLY_FUNCTION_ID,
-      { proposalId },
-      CALLER,
-    ) as KnowledgeApplyOutcomeDto
+    const applied = await invokeFunction(caller.registry, 'knowledge.forget', {
+      target: { grain: 'record', recordId }, operationId,
+    }, CALLER) as KnowledgeChangeOutput
 
     // The receipt came back — the leaseholder's, produced on the other side of a real socket.
-    expect(delegated).toEqual([proposalId])
+    expect(delegated).toEqual([{
+      request: { verb: 'forget', input: { target: { grain: 'record', recordId } } },
+      operationId,
+    }])
     expect(applied.outcome).toBe('applied')
-    expect(applied.forgetReceipt?.proposalId).toBe(proposalId)
+    if (applied.outcome !== 'applied') throw new Error('unreachable')
+    expect(applied.operationId).toBe(operationId)
     expect(applied.forgetReceipt?.tombstonedRecords.map((row) => row.recordId)).toEqual([recordId])
 
     // STRUCTURAL REFUSAL: the lease is byte-identical, so nothing about delegating took,
@@ -284,7 +239,7 @@ describe('knowledge.proposal.apply routes by lease state (D-18)', () => {
     expect(readWriterLease(where.knowledgeRoot)).toEqual(leaseBefore)
     expect(acquireWriterLease(where.knowledgeRoot).kind).toBe('held')
 
-    // …and the commit really happened, on the holder's side.
+    // …and the change really landed, on the holder's side.
     const rows = await invokeFunction(holderHost.registry, 'knowledge.bundles.list', {}, CALLER) as {
       status: string
     }[]
@@ -293,6 +248,8 @@ describe('knowledge.proposal.apply routes by lease state (D-18)', () => {
     releaseLease({ knowledgeRoot: where.knowledgeRoot, leaseId: held.leaseId })
   })
 
+  // RE-SPELLED 2026-10-01 (432-16): the unresponsive holder was an `applyDelegate` that never
+  // answered a proposal id; it is now a change delegate that never answers.
   it('refuses at the bound rather than hanging on an unresponsive holder', async () => {
     const where = fixture('wedged')
     const recordId = await seedRecord(where)
@@ -303,33 +260,22 @@ describe('knowledge.proposal.apply routes by lease state (D-18)', () => {
     const held = acquireWriterLease(where.knowledgeRoot)
     if (held.kind !== 'acquired') throw new Error('fixture could not take the lease')
 
-    const caller = host(where, {
-      // A holder that never answers. `applyReview`'s own bound is 30s, so the composition is
-      // given a delegate that resolves late enough to prove the refusal without the wall clock:
-      // the timeout under test is the pinned one, exercised through the shortened override the
-      // review module accepts.
-      applyDelegate: () => new Promise(() => {}),
-    })
-    grantApply(where, caller)
-    const proposalId = await proposeForget(where, recordId)
+    const caller = host(where, { knowledgeChangeDelegate: () => new Promise(() => {}) })
 
     const started = Date.now()
     await expect(
       Promise.race([
-        invokeFunction(
-          caller.registry,
-          KNOWLEDGE_PROPOSAL_APPLY_FUNCTION_ID,
-          { proposalId },
-          CALLER,
-        ),
+        invokeFunction(caller.registry, 'knowledge.forget', {
+          target: { grain: 'record', recordId },
+        }, CALLER),
         new Promise((_resolve, reject) =>
           setTimeout(() => reject(new Error('BOUNDED-WAIT-NOT-REACHED')), 250),
         ),
       ]),
     ).rejects.toThrow(/BOUNDED-WAIT-NOT-REACHED/)
-    // The point of the race above: the apply did NOT resolve and did NOT take the lease while
-    // waiting. `ApplyDelegateTimeoutError` is the refusal it will raise at the pinned bound, and
-    // it is exported so a surface can name it rather than string-match a message.
+    // The change did NOT resolve and did NOT take the lease while waiting.
+    // `ApplyDelegateTimeoutError` is the refusal it raises at the pinned bound, exported so a
+    // surface can name it rather than string-match a message.
     expect(Date.now() - started).toBeLessThan(5_000)
     expect(ApplyDelegateTimeoutError.name).toBe('ApplyDelegateTimeoutError')
     expect(acquireWriterLease(where.knowledgeRoot).kind).toBe('held')
