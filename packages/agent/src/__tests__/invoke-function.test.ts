@@ -22,6 +22,7 @@ import { z } from 'zod'
 
 import {
   FunctionInputError,
+  FunctionNotBoundError,
   FunctionScopeError,
   UnknownFunctionError,
   invokeFunction,
@@ -350,6 +351,71 @@ describe('invokeFunction pipeline', () => {
     const registry = createRegistryFromSpecs([runsListSpec], registryOptions({ deps: deps.deps }))
 
     await expect(invokeFunction(registry, 'runs.list', {}, caller(['read']))).resolves.toEqual([])
+  })
+})
+
+/**
+ * A synthetic op at the tier the retired gate asked about (432-13). `mutating-shared` used to reach
+ * the ask ladder: fail-closed in `ci` and `local-headless`, a confirm prompt in `local-interactive`.
+ */
+function markLikeSpec(invocations: { count: number }): FunctionSpec<{ runId: string }, { ok: true }> {
+  return {
+    id: 'runs.mark.synthetic',
+    summary: 'Synthetic mutating-shared capability used to prove the op gate is gone.',
+    requiredScopes: ['run'],
+    resultKind: 'unary',
+    input: z.object({ runId: z.string().min(1) }).strict(),
+    output: z.object({ ok: z.literal(true) }).strict(),
+    risk: { name: 'fn:runs.mark.synthetic', recognized: true, declaredTier: 'mutating-shared' },
+    classify: () => ({ status: 'executed' as const, outcome: '' }),
+    invoke: () => {
+      invocations.count += 1
+      return Promise.resolve({ ok: true as const })
+    },
+  }
+}
+
+describe('C432-INVOKE-DIRECT — invokeFunction dispatches with no gate (432-13)', () => {
+  it.each(['ci', 'local-headless', 'local-interactive'] as const)(
+    'C432-INVOKE-DIRECT: a mutating-shared op in %s returns once with no confirm port and no audit row',
+    async (context) => {
+      const invocations = { count: 0 }
+      const audit = capturingSink()
+      const registry = createRegistryFromSpecs([markLikeSpec(invocations) as FunctionSpec], {
+        ...registryOptions({ auditSink: audit.sink }),
+        resolveExecutionContext: () => context,
+      })
+
+      await expect(
+        invokeFunction(registry, 'runs.mark.synthetic', { runId: 'run-1' }, caller(['run'])),
+      ).resolves.toEqual({ ok: true })
+
+      expect(invocations.count).toBe(1)
+      // No decision was taken, so none was recorded.
+      expect(audit.executionRows()).toEqual([])
+    },
+  )
+
+  it('C432-INVOKE-DIRECT: invalid input and a missing binding still refuse by name, dispatching nothing', async () => {
+    const invocations = { count: 0 }
+    const registry = createRegistryFromSpecs(
+      [
+        markLikeSpec(invocations) as FunctionSpec,
+        { ...markLikeSpec(invocations), id: 'runs.mark.unbound', boundThrough: 'liveView' } as FunctionSpec,
+      ],
+      { ...registryOptions(), resolveExecutionContext: () => 'ci' },
+    )
+
+    await expect(
+      invokeFunction(registry, 'runs.mark.synthetic', { runId: '' }, caller(['run'])),
+    ).rejects.toBeInstanceOf(FunctionInputError)
+    await expect(
+      invokeFunction(registry, 'runs.mark.unbound', { runId: 'run-1' }, caller(['run'])),
+    ).rejects.toBeInstanceOf(FunctionNotBoundError)
+    await expect(
+      invokeFunction(registry, 'runs.mark.unbound', { runId: 'run-1' }, caller(['run'])),
+    ).rejects.toThrow(/runs\.mark\.unbound/)
+    expect(invocations.count).toBe(0)
   })
 })
 

@@ -478,6 +478,41 @@ describe('the daemon dispatches runs through the in-process core (401-06, INVK-0
   )
 })
 
+// 432-13 (D-01/D-14): the worker carries its detected posture and asks nobody. A dispatched run
+// against a shared target starts under the carried `local-headless`, whatever the ambient says.
+describe('C432-DAEMON-DIRECT — the worker starts a non-production run with no approval (432-13)', () => {
+  it(
+    'C432-DAEMON-DIRECT: a shared-target run dispatched to the daemon starts under the carried local-headless context',
+    async () => {
+      const target = new CountingTarget()
+      await target.listen()
+      try {
+        const project = daemonProject({ origin: target.origin, environment: 'shared' })
+        const { fixture } = project
+        const { acknowledged, refusal, stdoutWrites } = await dispatchThroughDaemon({
+          project,
+          patterns: [fixture.suitePattern],
+          varyAmbient: 'local-interactive',
+        })
+
+        expect(refusal, `runs.start refused: ${String(refusal)}`).toBeUndefined()
+        expect(acknowledged).toMatchObject({ executionContext: 'local-headless', testCount: 1 })
+        expect(stdoutWrites).toBe(0)
+        const events = eventTypes(fixture as never)
+        expect(events).toContain('runStarted')
+        expect(events).toContain('testStarted')
+        expect(target.hits).toEqual(['/in-process-thing'])
+        expect(buildOrdinalsExist(fixture as never)).toBe(true)
+        // No run-start decision was taken, so no row records one.
+        expect(auditRows(fixture as never).filter((row) => row.action === 'run:start')).toEqual([])
+      } finally {
+        await target.close()
+      }
+    },
+    180_000,
+  )
+})
+
 /** What a caller actually holds: the rehydrated error's class name and its message, as one string. */
 function callerSurface(refusal: unknown): string {
   const error = refusal as Error | undefined

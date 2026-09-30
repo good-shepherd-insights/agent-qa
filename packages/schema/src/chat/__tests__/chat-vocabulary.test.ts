@@ -228,6 +228,29 @@ describe('guardChatSessionEvent refuses untrusted bytes by name', () => {
   })
 })
 
+// 432-13 (D-14/D-22): no turn writes an `approval_decision` any more — the chat confirm and the
+// `/pin` verb that wrote them are gone from chat resolution. A session a person kept from before
+// still reopens: both historical sources parse, in order, beside the events a turn writes today.
+describe('C432-HISTORICAL-READER — pre-432 approval rows still read (432-13)', () => {
+  it('C432-HISTORICAL-READER: a pre-432 session line of each approval source and decision parses unchanged', () => {
+    const historical: ChatSessionEvent[] = [
+      userMessage(),
+      { kind: 'approval_decision', turnId: 'turn-1', at: AT, actionClass: 'fn:runs.mark', decision: 'accept', source: 'gate' },
+      { kind: 'approval_decision', turnId: 'turn-1', at: AT, actionClass: 'fn:runs.mark', decision: 'accept-always', source: 'gate' },
+      { kind: 'approval_decision', turnId: 'turn-1', at: AT, actionClass: 'fn:runs.start', decision: 'deny', source: 'gate' },
+      { kind: 'approval_decision', turnId: 'turn-1', at: AT, actionClass: 'fn:runs.start', decision: 'deny', source: 'verb' },
+      { kind: 'turn_complete', turnId: 'turn-1', at: AT, status: 'completed' },
+    ]
+    // Read back through the one guard reopen uses, from the JSON a session file holds.
+    const reread = historical.map((event) =>
+      guardChatSessionEvent(JSON.parse(JSON.stringify(event)), CURRENT_CHAT_SESSION_SCHEMA_VERSION),
+    )
+    expect(reread).toEqual(historical)
+    // The kind stays declared, so a reader that folds it keeps compiling (D-22).
+    expect(CHAT_SESSION_EVENT_KINDS).toContain('approval_decision')
+  })
+})
+
 describe('the pin overlay denies, and only denies (D-21)', () => {
   const overlay: ChatPinOverlay = { deniedActionClasses: ['fn:runs.start'] }
 

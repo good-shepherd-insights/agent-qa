@@ -258,6 +258,71 @@ describe('the invocation core — the allow leg, end to end (D-02)', () => {
   })
 })
 
+// 432-13 (D-01/D-15/D-18): the core asks nobody. Production is the one refusal left, and it lands
+// before every effect; every other class starts in every context with no confirm port and no trust.
+describe('C432-PRODUCTION-BEFORE-EFFECTS — production is the one refusal left (432-13)', () => {
+  it('C432-PRODUCTION-BEFORE-EFFECTS: shared and undeclared runs start in ci and local-headless with no confirm or trust', async () => {
+    const cases = [
+      { targetClass: 'shared', executionContext: 'ci', runId: 'run_shared_in_ci' },
+      { targetClass: undefined, executionContext: 'ci', runId: 'run_undeclared_in_ci' },
+      { targetClass: 'shared', executionContext: 'local-headless', runId: 'run_shared_headless' },
+      { targetClass: 'shared', executionContext: 'local-interactive', runId: 'run_shared_interactive' },
+    ] as const
+    for (const scene of cases) {
+      const assembler = recordingAssembler()
+      const core = makeCore({
+        targetClass: scene.targetClass,
+        executionContext: scene.executionContext,
+        assemble: assembler.assemble,
+        mintRunId: () => scene.runId,
+      })
+
+      const started = await core.execute({})
+
+      expect(started.runId, scene.runId).toBe(scene.runId)
+      expect(assembler.calls, scene.runId).toHaveLength(1)
+      // The context the door carried is still the one the run records.
+      expect(assembler.calls[0]!.executionContext).toBe(scene.executionContext)
+      expect(recordedEvents(scene.runId)[0]?.type).toBe('runStarted')
+      // No run-start decision was recorded, because none was taken.
+      expect(
+        recordedAuditRows(scene.runId).filter((row) => row.action === RUN_START_RISK_ACTION_NAME),
+      ).toEqual([])
+    }
+  })
+
+  it('C432-PRODUCTION-BEFORE-EFFECTS: a production run in the same contexts refuses before the audit sink, ports and assembly', async () => {
+    for (const executionContext of ['ci', 'local-headless', 'local-interactive'] as const) {
+      const assembler = recordingAssembler()
+      const sessions: RunSession[] = []
+      const runId = `run_production_${executionContext.replace('-', '_')}`
+      const core = createRunInvocationCore({
+        configPath: join(projectDir, 'agent-qa.config.yaml'),
+        agentQaRoot: agentQaRoot(),
+        executionContext,
+        mintRunId: () => runId,
+        isMintedRunId: FIXTURE_MINTED_RUN_ID,
+        resolveTargetDeclaration: () => ({
+          targetClass: 'production',
+          targetNames: ['prod-eu'],
+          productionTargetNames: ['prod-eu'],
+        }),
+        assembleRun: assembler.assemble,
+        onSession: (session) => sessions.push(session),
+      })
+
+      const refusal = await core.execute({}).catch((error: unknown) => error)
+
+      expect(refusal).toBeInstanceOf(RunDeniedError)
+      expect((refusal as RunDeniedError).reason).toContain('"prod-eu"')
+      expect((refusal as RunDeniedError).reason).toContain('allowProduction: true')
+      expect(assembler.calls).toHaveLength(0)
+      expect(sessions).toHaveLength(0)
+      expect(existsSync(join(agentQaRoot(), 'runs', runId))).toBe(false)
+    }
+  })
+})
+
 describe('the invocation core — the deny leg (D-16 criterion 3, at the unit)', () => {
   it('fails closed for a shared target in a non-interactive context and starts NOTHING', async () => {
     const assembler = recordingAssembler()

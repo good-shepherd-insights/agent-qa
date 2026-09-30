@@ -167,6 +167,47 @@ function pinAmbient(value: 'ci' | 'local-interactive' | 'local-headless', ciMark
   }
 }
 
+// 432-13 (D-01/D-14/D-15): the fn/chat/MCP door's runs.start asks nobody. An undeclared or shared
+// target starts from a CI or headless context with the one call, and no decision row is written at
+// either gate because neither gate exists.
+describe('C432-DOOR-NONPRODUCTION — the host door starts a non-production run in one call (432-13)', () => {
+  it.each([
+    ['undeclared', undefined, 'ci'],
+    ['shared', 'shared', 'local-headless'],
+  ] as const)(
+    'C432-DOOR-NONPRODUCTION: a %s target (environment %s) from %s starts and is acknowledged, with no gate row',
+    async (_label, environment, context) => {
+      const target = new CountingTarget()
+      await target.listen()
+      try {
+        const fixture = createInProcessFixture({
+          origin: target.origin,
+          ...(environment === undefined ? {} : { environment }),
+        })
+        pinAmbient(context === 'ci' ? 'ci' : 'local-interactive', context === 'ci')
+
+        const { ack, error } = await invokeRunsStartOutcome(
+          fixture,
+          { patterns: [fixture.testPattern] },
+          { resolveExecutionContext: () => context },
+        )
+
+        expect(error, `runs.start refused: ${String(error)}`).toBeUndefined()
+        expect(ack!.testCount).toBe(1)
+        expect(runDirs(fixture).map((dir) => dir.split('/').pop())).toContain(ack!.runId)
+        expect(eventTypes(fixture)).toContain('runStarted')
+        expect(buildOrdinalsExist(fixture)).toBe(true)
+        expect(target.hits).toEqual(['/in-process-thing'])
+        expect(auditRows(fixture).filter((row) => row.action === 'run:start')).toEqual([])
+        expect(opAuditRows(fixture).filter((row) => row.action === 'fn:runs.start')).toEqual([])
+      } finally {
+        await target.close()
+      }
+    },
+    120_000,
+  )
+})
+
 describe('the fn/MCP door refuses an ungated run and acks a gated one (401-05, D-16)', () => {
   it('THE FN-DOOR DENIAL — an UNDECLARED target from a fail-closed context, five artifacts', async () => {
     const target = new CountingTarget()

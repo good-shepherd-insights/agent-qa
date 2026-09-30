@@ -846,21 +846,22 @@ describe('validate:arch composition carve-out (385-08 / D-13) registration and s
 
 const PIN_GATE_HOOK = 'packages/safety/src/policy/gate-hook.ts'
 const PIN_SAFETY_BARREL = 'packages/safety/src/index.ts'
-const PIN_INVOKE = 'packages/agent/src/functions/invoke.ts'
-// Domain 3 (Phase 401 D-02): the in-process run invocation core.
-const PIN_RUN_CORE = 'packages/agent-local/src/composition/run-invocation-core.ts'
+// 2026-09-30 (432-13, D-03/D-15): the two former surface and run-invocation domains. They no longer
+// acquire the gate and are no longer pinned; the files stay named here so the census below can prove
+// both acquisitions left WITH their pin entries, and the package-specifier form they used stays a
+// held-out fixture rather than a real one.
+const FORMER_INVOKE = 'packages/agent/src/functions/invoke.ts'
+const FORMER_RUN_CORE = 'packages/agent-local/src/composition/run-invocation-core.ts'
 
 /**
- * Synthetic stand-ins for the four pinned files, each carrying the acquisition form the
- * real file uses. Every fixture scan starts here so the pin's stale direction stays quiet
- * and the case under test is the only thing that can speak.
+ * Synthetic stand-ins for the pinned files, each carrying the acquisition form the real file
+ * uses. Every fixture scan starts here so the pin's stale direction stays quiet and the case under
+ * test is the only thing that can speak.
  */
 function pinnedFixtureSources(): EvaluatePinSource[] {
   return [
     { file: PIN_GATE_HOOK, source: 'import { evaluate, type GateTrust } from "./gate"' },
     { file: PIN_SAFETY_BARREL, source: 'export { evaluate } from "./policy/gate"' },
-    { file: PIN_INVOKE, source: 'import { evaluate } from "@vostride/agent-qa-safety"' },
-    { file: PIN_RUN_CORE, source: 'import { evaluate } from "@vostride/agent-qa-safety"' },
   ]
 }
 
@@ -869,18 +870,22 @@ function pinScan(...extra: readonly EvaluatePinSource[]): string[] {
 }
 
 describe('validate:arch evaluate() pin (FUNC-02 / D-12) held-out fixtures', () => {
-  it('pins exactly four production files, each with a dated rationale', () => {
-    expect(Object.keys(EVALUATE_PIN).sort()).toEqual(
-      [PIN_INVOKE, PIN_SAFETY_BARREL, PIN_GATE_HOOK, PIN_RUN_CORE].sort(),
-    )
+  // RE-SPELLED 2026-09-30 (432-13, D-03): 'pins exactly four production files, each with a dated
+  // rationale'. The surface-capability and run-invocation acquisitions left with their call-sites;
+  // the in-run hook and its export seam stay pinned until 432-19 removes their providers.
+  it('pins exactly the two surviving acquisitions, each with a dated rationale', () => {
+    expect(Object.keys(EVALUATE_PIN).sort()).toEqual([PIN_SAFETY_BARREL, PIN_GATE_HOOK].sort())
     for (const [file, rationale] of Object.entries(EVALUATE_PIN)) {
       expect(rationale.trim()).not.toEqual('')
       expect(file).toMatch(/^packages\/[a-z-]+\/src\/.+\.ts$/)
     }
   })
 
-  it('fires on all THREE real acquisition forms, one of which is not an import at all', () => {
-    const acquisitions = [PIN_GATE_HOOK, PIN_SAFETY_BARREL, PIN_INVOKE, PIN_RUN_CORE].flatMap(file =>
+  // RE-SPELLED 2026-09-30 (432-13): 'fires on all THREE real acquisition forms, one of which is not
+  // an import at all'. Two forms are still real; the package-specifier named import is now a held-out
+  // fixture, and the two former call-sites are read to prove they acquire nothing.
+  it('fires on all THREE acquisition forms: two real ones, and the package form held out', () => {
+    const acquisitions = [PIN_GATE_HOOK, PIN_SAFETY_BARREL].flatMap(file =>
       findEvaluateAcquisitions(readRepoFile(file), file),
     )
 
@@ -897,28 +902,37 @@ describe('validate:arch evaluate() pin (FUNC-02 / D-12) held-out fixtures', () =
       // export-re-export: syntactically NOT an import, and the form a detector keyed on
       // import statements alone silently misses — reporting this file as a stale pin entry
       { file: PIN_SAFETY_BARREL, keyword: 'export', specifier: './policy/gate', form: 'named' },
-      // package-specifier named import of the barrel symbol
-      {
-        file: PIN_INVOKE,
-        keyword: 'import',
-        specifier: '@vostride/agent-qa-safety',
-        form: 'named',
-      },
-      // domain 3, the run invocation core — same form as domain 2, a different question
-      {
-        file: PIN_RUN_CORE,
-        keyword: 'import',
-        specifier: '@vostride/agent-qa-safety',
-        form: 'named',
-      },
     ])
     for (const acquisition of acquisitions) {
       expect(acquisition.line).toBeGreaterThan(0)
     }
 
+    // The third form, held out: a package-specifier named import of the barrel symbol.
+    const heldOut = 'packages/agent/src/functions/held-out-gate.ts'
+    expect(
+      findEvaluateAcquisitions('import { evaluate } from "@vostride/agent-qa-safety"', heldOut)
+        .map(({ keyword, specifier, form }) => ({ keyword, specifier, form })),
+    ).toEqual([{ keyword: 'import', specifier: '@vostride/agent-qa-safety', form: 'named' }])
+
     expect(
       findEvaluatePinOffenders(
-        [PIN_GATE_HOOK, PIN_SAFETY_BARREL, PIN_INVOKE, PIN_RUN_CORE].map(file => ({
+        [PIN_GATE_HOOK, PIN_SAFETY_BARREL].map(file => ({
+          file,
+          source: readRepoFile(file),
+        })),
+      ),
+    ).toEqual([])
+  })
+
+  it('C432-INVOKE-DIRECT: the former surface and run-invocation call-sites acquire nothing', () => {
+    for (const file of [FORMER_INVOKE, FORMER_RUN_CORE]) {
+      expect(findEvaluateAcquisitions(readRepoFile(file), file), file).toEqual([])
+      expect(Object.hasOwn(EVALUATE_PIN, file), file).toBe(false)
+    }
+    // Scanned together with the real pinned files, the workspace answer is clean.
+    expect(
+      findEvaluatePinOffenders(
+        [PIN_GATE_HOOK, PIN_SAFETY_BARREL, FORMER_INVOKE, FORMER_RUN_CORE].map(file => ({
           file,
           source: readRepoFile(file),
         })),
@@ -951,6 +965,18 @@ describe('validate:arch evaluate() pin (FUNC-02 / D-12) held-out fixtures', () =
       }),
     ).toEqual([
       `evaluate-pin: ${fourth}:1 ⇏ @vostride/agent-qa-safety (un-pinned gate acquisition)`,
+    ])
+
+    // 432-13: a former call-site that re-acquired the gate would be an offender again, by name.
+    expect(
+      pinScan({ file: FORMER_INVOKE, source: 'import { evaluate } from "@vostride/agent-qa-safety"' }),
+    ).toEqual([
+      `evaluate-pin: ${FORMER_INVOKE}:1 ⇏ @vostride/agent-qa-safety (un-pinned gate acquisition)`,
+    ])
+    expect(
+      pinScan({ file: FORMER_RUN_CORE, source: 'export { evaluate } from "@vostride/agent-qa-safety"' }),
+    ).toEqual([
+      `evaluate-pin: ${FORMER_RUN_CORE}:1 ⇏ @vostride/agent-qa-safety (un-pinned gate acquisition)`,
     ])
   })
 
@@ -1036,13 +1062,22 @@ describe('validate:arch evaluate() pin (FUNC-02 / D-12) held-out fixtures', () =
     ).toEqual([])
   })
 
+  // RE-SPELLED 2026-09-30 (432-13): the stale case moved from the former invoke entry to a
+  // still-pinned file, so the self-shrinking direction stays measured on a real pin entry.
   it('reports a pin entry that no longer acquires the gate as stale (self-shrinking)', () => {
     expect(
       findEvaluatePinOffenders(
-        pinnedFixtureSources().filter(entry => entry.file !== PIN_INVOKE),
+        pinnedFixtureSources().filter(entry => entry.file !== PIN_GATE_HOOK),
       ),
     ).toEqual([
-      `evaluate-pin: ${PIN_INVOKE} ⇏ pin entry no longer acquires the gate (stale)`,
+      `evaluate-pin: ${PIN_GATE_HOOK} ⇏ pin entry no longer acquires the gate (stale)`,
+    ])
+    expect(
+      findEvaluatePinOffenders(
+        pinnedFixtureSources().filter(entry => entry.file !== PIN_SAFETY_BARREL),
+      ),
+    ).toEqual([
+      `evaluate-pin: ${PIN_SAFETY_BARREL} ⇏ pin entry no longer acquires the gate (stale)`,
     ])
   })
 })

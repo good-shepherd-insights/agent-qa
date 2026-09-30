@@ -184,6 +184,11 @@ interface HarnessOptions {
    * answer with a real result for the one op whose result reaches a rendered line.
    */
   readonly results?: Readonly<Record<string, unknown>>
+  /**
+   * Answer ONE timestamp for every event of the turn (432-13, EDGE-03). Order must come from the
+   * utterance, never from a clock that happens to move between clauses.
+   */
+  readonly fixedClock?: boolean
 }
 
 /**
@@ -367,6 +372,7 @@ function harness(options: HarnessOptions = {}): Harness {
         }
       : {}),
     now: () => {
+      if (options.fixedClock === true) return '1970-01-01T00:00:00.000Z'
       clock += 1
       return `1970-01-01T00:00:0${String(clock)}.000Z`
     },
@@ -573,6 +579,64 @@ describe('turn engine stage 3/4: atomicity, ordered execution, receipts, per-sta
           (event) => event.kind === 'model_change' && event.source === 'verb',
         ).length,
       }).toEqual({ status: 'fail_closed', switched: [], verbModelChanges: 0 })
+    })
+  })
+
+  // 432-13 (D-14/D-15): chat resolution has no approval route left. `/pin` is not a directive, so it
+  // is an ordinary unroutable clause, and no turn writes an `approval_decision` row.
+  describe('C432-CHAT-DIRECT — no pin directive and no approval writer (432-13)', () => {
+    it('C432-CHAT-DIRECT: `/pin` is an unroutable clause, and nothing is pinned or recorded as an approval', async () => {
+      const run = harness({ directives: true })
+      const result = await run.runTurn({ message: '/pin fn:runs.start' })
+
+      expect({
+        status: result.status,
+        pinned: run.pinCalls,
+        approvalDecisions: run.log.events.filter((event) => event.kind === 'approval_decision')
+          .length,
+        unhandled: result.unhandled?.clause,
+      }).toEqual({
+        status: 'fail_closed',
+        pinned: [],
+        approvalDecisions: 0,
+        unhandled: '/pin fn:runs.start',
+      })
+      expect(run.log.events.map((event) => event.kind)).toContain('mark_unhandled')
+      expect(run.invocations).toEqual([])
+    })
+
+    it('C432-CHAT-DIRECT: direct change ops dispatch once each through /fn, with no approval row', async () => {
+      const run = harness()
+      const result = await run.runTurn({
+        message: '/fn knowledge.forget {"recordId":"mem_1"} and /fn config.field.set {"path":"use.timeout","value":45000}',
+      })
+
+      expect(result.status).toBe('completed')
+      expect(run.invocations.map((call) => call.functionId)).toEqual([
+        'knowledge.forget',
+        'config.field.set',
+      ])
+      expect(run.log.events.filter((event) => event.kind === 'approval_decision')).toEqual([])
+    })
+  })
+
+  // EDGE-03 (PXH-SAFE-01/ordering): explicit operations in one utterance run, receipt and log in the
+  // order the person declared them even when every event carries the same timestamp.
+  describe('EDGE-03 — declared order survives tied timestamps (432-13)', () => {
+    it('EDGE-03: three explicit operations under one frozen clock keep their declared execution and receipt order', async () => {
+      const run = harness({ fixedClock: true })
+      const result = await run.runTurn({
+        message: 'digest RUN-9 and /fn config.field.set {"path":"use.timeout","value":45000} and status',
+      })
+
+      expect(result.status).toBe('completed')
+      const declared = [RUNS_DIGEST, 'config.field.set', RUNS_LIST]
+      expect(run.invocations.map((call) => call.functionId)).toEqual(declared)
+      expect(result.receipts.map((receipt) => receipt.functionId)).toEqual(declared)
+      const logged = run.log.events.filter((event) => event.kind === 'clause_receipt')
+      expect(logged.map((event) => event.functionId)).toEqual(declared)
+      // Non-vacuity: every logged receipt really does carry the same instant.
+      expect(new Set(logged.map((event) => event.at)).size).toBe(1)
     })
   })
 

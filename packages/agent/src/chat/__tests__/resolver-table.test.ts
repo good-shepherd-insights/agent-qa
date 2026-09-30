@@ -16,7 +16,7 @@ import { PROPOSALS_LIST_FUNCTION_ID } from '../../functions/ops/proposals-list.j
 import { RUNS_DIGEST_FUNCTION_ID } from '../../functions/ops/runs-digest.js'
 import { RUNS_LIST_FUNCTION_ID } from '../../functions/ops/runs-list.js'
 import { RUNS_START_FUNCTION_ID } from '../../functions/ops/runs-start.js'
-import { CHAT_RESOLVER_TABLE, resolveClause } from '../resolver-table.js'
+import { CHAT_DIRECTIVES, CHAT_HELP_ENTRIES, CHAT_RESOLVER_TABLE, resolveClause } from '../resolver-table.js'
 import type { ChatResolverEntry } from '../resolver-table.js'
 
 /** The one call every case makes. */
@@ -54,6 +54,34 @@ describe('CHAT_RESOLVER_TABLE — the closed canon (D-06)', () => {
   it('does not carry the two verbs D-04 excluded', () => {
     expect(resolve('/tools')).toBeUndefined()
     expect(resolve('/compact')).toBeUndefined()
+  })
+})
+
+// 432-13 (D-05/D-14): chat resolution routes no pin directive and no proposal inbox. Direct
+// knowledge and config changes are reached by their own ids through the one `/fn` branch.
+describe('C432-CHAT-DIRECT — chat resolution carries no approval route (432-13)', () => {
+  it('C432-CHAT-DIRECT: /pin and the proposals inbox no longer resolve, and help names neither', () => {
+    expect(resolveClause(CHAT_RESOLVER_TABLE, '/pin fn:runs.start')).toEqual({ kind: 'unresolved' })
+    expect(resolveClause(CHAT_RESOLVER_TABLE, 'proposals')).toEqual({ kind: 'unresolved' })
+    expect([...CHAT_DIRECTIVES]).toEqual(['model', 'help', 'quit'])
+    expect(CHAT_RESOLVER_TABLE.map((rule) => rule.alias)).not.toContain('pin')
+    expect(CHAT_RESOLVER_TABLE.map((rule) => rule.alias)).not.toContain('proposals')
+    expect(CHAT_HELP_ENTRIES.map((entry) => entry.alias)).toEqual(
+      CHAT_RESOLVER_TABLE.map((rule) => rule.alias),
+    )
+  })
+
+  it('C432-CHAT-DIRECT: direct knowledge and config changes resolve to their own op ids', () => {
+    expect(resolve('/fn knowledge.forget {"recordId":"mem_1"}')).toEqual({
+      kind: 'op',
+      functionId: 'knowledge.forget',
+      input: { recordId: 'mem_1' },
+    })
+    expect(resolve('/fn config.field.set {"path":"use.timeout","value":45000}')).toEqual({
+      kind: 'op',
+      functionId: 'config.field.set',
+      input: { path: 'use.timeout', value: 45000 },
+    })
   })
 })
 

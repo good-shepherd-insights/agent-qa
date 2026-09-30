@@ -289,6 +289,29 @@ function buildOrdinalsExist(): boolean {
   return existsSync(join(project, '.agent-qa', 'build-ordinals.json'))
 }
 
+/** The approval wording a retired prompt or refusal would print. None of it may reach a person. */
+const RETIRED_APPROVAL_TEXT = /\[y\/N\]|\[y\/a\/N\]|needs your approval|Proceed\?|--trust-session|fail-closed/
+
+// 432-13 (D-01/D-14/D-18): `agent-qa run` asks nobody. A CI job with stdin that is not a terminal
+// starts a run against any non-production target; the piped stdin below is held open and never
+// written, so a run that waited on an answer would never exit.
+describe('C432-HEADLESS-START — CI with a non-TTY stdin starts the run (432-13)', () => {
+  it.each(['undeclared-thing', 'shared-thing'])(
+    'C432-HEADLESS-START: CI=true against a %s target starts, with no refusal, no prompt and no gate row',
+    async (target) => {
+      const result = await runCliWithEnv({ CI: 'true' }, `tests/${target}.yaml`)
+
+      expect(eventTypes()[0]).toBe('runStarted')
+      expect(buildOrdinalsExist()).toBe(true)
+      expect(probeHits).toContain(`/${target}`)
+      expect(auditRows().filter((row) => row.action === 'run:start')).toEqual([])
+      expect(result.stderr).not.toContain('Run denied')
+      expect(`${result.stdout}\n${result.stderr}`).not.toMatch(RETIRED_APPROVAL_TEXT)
+    },
+    180_000,
+  )
+})
+
 describe('the CLI door denies fail-closed and the run never starts (D-16, INVK-02 criterion 3)', () => {
   it.each(['shared-thing', 'undeclared-thing'])(
     'a no-tty run against a %s target with no trust is refused before anything happens',
