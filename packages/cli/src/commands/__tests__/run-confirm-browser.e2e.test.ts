@@ -6,19 +6,16 @@
 
 // THE RUN TRIGGER'S CONFIRM LOOP, CLOSED THROUGH A REAL BROWSER (Phase 401, UAT item 15 / Truth 6).
 //
-// SINCE 432-13 (D-14/D-15) there is no loop to close: the run button's run asks nobody, so the
-// browser holds its scope channel and no question ever arrives on it. Both cells were re-spelled to
-// drive the same real clicks and pin that absence on the wire and in the rendered DOM. The dialog
-// component itself is deleted by a later plan. History below kept as written.
+// SINCE 432-13 (D-14/D-15) there was no loop to close: the run button's run asked nobody. SINCE
+// 432-14 there is nothing left of the loop at all — no channel the page holds open, no scope the
+// trigger carries, no dialog in the bundle. The cells below drive the same real clicks and pin that
+// a click is one request: a non-production run starts at once, and a production target is refused
+// by the core with the plain sentence the page then shows. History below kept as written.
 //
 // WHAT WAS UNVERIFIED, AND WHY IT STAYED THAT WAY. 401-09 built both halves of this loop and could
 // measure neither end against the other: the SERVER end is driven end-to-end by
-// `run-trigger-confirm.test.ts` over `fetch`-parsed SSE, and the DIALOG's render is driven in jsdom
-// — which has no `EventSource`, so every shell suite mounts `RunConfirmHost` and takes its early
-// return. 401-14 drove the host through `openRunConfirmChannel`'s own callbacks with a stub
-// constructor, which made a real defect measurable, and still did not put a byte on an SSE socket.
-// The wire itself — `new EventSource('/api/run-confirm/channel')` in a browser, the `confirm_scope`
-// frame, `setRunConfirmScope`, and a trigger that carries the scope back — was source-pinned.
+// `run-trigger-confirm.test.ts` over `fetch`-parsed SSE, and the DIALOG's render was driven in jsdom,
+// which has no `EventSource`. The wire itself was source-pinned.
 //
 // SO THIS FILE PUTS A REAL CHROMIUM IN FRONT OF A REALLY-RUNNING DASHBOARD. The server is
 // `startServer` with the shipped `uiDir`, so what the browser downloads is `dashboard-ui`'s own
@@ -28,22 +25,11 @@
 // `@vostride/agent-qa-agent*`; validate:arch).
 //
 // NOTHING BELOW SUBSTITUTES FOR THE TRANSPORT. The page's `EventSource` is REPLACED BY A SUBCLASS
-// OF THE NATIVE ONE, which calls `super(url)` and then adds its own listeners. The bytes still
-// arrive over a real HTTP connection parsed by Chromium's own SSE implementation; the subclass only
-// keeps a copy of what arrived. A stub constructor here would put this file back where 401-14
-// stopped, which is the whole reason it exists.
+// OF THE NATIVE ONE, which calls `super(url)` and records the URL. The page's requests are read off
+// Chromium's own request events, bodies included.
 //
-// AND THE RUN IS STARTED BY CLICKING THE PRODUCT'S OWN BUTTON. The scope lives in a module-level
-// box inside `api.ts` and reaches the wire only through `triggerRun`; a cell that POSTed
-// `/api/runs/trigger` itself would have to spell the scope by hand and would therefore never
-// measure whether `setRunConfirmScope` ran at all. So the cells below select a row on the tests
-// page and walk the real Run → Run → Run Local path, and the confirm arriving AT ALL is the proof
-// that the browser's own trigger carried its own scope (a trigger with no scope is `local-headless`
-// and denies without parking — `run-trigger-confirm.test.ts`'s NO LIVE CHANNEL cell).
-//
-// A DENIAL AND A NEVER-GOT-THERE MUST NOT READ ALIKE. Every assertion below about what a person
-// saw is preceded by an assertion that the frame it depends on ARRIVED, read off the recorder — so
-// "the dialog said nothing" can never be reported for a question that was never asked.
+// AND THE RUN IS STARTED BY CLICKING THE PRODUCT'S OWN BUTTON. The cells select a row on the tests
+// page and walk the real Run → Run → Run Local path.
 //
 // A BROWSER THAT CANNOT LAUNCH IS A RED, NEVER A SKIP, and a stale `dist` is a red before that:
 // `dashboard-dom.test.ts`'s two rules, inherited verbatim. There is no environment predicate in
@@ -56,12 +42,7 @@ import { chromium } from 'playwright-core'
 import type { Browser, BrowserContext, Page } from 'playwright-core'
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
 
-import {
-  DashboardDatabase,
-  createConfirmRegistry,
-  startServer,
-  type ConfirmRegistry,
-} from '@vostride/agent-qa-dashboard'
+import { DashboardDatabase, startServer } from '@vostride/agent-qa-dashboard'
 import { resolveWorkspacePaths } from '@vostride/agent-qa-core'
 import { parse as parseYaml } from 'yaml'
 
@@ -98,27 +79,20 @@ const BROWSERS_PATH_AT_LOAD = process.env.PLAYWRIGHT_BROWSERS_PATH
 
 // ---- the recorder the page carries -------------------------------------------------------------
 
-interface WireFrame {
-  readonly event: string
-  readonly url: string
-  readonly data: string
-  readonly at: number
+interface TriggerRequest {
+  readonly method: string
+  readonly body: Record<string, unknown> | undefined
 }
 
-/** One rendered state of the confirm dialog, as the DOM held it. */
+/** One rendered state of any confirm or approval surface, as the DOM held it. */
 interface DialogShot {
   readonly present: boolean
-  readonly confirmId?: string | null
-  readonly resolution?: string | null
-  readonly resolvedBy?: string | null
-  readonly preview?: string | null
-  readonly outcome?: string | null
-  readonly answers?: readonly (string | null)[]
   readonly text?: string
 }
 
 interface PageWire {
-  readonly frames: readonly WireFrame[]
+  /** Every URL the page opened an `EventSource` on, in order. */
+  readonly eventSources: readonly string[]
   readonly dialogs: readonly DialogShot[]
 }
 
@@ -126,55 +100,35 @@ interface PageWire {
  * Install the two instruments, before any of the app's own script runs.
  *
  * `EventSource` IS SUBCLASSED, NOT REPLACED — see this file's header. `MutationObserver` records
- * every DISTINCT rendered state of the dialog, which is what makes "the person was never told"
- * an assertion over what the DOM actually held rather than over one lucky snapshot.
+ * every DISTINCT rendered state of any approval surface, which is what makes "nothing was shown" an
+ * assertion over what the DOM actually held rather than over one lucky snapshot.
  */
 async function installWireRecorder(page: Page): Promise<void> {
   await page.addInitScript(() => {
-    const wire = { frames: [] as unknown[], dialogs: [] as unknown[] }
+    const wire = { eventSources: [] as string[], dialogs: [] as unknown[] }
     ;(window as unknown as { __wire: typeof wire }).__wire = wire
 
     const NativeEventSource = window.EventSource
     class RecordingEventSource extends NativeEventSource {
       constructor(url: string | URL, init?: EventSourceInit) {
         super(url, init)
-        for (const kind of ['confirm_scope', 'confirm_request', 'confirm_resolved']) {
-          this.addEventListener(kind, (event) => {
-            wire.frames.push({
-              event: kind,
-              url: String(url),
-              data: (event as MessageEvent<string>).data,
-              at: Date.now(),
-            })
-          })
-        }
+        wire.eventSources.push(String(url))
       }
     }
     ;(window as unknown as { EventSource: unknown }).EventSource = RecordingEventSource
 
     const shoot = (): void => {
-      const el = document.querySelector('[data-run-confirm-dialog]')
-      const shot = el === null
-        ? { present: false }
-        : {
-            present: true,
-            confirmId: el.getAttribute('data-confirm-id'),
-            resolution: el.getAttribute('data-confirm-resolution'),
-            resolvedBy: el.getAttribute('data-confirm-resolved-by'),
-            preview: el.querySelector('[data-confirm-preview]')?.textContent ?? null,
-            outcome: el.querySelector('[data-confirm-outcome]')?.textContent ?? null,
-            answers: Array.from(el.querySelectorAll('[data-confirm-answer]'))
-              .map((button) => button.getAttribute('data-confirm-answer')),
-            text: el.textContent ?? '',
-          }
+      const el = document.querySelector(
+        '[data-run-confirm-dialog], [data-feedback-approval], [data-confirm-answer], [aria-label*="Approval"]',
+      )
+      const shot = el === null ? { present: false } : { present: true, text: el.textContent ?? '' }
       const last = wire.dialogs[wire.dialogs.length - 1]
       if (last === undefined || JSON.stringify(last) !== JSON.stringify(shot)) {
         wire.dialogs.push(shot)
       }
     }
     // OBSERVED ON `document`, NOT ON `documentElement`. This script runs at document-start, before
-    // the parser has created `<html>` — `observe(document.documentElement, …)` throws there, which
-    // is a page error and (correctly) failed this file's own first run.
+    // the parser has created `<html>` — `observe(document.documentElement, …)` throws there.
     new MutationObserver(shoot).observe(document, {
       subtree: true,
       childList: true,
@@ -190,44 +144,24 @@ async function readWire(page: Page): Promise<PageWire> {
   ) as PageWire
 }
 
-function confirmRequests(wire: PageWire): { confirmId: string; actionClass: string; preview?: string }[] {
-  return wire.frames
-    .filter((frame) => frame.event === 'confirm_request')
-    .map((frame) => JSON.parse(frame.data) as { confirmId: string; actionClass: string; preview?: string })
-}
-
-function confirmResolutions(wire: PageWire): { confirmId: string; answer: string; by: string }[] {
-  return wire.frames
-    .filter((frame) => frame.event === 'confirm_resolved')
-    .map((frame) => JSON.parse(frame.data) as { confirmId: string; answer: string; by: string })
-}
-
-/** Wait until the page's own recorder holds a frame satisfying the predicate. No sleeps. */
-async function waitForFrame(
-  page: Page,
-  predicate: (frame: WireFrame) => boolean,
-  budgetMs = 90_000,
-): Promise<WireFrame> {
-  const deadline = Date.now() + budgetMs
-  for (;;) {
-    const wire = await readWire(page)
-    const hit = wire.frames.find((frame) => predicate(frame))
-    if (hit !== undefined) return hit
-    if (Date.now() >= deadline) {
-      throw new Error(
-        `no SSE frame satisfied the predicate within ${String(budgetMs)}ms; the page saw `
-        + JSON.stringify(wire.frames.map((frame) => frame.event)),
-      )
-    }
-    await page.waitForTimeout(50)
-  }
+/** Every request the page sent to the trigger route, bodies parsed, in order. */
+function recordTriggers(page: Page): TriggerRequest[] {
+  const triggers: TriggerRequest[] = []
+  page.on('request', (request) => {
+    if (!request.url().endsWith('/api/runs/trigger')) return
+    const raw = request.postData()
+    triggers.push({
+      method: request.method(),
+      body: raw === null ? undefined : JSON.parse(raw) as Record<string, unknown>,
+    })
+  })
+  return triggers
 }
 
 // ---- the scene ---------------------------------------------------------------------------------
 
 interface Scene {
   readonly origin: string
-  readonly confirms: ConfirmRegistry
   readonly fixture: Fixture
   readonly db: DashboardDatabase
   settled(): { runId: string; status: string; details: Record<string, unknown> }[]
@@ -247,7 +181,7 @@ let browser: Browser | undefined
  * API-only server into something a browser can be pointed at. Everything else is that file's
  * recipe, deliberately: two answers to "how is this dashboard composed" would be two dashboards.
  */
-async function openScene(input: { fixture: Fixture; timeoutMs: number }): Promise<Scene> {
+async function openScene(input: { fixture: Fixture }): Promise<Scene> {
   const { fixture } = input
   // AN EMPTY BROWSERS ROOT, kept for parity with `run-trigger-confirm.test.ts` — AND MEASURED
   // NOT TO WORK HERE, which is worth stating rather than leaving as a comment that lies.
@@ -264,17 +198,14 @@ async function openScene(input: { fixture: Fixture; timeoutMs: number }): Promis
   process.env.PLAYWRIGHT_BROWSERS_PATH = browsersRoot
 
   const db = new DashboardDatabase({ dbPath: ':memory:' })
-  const confirms = createConfirmRegistry({ timeoutMs: input.timeoutMs })
   const runDoor = await createDashboardRunDoor({ db })
   const door = composeDashboardDoor({
     agentQaRoot: fixture.agentQaRoot,
     configPath: fixture.configPath,
     boundOrigin: () => undefined,
-    confirms,
     runBridge: runDoor.runBridge,
   })
   runDoor.bindHost(door.host)
-  runDoor.bindTriggerScope(door.enterRunTriggerScope)
 
   const settled: { runId: string; status: string; details: Record<string, unknown> }[] = []
   runDoor.backend.on(
@@ -314,7 +245,6 @@ async function openScene(input: { fixture: Fixture; timeoutMs: number }): Promis
 
   const scene: Scene = {
     origin: `http://127.0.0.1:${String(address.port)}`,
-    confirms,
     fixture,
     db,
     settled: () => settled,
@@ -354,13 +284,12 @@ async function waitFor(assertion: () => void, timeoutMs = 180_000): Promise<void
 // ---- the person at the keyboard -----------------------------------------------------------------
 
 /**
- * Open the dashboard, become askable, and dismiss the first-visit tour.
+ * Open the dashboard and dismiss the first-visit tour.
  *
- * THE SCOPE FRAME IS AWAITED, NOT ASSUMED. A page whose channel has not yet been minted is a page
- * whose next trigger is `local-headless`, so every cell waits for the frame the server writes
- * FIRST — and asserts it arrived — before it clicks anything.
+ * 432-14: there is no scope frame to wait for any more. The page is ready when the tests table has
+ * rendered the fixture's own row, which is what a person waits for before clicking.
  */
-async function openDashboard(scene: Scene): Promise<{ page: Page; scopeId: string }> {
+async function openDashboard(scene: Scene): Promise<{ page: Page; pageErrors: string[] }> {
   const context = await browser!.newContext()
   openContexts.push(context)
   const page = await context.newPage()
@@ -368,25 +297,12 @@ async function openDashboard(scene: Scene): Promise<{ page: Page; scopeId: strin
   page.on('pageerror', (error) => pageErrors.push(String(error)))
   await installWireRecorder(page)
   await page.goto(`${scene.origin}/tests`, { waitUntil: 'domcontentloaded' })
-
-  const scopeFrame = await waitForFrame(page, (frame) => frame.event === 'confirm_scope', 60_000)
-  expect(
-    pageErrors,
-    'the built dashboard threw before it could hold a confirm channel',
-  ).toEqual([])
-  expect(
-    scopeFrame.url,
-    'the scope frame did not arrive on the run-confirm channel',
-  ).toContain('/api/run-confirm/channel')
-  const scopeId = (JSON.parse(scopeFrame.data) as { scopeId: string }).scopeId
-  expect(
-    scopeId,
-    'the channel announced no scope, so nothing in this browser can name itself as askable',
-  ).toMatch(/^run-trigger:/)
+  await page.locator('tr', { hasText: 'direct.yaml' }).first().waitFor({ timeout: 60_000 })
+  expect(pageErrors, 'the built dashboard threw before it rendered the tests table').toEqual([])
 
   const skip = page.getByRole('button', { name: 'Skip' })
   if (await skip.isVisible()) await skip.click()
-  return { page, scopeId }
+  return { page, pageErrors }
 }
 
 /** Select one test by its file name — the row a person clicks. */
@@ -447,18 +363,17 @@ function startedContext(scene: Scene, runId: string): unknown {
 }
 
 describe('the run trigger confirm loop, closed through a real browser (UAT item 15, Truth 6)', () => {
-  // RE-SPELLED 2026-09-30 (432-13): was 'SINGLE CONFIRM — ... the dialog names the target and the
-  // environment class, and answering it starts the run'. Clicking Run now starts the run with no
-  // question: the scope still rides the trigger (the run claims `local-interactive`), and neither
-  // the wire nor the DOM ever carries a confirm.
-  it('SINGLE CONFIRM — the EventSource carries the scope, and clicking Run starts the run with no dialog', async () => {
+  // RE-SPELLED 2026-10-01 (432-14): was 'SINGLE CONFIRM — the EventSource carries the scope, and
+  // clicking Run starts the run with no dialog' (432-13). The page holds no channel and the trigger
+  // carries no scope, so the claim is now the click itself: one request, one run.
+  it('C432-BROWSER-RUN-ONE-CLICK: one click is one trigger request, and a non-production run starts at once', async () => {
     const target = new CountingTarget()
     await target.listen()
     try {
       const fixture = createInProcessFixture({ origin: target.origin, environment: 'shared' })
-      const scene = await openScene({ fixture, timeoutMs: 45_000 })
-      const { page, scopeId } = await openDashboard(scene)
-      expect(scopeId).toMatch(/^run-trigger:/)
+      const scene = await openScene({ fixture })
+      const { page, pageErrors } = await openDashboard(scene)
+      const triggers = recordTriggers(page)
 
       const triggeredRunIds: string[] = []
       page.on('response', (response) => {
@@ -479,17 +394,20 @@ describe('the run trigger confirm loop, closed through a real browser (UAT item 
       await waitFor(() => { expect(triggeredRunIds).toHaveLength(1) })
       const runId = triggeredRunIds[0]!
 
+      expect(triggers, 'one click did not send exactly one trigger request').toHaveLength(1)
+      expect(triggers[0]!.method).toBe('POST')
+      expect(triggers[0]!.body).not.toHaveProperty('confirm' + 'Scope')
       expect(runStartRows(fixture)).toEqual([])
       expect(eventTypes(fixture)).toContain('runStarted')
       expect(buildOrdinalsExist(fixture)).toBe(true)
       expect(target.hits, 'the run never touched the target').toContain('/in-process-thing')
-      expect(startedContext(scene, runId)).toBe('local-interactive')
+      expect(startedContext(scene, runId)).toBe('local-headless')
 
       const wire = await readWire(page)
-      expect(confirmRequests(wire), 'a question reached this browser').toEqual([])
-      expect(confirmResolutions(wire)).toEqual([])
-      expect(wire.dialogs.filter((shot) => shot.present), 'a confirm dialog was rendered').toEqual([])
-      expect(scene.confirms.pendingCount()).toBe(0)
+      expect(wire.eventSources.filter((url) => url.includes('run-confirm')), 'the page opened a confirm channel')
+        .toEqual([])
+      expect(wire.dialogs.filter((shot) => shot.present), 'an approval surface was rendered').toEqual([])
+      expect(pageErrors).toEqual([])
     } finally {
       await target.close()
     }
@@ -506,8 +424,9 @@ describe('the run trigger confirm loop, closed through a real browser (UAT item 
         environment: 'shared',
         parallelRuns: true,
       })
-      const scene = await openScene({ fixture, timeoutMs: 30_000 })
+      const scene = await openScene({ fixture })
       const { page } = await openDashboard(scene)
+      const triggers = recordTriggers(page)
 
       const triggeredRunIds: string[] = []
       page.on('response', (response) => {
@@ -527,6 +446,7 @@ describe('the run trigger confirm loop, closed through a real browser (UAT item 
 
       await waitFor(() => { expect(triggeredRunIds).toHaveLength(2) })
       await waitFor(() => { expect(scene.settled()).toHaveLength(2) })
+      expect(triggers).toHaveLength(2)
       for (const runId of triggeredRunIds) {
         expect(scene.buffered(runId).map((event) => event['type']), `${runId} never started`)
           .toContain('runStarted')
@@ -534,12 +454,67 @@ describe('the run trigger confirm loop, closed through a real browser (UAT item 
       expect(runStartRows(fixture)).toEqual([])
 
       const wire = await readWire(page)
-      expect(confirmRequests(wire)).toEqual([])
-      expect(confirmResolutions(wire)).toEqual([])
+      expect(wire.eventSources.filter((url) => url.includes('run-confirm'))).toEqual([])
       expect(wire.dialogs.filter((shot) => shot.present)).toEqual([])
       expect(
         await page.evaluate(() => document.body.innerText),
       ).not.toContain('denied — nobody answered before the window closed')
+    } finally {
+      await target.close()
+    }
+  }, 300_000)
+
+  it('C432-BROWSER-RUN-ONE-CLICK: a production target is refused by the core, and the run page shows the plain reason', async () => {
+    const target = new CountingTarget()
+    await target.listen()
+    try {
+      const fixture = createInProcessFixture({ origin: target.origin, environment: 'production' })
+      const scene = await openScene({ fixture })
+      const { page, pageErrors } = await openDashboard(scene)
+      const triggers = recordTriggers(page)
+
+      const triggeredRunIds: string[] = []
+      page.on('response', (response) => {
+        if (!response.url().endsWith('/api/runs/trigger')) return
+        void response.json().then(
+          (body: unknown) => {
+            const runId = (body as { runId?: string }).runId
+            if (typeof runId === 'string') triggeredRunIds.push(runId)
+          },
+          () => undefined,
+        )
+      })
+
+      await selectTest(page, 'direct.yaml')
+      await clickRunLocal(page)
+
+      await waitFor(() => { expect(scene.settled()).toHaveLength(1) })
+      await waitFor(() => { expect(triggeredRunIds).toHaveLength(1) })
+      const runId = triggeredRunIds[0]!
+      const settled = scene.settled()[0]!
+
+      expect(triggers).toHaveLength(1)
+      expect(settled.status).toBe('failed')
+      expect(settled.details['refusedBeforeStart']).toBe(true)
+      expect(eventTypes(fixture)).toEqual([])
+      expect(buildOrdinalsExist(fixture)).toBe(false)
+      expect(target.hits).toEqual([])
+
+      await page.goto(`${scene.origin}/runs/${runId}`, { waitUntil: 'domcontentloaded' })
+      const banner = page.locator('[data-failure-banner]')
+      await banner.waitFor({ timeout: 60_000 })
+      const toggle = banner.locator('[data-failure-banner-toggle]')
+      if (await toggle.count() > 0) await toggle.click()
+      await page.locator('[data-failure-banner][data-failure-banner-state="full"]').waitFor()
+      const shown = await banner.locator('[data-failure-banner-text]').textContent() ?? ''
+      expect(shown).toContain('Refused before the run started')
+      expect(shown).toContain(`"${fixture.targetName}"`)
+      expect(shown).toContain('allowProduction: true')
+
+      const wire = await readWire(page)
+      expect(wire.eventSources.filter((url) => url.includes('run-confirm'))).toEqual([])
+      expect(wire.dialogs.filter((shot) => shot.present)).toEqual([])
+      expect(pageErrors).toEqual([])
     } finally {
       await target.close()
     }

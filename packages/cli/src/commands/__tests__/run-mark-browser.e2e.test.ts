@@ -1,22 +1,24 @@
 /// <reference lib="dom" />
-// Real Chromium, shipped UI and the composed mark/confirmation/detail routes. No provider calls.
+// Real Chromium, shipped UI and the composed mark and detail routes. No provider calls.
 // An absent browser or stale build fails, never skips. Each cell owns an independent ledger.
 // 432-13 (D-14/D-15): a mark asks nobody. The first three cells, the draft-retention matrix and the
 // themes cell were re-spelled from approve/deny/no-channel onto the one-click mark; the approval
-// group is asserted never to render. The composer's approval component is deleted by a later plan.
+// group is asserted never to render. 432-14: the composer's approval component, the page's confirm
+// channel and the scope the mark carried are deleted, so the page opens no stream and one submit is
+// one request carrying the composer's own body.
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { chromium, type Browser, type BrowserContext, type Page, type Locator } from 'playwright-core'
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 import { parse, stringify } from 'yaml'
-import { DashboardDatabase, createConfirmRegistry, createDashboardRunDetailReader, startServer } from '@vostride/agent-qa-dashboard'
+import { DashboardDatabase, createDashboardRunDetailReader, startServer } from '@vostride/agent-qa-dashboard'
 import { resolveWorkspacePaths } from '@vostride/agent-qa-core'
 import { composeDashboardDoor } from '../dashboard.js'
 import { markFixture } from '../../gates/__tests__/feedback-fixture.js'
 import { DASHBOARD_ANCHORED_BUILDS, PACKAGES_ROOT, REBUILD_INSTRUCTION, buildFreshness } from '../../__tests__/conformance/spawned-chat.js'
 
 const UI_DIR = join(PACKAGES_ROOT, 'dashboard-ui', 'dist')
-// Only the home-path seam is isolated; confirmation, authority and ledger writes stay real.
+// Only the home-path seam is isolated; authority and ledger writes stay real.
 const { scratchHome } = await vi.hoisted(async () => {
   const fs = await import('node:fs')
   const os = await import('node:os')
@@ -57,26 +59,36 @@ beforeAll(async () => {
 afterEach(async () => { for (const close of closers.splice(0).reverse()) await close() })
 afterAll(async () => { await browser?.close(); rmSync(scratchHome, { recursive: true, force: true }) })
 
-interface Wire { event: string; url: string; data: string }
-async function recordWire(page: Page, noChannel: boolean) {
-  await page.addInitScript((blocked) => {
-    const frames: Wire[] = []
-    ;(window as unknown as { markWire: Wire[] }).markWire = frames
+interface Wire { eventSources: string[]; marks: Array<Record<string, unknown>> }
+async function recordWire(page: Page) {
+  await page.addInitScript(() => {
+    const wire: Wire = { eventSources: [], marks: [] }
+    ;(window as unknown as { markWire: Wire }).markWire = wire
     const Native = window.EventSource
     class Recorded extends Native {
       constructor(url: string | URL, init?: EventSourceInit) {
-        if (blocked && String(url).includes('/api/run-confirm/channel')) throw new Error('confirm channel unavailable')
         super(url, init)
-        for (const event of ['confirm_scope', 'confirm_request', 'confirm_resolved']) {
-          this.addEventListener(event, frame => frames.push({ event, url: String(url), data: (frame as MessageEvent<string>).data }))
-        }
+        wire.eventSources.push(String(url))
       }
     }
     window.EventSource = Recorded
-  }, noChannel)
+  })
+}
+/** Every POST to the mark route, bodies parsed, off Chromium's own request events. */
+function recordMarks(page: Page): Array<Record<string, unknown>> {
+  const bodies: Array<Record<string, unknown>> = []
+  page.on('request', request => {
+    if (!request.url().endsWith('/mark') || request.method() !== 'POST') return
+    const raw = request.postData()
+    bodies.push(raw === null ? {} : JSON.parse(raw) as Record<string, unknown>)
+  })
+  return bodies
+}
+async function wire(page: Page): Promise<Wire> {
+  return await page.evaluate(() => (window as unknown as { markWire: Wire }).markWire)
 }
 
-async function scene(noChannel = false) {
+async function scene() {
   const fixture = markFixture()
   const config = parse(readFileSync(fixture.configPath, 'utf8'))
   delete config.safety.trustMode
@@ -91,9 +103,8 @@ async function scene(noChannel = false) {
   member.steps.forEach((step, stepIndex) => db.insertRunStep({ runId: handoff.runId, testIndex: 0, stepIndex,
     stepText: step.stepText, cacheStatus: 'miss', verifierVerdict: step.verifierVerdict,
     selfHealOccurred: false, briefDigest: 'fixture-brief', status: 'failed' }))
-  const confirms = createConfirmRegistry({ timeoutMs: 20_000 })
   const door = composeDashboardDoor({ agentQaRoot: fixture.agentQaRoot, configPath: fixture.configPath,
-    boundOrigin: () => undefined, confirms, runDetail: createDashboardRunDetailReader(db) })
+    boundOrigin: () => undefined, runDetail: createDashboardRunDetailReader(db) })
   const signals = ['SIGINT', 'SIGTERM'] as const
   const beforeListeners = signals.map(signal => new Set(process.listeners(signal)))
   const server = await startServer({ db, port: 0, uiDir: UI_DIR, configPath: fixture.configPath,
@@ -117,18 +128,20 @@ async function scene(noChannel = false) {
     return route.abort('blockedbyclient')
   })
   const page = await context.newPage()
-  await recordWire(page, noChannel)
+  await recordWire(page)
+  const marks = recordMarks(page)
   const pageErrors: string[] = []
   page.on('pageerror', error => pageErrors.push(error.message))
   await page.goto(`http://127.0.0.1:${address.port}/runs/${handoff.runId}`)
   await page.locator(TEST_ENTRY).waitFor()
   const ledger = join(fixture.runDir, 'marks.jsonl')
   const rows = () => existsSync(ledger) ? readFileSync(ledger, 'utf8').trim().split('\n').filter(Boolean).map(line => JSON.parse(line)) : []
-  return { page, pageErrors, rows, confirms, outsideLoopback, runId: handoff.runId }
+  return { page, pageErrors, rows, marks, outsideLoopback, runId: handoff.runId }
 }
 
-async function waitChannel(page: Page) {
-  await page.waitForFunction(() => (window as unknown as { markWire: Wire[] }).markWire.some(frame => frame.event === 'confirm_scope'))
+/** 432-14: the page holds no stream to be asked on, whichever view it is showing. */
+async function noConfirmChannel(page: Page) {
+  expect((await wire(page)).eventSources.filter(url => url.includes('run-confirm'))).toEqual([])
 }
 /** The step door lives on the selected row only (D-04), so the row is selected first. */
 async function revealStepEntry(page: Page) {
@@ -216,7 +229,7 @@ describe('419 real browser mark confirmation', () => {
   // receipt and refetches its history'. One click records it; nothing is asked on the channel.
   it('records on one click with no approval; appends one receipt and refetches its history', async () => {
     const s = await scene()
-    await s.page.waitForFunction(() => (window as unknown as { markWire: Wire[] }).markWire.some(frame => frame.event === 'confirm_scope' && frame.url === '/api/run-confirm/channel'))
+    await noConfirmChannel(s.page)
     expect(s.rows()).toHaveLength(0)
     const composer = await submit(s.page)
     const recorded = await recordedSentence(composer)
@@ -224,7 +237,7 @@ describe('419 real browser mark confirmation', () => {
     expect(await status(composer).textContent()).toBe(recorded)
     expect(await approval(s.page).count()).toBe(0)
     expect(await s.page.locator('[role="dialog"], [aria-modal]').count()).toBe(0)
-    expect(await s.page.evaluate(() => (window as unknown as { markWire: Wire[] }).markWire.some(frame => frame.event === 'confirm_request'))).toBe(false)
+    await noConfirmChannel(s.page)
     expect(await targetEntries(composer).count()).toBe(1)
     expect(await entryChoice(targetEntries(composer).first())).toBe(CHOICE_LABELS['confirmed-bug'])
     expect(await targetEntries(composer).first().getAttribute('data-history-active')).toBe('true')
@@ -235,9 +248,10 @@ describe('419 real browser mark confirmation', () => {
   }, 45_000)
 
   // RE-SPELLED 2026-09-30 (432-13): was 'without a confirm channel renders its reason only and
-  // appends no ledger line'. The channel is not needed: the mark is recorded without it.
+  // appends no ledger line'. The channel is not needed: the mark is recorded without it. 432-14:
+  // no page holds a channel any more, so this is every mark, and the cell no longer blocks one.
   it('without a confirm channel still records the mark, with no refusal rendered', async () => {
-    const s = await scene(true)
+    const s = await scene()
     const response = s.page.waitForResponse(response => response.url().endsWith('/mark') && response.request().method() === 'POST')
     const composer = await submit(s.page)
     expect((await response).status()).toBe(200)
@@ -246,7 +260,7 @@ describe('419 real browser mark confirmation', () => {
     expect(await targetEntries(composer).count()).toBe(1)
     await s.page.locator(`${TEST_ENTRY}[data-feedback-marked="true"]`).waitFor()
     expect(s.rows()).toHaveLength(1)
-    expect(s.confirms.pendingCount()).toBe(0)
+    await noConfirmChannel(s.page)
     expect(s.pageErrors).toEqual([])
   }, 45_000)
 
@@ -254,13 +268,12 @@ describe('419 real browser mark confirmation', () => {
   // line'. There is no deny to give: no approval group renders and nothing is parked.
   it('offers no deny: the approval group never renders and nothing is parked', async () => {
     const s = await scene()
-    await waitChannel(s.page)
     const composer = await submit(s.page)
     await settled(composer, await recordedSentence(composer))
     expect(await approval(s.page).count()).toBe(0)
     expect(await composer.locator('[data-feedback-approval] [data-confirm-answer]').count()).toBe(0)
     expect(s.rows()).toHaveLength(1)
-    expect(s.confirms.pendingCount()).toBe(0)
+    expect(s.marks).toHaveLength(1)
     expect(s.pageErrors).toEqual([])
   }, 45_000)
 
@@ -269,7 +282,6 @@ describe('419 real browser mark confirmation', () => {
   for (const door of ['test', 'step'] as const) {
     it.each(['transport', 'refetch'])('retains the ' + door + ' draft after %s with actual ledger accounting', async failure => {
       const s = await scene()
-      await waitChannel(s.page)
       const composer = await fillDraft(s.page, door)
       expect(s.rows()).toHaveLength(0)
       let accepted = false
@@ -303,14 +315,40 @@ describe('419 real browser mark confirmation', () => {
     }, 45_000)
   }
 
+  it('C432-BROWSER-MARK-ONE-SUBMIT: one submit is one mark request, and a reload shows the applied change', async () => {
+    const s = await scene()
+    await noConfirmChannel(s.page)
+    const composer = await submit(s.page)
+    await settled(composer, await recordedSentence(composer))
+    expect(s.marks, 'one submit did not send exactly one mark request').toHaveLength(1)
+    expect(s.marks[0]).toMatchObject({ kind: 'confirmed-bug' })
+    expect(s.marks[0]).not.toHaveProperty('confirm' + 'Scope')
+    expect(s.rows()).toHaveLength(1)
+
+    await s.page.reload()
+    await s.page.locator(`${TEST_ENTRY}[data-feedback-marked="true"]`).waitFor()
+    const reopened = await openComposer(s.page, 'test')
+    const entry = targetEntries(reopened).first()
+    await entry.waitFor()
+    expect(await entryChoice(entry)).toBe(CHOICE_LABELS['confirmed-bug'])
+    const applied = entry.locator('[data-history-applied]')
+    expect(['knowledge', 'test-file']).toContain(await applied.getAttribute('data-history-applied'))
+    expect(await s.page.locator('[data-history-review], [data-review-command]').count()).toBe(0)
+    expect(await approval(s.page).count()).toBe(0)
+    expect(await s.page.locator('[data-feedback-approval], [data-feedback-approval-waiting], [data-confirm-answer]').count()).toBe(0)
+    expect(await s.page.locator('[role="dialog"], [aria-modal]').count()).toBe(0)
+    await noConfirmChannel(s.page)
+    expect(s.marks).toHaveLength(1)
+    healthy(s)
+  }, 60_000)
+
   it('renders readable selected controls in both themes and retains requested captures', async () => {
     const s = await scene()
     const measurements: unknown[] = []
-    await waitChannel(s.page)
     for (const theme of ['dark', 'light']) {
       await s.page.evaluate(theme => localStorage.setItem('vite-ui-theme', theme), theme)
       await s.page.reload()
-      await waitChannel(s.page)
+      await s.page.locator(TEST_ENTRY).waitFor()
       for (const door of ['test', 'step'] as const) {
         if (door === 'step') await revealStepEntry(s.page)
         await tabTo(s.page, DOORS[door].entry)

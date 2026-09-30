@@ -86,7 +86,7 @@ function sameOrigin(): Record<string, string> {
 
 // An event stream never ends, so it is read up to its headers and then dropped.
 async function probe(
-  method: 'GET' | 'POST',
+  method: 'GET' | 'POST' | 'OPTIONS',
   path: string,
   options: { headers?: Record<string, string>, body?: string } = {},
 ): Promise<Probe> {
@@ -144,22 +144,45 @@ describe('C430-DELETED-CHAT-ROUTES-SHARED-404', () => {
   )
 })
 
-describe('C430-RUN-CONFIRM-PREFIX-STILL-ROUTED', () => {
-  it('C430-RUN-CONFIRM-PREFIX-STILL-ROUTED: a malformed run-confirm answer gets the confirm router refusal, with no grant', async () => {
-    const answer = await probe('POST', RUN_CONFIRM_ANSWER, {
-      headers: { ...sameOrigin(), 'content-type': 'application/json' },
-      body: JSON.stringify({ malformed: true }),
-    })
-    expect(answer.status).toBe(400)
-    expect(answer.contentType).toBe('application/json')
-    expect(JSON.parse(answer.body)).toEqual({ error: 'Invalid request body' })
-    expect(answer.allowOrigin).toBeUndefined()
-  })
+// RE-SPELLED 2026-10-01 (432-14, D-14): was C430-RUN-CONFIRM-PREFIX-STILL-ROUTED, which pinned
+// that the run-confirm pair kept its own dispatch ahead of the shared OPTIONS arm. Phase 432
+// deletes the pair. Its claim is replaced by the one below: both retired paths now reach the same
+// generic answers as a path this server never served, for every method a browser can send.
+const NEVER_SERVED = '/api/' + 'never-served-432-14'
 
-  it('C430-RUN-CONFIRM-PREFIX-STILL-ROUTED: the run-confirm channel opens its stream, with no grant', async () => {
-    const answer = await probe('GET', RUN_CONFIRM_CHANNEL, { headers: sameOrigin() })
-    expect(answer.status).toBe(200)
-    expect(answer.contentType).toBe('text/event-stream')
-    expect(answer.allowOrigin).toBeUndefined()
+async function sameAnswer(method: 'GET' | 'POST' | 'OPTIONS', path: string): Promise<Probe> {
+  const headers: Record<string, string> = method === 'OPTIONS'
+    ? {
+        origin: 'https://evil.example',
+        'access-control-request-method': 'POST',
+        'access-control-request-headers': 'content-type',
+      }
+    : method === 'POST'
+      ? { ...sameOrigin(), 'content-type': 'application/json' }
+      : sameOrigin()
+  return await probe(method, path, {
+    headers,
+    body: method === 'POST' ? JSON.stringify({ scopeId: 'x', confirmId: 'y', answer: 'accept' }) : undefined,
   })
+}
+
+describe('C432-CONFIRM-ROUTES-404', () => {
+  it.each([
+    ['GET', RUN_CONFIRM_CHANNEL],
+    ['POST', RUN_CONFIRM_ANSWER],
+    ['OPTIONS', RUN_CONFIRM_CHANNEL],
+    ['OPTIONS', RUN_CONFIRM_ANSWER],
+  ] as const)(
+    'C432-CONFIRM-ROUTES-404: %s %s answers exactly what a never-served path answers',
+    async (method, path) => {
+      const retired = await sameAnswer(method, path)
+      const unknown = await sameAnswer(method, NEVER_SERVED)
+      expect(unknown.status, 'the control path is not a generic answer').toBe(method === 'OPTIONS' ? 204 : 404)
+      expect(retired).toEqual(unknown)
+      if (method !== 'OPTIONS') {
+        expect(JSON.parse(retired.body)).toEqual({ error: 'Not found' })
+        expect(retired.allowOrigin, 'a dispatch still owns the retired path').toBe('*')
+      }
+    },
+  )
 })

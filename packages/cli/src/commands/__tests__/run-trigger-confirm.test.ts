@@ -512,6 +512,43 @@ describe('an ask-tier run-button run asks the browser that triggered it (D-11)',
   }, 240_000)
 })
 
+// ---- 432-14 (D-14/D-15): the Run control is one request ------------------------------------------
+//
+// The trigger route used to accept a confirm scope, persist it on the queued row and hand it to the
+// run door, which entered it around `runs.start`. All of that is deleted with the run-confirm pair:
+// the click is the request, the queue dispatches it, and nothing names or waits for a browser.
+
+describe('C432-DASHBOARD-RUN-DIRECT', () => {
+  it('C432-DASHBOARD-RUN-DIRECT: one trigger request starts the run, and a stray scope field is neither kept nor forwarded', async () => {
+    const target = new CountingTarget()
+    await target.listen()
+    try {
+      const fixture = createInProcessFixture({ origin: target.origin })
+      const scene = await openScene({ fixture, timeoutMs: 1_500 })
+
+      const controller = new AbortController()
+      const channel = await fetch(`${scene.origin}/api/run-confirm/channel`, { signal: controller.signal })
+      const channelStatus = channel.status
+      controller.abort()
+      expect(channelStatus, 'the retired run-confirm channel is still served').toBe(404)
+
+      const stray = `run-trigger:${randomUUID()}`
+      const runId = await triggerRun(scene, stray)
+      await waitFor(() => { expect(scene.settled()).toHaveLength(1) })
+
+      const dispatched = scene.executed().filter((opts) => opts['runId'] === runId)
+      expect(dispatched, 'the queue did not dispatch the click exactly once').toHaveLength(1)
+      expect(dispatched[0]).not.toHaveProperty('confirm' + 'Scope')
+      expect(scene.db.getRun(runId)?.metadata ?? {}).not.toHaveProperty('confirm' + 'Scope')
+      expect(eventTypes(fixture)).toContain('runStarted')
+      expect(target.hits).toEqual(['/in-process-thing'])
+      expect(startedContext(scene, runId)).toBe('local-headless')
+    } finally {
+      await target.close()
+    }
+  }, 240_000)
+})
+
 // ---- G-401-18-CR01: the SEVENTH door, and the write door that plants into it -------------------
 //
 // 401-18 closed the confirm-scope leak on `runs.metadata` and shipped a census asserting it had

@@ -29,7 +29,6 @@ import { RUN_EVENT_TYPES } from '@vostride/agent-qa-schema'
 import {
   RunNotReadyError,
   openRunStream,
-  setRunConfirmScope,
   triggerRun,
 } from '@/lib/api'
 
@@ -81,12 +80,10 @@ const readinessCalls = (): FetchCall[] => calls.filter((call) => call.url.includ
 beforeEach(() => {
   calls = []
   originalFetch = globalThis.fetch
-  setRunConfirmScope(undefined)
 })
 
 afterEach(() => {
   globalThis.fetch = originalFetch
-  setRunConfirmScope(undefined)
   vi.clearAllMocks()
   vi.restoreAllMocks()
 })
@@ -108,9 +105,11 @@ describe('triggerRun preflights readiness at the ONE choke point', () => {
     expect(triggerCalls()[0]?.method).toBe('POST')
   })
 
-  it('still threads the confirm scope on the ready path — the preflight changes nothing else', async () => {
+  // RE-SPELLED 2026-10-01 (432-14, D-14): was 'still threads the confirm scope on the ready path'.
+  // The page no longer holds a scope to thread; the claim that survives is the second half — the
+  // preflight changes nothing else, so the trigger carries the caller's body as given and no more.
+  it('posts the caller body unchanged on the ready path — the preflight changes nothing else', async () => {
     stubFetch({ status: 200, body: READY })
-    setRunConfirmScope('scope_abc')
 
     const body = await new Promise<Record<string, unknown>>((resolve) => {
       globalThis.fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -121,10 +120,10 @@ describe('triggerRun preflights readiness at the ONE choke point', () => {
         resolve(JSON.parse(String(init?.body)) as Record<string, unknown>)
         return { ok: true, status: 202, json: async () => ({ runId: 'r', status: 'queued' }) } as unknown as Response
       }) as unknown as typeof fetch
-      void triggerRun({ file: 'tests/a.yaml' })
+      void triggerRun({ file: 'tests/a.yaml', local: true })
     })
 
-    expect(body).toMatchObject({ file: 'tests/a.yaml', confirmScope: 'scope_abc' })
+    expect(body).toEqual({ file: 'tests/a.yaml', local: true })
   })
 
   it('REFUSES to post when the host is not composed, and names the reason', async () => {
