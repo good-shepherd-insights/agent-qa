@@ -12,6 +12,10 @@
 
 import { describe, expect, it } from 'vitest'
 
+// 2026-09-30 (432-12 D-05): the read fixture was `agent_qa_list_proposals` over `proposals.list`,
+// which left the catalogue with the proposal round. Every claim below is carried unchanged over the
+// marks-history read, the 1:1 read tool whose contract converts cleanly in both modes.
+
 import {
   advertisedContracts,
   AGENT_QA_OP_CONTRACTS,
@@ -24,19 +28,19 @@ import type { ProjectedOpSpec } from '../projection.js'
 import { visibleToCaller } from '../visibility.js'
 
 const READ_PROJECTION: ToolProjection = {
-  name: 'agent_qa_list_proposals',
-  ops: ['proposals.list'],
+  name: 'agent_qa_get_run_marks',
+  ops: ['runs.marks.history'],
   kind: 'read',
 }
 
 function spec(overrides: Partial<ProjectedOpSpec> = {}): ProjectedOpSpec {
   return {
-    id: 'proposals.list',
-    summary: 'List every proposal awaiting, or already carrying, a human decision.',
+    id: 'runs.marks.history',
+    summary: 'Read the marks recorded against one run, and what each applied.',
     requiredScopes: ['read'],
-    risk: { name: 'fn:proposals.list', recognized: true, readOnly: true },
-    input: AGENT_QA_OP_CONTRACTS['proposals.list']!.input,
-    output: AGENT_QA_OP_CONTRACTS['proposals.list']!.output,
+    risk: { name: 'fn:runs.marks.history', recognized: true, readOnly: true },
+    input: AGENT_QA_OP_CONTRACTS['runs.marks.history']!.input,
+    output: AGENT_QA_OP_CONTRACTS['runs.marks.history']!.output,
     ...overrides,
   }
 }
@@ -89,13 +93,13 @@ describe('toRegisterToolConfig (D-16)', () => {
   it('derives the description from the op summary and advertises the op contracts', () => {
     const config = toRegisterToolConfig(READ_PROJECTION, [spec()], advertised(READ_PROJECTION), identity)
 
-    expect(config.title).toBe('agent_qa_list_proposals')
+    expect(config.title).toBe('agent_qa_get_run_marks')
     expect(config.description).toBe(spec().summary)
     // Identity, not equality-by-value: the advertised schema IS the object the op validates with,
     // which is the whole of D-16's drift claim. A cell comparing converted JSON Schemas would pass
     // over two objects that merely agree today.
-    expect(config.inputSchema).toBe(AGENT_QA_OP_CONTRACTS['proposals.list']!.input)
-    expect(config.outputSchema).toBe(AGENT_QA_OP_CONTRACTS['proposals.list']!.output)
+    expect(config.inputSchema).toBe(AGENT_QA_OP_CONTRACTS['runs.marks.history']!.input)
+    expect(config.outputSchema).toBe(AGENT_QA_OP_CONTRACTS['runs.marks.history']!.output)
   })
 
   it('derives readOnlyHint and idempotentHint for a read op', () => {
@@ -138,7 +142,7 @@ describe('toRegisterToolConfig (D-16)', () => {
     const planted = 'sk-live-9f3a1c0b7d2e4f6a'
     const masked = toRegisterToolConfig(
       READ_PROJECTION,
-      [spec({ summary: `Lists proposals for ${planted}.` })],
+      [spec({ summary: `Lists marks for ${planted}.` })],
       advertised(READ_PROJECTION),
       (text: string) => text.split(planted).join('[SECRET_0]'),
     )
@@ -148,7 +152,7 @@ describe('toRegisterToolConfig (D-16)', () => {
     }
     // Integrity: the masker demonstrably saw and rewrote these exact bytes, so the absence above
     // is a redaction rather than an empty channel.
-    expect(masked.description).toBe('Lists proposals for [SECRET_0].')
+    expect(masked.description).toBe('Lists marks for [SECRET_0].')
   })
 
   it('refuses a projection with no arms', () => {
@@ -163,7 +167,7 @@ describe('toRegisterToolConfig (D-16)', () => {
   // caller who found the missing arm would be told its valid input was invalid.
   it('refuses a fold derived from a subset of its declared arms', () => {
     const projection: ToolProjection = {
-      name: 'agent_qa_propose_config_change',
+      name: 'agent_qa_change_config',
       ops: ['config.field.set', 'config.hook.add', 'config.auth.set'],
       kind: 'workflow',
       discriminant: 'action',
@@ -172,7 +176,7 @@ describe('toRegisterToolConfig (D-16)', () => {
       toRegisterToolConfig(
         projection,
         [spec({ id: 'config.field.set' }), spec({ id: 'config.hook.add' })],
-        advertised({ ...projection, name: 'agent_qa_propose_config_change' }),
+        advertised({ ...projection, name: 'agent_qa_change_config' }),
         identity,
       ),
     ).toThrow(/declares 3 ops but was derived from 2/u)
@@ -204,14 +208,14 @@ describe('toRegisterToolConfig (D-16)', () => {
   it('refuses a degradation entry whose contract converts cleanly', () => {
     const projection: ToolProjection = {
       name: 'agent_qa_start_run',
-      ops: ['proposals.list'],
+      ops: ['runs.marks.history'],
       kind: 'read',
     }
     expect(() =>
       toRegisterToolConfig(
         projection,
         [spec()],
-        AGENT_QA_OP_CONTRACTS['proposals.list']!,
+        AGENT_QA_OP_CONTRACTS['runs.marks.history']!,
         identity,
       ),
     ).toThrow(/converts cleanly in output mode/u)
@@ -222,8 +226,8 @@ describe('toRegisterToolConfig (D-16)', () => {
   // message, instead of surfacing as an unattributed exception in a protocol response.
   it('refuses an undeclared unrepresentable output contract, naming the tool', () => {
     const projection: ToolProjection = {
-      name: 'agent_qa_list_proposals',
-      ops: ['proposals.list'],
+      name: 'agent_qa_get_run_marks',
+      ops: ['runs.marks.history'],
       kind: 'read',
     }
     expect(() =>
@@ -233,7 +237,7 @@ describe('toRegisterToolConfig (D-16)', () => {
         AGENT_QA_OP_CONTRACTS['runs.start']!,
         identity,
       ),
-    ).toThrow(/agent_qa_list_proposals advertises an output contract JSON Schema cannot represent/u)
+    ).toThrow(/agent_qa_get_run_marks advertises an output contract JSON Schema cannot represent/u)
   })
 })
 

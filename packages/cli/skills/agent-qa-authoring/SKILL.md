@@ -24,13 +24,14 @@ metadata:
 6. Validate before you write. `agent_qa_refine_test`'s verify arm returns the same verdict that
    gates the write; there is no standalone linter over pasted text, on purpose, because a second
    validator can disagree with the one that gates.
-7. Authoring mutations go through the proposal funnel, never a blind write:
+7. Authoring changes apply in the call, and each answer names what it wrote:
    - A new test or suite file: `agent_qa_write_test`, which names the suite file the draft joins and
-     files a reviewable proposal instead of writing.
-   - An edit to a draft: `agent_qa_refine_test`.
-   - A new hook: `agent_qa_propose_config_change`, so the hook arrives as a reviewable diff.
-   - Applying what was filed: `agent_qa_apply_proposal`, or `agent_qa_apply_config_proposal` for a
-     configuration change. `agent_qa_list_proposals` and `agent_qa_show_proposal` read the inbox.
+     writes it unless a keep-gate rejected it.
+   - An edit to a test: `agent_qa_refine_test`.
+   - A new hook or another configuration change: `agent_qa_change_config`, which writes the change
+     and answers the files and fields it changed.
+   - Nothing waits for a second call: there is no apply step and no review inbox. `git status` and
+     `git diff` show what changed, and `git restore` reverts a file.
 8. There is no delete verb on any surface, by rule rather than by omission. Removing a test, a suite
    or a hook is a repository edit a person makes and reviews.
 9. Editing an existing hook has no tool yet: it is an edit to `workspace.hooksFile` in the workspace

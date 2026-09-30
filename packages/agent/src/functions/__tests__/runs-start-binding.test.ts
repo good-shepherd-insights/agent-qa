@@ -148,9 +148,9 @@ const BINDING_PARITY_INPUTS: Readonly<Record<string, unknown>> = {
   // names a run, so the `{}` default fails its contract and turns an unbound refusal into an
   // input error, which the parity case below would read as `dispatched`.
   'runs.digest': { runId: 'run-alpha' },
-  'knowledge.accept.propose': { target: { grain: 'record', recordId: 'rec-x' } },
-  'knowledge.reject.propose': { target: { grain: 'record', recordId: 'rec-x' }, reason: 'no' },
-  'knowledge.forget.propose': { target: { grain: 'record', recordId: 'rec-x' } },
+  'knowledge.accept': { target: { grain: 'record', recordId: 'rec-x' } },
+  'knowledge.reject': { target: { grain: 'record', recordId: 'rec-x' }, reason: 'no' },
+  'knowledge.forget': { target: { grain: 'record', recordId: 'rec-x' } },
   'knowledge.proposal.apply': { proposalId: 'prop_0123456789ab' },
   // 390 D-13: the two quarantine WRITE verbs take the three legs of stable test identity, so
   // the `{}` default would fail their contract and turn an unbound refusal into an input

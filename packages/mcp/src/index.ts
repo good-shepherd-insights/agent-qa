@@ -11,7 +11,8 @@
 // `Mcp-Session-Id` header and SSE resumability outright, so a session is no longer a thing a server
 // can hold on this revision. What replaces it is a per-request factory plus the declared data
 // behind it, with every cross-call handle travelling as an ordinary tool argument (SEP-2567) — this
-// product's `proposal_id` is exactly that pattern, and it is why nothing below mints state.
+// product's run ids and knowledge change `operationId` are exactly that pattern, and it is why
+// nothing below mints state.
 //
 // What a HOST needs is the factory and the data behind it. What a TEST needs is the two predicates,
 // so they can be driven directly rather than only observed through a running server — the layers

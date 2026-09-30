@@ -44,7 +44,6 @@ import type {
   CompletedRunHandoff,
   FeedbackReadsPort,
   FunctionCaller,
-  KnowledgeProposeOutcomeDto,
   MarkDisposition,
   MarkReceipt,
   MaskedResolvedConfig,
@@ -55,6 +54,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import { composeLocalAgent } from '../composition/compose-local-agent.js'
 import type { LocalAgentHost } from '../composition/compose-local-agent.js'
+import { filePre432KnowledgeProposal } from './pre-432-knowledge-proposal.js'
 
 const MINT_IDENTITY = (filePath: string): string => filePath
 
@@ -65,9 +65,10 @@ const MINT_IDENTITY = (filePath: string): string => filePath
  * SURFACE has to name one, and a fixture is not one. What is exercised here is the dispatch a
  * caller performs BY NAME, so naming it is the point.
  */
-const FORGET_PROPOSE_ID = 'knowledge.forget.propose'
-const ACCEPT_PROPOSE_ID = 'knowledge.accept.propose'
-const REJECT_PROPOSE_ID = 'knowledge.reject.propose'
+// 432-12: the retired propose verbs, named by the verb a pre-432 record carries.
+const FORGET_PROPOSE_ID = 'forget'
+const ACCEPT_PROPOSE_ID = 'accept'
+const REJECT_PROPOSE_ID = 'reject'
 
 const RUN_A = 'run-391-digest-a'
 const RUN_B = 'run-391-digest-b'
@@ -273,22 +274,18 @@ describe('the per-run digest, over the composed host (PROP-04 / D-16 / D-18)', (
   async function mintForRun(
     runId: string | undefined,
     summary: string,
-    proposeId: string = FORGET_PROPOSE_ID,
-    extraInput: Record<string, unknown> = {},
+    proposeId: 'accept' | 'reject' | 'forget' = FORGET_PROPOSE_ID,
+    extraInput: { reason?: string } = {},
   ): Promise<{ proposalId: string; recordId: string }> {
     const recordId = publish(summary)
-    const outcome = (await invokeFunction(
-      host.registry,
-      proposeId,
-      {
-        target: { grain: 'record', recordId },
-        ...extraInput,
-        ...(runId === undefined ? {} : { runId }),
-      },
-      HUMAN,
-    )) as KnowledgeProposeOutcomeDto
-    if (outcome.kind !== 'proposed') throw new Error(`fixture propose failed: ${outcome.kind}`)
-    return { proposalId: outcome.proposal.proposalId, recordId }
+    // 432-12: nothing files a knowledge proposal any more; this is a pre-432 record on disk,
+    // attributed to the run as the retired propose ops attributed it.
+    const proposalId = await filePre432KnowledgeProposal({
+      agentQaRoot, knowledgeRoot, verb: proposeId, target: { grain: 'record', recordId },
+      ...(extraInput.reason === undefined ? {} : { reason: extraInput.reason }),
+      ...(runId === undefined ? {} : { runId }),
+    })
+    return { proposalId, recordId }
   }
 
   async function proposeForRun(runId: string | undefined, summary: string): Promise<string> {

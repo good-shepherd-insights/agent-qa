@@ -35,7 +35,7 @@ import type { ActionRef, EntityDescriptor, EntityKind } from '@vostride/agent-qa
 import { ENTITIES_GET_FUNCTION_ID } from '../ops/entities-ids.js'
 import { KNOWLEDGE_BRIEF_WHY_FUNCTION_ID } from '../ops/knowledge-brief-why.js'
 import { KNOWLEDGE_RECORD_SHOW_FUNCTION_ID } from '../ops/knowledge-record-show.js'
-import { KNOWLEDGE_FORGET_PROPOSE_FUNCTION_ID } from '../ops/knowledge-review-ids.js'
+import { KNOWLEDGE_FORGET_FUNCTION_ID } from '../ops/knowledge-review-ids.js'
 import { RUNS_GET_FUNCTION_ID } from '../ops/runs-get.js'
 import { RUNS_START_FUNCTION_ID } from '../ops/runs-start.js'
 
@@ -90,14 +90,14 @@ export const ENTITY_ACTION_TABLES = {
       inputSeed: { recordId: descriptor.machineId },
     },
     {
-      // D-11's table completion, now that the op id exists (387-08). PROPOSE, never apply: the
-      // action a card offers is "show me what forgetting this would remove", and a card that
-      // could hand a surface a one-shot destructive call would be the exact L1/L2 violation the
-      // two-step exists to prevent. The seed addresses the RECORD grain because a descriptor
-      // carries the machine id it was sighted under, and the bundle grain takes a short-ID
-      // whose resolution is the apply-side host's job rather than the card's.
-      functionId: KNOWLEDGE_FORGET_PROPOSE_FUNCTION_ID,
-      label: 'Preview forgetting this',
+      // D-11's table completion (387-08). 2026-09-30, 432-12 (D-05/D-09): forget is the explicit
+      // removal and it applies in the call, so the action says what it does. The record is
+      // tombstoned, never destroyed, and the card at this address then reads `tombstoned`. The
+      // seed addresses the RECORD grain because a descriptor carries the machine id it was
+      // sighted under, and the bundle grain takes a short-ID whose resolution is the writer's job
+      // rather than the card's.
+      functionId: KNOWLEDGE_FORGET_FUNCTION_ID,
+      label: 'Forget this record',
       inputSeed: { target: { grain: 'record', recordId: descriptor.machineId } },
     },
   ],
@@ -112,7 +112,7 @@ export const ADVERTISED_FUNCTION_IDS: readonly string[] = [
   RUNS_GET_FUNCTION_ID,
   KNOWLEDGE_BRIEF_WHY_FUNCTION_ID,
   KNOWLEDGE_RECORD_SHOW_FUNCTION_ID,
-  KNOWLEDGE_FORGET_PROPOSE_FUNCTION_ID,
+  KNOWLEDGE_FORGET_FUNCTION_ID,
 ]
 
 export function actionsForKind(descriptor: EntityDescriptor): ActionRef[] {

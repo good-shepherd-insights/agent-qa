@@ -90,18 +90,15 @@ const FIXTURE_OP_SCOPES: Readonly<Record<string, readonly FunctionScope[]>> = Ob
   'config.auth.set': ['config-write'],
   'config.hook.add': ['config-write'],
   'config.project.scaffold': ['config-write', 'run'],
-  'config.undo.propose': ['config-write'],
-  'config.proposal.apply': ['config-write', 'approval-write'],
-  'knowledge.accept.propose': ['knowledge-write'],
-  'knowledge.reject.propose': ['knowledge-write'],
-  'knowledge.forget.propose': ['knowledge-write'],
-  'knowledge.proposal.apply': ['knowledge-write', 'approval-write'],
+  // 2026-09-30, 432-12 D-05: the three knowledge changes apply in the call; the undo arm and the
+  // two apply ops left the catalogue with their tools.
+  'knowledge.accept': ['knowledge-write'],
+  'knowledge.reject': ['knowledge-write'],
+  'knowledge.forget': ['knowledge-write'],
   'entities.resolve': ['read'],
   'entities.get': ['read'],
   'runs.list': ['read'],
   'runs.digest': ['read'],
-  'proposals.list': ['read'],
-  'proposals.show': ['read'],
   // 2026-09-28, 431-04 D-04: the eight discovery reads are read-tier.
   'knowledge.bundles.list': ['read'],
   'knowledge.records.inspect': ['read'],

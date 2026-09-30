@@ -24,6 +24,12 @@
 // `runs.evidence` with `runs.artifact` behind one fold. Their prior rulings are kept verbatim in
 // `PROJECTED_RULING_ADDENDA`, each with its dated 431 addendum.
 //
+// 2026-09-30 (432-12 D-05/D-02): TWENTY tools over THIRTY registry ops; the other TWENTY-THREE stay
+// in `UNPROJECTED_OPS`, and the registry is still fifty-three. The two change tools are renamed
+// `agent_qa_change_knowledge` and `agent_qa_change_config` and write in the call. The four proposal
+// apply/list/show tools and the config undo arm are gone with no alias, and their five ops are
+// dispositioned below until 432-17 deletes them from the registry.
+//
 // 2026-08-17 (398 D-09): the unprojected side moved from nineteen to twenty when `agent.explain`
 // was registered. This sentence is prose and the guard is the mechanism — but the prose is updated
 // in the same change-set anyway, because a header that goes on stating a partition the code stopped
@@ -71,7 +77,6 @@ import {
   AuthoringVerifyDraftOutputSchema,
   BriefWhyInputSchema,
   BriefWhyResultSchema,
-  ConfigApplyOutcomeSchema,
   ConfigAuthSetInputSchema,
   ConfigChangeFoldInputSchema,
   ConfigChangeFoldOutputSchema,
@@ -79,37 +84,28 @@ import {
   ConfigFieldSetInputSchema,
   ConfigHookAddInputSchema,
   ConfigProjectScaffoldInputSchema,
-  ConfigProposalApplyInputSchema,
-  ConfigProposeOutputSchema,
   ConfigTargetCreateInputSchema,
   ConfigTargetEditInputSchema,
-  ConfigUndoProposeInputSchema,
   EntitiesGetInputSchema,
   EntitiesResolveInputSchema,
   EntityCardResolutionSchema,
   EntityCardSchema,
-  KnowledgeAcceptProposeInputSchema,
-  KnowledgeApplyOutcomeSchema,
+  KnowledgeAcceptChangeInputSchema,
   KnowledgeBundlesListInputSchema,
   KnowledgeBundlesListOutputSchema,
   KnowledgeChangeFoldInputSchema,
   KnowledgeChangeFoldOutputSchema,
-  KnowledgeForgetProposeInputSchema,
+  KnowledgeForgetChangeInputSchema,
   KnowledgeGatesListInputSchema,
   KnowledgeGatesListResultSchema,
-  KnowledgeProposalApplyInputSchema,
-  KnowledgeProposeOutcomeSchema,
+  KnowledgeChangeOutputSchema,
   KnowledgeRecordShowInputSchema,
   KnowledgeRecordShowResultSchema,
   KnowledgeRecordsDiffInputSchema,
   KnowledgeRecordsDiffOutputSchema,
   KnowledgeRecordsInspectInputSchema,
   KnowledgeRecordsInspectOutputSchema,
-  KnowledgeRejectProposeInputSchema,
-  ProposalsListInputSchema,
-  ProposalsListOutputSchema,
-  ProposalsShowInputSchema,
-  ProposalsShowOutputSchema,
+  KnowledgeRejectChangeInputSchema,
   RunDigestSchema,
   RunKnowledgeProjectionSchema,
   RunOverviewProjectionSchema,
@@ -134,16 +130,15 @@ import {
   TOOL_FOLD_DISCRIMINANT,
 } from '@vostride/agent-qa-schema'
 
-import { APPLY_TOOL_INPUT_SCHEMA, CREDENTIAL_REFUSAL_JSON_SCHEMA, composeApplyToolOutput } from './apply-refusal.js'
+import { composeMarkToolOutput } from './masked-result.js'
 
 /**
  * What a tool DOES, coarsely — the axis annotations are derived along (`projection.ts`).
  *
- * Three members and not more: a caller (and the host in front of it) needs to tell a read from a
- * mutation, and to tell a mutation that only PROPOSES from the one that commits. `apply` is its own
- * member rather than a flag on `workflow` because it is the class D-11's refuse-and-teach route and
- * MCPS-03's two-call rule attach to, and a class those rules can be forgotten for is a class they
- * will be forgotten for.
+ * `read` answers; `workflow` changes something in the call (a test file, a run, knowledge,
+ * configuration). `apply` is the sovereign mark door alone: since 432-12 (D-05/D-14) no tool files a
+ * proposal and no tool asks for a confirmation, and `apply` names only the one door whose credential
+ * check the permission wave removes (D-12).
  */
 export type ToolProjectionKind = 'read' | 'workflow' | 'apply'
 
@@ -319,29 +314,18 @@ export const AGENT_QA_OP_CONTRACTS: Readonly<Record<string, ToolOpContracts>> = 
     input: ConfigProjectScaffoldInputSchema,
     output: ConfigChangeOutputSchema,
   }),
-  'config.undo.propose': Object.freeze({
-    input: ConfigUndoProposeInputSchema,
-    output: ConfigProposeOutputSchema,
+  // 2026-09-30 (432-12 D-05): the three knowledge changes answer what they applied.
+  'knowledge.accept': Object.freeze({
+    input: KnowledgeAcceptChangeInputSchema,
+    output: KnowledgeChangeOutputSchema,
   }),
-  'config.proposal.apply': Object.freeze({
-    input: ConfigProposalApplyInputSchema,
-    output: ConfigApplyOutcomeSchema,
+  'knowledge.reject': Object.freeze({
+    input: KnowledgeRejectChangeInputSchema,
+    output: KnowledgeChangeOutputSchema,
   }),
-  'knowledge.accept.propose': Object.freeze({
-    input: KnowledgeAcceptProposeInputSchema,
-    output: KnowledgeProposeOutcomeSchema,
-  }),
-  'knowledge.reject.propose': Object.freeze({
-    input: KnowledgeRejectProposeInputSchema,
-    output: KnowledgeProposeOutcomeSchema,
-  }),
-  'knowledge.forget.propose': Object.freeze({
-    input: KnowledgeForgetProposeInputSchema,
-    output: KnowledgeProposeOutcomeSchema,
-  }),
-  'knowledge.proposal.apply': Object.freeze({
-    input: KnowledgeProposalApplyInputSchema,
-    output: KnowledgeApplyOutcomeSchema,
+  'knowledge.forget': Object.freeze({
+    input: KnowledgeForgetChangeInputSchema,
+    output: KnowledgeChangeOutputSchema,
   }),
   'entities.resolve': Object.freeze({
     input: EntitiesResolveInputSchema,
@@ -360,14 +344,6 @@ export const AGENT_QA_OP_CONTRACTS: Readonly<Record<string, ToolOpContracts>> = 
   'runs.digest': Object.freeze({
     input: RunsDigestInputSchema,
     output: RunDigestSchema,
-  }),
-  'proposals.list': Object.freeze({
-    input: ProposalsListInputSchema,
-    output: ProposalsListOutputSchema,
-  }),
-  'proposals.show': Object.freeze({
-    input: ProposalsShowInputSchema,
-    output: ProposalsShowOutputSchema,
   }),
   // 2026-09-28 (431-04 D-04/D-05/D-07): the eight reads keep their ops' own contracts. The
   // evidence arms use the canonical output contracts, whose validators are the runtime schemas.
@@ -410,23 +386,20 @@ export const AGENT_QA_OP_CONTRACTS: Readonly<Record<string, ToolOpContracts>> = 
 })
 
 /**
- * THE CATALOGUE. Twenty-four tools, and the bump guard pins this exact list by name and by op set.
- * (Sixteen until 2026-09-28; 431 D-01 added the eight discovery reads.)
+ * THE CATALOGUE. Twenty tools, and the bump guard pins this exact list by name and by op set.
+ * (Sixteen until 2026-09-28, when 431 D-01 added the eight discovery reads; twenty-four until
+ * 2026-09-30, when 432-12 removed the four proposal tools.)
  *
- * The read side is D-02: one universal entity door plus the three reads a workflow needs mid-flight
- * (runs list, run digest, the proposal inbox). The write side is propose-then-apply and nothing
- * else — every `workflow` entry files a proposal that commits nothing, and the two `apply` entries
- * are the only doors through which anything becomes durable.
+ * The read side is D-02: one universal entity door plus the reads a workflow needs mid-flight and
+ * the 431 discovery reads. The write side changes things IN THE CALL (432 D-05/D-14): every
+ * `workflow` entry writes what it names and answers what it changed, and nothing waits for a second
+ * call. There is no apply tool, no `confirmed` input and no elicitation; the mark door is the one
+ * `apply` entry, and only for its credential check.
  *
- * WHY THERE IS NO `agent_qa_reject_proposal`, which the plan's own table listed. `proposals.reject`
- * declares `requiresHumanOrigin: true`, and `invokeFunction` refuses any caller whose origin is not
- * `human` (invoke.ts, the check immediately after the scope check). This host mints `origin:
- * 'agent'` by construction — 391 D-06's rule is that nobody typed an MCP request — so the tool would
- * have listed for every caller and refused every call: a door that cannot open. That is exactly the
- * property that keeps `proposals.accept` out of this table (RESEARCH Pitfall 7), and it is a
- * property of the OP rather than of one op's name, so it is applied to both. The op moves to
- * `UNPROJECTED_OPS` below and 397 adjudicates whether a human-origin MCP caller can exist at all.
- * The bump guard states the rule generally: no projected op may declare `requiresHumanOrigin`.
+ * WHY THERE IS NO `agent_qa_reject_proposal`, and no proposal tool at all. `proposals.reject` and
+ * `proposals.accept` declare `requiresHumanOrigin: true`, so a tool over either would have listed for
+ * every caller and refused every call. The bump guard states the rule generally: no projected op may
+ * declare `requiresHumanOrigin`. Since 432-12 the whole inbox is unprojected, and 432-17 deletes it.
  */
 export const AGENT_QA_TOOL_PROJECTIONS: readonly ToolProjection[] = Object.freeze([
   Object.freeze({
@@ -448,8 +421,9 @@ export const AGENT_QA_TOOL_PROJECTIONS: readonly ToolProjection[] = Object.freez
     // per-call reference is derived from the OUTPUT.
     ui: Object.freeze({ resource: 'live-run', runIdFrom: 'output' } as const),
   }),
+  // 2026-09-30 (432-12 D-05): the config change tool writes in the call. The undo arm is gone.
   Object.freeze({
-    name: 'agent_qa_propose_config_change',
+    name: 'agent_qa_change_config',
     ops: Object.freeze([
       'config.field.set',
       'config.target.create',
@@ -457,30 +431,21 @@ export const AGENT_QA_TOOL_PROJECTIONS: readonly ToolProjection[] = Object.freez
       'config.auth.set',
       'config.hook.add',
       'config.project.scaffold',
-      'config.undo.propose',
     ]),
     kind: 'workflow',
     discriminant: TOOL_FOLD_DISCRIMINANT,
   }),
+  // 2026-09-30 (432-12 D-05/D-09): accept, reject and forget apply in the call. Forget is the
+  // explicit removal; a wrong record is otherwise corrected by new feedback.
   Object.freeze({
-    name: 'agent_qa_apply_config_proposal',
-    ops: Object.freeze(['config.proposal.apply']),
-    kind: 'apply',
-  }),
-  Object.freeze({
-    name: 'agent_qa_propose_knowledge_change',
+    name: 'agent_qa_change_knowledge',
     ops: Object.freeze([
-      'knowledge.accept.propose',
-      'knowledge.reject.propose',
-      'knowledge.forget.propose',
+      'knowledge.accept',
+      'knowledge.reject',
+      'knowledge.forget',
     ]),
     kind: 'workflow',
     discriminant: TOOL_FOLD_DISCRIMINANT,
-  }),
-  Object.freeze({
-    name: 'agent_qa_apply_proposal',
-    ops: Object.freeze(['knowledge.proposal.apply']),
-    kind: 'apply',
   }),
   Object.freeze({
     name: 'agent_qa_mark_run',
@@ -573,16 +538,6 @@ export const AGENT_QA_TOOL_PROJECTIONS: readonly ToolProjection[] = Object.freez
     discriminant: TOOL_FOLD_DISCRIMINANT,
     maxResultSizeChars: RUN_READ_MAX_RESULT_SIZE_CHARS,
   }),
-  Object.freeze({
-    name: 'agent_qa_list_proposals',
-    ops: Object.freeze(['proposals.list']),
-    kind: 'read',
-  }),
-  Object.freeze({
-    name: 'agent_qa_show_proposal',
-    ops: Object.freeze(['proposals.show']),
-    kind: 'read',
-  }),
 ] as const satisfies readonly ToolProjection[])
 
 /**
@@ -597,27 +552,26 @@ export const AGENT_QA_TOOL_PROJECTIONS: readonly ToolProjection[] = Object.freez
  *     the reference it has, and reads back the resolution union — a card, a small disambiguation
  *     set, or an honest miss. `entities.get` runs inside the resolved arm and contributes no shape
  *     of its own, which is why its contract is absent from the advertisement.
- *  3. THE APPLY DOORS advertise the wire envelope of D-11 rather than the op's `{ proposalId }`,
- *     because `confirmed` is a fact about a single-round-trip tool call and about no other caller
- *     of the same op. The handler translates the envelope into the op's own contract and
- *     `invokeFunction` parses it there, which keeps the two independent parses this layer relies on.
- *     The OUTPUT is still the op's own contract, untouched.
+ *  3. THE MARK DOOR advertises the op's outcome OR the credential refusal (419 D-20), because the
+ *     refusal is a fact about this door's credential check and about no other caller of the op.
+ *     Its input is the op's own contract. The D-11 apply envelope (`proposal_id`, `confirmed`) is
+ *     gone with the apply tools (432-12 D-05/D-14).
  */
 export const AGENT_QA_COMPOSED_CONTRACTS: Readonly<Record<string, ToolOpContracts>> = Object.freeze({
   // A mark addresses a run/member/step, never a proposal. Preserve the op's wire keys.
   agent_qa_mark_run: Object.freeze({
     input: RunsMarkInputSchema,
-    output: composeApplyToolOutput(RunsMarkOutcomeSchema, CREDENTIAL_REFUSAL_JSON_SCHEMA),
+    output: composeMarkToolOutput(RunsMarkOutcomeSchema),
   }),
   agent_qa_refine_test: Object.freeze({
     input: AuthoringRefineFoldInputSchema,
     output: AuthoringRefineFoldOutputSchema,
   }),
-  agent_qa_propose_config_change: Object.freeze({
+  agent_qa_change_config: Object.freeze({
     input: ConfigChangeFoldInputSchema,
     output: ConfigChangeFoldOutputSchema,
   }),
-  agent_qa_propose_knowledge_change: Object.freeze({
+  agent_qa_change_knowledge: Object.freeze({
     input: KnowledgeChangeFoldInputSchema,
     output: KnowledgeChangeFoldOutputSchema,
   }),
@@ -630,19 +584,6 @@ export const AGENT_QA_COMPOSED_CONTRACTS: Readonly<Record<string, ToolOpContract
   agent_qa_get_entity: Object.freeze({
     input: EntitiesResolveInputSchema,
     output: EntityCardResolutionSchema,
-  }),
-  // The apply doors advertise the op's outcome OR the D-11 refusal, on both sides of the call, for
-  // one reason (396-06): `confirmed` and "nothing was applied, here is the call that would" are
-  // both facts about a single-round-trip tool call and about no other caller of the same op. The
-  // union is composed from the op's OWN converted document, so the receipt arm is the op's contract
-  // rather than a copy of it.
-  agent_qa_apply_proposal: Object.freeze({
-    input: APPLY_TOOL_INPUT_SCHEMA,
-    output: composeApplyToolOutput(KnowledgeApplyOutcomeSchema),
-  }),
-  agent_qa_apply_config_proposal: Object.freeze({
-    input: APPLY_TOOL_INPUT_SCHEMA,
-    output: composeApplyToolOutput(ConfigApplyOutcomeSchema),
   }),
 })
 
@@ -777,11 +718,13 @@ export interface UnprojectedOp {
   // `runs.knowledge` and `runs.evidence`, are projected, and a member-less literal is the hole the
   // guard's non-vacuity check exists to close (the 408 re-stamp precedent). Their rulings live on in
   // `PROJECTED_RULING_ADDENDA`.
+  // WIDENED on 2026-09-30 (432-12, D-05) for the five pre-432 proposal ops that leave the projected
+  // side: the ruling that removed their tools is 432's, and 432-17 deletes the ops themselves.
   readonly adjudication: UnprojectedAdjudication
 }
 
 /** The closed adjudicator vocabulary as a runtime tuple; the type above is derived from it. */
-export const UNPROJECTED_ADJUDICATIONS = Object.freeze(['397', '398', '405', '408', '428'] as const)
+export const UNPROJECTED_ADJUDICATIONS = Object.freeze(['397', '398', '405', '408', '428', '432'] as const)
 
 export type UnprojectedAdjudication = (typeof UNPROJECTED_ADJUDICATIONS)[number]
 
@@ -936,6 +879,52 @@ export const UNPROJECTED_OPS: readonly UnprojectedOp[] = Object.freeze([
       + 'question with a third audience. DELETION-INVENTORY row 1 ruled a discovery TOOL not-a-gap '
       + 'on exactly this reasoning; projecting the op would reinstate it under a new name.',
     adjudication: '398',
+  }),
+  // 2026-09-30 (432-12 D-05): the five pre-432 proposal ops, off the catalogue with their tools.
+  Object.freeze({
+    opId: 'config.undo.propose',
+    reason:
+      'D-05/D-09 (dated 2026-09-30, 432-12): no Undo is built, and a direct config write makes '
+      + 'no agent commit for this op to reverse. It files a proposal, and the proposal round has '
+      + 'no MCP tool, so the undo arm left the config change tool with no alias (D-02). Files are '
+      + 'reverted with git. The op still reverses pre-432 agent commits until 432-17 deletes it.',
+    adjudication: '432',
+  }),
+  Object.freeze({
+    opId: 'config.proposal.apply',
+    reason:
+      'D-05 (dated 2026-09-30, 432-12): knowledge and config changes apply in the call, so the '
+      + 'proposal round this op belonged to has no MCP tool; its tool was removed with no alias '
+      + '(D-02). The op still serves the pre-432 records already on disk until 432-17 deletes it '
+      + 'with the inbox.',
+    adjudication: '432',
+  }),
+  Object.freeze({
+    opId: 'knowledge.proposal.apply',
+    reason:
+      'D-05 (dated 2026-09-30, 432-12): knowledge and config changes apply in the call, so the '
+      + 'proposal round this op belonged to has no MCP tool; its tool was removed with no alias '
+      + '(D-02). The op still serves the pre-432 records already on disk until 432-17 deletes it '
+      + 'with the inbox.',
+    adjudication: '432',
+  }),
+  Object.freeze({
+    opId: 'proposals.list',
+    reason:
+      'D-05 (dated 2026-09-30, 432-12): knowledge and config changes apply in the call, so the '
+      + 'proposal round this op belonged to has no MCP tool; its tool was removed with no alias '
+      + '(D-02). The op still serves the pre-432 records already on disk until 432-17 deletes it '
+      + 'with the inbox.',
+    adjudication: '432',
+  }),
+  Object.freeze({
+    opId: 'proposals.show',
+    reason:
+      'D-05 (dated 2026-09-30, 432-12): knowledge and config changes apply in the call, so the '
+      + 'proposal round this op belonged to has no MCP tool; its tool was removed with no alias '
+      + '(D-02). The op still serves the pre-432 records already on disk until 432-17 deletes it '
+      + 'with the inbox.',
+    adjudication: '432',
   }),
 ] as const satisfies readonly UnprojectedOp[])
 

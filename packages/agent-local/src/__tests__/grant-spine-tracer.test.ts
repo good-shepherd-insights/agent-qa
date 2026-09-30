@@ -62,7 +62,6 @@ import type {
   FunctionCaller,
   GrantLedgerEvent,
   KnowledgeApplyOutcomeDto,
-  KnowledgeProposeOutcomeDto,
   MaskedResolvedConfig,
 } from '@vostride/agent-qa-schema'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
@@ -72,6 +71,7 @@ import {
   createKnowledgeReview,
   createRunsReader,
 } from '../composition/compose-local-agent.js'
+import { filePre432KnowledgeProposal } from './pre-432-knowledge-proposal.js'
 
 const APPLY_FUNCTION_ID = 'knowledge.proposal.apply'
 const GRANT_ID = 'grant_tracer_proposal_apply'
@@ -208,15 +208,11 @@ describe('a committed standing grant is consumed by the shipped gate, and a revo
     }
   }
 
-  async function propose(registry: FunctionRegistry, recordId: string): Promise<string> {
-    const proposed = (await invokeFunction(
-      registry,
-      'knowledge.forget.propose',
-      { target: { grain: 'record', recordId } },
-      CALLER,
-    )) as KnowledgeProposeOutcomeDto
-    if (proposed.kind !== 'proposed') throw new Error(`expected a proposal, got ${proposed.kind}`)
-    return proposed.proposal.proposalId
+  /** 432-12: a pre-432 forget proposal on disk; the change ops apply in the call and file none. */
+  async function propose(_registry: FunctionRegistry, recordId: string): Promise<string> {
+    return await filePre432KnowledgeProposal({
+      agentQaRoot, knowledgeRoot, verb: 'forget', target: { grain: 'record', recordId },
+    })
   }
 
   it('refuses the apply with no grant, commits it with one, and refuses it again after the revoke', async () => {
@@ -331,7 +327,7 @@ describe('a committed standing grant is consumed by the shipped gate, and a revo
         grantId: 'grant_tracer_neighbouring_class',
         // A real sibling op's class, and a strict prefix of nothing: the point is that it is not
         // the apply's class, and that near-miss is the only thing separating it from leg 2's grant.
-        actionClass: 'fn:knowledge.forget.propose',
+        actionClass: 'fn:knowledge.forget',
         scope: STANDING_APPROVAL_SCOPE,
       },
     ])

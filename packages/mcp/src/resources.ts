@@ -63,7 +63,7 @@ import { visibleToCaller } from './visibility.js'
  *
  * A constant rather than a literal at three sites, and declared here rather than imported: the
  * function layer keeps its id constants inside its own directory and does not publish them on its
- * barrel, so this is the same shape `apply-refusal.ts` uses for `proposals.show`.
+ * barrel, so the id is spelled once here.
  */
 export const ENTITIES_GET_OP_ID = 'entities.get'
 

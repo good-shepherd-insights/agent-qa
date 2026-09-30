@@ -187,6 +187,9 @@ function recordingReview(): { port: KnowledgeReviewPort; applied: string[] } {
   return {
     applied,
     port: {
+      // 432-12: the direct change is the port's third member; this file measures the pre-432 accept
+      // path over a record already on disk, so it never reaches it.
+      change: () => Promise.reject(new Error('this file never changes knowledge directly')),
       propose: () => Promise.reject(new Error('this file never proposes')),
       apply: (proposalId: string) => {
         applied.push(proposalId)

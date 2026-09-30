@@ -1,76 +1,31 @@
-// The write path at the wire: propose, refuse, confirm, ONE commit, replay (396-06 · MCPS-03 · D-11).
+// The write path at the wire: one call writes the change and answers what it changed (432-12,
+// D-04/D-05/D-07/D-13/D-14).
 //
-// 2026-09-30, 432-11 D-05: the config tool WRITES IN THE CALL now (section 1). The apply doors this
-// file measures still serve the proposal records already on disk until 432-12/17 delete them, so
-// sections 2-7 start from a record written by `filePre432ConfigProposal` exactly as the old propose
-// path wrote it.
+// WHAT THIS FILE WAS. From 396-06 to 432-11 it drove the two MCP apply doors over the shipped
+// composition and a real git repository: the first apply refused and taught the exact re-call,
+// `confirmed: true` made exactly one commit, a replay answered `already-applied`, and the SEP-2322
+// form rode only on a connection that declared `elicitation`. 432-12 deletes that round with the
+// tools, and every claim moves to its direct form here:
 //
-// WHAT THIS FILE IS FOR, and how it differs from the suite one layer down. `apply-refusal.test.ts`
-// proved the handler HERMETICALLY: a recording invoke double, no store, no repository, no protocol.
-// That is the right bar for a primitive and it cannot answer the only question a person actually has
-// about a write surface, which is whether anything commits when it should not. This file drives the
-// SHIPPED composition — `composeCliLocalAgent`, the real proposals store on disk, the real
-// `config.proposal.apply` port, a real git repository — over a real MCP client speaking the real
-// wire, and every mutation-adjacent cell reads `git rev-list --count HEAD` before and after.
+//   the first apply refuses and commits nothing       -> section 2: the change tool writes on its
+//                                                        one call; the repository still has no
+//                                                        commit (D-07) and no proposal is filed
+//   the confirmed apply commits exactly once          -> sections 1-2: exactly one change, read
+//                                                        back from disk; zero commits
+//   a replayed confirmation answers as data           -> section 3: a repeated operation identity
+//                                                        answers the same records and lands once
+//   doctored one-shots commit nothing                 -> section 4: `confirmed` is not an input and
+//                                                        is refused at the schema wall, changing
+//                                                        nothing
+//   both eras, and the capability that decides shape  -> section 4: no form on either era, even
+//                                                        for a client that can answer one
+//   the second door and the family split              -> section 5: the retired door names are
+//                                                        unknown tools, and the two change tools
+//                                                        each reach only their own ops
 //
-// A COMMIT COUNT IS THE ONLY HONEST ASSERTION HERE. An outcome string is what the server SAYS it
-// did; the number of commits in the person's repository is what happened. Every cell below that
-// touches an apply door asserts that number, and the cells that must not commit assert it against a
-// repository that already has a commit in it — an absence measured over an empty channel is the trap
-// this project keeps recording.
-//
-// ASSERTED ON THE WIRE, NEVER ON AN INTERNAL OBJECT. `connect()` records the raw response body of
-// every exchange and the payload cells assert on that recorded text. The 395 lesson is that a corpus
-// asserting on an internal error object passes while the serialization a caller reads leaks; the
-// client's parsed view is used only where a typed read is what a cell is about.
-//
-// WHAT THIS FILE FOUND, which is why it exists rather than being a second spelling of plan 02. The
-// era claim plan 02 could only make about a PAYLOAD — "the teach travels in ordinary content, the
-// form is an affordance layered on top of it" — was FALSE at the wire on the shipped SDK, in both
-// directions, and this suite is what measured it (2026-08-16):
-//
-//   legacy (2025-era) connection: the SDK's shim REPLACED the handler's whole result with
-//     {"content":[{"type":"text","text":"Cannot request input 'confirm' (elicitation/create): the
-//     client on this 2025-era connection did not declare the required capability (no client
-//     capabilities are available on this connection — per-request legacy serving cannot receive
-//     server-to-client requests)"}],"isError":true}
-//
-//   2026-07-28 connection whose client declares no `elicitation` capability: the call THREW at the
-//     client — `ProtocolError: Cannot request input 'confirm' (elicitation/create): the request's
-//     client capabilities do not declare the required capability` (-32021, HTTP 400 — RESEARCH
-//     Pitfall 11), so the caller received no teach, no summary and no readable refusal at all.
-//
-// Nothing on day zero speaks the 2026 wire and almost nothing declares `elicitation`, so that was
-// the answer nearly every real caller got from D-11's door. The fix is in `apply-refusal.ts`: the
-// form is attached ONLY to a connection whose declared capabilities can carry it, and the teach is
-// what every other caller gets — which is what the module always said it did. See the SUMMARY's
-// deviations; group 6 is the three-way measurement that pins it.
-//
-// OBSERVED REDS — 2026-08-16, `SHOW_REDS=1 bash scripts/396-06-mutation.sh`, verbatim headlines:
-//
-//   A1 (7 cells) the refusal branch severed so an unconfirmed call applies — plan 02's M2 at the
-//        wire, where it is measurable as a COMMIT rather than as a call count:
-//          FAIL … 2 · the FIRST apply refuses and teaches …
-//          AssertionError: an unconfirmed apply committed: expected 2 to be 1
-//          FAIL … 4 · … (4b) refuses confirmed: false and teaches instead
-//          AssertionError: confirmed: false committed: expected 2 to be 1
-//   A2 (0 cells HERE, 1 in the hermetic suite) `args.confirmed === true` widened to
-//        `if (args.confirmed)`. THE WIRE CANNOT SEE IT, and that is a measurement rather than a
-//        gap: the SDK's `inputSchema` validation refuses the string `'true'` — the only input that
-//        distinguishes a boolean gate from a truthiness gate — before the handler runs. The bar
-//        lives in `packages/mcp/src/__tests__/apply-refusal.test.ts` and M1 reds it there. The leg
-//        is kept, and requires that hermetic red in the same run.
-//   A3 (5 cells) the capability check inverted so the form is attached unconditionally — the
-//        behaviour that shipped before this plan:
-//          FAIL … (6b) a 2026-07-28 caller that declares no elicitation capability …
-//          ProtocolError: Cannot request input 'confirm' (elicitation/create): the request's client
-//          capabilities do not declare the required capability
-//   A4 (5 cells) the structured refusal deleted, leaving `content` alone:
-//          AssertionError: Output validation error: Tool agent_qa_apply_config_proposal has an
-//          output schema but no structured content was provided
-//
-// Protocol grounding: SEP-2322 (`input_required` results and the client retry), SEP-2567 (no
-// session — the `proposal_id` is the cross-call handle), SEP-2575 (stateless per-request servers).
+// DRIVEN AS BEFORE: the SHIPPED composition (`composeCliLocalAgent`), the real knowledge store on
+// disk, a real git repository and a real MCP client over the SDK's in-process handler, with every
+// exchange's raw bytes recorded so payload cells assert on what a caller actually received.
 
 import { spawnSync } from 'node:child_process'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
@@ -80,26 +35,29 @@ import { join } from 'node:path'
 import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client'
 import { createMcpHandler } from '@modelcontextprotocol/server'
 import { buildAgentQaMcpServer } from '@vostride/agent-qa-mcp'
-import { createGrantOperations } from '@vostride/agent-qa-knowledge-local'
-import { STANDING_APPROVAL_SCOPE } from '@vostride/agent-qa-schema'
+import { publishBundleForTest } from '@vostride/agent-qa-knowledge-local'
+import { KnowledgeChangeOutputSchema } from '@vostride/agent-qa-schema'
 import { runSafetyScope } from '@vostride/agent-qa-safety-local'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import { composeMcpMasking, mcpFunctionCaller } from '../commands/mcp.js'
-import { filePre432ConfigProposal } from '../composition/__tests__/pre-432-config-proposal.js'
 import { composeCliLocalAgent } from '../composition/local-agent-host.js'
 import { resolveStdioScopes } from '../composition/mcp-token-resolution.js'
 
-/** The grantable class, READ off the shipped op id rather than typed as policy (391 D-04). */
-const CONFIG_APPLY_CLASS = 'fn:config.proposal.apply'
-
 const CONFIG_FILE = 'agent-qa.config.yaml'
 
-/** The two apply doors, by the names the shipped catalogue gives them. */
-const CONFIG_DOOR = 'agent_qa_apply_config_proposal'
-const KNOWLEDGE_DOOR = 'agent_qa_apply_proposal'
+const KNOWLEDGE_TOOL = 'agent_qa_change_knowledge'
+const CONFIG_TOOL = 'agent_qa_change_config'
+const RETIRED_TOOLS = [
+  'agent_qa_apply_proposal',
+  'agent_qa_apply_config_proposal',
+  'agent_qa_propose_knowledge_change',
+  'agent_qa_propose_config_change',
+  'agent_qa_list_proposals',
+  'agent_qa_show_proposal',
+] as const
 
-/** The house-style config, valid against the real schema — an invalid one files a BLOCKED record. */
+/** The house-style config, valid against the real schema. */
 const SEEDED_CONFIG = `# agent-qa Configuration
 
 workspace:
@@ -143,7 +101,6 @@ function git(...args: string[]): string {
   const result = spawnSync('git', args, { cwd: root, encoding: 'utf8' })
   if (result.error !== undefined) throw result.error
   if (result.status !== 0) {
-    // 395-24 · WR-12 — a `git` that ran and failed must not return quietly.
     throw new Error(`git ${args.join(' ')} exited ${String(result.status)}: ${result.stderr}`)
   }
   return result.stdout
@@ -158,15 +115,33 @@ function porcelain(): string {
   return git('status', '--porcelain').trim()
 }
 
-/** One committed standing approval through the REAL mint (produced-not-literal, 391's own law). */
-async function mintGrant(actionClass: string): Promise<void> {
-  const verbs = createGrantOperations({
-    resolveKnowledgeRoot: () => knowledgeRoot,
-    auditBaseDir: agentQaRoot,
-    now: () => '2026-08-16T09:00:00.000Z',
-  })
-  const outcome = await verbs.record({ actionClass, scope: STANDING_APPROVAL_SCOPE })
-  if (outcome.kind !== 'recorded') throw new Error(`fixture mint failed: ${outcome.kind}`)
+/** One committed candidate record in the real store, through the layer's own publish helper. */
+function publishRecord(name: string): string {
+  const outcome = publishBundleForTest(
+    { knowledgeRoot, productKey: 'Change Differential', auditBaseDir: agentQaRoot, commitArtifacts: 'none' },
+    {
+      draft: {
+        kind: 'fact',
+        subtype: 'selector',
+        anchors: [{ t: 'el', role: 'Button', name }],
+        scope: { tier: 'product', key: 'change-differential' },
+        summary: `${name.toLowerCase()} button`,
+        body: `Selecting ${name} advances the flow.`,
+        distilledEvidenceRef: { id: `evidence-${name.toLowerCase()}`, sha: 'c'.repeat(64) },
+        originStage: 'run-curation',
+      },
+      discriminant: { kind: 'fact', subtype: 'selector', elementRef: { role: 'Button', name } },
+      originClass: 'agent-verified',
+      createdAtOrdinal: 3,
+      screenStates: [],
+      initialEvents: [],
+      relations: [],
+      provenance: { mode: 'run-linked', runId: 'change-differential', testId: 't', stepIndex: 0 },
+      artifacts: [],
+    },
+  )
+  if (outcome.kind !== 'published') throw new Error(`fixture publish failed: ${outcome.kind}`)
+  return outcome.id
 }
 
 /** One recorded exchange: the bytes a caller's transport actually received. */
@@ -178,6 +153,7 @@ interface Frame {
 interface Session {
   readonly client: Client
   readonly frames: Frame[]
+  readonly elicited: unknown[]
   close(): Promise<void>
 }
 
@@ -188,32 +164,16 @@ interface Era {
 }
 
 const LEGACY: Era = { wire: 'legacy', elicitation: false }
-const MODERN_PLAIN: Era = { wire: 'modern', elicitation: false }
 const MODERN_CAPABLE: Era = { wire: 'modern', elicitation: true }
 
 /**
- * The id the capable-client cell answers its form with.
- *
- * A module-level handle rather than a closure argument because the elicitation handler is registered
- * at connect time and the proposal does not exist until later in the same cell. It is the CLIENT's
- * memory of what it is confirming, which is what a real host's UI would hold.
- */
-let lastElicitedProposalId: string | undefined
-
-/**
  * Connect a REAL MCP client to a server built by the SHIPPED factory over the SHIPPED composition.
- *
- * The only thing replaced is the socket — `handler.fetch` is the SDK's own documented in-process
- * driver, and the loopback face has its own cells in `mcp-visibility-differential.test.ts`. The
- * caller's scope set comes from `resolveStdioScopes(true)`, which is D-07's config opt-in: the
- * shipped route by which an MCP caller comes to hold `config-write`, rather than a scope array typed
- * here.
- *
- * `era` is explicit on every connection because the SDK client defaults to the 2025 handshake, and
- * the three combinations answer D-11's refusal in three different ways (group 6).
+ * The caller's scopes come from `resolveStdioScopes(true)`, the config opt-in, so both change
+ * tools are listed.
  */
 async function connect(era: Era = LEGACY): Promise<Session> {
   const frames: Frame[] = []
+  const elicited: unknown[] = []
   const handler = createMcpHandler(() =>
     buildAgentQaMcpServer({
       registry: host!.registry,
@@ -227,29 +187,25 @@ async function connect(era: Era = LEGACY): Promise<Session> {
     return res
   }) as typeof fetch
 
-  const client = new Client({ name: 'agent-qa-396-06-apply', version: '0.0.0' }, {
+  const client = new Client({ name: 'agent-qa-432-12-change', version: '0.0.0' }, {
     ...(era.wire === 'modern' ? { versionNegotiation: { mode: { pin: '2026-07-28' } } } : {}),
     ...(era.elicitation ? { capabilities: { elicitation: {} } } : {}),
   } as never)
-
   if (era.elicitation) {
-    // The client half of SEP-2322's multi-round-trip: the SDK re-issues the call carrying this
-    // answer, so this handler is what turns the server's form into an applied proposal.
-    client.setRequestHandler(
-      'elicitation/create' as never,
-      (() => ({
-        action: 'accept',
-        content: { proposal_id: lastElicitedProposalId ?? '' },
-      })) as never,
-    )
+    // A client that WOULD answer a form. The claim is that it is never asked.
+    client.setRequestHandler('elicitation/create' as never, ((request: unknown) => {
+      elicited.push(request)
+      return { action: 'accept', content: {} }
+    }) as never)
   }
 
   await client.connect(
-    new StreamableHTTPClientTransport(new URL('http://apply.local/mcp'), { fetch: recordingFetch }),
+    new StreamableHTTPClientTransport(new URL('http://change.local/mcp'), { fetch: recordingFetch }),
   )
   return {
     client,
     frames,
+    elicited,
     close: async () => {
       await client.close().catch(() => {})
       await handler.close().catch(() => {})
@@ -257,12 +213,6 @@ async function connect(era: Era = LEGACY): Promise<Session> {
   }
 }
 
-/** The last recorded response body — the serialization the caller read. */
-function lastFrame(session: Session): string {
-  return session.frames[session.frames.length - 1]!.text
-}
-
-/** Every byte this session received, in order — used where a cell is about an earlier round trip. */
 function allFrames(session: Session): string {
   return session.frames.map((frame) => frame.text).join('\n')
 }
@@ -272,65 +222,42 @@ interface ToolResult {
   readonly structuredContent?: Record<string, unknown>
   readonly isError?: boolean
   readonly resultType?: string
-  readonly inputRequests?: Record<string, unknown>
 }
 
-async function call(
-  session: Session,
-  name: string,
-  args: Record<string, unknown>,
-): Promise<ToolResult> {
+async function call(session: Session, name: string, args: Record<string, unknown>): Promise<ToolResult> {
   return (await session.client.callTool({ name, arguments: args })) as ToolResult
 }
 
-/** The text a caller reads, joined — the content channel of a tool result. */
 function rendered(result: ToolResult): string {
   return (result.content ?? []).map((block) => block.text ?? '').join('\n')
 }
 
-/**
- * A pre-432 config proposal on disk, as the old propose tool filed it, and its id.
- *
- * 432-11: the config tool writes in the call and files nothing, so the apply doors measured here
- * are driven over the records already on disk.
- */
-async function proposeConfigChange(_session: Session, value = '45s'): Promise<string> {
-  return (await filePre432ConfigProposal({
-    configPath,
-    agentQaRoot,
-    edits: [{ path: 'use.timeout.step', value }],
-  })).proposalId
+/** The store's statuses, read through the knowledge bundle read tool over the same wire. */
+async function statuses(session: Session): Promise<string[]> {
+  const listed = await call(session, 'agent_qa_list_knowledge_bundles', {})
+  const rows = (listed.structuredContent as { result?: unknown } | undefined)?.result
+    ?? listed.structuredContent
+  return ((rows ?? []) as { status: string }[]).map((row) => row.status).sort()
 }
 
-beforeEach(async () => {
-  root = mkdtempSync(join(tmpdir(), 'agent-qa-396-06-apply-'))
+beforeEach(() => {
+  root = mkdtempSync(join(tmpdir(), 'agent-qa-432-12-change-'))
   configPath = join(root, CONFIG_FILE)
   agentQaRoot = join(root, '.agent-qa')
   knowledgeRoot = join(root, 'agent-qa-knowledge')
   mkdirSync(agentQaRoot, { recursive: true })
   mkdirSync(knowledgeRoot, { recursive: true })
   writeFileSync(configPath, SEEDED_CONFIG)
-  lastElicitedProposalId = undefined
 
   git('init', '--quiet')
-  // A fresh temp repository has no identity and `git commit` refuses without one; signing is off so
-  // a developer machine configured to sign every commit does not make this suite depend on a key.
-  git('config', 'user.name', 'agent-qa 396-06 apply differential')
-  git('config', 'user.email', 'apply-differential@example.invalid')
+  git('config', 'user.name', 'agent-qa 432-12 change differential')
+  git('config', 'user.email', 'change-differential@example.invalid')
   git('config', 'commit.gpgsign', 'false')
   writeFileSync(join(root, '.gitignore'), '.agent-qa/\nagent-qa-knowledge/\n')
   git('add', '--', '.gitignore', CONFIG_FILE)
   git('commit', '--quiet', '-m', 'seed')
 
-  // D-02's read side, and the reason a commit below means what it says: `config.proposal.apply` is
-  // `mutating-shared`, the MCP host binds NO confirm port (D-09), and this process is headless — so
-  // a standing approval is the ONLY rung of the ladder that can allow. A cell that commits below
-  // committed on this grant and on nothing else.
-  await mintGrant(CONFIG_APPLY_CLASS)
-
   host = composeCliLocalAgent({ agentQaRoot, configPath, confirm: undefined })
-  // THE PRODUCTION MASKER, composed by the function the `mcp` command itself calls. Empty seeds
-  // because this file's subject is the write path; the credential surface has its own suite.
   masking = composeMcpMasking({ tokens: [], env: {} })
 })
 
@@ -342,14 +269,9 @@ afterEach(async () => {
   rmSync(root, { recursive: true, force: true })
 })
 
-/** Everything runs headless, which is the arrangement the grant above is the only way out of. */
-function headless<T>(fn: () => Promise<T>): Promise<T> {
-  return runSafetyScope({ executionContext: 'local-headless' }, fn)
-}
-
-/** Run a cell against one open session, closing it however the cell ends. */
+/** Everything runs headless, the MCP host's own context. */
 async function driven(era: Era, cell: (session: Session) => Promise<void>): Promise<void> {
-  await headless(async () => {
+  await runSafetyScope({ executionContext: 'local-headless' }, async () => {
     const session = await connect(era)
     try {
       await cell(session)
@@ -359,21 +281,20 @@ async function driven(era: Era, cell: (session: Session) => Promise<void>): Prom
   })
 }
 
-describe('1 · changing writes in the call and commits nothing', () => {
+describe('1 · changing config writes in the call and commits nothing', () => {
   it('writes the change on the first call, files nothing, and leaves history exactly where it was', async () => {
     await driven(LEGACY, async (session) => {
       const before = commitCount()
-      const result = await call(session, 'agent_qa_propose_config_change', {
+      const result = await call(session, CONFIG_TOOL, {
         action: 'config.field.set',
         path: 'use.timeout.step',
         value: '45s',
       })
       const structured = result.structuredContent as { outcome?: string; files?: string[] }
 
-      // 432-11 D-05: ONE CALL, applied, and the answer names the file it wrote.
       expect(structured.outcome, rendered(result)).toBe('applied')
       expect(structured.files).toEqual([CONFIG_FILE])
-      expect(lastFrame(session)).toContain('applied')
+      expect(allFrames(session)).toContain('applied')
 
       // D-07: a plain edit git shows as modified; no commit, and no proposal record.
       expect(commitCount(), 'changing must not commit').toBe(before)
@@ -384,337 +305,153 @@ describe('1 · changing writes in the call and commits nothing', () => {
   })
 })
 
-describe('2 · the FIRST apply refuses and teaches, and the repository does not move', () => {
-  it('answers a non-error refusal carrying the summary and the exact re-call, and commits nothing',
-    async () => {
-      await driven(LEGACY, async (session) => {
-        const proposalId = await proposeConfigChange(session)
-        const before = commitCount()
-
-        const refusal = await call(session, CONFIG_DOOR, { proposal_id: proposalId })
-
-        // THE NUMBER, first. Everything else in this cell is about what the caller was told; this
-        // line is about what happened to their repository.
-        expect(commitCount(), 'an unconfirmed apply committed').toBe(before)
-        expect(porcelain()).toBe('')
-
-        // NOT an error. Refusing to commit unasked is this tool working, and an error result would
-        // teach a host to surface it as a fault and an agent to retry it as one.
-        expect(refusal.isError ?? false, rendered(refusal)).toBe(false)
-
-        // Asserted on the RECORDED WIRE BYTES, not on the parsed object: the teach is only a teach
-        // if it survived serialization to the caller.
-        const wire = lastFrame(session)
-        expect(wire).toContain(proposalId)
-        expect(wire).toContain('confirmed')
-        expect(wire).toContain('Nothing has been changed by this call.')
-
-        // The summary a human authorises against describes THIS proposal, read through the same
-        // wall every other tool crosses.
-        expect(rendered(refusal)).toContain('a config proposal, status pending')
-
-        // THE MACHINE HALF. A model caller reads `structuredContent`, not prose, and the refusal
-        // arrives there as data on the arm the tool advertises for it — including `applied: false`,
-        // which is the one field a reader that mishandles the union still gets right.
-        const structured = refusal.structuredContent as Record<string, unknown>
-        expect(structured['status']).toBe('confirmation-required')
-        expect(structured['applied']).toBe(false)
-        expect(structured['proposal_id']).toBe(proposalId)
-        expect(String(structured['instruction'])).toContain('confirmed: true')
-      })
-    })
-
-  it('advertises both arms of that answer in tools/list, so a caller can see the union', async () => {
+describe('2 · C432-MCP-DIRECT-RECEIPT: knowledge changes apply on their one call', () => {
+  it('C432-MCP-DIRECT-RECEIPT: accept, reject and forget each change the real store once and answer the records they changed', async () => {
+    const forgotten = publishRecord('Checkout')
+    const rejected = publishRecord('Coupon')
     await driven(LEGACY, async (session) => {
-      const listed = await session.client.listTools()
-      const door = listed.tools.find((tool) => tool.name === CONFIG_DOOR)
-      expect(door, listed.tools.map((tool) => tool.name).join(', ')).toBeDefined()
+      const before = commitCount()
+      expect(await statuses(session)).toEqual(['candidate', 'candidate'])
 
-      // Two arms and no more: the op's own outcome, and D-11's refusal. A door advertising only
-      // the receipt is a door whose refusal a strict caller must treat as a contract violation —
-      // and the SDK agrees, which is why it refuses to serve one.
-      const output = door!.outputSchema as { anyOf?: readonly Record<string, unknown>[] }
-      expect(output.anyOf).toHaveLength(2)
-      const arms = output.anyOf!
-      const refusalArm = arms.find(
-        (arm) => (arm.properties as Record<string, unknown> | undefined)?.['status'] !== undefined,
-      )
-      expect(refusalArm, JSON.stringify(arms).slice(0, 400)).toBeDefined()
-      expect(Object.keys(refusalArm!.properties as Record<string, unknown>).sort()).toEqual([
-        'applied',
-        'instruction',
-        'proposal_id',
-        'status',
-        'summary',
-      ])
+      const forget = await call(session, KNOWLEDGE_TOOL, {
+        action: 'knowledge.forget', target: { grain: 'record', recordId: forgotten },
+      })
+      const forgetAnswer = KnowledgeChangeOutputSchema.parse(forget.structuredContent)
+      expect(forgetAnswer).toMatchObject({ outcome: 'applied', verb: 'forget', recordIds: [forgotten] })
+      if (forgetAnswer.outcome !== 'applied') throw new Error('forget did not apply')
+      expect(forgetAnswer.forgetReceipt?.resultingBundleStatus).toBe('tombstoned')
+
+      const reject = await call(session, KNOWLEDGE_TOOL, {
+        action: 'knowledge.reject', target: { grain: 'record', recordId: rejected }, reason: 'moved',
+      })
+      expect(KnowledgeChangeOutputSchema.parse(reject.structuredContent))
+        .toMatchObject({ outcome: 'applied', verb: 'reject', recordIds: [rejected] })
+
+      // Read back from disk through the same wire: both changes landed in the call.
+      expect(await statuses(session)).toEqual(['deprecated', 'deprecated'])
+      // The prose a person reads is the same masked serialization as the machine channel.
+      expect(JSON.parse(rendered(reject))).toEqual(reject.structuredContent)
+
+      // D-07: knowledge is gitignored here, so nothing the repository tracks moved, and no
+      // commit was made; D-05: no proposal was filed.
+      expect(commitCount()).toBe(before)
+      expect(porcelain()).toBe('')
+      expect(existsSync(join(agentQaRoot, 'proposals'))).toBe(false)
     })
   })
-})
 
-describe('3 · the confirmed apply commits EXACTLY once, with the receipts on the wire', () => {
-  it('makes one commit and answers the applied receipt as structured content', async () => {
+  it('C432-MCP-DIRECT-RECEIPT: a typed absence is data, and a malformed id is refused before any write', async () => {
+    const recordId = publishRecord('Checkout')
     await driven(LEGACY, async (session) => {
-      const proposalId = await proposeConfigChange(session)
-      await call(session, CONFIG_DOOR, { proposal_id: proposalId })
-      const before = commitCount()
+      const absent = await call(session, KNOWLEDGE_TOOL, {
+        action: 'knowledge.accept', target: { grain: 'record', recordId: 'rec-not-in-this-store' },
+      })
+      expect(absent.isError ?? false, rendered(absent)).toBe(false)
+      expect(absent.structuredContent).toMatchObject({
+        outcome: 'target-not-found', target: { grain: 'record', recordId: 'rec-not-in-this-store' },
+      })
 
-      const applied = await call(session, CONFIG_DOOR, { proposal_id: proposalId, confirmed: true })
-
-      expect(applied.isError ?? false, rendered(applied)).toBe(false)
-      expect(commitCount(), 'a confirmed apply must make exactly one commit').toBe(before + 1)
-      expect(porcelain(), 'the apply must leave nothing uncommitted').toBe('')
-
-      // T-396-20: the receipts travel untouched in `structuredContent`, which is the machine half of
-      // the answer — a caller that only read the prose could not tell which commit was made.
-      const receipt = applied.structuredContent as {
-        outcome?: string
-        commits?: readonly { role?: string; hash?: string }[]
-        files?: readonly string[]
+      for (const target of [
+        { grain: 'record', recordId: '' },
+        { grain: 'bundle', shortId: 'TST-001' },
+      ]) {
+        const refused = await call(session, KNOWLEDGE_TOOL, { action: 'knowledge.forget', target })
+        expect(refused.isError, JSON.stringify(target)).toBe(true)
       }
-      expect(receipt.outcome).toBe('applied')
-      expect(receipt.files).toEqual([CONFIG_FILE])
-      expect(receipt.commits).toHaveLength(1)
-
-      // The hash the wire carried is a commit that really is in the person's history, and it is the
-      // one at the tip. Read from git, not from the receipt that claimed it.
-      const claimed = receipt.commits![0]!.hash!
-      expect(git('rev-parse', 'HEAD').trim().startsWith(claimed)).toBe(true)
-      expect(lastFrame(session)).toContain(claimed)
-
-      // And the bytes really changed — an apply that committed an empty tree would satisfy every
-      // line above.
-      expect(git('show', '--stat', '--name-only', '--format=', 'HEAD').trim()).toBe(CONFIG_FILE)
-      expect(git('show', `HEAD:${CONFIG_FILE}`)).toContain('step: 45s')
+      expect(await statuses(session)).toEqual(['candidate'])
+      expect(recordId.length).toBeGreaterThan(0)
     })
   })
 })
 
-describe('4 · doctored one-shots commit nothing', () => {
-  it('(4a) refuses the STRING "true" at the schema wall, before the handler runs', async () => {
+describe('3 · a repeated operation identity is the same change', () => {
+  it('answers the same records for a retried identity and lands the change once', async () => {
+    const recordId = publishRecord('Checkout')
     await driven(LEGACY, async (session) => {
-      const proposalId = await proposeConfigChange(session)
-      const before = commitCount()
+      const operationId = '7b6a5f4e-3d2c-4b1a-9f8e-7d6c5b4a3f2e'
+      const args = { action: 'knowledge.forget', target: { grain: 'record', recordId }, operationId }
+      const first = KnowledgeChangeOutputSchema.parse((await call(session, KNOWLEDGE_TOOL, args)).structuredContent)
+      const retry = KnowledgeChangeOutputSchema.parse((await call(session, KNOWLEDGE_TOOL, args)).structuredContent)
 
-      const doctored = await call(session, CONFIG_DOOR, {
-        proposal_id: proposalId,
-        confirmed: 'true',
-      })
-
-      // THE FIRST of the two walls under `confirmed`, and the one the hermetic suite could not
-      // reach: the SDK validates the call against the advertised `inputSchema` BEFORE the handler
-      // runs, so a string never meets the handler's strict `=== true` at all.
-      expect(doctored.isError, rendered(doctored)).toBe(true)
-      expect(commitCount(), 'a string confirmation committed').toBe(before)
-      expect(porcelain()).toBe('')
-
-      // The handler never ran, evidenced without a spy: a handler that HAD run would have read the
-      // proposal and answered the teach, and neither the summary nor the re-call instruction is
-      // anywhere in the bytes the caller received.
-      const wire = lastFrame(session)
-      expect(wire).not.toContain('Nothing has been changed by this call.')
-      expect(wire).not.toContain('a config proposal, status pending')
+      expect(first).toMatchObject({ outcome: 'applied', operationId, recordIds: [recordId] })
+      expect(retry).toMatchObject({ outcome: 'applied', operationId, recordIds: [recordId] })
+      expect(await statuses(session)).toEqual(['deprecated'])
     })
   })
-
-  it('(4b) refuses confirmed: false and teaches instead', async () => {
-    await driven(LEGACY, async (session) => {
-      const proposalId = await proposeConfigChange(session)
-      const before = commitCount()
-
-      const refused = await call(session, CONFIG_DOOR, {
-        proposal_id: proposalId,
-        confirmed: false,
-      })
-
-      expect(refused.isError ?? false, rendered(refused)).toBe(false)
-      expect(commitCount(), 'confirmed: false committed').toBe(before)
-      expect(rendered(refused)).toContain('Nothing has been changed by this call.')
-    })
-  })
-
-  it('(4c) a confirmed apply of an id that names no proposal commits nothing, and says so',
-    async () => {
-      await driven(LEGACY, async (session) => {
-        const before = commitCount()
-        const answer = await call(session, CONFIG_DOOR, {
-          proposal_id: 'prop_00000000-0000-4000-8000-000000000000',
-          confirmed: true,
-        })
-
-        expect(commitCount(), 'a confirmed apply of a nonexistent proposal committed').toBe(before)
-        expect(porcelain()).toBe('')
-        // A refusal a caller can read, on the wire, rather than a transport failure.
-        expect(rendered(answer).length).toBeGreaterThan(0)
-      })
-    })
 })
 
-describe('5 · a replayed confirmation answers as DATA and commits nothing further', () => {
-  it('answers the already-applied outcome with the ORIGINAL receipt and an unchanged count',
-    async () => {
-      await driven(LEGACY, async (session) => {
-        const proposalId = await proposeConfigChange(session)
-        const first = await call(session, CONFIG_DOOR, {
-          proposal_id: proposalId,
-          confirmed: true,
-        })
-        const afterFirst = commitCount()
-        const firstHash = (first.structuredContent as {
-          commits?: readonly { hash?: string }[]
-        }).commits![0]!.hash
-
-        const replay = await call(session, CONFIG_DOOR, { proposal_id: proposalId, confirmed: true })
-
-        // DATA, NOT AN ERROR. A retrying surface — a dropped socket, a re-issued MCP call, an agent
-        // that lost its transcript — must be able to learn that its apply already happened AND what
-        // it did. `isError` would say the first half while discarding the receipt.
-        expect(replay.isError ?? false, rendered(replay)).toBe(false)
-        const receipt = replay.structuredContent as {
-          outcome?: string
-          commits?: readonly { hash?: string }[]
-        }
-        expect(receipt.outcome).toBe('already-applied')
-        expect(receipt.commits![0]!.hash).toBe(firstHash)
-
-        expect(commitCount(), 'a replayed confirmation committed a second time').toBe(afterFirst)
-        expect(porcelain()).toBe('')
-      })
-    })
-})
-
-describe('6 · both eras at the wire, and the capability that decides the shape', () => {
-  // THE THREE-WAY MEASUREMENT. `inputRequired` is not a payload the server composes and an
-  // uninterested client ignores: the SDK REFUSES to serve it to a connection that cannot answer it,
-  // and until this suite measured that, D-11's door answered an SDK capability error — no summary,
-  // no re-call — to every caller that did not declare `elicitation`, which is nearly all of them.
-  //
-  // The three cells are one law seen from three sides: the teach is always available, and the form
-  // is added exactly where it can be used.
-
-  it('(6a) a 2025-era caller receives the deterministic instruction as an ordinary result',
-    async () => {
-      await driven(LEGACY, async (session) => {
-        const proposalId = await proposeConfigChange(session)
-        const before = commitCount()
-
-        const refusal = await call(session, CONFIG_DOOR, { proposal_id: proposalId })
-
-        expect(refusal.isError ?? false, rendered(refusal)).toBe(false)
-        // The 2025 codec has no place to put an input request, so the payload must carry none —
-        // asserted on the wire, because the wire is where the SDK would have replaced it.
-        expect(refusal.resultType).toBeUndefined()
-        expect(lastFrame(session)).not.toContain('Cannot request input')
-        expect(rendered(refusal)).toContain('confirmed: true')
-        expect(commitCount()).toBe(before)
-      })
-    })
-
-  it('(6b) a 2026-07-28 caller that declares no elicitation capability gets the same teach, not a '
-    + 'protocol error', async () => {
-    await driven(MODERN_PLAIN, async (session) => {
-      const proposalId = await proposeConfigChange(session)
-      const before = commitCount()
-
-      // Before the fix this line THREW `ProtocolError … -32021` (HTTP 400, RESEARCH Pitfall 11) and
-      // the caller received nothing readable at all.
-      const refusal = await call(session, CONFIG_DOOR, { proposal_id: proposalId })
-
-      expect(refusal.isError ?? false, rendered(refusal)).toBe(false)
-      expect(refusal.resultType).toBeUndefined()
-      expect(rendered(refusal)).toContain('confirmed: true')
-      expect(lastFrame(session)).not.toContain('-32021')
-      expect(commitCount()).toBe(before)
-    })
-  })
-
-  it('(6c) a 2026-07-28 caller that DOES declare elicitation is served the form, and answering it '
-    + 'applies', async () => {
+describe('4 · C432-MCP-NO-ELICITATION: there is no confirmation round on either era', () => {
+  it('C432-MCP-NO-ELICITATION: a 2026 client that can answer a form is never asked, and its one call lands', async () => {
+    const recordId = publishRecord('Checkout')
     await driven(MODERN_CAPABLE, async (session) => {
-      const proposalId = await proposeConfigChange(session)
-      lastElicitedProposalId = proposalId
+      const answer = await call(session, KNOWLEDGE_TOOL, {
+        action: 'knowledge.forget', target: { grain: 'record', recordId },
+      })
+      expect(answer.isError ?? false, rendered(answer)).toBe(false)
+      expect(answer.resultType ?? 'complete').not.toBe('input_required')
+      expect(answer.structuredContent).toMatchObject({ outcome: 'applied', verb: 'forget' })
+      expect(session.elicited).toEqual([])
+      expect(allFrames(session)).not.toContain('input_required')
+      expect(await statuses(session)).toEqual(['deprecated'])
+    })
+  })
+
+  it('C432-MCP-NO-ELICITATION: `confirmed` is not an input — refused at the schema wall, and nothing changes', async () => {
+    const recordId = publishRecord('Checkout')
+    await driven(LEGACY, async (session) => {
       const before = commitCount()
+      for (const [tool, args] of [
+        [KNOWLEDGE_TOOL, { action: 'knowledge.forget', target: { grain: 'record', recordId }, confirmed: true }],
+        [CONFIG_TOOL, { action: 'config.field.set', path: 'use.timeout.step', value: '45s', confirmed: true }],
+      ] as const) {
+        const doctored = await call(session, tool, args as Record<string, unknown>)
+        expect(doctored.isError, `${tool} accepted a confirmation`).toBe(true)
+      }
+      expect(await statuses(session)).toEqual(['candidate'])
+      expect(readFileSync(configPath, 'utf8')).toBe(SEEDED_CONFIG)
+      expect(commitCount()).toBe(before)
+      expect(porcelain()).toBe('')
 
-      // The SDK drives SEP-2322's round trip: the server returns `input_required`, this client's
-      // elicitation handler answers with the proposal id, the SDK re-issues the same call carrying
-      // `inputResponses`, and the handler's SECONDARY route applies. One `callTool` from here.
-      const applied = await call(session, CONFIG_DOOR, { proposal_id: proposalId })
-
-      expect(applied.isError ?? false, rendered(applied)).toBe(false)
-      expect((applied.structuredContent as { outcome?: string }).outcome).toBe('applied')
-      expect(commitCount(), 'the answered form must commit exactly once').toBe(before + 1)
-
-      // The form really was served on this connection, and it asked for exactly one field — a form
-      // that also asked for a password would satisfy a containment check on `proposal_id` alone.
-      const served = allFrames(session)
-      expect(served).toContain('input_required')
-      expect(served).toContain('proposal_id')
-      expect(served).not.toContain('"reason"')
+      const tools = (await session.client.listTools()).tools
+      for (const tool of tools) {
+        const schema = JSON.stringify(tool.inputSchema)
+        expect(schema, tool.name).not.toContain('"confirmed"')
+        expect(schema, tool.name).not.toContain('"proposal_id"')
+      }
     })
   })
 })
 
-describe('7 · the SECOND door, and the family split', () => {
-  it('(7a) the knowledge door refuses first, teaches, and commits nothing', async () => {
+describe('5 · the retired doors are unknown, and each change tool reaches only its own ops', () => {
+  it('lists none of the retired names and answers a call to one as an unknown tool, changing nothing', async () => {
+    const recordId = publishRecord('Checkout')
     await driven(LEGACY, async (session) => {
-      const proposalId = await proposeConfigChange(session)
-      const before = commitCount()
-
-      const refusal = await call(session, KNOWLEDGE_DOOR, { proposal_id: proposalId })
-
-      expect(refusal.isError ?? false, rendered(refusal)).toBe(false)
-      expect(rendered(refusal)).toContain('Nothing has been changed by this call.')
-      expect(commitCount()).toBe(before)
+      const names = (await session.client.listTools()).tools.map((tool) => tool.name)
+      expect(names).toContain(KNOWLEDGE_TOOL)
+      expect(names).toContain(CONFIG_TOOL)
+      for (const retired of RETIRED_TOOLS) {
+        expect(names, retired).not.toContain(retired)
+        const answer = await call(session, retired, { proposal_id: 'prop_0123456789ab', confirmed: true })
+          .catch((error: unknown) => ({ isError: true, content: [{ type: 'text', text: String(error) }] }))
+        expect(answer.isError, retired).toBe(true)
+        expect(rendered(answer), retired).toMatch(/not found|unknown/i)
+      }
+      expect(await statuses(session)).toEqual(['candidate'])
+      expect(recordId.length).toBeGreaterThan(0)
     })
   })
 
-  // (7b) AND (7c) ARE ONE DIFFERENTIAL, and the pair is what makes it a measurement rather than a
-  // naming convention. Same proposal, same grants, same era, same confirmation — the ONLY thing
-  // that differs between them is which door the call went through. One commits and one cannot,
-  // which is exactly the claim "each tool binds one applyOpId at registration" makes.
-  //
-  // The knowledge apply class is granted in BOTH, so the policy gate is not what refuses in (7b):
-  // without that grant the refusal reads `denied knowledge.proposal.apply: fail-closed …`, which
-  // would have been a cell about the safety ladder wearing this cell's name. With it, the call
-  // reaches `knowledge.proposal.apply` itself and is refused there — by the KIND of the proposal.
-
-  it('(7b) the knowledge door CONFIRMED on a config proposal reaches the KNOWLEDGE op and commits '
-    + 'nothing', async () => {
-    await mintGrant('fn:knowledge.proposal.apply')
+  it('the knowledge tool cannot reach a config op, nor the config tool a knowledge op', async () => {
     await driven(LEGACY, async (session) => {
-      const proposalId = await proposeConfigChange(session)
-      const before = commitCount()
-
-      const answer = await call(session, KNOWLEDGE_DOOR, {
-        proposal_id: proposalId,
-        confirmed: true,
+      const crossed = await call(session, KNOWLEDGE_TOOL, {
+        action: 'config.field.set', path: 'use.timeout.step', value: '45s',
       })
-
-      // THE NUMBER is the claim: a door bound to `knowledge.proposal.apply` cannot commit a config
-      // proposal, whatever it is asked. A single fold over both ops would have.
-      expect(commitCount(), 'the knowledge door committed a config proposal').toBe(before)
-      expect(porcelain()).toBe('')
-
-      // And the refusal came from the op this door binds — which is the half that says WHICH op was
-      // reached rather than only that nothing happened.
-      expect(rendered(answer).toLowerCase()).toContain('knowledge')
+      expect(crossed.isError).toBe(true)
+      const crossedBack = await call(session, CONFIG_TOOL, {
+        action: 'knowledge.forget', target: { grain: 'record', recordId: 'rec-x' },
+      })
+      expect(crossedBack.isError).toBe(true)
+      expect(readFileSync(configPath, 'utf8')).toBe(SEEDED_CONFIG)
     })
   })
-
-  it('(7c) CONTROL: the same proposal, the same grants, through the CONFIG door — commits once',
-    async () => {
-      await mintGrant('fn:knowledge.proposal.apply')
-      await driven(LEGACY, async (session) => {
-        const proposalId = await proposeConfigChange(session)
-        const before = commitCount()
-
-        const applied = await call(session, CONFIG_DOOR, {
-          proposal_id: proposalId,
-          confirmed: true,
-        })
-
-        expect((applied.structuredContent as { outcome?: string }).outcome, rendered(applied))
-          .toBe('applied')
-        expect(commitCount(), 'the control must commit, or (7b) proves nothing').toBe(before + 1)
-      })
-    })
 })

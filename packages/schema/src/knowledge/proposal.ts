@@ -2,14 +2,14 @@
 //
 // 391-SHAPED (2026-08-02, D-17): the proposals inbox, `StandingApprovalGrant` and the
 // per-run digest engine that Phase 391 builds absorb THIS DTO as data — do not fork it
-// there. 387 ships the two-step seam only (propose computes typed deltas and commits
-// nothing; apply routes them through the Curator), and 396's MCP `agent_qa_apply_proposal`
-// projects the same shape. Re-minting it once two consumers exist would be a cross-surface
-// contract migration, which is precisely the cost this note exists to avoid.
+// there. 387 shipped the two-step seam (propose computes typed deltas and commits
+// nothing; apply routes them through the Curator).
 //
-// The two-step shape is not ceremony. A one-shot mutating call would mean the only way to
-// find out what a verb was about to do is to let it do it — and "forget" is not an operation
-// anyone wants to learn the scope of afterwards.
+// 2026-09-30, 432-12 (D-05): knowledge changes apply in the call. `knowledge.accept`,
+// `knowledge.reject` and `knowledge.forget` take the verb input plus an optional operation
+// identity and answer what they changed; no op mints this envelope any more. It stays only while
+// the pre-432 apply path still reads the records already on disk, until 432-17 deletes the inbox.
+// The forget receipt below is the direct change's receipt too.
 
 import { z } from 'zod'
 
@@ -58,6 +58,28 @@ export const ProposalIdSchema = z
   .string()
   .min(10)
   .regex(/^prop_[a-z0-9]+(?:-[a-z0-9]+)*$/u, 'expected a prop_-prefixed lowercase proposal id')
+
+/**
+ * 2026-09-30, 432-12 (D-05): the three knowledge changes a caller makes directly. A mark changes
+ * knowledge through `runs.mark`, so it is a review verb and not one of these.
+ */
+export const KNOWLEDGE_CHANGE_VERBS = ['accept', 'reject', 'forget'] as const
+
+export type KnowledgeChangeVerb = (typeof KNOWLEDGE_CHANGE_VERBS)[number]
+
+/**
+ * A caller's stable identity for one knowledge change (432-12). Repeating it repeats the change,
+ * which lands once. Letters, digits and single hyphens, so a UUID fits and the change id derived
+ * from it keeps the receipt id shape.
+ */
+export const KnowledgeChangeOperationIdSchema = z
+  .string()
+  .min(5)
+  .max(64)
+  .regex(
+    /^[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*$/u,
+    'expected letters, digits and single hyphens, such as a UUID',
+  )
 
 /**
  * WHAT a review verb is about, at either of the two grains D-19 pins: one record, or the

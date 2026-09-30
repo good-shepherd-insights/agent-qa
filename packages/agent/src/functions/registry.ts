@@ -37,16 +37,16 @@ import { explainSpec } from './ops/explain.js'
 import { entitiesResolveSpec } from './ops/entities-resolve.js'
 import { grantsListSpec } from './ops/grants-list.js'
 import { grantsRevokeSpec } from './ops/grants-revoke.js'
-import { knowledgeAcceptProposeSpec } from './ops/knowledge-accept-propose.js'
+import { knowledgeAcceptSpec } from './ops/knowledge-accept-propose.js'
 import { knowledgeBriefWhySpec } from './ops/knowledge-brief-why.js'
 import { knowledgeBundlesListSpec } from './ops/knowledge-bundles-list.js'
 import { knowledgeGatesListSpec } from './ops/knowledge-gates-list.js'
-import { knowledgeForgetProposeSpec } from './ops/knowledge-forget-propose.js'
+import { knowledgeForgetSpec } from './ops/knowledge-forget-propose.js'
 import { knowledgeProposalApplySpec } from './ops/knowledge-proposal-apply.js'
 import { knowledgeRecordShowSpec } from './ops/knowledge-record-show.js'
 import { knowledgeRecordsDiffSpec } from './ops/knowledge-records-diff.js'
 import { knowledgeRecordsInspectSpec } from './ops/knowledge-records-inspect.js'
-import { knowledgeRejectProposeSpec } from './ops/knowledge-reject-propose.js'
+import { knowledgeRejectSpec } from './ops/knowledge-reject-propose.js'
 import { proposalsAcceptSpec } from './ops/proposals-accept.js'
 import { proposalsListSpec } from './ops/proposals-list.js'
 import { proposalsRejectSpec } from './ops/proposals-reject.js'
@@ -199,15 +199,15 @@ const BUILT_IN_FUNCTION_SPECS: readonly FunctionSpec[] = [
   // the runs.knowledge projection. Bound through `runDetail`, so a host with no projection lists
   // it `unbound` BY NAME instead of mapping a run it cannot see.
   runsOverviewSpec as FunctionSpec,
-  // 387 KREV-01 D-17: the MUTATING half — three proposes and one apply. Registered here and
-  // bound only where a composition supplies `knowledgeReview`, so a read-only host lists all
-  // four as `unbound` BY NAME rather than omitting them: a capability that is absent from a
-  // catalogue is indistinguishable from one that never existed, and D-09 requires the two to
-  // look different. The apply is the ONE op in this list through which committed knowledge can
-  // change; the three proposes commit nothing by construction.
-  knowledgeAcceptProposeSpec as FunctionSpec,
-  knowledgeRejectProposeSpec as FunctionSpec,
-  knowledgeForgetProposeSpec as FunctionSpec,
+  // 387 KREV-01 D-17: the MUTATING half. Registered here and bound only where a composition
+  // supplies `knowledgeReview`, so a read-only host lists all four as `unbound` BY NAME rather
+  // than omitting them: a capability that is absent from a catalogue is indistinguishable from one
+  // that never existed, and D-09 requires the two to look different.
+  // 2026-09-30, 432-12 (D-05): the three changes apply in the call; the `.propose` ids are gone
+  // with no alias. The pre-432 apply stays for the records already on disk until 432-17.
+  knowledgeAcceptSpec as FunctionSpec,
+  knowledgeRejectSpec as FunctionSpec,
+  knowledgeForgetSpec as FunctionSpec,
   knowledgeProposalApplySpec as FunctionSpec,
   configGetSpec as FunctionSpec,
   // 395 D-01/D-03 · CFGM-01/CFGM-03: the config editor's first action and the ONE verb through

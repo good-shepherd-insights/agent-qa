@@ -28,7 +28,7 @@
 // authoring tools, and 398's build-time capability catalog owns discoverability. The SDK's prompt
 // registration verb is therefore named NOWHERE in this file — including in prose, since an
 // acceptance grep counts occurrences of that symbol and requires zero, and a guard a comment can
-// defeat is not a guard (the same discipline `apply-refusal.ts` keeps for the human-origin verb).
+// defeat is not a guard.
 //
 // THE TASK SEAM IS NOT IMPORTED HERE, and that absence is MCPS-06's actual content (D-12): a seam
 // that took the JobQueue contract would make every queue change an MCP change. `task-seam.ts` is
@@ -40,14 +40,12 @@
 // from a shared cache entry), SEP-2106 (full JSON Schema 2020-12 for the advertised contracts).
 
 import { McpServer, ProtocolError, ProtocolErrorCode } from '@modelcontextprotocol/server'
-import type { CallToolResult, InputRequiredResult } from '@modelcontextprotocol/server'
+import type { CallToolResult } from '@modelcontextprotocol/server'
 import { invokeFunction, RUNS_ARTIFACT_FUNCTION_ID } from '@vostride/agent-qa-agent'
 import type { FunctionRegistry } from '@vostride/agent-qa-agent'
 import type { FunctionCaller, FunctionScope } from '@vostride/agent-qa-schema'
 
 import { MCP_APPS_EXTENSION_ID, appResourceUriFor, registerAppResources } from './app-resource.js'
-import { createApplyToolHandler, createMarkToolHandler, credentialRequiredRefusal, summarizeProposalForApply } from './apply-refusal.js'
-import type { ApplyToolCallContext, ApplyToolInput } from './apply-refusal.js'
 import { liveLinkLineFor } from './live-link.js'
 import type { LiveLinkSupplier } from './live-link.js'
 import {
@@ -57,7 +55,13 @@ import {
   compositionOf,
 } from './mapping.js'
 import type { ToolProjection } from './mapping.js'
-import { decorateRunEvidenceImage, maskedToolError, maskedToolResult } from './masked-result.js'
+import {
+  createMarkToolHandler,
+  credentialRequiredRefusal,
+  decorateRunEvidenceImage,
+  maskedToolError,
+  maskedToolResult,
+} from './masked-result.js'
 import { V1_TOOL_MIGRATION_MAP } from './migration-map.js'
 import type { V1ToolMigrationEntry } from './migration-map.js'
 import { McpProjectionError, toRegisterToolConfig } from './projection.js'
@@ -668,29 +672,14 @@ export function buildAgentQaMcpServer(deps: AgentQaMcpServerDeps): McpServer {
     registered.add(projection.name)
     const config = toRegisterToolConfig(projection, specs, advertised, deps.maskText)
 
-    if (projection.kind === 'apply') {
-      if (projection.credential === 'required') {
-        server.registerTool(projection.name, config, createMarkToolHandler({
-          caller: deps.caller, invoke, maskText: deps.maskText,
-        }))
-        continue
-      }
-      // D-11's refuse-and-teach primitive, bound to THIS family's apply op. One primitive, two
-      // tools: there is no second refusal shape to keep in step and no family-specific branch
-      // anywhere below it. It does not pass through the generic handler above, which is why it
-      // takes its own `maskText` — a handler registered directly is a channel nothing else masks.
-      const applyHandler = createApplyToolHandler({
-        applyOpId: projection.ops[0]!,
-        invoke,
-        summarize: summarizeProposalForApply,
-        maskText: deps.maskText,
-      })
-      server.registerTool(
-        projection.name,
-        config,
-        async (args: unknown, ctx: unknown): Promise<CallToolResult | InputRequiredResult> =>
-          applyHandler(args as ApplyToolInput, ctx as ApplyToolCallContext),
-      )
+    // 419 D-20: the sovereign mark door keeps its credential check until the permission wave
+    // (D-12). 432-12 (D-05/D-14): it is the only `apply` entry left, and there is no confirmation
+    // round on any door — every other change tool goes through the generic handler below and
+    // answers its receipt on the one call.
+    if (projection.kind === 'apply' && projection.credential === 'required') {
+      server.registerTool(projection.name, config, createMarkToolHandler({
+        caller: deps.caller, invoke, maskText: deps.maskText,
+      }))
       continue
     }
 

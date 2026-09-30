@@ -707,12 +707,13 @@ describe('agent-qa fn (generic function invoker)', () => {
       // first rows in this table whose binding is a statement about the HOST rather than about
       // the required-port set: a read-only composition lists these same four `unbound`, which is
       // asserted directly in agent-local's `review-verbs.test.ts`.
-      'knowledge.accept.propose': {
+      // 2026-09-30, 432-12 (D-05): the three changes apply in the call and lose `.propose`.
+      'knowledge.accept': {
         requiredScopes: ['knowledge-write'],
         resultKind: 'unary',
         bindingStatus: 'bound',
       },
-      'knowledge.forget.propose': {
+      'knowledge.forget': {
         requiredScopes: ['knowledge-write'],
         resultKind: 'unary',
         bindingStatus: 'bound',
@@ -722,7 +723,7 @@ describe('agent-qa fn (generic function invoker)', () => {
         resultKind: 'unary',
         bindingStatus: 'bound',
       },
-      'knowledge.reject.propose': {
+      'knowledge.reject': {
         requiredScopes: ['knowledge-write'],
         resultKind: 'unary',
         bindingStatus: 'bound',

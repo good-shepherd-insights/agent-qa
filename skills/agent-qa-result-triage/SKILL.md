@@ -10,7 +10,7 @@ metadata:
 ## Workflow
 
 1. Start with `agent_qa_get_run_digest` for the run's verdicts, its post-processing chain, the
-   outcome of its steps, the proposals awaiting a decision, and the counts. This is the triage read
+   outcome of its steps, the changes its marks applied, and the counts. This is the triage read
    over this surface.
 2. Fetch the rest of the evidence before deciding:
    - `agent_qa_get_run_overview` — every test and step with its verdict, and the address of each

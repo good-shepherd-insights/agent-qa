@@ -59,7 +59,15 @@ describe('the closed event union — membership is the D-18 list, exactly (ANLY-
     )
     // 2026-09-15, 423-21 D-18: the two feedback read tools joined the mapping.
     // 2026-09-29, 431-04 D-01: the eight discovery read tools joined it (MX_MAX_TOOLS = 24).
-    expect(ANALYTICS_MCP_TOOL_NAMES.length).toBe(24)
+    // 2026-09-30, 432-12 D-05: the four proposal apply/list/show tools left it and the two change
+    // tools were renamed (MX_MAX_TOOLS = 20); no retired name survives in the vocabulary.
+    expect(ANALYTICS_MCP_TOOL_NAMES.length).toBe(20)
+    expect(ANALYTICS_MCP_TOOL_NAMES).toContain('agent_qa_change_knowledge')
+    expect(ANALYTICS_MCP_TOOL_NAMES).toContain('agent_qa_change_config')
+    for (const retired of [
+      'agent_qa_propose_knowledge_change', 'agent_qa_propose_config_change', 'agent_qa_apply_proposal',
+      'agent_qa_apply_config_proposal', 'agent_qa_list_proposals', 'agent_qa_show_proposal',
+    ]) expect(ANALYTICS_MCP_TOOL_NAMES as readonly string[], retired).not.toContain(retired)
     expect(ANALYTICS_MCP_TOOL_NAMES).toContain('agent_qa_mark_run')
     expect(ANALYTICS_MCP_TOOL_NAMES).toContain('agent_qa_list_knowledge_gates')
     expect(ANALYTICS_MCP_TOOL_NAMES).toContain('agent_qa_get_run_marks')

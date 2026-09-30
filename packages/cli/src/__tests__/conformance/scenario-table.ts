@@ -57,15 +57,15 @@ import {
   ExplainInputSchema,
   GrantsListInputSchema,
   GrantsRevokeInputSchema,
-  KnowledgeAcceptProposeInputSchema,
+  KnowledgeAcceptChangeInputSchema,
   KnowledgeBundlesListInputSchema,
   KnowledgeGatesListInputSchema,
-  KnowledgeForgetProposeInputSchema,
+  KnowledgeForgetChangeInputSchema,
   KnowledgeProposalApplyInputSchema,
   KnowledgeRecordShowInputSchema,
   KnowledgeRecordsDiffInputSchema,
   KnowledgeRecordsInspectInputSchema,
-  KnowledgeRejectProposeInputSchema,
+  KnowledgeRejectChangeInputSchema,
   ProposalsAcceptInputSchema,
   ProposalsListInputSchema,
   ProposalsRejectInputSchema,
@@ -127,16 +127,16 @@ export const OP_INPUT_CONTRACTS = {
   'entities.resolve': EntitiesResolveInputSchema,
   'grants.list': GrantsListInputSchema,
   'grants.revoke': GrantsRevokeInputSchema,
-  'knowledge.accept.propose': KnowledgeAcceptProposeInputSchema,
+  'knowledge.accept': KnowledgeAcceptChangeInputSchema,
   'knowledge.brief.why': BriefWhyInputSchema,
   'knowledge.bundles.list': KnowledgeBundlesListInputSchema,
   'knowledge.gates.list': KnowledgeGatesListInputSchema,
-  'knowledge.forget.propose': KnowledgeForgetProposeInputSchema,
+  'knowledge.forget': KnowledgeForgetChangeInputSchema,
   'knowledge.proposal.apply': KnowledgeProposalApplyInputSchema,
   'knowledge.record.show': KnowledgeRecordShowInputSchema,
   'knowledge.records.diff': KnowledgeRecordsDiffInputSchema,
   'knowledge.records.inspect': KnowledgeRecordsInspectInputSchema,
-  'knowledge.reject.propose': KnowledgeRejectProposeInputSchema,
+  'knowledge.reject': KnowledgeRejectChangeInputSchema,
   'proposals.accept': ProposalsAcceptInputSchema,
   'proposals.list': ProposalsListInputSchema,
   'proposals.reject': ProposalsRejectInputSchema,
@@ -224,6 +224,10 @@ export type UnprojectedReasonKey =
   // moves. Recorded here because a disposition that changes is dated on the record, never edited
   // away.
   | 'credential-mint-deferral'
+  // 2026-09-30 (432-12, D-05). The SIXTH class, admitted rather than folded: the five pre-432
+  // proposal ops are not scoped out of a workflow and are not doors that cannot open. Their MCP
+  // tools were removed with the proposal round, and 432-17 deletes the ops themselves.
+  | 'proposal-round-removed'
   | 'not-mid-flight-write'
   | 'not-mid-flight-read'
 
@@ -249,6 +253,9 @@ export const UNPROJECTED_REASON_SIGNATURES: readonly (readonly [UnprojectedReaso
     // whose issuance is deferred to a later phase is a stronger fact than a scoping line, and the
     // shipped prose for `runs.liveurl` deliberately contains neither mid-flight phrase.
     Object.freeze(['credential-mint-deferral', 'MINTS A CREDENTIAL'] as const),
+    // 432-12 D-05. Above the mid-flight lines on the same precedence rule; the shipped prose for
+    // the five ops contains neither mid-flight phrase.
+    Object.freeze(['proposal-round-removed', 'proposal round'] as const),
     Object.freeze(['not-mid-flight-write', 'mid-flight workflow write'] as const),
     Object.freeze(['not-mid-flight-read', 'mid-flight workflow read'] as const),
   ])
@@ -656,7 +663,7 @@ export const SCENARIO_TABLE = Object.freeze([
     input: { target: 'shop', authStateName: 'shop-default' },
     perSurface: {
       chat: { reachable: true },
-      mcp: { reachable: { tool: 'agent_qa_propose_config_change' } },
+      mcp: { reachable: { tool: 'agent_qa_change_config' } },
       fn: { reachable: true },
     },
     renderExpect: {
@@ -678,7 +685,7 @@ export const SCENARIO_TABLE = Object.freeze([
     input: { path: 'use.timeout', value: '45s' },
     perSurface: {
       chat: { reachable: true },
-      mcp: { reachable: { tool: 'agent_qa_propose_config_change' } },
+      mcp: { reachable: { tool: 'agent_qa_change_config' } },
       fn: { reachable: true },
     },
     renderExpect: {
@@ -711,7 +718,7 @@ export const SCENARIO_TABLE = Object.freeze([
     input: { name: 'seed', runtime: 'node', file: 'scripts/seed.mjs' },
     perSurface: {
       chat: { reachable: true },
-      mcp: { reachable: { tool: 'agent_qa_propose_config_change' } },
+      mcp: { reachable: { tool: 'agent_qa_change_config' } },
       fn: { reachable: true },
     },
     renderExpect: {
@@ -735,7 +742,7 @@ export const SCENARIO_TABLE = Object.freeze([
     input: { domain: 'shop.example.com' },
     perSurface: {
       chat: { reachable: true },
-      mcp: { reachable: { tool: 'agent_qa_propose_config_change' } },
+      mcp: { reachable: { tool: 'agent_qa_change_config' } },
       fn: { reachable: true },
     },
     renderExpect: {
@@ -757,7 +764,8 @@ export const SCENARIO_TABLE = Object.freeze([
     input: { proposalId: 'prop_0123456789ab' },
     perSurface: {
       chat: { reachable: true },
-      mcp: { reachable: { tool: 'agent_qa_apply_config_proposal' } },
+      // 2026-09-30 (432-12 D-05): the apply tool left with the proposal round; 432-17 deletes the op.
+      mcp: { unprojected: 'proposal-round-removed' },
       fn: { reachable: true },
     },
     renderExpect: { markers: ['commits', 'files', 'outcome'] },
@@ -769,7 +777,7 @@ export const SCENARIO_TABLE = Object.freeze([
     input: { name: 'shop', platform: 'web', url: 'https://shop.example.com' },
     perSurface: {
       chat: { reachable: true },
-      mcp: { reachable: { tool: 'agent_qa_propose_config_change' } },
+      mcp: { reachable: { tool: 'agent_qa_change_config' } },
       fn: { reachable: true },
     },
     renderExpect: {
@@ -791,7 +799,7 @@ export const SCENARIO_TABLE = Object.freeze([
     input: { name: 'shop', changes: { url: 'https://shop.example.com/basket' } },
     perSurface: {
       chat: { reachable: true },
-      mcp: { reachable: { tool: 'agent_qa_propose_config_change' } },
+      mcp: { reachable: { tool: 'agent_qa_change_config' } },
       fn: { reachable: true },
     },
     renderExpect: {
@@ -815,7 +823,8 @@ export const SCENARIO_TABLE = Object.freeze([
     input: {},
     perSurface: {
       chat: { reachable: true },
-      mcp: { reachable: { tool: 'agent_qa_propose_config_change' } },
+      // 2026-09-30 (432-12 D-05/D-09): the undo arm left the config change tool; 432-17 deletes it.
+      mcp: { unprojected: 'proposal-round-removed' },
       fn: { reachable: true },
     },
     renderExpect: {
@@ -901,15 +910,17 @@ export const SCENARIO_TABLE = Object.freeze([
   }),
   // 387-08: valid INPUTS for capabilities most compositions cannot run — `invokeFunction` validates
   // before it consults the binding.
+  // 2026-09-30 (432-12 D-05): the three knowledge changes apply in the call and answer the records
+  // they changed. The retired `.propose` ids have no row: they are not registered.
   scenario({
-    opId: 'knowledge.accept.propose',
+    opId: 'knowledge.accept',
     input: { target: { grain: 'record', recordId: 'rec-not-in-this-fixture' } },
     perSurface: {
       chat: { reachable: true },
-      mcp: { reachable: { tool: 'agent_qa_propose_knowledge_change' } },
+      mcp: { reachable: { tool: 'agent_qa_change_knowledge' } },
       fn: { reachable: true },
     },
-    renderExpect: { markers: ['kind', 'proposal'] },
+    renderExpect: { markers: ['operationId', 'outcome', 'recordIds', 'verb'] },
     policyPoints: { grant: 'allow', refuse: 'deny' },
   }),
   // 387 KREV-02: the fixture runs port records no run, so the honest answer is the typed no-trace
@@ -954,14 +965,14 @@ export const SCENARIO_TABLE = Object.freeze([
     policyPoints: { grant: 'allow', refuse: 'deny' },
   }),
   scenario({
-    opId: 'knowledge.forget.propose',
+    opId: 'knowledge.forget',
     input: { target: { grain: 'bundle', shortId: FIXTURE_ENTITY_SHORT_ID } },
     perSurface: {
       chat: { reachable: true },
-      mcp: { reachable: { tool: 'agent_qa_propose_knowledge_change' } },
+      mcp: { reachable: { tool: 'agent_qa_change_knowledge' } },
       fn: { reachable: true },
     },
-    renderExpect: { markers: ['kind', 'proposal'] },
+    renderExpect: { markers: ['operationId', 'outcome', 'recordIds', 'verb'] },
     policyPoints: { grant: 'allow', refuse: 'deny' },
   }),
   scenario({
@@ -982,7 +993,8 @@ export const SCENARIO_TABLE = Object.freeze([
     input: { proposalId: 'prop_0123456789ab' },
     perSurface: {
       chat: { reachable: true },
-      mcp: { reachable: { tool: 'agent_qa_apply_proposal' } },
+      // 2026-09-30 (432-12 D-05): the apply tool left with the proposal round; 432-17 deletes the op.
+      mcp: { unprojected: 'proposal-round-removed' },
       fn: { reachable: true },
     },
     renderExpect: { markers: ['outcome', 'proposal'] },
@@ -1038,17 +1050,17 @@ export const SCENARIO_TABLE = Object.freeze([
     policyPoints: { grant: 'allow', refuse: 'deny' },
   }),
   scenario({
-    opId: 'knowledge.reject.propose',
+    opId: 'knowledge.reject',
     input: {
       target: { grain: 'record', recordId: 'rec-not-in-this-fixture' },
       reason: 'not reproducible',
     },
     perSurface: {
       chat: { reachable: true },
-      mcp: { reachable: { tool: 'agent_qa_propose_knowledge_change' } },
+      mcp: { reachable: { tool: 'agent_qa_change_knowledge' } },
       fn: { reachable: true },
     },
-    renderExpect: { markers: ['kind', 'proposal'] },
+    renderExpect: { markers: ['operationId', 'outcome', 'recordIds', 'verb'] },
     policyPoints: { grant: 'allow', refuse: 'deny' },
   }),
   // 391 PROP-01: the accept takes the refined proposal id; `always` is optional and omitted.
@@ -1072,7 +1084,8 @@ export const SCENARIO_TABLE = Object.freeze([
     input: {},
     perSurface: {
       chat: { reachable: true },
-      mcp: { reachable: { tool: 'agent_qa_list_proposals' } },
+      // 2026-09-30 (432-12 D-05): the inbox read left with the proposal round; 432-17 deletes it.
+      mcp: { unprojected: 'proposal-round-removed' },
       fn: { reachable: true },
     },
     renderExpect: { markers: ['entries'] },
@@ -1096,7 +1109,8 @@ export const SCENARIO_TABLE = Object.freeze([
     input: { proposalId: 'prop_0123456789ab' },
     perSurface: {
       chat: { reachable: true },
-      mcp: { reachable: { tool: 'agent_qa_show_proposal' } },
+      // 2026-09-30 (432-12 D-05): the inbox read left with the proposal round; 432-17 deletes it.
+      mcp: { unprojected: 'proposal-round-removed' },
       fn: { reachable: true },
     },
     renderExpect: { markers: ['entry', 'kind'] },

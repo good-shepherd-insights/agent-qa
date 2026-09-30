@@ -286,10 +286,11 @@ export const V1_TOOL_MIGRATION_MAP: readonly V1ToolMigrationEntry[] = Object.fre
   Object.freeze({
     v1Name: 'agent_qa_create_hook',
     arm: 'renamed-to',
-    v2Tool: 'agent_qa_propose_config_change',
+    v2Tool: 'agent_qa_change_config',
     note:
       'projected by 396 (inventory row 21, 2026-08-16): `config.hook.add` is an arm of the config '
-      + 'fold, so a hook arrives as a reviewable diff instead of a written file.',
+      + 'fold. Since 2026-09-30 (432-12, D-05) the fold is `agent_qa_change_config` and the hook is '
+      + 'written in the call, with the files it changed on the answer.',
   }),
   // 22
   Object.freeze({
@@ -300,7 +301,7 @@ export const V1_TOOL_MIGRATION_MAP: readonly V1ToolMigrationEntry[] = Object.fre
       + 'hooks file is not one, so an existing hook has no edit verb. Minting one now would pin an '
       + 'edit shape to a contract the owning milestone revisits.',
     route:
-      'adding a hook goes through `agent_qa_propose_config_change`; editing an existing one is a '
+      'adding a hook goes through `agent_qa_change_config`; editing an existing one is a '
       + 'hooks-file edit a person makes until the owner rules on the verb.',
     owner: 'M7 (skills layer)',
   }),

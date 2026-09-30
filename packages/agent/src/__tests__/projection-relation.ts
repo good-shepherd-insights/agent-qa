@@ -46,13 +46,13 @@ import { entitiesResolveSpec } from '../functions/ops/entities-resolve.js'
 import { knowledgeBriefWhySpec } from '../functions/ops/knowledge-brief-why.js'
 import { knowledgeBundlesListSpec } from '../functions/ops/knowledge-bundles-list.js'
 import { knowledgeGatesListSpec } from '../functions/ops/knowledge-gates-list.js'
-import { knowledgeAcceptProposeSpec } from '../functions/ops/knowledge-accept-propose.js'
-import { knowledgeForgetProposeSpec } from '../functions/ops/knowledge-forget-propose.js'
+import { knowledgeAcceptSpec } from '../functions/ops/knowledge-accept-propose.js'
+import { knowledgeForgetSpec } from '../functions/ops/knowledge-forget-propose.js'
 import { knowledgeProposalApplySpec } from '../functions/ops/knowledge-proposal-apply.js'
 import { knowledgeRecordShowSpec } from '../functions/ops/knowledge-record-show.js'
 import { knowledgeRecordsDiffSpec } from '../functions/ops/knowledge-records-diff.js'
 import { knowledgeRecordsInspectSpec } from '../functions/ops/knowledge-records-inspect.js'
-import { knowledgeRejectProposeSpec } from '../functions/ops/knowledge-reject-propose.js'
+import { knowledgeRejectSpec } from '../functions/ops/knowledge-reject-propose.js'
 import { proposalsListSpec } from '../functions/ops/proposals-list.js'
 import { proposalsRejectSpec } from '../functions/ops/proposals-reject.js'
 import { proposalsShowSpec } from '../functions/ops/proposals-show.js'
@@ -160,15 +160,15 @@ export const CONTRACTS_BY_ID: Readonly<Record<string, DeclaredContracts>> = {
   // that answers "which decision widened this?" for a reviewer reading a diff.
   'grants.list': grantsListSpec,
   'grants.revoke': grantsRevokeSpec,
-  'knowledge.accept.propose': knowledgeAcceptProposeSpec,
+  'knowledge.accept': knowledgeAcceptSpec,
   'knowledge.bundles.list': knowledgeBundlesListSpec,
   'knowledge.brief.why': knowledgeBriefWhySpec,
-  'knowledge.forget.propose': knowledgeForgetProposeSpec,
+  'knowledge.forget': knowledgeForgetSpec,
   'knowledge.proposal.apply': knowledgeProposalApplySpec,
   'knowledge.record.show': knowledgeRecordShowSpec,
   'knowledge.records.diff': knowledgeRecordsDiffSpec,
   'knowledge.records.inspect': knowledgeRecordsInspectSpec,
-  'knowledge.reject.propose': knowledgeRejectProposeSpec,
+  'knowledge.reject': knowledgeRejectSpec,
   // 391 PROP-03. Paired the day they are registered. `show` and `reject` are the first
   // contracts in this map whose output union carries a WHOLE nested DTO per arm — the inbox
   // envelope, payload and all — so an unchecked projection is exactly where a published

@@ -30,6 +30,7 @@ import type {
   KnowledgeAcceptInput,
   KnowledgeBundleSummary,
   KnowledgeCandidateInjectionResult,
+  KnowledgeChangeOutput,
   KnowledgeGatesListResult,
   KnowledgeForgetInput,
   KnowledgeMarkInput,
@@ -751,10 +752,10 @@ export interface KnowledgeReaderPort {
 
 /**
  * Injected WRITE capability over knowledge review — accept, reject and forget (Phase 387,
- * KREV-01 / D-17, declared here and implemented in 387-08).
+ * KREV-01 / D-17, declared here and implemented in 387-08; direct since 432-12).
  *
  * A SEPARATE port from {@link KnowledgeReaderPort}, and separate is the point. Widening the
- * reader with propose/apply would have handed a write path to every composition that only
+ * reader with a write member would have handed a write path to every composition that only
  * ever wanted to list bundles — including the read-only surfaces the physically-separate
  * reader entry exists to keep write-free — and no lint could have told the two apart
  * afterwards, because they would have been one type. The split is what keeps "this host can
@@ -763,35 +764,34 @@ export interface KnowledgeReaderPort {
  *
  * OPTIONAL on {@link FunctionDeps} and joined to {@link OptionalFunctionDepKey} for the same
  * reason `runInvocation` is: a host that cannot mutate knowledge — a listing registry, a
- * read-only surface, a daemon before it holds the writer lease — must report that as a
- * VISIBLE `unbound` on the verbs by name, not as a call that fails somewhere far away.
+ * read-only surface — must report that as a VISIBLE `unbound` on the verbs by name, not as a call
+ * that fails somewhere far away.
  *
- * Two verbs and not five, because the mutating half is two STEPS rather than three verbs
- * (D-17): propose computes the typed deltas and commits nothing; apply routes a minted
- * proposal's deltas through the Curator's single commit path. Which verb is being proposed
- * is data on the request, so a fourth review verb later is a new arm rather than a new
- * member — and a port whose member set grows with the vocabulary is a port every host has to
- * be re-taught.
+ * 2026-09-30, 432-12 (D-04/D-05/D-09): `change` applies an explicit accept, reject or forget in the
+ * call, through the explicit writer, in every execution context, under the writer lease. It is the
+ * member every change op reaches. `propose` and `apply` remain only for the pre-432 records already
+ * on disk (`knowledge.proposal.apply` and the inbox's accept); no op reaches `propose`, and 432-17
+ * deletes both with the inbox.
  */
 export interface KnowledgeReviewPort {
   /**
+   * Apply one explicit knowledge change in the call and answer what it changed (432-12).
+   *
+   * Validation, target resolution, the writer lease, delegation to a live holder, delta
+   * validation, bundle egress and every promotion gate belong to the writer behind this member.
+   * A repeated `operationId` is the same change and lands once; an absent one is minted.
+   */
+  change(request: KnowledgeChangeRequest): Promise<KnowledgeChangeOutput>
+  /**
    * Compute what a verb WOULD change and mint a proposal for it. Commits nothing.
    *
-   * The receipt preview a forget carries is computed here for the same reason: "show me what
-   * would be removed" has to be answerable before anything is removed, or the answer arrives
-   * too late to act on.
+   * Pre-432 only: no op reaches it since 432-12, and 432-17 deletes it with the inbox.
    */
   propose(
     request: KnowledgeProposalRequest,
     /**
      * WHO is proposing (391 D-08 / D-15) — the emitting op's id, and the run when the caller has
-     * one. The proposal it mints rides into the envelope carrying this, which is what makes the
-     * inbox able to answer "where did this come from" and the per-run digest able to group by run.
-     *
-     * A SECOND PARAMETER rather than a field on the request union, because it is a fact about the
-     * CALL and not about the verb: adding it to each arm would have made every future arm restate
-     * it, and an arm that forgot would mint unattributed proposals that look identical to 387-era
-     * ones. Optional so a host that genuinely does not know an emitter writes the bare 387
+     * one. Optional so a host that genuinely does not know an emitter writes the bare 387
      * document instead of a fabricated attribution.
      */
     origin?: ProposalMintOrigin,
@@ -799,12 +799,23 @@ export interface KnowledgeReviewPort {
   /**
    * Apply a minted proposal by id, routing its deltas through the one commit path (D-18).
    *
-   * Takes an ID rather than a proposal document: a caller that could hand back an edited
-   * proposal would be able to apply deltas nothing ever computed, which is the whole reason
-   * the two steps are two steps.
+   * Serves the pre-432 records already on disk until 432-17 deletes the inbox.
    */
   apply(proposalId: string): Promise<KnowledgeApplyOutcome>
 }
+
+/**
+ * One explicit knowledge change (432-12): the verb, the input that verb takes, and the caller's
+ * stable identity for it when the caller has one.
+ *
+ * Discriminated so `reject`'s required reason cannot be omitted by asking for an accept. A mark is
+ * not here: it changes knowledge through `runs.mark`, which owns its own identity and checkpoints.
+ */
+export type KnowledgeChangeRequest = (
+  | { readonly verb: 'accept'; readonly input: KnowledgeAcceptInput }
+  | { readonly verb: 'reject'; readonly input: KnowledgeRejectInput }
+  | { readonly verb: 'forget'; readonly input: KnowledgeForgetInput }
+) & { readonly operationId?: string }
 
 /**
  * Which review verb is being proposed, with the input that verb takes.
@@ -1119,7 +1130,7 @@ export interface StartedRun {
  * optional split earn its keep on the WRITE side: the ability to read committed knowledge and
  * the ability to change it are separate powers, so they are separate members. A host that
  * supplies only the reader lists the mutating verbs as `unbound` by name — which is a true
- * statement about that host, and is exactly what widening the reader port with propose/apply
+ * statement about that host, and is exactly what widening the reader port with a write member
  * would have made unsayable.
  */
 /**

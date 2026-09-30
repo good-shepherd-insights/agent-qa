@@ -302,6 +302,8 @@ function recordingDraftApply(): { port: DraftApplyPortLike; calls: TestDraftAppl
 }
 
 const NEVER_PROPOSES: KnowledgeReviewPort = {
+  // 432-12: the direct change is never reached by the test-draft accept this file measures.
+  change: () => Promise.reject(new Error('this file never changes knowledge directly')),
   propose: () => Promise.reject(new Error('this file never proposes')),
   apply: (proposalId: string) =>
     Promise.reject(new Error(`this file never applies knowledge: ${proposalId}`)),

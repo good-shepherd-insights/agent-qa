@@ -32,6 +32,10 @@
 // RE-MEASURED 2026-09-28 (431-04 D-01/D-04/D-10): twenty-four tools; 53 declarations / 35 projected /
 // 18 unprojected. runs.overview arrives projected, and eight previously unprojected reads move over:
 // the five knowledge reads, runs.knowledge, and runs.evidence with runs.artifact behind one fold.
+// RE-MEASURED 2026-09-30 (432-12 D-05/D-02): twenty tools; 53 declarations / 30 projected /
+// 23 unprojected. The two change tools are renamed and write in the call; the four proposal
+// apply/list/show tools and the config undo arm leave with no alias, and their five ops are
+// dispositioned with a dated '432' ruling until 432-17 deletes them.
 // The original measurement settles the 41-vs-43 discrepancy the phase
 // context carried — whatever the registry answers IS the denominator, and this suite reds if the
 // two sets ever stop covering it exactly.
@@ -146,8 +150,8 @@ const projectedOpIds = (): readonly string[] =>
 
 /** D-04's exact sorted list. Adding, removing or renaming a tool reds the first cell below. */
 const PINNED_TOOL_NAMES: readonly string[] = [
-  'agent_qa_apply_config_proposal',
-  'agent_qa_apply_proposal',
+  'agent_qa_change_config',
+  'agent_qa_change_knowledge',
   'agent_qa_diff_knowledge_records',
   'agent_qa_explain_brief',
   'agent_qa_get_entity',
@@ -159,23 +163,30 @@ const PINNED_TOOL_NAMES: readonly string[] = [
   'agent_qa_inspect_knowledge_records',
   'agent_qa_list_knowledge_bundles',
   'agent_qa_list_knowledge_gates',
-  'agent_qa_list_proposals',
   'agent_qa_list_runs',
   'agent_qa_mark_run',
   'agent_qa_preview_run_mark',
-  'agent_qa_propose_config_change',
-  'agent_qa_propose_knowledge_change',
   'agent_qa_refine_test',
   'agent_qa_show_knowledge_record',
-  'agent_qa_show_proposal',
   'agent_qa_start_run',
   'agent_qa_write_test',
 ]
 
 /** D-04's other half: WHICH ops each tool stands in front of. A remap reds without a rename. */
 const PINNED_TOOL_OPS: Readonly<Record<string, readonly string[]>> = {
-  agent_qa_apply_config_proposal: ['config.proposal.apply'],
-  agent_qa_apply_proposal: ['knowledge.proposal.apply'],
+  agent_qa_change_config: [
+    'config.field.set',
+    'config.target.create',
+    'config.target.edit',
+    'config.auth.set',
+    'config.hook.add',
+    'config.project.scaffold',
+  ],
+  agent_qa_change_knowledge: [
+    'knowledge.accept',
+    'knowledge.reject',
+    'knowledge.forget',
+  ],
   agent_qa_diff_knowledge_records: ['knowledge.records.diff'],
   agent_qa_explain_brief: ['knowledge.brief.why'],
   agent_qa_get_entity: ['entities.resolve', 'entities.get'],
@@ -189,25 +200,9 @@ const PINNED_TOOL_OPS: Readonly<Record<string, readonly string[]>> = {
   agent_qa_list_knowledge_gates: ['knowledge.gates.list'],
   agent_qa_mark_run: ['runs.mark'],
   agent_qa_preview_run_mark: ['runs.mark.preview'],
-  agent_qa_list_proposals: ['proposals.list'],
   agent_qa_list_runs: ['runs.list'],
-  agent_qa_propose_config_change: [
-    'config.field.set',
-    'config.target.create',
-    'config.target.edit',
-    'config.auth.set',
-    'config.hook.add',
-    'config.project.scaffold',
-    'config.undo.propose',
-  ],
-  agent_qa_propose_knowledge_change: [
-    'knowledge.accept.propose',
-    'knowledge.reject.propose',
-    'knowledge.forget.propose',
-  ],
   agent_qa_refine_test: ['authoring.draft.edit', 'authoring.draft.verify'],
   agent_qa_show_knowledge_record: ['knowledge.record.show'],
-  agent_qa_show_proposal: ['proposals.show'],
   agent_qa_start_run: ['runs.start'],
   agent_qa_write_test: ['authoring.draft.write'],
 }
@@ -287,7 +282,7 @@ const PINNED_V1_MIGRATION_ARMS: Readonly<Record<string, V1MigrationArm>> = {
  * was pointed at. A remap onto a different real tool reds here and nowhere else.
  */
 const PINNED_V1_RENAMED_TARGETS: Readonly<Record<string, string>> = {
-  agent_qa_create_hook: 'agent_qa_propose_config_change',
+  agent_qa_create_hook: 'agent_qa_change_config',
   agent_qa_create_test: 'agent_qa_write_test',
   agent_qa_enqueue_suite_run: 'agent_qa_start_run',
   agent_qa_enqueue_test_run: 'agent_qa_start_run',
@@ -303,7 +298,8 @@ function armSizes(entries: readonly (readonly [string, V1MigrationArm])[]): Reco
 }
 
 /** 2026-09-28 (431-04 D-10): the closed adjudicator vocabulary, pinned beside its runtime tuple. */
-const PINNED_ADJUDICATIONS: readonly string[] = ['397', '398', '405', '408', '428']
+// 2026-09-30 (432-12 D-05): `'432'` arrives for the five proposal ops that left the catalogue.
+const PINNED_ADJUDICATIONS: readonly string[] = ['397', '398', '405', '408', '428', '432']
 
 /** MCPS-02's stated band. Asserted AT the bound, not implied by the exact pin above it. */
 const MCPS_02_MIN_TOOLS = 8
@@ -314,8 +310,10 @@ const MCPS_02_MIN_TOOLS = 8
  * pins above still red on every change; this bound only states how far the owner has decided to go.
  * 2026-09-28 (431 D-01): the owner widened 431 to the run overview and the evidence fold as well,
  * so the decided total is 16 + 8.
+ * 2026-09-30 (432-12 D-05): the four proposal apply/list/show tools are deleted, so the decided
+ * total is 24 - 4 = 20, and the ceiling moves down with it: a returned proposal tool reds here too.
  */
-const MX_MAX_TOOLS = 24
+const MX_MAX_TOOLS = 20
 
 describe('the pinned catalogue (D-04)', () => {
   it('MCP-NAMES-EXACT: declares exactly the pinned sorted tool-name list', () => {
@@ -334,7 +332,7 @@ describe('the pinned catalogue (D-04)', () => {
   // still passes here and reds the exact pin, and a drop to seven reds here.
   it('holds a tool count inside the MCPS-02 band, at both ends', () => {
     const count = AGENT_QA_TOOL_PROJECTIONS.length
-    expect(count).toBe(24)
+    expect(count).toBe(20)
     expect(count).toBeGreaterThanOrEqual(MCPS_02_MIN_TOOLS)
     expect(count).toBeLessThanOrEqual(MX_MAX_TOOLS)
   })
@@ -445,9 +443,10 @@ describe('the partition law (D-03 / D-15)', () => {
     // 2026-09-15, 423-21 D-04/D-18: two feedback reads projected, evidence unprojected (51/26/25).
     // 2026-09-25, 428 D-07: editor.liveurl arrives unprojected (52/26/26).
     // 2026-09-28, 431-04 D-01/D-10: runs.overview arrives projected and eight reads move (53/35/18).
+    // 2026-09-30, 432-12 D-05: five proposal ops leave the projected side with their tools (53/30/23).
     expect(declarations().length).toBe(53)
-    expect(projectedOpIds().length).toBe(35)
-    expect(UNPROJECTED_OPS.length).toBe(18)
+    expect(projectedOpIds().length).toBe(30)
+    expect(UNPROJECTED_OPS.length).toBe(23)
   })
 
   it('lists no op twice in the scoping note', () => {
@@ -482,8 +481,18 @@ describe('the partition law (D-03 / D-15)', () => {
     // 2026-09-25 (428 D-07). The same widening for the same reason: `editor.liveurl` arrived in
     // 428, unprojected by ruling. Membership is spelled by op id.
     const ADJUDICATED_BY_428 = new Set(['editor.liveurl'])
+    // 2026-09-30 (432-12 D-05): the five pre-432 proposal ops, ruled off the catalogue by 432.
+    const ADJUDICATED_BY_432 = new Set([
+      'config.undo.propose',
+      'config.proposal.apply',
+      'knowledge.proposal.apply',
+      'proposals.list',
+      'proposals.show',
+    ])
     const expectedAdjudicator = (opId: string): string =>
-      ADJUDICATED_BY_428.has(opId)
+      ADJUDICATED_BY_432.has(opId)
+        ? '432'
+        : ADJUDICATED_BY_428.has(opId)
         ? '428'
         : ADJUDICATED_BY_398.has(opId)
         ? '398'
@@ -534,6 +543,10 @@ describe('the partition law (D-03 / D-15)', () => {
       UNPROJECTED_OPS.filter((entry) => ADJUDICATED_BY_428.has(entry.opId)).map((e) => e.opId),
       'the 428-adjudicated pin names entries the scoping note does not carry',
     ).toEqual([...ADJUDICATED_BY_428])
+    expect(
+      UNPROJECTED_OPS.filter((entry) => ADJUDICATED_BY_432.has(entry.opId)).map((e) => e.opId),
+      'the 432-adjudicated pin names entries the scoping note does not carry',
+    ).toEqual([...ADJUDICATED_BY_432])
   })
 
   // D-03's own note leads the list, and the ORDER is part of the decision: a reader scanning the
@@ -566,8 +579,8 @@ describe('the composed fold contracts answer for the ops the mapping declares', 
     )
     expect(folds.map((fold) => fold.name)).toEqual([
       'agent_qa_refine_test',
-      'agent_qa_propose_config_change',
-      'agent_qa_propose_knowledge_change',
+      'agent_qa_change_config',
+      'agent_qa_change_knowledge',
       'agent_qa_get_run_evidence',
     ])
 
@@ -583,8 +596,8 @@ describe('the composed fold contracts answer for the ops the mapping declares', 
         expect(composed, `${projection.name} folds but has no composed contract`).toBe(true)
         continue
       }
-      // The two apply doors are the deliberate exception: they advertise D-11's wire envelope
-      // rather than the op's `{ proposalId }`, which is a fact about MCP and about no other caller.
+      // The mark door is the deliberate exception: it advertises its credential refusal beside the
+      // op's outcome, a fact about this door (419 D-20). The D-11 apply doors are gone (432-12).
       expect(composed, `${projection.name} restates a contract it could inherit`).toBe(
         projection.kind === 'apply',
       )

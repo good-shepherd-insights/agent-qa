@@ -272,11 +272,12 @@ function refusalMessage(error: unknown): string {
  * drop-site lesson (D-04) applied to the field that decides whether a fresh ask is owed.
  *
  * THE FIELD NAMES ARE IN THE BYTES, deliberately. A person who reads `crossBoundary: true` here can
- * find the same field in `agent-qa proposals show <id>` and in the grant refusal, and knows they
- * are looking at one fact rather than three surfaces' opinions of it.
+ * find the same field on the applied answer `agent-qa fn` and the MCP change tool return, and knows
+ * they are looking at one fact rather than several surfaces' opinions of it. (432-12: changes apply
+ * in the call, so there is no proposal to look it up in and nothing waits for review.)
  *
- * SILENT ON THE COMMON PATH. A proposal that crosses nothing contributes NO line, because a warning
- * printed over every proposal is one nobody reads — and an absent or non-boolean verdict is treated
+ * SILENT ON THE COMMON PATH. A change that crosses nothing contributes NO line, because a warning
+ * printed over every change is one nobody reads — and an absent or non-boolean verdict is treated
  * as "no claim of crossing", never as a crossing, since the notice is a disclosure and inventing one
  * would be this function paraphrasing a producer that said nothing.
  */

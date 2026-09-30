@@ -31,9 +31,9 @@
     },
     {
       "arm": "renamed-to",
-      "note": "projected by 396 (inventory row 21, 2026-08-16): `config.hook.add` is an arm of the config fold, so a hook arrives as a reviewable diff instead of a written file.",
+      "note": "projected by 396 (inventory row 21, 2026-08-16): `config.hook.add` is an arm of the config fold. Since 2026-09-30 (432-12, D-05) the fold is `agent_qa_change_config` and the hook is written in the call, with the files it changed on the answer.",
       "v1Name": "agent_qa_create_hook",
-      "v2Tool": "agent_qa_propose_config_change"
+      "v2Tool": "agent_qa_change_config"
     },
     {
       "arm": "retired",
@@ -182,7 +182,7 @@
       "arm": "pending",
       "note": "gap (397, 2026-08-16): `config.field.set` reaches any schema-addressable CONFIG path and the hooks file is not one, so an existing hook has no edit verb. Minting one now would pin an edit shape to a contract the owning milestone revisits.",
       "owner": "M7 (skills layer)",
-      "route": "adding a hook goes through `agent_qa_propose_config_change`; editing an existing one is a hooks-file edit a person makes until the owner rules on the verb.",
+      "route": "adding a hook goes through `agent_qa_change_config`; editing an existing one is a hooks-file edit a person makes until the owner rules on the verb.",
       "v1Name": "agent_qa_update_hook"
     },
     {
@@ -618,7 +618,7 @@
       },
       "id": "config.auth.set",
       "kind": "op",
-      "mcpTool": "agent_qa_propose_config_change",
+      "mcpTool": "agent_qa_change_config",
       "params": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "additionalProperties": false,
@@ -665,7 +665,7 @@
       },
       "id": "config.field.set",
       "kind": "op",
-      "mcpTool": "agent_qa_propose_config_change",
+      "mcpTool": "agent_qa_change_config",
       "params": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "additionalProperties": false,
@@ -738,7 +738,7 @@
       },
       "id": "config.hook.add",
       "kind": "op",
-      "mcpTool": "agent_qa_propose_config_change",
+      "mcpTool": "agent_qa_change_config",
       "params": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "additionalProperties": false,
@@ -794,7 +794,7 @@
       },
       "id": "config.project.scaffold",
       "kind": "op",
-      "mcpTool": "agent_qa_propose_config_change",
+      "mcpTool": "agent_qa_change_config",
       "params": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "additionalProperties": false,
@@ -828,7 +828,7 @@
       },
       "id": "config.proposal.apply",
       "kind": "op",
-      "mcpTool": "agent_qa_apply_config_proposal",
+      "mcpUnprojectedReasonKey": "proposal-round-removed",
       "params": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "additionalProperties": false,
@@ -847,8 +847,7 @@
         "config-write"
       ],
       "surfaces": [
-        "chat",
-        "mcp"
+        "chat"
       ]
     },
     {
@@ -864,7 +863,7 @@
       },
       "id": "config.target.create",
       "kind": "op",
-      "mcpTool": "agent_qa_propose_config_change",
+      "mcpTool": "agent_qa_change_config",
       "params": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "additionalProperties": false,
@@ -921,7 +920,7 @@
       },
       "id": "config.target.edit",
       "kind": "op",
-      "mcpTool": "agent_qa_propose_config_change",
+      "mcpTool": "agent_qa_change_config",
       "params": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "additionalProperties": false,
@@ -968,7 +967,7 @@
       },
       "id": "config.undo.propose",
       "kind": "op",
-      "mcpTool": "agent_qa_propose_config_change",
+      "mcpUnprojectedReasonKey": "proposal-round-removed",
       "params": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "additionalProperties": false,
@@ -979,8 +978,7 @@
         "config-write"
       ],
       "surfaces": [
-        "chat",
-        "mcp"
+        "chat"
       ]
     },
     {
@@ -1141,7 +1139,7 @@
       ]
     },
     {
-      "description": "Compute what accepting a knowledge candidate would change, committing nothing.",
+      "description": "Accept a knowledge candidate, applying the change in the call.",
       "docAbsentReason": "D-07 (dated 2026-08-16): no canonical doc ships for this capability yet. The explicit absence is the honest state — a guessed path would existence-check green and mislead a reader — and the abstention coverage log is the demand signal for writing one.",
       "docPath": null,
       "exampleCall": {
@@ -1152,15 +1150,17 @@
           }
         }
       },
-      "id": "knowledge.accept.propose",
+      "id": "knowledge.accept",
       "kind": "op",
-      "mcpTool": "agent_qa_propose_knowledge_change",
+      "mcpTool": "agent_qa_change_knowledge",
       "params": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "additionalProperties": false,
         "properties": {
-          "runId": {
-            "minLength": 1,
+          "operationId": {
+            "maxLength": 64,
+            "minLength": 5,
+            "pattern": "^[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*$",
             "type": "string"
           },
           "target": {
@@ -1290,7 +1290,7 @@
       ]
     },
     {
-      "description": "Compute exactly what forgetting a record or bundle would remove, removing nothing.",
+      "description": "Forget a knowledge record or bundle, tombstoning it in the call.",
       "docAbsentReason": "D-07 (dated 2026-08-16): no canonical doc ships for this capability yet. The explicit absence is the honest state — a guessed path would existence-check green and mislead a reader — and the abstention coverage log is the demand signal for writing one.",
       "docPath": null,
       "exampleCall": {
@@ -1301,15 +1301,17 @@
           }
         }
       },
-      "id": "knowledge.forget.propose",
+      "id": "knowledge.forget",
       "kind": "op",
-      "mcpTool": "agent_qa_propose_knowledge_change",
+      "mcpTool": "agent_qa_change_knowledge",
       "params": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "additionalProperties": false,
         "properties": {
-          "runId": {
-            "minLength": 1,
+          "operationId": {
+            "maxLength": 64,
+            "minLength": 5,
+            "pattern": "^[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*$",
             "type": "string"
           },
           "target": {
@@ -1407,7 +1409,7 @@
       "exampleCallAbsentReason": "D-08 (dated 2026-08-17): no example call is derivable for knowledge.proposal.apply — params.proposalId constrains its value with the regular expression /^prop_[a-z0-9]+(?:-[a-z0-9]+)*$/, and a placeholder cannot be SHOWN to satisfy an arbitrary pattern — an example the shipped contract would reject teaches a caller a shape this product does not have. The explicit absence is the honest state; an example an agent copies and is refused for is worse than a column that says there is none.",
       "id": "knowledge.proposal.apply",
       "kind": "op",
-      "mcpTool": "agent_qa_apply_proposal",
+      "mcpUnprojectedReasonKey": "proposal-round-removed",
       "params": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "additionalProperties": false,
@@ -1427,8 +1429,7 @@
         "knowledge-write"
       ],
       "surfaces": [
-        "chat",
-        "mcp"
+        "chat"
       ]
     },
     {
@@ -1576,7 +1577,7 @@
       ]
     },
     {
-      "description": "Compute what rejecting a knowledge candidate would change, committing nothing.",
+      "description": "Reject a knowledge candidate with a reason, applying the change in the call.",
       "docAbsentReason": "D-07 (dated 2026-08-16): no canonical doc ships for this capability yet. The explicit absence is the honest state — a guessed path would existence-check green and mislead a reader — and the abstention coverage log is the demand signal for writing one.",
       "docPath": null,
       "exampleCall": {
@@ -1588,18 +1589,20 @@
           }
         }
       },
-      "id": "knowledge.reject.propose",
+      "id": "knowledge.reject",
       "kind": "op",
-      "mcpTool": "agent_qa_propose_knowledge_change",
+      "mcpTool": "agent_qa_change_knowledge",
       "params": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "additionalProperties": false,
         "properties": {
-          "reason": {
-            "minLength": 1,
+          "operationId": {
+            "maxLength": 64,
+            "minLength": 5,
+            "pattern": "^[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*$",
             "type": "string"
           },
-          "runId": {
+          "reason": {
             "minLength": 1,
             "type": "string"
           },
@@ -1702,7 +1705,7 @@
       },
       "id": "proposals.list",
       "kind": "op",
-      "mcpTool": "agent_qa_list_proposals",
+      "mcpUnprojectedReasonKey": "proposal-round-removed",
       "params": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "additionalProperties": false,
@@ -1731,8 +1734,7 @@
         "read"
       ],
       "surfaces": [
-        "chat",
-        "mcp"
+        "chat"
       ]
     },
     {
@@ -1778,7 +1780,7 @@
       "exampleCallAbsentReason": "D-08 (dated 2026-08-17): no example call is derivable for proposals.show — params.proposalId constrains its value with the regular expression /^prop_[a-z0-9]+(?:-[a-z0-9]+)*$/, and a placeholder cannot be SHOWN to satisfy an arbitrary pattern — an example the shipped contract would reject teaches a caller a shape this product does not have. The explicit absence is the honest state; an example an agent copies and is refused for is worse than a column that says there is none.",
       "id": "proposals.show",
       "kind": "op",
-      "mcpTool": "agent_qa_show_proposal",
+      "mcpUnprojectedReasonKey": "proposal-round-removed",
       "params": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "additionalProperties": false,
@@ -1798,8 +1800,7 @@
         "read"
       ],
       "surfaces": [
-        "chat",
-        "mcp"
+        "chat"
       ]
     },
     {
@@ -2645,5 +2646,5 @@
       "shortDescription": "Triage agent-qa run failures"
     }
   ],
-  "rowsDigest": "e007340b8b26f0239d4f3fdca11494c4f80854086fb373c925dbe2e086c73cf4"
+  "rowsDigest": "cdab3f8289b3f63163f97e1407823a1e9aad88a439bab2531a1d80ba166cf4c2"
 }

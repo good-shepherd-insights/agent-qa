@@ -592,8 +592,9 @@ first use.
 - \`evidence/outcomes.jsonl\` is the evidence: the append-only outcome log the
   belief rests on.
 - Trust is derived by code from the outcome log — never hand-edit trust
-  counters or status fields. Edit the fact or the evidence; the derivation
-  follows.
+  counters or status fields, the fact or the evidence. Knowledge changes only
+  through agent-qa: a run mark, or \`agent_qa_change_knowledge\` to accept,
+  reject or forget a record. Each change applies at once and shows up here.
 
 ## Committed vs. gitignored
 

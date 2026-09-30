@@ -109,7 +109,7 @@ const CONFIG_APPLY_CLASS = 'fn:config.proposal.apply'
  * a non-empty file against itself. An absence over an empty channel is the trap this project keeps
  * recording; a file that exists, folds, and is byte-identical is not one.
  */
-const UNRELATED_CLASS = 'fn:knowledge.forget.propose'
+const UNRELATED_CLASS = 'fn:knowledge.forget'
 
 const CONFIG_FILE = 'agent-qa.config.yaml'
 

@@ -24,12 +24,11 @@
 // and its absence from this run's digest is asserted BESIDE its presence in its own — an
 // absence claim is load-bearing only if the same input could have produced the presence.
 //
-// EVERY PROPOSAL IS PRODUCED THROUGH THE PRODUCTION PATH. Each mint below is an `invokeFunction`
-// call on the shipped `knowledge.forget.propose` op, with the run on the op's own input contract
-// — the exact bytes a run-scoped caller sends. Nothing is written at the store seam and no origin
-// is hand-composed: a corpus assembled at a seam production never reaches can pin an input the
-// producer cannot make, and a differential over impossible fixtures cannot tell a vacuous corpus
-// from a real closure (391-VERIFICATION Gap 1(c)).
+// EVERY PROPOSAL IS A PRE-432 RECORD. 2026-09-30, 432-12 (D-05): the three knowledge changes apply
+// in the call and file nothing, so no production path mints a proposal any more. Each mint below
+// writes the record the retired `knowledge.forget.propose` op wrote, through the same review port
+// member and with the same attribution (emitter and run), which is the shape a pre-432 project has
+// on disk. What this file measures is that the digest reads NONE of them.
 
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -55,7 +54,6 @@ import type {
   Anchor,
   CompletedRunHandoff,
   GuardrailPolicy,
-  KnowledgeProposeOutcomeDto,
   RunDigest,
   Verdict,
 } from '@vostride/agent-qa-schema'
@@ -68,18 +66,11 @@ import {
   type PostRunTailOperations,
   type RunPostRunTailOptions,
 } from '../curation/post-run-tail.js'
+import { filePre432KnowledgeProposal } from '../composition/__tests__/pre-432-knowledge-proposal.js'
 import { enqueueThroughTheStep } from './post-run-step-harness.js'
 
 const MINT_IDENTITY = (filePath: string): string => filePath
 
-/**
- * The propose op's WIRE id, spelled as a caller spells it (391-03's fixture precedent).
- *
- * Not imported from the agent barrel: that barrel exports an op id only when a production
- * SURFACE has to name one, and a fixture is not one. What is being exercised here is the
- * dispatch a caller performs by name, so naming it is the point.
- */
-const FORGET_PROPOSE_ID = 'knowledge.forget.propose'
 
 /** The heartbeat run whose chain drains in-process — the digest's subject. */
 const RUN_ID = 'run-391-06-batching'
@@ -341,28 +332,16 @@ function publishRecord(f: Fixture, summary: string): string {
   return published.id
 }
 
-/**
- * One real record, then one real proposal about it — minted the way PRODUCTION mints one.
- *
- * `invokeFunction` on the shipped `knowledge.forget.propose` op, with the run on the op's own
- * input, through a cold composition and the CLI's own caller. Everything the digest later reads
- * about this proposal — its origin, its emitter, its run — was written by the op, not by here.
- */
+/** One real record, then one pre-432 proposal about it, attributed to the run (432-12). */
 async function mint(f: Fixture, runId: string, summary: string): Promise<string> {
   const recordId = publishRecord(f, summary)
-  const host = composeCold(f)
-  try {
-    const outcome = await invokeFunction(
-      host.registry,
-      FORGET_PROPOSE_ID,
-      { target: { grain: 'record', recordId }, runId },
-      CLI_FUNCTION_CALLER,
-    ) as KnowledgeProposeOutcomeDto
-    if (outcome.kind !== 'proposed') throw new Error(`fixture propose failed: ${outcome.kind}`)
-    return outcome.proposal.proposalId
-  } finally {
-    await host.close()
-  }
+  return await filePre432KnowledgeProposal({
+    agentQaRoot: f.agentQaRoot,
+    knowledgeRoot: f.knowledgeRoot,
+    verb: 'forget',
+    target: { grain: 'record', recordId },
+    runId,
+  })
 }
 
 /** Read the notify rows through a SECOND cold composition, so nothing in memory can agree. */

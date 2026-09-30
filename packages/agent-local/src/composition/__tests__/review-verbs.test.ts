@@ -6,9 +6,10 @@
 // composition rather than a sentence in a doc comment — the same four ids, the same caller, the
 // same store, two different honest answers.
 //
-// Nothing is stubbed on the write path: the proposal is really minted to disk, the apply really
-// takes the writer lease and really reaches the Curator's `commit()`, and the store is really
-// re-read afterwards.
+// Nothing is stubbed on the write path: since 432-12 (D-05) each change really takes the writer
+// lease through the explicit writer and really reaches the Curator's `commit()` in the call, and
+// the store is really re-read afterwards. No proposal is minted; the pre-432 apply is measured over
+// a record already on disk.
 
 import { existsSync, mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -41,7 +42,7 @@ import type {
   FunctionCaller,
   ForgetReceiptV1,
   KnowledgeApplyOutcomeDto,
-  KnowledgeProposeOutcomeDto,
+  KnowledgeChangeOutput,
   MaskedResolvedConfig,
   ResolvePromotionPosture,
 } from '@vostride/agent-qa-schema'
@@ -54,15 +55,18 @@ import {
   createKnowledgeReview,
   createRunsReader,
 } from '../compose-local-agent.js'
+import { filePre432KnowledgeProposal } from '../../__tests__/pre-432-knowledge-proposal.js'
 
-const ANCHOR: Anchor = { t: 'el', role: 'Button', name: 'Checkout' }
 
-/** The four ids the write half owns. Written out so an id that stopped registering is visible. */
+/**
+ * The four ids the write half owns. Written out so an id that stopped registering is visible.
+ * 432-12 (D-05): the three changes apply in the call; the pre-432 apply serves records on disk.
+ */
 const MUTATING_FUNCTION_IDS = [
-  'knowledge.accept.propose',
-  'knowledge.forget.propose',
+  'knowledge.accept',
+  'knowledge.forget',
   'knowledge.proposal.apply',
-  'knowledge.reject.propose',
+  'knowledge.reject',
 ] as const
 
 const MASKED_CONFIG: MaskedResolvedConfig = {
@@ -103,14 +107,15 @@ describe('the mutating review verbs bind, refuse and commit by name', () => {
     }
   }
 
-  function publish(): string {
+  function publish(name = 'Checkout'): string {
+    const anchor: Anchor = { t: 'el', role: 'Button', name }
     const outcome = publishBundleForTest(storeConfig(), {
       draft: {
         kind: 'fact',
         subtype: 'selector',
-        anchors: [ANCHOR],
+        anchors: [anchor],
         scope: { tier: 'product', key: 'review-verbs' },
-        summary: 'checkout button',
+        summary: `${name.toLowerCase()} button`,
         body: 'Selecting Checkout advances to the payment page.',
         distilledEvidenceRef: { id: 'review-verbs-evidence', sha: 'a'.repeat(64) },
         originStage: 'run-curation',
@@ -118,7 +123,7 @@ describe('the mutating review verbs bind, refuse and commit by name', () => {
       discriminant: {
         kind: 'fact',
         subtype: 'selector',
-        elementRef: { role: 'Button', name: 'Checkout' },
+        elementRef: { role: 'Button', name },
       },
       originClass: 'agent-verified',
       createdAtOrdinal: 9,
@@ -232,9 +237,9 @@ describe('the mutating review verbs bind, refuse and commit by name', () => {
     }
 
     for (const [id, input] of [
-      ['knowledge.accept.propose', { target: { grain: 'record', recordId } }],
-      ['knowledge.reject.propose', { target: { grain: 'record', recordId }, reason: 'no' }],
-      ['knowledge.forget.propose', { target: { grain: 'record', recordId } }],
+      ['knowledge.accept', { target: { grain: 'record', recordId } }],
+      ['knowledge.reject', { target: { grain: 'record', recordId }, reason: 'no' }],
+      ['knowledge.forget', { target: { grain: 'record', recordId } }],
       ['knowledge.proposal.apply', { proposalId: 'prop_0123456789ab' }],
     ] as const) {
       // The inputs PARSE, so this refusal cannot be a contract refusal wearing a binding
@@ -261,39 +266,42 @@ describe('the mutating review verbs bind, refuse and commit by name', () => {
       ).toBe('bound')
     }
 
-    const proposed = await invokeFunction(
-      host,
-      'knowledge.forget.propose',
-      { target: { grain: 'record', recordId } },
-      CALLER,
-    ) as KnowledgeProposeOutcomeDto
-    if (proposed.kind !== 'proposed') throw new Error('expected a proposal')
-    // Propose changed nothing: the record is still the candidate it was.
-    expect(await statuses(host)).toEqual(['candidate'])
-
+    // 432-12 (D-05): the forget applies in the call. Nothing is proposed first.
+    const operationId = '3d2c1b0a-9f8e-4d7c-8b6a-5f4e3d2c1b0a'
     const applied = await invokeFunction(
       host,
-      'knowledge.proposal.apply',
-      { proposalId: proposed.proposal.proposalId },
+      'knowledge.forget',
+      { target: { grain: 'record', recordId }, operationId },
       CALLER,
-    ) as KnowledgeApplyOutcomeDto
+    ) as KnowledgeChangeOutput
 
-    expect(applied.outcome).toBe('applied')
+    if (applied.outcome !== 'applied') throw new Error(`expected an applied forget, got ${applied.outcome}`)
     expect(factory).toHaveBeenCalledOnce()
     const receipt = applied.forgetReceipt as ForgetReceiptV1
     expect(receipt.tombstonedRecords.map((row) => row.recordId)).toEqual([recordId])
     // Tombstoned, never destroyed — the record is still enumerable, saying what happened to it.
     expect(await statuses(host)).toEqual(['deprecated'])
 
-    // And the second apply is the typed already-applied answer carrying the FIRST receipt.
+    // And the retry of the same identity is the same change, carrying the FIRST receipt's records.
     const again = await invokeFunction(
       host,
-      'knowledge.proposal.apply',
-      { proposalId: proposed.proposal.proposalId },
+      'knowledge.forget',
+      { target: { grain: 'record', recordId }, operationId },
       CALLER,
-    ) as KnowledgeApplyOutcomeDto
-    expect(again.outcome).toBe('already-applied')
-    expect(again.forgetReceipt).toEqual(applied.forgetReceipt)
+    ) as KnowledgeChangeOutput
+    expect(again).toMatchObject({ outcome: 'applied', operationId, recordIds: applied.recordIds })
+    expect(await statuses(host)).toEqual(['deprecated'])
+
+    // The pre-432 apply is still bound and still commits a record already on disk (432-17 deletes it).
+    const pending = publish('Payment')
+    const proposalId = await filePre432KnowledgeProposal({
+      agentQaRoot, knowledgeRoot, verb: 'forget', target: { grain: 'record', recordId: pending },
+    })
+    const old = await invokeFunction(host, 'knowledge.proposal.apply', { proposalId }, CALLER) as
+      KnowledgeApplyOutcomeDto
+    expect(old.outcome).toBe('applied')
+    expect(old.forgetReceipt?.tombstonedRecords.map((row) => row.recordId)).toEqual([pending])
+    expect(await statuses(host)).toEqual(['deprecated', 'deprecated'])
   })
 
   /**
@@ -328,21 +336,14 @@ describe('the mutating review verbs bind, refuse and commit by name', () => {
     expect(before.card.status).toBe('active')
     const address = before.card.id
 
-    const proposed = await invokeFunction(
-      host,
-      'knowledge.forget.propose',
-      { target: { grain: 'record', recordId } },
-      CALLER,
-    ) as KnowledgeProposeOutcomeDto
-    if (proposed.kind !== 'proposed') throw new Error('expected a proposal')
-
+    // 432-12: the forget applies in the call.
     const applied = await invokeFunction(
       host,
-      'knowledge.proposal.apply',
-      { proposalId: proposed.proposal.proposalId },
+      'knowledge.forget',
+      { target: { grain: 'record', recordId } },
       CALLER,
-    ) as KnowledgeApplyOutcomeDto
-    expect(applied.outcome).toBe('applied')
+    ) as KnowledgeChangeOutput
+    if (applied.outcome !== 'applied') throw new Error(`expected an applied forget, got ${applied.outcome}`)
     const receipt = applied.forgetReceipt as ForgetReceiptV1
 
     // Half one: what the operation TOLD this caller.
@@ -516,17 +517,20 @@ describe('the mutating review verbs bind, refuse and commit by name', () => {
 
     const outcome = await invokeFunction(
       host,
-      'knowledge.accept.propose',
+      'knowledge.accept',
       { target: { grain: 'record', recordId: 'rec-not-in-this-store' } },
       CALLER,
-    ) as KnowledgeProposeOutcomeDto
+    ) as KnowledgeChangeOutput
 
     // A result, not a rejection — and it survives the op's declared OUTPUT contract, which is
     // what makes "typed" mean something rather than "shaped like this today".
     expect(outcome).toEqual({
-      kind: 'target-not-found',
+      outcome: 'target-not-found',
+      verb: 'accept',
+      operationId: expect.stringMatching(/^[0-9a-f-]{36}$/),
       target: { grain: 'record', recordId: 'rec-not-in-this-store' },
     })
+    expect(existsSync(join(agentQaRoot, 'proposals'))).toBe(false)
   })
 
   // 407-04 (D-08): the reader port's fifth member, bound over the `/reader` entry like the four

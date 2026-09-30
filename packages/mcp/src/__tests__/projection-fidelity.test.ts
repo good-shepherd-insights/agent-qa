@@ -21,6 +21,8 @@
 // byte snapshot. Observed 2026-08-16:
 //
 //   P1  `runs.digest`'s contract entry re-pointed at the proposals-list contracts   -> RED (1 cell)
+//       (2026-09-30, 432-12: the proposals-list contract left the table; the leg's analog is any
+//       other read contract, and the 432-45 mutation owner re-points it.)
 //   P2  the pipeline's advertised input swapped for its SECOND arm's contract       -> RED (1 cell)
 //   P3  `agent_qa_start_run` removed from `DEGRADED_OUTPUT_CONTRACTS`               -> RED (8 cells)
 //   P4  the config fold's advertised input swapped for the knowledge fold's         -> RED (2 cells)
@@ -46,8 +48,8 @@ import { STANDING_APPROVAL_SCOPE, FunctionScopeSchema } from '@vostride/agent-qa
 import type { FunctionCaller, FunctionScope } from '@vostride/agent-qa-schema'
 import { afterEach, describe, expect, it } from 'vitest'
 
-import { APPLY_REFUSAL_JSON_SCHEMA, CREDENTIAL_REFUSAL_JSON_SCHEMA } from '../apply-refusal.js'
 import { buildAgentQaMcpServer } from '../catalog.js'
+import { CREDENTIAL_REFUSAL_JSON_SCHEMA } from '../masked-result.js'
 // 2026-08-16 (Phase 397 D-06): the three normalisations this file authored now live beside the
 // package's other source, because 397's conformance suite compares the same two sides from
 // `packages/cli` and may not reach into another package's tests. They are consumed here rather
@@ -174,13 +176,11 @@ describe('the advertised schema equals the function layer\'s own projection (D-1
       const tool = advertised.get(projection.name)
       expect(tool, projection.name).toBeDefined()
 
-      // The two apply doors advertise D-11's wire vocabulary on BOTH sides by design (396-06): the
-      // `confirmed` envelope going in, and `op outcome OR refusal` coming out. Both exist because a
-      // tool call is a single round trip with nobody to ask — a fact about this surface and about
-      // no other caller of the same op. The op's own document is still what the RECEIPT arm is, and
-      // that is compared below rather than exempted.
+      // 432-12 (D-05/D-14): the D-11 apply doors are gone, so every tool's input is its op's own
+      // contract. The mark door alone advertises `op outcome OR credential refusal` on the output
+      // side (419 D-20); the op's own document is still what its RECEIPT arm is, compared below.
       const composition = compositionOf(projection)
-      const inputComparable = projection.kind !== 'apply' || projection.credential === 'required'
+      const inputComparable = true
 
       if (inputComparable && composition !== 'union') {
         const armDeclaration = declared.get(projection.ops[0]!)!
@@ -225,7 +225,7 @@ describe('the advertised schema equals the function layer\'s own projection (D-1
           expect(arms.length, `${projection.name} output arms`).toBe(2)
           expect(arms[0], `${projection.name} receipt arm`).toEqual(distinct[0])
           expect(arms[1], `${projection.name} refusal arm`).toEqual(
-            (projection.credential === 'required' ? CREDENTIAL_REFUSAL_JSON_SCHEMA : APPLY_REFUSAL_JSON_SCHEMA) as unknown as JsonDocument,
+            CREDENTIAL_REFUSAL_JSON_SCHEMA as unknown as JsonDocument,
           )
           checked += 1
         } else if (distinct.length === 1) {
@@ -248,7 +248,10 @@ describe('the advertised schema equals the function layer\'s own projection (D-1
     // compared too, through the 2025-11-25 codec's `{ result }` wrap around its array root.
     // 2026-09-28 (431-04 D-04/D-07): seven single reads add one input and one output each (14), and
     // the evidence fold adds two arm inputs and one output (3).
-    expect(checked).toBe(55)
+    // 2026-09-30 (432-12 D-05): the two proposal reads leave (-2 inputs, -2 outputs), the two apply
+    // doors leave (-2 outputs; their authored inputs were never compared), and the config fold loses
+    // its undo arm (-1 input): 16 single/pipeline/mark inputs + 13 fold arms + 19 outputs = 48.
+    expect(checked).toBe(48)
   })
 
   // IDENTITY, NOT AGREEMENT — and this cell exists because the one above it was measured BLIND to
@@ -284,7 +287,8 @@ describe('the advertised schema equals the function layer\'s own projection (D-1
     }
     // 10 non-union, non-apply tools contributing both sides (423-21 D-18 adds the two feedback reads).
     // 2026-09-28 (431-04 D-04): the seven single discovery reads make it 17.
-    expect(checked).toBe(34)
+    // 2026-09-30 (432-12 D-05): the two proposal reads leave, so 15.
+    expect(checked).toBe(30)
   })
 
   // Pitfall 3, and the field-level half of D-16's "descriptions live on the zod schemas" clause.
@@ -293,19 +297,20 @@ describe('the advertised schema equals the function layer\'s own projection (D-1
   // dropped without any shape changing.
   it('carries a field description from the zod contract all the way to the wire', async () => {
     const advertised = new Map((await advertise()).map((tool) => [tool.name, tool]))
-    const fold = withoutDialect(advertised.get('agent_qa_propose_config_change')!.inputSchema)
+    const fold = withoutDialect(advertised.get('agent_qa_change_config')!.inputSchema)
     const arms = (fold.oneOf ?? []) as readonly JsonDocument[]
     const discriminant = (arms[0]!.properties as JsonDocument).action as JsonDocument
 
     expect(discriminant.const).toBe('config.field.set')
     expect(discriminant.description).toContain('Which registry operation this call is for')
 
-    // The apply doors' authored envelope travels the OTHER conversion route (`fromJsonSchema`), so
-    // its prose is pinned too — the two routes are the only two in this package and neither may
-    // silently drop what a caller reads.
-    const apply = withoutDialect(advertised.get('agent_qa_apply_proposal')!.inputSchema)
-    const properties = apply.properties as JsonDocument
-    expect((properties.confirmed as JsonDocument).description).toContain('Set to true to APPLY')
+    // 2026-09-30 (432-12 D-05): the apply doors' authored envelope is gone with them, so the second
+    // conversion route has no tool on it. The knowledge change fold carries the same prose.
+    const knowledge = withoutDialect(advertised.get('agent_qa_change_knowledge')!.inputSchema)
+    const knowledgeArms = (knowledge.oneOf ?? []) as readonly JsonDocument[]
+    const knowledgeDiscriminant = (knowledgeArms[0]!.properties as JsonDocument).action as JsonDocument
+    expect(knowledgeDiscriminant.const).toBe('knowledge.accept')
+    expect(knowledgeDiscriminant.description).toContain('Which registry operation this call is for')
   })
 })
 
@@ -380,11 +385,14 @@ describe('the build is deterministic (idempotency)', () => {
 
   it('derives annotations from the ops rather than from the tool name', async () => {
     const advertised = new Map((await advertise()).map((tool) => [tool.name, tool]))
-    expect(advertised.get('agent_qa_list_proposals')!.annotations?.readOnlyHint).toBe(true)
-    expect(advertised.get('agent_qa_list_proposals')!.annotations?.idempotentHint).toBe(true)
-    // A fold containing seven writes is not read-only, and its idempotence follows.
-    expect(advertised.get('agent_qa_propose_config_change')!.annotations?.readOnlyHint).toBe(false)
-    expect(advertised.get('agent_qa_propose_config_change')!.annotations?.idempotentHint).toBe(false)
+    expect(advertised.get('agent_qa_get_run_marks')!.annotations?.readOnlyHint).toBe(true)
+    expect(advertised.get('agent_qa_get_run_marks')!.annotations?.idempotentHint).toBe(true)
+    // A fold containing six writes is not read-only, and its idempotence follows.
+    expect(advertised.get('agent_qa_change_config')!.annotations?.readOnlyHint).toBe(false)
+    expect(advertised.get('agent_qa_change_config')!.annotations?.idempotentHint).toBe(false)
+    // 432-12: the knowledge changes write in the call, so the same derivation marks them.
+    expect(advertised.get('agent_qa_change_knowledge')!.annotations?.readOnlyHint).toBe(false)
+    expect(advertised.get('agent_qa_change_knowledge')!.annotations?.idempotentHint).toBe(false)
   })
 })
 
@@ -442,7 +450,7 @@ describe('the App carrier declaration is registry data (408 D-05)', () => {
     })
     // ABSENT, never present-and-undefined: the house rule, and the difference a host sees is
     // between a tool with no App and a tool advertising an App reference of `undefined`.
-    const plain = configFor('agent_qa_list_proposals')
+    const plain = configFor('agent_qa_get_run_marks')
     expect('_meta' in plain).toBe(false)
   })
 

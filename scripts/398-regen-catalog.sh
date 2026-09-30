@@ -76,13 +76,20 @@ CATALOG="$ROOT/$CATALOG_REL"
 # the catalog half, which is exactly the state this script exists to let a person out of. The
 # all-door parity and masking cells beside it measure the TREE and are deliberately NOT listed.
 #
+# THE FOURTH NAME (2026-09-30, 432-12) is admitted on the same rule: LIVE-GUIDANCE-TOOLS's subject is
+# the guidance naming a projected tool whose ops the COMMITTED catalogue does not carry yet. A
+# public tool rename rewrites the guidance and the catalogue in one cutover, so after the golden
+# writer has run the cell is red exactly while this script's write is owed. The guidance cells that
+# measure the TREE (live names, dead names, the pointer) are deliberately NOT listed.
+#
 # A PLAIN MULTI-LINE STRING, not a heredoc inside a command substitution. Measured 2026-08-17 on the
 # bash 3.2 macOS ships: `VAR="$(cat <<'X' ... X )"` mis-parses there and the script dies at an
 # unrelated line with `arg: unbound variable`, which is the least helpful diagnosis available for
 # it. The rest of this file avoids bash-4 idioms for the same reason the header states.
 ALLOWED_RED_NAMES="the capability catalog regenerates byte-identically from the live seams into the committed artifact (D-03)
 the catalog's migration map projection (D-14, XPLN-03) lands in the COMMITTED artifact, entry for entry, as the shipped map declares it
-423-38 committed artifacts carry the reviewed read contracts GOLDEN-CATALOG-COMPLETE: the committed golden ledger and capability catalog carry every addressed read op as the live tree declares it"
+423-38 committed artifacts carry the reviewed read contracts GOLDEN-CATALOG-COMPLETE: the committed golden ledger and capability catalog carry every addressed read op as the live tree declares it
+LIVE-GUIDANCE: the guide, pointer and every source and packaged skill quote only live names LIVE-GUIDANCE-TOOLS: every agent_qa_* name is a projected tool whose ops the catalog carries"
 # Vacuity floor. A gate that passed because the suite collected nothing is the CI-shaped version of
 # the failure this artifact exists to prevent. Measured 2026-08-16: 88 tests in the directory;
 # 2026-08-17 (398-08): 115, after the manifest legs, the `init --agent` cells and the two shipped-
@@ -297,7 +304,11 @@ mint_catalog() {
   local out="$SANDBOX/minted.json"
   note "mint: emitting a fresh catalog from the composition root"
   # `--disable-console-intercept` so the sentinels reach this shell rather than the runner's buffer.
-  (cd "$CLI_DIR" && env "$EMIT_FLAG=1" npx vitest run "$SUITE_REL" --disable-console-intercept) \
+  # 2026-09-30 (432-12): the mint runs the ONE file that emits, not the whole directory. With the
+  # directory, output from parallel workers' red cells landed between the sentinels and corrupted
+  # the JSON (logged in 432-02, then measured twice in a row in 432-12). The gate above still runs
+  # the whole suite; the mint only needs the emitting file, and the emitted text is unchanged.
+  (cd "$CLI_DIR" && env "$EMIT_FLAG=1" npx vitest run "${SUITE_REL}catalog.test.ts" --disable-console-intercept) \
     > "$SANDBOX/mint.stdout" 2>&1 || true
 
   awk -v begin="$EMIT_BEGIN" -v end="$EMIT_END" \

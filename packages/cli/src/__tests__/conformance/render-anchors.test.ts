@@ -569,21 +569,40 @@ describe('the chat render anchors (399.1, G-399-2)', () => {
  * one file away: the day this op is retired, a literal would leave three anchors asserting about a
  * capability that no longer exists, while the rule re-lands on whatever the table's next qualifying
  * row is and says so.
+ *
+ * 2026-09-30 (432-12, D-05): THAT DAY CAME, and the rule is re-stated rather than bent. The row it
+ * landed on, `proposals.list`, left the MCP door with the proposal round, and the next row with an
+ * empty input and an object root is `runs.start` — which STARTS A RUN, so an empty fixture refuses
+ * it and the anchors would measure a failure. Clause (2) is therefore widened from "the empty
+ * input" to "an EMPTY QUERY": every field of the row's input is an empty object or a zero baseline,
+ * so it addresses nothing and the fixture's honest answer is a whole result rather than an absence.
+ * The three doors still spell it identically (each sends the row's own JSON). A fourth clause is
+ * added: (4) the op declares itself read-only, because an anchor drives the shipped binary against
+ * a fixture and must change nothing. The rule now lands on `knowledge.records.diff`.
  */
+function isEmptyQuery(input: unknown): boolean {
+  if (typeof input !== 'object' || input === null || Array.isArray(input)) return false
+  return Object.values(input).every((value) =>
+    value === 0
+    || (typeof value === 'object' && value !== null && !Array.isArray(value)
+      && Object.keys(value).length === 0))
+}
+
 function anchorRow(): ScenarioRow {
-  const projections = new Map(registryDeclarations().map((d) => [d.id, d.output]))
+  const declarations = new Map(registryDeclarations().map((d) => [d.id, d]))
   const row = SCENARIO_TABLE.find((candidate) => {
     if (!candidate.perSurface.fn.reachable) return false
     if (!('reachable' in candidate.perSurface.mcp)) return false
-    const input = candidate.input as Record<string, unknown>
-    if (typeof input !== 'object' || input === null || Object.keys(input).length > 0) return false
-    const projection = projections.get(candidate.opId) as Record<string, unknown> | undefined
+    if (!isEmptyQuery(candidate.input)) return false
+    const declaration = declarations.get(candidate.opId)
+    if (declaration?.risk.readOnly !== true) return false
+    const projection = declaration.output as Record<string, unknown> | undefined
     return projection?.['type'] === 'object'
   })
   expect(
     row,
-    'no scenario row is reachable on all three doors with an empty input and an object-rooted '
-    + 'output contract, so these anchors have nothing they can drive on every door at once',
+    'no read-only scenario row is reachable on all three doors with an empty query and an '
+    + 'object-rooted output contract, so these anchors have nothing they can drive on every door',
   ).toBeDefined()
   return row as ScenarioRow
 }

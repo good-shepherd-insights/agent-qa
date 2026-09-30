@@ -344,18 +344,14 @@ const REACHED_THE_GATE: readonly GateAnswerKind[] = Object.freeze([
  * than added as a condition nobody counts. No skip-lists: every op is either compared or carries one
  * of these keys, and the arithmetic is pinned.
  */
+// 2026-09-30 (432-12 D-05/D-14): `apply-door-wire-envelope` LEFT this vocabulary with the two apply
+// doors. No tool advertises a `confirmed` envelope any more, so every projected input is compared,
+// and an exception nothing takes would be dead prose (the cell below asserts every key is taken).
 type Leg2ExceptionKey =
-  | 'apply-door-wire-envelope'
   | 'pipeline-downstream-op'
   | 'degraded-output-contract'
 
 const LEG2_EXCEPTIONS: readonly (readonly [Leg2ExceptionKey, string])[] = Object.freeze([
-  Object.freeze([
-    'apply-door-wire-envelope',
-    'the two apply doors advertise 396 D-11\'s wire vocabulary on the way IN — a `confirmed` '
-      + 'envelope around the op\'s own input — because a tool call is one round trip with nobody to '
-      + 'ask. The op\'s own document is still what the RECEIPT arm is, and that is compared',
-  ] as const),
   Object.freeze([
     'pipeline-downstream-op',
     'a pipeline tool advertises its FIRST op\'s shapes; the downstream op runs inside the resolved '
@@ -381,10 +377,7 @@ type Leg2Plan =
  * rather than from a per-op list this file would have to keep in step with them.
  */
 function leg2InputPlan(projection: ToolProjection, opId: string): Leg2Plan {
-  // The credential-required mark door takes its native op input; only proposal apply wraps it.
-  if (projection.kind === 'apply' && projection.credential !== 'required') {
-    return { kind: 'exception', key: 'apply-door-wire-envelope' }
-  }
+  // 432-12: every door, the credential-required mark door included, takes its native op input.
   const composition = compositionOf(projection)
   if (composition === 'union') return { kind: 'arm', at: projection.ops.indexOf(opId) }
   if (composition === 'pipeline' && projection.ops[0] !== opId) {
@@ -1459,14 +1452,16 @@ describe('the parity suite ranges the registry census over every rostered surfac
   it('drives a tool through the MCP surface\'s real protocol door', async () => {
     // The MCP half of the tracer, over the same `withMcpClient` wiring every enumeration leg reads
     // through — so an enumeration and a call in this suite cannot be talking to two servers.
+    // 432-12: `agent_qa_list_proposals` left with the proposal round; the bundle read is the empty-
+    // argument read tool that stands in.
     const answered = await driveMcpCall({
-      toolName: 'agent_qa_list_proposals',
+      toolName: 'agent_qa_list_knowledge_bundles',
       args: {},
       grantedScopes: [...FunctionScopeSchema.options],
     })
     expect(
       answered.answered,
-      'agent_qa_list_proposals on mcp: the protocol refused a tool the mapping projects',
+      'agent_qa_list_knowledge_bundles on mcp: the protocol refused a tool the mapping projects',
     ).toBe(true)
     // The discriminating half: the SAME call shape against a name no server registers is refused
     // by the protocol rather than answered in band, which is what makes an absence probe a probe.
@@ -1892,69 +1887,59 @@ describe('the parity suite ranges the registry census over every rostered surfac
   }, 300_000)
 
   it('handles the ask on MCP per ITS contract — refuse-and-teach, or refuse in band', async () => {
-    // MCP's own contract, and WHICH contract is DERIVED from the mapping's own `kind` rather than
-    // picked per op: an `apply` tool is D-11's refuse-and-teach front door, and every other tool
-    // crosses the generic handler and gets the gate's own answer back in band. Neither executes on
-    // a blind first call, which is the property the two shapes share and the only one that is
-    // averaged here.
+    // MCP's own contract, DERIVED from the mapping's own `kind` rather than picked per op.
+    // 2026-09-30 (432-12 D-05/D-14): the refuse-and-teach arm is GONE with the D-11 apply doors, and
+    // its absence is asserted rather than skipped: no projected ask-capable op sits behind an
+    // `apply` tool without the mark door's credential check, and the two apply ops that could ask
+    // are dispositioned with the removed proposal round. Every other projected tool still gets the
+    // gate's own answer back in band, and none executes on a blind first call.
     const everyScope = [...FunctionScopeSchema.options]
-    let applyTools = 0
     let bandRefusals = 0
+    let unprojectedWithRound = 0
     for (const opId of ASK_CAPABLE_OP_IDS) {
       const projection = AGENT_QA_TOOL_PROJECTIONS.find((candidate) => candidate.ops.includes(opId))
       if (projection === undefined) {
         // Unprojected: this surface's handling is ABSENCE, already asserted by 397-03's D-12 leg.
-        // What is asserted here is that the absence is the one the divergence above explains.
         const entry = UNPROJECTED_OPS.find((candidate) => candidate.opId === opId)
+        const reason = entry === undefined ? undefined : unprojectedReasonKeyOf(entry.reason)
         expect(
-          entry === undefined ? undefined : unprojectedReasonKeyOf(entry.reason),
+          ['requires-human-origin', 'proposal-round-removed'],
           `${opId} on mcp (ask): it can ask, this surface does not project it, and the mapping `
             + 'gives no reason a reader can classify',
-        ).toBe('requires-human-origin')
+        ).toContain(reason)
+        if (reason === 'proposal-round-removed') unprojectedWithRound += 1
         continue
       }
+      expect(
+        projection.kind === 'apply' && projection.credential !== 'required',
+        `${opId} on mcp (ask): ${projection.name} is a refuse-and-teach apply door, which 432-12 removed`,
+      ).toBe(false)
       const row = scenarioRowFor(opId as ScenarioOpId)
-      const args = projection.kind === 'apply' && projection.credential !== 'required'
-        // The apply door's own argument name, read off the op's contract rather than typed: its
-        // input carries exactly one field and the tool spells it in snake case.
-        ? { proposal_id: (row!.input as { proposalId: string }).proposalId }
-        : (row!.input as Record<string, unknown>)
-      const answered = await driveMcpCall({ toolName: projection.name, args, grantedScopes: everyScope })
+      const answered = await driveMcpCall({
+        toolName: projection.name,
+        args: row!.input as Record<string, unknown>,
+        grantedScopes: everyScope,
+      })
       expect(answered.answered, `${opId} on mcp (ask): the protocol refused the call outright`)
         .toBe(true)
       const inBand = answered as Extract<typeof answered, { answered: true }>
+      bandRefusals += 1
       if (projection.credential === 'required') {
-        bandRefusals += 1
         expect(inBand.isError, `${opId}: anonymous credential-required call must refuse`).toBe(true)
         expect(inBand.structured?.['status']).toBe('credential-required')
         expect(inBand.structured?.['applied']).toBe(false)
         expect(inBand.text).toContain('present a bearer whose scopes include `knowledge-write`')
-      } else if (projection.kind === 'apply') {
-        applyTools += 1
-        expect(inBand.isError, `${opId} on mcp (ask): refuse-and-teach is an ANSWER, not an error `
-          + '— a caller told this is an error has been taught nothing').toBe(false)
-        expect(
-          inBand.structured?.['status'],
-          `${opId} on mcp (ask): a first apply call must come back needing confirmation`,
-        ).toBe('confirmation-required')
-        expect(inBand.structured?.['applied'], `${opId} on mcp (ask): a first apply call committed`)
-          .toBe(false)
-        expect(
-          String(inBand.structured?.['instruction'] ?? ''),
-          `${opId} on mcp (ask): the teach must name the exact second call, or it is a refusal `
-            + 'with no door behind it',
-        ).toContain('confirmed')
       } else {
-        bandRefusals += 1
         expect(inBand.isError, `${opId} on mcp (ask): an ask-tier capability answered without the `
           + 'gate refusing it').toBe(true)
         expect(inBand.text, `${opId} on mcp (ask): the in-band refusal must name the capability`)
           .toContain(opId)
       }
     }
-    // Both arms were exercised, or one of the two contracts is asserted by nothing.
-    expect(applyTools, 'no ask-capable op reached the refuse-and-teach arm').toBeGreaterThan(0)
     expect(bandRefusals, 'no ask-capable op reached the in-band refusal arm').toBeGreaterThan(0)
+    // The two proposal apply ops are the ones that left with the round (432-17 deletes them).
+    expect(unprojectedWithRound, 'the apply ops that could ask are not dispositioned with the round')
+      .toBe(2)
   }, 300_000)
 
   it('observes each surface through its own dispatch, never through the gate directly', () => {
@@ -2441,10 +2426,10 @@ describe('the parity suite ranges the registry census over every rostered surfac
         const members = advertisedOutputMembers(advertisedOutput)
 
         if (projection.kind === 'apply') {
-          // The apply door's result is `op outcome OR refusal`. The RECEIPT arm is the op's own
-          // document; the refusal arm is this surface's authored wire vocabulary (396 D-11) and is
-          // owned by the fidelity suite, which compares it against the authored constant.
-          expect(members.length, `${projection.name}: the apply door's output arms`).toBe(2)
+          // The mark door's result is `op outcome OR credential refusal` (419 D-20). The RECEIPT
+          // arm is the op's own document; the refusal arm is owned by the fidelity suite, which
+          // compares it against the authored constant. 432-12 removed the D-11 apply doors.
+          expect(members.length, `${projection.name}: the mark door's output arms`).toBe(2)
           expect(
             members[0],
             `${opId} on mcp (output, receipt arm of ${projection.name}): the advertised receipt is `
@@ -2498,13 +2483,16 @@ describe('the parity suite ranges the registry census over every rostered surfac
     // (2026-09-28, 431-03: `runs.list` left the degraded list with its canonical output contract.)
     // (2026-09-28, 431-04 D-04/D-07: nine more projected capabilities, each compared on both sides:
     // seven single reads and the evidence fold's two arms — 32 inputs and 33 outputs.)
+    // (2026-09-30, 432-12 D-05: thirty projected capabilities. The two apply doors, the two proposal
+    // reads and the undo arm leave: 30 less 1 pipeline downstream op = 29 inputs, all compared now
+    // that no door wraps its input; 30 less 1 degraded and 1 pipeline downstream = 28 outputs.)
     const projectedOpCount = AGENT_QA_TOOL_PROJECTIONS.reduce(
       (total, projection) => total + projection.ops.length,
       0,
     )
     const exceptionTotal = [...exceptionsTaken.values()].reduce((total, at) => total + at, 0)
-    expect(inputsCompared, 'leg 2 compared a different number of inputs').toBe(32)
-    expect(outputsCompared, 'leg 2 compared a different number of outputs').toBe(33)
+    expect(inputsCompared, 'leg 2 compared a different number of inputs').toBe(29)
+    expect(outputsCompared, 'leg 2 compared a different number of outputs').toBe(28)
     expect(
       inputsCompared + outputsCompared + exceptionTotal,
       'every projected capability must be compared or excepted on BOTH sides — no skip-lists',

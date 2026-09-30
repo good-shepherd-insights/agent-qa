@@ -28,10 +28,12 @@ import {
 import type {
   FunctionCaller,
   KnowledgeApplyOutcomeDto,
-  KnowledgeProposeOutcomeDto,
+  KnowledgeChangeOutput,
 } from '@vostride/agent-qa-schema'
 import { afterEach, describe, expect, it } from 'vitest'
 
+import { filePre432KnowledgeProposal } from '../composition/__tests__/pre-432-knowledge-proposal.js'
+import { delegateKnowledgeChangeViaDaemon } from '../composition/local-agent-host.js'
 import { invokeViaDaemon } from '../daemon/client.js'
 import { startInvokeServer, type InvokeServerHandle } from '../daemon/server.js'
 import {
@@ -181,15 +183,14 @@ function grantApply(where: Fixture, agent: LocalAgentHost): void {
   if (outcome.kind !== 'appended') throw new Error(`grant append refused: ${outcome.kind}`)
 }
 
-async function proposeForget(agent: LocalAgentHost, recordId: string): Promise<string> {
-  const proposed = await invokeFunction(
-    agent.registry,
-    'knowledge.forget.propose',
-    { target: { grain: 'record', recordId } },
-    CALLER,
-  ) as KnowledgeProposeOutcomeDto
-  if (proposed.kind !== 'proposed') throw new Error('expected a proposal')
-  return proposed.proposal.proposalId
+/** 432-12: a pre-432 forget proposal on disk; the change ops apply in the call and file none. */
+async function proposeForget(where: Fixture, recordId: string): Promise<string> {
+  return await filePre432KnowledgeProposal({
+    agentQaRoot: where.agentQaRoot,
+    knowledgeRoot: where.knowledgeRoot,
+    verb: 'forget',
+    target: { grain: 'record', recordId },
+  })
 }
 
 describe('knowledge.proposal.apply routes by lease state (D-18)', () => {
@@ -202,7 +203,7 @@ describe('knowledge.proposal.apply routes by lease state (D-18)', () => {
     const applied = await invokeFunction(
       agent.registry,
       KNOWLEDGE_PROPOSAL_APPLY_FUNCTION_ID,
-      { proposalId: await proposeForget(agent, recordId) },
+      { proposalId: await proposeForget(where, recordId) },
       CALLER,
     ) as KnowledgeApplyOutcomeDto
 
@@ -262,7 +263,7 @@ describe('knowledge.proposal.apply routes by lease state (D-18)', () => {
     })
 
     grantApply(where, caller)
-    const proposalId = await proposeForget(caller, recordId)
+    const proposalId = await proposeForget(where, recordId)
     const leaseBefore = readWriterLease(where.knowledgeRoot)
 
     const applied = await invokeFunction(
@@ -310,7 +311,7 @@ describe('knowledge.proposal.apply routes by lease state (D-18)', () => {
       applyDelegate: () => new Promise(() => {}),
     })
     grantApply(where, caller)
-    const proposalId = await proposeForget(caller, recordId)
+    const proposalId = await proposeForget(where, recordId)
 
     const started = Date.now()
     await expect(
@@ -332,6 +333,81 @@ describe('knowledge.proposal.apply routes by lease state (D-18)', () => {
     expect(Date.now() - started).toBeLessThan(5_000)
     expect(ApplyDelegateTimeoutError.name).toBe('ApplyDelegateTimeoutError')
     expect(acquireWriterLease(where.knowledgeRoot).kind).toBe('held')
+
+    releaseLease({ knowledgeRoot: where.knowledgeRoot, leaseId: held.leaseId })
+  })
+})
+
+// 2026-09-30, 432-12 (D-05): a DIRECT knowledge change takes the same lease routing, with no
+// proposal id to hand over. The live holder receives the change op and the change's own identity
+// over the same socket, applies with its authority, and nothing is filed or claimed anywhere.
+describe('a direct knowledge change routes by lease state (432-12)', () => {
+  it('C432-KNOWLEDGE-DIRECT-BINDING: delegates the change op and its identity to a live holder over the 386 socket, filing nothing and never taking the lease', async () => {
+    const where = fixture('direct-held')
+    const recordId = await seedRecord(where)
+
+    const { acquireWriterLease, releaseLease, readWriterLease } =
+      await import('@vostride/agent-qa-knowledge-local')
+    const { existsSync } = await import('node:fs')
+
+    const held = acquireWriterLease(where.knowledgeRoot)
+    if (held.kind !== 'acquired') throw new Error('fixture could not take the lease')
+    const holderHost = host(where, {
+      resolveWriterAuthority: () => ({ leaseId: held.leaseId, epoch: held.epoch }),
+    })
+    writeDaemonRegistration(where.agentQaRoot, {
+      schemaVersion: DAEMON_REGISTRATION_SCHEMA_VERSION,
+      instanceId: INSTANCE_ID,
+      pid: process.pid,
+      socketPath: where.socketPath,
+      startedAtMs: Date.now(),
+    })
+    const server = await startInvokeServer({
+      socketPath: where.socketPath,
+      registry: holderHost.registry,
+      identity: { schemaVersion: 1, instanceId: INSTANCE_ID, pid: process.pid },
+    })
+    servers.push(server)
+
+    // The delegating process binds the CLI host's own shipped delegate, over the same roots.
+    const shipped = delegateKnowledgeChangeViaDaemon({
+      agentQaRoot: where.agentQaRoot,
+      resolveKnowledgeRoot: () => where.knowledgeRoot,
+    })
+    const delegated: unknown[] = []
+    const caller = host(where, {
+      knowledgeChangeDelegate: async (delegation) => {
+        delegated.push(delegation)
+        return await shipped(delegation)
+      },
+    })
+    const operationId = '9c8b7a6d-5e4f-4a3b-8c2d-1e0f9a8b7c6d'
+    const leaseBefore = readWriterLease(where.knowledgeRoot)
+
+    const applied = await invokeFunction(caller.registry, 'knowledge.reject', {
+      target: { grain: 'record', recordId }, reason: 'the button moved', operationId,
+    }, CALLER) as KnowledgeChangeOutput
+
+    expect(delegated).toEqual([{
+      request: { verb: 'reject', input: { target: { grain: 'record', recordId }, reason: 'the button moved' } },
+      operationId,
+    }])
+    expect(applied).toEqual({ outcome: 'applied', verb: 'reject', operationId, recordIds: [recordId] })
+
+    // The lease is untouched and still refused to the delegator; nothing was filed or claimed.
+    expect(readWriterLease(where.knowledgeRoot)).toEqual(leaseBefore)
+    expect(acquireWriterLease(where.knowledgeRoot).kind).toBe('held')
+    expect(existsSync(join(where.agentQaRoot, 'proposals'))).toBe(false)
+
+    // The change landed on the holder's side, and a retry of the same identity lands nothing more.
+    const rows = await invokeFunction(holderHost.registry, 'knowledge.bundles.list', {}, CALLER) as {
+      status: string
+    }[]
+    expect(rows.map((row) => row.status)).toEqual(['deprecated'])
+    const retried = await invokeFunction(caller.registry, 'knowledge.reject', {
+      target: { grain: 'record', recordId }, reason: 'the button moved', operationId,
+    }, CALLER) as KnowledgeChangeOutput
+    expect(retried).toEqual(applied)
 
     releaseLease({ knowledgeRoot: where.knowledgeRoot, leaseId: held.leaseId })
   })

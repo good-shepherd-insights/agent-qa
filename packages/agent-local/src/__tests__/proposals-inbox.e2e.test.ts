@@ -36,7 +36,6 @@ import type {
   ProposalInboxEntryDto,
   Anchor,
   FunctionCaller,
-  KnowledgeProposeOutcomeDto,
   MaskedResolvedConfig,
   ProposalsListOutput,
   ProposalsRejectOutput,
@@ -46,6 +45,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import { composeLocalAgent } from '../composition/compose-local-agent.js'
 import type { LocalAgentHost } from '../composition/compose-local-agent.js'
+import { filePre432KnowledgeProposal } from './pre-432-knowledge-proposal.js'
 
 /**
  * The KNOWLEDGE payload off an envelope this store produced (394-06).
@@ -68,6 +68,7 @@ function knowledgePayloadOf(
 const LIST_ID = 'proposals.list'
 const SHOW_ID = 'proposals.show'
 const REJECT_ID = 'proposals.reject'
+/** The retired op a pre-432 forget proposal names as its emitter (432-12). */
 const PROPOSE_ID = 'knowledge.forget.propose'
 
 const ANCHOR: Anchor = { t: 'el', role: 'Button', name: 'Checkout' }
@@ -174,17 +175,16 @@ describe('the proposals inbox, end to end over the composed host (PROP-03)', () 
     return outcome.id
   }
 
-  /** Mint one REAL proposal through the shipped KREV verb (D-15's first client). */
+  /**
+   * One pre-432 proposal on disk, filed as the retired forget-propose op filed it (432-12: the
+   * change ops apply in the call and file nothing, so the inbox this file measures reads records
+   * that already exist until 432-17 deletes it).
+   */
   async function propose(summary: string, ordinal: number): Promise<string> {
     const recordId = publish(summary, ordinal)
-    const proposed = (await invokeFunction(
-      host.registry,
-      PROPOSE_ID,
-      { target: { grain: 'record', recordId } },
-      HUMAN,
-    )) as KnowledgeProposeOutcomeDto
-    if (proposed.kind !== 'proposed') throw new Error(`expected a proposal, got ${proposed.kind}`)
-    return proposed.proposal.proposalId
+    return await filePre432KnowledgeProposal({
+      agentQaRoot, knowledgeRoot, verb: 'forget', target: { grain: 'record', recordId },
+    })
   }
 
   async function list(

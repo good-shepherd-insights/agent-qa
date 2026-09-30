@@ -38,10 +38,11 @@ import {
 } from '@vostride/agent-qa-schema'
 import type {
   KnowledgeApplyOutcomeDto,
-  KnowledgeProposeOutcomeDto,
+  KnowledgeChangeOutput,
 } from '@vostride/agent-qa-schema'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
+import { filePre432KnowledgeProposal } from '../composition/__tests__/pre-432-knowledge-proposal.js'
 import { invokeViaDaemon } from '../daemon/client.js'
 import {
   runDaemonHost,
@@ -268,25 +269,24 @@ describe('the daemon commits its own applies in process (CR-01, D-18)', () => {
       if (leaseBefore.kind !== 'parsed') throw new Error(`no daemon lease: ${leaseBefore.kind}`)
       expect(leaseBefore.lease.pid).toBe(process.pid)
 
-      const proposed = await callDaemon(
-        paths,
-        'knowledge.forget.propose',
-        { target: { grain: 'record', recordId } },
-      ) as KnowledgeProposeOutcomeDto
-      if (proposed.kind !== 'proposed') throw new Error('expected a proposal')
-
-      // Against unmodified host.ts this line threw ApplyDelegateUnavailableError (see the file
-      // header for the verbatim message) — the daemon posture could commit nothing at all.
+      // 2026-09-30, 432-12 (D-05): the forget is the direct change op, applied in the call by the
+      // daemon with the lease it holds. Before 387-10 the daemon's own apply threw
+      // ApplyDelegateUnavailableError (see the file header) — it asked itself for its own lease.
+      const operationId = 'e1d2c3b4-a596-4877-8695-a4b3c2d1e0f9'
       const applied = await callDaemon(
         paths,
-        'knowledge.proposal.apply',
-        { proposalId: proposed.proposal.proposalId },
-      ) as KnowledgeApplyOutcomeDto
+        'knowledge.forget',
+        { target: { grain: 'record', recordId }, operationId },
+      ) as KnowledgeChangeOutput
 
-      expect(applied.outcome).toBe('applied')
-      expect(applied.forgetReceipt?.proposalId).toBe(proposed.proposal.proposalId)
+      if (applied.outcome !== 'applied') throw new Error(`expected an applied forget, got ${applied.outcome}`)
+      expect(applied.operationId).toBe(operationId)
+      expect(applied.forgetReceipt?.proposalId).toBe(`prop_${operationId}`)
       expect(applied.forgetReceipt?.tombstonedRecords.map((row) => row.recordId))
         .toEqual([recordId])
+      // Nothing was filed: the change is the call.
+      const { existsSync } = await import('node:fs')
+      expect(existsSync(join(paths.agentQaRoot, 'proposals'))).toBe(false)
 
       // The commit really landed in the store the daemon serves from.
       const rows = await callDaemon(paths, 'knowledge.bundles.list', {}) as { status: string }[]
@@ -307,6 +307,33 @@ describe('the daemon commits its own applies in process (CR-01, D-18)', () => {
       expect(leaseAfter.lease.leaseId).toBe(leaseBefore.lease.leaseId)
       expect(leaseAfter.lease.epoch).toBe(leaseBefore.lease.epoch)
       expect(leaseAfter.lease.pid).toBe(leaseBefore.lease.pid)
+    } finally {
+      await daemon.stop()
+    }
+  }, 60_000)
+
+  it('still commits a pre-432 proposal already on disk through the daemon entry, in process', async () => {
+    const paths = makePaths('pre432')
+    const recordId = await seedRecord(paths)
+    grantApply(paths)
+    // 432-12: nothing files a knowledge proposal any more; this is a record the old propose op wrote.
+    const proposalId = await filePre432KnowledgeProposal({
+      agentQaRoot: paths.agentQaRoot,
+      knowledgeRoot: paths.knowledgeRoot,
+      verb: 'forget',
+      target: { grain: 'record', recordId },
+    })
+    const daemon = await startDaemon(paths)
+    try {
+      const applied = await callDaemon(
+        paths,
+        'knowledge.proposal.apply',
+        { proposalId },
+      ) as KnowledgeApplyOutcomeDto
+      expect(applied.outcome).toBe('applied')
+      expect(applied.forgetReceipt?.proposalId).toBe(proposalId)
+      const rows = await callDaemon(paths, 'knowledge.bundles.list', {}) as { status: string }[]
+      expect(rows.map((row) => row.status)).toEqual(['deprecated'])
     } finally {
       await daemon.stop()
     }

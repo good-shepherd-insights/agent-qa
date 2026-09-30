@@ -83,7 +83,8 @@ const UNKNOWN_SCOPE_KEY = anUnknownScopeKey()
 const OPEN_CLASS = 'fn:knowledge.proposal.apply'
 /** A real member of the closed set, read off the constant so this cannot drift from it. */
 const PROTECTED_CLASS = PROTECTED_ACTION_CLASSES[0]
-const SECOND_OPEN_CLASS = 'fn:knowledge.forget.propose'
+// 432-12: the forget change lost `.propose`; the class follows the registered op.
+const SECOND_OPEN_CLASS = 'fn:knowledge.forget'
 
 const AT = '2026-08-07T10:00:00.000Z'
 const LATER = '2026-08-07T11:00:00.000Z'

@@ -37,7 +37,7 @@ a receipt, and `knowledge gates` lists them.
   must fix what it targets and change nothing else.
 - Gate 2 — canary: the record is served, flagged, on later real runs, and a run has to use it
   and benefit.
-- Gate 3 — a person: a run mark or a policy approval. It promotes on its own.
+- Gate 3 — a person: a run mark or an accepted policy. It promotes on its own.
 
 The promotion path names how a record got in, weakest to strongest: `deterministic-verdict-floor`,
 `gate1-lower-trust`, `gate1+gate2`, `user-sovereign`. A held record says why it is held.
@@ -69,8 +69,11 @@ Absence is an answer too. Evidence can be `absent` with a reason (`empty`, `not-
 
 ## Changing knowledge
 
-Never edit files under `agent-qa-knowledge/`. Knowledge changes only through agent-qa. Today that
-is `agent_qa_propose_knowledge_change`, then a person runs `agent-qa proposals accept <proposalId>`.
+Never edit files under `agent-qa-knowledge/`. Knowledge changes only through agent-qa, and each
+change applies at once: `agent_qa_change_knowledge` accepts, rejects or forgets a record by its id
+(`"action": "knowledge.accept"`, `"knowledge.reject"` with a `reason`, or `"knowledge.forget"`),
+and answers the records it changed. Pass an `operationId` to retry a change without applying it
+twice. Wrong knowledge is corrected by new feedback (a run mark) or by forgetting the record.
 
 ## Sample calls and answers
 

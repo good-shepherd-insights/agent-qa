@@ -54,7 +54,8 @@ writes a screenshot to a new file you then open with your image viewer.
 - Answer from these reads, not from a raw `record.md`: trust, validity and supersession are
   worked out when you ask. Browsing a bundle under `agent-qa-knowledge/memory/` is fine;
   `memory/index/`, `memory/queue/`, lease and epoch files and SQLite are never read or edited.
-- Never edit `agent-qa-knowledge/` yourself; knowledge changes only through agent-qa. Today:
-  `agent_qa_propose_knowledge_change`, then a person runs `agent-qa proposals accept <proposalId>`.
+- Never edit `agent-qa-knowledge/` yourself; knowledge changes only through agent-qa.
+  `agent_qa_change_knowledge` accepts, rejects or forgets a record, and the change applies at once.
+  Wrong knowledge is corrected by new feedback (a run mark) or by forgetting the record.
 - Load `references/knowledge-reads.md` for record kinds, trust, gates and lifecycle, and a sample
   call and answer for every read.

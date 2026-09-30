@@ -67,7 +67,7 @@ import {
 
 const APPLY_ID = 'knowledge.proposal.apply'
 /** A second registered, unprotected op — the intact sibling grant's class (391-10). */
-const SIBLING_ID = 'knowledge.forget.propose'
+const SIBLING_ID = 'knowledge.forget'
 const GRANTS_LIST_ID = 'grants.list'
 const NOW_ISO = '2026-08-08T12:00:00.000Z'
 

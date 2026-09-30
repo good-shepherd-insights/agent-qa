@@ -241,6 +241,8 @@ import type {
   ExecutionContext,
   GateReceipt,
   GateReceiptRecordOutcome,
+  KnowledgeChangeOutput,
+  KnowledgeChangeVerb,
   PromotionOutcome,
   RecordId,
   ResolvePromotionPosture,
@@ -875,6 +877,44 @@ export interface CreateKnowledgeReviewInput {
    * supplying a delegate, and a host that supplies both is a host claiming to be two places.
    */
   readonly resolveWriterAuthority?: () => { readonly leaseId: string; readonly epoch: number } | undefined
+  /**
+   * 432-12 (D-05): how a direct change reaches a live writer-lease holder. The holder receives the
+   * validated request and the change's stable identity, bounded; the lease is never taken. Absent,
+   * a held lease refuses the change by name. Exclusive with {@link resolveWriterAuthority}, for the
+   * reason {@link applyDelegate} is.
+   */
+  readonly knowledgeChangeDelegate?: ExplicitReviewDelegate
+  /**
+   * 432-12: the context a direct change is recorded under. Absent means the process resolver, the
+   * default every registry in this composition already reads. The context is recorded as-is; an
+   * explicit change applies in every context (D-04/D-08).
+   */
+  readonly resolveExecutionContext?: () => ExecutionContext
+}
+
+/** The public answer to one direct change, from the explicit writer's own result (432-12). */
+function knowledgeChangeOutput(
+  verb: KnowledgeChangeVerb,
+  operationId: string,
+  result: ExplicitReviewResult,
+): KnowledgeChangeOutput {
+  switch (result.outcome) {
+    case 'applied':
+      return {
+        outcome: 'applied',
+        verb,
+        operationId,
+        recordIds: [...result.recordIds],
+        ...(result.forgetReceipt === undefined ? {} : { forgetReceipt: result.forgetReceipt }),
+        ...(result.commitReceipt === undefined ? {} : { commitReceipt: result.commitReceipt }),
+      }
+    case 'target-not-found':
+      return { outcome: 'target-not-found', verb, operationId, target: result.target }
+    case 'policy-materialize-refused':
+      return { outcome: 'refused', verb, operationId, reason: 'policy-materialize-refused' }
+    default:
+      return result satisfies never
+  }
 }
 
 /**
@@ -892,6 +932,32 @@ export function createKnowledgeReview(input: CreateKnowledgeReviewInput): Knowle
   }
 
   return {
+    // 432-12 (D-04/D-05/D-09): one explicit change, applied in the call through the direct writer
+    // (432-06). Nothing is filed: the change is committed under the lease, handed to a live
+    // holder, or refused by type. A missing identity is minted here, once per call, and returned on
+    // the receipt so the caller can retry the same change.
+    async change(request) {
+      const { knowledgeRoot } = await roots()
+      const operationId = request.operationId ?? randomUUID()
+      const authority = input.resolveWriterAuthority?.()
+      const result = await applyKnowledgeChange({
+        agentQaRoot: input.agentQaRoot,
+        knowledgeRoot,
+        request: { verb: request.verb, input: request.input } as ExplicitReviewRequest,
+        operationId,
+        // The op that made the change, stamped on Gate-3 receipts: `knowledge.accept`,
+        // `knowledge.reject` or `knowledge.forget`, which is the verb's own op id.
+        opId: `knowledge.${request.verb}`,
+        executionContext: (input.resolveExecutionContext ?? getActiveExecutionContext)(),
+        ...(input.resolveTrustPriors === undefined ? {} : { resolveTrustPriors: input.resolveTrustPriors }),
+        ...(input.resolvePromotionPosture === undefined
+          ? {}
+          : { resolvePromotionPosture: input.resolvePromotionPosture }),
+        ...(input.knowledgeChangeDelegate === undefined ? {} : { delegate: input.knowledgeChangeDelegate }),
+        ...(authority === undefined ? {} : { writerAuthority: authority }),
+      })
+      return knowledgeChangeOutput(request.verb, operationId, result)
+    },
     async propose(request, origin) {
       const { knowledgeRoot } = await roots()
       const ledger = openAddressingLedgerForReview({
@@ -1991,6 +2057,13 @@ export interface ComposeLocalAgentInput {
    * `invokeViaDaemon`, and the daemon's own composition injects nothing.
    */
   readonly applyDelegate?: ApplyDelegate
+  /**
+   * 432-12 (D-05): how a direct knowledge change reaches the writer-lease holder when one is alive,
+   * on the same optional-operation idiom as {@link applyDelegate}. The CLI host injects a closure
+   * over `invokeViaDaemon` that invokes the change op there with the same identity; the daemon's
+   * own composition injects nothing, because it holds the lease.
+   */
+  readonly knowledgeChangeDelegate?: ExplicitReviewDelegate
   /** The writer lease a leaseholding host already owns (387-08 D-18). See `createKnowledgeReview`. */
   readonly resolveWriterAuthority?: () => { readonly leaseId: string; readonly epoch: number } | undefined
   /**
@@ -3420,9 +3493,17 @@ export function composeLocalAgent(input: ComposeLocalAgentInput): LocalAgentHost
         agentQaRoot: input.agentQaRoot,
         resolveKnowledgeRoot: input.knowledgeRoot,
         ...(input.applyDelegate === undefined ? {} : { applyDelegate: input.applyDelegate }),
+        ...(input.knowledgeChangeDelegate === undefined
+          ? {}
+          : { knowledgeChangeDelegate: input.knowledgeChangeDelegate }),
         ...(input.resolveWriterAuthority === undefined
           ? {}
           : { resolveWriterAuthority: input.resolveWriterAuthority }),
+        // 432-12: the same context this composition's registry decides in, so a direct change is
+        // recorded under the context it was actually made in.
+        ...(input.resolveExecutionContext === undefined
+          ? {}
+          : { resolveExecutionContext: input.resolveExecutionContext }),
       }),
       // 388 D-14: chip truth, on EVERY local host and not gated on `postRun`. The two are
       // different questions and conflating them would be the bug: `postRun` says whether this

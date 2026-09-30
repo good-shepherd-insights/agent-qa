@@ -164,7 +164,7 @@
       "outputSchemaDigest": "c640c09958203dd4ee4aa3da05d5a9eff3e58107657d554b055705859009d826",
       "partition": {
         "kind": "projected",
-        "tool": "agent_qa_propose_config_change"
+        "tool": "agent_qa_change_config"
       },
       "requiredScopes": [
         "config-write"
@@ -184,7 +184,7 @@
       "outputSchemaDigest": "c640c09958203dd4ee4aa3da05d5a9eff3e58107657d554b055705859009d826",
       "partition": {
         "kind": "projected",
-        "tool": "agent_qa_propose_config_change"
+        "tool": "agent_qa_change_config"
       },
       "requiredScopes": [
         "config-write"
@@ -224,7 +224,7 @@
       "outputSchemaDigest": "c640c09958203dd4ee4aa3da05d5a9eff3e58107657d554b055705859009d826",
       "partition": {
         "kind": "projected",
-        "tool": "agent_qa_propose_config_change"
+        "tool": "agent_qa_change_config"
       },
       "requiredScopes": [
         "config-write"
@@ -244,7 +244,7 @@
       "outputSchemaDigest": "c640c09958203dd4ee4aa3da05d5a9eff3e58107657d554b055705859009d826",
       "partition": {
         "kind": "projected",
-        "tool": "agent_qa_propose_config_change"
+        "tool": "agent_qa_change_config"
       },
       "requiredScopes": [
         "config-write"
@@ -263,8 +263,8 @@
       "inputSchemaDigest": "cf1854b304be80b60d4100ea341a031fef65230ac16e9563eae88bd151cd0e7d",
       "outputSchemaDigest": "fe3a678695929d1affd1156bd83522dc4949199a580c0698333b4efdd4ea6fb8",
       "partition": {
-        "kind": "projected",
-        "tool": "agent_qa_apply_config_proposal"
+        "kind": "unprojected",
+        "reason": "proposal-round-removed"
       },
       "requiredScopes": [
         "config-write"
@@ -285,7 +285,7 @@
       "outputSchemaDigest": "c640c09958203dd4ee4aa3da05d5a9eff3e58107657d554b055705859009d826",
       "partition": {
         "kind": "projected",
-        "tool": "agent_qa_propose_config_change"
+        "tool": "agent_qa_change_config"
       },
       "requiredScopes": [
         "config-write"
@@ -305,7 +305,7 @@
       "outputSchemaDigest": "c640c09958203dd4ee4aa3da05d5a9eff3e58107657d554b055705859009d826",
       "partition": {
         "kind": "projected",
-        "tool": "agent_qa_propose_config_change"
+        "tool": "agent_qa_change_config"
       },
       "requiredScopes": [
         "config-write"
@@ -324,8 +324,8 @@
       "inputSchemaDigest": "71fc596a20f27da3dec80050e5d1f553eba34aea24c2853b853488a811e6b892",
       "outputSchemaDigest": "7a8846c253dbbbc0db25847d005710df759dcd7d500f92d70889e7e13c02100d",
       "partition": {
-        "kind": "projected",
-        "tool": "agent_qa_propose_config_change"
+        "kind": "unprojected",
+        "reason": "proposal-round-removed"
       },
       "requiredScopes": [
         "config-write"
@@ -442,19 +442,19 @@
     {
       "bindingStatusAtRoot": "bound",
       "classifies": true,
-      "id": "knowledge.accept.propose",
-      "inputSchemaDigest": "71fa1a386fd3f9977492ac0c9cd1c3f3a58cc9e4ae17aab816333e9f1ad2bfac",
-      "outputSchemaDigest": "3ea633f6d7fd567a684eedb134cd283221b3391c4b772de78be881a4e78e9f4c",
+      "id": "knowledge.accept",
+      "inputSchemaDigest": "ece244ec807fe3ea186fe1326ec14fe4dc93d54c719cbd1fb35244e43caada32",
+      "outputSchemaDigest": "dd3c72c3e15d892a3cd5780dc2f77d05ac59856b801d128b94d1d3e5ba5f52f4",
       "partition": {
         "kind": "projected",
-        "tool": "agent_qa_propose_knowledge_change"
+        "tool": "agent_qa_change_knowledge"
       },
       "requiredScopes": [
         "knowledge-write"
       ],
       "resultKind": "unary",
       "risk": {
-        "name": "fn:knowledge.accept.propose",
+        "name": "fn:knowledge.accept",
         "readOnly": false,
         "recognized": true
       }
@@ -502,19 +502,19 @@
     {
       "bindingStatusAtRoot": "bound",
       "classifies": true,
-      "id": "knowledge.forget.propose",
-      "inputSchemaDigest": "71fa1a386fd3f9977492ac0c9cd1c3f3a58cc9e4ae17aab816333e9f1ad2bfac",
-      "outputSchemaDigest": "3ea633f6d7fd567a684eedb134cd283221b3391c4b772de78be881a4e78e9f4c",
+      "id": "knowledge.forget",
+      "inputSchemaDigest": "ece244ec807fe3ea186fe1326ec14fe4dc93d54c719cbd1fb35244e43caada32",
+      "outputSchemaDigest": "dd3c72c3e15d892a3cd5780dc2f77d05ac59856b801d128b94d1d3e5ba5f52f4",
       "partition": {
         "kind": "projected",
-        "tool": "agent_qa_propose_knowledge_change"
+        "tool": "agent_qa_change_knowledge"
       },
       "requiredScopes": [
         "knowledge-write"
       ],
       "resultKind": "unary",
       "risk": {
-        "name": "fn:knowledge.forget.propose",
+        "name": "fn:knowledge.forget",
         "readOnly": false,
         "recognized": true
       }
@@ -546,8 +546,8 @@
       "inputSchemaDigest": "22ab6f6276b4e60e27758f591e47bb2890bf8ee64c4a0e6e861a97d93e0ae980",
       "outputSchemaDigest": "e4f72e90664eb610875c63ba32fbfb4982c0b3f673d7d2e7d983c1b3cd0bfa70",
       "partition": {
-        "kind": "projected",
-        "tool": "agent_qa_apply_proposal"
+        "kind": "unprojected",
+        "reason": "proposal-round-removed"
       },
       "requiredScopes": [
         "knowledge-write"
@@ -623,19 +623,19 @@
     {
       "bindingStatusAtRoot": "bound",
       "classifies": true,
-      "id": "knowledge.reject.propose",
-      "inputSchemaDigest": "e1d4344c43bf56254e8844ed401bdfe80d136d711d831805f4634d8e09acc55c",
-      "outputSchemaDigest": "3ea633f6d7fd567a684eedb134cd283221b3391c4b772de78be881a4e78e9f4c",
+      "id": "knowledge.reject",
+      "inputSchemaDigest": "d374a11362776bc2d78a55dd618c4e60ed64bbaf0f8913ebee51716daaabf35b",
+      "outputSchemaDigest": "dd3c72c3e15d892a3cd5780dc2f77d05ac59856b801d128b94d1d3e5ba5f52f4",
       "partition": {
         "kind": "projected",
-        "tool": "agent_qa_propose_knowledge_change"
+        "tool": "agent_qa_change_knowledge"
       },
       "requiredScopes": [
         "knowledge-write"
       ],
       "resultKind": "unary",
       "risk": {
-        "name": "fn:knowledge.reject.propose",
+        "name": "fn:knowledge.reject",
         "readOnly": false,
         "recognized": true
       }
@@ -670,8 +670,8 @@
       "inputSchemaDigest": "012cc84b061f0892ac1067e97d8135fcc4f5a59a1ecdb575383b8914719a4401",
       "outputSchemaDigest": "6bd50afa895c6456c54a11c951695f18b701cb9c2900ff98702adf25ae578f0e",
       "partition": {
-        "kind": "projected",
-        "tool": "agent_qa_list_proposals"
+        "kind": "unprojected",
+        "reason": "proposal-round-removed"
       },
       "requiredScopes": [
         "read"
@@ -711,8 +711,8 @@
       "inputSchemaDigest": "22ab6f6276b4e60e27758f591e47bb2890bf8ee64c4a0e6e861a97d93e0ae980",
       "outputSchemaDigest": "e9fcdba4a54503708650a469c206b96c17f2fe5023f5d44c557a8171d144bb2c",
       "partition": {
-        "kind": "projected",
-        "tool": "agent_qa_show_proposal"
+        "kind": "unprojected",
+        "reason": "proposal-round-removed"
       },
       "requiredScopes": [
         "read"

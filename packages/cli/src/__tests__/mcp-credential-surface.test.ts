@@ -458,7 +458,9 @@ describe('B · no seeded credential reaches the wire through a read tool', () =>
   it('(B1b) the SUCCESS payload of a read tool that echoes the caller\'s own string is masked on '
     + 'BOTH channels — text and structuredContent', async () => {
     await headless(async () => {
-      const answer = await call('agent_qa_show_proposal', { proposalId: ECHO_PLANT })
+      // 432-12: `agent_qa_show_proposal` left with the proposal round. The record read's not-found
+      // arm echoes the caller's own id on its success channel, which is the same claim.
+      const answer = await call('agent_qa_show_knowledge_record', { recordId: ECHO_PLANT })
 
       // The integrity half: this really is the echoing SUCCESS arm, not a refusal.
       expect(answer.isError ?? false, rendered(answer)).toBe(false)
@@ -478,7 +480,7 @@ describe('B · no seeded credential reaches the wire through a read tool', () =>
     await headless(async () => {
       for (const plant of [ENV_PLANT, TOKEN_PLANT]) {
         await call('agent_qa_get_entity', { ref: plant })
-        await call('agent_qa_list_proposals', {})
+        await call('agent_qa_list_knowledge_bundles', {})
         await call('agent_qa_list_runs', {})
       }
       for (const plant of [ENV_PLANT, TOKEN_PLANT]) {
@@ -505,7 +507,12 @@ describe('C · the error channels', () => {
       // path and could not be. Measured on 2.0.0 (2026-08-16): the message names the field and the
       // rule and never quotes the rejected value. This cell reds the day that changes, which is the
       // only way a channel outside our masker can be watched at all.
-      const answer = await call('agent_qa_show_proposal', { proposalId: ENV_PLANT })
+      // 432-12: the proposal read is gone; a MEM short-ID refinement on the knowledge change tool is
+      // the SDK-validated input that now refuses the plant, before any handler or writer runs.
+      const answer = await call('agent_qa_change_knowledge', {
+        action: 'knowledge.forget',
+        target: { grain: 'bundle', shortId: ENV_PLANT },
+      })
 
       expect(answer.isError).toBe(true)
       expect(rendered(answer), 'the SDK stopped naming the tool — re-read this channel')
@@ -516,22 +523,27 @@ describe('C · the error channels', () => {
   })
 })
 
-describe('D · the apply refusal payload renders envelope content, and masks it', () => {
-  it('(D1) neither the prose nor the structured refusal carries a window of a seeded plant',
+describe('D · the direct change answer renders the caller\'s target, and masks it', () => {
+  // 2026-09-30, 432-12 (D-05/D-13): the apply refusal payload is gone with the apply tools. The
+  // payload that now carries caller-supplied content back is the change tool's own answer: a typed
+  // absence echoes the target it was asked about, through the one masked serialization.
+  it('(D1) neither the prose nor the structured answer carries a window of a seeded plant',
     async () => {
       await headless(async () => {
         for (const plant of [ENV_PLANT, TOKEN_PLANT]) {
-          const refusal = await call('agent_qa_apply_config_proposal', { proposal_id: plant })
+          const answer = await call('agent_qa_change_knowledge', {
+            action: 'knowledge.accept',
+            target: { grain: 'record', recordId: plant },
+          })
 
-          // The integrity half: this really is the teach payload, composed from the id the caller
-          // sent, on both the prose channel and the data channel.
-          expect(rendered(refusal)).toContain('To apply it, call this tool again')
-          const structured = refusal.structuredContent as Record<string, unknown>
-          expect(structured['status']).toBe('confirmation-required')
+          // The integrity half: this really is the typed absence, composed from the caller's id.
+          const structured = answer.structuredContent as Record<string, unknown>
+          expect(answer.isError ?? false, rendered(answer)).toBe(false)
+          expect(structured['outcome']).toBe('target-not-found')
 
-          expect(leakedWindow(rendered(refusal), plant)).toBeUndefined()
+          expect(leakedWindow(rendered(answer), plant)).toBeUndefined()
           expect(leakedWindow(JSON.stringify(structured), plant)).toBeUndefined()
-          expect(leakedWindow(wire(), plant), `the apply refusal leaked ${plant}`).toBeUndefined()
+          expect(leakedWindow(wire(), plant), `the change answer leaked ${plant}`).toBeUndefined()
         }
       })
     })
@@ -541,7 +553,7 @@ describe('E · the config-write channel refuses to carry a credential at all', (
   it('(E1) a credential-SHAPED value is blocked by the pattern arm, and the wire carries a '
     + 'fingerprint instead of the value', async () => {
     await headless(async () => {
-      const answer = await call('agent_qa_propose_config_change', {
+      const answer = await call('agent_qa_change_config', {
         action: 'config.field.set',
         path: 'workspace.hooksFile',
         value: CONFIG_PLANT,
@@ -571,7 +583,7 @@ describe('E · the config-write channel refuses to carry a credential at all', (
   it('(E2) a value the environment SEEDED is blocked by the seed arm — a different mechanism',
     async () => {
       await headless(async () => {
-        const answer = await call('agent_qa_propose_config_change', {
+        const answer = await call('agent_qa_change_config', {
           action: 'config.field.set',
           path: 'workspace.hooksFile',
           value: ENV_PLANT,
@@ -604,7 +616,7 @@ describe('E · the config-write channel refuses to carry a credential at all', (
       expect(readFileSync(configPath, 'utf8'), 'the fixture lost its plant')
         .toContain(CONFIG_PLANT)
 
-      const answer = await call('agent_qa_propose_config_change', {
+      const answer = await call('agent_qa_change_config', {
         action: 'config.field.set',
         path: 'registry.llms.0.model',
         value: 'gpt-5.7-terra',
@@ -653,7 +665,7 @@ describe('F · the controls, and the bound they measure', () => {
     await openWorkspace(configWithOpaqueHeaderCredential())
 
     await headless(async () => {
-      const answer = await call('agent_qa_propose_config_change', {
+      const answer = await call('agent_qa_change_config', {
         action: 'config.field.set',
         // THE SECOND ENTRY, which is the one carrying the header. A change three lines away would
         // put the credential outside the diff's context window and the cell would then be about
@@ -687,9 +699,9 @@ describe('G · redaction lands on credentials, not on the config (v1 M2 / P2 re-
       const listed = await client!.listTools()
       // The catalogue is readable: a masker that blackened everything would take from the model the
       // very surface it was asked to use. Over-redaction is a real cost, not a safe default.
-      expect(listed.tools.map((tool) => tool.name)).toContain('agent_qa_apply_config_proposal')
+      expect(listed.tools.map((tool) => tool.name)).toContain('agent_qa_change_config')
 
-      const answer = await call('agent_qa_propose_config_change', {
+      const answer = await call('agent_qa_change_config', {
         action: 'config.field.set',
         path: 'use.timeout.step',
         value: '45s',
@@ -713,12 +725,12 @@ describe('H · nothing persisted carries a planted byte', () => {
     await headless(async () => {
       const configBefore = readFileSync(configPath, 'utf8')
       const answers = [
-        await call('agent_qa_propose_config_change', {
+        await call('agent_qa_change_config', {
           action: 'config.field.set',
           path: 'workspace.hooksFile',
           value: CONFIG_PLANT,
         }),
-        await call('agent_qa_propose_config_change', {
+        await call('agent_qa_change_config', {
           action: 'config.field.set',
           path: 'workspace.hooksFile',
           value: ENV_PLANT,

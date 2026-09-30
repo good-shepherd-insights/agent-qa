@@ -20,6 +20,8 @@ import { BundleProvenanceSchema } from './bundle-files'
 import {
   ForgetReceiptV1Schema,
   ForgetTargetRefSchema,
+  KNOWLEDGE_CHANGE_VERBS,
+  KnowledgeChangeOperationIdSchema,
   KnowledgeProposalV1Schema,
   KnowledgeTargetRefSchema,
   MarkProposalStampSchema,
@@ -172,50 +174,79 @@ export const KnowledgeMarkInputSchema = z.object({
 export type KnowledgeMarkInput = z.infer<typeof KnowledgeMarkInputSchema>
 
 /**
- * What a PROPOSE op takes on top of the verb it proposes: the run the caller is serving (391-07).
+ * 432-12 (D-05/D-09): what a CHANGE op takes on top of the verb it applies — an optional operation
+ * identity. A caller that repeats the identity repeats the change, which lands once and answers the
+ * same records; a caller that omits it gets a fresh identity back on the receipt.
  *
- * Run identity is a fact about the CALL, not about the verb — which is why it lives on the op's
- * input rather than on {@link KnowledgeForgetInput} and friends beneath it, and why the port
- * takes it as a second parameter rather than as a field on the request union. The verb answers
- * "what would change"; the run answers "who asked, on whose behalf", and only a run-scoped caller
- * knows it. A composition-bound alternative would have named the wrong noun: a composition is a
- * HOST — a daemon serves many runs over its lifetime and a CLI one-shot is no run at all — so
- * binding identity there would attribute proposals to a process.
- *
- * OPTIONAL, and its absence is a true statement rather than a gap: a proposal minted by a
- * directly invoked CLI verb belongs to no run, and inventing one so the field could be required
- * is the fabricated attribution the origin vocabulary refuses elsewhere.
- *
- * DISPLAY AND GROUPING ONLY (T-391-20). Nothing authorizes on this value: the gate never reads
- * `origin.runId`, and no scope, grant or protected-class decision consumes it. A caller that
- * misstates its run can mislead a digest reader and gains no capability, which is why it is
- * accepted from the input rather than derived from a trusted source.
+ * The 391-07 `runId` attribution is gone with the proposal it attributed: an applied change is
+ * recorded by the records it changed, and nothing groups direct changes by run (D-10).
  */
-const PROPOSE_RUN_ATTRIBUTION = { runId: z.string().min(1).optional() }
+const CHANGE_IDENTITY = { operationId: KnowledgeChangeOperationIdSchema.optional() }
 
-/** {@link KnowledgeForgetInputSchema} as the forget-propose OP takes it. */
-export const KnowledgeForgetProposeInputSchema = z.object({
-  ...KnowledgeForgetInputSchema.shape,
-  ...PROPOSE_RUN_ATTRIBUTION,
-}).strict()
-
-export type KnowledgeForgetProposeInput = z.infer<typeof KnowledgeForgetProposeInputSchema>
-
-/** {@link KnowledgeAcceptInputSchema} as the accept-propose OP takes it. */
-export const KnowledgeAcceptProposeInputSchema = z.object({
+/** {@link KnowledgeAcceptInputSchema} as `knowledge.accept` takes it. */
+export const KnowledgeAcceptChangeInputSchema = z.object({
   ...KnowledgeAcceptInputSchema.shape,
-  ...PROPOSE_RUN_ATTRIBUTION,
+  ...CHANGE_IDENTITY,
 }).strict()
 
-export type KnowledgeAcceptProposeInput = z.infer<typeof KnowledgeAcceptProposeInputSchema>
+export type KnowledgeAcceptChangeInput = z.infer<typeof KnowledgeAcceptChangeInputSchema>
 
-/** {@link KnowledgeRejectInputSchema} as the reject-propose OP takes it. */
-export const KnowledgeRejectProposeInputSchema = z.object({
+/** {@link KnowledgeRejectInputSchema} as `knowledge.reject` takes it. */
+export const KnowledgeRejectChangeInputSchema = z.object({
   ...KnowledgeRejectInputSchema.shape,
-  ...PROPOSE_RUN_ATTRIBUTION,
+  ...CHANGE_IDENTITY,
 }).strict()
 
-export type KnowledgeRejectProposeInput = z.infer<typeof KnowledgeRejectProposeInputSchema>
+export type KnowledgeRejectChangeInput = z.infer<typeof KnowledgeRejectChangeInputSchema>
+
+/** {@link KnowledgeForgetInputSchema} as `knowledge.forget` takes it. */
+export const KnowledgeForgetChangeInputSchema = z.object({
+  ...KnowledgeForgetInputSchema.shape,
+  ...CHANGE_IDENTITY,
+}).strict()
+
+export type KnowledgeForgetChangeInput = z.infer<typeof KnowledgeForgetChangeInputSchema>
+
+/** Why a direct change wrote nothing, when the store refused it by type rather than by absence. */
+export const KNOWLEDGE_CHANGE_REFUSAL_REASONS = ['policy-materialize-refused'] as const
+
+export type KnowledgeChangeRefusalReason = (typeof KNOWLEDGE_CHANGE_REFUSAL_REASONS)[number]
+
+/**
+ * What a direct knowledge change DID (432-12, D-05): the records it changed, a typed absence, or a
+ * typed refusal. Never a proposal: nothing waits for a second call.
+ *
+ * `recordIds` are read back after the write. A forget carries the existing tombstone receipt, and a
+ * change that crossed a promotion gate carries its commit receipt. `operationId` is the identity the
+ * change landed under, so a caller can retry it and land nothing twice.
+ */
+export const KnowledgeChangeOutputSchema = z.discriminatedUnion('outcome', [
+  z.object({
+    outcome: z.literal('applied'),
+    verb: z.enum(KNOWLEDGE_CHANGE_VERBS),
+    operationId: KnowledgeChangeOperationIdSchema,
+    recordIds: z.array(z.string().min(1)),
+    /** Present exactly when the change was a forget (D-19). */
+    forgetReceipt: ForgetReceiptV1Schema.optional(),
+    /** Present when the change passed a promotion gate or wrote a policy record. */
+    commitReceipt: CommitReceiptSchema.optional(),
+  }).strict(),
+  z.object({
+    outcome: z.literal('target-not-found'),
+    verb: z.enum(KNOWLEDGE_CHANGE_VERBS),
+    operationId: KnowledgeChangeOperationIdSchema,
+    /** Echoed so an answer pasted into an issue still says what was asked about. */
+    target: KnowledgeTargetRefSchema,
+  }).strict(),
+  z.object({
+    outcome: z.literal('refused'),
+    verb: z.enum(KNOWLEDGE_CHANGE_VERBS),
+    operationId: KnowledgeChangeOperationIdSchema,
+    reason: z.enum(KNOWLEDGE_CHANGE_REFUSAL_REASONS),
+  }).strict(),
+])
+
+export type KnowledgeChangeOutput = z.infer<typeof KnowledgeChangeOutputSchema>
 
 /** Apply a proposal by id — the second half of the two-step (D-17). */
 export const KnowledgeProposalApplyInputSchema = z.object({
@@ -234,20 +265,6 @@ export type KnowledgeProposalApplyInput = z.infer<typeof KnowledgeProposalApplyI
  * two indistinguishable, and reporting it as a throw would throw away the receipt — which is
  * the one thing the caller asked for. So it is an ARM, and the receipt rides on both arms.
  */
-export const KnowledgeProposeOutcomeSchema = z.discriminatedUnion('kind', [
-  z.object({
-    kind: z.literal('proposed'),
-    proposal: KnowledgeProposalV1Schema,
-  }).strict(),
-  z.object({
-    kind: z.literal('target-not-found'),
-    /** Echoed so an answer pasted into an issue still says what was asked about. */
-    target: KnowledgeTargetRefSchema,
-  }).strict(),
-])
-
-export type KnowledgeProposeOutcomeDto = z.infer<typeof KnowledgeProposeOutcomeSchema>
-
 export const KNOWLEDGE_APPLY_OUTCOMES = ['applied', 'already-applied', 'policy-materialize-refused'] as const
 
 export type KnowledgeApplyOutcomeKind = (typeof KNOWLEDGE_APPLY_OUTCOMES)[number]

@@ -195,6 +195,7 @@ function mintProposal(ws: Workspace, runId: string, summary: string, ordinal: nu
     agentQaRoot: ws.agentQaRoot,
     knowledgeRoot: ws.knowledgeRoot,
     request: { verb: 'forget', input: { target: { grain: 'record', recordId: published.id } } },
+    // A pre-432 record: its emitter is the retired propose op that wrote it (432-12).
     origin: { emittedBy: 'knowledge.forget.propose', runId },
   })
   if (outcome.kind !== 'proposed') throw new Error(`fixture propose failed: ${outcome.kind}`)
@@ -489,9 +490,12 @@ describe('agent-qa proposals (D-17, the decision surface)', () => {
 
 describe('agent-qa proposals accept --always, over a grant ledger the build cannot fully read', () => {
   const LEDGER_AT = '2026-08-08T10:00:00.000Z'
-  /** Two real, unprotected classes — deliberately NOT the apply class the accept below mints. */
-  const FIRST_CLASS = 'fn:knowledge.forget.propose'
-  const SECOND_CLASS = 'fn:knowledge.reject.propose'
+  /**
+   * Two real, unprotected classes — deliberately NOT the apply class the accept below mints.
+   * 2026-09-30, 432-12 (D-05): the two knowledge changes lost `.propose`; their classes follow.
+   */
+  const FIRST_CLASS = 'fn:knowledge.forget'
+  const SECOND_CLASS = 'fn:knowledge.reject'
   const ACCEPT_ID = 'proposals.accept'
 
   /** Two committed lines through the REAL mint — the produced-not-literal corpus law. */

@@ -61,7 +61,7 @@ import { resolveMcpTokens } from '../composition/mcp-token-resolution.js'
 import type { ResolvedMcpToken } from '../composition/mcp-token-resolution.js'
 
 /**
- * The two config tools, read OUT of the shipped mapping.
+ * The config tools (one since 432-12), read OUT of the shipped mapping.
  *
  * Never typed as literals. An absence cell naming a tool by hand keeps passing after a rename —
  * it would then be asserting that a tool nobody ships is not listed, which is true of every string.
@@ -301,13 +301,12 @@ function lastPayload(frames: readonly Frame[]): unknown {
 // ---------------------------------------------------------------------------------------------
 
 describe('1 · the config tools are ABSENT from a caller without config-write', () => {
-  it('names two config tools in the shipped mapping, so the absence below is about something', () => {
+  it('names the config tool in the shipped mapping, so the absence below is about something', () => {
     // The integrity assertion that keeps every cell in this group from being a statement about the
     // empty set. Without it, deleting the config tools from the catalogue would make cell 1 pass.
-    expect(CONFIG_TOOL_NAMES).toEqual([
-      'agent_qa_propose_config_change',
-      'agent_qa_apply_config_proposal',
-    ])
+    // 2026-09-30 (432-12 D-05): the apply tool is gone and the change tool writes in the call, so
+    // the config-write door is ONE tool; the two-sided claims below hold over it unchanged.
+    expect(CONFIG_TOOL_NAMES).toEqual(['agent_qa_change_config'])
   })
 
   it('a read-only caller sees NEITHER config tool', async () => {

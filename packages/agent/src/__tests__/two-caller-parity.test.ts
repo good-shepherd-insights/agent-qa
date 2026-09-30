@@ -275,17 +275,18 @@ const ALL_FUNCTION_IDS = [
   // does NOT survive safe-mode filtering — which is what turns the assertion below from "one id
   // drops out" into "exactly the non-read ids drop out", a claim about the RULE rather than
   // about `runs.start`.
-  'knowledge.accept.propose',
+  // 2026-09-30, 432-12 (D-05): the three changes lose `.propose` and keep their sort positions.
+  'knowledge.accept',
   'knowledge.brief.why',
   'knowledge.bundles.list',
-  'knowledge.forget.propose',
+  'knowledge.forget',
   // 416 D-17: gate history is read-tier and remains visible in both caller listings.
   'knowledge.gates.list',
   'knowledge.proposal.apply',
   'knowledge.record.show',
   'knowledge.records.diff',
   'knowledge.records.inspect',
-  'knowledge.reject.propose',
+  'knowledge.reject',
   // 391 PROP-03: three more ids in SORT position (`proposals.` falls between `knowledge.` and
   // `quarantine.`). `list` and `show` are read-tier and survive safe-mode filtering; `reject` is
   // approval-write-tier and drops out with the other non-read verbs, so the derived non-read set

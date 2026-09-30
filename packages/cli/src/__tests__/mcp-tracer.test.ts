@@ -15,7 +15,7 @@
 // documented in-process driver. A cell that asserted against a hand-built response would be
 // measuring this file's idea of the protocol rather than the protocol.
 //
-// The assertion on the output side is `ProposalsListOutputSchema.parse` — the op's OWN contract,
+// The assertion on the output side is `KnowledgeRecordsInspectOutputSchema.parse` — the op's OWN contract,
 // imported rather than restated. That is what makes it a D-16 claim: the schema the server
 // advertised, the schema `invokeFunction` validated with, and the schema asserted here are one
 // object, so the cell cannot pass over a server advertising something the op does not honour.
@@ -29,7 +29,7 @@ import { createMcpHandler } from '@modelcontextprotocol/server'
 import { Client } from '@modelcontextprotocol/client'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/client'
 import { buildAgentQaMcpServer, createAgentQaMcpNodeHandler } from '@vostride/agent-qa-mcp'
-import { ProposalsListOutputSchema } from '@vostride/agent-qa-schema'
+import { KnowledgeRecordsInspectOutputSchema } from '@vostride/agent-qa-schema'
 import { afterEach, describe, expect, it } from 'vitest'
 
 import { MCP_FUNCTION_CALLER } from '../commands/mcp.js'
@@ -71,7 +71,10 @@ function workspace(): { configPath: string; agentQaRoot: string } {
 }
 
 describe('the MCP tracer: one projected tool, end to end on the v2 SDK', () => {
-  it('lists agent_qa_list_proposals and answers a call with contract-valid structuredContent', async () => {
+  // 2026-09-30, 432-12 (D-05): the tracer tool was `agent_qa_list_proposals`, which left the catalogue
+  // with the proposal round. The same claims are carried over the knowledge inspect read, a 1:1
+  // read tool with an object-rooted output contract.
+  it('lists agent_qa_inspect_knowledge_records and answers a call with contract-valid structuredContent', async () => {
     const where = workspace()
     const host = composeCliLocalAgent({
       agentQaRoot: where.agentQaRoot,
@@ -99,29 +102,32 @@ describe('the MCP tracer: one projected tool, end to end on the v2 SDK', () => {
       await client.connect(transport)
 
       const listed = await client.listTools()
-      const tool = listed.tools.find((entry) => entry.name === 'agent_qa_list_proposals')
+      const tool = listed.tools.find((entry) => entry.name === 'agent_qa_inspect_knowledge_records')
       expect(tool, `tools/list carried: ${listed.tools.map((t) => t.name).join(', ')}`).toBeDefined()
 
-      // The annotation is DERIVED from the op — `proposals.list` declares `readOnly` and asks for
+      // The annotation is DERIVED from the op — `knowledge.records.inspect` declares `readOnly` and asks for
       // nothing beyond `read` — so this asserts the derivation reached the wire, not a literal.
       expect(tool!.annotations?.readOnlyHint).toBe(true)
 
       // D-16's advertised half: a real object-typed output schema, converted by the SDK from the
-      // op's own zod contract. `entries` is the contract's own property name.
+      // op's own zod contract. `records` is the contract's own property name.
       expect(tool!.outputSchema).toBeDefined()
       expect((tool!.outputSchema as { type?: string }).type).toBe('object')
       expect(
         Object.keys((tool!.outputSchema as { properties?: Record<string, unknown> }).properties ?? {}),
-      ).toContain('entries')
+      ).toContain('records')
 
-      const called = await client.callTool({ name: 'agent_qa_list_proposals', arguments: {} })
+      const called = await client.callTool({
+        name: 'agent_qa_inspect_knowledge_records',
+        arguments: { filter: {} },
+      })
       expect(called.isError ?? false, JSON.stringify(called.content)).toBe(false)
 
       // D-16's enforced half, and the whole point of the cell: the result parses under the op's own
-      // output contract. An empty store is a RESULT — a project with nothing pending reads exactly
-      // like one that has never proposed anything, because those are the same fact.
-      const parsed = ProposalsListOutputSchema.parse(called.structuredContent)
-      expect(parsed.entries).toEqual([])
+      // output contract. An empty store is a RESULT — a project with no records reads exactly like
+      // one that has never learned anything, because those are the same fact.
+      const parsed = KnowledgeRecordsInspectOutputSchema.parse(called.structuredContent)
+      expect(parsed.records).toEqual([])
     } finally {
       await client.close().catch(() => {})
       await handler.close().catch(() => {})
@@ -162,7 +168,7 @@ describe('the MCP tracer: one projected tool, end to end on the v2 SDK', () => {
     try {
       await client.connect(transport)
       const listed = await client.listTools()
-      expect(listed.tools.map((entry) => entry.name)).toContain('agent_qa_list_proposals')
+      expect(listed.tools.map((entry) => entry.name)).toContain('agent_qa_inspect_knowledge_records')
 
       // Asserted on a raw response rather than through the client, because the client would not
       // report a header it does not read — and the header is the whole claim.

@@ -35,14 +35,12 @@ import {
   ConfigProjectScaffoldInputSchema,
   ConfigTargetCreateInputSchema,
   ConfigTargetEditInputSchema,
-  ConfigUndoProposeInputSchema,
 } from '../config-mutation/actions'
-import { ConfigProposeOutputSchema } from '../config-mutation/proposal'
 import {
-  KnowledgeAcceptProposeInputSchema,
-  KnowledgeForgetProposeInputSchema,
-  KnowledgeProposeOutcomeSchema,
-  KnowledgeRejectProposeInputSchema,
+  KnowledgeAcceptChangeInputSchema,
+  KnowledgeChangeOutputSchema,
+  KnowledgeForgetChangeInputSchema,
+  KnowledgeRejectChangeInputSchema,
 } from '../knowledge/review-verbs'
 import {
   AuthoringDraftEditInputSchema,
@@ -89,8 +87,8 @@ function armLiteral<Id extends string>(opId: Id): z.ZodLiteral<Id> {
 /**
  * Compose the output a fold advertises from its arms' own output contracts.
  *
- * DEDUPED BY OBJECT IDENTITY, and the collapse is the point rather than an optimisation. Six of the
- * seven config actions and all three knowledge proposes answer with literally the same schema
+ * DEDUPED BY OBJECT IDENTITY, and the collapse is the point rather than an optimisation. The six
+ * config actions and the three knowledge changes each answer with literally the same schema
  * object, so a `z.union` over them would advertise `anyOf: [X, X, X, …]` — a document that says
  * nothing the single member does not, while implying to a reader that the arms differ. When the
  * arms genuinely differ (the authoring fold), the union survives and is advertised.
@@ -133,7 +131,7 @@ export const AuthoringRefineFoldOutputSchema = foldOutput([
   AuthoringVerifyDraftOutputSchema,
 ])
 
-// ---- `agent_qa_propose_config_change`: the closed seven-action class ----------------------------
+// ---- `agent_qa_change_config`: the six direct config actions -------------------------------------
 
 const configArms = [
   ConfigFieldSetInputSchema.extend({
@@ -154,9 +152,6 @@ const configArms = [
   ConfigProjectScaffoldInputSchema.extend({
     [TOOL_FOLD_DISCRIMINANT]: armLiteral('config.project.scaffold'),
   }),
-  ConfigUndoProposeInputSchema.extend({
-    [TOOL_FOLD_DISCRIMINANT]: armLiteral('config.undo.propose'),
-  }),
 ] as const
 
 /**
@@ -174,28 +169,22 @@ export const ConfigChangeFoldInputSchema = z.discriminatedUnion(
 export type ConfigChangeFoldInput = z.infer<typeof ConfigChangeFoldInputSchema>
 
 /**
- * 2026-09-30, 432-11 D-05: the six config operations answer what they wrote, and
- * `config.undo.propose` still answers a proposal until 432-17 deletes it, so the advertised output
- * is the union of those two contracts, arm by arm.
+ * 2026-09-30, 432-11 D-05: the six config operations answer what they wrote. 432-12 removed the
+ * undo arm, so every arm answers the one change contract and the union collapses to it.
  */
-export const ConfigChangeFoldOutputSchema = foldOutput(
-  configArms.map((arm) =>
-    arm.shape[TOOL_FOLD_DISCRIMINANT].value === 'config.undo.propose'
-      ? ConfigProposeOutputSchema
-      : ConfigChangeOutputSchema),
-)
+export const ConfigChangeFoldOutputSchema = foldOutput(configArms.map(() => ConfigChangeOutputSchema))
 
-// ---- `agent_qa_propose_knowledge_change`: accept, reject, forget --------------------------------
+// ---- `agent_qa_change_knowledge`: accept, reject, forget, applied in the call (432-12) ------------
 
 const knowledgeArms = [
-  KnowledgeAcceptProposeInputSchema.extend({
-    [TOOL_FOLD_DISCRIMINANT]: armLiteral('knowledge.accept.propose'),
+  KnowledgeAcceptChangeInputSchema.extend({
+    [TOOL_FOLD_DISCRIMINANT]: armLiteral('knowledge.accept'),
   }),
-  KnowledgeRejectProposeInputSchema.extend({
-    [TOOL_FOLD_DISCRIMINANT]: armLiteral('knowledge.reject.propose'),
+  KnowledgeRejectChangeInputSchema.extend({
+    [TOOL_FOLD_DISCRIMINANT]: armLiteral('knowledge.reject'),
   }),
-  KnowledgeForgetProposeInputSchema.extend({
-    [TOOL_FOLD_DISCRIMINANT]: armLiteral('knowledge.forget.propose'),
+  KnowledgeForgetChangeInputSchema.extend({
+    [TOOL_FOLD_DISCRIMINANT]: armLiteral('knowledge.forget'),
   }),
 ] as const
 
@@ -207,7 +196,7 @@ export const KnowledgeChangeFoldInputSchema = z.discriminatedUnion(
 export type KnowledgeChangeFoldInput = z.infer<typeof KnowledgeChangeFoldInputSchema>
 
 export const KnowledgeChangeFoldOutputSchema = foldOutput(
-  knowledgeArms.map(() => KnowledgeProposeOutcomeSchema),
+  knowledgeArms.map(() => KnowledgeChangeOutputSchema),
 )
 
 // ---- the run evidence read: a step's parsed evidence, or one of its blobs by sha ---------------

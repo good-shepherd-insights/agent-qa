@@ -62,7 +62,6 @@ import type {
   GrantsListOutput,
   GrantsRevokeOutput,
   KnowledgeApplyOutcomeDto,
-  KnowledgeProposeOutcomeDto,
   MaskedResolvedConfig,
   ProposalsAcceptOutput,
   ProposalsListOutput,
@@ -77,9 +76,9 @@ import {
   createKnowledgeReview,
   createRunsReader,
 } from '../composition/compose-local-agent.js'
+import { filePre432KnowledgeProposal } from './pre-432-knowledge-proposal.js'
 
 const APPLY_ID = 'knowledge.proposal.apply'
-const PROPOSE_ID = 'knowledge.forget.propose'
 const ACCEPT_ID = 'proposals.accept'
 const GRANTS_LIST_ID = 'grants.list'
 const GRANTS_REVOKE_ID = 'grants.revoke'
@@ -241,15 +240,11 @@ describe('the grant loop: a person accepts with always, and a later headless app
     return name
   }
 
-  async function propose(registry: FunctionRegistry, recordId: string): Promise<string> {
-    const proposed = (await invokeFunction(
-      registry,
-      PROPOSE_ID,
-      { target: { grain: 'record', recordId } },
-      HUMAN,
-    )) as KnowledgeProposeOutcomeDto
-    if (proposed.kind !== 'proposed') throw new Error(`expected a proposal, got ${proposed.kind}`)
-    return proposed.proposal.proposalId
+  /** 432-12: a pre-432 forget proposal on disk; the change ops apply in the call and file none. */
+  async function propose(_registry: FunctionRegistry, recordId: string): Promise<string> {
+    return await filePre432KnowledgeProposal({
+      agentQaRoot, knowledgeRoot, verb: 'forget', target: { grain: 'record', recordId },
+    })
   }
 
   it('mints on the always form only, and the mint is what lets a headless apply commit', async () => {

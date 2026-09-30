@@ -141,7 +141,12 @@ export {
 import { proposalStageCapabilities, resolveProposeGate1MaxPerJob } from './proposal-stage-capabilities.js'
 import { misdirectionPostureCapability } from './misdirection-posture-capability.js'
 import { misdirectionPreparationCapabilities } from '../curation/misdirection-tail.js'
-import type { ApplyDelegate, ApplyReviewResult } from '@vostride/agent-qa-agent-local'
+import type {
+  ApplyDelegate,
+  ApplyReviewResult,
+  ExplicitReviewDelegate,
+  ExplicitReviewResult,
+} from '@vostride/agent-qa-agent-local'
 import type {
   ConfigScaffoldContentPortLike,
   ConfigUndoSource,
@@ -155,6 +160,7 @@ import {
   CONFIG_REVISION_ABSENT,
   CONFIG_SET_DEFAULT_HOOKS_FILE,
   KnowledgeApplyOutcomeSchema,
+  KnowledgeChangeOutputSchema,
   base64Decode,
   enumerateConfigFileSet,
   renderConfigDiff,
@@ -809,6 +815,12 @@ export interface ComposeCliLocalAgentInput {
    * substitutes it to exercise the routing without a socket.
    */
   applyDelegate?: ApplyDelegate
+  /**
+   * 432-12 (D-05): how a direct knowledge change reaches the writer-lease holder when one is alive.
+   * Defaults to the same `/invoke` transport as {@link applyDelegate}, invoking the change op on the
+   * daemon with the same operation identity. A test substitutes it to exercise the routing.
+   */
+  knowledgeChangeDelegate?: ExplicitReviewDelegate
   /**
    * The queue's model capability. Defaults to the project's configured job model.
    *
@@ -4255,6 +4267,14 @@ export function composeCliLocalAgent(input: ComposeCliLocalAgentInput): LocalAge
       })
       return KnowledgeApplyOutcomeSchema.parse(answer) as ApplyReviewResult
     }),
+    // 432-12 (D-05): a direct knowledge change made while a live daemon holds the writer lease is
+    // handed to that daemon as the SAME change op with the SAME operation identity, over the same
+    // socket, and its answer is read back. Nothing is filed or claimed on either side; the daemon
+    // applies with the authority it holds, and a retried identity lands once there too.
+    knowledgeChangeDelegate: input.knowledgeChangeDelegate ?? delegateKnowledgeChangeViaDaemon({
+      agentQaRoot: input.agentQaRoot,
+      resolveKnowledgeRoot: knowledgeRoot,
+    }),
     // Deferred, and never called by a host that only invokes a function op: the queue is opened by
     // `jobs()` and nothing else resolves a provider handle.
     model: input.model ?? (() => resolveCliJobModel(input.configPath)),
@@ -4324,4 +4344,56 @@ export function composeCliLocalAgent(input: ComposeCliLocalAgentInput): LocalAge
       }
     },
   })
+}
+
+/**
+ * 432-12 (D-05): the CLI's delegate for a direct knowledge change a live daemon's lease covers.
+ *
+ * It invokes the verb's own change op on the daemon over the 386 `/invoke` socket, with the same
+ * operation identity, and reads the daemon's answer back as the writer's result. The daemon holds
+ * the lease and applies with its own authority; nothing is filed or claimed on either side. A mark
+ * never reaches here: it changes knowledge through `runs.mark`.
+ */
+export function delegateKnowledgeChangeViaDaemon(input: {
+  readonly agentQaRoot: string
+  readonly resolveKnowledgeRoot: () => string | Promise<string>
+}): ExplicitReviewDelegate {
+  return async ({ request, operationId }) => {
+    if (request.verb === 'mark') {
+      throw new TypeError('a mark changes knowledge through runs.mark, never through a change op')
+    }
+    const answer = KnowledgeChangeOutputSchema.parse(await invokeViaDaemon({
+      agentQaRoot: input.agentQaRoot,
+      knowledgeRoot: await input.resolveKnowledgeRoot(),
+      // The verb's own change op: `knowledge.accept`, `knowledge.reject` or `knowledge.forget`.
+      functionId: `knowledge.${request.verb}`,
+      input: { ...request.input, operationId },
+    }))
+    return explicitResultOf(answer, operationId)
+  }
+}
+
+/** The daemon's public answer to a delegated knowledge change, read back as the writer's result. */
+function explicitResultOf(
+  answer: ReturnType<typeof KnowledgeChangeOutputSchema.parse>,
+  operationId: string,
+): ExplicitReviewResult {
+  const changeId = `prop_${operationId.toLowerCase()}`
+  switch (answer.outcome) {
+    case 'applied':
+      return {
+        outcome: 'applied',
+        verb: answer.verb,
+        changeId,
+        recordIds: answer.recordIds,
+        ...(answer.forgetReceipt === undefined ? {} : { forgetReceipt: answer.forgetReceipt }),
+        ...(answer.commitReceipt === undefined ? {} : { commitReceipt: answer.commitReceipt }),
+      }
+    case 'target-not-found':
+      return { outcome: 'target-not-found', verb: answer.verb, changeId, target: answer.target }
+    case 'refused':
+      return { outcome: 'policy-materialize-refused', verb: answer.verb, changeId }
+    default:
+      return answer satisfies never
+  }
 }

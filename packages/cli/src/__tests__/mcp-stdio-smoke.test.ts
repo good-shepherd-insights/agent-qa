@@ -92,7 +92,8 @@ describe('agent-qa mcp over spawned stdio', () => {
       const names = listed.tools.map((entry) => entry.name)
 
       // (a) The catalog reached a client that spawned the shipped binary.
-      expect(names).toContain('agent_qa_list_proposals')
+      // 432-12: `agent_qa_list_proposals` left with the proposal round; the run list stands in.
+      expect(names).toContain('agent_qa_list_runs')
 
       // (b) D-07's default grant, read off the SHIPPED constant rather than restated: everything
       // except `config-write`, derived from the scope enum by exclusion. Stated honestly: the

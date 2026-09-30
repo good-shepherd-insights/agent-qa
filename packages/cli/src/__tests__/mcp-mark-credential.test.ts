@@ -93,7 +93,8 @@ describe('419 MCP sovereign mark bearer differential', () => {
     const reader = await h.connect(READER)
     const before = h.ledgerBytes()
     const anonymousNames = await h.list(anonymous)
-    expect(anonymousNames).toContain('agent_qa_apply_proposal')
+    // 432-12 (D-05): the knowledge-write door an anonymous caller sees is the direct change tool.
+    expect(anonymousNames).toContain('agent_qa_change_knowledge')
     expect(anonymousNames).toContain(GATES_TOOL)
     for (const client of [anonymous, reader]) {
       expect(await h.list(client)).not.toContain(MARK_TOOL)
@@ -144,13 +145,13 @@ describe('419 MCP sovereign mark bearer differential', () => {
     const writer = await h.connect(MARK_ONLY)
     const names = await h.list(writer)
     expect(names).toContain(MARK_TOOL)
-    expect(names).not.toContain('agent_qa_apply_config_proposal')
+    expect(names).not.toContain('agent_qa_change_config')
     expect(names).not.toContain('agent_qa_write_test')
     expect(names).not.toContain('agent_qa_start_run')
     expect((await h.mark(writer)).structuredContent).toMatchObject({ kind: 'marked' })
     const written = h.ledgerBytes()
-    await writer.callTool({ name: 'agent_qa_apply_config_proposal', arguments: {
-      proposal_id: 'prop_419-absent', confirmed: true,
+    await writer.callTool({ name: 'agent_qa_change_config', arguments: {
+      action: 'config.field.set', path: 'use.timeout.step', value: '45s',
     } }).catch(() => undefined)
     expect(h.frames.at(-1)).toContain('not found')
     // Bypass listing to prove the independent op-required-scope guard still refuses.

@@ -23,6 +23,7 @@ import type { mapStepEvidenceToWhy } from '../ops/knowledge-brief-why.js'
 import type {
   FunctionDeps,
   KnowledgeApplyOutcome,
+  KnowledgeChangeRequest,
   KnowledgeProposalRequest,
   KnowledgeReaderPort,
   KnowledgeReviewPort,
@@ -235,7 +236,11 @@ expectTypeOf<keyof QuarantineOperationsPort>().toEqualTypeOf<'list' | 'release' 
 // The review port's own surface, pinned for the same exact-set reason as the reader's: 387-08
 // implements against this and a third member arriving quietly would be a third power no host
 // declared.
-expectTypeOf<keyof KnowledgeReviewPort>().toEqualTypeOf<'propose' | 'apply'>()
+// 2026-09-30, 432-12 (D-05): `change` arrives BY NAME — the direct change every change op reaches.
+// `propose` and `apply` stay only for the pre-432 records on disk until 432-17 deletes them.
+expectTypeOf<keyof KnowledgeReviewPort>().toEqualTypeOf<'change' | 'propose' | 'apply'>()
+expectTypeOf<KnowledgeChangeRequest['verb']>().toEqualTypeOf<'accept' | 'reject' | 'forget'>()
+expectTypeOf<KnowledgeChangeRequest['operationId']>().toEqualTypeOf<string | undefined>()
 expectTypeOf<KnowledgeProposalRequest['verb']>().toEqualTypeOf<'accept' | 'reject' | 'forget' | 'mark'>()
 expectTypeOf<KnowledgeApplyOutcome['forgetReceipt']>().toBeNullable()
 
