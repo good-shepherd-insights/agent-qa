@@ -205,7 +205,7 @@ describe('SC2 — the shipped positive-on-any-anchor-match fixture earns no cred
         if (first && failure === 'projection') throw new Error('fixture projection unavailable after completed replay')
         return { kind: 'applied', tests: 1, quarantine: { kind: 'not-evaluated', reason: 'not-requested' } }
       },
-      drainQueue: async () => ({ kind: 'drained', jobsProcessed: 0, committed: 0, inconsistenciesFiled: 0,
+      drainQueue: async () => ({ kind: 'drained', jobsProcessed: 0, committed: 0,
         downgraded: 0, withheld: 0, quarantined: 0, requeued: first && failure === 'drain' ? 1 : 0,
         failures: first && failure === 'drain' ? 1 : 0, failureDetails: [], noops: 0, noopDetails: [],
         remaining: 0, remainingWork: { queued: 0, claimedNonterminal: 0, quarantined: 0 },
@@ -237,6 +237,37 @@ describe('SC2 — the shipped positive-on-any-anchor-match fixture earns no cred
     writeFileSync(badPath, '{}')
     await expect(fold()).rejects.toThrow('completed canary evidence invalid')
     expect(ablate).toHaveBeenCalledOnce()
+  })
+
+  // 2026-09-30, 432-10 D-05/D-22: the hold is presented from evidence; nothing is filed or read.
+  it('C432-CANARY-HOLD-PRESENTATION: a gate-inconsistent canary hold renders as its held line, with no proposal or inbox', async () => {
+    const completed = handoff([step()])
+    const info = vi.fn()
+    const drainQueue = vi.fn(async (_options: object) => ({ kind: 'drained' as const, jobsProcessed: 1, committed: 1,
+      downgraded: 0, withheld: 0, quarantined: 0, requeued: 0, failures: 0, failureDetails: [],
+      noops: 0, noopDetails: [], remaining: 0, remainingWork: { queued: 0, claimedNonterminal: 0, quarantined: 0 },
+      reconcile: undefined, writerPass: { kind: 'not-requested' as const }, gc: { kind: 'not-run' as const },
+      promotions: [{ candidateId: CANDIDATE, promotionHoldReason: 'gate-inconsistent' as const }] }))
+    const operations: Partial<CurationTailOperations> = {
+      canaryAblation: { ablate: async () => ({ kind: 'no-eval-root' }), isNovel: async () => false,
+        stage: async () => ({ kind: 'no-eval-root' }), corpusDigest: async () => ({ kind: 'no-eval-root' }) },
+      runSafetyScope: (_input, fn) => fn(),
+      emitCurationCandidates: () => ({ enqueued: 0, coalesced: 0, refused: 0, capExceeded: 0, details: [] }),
+      openKnowledgeReader: () => ({ emitCanaryOutcome: () => undefined }) as unknown as ReturnType<CurationTailOperations['openKnowledgeReader']>,
+      foldRunOutcomes: () => ({ kind: 'applied', tests: 1, quarantine: { kind: 'not-evaluated', reason: 'not-requested' } }),
+      drainQueue: drainQueue as unknown as CurationTailOperations['drainQueue'],
+    }
+    const { defaultGuardrailPolicyInput, loadGuardrailPolicy } = await import('@vostride/agent-qa-safety')
+    const report = await curateCompletedRun({ handoff: completed, runDir: creditRunDir,
+      knowledgeRoot: '/tmp/agent-qa-knowledge', agentQaRoot: creditRunDir, maxAblations: 1,
+      auditSink: { appendGuardrailAudit: () => undefined, appendExecutionAudit: () => undefined },
+      policy: loadGuardrailPolicy(defaultGuardrailPolicyInput), operations, log: { warn: vi.fn(), info } })
+    expect(report).toMatchObject({ complete: true, curated: 1 })
+    const lines = info.mock.calls.map(([line]) => String(line))
+    expect(lines).toContain(`curation: ${CANDIDATE} held: gate-inconsistent`)
+    expect(lines.filter(line => /proposal|review with/.test(line))).toEqual([])
+    expect(drainQueue).toHaveBeenCalledOnce()
+    expect(drainQueue.mock.calls[0]![0]).not.toHaveProperty('agentQaRoot')
   })
 })
 

@@ -1,11 +1,14 @@
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { asEvidenceToken, stampReceiptDigest } from '@vostride/agent-qa-schema'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { asEvidenceToken, stampReceiptDigest, type CanaryOutcome } from '@vostride/agent-qa-schema'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { appendGateReceipt, appendOutcomeEvent, appendPromotionReceipt } from '../bundle-append.js'
+import { deriveBundleTrust, loadBundle } from '../bundle-read.js'
 import { canaryPostureFactsFor, lowerTrustSharesFor, standingReceiptDigestsFor } from '../gates/canary-posture-facts.js'
-import { completeGate1Receipt, createPromotionFloorFixture } from '../curator/__tests__/fixtures/promotion-floor-fixture.js'
+import { completeGate1Receipt, createPromotionFloorFixture, resolvedPromotionPosture } from '../curator/__tests__/fixtures/promotion-floor-fixture.js'
+import { createLocalKnowledgeStore } from '../curator/knowledge-store.js'
+import { acquireWriterLease } from '../lease/writer-lease.js'
 import { buildGateInconsistencyProposal, fileGateInconsistencyProposal } from '../review/gate-inconsistency.js'
 import { claimPendingProposal, publishAppliedProposal, rejectPendingProposal, restorePendingProposal,
   proposalsDir } from '../review/proposals-store.js'
@@ -136,5 +139,101 @@ describe('418 bundle-local canary posture facts', () => {
     expect(() => read(planted.id)).toThrow()
     expect(() => lowerTrustSharesFor({ knowledgeRoot })).toThrow()
     expect(() => standingReceiptDigestsFor({ knowledgeRoot })).toThrow()
+  })
+})
+
+// 2026-09-30, 432-10 D-05/D-22: the pre-432 inbox is left on disk and never read. A leftover
+// pending gate-inconsistency file sits beside a corrupt one, and the directory is unreadable.
+function plantLegacyInbox(agentQaRoot: string, candidateId: string, gate1Digest: string): string {
+  const dir = join(agentQaRoot, 'proposals')
+  mkdirSync(dir, { recursive: true })
+  const proposalId = 'prop_0123456789abcdef'
+  writeFileSync(join(dir, `${proposalId}.json`), `${JSON.stringify({
+    schemaVersion: 1, proposalId, verb: 'accept',
+    targetRef: { grain: 'record', recordId: candidateId },
+    deltas: [{ kind: 'Deprecate', origin: 'system', scope: { tier: 'product', key: 'storefront' },
+      citedIds: [candidateId], targetId: candidateId,
+      reason: `gate-inconsistent:gate1-pass-gate2-fail:${gate1Digest}:${'d'.repeat(64)}` }],
+    proposedAt: 10, status: 'pending',
+  }, undefined, 2)}\n`)
+  return dir
+}
+
+function breakLegacyInbox(dir: string): void {
+  writeFileSync(join(dir, 'prop_fedcba9876543210.json'), '{bad')
+  chmodSync(dir, 0o000)
+}
+
+describe('432 canary posture facts and holds never read the legacy inbox (D-05, D-22)', () => {
+  let root: string
+  let knowledgeRoot: string
+  let agentQaRoot: string
+  let legacyDir: string | undefined
+  let fixture: ReturnType<typeof createPromotionFloorFixture>
+  const scope = { tier: 'product', key: 'storefront' } as const
+  beforeEach(() => {
+    root = mkdtempSync(join(tmpdir(), '432-canary-inbox-'))
+    knowledgeRoot = join(root, 'knowledge')
+    agentQaRoot = join(root, '.agent-qa')
+    legacyDir = undefined
+    fixture = createPromotionFloorFixture({ knowledgeRoot, auditBaseDir: agentQaRoot })
+  })
+  afterEach(() => {
+    if (legacyDir !== undefined && existsSync(legacyDir)) chmodSync(legacyDir, 0o755)
+    rmSync(root, { recursive: true, force: true })
+  })
+  function seed(name: string) {
+    const { published, draft } = fixture.publishHeldCandidate(name)
+    const pass = completeGate1Receipt(published.id, { producedAtOrdinal: 10 })
+    expect(appendGateReceipt(fixture.outcomeAppendConfig(), published.id, pass)).toEqual({ kind: 'appended' })
+    return { ...published, pass, anchor: draft.anchors[0]! }
+  }
+
+  it('C432-CANARY-INBOX-UNREAD: clean facts are identical with a pending, corrupt or unreadable legacy inbox', () => {
+    const planted = seed('clean')
+    const clean = { kind: 'found', gate1PassOrdinal: 10, gate1PassDigest: planted.pass.receiptDigest,
+      activeInScope: 0, lowerTrustActiveInScope: 0 }
+    expect(canaryPostureFactsFor({ knowledgeRoot, candidateId: planted.id, scope })).toEqual(clean)
+    legacyDir = plantLegacyInbox(agentQaRoot, planted.id, planted.pass.receiptDigest)
+    // A pre-432 caller still handing its runtime root gets the same evidence-only answer.
+    const legacyInput = { knowledgeRoot, candidateId: planted.id, scope, agentQaRoot }
+    expect(canaryPostureFactsFor(legacyInput)).toEqual(clean)
+    breakLegacyInbox(legacyDir)
+    expect(() => canaryPostureFactsFor(legacyInput)).not.toThrow()
+    expect(canaryPostureFactsFor(legacyInput)).toEqual(clean)
+    expect(lowerTrustSharesFor({ knowledgeRoot })).toEqual([{ product: 'storefront', active: 0, lowerTrust: 0 }])
+  })
+
+  it('C432-CANARY-EVIDENCE-HOLD: contradictory standing canary evidence holds gate-inconsistent and files nothing', async () => {
+    const planted = seed('contradicted')
+    const facts = canaryPostureFactsFor({ knowledgeRoot, candidateId: planted.id, scope })
+    legacyDir = plantLegacyInbox(agentQaRoot, planted.id, planted.pass.receiptDigest)
+    breakLegacyInbox(legacyDir)
+    const runtimeRoot = join(root, 'runtime')
+    const lease = acquireWriterLease(knowledgeRoot)
+    if (lease.kind !== 'acquired') throw new Error(lease.kind)
+    const onPromotionOutcome = vi.fn()
+    // The pre-432 store config also named a proposals root; nothing may be written under it.
+    const storeConfig = { knowledgeRoot, auditBaseDir: runtimeRoot, agentQaRoot: runtimeRoot,
+      executionContext: 'local-interactive' as const, epoch: lease.epoch, writerLeaseId: lease.leaseId,
+      sourceBuildOrdinal: 43, resolvePromotionPosture: () => resolvedPromotionPosture(), onPromotionOutcome }
+    const store = createLocalKnowledgeStore(storeConfig)
+    const harm: CanaryOutcome = { candidateId: planted.id, runOutcome: 'negative', benefit: 'exercised-harmed',
+      stateValidity: 'valid', runId: 'run-432-harm', testId: 'checkout::harm', testIndex: 0,
+      buildOrdinal: 43, stepIndex: 1, briefDigest: 'brief-432-harm',
+      attribution: 'The served checkout hypothesis was exercised and harmed.',
+      exercisedAnchor: planted.anchor, corpusDigest: 'c'.repeat(64) }
+    await store.recordCanaryOutcome(harm)
+    expect(onPromotionOutcome).toHaveBeenLastCalledWith({ candidateId: planted.id, promotionHoldReason: 'gate-inconsistent' })
+    await expect(store.promote(planted.id)).rejects.toMatchObject({ reason: 'gate-inconsistent' })
+    expect(existsSync(join(runtimeRoot, 'proposals'))).toBe(false)
+    // The hold is not a deprecation: the record stays a candidate, and its facts still read.
+    const loaded = loadBundle(planted.dir)
+    if (loaded.kind !== 'loaded') throw new Error(loaded.kind)
+    expect(deriveBundleTrust(loaded.bundle).status).toBe('candidate')
+    expect(canaryPostureFactsFor({ knowledgeRoot, candidateId: planted.id, scope }))
+      .toMatchObject({ ...facts, latestGate2Ordinal: 43 })
+    chmodSync(legacyDir, 0o755)
+    expect(readdirSync(legacyDir).sort()).toEqual(['prop_0123456789abcdef.json', 'prop_fedcba9876543210.json'])
   })
 })
