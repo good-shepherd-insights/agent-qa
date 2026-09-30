@@ -931,12 +931,23 @@ export function createKnowledgeReview(input: CreateKnowledgeReviewInput): Knowle
     return { knowledgeRoot: await input.resolveKnowledgeRoot() }
   }
 
+  // 432-12: this host's direct changes take the writer lease one at a time. Two changes racing in
+  // one process would otherwise find the lease held by each other and the second would refuse as if
+  // another writer held it. The queue releases on success and failure alike (the config
+  // transaction's pattern); it does not claim to serialize across processes, which the lease does.
+  let changeChain: Promise<unknown> = Promise.resolve()
+  function serialized<T>(work: () => Promise<T>): Promise<T> {
+    const next = changeChain.then(work, work)
+    changeChain = next.then(() => undefined, () => undefined)
+    return next
+  }
+
   return {
     // 432-12 (D-04/D-05/D-09): one explicit change, applied in the call through the direct writer
     // (432-06). Nothing is filed: the change is committed under the lease, handed to a live
     // holder, or refused by type. A missing identity is minted here, once per call, and returned on
     // the receipt so the caller can retry the same change.
-    async change(request) {
+    change: (request) => serialized(async () => {
       const { knowledgeRoot } = await roots()
       const operationId = request.operationId ?? randomUUID()
       const authority = input.resolveWriterAuthority?.()
@@ -957,7 +968,7 @@ export function createKnowledgeReview(input: CreateKnowledgeReviewInput): Knowle
         ...(authority === undefined ? {} : { writerAuthority: authority }),
       })
       return knowledgeChangeOutput(request.verb, operationId, result)
-    },
+    }),
     async propose(request, origin) {
       const { knowledgeRoot } = await roots()
       const ledger = openAddressingLedgerForReview({
