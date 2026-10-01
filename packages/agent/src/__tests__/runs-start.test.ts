@@ -254,6 +254,37 @@ describe('runs.start is visibly unbound, never silently missing', () => {
     expect(declared[2]).toEqual(declared[0])
   })
 
+  // 432-24 (D-12): `runs.list` lost its scope too, so the bound read beside the unbound start is
+  // now a migrated op as well. Retried from the same three callers it is SERVED every time — the
+  // port is reached once per attempt, every caller gets the same answer, and no audit row is written.
+  it('C432-ALL-OPS-AVAILABLE: a retried bound runs.list is served alike to every caller', async () => {
+    const audit = capturingSink()
+    const deps = fakeDeps()
+    let listCalls = 0
+    const registry = createRegistryFromSpecs([runsListSpec, runsEventsSpec, runsStartSpec], {
+      deps: {
+        ...deps,
+        runs: { ...deps.runs, list: () => { listCalls += 1; return Promise.resolve([]) } },
+      },
+      auditSink: audit.sink,
+    })
+    const callers: readonly FunctionCaller[] = [
+      RUN_CALLER,
+      { surface: 'cli', origin: 'human' },
+      { surface: 'mcp', origin: 'agent' },
+    ]
+
+    const answers: unknown[] = []
+    for (const caller of callers) {
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        answers.push(await invokeFunction(registry, 'runs.list', {}, caller))
+      }
+    }
+    expect(answers).toEqual(Array.from({ length: 6 }, () => []))
+    expect(listCalls).toBe(6)
+    expect(audit.auditRows()).toEqual([])
+  })
+
   it('refuses a DIRECT spec dispatch too, so no in-layer caller can slip past it', async () => {
     await expect(runsStartSpec.invoke({}, fakeDeps())).rejects.toBeInstanceOf(FunctionNotBoundError)
   })
