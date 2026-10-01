@@ -41,6 +41,23 @@ describe('the actor-origin axis (391 D-06)', () => {
   })
 })
 
+describe('C432-DECLARATION-KEYS: the caller record after the permission wave (432-20, D-10/D-12)', () => {
+  it('types a tokenless caller with surface and origin alone — every permission field is optional', () => {
+    // Compile-checked: until 432-20 `grantedScopes` and `safeMode` were required, so this literal
+    // did not type. The retired fields stay optional and unread until 432-39 deletes them.
+    const tokenless: FunctionCaller = { surface: 'mcp', origin: 'agent' }
+    expect(Object.keys(tokenless).sort()).toEqual(['origin', 'surface'])
+  })
+
+  it('keeps origin as presentation data only, with no new label', () => {
+    // No approval- or provenance-shaped member joins the closed origin vocabulary (D-10).
+    expect([...FUNCTION_CALLER_ORIGINS]).toEqual(['human', 'agent'])
+    const human: FunctionCaller = { surface: 'cli', origin: 'human' }
+    const agent: FunctionCaller = { surface: 'cli', origin: 'agent' }
+    expect(Object.keys(human)).toEqual(Object.keys(agent))
+  })
+})
+
 describe('the capability-scope union', () => {
   it('carries test-write as a sixth, distinct member (394 WTST-01)', () => {
     expect(FunctionScopeSchema.options).toEqual([

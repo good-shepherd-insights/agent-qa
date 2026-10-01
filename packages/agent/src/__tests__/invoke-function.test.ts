@@ -412,6 +412,34 @@ describe('C432-INVOKE-DIRECT — invokeFunction dispatches with no gate (432-13)
   })
 })
 
+describe('432-20 (D-12): retry and refusal order with no permission check', () => {
+  it('C432-ALL-OPS-AVAILABLE: a retry after an input refusal dispatches exactly once, for a grantless caller', async () => {
+    const deps = spyDeps()
+    const audit = capturingSink()
+    const registry = createRegistryFromSpecs(
+      [runsListSpec],
+      registryOptions({ deps: deps.deps, auditSink: audit.sink }),
+    )
+    const grantless: FunctionCaller = { surface: 'test', origin: 'agent' }
+
+    await expect(invokeFunction(registry, 'runs.list', { unexpected: true }, grantless))
+      .rejects.toBeInstanceOf(FunctionInputError)
+    expect(deps.listCalls()).toBe(0)
+    await expect(invokeFunction(registry, 'runs.list', {}, grantless)).resolves.toEqual([])
+    await expect(invokeFunction(registry, 'runs.list', {}, grantless)).resolves.toEqual([])
+    expect(deps.listCalls()).toBe(2)
+    expect(audit.auditRows()).toHaveLength(0)
+  })
+
+  it('refuses an unknown id before input, and input before binding, for every caller shape', async () => {
+    const registry = createRegistryFromSpecs([runsListSpec], registryOptions())
+    for (const who of [caller([]), caller(['read'], true), { surface: 'test', origin: 'human' } as FunctionCaller]) {
+      await expect(invokeFunction(registry, 'runs.nope', null, who)).rejects.toBeInstanceOf(UnknownFunctionError)
+      await expect(invokeFunction(registry, 'runs.list', null, who)).rejects.toBeInstanceOf(FunctionInputError)
+    }
+  })
+})
+
 describe('createRegistryFromSpecs', () => {
   it('rejects two declarations sharing an id', () => {
     expect(() => createRegistryFromSpecs([runsListSpec, runsListSpec], registryOptions()))

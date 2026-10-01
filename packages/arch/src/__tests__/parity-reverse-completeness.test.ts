@@ -73,12 +73,11 @@ const REGISTRY_IDS = createFunctionRegistry({
   // is ever written to it. Declared inline so this source-only package keeps depending on
   // nothing.
   auditSink: { appendGuardrailAudit() {} },
-  resolveExecutionContext: () => 'local-interactive',
 })
+  // 432-20 (D-12): the tokenless caller shape. The listing is the same for every caller, so the
+  // retired grant fields and the registry's retired context option are not supplied here.
   .list({
     surface: 'arch-conformance',
-    grantedScopes: ['read', 'run', 'config-write'],
-    safeMode: false,
     origin: 'agent',
   })
   .map(declaration => declaration.id)
