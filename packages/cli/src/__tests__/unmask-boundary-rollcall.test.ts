@@ -483,7 +483,9 @@ function consoleLines(needle: string): string {
 function dashboardRollCallHost(): AgentHost {
   return {
     registry: {},
-    caller: { origin: 'human', surface: 'dashboard', scopes: ['read'] } as never,
+    // 2026-10-02 (432-37, D-12): no stray `scopes` key; it was never a caller field, and nothing
+    // reads a caller scope set (432-20).
+    caller: { origin: 'human', surface: 'dashboard' } as never,
     // Every op id is named so the SHAPE is complete; the run host below overrides the ids it
     // dispatches, the registry and the dispatch itself.
     runsPostProcessingFunctionId: 'runs.postprocessing',
@@ -589,12 +591,12 @@ function dashboardRunRollCallHost(registry: FunctionRegistry): AgentHost {
   return {
     ...dashboardRollCallHost(),
     registry: registry as unknown as AgentHost['registry'],
+    // 2026-10-02 (432-37, D-12): no `grantedScopes` or `safeMode` (or the cast that carried them);
+    // the registry reads neither (432-20).
     caller: {
       surface: 'dashboard',
-      grantedScopes: ['read'],
-      safeMode: false,
       origin: 'human',
-    } as unknown as AgentHost['caller'],
+    },
     runsDetailFunctionId: RUNS_DETAIL_FUNCTION_ID,
     runsArtifactFunctionId: RUNS_ARTIFACT_FUNCTION_ID,
     analysisGetFunctionId: ANALYSIS_GET_FUNCTION_ID,
@@ -663,7 +665,8 @@ function dashboardRunRollCall(): Promise<DashboardRunRollCall> {
       ),
       // Discards every row: this file asserts on emitted bytes, never on the audit trail.
       auditSink: { appendGuardrailAudit() {} },
-      resolveExecutionContext: () => 'local-interactive',
+      // 2026-10-02 (432-37, D-12): no `resolveExecutionContext` registry option; the registry reads
+      // no context (432-20).
     })
 
     return { db, host: dashboardRunRollCallHost(registry), artifactSha: ref.sha, artifactBytes }

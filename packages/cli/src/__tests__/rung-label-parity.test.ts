@@ -428,12 +428,11 @@ describe('DOCTOR-CURRENT-SEPARATE', () => {
     const registry = createFunctionRegistry({
       deps: {} as unknown as FunctionDeps,
       auditSink: { appendGuardrailAudit() {} },
-      resolveExecutionContext: () => 'local-interactive',
+      // 2026-10-02 (432-37, D-12): no `resolveExecutionContext` registry option, and the listing
+      // caller carries no `grantedScopes`/`safeMode`; the registry reads neither (432-20).
     })
     const ids = registry.list({
       surface: 'test',
-      grantedScopes: [],
-      safeMode: false,
       origin: 'human',
     }).map((entry) => entry.id)
     expect(ids.length).toBeGreaterThan(30)

@@ -163,12 +163,14 @@ function fixtureRegistry(handles: readonly number[] = [0, 1]): {
   }
 }
 
-const caller = (grantedScopes: readonly FunctionScope[] = ['read']): FunctionCaller => ({
-  surface: 'mcp',
-  origin: 'agent',
-  grantedScopes,
-  safeMode: false,
-})
+// 2026-10-02 (432-37, D-12): no `safeMode`, and no `['read']` default scope set; the server reads
+// neither (432-20). A scope set a cell passes EXPLICITLY is kept, cast past the type, as a
+// deliberate smuggle: the cell whose caller's scopes omit `read` hands `['run']` to prove the set
+// changes nothing. Goes with the field in 432-39.
+const caller = (grantedScopes?: readonly FunctionScope[]): FunctionCaller =>
+  grantedScopes === undefined
+    ? { surface: 'mcp', origin: 'agent' }
+    : ({ surface: 'mcp', origin: 'agent', grantedScopes } as FunctionCaller)
 
 const identity = (text: string): string => text
 
