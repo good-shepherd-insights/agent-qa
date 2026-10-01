@@ -40,6 +40,9 @@
 // 16 unprojected. The seven proposal, apply and undo ops are deleted from the registry, so the five
 // '432' entries and the two 397 entries for proposals.accept/reject leave the scoping note, and
 // '432' leaves the adjudicator vocabulary with no member left to rule on.
+// RE-MEASURED 2026-10-01 (432-18 D-14/D-15): twenty tools; 44 declarations / 30 projected /
+// 14 unprojected. `grants.list` and `grants.revoke` (both 397 entries) are deleted with the grant
+// ledger and leave the scoping note; the projection is unmoved.
 // The original measurement settles the 41-vs-43 discrepancy the phase
 // context carried — whatever the registry answers IS the denominator, and this suite reds if the
 // two sets ever stop covering it exactly.
@@ -407,9 +410,13 @@ describe('the projection resolves against the registry, produced not literal', (
       .filter((declaration) => declaration.requiresHumanOrigin === true)
       .map((declaration) => declaration.id)
 
-    // Integrity: the filter found something, so the absence below is a refusal rather than an
-    // empty channel that would pass over a declaration field spelled wrong.
-    expect(humanOnly.length).toBeGreaterThan(0)
+    // RE-SPELLED 2026-10-01 (432-18, D-15): the integrity check was `humanOnly.length > 0`. The last
+    // op declaring `requiresHumanOrigin` (`grants.revoke`) is deleted, so the set is empty now and
+    // the rule holds over the whole projection; the filter is still measured over a non-empty
+    // census, and the field is still read (432-39 deletes it).
+    expect(declarations().length).toBeGreaterThan(0)
+    expect(projected.size).toBeGreaterThan(0)
+    expect(humanOnly, 'an op declares requiresHumanOrigin again; it must stay unprojected').toEqual([])
     for (const opId of humanOnly) {
       expect(projected.has(opId), `${opId} requires a human origin and cannot serve this surface`)
         .toBe(false)
@@ -450,9 +457,10 @@ describe('the partition law (D-03 / D-15)', () => {
     // 2026-09-28, 431-04 D-01/D-10: runs.overview arrives projected and eight reads move (53/35/18).
     // 2026-09-30, 432-12 D-05: five proposal ops leave the projected side with their tools (53/30/23).
     // 2026-10-01, 432-17 D-05: the seven proposal, apply and undo ops leave the registry (46/30/16).
-    expect(declarations().length).toBe(46)
+    // 2026-10-01, 432-18 D-15: the two grant ops leave the registry (44/30/14).
+    expect(declarations().length).toBe(44)
     expect(projectedOpIds().length).toBe(30)
-    expect(UNPROJECTED_OPS.length).toBe(16)
+    expect(UNPROJECTED_OPS.length).toBe(14)
   })
 
   it('lists no op twice in the scoping note', () => {
@@ -807,11 +815,13 @@ describe('C432-MCP-TWENTY-TOOLS: twenty tools, the change tools renamed, no prop
 describe('C432-RUNTIME-SETS: the actual registry partition after the cutover', () => {
   // 2026-10-01 (432-17 D-05): 53 -> 46 registered and 23 -> 16 dispositioned. The seven ops that
   // sat here with the removed proposal round are deleted with the inbox; the projection is unmoved.
-  it('C432-RUNTIME-SETS: 46 registered ops, 30 projected by twenty tools, 16 dispositioned', () => {
+  // 2026-10-01 (432-18 D-15): 46 -> 44 registered and 16 -> 14 dispositioned; `grants.list` and
+  // `grants.revoke` are deleted with the grant ledger.
+  it('C432-RUNTIME-SETS: 44 registered ops, 30 projected by twenty tools, 14 dispositioned', () => {
     const registryIds = declarations().map((declaration) => declaration.id).sort()
     const projected = [...projectedOpIds()].sort()
     const unprojected = UNPROJECTED_OPS.map((entry) => entry.opId).sort()
-    expect(registryIds).toHaveLength(46)
+    expect(registryIds).toHaveLength(44)
     expect(projected).toHaveLength(30)
     expect(unprojected).toEqual([
       'agent.ask',
@@ -820,8 +830,6 @@ describe('C432-RUNTIME-SETS: the actual registry partition after the cutover', (
       'authoring.funnel.get',
       'config.get',
       'editor.liveurl',
-      'grants.list',
-      'grants.revoke',
       'quarantine.add',
       'quarantine.list',
       'quarantine.release',
@@ -833,5 +841,6 @@ describe('C432-RUNTIME-SETS: the actual registry partition after the cutover', (
     ])
     expect([...projected, ...unprojected].sort()).toEqual(registryIds)
     expect(registryIds.filter((id) => id.endsWith('.propose') && id.startsWith('knowledge.'))).toEqual([])
+    expect(registryIds.filter((id) => id.startsWith('grants.')), 'C432-NO-GRANT-OPS').toEqual([])
   })
 })

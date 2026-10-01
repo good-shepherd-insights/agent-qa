@@ -145,3 +145,24 @@ describe('C432-NO-GRANT-CONTRACTS: the grant ledger, grant op, protected-class a
     expect(Object.keys(module).sort()).toEqual(['TrustScopeSchema'])
   })
 })
+
+// C432-NO-GRANT-CONTRACTS, type level: each line fails `pnpm typecheck` the moment the type returns.
+// @ts-expect-error the grant ledger event is deleted
+export type RetiredGrantLedgerEvent = import('../index').GrantLedgerEvent
+// @ts-expect-error the folded standing grant is deleted
+export type RetiredActiveStandingGrant = import('../index').ActiveStandingGrant
+// @ts-expect-error the standing-grants port is deleted
+export type RetiredStandingGrantsPort = import('../index').StandingGrantsPort
+// @ts-expect-error the grant list output is deleted
+export type RetiredGrantsListOutput = import('../index').GrantsListOutput
+// @ts-expect-error the grant revoke output is deleted
+export type RetiredGrantsRevokeOutput = import('../index').GrantsRevokeOutput
+// @ts-expect-error the grant mint outcome is deleted
+export type RetiredGrantRecordOutcome = import('../index').GrantRecordOutcome
+// @ts-expect-error the protected class is deleted
+export type RetiredProtectedActionClass = import('../index').ProtectedActionClass
+// @ts-expect-error the chat pin overlay is deleted
+export type RetiredChatPinOverlay = import('../index').ChatPinOverlay
+// The interim members are still types a consumer can name (432-19 and 432-22 remove them).
+export type RetainedStandingApprovalGrant = import('../index').StandingApprovalGrant
+export type RetainedTrustScope = import('../index').TrustScope

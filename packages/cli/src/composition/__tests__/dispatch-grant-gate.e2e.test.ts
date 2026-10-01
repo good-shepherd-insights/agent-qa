@@ -1,12 +1,15 @@
 // D-08's DISPATCH GRANT AT THE REAL RUN GATE (Phase 401 plan 08 — RESEARCH Pitfall 6).
 //
 // RE-SPELLED 2026-09-30 (432-13, D-14/D-15). The run gate this file measured is gone: the run core
-// evaluates nothing and the door forwards no reader, so a dispatch grant has nothing to satisfy. A
-// shared-target run starts in the fail-closed `local-headless` context with the dispatch open, closed
-// or never opened, from inside the dispatch's call tree or outside it — and no `run:start` row, and
-// therefore no `trustSource`, is written in any of them. The overlay itself survives until its own
-// deletion plan; what is kept here is that it still mints nothing durable. The history below is
-// kept as written.
+// evaluates nothing and the door forwards no reader, so a dispatch grant had nothing to satisfy.
+//
+// RE-SPELLED AGAIN 2026-10-01 (432-18, D-15/D-22). The overlay itself is deleted with the grant
+// ledger (`agent-local/src/composition/dispatch-grants.ts`), and `composeCliLocalAgent` takes no
+// `dispatchGrants` input. The four arms below kept their shapes and lost their overlay: a
+// shared-target run in the fail-closed `local-headless` context starts back to back, starts alone,
+// starts after an earlier run, and starts while a workspace still holds an old, damaged
+// `grants.jsonl` — with no `run:start` row and no `trustSource` in any of them, and the old ledger
+// left byte-identical (C432-GRANTS-UNREAD-WRITER-ABSENT). The history below is kept as written.
 //
 // WHAT IS UNDER TEST is the whole shipped path: `composeCliLocalAgent` → the 384 registry →
 // `invokeFunction` → the op gate → the bound run invocation → the composition's per-run grant
@@ -38,14 +41,14 @@
 // message: the audit row's `outcome`, no run events, no build-ordinal ledger, zero requests at the
 // target, and the reason read BACK off the row.
 
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import { invokeFunction } from '@vostride/agent-qa-agent'
-import { RunDeniedError, createDispatchGrants } from '@vostride/agent-qa-agent-local'
-import type { DispatchGrants } from '@vostride/agent-qa-agent-local'
+import * as agentLocal from '@vostride/agent-qa-agent-local'
+import { RunDeniedError } from '@vostride/agent-qa-agent-local'
 import {
   getActiveExecutionContext,
   setActiveExecutionContextResolver,
@@ -81,10 +84,24 @@ function runGateRowsPerDir(fixture: Fixture): GateAuditRow[][] {
   })
 }
 
-/** The durable ledger this overlay must never write. */
+/** The old ledger a workspace may still hold. Nothing in this build reads or writes it. */
 function grantsLedgerBytes(fixture: Fixture): string | undefined {
   const path = join(fixture.project, 'agent-qa-knowledge', 'grants.jsonl')
   return existsSync(path) ? readFileSync(path, 'utf8') : undefined
+}
+
+/** A pre-432 ledger: a `run:start` grant, its revoke fused onto a conflict marker, a truncated line. */
+const LEGACY_LEDGER_BYTES = [
+  '{"schemaVersion":1,"kind":"grant","at":"2026-08-20T00:00:00.000Z","grantId":"grant_run_start","actionClass":"run:start","scope":{"project":"local-workspace"}}',
+  '<<<<<<< HEAD{"schemaVersion":1,"kind":"revoke","at":"2026-08-20T01:00:00.000Z","grantId":"grant_run_start"}',
+  '{"schemaVersion":1,"kind":"gra',
+  '',
+].join('\n')
+
+function plantLegacyLedger(fixture: Fixture): void {
+  const dir = join(fixture.project, 'agent-qa-knowledge')
+  mkdirSync(dir, { recursive: true })
+  writeFileSync(join(dir, 'grants.jsonl'), LEGACY_LEDGER_BYTES, 'utf8')
 }
 
 /** An empty browsers root, so a member's failure is a property of the fixture, not of the machine. */
@@ -93,21 +110,18 @@ function pinEmptyBrowsersRoot(fixture: Fixture): void {
 }
 
 /**
- * Invoke `runs.start` through the SHIPPED dispatcher, on a host composed with this overlay.
+ * Invoke `runs.start` through the SHIPPED dispatcher, on the shipped host.
  *
- * `dispatchGrants` is the ONLY thing supplied beyond what 401-05's cells supply. The door resolves
- * the reader itself, per run, through the composition — which is the seam under test.
+ * 432-18: nothing is supplied beyond what 401-05's cells supply — the host takes no overlay.
  */
 async function invokeRunsStart(
   fixture: Fixture,
-  dispatchGrants: DispatchGrants,
   request: RunsStartInput,
 ): Promise<{ ack?: RunStartAcknowledgement; error?: unknown }> {
   pinEmptyBrowsersRoot(fixture)
   const { registry } = composeCliLocalAgent({
     agentQaRoot: fixture.agentQaRoot,
     configPath: fixture.configPath,
-    dispatchGrants,
     resolveExecutionContext: () => 'local-headless',
   })
   try {
@@ -157,30 +171,24 @@ describe('one human ask, N gated runs, every one of them gated (D-08)', () => {
     expect((auditRows(fixture) as GateAuditRow[]).map((row) => row.trustSource).filter(Boolean)).toEqual([])
   }
 
-  it('THE ORDERING EDGE — two shared runs inside an open dispatch start, with no decision row', async () => {
+  // RE-SPELLED 2026-10-01 (432-18) from 'THE ORDERING EDGE — two shared runs inside an open dispatch
+  // start, with no decision row': there is no dispatch to open; the two runs start back to back.
+  it('THE ORDERING EDGE — two shared runs start back to back, with no decision row', async () => {
     const target = new CountingTarget()
     await target.listen()
     try {
       const fixture = createInProcessFixture({ origin: target.origin, environment: 'shared' })
       pinAmbient('local-interactive', false)
-      const dispatchGrants = createDispatchGrants()
-      const ledgerBefore = grantsLedgerBytes(fixture)
 
-      const { first, second } = await dispatchGrants.within(async () => {
-        const firstRun = await invokeRunsStart(fixture, dispatchGrants, { patterns: [fixture.testPattern] })
-        const secondRun = await invokeRunsStart(fixture, dispatchGrants, { patterns: [fixture.testPattern] })
-        return { first: firstRun, second: secondRun }
-      })
+      const first = await invokeRunsStart(fixture, { patterns: [fixture.testPattern] })
+      const second = await invokeRunsStart(fixture, { patterns: [fixture.testPattern] })
 
       expectStartedWithNoDecision(fixture, first)
       expectStartedWithNoDecision(fixture, second)
       expect(first.ack?.runId).not.toBe(second.ack?.runId)
       expect(eventTypes(fixture)).toContain('runStarted')
       expect(buildOrdinalsExist(fixture)).toBe(true)
-
-      // THE ONE-MINT LAW still holds: the overlay writes nothing durable.
-      expect(grantsLedgerBytes(fixture)).toEqual(ledgerBefore)
-      expect(dispatchGrants.openScopes).toBe(0)
+      expect(grantsLedgerBytes(fixture), 'a run minted a grant ledger').toBeUndefined()
     } finally {
       await target.close()
     }
@@ -192,9 +200,8 @@ describe('one human ask, N gated runs, every one of them gated (D-08)', () => {
     try {
       const fixture = createInProcessFixture({ origin: target.origin, environment: 'shared' })
       pinAmbient('local-interactive', false)
-      const dispatchGrants = createDispatchGrants()
 
-      const outcome = await invokeRunsStart(fixture, dispatchGrants, { patterns: [fixture.testPattern] })
+      const outcome = await invokeRunsStart(fixture, { patterns: [fixture.testPattern] })
 
       expectStartedWithNoDecision(fixture, outcome)
       expect(eventTypes(fixture)).toContain('runStarted')
@@ -205,62 +212,29 @@ describe('one human ask, N gated runs, every one of them gated (D-08)', () => {
     }
   }, 300_000)
 
-  it('THE GRANT DIES WITH THE DISPATCH — and the run after it starts all the same', async () => {
+  // RE-SPELLED 2026-10-01 (432-18) from 'THE GRANT DIES WITH THE DISPATCH — and the run after it
+  // starts all the same' and 'AN UNRELATED CALLER DURING AN OPEN DISPATCH — starts, and no row
+  // borrows the dispatch (CR-03)': with no overlay there is no grant to die or to borrow. The
+  // surviving claim is that a run starts whatever an old ledger says, and leaves it as it was.
+  it('C432-GRANTS-UNREAD-WRITER-ABSENT: a run beside an old, damaged grants.jsonl starts and leaves it byte-identical', async () => {
     const target = new CountingTarget()
     await target.listen()
     try {
       const fixture = createInProcessFixture({ origin: target.origin, environment: 'shared' })
       pinAmbient('local-interactive', false)
-      const dispatchGrants = createDispatchGrants()
+      plantLegacyLedger(fixture)
 
-      await dispatchGrants.within(async () => {
-        expect(dispatchGrants.openScopes).toBe(1)
-        await Promise.resolve()
-      })
-      expect(dispatchGrants.openScopes).toBe(0)
-
-      const outcome = await invokeRunsStart(fixture, dispatchGrants, { patterns: [fixture.testPattern] })
+      const outcome = await invokeRunsStart(fixture, { patterns: [fixture.testPattern] })
 
       expectStartedWithNoDecision(fixture, outcome)
       expect(eventTypes(fixture)).toContain('runStarted')
+      expect(grantsLedgerBytes(fixture)).toBe(LEGACY_LEDGER_BYTES)
     } finally {
       await target.close()
     }
   }, 300_000)
 
-  it('AN UNRELATED CALLER DURING AN OPEN DISPATCH — starts, and no row borrows the dispatch (CR-03)', async () => {
-    // CR-03's claim was that an outsider could not collect a row byte-identical to the dispatch's
-    // own. With no row written at all, there is nothing to borrow; the dispatch is held open while
-    // the outsider's run starts so the scope is provably live throughout.
-    const target = new CountingTarget()
-    await target.listen()
-    let release: (() => void) | undefined
-    let dispatch: Promise<void> | undefined
-    try {
-      const fixture = createInProcessFixture({ origin: target.origin, environment: 'shared' })
-      pinAmbient('local-interactive', false)
-      const dispatchGrants = createDispatchGrants()
-      const ledgerBefore = grantsLedgerBytes(fixture)
-
-      const held = new Promise<void>((resolve) => { release = resolve })
-      dispatch = dispatchGrants.within(async () => { await held })
-      await Promise.resolve()
-      expect(dispatchGrants.openScopes).toBe(1)
-
-      const outcome = await invokeRunsStart(fixture, dispatchGrants, { patterns: [fixture.testPattern] })
-
-      expect(dispatchGrants.openScopes).toBe(1)
-      expectStartedWithNoDecision(fixture, outcome)
-      expect(eventTypes(fixture)).toContain('runStarted')
-      expect(grantsLedgerBytes(fixture)).toEqual(ledgerBefore)
-
-      release!()
-      await dispatch
-      expect(dispatchGrants.openScopes).toBe(0)
-    } finally {
-      release?.()
-      await dispatch
-      await target.close()
-    }
-  }, 300_000)
+  it('C432-GRANTS-UNREAD-WRITER-ABSENT: the host takes no dispatch overlay and agent-local publishes none', () => {
+    expect(Object.keys(agentLocal).filter((name) => /dispatchgrant/i.test(name))).toEqual([])
+  })
 })

@@ -77,46 +77,8 @@ export type {
 
 export { KNOWLEDGE_BUNDLE_EGRESS_CHANNEL, checkpointCommittedParts } from './bundle-egress.js'
 export type { BundleEgressOptions, BundleEgressOutcome } from './bundle-egress.js'
-// 391 D-04/D-11: the committed standing-grant ledger — read, pure fold, checked append — and the
-// synchronous reader the policy gate consults through it. The event DTOs and both guard legs live
-// in schema; this package owns the bytes.
-//
-// The APPEND is published here, unlike its quarantine sibling, and the difference is not an
-// inconsistency: quarantine's writers all live inside this package, while a grant is minted by the
-// function layer's accept-with-always decision, which does not. The write surface has to cross the
-// boundary, so it crosses it through the one function that pre-checks both read legs and passes the
-// egress checkpoint rather than through raw file access.
-export {
-  GRANT_LEDGER_EGRESS_CHANNEL,
-  GRANT_LEDGER_FILENAME,
-  appendGrantLedgerEvents,
-  foldActiveGrants,
-  grantsLedgerPath,
-  readGrantLedger,
-} from './grants/ledger.js'
-export type {
-  GrantAppendOptions,
-  GrantAppendOutcome,
-  GrantLedgerRead,
-  RefusedGrantLine,
-} from './grants/ledger.js'
-export { createStandingApprovalReader } from './grants/reader.js'
-export type {
-  GrantLedgerStandingApprovalReader,
-  StandingApprovalReaderOptions,
-} from './grants/reader.js'
-// 391 D-03/D-05: the three grant verbs behind `StandingGrantsPort`. Published because the binding
-// site is `composeLocalAgent`, in another package — the same reason the append one file up is
-// published and the quarantine append is not. The two typed refusals travel with the factory:
-// a caller that must distinguish "somebody else is writing" from "the checkpoint refused these
-// bytes" needs the classes, and both are errors rather than powers.
-export {
-  GrantLeaseHeldError,
-  GrantLedgerDamagedError,
-  GrantWriteBlockedError,
-  createGrantOperations,
-} from './grants/operations.js'
-export type { GrantOperationsOptions } from './grants/operations.js'
+// 2026-10-01 (432-18, D-14/D-15/D-22): the committed standing-grant ledger, its reader and the grant
+// verbs are deleted. An old `grants.jsonl` stays on disk and nothing in this package opens it.
 // 390 D-01/D-03/D-11: the committed quarantine ledger — read, pure state fold. The event DTOs and
 // the state vocabulary live in schema; this package owns the bytes and the fold over them.
 // The APPEND is deliberately NOT published (390-11 / WR-07): it writes a committed artifact whose

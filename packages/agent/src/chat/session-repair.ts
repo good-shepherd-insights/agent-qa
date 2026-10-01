@@ -18,7 +18,8 @@
 //      `aborted` naming that turn.
 //
 // Everything else that fails the guard is ordinary DAMAGE, and damage is data: a named refusal
-// beside the events that still fold, on the grants-ledger posture (`grants/ledger.ts:73-83`).
+// beside the events that still fold, on the posture the grant ledger had (391; the ledger was
+// deleted in 432-18).
 // The two are deliberately not collapsed into one word. A tear is what a crash costs; a mid-file
 // line that will not guard was written by another build or damaged in place and will still be
 // broken tomorrow. Telling an operator to go and repair a file whose real problem is that it was

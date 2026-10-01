@@ -1,5 +1,10 @@
 // The standing-grant spine, end to end through the real composition (Phase 391, PROP-01 / D-11).
 //
+// RE-SPELLED 2026-10-01 (432-18, D-14/D-15/D-22): the append API, the event types and the ledger are
+// deleted. The grant and its revoke are now planted as the bytes a pre-432 build committed, and
+// the claim is unchanged: the change commits with no grant, a grant or revoke changes nothing about
+// it, and the old file is left byte-identical (nothing reads or rewrites it).
+//
 // 2026-10-01 (432-17, D-05): the apply this spine was built around (`knowledge.proposal.apply`) is
 // deleted with the inbox, so the subject is the direct `knowledge.forget` that replaced it. Every
 // claim below keeps its shape: the change commits with no grant, and a grant or revoke changes
@@ -43,7 +48,7 @@
 // fail-closed, and a test that pinned the prompt arm would be pinning the one context neither of
 // them is ever in.
 
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { appendFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -54,13 +59,10 @@ import {
 import type { FunctionRegistry } from '@vostride/agent-qa-agent'
 import type { AuditSink, ExecutionAuditRow, GuardrailAuditRow } from '@vostride/agent-qa-safety'
 import {
-  appendGrantLedgerEvents,
-  grantsLedgerPath,
   publishBundleForTest,
   type BundleStoreConfig,
 } from '@vostride/agent-qa-knowledge-local'
 import {
-  CURRENT_GRANT_LEDGER_SCHEMA_VERSION,
   FunctionScopeSchema,
   MASKED_RESOLVED_CONFIG_SCHEMA_VERSION,
   STANDING_APPROVAL_SCOPE,
@@ -68,7 +70,6 @@ import {
 import type {
   Anchor,
   FunctionCaller,
-  GrantLedgerEvent,
   KnowledgeChangeOutput,
   MaskedResolvedConfig,
 } from '@vostride/agent-qa-schema'
@@ -207,13 +208,17 @@ describe('a committed standing grant is consumed by nothing (432-13)', () => {
     return declaration.risk.name
   }
 
-  function append(events: readonly GrantLedgerEvent[]): void {
-    const outcome = appendGrantLedgerEvents(knowledgeRoot, events, { auditBaseDir: agentQaRoot })
-    if (outcome.kind !== 'appended') {
-      throw new Error(`grant append refused: ${outcome.kind}`)
-    }
+  /** A legacy ledger line, as the bytes a pre-432 build committed. Nothing in this build reads it. */
+  type LegacyEvent = Record<string, unknown> & { kind: 'grant' | 'revoke'; grantId: string }
+
+  function ledgerPath(): string {
+    return join(knowledgeRoot, 'grants.jsonl')
   }
 
+  function append(events: readonly LegacyEvent[]): void {
+    mkdirSync(knowledgeRoot, { recursive: true })
+    appendFileSync(ledgerPath(), events.map((event) => `${JSON.stringify(event)}\n`).join(''), 'utf8')
+  }
 
   // RE-SPELLED 2026-09-30 (432-13) from 'refuses the apply with no grant, commits it with one, and
   // refuses it again after the revoke'. The apply commits with no grant at all, and the grant and
@@ -236,10 +241,10 @@ describe('a committed standing grant is consumed by nothing (432-13)', () => {
     expect(applied.outcome).toBe('applied')
     expect(sink.rows).toEqual([])
 
-    // ── LEG 2/3: a grant and then its revoke, through the real append API. Neither is read.
+    // ── LEG 2/3: a grant and then its revoke, as committed bytes. Neither is read.
     append([
       {
-        schemaVersion: CURRENT_GRANT_LEDGER_SCHEMA_VERSION,
+        schemaVersion: 1,
         kind: 'grant',
         at: GRANTED_AT,
         grantId: GRANT_ID,
@@ -249,7 +254,7 @@ describe('a committed standing grant is consumed by nothing (432-13)', () => {
     ])
     append([
       {
-        schemaVersion: CURRENT_GRANT_LEDGER_SCHEMA_VERSION,
+        schemaVersion: 1,
         kind: 'revoke',
         at: REVOKED_AT,
         grantId: GRANT_ID,
@@ -264,10 +269,10 @@ describe('a committed standing grant is consumed by nothing (432-13)', () => {
     expect(sink.rows).toEqual([])
 
     // The committed artifact still holds BOTH events, in the order they happened.
-    const committed = readFileSync(grantsLedgerPath(knowledgeRoot), 'utf8')
+    const committed = readFileSync(ledgerPath(), 'utf8')
       .split('\n')
       .filter((line) => line.trim().length > 0)
-      .map((line) => JSON.parse(line) as GrantLedgerEvent)
+      .map((line) => JSON.parse(line) as LegacyEvent)
     expect(committed.map((event) => event.kind)).toEqual(['grant', 'revoke'])
     expect(committed.map((event) => event.grantId)).toEqual([GRANT_ID, GRANT_ID])
   }, 60_000)
@@ -280,7 +285,7 @@ describe('a committed standing grant is consumed by nothing (432-13)', () => {
     const registry = host()
     append([
       {
-        schemaVersion: CURRENT_GRANT_LEDGER_SCHEMA_VERSION,
+        schemaVersion: 1,
         kind: 'grant',
         at: GRANTED_AT,
         grantId: 'grant_tracer_neighbouring_class',
@@ -288,6 +293,7 @@ describe('a committed standing grant is consumed by nothing (432-13)', () => {
         scope: STANDING_APPROVAL_SCOPE,
       },
     ])
+    const before = readFileSync(ledgerPath(), 'utf8')
 
     const applied = (await invokeFunction(
       registry,
@@ -297,5 +303,6 @@ describe('a committed standing grant is consumed by nothing (432-13)', () => {
     )) as KnowledgeChangeOutput
     expect(applied.outcome).toBe('applied')
     expect(sink.rows).toEqual([])
+    expect(readFileSync(ledgerPath(), 'utf8'), 'the old ledger was rewritten').toBe(before)
   }, 60_000)
 })

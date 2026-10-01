@@ -21,12 +21,12 @@
 // through `sourceFilesFor`, which drops `__tests__`, precisely because test files exercising the
 // shipped gate are not call-sites in the sense SC2 polices. `EVALUATE_PIN` stays at three files.)
 //
-// EVERYTHING ELSE IS REAL, and that is what makes it a differential rather than an argument about
-// `baseVerdict`. The grant is minted through the shipped `createGrantOperations.record` — the mint
-// guard, the writer lease, the egress checkpoint and the committed append — and read back through
-// the shipped `createStandingApprovalReader` over the committed `grants.jsonl`. Only the ACTION
-// DESCRIPTOR is a fixture, because a descriptor is what a registered op would supply and the
-// registry supplies no restricted one.
+// EVERYTHING ELSE WAS REAL until 432-18. The grant was minted through `createGrantOperations.record`
+// and read back through `createStandingApprovalReader` over the committed `grants.jsonl`.
+// RE-SPELLED 2026-10-01 (432-18, D-15/D-22): the ledger, its mint and its reader are deleted, so the
+// covering grants are handed to the gate by an in-memory reader that answers exactly the two grants
+// the mint used to commit. The gate (`evaluate`) and its `StandingApprovalReader` port are 432-19's to
+// delete; until then the finality claim is measured over the same verdict path with the same grants.
 //
 // THE CORPUS HAS BOTH SIDES, which is the whole difficulty of a negative like this one. "The grant
 // did not help" is indistinguishable from "the grant never matched anything" unless the SAME grant
@@ -36,26 +36,21 @@
 // lexicon fires on the name itself), the reader is asked directly and shown returning the grant
 // with both of `grantCovers`'s conditions satisfied.
 
-import { mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
-import { tmpdir } from 'node:os'
-import { join } from 'node:path'
-
-import {
-  createGrantOperations,
-  createStandingApprovalReader,
-  grantsLedgerPath,
-} from '@vostride/agent-qa-knowledge-local'
 import { STANDING_APPROVAL_SCOPE } from '@vostride/agent-qa-schema'
 import type {
   ExecutionContext,
-  GrantLedgerEvent,
   RiskActionDescriptor,
+  StandingApprovalGrant,
+  TrustScope,
 } from '@vostride/agent-qa-schema'
 import { evaluate } from '@vostride/agent-qa-safety'
-import type { AuditSink, ExecutionAuditRow, GuardrailAuditRow } from '@vostride/agent-qa-safety'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-
-const NOW_ISO = '2026-08-07T12:00:00.000Z'
+import type {
+  AuditSink,
+  ExecutionAuditRow,
+  GuardrailAuditRow,
+  StandingApprovalReader,
+} from '@vostride/agent-qa-safety'
+import { beforeEach, describe, expect, it } from 'vitest'
 
 /**
  * The class every descriptor in the declared-tier and unrecognized cases carries.
@@ -88,48 +83,27 @@ function capturingSink(): AuditSink & { rows: ExecutionAuditRow[] } {
 }
 
 describe('differential 4: a covering standing approval never overrides a restricted verdict', () => {
-  let root: string
-  let knowledgeRoot: string
-  let agentQaRoot: string
   let sink: ReturnType<typeof capturingSink>
   /** Would say YES to anything. Asserted NEVER consulted on a restricted action. */
   let prompted: RiskActionDescriptor[]
 
-  beforeEach(async () => {
-    root = mkdtempSync(join(tmpdir(), 'sovereignty-'))
-    knowledgeRoot = join(root, 'agent-qa-knowledge')
-    agentQaRoot = join(root, '.agent-qa')
-    mkdirSync(agentQaRoot, { recursive: true })
+  beforeEach(() => {
     sink = capturingSink()
     prompted = []
+  })
 
-    // THE MINT, through the shipped port. Not an appended line and not a literal: a grant that
-    // exists because the real mint decided it could, stamped with the real pinned scope, and
-    // committed through the same lease and egress checkpoint a person's accept would have used.
-    const grants = createGrantOperations({
-      resolveKnowledgeRoot: () => knowledgeRoot,
-      auditBaseDir: agentQaRoot,
-      now: () => NOW_ISO,
-    })
-    for (const actionClass of [ASK_TIER_CLASS, LEXICON_CLASS]) {
-      const recorded = await grants.record({ actionClass, scope: STANDING_APPROVAL_SCOPE })
-      expect(recorded.kind).toBe('recorded')
+  /** The two grants the deleted mint committed, answered by exact class and pinned scope. */
+  const GRANTED: readonly StandingApprovalGrant[] = [ASK_TIER_CLASS, LEXICON_CLASS].map((actionClass) => ({
+    actionClass,
+    scope: STANDING_APPROVAL_SCOPE,
+  }))
+
+  function reader(): StandingApprovalReader {
+    return {
+      grantsFor(action: RiskActionDescriptor, _scope: TrustScope): readonly StandingApprovalGrant[] {
+        return GRANTED.filter((grant) => grant.actionClass === action.name)
+      },
     }
-  })
-
-  afterEach(() => {
-    rmSync(root, { recursive: true, force: true })
-  })
-
-  function reader(): ReturnType<typeof createStandingApprovalReader> {
-    return createStandingApprovalReader({ knowledgeRoot })
-  }
-
-  function committedEvents(): GrantLedgerEvent[] {
-    return readFileSync(grantsLedgerPath(knowledgeRoot), 'utf8')
-      .split('\n')
-      .filter((line) => line.trim().length > 0)
-      .map((line) => JSON.parse(line) as GrantLedgerEvent)
   }
 
   async function verdictFor(action: RiskActionDescriptor, context: ExecutionContext) {
@@ -156,10 +130,11 @@ describe('differential 4: a covering standing approval never overrides a restric
     )
   }
 
-  it('is not vacuous: both grants are committed, active, and returned for their exact classes', () => {
+  // RE-SPELLED 2026-10-01 (432-18) from 'is not vacuous: both grants are committed, active, and
+  // returned for their exact classes': nothing is committed any more; the reader still answers both.
+  it('is not vacuous: both grants are returned for their exact classes', () => {
     // The precondition every negative below rests on. Without this, "the grant did not override the
-    // deny" would be satisfied just as well by a ledger that never received the grant.
-    expect(committedEvents().map((event) => event.kind)).toEqual(['grant', 'grant'])
+    // deny" would be satisfied just as well by a reader that never held the grant.
 
     for (const actionClass of [ASK_TIER_CLASS, LEXICON_CLASS]) {
       const returned = reader().grantsFor(

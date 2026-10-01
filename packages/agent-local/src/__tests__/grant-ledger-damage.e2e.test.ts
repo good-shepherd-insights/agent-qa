@@ -1,69 +1,45 @@
 // A damaged grant ledger authorizes NOTHING, proven through the composed host
 // (Phase 391 plan 08, closing 391-VERIFICATION gap 2).
 //
-// 2026-09-30 (432-13, D-14/D-15): NO LEDGER AUTHORIZES ANYTHING NOW. `invokeFunction` has no gate,
-// so the headless invocation below is dispatched whatever the ledger holds — intact, revoked or
-// damaged — and no decision row is written. The three invocation cells are re-spelled as that; the
-// reader's own refusal of a damaged file, the listing's report and the write verbs' damage refusal
-// are unchanged (432-18 deletes the ledger with them).
+// 2026-09-30 (432-13, D-14/D-15): NO LEDGER AUTHORIZES ANYTHING NOW. `invokeFunction` has no gate, so
+// the headless invocation is dispatched whatever the ledger holds and no decision row is written.
 //
-// The verifier measured the defect with a throwaway probe: a git conflict marker fused onto the
-// REVOKE line leaves `refusedLines` non-empty, the fold still hands back the grant, and a headless
-// invocation the withdrawn approval used to satisfy goes on being satisfied by it — with no human
-// present and no report anywhere. That probe is a committed differential here, asserting the
-// opposite, over the REAL composition: real grant verbs, real committed ledger, real reader, real
-// gate, real audit sink.
+// RE-SPELLED 2026-10-01 (432-18, D-14/D-15/D-22): NOTHING READS THE LEDGER NOW. The reader, the
+// listing (`grants.list`) and the two write verbs (record, revoke) are deleted with the ledger, so
+// the cells that measured the reader's refusal of a damaged file, the listing's damage report and
+// the write verbs' `GrantLedgerDamagedError` lost their subject. The write-side refusals moved to the
+// direct writers (knowledge-local `grants/__tests__/ledger.test.ts`, C432-GRANTS-UNREAD-WRITER-ABSENT).
+// What this file keeps is the composed half of the claim, over the same three cases and the same
+// unknown-scope-key line: whatever state the old `grants.jsonl` is in — intact, revoked, damaged in
+// place or carrying a key the wire contract never admitted — the headless direct change is
+// dispatched exactly as it is with no file at all, no row is written, the listing verb is an unknown
+// function, and the file is left byte-identical.
 //
-// THREE CASES IN ONE FIXTURE, because the new guard has a precondition and a corpus drawn only from
-// inside a precondition measures the precondition:
-//
-//   case 1  intact ledger, grant in force   -> headless invocation ALLOWED, audit row names the
-//                                              standing approval as what satisfied the ask
-//   case 2  intact ledger, grant revoked    -> the same invocation is fail-closed-denied
-//   case 3  the same events, revoke line damaged -> fail-closed-denied, and grantsFor is empty
-//
-// Case 1 is what stops case 3 being satisfied by a host that denies everything; case 2 is what
-// stops it being satisfied by a fixture that never recorded an approval. Only with both does the
-// third case say something about the DAMAGE.
-//
-// 2026-10-01 (432-17, D-05): THE SUBJECT is `knowledge.accept` over a record that was never
-// published — `knowledge.proposal.apply` is deleted with the inbox. The accept answers a typed
-// `target-not-found` without writing, so an invocation that resolves is the dispatch this file asks
-// about, exactly as the apply's not-found complaint was before.
-//
-// THE GATED SUBJECT was `knowledge.proposal.apply`, whose action class is read off the registry's
-// own descriptor rather than typed here — a hand-spelled class is the silent miss the ledger's
-// module head names, and it would turn every negative below into a pass for the wrong reason. The
-// gate runs and writes its audit row BEFORE the op body, so the id the apply is handed does not
-// have to resolve for the authorization question to be answered.
+// THE SUBJECT is `knowledge.accept` over a record that was never published (432-17): it answers a
+// typed `target-not-found` without writing, so an invocation that resolves is the dispatch this file
+// asks about.
 
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import {
+  UnknownFunctionError,
   createFunctionRegistry,
   invokeFunction,
 } from '@vostride/agent-qa-agent'
 import type { FunctionRegistry } from '@vostride/agent-qa-agent'
-import {
-  createGrantOperations,
-  createStandingApprovalReader,
-  grantsLedgerPath,
-  readGrantLedger,
-} from '@vostride/agent-qa-knowledge-local'
+import * as knowledgeLocal from '@vostride/agent-qa-knowledge-local'
 import {
   FunctionScopeSchema,
   MASKED_RESOLVED_CONFIG_SCHEMA_VERSION,
-  STANDING_APPROVAL_SCOPE,
   TRUST_SCOPE_KEYS,
 } from '@vostride/agent-qa-schema'
 import type {
   ExecutionContext,
   FunctionCaller,
-  GrantsListOutput,
+  KnowledgeChangeOutput,
   MaskedResolvedConfig,
-  RiskActionDescriptor,
 } from '@vostride/agent-qa-schema'
 import type { AuditSink, ExecutionAuditRow, GuardrailAuditRow } from '@vostride/agent-qa-safety'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
@@ -75,17 +51,11 @@ import {
 } from '../composition/compose-local-agent.js'
 
 const APPLY_ID = 'knowledge.accept'
-/** A second registered, unprotected op — the intact sibling grant's class (391-10). */
-const SIBLING_ID = 'knowledge.forget'
 const GRANTS_LIST_ID = 'grants.list'
-const NOW_ISO = '2026-08-08T12:00:00.000Z'
 
 /**
- * A scope key OUTSIDE `TRUST_SCOPE_KEYS` — what `TrustScopeSchema.strict()` refuses. COMPUTED
- * against the published constant rather than typed: a hard-coded key becomes LEGAL the day the
- * constant grows, and these cases then report green while measuring nothing. 391-11 measured
- * exactly that, reding the four cases below under a mutation that legalised the `'tenant'` this
- * line used to spell.
+ * A scope key OUTSIDE `TRUST_SCOPE_KEYS`. COMPUTED against the published constant rather than typed:
+ * a hard-coded key becomes LEGAL the day the constant grows (391-11 measured exactly that).
  */
 const UNKNOWN_SCOPE_KEY_CANDIDATES = ['tenant', 'workspace', 'region', 'cell'] as const
 
@@ -95,27 +65,27 @@ function anUnknownScopeKey(): string {
   if (found === undefined) {
     throw new Error(
       `every candidate scope key (${UNKNOWN_SCOPE_KEY_CANDIDATES.join(', ')}) is now legal in ` +
-        `TRUST_SCOPE_KEYS (${declared.join(', ')}); these cases can no longer measure a refusal — ` +
-        'add a candidate rather than letting them pass',
+        `TRUST_SCOPE_KEYS (${declared.join(', ')}); add a candidate rather than letting these cases pass`,
     )
   }
   return found
 }
 
-const UNKNOWN_SCOPE_KEY = anUnknownScopeKey()
-
 /** What a merge leaves behind when two branches both appended: a marker fused onto a real line. */
 const CONFLICT_MARKER = '<<<<<<< HEAD'
 
-/**
- * A well-formed proposal id that nothing was ever minted under.
- *
- * It has to satisfy the input contract, because a contract refusal is raised before the gate and
- * would answer the authorization question by never asking it. It does NOT have to resolve: the
- * verdict and its audit row are written before the op body runs, so what the apply then reports
- * about a proposal it cannot find is beside the point here.
- */
-const PROBE_PROPOSAL_ID = 'prop_probe-target'
+const GRANT = '{"schemaVersion":1,"kind":"grant","at":"2026-08-08T12:00:00.000Z","grantId":"grant_damage_case","actionClass":"fn:knowledge.accept","scope":{"project":"local-workspace"}}'
+const SIBLING = '{"schemaVersion":1,"kind":"grant","at":"2026-08-08T12:00:00.000Z","grantId":"grant_damage_sibling","actionClass":"fn:knowledge.forget","scope":{"project":"local-workspace"}}'
+const REVOKE = '{"schemaVersion":1,"kind":"revoke","at":"2026-08-08T12:30:00.000Z","grantId":"grant_damage_case"}'
+const UNKNOWN_KEY = `{"schemaVersion":1,"kind":"grant","at":"2026-08-08T12:00:00.000Z","grantId":"grant_unknown_key","actionClass":"fn:knowledge.accept","scope":{"project":"local-workspace","${anUnknownScopeKey()}":"smuggled"}}`
+
+/** The ledger states the deleted reader and listing distinguished, as the bytes earlier builds left. */
+const LEDGER_STATES = [
+  ['CASE 1 — intact ledger, grant in force', `${GRANT}\n${SIBLING}\n`],
+  ['CASE 2 — intact ledger, the grant revoked', `${GRANT}\n${SIBLING}\n${REVOKE}\n`],
+  ['CASE 3 — the revoke line damaged in place', `${GRANT}\n${SIBLING}\n${CONFLICT_MARKER}${REVOKE}\n`],
+  ['a grant line whose scope carries an UNKNOWN key', `${UNKNOWN_KEY}\n${SIBLING}\n`],
+] as const
 
 const MASKED_CONFIG: MaskedResolvedConfig = {
   schemaVersion: MASKED_RESOLVED_CONFIG_SCHEMA_VERSION,
@@ -123,7 +93,7 @@ const MASKED_CONFIG: MaskedResolvedConfig = {
   entries: [],
 }
 
-/** A person holding every scope, so a refusal below can only ever be policy's. */
+/** A person holding every scope, so a refusal below can only ever be the layer's. */
 const HUMAN: FunctionCaller = {
   surface: 'test',
   grantedScopes: [...FunctionScopeSchema.options],
@@ -142,7 +112,7 @@ function capturingSink(): AuditSink & { rows: ExecutionAuditRow[] } {
   }
 }
 
-describe('a grant ledger the build cannot fully read authorizes nothing', () => {
+describe('a grant ledger the build cannot fully read authorizes nothing, because nothing reads it', () => {
   let root: string
   let knowledgeRoot: string
   let agentQaRoot: string
@@ -161,15 +131,7 @@ describe('a grant ledger the build cannot fully read authorizes nothing', () => 
     rmSync(root, { recursive: true, force: true })
   })
 
-  function grantVerbs() {
-    return createGrantOperations({
-      resolveKnowledgeRoot: () => knowledgeRoot,
-      auditBaseDir: agentQaRoot,
-      now: () => NOW_ISO,
-    })
-  }
-
-  /** The composition under test: REAL grant verbs, REAL committed ledger, REAL reader, REAL gate. */
+  /** The composition under test: the real readers and the real direct change door, no grant port. */
   function host(context: ExecutionContext): FunctionRegistry {
     return createFunctionRegistry({
       deps: {
@@ -184,381 +146,66 @@ describe('a grant ledger the build cannot fully read authorizes nothing', () => 
           agentQaRoot,
           resolveKnowledgeRoot: () => knowledgeRoot,
         }),
-        standingGrants: grantVerbs(),
       },
       auditSink: sink,
       resolveExecutionContext: () => context,
-      // No confirm arm at all: in a headless context there is nothing to prompt, so the only thing
-      // that can produce an allow below is the committed ledger.
     })
   }
 
-  /**
-   * The class the gate compares against, read off the apply op's OWN declaration.
-   *
-   * Never spelled as a literal here: a rename of the op moves the fixture with it instead of
-   * turning this whole file into a set of misses that still passes its negative cases.
-   */
-  function riskClass(registry: FunctionRegistry, opId: string): string {
-    const name = registry.list(HUMAN).find((entry) => entry.id === opId)?.risk.name
-    if (name === undefined) throw new Error(`${opId} is not registered`)
-    return name
+  function ledger(): string {
+    return join(knowledgeRoot, 'grants.jsonl')
   }
 
-  function applyClass(registry: FunctionRegistry): string {
-    return riskClass(registry, APPLY_ID)
+  /** The direct change, asked the way a headless run asks it. */
+  async function headlessApply(registry: FunctionRegistry): Promise<KnowledgeChangeOutput> {
+    return (await invokeFunction(
+      registry,
+      APPLY_ID,
+      { target: { grain: 'record', recordId: 'rec-never-published' } },
+      HUMAN,
+    )) as KnowledgeChangeOutput
   }
 
-  function action(name: string): RiskActionDescriptor {
-    return { name, recognized: true }
-  }
-
-  /**
-   * The authorization question, asked the way a headless run asks it.
-   *
-   * The proposal id need not resolve: the gate evaluates and audits before the op body runs, so an
-   * allow here is a statement about the ledger and nothing else.
-   */
-  async function headlessApply(registry: FunctionRegistry): Promise<'allowed' | 'denied'> {
-    try {
-      await invokeFunction(registry, APPLY_ID, { target: { grain: 'record', recordId: PROBE_PROPOSAL_ID } }, HUMAN)
-      return 'allowed'
-    } catch (error) {
-      // Anything ELSE is rethrown rather than folded into an answer. A refusal raised before the
-      // gate — an input the contract rejects, an unbound port — would otherwise read as a denial
-      // and turn every negative case here into a pass for a reason that has nothing to do with
-      // the ledger.
-      throw error
-    }
-  }
-
-  /** Record a standing approval for one class, through the real mint. */
-  async function recordGrantFor(actionClass: string): Promise<string> {
-    const outcome = await grantVerbs().record({ actionClass, scope: STANDING_APPROVAL_SCOPE })
-    if (outcome.kind !== 'recorded') throw new Error(`fixture mint failed: ${outcome.kind}`)
-    return outcome.grant.grantId
-  }
-
-  /** Record a standing approval for the apply class, through the real mint. */
-  async function recordApplyGrant(registry: FunctionRegistry): Promise<string> {
-    return await recordGrantFor(applyClass(registry))
-  }
-
-  /**
-   * Fuse a conflict marker onto the LAST committed line, in place.
-   *
-   * Rewritten rather than appended: a whole extra garbage line would leave the revoke perfectly
-   * readable, and the refusal under test would then be about a line nothing depends on.
-   */
-  /**
-   * The write verbs' damage refusal, matched BY NAME and never by "something threw".
-   *
-   * A lease refusal, an egress refusal or a fixture bug is rethrown rather than folded into a pass.
-   */
-  async function damageRefusal(call: () => Promise<unknown>): Promise<Error> {
-    let answered: unknown
-    try {
-      answered = await call()
-    } catch (error) {
-      if (error instanceof Error && error.name === 'GrantLedgerDamagedError') return error
-      throw error
-    }
-    throw new Error(
-      `expected the verb to refuse a damaged ledger, it answered ${JSON.stringify(answered)}`,
-    )
-  }
-
-  function damageLastLine(): void {
-    const path = grantsLedgerPath(knowledgeRoot)
-    const lines = readFileSync(path, 'utf8').split('\n')
-    let last = lines.length - 1
-    while (last >= 0 && (lines[last] ?? '').trim().length === 0) last -= 1
-    if (last < 0) throw new Error('the fixture ledger has no line to damage')
-    lines[last] = `${CONFLICT_MARKER}${lines[last] ?? ''}`
-    writeFileSync(path, lines.join('\n'), 'utf8')
-  }
-
-  // RE-SPELLED 2026-09-30 (432-13): 'CASE 1 — intact ledger, grant in force: the headless invocation
-  // is ALLOWED'. Still dispatched; no row says what satisfied it, because nothing was asked.
-  it('CASE 1 — intact ledger, grant in force: the headless invocation is dispatched, with no row', async () => {
-    const headless = host('local-headless')
-    await recordApplyGrant(headless)
-
-    expect(await headlessApply(headless)).toBe('allowed')
+  it('the control: with no ledger file at all, the headless invocation is dispatched, with no row', async () => {
+    const answered = await headlessApply(host('local-headless'))
+    expect(answered.outcome).toBe('target-not-found')
     expect(sink.rows).toEqual([])
+    expect(existsSync(ledger()), 'a ledger was created where none existed').toBe(false)
   })
 
-  // RE-SPELLED 2026-09-30 (432-13) from '... the grant revoked: the same invocation is
-  // fail-closed-denied'. The revoke is recorded and read by nothing: the invocation is dispatched.
-  it('CASE 2 — intact ledger, the grant revoked: the same invocation is still dispatched', async () => {
-    const headless = host('local-headless')
-    const grantId = await recordApplyGrant(headless)
-    const revoked = await grantVerbs().revoke({ grantId })
-    expect(revoked.outcome).toBe('revoked')
-
-    expect(await headlessApply(headless)).toBe('allowed')
-    expect(sink.rows).toEqual([])
-  })
-
-  describe('CASE 3 — the revoke line damaged in place', () => {
-    let grantId: string
-    let headless: FunctionRegistry
-
-    beforeEach(async () => {
-      headless = host('local-headless')
-      grantId = await recordApplyGrant(headless)
-      const revoked = await grantVerbs().revoke({ grantId })
-      if (revoked.outcome !== 'revoked') throw new Error('fixture revoke failed')
-      damageLastLine()
-    })
-
-    it('is a valid fixture: the grant line still folds while the revoke line is refused', () => {
-      const lines = readFileSync(grantsLedgerPath(knowledgeRoot), 'utf8')
-        .split('\n')
-        .filter((line) => line.trim().length > 0)
-
-      expect(lines).toHaveLength(2)
-      // Line 1 is byte-perfect committed truth; line 2 is what a merge left behind.
-      expect(JSON.parse(lines[0] ?? '')).toMatchObject({ kind: 'grant', grantId })
-      expect(lines[1]?.startsWith(CONFLICT_MARKER)).toBe(true)
-    })
-
-    it('grants NOTHING at the authorization site: grantsFor is empty for the intact grant\'s class', () => {
-      const reader = createStandingApprovalReader({ knowledgeRoot })
-
-      expect(reader.grantsFor(action(applyClass(headless)), STANDING_APPROVAL_SCOPE)).toEqual([])
-    })
-
-    // RE-SPELLED 2026-09-30 (432-13) from 'and the headless invocation is fail-closed-denied, with
-    // no trust source on the row'. The damaged file is read by nothing at dispatch.
-    it('and the headless invocation is dispatched regardless, with no row', async () => {
-      expect(await headlessApply(headless)).toBe('allowed')
+  for (const [name, bytes] of LEDGER_STATES) {
+    // RE-SPELLED 2026-10-01 (432-18): each of these was a reader/listing/write-verb differential over
+    // the same bytes. The invocation answers exactly as the no-file control does.
+    it(`${name}: the headless invocation is dispatched exactly as with no file, and the file is untouched`, async () => {
+      writeFileSync(ledger(), bytes, 'utf8')
+      const answered = await headlessApply(host('local-headless'))
+      expect(answered.outcome).toBe('target-not-found')
       expect(sink.rows).toEqual([])
+      expect(readFileSync(ledger(), 'utf8')).toBe(bytes)
     })
 
-    it('and `grants.list` carries the explanation the denial does not', async () => {
-      // The operator staring at the denial above checks the surface that lists their approvals.
-      // A listing that showed the grant with no word about the damage would send them looking
-      // for a revoke that never took, on a file whose problem is a line nobody named.
-      const listed = (await invokeFunction(
-        headless,
-        GRANTS_LIST_ID,
-        {},
-        HUMAN,
-      )) as GrantsListOutput
-
-      expect(listed.grants.map((grant) => grant.grantId)).toEqual([grantId])
-      expect(listed.refusedLines.map((line) => line.lineNumber)).toEqual([2])
-      expect(listed.refusedLines[0]?.reason).toMatch(/unparseable line/)
+    // RE-SPELLED 2026-10-01 (432-18) from "`grants.list` carries the explanation the denial does
+    // not" and "`grants.list` RESOLVES, naming the refused line beside the grant that folds": there is
+    // no listing to explain anything; it is an unknown function and the file stays as it was.
+    it(`${name}: grants.list is an unknown function, and the file is untouched`, async () => {
+      writeFileSync(ledger(), bytes, 'utf8')
+      await expect(invokeFunction(host('local-headless'), GRANTS_LIST_ID, {}, HUMAN))
+        .rejects.toBeInstanceOf(UnknownFunctionError)
+      expect(readFileSync(ledger(), 'utf8')).toBe(bytes)
     })
+  }
 
-    it('and BOTH write verbs refuse to DECIDE over the same damaged root, by name', async () => {
-      // The sibling-input corpus law: `readGrantLedger` has four consumers and this one fixture now
-      // fault-injects all four. The reader refuses to authorize, `list` reports — and these two
-      // refuse to decide, so no person is told RECORDED for an approval the reader refuses.
-      const verbs = grantVerbs()
-
-      const refusedRecord = await damageRefusal(() =>
-        verbs.record({ actionClass: applyClass(headless), scope: STANDING_APPROVAL_SCOPE }),
-      )
-      expect(refusedRecord.name).toBe('GrantLedgerDamagedError')
-      expect(refusedRecord.message).toContain('line 2')
-
-      const refusedRevoke = await damageRefusal(() => verbs.revoke({ grantId }))
-      expect(refusedRevoke.name).toBe('GrantLedgerDamagedError')
-    })
-  })
-
-  // ---- 391-10, gap 2: a grant whose scope carries a key the wire contract refuses ----
-  //
-  // The verifier measured the divergence end-to-end: the structural guard admitted an unknown scope
-  // key that `TrustScopeSchema` (`.strict()`) refuses, so the line PARSED, folded, and `grantsFor`
-  // RETURNED it as a standing approval — while `GrantsListOutputSchema` refused the same object at
-  // `invokeFunction`'s output parse, throwing the WHOLE listing away. One such line authorized
-  // silently and hid every other grant from the enumeration verb.
-  //
-  // The fixture carries an intact producer-built sibling grant beside it, so the refusal under test
-  // is about a line the listing depends on rather than about a file nothing could read.
-  describe('a grant line whose scope carries an UNKNOWN key', () => {
-    let headless: FunctionRegistry
-    let siblingGrantId: string
-
-    beforeEach(async () => {
-      headless = host('local-headless')
-      // Line 1: the intact sibling, minted through the real verb.
-      siblingGrantId = await recordGrantFor(riskClass(headless, SIBLING_ID))
-      // Line 2: the apply-class grant, minted intact and then fused with the unknown key.
-      await recordApplyGrant(headless)
-    })
-
-    /**
-     * Fuse an unknown scope key ONTO a committed line, in place.
-     *
-     * Rewritten rather than appended: a separate garbage line would leave every real line readable,
-     * and the refusal under test would then be about a line nothing depends on.
-     */
-    function smuggleUnknownScopeKey(lineNumber: number): void {
-      const path = grantsLedgerPath(knowledgeRoot)
-      const lines = readFileSync(path, 'utf8').split('\n')
-      const index = lineNumber - 1
-      const parsed = JSON.parse(lines[index] ?? '') as Record<string, unknown>
-      lines[index] = JSON.stringify({
-        ...parsed,
-        scope: { ...(parsed.scope as Record<string, unknown>), [UNKNOWN_SCOPE_KEY]: 'smuggled' },
-      })
-      writeFileSync(path, lines.join('\n'), 'utf8')
+  // RE-SPELLED 2026-10-01 (432-18) from 'the write verbs still refuse by THROWING, not by answering
+  // an arm': the write verbs are deleted, so the composition binds no grant port at all.
+  it('C432-GRANTS-UNREAD-WRITER-ABSENT: no grant reader, writer or verb is exported to the composition', () => {
+    const exported = Object.keys(knowledgeLocal)
+    for (const name of [
+      'createGrantOperations', 'createStandingApprovalReader', 'readGrantLedger', 'grantsLedgerPath',
+      'appendGrantLedgerEvents', 'GrantLedgerDamagedError',
+    ]) {
+      expect(exported, name).not.toContain(name)
     }
-
-    async function listedGrants(): Promise<GrantsListOutput> {
-      return (await invokeFunction(headless, GRANTS_LIST_ID, {}, HUMAN)) as GrantsListOutput
-    }
-
-    it('ADMIT CONTROL — untouched, both grants fold, authorize and list', async () => {
-      // What stops the three cases below being satisfied by a fixture that never recorded anything,
-      // or by an enumeration verb that is broken for every input.
-      const read = readGrantLedger(knowledgeRoot)
-      expect(read.refusedLines).toEqual([])
-
-      const reader = createStandingApprovalReader({ knowledgeRoot })
-      expect(
-        reader
-          .grantsFor(action(applyClass(headless)), STANDING_APPROVAL_SCOPE)
-          .map((grant) => grant.actionClass),
-      ).toEqual([applyClass(headless)])
-
-      const listed = await listedGrants()
-      expect(listed.grants).toHaveLength(2)
-      expect(listed.refusedLines).toEqual([])
-    })
-
-    it('is a valid fixture: the unknown-key line is REFUSED by number while the sibling folds', () => {
-      smuggleUnknownScopeKey(2)
-
-      const read = readGrantLedger(knowledgeRoot)
-      expect(read.refusedLines.map((line) => line.lineNumber)).toEqual([2])
-      expect(read.events.map((event) => event.grantId)).toEqual([siblingGrantId])
-    })
-
-    it('authorizes NOTHING: grantsFor is empty for the unknown-key grant\'s own class', () => {
-      smuggleUnknownScopeKey(2)
-      const reader = createStandingApprovalReader({ knowledgeRoot })
-
-      // It never folds — and the file now carries a refused line, so 391-08's fail-closed rule
-      // applies file-wide: the byte-perfect sibling grants nothing either.
-      expect(reader.grantsFor(action(applyClass(headless)), STANDING_APPROVAL_SCOPE)).toEqual([])
-      expect(
-        reader.grantsFor(action(riskClass(headless, SIBLING_ID)), STANDING_APPROVAL_SCOPE),
-      ).toEqual([])
-    })
-
-    it('and `grants.list` RESOLVES, naming the refused line beside the grant that folds', async () => {
-      smuggleUnknownScopeKey(2)
-
-      // The headline harm: this call used to throw a ZodError at the op's output parse, so the CLI
-      // printed no grants at all. The enumeration verb now survives the very line that blanked it.
-      const listed = await listedGrants()
-
-      expect(listed.grants.map((grant) => grant.grantId)).toEqual([siblingGrantId])
-      expect(listed.refusedLines.map((line) => line.lineNumber)).toEqual([2])
-    })
-
-    it('and BOTH write verbs refuse to DECIDE over it, by name (the composed 391-09 posture)', async () => {
-      smuggleUnknownScopeKey(2)
-      // An unknown-key line stops being a special case anywhere: it is simply a refused line, and
-      // every consumer already answers refused lines. Measured rather than derived — before the
-      // guard closed, this same call answered `already-granted` for the line it could not render.
-      const verbs = grantVerbs()
-
-      const refusedRecord = await damageRefusal(() =>
-        verbs.record({ actionClass: applyClass(headless), scope: STANDING_APPROVAL_SCOPE }),
-      )
-      expect(refusedRecord.name).toBe('GrantLedgerDamagedError')
-      expect(refusedRecord.message).toContain('line 2')
-
-      const refusedRevoke = await damageRefusal(() => verbs.revoke({ grantId: siblingGrantId }))
-      expect(refusedRevoke.name).toBe('GrantLedgerDamagedError')
-    })
-  })
-
-  // ---- 391-13: the accept seam's data arm did NOT relocate the port's contract ----
-  //
-  // 391-12 gave `proposals.accept --always` a fourth `ledger-damaged` ARM, because by the time its
-  // mint runs the apply has already committed and an uncaught throw would discard that receipt.
-  // That conversion is licensed at exactly ONE seam. Had it instead been done by widening the
-  // PORT's own outcome union, every other caller would have started receiving a refusal-to-DECIDE
-  // dressed as a decision — and every exhaustive switch over that union would have gone silently
-  // incomplete rather than loudly broken, which is the failure shape that produced rounds 2 and 3
-  // of this phase's arc.
-  //
-  // So the port is pinned here, at the composed-host grain and in this package rather than on the
-  // word of the plan that changed the seam. Written over a DESCRIPTION of how each call settled
-  // rather than as a bare rejection assertion: a port that had grown the arm fails these cases
-  // naming the arm it answered with, instead of merely failing to throw.
-  describe('the write verbs still refuse by THROWING, not by answering an arm', () => {
-    type Settled =
-      | { settled: 'threw'; error: Error }
-      | { settled: 'answered'; value: unknown }
-
-    async function settle(call: () => Promise<unknown>): Promise<Settled> {
-      try {
-        return { settled: 'answered', value: await call() }
-      } catch (error) {
-        // A non-Error throw is a fixture bug, not a refusal, and is rethrown rather than folded in.
-        if (!(error instanceof Error)) throw error
-        return { settled: 'threw', error }
-      }
-    }
-
-    /** One string carrying BOTH halves of the contract: THAT it threw, and WHAT it threw. */
-    function howItSettled(result: Settled): string {
-      return result.settled === 'threw'
-        ? `threw ${result.error.name}`
-        : `answered ${JSON.stringify(result.value)}`
-    }
-
-    let headless: FunctionRegistry
-    let applyGrantId: string
-
-    beforeEach(async () => {
-      headless = host('local-headless')
-      // Line 1: the apply-class grant, the revoke target below.
-      applyGrantId = await recordApplyGrant(headless)
-      // Line 2: the sibling grant — and the line the damage lands on.
-      await recordGrantFor(riskClass(headless, SIBLING_ID))
-    })
-
-    it('over a DAMAGED root, record and revoke BOTH raise GrantLedgerDamagedError', async () => {
-      damageLastLine()
-      const verbs = grantVerbs()
-
-      // `record` is the verb the accept seam calls. Its throw is what 391-12 catches THERE; this
-      // is the pin that the catch did not quietly become a change of contract HERE.
-      expect(howItSettled(await settle(() =>
-        verbs.record({ actionClass: riskClass(headless, SIBLING_ID), scope: STANDING_APPROVAL_SCOPE }),
-      ))).toBe('threw GrantLedgerDamagedError')
-
-      // `revoke` mints nothing and has no committed receipt to protect, so it has no reason to
-      // convert at any seam — 391-12 enumerated `grants-revoke.ts` and consciously left it alone.
-      expect(howItSettled(await settle(() => verbs.revoke({ grantId: applyGrantId }))))
-        .toBe('threw GrantLedgerDamagedError')
-    })
-
-    it('ADMIT CONTROL — over an INTACT root the SAME two calls ANSWER', async () => {
-      // The differential's other half, and what stops the case above being satisfied by a port that
-      // refuses everything or by a fixture that committed nothing for the damage to land on. Same
-      // two calls, same arguments, same composition — only the damage is missing — and both of them
-      // come back as ordinary arms. So the throws above are the damaged line's doing, and "throws"
-      // is not simply what this port does.
-      const verbs = grantVerbs()
-
-      const recorded = await verbs.record({
-        actionClass: riskClass(headless, SIBLING_ID),
-        scope: STANDING_APPROVAL_SCOPE,
-      })
-      expect(recorded.kind).toBe('already-granted')
-
-      const revoked = await verbs.revoke({ grantId: applyGrantId })
-      expect(revoked.outcome).toBe('revoked')
-    })
+    expect(host('local-headless').list(HUMAN).map((entry) => entry.id).filter((id) => id.startsWith('grants.')))
+      .toEqual([])
   })
 })

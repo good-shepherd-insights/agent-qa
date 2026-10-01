@@ -133,7 +133,7 @@ export const CANONICAL_ID_DOMAINS: readonly CanonicalDomain[] = Object.freeze([
       + 'standing posture, as opposed to being gated by it',
     reserved:
       '2026-08-16: held from D-15, unshipped. The gate is reached today only as ENFORCEMENT '
-      + '(`invokeFunction` steps 4-5) and through `grants.`; nothing enumerates it as data. A '
+      + '(`invokeFunction` steps 4-5); nothing enumerates it as data (`grants.` retired in 432-18). A '
       + 'future catalogue verb over policy belongs here.',
   }),
   Object.freeze({
@@ -141,6 +141,10 @@ export const CANONICAL_ID_DOMAINS: readonly CanonicalDomain[] = Object.freeze([
     charter:
       'standing approvals as durable facts about what the agent may do — list and revoke; the '
       + 'MINT is a port member and deliberately no registry op (391 D-03/D-01)',
+    reserved:
+      '2026-10-01: retired by 432-18 (D-14/D-15/D-22), not unshipped. Nothing asks for approval, so '
+      + 'the ledger and its two verbs are deleted and an old `grants.jsonl` is never read; the name '
+      + 'stays held so a revived id must argue for it against this sentence.',
   }),
   Object.freeze({
     domain: 'knowledge',

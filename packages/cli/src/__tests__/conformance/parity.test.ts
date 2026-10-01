@@ -1123,11 +1123,17 @@ describe('the parity suite ranges the registry census over every rostered surfac
       'prose in no declared class must classify as nothing rather than as the last class tried',
     ).toBeUndefined()
     // …and precedence is a DECISION rather than an accident of iteration order: a reason carrying
-    // two signatures answers with the stronger one, which is what `grants.revoke` relies on.
+    // two signatures answers with the stronger one. RE-SPELLED 2026-10-01 (432-18): the shipped case
+    // was `grants.revoke` (requiresHumanOrigin over a mid-flight line), deleted with the grant ledger
+    // and its class with it; the rule is measured on the surviving overlap.
     expect(
-      unprojectedReasonKeyOf('declares requiresHumanOrigin. Not a mid-flight workflow write.'),
+      unprojectedReasonKeyOf('answers machine discovery. Not a mid-flight workflow read.'),
       'a reason in two classes must answer with the higher-precedence one',
-    ).toBe('requires-human-origin')
+    ).toBe('discovery-answered-by-protocol')
+    expect(
+      UNPROJECTED_REASON_SIGNATURES.map(([key]) => key),
+      'the human-origin class left the vocabulary with its last member (432-18)',
+    ).not.toContain('requires-human-origin')
   })
 
   it('joins every row chat expectation to the live chat enumeration, in both directions', () => {
@@ -1506,7 +1512,10 @@ describe('the parity suite ranges the registry census over every rostered surfac
     ).toEqual([])
   }, 120_000)
 
-  it('diverges between the surfaces\' own mints on exactly the human-origin capabilities', async () => {
+  // RE-SPELLED 2026-10-01 (432-18) from 'diverges between the surfaces\' own mints on exactly the
+  // human-origin capabilities': the last op declaring `requiresHumanOrigin` (`grants.revoke`) is
+  // deleted, so the derived divergent set is EMPTY and both directions hold over the whole census.
+  it('C432-NO-GRANT-OPS: the surfaces\' own mints diverge on no capability, because none declares requiresHumanOrigin', async () => {
     // The other half of leg 3, and the reason the cell above harmonises `origin`. The surfaces'
     // REAL mints differ on origin as well as on surface (391 D-06: a person typing an alias decided
     // that call; an MCP client did not), so their answers legitimately differ — but only where an
@@ -1534,19 +1543,10 @@ describe('the parity suite ranges the registry census over every rostered surfac
       'the capabilities whose answer differs between the surfaces\' own caller mints must be '
         + 'exactly the ones declaring requiresHumanOrigin',
     ).toEqual(sorted(declaredHumanOrigin))
-    // …and the set is not empty, or the two directions above would both hold over nothing.
-    expect(declaredHumanOrigin.length, 'no capability declares requiresHumanOrigin, so this cell '
-      + 'asserts nothing').toBeGreaterThan(0)
-    // The join D-12 already carries: every one of those ops is unprojected over MCP, citing that
-    // very reason class. The divergence is not a hole — it is a scoping note, machine-checked.
-    for (const opId of declaredHumanOrigin) {
-      const entry = UNPROJECTED_OPS.find((candidate) => candidate.opId === opId)
-      expect(
-        entry === undefined ? undefined : unprojectedReasonKeyOf(entry.reason),
-        `${opId}: it needs a human and MCP mints an agent, so the mapping must cite that as its `
-          + 'unprojected reason rather than leaving a door the surface can never open',
-      ).toBe('requires-human-origin')
-    }
+    // …and the census is not empty, or the two directions above would hold over nothing.
+    expect(registryDeclarations().length).toBeGreaterThan(0)
+    expect(declaredHumanOrigin, 'an op declares requiresHumanOrigin again').toEqual([])
+    expect(divergent).toEqual([])
   }, 120_000)
 
   // ---- LEG 4: the refuse direction, two independent walls (D-11) --------------------------------
@@ -1791,23 +1791,21 @@ describe('the parity suite ranges the registry census over every rostered surfac
     // 2026-09-30 (432-12 D-05/D-14): the refuse-and-teach arm is GONE with the D-11 apply doors, and
     // its absence is asserted rather than skipped: no projected ask-capable op sits behind an
     // `apply` tool without the mark door's credential check, and the two apply ops that could ask
-    // were dispositioned with the removed proposal round until 432-17 deleted them, so every
-    // unprojected ask-capable op left is a human-origin one. Every other projected tool still gets the
+    // were dispositioned with the removed proposal round until 432-17 deleted them; the last
+    // unprojected ask-capable op, the human-origin `grants.revoke`, left in 432-18, so every
+    // ask-capable op is projected. Every projected tool still gets the
     // gate's own answer back in band, and none executes on a blind first call.
     const everyScope = [...FunctionScopeSchema.options]
     let bandRefusals = 0
     for (const opId of ASK_CAPABLE_OP_IDS) {
       const projection = AGENT_QA_TOOL_PROJECTIONS.find((candidate) => candidate.ops.includes(opId))
       if (projection === undefined) {
-        // Unprojected: this surface's handling is ABSENCE, already asserted by 397-03's D-12 leg.
-        const entry = UNPROJECTED_OPS.find((candidate) => candidate.opId === opId)
-        const reason = entry === undefined ? undefined : unprojectedReasonKeyOf(entry.reason)
-        expect(
-          reason,
-          `${opId} on mcp (ask): it can ask, this surface does not project it, and the mapping `
-            + 'gives no reason a reader can classify',
-        ).toBe('requires-human-origin')
-        continue
+        // 2026-10-01 (432-18): the last unprojected ask-capable op was `grants.revoke`, filed under
+        // the human-origin class; both are deleted, so no class excuses an unprojected one now.
+        expect.unreachable(
+          `${opId} on mcp (ask): it can ask and this surface does not project it — since 432-18 `
+            + 'no unprojected ask-capable op remains',
+        )
       }
       expect(
         projection.kind === 'apply' && projection.credential !== 'required',

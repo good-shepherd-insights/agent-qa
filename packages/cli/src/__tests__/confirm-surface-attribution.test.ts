@@ -136,13 +136,14 @@ describe('the two-port seam names the port that actually answered', () => {
     })
     try {
       await runSafetyScope({ executionContext: 'local-interactive' }, async () => {
-        // The op itself fails — there is no such grant — and that is fine and deliberate: the gate
-        // decision is taken BEFORE dispatch, so the row exists either way, and a cell that needed a
-        // real grant would be measuring the grants ledger rather than the confirm seam.
+        // 2026-10-01 (432-18): the subject was `grants.revoke` over a grant that did not exist; the
+        // op is deleted with the ledger, so the subject is a direct change over a record that does
+        // not exist. It answers target-not-found and writes nothing, and it was an ask-free class
+        // before 432 as well, so the cell still measures only whether a port is consulted.
         await invokeFunction(
           host.registry,
-          'grants.revoke',
-          { grantId: 'grant_0123456789abcdef' },
+          'knowledge.forget',
+          { target: { grain: 'record', recordId: 'rec-not-in-this-workspace' } },
           CLI_FUNCTION_CALLER,
         ).catch(() => undefined)
       })

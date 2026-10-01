@@ -13,8 +13,9 @@
 //
 // WHAT IS IN IT IS WHAT A SURFACE CANNOT ANSWER FOR ITSELF. The active turn id (minted inside the
 // engine, and the only thing a Ctrl+C handler can name), the conversation as compaction left it,
-// the model in force after any `/model`, the classes `/pin` denies, and whether `/quit` asked the
-// loop to end. Everything else a REPL renders — receipts, the answer — rides the turn result.
+// the model in force after any `/model`, and whether `/quit` asked the loop to end. (The
+// classes `/pin` denied left with the pin overlay, 432-18.) Everything else a REPL renders —
+// receipts, the answer — rides the turn result.
 //
 // THE CONVERSATION IS `ModelMessage[]`, AND THE DIRECTION IS SPELLED ONCE (392-06's flagged
 // mismatch, resolved here because this is the file that holds it). The one projection is
@@ -58,8 +59,6 @@ export interface ChatStateSnapshot {
   readonly activeTurnId?: string
   /** The conversation as compaction left it, oldest first (see the module head for the direction). */
   readonly conversation: readonly ModelMessage[]
-  /** What `/pin` denies for the rest of this session, in the order a person pinned it. */
-  readonly pinnedActionClasses: readonly string[]
   readonly lastTurn?: ChatLastTurn
   /** `/quit` asked the loop to end. The REPL reads it; nothing in the engine acts on it. */
   readonly closing: boolean
@@ -78,7 +77,6 @@ export interface ChatStateContainer {
   endTurn(turn: ChatLastTurn): void
   setConversation(messages: readonly ModelMessage[]): void
   setActiveModel(model: string): void
-  setPinnedActionClasses(classes: readonly string[]): void
   requestClose(): void
 }
 
@@ -91,7 +89,6 @@ export function createChatState(input: CreateChatStateInput): ChatStateContainer
   let activeModel = input.activeModel
   let activeTurnId: string | undefined
   let conversation: readonly ModelMessage[] = []
-  let pinnedActionClasses: readonly string[] = []
   let lastTurn: ChatLastTurn | undefined
   let closing = false
 
@@ -104,7 +101,6 @@ export function createChatState(input: CreateChatStateInput): ChatStateContainer
         activeModel,
         ...(activeTurnId === undefined ? {} : { activeTurnId }),
         conversation: Object.freeze([...conversation]),
-        pinnedActionClasses: Object.freeze([...pinnedActionClasses]),
         ...(lastTurn === undefined ? {} : { lastTurn }),
         closing,
       }
@@ -124,9 +120,6 @@ export function createChatState(input: CreateChatStateInput): ChatStateContainer
     },
     setActiveModel(model) {
       activeModel = model
-    },
-    setPinnedActionClasses(classes) {
-      pinnedActionClasses = [...classes]
     },
     requestClose() {
       closing = true

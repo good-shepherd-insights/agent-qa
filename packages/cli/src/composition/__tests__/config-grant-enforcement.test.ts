@@ -19,8 +19,8 @@
 //   (R1)-(R4)                 — a pre-432 record, flagged or in-scope, with or without a covering
 //                               grant, doctored or not, is refused unbound by `config.proposal.apply`
 //                               and commits nothing.
-//   (B)  the grant read       — `grants.list` still folds the committed ledger until 432-18
-//                               deletes it.
+//   (B)  the grant read       — 432-18 deleted `grants.list` with the ledger: it is an unknown
+//                               function, and the old ledger is left byte-identical.
 //
 // C432-NO-CONFIG-UNDO-PORT is the absence of the undo source: no export, `config.undo.propose`
 // listed and answered unbound, and nothing filed.
@@ -28,13 +28,12 @@
 // The two-sided design notes this header carried before 432-16 are in this file's git history.
 
 import { spawnSync } from 'node:child_process'
+import { createHash } from 'node:crypto'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import { invokeFunction } from '@vostride/agent-qa-agent'
-import { createGrantOperations, grantsLedgerPath } from '@vostride/agent-qa-knowledge-local'
-import { STANDING_APPROVAL_SCOPE } from '@vostride/agent-qa-schema'
 import type { ConfigChangeOutput } from '@vostride/agent-qa-schema'
 
 /** A planted pre-432 record, read as the plain JSON it is (432-17 deleted the record schema). */
@@ -117,7 +116,7 @@ function commitCount(): number {
 
 /** The committed ledger's exact bytes, or `undefined` when no file exists at all. */
 function ledgerBytes(): string | undefined {
-  const path = grantsLedgerPath(knowledgeRoot)
+  const path = join(knowledgeRoot, 'grants.jsonl')
   return existsSync(path) ? readFileSync(path, 'utf8') : undefined
 }
 
@@ -125,15 +124,24 @@ function ledgerLines(): string[] {
   return (ledgerBytes() ?? '').split('\n').filter((line) => line.trim().length > 0)
 }
 
-/** One committed line through the REAL mint — the produced-not-literal corpus law (391's own). */
+/**
+ * One committed grant line, planted as the bytes a pre-432 build's mint wrote.
+ *
+ * RE-SPELLED 2026-10-01 (432-18, D-22): the mint is deleted with the ledger, so the line is a literal
+ * of the shape it produced. Nothing in this build reads or rewrites it.
+ */
 async function mintGrant(actionClass: string): Promise<void> {
-  const verbs = createGrantOperations({
-    resolveKnowledgeRoot: () => knowledgeRoot,
-    auditBaseDir: agentQaRoot,
-    now: () => '2026-08-14T09:00:00.000Z',
-  })
-  const outcome = await verbs.record({ actionClass, scope: STANDING_APPROVAL_SCOPE })
-  if (outcome.kind !== 'recorded') throw new Error(`fixture mint failed: ${outcome.kind}`)
+  mkdirSync(knowledgeRoot, { recursive: true })
+  const grantId = `grant_${createHash('sha256').update(actionClass).digest('hex').slice(0, 16)}`
+  writeFileSync(
+    join(knowledgeRoot, 'grants.jsonl'),
+    `${ledgerBytes() ?? ''}${JSON.stringify({
+      schemaVersion: 1, kind: 'grant', at: '2026-08-14T09:00:00.000Z', grantId, actionClass,
+      scope: { project: 'local-workspace' },
+    })}\n`,
+    'utf8',
+  )
+  await Promise.resolve()
 }
 
 function pendingProposalPath(proposalId: string): string {
@@ -365,17 +373,19 @@ describe('a pre-432 record is refused unbound, grant or no grant (D-07, D-22)', 
     expect(git('status', '--porcelain', '--', CONFIG_FILE).stdout.trim()).toBe('')
   })
 
-  it('(B) the grant read still folds the committed ledger until 432-18 deletes it', async () => {
+  // RE-SPELLED 2026-10-01 (432-18) from '(B) the grant read still folds the committed ledger until
+  // 432-18 deletes it': the read is deleted with the ledger.
+  it('C432-NO-GRANT-OPS: (B) the grant read is an unknown function, and the old ledger is untouched', async () => {
     await mintGrant(CONFIG_APPLY_CLASS)
+    const before = ledgerBytes()
     const host = composeCliLocalAgent({ agentQaRoot, configPath })
     try {
-      const listed = await runSafetyScope({ executionContext: 'local-headless' }, async () =>
-        await invokeFunction(
-          host.registry, 'grants.list', {}, CLI_FUNCTION_CALLER,
-        ) as { grants: readonly { actionClass: string }[] })
-      expect(listed.grants.map((grant) => grant.actionClass)).toContain(CONFIG_APPLY_CLASS)
+      await expect(runSafetyScope({ executionContext: 'local-headless' }, async () =>
+        await invokeFunction(host.registry, 'grants.list', {}, CLI_FUNCTION_CALLER)))
+        .rejects.toMatchObject({ name: 'UnknownFunctionError' })
     } finally {
       await host.close()
     }
+    expect(ledgerBytes()).toBe(before)
   })
 })

@@ -574,15 +574,6 @@ export interface ComposeCliLocalAgentInput {
   /** The project's runtime root, i.e. `<configDir>/.agent-qa`. */
   agentQaRoot: string
   /**
-   * The dispatch-scoped grant overlay this host's run gate consults (401-08, D-08).
-   *
-   * Forwarded UNTOUCHED to `composeLocalAgent`, on the passthrough idiom every neighbour here uses
-   * and typed by indexed access so this file names no `agent-local` internal it does not already
-   * name. Absent leaves the composition minting its own — which is the shipped default and the
-   * posture every caller had before this field existed.
-   */
-  dispatchGrants?: ComposeLocalAgentInput['dispatchGrants']
-  /**
    * The context every policy decision in this host's registry is taken in (400-01, D-05).
    *
    * A PASSTHROUGH of the shared composition's own new input, and it is here rather than pinned on
@@ -2093,9 +2084,6 @@ export function composeCliLocalAgent(input: ComposeCliLocalAgentInput): LocalAge
       resolveExecutionContext: input.resolveExecutionContext,
       ...(input.runBridge === undefined ? {} : { runBridge: input.runBridge }),
     }),
-    // D-08 (401-08): forwarded untouched, conditionally spread on this literal's own house rule.
-    // Absent leaves `composeLocalAgent` minting its own dispatch scope.
-    ...(input.dispatchGrants === undefined ? {} : { dispatchGrants: input.dispatchGrants }),
     // 403 D-03: the live-view mint seam, forwarded untouched on the same house rule.
     ...(input.liveView === undefined ? {} : { liveView: input.liveView }),
     // 405 D-03: the run-detail projection read, spread on the same house rule.

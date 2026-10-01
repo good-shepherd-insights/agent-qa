@@ -1207,7 +1207,8 @@ describe('423-21 read-op adjudication (D-04/D-18)', () => {
     // 2026-09-25 (428 D-07): 52 — editor.liveurl registered, dashboard-only and MCP-unprojected.
     // 2026-09-29 (431-08 D-06): 53 — runs.overview registered, with its own input singleton.
     // 2026-10-01 (432-17 D-05): 46 — the seven proposal-inbox, apply and undo-propose ops deleted.
-    expect(registryIds).toHaveLength(46)
+    // 2026-10-01 (432-18 D-15): 44 — grants.list and grants.revoke deleted with the ledger.
+    expect(registryIds).toHaveLength(44)
     expect(censusDiff(registryIds, Object.keys(contracts))).toEqual({ missing: [], stray: [] })
   })
 

@@ -170,10 +170,7 @@ const BINDING_PARITY_INPUTS: Readonly<Record<string, unknown>> = {
   'proposals.show': { proposalId: 'prop_0123456789ab' },
   'proposals.reject': { proposalId: 'prop_0123456789ab' },
   'proposals.accept': { proposalId: 'prop_0123456789ab' },
-  // 391 PROP-01 / D-03: `grants.revoke` takes the grant's durable id, so the `{}` default fails
-  // its contract and turns an unbound refusal into an input error — which the parity case below
-  // reads as `dispatched`. `grants.list` genuinely takes the empty query and needs no row here.
-  'grants.revoke': { grantId: 'grant_0123456789abcdef' },
+  // 391 PROP-01 / D-03's `grants.revoke` row left with the op (432-18).
   // 395 D-03: a PARSING input on its siblings' reasoning — the contract requires a non-empty path
   // and a scalar value, so the `{}` default would fail validation and turn an unbound refusal into
   // an input error, which the parity case below reads as `dispatched`. The path names a real

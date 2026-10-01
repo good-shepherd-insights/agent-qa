@@ -3,47 +3,38 @@
 // 2026-09-30 (432-13, D-14/D-15): THE LOOP HAS NO CONSUMER. `invokeFunction` reads no standing
 // approval, asks no confirm port and writes no decision row.
 //
-// RE-SPELLED 2026-10-01 (432-17, D-05/D-22): THE LOOP HAS NO MINT EITHER. The only door that wrote a
-// grant was `proposals.accept`'s always form, and it is deleted with the inbox, together with
-// `knowledge.proposal.apply` (the apply a grant was minted for), `proposals.list` and the store. So
-// the cells that minted on the always form, applied headless with and without a grant, and drove
-// the accept's origin refusal lost their subject; C432-NO-PROPOSAL-OPS pins that the doors are gone.
-// What survives until 432-18 deletes the grant ops and the ledger is the revoke half over a line
-// appended through the real append API: a revoke appends rather than rewrites, both events survive,
-// an agent-origin revoke is refused before dispatch, and a headless revoke runs with no
-// confirmation and writes no decision row.
+// 2026-10-01 (432-17, D-05/D-22): THE LOOP HAS NO MINT EITHER. The only door that wrote a grant was
+// `proposals.accept`'s always form, deleted with the inbox (C432-NO-PROPOSAL-OPS).
+//
+// RE-SPELLED 2026-10-01 (432-18, D-14/D-15/D-22): THE LOOP HAS NO VERBS. `grants.list` and
+// `grants.revoke` are deleted with the ledger, so the revoke half this file kept after 432-17 (a
+// revoke appends rather than rewrites, an agent-origin revoke is refused before dispatch, a headless
+// revoke runs with no confirmation) lost its subject. What is measured instead, over the same
+// composition: neither grant id is a capability of the host, every door refuses both as unknown
+// functions, a workspace's old `grants.jsonl` is left byte-identical, and a headless direct change
+// still runs with no confirmation and writes no decision row.
 
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import {
-  FunctionOriginError,
   UnknownFunctionError,
   createFunctionRegistry,
   invokeFunction,
 } from '@vostride/agent-qa-agent'
 import type { FunctionRegistry } from '@vostride/agent-qa-agent'
-import {
-  appendGrantLedgerEvents,
-  createGrantOperations,
-  grantsLedgerPath,
-  publishBundleForTest,
-} from '@vostride/agent-qa-knowledge-local'
+import { publishBundleForTest } from '@vostride/agent-qa-knowledge-local'
 import type { BundleStoreConfig } from '@vostride/agent-qa-knowledge-local'
 import {
-  CURRENT_GRANT_LEDGER_SCHEMA_VERSION,
   FunctionScopeSchema,
   MASKED_RESOLVED_CONFIG_SCHEMA_VERSION,
-  STANDING_APPROVAL_SCOPE,
 } from '@vostride/agent-qa-schema'
 import type {
   Anchor,
   ExecutionContext,
   FunctionCaller,
-  GrantLedgerEvent,
-  GrantsListOutput,
-  GrantsRevokeOutput,
+  KnowledgeChangeOutput,
   MaskedResolvedConfig,
 } from '@vostride/agent-qa-schema'
 import type { AuditSink, ExecutionAuditRow, GuardrailAuditRow } from '@vostride/agent-qa-safety'
@@ -55,12 +46,13 @@ import {
   createRunsReader,
 } from '../composition/compose-local-agent.js'
 
-const GRANTS_LIST_ID = 'grants.list'
-const GRANTS_REVOKE_ID = 'grants.revoke'
+/** The deleted grant verbs, spelled as a caller spells them, each with an input its contract took. */
+const RETIRED_GRANT_DOORS = [
+  ['grants.list', {}],
+  ['grants.revoke', { grantId: 'grant_loop_revoke' }],
+] as const
 /** The deleted mint door and the apply its grants covered, spelled as a caller spells them. */
 const RETIRED_DOORS = ['proposals.accept', 'knowledge.proposal.apply', 'proposals.list'] as const
-
-const NOW_ISO = '2026-08-07T12:00:00.000Z'
 
 const ANCHOR: Anchor = { t: 'el', role: 'Button', name: 'Checkout' }
 
@@ -81,6 +73,14 @@ const HUMAN: FunctionCaller = {
 /** The same permissions, on behalf of the agent. ONLY `origin` differs. */
 const AGENT: FunctionCaller = { ...HUMAN, origin: 'agent' }
 
+/** An old ledger as a pre-432 build left it: a grant and its revoke, plus a damaged line. */
+const LEGACY_LEDGER_BYTES = [
+  '{"schemaVersion":1,"kind":"grant","at":"2026-08-07T12:00:00.000Z","grantId":"grant_loop_revoke","actionClass":"fn:knowledge.forget","scope":{"project":"local-workspace"}}',
+  '{"schemaVersion":1,"kind":"revoke","at":"2026-08-07T12:30:00.000Z","grantId":"grant_loop_revoke"}',
+  '<<<<<<< HEAD{"schemaVersion":1,"kind":"grant","at"',
+  '',
+].join('\n')
+
 function capturingSink(): AuditSink & { rows: ExecutionAuditRow[] } {
   const rows: ExecutionAuditRow[] = []
   return {
@@ -92,7 +92,7 @@ function capturingSink(): AuditSink & { rows: ExecutionAuditRow[] } {
   }
 }
 
-describe('the grant loop: a person accepts with always, and a later headless apply commits', () => {
+describe('C432-NO-GRANT-OPS: the grant loop has no verbs left on the composed host', () => {
   let root: string
   let knowledgeRoot: string
   let agentQaRoot: string
@@ -149,12 +149,7 @@ describe('the grant loop: a person accepts with always, and a later headless app
     return outcome.id
   }
 
-  /**
-   * The composition under test: REAL grant verbs, REAL committed ledger, REAL reader.
-   *
-   * Nothing about the policy answer is stubbed — every leg below changes the gate's behaviour by
-   * changing a file, through a verb a person invoked.
-   */
+  /** The composition under test: the real readers and the real direct knowledge change door. */
   function host(context: ExecutionContext): FunctionRegistry {
     return createFunctionRegistry({
       deps: {
@@ -169,11 +164,6 @@ describe('the grant loop: a person accepts with always, and a later headless app
           agentQaRoot,
           resolveKnowledgeRoot: () => knowledgeRoot,
         }),
-        standingGrants: createGrantOperations({
-          resolveKnowledgeRoot: () => knowledgeRoot,
-          auditBaseDir: agentQaRoot,
-          now: () => NOW_ISO,
-        }),
       },
       auditSink: sink,
       // 432-13: no standing-approval reader and no confirm port — `invokeFunction` asks nobody.
@@ -181,29 +171,13 @@ describe('the grant loop: a person accepts with always, and a later headless app
     })
   }
 
-  function committedEvents(): GrantLedgerEvent[] {
-    if (!existsSync(grantsLedgerPath(knowledgeRoot))) return []
-    return readFileSync(grantsLedgerPath(knowledgeRoot), 'utf8')
-      .split('\n')
-      .filter((line) => line.trim().length > 0)
-      .map((line) => JSON.parse(line) as GrantLedgerEvent)
+  function legacyLedger(): string {
+    return join(knowledgeRoot, 'grants.jsonl')
   }
 
-  /** One committed grant line, appended through the real append API (the 391-01 tracer's hand). */
-  function appendGrant(grantId: string): void {
-    const outcome = appendGrantLedgerEvents(
-      knowledgeRoot,
-      [{
-        schemaVersion: CURRENT_GRANT_LEDGER_SCHEMA_VERSION,
-        kind: 'grant',
-        at: NOW_ISO,
-        grantId,
-        actionClass: 'fn:knowledge.forget',
-        scope: STANDING_APPROVAL_SCOPE,
-      }],
-      { auditBaseDir: agentQaRoot },
-    )
-    if (outcome.kind !== 'appended') throw new Error(`grant append refused: ${outcome.kind}`)
+  function plantLegacyLedger(): void {
+    mkdirSync(knowledgeRoot, { recursive: true })
+    writeFileSync(legacyLedger(), LEGACY_LEDGER_BYTES, 'utf8')
   }
 
   it('C432-NO-PROPOSAL-OPS: the mint door and the apply it covered are not capabilities of this host', async () => {
@@ -214,69 +188,55 @@ describe('the grant loop: a person accepts with always, and a later headless app
     for (const id of RETIRED_DOORS) {
       await expect(invokeFunction(interactive, id, {}, HUMAN), id).rejects.toBeInstanceOf(UnknownFunctionError)
     }
-    expect(existsSync(grantsLedgerPath(knowledgeRoot))).toBe(false)
+    expect(existsSync(legacyLedger())).toBe(false)
   })
 
-  // RE-SPELLED 2026-10-01 (432-17) from 'mints on the always form only, and a headless apply commits
-  // whatever the ledger holds': the always form is deleted, so the grant is appended by hand and the
-  // revoke half — the one that survives — is what is measured.
-  it('revokes by appending: both events survive, in order', async () => {
-    const interactive = host('local-interactive')
-    appendGrant('grant_loop_revoke')
-    expect(committedEvents().map((event) => event.kind)).toEqual(['grant'])
-
-    const listed = (await invokeFunction(interactive, GRANTS_LIST_ID, {}, HUMAN)) as GrantsListOutput
-    expect(listed.grants.map((grant) => grant.grantId)).toEqual(['grant_loop_revoke'])
-
-    const revoked = (await invokeFunction(
-      interactive,
-      GRANTS_REVOKE_ID,
-      { grantId: 'grant_loop_revoke' },
-      HUMAN,
-    )) as GrantsRevokeOutput
-    expect(revoked.outcome).toBe('revoked')
-    // BOTH events survive, in order. A revoke that rewrote or removed the grant line would leave a
-    // ledger with no record that the approval ever existed.
-    expect(committedEvents().map((event) => event.kind)).toEqual(['grant', 'revoke'])
+  // RE-SPELLED 2026-10-01 (432-18) from 'revokes by appending: both events survive, in order': the
+  // revoke verb is deleted, so neither grant id is listed and both answer as unknown functions.
+  it('C432-NO-GRANT-OPS: neither grant verb is listed, and both are unknown functions on every context', async () => {
+    plantLegacyLedger()
+    for (const context of ['local-interactive', 'local-headless', 'ci', 'cloud'] as const) {
+      const registry = host(context)
+      const ids = registry.list(HUMAN).map((entry) => entry.id)
+      expect(ids.length, `${context}: the listing is empty, so the absence is vacuous`).toBeGreaterThan(0)
+      expect(ids.filter((id) => id.startsWith('grants.')), context).toEqual([])
+      for (const [id, input] of RETIRED_GRANT_DOORS) {
+        await expect(invokeFunction(registry, id, input, HUMAN), `${context} ${id}`)
+          .rejects.toBeInstanceOf(UnknownFunctionError)
+      }
+    }
+    expect(readFileSync(legacyLedger(), 'utf8')).toBe(LEGACY_LEDGER_BYTES)
   }, 120_000)
 
-  // RE-SPELLED 2026-10-01 (432-17) from 'refuses an agent-origin accept and revoke, leaving the
-  // committed ledger untouched': the accept is deleted; the revoke half and its human control stay.
-  it('refuses an agent-origin revoke, leaving the committed ledger untouched', async () => {
+  // RE-SPELLED 2026-10-01 (432-18) from 'refuses an agent-origin revoke, leaving the committed ledger
+  // untouched': there is no revoke to refuse. Agent and human origin get the same unknown-function
+  // answer, and the old ledger is untouched either way.
+  it('C432-NO-GRANT-OPS: an agent-origin and a human-origin revoke get the same unknown-function answer', async () => {
+    plantLegacyLedger()
     const interactive = host('local-interactive')
-    appendGrant('grant_loop_origin')
-    const before = readFileSync(grantsLedgerPath(knowledgeRoot), 'utf8')
-
-    await expect(
-      invokeFunction(interactive, GRANTS_REVOKE_ID, { grantId: 'grant_loop_origin' }, AGENT),
-    ).rejects.toBeInstanceOf(FunctionOriginError)
-    expect(readFileSync(grantsLedgerPath(knowledgeRoot), 'utf8')).toBe(before)
-
-    // And the control: the same permissions, human origin, dispatches.
-    const revoked = (await invokeFunction(
-      interactive,
-      GRANTS_REVOKE_ID,
-      { grantId: 'grant_loop_origin' },
-      HUMAN,
-    )) as GrantsRevokeOutput
-    expect(revoked.outcome).toBe('revoked')
-  }, 120_000)
-
-  // RE-SPELLED 2026-10-01 (432-17): the accept half of this cell is deleted with the op. A headless
-  // revoke runs with no confirmation, answers by the ledger's own content, and writes no decision row.
-  it('C432-INVOKE-DIRECT: both decision verbs run in a headless context with no confirmation', async () => {
-    const headless = host('local-headless')
-    const revoked = (await invokeFunction(
-      headless,
-      GRANTS_REVOKE_ID,
-      { grantId: 'grant_anything' },
-      HUMAN,
-    )) as GrantsRevokeOutput
-    expect(revoked.outcome).not.toBe('revoked')
-    expect(existsSync(grantsLedgerPath(knowledgeRoot))).toBe(false)
+    for (const caller of [AGENT, HUMAN]) {
+      await expect(invokeFunction(interactive, 'grants.revoke', { grantId: 'grant_loop_revoke' }, caller), caller.origin)
+        .rejects.toBeInstanceOf(UnknownFunctionError)
+    }
+    expect(readFileSync(legacyLedger(), 'utf8')).toBe(LEGACY_LEDGER_BYTES)
     expect(sink.rows).toEqual([])
+  }, 120_000)
 
-    const grants = (await invokeFunction(headless, GRANTS_LIST_ID, {}, HUMAN)) as GrantsListOutput
-    expect(grants.grants).toEqual([])
+  // RE-SPELLED 2026-10-01 (432-18): the headless revoke this cell drove is deleted. The surviving
+  // claim — a decision verb runs headless with no confirmation and writes no decision row — is
+  // measured on the direct change, beside an old ledger that names a grant for exactly that class.
+  it('C432-INVOKE-DIRECT: both decision verbs run in a headless context with no confirmation', async () => {
+    plantLegacyLedger()
+    const recordId = publish('headless')
+    const headless = host('local-headless')
+    const changed = (await invokeFunction(
+      headless,
+      'knowledge.forget',
+      { target: { grain: 'record', recordId } },
+      HUMAN,
+    )) as KnowledgeChangeOutput
+    expect(changed).toMatchObject({ outcome: 'applied', recordIds: [recordId] })
+    expect(sink.rows).toEqual([])
+    expect(readFileSync(legacyLedger(), 'utf8')).toBe(LEGACY_LEDGER_BYTES)
   }, 120_000)
 })

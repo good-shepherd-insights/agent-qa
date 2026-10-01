@@ -18,7 +18,8 @@
 // `authoring-proposals-store.test.ts` are deleted with their subject. What either asserted that is
 // still true is carried here under its name: the change id that could address a path is refused,
 // every surviving contract projects to JSON Schema, an applied change receipt carries no proposal
-// field and no envelope parses as one, and the protected-class set (432-18's) is unchanged.
+// field and no envelope parses as one. The protected-class set these cells also carried is deleted
+// by 432-18 (C432-NO-GRANT-CONTRACTS in `432-deleted-runtime-sets.test.ts`).
 
 import { existsSync } from 'node:fs'
 import { dirname, join } from 'node:path'
@@ -28,7 +29,6 @@ import { describe, expect, it } from 'vitest'
 import { z } from 'zod'
 
 import * as schema from '../index'
-import { PROTECTED_ACTION_CLASSES, isProtectedActionClass } from '../index'
 
 const SRC = join(dirname(fileURLToPath(import.meta.url)), '..')
 
@@ -301,28 +301,5 @@ describe('C432-NO-ENVELOPE-EXPORTS: no envelope, inbox, proposal payload or appl
     const exported = new Set(Object.keys(schema))
     expect(['KnowledgeChangeOutputSchema', 'ConfigChangeOutputSchema'].filter((name) => exported.has(name)))
       .toEqual(['KnowledgeChangeOutputSchema', 'ConfigChangeOutputSchema'])
-  })
-})
-
-describe('the protected-class set (D-05/D-07)', () => {
-  // Carried verbatim from proposal-envelope.test.ts. The set is 432-18's to delete; until then it is
-  // unchanged, including the membership that names an op 432-17 retires.
-  it('is closed and stored exactly as the gate sees action names', () => {
-    expect(PROTECTED_ACTION_CLASSES).toEqual(['fn:proposals.accept', 'fn:grants.revoke'])
-    for (const actionClass of PROTECTED_ACTION_CLASSES) {
-      expect(actionClass.startsWith('fn:')).toBe(true)
-    }
-  })
-
-  it('refuses the BARE op id — the silent-no-op spelling', () => {
-    expect(isProtectedActionClass('proposals.accept')).toBe(false)
-    expect(isProtectedActionClass('fn:proposals.accept')).toBe(true)
-  })
-
-  it('answers false for anything off the set, including non-strings off a hand-edited ledger', () => {
-    expect(isProtectedActionClass('fn:knowledge.proposal.apply')).toBe(false)
-    expect(isProtectedActionClass(undefined)).toBe(false)
-    expect(isProtectedActionClass(null)).toBe(false)
-    expect(isProtectedActionClass({ toString: () => 'fn:grants.revoke' })).toBe(false)
   })
 })

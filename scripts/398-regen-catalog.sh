@@ -126,7 +126,10 @@ FROZEN_MIN_TESTS=129
 # `proposals.list/show/accept/reject`, `knowledge.proposal.apply`, `config.proposal.apply` and
 # `config.undo.propose` — so the measured mint is 46 registry ops + 4 chat op-aliases + 4 shipped
 # skills. The floor is the exact observed baseline; the argument is the seven deleted ops.
-FROZEN_MIN_ROWS=54
+# Lowered 2026-10-01 (432-18, D-14/D-15): 54 -> 52. `grants.list` and `grants.revoke` are deleted
+# with the grant ledger, so the measured mint is 44 registry ops + 4 chat op-aliases + 4 shipped
+# skills. The floor is the exact observed baseline; the argument is the two deleted ops.
+FROZEN_MIN_ROWS=52
 # The migration section's floor (398-08, D-14). It is SEPARATE from the row floor because it is a
 # separate section with a separate source: a mint that folded every capability correctly and dropped
 # the projected map would clear FROZEN_MIN_ROWS and write a manifest that answers no v1 caller.

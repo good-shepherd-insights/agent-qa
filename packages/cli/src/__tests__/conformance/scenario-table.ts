@@ -53,8 +53,6 @@ import {
   EntitiesGetInputSchema,
   EntitiesResolveInputSchema,
   ExplainInputSchema,
-  GrantsListInputSchema,
-  GrantsRevokeInputSchema,
   KnowledgeAcceptChangeInputSchema,
   KnowledgeBundlesListInputSchema,
   KnowledgeGatesListInputSchema,
@@ -116,8 +114,6 @@ export const OP_INPUT_CONTRACTS = {
   'editor.liveurl': EditorLiveUrlInputSchema,
   'entities.get': EntitiesGetInputSchema,
   'entities.resolve': EntitiesResolveInputSchema,
-  'grants.list': GrantsListInputSchema,
-  'grants.revoke': GrantsRevokeInputSchema,
   'knowledge.accept': KnowledgeAcceptChangeInputSchema,
   'knowledge.brief.why': BriefWhyInputSchema,
   'knowledge.bundles.list': KnowledgeBundlesListInputSchema,
@@ -170,7 +166,10 @@ export type ScenarioInput<Id extends ScenarioOpId> = z.input<(typeof OP_INPUT_CO
  */
 export type UnprojectedReasonKey =
   | 'agent-ask-delegation-deferral'
-  | 'requires-human-origin'
+  // 2026-10-01 (432-18, D-15): `requires-human-origin` LEAVES the vocabulary. Its last member,
+  // `grants.revoke`, is deleted with the grant ledger (`proposals.accept`/`reject` left in 432-17),
+  // so no registered op declares `requiresHumanOrigin` and the class would be a member-less literal
+  // (the 432-17 `proposal-round-removed` precedent).
   // 2026-08-17 (398 D-09). The FOURTH class, and it is admitted rather than folded because the
   // vocabulary's whole job is to keep genuinely different facts apart. `agent.explain` is not
   // scoped out of a workflow and is not a door that cannot open — the question it answers is one
@@ -219,16 +218,15 @@ export type UnprojectedReasonKey =
 /**
  * The signature phrase each class is recognised by, in PRECEDENCE ORDER (highest first).
  *
- * Ordered rather than exclusive because the shipped reasons genuinely overlap: `grants.revoke` names
- * both `requiresHumanOrigin` and the mid-flight line, and the honest class is the stronger one — a
- * door that CANNOT open on this surface is a different fact from a door that was scoped out of it.
+ * Ordered rather than exclusive because the shipped reasons can overlap (until 432-18 `grants.revoke`
+ * named both `requiresHumanOrigin` and the mid-flight line), and the honest class is the stronger one —
+ * a question the protocol answers is a different fact from a read that was scoped out of a workflow.
  * A first-match rule over a declared order makes that a decision recorded once rather than a
  * judgement call repeated per row.
  */
 export const UNPROJECTED_REASON_SIGNATURES: readonly (readonly [UnprojectedReasonKey, string])[] =
   Object.freeze([
     Object.freeze(['agent-ask-delegation-deferral', 'nested-agent delegation'] as const),
-    Object.freeze(['requires-human-origin', 'requiresHumanOrigin'] as const),
     // 398 D-09. Placed ABOVE the two mid-flight lines because its reason is the stronger fact, on
     // the precedence rule this list already states: a question the protocol answers is a different
     // thing from a read that was scoped out of a workflow, and the shipped prose for
@@ -832,32 +830,7 @@ export const SCENARIO_TABLE = Object.freeze([
     entityCardExpect: EVERY_ENTITY_CARD_KIND,
     policyPoints: { grant: 'allow', refuse: 'deny' },
   }),
-  // 391 PROP-01 / D-03: `list` genuinely takes the empty query — the fold is bounded, so there is
-  // nothing to filter.
-  scenario({
-    opId: 'grants.list',
-    input: {},
-    perSurface: {
-      chat: { reachable: true },
-      mcp: { unprojected: 'not-mid-flight-read' },
-      fn: { reachable: true },
-    },
-    renderExpect: { markers: ['grants', 'refusedLines'] },
-    policyPoints: { grant: 'allow', refuse: 'deny' },
-  }),
-  // 391 PROP-01 / D-03: `revoke` takes the grant's durable id, and `{}` would report an INPUT error
-  // exactly where a binding refusal is wanted. The id is well-formed and names nothing.
-  scenario({
-    opId: 'grants.revoke',
-    input: { grantId: 'grant_0123456789abcdef' },
-    perSurface: {
-      chat: { reachable: true },
-      mcp: { unprojected: 'requires-human-origin' },
-      fn: { reachable: true },
-    },
-    renderExpect: { markers: ['grant', 'outcome'] },
-    policyPoints: { grant: 'allow', refuse: 'deny', ask: 'direct' },
-  }),
+  // 391 PROP-01 / D-03's `grants.list` and `grants.revoke` rows left with the ops (432-18).
   // 387-08: valid INPUTS for capabilities most compositions cannot run — `invokeFunction` validates
   // before it consults the binding.
   // 2026-09-30 (432-12 D-05): the three knowledge changes apply in the call and answer the records

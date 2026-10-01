@@ -189,7 +189,10 @@ describe('the composed session directives reach something (D-04 / D-21 / RESEARC
       const result = await ask(host, `/pin ${QUARANTINE_LIST_FUNCTION_ID}`)
 
       expect(result.receipts).toEqual([])
-      expect(host.chat.stateFor(result.sessionId)?.pinnedActionClasses ?? []).toEqual([])
+      // 432-18 (C432-PIN-ABSENT): the live state no longer carries a pin field at all.
+      const state = host.chat.stateFor(result.sessionId)
+      expect(state).toBeDefined()
+      expect(Object.keys(state!)).not.toContain('pinnedActionClasses')
     })
 
     it('refuses BY NAME as an unroutable clause, leaving one countable row', async () => {

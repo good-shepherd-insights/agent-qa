@@ -224,8 +224,7 @@ export const CATALOG_DOC_PATHS: readonly (readonly [string, CatalogDocAdjudicati
     ] as const),
     Object.freeze(['entities.get', Object.freeze({ absentReason: CATALOG_DOC_ABSENT_REASON })] as const),
     Object.freeze(['entities.resolve', Object.freeze({ absentReason: CATALOG_DOC_ABSENT_REASON })] as const),
-    Object.freeze(['grants.list', Object.freeze({ absentReason: CATALOG_DOC_ABSENT_REASON })] as const),
-    Object.freeze(['grants.revoke', Object.freeze({ absentReason: CATALOG_DOC_ABSENT_REASON })] as const),
+    // 2026-10-01 (432-18): `grants.list` and `grants.revoke` left with the grant ledger.
     Object.freeze(['knowledge.accept', Object.freeze({ absentReason: CATALOG_DOC_ABSENT_REASON })] as const),
     Object.freeze(['knowledge.brief.why', Object.freeze({ absentReason: CATALOG_DOC_ABSENT_REASON })] as const),
     Object.freeze(['knowledge.bundles.list', Object.freeze({ absentReason: CATALOG_DOC_ABSENT_REASON })] as const),

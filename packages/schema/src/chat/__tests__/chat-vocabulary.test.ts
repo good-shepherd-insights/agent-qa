@@ -25,9 +25,8 @@ import {
   SCENARIO_EXPECTATIONS,
   clauseReachedCapability,
   guardChatSessionEvent,
-  pinDenies,
 } from '../index'
-import type { ChatPinOverlay, ChatSessionEvent, ChatSessionEventKind } from '../index'
+import type { ChatSessionEvent, ChatSessionEventKind } from '../index'
 
 /**
  * The total map: one sentence per kind, and the day an eleventh kind is declared this stops
@@ -251,19 +250,16 @@ describe('C432-HISTORICAL-READER — pre-432 approval rows still read (432-13)',
   })
 })
 
-describe('the pin overlay denies, and only denies (D-21)', () => {
-  const overlay: ChatPinOverlay = { deniedActionClasses: ['fn:runs.start'] }
-
-  it('matches the fn:-prefixed risk-name spelling the gate actually sees', () => {
-    expect(pinDenies(overlay, 'fn:runs.start')).toBe(true)
-    // 391-05's measured trap: the BARE spelling matches nothing, because every registered op's
-    // risk name carries the prefix. A pin recorded without it would silently deny nothing.
-    expect(pinDenies(overlay, 'runs.start')).toBe(false)
-    expect(pinDenies(overlay, 'fn:runs.list')).toBe(false)
-  })
-
-  it('an empty overlay denies nothing', () => {
-    expect(pinDenies({ deniedActionClasses: [] }, 'fn:runs.start')).toBe(false)
+// RE-SPELLED 2026-10-01 (432-18, D-14): 'the pin overlay denies, and only denies (D-21)' pinned
+// `pinDenies` over `ChatPinOverlay`. Both are deleted with the session pin overlay; the absence is
+// C432-PIN-ABSENT (agent `chat/__tests__/pin-overlay.test.ts`) and C432-NO-GRANT-CONTRACTS
+// (`__tests__/432-deleted-runtime-sets.test.ts`). The historical `/pin` row (`source: 'verb'`) still
+// parses, above.
+describe('C432-PIN-ABSENT: the schema publishes no pin predicate (432-18)', () => {
+  it('C432-PIN-ABSENT: no pin member is exported beside the session vocabulary', async () => {
+    const barrel = await import('../index') as Record<string, unknown>
+    expect(Object.keys(barrel).filter((name) => /^pin|pinOverlay/i.test(name))).toEqual([])
+    expect(barrel['guardChatSessionEvent']).toBeTypeOf('function')
   })
 })
 

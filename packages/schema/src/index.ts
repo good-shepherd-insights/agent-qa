@@ -1435,29 +1435,13 @@ export type {
 
 // 342 safety contracts
 export { guardrailPolicySchema } from './safety/index'
-// 391 D-04/D-11: the committed standing-grant ledger's event vocabulary, both guard legs, and the
-// ONE canonical action scope the mint and the gate call-site both read (never re-spell).
-export {
-  CURRENT_GRANT_LEDGER_SCHEMA_VERSION,
-  GRANT_LEDGER_EVENT_KINDS,
-  GRANT_LEDGER_MIGRATIONS,
-  GrantLedgerVersionError,
-  STANDING_APPROVAL_SCOPE,
-  guardGrantLedgerEvent,
-  hasGrantEventShape,
-  isGrantLedgerEventKind,
-} from './safety/index'
-export type {
-  ActiveStandingGrant,
-  GrantLedgerEvent,
-  GrantLedgerEventKind,
-  GrantRecordedEvent,
-  GrantRevokedEvent,
-} from './safety/index'
+// 2026-10-01 (432-18, D-14/D-15/D-22): the standing-grant ledger's event vocabulary and guards are
+// deleted with the ledger. `STANDING_APPROVAL_SCOPE` moved to `trust-credential.ts` and is exported
+// beside the key set below; it is the scope the MCP bearer credential still carries.
 // 391-11 (REVIEW WR-05): the scope key set, spelled ONCE. A test that wants a key OUTSIDE the set
 // must compute it against this value rather than hard-code one that a later key addition could
 // legalise.
-export { TRUST_SCOPE_KEYS } from './safety/index'
+export { STANDING_APPROVAL_SCOPE, TRUST_SCOPE_KEYS } from './safety/index'
 // 401-15 (WR-01 / T-401-G5 / T-401-G6): the disclosure scrub, exported beside the field whose law
 // it enforces. Every composition that fills `RiskActionDescriptor.disclosure` applies it — the two
 // today are the run gate's preview and `invoke.ts`'s per-op `spec.disclose` result.
@@ -1469,11 +1453,6 @@ export {
   scrubDisclosureFragment,
   scrubDisclosureText,
 } from './safety/index'
-// 391 D-05/D-07: the closed grant-ineligible action-class set and its membership predicate. One
-// export, consulted by BOTH the grant mint and the grant read — a config-sourced protected list
-// would be self-referentially mutable, which is the hole PROP-05 closes.
-export { PROTECTED_ACTION_CLASSES, isProtectedActionClass } from './safety/index'
-export type { ProtectedActionClass } from './safety/index'
 // 400 D-15: the closed remedy vocabulary a denial carries beside its prose reason, and the ONE
 // per-surface projection every render runs through. `remediesRenderableBy` is published rather
 // than re-derived at each door, because a render that filtered for itself is how one surface ends
@@ -1490,28 +1469,9 @@ export type {
   GateRemedySurface,
   RemedyKindFor,
 } from './safety/index'
-// 391 D-03/D-05: the grant verbs' contracts and the ONE standing-grants port. `record` is on the
-// port and on no registry entry — a standing approval arises only from the accept escalation.
-export {
-  GrantRecordInputSchema,
-  GrantRecordOutcomeSchema,
-  GrantsListInputSchema,
-  GrantsListOutputSchema,
-  GrantsRevokeInputSchema,
-  GrantsRevokeOutputSchema,
-  StandingGrantSchema,
-  TrustScopeSchema,
-} from './safety/index'
-export type {
-  GrantRecordInput,
-  GrantRecordOutcome,
-  GrantsListInput,
-  GrantsListOutput,
-  GrantsRevokeInput,
-  GrantsRevokeOutput,
-  StandingGrantDto,
-  StandingGrantsPort,
-} from './safety/index'
+// 2026-10-01 (432-18): the grant verbs' contracts, the protected-class set and the standing-grants
+// port are deleted. The trust-scope projection stays for `config/run-service.ts` until 432-22.
+export { TrustScopeSchema } from './safety/index'
 export type {
   RiskActionDescriptor,
   RiskTier,
@@ -1559,7 +1519,6 @@ export {
   ScenarioExpectationSchema,
   clauseReachedCapability,
   guardChatSessionEvent,
-  pinDenies,
 } from './chat/index'
 export type {
   AgentAskInput,
@@ -1572,7 +1531,6 @@ export type {
   ChatCompactionEvent,
   ChatMarkUnhandledEvent,
   ChatModelChangeEvent,
-  ChatPinOverlay,
   ChatScenario,
   ChatSessionEvent,
   ChatSessionEventBase,

@@ -1,44 +1,18 @@
-// The cross-spelling pin: schema's closed protected set ↔ the registry it protects (Phase 391,
-// PROP-05, plan 05).
+// The cross-spelling pin between schema's closed protected set and the registry it protected (Phase
+// 391, PROP-05, plan 05), RE-SPELLED 2026-10-01 (432-18, D-15) as the set's absence.
 //
-// WHY THIS FILE EXISTS, stated precisely, because a weaker version of it already shipped.
-//
-// `schema/src/__tests__/proposal-envelope.test.ts` asserts `PROTECTED_ACTION_CLASSES` equals
-// `['fn:proposals.accept', 'fn:grants.revoke']`. That is the constant restating itself inside its
-// own package, and it binds NOTHING to reality: schema cannot import agent, so nothing there can
-// see whether an op by either of those names is registered, or ever was. Rename
-// `proposals.accept` tomorrow and that assertion stays green while the protected set silently
-// loses a member — the grant-ineligible floor would be protecting a name nobody answers to.
-//
-// The real pin has to live where the constant and the registry are BOTH reachable, and this
-// package is the only place that is true: `agent` owns the registry and depends on `schema`. So
-// the pin is here rather than beside the constant, and the constant's own module head says to
-// come looking for it here.
-//
-// FOUR CLAIMS, and the third and fourth are what keep the first two from being decorative:
-//
-//   1. every member of the protected set is the `risk.name` of a registered op — the set does not
-//      protect a ghost;
-//   2. every member matches EXACTLY ONE op — a member covering two ops would be ambiguous about
-//      what a mint refusal was actually refusing;
-//   3. the BARE spelling of each member — the `fn:` prefix stripped — matches no registered op at
-//      all. This is the admitted/rejected pair the precondition-guarded corpus law asks for: it
-//      proves the comparison in claim 1 discriminates, rather than being satisfied by any string
-//      that happens to contain an op id. It is also the exact failure the ledger's module head
-//      warns about, asserted at the OTHER end of the same contract;
-//   4. NO registered op classifies as `restricted` today. That is a fact about the catalogue, not
-//      a rule, and it is pinned as a FORWARD RED — see its own case below.
-//
-// WHAT IS DELIBERATELY NOT ASSERTED: the classified TIER of a protected member. `grants.revoke`
-// classifies `destructive` (its name carries the soft destructive verb `revoke`) even though it
-// declares `mutating-shared`, and both resolve to `ask`. Pinning a tier here would pin the
-// lexicon's opinion about a verb's NAME, which is a different contract owned by a different suite.
+// The set (`['fn:proposals.accept', 'fn:grants.revoke']`) named the action classes no standing grant
+// could cover. 432-17 deleted `proposals.accept` and 432-18 deletes `grants.revoke`, the grant
+// ledger and the set itself, so claims 1-3 below (each member names exactly one registered op, and
+// its bare spelling none) lost their subject. What is kept: no op is protected because nothing
+// mints a grant, the knowledge changes classify at the local mutating floor, and claim 4 — no op
+// classifies `restricted` — is unchanged.
 
 import { classifyRisk } from '@vostride/agent-qa-safety'
+import * as schema from '@vostride/agent-qa-schema'
 import {
   FunctionScopeSchema,
   MASKED_RESOLVED_CONFIG_SCHEMA_VERSION,
-  PROTECTED_ACTION_CLASSES,
 } from '@vostride/agent-qa-schema'
 import type { FunctionCaller } from '@vostride/agent-qa-schema'
 import type { AuditSink } from '@vostride/agent-qa-safety'
@@ -110,48 +84,24 @@ function declarations(): readonly FunctionDeclaration[] {
 }
 
 describe('the protected action classes name real registered ops', () => {
-  it('is not vacuous: the catalogue and the protected set are both non-empty', () => {
-    // The guard every claim below leans on. A registry that listed nothing would satisfy "no
-    // member matches two ops" and "no bare id matches anything" perfectly.
+  // RE-SPELLED 2026-10-01 (432-18) from 'is not vacuous: the catalogue and the protected set are both
+  // non-empty': the catalogue still is, and the set is gone.
+  it('C432-NO-GRANT-CONTRACTS: the catalogue is non-empty and no protected-class set is published', () => {
     expect(declarations().length).toBeGreaterThan(0)
-    expect(PROTECTED_ACTION_CLASSES.length).toBeGreaterThan(0)
+    const exported = Object.keys(schema)
+    expect(exported.filter((name) => /protected/i.test(name)), 'a protected-class member is exported')
+      .toEqual([])
   })
 
-  // RE-SPELLED 2026-10-01 (432-17, D-05): `proposals.accept` is deleted with the inbox, so its
-  // protected class names no registered op. The set itself is 432-18's to delete; until then the
-  // retired member is pinned as matching NOTHING rather than dropped from the check.
-  const RETIRED_BY_432_17 = new Set(['fn:proposals.accept'])
-
-  it('each member is the risk.name of EXACTLY ONE registered op', () => {
-    const listed = declarations()
-
-    for (const member of PROTECTED_ACTION_CLASSES) {
-      const matching = listed.filter((declaration) => declaration.risk.name === member)
-      // Named per member so a failure says WHICH class lost its op, rather than reporting a
-      // count nobody can act on.
-      expect({ member, ids: matching.map((declaration) => declaration.id) }).toEqual({
-        member,
-        ids: RETIRED_BY_432_17.has(member) ? [] : [member.replace(/^fn:/, '')],
-      })
+  // RE-SPELLED 2026-10-01 (432-18) from 'each member is the risk.name of EXACTLY ONE registered op'
+  // and 'the BARE spelling of each member matches no registered op': both members' ops are deleted.
+  it('C432-NO-GRANT-OPS: neither former protected class names a registered op, prefixed or bare', () => {
+    const names = declarations().flatMap((declaration) => [declaration.risk.name, declaration.id])
+    for (const member of ['fn:proposals.accept', 'fn:grants.revoke']) {
+      expect(names, member).not.toContain(member)
+      expect(names, member.replace(/^fn:/, '')).not.toContain(member.replace(/^fn:/, ''))
     }
   })
-
-  it('the BARE spelling of each member matches no registered op — the `fn:` prefix is the contract',
-    () => {
-      const listed = declarations()
-
-      for (const member of PROTECTED_ACTION_CLASSES) {
-        const bare = member.replace(/^fn:/, '')
-        // The prefix is really being stripped: a member that never carried one would make this
-        // whole case a comparison of a string against itself.
-        expect(bare).not.toBe(member)
-        // This is the ADMITTED/REJECTED pair. The case above proves the prefixed spelling FINDS
-        // its op; this proves the un-prefixed one finds nothing — so the equality up there is
-        // discriminating, and a member hand-typed without the prefix would be a class that
-        // protects nothing while looking exactly like one that does.
-        expect(listed.filter((declaration) => declaration.risk.name === bare)).toEqual([])
-      }
-    })
 
   // 2026-09-30, 432-12 (D-01/D-05): the three knowledge changes apply in the call. Their classes are
   // not protected, and they sit at the recognized local mutating floor — the tier that allows in
@@ -162,7 +112,6 @@ describe('the protected action classes name real registered ops', () => {
     for (const id of ['knowledge.accept', 'knowledge.reject', 'knowledge.forget']) {
       const declaration = listed.find((row) => row.id === id)
       expect(declaration, id).toBeDefined()
-      expect(PROTECTED_ACTION_CLASSES as readonly string[], id).not.toContain(declaration!.risk.name)
       expect(classifyRisk(declaration!.risk).riskTier, id).toBe('mutating-local')
       expect(listed.filter((row) => row.risk.name === `fn:${id}.propose`), `${id}.propose`).toEqual([])
     }

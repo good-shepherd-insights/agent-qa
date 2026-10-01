@@ -87,9 +87,7 @@ import {
   countPendingCurationJobs,
   createMemorySightingSource,
   createLocalKnowledgeStore,
-  createGrantOperations,
   createQuarantineOperations,
-  createStandingApprovalReader,
   QUARANTINE_FLAG_FLOOR,
   describeAllEntities,
   embedPendingEntities,
@@ -181,7 +179,6 @@ import type { ServedRecordFacts } from '@vostride/agent-qa-knowledge-local'
 export type { ServedRecordFacts, MarkTriage, ApplyFeedbackInput } from '@vostride/agent-qa-knowledge-local'
 import { ReplayIncompleteError, SecretStore } from '@vostride/agent-qa-runner'
 import {
-  NO_STANDING_APPROVALS,
   defaultGuardrailPolicyInput,
   getActiveAuditSink,
   getActiveExecutionContext,
@@ -190,10 +187,7 @@ import {
   scanConstructedArtifact,
   setActiveExecutionContextResolver,
 } from '@vostride/agent-qa-safety'
-import type {
-  MaskingSeedSources,
-  StandingApprovalReader,
-} from '@vostride/agent-qa-safety'
+import type { MaskingSeedSources } from '@vostride/agent-qa-safety'
 import {
   ARTIFACT_FILE,
   FsEventLog,
@@ -249,8 +243,6 @@ import type {
 import { createKnowledgeReaderPort } from './knowledge-review-reader.js'
 import type { SightMemoryEntities } from './knowledge-review-reader.js'
 import { createEvidenceBlobReader, readEvidenceBlobBytes } from './evidence-blob-reader.js'
-import { createDispatchGrants } from './dispatch-grants.js'
-import type { DispatchGrants } from './dispatch-grants.js'
 import { buildRunMaskingContext, buildRunPorts } from './run-composition.js'
 import type { RetrievalRungResolver } from './run-composition.js'
 import { writeAnalysisArtifact } from '../analysis/persist-analysis.js'
@@ -1176,24 +1168,12 @@ export async function sweepEntityIndexProjection(
  */
 export interface RunExecutionPort {
   /**
-   * @param gate what the composition knows about this run's POLICY inputs and the host does not.
-   *
-   * OPTIONAL, AND ADDITIVE ON PURPOSE (401-08, D-08). Every existing implementor — the CLI door,
-   * the daemon's, every fake in every suite — satisfies this signature unchanged, because a method
-   * that ignores a parameter is assignable to one that declares it. What a host does with the
-   * field is a host decision; what the composition may not do is resolve the run gate's standing
-   * approvals ITSELF, because the gate lives behind the port.
-   *
-   * `reader` is the standing-approval reader the run gate should consult: the durable ledger's
-   * answer unioned with any DISPATCH-SCOPED grant in force (`dispatch-grants.ts`). It travels here
-   * rather than being composed once at the door for the reason the grant is scoped at all — which
-   * approvals are in force is a fact about the moment the run is started, not about the moment the
-   * host was built.
+   * 2026-10-01 (432-18, D-15): the optional `gate` argument (401-08, D-08) carried the standing
+   * approvals in force — the durable ledger's answer unioned with any dispatch-scoped grant — to a
+   * run gate behind the port. The run gate went in 432-13 and the ledger and the dispatch overlay
+   * go in 432-18, so a host is handed the request and nothing else.
    */
-  execute(
-    request: RunsStartInput,
-    gate?: { readonly reader?: StandingApprovalReader },
-  ): Promise<StartedRun>
+  execute(request: RunsStartInput): Promise<StartedRun>
 }
 
 /**
@@ -1228,28 +1208,10 @@ export class RunProducedNoEventsError extends Error {
 export function createLocalRunInvocation(input: {
   readonly agentQaRoot: string
   readonly execution: RunExecutionPort
-  /**
-   * The standing approvals in force AT THE MOMENT THIS RUN STARTS (401-08, D-08).
-   *
-   * RESOLVED PER CALL, exactly as `invoke.ts` resolves the op gate's reader per invocation and for
-   * the same two reasons: the knowledge root is resolved asynchronously and per call, so a reader
-   * captured once would read approvals from a tree this invocation is not serving from; and a
-   * DISPATCH-scoped grant is by construction a fact about now, not about composition time.
-   *
-   * ABSENT means the host is handed nothing and the gate keeps its own `NO_STANDING_APPROVALS`
-   * default — the posture every composition had before this parameter existed.
-   */
-  readonly resolveRunGrants?: () => Promise<StandingApprovalReader | undefined>
 }): RunInvocationPort {
   return {
     async start(request: RunsStartInput): Promise<StartedRun> {
-      const reader = await input.resolveRunGrants?.()
-      // Conditionally spread on this file's own house rule: an absent authority must be an ABSENT
-      // field, never a present `undefined`, so the gate's default lives in exactly one place.
-      const started = await input.execution.execute(
-        request,
-        reader === undefined ? {} : { reader },
-      )
+      const started = await input.execution.execute(request)
       const { eventLog } = buildRunPorts({
         configDir: dirname(input.agentQaRoot),
         runId: String(started.runId),
@@ -1843,19 +1805,6 @@ export interface ComposeLocalAgentInput {
    * visible state rather than a call that fails somewhere far from the composition.
    */
   readonly runExecution?: RunExecutionPort
-  /**
-   * The dispatch-scoped grant overlay this host's run gate consults (401-08, D-08).
-   *
-   * OPTIONAL on the same idiom as its neighbours, but the optionality means something different
-   * here: absent does not disable a capability, it means "this composition owns its own dispatch
-   * scope". A composition ROOT that composes more than one agent — or that wants to hold the
-   * authoring dispatch's approval itself, which is where the 394 confirm is actually answered —
-   * supplies one and the scope spans them.
-   *
-   * It cannot widen anything a caller names: `open()` takes no action class and the grant it
-   * contributes is spelled from the run gate's own pinned constant and the pinned approval scope.
-   */
-  readonly dispatchGrants?: DispatchGrants
   /**
    * How this host parses a draft and enumerates its authored suite (393 D-01), on the exact
    * optional-operation idiom `runExecution` above uses.
@@ -3029,36 +2978,9 @@ export function composeLocalAgent(input: ComposeLocalAgentInput): LocalAgentHost
     mintTurnId: () => `turn-${randomUUID()}`,
   })
 
-  // ONE grants port per composition (plan 08, T-392-26). Since 432-13 its only consumer is the
-  // `standingGrants` dep of the pre-432 grant ops; 432-18 deletes both.
-  const standingGrants = createGrantOperations({
-    resolveKnowledgeRoot: input.knowledgeRoot,
-    auditBaseDir: input.agentQaRoot,
-    now: () => clock.now(),
-    ...(input.resolveWriterAuthority === undefined
-      ? {}
-      : { resolveWriterAuthority: input.resolveWriterAuthority }),
-  })
-
-  // THE DURABLE GRANT READ (401-08), per invocation, folding a resolution failure to the no-grants
-  // reader. 432-13: no gate reads it — the op gate and the run gate are gone — so its one remaining
-  // consumer is the run door's `resolveRunGrants`, which the host no longer forwards anywhere.
-  // 432-18 deletes both with the ledger.
-  const resolveDurableApprovals = async (): Promise<StandingApprovalReader> => {
-    try {
-      return createStandingApprovalReader({ knowledgeRoot: await input.knowledgeRoot() })
-    } catch {
-      return NO_STANDING_APPROVALS
-    }
-  }
-
-  // D-08's dispatch-scoped grant overlay. The OBJECT lives as long as this composition; the GRANTS
-  // live as long as an open dispatch, and with none open it answers exactly what the ledger answers
-  // (see `dispatch-grants.ts`). Host-supplied when a composition root wants ONE dispatch scope
-  // across the several agents it composes — the authoring dispatch's approval is a fact about the
-  // root, not about one `composeLocalAgent` call — and internally minted otherwise, so the shipped
-  // default is a composition that owns its own.
-  const dispatchGrants = input.dispatchGrants ?? createDispatchGrants()
+  // 2026-10-01 (432-18, D-14/D-15/D-22): no grants port, standing-approval read or dispatch-scoped
+  // grant overlay is composed. The grant ops, the ledger and the overlay are deleted, and an old
+  // `grants.jsonl` under the knowledge root is never opened.
 
   // 394 D-01: the authoring loop's host half, narrowed ONCE so the loop's closures capture a value
   // rather than an optional property — and so "can this host author a draft" is decided in one
@@ -3255,12 +3177,6 @@ export function composeLocalAgent(input: ComposeLocalAgentInput): LocalAgentHost
         runInvocation: createLocalRunInvocation({
           agentQaRoot: input.agentQaRoot,
           execution: input.runExecution,
-          // D-08. The overlay in FRONT of the ledger, resolved per run: with no dispatch open this
-          // hands the run gate exactly the ledger's answer (which the gate never used to see at
-          // all — a hand-written `run:start` grant was unconsumable), and inside an open dispatch
-          // it adds that dispatch's grant. What it never does is let a run skip `evaluate()`.
-          resolveRunGrants: async () =>
-            dispatchGrants.readerOver(await resolveDurableApprovals()),
         }),
       }),
       // 389 D-10/D-11: the artifact read `analysis.get` binds through, and the D-08
@@ -3349,25 +3265,6 @@ export function composeLocalAgent(input: ComposeLocalAgentInput): LocalAgentHost
           ? {}
           : { resolveWriterAuthority: input.resolveWriterAuthority }),
       }),
-      // 391 PROP-01 / D-03: the standing-grant verbs, bound HERE and therefore on BOTH hosts, over
-      // the SAME committed knowledge root the quarantine ledger, the review verbs and the gate's
-      // own standing-approval reader all serve from. A second binding site would be a second answer
-      // to "which approvals are in force" — and one of the two would be the one the gate reads.
-      //
-      // Bound over the KNOWLEDGE root rather than `agentQaRoot`, which is the opposite of the inbox
-      // one binding up, and the difference is the artifacts' own placement rather than an
-      // inconsistency: proposals are machine-local working state under the gitignored runtime root
-      // because the human who can accept one is at this machine, while a grant is COMMITTED
-      // precisely so a pull request shows every widening of agent autonomy and a fresh checkout
-      // inherits it (D-10 against D-11).
-      //
-      // The root is a FACTORY and the clock is an argument, so this composition supplies both and
-      // the implementation reads neither of its own accord. It rides the SAME
-      // `resolveWriterAuthority` the apply path and the quarantine verbs consume, conditionally
-      // spread for the same reason: an absent authority must be an ABSENT field, so the
-      // implementation's `?.()` arm distinguishes the leaseholding daemon from the CLI that
-      // acquires per call. Nothing opens here; the first byte is read when a verb is invoked.
-      standingGrants,
       // 392 D-24: the turn engine assembled above. Bound HERE and therefore on BOTH hosts, so
       // `agent.ask` is a real capability wherever the composition root runs — and unbound nowhere,
       // which is what lets 397's parity suite read it off the registry with no chat-specific case.
@@ -3500,22 +3397,9 @@ export function composeLocalAgent(input: ComposeLocalAgentInput): LocalAgentHost
             },
             get: (runId: string) => runsReader.get(runId as RunId),
           },
-          // D-08's HALF THAT THE LOOP OWNS. The loop opens one dispatch scope around the stages
-          // that spend runs and disposes it in a `finally`; every gate run started inside it is
-          // covered by the dispatch grant at the run gate, and none of them skips that gate.
-          //
-          // IT RIDES THIS BUNDLE, beside `runs`, on the bundle's own stated rule: these
-          // capabilities are not independently bindable. A host that can start a gate run is
-          // exactly the host whose approval to start one can be scoped — a shelf bound with `runs`
-          // and without this would be a host that spends a person's approval and cannot carry it.
-          //
-          // `within(fn)` takes NO argument but the work to run, so the loop cannot name what it is
-          // being granted — not the action class, not the scope, not a run budget, and (401-13)
-          // not a dispatch to attach itself to. Coverage follows from being INSIDE the scope,
-          // which nothing outside the loop's own call tree can be.
-          dispatchGrants: {
-            within: <T>(fn: () => Promise<T>): Promise<T> => dispatchGrants.within(fn),
-          },
+          // 2026-10-01 (432-18, D-15): no dispatch-scoped grant is bound. The loop's optional
+          // `dispatchGrants` seam is left unbound, so it runs the dispatch directly (its own
+          // absent-port posture), and no run it starts consults any approval.
           verifyDraft: async (verifyInput: AuthoringVerifyDraftInput): Promise<DraftReceipt> => {
             if (composedRegistry === undefined) {
               throw new TypeError('a draft was verified before its registry finished composing')
@@ -3571,8 +3455,7 @@ export function composeLocalAgent(input: ComposeLocalAgentInput): LocalAgentHost
     },
     auditSink: new JsonlAuditSink(input.agentQaRoot),
     // 432-13 (D-14/D-15): no standing-approval reader, confirm port or session deny overlay reaches
-    // the registry — `invokeFunction` asks nobody. The grant reader stays only for the run door's
-    // `resolveRunGrants`, which 432-18 deletes with the ledger.
+    // the registry — `invokeFunction` asks nobody. 432-18 deleted the grant reader with the ledger.
     // 400-01 (D-05): the host's own execution-context answer, forwarded UNTOUCHED to the option the
     // registry has published since 384. Conditionally spread on this block's own house rule — an
     // absent host answer must be an ABSENT field, never a present `undefined` — so the registry's

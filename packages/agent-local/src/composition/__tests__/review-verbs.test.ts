@@ -24,7 +24,6 @@ import {
 import type { EntityDirectoryPort, FunctionRegistry } from '@vostride/agent-qa-agent'
 import {
   acquireWriterLease,
-  createStandingApprovalReader,
   releaseLease,
   publishBundleForTest,
   type BundleStoreConfig,

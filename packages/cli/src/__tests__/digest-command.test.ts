@@ -15,8 +15,8 @@
 // deleted too. Their claims transfer: the verb's absence is C432-NO-PROPOSAL-CLI
 // (conformance/help-census.test.ts), the ops' absence is C432-NO-PROPOSAL-OPS, and a pre-432
 // proposal file on disk is never read (C432-PROPOSAL-FILES-UNREAD; the digest cell below keeps
-// planting one beside the run it digests). The grant ledger's read posture is still proven at
-// the op (`grants.list`) by agent-local's grant-ledger-damage suite until 432-18 deletes it.
+// planting one beside the run it digests). 432-18 deleted the grant ledger and `grants.list`; an old
+// `grants.jsonl` is never read (C432-GRANTS-UNREAD-WRITER-ABSENT, agent-local grant-ledger-damage).
 
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'

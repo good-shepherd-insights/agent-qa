@@ -27,8 +27,6 @@ import { configTargetEditSpec } from './ops/config-target-edit.js'
 import { entitiesGetSpec } from './ops/entities-get.js'
 import { explainSpec } from './ops/explain.js'
 import { entitiesResolveSpec } from './ops/entities-resolve.js'
-import { grantsListSpec } from './ops/grants-list.js'
-import { grantsRevokeSpec } from './ops/grants-revoke.js'
 import { knowledgeAcceptSpec } from './ops/knowledge-accept-propose.js'
 import { knowledgeBriefWhySpec } from './ops/knowledge-brief-why.js'
 import { knowledgeBundlesListSpec } from './ops/knowledge-bundles-list.js'
@@ -236,17 +234,9 @@ const BUILT_IN_FUNCTION_SPECS: readonly FunctionSpec[] = [
   // 391 PROP-03 / D-15 added a `proposals.` domain (list, show, reject, accept). 2026-10-01, 432-17
   // (D-05/D-22): the domain is deleted with the inbox, with no alias and no hidden follow-up; old
   // proposal files are never read again.
-  // 391 PROP-01 / D-03: a new `grants.` domain — the standing approvals a person has given, and
-  // the way back. A taxonomy extension exactly as `proposals.` was, and separate from it because
-  // a grant outlives the proposal that minted it: a revoke is about what the agent may do, not
-  // about any one decision. Both bind through the OPTIONAL `standingGrants` dep.
-  //
-  // THERE IS NO `grants.record`. That absence is D-01 expressed as a missing capability rather
-  // than as a rule: a standing approval arises only from the deliberate accept-with-always form,
-  // so a registered mint verb would be a second door into the same power — reachable without ever
-  // deciding a proposal, which is precisely the silent accretion D-01 forbids.
-  grantsListSpec as FunctionSpec,
-  grantsRevokeSpec as FunctionSpec,
+  // 391 PROP-01 / D-03 added a `grants.` domain (list, revoke) over the committed standing-grant
+  // ledger. 2026-10-01, 432-18 (D-14/D-15/D-22): the domain is deleted with the ledger; an old
+  // `grants.jsonl` is never read again.
   // 391 PROP-04 / D-16: the per-run digest. Filed under `runs.` beside `runs.postprocessing`
   // because what it answers is a fact about a RUN. Read-tier, and it registers NO new dep: the
   // projection composes from capabilities this catalogue already had (since 432-09 its substrate

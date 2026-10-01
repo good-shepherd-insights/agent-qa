@@ -7,6 +7,11 @@
 // that the loop still spends its gate runs, that a run started from outside the dispatch starts the
 // same way, and that the overlay still mints nothing durable. The history below is kept as written.
 //
+// 2026-10-01 (432-18, D-15/D-22): the dispatch overlay is deleted with the grant ledger, so this file
+// composes no `dispatchGrants`; the loop's optional dispatch seam is unbound and it runs the
+// dispatch directly. The chain, the gate runs and the outsider's run are unchanged, and a workspace
+// that still holds an old `grants.jsonl` keeps it byte-identical.
+//
 // WHAT WAS UNMEASURED BEFORE THIS FILE. Two cells shipped in 401-13 and neither of them drives the
 // segment D-08's benefit actually rests on:
 //
@@ -71,14 +76,13 @@
 // 401-12 shipped a fixture that read `auditRows: []` on both legs because it died at config
 // validation: a perfect vacuous green.
 
-import { existsSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 
 import { describe, expect, it } from 'vitest'
 
 import { invokeFunction } from '@vostride/agent-qa-agent'
-import { RunDeniedError, createDispatchGrants } from '@vostride/agent-qa-agent-local'
-import type { DispatchGrants } from '@vostride/agent-qa-agent-local'
+import { RunDeniedError } from '@vostride/agent-qa-agent-local'
 import { generateTestId } from '@vostride/agent-qa-ids'
 import { DRAFT_STABILITY_RUNS_N, authoredSuiteTargetPath } from '@vostride/agent-qa-schema'
 import type { RiskActionDescriptor } from '@vostride/agent-qa-schema'
@@ -135,7 +139,16 @@ function rowFor(fixture: Fixture, runId: string): GateRow {
   return rows[0]!
 }
 
-/** The durable ledger this overlay must never write. */
+/** The old ledger a workspace may still hold. Nothing in this build reads or writes it. */
+const LEGACY_LEDGER_BYTES =
+  '{"schemaVersion":1,"kind":"grant","at":"2026-08-20T00:00:00.000Z","grantId":"grant_run_start","actionClass":"run:start","scope":{"project":"local-workspace"}}\n'
+
+function plantLegacyLedger(fixture: Fixture): void {
+  const dir = join(fixture.project, 'agent-qa-knowledge')
+  mkdirSync(dir, { recursive: true })
+  writeFileSync(join(dir, 'grants.jsonl'), LEGACY_LEDGER_BYTES, 'utf8')
+}
+
 function grantsLedgerBytes(fixture: Fixture): string | undefined {
   const path = join(fixture.project, 'agent-qa-knowledge', 'grants.jsonl')
   return existsSync(path) ? readFileSync(path, 'utf8') : undefined
@@ -154,13 +167,12 @@ describe('one human ask, N gated runs, driven from the authoring loop (D-08 · U
       const fixture = createInProcessFixture({ origin: target.origin, environment: 'shared' })
       process.env.PLAYWRIGHT_BROWSERS_PATH = join(fixture.project, 'no-browsers')
 
-      const dispatchGrants: DispatchGrants = createDispatchGrants()
+      plantLegacyLedger(fixture)
       const ledgerBefore = grantsLedgerBytes(fixture)
 
       const { registry: probeRegistry } = composeCliLocalAgent({
         agentQaRoot: fixture.agentQaRoot,
         configPath: fixture.configPath,
-        dispatchGrants,
         resolveExecutionContext: () => 'local-headless',
       })
       const probe = async (): Promise<ProbeResult> => {
@@ -183,7 +195,6 @@ describe('one human ask, N gated runs, driven from the authoring loop (D-08 · U
       const { registry } = composeCliLocalAgent({
         agentQaRoot: fixture.agentQaRoot,
         configPath: fixture.configPath,
-        dispatchGrants,
         resolveExecutionContext: () => 'local-interactive',
         // 432-16 (D-14): the input declares no confirm, so the recording port is smuggled past the
         // type; nothing may read it.
@@ -245,15 +256,16 @@ describe('one human ask, N gated runs, driven from the authoring loop (D-08 · U
       }
 
       // ---- (3) A RUN FROM OUTSIDE THE DISPATCH STARTS THE SAME WAY -----------------------------
-      expect(dispatchGrants.openScopes).toBe(0)
       const outsider = await probe()
       expect(outsider.error).toBeUndefined()
       expect(outsider.error).not.toBeInstanceOf(RunDeniedError)
       expect(outsider.ack?.runId).toMatch(/^r_/)
       expect(gateRows(fixture)).toEqual([])
 
-      // THE ONE-MINT LAW. `grants.jsonl` has exactly one writer and this overlay is not it.
+      // 432-18 (C432-GRANTS-UNREAD-WRITER-ABSENT): nothing writes `grants.jsonl` any more; the old
+      // one is left exactly as it was.
       expect(grantsLedgerBytes(fixture)).toEqual(ledgerBefore)
+      expect(ledgerBefore).toBe(LEGACY_LEDGER_BYTES)
     } finally {
       await target.close()
     }

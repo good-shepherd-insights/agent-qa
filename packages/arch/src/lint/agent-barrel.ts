@@ -76,6 +76,9 @@ export const AGENT_BARREL_FILE = 'packages/agent/src/index.ts'
  * `proposals.accept`/`list`, `knowledge.proposal.apply`, `config.proposal.apply` and
  * `config.undo.propose` ids, `ConfigProposalNotApplicableError`, and the apply, undo-source,
  * proposal-write and propose/apply-outcome port types. Removed, not waived: nothing exports them.
+ *
+ * 2026-10-01 (432-18, D-14): two values and one type left with the session pin overlay —
+ * `ChatPinError`, `createPinOverlay` and `ChatPinOverlayHolder`. Removed, not waived.
  */
 export const EXPECTED_AGENT_BARREL_VALUE_EXPORTS: readonly string[] = [
   // 392 plan 01, D-24: the chat turn entry's id. It is here for the reason every op-id constant
@@ -161,12 +164,6 @@ export const EXPECTED_AGENT_BARREL_VALUE_EXPORTS: readonly string[] = [
   // proofs put these names on the wire, and 387 D-11 forbids the literals each would spell.
   'CONFIG_TARGET_CREATE_FUNCTION_ID',
   'CONFIG_TARGET_EDIT_FUNCTION_ID',
-  // 392 plan 05, D-21: the `/pin` refusal a REPL catches to say which class matched nothing. An
-  // error CLASS on the footing of its siblings below — holding it runs nothing — and it is here
-  // rather than local to the chat subtree because the surface that renders the refusal is in
-  // another package. In SORT position, like `FunctionOriginError` below: this list is compared
-  // against the barrel's sorted export set by exact positional equality.
-  'ChatPinError',
   'DuplicateFunctionIdError',
   'DuplicateJobKindError',
   // 428-07, D-07: the editor subject's minter, published beside runs.liveurl's — its id and its
@@ -362,12 +359,6 @@ export const EXPECTED_AGENT_BARREL_VALUE_EXPORTS: readonly string[] = [
   'createFunctionRegistry',
   'createJobKindRegistry',
   'createMaskingContext',
-  // 392 plan 05, D-21: the session pin holder's factory. Published because the composition root
-  // that binds the session's deny overlay onto the gate lives outside this package. It is a pure
-  // assembly over the registry LISTING — declarations, not specs — so what it hands back can
-  // validate a class name and answer a boolean, and can reach no capability. The holder's type
-  // carries no unpin and no clear, which is where "a pin only ever tightens" actually lives.
-  'createPinOverlay',
   // 392 plan 07, CHAT-01 / CHAT-06: stage 2 itself. It is on this list because the composition root
   // is the only thing that can bind it, and it opens no path this pin exists to close: the stage
   // takes an ALREADY-BUILT model and answers with a PLAN — intentions over execute-less tools — so
@@ -688,11 +679,6 @@ export const EXPECTED_AGENT_BARREL_TYPE_EXPORTS: readonly string[] = [
   // — the ONE construction site for that event — and a handler that emitted its own would be the
   // second one 392-07 warned against.
   'ChatModelDirectiveOutcome',
-  // 392 plan 05, D-21: what a session holds when it holds a pin set. A TYPE, and the shape of it
-  // is the feature: three members — pin, list, asGateDeny — and no fourth. A composition root
-  // storing one in session state must be able to NAME it, and pinning the name here is what makes
-  // an added `unpin` a visible edit to this list rather than a quiet acquisition of a loosen path.
-  'ChatPinOverlayHolder',
   // 392 plan 03: one rebuilt line of conversation — refs and one-liners, never a payload body.
   'ChatReplayMessage',
   'ChatResolution',

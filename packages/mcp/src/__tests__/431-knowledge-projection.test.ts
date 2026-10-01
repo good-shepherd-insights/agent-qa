@@ -563,7 +563,8 @@ describe('REGISTRY-NO-SEARCH (D-09)', () => {
     )
     expect(census).toEqual([])
     // 2026-10-01 (432-17 D-05): 53 -> 46, the seven proposal-inbox, apply and undo ops deleted.
-    expect(allDeclarations()).toHaveLength(46)
+    // 2026-10-01 (432-18 D-15): 46 -> 44, grants.list and grants.revoke deleted with the ledger.
+    expect(allDeclarations()).toHaveLength(44)
   })
 
   it('flags a planted knowledge.search declaration through the same census', () => {

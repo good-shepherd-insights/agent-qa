@@ -25,16 +25,12 @@
 // hand the work to — so on any project with a daemon running, no accept, reject or forget could
 // be committed at all.
 
-import { mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import type { ConfigReaderPort, JobModelCapability } from '@vostride/agent-qa-agent'
-import { appendGrantLedgerEvents, readWriterLease } from '@vostride/agent-qa-knowledge-local'
-import {
-  CURRENT_GRANT_LEDGER_SCHEMA_VERSION,
-  STANDING_APPROVAL_SCOPE,
-} from '@vostride/agent-qa-schema'
+import { readWriterLease } from '@vostride/agent-qa-knowledge-local'
 import type { KnowledgeChangeOutput } from '@vostride/agent-qa-schema'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
@@ -203,34 +199,21 @@ async function startDaemon(paths: Paths): Promise<LiveDaemon> {
 }
 
 /**
- * Record the standing approval the ask-tier apply requires (391 D-02/D-04).
+ * Plant the standing approval a pre-432 daemon needed for the apply (391 D-02/D-04).
  *
- * 391 raised `knowledge.proposal.apply` to `mutating-shared`, and a daemon is `local-headless` by
- * definition — the one context that fail-closes hardest. That is the intended posture, and it is
- * exactly why the daemon needs the committed ledger: it has nobody to ask. This case is about
- * WRITER AUTHORITY, so the approval is recorded first and the authority claim is measured as before.
- *
- * The covered class is built from the op id and the gate's own `fn:` prefix. That prefix is not
- * re-derived guesswork: the relation between an op id and the action name the gate compares is
- * pinned against the live declaration in `agent-local`'s grant-spine tracer, and this fixture is a
- * consumer of that pinned rule. The daemon exposes no listing route to read it from directly.
+ * RE-SPELLED 2026-10-01 (432-18, D-22): the ledger and its append API are deleted, so the line is
+ * planted as the bytes a pre-432 build committed. Nothing reads it — no gate since 432-13, no reader
+ * since 432-18 — and this case is about WRITER AUTHORITY: a workspace that still holds the old file
+ * gets the same daemon answer as one that does not.
  */
 function grantApply(where: Paths): void {
-  const outcome = appendGrantLedgerEvents(
-    where.knowledgeRoot,
-    [{
-      schemaVersion: CURRENT_GRANT_LEDGER_SCHEMA_VERSION,
-      kind: 'grant',
-      at: '2026-08-07T12:00:00.000Z',
-      grantId: 'grant_daemon_apply_authority',
-      // 2026-10-01 (432-17): the class of the deleted `knowledge.proposal.apply`, spelled as the
-      // committed ledger line it was; no gate reads it since 432-13.
-      actionClass: 'fn:knowledge.proposal.apply',
-      scope: STANDING_APPROVAL_SCOPE,
-    }],
-    { auditBaseDir: where.agentQaRoot },
+  mkdirSync(where.knowledgeRoot, { recursive: true })
+  writeFileSync(
+    join(where.knowledgeRoot, 'grants.jsonl'),
+    '{"schemaVersion":1,"kind":"grant","at":"2026-08-07T12:00:00.000Z","grantId":"grant_daemon_apply_authority",'
+      + '"actionClass":"fn:knowledge.proposal.apply","scope":{"project":"local-workspace"}}\n',
+    'utf8',
   )
-  if (outcome.kind !== 'appended') throw new Error(`grant append refused: ${outcome.kind}`)
 }
 
 function callDaemon(where: Paths, functionId: string, input: unknown): Promise<unknown> {

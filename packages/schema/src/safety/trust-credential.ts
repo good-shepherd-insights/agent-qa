@@ -36,6 +36,18 @@ const _trustScopeKeysCoverTheDto: ExactlyEqual<TrustScopeKey, keyof TrustScope> 
 void _trustScopeKeysCoverTheDto
 
 /**
+ * The one scope this build's trust credentials carry.
+ *
+ * MOVED HERE 2026-10-01 (432-18) from the deleted grant ledger, where it was the scope every standing
+ * grant was minted and matched under. The grants are gone; the constant stays because the MCP
+ * knowledge-write bearer still presents a credential carrying it
+ * (`cli/src/composition/mcp-token-resolution.ts`), and it leaves with that credential.
+ */
+export const STANDING_APPROVAL_SCOPE: TrustScope = Object.freeze({
+  project: 'local-workspace',
+})
+
+/**
  * Scoped trust credential presented to the policy gate.
  *
  * 2026-08-25 (Phase 403, D-01/D-03): PART OF THIS FAMILY NOW HAS A REAL ISSUER IN THIS

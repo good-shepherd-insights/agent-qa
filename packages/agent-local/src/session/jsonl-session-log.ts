@@ -344,7 +344,7 @@ function guardHeader(sessionId: string, line: string): ChatSessionHeader {
 /**
  * Every session under one runtime root, read from headers alone (D-17).
  *
- * A DAMAGED FILE IS DATA, NOT AN EXCEPTION — the grants-ledger posture (`grants/ledger.ts:73-83`).
+ * A DAMAGED FILE IS DATA, NOT AN EXCEPTION — the posture the grant ledger had (391; deleted in 432-18).
  * A corrupt neighbour costs the caller that one entry and nothing else; throwing would let a single
  * unreadable file hide every healthy session from the person trying to find their conversation.
  *

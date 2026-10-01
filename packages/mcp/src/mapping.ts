@@ -747,18 +747,8 @@ export const UNPROJECTED_OPS: readonly UnprojectedOp[] = Object.freeze([
   }),
   // 2026-10-01 (432-17, D-05): `proposals.accept` and `proposals.reject` (397, requiresHumanOrigin)
   // are deleted with the inbox and leave the scoping note.
-  Object.freeze({
-    opId: 'grants.revoke',
-    reason:
-      'declares requiresHumanOrigin: withdrawing a standing approval is not the agent\'s decision '
-      + 'to make. Not a mid-flight workflow write per D-02.',
-    adjudication: '397',
-  }),
-  Object.freeze({
-    opId: 'grants.list',
-    reason: 'not a mid-flight workflow read per D-02; 397 adjudicates',
-    adjudication: '397',
-  }),
+  // 2026-10-01 (432-18, D-14/D-15): `grants.revoke` (397, requiresHumanOrigin) and `grants.list`
+  // (397, not a mid-flight read) are deleted with the grant ledger and leave the scoping note.
   Object.freeze({
     opId: 'runs.get',
     reason:

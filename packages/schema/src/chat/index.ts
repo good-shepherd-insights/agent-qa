@@ -57,5 +57,3 @@ export type {
   ScenarioExpectationKind,
   ScenarioLane,
 } from './scenario-expectation'
-export { pinDenies } from './pin-overlay'
-export type { ChatPinOverlay } from './pin-overlay'

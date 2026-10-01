@@ -8,7 +8,7 @@
     "conformance suite is red, so a regeneration cannot launder an unrelated failure, and no",
     "test-runner update flag reaches this file."
   ],
-  "opCount": 46,
+  "opCount": 44,
   "rows": [
     {
       "bindingStatusAtRoot": "bound",
@@ -353,48 +353,6 @@
       "risk": {
         "name": "fn:entities.resolve",
         "readOnly": true,
-        "recognized": true
-      }
-    },
-    {
-      "bindingStatusAtRoot": "bound",
-      "classifies": true,
-      "id": "grants.list",
-      "inputSchemaDigest": "71fc596a20f27da3dec80050e5d1f553eba34aea24c2853b853488a811e6b892",
-      "outputSchemaDigest": "be4a7704e0277f0af60a3dc13bf6e92c790368a83a1da6c7136919dff1aee47f",
-      "partition": {
-        "kind": "unprojected",
-        "reason": "not-mid-flight-read"
-      },
-      "requiredScopes": [
-        "read"
-      ],
-      "resultKind": "unary",
-      "risk": {
-        "name": "fn:grants.list",
-        "readOnly": true,
-        "recognized": true
-      }
-    },
-    {
-      "bindingStatusAtRoot": "bound",
-      "classifies": true,
-      "id": "grants.revoke",
-      "inputSchemaDigest": "a2962eacfcca384c4030f7c0cb9f365473103341046f9b4b2f3060e0cbe5a4c8",
-      "outputSchemaDigest": "cd2f5cc8836090c28a0a1428d7d5830a2be0fa983a2c7eb60e7ecbf650c436db",
-      "partition": {
-        "kind": "unprojected",
-        "reason": "requires-human-origin"
-      },
-      "requiredScopes": [
-        "approval-write"
-      ],
-      "requiresHumanOrigin": true,
-      "resultKind": "unary",
-      "risk": {
-        "declaredTier": "mutating-shared",
-        "name": "fn:grants.revoke",
-        "readOnly": false,
         "recognized": true
       }
     },

@@ -230,16 +230,16 @@ export async function deriveAskCapableOpIds(
  * so a lexicon change or a declared-tier edit that moves a capability into or out of "asks a person
  * first" is a named RED on the PR that makes it — which is the whole reason the pin exists.
  *
- * Worth reading once: `grants.revoke` is here at `destructive` rather than at the `mutating-shared`
- * its spec declares, because the soft-destructive lexicon matches `revoke` in its action name and
- * the classifier takes the HIGHEST proposal. That is the classifier working, and it is exactly the
- * kind of fact a hand-picked list gets wrong.
+ * Worth reading once: `grants.revoke` was here (until 432-18 deleted it) at `destructive` rather
+ * than at the `mutating-shared` its spec declared, because the soft-destructive lexicon matches
+ * `revoke` in its action name and the classifier takes the HIGHEST proposal. That is the classifier
+ * working, and it is exactly the kind of fact a hand-picked list gets wrong.
  */
 export const ASK_CAPABLE_OP_IDS: readonly string[] = Object.freeze([
   'authoring.draft.write',
   // 2026-10-01 (432-17): `config.proposal.apply`, `knowledge.proposal.apply` and `proposals.accept`
-  // left the registry with the inbox, and so left this set.
-  'grants.revoke',
+  // left the registry with the inbox, and so left this set. 2026-10-01 (432-18): `grants.revoke`
+  // left with the grant ledger.
   // 2026-09-08, 419 D-13/D-20: measured by the same shipped ask derivation.
   'runs.mark',
 ])
