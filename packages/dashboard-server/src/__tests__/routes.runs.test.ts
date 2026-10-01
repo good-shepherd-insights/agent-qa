@@ -404,6 +404,101 @@ describe('POST run enqueue trigger attributes', () => {
   })
 })
 
+// 2026-10-01 (432-21, owner decision recorded in 432-14 #4): the run trigger and the queue enqueue
+// are same-site only. With run approval gone (432-13/14), a simple cross-site POST to either legacy
+// route could start any non-production run; the same predicate the mark, config-write, live-editor
+// and credential doors use now refuses it before the queue is consulted or the body is read. The
+// non-browser callers of these two routes — the conformance harnesses, the appium-ownership suite,
+// `packages/web/scripts/dashboard-smoke.mjs` — send a loopback `Host` and no `Origin`, so they are
+// admitted, and so is the dashboard's own Run.
+const RUN_ROUTES = ['/api/runs/trigger', '/api/queue/enqueue'] as const
+const RUN_ROUTE_BODY: Record<(typeof RUN_ROUTES)[number], Record<string, unknown>> = {
+  '/api/runs/trigger': {},
+  '/api/queue/enqueue': { name: 'API Run' },
+}
+
+describe('C432-RUN-ROUTES-CROSS-SITE: the run trigger and the queue enqueue refuse a cross-site request', () => {
+  const CROSS_SITE_SHAPES: ReadonlyArray<readonly [string, IncomingHttpHeaders]> = [
+    ['a foreign Origin', { origin: 'https://evil.example' }],
+    ['the literal null Origin', { origin: 'null' }],
+    ['a cross-site fetch-metadata header', { 'sec-fetch-site': 'cross-site' }],
+    ['a non-loopback Host (DNS rebinding)', { host: 'evil.example:3470' }],
+  ]
+
+  for (const path of RUN_ROUTES) {
+    for (const [label, headers] of CROSS_SITE_SHAPES) {
+      it(`C432-RUN-ROUTES-CROSS-SITE: ${path} refuses ${label} before any run is queued`, async () => {
+        const db = createMockDatabase()
+        const { router, enqueued } = createQueueRouter(db)
+        // A SIMPLE request — `text/plain` — the shape a page can send with no preflight.
+        const res = await invokeRoute(router, path, {
+          method: 'POST',
+          headers: { 'content-type': 'text/plain', ...headers },
+          body: JSON.stringify(RUN_ROUTE_BODY[path]),
+        })
+        expect(res.status).toBe(403)
+        expect(JSON.parse(res.body)).toEqual({ error: 'cross_site_refused' })
+        expect(res.headers['access-control-allow-origin']).toBeUndefined()
+        expect(enqueued).toEqual([])
+        expect(db.getPendingRuns()).toEqual([])
+      })
+    }
+
+    it(`C432-RUN-ROUTES-CROSS-SITE: a cross-site preflight to ${path} is refused with no grant`, async () => {
+      const db = createMockDatabase()
+      const { router, enqueued } = createQueueRouter(db)
+      const res = await invokeRoute(router, path, {
+        method: 'OPTIONS',
+        headers: { origin: 'https://evil.example', 'access-control-request-method': 'POST' },
+      })
+      expect(res.status).toBe(403)
+      expect(res.headers['access-control-allow-origin']).toBeUndefined()
+      expect(res.headers['access-control-allow-methods']).toBeUndefined()
+      expect(enqueued).toEqual([])
+    })
+  }
+})
+
+describe('C432-RUN-ROUTES-SAME-ORIGIN: the dashboard\'s own Run and a local client still start runs', () => {
+  for (const path of RUN_ROUTES) {
+    it(`C432-RUN-ROUTES-SAME-ORIGIN: the dashboard page's same-origin POST to ${path} queues one run`, async () => {
+      const db = createMockDatabase()
+      const { router, enqueued } = createQueueRouter(db)
+      const res = await invokeRoute(router, path, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          origin: 'http://127.0.0.1:3470',
+          'sec-fetch-site': 'same-origin',
+        },
+        body: JSON.stringify(RUN_ROUTE_BODY[path]),
+      })
+      expect(res.status).toBe(202)
+      expect(JSON.parse(res.body)).toMatchObject({ status: 'queued' })
+      expect(enqueued).toHaveLength(1)
+    })
+
+    it(`C432-RUN-ROUTES-SAME-ORIGIN: a local client with no Origin (CLI, curl, the harness) queues one run on ${path}`, async () => {
+      const db = createMockDatabase()
+      const { router, enqueued } = createQueueRouter(db)
+      const res = await postJson(router, path, RUN_ROUTE_BODY[path])
+      expect(res.status).toBe(202)
+      expect(enqueued).toHaveLength(1)
+    })
+  }
+
+  it('C432-RUN-ROUTES-SAME-ORIGIN: an unrelated route keeps the shared preflight grant (whole-server CORS is unchanged)', async () => {
+    const db = createMockDatabase()
+    const { router } = createQueueRouter(db)
+    const res = await invokeRoute(router, '/api/runs', {
+      method: 'OPTIONS',
+      headers: { origin: 'https://evil.example', 'access-control-request-method': 'GET' },
+    })
+    expect(res.status).toBe(204)
+    expect(res.headers['access-control-allow-origin']).toBe('*')
+  })
+})
+
 describe('GET /api/runs route contract', () => {
   let db: ReturnType<typeof createMockDatabase>
   let router: ReturnType<typeof createRouter>
