@@ -1340,7 +1340,8 @@ function seamHost(restoreTo: string = SEAM_RESTORED): {
     calls,
     agentHost: {
       registry: {},
-      caller: { origin: 'human', surface: 'dashboard', scopes: ['read'] },
+      // 2026-10-01 (432-33): no scope set on the caller. Nothing reads one (432-20, D-12).
+      caller: { origin: 'human', surface: 'dashboard' },
       runsPostProcessingFunctionId: 'runs.postprocessing',
       runsEventsFunctionId: 'runs.events',
       runsDetailFunctionId: 'runs.detail',
