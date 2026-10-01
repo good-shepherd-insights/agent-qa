@@ -36,6 +36,10 @@
 // 23 unprojected. The two change tools are renamed and write in the call; the four proposal
 // apply/list/show tools and the config undo arm leave with no alias, and their five ops are
 // dispositioned with a dated '432' ruling until 432-17 deletes them.
+// RE-MEASURED 2026-10-01 (432-17 D-05/D-02): twenty tools; 46 declarations / 30 projected /
+// 16 unprojected. The seven proposal, apply and undo ops are deleted from the registry, so the five
+// '432' entries and the two 397 entries for proposals.accept/reject leave the scoping note, and
+// '432' leaves the adjudicator vocabulary with no member left to rule on.
 // The original measurement settles the 41-vs-43 discrepancy the phase
 // context carried — whatever the registry answers IS the denominator, and this suite reds if the
 // two sets ever stop covering it exactly.
@@ -299,7 +303,8 @@ function armSizes(entries: readonly (readonly [string, V1MigrationArm])[]): Reco
 
 /** 2026-09-28 (431-04 D-10): the closed adjudicator vocabulary, pinned beside its runtime tuple. */
 // 2026-09-30 (432-12 D-05): `'432'` arrives for the five proposal ops that left the catalogue.
-const PINNED_ADJUDICATIONS: readonly string[] = ['397', '398', '405', '408', '428', '432']
+// 2026-10-01 (432-17 D-05): those five ops are deleted, so `'432'` leaves with them.
+const PINNED_ADJUDICATIONS: readonly string[] = ['397', '398', '405', '408', '428']
 
 /** MCPS-02's stated band. Asserted AT the bound, not implied by the exact pin above it. */
 const MCPS_02_MIN_TOOLS = 8
@@ -444,9 +449,10 @@ describe('the partition law (D-03 / D-15)', () => {
     // 2026-09-25, 428 D-07: editor.liveurl arrives unprojected (52/26/26).
     // 2026-09-28, 431-04 D-01/D-10: runs.overview arrives projected and eight reads move (53/35/18).
     // 2026-09-30, 432-12 D-05: five proposal ops leave the projected side with their tools (53/30/23).
-    expect(declarations().length).toBe(53)
+    // 2026-10-01, 432-17 D-05: the seven proposal, apply and undo ops leave the registry (46/30/16).
+    expect(declarations().length).toBe(46)
     expect(projectedOpIds().length).toBe(30)
-    expect(UNPROJECTED_OPS.length).toBe(23)
+    expect(UNPROJECTED_OPS.length).toBe(16)
   })
 
   it('lists no op twice in the scoping note', () => {
@@ -481,18 +487,10 @@ describe('the partition law (D-03 / D-15)', () => {
     // 2026-09-25 (428 D-07). The same widening for the same reason: `editor.liveurl` arrived in
     // 428, unprojected by ruling. Membership is spelled by op id.
     const ADJUDICATED_BY_428 = new Set(['editor.liveurl'])
-    // 2026-09-30 (432-12 D-05): the five pre-432 proposal ops, ruled off the catalogue by 432.
-    const ADJUDICATED_BY_432 = new Set([
-      'config.undo.propose',
-      'config.proposal.apply',
-      'knowledge.proposal.apply',
-      'proposals.list',
-      'proposals.show',
-    ])
+    // 2026-09-30 (432-12 D-05): the five pre-432 proposal ops were ruled off the catalogue by 432.
+    // 2026-10-01 (432-17 D-05): they are deleted from the registry, so no entry carries `'432'`.
     const expectedAdjudicator = (opId: string): string =>
-      ADJUDICATED_BY_432.has(opId)
-        ? '432'
-        : ADJUDICATED_BY_428.has(opId)
+      ADJUDICATED_BY_428.has(opId)
         ? '428'
         : ADJUDICATED_BY_398.has(opId)
         ? '398'
@@ -544,9 +542,23 @@ describe('the partition law (D-03 / D-15)', () => {
       'the 428-adjudicated pin names entries the scoping note does not carry',
     ).toEqual([...ADJUDICATED_BY_428])
     expect(
-      UNPROJECTED_OPS.filter((entry) => ADJUDICATED_BY_432.has(entry.opId)).map((e) => e.opId),
-      'the 432-adjudicated pin names entries the scoping note does not carry',
-    ).toEqual([...ADJUDICATED_BY_432])
+      UNPROJECTED_OPS.map((entry) => entry.adjudication as string).filter((a) => a === '432'),
+      "`'432'` left the adjudicator vocabulary with the proposal ops 432-17 deleted",
+    ).toEqual([])
+  })
+
+  it('C432-NO-PROPOSAL-OPS: the scoping note dispositions no retired proposal, apply or undo op', () => {
+    const retired = [
+      'proposals.list', 'proposals.show', 'proposals.accept', 'proposals.reject',
+      'knowledge.proposal.apply', 'config.proposal.apply', 'config.undo.propose',
+    ]
+    const registryIds = declarations().map((declaration) => declaration.id)
+    expect(retired.filter((opId) => registryIds.includes(opId)), 'a retired op is still registered').toEqual([])
+    expect(
+      UNPROJECTED_OPS.map((entry) => entry.opId).filter((opId) => retired.includes(opId)),
+      'the scoping note still dispositions a deleted op',
+    ).toEqual([])
+    expect(projectedOpIds().filter((opId) => retired.includes(opId))).toEqual([])
   })
 
   // D-03's own note leads the list, and the ORDER is part of the decision: a reader scanning the

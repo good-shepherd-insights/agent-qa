@@ -60,7 +60,7 @@ import type {
 import type { AuditSink } from '@vostride/agent-qa-safety'
 import { describe, expect, it } from 'vitest'
 
-import { invokeFunction } from '../functions/invoke.js'
+import { UnknownFunctionError, invokeFunction } from '../functions/invoke.js'
 import { createFunctionRegistry } from '../functions/registry.js'
 import type { FunctionDeclaration, FunctionDeps } from '../functions/spec.js'
 import { CONTRACTS_BY_ID } from './projection-relation.js'
@@ -601,5 +601,44 @@ describe('registry invariants that need in-package access', () => {
 
     // …and the loop ran: a `bound` set that emptied would otherwise pass every line above.
     expect(checked).toBeGreaterThan(0)
+  })
+})
+
+// 2026-10-01, 432-17 (D-02 / D-05 / D-09): the proposal inbox's four verbs, the two apply ops and the
+// config undo op are deleted with the inbox. No alias, hidden inbox or accept/reject follow-up
+// survives: each retired id is simply not a capability, so every door refuses it as an unknown
+// function before any dependency is consulted.
+const RETIRED_PROPOSAL_OP_IDS = [
+  'proposals.list',
+  'proposals.show',
+  'proposals.accept',
+  'proposals.reject',
+  'knowledge.proposal.apply',
+  'config.proposal.apply',
+  'config.undo.propose',
+] as const
+
+describe('C432-NO-PROPOSAL-OPS: the proposal, apply and undo ops are not capabilities', () => {
+  it('C432-NO-PROPOSAL-OPS: the registry lists none of the seven retired ids and no proposals domain', () => {
+    const ids = declarations().map(declaration => declaration.id)
+    expect(ids.length, 'the listing is empty, so the absence below would be vacuous').toBeGreaterThan(0)
+    expect(RETIRED_PROPOSAL_OP_IDS.filter(id => ids.includes(id)), 'a retired proposal op is registered')
+      .toEqual([])
+    expect(ids.filter(id => id.startsWith('proposals.')), 'the proposals domain is still registered').toEqual([])
+    // The direct ops that replaced them are registered.
+    for (const id of ['knowledge.accept', 'knowledge.reject', 'knowledge.forget', 'config.field.set']) {
+      expect(ids, id).toContain(id)
+    }
+  })
+
+  it('C432-NO-PROPOSAL-OPS: invoking a retired id is refused as an unknown function', async () => {
+    const built = registry()
+    for (const id of RETIRED_PROPOSAL_OP_IDS) {
+      const refused = await invokeFunction(built, id, {}, FULLY_GRANTED).then(
+        () => undefined,
+        (error: unknown) => error,
+      )
+      expect(refused, `${id} dispatched`).toBeInstanceOf(UnknownFunctionError)
+    }
   })
 })

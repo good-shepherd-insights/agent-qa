@@ -948,3 +948,36 @@ describe('LIVE-GUIDANCE: the guide, pointer and every source and packaged skill 
     expect(skillRows).toContain(KNOWLEDGE_SKILL_NAME)
   })
 })
+
+// 2026-10-01, 432-17 (D-02 / D-05 / D-09): `agent-qa proposals` is deleted with the inbox, including
+// its `grants list | revoke` subtree. No alias is kept, so the parse tree rejects the verb the way it
+// rejects any word it never had, and nothing in the help, the manifest or the dedicated-verb list
+// still names it.
+describe('C432-NO-PROPOSAL-CLI: there is no proposals verb', () => {
+  it('C432-NO-PROPOSAL-CLI: the live Commander tree and its help name no proposals command', () => {
+    const program = createAgentQaProgram()
+    const names = program.commands.flatMap((command) => [command.name(), ...command.aliases()])
+    expect(names.length, 'the command tree is empty, so the absence below would be vacuous').toBeGreaterThan(5)
+    expect(names, 'agent-qa proposals is still registered').not.toContain('proposals')
+    expect(program.helpInformation()).not.toMatch(/\bproposals\b/u)
+    expect(DEDICATED_READ_VERBS.map(({ verb }) => verb).filter((verb) => verb.split(' ')[0] === 'proposals'))
+      .toEqual([])
+  })
+
+  it('C432-NO-PROPOSAL-CLI: parsing a proposals or proposals-grants invocation is an unknown command', async () => {
+    // Guarded first: on a tree that still registers the verb, parsing would RUN it in this cwd.
+    expect(createAgentQaProgram().commands.map((command) => command.name()), 'the verb is registered')
+      .not.toContain('proposals')
+    for (const argv of [['proposals', 'list'], ['proposals', 'accept', 'prop_0123456789ab'], ['proposals', 'grants', 'list']]) {
+      const program = createAgentQaProgram()
+      let written = ''
+      program.exitOverride().configureOutput({ writeErr: (text) => { written += text }, writeOut: () => {} })
+      const refused = await program.parseAsync(argv, { from: 'user' }).then(
+        () => undefined,
+        (error: unknown) => error as { code?: string },
+      )
+      expect(refused?.code, argv.join(' ')).toBe('commander.unknownCommand')
+      expect(written, argv.join(' ')).toMatch(/unknown command 'proposals'/u)
+    }
+  })
+})
