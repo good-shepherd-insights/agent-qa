@@ -218,6 +218,42 @@ describe('runs.start is visibly unbound, never silently missing', () => {
     expect(audit.auditRows()).toHaveLength(0)
   })
 
+  // 432-23 (D-12): the scope came off the spec, and the binding refusal must not have gone with it.
+  // Retried, from callers that differ in every field a caller still carries, the unbound start
+  // meets the same named refusal every time, writes no audit row, and never a permission error;
+  // the bound stream beside it answers each caller alike.
+  it('C432-ALL-OPS-AVAILABLE: a retried unbound start refuses by binding alone for every caller', async () => {
+    const audit = capturingSink()
+    const registry = registryWithRunsStart(audit.sink)
+    const callers: readonly FunctionCaller[] = [
+      RUN_CALLER,
+      { surface: 'cli', origin: 'human' },
+      { surface: 'mcp', origin: 'agent' },
+    ]
+
+    const names: string[] = []
+    for (const caller of callers) {
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        const thrown = await invokeFunction(registry, 'runs.start', {}, caller)
+          .catch((error: unknown) => error)
+        expect(thrown).toBeInstanceOf(FunctionNotBoundError)
+        names.push((thrown as Error).name)
+      }
+    }
+    expect(names).toEqual(Array.from({ length: 6 }, () => 'FunctionNotBoundError'))
+    expect(audit.auditRows()).toEqual([])
+
+    const declared = callers.map((caller) => registry.list(caller)
+      .map((declaration) => [declaration.id, declaration.bindingStatus]))
+    expect(declared[0]).toEqual([
+      ['runs.events', 'bound'],
+      ['runs.list', 'bound'],
+      ['runs.start', 'unbound'],
+    ])
+    expect(declared[1]).toEqual(declared[0])
+    expect(declared[2]).toEqual(declared[0])
+  })
+
   it('refuses a DIRECT spec dispatch too, so no in-layer caller can slip past it', async () => {
     await expect(runsStartSpec.invoke({}, fakeDeps())).rejects.toBeInstanceOf(FunctionNotBoundError)
   })

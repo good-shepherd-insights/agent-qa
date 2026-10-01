@@ -19,11 +19,20 @@ import {
 } from '@vostride/agent-qa-schema'
 import { describe, expect, it } from 'vitest'
 
+import { authoringDraftWriteSpec } from '../functions/ops/authoring-draft-write.js'
+import { authoringFunnelGetSpec } from '../functions/ops/authoring-funnel-get.js'
+import { authoringVerifyDraftSpec } from '../functions/ops/authoring-verify-draft.js'
 import { configGetSpec } from '../functions/ops/config-get.js'
+import { configTargetEditSpec } from '../functions/ops/config-target-edit.js'
+import { entitiesResolveSpec } from '../functions/ops/entities-resolve.js'
 import { knowledgeBundlesListSpec } from '../functions/ops/knowledge-bundles-list.js'
+import { knowledgeForgetSpec } from '../functions/ops/knowledge-forget-propose.js'
 import { knowledgeGatesListSpec, KnowledgeGatesUnboundError } from '../functions/ops/knowledge-gates-list.js'
+import { knowledgeRecordsDiffSpec } from '../functions/ops/knowledge-records-diff.js'
+import { runsEventsSpec } from '../functions/ops/runs-events.js'
 import { RunNotFoundError, runsGetSpec } from '../functions/ops/runs-get.js'
 import { runsListSpec } from '../functions/ops/runs-list.js'
+import { runsStartSpec } from '../functions/ops/runs-start.js'
 import type { FunctionDeps } from '../functions/spec.js'
 
 function bundle(overrides: Partial<KnowledgeBundleSummary> = {}): KnowledgeBundleSummary {
@@ -338,5 +347,69 @@ describe('knowledge.gates.list', () => {
   it('refuses an unbound gateReceipts capability by name', async () => {
     await expect(knowledgeGatesListSpec.invoke({ recordId: 'rec-1' }, fakeDeps()))
       .rejects.toBeInstanceOf(KnowledgeGatesUnboundError)
+  })
+})
+
+// ---- C432-DECLARATION-KEYS (432-23, D-10/D-12) --------------------------------------------------
+//
+// The ten op specs 432-23 migrated, pinned at the SPEC, which is the layer the registry's own
+// key-set census cannot see: a declaration omits the retired keys whatever the spec spells, so only
+// a raw-spec cell proves the op-spec owner actually removed them. The second half pins what must NOT
+// move with them — id, result kind, binding need, risk descriptor and the classify fold — so a
+// metadata removal that also dropped a binding or changed a tier reds here by name.
+describe('C432-DECLARATION-KEYS: the 432-23 op specs carry no permission metadata', () => {
+  const migrated = [
+    { spec: authoringFunnelGetSpec, resultKind: 'unary', boundThrough: 'authoringFunnel',
+      risk: { name: 'fn:authoring.funnel.get', recognized: true, readOnly: true } },
+    { spec: knowledgeRecordsDiffSpec, resultKind: 'unary', boundThrough: undefined,
+      risk: { name: 'fn:knowledge.records.diff', recognized: true, readOnly: true } },
+    { spec: entitiesResolveSpec, resultKind: 'unary', boundThrough: undefined,
+      risk: { name: 'fn:entities.resolve', recognized: true, readOnly: true } },
+    { spec: authoringVerifyDraftSpec, resultKind: 'unary', boundThrough: 'draftEvaluation',
+      risk: { name: 'fn:authoring.draft.verify', recognized: true, declaredTier: 'mutating-local' } },
+    { spec: runsEventsSpec, resultKind: 'stream', boundThrough: undefined,
+      risk: { name: 'fn:runs.events', recognized: true, readOnly: true } },
+    { spec: authoringDraftWriteSpec, resultKind: 'unary', boundThrough: 'draftShelf',
+      risk: { name: 'fn:authoring.draft.write', recognized: true, declaredTier: 'mutating-shared' } },
+    { spec: runsGetSpec, resultKind: 'unary', boundThrough: undefined,
+      risk: { name: 'fn:runs.get', recognized: true, readOnly: true } },
+    { spec: knowledgeForgetSpec, resultKind: 'unary', boundThrough: 'knowledgeReview',
+      risk: { name: 'fn:knowledge.forget', recognized: true, readOnly: false } },
+    { spec: runsStartSpec, resultKind: 'unary', boundThrough: 'runInvocation',
+      risk: { name: 'fn:runs.start', recognized: true, declaredTier: 'mutating-local' } },
+    { spec: configTargetEditSpec, resultKind: 'unary', boundThrough: 'configWrite',
+      risk: { name: 'fn:config.target.edit', recognized: true, readOnly: false } },
+  ] as const
+
+  it('spells neither retired permission key on any of the ten specs', () => {
+    expect(migrated.map(({ spec }) => spec.id)).toEqual([
+      'authoring.funnel.get',
+      'knowledge.records.diff',
+      'entities.resolve',
+      'authoring.draft.verify',
+      'runs.events',
+      'authoring.draft.write',
+      'runs.get',
+      'knowledge.forget',
+      'runs.start',
+      'config.target.edit',
+    ])
+    for (const { spec } of migrated) {
+      expect(Object.keys(spec), spec.id).not.toContain('requiredScopes')
+      expect(Object.keys(spec), spec.id).not.toContain('requiresHumanOrigin')
+    }
+  })
+
+  it('keeps each spec\'s result kind, binding need, risk descriptor and classify fold', () => {
+    for (const { spec, resultKind, boundThrough, risk } of migrated) {
+      expect(spec.resultKind, spec.id).toBe(resultKind)
+      expect(spec.boundThrough, spec.id).toBe(boundThrough)
+      expect(spec.risk, spec.id).toEqual(risk)
+      expect(typeof spec.classify, spec.id).toBe('function')
+      expect(typeof spec.invoke, spec.id).toBe('function')
+    }
+    // The one disclosure among the ten is untouched by the metadata removal.
+    expect(migrated.filter(({ spec }) => 'disclose' in spec).map(({ spec }) => spec.id))
+      .toEqual(['authoring.draft.write'])
   })
 })
