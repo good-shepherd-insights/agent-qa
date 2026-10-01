@@ -13,7 +13,6 @@ export class KnowledgeGatesUnboundError extends Error {
 export const knowledgeGatesListSpec: FunctionSpec<KnowledgeGatesListInput, KnowledgeGatesListResult> = {
   id: KNOWLEDGE_GATES_LIST_FUNCTION_ID,
   summary: 'Read a knowledge record’s gate history, standing receipts and current promotion verdict.',
-  requiredScopes: ['read'],
   resultKind: 'unary',
   input: KnowledgeGatesListInputSchema,
   output: KnowledgeGatesListResultSchema,

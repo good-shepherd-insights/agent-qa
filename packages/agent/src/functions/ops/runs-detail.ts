@@ -140,7 +140,6 @@ async function projectMemberRecording(
 export const runsDetailSpec: FunctionSpec<RunsDetailInput, RunDetailProjection> = {
   id: RUNS_DETAIL_FUNCTION_ID,
   summary: "Read one run's durable members, steps and sub-actions as the dashboard projected them.",
-  requiredScopes: ['read'],
   resultKind: 'unary',
   // Bound exactly where a composition owns the dashboard's projection database (the D-16 idiom). A
   // host that holds no such database lists this by name as `unbound` rather than answering an

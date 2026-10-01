@@ -333,7 +333,6 @@ export const runsOverviewSpec: FunctionSpec<RunsOverviewInput, RunOverviewProjec
   id: RUNS_OVERVIEW_FUNCTION_ID,
   summary: 'Map one completed run: its tests and steps with verdicts, and the address of '
     + 'everything recorded at each, without bodies, traces or bytes.',
-  requiredScopes: ['read'],
   resultKind: 'unary',
   boundThrough: 'runDetail',
   input: RunsOverviewInputSchema,

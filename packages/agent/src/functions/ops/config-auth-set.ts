@@ -5,9 +5,12 @@
 // fields it changed, a blocked change is answered with its report and nothing is kept, and no git
 // runs. Where the paragraphs below say "proposal", read the change this call writes.
 //
-// `config-field-set.ts`'s header carries the arguments for the tier, the scope and the one-op-per-
-// action shape; they are not restated. What is different about this one is the law it enforces and
-// where it enforces it.
+// `config-field-set.ts`'s header carries the arguments for the tier and the one-op-per-action
+// shape; they are not restated. What is different about this one is the law it enforces and where
+// it enforces it. 2026-10-01 (432-27, D-12): this op once declared `config-write`, and that header
+// once argued for the scope. It declares no scope now, because no caller is checked for one; the
+// reference law below, the scan and whole-config validation guard the write, and nothing about the
+// masking or the refusal of a literal credential changed with the scope.
 //
 // A LITERAL CREDENTIAL ARRIVING IN THE INPUT IS ITSELF THE FAILURE. D-11 ratified this action as
 // writing REFERENCES — the name of an auth state, the name of a plugin package, the name of an
@@ -46,7 +49,6 @@ export const CONFIG_AUTH_SET_FUNCTION_ID = 'config.auth.set'
 export const configAuthSetSpec: FunctionSpec<ConfigAuthSetInput, ConfigChangeOutput> = {
   id: CONFIG_AUTH_SET_FUNCTION_ID,
   summary: 'Point a target at a stored auth state or auth plugin by NAME, written in this call.',
-  requiredScopes: ['config-write'],
   resultKind: 'unary',
   input: ConfigAuthSetInputSchema,
   output: ConfigChangeOutputSchema,

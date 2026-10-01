@@ -170,7 +170,9 @@ describe('the declaration', () => {
   })
 
   it('is a read-tier, read-only unary op bound through the optional runDetail dep', () => {
-    expect(runsDetailSpec.requiredScopes).toEqual(['read'])
+    // RE-SPELLED 2026-10-01 (432-27, D-12) from `requiredScopes` equal to ['read']: the op
+    // declares no scope; the read-only risk below is what still states the tier.
+    expect(runsDetailSpec).not.toHaveProperty('requiredScopes')
     expect(runsDetailSpec.resultKind).toBe('unary')
     expect(runsDetailSpec.boundThrough).toBe('runDetail')
     expect(runsDetailSpec.risk).toEqual({ name: 'fn:runs.detail', recognized: true, readOnly: true })

@@ -23,6 +23,7 @@ import { authoringDraftEditSpec } from '../functions/ops/authoring-draft-edit.js
 import { authoringDraftWriteSpec } from '../functions/ops/authoring-draft-write.js'
 import { authoringFunnelGetSpec } from '../functions/ops/authoring-funnel-get.js'
 import { authoringVerifyDraftSpec } from '../functions/ops/authoring-verify-draft.js'
+import { configAuthSetSpec } from '../functions/ops/config-auth-set.js'
 import { configFieldSetSpec } from '../functions/ops/config-field-set.js'
 import { configGetSpec } from '../functions/ops/config-get.js'
 import { configHookAddSpec } from '../functions/ops/config-hook-add.js'
@@ -40,6 +41,7 @@ import { quarantineAddSpec } from '../functions/ops/quarantine-add.js'
 import { quarantineListSpec } from '../functions/ops/quarantine-list.js'
 import { quarantineReleaseSpec } from '../functions/ops/quarantine-release.js'
 import { runsArtifactSpec } from '../functions/ops/runs-artifact.js'
+import { runsDetailSpec } from '../functions/ops/runs-detail.js'
 import { runsDigestSpec } from '../functions/ops/runs-digest.js'
 import { runsEvidenceSpec } from '../functions/ops/runs-evidence.js'
 import { runsEventsSpec } from '../functions/ops/runs-events.js'
@@ -49,6 +51,7 @@ import { runsLiveUrlSpec } from '../functions/ops/runs-live-url.js'
 import { runsMarkSpec } from '../functions/ops/runs-mark.js'
 import { runsMarkPreviewSpec } from '../functions/ops/runs-mark-preview.js'
 import { runsMarksHistorySpec } from '../functions/ops/runs-marks-history.js'
+import { runsOverviewSpec } from '../functions/ops/runs-overview.js'
 import { runsStartSpec } from '../functions/ops/runs-start.js'
 import type { FunctionDeps } from '../functions/spec.js'
 
@@ -331,7 +334,9 @@ describe('the seed capability set', () => {
 describe('knowledge.gates.list', () => {
   it('declares a read-only unary contract through the required knowledge port', () => {
     expect(knowledgeGatesListSpec.id).toBe('knowledge.gates.list')
-    expect(knowledgeGatesListSpec.requiredScopes).toEqual(['read'])
+    // RE-SPELLED 2026-10-01 (432-27, D-12) from `requiredScopes` equal to ['read']: the op
+    // declares no scope; read-only stays on its risk descriptor below.
+    expect(knowledgeGatesListSpec).not.toHaveProperty('requiredScopes')
     expect(knowledgeGatesListSpec.resultKind).toBe('unary')
     expect(knowledgeGatesListSpec.boundThrough).toBeUndefined()
     expect(knowledgeGatesListSpec.risk).toEqual({
@@ -556,5 +561,51 @@ describe('C432-DECLARATION-KEYS: the 432-25 op specs carry no permission metadat
     expect(migrated.filter(({ spec }) => 'disclose' in spec).map(({ spec }) => spec.id)).toEqual([])
     expect(migrated.filter(({ spec }) => 'outputRepresentation' in spec).map(({ spec }) => spec.id))
       .toEqual(['runs.evidence'])
+  })
+})
+
+// ---- C432-DECLARATION-KEYS (432-27, D-10/D-12) --------------------------------------------------
+//
+// The last four op specs that still spelled `requiredScopes`, pinned as the earlier groups are.
+// config.auth.set is the writer among them: its risk descriptor and its `configWrite` binding are
+// what still say it writes. runs.detail and runs.overview keep their `runDetail` binding, which is
+// what lists them `unbound` on a host with no projection database.
+describe('C432-DECLARATION-KEYS: the 432-27 op specs carry no permission metadata', () => {
+  const migrated = [
+    { spec: configAuthSetSpec, resultKind: 'unary', boundThrough: 'configWrite',
+      risk: { name: 'fn:config.auth.set', recognized: true, readOnly: false } },
+    { spec: knowledgeGatesListSpec, resultKind: 'unary', boundThrough: undefined,
+      risk: { name: 'fn:knowledge.gates.list', recognized: true, readOnly: true } },
+    { spec: runsDetailSpec, resultKind: 'unary', boundThrough: 'runDetail',
+      risk: { name: 'fn:runs.detail', recognized: true, readOnly: true } },
+    { spec: runsOverviewSpec, resultKind: 'unary', boundThrough: 'runDetail',
+      risk: { name: 'fn:runs.overview', recognized: true, readOnly: true } },
+  ] as const
+
+  it('spells neither retired permission key on any of the four specs', () => {
+    expect(migrated.map(({ spec }) => spec.id)).toEqual([
+      'config.auth.set',
+      'knowledge.gates.list',
+      'runs.detail',
+      'runs.overview',
+    ])
+    for (const { spec } of migrated) {
+      expect(Object.keys(spec), spec.id).not.toContain('requiredScopes')
+      expect(Object.keys(spec), spec.id).not.toContain('requiresHumanOrigin')
+    }
+  })
+
+  it('keeps each spec\'s result kind, binding need, risk descriptor and classify fold', () => {
+    for (const { spec, resultKind, boundThrough, risk } of migrated) {
+      expect(spec.resultKind, spec.id).toBe(resultKind)
+      expect(spec.boundThrough, spec.id).toBe(boundThrough)
+      expect(spec.risk, spec.id).toEqual(risk)
+      expect(typeof spec.classify, spec.id).toBe('function')
+      expect(typeof spec.invoke, spec.id).toBe('function')
+    }
+    // None of the four discloses or declares an output representation.
+    expect(migrated.filter(({ spec }) => 'disclose' in spec).map(({ spec }) => spec.id)).toEqual([])
+    expect(migrated.filter(({ spec }) => 'outputRepresentation' in spec).map(({ spec }) => spec.id))
+      .toEqual([])
   })
 })
