@@ -17,7 +17,7 @@ export const runsMarkSpec: FunctionSpec<RunsMarkInput, RunsMarkOutcome> = {
   output: RunsMarkOutcomeSchema,
   // D-13: a mark writes the committed eval root and, since 432-09, applies its fix to knowledge or
   // a test file. mutating-local would understate its risk.
-  // No requiresHumanOrigin: MCP callers have origin agent; D-20 makes the bearer the grant.
+  // No requiresHumanOrigin and, since 432-21 (D-12), no bearer: every caller on every door reaches it.
   risk: {
     name: `fn:${RUNS_MARK_FUNCTION_ID}`,
     recognized: true,

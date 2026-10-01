@@ -187,41 +187,17 @@ import { buildMaskedResolvedConfig } from './masked-config.js'
 /**
  * The CLI's caller record.
  *
- * Full local grants: an operator at their own terminal already has every power the CLI can
- * exercise, so withholding a scope here would be theatre. `knowledge-write` (387-08) joins on
- * exactly that reasoning and no other: the operator can already edit the knowledge root with a
- * text editor, so the scope's job here is to make the CAPABILITY's cost legible in the catalogue
- * and in the audit row, not to withhold it from the person who owns the machine. Grant ISSUANCE — who may mint which
- * scopes, and how a remote caller proves them — is the M5 run-invocation / cloud-auth model's job;
- * this constant is the local composition's minting site.
- *
- * 394-13 / WINDOWS 101: `test-write` was ABSENT here from 394-01 until this plan, and it was an
- * omission rather than a decision — 394-01 minted the sixth capability scope and recorded in the
- * same breath that what constrains its power is D-03's two decision points (the fan-out confirm
- * and 391's inbox accept), not a withheld grant. So the full-local-grants rule this header already
- * states covered it all along, and the list simply had not been extended. The list is now pinned
- * SET-EQUAL to `FunctionScopeSchema.options` (`__tests__/caller-scopes.test.ts`), which is that
- * rule made mechanical: a seventh scope minted by a later phase cannot be silently omitted, it
- * reds. Do not replace the equality with a membership check — a hand-extended list is exactly what
- * rotted here, and it rotted invisibly because every op-level suite mints its own caller.
+ * 2026-10-01 (432-20/432-21, D-12): every door can call every operation, so this record carries no
+ * scope set and no safe-mode flag. The full-local-grants list it used to spell — pinned set-equal
+ * to `FunctionScopeSchema.options` so a later scope could not be silently omitted — and the reason
+ * it gave (an operator at their own terminal already has every power the CLI can exercise) are both
+ * what D-12 made true of every caller; nothing reads a grant any more. What stays is attribution.
  */
 export const CLI_FUNCTION_CALLER: FunctionCaller = {
   surface: 'cli',
-  // 391 D-06: `approval-write` joins because the CLI is where a person accepts a proposal and
-  // revokes a standing grant. The scope is the POWER; the origin below is who may exercise it,
-  // and this host is the only one that mints both.
-  grantedScopes: [
-    'read',
-    'run',
-    'config-write',
-    'knowledge-write',
-    'approval-write',
-    'test-write',
-  ],
-  safeMode: false,
-  // A person typed the command. This is the mint the whole self-grant rule turns on, so it is
-  // stated here rather than defaulted anywhere: the origin is a property of the composition,
-  // never of the call, and nothing downstream may set it.
+  // A person typed the command. The origin is a property of the composition, never of the call,
+  // and nothing downstream may set it. Since 432-20 nothing reads it to decide what may happen; the
+  // receipts and audit rows that record a caller's origin still do.
   origin: 'human',
 }
 
@@ -690,10 +666,11 @@ export interface ComposeCliLocalAgentInput {
     /**
      * Secrets this host holds that every run through it must mask (402-06, T-402-04).
      *
-     * A PASS-THROUGH LIKE ITS FOUR SIBLINGS. The authed run door's credentials are the case: they
-     * live only in the environment, under names `sensitiveEnvSlice` does not recognise, and the
-     * runs they authorise execute in the same process. See the option's own doc on
-     * `InProcessCliRunExecutionOptions` for why it is a resolver rather than a store.
+     * A PASS-THROUGH LIKE ITS FOUR SIBLINGS. The dashboard's minted `liveUrl` tokens are the case
+     * (and, until 432-21, the run-service credentials): they live only in this process, under names
+     * `sensitiveEnvSlice` does not recognise, and the runs they concern execute in the same process.
+     * See the option's own doc on `InProcessCliRunExecutionOptions` for why it is a resolver rather
+     * than a store.
      */
     readonly maskingSecrets?: InProcessCliRunExecutionOptions['maskingSecrets']
     /**

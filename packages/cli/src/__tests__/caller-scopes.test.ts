@@ -106,16 +106,14 @@ async function refusalFrom(
 }
 
 describe('CLI_FUNCTION_CALLER', () => {
+  // RE-SPELLED 2026-10-01 (432-21, D-12) from 'grants the whole scope vocabulary, member for member'.
+  // The full-local-grants rule that cell made mechanical is what D-12 made true of every caller, and
+  // the field it pinned is gone from the mint: the CLI record carries attribution only. Whether every
+  // op is reachable is C432-ALL-OPS-AVAILABLE's claim below, measured without any grant.
   it('grants the whole scope vocabulary, member for member', () => {
-    // SET EQUALITY, NOT A MEMBERSHIP CHECK, and the difference is the whole point. The constant's
-    // own header states a FULL-LOCAL-GRANTS rule — an operator at their own terminal already holds
-    // every power the CLI can exercise, so a withheld scope is theatre. A hand-extended list
-    // re-rots the next time a scope is minted; equality with the vocabulary is that rule made
-    // mechanical, and it reds on the omission rather than on the six names anyone thought to type.
-    // 432-20: the field is retired and unread; the mint still carries it until 432-21.
-    expect([...(CLI_FUNCTION_CALLER.grantedScopes ?? [])].sort()).toEqual(
-      [...FunctionScopeSchema.options].sort(),
-    )
+    expect(Object.keys(CLI_FUNCTION_CALLER).sort()).toEqual(['origin', 'surface'])
+    expect(CLI_FUNCTION_CALLER.grantedScopes).toBeUndefined()
+    expect(FunctionScopeSchema.options.length, 'the retired vocabulary still names its members').toBeGreaterThan(0)
   })
 
   // RE-SPELLED 2026-09-30 (432-13) from 'reaches the gate for authoring.draft.write — the refusal
@@ -146,11 +144,11 @@ describe('C432-ALL-OPS-AVAILABLE: a caller holding no grant (432-20, D-12)', () 
 })
 
 describe('DAEMON_FUNCTION_CALLER', () => {
+  // RE-SPELLED 2026-10-01 (432-21, D-12) from 'holds test-write'. The daemon record carries no scope
+  // set; the claim that survives — the daemon reaches the test-write ops — is the next cell's.
   it('holds test-write', () => {
-    // MEMBERSHIP, not set equality, and the asymmetry with the CLI cell above is deliberate: the
-    // daemon's header enumerates a per-scope rationale rather than stating a full-grants rule, so
-    // its pin is per-scope too. A seventh scope arriving must be argued for here, not inherited.
-    expect(DAEMON_FUNCTION_CALLER.grantedScopes).toContain('test-write')
+    expect(Object.keys(DAEMON_FUNCTION_CALLER).sort()).toEqual(['origin', 'surface'])
+    expect(DAEMON_FUNCTION_CALLER.grantedScopes).toBeUndefined()
   })
 
   // RE-SPELLED 2026-09-30 (432-13, D-14/D-15) from 'is still refused for authoring.draft.write —

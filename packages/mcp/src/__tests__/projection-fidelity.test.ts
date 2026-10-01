@@ -44,12 +44,11 @@ import {
   type FunctionDeps,
   type FunctionRegistry,
 } from '@vostride/agent-qa-agent'
-import { STANDING_APPROVAL_SCOPE, FunctionScopeSchema } from '@vostride/agent-qa-schema'
+import { FunctionScopeSchema } from '@vostride/agent-qa-schema'
 import type { FunctionCaller, FunctionScope } from '@vostride/agent-qa-schema'
 import { afterEach, describe, expect, it } from 'vitest'
 
 import { buildAgentQaMcpServer } from '../catalog.js'
-import { CREDENTIAL_REFUSAL_JSON_SCHEMA } from '../masked-result.js'
 // 2026-08-16 (Phase 397 D-06): the three normalisations this file authored now live beside the
 // package's other source, because 397's conformance suite compares the same two sides from
 // `packages/cli` and may not reach into another package's tests. They are consumed here rather
@@ -91,7 +90,8 @@ function builtInRegistry(): FunctionRegistry {
 }
 
 function callerWith(grantedScopes: readonly FunctionScope[]): FunctionCaller {
-  return { surface: 'mcp', grantedScopes, safeMode: false, origin: 'agent', credential: { scope: STANDING_APPROVAL_SCOPE } }
+  // 432-21 (D-12): no credential rides the caller; the scope set is retired and unread (432-20).
+  return { surface: 'mcp', grantedScopes, safeMode: false, origin: 'agent' }
 }
 
 const EVERY_SCOPE = [...FunctionScopeSchema.options] as readonly FunctionScope[]
@@ -175,8 +175,8 @@ describe('the advertised schema equals the function layer\'s own projection (D-1
       expect(tool, projection.name).toBeDefined()
 
       // 432-12 (D-05/D-14): the D-11 apply doors are gone, so every tool's input is its op's own
-      // contract. The mark door alone advertises `op outcome OR credential refusal` on the output
-      // side (419 D-20); the op's own document is still what its RECEIPT arm is, compared below.
+      // contract. 2026-10-01 (432-21, D-12): the mark door's `op outcome OR credential refusal`
+      // output (419 D-20) left with the bearer credential, so its output is its op's own too.
       const composition = compositionOf(projection)
       const inputComparable = true
 
@@ -215,18 +215,7 @@ describe('the advertised schema equals the function layer\'s own projection (D-1
           (document, at) =>
             armOutputs.findIndex((other) => JSON.stringify(other) === JSON.stringify(document)) === at,
         )
-        if (projection.kind === 'apply') {
-          // The receipt arm is the op's OWN converted document, byte for byte, and the refusal arm
-          // is the authored one. Compared member by member rather than exempted, so a door that
-          // quietly narrowed the receipt it advertises still fails here.
-          const arms = (advertisedOutput.anyOf ?? []) as readonly JsonDocument[]
-          expect(arms.length, `${projection.name} output arms`).toBe(2)
-          expect(arms[0], `${projection.name} receipt arm`).toEqual(distinct[0])
-          expect(arms[1], `${projection.name} refusal arm`).toEqual(
-            CREDENTIAL_REFUSAL_JSON_SCHEMA as unknown as JsonDocument,
-          )
-          checked += 1
-        } else if (distinct.length === 1) {
+        if (distinct.length === 1) {
           expect(advertisedOutput, `${projection.name} output`).toEqual(distinct[0])
           checked += 1
         } else {
@@ -273,12 +262,8 @@ describe('the advertised schema equals the function layer\'s own projection (D-1
       expect(advertised, projection.name).toBeDefined()
       const own = AGENT_QA_OP_CONTRACTS[projection.ops[0]!]!
 
-      // The apply doors advertise authored wire vocabulary on BOTH sides (396-06), so identity
-      // cannot hold for either of theirs — a composed union is a NEW object by construction, the
-      // same structural exclusion union folds carry. What stands in for identity there is the
-      // member-by-member comparison in the cell above, which reads the receipt arm back out of the
-      // composed document and requires it to equal the op's own projection.
-      if (projection.kind === 'apply') continue
+      // 2026-10-01 (432-21, D-12): the mark door no longer advertises a composed `anyOf` with a
+      // credential-refusal arm, so it is held to identity like every other single tool.
       expect(advertised!.input, `${projection.name} input identity`).toBe(own.input)
       expect(advertised!.output, `${projection.name} output identity`).toBe(own.output)
       checked += 2
@@ -286,7 +271,8 @@ describe('the advertised schema equals the function layer\'s own projection (D-1
     // 10 non-union, non-apply tools contributing both sides (423-21 D-18 adds the two feedback reads).
     // 2026-09-28 (431-04 D-04): the seven single discovery reads make it 17.
     // 2026-09-30 (432-12 D-05): the two proposal reads leave, so 15.
-    expect(checked).toBe(30)
+    // 2026-10-01 (432-21 D-12): the mark door joins, its composed refusal arm gone, so 16.
+    expect(checked).toBe(32)
   })
 
   // Pitfall 3, and the field-level half of D-16's "descriptions live on the zod schemas" clause.

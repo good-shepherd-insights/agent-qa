@@ -34,17 +34,14 @@ import { resolveVisionConfig } from '@vostride/agent-qa-model'
 import type {
   ExecutionContext,
   FunctionCaller,
-  FunctionScope,
   MaskedConfigEntry,
   MaskedResolvedConfig,
   RunEventEnvelope,
   RunServiceReadiness,
-  RunServiceTokenEntry,
   RunSession,
   RunStartAcknowledgement,
   RunsLiveUrlResult,
   RunsStartInput,
-  TrustScope,
 } from '@vostride/agent-qa-schema'
 import {
   RUN_SERVICE_CONTRACT_VERSION,
@@ -59,27 +56,19 @@ import {
 } from '../composition/live-view-composition.js'
 import { createDisplayUnmasker, markUnrestorablePlaceholders } from '../composition/display-unmask.js'
 import type { DisplayUnmask, DisplayUnmaskSecretStore } from '../composition/display-unmask.js'
-import {
-  matchServiceBearer,
-  resolveRunServiceTokens,
-  runServiceTokenSecretStore,
-  type ResolvedRunServiceToken,
-} from '../composition/run-service-token-resolution.js'
 import { resolveConfig } from '../config.js'
 // 408 plan 03 (D-03, Open Question 4): the CO-HOSTED MCP endpoint reuses the standalone command's
 // exported listener, masking composition and constants VERBATIM. A value edge from this command to
 // that one, and the direction was measured before it was written: `commands/mcp.ts` reaches
 // `composition/*` and two other command modules, none of which reaches back here, so nothing closes
-// at module-evaluation time. Reusing them is the whole point of Pitfall 7 — the Host/Origin/bearer
-// order is a security claim, and a second spelling of it here would be a second claim.
+// at module-evaluation time. Reusing them is the whole point of Pitfall 7 — the Host/Origin order
+// is a security claim, and a second spelling of it here would be a second claim.
 import {
   composeMcpMasking,
   createMcpHttpRequestListener,
   MCP_HTTP_BIND_HOST,
   MCP_HTTP_DEFAULT_PORT,
 } from './mcp.js'
-import { mcpTokenSecretStore, resolveMcpTokens } from '../composition/mcp-token-resolution.js'
-import type { ResolvedMcpToken } from '../composition/mcp-token-resolution.js'
 import {
   CLI_FUNCTION_CALLER,
   composeCliLocalAgent,
@@ -112,10 +101,10 @@ export const DASHBOARD_WORKSPACE_CONFIG_KEY = 'services.dashboard.workspace'
  * 430 D-03).
  *
  * DERIVED FROM THE CLI'S OWN MINT, with the surface name — attribution only, never a permission
- * input — as the single difference. The spread keeps the two grants structurally equal: a scope
- * minted by a later phase reaches the dashboard the day it reaches the CLI. `origin` rides along
- * unchanged and deliberately — a person clicking in a browser this machine's own process is
- * serving is the same fact the CLI mints `human` for.
+ * input — as the single difference. `origin` rides along unchanged and deliberately — a person
+ * clicking in a browser this machine's own process is serving is the same fact the CLI mints
+ * `human` for. 2026-10-01 (432-21, D-12): the CLI mint carries no scope set or safe-mode flag, so
+ * neither does this one.
  */
 export const DASHBOARD_FUNCTION_CALLER: FunctionCaller = Object.freeze({
   ...CLI_FUNCTION_CALLER,
@@ -541,21 +530,20 @@ export interface DashboardRunDoor {
    * Bind the secrets THIS PROCESS holds that every run through this door must mask (402-06, #224).
    *
    * THE SAME MUTABLE-BOX SHAPE AS `bindHost`, AND FOR THE SAME ORDERING REASON. The door's bridge
-   * is an INPUT to `composeDashboardDoor`, and the run-service credentials are dereferenced by
-   * `composeRunServicePorts` — which needs the door. Neither can be built first, so the value
-   * arrives through a box the bridge reads at run time.
+   * is an INPUT to `composeDashboardDoor`, and the composer that holds a secret — `composeLiveView`,
+   * which mints `liveUrl` tokens — needs the door. Neither can be built first, so the value arrives
+   * through a box the bridge reads at run time.
    *
-   * IT IS NOT OPTIONAL PLUMBING A CALLER MIGHT FORGET: `composeRunServicePorts` calls it itself,
-   * so any composition that goes through the shipped composer is seeded. A cell that assembled its
-   * own verifier and starter beside that composer would be measuring a door this product does not
-   * ship, which is the lookalike assembly the conformance suite refuses by name.
+   * IT IS NOT OPTIONAL PLUMBING A CALLER MIGHT FORGET: the composer calls it itself, so any
+   * composition that goes through the shipped composer is seeded.
    *
-   * 2026-08-25 (403-01, T-403-16): IT IS ADDITIVE. Two composers now bind the store THEY own —
-   * `composeRunServicePorts` the declared credentials, `composeLiveView` the minted `liveUrl`
-   * tokens — and the door UNIONS them through `mergedSecretStore`. It used to be a single
-   * assignment, which is how one of them would have vanished without a cell noticing: each
-   * composer binds correctly, and only the door could see that the second bind erased the first.
-   * `live-view-masking.test.ts` pins BOTH values masked under BOTH composition orders.
+   * 2026-08-25 (403-01, T-403-16): IT IS ADDITIVE, and the door UNIONS every bound store through
+   * `mergedSecretStore`. It used to be a single assignment, which is how one of two binders would
+   * have vanished without a cell noticing. 2026-10-01 (432-21, D-12): the second binder —
+   * `composeRunServicePorts` with the declared run-service credentials — is gone with those
+   * credentials, so the shipped command binds one store; the union stays, because a set of one is
+   * still the honest shape for a door any composer may bind to. `live-view-masking.test.ts` pins
+   * the minted token masked, and two binders unioned.
    */
   bindMaskingSecrets(store: {
     forEachSecret(cb: (name: string, value: string) => void): void
@@ -569,8 +557,8 @@ export interface DashboardRunDoor {
    * process consider a secret", free to disagree with the runs whose digests it is matching — and
    * the disagreement would look exactly like a correct page with one chip too many.
    *
-   * IT ANSWERS THE LIVE SET, NOT A COPY TAKEN AT COMPOSITION TIME. `composeRunServicePorts` and
-   * `composeLiveView` bind at different moments, and a snapshot would miss whichever bound later.
+   * IT ANSWERS THE LIVE SET, NOT A COPY TAKEN AT COMPOSITION TIME. A composer may bind after the
+   * door is built, and a snapshot would miss whichever bound later.
    */
   maskingSecretStores(): Iterable<{
     forEachSecret(cb: (name: string, value: string) => void): void
@@ -680,11 +668,10 @@ export async function createDashboardRunDoor(input: {
    * 402-06 (#224) + 403-01 (T-403-16): the secrets OTHER composers in this process hold, read at
    * RUN time.
    *
-   * A SET, NOT A SLOT, and the difference is the whole of T-403-16. Two composers legitimately bind
-   * here — `composeRunServicePorts` binds the declared run-service credentials, `composeLiveView`
-   * binds the `liveUrl` tokens it mints — and with one slot whichever bound LAST won, silently,
-   * with no cell able to see it: each composer is correct on its own, and the door was the only
-   * place the collision existed. Empty is still the honest state of a dashboard that holds neither.
+   * A SET, NOT A SLOT, and the difference is the whole of T-403-16: with one slot whichever composer
+   * bound LAST won, silently. Since 432-21 (D-12) the shipped command binds one store —
+   * `composeLiveView`'s minted `liveUrl` tokens — because the run-service credentials are deleted.
+   * Empty is still the honest state of a dashboard that holds none.
    */
   const maskingSecretStores = new Set<{
     forEachSecret(cb: (name: string, value: string) => void): void
@@ -802,68 +789,28 @@ export async function createDashboardRunDoor(input: {
 }
 
 
-// ---- The REMOTE door's composition (402-01, D-01/D-02/D-04/D-05/D-06 — INVK-03) ---------------
+// ---- The run service's composition (402-01, D-01/D-02/D-04/D-05/D-06 — INVK-03) -----------------
 
-/**
- * What the run service's own `FunctionCaller` may do — FIXED at composition, never per token.
- *
- * D-06: the door's capability set is decided here, once, for every holder of every credential.
- *
- * A LIST AND NOT A SPREAD, which is the opposite of {@link DASHBOARD_FUNCTION_CALLER}'s rule and
- * for the opposite reason. That caller is the CLI's own mint under another surface word, so its
- * grant must track the CLI's automatically. This door's claim is LEAST PRIVILEGE, so a scope
- * minted tomorrow must NOT reach it by default: the whole point is that a remote token-holder's
- * powers are the ones somebody wrote down.
- *
- * Dated note (2026-08-25, Phase 403 plan 03 / D-03, Q3): `read` joins `run`, and this is the diff
- * the 402 wording above pre-authorised in its own words — "the diff that needs `read` is the diff
- * that adds it". `GET /run/:runId/live-url` dispatches `runs.liveurl`, whose declared
- * `requiredScopes` is `['read']`, and without this member `invokeFunction` raises
- * `FunctionScopeError` before the op is ever reached. Measured, not assumed: the conformance door
- * answered 500 `live_url_mint_failed` for a credentialled mint until this line changed.
- *
- * WHAT WAS REJECTED, AND WHY. Retagging `runs.liveurl` as a `run` op instead would have kept this
- * list at one member — and it would have re-axised a capability's declared cost to fit ONE door's
- * grant, telling every other caller that the price of VIEWING a run is the power to EXECUTE one.
- * That is the privilege conflation `FunctionScopeSchema`'s own counter-notes refuse three times
- * over, pointed the other way.
- *
- * WHAT THIS DOES AND DOES NOT WIDEN. A scope is not a route. This door publishes four paths and
- * dispatches exactly two ops; `runs.get`, `runs.list`, `analysis.get` and every other read the
- * registry declares stay UNREACHABLE from here because no route reaches them, which is a stronger
- * bound than a scope list and the one `runServiceSurfaceAdapter.notApplicable` now states.
- */
-export const RUN_SERVICE_GRANTED_SCOPES: readonly FunctionScope[] = Object.freeze(['run', 'read'])
+// 2026-10-01 (432-21, D-12): `RUN_SERVICE_GRANTED_SCOPES` and `runServiceCallerFor(trustScope)` are
+// deleted. The door's least-privilege scope list and the matched token's trust scope it carried into
+// `FunctionCaller.credential` went with the run-service tokens: every caller can call every
+// operation, and the door mints one caller for every request.
 
 /** The surface id this door attributes its calls to. Attribution only, never a permission input. */
 export const RUN_SERVICE_SURFACE = 'run-service'
 
 /**
- * Mint the caller for ONE verified request (D-04, Pitfall 4).
+ * The caller this door dispatches as — one record, for every request (D-04, Pitfall 4).
  *
- * NEVER `DASHBOARD_FUNCTION_CALLER`. That caller holds the CLI's whole scope set and
- * mints `origin: 'human'`; reusing it here would hand a remote token every power a person sitting
- * at this machine has, and would tell the gate a person decided something nobody decided.
- *
- * `origin: 'agent'` is the fail-closed reading of the closed two-member axis (391 D-06): the axis
- * asks "did a person decide this", and on a request that arrived over a socket from another
- * machine the answer this process can honestly give is no. `human` would be a self-grant minted
- * from a header.
- *
- * `credential` is the matched entry's TrustScope, PASSED THROUGH UNTOUCHED — the function layer
- * never inspects or rewrites it and `evaluate()` owns ask-tier resolution against it. This is the
- * whole of "the token is the trust grant": one credential family, no second auth vocabulary, and
- * the reserved v48 field filled rather than a new machinery built beside it.
+ * NOT `DASHBOARD_FUNCTION_CALLER`. That caller mints `origin: 'human'` for a person clicking in this
+ * machine's own browser; a request on this door arrived from a client over a socket, and the honest
+ * answer to "did a person decide this" is no, so `origin: 'agent'` (391 D-06). Since 432-20 nothing
+ * reads `origin` to decide what may happen; the receipts that record it still read it.
  */
-export function runServiceCallerFor(trustScope: TrustScope): FunctionCaller {
-  return Object.freeze({
-    surface: RUN_SERVICE_SURFACE,
-    grantedScopes: RUN_SERVICE_GRANTED_SCOPES,
-    origin: 'agent',
-    safeMode: false,
-    credential: { scope: trustScope },
-  })
-}
+export const RUN_SERVICE_FUNCTION_CALLER: FunctionCaller = Object.freeze({
+  surface: RUN_SERVICE_SURFACE,
+  origin: 'agent',
+})
 
 /**
  * THE READINESS PREDICATE — ONE DECLARATION SITE, TWO DOORS (D-15).
@@ -876,9 +823,10 @@ export function runServiceCallerFor(trustScope: TrustScope): FunctionCaller {
  *
  * EVERY FIELD IS MEASURED, AND NOTHING IS PREDICTED. `hostComposed` reads the SAME box the run
  * starter's guard throws on — not a parallel flag — so `/ok` cannot say yes where `POST /run` says
- * no. `authConfigured` is a COUNT reduced to a boolean: whether this process resolved any
- * credential, never how many and never which. `contractVersion` is a constant, which is the point
- * of it: a caller learns which route set it is talking to without this process guessing anything.
+ * no. `authConfigured` is `false`, always: since 432-21 (D-12) no credential can be configured, and
+ * the key stays on the wire DTO until the permission fields retire together (432-39).
+ * `contractVersion` is a constant, which is the point of it: a caller learns which route set it is
+ * talking to without this process guessing anything.
  *
  * WHAT IS DELIBERATELY ABSENT is a `ready` verdict. Whether a run will succeed depends on a
  * browser, a model, a network and a target, none of which this predicate touched — and a field
@@ -888,36 +836,31 @@ export function runServiceCallerFor(trustScope: TrustScope): FunctionCaller {
 export function createRunServiceReadiness(input: {
   /** The composed-host box. Read at CALL time, because a host binds after this is built. */
   readonly resolveHost: () => LocalAgentHost | undefined
-  /** How many credentials resolved. Reduced to a boolean here and never published as a count. */
-  readonly tokenCount: number
 }): () => RunServiceReadiness {
   return () => ({
     service: 'up',
     hostComposed: input.resolveHost() !== undefined,
-    authConfigured: input.tokenCount > 0,
+    authConfigured: false,
     contractVersion: RUN_SERVICE_CONTRACT_VERSION,
   })
 }
 
 export interface RunServiceCompositionInput {
-  /** The declared entries, straight off `services.dashboard.runServiceTokens`. */
-  readonly entries: readonly RunServiceTokenEntry[]
-  /** The environment the declared variables are dereferenced from, once, now. */
-  readonly env?: NodeJS.ProcessEnv
-  /** The run door this process composed — the host box and the one session bridge. */
-  readonly door: Pick<
-    DashboardRunDoor,
-    'resolveHost' | 'observeSessions' | 'bindMaskingSecrets'
-  >
+  /**
+   * The run door this process composed — the host box and the one session bridge.
+   *
+   * 2026-10-01 (432-21, D-12): no `entries` and no `env`. The declared run-service tokens this
+   * composer dereferenced, and the environment it read them from, are deleted.
+   */
+  readonly door: Pick<DashboardRunDoor, 'resolveHost' | 'observeSessions'>
   /** How long a finished run stays attachable. Defaults to the registry's own window. */
   readonly retentionMs?: number
   /**
    * 403 D-14 (WINDOWS #264): the process's ALREADY-COMPOSED session registry, when there is one.
    *
-   * The command now hoists the registry above the door composition so it exists on BOTH token arms
-   * — a zero-token dashboard has live runs to attach to too, and building the lookup only inside
-   * this composer is precisely how the local run-stream door came to answer 503 for a run this
-   * process was executing. Supplied ⇒ used as-is and `dispose` leaves it to its owner; absent ⇒
+   * The command hoists the registry above the door composition, because building the lookup only
+   * inside this composer is precisely how the local run-stream door came to answer 503 for a run
+   * this process was executing. Supplied ⇒ used as-is and `dispose` leaves it to its owner; absent ⇒
    * this composer builds and owns one, exactly as it did.
    */
   readonly sessions?: RunServiceSessionRegistry
@@ -925,21 +868,20 @@ export interface RunServiceCompositionInput {
    * 405-05 (D-12 / 402 D-16): the composed agent host the two READ rows dispatch through.
    *
    * PASSED STRAIGHT THROUGH, on `sessions`' own rule — this composer decides nothing about it and
-   * composes no host of its own. It is the SAME `agentHost` the local door was handed, which is
-   * the whole of "mounts behind the same authed door": one registry, one caller, two credentials
-   * in front of it. Absent ⇒ both rows answer 503 `agent_host_unavailable`, in the local door's
-   * own word, which is an honest fact about a composition with no function layer behind it.
+   * composes no host of its own. It is the SAME `agentHost` the local door was handed: one
+   * registry behind two front doors. Absent ⇒ both rows answer 503 `agent_host_unavailable`, in the
+   * local door's own word, which is an honest fact about a composition with no function layer
+   * behind it.
    */
   readonly agentHost?: RunServicePorts['agentHost']
 }
 
 export interface RunServiceComposition {
-  /** Handed to `startServer` as `runService`. */
+  /**
+   * Handed to `startServer` as `runService`. 2026-10-01 (432-21, D-12): the composition carries no
+   * `secretStore` and no `tokenCount` — there are no declared credentials to seed or count.
+   */
   readonly ports: RunServicePorts
-  /** The resolved values, shaped as the run masker's secret-store port. Seeded by declared name. */
-  readonly secretStore: { forEachSecret(cb: (name: string, value: string) => void): void }
-  /** How many credentials resolved. A COUNT, never the values — `/ok` reports whether it is > 0. */
-  readonly tokenCount: number
   /**
    * THE READINESS PREDICATE THIS COMPOSITION BUILT (402-05, D-15).
    *
@@ -957,26 +899,22 @@ export interface RunServiceComposition {
  * Compose the remote door's ports — ONE composer, for production and for the cells that measure it.
  *
  * PUBLISHED AND SINGULAR for `composeDashboardDoor`'s own reason: a cell that assembled its own
- * verifier, caller mint or starter beside this one would be measuring a door this product does not
- * ship, which is the lookalike-assembly failure the conformance suite refuses by name.
+ * caller mint or starter beside this one would be measuring a door this product does not ship,
+ * which is the lookalike-assembly failure the conformance suite refuses by name.
  *
- * THE TOKENS ARE DEREFERENCED HERE, ONCE, BEFORE ANYTHING LISTENS. A declared variable that is
- * unset throws `RunServiceTokenEnvVarUnsetError` out of this call and out of `agent-qa dashboard`
- * — startup REFUSES, naming the variable and never a value (D-05). A server that started with a
- * credential nobody can present reads to an operator exactly like a server rejecting their token.
+ * 2026-10-01 (432-21, D-12): NO TOKENS ARE DEREFERENCED. The declared run-service credentials, the
+ * startup refusal for an unset one and the store that seeded their values into the run masker are
+ * deleted; this composer cannot refuse startup any more, and every request runs as
+ * {@link RUN_SERVICE_FUNCTION_CALLER}.
  *
  * THE STARTER IS NAMED `invokeRunStart`-STYLE AND NOT `startRun`. `startRun` is the RUN SHELL's
  * entry point in `@vostride/agent-qa-runner`, and `run-door-invocation-census.test.ts` makes a
  * complete-set claim over this package that no file acquires it.
  */
 export function composeRunServicePorts(input: RunServiceCompositionInput): RunServiceComposition {
-  const tokens: readonly ResolvedRunServiceToken[] = resolveRunServiceTokens(
-    input.entries,
-    input.env ?? process.env,
-  )
   // THE ATTACHABLE-SESSION LOOKUP, in its own module. See that module's header for why the
-  // retention timer may not live in this file. 403 D-14: the command hoists one above BOTH token
-  // arms and hands it in; owning one here is now the fallback for a caller that composed none.
+  // retention timer may not live in this file. 403 D-14: the command hoists one and hands it in;
+  // owning one here is the fallback for a caller that composed none.
   const ownsSessions = input.sessions === undefined
   const sessions = input.sessions ?? createRunServiceSessionRegistry({
     observeSessions: input.door.observeSessions,
@@ -988,22 +926,22 @@ export function composeRunServicePorts(input: RunServiceCompositionInput): RunSe
     if (host === undefined) {
       throw new Error('The run service was asked to start a run before its host was composed.')
     }
-    // NO `runId`, NO `scope`, NO `executionContext` ON THE REQUEST. The remote door does not carry
-    // a caller's claim about any of them, and it does not substitute a claim of its own: the core
+    // NO `runId`, NO `scope`, NO `executionContext` ON THE REQUEST. The door does not carry a
+    // caller's claim about any of them, and it does not substitute a claim of its own: the core
     // mints the id, the config resolves the scope, and the context is this composition's own
-    // fail-closed default. The dashboard door legitimately forwards a pre-minted id because its
-    // queue chose one; a remote caller has chosen nothing.
+    // default. The dashboard door legitimately forwards a pre-minted id because its queue chose one;
+    // a run-service caller has chosen nothing.
     const request: RunsStartInput = start.patterns === undefined || start.patterns.length === 0
       ? {}
       : { patterns: [...start.patterns] }
     // THE SHIPPED DISPATCHER, NOT THE PORT UNDERNEATH IT (D-04). Going straight to the run
-    // execution would skip the op-level gate, the receipt classification and the ack law — the
-    // carve-out the no-private-powers law refuses.
+    // execution would skip the input validation, the core's production refusal, the receipt
+    // classification and the ack law — the carve-out the no-private-powers law refuses.
     const result = await invokeFunction(
       host.registry as FunctionRegistry,
       RUNS_START_FUNCTION_ID,
       request,
-      runServiceCallerFor(start.trustScope),
+      RUN_SERVICE_FUNCTION_CALLER,
     )
     // PARSED, NOT CAST. The ack law says every field comes off the durable record; this is the
     // read side of it, and it is what makes the router's typed 202 a fact rather than a hope.
@@ -1011,13 +949,13 @@ export function composeRunServicePorts(input: RunServiceCompositionInput): RunSe
   }
 
   /**
-   * THE MINT, UNDER THE CALLER'S OWN TRUST SCOPE (403 D-03, Q3 · T-403-01).
+   * THE MINT (403 D-03, Q3 · T-403-01).
    *
    * THE SAME HELPER THE LOCAL DOOR CALLS, by reference — see `mintLiveUrlThrough`. The two doors
-   * differ in the `FunctionCaller` and in nothing else: `runServiceCallerFor(trustScope)` here,
-   * built from the VERIFIED bearer's scope, against the dashboard's own local caller there. A door
-   * that substituted a caller of its own would let a token-holder mint a viewing credential under
-   * this host's authority rather than under the authorization it actually presented.
+   * differ in the `FunctionCaller`'s surface and origin and in nothing else. The minted token binds
+   * its own subject (run, handle) and expiry, and the frame socket validates those independently of
+   * which door minted it (D-13). 2026-10-01 (432-21, D-12): the verified bearer's trust scope this
+   * mint ran under is deleted with the bearer.
    *
    * AN UNCOMPOSED HOST IS `live_view_unavailable`, NOT A CRASH. It is the same genuine host fact
    * `runs.liveurl` itself raises when no live-view port is bound, said in the same word, so a
@@ -1036,18 +974,14 @@ export function composeRunServicePorts(input: RunServiceCompositionInput): RunSe
     }
     return mintLiveUrlThrough(
       host.registry as FunctionRegistry,
-      runServiceCallerFor(mint.trustScope),
+      RUN_SERVICE_FUNCTION_CALLER,
     )(mint.runId, mint.handle)
   }
 
   // THE ONE PREDICATE, CALLED — not a second copy of it. See `createRunServiceReadiness`.
-  const readiness = createRunServiceReadiness({
-    resolveHost: input.door.resolveHost,
-    tokenCount: tokens.length,
-  })
+  const readiness = createRunServiceReadiness({ resolveHost: input.door.resolveHost })
 
   const ports: RunServicePorts = {
-    verifyBearer: (header) => matchServiceBearer(header, tokens),
     invokeRunStart,
     attach: (runId) => sessions.attach(runId),
     readiness,
@@ -1058,19 +992,12 @@ export function composeRunServicePorts(input: RunServiceCompositionInput): RunSe
     ...(input.agentHost === undefined ? {} : { agentHost: input.agentHost }),
   }
 
-  // THE STORE IS BOUND HERE, NOT PUBLISHED AND HOPED FOR (402-06, WINDOWS #224). Until this line
-  // `runServiceTokenSecretStore` was built, exported and consumed by nothing: the values a remote
-  // caller presents are in this process's environment under a name `sensitiveEnvSlice` cannot
-  // recognise, so a run started through this door printed them in the clear if anything echoed the
-  // variable. Binding inside the composer rather than at the command means every composition that
-  // uses the shipped composer is seeded, including the suites.
-  const secretStore = runServiceTokenSecretStore(tokens)
-  input.door.bindMaskingSecrets(secretStore)
-
+  // 2026-10-01 (432-21, D-12): no store is bound here. Until then the declared run-service token
+  // values were seeded into every run's masker from this line (402-06, WINDOWS #224); the tokens
+  // are deleted, and environment secret masking still covers every run through the door's own
+  // seeding.
   return {
     ports,
-    secretStore,
-    tokenCount: tokens.length,
     // THE SAME OBJECT `ports.readiness` HOLDS, deliberately — see the field's own doc.
     readiness,
     dispose: () => { if (ownsSessions) sessions.dispose() },
@@ -1081,14 +1008,12 @@ export function composeRunServicePorts(input: RunServiceCompositionInput): RunSe
  * The co-hosted MCP endpoint's mount decision, as a value (408-09 WR-01 / WR-09).
  *
  * `mount` is the whole answer to "does this dashboard bind a second listener at all"; `port` is the
- * clamped port it would bind; `tokenCount` is how many caller credentials the operator DECLARED —
- * not how many resolved, which is a different fact that needs `process.env` and therefore stays out
- * of a pure function.
+ * clamped port it would bind. 2026-10-01 (432-21, D-12): no `tokenCount` — the MCP token
+ * declarations are no longer read.
  */
 export interface McpCoHostMountPlan {
   readonly mount: boolean
   readonly port: number
-  readonly tokenCount: number
 }
 
 /**
@@ -1096,23 +1021,23 @@ export interface McpCoHostMountPlan {
  *
  * TWO CONDITIONS, BOTH REQUIRED, and this function is the only place either is spelled.
  *
- * 1. `services.mcp.enabled` must not be the literal `false`. **An ABSENT `enabled` means ENABLED** —
- *    the schema declares it `optional()`, and every project that has ever declared MCP tokens has
- *    done so without it. Only an operator who writes `enabled: false` turns the surface off, and
- *    they get to keep their credentials on file while it is off, which is the posture the schema
- *    already advertises. Say the default out loud here because "absent means on" is the kind of
- *    default a reader checks twice.
- * 2. At least one token entry must be DECLARED. A project that has declared no MCP credential gets
- *    today's dashboard byte for byte; the alternative — mounting with an empty token list — is an
- *    endpoint that answers the D-07 default grant to anyone who can reach loopback, which on a
- *    long-running dashboard is a surface nobody asked for.
+ * 1. A `services.mcp` block must be DECLARED. A project that declares none gets today's dashboard
+ *    byte for byte: a second loopback listener is a surface somebody has to ask for.
+ * 2. `services.mcp.enabled` must not be the literal `false`. **An ABSENT `enabled` means ENABLED** —
+ *    the schema declares it `optional()`. Only an operator who writes `enabled: false` turns the
+ *    surface off while keeping the block on file.
  *
- * Until 408-09 the first condition did not exist: `enabled` was declared in `McpConfigSchema` and
- * read NOWHERE, so `enabled: false` still bound an authenticated loopback listener with the
- * live-view registry behind it (WR-01, T-408-18). A knob that reads as a control and controls
- * nothing is the same class of defect this phase already fixed once — the always-undefined
- * `services.dashboard.mcp` read of 408-03 — which is why the decision is now a FUNCTION a cell can
- * drive over a config record rather than four lines a cell could only grep for.
+ * 2026-10-01 (432-21, D-12): CONDITION 1 REPLACES "at least one token entry must be declared".
+ * That condition read `services.mcp.tokens`, which is no longer read: the endpoint asks no caller for
+ * a bearer, and the request a block declares is the request to serve the surface. What keeps the
+ * endpoint off other machines and other websites is the loopback bind and the Host/Origin guards in
+ * `createMcpHttpRequestListener` (D-13), not a credential count. A project that declared tokens and
+ * no `enabled` key keeps its co-hosted endpoint; a project with no block still gets none.
+ *
+ * Until 408-09 the `enabled` condition did not exist: it was declared in `McpConfigSchema` and read
+ * NOWHERE (WR-01, T-408-18). A knob that reads as a control and controls nothing is the defect class
+ * this function exists to prevent, which is why the decision is a FUNCTION a cell can drive over a
+ * config record.
  *
  * Reads `unknown` on purpose: the caller holds a parsed record whose static type does not carry
  * `services.mcp`, and a cell must be able to hand this the shape of a defect as easily as the shape
@@ -1121,13 +1046,12 @@ export interface McpCoHostMountPlan {
 export function mcpMountPlanFor(config: unknown): McpCoHostMountPlan {
   const services = (config as { services?: unknown } | null | undefined)?.services
   const declared = (services as { mcp?: unknown } | null | undefined)?.mcp
-  const block = (typeof declared === 'object' && declared !== null ? declared : {}) as {
+  const blockDeclared = typeof declared === 'object' && declared !== null
+  const block = (blockDeclared ? declared : {}) as {
     enabled?: unknown
     port?: unknown
-    tokens?: unknown
   }
 
-  const tokenCount = Array.isArray(block.tokens) ? block.tokens.length : 0
   const enabled = block.enabled !== false
   // The port clamp lives here so the port decision is drivable too. Anything that is not an integer
   // inside the schema's own 1..65535 range falls back to the constant the standalone face binds.
@@ -1138,7 +1062,7 @@ export function mcpMountPlanFor(config: unknown): McpCoHostMountPlan {
     ? block.port
     : MCP_HTTP_DEFAULT_PORT
 
-  return { mount: enabled && tokenCount > 0, port, tokenCount }
+  return { mount: blockDeclared && enabled, port }
 }
 
 /**
@@ -1215,87 +1139,10 @@ export async function mountCoHostedMcp(input: {
   return { server, boundPort, warning: undefined }
 }
 
-/**
- * The co-hosted MCP endpoint's CREDENTIAL answer, as a value (408-17, CR-01).
- *
- * `plan` is the decision `mcpMountPlanFor` took from the config alone; `tokens` is what the
- * environment could actually honour; `shouldMount` is the conjunction the mount site branches on;
- * `warning` is the operator-visible line when the dereference refused, and `undefined` when there
- * was nothing to say.
- */
-export interface McpCoHostCredentials {
-  readonly plan: McpCoHostMountPlan
-  readonly tokens: readonly ResolvedMcpToken[]
-  readonly shouldMount: boolean
-  readonly warning: string | undefined
-}
-
-/**
- * Decide, then dereference — the co-host's credential path as ONE drivable function (408-17, CR-01).
- *
- * THE ORDER IS THE WHOLE POINT, AND UNTIL 408-17 IT WAS THE OTHER WAY ROUND. The shipped mount
- * site dereferenced `services.mcp.tokens` through `resolveMcpTokens` and consulted the mount plan
- * TWO LINES LATER — so a declared-but-unset `tokenEnvVar` threw `McpTokenEnvVarUnsetError` past a
- * dashboard that had ALREADY BOUND, into the command's outer catch, and out at `process.exit(2)`
- * with neither `close()` nor `sessions.dispose()` reached. An operator met the loss of their whole
- * primary surface for a forgotten `export` on an OPTIONAL one, and `services.mcp.enabled: false`
- * prevented none of it, because the flag was read after the dereference rather than before it.
- *
- * TWO CONSEQUENCES, AND THEY ARE SEPARATE. (1) When the plan says do not mount, this returns
- * BEFORE touching `input.env` at all — that is what makes `enabled: false` a control on this path
- * rather than a control on a path nothing reaches, and a cell drives it with a recording
- * environment that reports which names were dereferenced. (2) When the plan says mount, the
- * dereference isolates its own failure exactly the way the bind beside it already does: the
- * warning is composed from `McpTokenEnvVarUnsetError.message` and NOTHING else — no error object,
- * no `cause`, no resolved value — because that message names the entry label and the variable name
- * and carries no credential, which is the reason the class takes the two fields it takes.
- *
- * AND A REFUSAL MOUNTS NOTHING. `shouldMount` conjoins the plan's flag with a NON-EMPTY resolved
- * list, so surviving an unset variable never becomes serving the endpoint with an empty token list
- * — which would answer the D-07 default grant to anything that can reach loopback, a strictly
- * worse posture than the defect this repairs.
- *
- * THE FIX IS AT THE CALL SITE, NEVER IN `resolveMcpTokens`. At `agent-qa mcp` the refusal precedes
- * any bind, nothing is serving, and a hard failure naming the variable is the honest outcome its
- * own docstring argues for. One error class, two call sites, two correct answers.
- *
- * Reads `unknown` for the same reason `mcpMountPlanFor` does: a cell must be able to hand this the
- * shape of a defect as easily as the shape of a correct config. `env` is a PARAMETER rather than
- * `process.env` read inside, so a cell can hand it an environment that records what was read.
- */
-export function coHostedMcpCredentialsFor(
-  // Indented deliberately rather than closed at column 0 in `mountCoHostedMcp`'s style: 408-17's
-  // `COHOST-RESOLUTION-CALLED-ONCE-OK` scopes its "exactly one call" clause to the region between
-  // this line and the first brace in column 1, and a `}): T {` signature line would end that
-  // region at the signature and measure an empty body.
-  input: {
-    readonly config: unknown
-    readonly env: NodeJS.ProcessEnv
-    readonly warn?: (line: string) => void
-  },
-): McpCoHostCredentials {
-  const warn = input.warn ?? ((line: string) => console.error(pc.yellow(line)))
-  const plan = mcpMountPlanFor(input.config)
-  // THE DECISION, TAKEN FIRST. Nothing below this line runs when the operator turned the surface
-  // off or declared no credential, and `input.env` is not touched at all.
-  if (!plan.mount) {
-    return { plan, tokens: [], shouldMount: false, warning: undefined }
-  }
-
-  const declared = (input.config as any)?.services?.mcp ?? {}
-  try {
-    const tokens = resolveMcpTokens(declared.tokens ?? [], input.env)
-    return { plan, tokens, shouldMount: plan.mount && tokens.length > 0, warning: undefined }
-  } catch (error) {
-    // The same shape `mountCoHostedMcp` uses, deliberately: two failure paths on one optional
-    // surface should speak with one voice, and the closing sentence is copied from it verbatim.
-    const reason = error instanceof Error ? error.message : String(error)
-    const warning = `MCP endpoint not mounted — ${reason} `
-      + 'The dashboard is unaffected and keeps serving.'
-    warn(warning)
-    return { plan, tokens: [], shouldMount: false, warning }
-  }
-}
+// 2026-10-01 (432-21, D-12): `McpCoHostCredentials` and `coHostedMcpCredentialsFor` are deleted.
+// They dereferenced `services.mcp.tokens` after the mount decision (408-17, CR-01) and refused the
+// mount when a declared variable was unset; with no token declarations read, the mount plan above
+// is the whole decision, and there is no dereference left to fail.
 
 type DashboardCommandOptions = {
   port?: string
@@ -1423,10 +1270,10 @@ async function startDashboardBackedServices(
     // ---- The live-view composition (403 D-03/D-14 — closes WINDOWS #264) -----------------------
     //
     // HOISTED ABOVE THE DOOR, AND UNCONDITIONAL. The attachable-session registry used to be built
-    // inside `composeRunServicePorts`, which runs ONLY when `runServiceTokens` is declared — so on
-    // the default zero-token dashboard nothing ever registered a session and the local
-    // `/api/run-stream/:runId` door answered 503 about runs this very process was executing. It is
-    // composed here, once, for both arms; the token arm receives it rather than building a second.
+    // inside `composeRunServicePorts`, which until 432-21 ran ONLY when `runServiceTokens` was
+    // declared — so on the default zero-token dashboard nothing ever registered a session and the
+    // local `/api/run-stream/:runId` door answered 503 about runs this very process was executing.
+    // It is composed here, once, and the run service receives it rather than building a second.
     const sessions = createRunServiceSessionRegistry({ observeSessions: runDoor.observeSessions })
     // 428 D-07: the editor-subject registry, created once beside the run registry. The same object
     // is the function layer's editor lookup (through `composeLiveView`) and the server's (the
@@ -1462,57 +1309,43 @@ async function startDashboardBackedServices(
     })
     runDoor.bindHost(runHost)
 
-    // ---- The REMOTE door (402-01, D-02/D-05/D-06 — INVK-03) -----------------------------------
+    // ---- The run service (402-01, D-02/D-05/D-06 — INVK-03) -----------------------------------
     //
     // COMPOSED HERE FOR `agentHost`'s AND `executionBackend`'s OWN REASON: the ports name
-    // `runs.start`, `invokeFunction`, the composed local host and this project's credential
-    // resolution, none of which `packages/dashboard-server` may import. The server mounts the
-    // module; this process supplies everything it reaches through.
+    // `runs.start`, `invokeFunction` and the composed local host, none of which
+    // `packages/dashboard-server` may import. The server mounts the module; this process supplies
+    // everything it reaches through.
     //
-    // NOT MOUNTED WHEN NOTHING IS DECLARED, and that is the shipped default rather than a
-    // degradation: a project that has declared no run-service credential gets today's dashboard,
-    // byte for byte. The alternative — mounting with an empty token list — would be a door every
-    // request is refused at, which is honest but adds a surface nobody asked for.
-    //
-    // AN UNSET DECLARED VARIABLE REFUSES STARTUP FROM INSIDE THIS CALL, naming the variable and
-    // never a value (D-05). The refusal reaches the `catch` below as an ordinary command error.
+    // 2026-10-01 (432-21, D-12/D-13): MOUNTED UNCONDITIONALLY, AND TOKENLESS. It used to mount only
+    // when `services.dashboard.runServiceTokens` declared a credential, and an unset declared
+    // variable refused startup here. That key is no longer read: the door asks for no credential,
+    // and what guards it is the same-site check above its route table and the loopback bind every
+    // door in this process shares.
     const configuredHost = typeof servicesConfig.host === 'string' && servicesConfig.host.trim() !== ''
       ? (servicesConfig.host as string).trim()
       : undefined
-    const runServiceEntries = (servicesConfig.runServiceTokens ?? []) as readonly RunServiceTokenEntry[]
-    const runService = runServiceEntries.length === 0
-      ? undefined
-      // 405-05 (D-12 / 402 D-16): the SAME host the local door serves through, handed to the
-      // remote one. Not a second composition — the two doors differ in the credential and in
-      // nothing else, which is what makes `/run/:runId/detail` and the local `/api/runs/:id/detail`
-      // one capability behind two front doors rather than two implementations of one idea.
-      : composeRunServicePorts({ entries: runServiceEntries, door: runDoor, sessions, agentHost })
+    // 405-05 (D-12 / 402 D-16): the SAME host the local door serves through. Not a second
+    // composition, which is what makes `/run/:runId/detail` and the local `/api/runs/:id/detail` one
+    // capability behind two front doors rather than two implementations of one idea.
+    const runService = composeRunServicePorts({ door: runDoor, sessions, agentHost })
 
     const { close, port: listeningPort } = await startServer({
       db,
       port,
       // 402-05 (D-07 — INVK-03): the interface this server binds. A non-loopback value is REFUSED
       // pre-listen, unconditionally — the credential count that once exempted it was deleted in
-      // the phase-402 verification round, because a run-service token authenticates the three
-      // run-service paths and leaves `/api/runs/trigger` anonymous. The config schema still does
-      // not refuse a non-loopback host at parse time, so the refusal reads as a security decision
-      // rather than a config-shape error.
+      // the phase-402 verification round, and the credentials themselves in 432-21 (D-12). The
+      // config schema still does not refuse a non-loopback host at parse time, so the refusal reads
+      // as a security decision rather than a config-shape error.
       ...(configuredHost === undefined ? {} : { host: configuredHost }),
-      // 402-05 (D-15): the LOCAL readiness door, supplied on BOTH arms. With the service mounted
-      // this is the identical function object the authed `/ok` serves; without it, the SAME
-      // producer is called with a zero count, so a project that declared no credential gets an
-      // honest `authConfigured: false` rather than a 404 the browser preflight cannot read. What
-      // is deliberately NOT here is a second copy of these four facts.
-      runServiceReadiness: runService?.readiness
-        ?? createRunServiceReadiness({ resolveHost: runDoor.resolveHost, tokenCount: 0 }),
-      // 403 D-14 (WINDOWS #264): the session lookup, on BOTH arms — this is the
-      // `runServiceReadiness` line's own argument, not the `runService` conditional's. The
-      // registry is hoisted above both, so the local run-stream door and the frame socket can
-      // attach to a run this process is executing whether or not a credential was declared.
+      // 402-05 (D-15): the LOCAL readiness door — the identical function object the run service's
+      // `/ok` serves. What is deliberately NOT here is a second copy of these four facts.
+      runServiceReadiness: runService.readiness,
+      // 403 D-14 (WINDOWS #264): the session lookup, read off the hoisted registry so the local
+      // run-stream door and the frame socket can attach to a run this process is executing.
       runServiceAttach: sessions.attach,
-      // 404-05 (D-16): the other half of the relay above. Unconditional on both token arms, on
-      // `runServiceAttach`'s own argument — a run this process drains is a run this process can
-      // push chips for, whether or not a run-service credential was ever declared.
+      // 404-05 (D-16): the other half of the relay above — a run this process drains is a run this
+      // process can push chips for.
       postProcessingRelay,
       // 403 D-03/D-06: the live-view seam, likewise on both arms. `validate` is the function
       // layer's own validator by reference; `mintLiveUrl` dispatches the op through the SHIPPED
@@ -1521,9 +1354,10 @@ async function startDashboardBackedServices(
       // no-private-powers law refuses.
       liveView: {
         validate: liveView.validate,
-        // 403-03 (D-03, Q3): THE SAME FUNCTION THE AUTHED DOOR CALLS, by reference. Both doors mint
-        // the identical credential through the identical dispatcher and differ only in the caller
-        // identity — which is what makes the two-door parity corpus a claim about one mint.
+        // 403-03 (D-03, Q3): THE SAME FUNCTION THE RUN SERVICE CALLS, by reference. Both doors mint
+        // the identical credential through the identical dispatcher and differ only in the caller's
+        // surface and origin — which is what makes the two-door parity corpus a claim about one
+        // mint.
         mintLiveUrl: mintLiveUrlThrough(
           runHost.registry as FunctionRegistry,
           DASHBOARD_FUNCTION_CALLER,
@@ -1548,9 +1382,8 @@ async function startDashboardBackedServices(
       // started without it would answer 503 from the execution routes — which is what an
       // unresolvable `agent-qa` binary used to produce, and the honest shape of the same absence.
       executionBackend: runDoor.backend,
-      // 402-01: absent is an ABSENT field and never a present `undefined`, on the house rule
-      // `agentHost` and `executionBackend` already follow — the server's own mount arm decides.
-      ...(runService === undefined ? {} : { runService: runService.ports }),
+      // 432-21 (D-12): always present — the run service mounts tokenlessly.
+      runService: runService.ports,
     })
 
     // D-16: the second supplier, now that there is a port to name. Loopback rather than a hostname,
@@ -1576,67 +1409,32 @@ async function startDashboardBackedServices(
     // here at all.
     //
     // THE GUARD ORDER IS REUSED BY REFERENCE (Pitfall 7). `createMcpHttpRequestListener` is the
-    // exported one — Host, then Origin, then bearer, then the handler — so this endpoint refuses a
-    // rebound DNS name and an unmatched credential by exactly the code the standalone face does,
-    // and emits no CORS header for the same reason it does not.
+    // exported one — Host, then Origin, then the handler — so this endpoint refuses a rebound DNS
+    // name and a page on another origin by exactly the code the standalone face does, and emits no
+    // CORS header for the same reason it does not.
     //
-    // ONE CREDENTIAL FAMILY PER SURFACE (Open Question 4, qa-agent-and-surfaces §3.1). The
-    // `services.mcp.tokens` vocabulary is reused verbatim; a run-service bearer is NOT accepted
-    // here. Two credential families on one endpoint would be two answers to "who is this", and the
-    // MCP scope set is what `visibleToCaller` reads.
+    // 2026-10-01 (432-21, D-12): NO CREDENTIAL FAMILY. The `services.mcp.tokens` bearer this
+    // endpoint used to require (Open Question 4: one credential family per surface) is deleted, so
+    // the endpoint serves the same tokenless caller the standalone face does, and a run-service
+    // bearer is not a thing either.
     //
-    // THE MOUNT DECISION IS `mcpMountPlanFor`, AND IT IS THE ONLY PLACE THE TWO CONDITIONS ARE
-    // SPELLED (408-09, WR-01 / WR-09 · T-408-18). Both must hold:
-    //
-    //   1. `services.mcp.enabled` is not the literal `false`. AN ABSENT `enabled` MEANS ENABLED —
-    //      the schema declares it optional and no project has ever written it, so only an operator
-    //      who explicitly writes `enabled: false` turns the surface off. Before 408-09 that knob was
-    //      declared in `McpConfigSchema` and read nowhere, so an operator who wrote it kept a
-    //      second authenticated loopback listener with the live-view registry behind it.
-    //   2. NOT MOUNTED WHEN NOTHING IS DECLARED, mirroring the run-service arm above: a project that
-    //      has declared no MCP credential gets today's dashboard, byte for byte. The alternative —
-    //      mounting with an empty token list — is an endpoint that answers the D-07 default grant to
-    //      anyone who can reach loopback, which on a long-running dashboard is a surface nobody
-    //      asked for.
-    //
-    // The token RESOLUTION stays here and is a SEPARATE fact: `resolveMcpTokens` reads
-    // `process.env`, so a plan that declared two entries can still resolve zero usable ones, and a
-    // mount with nothing to match a bearer against is the same open door condition 2 refuses.
-    //
-    // CORRECTED 2026-09-01 (CR-01, 408-17). The three lines directly above are RETAINED and
-    // WITHDRAWN, not rewritten — an adjudication in this repository is re-grounded on the record,
-    // never edited away.
-    //
-    // WHAT IS WITHDRAWN, quoted: "The token RESOLUTION stays here and is a SEPARATE fact". Separate
-    // it was not. Until 408-17 the resolution stood at :2104 and the mount plan's flag was
-    // consulted at :2107 — the dereference ran ABOVE the very condition this comment claimed it was
-    // merely beside, and it ran AFTER `startServer` had already bound the dashboard at :1996. So a
-    // declared-but-unset `tokenEnvVar` threw `McpTokenEnvVarUnsetError` out of `resolveMcpTokens`,
-    // past a fully started dashboard, into this command's outer catch — and what an operator
-    // actually met was `process.exit(2)`, with neither `close()` nor `sessions.dispose()` reached.
-    // `services.mcp.enabled: false`, the off switch 408-09 added for exactly this surface, could
-    // not prevent it: condition 1 above was read two lines too late to be a control at all.
-    //
-    // THE REPLACEMENT RULE: the decision is taken FIRST, and the dereference that follows it
-    // isolates its own failure the way the bind beside it already does. Both halves now live in
-    // `coHostedMcpCredentialsFor`, which is one function a cell can hand a config record and an
-    // environment — and section 8 of `mcp-cohost.test.ts` hands it both, having first watched the
-    // ordering above red at this seam.
-    const mcpCredentials = coHostedMcpCredentialsFor({ config, env: process.env })
-    const mcpTokens = mcpCredentials.tokens
+    // THE MOUNT DECISION IS `mcpMountPlanFor`, AND IT IS THE ONLY PLACE ITS CONDITIONS ARE SPELLED
+    // (408-09, WR-01 / WR-09 · T-408-18): a declared `services.mcp` block that does not say
+    // `enabled: false`. Until 432-21 the second condition was "at least one token declared", and
+    // 408-17 (CR-01) moved the token dereference that followed it behind the decision so an unset
+    // `tokenEnvVar` could not take a serving dashboard down; with no dereference left, that ordering
+    // hazard is gone with it.
+    const mcpPlan = mcpMountPlanFor(config)
     let mcpMasking: ReturnType<typeof composeMcpMasking> | undefined
     let mcpServer: NodeHttpServer | undefined
-    if (mcpCredentials.shouldMount) {
-      runDoor.bindMaskingSecrets(mcpTokenSecretStore(mcpTokens))
+    if (mcpPlan.mount) {
       // The MCP masker, composed exactly as `agent-qa mcp` composes it: `buildRunMaskingContext`
-      // seeded with THIS process's declared MCP credentials, because `sensitiveEnvSlice` selects by
-      // name suffix and nothing obliges an operator to point `tokenEnvVar` at a name ending in
-      // `_TOKEN`. Separate from the dashboard's own masking context on purpose — the values this
-      // endpoint must never echo are its own bearer tokens.
-      mcpMasking = composeMcpMasking({ tokens: mcpTokens, env: process.env })
+      // over this process's environment. Separate from the dashboard's own masking context on
+      // purpose — it masks what this endpoint writes.
+      mcpMasking = composeMcpMasking({ env: process.env })
       const mcpMaskText = (text: string): string => mcpMasking!.mask(text)
       // Clamped inside `mcpMountPlanFor`, so the port a cell drives is the port this binds.
-      const mcpPort = mcpCredentials.plan.port
+      const mcpPort = mcpPlan.port
       mcpServer = createServer(
         createMcpHttpRequestListener({
           // THE LIVE-VIEW-BOUND REGISTRY — the one fact that makes this endpoint different from the
@@ -1648,7 +1446,6 @@ async function startDashboardBackedServices(
           // exactly that reason.
           registry: runHost.registry as FunctionRegistry,
           maskText: mcpMaskText,
-          tokens: mcpTokens,
           // D-08's overlay law, in the one order it may be written: the operator's configured base
           // is somebody pointing at a reverse proxy, a tunnel or a path prefix, so it WINS; the
           // bound origin fills an absence and never replaces a presence. Read per result rather
@@ -1676,7 +1473,7 @@ async function startDashboardBackedServices(
       } else {
         console.log(pc.dim(
           `MCP endpoint listening on http://${MCP_HTTP_BIND_HOST}:${String(mcpMount.boundPort)}/ `
-          + `(${String(mcpTokens.length)} declared caller credential(s); live view attached).`,
+          + '(live view attached).',
         ))
       }
     }
@@ -1695,13 +1492,13 @@ async function startDashboardBackedServices(
       close()
       // 408 plan 03: the co-hosted MCP listener is this command's to close, beside the dashboard's
       // own — it is a socket this process bound, and a shutdown that left it listening would leave
-      // an authed endpoint over a registry whose door is closing underneath it.
+      // an endpoint over a registry whose door is closing underneath it.
       mcpServer?.close()
       mcpMasking?.dispose()
       // 402-01: unregister the session observer and drop every retained handle. Without it the
       // run door's observer set keeps a closure alive that keeps this map alive that keeps every
       // finished run's bus alive.
-      runService?.dispose()
+      runService.dispose()
       // 403 D-14: the hoisted registry is the command's to dispose — `composeRunServicePorts`
       // leaves a registry it did not build alone.
       sessions.dispose()

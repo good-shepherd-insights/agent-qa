@@ -35,17 +35,10 @@ type ExactlyEqual<A, B> = [A] extends [B] ? ([B] extends [A] ? true : false) : f
 const _trustScopeKeysCoverTheDto: ExactlyEqual<TrustScopeKey, keyof TrustScope> = true
 void _trustScopeKeysCoverTheDto
 
-/**
- * The one scope this build's trust credentials carry.
- *
- * MOVED HERE 2026-10-01 (432-18) from the deleted grant ledger, where it was the scope every standing
- * grant was minted and matched under. The grants are gone; the constant stays because the MCP
- * knowledge-write bearer still presents a credential carrying it
- * (`cli/src/composition/mcp-token-resolution.ts`), and it leaves with that credential.
- */
-export const STANDING_APPROVAL_SCOPE: TrustScope = Object.freeze({
-  project: 'local-workspace',
-})
+// 2026-10-01 (432-21, D-12): `STANDING_APPROVAL_SCOPE` is deleted. 432-18 moved it here from the
+// deleted grant ledger because the MCP knowledge-write bearer still presented a credential carrying
+// it; that bearer credential and its resolver are deleted, so the constant left with its last
+// consumer.
 
 /**
  * Scoped trust credential presented to the policy gate.

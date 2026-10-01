@@ -589,26 +589,9 @@ export async function spawnDashboard(
 // child environment or an explicit `env` map. `fixtureProject`'s own argument applies unchanged —
 // what a file does not contain cannot be printed by a diagnostic nobody anticipated.
 
-/**
- * The environment variable the run-service fixture declares. A NAME, and only ever a name.
- *
- * NO SUFFIX A MASKER RECOGNISES, on `run-service-door.e2e.test.ts`'s reasoning: `sensitiveEnvSlice`
- * selects environment variables by name suffix, so a probe called `..._API_TOKEN` would be masked
- * by machinery that has nothing to do with this door and a leak would pass for the wrong reason.
- */
-export const RUN_SERVICE_FIXTURE_TOKEN_VAR = 'AGENT_QA_402_07_RUN_CRED'
-
-/**
- * The credential the two run-service frames present.
- *
- * A THROWAWAY THIS REPOSITORY OWNS, not a secret: it exists only inside a temp project's process
- * environment and is never written to any file. It is a distinct value from 402-01's e2e token so
- * that a cell in either file cannot accidentally authenticate against the other's door.
- */
-export const RUN_SERVICE_FIXTURE_TOKEN = 'zz-402-07-conformance-run-credential-4b7e12'
-
-/** The entry NAME the fixture declares, echoed by nothing on the wire but named once here. */
-export const RUN_SERVICE_FIXTURE_ENTRY_NAME = 'conformance'
+// 2026-10-01 (432-21, D-12): `RUN_SERVICE_FIXTURE_TOKEN_VAR`, `RUN_SERVICE_FIXTURE_TOKEN` and
+// `RUN_SERVICE_FIXTURE_ENTRY_NAME` are deleted with the run-service tokens. The run service is
+// tokenless and always mounted, so the fixture declares no credential and the frames present none.
 
 /**
  * The built artifacts a RUN SERVICE cell executes — the dashboard list plus the run path's two.
@@ -647,7 +630,7 @@ export const RUN_SERVICE_ANCHORED_BUILDS: readonly {
  * an ack off the durable record, envelopes in the frozen frame, bytes that are pure JSON — and a
  * cell that needed a passing run would need a browser and would be measuring Playwright.
  */
-export function runServiceFixtureProject(label: string, declareToken = true): {
+export function runServiceFixtureProject(label: string): {
   root: string
   configPath: string
 } {
@@ -675,24 +658,10 @@ export function runServiceFixtureProject(label: string, declareToken = true): {
             },
           },
         },
-        // `declareToken: false` is the DEFAULT SHIPPED POSTURE — most projects declare no
-        // run-service credential — and it is a distinct arm of the readiness composition, not a
-        // degenerate case of this one. Phase-402 re-verification measured a mutation that kept
-        // only the mounted arm leaving 374/374 green while a token-less dashboard answered
-        // /api/run-readiness with 503 and the UI preflight silently no-opped.
-        services: {
-          dashboard: declareToken
-            ? {
-                runServiceTokens: [
-                  {
-                    name: RUN_SERVICE_FIXTURE_ENTRY_NAME,
-                    tokenEnvVar: RUN_SERVICE_FIXTURE_TOKEN_VAR,
-                    trustScope: { project: 'conformance' },
-                  },
-                ],
-              }
-            : {},
-        },
+        // 2026-10-01 (432-21, D-12): no `services.dashboard.runServiceTokens` declaration. Until
+        // then this fixture had a token-declaring arm and a zero-token arm, and the zero-token arm
+        // (the default posture) was the one a composition could silently drop; with the tokens
+        // deleted there is one posture, and every frame spawns it.
       },
       null,
       2,
@@ -785,7 +754,7 @@ export function drainableSuiteFixtureProject(label: string): {
   configPath: string
   suitePath: string
 } {
-  const project = runServiceFixtureProject(label, false)
+  const project = runServiceFixtureProject(label)
 
   // The suite addresses the test by the id that file MINTED. Read back rather than re-minted: two
   // ids would be a suite entry naming a test this project does not contain, which the suite parser

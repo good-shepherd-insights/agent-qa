@@ -854,8 +854,9 @@ async function runTurnThrough(
   for (const step of verdict.plan) {
     // The mint follows the stage that PROVED the binding, which the verdict states (Pitfall 1).
     // Re-deriving it by matching the action back against the mapper set would answer `human`
-    // for any planner-produced call to an op the table also knows — handing a model-originated
-    // invocation the self-grant power `requiresHumanOrigin` ops withhold (391 D-06, T-392-23).
+    // for any planner-produced call to an op the table also knows, and the receipt would then
+    // record a model-originated call as a person's (391 D-06, T-392-23). 2026-10-01 (432-20/21,
+    // D-12): no op withholds anything by origin any more; the origin is attribution.
     const caller = deps.mint.forStage(step.source, sessionId)
     let receipt: ClauseReceipt
     if (failed) {

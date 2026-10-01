@@ -40,9 +40,8 @@ import { KnowledgeChangeOutputSchema } from '@vostride/agent-qa-schema'
 import { runSafetyScope } from '@vostride/agent-qa-safety-local'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
-import { composeMcpMasking, mcpFunctionCaller } from '../commands/mcp.js'
+import { composeMcpMasking, MCP_FUNCTION_CALLER } from '../commands/mcp.js'
 import { composeCliLocalAgent } from '../composition/local-agent-host.js'
-import { resolveStdioScopes } from '../composition/mcp-token-resolution.js'
 
 const CONFIG_FILE = 'agent-qa.config.yaml'
 
@@ -168,8 +167,7 @@ const MODERN_CAPABLE: Era = { wire: 'modern', elicitation: true }
 
 /**
  * Connect a REAL MCP client to a server built by the SHIPPED factory over the SHIPPED composition.
- * The caller's scopes come from `resolveStdioScopes(true)`, the config opt-in, so both change
- * tools are listed.
+ * 432-21 (D-12): the caller is the one tokenless MCP caller; every change tool is listed for it.
  */
 async function connect(era: Era = LEGACY): Promise<Session> {
   const frames: Frame[] = []
@@ -177,7 +175,7 @@ async function connect(era: Era = LEGACY): Promise<Session> {
   const handler = createMcpHandler(() =>
     buildAgentQaMcpServer({
       registry: host!.registry,
-      caller: mcpFunctionCaller(resolveStdioScopes(true)),
+      caller: MCP_FUNCTION_CALLER,
       maskText: (text: string) => masking!.mask(text),
     }),
   )
@@ -258,7 +256,7 @@ beforeEach(() => {
   git('commit', '--quiet', '-m', 'seed')
 
   host = composeCliLocalAgent({ agentQaRoot, configPath })
-  masking = composeMcpMasking({ tokens: [], env: {} })
+  masking = composeMcpMasking({ env: {} })
 })
 
 afterEach(async () => {

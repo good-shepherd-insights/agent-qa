@@ -87,9 +87,10 @@ describe('432-09 applied output key sets', () => {
 // safety ports, and `TrustScopeSchema` (`grant-ops.ts`) for the run-service DTO 432-22 deletes.
 // 2026-10-01, 432-19 (D-03/D-15): the safety gate, its standing-approval reader and its scope check
 // are deleted, so `StandingApprovalGrant` and `standing-approval.ts` leave with them and the census
-// below now asserts their absence. TrustScopeSchema stays until 432-22. `STANDING_APPROVAL_SCOPE` is the scope the MCP bearer credential still carries
-// (`cli/src/composition/mcp-token-resolution.ts`), so it moves beside `TrustScope` and stays until the
-// token owner removes that credential. No later absence is asserted here early.
+// below now asserts their absence. TrustScopeSchema stays until 432-22. `STANDING_APPROVAL_SCOPE` was the scope the MCP bearer credential carried
+// (`cli/src/composition/mcp-token-resolution.ts`), so it moved beside `TrustScope` and stayed until the
+// token owner removed that credential. 2026-10-01, 432-21 (D-12): the resolver and the bearer credential
+// are deleted, so the constant joins the absence set below. No later absence is asserted here early.
 const SRC = join(dirname(fileURLToPath(import.meta.url)), '..')
 
 const RETIRED_GRANT_RUNTIME_EXPORTS = [
@@ -110,6 +111,8 @@ const RETIRED_GRANT_RUNTIME_EXPORTS = [
   'GrantsRevokeOutputSchema',
   'StandingGrantSchema',
   'pinDenies',
+  // 432-21: the scope the MCP bearer credential carried, deleted with that credential.
+  'STANDING_APPROVAL_SCOPE',
 ] as const
 
 const RETIRED_GRANT_MODULES = [
@@ -157,8 +160,6 @@ describe('C432-NO-GRANT-CONTRACTS: the grant ledger, grant op, protected-class a
     // named and found.
     expect(exported('TrustScopeSchema'), 'TrustScopeSchema stays for config/run-service.ts until 432-22')
       .toBeDefined()
-    expect(exported('STANDING_APPROVAL_SCOPE'), 'the MCP bearer credential scope stays with its consumer')
-      .toEqual({ project: 'local-workspace' })
     expect(exported('TRUST_SCOPE_KEYS')).toEqual(['project', 'org'])
   })
 

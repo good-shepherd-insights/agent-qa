@@ -1,6 +1,5 @@
 import {
   FunctionScopeSchema,
-  STANDING_APPROVAL_SCOPE,
   asRunId,
   RunDetailProjectionSchema,
 } from '@vostride/agent-qa-schema'
@@ -28,7 +27,9 @@ const CALLER: FunctionCaller = {
   safeMode: false,
   origin: 'agent',
 }
-const TRUSTED: FunctionCaller = { ...CALLER, credential: { scope: STANDING_APPROVAL_SCOPE } }
+// 2026-10-01 (432-21, D-12): `STANDING_APPROVAL_SCOPE` is deleted with the MCP bearer credential, so
+// the legacy credential a pre-432 bearer carried is spelled as its bytes. Nothing reads it.
+const TRUSTED: FunctionCaller = { ...CALLER, credential: { scope: { project: 'local-workspace' } } }
 
 function receipt(overrides: Partial<MarkReceipt> = {}): MarkReceipt {
   return {

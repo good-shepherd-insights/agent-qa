@@ -48,9 +48,9 @@ import type { RunServiceReadiness } from '@vostride/agent-qa-schema'
 // M5's dashboard rebuild decides whether it wants a mount back, via `/hono` and its own decision.
 //
 // 2026-08-24 — THE HONO RESERVATION IS RETIRED (Phase 402 D-03). The question this file reserved
-// ("would a framework earn its place here?") is answered: no. The authed run service mounted below
-// is hand-rolled `node:http`, like the daemon server and the MCP token idiom before it — zero new
-// dependencies at an auth boundary, one routing idiom per process. A framework added later would
+// ("would a framework earn its place here?") is answered: no. The run service mounted below is
+// hand-rolled `node:http`, like the daemon server and the MCP listener — zero new dependencies at a
+// network boundary, one routing idiom per process. A framework added later would
 // have to argue against that, not inherit an open reservation.
 
 const MIME_TYPES: Record<string, string> = {
@@ -79,17 +79,16 @@ function isAnalyticsPrivacyEnabled(config: unknown): boolean {
 }
 
 /**
- * The refusal that keeps the UNAUTHENTICATED dashboard surface off the network (402-05, D-07).
+ * The refusal that keeps the dashboard surface off the network (402-05, D-07; 432 D-13).
  *
- * NAMES THE HOST AND THE TWO CONFIG KEYS, AND NOTHING ELSE — never a token, never a count, on
- * `McpTokenEnvVarUnsetError`'s own rule and for its own reason (395-16 measured Node's default
- * uncaught printer walking a `cause` chain with `util.inspect`, which is how a config file's
- * contents once reached a person's terminal). There is deliberately no `cause` attached.
+ * NAMES THE HOST AND THE CONFIG KEY, AND NOTHING ELSE (395-16 measured Node's default uncaught
+ * printer walking a `cause` chain with `util.inspect`, which is how a config file's contents once
+ * reached a person's terminal). There is deliberately no `cause` attached.
  *
- * WHY A REFUSAL AND NOT A WARNING. Everything this server mounts outside the run-service module is
- * unauthenticated: the run trigger, the queue enqueue, the artifact serving, the config reads. A
- * constant-time compare on `POST /run` is theatre while the same process answers an anonymous run
- * trigger on every interface.
+ * WHY A REFUSAL AND NOT A WARNING. Nothing this server mounts asks for a credential: the run
+ * trigger, the queue enqueue, the run service, the artifact serving, the config reads. 2026-10-01
+ * (432-21, D-12/D-13): that is now true of the run service too — its bearer tokens are deleted — so
+ * the loopback bind is the whole of what keeps another machine off every one of them.
  *
  * AND WHY THE REFUSAL IS UNCONDITIONAL. This guard originally exempted a process that had declared
  * a run-service credential, on the premise that "the operator who genuinely wants remote access
@@ -99,17 +98,17 @@ function isAnalyticsPrivacyEnabled(config: unknown): boolean {
  * and declaring one was precisely what unlocked the bind. With `host: 0.0.0.0` and one token,
  * `POST /api/runs/trigger` carrying no Authorization header answered `202` and started a run, and
  * `GET /api/runs` answered `200` with the run list. The token count was never evidence about the
- * surface this guard protects, so it is no longer consulted. Publishing this server to a network
- * needs the non-service API to be authenticated first; until it is, the honest answer is no.
+ * surface this guard protects, so it is no longer consulted. Since 432-21 there is no credential to
+ * consult at all. Publishing this server to a network needs a front-door login first (432 D-13's
+ * forward note); until there is one, the honest answer is no.
  */
 export class DashboardRemoteBindRefusedError extends Error {
   constructor(readonly host: string) {
     super(
-      `The dashboard was asked to bind ${host}, which is not a loopback interface. Everything this `
-      + 'server serves outside the authed run service — the run trigger, the queue enqueue, the '
-      + 'artifact serving, the config reads — is unauthenticated, so a non-loopback bind would '
-      + 'publish an anonymous run trigger to the network. A run-service credential does not change '
-      + 'that: it authenticates the three run-service paths and nothing else. Leave '
+      `The dashboard was asked to bind ${host}, which is not a loopback interface. Nothing this `
+      + 'server serves — the run trigger, the queue enqueue, the run service, the artifact '
+      + 'serving, the config reads — asks for a credential, so a non-loopback bind would publish '
+      + 'an anonymous run trigger to the network. Leave '
       + `services.dashboard.host unset (it defaults to ${DEFAULT_DASHBOARD_HOST}), and reach a `
       + 'remote dashboard through an authenticating proxy or a tunnel you control.',
     )
@@ -129,8 +128,7 @@ interface StartServerOptions {
    * DEFAULTS TO LOOPBACK, and a non-loopback value is REFUSED before anything listens — with no
    * exemption. This is BREAKING for anyone who relied on the previous `server.listen(port)`, which
    * bound every interface, and there is no migration flag: the v2 ethos ships no back-compat shim
-   * for a hole. Remote access goes through an authenticating proxy until the non-service API is
-   * itself authed.
+   * for a hole. Remote access goes through an authenticating proxy (432 D-13's forward note).
    */
   host?: string
   uiDir?: string
@@ -176,31 +174,29 @@ interface StartServerOptions {
    */
   executionBackend?: ExecutionBackend
   /**
-   * The authed run service's ports (402-01, D-02/D-06 — INVK-03).
+   * The run service's ports (402-01, D-02/D-06 — INVK-03).
    *
    * INJECTED, ON `agentHost`'s AND `executionBackend`'s OWN IDIOM AND FOR THEIR OWN REASON. The
-   * implementations name `runs.start`, `invokeFunction`, the composed local host and this
-   * project's credential resolution — all of it vocabulary this package may not import
-   * (validate:arch). So `agent-qa dashboard` composes them in the process that runs this server
-   * and hands them over, which is what makes the run service a mountable module rather than a
-   * fourth process.
+   * implementations name `runs.start`, `invokeFunction` and the composed local host — all of it
+   * vocabulary this package may not import (validate:arch). So `agent-qa dashboard` composes them
+   * in the process that runs this server and hands them over, which is what makes the run service
+   * a mountable module rather than a fourth process.
    *
-   * ABSENT MEANS THE SERVICE IS NOT MOUNTED and this server behaves exactly as it does today —
-   * `/run` and its neighbours reach whatever the static/SPA handling below does with an unknown
-   * path. That is the shipped posture for a project that has declared no run-service credential,
-   * and it is deliberately NOT "mounted but open": a door with no credential is a door nobody can
-   * open, never a door left ajar.
+   * ABSENT MEANS THE SERVICE IS NOT MOUNTED, and `/run` and its neighbours reach whatever the
+   * static/SPA handling below does with an unknown path. 2026-10-01 (432-21, D-12): `agent-qa
+   * dashboard` supplies it unconditionally now. It used to mount only when a run-service credential
+   * was declared, and those credentials are deleted; the door is guarded by the same-site check
+   * and the loopback bind like every other door here. Absent is a bare in-process mount's posture.
    */
   runService?: RunServicePorts
   /**
    * The run service's readiness predicate, served WITHOUT a token on the local dashboard API
    * (402-05, D-15 — `GET /api/run-readiness`).
    *
-   * SEPARATE FROM `runService` ABOVE AND NOT DERIVED FROM IT, because the two absences are
-   * different facts. `runService` is absent when no credential is declared — and that project
-   * still has a browser that needs an honest `authConfigured: false` rather than a 404. So
-   * `agent-qa dashboard` supplies this on BOTH arms, and when the service IS mounted it supplies
-   * the very same function object it put on `runService.readiness`: one predicate, two doors.
+   * SEPARATE FROM `runService` ABOVE AND NOT DERIVED FROM IT, because a mount without the service
+   * still has a browser that needs an honest readiness answer rather than a 404. `agent-qa
+   * dashboard` supplies the very same function object it put on `runService.readiness`: one
+   * predicate, two doors. (Until 432-21 the service was absent whenever no credential was declared.)
    */
   runServiceReadiness?: () => RunServiceReadiness
   /**
@@ -208,10 +204,10 @@ interface StartServerOptions {
    *
    * SEPARATE FROM `runService` AND NOT DERIVED FROM IT, on `runServiceReadiness`'s exact argument
    * one field up. The derivation `runService?.attach` is what made the local run-stream door
-   * answer 503 about runs this very process was executing: `composeRunServicePorts` runs only when
-   * `runServiceTokens` are declared, so the DEFAULT zero-token dashboard composed no registry at
-   * all and the local door had nothing to attach to. `agent-qa dashboard` now supplies this on
-   * BOTH arms from a registry hoisted above them.
+   * answer 503 about runs this very process was executing: until 432-21 `composeRunServicePorts`
+   * ran only when `runServiceTokens` were declared, so the DEFAULT zero-token dashboard composed no
+   * registry at all and the local door had nothing to attach to. `agent-qa dashboard` supplies this
+   * from a registry hoisted above the door.
    *
    * The legacy derivation still applies when this is absent, so an in-process caller that only
    * passes `runService` keeps working byte-for-byte.
@@ -282,8 +278,9 @@ export async function startServer(opts: StartServerOptions): Promise<{
   // string in the config schema so this decision is reachable at all, and so a loopback SPELLING
   // other than the default (`localhost`, `::1`) stays configurable.
   //
-  // NO CREDENTIAL EXEMPTION — see `DashboardRemoteBindRefusedError`. The count of declared
-  // run-service tokens says nothing about whether `/api/runs/trigger` is authed, and it is not.
+  // NO EXEMPTION — see `DashboardRemoteBindRefusedError`. A run-service credential once exempted a
+  // non-loopback bind and never authenticated `/api/runs/trigger`; since 432-21 no credential
+  // exists to consult.
   if (!isLoopbackHost(host)) {
     throw new DashboardRemoteBindRefusedError(host)
   }
@@ -664,13 +661,14 @@ export async function startServer(opts: StartServerOptions): Promise<{
       }
       const path = url.pathname
 
-      // THE AUTHED RUN SERVICE, CONSULTED FIRST (402-01, D-02/D-06 — INVK-03).
+      // THE RUN SERVICE, CONSULTED FIRST (402-01, D-02/D-06 — INVK-03).
       //
       // ABOVE EVERYTHING, INCLUDING THE `OPTIONS` PREFLIGHT ARM AND THE SPA FALLBACK, and the
       // order is the guard. The preflight arm below writes a wildcard `Access-Control-Allow-Origin`
-      // and the SPA fallback answers 200 with an HTML page for any unknown path; either reaching an
-      // authed surface would be a grant nobody decided. `ownsRunServicePath` is METHOD-BLIND for
-      // exactly that reason — every request to a service path is this door's to refuse.
+      // and the SPA fallback answers 200 with an HTML page for any unknown path; either reaching
+      // this surface would be a grant nobody decided. `ownsRunServicePath` is METHOD-BLIND for
+      // exactly that reason — every request to a service path is this door's to refuse, and its
+      // same-site guard runs before its route table (432-21, D-13).
       if (runServiceRouter !== undefined && ownsRunServicePath(path)) {
         runServiceRouter(req, res)
         return
@@ -932,10 +930,9 @@ export async function startServer(opts: StartServerOptions): Promise<{
       server.off('error', onError)
       // A LOOPBACK BIND PRINTS THE LINE IT ALWAYS PRINTED, BYTE FOR BYTE. That is not cosmetic
       // conservatism: this line is the readiness signal three shipped conformance harnesses parse
-      // a port out of, and the phase's own posture is that a project which declared no credential
-      // gets today's dashboard unchanged. A NON-loopback bind is the new configuration, and it
-      // prints the interface it actually got — an operator who declared a credential and bound
-      // 0.0.0.0 should not read back a `localhost` that is not where their server is.
+      // a port out of. The non-loopback arm is unreachable since the bind guard above lost its
+      // credential exemption (402 verification); it is kept so the line never names a `localhost`
+      // that is not where the server is.
       console.log(
         isLoopbackHost(host)
           ? `Dashboard running at http://localhost:${port}`

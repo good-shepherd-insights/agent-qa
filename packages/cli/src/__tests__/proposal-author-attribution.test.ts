@@ -33,8 +33,8 @@ import type { FunctionCaller, FunctionScope } from '@vostride/agent-qa-schema'
 import { FunctionScopeSchema, RunsMarkOutcomeSchema } from '@vostride/agent-qa-schema'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { composeDashboardDoor, RUN_SERVICE_GRANTED_SCOPES } from '../commands/dashboard.js'
-import { mcpFunctionCaller } from '../commands/mcp.js'
+import { composeDashboardDoor } from '../commands/dashboard.js'
+import { MCP_FUNCTION_CALLER } from '../commands/mcp.js'
 import * as cliHost from '../composition/local-agent-host.js'
 import { composeCliLocalAgent, CLI_FUNCTION_CALLER } from '../composition/local-agent-host.js'
 import { filePre432ConfigProposal } from '../composition/__tests__/pre-432-config-proposal.js'
@@ -172,7 +172,8 @@ const DOORS: readonly Door[] = [
   },
   {
     name: 'mcp',
-    caller: mcpFunctionCaller(ALL_SCOPES),
+    // 432-21 (D-12): the one tokenless MCP caller, carrying the legacy full scope set nothing reads.
+    caller: { ...MCP_FUNCTION_CALLER, grantedScopes: ALL_SCOPES },
     compose: (workspace) => composeCliLocalAgent({
       agentQaRoot: workspace.agentQaRoot,
       configPath: workspace.configPath,
@@ -180,7 +181,8 @@ const DOORS: readonly Door[] = [
   },
   {
     name: 'co-hosted mcp',
-    caller: mcpFunctionCaller(ALL_SCOPES),
+    // 432-21 (D-12): the one tokenless MCP caller, carrying the legacy full scope set nothing reads.
+    caller: { ...MCP_FUNCTION_CALLER, grantedScopes: ALL_SCOPES },
     compose: (workspace) => composeDashboardDoor({
       agentQaRoot: workspace.agentQaRoot,
       configPath: workspace.configPath,
@@ -484,8 +486,10 @@ describe('no door supplies a minting surface (432-17, D-05)', () => {
       mcp: 'mcp.ts',
       fn: 'fn.ts',
     }
-    const CANNOT_MINT: Readonly<Record<string, readonly FunctionScope[]>> = {
-      'run-service': RUN_SERVICE_GRANTED_SCOPES,
+    // 432-21 (D-12): the run-service door's exemption was its least-privilege scope list, deleted
+    // with its tokens. It is exempt because it has no change route at all — it starts and reads runs.
+    const CANNOT_MINT: Readonly<Record<string, string>> = {
+      'run-service': 'no change route: the door starts runs and reads them',
     }
     expect(SURFACE_ROSTER.length).toBeGreaterThan(0)
     expect(

@@ -384,7 +384,7 @@ beforeAll(async () => {
   expect(buildFreshness(DASHBOARD_ANCHORED_BUILDS), REBUILD_INSTRUCTION)
     .toEqual({ missing: [], stale: [] })
 
-  const project = runServiceFixtureProject('live-view-cross-site', false)
+  const project = runServiceFixtureProject('live-view-cross-site')
   const port = await reserveEphemeralPort()
   const dashboard = await spawnDashboard(project.root, project.configPath, port)
   expect(
@@ -1040,7 +1040,7 @@ function editorMintPath(sessionId: string): string {
 
 describe('the live-editor surface refuses a cross-site caller (428 D-08, WINDOWS #275)', () => {
   beforeAll(async () => {
-    const project = runServiceFixtureProject('live-editor-cross-site', false)
+    const project = runServiceFixtureProject('live-editor-cross-site')
     const config = JSON.parse(readFileSync(project.configPath, 'utf8')) as Record<string, unknown>
     const registry = (config.registry ?? {}) as Record<string, unknown>
     config.registry = {

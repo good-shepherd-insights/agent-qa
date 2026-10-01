@@ -64,55 +64,17 @@ export const daemonIdentitySchema = z
 export type DaemonIdentity = z.infer<typeof daemonIdentitySchema>
 
 /**
- * The socket authenticates the local operator through its owner-only directory. Caller grants are
- * therefore minted here and are never accepted from the wire; Phase 396 owns any remote trust
- * model that later replaces this local-only decision.
+ * The socket authenticates the local operator through its owner-only directory, so the caller is
+ * minted here and never accepted from the wire.
+ *
+ * 2026-10-01 (432-20/432-21, D-12): no scope set and no safe-mode flag. The six-scope grant this
+ * record held — and the reasoning that explained each scope by the execution gate's fail-closed
+ * reading of `local-headless`, the grant ledger and the inbox accept — went with those
+ * mechanisms: `invokeFunction` checks no scope, the gate and the ledger are deleted, and every
+ * caller can call every operation. What stays is attribution.
  */
 export const DAEMON_FUNCTION_CALLER: FunctionCaller = Object.freeze({
   surface: 'daemon',
-  // `knowledge-write` (387-08 D-18): a delegated apply crosses THIS caller record, and
-  // `invokeFunction` gates scopes before it consults binding — so without the grant the
-  // leaseholder would refuse the very work only it can do, and the refusal would read as a
-  // permission problem rather than as the routing being wrong.
-  // 391 D-06: `approval-write` is held here too, and holding it is not a contradiction of the
-  // origin below — it is the point of separating them. The daemon runs background jobs that
-  // legitimately touch approval state (listing grants, applying an already-accepted proposal);
-  // what it cannot do is the subset of that work an op declares human-only. Autonomy here rides
-  // GRANTS, which a person committed to the ledger, not on origin.
-  // 394-13 D / WINDOWS 101: `test-write` joins on EXACTLY the `knowledge-write` argument above and
-  // on no other. The scope is the POWER, and the v48 gate is what decides whether the power may be
-  // exercised here: `authoring.draft.write` is `declaredTier: 'mutating-shared'`, and this daemon
-  // composes `local-headless`, which `requiresFailClosed` refuses — so a via-daemon invocation is
-  // denied whether or not this list holds the scope. What the grant changes is WHICH refusal
-  // arrives. Without it the leaseholder answered `FunctionScopeError`, a permission problem the
-  // caller could do nothing about and which said nothing about authoring; with it the caller reads
-  // the gate's own line naming the tier and the ways out (`--trust-session`, a trust credential, a
-  // standing approval). That refusal is PINNED, not assumed —
-  // `__tests__/caller-scopes.test.ts` drives this caller at `local-headless` and asserts the error
-  // is the gate's, by name, and is NOT the scope refusal's class. Withholding the scope was also
-  // the reason 394-VERIFICATION found BOTH CLI routes blocked rather than one.
-  //
-  // 394-21 / CR-03: `test-write` has a SECOND holder, and that reach is decided here rather than
-  // inherited from the sentence above. `authoring.draft.edit` is `declaredTier: 'mutating-local'`
-  // and declares no `requiresHumanOrigin`, so unlike the write op the gate ALLOWS it in every
-  // execution context this daemon composes — the grant makes it agent-origin reachable, and that
-  // is INTENDED. The edit op takes one model call, starts zero runs, and writes only a
-  // proposal-with-diff to the gitignored shelf; per D-05 everything proposes, and nothing reaches
-  // the repository without a human accept in the inbox (391: an accept is a decision, never a
-  // grant). The consent point is therefore the accept, not the origin — refusing here would deny
-  // every unattended edit while protecting a decision the inbox already protects. That ALLOWANCE
-  // is PINNED the same way the refusal above is: `__tests__/caller-scopes.test.ts` drives
-  // `authoring.draft.edit` on this caller at `local-headless` and asserts the invocation passes
-  // both control points, so a later tier change or origin gate reds a cell by name.
-  grantedScopes: [
-    'read',
-    'run',
-    'config-write',
-    'knowledge-write',
-    'approval-write',
-    'test-write',
-  ] as const,
-  safeMode: false,
   // Nobody typed anything. The daemon is the standing counterexample to reading `surface` as a
   // proxy for a person: it shares `cli`'s process shape and none of its consent.
   origin: 'agent',

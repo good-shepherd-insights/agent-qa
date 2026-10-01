@@ -10,8 +10,14 @@
 // whether a token served inside the App document passes THAT composition's own `validate`. That is
 // the invariant stated as a measurement rather than as an argument.
 //
+// 2026-10-01 (432-21, D-12/D-13): TOKENLESS. The co-hosted endpoint asks no caller for a bearer,
+// the mount decision no longer counts declared tokens, and `coHostedMcpCredentialsFor` and the token
+// resolver are deleted. The cells that measured those are RE-SPELLED in place (each says so); the
+// Host and Origin guards, the D-03 served-token claim, the counted-zero CORS law, the bind-collision
+// survival and the wiring assertions are unchanged.
+//
 // WHAT IS PRODUCTION HERE AND WHAT IS SCRIPTED. Production: `createMcpHttpRequestListener` (the
-// Host -> Origin -> bearer guard order, verbatim), `composeMcpMasking`, `resolveMcpTokens`,
+// Host -> Origin guard order, verbatim), `composeMcpMasking`,
 // `composeLiveView` (the signer, the mint port and the validator, joined once),
 // `createRunServiceSessionRegistry`, `createFunctionRegistry`, `invokeFunction`, `runs.liveurl`,
 // `runs.events`, `runs.digest`, `buildAgentQaMcpServer` with its App registration and its carrier
@@ -30,9 +36,9 @@
 // their red observed on 2026-08-31, then the subject was restored:
 //   D1  the Host validator dropped from the mounted listener        -> MEASURED: forcing
 //       `host.ok` reds `refuses a non-localhost Host with 403 forbidden_host` (1 of 13)
-//   D2  an unmatched bearer degraded to the default grant           -> MEASURED: skipping the
-//       `verdict.kind === 'refused'` arm reds BOTH the invalid_token cell and the refusal-side
-//       CORS cell (2 of 13) — the second is the honest cost of a shared refusal path
+//   D2  an unmatched bearer degraded to the default grant           -> RETIRED 2026-10-01 (432-21,
+//       D-12): there is no bearer rung to degrade. Its two cells are re-spelled to the tokenless
+//       admission and an Origin refusal
 //   D3  a token minted here validated by ANOTHER composition        -> MEASURED, and it is the
 //       file's whole subject: validating the served token against a second `composeLiveView`'s
 //       validator answers `refused` rather than `ok`. That is 403 D-01's per-process key stated
@@ -95,7 +101,6 @@ import {
 import { asRunId } from '@vostride/agent-qa-schema'
 import type {
   CompletedRunHandoff,
-  McpTokenEntry,
   RunEventEnvelope,
   RunSession,
 } from '@vostride/agent-qa-schema'
@@ -104,8 +109,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { composeLiveView } from '../composition/live-view-composition.js'
 import type { ComposedLiveView } from '../composition/live-view-composition.js'
 import { createRunServiceSessionRegistry } from '../composition/run-service-session-registry.js'
-import { McpTokenEnvVarUnsetError, resolveMcpTokens } from '../composition/mcp-token-resolution.js'
-import { coHostedMcpCredentialsFor, mcpMountPlanFor, mountCoHostedMcp } from '../commands/dashboard.js'
+import { mcpMountPlanFor, mountCoHostedMcp } from '../commands/dashboard.js'
 import {
   composeMcpMasking,
   createMcpHttpRequestListener,
@@ -186,8 +190,6 @@ interface Harness {
 let harness: Harness
 
 beforeAll(async () => {
-  process.env[TOKEN_ENV_VAR] = TOKEN_VALUE
-
   // The dashboard's composition order, verbatim: the session registry first (hoisted above both
   // arms), then the live view over it with the ORIGIN AS A BOX — the port does not exist yet.
   let boundOrigin: string | undefined
@@ -227,17 +229,13 @@ beforeAll(async () => {
     auditSink,
   })
 
-  const tokens = resolveMcpTokens(
-    [{ name: 'cohost', tokenEnvVar: TOKEN_ENV_VAR, scopes: ['read'] }],
-    process.env,
-  )
-  const masking = composeMcpMasking({ tokens, env: process.env })
+  // 432-21 (D-12): no token is resolved; the masker is the environment's.
+  const masking = composeMcpMasking({ env: process.env })
 
   const server: NodeHttpServer = createServer(
     createMcpHttpRequestListener({
       registry,
       maskText: (text: string) => masking.mask(text),
-      tokens,
       // The dashboard's own supplier: no configured base in this fixture, so the bound origin is
       // what fills the absence — read PER RESULT, because the box below is assigned after listen.
       liveLink: { dashboardBaseUrl: () => boundOrigin },
@@ -256,7 +254,6 @@ beforeAll(async () => {
       await new Promise<void>((closed) => server.close(() => closed()))
       sessions.dispose()
       masking.dispose()
-      delete process.env[TOKEN_ENV_VAR]
     },
   }
 }, 60_000)
@@ -274,7 +271,8 @@ interface Frame {
 const frames: Frame[] = []
 
 /**
- * Connect the SHIPPED client with a bearer, on the modern era, declaring the Apps extension.
+ * Connect the SHIPPED client, on the modern era, declaring the Apps extension. 432-21: the bearer it
+ * may still send is a legacy header the listener ignores; the cells pass it to show exactly that.
  *
  * Every response's header NAMES are recorded on the way past, which is what makes the CORS cell a
  * statement about the wire rather than about a source grep.
@@ -379,8 +377,8 @@ describe('the mounted endpoint keeps the standalone face\'s guard order (Pitfall
       Host: 'attacker.example.com',
       'Content-Type': 'application/json',
       Accept: 'application/json, text/event-stream',
-      // A VALID credential, deliberately: the Host wall answers first, so the right bearer must
-      // not rescue a rebound name. That ordering IS the DNS-rebinding claim.
+      // A legacy bearer, deliberately: the Host wall answers first, so no header a caller adds can
+      // rescue a rebound name. That ordering IS the DNS-rebinding claim.
       Authorization: `Bearer ${TOKEN_VALUE}`,
     })
     expect(answer.status).toBe(403)
@@ -399,17 +397,19 @@ describe('the mounted endpoint keeps the standalone face\'s guard order (Pitfall
     expect(answer.text).toContain('forbidden_origin')
   })
 
-  it('refuses an unmatched bearer with 401 invalid_token, never degraded to the default grant', async () => {
+  // RE-SPELLED 2026-10-01 (432-21, D-12) from 'refuses an unmatched bearer with 401 invalid_token,
+  // never degraded to the default grant'. There is no bearer wall and no default grant: an
+  // unmatched bearer passes the two guards like no bearer, and is echoed nowhere.
+  it('admits an unmatched legacy bearer past the guards like no bearer, echoing nothing', async () => {
     const answer = await rawRequest({
       Host: `127.0.0.1:${String(harness.port)}`,
       'Content-Type': 'application/json',
       Accept: 'application/json, text/event-stream',
       Authorization: 'Bearer not-the-declared-credential',
     })
-    expect(answer.status).toBe(401)
-    expect(answer.text).toContain('invalid_token')
-    // The 401 tells a prober nothing about which of the two shapes it produced, and echoes
-    // nothing it was sent.
+    expect(answer.status).not.toBe(401)
+    expect(answer.status).not.toBe(403)
+    expect(answer.text).not.toContain('invalid_token')
     expect(answer.text).not.toContain('not-the-declared-credential')
   })
 })
@@ -541,14 +541,16 @@ describe('the co-hosted endpoint emits no CORS header, ever (the counted-zero la
     expect(offending).toEqual([])
   })
 
+  // 432-21 (D-12): the refusal driven here is the Origin wall's; the bearer refusal it used to drive
+  // is deleted.
   it('answered no REFUSAL with one either', async () => {
     const answer = await rawRequest({
       Host: `127.0.0.1:${String(harness.port)}`,
+      Origin: 'https://evil.example.com',
       'Content-Type': 'application/json',
       Accept: 'application/json, text/event-stream',
-      Authorization: 'Bearer still-not-the-declared-credential',
     })
-    expect(answer.status).toBe(401)
+    expect(answer.status).toBe(403)
     expect(answer.text.toLowerCase()).not.toContain('access-control')
   })
 })
@@ -587,7 +589,10 @@ const DASHBOARD_SOURCE = readFileSync(
 /** The inner `agent-qa` repository root — `packages/cli/src/__tests__` is four levels down. */
 const REPO_ROOT = resolvePath(dirname(fileURLToPath(import.meta.url)), '../../../..')
 
-/** One declared caller credential, in the refs-only shape `McpTokenEntrySchema` accepts. */
+/**
+ * One legacy caller-credential declaration, in the refs-only shape `McpTokenEntrySchema` accepts.
+ * 432-21 (D-12): still parsed until 432-22 deletes the key, and read by nothing.
+ */
 const DECLARED_TOKEN = { name: 'cohost', tokenEnvVar: TOKEN_ENV_VAR, scopes: ['read'] } as const
 
 interface MountRow {
@@ -600,11 +605,21 @@ interface MountRow {
 // Every row is a CONFIG RECORD in, a decision out. This is what makes the block able to detect the
 // two defects the old cells could not: `enabled: false` ignored (WR-01), and the mount keyed off
 // `services.dashboard.mcp` rather than `services.mcp` (the 408-03 defect's exact shape).
+//
+// 2026-10-01 (432-21, D-12): the second condition — "at least one token declared" — is replaced by
+// "a services.mcp block is declared". Rows that turned on the token count are RE-SPELLED and say so.
 const MOUNT_ROWS: readonly MountRow[] = [
   {
     claim: 'mounts when services.mcp declares a token and says nothing about enabled — an ABSENT'
       + ' enabled means ENABLED',
     config: { services: { mcp: { tokens: [DECLARED_TOKEN] } } },
+    mount: true,
+    port: MCP_HTTP_DEFAULT_PORT,
+  },
+  {
+    claim: 'mounts when services.mcp is declared with no token at all (432-21: the block is the'
+      + ' request; loopback and the Host/Origin guards bound the endpoint)',
+    config: { services: { mcp: {} } },
     mount: true,
     port: MCP_HTTP_DEFAULT_PORT,
   },
@@ -615,10 +630,12 @@ const MOUNT_ROWS: readonly MountRow[] = [
     mount: false,
   },
   {
-    claim: 'does NOT mount when enabled is true but no token is declared — an endpoint with nothing'
-      + ' to match a bearer against is the D-07 default grant on loopback',
+    // RE-SPELLED 2026-10-01 (432-21, D-12) from 'does NOT mount when enabled is true but no token is
+    // declared — an endpoint with nothing to match a bearer against is the D-07 default grant on
+    // loopback'. There is no bearer to match and no default grant; `enabled: true` mounts.
+    claim: 'mounts when enabled is true and no token is declared — there is no bearer to match',
     config: { services: { mcp: { enabled: true, tokens: [] } } },
-    mount: false,
+    mount: true,
   },
   {
     claim: 'does NOT mount for a token declared under services.dashboard.mcp — the shape of the'
@@ -665,16 +682,20 @@ describe('the co-host mount decision is a FUNCTION of the parsed config (WR-01, 
     })
   }
 
+  // RE-SPELLED 2026-10-01 (432-21, D-12) from 'counts the DECLARED token entries, never the resolved
+  // ones'. The plan counts no token entries at all: one declaration, two or an unset one decide the
+  // same thing, and the plan carries no count.
   it('counts the DECLARED token entries, never the resolved ones — resolution reads process.env and'
     + ' is a different fact that stays at the mount site', () => {
-    expect(mcpMountPlanFor({
+    const two = mcpMountPlanFor({
       services: { mcp: { tokens: [DECLARED_TOKEN, { ...DECLARED_TOKEN, name: 'second' }] } },
-    }).tokenCount).toBe(2)
-    // A declared entry whose environment variable is UNSET still counts here: the plan is about
-    // what the operator wrote, and `resolveMcpTokens` is about what the process can honour.
-    expect(mcpMountPlanFor({
+    })
+    const unset = mcpMountPlanFor({
       services: { mcp: { tokens: [{ name: 'ghost', tokenEnvVar: 'AGENT_QA_408_09_UNSET', scopes: ['read'] }] } },
-    })).toEqual({ mount: true, port: MCP_HTTP_DEFAULT_PORT, tokenCount: 1 })
+    })
+    expect(two).toEqual({ mount: true, port: MCP_HTTP_DEFAULT_PORT })
+    expect(unset).toEqual(two)
+    expect('tokenCount' in two).toBe(false)
   })
 })
 
@@ -804,107 +825,53 @@ describe('the shipped dashboard composition wires and closes the endpoint', () =
 // exists to remove: it would turn green on a developer's machine for reasons the assertion never
 // stated.
 
-/**
- * One DECLARED credential whose variable is set nowhere — the input the shipped ordering died on.
- *
- * Typed as `McpTokenEntry` so the same value can be driven straight through `resolveMcpTokens` in
- * cell 4 as well as through a config record here.
- */
-const UNSET_ENTRY: McpTokenEntry = {
+/** One legacy declaration whose variable is set nowhere — the input the 408-17 ordering died on. */
+const UNSET_ENTRY = {
   name: 'ghost',
   tokenEnvVar: 'AGENT_QA_408_17_UNSET_TOKEN',
   scopes: ['read'],
-}
+} as const
 
-/** The config an operator with one declared MCP credential and no `enabled` key has written. */
+/** The config an operator with one legacy MCP declaration and no `enabled` key has written. */
 const UNSET_ENTRY_CONFIG = { services: { mcp: { tokens: [UNSET_ENTRY] } } }
 
+// RE-SPELLED 2026-10-01 (432-21, D-12). The three cells below measured `coHostedMcpCredentialsFor`,
+// the decide-then-dereference path 408-17 (CR-01) built so an unset `tokenEnvVar` could not take a
+// serving dashboard down. The function and the dereference are deleted with the tokens; each cell
+// now pins what replaced its claim.
 describe('the co-host resolves credentials without betting the dashboard on them (CR-01)', () => {
   it('a declared-but-unset tokenEnvVar costs a warning, not the dashboard', () => {
-    const warnings: string[] = []
-    // THE CALL ITSELF IS THE FIRST ASSERTION. Before this fix it threw `McpTokenEnvVarUnsetError`
-    // out of `resolveMcpTokens`, that throw reached the dashboard command's outer catch at the
-    // bottom of the action, and the process ended at exit code 2 — with a fully started dashboard
-    // still bound and neither `close()` nor `sessions.dispose()` reached. The operator's whole
-    // primary surface, for a forgotten `export` on an OPTIONAL one.
-    const credentials = coHostedMcpCredentialsFor({
-      config: UNSET_ENTRY_CONFIG,
-      env: {},
-      warn: (line) => warnings.push(line),
-    })
-    expect(
-      () => coHostedMcpCredentialsFor({ config: UNSET_ENTRY_CONFIG, env: {} }),
-      'nothing escapes the co-host credential path',
-    ).not.toThrow()
-    expect(credentials.tokens, 'an unhonourable declaration resolves to nothing').toHaveLength(0)
-    expect(credentials.shouldMount, 'and nothing is mounted on it').toBe(false)
-    expect(credentials.warning ?? '', 'the warning names the endpoint').toContain('MCP endpoint')
-    expect(credentials.warning ?? '', 'and the variable the operator forgot')
-      .toContain('AGENT_QA_408_17_UNSET_TOKEN')
-    expect(warnings.join('\n'), 'and it really reached the operator')
-      .toContain('AGENT_QA_408_17_UNSET_TOKEN')
+    // It costs NOTHING now: the decision reads no token entry and no environment, so there is no
+    // refusal to warn about and nothing to escape. The source half: no dashboard code dereferences
+    // an MCP token any more.
+    expect(() => mcpMountPlanFor(UNSET_ENTRY_CONFIG)).not.toThrow()
+    expect(mcpMountPlanFor(UNSET_ENTRY_CONFIG)).toEqual({ mount: true, port: MCP_HTTP_DEFAULT_PORT })
+    expect(DASHBOARD_SOURCE).not.toContain('resolveMcpTokens(')
+    expect(DASHBOARD_SOURCE).not.toContain('coHostedMcpCredentialsFor(')
   })
 
   it('a refused resolution leaves nothing to mount — the endpoint is never served without'
-    + ' a credential', () => {
-    // THE TWO-SIDED PIN, and it is the reason this cell is separate from the one above. The repair
-    // for "an unset variable must not kill the dashboard" has an obvious wrong shape — carry on and
-    // mount with an empty token list — and that shape is STRICTLY WORSE than the defect: an MCP
-    // endpoint with nothing to match a bearer against answers the D-07 default grant to anything
-    // that can reach loopback. So the refused side asserts `false` and the honoured side asserts
-    // `true`, and neither can be satisfied by a function that always answers the same way.
-    const refused = coHostedMcpCredentialsFor({ config: UNSET_ENTRY_CONFIG, env: {} })
-    expect(refused.shouldMount, 'a refusal mounts nothing').toBe(false)
-
-    const honoured = coHostedMcpCredentialsFor({
-      config: UNSET_ENTRY_CONFIG,
-      env: { AGENT_QA_408_17_UNSET_TOKEN: 'not-a-real-credential-408-17' },
+    + ' a credential', async () => {
+    // The endpoint IS served without a credential now (D-12), and what bounds it is the loopback
+    // bind and the Host/Origin guards (D-13): a tokenless client lists the catalogue, and a page on
+    // another origin is refused.
+    const client = await connectAs(undefined)
+    expect((await client.listTools()).tools.length).toBeGreaterThan(0)
+    await client.close()
+    const refused = await rawRequest({
+      Host: `127.0.0.1:${String(harness.port)}`,
+      Origin: 'https://evil.example.com',
+      'Content-Type': 'application/json',
+      Accept: 'application/json, text/event-stream',
     })
-    expect(honoured.shouldMount, 'and a credential that resolves still mounts').toBe(true)
-    expect(honoured.tokens, 'with the declaration honoured').toHaveLength(1)
-    expect(honoured.warning, 'and nothing to warn about').toBeUndefined()
+    expect(refused.status).toBe(403)
   })
 
   it('services.mcp.enabled: false never reads the environment at all', () => {
-    // WHY A RECORDING ENVIRONMENT AND NOT "IT DID NOT THROW". After the repair above, the catch
-    // would swallow the refusal on EITHER setting — so an assertion that nothing escaped would pass
-    // whether or not the decision precedes the dereference, and 408-09 truth 1 would be discharged
-    // by a cell that cannot tell the two apart. The proxy makes the INERTNESS observable: it
-    // reports which variable names were actually dereferenced, so "the off switch is a control on
-    // this path" becomes a measurement instead of an absence.
-    const record = (reads: string[]): NodeJS.ProcessEnv => new Proxy({} as NodeJS.ProcessEnv, {
-      get: (_target, property) => {
-        reads.push(String(property))
-        return undefined
-      },
-    })
-
-    const offReads: string[] = []
-    const offWarnings: string[] = []
-    const off = coHostedMcpCredentialsFor({
-      config: { services: { mcp: { enabled: false, tokens: [UNSET_ENTRY] } } },
-      env: record(offReads),
-      warn: (line) => offWarnings.push(line),
-    })
-    expect(offReads, 'the off switch is read BEFORE the environment is')
-      .not.toContain('AGENT_QA_408_17_UNSET_TOKEN')
-    // A warning here would mean the dereference ran and was merely caught — inert, not skipped.
-    expect(offWarnings, 'and there is nothing to warn an operator about').toHaveLength(0)
-    expect(off.warning).toBeUndefined()
-    expect(off.tokens).toHaveLength(0)
-    expect(off.shouldMount).toBe(false)
-
-    // THE OTHER SIDE, and it is what stops a recorder that records nothing from satisfying the
-    // assertion above. Identical input, `enabled` absent — which MEANS ENABLED — and the same
-    // variable name now really is dereferenced.
-    const onReads: string[] = []
-    coHostedMcpCredentialsFor({
-      config: { services: { mcp: { tokens: [UNSET_ENTRY] } } },
-      env: record(onReads),
-      warn: () => {},
-    })
-    expect(onReads, 'an ABSENT enabled means ENABLED, and the environment is read')
-      .toContain('AGENT_QA_408_17_UNSET_TOKEN')
+    // The plan takes no environment at all, so the off switch is the WHOLE decision on this path.
+    expect(mcpMountPlanFor.length).toBe(1)
+    expect(mcpMountPlanFor({ services: { mcp: { enabled: false, tokens: [UNSET_ENTRY] } } }).mount).toBe(false)
+    expect(mcpMountPlanFor(UNSET_ENTRY_CONFIG).mount, 'an ABSENT enabled means ENABLED').toBe(true)
   })
 })
 
@@ -914,26 +881,14 @@ const MCP_COMMAND_SOURCE = readFileSync(
   'utf8',
 )
 
+// RE-SPELLED 2026-10-01 (432-21, D-12) from 'the standalone agent-qa mcp face still refuses hard on
+// the same entry'. Neither face resolves a token now, so neither refuses on an unset one; the
+// standalone face reads no token declaration and is not routed through any co-host wrapper.
 describe('one error class, two call sites, two correct answers (CR-01)', () => {
   it('the standalone agent-qa mcp face still refuses hard on the same entry', () => {
-    // THE BEHAVIOURAL HALF. The repair above belongs to the CO-HOST and to nothing else: at
-    // `agent-qa mcp` the refusal precedes any bind, nothing is serving, the operator asked for
-    // exactly one surface, and a hard failure naming the variable is the honest outcome that
-    // command's own docstring argues for. Weakening `resolveMcpTokens` to return an empty list
-    // would have turned a documented refusal into the quiet degradation it explicitly refuses —
-    // a server that starts while silently dropping the credential its operator just configured.
-    expect(() => resolveMcpTokens([UNSET_ENTRY], {})).toThrow(McpTokenEnvVarUnsetError)
-    expect(() => resolveMcpTokens([UNSET_ENTRY], {})).toThrow('AGENT_QA_408_17_UNSET_TOKEN')
-
-    // THE SOURCE ASSERTION HALF, labelled as such in section 7's idiom. The construct read is a
-    // BARE CALL EXPRESSION in `commands/mcp.ts` — no `try`, no wrapper — and the second clause is
-    // the one that catches the tempting future diff: routing the standalone face through the
-    // co-host's forgiving wrapper would leave both suites green while silently converting that
-    // command's loud refusal into a start with no credentials. Driving it behaviourally would mean
-    // spawning the real command and a real transport to observe a call this file can read.
-    expect(MCP_COMMAND_SOURCE, 'the standalone face still calls the shared resolver bare')
-      .toContain('const tokens = resolveMcpTokens(config?.services?.mcp?.tokens ?? [], process.env)')
-    expect(MCP_COMMAND_SOURCE, 'and is not routed through the co-host wrapper')
+    expect(MCP_COMMAND_SOURCE).not.toContain('resolveMcpTokens(')
+    expect(MCP_COMMAND_SOURCE).not.toContain('services?.mcp?.tokens')
+    expect(MCP_COMMAND_SOURCE, 'and is not routed through a co-host wrapper')
       .not.toContain('coHostedMcpCredentialsFor')
   })
 })

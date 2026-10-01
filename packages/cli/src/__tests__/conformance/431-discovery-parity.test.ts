@@ -36,8 +36,6 @@ import { createKnowledgeCommand } from '../../commands/knowledge.js'
 import { composeMcpMasking, createMcpHttpRequestListener } from '../../commands/mcp.js'
 import { createRunsCommand } from '../../commands/runs.js'
 import { composeCliLocalAgent } from '../../composition/local-agent-host.js'
-import { resolveMcpTokens } from '../../composition/mcp-token-resolution.js'
-import { matchServiceBearer } from '../../composition/run-service-token-resolution.js'
 import {
   chatSurfaceAdapter,
   fnSurfaceAdapter,
@@ -66,7 +64,6 @@ const DISCOVERY_OPS = [
 ] as const
 
 const READER_TOKEN = 'zz-431-08-discovery-reader-7d02c4'
-const SERVICE_TOKEN = 'zz-431-08-discovery-service-19be3f'
 
 function toolFor(opId: string) {
   return AGENT_QA_TOOL_PROJECTIONS.find((projection) => projection.ops.includes(opId))
@@ -155,16 +152,15 @@ interface McpDoor {
   close(): Promise<void>
 }
 
-/** The shipped `agent-qa mcp` HTTP listener over the project's own composition, read-only bearer. */
+/**
+ * The shipped `agent-qa mcp` HTTP listener over the project's own composition. 2026-10-01 (432-21,
+ * D-12): tokenless; the client still sends the legacy reader bearer, which nothing reads.
+ */
 async function openMcpDoor(p: DiscoveryRunFixture): Promise<McpDoor> {
   const composed = composeCliLocalAgent({ configPath: p.configPath, agentQaRoot: p.agentQaRoot })
-  const tokens = resolveMcpTokens(
-    [{ name: 'reader', tokenEnvVar: 'AGENT_QA_431_08_READER', scopes: ['read'] }],
-    { AGENT_QA_431_08_READER: READER_TOKEN },
-  )
-  const masking = composeMcpMasking({ tokens, env: {} })
+  const masking = composeMcpMasking({ env: {} })
   const server = createServer(createMcpHttpRequestListener({
-    registry: composed.registry, tokens, maskText: (text) => masking.mask(text),
+    registry: composed.registry, maskText: (text) => masking.mask(text),
   }))
   const port = await listen(server)
   const client = new Client({ name: 'agent-qa-431-08', version: '0.0.0' })
@@ -206,23 +202,18 @@ interface RunServiceDoor {
   close(): Promise<void>
 }
 
-/** The authed run-service router over the project's own composition, as the dashboard mounts it. */
+/**
+ * The run-service router over the project's own composition, as the dashboard mounts it.
+ * 2026-10-01 (432-21, D-12): tokenless — no `verifyBearer` port and no credential on the request.
+ */
 async function openRunServiceDoor(p: DiscoveryRunFixture): Promise<RunServiceDoor> {
   const composed = composeCliLocalAgent({ configPath: p.configPath, agentQaRoot: p.agentQaRoot })
   const agentHost = composeDashboardAgentHost(composed)
-  const server = createServer(createRunServiceRoutes({
-    agentHost,
-    verifyBearer: (header: string | undefined) => matchServiceBearer(header, [{
-      name: 'discovery', tokenEnvVar: 'AGENT_QA_431_08_SERVICE', value: SERVICE_TOKEN,
-      trustScope: { project: 'discovery' },
-    }]),
-  } as unknown as RunServicePorts))
+  const server = createServer(createRunServiceRoutes({ agentHost } as unknown as RunServicePorts))
   const port = await listen(server)
   return {
     async get(path) {
-      const response = await fetch(`http://127.0.0.1:${String(port)}/run${path}`, {
-        headers: { Authorization: `Bearer ${SERVICE_TOKEN}` },
-      })
+      const response = await fetch(`http://127.0.0.1:${String(port)}/run${path}`)
       const bytes = Buffer.from(await response.arrayBuffer())
       let json: unknown
       try { json = JSON.parse(bytes.toString('utf8')) } catch { json = undefined }

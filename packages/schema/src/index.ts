@@ -1126,7 +1126,6 @@ export {
   RunServiceReadinessSchema,
   RunServiceReplayFloorBodySchema,
   RunServiceStartRequestSchema,
-  SERVICE_BEARER_REFUSAL_REASONS,
 } from './functions/index'
 export type {
   FunctionCaller,
@@ -1209,8 +1208,6 @@ export type {
   RunServiceReadiness,
   RunServiceReplayFloorBody,
   RunServiceStartRequest,
-  ServiceBearerRefusalReason,
-  ServiceBearerVerdict,
 } from './functions/index'
 
 // 393 (WTST-02, D-18/D-19): the keep-gate authoring vocabulary. `computeDraftDisposition` is
@@ -1436,12 +1433,12 @@ export type {
 // 342 safety contracts
 export { guardrailPolicySchema } from './safety/index'
 // 2026-10-01 (432-18, D-14/D-15/D-22): the standing-grant ledger's event vocabulary and guards are
-// deleted with the ledger. `STANDING_APPROVAL_SCOPE` moved to `trust-credential.ts` and is exported
-// beside the key set below; it is the scope the MCP bearer credential still carries.
+// deleted with the ledger. `STANDING_APPROVAL_SCOPE` moved to `trust-credential.ts` (432-18) and was
+// deleted with the MCP bearer credential that carried it (432-21, D-12).
 // 391-11 (REVIEW WR-05): the scope key set, spelled ONCE. A test that wants a key OUTSIDE the set
 // must compute it against this value rather than hard-code one that a later key addition could
 // legalise.
-export { STANDING_APPROVAL_SCOPE, TRUST_SCOPE_KEYS } from './safety/index'
+export { TRUST_SCOPE_KEYS } from './safety/index'
 // 401-15 (WR-01 / T-401-G5 / T-401-G6): the disclosure scrub, exported beside the field whose law
 // it enforces. Every composition that fills `RiskActionDescriptor.disclosure` applies it — the two
 // today are the run gate's preview and `invoke.ts`'s per-op `spec.disclose` result.

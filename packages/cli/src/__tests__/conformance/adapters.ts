@@ -96,14 +96,8 @@ import {
 import { composeLiveView } from '../../composition/live-view-composition.js'
 import { createRunServiceSessionRegistry } from '../../composition/run-service-session-registry.js'
 import { createFnCommand } from '../../commands/fn.js'
-import { mcpFunctionCaller } from '../../commands/mcp.js'
-import { credentialForBearer, matchBearer, resolveMcpTokens } from '../../composition/mcp-token-resolution.js'
-import {
-  RUN_SERVICE_FIXTURE_ENTRY_NAME,
-  RUN_SERVICE_FIXTURE_TOKEN,
-  RUN_SERVICE_FIXTURE_TOKEN_VAR,
-  runServiceFixtureProject,
-} from './spawned-chat.js'
+import { MCP_FUNCTION_CALLER } from '../../commands/mcp.js'
+import { runServiceFixtureProject } from './spawned-chat.js'
 
 /** Which enumeration produced a capability the declared data does not catalogue. */
 export interface SurfaceStray {
@@ -207,21 +201,18 @@ export const MCP_ENUMERATION_SCOPES: readonly FunctionScope[] = Object.freeze([
 /**
  * The caller the MCP enumeration lists under.
  *
- * NOT the host's default grant, and the difference is the whole reason this constant exists: the
- * default MCP grant is every scope EXCEPT `config-write`, and MCP visibility is a scope-union subset
- * check, so the two configuration tools are simply not registered on a default caller's instance.
- * An enumeration taken under that caller would report a smaller surface than the surface has and
- * every completeness leg would pass on it. The mint goes through the shipped `mcpFunctionCaller`
- * rather than a literal object, so the surface attribution and the agent origin stay one decision.
+ * 2026-10-01 (432-21, D-12): THE ONE TOKENLESS MCP CALLER, carrying the legacy scope set the
+ * enumeration was taken under. Until 432-20 MCP visibility was a scope-union subset check and the
+ * default grant withheld `config-write`, so the enumeration needed the full set; until 432-21 the
+ * mark tool also needed a declared bearer's credential. Neither field is read now. A `declaredBearer`
+ * caller still carries the legacy credential shape a pre-432 bearer minted, so the parity cells can
+ * show that it changes nothing.
  */
-// 419 D-20: the full census includes credential-required tools. Resolve a declared test bearer
-// through the production mint; a scope-only anonymous listing deliberately has a smaller surface.
 function declaredMcpCaller(grantedScopes: readonly FunctionScope[]): FunctionCaller {
-  const token = 'agent-qa-conformance-enumeration-bearer'
-  const tokens = resolveMcpTokens([
-    { name: 'conformance', tokenEnvVar: 'AGENT_QA_CONFORMANCE_BEARER', scopes: [...grantedScopes] },
-  ], { AGENT_QA_CONFORMANCE_BEARER: token })
-  return mcpFunctionCaller(grantedScopes, credentialForBearer(matchBearer(`Bearer ${token}`, tokens)))
+  return { ...MCP_FUNCTION_CALLER, grantedScopes, credential: { scope: { project: 'local-workspace' } } }
+}
+function tokenlessMcpCaller(grantedScopes: readonly FunctionScope[]): FunctionCaller {
+  return { ...MCP_FUNCTION_CALLER, grantedScopes }
 }
 export const MCP_ENUMERATION_CALLER: FunctionCaller = declaredMcpCaller(MCP_ENUMERATION_SCOPES)
 
@@ -352,7 +343,7 @@ export async function withMcpClient<Answer>(
   const handler = createMcpHandler(() =>
     buildAgentQaMcpServer({
       registry: conformanceRegistry(registryOptions),
-      caller: declaredBearer ? declaredMcpCaller(grantedScopes) : mcpFunctionCaller(grantedScopes),
+      caller: declaredBearer ? declaredMcpCaller(grantedScopes) : tokenlessMcpCaller(grantedScopes),
       maskText: (text: string) => text,
     }),
   )
@@ -947,16 +938,8 @@ export async function withRunServiceDoor<Answer>(
     runBridge: runDoor.runBridge,
   })
   runDoor.bindHost(host)
+  // 432-21 (D-12): tokenless — no declared entries and no environment to read.
   const runService = composeRunServicePorts({
-    entries: [{
-      name: RUN_SERVICE_FIXTURE_ENTRY_NAME,
-      tokenEnvVar: RUN_SERVICE_FIXTURE_TOKEN_VAR,
-      trustScope: { project: 'conformance' },
-    }],
-    // THE VALUE TRAVELS IN AN EXPLICIT MAP, never through `process.env`: a cell that exported a
-    // variable would leak it into every sibling in the same worker, and a door authenticated by
-    // ambient state is a door this file cannot say it configured.
-    env: { [RUN_SERVICE_FIXTURE_TOKEN_VAR]: RUN_SERVICE_FIXTURE_TOKEN },
     door: runDoor,
     sessions,
     // 405-05: the SAME host the local door serves through, as `agent-qa dashboard` hands it.
@@ -1010,7 +993,8 @@ export async function withRunServiceDoor<Answer>(
 export async function enumerateRunServiceOpIds(): Promise<SurfaceEnumeration> {
   const publishedKeys = RUN_SERVICE_ROUTE_TABLE.map((row) => runServiceRouteKey(row))
   const answered = await withRunServiceDoor(async (origin) => {
-    const bearer = { Authorization: `Bearer ${RUN_SERVICE_FIXTURE_TOKEN}` }
+    // 432-21 (D-12): the door asks for no credential.
+    const bearer: Record<string, string> = {}
     const keys: string[] = []
     let runId: string | undefined
 

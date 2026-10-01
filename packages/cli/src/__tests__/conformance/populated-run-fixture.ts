@@ -105,7 +105,7 @@ import type { SpawnedDashboard } from './spawned-chat.js'
  * The ambient credential-shaped value the masking context registers, and therefore the ONE value
  * that becomes a `<SECRET_n>` placeholder on the wire.
  *
- * A THROWAWAY THIS REPOSITORY OWNS, on `RUN_SERVICE_FIXTURE_TOKEN`'s argument: it names nothing,
+ * A THROWAWAY THIS REPOSITORY OWNS: it names nothing,
  * opens nothing, and exists only inside a temp project's child environment. It is deliberately
  * distinctive so a scan of `events.jsonl` or the SQLite bytes for it cannot match by accident.
  */

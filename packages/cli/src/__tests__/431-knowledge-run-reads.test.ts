@@ -33,7 +33,6 @@ import { composeMcpMasking, createMcpHttpRequestListener } from '../commands/mcp
 import { createKnowledgeCommand } from '../commands/knowledge.js'
 import { createRunsCommand } from '../commands/runs.js'
 import * as host from '../composition/local-agent-host.js'
-import { resolveMcpTokens } from '../composition/mcp-token-resolution.js'
 import { markFixture } from '../gates/__tests__/feedback-fixture.js'
 import { SURFACE_ROSTER } from './conformance/roster.js'
 import {
@@ -262,11 +261,10 @@ type WireResult = {
 async function mcpReader(p: { configPath: string; agentQaRoot: string }) {
   const composed = host.composeCliLocalAgent({ configPath: p.configPath, agentQaRoot: p.agentQaRoot })
   cleanups.push(() => composed.close())
-  const declarations = [{ name: 'reader', tokenEnvVar: 'AGENT_QA_431_07_READER', scopes: ['read' as const] }]
-  const tokens = resolveMcpTokens(declarations, { AGENT_QA_431_07_READER: READER_TOKEN })
-  const masking = composeMcpMasking({ tokens, env: {} })
+  // 432-21 (D-12): tokenless. The client below still sends a legacy reader bearer, which is ignored.
+  const masking = composeMcpMasking({ env: {} })
   const server = createServer(createMcpHttpRequestListener({
-    registry: composed.registry, tokens, maskText: (text) => masking.mask(text),
+    registry: composed.registry, maskText: (text) => masking.mask(text),
   }))
   await new Promise<void>((listening, fail) => {
     server.once('error', fail)

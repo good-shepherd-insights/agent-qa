@@ -590,7 +590,7 @@ describe('READ-SCOPE-ONLY (T-431-08) — retired: every caller sees the eight (4
         expect(declared.get(opId)!.risk.readOnly, `${name} -> ${opId}`).toBe(true)
         expect(Object.keys(declared.get(opId)!), `${name} -> ${opId}`).not.toContain('requiredScopes')
       }
-      expect(projection.credential, name).toBeUndefined()
+      expect(Object.hasOwn(projection, 'credential'), name).toBe(false)
       expect(projection.ui, name).toBeUndefined()
       expect(projection.kind, name).toBe('read')
     }

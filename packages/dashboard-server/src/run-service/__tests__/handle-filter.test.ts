@@ -32,8 +32,6 @@ import { afterEach, describe, expect, it } from 'vitest'
 
 import { createRunServiceRoutes, type RunServicePorts } from '../run-service-routes.js'
 
-const TOKEN = 'zz-402-04-handle-token-8ad1f2'
-
 /** The announced roster. Non-contiguous and not 0-based, on purpose (see the header). */
 const ROSTER = [3, 7, 11] as const
 
@@ -111,9 +109,7 @@ const ACK: RunStartAcknowledgement = {
 
 function fakePorts(): RunServicePorts {
   return {
-    verifyBearer: (header) => header === `Bearer ${TOKEN}`
-      ? { kind: 'token', clientId: 'ci', trustScope: { project: 'acme' } }
-      : { kind: 'refused', reason: header === undefined ? 'missing_authorization' : 'invalid_token' },
+    // 2026-10-01 (432-21, D-12): no `verifyBearer` — the door is tokenless.
     invokeRunStart: async () => ACK,
     attach: (runId) => {
       if (runId === 'r_feed') return sessionOver('r_feed', FEED)
@@ -123,7 +119,7 @@ function fakePorts(): RunServicePorts {
     readiness: () => ({
       service: 'up',
       hostComposed: true,
-      authConfigured: true,
+      authConfigured: false,
       contractVersion: RUN_SERVICE_CONTRACT_VERSION,
     }),
     // 403-03 (D-03, Q3): a fixture that composed no live view HAS no live view, and the honest
@@ -163,7 +159,7 @@ interface Capture {
 
 /** Read a whole SSE body. The planted feed ends at `runFinished`, so this terminates. */
 async function read(url: string): Promise<Capture> {
-  const response = await fetch(url, { headers: { Authorization: `Bearer ${TOKEN}` } })
+  const response = await fetch(url)
   return {
     status: response.status,
     contentType: response.headers.get('content-type'),
@@ -291,7 +287,6 @@ describe('an invalid or unknown handle is refused BEFORE any stream header', () 
       const origin = await mount()
       const response = await fetch(
         `${origin}/run/r_feed/events?handle=${encodeURIComponent(raw)}`,
-        { headers: { Authorization: `Bearer ${TOKEN}` } },
       )
       expect(response.status).toBe(400)
       // The whole point of validating before `writeHead`: a response that has already written
@@ -304,9 +299,7 @@ describe('an invalid or unknown handle is refused BEFORE any stream header', () 
 
   it('refuses a handle on a run that announced NO roster, rather than guessing', async () => {
     const origin = await mount()
-    const response = await fetch(`${origin}/run/r_norost/events?handle=0`, {
-      headers: { Authorization: `Bearer ${TOKEN}` },
-    })
+    const response = await fetch(`${origin}/run/r_norost/events?handle=0`)
     expect(response.status).toBe(400)
     expect(response.headers.get('content-type')).toContain('application/json')
     expect(await response.json()).toEqual({ error: 'unknown_handle' })
@@ -325,27 +318,28 @@ describe('an invalid or unknown handle is refused BEFORE any stream header', () 
     // as a run-existence oracle. A well-formed handle on a nonexistent run still gets `unknown_run`
     // (the cell below), because that answer needs the run looked up.
     const origin = await mount()
-    const malformed = await fetch(`${origin}/run/r_absent/events?handle=notanumber`, {
-      headers: { Authorization: `Bearer ${TOKEN}` },
-    })
+    const malformed = await fetch(`${origin}/run/r_absent/events?handle=notanumber`)
     expect(malformed.status).toBe(400)
     expect(await malformed.json()).toEqual({ error: 'invalid_handle' })
   })
 
   it('refuses an unknown RUN when the handle itself parses', async () => {
     const origin = await mount()
-    const response = await fetch(`${origin}/run/r_absent/events?handle=7`, {
-      headers: { Authorization: `Bearer ${TOKEN}` },
-    })
+    const response = await fetch(`${origin}/run/r_absent/events?handle=7`)
     expect(response.status).toBe(404)
     expect(await response.json()).toEqual({ error: 'unknown_run' })
   })
 
-  it('refuses an unauthenticated handle request with 401, never a handle code', async () => {
+  // RE-SPELLED 2026-10-01 (432-21, D-12/D-13) from 'refuses an unauthenticated handle request with
+  // 401, never a handle code'. The door asks for no credential; what refuses at the door now is the
+  // same-site guard, and it still answers before any handle code.
+  it('refuses a cross-site handle request with 403, never a handle code', async () => {
     const origin = await mount()
-    const response = await fetch(`${origin}/run/r_feed/events?handle=7`)
-    expect(response.status).toBe(401)
-    expect(await response.json()).toEqual({ error: 'missing_authorization' })
+    const response = await fetch(`${origin}/run/r_feed/events?handle=7`, {
+      headers: { Origin: 'https://evil.example' },
+    })
+    expect(response.status).toBe(403)
+    expect(await response.json()).toEqual({ error: 'cross_site_refused' })
   })
 })
 

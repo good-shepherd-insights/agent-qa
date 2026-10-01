@@ -215,7 +215,7 @@ beforeAll(async () => {
   // THE ZERO-TOKEN POSTURE, on `live-view-anchors.test.ts`'s own argument: it is the default a
   // project gets, and it is the arm in which a composition that only runs on the credentialed
   // branch hides.
-  const project = runServiceFixtureProject('post-processing', false)
+  const project = runServiceFixtureProject('post-processing')
   const port = await reserveEphemeralPort()
   const dashboard = await spawnDashboard(project.root, project.configPath, port)
   expect(

@@ -3,9 +3,13 @@
 // 2026-10-01 (432-20, D-12): BOTH WALLS ARE DELETED. `visibleToCaller` (wall one) and
 // `invokeFunction`'s scope refusal (wall two) are gone: every caller of this server lists the same
 // catalogue and reaches every op. Groups 1-5, 7 and the first cell of 8 are re-spelled in place to
-// pin that sameness — W1 and W2 below are now the shipped behaviour. The bearer token still
-// authenticates on this door until 432-21 removes it, so group 9's guards and masking cells are
-// unchanged and still measured.
+// pin that sameness — W1 and W2 below are now the shipped behaviour.
+//
+// 2026-10-01 (432-21, D-12/D-13): THE BEARER IS DELETED TOO. The listener reads no `Authorization`
+// header, so the "tokens" below are legacy header values a pre-432 client might still send, and
+// every one of them — and none — is the same caller. Group 9's Host and Origin guards are unchanged;
+// its bearer cells are re-spelled to "never read, never echoed", and its masking cells now seed the
+// production masker from the environment (the declared-token seeding, leg K1, is deleted).
 //
 // WHAT THIS SUITE IS AND WHY IT IS DRIVEN. Every cell below speaks to a REAL loopback socket, over
 // a REAL `Authorization` header, against the production `createMcpHttpRequestListener` composed
@@ -62,10 +66,18 @@ import { invokeFunction } from '@vostride/agent-qa-agent'
 import { AGENT_QA_TOOL_PROJECTIONS, buildAgentQaMcpServer } from '@vostride/agent-qa-mcp'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 
-import { composeMcpMasking, createMcpHttpRequestListener, mcpFunctionCaller } from '../commands/mcp.js'
+import type { FunctionCaller, FunctionScope } from '@vostride/agent-qa-schema'
+
+import { composeMcpMasking, createMcpHttpRequestListener, MCP_FUNCTION_CALLER } from '../commands/mcp.js'
 import { composeCliLocalAgent } from '../composition/local-agent-host.js'
-import { resolveMcpTokens } from '../composition/mcp-token-resolution.js'
-import type { ResolvedMcpToken } from '../composition/mcp-token-resolution.js'
+
+/**
+ * A caller carrying a LEGACY scope set — the fields 432-20 made optional and unread. Built from the
+ * one caller the MCP host mints, so the only difference is fields nothing reads.
+ */
+function legacyCaller(scopes: readonly string[]): FunctionCaller {
+  return { ...MCP_FUNCTION_CALLER, grantedScopes: scopes as readonly FunctionScope[], safeMode: false }
+}
 
 /**
  * The config tools (one since 432-12), read OUT of the shipped mapping.
@@ -85,9 +97,9 @@ const AUTHORING_TOOL = 'agent_qa_write_test'
 const AUTHORING_SCOPES = ['test-write', 'run', 'read'] as const
 
 /**
- * The planted credential. No suffix `sensitiveEnvSlice` recognises, deliberately: a probe named
- * `…_TOKEN` would be masked by machinery this suite is not testing and the cells would pass for
- * the wrong reason.
+ * The legacy bearer values a pre-432 client might present. None is read. `PLANTED_RO` is ALSO
+ * seeded into the masker's environment under a `…_TOKEN` name (432-21), so the masking cells in
+ * group 9 measure the environment masking D-13 keeps.
  */
 const PLANTED_CFG = 'zz-396-05-cfg-credential-8c14ae'
 const PLANTED_RO = 'zz-396-05-ro-credential-3b90fd'
@@ -108,7 +120,6 @@ interface Harness {
   readonly port: number
   readonly url: string
   readonly registry: Parameters<typeof invokeFunction>[0]
-  readonly tokens: readonly ResolvedMcpToken[]
   readonly mask: (text: string) => string
   close(): Promise<void>
 }
@@ -149,43 +160,14 @@ beforeAll(async () => {
     configPath: where.configPath,
   })
 
-  // Produced, not literal, on the credential side too: the entries go through the SHIPPED resolver
-  // against a planted environment, so what the server matches against is what a real start would
-  // have produced from a real config.
-  const tokens = resolveMcpTokens(
-    [
-      { name: 'cfg', tokenEnvVar: 'AGENT_QA_396_CFG', scopes: ['read', 'run', 'config-write'] },
-      { name: 'ro', tokenEnvVar: 'AGENT_QA_396_RO', scopes: ['read'] },
-      { name: 'authoring', tokenEnvVar: 'AGENT_QA_396_AUTHORING', scopes: [...AUTHORING_SCOPES] },
-      {
-        name: 'minus-test-write',
-        tokenEnvVar: 'AGENT_QA_396_AUTHORING_MINUS_TEST_WRITE',
-        scopes: ['run', 'read'],
-      },
-      {
-        name: 'minus-run',
-        tokenEnvVar: 'AGENT_QA_396_AUTHORING_MINUS_RUN',
-        scopes: ['test-write', 'read'],
-      },
-      {
-        name: 'minus-read',
-        tokenEnvVar: 'AGENT_QA_396_AUTHORING_MINUS_READ',
-        scopes: ['test-write', 'run'],
-      },
-    ],
-    TOKEN_ENV,
-  )
-
   // THE PRODUCTION MASKER, not a stand-in. `composeMcpMasking` is the function the `mcp` command
-  // itself calls, seeded with these declared credentials; a suite that built its own masker here
-  // would be asserting that ITS masker works, which is true and worthless. `env: {}` because the
-  // only values under test are the declared token values — a real process environment would seed
-  // this masker with unrelated secrets and a passing cell could then be passing on one of those.
-  const masking = composeMcpMasking({ tokens, env: {} })
+  // itself calls. 432-21 (D-12): it is seeded from the environment alone; this suite hands it ONE
+  // suffix-recognised secret, so a masking cell below passes only on that value's masking.
+  const masking = composeMcpMasking({ env: { AGENT_QA_396_RO_TOKEN: PLANTED_RO } })
   const maskText = (text: string): string => masking.mask(text)
 
   const server = createServer(
-    createMcpHttpRequestListener({ registry: host.registry, maskText, tokens }),
+    createMcpHttpRequestListener({ registry: host.registry, maskText }),
   )
   await new Promise<void>((listening) => server.listen(0, '127.0.0.1', () => listening()))
   const address = server.address()
@@ -196,7 +178,6 @@ beforeAll(async () => {
     port,
     url: `http://127.0.0.1:${port}/mcp`,
     registry: host.registry,
-    tokens,
     mask: maskText,
     close: async () => {
       await new Promise<void>((closed) => server.close(() => closed()))
@@ -363,7 +344,7 @@ describe('2 · no tool is hidden, so a formerly hidden tool answers unlike a non
 // anything a surface listed'. The second wall is deleted too: the function layer serves the op to
 // a caller holding no `config-write`, exactly as to one that holds it.
 describe('3 · the function layer reads no grant (432-20)', () => {
-  async function outcomeFor(caller: ReturnType<typeof mcpFunctionCaller>): Promise<string> {
+  async function outcomeFor(caller: FunctionCaller): Promise<string> {
     try {
       return JSON.stringify(await invokeFunction(
         harness.registry,
@@ -378,25 +359,25 @@ describe('3 · the function layer reads no grant (432-20)', () => {
 
   // RE-SPELLED from 'refuses a config op for a caller without the scope, naming the missing scope'.
   it('serves a config op to a caller without the scope, with no scope refusal', async () => {
-    const outcome = await outcomeFor(mcpFunctionCaller(['read']))
+    const outcome = await outcomeFor(legacyCaller(['read']))
     expect(outcome).not.toBe('FunctionScopeError')
   })
 
   it('admits the same op for a caller that holds the scope — the same answer either way', async () => {
-    const withScope = await outcomeFor(mcpFunctionCaller(['read', 'config-write']))
+    const withScope = await outcomeFor(legacyCaller(['read', 'config-write']))
     expect(withScope).not.toBe('FunctionScopeError')
-    expect(await outcomeFor(mcpFunctionCaller(['read']))).toBe(withScope)
+    expect(await outcomeFor(legacyCaller(['read']))).toBe(withScope)
   })
 
   // RE-SPELLED from 'refuses even when the SERVER was built for a caller that holds the scope'.
   it('serves the op whatever caller the SERVER was built for', async () => {
     const openServer = buildAgentQaMcpServer({
       registry: harness.registry,
-      caller: mcpFunctionCaller(['read', 'run', 'config-write']),
+      caller: legacyCaller(['read', 'run', 'config-write']),
       maskText: (text: string) => text,
     })
     expect(openServer).toBeDefined()
-    expect(await outcomeFor(mcpFunctionCaller(['read', 'run']))).not.toBe('FunctionScopeError')
+    expect(await outcomeFor(legacyCaller(['read', 'run']))).not.toBe('FunctionScopeError')
   })
 })
 
@@ -444,7 +425,7 @@ async function namesFromFactory(scopes: readonly string[]): Promise<string[]> {
   const handler = createMcpHandler(() =>
     buildAgentQaMcpServer({
       registry: harness.registry,
-      caller: mcpFunctionCaller(scopes as Parameters<typeof mcpFunctionCaller>[0]),
+      caller: legacyCaller(scopes),
       maskText: (text: string) => text,
     }),
   )
@@ -606,6 +587,8 @@ describe('9 · the walls in front of the handler refuse without becoming a chann
     expect(refused.text).toContain('forbidden_origin')
   })
 
+  // 432-21 (D-12): a legacy bearer is not a credential any more; the claim that no header a caller
+  // adds rescues a rebound host is unchanged.
   it('checks Host BEFORE the credential — a valid token does not buy a rebound host', async () => {
     const refused = await rawRequest({
       Host: 'evil.example.com',
@@ -617,33 +600,36 @@ describe('9 · the walls in front of the handler refuse without becoming a chann
     expect(refused.text).not.toContain('invalid_token')
   })
 
-  it('answers 401 for an undeclared credential and NEVER echoes it', async () => {
-    // The masking claim on the one path composed entirely of caller-supplied text. 396-03 measured
-    // that dropping the masker from a refusal path left an entire suite green; this cell is what
-    // that lesson buys here, and leg K2 reds it.
-    const refused = await rawRequest({
+  // RE-SPELLED 2026-10-01 (432-21, D-12) from 'answers 401 for an undeclared credential and NEVER
+  // echoes it'. Nothing is refused for a bearer; the never-echoes half is the claim that survives
+  // (leg K2's subject — the 401 body — is deleted with the bearer rung).
+  it('serves an undeclared legacy bearer like none and NEVER echoes it', async () => {
+    const served = await rawRequest({
       Host: `127.0.0.1:${harness.port}`,
       Authorization: `Bearer ${PLANTED_WRONG}`,
       'Content-Type': 'application/json',
+      Accept: 'application/json, text/event-stream',
     })
-    expect(refused.status).toBe(401)
-    expect(refused.text).toContain('invalid_token')
-    expect(refused.text).not.toContain(PLANTED_WRONG)
-    expect(refused.text.toLowerCase()).not.toContain('bearer zz')
+    expect(served.status).toBe(200)
+    expect(served.text).not.toContain('invalid_token')
+    expect(served.text).not.toContain(PLANTED_WRONG)
+    expect(served.text.toLowerCase()).not.toContain('bearer zz')
   })
 
-  it('answers the SAME 401 body for a malformed header as for a wrong credential', async () => {
-    // A prober must not learn which of the two it produced. Compared after stripping the status
-    // line's date and the chunked framing — the JSON body is the whole answer.
+  // RE-SPELLED 2026-10-01 (432-21, D-12) from 'answers the SAME 401 body for a malformed header as
+  // for a wrong credential': the SAME body still, because neither header is read.
+  it('answers the SAME body for a malformed header as for a wrong credential', async () => {
     const wrong = await rawRequest({
       Host: `127.0.0.1:${harness.port}`,
       Authorization: `Bearer ${PLANTED_WRONG}`,
       'Content-Type': 'application/json',
+      Accept: 'application/json, text/event-stream',
     })
     const malformed = await rawRequest({
       Host: `127.0.0.1:${harness.port}`,
       Authorization: 'Basic aGk6dGhlcmU=',
       'Content-Type': 'application/json',
+      Accept: 'application/json, text/event-stream',
     })
     const bodyOf = (frame: Frame): string =>
       frame.text.split('\r\n\r\n').slice(1).join('').replace(/[0-9a-f]+\r\n/gi, '').trim()
@@ -666,13 +652,13 @@ describe('9 · the walls in front of the handler refuse without becoming a chann
     }
   })
 
-  it('masks a declared credential a caller smuggles back through a tool argument', async () => {
-    // The general masking claim, driven through the channel a caller reads rather than asserted on
-    // an internal error object — the 395-round-2 lesson applied. `runs.digest` is used because it
-    // was MEASURED (2026-08-16) to be an echoing path: its refusal for an unknown id is composed
-    // from the caller's own string, which is exactly the shape T-395-R5-10's credential rode out
-    // on. The host seeds the run masker with its declared credentials, so the echo comes back
-    // masked. Leg K1 removes that seeding and reds this cell.
+  // RE-SPELLED 2026-10-01 (432-21, D-12/D-13) from 'masks a declared credential a caller smuggles back
+  // through a tool argument': no credential is declared; the value is an environment secret the
+  // production masker was seeded with (D-13 keeps environment secret masking).
+  it('masks an environment secret a caller smuggles back through a tool argument', async () => {
+    // Driven through the channel a caller reads — the 395-round-2 lesson applied. `runs.digest` was
+    // MEASURED (2026-08-16) to be an echoing path: its refusal for an unknown id is composed from
+    // the caller's own string, which is exactly the shape T-395-R5-10's credential rode out on.
     const { client, frames } = await connectAs(PLANTED_RO)
     try {
       const called = await client.callTool({
@@ -691,12 +677,11 @@ describe('9 · the walls in front of the handler refuse without becoming a chann
     }
   })
 
-  it('the masker the COMMAND composes hides every declared credential', async () => {
-    // The same claim one layer down, so a failure can be read as "the seeding is gone" rather than
-    // only as "some tool stopped echoing". Both cells red under leg K1; this is the one that says
-    // why.
-    for (const token of harness.tokens) {
-      expect(harness.mask(`presented ${token.value} here`)).not.toContain(token.value)
-    }
+  // RE-SPELLED 2026-10-01 (432-21, D-12) from 'the masker the COMMAND composes hides every declared
+  // credential': it hides the environment secret it was seeded with, and only that.
+  it('the masker the COMMAND composes hides the environment secret it was seeded with', async () => {
+    expect(harness.mask(`presented ${PLANTED_RO} here`)).not.toContain(PLANTED_RO)
+    // And it is a masker of what it was given, not of everything: an unseeded value is untouched.
+    expect(harness.mask(`presented ${PLANTED_CFG} here`)).toContain(PLANTED_CFG)
   })
 })

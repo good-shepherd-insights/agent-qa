@@ -19,7 +19,6 @@ import { maskedMarker, type EvidenceDocument } from '@vostride/agent-qa-schema'
 import { composeDashboardAgentHost } from '../commands/dashboard.js'
 import { createDisplayUnmasker } from '../composition/display-unmask.js'
 import { CLI_FUNCTION_CALLER, composeCliLocalAgent } from '../composition/local-agent-host.js'
-import { matchServiceBearer } from '../composition/run-service-token-resolution.js'
 
 const SECRET = 'synthetic-production-secret-423'
 const MARKER = maskedMarker('secret')
@@ -132,10 +131,7 @@ async function startDoors(f: ReturnType<typeof productionFixture>) {
   const address = started.server.address()
   if (address === null || typeof address === 'string') throw new Error('Dashboard fixture did not bind')
   const origin = `http://127.0.0.1:${address.port}`
-  const remote = await listen(createServer(createRunServiceRoutes({ agentHost,
-    verifyBearer: header => matchServiceBearer(header, [{ name: 'test', tokenEnvVar: 'AGENT_QA_TEST_TOKEN',
-      value: 'synthetic-evidence-client', trustScope: { project: 'test' } }]),
-  } as RunServicePorts)))
+  const remote = await listen(createServer(createRunServiceRoutes({ agentHost } as unknown as RunServicePorts)))
   const query = 'kind=network&testIndex=0&stepIndex=0'
   return {
     human: `${origin}/api/runs/${f.runId}/evidence?${query}`,
@@ -200,8 +196,9 @@ describe('423 production read posture', () => {
     ] } })
     expect(humanRaw).not.toContain(SECRET)
 
-    expect((await fetch(doors.machine)).status).toBe(401)
-    const machine = await fetch(doors.machine, { headers: { Authorization: 'Bearer synthetic-evidence-client' } })
+    // 432-21 (D-12/D-13): the machine door is tokenless; what it refuses is a cross-site read.
+    expect((await fetch(doors.machine, { headers: { Origin: 'https://evil.example' } })).status).toBe(403)
+    const machine = await fetch(doors.machine)
     expect(machine.status).toBe(200)
     const machineRaw = await machine.text()
     expect(JSON.parse(machineRaw)).toMatchObject({ outcome: 'ready', document: { records: [

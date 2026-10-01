@@ -34,7 +34,7 @@ import { classifyRisk } from '@vostride/agent-qa-safety'
 import type { ExecutionContext, FunctionCaller } from '@vostride/agent-qa-schema'
 import type { RiskActionDescriptor } from '@vostride/agent-qa-schema'
 
-import { MCP_DEFAULT_GRANTED_SCOPES, mcpFunctionCaller } from '../../commands/mcp.js'
+import { MCP_FUNCTION_CALLER } from '../../commands/mcp.js'
 
 /**
  * The one execution context every conformance policy decision is taken in.
@@ -81,7 +81,7 @@ export function coveringCallerFor(_declaration: FunctionDeclaration): FunctionCa
  *
  * BOTH SIDES ARE PRODUCED BY THE SURFACE THAT OWNS THEM, and that is the whole point of this type
  * existing rather than a `surface` argument on one builder. `CHAT_RESOLVER_CALLER` is the frozen
- * record `composeLocalAgent` spreads at its own `mint.forStage`; `mcpFunctionCaller` is the function
+ * record `composeLocalAgent` returns from its own `mint.forStage`; `MCP_FUNCTION_CALLER` is the record
  * `commands/mcp.ts` composes its server with. A parity assertion whose two comparands came out of
  * ONE builder with a different string is a value compared to itself.
  */
@@ -92,15 +92,16 @@ export interface SurfaceShapedCallers {
 
 /**
  * The two surfaces' callers, each minted the way its own surface mints today: the chat resolver's
- * record verbatim, and the MCP door's anonymous mint over its default grant.
+ * record verbatim, and the MCP door's one tokenless caller.
  *
- * They differ in `surface`, `origin` and the retired grant fields. Since 432-20 (D-10/D-12) none of
- * those is read by the function layer, so the two must answer alike for every capability.
+ * They differ in `surface` and `origin`. Since 432-20 (D-10/D-12) neither is read by the function
+ * layer to decide anything, and since 432-21 neither record carries a grant field at all, so the two
+ * must answer alike for every capability.
  */
 export function surfaceShapedCallers(): SurfaceShapedCallers {
   return {
     chat: Object.freeze({ ...CHAT_RESOLVER_CALLER }),
-    mcp: Object.freeze(mcpFunctionCaller([...MCP_DEFAULT_GRANTED_SCOPES])),
+    mcp: Object.freeze({ ...MCP_FUNCTION_CALLER }),
   }
 }
 
@@ -115,8 +116,6 @@ export function surfaceInertCallers(): SurfaceShapedCallers {
     mcp: Object.freeze({
       ...shaped.mcp,
       origin: shaped.chat.origin,
-      grantedScopes: shaped.chat.grantedScopes,
-      safeMode: shaped.chat.safeMode,
     }),
   }
 }

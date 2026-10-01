@@ -1,89 +1,57 @@
-# The authed run service, and where the dashboard binds
+# The run service, and where the dashboard binds
 
-`agent-qa dashboard` (and `agent-qa serve`) runs one HTTP process. Two different surfaces live in
-it, and they have different rules.
+`agent-qa dashboard` (and `agent-qa serve`) runs one HTTP process. Two surfaces live in it.
 
 | | the dashboard API | the run service |
 |---|---|---|
-| **Paths** | `/api/*`, the UI, the artifact routes | `POST /run`, `GET /run/{runId}/events`, `GET /ok` |
-| **Auth** | none | a bearer token, on every route, with no anonymous arm |
-| **Mounted** | always | only when a credential is declared |
-| **Reachable from** | loopback only, unless a credential is declared | wherever the process binds |
+| **Paths** | `/api/*`, the UI, the artifact routes | `POST /run`, `GET /run/{runId}/events`, `GET /run/{runId}/live-url`, the run reads, `GET /ok` |
+| **Credential** | none | none (since 2026-10-01) |
+| **Mounted** | always | always (since 2026-10-01) |
+| **Reachable from** | loopback only | loopback only |
 
-## BREAKING: the dashboard binds `127.0.0.1` by default
+**2026-10-01: the run-service tokens are gone.** `services.dashboard.runServiceTokens` is no longer
+read, no route asks for an `Authorization` header, and an `Authorization` header you still send is
+ignored. Every caller can call every operation (432 D-12). What still stops other machines and
+websites (432 D-13) is the loopback bind, the Host check and the same-site check described below.
 
-Before v2 the server called `listen(port)` with no host, which binds **every interface** — so an
-unauthenticated run trigger was reachable from any machine that could route to yours.
+## The dashboard binds `127.0.0.1`, and only loopback
 
-It now binds `127.0.0.1`. If you relied on LAN access to the dashboard, the migration is to declare
-a run-service credential (below). There is no flag that restores the old behaviour and no
-deprecation window: the previous default published an anonymous run trigger, and a shim that let
-you keep it would be a shim for a hole.
+The server binds `127.0.0.1` by default. A non-loopback `services.dashboard.host` **refuses startup**
+before anything listens, and nothing exempts it — no credential ever did, and none exists now:
 
 ```yaml
 services:
   dashboard:
     port: 3470
     # Optional. Defaults to 127.0.0.1. Anything other than localhost / 127.0.0.1 / ::1 REFUSES
-    # startup unless at least one runServiceTokens entry is declared.
-    host: 0.0.0.0
+    # startup.
+    host: 127.0.0.1
 ```
-
-Start it with a non-loopback `host` and no credential and the process refuses before it listens:
 
 ```
 DashboardRemoteBindRefusedError: The dashboard was asked to bind 0.0.0.0, which is not a loopback
-interface, with no run-service credential declared. …
+interface. …
 ```
 
-## Declaring a run-service credential
+To reach a dashboard from another machine, put an authenticating proxy or a tunnel you control in
+front of it.
 
-Config declares credentials **by reference**. The value itself lives only in the environment — no
-secret is ever written to a file this tool manages, and every channel that prints config prints the
-resolved value masked.
+## The same-site check
 
-```yaml
-services:
-  dashboard:
-    host: 0.0.0.0
-    runServiceTokens:
-      - name: ci
-        tokenEnvVar: AGENT_QA_RUN_TOKEN_CI
-        trustScope:
-          project: acme-web
-      - name: alice
-        tokenEnvVar: AGENT_QA_RUN_TOKEN_ALICE
-        trustScope:
-          project: acme-web
-```
+Every run-service route, and the dashboard's run trigger (`POST /api/runs/trigger`) and queue
+enqueue (`POST /api/queue/enqueue`), refuse a request **before reading its body** when:
 
-Mint the values yourself — this tool never generates one for you:
+- its `Host` header does not name a loopback interface this server answers to (DNS rebinding);
+- its `Origin` names another origin, including the literal `null`; or
+- the browser's `Sec-Fetch-Site` says anything other than `same-origin` or `none`.
 
-```bash
-openssl rand -base64 32
-```
-
-Then export it where the dashboard process can read it:
-
-```bash
-export AGENT_QA_RUN_TOKEN_CI="$(openssl rand -base64 32)"
-agent-qa dashboard
-```
-
-A declared `tokenEnvVar` that is unset — or set to whitespace — **refuses startup**, naming the
-variable and never a value. A server that started with a credential nobody can present reads to an
-operator exactly like a server rejecting their token, which is the confusion that refusal avoids.
-
-- **Rotation** is swapping the environment value and restarting.
-- **Revocation** is deleting the entry.
-- There is no expiry metadata. Credential lifetime mechanics belong with the OAuth form of the same
-  family, which this milestone does not ship.
+The refusal is `403 {"error":"cross_site_refused"}`. A caller that sends **no** `Origin` — `curl`, a
+script, CI, the CLI — is admitted, and so is the dashboard's own page.
 
 ## Calling it
 
 ```bash
-curl -sS -X POST http://your-host:3470/run \
-  -H "Authorization: Bearer $AGENT_QA_RUN_TOKEN_CI" \
+curl -sS -X POST http://127.0.0.1:3470/run \
   -H 'content-type: application/json' \
   -d '{"patterns":["tests/checkout.yaml"]}'
 ```
@@ -91,8 +59,7 @@ curl -sS -X POST http://your-host:3470/run \
 The ack carries the `runId` the core minted — the request cannot choose one. Stream the run with:
 
 ```bash
-curl -sS -N http://your-host:3470/run/<runId>/events \
-  -H "Authorization: Bearer $AGENT_QA_RUN_TOKEN_CI"
+curl -sS -N http://127.0.0.1:3470/run/<runId>/events
 ```
 
 ### Resuming a stream
@@ -102,8 +69,7 @@ clients that cannot set a header. Both name **the last envelope you already rece
 replay opens at the next one and no `id` you have already seen is re-sent:
 
 ```bash
-curl -sS -N 'http://your-host:3470/run/<runId>/events?lastEventId=42' \
-  -H "Authorization: Bearer $AGENT_QA_RUN_TOKEN_CI"
+curl -sS -N 'http://127.0.0.1:3470/run/<runId>/events?lastEventId=42'
 ```
 
 When both are present the **header wins** — a browser's own `EventSource` reconnect carries the
@@ -127,8 +93,7 @@ earliestAvailableSeq - 1`**, because you name the last envelope you already have
 the first one still available:
 
 ```bash
-curl -sS -N 'http://your-host:3470/run/<runId>/events?lastEventId=127' \
-  -H "Authorization: Bearer $AGENT_QA_RUN_TOKEN_CI"
+curl -sS -N 'http://127.0.0.1:3470/run/<runId>/events?lastEventId=127'
 ```
 
 Events between your resume point and the floor are gone from the live channel. The run record is
@@ -142,13 +107,12 @@ run this process never started, the door answers `404 {"error":"unknown_run"}`.
 ### Minting a liveUrl
 
 ```bash
-curl -sS 'http://your-host:3470/run/<runId>/live-url?handle=0' \
-  -H "Authorization: Bearer $AGENT_QA_RUN_TOKEN_CI"
+curl -sS 'http://127.0.0.1:3470/run/<runId>/live-url?handle=0'
 ```
 
 ```json
 {
-  "liveUrl": "http://your-host:3470/live/<runId>#v1.<token>",
+  "liveUrl": "http://localhost:3470/live/<runId>#v1.<token>",
   "expiresAt": 1735689600000,
   "handle": 0,
   "stream": { "kind": "cdp-screencast" }
@@ -164,27 +128,20 @@ without opening a socket to find out. A browserless run answers `{"kind":"none"}
 
 **The token lives in the URL fragment and must never be logged.** A fragment is never sent to a
 server; open the `liveUrl` in a browser or an iframe and nothing else. It is a short-lived
-(5-minute), view-scoped, single-run capability of the same credential family as your run-service
-token — it grants viewing and nothing else, and it cannot cancel, restart or modify the run.
+(5-minute), view-scoped, single-run, single-handle capability signed by this process — it grants
+viewing and nothing else, and it cannot cancel, restart or modify the run. This signed link is the
+one credential the run service still mints, and it is checked independently of who asked for it: a
+tampered, expired, foreign-run or foreign-handle token is refused by name.
 
 Both doors mint through the same function-layer op, `runs.liveurl`, and answer identically. The
-difference is only the credential: the **local dashboard door** at
-`GET /api/runs/<runId>/live-url` needs **no** credential, because asking for a *remote* credential
-to use a *local* surface would be the wrong trade. The local door refuses a request whose claimed
-`Host` is not one of the loopback names this server answers to, a rule requiring no configuration
-because the bind guard refuses every non-loopback bind; refuses a browser request whose `Origin`
-names another origin, including the literal `null` that denotes an origin declining to name itself;
-and admits a caller sending no `Origin` at all — `curl`, a script or the CLI — as the deliberate
-localhost allowance. This
-route, on the remote door, mints under the trust scope of the bearer you presented.
+local dashboard door is `GET /api/runs/<runId>/live-url`; both apply the same same-site check above.
 
 `404 {"error":"unknown_run"}` means this process has no live session for that run.
 `503 {"error":"live_view_unavailable"}` is an honest host fact: this host has no live-view
 composition, or is not serving on a known origin, so there is no link it could build that would
 resolve to anything.
 
-`GET /ok` reports only measured facts (the service answered, a host is composed, a credential
-resolved, the contract version). It never predicts that a run will succeed. The same facts are
-served without a token at `GET /api/run-readiness` on the local dashboard API — one readiness
-answer behind two doors, and the loopback bind above is what keeps a remote host off the
-unauthenticated one.
+`GET /ok` reports only measured facts (the service answered, a host is composed, whether a
+credential is configured — always `false` now — and the contract version). It never predicts that a
+run will succeed. The same facts are served at `GET /api/run-readiness` on the local dashboard API —
+one readiness answer behind two doors.

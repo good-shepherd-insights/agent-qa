@@ -1,70 +1,151 @@
-// The MCP credential mechanics (Phase 396 plan 05, D-06 / D-07 · MCPS-04).
+// The MCP credential mechanics (Phase 396 plan 05, D-06 / D-07 · MCPS-04), RETIRED 2026-10-01.
 //
-// WHAT THESE CELLS ARE FOR. Every one of them is written against the direction a mistake would
-// actually take. The default grant is asserted as a RELATION to the closed scope union rather than
-// as five names, because a literal here would agree with a literal in the implementation and the
-// pair would be one opinion spelled twice. The unmatched-bearer cell asserts what the verdict is
-// NOT, because the failure this whole seam exists to forbid is a wrong credential quietly becoming
-// an anonymous success. The startup refusal is asserted on both sides of the refs-only law: it
-// must name the variable, and it must not carry the value.
+// 2026-10-01 (432-21, D-12): RE-SPELLED from the resolver's own cells. `mcp-token-resolution.ts` —
+// `DEFAULT_MCP_SCOPES`, `resolveMcpTokens`, `matchBearer`, `credentialForBearer`,
+// `resolveStdioScopes`, `mcpTokenSecretStore` and `McpTokenEnvVarUnsetError` — is deleted with the
+// MCP bearer tokens. Each retired cell is replaced by the claim that now holds in its place:
 //
-// THE PLANTED CREDENTIAL IS A LITERAL WITH NO SUFFIX A MASKER RECOGNISES. `sensitiveEnvSlice`
-// selects environment variables by NAME SUFFIX, so a probe variable called `PROBE_API_TOKEN` would
-// be masked by machinery that has nothing to do with this module and the cell would pass for the
-// wrong reason. `AGENT_QA_396_MCP_CRED` matches no suffix; if a value reaches a message, this
-// suite sees it.
+//   * the knowledge-write credential a declared bearer minted, and the default grant derived from
+//     the scope union -> the one tokenless caller carries no scope set, flag or credential;
+//   * `matchBearer`'s three answers, and never degrading a wrong credential -> the listener reads no
+//     `Authorization` header at all: absent, malformed and unmatched bearers are served identically;
+//   * the startup dereference and its refusal by variable name -> the token block is not read, so a
+//     declared-but-unset variable refuses nothing (`mcp-stdio-smoke.test.ts` drives the binary);
+//   * the stdio grant opt-in -> no stdio grant exists;
+//   * the declared values seeded into the masker -> the masker is seeded from the environment, and
+//     a suffix-recognised secret is still masked (D-13).
+//
+// The refs-only config cells stay unchanged below: `services.mcp.tokens` and
+// `services.mcp.stdio.grantConfigWrite` are still declared, unread, until 432-22 deletes the keys.
 
-import { describe, expect, it } from 'vitest'
-import { McpTokenEntrySchema, FunctionScopeSchema, STANDING_APPROVAL_SCOPE } from '@vostride/agent-qa-schema'
+import { existsSync, readFileSync, readdirSync } from 'node:fs'
+import { createServer, type Server } from 'node:http'
+import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
+
+import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client'
+import { createFunctionRegistry } from '@vostride/agent-qa-agent'
+import type { CreateFunctionRegistryOptions, FunctionDeps } from '@vostride/agent-qa-agent'
+import { McpTokenEntrySchema } from '@vostride/agent-qa-schema'
 import { AgentQaConfigSchema } from '@vostride/agent-qa-core'
+import { afterEach, describe, expect, it } from 'vitest'
 
-import {
-  DEFAULT_MCP_SCOPES,
-  credentialForBearer,
-  matchBearer,
-  mcpTokenSecretStore,
-  McpTokenEnvVarUnsetError,
-  resolveMcpTokens,
-  resolveStdioScopes,
-} from '../composition/mcp-token-resolution.js'
+import * as mcpCommand from '../commands/mcp.js'
+import { composeMcpMasking, createMcpHttpRequestListener, MCP_FUNCTION_CALLER } from '../commands/mcp.js'
 
 /** The value that must never appear in any message, header or body this suite can reach. */
 const PLANTED = 'zz-396-05-planted-credential-4f1c9a'
 const PLANTED_VAR = 'AGENT_QA_396_MCP_CRED'
 
-describe('419 declared bearer credentials', () => {
-  it('mints exactly the standing scope for a declared knowledge writer, regardless of label', () => {
-    expect(credentialForBearer({ kind: 'token', clientId: 'anonymous', scopes: ['knowledge-write'] }))
-      .toEqual({ scope: STANDING_APPROVAL_SCOPE })
+const SRC = join(dirname(fileURLToPath(import.meta.url)), '..')
+
+const cleanups: (() => Promise<void>)[] = []
+afterEach(async () => {
+  for (const close of cleanups.splice(0).reverse()) await close()
+})
+
+describe('C432-TOKENLESS-MCP: the MCP bearer resolver is deleted, not bypassed', () => {
+  it('C432-TOKENLESS-MCP: the resolver module is gone and no CLI source imports it', () => {
+    expect(existsSync(join(SRC, 'composition', 'mcp-token-resolution.ts'))).toBe(false)
+    const offenders: string[] = []
+    const walk = (dir: string): void => {
+      for (const entry of readdirSync(dir, { withFileTypes: true })) {
+        const path = join(dir, entry.name)
+        if (entry.isDirectory()) { if (entry.name !== '__tests__') walk(path) }
+        else if (entry.name.endsWith('.ts') && readFileSync(path, 'utf8').includes("mcp-token-resolution.js'")) {
+          offenders.push(path)
+        }
+      }
+    }
+    walk(SRC)
+    expect(offenders).toEqual([])
   })
-  it('mints nothing for anonymous defaults, readers or rejected credentials', () => {
-    expect(DEFAULT_MCP_SCOPES).toContain('knowledge-write')
-    expect(credentialForBearer({ kind: 'anonymous', scopes: DEFAULT_MCP_SCOPES })).toBeUndefined()
-    expect(credentialForBearer({ kind: 'token', clientId: 'reader', scopes: ['read'] })).toBeUndefined()
-    expect(credentialForBearer({ kind: 'refused', reason: 'invalid_token' })).toBeUndefined()
-    expect(credentialForBearer({ kind: 'refused', reason: 'malformed_authorization' })).toBeUndefined()
+
+  it('C432-TOKENLESS-MCP: the command exports one tokenless caller and no grant, credential or sentinel', () => {
+    for (const retired of ['MCP_DEFAULT_GRANTED_SCOPES', 'mcpFunctionCaller', 'MCP_AUTH_TOKEN_SENTINEL']) {
+      expect(retired in mcpCommand, retired).toBe(false)
+    }
+    expect(MCP_FUNCTION_CALLER).toEqual({ surface: 'mcp', origin: 'agent' })
+    expect(Object.isFrozen(MCP_FUNCTION_CALLER)).toBe(true)
   })
 })
 
-describe('the D-07 default grant is derived, not restated', () => {
-  it('is the closed scope union minus exactly config-write', () => {
-    // The relation, not the list: this cell keeps holding the day 397 mints a seventh scope, and
-    // it reds the day somebody adds a second exclusion without saying so.
-    const all = FunctionScopeSchema.options
-    expect([...DEFAULT_MCP_SCOPES].sort()).toEqual(
-      all.filter((scope) => scope !== 'config-write').sort(),
-    )
-    expect(DEFAULT_MCP_SCOPES).not.toContain('config-write')
-    expect(DEFAULT_MCP_SCOPES).toHaveLength(all.length - 1)
-  })
-
-  it('carries every other member of the union, one at a time', () => {
-    // Asserted member by member rather than by length alone, because a set of the right SIZE that
-    // omits `run` and includes `config-write` would satisfy a count.
-    for (const scope of FunctionScopeSchema.options) {
-      if (scope === 'config-write') continue
-      expect(DEFAULT_MCP_SCOPES, `default grant is missing ${scope}`).toContain(scope)
+describe('C432-DECLARATION-KEYS: every caller the composition roots mint is attribution only', () => {
+  it('C432-DECLARATION-KEYS: the MCP, run-service, daemon, CLI and dashboard mints carry exactly surface and origin', async () => {
+    const { RUN_SERVICE_FUNCTION_CALLER, DASHBOARD_FUNCTION_CALLER } = await import('../commands/dashboard.js')
+    const { DAEMON_FUNCTION_CALLER } = await import('../daemon/server.js')
+    const { CLI_FUNCTION_CALLER } = await import('../composition/local-agent-host.js')
+    const mints = {
+      mcp: MCP_FUNCTION_CALLER,
+      'run-service': RUN_SERVICE_FUNCTION_CALLER,
+      daemon: DAEMON_FUNCTION_CALLER,
+      cli: CLI_FUNCTION_CALLER,
+      dashboard: DASHBOARD_FUNCTION_CALLER,
     }
+    for (const [name, caller] of Object.entries(mints)) {
+      expect(Object.keys(caller).sort(), name).toEqual(['origin', 'surface'])
+    }
+    expect(Object.values(mints).map((caller) => caller.surface).sort())
+      .toEqual(['cli', 'daemon', 'dashboard', 'mcp', 'run-service'])
+  })
+})
+
+describe('the listener reads no Authorization header (D-12)', () => {
+  async function listener(): Promise<URL> {
+    const registry = createFunctionRegistry({
+      deps: {} as unknown as FunctionDeps,
+      auditSink: { appendGuardrailAudit() {} } as unknown as CreateFunctionRegistryOptions['auditSink'],
+    })
+    const mask = composeMcpMasking({ env: {} })
+    const server: Server = createServer(createMcpHttpRequestListener({ registry, maskText: (text) => mask.mask(text) }))
+    await new Promise<void>((ready) => server.listen(0, '127.0.0.1', ready))
+    cleanups.push(() => new Promise<void>((closed) => server.close(() => closed())))
+    const address = server.address()
+    if (address === null || typeof address === 'string') throw new Error('no port')
+    return new URL(`http://127.0.0.1:${String(address.port)}/mcp`)
+  }
+
+  async function namesWith(url: URL, authorization: string | undefined, frames: string[]): Promise<string[]> {
+    const client = new Client({ name: 'agent-qa-432-21-tokenless', version: '0.0.0' })
+    cleanups.push(() => client.close())
+    await client.connect(new StreamableHTTPClientTransport(url, {
+      fetch: (async (input: URL | string, init?: RequestInit) => {
+        const headers = new Headers(init?.headers)
+        if (authorization !== undefined) headers.set('authorization', authorization)
+        const response = await fetch(input, { ...init, headers })
+        frames.push(await response.clone().text())
+        return response
+      }) as typeof fetch,
+    }))
+    return (await client.listTools()).tools.map((tool) => tool.name).sort()
+  }
+
+  // RE-SPELLED from 'matchBearer answers three ways and never degrades a wrong credential (D-07)':
+  // there is no verdict to degrade. Absent, malformed and unmatched headers are served identically.
+  it('C432-TOKENLESS-MCP: absent, malformed and unmatched bearers list the identical catalogue', async () => {
+    const url = await listener()
+    const frames: string[] = []
+    const absent = await namesWith(url, undefined, frames)
+    expect(absent.length).toBeGreaterThan(0)
+    expect(await namesWith(url, 'Basic not-a-bearer', frames)).toEqual(absent)
+    expect(await namesWith(url, `Bearer ${PLANTED}`, frames)).toEqual(absent)
+    const wire = frames.join('\n')
+    expect(wire).not.toContain('invalid_token')
+    expect(wire).not.toContain(PLANTED)
+  })
+})
+
+// RE-SPELLED from 'the resolved values reach the masker by declaration, not by luck': nothing is
+// declared any more, and environment secret masking is what remains (D-13).
+describe('the MCP masker is seeded from the environment alone', () => {
+  it('masks a suffix-recognised environment secret, and takes no declared-token argument', () => {
+    const masking = composeMcpMasking({ env: { AGENT_QA_432_21_PROBE_TOKEN: PLANTED } })
+    try {
+      expect(masking.mask(`leaked ${PLANTED}`)).not.toContain(PLANTED)
+    } finally {
+      masking.dispose()
+    }
+    expect(composeMcpMasking.length).toBe(1)
   })
 })
 
@@ -150,134 +231,5 @@ describe('the config block lands on services.mcp and defaults safely', () => {
       },
     })
     expect(refused.success).toBe(false)
-  })
-})
-
-describe('resolveMcpTokens dereferences once, at start (D-06)', () => {
-  it('resolves a declared entry against the supplied environment', () => {
-    const [resolved] = resolveMcpTokens(
-      [{ name: 'ci', tokenEnvVar: PLANTED_VAR, scopes: ['read'] }],
-      { [PLANTED_VAR]: PLANTED },
-    )
-    expect(resolved?.name).toBe('ci')
-    expect(resolved?.scopes).toEqual(['read'])
-  })
-
-  it('REFUSES startup naming the variable — and the refusal carries no value', () => {
-    // Two-sided on the one law this class exists for. A message that named the value would be the
-    // T-396-17 leak arriving through the diagnostic written to prevent it.
-    let thrown: unknown
-    try {
-      resolveMcpTokens([{ name: 'ci', tokenEnvVar: PLANTED_VAR, scopes: ['read'] }], {})
-    } catch (err) {
-      thrown = err
-    }
-    expect(thrown).toBeInstanceOf(McpTokenEnvVarUnsetError)
-    const message = (thrown as Error).message
-    expect(message).toContain(PLANTED_VAR)
-    expect(message).toContain('ci')
-    expect(message).not.toContain(PLANTED)
-    // The cause chain too: Node's default uncaught printer walks it (395-16 · CR-01).
-    expect(JSON.stringify((thrown as Error).cause ?? null)).not.toContain(PLANTED)
-  })
-
-  it('treats an empty variable as unset', () => {
-    // `FOO=` is what a failed substitution leaves behind. Accepting it would mint a credential that
-    // matches `Authorization: Bearer ` — the one value nobody has to guess.
-    expect(() =>
-      resolveMcpTokens([{ name: 'ci', tokenEnvVar: PLANTED_VAR, scopes: ['read'] }], {
-        [PLANTED_VAR]: '   ',
-      }),
-    ).toThrow(McpTokenEnvVarUnsetError)
-  })
-})
-
-describe('matchBearer answers three ways and never degrades a wrong credential (D-07)', () => {
-  const tokens = resolveMcpTokens(
-    [
-      { name: 'ci', tokenEnvVar: PLANTED_VAR, scopes: ['read', 'config-write'] },
-      { name: 'editor', tokenEnvVar: 'AGENT_QA_396_MCP_CRED_B', scopes: ['read'] },
-    ],
-    { [PLANTED_VAR]: PLANTED, AGENT_QA_396_MCP_CRED_B: 'zz-396-05-second-credential-b7e2' },
-  )
-
-  it('ABSENT header -> the D-07 default grant', () => {
-    const verdict = matchBearer(undefined, tokens)
-    expect(verdict.kind).toBe('anonymous')
-    expect(verdict.kind === 'anonymous' && verdict.scopes).toEqual(DEFAULT_MCP_SCOPES)
-  })
-
-  it('MATCHED bearer -> exactly that entry\'s scopes, attributed to its label', () => {
-    const verdict = matchBearer(`Bearer ${PLANTED}`, tokens)
-    expect(verdict.kind).toBe('token')
-    expect(verdict.kind === 'token' && verdict.clientId).toBe('ci')
-    expect(verdict.kind === 'token' && verdict.scopes).toEqual(['read', 'config-write'])
-  })
-
-  it('UNMATCHED bearer -> refused, and specifically NOT the default grant', () => {
-    // The prohibited direction, asserted as an absence rather than only as a presence: a verdict
-    // that happened to be `anonymous` would carry `scopes` and this cell would see it.
-    const verdict = matchBearer('Bearer zz-not-a-declared-credential', tokens)
-    expect(verdict.kind).toBe('refused')
-    expect(verdict.kind).not.toBe('anonymous')
-    expect((verdict as { scopes?: unknown }).scopes).toBeUndefined()
-    expect(verdict.kind === 'refused' && verdict.reason).toBe('invalid_token')
-  })
-
-  it('MALFORMED header -> refused, never the default grant', () => {
-    for (const header of ['Basic abc', 'Bearer', 'Bearer   ', 'nonsense']) {
-      const verdict = matchBearer(header, tokens)
-      expect(verdict.kind, `header ${JSON.stringify(header)} was not refused`).toBe('refused')
-    }
-  })
-
-  it('accepts the scheme case-insensitively, per RFC 7235', () => {
-    expect(matchBearer(`bearer ${PLANTED}`, tokens).kind).toBe('token')
-    expect(matchBearer(`BEARER ${PLANTED}`, tokens).kind).toBe('token')
-  })
-
-  it('does not throw on a presented value of a different length than any declared one', () => {
-    // The length guard, measured as behaviour rather than read off the source. A bare
-    // `timingSafeEqual` over two raw buffers throws `RangeError` here, which would turn every
-    // wrong-length credential into a 500 and leak the declared length through the difference.
-    for (const presented of ['x', PLANTED.repeat(4), '']) {
-      expect(() => matchBearer(`Bearer ${presented}`, tokens)).not.toThrow()
-    }
-  })
-
-  it('with NO declared tokens, a presented credential is still refused', () => {
-    // The empty-token-list posture: absence of declared credentials is not a reason to honour an
-    // undeclared one. Absent header still gets the default grant.
-    expect(matchBearer(`Bearer ${PLANTED}`, []).kind).toBe('refused')
-    expect(matchBearer(undefined, []).kind).toBe('anonymous')
-  })
-})
-
-describe('the stdio grant is an opt-in that flips exactly one scope (D-07)', () => {
-  it('withholds config-write by default', () => {
-    expect(resolveStdioScopes(false)).toEqual(DEFAULT_MCP_SCOPES)
-    expect(resolveStdioScopes(false)).not.toContain('config-write')
-  })
-
-  it('adds config-write and nothing else when the config opts in', () => {
-    const granted = resolveStdioScopes(true)
-    expect(granted).toContain('config-write')
-    // Both sides: the opt-in adds one member and removes none.
-    expect([...granted].sort()).toEqual([...FunctionScopeSchema.options].sort())
-    expect(granted).toHaveLength(DEFAULT_MCP_SCOPES.length + 1)
-  })
-})
-
-describe('the resolved values reach the masker by declaration, not by luck', () => {
-  it('offers every declared variable name and its value to a secret store consumer', () => {
-    // The name has no suffix `sensitiveEnvSlice` recognises, which is exactly why this door has to
-    // exist: without it the one credential this host definitionally holds is the one the run
-    // masker does not know about.
-    const tokens = resolveMcpTokens([{ name: 'ci', tokenEnvVar: PLANTED_VAR, scopes: ['read'] }], {
-      [PLANTED_VAR]: PLANTED,
-    })
-    const seen: Array<[string, string]> = []
-    mcpTokenSecretStore(tokens).forEachSecret((name, value) => seen.push([name, value]))
-    expect(seen).toEqual([[PLANTED_VAR, PLANTED]])
   })
 })

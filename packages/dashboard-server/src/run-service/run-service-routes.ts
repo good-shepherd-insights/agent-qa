@@ -1,36 +1,37 @@
-// The authed run service's HTTP surface (Phase 402 plan 01, D-02 / D-06 / D-13 / D-15 · INVK-03).
+// The run service's HTTP surface (Phase 402 plan 01, D-02 / D-06 / D-13 / D-15 · INVK-03).
+//
+// 2026-10-01 (432-21, D-12/D-13): TOKENLESS. The bearer verdict this door put first on every route,
+// its `verifyBearer` port and the trust scope a matched token carried into the caller are deleted
+// with `services.dashboard.runServiceTokens`. What stands first on every route now is the
+// dashboard's own same-site guard (`refuseCrossSiteRequest`): a Host this loopback server never
+// agreed to answer to, a foreign `Origin` or a cross-site `Sec-Fetch-Site` is refused before the
+// route table. The paragraphs below that describe the bearer are kept as history and say so.
 //
 // A MOUNTABLE MODULE, NOT A SERVER (D-02). Everything this door needs from the world arrives as
-// {@link RunServicePorts}: how to verify a bearer header, how to start a run, how to reach a
-// started run's session, and how to answer readiness. It imports the shared schema vocabulary and
+// {@link RunServicePorts}: how to start a run, how to reach a started run's session, and how to
+// answer readiness. It imports the shared schema vocabulary and
 // node built-ins and NOTHING from `@vostride/agent-qa-agent`, `-agent-local` or `-safety` — those
 // are the packages `packages/dashboard-server` may not name, and `pnpm validate:arch` is the
 // mechanical proof. 402 mounts this in the shipped dashboard process so there is no fourth process
 // and no daemon TCP exposure; a future cloud host mounts the same unit with different ports.
 //
-// THE VERDICT IS FIRST ON EVERY ROUTE, AND ABOVE THE ROUTE TABLE (D-06, D-15). Not per handler —
-// per REQUEST, before dispatch is even attempted. Two things follow that a per-handler check could
-// not give: a route added tomorrow inherits the refusal by construction rather than by somebody
-// remembering, and an unauthenticated caller cannot learn WHICH paths exist, because a valid path
-// and a nonsense one are refused identically. `/ok` is inside this rule and not an exception to it
-// (D-15): an `/ok` that answered before the verdict would be a fingerprinting surface.
-//
-// THERE IS NO PERMISSIVE ARM ANYWHERE IN THIS FILE. {@link ServiceBearerVerdict} has two arms, so
-// a missing header and a wrong token both land in `refused`, and there is no value of that type
-// meaning "nobody presented anything, serve them anyway". A wrong credential never degrades to a
-// weaker success.
+// THE SAME-SITE GUARD IS FIRST ON EVERY ROUTE, AND ABOVE THE ROUTE TABLE (D-06, D-15; 432-21 D-13).
+// Not per handler — per REQUEST, before dispatch is even attempted. A route added tomorrow inherits
+// the refusal by construction rather than by somebody remembering, and a refused caller cannot
+// learn WHICH paths exist, because a valid path and a nonsense one are refused identically. `/ok` is
+// inside this rule and not an exception to it (D-15). Until 432-21 the rung here was the bearer
+// verdict, whose two-arm type had no permissive arm; the guard that replaced it has none either —
+// a request it does not admit is refused, never served a weaker answer.
 //
 // EVERY REFUSAL WRITES THE SAME BODY SHAPE — one key, a closed code (see
-// `RunServiceErrorBodySchema`). Nothing echoes the caller's input, names a run id, or hints at how
-// many credentials are declared.
+// `RunServiceErrorBodySchema`). Nothing echoes the caller's input or names a run id.
 //
-// WITH EXACTLY ONE EXCEPTION, AND IT IS ON THE OTHER SIDE OF THE VERDICT (402-06). A run DENIAL
-// is answered 403 with the run core's plain refusal sentence (`RunServiceDenialBodySchema`). The
-// one-key law's whole argument is about what an UNAUTHENTICATED caller may learn; a 403 is reached
-// only after a declared credential matched, so the reader is a party this process already decided
-// to talk to, and a bare word would turn a decidable situation into a failure they will retry
-// forever. Since 432 the one run denial is production without the config opt-in (D-18), and since
-// 432-19 the body carries no remedy list.
+// WITH EXACTLY ONE EXCEPTION, AND IT IS ON THE OTHER SIDE OF THE GUARD (402-06). A run DENIAL is
+// answered 403 with the run core's plain refusal sentence (`RunServiceDenialBodySchema`). The
+// one-key law's whole argument is about what a caller refused at the door may learn; a run denial is
+// reached only by a caller the guard admitted, and a bare word would turn a decidable situation into
+// a failure they will retry forever. Since 432 the one run denial is production without the config
+// opt-in (D-18), and since 432-19 the body carries no remedy list.
 //
 // THE STREAM SERVES THE FROZEN BUS ENVELOPE VERBATIM (D-13). SSE `id` is the envelope's `seq`,
 // `event` is its `type`, and `data` is the envelope's own JSON. There is no projection layer and
@@ -39,10 +40,10 @@
 // full replay/attach acceptance is 403's (INVK-05); 402 claims delivery, not the attach contract.
 //
 // NO CROSS-ORIGIN GRANT, AT ALL. This file writes no `Access-Control-Allow-Origin`, following the
-// chat door's adjudication rather than the legacy run stream's wildcard. That is also the whole of
-// this door's CSRF story and it is structural: every route requires an `Authorization` header, and
-// a header a page sets makes the request non-simple, so a browser must preflight — and this door
-// grants no preflight. A cross-origin page therefore cannot drive it at all.
+// chat door's adjudication rather than the legacy run stream's wildcard. Until 432-21 that was the
+// whole of this door's CSRF story: every route required an `Authorization` header, which made every
+// request non-simple. With no header required, a page could send a SIMPLE cross-site POST, so the
+// same-site guard above the table is what refuses it now, preflight or not.
 //
 // THE `?handle=` FILTER IS SERVER-SIDE, AND ITS PREDICATE LIVES IN THE SCHEMA (402-04, D-14).
 // A parallel run is ONE run id with N attachable per-member handles. The optional `handle` query
@@ -69,11 +70,8 @@
 // data to a caller who asked for one) and not an empty one (which would look like a member that
 // did nothing).
 //
-// BEARER CARRIAGE IS HEADER-ONLY, AND THERE MUST NEVER BE A QUERY-PARAMETER FALLBACK: a URL is
-// written to access logs, proxy logs and browser history, so a token carried there is published.
-// Browser `EventSource` cannot set an `Authorization` header (RESEARCH A1), which is why this
-// door's clients are `curl`, `fetch` and CI rather than a bare `EventSource`. A future browser
-// client uses `fetch` with a streaming body reader, not `EventSource`.
+// 2026-10-01 (432-21): no bearer is carried at all, in a header or a URL. This door's clients are
+// still `curl`, `fetch` and CI; none of them sends an `Origin`, which is what the guard admits.
 //
 // BACKPRESSURE POSTURE, STATED RATHER THAN OVERLOOKED: writes are fire-and-forget with no `drain`
 // handling, matching both shipped SSE streams in this package. A client that reads slower than a
@@ -102,12 +100,11 @@ import {
   type RunsLiveUrlResult,
   type RunSession,
   type RunStartAcknowledgement,
-  type ServiceBearerVerdict,
-  type TrustScope,
 } from '@vostride/agent-qa-schema'
 
 import type { AgentHost } from '../chat/host.js'
 import { readJsonBody } from '../server/body-parser.js'
+import { refuseCrossSiteRequest } from '../server/cross-site.js'
 // 405-05 (D-12 / 402 D-16): THE SAME TWO ADAPTERS THE LOCAL DOOR CALLS. Imported rather than
 // re-implemented, because "both doors answer the same bytes" is a claim about there being one
 // implementation — two that agree today are two that can stop agreeing.
@@ -141,26 +138,26 @@ const HEARTBEAT_MS = 15_000
  */
 const MAX_REQUEST_BYTES = 64 * 1024
 
-/** What starting a run needs from the composition, as data rather than as a live handle. */
+/**
+ * What starting a run needs from the composition, as data rather than as a live handle.
+ *
+ * 2026-10-01 (432-21, D-12): the matched token's `trustScope` and `clientId` are deleted with the
+ * token. A start carries the caller's pattern set and nothing about who the caller is.
+ */
 export interface RunServiceStartInput {
   /** The pattern set the caller asked for; absent means the configured default set. */
   readonly patterns?: readonly string[]
-  /** The matched entry's trust, on its way to `FunctionCaller.credential`. */
-  readonly trustScope: TrustScope
-  /** The matched entry's operator label — attribution only, never a permission input. */
-  readonly clientId: string
 }
 
 /**
  * Everything this door reaches the world through (D-02).
  *
- * ALL FOUR ARE INJECTED, and the injection is what makes the module mountable: the implementations
- * name `invokeFunction`, `runs.start` and a composed local host, all of it vocabulary this package
- * may not import. `InProcessRunStarter` is the shape precedent one directory over.
+ * ALL ARE INJECTED, and the injection is what makes the module mountable: the implementations name
+ * `invokeFunction`, `runs.start` and a composed local host, all of it vocabulary this package may
+ * not import. `InProcessRunStarter` is the shape precedent one directory over. 2026-10-01 (432-21,
+ * D-12): `verifyBearer` is deleted; the same-site guard needs no port.
  */
 export interface RunServicePorts {
-  /** Resolve one request's `Authorization` header to the two-arm verdict. */
-  verifyBearer(header: string | null | undefined): ServiceBearerVerdict
   /**
    * Start a run and return the acknowledgment.
    *
@@ -173,7 +170,7 @@ export interface RunServicePorts {
   /** The measured readiness facts `/ok` reports (D-15). */
   readiness(): RunServiceReadiness
   /**
-   * Mint a live-view URL for one handle of a run, under the CALLER'S OWN trust scope (403 D-03).
+   * Mint a live-view URL for one handle of a run (403 D-03).
    *
    * REQUIRED, NOT OPTIONAL, and that is a decision rather than an oversight. An optional member is
    * a member a composition can forget, and the failure mode of forgetting it here is a 404 that
@@ -182,8 +179,9 @@ export interface RunServicePorts {
    * `LiveViewUnavailableError`-named error, which the arm maps to 503 `live_view_unavailable`: an
    * honest host fact, said out loud, once, in the vocabulary the local door already uses.
    *
-   * THE TRUST SCOPE IS AN INPUT because this is a credential mint (T-403-01). The composition turns
-   * it into the `FunctionCaller` the op runs under; the door never chooses one.
+   * The minted token's own subject (run, handle) and expiry are checked by the live-view validator
+   * independently of who asked (D-13). 2026-10-01 (432-21, D-12): the bearer's trust scope this mint
+   * used to run under is deleted; the composition supplies the one caller it runs under.
    */
   mintLiveUrl(input: MintLiveUrlInput): Promise<RunsLiveUrlResult>
   /**
@@ -202,12 +200,10 @@ export interface RunServicePorts {
   readonly agentHost?: AgentHost
 }
 
-/** What minting one `liveUrl` needs from a request, as data. */
+/** What minting one `liveUrl` needs from a request, as data: the subject, and nothing else. */
 export interface MintLiveUrlInput {
   readonly runId: string
   readonly handle: number
-  /** The verified bearer's trust, on its way to `FunctionCaller.credential`. */
-  readonly trustScope: TrustScope
 }
 
 /** Which handler a table row reaches. A closed union, so a row with no arm is a type error. */
@@ -217,14 +213,14 @@ export type RunServiceRouteHandlerName =
   | 'liveUrl'
   // 405-05 (D-12 / 402 D-16): the two READ rows. 402 D-16 said "405's ref-resolving sha-keyed
   // route mounts behind the same authed door", and mounting it here rather than beside it is what
-  // makes that literal: the verdict above the table applies to these rows by construction, and the
-  // census that drives every row unauthenticated inherits them the day they land.
+  // makes that literal: the guard above the table applies to these rows by construction, and the
+  // census that drives every row cross-site inherits them the day they land.
   | 'detail'
   | 'evidence'
   | 'artifact'
   // 406-01 (D-04): the failure view's read, on the two rows above's exact footing — the local
   // door's `GET /api/runs/:id/analysis` mounts the SAME adapter, so 408's embed and every thin
-  // client parse one path shape whichever credential they hold.
+  // client parse one path shape whichever door they call.
   | 'analysis'
   // 2026-09-15, 423-21 D-18: the two feedback reads, masked on this door like the rows above.
   | 'marks'
@@ -247,20 +243,18 @@ const RUN_SERVICE_EVENTS_PATTERN = /^\/run\/([^/]+)\/events$/
  * The MINT (403 D-03, Q3) — the remote half of the pair whose local half is
  * `GET /api/runs/:runId/live-url`.
  *
- * SAME SHAPE AS THE EVENTS ROUTE ONE LINE UP, deliberately: a remote caller addresses a run it
- * started by id and asks this door for one thing about it per route. The two doors differ in the
- * credential and in nothing else — the same op, the same result, the same fragment carriage.
+ * SAME SHAPE AS THE EVENTS ROUTE ONE LINE UP, deliberately: a caller addresses a run it started by
+ * id and asks this door for one thing about it per route. Since 432-21 the two doors differ in
+ * nothing but the path — the same op, the same caller shape, the same result and fragment carriage.
  */
 export const RUN_SERVICE_LIVE_URL_TEMPLATE = '/run/:runId/live-url'
 const RUN_SERVICE_LIVE_URL_PATTERN = /^\/run\/([^/]+)\/live-url$/
 /**
- * Readiness (D-15) — AUTHED, like every other route on this door.
+ * Readiness (D-15) — behind the same-site guard, like every other route on this door.
  *
- * There is no unauthenticated liveness probe here and there must not be one. An `/ok` that
- * answered before the verdict would tell an unauthenticated caller that this process is an
- * agent-qa run service, that it is up, and — by the shape of what it refused elsewhere — which
- * other routes it serves. The dashboard's preflight is liveness AND early token validation in one
- * round-trip precisely because they are the same question at this door.
+ * An `/ok` that answered before the guard would tell a page on another origin that this process is
+ * an agent-qa run service and that it is up. (Until 432-21 the guard here was the bearer verdict,
+ * and the preflight was liveness and early token validation in one round-trip.)
  */
 /**
  * The durable run-detail READ (405-05, D-12 / 402 D-16) — the remote twin of the local door's
@@ -273,8 +267,8 @@ const RUN_SERVICE_LIVE_URL_PATTERN = /^\/run\/([^/]+)\/live-url$/
  * THIS ROW IS MASKED, and deliberately. It is a machine wire like `/run/:runId/events` one line up
  * — its consumer (the CLI's own `emitHuman`, 408's embed) is where a person meets the text, and
  * that consumer is the display boundary. The alternative would restore declared secrets onto a
- * BEARER-authed wire, extending the disclosure surface to every token holder and every
- * intermediary, which is not what "the browser is never the boundary" (400-06) asks for. 405-10
+ * machine wire, extending the disclosure surface to every client and every intermediary, which is
+ * not what "the browser is never the boundary" (400-06) asks for. 405-10
  * applies the unmask seam to the LOCAL door only and enrols this row on the masked side.
  */
 export const RUN_SERVICE_DETAIL_TEMPLATE = '/run/:runId/detail'
@@ -304,13 +298,13 @@ const RUN_SERVICE_ARTIFACT_PATTERN = /^\/run\/([^/]+)\/artifacts\/([^/]+)$/
  *
  * THIS ROW IS MASKED, AND FOR THE REASON ITS SIBLING IS. The verdict sentence quotes the failing
  * step's recorded error, which carries declared placeholders at rest; restoring them onto a
- * BEARER-authed wire would hand them to every token holder and every intermediary, and this row's
+ * machine wire would hand them to every client and every intermediary, and this row's
  * consumer — the CLI's own emit, 408's embed — is where a person meets the text. The dispatch
  * below passes no `boundary`, and the option's `'machine'` default is what keeps it masked.
  */
 export const RUN_SERVICE_ANALYSIS_TEMPLATE = '/run/:runId/analysis'
 const RUN_SERVICE_ANALYSIS_PATTERN = /^\/run\/([^/]+)\/analysis$/
-/** 2026-09-15, 423-21 D-18: runs.marks.history and runs.mark.preview behind the same verdict. */
+/** 2026-09-15, 423-21 D-18: runs.marks.history and runs.mark.preview behind the same guard. */
 export const RUN_SERVICE_MARKS_TEMPLATE = '/run/:runId/marks'
 const RUN_SERVICE_MARKS_PATTERN = /^\/run\/([^/]+)\/marks$/
 export const RUN_SERVICE_MARK_PREVIEW_TEMPLATE = '/run/:runId/mark-preview'
@@ -320,11 +314,11 @@ export const RUN_SERVICE_OK_ROUTE = '/ok'
 /**
  * EVERY PATH THIS DOOR ANSWERS, as data the dispatch reads (the chat door's own idiom).
  *
- * WHY A TABLE AND NOT THREE ARMS. The verdict guard below is applied to the REQUEST, above this
+ * WHY A TABLE AND NOT THREE ARMS. The same-site guard below is applied to the REQUEST, above this
  * table, so a route added tomorrow inherits it by construction. The table is what makes that
  * inheritance AUDITABLE from outside: because dispatch reads it, a route not in it is unreachable,
- * so a census cell can enumerate this array and drive every row unauthenticated — and a newly
- * added route cannot escape that corpus by nobody noticing it.
+ * so a census cell can enumerate this array and drive every row cross-site — and a newly added
+ * route cannot escape that corpus by nobody noticing it.
  */
 export const RUN_SERVICE_ROUTE_TABLE: readonly RunServiceRouteRow[] = Object.freeze([
   { method: 'POST', path: RUN_SERVICE_START_ROUTE, handler: 'start' },
@@ -396,7 +390,7 @@ export function matchRunServiceRoute(
  * A host consults this before its own routing so that every request to a service path, including
  * an `OPTIONS` preflight and a method this table has no row for, is answered by this door rather
  * than by the host's generic handling. That is what keeps the host's wildcard CORS preflight and
- * its SPA fallback away from an authed surface.
+ * its SPA fallback away from this surface.
  *
  * DERIVED FROM THE TABLE, never a second list: the prefixes are read off the rows, so a route
  * added above is mounted the same commit.
@@ -464,13 +458,6 @@ function respondJson(res: ServerResponse, status: number, data: unknown): void {
   res.end(body)
 }
 
-/** The header, normalised. Node folds a repeated `Authorization` into an array; both refuse. */
-function authorizationHeaderOf(req: IncomingMessage): string | undefined {
-  const raw = req.headers.authorization
-  if (raw === undefined) return undefined
-  return Array.isArray(raw) ? raw.join(', ') : raw
-}
-
 /**
  * The `handle` query parameter, exactly as it arrived, or `null` when absent.
  *
@@ -479,9 +466,8 @@ function authorizationHeaderOf(req: IncomingMessage): string | undefined {
  * belong between a matched route and its handler.
  *
  * A REPEATED parameter is not resolved to one of its values — the values are joined, which cannot
- * parse, so `?handle=1&handle=2` is refused rather than silently answered as handle 1. Same
- * posture as the repeated `Authorization` header above, and for the same reason: a request that
- * says two different things is not a request that said the first one.
+ * parse, so `?handle=1&handle=2` is refused rather than silently answered as handle 1: a request
+ * that says two different things is not a request that said the first one.
  *
  * EXPORTED FOR THE SECOND DOOR (402-08), on {@link serveRunEventStream}'s own reasoning. The local
  * loopback route reads the parameter through THIS function rather than through the host router's
@@ -613,7 +599,7 @@ function refusedFieldsIn(body: Record<string, unknown>): readonly string[] {
  *
  * TOTAL BY DESIGN. It answers every path {@link ownsRunServicePath} claims, including ones no row
  * matches, because the fall-through it would otherwise land in is the host's SPA fallback — which
- * answers 200 with an HTML page, on an authed surface, to a caller with no credential.
+ * answers 200 with an HTML page for any unknown path.
  */
 /** What the exported stream core reaches the world through. */
 export interface RunEventStreamDeps {
@@ -647,7 +633,8 @@ export interface RunEventStreamDeps {
  * THE RUN STREAM, AS ONE UNIT: attach, validate the handle, filter, frame, heartbeat, close.
  *
  * Exported because there is going to be a SECOND door onto the same stream — 402-08 mounts the
- * local door, which differs from this one only in what it does about credentials. Two doors
+ * local door, which differed from this one only in what it did about credentials (and since 432-21
+ * differs in nothing but the path). Two doors
  * calling one function is the only shape in which the filter has exactly one implementation; two
  * copies of the serving body would be two places `?handle=` could drift, and the drift would be
  * invisible until somebody diffed them.
@@ -881,10 +868,7 @@ export function createRunServiceRoutes(ports: RunServicePorts): RunServiceRouter
   /** Every live stream's teardown, so a host can count them and a close removes exactly one. */
   const openStreams = new Set<() => void>()
 
-  function handleStart(req: IncomingMessage, res: ServerResponse, input: {
-    readonly trustScope: TrustScope
-    readonly clientId: string
-  }): void {
+  function handleStart(req: IncomingMessage, res: ServerResponse): void {
     void (async () => {
       let raw: unknown
       try {
@@ -899,9 +883,9 @@ export function createRunServiceRoutes(ports: RunServicePorts): RunServiceRouter
       }
       const refused = refusedFieldsIn(raw as Record<string, unknown>)
       if (refused.length > 0) {
-        // A token-holder may not name the terms of its own authorization, may not choose the
-        // identity its run is addressed by, and may not tune a target's concurrency. The door
-        // composes context and the core mints the id.
+        // A caller may not name the terms of its own authorization, may not choose the identity
+        // its run is addressed by, and may not tune a target's concurrency. The door composes
+        // context and the core mints the id.
         refuse(res, 400, 'refused_request_field')
         return
       }
@@ -913,11 +897,9 @@ export function createRunServiceRoutes(ports: RunServicePorts): RunServiceRouter
 
       let ack: RunStartAcknowledgement
       try {
-        ack = await ports.invokeRunStart({
-          ...(parsed.data.patterns === undefined ? {} : { patterns: parsed.data.patterns }),
-          trustScope: input.trustScope,
-          clientId: input.clientId,
-        })
+        ack = await ports.invokeRunStart(
+          parsed.data.patterns === undefined ? {} : { patterns: parsed.data.patterns },
+        )
       } catch (error) {
         // A POLICY DENIAL IS A DECISION, NOT A CRASH, and it is the one rejection this door
         // RENDERS rather than flattens. Read structurally — see `runDenialOf`.
@@ -927,8 +909,8 @@ export function createRunServiceRoutes(ports: RunServicePorts): RunServiceRouter
           return
         }
         // Everything else keeps its words to itself: a crash message is composed from this
-        // process's own state and this caller is remote. The run's own diagnostics reach whoever
-        // can read the run, which requires the same credential.
+        // process's own state and is not this caller's to read. The run's own diagnostics reach
+        // whoever reads the run.
         refuse(res, 500, 'run_start_failed')
         return
       }
@@ -982,7 +964,6 @@ export function createRunServiceRoutes(ports: RunServicePorts): RunServiceRouter
     runIdParam: string,
     req: IncomingMessage,
     res: ServerResponse,
-    trustScope: TrustScope,
   ): void {
     let runId: string
     try {
@@ -1001,7 +982,7 @@ export function createRunServiceRoutes(ports: RunServicePorts): RunServiceRouter
       return
     }
     const handle = parsedHandle.kind === 'absent' ? 0 : parsedHandle.index
-    void ports.mintLiveUrl({ runId, handle, trustScope }).then(
+    void ports.mintLiveUrl({ runId, handle }).then(
       (result) => { respondJson(res, 200, result) },
       (error: unknown) => {
         const name = typeof error === 'object' && error !== null
@@ -1031,7 +1012,7 @@ export function createRunServiceRoutes(ports: RunServicePorts): RunServiceRouter
    * AN UNCOMPOSED HOST IS 503 IN THE ADAPTERS' OWN VOCABULARY, not this door's closed error set.
    * These two rows serve a shape the closed `RunServiceErrorCode` set was never written for — a
    * whole projection, a PNG — so their refusals are the adapters' and are byte-identical to the
-   * local door's. What the closed set still owns is everything an UNAUTHENTICATED caller can see,
+   * local door's. What the closed set still owns is everything a caller refused at the door can see,
    * and that is settled above the table, before either of these arms is reachable at all.
    */
   function handleAgentRead(
@@ -1061,13 +1042,15 @@ export function createRunServiceRoutes(ports: RunServicePorts): RunServiceRouter
     try {
       const path = (req.url ?? '/').split('?')[0] ?? '/'
 
-      // THE VERDICT, FIRST, ABOVE THE ROUTE TABLE (D-06 / D-15). Every route, every method, every
-      // path this door owns — including a path no row matches. Nothing below this line runs for a
-      // caller who has not presented a declared credential, which is what makes "no permissive arm
-      // on ANY service route" a property of the dispatch rather than of three handlers.
-      const verdict = ports.verifyBearer(authorizationHeaderOf(req))
-      if (verdict.kind === 'refused') {
-        refuse(res, 401, verdict.reason)
+      // THE SAME-SITE GUARD, FIRST, ABOVE THE ROUTE TABLE (D-06 / D-15; 432-21 D-13). Every route,
+      // every method, every path this door owns — including a path no row matches, and a preflight.
+      // Nothing below this line runs, and no body is read, for a request naming a non-loopback Host,
+      // a foreign `Origin` or a cross-site `Sec-Fetch-Site`. The predicate is the dashboard's one
+      // shared spelling (`server/cross-site.ts`), so this door and the mark, config and live-url
+      // doors cannot disagree about what cross-site means. Until 432-21 this rung was the bearer
+      // verdict; the credential is deleted (D-12) and the network boundary is what remains.
+      if (refuseCrossSiteRequest(req) !== undefined) {
+        refuse(res, 403, 'cross_site_refused')
         return
       }
 
@@ -1079,13 +1062,13 @@ export function createRunServiceRoutes(ports: RunServicePorts): RunServiceRouter
 
       switch (matched.row.handler) {
         case 'start':
-          handleStart(req, res, { trustScope: verdict.trustScope, clientId: verdict.clientId })
+          handleStart(req, res)
           return
         case 'events':
           handleEvents(matched.params[0] ?? '', handleParamOf(req), req, res)
           return
         case 'liveUrl':
-          handleLiveUrl(matched.params[0] ?? '', req, res, verdict.trustScope)
+          handleLiveUrl(matched.params[0] ?? '', req, res)
           return
         case 'detail':
           handleAgentRead(req, res, matched.params[0] ?? '', (runId, host) => {
@@ -1105,8 +1088,8 @@ export function createRunServiceRoutes(ports: RunServicePorts): RunServiceRouter
         case 'analysis':
           handleAgentRead(req, res, matched.params[0] ?? '', (runId, host) => {
             // NO DISPLAY OPT-IN, AND THAT IS THE WHOLE DECISION (406 D-04, 405-10's precedent).
-            // The shared adapter's option defaults to `'machine'`; a token authenticates a
-            // client, not a person's browser session, so this body stays masked. Opting this arm
+            // The shared adapter's option defaults to `'machine'`; this door's callers are machine
+            // clients, not a person's browser session, so this body stays masked. Opting this arm
             // in reds the roll-call's `machine:remote-run-analysis` row and a source cell in
             // `run-service-routes.test.ts` that greps this very block — which is the review the
             // reversal deserves.

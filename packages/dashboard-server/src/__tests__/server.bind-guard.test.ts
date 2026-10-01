@@ -22,9 +22,9 @@ import { DashboardRemoteBindRefusedError, startServer } from '../server/server.j
  * LISTENING server; a cell that asserted "a default was passed" would pass under an implementation
  * that passed the default and then ignored it.
  *
- * THE REFUSAL IS PROVEN ON A GENUINELY NON-LOOPBACK HOST, BOTH WAYS. `0.0.0.0` is refused with no
- * credential declared and BOUND with one — a suite that only exercised the loopback default would
- * prove nothing about the arm D-07 exists to permit.
+ * THE REFUSAL IS PROVEN ON A GENUINELY NON-LOOPBACK HOST. `0.0.0.0` is refused with and without the
+ * run service mounted, and (since 432-21, D-12/D-13) with and without a legacy run-service token
+ * declaration in the config the server reads: there is no credential that could exempt a bind.
  */
 
 const NON_LOOPBACK_HOST = '0.0.0.0'
@@ -42,17 +42,28 @@ afterEach(() => {
   }
 })
 
-function configPathFor(): string {
+function configPathFor(legacyTokens = false): string {
   tempDir = mkdtempSync(join(tmpdir(), 'agent-qa-bind-guard-'))
   const configPath = join(tempDir, 'agent-qa.config.yaml')
-  writeFileSync(configPath, 'testDir: tests\n')
+  // 432-21 (D-12/D-22): the legacy run-service token block, as a pre-432 project would still carry
+  // it on disk. Nothing reads it; it is here so the bind refusal is measured with it present.
+  writeFileSync(configPath, legacyTokens
+    ? [
+        'testDir: tests',
+        'services:',
+        '  dashboard:',
+        '    runServiceTokens:',
+        '      - name: ci',
+        '        tokenEnvVar: AGENT_QA_BIND_GUARD_LEGACY_TOKEN',
+        '        trustScope: { project: acme }',
+        '',
+      ].join('\n')
+    : 'testDir: tests\n')
   return configPath
 }
 
 type ServicePorts = NonNullable<Parameters<typeof startServer>[0]['runService']>
 type Readiness = NonNullable<Parameters<typeof startServer>[0]['runServiceReadiness']>
-
-const ACCEPTED_TOKEN = 'bind-guard-fixture-token'
 
 /**
  * A run-service port set whose readiness is INJECTED by the caller.
@@ -62,11 +73,8 @@ const ACCEPTED_TOKEN = 'bind-guard-fixture-token'
  * not merely "two functions that agree today".
  */
 function stubRunServicePorts(readiness: Readiness): ServicePorts {
+  // 2026-10-01 (432-21, D-12): no `verifyBearer` — the run service is tokenless.
   return {
-    verifyBearer: (header: string | null | undefined) =>
-      header === `Bearer ${ACCEPTED_TOKEN}`
-        ? { kind: 'token', clientId: 'fixture', trustScope: {} }
-        : { kind: 'refused', reason: 'invalid_token' },
     invokeRunStart: () => { throw new Error('the bind cells never start a run') },
     attach: () => undefined,
     readiness,
@@ -76,7 +84,7 @@ function stubRunServicePorts(readiness: Readiness): ServicePorts {
 const INERT_READINESS: Readiness = () => ({
   service: 'up',
   hostComposed: false,
-  authConfigured: true,
+  authConfigured: false,
   contractVersion: 1,
 })
 
@@ -85,6 +93,7 @@ async function start(opts: {
   port?: number
   mountService?: boolean
   readiness?: Readiness
+  legacyTokens?: boolean
 }): Promise<{ server: Server; close: () => void }> {
   const db = new DashboardDatabase({ dbPath: ':memory:' })
   dbs.push(db)
@@ -92,7 +101,7 @@ async function start(opts: {
   const handle = await startServer({
     db,
     port: opts.port ?? 0,
-    configPath: configPathFor(),
+    configPath: configPathFor(opts.legacyTokens === true),
     ...(opts.host === undefined ? {} : { host: opts.host }),
     ...(opts.mountService === true ? { runService: stubRunServicePorts(readiness) } : {}),
     ...(opts.readiness === undefined ? {} : { runServiceReadiness: readiness }),
@@ -198,6 +207,27 @@ describe('the dashboard bind contract (D-07)', () => {
       expect(isLoopbackHost(boundAddress(server) ?? '')).toBe(true)
     }
   })
+
+  // 2026-10-01 (432-21, D-12/D-13): the run-service tokens are deleted, and the loopback bind is
+  // what D-13 keeps. The refusal is unconditional with the tokenless run service mounted, with and
+  // without a legacy token declaration on disk, and an ordinary local start still binds and serves.
+  it('C432-RETAINED-LOOPBACK: refuses a non-loopback bind with and without a legacy token block, and an ordinary local start serves', async () => {
+    for (const legacyTokens of [false, true]) {
+      const port = await reserveFreePort()
+      await expect(start({ host: NON_LOOPBACK_HOST, port, mountService: true, legacyTokens }),
+        `legacy token block ${String(legacyTokens)}`)
+        .rejects.toBeInstanceOf(DashboardRemoteBindRefusedError)
+      await expect(portIsFree(port)).resolves.toBe(true)
+    }
+    const error = await start({ host: NON_LOOPBACK_HOST, legacyTokens: true }).catch((e: unknown) => e)
+    expect((error as Error).message).not.toMatch(/runServiceTokens|credential declared|declare a/u)
+
+    const { server } = await start({ mountService: true, legacyTokens: true })
+    expect(boundAddress(server)).toBe('127.0.0.1')
+    const port = (server.address() as AddressInfo).port
+    const ok = await fetch(`http://127.0.0.1:${String(port)}/ok`)
+    expect(ok.status).toBe(200)
+  })
 })
 
 /**
@@ -217,20 +247,18 @@ describe('the local readiness door (D-15)', () => {
       fn: () => ({
         service: 'up' as const,
         hostComposed,
-        authConfigured: true,
+        authConfigured: false,
         contractVersion: 7,
       }),
       flip: () => { hostComposed = true },
     }
   }
 
-  async function get(port: number, path: string, token?: string): Promise<{
+  async function get(port: number, path: string, headers: Record<string, string> = {}): Promise<{
     status: number
     body: unknown
   }> {
-    const response = await fetch(`http://127.0.0.1:${String(port)}${path}`, {
-      headers: token === undefined ? {} : { authorization: `Bearer ${token}` },
-    })
+    const response = await fetch(`http://127.0.0.1:${String(port)}${path}`, { headers })
     return { status: response.status, body: await response.json().catch(() => undefined) }
   }
 
@@ -241,7 +269,7 @@ describe('the local readiness door (D-15)', () => {
 
     const before = await Promise.all([
       get(port, '/api/run-readiness'),
-      get(port, '/ok', ACCEPTED_TOKEN),
+      get(port, '/ok'),
     ])
     expect(before[0].status).toBe(200)
     expect(before[1].status).toBe(200)
@@ -249,7 +277,7 @@ describe('the local readiness door (D-15)', () => {
     expect(before[0].body).toEqual({
       service: 'up',
       hostComposed: false,
-      authConfigured: true,
+      authConfigured: false,
       contractVersion: 7,
     })
 
@@ -258,25 +286,29 @@ describe('the local readiness door (D-15)', () => {
     flip()
     const after = await Promise.all([
       get(port, '/api/run-readiness'),
-      get(port, '/ok', ACCEPTED_TOKEN),
+      get(port, '/ok'),
     ])
     expect(after[0].body).toEqual(after[1].body)
     expect(after[0].body).toMatchObject({ hostComposed: true })
   })
 
-  it('answers the LOCAL door with no token at all — the bind guard is what keeps it local', async () => {
+  // RE-SPELLED 2026-10-01 (432-21, D-12/D-13) from 'answers the LOCAL door with no token at all —
+  // the bind guard is what keeps it local'. Neither door asks for a token now; the bind guard still
+  // keeps both local, and the run service's same-site guard refuses a cross-site readiness probe.
+  it('answers BOTH doors with no token at all — the bind guard is what keeps them local', async () => {
     const { fn } = movingReadiness()
     const { server } = await start({ mountService: true, readiness: fn })
     const port = (server.address() as AddressInfo).port
 
-    // No Authorization header anywhere. The authed door refuses the identical question.
     await expect(get(port, '/api/run-readiness')).resolves.toMatchObject({ status: 200 })
-    await expect(get(port, '/ok')).resolves.toMatchObject({ status: 401 })
+    await expect(get(port, '/ok')).resolves.toMatchObject({ status: 200 })
+    await expect(get(port, '/ok', { origin: 'https://evil.example' }))
+      .resolves.toMatchObject({ status: 403, body: { error: 'cross_site_refused' } })
   })
 
   it('answers honestly with NO run service mounted — never a 404', async () => {
-    // The shipped no-credential arm: the service is not mounted, and the composition still hands
-    // over the SAME producer with a zero count. The browser preflight gets a readable answer.
+    // An in-process mount with no service (since 432-21 the shipped command always mounts it): the
+    // composition still hands over the producer, and the browser preflight gets a readable answer.
     const { server } = await start({
       readiness: () => ({
         service: 'up',
@@ -290,7 +322,7 @@ describe('the local readiness door (D-15)', () => {
     expect(local.status).toBe(200)
     expect(local.body).toMatchObject({ authConfigured: false })
     // …and the authed door genuinely is not mounted on this arm.
-    await expect(get(port, '/ok', ACCEPTED_TOKEN)).resolves.toMatchObject({ status: 404 })
+    await expect(get(port, '/ok')).resolves.toMatchObject({ status: 404 })
   })
 
   it('answers 503 BY NAME on a mount that was given no predicate — not a fabricated answer', async () => {

@@ -55,10 +55,12 @@
 //   here rather than quietly restated. The ground that HOLDS is a fact about this server rather
 //   than about its caller: the wrapper document is the token's destination because it is the ONE
 //   place this server writes the token, and that door is bounded at REGISTRATION by
-//   `visibleToCaller` over the registry's declared scopes for the mint and roster ops, plus
 //   `mint.bindingStatus === 'bound'` (header clause 5) — never by the caller's own capability
 //   declaration, which clause 3's re-adjudication established this server cannot authenticate.
 //   The exclusion is therefore as narrow as it ever was and is now grounded on something measured.
+//   (2026-10-01, 432-20/432-21, D-12: the `visibleToCaller` scope bound that also stood here is
+//   deleted for every caller, and the caller below carries no scope set or credential. The token's
+//   own subject and expiry checks, and the loopback/Host/Origin boundary, are what D-13 keeps.)
 //   (adjudicated 2026-08-31, plan 02; see that file's header, "THE `ui://` READ CHANNEL — the full
 //   ruling", and "THE 2026-09-01 GAP-ROUND RULING" beneath it.)
 //   The other three clauses are what make the exclusion narrow enough to be honest: the template is
@@ -142,7 +144,6 @@ import { asRunId } from '@vostride/agent-qa-schema'
 import type {
   CompletedRunHandoff,
   FunctionCaller,
-  FunctionScope,
   LiveUrlSigner,
   RunEventEnvelope,
 } from '@vostride/agent-qa-schema'
@@ -341,12 +342,10 @@ function fixtureRegistry(): { readonly registry: FunctionRegistry; readonly mint
   return { registry: createFunctionRegistry({ deps, auditSink }), minted }
 }
 
-const CALLER_SCOPES: readonly FunctionScope[] = ['read', 'run']
-
+// 2026-10-01 (432-21, D-12): the tokenless MCP caller every request is served as — no scope set,
+// safe-mode flag or credential.
 const caller: FunctionCaller = {
   surface: 'mcp',
-  grantedScopes: CALLER_SCOPES,
-  safeMode: false,
   origin: 'agent',
 }
 

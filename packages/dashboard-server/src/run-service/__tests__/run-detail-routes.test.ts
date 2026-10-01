@@ -89,6 +89,10 @@ import { createDashboardRunDetailReader } from '../run-detail-reader.js'
 
 /** A 64-hex sha, the shape `FsEvidenceArtifactStore` content-addresses a blob under. */
 const DECISION_SHA = 'a'.repeat(63) + '7'
+// 2026-10-01 (432-21, D-12): the run service is tokenless, so its fixture headers carry nothing, and
+// what it refuses before dispatch is a cross-site request.
+const TOKENLESS_HEADERS: Record<string, string> = {}
+const CROSS_SITE_HEADERS: Record<string, string> = { Origin: 'https://evil.example' }
 const RUN_ID = 'r_tracer-alpha-bravo-charlie-delta-echo-foxtrot-golf-hotel-india'
 const BRIEF_DIGEST = 'brief-digest-405-tracer'
 
@@ -137,12 +141,11 @@ function makeSubActionEvidence(): SubActionEvidence {
   }
 }
 
+// 2026-10-01 (432-21, D-12): the tokenless caller shape — no scope set or safe-mode flag.
 const REGISTRY_CALLER: FunctionCaller = {
   surface: 'dashboard',
-  grantedScopes: ['read'],
-  safeMode: false,
   origin: 'human',
-} as unknown as FunctionCaller
+}
 
 /**
  * The four REQUIRED ports, minimal by construction. None of them is reached by `runs.detail` —
@@ -454,17 +457,13 @@ async function serveEvidence() {
   }
   const started = await startServer({ db, port: 0, agentHost: host })
   closers.push(started.close)
-  const remote = createServer(createRunServiceRoutes({ agentHost: host,
-    verifyBearer: header => header === 'Bearer synthetic-evidence-client'
-      ? { kind: 'token', clientId: 'test', trustScope: { project: 'test' } }
-      : { kind: 'refused', reason: 'invalid_token' },
-  } as RunServicePorts))
+  const remote = createServer(createRunServiceRoutes({ agentHost: host } as unknown as RunServicePorts))
   servers.push(remote)
   await new Promise<void>(resolve => remote.listen(0, '127.0.0.1', resolve))
   return { seen, registry, ref, document,
     local: `http://127.0.0.1:${(started.server.address() as AddressInfo).port}/api/runs/${RUN_ID}`,
     remote: `http://127.0.0.1:${(remote.address() as AddressInfo).port}/run/${RUN_ID}`,
-    headers: { Authorization: 'Bearer synthetic-evidence-client' },
+    headers: TOKENLESS_HEADERS,
   }
 }
 
@@ -479,9 +478,12 @@ describe('423 typed evidence HTTP doors', () => {
     expect(f.seen).toContain('display')
     expect(response.headers.get('access-control-allow-origin')).toBeNull()
   })
-  it('HTTP-EVIDENCE-MACHINE authenticates before dispatch and never restores', async () => {
+  // RE-SPELLED 2026-10-01 (432-21, D-12/D-13) from 'HTTP-EVIDENCE-MACHINE authenticates before
+  // dispatch and never restores': the run service asks for no bearer, so the guard that answers
+  // before dispatch is the same-site check; the never-restores claim is unchanged.
+  it('HTTP-EVIDENCE-MACHINE guards before dispatch and never restores', async () => {
     const f = await serveEvidence()
-    expect((await fetch(`${f.remote}/evidence${query}`)).status).toBe(401)
+    expect((await fetch(`${f.remote}/evidence${query}`, { headers: CROSS_SITE_HEADERS })).status).toBe(403)
     expect(f.seen).toEqual([])
     const response = await fetch(`${f.remote}/evidence${query}`, { headers: f.headers })
     expect(response.status).toBe(200)
@@ -621,17 +623,13 @@ async function serveFeedbackReads(options: { withPreview?: boolean; unbound?: bo
   }
   const started = await startServer({ db, port: 0, agentHost: host })
   closers.push(started.close)
-  const remote = createServer(createRunServiceRoutes({ agentHost: host,
-    verifyBearer: header => header === 'Bearer synthetic-feedback-client'
-      ? { kind: 'token', clientId: 'test', trustScope: { project: 'test' } }
-      : { kind: 'refused', reason: 'invalid_token' },
-  } as RunServicePorts))
+  const remote = createServer(createRunServiceRoutes({ agentHost: host } as unknown as RunServicePorts))
   servers.push(remote)
   await new Promise<void>(resolve => remote.listen(0, '127.0.0.1', resolve))
   return { root, db, registry, seen, portCalls,
     local: `http://127.0.0.1:${(started.server.address() as AddressInfo).port}/api/runs`,
     remote: `http://127.0.0.1:${(remote.address() as AddressInfo).port}/run`,
-    headers: { Authorization: 'Bearer synthetic-feedback-client' },
+    headers: TOKENLESS_HEADERS,
   }
 }
 
@@ -649,15 +647,13 @@ async function serveRestoringFeedbackHost(body: unknown) {
   } as AgentHost
   const started = await startServer({ db, port: 0, agentHost: host })
   closers.push(started.close)
-  const remote = createServer(createRunServiceRoutes({ agentHost: host,
-    verifyBearer: () => ({ kind: 'token', clientId: 'test', trustScope: { project: 'test' } }),
-  } as unknown as RunServicePorts))
+  const remote = createServer(createRunServiceRoutes({ agentHost: host } as unknown as RunServicePorts))
   servers.push(remote)
   await new Promise<void>(resolve => remote.listen(0, '127.0.0.1', resolve))
   return { restored,
     local: `http://127.0.0.1:${(started.server.address() as AddressInfo).port}/api/runs/${RUN_ID}`,
     remote: `http://127.0.0.1:${(remote.address() as AddressInfo).port}/run/${RUN_ID}`,
-    headers: { Authorization: 'Bearer any' },
+    headers: TOKENLESS_HEADERS,
   }
 }
 
@@ -687,12 +683,12 @@ describe('423-21 feedback reads on both HTTP doors (D-18)', () => {
     expect(f.seen).toEqual([RUNS_MARKS_HISTORY_FUNCTION_ID, ...f.seen.slice(1).map(() => 'display')])
 
     f.seen.length = 0
-    expect((await fetch(`${f.remote}/${RUN_ID}/marks`)).status).toBe(401)
+    expect((await fetch(`${f.remote}/${RUN_ID}/marks`, { headers: CROSS_SITE_HEADERS })).status).toBe(403)
     expect(f.seen).toEqual([])
     const remote = await fetch(`${f.remote}/${RUN_ID}/marks`, { headers: f.headers })
     expect(remote.status).toBe(200)
     expect(await remote.json()).toEqual(expected)
-    expect(f.seen, 'the bearer door never restores').toEqual([RUNS_MARKS_HISTORY_FUNCTION_ID])
+    expect(f.seen, 'the machine door never restores').toEqual([RUNS_MARKS_HISTORY_FUNCTION_ID])
 
     // Typed outcomes are results, not transport errors, on both doors.
     const unknownRun = 'r_no-such-run-was-ever-marked-here-at-all'
@@ -761,7 +757,7 @@ describe('423-21 feedback reads on both HTTP doors (D-18)', () => {
     expect(f.seen).not.toContain(RUNS_MARK_FUNCTION_ID)
 
     f.seen.length = 0
-    expect((await postJson(`${f.remote}/${RUN_ID}/mark-preview`, previewInput())).status).toBe(401)
+    expect((await postJson(`${f.remote}/${RUN_ID}/mark-preview`, previewInput(), CROSS_SITE_HEADERS)).status).toBe(403)
     expect(f.seen).toEqual([])
     const remote = await postJson(`${f.remote}/${RUN_ID}/mark-preview`, previewInput(), f.headers)
     expect(remote.status).toBe(200)

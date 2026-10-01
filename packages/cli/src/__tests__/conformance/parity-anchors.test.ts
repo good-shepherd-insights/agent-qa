@@ -45,14 +45,13 @@ import { Client } from '@modelcontextprotocol/client'
 import { StdioClientTransport } from '@modelcontextprotocol/client/stdio'
 import { EXPLAIN_FUNCTION_ID } from '@vostride/agent-qa-agent'
 import { AGENT_QA_TOOL_PROJECTIONS } from '@vostride/agent-qa-mcp'
-import { AgentManifestSchema, catalogRowKey } from '@vostride/agent-qa-schema'
+import { AgentManifestSchema, FunctionScopeSchema, catalogRowKey } from '@vostride/agent-qa-schema'
 import { Command } from 'commander'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { loadCapabilityCatalog } from '../../capability-catalog/loader.js'
 import { createChatCommand } from '../../commands/chat.js'
 import { MCP_STDIO_STARTUP_MESSAGE } from '../../commands/mcp.js'
-import { DEFAULT_MCP_SCOPES } from '../../composition/mcp-token-resolution.js'
 import { MCP_ENUMERATION_SCOPES, enumerateMcpOpIds, expandMcpListedTools } from './adapters.js'
 import {
   ANCHORED_BUILDS,
@@ -521,15 +520,18 @@ describe('the built-binary anchors (D-02)', () => {
       // THE POSTURE IS SHAPE-ASSERTED, NOT BYTE-PINNED, and that is the honest bar: it is a fact
       // about the workspace the binary ran in — a temporary directory here — so pinning its bytes
       // would pin the fixture. What must hold is that the section is WHOLE and reports the shipped
-      // default grant rather than a list this cell wrote down.
-      expect(manifest.posture.defaultScopes, 'the shipped posture is not the shipped default grant')
-        .toEqual([...DEFAULT_MCP_SCOPES])
+      // default grant rather than a list this cell wrote down. 2026-10-01 (432-21, D-12): that grant
+      // is the whole closed scope union — no caller is withheld anything.
+      expect(manifest.posture.defaultScopes, 'the shipped posture is not the whole scope union')
+        .toEqual([...FunctionScopeSchema.options])
       expect(manifest.posture.configuration, 'the fixture project\'s config did not resolve')
         .toBe('resolved')
       expect(typeof manifest.posture.safeMode, 'the shipped posture has no safe-mode state')
         .toBe('boolean')
     }, 120_000)
 
+  // RE-SPELLED 2026-10-01 (432-21, D-12): the NAME half is retired (no token declaration is read);
+  // the never-its-value half is measured unchanged.
   it('the shipped init --agent prints a declared credential\'s NAME and never its value (398-08, T-398-17)',
     async () => {
       // THE REFS-ONLY LAW, ON THE SURFACE A PERSON ACTUALLY SEES. `manifest.test.ts` proves the
@@ -562,12 +564,12 @@ describe('the built-binary anchors (D-02)', () => {
 
       const manifest = AgentManifestSchema.parse(JSON.parse(outcome.stdout) as unknown)
 
-      // THE NAME IS THERE — without this, the absence below is satisfied by a binary that reported
-      // no credential at all, which is the vacuous way to pass a "no secret" assertion.
-      expect(
-        manifest.posture.tokenEnvRefs,
-        'the shipped manifest did not report the declared credential',
-      ).toEqual([{ name: 'ci', tokenEnvVar, scopes: ['read'] }])
+      // 2026-10-01 (432-21, D-12): NO REF IS REPORTED — the legacy token block is read by nothing.
+      // The non-vacuity control is the whole document and the echo cell below: the binary ran, the
+      // value was readable in its environment, and it printed it nowhere.
+      expect(manifest.posture.tokenEnvRefs, 'the shipped manifest reported a legacy token declaration')
+        .toEqual([])
+      expect(manifest.rows.length, 'the shipped manifest carried no rows').toBeGreaterThan(0)
 
       // …and the VALUE is on neither stream. The variable was set in the child's environment, so a
       // path from a declared name to its contents would have had one.

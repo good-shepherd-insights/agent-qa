@@ -28,41 +28,54 @@ import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/cli
 import { createMcpHandler } from '@modelcontextprotocol/server'
 import { FunctionInputError, createFunctionRegistry, invokeFunction } from '@vostride/agent-qa-agent'
 import type { CreateFunctionRegistryOptions, FunctionDeps } from '@vostride/agent-qa-agent'
-import { STANDING_APPROVAL_SCOPE } from '@vostride/agent-qa-schema'
 import type { FunctionCaller } from '@vostride/agent-qa-schema'
 import { afterEach, describe, expect, it } from 'vitest'
 
 import { buildAgentQaMcpServer } from '../catalog.js'
-import { createMarkToolHandler, maskedToolError } from '../masked-result.js'
+import { maskedToolError } from '../masked-result.js'
 
+// RE-SPELLED 2026-10-01 (432-21, D-12). The mark tool's handler-level credential refusal (419 D-20)
+// left with the MCP bearer credential, and `createMarkToolHandler` with it: the mark tool goes
+// through the generic projection handler. The surviving claims are measured through the real
+// catalogue over a real client: the input reaches the one invoke unchanged, and both result channels
+// are masked from one serialization.
 describe('419 sovereign mark credential refusal', () => {
-  const caller = { surface: 'mcp', grantedScopes: ['knowledge-write'], safeMode: false, origin: 'agent' } as const
-  it('refuses before invoking and renders only the MCP remedy without echoing input', async () => {
-    const calls: unknown[] = []
-    const handler = createMarkToolHandler({ caller, invoke: async (...args) => { calls.push(args) }, maskText: text => text })
-    const result = await handler({ note: 'untrusted-input' })
-    expect(calls).toEqual([])
-    expect(result.isError).toBe(true)
-    expect(result.structuredContent).toEqual({
-      status: 'credential-required', applied: false,
-      instruction: 'agent_qa_mark_run requires a declared bearer; present a bearer whose scopes include `knowledge-write`',
-    })
-    expect(JSON.stringify(result)).not.toContain('untrusted-input')
-    expect(JSON.stringify(result)).not.toContain('--trust-session')
+  const MARK_INPUT = { runId: 'run-alpha', kind: 'false-fail', note: 'untrusted-input' } as const
+
+  it('C432-TOKENLESS-MCP-MARK: a tokenless mark is invoked once with its input unchanged, and nothing refuses for a credential', async () => {
+    const port = directDeps(() => ({ outcome: 'applied' }))
+    const marks: unknown[] = []
+    const deps = { ...port.deps, feedback: {
+      mark: async (input: unknown) => { marks.push(input); return { kind: 'run-not-found', runId: 'run-alpha' } },
+      marksFor: async () => [],
+    } } as unknown as FunctionDeps
+    const session = await wire(deps)
+    const outcome = await callSettled(session, 'agent_qa_mark_run', { ...MARK_INPUT })
+    expect(outcome.error).toBeUndefined()
+    expect(marks).toEqual([MARK_INPUT])
+    expect(outcome.result?.isError ?? false).toBe(false)
+    expect(outcome.result?.structuredContent).toEqual({ kind: 'run-not-found', runId: 'run-alpha' })
+    const frames = session.frames.join('\n')
+    expect(frames).not.toContain('credential-required')
+    expect(frames).not.toMatch(/present a bearer|--trust-session/)
   })
   it('passes the mark input unchanged through the sole invoke and masks both result channels', async () => {
-    const calls: unknown[] = []
-    const args = { kind: 'confirmed-bug', correctedExpectation: 'Use the corrected control',
-      correctedAction: { type: 'click', ref: 'e-correct' } }
-    const handler = createMarkToolHandler({
-      caller: { ...caller, credential: { scope: STANDING_APPROVAL_SCOPE } },
-      invoke: async (...input) => { calls.push(input); return { note: 'planted-secret' } },
-      maskText: text => text.replaceAll('planted-secret', '<SECRET>'),
-    })
-    const result = await handler(args)
-    expect(calls).toEqual([['runs.mark', args]])
-    expect(result.structuredContent).toEqual({ note: '<SECRET>' })
-    expect(JSON.stringify(result)).not.toContain('planted-secret')
+    const marks: unknown[] = []
+    const port = directDeps(() => ({ outcome: 'applied' }))
+    const deps = { ...port.deps, feedback: {
+      mark: async (input: unknown) => {
+        marks.push(input)
+        return { kind: 'member-not-found', runId: 'run-alpha', testId: `t-${PLANTED}` }
+      },
+      marksFor: async () => [],
+    } } as unknown as FunctionDeps
+    const session = await wire(deps)
+    const outcome = await callSettled(session, 'agent_qa_mark_run', { ...MARK_INPUT })
+    expect(marks).toEqual([MARK_INPUT])
+    expect(outcome.result?.structuredContent).toEqual({ kind: 'member-not-found', runId: 'run-alpha', testId: 't-<SECRET>' })
+    const text = (outcome.result?.content ?? []).map((block) => block.text ?? '').join('\n')
+    expect(JSON.parse(text)).toEqual(outcome.result?.structuredContent)
+    expect(session.frames.join('\n')).not.toContain(PLANTED)
   })
   // RE-SPELLED 2026-10-01 (432-19, D-15) from 'renders typed gate denials with neutral prose and only
   // actionable MCP affordances'. The gate's denial error and its remedy vocabulary are deleted, so the
@@ -78,10 +91,8 @@ describe('419 sovereign mark credential refusal', () => {
 
 // ---- 432-12 (D-05/D-13/D-14): a direct receipt through the real catalogue, and no confirm round --
 
-/** The anonymous MCP caller: no credential, the default local grant. */
-const TOKENLESS: FunctionCaller = {
-  surface: 'mcp', grantedScopes: ['read', 'knowledge-write'], safeMode: false, origin: 'agent',
-}
+/** The MCP caller: since 432-21 (D-12) it carries no credential, scope set or safe-mode flag. */
+const TOKENLESS: FunctionCaller = { surface: 'mcp', origin: 'agent' }
 
 const PLANTED = 'sk-live-432-planted-secret'
 

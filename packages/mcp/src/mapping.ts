@@ -136,15 +136,14 @@ import {
   TOOL_FOLD_DISCRIMINANT,
 } from '@vostride/agent-qa-schema'
 
-import { composeMarkToolOutput } from './masked-result.js'
-
 /**
  * What a tool DOES, coarsely — the axis annotations are derived along (`projection.ts`).
  *
  * `read` answers; `workflow` changes something in the call (a test file, a run, knowledge,
  * configuration). `apply` is the sovereign mark door alone: since 432-12 (D-05/D-14) no tool files a
- * proposal and no tool asks for a confirmation, and `apply` names only the one door whose credential
- * check the permission wave removes (D-12).
+ * proposal and no tool asks for a confirmation, and `apply` names only the mark door, which lands a
+ * mark's gold, evidence and fix in the call. Its credential check left with the MCP bearer
+ * credential (432-21, D-12), so `apply` is now a name for that one door and gates nothing.
  */
 export type ToolProjectionKind = 'read' | 'workflow' | 'apply'
 
@@ -174,12 +173,8 @@ export interface ToolProjection {
   /** The registry op ids this tool projects. Length 1 = 1:1; length > 1 = a declared fold. */
   readonly ops: readonly string[]
   readonly kind: ToolProjectionKind
-  /**
-   * 2026-09-08, 419 D-20: present iff a FunctionCaller credential is required.
-   * Scopes cannot express this: the anonymous grant already holds knowledge-write.
-   * Listing and dispatch both read this signal, independently of trustMode.
-   */
-  readonly credential?: 'required'
+  // 2026-10-01 (432-21, D-12): the `credential?: 'required'` marker (419 D-20) is deleted with the
+  // MCP bearer credential. No tool declares a credential and no handler reads one.
   /**
    * A union fold's discriminant key — absent on a 1:1 tool AND on the pipeline.
    *
@@ -400,7 +395,7 @@ export const AGENT_QA_OP_CONTRACTS: Readonly<Record<string, ToolOpContracts>> = 
  * the 431 discovery reads. The write side changes things IN THE CALL (432 D-05/D-14): every
  * `workflow` entry writes what it names and answers what it changed, and nothing waits for a second
  * call. There is no apply tool, no `confirmed` input and no elicitation; the mark door is the one
- * `apply` entry, and only for its credential check.
+ * `apply` entry, and since 432-21 (D-12) it checks no credential.
  *
  * WHY THERE IS NO PROPOSAL TOOL AT ALL. The inbox's verbs declared `requiresHumanOrigin: true`, so a
  * tool over either decision verb would have listed for every caller and refused every call; the
@@ -457,11 +452,10 @@ export const AGENT_QA_TOOL_PROJECTIONS: readonly ToolProjection[] = Object.freez
     name: 'agent_qa_mark_run',
     ops: Object.freeze(['runs.mark']),
     kind: 'apply',
-    credential: 'required',
   }),
   // 2026-09-15, 423-21 D-18: marks history and the mark consequence preview beside the mark
-  // writer. Both are read projections: no credential, no apply envelope and no write scope, so
-  // `agent_qa_mark_run` stays the only door that lands a mark.
+  // writer. Both are read projections with no apply envelope, so `agent_qa_mark_run` stays the
+  // only door that lands a mark.
   Object.freeze({
     name: 'agent_qa_get_run_marks',
     ops: Object.freeze(['runs.marks.history']),
@@ -549,7 +543,7 @@ export const AGENT_QA_TOOL_PROJECTIONS: readonly ToolProjection[] = Object.freez
 /**
  * Tool name -> the contract that tool ADVERTISES, where it is not simply its one op's contract.
  *
- * Exactly three reasons an entry exists here, and no fourth:
+ * Exactly two reasons an entry exists here, and no third:
  *
  *  1. A UNION FOLD advertises the discriminated union of its arms' own DTOs, composed in
  *     `@vostride/agent-qa-schema` (see `functions/tool-folds.ts` for why it is composed there and
@@ -558,17 +552,13 @@ export const AGENT_QA_TOOL_PROJECTIONS: readonly ToolProjection[] = Object.freez
  *     the reference it has, and reads back the resolution union — a card, a small disambiguation
  *     set, or an honest miss. `entities.get` runs inside the resolved arm and contributes no shape
  *     of its own, which is why its contract is absent from the advertisement.
- *  3. THE MARK DOOR advertises the op's outcome OR the credential refusal (419 D-20), because the
- *     refusal is a fact about this door's credential check and about no other caller of the op.
- *     Its input is the op's own contract. The D-11 apply envelope (`proposal_id`, `confirmed`) is
- *     gone with the apply tools (432-12 D-05/D-14).
+ *
+ * 2026-10-01 (432-21, D-12): THE MARK DOOR'S ENTRY IS DELETED. It advertised the op's outcome OR the
+ * credential refusal (419 D-20); the refusal left with the MCP bearer credential, so the door
+ * advertises exactly its op's own contracts and needs no entry. (The D-11 apply envelope it once
+ * carried, `proposal_id` and `confirmed`, went with the apply tools in 432-12, D-05/D-14.)
  */
 export const AGENT_QA_COMPOSED_CONTRACTS: Readonly<Record<string, ToolOpContracts>> = Object.freeze({
-  // A mark addresses a run/member/step, never a proposal. Preserve the op's wire keys.
-  agent_qa_mark_run: Object.freeze({
-    input: RunsMarkInputSchema,
-    output: composeMarkToolOutput(RunsMarkOutcomeSchema),
-  }),
   agent_qa_refine_test: Object.freeze({
     input: AuthoringRefineFoldInputSchema,
     output: AuthoringRefineFoldOutputSchema,
@@ -800,8 +790,10 @@ export const UNPROJECTED_OPS: readonly UnprojectedOp[] = Object.freeze([
       + 'server, so the "never in tool-result text a model reads" half over-claimed. What this '
       + 'server guarantees is narrower and it is verifiable: it writes the token into exactly one '
       + 'place, the frame src of the document the `ui://` read serves, and that door is reachable '
-      + 'by any caller an operator granted the `read` scope (`visibleToCaller` over the '
-      + "registry's own declared scopes, plus a bound mint). The op STAYS unprojected on exactly "
+      + 'by any caller of a composition whose mint is bound (dated 2026-10-01, 432-20/432-21, '
+      + 'D-12: the scope gate that once also bounded it is deleted for every caller, and the '
+      + 'loopback bind and the Host/Origin guards still bound who can reach it). The op STAYS '
+      + 'unprojected on exactly '
       + 'the same footing, and the reason is unchanged and STRONGER rather than weaker: a '
       + 'projected mint tool would put the credential on a channel a model consumes BY DEFAULT, '
       + 'on every call, for every caller, whereas the `ui://` read is an unlisted address a '

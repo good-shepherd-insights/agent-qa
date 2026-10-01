@@ -27,7 +27,6 @@ import type { FunctionDeclaration } from '@vostride/agent-qa-agent'
 import {
   CHAT_PLANNER_CALLER,
   CHAT_RESOLVER_CALLER,
-  CHAT_STAGE_SCOPES,
 } from '@vostride/agent-qa-agent-local'
 import {
   AGENT_QA_OP_CONTRACTS,
@@ -41,10 +40,23 @@ import {
 } from '@vostride/agent-qa-mcp'
 import type { JsonDocument, ToolProjection } from '@vostride/agent-qa-mcp'
 import { committedFileText, FunctionScopeSchema } from '@vostride/agent-qa-schema'
+import type { FunctionCaller, FunctionScope } from '@vostride/agent-qa-schema'
 import { beforeAll, describe, expect, it } from 'vitest'
 import { z } from 'zod'
 
-import { MCP_DEFAULT_GRANTED_SCOPES, mcpFunctionCaller } from '../../commands/mcp.js'
+import { MCP_FUNCTION_CALLER } from '../../commands/mcp.js'
+
+/**
+ * 2026-10-01 (432-21, D-12): the retired MCP default grant — every scope but `config-write` —
+ * spelled here as the legacy scope set a caller may still carry. The token resolver that minted it
+ * is deleted; nothing reads the field, and the cells below use it to show exactly that.
+ */
+const LEGACY_DEFAULT_GRANT = FunctionScopeSchema.options.filter((scope) => scope !== 'config-write')
+
+/** The one tokenless MCP caller, carrying a legacy scope set that nothing reads (432-21, D-12). */
+function legacyMcpCaller(grantedScopes: readonly FunctionScope[]): FunctionCaller {
+  return { ...MCP_FUNCTION_CALLER, grantedScopes }
+}
 import {
   CHAT_RESOLVER_PROBES,
   chatEnumerationOf,
@@ -207,12 +219,10 @@ beforeAll(async () => {
     // the product rather than about this file's assembly.
     rootHostListings.set('chat:planner', registry.list(CHAT_PLANNER_CALLER))
     rootHostListings.set('chat:resolver', registry.list(CHAT_RESOLVER_CALLER))
-    rootHostListings.set('mcp:every-scope', registry.list(mcpFunctionCaller([
+    rootHostListings.set('mcp:every-scope', registry.list(legacyMcpCaller([
       ...FunctionScopeSchema.options,
     ])))
-    rootHostListings.set('mcp:default-grant', registry.list(mcpFunctionCaller(
-      MCP_DEFAULT_GRANTED_SCOPES,
-    )))
+    rootHostListings.set('mcp:default-grant', registry.list(legacyMcpCaller(LEGACY_DEFAULT_GRANT)))
   })
 })
 
@@ -631,7 +641,7 @@ describe('the parity suite ranges the registry census over every rostered surfac
   // now EMPTY, in both directions, and the two grants list the same surface.
   it('C432-TOKENLESS-CATALOG: pins an EMPTY listing delta between the every-scope and the default MCP grant', async () => {
     const everyScope = enumerationOf('mcp')
-    const defaultGrant = await enumerateMcpOpIds(MCP_DEFAULT_GRANTED_SCOPES)
+    const defaultGrant = await enumerateMcpOpIds(LEGACY_DEFAULT_GRANT)
     const nothing = await enumerateMcpOpIds([])
     expect(
       defaultGrant.strays,
@@ -1450,8 +1460,8 @@ describe('the parity suite ranges the registry census over every rostered surfac
     //
     // WHAT PRODUCES EACH SIDE: the left caller is `CHAT_RESOLVER_CALLER` — the frozen record
     // `composeLocalAgent` spreads at its own per-stage mint — regranted to this op's declared
-    // scopes; the right is `mcpFunctionCaller(...)`, the function `commands/mcp.ts` composes its
-    // server with. Two producers in two packages, two `invokeFunction` calls, one comparison. A
+    // scopes; the right is `MCP_FUNCTION_CALLER`, the record `commands/mcp.ts` composes its server
+    // with. Two producers in two packages, two `invokeFunction` calls, one comparison. A
     // helper that shaped both sides would be comparing a value to itself.
     const divergent: string[] = []
     for (const declaration of registryDeclarations()) {
@@ -1567,8 +1577,8 @@ describe('the parity suite ranges the registry census over every rostered surfac
   // RE-SPELLED 2026-10-01 (432-20, D-12) from 'refuses at the MCP SURFACE WALL for every projected
   // capability: no door under the short grant'. The visibility law is deleted, so the surface wall is
   // gone: every projected tool is listed to a caller granted nothing, and a direct call is answered
-  // in band rather than refused by the protocol. The mark door's credential refusal is the one
-  // in-band permission answer left, and 432-21 removes it with the bearer credential.
+  // in band rather than refused by the protocol. 2026-10-01 (432-21, D-12): the mark door's
+  // credential refusal, the one in-band permission answer that was left, is deleted too.
   it('C432-TOKENLESS-CATALOG: refuses at the MCP SURFACE WALL for no projected capability', async () => {
     const listedUnderEveryScope = await listMcpToolNames([...FunctionScopeSchema.options])
     const listedUnderNothing = await listMcpToolNames([])
@@ -1587,28 +1597,28 @@ describe('the parity suite ranges the registry census over every rostered surfac
         `${row.opId} on mcp (surface wall): a grantless caller's call was refused by the protocol `
           + 'rather than answered in band — the door is still hidden',
       ).toBe(true)
-      const projection = AGENT_QA_TOOL_PROJECTIONS.find(candidate => candidate.name === tool)!
-      if (projection.credential === 'required' && called.answered) {
-        // Until 432-21 the mark door's handler still refuses a bearer-less call in band. With the
-        // hidden-tool pre-refusal gone the SDK validates the input first, so this empty-argument
-        // call is answered by the ordinary schema refusal — in band either way, never a hidden door.
-        expect(called.isError).toBe(true)
+      // 432-21 (D-12, routed 432-20 #3): the mark door has no credential refusal, so this
+      // empty-argument call is answered by the ordinary schema refusal like every other tool's —
+      // in band, and never `credential-required`.
+      if (called.answered) {
+        expect(JSON.stringify(called.structured ?? {}), `${tool}: no credential refusal survives`)
+          .not.toContain('credential-required')
       }
     }
   }, 300_000)
 
   it('records WHY the chat surface has no wall since /pin left', async () => {
-    // THE MEASUREMENT BEHIND THE DESIGN, pinned so it cannot go stale silently. Both chat stage
-    // callers hold `CHAT_STAGE_SCOPES`, and that constant is the WHOLE closed scope union — so "a
-    // chat caller missing a required scope" is not a state this product can be in, and the chat
-    // surface wall could not be a scope refusal however it were written. It was a pin until 432-13
-    // (C432-CHAT-DIRECT). The day chat narrows its grants, this cell reds and a scope wall on the
-    // chat surface becomes assertable.
-    expect(
-      sorted(CHAT_STAGE_SCOPES),
-      'the chat stage callers no longer hold every scope — a scope-refused chat caller is now a '
-        + 'state this product can be in, and the chat surface wall should assert it directly',
-    ).toEqual(sorted(FunctionScopeSchema.options))
+    // THE MEASUREMENT BEHIND THE DESIGN, pinned so it cannot go stale silently. Until 432-21 both
+    // chat stage callers held `CHAT_STAGE_SCOPES`, the WHOLE closed scope union. 2026-10-01 (432-21,
+    // D-12): the constant is deleted and the stage callers carry no scope set at all — nothing reads
+    // one — so a chat surface wall cannot be a scope refusal however it were written. It was a pin
+    // until 432-13 (C432-CHAT-DIRECT).
+    for (const caller of [CHAT_PLANNER_CALLER, CHAT_RESOLVER_CALLER]) {
+      expect(
+        Object.keys(caller).sort(),
+        'a chat stage caller carries a grant field again — a scope wall would be a state to assert',
+      ).toEqual(['origin', 'surface'])
+    }
     // Every capability's risk name is still `fn:<id>`: it is the declaration's published risk
     // descriptor (432-19 deleted the in-run gate hook and the audit row that compared these bytes).
     for (const declaration of registryDeclarations()) {
@@ -1747,8 +1757,10 @@ describe('the parity suite ranges the registry census over every rostered surfac
             + 'no unprojected ask-capable op remains',
         )
       }
+      // 432-21 (D-12): the mark door is the one `apply` entry and it checks no credential; any other
+      // apply entry would be a refuse-and-teach door, which 432-12 removed.
       expect(
-        projection.kind === 'apply' && projection.credential !== 'required',
+        projection.kind === 'apply' && projection.name !== 'agent_qa_mark_run',
         `${opId} on mcp (ask): ${projection.name} is a refuse-and-teach apply door, which 432-12 removed`,
       ).toBe(false)
       const row = scenarioRowFor(opId as ScenarioOpId)
@@ -1761,17 +1773,13 @@ describe('the parity suite ranges the registry census over every rostered surfac
         .toBe(true)
       const inBand = answered as Extract<typeof answered, { answered: true }>
       bandRefusals += 1
-      if (projection.credential === 'required') {
-        expect(inBand.isError, `${opId}: anonymous credential-required call must refuse`).toBe(true)
-        expect(inBand.structured?.['status']).toBe('credential-required')
-        expect(inBand.structured?.['applied']).toBe(false)
-        expect(inBand.text).toContain('present a bearer whose scopes include `knowledge-write`')
-      } else {
-        expect(inBand.isError, `${opId} on mcp (ask): an ask-tier capability answered without the `
-          + 'gate refusing it').toBe(true)
-        expect(inBand.text, `${opId} on mcp (ask): the in-band refusal must name the capability`)
-          .toContain(opId)
-      }
+      // 432-21 (D-12): no `credential-required` arm — the mark door answers like every other door.
+      expect(inBand.structured?.['status'], `${opId}: no credential refusal survives`)
+        .not.toBe('credential-required')
+      expect(inBand.isError, `${opId} on mcp (ask): an ask-tier capability answered without the `
+        + 'gate refusing it').toBe(true)
+      expect(inBand.text, `${opId} on mcp (ask): the in-band refusal must name the capability`)
+        .toContain(opId)
     }
     expect(bandRefusals, 'no ask-capable op reached the in-band refusal arm').toBeGreaterThan(0)
   }, 300_000)
@@ -2261,19 +2269,9 @@ describe('the parity suite ranges the registry census over every rostered surfac
         ).toBeDefined()
         const members = advertisedOutputMembers(advertisedOutput)
 
-        if (projection.kind === 'apply') {
-          // The mark door's result is `op outcome OR credential refusal` (419 D-20). The RECEIPT
-          // arm is the op's own document; the refusal arm is owned by the fidelity suite, which
-          // compares it against the authored constant. 432-12 removed the D-11 apply doors.
-          expect(members.length, `${projection.name}: the mark door's output arms`).toBe(2)
-          expect(
-            members[0],
-            `${opId} on mcp (output, receipt arm of ${projection.name}): the advertised receipt is `
-              + 'not this capability\'s own contract',
-          ).toEqual(ownOutput)
-          outputsCompared += 1
-          continue
-        }
+        // 2026-10-01 (432-21, D-12): the mark door's `op outcome OR credential refusal` output
+        // (419 D-20) left with the bearer credential; it advertises its op's own contract and is
+        // compared on the single-op arm below like every other 1:1 tool.
 
         if (composition === 'union') {
           // A fold whose arms answer one shape advertises that shape; the one whose arms differ

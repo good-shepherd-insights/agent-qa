@@ -535,9 +535,6 @@ function dashboardRollCallHost(): AgentHost {
 // seam's own matching mechanism is measured where it lives, in
 // `packages/cli/src/composition/__tests__/display-unmask.test.ts`.
 
-/** The bearer this file's remote-door fixture accepts. Never a real credential. */
-const ROLLCALL_SERVICE_TOKEN = 'rollcall-service-token'
-
 /** The four REQUIRED read ports, minimal by construction — `runs.detail` reaches none of them. */
 function rollCallFunctionDeps(
   runDetail: unknown,
@@ -744,20 +741,17 @@ function rollCallRunSession(): unknown {
   }
 }
 
-/** The authed REMOTE door's ports — enough to reach the two READ rows and nothing more. */
+/** The REMOTE run-service door's ports — enough to reach the READ rows and nothing more. */
 async function rollCallServicePorts(): Promise<unknown> {
   const fixture = await dashboardRunRollCall()
+  // 2026-10-01 (432-21, D-12): no `verifyBearer` — the run service is tokenless.
   return {
-    verifyBearer: (header: string | null | undefined) =>
-      header === `Bearer ${ROLLCALL_SERVICE_TOKEN}`
-        ? { kind: 'token', clientId: 'rollcall', trustScope: { project: 'rollcall' } }
-        : { kind: 'refused', reason: header === undefined ? 'missing_authorization' : 'invalid_token' },
     invokeRunStart: () => Promise.reject(new Error('this fixture starts no runs')),
     attach: (runId: string) => (runId === RUN_ID ? rollCallRunSession() : undefined),
     readiness: () => ({
       service: 'up',
       hostComposed: true,
-      authConfigured: true,
+      authConfigured: false,
       contractVersion: RUN_SERVICE_CONTRACT_VERSION,
     }),
     mintLiveUrl: () => Promise.reject(
@@ -1062,7 +1056,6 @@ const MASKED_SURFACES: MaskedSurface[] = [
       return overOneSocket(
         createRunServiceRoutes(ports as never),
         `/run/${RUN_ID}/detail`,
-        { headers: { Authorization: `Bearer ${ROLLCALL_SERVICE_TOKEN}` } },
       )
     },
   },
@@ -1077,7 +1070,6 @@ const MASKED_SURFACES: MaskedSurface[] = [
       return overOneSocket(
         createRunServiceRoutes(ports as never),
         `/run/${RUN_ID}/analysis`,
-        { headers: { Authorization: `Bearer ${ROLLCALL_SERVICE_TOKEN}` } },
       )
     },
   },

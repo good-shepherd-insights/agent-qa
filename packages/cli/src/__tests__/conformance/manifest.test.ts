@@ -30,6 +30,7 @@ import {
   AgentManifestSchema,
   AgentManifestTokenRefSchema,
   CatalogMigrationArmSchema,
+  FunctionScopeSchema,
   canonicalJson,
   type CapabilityCatalog,
   type CatalogOpRow,
@@ -39,7 +40,6 @@ import { afterEach, beforeAll, describe, expect, it } from 'vitest'
 import { loadCapabilityCatalog } from '../../capability-catalog/loader.js'
 import { buildAgentManifest } from '../../capability-catalog/manifest.js'
 import { CLI_FUNCTION_CALLER } from '../../composition/local-agent-host.js'
-import { DEFAULT_MCP_SCOPES } from '../../composition/mcp-token-resolution.js'
 import { registryOpIds } from './adapters.js'
 import {
   CATALOG_PATH,
@@ -483,6 +483,9 @@ describe('the agent manifest (D-16, XPLN-01)', () => {
     expect(manifest.$note.join(' ')).toContain('NOT A GRANT LIST')
   })
 
+  // RE-SPELLED 2026-10-01 (432-21, D-12) from '… by env-ref NAME …'. The manifest reads no MCP token
+  // declaration any more, so a legacy block yields no ref at all; the never-by-value half is the claim
+  // that survives, and it is still measured against a value that is SET while the manifest builds.
   it('reports a declared credential by env-ref NAME and never by value (T-398-17, 395 D-11)',
     async () => {
     // THE REFS-ONLY LAW, DRIVEN OVER A REAL SECRET. A cell that only asserted the shape of the
@@ -507,14 +510,11 @@ describe('the agent manifest (D-16, XPLN-01)', () => {
 
       const serialized = JSON.stringify(manifest, null, 2)
 
-      // The NAME is present — without this the absence below is satisfied by a manifest that
-      // reported nothing at all, which is the vacuous way to pass a "no secret" assertion.
-      expect(
-        manifest.posture.tokenEnvRefs,
-        'the manifest did not report the declared credential at all',
-      ).toEqual([{ name: 'ci', tokenEnvVar, scopes: ['read'] }])
-      expect(serialized, 'the env-ref NAME is missing from the serialized manifest')
-        .toContain(tokenEnvVar)
+      // 432-21 (D-12): no ref is reported — the legacy block is read by nothing. The non-vacuity
+      // control is the rows: the manifest is whole, so the absence below is about a real document.
+      expect(manifest.posture.tokenEnvRefs, 'the manifest reported a legacy token declaration')
+        .toEqual([])
+      expect(manifest.rows.length, 'the manifest carried no rows').toBeGreaterThan(0)
 
       // …and the VALUE is nowhere in it. The environment variable was SET while the manifest was
       // built, so any path from a declared name to its contents would have had one.
@@ -548,19 +548,19 @@ describe('the agent manifest (D-16, XPLN-01)', () => {
     ).toBe(true)
   })
 
+  // RE-SPELLED 2026-10-01 (432-21, D-12): the MCP default grant (every scope but `config-write`)
+  // is deleted with the token resolver. Every caller reaches every op, so the posture reports the
+  // WHOLE closed scope union, read off the union rather than restated, and safe mode is off.
   it('reads the shipped default grant and safe-mode state rather than restating them', async () => {
-    // The posture's two derived facts, tied to the constants that mint them. A literal scope list
-    // in `manifest.ts` would be right on the day it was written and silently wrong the day a
-    // seventh scope landed — 396 D-07's set is DERIVED by exclusion for exactly that reason.
     const manifest = await buildAgentManifest({
       configPath: join(fixtureProject('posture'), 'agent-qa.config.yaml'),
     })
-    expect(manifest.posture.defaultScopes, 'the manifest\'s default grant is not the shipped one')
-      .toEqual([...DEFAULT_MCP_SCOPES])
+    expect(manifest.posture.defaultScopes, 'the manifest\'s default grant is not the whole union')
+      .toEqual([...FunctionScopeSchema.options])
     expect(manifest.posture.defaultScopes, 'the local default grant withholds nothing')
-      .not.toContain('config-write')
-    expect(manifest.posture.safeMode, 'the manifest\'s safe-mode state is not the composed one')
-      .toBe(CLI_FUNCTION_CALLER.safeMode)
+      .toContain('config-write')
+    expect(manifest.posture.safeMode, 'no composition hides an op from a listing').toBe(false)
+    expect(CLI_FUNCTION_CALLER.safeMode, 'the CLI mint carries no safe-mode flag').toBeUndefined()
     expect(manifest.posture.configuration, 'a resolvable config was reported unresolved')
       .toBe('resolved')
   })

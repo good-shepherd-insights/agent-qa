@@ -274,7 +274,6 @@ export {
   RunServiceReadinessSchema,
   RunServiceReplayFloorBodySchema,
   RunServiceStartRequestSchema,
-  SERVICE_BEARER_REFUSAL_REASONS,
 } from './run-service'
 export type {
   RunServiceDenialBody,
@@ -283,6 +282,4 @@ export type {
   RunServiceReadiness,
   RunServiceReplayFloorBody,
   RunServiceStartRequest,
-  ServiceBearerRefusalReason,
-  ServiceBearerVerdict,
 } from './run-service'

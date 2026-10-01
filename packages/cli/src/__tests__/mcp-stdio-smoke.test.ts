@@ -25,10 +25,9 @@ import { fileURLToPath } from 'node:url'
 
 import { Client } from '@modelcontextprotocol/client'
 import { StdioClientTransport } from '@modelcontextprotocol/client/stdio'
-import { FunctionScopeSchema } from '@vostride/agent-qa-schema'
 import { afterEach, describe, expect, it } from 'vitest'
 
-import { MCP_DEFAULT_GRANTED_SCOPES, MCP_STDIO_STARTUP_MESSAGE } from '../commands/mcp.js'
+import { MCP_STDIO_STARTUP_MESSAGE } from '../commands/mcp.js'
 
 const CLI_ENTRY = resolve(dirname(fileURLToPath(import.meta.url)), '../../dist/cli.js')
 
@@ -38,8 +37,14 @@ afterEach(() => {
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true })
 })
 
-/** A real project on disk — produced, not a literal path handed to the child. */
-function fixtureProject(): string {
+/**
+ * A real project on disk — produced, not a literal path handed to the child.
+ *
+ * `legacyTokens` (432-21, D-12/D-22) writes the pre-432 MCP credential block: one declared token
+ * whose variable is set nowhere, and the stdio config-write switch off. Before 432-21 the unset
+ * variable refused startup by name; now nothing reads the block.
+ */
+function fixtureProject(legacyTokens = false): string {
   const root = mkdtempSync(join(tmpdir(), 'agent-qa-396-01-stdio-'))
   roots.push(root)
   writeFileSync(
@@ -54,6 +59,16 @@ function fixtureProject(): string {
           envFile: '.env',
           secretsFile: '.env.secrets.local',
         },
+        ...(legacyTokens
+          ? {
+              services: {
+                mcp: {
+                  tokens: [{ name: 'legacy', tokenEnvVar: 'AGENT_QA_432_21_NEVER_SET_MCP_CRED', scopes: ['read'] }],
+                  stdio: { grantConfigWrite: false },
+                },
+              },
+            }
+          : {}),
       },
       null,
       2,
@@ -62,6 +77,29 @@ function fixtureProject(): string {
   )
   mkdirSync(join(root, '.agent-qa'), { recursive: true })
   return root
+}
+
+/** Spawn the built binary over stdio in `cwd`, list its tools, and return them with captured stderr. */
+async function listOverStdio(cwd: string): Promise<{ names: string[]; stderr: () => string }> {
+  const transport = new StdioClientTransport({
+    command: process.execPath,
+    args: [CLI_ENTRY, 'mcp'],
+    cwd,
+    stderr: 'pipe',
+  })
+  let captured = ''
+  transport.stderr?.on('data', (chunk: Buffer | string) => {
+    captured += typeof chunk === 'string' ? chunk : chunk.toString('utf8')
+  })
+  const client = new Client({ name: 'agent-qa-432-21-stdio-legacy', version: '0.0.0' })
+  try {
+    await client.connect(transport)
+    const names = (await client.listTools()).tools.map((entry) => entry.name).sort()
+    return { names, stderr: () => captured }
+  } finally {
+    await client.close().catch(() => {})
+    await transport.close().catch(() => {})
+  }
 }
 
 describe('agent-qa mcp over spawned stdio', () => {
@@ -95,16 +133,11 @@ describe('agent-qa mcp over spawned stdio', () => {
       // 432-12: `agent_qa_list_proposals` left with the proposal round; the run list stands in.
       expect(names).toContain('agent_qa_list_runs')
 
-      // (b) D-07's default grant, read off the SHIPPED constant rather than restated: everything
-      // except `config-write`, derived from the scope enum by exclusion. Stated honestly: the
-      // matching TOOL-side clause — that no config-write tool appears in this listing — is
-      // VACUOUS at plan 01, because no config-write op is projected yet. Its bar arrives with the
-      // completed mapping in plan 04, and the two-token differential (a granted caller sees a
-      // tool a withheld caller cannot) is plan 05's. What is measured here is the grant itself.
-      expect(MCP_DEFAULT_GRANTED_SCOPES).not.toContain('config-write')
-      expect([...MCP_DEFAULT_GRANTED_SCOPES].sort()).toEqual(
-        FunctionScopeSchema.options.filter((scope) => scope !== 'config-write').sort(),
-      )
+      // (b) RE-SPELLED 2026-10-01 (432-21, D-12) from D-07's default grant (every scope except
+      // `config-write`, with a stdio opt-in for the last one). Neither the grant nor the opt-in
+      // exists: a stdio caller with no switch set lists the config-write tool like every other.
+      expect(names).toContain('agent_qa_change_config')
+      expect(names).toContain('agent_qa_mark_run')
 
       // (c) The diagnostic exists and it is on STDERR. Together with the round trip above — which
       // could not have completed had anything else been written to stdout — this pins the channel
@@ -117,4 +150,17 @@ describe('agent-qa mcp over spawned stdio', () => {
       await transport.close().catch(() => {})
     }
   }, 30_000)
+
+  // 432-21 (D-12/D-22): the legacy credential block is left on disk and never read. Before 432-21 a
+  // declared token whose variable was unset refused startup naming the variable; now the binary
+  // starts and lists exactly what it lists for a project with no block at all.
+  it('C432-TOKENLESS-MCP: a legacy token block with an unset variable refuses nothing and changes no listing', async () => {
+    expect(existsSync(CLI_ENTRY), `the built CLI entry is missing at ${CLI_ENTRY}`).toBe(true)
+    const plain = await listOverStdio(fixtureProject())
+    const legacy = await listOverStdio(fixtureProject(true))
+    expect(legacy.names).toEqual(plain.names)
+    expect(legacy.names).toContain('agent_qa_change_config')
+    expect(legacy.stderr()).not.toContain('AGENT_QA_432_21_NEVER_SET_MCP_CRED')
+    expect(legacy.stderr()).not.toContain('Failed to start MCP server')
+  }, 60_000)
 })

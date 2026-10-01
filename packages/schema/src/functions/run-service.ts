@@ -1,8 +1,9 @@
 // The remote run service's wire vocabulary (Phase 402 plan 01, D-06 / D-13 / D-15 · INVK-03).
 //
 // WHAT LIVES HERE AND WHAT DELIBERATELY DOES NOT. This file holds the vocabulary the authed run
-// service speaks on the wire: the header verdict, the closed error-code set every refusal answers
-// with, the readiness DTO, the request shape, and the door's own contract version. It holds no
+// service speaks on the wire: the closed error-code set every refusal answers with, the readiness
+// DTO, the request shape, and the door's own contract version. 2026-10-01 (432-21, D-12): the
+// bearer header verdict and its three refusal reasons are deleted with the run-service tokens. It holds no
 // transport, no token, no route and no handler — the router that serves these words lives in
 // `packages/dashboard-server` and the composition that mints them lives in the CLI, because a
 // mountable module (D-02) can only be mountable if its vocabulary is reachable from a package
@@ -14,8 +15,6 @@
 
 import { z } from 'zod'
 
-import type { TrustScope } from '../safety/trust-credential'
-
 /**
  * The door's own contract version, bumped INDEPENDENTLY of the bus envelope's.
  *
@@ -25,42 +24,21 @@ import type { TrustScope } from '../safety/trust-credential'
  */
 export const RUN_SERVICE_CONTRACT_VERSION = 1
 
-/**
- * Why a request was refused at the door — the closed set, spelled once (388 C13).
- *
- * THREE REASONS AND NO FOURTH, and the fourth that is missing is the one that matters: there is no
- * `default_grant`, no `unauthenticated` and no permissive arm anywhere in this vocabulary. D-06
- * deletes the MCP door's no-credential-presented arm for this surface; a caller that presents
- * nothing is refused with `missing_authorization`, which is a REFUSAL and not a weaker success.
- */
-export const SERVICE_BEARER_REFUSAL_REASONS = [
-  'missing_authorization',
-  'malformed_authorization',
-  'invalid_token',
-] as const
-
-export type ServiceBearerRefusalReason = (typeof SERVICE_BEARER_REFUSAL_REASONS)[number]
-
-/**
- * The verdict on one request's `Authorization` header — TWO arms, and the count is the contract.
- *
- * The MCP door's verdict has three because a local caller that presents nothing gets a default
- * grant. This door has two because it does not, and a shape with only two arms is what makes that
- * unrepresentable rather than merely undone: there is no value of this type that means "nobody
- * presented anything, serve them anyway", so no careless `??` can produce one.
- */
-export type ServiceBearerVerdict =
-  | { readonly kind: 'token'; readonly clientId: string; readonly trustScope: TrustScope }
-  | { readonly kind: 'refused'; readonly reason: ServiceBearerRefusalReason }
+// 2026-10-01 (432-21, D-12): `SERVICE_BEARER_REFUSAL_REASONS`, `ServiceBearerRefusalReason` and the
+// two-arm `ServiceBearerVerdict` are deleted with `services.dashboard.runServiceTokens` and the door's
+// `verifyBearer` port. The door reads no `Authorization` header; what refuses a request before the
+// route table now is the dashboard's same-site guard (`cross_site_refused` below).
 
 /**
  * Every code any non-2xx answer on this door carries. Closed, and shared across all routes.
  *
- * The three refusal reasons are members so that an unauthorized answer and every other error
- * answer have ONE body shape — see {@link RunServiceErrorBodySchema}.
+ * 2026-10-01 (432-21, D-12/D-13): the three bearer refusal reasons left with the bearer, and
+ * `cross_site_refused` took their place above the route table. The door answers a request a page on
+ * another origin drove — or one naming a Host this loopback server never agreed to answer to — with
+ * that word and nothing else, the same word the dashboard's other same-site doors use.
  */
 export const RUN_SERVICE_ERROR_CODES = [
-  ...SERVICE_BEARER_REFUSAL_REASONS,
+  'cross_site_refused',
   'refused_request_field',
   'invalid_request_body',
   'unknown_run',
@@ -102,14 +80,14 @@ export type RunServiceErrorCode = (typeof RUN_SERVICE_ERROR_CODES)[number]
  * The ONE error body this door writes — a single key carrying a closed code.
  *
  * ONE KEY, DELIBERATELY. A refusal body that varied its SHAPE by route or by reason would be a
- * fingerprinting surface: a caller with no credential could learn which routes exist, whether a
- * run id is real, or whether any token is declared at all, by diffing the bodies it is refused
- * with. With one key and a closed vocabulary the only thing that varies is the word, and the words
- * that can appear before a verdict is settled are the three refusal reasons and nothing else.
+ * fingerprinting surface: a caller refused at the door could learn which routes exist or whether a
+ * run id is real by diffing the bodies it is refused with. With one key and a closed vocabulary the
+ * only thing that varies is the word, and the word that can appear before the route table is
+ * reached is `cross_site_refused` and nothing else.
  *
  * It is also why nothing here echoes the caller's input. Naming the offending field, the run id or
- * the entry that nearly matched would each put an attacker-chosen or a host-held string into a
- * body served to an unauthenticated caller.
+ * anything else would each put an attacker-chosen or a host-held string into a body served to a
+ * caller this door has not yet admitted.
  */
 export const RunServiceErrorBodySchema = z.object({
   error: z.enum(RUN_SERVICE_ERROR_CODES),
@@ -123,8 +101,9 @@ export type RunServiceErrorBody = z.infer<typeof RunServiceErrorBodySchema>
  * WHY THE ONE-KEY LAW DOES NOT GOVERN HERE, and this is the whole of the argument. That law exists
  * because a refusal shown to an UNAUTHENTICATED caller must not fingerprint the route map, a run
  * id's existence, or how many credentials are declared — every fact it could carry is a fact the
- * caller has not earned. A 403 is answered only AFTER a declared credential matched. The reader is
- * a party this process has already decided to talk to, and telling them nothing but a word turns a
+ * caller has not earned. A run denial is answered only AFTER the same-site guard admitted the
+ * caller (since 432-21; before it, after a declared credential matched). The reader is a party this
+ * process has already decided to talk to, and telling them nothing but a word turns a
  * decidable situation ("this project's policy refuses runs of this class from this context") into
  * an unexplained failure they will retry forever.
  *
@@ -152,8 +131,9 @@ export type RunServiceDenialBody = z.infer<typeof RunServiceDenialBodySchema>
  * (403-03, D-13 · INVK-05).
  *
  * WHY THE ONE-KEY LAW DOES NOT GOVERN HERE EITHER, on `RunServiceDenialBodySchema`'s exact
- * argument and with one addition of its own. A 410 is answered only AFTER a declared credential
- * matched on the authed door, and only behind the bind guard on the local one — the reader is a
+ * argument and with one addition of its own. A 410 is answered only AFTER the same-site guard
+ * admitted the caller on the run-service door (a declared credential until 432-21), and only behind
+ * the bind guard on the local one — the reader is a
  * party this process has already decided to talk to. And what the second key carries is not a host
  * secret: `earliestAvailableSeq` is a fact about the CALLER'S OWN request, namely the point at
  * which the replay it asked for could have been served.
@@ -180,7 +160,7 @@ export type RunServiceReplayFloorBody = z.infer<typeof RunServiceReplayFloorBody
 /**
  * The request fields this door REFUSES outright (D-07 / D-12, 401's law carried to the wire).
  *
- * A token-holder may not name the terms of its own authorization, may not choose the identity its
+ * A caller may not name the terms of its own authorization, may not choose the identity its
  * run is addressed by, and may not turn up concurrency on a target whose config owner tuned it.
  * The core's own `REFUSED_RUN_REQUEST_FIELDS` refuses `scope` and `executionContext` a layer down;
  * `runId` joins them HERE because the local dashboard door legitimately supplies one (its queue
@@ -206,8 +186,10 @@ export type RunServiceStartRequest = z.infer<typeof RunServiceStartRequestSchema
  * What `/ok` reports (D-15): measured facts, and no prediction.
  *
  * SHALLOW BUT HONEST. Each field is something this process can observe about ITSELF right now —
- * the service answered, a host is composed, at least one credential resolved, and which contract
- * version these routes implement. There is no `ready: true`, because a run's success depends on a
+ * the service answered, a host is composed, whether a credential is configured, and which contract
+ * version these routes implement. 2026-10-01 (432-21, D-12): no credential can be configured any
+ * more, so `authConfigured` is always `false`; the key stays on this wire DTO until the permission
+ * fields are retired together (432-39). There is no `ready: true`, because a run's success depends on a
  * browser, a model, a network and a target, none of which this route touched. Deep diagnostics
  * (knowledge rungs, embedder health) belong to 407's `doctor` and are deliberately absent.
  *

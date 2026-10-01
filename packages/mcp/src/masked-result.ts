@@ -77,14 +77,12 @@
 // serving it, and it happens only when a legitimate value is byte-equal to a credential this host
 // was told about.
 
-import { fromJsonSchema } from '@modelcontextprotocol/server'
-import type { CallToolResult, StandardSchemaWithJSON } from '@modelcontextprotocol/server'
+import type { CallToolResult } from '@modelcontextprotocol/server'
 import { RunsArtifactResultSchema } from '@vostride/agent-qa-schema'
-import type { FunctionCaller, RunsArtifactResult } from '@vostride/agent-qa-schema'
+import type { RunsArtifactResult } from '@vostride/agent-qa-schema'
 
 // 2026-10-01 (432-19, D-15): the MCP remedy renderer is deleted with the remedy vocabulary. The
-// one sentence it rendered for this surface rides the mark credential refusal below verbatim,
-// until 432-21 removes that refusal with the bearer credential.
+// mark credential refusal that carried its last sentence is deleted too (432-21, D-12).
 
 /** The one prose a caller reads when a value could not be masked in place. Value-free by design. */
 const WITHHELD_TEXT =
@@ -375,71 +373,6 @@ export function decorateRunEvidenceImage(input: {
   }
 }
 
-// ---- the mark door's credential refusal (419 D-20), moved here by 432-12 --------------------------
-//
-// 2026-09-30, 432-12 (D-05/D-14): the refuse-and-teach apply module is deleted with the apply
-// tools, its `confirmed` input and its SEP-2322 elicitation. What survives from it is the mark
-// door's credential refusal, which is a permission and not a confirmation round: it answers once,
-// through the same single masked serialization as every other result, and it leaves with the token
-// filtering in the permission wave (D-12).
-
-/** 419 D-20: the sovereign mark door refuses a caller with no declared credential. */
-export const CREDENTIAL_REFUSAL_JSON_SCHEMA = {
-  type: 'object',
-  properties: {
-    status: { type: 'string', const: 'credential-required' },
-    applied: { type: 'boolean', const: false },
-    instruction: { type: 'string' },
-  },
-  required: ['status', 'applied', 'instruction'],
-  additionalProperties: false,
-} as const
-
-/**
- * The mark tool's advertised output: the op's own outcome, or the credential refusal.
- *
- * Composed from the op's OWN converted document in OUTPUT mode, so the receipt arm is the op's
- * contract rather than a copy. An unconvertible op contract is returned unchanged, so the two-sided
- * degradation probe in `projection.ts` names the failure instead of an import-time throw.
- */
-export function composeMarkToolOutput(opOutput: StandardSchemaWithJSON): StandardSchemaWithJSON {
-  let converted: Record<string, unknown>
-  try {
-    converted = opOutput['~standard'].jsonSchema.output({
-      target: 'draft-2020-12',
-    }) as unknown as Record<string, unknown>
-  } catch {
-    return opOutput
-  }
-  const { $schema: _dialect, ...outcome } = converted
-  return fromJsonSchema({
-    $schema: 'https://json-schema.org/draft/2020-12/schema',
-    anyOf: [outcome, CREDENTIAL_REFUSAL_JSON_SCHEMA],
-  } as unknown as Parameters<typeof fromJsonSchema>[0])
-}
-
-/** Shared by the hidden-name dispatch guard and the mark handler's independent guard. */
-export function credentialRequiredRefusal(maskText: (text: string) => string): CallToolResult {
-  const instruction = 'agent_qa_mark_run requires a declared bearer; '
-    + 'present a bearer whose scopes include `knowledge-write`'
-  return {
-    ...maskedToolResult({ status: 'credential-required', applied: false, instruction }, maskText),
-    isError: true,
-  }
-}
-
-/** A bearer is the trust grant; a mark has no proposal id and no second round. */
-export function createMarkToolHandler(deps: {
-  readonly caller: FunctionCaller
-  readonly invoke: (opId: string, input: unknown) => Promise<unknown>
-  readonly maskText: (text: string) => string
-}) {
-  return async (args: unknown): Promise<CallToolResult> => {
-    if (deps.caller.credential === undefined) return credentialRequiredRefusal(deps.maskText)
-    try {
-      return maskedToolResult(await deps.invoke('runs.mark', args), deps.maskText)
-    } catch (err) {
-      return maskedToolError(err, deps.maskText)
-    }
-  }
-}
+// 2026-10-01 (432-21, D-12): the mark door's credential refusal is deleted with the MCP bearer
+// credential. `agent_qa_mark_run` dispatches through the generic projection handler like every other
+// change tool, advertises the op's own outcome, and answers its receipt on the one call.

@@ -99,11 +99,12 @@ export const SURFACE_ROSTER: readonly SurfaceRosterEntry[] = Object.freeze([
   // caller mint and a declaration projection, and a set assembled from the registry this file could
   // reach would be the same set on both sides of every comparison.
   Object.freeze({ id: 'fn', adapter: fnSurfaceAdapter }),
-  // The authed run service (402, rostered 402-07, D-04). THE THIRD OF THE THREE ARRIVALS the
+  // The run service (402, rostered 402-07, D-04). THE THIRD OF THE THREE ARRIVALS the
   // 2026-08-16 registration note reserved — "any post-v2.0 REST or SDK surface" — and the first door
-  // on this roster that is NARROW BY DESIGN. It dispatches, it consults the gate, and a caller on
-  // another machine reaches it over TCP with a bearer credential, so it is an INVOCATION DOOR by the
-  // 2026-08-17 test and it arrives with a row in the phase that ships it.
+  // on this roster that is NARROW BY DESIGN. It dispatches, and a caller reaches it over TCP, so it
+  // is an INVOCATION DOOR by the 2026-08-17 test and it arrives with a row in the phase that ships
+  // it. (2026-10-01, 432-21 D-12: it asks for no bearer credential any more, and it consults no gate
+  // since 432-13; loopback and its same-site guard bound who reaches it.)
   //
   // WHAT IS AND IS NOT ON THE ROW, on 397 D-03's unchanged rule. The row is the whole door: the
   // three paths `RUN_SERVICE_ROUTE_TABLE` publishes and no fourth. There is nothing to leave off,

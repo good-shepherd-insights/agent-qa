@@ -65,12 +65,11 @@ afterEach(async () => {
 const RUN_ID = 'r_knowledge-alpha-bravo-charlie-delta-echo-foxtrot-golf-hotel'
 const SCOPE: ScopeKey = { tier: 'product', key: 'shop' }
 
+// 2026-10-01 (432-21, D-12): the tokenless caller shape — no scope set or safe-mode flag.
 const REGISTRY_CALLER: FunctionCaller = {
   surface: 'dashboard',
-  grantedScopes: ['read'],
-  safeMode: false,
   origin: 'human',
-} as unknown as FunctionCaller
+}
 
 function brief(overrides: Partial<ServedBrief> = {}): ServedBrief {
   return {

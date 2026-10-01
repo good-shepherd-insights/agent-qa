@@ -225,7 +225,6 @@ import type {
   RecordId,
   ResolvePromotionPosture,
   FunctionCaller,
-  FunctionScope,
   JobKind,
   QuarantineEntryStateName,
   QuarantineLadderState,
@@ -1579,20 +1578,16 @@ function createDraftEvaluation(input: DraftEvaluationBindingInput) {
 /**
  * The caller every gate-run is dispatched as (D-02, op-calls-op).
  *
- * MINTED HERE, on the rule every caller in this file is under: a caller that could name its own
- * grants would be choosing what it is allowed to do. Its two scopes are EXACTLY the two
- * `authoring.draft.verify` itself declares, which is what keeps this from being a widening — the
- * outer invocation has already been checked for both, so nothing reachable through this caller was
- * unreachable to the caller who asked for the evaluation.
+ * MINTED HERE, on the rule every caller in this file is under: the composition says who a call is
+ * on behalf of. `origin: agent` because nobody typed this run: a person asked for a draft to be
+ * verified, and the runs that answer that are the system's own doing.
  *
- * `origin: agent` because nobody typed this run: a person asked for a draft to be verified, and
- * the runs that answer that are the system own doing. `runs.start` declares no
- * `requiresHumanOrigin`, so this is an honest attribution rather than a permission routed around.
+ * 2026-10-01 (432-20/432-21, D-12): no scope set and no safe-mode flag. The two scopes this caller
+ * held were exactly `authoring.draft.verify`'s declared ones, so a nested call could not widen what
+ * the outer caller was granted; with no scope checked anywhere there is nothing to widen.
  */
 const AUTHORING_GATE_RUN_CALLER: FunctionCaller = Object.freeze({
   surface: 'authoring',
-  grantedScopes: ['run', 'read'] as readonly FunctionScope[],
-  safeMode: false,
   origin: 'agent',
 })
 
@@ -1600,29 +1595,18 @@ const AUTHORING_GATE_RUN_CALLER: FunctionCaller = Object.freeze({
  * The caller the authoring loop's stage 4 dispatches `authoring.draft.verify` as (394 D-01,
  * op-calls-op · T-394-05).
  *
- * ITS TWO SCOPES ARE EXACTLY THE CALLEE'S, AND THAT IS THE MITIGATION. `authoring.draft.write`
- * declares three — `test-write`, `run`, `read` — because it writes a file; `authoring.draft.verify`
- * declares two, because its whole effect is the gate-runs it takes. A minted caller carrying the
- * OUTER op's three would hand the inner call a power it does not declare and nobody granted for
- * it, which is a widening performed by a nested call rather than by a person. So this narrows,
- * and the narrowing is checkable: the array below is the callee's `requiredScopes`, asserted
- * against the spec off the registry rather than trusted.
- *
  * There is no second minted caller for `runs.start` / `runs.get`, and its absence is the design
  * rather than an omission. The loop takes no run of its own: every gate-run is started INSIDE
  * `authoring.draft.verify`, which already dispatches it on {@link AUTHORING_GATE_RUN_CALLER}
- * above. A caller minted here for a dispatch that does not exist would be a set of grants nothing
- * checks and nobody could tell had gone wrong.
+ * above.
  *
  * `origin: agent` for the reason the gate-run caller is: a person asked for a test to be written,
- * and the verification that answers it is the system's own doing. `authoring.draft.verify`
- * declares no `requiresHumanOrigin`, so this is an honest attribution and not a permission routed
- * around.
+ * and the verification that answers it is the system's own doing. 2026-10-01 (432-20/432-21,
+ * D-12): the narrowed scope pair this caller carried — the callee's own `requiredScopes`, asserted
+ * against the spec — is deleted with the scope check it was narrowing for.
  */
 const AUTHORING_LOOP_VERIFY_CALLER: FunctionCaller = Object.freeze({
   surface: 'authoring',
-  grantedScopes: ['run', 'read'] as readonly FunctionScope[],
-  safeMode: false,
   origin: 'agent',
 })
 
@@ -2539,42 +2523,24 @@ export function postRunCapabilities(
 /**
  * The two callers chat mints, one per stage (392, RESEARCH Pitfall 1 / 391 D-06).
  *
- * IDENTICAL BUT FOR `origin`, and that is the whole design. `FunctionCaller.origin` answers "did a
- * person decide this", and inside ONE turn both answers occur: a person typing a canonical alias
- * decided that call, and a model planning one did not. A uniform mint would be wrong in one
- * direction or the other — `agent` everywhere would refuse the deterministic aliases at every
- * `requiresHumanOrigin` op, and `human` everywhere would hand the planner the self-grant power
- * 391 D-06 deliberately withholds.
+ * IDENTICAL BUT FOR `origin`. `FunctionCaller.origin` answers "did a person decide this", and inside
+ * ONE turn both answers occur: a person typing a canonical alias decided that call, and a model
+ * planning one did not. The receipts a turn logs record that origin per clause.
  *
  * `surface` is `'chat'` on both and is ATTRIBUTION ONLY. Nothing in the function layer may branch
- * on it (`invoke.ts:28-29`), and the origin split above is exactly why nothing needs to.
+ * on it (`invoke.ts:28-29`).
  *
- * 2026-08-11 (Phase 394 / WTST-01): both stages hold `test-write`, so the chat planner can reach
- * the authoring loop. What constrains that power is the two decision points D-03 names — the
- * ask-tier confirm at dispatch and the 391 inbox accept — not the absence of a grant. Withholding
- * the grant here would refuse the loop for a reason that has nothing to do with the loop, and a
- * refusal nobody chose is the worst kind.
+ * 2026-10-01 (432-20/432-21, D-12): no scope set and no safe-mode flag. `CHAT_STAGE_SCOPES`, the
+ * whole closed scope union both stages held, is deleted: every caller can call every operation, and
+ * the human-origin restriction the origin split once protected is deleted with `requiresHumanOrigin`.
  */
-export const CHAT_STAGE_SCOPES: readonly FunctionScope[] = [
-  'read',
-  'run',
-  'config-write',
-  'knowledge-write',
-  'approval-write',
-  'test-write',
-]
-
 export const CHAT_RESOLVER_CALLER: FunctionCaller = Object.freeze({
   surface: 'chat',
-  grantedScopes: CHAT_STAGE_SCOPES,
-  safeMode: false,
   origin: 'human',
 })
 
 export const CHAT_PLANNER_CALLER: FunctionCaller = Object.freeze({
   surface: 'chat',
-  grantedScopes: CHAT_STAGE_SCOPES,
-  safeMode: false,
   origin: 'agent',
 })
 
@@ -2858,18 +2824,14 @@ export function composeLocalAgent(input: ComposeLocalAgentInput): LocalAgentHost
     reconcile: input.chatReconcile ?? deterministicOverrideStrategy,
     sessionLog: trackedChatSessionLog,
     // RESEARCH Pitfall 1: per-STAGE minting, because origin is a per-call fact. A deterministic
-    // table hit is a person typing and mints `human`; a planner-planned call mints `agent`, so a
-    // `requiresHumanOrigin` op refuses it without chat knowing such ops exist.
-    // STAMPED WITH THE SESSION AS WELL AS THE ORIGIN (plan 13, W-03). The two are different facts
-    // about one call — who is acting, and which conversation they are acting in — and the gate's
-    // deny overlay needs the second to answer "is this class pinned for THIS session". Minted here
-    // rather than accepted from anywhere, on the same rule `origin` is under: a caller that could
-    // name its own session would be choosing which deny set it is evaluated against.
+    // table hit is a person typing and mints `human`; a planner-planned call mints `agent`, and the
+    // turn's receipts record which.
+    // 2026-10-01 (432-21, D-12): NOT STAMPED WITH THE SESSION ANY MORE. The session id rode the
+    // caller for the gate's deny overlay (plan 13, W-03) and the overlay is deleted (432-13/18/19);
+    // nothing reads `FunctionCaller.sessionId`. The session still reaches the ops that record it
+    // through the turn's own session facts, not through the caller.
     mint: {
-      forStage: (stage, sessionId) => ({
-        ...(stage === 'resolver' ? CHAT_RESOLVER_CALLER : CHAT_PLANNER_CALLER),
-        sessionId,
-      }),
+      forStage: (stage) => (stage === 'resolver' ? CHAT_RESOLVER_CALLER : CHAT_PLANNER_CALLER),
     },
     // 399.1 D-01/D-03/D-05: the classified envelope, built HERE because this closure is the one
     // place in the system holding both the registry and the invoke call. The chat subtree cannot

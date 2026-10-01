@@ -45,11 +45,8 @@ for (const door of ['local', 'remote'] as const) {
         closers.push(started.close)
         path = `/api/runs/media-probe/artifacts/${sha}`
       } else {
-        server = createServer(createRunServiceRoutes({ agentHost: host,
-          verifyBearer: header => header === 'Bearer synthetic-media-client'
-            ? { kind: 'token', clientId: 'test', trustScope: { project: 'test' } }
-            : { kind: 'refused', reason: 'invalid_token' },
-        } as RunServicePorts))
+        // 2026-10-01 (432-21, D-12): the run service is tokenless — no `verifyBearer`.
+        server = createServer(createRunServiceRoutes({ agentHost: host } as unknown as RunServicePorts))
         await new Promise<void>((resolve, reject) => {
           server.once('error', reject)
           server.listen(0, '127.0.0.1', resolve)
@@ -61,12 +58,11 @@ for (const door of ['local', 'remote'] as const) {
       }
       const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}${path}`
       if (door === 'remote') {
-        expect((await nativeFetch(url)).status).toBe(401)
+        // RE-SPELLED 2026-10-01 (432-21, D-12/D-13): the door refuses a cross-site probe, not an
+        // unauthenticated one, before anything is dispatched.
+        expect((await nativeFetch(url, { headers: { Origin: 'https://evil.example' } })).status).toBe(403)
         expect(invokeFunction).not.toHaveBeenCalled()
       }
-      vi.stubGlobal('fetch', (input: Parameters<typeof fetch>[0], init?: RequestInit) =>
-        nativeFetch(input, { ...init, headers: { ...init?.headers,
-          ...(door === 'remote' ? { Authorization: 'Bearer synthetic-media-client' } : {}) } }))
       expect(await probeMediaError(url, new AbortController().signal)).toEqual({ status })
       expect(invokeFunction).toHaveBeenCalledOnce()
       expect(invokeFunction.mock.calls[0]).toContainEqual({ runId: 'media-probe', sha, range: { start: 0, end: 0 } })

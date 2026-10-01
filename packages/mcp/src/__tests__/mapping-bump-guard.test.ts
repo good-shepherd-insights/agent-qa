@@ -617,11 +617,11 @@ describe('the composed fold contracts answer for the ops the mapping declares', 
         expect(composed, `${projection.name} folds but has no composed contract`).toBe(true)
         continue
       }
-      // The mark door is the deliberate exception: it advertises its credential refusal beside the
-      // op's outcome, a fact about this door (419 D-20). The D-11 apply doors are gone (432-12).
-      expect(composed, `${projection.name} restates a contract it could inherit`).toBe(
-        projection.kind === 'apply',
-      )
+      // 2026-10-01 (432-21, D-12): no exception. The mark door advertised its credential refusal
+      // beside the op's outcome (419 D-20); that refusal left with the MCP bearer credential, so the
+      // door inherits its op's contracts like every other 1:1 tool. (The D-11 apply doors went in
+      // 432-12.)
+      expect(composed, `${projection.name} restates a contract it could inherit`).toBe(false)
     }
   })
 })
@@ -697,9 +697,12 @@ describe('the degradation list names tools that exist (D-16)', () => {
   })
 })
 
-const PINNED_CREDENTIAL_REQUIRED = ['agent_qa_mark_run']
+// RE-SPELLED 2026-10-01 (432-21, D-12) from '419 D-20 pins the credential-required vocabulary'. The
+// `credential: 'required'` marker left with the MCP bearer credential, so no projection declares
+// one; the mark door is still the one `apply` entry.
 it('419 D-20 pins the credential-required vocabulary', () => {
-  expect(AGENT_QA_TOOL_PROJECTIONS.filter(row => row.credential === 'required').map(row => row.name)).toEqual(PINNED_CREDENTIAL_REQUIRED)
+  expect(AGENT_QA_TOOL_PROJECTIONS.filter(row => Object.hasOwn(row, 'credential')).map(row => row.name)).toEqual([])
+  expect(AGENT_QA_TOOL_PROJECTIONS.filter(row => row.kind === 'apply').map(row => row.name)).toEqual(['agent_qa_mark_run'])
 })
 
 // 2026-09-15, 423-21 D-18/D-04: the two feedback reads are read tools with their ops' own strict
@@ -732,8 +735,9 @@ describe('423-21 feedback read tools (D-18)', () => {
       expect(config.outputSchema, `${tool} advertises its strict output`).toBeDefined()
     }
     // The preview is the mark writer's exact input, read-tier: it adds no credential and no apply door.
-    expect(byName.get('agent_qa_preview_run_mark')?.credential).toBeUndefined()
-    expect(byName.get('agent_qa_mark_run')).toMatchObject({ kind: 'apply', credential: 'required', ops: ['runs.mark'] })
+    expect(Object.hasOwn(byName.get('agent_qa_preview_run_mark') ?? {}, 'credential')).toBe(false)
+    // 432-21 (D-12): the mark door declares no credential any more.
+    expect(byName.get('agent_qa_mark_run')).toEqual({ name: 'agent_qa_mark_run', kind: 'apply', ops: ['runs.mark'] })
     expect(declarationsById.get('runs.mark')?.risk.readOnly).toBe(false)
 
     expect(UNPROJECTED_OPS.find((entry) => entry.opId === 'runs.evidence')).toBeUndefined()

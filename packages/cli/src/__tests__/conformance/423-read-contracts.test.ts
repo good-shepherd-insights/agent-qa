@@ -70,12 +70,10 @@ import {
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 
 import { composeDashboardAgentHost, composeDashboardDoor } from '../../commands/dashboard.js'
-import { mcpFunctionCaller } from '../../commands/mcp.js'
+import { MCP_FUNCTION_CALLER } from '../../commands/mcp.js'
 import { createDisplayUnmasker } from '../../composition/display-unmask.js'
 import { loadCapabilityCatalog } from '../../capability-catalog/loader.js'
 import { CLI_FUNCTION_CALLER } from '../../composition/local-agent-host.js'
-import { credentialForBearer, matchBearer, resolveMcpTokens } from '../../composition/mcp-token-resolution.js'
-import { matchServiceBearer } from '../../composition/run-service-token-resolution.js'
 import { createFeedbackPortForHost } from '../../gates/feedback-host.js'
 import { markFixture } from '../../gates/__tests__/feedback-fixture.js'
 import { CATALOG_PATH, catalogOpRowOf } from './catalog.js'
@@ -90,7 +88,6 @@ const AUTH_STATE = JSON.stringify({
   origins: [],
 })
 const ALLOWED = 'Restored 423-38 display label'
-const BEARER = 'synthetic-423-38-remote-client'
 const READ_SCOPES: readonly FunctionScope[] = ['read']
 
 /** Every path and byte under a root, directories included, so a created directory is visible. */
@@ -102,13 +99,12 @@ function tree(root: string): [string, string][] {
   return walk(root)
 }
 
-/** The declared-bearer MCP caller the socket path mints, for a read-only grant. */
+/**
+ * The MCP caller the socket path mints. 2026-10-01 (432-21, D-12): it is the one tokenless caller;
+ * the legacy read-only scope set rides along unread, so the cells keep their read-only framing.
+ */
 function declaredMcpCaller(scopes: readonly FunctionScope[]): FunctionCaller {
-  const token = 'agent-qa-423-38-mcp-bearer'
-  const tokens = resolveMcpTokens([
-    { name: 'read-contracts', tokenEnvVar: 'AGENT_QA_423_38_BEARER', scopes: [...scopes] },
-  ], { AGENT_QA_423_38_BEARER: token })
-  return mcpFunctionCaller(scopes, credentialForBearer(matchBearer(`Bearer ${token}`, tokens)))
+  return { ...MCP_FUNCTION_CALLER, grantedScopes: scopes }
 }
 
 // ---- Doors over one registry ----------------------------------------------------------------------
@@ -145,10 +141,7 @@ async function openDoors(input: {
   const address = started.server.address()
   if (address === null || typeof address === 'string') throw new Error('human door bound no port')
   const humanOrigin = `http://127.0.0.1:${String(address.port)}`
-  const remote = createServer(createRunServiceRoutes({ agentHost: input.agentHost,
-    verifyBearer: header => matchServiceBearer(header, [{ name: 'read-contracts', tokenEnvVar: 'AGENT_QA_423_38_TOKEN',
-      value: BEARER, trustScope: { project: 'read-contracts' } }]),
-  } as RunServicePorts))
+  const remote = createServer(createRunServiceRoutes({ agentHost: input.agentHost } as unknown as RunServicePorts))
   const machineOrigin = await listen(remote)
   const call = async (url: string, method: 'GET' | 'POST', headers: Record<string, string>, body?: unknown) => {
     const response = await fetch(url, { method, headers: { ...headers, ...(body === undefined ? {} : { 'content-type': 'application/json' }) },
@@ -184,7 +177,8 @@ async function openDoors(input: {
       }
     }),
     human: (method, path, body) => call(`${humanOrigin}/api/runs${path}`, method, {}, body),
-    machine: (method, path, body) => call(`${machineOrigin}/run${path}`, method, { Authorization: `Bearer ${BEARER}` }, body),
+    // 432-21 (D-12): the run service is tokenless; the machine door sends no credential.
+    machine: (method, path, body) => call(`${machineOrigin}/run${path}`, method, {}, body),
     async close() {
       await started.close()
       await new Promise<void>(resolve => remote.close(() => resolve()))

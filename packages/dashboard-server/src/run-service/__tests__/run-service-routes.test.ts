@@ -47,7 +47,11 @@ import {
   type RunServicePorts,
 } from '../run-service-routes.js'
 
-const TOKEN = 'zz-402-01-unit-token-31c9de'
+// 2026-10-01 (432-21, D-12): no declared token — the door is tokenless. What it refuses at the
+// door is a cross-site request, spelled by these two header sets (each trips one rung of the shared
+// same-site guard: a foreign `Origin`, and a cross-site fetch-metadata header).
+const CROSS_SITE = { Origin: 'https://evil.example' } as const
+const CROSS_SITE_FETCH = { 'Sec-Fetch-Site': 'cross-site' } as const
 
 /**
  * A session whose seqs are CHOSEN — non-contiguous and not starting at 1.
@@ -94,15 +98,12 @@ const ACK: RunStartAcknowledgement = {
 
 function fakePorts(overrides: Partial<RunServicePorts> = {}): RunServicePorts {
   return {
-    verifyBearer: (header) => header === `Bearer ${TOKEN}`
-      ? { kind: 'token', clientId: 'ci', trustScope: { project: 'acme' } }
-      : { kind: 'refused', reason: header === undefined ? 'missing_authorization' : 'invalid_token' },
     invokeRunStart: async () => ACK,
     attach: (runId) => runId === 'r_planted' ? plantedSession() : undefined,
     readiness: () => ({
       service: 'up',
       hostComposed: true,
-      authConfigured: true,
+      authConfigured: false,
       contractVersion: RUN_SERVICE_CONTRACT_VERSION,
     }),
     // The DEFAULT is the honest absence, not a stub that mints: a fixture that composed no live
@@ -153,7 +154,7 @@ describe('D-13 — the wire IS the bus envelope', () => {
     const origin = await mount()
     const stream = await readStream(
       `${origin}/run/r_planted/events`,
-      { Authorization: `Bearer ${TOKEN}` },
+      {},
     )
     expect(stream.status).toBe(200)
     expect(stream.contentType).toContain('text/event-stream')
@@ -168,7 +169,7 @@ describe('D-13 — the wire IS the bus envelope', () => {
     const origin = await mount()
     const stream = await readStream(
       `${origin}/run/r_planted/events`,
-      { Authorization: `Bearer ${TOKEN}` },
+      {},
     )
     const events = [...stream.body.matchAll(/^event: (.+)$/gmu)].map((match) => match[1])
     expect(events).toEqual(['runStarted', 'verdict', 'runFinished'])
@@ -178,7 +179,7 @@ describe('D-13 — the wire IS the bus envelope', () => {
     const origin = await mount()
     const stream = await readStream(
       `${origin}/run/r_planted/events`,
-      { Authorization: `Bearer ${TOKEN}` },
+      {},
     )
     const datas = [...stream.body.matchAll(/^data: (.+)$/gmu)].map((match) => match[1]!)
     // Byte equality against the envelope's own serialisation. A second event vocabulary — a
@@ -188,9 +189,7 @@ describe('D-13 — the wire IS the bus envelope', () => {
 
   it('opens with the `:ok` preamble and writes no cross-origin grant', async () => {
     const origin = await mount()
-    const response = await fetch(`${origin}/run/r_planted/events`, {
-      headers: { Authorization: `Bearer ${TOKEN}` },
-    })
+    const response = await fetch(`${origin}/run/r_planted/events`)
     expect(response.headers.get('access-control-allow-origin')).toBeNull()
     expect(await response.text()).toMatch(/^:ok\n\n/u)
   })
@@ -199,9 +198,7 @@ describe('D-13 — the wire IS the bus envelope', () => {
 describe('the stream head is never written before the answer is settled', () => {
   it('answers a typed JSON 404 for an unknown run', async () => {
     const origin = await mount()
-    const response = await fetch(`${origin}/run/r_absent/events`, {
-      headers: { Authorization: `Bearer ${TOKEN}` },
-    })
+    const response = await fetch(`${origin}/run/r_absent/events`)
     expect(response.status).toBe(404)
     expect(response.headers.get('content-type')).toContain('application/json')
     expect(await response.json()).toEqual({ error: 'unknown_run' })
@@ -213,15 +210,16 @@ describe('the stream head is never written before the answer is settled', () => 
     const origin = await mount(fakePorts({
       attach: () => plantedSession({ throwOnSubscribe: true }),
     }))
-    const response = await fetch(`${origin}/run/r_planted/events`, {
-      headers: { Authorization: `Bearer ${TOKEN}` },
-    })
+    const response = await fetch(`${origin}/run/r_planted/events`)
     expect(response.status).toBe(500)
     expect(response.headers.get('content-type')).toContain('application/json')
     expect(await response.json()).toEqual({ error: 'replay_unavailable' })
   })
 })
 
+// RE-SPELLED 2026-10-01 (432-21, D-12/D-13): the rung above the route table is the same-site guard,
+// not the bearer verdict. The claims — identical refusal on every route, declared or not, and the run
+// starter never consulted — are unchanged; the refusal is `cross_site_refused` at 403.
 describe('the verdict stands above the route table', () => {
   it('refuses every declared route and an undeclared one identically', async () => {
     const origin = await mount()
@@ -232,9 +230,9 @@ describe('the verdict stands above the route table', () => {
       { method: 'DELETE', path: '/run' },
     ]
     for (const probe of probes) {
-      const response = await fetch(`${origin}${probe.path}`, { method: probe.method })
-      expect(response.status, `${probe.method} ${probe.path}`).toBe(401)
-      expect(await response.json()).toEqual({ error: 'missing_authorization' })
+      const response = await fetch(`${origin}${probe.path}`, { method: probe.method, headers: CROSS_SITE })
+      expect(response.status, `${probe.method} ${probe.path}`).toBe(403)
+      expect(await response.json()).toEqual({ error: 'cross_site_refused' })
     }
   })
 
@@ -243,10 +241,10 @@ describe('the verdict stands above the route table', () => {
     const origin = await mount(fakePorts({
       invokeRunStart: async () => { started += 1; return ACK },
     }))
-    await fetch(`${origin}/run`, { method: 'POST', body: '{}' })
+    await fetch(`${origin}/run`, { method: 'POST', body: '{}', headers: CROSS_SITE })
     await fetch(`${origin}/run`, {
       method: 'POST',
-      headers: { Authorization: 'Bearer wrong' },
+      headers: { ...CROSS_SITE_FETCH, 'Content-Type': 'text/plain' },
       body: '{}',
     })
     expect(started).toBe(0)
@@ -255,35 +253,39 @@ describe('the verdict stands above the route table', () => {
 
 // ---- Task 2: `/ok` — authed, shallow-but-honest readiness (D-15) -----------------------------
 
+// RE-SPELLED 2026-10-01 (432-21, D-12/D-13) from 'refuses a request with no token' and 'refuses a
+// wrong token with a body shape-identical to the missing-token refusal': `/ok` is still behind the
+// door's one guard, which is now the same-site check; both of its rungs answer one body shape.
 describe('GET /ok is a service route like every other one', () => {
-  it('refuses a request with no token', async () => {
+  it('refuses a cross-site request', async () => {
     const origin = await mount()
-    const response = await fetch(`${origin}/ok`)
-    expect(response.status).toBe(401)
-    expect(await response.json()).toEqual({ error: 'missing_authorization' })
+    const response = await fetch(`${origin}/ok`, { headers: CROSS_SITE })
+    expect(response.status).toBe(403)
+    expect(await response.json()).toEqual({ error: 'cross_site_refused' })
   })
 
-  it('refuses a wrong token with a body shape-identical to the missing-token refusal', async () => {
+  it('refuses a cross-site fetch-metadata request with a body shape-identical to the Origin refusal', async () => {
     const origin = await mount()
-    const wrong = await fetch(`${origin}/ok`, { headers: { Authorization: 'Bearer nope' } })
-    expect(wrong.status).toBe(401)
-    const wrongBody = await wrong.json() as Record<string, unknown>
-    const missingBody = await (await fetch(`${origin}/ok`)).json() as Record<string, unknown>
-    // Beyond the reason word, nothing differs — no entry count, no hint of how auth is configured.
-    expect(Object.keys(wrongBody)).toEqual(Object.keys(missingBody))
-    expect(wrongBody).toEqual({ error: 'invalid_token' })
+    const viaFetchSite = await fetch(`${origin}/ok`, { headers: CROSS_SITE_FETCH })
+    expect(viaFetchSite.status).toBe(403)
+    const fetchSiteBody = await viaFetchSite.json() as Record<string, unknown>
+    const originBody = await (await fetch(`${origin}/ok`, { headers: CROSS_SITE })).json() as Record<string, unknown>
+    // Nothing differs — no hint of which rung answered.
+    expect(fetchSiteBody).toEqual(originBody)
+    expect(fetchSiteBody).toEqual({ error: 'cross_site_refused' })
   })
 
   it('reports MEASURED facts and the contract version to a valid token', async () => {
     const origin = await mount()
-    const response = await fetch(`${origin}/ok`, { headers: { Authorization: `Bearer ${TOKEN}` } })
+    const response = await fetch(`${origin}/ok`)
     expect(response.status).toBe(200)
     expect(response.headers.get('content-type')).toContain('application/json')
     const body = RunServiceReadinessSchema.parse(await response.json())
+    // 432-21 (D-12): a local caller with no token is served; `authConfigured` is always false.
     expect(body).toEqual({
       service: 'up',
       hostComposed: true,
-      authConfigured: true,
+      authConfigured: false,
       contractVersion: RUN_SERVICE_CONTRACT_VERSION,
     })
     // It never claims a run will succeed: there is no `ready`, no verdict prediction, and no
@@ -302,7 +304,7 @@ describe('GET /ok is a service route like every other one', () => {
         contractVersion: RUN_SERVICE_CONTRACT_VERSION,
       }),
     }))
-    const response = await fetch(`${origin}/ok`, { headers: { Authorization: `Bearer ${TOKEN}` } })
+    const response = await fetch(`${origin}/ok`)
     expect(response.status).toBe(200)
     expect((await response.json() as { hostComposed: boolean }).hostComposed).toBe(false)
   })
@@ -336,30 +338,34 @@ describe('the refusal-shape census walks the module\'s OWN route table', () => {
     expect(handlers).toEqual(['analysis', 'artifact', 'detail', 'events', 'evidence', 'liveUrl', 'markPreview', 'marks', 'ok', 'start'])
   })
 
-  it('refuses a MISSING token on every row with one body shape', async () => {
+  // RE-SPELLED 2026-10-01 (432-21, D-12/D-13) from 'refuses a MISSING token on every row with one
+  // body shape' and 'refuses an INVALID token on every row with the same body shape'. The census
+  // still walks the module's own table; what every row refuses is a cross-site request, on either
+  // rung of the same-site guard, with one body shape.
+  it('refuses a cross-site Origin on every row with one body shape', async () => {
     const origin = await mount()
     const bodies: Record<string, unknown>[] = []
     for (const row of RUN_SERVICE_ROUTE_TABLE) {
-      const response = await fetch(`${origin}${probePathFor(row)}`, { method: row.method })
-      expect(response.status, `${row.method} ${row.path}`).toBe(401)
+      const response = await fetch(`${origin}${probePathFor(row)}`, { method: row.method, headers: CROSS_SITE })
+      expect(response.status, `${row.method} ${row.path}`).toBe(403)
       bodies.push(await response.json() as Record<string, unknown>)
     }
     for (const body of bodies) {
-      expect(body).toEqual({ error: 'missing_authorization' })
+      expect(body).toEqual({ error: 'cross_site_refused' })
     }
   })
 
-  it('refuses an INVALID token on every row with the same body shape', async () => {
+  it('refuses a cross-site fetch-metadata request on every row with the same body shape', async () => {
     const origin = await mount()
     for (const row of RUN_SERVICE_ROUTE_TABLE) {
       const response = await fetch(`${origin}${probePathFor(row)}`, {
         method: row.method,
-        headers: { Authorization: 'Bearer definitely-not-the-token' },
+        headers: CROSS_SITE_FETCH,
       })
-      expect(response.status, `${row.method} ${row.path}`).toBe(401)
+      expect(response.status, `${row.method} ${row.path}`).toBe(403)
       const body = await response.json() as Record<string, unknown>
       expect(Object.keys(body), `${row.method} ${row.path}`).toEqual(['error'])
-      expect(body).toEqual({ error: 'invalid_token' })
+      expect(body).toEqual({ error: 'cross_site_refused' })
     }
   })
 })
@@ -402,10 +408,8 @@ describe('the READ rows dispatch through the injected host (405-05, D-12)', () =
 
   it('reaches the run-detail adapter — a valid token, an unknown run, the op\'s own word', async () => {
     const origin = await mount(fakePorts({ agentHost: hostRefusing('RunNotFoundError') }))
-    const response = await fetch(`${origin}/run/r_planted/detail`, {
-      headers: { Authorization: `Bearer ${TOKEN}` },
-    })
-    // 404 `unknown_run` PROVES THE WHOLE CHAIN: the verdict passed (a refused one is 401), the
+    const response = await fetch(`${origin}/run/r_planted/detail`)
+    // 404 `unknown_run` PROVES THE WHOLE CHAIN: the guard passed (a refused one is 403), the
     // pattern matched (an unmatched one is 404 `unknown_route`), the param decoded, and the
     // adapter classified the op's refusal. A door that never reached the op could not say this.
     expect(response.status).toBe(404)
@@ -415,9 +419,7 @@ describe('the READ rows dispatch through the injected host (405-05, D-12)', () =
   it('reaches the ANALYSIS adapter through analysisGetFunctionId (406-01, D-04)', async () => {
     const seen: string[] = []
     const origin = await mount(fakePorts({ agentHost: hostRefusing('RunNotFoundError', seen) }))
-    const response = await fetch(`${origin}${RUN_SERVICE_ANALYSIS_TEMPLATE.replace(':runId', 'r_planted')}`, {
-      headers: { Authorization: `Bearer ${TOKEN}` },
-    })
+    const response = await fetch(`${origin}${RUN_SERVICE_ANALYSIS_TEMPLATE.replace(':runId', 'r_planted')}`)
     // THE ID IS THE CLAIM. A 404 alone would be satisfied by a dispatch that reached the DETAIL
     // adapter; what makes this row its own is the op it asked the host for.
     expect(seen, 'the analysis row dispatches the analysis op, not its sibling')
@@ -441,9 +443,7 @@ describe('the READ rows dispatch through the injected host (405-05, D-12)', () =
 
   it('reaches the artifact adapter, and tells its two 404s apart on this door too', async () => {
     const absent = await mount(fakePorts({ agentHost: hostRefusing('EvidenceBlobAbsentError') }))
-    const response = await fetch(`${absent}/run/r_planted/artifacts/${'a'.repeat(64)}`, {
-      headers: { Authorization: `Bearer ${TOKEN}` },
-    })
+    const response = await fetch(`${absent}/run/r_planted/artifacts/${'a'.repeat(64)}`)
     expect(response.status).toBe(404)
     expect(await response.json()).toEqual({ error: 'blob_absent' })
   })
@@ -451,9 +451,7 @@ describe('the READ rows dispatch through the injected host (405-05, D-12)', () =
   it('refuses a malformed sha at the CONTRACT, before the op is reached', async () => {
     // The host would refuse by name if it were reached; a 400 proves it was not.
     const origin = await mount(fakePorts({ agentHost: hostRefusing('RunNotFoundError') }))
-    const response = await fetch(`${origin}/run/r_planted/artifacts/${'z'.repeat(64)}`, {
-      headers: { Authorization: `Bearer ${TOKEN}` },
-    })
+    const response = await fetch(`${origin}/run/r_planted/artifacts/${'z'.repeat(64)}`)
     expect(response.status).toBe(400)
     expect(await response.json()).toEqual({ error: 'malformed_sha' })
   })
@@ -461,23 +459,24 @@ describe('the READ rows dispatch through the injected host (405-05, D-12)', () =
   it('says agent_host_unavailable — the LOCAL door\'s word — when no host is composed', async () => {
     const origin = await mount()
     for (const path of ['/run/r_planted/detail', '/run/r_planted/analysis', `/run/r_planted/artifacts/${'a'.repeat(64)}`]) {
-      const response = await fetch(`${origin}${path}`, {
-        headers: { Authorization: `Bearer ${TOKEN}` },
-      })
+      const response = await fetch(`${origin}${path}`)
       expect(response.status, path).toBe(503)
       expect(await response.json(), path).toEqual({ error: 'agent_host_unavailable' })
     }
   })
 
-  it('refuses BOTH rows unauthenticated, before any host is consulted', async () => {
+  // RE-SPELLED 2026-10-01 (432-21, D-12/D-13) from 'refuses BOTH rows unauthenticated, before any
+  // host is consulted'. No row asks for a credential; a cross-site read is what is refused, and still
+  // before any host is consulted.
+  it('refuses BOTH rows cross-site, before any host is consulted', async () => {
     // The row-level restatement of the census above, kept here because these two rows are the
     // first on this door that would otherwise have reached a capability: a permissive arm here
-    // would serve one run's whole projection, or its screenshots, to an anonymous caller.
+    // would serve one run's whole projection, or its screenshots, to a page on another origin.
     const origin = await mount(fakePorts({ agentHost: hostRefusing('RunNotFoundError') }))
     for (const path of ['/run/r_planted/detail', '/run/r_planted/analysis', `/run/r_planted/artifacts/${'a'.repeat(64)}`]) {
-      const response = await fetch(`${origin}${path}`)
-      expect(response.status, path).toBe(401)
-      expect(await response.json(), path).toEqual({ error: 'missing_authorization' })
+      const response = await fetch(`${origin}${path}`, { headers: CROSS_SITE })
+      expect(response.status, path).toBe(403)
+      expect(await response.json(), path).toEqual({ error: 'cross_site_refused' })
     }
   })
 })
@@ -587,8 +586,7 @@ describe('INVK-05 — the door honours Last-Event-ID and ?lastEventId=', () => {
   it('replays from subscribe(N + 1): no id at or below the resume point is ever re-sent', async () => {
     const origin = await mount(resumePorts())
     const stream = await readStream(`${origin}/run/r_planted/events?lastEventId=7`, {
-      Authorization: `Bearer ${TOKEN}`,
-    })
+      })
     expect(stream.status).toBe(200)
     expect(idsOfStream(stream.body)).toEqual([11, 12])
     expect(idsOfStream(stream.body)).not.toEqual(RESUMABLE_SEQS)
@@ -597,14 +595,12 @@ describe('INVK-05 — the door honours Last-Event-ID and ?lastEventId=', () => {
   it('honours the HEADER as well as the query, and the header decides when they disagree', async () => {
     const origin = await mount(resumePorts())
     const viaHeader = await readStream(`${origin}/run/r_planted/events`, {
-      'Authorization': `Bearer ${TOKEN}`,
       'Last-Event-ID': '7',
     })
     expect(idsOfStream(viaHeader.body)).toEqual([11, 12])
 
     // The browser's own automatic reconnect carries the fresher value, so it wins.
     const disagreeing = await readStream(`${origin}/run/r_planted/events?lastEventId=0`, {
-      'Authorization': `Bearer ${TOKEN}`,
       'Last-Event-ID': '7',
     })
     expect(idsOfStream(disagreeing.body)).toEqual([11, 12])
@@ -621,7 +617,6 @@ describe('INVK-05 — the door honours Last-Event-ID and ?lastEventId=', () => {
     const origin = await mount(resumePorts())
     const response = await fetch(
       `${origin}/run/r_planted/events?lastEventId=${encodeURIComponent(raw)}`,
-      { headers: { Authorization: `Bearer ${TOKEN}` } },
     )
     expect(response.status).toBe(400)
     expect(response.headers.get('content-type')).toContain('application/json')
@@ -631,9 +626,7 @@ describe('INVK-05 — the door honours Last-Event-ID and ?lastEventId=', () => {
 
   it('refuses a REPEATED lastEventId rather than silently answering the first', async () => {
     const origin = await mount(resumePorts())
-    const response = await fetch(`${origin}/run/r_planted/events?lastEventId=1&lastEventId=7`, {
-      headers: { Authorization: `Bearer ${TOKEN}` },
-    })
+    const response = await fetch(`${origin}/run/r_planted/events?lastEventId=1&lastEventId=7`)
     expect(response.status).toBe(400)
     expect(await response.json()).toEqual({ error: 'invalid_last_event_id' })
   })
@@ -642,9 +635,7 @@ describe('INVK-05 — the door honours Last-Event-ID and ?lastEventId=', () => {
 describe('INVK-05 / D-13 — the replay floor is a TYPED refusal carrying the recovery point', () => {
   it('answers 410 replay_floor with the bus\'s own earliestAvailableSeq, before any head', async () => {
     const origin = await mount(resumePorts())
-    const response = await fetch(`${origin}/run/r_floor/events?lastEventId=2`, {
-      headers: { Authorization: `Bearer ${TOKEN}` },
-    })
+    const response = await fetch(`${origin}/run/r_floor/events?lastEventId=2`)
     expect(response.status).toBe(410)
     expect(response.headers.get('content-type')).toContain('application/json')
     expect(response.headers.get('content-type')).not.toContain('text/event-stream')
@@ -659,14 +650,12 @@ describe('INVK-05 / D-13 — the replay floor is a TYPED refusal carrying the re
     // client would — `lastEventId = earliestAvailableSeq - 1`, because the caller names the last
     // envelope it has ALREADY observed and the floor names the first one still available.
     const origin = await mount(resumePorts())
-    const refused = await fetch(`${origin}/run/r_floor/events?lastEventId=2`, {
-      headers: { Authorization: `Bearer ${TOKEN}` },
-    })
+    const refused = await fetch(`${origin}/run/r_floor/events?lastEventId=2`)
     const floor = (await refused.json() as { earliestAvailableSeq: number }).earliestAvailableSeq
 
     const recovered = await readStream(
       `${origin}/run/r_floor/events?lastEventId=${String(floor - 1)}`,
-      { Authorization: `Bearer ${TOKEN}` },
+      {},
     )
     expect(recovered.status).toBe(200)
     expect(idsOfStream(recovered.body)[0]).toBe(floor)
@@ -676,8 +665,7 @@ describe('INVK-05 / D-13 — the replay floor is a TYPED refusal carrying the re
   it('serves a resume AT the floor rather than refusing it — the boundary is inclusive', async () => {
     const origin = await mount(resumePorts())
     const stream = await readStream(`${origin}/run/r_floor/events?lastEventId=5`, {
-      Authorization: `Bearer ${TOKEN}`,
-    })
+      })
     expect(stream.status).toBe(200)
     expect(idsOfStream(stream.body)).toEqual([6, 7, 8])
   })
@@ -686,9 +674,7 @@ describe('INVK-05 / D-13 — the replay floor is a TYPED refusal carrying the re
     const origin = await mount(fakePorts({
       attach: () => plantedSession({ throwOnSubscribe: true }),
     }))
-    const response = await fetch(`${origin}/run/r_planted/events`, {
-      headers: { Authorization: `Bearer ${TOKEN}` },
-    })
+    const response = await fetch(`${origin}/run/r_planted/events`)
     expect(response.status).toBe(500)
     expect(await response.json()).toEqual({ error: 'replay_unavailable' })
   })
@@ -701,8 +687,7 @@ describe('D-14 — the handle filter survives a DEEP resume', () => {
     // for EVERY deep resume on a member stream — the defect this cell exists for.
     const origin = await mount(resumePorts())
     const stream = await readStream(`${origin}/run/r_floor/events?handle=7&lastEventId=5`, {
-      Authorization: `Bearer ${TOKEN}`,
-    })
+      })
     expect(stream.status).toBe(200)
     // seq 6 is member 3's step and must NOT reach handle 7; 7 is member 7's; 8 is run-scoped.
     expect(idsOfStream(stream.body)).toEqual([7, 8])
@@ -710,9 +695,7 @@ describe('D-14 — the handle filter survives a DEEP resume', () => {
 
   it('still refuses a handle no member of the run answers to on a deep resume', async () => {
     const origin = await mount(resumePorts())
-    const response = await fetch(`${origin}/run/r_planted/events?handle=4&lastEventId=7`, {
-      headers: { Authorization: `Bearer ${TOKEN}` },
-    })
+    const response = await fetch(`${origin}/run/r_planted/events?handle=4&lastEventId=7`)
     expect(response.status).toBe(400)
     expect(await response.json()).toEqual({ error: 'unknown_handle' })
   })
@@ -722,7 +705,6 @@ describe('D-15 — a resume that lands past the end closes rather than hanging',
   it('answers 200 with zero data frames and ENDS when the resume point is the final seq', async () => {
     const origin = await mount(resumePorts())
     const response = await fetch(`${origin}/run/r_planted/events?lastEventId=12`, {
-      headers: { Authorization: `Bearer ${TOKEN}` },
       signal: AbortSignal.timeout(5_000),
     })
     expect(response.status).toBe(200)
@@ -847,28 +829,15 @@ async function refusalAt(
   return { status: response.status, body: await response.json() as Record<string, unknown> }
 }
 
-const authed = { Authorization: `Bearer ${TOKEN}` }
+// 2026-10-01 (432-21, D-12): a local caller sends no credential, so the admitted header set is empty.
+// The three bearer codes left the closed set with the bearer, and `cross_site_refused` joined it.
+const authed: Record<string, string> = {}
 
 const CODE_PROBES: readonly CodeProbe[] = Object.freeze([
   {
-    code: 'missing_authorization',
-    status: 401,
-    drive: () => refusalAt('/ok'),
-  },
-  {
-    code: 'malformed_authorization',
-    status: 401,
-    drive: () => refusalAt('/ok', {
-      headers: { Authorization: 'Basic nope' },
-      ports: fakePorts({
-        verifyBearer: () => ({ kind: 'refused', reason: 'malformed_authorization' }),
-      }),
-    }),
-  },
-  {
-    code: 'invalid_token',
-    status: 401,
-    drive: () => refusalAt('/ok', { headers: { Authorization: 'Bearer wrong' } }),
+    code: 'cross_site_refused',
+    status: 403,
+    drive: () => refusalAt('/ok', { headers: CROSS_SITE }),
   },
   {
     code: 'unknown_route',
@@ -989,7 +958,8 @@ describe('the refusal-CODE census is a complete set over RUN_SERVICE_ERROR_CODES
       + 'this file certifying an answer that is gone',
     ).toEqual([...RUN_SERVICE_ERROR_CODES].sort())
     // Non-vacuity: a census over an empty probe list agrees with an empty code set for free.
-    expect(CODE_PROBES.length).toBeGreaterThanOrEqual(16)
+    // 432-21: three bearer codes out, one same-site code in.
+    expect(CODE_PROBES.length).toBeGreaterThanOrEqual(14)
     expect(new Set(probed).size).toBe(CODE_PROBES.length)
   })
 
@@ -1063,14 +1033,15 @@ describe('D-03 / Q3 — the authed door mints a liveUrl', () => {
     expect(await response.json()).toEqual(MINTED)
   })
 
-  it('carries the BEARER\'S trust scope to the port — never a scope of the door\'s own', async () => {
-    // T-403-01: the mint is a credential mint, so the caller identity it runs under has to be the
-    // one the verdict settled. A door that substituted a local caller would let any token-holder
-    // mint under the host's own authority.
+  // RE-SPELLED 2026-10-01 (432-21, D-12) from 'carries the BEARER'S trust scope to the port — never
+  // a scope of the door's own'. No bearer and no trust scope exist; the port is handed the subject
+  // the caller named and nothing about who the caller is, and the composition supplies the one
+  // caller the mint runs under.
+  it('hands the port the requested subject and no caller-supplied scope', async () => {
     const { ports, seen } = recordingMintPorts()
     const origin = await mount(ports)
     await fetch(`${origin}/run/r_planted/live-url?handle=7`, { headers: authed })
-    expect(seen).toEqual([{ runId: 'r_planted', handle: 7, trustScope: { project: 'acme' } }])
+    expect(seen).toEqual([{ runId: 'r_planted', handle: 7 }])
   })
 
   it('defaults the handle to 0 when none is asked for', async () => {
@@ -1123,12 +1094,14 @@ describe('D-03 / Q3 — the authed door mints a liveUrl', () => {
     },
   )
 
-  it('is under the SAME verdict as every other route — no credential, no mint', async () => {
+  // RE-SPELLED 2026-10-01 (432-21, D-12/D-13) from '… — no credential, no mint': the guard every route
+  // is under is the same-site check, and a refused mint still never reaches the port.
+  it('is under the SAME verdict as every other route — cross-site, no mint', async () => {
     const { ports, seen } = recordingMintPorts()
     const origin = await mount(ports)
-    const response = await fetch(`${origin}/run/r_planted/live-url`)
-    expect(response.status).toBe(401)
-    expect(await response.json()).toEqual({ error: 'missing_authorization' })
+    const response = await fetch(`${origin}/run/r_planted/live-url`, { headers: CROSS_SITE })
+    expect(response.status).toBe(403)
+    expect(await response.json()).toEqual({ error: 'cross_site_refused' })
     expect(seen, 'the port must not be reached for a refused request').toEqual([])
   })
 

@@ -51,7 +51,6 @@ import { DashboardDatabase } from '../../db/database.js'
 import { startServer } from '../../server/server.js'
 import type { RunServicePorts } from '../run-service-routes.js'
 
-const TOKEN = 'zz-402-04-attribution-token-6b19cc'
 const RUN_ID = 'run-attribution'
 
 /** Planted, non-contiguous, not 0-based — see the header. */
@@ -153,9 +152,7 @@ let db: DashboardDatabase | undefined
 
 function servicePorts(session: RunSession): RunServicePorts {
   return {
-    verifyBearer: (header) => header === `Bearer ${TOKEN}`
-      ? { kind: 'token', clientId: 'ci', trustScope: { project: 'acme' } }
-      : { kind: 'refused', reason: header === undefined ? 'missing_authorization' : 'invalid_token' },
+    // 2026-10-01 (432-21, D-12): no `verifyBearer` — the door is tokenless.
     invokeRunStart: async () => ({
       runId: RUN_ID as RunStartAcknowledgement['runId'],
       scope: 'main' as unknown as RunStartAcknowledgement['scope'],
@@ -168,7 +165,7 @@ function servicePorts(session: RunSession): RunServicePorts {
     readiness: () => ({
       service: 'up',
       hostComposed: true,
-      authConfigured: true,
+      authConfigured: false,
       contractVersion: RUN_SERVICE_CONTRACT_VERSION,
     }),
     // 403-03 (D-03, Q3): a fixture that composed no live view HAS no live view, and the honest
@@ -224,9 +221,7 @@ interface Attached {
 /** Attach one SSE reader. The run is over, so the replay ends at `runFinished` and this returns. */
 async function attach(port: number, handle: number | 'firehose'): Promise<Attached> {
   const query = handle === 'firehose' ? '' : `?handle=${String(handle)}`
-  const response = await fetch(`http://127.0.0.1:${String(port)}/run/${RUN_ID}/events${query}`, {
-    headers: { Authorization: `Bearer ${TOKEN}` },
-  })
+  const response = await fetch(`http://127.0.0.1:${String(port)}/run/${RUN_ID}/events${query}`)
   const body = await response.text()
   return {
     handle,
@@ -306,7 +301,6 @@ describe('three SIMULTANEOUS per-handle readers on the shipped server, one concu
     for (const outside of [0, 1, 2, 4, 12]) {
       const response = await fetch(
         `http://127.0.0.1:${String(port)}/run/${RUN_ID}/events?handle=${String(outside)}`,
-        { headers: { Authorization: `Bearer ${TOKEN}` } },
       )
       expect(response.status).toBe(400)
       expect(response.headers.get('content-type')).toContain('application/json')
@@ -314,14 +308,18 @@ describe('three SIMULTANEOUS per-handle readers on the shipped server, one concu
     }
   })
 
-  it('still requires the bearer on a per-handle attach — the filter is below the verdict', async () => {
+  // RE-SPELLED 2026-10-01 (432-21, D-12/D-13) from 'still requires the bearer on a per-handle
+  // attach — the filter is below the verdict'. The bearer is deleted; the door's guard is the
+  // same-site check, and the filter is still below it.
+  it('still refuses a cross-site per-handle attach — the filter is below the same-site guard', async () => {
     const { session } = await produceConcurrentRun()
     const port = await mountShippedHost(session)
     const response = await fetch(
       `http://127.0.0.1:${String(port)}/run/${RUN_ID}/events?handle=7`,
+      { headers: { Origin: 'https://evil.example' } },
     )
-    expect(response.status).toBe(401)
-    expect(await response.json()).toEqual({ error: 'missing_authorization' })
+    expect(response.status).toBe(403)
+    expect(await response.json()).toEqual({ error: 'cross_site_refused' })
   })
 
   it('attributes every member-scoped envelope the run published to the right owner', async () => {

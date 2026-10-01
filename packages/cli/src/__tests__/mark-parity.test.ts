@@ -19,7 +19,6 @@ import { composeDashboardDoor } from '../commands/dashboard.js'
 import { composeMcpMasking, createMcpHttpRequestListener } from '../commands/mcp.js'
 import { createRunsCommand } from '../commands/runs.js'
 import * as host from '../composition/local-agent-host.js'
-import { resolveMcpTokens } from '../composition/mcp-token-resolution.js'
 import { markFixture } from '../gates/__tests__/feedback-fixture.js'
 
 export const MARK_RECEIPT_EQUIVALENCE_KEYS = [
@@ -81,18 +80,16 @@ function receiptOf(value: unknown): MarkReceipt {
 }
 
 async function mcpDoor(scene: Scratch) {
-  // Test-owned declared credential; never copied from the environment or printed on the wire.
+  // 432-21 (D-12): the MCP door is tokenless. A legacy bearer value is still presented by one client
+  // to show it changes nothing; it is never copied from the environment or printed on the wire.
   const token = 'agent-qa-parity-fixture-writer-419'
-  const declarations: Parameters<typeof resolveMcpTokens>[0] = [{ name: 'writer', tokenEnvVar: 'AGENT_QA_PARITY_WRITER', scopes: ['knowledge-write'] }]
-  scene.config.services = { ...scene.config.services, mcp: { tokens: [...declarations], stdio: { grantConfigWrite: false } } }
   writeFileSync(scene.configPath, JSON.stringify(scene.config))
   const composed = host.composeCliLocalAgent({ configPath: scene.configPath, agentQaRoot: scene.agentQaRoot,
     resolveExecutionContext: () => 'local-headless' })
   closers.push(() => composed.close())
-  const tokens = resolveMcpTokens(declarations, { AGENT_QA_PARITY_WRITER: token })
-  const masking = composeMcpMasking({ tokens, env: {} })
+  const masking = composeMcpMasking({ env: {} })
   const server = createServer(createMcpHttpRequestListener({ registry: composed.registry,
-    tokens, maskText: text => masking.mask(text) }))
+    maskText: text => masking.mask(text) }))
   await new Promise<void>((resolve, reject) => {
     server.once('error', reject)
     server.listen(0, '127.0.0.1', resolve)
@@ -164,16 +161,15 @@ describe('419 mark receipt parity across the four sovereign doors', () => {
     } finally { spy.mockRestore(); output.mockRestore(); errors.mockRestore() }
 
     const mcp = await mcpDoor(scenes[2])
-    // 432-20 (D-12): the mark tool is listed for every caller; its handler still refuses an
-    // anonymous one until 432-21 removes the bearer credential.
+    // 432-21 (D-12): the mark tool is listed and served for every caller; the tokenless client lands
+    // the mark, and the client still sending a legacy bearer then gets the identical repeat.
     expect((await mcp.anonymous.listTools()).tools.map(tool => tool.name)).toContain('agent_qa_mark_run')
-    const refused = await mcp.anonymous.callTool({ name: 'agent_qa_mark_run', arguments: input })
-    expect(refused.isError).toBe(true)
-    expect(JSON.stringify(refused.content)).toContain('present a bearer whose scopes include `knowledge-write`')
     expect(existsSync(scenes[2].ledger)).toBe(false)
-    const called = await mcp.writer.callTool({ name: 'agent_qa_mark_run', arguments: input })
+    const called = await mcp.anonymous.callTool({ name: 'agent_qa_mark_run', arguments: input })
     expect(called.isError).not.toBe(true)
     const bearer = receiptOf(called.structuredContent)
+    const repeated = RunsMarkOutcomeSchema.parse((await mcp.writer.callTool({ name: 'agent_qa_mark_run', arguments: input })).structuredContent)
+    expect(repeated.kind).toBe('already-marked')
     const api = await dashboardDoor(scenes[3], input)
     const receipts = [fn, cli!, bearer, api]
     for (const [index, receipt] of receipts.entries()) {

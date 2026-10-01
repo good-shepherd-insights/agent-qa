@@ -1,4 +1,10 @@
-// The authed run service, DRIVEN END TO END (Phase 402 plan 01, D-02/D-05/D-06/D-13 · INVK-03).
+// The run service, DRIVEN END TO END (Phase 402 plan 01, D-02/D-05/D-06/D-13 · INVK-03).
+//
+// 2026-10-01 (432-21, D-12/D-13): TOKENLESS. The cells that measured a bearer refusal (legs (a),
+// (b), the empty-entry door, the tokenless `/ok`) are RE-SPELLED in place: a request with no
+// credential is served, a legacy bearer is ignored, and what the door refuses before its route table
+// is a cross-site request (the dashboard's shared same-site guard). Delivery, framing, the refused
+// request fields and the one readiness predicate are unchanged claims.
 //
 // THE FRAME, STATED: every cell below drives the PRODUCTION COMPOSITION over real TCP. The server
 // is `startServer` — the same function `agent-qa dashboard` calls, not a router mounted on a bare
@@ -42,15 +48,11 @@ import {
   createRunServiceReadiness,
 } from '../commands/dashboard.js'
 
-/**
- * The credential this suite declares and presents.
- *
- * NO SUFFIX A MASKER RECOGNISES, deliberately: `sensitiveEnvSlice` selects environment variables
- * by NAME SUFFIX, so a probe called `PROBE_API_TOKEN` would be masked by machinery that has
- * nothing to do with this door and a leak would pass for the wrong reason.
- */
+/** A bearer value a pre-432 client might still present. The door neither needs nor reads it. */
 const TOKEN = 'zz-402-01-e2e-run-credential-6d20af'
-const TOKEN_VAR = 'AGENT_QA_402_E2E_RUN_CRED'
+
+/** 432-21: what the door refuses before its route table. */
+const CROSS_SITE = { Origin: 'https://evil.example' } as const
 
 /** The `dashboard-door-security.ts` fixture project's shape, plus one planted test. */
 function fixtureWorkspace(): string {
@@ -82,13 +84,6 @@ function fixtureWorkspace(): string {
             url: 'https://conformance.invalid',
             environment: 'local',
           },
-        },
-      },
-      services: {
-        dashboard: {
-          runServiceTokens: [
-            { name: 'ci', tokenEnvVar: TOKEN_VAR, trustScope: { project: 'acme' } },
-          ],
         },
       },
     })}\n`,
@@ -123,9 +118,7 @@ interface ServiceFixture {
 const openFixtures: ServiceFixture[] = []
 
 /** The composition `agent-qa dashboard` performs, with an ephemeral port and a temp project. */
-async function openRunService(options: {
-  readonly declareToken?: boolean
-} = {}): Promise<ServiceFixture> {
+async function openRunService(): Promise<ServiceFixture> {
   const configPath = fixtureWorkspace()
   const configDir = dirname(resolve(configPath))
   const { DashboardDatabase, startServer } = await import('@vostride/agent-qa-dashboard')
@@ -140,13 +133,7 @@ async function openRunService(options: {
   })
   runDoor.bindHost(host)
 
-  const runService = composeRunServicePorts({
-    entries: options.declareToken === false
-      ? []
-      : [{ name: 'ci', tokenEnvVar: TOKEN_VAR, trustScope: { project: 'acme' } }],
-    env: { [TOKEN_VAR]: TOKEN },
-    door: runDoor,
-  })
+  const runService = composeRunServicePorts({ door: runDoor })
 
   const started = await startServer({
     db,
@@ -237,50 +224,57 @@ function parseFrame(frame: string): { id?: string; event?: string; data?: string
   return out
 }
 
-const authed = { Authorization: `Bearer ${TOKEN}`, 'Content-Type': 'application/json' }
+const authed = { 'Content-Type': 'application/json' }
 
+// RE-SPELLED 2026-10-01 (432-21, D-12/D-13) from 'leg (a) — POST /run with no Authorization header'
+// ('is refused 401 with the typed body, and starts nothing'; 'refuses an OPTIONS preflight too').
+// A missing header is the normal case now; the refusal the leg measures is a cross-site POST, and
+// it still starts nothing and grants nothing.
 describe('leg (a) — POST /run with no Authorization header', () => {
-  it('is refused 401 with the typed body, and starts nothing', async () => {
+  it('is refused 403 cross-site with the typed body, and starts nothing', async () => {
     const service = await openRunService()
     const response = await fetch(`${service.origin}/run`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { ...CROSS_SITE, 'Content-Type': 'text/plain' },
       body: '{}',
     })
-    expect(response.status).toBe(401)
+    expect(response.status).toBe(403)
     const body = RunServiceErrorBodySchema.parse(await response.json())
-    expect(body).toEqual({ error: 'missing_authorization' })
-    // The refusal carries NOTHING else: no run id, no hint that any credential is declared.
+    expect(body).toEqual({ error: 'cross_site_refused' })
+    // The refusal carries NOTHING else: no run id.
     expect(Object.keys(body)).toEqual(['error'])
-    // No cross-origin grant on an authed surface — the chat door's adjudication, not the legacy
-    // run stream's wildcard.
+    // No cross-origin grant — the chat door's adjudication, not the legacy run stream's wildcard.
     expect(response.headers.get('access-control-allow-origin')).toBeNull()
   })
 
   it('refuses an OPTIONS preflight too, so the host wildcard arm never sees a service path', async () => {
     const service = await openRunService()
-    const response = await fetch(`${service.origin}/run`, { method: 'OPTIONS' })
-    expect(response.status).toBe(401)
+    const response = await fetch(`${service.origin}/run`, {
+      method: 'OPTIONS',
+      headers: { ...CROSS_SITE, 'Access-Control-Request-Method': 'POST' },
+    })
+    expect(response.status).toBe(403)
     expect(response.headers.get('access-control-allow-origin')).toBeNull()
   })
 })
 
+// RE-SPELLED 2026-10-01 (432-21, D-12) from 'leg (b) — POST /run with a wrong token'. No token is
+// compared: a wrong bearer, a malformed scheme and no header reach the same request-shape check,
+// and a cross-site request to an unknown path is refused identically to a known one.
 describe('leg (b) — POST /run with a wrong token', () => {
-  it('is refused 401, shape-identical to the missing-token refusal beyond the reason', async () => {
+  it('C432-TOKENLESS-RUN-SERVICE: a wrong legacy bearer is not read — the request reaches the body check', async () => {
     const service = await openRunService()
     const wrong = await fetch(`${service.origin}/run`, {
       method: 'POST',
       headers: { Authorization: `Bearer ${TOKEN}-wrong`, 'Content-Type': 'application/json' },
-      body: '{}',
+      body: JSON.stringify({ workers: 8 }),
     })
-    expect(wrong.status).toBe(401)
-    const wrongBody = RunServiceErrorBodySchema.parse(await wrong.json())
-    expect(wrongBody).toEqual({ error: 'invalid_token' })
-
-    const missing = await fetch(`${service.origin}/run`, { method: 'POST', body: '{}' })
-    const missingBody = RunServiceErrorBodySchema.parse(await missing.json())
-    // The KEY SETS are identical: an unauthenticated prober learns the reason word and no more.
-    expect(Object.keys(wrongBody)).toEqual(Object.keys(missingBody))
+    const missing = await fetch(`${service.origin}/run`, {
+      method: 'POST', headers: authed, body: JSON.stringify({ workers: 8 }),
+    })
+    expect(wrong.status).toBe(400)
+    expect(missing.status).toBe(400)
+    expect(await wrong.json()).toEqual(await missing.json())
   })
 
   it('refuses a malformed scheme distinctly from a wrong value', async () => {
@@ -288,17 +282,19 @@ describe('leg (b) — POST /run with a wrong token', () => {
     const response = await fetch(`${service.origin}/run`, {
       method: 'POST',
       headers: { Authorization: 'Basic abc' },
-      body: '{}',
+      body: JSON.stringify({ runId: 'r_mine' }),
     })
-    expect(response.status).toBe(401)
-    expect(await response.json()).toEqual({ error: 'malformed_authorization' })
+    // Not refused for the header — refused for the field it names, like any caller.
+    expect(response.status).toBe(400)
+    expect(await response.json()).toEqual({ error: 'refused_request_field' })
   })
 
   it('refuses an unknown path under the door identically, leaking no route map', async () => {
     const service = await openRunService()
-    const response = await fetch(`${service.origin}/run/nope/nothing`)
-    expect(response.status).toBe(401)
-    expect(await response.json()).toEqual({ error: 'missing_authorization' })
+    const unknown = await fetch(`${service.origin}/run/nope/nothing`, { headers: CROSS_SITE })
+    const known = await fetch(`${service.origin}/ok`, { headers: CROSS_SITE })
+    expect(unknown.status).toBe(403)
+    expect(await unknown.json()).toEqual(await known.json())
   })
 })
 
@@ -359,7 +355,7 @@ describe('legs (c) and (d) — the authed path, end to end', () => {
     // so the frames are the whole log either way.
     const stream = await collectSse(
       `${service.origin}/run/${encodeURIComponent(ack.runId)}/events`,
-      { Authorization: `Bearer ${TOKEN}` },
+      {},
     )
     expect(stream.status).toBe(200)
     expect(stream.contentType).toContain('text/event-stream')
@@ -395,48 +391,51 @@ describe('legs (c) and (d) — the authed path, end to end', () => {
 
   it('refuses a stream for a run this process never started, BEFORE any stream header', async () => {
     const service = await openRunService()
-    const response = await fetch(`${service.origin}/run/r_never-started/events`, {
-      headers: { Authorization: `Bearer ${TOKEN}` },
-    })
+    const response = await fetch(`${service.origin}/run/r_never-started/events`)
     expect(response.status).toBe(404)
     expect(response.headers.get('content-type')).toContain('application/json')
     expect(await response.json()).toEqual({ error: 'unknown_run' })
   })
 
-  it('refuses the stream without a token, before it can learn whether the run exists', async () => {
+  // RE-SPELLED 2026-10-01 (432-21, D-12/D-13) from 'refuses the stream without a token, before it
+  // can learn whether the run exists': a cross-site stream request is refused before the lookup.
+  it('refuses the stream cross-site, before it can learn whether the run exists', async () => {
     const service = await openRunService()
-    const response = await fetch(`${service.origin}/run/r_never-started/events`)
-    expect(response.status).toBe(401)
-    expect(await response.json()).toEqual({ error: 'missing_authorization' })
+    const response = await fetch(`${service.origin}/run/r_never-started/events`, { headers: CROSS_SITE })
+    expect(response.status).toBe(403)
+    expect(await response.json()).toEqual({ error: 'cross_site_refused' })
   })
 })
 
+// RE-SPELLED 2026-10-01 (432-21, D-12) from 'a door with no declared credential is a door nobody
+// can open'. There are no declared credentials and the door opens for every local caller; the
+// claim that survives is that it is the same door whether or not the client sends a bearer.
 describe('a door with no declared credential is a door nobody can open', () => {
-  it('refuses even the declared value when the entry list is empty', async () => {
-    const service = await openRunService({ declareToken: false })
-    const response = await fetch(`${service.origin}/run`, {
-      method: 'POST',
-      headers: authed,
-      body: '{}',
-    })
-    expect(response.status).toBe(401)
-    expect(await response.json()).toEqual({ error: 'invalid_token' })
+  it('C432-TOKENLESS-RUN-SERVICE: the door opens for a local caller with no credential, and a legacy bearer opens nothing more', async () => {
+    const service = await openRunService()
+    const [plain, legacy] = await Promise.all([
+      fetch(`${service.origin}/ok`),
+      fetch(`${service.origin}/ok`, { headers: { Authorization: `Bearer ${TOKEN}` } }),
+    ])
+    expect(plain.status).toBe(200)
+    expect(legacy.status).toBe(200)
+    expect(await plain.text()).toBe(await legacy.text())
   })
 })
 
 // ---- Task 2: `/ok` driven through the production composition --------------------------------
 
 describe('GET /ok on the mounted door', () => {
-  it('is refused without a token and answers measured facts with one', async () => {
+  // RE-SPELLED 2026-10-01 (432-21, D-12/D-13) from 'is refused without a token and answers measured
+  // facts with one': refused cross-site, and answers measured facts to a local caller with none.
+  it('is refused cross-site and answers measured facts to a local caller', async () => {
     const service = await openRunService()
 
-    const refused = await fetch(`${service.origin}/ok`)
-    expect(refused.status).toBe(401)
-    expect(await refused.json()).toEqual({ error: 'missing_authorization' })
+    const refused = await fetch(`${service.origin}/ok`, { headers: CROSS_SITE })
+    expect(refused.status).toBe(403)
+    expect(await refused.json()).toEqual({ error: 'cross_site_refused' })
 
-    const ok = await fetch(`${service.origin}/ok`, {
-      headers: { Authorization: `Bearer ${TOKEN}` },
-    })
+    const ok = await fetch(`${service.origin}/ok`)
     expect(ok.status).toBe(200)
     const body = RunServiceReadinessSchema.parse(await ok.json())
     expect(body).toEqual({
@@ -444,15 +443,15 @@ describe('GET /ok on the mounted door', () => {
       // MEASURED, not asserted from this cell's own knowledge: the composition bound a host above,
       // and this is the same box the run starter's guard reads.
       hostComposed: true,
-      authConfigured: true,
+      // 432-21 (D-12): no credential can be configured.
+      authConfigured: false,
       contractVersion: RUN_SERVICE_CONTRACT_VERSION,
     })
   })
 
   it('reports authConfigured FALSE when no credential resolved', async () => {
-    // The falsifiability of the field, driven: a door with an empty entry list refuses every
-    // request, so this is measured through the ONE predicate rather than through the wire.
-    const readiness = createRunServiceReadiness({ resolveHost: () => undefined, tokenCount: 0 })
+    // Measured through the ONE predicate: since 432-21 it takes no credential count at all.
+    const readiness = createRunServiceReadiness({ resolveHost: () => undefined })
     expect(readiness()).toEqual({
       service: 'up',
       hostComposed: false,
@@ -468,11 +467,7 @@ describe('one readiness predicate, two doors (402-05, D-15)', () => {
     const { DashboardDatabase } = await import('@vostride/agent-qa-dashboard')
     const db = new DashboardDatabase({ dbPath: join(dirname(resolve(configPath)), 'identity.db') })
     const runDoor = await createDashboardRunDoor({ db })
-    const composition = composeRunServicePorts({
-      entries: [{ name: 'ci', tokenEnvVar: TOKEN_VAR, trustScope: { project: 'acme' } }],
-      env: { [TOKEN_VAR]: TOKEN },
-      door: runDoor,
-    })
+    const composition = composeRunServicePorts({ door: runDoor })
     try {
       // REFERENCE IDENTITY AND NOT DEEP EQUALITY. "The two doors agree today" is what a deep
       // compare proves; "there is one predicate" is what survives somebody adding a fifth fact to
@@ -485,11 +480,12 @@ describe('one readiness predicate, two doors (402-05, D-15)', () => {
     }
   })
 
+  // 432-21 (D-12): '… on /ok with one' — neither door takes a token now; the body is the same.
   it('serves the same readiness body on the local door with NO token and on /ok with one', async () => {
     const fixture = await openRunService()
     const [local, authed] = await Promise.all([
       fetch(`${fixture.origin}/api/run-readiness`),
-      fetch(`${fixture.origin}/ok`, { headers: { authorization: `Bearer ${TOKEN}` } }),
+      fetch(`${fixture.origin}/ok`),
     ])
     expect(local.status).toBe(200)
     expect(authed.status).toBe(200)
@@ -498,19 +494,19 @@ describe('one readiness predicate, two doors (402-05, D-15)', () => {
     expect(localBody).toEqual(authedBody)
     // Both are the MEASURED facts, on the shipped composition — `hostComposed` is true here
     // because this fixture bound a host, which is the same box `POST /run`'s guard throws on.
-    expect(localBody).toMatchObject({ service: 'up', hostComposed: true, authConfigured: true })
+    expect(localBody).toMatchObject({ service: 'up', hostComposed: true, authConfigured: false })
   })
 
+  // RE-SPELLED 2026-10-01 (432-21, D-12): neither door reads a token now; both serve a garbage one.
   it('refuses the LOCAL door no differently for a bad token — it never reads one', async () => {
     const fixture = await openRunService()
     const withGarbage = await fetch(`${fixture.origin}/api/run-readiness`, {
       headers: { authorization: 'Bearer not-the-token' },
     })
     expect(withGarbage.status).toBe(200)
-    // The authed door is the one that cares, and it still does.
-    const authed = await fetch(`${fixture.origin}/ok`, {
+    const service = await fetch(`${fixture.origin}/ok`, {
       headers: { authorization: 'Bearer not-the-token' },
     })
-    expect(authed.status).toBe(401)
+    expect(service.status).toBe(200)
   })
 })

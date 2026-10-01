@@ -204,9 +204,9 @@ beforeAll(async () => {
   expect(buildFreshness(DASHBOARD_ANCHORED_BUILDS), REBUILD_INSTRUCTION)
     .toEqual({ missing: [], stale: [] })
 
-  // THE ZERO-TOKEN POSTURE, DELIBERATELY. `declareToken: false` is the default shipped project and
-  // the arm WINDOWS #264 lived in — a token-declaring fixture is how it stayed invisible.
-  const project = runServiceFixtureProject('live-view', false)
+  // THE ZERO-TOKEN POSTURE, DELIBERATELY — the arm WINDOWS #264 lived in. Since 432-21 (D-12) it is
+  // the only posture: no project declares a run-service credential.
+  const project = runServiceFixtureProject('live-view')
   const port = await reserveEphemeralPort()
   const dashboard = await spawnDashboard(project.root, project.configPath, port)
   expect(

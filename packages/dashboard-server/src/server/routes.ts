@@ -1839,15 +1839,15 @@ interface RouterDeps {
   /**
    * The run service's readiness predicate, served on the LOCAL door (402-05, D-15).
    *
-   * THE SAME FUNCTION THE AUTHED `/ok` SERVES — one readiness spelling behind two doors, which is
-   * the whole of D-15. It is passed in rather than computed here for the reason `agentHost` is:
-   * every fact in it (is a host composed, did any credential resolve) is known only to the process
-   * that composed them, and a copy made here is how the remote door and the dashboard start
-   * disagreeing about whether this process can run anything.
+   * THE SAME FUNCTION THE RUN SERVICE'S `/ok` SERVES — one readiness spelling behind two doors,
+   * which is the whole of D-15. It is passed in rather than computed here for the reason `agentHost`
+   * is: every fact in it (is a host composed) is known only to the process that composed it, and a
+   * copy made here is how the run service and the dashboard start disagreeing about whether this
+   * process can run anything.
    *
    * ABSENT IS THE LEGACY MOUNT, NOT AN UNCONFIGURED SERVICE. `agent-qa dashboard` ALWAYS supplies
-   * this — with `authConfigured: false` when no credential is declared, because the browser
-   * preflight needs an honest answer either way and a 404 is not one. A router built the legacy
+   * this — with `authConfigured: false`, always since 432-21 (D-12: no credential can be declared),
+   * because the browser preflight needs an honest answer and a 404 is not one. A router built the legacy
    * two-argument way has none, and that arm answers 503 by name on `agentHost`'s idiom.
    */
   runServiceReadiness?: () => RunServiceReadiness
@@ -1993,6 +1993,23 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps): (req: In
         inFlight: connectsInFlight,
       })
       return
+    }
+
+    // 2026-10-01 (432-21, owner decision recorded in 432-14 #4): THE RUN TRIGGER AND THE QUEUE
+    // ENQUEUE ARE SAME-SITE ONLY, AHEAD OF THE SHARED OPTIONS ARM. With the run approval gone
+    // (432-13/14), a page on another origin could start any non-production run with a simple
+    // cross-site POST to either path; these two never had the refusal the mark, config-write,
+    // live-editor and credential doors carry. The guard runs for every method on exactly these two
+    // paths, so a cross-site preflight is refused too and gets no wildcard grant, and it runs before
+    // the queue is consulted or a body is read, so a refused request queues and starts nothing.
+    // The dashboard's own Run (same origin) and a local client that sends no `Origin` — the CLI,
+    // `curl`, the conformance harness, `dashboard-smoke.mjs` — are admitted. The whole-server CORS
+    // posture (WINDOWS CR-01) is unchanged.
+    if (path === '/api/runs/trigger' || path === '/api/queue/enqueue') {
+      if (refuseCrossSiteRequest(req) !== undefined) {
+        jsonNoCors(res, { error: 'cross_site_refused' }, 403)
+        return
+      }
     }
 
     if (req.method === 'OPTIONS') {

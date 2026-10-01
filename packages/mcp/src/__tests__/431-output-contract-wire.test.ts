@@ -36,7 +36,7 @@ const TARGET = { target: 'draft-2020-12' } as const
 const EVERY_SCOPE = [...schema.FunctionScopeSchema.options] as readonly FunctionScope[]
 const caller: FunctionCaller = {
   surface: 'mcp', grantedScopes: EVERY_SCOPE, safeMode: false, origin: 'agent',
-  credential: { scope: schema.STANDING_APPROVAL_SCOPE },
+  // 432-21 (D-12): no credential; the mark tool's handler reads none.
 }
 const auditSink = { appendGuardrailAudit() {} } as unknown as CreateFunctionRegistryOptions['auditSink']
 

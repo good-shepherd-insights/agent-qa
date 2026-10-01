@@ -12,32 +12,25 @@
 // can be a suite cell at all.
 //
 // 2026-08-17 — UNFILTERED BY DESIGN (D-16, prohibition P1). Every row is emitted, for every caller,
-// with no scope filter applied anywhere below. This is DELIBERATE and it is not a hole: the manifest
-// documents what EXISTS and what unlocks it, while per-caller filtering is enforced live at the MCP
-// `tools/list` seam and nowhere else (D-05's visibility law). Filtering here would put the
-// visibility law in a second place, and the two would agree until the day one of them was improved.
-// Reading this file as a grant list is the misreading T-398-03 names; the emitted `$note` says so in
-// the document itself, so a reader who never opens this source still learns it.
+// with no scope filter applied anywhere below. 2026-10-01 (432-20/432-21, D-12): there is no
+// per-caller filter anywhere else either — the MCP `tools/list` visibility law is deleted, so every
+// caller lists and calls what this manifest lists. The emitted `$note` says so in the document
+// itself, so a reader who never opens this source still learns it.
 //
-// REFS-ONLY IS STRUCTURAL, NOT REMEMBERED (395 D-11, T-398-17). The posture reports declared
-// credentials by env-var NAME. It gets them from the CONFIGURATION, whose schema has no member a
-// value could occupy, and it never calls `resolveMcpTokens` — the one function in this product that
-// turns a declared name into a credential. So there is no code path from this module to a secret,
-// rather than a rule about one; the sentinel-absence cell in `conformance/manifest.test.ts` is what
-// keeps that true as the file changes.
+// NO SECRET PATH, STRUCTURALLY (395 D-11, T-398-17). 2026-10-01 (432-21, D-12): the posture no
+// longer reports declared MCP credentials at all — `services.mcp.tokens` is not read, and the
+// resolver that once turned a declared name into a credential is deleted — so `tokenEnvRefs` is
+// always empty. The sentinel-absence cell in `conformance/manifest.test.ts` keeps that true as the
+// file changes.
 
 import { existsSync } from 'node:fs'
 import { resolve } from 'node:path'
 
-import type {
-  AgentManifest,
-  AgentManifestPosture,
-  AgentManifestTokenRef,
-} from '@vostride/agent-qa-schema'
+import { FunctionScopeSchema } from '@vostride/agent-qa-schema'
+import type { AgentManifest, AgentManifestPosture } from '@vostride/agent-qa-schema'
 
 import { WRITE_AGENT_INSTRUCTIONS_FLAG } from '../commands/knowledge-guide.js'
 import { resolveConfig } from '../config.js'
-import { DEFAULT_MCP_SCOPES } from '../composition/mcp-token-resolution.js'
 import { loadCapabilityCatalog } from './loader.js'
 
 /**
@@ -49,11 +42,12 @@ import { loadCapabilityCatalog } from './loader.js'
  * lines carry it for the manifest as a whole, including the posture.
  */
 export const AGENT_MANIFEST_NOTE: readonly string[] = Object.freeze([
-  'THIS MANIFEST IS UNFILTERED AND IT IS NOT A GRANT LIST (2026-08-17, D-16). Every capability is',
-  'listed for every reader. What a particular caller may SEE and DO is decided live at the MCP',
-  '`tools/list` seam from that caller\'s scopes, and nowhere else — so a row appearing here is not a',
-  'permission, and `posture.defaultScopes` describes the local unauthenticated default rather than',
-  'your grant. `posture.tokenEnvRefs` names environment VARIABLES, never their contents.',
+  'THIS MANIFEST IS UNFILTERED AND IT IS NOT A GRANT LIST (2026-08-17, D-16). Every capability',
+  'is listed for every reader.',
+  'Since 2026-10-01 (432 D-12) there are no permissions: every caller on every door may see and',
+  'call every capability listed here, MCP included, with no token. `posture.defaultScopes` lists',
+  'every scope name for that reason, and `posture.tokenEnvRefs` is always empty; both keys are',
+  'retired and leave with the remaining permission metadata.',
 ])
 
 /** One dedicated CLI read verb: its Commander path, its long flags and the ops it invokes. */
@@ -91,24 +85,8 @@ export interface AgentManifestInput {
   readonly configPath?: string
 }
 
-/**
- * The declared credentials, as names.
- *
- * The config entries are ALREADY refs-only by schema (`McpTokenEntrySchema` has no member a value
- * could occupy and refuses one strictly), so this is a projection of names onto names. It is written
- * as an explicit field-by-field copy rather than a spread for one reason worth stating: a spread
- * would silently carry whatever member the config schema grew next, and the member this manifest
- * must never carry is precisely the one somebody would add in a hurry.
- */
-function tokenEnvRefsOf(
-  entries: readonly { name: string; tokenEnvVar: string; scopes: readonly string[] }[],
-): readonly AgentManifestTokenRef[] {
-  return entries.map((entry) => ({
-    name: entry.name,
-    tokenEnvVar: entry.tokenEnvVar,
-    scopes: [...entry.scopes] as AgentManifestTokenRef['scopes'],
-  }))
-}
+// 2026-10-01 (432-21, D-12): `tokenEnvRefsOf` is deleted. It projected `services.mcp.tokens` onto
+// names for the posture, and that key is no longer read by anything.
 
 /**
  * The whole manifest: the committed catalog, the projected map, and this workspace's posture.
@@ -117,8 +95,8 @@ function tokenEnvRefsOf(
  * command an agent runs in a directory that is not a project yet — that is what `init` is for — so
  * neither state is an error here. They are told apart by whether the FILE EXISTS, which is a fact
  * about the filesystem rather than a fact read out of an exception message: `absent` means run
- * `init`, `unresolved` means fix the file, and reporting either as `resolved` with no credentials
- * would say "this workspace declares none" about a workspace nobody could read.
+ * `init`, `unresolved` means fix the file, and reporting either as `resolved` would say "this
+ * workspace is fine" about a workspace nobody could read.
  *
  * NOT TOLERANT OF A MISSING CATALOG. A broken install throws {@link
  * CapabilityCatalogUnavailableError} with the regen instruction, because the alternative — an empty
@@ -131,7 +109,6 @@ export async function buildAgentManifest(
   const catalog = loadCapabilityCatalog()
 
   const configPath = resolve(input.configPath ?? 'agent-qa.config.yaml')
-  let tokenEnvRefs: readonly AgentManifestTokenRef[] = []
   // The two failing arms are told apart BEFORE the read, by whether the file is there. Deciding it
   // afterwards would mean reading the failure's message to classify it, and a message is exactly
   // what must not travel here.
@@ -141,9 +118,8 @@ export async function buildAgentManifest(
     try {
       // `loadAuthPlugins: false` keeps the read a read: resolving a posture must not load and
       // execute plugin code, on the reasoning `createMaskedConfigReader` already states next door.
-      const config = await resolveConfig({ configPath, loadAuthPlugins: false })
+      await resolveConfig({ configPath, loadAuthPlugins: false })
       configuration = 'resolved'
-      tokenEnvRefs = tokenEnvRefsOf(config.services?.mcp?.tokens ?? [])
     } catch {
       // The reason is deliberately NOT carried into the manifest — see the doc comment above.
       configuration = 'unresolved'
@@ -156,16 +132,17 @@ export async function buildAgentManifest(
     rows: catalog.rows,
     migrationMap: catalog.migrationMap,
     posture: {
-      // THE SHIPPED CONSTANT, IMPORTED. A scope list spelled here would be a second answer to
-      // "what does a local caller get", and it would be right on the day it was written: 396 D-07's
-      // set is DERIVED from the closed scope union by excluding `config-write`, so a scope minted
-      // tomorrow joins it there and would not join a copy.
-      defaultScopes: [...DEFAULT_MCP_SCOPES],
+      // 2026-10-01 (432-21, D-12): EVERY SCOPE NAME, read off the closed union. The MCP default
+      // grant this used to import (396 D-07: every scope except `config-write`) is deleted with the
+      // token resolver; every caller now reaches every operation, which is what the whole union
+      // says. The key is retired with the rest of the permission metadata (432-39).
+      defaultScopes: [...FunctionScopeSchema.options],
       // 2026-10-01 (432-20, D-12): the registry's safe-mode listing filter is deleted, so no
       // composition hides an op from a listing and the honest answer is a constant `false`. The
       // posture key itself is permission metadata 432-39 retires with the catalogue's scope column.
       safeMode: false,
-      tokenEnvRefs: [...tokenEnvRefs],
+      // 2026-10-01 (432-21, D-12): always empty — no MCP token declaration is read.
+      tokenEnvRefs: [],
       configuration,
     },
   }

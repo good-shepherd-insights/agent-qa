@@ -1,5 +1,12 @@
 // THE SERVICE DOOR'S REJECTION CELLS (Phase 402 plan 06, D-05 / D-06 · INVK-03).
 //
+// 2026-10-01 (432-21, D-12/D-13): TOKENLESS. The run-service tokens, their resolver, the door's
+// `verifyBearer` port and the trust scope a token carried are deleted. Every cell below that
+// measured a bearer refusal is RE-SPELLED in place to the request the door still refuses — a
+// cross-site one, refused by the dashboard's shared same-site guard above the route table — or to
+// the tokenless success that replaced it. The production refusal, the never-forwarded run id, the
+// masking seam and the live-view signature's compare discipline are unchanged claims.
+//
 // THE FRAME, STATED: every wire cell below drives the PRODUCTION COMPOSITION over real TCP —
 // `startServer` with `runService` from `composeRunServicePorts`, over a host from
 // `composeDashboardDoor` and a run door from `createDashboardRunDoor`. Same boot as 402-01's
@@ -30,18 +37,10 @@ import { inspect } from 'node:util'
 import {
   RUN_SERVICE_ROUTE_TABLE,
 } from '@vostride/agent-qa-dashboard'
-import {
-  RunServiceErrorBodySchema,
-  STANDING_APPROVAL_SCOPE,
-} from '@vostride/agent-qa-schema'
-import type { TrustScope } from '@vostride/agent-qa-schema'
+import { RunServiceErrorBodySchema } from '@vostride/agent-qa-schema'
 import { generateTestId } from '@vostride/agent-qa-ids'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import {
-  RunServiceTokenEnvVarUnsetError,
-  runServiceTokenSecretStore,
-} from '../composition/run-service-token-resolution.js'
 import {
   composeDashboardDoor,
   composeRunServicePorts,
@@ -49,38 +48,43 @@ import {
 } from '../commands/dashboard.js'
 
 /**
- * The credential this suite declares, presents and then hunts for in every captured channel.
+ * A bearer value a pre-432 client might still present, hunted for in every captured channel.
  *
- * THE VARIABLE NAME CARRIES NO SUFFIX `sensitiveEnvSlice` RECOGNISES, deliberately. That selector
- * masks `…_TOKEN`, `…_KEY`, `…_SECRET` and kin BY NAME; a probe called `PROBE_API_TOKEN` would be
- * masked by machinery that has nothing to do with this door, and both the leak cells and the
- * masking cells would pass for the wrong reason. `…_CRED` matches nothing in that list, which is
- * exactly the case `runServiceTokenSecretStore` exists for.
+ * THE VARIABLE NAME CARRIES NO SUFFIX `sensitiveEnvSlice` RECOGNISES, deliberately: a probe called
+ * `PROBE_API_TOKEN` would be masked by machinery that has nothing to do with this door.
  */
 const TOKEN = 'zz-402-06-planted-run-credential-4b91ce'
 const TOKEN_VAR = 'AGENT_QA_402_06_RUN_CRED'
-/** A declared variable this suite never sets — the startup-refusal arm. */
-const UNSET_VAR = 'AGENT_QA_402_06_NEVER_SET_CRED'
 
-/** The scope a token declares by default: real-looking, and NOT the one the gate can satisfy. */
-const PROJECT_SCOPE: TrustScope = { project: 'acme' }
+/** 432-21: what the door refuses before its route table — the shared same-site guard's rungs. */
+const CROSS_SITE_CLASSES = [
+  { id: 'foreign Origin', headers: { Origin: 'https://evil.example' } as Record<string, string> },
+  { id: 'null Origin', headers: { Origin: 'null' } as Record<string, string> },
+  { id: 'cross-site fetch metadata', headers: { 'Sec-Fetch-Site': 'cross-site' } as Record<string, string> },
+] as const
+
+/** 432-21: legacy Authorization shapes a pre-432 client may send. None is read, none is refused. */
+const LEGACY_HEADER_CLASSES = [
+  { id: 'absent header', headers: {} as Record<string, string> },
+  { id: 'malformed scheme', headers: { Authorization: `Basic ${TOKEN}` } as Record<string, string> },
+  { id: 'well-formed legacy bearer', headers: { Authorization: `Bearer ${TOKEN}` } as Record<string, string> },
+] as const
 
 interface WorkspaceInput {
   /** `undefined` writes NO declaration, which classifies the run's target as shared. */
   readonly environment?: 'local' | 'production'
-  readonly trustScope?: TrustScope
   /**
    * Mask this text through each started run's OWN masking context (402-06, #224).
    *
    * The observer is CHAINED onto the door's real bridge rather than replacing it: the spread keeps
    * the door's `onSession` routing, its ingest subscribers and — the point of the cell — its
-   * `maskingSecrets` resolver, which is the same closure over the same box `composeRunServicePorts`
-   * binds into. What is added is one reader, so the value a reporter would print is observable.
+   * `maskingSecrets` resolver. What is added is one reader, so the value a reporter would print is
+   * observable.
    */
   readonly observeMasking?: { readonly text: string; readonly seen: string[] }
 }
 
-/** The 402-01 fixture project, with the target's environment and the token's scope as knobs. */
+/** The 402-01 fixture project, with the target's environment as the knob (432-21: no token block). */
 function fixtureWorkspace(input: WorkspaceInput = {}): string {
   const root = mkdtempSync(join(tmpdir(), 'agent-qa-402-06-'))
   const configPath = join(root, 'agent-qa.config.yaml')
@@ -100,24 +104,10 @@ function fixtureWorkspace(input: WorkspaceInput = {}): string {
           conformance: {
             platform: 'web',
             url: 'https://conformance.invalid',
-            // THE ONE AXIS THE DENIAL CELLS TURN. A target declared `local` folds to
-            // `mutating-local`, which allows in every execution context. An UNDECLARED environment
-            // folds to `mutating-shared`, whose tier is `ask` — and the remote door composes no
-            // confirm channel, so its context is `local-headless` and `requiresFailClosed` denies
-            // unless a trust source satisfies the ask.
+            // THE ONE AXIS THE DENIAL CELLS TURN. Since 432 (D-18) the only run the core refuses is
+            // a `production` target without the config opt-in; `local` and undeclared targets run.
             ...(input.environment === undefined ? {} : { environment: input.environment }),
           },
-        },
-      },
-      services: {
-        dashboard: {
-          runServiceTokens: [
-            {
-              name: 'ci',
-              tokenEnvVar: TOKEN_VAR,
-              trustScope: input.trustScope ?? PROJECT_SCOPE,
-            },
-          ],
         },
       },
     })}\n`,
@@ -172,15 +162,7 @@ async function openRunService(input: WorkspaceInput = {}): Promise<ServiceFixtur
   })
   runDoor.bindHost(host)
 
-  const runService = composeRunServicePorts({
-    entries: [{
-      name: 'ci',
-      tokenEnvVar: TOKEN_VAR,
-      trustScope: input.trustScope ?? PROJECT_SCOPE,
-    }],
-    env: { [TOKEN_VAR]: TOKEN },
-    door: runDoor,
-  })
+  const runService = composeRunServicePorts({ door: runDoor })
 
   const started = await startServer({
     db,
@@ -245,38 +227,27 @@ function runsThatProducedEvents(configDir: string): readonly string[] {
 // `RUN_SERVICE_ROUTE_TABLE`, so a fourth route added tomorrow joins this corpus without anybody
 // editing the cell — which is the whole reason 402-01 published the table as data.
 
-/** The three ways a caller can fail to present a declared credential. */
-const FAILURE_CLASSES = [
-  { id: 'absent header', headers: {} as Record<string, string>, reason: 'missing_authorization' },
-  {
-    id: 'malformed scheme',
-    headers: { Authorization: `Basic ${TOKEN}` },
-    reason: 'malformed_authorization',
-  },
-  {
-    id: 'well-formed unknown token',
-    headers: { Authorization: `Bearer ${TOKEN}-not-the-declared-value` },
-    reason: 'invalid_token',
-  },
-] as const
-
 /** A row's template turned into a concrete request target. */
 function probeTargetsFor(row: (typeof RUN_SERVICE_ROUTE_TABLE)[number]): readonly string[] {
   if (row.pattern === undefined) return [row.path]
   const concrete = row.path.replace(/:([A-Za-z0-9_]+)/g, 'r_census-probe')
   // THE TEMPLATED ROW IS DRIVEN THREE WAYS, and the third one is load-bearing. 402-04 added a
   // `?handle=` parameter with two refusals of its own, both answered before any stream header —
-  // which puts them in the same region of the dispatch as the verdict. A WELL-FORMED handle does
-  // not discriminate the ordering at all (a mutation that validated the handle above the verdict
-  // survived a census that drove only `?handle=1`, measured). The MALFORMED one does: it is the
-  // input the early check would refuse 400 on, so a census that drives it proves the verdict still
-  // stands first — and therefore that a handle refusal cannot be used as a run-existence oracle by
-  // a caller with no credential.
+  // which puts them in the same region of the dispatch as the guard. A WELL-FORMED handle does not
+  // discriminate the ordering at all (a mutation that validated the handle above the guard survived
+  // a census that drove only `?handle=1`, measured). The MALFORMED one does: it is the input the
+  // early check would refuse 400 on, so a census that drives it proves the guard still stands first
+  // — and therefore that a handle refusal cannot be used as a run-existence oracle by a page on
+  // another origin.
   return [concrete, `${concrete}?handle=1`, `${concrete}?handle=not-a-number`]
 }
 
+// RE-SPELLED 2026-10-01 (432-21, D-12/D-13). The census's classes were the three ways to fail to
+// present a declared credential, answered 401; they are now the three rungs of the same-site guard,
+// answered 403 `cross_site_refused`. The denominator, the shape law and the no-grant law are the
+// census's own and unchanged.
 describe('the refusal census: every route on the table, every failure class (D-06)', () => {
-  it('refuses all of them 401 with a body that is shape-identical beyond the reason', async () => {
+  it('refuses all of them 403 with a body that is shape-identical beyond the reason', async () => {
     const service = await openRunService({ environment: 'local' })
 
     // NON-VACUITY, FIRST. A census over an empty or shrunken table would pass by driving nothing.
@@ -285,7 +256,7 @@ describe('the refusal census: every route on the table, every failure class (D-0
     const observed: { probe: string; status: number; keys: readonly string[]; error: string }[] = []
     for (const row of RUN_SERVICE_ROUTE_TABLE) {
       for (const target of probeTargetsFor(row)) {
-        for (const failure of FAILURE_CLASSES) {
+        for (const failure of CROSS_SITE_CLASSES) {
           const response = await fetch(`${service.origin}${target}`, {
             method: row.method,
             headers: failure.headers,
@@ -298,8 +269,8 @@ describe('the refusal census: every route on the table, every failure class (D-0
             keys: Object.keys(body),
             error: body.error,
           })
-          expect(response.status, observed.at(-1)!.probe).toBe(401)
-          expect(body.error, observed.at(-1)!.probe).toBe(failure.reason)
+          expect(response.status, observed.at(-1)!.probe).toBe(403)
+          expect(body.error, observed.at(-1)!.probe).toBe('cross_site_refused')
           // No cross-origin grant on a refusal, on any route.
           expect(response.headers.get('access-control-allow-origin')).toBeNull()
           expect(response.headers.get('content-type')).toContain('application/json')
@@ -310,63 +281,65 @@ describe('the refusal census: every route on the table, every failure class (D-0
     // THE DENOMINATOR IS THE TABLE'S, not a number written here: every row, every probe target,
     // every failure class, and the arithmetic is stated so a silently-skipped row cannot pass.
     const expectedProbes = RUN_SERVICE_ROUTE_TABLE
-      .reduce((total, row) => total + probeTargetsFor(row).length, 0) * FAILURE_CLASSES.length
+      .reduce((total, row) => total + probeTargetsFor(row).length, 0) * CROSS_SITE_CLASSES.length
     expect(observed.length).toBe(expectedProbes)
 
-    // SHAPE-IDENTICAL BEYOND THE REASON. One key, the same key, on every route and every class —
-    // so a refused caller cannot fingerprint the route map, a run's existence, or how many
-    // credentials are declared by diffing bodies.
+    // SHAPE-IDENTICAL. One key, the same key, on every route and every class — so a refused caller
+    // cannot fingerprint the route map or a run's existence by diffing bodies.
     const shapes = new Set(observed.map((row) => JSON.stringify(row.keys)))
     expect([...shapes]).toEqual(['["error"]'])
     const statuses = new Set(observed.map((row) => row.status))
-    expect([...statuses]).toEqual([401])
-    // And the WORD varies only with the class, never with the route.
-    for (const failure of FAILURE_CLASSES) {
-      const words = new Set(
-        observed.filter((row) => row.probe.endsWith(failure.id)).map((row) => row.error),
-      )
-      expect([...words], failure.id).toEqual([failure.reason])
-    }
+    expect([...statuses]).toEqual([403])
+    // And the WORD is one word, whatever the route or the rung.
+    expect([...new Set(observed.map((row) => row.error))]).toEqual(['cross_site_refused'])
   }, 60_000)
+
+  it('C432-TOKENLESS-RUN-SERVICE: a legacy Authorization header is neither needed nor read', async () => {
+    const service = await openRunService({ environment: 'local' })
+    const answers: string[] = []
+    for (const legacy of LEGACY_HEADER_CLASSES) {
+      const response = await fetch(`${service.origin}/ok`, { headers: legacy.headers })
+      expect(response.status, legacy.id).toBe(200)
+      answers.push(await response.text())
+    }
+    // Byte-identical answers: nothing about the header reached the door's decision or its body.
+    expect(new Set(answers).size).toBe(1)
+    expect(JSON.parse(answers[0]!)).toMatchObject({ service: 'up', authConfigured: false })
+    expect(answers.join('\n')).not.toContain(TOKEN)
+  }, 30_000)
 
   it('refuses a path NO row matches identically, so the table itself does not leak', async () => {
     const service = await openRunService({ environment: 'local' })
-    for (const failure of FAILURE_CLASSES) {
+    for (const failure of CROSS_SITE_CLASSES) {
       const response = await fetch(`${service.origin}/run/not-a-route/at-all`, {
         headers: failure.headers,
       })
-      expect(response.status).toBe(401)
-      expect(await response.json()).toEqual({ error: failure.reason })
+      expect(response.status).toBe(403)
+      expect(await response.json()).toEqual({ error: 'cross_site_refused' })
     }
   }, 30_000)
 })
 
 // ---- (2) THE GATE DENIAL, RENDERED ON THE WIRE ------------------------------------------------
 //
-// THE MEASUREMENT WINDOWS #227 ASKED FOR. 402-01 recorded that the remote door composes no
-// execution context, so its runs decide under the fail-closed `local-headless` default — and that
-// "the declared TrustScope reaches `FunctionCaller.credential` and `evaluate()` reads it, but
-// nothing issues a scoped standing approval for it to satisfy". Both cells below are the same run
-// with ONE field different: the token's declared scope. That difference is the whole of what the
-// credential arm can do today, and it turns out to be reachable — `resolveAsk` consults
-// `scopeMatches(credential.scope, actionScope)` BEFORE it consults the standing-approval reader,
-// and `actionScope` is the pinned `STANDING_APPROVAL_SCOPE` constant.
+// THE MEASUREMENT WINDOWS #227 ASKED FOR, history kept: 402-01 recorded that a declared token's
+// TrustScope reached `FunctionCaller.credential` and `evaluate()` read it. Both are deleted (432-13
+// for the gate, 432-21 for the token and the credential).
 
 // RE-SPELLED 2026-09-30 (432-13, D-14/D-18). No gate weighs the run over this door any more: an
 // undeclared target starts under either declared scope, and the one refusal left is an un-opted-in
 // production target, which answers the same typed 403 this describe always measured.
 describe('a credential whose scope does not satisfy the gate is DENIED over the wire', () => {
   it('answers 403 with the typed denial, and no run is recorded', async () => {
-    const service = await openRunService({ trustScope: PROJECT_SCOPE, environment: 'production' })
+    const service = await openRunService({ environment: 'production' })
     const response = await fetch(`${service.origin}/run`, {
       method: 'POST',
-      headers: { Authorization: `Bearer ${TOKEN}`, 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ patterns: ['tests/probe.test.yaml'] }),
     })
 
-    // NOT 401 — the credential was accepted. NOT 500 — a policy denial is a decision, not a crash.
-    // NOT 2xx — and that is the elevation-of-privilege claim (T-402-22): a wrong credential never
-    // degrades to a weaker success.
+    // NOT 500 — a policy denial is a decision, not a crash. NOT 2xx — production without the config
+    // opt-in never starts (D-18), whoever asks.
     expect(response.status).toBe(403)
     expect(response.headers.get('content-type')).toContain('application/json')
     expect(response.headers.get('access-control-allow-origin')).toBeNull()
@@ -389,32 +362,31 @@ describe('a credential whose scope does not satisfy the gate is DENIED over the 
   }, 60_000)
 
   it('still 404s the stream for the run that was never started', async () => {
-    const service = await openRunService({ trustScope: PROJECT_SCOPE, environment: 'production' })
+    const service = await openRunService({ environment: 'production' })
     await fetch(`${service.origin}/run`, {
       method: 'POST',
-      headers: { Authorization: `Bearer ${TOKEN}`, 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ patterns: ['tests/probe.test.yaml'] }),
     })
-    const stream = await fetch(`${service.origin}/run/r_denied-never-started/events`, {
-      headers: { Authorization: `Bearer ${TOKEN}` },
-    })
+    const stream = await fetch(`${service.origin}/run/r_denied-never-started/events`)
     expect(stream.status).toBe(404)
     expect(stream.headers.get('content-type')).toContain('application/json')
     expect(stream.headers.get('content-type')).not.toContain('text/event-stream')
     expect(await stream.json()).toEqual({ error: 'unknown_run' })
   }, 60_000)
 
-  it('WINDOWS #227 — the declared scope makes NO difference: an undeclared target starts under either', async () => {
-    // 402's measurement was that the declared scope never reached `evaluate()`. There is no
-    // `evaluate()` on this road since 432-13, so both scopes start the same undeclared run.
-    for (const trustScope of [PROJECT_SCOPE, STANDING_APPROVAL_SCOPE]) {
-      const service = await openRunService({ trustScope })
+  // RE-SPELLED 2026-10-01 (432-21, D-12) from 'WINDOWS #227 — the declared scope makes NO difference:
+  // an undeclared target starts under either'. No scope can be declared; the same undeclared run
+  // starts with no header and with a legacy bearer header alike.
+  it('WINDOWS #227 — no credential makes a difference: an undeclared target starts with or without a legacy bearer', async () => {
+    for (const legacy of [LEGACY_HEADER_CLASSES[0], LEGACY_HEADER_CLASSES[2]]) {
+      const service = await openRunService({})
       const response = await fetch(`${service.origin}/run`, {
         method: 'POST',
-        headers: { Authorization: `Bearer ${TOKEN}`, 'Content-Type': 'application/json' },
+        headers: { ...legacy.headers, 'Content-Type': 'application/json' },
         body: JSON.stringify({ patterns: ['tests/probe.test.yaml'] }),
       })
-      expect(response.status, JSON.stringify(trustScope)).toBe(202)
+      expect(response.status, legacy.id).toBe(202)
       const ack = (await response.json()) as { runId?: string }
       expect(typeof ack.runId).toBe('string')
     }
@@ -427,7 +399,7 @@ describe('a credential whose scope does not satisfy the gate is DENIED over the 
     const service = await openRunService({ environment: 'local' })
     const response = await fetch(`${service.origin}/run`, {
       method: 'POST',
-      headers: { Authorization: `Bearer ${TOKEN}`, 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ patterns: ['tests/probe.test.yaml'] }),
     })
     expect(response.status).toBe(202)
@@ -435,12 +407,33 @@ describe('a credential whose scope does not satisfy the gate is DENIED over the 
     expect(typeof ack.runId).toBe('string')
     expect(runsThatProducedEvents(service.configDir).length).toBeGreaterThan(0)
   }, 180_000)
+
+  // 432-21 (D-12, EDGE-17): two concurrent tokenless starts are two runs, each under the id the core
+  // minted for it — no request can choose an id, and no request shares another's.
+  it('C432-TOKENLESS-RUN-SERVICE: two concurrent tokenless starts get two distinct core-minted run ids', async () => {
+    const service = await openRunService({ environment: 'local' })
+    const start = () => fetch(`${service.origin}/run`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ patterns: ['tests/probe.test.yaml'] }),
+    })
+    const responses = await Promise.all([start(), start()])
+    expect(responses.map((response) => response.status)).toEqual([202, 202])
+    const ids = await Promise.all(responses.map(async (response) => ((await response.json()) as { runId: string }).runId))
+    expect(ids.every((id) => typeof id === 'string' && id.length > 0)).toBe(true)
+    expect(new Set(ids).size).toBe(2)
+  }, 180_000)
 })
 
 // ---- (3) THE COMPARE DISCIPLINE, SOURCE HALF --------------------------------------------------
+//
+// 2026-10-01 (432-21, D-12/D-13): the bearer compare module is deleted. The secret compare the run
+// service still depends on is the live-view link signature (`live-url-signer.ts`), which D-13
+// keeps; the source half is measured there, and a census pins that no other CLI module grew a
+// second constant-time compare of a credential.
 
 const TOKEN_MODULE = fileURLToPath(
-  new URL('../composition/run-service-token-resolution.ts', import.meta.url),
+  new URL('../composition/live-url-signer.ts', import.meta.url),
 )
 
 /**
@@ -495,49 +488,49 @@ describe('the compare discipline is source-pinned, on stripped CODE (T-402-20)',
   const code = codeOf(readFileSync(TOKEN_MODULE, 'utf8'))
 
   it('has EXACTLY ONE timingSafeEqual call site — and the import line is not one of them', () => {
-    // The criterion 402-01 was handed reads `grep -c "timingSafeEqual"` returns 1. It returns 2 on
-    // the shipped file and always will, because `import { createHash, timingSafeEqual } from
-    // 'node:crypto'` is the spelling D-05 mandates cloning verbatim. This is the same claim,
-    // measured on something a mutation cannot satisfy by accident.
     expect(callsTo(code, 'timingSafeEqual')).toBe(1)
     // The raw grep, recorded here so the discrepancy is a fact in the suite rather than a surprise.
     const raw = (readFileSync(TOKEN_MODULE, 'utf8').match(/timingSafeEqual/g) ?? []).length
     expect(raw).toBeGreaterThan(1)
   })
 
+  // RE-SPELLED from 'routes every credential comparison through the ONE named compare function':
+  // the signer's `equals` is the one compare, and its width guard precedes the primitive.
   it('routes every credential comparison through the ONE named compare function', () => {
-    // One CALL to `secretEquals`, plus its declaration. An inlined `===` reads 0 here — which is
-    // the mutation a `timingSafeEqual` count alone cannot see, because the primitive stays in the
-    // file inside a function nobody calls any more.
-    expect(callsTo(code, 'secretEquals')).toBe(1)
-    expect(/function\s+secretEquals\s*\(/.test(code)).toBe(true)
-    // BOTH SIDES HASHED — two `sha256(` calls, one per operand.
-    expect(callsTo(code, 'sha256')).toBe(2)
+    expect((code.match(/\bequals\s*\(/g) ?? []).length).toBe(1)
+    const guard = code.indexOf('left.length !== right.length')
+    const primitive = code.indexOf('timingSafeEqual(left, right)')
+    expect(guard).toBeGreaterThan(-1)
+    expect(primitive).toBeGreaterThan(guard)
   })
 
   it('compares a credential value NOWHERE ELSE — no bare equality against an entry', () => {
-    // The inlined-comparison mutation in its other spellings: `presented === token.value`,
-    // `token.value === presented`, `.includes(presented)`, `indexOf`. What this refuses is any
-    // operator or method applied to the resolved value outside the one compare function.
-    expect(/\.value\s*(===|!==|==|!=)/.test(code)).toBe(false)
-    expect(/(===|!==|==|!=)\s*[A-Za-z0-9_.]*\.value\b/.test(code)).toBe(false)
-    expect(/\bpresented\s*(===|!==|==|!=)/.test(code)).toBe(false)
-    expect(/(===|!==|==|!=)\s*presented\b/.test(code)).toBe(false)
-    expect(code.includes('.indexOf(presented')).toBe(false)
-    expect(code.includes('.includes(presented')).toBe(false)
+    expect(/sign\([^)]*\)\s*(===|!==|==|!=)/.test(code)).toBe(false)
+    expect(/(===|!==|==|!=)\s*sign\(/.test(code)).toBe(false)
+    expect(/\b(left|right)\s*(===|!==)\s*(left|right)\b/.test(code)).toBe(false)
   })
 
+  // RE-SPELLED from 'scans the WHOLE entry list — the loop carries no early exit': there is no
+  // declared-credential list left to scan. The census instead pins that the CLI's only
+  // constant-time compares are the live-view signature and the display unmask's digest check.
   it('scans the WHOLE entry list — the loop carries no early exit', () => {
-    // `break` and `continue` are absent from the module's code entirely, and the scan loop's only
-    // statement is the assignment. A short circuit is what makes the comparison count depend on
-    // WHICH entry matched, which is the timing channel T-402-20 names.
-    expect(code.includes('break')).toBe(false)
-    expect(/for\s*\(const token of tokens\)\s*\{?\s*if\s*\(secretEquals\(/.test(code)).toBe(true)
+    const SRC = fileURLToPath(new URL('..', import.meta.url))
+    const callers: string[] = []
+    const walk = (dir: string): void => {
+      for (const entry of readdirSync(dir, { withFileTypes: true })) {
+        const path = join(dir, entry.name)
+        if (entry.isDirectory()) { if (entry.name !== '__tests__') walk(path) }
+        else if (entry.name.endsWith('.ts') && callsTo(codeOf(readFileSync(path, 'utf8')), 'timingSafeEqual') > 0) {
+          callers.push(path.slice(SRC.length))
+        }
+      }
+    }
+    walk(SRC)
+    expect(callers.sort()).toEqual(['composition/display-unmask.ts', 'composition/live-url-signer.ts'])
   })
 
   it('carries NO permissive arm and no query-parameter carriage', () => {
     expect(code.includes('anonymous')).toBe(false)
-    // A token carried in a URL is a token written to access logs, proxy logs and browser history.
     expect(/req\.url|URLSearchParams|searchParams/.test(code)).toBe(false)
   })
 })
@@ -545,11 +538,8 @@ describe('the compare discipline is source-pinned, on stripped CODE (T-402-20)',
 // ---- (4) THE MASKING SWEEP --------------------------------------------------------------------
 
 /**
- * A door stub carrying only what `composeRunServicePorts` reads from one, plus a recorder.
- *
- * `bindMaskingSecrets` is REQUIRED by the composer's own parameter type, which is the point: a
- * composition that forgot to seed the run masker would not compile. This stub records what it was
- * handed so a cell can read it back.
+ * A door stub carrying what `composeRunServicePorts` reads from one, plus a recorder for a store
+ * bound to it. 432-21: the composer binds nothing, and the recorder is how a cell sees that.
  */
 function stubDoor(): {
   door: {
@@ -570,9 +560,6 @@ function stubDoor(): {
   }
 }
 
-/** The stub for the cells that only need the composer to accept a door. */
-const inertDoor = stubDoor().door
-
 /** Every channel a thrown value can reach a person through, as strings. */
 function channelsOf(error: unknown): readonly string[] {
   const channels: string[] = [
@@ -588,71 +575,37 @@ function channelsOf(error: unknown): readonly string[] {
 }
 
 describe('the token value reaches no channel (T-402-21)', () => {
-  it('the STARTUP refusal names the variable and never a value, and carries no cause', () => {
-    let thrown: unknown
+  // RE-SPELLED 2026-10-01 (432-21, D-12) from 'the STARTUP refusal names the variable and never a
+  // value, and carries no cause' and 'an EMPTY or whitespace-only value refuses startup identically
+  // to an unset one'. The composer reads no declaration and no environment, so there is no startup
+  // refusal to leak through: it composes whatever the environment holds, and nothing it returns or
+  // throws carries the value.
+  it('the composer reads no declaration and no environment, and refuses nothing', () => {
+    const previous = process.env[TOKEN_VAR]
+    process.env[TOKEN_VAR] = TOKEN
     try {
-      composeRunServicePorts({
-        entries: [
-          { name: 'ci', tokenEnvVar: TOKEN_VAR, trustScope: PROJECT_SCOPE },
-          { name: 'missing', tokenEnvVar: UNSET_VAR, trustScope: PROJECT_SCOPE },
-        ],
-        // The FIRST entry resolves — so a real credential value is in this process's hands at the
-        // moment the second entry refuses. That is what makes the sweep below non-vacuous: there
-        // is a value available to leak.
-        env: { [TOKEN_VAR]: TOKEN },
-        door: inertDoor,
-      })
-    } catch (error) {
-      thrown = error
-    }
-
-    expect(thrown).toBeInstanceOf(RunServiceTokenEnvVarUnsetError)
-    // NO `cause`. 395-16 measured that Node's default uncaught printer walks the cause chain with
-    // `util.inspect`, which is how a config file's contents once reached a person's terminal.
-    expect((thrown as { cause?: unknown }).cause).toBeUndefined()
-
-    for (const channel of channelsOf(thrown)) {
-      expect(channel).not.toContain(TOKEN)
-    }
-    // And the variable NAME is present, because a refusal an operator cannot act on is not a
-    // refusal — it is a crash.
-    expect((thrown as Error).message).toContain(UNSET_VAR)
-  })
-
-  it('an EMPTY or whitespace-only value refuses startup identically to an unset one', () => {
-    const refusals = ['', '   ', '\t\n'].map((value) => {
-      try {
-        composeRunServicePorts({
-          entries: [{ name: 'ci', tokenEnvVar: UNSET_VAR, trustScope: PROJECT_SCOPE }],
-          env: { [UNSET_VAR]: value },
-          door: inertDoor,
-        })
-        return undefined
-      } catch (error) {
-        return error
+      for (const value of [TOKEN, '', '   ']) {
+        process.env[TOKEN_VAR] = value
+        let thrown: unknown
+        let composition: ReturnType<typeof composeRunServicePorts> | undefined
+        try {
+          composition = composeRunServicePorts({ door: stubDoor().door })
+        } catch (error) {
+          thrown = error
+        }
+        expect(thrown).toBeUndefined()
+        expect(inspect(composition, { depth: 4 })).not.toContain(TOKEN)
+        composition?.dispose()
       }
-    })
-    let unsetRefusal: unknown
-    try {
-      composeRunServicePorts({
-        entries: [{ name: 'ci', tokenEnvVar: UNSET_VAR, trustScope: PROJECT_SCOPE }],
-        env: {},
-        door: inertDoor,
-      })
-    } catch (error) {
-      unsetRefusal = error
+    } finally {
+      if (previous === undefined) delete process.env[TOKEN_VAR]
+      else process.env[TOKEN_VAR] = previous
     }
-
-    // `FOO=` in a shell is what an operator writes when a substitution came back empty. Treating
-    // it as a present credential would mint a token matching `Authorization: Bearer `, which is
-    // the one value an attacker does not have to guess.
-    for (const refusal of refusals) {
-      expect(refusal).toBeInstanceOf(RunServiceTokenEnvVarUnsetError)
-      expect((refusal as Error).message).toBe((unsetRefusal as Error).message)
-    }
-    expect(unsetRefusal).toBeInstanceOf(RunServiceTokenEnvVarUnsetError)
   })
 
+  // RE-SPELLED 2026-10-01 (432-21, D-12) from 'a WRONG-token refusal leaks the declared value on no
+  // channel a person can read'. A presented bearer is not read; this sweep presents one alongside
+  // each cross-site rung and asserts the value reaches no body, header or log line.
   it('a WRONG-token refusal leaks the declared value on no channel a person can read', async () => {
     const service = await openRunService({ environment: 'local' })
     const out: string[] = []
@@ -666,23 +619,18 @@ describe('the token value reaches no channel (T-402-21)', () => {
     }) as never)
     let bodies: string[] = []
     try {
-      for (const failure of FAILURE_CLASSES) {
+      for (const failure of CROSS_SITE_CLASSES) {
         const response = await fetch(`${service.origin}/run`, {
           method: 'POST',
-          headers: { ...failure.headers, 'Content-Type': 'application/json' },
+          headers: { ...failure.headers, Authorization: `Bearer ${TOKEN}`, 'Content-Type': 'application/json' },
           body: '{}',
         })
         bodies.push(await response.text())
         bodies.push(JSON.stringify([...response.headers.entries()]))
       }
-      // A NEAR MISS, deliberately: a presented value one character off the declared one. A door
-      // that echoed "the entry that nearly matched" would put a host-held string on the wire.
-      const near = await fetch(`${service.origin}/run`, {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${TOKEN.slice(0, -1)}`, 'Content-Type': 'application/json' },
-        body: '{}',
-      })
-      bodies.push(await near.text())
+      // An ADMITTED request carrying the legacy bearer: the readiness answer, which is served.
+      const admitted = await fetch(`${service.origin}/ok`, { headers: { Authorization: `Bearer ${TOKEN}` } })
+      bodies.push(await admitted.text())
     } finally {
       stdout.mockRestore()
       stderr.mockRestore()
@@ -695,68 +643,43 @@ describe('the token value reaches no channel (T-402-21)', () => {
     }
     // NON-VACUITY: the sweep looked at something. Four responses, each with a body and a header
     // dump, and the bodies are the typed refusals rather than empty strings.
-    expect(bodies.length).toBe(FAILURE_CLASSES.length * 2 + 1)
-    expect(bodies.filter((body) => body.includes('"error"')).length)
-      .toBe(FAILURE_CLASSES.length + 1)
+    expect(bodies.length).toBe(CROSS_SITE_CLASSES.length * 2 + 1)
+    expect(bodies.filter((body) => body.includes('"cross_site_refused"')).length)
+      .toBe(CROSS_SITE_CLASSES.length)
   }, 60_000)
 })
 
 // ---- (5) THE SECRET STORE IS CONSUMED (WINDOWS #224, T-402-04) --------------------------------
 //
-// 402-01 shipped `runServiceTokenSecretStore` and published it from `composeRunServicePorts`, and
-// nothing read it. That half-wiring is what these cells close, and the claim has TWO sides, so it
-// is pinned on both: the composer BINDS the store into the door's bridge, and the run seam WALKS
-// what the bridge hands it. Either half alone is a mechanism that reports success while the value
-// still reaches a person in the clear.
+// 402-06 bound the run-service token store into the door's bridge and pinned that every run walked
+// it. 2026-10-01 (432-21, D-12): the token store is deleted, so the BIND half is re-spelled to its
+// absence; the CONSUME half — a store a door binds reaches every run's masker — is unchanged,
+// because the live-view composer still binds its minted tokens through the same seam.
 
 describe('the door’s credentials reach every run’s masker (#224)', () => {
   it('BIND HALF — composing the ports seeds the door with the resolved values', () => {
+    // RE-SPELLED 2026-10-01 (432-21, D-12): there are no resolved values; the composer binds nothing.
     const recorder = stubDoor()
-    const composition = composeRunServicePorts({
-      entries: [
-        { name: 'ci', tokenEnvVar: TOKEN_VAR, trustScope: PROJECT_SCOPE },
-        { name: 'teammate', tokenEnvVar: `${TOKEN_VAR}_2`, trustScope: PROJECT_SCOPE },
-      ],
-      env: { [TOKEN_VAR]: TOKEN, [`${TOKEN_VAR}_2`]: `${TOKEN}-second` },
-      door: recorder.door,
-    })
+    const composition = composeRunServicePorts({ door: recorder.door })
     try {
-      const seeded: [string, string][] = []
-      recorder.bound()?.forEachSecret((name, value) => { seeded.push([name, value]) })
-      // EVERY declared entry, keyed by the variable NAME the operator chose — which is the whole
-      // reason the store exists rather than the masker's own name-suffix selector being enough.
-      expect(seeded).toEqual([
-        [TOKEN_VAR, TOKEN],
-        [`${TOKEN_VAR}_2`, `${TOKEN}-second`],
-      ])
-      // The published store and the bound one are the SAME object, not two builds of it.
-      expect(recorder.bound()).toBe(composition.secretStore)
+      expect(recorder.bound()).toBeUndefined()
+      expect('secretStore' in composition).toBe(false)
     } finally {
       composition.dispose()
     }
   })
 
   it('BIND HALF — the real door has nothing bound until the composer runs', async () => {
+    // RE-SPELLED 2026-10-01 (432-21, D-12): and nothing bound after it runs either.
     const configPath = fixtureWorkspace({ environment: 'local' })
     const configDir = dirname(resolve(configPath))
     const { DashboardDatabase } = await import('@vostride/agent-qa-dashboard')
     const db = new DashboardDatabase({ dbPath: join(configDir, 'bind.db') })
     const runDoor = await createDashboardRunDoor({ db })
     try {
-      // A dashboard with no run service declared holds no credential, so there is nothing extra to
-      // mask and the resolver honestly answers nothing.
       expect(runDoor.runBridge.maskingSecrets?.()).toBeUndefined()
-
-      const composition = composeRunServicePorts({
-        entries: [{ name: 'ci', tokenEnvVar: TOKEN_VAR, trustScope: PROJECT_SCOPE }],
-        env: { [TOKEN_VAR]: TOKEN },
-        door: runDoor,
-      })
-      const seeded: string[] = []
-      // READ THROUGH THE BRIDGE the host actually runs runs through — not through the composition's
-      // own field. The bridge is the only channel that reaches `runInProcessCliRun`.
-      runDoor.runBridge.maskingSecrets?.()?.forEachSecret((_name, value) => { seeded.push(value) })
-      expect(seeded).toEqual([TOKEN])
+      const composition = composeRunServicePorts({ door: runDoor })
+      expect(runDoor.runBridge.maskingSecrets?.()).toBeUndefined()
       composition.dispose()
     } finally {
       db.close()
@@ -809,10 +732,10 @@ describe('the door’s credentials reach every run’s masker (#224)', () => {
       }
 
       const withoutWiring = await capture()
+      // 432-21: a store of the shape any door composer binds (the live-view composer's minted
+      // tokens are the shipped case); the run-service token store that used to be bound is deleted.
       const withWiring = await capture(
-        () => runServiceTokenSecretStore([
-          { name: 'ci', tokenEnvVar: TOKEN_VAR, value: TOKEN, trustScope: PROJECT_SCOPE },
-        ]),
+        () => ({ forEachSecret(cb: (n: string, v: string) => void) { cb(TOKEN_VAR, TOKEN) } }),
       )
 
       // THE GAP, MEASURED rather than asserted: the shipped seed pipeline does not know this value.
@@ -831,32 +754,38 @@ describe('the door’s credentials reach every run’s masker (#224)', () => {
   }, 180_000)
 })
 
+// RE-SPELLED 2026-10-01 (432-21, D-12) from 'END TO END — a run started over the wire masks the
+// door's credential (#224)'. The door holds no credential; the end-to-end claim that survives is
+// that a run started over the wire masks this process's environment secrets in its own context
+// (D-13), through the shipped composition.
 describe('END TO END — a run started over the wire masks the door’s credential (#224)', () => {
   it('the value the token holder presented is masked in that run’s own context', async () => {
-    // THE MIDDLE LINK, DRIVEN. The bind half and the consume half above each pin one end; this
-    // cell is the whole chain on the shipped composition — `composeRunServicePorts` binds the
-    // store into the door, `composeCliLocalAgent` passes the bridge's resolver through to
-    // `runInProcessCliRun`, and the run's masker walks it. Nothing here is assembled beside the
-    // product: the observer is chained onto the real bridge and the run is started by a real
-    // `POST /run` over TCP.
-    const seen: string[] = []
-    const text = `a reporter printed ${TOKEN} while the run was in flight`
-    const service = await openRunService({
-      environment: 'local',
-      observeMasking: { text, seen },
-    })
-    const response = await fetch(`${service.origin}/run`, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${TOKEN}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ patterns: ['tests/probe.test.yaml'] }),
-    })
-    expect(response.status).toBe(202)
+    const ENV_SECRET_VAR = 'AGENT_QA_432_21_PROBE_TOKEN'
+    const previous = process.env[ENV_SECRET_VAR]
+    process.env[ENV_SECRET_VAR] = TOKEN
+    try {
+      const seen: string[] = []
+      const text = `a reporter printed ${TOKEN} while the run was in flight`
+      const service = await openRunService({
+        environment: 'local',
+        observeMasking: { text, seen },
+      })
+      const response = await fetch(`${service.origin}/run`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ patterns: ['tests/probe.test.yaml'] }),
+      })
+      expect(response.status).toBe(202)
 
-    expect(seen.length).toBeGreaterThan(0)
-    for (const masked of seen) {
-      expect(masked).not.toContain(TOKEN)
-      expect(masked).toContain('SECRET')
-      expect(masked).toContain('a reporter printed')
+      expect(seen.length).toBeGreaterThan(0)
+      for (const masked of seen) {
+        expect(masked).not.toContain(TOKEN)
+        expect(masked).toContain('SECRET')
+        expect(masked).toContain('a reporter printed')
+      }
+    } finally {
+      if (previous === undefined) delete process.env[ENV_SECRET_VAR]
+      else process.env[ENV_SECRET_VAR] = previous
     }
   }, 180_000)
 })
@@ -887,17 +816,11 @@ describe('the door never forwards a caller’s run id, even with its own check b
       runBridge: runDoor.runBridge,
     })
     runDoor.bindHost(host)
-    const composition = composeRunServicePorts({
-      entries: [{ name: 'ci', tokenEnvVar: TOKEN_VAR, trustScope: PROJECT_SCOPE }],
-      env: { [TOKEN_VAR]: TOKEN },
-      door: runDoor,
-    })
+    const composition = composeRunServicePorts({ door: runDoor })
     try {
       const smuggled = 'r_the-caller-chose-this-id'
       const ack = await composition.ports.invokeRunStart({
         patterns: ['tests/probe.test.yaml'],
-        trustScope: PROJECT_SCOPE,
-        clientId: 'ci',
         // Past the door's own key check, by construction — this is the input the HTTP layer would
         // have refused, arriving at the composition anyway.
         runId: smuggled,

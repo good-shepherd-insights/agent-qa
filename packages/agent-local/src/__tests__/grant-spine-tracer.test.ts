@@ -65,7 +65,6 @@ import {
 import {
   FunctionScopeSchema,
   MASKED_RESOLVED_CONFIG_SCHEMA_VERSION,
-  STANDING_APPROVAL_SCOPE,
 } from '@vostride/agent-qa-schema'
 import type {
   Anchor,
@@ -85,6 +84,9 @@ const APPLY_FUNCTION_ID = 'knowledge.forget'
 const GRANT_ID = 'grant_tracer_proposal_apply'
 const GRANTED_AT = '2026-08-07T12:00:00.000Z'
 const REVOKED_AT = '2026-08-07T12:30:00.000Z'
+// 2026-10-01 (432-21, D-12): `STANDING_APPROVAL_SCOPE` is deleted with the MCP bearer credential; a
+// legacy grant line still carries the scope it was minted under, spelled here as its bytes.
+const LEGACY_GRANT_SCOPE = { project: 'local-workspace' } as const
 
 const ANCHOR: Anchor = { t: 'el', role: 'Button', name: 'Checkout' }
 
@@ -250,7 +252,7 @@ describe('a committed standing grant is consumed by nothing (432-13)', () => {
         at: GRANTED_AT,
         grantId: GRANT_ID,
         actionClass,
-        scope: STANDING_APPROVAL_SCOPE,
+        scope: LEGACY_GRANT_SCOPE,
       },
     ])
     append([
@@ -291,7 +293,7 @@ describe('a committed standing grant is consumed by nothing (432-13)', () => {
         at: GRANTED_AT,
         grantId: 'grant_tracer_neighbouring_class',
         actionClass: 'fn:knowledge.reject',
-        scope: STANDING_APPROVAL_SCOPE,
+        scope: LEGACY_GRANT_SCOPE,
       },
     ])
     const before = readFileSync(ledgerPath(), 'utf8')

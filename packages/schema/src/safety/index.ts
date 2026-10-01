@@ -15,9 +15,9 @@ export {
 } from './action-descriptor'
 // 391-11 (REVIEW WR-05): the scope key set, spelled ONCE and PUBLISHED, so an out-of-package
 // differential can range it.
-// 432-18: `STANDING_APPROVAL_SCOPE` moved beside it when the grant ledger was deleted; it is the scope
-// the MCP bearer credential carries.
-export { STANDING_APPROVAL_SCOPE, TRUST_SCOPE_KEYS } from './trust-credential'
+// 432-18 moved `STANDING_APPROVAL_SCOPE` beside it; 432-21 (D-12) deleted it with the MCP bearer
+// credential that carried it.
+export { TRUST_SCOPE_KEYS } from './trust-credential'
 export type { TrustCredential, TrustScope, TrustScopeKey } from './trust-credential'
 // 432-18 (D-14/D-15): the grant ledger, the protected-class set and the grant op contracts are
 // deleted. The trust-scope projection stays for `config/run-service.ts` until 432-22.

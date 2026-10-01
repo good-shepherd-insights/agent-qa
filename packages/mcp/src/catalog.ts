@@ -9,7 +9,8 @@
 // 2026-10-01 (432-20, D-12): THE SAME CATALOGUE FOR EVERY CALLER. The per-caller visibility law
 // (`visibleToCaller` over required and granted scopes) and the mark tool's credential hiding are
 // deleted, so a tool is absent only when this composition does not register its op — a fact about
-// the host, identical for a tokenless stdio caller and a tokenless HTTP one.
+// the host, identical for a tokenless stdio caller and a tokenless HTTP one. Since 432-21 the mark
+// tool's handler refuses nobody either: there is no bearer credential for it to read.
 //
 // THE HANDLERS DO NOTHING. That is D-01's "pure projection" spelled as code, and it is the whole
 // architectural claim of the phase: no MCP-local business logic, no second data path, no reaching
@@ -57,7 +58,6 @@ import {
 } from './mapping.js'
 import type { ToolProjection } from './mapping.js'
 import {
-  createMarkToolHandler,
   decorateRunEvidenceImage,
   maskedToolError,
   maskedToolResult,
@@ -85,8 +85,8 @@ export interface AgentQaMcpServerDeps {
   /**
    * WHO this server answers as. Minted by the composition root and passed through untouched to
    * `invokeFunction`. Since 432-20 (D-12) nothing here reads it to decide what to list or serve;
-   * its `surface` and `origin` reach only the receipts that already consume them, and the mark
-   * door's credential refusal reads `credential` until 432-21 removes it.
+   * its `surface` and `origin` reach only the receipts that already consume them. Since 432-21 no
+   * field of it is a credential this package reads.
    */
   readonly caller: FunctionCaller
   /**
@@ -645,18 +645,9 @@ export function buildAgentQaMcpServer(deps: AgentQaMcpServerDeps): McpServer {
     registered.add(projection.name)
     const config = toRegisterToolConfig(projection, specs, advertised, deps.maskText)
 
-    // 419 D-20: the sovereign mark door's handler keeps its credential refusal until 432-21 removes
-    // the bearer credential (D-12); since 432-20 the tool itself is listed for every caller.
-    // 432-12 (D-05/D-14): it is the only `apply` entry left, and there is no confirmation round on
-    // any door — every other change tool goes through the generic handler below and answers its
-    // receipt on the one call.
-    if (projection.kind === 'apply' && projection.credential === 'required') {
-      server.registerTool(projection.name, config, createMarkToolHandler({
-        caller: deps.caller, invoke, maskText: deps.maskText,
-      }))
-      continue
-    }
-
+    // 2026-10-01 (432-21, D-12): every tool, the mark door included, goes through the one generic
+    // handler. The mark door's credential refusal left with the MCP bearer credential, so a mark
+    // answers its receipt on the one call like every other change tool (432-12 D-05/D-14).
     server.registerTool(
       projection.name,
       config,

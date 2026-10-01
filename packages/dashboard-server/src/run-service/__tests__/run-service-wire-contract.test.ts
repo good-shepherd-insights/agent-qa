@@ -41,7 +41,6 @@ import { DashboardDatabase } from '../../db/database.js'
 import { startServer } from '../../server/server.js'
 import type { RunServicePorts } from '../run-service-routes.js'
 
-const TOKEN = 'zz-402-06-wire-contract-token-3f7ac1'
 const RUN_ID = 'r_wire'
 
 /**
@@ -96,20 +95,13 @@ const ACK: RunStartAcknowledgement = {
 
 function servicePorts(session: RunSession): RunServicePorts {
   return {
-    verifyBearer: (header) => header === `Bearer ${TOKEN}`
-      ? { kind: 'token', clientId: 'ci', trustScope: { project: 'acme' } }
-      : {
-          kind: 'refused',
-          reason: header === undefined || header === null
-            ? 'missing_authorization'
-            : 'invalid_token',
-        },
+    // 2026-10-01 (432-21, D-12): no `verifyBearer` — the door is tokenless.
     invokeRunStart: async () => ACK,
     attach: (runId) => runId === RUN_ID ? session : undefined,
     readiness: () => ({
       service: 'up',
       hostComposed: true,
-      authConfigured: true,
+      authConfigured: false,
       contractVersion: RUN_SERVICE_CONTRACT_VERSION,
     }),
     // 403-03 (D-03, Q3): a fixture that composed no live view HAS no live view, and the honest
@@ -208,7 +200,7 @@ describe('SSE framing is the frozen envelope, verbatim (D-13)', () => {
 
     const response = await readStreamBody(
       `http://127.0.0.1:${String(port)}/run/${RUN_ID}/events`,
-      { Authorization: `Bearer ${TOKEN}` },
+      {},
     )
     expect(response.status).toBe(200)
     expect(response.contentType).toContain('text/event-stream')
@@ -233,7 +225,7 @@ describe('SSE framing is the frozen envelope, verbatim (D-13)', () => {
 
     const response = await readStreamBody(
       `http://127.0.0.1:${String(port)}/run/${RUN_ID}/events`,
-      { Authorization: `Bearer ${TOKEN}` },
+      {},
     )
     const dataLines = framesOf(response.body)
       .slice(1)
@@ -250,38 +242,45 @@ describe('SSE framing is the frozen envelope, verbatim (D-13)', () => {
   })
 })
 
+// 2026-10-01 (432-21, D-12/D-13): the door's first rung is the same-site guard, not the bearer
+// verdict. The two refusal cells below are re-spelled from 'a wrong token …' and 'a missing token
+// likewise …'; the claim they carry — refused as JSON before any stream header and before the run
+// is looked up — is unchanged.
 describe('the verdict and the run id are settled BEFORE any stream header', () => {
-  it('a wrong token on the stream route gets a JSON refusal and no event-stream header', async () => {
+  it('a cross-site request on the stream route gets a JSON refusal and no event-stream header', async () => {
     const port = await mountShippedHost(sessionOverFeed())
     const response = await readStreamBody(
       `http://127.0.0.1:${String(port)}/run/${RUN_ID}/events`,
-      { Authorization: 'Bearer not-the-declared-value' },
+      { Origin: 'https://evil.example' },
     )
-    expect(response.status).toBe(401)
+    expect(response.status).toBe(403)
     expect(response.contentType).toContain('application/json')
     // A `200 text/event-stream` cannot be told it failed. The absence of that header on the SAME
     // response is the claim — asserting only the status would pass on a response that wrote both.
     expect(response.contentType).not.toContain('text/event-stream')
-    expect(JSON.parse(response.body)).toEqual({ error: 'invalid_token' })
+    expect(JSON.parse(response.body)).toEqual({ error: 'cross_site_refused' })
     // And nothing of the run reached the socket, not even the keepalive preamble.
     expect(response.body).not.toContain(':ok')
     expect(response.body).not.toContain('event: runStarted')
   })
 
-  it('a missing token likewise, before the run is even looked up', async () => {
+  it('a cross-site fetch metadata likewise, before the run is even looked up', async () => {
     const port = await mountShippedHost(sessionOverFeed())
-    const response = await readStreamBody(`http://127.0.0.1:${String(port)}/run/${RUN_ID}/events`, {})
-    expect(response.status).toBe(401)
+    const response = await readStreamBody(
+      `http://127.0.0.1:${String(port)}/run/r_this-process-never-started-it/events`,
+      { 'Sec-Fetch-Site': 'cross-site' },
+    )
+    expect(response.status).toBe(403)
     expect(response.contentType).toContain('application/json')
     expect(response.contentType).not.toContain('text/event-stream')
-    expect(JSON.parse(response.body)).toEqual({ error: 'missing_authorization' })
+    expect(JSON.parse(response.body)).toEqual({ error: 'cross_site_refused' })
   })
 
   it('an unknown run id gets a JSON 404 and no event-stream header', async () => {
     const port = await mountShippedHost(sessionOverFeed())
     const response = await readStreamBody(
       `http://127.0.0.1:${String(port)}/run/r_this-process-never-started-it/events`,
-      { Authorization: `Bearer ${TOKEN}` },
+      {},
     )
     expect(response.status).toBe(404)
     expect(response.contentType).toContain('application/json')
@@ -294,7 +293,7 @@ describe('the verdict and the run id are settled BEFORE any stream header', () =
     const port = await mountShippedHost(sessionOverFeed())
     const response = await readStreamBody(
       `http://127.0.0.1:${String(port)}/run/${RUN_ID}/events?handle=not-a-number`,
-      { Authorization: `Bearer ${TOKEN}` },
+      {},
     )
     expect(response.status).toBe(400)
     expect(response.contentType).toContain('application/json')
@@ -308,9 +307,10 @@ describe('the verdict and the run id are settled BEFORE any stream header', () =
 //
 // ASSERTED AS ABSENCE, on the chat door's precedent, and on EVERY cross-origin header rather than
 // only the allow-origin one: a door that granted credentials or methods without an origin would be
-// a partial grant a single-header cell would miss. This is also the whole of the door's CSRF story
-// and it is structural — every route requires an `Authorization` header, a header a page sets makes
-// the request non-simple, so a browser must preflight, and this door grants no preflight.
+// a partial grant a single-header cell would miss. Until 432-21 this was also the whole of the
+// door's CSRF story (every route required an `Authorization` header, which made every request
+// non-simple); the bearer is deleted, so the same-site guard above the route table now refuses a
+// cross-site request, simple or preflighted, and the refusal grants nothing either.
 
 const CORS_HEADERS = [
   'access-control-allow-origin',
@@ -333,20 +333,19 @@ describe('no cross-origin grant on any service route, success or refusal', () =>
     const origin = `http://127.0.0.1:${String(port)}`
 
     const stream = await readStreamBody(`${origin}/run/${RUN_ID}/events`, {
-      Authorization: `Bearer ${TOKEN}`,
-    })
+      })
     expect(stream.status).toBe(200)
     assertNoCrossOriginGrant(stream.headers, 'GET /run/:id/events 200')
 
     const ack = await fetch(`${origin}/run`, {
       method: 'POST',
-      headers: { Authorization: `Bearer ${TOKEN}`, 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json' },
       body: '{}',
     })
     expect(ack.status).toBe(202)
     assertNoCrossOriginGrant(ack.headers, 'POST /run 202')
 
-    const ok = await fetch(`${origin}/ok`, { headers: { Authorization: `Bearer ${TOKEN}` } })
+    const ok = await fetch(`${origin}/ok`)
     expect(ok.status).toBe(200)
     assertNoCrossOriginGrant(ok.headers, 'GET /ok 200')
   })
@@ -355,9 +354,14 @@ describe('no cross-origin grant on any service route, success or refusal', () =>
     const port = await mountShippedHost(sessionOverFeed())
     const origin = `http://127.0.0.1:${String(port)}`
 
-    const refused = await fetch(`${origin}/run`, { method: 'POST', body: '{}' })
-    expect(refused.status).toBe(401)
-    assertNoCrossOriginGrant(refused.headers, 'POST /run 401')
+    // 432-21: a SIMPLE cross-site POST (no custom header, text/plain body) — the shape a page can
+    // send without a preflight now that no `Authorization` header is required.
+    const refused = await fetch(`${origin}/run`, {
+      method: 'POST', body: '{}', headers: { Origin: 'https://evil.example', 'Content-Type': 'text/plain' },
+    })
+    expect(refused.status).toBe(403)
+    expect(await refused.json()).toEqual({ error: 'cross_site_refused' })
+    assertNoCrossOriginGrant(refused.headers, 'POST /run 403')
 
     // THE PREFLIGHT IS THE ONE THAT MATTERS. The host answers a wildcard `OPTIONS` for its own
     // routes; the run service is consulted ABOVE that arm, so a service path never reaches it.
@@ -365,12 +369,10 @@ describe('no cross-origin grant on any service route, success or refusal', () =>
       method: 'OPTIONS',
       headers: { Origin: 'https://evil.example', 'Access-Control-Request-Method': 'POST' },
     })
-    expect(preflight.status).toBe(401)
-    assertNoCrossOriginGrant(preflight.headers, 'OPTIONS /run 401')
+    expect(preflight.status).toBe(403)
+    assertNoCrossOriginGrant(preflight.headers, 'OPTIONS /run 403')
 
-    const unknown = await fetch(`${origin}/run/nope/nothing`, {
-      headers: { Authorization: `Bearer ${TOKEN}` },
-    })
+    const unknown = await fetch(`${origin}/run/nope/nothing`)
     expect(unknown.status).toBe(404)
     assertNoCrossOriginGrant(unknown.headers, 'GET /run/nope/nothing 404')
 

@@ -134,7 +134,6 @@ import { DASHBOARD_FUNCTION_CALLER, composeDashboardDoor, createDashboardRunDoor
 import { composeMcpMasking, createMcpHttpRequestListener } from '../commands/mcp.js'
 import { composeLiveView } from '../composition/live-view-composition.js'
 import { createRunServiceSessionRegistry } from '../composition/run-service-session-registry.js'
-import { resolveMcpTokens } from '../composition/mcp-token-resolution.js'
 import { startLiveStreamFixturePage } from './fixtures/live-stream-fixture-page.js'
 import type { LiveStreamFixturePage } from './fixtures/live-stream-fixture-page.js'
 
@@ -532,16 +531,13 @@ beforeAll(async () => {
   // by-reference `runs.liveurl` mint on a `ui://` read is signed by the signer this process's frame
   // proxy validates against. That is D-03's invariant held by composition, and it is why
   // `registerAppResources`' third (bound) condition passes here at all.
-  const tokens = resolveMcpTokens(
-    [{ name: 'harness', tokenEnvVar: TOKEN_ENV_VAR, scopes: ['read'] }],
-    process.env,
-  )
-  const masking = composeMcpMasking({ tokens, env: process.env })
+  // 432-21 (D-12): the co-hosted endpoint is tokenless; the client below still sends a legacy
+  // bearer, which the listener ignores.
+  const masking = composeMcpMasking({ env: process.env })
   const mcpServer = createServer(
     createMcpHttpRequestListener({
       registry: host.registry as FunctionRegistry,
       maskText: (text: string) => masking.mask(text),
-      tokens,
       liveLink: { dashboardBaseUrl: () => boundOrigin },
     }),
   )

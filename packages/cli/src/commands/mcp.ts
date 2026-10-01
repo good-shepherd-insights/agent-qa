@@ -18,16 +18,18 @@
 // below rather than merely absent, and why there is no `console.log` in this file.
 //
 // TWO TRANSPORTS, ONE SERVER (D-10, plan 05). `--http` binds a stateless loopback endpoint beside
-// the stdio default. They differ in EXACTLY ONE THING — how a caller's scope set is resolved — and
-// the code says so: both reach `buildAgentQaMcpServer` through the same `mcpServerDeps` helper,
-// which takes a scope set and composes the rest identically. Anything else the two transports
-// disagreed about would be a policy living in a transport, which is the shape this whole phase is
-// deleting.
+// the stdio default. Both reach `buildAgentQaMcpServer` through the same `mcpServerDeps` helper with
+// the same caller, so the two transports cannot disagree about what a caller sees or can call.
+// 2026-10-01 (432-21, D-12/D-13): they used to differ in exactly one thing, how a caller's scope
+// set was resolved — a bearer header on HTTP, a config switch on stdio. Both are deleted, with the
+// token declarations they read: every caller lists and calls every tool. What still differs is the
+// network boundary, and only HTTP has one.
 //
 // THE ORDER OF THE HTTP GUARDS IS THE SECURITY CLAIM, and it is written as straight-line code
-// rather than as middleware for that reason: Host, then Origin, then bearer, then — and only then —
-// the MCP handler. A request that fails any of the three never reaches a factory, so an unmatched
-// credential cannot cost a server build, and a rebound DNS name cannot reach one at all.
+// rather than as middleware for that reason: Host, then Origin, then — and only then — the MCP
+// handler. A request that fails either never reaches a factory, so a rebound DNS name or a page on
+// another origin cannot reach a server build at all. The bearer rung that stood between them and
+// the handler is deleted (432-21, D-12); the two guards and the loopback bind are what D-13 keeps.
 //
 // NO CORS HEADER IS EMITTED, ANYWHERE. The deleted v1 bridge answered every request and every
 // preflight with `Access-Control-Allow-Origin: *`, which on a loopback JSON-RPC endpoint is an
@@ -38,7 +40,7 @@
 // Protocol grounding: SEP-2575 (stateless — no `initialize` handshake, no session id; `serveStdio`
 // owns era negotiation and serves 2025-era clients from the same factory, and the HTTP face builds
 // one instance per REQUEST and holds nothing between them), SEP-2567 (list results no longer vary
-// per connection; the variance here is per CALLER, keyed on the credential resolved in front),
+// per connection; since 432-20/432-21 they do not vary per caller either),
 // SEP-2243 (Host/Origin validation at the HTTP boundary for loopback endpoints).
 
 import { createServer } from 'node:http'
@@ -51,26 +53,16 @@ import {
   validateHostHeader,
   validateOriginHeader,
 } from '@modelcontextprotocol/server'
-import type { AuthInfo } from '@modelcontextprotocol/server'
 import { buildAgentQaMcpServer, createAgentQaMcpNodeHandler } from '@vostride/agent-qa-mcp'
 import type { LiveLinkSupplier } from '@vostride/agent-qa-mcp'
 import { buildRunMaskingContext } from '@vostride/agent-qa-agent-local'
-import type { FunctionCaller, FunctionScope, TrustCredential } from '@vostride/agent-qa-schema'
+import type { FunctionCaller } from '@vostride/agent-qa-schema'
 import { Command } from 'commander'
 import pc from 'picocolors'
 import { dirname, resolve } from 'node:path'
 
 import { analyticsEvent, composeAnalyticsHost } from '../composition/analytics-host.js'
 import { composeCliLocalAgent } from '../composition/local-agent-host.js'
-import {
-  DEFAULT_MCP_SCOPES,
-  credentialForBearer,
-  matchBearer,
-  mcpTokenSecretStore,
-  resolveMcpTokens,
-  resolveStdioScopes,
-} from '../composition/mcp-token-resolution.js'
-import type { ResolvedMcpToken } from '../composition/mcp-token-resolution.js'
 import { resolveConfig } from '../config.js'
 
 /** The one line the stdio host prints, on stderr, once the server is listening. */
@@ -84,54 +76,28 @@ export const MCP_HTTP_BIND_HOST = '127.0.0.1'
 /** The default port for `--http` with no argument. The v1 endpoint used the same one. */
 export const MCP_HTTP_DEFAULT_PORT = 3471
 
-/**
- * What travels in `AuthInfo.token` — never the credential the caller presented.
- *
- * `AuthInfo` is the SDK's pass-through envelope and its `token` field is typed `string`, so
- * something has to go there. Putting the real value there would place a live credential on an
- * object that reaches every handler on the instance and every serializer that ever inspects one,
- * which is T-396-17's channel exactly. The VERDICT is what this host resolved — a scope set and a
- * label — and the verdict is all that crosses. The sentinel is a fixed, meaningless string so that
- * a leak of this field is self-evidently harmless and self-evidently a bug.
- */
-export const MCP_AUTH_TOKEN_SENTINEL = '[agent-qa: token withheld]'
+// 2026-10-01 (432-21, D-12): `MCP_AUTH_TOKEN_SENTINEL` is deleted. It filled `AuthInfo.token` so a
+// resolved bearer verdict could ride `req.auth` without the presented value; there is no verdict
+// and no `req.auth` any more.
 
 /**
- * The caller this host mints, for a given resolved scope set.
+ * The caller this host mints — one record, for every request on both transports.
  *
- * `origin: 'agent'` and not `'human'`, which is the load-bearing field on this whole surface. 391
- * D-06's rule is that a caller never asserts its own grants and the composition root decides who a
- * call is on behalf of; nobody typed an MCP request, so an agent is what it is. The consequence is
- * concrete rather than philosophical: `proposals.accept` and `proposals.reject` declare
- * `requiresHumanOrigin`, so an MCP caller structurally cannot accept or reject its own proposals
- * (which is why 396-04's catalogue projects neither), and the commit door for this surface is the
- * gated apply instead (D-11).
+ * `origin: 'agent'` and not `'human'`: nobody typed an MCP request, so the composition root says an
+ * agent is what it is (391 D-06). Since 432-20 nothing reads `origin` to decide what a caller may
+ * do; it stays because the receipts that already record a caller's origin still read it.
  *
- * `safeMode: false` because the visibility law is now the scope subset itself (D-05): safe mode is
- * the instance of that law where the only granted scope is `read`, so leaving the registry's
- * cosmetic flag off keeps ONE filter deciding what a caller sees.
+ * 2026-10-01 (432-21, D-12): no scope set, no safe-mode flag and no credential. The bearer header
+ * that once chose a scope set, the stdio config switch that added `config-write`, and the
+ * knowledge-write credential a declared bearer carried are all deleted. Every caller is this one.
  */
-export function mcpFunctionCaller(
-  grantedScopes: readonly FunctionScope[],
-  credential?: TrustCredential,
-): FunctionCaller {
-  return {
-    surface: 'mcp', grantedScopes, safeMode: false, origin: 'agent',
-    ...(credential === undefined ? {} : { credential }),
-  }
-}
-
-/**
- * The default-grant caller (D-07), kept as a named export because two suites and the conformance
- * job compose against it.
- */
-export const MCP_FUNCTION_CALLER: FunctionCaller = mcpFunctionCaller(DEFAULT_MCP_SCOPES)
-
-/** Re-exported so the default grant has ONE definition in the process; see `mcp-token-resolution`. */
-export { DEFAULT_MCP_SCOPES as MCP_DEFAULT_GRANTED_SCOPES }
+export const MCP_FUNCTION_CALLER: FunctionCaller = Object.freeze({
+  surface: 'mcp',
+  origin: 'agent',
+})
 
 /** How a request was refused before it reached any server instance. */
-export type McpHttpRefusal = 'host' | 'origin' | 'auth'
+export type McpHttpRefusal = 'host' | 'origin'
 
 /**
  * The masker this host composes (T-396-17).
@@ -141,43 +107,36 @@ export type McpHttpRefusal = 'host' | 'origin' | 'auth'
  * instead of two lists that agree today. The run's other two channels (a live secret store,
  * captured auth state) are run-scoped and do not exist in a server process.
  *
- * THE DECLARED CREDENTIALS ARE SEEDED EXPLICITLY, and that second argument is the whole reason
- * this is a named function rather than three lines inside the action. `sensitiveEnvSlice` selects
- * environment variables BY NAME SUFFIX; nothing obliges an operator to point `tokenEnvVar` at a
- * name ending in `_TOKEN`, so without this seeding the one credential this process definitionally
- * holds would be the one credential the masker did not know about. That is not a hypothetical
- * ordering of words: 396-03 measured that dropping the masker from a single refusal path left an
- * entire suite green. A differential cell drives this function and reds when the seeding goes.
+ * 2026-10-01 (432-21, D-12): THE DECLARED-TOKEN SEEDING IS DELETED with the token declarations.
+ * This process holds no bearer credential of its own any more, so the masker is seeded from the
+ * environment slice alone — the same seed every run takes. Environment secret masking itself is
+ * unchanged (D-13): a `…_TOKEN`/`…_KEY` value in this process's environment is still hidden on
+ * every channel this host writes.
  *
  * Exported so the MCPS-04 suite masks with the object the command masks with. A suite that built
  * its own masker would be asserting that ITS masker works.
  */
 export function composeMcpMasking(input: {
-  tokens: readonly ResolvedMcpToken[]
   env: NodeJS.ProcessEnv
 }): ReturnType<typeof buildRunMaskingContext> {
-  return buildRunMaskingContext({
-    env: input.env,
-    secretStore: mcpTokenSecretStore(input.tokens),
-  })
+  return buildRunMaskingContext({ env: input.env })
 }
 
 /**
- * Bind a resolved scope set to a registry and a masker.
+ * Bind the one caller to a registry and a masker.
  *
- * THE ONE PLACE deps are composed, so stdio and HTTP cannot drift into two different servers. What
- * a transport supplies is a scope set; everything else is the same object.
+ * THE ONE PLACE deps are composed, so stdio and HTTP cannot drift into two different servers.
+ * 2026-10-01 (432-21, D-12): a transport supplies nothing here any more — not a scope set, not a
+ * credential — so both build the identical deps object.
  */
 function mcpServerDeps(input: {
   registry: Parameters<typeof buildAgentQaMcpServer>[0]['registry']
   maskText: (text: string) => string
-  grantedScopes: readonly FunctionScope[]
-  credential?: TrustCredential
   /**
    * Which dashboard this process is pointed at (408 plan 03, D-08/D-09).
    *
-   * THREADED THROUGH THIS FUNCTION AND NOWHERE ELSE, on this function's own stated law: what a
-   * transport supplies is a scope set, and everything else is the same object. A supplier passed at
+   * THREADED THROUGH THIS FUNCTION AND NOWHERE ELSE, on this function's own stated law: the two
+   * transports build one deps object. A supplier passed at
    * one of the two `buildAgentQaMcpServer` call sites and not the other would be a stdio server
    * whose results carry a working link and an HTTP server whose results do not — which is exactly
    * the per-transport policy the whole file is written to make impossible.
@@ -186,7 +145,7 @@ function mcpServerDeps(input: {
 }) {
   return {
     registry: input.registry,
-    caller: mcpFunctionCaller(input.grantedScopes, input.credential),
+    caller: MCP_FUNCTION_CALLER,
     maskText: input.maskText,
     // Absent stays ABSENT rather than becoming a present `undefined`: the house rule for an
     // optional member, and the two are the same posture to the builder either way.
@@ -195,12 +154,13 @@ function mcpServerDeps(input: {
 }
 
 /**
- * The loopback request listener: Host, Origin, bearer, handler — in that order (D-10).
+ * The loopback request listener: Host, Origin, handler — in that order (D-10, D-13).
  *
  * EXPORTED because a differential that drives anything other than this function is measuring a
  * second implementation of the guard order. MCPS-04's cells bind a real socket to this listener and
- * speak real `Authorization` headers over it, which is the only way to assert on the surface a
- * caller actually reads.
+ * speak real `Host` and `Origin` headers over it, which is the only way to assert on the surface a
+ * caller actually reads. 2026-10-01 (432-21, D-12): the bearer rung is deleted; an `Authorization`
+ * header is neither required nor read.
  *
  * `onRefusal` exists so a test can tell WHICH wall answered without this function writing a
  * diagnostic that would then be a channel for the header it just refused. Nothing in production
@@ -209,7 +169,6 @@ function mcpServerDeps(input: {
 export function createMcpHttpRequestListener(input: {
   registry: Parameters<typeof buildAgentQaMcpServer>[0]['registry']
   maskText: (text: string) => string
-  tokens: readonly ResolvedMcpToken[]
   onRefusal?: (refusal: McpHttpRefusal) => void
   /**
    * D-08's base supplier, passed straight through to the deps (408 plan 03).
@@ -218,7 +177,7 @@ export function createMcpHttpRequestListener(input: {
    * co-hosted mount inside `agent-qa dashboard` binds THIS listener — the same guard order, the
    * same factory — and it is the composition that actually knows an origin, because it is the one
    * that bound a port. A second listener written there to carry a base would be a second reading of
-   * the Host/Origin/bearer discipline this function is exported to prevent (Pitfall 7).
+   * the Host/Origin discipline this function is exported to prevent (Pitfall 7).
    */
   liveLink?: LiveLinkSupplier
 }): (req: IncomingMessage, res: ServerResponse) => void {
@@ -243,45 +202,12 @@ export function createMcpHttpRequestListener(input: {
       return refuse(res, 403, 'forbidden_origin')
     }
 
-    // (3) The bearer, IN FRONT of the handler and before any server is built. An unmatched
-    // credential is a 401 here; it is never degraded to the anonymous default grant, and it never
-    // costs a factory call.
-    const verdict = matchBearer(req.headers.authorization, input.tokens)
-    if (verdict.kind === 'refused') {
-      input.onRefusal?.('auth')
-      // `WWW-Authenticate` carries the scheme and nothing else — no realm derived from a header, no
-      // echo of what was presented. The body is the same shape for a malformed header and a wrong
-      // credential, so the 401 tells a prober nothing about which of the two it produced.
-      res.writeHead(401, {
-        'content-type': 'application/json',
-        'www-authenticate': 'Bearer',
-      })
-      res.end(JSON.stringify({ error: 'invalid_token' }))
-      return
-    }
-
-    const authInfo: AuthInfo = {
-      token: MCP_AUTH_TOKEN_SENTINEL,
-      clientId: verdict.kind === 'token' ? verdict.clientId : 'anonymous',
-      scopes: [...verdict.scopes],
-      // The SDK's bearer MIDDLEWARE rejects an `AuthInfo` with no expiry; this host does not use
-      // that middleware (its verifier interface is an OAuth resource-server shape, and D-06 is a
-      // local static credential), and a fabricated expiry on a credential that does not expire
-      // would be a fact this host invented. The field is therefore absent, deliberately.
-    }
-    // `req.auth` is the adapter's documented pass-through slot. Assigned rather than passed because
-    // that is the seam `toNodeHandler` reads (measured on 2.0.0 — RESEARCH A3).
-    ;(req as IncomingMessage & { auth?: AuthInfo }).auth = authInfo
-
-    // 419 D-20: close over THIS verified verdict, never a shared mutable credential or a
-    // clientId comparison (an operator may name a declared token "anonymous"). No credential
-    // data enters authInfo or protocol responses, and no previous request can donate authority.
-    const credential = credentialForBearer(verdict)
+    // 2026-10-01 (432-21, D-12): no bearer rung. Every request that passed the two guards above
+    // is served by the same caller, so no request can carry or donate authority to another, and
+    // nothing a caller sends reaches `req.auth` or a protocol response.
     const nodeHandler = createAgentQaMcpNodeHandler(() => mcpServerDeps({
       registry: input.registry,
       maskText: input.maskText,
-      grantedScopes: verdict.scopes,
-      ...(credential === undefined ? {} : { credential }),
       ...(input.liveLink === undefined ? {} : { liveLink: input.liveLink }),
     }))
     void nodeHandler(req, res)
@@ -305,13 +231,11 @@ export function createMcpCommand(): Command {
         const program = command.parent
         const globalOpts = program?.opts<{ config?: string }>() ?? {}
         // Tolerant exactly as the v1 command was: a project whose configuration will not resolve
-        // still gets a server, because analytics configuration is the only thing this read fed in
-        // plan 01 and refusing to start over it would be refusing the capability over the telemetry.
-        //
-        // THE TOKEN BLOCK IS THE ONE EXCEPTION, and it is a deliberate one: `services.mcp.tokens`
-        // is a security declaration, so a config that will not parse means this host does not know
-        // what its own credentials are. It then serves the D-07 default grant to everybody, which
-        // is the correct answer for a host with no declarations — and never a wider one.
+        // still gets a server, because analytics configuration and the dashboard base are the only
+        // things this read feeds, and refusing to start over them would be refusing the capability
+        // over the telemetry. 2026-10-01 (432-21, D-12): `services.mcp.tokens` and
+        // `services.mcp.stdio.grantConfigWrite` are no longer read here; nothing in this host
+        // depends on a credential declaration.
         let config: Awaited<ReturnType<typeof resolveConfig>> | undefined
         try {
           config = await resolveConfig({ configPath: globalOpts.config })
@@ -322,16 +246,9 @@ export function createMcpCommand(): Command {
         const configPath = resolve(globalOpts.config ?? 'agent-qa.config.yaml')
         const agentQaRoot = resolve(dirname(configPath), '.agent-qa')
 
-        // D-06: every declared credential is dereferenced ONCE, here, at start. A declared variable
-        // that is unset throws out of this call and the process refuses to start naming the
-        // VARIABLE — which is the whole point, because a server that started while silently
-        // dropping a token would present an operator with a working endpoint that rejects the
-        // credential they just configured.
-        const tokens = resolveMcpTokens(config?.services?.mcp?.tokens ?? [], process.env)
-
         // 408 plan 03 (D-08/D-09 · D-03's floor): WHICH DASHBOARD THIS HOST IS POINTED AT.
         //
-        // Read exactly as the token block above is read — off this command's own resolved config,
+        // Read off this command's own resolved config,
         // at `services.dashboard.baseUrl`, which is the 387 D-10 knob and the shipped mechanism for
         // pointing a CLI or MCP host at somebody's dashboard. It is not read through the masked
         // config reader for the reason that reader exists: masking answers "what may this value be
@@ -350,14 +267,13 @@ export function createMcpCommand(): Command {
           : undefined
         const liveLink = { dashboardBaseUrl: () => configuredDashboardBase }
 
-        // See `composeMcpMasking` — the seeding of the declared credentials is the load-bearing
-        // half, and it is documented there because that is the function a differential drives.
-        const masking = composeMcpMasking({ tokens, env: process.env })
+        // See `composeMcpMasking` — the one masker both transports and the analytics port share.
+        const masking = composeMcpMasking({ env: process.env })
         const maskText = (text: string) => masking.mask(text)
 
         // 398-10 (D-17/D-19/D-20): THIS COMMAND'S ANALYTICS COMPOSITION ROOT. Composed after the
-        // masking context above and pointed at it immediately, because this process's declared
-        // credentials are exactly the values that must never ride an event off the machine.
+        // masking context above and pointed at it immediately, because this process's environment
+        // secrets are exactly the values that must never ride an event off the machine.
         //
         // `config` may be `undefined` here — the read above is tolerant on purpose — and that is a
         // real posture rather than a gap: with no config there is no `analytics.privacy` to honour,
@@ -372,7 +288,8 @@ export function createMcpCommand(): Command {
         })
 
         const host = composeCliLocalAgent({
-          maskingSecretStores: () => [mcpTokenSecretStore(tokens)],
+          // 432-21 (D-12): no declared MCP token store to retain — the token declarations are no
+          // longer read, so the host's masking seeds are its own.
           // 398-10 (D-11/D-18): the explain counter hooks bind against this port inside the
           // composition root, so `agent.explain` is countable over MCP exactly as it is in chat.
           analytics,
@@ -396,7 +313,7 @@ export function createMcpCommand(): Command {
         // `buildAgentQaMcpServer`, and the two things a host holds — the registry and the caller —
         // cannot observe it: the registry's internals are keyed by object identity in a `WeakMap`,
         // so a decorating wrapper is simply an object `invokeFunction` finds no specs on, and the
-        // caller is a credential rather than an invoke. Wrapping the SDK's `tools/call` dispatch is
+        // caller is a record rather than an invoke. Wrapping the SDK's `tools/call` dispatch is
         // possible and is exactly what `installV1NameRedirect` does — inside `packages/mcp`, which
         // is where a hook belongs.
         //
@@ -417,12 +334,12 @@ export function createMcpCommand(): Command {
             mcp_server_state: state,
             mcp_transport: mcpTransport,
             // `mcp_tool_count` is DELIBERATELY ABSENT and the field stays optional for this reason.
-            // How many tools exist is `visibleToCaller`'s verdict, computed inside
-            // `buildAgentQaMcpServer` per caller — and under HTTP there is one instance per REQUEST,
-            // so there is no single number for the process. Counting here would mean re-running the
-            // visibility law outside the file that owns it: a second census of a security rule, to
-            // put a number on a chart. Retune: when the builder reports its own registered count,
-            // that number can ride here.
+            // How many tools exist is decided inside `buildAgentQaMcpServer` by what this
+            // composition registers — and under HTTP there is one instance per REQUEST, so there is
+            // no single number for the process without a second census of that registration.
+            // Retune: when the builder reports its own registered count, that number can ride here.
+            // (Until 432-20 the count also varied per caller, by `visibleToCaller`; it no longer
+            // does.)
           }))
         }
 
@@ -432,7 +349,6 @@ export function createMcpCommand(): Command {
               port: httpPort(options.http as string | boolean),
               registry: host.registry,
               maskText,
-              tokens,
               liveLink,
               onServing: () => emitLifecycle('started'),
             })
@@ -440,7 +356,6 @@ export function createMcpCommand(): Command {
             await serveOverStdio({
               registry: host.registry,
               maskText,
-              grantConfigWrite: config?.services?.mcp?.stdio?.grantConfigWrite === true,
               liveLink,
               onServing: () => emitLifecycle('started'),
             })
@@ -479,21 +394,18 @@ function httpPort(value: string | boolean): number {
 async function serveOverStdio(input: {
   registry: Parameters<typeof buildAgentQaMcpServer>[0]['registry']
   maskText: (text: string) => string
-  grantConfigWrite: boolean
   /** D-08's base supplier (408 plan 03) — the same object the HTTP face is handed. */
   liveLink?: LiveLinkSupplier
   /** Fired once the entry is live — see the lifecycle note at the call site. */
   onServing?: () => void
 }): Promise<void> {
-  // D-07's second half: stdio has no header to carry an exception, so `config-write` arrives only
-  // through the config opt-in, which defaults to false.
-  const grantedScopes = resolveStdioScopes(input.grantConfigWrite)
+  // 2026-10-01 (432-21, D-12): no stdio grant. The `grantConfigWrite` opt-in that added
+  // `config-write` to a stdio caller is no longer read; a stdio caller is the HTTP caller.
   const handle = serveStdio(() =>
     buildAgentQaMcpServer(
       mcpServerDeps({
         registry: input.registry,
         maskText: input.maskText,
-        grantedScopes,
         ...(input.liveLink === undefined ? {} : { liveLink: input.liveLink }),
       }),
     ),
@@ -514,7 +426,6 @@ async function serveOverHttp(input: {
   port: number
   registry: Parameters<typeof buildAgentQaMcpServer>[0]['registry']
   maskText: (text: string) => string
-  tokens: readonly ResolvedMcpToken[]
   /** D-08's base supplier (408 plan 03) — the same object the stdio face is handed. */
   liveLink?: LiveLinkSupplier
   /** Fired once the socket is bound — see the lifecycle note at the call site. */
@@ -524,7 +435,6 @@ async function serveOverHttp(input: {
     createMcpHttpRequestListener({
       registry: input.registry,
       maskText: input.maskText,
-      tokens: input.tokens,
       ...(input.liveLink === undefined ? {} : { liveLink: input.liveLink }),
     }),
   )

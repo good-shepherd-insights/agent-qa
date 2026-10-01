@@ -151,9 +151,8 @@ import { buildAgentQaMcpServer } from '@vostride/agent-qa-mcp'
 import { runSafetyScope } from '@vostride/agent-qa-safety-local'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
-import { composeMcpMasking, mcpFunctionCaller } from '../commands/mcp.js'
+import { composeMcpMasking, MCP_FUNCTION_CALLER } from '../commands/mcp.js'
 import { composeCliLocalAgent } from '../composition/local-agent-host.js'
-import { resolveMcpTokens, resolveStdioScopes } from '../composition/mcp-token-resolution.js'
 
 // ── THE PLANTS ────────────────────────────────────────────────────────────────────────────────
 //
@@ -165,12 +164,14 @@ const ENV_VAR = 'AGENT_QA_396_06_FIXTURE_TOKEN'
 const ENV_PLANT = 'qeb4t7zmv1x8s3d0g5j2n9'
 
 /**
- * The credential this host DEFINITIONALLY holds: a declared MCP bearer token. Its variable name
- * ends in no suffix `sensitiveEnvSlice` recognises, deliberately — this plant is masked only
- * because 396-05 seeded the masker from the DECLARED entries, and a cell that let the suffix rule
- * catch it would be measuring the wrong arm.
+ * The second seeded plant. Until 2026-10-01 it was a declared MCP bearer token whose variable name
+ * ended in no suffix `sensitiveEnvSlice` recognises, masked only because 396-05 seeded the masker
+ * from the DECLARED entries. 432-21 (D-12) deleted the declared tokens and that seeding arm, so the
+ * plant now reaches the masker through the environment arm under a DIFFERENT recognised suffix
+ * (`_SECRET`, where `ENV_VAR` uses `_TOKEN`). Every claim below that covered "both seeded plants"
+ * still covers two values; they now share one mechanism, which A2 states.
  */
-const TOKEN_VAR = 'AGENT_QA_396_06_FIXTURE_CRED'
+const TOKEN_VAR = 'AGENT_QA_396_06_FIXTURE_CRED_SECRET'
 const TOKEN_PLANT = 'wnk9j2p6r4y7c1f8h3l5b0'
 
 /** Credential-SHAPED, so the construction scan's pattern arm can recognise it with no seed. */
@@ -339,25 +340,22 @@ async function openWorkspace(configBody: string): Promise<void> {
   // reads: `configScanSeeds: () => ({ env: sensitiveEnvSlice(process.env) })`. A stubbed object
   // would have measured a seam this composition does not have.
   process.env[ENV_VAR] = ENV_PLANT
+  process.env[TOKEN_VAR] = TOKEN_PLANT
   process.env[ECHO_VAR] = ECHO_PLANT
 
   host = composeCliLocalAgent({ agentQaRoot, configPath })
 
-  // PRODUCED THROUGH THE SHIPPED RESOLVER, not typed: what the masker is seeded with is what a real
-  // start would have produced from a real config and a real environment.
-  const tokens = resolveMcpTokens(
-    [{ name: 'fixture', tokenEnvVar: TOKEN_VAR, scopes: ['read'] }],
-    { [TOKEN_VAR]: TOKEN_PLANT },
-  )
   // THE PRODUCTION MASKER — the function the `mcp` command itself calls. A suite that built its own
-  // masker here would be asserting that ITS masker works, which is true and worthless.
-  masking = composeMcpMasking({ tokens, env: process.env })
+  // masker here would be asserting that ITS masker works, which is true and worthless. 432-21: it
+  // is seeded from the environment alone.
+  masking = composeMcpMasking({ env: process.env })
 
   frames = []
   handler = createMcpHandler(() =>
     buildAgentQaMcpServer({
       registry: host!.registry,
-      caller: mcpFunctionCaller(resolveStdioScopes(true)),
+      // 432-21 (D-12): the one tokenless caller; no stdio grant exists to resolve.
+      caller: MCP_FUNCTION_CALLER,
       maskText: (text: string) => masking!.mask(text),
     }),
   )
@@ -387,6 +385,7 @@ afterEach(async () => {
   host = undefined
   masking = undefined
   delete process.env[ENV_VAR]
+  delete process.env[TOKEN_VAR]
   delete process.env[ECHO_VAR]
   rmSync(root, { recursive: true, force: true })
 })
@@ -421,11 +420,12 @@ describe('A · the plants are what the ledger says they are (the non-vacuity gat
     })
 
   it('(A2) the masker recognises exactly the two SEEDED plants, and nothing else', () => {
-    // Each arm asserted separately. If both plants were caught by one arm, every cell in groups B
-    // and D would be one measurement wearing two names.
-    expect(masking!.mask(ENV_PLANT), 'the environment arm did not seed the masker')
+    // 2026-10-01 (432-21, D-12): ONE ARM NOW, two suffixes. The declared-token arm is deleted, so
+    // both plants are seeded by the environment arm — `_TOKEN` and `_SECRET` — and groups B and D
+    // measure that arm on two values rather than two arms.
+    expect(masking!.mask(ENV_PLANT), 'the environment arm (_TOKEN) did not seed the masker')
       .not.toContain(ENV_PLANT)
-    expect(masking!.mask(TOKEN_PLANT), 'the declared-token arm did not seed the masker')
+    expect(masking!.mask(TOKEN_PLANT), 'the environment arm (_SECRET) did not seed the masker')
       .not.toContain(TOKEN_PLANT)
 
     // The discrimination that makes F1 a control rather than a coincidence: this value is NOT

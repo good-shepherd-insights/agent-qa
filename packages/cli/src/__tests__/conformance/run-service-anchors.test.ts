@@ -57,8 +57,6 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import {
   REBUILD_INSTRUCTION,
   RUN_SERVICE_ANCHORED_BUILDS,
-  RUN_SERVICE_FIXTURE_TOKEN,
-  RUN_SERVICE_FIXTURE_TOKEN_VAR,
   buildFreshness,
   cleanupTempRoots,
   reserveEphemeralPort,
@@ -327,7 +325,8 @@ async function readStream(
 let door: SpawnedDashboard | undefined
 let doorReady = false
 let doorDiagnostics = ''
-const bearer = { Authorization: `Bearer ${RUN_SERVICE_FIXTURE_TOKEN}` }
+// 2026-10-01 (432-21, D-12): the run service is tokenless — a request carries no credential.
+const bearer: Record<string, string> = {}
 const authedJson = { ...bearer, 'Content-Type': 'application/json' }
 
 beforeAll(async () => {
@@ -340,14 +339,12 @@ beforeAll(async () => {
 
   const fixture = runServiceFixtureProject('anchors')
   const port = await reserveEphemeralPort()
+  // 432-21 (D-12): no credential reaches the child — none is declared and none is read.
   const spawned = await spawnDashboard(
     fixture.root,
     fixture.configPath,
     port,
     WIRE_BUDGET_MS,
-    // THE CREDENTIAL REACHES THE CHILD AND NOWHERE ELSE. The project declares the variable's NAME;
-    // this is the only place its value exists, and it is never written to a file or an expectation.
-    { [RUN_SERVICE_FIXTURE_TOKEN_VAR]: RUN_SERVICE_FIXTURE_TOKEN },
   )
   door = spawned
   doorReady = spawned.ready
@@ -446,21 +443,24 @@ describe('the run-service wire anchors (402-07 · criterion 4)', () => {
     ).toEqual([...RUN_SESSION_DATA_MEMBERS, ...RUN_SESSION_HANDLE_MEMBERS].sort())
   })
 
-  it('refuses POST /run with no credential — 401 from the spawned binary, not a fixture', async () => {
+  // RE-SPELLED 2026-10-01 (432-21, D-12/D-13) from 'refuses POST /run with no credential — 401 from
+  // the spawned binary, not a fixture'. No credential is asked for; the spawned binary's refusal is
+  // a cross-site POST, answered before the body is read and before any run is queued.
+  it('refuses a cross-site POST /run — 403 from the spawned binary, not a fixture', async () => {
     expect(buildFreshness(RUN_SERVICE_ANCHORED_BUILDS), REBUILD_INSTRUCTION)
       .toEqual({ missing: [], stale: [] })
     const response = await fetch(`${origin()}/run`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'text/plain', Origin: 'https://evil.example' },
       body: '{}',
     })
-    expect(response.status).toBe(401)
+    expect(response.status).toBe(403)
     const raw = await response.text()
     const body = RunServiceErrorBodySchema.parse(JSON.parse(raw))
-    expect(body).toEqual({ error: 'missing_authorization' })
-    // The single-key law, on the wire: an unauthenticated caller learns a reason word and no more.
+    expect(body).toEqual({ error: 'cross_site_refused' })
+    // The single-key law, on the wire: a refused caller learns a reason word and no more.
     expect(Object.keys(body)).toEqual(['error'])
-    // No cross-origin grant on an authed surface, asserted where a browser would read it.
+    // No cross-origin grant, asserted where a browser would read it.
     expect(response.headers.get('access-control-allow-origin')).toBeNull()
     sweepWireDocument('errorBody', raw, 'the refusal body must be pure JSON')
   }, WIRE_BUDGET_MS)
@@ -494,21 +494,15 @@ describe('the run-service wire anchors (402-07 · criterion 4)', () => {
     expect(readiness.hostComposed).toBe(true)
   }, WIRE_BUDGET_MS)
 
-  // THE ZERO-TOKEN ARM — the DEFAULT posture, and the one the mounted-arm anchor cannot see.
-  //
-  // `runServiceReadiness` is composed from TWO arms: `runService?.readiness` when a credential is
-  // declared, and a `createRunServiceReadiness({ …, tokenCount: 0 })` fallback when none is. The
-  // anchor above declares a token, so it pins the first arm only — re-verification measured a
-  // mutation that dropped the fallback leaving 374/374 green while a token-less
-  // `agent-qa dashboard` answered `/api/run-readiness` with 503, which is a member of the UI's
-  // NO_READINESS_DOOR set, so the preflight silently stops gating for most projects.
-  //
-  // Spawns its OWN token-less dashboard rather than reusing the suite's: the arm is selected by
-  // config, so no request against the shared child can reach it.
+  // THE ZERO-TOKEN ARM — history: `runServiceReadiness` used to be composed from TWO arms (a
+  // credential-declaring one and a zero-token fallback), and a mutation that dropped the fallback
+  // left 374/374 green while a token-less `agent-qa dashboard` answered `/api/run-readiness` 503.
+  // 2026-10-01 (432-21, D-12): there is one arm — the tokenless run service is always composed —
+  // and this cell still spawns its OWN dashboard so a second child pins the same answer.
   it('serves the LOCAL readiness door with NO credential declared — the default posture', async () => {
     expect(buildFreshness(RUN_SERVICE_ANCHORED_BUILDS), REBUILD_INSTRUCTION)
       .toEqual({ missing: [], stale: [] })
-    const fixture = runServiceFixtureProject('anchors-no-token', false)
+    const fixture = runServiceFixtureProject('anchors-no-token')
     const port = await reserveEphemeralPort()
     const child = await spawnDashboard(fixture.root, fixture.configPath, port, WIRE_BUDGET_MS)
     try {
@@ -610,13 +604,14 @@ describe('the run-service wire anchors (402-07 · criterion 4)', () => {
       expect(rpcShapeOf(liveUrlBytes as string).functionTyped).toEqual([])
       expect(rpcShapeOf(liveUrlBytes as string).byteUnstable).toBe(false)
 
-      // (2) READINESS, authed, from the same child — the contract version a 403 may bump.
+      // (2) READINESS, from the same child — the contract version a 403 may bump.
       const ok = await fetch(`${origin()}/ok`, { headers: bearer })
       expect(ok.status).toBe(200)
       const okBytes = await ok.text()
       const readiness = RunServiceReadinessSchema.parse(JSON.parse(okBytes))
       expect(readiness.hostComposed).toBe(true)
-      expect(readiness.authConfigured).toBe(true)
+      // 432-21 (D-12): no credential can be configured.
+      expect(readiness.authConfigured).toBe(false)
       sweepWireDocument('readiness', okBytes, 'the readiness body must be pure JSON')
 
       // (3) THE STREAM. `subscribe(1, …)` replays from the first seq, so the frames are the whole

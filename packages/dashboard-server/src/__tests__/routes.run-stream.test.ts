@@ -79,7 +79,6 @@ vi.mock('../run-service/run-service-routes.js', async (importOriginal) => {
   return { ...actual, serveRunEventStream: vi.fn(actual.serveRunEventStream) }
 })
 
-const TOKEN = 'zz-402-08-local-door-token-1c9be4'
 
 /**
  * The announced roster — non-contiguous and not 0-based, on 402-04's own reasoning.
@@ -216,7 +215,7 @@ function freshMint(seed: string): (runId: string, handle: number) => Promise<Run
 const READINESS: RunServiceReadiness = {
   service: 'up',
   hostComposed: true,
-  authConfigured: true,
+  authConfigured: false,
   contractVersion: RUN_SERVICE_CONTRACT_VERSION,
 }
 
@@ -232,9 +231,7 @@ const ACK: RunStartAcknowledgement = {
 function servicePorts(options: { readonly mint?: boolean } = {}): RunServicePorts {
   const mint = options.mint === true ? freshMint('authed-') : undefined
   return {
-    verifyBearer: (header) => header === `Bearer ${TOKEN}`
-      ? { kind: 'token', clientId: 'ci', trustScope: { project: 'acme' } }
-      : { kind: 'refused', reason: header === undefined ? 'missing_authorization' : 'invalid_token' },
+    // 2026-10-01 (432-21, D-12): no `verifyBearer` — the run service is tokenless.
     invokeRunStart: async () => ACK,
     attach: attachPort,
     readiness: () => READINESS,
@@ -368,10 +365,7 @@ describe('the local run-stream door serves the SAME stream core the authed door 
     const authed = await authedDoor()
 
     const fromLocal = await read(`${local}/api/run-stream/${runId}${query}`, { ...headers })
-    const fromAuthed = await read(`${authed}/run/${runId}/events${query}`, {
-      Authorization: `Bearer ${TOKEN}`,
-      ...headers,
-    })
+    const fromAuthed = await read(`${authed}/run/${runId}/events${query}`, { ...headers })
 
     expect(fromLocal.status).toBe(fromAuthed.status)
     expect(fromLocal.contentType).toBe(fromAuthed.contentType)
@@ -426,7 +420,7 @@ describe('the local run-stream door serves the SAME stream core the authed door 
     // driven through the WHOLE recovery, not just the refusal.
     for (const [label, origin, path, headers] of [
       ['local', await localDoor(), '/api/run-stream/r_floor', {}],
-      ['authed', await authedDoor(), '/run/r_floor/events', { Authorization: `Bearer ${TOKEN}` }],
+      ['authed', await authedDoor(), '/run/r_floor/events', {}],
     ] as const) {
       const refused = await read(`${origin}${path}?lastEventId=2`, { ...headers })
       expect(refused.status, label).toBe(410)
@@ -496,9 +490,7 @@ describe('both doors mint the SAME liveUrl — shape-identically, and refuse ide
     const authed = await authedDoor({ mint: true })
 
     const fromLocal = await read(`${local}/api/runs/${runId}/live-url${query}`)
-    const fromAuthed = await read(`${authed}/run/${runId}/live-url${query}`, {
-      Authorization: `Bearer ${TOKEN}`,
-    })
+    const fromAuthed = await read(`${authed}/run/${runId}/live-url${query}`)
 
     expect(fromLocal.status).toBe(fromAuthed.status)
     expect(fromLocal.contentType).toBe(fromAuthed.contentType)
@@ -509,9 +501,7 @@ describe('both doors mint the SAME liveUrl — shape-identically, and refuse ide
     const local = await localDoor({ mint: true })
     const authed = await authedDoor({ mint: true })
     const fromLocal = await read(`${local}/api/runs/r_local/live-url`)
-    const fromAuthed = await read(`${authed}/run/r_local/live-url`, {
-      Authorization: `Bearer ${TOKEN}`,
-    })
+    const fromAuthed = await read(`${authed}/run/r_local/live-url`)
 
     expect(fromLocal.body, 'a byte comparison here would be satisfied by a fixture, not a door')
       .not.toBe(fromAuthed.body)
@@ -525,14 +515,21 @@ describe('both doors mint the SAME liveUrl — shape-identically, and refuse ide
     }
   })
 
-  it('the local door needs NO credential and the authed door needs one — the only difference', async () => {
+  // RE-SPELLED 2026-10-01 (432-21, D-12/D-13) from 'the local door needs NO credential and the
+  // authed door needs one — the only difference'. Neither door needs a credential now; both refuse a
+  // cross-site mint with the same same-site guard, and both mint for a local caller.
+  it('neither door needs a credential, and both refuse a cross-site mint the same way', async () => {
     const authed = await authedDoor({ mint: true })
-    const refused = await read(`${authed}/run/r_local/live-url`)
-    expect(refused.status).toBe(401)
-    expect(JSON.parse(refused.body)).toEqual({ error: 'missing_authorization' })
+    expect((await read(`${authed}/run/r_local/live-url`)).status).toBe(200)
+    const refused = await read(`${authed}/run/r_local/live-url`, { Origin: 'https://evil.example' })
+    expect(refused.status).toBe(403)
+    expect(JSON.parse(refused.body)).toEqual({ error: 'cross_site_refused' })
 
     const local = await localDoor({ mint: true })
     expect((await read(`${local}/api/runs/r_local/live-url`)).status).toBe(200)
+    const localRefused = await read(`${local}/api/runs/r_local/live-url`, { Origin: 'https://evil.example' })
+    expect(localRefused.status).toBe(403)
+    expect(JSON.parse(localRefused.body)).toEqual({ error: 'cross_site_refused' })
   })
 
   it('the liveUrl corpus is not vacuous — it spans a mint, two refusals and an unknown run', async () => {

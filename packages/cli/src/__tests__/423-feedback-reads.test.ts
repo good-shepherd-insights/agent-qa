@@ -17,7 +17,6 @@ import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest
 import { composeDashboardDoor, DASHBOARD_FUNCTION_CALLER } from '../commands/dashboard.js'
 import { createFnCommand } from '../commands/fn.js'
 import * as host from '../composition/local-agent-host.js'
-import { matchServiceBearer } from '../composition/run-service-token-resolution.js'
 import { FsMarkLedger } from '../eval-session-composition.js'
 import { createFeedbackPortForHost } from '../gates/feedback-host.js'
 import { createFeedbackReadsPortForHost, type FeedbackReadsHostDeps } from '../gates/feedback-read-host.js'
@@ -1024,10 +1023,7 @@ describe('423-21 feedback reads over both HTTP doors (D-18)', () => {
     closers.push(() => db.close())
     const started = await startServer({ db, port: 0, agentHost: door.agentHost })
     closers.push(() => started.close())
-    const remote: Server = createServer(createRunServiceRoutes({ agentHost: door.agentHost,
-      verifyBearer: header => matchServiceBearer(header, [{ name: 'test', tokenEnvVar: 'AGENT_QA_TEST_TOKEN',
-        value: 'synthetic-423-21-client', trustScope: { project: 'test' } }]),
-    } as RunServicePorts))
+    const remote: Server = createServer(createRunServiceRoutes({ agentHost: door.agentHost } as unknown as RunServicePorts))
     await new Promise<void>(resolve => remote.listen(0, '127.0.0.1', resolve))
     closers.push(() => new Promise<void>(resolve => remote.close(() => resolve())))
     const port = (server: { address(): unknown }) => (server.address() as { port: number }).port
@@ -1035,7 +1031,8 @@ describe('423-21 feedback reads over both HTTP doors (D-18)', () => {
       stores: [join(agentQaRoot, 'runs'), join(agentQaRoot, 'proposals'), join(agentQaRoot, 'eval'), join(root, 'agent-qa-knowledge'), join(root, 'agent-qa-eval')],
       doors: [
         { name: 'local-human', base: `http://127.0.0.1:${port(started.server)}/api/runs`, headers: {} as Record<string, string> },
-        { name: 'remote-machine', base: `http://127.0.0.1:${port(remote)}/run`, headers: { Authorization: 'Bearer synthetic-423-21-client' } },
+        // 432-21 (D-12): the run service is tokenless — the machine door sends no credential.
+        { name: 'remote-machine', base: `http://127.0.0.1:${port(remote)}/run`, headers: {} as Record<string, string> },
       ] }
   }
   const storeMaps = (stores: readonly string[]) => stores.map(tree)

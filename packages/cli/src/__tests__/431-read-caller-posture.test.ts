@@ -1,18 +1,17 @@
 // READ-CALLER-MATRIX (431-05 task 2 · D-07 · T-431-11 / T-431-12): who may fetch a screenshot.
 //
 // Measured at the real composition boundary: `composeCliLocalAgent` over a project on disk, the
-// shipped `createMcpHttpRequestListener` bound to a loopback socket with real `Authorization`
-// headers, and the built `agent-qa mcp` binary spawned over stdio.
+// shipped `createMcpHttpRequestListener` bound to a loopback socket, and the built `agent-qa mcp`
+// binary spawned over stdio.
 //
-// THE POSTURE IS INHERITED, NOT NEW. `agent_qa_get_run_evidence` declares `requiredScopes: ['read']`
-// and no credential marker. The marker would demand a knowledge-write bearer for a read, because
-// `credentialForBearer` only mints a credential for one, so it is deliberately absent. An anonymous
-// loopback or stdio caller holds `DEFAULT_MCP_SCOPES` and therefore reads screenshots, as it
-// already read every other run read. That anonymous exposure is recorded for the security gate,
-// not redesigned here. Masking hides strings, never pixels: a screenshot shows what the page showed.
+// 2026-10-01 (432-21, D-12/D-13): TOKENLESS. The bearer tokens, the default-grant scope set and the
+// credential marker are deleted, so every loopback or stdio caller is the same caller and reads
+// screenshots, as it reads every other run read. What still refuses a caller is the network
+// boundary: a page on another origin is refused before any server exists. Masking hides strings,
+// never pixels: a screenshot shows what the page showed.
 //
-// MUTATION SUBJECT (observed 2026-09-28, restored byte for byte):
-//   M2 `credential: 'required'` added to the evidence tool in mcp's mapping.ts -> READ-CALLER-MATRIX
+// MUTATION SUBJECT (observed 2026-09-28, restored byte for byte): M2 added a `credential: 'required'`
+// marker to the evidence tool. 2026-10-01 (432-21): the marker no longer exists in `ToolProjection`.
 //
 // BUILD PREREQUISITE: the stdio cell spawns `dist/cli.js`. Run `pnpm build` first.
 
@@ -28,12 +27,11 @@ import { invokeFunction } from '@vostride/agent-qa-agent'
 import { AgentQaConfigSchema } from '@vostride/agent-qa-core'
 import { generateRunId } from '@vostride/agent-qa-ids'
 import { FsEvidenceArtifactStore } from '@vostride/agent-qa-runner-local'
-import { asRunId, FunctionScopeSchema } from '@vostride/agent-qa-schema'
+import { asRunId } from '@vostride/agent-qa-schema'
 import { afterEach, describe, expect, it } from 'vitest'
 
-import { composeMcpMasking, createMcpHttpRequestListener, mcpFunctionCaller, MCP_DEFAULT_GRANTED_SCOPES } from '../commands/mcp.js'
+import { composeMcpMasking, createMcpHttpRequestListener, MCP_FUNCTION_CALLER } from '../commands/mcp.js'
 import { composeCliLocalAgent } from '../composition/local-agent-host.js'
-import { credentialForBearer, matchBearer, resolveMcpTokens, resolveStdioScopes } from '../composition/mcp-token-resolution.js'
 
 const CLI_ENTRY = resolve(dirname(fileURLToPath(import.meta.url)), '../../dist/cli.js')
 const TOOL = 'agent_qa_get_run_evidence'
@@ -42,16 +40,9 @@ const PNG_BASE64 =
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=='
 const PNG = Uint8Array.from(atob(PNG_BASE64), (char) => char.charCodeAt(0))
 
-const READER = 'zz-431-05-reader-credential-4a7c1e'
-const NO_READ = 'zz-431-05-no-read-credential-8b2d9f'
-const WRITER = 'zz-431-05-writer-credential-c3e6a0'
-const INVALID = 'zz-431-05-undeclared-credential-5f9b21'
-const TOKEN_ENV = {
-  AGENT_QA_431_05_READER: READER,
-  AGENT_QA_431_05_NO_READ: NO_READ,
-  AGENT_QA_431_05_WRITER: WRITER,
-}
-const NO_READ_SCOPES = FunctionScopeSchema.options.filter((scope) => scope !== 'read')
+/** Bearer values a pre-432 client might still send. The listener neither needs nor reads them. */
+const LEGACY_READER = 'zz-431-05-reader-credential-4a7c1e'
+const LEGACY_NO_READ = 'zz-431-05-no-read-credential-8b2d9f'
 
 type Block = { readonly type: string; readonly text?: string; readonly data?: string; readonly mimeType?: string }
 type WireResult = { readonly content: readonly Block[]; readonly structuredContent?: unknown; readonly isError?: boolean }
@@ -73,11 +64,6 @@ function project() {
       hooksFile: 'hooks.yaml', envFile: '.env', secretsFile: '.env.secrets.local',
     },
     use: { mobile: { appState: 'preserve' } },
-    services: { mcp: { tokens: [
-      { name: 'reader', tokenEnvVar: 'AGENT_QA_431_05_READER', scopes: ['read'] },
-      { name: 'no-read', tokenEnvVar: 'AGENT_QA_431_05_NO_READ', scopes: NO_READ_SCOPES },
-      { name: 'writer', tokenEnvVar: 'AGENT_QA_431_05_WRITER', scopes: ['read', 'knowledge-write'] },
-    ] } },
   })
   writeFileSync(configPath, JSON.stringify(config))
   const runId = asRunId(generateRunId())
@@ -92,10 +78,9 @@ async function httpHost() {
     resolveExecutionContext: () => 'local-headless',
   })
   cleanups.push(() => host.close())
-  const tokens = resolveMcpTokens(p.config.services!.mcp!.tokens, TOKEN_ENV)
-  const mask = composeMcpMasking({ tokens, env: {} })
+  const mask = composeMcpMasking({ env: {} })
   const server: Server = createServer(createMcpHttpRequestListener({
-    registry: host.registry, tokens, maskText: (text) => mask.mask(text),
+    registry: host.registry, maskText: (text) => mask.mask(text),
   }))
   await new Promise<void>((listening, failed) => {
     server.once('error', failed)
@@ -106,13 +91,13 @@ async function httpHost() {
   if (address === null || typeof address === 'string') throw new Error('missing bound address')
   const url = new URL(`http://127.0.0.1:${address.port}/mcp`)
   const frames: string[] = []
-  async function connect(token?: string): Promise<Client> {
+  async function connect(extraHeaders: Record<string, string> = {}): Promise<Client> {
     const client = new Client({ name: 'agent-qa-431-05-caller', version: '0.0.0' })
     cleanups.push(() => client.close())
     await client.connect(new StreamableHTTPClientTransport(url, {
       fetch: (async (input: URL | string, init?: RequestInit) => {
         const headers = new Headers(init?.headers)
-        if (token !== undefined) headers.set('authorization', `Bearer ${token}`)
+        for (const [name, value] of Object.entries(extraHeaders)) headers.set(name, value)
         const response = await fetch(input, { ...init, headers })
         frames.push(await response.clone().text())
         return response
@@ -120,7 +105,7 @@ async function httpHost() {
     }))
     return client
   }
-  return { ...p, registry: host.registry, tokens, connect, frames }
+  return { ...p, registry: host.registry, connect, frames }
 }
 
 const listNames = async (client: Client): Promise<string[]> => (await client.listTools()).tools.map((tool) => tool.name)
@@ -137,53 +122,56 @@ function expectScreenshot(result: WireResult): void {
 }
 
 describe('READ-CALLER-MATRIX (D-07 · T-431-11)', () => {
-  it('anonymous loopback, a read-only bearer and a writer read the screenshot; none borrows a write credential for it', async () => {
+  // RE-SPELLED 2026-10-01 (432-21, D-12) from 'anonymous loopback, a read-only bearer and a writer
+  // read the screenshot; none borrows a write credential for it'. There is no bearer to borrow: a
+  // tokenless caller and a client still sending a legacy bearer read it identically.
+  it('a tokenless loopback caller reads the screenshot, and a legacy bearer header changes nothing', async () => {
     const h = await httpHost()
-    for (const [label, token] of [['anonymous', undefined], ['reader', READER], ['writer', WRITER]] as const) {
-      const client = await h.connect(token)
+    for (const [label, headers] of [
+      ['tokenless', {}],
+      ['legacy reader bearer', { authorization: `Bearer ${LEGACY_READER}` }],
+    ] as const) {
+      const client = await h.connect(headers)
       expect(await listNames(client), label).toContain(TOOL)
       expectScreenshot(await fetchScreenshot(client, h.runId, h.sha))
     }
-
-    const anonymous = matchBearer(undefined, h.tokens)
-    expect(anonymous).toEqual({ kind: 'anonymous', scopes: MCP_DEFAULT_GRANTED_SCOPES })
-    expect(credentialForBearer(anonymous)).toBeUndefined()
-    const reader = matchBearer(`Bearer ${READER}`, h.tokens)
-    expect(reader).toMatchObject({ kind: 'token', clientId: 'reader', scopes: ['read'] })
-    expect(credentialForBearer(reader)).toBeUndefined()
-    for (const secret of [READER, NO_READ, WRITER]) expect(h.frames.join('\n')).not.toContain(secret)
+    expect(Object.keys(MCP_FUNCTION_CALLER).sort()).toEqual(['origin', 'surface'])
+    expect(h.frames.join('\n')).not.toContain(LEGACY_READER)
   })
 
   // RE-SPELLED 2026-10-01 (432-20, D-12) from 'a no-read bearer neither lists nor reaches the tool,
   // even by its hidden name'. No scope gates the listing or the op, so the no-read bearer reads the
   // screenshot like every other caller; the evidence masking and decoding claims are unchanged.
+  // RE-SPELLED 2026-10-01 (432-21, D-12) from 'a no-read bearer lists and reaches the tool like
+  // every caller': the tokenless caller the function layer sees reaches the op directly.
   it('a no-read bearer lists and reaches the tool like every caller', async () => {
     const h = await httpHost()
-    const client = await h.connect(NO_READ)
+    const client = await h.connect({ authorization: `Bearer ${LEGACY_NO_READ}` })
     expect(await listNames(client)).toContain(TOOL)
     expectScreenshot(await fetchScreenshot(client, h.runId, h.sha))
 
-    const verdict = matchBearer(`Bearer ${NO_READ}`, h.tokens)
-    if (verdict.kind !== 'token') throw new Error('the no-read bearer did not resolve')
     const served = await invokeFunction(h.registry, 'runs.artifact', { runId: h.runId, sha: h.sha },
-      mcpFunctionCaller(verdict.scopes, credentialForBearer(verdict)))
+      MCP_FUNCTION_CALLER)
       .then(() => 'served', (error: unknown) => (error as Error).name)
     expect(served).toBe('served')
-    for (const secret of [READER, NO_READ, WRITER]) expect(h.frames.join('\n')).not.toContain(secret)
+    expect(h.frames.join('\n')).not.toContain(LEGACY_NO_READ)
   })
 
-  it('an undeclared bearer is refused before any server exists and never degrades to anonymous', async () => {
+  // RE-SPELLED 2026-10-01 (432-21, D-12/D-13) from 'an undeclared bearer is refused before any
+  // server exists and never degrades to anonymous'. No bearer is checked; what is refused before any
+  // server exists is a page on another origin, and the refusal serves none of the screenshot.
+  it('a cross-origin page is refused before any server exists and reads nothing', async () => {
     const h = await httpHost()
-    await expect(h.connect(INVALID)).rejects.toThrow()
-    expect(h.frames.some((frame) => frame.includes('invalid_token'))).toBe(true)
+    await expect(h.connect({ origin: 'https://evil.example' })).rejects.toThrow()
+    expect(h.frames.some((frame) => frame.includes('forbidden_origin'))).toBe(true)
     expect(h.frames.join('\n')).not.toContain(PNG_BASE64.slice(0, 16))
   })
 
-  it('an anonymous stdio client of the built binary reads the screenshot with the default grant', async () => {
+  // RE-SPELLED 2026-10-01 (432-21, D-12) from '… with the default grant': no stdio grant exists.
+  it('an anonymous stdio client of the built binary reads the screenshot with no grant', async () => {
     expect(existsSync(CLI_ENTRY), `the built CLI entry is missing at ${CLI_ENTRY}; run \`pnpm build\` first`).toBe(true)
-    expect(resolveStdioScopes(false)).toEqual(MCP_DEFAULT_GRANTED_SCOPES)
     const p = project()
-    const env = Object.fromEntries(Object.entries({ ...process.env, ...TOKEN_ENV })
+    const env = Object.fromEntries(Object.entries({ ...process.env })
       .filter((entry): entry is [string, string] => typeof entry[1] === 'string'))
     const transport = new StdioClientTransport({ command: process.execPath, args: [CLI_ENTRY, 'mcp'], cwd: p.root, env, stderr: 'pipe' })
     const client = new Client({ name: 'agent-qa-431-05-stdio', version: '0.0.0' })

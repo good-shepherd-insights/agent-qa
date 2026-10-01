@@ -38,7 +38,6 @@ import { chromium, type Browser, type Page } from 'playwright-core'
 
 import { composeDashboardAgentHost } from '../../commands/dashboard.js'
 import { createDisplayUnmasker } from '../../composition/display-unmask.js'
-import { matchServiceBearer } from '../../composition/run-service-token-resolution.js'
 import { PACKAGES_ROOT } from './spawned-chat.js'
 
 const AUTH_TOKEN = 'synthetic-423-cookie-token'
@@ -118,10 +117,7 @@ async function startFixture(
   await new Promise<void>((resolve) => machine.listen(0, '127.0.0.1', resolve))
   const machineAddress = machine.address()
   if (machineAddress === null || typeof machineAddress === 'string') throw new Error('Machine fixture did not bind')
-  const remote = createServer(createRunServiceRoutes({ agentHost,
-    verifyBearer: header => matchServiceBearer(header, [{ name: 'test', tokenEnvVar: 'AGENT_QA_TEST_TOKEN',
-      value: 'synthetic-evidence-client', trustScope: { project: 'test' } }]),
-  } as RunServicePorts))
+  const remote = createServer(createRunServiceRoutes({ agentHost } as unknown as RunServicePorts))
   await new Promise<void>(resolve => remote.listen(0, '127.0.0.1', resolve))
   const remoteAddress = remote.address()
   if (remoteAddress === null || typeof remoteAddress === 'string') throw new Error('Remote fixture did not bind')
@@ -163,8 +159,9 @@ describe('423 guarded human read', () => {
   })
 
   it('HTTP-EVIDENCE-MACHINE real authenticated router retains placeholders and durable masked bytes', async () => {
-    expect((await fetch(fixture.remoteUrl)).status).toBe(401)
-    const response = await fetch(fixture.remoteUrl, { headers: { Authorization: 'Bearer synthetic-evidence-client' } })
+    // 432-21 (D-12/D-13): the machine door is tokenless; what it refuses is a cross-site read.
+    expect((await fetch(fixture.remoteUrl, { headers: { Origin: 'https://evil.example' } })).status).toBe(403)
+    const response = await fetch(fixture.remoteUrl)
     expect(response.status).toBe(200)
     const raw = await response.text()
     expect(raw).toContain(fixture.authPlaceholder)
