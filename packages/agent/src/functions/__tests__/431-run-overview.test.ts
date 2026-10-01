@@ -58,7 +58,7 @@ const READER: FunctionCaller = {
   origin: 'agent',
 }
 
-const NO_AUDIT: AuditSink = { appendExecutionAudit() {}, appendGuardrailAudit() {} }
+const NO_AUDIT: AuditSink = { appendGuardrailAudit() {} }
 
 const sha = (seed: string) => createHash('sha256').update(seed).digest('hex')
 

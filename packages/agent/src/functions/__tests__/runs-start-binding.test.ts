@@ -34,7 +34,6 @@ import type {
 } from '@vostride/agent-qa-schema'
 import type {
   AuditSink,
-  ExecutionAuditRow,
   GuardrailAuditRow,
 } from '@vostride/agent-qa-safety'
 import { describe, expect, it } from 'vitest'
@@ -295,24 +294,22 @@ function deps(overrides: Partial<FunctionDeps> = {}): FunctionDeps {
   }
 }
 
+// 2026-10-01 (432-19, D-17): the audit port has one append, for guardrail rows, so `rows` is every
+// row a start could write; the cells that asserted no execution-audit row now assert no row at all.
 interface CapturedSink {
   sink: AuditSink
-  rows: () => readonly ExecutionAuditRow[]
+  rows: () => readonly GuardrailAuditRow[]
 }
 
 function capturingSink(): CapturedSink {
-  const executionRows: ExecutionAuditRow[] = []
   const guardrailRows: GuardrailAuditRow[] = []
   return {
     sink: {
-      appendExecutionAudit(row) {
-        executionRows.push(row)
-      },
       appendGuardrailAudit(row) {
         guardrailRows.push(row)
       },
     },
-    rows: () => executionRows,
+    rows: () => guardrailRows,
   }
 }
 
@@ -327,7 +324,6 @@ function registryWith(
     deps: deps(runInvocation === undefined ? {} : { runInvocation }),
     resolveExecutionContext: () => options.context ?? 'local-interactive',
     auditSink: options.auditSink ?? {
-      appendExecutionAudit() {},
       appendGuardrailAudit() {},
     },
   })
@@ -405,7 +401,7 @@ describe('bindingStatus is a fact about a COMPOSITION, computed (D-16)', () => {
     const registry = createRegistryFromSpecs([eagerlyBound], {
       deps: deps(),
       resolveExecutionContext: () => 'local-interactive',
-      auditSink: { appendExecutionAudit() {}, appendGuardrailAudit() {} },
+      auditSink: { appendGuardrailAudit() {} },
     })
 
     await expect(invokeFunction(registry, RUNS_START_FUNCTION_ID, {}, RUN_CALLER))
@@ -457,7 +453,7 @@ describe('mutating-local, proven through a DISPATCH (Pitfall 10 / D-16)', () => 
     const registry = createRegistryFromSpecs([shared], {
       deps: deps({ runInvocation: recorder.port }),
       resolveExecutionContext: () => 'ci',
-      auditSink: { appendExecutionAudit() {}, appendGuardrailAudit() {} },
+      auditSink: { appendGuardrailAudit() {} },
     })
 
     await expect(invokeFunction(registry, RUNS_START_FUNCTION_ID, {}, RUN_CALLER))

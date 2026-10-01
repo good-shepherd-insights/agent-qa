@@ -375,7 +375,8 @@ describe('a credential whose scope does not satisfy the gate is DENIED over the 
     expect(body.error).toBe('run_denied')
     expect(typeof body.neutralReason).toBe('string')
     expect((body.neutralReason as string).length).toBeGreaterThan(0)
-    expect(Array.isArray(body.remedies)).toBe(true)
+    // 432-19 (D-15): the body is the code and the plain reason, and no remedy list rides it.
+    expect(Object.keys(body).sort()).toEqual(['error', 'neutralReason'])
 
     // THE 399 DEFECT, ASSERTED CLOSED. `--trust-session` is declared on exactly one CLI command;
     // the gate's CANONICAL reason names it verbatim on this arm. A door that echoed that sentence

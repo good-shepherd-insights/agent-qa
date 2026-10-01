@@ -25,8 +25,8 @@
 // the input contract, the scope and origin checks and the binding check; nothing else is asked and
 // no decision row is written. The credential axis below is re-spelled accordingly.
 
-import { evaluate } from '@vostride/agent-qa-safety'
-import type { AuditSink, ExecutionAuditRow, GuardrailAuditRow } from '@vostride/agent-qa-safety'
+import * as safety from '@vostride/agent-qa-safety'
+import type { AuditSink, GuardrailAuditRow } from '@vostride/agent-qa-safety'
 import {
   CURRENT_HANDOFF_SCHEMA_VERSION,
   MASKED_RESOLVED_CONFIG_SCHEMA_VERSION,
@@ -151,27 +151,25 @@ const DEPS: FunctionDeps = {
   },
 }
 
+// 2026-10-01 (432-19, D-17): the audit port has one append, for guardrail rows, so `take` drains
+// every row an invocation could write; "no decision row" is now "no row of any kind".
 interface CapturedSink {
   sink: AuditSink
   /** Drain the rows written since the last drain, so each case reads its own trail. */
-  take: () => readonly ExecutionAuditRow[]
+  take: () => readonly GuardrailAuditRow[]
 }
 
 function capturingSink(): CapturedSink {
-  let executionRows: ExecutionAuditRow[] = []
-  const guardrailRows: GuardrailAuditRow[] = []
+  let auditRows: GuardrailAuditRow[] = []
   return {
     sink: {
-      appendExecutionAudit(row) {
-        executionRows.push(row)
-      },
       appendGuardrailAudit(row) {
-        guardrailRows.push(row)
+        auditRows.push(row)
       },
     },
     take() {
-      const drained = executionRows
-      executionRows = []
+      const drained = auditRows
+      auditRows = []
       return drained
     },
   }
@@ -560,27 +558,19 @@ describe('the credential flows to the gate untouched (D-13)', () => {
     expect(CALLER_A.credential).toEqual({ scope: { project: 'shop' } })
   })
 
-  it('is decisive at the gate once an action scope exists — the 384 boundary, stated', async () => {
-    // The counterfactual that keeps the case above from being vacuous. The shipped
-    // `scopeMatches` requires BOTH a populated credential scope and a populated ACTION
-    // scope; `invokeFunction` supplies no action scope in 384, which is precisely why the
-    // credential is inert above rather than ignored. Given the action scope a later phase
-    // will supply, the very same credential flips the verdict.
-    const withCredential = await evaluate(
-      askTierSpec.risk,
-      'local-interactive',
-      { credential: CREDENTIAL, actionScope: CREDENTIAL.scope },
-      {},
-    )
-    const withoutCredential = await evaluate(
-      askTierSpec.risk,
-      'local-interactive',
-      { actionScope: CREDENTIAL.scope },
-      {},
-    )
-
-    expect(withCredential.verdict).toBe('allow')
-    expect(withoutCredential.verdict).toBe('deny')
+  // RE-SPELLED 2026-10-01 (432-19, D-15) from 'is decisive at the gate once an action scope exists
+  // — the 384 boundary, stated'. That counterfactual drove the gate's `evaluate` with an action
+  // scope to show the credential could flip a verdict there. The gate and its scope check are
+  // deleted, so there is no layer at which the credential can be decisive: the case above is no
+  // longer the inert half of a pair, it is the whole answer.
+  it('C432-NO-EVALUATE: is decisive nowhere — the gate that could read it is gone', async () => {
+    expect(Object.keys(safety)).not.toContain('evaluate')
+    expect(Object.keys(safety)).not.toContain('scopeMatches')
+    // Served with and without the credential, in every context, with no row either way.
+    await expect(invokeFunction(askRegistry, 'synthetic.ask', {}, CALLER_A)).resolves.toEqual({ ok: true })
+    await expect(invokeFunction(askRegistry, 'synthetic.ask', {}, { ...CALLER_A, credential: undefined }))
+      .resolves.toEqual({ ok: true })
+    expect(askAudit.take()).toEqual([])
   })
 })
 

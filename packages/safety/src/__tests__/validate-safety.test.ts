@@ -235,7 +235,10 @@ const CONTEXT_BUILDER_PACKAGES = ['core', 'model'] as const
 
 // The host adapter package that writes audit trails; no context builder may import it.
 const SAFETY_LOCAL_PACKAGE = '@vostride/agent-qa-safety-local'
-// The audit sink symbol and the JSONL trail filenames it writes.
+// The audit sink symbol and the JSONL trail filenames. 2026-10-01 (432-19, D-17/D-22): the sink
+// writes `guardrail_audit.jsonl` only, and `execution_audit.jsonl` has no writer; an old one stays in
+// a workspace and is never read. It stays a needle here for exactly that reason — a context builder
+// that started reading the legacy trail would be the first reader it ever had.
 const AUDIT_SINK_SYMBOL = 'JsonlAuditSink'
 const AUDIT_TRAIL_FILES = ['execution_audit.jsonl', 'guardrail_audit.jsonl'] as const
 
@@ -327,6 +330,17 @@ describe('SAFE-03 (c) audit-into-context import firewall', () => {
     ).toEqual([
       'packages/core/src/agent/context.ts:1 | @vostride/agent-qa-safety-local | R1 context builder must not import the audit host adapter @vostride/agent-qa-safety-local',
       'packages/core/src/agent/context.ts:2 | JsonlAuditSink | R2 context builder must not reference the audit sink symbol',
+    ])
+  })
+
+  it('C432-AUDIT-UNREAD: a context builder naming the legacy execution-audit trail is still an offender', () => {
+    expect(
+      findAuditFirewallOffenders(
+        'packages/core/src/agent/context.ts',
+        "const legacy = readFileSync(join(root, 'execution_audit.jsonl'), 'utf8')",
+      ),
+    ).toEqual([
+      'packages/core/src/agent/context.ts:1 | execution_audit.jsonl | R3 context builder must not reference an audit trail filename',
     ])
   })
 

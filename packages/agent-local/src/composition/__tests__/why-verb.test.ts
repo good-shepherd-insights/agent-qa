@@ -247,7 +247,6 @@ describe('knowledge.brief.why answers from the persisted trace (387-06)', () => 
         },
       },
       auditSink: {
-        appendExecutionAudit() {},
         appendGuardrailAudit() {},
       } as never,
       resolveExecutionContext: () => 'local-headless',

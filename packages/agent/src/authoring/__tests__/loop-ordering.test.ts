@@ -539,7 +539,7 @@ describe('the loop has exactly one public entry', () => {
     const registry = createFunctionRegistry({
       deps: minimalDeps(),
       resolveExecutionContext: () => 'local-interactive',
-      auditSink: { appendExecutionAudit() {}, appendGuardrailAudit() {} },
+      auditSink: { appendGuardrailAudit() {} },
     })
 
     const authoringIds = registry

@@ -71,7 +71,7 @@ function explainRegistry(port: CapabilityCatalogPort): FunctionRegistry {
     deps: { capabilityCatalog: port } as unknown as Parameters<
       typeof createFunctionRegistry
     >[0]['deps'],
-    auditSink: { appendExecutionAudit() {}, appendGuardrailAudit() {} },
+    auditSink: { appendGuardrailAudit() {} },
     // PINNED, on Pitfall 3's rule: a verdict computed against the ambient resolver is one answer on
     // a laptop and another on a runner, and these cells state what the op ANSWERS.
     resolveExecutionContext: () => 'local-interactive',
@@ -394,7 +394,7 @@ describe('a composition with no catalog port refuses BY NAME (D-09)', () => {
     // data still SOUNDS like an explain, so the honest report is a refusal naming the capability.
     const registry = createFunctionRegistry({
       deps: {} as unknown as Parameters<typeof createFunctionRegistry>[0]['deps'],
-      auditSink: { appendExecutionAudit() {}, appendGuardrailAudit() {} },
+      auditSink: { appendGuardrailAudit() {} },
       resolveExecutionContext: () => 'local-interactive',
     })
     await expect(

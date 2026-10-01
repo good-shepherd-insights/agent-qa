@@ -1,70 +1,34 @@
 import { expectTypeOf } from 'vitest'
 import type {
   ContextHookResult,
-  ExecutionPolicyResult,
-  GateRemedy,
   ExecutionContext,
   MaskingContext,
-  PolicyVerdict,
   RiskTier,
   ScanAction,
   ScanResult,
+  ToolCallHookDenyResult,
   ToolCallHookResult,
   ToolResultHookResult,
 } from '../../index'
 
-const policyResult: ExecutionPolicyResult = {
-  verdict: 'allow',
-  reason: 'read-only action',
-  riskTier: 'read-only',
-  remedies: [],
-  neutralReason: 'read-only action',
-}
+// 2026-10-01 (432-19, D-15). The exact-shape pin on `ExecutionPolicyResult` (verdict, reason, tier,
+// remedies, neutral reason) and its three invalid-member cells retire with the gate: the result, its
+// `PolicyVerdict` and the remedy vocabulary are deleted, and each is now a type a consumer cannot
+// name. The risk tier keeps its five-member exact pin because eval scores side effects with it.
 
-expectTypeOf(policyResult.verdict).toEqualTypeOf<PolicyVerdict>()
-expectTypeOf(policyResult.riskTier).toEqualTypeOf<RiskTier>()
-// 400 D-15 reconciled the exact-shape pin: the decision gained a FOURTH member, and 400's gap
-// round 1 a FIFTH (`neutralReason`, the prose half of the same finding). The pin is restated each
-// time rather than loosened — an `expectTypeOf(...).toMatchTypeOf` here would have let any later
-// member arrive unannounced, and the point of an exact pin on this type is that a field reaching
-// every surface's render cannot be added quietly.
-expectTypeOf<ExecutionPolicyResult>().toEqualTypeOf<{
-  verdict: PolicyVerdict
-  reason: string
-  riskTier: RiskTier
-  remedies: readonly GateRemedy[]
-  neutralReason: string
-}>()
+// @ts-expect-error C432-REMEDY-TYPES-ABSENT: the execution-policy result is deleted
+export type RetiredExecutionPolicyResult = import('../../index').ExecutionPolicyResult
+// @ts-expect-error C432-REMEDY-TYPES-ABSENT: the allow/ask/deny verdict is deleted
+export type RetiredPolicyVerdict = import('../../index').PolicyVerdict
 
-const invalidVerdict: ExecutionPolicyResult = {
-  // @ts-expect-error ExecutionPolicyResult uses allow | ask | deny; `auto` belonged to the
-  // superseded v44 policy vocabulary, deleted in 391 (D-09), and is named here by role rather
-  // than by identifier so a token scan cannot read this line as its resurrection.
-  verdict: 'auto',
-  reason: 'a policy word from the deleted vocabulary',
-  riskTier: 'read-only',
-  remedies: [],
-  neutralReason: 'a policy word from the deleted vocabulary',
-}
+expectTypeOf<RiskTier>().toEqualTypeOf<
+  'read-only' | 'mutating-local' | 'mutating-shared' | 'destructive' | 'restricted'
+>()
+// @ts-expect-error riskTier is the five-member execution-risk union.
+export const invalidRiskTier: RiskTier = 'shared'
 
-const invalidRiskTier: ExecutionPolicyResult = {
-  verdict: 'allow',
-  reason: 'invalid risk tier',
-  // @ts-expect-error riskTier is the five-member execution-risk union.
-  riskTier: 'shared',
-  remedies: [],
-  neutralReason: 'invalid risk tier',
-}
-
-const invalidRemedyKind: ExecutionPolicyResult = {
-  verdict: 'deny',
-  reason: 'a remedy kind outside the closed vocabulary',
-  riskTier: 'mutating-shared',
-  // @ts-expect-error GateRemedyKind is closed; a surface cannot be told to do something the
-  // vocabulary never declared, which is the whole of D-15's guard shape.
-  remedies: [{ kind: 'email-the-admin' }],
-  neutralReason: 'a remedy kind outside the closed vocabulary',
-}
+// A deny result carries a reason and nothing a gate decided: no policy result rides it.
+expectTypeOf<ToolCallHookDenyResult>().toEqualTypeOf<{ action: 'deny'; reason: string }>()
 
 expectTypeOf<ScanResult['action']>().toEqualTypeOf<ScanAction>()
 expectTypeOf<ScanResult>().toEqualTypeOf<{

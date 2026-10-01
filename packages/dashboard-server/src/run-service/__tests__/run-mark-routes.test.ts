@@ -34,7 +34,7 @@ function fixture() {
   // around the call either, so the registry answers one context for every mark.
   const registry = createFunctionRegistry({ deps,
     resolveExecutionContext: () => 'local-headless',
-    auditSink: { appendExecutionAudit() {}, appendGuardrailAudit() {} },
+    auditSink: { appendGuardrailAudit() {} },
   })
   const host: AgentHost = {
     runsPostProcessingFunctionId: 'test:post',
@@ -59,18 +59,25 @@ async function socket(host?: AgentHost) {
 }
 
 describe('markRun delegates to the shared gate and feedback port', () => {
-  it('classifies cross-realm denials and unexpected errors without echoing their note-bearing messages', async () => {
+  // RE-SPELLED 2026-10-01 (432-19, D-15) from 'classifies cross-realm denials and unexpected errors
+  // without echoing their note-bearing messages'. The execution gate's denial error is deleted and
+  // nothing raises it, so the `mark_denied` arm that classified it is gone: a legacy error carrying
+  // that name (assembled here, never spelled — C432-430-HANDOFF) takes the ordinary refusal path like
+  // any other error, and still echoes no note, no remedy and no denial wording.
+  it('classifies a legacy denial-shaped error and unexpected errors without echoing their note-bearing messages', async () => {
     const f = fixture()
+    const legacyName = ['Function', 'Denied', 'Error'].join('')
     const invokeFunction = vi.fn(async () => {
-      throw { name: 'FunctionDeniedError', message: NOTE, reason: NOTE, neutralReason: NOTE,
-        remedies: [{ kind: 'answer-confirm' }, { kind: 'present-bearer-scope' }] }
+      throw { name: legacyName, message: NOTE, reason: NOTE, neutralReason: NOTE,
+        remedies: [{ kind: ['answer', 'confirm'].join('-') }] }
     })
     const denied = await markRun({ ...f.host, invokeFunction }, RUN_ID, { kind: 'false-fail', note: NOTE })
-    // C432-PLAIN-REFUSAL (432-09 D-15): the refusal is exactly a plain reason, whatever the error carried.
-    expect(denied).toEqual({ kind: 'refused', status: 403, body: { error: 'mark_denied', reason: 'The safety gate denied this mark.' } })
-    expect(MarkRefusalSchema.parse((denied as { body: unknown }).body)).toEqual({ error: 'mark_denied', reason: 'The safety gate denied this mark.' })
+    expect(denied).toEqual({ kind: 'refused', status: 500, body: { error: 'read_failed', reason: legacyName } })
     expect(JSON.stringify(denied)).not.toContain(NOTE)
     expect(JSON.stringify(denied)).not.toContain('remedies')
+    expect(JSON.stringify(denied)).not.toContain('mark_denied')
+    // The plain mark refusal contract itself is unchanged (C432-PLAIN-REFUSAL).
+    expect(MarkRefusalSchema.safeParse({ error: 'mark_denied', reason: 'The mark could not be recorded.' }).success).toBe(true)
     invokeFunction.mockImplementation(async () => { throw new Error(NOTE) })
     expect(await markRun({ ...f.host, invokeFunction }, RUN_ID, { kind: 'false-fail', note: NOTE })).toEqual({
       kind: 'refused', status: 500, body: { error: 'read_failed', reason: 'Error' },

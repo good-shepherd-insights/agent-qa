@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest'
 
 import { createProviderRequestMiddleware } from '../../egress/provider-request-middleware'
 import { createHookRegistry } from '../../hooks/registry'
-import type { AuditSink, ExecutionAuditRow, GuardrailAuditRow } from '../../ports/audit-sink'
+import type { AuditSink, GuardrailAuditRow } from '../../ports/audit-sink'
 import { defaultGuardrailPolicyInput, loadGuardrailPolicy } from '../policy-loader'
 import { createGuardrailStreamScan, type LanguageModelV3StreamPart } from '../stream-scan'
 
@@ -15,10 +15,6 @@ const policy = loadGuardrailPolicy(defaultGuardrailPolicyInput)
 
 class FakeAuditSink implements AuditSink {
   readonly guardrailRows: GuardrailAuditRow[] = []
-
-  appendExecutionAudit(_row: ExecutionAuditRow): void {
-    throw new Error('execution audit should not be written by guardrail stream scan')
-  }
 
   appendGuardrailAudit(row: GuardrailAuditRow): void {
     this.guardrailRows.push(row)

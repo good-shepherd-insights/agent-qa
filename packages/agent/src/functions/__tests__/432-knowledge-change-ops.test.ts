@@ -114,7 +114,7 @@ function deps(knowledgeReview: KnowledgeReviewPort): FunctionDeps {
   }
 }
 
-const SINK = { appendExecutionAudit() {}, appendGuardrailAudit() {} } as unknown as AuditSink
+const SINK = { appendGuardrailAudit() {} } as unknown as AuditSink
 
 function registry(port: KnowledgeReviewPort, context: ExecutionContext = 'local-interactive') {
   return createFunctionRegistry({

@@ -1,42 +1,8 @@
-import type {
-  ContentOrigin,
-  ExecutionContext,
-  PolicyVerdict,
-  RiskTier,
-  ScanAction,
-} from '@vostride/agent-qa-schema'
+import type { ContentOrigin, ScanAction } from '@vostride/agent-qa-schema'
 
-export interface ExecutionAuditRow {
-  runId?: string
-  actionId?: string
-  /**
-   * Coded execution context the decision resolved under
-   * (local-interactive, local-headless, ci, or cloud). Additive SEAM-02
-   * correlation (D-13): the run stamps it so gate rows are self-describing.
-   */
-  executionContext?: ExecutionContext
-  /**
-   * Secret-free coded action value, e.g. tool_call or delete_resource.
-   */
-  action: string
-  riskTier: RiskTier
-  verdict: PolicyVerdict
-  /**
-   * Secret-free coded outcome value:
-   * proceeded, prompted-approved, prompted-denied, fail-closed-denied, blocked,
-   * or session-pin-denied (392 D-21 — a session `/pin` refused the action class).
-   */
-  outcome: string
-  reason: string
-  /**
-   * Trust source that satisfied an ask. Either a MECHANISM —
-   * session-trust-mode, trust-credential, standing-approval —
-   * or, when a person was asked, the SURFACE they answered on (G-401-17):
-   * tty-prompt (a terminal) or browser-click (a click in a browser).
-   * Omitted for allow, deny, and fail-closed outcomes.
-   */
-  trustSource?: string
-}
+// 2026-10-01 (432-19, D-17): the audit contract is the GUARDRAIL contract. The execution-policy row
+// and its append method left with the gate that wrote them; nothing produces an execution-audit
+// trail any more, and an old one on disk is never read (D-22). Masking and egress rows land here.
 
 export interface GuardrailAuditRow {
   runId?: string
@@ -51,6 +17,5 @@ export interface GuardrailAuditRow {
 }
 
 export interface AuditSink {
-  appendExecutionAudit(row: ExecutionAuditRow): void | Promise<void>
   appendGuardrailAudit(row: GuardrailAuditRow): void | Promise<void>
 }

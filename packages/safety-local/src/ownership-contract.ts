@@ -4,12 +4,11 @@ export const AGENT_QA_SAFETY_LOCAL_PACKAGE_NAME = '@vostride/agent-qa-safety-loc
 export const AGENT_QA_SAFETY_LOCAL_PACKAGE_DIR = 'packages/safety-local'
 export const AGENT_QA_SAFETY_LOCAL_PACKAGE_CLASSES = ['storageImplementation'] as const
 export const AGENT_QA_SAFETY_LOCAL_ALLOWED_RESPONSIBILITIES = [
-  'local JSONL audit writer implementation behind the safety AuditSink port',
+  'local JSONL guardrail audit writer implementation behind the safety AuditSink port',
   'local guardrail configuration loader implementation for execution safety',
   'filesystem access for local safety audit and guardrail configuration adapters',
   'local AsyncLocalStorage run-safety scope binding behind the safety masking-context, execution-context, and audit-sink resolver seams',
   'host execution-context detection behind the safety resolver seam',
-  'host readline confirm adapter behind the safety confirm port',
 ] as const
 export const AGENT_QA_SAFETY_LOCAL_FORBIDDEN_RESPONSIBILITIES = [
   'provider invocation ownership',

@@ -941,45 +941,16 @@ export async function runAuthoringLoop(
   // COVER REPAIR — `repairDraft` screens each patched candidate at its own site, per iteration.
   screenDraftForCredentials(draft)
 
-  // D-08's DISPATCH SCOPE OPENS HERE, and the position is the whole of what this loop decides.
-  //
-  // ABOVE stage 4 because stage 4 is the FIRST line that can spend a run: `verifyDraft` dispatches
-  // the evaluation, which takes the initial stability gate, and `routeAfterVerify` below takes the
-  // repair probes and the final gate. Everything before this point — the brief, the dedup screen,
-  // the compile, the refinement round, the credential screen — reaches a model and a corpus and
-  // never a target, so a scope opened at the top of this function would hold an approval open
-  // across a model call for no reason at all.
-  //
-  // AND IT OPENS ONLY WHERE THE APPROVAL WAS ACTUALLY GIVEN. This function is unreachable unless
-  // `fn:authoring.draft.write`'s gate allowed — it is `mutating-shared` and it renders the fan-out
-  // preview, which is D-03's one ask — so reaching this line IS the approval, and the stage-2
-  // dedup refusal above returns before it, never opening a scope for an invocation that was never
-  // going to run anything.
-  //
-  // DISPOSAL IS THE SCOPE'S OWN `finally`, not this function's (401-13). Stage 4 can throw (a
-  // credential screen, an unparsable receipt, a host error), and a grant that survived a thrown
-  // dispatch would be an approval with no expiry at all — the exact elevation T-401-22 names. The
-  // scope releases on every exit, including the ones nobody planned, and the loop cannot forget to.
-  //
-  // AND RUNNING THE DISPATCH *INSIDE* THE SCOPE IS THE POINT (verification gap CR-03). The lease
-  // pair this replaced told the run gate only that SOME dispatch was open, so every concurrent
-  // caller on the host collected the grant. Everything this call starts — stage 4's evaluation, the
-  // repair probes, the final gate — runs in the scope's own async tree, and that is the fact the
-  // gate reads. A run started anywhere else is a run this dispatch did not ask for.
-  const scope = deps.shelf.dispatchGrants
-  const dispatch = async (): Promise<AuthoringLoopResult> =>
-    await runAuthoringLoopDispatch(input, deps, { stages, previewed, dedup, draft, refinement })
-  // ABSENT PORT, UNCHANGED POSTURE: the loop runs the dispatch directly, exactly as it did before
-  // D-08 existed. An optional affordance must not become a binding requirement.
-  if (scope === undefined) return await dispatch()
-  return await scope.within(dispatch)
+  // 2026-10-01 (432-19, D-15): the dispatch runs directly. The optional dispatch-grant scope that
+  // used to wrap stages 4-6 is deleted; no host bound it after 432-18 and nothing asks for an
+  // approval a gate run could collect.
+  return await runAuthoringLoopDispatch(input, deps, { stages, previewed, dedup, draft, refinement })
 }
 
 /**
- * Stages 4-6 — everything inside D-08's dispatch scope.
+ * Stages 4-6 — the dispatch: verification, routing and the final write.
  *
- * SPLIT OUT SO THE SCOPE IS A BLOCK rather than a pair of statements a later edit could drift
- * apart. `stages`, `previewed` and `dedup` are threaded rather than recomputed: `previewed` in
+ * `stages`, `previewed` and `dedup` are threaded rather than recomputed: `previewed` in
  * particular must stay the SAME value the caller derived, because the fan-out report's whole claim
  * is that the number a person approved and the number they are shown afterwards are one function
  * of one input.

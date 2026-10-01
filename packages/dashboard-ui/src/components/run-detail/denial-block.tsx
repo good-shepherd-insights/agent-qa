@@ -1,5 +1,5 @@
-// The dashboard renders a denial's neutral reason only; its remedy projection is declared empty.
-// The gate's canonical prose never reaches the DOM.
+// The dashboard renders a denial's plain reason only. 2026-10-01 (432-19, D-15): there is no remedy
+// vocabulary to project, so the block has one line and no way to grow a suggested command.
 
 export function DenialBlock({ neutralReason }: { neutralReason: string }) {
   return (

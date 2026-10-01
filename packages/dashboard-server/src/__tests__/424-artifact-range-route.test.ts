@@ -28,7 +28,7 @@ beforeEach(async () => {
   sha = new FsEvidenceArtifactStore({ root, runId }).persistDecisionScreenshot(bytes).sha
   const registry = createFunctionRegistry({
     deps: { evidenceBlobs: createEvidenceBlobReader({ agentQaRoot: root }) } as FunctionDeps,
-    auditSink: { appendExecutionAudit() {}, appendGuardrailAudit() {} },
+    auditSink: { appendGuardrailAudit() {} },
     resolveExecutionContext: () => 'local-interactive',
   })
   const host = {

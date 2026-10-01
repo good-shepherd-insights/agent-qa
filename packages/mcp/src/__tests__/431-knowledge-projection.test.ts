@@ -104,7 +104,6 @@ const CANONICAL_CONTRACTS: Readonly<Record<string, CanonicalContract>> = {
 }
 
 const auditSink = {
-  appendExecutionAudit() {},
   appendGuardrailAudit() {},
 } as unknown as CreateFunctionRegistryOptions['auditSink']
 

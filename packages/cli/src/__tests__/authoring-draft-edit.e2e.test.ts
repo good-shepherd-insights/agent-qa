@@ -184,7 +184,7 @@ function harness(emission: string, options: { readonly beforeAnswer?: () => void
     registry: createFunctionRegistry({
       deps,
       resolveExecutionContext: () => 'local-interactive',
-      auditSink: { appendExecutionAudit() {}, appendGuardrailAudit() {} },
+      auditSink: { appendGuardrailAudit() {} },
     }),
     runStarts: () => runStarts,
   }

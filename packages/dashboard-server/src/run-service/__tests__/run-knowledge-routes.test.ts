@@ -153,7 +153,7 @@ function composeRegistry(document: CompletedRunHandoff | undefined): FunctionReg
   return createFunctionRegistry({
     deps: depsOver(document),
     // Discards every row: this file asserts on the path, never on the audit trail.
-    auditSink: { appendExecutionAudit() {}, appendGuardrailAudit() {} },
+    auditSink: { appendGuardrailAudit() {} },
     resolveExecutionContext: () => 'local-interactive',
   })
 }

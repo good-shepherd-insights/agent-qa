@@ -38,7 +38,7 @@ const caller: FunctionCaller = {
   surface: 'mcp', grantedScopes: EVERY_SCOPE, safeMode: false, origin: 'agent',
   credential: { scope: schema.STANDING_APPROVAL_SCOPE },
 }
-const auditSink = { appendExecutionAudit() {}, appendGuardrailAudit() {} } as unknown as CreateFunctionRegistryOptions['auditSink']
+const auditSink = { appendGuardrailAudit() {} } as unknown as CreateFunctionRegistryOptions['auditSink']
 
 function handoff(runId: string, endedAt: number): CompletedRunHandoff {
   return {

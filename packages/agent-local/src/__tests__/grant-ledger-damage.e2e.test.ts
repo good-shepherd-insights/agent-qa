@@ -41,7 +41,7 @@ import type {
   KnowledgeChangeOutput,
   MaskedResolvedConfig,
 } from '@vostride/agent-qa-schema'
-import type { AuditSink, ExecutionAuditRow, GuardrailAuditRow } from '@vostride/agent-qa-safety'
+import type { AuditSink, GuardrailAuditRow } from '@vostride/agent-qa-safety'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import {
@@ -101,14 +101,15 @@ const HUMAN: FunctionCaller = {
   origin: 'human',
 }
 
-function capturingSink(): AuditSink & { rows: ExecutionAuditRow[] } {
-  const rows: ExecutionAuditRow[] = []
+// 2026-10-01 (432-19, D-17): the audit port has one append, for guardrail rows, so `rows` is every
+// row an invocation could write; "no execution-audit row" is now "no audit row of any kind".
+function capturingSink(): AuditSink & { rows: GuardrailAuditRow[] } {
+  const rows: GuardrailAuditRow[] = []
   return {
     rows,
-    appendExecutionAudit(row: ExecutionAuditRow) {
+    appendGuardrailAudit(row: GuardrailAuditRow) {
       rows.push(row)
     },
-    appendGuardrailAudit(_row: GuardrailAuditRow) {},
   }
 }
 

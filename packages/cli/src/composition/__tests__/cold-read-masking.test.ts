@@ -469,7 +469,7 @@ describe('Wave 18 cold read masking recovery', () => {
     writeFileSync(p.secretFile, `VALUE=${secret}\n`)
     await publish(p, snapshot(p.runId, [secret]))
     const read = cold(p)
-    const sink = { appendExecutionAudit() {}, appendGuardrailAudit() {} }
+    const sink = { appendGuardrailAudit() {} }
     let active: MaskingContext | undefined
     const original = CurationSnapshotSchema.safeParse.bind(CurationSnapshotSchema)
     vi.spyOn(CurationSnapshotSchema, 'safeParse').mockImplementation((...args) => {

@@ -252,7 +252,7 @@ function registryFor(options: { readonly confirm?: boolean } = {}) {
 
   return createFunctionRegistry({
     deps,
-    auditSink: { appendExecutionAudit() {}, appendGuardrailAudit() {} },
+    auditSink: { appendGuardrailAudit() {} },
     resolveExecutionContext: () => 'local-interactive',
     // A SPY, so "the confirm was reached" is a measurement rather than an inference from the turn
     // having completed (D-14). Omitted entirely for the fail-closed cell.
@@ -1067,7 +1067,7 @@ function directRegistry() {
   } as unknown as FunctionDeps
   return createFunctionRegistry({
     deps,
-    auditSink: { appendExecutionAudit() {}, appendGuardrailAudit() {} },
+    auditSink: { appendGuardrailAudit() {} },
     resolveExecutionContext: () => 'local-interactive',
   })
 }

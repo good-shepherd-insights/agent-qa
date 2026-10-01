@@ -118,7 +118,6 @@ const callerWith = (grantedScopes: readonly FunctionScope[]): FunctionCaller => 
 const identity = (text: string): string => text
 
 const auditSink = {
-  appendExecutionAudit() {},
   appendGuardrailAudit() {},
 } as unknown as CreateFunctionRegistryOptions['auditSink']
 

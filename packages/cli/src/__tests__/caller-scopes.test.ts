@@ -69,7 +69,7 @@ function benchAt(ctx: ExecutionContext) {
   return createFunctionRegistry({
     deps: {} as unknown as FunctionDeps,
     resolveExecutionContext: () => ctx,
-    auditSink: { appendExecutionAudit() {}, appendGuardrailAudit() {} },
+    auditSink: { appendGuardrailAudit() {} },
   })
 }
 

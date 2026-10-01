@@ -7,7 +7,10 @@
 // cannot even be handed a port: the presentation confirm contract and its CLI producer are deleted.
 // SINCE 432-16 (D-14/D-15) the composition cannot be handed one either: `confirm` and `chatConfirm`
 // are gone from both composition inputs, so the second describe smuggles its ports past the type as
-// excess fields and pins that nothing reads them. The history below is kept as written.
+// excess fields and pins that nothing reads them. SINCE 432-19 (D-14/D-15/D-17) the confirm port,
+// its answering-surface vocabulary, the gate and the execution-audit row are all deleted, so the
+// ports here are a local shape and "no prompted row" is read as "no execution-audit row at all".
+// The history below is kept as written.
 //
 // The gate now records the surface the composition DECLARED rather than the mechanism rung (e) used
 // to hardcode. Declaring it is a compile obligation — `packages/safety/src/ports/__tests__/
@@ -33,7 +36,6 @@ import { join, resolve } from 'node:path'
 import { invokeFunction } from '@vostride/agent-qa-agent'
 import { buildRunAuditSink } from '@vostride/agent-qa-agent-local'
 import { RUNS_SUBDIR, slugBranch } from '@vostride/agent-qa-runner-local'
-import type { ConfirmPort, ExecutionAuditRow } from '@vostride/agent-qa-safety'
 import { runSafetyScope } from '@vostride/agent-qa-safety-local'
 import { describe, expect, it } from 'vitest'
 
@@ -45,11 +47,23 @@ import { buildRunSafetyHooks } from '../run-session-composition.js'
 
 const ASK_TIER_ACTION = { name: 'delete_record', recognized: true } as const
 
-function auditRowsAt(dir: string): ExecutionAuditRow[] {
+/** The confirm shape an old host bound (safety no longer publishes it, 432-19). */
+interface ConfirmPort {
+  readonly surface: 'tty-prompt' | 'browser-click'
+  readonly ask: (action: { readonly name: string }) => boolean
+}
+
+/** The legacy execution-audit row, by the two fields these cells read. Nothing writes one (432-19). */
+interface LegacyExecutionAuditRow {
+  readonly outcome?: unknown
+  readonly trustSource?: unknown
+}
+
+function auditRowsAt(dir: string): LegacyExecutionAuditRow[] {
   return readFileSync(join(dir, 'execution_audit.jsonl'), 'utf8')
     .trim()
     .split('\n')
-    .map((line) => JSON.parse(line) as ExecutionAuditRow)
+    .map((line) => JSON.parse(line) as LegacyExecutionAuditRow)
 }
 
 /** A confirm binding that records being asked, declaring the surface it stands in for. */
@@ -57,7 +71,7 @@ function recording(surface: 'tty-prompt' | 'browser-click', calls: string[]): Co
   return { surface, ask: (action) => { calls.push(`${surface}:${action.name}`); return true } }
 }
 
-function auditRowsIfAny(dir: string): ExecutionAuditRow[] {
+function auditRowsIfAny(dir: string): LegacyExecutionAuditRow[] {
   try {
     return auditRowsAt(dir)
   } catch {
@@ -81,14 +95,12 @@ describe('a decorator forwards the surface of the port it wraps', () => {
       const auditSink = buildRunAuditSink({
         configDir,
         runId,
-        executionContext: 'local-interactive',
       })
       const calls: string[] = []
 
-      const smuggled = { confirm: recording(surface, calls), trustMode: true }
+      const smuggled = { confirm: recording(surface, calls), trustMode: true, executionContext: 'local-interactive' }
       const { safetyHooks, confirmPausedMs } = buildRunSafetyHooks({
         auditSink,
-        executionContext: 'local-interactive',
         ...smuggled,
       })
 
@@ -97,7 +109,8 @@ describe('a decorator forwards the surface of the port it wraps', () => {
       expect(calls).toEqual([])
       expect(confirmPausedMs()).toBe(0)
       const rows = auditRowsIfAny(join(resolve(configDir, '.agent-qa'), RUNS_SUBDIR, slugBranch(runId)))
-      expect(rows.filter((row) => row.outcome === 'prompted-approved')).toEqual([])
+      // 432-19: no row of any outcome lands, because nothing writes the execution-audit trail.
+      expect(rows).toEqual([])
       expect(rows.map((row) => row.trustSource)).not.toContain(surface)
     },
   )
@@ -121,7 +134,7 @@ describe('the two-port seam names the port that actually answered', () => {
   async function revokeThrough(input: {
     readonly chat?: ConfirmPort
     readonly door: ConfirmPort
-  }): Promise<ExecutionAuditRow[]> {
+  }): Promise<LegacyExecutionAuditRow[]> {
     const ws = workspace()
     const chat = input.chat
     // 432-16: neither input declares these any more, so they can only arrive as excess fields.
@@ -167,5 +180,8 @@ describe('the two-port seam names the port that actually answered', () => {
     expect(calls).toEqual([])
     expect(withChat.filter((row) => row.outcome === 'prompted-approved')).toEqual([])
     expect(doorOnly.filter((row) => row.outcome === 'prompted-approved')).toEqual([])
+    // 432-19: and no execution-audit row of any outcome, on either arm.
+    expect(withChat).toEqual([])
+    expect(doorOnly).toEqual([])
   })
 })

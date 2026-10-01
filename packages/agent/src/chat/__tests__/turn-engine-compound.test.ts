@@ -84,9 +84,12 @@ const PLANNER_CALLER: FunctionCaller = {
   origin: 'agent',
 }
 
-/** The refusal shape `invokeFunction` publishes, as a scripted stand-in with the same NAME. */
-class FunctionDeniedError extends Error {
-  override readonly name = 'FunctionDeniedError'
+/**
+ * A refusal shape `invokeFunction` publishes, as a scripted stand-in with the same NAME.
+ * 2026-10-01 (432-19): the input refusal, since the gate's denial error is deleted.
+ */
+class FunctionInputError extends Error {
+  override readonly name = 'FunctionInputError'
 }
 
 interface MemoryLog extends SessionLogPort {
@@ -220,7 +223,6 @@ const FOLD_REGISTRY = createRegistryFromSpecs(
     // RETURN path, which is where folds run. The sink exists because D-11 refuses a sinkless one.
     deps: {} as unknown as FunctionDeps,
     auditSink: {
-      appendExecutionAudit: () => { /* nothing dispatches here */ },
       appendGuardrailAudit: () => { /* nothing dispatches here */ },
     },
   },
@@ -293,7 +295,7 @@ function harness(options: HarnessOptions = {}): Harness {
     invoke: (functionId, input, caller) => {
       ordering.push(`invoke:${functionId}`)
       invocations.push({ functionId, input, caller })
-      if (functionId === options.failOn) return Promise.reject(new FunctionDeniedError('denied'))
+      if (functionId === options.failOn) return Promise.reject(new FunctionInputError('refused'))
       // 399.1: the envelope, run through the REAL composition-root fold (399.1-03).
       //
       // It used to script `{ status: 'executed', outcome: '' }` for everything, which was right
@@ -663,7 +665,7 @@ describe('turn engine stage 3/4: atomicity, ordered execution, receipts, per-sta
       expect(result.receipts[1]).toMatchObject({
         status: 'failed',
         functionId: RUNS_LIST,
-        outcome: 'FunctionDeniedError',
+        outcome: 'FunctionInputError',
       })
     })
 

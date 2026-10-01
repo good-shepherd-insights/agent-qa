@@ -137,7 +137,7 @@ function registryWith(postProcessing: PostProcessingReaderPort | undefined) {
   return createFunctionRegistry({
     deps: deps(postProcessing === undefined ? {} : { postProcessing }),
     resolveExecutionContext: () => 'local-headless',
-    auditSink: { appendExecutionAudit() {}, appendGuardrailAudit() {} },
+    auditSink: { appendGuardrailAudit() {} },
   })
 }
 
@@ -405,7 +405,7 @@ async function statusWithHandoff(
       },
     }),
     resolveExecutionContext: () => 'local-headless',
-    auditSink: { appendExecutionAudit() {}, appendGuardrailAudit() {} },
+    auditSink: { appendGuardrailAudit() {} },
   })
   const status = await invokeFunction(
     registry,

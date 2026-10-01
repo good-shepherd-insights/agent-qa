@@ -128,7 +128,7 @@ it('refuses a real gold mark published after capture without mixing staged weigh
   expect(await f.invoke({ commit: true, onBoundary: stage => {
     if (stage !== 'before-marker') return
     const frozen = api.freezeGoldenTrajectory({ agentQaRoot: f.agentQaRoot, committedRoot: f.committedRoot,
-      product: 'shop', handoff: f.handoff, mark, auditSink: { appendExecutionAudit() {}, appendGuardrailAudit() {} } })
+      product: 'shop', handoff: f.handoff, mark, auditSink: { appendGuardrailAudit() {} } })
     expect(frozen.kind).toBe('frozen')
     if (frozen.kind !== 'frozen') throw new Error('gold publication refused')
     write(f.agentQaRoot, `runs/${f.handoff.runId}/marks.jsonl`, JSON.stringify({ ...mark, gold: frozen.cases }) + '\n')

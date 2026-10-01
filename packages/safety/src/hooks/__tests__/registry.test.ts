@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 
 import { createProviderRequestMiddleware } from '../../egress/provider-request-middleware'
 import { FIRST_PARTY, FirstPartyHookError } from '../capability'
-import type { AuditSink, ExecutionAuditRow, GuardrailAuditRow } from '../../ports/audit-sink'
+import type { AuditSink, GuardrailAuditRow } from '../../ports/audit-sink'
 import type { AsyncToolCallHook, ProviderRequestParams } from '../interfaces'
 import { createHookRegistry } from '../registry'
 
@@ -56,29 +56,18 @@ describe('HookRegistry', () => {
     expect(calls).toEqual(['tool_call', 'tool_result', 'context', 'provider_request'])
   })
 
+  // 2026-10-01 (432-19, D-15/D-17): the deny result carries a reason only — the gate's `policy`
+  // result (verdict, tier, remedies, neutral reason) left with the gate — and the audit port has
+  // only the guardrail append, which a tool-call deny never touches.
   it('short-circuits a denied sync tool call without writing any audit row', () => {
-    const appendExecutionAudit = vi.fn<(row: ExecutionAuditRow) => void>()
-    const auditSink: AuditSink = {
-      appendExecutionAudit,
-      appendGuardrailAudit: vi.fn<(row: GuardrailAuditRow) => void>(),
-    }
+    const appendGuardrailAudit = vi.fn<(row: GuardrailAuditRow) => void>()
+    const auditSink: AuditSink = { appendGuardrailAudit }
     const registry = createHookRegistry({ auditSink })
     const laterHook = vi.fn()
 
     registry.registerToolCall(() => ({
       action: 'deny',
       reason: 'restricted action blocked',
-      policy: {
-        verdict: 'deny',
-        reason: 'restricted action blocked',
-        riskTier: 'restricted',
-        // 400 D-15: `remedies` is a required member of a decision — a restricted-tier block
-        // is the arm that offers nothing, and it has to SAY nothing rather than omit the field.
-        remedies: [],
-        // 400 gap round 1: and `neutralReason` for the same argument. §2.4 finality names no
-        // affordance on any surface, so this arm's neutral form IS its canonical sentence.
-        neutralReason: 'restricted action blocked',
-      },
     }), FIRST_PARTY)
     registry.registerToolCall(laterHook, FIRST_PARTY)
 
@@ -87,19 +76,10 @@ describe('HookRegistry', () => {
     expect(result).toEqual({
       action: 'deny',
       reason: 'restricted action blocked',
-      policy: {
-        verdict: 'deny',
-        reason: 'restricted action blocked',
-        riskTier: 'restricted',
-        remedies: [],
-        neutralReason: 'restricted action blocked',
-      },
     })
     expect(laterHook).not.toHaveBeenCalled()
-    // The registry is a pure dispatcher: the policy gate's evaluate() is the sole
-    // execution-audit author (349 D-02). A registry-side second writer would emit
-    // two rows per deny — assert zero rows here.
-    expect(appendExecutionAudit).not.toHaveBeenCalled()
+    // The registry is a pure dispatcher and writes no row of its own around a deny.
+    expect(appendGuardrailAudit).not.toHaveBeenCalled()
   })
 
   it('makes a tool-call mutation visible to the next hook', () => {
@@ -266,11 +246,8 @@ describe('HookRegistry async tool_call dispatch', () => {
   })
 
   it('short-circuits on a deny result, never invokes later hooks, and writes no audit row', async () => {
-    const appendExecutionAudit = vi.fn<(row: ExecutionAuditRow) => void>()
-    const auditSink: AuditSink = {
-      appendExecutionAudit,
-      appendGuardrailAudit: vi.fn<(row: GuardrailAuditRow) => void>(),
-    }
+    const appendGuardrailAudit = vi.fn<(row: GuardrailAuditRow) => void>()
+    const auditSink: AuditSink = { appendGuardrailAudit }
     const registry = createHookRegistry({ auditSink })
     const laterHook = vi.fn<AsyncToolCallHook>(async (call) => ({ action: 'allow', call }))
 
@@ -278,13 +255,6 @@ describe('HookRegistry async tool_call dispatch', () => {
       (async () => ({
         action: 'deny',
         reason: 'restricted action blocked',
-        policy: {
-          verdict: 'deny',
-          reason: 'restricted action blocked',
-          riskTier: 'restricted',
-          remedies: [],
-          neutralReason: 'restricted action blocked',
-        },
       })) as AsyncToolCallHook,
       FIRST_PARTY,
     )
@@ -298,16 +268,9 @@ describe('HookRegistry async tool_call dispatch', () => {
     expect(result).toEqual({
       action: 'deny',
       reason: 'restricted action blocked',
-      policy: {
-        verdict: 'deny',
-        reason: 'restricted action blocked',
-        riskTier: 'restricted',
-        remedies: [],
-        neutralReason: 'restricted action blocked',
-      },
     })
     expect(laterHook).not.toHaveBeenCalled()
-    expect(appendExecutionAudit).not.toHaveBeenCalled()
+    expect(appendGuardrailAudit).not.toHaveBeenCalled()
   })
 
   it('returns allow with the original call when no async hooks are registered', async () => {

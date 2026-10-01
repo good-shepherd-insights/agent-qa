@@ -1,38 +1,23 @@
+// RE-SPELLED 2026-10-01 (432-19, D-15): the type-level twin of `430-remedy-memberships.test.ts`.
+// It pinned each kind's exact surface members, the five doors and an empty dashboard projection;
+// the vocabulary is deleted, so each type is now one a consumer cannot name. `@ts-expect-error` is
+// two-way: a line fails `tsc --noEmit` the moment its type comes back.
 import { expectTypeOf, test } from 'vitest'
 
-import { GATE_REMEDY_SURFACES, GATE_REMEDY_SURFACES_BY_KIND } from '../../index'
-import type { GateRemedySurface, RemedyKindFor } from '../../index'
+import type { RunServiceDenialBody } from '../../index'
 
-type Members<K extends keyof typeof GATE_REMEDY_SURFACES_BY_KIND> =
-  (typeof GATE_REMEDY_SURFACES_BY_KIND)[K][number]
+// @ts-expect-error C432-REMEDY-TYPES-ABSENT: the remedy type is deleted
+export type RetiredGateRemedy = import('../../index').GateRemedy
+// @ts-expect-error C432-REMEDY-TYPES-ABSENT: the remedy kind union is deleted
+export type RetiredGateRemedyKind = import('../../index').GateRemedyKind
+// @ts-expect-error C432-REMEDY-TYPES-ABSENT: the remedy surface union is deleted
+export type RetiredGateRemedySurface = import('../../index').GateRemedySurface
+// @ts-expect-error C432-REMEDY-TYPES-ABSENT: the per-surface projection type is deleted
+export type RetiredRemedyKindFor = import('../../index').RemedyKindFor<'cli'>
+// @ts-expect-error C432-REMEDY-TYPES-ABSENT: the chat clause denial is deleted
+export type RetiredClauseDenial = import('../../index').ClauseDenial
 
-test('C430-REMEDY-MEMBERSHIPS-EXACT', () => {
-  expectTypeOf<Members<'answer-confirm'>>().toEqualTypeOf<'cli' | 'chat'>()
-  expectTypeOf<Exclude<Members<'answer-confirm'>, 'cli' | 'chat'>>().toEqualTypeOf<never>()
-  expectTypeOf<Exclude<'cli' | 'chat', Members<'answer-confirm'>>>().toEqualTypeOf<never>()
-
-  expectTypeOf<Members<'trust-session-flag'>>().toEqualTypeOf<'cli'>()
-  expectTypeOf<Exclude<Members<'trust-session-flag'>, 'cli'>>().toEqualTypeOf<never>()
-  expectTypeOf<Exclude<'cli', Members<'trust-session-flag'>>>().toEqualTypeOf<never>()
-
-  expectTypeOf<Members<'session-pin-final'>>().toEqualTypeOf<'chat'>()
-  expectTypeOf<Exclude<Members<'session-pin-final'>, 'chat'>>().toEqualTypeOf<never>()
-  expectTypeOf<Exclude<'chat', Members<'session-pin-final'>>>().toEqualTypeOf<never>()
-
-  expectTypeOf<Members<'present-bearer-scope'>>().toEqualTypeOf<'mcp'>()
-  expectTypeOf<Exclude<Members<'present-bearer-scope'>, 'mcp'>>().toEqualTypeOf<never>()
-  expectTypeOf<Exclude<'mcp', Members<'present-bearer-scope'>>>().toEqualTypeOf<never>()
-})
-
-test('C430-REMEDY-SURFACES-EXACT', () => {
-  type Expected = 'cli' | 'chat' | 'mcp' | 'dashboard' | 'run-service'
-  expectTypeOf<GateRemedySurface>().toEqualTypeOf<Expected>()
-  expectTypeOf<(typeof GATE_REMEDY_SURFACES)[number]>().toEqualTypeOf<Expected>()
-  expectTypeOf<Exclude<GateRemedySurface, Expected>>().toEqualTypeOf<never>()
-  expectTypeOf<Exclude<Expected, GateRemedySurface>>().toEqualTypeOf<never>()
-})
-
-test('C430-DASHBOARD-PROJECTION-EMPTY', () => {
-  expectTypeOf<RemedyKindFor<'dashboard'>>().toEqualTypeOf<never>()
-  expectTypeOf<RemedyKindFor<'run-service'>>().toEqualTypeOf<never>()
+test('C432-REMEDY-TYPES-ABSENT', () => {
+  // The run denial a door still answers with is a reason and a code, nothing a caller acts on.
+  expectTypeOf<RunServiceDenialBody>().toEqualTypeOf<{ error: 'run_denied'; neutralReason: string }>()
 })

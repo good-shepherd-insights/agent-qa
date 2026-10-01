@@ -6,7 +6,7 @@ export const AGENT_QA_SAFETY_PACKAGE_CLASSES = ['providerNeutral', 'storageNeutr
 export const AGENT_QA_SAFETY_ALLOWED_RESPONSIBILITIES = [
   'provider-neutral and storage-neutral safety hook framework contracts',
   'egress-scan and policy seam contracts for execution safety engines',
-  'storage-neutral audit sink port for execution and guardrail audit rows',
+  'storage-neutral audit sink port for guardrail audit rows',
   'run-scoped reversible masking context with stable per-run placeholders',
   'provider-request egress masking hook, neutral run-scope resolver seam, and known-value seeding',
   'deterministic egress guardrail detector and scan engine',
@@ -14,9 +14,8 @@ export const AGENT_QA_SAFETY_ALLOWED_RESPONSIBILITIES = [
   'buffering streaming egress guardrail scan with block-to-redact promotion',
   'reusable fail-closed committed-egress pre-write checkpoint with audited user-authored override',
   'pure construction-time secret scan over surfaced artifact bytes, seeded from the masking sources',
-  'neutral execution-context resolver seam and fail-closed policy function',
-  'deterministic static risk-tier classifier and destructive lexicon',
-  'deterministic allow/ask/deny execution-policy gate with scoped trust and standing-approval read seam',
+  'neutral execution-context resolver seam',
+  'deterministic static risk-tier classifier and destructive name lexicon',
 ] as const
 export const AGENT_QA_SAFETY_FORBIDDEN_RESPONSIBILITIES = [
   'filesystem, database, or process access',

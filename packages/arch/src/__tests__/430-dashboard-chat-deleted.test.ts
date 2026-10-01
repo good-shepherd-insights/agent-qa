@@ -209,6 +209,23 @@ const UI_ONLY: NeedleEntry[] = [
   { label: 'the presence frame name', halves: ['chat_', 'present'], scope: 'ui' },
 ]
 
+/**
+ * The execution gate's remedy vocabulary and its denial error (432-19, D-15), handed over from the
+ * 430 census's remedy cells (C432-430-HANDOFF). 430 pinned the dashboard's remedy memberships empty
+ * and its text table absent; with the vocabulary deleted, no source or test in these universes may
+ * spell a member, the projection, the type or the error class at all.
+ */
+const REMEDY_HANDOFF: NeedleEntry[] = [
+  { label: 'the remedy kind list', halves: ['GATE_REMEDY_', 'KINDS'], scope: 'all' },
+  { label: 'the remedy surface projection', halves: ['remediesRenderable', 'By'], scope: 'all' },
+  { label: 'the remedy type', halves: ['Gate', 'Remedy'], scope: 'all' },
+  { label: 'the confirm-answering remedy kind', halves: ['answer-', 'confirm'], scope: 'all' },
+  { label: 'the trust-flag remedy kind', halves: ['trust-session', '-flag'], scope: 'all' },
+  { label: 'the session-pin remedy kind', halves: ['session-pin', '-final'], scope: 'all' },
+  { label: 'the bearer-scope remedy kind', halves: ['present-bearer', '-scope'], scope: 'all' },
+  { label: 'the gate denial error class', halves: ['FunctionDenied', 'Error'], scope: 'all' },
+]
+
 /** The ownership contract's dependency list alone: the parser's quoted package name. */
 const CONTRACT_ONLY: NeedleEntry[] = [
   { label: 'the parser in the ownership contract', halves: ["'mar", "ked'"], scope: 'contract' },
@@ -218,6 +235,7 @@ const EVERY_NEEDLE: NeedleEntry[] = [
   ...EVERYWHERE,
   ...SERVER_AND_DOOR,
   ...UI_ONLY,
+  ...REMEDY_HANDOFF,
   ...CONTRACT_ONLY,
 ]
 
@@ -442,6 +460,24 @@ describe('no hidden second Chat remains in the dashboard UI, server or door comp
       .filter((entry) => text.includes(joined(entry)))
       .map((entry) => entry.label)
     expect(joinedHits, `the type test spells these whole: ${joinedHits.join(', ')}`).toEqual([])
+  })
+
+  // 2026-10-01 (432-19, D-15). The 430 remedy cells (memberships exact, dashboard projection empty,
+  // the denial block's reason-only render, the remedy text table absent) handed their subject to
+  // this census: the vocabulary is deleted, so each member is a needle above, and the denial block
+  // stays a kept name whose whole input is one reason.
+  it('C432-430-HANDOFF: the remedy vocabulary is a needle set and the kept denial block renders one reason', () => {
+    expect(REMEDY_HANDOFF.map((entry) => entry.label)).toHaveLength(8)
+    for (const entry of REMEDY_HANDOFF) {
+      expect(EVERY_NEEDLE, entry.label).toContain(entry)
+      expect(census(joined(entry), UNIVERSE_FOR.all), entry.label).toEqual([])
+    }
+    const block = read('dashboard-ui/src/components/run-detail/denial-block.tsx')
+    expect(block).toContain('export function DenialBlock({ neutralReason }: { neutralReason: string })')
+    expect(block.match(/\{neutralReason\}/g) ?? []).toHaveLength(1)
+    expect(block).not.toContain('remed' + 'ies=')
+    // The 430 R14 subject is the DenialBlock's own render, and it is still a kept name.
+    expect(TOLERATED.map(([name]) => name)).toContain('DenialBlock')
   })
 
   // This file is outside every universe, but a whole spelling here would still be an inventory

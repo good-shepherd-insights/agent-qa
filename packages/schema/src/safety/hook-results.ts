@@ -1,5 +1,3 @@
-import type { ExecutionPolicyResult } from './risk-tier'
-
 export interface ToolCallHookAllowResult<TCall = unknown> {
   action: 'allow'
   call: TCall
@@ -14,7 +12,6 @@ export interface ToolCallHookMutateResult<TCall = unknown> {
 export interface ToolCallHookDenyResult {
   action: 'deny'
   reason: string
-  policy?: ExecutionPolicyResult
 }
 
 export type ToolCallHookResult<TCall = unknown> =

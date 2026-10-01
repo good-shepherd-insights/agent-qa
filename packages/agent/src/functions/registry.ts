@@ -88,8 +88,8 @@ export class OutputRepresentationMismatchError extends Error {
  * and for a plain-JS consumer of the published package.
  *
  * 432-13: `invokeFunction` no longer writes an execution-audit row (there is no op gate), so the
- * sink is a construction contract only. It stays until 432-19 narrows the audit contract to the
- * guardrail rows and removes the execution-audit writer.
+ * sink is a construction contract only. 2026-10-01 (432-19, D-17): the audit contract is the
+ * guardrail contract, so a usable sink is one with a callable `appendGuardrailAudit`.
  */
 export class MissingAuditSinkError extends Error {
   constructor(readonly detail: string) {
@@ -353,8 +353,8 @@ export interface CreateFunctionRegistryOptions {
    *
    * REQUIRED, on the same discipline `FunctionDeps` uses (see spec.ts), and required at RUNTIME
    * too: `createRegistryFromSpecs` throws {@link MissingAuditSinkError} when the sink is absent or
-   * its two append methods are not callable. Since 432-13 no op gate writes through it; 432-19
-   * narrows it with the execution-audit writer.
+   * its guardrail append method is not callable. Since 432-13 no op gate writes through it, and
+   * since 432-19 there is no execution-audit writer to require.
    */
   auditSink: AuditSink
   /**
@@ -488,20 +488,16 @@ function declarationView(spec: FunctionSpec, deps: FunctionDeps): FunctionDeclar
  *
  * One check at the ONE seam that populates the internals record, covering the three live
  * routes together: the field omitted or cast past the type, and a hollow object whose
- * append methods are absent or not callable. The methods are probed rather than the shape
+ * append method is absent or not callable. The method is probed rather than the shape
  * asserted.
  */
 function requireAuditSink(supplied: AuditSink | undefined | null): AuditSink {
   if (supplied === undefined || supplied === null) {
     throw new MissingAuditSinkError('no sink was supplied')
   }
-  if (
-    typeof supplied.appendExecutionAudit !== 'function' ||
-    typeof supplied.appendGuardrailAudit !== 'function'
-  ) {
+  if (typeof supplied.appendGuardrailAudit !== 'function') {
     throw new MissingAuditSinkError(
-      'the supplied sink does not implement callable appendExecutionAudit and ' +
-        'appendGuardrailAudit methods',
+      'the supplied sink does not implement a callable appendGuardrailAudit method',
     )
   }
   return supplied

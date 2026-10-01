@@ -40,7 +40,6 @@ import type {
   AgentAskResult,
   ChatSessionEvent,
   ChatSessionHandle,
-  ClauseDenial,
   ClauseReceipt,
   ClauseResult,
   ChatTurnStatus,
@@ -48,7 +47,6 @@ import type {
   SessionLogPort,
 } from '@vostride/agent-qa-schema'
 
-import { FunctionDeniedError } from '../functions/invoke.js'
 import { AUTHORING_DRAFT_WRITE_FUNCTION_ID } from '../functions/ops/authoring-draft-write.js'
 import { CONFIG_PROJECT_SCAFFOLD_FUNCTION_ID } from '../functions/ops/config-project-scaffold.js'
 import {
@@ -467,11 +465,8 @@ async function runTurnThrough(
     // making them state the fact twice; making the field optional would have made 'nothing ran' and
     // 'this build does not report results' the same bytes, which is the ambiguity `receipts` was
     // required for in the first place.
-    // `denials` is defaulted here for `results`' reason and by the same argument (400-06): every
-    // arm that reaches this without one is an arm where the gate never spoke, and making each of
-    // them spell `denials: []` would be making them state that twice.
-    result: Omit<AgentAskResult, 'sessionId' | 'turnId' | 'status' | 'results' | 'denials'>
-      & { results?: readonly ClauseResult[]; denials?: readonly ClauseDenial[] },
+    result: Omit<AgentAskResult, 'sessionId' | 'turnId' | 'status' | 'results'>
+      & { results?: readonly ClauseResult[] },
   ): Promise<AgentAskResult> => {
     await append({ kind: 'turn_complete', turnId, at: deps.now(), status })
     // The fsync point (D-19). Per TURN, so the loss bound is exactly the in-flight turn —
@@ -485,7 +480,6 @@ async function runTurnThrough(
       ...refusedLineCount,
       ...result,
       results: [...result.results ?? []],
-      denials: [...result.denials ?? []],
     }
   }
   /**
@@ -838,22 +832,6 @@ async function runTurnThrough(
   // this engine preserves everywhere else — and its length is the number of clauses that ran.
   const results: ClauseResult[] = []
   /**
-   * What the GATE refused, in clause order (400-06, window #188).
-   *
-   * THE THIRD CHANNEL, AND IT EXISTS BECAUSE THE CATCH BELOW THROWS AWAY A TYPED ANSWER. A denial
-   * arrives here as a `FunctionDeniedError` carrying the gate's canonical `reason` and the typed
-   * `remedies` phase 400 D-15 minted so each door can offer a way forward IT can take. The receipt
-   * is a five-string map by charter and can carry only the refusal NAME, so both were dropped —
-   * and every interactive door has been rendering `failed  FunctionDeniedError` with nothing
-   * behind it. The CLI's single-op `fn` door renders them only because it catches the error
-   * itself; a conversation, which catches on the turn's behalf, never could.
-   *
-   * ONLY THE TYPED DENIAL LANDS HERE. A clause that threw for any other reason is a failure and
-   * not a refusal, and inventing a denial entry for it would put the gate's voice on an error the
-   * gate never saw.
-   */
-  const denials: ClauseDenial[] = []
-  /**
    * Whether some clause of this turn FAILED — the one fact the D-11 stop gate and the aggregate
    * below both read.
    *
@@ -989,29 +967,6 @@ async function runTurnThrough(
           status: 'failed',
           outcome: refusalName(error),
         }
-        // THE RECEIPT IS UNCHANGED AND THE TERRITORY RIDES BESIDE IT (400-06). `instanceof` rather
-        // than a name check: the class is this package's own and the daemon client reconstructs
-        // the real one across the wire (400-02), so a `name === 'FunctionDeniedError'` string
-        // comparison would be a second, weaker spelling of a question the type already answers.
-        //
-        // NOTHING IS APPENDED TO THE SESSION LOG HERE, deliberately. A remedy is advice about the
-        // posture a turn is running under right now — "a confirm could be answered", "this class
-        // is pinned for this session" — and replaying it out of a file a week later would be a
-        // suggestion nobody can check. The durable record of this refusal is the receipt above and
-        // the gate's own execution-audit row, both untouched; and the append-only event grammar's
-        // exact-key guard stays exactly as closed as it was.
-        if (error instanceof FunctionDeniedError) {
-          denials.push({
-            clause: step.clause.text,
-            functionId: step.functionId,
-            reason: error.reason,
-            remedies: [...error.remedies],
-            // 400 gap round 1: and the surface-neutral half of the same sentence, because the
-            // door that renders this carrier is a BROWSER — `reason` names a CLI flag on two of
-            // its arms and a browser reader has no way to pass one.
-            neutralReason: error.neutralReason,
-          })
-        }
       }
     }
     // THE ONE DERIVATION (399.1-09, D-12). Every receipt this loop mints passes here — the
@@ -1052,7 +1007,6 @@ async function runTurnThrough(
   return finish(failed ? 'failed' : 'completed', {
     receipts,
     results,
-    denials,
     ...(answer.length === 0 ? {} : { answer: answer.join('\n') }),
   })
 }

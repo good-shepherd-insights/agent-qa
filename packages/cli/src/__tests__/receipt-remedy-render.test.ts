@@ -1,99 +1,86 @@
-// The CLI's half of D-15: this door renders the remedies IT can take, and nothing else (400-02).
+// The CLI's half of D-15 — RE-SPELLED 2026-10-01 (432-19, D-14/D-15).
 //
-// WHAT THE TODO MEASURED, AND WHAT THIS FILE HOLDS. `399-friction-refusal-remedies-unreachable`
-// chased the fail-closed denial's two remedies from the surface that issued them and found the
-// flag declared on a different command and the confirm port unnamed. The repair is structural:
-// the gate mints typed remedies, and each surface projects them through `remediesRenderableBy`.
-// The projection is the security-relevant half (T-400-06), so both directions are measured here —
-// the CLI DOES render what it can take, and it renders NOTHING when the projection is empty.
+// This file proved that the CLI rendered the remedies IT could take (the trust-session flag named
+// with the command it is declared on, the confirm answer) under a gate denial, and nothing when the
+// projection was empty. The execution gate that minted remedies is deleted and the vocabulary with
+// it, so the renderer (`denialDetailLines`) is deleted too. What survives is the harder half the
+// file always called the point: HONEST ABSENCE. A refusal is a plain reason, and the CLI appends
+// nothing a reader could try — no flag, no confirm, no approval or trust command.
 //
-// HONEST ABSENCE IS THE HARDER HALF and it is why the empty case is a cell rather than an
-// assumption. A render that reached for a line when it had nothing to offer would be the defect
-// re-minted: the reader spends time on a way forward that is not there. `[reason]` and nothing
-// appended is the whole assertion.
-//
-// DRIVEN THROUGH THE SHIPPED PRODUCERS. The remedy fixtures come from `evaluate()` — the real
-// gate, on real actions — rather than from hand-built literals, so a cell cannot pass against a
-// remedy shape the gate never mints (the produced-not-literal corpus law).
+// The one refusal left at this door is a production run without the config opt-in (D-18). Its
+// sentence is built by the shared producer and printed as `Run denied: <reason>`, which these cells
+// read off the shipped sources and the shipped producer rather than off a copy.
+
+import { readFileSync } from 'node:fs'
+import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 
 import { describe, expect, it } from 'vitest'
 
-import { evaluate } from '@vostride/agent-qa-safety'
-import {
-  remediesRenderableBy,
-  type GateRemedy,
-  type RiskActionDescriptor,
-} from '@vostride/agent-qa-schema'
+import { buildProductionRefusal, type ClauseReceipt } from '@vostride/agent-qa-schema'
 
-import { denialDetailLines } from '../commands/receipt-line.js'
+import * as receiptLineModule from '../commands/receipt-line.js'
+import { receiptLine } from '../commands/receipt-line.js'
 
-const REASON = 'Denied authoring.draft.write: fail-closed: ask in local-headless without trust'
+const COMMANDS = join(dirname(fileURLToPath(import.meta.url)), '..', 'commands')
 
-const mutatingSharedAction: RiskActionDescriptor = {
-  name: 'push_to_remote',
-  recognized: true,
-  declaredTier: 'mutating-shared',
+/** Anything a reader could take as an instruction to approve, trust, answer or opt in. */
+const SUGGESTED_ACTION = /--trust-session|\[y\/N\]|\bapprove\b|\bgrant\b|answer the confirm|opt in for this session|agent-qa \w+ --/i
+
+function stripComments(source: string): string {
+  return source.replace(/\/\*[\s\S]*?\*\/|(^|[^:])\/\/.*$/gm, (_m, kept?: string) => kept ?? '')
 }
 
-const restrictedAction: RiskActionDescriptor = {
-  name: 'run_shell',
-  recognized: true,
-  command: 'rm -rf /',
-}
-
-async function remediesFor(
-  action: RiskActionDescriptor,
-  ctx: 'local-headless' | 'local-interactive',
-): Promise<readonly GateRemedy[]> {
-  return (await evaluate(action, ctx)).remedies
-}
-
-describe('a refused receipt whose remedies project non-empty', () => {
-  it('renders the CLI affordance AFTER the canonical reason, reason first and unedited', async () => {
-    const remedies = await remediesFor(mutatingSharedAction, 'local-headless')
-    expect(remediesRenderableBy('cli', remedies).length).toBeGreaterThan(0)
-
-    const lines = denialDetailLines(REASON, remedies)
-
-    expect(lines[0]).toBe(REASON)
-    expect(lines.length).toBeGreaterThan(1)
-    // The flag is named, and named WITH the command it is declared on — the half of the finding a
-    // bare flag name could not have carried.
-    expect(lines.join('\n')).toContain('--trust-session')
-    expect(lines.join('\n')).toContain('agent-qa run')
+describe('C432-REMEDY-TYPES-ABSENT: the CLI has no remedy renderer', () => {
+  it('C432-REMEDY-TYPES-ABSENT: receipt-line exports the receipt render and nothing that renders a remedy', () => {
+    expect(Object.keys(receiptLineModule).sort()).toEqual(['receiptLine'])
   })
 
-  it('renders one line per CLI-renderable remedy and no line for the others', async () => {
-    const remedies = await remediesFor(mutatingSharedAction, 'local-headless')
-    const projected = remediesRenderableBy('cli', remedies)
-
-    const lines = denialDetailLines(REASON, remedies)
-
-    expect(lines).toHaveLength(1 + projected.length)
-  })
-
-  it('renders nothing a CLI reader cannot take, even when the gate minted it', async () => {
-    // The session-pin remedy is a chat/dashboard affordance: a pin ends with the session, and the
-    // one-shot CLI door has none. It must reach this render and produce no line.
-    const pinned = await evaluate(mutatingSharedAction, 'local-interactive', {}, {
-      deny: () => true,
-    })
-    expect(pinned.remedies.length).toBeGreaterThan(0)
-    expect(remediesRenderableBy('cli', pinned.remedies)).toEqual([])
-
-    expect(denialDetailLines(REASON, pinned.remedies)).toEqual([REASON])
+  it('C432-REMEDY-TYPES-ABSENT: no command source spells the remedy vocabulary or its renderer', () => {
+    for (const file of ['receipt-line.ts', 'run.ts', 'fn.ts']) {
+      const code = stripComments(readFileSync(join(COMMANDS, file), 'utf8'))
+      for (const needle of ['denialDetailLines', 'remediesRenderable' + 'By', 'Gate' + 'Remedy', 'FunctionDenied' + 'Error', '.remedies']) {
+        expect(code.includes(needle), `${file}: ${needle}`).toBe(false)
+      }
+    }
   })
 })
 
-describe('a refused receipt whose projection is empty', () => {
-  it('renders the reason with nothing appended — honest absence', async () => {
-    const remedies = await remediesFor(restrictedAction, 'local-interactive')
-    expect(remedies).toEqual([])
-
-    expect(denialDetailLines(REASON, remedies)).toEqual([REASON])
+describe('C432-PLAIN-REFUSAL: a refused run prints a plain reason and suggests nothing', () => {
+  it('C432-PLAIN-REFUSAL: the run door prints exactly `Run denied: <reason>` for a run denial', () => {
+    const code = stripComments(readFileSync(join(COMMANDS, 'run.ts'), 'utf8'))
+    const branch = code.slice(code.indexOf('if (err instanceof RunDeniedError) {'))
+    expect(branch.length).toBeGreaterThan(0)
+    const body = branch.slice(0, branch.indexOf('process.exit(2)'))
+    expect(body).toContain('console.error(pc.red(`Run denied: ${err.reason}`))')
+    // One print, of the reason alone.
+    expect(body.match(/console\.error/g) ?? []).toHaveLength(1)
   })
 
-  it('appends nothing for an empty remedy list', () => {
-    expect(denialDetailLines(REASON, [])).toEqual([REASON])
+  it('C432-PLAIN-REFUSAL: the refusal names the target and the config line, and no approval or trust command', () => {
+    for (const names of [['prod-eu'], ['prod-eu', 'prod-us'], []]) {
+      const printed = `Run denied: ${buildProductionRefusal(names)}`
+      for (const name of names) expect(printed).toContain(`"${name}"`)
+      expect(printed).toContain('allowProduction: true')
+      expect(printed).not.toMatch(SUGGESTED_ACTION)
+      expect(printed.split('\n')).toHaveLength(1)
+    }
+  })
+
+  it('C432-PLAIN-REFUSAL: a refused or failed receipt renders its own outcome and appends no suggested command', () => {
+    const base: Omit<ClauseReceipt, 'status' | 'outcome'> = {
+      clause: 'start a run on prod',
+      functionId: 'runs.start',
+      origin: 'human',
+    }
+    for (const receipt of [
+      { ...base, status: 'refused', outcome: buildProductionRefusal(['prod-eu']) },
+      { ...base, status: 'failed', outcome: 'FunctionInputError' },
+    ] satisfies ClauseReceipt[]) {
+      const line = receiptLine(receipt)
+      expect(line.split('\n')).toHaveLength(2)
+      expect(line).toContain(receipt.outcome)
+      expect(line).not.toMatch(SUGGESTED_ACTION)
+    }
   })
 })

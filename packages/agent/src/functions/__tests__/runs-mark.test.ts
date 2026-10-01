@@ -69,7 +69,7 @@ function host(feedback?: FeedbackPort) {
   return createFunctionRegistry({
     deps: deps(feedback),
     resolveExecutionContext: () => 'local-headless',
-    auditSink: { appendExecutionAudit() {}, appendGuardrailAudit() {} },
+    auditSink: { appendGuardrailAudit() {} },
   })
 }
 

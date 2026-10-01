@@ -478,7 +478,8 @@ describe('C432-PRODUCTION-BEFORE-EFFECTS — the in-process drive refuses before
       expect(effects.produced, 'the real producer never ran').toHaveLength(1)
       expect(refusal).toBeInstanceOf(RunDeniedError)
       const denied = refusal as RunDeniedError
-      expect(denied.remedies).toEqual([])
+      // 432-19 (D-15): no remedy member at all, not even an empty list.
+      expect(denied).not.toHaveProperty('remedies')
       expect(denied.reason).toContain('"prod-us"')
       expect(denied.reason).toContain('"prod-eu"')
       expect(denied.reason).toContain(OPT_IN_LINE)

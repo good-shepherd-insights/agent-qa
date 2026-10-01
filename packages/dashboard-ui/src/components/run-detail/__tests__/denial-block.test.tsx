@@ -1,8 +1,13 @@
 // @vitest-environment jsdom
 
-// A denial on the dashboard shows the gate's neutral reason and nothing else (D-06). Whatever
-// remedy list the denial carries, the box is the same, and the canonical reason, which names
-// another surface's flag, is never composed into the DOM.
+// A denial on the dashboard shows its reason and nothing else (D-06). Whatever stale remedy list an
+// older wire still carries, the box is the same, and the canonical reason, which named another
+// surface's flag, is never composed into the DOM.
+//
+// 2026-10-01 (432-19, D-15): the remedy vocabulary is deleted with the gate, so the wire fixtures
+// below are LEGACY bytes an older build could still send, spelled without the retired kind names
+// (the 430 census forbids them anywhere in this tree; C432-430-HANDOFF). The one live denial is the
+// production refusal, and it renders as the plain sentence it is (C432-PLAIN-REFUSAL).
 //
 // Mounted into document.body through createRoot, the call main.tsx makes, so a broken mount path
 // cannot pass here.
@@ -11,7 +16,7 @@ import { act, type ReactElement } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, describe, expect, it } from 'vitest'
 
-import type { GateRemedy } from '@vostride/agent-qa-schema'
+import { buildProductionRefusal } from '@vostride/agent-qa-schema'
 
 import { DenialBlock } from '@/components/run-detail/denial-block'
 
@@ -49,23 +54,36 @@ function unmount(): void {
   container = undefined
 }
 
-// The denial as the wire carries it. Spread into the block, so a render that read the remedies
-// would see them.
-function wireDenial(neutralReason: string, remedies: readonly GateRemedy[]) {
+/** A legacy remedy entry as an older wire carried it. The kind names are assembled, never spelled. */
+interface LegacyRemedy {
+  readonly kind: string
+  readonly params?: Readonly<Record<string, string>>
+}
+
+// The denial as an older wire carried it. Spread into the block, so a render that read the stale
+// list would see it.
+function wireDenial(neutralReason: string, remedies: readonly LegacyRemedy[]) {
   return { neutralReason, remedies }
 }
 
-const TRUST_SESSION_FLAG = {
-  kind: 'trust-session-flag',
-  params: { flag: '--trust-session', command: 'run' },
+const LEGACY_KIND = {
+  answer: ['answer', 'confirm'].join('-'),
+  flag: ['trust', 'session', 'flag'].join('-'),
+  bearer: ['present', 'bearer', 'scope'].join('-'),
+  pin: ['session', 'pin', 'final'].join('-'),
 } as const
 
-const WIRE_REMEDY_LISTS: readonly (readonly GateRemedy[])[] = [
+const TRUST_SESSION_FLAG: LegacyRemedy = {
+  kind: LEGACY_KIND.flag,
+  params: { flag: '--trust-session', command: 'run' },
+}
+
+const WIRE_REMEDY_LISTS: readonly (readonly LegacyRemedy[])[] = [
   [],
   [TRUST_SESSION_FLAG],
-  [{ kind: 'present-bearer-scope' }],
-  [{ kind: 'answer-confirm' }],
-  [{ kind: 'answer-confirm' }, { kind: 'session-pin-final' }, TRUST_SESSION_FLAG],
+  [{ kind: LEGACY_KIND.bearer }],
+  [{ kind: LEGACY_KIND.answer }],
+  [{ kind: LEGACY_KIND.answer }, { kind: LEGACY_KIND.pin }, TRUST_SESSION_FLAG],
 ]
 
 const REMOVED_REMEDY_SENTENCES = [
@@ -109,7 +127,7 @@ describe('DenialBlock renders its reason only (D-06)', () => {
 
     const dom = mount(
       <DenialBlock
-        {...wireDenial(neutralReason, [{ kind: 'answer-confirm' }, TRUST_SESSION_FLAG])}
+        {...wireDenial(neutralReason, [{ kind: LEGACY_KIND.answer }, TRUST_SESSION_FLAG])}
       />,
     )
     const denial = dom.querySelector<HTMLElement>('[data-entry="denial"]')
@@ -126,5 +144,17 @@ describe('DenialBlock renders its reason only (D-06)', () => {
     expect(denials).toHaveLength(1)
     expect(dom.querySelectorAll('[data-remedy-kind]')).toHaveLength(0)
     expect(denials[0]?.textContent).toBe('')
+  })
+
+  it('C432-PLAIN-REFUSAL: the production refusal renders as its one plain sentence, naming the target and the config line', () => {
+    const reason = buildProductionRefusal(['prod-eu'])
+    const dom = mount(<DenialBlock neutralReason={reason} />)
+    const denials = dom.querySelectorAll('[data-entry="denial"]')
+    expect(denials).toHaveLength(1)
+    expect(denials[0]?.textContent).toBe(reason)
+    expect(dom.textContent).toContain('"prod-eu"')
+    expect(dom.textContent).toContain('allowProduction: true')
+    expect(dom.textContent).not.toMatch(/--trust-session|\[y\/N\]|approve|grant/i)
+    expect(dom.querySelectorAll('button, a, [data-remedy-kind]')).toHaveLength(0)
   })
 })

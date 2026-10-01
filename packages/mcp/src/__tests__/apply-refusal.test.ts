@@ -26,7 +26,7 @@ import { existsSync } from 'node:fs'
 
 import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client'
 import { createMcpHandler } from '@modelcontextprotocol/server'
-import { FunctionDeniedError, createFunctionRegistry, invokeFunction } from '@vostride/agent-qa-agent'
+import { FunctionInputError, createFunctionRegistry, invokeFunction } from '@vostride/agent-qa-agent'
 import type { CreateFunctionRegistryOptions, FunctionDeps } from '@vostride/agent-qa-agent'
 import { STANDING_APPROVAL_SCOPE } from '@vostride/agent-qa-schema'
 import type { FunctionCaller } from '@vostride/agent-qa-schema'
@@ -64,14 +64,15 @@ describe('419 sovereign mark credential refusal', () => {
     expect(result.structuredContent).toEqual({ note: '<SECRET>' })
     expect(JSON.stringify(result)).not.toContain('planted-secret')
   })
-  it('renders typed gate denials with neutral prose and only actionable MCP affordances', () => {
-    const result = maskedToolError(new FunctionDeniedError('runs.mark', 'use --trust-session', [
-      { kind: 'answer-confirm' }, { kind: 'trust-session-flag' },
-      { kind: 'present-bearer-scope', params: { scope: 'knowledge-write' } },
-    ], 'confirmation required'), text => text)
-    expect(result.content).toEqual([{ type: 'text', text: 'Denied runs.mark: confirmation required; present a bearer whose scopes include `knowledge-write`' }])
+  // RE-SPELLED 2026-10-01 (432-19, D-15) from 'renders typed gate denials with neutral prose and only
+  // actionable MCP affordances'. The gate's denial error and its remedy vocabulary are deleted, so the
+  // MCP error result has no denial arm and no remedy projection: every refusal renders its own
+  // message, masked, and nothing is appended to it.
+  it('C432-REMEDY-TYPES-ABSENT: renders every refusal as its own masked message, with no remedy appended', () => {
+    const result = maskedToolError(new FunctionInputError('runs.mark', 'note: planted-secret'), text => text.replaceAll('planted-secret', '<SECRET>'))
+    expect(result.content).toEqual([{ type: 'text', text: 'Invalid input for runs.mark: note: <SECRET>' }])
     expect(result.isError).toBe(true)
-    expect(JSON.stringify(result)).not.toContain('--trust-session')
+    expect(JSON.stringify(result)).not.toMatch(/--trust-session|present a bearer|answer the confirm/)
   })
 })
 
@@ -124,7 +125,7 @@ function directDeps(answer: (request: { verb: string, input: Record<string, unkn
 }
 
 const directSink = {
-  appendExecutionAudit() {}, appendGuardrailAudit() {},
+  appendGuardrailAudit() {},
 } as unknown as CreateFunctionRegistryOptions['auditSink']
 
 const directClients: Client[] = []

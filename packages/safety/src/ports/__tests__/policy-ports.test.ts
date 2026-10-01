@@ -1,26 +1,25 @@
+import { existsSync } from 'node:fs'
+import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
+
 import { describe, expect, it } from 'vitest'
 
-import type { RiskActionDescriptor, TrustScope } from '@vostride/agent-qa-schema'
-import { DENY_CONFIRM, NO_STANDING_APPROVALS } from '../policy-ports'
+import * as safety from '../../index'
 
-const action: RiskActionDescriptor = {
-  name: 'delete_record',
-  recognized: true,
-}
-
-const actionScope: TrustScope = {
-  project: 'A',
-}
+// RE-SPELLED 2026-10-01 (432-19, D-14/D-15). This file pinned the two null objects of the policy
+// ports: `DENY_CONFIRM` (never approves, declares no surface) and `NO_STANDING_APPROVALS` (no grants).
+// The confirm port, the standing-approval reader and both null objects are deleted with the gate, so
+// nothing can ask a person or read an approval through safety.
+const PORTS = join(dirname(fileURLToPath(import.meta.url)), '..')
 
 describe('policy ports', () => {
-  it('denies confirmation by default, and declares no surface to approve from', async () => {
-    await expect(Promise.resolve(DENY_CONFIRM.ask(action))).resolves.toBe(false)
-    // G-401-17: the null-object's honest declaration. It never approves anything, so there is no
-    // surface for the gate to attribute an approval to — and the gate refuses to mint one.
-    expect(DENY_CONFIRM.surface).toBeNull()
+  it('C432-NO-ASK-PORTS: the policy-ports module is gone and only the audit port remains', () => {
+    expect(existsSync(join(PORTS, 'policy-ports.ts'))).toBe(false)
+    expect(existsSync(join(PORTS, 'audit-sink.ts'))).toBe(true)
   })
 
-  it('returns no standing approval grants by default', () => {
-    expect(NO_STANDING_APPROVALS.grantsFor(action, actionScope)).toEqual([])
+  it('C432-NO-ASK-PORTS: neither null object is published at runtime', () => {
+    expect(Object.keys(safety)).not.toContain('DENY_CONFIRM')
+    expect(Object.keys(safety)).not.toContain('NO_STANDING_APPROVALS')
   })
 })

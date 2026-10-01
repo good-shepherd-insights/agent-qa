@@ -25,7 +25,7 @@ import type { FunctionDeps, FunctionSpec } from '../spec.js'
 
 const TARGET = { target: 'draft-2020-12' } as const
 
-const auditSink: AuditSink = { appendExecutionAudit() {}, appendGuardrailAudit() {} }
+const auditSink: AuditSink = { appendGuardrailAudit() {} }
 
 function options(deps: unknown = {}): CreateFunctionRegistryOptions {
   return {

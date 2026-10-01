@@ -18,7 +18,6 @@ import type {
   FunctionCaller,
   FunctionCallerOrigin,
   FunctionScope,
-  GateRemedy,
 } from '@vostride/agent-qa-schema'
 
 import { registryInternals, resolveBindingStatus } from './registry.js'
@@ -82,43 +81,9 @@ export class FunctionOriginError extends Error {
   }
 }
 
-/**
- * An invocation was refused with a decision's own reason.
- *
- * NO GATE RAISES THIS SINCE 432-13; the class stays for the doors and wire codecs that still
- * reconstruct it, and 432-19 narrows it with the remedy vocabulary.
- *
- * `remedies` CARRIES A DECISION'S OWN ANSWER TO "now what" (400 D-15), unprojected. Each surface
- * applies `remediesRenderableBy` at its render; this class does not choose for them, because it
- * cannot know which door it will be caught on — the same object reaches a terminal, a chat
- * transcript, an MCP client and the daemon's wire, and the whole finding
- * (`399-friction-refusal-remedies-unreachable`) is what happens when one of them is shown
- * another's instructions.
- *
- * IT IS AN ENUMERABLE OWN PROPERTY, which is load-bearing across the daemon: `wireError` preserves
- * exactly those, so the remedies survive the hop and the client reconstructs them. It DEFAULTS to
- * empty so a caller that has no gate decision in hand cannot be forced to invent one — and an
- * empty list renders as honest absence rather than as a wrong remedy.
- *
- * `neutralReason` IS THE PROSE HALF OF THE SAME REPAIR (400 gap round 1). `reason` is the gate's
- * canonical sentence and stays the message this error carries; `neutralReason` is that decision
- * said without naming a surface's affordance, for the doors whose reader cannot take the one the
- * canonical sentence names. It defaults to `reason` — a caller with no gate decision in hand has
- * only one sentence and copying it is the honest answer, where inventing a neutral one would be
- * this class writing policy prose it did not compose. The parameter is APPENDED so every existing
- * construction site stays valid positionally.
- */
-export class FunctionDeniedError extends Error {
-  constructor(
-    readonly functionId: string,
-    readonly reason: string,
-    readonly remedies: readonly GateRemedy[] = [],
-    readonly neutralReason: string = reason,
-  ) {
-    super(`Denied ${functionId}: ${reason}`)
-    this.name = 'FunctionDeniedError'
-  }
-}
+// 2026-10-01 (432-19, D-15): `FunctionDeniedError` is deleted. It was the execution gate's
+// refusal, carrying the gate's reason and remedies; no gate raises it since 432-13, and the doors
+// that reconstructed or rendered it no longer look for it.
 
 function issueSummary(issues: readonly { path: PropertyKey[]; message: string }[]): string {
   return issues

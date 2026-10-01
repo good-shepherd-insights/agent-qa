@@ -82,7 +82,7 @@ function lookup(blobs: Blobs, runId: RunId, sha: string): EvidenceBlobLookup {
   return bytes === undefined ? { status: 'blob_absent' } : { status: 'found', bytes }
 }
 
-const auditSink = { appendExecutionAudit() {}, appendGuardrailAudit() {} } as unknown as CreateFunctionRegistryOptions['auditSink']
+const auditSink = { appendGuardrailAudit() {} } as unknown as CreateFunctionRegistryOptions['auditSink']
 
 function registryOver(blobs: Blobs): FunctionRegistry {
   const evidenceBlobs = {

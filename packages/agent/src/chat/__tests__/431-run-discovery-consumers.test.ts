@@ -29,7 +29,7 @@ const CALLER: FunctionCaller = {
   origin: 'human',
 }
 
-const NO_AUDIT: AuditSink = { appendExecutionAudit() {}, appendGuardrailAudit() {} }
+const NO_AUDIT: AuditSink = { appendGuardrailAudit() {} }
 
 function completion(runId: string, endedAt: number, buildOrdinal: number): CompletedRunHandoff {
   return {

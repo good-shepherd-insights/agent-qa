@@ -271,7 +271,7 @@ describe('RUN-TARGET-HISTORY: runs.list filters on recorded targets, not current
           get: () => Promise.resolve(undefined),
         },
       } as never,
-      auditSink: { appendExecutionAudit() {}, appendGuardrailAudit() {} } as never,
+      auditSink: { appendGuardrailAudit() {} } as never,
       resolveExecutionContext: () => 'local-interactive',
     })
   }

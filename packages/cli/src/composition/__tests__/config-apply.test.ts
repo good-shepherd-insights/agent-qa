@@ -195,7 +195,7 @@ function registryFor() {
 
   return createFunctionRegistry({
     deps,
-    auditSink: { appendExecutionAudit() {}, appendGuardrailAudit() {} },
+    auditSink: { appendGuardrailAudit() {} },
     // The production door for an accept: `mutating-shared` asks in every context, and this is the
     // arm the CLI host binds. Without it every cell below would pass while measuring nothing.
     resolveExecutionContext: () => 'local-interactive',

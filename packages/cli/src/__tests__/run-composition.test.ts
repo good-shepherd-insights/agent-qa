@@ -7,74 +7,32 @@ import { createMaskingContext } from '@vostride/agent-qa-safety'
 import type { RiskActionDescriptor } from '@vostride/agent-qa-schema'
 import type { RunEventEnvelope } from '@vostride/agent-qa-schema'
 import type { RunSubscriberHandle } from '@vostride/agent-qa-agent-local'
+import * as runSessionComposition from '../run-session-composition.js'
 import {
   attachRunSubscribers,
   buildRunSafetyHooks,
-  buildUnmaskingConfirm,
   createLivePauseController,
 } from '../run-session-composition.js'
 import { QUARANTINE_TEST_ANNOTATION } from '../reporters/console-reporter.js'
 import { JUNIT_QUARANTINE_MARKER_BLOCK } from '../reporters/junit-reporter.js'
 import { QUARANTINED_CHECKOUT, buildReporterFixture, createCapture } from './reporters/fixtures.js'
-import type { ConfirmPort } from '@vostride/agent-qa-safety'
 
 // 363-09 Task 2 / Task 1 — the composition swap seam: the D-11 unmasking confirm decorator and the
 // shared `attachRunSubscribers` helper both startRun sites use (Pitfall 8). Reporter RENDERING is
 // unit-tested in reporters/*.test.ts; here we pin the composition contract.
 
+// RE-SPELLED 2026-10-01 (432-19, D-14/D-15; 432-14 deferred #3). `buildUnmaskingConfirm` unmasked
+// the action name on a confirm prompt for the person reading it, paused the live line around the
+// question and left the gate's masked record untouched. It had no production caller after 432-14,
+// and the `ConfirmPort` it decorated is deleted with the gate, so it goes too. The masking claim it
+// carried — a human-facing render unmasks exactly once while the record stays masked — is held by
+// every surviving human render (`unmask-boundary-rollcall.test.ts`); what is pinned here is that the
+// decorator cannot come back as an export of this module.
 describe('buildUnmaskingConfirm (D-11 / Pitfall 4)', () => {
-  it('delivers the UNMASKED prompt to the readline confirm while the deny record stays MASKED', async () => {
-    const secret = 'sk-live-CONFIRM-1234567890'
-    const ctx = createMaskingContext()
-    ctx.register(secret)
-    const maskedName = ctx.mask(`git push with token ${secret}`)
-    // sanity: the action the gate holds is masked (the placeholder replaced the original)
-    expect(maskedName).not.toContain(secret)
-    expect(maskedName).toContain('<')
-
-    const seen: RiskActionDescriptor[] = []
-    const asked = vi.fn(async (action: RiskActionDescriptor) => {
-      seen.push(action)
-      return false // deny
-    })
-    const base: ConfirmPort = { surface: 'tty-prompt', ask: asked }
-
-    const events: string[] = []
-    const live = createLivePauseController()
-    live.bind({
-      pauseLive: () => events.push('pause'),
-      resumeLive: () => events.push('resume'),
-    })
-
-    const confirm = buildUnmaskingConfirm({ base, maskingContext: ctx, live })
-    const maskedAction: RiskActionDescriptor = { name: maskedName, recognized: true }
-    const answer = await confirm.ask(maskedAction)
-
-    // (1) the human-facing prompt (delivered to the stubbed readline) shows the ORIGINAL value
-    expect(seen).toHaveLength(1)
-    expect(seen[0].name).toContain(secret)
-    // (2) the console reporter's pause/resume seam wrapped the question (Pitfall 4)
-    expect(events).toEqual(['pause', 'resume'])
-    // (3) the caller's masked action is never mutated — the gate's deny/audit record stays MASKED
-    expect(maskedAction.name).toBe(maskedName)
-    expect(maskedAction.name).not.toContain(secret)
-    // (4) the deny answer is preserved verbatim
-    expect(answer).toBe(false)
-  })
-
-  it('resumes the live line even when the base confirm throws (no wedged TTY)', async () => {
-    const ctx = createMaskingContext()
-    const events: string[] = []
-    const live = createLivePauseController()
-    live.bind({ pauseLive: () => events.push('pause'), resumeLive: () => events.push('resume') })
-    const confirm = buildUnmaskingConfirm({
-      base: { surface: 'tty-prompt', ask: async () => { throw new Error('readline blew up') } },
-      maskingContext: ctx,
-      live,
-    })
-
-    await expect(confirm.ask({ name: 'plain action', recognized: true })).rejects.toThrow('readline blew up')
-    expect(events).toEqual(['pause', 'resume'])
+  it('C432-NO-ASK-PORTS: the confirm decorator is not exported, so nothing can wrap a prompt any more', () => {
+    expect(Object.keys(runSessionComposition)).not.toContain('buildUnmaskingConfirm')
+    // Non-vacuity: the namespace is the real module, with its retained presentation symbols.
+    expect(typeof runSessionComposition.createLivePauseController).toBe('function')
   })
 })
 
@@ -234,7 +192,7 @@ describe('the CLI run-session module exports presentation ONLY (385-08 / D-13)',
       // host attaches to the bus and flushes, which a headless drainer would substitute.
       'buildAnalyticsRunSubscriber',
       'buildRunSafetyHooks',
-      'buildUnmaskingConfirm',
+      // 2026-10-01 (432-19): 'buildUnmaskingConfirm' left with the confirm port it decorated.
       'createLivePauseController',
     ].sort())
   })
@@ -270,7 +228,6 @@ describe('human decoration composes OUTSIDE the pause timing (385-08 / D-10 / D-
     })
 
     const auditSink = {
-      appendExecutionAudit() { /* no-op */ },
       appendGuardrailAudit() { /* no-op */ },
     }
 
@@ -282,10 +239,10 @@ describe('human decoration composes OUTSIDE the pause timing (385-08 / D-10 / D-
       confirm: { surface: 'tty-prompt' as const, ask: async () => { asked += 1; return true } },
       maskingContext: ctx,
       live,
+      executionContext: 'local-interactive',
     }
     const { safetyHooks, confirmPausedMs } = buildRunSafetyHooks({
       auditSink,
-      executionContext: 'local-interactive',
       ...smuggled,
     })
 

@@ -219,8 +219,7 @@ export interface CallerMint {
  * A closure over `invokeFunction` supplied by the composition root, NOT a registry handle. Two
  * reasons and the second is the structural one: `agent`'s chat subtree would otherwise import the
  * registry it is registered inside, and — more importantly — a seam typed as "call this op for me"
- * cannot become a seam that runs a spec directly. `evaluate()` is reachable from exactly one place
- * in this repo and chat is not it (384 FUNC-03).
+ * cannot become a seam that runs a spec directly (384 FUNC-03).
  */
 export type ChatInvokeBinding = (
   functionId: string,

@@ -19,7 +19,7 @@ import type {
   RunEventType,
   RunId,
 } from '@vostride/agent-qa-schema'
-import type { AuditSink, ExecutionAuditRow, GuardrailAuditRow } from '@vostride/agent-qa-safety'
+import type { AuditSink, GuardrailAuditRow } from '@vostride/agent-qa-safety'
 import { describe, expect, it } from 'vitest'
 
 import { invokeFunction } from '../functions/invoke.js'
@@ -103,31 +103,29 @@ function eventsDeps(options: {
   }
 }
 
+// 2026-10-01 (432-19, D-17): the audit port has one append, for guardrail rows, so this sink
+// records every row an invocation could write. The cells that asserted "no execution-audit row"
+// since 432-13 now assert "no audit row of any kind".
 interface CapturedSink {
   sink: AuditSink
-  executionRows: () => readonly ExecutionAuditRow[]
+  auditRows: () => readonly GuardrailAuditRow[]
 }
 
 function capturingSink(): CapturedSink {
-  const executionRows: ExecutionAuditRow[] = []
   const guardrailRows: GuardrailAuditRow[] = []
   return {
     sink: {
-      appendExecutionAudit(row) {
-        executionRows.push(row)
-      },
       appendGuardrailAudit(row) {
         guardrailRows.push(row)
       },
     },
-    executionRows: () => executionRows,
+    auditRows: () => guardrailRows,
   }
 }
 
 /** Discards every row — for the cases that do not assert on the audit trail. */
 function noOpSink(): AuditSink {
   return {
-    appendExecutionAudit() {},
     appendGuardrailAudit() {},
   }
 }
@@ -231,10 +229,10 @@ describe('runs.events through invokeFunction (D-11 one dispatch path)', () => {
 
     const result = await invokeFunction(registry, 'runs.events', { runId: RUN_ID }, READ_CALLER)
 
-    expect(audit.executionRows()).toEqual([])
+    expect(audit.auditRows()).toEqual([])
     const events = await drain(result as FunctionStream<RunEventEnvelope>)
     expect(events.map((event) => event.seq)).toEqual([1, 2, 3, 4, 5])
-    expect(audit.executionRows()).toEqual([])
+    expect(audit.auditRows()).toEqual([])
   })
 
   it('returns the async iterable itself rather than a zod-parsed unary DTO', async () => {

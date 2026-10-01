@@ -21,7 +21,7 @@
 
 import { MASKED_RESOLVED_CONFIG_SCHEMA_VERSION } from '@vostride/agent-qa-schema'
 import type { ExecutionContext, FunctionCaller } from '@vostride/agent-qa-schema'
-import type { AuditSink, ExecutionAuditRow, GuardrailAuditRow } from '@vostride/agent-qa-safety'
+import type { AuditSink, GuardrailAuditRow } from '@vostride/agent-qa-safety'
 import { describe, expect, it } from 'vitest'
 import { z } from 'zod'
 
@@ -118,16 +118,12 @@ function deps(overrides: Partial<FunctionDeps> = {}): FunctionDeps {
 }
 
 function capturingSink(): AuditSink {
-  const executionRows: ExecutionAuditRow[] = []
   const guardrailRows: GuardrailAuditRow[] = []
   return {
-    appendExecutionAudit(row: ExecutionAuditRow) {
-      executionRows.push(row)
-    },
     appendGuardrailAudit(row: GuardrailAuditRow) {
       guardrailRows.push(row)
     },
-  } as unknown as AuditSink
+  }
 }
 
 function registryOver(functionDeps: FunctionDeps) {

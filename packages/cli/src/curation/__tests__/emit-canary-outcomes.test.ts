@@ -214,7 +214,7 @@ describe('SC2 — the shipped positive-on-any-anchor-match fixture earns no cred
     const { defaultGuardrailPolicyInput, loadGuardrailPolicy } = await import('@vostride/agent-qa-safety')
     const fold = () => curateCompletedRun({ handoff: completed, runDir: creditRunDir,
       knowledgeRoot: '/tmp/agent-qa-knowledge', agentQaRoot: creditRunDir, maxAblations: 1,
-      auditSink: { appendGuardrailAudit: () => undefined, appendExecutionAudit: () => undefined },
+      auditSink: { appendGuardrailAudit: () => undefined },
       policy: loadGuardrailPolicy(defaultGuardrailPolicyInput), operations, log: { warn: vi.fn() } })
     expect(await fold()).toMatchObject({ complete: false })
     expect(readCurationTailReceipt(creditRunDir)).toBeUndefined()
@@ -260,7 +260,7 @@ describe('SC2 — the shipped positive-on-any-anchor-match fixture earns no cred
     const { defaultGuardrailPolicyInput, loadGuardrailPolicy } = await import('@vostride/agent-qa-safety')
     const report = await curateCompletedRun({ handoff: completed, runDir: creditRunDir,
       knowledgeRoot: '/tmp/agent-qa-knowledge', agentQaRoot: creditRunDir, maxAblations: 1,
-      auditSink: { appendGuardrailAudit: () => undefined, appendExecutionAudit: () => undefined },
+      auditSink: { appendGuardrailAudit: () => undefined },
       policy: loadGuardrailPolicy(defaultGuardrailPolicyInput), operations, log: { warn: vi.fn(), info } })
     expect(report).toMatchObject({ complete: true, curated: 1 })
     const lines = info.mock.calls.map(([line]) => String(line))

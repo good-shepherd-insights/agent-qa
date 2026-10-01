@@ -1,26 +1,21 @@
-// The FOLD and the SENTENCE, composed the way production composes them (401-15, WR-06).
+// The FOLD over a run's member target classes (401-15, WR-06) — RE-SPELLED 2026-10-01 (432-19, D-14).
 //
-// WHY A SECOND FILE WHEN `run-risk.test.ts` ALREADY RANGES THE SENTENCE. That file ranges the three
-// values `RunTargetClass` can hold — which is the producer's whole input domain, and is where the
-// clause wording is pinned. It cannot range MEMBER SETS, because `foldMostRestrictiveTargetClass`
-// lives in the CLI and `agent-local` may not import the CLI. The property WR-06 is really about is
-// a property of the pair: no member set carrying a shared or undeclared member may render the
-// sentence that invites a person to approve the run as an all-local one. Measuring that needs both
-// halves in one road, and this is the only package that can hold both.
+// This file composed the fold with `buildRunDisclosure`, the sentence a person was asked to approve
+// a run on, to prove that no member set carrying a shared or undeclared member could render the
+// all-local clause. The approval prompt and its sentence are deleted (D-14), so the pair is gone;
+// the FOLD stays, because it is what the production refusal reads (D-18). The property is restated
+// on the fold's own answer: it says `local` for exactly the sets whose every member is declared
+// local, `production` whenever any member is, and fails toward undeclared otherwise.
 //
-// A second spelling of the fold is deliberately absent. Both functions are IMPORTED — a mini-fold
-// written here would be the second spelling of a security fold that `run.ts` says out loud must
-// not exist, and it would agree with itself rather than with production.
+// A second spelling of the fold is deliberately absent. It is IMPORTED — a mini-fold written here
+// would be the second spelling of a security fold that `run.ts` says out loud must not exist.
 
 import { describe, expect, it } from 'vitest'
 
-import { buildRunDisclosure } from '@vostride/agent-qa-agent-local'
 import type { RunTargetClass } from '@vostride/agent-qa-agent-local'
 
 import { foldMostRestrictiveTargetClass } from '../run.js'
 
-/** The clause that says the declaration covers EVERY member — reachable from one fold answer. */
-const ALL_LOCAL_CLAUSE = 'declared: every target local'
 
 /**
  * Every member set over the declarations, up to length two, plus the empty set. (432-03 added
@@ -37,18 +32,10 @@ const MEMBER_SETS: readonly (readonly RunTargetClass[])[] = [
   ...DECLARATIONS.flatMap((first) => DECLARATIONS.map((second) => [first, second])),
 ]
 
-function namesFor(members: readonly RunTargetClass[]): string[] {
-  return members.map((member, index) => `${member ?? 'undeclared'}-${index}`)
-}
-
-describe('no member set with a shared or undeclared member can render the all-local sentence', () => {
-  it('a production member makes the fold production and the sentence says so (432-03, D-18)', () => {
+describe('no member set with a shared or undeclared member folds to local', () => {
+  it('a production member makes the fold production (432-03, D-18)', () => {
     for (const members of [['production'], ['local', 'production'], [undefined, 'production', 'shared']] as const) {
-      const folded = foldMostRestrictiveTargetClass(members)
-      expect(folded, JSON.stringify(members)).toBe('production')
-      const sentence = buildRunDisclosure(folded, namesFor(members))
-      expect(sentence).toContain('declared: at least one target production')
-      expect(sentence).not.toContain(ALL_LOCAL_CLAUSE)
+      expect(foldMostRestrictiveTargetClass(members), JSON.stringify(members)).toBe('production')
     }
   })
 
@@ -56,30 +43,19 @@ describe('no member set with a shared or undeclared member can render the all-lo
     'members $label',
     ({ members }) => {
       const folded = foldMostRestrictiveTargetClass(members)
-      const sentence = buildRunDisclosure(folded, namesFor(members))
       const everyMemberLocal = members.length > 0 && members.every((member) => member === 'local')
 
-      // The whole claim, in one line: the all-local sentence appears for exactly the sets whose
-      // every member really is declared local, and for no other set at all.
-      expect(sentence.includes(ALL_LOCAL_CLAUSE), sentence).toBe(everyMemberLocal)
+      // The whole claim, in one line: the fold answers `local` for exactly the sets whose every
+      // member really is declared local, and for no other set at all.
+      expect(folded === 'local', JSON.stringify(members)).toBe(everyMemberLocal)
+      // And a production member is never hidden behind its siblings.
+      if (members.includes('production')) expect(folded).toBe('production')
     },
   )
 
-  it('the mixed [shared, undeclared] set never describes the declared-shared member as undeclared', () => {
-    // The measured defect's own member set, driven through the production fold rather than through
-    // a class this file chose: the fold is what answers `undefined` here, and reading the answer
-    // off the fold is what makes this cell about the pair rather than about one function.
+  it('the mixed [shared, undeclared] set folds to undeclared, never to shared or local', () => {
     const members: readonly RunTargetClass[] = ['shared', undefined]
-    const folded = foldMostRestrictiveTargetClass(members)
-    expect(folded).toBeUndefined()
-
-    const sentence = buildRunDisclosure(folded, ['staging', 'weird'])
-
-    expect(sentence).toContain('staging')
-    expect(sentence).toContain('weird')
-    expect(sentence).toContain('declared: at least one target undeclared, which classifies as shared')
-    // No clause asserts an environment FOR THE SET — the shipped form this ruling refused.
-    expect(sentence).not.toContain('environment: ')
+    expect(foldMostRestrictiveTargetClass(members)).toBeUndefined()
   })
 })
 
@@ -110,11 +86,11 @@ describe('a declaration the enum forbids takes the fail-closed answer, never `lo
     expect(foldMostRestrictiveTargetClass([STRANGER])).toBeUndefined()
   })
 
-  it('and the answer it takes renders the undeclared clause, which classifies as shared', () => {
-    // The consequence, not just the value: `buildRunRiskDescriptor` reads anything other than
-    // `local` as `mutating-shared`, and the sentence a person is asked to approve says so.
-    const sentence = buildRunDisclosure(foldMostRestrictiveTargetClass(['local', STRANGER]), ['ok', 'weird'])
-    expect(sentence).toContain('declared: at least one target undeclared, which classifies as shared')
-    expect(sentence).not.toContain(ALL_LOCAL_CLAUSE)
+  // RE-SPELLED 2026-10-01 (432-19) from 'and the answer it takes renders the undeclared clause,
+  // which classifies as shared'. The sentence is deleted; the answer is still never `local`.
+  it('and the answer it takes is never local or production', () => {
+    const folded = foldMostRestrictiveTargetClass(['local', STRANGER])
+    expect(folded).not.toBe('local')
+    expect(folded).not.toBe('production')
   })
 })

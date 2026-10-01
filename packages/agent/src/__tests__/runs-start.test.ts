@@ -17,7 +17,7 @@
 
 import { MASKED_RESOLVED_CONFIG_SCHEMA_VERSION } from '@vostride/agent-qa-schema'
 import type { ExecutionContext, FunctionCaller } from '@vostride/agent-qa-schema'
-import type { AuditSink, ExecutionAuditRow, GuardrailAuditRow } from '@vostride/agent-qa-safety'
+import type { AuditSink, GuardrailAuditRow } from '@vostride/agent-qa-safety'
 import { describe, expect, it } from 'vitest'
 
 import { FunctionNotBoundError, UnknownFunctionError, invokeFunction } from '../functions/invoke.js'
@@ -61,24 +61,23 @@ function fakeDeps(): FunctionDeps {
   }
 }
 
+// 2026-10-01 (432-19, D-17): the audit port has one append, for guardrail rows, so this sink
+// records every row an invocation could write. The cells that asserted "no execution-audit row"
+// since 432-13 now assert "no audit row of any kind".
 interface CapturedSink {
   sink: AuditSink
-  executionRows: () => readonly ExecutionAuditRow[]
+  auditRows: () => readonly GuardrailAuditRow[]
 }
 
 function capturingSink(): CapturedSink {
-  const executionRows: ExecutionAuditRow[] = []
   const guardrailRows: GuardrailAuditRow[] = []
   return {
     sink: {
-      appendExecutionAudit(row) {
-        executionRows.push(row)
-      },
       appendGuardrailAudit(row) {
         guardrailRows.push(row)
       },
     },
-    executionRows: () => executionRows,
+    auditRows: () => guardrailRows,
   }
 }
 
@@ -92,7 +91,6 @@ const RUN_CALLER: FunctionCaller = {
 /** Discards every row — for the cases that do not assert on the audit trail. */
 function noOpSink(): AuditSink {
   return {
-    appendExecutionAudit() {},
     appendGuardrailAudit() {},
   }
 }
@@ -195,7 +193,7 @@ describe('runs.start is visibly unbound, never silently missing', () => {
       .catch((error: unknown) => error)
 
     expect(thrown).toBeInstanceOf(FunctionNotBoundError)
-    expect(audit.executionRows()).toEqual([])
+    expect(audit.auditRows()).toEqual([])
   })
 
   it('refuses a caller lacking the run scope before it ever reaches the binding check', async () => {
@@ -216,7 +214,7 @@ describe('runs.start is visibly unbound, never silently missing', () => {
 
     expect(thrown).not.toBeInstanceOf(FunctionNotBoundError)
     expect((thrown as Error).name).toBe('FunctionScopeError')
-    expect(audit.executionRows()).toHaveLength(0)
+    expect(audit.auditRows()).toHaveLength(0)
   })
 
   it('refuses a DIRECT spec dispatch too, so no in-layer caller can slip past it', async () => {

@@ -300,7 +300,6 @@ function fixtureRegistry(): { readonly registry: FunctionRegistry; readonly mint
   }
 
   const auditSink = {
-    appendExecutionAudit() {},
     appendGuardrailAudit() {},
   } as unknown as CreateFunctionRegistryOptions['auditSink']
 

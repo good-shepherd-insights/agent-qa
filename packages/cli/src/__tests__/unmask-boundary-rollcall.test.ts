@@ -36,7 +36,7 @@ import {
   createMaskingProviderRequestHook,
   unmaskForHumanOutput,
 } from '@vostride/agent-qa-safety'
-import type { ConfirmPort, ProviderRequestParams } from '@vostride/agent-qa-safety'
+import type { ProviderRequestParams } from '@vostride/agent-qa-safety'
 import { debugLoggingMiddleware } from '@vostride/agent-qa-model'
 // 405-10 (D-09): the shipped subscriber, database, detail adapter and routers. A cell that
 // mounted its own would be measuring a door this product does not ship.
@@ -106,7 +106,6 @@ import type {
 } from '@vostride/agent-qa-schema'
 
 import { createConsoleReporter, createJunitReporter, createWireReporter } from '../reporters/index.js'
-import { buildUnmaskingConfirm } from '../run-session-composition.js'
 
 // Any `<SECRET_n>` residue — matches both the raw `<SECRET_0>` and the XML-escaped `&lt;SECRET_0&gt;`.
 const PLACEHOLDER = /SECRET_\d+/
@@ -666,7 +665,7 @@ function dashboardRunRollCall(): Promise<DashboardRunRollCall> {
         createEvidenceBlobReader({ agentQaRoot: TMP_ROOT }),
       ),
       // Discards every row: this file asserts on emitted bytes, never on the audit trail.
-      auditSink: { appendExecutionAudit() {}, appendGuardrailAudit() {} },
+      auditSink: { appendGuardrailAudit() {} },
       resolveExecutionContext: () => 'local-interactive',
     })
 
@@ -799,24 +798,9 @@ const HUMAN_SURFACES: HumanSurface[] = [
     originals: [SECRETS.summary],
     render: () => consoleLines('Checkout failed near'),
   },
-  {
-    name: 'confirm:ask-prompt',
-    originals: [SECRETS.confirm],
-    // Drive the REAL Plan-09 unmasking confirm decorator: the base port receives the UNMASKED name.
-    render: async () => {
-      const seen: string[] = []
-      const base: ConfirmPort = {
-        surface: 'tty-prompt',
-        ask: (action: RiskActionDescriptor) => {
-          seen.push(action.name)
-          return false
-        },
-      }
-      const confirm = buildUnmaskingConfirm({ base, maskingContext: FIXTURE.ctx })
-      await confirm.ask({ name: FIXTURE.confirmActionName, recognized: true })
-      return seen.join('\n')
-    },
-  },
+  // 2026-10-01 (432-19, D-14/D-15; 432-14 deferred #3): 'confirm:ask-prompt' leaves the roll-call.
+  // It drove the unmasking confirm decorator over the ask-tier prompt; the confirm port and the
+  // decorator are deleted, and no prompt is shown to anyone, so there is no such human surface.
   {
     // 399.1 (criterion 3): the op-result payload block, on its way to a terminal. Both chat
     // surfaces compose it with `renderClauseResults` and emit it through `unmaskForHumanOutput`,
@@ -1142,7 +1126,7 @@ const SURFACE_ROLLCALL = [
   'console:error-prose',
   'console:hook-variable',
   'console:run-summary',
-  'confirm:ask-prompt',
+  // 2026-10-01 (432-19): 'confirm:ask-prompt' left with the confirm port and its decorator.
   'durable:events.jsonl',
   'durable:handoff.json',
   'durable:artifact.json',

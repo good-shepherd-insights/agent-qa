@@ -6,10 +6,10 @@ Inherit the root `agent-qa/AGENTS.md` branding, security, and release rules.
 
 This package is the host-adapter home for the safety kernel. It owns the host
 APIs the browser-safe `@vostride/agent-qa-safety` package deliberately excludes:
-the filesystem `JsonlAuditSink`, the `AsyncLocalStorage` masking-scope binding
+the filesystem `JsonlAuditSink` (guardrail rows), the `AsyncLocalStorage` masking-scope binding
 (`runMaskingScope`), the host `process`-reading execution-context detector, and
 the `fingerprint` helper. Key exports: `JsonlAuditSink`, `runMaskingScope`,
-`detectExecutionContext`, `fingerprint`, `createReadlineConfirm`.
+`detectExecutionContext`, `fingerprint`.
 
 ## Read First
 

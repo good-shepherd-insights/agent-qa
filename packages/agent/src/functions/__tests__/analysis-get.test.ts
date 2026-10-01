@@ -142,7 +142,7 @@ function registryWith(options: {
       ...(options.evidenceBlobs === undefined ? {} : { evidenceBlobs: options.evidenceBlobs }),
     }),
     resolveExecutionContext: () => 'local-headless',
-    auditSink: { appendExecutionAudit() {}, appendGuardrailAudit() {} },
+    auditSink: { appendGuardrailAudit() {} },
   })
 }
 

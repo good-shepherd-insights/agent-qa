@@ -48,7 +48,7 @@ const FULLY_GRANTED: FunctionCaller = {
 }
 
 function noOpSink(): AuditSink {
-  return { appendExecutionAudit() {}, appendGuardrailAudit() {} }
+  return { appendGuardrailAudit() {} }
 }
 
 /**

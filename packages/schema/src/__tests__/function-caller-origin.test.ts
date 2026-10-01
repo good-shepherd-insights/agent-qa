@@ -1,6 +1,13 @@
 import { describe, expect, it } from 'vitest'
 
-import { FUNCTION_CALLER_ORIGINS, FunctionScopeSchema } from '../index'
+import {
+  CHAT_SESSION_EVENT_KINDS,
+  CURRENT_CHAT_SESSION_SCHEMA_VERSION,
+  ClauseReceiptSchema,
+  FUNCTION_CALLER_ORIGINS,
+  FunctionScopeSchema,
+  guardChatSessionEvent,
+} from '../index'
 import type { FunctionCaller } from '../index'
 
 describe('the actor-origin axis (391 D-06)', () => {
@@ -79,5 +86,63 @@ describe('the capability-scope union', () => {
       origin: 'agent',
     }
     expect(runOnly.grantedScopes).not.toContain('test-write')
+  })
+})
+
+// 2026-10-01 (432-19, D-14/D-22). The origin axis's surviving reader is the clause RECEIPT: every
+// receipt names the origin the composition minted, and that is the contract the axis keeps once the
+// execution gate (which decided by it) is deleted. No new origin label is introduced, and the one
+// approval record the axis ever attributed — `approval_decision` — stays a READABLE historical kind
+// with no writer, so a session file a pre-432 build wrote still opens.
+describe('the origin axis after the gate (432-19)', () => {
+  it('C432-HISTORICAL-READER: the clause receipt carries origin, with its exact key set', () => {
+    expect(Object.keys(ClauseReceiptSchema.shape).sort()).toEqual(
+      ['clause', 'functionId', 'origin', 'outcome', 'status'],
+    )
+    for (const origin of FUNCTION_CALLER_ORIGINS) {
+      expect(ClauseReceiptSchema.parse({
+        clause: 'show the last run', functionId: 'runs.list', origin, status: 'executed', outcome: 'ok',
+      }).origin).toBe(origin)
+    }
+  })
+
+  it('C432-HISTORICAL-READER: a pre-432 approval_decision line still parses, both sources and all three decisions', () => {
+    expect(CHAT_SESSION_EVENT_KINDS).toContain('approval_decision')
+    for (const source of ['gate', 'verb'] as const) {
+      for (const decision of ['accept', 'accept-always', 'deny'] as const) {
+        const line = {
+          kind: 'approval_decision',
+          turnId: 't_0001',
+          at: '2026-09-01T10:00:00.000Z',
+          actionClass: 'fn:authoring.draft.write',
+          decision,
+          source,
+        }
+        expect(guardChatSessionEvent(line, CURRENT_CHAT_SESSION_SCHEMA_VERSION)).toEqual(line)
+      }
+    }
+  })
+
+  it('C432-HISTORICAL-READER: the historical kind keeps its exact key set — no field is added or dropped', () => {
+    const line = {
+      kind: 'approval_decision',
+      turnId: 't_0001',
+      at: '2026-09-01T10:00:00.000Z',
+      actionClass: 'fn:runs.mark',
+      decision: 'deny',
+      source: 'gate',
+    }
+    expect(() => guardChatSessionEvent({ ...line, origin: 'human' }, CURRENT_CHAT_SESSION_SCHEMA_VERSION))
+      .toThrow(/approval_decision/)
+    const { source: _source, ...withoutSource } = line
+    expect(() => guardChatSessionEvent(withoutSource, CURRENT_CHAT_SESSION_SCHEMA_VERSION))
+      .toThrow(/approval_decision/)
+  })
+
+  it('C432-HISTORICAL-READER: the origin vocabulary gains no approval-shaped label', () => {
+    expect([...FUNCTION_CALLER_ORIGINS]).toEqual(['human', 'agent'])
+    for (const retired of ['approved', 'confirmed', 'granted', 'trusted']) {
+      expect(FUNCTION_CALLER_ORIGINS as readonly string[]).not.toContain(retired)
+    }
   })
 })

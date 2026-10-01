@@ -190,7 +190,7 @@ function composeRegistry(options: { readonly withAnalysis: boolean }): FunctionR
   return createFunctionRegistry({
     deps: depsWith(options),
     // Discards every row: this file asserts on the path, never on the audit trail.
-    auditSink: { appendExecutionAudit() {}, appendGuardrailAudit() {} },
+    auditSink: { appendGuardrailAudit() {} },
     resolveExecutionContext: () => 'local-interactive',
   })
 }

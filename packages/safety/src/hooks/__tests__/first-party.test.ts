@@ -8,13 +8,17 @@ import {
 } from '../../policy/audit-sink-resolver'
 import type { ProviderRequestParams } from '../interfaces'
 
-// House style: real engine end-to-end, no mocks (349 POLICY-05 precedent). Test 3
-// drives the actual evaluate() through the actual classifier lexicon; the
-// unrecognized-action restricted-tier deny is Phase 348's fail-safe floor, so no
-// classifier stubbing is needed or allowed. Live agent-loop dispatch through
-// runToolCallAsync is HOOK-FUT-01 (M1/M4) — this file proves attach/block/audit only.
+// House style: real engine end-to-end, no mocks (349 POLICY-05 precedent).
+//
+// 2026-10-01 (432-19, D-15): the registrar no longer attaches the execution policy gate at the
+// async tool_call point. The cells that drove `evaluate()` through it (an unrecognized action
+// denied, trust forwarded, the ci fail-closed default) are re-spelled as the deletion's claim and
+// the retained one: nothing is registered at the tool-call point, and masking still runs BEFORE
+// the guardrail on every provider request, both writing guardrail rows (C432-RETAINED-SAFETY).
 import { GuardrailConfigError } from '../../guardrail/policy-loader'
-import type { AuditSink, ExecutionAuditRow, GuardrailAuditRow } from '../../ports/audit-sink'
+import { createMaskingContext } from '../../masking/context'
+import { setActiveMaskingContextResolver } from '../../masking/resolver'
+import type { AuditSink, GuardrailAuditRow } from '../../ports/audit-sink'
 import { FIRST_PARTY, FirstPartyHookError } from '../capability'
 import { registerFirstPartySafetyHooks } from '../first-party'
 import type { AsyncToolCallHook } from '../interfaces'
@@ -22,12 +26,7 @@ import { HookRegistry } from '../registry'
 import * as barrel from '../../index'
 
 class InMemoryAuditSink implements AuditSink {
-  readonly executionRows: ExecutionAuditRow[] = []
   readonly guardrailRows: GuardrailAuditRow[] = []
-
-  appendExecutionAudit(row: ExecutionAuditRow): void {
-    this.executionRows.push(row)
-  }
 
   appendGuardrailAudit(row: GuardrailAuditRow): void {
     this.guardrailRows.push(row)
@@ -86,22 +85,18 @@ describe('first-party safety hook registration (HOOK-03)', () => {
 })
 
 describe('registerFirstPartySafetyHooks (HOOK-02 attach/block/audit)', () => {
-  it('denies an unrecognized action via the real engine and writes exactly one audit row', async () => {
+  // RE-SPELLED 2026-10-01 (432-19) from 'denies an unrecognized action via the real engine and
+  // writes exactly one audit row'. No gate is attached, so the tool-call point allows the action and
+  // the registrar writes nothing for it.
+  it('C432-RETAINED-SAFETY: attaches nothing at the tool-call point — an unrecognized action passes with no audit row', async () => {
     const auditSink = new InMemoryAuditSink()
     const { registry } = registerFirstPartySafetyHooks({ auditSink })
 
     const action: RiskActionDescriptor = { name: 'unknown_action', recognized: false }
     const result = await registry.runToolCallAsync(action)
 
-    expect(result.action).toBe('deny')
-    // Load-bearing: exactly one row proves the registry added no second audit
-    // write around the gate's own row (349 D-02, single audit author).
-    expect(auditSink.executionRows).toHaveLength(1)
-    const row = auditSink.executionRows[0]
-    expect(row?.verdict).toBe('deny')
-    expect(row?.riskTier).toBe('restricted')
-    expect(row?.outcome).toBe('blocked')
-    expect(row?.action).toBe('unknown_action')
+    expect(result).toEqual({ action: 'allow', call: action })
+    expect(auditSink.guardrailRows).toHaveLength(0)
   })
 
   it('fails closed at composition time on invalid guardrail policy input (SAFE-03(b))', () => {
@@ -134,6 +129,7 @@ const mutatingSharedAction: RiskActionDescriptor = {
 describe('registerFirstPartySafetyHooks invocation-time sink + trust forwarding (362-01)', () => {
   afterEach(() => {
     setActiveAuditSinkResolver(() => undefined)
+    setActiveMaskingContextResolver(() => undefined)
   })
 
   it('resolves the guardrail sink at invocation time — a resolver installed AFTER registration still receives rows (Pitfall 3)', () => {
@@ -160,39 +156,47 @@ describe('registerFirstPartySafetyHooks invocation-time sink + trust forwarding 
     expect(resolverSink.guardrailRows).toHaveLength(0)
   })
 
-  it('forwards trust to the gate — session trust mode satisfies an ask in ci (Pitfall 1, Test 3)', async () => {
-    const auditSink = new InMemoryAuditSink()
-    const { registry } = registerFirstPartySafetyHooks({
-      auditSink,
+  // RE-SPELLED 2026-10-01 (432-19) from 'forwards trust to the gate — session trust mode satisfies
+  // an ask in ci' and 'keeps the default fail-closed posture when no trust is forwarded in ci'. There
+  // is no gate to forward trust to and no ask to fail closed: an ask-tier action allows in ci with or
+  // without the retired trust input, and the two answers are identical.
+  it('C432-RETAINED-SAFETY: an ask-tier action allows in ci with or without the retired trust input', async () => {
+    const trusted = registerFirstPartySafetyHooks({
+      auditSink: new InMemoryAuditSink(),
       trust: { trustMode: true },
       resolveExecutionContext: () => 'ci',
-    })
+    } as never)
+    const untrusted = registerFirstPartySafetyHooks({ auditSink: new InMemoryAuditSink() })
 
-    const result = await registry.runToolCallAsync(mutatingSharedAction)
+    const withTrust = await trusted.registry.runToolCallAsync(mutatingSharedAction)
+    const withoutTrust = await untrusted.registry.runToolCallAsync(mutatingSharedAction)
 
-    expect(result.action).toBe('allow')
-    expect(auditSink.executionRows).toHaveLength(1)
-    expect(auditSink.executionRows[0]).toMatchObject({
-      verdict: 'allow',
-      outcome: 'proceeded',
-      trustSource: 'session-trust-mode',
-    })
+    expect(withTrust).toEqual({ action: 'allow', call: mutatingSharedAction })
+    expect(withoutTrust).toEqual(withTrust)
   })
 
-  it('keeps the default fail-closed posture when no trust is forwarded in ci (Test 4)', async () => {
+  it('C432-RETAINED-SAFETY: masking runs BEFORE the guardrail — a registered secret reaches the guardrail already masked', () => {
     const auditSink = new InMemoryAuditSink()
-    const { registry } = registerFirstPartySafetyHooks({
-      auditSink,
-      resolveExecutionContext: () => 'ci',
-    })
+    const ctx = createMaskingContext()
+    ctx.register('abcdefghijklmno12345')
+    setActiveMaskingContextResolver(() => ctx)
+    const { registry } = registerFirstPartySafetyHooks({ auditSink })
 
-    const result = await registry.runToolCallAsync(mutatingSharedAction)
+    const out = registry.runProviderRequest(bearerParams())
+    const text = JSON.stringify(out)
 
-    expect(result.action).toBe('deny')
-    expect(auditSink.executionRows[0]).toMatchObject({
-      verdict: 'deny',
-      outcome: 'fail-closed-denied',
-    })
+    // Masking replaced the value with its placeholder, so the guardrail had nothing to redact.
+    expect(text).toContain('<SECRET_0>')
+    expect(text).not.toContain('abcdefghijklmno12345')
+    expect(auditSink.guardrailRows).toEqual([])
+
+    // The control: with no masking context the SAME request trips the guardrail and lands its row,
+    // so the empty list above is the ordering, not a guardrail that stopped looking.
+    setActiveMaskingContextResolver(() => undefined)
+    const unmasked = JSON.stringify(registry.runProviderRequest(bearerParams()))
+    expect(unmasked).not.toContain('abcdefghijklmno12345')
+    expect(auditSink.guardrailRows).toHaveLength(1)
+    expect(auditSink.guardrailRows[0]).toMatchObject({ action: 'redact', detector: 'bearer' })
   })
 
   it('keeps getActiveAuditSink undefined once the default resolver is restored', () => {

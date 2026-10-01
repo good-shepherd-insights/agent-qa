@@ -209,12 +209,12 @@ export interface ChatTurnCompleteEvent extends ChatSessionEventBase<'turn_comple
 }
 
 /**
- * A person's answer at an ask-tier gate (D-03).
+ * A person's answer at an ask-tier gate (D-03). HISTORICAL ONLY.
  *
- * Recorded by the chat WRAPPER around the shipped `ConfirmPort`, never from inside safety — the
- * port's type is `(action) => boolean | Promise<boolean>` and it stays untouched (RESEARCH
- * Pitfall 7). `accept-always` is the two-form surface 391 shipped, and it appears here because a
- * standing approval granted mid-conversation is exactly the event a reviewer needs to find.
+ * 2026-10-01 (432-19, D-14/D-22): nothing writes this event any more. The chat confirm, the
+ * `/pin` verb and the execution gate are deleted, so no build mints an `approval_decision`. The kind
+ * and its exact key set stay so a session file a pre-432 build wrote keeps parsing: the session
+ * guard throws on an unknown kind, and persisted history stays readable (430 D-08).
  */
 export interface ChatApprovalDecisionEvent extends ChatSessionEventBase<'approval_decision'> {
   /** The `fn:`-prefixed risk name the gate classified, not the bare op id (391-05). */

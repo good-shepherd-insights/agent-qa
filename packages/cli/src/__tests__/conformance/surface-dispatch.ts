@@ -49,7 +49,13 @@ import {
   getActiveExecutionContext,
   setActiveExecutionContextResolver,
 } from '@vostride/agent-qa-safety'
-import type { ExecutionAuditRow } from '@vostride/agent-qa-safety'
+// 2026-10-01 (432-19, D-17): safety no longer publishes the execution-audit row, and nothing writes
+// `execution_audit.jsonl`. The harness still reads that path so the cells that assert "no decision
+// row" see a returning writer; the row is typed by the two fields they filter on.
+interface LegacyExecutionAuditRow {
+  readonly action?: unknown
+  readonly verdict?: unknown
+}
 import type {
   ClauseReceipt,
   ClauseResult,
@@ -108,14 +114,12 @@ export interface ChatDriveObservation {
    */
   readonly results: readonly ClauseResult[]
   /**
-   * The execution-audit rows this drive landed, in order.
+   * The execution-audit rows this drive landed, in order — always none since 432-13.
    *
-   * THE GATE'S OWN RECORD, and the reason the driver returns it. `evaluate()` is the single audit
-   * author, it is reached from exactly one call site, and a capability rerouted around that call
-   * site lands NO ROW. So "the surface refused" and "the gate is what refused it" are two separate
-   * observations here, which is what D-14's ungated-op mutation has to be able to break.
+   * The gate that authored them is deleted (432-19, D-15/D-17), so this is the absence witness: a
+   * capability that started writing a decision row again would show up here.
    */
-  readonly auditRows: readonly ExecutionAuditRow[]
+  readonly auditRows: readonly LegacyExecutionAuditRow[]
   /** Clauses the turn engine could not route at all — a resolution failure, not a verdict. */
   readonly unhandled: readonly string[]
   /** Everything the surface printed, i.e. what a person actually sees. */
@@ -390,7 +394,7 @@ export function readRuntimeObservations(agentQaRoot: string): Omit<ChatDriveObse
     }
   }
   const auditRows = readJsonLines(join(agentQaRoot, 'execution_audit.jsonl')).map(
-    (row) => row as unknown as ExecutionAuditRow,
+    (row) => row as unknown as LegacyExecutionAuditRow,
   )
   return { receipts, results, auditRows, unhandled }
 }

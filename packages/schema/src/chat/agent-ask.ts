@@ -12,7 +12,6 @@
 
 import { z } from 'zod'
 
-import { GATE_REMEDY_KINDS } from '../safety/remedies'
 import { CLAUSE_RECEIPT_STATUSES } from './turn-receipts'
 import { CHAT_TURN_STATUSES } from './session-events'
 
@@ -54,59 +53,6 @@ export const ClauseResultSchema = z.object({
 
 export type ClauseResult = z.infer<typeof ClauseResultSchema>
 
-/**
- * What the GATE decided about one clause it refused, in the vocabulary each door projects.
- *
- * THE THIRD CHANNEL, AND IT EXISTS FOR `results[]`'s REASON ONE LAYER OVER (400-06, window #188).
- * A gate denial arrives inside a turn as a thrown `FunctionDeniedError` carrying two things a
- * refused person needs: the canonical `reason` and the typed `remedies` phase 400 minted so a
- * surface can offer a way forward it can actually take. `turn-engine.ts`'s dispatch catch keeps
- * `refusalName(error)` — the NAME — because that is all a five-string receipt may carry, so both
- * were dropped on the floor and every interactive door rendered `failed FunctionDeniedError` with
- * nothing behind it. The CLI's single-op `fn` door renders them only because it catches the error
- * itself; a conversation never can.
- *
- * A SIBLING OF `receipts` RATHER THAN A MEMBER OF ONE, on the receipt charter's own argument
- * (398-13 D-21, defended at length at `explainAnswerLines`): the receipt is the MAP — five strings,
- * one line — and the territory travels beside it. Widening `ClauseReceipt` would also have widened
- * the append-only session-event grammar, whose `EVENT_KEYS` guard is an EXACT key comparison: every
- * session file written before the field existed would stop being readable. Nothing here reaches
- * that grammar. `clause_receipt` lines are byte-identical to the ones this build wrote yesterday.
- *
- * AND IT IS DELIBERATELY NOT PERSISTED. A remedy is advice about a decision being made NOW — "a
- * confirm could be answered", "this class is pinned for this session" — and its truth is a fact
- * about the live posture, not about the past. The durable record of the denial is the receipt and
- * the execution-audit row, both unchanged. A remedy replayed out of a log a week later would be a
- * suggestion nobody can check.
- *
- * `reason` IS THE GATE'S CANONICAL SENTENCE, VERBATIM. It is the same string the audit row carries
- * and `demo/acceptance/399/` publishes; nothing edits it on the way here. The per-surface half is
- * `remedies`, which is data, and each door renders only its own projection.
- *
- * `neutralReason` IS WHAT A BROWSER READER IS ACTUALLY SHOWN (400 gap round 1, D-15 prose half).
- * The canonical sentence names `--trust-session` on two arms — a flag declared on `agent-qa run`
- * and nowhere else — so rendering it in a transcript hands a reader another surface's instructions,
- * which is precisely what the finding measured. The gate mints this beside the canonical one; the
- * carrier moves both, and each door picks the one its reader can act on.
- *
- * REQUIRED, AND THAT COSTS NOTHING PERSISTED. Denials ride the RESULT channel only — they are
- * never appended to a session log, so no file written before this field existed becomes
- * unreadable, and no back-compat arm is owed. An optional member would have let a producer answer
- * "this build does not mint one" in the same bytes as a real answer, and the render's fallback
- * would then be the canonical prose: the defect, restored by the shape of its own fix.
- */
-export const ClauseDenialSchema = z.object({
-  clause: z.string(),
-  functionId: z.string(),
-  reason: z.string(),
-  remedies: z.array(z.object({
-    kind: z.enum(GATE_REMEDY_KINDS),
-    params: z.record(z.string(), z.string()).optional(),
-  })),
-  neutralReason: z.string(),
-})
-
-export type ClauseDenial = z.infer<typeof ClauseDenialSchema>
 
 /**
  * What a caller asks with.
@@ -151,21 +97,8 @@ export const AgentAskResultSchema = z.object({
    * property this whole engine preserves everywhere else.
    */
   results: z.array(ClauseResultSchema),
-  /**
-   * What the GATE refused, in clause order (400-06, window #188).
-   *
-   * REQUIRED, AND EMPTY IS THE CLAIM, on `results[]`'s own argument directly above: a turn that
-   * omitted the field would leave "the gate refused nothing here" and "this build does not report
-   * denials" as the same bytes — and "nothing was refused" is precisely what a reader of a green
-   * transcript is entitled to believe. So a turn where the gate never spoke carries `[]` and says
-   * so.
-   *
-   * ONE ENTRY PER DENIED CLAUSE, joined to its receipt by `clause` and `functionId` rather than by
-   * position: a compound turn stops on failure, so the denial list and the receipt list have
-   * different lengths, and a render that paired them by index would attribute one op's refusal to
-   * another — the exact class of legibility defect 399.1 gap 2 measured on the payload side.
-   */
-  denials: z.array(ClauseDenialSchema),
+  // 2026-10-01 (432-19, D-15): no `denials` channel. It carried what the execution gate refused,
+  // with the gate's remedies; there is no gate, so nothing is refused that way.
   unhandled: z.object({ clause: z.string(), reason: z.string() }).optional(),
   /**
    * Lines of this session's log the open path could not read (392 plan 08, discharging 392-03).

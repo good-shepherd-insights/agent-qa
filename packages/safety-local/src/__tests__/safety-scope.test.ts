@@ -14,7 +14,7 @@ import { JsonlAuditSink } from '../jsonl-audit-sink'
 import { runSafetyScope } from '../safety-scope'
 
 function fakeSink(): AuditSink {
-  return { appendExecutionAudit() {}, appendGuardrailAudit() {} }
+  return { appendGuardrailAudit() {} }
 }
 
 describe('runSafetyScope', () => {

@@ -444,7 +444,7 @@ describe('423-18 read-only marks history host (D-19)', () => {
 
 // 2026-09-15, 423 D-19: runs.marks.history registered and bound on every existing local host composition.
 const HISTORY = 'runs.marks.history'
-const auditless = { appendExecutionAudit() {}, appendGuardrailAudit() {} }
+const auditless = { appendGuardrailAudit() {} }
 
 describe('423-18 marks history registration and host binding (D-19)', () => {
   const roots: string[] = []

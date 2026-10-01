@@ -543,7 +543,7 @@ describe('422-16 D-20 — flipped evidence emits harm independently of the class
       runDir,
       knowledgeRoot: '/tmp/agent-qa-knowledge',
       agentQaRoot: runDir,
-      auditSink: { appendGuardrailAudit: () => undefined, appendExecutionAudit: () => undefined },
+      auditSink: { appendGuardrailAudit: () => undefined },
       policy: loadGuardrailPolicy(defaultGuardrailPolicyInput),
       operations,
       log: { warn: vi.fn(), info },

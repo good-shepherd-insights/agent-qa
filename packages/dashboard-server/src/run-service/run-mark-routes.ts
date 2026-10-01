@@ -49,14 +49,8 @@ export async function markRun(
     )
     return { kind: 'ok', body: result as RunsMarkOutcome }
   } catch (error) {
-    // Realm-independent classification: dashboard-server cannot import the agent package.
-    if (typeof error === 'object' && error !== null && 'name' in error && error.name === 'FunctionDeniedError') {
-      return { kind: 'refused', status: 403, body: {
-        error: 'mark_denied',
-        // Closed prose avoids reflecting a note, corrected expectation or provider error.
-        reason: 'The safety gate denied this mark.',
-      } }
-    }
+    // 2026-10-01 (432-19, D-15): no `mark_denied` arm. It classified the execution gate's denial
+    // error, which nothing raises any more; every rejection takes `refusalFor`.
     return refusalFor(error)
   }
 }

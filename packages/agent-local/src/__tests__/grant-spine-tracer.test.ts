@@ -57,7 +57,7 @@ import {
   invokeFunction,
 } from '@vostride/agent-qa-agent'
 import type { FunctionRegistry } from '@vostride/agent-qa-agent'
-import type { AuditSink, ExecutionAuditRow, GuardrailAuditRow } from '@vostride/agent-qa-safety'
+import type { AuditSink, GuardrailAuditRow } from '@vostride/agent-qa-safety'
 import {
   publishBundleForTest,
   type BundleStoreConfig,
@@ -103,14 +103,15 @@ const CALLER: FunctionCaller = {
 }
 
 /** Captures what the gate wrote, which is the only place `trustSource` is observable. */
-function capturingSink(): AuditSink & { rows: ExecutionAuditRow[] } {
-  const rows: ExecutionAuditRow[] = []
+// 2026-10-01 (432-19, D-17): the audit port has one append, for guardrail rows, so `rows` is every
+// row an invocation could write; "no execution-audit row" is now "no audit row of any kind".
+function capturingSink(): AuditSink & { rows: GuardrailAuditRow[] } {
+  const rows: GuardrailAuditRow[] = []
   return {
     rows,
-    appendExecutionAudit(row: ExecutionAuditRow) {
+    appendGuardrailAudit(row: GuardrailAuditRow) {
       rows.push(row)
     },
-    appendGuardrailAudit(_row: GuardrailAuditRow) {},
   }
 }
 

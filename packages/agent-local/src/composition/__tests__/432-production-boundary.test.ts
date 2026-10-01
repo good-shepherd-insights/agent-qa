@@ -140,8 +140,10 @@ describe('C432-PRODUCTION-BEFORE-EFFECTS — a declared production member refuse
     const denied = refusal as RunDeniedError
     expect(denied.reason).toContain('"prod-eu"')
     expect(denied.reason).toContain(OPT_IN_LINE)
-    // PLAIN: no remedy a door could render as a prompt, a flag or a grant.
-    expect(denied.remedies).toEqual([])
+    // PLAIN: no remedy a door could render as a prompt, a flag or a grant. Since 432-19 (D-15) the
+    // error has no remedy member at all, and its surface-neutral reason is the same one sentence.
+    expect(denied).not.toHaveProperty('remedies')
+    expect(Object.keys(denied).sort()).toEqual(['name', 'neutralReason', 'reason', 'runId'])
     expect(denied.neutralReason).toBe(denied.reason)
     expect(denied.runId).toBe('run_minted_by_the_core')
     // One line, so no door can render it as more than one.

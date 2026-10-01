@@ -162,7 +162,6 @@ function fixtureRegistry(options: FixtureOptions = {}): {
   }
 
   const auditSink = {
-    appendExecutionAudit() {},
     appendGuardrailAudit() {},
   } as unknown as CreateFunctionRegistryOptions['auditSink']
 

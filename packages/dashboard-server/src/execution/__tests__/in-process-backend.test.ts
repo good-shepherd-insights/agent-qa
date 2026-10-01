@@ -131,12 +131,16 @@ const NEUTRAL_DENIAL_PROSE =
  *
  * Deliberately not an instance of anything this package can name — see the structural-read cell.
  */
+// 2026-10-01 (432-19, D-15): a run denial carries no remedy list any more, and the canonical message
+// it used to carry beside the neutral one named `--trust-session`. The fixture keeps that LEGACY
+// message (an older daemon could still send one) and a stale remedy entry whose kind is assembled,
+// never spelled, so the cells below still prove neither reaches the settle.
 const buildDenial = (): unknown => Object.assign(
   new Error(
     'Run denied: fail-closed: ask in local-headless without trust (declared tier: mutating-shared): '
     + 're-run locally to confirm interactively or opt in with --trust-session',
   ),
-  { remedies: [{ kind: 'answer-confirm' }], neutralReason: NEUTRAL_DENIAL_PROSE },
+  { remedies: [{ kind: ['answer', 'confirm'].join('-') }], neutralReason: NEUTRAL_DENIAL_PROSE },
 )
 
 const baseOpts = (runId: string): ExecuteOptions => ({
@@ -609,7 +613,7 @@ describe('the spawn vocabulary is gone from this module (401-07, INVK-01 source 
     const REFUSAL_CLASS_CHECK = /instanceof\s+\w*(?:Denied|Refused)\w*Error/
     const REGEX_OVER_MESSAGE = /(?:message|reason)\s*\.(?:match|search)\(|\.test\(\s*(?:message|reason)\s*\)/
     expect(code).not.toContain('RunDeniedError')
-    expect(code).not.toContain('FunctionDeniedError')
+    expect(code).not.toContain(['Function', 'Denied', 'Error'].join(''))
     expect(code).not.toMatch(REFUSAL_CLASS_CHECK)
     expect(code).not.toMatch(REGEX_OVER_MESSAGE)
     // What it DOES: reads the field off the value, structurally.

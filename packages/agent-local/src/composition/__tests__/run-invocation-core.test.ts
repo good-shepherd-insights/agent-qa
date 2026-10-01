@@ -25,7 +25,6 @@ import { fileURLToPath } from 'node:url'
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
-import type { ExecutionAuditRow } from '@vostride/agent-qa-safety'
 import type { RunEventEnvelope, RunSession } from '@vostride/agent-qa-schema'
 
 import { buildRunPorts } from '../run-composition.js'
@@ -38,7 +37,9 @@ import {
   RunRequestFieldRefusedError,
 } from '../run-invocation-core.js'
 import type { RunAssemblyContext, RunConfig } from '../run-invocation-core.js'
-import { RUN_START_RISK_ACTION_NAME } from '../run-risk.js'
+// 2026-10-01 (432-19, D-15): the run gate's descriptor recipe is deleted; its action name is kept
+// here as a literal so the cells below can still assert no row ever names it.
+const RETIRED_RUN_START_ACTION = 'run:start'
 import type { RunTargetClass } from '../run-risk.js'
 
 let projectDir: string
@@ -161,15 +162,23 @@ function artifactDigests(runDir: string): Record<string, string> {
   return digests
 }
 
-/** Every execution-audit row the run dir holds (432-13: the core writes none; in-run hooks may). */
-function recordedAuditRows(runId: string): ExecutionAuditRow[] {
+/**
+ * Every audit row the run dir holds, from either trail (432-13: the core writes none).
+ *
+ * 2026-10-01 (432-19, D-17): `execution_audit.jsonl` has no writer at all, and the run's guardrail
+ * rows land in `guardrail_audit.jsonl`. Both are read so "no row" means no row of any kind, and a
+ * returning execution-audit writer would be seen here.
+ */
+function recordedAuditRows(runId: string): Array<Record<string, unknown>> {
   const slug = runId.replaceAll('/', '-')
-  const path = join(agentQaRoot(), 'runs', slug, 'execution_audit.jsonl')
-  if (!existsSync(path)) return []
-  return readFileSync(path, 'utf8')
-    .split('\n')
-    .filter((line) => line.trim() !== '')
-    .map((line) => JSON.parse(line) as ExecutionAuditRow)
+  return ['execution_audit.jsonl', 'guardrail_audit.jsonl'].flatMap((file) => {
+    const path = join(agentQaRoot(), 'runs', slug, file)
+    if (!existsSync(path)) return []
+    return readFileSync(path, 'utf8')
+      .split('\n')
+      .filter((line) => line.trim() !== '')
+      .map((line) => JSON.parse(line) as Record<string, unknown>)
+  })
 }
 
 describe('the invocation core — the allow leg, end to end (D-02)', () => {
@@ -210,7 +219,7 @@ describe('the invocation core — the allow leg, end to end (D-02)', () => {
 
     // No run-start decision row: nothing decided. This cell runs in `ci` on purpose.
     const rows = recordedAuditRows(String(started.runId))
-    expect(rows.filter((row) => row.action === RUN_START_RISK_ACTION_NAME)).toEqual([])
+    expect(rows.filter((row) => row.action === RETIRED_RUN_START_ACTION)).toEqual([])
   })
 
   it('carries the request markers onto the run and only the literal true (INVK-06 chain, shortened)', async () => {
@@ -268,7 +277,7 @@ describe('C432-PRODUCTION-BEFORE-EFFECTS — production is the one refusal left 
       expect(recordedEvents(scene.runId)[0]?.type).toBe('runStarted')
       // No run-start decision was recorded, because none was taken.
       expect(
-        recordedAuditRows(scene.runId).filter((row) => row.action === RUN_START_RISK_ACTION_NAME),
+        recordedAuditRows(scene.runId).filter((row) => row.action === RETIRED_RUN_START_ACTION),
       ).toEqual([])
     }
   })
@@ -496,8 +505,10 @@ describe('the core hygiene census (D-02 / D-07, pinned to the core file)', () =>
       'utf8',
     )
     expect(pin).not.toContain("'packages/agent-local/src/composition/run-invocation-core.ts':")
-    // Non-vacuity: the pin file is the one that still names the surviving acquisitions.
-    expect(pin).toContain("'packages/safety/src/policy/gate-hook.ts':")
+    // 2026-10-01 (432-19, D-15): the gate pin itself is deleted; the file keeps only the shared
+    // scanner the startRun pin reads with, and names no permitted acquisition at all.
+    expect(pin).not.toMatch(/export const EVALUATE_PIN\b/)
+    expect(pin).toContain('export function parseModuleStatements')
   })
 
   // RE-SPELLED 2026-09-30 (432-13): '... above the audit sink, the ONE evaluate() and assembly'. There
@@ -520,7 +531,7 @@ describe('the core hygiene census (D-02 / D-07, pinned to the core file)', () =>
   // reached (the ordering, from inside)'. Nothing decides a non-production run, so the assembler
   // finds no decision row: the run's audit trail is empty when assembly is reached.
   it('nothing has been decided or recorded by the time assembly is reached (the ordering, from inside)', async () => {
-    let rowsVisibleToAssembly: ExecutionAuditRow[] = []
+    let rowsVisibleToAssembly: Array<Record<string, unknown>> = []
     const inner = recordingAssembler()
     const core = makeCore({
       targetClass: 'local',

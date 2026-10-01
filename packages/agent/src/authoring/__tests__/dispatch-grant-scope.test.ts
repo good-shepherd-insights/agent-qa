@@ -1,23 +1,14 @@
-// D-08's DISPATCH SCOPE, AS THE LOOP KEEPS IT (Phase 401 plan 08).
+// D-08's DISPATCH SCOPE, AS THE LOOP KEPT IT (Phase 401 plan 08) — RE-SPELLED 2026-10-01 (432-19,
+// D-15; 432-18 deferred #2).
 //
-// WHAT IS UNDER TEST is the LIFETIME and nothing else: when the scope opens relative to the first
-// line that can spend a run, when it closes, and that it closes on paths nobody planned. The
-// grant's arithmetic is measured in `agent-local` and its EFFECT on a real gate is measured over a
-// real run in `packages/cli/src/composition/__tests__/dispatch-grant-gate.e2e.test.ts`. A cell here
-// that claimed a run was allowed would be asserting its own fake.
-//
-// ORDERING IS ASSERTED AS A SEQUENCE, not as a pair of call counts. "The scope was entered" and "a
-// run was started" are both true of a loop that enters the scope AFTER the first gate run — which is
-// exactly the defect: that run crosses the gate with no grant in force and denies. So the bench
-// records one interleaved trace and the cells compare it whole.
-//
-// 401-13 (verification gap CR-03) MOVED THE PORT from a lease pair to a SCOPE, and the trace is
-// what makes the difference measurable here rather than merely typed. `enter`/`exit` are recorded
-// by a bench whose `within` actually runs the continuation, so a loop that entered the scope and
-// then started its runs somewhere else — the shape that would leave the dispatch's own gate-runs
-// uncovered after the fix — produces a trace with the runs outside the enter/exit pair. It is also
-// why the throw cell still passes: `exit` is written by the bench's own `finally`, which is where
-// the real overlay writes its disposal too.
+// This file measured the LIFETIME of the optional dispatch-grant scope: entered once, after every
+// model call and before the first gate run, left after the last one, left on a throw, never entered
+// by a dedup refusal, and inert when unbound. 432-18 deleted the overlay that bound it and 432-19
+// deletes the port (`DispatchGrantPortLike`, `AuthoringShelf.dispatchGrants`) and the loop's wrapper,
+// so the authoring loop runs its gate runs DIRECTLY. The claims that survive are the dispatch's own
+// ordering — every model call before the first run, every run inside the one dispatch, nothing
+// started by a refusal, a throw propagating — measured on the same interleaved trace, plus the
+// deletion's own claim: a host that still hands the loop a scope object does not have it entered.
 //
 // vitest does not typecheck `.test.ts` (`typecheck.include` is `*.test-d.ts`); `tsc --noEmit` is
 // this file's only type authority.
@@ -100,7 +91,8 @@ interface Bench {
  */
 function bench(input: {
   readonly gateRuns: number
-  readonly bindDispatchGrants: boolean
+  /** A stale host handing the deleted scope anyway. The loop must not enter it. */
+  readonly bindStaleScope?: boolean
   readonly failVerify?: boolean
   readonly duplicateIntent?: boolean
 }): Bench {
@@ -122,13 +114,12 @@ function bench(input: {
       },
       get: () => Promise.resolve(undefined),
     },
-    ...(input.bindDispatchGrants
+    ...(input.bindStaleScope === true
       ? {
           dispatchGrants: {
-            // THE BENCH RUNS THE CONTINUATION. A fake `within` that recorded `enter`/`exit` and
-            // never called `fn` would make every ordering cell below vacuous AND would silently
-            // change what the loop returns — the shape of the port is that the dispatch happens
-            // INSIDE it, and a bench that did not honour that would be measuring its own fake.
+            // THE BENCH RUNS THE CONTINUATION, so if the loop still entered a bound scope the trace
+            // would show `enter`/`exit` around the runs and the result would be unchanged — the
+            // absence cell below can only pass because the loop no longer reads this member.
             async within<T>(fn: () => Promise<T>): Promise<T> {
               trace.push('enter')
               try {
@@ -198,107 +189,57 @@ const LOOP_INPUT: AuthoringLoopInput = {
   scope: { tier: 'product', key: 'local-form' },
 }
 
-describe('one approval, N gated runs, one scope (D-08)', () => {
-  it('THE SCOPE IS ENTERED BEFORE THE FIRST RUN AND LEFT AFTER THE LAST — the whole sequence', async () => {
-    const harness = bench({ gateRuns: 3, bindDispatchGrants: true })
+describe('the authoring dispatch runs directly (D-08 scope deleted, 432-19)', () => {
+  it('EVERY MODEL CALL PRECEDES THE FIRST RUN, AND THE RUNS ARE THE DISPATCH — the whole sequence', async () => {
+    const harness = bench({ gateRuns: 3 })
     await runAuthoringLoop(LOOP_INPUT, harness.deps)
 
     // Sequence equality over the whole invocation, on `loop-ordering.test.ts`'s own reasoning: a
-    // per-entry "did it happen" check is satisfied by every wrong order, and every wrong order here
-    // is a gate run crossing the gate with no grant in force.
-    // TWO model calls, not one: stage 3's compile and D-18's unconditional refinement round. Both
-    // are outside the scope, which is the point of the cell below.
+    // per-entry "did it happen" check is satisfied by every wrong order. TWO model calls (stage 3's
+    // compile and D-18's refinement round), then the three gate runs stage 4 takes, and nothing else.
     expect(harness.trace).toEqual([
       'model',
       'model',
-      'enter',
       'start:r_gate-0',
       'start:r_gate-1',
       'start:r_gate-2',
-      'exit',
     ])
-    // AND THE RUNS ARE STRICTLY BETWEEN THE TWO, stated as its own claim (401-13). The sequence
-    // above says it, but it says it by literal equality over a fixed fixture; this says the
-    // property the fix depends on — every gate run happened INSIDE the scope's own call tree, which
-    // is now the only thing that earns it the grant.
-    const entered = harness.trace.indexOf('enter')
-    const left = harness.trace.indexOf('exit')
-    const starts = harness.trace
-      .map((entry, index) => (entry.startsWith('start:') ? index : -1))
-      .filter((index) => index >= 0)
-    expect(starts).toHaveLength(3)
-    expect(starts.every((index) => index > entered && index < left)).toBe(true)
   })
 
-  it('ONE ENTRY FOR N RUNS — the loop does not re-approve itself per run', async () => {
-    // The prohibited shape D-08 names: a scope entered around each run would be the loop granting
-    // itself, which makes the human ask decorative. One `enter`, one `exit`, three runs.
-    const harness = bench({ gateRuns: 3, bindDispatchGrants: true })
-    await runAuthoringLoop(LOOP_INPUT, harness.deps)
+  it('C432-NO-ASK-PORTS: a host that still binds the deleted scope does not have it entered', async () => {
+    // The deletion's own claim. A stale composition handing `dispatchGrants` is ignored: no `enter`,
+    // no `exit`, the same runs in the same order and the same result as with nothing bound.
+    const stale = bench({ gateRuns: 3, bindStaleScope: true })
+    const plain = bench({ gateRuns: 3 })
+    const staleResult = await runAuthoringLoop(LOOP_INPUT, stale.deps)
+    const plainResult = await runAuthoringLoop(LOOP_INPUT, plain.deps)
 
-    expect(harness.trace.filter((entry) => entry === 'enter')).toHaveLength(1)
-    expect(harness.trace.filter((entry) => entry === 'exit')).toHaveLength(1)
-    expect(harness.trace.filter((entry) => entry.startsWith('start:'))).toHaveLength(3)
+    expect(stale.trace).toEqual(plain.trace)
+    expect(stale.trace).not.toContain('enter')
+    expect(stale.trace).not.toContain('exit')
+    expect(staleResult.stages).toEqual(plainResult.stages)
+    expect(staleResult.outcome).toEqual(plainResult.outcome)
+    expect(staleResult.fanOut).toEqual(plainResult.fanOut)
   })
 
-  it('EVERY MODEL CALL IS OUTSIDE IT — a compile does not hold a run approval open', async () => {
-    const harness = bench({ gateRuns: 1, bindDispatchGrants: true })
-    await runAuthoringLoop(LOOP_INPUT, harness.deps)
-    expect(harness.trace.lastIndexOf('model')).toBeLessThan(harness.trace.indexOf('enter'))
-    expect(harness.trace.filter((entry) => entry === 'model')).toHaveLength(2)
-  })
-
-  it('A THROWN DISPATCH STILL LEAVES THE SCOPE — the grant has no path that outlives the invocation', async () => {
-    // T-401-22 stated as a measurement. Stage 4 throwing is a real path (a credential screen, an
-    // unparsable receipt, a host error), and a grant surviving it would be an approval with no
-    // expiry at all. Since 401-13 the loop owns no `finally` of its own — the throw propagates
-    // through the SCOPE's, which is where the real overlay retires its token.
-    const harness = bench({ gateRuns: 2, bindDispatchGrants: true, failVerify: true })
+  it('A THROWN DISPATCH PROPAGATES — the loop adds no wrapper that could swallow it', async () => {
+    const harness = bench({ gateRuns: 2, failVerify: true })
     await expect(runAuthoringLoop(LOOP_INPUT, harness.deps)).rejects.toThrow(
       'the evaluator could not judge this draft',
     )
     expect(harness.trace).toEqual([
       'model',
       'model',
-      'enter',
       'start:r_gate-0',
       'start:r_gate-1',
-      'exit',
     ])
   })
 
-  it('A DEDUP REFUSAL ENTERS NOTHING — an invocation that spends no run is granted nothing', async () => {
-    // Stage 2 returns before the scope, and the fan-out report for that arm is
-    // `NO_RUNS_FAN_OUT_BOUND` for the same reason: this invocation was never going to run anything.
-    const harness = bench({ gateRuns: 3, bindDispatchGrants: true, duplicateIntent: true })
+  it('A DEDUP REFUSAL STARTS NOTHING — an invocation that spends no run reaches no model and no run', async () => {
+    const harness = bench({ gateRuns: 3, duplicateIntent: true })
     const result = await runAuthoringLoop(LOOP_INPUT, harness.deps)
 
     expect(result.outcome.kind).toBe('refused')
     expect(harness.trace).toEqual([])
-  })
-
-  it('AN UNBOUND OVERLAY CHANGES NOTHING ELSE — the loop runs exactly as it did before D-08', async () => {
-    // The absent-port posture, kept honest: a project whose target is declared `local` never
-    // reaches an ask-tier gate and needs no grant, and a loop that REQUIRED one would turn a policy
-    // affordance into a binding requirement.
-    const withOverlay = bench({ gateRuns: 3, bindDispatchGrants: true })
-    const withoutOverlay = bench({ gateRuns: 3, bindDispatchGrants: false })
-    const granted = await runAuthoringLoop(LOOP_INPUT, withOverlay.deps)
-    const ungranted = await runAuthoringLoop(LOOP_INPUT, withoutOverlay.deps)
-
-    // THE RESULT SURVIVES THE SCOPE (401-13). `within` returns what the dispatch returned, and a
-    // port that dropped it would turn a keep-eligible draft into `undefined` on the granted arm
-    // only — a difference the trace cannot see and the ungranted arm cannot reproduce.
-    expect(ungranted.stages).toEqual(granted.stages)
-    expect(ungranted.outcome).toEqual(granted.outcome)
-    expect(ungranted.outcome.kind).toBe(granted.outcome.kind)
-    expect(ungranted.fanOut).toEqual(granted.fanOut)
-    expect(withoutOverlay.trace).toEqual([
-      'model',
-      'model',
-      'start:r_gate-0',
-      'start:r_gate-1',
-      'start:r_gate-2',
-    ])
   })
 })

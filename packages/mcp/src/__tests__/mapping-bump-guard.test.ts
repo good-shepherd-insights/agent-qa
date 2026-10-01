@@ -132,7 +132,6 @@ import { V1_TOOL_MIGRATION_MAP, type V1MigrationArm } from '../migration-map.js'
  */
 function builtInRegistry(): FunctionRegistry {
   const auditSink = {
-    appendExecutionAudit() {},
     appendGuardrailAudit() {},
   } as unknown as CreateFunctionRegistryOptions['auditSink']
   return createFunctionRegistry({ deps: {} as unknown as FunctionDeps, auditSink })

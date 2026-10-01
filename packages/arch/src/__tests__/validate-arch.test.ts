@@ -69,10 +69,10 @@ import {
   type SurfaceLedgerEntry,
 } from '../lint/surface-firewall-ledger.js'
 import {
-  EVALUATE_PIN,
-  findEvaluateAcquisitions,
-  findEvaluatePinOffenders,
-  type EvaluatePinSource,
+  normalizeRepoPath,
+  parseModuleStatements,
+  readClause,
+  resolveRelative,
 } from '../lint/evaluate-pin.js'
 import {
   findStartRunAcquisitions,
@@ -108,13 +108,13 @@ function packageSourceHits(contract: OwnershipContract): SpecifierHit[] {
 }
 
 /**
- * Source text for the evaluate() pin, keyed by repo-relative path.
+ * Source text for the startRun() pin (and, since 432-19, the gate-absence census), keyed by
+ * repo-relative path.
  *
- * Routed through `sourceFilesFor` on purpose: it already drops `__tests__`, and FIVE test
- * files across three packages legitimately exercise the shipped gate. Scanning raw files
- * instead would turn every one of them into a pin offender.
+ * Routed through `sourceFilesFor` on purpose: it already drops `__tests__`, so a test file that
+ * plants an acquisition as a fixture string is never read as a production acquisition.
  */
-function pinSourcesFor(packageDir: string): EvaluatePinSource[] {
+function pinSourcesFor(packageDir: string): StartRunPinSource[] {
   return sourceFilesFor(packageDir, repoRoot).map(file => ({
     file: relative(repoRoot, file).replaceAll('\\', '/'),
     source: readFileSync(file, 'utf8'),
@@ -195,7 +195,7 @@ describe('validate:arch (LINT-01..05)', () => {
     const offenders: string[] = []
     const contracts: readonly OwnershipContract[] = ARCH_MANIFEST.packages
     const surfaceScans: SurfaceFirewallScan[] = []
-    const pinSources: EvaluatePinSource[] = []
+    const pinSources: StartRunPinSource[] = []
     // "Exactly one importer" is a property of the workspace, not of any one package, so the
     // reader-scanned hits are accumulated and judged once after the loop.
     const readerScannedHits: SpecifierHit[] = []
@@ -254,10 +254,9 @@ describe('validate:arch (LINT-01..05)', () => {
     offenders.push(...findEvalLocalAllowanceUnusedOffenders(evalLocalHits))
     offenders.push(...findSurfaceFirewallOffenders(surfaceScans, SURFACE_FIREWALL_LEDGER))
     offenders.push(...findSurfaceClassGoldenSetOffenders(contracts))
-    offenders.push(...findEvaluatePinOffenders(pinSources))
-    // 401-20 (W-2): the SECOND pin, over the SAME sources — so `__tests__` are out of scope by
-    // construction here too, and the two pins can never come to range different file sets.
-    offenders.push(...findStartRunPinOffenders(pinSources as StartRunPinSource[]))
+    // 2026-10-01 (432-19, D-03/D-15): the evaluate() pin is deleted with the gate it policed. The
+    // startRun() pin is the one run pin left, over the same `__tests__`-free sources.
+    offenders.push(...findStartRunPinOffenders(pinSources))
     offenders.push(...findAgentBarrelOffenders(readRepoFile(AGENT_BARREL_FILE)))
     offenders.push(...findCycleOffenders(contracts))
     offenders.push(...findDirectionOffenders(contracts))
@@ -844,241 +843,187 @@ describe('validate:arch composition carve-out (385-08 / D-13) registration and s
   })
 })
 
-const PIN_GATE_HOOK = 'packages/safety/src/policy/gate-hook.ts'
-const PIN_SAFETY_BARREL = 'packages/safety/src/index.ts'
-// 2026-09-30 (432-13, D-03/D-15): the two former surface and run-invocation domains. They no longer
-// acquire the gate and are no longer pinned; the files stay named here so the census below can prove
-// both acquisitions left WITH their pin entries, and the package-specifier form they used stays a
-// held-out fixture rather than a real one.
+// 2026-10-01 (432-19, D-03/D-15): the evaluate() pin's held-out fixtures are re-spelled. Its last two
+// acquisitions (safety's in-run gate hook and the safety barrel's re-export) left with the gate, so
+// the pin is deleted rather than kept at zero entries. What its fixtures measured survives in two
+// places: the ABSENCE of every gate acquisition (C432-NO-EVALUATE, an independent statement census
+// over the real tree) and the SHARED SCANNER's forms and stale-entry direction, now measured on the
+// one run pin that remains (C432-ARCH-RETAINED-PINS).
+const RETIRED_GATE_MODULES = [
+  'packages/safety/src/policy/gate.ts',
+  'packages/safety/src/policy/gate-hook.ts',
+  'packages/safety/src/policy/scope.ts',
+  'packages/safety/src/ports/policy-ports.ts',
+] as const
+const SAFETY_SPECIFIER = '@vostride/agent-qa-safety'
+// The names the gate published as VALUES. A production file importing any of them from the safety
+// barrel, or anything at all from a retired gate module path, would be a gate acquisition.
+const RETIRED_GATE_VALUES = [
+  'evaluate',
+  'resolveAsk',
+  'baseVerdict',
+  'buildExecutionAuditRow',
+  'createPolicyGateToolCallHook',
+  'requiresFailClosed',
+  'NO_STANDING_APPROVALS',
+  'DENY_CONFIRM',
+  'scopeMatches',
+  'grantCovers',
+] as const
+// The former call-sites. They stay named so the census proves the acquisitions left WITH their
+// pin entries.
 const FORMER_INVOKE = 'packages/agent/src/functions/invoke.ts'
 const FORMER_RUN_CORE = 'packages/agent-local/src/composition/run-invocation-core.ts'
+const FORMER_GATE_HOOK = 'packages/safety/src/policy/gate-hook.ts'
+const SAFETY_BARREL = 'packages/safety/src/index.ts'
 
-/**
- * Synthetic stand-ins for the pinned files, each carrying the acquisition form the real file
- * uses. Every fixture scan starts here so the pin's stale direction stays quiet and the case under
- * test is the only thing that can speak.
- */
-function pinnedFixtureSources(): EvaluatePinSource[] {
+/** Every statement in one file that would acquire a retired gate, by the scanner the pins share. */
+function gateAcquisitions(source: string, file: string): string[] {
+  const hits: string[] = []
+  for (const statement of parseModuleStatements(source)) {
+    const shape = readClause(statement.clause)
+    if (shape.typeOnly) continue
+    const fromBarrel = statement.specifier === SAFETY_SPECIFIER
+      || statement.specifier.startsWith(`${SAFETY_SPECIFIER}/`)
+    const fromRetiredModule = statement.specifier.startsWith('.')
+      && RETIRED_GATE_MODULES.some(
+        (module) => `${resolveRelative(file, statement.specifier)}.ts` === module,
+      )
+    if (fromRetiredModule) {
+      hits.push(`${file}:${statement.line} ⇏ ${statement.specifier}`)
+      continue
+    }
+    if (fromBarrel && shape.valueNames.some((name) => (RETIRED_GATE_VALUES as readonly string[]).includes(name))) {
+      hits.push(`${file}:${statement.line} ⇏ ${statement.specifier}`)
+    }
+  }
+  return hits
+}
+
+function startRunPinnedFixtures(): StartRunPinSource[] {
   return [
-    { file: PIN_GATE_HOOK, source: 'import { evaluate, type GateTrust } from "./gate"' },
-    { file: PIN_SAFETY_BARREL, source: 'export { evaluate } from "./policy/gate"' },
+    { file: 'packages/runner/src/index.ts', source: 'export { startRun } from "./run/shell.js"' },
+    { file: FORMER_RUN_CORE, source: 'import { startRun } from "@vostride/agent-qa-runner"' },
   ]
 }
 
-function pinScan(...extra: readonly EvaluatePinSource[]): string[] {
-  return findEvaluatePinOffenders([...pinnedFixtureSources(), ...extra])
+function startRunScan(...extra: readonly StartRunPinSource[]): string[] {
+  return findStartRunPinOffenders([...startRunPinnedFixtures(), ...extra])
 }
 
-describe('validate:arch evaluate() pin (FUNC-02 / D-12) held-out fixtures', () => {
-  // RE-SPELLED 2026-09-30 (432-13, D-03): 'pins exactly four production files, each with a dated
-  // rationale'. The surface-capability and run-invocation acquisitions left with their call-sites;
-  // the in-run hook and its export seam stay pinned until 432-19 removes their providers.
-  it('pins exactly the two surviving acquisitions, each with a dated rationale', () => {
-    expect(Object.keys(EVALUATE_PIN).sort()).toEqual([PIN_SAFETY_BARREL, PIN_GATE_HOOK].sort())
-    for (const [file, rationale] of Object.entries(EVALUATE_PIN)) {
-      expect(rationale.trim()).not.toEqual('')
-      expect(file).toMatch(/^packages\/[a-z-]+\/src\/.+\.ts$/)
+describe('validate:arch run pins after the gate (432-19, D-03/D-15)', () => {
+  it('C432-NO-EVALUATE: the gate pin, the gate modules and every production gate acquisition are gone', () => {
+    // The pin module keeps only the shared scanner: no permitted set, no finder, no offender check.
+    const pinModule = readRepoFile('packages/arch/src/lint/evaluate-pin.ts')
+    expect(pinModule).not.toMatch(/export const EVALUATE_PIN\b/)
+    expect(pinModule).not.toMatch(/export function findEvaluate/)
+    for (const module of RETIRED_GATE_MODULES) {
+      expect(existsSync(join(repoRoot, module)), module).toBe(false)
     }
+
+    // The census, over EVERY production source the manifest ranges (tests are dropped by
+    // `sourceFilesFor`): nothing imports a retired gate value from the safety barrel and nothing
+    // imports a retired gate module by path.
+    const sources = ARCH_MANIFEST.packages.flatMap((contract) => pinSourcesFor(contract.packageDir))
+    expect(sources.length).toBeGreaterThan(500)
+    expect(sources.map((entry) => entry.file)).toContain(SAFETY_BARREL)
+    expect(sources.flatMap((entry) => gateAcquisitions(entry.source, entry.file))).toEqual([])
+
+    // The barrel publishes no retired gate value. Read as SOURCE, so the cell needs no build.
+    const barrelValues = parseModuleStatements(readRepoFile(SAFETY_BARREL))
+      .flatMap((statement) => readClause(statement.clause).valueNames)
+    for (const retired of RETIRED_GATE_VALUES) {
+      expect(barrelValues, retired).not.toContain(retired)
+    }
+    // Non-vacuity: the census reads the barrel's real values, which still include the classifier.
+    expect(barrelValues).toContain('classifyRisk')
+    expect(barrelValues).toContain('registerFirstPartySafetyHooks')
   })
 
-  // RE-SPELLED 2026-09-30 (432-13): 'fires on all THREE real acquisition forms, one of which is not
-  // an import at all'. Two forms are still real; the package-specifier named import is now a held-out
-  // fixture, and the two former call-sites are read to prove they acquire nothing.
-  it('fires on all THREE acquisition forms: two real ones, and the package form held out', () => {
-    const acquisitions = [PIN_GATE_HOOK, PIN_SAFETY_BARREL].flatMap(file =>
-      findEvaluateAcquisitions(readRepoFile(file), file),
-    )
-
-    expect(
-      acquisitions.map(({ file, keyword, specifier, form }) => ({
-        file,
-        keyword,
-        specifier,
-        form,
-      })),
-    ).toEqual([
-      // relative import of the gate module, from inside safety
-      { file: PIN_GATE_HOOK, keyword: 'import', specifier: './gate', form: 'named' },
-      // export-re-export: syntactically NOT an import, and the form a detector keyed on
-      // import statements alone silently misses — reporting this file as a stale pin entry
-      { file: PIN_SAFETY_BARREL, keyword: 'export', specifier: './policy/gate', form: 'named' },
+  it('C432-NO-EVALUATE: the census fires on every form a returning gate acquisition could take', () => {
+    // Held-out fixtures, so the absence above is a measurement and not a scanner that sees nothing.
+    expect(gateAcquisitions('import { evaluate } from "@vostride/agent-qa-safety"', 'packages/runner/src/x.ts'))
+      .toEqual(['packages/runner/src/x.ts:1 ⇏ @vostride/agent-qa-safety'])
+    expect(gateAcquisitions('import { evaluate as runGate } from "@vostride/agent-qa-safety"', 'packages/runner/src/x.ts'))
+      .toHaveLength(1)
+    expect(gateAcquisitions('export { evaluate } from "./policy/gate"', SAFETY_BARREL)).toEqual([
+      `${SAFETY_BARREL}:1 ⇏ ./policy/gate`,
     ])
-    for (const acquisition of acquisitions) {
-      expect(acquisition.line).toBeGreaterThan(0)
-    }
-
-    // The third form, held out: a package-specifier named import of the barrel symbol.
-    const heldOut = 'packages/agent/src/functions/held-out-gate.ts'
-    expect(
-      findEvaluateAcquisitions('import { evaluate } from "@vostride/agent-qa-safety"', heldOut)
-        .map(({ keyword, specifier, form }) => ({ keyword, specifier, form })),
-    ).toEqual([{ keyword: 'import', specifier: '@vostride/agent-qa-safety', form: 'named' }])
-
-    expect(
-      findEvaluatePinOffenders(
-        [PIN_GATE_HOOK, PIN_SAFETY_BARREL].map(file => ({
-          file,
-          source: readRepoFile(file),
-        })),
-      ),
-    ).toEqual([])
+    expect(gateAcquisitions('import { resolveAsk } from "../policy/gate"', 'packages/safety/src/hooks/x.ts'))
+      .toHaveLength(1)
+    expect(gateAcquisitions('import { createPolicyGateToolCallHook } from "../policy/gate-hook"', 'packages/safety/src/hooks/x.ts'))
+      .toHaveLength(1)
+    expect(gateAcquisitions(['import {', '  classifyRisk,', '  evaluate,', '} from "@vostride/agent-qa-safety"'].join('\n'), 'packages/mcp/src/x.ts'))
+      .toHaveLength(1)
+    // And it stays quiet on what is not an acquisition: a type, a comment, a call token, an
+    // unrelated value from the same barrel.
+    expect(gateAcquisitions('import type { AuditSink } from "@vostride/agent-qa-safety"', 'packages/cli/src/x.ts')).toEqual([])
+    expect(gateAcquisitions('// import { evaluate } from "@vostride/agent-qa-safety"', 'packages/cli/src/x.ts')).toEqual([])
+    expect(gateAcquisitions('const t = await page.evaluate(() => document.title)', 'packages/web/src/x.ts')).toEqual([])
+    expect(gateAcquisitions('import { classifyRisk } from "@vostride/agent-qa-safety"', 'packages/eval/src/x.ts')).toEqual([])
   })
 
-  it('C432-INVOKE-DIRECT: the former surface and run-invocation call-sites acquire nothing', () => {
+  it('C432-INVOKE-DIRECT: the former surface, run-invocation and hook call-sites acquire nothing', () => {
     for (const file of [FORMER_INVOKE, FORMER_RUN_CORE]) {
-      expect(findEvaluateAcquisitions(readRepoFile(file), file), file).toEqual([])
-      expect(Object.hasOwn(EVALUATE_PIN, file), file).toBe(false)
+      expect(gateAcquisitions(readRepoFile(file), file), file).toEqual([])
     }
-    // Scanned together with the real pinned files, the workspace answer is clean.
-    expect(
-      findEvaluatePinOffenders(
-        [PIN_GATE_HOOK, PIN_SAFETY_BARREL, FORMER_INVOKE, FORMER_RUN_CORE].map(file => ({
-          file,
-          source: readRepoFile(file),
-        })),
-      ),
-    ).toEqual([])
+    // The hook itself is gone, and so is the barrel's re-export of the gate.
+    expect(existsSync(join(repoRoot, FORMER_GATE_HOOK))).toBe(false)
+    expect(gateAcquisitions(readRepoFile(SAFETY_BARREL), SAFETY_BARREL)).toEqual([])
   })
 
-  it('reports an UN-PINNED importer, whatever name it binds the symbol to', () => {
-    const fourth = 'packages/runner/src/loop/second-gate.ts'
-
-    expect(
-      pinScan({ file: fourth, source: 'import { evaluate } from "@vostride/agent-qa-safety"' }),
-    ).toEqual([
-      `evaluate-pin: ${fourth}:1 ⇏ @vostride/agent-qa-safety (un-pinned gate acquisition)`,
-    ])
-
-    expect(
-      pinScan({
-        file: fourth,
-        source: 'import { evaluate as runGate } from "@vostride/agent-qa-safety"',
-      }),
-    ).toEqual([
-      `evaluate-pin: ${fourth}:1 ⇏ @vostride/agent-qa-safety (un-pinned gate acquisition)`,
-    ])
-
-    expect(
-      pinScan({
-        file: fourth,
-        source: 'import * as safety from "@vostride/agent-qa-safety"',
-      }),
-    ).toEqual([
-      `evaluate-pin: ${fourth}:1 ⇏ @vostride/agent-qa-safety (un-pinned gate acquisition)`,
-    ])
-
-    // 432-13: a former call-site that re-acquired the gate would be an offender again, by name.
-    expect(
-      pinScan({ file: FORMER_INVOKE, source: 'import { evaluate } from "@vostride/agent-qa-safety"' }),
-    ).toEqual([
-      `evaluate-pin: ${FORMER_INVOKE}:1 ⇏ @vostride/agent-qa-safety (un-pinned gate acquisition)`,
-    ])
-    expect(
-      pinScan({ file: FORMER_RUN_CORE, source: 'export { evaluate } from "@vostride/agent-qa-safety"' }),
-    ).toEqual([
-      `evaluate-pin: ${FORMER_RUN_CORE}:1 ⇏ @vostride/agent-qa-safety (un-pinned gate acquisition)`,
-    ])
+  it('C432-ARCH-RETAINED-PINS: the ONE startRun pin is retained with its two entries and is clean over the real tree', () => {
+    expect(Object.keys(STARTRUN_PIN).sort()).toEqual(
+      ['packages/agent-local/src/composition/run-invocation-core.ts', 'packages/runner/src/index.ts'].sort(),
+    )
+    for (const rationale of Object.values(STARTRUN_PIN)) expect(rationale.trim()).not.toEqual('')
+    const sources = ARCH_MANIFEST.packages.flatMap((contract) => pinSourcesFor(contract.packageDir))
+    expect(findStartRunPinOffenders(sources)).toEqual([])
+    // Non-vacuity: the core really is an acquisition, so the clean answer is not a blind scanner.
+    expect(findStartRunAcquisitions(readRepoFile(FORMER_RUN_CORE), FORMER_RUN_CORE)).toHaveLength(1)
   })
 
-  it('reports a relative gate-module acquisition from a NEW safety file', () => {
-    const secondHook = 'packages/safety/src/policy/second-hook.ts'
-    expect(
-      pinScan({ file: secondHook, source: 'import { evaluate } from "./gate"' }),
-    ).toEqual([
-      `evaluate-pin: ${secondHook}:1 ⇏ ./gate (un-pinned gate acquisition)`,
-    ])
-
-    // Any VALUE the gate module publishes is gate power, so a factory or helper added
-    // there cannot be used to dodge the pin under a different name.
-    const deepFile = 'packages/safety/src/hooks/second-registrar.ts'
-    expect(
-      pinScan({ file: deepFile, source: 'import { resolveAsk } from "../policy/gate"' }),
-    ).toEqual([
-      `evaluate-pin: ${deepFile}:1 ⇏ ../policy/gate (un-pinned gate acquisition)`,
-    ])
+  it('C432-ARCH-RETAINED-PINS: the shared scanner keeps every acquisition form the gate pin measured', () => {
+    const fourth = 'packages/cli/src/commands/second-starter.ts'
+    // named import, aliased import, re-export, whole-module dynamic load naming the symbol
+    for (const source of [
+      'import { startRun } from "@vostride/agent-qa-runner"',
+      'import { startRun as begin } from "@vostride/agent-qa-runner"',
+      'export { startRun } from "@vostride/agent-qa-runner"',
+      'const { startRun } = await import("@vostride/agent-qa-runner")',
+    ]) {
+      expect(startRunScan({ file: fourth, source }), source).toEqual([
+        `startrun-pin: ${fourth}:1 ⇏ @vostride/agent-qa-runner (un-pinned run-starter acquisition)`,
+      ])
+    }
+    // a relative shell-module acquisition from inside the runner
+    expect(startRunScan({ file: 'packages/runner/src/run/second.ts', source: 'import { startRun } from "./shell.js"' }))
+      .toEqual(['startrun-pin: packages/runner/src/run/second.ts:1 ⇏ ./shell.js (un-pinned run-starter acquisition)'])
+    // a multi-line clause
+    expect(startRunScan({
+      file: fourth,
+      source: ['import {', '  RunConfig,', '  startRun,', '} from "@vostride/agent-qa-runner"'].join('\n'),
+    })).toHaveLength(1)
+    // and the quiet forms: comment, type-only, unrelated value, call token
+    for (const source of [
+      '// import { startRun } from "@vostride/agent-qa-runner"',
+      'import type { RunConfig } from "@vostride/agent-qa-runner"',
+      'import { projectRiskAction } from "@vostride/agent-qa-runner"',
+      'const r = await page.evaluate(() => 1)',
+    ]) {
+      expect(startRunScan({ file: fourth, source }), source).toEqual([])
+    }
   })
 
-  it('leaves a TYPE-ONLY gate-module import alone, but not an inline value beside a type', () => {
-    // The shape `hooks/first-party.ts` carries today. A type acquires nothing at runtime,
-    // so treating it as an acquisition would make the pin four entries and would say a
-    // file that cannot call the gate is a gate call-site.
-    expect(
-      pinScan({
-        file: 'packages/safety/src/hooks/first-party.ts',
-        source: 'import type { GateTrust } from "../policy/gate"',
-      }),
-    ).toEqual([])
-
-    expect(
-      pinScan({
-        file: 'packages/safety/src/hooks/first-party.ts',
-        source: 'export type { GateDeps, GateTrust } from "../policy/gate"',
-      }),
-    ).toEqual([])
-
-    const inlineMix = 'packages/safety/src/hooks/mixed.ts'
-    expect(
-      pinScan({
-        file: inlineMix,
-        source: 'import { type GateTrust, evaluate } from "../policy/gate"',
-      }),
-    ).toEqual([
-      `evaluate-pin: ${inlineMix}:1 ⇏ ../policy/gate (un-pinned gate acquisition)`,
+  it('C432-ARCH-RETAINED-PINS: a pin entry that no longer acquires is reported stale (self-shrinking)', () => {
+    const fixtures = startRunPinnedFixtures()
+    expect(findStartRunPinOffenders(fixtures.filter((entry) => entry.file !== FORMER_RUN_CORE))).toEqual([
+      `startrun-pin: ${FORMER_RUN_CORE} ⇏ pin entry no longer acquires the run starter (stale)`,
     ])
-  })
-
-  it('keys on import and export STATEMENTS, never on call tokens (Pitfall 3)', () => {
-    const noisy = [
-      'import { Page } from "playwright"',
-      'import { classifyRisk } from "@vostride/agent-qa-safety"',
-      'const text = await page.evaluate(() => document.title)',
-      'const verdict = asserter.evaluate(candidate)',
-      '// evaluate() is called by the gate hook, never here',
-      'export function evaluate(input: string) { return input }',
-    ].join('\n')
-
-    expect(findEvaluateAcquisitions(noisy, 'packages/web/src/probe.ts')).toEqual([])
-    expect(pinScan({ file: 'packages/web/src/probe.ts', source: noisy })).toEqual([])
-  })
-
-  it('reads a multi-line clause and a commented-out acquisition correctly', () => {
-    const continuation = 'packages/mcp/src/server/tools.ts'
-    const source = [
-      'import {',
-      '  classifyRisk,',
-      '  evaluate,',
-      '} from "@vostride/agent-qa-safety"',
-    ].join('\n')
-
-    expect(pinScan({ file: continuation, source })).toEqual([
-      `evaluate-pin: ${continuation}:1 ⇏ @vostride/agent-qa-safety (un-pinned gate acquisition)`,
+    expect(findStartRunPinOffenders(fixtures.filter((entry) => entry.file !== 'packages/runner/src/index.ts'))).toEqual([
+      'startrun-pin: packages/runner/src/index.ts ⇏ pin entry no longer acquires the run starter (stale)',
     ])
-
-    expect(
-      pinScan({
-        file: continuation,
-        source: '// import { evaluate } from "@vostride/agent-qa-safety"',
-      }),
-    ).toEqual([])
-  })
-
-  // RE-SPELLED 2026-09-30 (432-13): the stale case moved from the former invoke entry to a
-  // still-pinned file, so the self-shrinking direction stays measured on a real pin entry.
-  it('reports a pin entry that no longer acquires the gate as stale (self-shrinking)', () => {
-    expect(
-      findEvaluatePinOffenders(
-        pinnedFixtureSources().filter(entry => entry.file !== PIN_GATE_HOOK),
-      ),
-    ).toEqual([
-      `evaluate-pin: ${PIN_GATE_HOOK} ⇏ pin entry no longer acquires the gate (stale)`,
-    ])
-    expect(
-      findEvaluatePinOffenders(
-        pinnedFixtureSources().filter(entry => entry.file !== PIN_SAFETY_BARREL),
-      ),
-    ).toEqual([
-      `evaluate-pin: ${PIN_SAFETY_BARREL} ⇏ pin entry no longer acquires the gate (stale)`,
-    ])
+    expect(normalizeRepoPath('packages\\runner\\src\\index.ts')).toBe('packages/runner/src/index.ts')
   })
 })
 

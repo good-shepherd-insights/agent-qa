@@ -206,7 +206,6 @@ beforeAll(async () => {
   })
 
   const auditSink = {
-    appendExecutionAudit() {},
     appendGuardrailAudit() {},
   } as unknown as CreateFunctionRegistryOptions['auditSink']
 

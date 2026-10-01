@@ -1249,12 +1249,15 @@ describe('the parity suite ranges the registry census over every rostered surfac
 
   // ---- D-11: the ask set is PRODUCED by the shipped classifier, then pinned -------------------
 
-  it('pins an ask-capable set equal to a fresh run of the shipped gate over the census', async () => {
-    // T-397-07. The pin exists so a reader can see which capabilities stop and ask a person before
-    // they act; this cell exists so the pin cannot quietly stop being true. A lexicon edit, a
-    // declared-tier change or a new op arriving at `mutating-shared` reds HERE, by op id, rather
-    // than silently re-scoping the ask points 397-04's verdict legs are driven from.
-    const derived = await deriveAskCapableOpIds(registryDeclarations())
+  // RE-SPELLED 2026-10-01 (432-19, D-15) from 'pins an ask-capable set equal to a fresh run of the
+  // shipped gate over the census'. The gate is deleted, so the derivation runs the shipped
+  // CLASSIFIER instead; the pin and its by-op-id red are unchanged.
+  it('pins a formerly-asking set equal to a fresh run of the shipped classifier over the census', () => {
+    // T-397-07. The pin exists so a reader can see which capabilities the deleted gate used to stop
+    // on; this cell exists so the pin cannot quietly stop being true. A lexicon edit, a declared-tier
+    // change or a new op arriving at `mutating-shared` reds HERE, by op id, rather than silently
+    // re-scoping the `direct` points 397-04's verdict legs are driven from.
+    const derived = deriveAskCapableOpIds(registryDeclarations())
     expect(
       derived,
       'the pinned ask-capable set no longer equals what the shipped gate produces over the census',
@@ -1267,14 +1270,9 @@ describe('the parity suite ranges the registry census over every rostered surfac
       'every capability asks, which would make the ask point say nothing about any of them',
     ).toBeLessThan(registryOpIds().length)
 
-    // …and the injected context is LOAD-BEARING rather than decorative, which is the whole of
-    // Pitfall 3 stated as a measurement: under any other context the gate fails closed before an
-    // ask can be observed, so a fixture that read the ambient environment would report an EMPTY ask
-    // set on precisely the machine (a CI runner) this suite exists to be believed on.
-    expect(
-      await deriveAskCapableOpIds(registryDeclarations(), 'ci'),
-      'the derivation is indifferent to its execution context, so injecting one measures nothing',
-    ).toEqual([])
+    // 2026-10-01 (432-19, D-15): the context cell is retired with `requiresFailClosed`. The
+    // derivation takes no context because nothing fails closed in any context any more.
+    expect(deriveAskCapableOpIds.length, 'the derivation takes the census and nothing else').toBe(1)
   })
 
   it('control: the ask derivation tells an asking risk class from a non-asking one', () => {
@@ -1296,7 +1294,7 @@ describe('the parity suite ranges the registry census over every rostered surfac
       },
     ] as const satisfies readonly RiskClassifiable[]
 
-    return expect(deriveAskCapableOpIds(probes)).resolves.toEqual([SYNTHETIC_ASKING_OP_ID])
+    expect(deriveAskCapableOpIds(probes)).toEqual([SYNTHETIC_ASKING_OP_ID])
   })
 
   it('carries an ask policy point on exactly the ops that can ask, in both directions', () => {
@@ -1318,10 +1316,9 @@ describe('the parity suite ranges the registry census over every rostered surfac
   })
 
   it('derives its policy fixtures from the declarations, and never from the ambient environment', () => {
-    // Pitfall 3, as a source assertion rather than a hope. The gate branches on
-    // `requiresFailClosed(ctx)`, and the shipped resolver answers `ci` wherever CI markers are set —
-    // so a fixture that read the ambient context would compute one ask set on a laptop and a
-    // different one on the PR that is supposed to be checking it. Comments are stripped BEFORE the
+    // Pitfall 3, as a source assertion rather than a hope. The shipped resolver answers `ci`
+    // wherever CI markers are set — so a fixture that read the ambient context would compute one
+    // answer on a laptop and a different one on the PR that is supposed to be checking it. Comments are stripped BEFORE the
     // sweep, because the file's own header names these very identifiers to explain why it avoids
     // them, and a grep that counted prose would make the header unwritable.
     const source = readFileSync(new URL('./policy-fixtures.ts', import.meta.url), 'utf8')
@@ -1670,8 +1667,8 @@ describe('the parity suite ranges the registry census over every rostered surfac
       'the chat stage callers no longer hold every scope — a scope-refused chat caller is now a '
         + 'state this product can be in, and the chat surface wall should assert it directly',
     ).toEqual(sorted(FunctionScopeSchema.options))
-    // Every capability's risk name is still `fn:<id>`: the in-run gate hook and the audit reader
-    // compare these bytes until 432-19, so a capability spelled otherwise would read as unrecognised.
+    // Every capability's risk name is still `fn:<id>`: it is the declaration's published risk
+    // descriptor (432-19 deleted the in-run gate hook and the audit row that compared these bytes).
     for (const declaration of registryDeclarations()) {
       expect(
         declaration.risk.name,

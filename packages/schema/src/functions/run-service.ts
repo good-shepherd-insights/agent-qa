@@ -14,7 +14,6 @@
 
 import { z } from 'zod'
 
-import { GATE_REMEDY_KINDS } from '../safety/remedies'
 import type { TrustScope } from '../safety/trust-credential'
 
 /**
@@ -119,7 +118,7 @@ export const RunServiceErrorBodySchema = z.object({
 export type RunServiceErrorBody = z.infer<typeof RunServiceErrorBodySchema>
 
 /**
- * What a POLICY DENIAL answers with — the one body on this door wider than a single key (402-06).
+ * What a RUN DENIAL answers with — the one body on this door wider than a single key (402-06).
  *
  * WHY THE ONE-KEY LAW DOES NOT GOVERN HERE, and this is the whole of the argument. That law exists
  * because a refusal shown to an UNAUTHENTICATED caller must not fingerprint the route map, a run
@@ -131,20 +130,12 @@ export type RunServiceErrorBody = z.infer<typeof RunServiceErrorBodySchema>
  *
  * WHAT IS ON IT, AND WHAT IS DELIBERATELY NOT.
  *
- *   `neutralReason` — the gate's OWN second phrasing of the same decision (400 D-15), minted from
- *   the same resolved outcome as the canonical sentence and naming no surface's affordance.
+ *   `neutralReason` — the run core's plain refusal sentence. Since 432 the only run denial is the
+ *   production refusal (D-18): it names the target and the one config line that allows it, and it
+ *   asks the reader to do nothing else.
  *
- *   `remedies` — the typed data, projected through `remediesRenderableBy('run-service', …)`. For
- *   this door that projection is EMPTY today and the field is still present: an empty list is the
- *   honest answer "there is nothing you, from there, can do", and a caller can tell it apart from
- *   a door that forgot to say.
- *
- *   The gate's CANONICAL `reason` is NOT here, and its absence is the point. On the fail-closed
- *   arm that sentence reads "…re-run locally to confirm interactively or opt in with
- *   --trust-session", and `--trust-session` is declared on exactly one CLI command. Serving it to
- *   an HTTP client on another machine is Phase 399's defect verbatim — one surface's instructions
- *   shown to a reader on another. The neutral phrasing exists precisely so a door in this position
- *   has something true to say.
+ *   2026-10-01 (432-19, D-15): there is no `remedies` list. The remedy vocabulary left with the
+ *   execution gate that minted it, and the production refusal never carried one.
  *
  *   No `runId`. A denied run never started; publishing the id the core happened to mint would name
  *   a run that does not exist and cannot be streamed.
@@ -152,10 +143,6 @@ export type RunServiceErrorBody = z.infer<typeof RunServiceErrorBodySchema>
 export const RunServiceDenialBodySchema = z.object({
   error: z.literal('run_denied'),
   neutralReason: z.string().min(1),
-  remedies: z.array(z.object({
-    kind: z.enum(GATE_REMEDY_KINDS),
-    params: z.record(z.string(), z.string()).optional(),
-  }).strict()),
 }).strict()
 
 export type RunServiceDenialBody = z.infer<typeof RunServiceDenialBodySchema>

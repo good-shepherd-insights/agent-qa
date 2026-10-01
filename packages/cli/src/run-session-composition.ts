@@ -3,9 +3,10 @@
 // Until this phase this module was 1035 lines and held the whole composition. The host-neutral
 // majority now lives in the local agent package's composition subtree, beside where every other
 // host will reach it, and this file holds ONLY the part that a terminal is required to run: the
-// reporter attachment, the live-line seam those reporters own and the human-output unmasking confirm
-// decorator. 2026-10-01 (432-14, D-03/D-14): the readline default is gone — nothing in a run asks,
-// so the CLI hands the per-run registrar no confirm channel at all.
+// reporter attachment and the live-line seam those reporters own. 2026-10-01 (432-14, D-03/D-14):
+// the readline default is gone — nothing in a run asks, so the CLI hands the per-run registrar no
+// confirm channel at all; 432-19 deleted the human-output unmasking confirm decorator with the
+// confirm port it wrapped.
 //
 // There is deliberately NO compatibility re-export here. A module that re-published the moved
 // symbols would let every call site keep naming this path, and then nothing would have moved except
@@ -16,14 +17,12 @@
 // module. Everything below is on the presentation side of it because a headless drainer would have
 // to substitute something else for each one.
 
-import { unmaskForHumanOutput } from '@vostride/agent-qa-safety'
-import type { AuditSink, ConfirmPort, SafetyHookRunner } from '@vostride/agent-qa-safety'
+import type { AuditSink, SafetyHookRunner } from '@vostride/agent-qa-safety'
 import type { QuarantineAppliedEntry } from '@vostride/agent-qa-schema'
 import { buildRunSessionSafetyHooks } from '@vostride/agent-qa-agent-local'
 import type {
   AttachableRunSession,
   LivePauseController,
-  RunExecutionContext,
   RunMaskingContext,
   RunSubscriberHandle,
 } from '@vostride/agent-qa-agent-local'
@@ -51,6 +50,9 @@ const REPLAY_FROM_START = 1
  * reporter exists; the confirm decorator reads through the live target at call time. Guards swallow
  * their own errors so a reporter fault never blocks a prompt.
  *
+ * 2026-10-01 (432-19): the confirm decorator is deleted, so nothing reads through this seam today;
+ * the binding stays with the console reporter that owns it.
+ *
  * The TYPE is host-neutral vocabulary and lives in the composition package. This factory does not:
  * it exists to hold a console reporter handle, and a host with no console has nothing to bind.
  */
@@ -69,42 +71,9 @@ export function createLivePauseController(): LivePauseController {
   }
 }
 
-/**
- * Wrap a base `ConfirmPort` with the D-11 human-output unmasking decorator (Pitfall 4). Before
- * delegating it (1) pauses the console reporter's live TTY line so the readline question is not
- * clobbered, (2) applies EXACTLY ONE `unmaskForHumanOutput` call on the final rendered prompt text
- * (the ask-tier prompt is `Proceed with <action.name>? …`, so `name` is the only human-visible
- * placeholder-bearing field) and delegates with a display-only action carrying the unmasked name,
- * and (3) resumes the live line on answer. The ORIGINAL masked action is never mutated — the gate
- * records the deny/allow decision MASKED (T-363-21). No unmasked value is retained beyond the call.
- *
- * Presentation by the dissection rule, and not a close call: restoring a secret to its real value
- * is only ever correct because a human is about to read it. A headless host doing this would be an
- * information-disclosure regression, not a feature it inherited.
- */
-export function buildUnmaskingConfirm(input: {
-  base: ConfirmPort
-  maskingContext: RunMaskingContext
-  live?: LivePauseController
-}): ConfirmPort {
-  return {
-    // THE WRAPPED PORT'S SURFACE, FORWARDED (G-401-17). Unmasking changes what the person READS;
-    // it does not change who they are or where they are standing, so this decorator has no surface
-    // of its own to declare and reads the one it wraps. It is the third of three decorators over
-    // this port and each is an independent chance to drop the value.
-    surface: input.base.surface,
-    ask: async (action) => {
-      input.live?.pauseLive()
-      try {
-        const displayName = unmaskForHumanOutput(input.maskingContext, action.name)
-        const displayAction = displayName === action.name ? action : { ...action, name: displayName }
-        return await input.base.ask(displayAction)
-      } finally {
-        input.live?.resumeLive()
-      }
-    },
-  }
-}
+// 2026-10-01 (432-19, D-14/D-15): `buildUnmaskingConfirm` is deleted with `ConfirmPort`. It
+// unmasked the action name on a confirm prompt for a person to read; nothing in a run asks any more,
+// so there is no prompt to unmask and no port to decorate.
 
 /**
  * The CLI's assembly of the per-run safety hooks.
@@ -117,11 +86,9 @@ export function buildUnmaskingConfirm(input: {
  */
 export function buildRunSafetyHooks(input: {
   auditSink: AuditSink
-  executionContext: RunExecutionContext
 }): { safetyHooks: SafetyHookRunner; confirmPausedMs: () => number } {
   return buildRunSessionSafetyHooks({
     auditSink: input.auditSink,
-    executionContext: input.executionContext,
   })
 }
 

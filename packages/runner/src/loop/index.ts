@@ -60,7 +60,6 @@ import type {
   ProcedureStepSpec,
   RecordId,
   Ref,
-  RiskTier,
   ScreenState,
   ServedRetrievalTraceV1,
   StagnationEvidence,
@@ -322,7 +321,7 @@ export async function executeStep(
   // the five dispatch paths; the post-dispatch terminal check reads it and returns a terminal
   // policy_denied failure — no replan turn, no verifier call, no further planner call. Loop-local
   // by design (RESEARCH Open Q2: the existing failure/error shape suffices; no schema field minted).
-  let policyDenial: { reason: string; riskTier?: RiskTier } | undefined
+  let policyDenial: { reason: string } | undefined
 
   // D-08 (Phase 360): a completing plan that dispatched an assertAI/extractAI step never
   // writes the cache (the runtime half of the CacheablePlannedAction type exclusion). This
@@ -631,10 +630,12 @@ export async function executeStep(
         // never attributed to the app under test (only when a deadline is armed).
         if (deadline) deadline += performance.now() - gateStart
         if (gate.action === 'deny') {
-          // D-09: record the terminal marker (with the gate's audited D-16 reason + optional tier)
-          // and short-circuit; the post-dispatch terminal check ends the step. The action never
-          // reaches the adapter/callback.
-          policyDenial = { reason: gate.reason, ...(gate.policy ? { riskTier: gate.policy.riskTier } : {}) }
+          // D-09: record the terminal marker with the hook's reason and short-circuit; the
+          // post-dispatch terminal check ends the step. The action never reaches the
+          // adapter/callback. 2026-10-01 (432-19, D-15): no first-party hook denies here any more
+          // (the execution gate is deleted), and a deny result no longer carries a policy result,
+          // so no tier rides the marker.
+          policyDenial = { reason: gate.reason }
           result = { success: false, error: gate.reason }
           result = ports.safetyHooks.runToolResult(result).result ?? result
           return { result, error: gate.reason }

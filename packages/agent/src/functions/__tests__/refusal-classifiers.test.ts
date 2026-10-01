@@ -301,7 +301,6 @@ describe('399.1 D-03 — the fail-closed wrapper, driven', () => {
       // The fold runs on the RETURN path, after the gate has audited; this sink exists only so the
       // registry may be constructed at all (D-11 refuses a sinkless one).
       auditSink: {
-        appendExecutionAudit: () => { /* nothing dispatches here */ },
         appendGuardrailAudit: () => { /* nothing dispatches here */ },
       },
     },
@@ -372,7 +371,6 @@ describe('399.1-04 D-03 — the fail-closed branches a shipped op cannot reach',
       {
         deps: {} as unknown as FunctionDeps,
         auditSink: {
-          appendExecutionAudit: () => { /* nothing dispatches here */ },
           appendGuardrailAudit: () => { /* nothing dispatches here */ },
         },
       },

@@ -360,7 +360,7 @@ function sha256(text: string): string {
 function registryFor(test: Harness) {
   return createFunctionRegistry({
     deps: test.deps,
-    auditSink: { appendExecutionAudit() {}, appendGuardrailAudit() {} },
+    auditSink: { appendGuardrailAudit() {} },
     resolveExecutionContext: () => 'local-interactive',
   })
 }
@@ -937,7 +937,7 @@ describe('the config action class is CLOSED, and the registry is where that is l
     const { configScan: _dropped, ...withoutScan } = test.deps as unknown as Record<string, unknown>
     const registry = createFunctionRegistry({
       deps: withoutScan as unknown as FunctionDeps,
-      auditSink: { appendExecutionAudit() {}, appendGuardrailAudit() {} },
+      auditSink: { appendGuardrailAudit() {} },
       resolveExecutionContext: () => 'local-interactive',
     })
 
@@ -963,7 +963,7 @@ describe('the config action class is CLOSED, and the registry is where that is l
     const { configWrite: _dropped, ...withoutWriter } = test.deps as unknown as Record<string, unknown>
     const registry = createFunctionRegistry({
       deps: withoutWriter as unknown as FunctionDeps,
-      auditSink: { appendExecutionAudit() {}, appendGuardrailAudit() {} },
+      auditSink: { appendGuardrailAudit() {} },
       resolveExecutionContext: () => 'local-interactive',
     })
     const status = new Map(registry.list(CALLER).map((entry) => [entry.id, entry.bindingStatus]))

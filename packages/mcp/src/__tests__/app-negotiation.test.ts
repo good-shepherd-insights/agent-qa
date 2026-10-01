@@ -151,7 +151,6 @@ function fixtureRegistry(handles: readonly number[] = [0, 1]): {
   }
 
   const auditSink = {
-    appendExecutionAudit() {},
     appendGuardrailAudit() {},
   } as unknown as CreateFunctionRegistryOptions['auditSink']
 

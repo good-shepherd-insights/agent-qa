@@ -5,7 +5,7 @@ import { join, resolve } from 'node:path'
 import { FsEventLog, RUN_EVIDENCE_BLOBS_SUBDIR, RUNS_SUBDIR, slugBranch } from '@vostride/agent-qa-runner-local'
 import { runSafetyScope } from '@vostride/agent-qa-safety-local'
 import { getActiveMaskingContext } from '@vostride/agent-qa-safety'
-import type { AuditSink, ExecutionAuditRow, GuardrailAuditRow } from '@vostride/agent-qa-safety'
+import type { AuditSink, GuardrailAuditRow } from '@vostride/agent-qa-safety'
 import {
   computeRunConfigDigests,
   buildRunPorts,
@@ -25,7 +25,6 @@ import {
 // decorator over the relocated registrar.
 import { buildRunSafetyHooks } from '../run-session-composition.js'
 import { assembleCliRun } from '../composition/run-assembly.js'
-import type { ConfirmPort } from '@vostride/agent-qa-safety'
 
 // D-20: computeRunConfigDigests is the ONE digest mint. Both the cache path (per-member) and
 // the handoff header (run-level) draw from a single call, so run identity and handoff identity
@@ -362,56 +361,39 @@ describe('resolveRunExecutionContext (delegates to safety-local)', () => {
 
 // ---- (8) per-run stamped audit sink (D-12/D-13) --------------------------------------------
 
-// D-13 (RESEARCH Open Q3): the stamp WINS over any pre-existing row runId/executionContext —
-// correlation is authored at the single composition-root stamping site, not by callers.
+// D-13 (RESEARCH Open Q3): the stamp WINS over any pre-existing row runId — correlation is authored
+// at the single composition-root stamping site, not by callers.
+// 2026-10-01 (432-19, D-17): the execution row (which also carried the context) is deleted with the
+// gate; the guardrail row is the only row, and it is stamped with the run id.
 describe('stampAuditSink (D-13 — stamp-wins correlation)', () => {
-  it('overrides row runId + executionContext on execution rows, and runId on guardrail rows', async () => {
-    const execRows: ExecutionAuditRow[] = []
+  it('overrides row runId on guardrail rows, the only rows there are', async () => {
     const guardRows: GuardrailAuditRow[] = []
     const inner: AuditSink = {
-      appendExecutionAudit(row) {
-        execRows.push(row)
-      },
       appendGuardrailAudit(row) {
         guardRows.push(row)
       },
     }
-    const stamped = stampAuditSink(inner, 'run-1', 'ci')
+    const stamped = stampAuditSink(inner, 'run-1')
 
-    await stamped.appendExecutionAudit({
-      runId: 'STALE',
-      executionContext: 'cloud',
-      action: 'delete_record',
-      riskTier: 'destructive',
-      verdict: 'deny',
-      outcome: 'fail-closed-denied',
-      reason: 'r',
-    })
     await stamped.appendGuardrailAudit({ runId: 'STALE', action: 'redact' })
 
-    expect(execRows).toHaveLength(1)
-    expect(execRows[0].runId).toBe('run-1')
-    expect(execRows[0].executionContext).toBe('ci')
-    expect(guardRows).toHaveLength(1)
-    expect(guardRows[0].runId).toBe('run-1')
+    expect(guardRows).toEqual([{ runId: 'run-1', action: 'redact' }])
+    expect(Object.keys(stamped)).toEqual(['appendGuardrailAudit'])
   })
 })
 
 // D-12: the per-run sink writes into the SAME .agent-qa/runs/<slug(runId)>/ directory FsEventLog
 // uses — the paths cannot fork (a completed run is one self-contained directory).
 describe('buildRunAuditSink (D-12 — path identity with FsEventLog)', () => {
-  it('writes execution_audit.jsonl in the exact dir FsEventLog writes events.jsonl', async () => {
+  // RE-SPELLED 2026-10-01 (432-19, D-17) from 'writes execution_audit.jsonl in the exact dir
+  // FsEventLog writes events.jsonl'. The execution trail has no writer; the guardrail trail is the
+  // run's audit file and lands in the same directory.
+  it('writes guardrail_audit.jsonl in the exact dir FsEventLog writes events.jsonl, and no execution trail', async () => {
     const configDir = mkdtempSync(join(tmpdir(), 'run-audit-'))
     const runId = 'r_audit-path-check'
-    const sink = buildRunAuditSink({ configDir, runId, executionContext: 'ci' })
+    const sink = buildRunAuditSink({ configDir, runId })
 
-    await sink.appendExecutionAudit({
-      action: 'noop',
-      riskTier: 'read-only',
-      verdict: 'allow',
-      outcome: 'proceeded',
-      reason: 'r',
-    })
+    await sink.appendGuardrailAudit({ action: 'pass', channel: 'planner' })
 
     const root = resolve(configDir, '.agent-qa')
     new FsEventLog({ root, runId }).append({
@@ -423,57 +405,53 @@ describe('buildRunAuditSink (D-12 — path identity with FsEventLog)', () => {
     } as never)
 
     const runDir = join(root, RUNS_SUBDIR, slugBranch(runId))
-    expect(existsSync(join(runDir, 'execution_audit.jsonl'))).toBe(true)
+    expect(existsSync(join(runDir, 'guardrail_audit.jsonl'))).toBe(true)
     expect(existsSync(join(runDir, 'events.jsonl'))).toBe(true)
+    expect(existsSync(join(runDir, 'execution_audit.jsonl'))).toBe(false)
+    const row = JSON.parse(readFileSync(join(runDir, 'guardrail_audit.jsonl'), 'utf-8').trim()) as Record<string, unknown>
+    expect(row).toMatchObject({ runId, action: 'pass', channel: 'planner' })
   })
 })
 
 // ---- (9) per-run safety-hooks registrar (D-01/D-15/D-10/D-11) ------------------------------
 
 describe('buildRunSafetyHooks (D-01/D-15/D-10 — per-run registrar invocation)', () => {
-  it('denies a destructive descriptor in a fail-closed ci context AND appends a stamped execution row (D-01)', async () => {
+  // RE-SPELLED 2026-10-01 (432-19, D-15/D-17) from 'denies a destructive descriptor in a fail-closed
+  // ci context AND appends a stamped execution row (D-01)'. The in-run gate hook and the execution
+  // row are deleted: the descriptor passes, and the run directory gets no execution trail.
+  it('C432-RETAINED-SAFETY: allows a destructive descriptor in ci and writes no execution row (D-01)', async () => {
     const configDir = mkdtempSync(join(tmpdir(), 'run-hooks-'))
     const runId = 'r_hooks-deny'
-    const auditSink = buildRunAuditSink({ configDir, runId, executionContext: 'ci' })
-    const { safetyHooks } = buildRunSafetyHooks({ auditSink, executionContext: 'ci' })
+    const auditSink = buildRunAuditSink({ configDir, runId })
+    const { safetyHooks } = buildRunSafetyHooks({ auditSink })
 
-    const result = await safetyHooks.runToolCallAsync({ name: 'delete_record', recognized: true })
-    expect(result.action).toBe('deny')
+    const action = { name: 'delete_record', recognized: true }
+    expect(await safetyHooks.runToolCallAsync(action)).toEqual({ action: 'allow', call: action })
 
-    const line = readFileSync(
-      join(resolve(configDir, '.agent-qa'), RUNS_SUBDIR, slugBranch(runId), 'execution_audit.jsonl'),
-      'utf-8',
-    ).trim()
-    const row = JSON.parse(line) as Record<string, unknown>
-    expect(row).toHaveProperty('runId', runId)
-    expect(row).toHaveProperty('executionContext', 'ci')
-    expect(row.outcome).toBe('fail-closed-denied')
+    const runDir = join(resolve(configDir, '.agent-qa'), RUNS_SUBDIR, slugBranch(runId))
+    expect(existsSync(join(runDir, 'execution_audit.jsonl'))).toBe(false)
   })
 
   // RE-SPELLED 2026-09-30 (432-13, D-15): was 'allows the same dispatch under session trustMode'.
   // Trust no longer reaches the in-run hook, so the flag changes nothing: the dispatch answers
-  // exactly as it does without it. (In-test action names carry no soft-destructive verb, so no
-  // shipped run reaches this arm; `delete_record` is the synthetic probe that does.)
+  // exactly as it does without it.
   // 2026-10-01 (432-14, D-03): the input no longer declares trust, so the flag can only arrive as an
   // excess field smuggled past the type — and the answer is still the one without it.
+  // 2026-10-01 (432-19): with no gate the answer is `allow` either way and neither writes a row.
   it('ignores session trustMode: the same dispatch answers as it does without it (432-13)', async () => {
     const answer = async (trustMode: boolean) => {
       const configDir = mkdtempSync(join(tmpdir(), 'run-hooks-'))
       const runId = `r_hooks-trust-${String(trustMode)}`
-      const auditSink = buildRunAuditSink({ configDir, runId, executionContext: 'ci' })
-      const smuggled = { trustMode }
-      const { safetyHooks } = buildRunSafetyHooks({ auditSink, executionContext: 'ci', ...smuggled })
+      const auditSink = buildRunAuditSink({ configDir, runId })
+      const smuggled = { trustMode, executionContext: 'ci' }
+      const { safetyHooks } = buildRunSafetyHooks({ auditSink, ...smuggled })
       const result = await safetyHooks.runToolCallAsync({ name: 'delete_record', recognized: true })
-      const line = readFileSync(
-        join(resolve(configDir, '.agent-qa'), RUNS_SUBDIR, slugBranch(runId), 'execution_audit.jsonl'),
-        'utf-8',
-      ).trim()
-      const row = JSON.parse(line) as Record<string, unknown>
-      return { action: result.action, outcome: row.outcome, trustSource: row.trustSource }
+      const runDir = join(resolve(configDir, '.agent-qa'), RUNS_SUBDIR, slugBranch(runId))
+      return { action: result.action, executionTrail: existsSync(join(runDir, 'execution_audit.jsonl')) }
     }
     const trusted = await answer(true)
     expect(trusted).toEqual(await answer(false))
-    expect(trusted.trustSource).toBeUndefined()
+    expect(trusted).toEqual({ action: 'allow', executionTrail: false })
   })
 
   // RE-SPELLED 2026-09-30 (432-13, D-10): was 'accumulates awaited confirm time'. No confirm is
@@ -483,19 +461,19 @@ describe('buildRunSafetyHooks (D-01/D-15/D-10 — per-run registrar invocation)'
   it('never asks the confirm it is handed; confirmPausedMs() stays 0 (432-13)', async () => {
     const configDir = mkdtempSync(join(tmpdir(), 'run-hooks-'))
     const runId = 'r_hooks-pause'
-    const auditSink = buildRunAuditSink({ configDir, runId, executionContext: 'local-interactive' })
+    const auditSink = buildRunAuditSink({ configDir, runId })
     let asked = 0
-    const confirm: ConfirmPort = {
-      surface: 'tty-prompt',
+    // 432-19: safety publishes no confirm port; the shape an old host bound, spelled locally.
+    const confirm = {
+      surface: 'tty-prompt' as const,
       ask: async () => {
         asked += 1
         return true
       },
     }
-    const smuggled = { confirm, trustMode: false }
+    const smuggled = { confirm, trustMode: false, executionContext: 'local-interactive' }
     const { safetyHooks, confirmPausedMs } = buildRunSafetyHooks({
       auditSink,
-      executionContext: 'local-interactive',
       ...smuggled,
     })
 
@@ -521,7 +499,6 @@ describe('runSafetyScope run-body wrap (SEAM-01 / Pitfall 8, 362-06)', () => {
     const auditSink = buildRunAuditSink({
       configDir: tmpAuditDir,
       runId: 'run-scope-wrap',
-      executionContext: 'local-interactive',
     })
 
     let inScopeMasked = ''

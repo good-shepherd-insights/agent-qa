@@ -889,7 +889,7 @@ describe('procedure loop closure (PROC-01/PROC-02/ABRF-01/ABRF-02, D-01..D-12)',
     } as unknown as FunctionDeps
     const registry = createFunctionRegistry({
       deps,
-      auditSink: { appendExecutionAudit() {}, appendGuardrailAudit() {} },
+      auditSink: { appendGuardrailAudit() {} },
       resolveExecutionContext: () => 'local-interactive',
     })
     const caller: FunctionCaller = {

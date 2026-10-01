@@ -58,7 +58,6 @@ function descriptorFor(kind: EntityKind): EntityDescriptor {
 const MEM_DESCRIPTOR = descriptorFor('MEM')
 
 const AUDIT_SINK: AuditSink = {
-  appendExecutionAudit: () => undefined,
   appendGuardrailAudit: () => undefined,
 }
 

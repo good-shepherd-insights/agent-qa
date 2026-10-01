@@ -262,7 +262,7 @@ describe('423-37 runs.mark.preview contract (D-16/D-17)', () => {
     const reads = port(consequences())
     const { deps: bound, forbidden } = deps(reads)
     const options = { deps: bound, resolveExecutionContext: () => 'local-headless' as const,
-      auditSink: { appendExecutionAudit() {}, appendGuardrailAudit() {} } }
+      auditSink: { appendGuardrailAudit() {} } }
     const caller: FunctionCaller = { surface: 'mcp', grantedScopes: ['read'], safeMode: true, origin: 'agent' }
     const registry = createRegistryFromSpecs([{ ...op }], options)
     expect(registry.list(caller).find(entry => entry.id === 'runs.mark.preview')?.bindingStatus).toBe('bound')

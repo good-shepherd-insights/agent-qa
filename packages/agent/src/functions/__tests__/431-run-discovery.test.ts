@@ -29,7 +29,7 @@ const READER: FunctionCaller = {
   origin: 'agent',
 }
 
-const NO_AUDIT: AuditSink = { appendExecutionAudit() {}, appendGuardrailAudit() {} }
+const NO_AUDIT: AuditSink = { appendGuardrailAudit() {} }
 
 beforeEach(() => setActiveMaskingContextResolver(() => createMaskingContext()))
 afterEach(() => setActiveMaskingContextResolver(() => undefined))

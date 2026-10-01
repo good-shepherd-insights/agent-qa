@@ -17,7 +17,7 @@ import type {
   FunctionScope,
   RunSummary,
 } from '@vostride/agent-qa-schema'
-import type { AuditSink, ExecutionAuditRow, GuardrailAuditRow } from '@vostride/agent-qa-safety'
+import type { AuditSink, GuardrailAuditRow } from '@vostride/agent-qa-safety'
 import { describe, expect, it } from 'vitest'
 import { z } from 'zod'
 
@@ -58,7 +58,7 @@ describe('read invocation scope', () => {
       ...registryOptions({ auditSink: sink.sink }),
       withReadScope: async (functionId: string, invoke: () => Promise<unknown>) => {
         expect(functionId).toBe('runs.list')
-        expect(sink.executionRows()).toHaveLength(0)
+        expect(sink.auditRows()).toHaveLength(0)
         events.push('enter')
         try { return await invoke() } finally { events.push('dispose') }
       },
@@ -146,24 +146,23 @@ function spyDeps(documents: readonly CompletedRunHandoff[] = []): SpyDeps {
   }
 }
 
+// 2026-10-01 (432-19, D-17): the audit port has one append, for guardrail rows, so this sink
+// records every row an invocation could write. The cells that asserted "no execution-audit row"
+// since 432-13 now assert "no audit row of any kind".
 interface CapturedSink {
   sink: AuditSink
-  executionRows: () => readonly ExecutionAuditRow[]
+  auditRows: () => readonly GuardrailAuditRow[]
 }
 
 function capturingSink(): CapturedSink {
-  const executionRows: ExecutionAuditRow[] = []
   const guardrailRows: GuardrailAuditRow[] = []
   return {
     sink: {
-      appendExecutionAudit(row) {
-        executionRows.push(row)
-      },
       appendGuardrailAudit(row) {
         guardrailRows.push(row)
       },
     },
-    executionRows: () => executionRows,
+    auditRows: () => guardrailRows,
   }
 }
 
@@ -218,7 +217,6 @@ const authoringDraftWriteSpec: FunctionSpec<Record<string, never>, { ok: true }>
 /** Discards every row. Cases that ASSERT on rows pass an explicit `capturingSink` instead. */
 function noOpSink(): AuditSink {
   return {
-    appendExecutionAudit() {},
     appendGuardrailAudit() {},
   }
 }
@@ -284,7 +282,7 @@ describe('invokeFunction pipeline', () => {
     await expect(refusal).rejects.toMatchObject({ missingScopes: ['read'] })
     // The scope check precedes dispatch, so nothing dispatched and nothing was audited.
     expect(deps.listCalls()).toBe(0)
-    expect(audit.executionRows()).toHaveLength(0)
+    expect(audit.auditRows()).toHaveLength(0)
   })
 
   it('refuses a run+read caller at a test-write op, naming the missing scope (394 T-394-01)', async () => {
@@ -307,7 +305,7 @@ describe('invokeFunction pipeline', () => {
     // refusal listing anything else would mean the gate is not reading the declaration.
     await expect(refusal).rejects.toMatchObject({ missingScopes: ['test-write'] })
     await expect(refusal).rejects.toThrow(/test-write/)
-    expect(audit.executionRows()).toHaveLength(0)
+    expect(audit.auditRows()).toHaveLength(0)
   })
 
   it('lets a caller holding test-write through the same op', async () => {
@@ -343,7 +341,7 @@ describe('invokeFunction pipeline', () => {
 
     expect(result.map((summary) => summary.runId)).toEqual(['run-beta', 'run-alpha'])
     expect(deps.listCalls()).toBe(1)
-    expect(audit.executionRows()).toEqual([])
+    expect(audit.auditRows()).toEqual([])
   })
 
   it('yields an empty list when the injected reader has no runs', async () => {
@@ -392,7 +390,7 @@ describe('C432-INVOKE-DIRECT — invokeFunction dispatches with no gate (432-13)
 
       expect(invocations.count).toBe(1)
       // No decision was taken, so none was recorded.
-      expect(audit.executionRows()).toEqual([])
+      expect(audit.auditRows()).toEqual([])
     },
   )
 
@@ -466,10 +464,25 @@ describe('createRegistryFromSpecs', () => {
       deps: spyDeps().deps,
       resolveExecutionContext: FIXED_CONTEXT,
       auditSink: {
-        appendExecutionAudit: 'not a function',
         appendGuardrailAudit: 'not a function',
       } as unknown as AuditSink,
     })).toThrow(MissingAuditSinkError)
+  })
+
+  // 2026-10-01 (432-19, D-17): the construction contract is the guardrail append. A sink that
+  // offers only the deleted execution-audit append is hollow, and one with only the guardrail
+  // append is complete.
+  it('C432-AUDIT-UNREAD: requires the guardrail append and nothing else', () => {
+    expect(() => createRegistryFromSpecs([runsListSpec], {
+      deps: spyDeps().deps,
+      resolveExecutionContext: FIXED_CONTEXT,
+      auditSink: { appendExecutionAudit() {} } as unknown as AuditSink,
+    })).toThrow(MissingAuditSinkError)
+    expect(() => createRegistryFromSpecs([runsListSpec], {
+      deps: spyDeps().deps,
+      resolveExecutionContext: FIXED_CONTEXT,
+      auditSink: { appendGuardrailAudit() {} },
+    })).not.toThrow()
   })
 
   it('constructs normally for every compliant composition', () => {

@@ -90,7 +90,7 @@ it.each(['both', 'runDetail', 'evidenceBlobs'] as const)(
       ...(missing === 'both' || missing === 'evidenceBlobs' ? {} : { evidenceBlobs: { read: f.forbidden } }),
     } as unknown as FunctionDeps
     const registry = agent.createFunctionRegistry({ deps,
-      auditSink: { appendExecutionAudit() {}, appendGuardrailAudit() {} },
+      auditSink: { appendGuardrailAudit() {} },
       resolveExecutionContext: () => 'local-headless' })
     try {
       expect(registry.list(caller).find(item => item.id === op)?.bindingStatus).toBe('unbound')

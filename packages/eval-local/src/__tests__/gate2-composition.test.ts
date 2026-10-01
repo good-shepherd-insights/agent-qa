@@ -79,7 +79,7 @@ describe('418 feedback staging and explicit admission', () => {
     f.save()
     const runtime = tree(f.agentQaRoot)
     const committed = tree(f.committedRoot)
-    const auditSink = { appendGuardrailAudit: vi.fn(), appendExecutionAudit: vi.fn() }
+    const auditSink = { appendGuardrailAudit: vi.fn() }
     expect(await stageFeedbackEntry({ ...input, auditSink })).toEqual({ kind: mode === 'egress' ? 'egress-blocked' : 'target-unavailable' })
     expect(listStagedFeedback({ agentQaRoot: f.agentQaRoot })).toEqual([])
     expect(tree(f.agentQaRoot)).toEqual(runtime)

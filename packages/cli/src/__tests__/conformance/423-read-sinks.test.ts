@@ -99,7 +99,7 @@ async function startFixture(
       runDetail: createDashboardRunDetailReader(db), evidenceBlobs: createEvidenceBlobReader({ agentQaRoot: root }),
       ...extraDeps?.(runId),
     } as FunctionDeps,
-    auditSink: { appendExecutionAudit() {}, appendGuardrailAudit() {} },
+    auditSink: { appendGuardrailAudit() {} },
     resolveExecutionContext: () => 'local-interactive',
   })
   const unmask = createDisplayUnmasker({

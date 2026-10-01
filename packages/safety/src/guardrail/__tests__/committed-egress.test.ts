@@ -22,10 +22,8 @@ const policy = loadGuardrailPolicy(defaultGuardrailPolicyInput)
 class FakeAuditSink {
   readonly guardrailRows: GuardrailAuditRow[] = []
 
-  appendExecutionAudit(): void {
-    throw new Error('execution audit should not be written by committed egress')
-  }
-
+  // 2026-10-01 (432-19, D-17): the audit port has no execution-audit method to refuse; the
+  // guardrail row is the only row this path can write.
   appendGuardrailAudit(row: GuardrailAuditRow): void {
     this.guardrailRows.push(row)
   }

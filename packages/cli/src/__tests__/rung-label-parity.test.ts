@@ -427,7 +427,7 @@ describe('DOCTOR-CURRENT-SEPARATE', () => {
   it('adds no current-health read op; current health stays on agent-qa doctor (D-23)', () => {
     const registry = createFunctionRegistry({
       deps: {} as unknown as FunctionDeps,
-      auditSink: { appendExecutionAudit() {}, appendGuardrailAudit() {} },
+      auditSink: { appendGuardrailAudit() {} },
       resolveExecutionContext: () => 'local-interactive',
     })
     const ids = registry.list({

@@ -2,15 +2,13 @@ import { request, type IncomingMessage } from 'node:http'
 import { dirname, join } from 'node:path'
 
 import {
-  FunctionDeniedError,
   FunctionInputError,
   FunctionNotBoundError,
   FunctionScopeError,
   StreamReplayFloorError,
   UnknownFunctionError,
 } from '@vostride/agent-qa-agent'
-import { GATE_REMEDY_KINDS } from '@vostride/agent-qa-schema'
-import type { FunctionScope, GateRemedy, GateRemedyKind } from '@vostride/agent-qa-schema'
+import type { FunctionScope } from '@vostride/agent-qa-schema'
 
 import {
   classifyDaemonRegistration,
@@ -74,12 +72,6 @@ interface WireError {
   readonly functionId?: unknown
   readonly issues?: unknown
   readonly missingScopes?: unknown
-  readonly reason?: unknown
-  // 400 D-15: the gate's structured remedies, preserved across the hop by `wireError`'s
-  // enumerable-own-property spread and re-validated on the way in by `wireRemedies`.
-  readonly remedies?: unknown
-  // 400 gap round 1: the surface-neutral prose half, across the same hop by the same spread.
-  readonly neutralReason?: unknown
   readonly runId?: unknown
   readonly requestedSeq?: unknown
   readonly earliestAvailableSeq?: unknown
@@ -171,31 +163,9 @@ export function rehydrateFunctionError(value: unknown, statusCode: number): Erro
   ) {
     return new FunctionScopeError(functionId, wire.missingScopes as FunctionScope[])
   }
-  if (
-    wire?.name === 'FunctionDeniedError' &&
-    functionId !== undefined &&
-    typeof wire.reason === 'string'
-  ) {
-    // 400 D-15: the remedies ride the wire because `wireError` preserves enumerable own
-    // properties, and they are RECONSTRUCTED HERE rather than dropped — a read side that ignored
-    // them would leave the daemon-routed door silently remedy-less while the direct door renders
-    // them, which is a one-sided contract and the class of half-fix this codebase has paid for
-    // before. They are re-validated against the shipped vocabulary rather than trusted: an
-    // unknown `kind` arriving from a wire must not reach a render map that is total over the
-    // kinds this build declares.
-    // 400 gap round 1: `neutralReason` crosses the same way and is read back the same way, for
-    // the same reason. The FALLBACK IS THE CANONICAL SENTENCE and it is deliberate: a daemon
-    // built before this field existed sends nothing, and the honest reconstruction is the one
-    // sentence it did send. Defaulting to an empty string would have made an older daemon's
-    // denials render blank in the browser — a read side inventing a silence the write side never
-    // claimed.
-    return new FunctionDeniedError(
-      functionId,
-      wire.reason,
-      wireRemedies(wire.remedies),
-      typeof wire.neutralReason === 'string' ? wire.neutralReason : wire.reason,
-    )
-  }
+  // 2026-10-01 (432-19, D-15): no `FunctionDeniedError` arm. The execution gate that raised it is
+  // deleted, and a wire error naming it from an older daemon falls through to the generic error
+  // below with its message intact.
   if (wire?.name === 'FunctionNotBoundError' && functionId !== undefined) {
     return new FunctionNotBoundError(functionId)
   }
@@ -537,35 +507,3 @@ export async function nudgeDaemon(
   }
 }
 
-/**
- * The remedies a wire error carried, kept only where the shipped vocabulary recognises them.
- *
- * DROPS RATHER THAN THROWS. A refusal that failed to reconstruct because a peer offered a remedy
- * kind this build does not know would replace a governed denial with a parse error — the caller
- * would lose the reason too. An unrecognised kind is simply not a remedy here.
- */
-function wireRemedies(value: unknown): readonly GateRemedy[] {
-  if (!Array.isArray(value)) return []
-  return value.flatMap((entry): GateRemedy[] => {
-    if (typeof entry !== 'object' || entry === null) return []
-    const kind = (entry as { kind?: unknown }).kind
-    if (
-      typeof kind !== 'string' ||
-      !(GATE_REMEDY_KINDS as readonly string[]).includes(kind)
-    ) {
-      return []
-    }
-    const params = (entry as { params?: unknown }).params
-    const usableParams =
-      typeof params === 'object' &&
-      params !== null &&
-      Object.values(params).every((entryValue) => typeof entryValue === 'string')
-        ? (params as Record<string, string>)
-        : undefined
-    return [
-      usableParams === undefined
-        ? { kind: kind as GateRemedyKind }
-        : { kind: kind as GateRemedyKind, params: usableParams },
-    ]
-  })
-}

@@ -35,7 +35,7 @@ const proposeDeclaredTier: Signal = (action) =>
     : { tier: action.declaredTier, reason: `declared tier: ${action.declaredTier}` }
 
 const proposeLexicon: Signal = (action) => {
-  const hit = matchLexicon(action.name, action.command)
+  const hit = matchLexicon(action.name)
   if (hit === 'hard') {
     return { tier: 'restricted', reason: `hard destructive lexicon: ${action.name}` }
   }

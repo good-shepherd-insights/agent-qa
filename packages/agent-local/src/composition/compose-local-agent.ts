@@ -2035,8 +2035,8 @@ export interface ComposeLocalAgentInput {
    *
    * ABSENT MEANS THE SHIPPED AMBIENT RESOLVER, unchanged: the registry's own default reads
    * safety's process resolver, so every existing host composes exactly as it did before. This is
-   * a passthrough and nothing here decides what a context MEANS — `requiresFailClosed` still owns
-   * that, over the same closed four-member vocabulary.
+   * a passthrough and nothing here decides what a context MEANS. (432-19: `requiresFailClosed`, the
+   * gate's reading of a context, is deleted; the four-member vocabulary stays.)
    */
   readonly resolveExecutionContext?: () => ExecutionContext
   /**
@@ -2531,10 +2531,10 @@ export function postRunCapabilities(
 /**
  * Compose the local agent host.
  *
- * Function-layer invocations audit at the PROJECT root (`<agentQaRoot>/execution_audit.jsonl`), not
- * inside a per-run directory: a capability call is not scoped to any run, and several of them
- * (config reads, registry listings) happen with no run in existence. This follows the v48
- * `execution_audit.jsonl` conventions — same row shape, same sink, project-level file.
+ * The registry's audit sink is rooted at the PROJECT root (`<agentQaRoot>`), not inside a per-run
+ * directory: a capability call is not scoped to any run, and several of them (config reads, registry
+ * listings) happen with no run in existence. 2026-10-01 (432-19, D-17): the sink writes guardrail
+ * rows only; no execution-audit row is written for an invocation.
  */
 /**
  * The two callers chat mints, one per stage (392, RESEARCH Pitfall 1 / 391 D-06).
@@ -3397,9 +3397,8 @@ export function composeLocalAgent(input: ComposeLocalAgentInput): LocalAgentHost
             },
             get: (runId: string) => runsReader.get(runId as RunId),
           },
-          // 2026-10-01 (432-18, D-15): no dispatch-scoped grant is bound. The loop's optional
-          // `dispatchGrants` seam is left unbound, so it runs the dispatch directly (its own
-          // absent-port posture), and no run it starts consults any approval.
+          // 2026-10-01 (432-18/432-19, D-15): no dispatch-scoped grant exists. The authoring loop
+          // runs its dispatch directly, and no gate run it starts consults any approval.
           verifyDraft: async (verifyInput: AuthoringVerifyDraftInput): Promise<DraftReceipt> => {
             if (composedRegistry === undefined) {
               throw new TypeError('a draft was verified before its registry finished composing')

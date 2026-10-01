@@ -1453,34 +1453,17 @@ export {
   scrubDisclosureFragment,
   scrubDisclosureText,
 } from './safety/index'
-// 400 D-15: the closed remedy vocabulary a denial carries beside its prose reason, and the ONE
-// per-surface projection every render runs through. `remediesRenderableBy` is published rather
-// than re-derived at each door, because a render that filtered for itself is how one surface ends
-// up printing another surface's instructions — the defect this vocabulary closes.
-export {
-  GATE_REMEDY_KINDS,
-  GATE_REMEDY_SURFACES,
-  GATE_REMEDY_SURFACES_BY_KIND,
-  remediesRenderableBy,
-} from './safety/index'
-export type {
-  GateRemedy,
-  GateRemedyKind,
-  GateRemedySurface,
-  RemedyKindFor,
-} from './safety/index'
+// 2026-10-01 (432-19, D-15): the remedy vocabulary, the execution-policy verdict and result, and the
+// standing-approval contract are deleted with the gate. A refusal is a plain reason.
 // 2026-10-01 (432-18): the grant verbs' contracts, the protected-class set and the standing-grants
 // port are deleted. The trust-scope projection stays for `config/run-service.ts` until 432-22.
 export { TrustScopeSchema } from './safety/index'
 export type {
   RiskActionDescriptor,
   RiskTier,
-  PolicyVerdict,
-  ExecutionPolicyResult,
   TrustCredential,
   TrustScope,
   TrustScopeKey,
-  StandingApprovalGrant,
   ScanAction,
   ScanResult,
   ContentOrigin,
@@ -1510,7 +1493,6 @@ export {
   CURRENT_CHAT_SESSION_SCHEMA_VERSION,
   ChatScenarioSchema,
   ChatSessionEventSchemaError,
-  ClauseDenialSchema,
   ClauseReceiptSchema,
   ClauseResultSchema,
   SCENARIO_CLASSES,
@@ -1543,7 +1525,6 @@ export type {
   ChatTurnStage,
   ChatTurnStatus,
   ChatUserMessageEvent,
-  ClauseDenial,
   ClauseReceipt,
   ClauseReceiptStatus,
   ClauseResult,

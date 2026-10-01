@@ -13,7 +13,6 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import {
-  FunctionDeniedError,
   FunctionInputError,
   FunctionNotBoundError,
   FunctionScopeError,
@@ -131,7 +130,6 @@ interface FnInvocationResult {
 }
 
 interface SemanticEndpointModules {
-  readonly FunctionDeniedError: typeof FunctionDeniedError
   readonly FunctionInputError: typeof FunctionInputError
   readonly FunctionNotBoundError: typeof FunctionNotBoundError
   readonly FunctionScopeError: typeof FunctionScopeError
@@ -164,7 +162,6 @@ function semanticModules(): Promise<SemanticEndpointModules> {
     const clientModule = (await import(clientModulePath)) as Record<string, unknown>
 
     return {
-      FunctionDeniedError: invokeModule.FunctionDeniedError,
       FunctionInputError: invokeModule.FunctionInputError,
       FunctionNotBoundError: invokeModule.FunctionNotBoundError,
       FunctionScopeError: invokeModule.FunctionScopeError,
@@ -215,11 +212,12 @@ async function registryFixture(
       },
       config: TEST_CONFIG,
     },
+    // 2026-10-01 (432-19, D-17): the audit port has one append, for guardrail rows, so `auditRows`
+    // records every row an invocation could write.
     auditSink: {
-      appendExecutionAudit(row: TestAuditRow) {
+      appendGuardrailAudit(row: TestAuditRow) {
         auditRows.push(row)
       },
-      appendGuardrailAudit() {},
     },
     resolveExecutionContext: () => 'local-headless',
   })

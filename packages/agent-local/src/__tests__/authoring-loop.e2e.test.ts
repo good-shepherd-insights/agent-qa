@@ -52,7 +52,13 @@ import {
   resolveExecutionContext,
   setActiveExecutionContextResolver,
 } from '@vostride/agent-qa-safety'
-import type { ConfirmPort } from '@vostride/agent-qa-safety'
+// 2026-10-01 (432-19, D-14): safety no longer publishes a confirm port. The shape an old host
+// supplied is spelled locally so the C432-INVOKE-DIRECT cells can still smuggle one in and measure
+// that nothing calls it.
+interface ConfirmPort {
+  readonly surface: 'tty-prompt'
+  readonly ask: (action: RiskActionDescriptor) => boolean
+}
 import { FsEventLog, HANDOFF_FILE, RUNS_SUBDIR, slugBranch } from '@vostride/agent-qa-runner-local'
 import {
   AUTHORING_DEDUP_CONTINUATIONS,

@@ -12,28 +12,25 @@
 // declaration's scope list — one that falls behind the day a scope is widened, and then passes
 // forever on the smaller world, which is the exact failure 387-08 measured.
 //
-// THE EXECUTION CONTEXT IS INJECTED AND NEVER READ FROM THE AMBIENT PROCESS (Pitfall 3). The gate's
-// ladder branches on `requiresFailClosed(ctx)`, and the shipped resolver answers `ci` whenever CI
-// markers are present — so a verdict computed against the ambient context would be one answer on a
-// laptop and another on a PR, in a suite whose entire job is to state what the verdict IS. Nothing
-// here calls `getActiveExecutionContext`, reads `process.env`, or consults a TTY; the context is a
-// constant this file exports and every consumer passes explicitly.
+// THE EXECUTION CONTEXT IS INJECTED AND NEVER READ FROM THE AMBIENT PROCESS (Pitfall 3). The shipped
+// resolver answers `ci` whenever CI markers are present, so anything computed against the ambient
+// context would be one answer on a laptop and another on a PR. Nothing here calls
+// `getActiveExecutionContext`, reads `process.env`, or consults a TTY; the context is a constant this
+// file exports and every consumer passes explicitly.
 //
-// THE ASK SET IS PRODUCED BY THE SHIPPED CLASSIFIER, NEVER HAND-PICKED (D-11's discretion clause).
-// `deriveAskCapableOpIds` runs the real `evaluate` over each declaration's own risk descriptor and
-// OBSERVES whether the ladder reached the confirm port — which is what "this op can produce an ask"
-// means operationally, as opposed to what a reading of the tier table says it should mean. The
-// pinned constant below is the recorded output of that run, and `parity.test.ts` asserts the two
-// are equal on every execution, so classifier drift reds by name rather than silently re-scoping
-// which capabilities ask a person before they act.
+// THE FORMERLY-ASKING SET IS PRODUCED BY THE SHIPPED CLASSIFIER, NEVER HAND-PICKED (D-11).
 //
-// SINCE 432-13 (D-14/D-15) the ask set names what the classifier WOULD ask about; the function door
-// asks nobody and dispatches these directly. The scenario rows carry them as the `direct` policy
-// point, and the standing-approval reader that got a leg past the ask is gone with the ask.
+// SINCE 432-13 (D-14/D-15) the function door asks nobody and dispatches these directly; the scenario
+// rows carry them as the `direct` policy point. 2026-10-01 (432-19, D-15): the gate (`evaluate`), its
+// ask ladder and its confirm port are deleted, so the set can no longer be OBSERVED by watching a
+// confirm port get consulted. It is derived from what is left: `classifyRisk`'s tier, and the two
+// tiers the deleted ladder used to ask about (`mutating-shared`, `destructive`). `restricted` was
+// never an ask (it was blocked) and stays out. The pinned constant is still the recorded output, and
+// `parity.test.ts` still asserts the two are equal, so classifier drift reds by op id.
 
 import type { FunctionDeclaration } from '@vostride/agent-qa-agent'
 import { CHAT_RESOLVER_CALLER } from '@vostride/agent-qa-agent-local'
-import { evaluate, NO_STANDING_APPROVALS } from '@vostride/agent-qa-safety'
+import { classifyRisk } from '@vostride/agent-qa-safety'
 import type { ExecutionContext, FunctionCaller, FunctionScope } from '@vostride/agent-qa-schema'
 import type { RiskActionDescriptor } from '@vostride/agent-qa-schema'
 
@@ -42,10 +39,9 @@ import { mcpFunctionCaller } from '../../commands/mcp.js'
 /**
  * The one execution context every conformance policy decision is taken in.
  *
- * `local-interactive` is the ONLY context `requiresFailClosed` answers `false` for, and that is
- * exactly why it is the right fixture: in any other context the gate denies an ask before it can be
- * observed to BE an ask, so a derivation taken there would report an empty ask set and a suite built
- * on it would assert that no capability in this product ever asks anyone anything.
+ * `local-interactive`, fixed. Since 432-19 no decision depends on the context (there is no
+ * fail-closed context any more); it is still injected so the surface-dispatch fixtures never read
+ * the ambient one.
  */
 export const CONFORMANCE_EXECUTION_CONTEXT: ExecutionContext = 'local-interactive'
 
@@ -176,49 +172,24 @@ export interface RiskClassifiable {
   readonly risk: RiskActionDescriptor
 }
 
+/** The two tiers the deleted ask ladder resolved through a confirm (`baseVerdict` → `ask`). */
+const FORMERLY_ASKING_TIERS: ReadonlySet<string> = new Set(['mutating-shared', 'destructive'])
+
 /**
- * The ops whose risk class can produce an `ask`, PRODUCED by running the shipped gate.
+ * The ops whose risk class the deleted gate would have ASKED about, PRODUCED by the shipped
+ * classifier.
  *
- * OBSERVED RATHER THAN INFERRED. `evaluate` never returns the string `ask` — it RESOLVES an ask into
- * an allow or a deny — so "can this op ask" cannot be read off its answer. What it can be read off
- * is behaviour: the confirm port is reached on exactly the path where the base verdict was `ask` and
- * no trust, credential or standing grant satisfied it. So the derivation supplies a confirm that
- * records having been consulted (and declines, so nothing is ever approved by this measurement),
- * an empty standing-approval reader, and no trust at all.
- *
- * Reading `classifyRisk(...).riskTier` and comparing it against a tier list would have been the
- * shorter spelling and a worse one: it restates the gate's own `baseVerdict` table in the suite, so
- * a change to that table would leave both copies agreeing with themselves and disagreeing with the
- * product.
- *
- * Pure of ambient state, and drivable with synthetic descriptors, so `parity.test.ts` can prove the
- * derivation distinguishes an asking op from a non-asking one instead of trusting its output.
+ * Until 432-19 this OBSERVED the gate: it ran `evaluate` with a declining confirm and recorded which
+ * ops reached the port. The gate and its port are deleted (D-15), so there is nothing to observe; the
+ * set is the classifier's own tier for each declaration's descriptor, filtered to the two tiers the
+ * ladder asked on. Pure of ambient state, and drivable with synthetic descriptors, so
+ * `parity.test.ts` can prove the derivation still tells an asking class from a non-asking one.
  */
-export async function deriveAskCapableOpIds(
-  ops: readonly RiskClassifiable[],
-  ctx: ExecutionContext = CONFORMANCE_EXECUTION_CONTEXT,
-): Promise<readonly string[]> {
-  const asked: string[] = []
-  for (const op of ops) {
-    let confirmConsulted = false
-    await evaluate(
-      op.risk,
-      ctx,
-      {},
-      {
-        reader: NO_STANDING_APPROVALS,
-        confirm: {
-          surface: 'tty-prompt',
-          ask: () => {
-            confirmConsulted = true
-            return false
-          },
-        },
-      },
-    )
-    if (confirmConsulted) asked.push(op.id)
-  }
-  return asked.sort()
+export function deriveAskCapableOpIds(ops: readonly RiskClassifiable[]): readonly string[] {
+  return ops
+    .filter((op) => FORMERLY_ASKING_TIERS.has(classifyRisk(op.risk).riskTier))
+    .map((op) => op.id)
+    .sort()
 }
 
 /**

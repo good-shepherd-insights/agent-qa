@@ -33,7 +33,7 @@ describe('freezeGoldenTrajectory', () => {
   const product = 'default'
   const freeze = () => freezeGoldenTrajectory({
     agentQaRoot: root, committedRoot, product, handoff, mark,
-    auditSink: { appendExecutionAudit() {}, appendGuardrailAudit(row) { rows.push(row) } },
+    auditSink: { appendGuardrailAudit(row) { rows.push(row) } },
   })
   const extract = () => extractRunCassettes({ handoff, artifacts: new FsRunArtifactSource({ root, runId: handoff.runId }) }).cassettes
   const paths = (id: string) => [committedCassettePath(product, id), committedLabelPath(product, id), committedCorpusPath(product, id)]

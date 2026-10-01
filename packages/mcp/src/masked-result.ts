@@ -79,19 +79,12 @@
 
 import { fromJsonSchema } from '@modelcontextprotocol/server'
 import type { CallToolResult, StandardSchemaWithJSON } from '@modelcontextprotocol/server'
-import { FunctionDeniedError } from '@vostride/agent-qa-agent'
-import { remediesRenderableBy, RunsArtifactResultSchema } from '@vostride/agent-qa-schema'
-import type { FunctionCaller, GateRemedy, RemedyKindFor, RunsArtifactResult } from '@vostride/agent-qa-schema'
+import { RunsArtifactResultSchema } from '@vostride/agent-qa-schema'
+import type { FunctionCaller, RunsArtifactResult } from '@vostride/agent-qa-schema'
 
-const MCP_REMEDY_TEXT = {
-  'present-bearer-scope': 'present a bearer whose scopes include `knowledge-write`',
-} as const satisfies Record<RemedyKindFor<'mcp'>, string>
-
-/** Only affordances this surface can take, never credential values or caller-supplied params. */
-export function renderMcpRemedies(remedies: readonly GateRemedy[]): string {
-  return remediesRenderableBy('mcp', remedies)
-    .map(remedy => MCP_REMEDY_TEXT[remedy.kind as RemedyKindFor<'mcp'>]).join('; ')
-}
+// 2026-10-01 (432-19, D-15): the MCP remedy renderer is deleted with the remedy vocabulary. The
+// one sentence it rendered for this surface rides the mark credential refusal below verbatim,
+// until 432-21 removes that refusal with the bearer credential.
 
 /** The one prose a caller reads when a value could not be masked in place. Value-free by design. */
 const WITHHELD_TEXT =
@@ -229,9 +222,7 @@ export function maskedToolResult(
  * are one thing to read and one thing to change.
  */
 export function maskedToolError(err: unknown, maskText: (text: string) => string): CallToolResult {
-  const message = err instanceof FunctionDeniedError
-    ? [`Denied ${err.functionId}: ${err.neutralReason}`, renderMcpRemedies(err.remedies)].filter(Boolean).join('; ')
-    : err instanceof Error ? err.message : String(err)
+  const message = err instanceof Error ? err.message : String(err)
   return {
     content: [
       {
@@ -429,9 +420,8 @@ export function composeMarkToolOutput(opOutput: StandardSchemaWithJSON): Standar
 
 /** Shared by the hidden-name dispatch guard and the mark handler's independent guard. */
 export function credentialRequiredRefusal(maskText: (text: string) => string): CallToolResult {
-  const instruction = 'agent_qa_mark_run requires a declared bearer; ' + renderMcpRemedies([
-    { kind: 'present-bearer-scope', params: { scope: 'knowledge-write' } },
-  ])
+  const instruction = 'agent_qa_mark_run requires a declared bearer; '
+    + 'present a bearer whose scopes include `knowledge-write`'
   return {
     ...maskedToolResult({ status: 'credential-required', applied: false, instruction }, maskText),
     isError: true,

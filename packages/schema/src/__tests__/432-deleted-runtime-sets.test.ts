@@ -4,7 +4,7 @@
 // outputs to applied changes and the mark refusal to a plain reason. Later owners (432-18/19/22/39/42)
 // extend this file with their own removed members only. Every expected set is spelled by hand, so no
 // expectation is derived from the production value it checks.
-import { existsSync } from 'node:fs'
+import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -82,10 +82,12 @@ describe('432-09 applied output key sets', () => {
 })
 
 // 2026-10-01, 432-18 (D-03/D-14/D-15/D-22): the standing-grant ledger, the grant op contracts, the
-// protected-class set and the chat pin overlay leave the schema. Two members stay on purpose, each
+// protected-class set and the chat pin overlay leave the schema. Two members stayed on purpose, each
 // until its last consumer leaves: `StandingApprovalGrant` (type only, `standing-approval.ts`) for the
-// safety ports 432-19 deletes, and `TrustScopeSchema` (`grant-ops.ts`) for the run-service DTO 432-22
-// deletes. `STANDING_APPROVAL_SCOPE` is the scope the MCP bearer credential still carries
+// safety ports, and `TrustScopeSchema` (`grant-ops.ts`) for the run-service DTO 432-22 deletes.
+// 2026-10-01, 432-19 (D-03/D-15): the safety gate, its standing-approval reader and its scope check
+// are deleted, so `StandingApprovalGrant` and `standing-approval.ts` leave with them and the census
+// below now asserts their absence. TrustScopeSchema stays until 432-22. `STANDING_APPROVAL_SCOPE` is the scope the MCP bearer credential still carries
 // (`cli/src/composition/mcp-token-resolution.ts`), so it moves beside `TrustScope` and stays until the
 // token owner removes that credential. No later absence is asserted here early.
 const SRC = join(dirname(fileURLToPath(import.meta.url)), '..')
@@ -114,6 +116,8 @@ const RETIRED_GRANT_MODULES = [
   'safety/grant-ledger.ts',
   'safety/protected-classes.ts',
   'chat/pin-overlay.ts',
+  // 432-19: the last grant-shaped contract, with the safety ports that read it.
+  'safety/standing-approval.ts',
 ] as const
 
 describe('C432-NO-GRANT-CONTRACTS: the grant ledger, grant op, protected-class and pin contracts are gone', () => {
@@ -124,8 +128,28 @@ describe('C432-NO-GRANT-CONTRACTS: the grant ledger, grant op, protected-class a
     expect(RETIRED_GRANT_RUNTIME_EXPORTS.filter(name => safetyBarrel.has(name)), 'safety barrel').toEqual([])
   })
 
-  it('C432-NO-GRANT-CONTRACTS: the ledger, protected-class and pin modules are deleted', () => {
+  it('C432-NO-GRANT-CONTRACTS: the ledger, protected-class, pin and standing-approval modules are deleted', () => {
     expect(RETIRED_GRANT_MODULES.filter(path => existsSync(join(SRC, path)))).toEqual([])
+  })
+
+  it('C432-NO-GRANT-CONTRACTS: no schema source names the standing-approval grant any more', () => {
+    // A source census rather than a barrel read, because the member was TYPE-only: a runtime key set
+    // can never see it, and a type re-export from any module would bring it back.
+    const sources: string[] = []
+    const walk = (dir: string): void => {
+      for (const entry of readdirSync(dir, { withFileTypes: true })) {
+        const path = join(dir, entry.name)
+        if (entry.isDirectory()) {
+          if (entry.name !== '__tests__') walk(path)
+        } else if (entry.name.endsWith('.ts')) {
+          sources.push(readFileSync(path, 'utf8'))
+        }
+      }
+    }
+    walk(SRC)
+    expect(sources.length).toBeGreaterThan(50)
+    expect(sources.filter(text => text.includes('StandingApproval' + 'Grant'))).toEqual([])
+    expect(sources.filter(text => text.includes("from './standing-" + "approval'"))).toEqual([])
   })
 
   it('C432-NO-GRANT-CONTRACTS: the interim members stay until their own owners remove them', () => {
@@ -136,8 +160,6 @@ describe('C432-NO-GRANT-CONTRACTS: the grant ledger, grant op, protected-class a
     expect(exported('STANDING_APPROVAL_SCOPE'), 'the MCP bearer credential scope stays with its consumer')
       .toEqual({ project: 'local-workspace' })
     expect(exported('TRUST_SCOPE_KEYS')).toEqual(['project', 'org'])
-    expect(existsSync(join(SRC, 'safety/standing-approval.ts')), 'StandingApprovalGrant stays until 432-19')
-      .toBe(true)
   })
 
   it('C432-NO-GRANT-CONTRACTS: grant-ops.ts holds only the trust-scope projection', async () => {
@@ -163,6 +185,9 @@ export type RetiredGrantRecordOutcome = import('../index').GrantRecordOutcome
 export type RetiredProtectedActionClass = import('../index').ProtectedActionClass
 // @ts-expect-error the chat pin overlay is deleted
 export type RetiredChatPinOverlay = import('../index').ChatPinOverlay
-// The interim members are still types a consumer can name (432-19 and 432-22 remove them).
-export type RetainedStandingApprovalGrant = import('../index').StandingApprovalGrant
+// @ts-expect-error 432-19: the standing-approval grant is deleted with the safety ports that read it
+export type RetiredStandingApprovalGrant = import('../index').StandingApprovalGrant
+// @ts-expect-error 432-19: and it is gone from the safety barrel too
+export type RetiredSafetyStandingApprovalGrant = import('../safety/index').StandingApprovalGrant
+// The interim member is still a type a consumer can name (432-22 removes it).
 export type RetainedTrustScope = import('../index').TrustScope

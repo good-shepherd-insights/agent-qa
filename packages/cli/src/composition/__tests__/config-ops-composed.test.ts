@@ -149,7 +149,7 @@ function registry() {
 
   return createFunctionRegistry({
     deps,
-    auditSink: { appendExecutionAudit() {}, appendGuardrailAudit() {} },
+    auditSink: { appendGuardrailAudit() {} },
     resolveExecutionContext: () => 'local-interactive',
   })
 }

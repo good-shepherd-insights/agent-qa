@@ -426,7 +426,6 @@ const FULLY_GRANTED: FunctionCaller = {
 /** Discards every row: this file asserts on coverage, never on the audit trail. */
 function noOpSink(): AuditSink {
   return {
-    appendExecutionAudit() {},
     appendGuardrailAudit() {},
   }
 }

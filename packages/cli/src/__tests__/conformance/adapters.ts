@@ -263,7 +263,6 @@ export interface ConformanceRegistryOptions {
  */
 export function conformanceRegistry(options: ConformanceRegistryOptions = {}): FunctionRegistry {
   const auditSink = options.auditSink ?? ({
-    appendExecutionAudit() {},
     appendGuardrailAudit() {},
   } as unknown as CreateFunctionRegistryOptions['auditSink'])
   return createFunctionRegistry({

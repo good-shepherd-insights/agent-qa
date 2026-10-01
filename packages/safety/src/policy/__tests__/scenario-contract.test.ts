@@ -1,26 +1,33 @@
-import { describe, expect, it, vi } from 'vitest'
+// RE-SPELLED 2026-10-01 (432-19, D-15/D-16/D-17). The POLICY-05 scenario contract drove `evaluate`
+// over the classic scenarios and pinned three things per case: the classified risk tier, the gate's
+// verdict and outcome, and one secret-free execution-audit row. The gate and the execution audit are
+// deleted, so each case keeps its name and its CLASSIFICATION half (eval still scores side effects
+// with `classifyRisk`) and its verdict half becomes the deletion's own claim: the first-party
+// tool-call point allows the action in that context, no trust input changes that, and no audit row
+// of any kind is written for it.
+//
+// TWO CASES CHANGE TIER, ON PURPOSE (D-16). They classified a shell COMMAND (`rm -rf`, `sudo rm`)
+// through the deleted command-pattern list; the classifier now reads the action name only, so
+// `run_shell` classifies by its name to the recognized floor. Their names say so.
+
+import { describe, expect, it } from 'vitest'
 
 import type {
   ExecutionContext,
   RiskActionDescriptor,
   RiskTier,
-  StandingApprovalGrant,
   TrustCredential,
   TrustScope,
 } from '@vostride/agent-qa-schema'
-import type { ExecutionAuditRow, GuardrailAuditRow } from '../../ports/audit-sink'
-import type { StandingApprovalReader } from '../../ports/policy-ports'
-import { evaluate } from '../gate'
+import { registerFirstPartySafetyHooks } from '../../hooks/first-party'
+import type { AuditSink, GuardrailAuditRow } from '../../ports/audit-sink'
+import { classifyRisk } from '../risk-classifier'
 
-class FakeAuditSink {
-  readonly executionRows: ExecutionAuditRow[] = []
+class RecordingAuditSink implements AuditSink {
+  readonly rows: GuardrailAuditRow[] = []
 
-  appendExecutionAudit(row: ExecutionAuditRow): void {
-    this.executionRows.push(row)
-  }
-
-  appendGuardrailAudit(_row: GuardrailAuditRow): void {
-    throw new Error('gate writes execution audit only')
+  appendGuardrailAudit(row: GuardrailAuditRow): void {
+    this.rows.push(row)
   }
 }
 
@@ -31,14 +38,6 @@ const matchingCredential: TrustCredential = {
   scope: { project: PROJECT_A },
 }
 
-type ExpectedTrustSource =
-  | 'session-trust-mode'
-  | 'trust-credential'
-  | 'standing-approval'
-  | 'tty-prompt'
-  | 'browser-click'
-  | undefined
-
 interface ScenarioCase {
   name: string
   action: RiskActionDescriptor
@@ -48,61 +47,27 @@ interface ScenarioCase {
     credential?: TrustCredential
     actionScope?: TrustScope
   }
-  reader?: StandingApprovalReader
   expectedRiskTier: RiskTier
-  expectedVerdict: 'allow' | 'deny'
-  expectedOutcome:
-    | 'proceeded'
-    | 'prompted-approved'
-    | 'prompted-denied'
-    | 'fail-closed-denied'
-    | 'blocked'
-  expectedTrustSource?: ExpectedTrustSource
 }
 
-function expectSecretFree(rows: readonly ExecutionAuditRow[]): void {
-  const serialized = JSON.stringify(rows)
+async function runScenario(testCase: ScenarioCase): Promise<void> {
+  // The classification half, unchanged in meaning: what eval's side-effect axis reads.
+  expect(classifyRisk(testCase.action).riskTier).toBe(testCase.expectedRiskTier)
 
-  expect(serialized).not.toContain(PROJECT_A)
-  expect(serialized).not.toContain(PROJECT_B)
-}
-
-async function evaluateScenario(testCase: ScenarioCase): Promise<ExecutionAuditRow> {
-  const sink = new FakeAuditSink()
-  const ask = vi.fn(() => false)
-  const result = await evaluate(testCase.action, testCase.ctx, testCase.trust ?? {}, {
+  // The verdict half, now absence: the retired trust inputs and the context are handed over as a
+  // stale composition would, and the tool-call point still allows without a word.
+  const sink = new RecordingAuditSink()
+  const { registry } = registerFirstPartySafetyHooks({
     auditSink: sink,
-    // Every scenario below resolves BEFORE the confirm rung, which is what `ask` never having been
-    // called asserts at the foot of this helper. The surface it declares is therefore arbitrary —
-    // and declaring one at all is the point: post-G-401-17 there is no way to bind a confirm
-    // channel here without saying who answers on it, not even for a port nothing ever calls.
-    confirm: { surface: 'tty-prompt', ask },
-    reader: testCase.reader,
-  })
+    ...(testCase.trust === undefined ? {} : { trust: testCase.trust }),
+    resolveExecutionContext: () => testCase.ctx,
+  } as never)
+  const answer = await registry.runToolCallAsync(testCase.action)
 
-  expect(result).toMatchObject({
-    riskTier: testCase.expectedRiskTier,
-    verdict: testCase.expectedVerdict,
-  })
-  expect(sink.executionRows).toHaveLength(1)
-  expectSecretFree(sink.executionRows)
-
-  const row = sink.executionRows[0]
-  expect(row).toMatchObject({
-    action: testCase.action.name,
-    riskTier: testCase.expectedRiskTier,
-    verdict: testCase.expectedVerdict,
-    outcome: testCase.expectedOutcome,
-  })
-  if (testCase.expectedTrustSource === undefined) {
-    expect(row).not.toHaveProperty('trustSource')
-  } else {
-    expect(row.trustSource).toBe(testCase.expectedTrustSource)
-  }
-  expect(row).not.toHaveProperty('ts')
-  expect(ask).not.toHaveBeenCalled()
-
-  return row
+  expect(answer).toEqual({ action: 'allow', call: testCase.action })
+  expect(sink.rows).toEqual([])
+  expect(JSON.stringify(answer)).not.toContain(PROJECT_A)
+  expect(JSON.stringify(answer)).not.toContain(PROJECT_B)
 }
 
 describe('POLICY-05 scenario contract', () => {
@@ -112,37 +77,27 @@ describe('POLICY-05 scenario contract', () => {
       action: { name: 'inspect_state', recognized: true, readOnly: true },
       ctx: 'cloud',
       expectedRiskTier: 'read-only',
-      expectedVerdict: 'allow',
-      expectedOutcome: 'proceeded',
     },
     {
-      name: 'restricted local-interactive with no trust blocks',
+      name: 'a shell command is not a risk signal: run_shell classifies by its name and proceeds (D-16)',
       action: { name: 'run_shell', recognized: true, command: 'rm -rf /tmp/agent-qa' },
       ctx: 'local-interactive',
-      expectedRiskTier: 'restricted',
-      expectedVerdict: 'deny',
-      expectedOutcome: 'blocked',
+      expectedRiskTier: 'mutating-local',
     },
     {
       name: 'mutating-local local-interactive with no trust proceeds',
       action: { name: 'edit_local_file', recognized: true },
       ctx: 'local-interactive',
       expectedRiskTier: 'mutating-local',
-      expectedVerdict: 'allow',
-      expectedOutcome: 'proceeded',
     },
     {
-      // §2.1 (Ratified 2026-07-05): mutating-local allows in every execution
-      // context — ordinary in-test verbs are unaffected in ci (D-15 guarantee).
       name: 'mutating-local ci with no trust proceeds',
       action: { name: 'edit_local_file', recognized: true },
       ctx: 'ci',
       expectedRiskTier: 'mutating-local',
-      expectedVerdict: 'allow',
-      expectedOutcome: 'proceeded',
     },
     {
-      name: 'mutating-shared ci with matching credential proceeds',
+      name: 'mutating-shared ci proceeds with or without a credential (no ask, D-15)',
       action: { name: 'push_to_remote', recognized: true, declaredTier: 'mutating-shared' },
       ctx: 'ci',
       trust: {
@@ -150,35 +105,28 @@ describe('POLICY-05 scenario contract', () => {
         actionScope: { project: PROJECT_A },
       },
       expectedRiskTier: 'mutating-shared',
-      expectedVerdict: 'allow',
-      expectedOutcome: 'proceeded',
-      expectedTrustSource: 'trust-credential',
     },
     {
-      name: 'non-interactive cloud-trigger with no token denies fail closed',
+      name: 'non-interactive cloud-trigger with no token proceeds; nothing fails closed (D-15)',
       action: { name: 'cloud_trigger_delete_record', recognized: true },
       ctx: 'cloud',
       trust: { actionScope: { project: PROJECT_B } },
       expectedRiskTier: 'destructive',
-      expectedVerdict: 'deny',
-      expectedOutcome: 'fail-closed-denied',
     },
   ] satisfies readonly ScenarioCase[])('$name', async (testCase) => {
-    await evaluateScenario(testCase)
+    await runScenario(testCase)
   })
 
   describe('destructive lexicon coverage', () => {
     it.each([
       {
-        name: 'soft lexicon action classifies destructive and fails closed',
+        name: 'soft lexicon action classifies destructive and proceeds',
         action: { name: 'delete_record', recognized: true },
         ctx: 'cloud',
         expectedRiskTier: 'destructive',
-        expectedVerdict: 'deny',
-        expectedOutcome: 'fail-closed-denied',
       },
       {
-        name: 'hard command lexicon action classifies restricted and blocks',
+        name: 'a hard command is not a risk signal: run_shell with sudo classifies by its name (D-16)',
         action: { name: 'run_shell', recognized: true, command: 'sudo rm -rf /tmp/agent-qa' },
         ctx: 'local-interactive',
         trust: {
@@ -186,12 +134,16 @@ describe('POLICY-05 scenario contract', () => {
           credential: matchingCredential,
           actionScope: { project: PROJECT_A },
         },
+        expectedRiskTier: 'mutating-local',
+      },
+      {
+        name: 'a hard NAME verb still classifies restricted (the name signal eval reads)',
+        action: { name: 'sudo_reboot', recognized: true },
+        ctx: 'local-interactive',
         expectedRiskTier: 'restricted',
-        expectedVerdict: 'deny',
-        expectedOutcome: 'blocked',
       },
     ] satisfies readonly ScenarioCase[])('$name', async (testCase) => {
-      await evaluateScenario(testCase)
+      await runScenario(testCase)
     })
   })
 
@@ -204,7 +156,7 @@ describe('POLICY-05 scenario contract', () => {
 
     it.each([
       {
-        name: 'project A credential does not authorize project B action',
+        name: 'a project A credential and a project B action proceed alike: no scope is checked',
         action: scopedAction,
         ctx: 'ci',
         trust: {
@@ -212,11 +164,9 @@ describe('POLICY-05 scenario contract', () => {
           actionScope: { project: PROJECT_B },
         },
         expectedRiskTier: 'mutating-shared',
-        expectedVerdict: 'deny',
-        expectedOutcome: 'fail-closed-denied',
       },
       {
-        name: 'project A credential authorizes project A action',
+        name: 'a project A credential and a project A action proceed alike',
         action: scopedAction,
         ctx: 'ci',
         trust: {
@@ -224,43 +174,26 @@ describe('POLICY-05 scenario contract', () => {
           actionScope: { project: PROJECT_A },
         },
         expectedRiskTier: 'mutating-shared',
-        expectedVerdict: 'allow',
-        expectedOutcome: 'proceeded',
-        expectedTrustSource: 'trust-credential',
       },
     ] satisfies readonly ScenarioCase[])('$name', async (testCase) => {
-      await evaluateScenario(testCase)
+      await runScenario(testCase)
     })
   })
 
   describe('standing approvals and sovereignty', () => {
-    const standingApproval: StandingApprovalGrant = {
-      actionClass: 'file_issue',
-      scope: { project: PROJECT_A },
-    }
-    const reader: StandingApprovalReader = {
-      grantsFor: () => [standingApproval],
-    }
-
-    it('lets a matching standing approval stop prompting for its action class', async () => {
-      // Post-§2.1, mutating-local allows outright and never reaches resolveAsk, so
-      // standing-approval coverage is pinned on an ask-tier (destructive) action.
-      await evaluateScenario({
-        name: 'standing approval covers file_issue in project A',
+    it('no standing approval is read: an ask-tier action proceeds with none', async () => {
+      await runScenario({
+        name: 'file_issue in project A',
         action: { name: 'file_issue', recognized: true, declaredTier: 'destructive' },
         ctx: 'ci',
         trust: { actionScope: { project: PROJECT_A } },
-        reader,
         expectedRiskTier: 'destructive',
-        expectedVerdict: 'allow',
-        expectedOutcome: 'proceeded',
-        expectedTrustSource: 'standing-approval',
       })
     })
 
-    it('keeps restricted actions blocked despite grant, credential, and trust mode', async () => {
-      await evaluateScenario({
-        name: 'restricted action is sovereign over all trust sources',
+    it('a restricted name still classifies restricted, and nothing blocks it in-run (D-15)', async () => {
+      await runScenario({
+        name: 'restricted action with every retired trust source',
         action: { name: 'sudo', recognized: true },
         ctx: 'local-interactive',
         trust: {
@@ -268,10 +201,7 @@ describe('POLICY-05 scenario contract', () => {
           credential: matchingCredential,
           actionScope: { project: PROJECT_A },
         },
-        reader,
         expectedRiskTier: 'restricted',
-        expectedVerdict: 'deny',
-        expectedOutcome: 'blocked',
       })
     })
   })

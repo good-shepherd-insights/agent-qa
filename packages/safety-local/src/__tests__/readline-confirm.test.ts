@@ -1,102 +1,42 @@
-import { PassThrough, Readable, Writable } from 'node:stream'
+import { existsSync, readdirSync, readFileSync } from 'node:fs'
+import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 
-import type { RiskActionDescriptor } from '@vostride/agent-qa-schema'
 import { describe, expect, it } from 'vitest'
 
-import { createReadlineConfirm } from '../readline-confirm'
+import * as surface from '../index'
+import { AGENT_QA_SAFETY_LOCAL_ALLOWED_RESPONSIBILITIES } from '../ownership-contract'
 
-const action: RiskActionDescriptor = {
-  name: 'deploy_service',
-  recognized: true,
+// RE-SPELLED 2026-10-01 (432-19, D-14). This file drove `createReadlineConfirm`, the in-test
+// terminal confirm: the `[y/N]` question, deny on empty input, deny on EOF, deny when either stream
+// contradicted the declared `tty-prompt` surface, and no stream read when it would refuse anyway.
+// D-14 deletes every y/n prompt, and the confirm port this adapter implemented is deleted with the
+// gate, so the adapter goes too. What these cells pin now is that it cannot come back unnoticed.
+const SRC = join(dirname(fileURLToPath(import.meta.url)), '..')
+
+function productionSources(): string[] {
+  return readdirSync(SRC, { withFileTypes: true })
+    .filter((entry) => entry.isFile() && entry.name.endsWith('.ts'))
+    .map((entry) => readFileSync(join(SRC, entry.name), 'utf8'))
 }
 
-function createOutput(isTTY: boolean): Writable & { isTTY: boolean } {
-  const output = new Writable({
-    write(_chunk, _encoding, callback) {
-      callback()
-    },
-  }) as Writable & { isTTY: boolean }
-  output.isTTY = isTTY
-  return output
-}
-
-class ThrowIfRead extends Readable {
-  readCalls = 0
-
-  _read() {
-    this.readCalls += 1
-    this.destroy(new Error('input should not be consumed'))
-  }
-}
-
-describe('createReadlineConfirm', () => {
-  it('denies without consuming input when output is not a TTY', async () => {
-    const input = new ThrowIfRead()
-    const confirm = createReadlineConfirm({
-      input,
-      output: createOutput(false),
-    })
-
-    await expect(confirm.ask(action)).resolves.toBe(false)
-    expect(input.readCalls).toBe(0)
-    // G-401-17: the readline port speaks for a terminal, and says so at the site that builds it.
-    expect(confirm.surface).toBe('tty-prompt')
+describe('C432-NO-READLINE-CONFIRM: the in-test readline confirm is gone', () => {
+  it('C432-NO-READLINE-CONFIRM: the module is deleted and the barrel does not publish it', () => {
+    expect(existsSync(join(SRC, 'readline-confirm.ts'))).toBe(false)
+    expect(Object.keys(surface)).not.toContain('createReadlineConfirm')
   })
 
-  it.each([
-    ['y\n', true],
-    ['yes\n', true],
-    // A BARE ENTER IS A REFUSAL, NOT AN APPROVAL (DF-2). This cell used to pin `true`: someone who
-    // pressed Enter without reading approved an ask-tier action. The prompt reads `[y/N]` and only
-    // an explicit y/yes approves.
-    ['\n', false],
-    ['n\n', false],
-    ['no\n', false],
-    ['garbage\n', false],
-  ] as const)('parses %j from injected TTY io', async (answer, expected) => {
-    const input = new PassThrough()
-    const confirm = createReadlineConfirm({
-      input,
-      output: createOutput(true),
-    })
-
-    const result = confirm.ask(action)
-    input.end(answer)
-
-    await expect(result).resolves.toBe(expected)
+  it('C432-NO-READLINE-CONFIRM: no safety-local source opens a readline interface or asks a y/N question', () => {
+    const sources = productionSources()
+    expect(sources.length).toBeGreaterThanOrEqual(6)
+    for (const needle of ['node:readline', 'createInterface', '[y/N]', 'tty-prompt', 'ConfirmPort']) {
+      expect(sources.filter((text) => text.includes(needle)), needle).toEqual([])
+    }
   })
 
-  // EOF IS A REFUSAL (DF-2, defect 2). The stream simply ends with no line at all — `question` waits
-  // forever for a line that is not coming unless a `close` handler settles it. The explicit timeout
-  // is what turns that hang into a reported failure instead of a 30s suite stall.
-  it(
-    'denies when the input stream ends without a line',
-    async () => {
-      const input = new PassThrough()
-      const confirm = createReadlineConfirm({
-        input,
-        output: createOutput(true),
-      })
-
-      const result = confirm.ask(action)
-      input.end()
-
-      await expect(result).resolves.toBe(false)
-    },
-    3000,
-  )
-
-  // THE MISMATCHED-STREAM CASE (DF-2). A TTY output paired with an explicitly non-TTY input is the
-  // piped-stdin shape that slipped past the output-only gate; it must deny without reading.
-  it('denies without consuming input when input is explicitly not a TTY', async () => {
-    const input = new ThrowIfRead() as ThrowIfRead & { isTTY: boolean }
-    input.isTTY = false
-    const confirm = createReadlineConfirm({
-      input,
-      output: createOutput(true),
-    })
-
-    await expect(confirm.ask(action)).resolves.toBe(false)
-    expect(input.readCalls).toBe(0)
+  it('C432-NO-READLINE-CONFIRM: the ownership contract no longer allows a confirm adapter', () => {
+    expect(AGENT_QA_SAFETY_LOCAL_ALLOWED_RESPONSIBILITIES.filter((entry) => /confirm/i.test(entry))).toEqual([])
+    // Non-vacuity: the contract still names what this package does own.
+    expect(AGENT_QA_SAFETY_LOCAL_ALLOWED_RESPONSIBILITIES.some((entry) => /guardrail audit writer/.test(entry))).toBe(true)
   })
 })

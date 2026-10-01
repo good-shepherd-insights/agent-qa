@@ -24,15 +24,13 @@
 // `RunServiceErrorBodySchema`). Nothing echoes the caller's input, names a run id, or hints at how
 // many credentials are declared.
 //
-// WITH EXACTLY ONE EXCEPTION, AND IT IS ON THE OTHER SIDE OF THE VERDICT (402-06). A policy DENIAL
-// is answered 403 with the gate's own neutral phrasing and its surface-projected remedies
-// (`RunServiceDenialBodySchema`). The one-key law's whole argument is about what an
-// UNAUTHENTICATED caller may learn; a 403 is reached only after a declared credential matched, so
-// the reader is a party this process already decided to talk to, and a bare word would turn a
-// decidable situation into a failure they will retry forever. What that body may NOT carry is the
-// gate's CANONICAL reason: on the fail-closed arm it names `--trust-session`, a flag declared on
-// one CLI command, and handing it to an HTTP client on another machine is Phase 399's defect —
-// one surface's instructions shown to a reader on another.
+// WITH EXACTLY ONE EXCEPTION, AND IT IS ON THE OTHER SIDE OF THE VERDICT (402-06). A run DENIAL
+// is answered 403 with the run core's plain refusal sentence (`RunServiceDenialBodySchema`). The
+// one-key law's whole argument is about what an UNAUTHENTICATED caller may learn; a 403 is reached
+// only after a declared credential matched, so the reader is a party this process already decided
+// to talk to, and a bare word would turn a decidable situation into a failure they will retry
+// forever. Since 432 the one run denial is production without the config opt-in (D-18), and since
+// 432-19 the body carries no remedy list.
 //
 // THE STREAM SERVES THE FROZEN BUS ENVELOPE VERBATIM (D-13). SSE `id` is the envelope's `seq`,
 // `event` is its `type`, and `data` is the envelope's own JSON. There is no projection layer and
@@ -92,14 +90,11 @@
 import type { IncomingMessage, ServerResponse } from 'node:http'
 
 import {
-  GATE_REMEDY_KINDS,
   RUN_SERVICE_REFUSED_REQUEST_FIELDS,
   RunServiceStartRequestSchema,
   handleRosterOf,
   parseHandleParam,
   passesHandleFilter,
-  remediesRenderableBy,
-  type GateRemedy,
   type RunEventEnvelope,
   type RunServiceDenialBody,
   type RunServiceErrorCode,
@@ -861,55 +856,25 @@ export function serveRunEventStream(
 /**
  * The DENIAL this rejection is, if it is one — read structurally, never by class (402-06, T-402-22).
  *
- * ON `dashboardRemediesOf`S EXACT PRECEDENT (`execution/in-process-backend.ts`), and for the same
- * architectural reason: the rejection is a `RunDeniedError` minted in `agent-local`, and this
+ * ON `dashboardNeutralReasonOf`'S EXACT PRECEDENT (`execution/in-process-backend.ts`), and for the
+ * same architectural reason: the rejection is a `RunDeniedError` minted in `agent-local`, and this
  * package may not import `agent`, `agent-local` or `safety` — `pnpm validate:arch` is the
- * mechanical proof. What it MAY name is the remedy vocabulary itself, which lives in `schema`
- * precisely because several packages render it.
+ * mechanical proof.
  *
- * THE DISCRIMINATOR IS `neutralReason`, DELIBERATELY. Only a GATE decision carries a second
- * phrasing (400 D-15): an unrecognised request field, an input error and "the host was asked to
- * start a run before it was composed" carry none, and those are exactly the rejections that must
- * stay a 500 with no words on them. Keying on `remedies` instead would misclassify a denial that
- * offered none; keying on the class NAME would be a string compare against another package private
+ * THE DISCRIMINATOR IS `neutralReason`, DELIBERATELY. Only a run denial carries it: an
+ * unrecognised request field, an input error and "the host was asked to start a run before it was
+ * composed" carry none, and those are exactly the rejections that must stay a 500 with no words on
+ * them. Keying on the class NAME would be a string compare against another package's private
  * vocabulary.
  *
- * THE REMEDIES ARE VALIDATED AGAINST THE CLOSED VOCABULARY before they are projected, so an
- * arbitrary object that happened to carry a `remedies` array cannot put an unknown kind on the
- * wire. A kind this build does not know is dropped rather than passed through.
- *
- * THE PROJECTION IS THIS DOOR OWN SURFACE. `remediesRenderableBy('run-service', …)` answers the
- * empty list today — see `GATE_REMEDY_SURFACES` for why that emptiness is a declaration, not an
- * oversight — and this module does not second-guess it: filtering again here would be a second
- * opinion about what a remote caller can do, and not filtering at all would serve `--trust-session`
- * to an HTTP client.
+ * 2026-10-01 (432-19, D-15): there is no remedy list to validate or project. The production refusal
+ * never carried one, and the remedy vocabulary left with the execution gate.
  */
 export function runDenialOf(error: unknown): RunServiceDenialBody | undefined {
   if (typeof error !== 'object' || error === null) return undefined
   const neutralReason = (error as { neutralReason?: unknown }).neutralReason
   if (typeof neutralReason !== 'string' || neutralReason.trim().length === 0) return undefined
-
-  const carried = (error as { remedies?: unknown }).remedies
-  const known = new Set<string>(GATE_REMEDY_KINDS)
-  const remedies: GateRemedy[] = []
-  for (const entry of Array.isArray(carried) ? (carried as unknown[]) : []) {
-    if (typeof entry !== 'object' || entry === null) continue
-    const kind = (entry as { kind?: unknown }).kind
-    if (typeof kind !== 'string' || !known.has(kind)) continue
-    const params = (entry as { params?: unknown }).params
-    remedies.push({
-      kind: kind as GateRemedy['kind'],
-      ...(typeof params === 'object' && params !== null
-        ? { params: params as Readonly<Record<string, string>> }
-        : {}),
-    })
-  }
-
-  return {
-    error: 'run_denied',
-    neutralReason,
-    remedies: [...remediesRenderableBy('run-service', remedies)],
-  }
+  return { error: 'run_denied', neutralReason }
 }
 
 export function createRunServiceRoutes(ports: RunServicePorts): RunServiceRouter {

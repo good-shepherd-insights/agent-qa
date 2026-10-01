@@ -412,7 +412,7 @@ async function detail(db: DashboardDatabase, runId: string) {
       runDetail: createDashboardRunDetailReader(db),
       runs: { get: forbidden }, config: { getMasked: forbidden },
     } as unknown as FunctionDeps,
-    auditSink: { appendExecutionAudit() {}, appendGuardrailAudit() {} },
+    auditSink: { appendGuardrailAudit() {} },
     resolveExecutionContext: () => 'local-interactive',
   })
   return RunDetailProjectionSchema.parse(await invokeFunction(

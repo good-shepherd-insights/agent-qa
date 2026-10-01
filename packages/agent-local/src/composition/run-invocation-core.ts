@@ -30,7 +30,6 @@ import { dirname } from 'node:path'
 
 import type { AuditSink } from '@vostride/agent-qa-safety'
 import type {
-  GateRemedy,
   RunId,
   RunSession,
   RunsStartInput,
@@ -146,6 +145,8 @@ export class RunIdNotMintedError extends Error {
  *
  * THE TEST IS THE RUN'S OWN DIRECTORY, derived through `runDirFor` — the same composition
  * `buildRunAuditSink` uses — because every artifact a collision could tamper with lives inside it.
+ * (2026-10-01, 432-19: the run no longer writes `execution_audit.jsonl`; its guardrail rows and
+ * events are what a collision would still tamper with.)
  * Asking after `handoff.json` alone would let a run that crashed before writing one be silently
  * appended to.
  */
@@ -161,22 +162,24 @@ export class RunIdAlreadyInUseError extends Error {
 }
 
 /**
- * This run was refused before it started, carrying the refusal's own three fields.
+ * This run was refused before it started.
  *
  * Since 432-13 the one producer is the production refusal (`refuseProductionWithoutOptIn`): its
- * reason is the plain sentence naming the target and the config line, it carries no remedies, and
- * its neutral reason is the same sentence. The shape stays `FunctionDeniedError`'s (400 D-15) until
- * 432-19 removes the remedy vocabulary; a door renders the reason and never composes its own.
+ * reason is the plain sentence naming the target and the config line. 2026-10-01 (432-19, D-15):
+ * it carries no remedy list, because the remedy vocabulary left with the execution gate.
+ * `neutralReason` is the same sentence; the dashboard and run-service doors read that member to
+ * tell a run denial from any other rejection, and a door renders it and never composes its own.
  */
 export class RunDeniedError extends Error {
+  readonly neutralReason: string
+
   constructor(
     readonly runId: string,
     readonly reason: string,
-    readonly remedies: readonly GateRemedy[],
-    readonly neutralReason: string,
   ) {
     super(reason)
     this.name = 'RunDeniedError'
+    this.neutralReason = reason
   }
 }
 
@@ -219,8 +222,8 @@ export interface RunTargetDeclaration {
  * Refuse a run that drives a production target the config has not opted into (432-03, D-18).
  *
  * A production CLASS with no names still refuses, so a producer that folded the class but lost the
- * names fails closed. The refusal is a plain `RunDeniedError`: the sentence from
- * `buildProductionRefusal`, no remedies, and the same sentence as its surface-neutral reason.
+ * names fails closed. The refusal is a plain `RunDeniedError` carrying the sentence from
+ * `buildProductionRefusal`.
  *
  * EXPORTED because a producer that must acquire a device or an adapter before the core runs (the
  * suite half) calls it first, so production is refused before that acquisition too.
@@ -235,7 +238,7 @@ export function refuseProductionWithoutOptIn(
     declaration.productionTargetNames.length > 0 || declaration.targetClass === 'production'
   if (!production || declaration.allowProduction === true) return
   const reason = buildProductionRefusal(declaration.productionTargetNames)
-  throw new RunDeniedError(runId, reason, [], reason)
+  throw new RunDeniedError(runId, reason)
 }
 
 /**
@@ -447,7 +450,6 @@ export function createRunInvocationCore(
         buildRunAuditSink({
           configDir,
           runId,
-          executionContext: options.executionContext,
         })
 
       // (4) Assembly — the first line that may touch the target, and it is below every refusal.

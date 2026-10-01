@@ -98,7 +98,6 @@ const RECORDED: ReadonlyMap<string, CompletedRunHandoff> = new Map([
  */
 function fixtureRegistry(): FunctionRegistry {
   const auditSink = {
-    appendExecutionAudit() {},
     appendGuardrailAudit() {},
   } as unknown as CreateFunctionRegistryOptions['auditSink']
 

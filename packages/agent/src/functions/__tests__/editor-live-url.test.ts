@@ -28,7 +28,7 @@ const CALLER: FunctionCaller = {
   origin: 'human',
 }
 
-const auditSink: AuditSink = { appendExecutionAudit() {}, appendGuardrailAudit() {} }
+const auditSink: AuditSink = { appendGuardrailAudit() {} }
 
 interface RecordingLiveView {
   readonly port: LiveViewPort

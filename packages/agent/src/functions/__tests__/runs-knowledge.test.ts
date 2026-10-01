@@ -530,7 +530,7 @@ describe('423 current content and fixed historical sections', () => {
   it('JOIN-NOT-BOUND: actual registry retains the read with typed enrichment absence and no unary fallback', async () => {
     const unary = vi.fn(async () => { throw new Error('unary fallback forbidden') })
     const registry = createFunctionRegistry({ deps: deps({ knowledge: { showRecord: unary } }),
-      auditSink: { appendExecutionAudit() {}, appendGuardrailAudit() {} },
+      auditSink: { appendGuardrailAudit() {} },
       resolveExecutionContext: () => 'local-headless' })
     const result = await invokeFunction(registry, 'runs.knowledge', { runId: RUN_ID },
       { surface: 'cli', origin: 'human', grantedScopes: ['read'], safeMode: false })

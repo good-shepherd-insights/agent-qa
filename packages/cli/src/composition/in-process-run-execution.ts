@@ -540,14 +540,12 @@ export async function runInProcessCliRun(
   const auditSink = buildRunAuditSink({
     configDir: produced.configDir,
     runId,
-    executionContext: options.executionContext,
   })
   const live = createLivePauseController()
-  // 432-13/432-14: nothing in a run asks, so the registrar is handed the run's audit sink and context
-  // and nothing else — no confirm channel, no human decorator, no session trust.
+  // 432-13/432-14/432-19: nothing in a run asks and no gate is registered, so the registrar is
+  // handed the run's audit sink and nothing else.
   const { safetyHooks, confirmPausedMs } = buildRunSafetyHooks({
     auditSink,
-    executionContext: options.executionContext,
   })
   produced.bindRunContext({ maskingContext, safetyHooks })
 

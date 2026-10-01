@@ -76,7 +76,6 @@ function fakeDeps(): FunctionDeps {
 /** The sink is a REQUIRED construction field (D-11); nothing here asserts on rows. */
 function noOpSink(): AuditSink {
   return {
-    appendExecutionAudit() {},
     appendGuardrailAudit() {},
   }
 }

@@ -326,7 +326,8 @@ describe('one human ask, N gated runs, driven from the authoring loop (D-08 · U
       expect(denial.reason).toContain(`"${IN_PROCESS_TARGET_NAME}"`)
       expect(denial.reason).toContain('environment: production')
       expect(denial.reason).toContain('allowProduction: true')
-      expect(denial.remedies).toEqual([])
+      // 432-19 (D-15): no remedy member at all, not even an empty list.
+      expect(denial).not.toHaveProperty('remedies')
       // 432-13: not even the dispatch is put to the person now.
       expect(asked).toEqual([])
       // Nothing started: no run directory, so no gate row, and nobody knocked on the target.

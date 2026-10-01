@@ -29,7 +29,6 @@ export type { ClauseVerdict } from './functions/spec.js'
 export { OPTIONAL_FUNCTION_DEP_KEYS } from './functions/spec.js'
 export {
   invokeFunction,
-  FunctionDeniedError,
   FunctionInputError,
   FunctionNotBoundError,
   FunctionOriginError,

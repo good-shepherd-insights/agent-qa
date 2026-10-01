@@ -47,7 +47,7 @@ it('REC-V3-ROW-READS-UNAVAILABLE-ORDINAL: cold registry reads only persisted v3 
         runs: { get: forbidden }, config: { getMasked: forbidden },
         evidenceBlobs: { read: forbidden },
       } as unknown as FunctionDeps,
-      auditSink: { appendExecutionAudit() {}, appendGuardrailAudit() {} },
+      auditSink: { appendGuardrailAudit() {} },
       resolveExecutionContext: () => 'local-interactive',
     })
     const output = RunDetailProjectionSchema.parse(await invokeFunction(registry, 'runs.detail',

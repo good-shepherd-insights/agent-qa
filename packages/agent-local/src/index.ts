@@ -96,8 +96,8 @@ export type { ConstructKnowledgeReaderInput } from './composition/knowledge-read
 // not name, an id that already belongs to a run, and a policy denial apart from each other without
 // reading a message). Published for the reason the run composition is: it is the seam every host is
 // supposed to share, and a host that cannot reach it composes a run of its own — which is the
-// dual-mechanism class this phase exists to remove. `buildRunRiskDescriptor` travels with it
-// because the doors' own denial cells assert against the descriptor the core classifies.
+// dual-mechanism class this phase exists to remove. (432-19: the run gate's descriptor recipe that
+// used to travel with it is deleted; the production refusal is the core's only denial.)
 export {
   createRunInvocationCore,
   REFUSED_RUN_REQUEST_FIELDS,
@@ -148,9 +148,6 @@ export type { MaskingDigestEntry, MaskingDigestsFile } from './composition/run-d
 export {
   ALLOW_PRODUCTION_OPT_IN,
   buildProductionRefusal,
-  buildRunDisclosure,
-  buildRunRiskDescriptor,
-  RUN_START_RISK_ACTION_NAME,
 } from './composition/run-risk.js'
 export type { RunTargetClass } from './composition/run-risk.js'
 // 405-05 (D-12/D-13): the evidence-blob read port's binding — ONE lambda over the store the

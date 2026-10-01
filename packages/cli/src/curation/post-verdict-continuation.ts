@@ -332,7 +332,7 @@ export async function recoverPendingPostVerdictContinuations(input: RecoverPendi
         if (Date.now() >= input.deadlineMs || input.signal?.aborted) return
         const maskingContext = session.maskingContextFactory()
         try {
-          const auditSink = buildRunAuditSink({ configDir: dirname(input.configPath), runId, executionContext: 'local-headless' })
+          const auditSink = buildRunAuditSink({ configDir: dirname(input.configPath), runId })
           const { createPostVerdictStep } = await import('./post-verdict-step.js')
           const step = createPostVerdictStep({ ...bound, detach: true })
           handoff = step.handoff

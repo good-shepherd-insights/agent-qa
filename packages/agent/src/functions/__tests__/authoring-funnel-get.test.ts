@@ -114,7 +114,7 @@ function registryWith(authoringFunnel?: AuthoringFunnelPortLike) {
   return createFunctionRegistry({
     deps: deps(authoringFunnel),
     resolveExecutionContext: () => 'local-headless',
-    auditSink: { appendExecutionAudit() {}, appendGuardrailAudit() {} },
+    auditSink: { appendGuardrailAudit() {} },
   })
 }
 

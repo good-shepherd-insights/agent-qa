@@ -44,7 +44,7 @@ describe('materializePolicy sovereign authored shelf', () => {
   })
   it('holds the current authority transaction throughout the actual read/check/write', () => {
     let attempted = false
-    const auditSink = { appendExecutionAudit() {}, appendGuardrailAudit() {
+    const auditSink = { appendGuardrailAudit() {
       attempted = true
       // A second process with the exact current credentials cannot release the lease
       // between the egress check and publication: it must contend on the same transaction.
@@ -84,7 +84,7 @@ describe('materializePolicy sovereign authored shelf', () => {
   })
   it('overrides REDACT once with user-origin audit and refuses BLOCK before a write', () => {
     const rows: GuardrailAuditRow[] = []
-    const auditSink = { appendExecutionAudit() {}, appendGuardrailAudit(row: GuardrailAuditRow) { rows.push(row) } }
+    const auditSink = { appendGuardrailAudit(row: GuardrailAuditRow) { rows.push(row) } }
     const text = 'Contact owner@example.com before checkout'
     expect(materializePolicy({ ...input(text), auditSink }).kind).toBe('written')
     expect(readFileSync(policyShelfPath(root, 'shop'), 'utf8')).toContain(text)

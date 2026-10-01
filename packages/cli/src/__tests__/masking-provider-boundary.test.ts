@@ -196,38 +196,36 @@ describe('SEAM-01 captured-provider-boundary proof (production chain)', () => {
 })
 
 describe('SEAM-02/04 stamped-audit integration proof (production helpers)', () => {
-  it('writes a stamped fail-closed execution_audit.jsonl row for a soft-destructive dispatch in ci (D-16 remediation)', async () => {
+  // RE-SPELLED 2026-10-01 (432-19, D-15/D-17) from 'writes a stamped fail-closed execution_audit.jsonl
+  // row for a soft-destructive dispatch in ci (D-16 remediation)'. The in-run gate hook that denied
+  // `delete_record` in ci and wrote that row is deleted, and so is the execution-audit writer. The
+  // stamped-audit integration survives on the GUARDRAIL row: the run's own registrar, over the run's
+  // own stamped sink, lands a correlated row in the run directory.
+  it('C432-GUARDRAIL-AUDIT-RETAINED: the run registrar writes a runId-stamped guardrail row and no execution row', async () => {
     const configDir = mkdtempSync(join(tmpdir(), 'masking-boundary-audit-'))
     const runId = 'r_provider-boundary-audit'
+    const runDir = join(resolve(configDir, '.agent-qa'), RUNS_SUBDIR, slugBranch(runId))
 
     // The production per-run stamped sink + per-run registrar, exactly as run.ts wires them.
-    const auditSink = buildRunAuditSink({ configDir, runId, executionContext: 'ci' })
-    const { safetyHooks } = buildRunSafetyHooks({
-      auditSink,
-      executionContext: 'ci',
-    })
+    const auditSink = buildRunAuditSink({ configDir, runId })
+    const { safetyHooks } = buildRunSafetyHooks({ auditSink })
 
-    const result = await safetyHooks.runToolCallAsync({ name: 'delete_record', recognized: true })
-    expect(result.action).toBe('deny')
+    // A soft-destructive in-test action is no longer gated: it passes the tool-call point.
+    const action = { name: 'delete_record', recognized: true }
+    expect(await safetyHooks.runToolCallAsync(action)).toEqual({ action: 'allow', call: action })
 
-    const jsonlPath = join(
-      resolve(configDir, '.agent-qa'),
-      RUNS_SUBDIR,
-      slugBranch(runId),
-      'execution_audit.jsonl',
-    )
-    expect(existsSync(jsonlPath)).toBe(true)
+    // A provider request carrying a bearer trips the guardrail, which writes the stamped row.
+    safetyHooks.runProviderRequest({
+      prompt: [{ role: 'user', content: [{ type: 'text', text: 'Authorization: Bearer abcdefghijklmno12345' }] }],
+    } as never)
 
-    const line = readFileSync(jsonlPath, 'utf-8').trim()
-    // Acceptance: the raw row line carries these substrings (correlation + D-16 remediation clause).
-    expect(line).toContain('runId')
-    expect(line).toContain('executionContext')
-    expect(line).toContain('--trust-session')
-
+    expect(existsSync(join(runDir, 'execution_audit.jsonl'))).toBe(false)
+    const line = readFileSync(join(runDir, 'guardrail_audit.jsonl'), 'utf-8').trim()
+    expect(line.split('\n')).toHaveLength(1)
+    expect(line).not.toContain('abcdefghijklmno12345')
     const row = JSON.parse(line) as Record<string, unknown>
     expect(row.runId).toBe(runId)
-    expect(row.executionContext).toBe('ci')
-    expect(row.outcome).toBe('fail-closed-denied')
-    expect(String(row.reason)).toContain('--trust-session')
+    expect(row).toMatchObject({ action: 'redact', detector: 'bearer' })
+    expect(typeof row.ts).toBe('string')
   })
 })

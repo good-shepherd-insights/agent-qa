@@ -57,7 +57,12 @@ import { runSafetyScope } from '@vostride/agent-qa-safety-local'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { CLI_FUNCTION_CALLER, composeCliLocalAgent } from '../local-agent-host.js'
-import type { ConfirmPort } from '@vostride/agent-qa-safety'
+// 2026-10-01 (432-19, D-14): safety publishes no confirm port; the shape an old host bound is spelled
+// locally so the spies below can still be smuggled in and shown never to be called.
+interface ConfirmPort {
+  readonly surface: 'tty-prompt'
+  readonly ask: (action: unknown) => boolean
+}
 
 const CONFIG_FILE = 'agent-qa.config.yaml'
 

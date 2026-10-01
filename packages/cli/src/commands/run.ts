@@ -54,7 +54,6 @@ import type { runInProcessCliRun as RunInProcessCliRun } from '../composition/in
 // It lives in a leaf module rather than in `in-process-run-execution.ts` because that module
 // imports this one's producers — see `cli-run-input-error.ts`'s header.
 import { CliRunInputError } from '../composition/cli-run-input-error.js'
-import { denialDetailLines } from './receipt-line.js'
 import {
   buildMemberRunConfig,
   buildRunPorts,
@@ -5073,16 +5072,16 @@ export function createRunCommand(): Command {
           for (const line of err.lines) console.error(line)
           process.exit(err.exitCode)
         }
-        // 401-03 (D-15/D-16): the policy refused this run, so the run never started — there is no
-        // run row to finalize, no crash to report, and nothing for `formatFrameworkError` to say.
-        // THE DOOR THAT ISSUED THE REFUSAL IS THE DOOR THAT ANSWERS "now what": the gate mints the
-        // canonical reason and structured remedies, and this projects the ones a CLI reader can
-        // actually take (`fn.ts` renders the same pair for a denied capability).
+        // 401-03 (D-15/D-16): the run was refused, so it never started — there is no run row to
+        // finalize, no crash to report, and nothing for `formatFrameworkError` to say. Since 432 the
+        // one refusal is production without the config opt-in (D-18), and its reason is the whole
+        // answer: it names the target and the config line. 2026-10-01 (432-19): no remedy line
+        // follows it, because the remedy vocabulary left with the execution gate.
         //
         // EXIT 2, NOT 1. `1` is "the tests failed", and a denial must never read as a failing
         // suite: nothing ran. `2` is this command's existing "no verdict was produced" code.
         if (err instanceof RunDeniedError) {
-          console.error(pc.red(denialDetailLines(`Run denied: ${err.reason}`, err.remedies).join('\n')))
+          console.error(pc.red(`Run denied: ${err.reason}`))
           await drainAnalytics()
           process.exit(2)
         }

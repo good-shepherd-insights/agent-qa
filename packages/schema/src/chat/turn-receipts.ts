@@ -42,7 +42,7 @@ export type ClauseReceiptStatus = (typeof CLAUSE_RECEIPT_STATUSES)[number]
  * One clause's receipt.
  *
  * `outcome` is a ONE-LINE summary and never a payload body (D-18): for a failure it carries the
- * function layer's own refusal NAME (`UnknownFunctionError`, `FunctionDeniedError`, …), which is
+ * function layer's own refusal NAME (`UnknownFunctionError`, `FunctionInputError`, …), which is
  * the vocabulary `invokeFunction` already publishes, so a surface reporting a refused clause names
  * the same thing the audit row does.
  */

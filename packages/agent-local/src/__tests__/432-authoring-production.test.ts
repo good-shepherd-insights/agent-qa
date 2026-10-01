@@ -517,7 +517,8 @@ describe('authoring reaches the production boundary on both chains (432-04, D-18
     expect(denied.reason).toContain(`"${targetName}"`)
     expect(denied.reason).toContain('environment: production')
     expect(denied.reason).toContain(OPT_IN_LINE)
-    expect(denied.remedies).toEqual([])
+    // 432-19 (D-15): the refusal carries no remedy member at all, not even an empty list.
+    expect(denied).not.toHaveProperty('remedies')
   }
 
   describe('C432-AUTHORING-PRODUCTION-NORMAL — normal verification meets the core refusal', () => {

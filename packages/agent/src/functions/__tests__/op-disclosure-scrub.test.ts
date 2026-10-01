@@ -29,7 +29,7 @@ const LOCAL_INTERACTIVE: () => ExecutionContext = () => 'local-interactive'
 const CONTROL_BYTES = /[\u0000-\u001f\u007f-\u009f]/
 
 function noOpSink(): AuditSink {
-  return { appendExecutionAudit() {}, appendGuardrailAudit() {} }
+  return { appendGuardrailAudit() {} }
 }
 
 function caller(): FunctionCaller {

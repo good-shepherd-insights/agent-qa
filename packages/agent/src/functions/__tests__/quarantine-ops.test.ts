@@ -132,7 +132,7 @@ function registryWith(quarantine?: QuarantineOperationsPort) {
   return createFunctionRegistry({
     deps: deps(quarantine),
     resolveExecutionContext: () => 'local-headless',
-    auditSink: { appendExecutionAudit() {}, appendGuardrailAudit() {} },
+    auditSink: { appendGuardrailAudit() {} },
   })
 }
 

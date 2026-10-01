@@ -37,7 +37,6 @@ const CALLER: FunctionCaller = {
 }
 
 const AUDIT_SINK: AuditSink = {
-  appendExecutionAudit: () => undefined,
   appendGuardrailAudit: () => undefined,
 }
 

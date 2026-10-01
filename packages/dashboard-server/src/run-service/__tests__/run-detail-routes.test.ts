@@ -195,7 +195,7 @@ function composeRegistry(
     ...(withReadScope === undefined ? {} : { withReadScope }),
     deps: depsWith(runDetail, evidenceBlobs, feedbackReads),
     // Discards every row: this file asserts on the path, never on the audit trail.
-    auditSink: { appendExecutionAudit() {}, appendGuardrailAudit() {} },
+    auditSink: { appendGuardrailAudit() {} },
     resolveExecutionContext: () => 'local-interactive',
   })
 }

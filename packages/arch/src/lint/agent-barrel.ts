@@ -181,7 +181,7 @@ export const EXPECTED_AGENT_BARREL_VALUE_EXPORTS: readonly string[] = [
   // cross, a NAME is the only carrier that distinction has. In SORT position; this list is
   // compared against the barrel's sorted export set by exact positional equality.
   'EvidenceBlobAbsentError',
-  'FunctionDeniedError',
+  // 2026-10-01 (432-19, D-15): 'FunctionDeniedError' left with the execution gate that raised it.
   'FunctionInputError',
   'FunctionNotBoundError',
   // 391 D-06. A caller-facing refusal a surface legitimately catches and reports, on exactly

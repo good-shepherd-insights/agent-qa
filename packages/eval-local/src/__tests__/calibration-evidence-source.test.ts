@@ -38,7 +38,7 @@ function fixture() {
       origin: 'user', ordinal: step.stepIndex + 1, markedAt: 0, disposition: { kind: 'confirmed-bug', confirmedRecords: 0 },
       gold: [], evidence: { confirmed: 0, overturned: 0 } }
     const frozen = local.freezeGoldenTrajectory({ agentQaRoot: root, committedRoot, product: 'shop', handoff, mark,
-      auditSink: { appendExecutionAudit() {}, appendGuardrailAudit() {} } })
+      auditSink: { appendGuardrailAudit() {} } })
     if (frozen.kind !== 'frozen') throw new Error('Fixture gold refused')
     marks.push({ ...mark, gold: frozen.cases })
   }

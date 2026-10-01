@@ -804,28 +804,24 @@ export function buildRunMaskingContext(input: {
 
 // ---- (7) per-run stamped audit sink — stampAuditSink / buildRunAuditSink (D-12/D-13) ---------
 //
-// D-13: the run stamps correlation at ONE composition-root site — a thin wrapper that injects runId + the resolved
-// executionContext into every row before append so rows are self-describing (SEAM-02 is literal
+// D-13: the run stamps correlation at ONE composition-root site — a thin wrapper that injects runId
+// into every row before append so rows are self-describing (SEAM-02 is literal
 // in the row, no joins). The stamp WINS over any pre-existing row field (RESEARCH Open Q3): spread
 // the row FIRST, stamp AFTER. D-12: the sink is a JsonlAuditSink rooted at the SAME
 // .agent-qa/runs/<slug(runId)>/ directory FsEventLog uses (slugBranch reuse — path forking is the
 // failure mode), so a completed run is one self-contained directory.
 
 /**
- * Wrap an AuditSink so every appended row carries `runId` + `executionContext` (D-13). Stamp-wins:
- * the row is spread first and the stamp applied after, so a stale row field never survives.
- * Guardrail rows carry `runId` only (their schema has no executionContext). The void-or-promise
+ * Wrap an AuditSink so every appended row carries `runId` (D-13). Stamp-wins: the row is spread
+ * first and the stamp applied after, so a stale row field never survives. The void-or-promise
  * return of the inner sink is preserved.
+ *
+ * 2026-10-01 (432-19, D-17): guardrail rows are the only rows. The execution-audit row, the one
+ * that also carried the execution context, is deleted with the gate, so the context is no longer
+ * stamped here; the run still records it on its handoff, events and DTOs.
  */
-export function stampAuditSink(
-  inner: AuditSink,
-  runId: string,
-  executionContext: RunExecutionContext,
-): AuditSink {
+export function stampAuditSink(inner: AuditSink, runId: string): AuditSink {
   return {
-    appendExecutionAudit(row) {
-      return inner.appendExecutionAudit({ ...row, runId, executionContext })
-    },
     appendGuardrailAudit(row) {
       return inner.appendGuardrailAudit({ ...row, runId })
     },
@@ -835,16 +831,15 @@ export function stampAuditSink(
 /**
  * Build the per-run stamped audit sink (D-12/D-13). A `JsonlAuditSink` rooted at the EXACT run dir
  * `FsEventLog`/`FsHandoffStore` write to — `<configDir>/.agent-qa/runs/<slugBranch(runId)>/` — so
- * execution_audit.jsonl / guardrail_audit.jsonl land beside events.jsonl + handoff.json. The
+ * guardrail_audit.jsonl lands beside events.jsonl + handoff.json. The
  * slug is `slugBranch` from runner-local (the exact slug the event log uses); path forking would
  * scatter a run's evidence. The sink is wrapped by `stampAuditSink` so every row is correlated.
  */
 export function buildRunAuditSink(input: {
   configDir: string
   runId: string
-  executionContext: RunExecutionContext
 }): AuditSink {
-  return stampAuditSink(new JsonlAuditSink(runDirFor(input)), input.runId, input.executionContext)
+  return stampAuditSink(new JsonlAuditSink(runDirFor(input)), input.runId)
 }
 
 /**
@@ -874,23 +869,25 @@ export function runDirFor(input: { configDir: string; runId: string }): string {
 // 432-14 (D-03): the input narrows to what the registrar reads. The presentation contract and the
 // trust flag are deleted with their last producer; `confirmPausedMs` answers 0 because no run waits
 // on a person.
+//
+// 2026-10-01 (432-19, D-15): the registrar no longer registers the execution gate, so it reads no
+// execution context. The run still resolves the context and stamps it where it is a durable field
+// (handoffs, bus events, run DTOs); it no longer reaches the safety registrar.
 
 export interface BuildRunSessionSafetyHooksInput {
   auditSink: AuditSink
-  executionContext: RunExecutionContext
 }
 
 /**
  * Perform the D-01 per-run `registerFirstPartySafetyHooks` invocation and return the loop's
- * `SafetyHookRunner`. No confirm port, trust flag or standing-approval reader reaches the registrar
- * (432-13), so no in-run action can wait on a person; `confirmPausedMs` therefore reports 0.
+ * `SafetyHookRunner`: masking before guardrail, both writing the run's own guardrail rows. No gate
+ * is registered (432-19), so no in-run action can wait on a person; `confirmPausedMs` reports 0.
  */
 export function buildRunSessionSafetyHooks(
   input: BuildRunSessionSafetyHooksInput,
 ): { safetyHooks: SafetyHookRunner; confirmPausedMs: () => number } {
   const { registry } = registerFirstPartySafetyHooks({
     auditSink: input.auditSink,
-    resolveExecutionContext: () => input.executionContext,
   })
 
   return { safetyHooks: registry, confirmPausedMs: () => 0 }

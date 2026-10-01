@@ -121,7 +121,7 @@ async function digestOver(scene: {
   const registry = createFunctionRegistry({
     deps,
     resolveExecutionContext: () => 'local-headless',
-    auditSink: { appendExecutionAudit() {}, appendGuardrailAudit() {} },
+    auditSink: { appendGuardrailAudit() {} },
   })
   return await invokeFunction(
     registry,

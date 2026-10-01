@@ -175,7 +175,7 @@ async function readThroughTheOp(
       analysis: { getArtifact: () => artifact },
     } as FunctionDeps,
     resolveExecutionContext: () => 'local-headless',
-    auditSink: { appendExecutionAudit() {}, appendGuardrailAudit() {} },
+    auditSink: { appendGuardrailAudit() {} },
   })
   return await invokeFunction(
     registry,

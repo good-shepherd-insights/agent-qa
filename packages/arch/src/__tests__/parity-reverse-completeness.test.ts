@@ -72,7 +72,7 @@ const REGISTRY_IDS = createFunctionRegistry({
   // Required at construction (D-11), and inert here: listing never dispatches, so nothing
   // is ever written to it. Declared inline so this source-only package keeps depending on
   // nothing.
-  auditSink: { appendExecutionAudit() {}, appendGuardrailAudit() {} },
+  auditSink: { appendGuardrailAudit() {} },
   resolveExecutionContext: () => 'local-interactive',
 })
   .list({

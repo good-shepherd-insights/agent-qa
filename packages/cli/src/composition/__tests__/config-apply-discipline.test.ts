@@ -208,7 +208,7 @@ function registryFor(overrides: Partial<FunctionDeps> = {}) {
 
   return createFunctionRegistry({
     deps,
-    auditSink: { appendExecutionAudit() {}, appendGuardrailAudit() {} },
+    auditSink: { appendGuardrailAudit() {} },
     resolveExecutionContext: () => 'local-interactive',
   })
 }

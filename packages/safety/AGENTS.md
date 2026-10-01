@@ -8,14 +8,15 @@ This package is the browser-safe safety kernel. It owns the masking, guardrail,
 and policy contracts, the first-party interception-hook registrar, and the
 egress seam. Key exports: `createMaskingProviderRequestHook`,
 `createGuardrailProviderRequestHook`, `GuardrailBlockError`,
-`registerFirstPartySafetyHooks`, `evaluate`, `classifyRisk`, and `scan`.
+`registerFirstPartySafetyHooks`, `classifyRisk`, and `scan`. The execution
+policy gate and its confirm ports were deleted in Phase 432 (D-15).
 
 ## Read First
 
 - `package.json`
 - `src/index.ts`
 - `src/hooks/first-party.ts`
-- `src/policy/gate.ts`
+- `src/policy/risk-classifier.ts`
 - `src/masking/egress-hook.ts`
 
 ## Commands

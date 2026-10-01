@@ -72,7 +72,7 @@ describe('flushWorkingMemory — guardrail composition + blocked-entry placehold
       artifactsDir: TMP_DIR,
       mask: (v: string) => v,
       policy,
-      auditSink: { appendGuardrailAudit: (row: GuardrailAuditRow) => { auditRows.push(row) }, appendExecutionAudit: () => {} },
+      auditSink: { appendGuardrailAudit: (row: GuardrailAuditRow) => { auditRows.push(row) } },
     })
 
     const raw = await readFile(result.path, 'utf8')

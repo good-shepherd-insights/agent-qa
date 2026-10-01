@@ -329,7 +329,7 @@ async function openDurableScene() {
     evidenceBlobs: createEvidenceBlobReader({ agentQaRoot: root }),
   } as unknown as FunctionDeps
   const registry = createFunctionRegistry({ deps, resolveExecutionContext: () => 'local-interactive',
-    auditSink: { appendExecutionAudit() {}, appendGuardrailAudit() {} } })
+    auditSink: { appendGuardrailAudit() {} } })
   const unmask = createDisplayUnmasker({ agentQaRoot: root, secretStores: () => [store], env: () => ({}), authStatePayloads: () => [] })
   const agentHost = composeDashboardAgentHost({ registry } as LocalAgentHost, unmask)
   const doors = await openDoors({ registry, agentHost, db, maskText: text => mask.mask(text) })

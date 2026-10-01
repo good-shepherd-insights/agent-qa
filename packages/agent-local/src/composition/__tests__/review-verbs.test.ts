@@ -175,7 +175,7 @@ describe('the mutating review verbs bind, refuse and commit by name', () => {
             }
           : {}),
       },
-      auditSink: { appendExecutionAudit() {}, appendGuardrailAudit() {} } as never,
+      auditSink: { appendGuardrailAudit() {} } as never,
       // 391: the apply is ask-tier now, so this composition binds the REAL reader over the same
       // knowledge root the verbs serve from, and each case records the approval it needs through
       // `approveApply` below. The alternative — a stub that says yes — would have made three cases
@@ -382,7 +382,7 @@ describe('the mutating review verbs bind, refuse and commit by name', () => {
           ...extra,
         } as Parameters<typeof createKnowledgeReview>[0]),
       },
-      auditSink: { appendExecutionAudit() {}, appendGuardrailAudit() {} } as never,
+      auditSink: { appendGuardrailAudit() {} } as never,
       resolveExecutionContext: () => context,
     })
   }

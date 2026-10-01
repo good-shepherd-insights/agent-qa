@@ -47,7 +47,6 @@ import { projectPlannerTools } from '../planner-tools.js'
 
 function noOpSink(): AuditSink {
   return {
-    appendExecutionAudit() {},
     appendGuardrailAudit() {},
   }
 }

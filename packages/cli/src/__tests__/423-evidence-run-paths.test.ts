@@ -197,7 +197,7 @@ for (const path of ['COMPOSED', 'DIRECT'] as const) {
         expect(rows?.steps[0]?.evidence).toEqual(terminal.evidence)
         const registry = createFunctionRegistry({
           deps: { runDetail: createDashboardRunDetailReader(coldDb) } as FunctionDeps,
-          auditSink: { appendExecutionAudit() {}, appendGuardrailAudit() {} },
+          auditSink: { appendGuardrailAudit() {} },
           resolveExecutionContext: () => 'local-interactive',
         })
         const detail = RunDetailProjectionSchema.parse(await invokeFunction(
@@ -317,7 +317,7 @@ async function ariaReadback(mode: 'two' | 'empty' | 'missing' | 'mobile' | 'chil
         runDetail: createDashboardRunDetailReader(cold), runs: { get: forbidden },
         evidenceBlobs: { read: blobRead, has: async (_runId: unknown, sha: string) => reopened.hasBlob(sha) ? 'found' : 'blob_absent' },
       } as unknown as FunctionDeps,
-      auditSink: { appendExecutionAudit() {}, appendGuardrailAudit() {} },
+      auditSink: { appendGuardrailAudit() {} },
       resolveExecutionContext: () => 'local-interactive',
     })
     const detail = RunDetailProjectionSchema.parse(await invokeFunction(

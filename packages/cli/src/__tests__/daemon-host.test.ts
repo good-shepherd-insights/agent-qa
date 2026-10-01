@@ -38,7 +38,6 @@ import { ENTITY_INDEX_SWEEP_INTERVAL_MS } from '@vostride/agent-qa-agent-local'
 import type { CuratorAuthor } from '@vostride/agent-qa-agent-local'
 import {
   defaultGuardrailPolicyInput,
-  evaluate,
   getActiveExecutionContext,
   loadGuardrailPolicy,
   resolveExecutionContext,
@@ -86,7 +85,6 @@ import {
   writeDaemonRegistration,
 } from '../daemon/registration.js'
 import type { DaemonRegistration } from '../daemon/registration.js'
-import type { ConfirmPort } from '@vostride/agent-qa-safety'
 
 const CHILD_ROOT_ENV = 'AGENT_QA_DAEMON_HOST_ROOT'
 const CHILD_HOST_URL_ENV = 'AGENT_QA_DAEMON_HOST_URL'
@@ -743,9 +741,10 @@ describe('runDaemonHost — standing leaseholder tracer', () => {
  * ambient/pinned divergence BEFORE running the host. That control is the point: if the fixture
  * ever stops producing a differing value it reddens here rather than passing silently.
  *
- * `local-interactive` is also the ONE context in which `requiresFailClosed` is false, which is
- * what makes the statement's second clause — "never sits on an interactive ask" — expressible at
- * all. Without the pin an ask-tier action would reach `confirm`; with it, it is denied by name.
+ * `local-interactive` was also the ONE context in which `requiresFailClosed` was false, which is
+ * what made the statement's second clause — "never sits on an interactive ask" — expressible.
+ * 2026-10-01 (432-19, D-15): the gate, its ask and `requiresFailClosed` are deleted, so the second
+ * clause is now true by absence; the posture pin itself (the execution context) is retained.
  */
 describe('runDaemonHost — D-09 execution-posture pin (386-04 #2)', () => {
   /** An ask-tier action: `recognized` floors it at mutating-local, the declaration raises it. */
@@ -801,23 +800,18 @@ describe('runDaemonHost — D-09 execution-posture pin (386-04 #2)', () => {
     })
   })
 
-  it('denies an ask-tier action by name under the pin instead of prompting a TTY', async () => {
+  // RE-SPELLED 2026-10-01 (432-19, D-15) from 'denies an ask-tier action by name under the pin
+  // instead of prompting a TTY'. That cell drove the gate's `evaluate` under the ambient and the
+  // pinned context to show the pin turned a prompt into a named fail-closed denial. The gate is
+  // deleted: there is no ask to prompt and no denial to name, so the daemon can never sit on an
+  // interactive ask. What survives is the pin, which the run, handoff and bus still record.
+  it('C432-EXECUTION-CONTEXT-RETAINED: pins local-headless while it runs, and there is no ask left to sit on', async () => {
     await withInteractiveAmbient(async () => {
       const paths = makePaths('posture-pin-ask')
       const harness = hostHarness()
-      const ask = vi.fn(() => Promise.resolve(true))
-      const confirm: ConfirmPort = { surface: 'tty-prompt', ask }
-
-      // Control: the ambient posture WOULD prompt. Without this the denial below proves nothing.
-      const ambient = await evaluate(
-        ASK_TIER_ACTION,
-        getActiveExecutionContext(),
-        {},
-        { confirm },
-      )
-      expect(ambient).toMatchObject({ verdict: 'allow' })
-      expect(ask).toHaveBeenCalledTimes(1)
-      ask.mockClear()
+      const safety = await import('@vostride/agent-qa-safety')
+      expect(Object.keys(safety)).not.toContain('evaluate')
+      expect(Object.keys(safety)).not.toContain('requiresFailClosed')
 
       const running = runDaemonHost({
         agentQaRoot: paths.agentQaRoot,
@@ -833,17 +827,9 @@ describe('runDaemonHost — D-09 execution-posture pin (386-04 #2)', () => {
         'daemon registration was not written',
       )
 
-      const underPin = await evaluate(
-        ASK_TIER_ACTION,
-        getActiveExecutionContext(),
-        {},
-        { confirm },
-      )
-
-      expect(ask).not.toHaveBeenCalled()
-      expect(underPin.verdict).toBe('deny')
-      expect(underPin.riskTier).toBe('mutating-shared')
-      expect(underPin.reason).toContain('fail-closed: ask in local-headless without trust')
+      expect(getActiveExecutionContext()).toBe('local-headless')
+      // The ask-tier action still classifies at its declared tier; nothing reads the tier to ask.
+      expect(safety.classifyRisk(ASK_TIER_ACTION).riskTier).toBe('mutating-shared')
 
       harness.signal('SIGTERM')
       await expect(running).resolves.toBe(0)

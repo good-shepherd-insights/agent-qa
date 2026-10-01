@@ -1,4 +1,3 @@
-import type { ExecutionContext } from '@vostride/agent-qa-schema'
 import type { LanguageModelMiddleware } from 'ai'
 
 import { createProviderRequestMiddleware } from '../egress/provider-request-middleware'
@@ -11,24 +10,20 @@ import { createGuardrailStreamScan } from '../guardrail/stream-scan'
 import { createMaskingProviderRequestHook } from '../masking/egress-hook'
 import { getActiveMaskingContext } from '../masking/resolver'
 import { getActiveAuditSink } from '../policy/audit-sink-resolver'
-import type { GateTrust } from '../policy/gate'
-import { createPolicyGateToolCallHook } from '../policy/gate-hook'
 import type { AuditSink } from '../ports/audit-sink'
-import type { ConfirmPort, StandingApprovalReader } from '../ports/policy-ports'
 import { FIRST_PARTY } from './capability'
-import type { AsyncToolCallHook, SafetyHookRunner } from './interfaces'
+import type { SafetyHookRunner } from './interfaces'
 import { HookRegistry } from './registry'
 
 // The single canonical first-party registrar (D-01). It is the only public
-// composition entry: masking -> guardrail -> policy gate on ONE HookRegistry,
-// masking BEFORE guardrail (locked Phase 346 order), the gate at the async
-// tool_call point via the module-private FIRST_PARTY token.
+// composition entry: masking -> guardrail on ONE HookRegistry, masking BEFORE
+// guardrail (locked Phase 346 order), via the module-private FIRST_PARTY token.
+//
+// 2026-10-01 (432-19, D-15): the execution policy gate is no longer registered at the
+// async tool_call point. The gate, its confirm and standing-approval ports and its
+// trust input are deleted; masking, guardrail and the guardrail audit stay.
 export interface FirstPartySafetyDeps {
   auditSink?: AuditSink
-  reader?: StandingApprovalReader
-  confirm?: ConfirmPort
-  resolveExecutionContext?: () => ExecutionContext
-  trust?: GateTrust
   guardrailPolicyInput?: unknown
 }
 
@@ -39,9 +34,6 @@ export interface FirstPartySafetyDeps {
 // registrar — this adapter closes that gap without touching its call signature (D-01).
 function resolverBackedAuditSink(): AuditSink {
   return {
-    appendExecutionAudit(row) {
-      return getActiveAuditSink()?.appendExecutionAudit(row)
-    },
     appendGuardrailAudit(row) {
       return getActiveAuditSink()?.appendGuardrailAudit(row)
     },
@@ -81,20 +73,6 @@ export function registerFirstPartySafetyHooks(
     createGuardrailProviderRequestHook(policy, auditSink),
     FIRST_PARTY,
   )
-
-  // (4) The policy gate at the async tool_call point, via the FIRST_PARTY token.
-  // The gate hook is precise about its RiskActionDescriptor input; the registry
-  // slot is the erased AsyncToolCallHook<unknown> (function params are
-  // contravariant), so widen at this single trusted registration site — tool_call
-  // dispatch only ever threads RiskActionDescriptors here (HOOK-FUT-01).
-  const gateHook = createPolicyGateToolCallHook({
-    auditSink,
-    reader: deps.reader,
-    confirm: deps.confirm,
-    resolveExecutionContext: deps.resolveExecutionContext,
-    trust: deps.trust,
-  }) as AsyncToolCallHook
-  registry.registerToolCallAsync(gateHook, FIRST_PARTY)
 
   return {
     registry,
