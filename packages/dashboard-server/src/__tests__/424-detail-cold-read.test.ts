@@ -48,10 +48,11 @@ it('REC-V3-ROW-READS-UNAVAILABLE-ORDINAL: cold registry reads only persisted v3 
         evidenceBlobs: { read: forbidden },
       } as unknown as FunctionDeps,
       auditSink: { appendGuardrailAudit() {} },
-      resolveExecutionContext: () => 'local-interactive',
     })
+    // 2026-10-01 (432-34, D-12): no `resolveExecutionContext` registry option and no `grantedScopes`
+    // or `safeMode` on the caller; the registry reads none of them (432-20).
     const output = RunDetailProjectionSchema.parse(await invokeFunction(registry, 'runs.detail',
-      { runId }, { surface: 'dashboard', grantedScopes: ['read'], safeMode: false, origin: 'human' }))
+      { runId }, { surface: 'dashboard', origin: 'human' }))
     expect(output.members.map(member => member.recording)).toEqual([
       { state: 'absent', reason: 'unavailable' }, { state: 'absent', reason: 'unavailable' },
     ])
