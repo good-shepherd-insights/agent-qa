@@ -585,7 +585,9 @@ async function ready(options: DepsOptions = {}) {
 describe('the spec declares a read-tier, everywhere-bound contract (D-05)', () => {
   it('names its id, scopes and risk the way its read siblings do', () => {
     expect(runsKnowledgeSpec.id).toBe('runs.knowledge')
-    expect(runsKnowledgeSpec.requiredScopes).toEqual(['read'])
+    // RE-SPELLED 2026-10-01 (432-26, D-12) from `requiredScopes` equal to ['read']: the op declares
+    // no scope. Its read tier is the read-only risk pinned below, the same as its read siblings'.
+    expect(runsKnowledgeSpec).not.toHaveProperty('requiredScopes')
     expect(runsKnowledgeSpec.resultKind).toBe('unary')
     expect(runsKnowledgeSpec.risk).toEqual({
       name: 'fn:runs.knowledge',

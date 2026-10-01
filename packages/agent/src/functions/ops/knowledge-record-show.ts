@@ -29,7 +29,6 @@ export const knowledgeRecordShowSpec: FunctionSpec<
 > = {
   id: KNOWLEDGE_RECORD_SHOW_FUNCTION_ID,
   summary: 'Show one committed knowledge record with its provenance.',
-  requiredScopes: ['read'],
   resultKind: 'unary',
   input: KnowledgeRecordShowInputSchema,
   output: KnowledgeRecordShowResultSchema,

@@ -45,7 +45,6 @@ export const knowledgeRecordsInspectSpec: FunctionSpec<
 > = {
   id: KNOWLEDGE_RECORDS_INSPECT_FUNCTION_ID,
   summary: 'Inspect committed knowledge records through a closed structural filter.',
-  requiredScopes: ['read'],
   resultKind: 'unary',
   input: KnowledgeRecordsInspectInputSchema,
   output: KnowledgeRecordsInspectOutputSchema,

@@ -5,10 +5,10 @@
 // proposed and nothing waits for a second call; the retired `knowledge.reject.propose` id has no
 // alias (D-02). This file keeps its name until the later rename audit, so its consumers move first.
 //
-// `knowledge-write` scope and `readOnly: false`, at the recognized-mutating floor: an explicit
-// change to this machine's knowledge allows in every execution context (D-01, D-08). It binds
-// through the OPTIONAL `knowledgeReview` dep, so a host with no review port lists it `unbound` BY
-// NAME.
+// `readOnly: false`, at the recognized-mutating floor: an explicit change to this machine's
+// knowledge runs in every execution context (D-01, D-08). 2026-10-01 (432-26, D-12): it declares
+// no `knowledge-write` scope any more; every door can call it. It binds through the OPTIONAL
+// `knowledgeReview` dep, so a host with no review port lists it `unbound` BY NAME.
 //
 // The reason is REQUIRED by the input contract because the `Deprecate` delta this becomes
 // requires one: a verb that admitted an empty reason would be inventing a justification for a
@@ -31,7 +31,6 @@ export { KNOWLEDGE_REJECT_FUNCTION_ID } from './knowledge-review-ids.js'
 export const knowledgeRejectSpec: FunctionSpec<KnowledgeRejectChangeInput, KnowledgeChangeOutput> = {
   id: KNOWLEDGE_REJECT_FUNCTION_ID,
   summary: 'Reject a knowledge candidate with a reason, applying the change in the call.',
-  requiredScopes: ['knowledge-write'],
   resultKind: 'unary',
   input: KnowledgeRejectChangeInputSchema,
   output: KnowledgeChangeOutputSchema,
@@ -55,8 +54,8 @@ export const knowledgeRejectSpec: FunctionSpec<KnowledgeRejectChangeInput, Knowl
     }
   },
   invoke({ operationId, ...input }, deps) {
-    // Non-null: `boundThrough` makes an absent review port an `unbound` listing and a refusal at
-    // the gate, so dispatch is only reached in a composition that supplied one. The identity is
+    // Non-null: `boundThrough` makes an absent review port an `unbound` listing and a binding
+    // refusal in `invokeFunction`, so dispatch is only reached in a composition that supplied one. The identity is
     // lifted off the input because it names the change, not the verb: the verb input below is
     // exactly what the explicit writer validates.
     return deps.knowledgeReview!.change({

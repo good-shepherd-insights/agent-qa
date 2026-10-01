@@ -18,9 +18,17 @@ import type {
 } from '@vostride/agent-qa-schema'
 import { describe, expect, it } from 'vitest'
 
+import { agentAskSpec } from '../ops/agent-ask.js'
+import { analysisGetSpec } from '../ops/analysis-get.js'
+import { configTargetCreateSpec } from '../ops/config-target-create.js'
+import { explainSpec } from '../ops/explain.js'
+import { knowledgeAcceptSpec } from '../ops/knowledge-accept-propose.js'
 import { knowledgeRecordShowSpec } from '../ops/knowledge-record-show.js'
 import { knowledgeRecordsDiffSpec } from '../ops/knowledge-records-diff.js'
 import { knowledgeRecordsInspectSpec } from '../ops/knowledge-records-inspect.js'
+import { knowledgeRejectSpec } from '../ops/knowledge-reject-propose.js'
+import { runsKnowledgeSpec } from '../ops/runs-knowledge.js'
+import { runsPostProcessingSpec } from '../ops/runs-post-processing.js'
 import type { FunctionDeps, KnowledgeReaderPort } from '../spec.js'
 
 function view(overrides: Partial<InspectRecordView> = {}): InspectRecordView {
@@ -108,13 +116,12 @@ describe('the three read verbs declare read-only unary contracts', () => {
       'knowledge.records.diff',
       'knowledge.record.show',
     ])
-    // RE-SPELLED 2026-10-01 (432-23, D-12): `knowledge.records.diff` declares no scope. Its two
-    // siblings still spell the retired, unread `['read']` until their op-spec owner (432-26)
-    // removes it, so each is pinned by name rather than in the loop.
-    expect(knowledgeRecordsDiffSpec).not.toHaveProperty('requiredScopes')
-    expect(knowledgeRecordsInspectSpec.requiredScopes).toEqual(['read'])
-    expect(knowledgeRecordShowSpec.requiredScopes).toEqual(['read'])
+    // RE-SPELLED 2026-10-01 (432-23, D-12): `knowledge.records.diff` declares no scope.
+    // RE-SPELLED 2026-10-01 (432-26, D-12) from `requiredScopes` equal to ['read'] on its two
+    // siblings: none of the three declares a scope now, so the absence is pinned in the loop. The
+    // read tier the scope once named is the read-only risk pinned below.
     for (const spec of specs) {
+      expect(spec, spec.id).not.toHaveProperty('requiredScopes')
       expect(spec.resultKind, spec.id).toBe('unary')
       // Bound wherever registered: `knowledge` is a REQUIRED dep, so unlike the mutating half
       // there is no host that lists these and then refuses them.
@@ -356,5 +363,69 @@ describe('Test 4 — each op owns a deterministic TOTAL order (the 384 conventio
     )
 
     expect(reversed.records).toEqual(forward.records)
+  })
+})
+
+// ---- C432-DECLARATION-KEYS (432-26, D-10/D-12) --------------------------
+//
+// The ten op specs 432-26 migrates, pinned at the SPEC: declarations omit the retired keys whatever
+// a spec spells, so only the spec itself can show the key is gone. The other owners' blocks live in
+// `ops.test.ts`, which is outside 432-26's file list, so this owner's block sits beside the three
+// read verbs it covers.
+describe('C432-DECLARATION-KEYS: the 432-26 op specs carry no permission metadata', () => {
+  const migrated = [
+    { spec: runsPostProcessingSpec, resultKind: 'unary', boundThrough: 'postProcessing',
+      risk: { name: 'fn:runs.postprocessing', recognized: true, readOnly: true } },
+    { spec: knowledgeAcceptSpec, resultKind: 'unary', boundThrough: 'knowledgeReview',
+      risk: { name: 'fn:knowledge.accept', recognized: true, readOnly: false } },
+    { spec: knowledgeRecordsInspectSpec, resultKind: 'unary', boundThrough: undefined,
+      risk: { name: 'fn:knowledge.records.inspect', recognized: true, readOnly: true } },
+    { spec: knowledgeRecordShowSpec, resultKind: 'unary', boundThrough: undefined,
+      risk: { name: 'fn:knowledge.record.show', recognized: true, readOnly: true } },
+    { spec: knowledgeRejectSpec, resultKind: 'unary', boundThrough: 'knowledgeReview',
+      risk: { name: 'fn:knowledge.reject', recognized: true, readOnly: false } },
+    { spec: agentAskSpec, resultKind: 'unary', boundThrough: 'chatTurn',
+      risk: { name: 'fn:agent.ask', recognized: true, readOnly: false } },
+    { spec: configTargetCreateSpec, resultKind: 'unary', boundThrough: 'configWrite',
+      risk: { name: 'fn:config.target.create', recognized: true, readOnly: false } },
+    { spec: analysisGetSpec, resultKind: 'unary', boundThrough: 'analysis',
+      risk: { name: 'fn:analysis.get', recognized: true, readOnly: true } },
+    { spec: runsKnowledgeSpec, resultKind: 'unary', boundThrough: undefined,
+      risk: { name: 'fn:runs.knowledge', recognized: true, readOnly: true } },
+    { spec: explainSpec, resultKind: 'unary', boundThrough: 'capabilityCatalog',
+      risk: { name: 'fn:agent.explain', recognized: true, readOnly: true } },
+  ] as const
+
+  it('C432-DECLARATION-KEYS: spells neither retired permission key on any of the ten specs', () => {
+    expect(migrated.map(({ spec }) => spec.id)).toEqual([
+      'runs.postprocessing',
+      'knowledge.accept',
+      'knowledge.records.inspect',
+      'knowledge.record.show',
+      'knowledge.reject',
+      'agent.ask',
+      'config.target.create',
+      'analysis.get',
+      'runs.knowledge',
+      'agent.explain',
+    ])
+    for (const { spec } of migrated) {
+      expect(Object.keys(spec), spec.id).not.toContain('requiredScopes')
+      expect(Object.keys(spec), spec.id).not.toContain('requiresHumanOrigin')
+    }
+  })
+
+  it('C432-DECLARATION-KEYS: keeps each spec\'s result kind, binding need, risk descriptor and classify fold', () => {
+    for (const { spec, resultKind, boundThrough, risk } of migrated) {
+      expect(spec.resultKind, spec.id).toBe(resultKind)
+      expect(spec.boundThrough, spec.id).toBe(boundThrough)
+      expect(spec.risk, spec.id).toEqual(risk)
+      expect(typeof spec.classify, spec.id).toBe('function')
+      expect(typeof spec.invoke, spec.id).toBe('function')
+    }
+    // None of the ten discloses or declares an output representation.
+    expect(migrated.filter(({ spec }) => 'disclose' in spec).map(({ spec }) => spec.id)).toEqual([])
+    expect(migrated.filter(({ spec }) => 'outputRepresentation' in spec).map(({ spec }) => spec.id))
+      .toEqual([])
   })
 })

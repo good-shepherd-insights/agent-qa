@@ -90,9 +90,8 @@ export const explainSpec: FunctionSpec<ExplainInput, ExplainOutput> = {
   summary:
     'Answer a question about what this product can do by citing the capability catalog, or say '
     + 'plainly that the catalog does not ground an answer.',
-  // `read` and nothing else, so the op stays LISTABLE in safe mode: a person who has locked the
-  // agent down to reads is exactly the person most likely to ask what is still available.
-  requiredScopes: ['read'],
+  // 2026-10-01 (432-26, D-12): no scope. This op once declared `read` alone so that it stayed
+  // listable in safe mode; safe mode and scopes are deleted, and every caller lists and calls it.
   resultKind: 'unary',
   // D-09: the catalog reaches this op through a port bound at `composeLocalAgent()` (385 D-15). A
   // composition without one lists the capability `unbound` BY NAME rather than degrading to a

@@ -10,14 +10,13 @@
 //
 // OP CALLS OP, WHICH IS ORDINARY COMPOSITION. A turn invokes other capabilities, and each of those
 // invocations crosses `invokeFunction` on its own with the caller the composition minted for its
-// stage — so a clause the turn runs is gated by the same eight steps as the turn itself, and a
-// `requiresHumanOrigin` op refuses a planner-planned call without this file knowing such ops exist.
+// stage — so a clause the turn runs passes the same pipeline as the turn itself: input validation,
+// the binding check and output validation, each clause with its own receipt.
 //
-// `requiredScopes: ['read']` IS ABOUT THE TURN, NOT ITS CONTENTS, and that is the deliberate part.
-// Declaring the union of every scope a clause might need would hand a read-only surface's caller
-// nothing and a full caller everything in one undifferentiated grant — the per-clause checks are
-// where reach is actually decided, and they happen whatever this line says. What this scope governs
-// is the ability to START a turn.
+// NO SCOPE AND NO ORIGIN RULE (2026-10-01, 432-26, D-10/D-12). This op once declared
+// `requiredScopes: ['read']` as the right to START a turn, with the per-clause scope checks and
+// `requiresHumanOrigin` deciding each clause's reach. All three are deleted: every door can call
+// every operation, so a turn and the clauses it plans are served to any caller alike.
 //
 // `agent.chat` IS DELIBERATELY NOT HERE. The session-stateful sibling waits for a consumer
 // (RESEARCH Open Q3): shipping it now would mint a second entry with no client, and 397's parity
@@ -55,7 +54,6 @@ export const agentAskSpec: FunctionSpec<AgentAskInput, AgentAskResult> = {
     + 'Surfaces (a REPL, the ask verb, an MCP client) call this to START a turn — it is not a way '
     + 'to carry out a request while a turn is already running. It routes the utterance, executes '
     + 'what it resolves to, and answers with per-clause receipts.',
-  requiredScopes: ['read'],
   resultKind: 'unary',
   // Bound where a composition assembles a turn engine. A host with no engine lists this
   // `unbound` BY NAME rather than answering an empty turn — which would tell a person their
@@ -64,8 +62,9 @@ export const agentAskSpec: FunctionSpec<AgentAskInput, AgentAskResult> = {
   input: AgentAskInputSchema,
   output: AgentAskResultSchema,
   // `readOnly: false`, and the honesty matters more here than on any other op in the catalogue: a
-  // turn is a variable-reach capability, so describing it as a read would let a gate ladder treat
-  // the door to every write verb as the cheapest thing in the registry.
+  // turn is a variable-reach capability, so describing it as a read would let a risk ladder treat
+  // the door to every write verb as the cheapest thing in the registry. (2026-10-01, 432-26: the
+  // descriptor is a classification; no gate reads it to ask or deny.)
   risk: { name: `fn:${AGENT_ASK_FUNCTION_ID}`, recognized: true, readOnly: false },
   /**
    * A TURN's own report of how it went (2026-08-20, Phase 399.1 D-01/D-02/D-12).

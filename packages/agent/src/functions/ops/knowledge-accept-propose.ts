@@ -6,11 +6,12 @@
 // proposed and nothing waits for a second call; the retired `knowledge.accept.propose` id has no
 // alias (D-02). This file keeps its name until the later rename audit, so its consumers move first.
 //
-// `knowledge-write` scope and `readOnly: false`, at the recognized-mutating floor: an explicit
-// change to this machine's knowledge allows in every execution context (D-01, D-08), and the writer
-// behind the port keeps the lease, delta validation, bundle egress and every promotion gate. It
-// binds through the OPTIONAL `knowledgeReview` dep and never `deps.knowledge`: the reader port is
-// physically write-free, and a host that supplies no review port lists this verb `unbound` BY NAME.
+// `readOnly: false`, at the recognized-mutating floor: an explicit change to this machine's
+// knowledge runs in every execution context (D-01, D-08), and the writer behind the port keeps the
+// lease, delta validation, bundle egress and every promotion gate. 2026-10-01 (432-26, D-12): it
+// declares no `knowledge-write` scope any more; every door can call it. It binds through the
+// OPTIONAL `knowledgeReview` dep and never `deps.knowledge`: the reader port is physically
+// write-free, and a host that supplies no review port lists this verb `unbound` BY NAME.
 
 import {
   KnowledgeAcceptChangeInputSchema,
@@ -29,7 +30,6 @@ export { KNOWLEDGE_ACCEPT_FUNCTION_ID } from './knowledge-review-ids.js'
 export const knowledgeAcceptSpec: FunctionSpec<KnowledgeAcceptChangeInput, KnowledgeChangeOutput> = {
   id: KNOWLEDGE_ACCEPT_FUNCTION_ID,
   summary: 'Accept a knowledge candidate, applying the change in the call.',
-  requiredScopes: ['knowledge-write'],
   resultKind: 'unary',
   input: KnowledgeAcceptChangeInputSchema,
   output: KnowledgeChangeOutputSchema,
@@ -53,8 +53,8 @@ export const knowledgeAcceptSpec: FunctionSpec<KnowledgeAcceptChangeInput, Knowl
     }
   },
   invoke({ operationId, ...input }, deps) {
-    // Non-null: `boundThrough` makes an absent review port an `unbound` listing and a refusal at
-    // the gate, so dispatch is only reached in a composition that supplied one. The identity is
+    // Non-null: `boundThrough` makes an absent review port an `unbound` listing and a binding
+    // refusal in `invokeFunction`, so dispatch is only reached in a composition that supplied one. The identity is
     // lifted off the input because it names the change, not the verb: the verb input below is
     // exactly what the explicit writer validates.
     return deps.knowledgeReview!.change({

@@ -233,7 +233,6 @@ function withNestedSnapshot(
 export const runsPostProcessingSpec: FunctionSpec<RunsPostProcessingInput, PostProcessingStatus> = {
   id: RUNS_POST_PROCESSING_FUNCTION_ID,
   summary: "Read one run's post-processing chip statuses from durable job state.",
-  requiredScopes: ['read'],
   resultKind: 'unary',
   // Bound exactly where a composition supplies durable queue storage (D-16 idiom). A host that
   // cannot see the queue lists this by name as `unbound` rather than answering all-pending

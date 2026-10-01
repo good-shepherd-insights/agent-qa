@@ -101,7 +101,6 @@ function fingerprintFor(
 export const analysisGetSpec: FunctionSpec<AnalysisGetInput, AnalysisGetOutput> = {
   id: ANALYSIS_GET_FUNCTION_ID,
   summary: "Read one run's resolved verdicts, rendered sentences and failure clusters.",
-  requiredScopes: ['read'],
   resultKind: 'unary',
   // Bound exactly where a composition supplies the artifact reader (D-16 idiom). The
   // OPTIONAL `recurrence` dep is deliberately NOT the binding key: a host without history

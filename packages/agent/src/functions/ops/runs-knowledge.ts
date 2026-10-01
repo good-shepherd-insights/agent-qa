@@ -27,7 +27,8 @@
 // serves — by CALLING them with this call's deps rather than by a comment promising not to diverge.
 // 2026-09-30, 432-09 (D-25): no pending-proposal count is joined; the tab shows what changed. The
 // specs are module-internal, so this is composition inside the layer and not a dispatch path
-// around `invokeFunction`'s gate: every external caller still arrives through the pipeline.
+// around `invokeFunction`: every external caller still arrives through the pipeline. 2026-10-01
+// (432-26, D-12): the op declares no `read` scope, and no step of that pipeline checks one.
 
 import { getActiveMaskingContext } from '@vostride/agent-qa-safety'
 import {
@@ -338,7 +339,6 @@ export const runsKnowledgeSpec: FunctionSpec<RunsKnowledgeInput, RunKnowledgePro
   id: RUNS_KNOWLEDGE_FUNCTION_ID,
   summary: "Project one run's used brief channels, serve-time traces, procedure use, recorded "
     + 'retrieval rung and curator deltas from its handoff.',
-  requiredScopes: ['read'],
   resultKind: 'unary',
   // NO OPTIONAL-DEP BINDING KEY IS DECLARED ON THIS SPEC AT ALL, and the absence is a claim about
   // the op's substrate rather than an oversight. Its truth is the RUNS port, and that port is

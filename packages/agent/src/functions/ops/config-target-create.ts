@@ -7,9 +7,11 @@
 // runs. Where the paragraphs below say "proposal", read the change this call writes.
 //
 // EVERY PARAGRAPH `config-field-set.ts` OPENS WITH APPLIES HERE VERBATIM and is not restated: one
-// registered op per action, no `declaredTier` because a proposal commits nothing, and
-// `requiredScopes: ['config-write']` because the scope describes what the capability is ABOUT. Read
-// that file for the arguments; what follows is what is different about this one.
+// registered op per action, and no `declaredTier` because a proposal commits nothing. Read that file
+// for the arguments; what follows is what is different about this one. 2026-10-01 (432-26, D-12):
+// this op once declared `config-write` because the scope described what the capability is about.
+// It declares no scope now, because no caller is checked for one; the construction, the scan and
+// whole-config validation below guard the write.
 //
 // A CREATE IS NEVER AN UPSERT, AND THAT IS THIS OP'S WHOLE EDGE. The yaml `setIn` that backs every
 // mutation in this phase REPLACES whatever is at the path it is given, so the natural implementation
@@ -37,7 +39,6 @@ export const CONFIG_TARGET_CREATE_FUNCTION_ID = 'config.target.create'
 export const configTargetCreateSpec: FunctionSpec<ConfigTargetCreateInput, ConfigChangeOutput> = {
   id: CONFIG_TARGET_CREATE_FUNCTION_ID,
   summary: 'Add a web target to the registry, written in this call.',
-  requiredScopes: ['config-write'],
   resultKind: 'unary',
   input: ConfigTargetCreateInputSchema,
   output: ConfigChangeOutputSchema,
