@@ -48,10 +48,10 @@ const MINT_IDENTITY = (filePath: string): string => filePath
 
 const PRODUCT = 'shop'
 
+// 2026-10-01 (432-30, D-12): the retired `grantedScopes` and `safeMode` caller fields are dropped;
+// nothing read them.
 const CALLER: FunctionCaller = {
   surface: 'cli',
-  grantedScopes: ['read'],
-  safeMode: false,
   origin: 'agent',
 }
 

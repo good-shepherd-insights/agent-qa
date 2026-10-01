@@ -77,10 +77,10 @@ import type {
  */
 const MINT_IDENTITY = (filePath: string): string => filePath
 
+// 2026-10-01 (432-30, D-12): the retired `grantedScopes` and `safeMode` caller fields are dropped
+// here and from the quarantine block's WRITE_CALLER; nothing read them.
 const CALLER: FunctionCaller = {
   surface: 'cli',
-  grantedScopes: ['read', 'run', 'config-write'],
-  safeMode: false,
   origin: 'agent',
 }
 
@@ -1035,8 +1035,6 @@ describe('composeLocalAgent (D-15)', () => {
 
     const WRITE_CALLER: FunctionCaller = {
       surface: 'cli',
-      grantedScopes: ['read', 'knowledge-write'],
-      safeMode: false,
       origin: 'agent',
     }
 

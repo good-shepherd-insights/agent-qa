@@ -28,10 +28,7 @@ import {
   publishBundleForTest,
   type BundleStoreConfig,
 } from '@vostride/agent-qa-knowledge-local'
-import {
-  FunctionScopeSchema,
-  MASKED_RESOLVED_CONFIG_SCHEMA_VERSION,
-} from '@vostride/agent-qa-schema'
+import { MASKED_RESOLVED_CONFIG_SCHEMA_VERSION } from '@vostride/agent-qa-schema'
 import type {
   Anchor,
   EntityCard,
@@ -71,11 +68,15 @@ const MASKED_CONFIG: MaskedResolvedConfig = {
   entries: [],
 }
 
-/** Granted EVERY scope, so a refusal below can only ever be about BINDING. */
+/**
+ * A refusal below can only ever be about BINDING. 2026-10-01 (432-30, D-12): the retired
+ * `grantedScopes` and `safeMode` caller fields are dropped (no scope exists to grant), and the
+ * retired `resolveExecutionContext` registry option is dropped from both registries below; nothing
+ * read them. `createKnowledgeReview`'s own `resolveExecutionContext` is the context a change is
+ * recorded under, not the registry option, and stays.
+ */
 const CALLER: FunctionCaller = {
   surface: 'test',
-  grantedScopes: [...FunctionScopeSchema.options],
-  safeMode: false,
   origin: 'agent',
 }
 
@@ -176,11 +177,6 @@ describe('the mutating review verbs bind, refuse and commit by name', () => {
           : {}),
       },
       auditSink: { appendGuardrailAudit() {} } as never,
-      // 391: the apply is ask-tier now, so this composition binds the REAL reader over the same
-      // knowledge root the verbs serve from, and each case records the approval it needs through
-      // `approveApply` below. The alternative — a stub that says yes — would have made three cases
-      // about binding quietly depend on a policy fixture nothing else in the repo uses.
-      resolveExecutionContext: () => 'local-interactive',
     })
   }
 
@@ -384,7 +380,6 @@ describe('the mutating review verbs bind, refuse and commit by name', () => {
         } as Parameters<typeof createKnowledgeReview>[0]),
       },
       auditSink: { appendGuardrailAudit() {} } as never,
-      resolveExecutionContext: () => context,
     })
   }
 
@@ -544,10 +539,10 @@ describe('the mutating review verbs bind, refuse and commit by name', () => {
     // No `standingApprovalReader`, no grant in the ledger and no credential: the direct change is at
     // the local mutating floor, so the gate allows it in every context (D-01) — unlike the pre-432
     // apply, which this file still has to approve before it commits.
+    // 2026-10-01 (432-30, D-12): the caller no longer carries the retired `grantedScopes` and
+    // `safeMode`; no gate or grant is left, so it holds nothing at all and the change still applies.
     const recordId = publish()
-    const tokenless: FunctionCaller = {
-      surface: 'mcp', grantedScopes: ['read', 'knowledge-write'], safeMode: false, origin: 'agent',
-    }
+    const tokenless: FunctionCaller = { surface: 'mcp', origin: 'agent' }
     const outcome = await settle(invokeFunction(directRegistry('ci'), 'knowledge.forget', {
       target: { grain: 'record', recordId },
     }, tokenless))
