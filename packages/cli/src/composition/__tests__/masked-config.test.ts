@@ -542,14 +542,22 @@ describe('classifyConfigPath (the one map, re-targeting the retired name census)
   it('guesses nothing from a name: plain stays plain, undeclared stays secret', () => {
     // The no-guessing claim, both directions. Plain schema leaves whose names contain
     // credential words stay plain...
+    // 432-22 (D-12): the MCP and run-service token labels were three of these; their lists are
+    // deleted, so each is now an undeclared path and fails closed below like any other.
     for (const key of [
       'knowledge.contextBudgetTokens',
-      'services.mcp.tokens.0.name',
-      'services.dashboard.runServiceTokens.0.name',
-      'services.dashboard.runServiceTokens.0.trustScope.org',
+      'services.mcp.port',
+      'allowProduction',
       'plugins.auth.0.path',
     ]) {
       expect(classifyConfigPath(segmentsOf(key)), key).toBe('plain')
+    }
+    for (const key of [
+      'services.mcp.tokens.0.name',
+      'services.dashboard.runServiceTokens.0.name',
+      'services.dashboard.runServiceTokens.0.trustScope.org',
+    ]) {
+      expect(classifyConfigPath(segmentsOf(key)), key).toBe('secret')
     }
     // ...and undeclared paths are secret whatever they are called, including the ten
     // out-of-vocabulary credential names and innocuous words.
@@ -1537,39 +1545,14 @@ const DECLARED_STRING_LEAF_PATHS: readonly string[] = [
   // `CREDENTIAL_BEARING_URL_LEAVES`. An operator reading their own bind address back learns where
   // their server is listening, which is the fact D-07's refusal is about.
   //
-  // `runServiceTokens.*.name` and `.tokenEnvVar` are the 396 D-06 row, verbatim in reasoning:
-  // `name` is an operator's label for a credential, carrying no address and matched against
-  // nothing a caller sends; `tokenEnvVar` is the NAME of an environment variable, and registering
-  // a name as credential-bearing would invert the refs-only law it exists to serve — the reference
-  // is in the file precisely SO the secret is not. The VALUE never appears in this schema at all:
-  // `RunServiceTokenEntrySchema` is `.strict()` and refuses a field that could hold one, which is
-  // a stronger guarantee than masking a field that exists.
-  //
-  // `trustScope.project` and `.org` are OPAQUE TENANCY IDENTIFIERS, not credentials. They say
-  // whose work a holder acts for; they satisfy nothing on their own, and the gate reads them only
-  // beside a credential that was verified in constant time. Masking them would hide from an
-  // operator which tenancy their own declared token grants, while hiding nothing from anyone who
-  // already has the config file.
+  // 2026-10-01 (432-22, D-12): the four `runServiceTokens` rows (the 396 D-06 label and env-var
+  // name, and the opaque `trustScope` tenancy identifiers) are deleted with the key.
   'services.dashboard.host',
-  'services.dashboard.runServiceTokens.*.name',
-  'services.dashboard.runServiceTokens.*.tokenEnvVar',
-  'services.dashboard.runServiceTokens.*.trustScope.org',
-  'services.dashboard.runServiceTokens.*.trustScope.project',
   'services.dashboard.workspace',
   'services.mcp.host',
   'services.mcp.path',
-  // Phase 396 D-06. Both recorded INERT, and the classification is the whole content of that
-  // decision rather than a formality. `name` is an operator's label for a credential — `"ci"`,
-  // `"claude-desktop"` — carrying no address and matched against nothing a caller sends.
-  // `tokenEnvVar` is the NAME of an environment variable, and registering a name as
-  // credential-bearing would invert the refs-only law it exists to serve: the reference is in the
-  // file precisely SO the secret is not, and hiding the reference would leave an operator unable
-  // to read which variable their own server wants while hiding nothing. The VALUE never appears in
-  // this schema at all — `McpTokenEntrySchema` is `.strict()` and refuses a field that could hold
-  // one, which is a stronger guarantee than masking a field that exists. A cell below executes
-  // both halves of this row.
-  'services.mcp.tokens.*.name',
-  'services.mcp.tokens.*.tokenEnvVar',
+  // 2026-10-01 (432-22, D-12): the two `services.mcp.tokens` rows (396 D-06) are deleted with the
+  // key; the cell that executed them is re-spelled below as their absence.
   'services.vision.screenshotSize',
   'use.buildTag',
   'use.llm',
@@ -1711,43 +1694,34 @@ describe('the registered URL-name set cannot silently go stale', () => {
     expect(JSON.stringify(config)).not.toContain(SECRET)
   })
 
+  // 432-22 (D-12/D-22): re-spelled from 'registers the D-06 token entry as inert, and holds no field
+  // a token VALUE could occupy'. The token entry is deleted, so no leaf could hold a token value at
+  // all: every path under the retired lists is undeclared and fails closed to secret.
   it('registers the D-06 token entry as inert, and holds no field a token VALUE could occupy', () => {
-    // The human decision the pin forced for Phase 396, executed. Neither leaf is an ADDRESS, so
-    // neither is reduced to an origin.
     expect(isCredentialBearingUrlField('services.mcp.tokens.*.name')).toBe(false)
-    expect(isCredentialBearingUrlField('services.mcp.tokens.*.tokenEnvVar')).toBe(false)
-
-    // The label renders verbatim. It is what an operator called a credential, not the credential.
-    expect(isMaskedConfigPath(segmentsOf('services.mcp.tokens.0.name'))).toBe(false)
-
-    // `tokenEnvVar` is VISIBLE since 429 D-08 (WIN #153): a variable NAME is not a secret, and
-    // the map classifies it env-var-name, so an operator can read which variable their own
-    // server wants. It used to be over-masked because its name contains `token`. A violation of
-    // the refs-only law still fails closed: a `token` field added to the entry tomorrow is a
-    // path the map does not describe, so it is secret until someone classifies it.
-    expect(classifyConfigPath(segmentsOf('services.mcp.tokens.0.tokenEnvVar')))
-      .toBe('env-var-name')
-    expect(isMaskedConfigPath(segmentsOf('services.mcp.tokens.0.tokenEnvVar'))).toBe(false)
-    expect(isMaskedConfigPath(segmentsOf('services.mcp.tokens.0.token'))).toBe(true)
-
-    // And there is no third leaf under a token entry. The walk reads the shipped schema, so this
-    // is the schema's own answer rather than a claim about it — a `token` field added tomorrow
-    // appears here and fails the pin above on the same run.
+    for (const key of [
+      'services.mcp.tokens.0.name',
+      'services.mcp.tokens.0.tokenEnvVar',
+      'services.mcp.tokens.0.token',
+      'services.dashboard.runServiceTokens.0.tokenEnvVar',
+    ]) {
+      expect(classifyConfigPath(segmentsOf(key)), key).toBe('secret')
+      expect(isMaskedConfigPath(segmentsOf(key)), key).toBe(true)
+    }
     const leaves = [...declaredStringLeafPaths(AgentQaConfigSchema)]
-      .filter((path) => path.startsWith('services.mcp.tokens.'))
+      .filter((path) => /tokens|runServiceTokens|stdio/.test(path))
       .sort()
-    expect(leaves).toEqual(['services.mcp.tokens.*.name', 'services.mcp.tokens.*.tokenEnvVar'])
+    expect(leaves).toEqual([])
   })
 
+  // 432-22: re-spelled from WIN #153's known answer (both token tables rendered their variable
+  // NAMES in clear). The tables are deleted; what survives is that `config show` renders a plain
+  // MCP leaf in clear and that a legacy token block, were one read, would be masked rather than shown.
   it('CONFIG-SHOW-ENV-VAR-NAME-IN-CLEAR', () => {
-    // WIN #153's CLI known answer (429 D-08): both token tables render their variable NAMES
-    // verbatim. The values those variables hold are never read by `config show`.
     const resolved = {
       services: {
-        mcp: { tokens: [{ name: 'ci', tokenEnvVar: 'AGENT_QA_MCP_TOKEN', scopes: ['read'] }] },
-        dashboard: {
-          runServiceTokens: [{ name: 'ci', tokenEnvVar: 'AGENT_QA_RUN_TOKEN', trustScope: {} }],
-        },
+        mcp: { enabled: true, port: 3471 },
+        dashboard: { port: 3470 },
       },
     }
     const config = buildMaskedResolvedConfig({
@@ -1756,18 +1730,19 @@ describe('the registered URL-name set cannot silently go stale', () => {
       layers: [{ source: 'config-file', values: resolved }],
     })
     expect(config.entries).toContainEqual({
-      key: 'services.mcp.tokens.0.tokenEnvVar',
-      value: 'AGENT_QA_MCP_TOKEN',
-      source: 'config-file',
-      masked: false,
-    })
-    expect(config.entries).toContainEqual({
-      key: 'services.dashboard.runServiceTokens.0.tokenEnvVar',
-      value: 'AGENT_QA_RUN_TOKEN',
-      source: 'config-file',
-      masked: false,
+      key: 'services.mcp.port', value: '3471', source: 'config-file', masked: false,
     })
     expect(config.entries.every((entry) => !entry.masked)).toBe(true)
+
+    const legacy = { services: { mcp: { tokens: [{ name: 'ci', tokenEnvVar: 'AGENT_QA_MCP_TOKEN' }] } } }
+    const masked = buildMaskedResolvedConfig({
+      configPath: 'agent-qa.config.yaml',
+      resolved: legacy,
+      layers: [{ source: 'config-file', values: legacy }],
+    })
+    expect(masked.entries.filter((entry) => entry.key.startsWith('services.mcp.tokens'))
+      .every((entry) => entry.masked)).toBe(true)
+    expect(JSON.stringify(masked)).not.toContain('AGENT_QA_MCP_TOKEN')
   })
 
   it('registers the four names the corpus above plants credentials on', () => {

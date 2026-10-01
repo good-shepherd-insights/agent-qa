@@ -48,7 +48,7 @@ function scratch(template: ReturnType<typeof markFixture>) {
   cpSync(template.root, root, { recursive: true })
   const configPath = join(root, 'agent-qa.config.yaml')
   const config = AgentQaConfigSchema.parse(parse(readFileSync(configPath, 'utf8')))
-  config.safety = { ...config.safety, trustMode: false }
+  // 432-22 (D-15/D-22): `safety.trustMode` is deleted from the schema, so there is no trust to pin off.
   writeFileSync(configPath, JSON.stringify(config))
   const agentQaRoot = join(root, '.agent-qa')
   const ledger = join(agentQaRoot, 'runs', slugBranch(template.handoff.runId), 'marks.jsonl')

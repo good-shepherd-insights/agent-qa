@@ -548,13 +548,14 @@ describe('ConfigManager.applyChanges ops and selectors (429-05)', () => {
   it('APPEND-CREATES-SEQ: an append to an absent sequence creates it with one entry', async () => {
     await writeFile(configPath, writeConfig(WRITE_BASE_LINES, WRITE_MOBILE_LINES))
 
+    // 432-22: re-spelled from the deleted `services.mcp.tokens` list onto a retained absent sequence.
     const outcome = await manager.applyChanges([
-      { op: 'append', path: ['services', 'mcp', 'tokens'], value: { name: 'ci', tokenEnvVar: 'AGENT_QA_MCP_CI_TOKEN', scopes: ['read'] } },
+      { op: 'append', path: ['workspace', 'testPathIgnore'], value: 'tests/skip/**' },
     ])
 
     expect(outcome.kind).toBe('ok')
-    const parsed = parseYaml(await readFile(configPath, 'utf-8')) as { services: { mcp: { tokens: unknown[] } } }
-    expect(parsed.services.mcp.tokens).toEqual([{ name: 'ci', tokenEnvVar: 'AGENT_QA_MCP_CI_TOKEN', scopes: ['read'] }])
+    const parsed = parseYaml(await readFile(configPath, 'utf-8')) as { workspace: { testPathIgnore: unknown[] } }
+    expect(parsed.workspace.testPathIgnore).toEqual(['tests/skip/**'])
   })
 
   it('NAME-SELECTOR-RESOLVES: a { name } segment changes only that entry', async () => {
@@ -705,9 +706,10 @@ describe('ConfigManager broken files, missing files and the mask guard (429-05)'
       ]),
       await manager.applyChanges([
         {
+          // 432-22: re-spelled from the deleted MCP token list onto the one named array left.
           op: 'append',
-          path: ['services', 'mcp', 'tokens'],
-          value: { name: 'ci', tokenEnvVar: 'AGENT_QA_MCP_CI_TOKEN', scopes: ['read', CONFIG_MASK_PLACEHOLDER] },
+          path: ['registry', 'llms'],
+          value: { name: 'ci', provider: 'gemini', model: 'gemini-2.5-flash', providerHeaders: { 'X-Team': CONFIG_MASK_PLACEHOLDER } },
         },
       ]),
     ]

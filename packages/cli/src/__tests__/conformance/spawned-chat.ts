@@ -190,26 +190,24 @@ export function cleanupTempRoots(): void {
 /**
  * A real project on disk, produced rather than a literal path handed to a child.
  *
- * `grantConfigWrite` is the one non-default setting and it is what makes the MCP anchor a
- * like-for-like comparison: stdio has no header to carry a scope exception, so without this opt-in
- * the spawned host serves the D-07 default grant (every scope but `config-write`) and hides the two
- * configuration tools, while the in-process adapter enumerates under every scope. Comparing those
- * two would be comparing two different questions and calling the difference a defect.
+ * 2026-10-01 (432-22, D-12): no `stdio.grantConfigWrite`. It was the one non-default setting, and
+ * it made the MCP anchor like-for-like while stdio hid the configuration tools from callers without
+ * the opt-in; since 432-21 every caller lists every tool, and 432-22 deletes the key. The fixture
+ * declares an empty `services.mcp` block, which is what it declared besides the switch.
  *
  * NOTHING SECRET IS PLANTED HERE. There is no token entry, no key and no LLM block: the fixture
- * declares workspace globs and one boolean. That is stronger than planting a throwaway credential,
- * because a value that does not exist cannot be printed by a diagnostic nobody anticipated.
+ * declares workspace globs. That is stronger than planting a throwaway credential, because a value
+ * that does not exist cannot be printed by a diagnostic nobody anticipated.
  */
 export function fixtureProject(
   label: string,
   /**
-   * Declared MCP token ENTRIES — names, never values (398-08).
+   * A LEGACY `services.mcp.tokens` block — names, never values (398-08; retired by 432-22).
    *
-   * Empty for every 397 anchor, which is the posture the paragraph above argues for. The 398-08
-   * refs-only cell passes entries because its claim is the opposite one: that a credential which
-   * DOES exist is not printed, which nothing can measure without one. An entry here still carries
-   * no value — `McpTokenEntrySchema` has no member one could occupy — so what is written into the
-   * fixture is a variable NAME, and the value travels only in a constructed child environment.
+   * Empty for every 397 anchor. The 398-08 refs-only cell passes entries to plant a pre-432 file:
+   * since 432-22 the key is deleted, so such a file fails strict validation with the normal
+   * unrecognized-key error (D-22) and the value it names still travels only in a constructed child
+   * environment.
    */
   tokens: readonly { name: string; tokenEnvVar: string; scopes: readonly string[] }[] = [],
 ): { root: string; configPath: string } {
@@ -230,7 +228,6 @@ export function fixtureProject(
         use: { mobile: { appState: 'preserve' } },
         services: {
           mcp: {
-            stdio: { grantConfigWrite: true },
             ...(tokens.length === 0 ? {} : { tokens }),
           },
         },

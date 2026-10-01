@@ -101,7 +101,6 @@ function servicePorts(session: RunSession): RunServicePorts {
     readiness: () => ({
       service: 'up',
       hostComposed: true,
-      authConfigured: false,
       contractVersion: RUN_SERVICE_CONTRACT_VERSION,
     }),
     // 403-03 (D-03, Q3): a fixture that composed no live view HAS no live view, and the honest

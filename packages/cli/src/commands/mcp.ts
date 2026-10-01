@@ -233,9 +233,10 @@ export function createMcpCommand(): Command {
         // Tolerant exactly as the v1 command was: a project whose configuration will not resolve
         // still gets a server, because analytics configuration and the dashboard base are the only
         // things this read feeds, and refusing to start over them would be refusing the capability
-        // over the telemetry. 2026-10-01 (432-21, D-12): `services.mcp.tokens` and
-        // `services.mcp.stdio.grantConfigWrite` are no longer read here; nothing in this host
-        // depends on a credential declaration.
+        // over the telemetry. 2026-10-01 (432-21/432-22, D-12/D-22): `services.mcp.tokens` and
+        // `services.mcp.stdio.grantConfigWrite` are deleted keys. A file that still declares one
+        // fails strict validation like any unknown key, and this tolerant read then serves without
+        // the configuration; nothing in this host depends on a credential declaration.
         let config: Awaited<ReturnType<typeof resolveConfig>> | undefined
         try {
           config = await resolveConfig({ configPath: globalOpts.config })
@@ -399,8 +400,8 @@ async function serveOverStdio(input: {
   /** Fired once the entry is live — see the lifecycle note at the call site. */
   onServing?: () => void
 }): Promise<void> {
-  // 2026-10-01 (432-21, D-12): no stdio grant. The `grantConfigWrite` opt-in that added
-  // `config-write` to a stdio caller is no longer read; a stdio caller is the HTTP caller.
+  // 2026-10-01 (432-21/432-22, D-12): no stdio grant. The `grantConfigWrite` opt-in that added
+  // `config-write` to a stdio caller is deleted; a stdio caller is the HTTP caller.
   const handle = serveStdio(() =>
     buildAgentQaMcpServer(
       mcpServerDeps({

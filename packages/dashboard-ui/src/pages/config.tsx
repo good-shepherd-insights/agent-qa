@@ -56,17 +56,12 @@ import { DevicesSection } from "@/components/config-manager/devices-section"
 import { ProvidersSection } from "@/components/config-manager/providers-section"
 import { AnalyticsSection } from "@/components/config-manager/analytics-section"
 import { McpSection } from "@/components/config-manager/mcp-section"
-import { TokenList } from "@/components/config-manager/token-list"
 import { EvalSection } from "@/components/config-manager/eval-section"
 import { ConfigFileView } from "@/components/config-manager/config-file-view"
 
 interface SectionProps {
   config: Record<string, unknown>
   onConfigChange: () => void
-}
-
-function RunServiceTokensSection({ config }: SectionProps) {
-  return <TokenList kind="run-service" config={config} />
 }
 
 const SECTION_COMPONENTS: Partial<Record<ConfigSectionId, readonly ComponentType<SectionProps>[]>> = {
@@ -92,7 +87,6 @@ const SECTION_COMPONENTS: Partial<Record<ConfigSectionId, readonly ComponentType
   logging: [LoggingSection],
   "pass-rate-scope": [AnalyticsSection],
   mcp: [McpSection],
-  "run-service-tokens": [RunServiceTokensSection],
   eval: [EvalSection],
   "config-file": [ConfigFileView],
 }

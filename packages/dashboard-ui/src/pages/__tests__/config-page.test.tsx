@@ -1703,7 +1703,7 @@ describe('ConfigPage task tabs shell', () => {
     expect(toast.success).not.toHaveBeenCalled()
   })
 
-  it('PROJECT-DATA-LEAVES-HAVE-FIELDS: the Project tab has a field for every knowledge leaf and every Dashboard leaf but run-service tokens', async () => {
+  it('PROJECT-DATA-LEAVES-HAVE-FIELDS: the Project tab has a field for every knowledge leaf and every Dashboard leaf', async () => {
     await renderAt('/config/project')
 
     const panel = container!.querySelector('[data-config-panel="project"]') as HTMLElement
@@ -1762,7 +1762,7 @@ describe('ConfigPage task tabs shell', () => {
     expect(toast.error).not.toHaveBeenCalled()
   })
 
-  it('PROJECT-LEAVES-HAVE-FIELDS: every workspace, knowledge, dashboard (but run-service tokens), logging and analytics leaf has a field on the Project tab', async () => {
+  it('PROJECT-LEAVES-HAVE-FIELDS: every workspace, knowledge, dashboard, logging and analytics leaf has a field on the Project tab', async () => {
     await renderAt('/config/project')
 
     const panel = container!.querySelector('[data-config-panel="project"]') as HTMLElement
@@ -1770,7 +1770,7 @@ describe('ConfigPage task tabs shell', () => {
       (pattern) =>
         pattern.startsWith('workspace.') ||
         pattern.startsWith('knowledge.') ||
-        (pattern.startsWith('services.dashboard.') && !pattern.startsWith('services.dashboard.runServiceTokens')) ||
+        pattern.startsWith('services.dashboard.') ||
         pattern.startsWith('services.logging.') ||
         pattern.startsWith('analytics.'),
     )
@@ -1784,38 +1784,42 @@ describe('ConfigPage task tabs shell', () => {
     expect(panel.querySelector('[data-config-section-shell]')).toBeNull()
   })
 
-  it('ADVANCED-TOKEN-LEAVES-HAVE-FIELDS: the Advanced tab has a field for every MCP leaf and a list for MCP and run-service tokens', async () => {
+  // 2026-10-01 (432-22, D-12): re-spelled from ADVANCED-TOKEN-LEAVES-HAVE-FIELDS. The MCP field claim
+  // survives; the token lists and the stdio switch are deleted with their keys, so they are absent.
+  it('ADVANCED-MCP-LEAVES-HAVE-FIELDS: the Advanced tab has a field for every MCP leaf', async () => {
     await renderAt('/config/advanced')
 
     const panel = container!.querySelector('[data-config-panel="advanced"]') as HTMLElement
     expect(panel).not.toBeNull()
     expect(section('mcp')).not.toBeNull()
-    expect(section('run-service-tokens')).not.toBeNull()
-    for (const path of [
+    const mcpLeaves = CONFIG_SCHEMA_LEAVES.filter((pattern) => pattern.startsWith('services.mcp.'))
+    expect(mcpLeaves).toEqual([
       'services.mcp.enabled',
-      'services.mcp.transport',
       'services.mcp.host',
-      'services.mcp.port',
       'services.mcp.path',
-      'services.mcp.stdio.grantConfigWrite',
-    ]) {
-      expect(section('mcp')!.querySelector(`[data-field-path="${path}"]`), path).not.toBeNull()
-    }
-    expect(section('mcp')!.querySelector('[data-field-list="services.mcp.tokens"]')).not.toBeNull()
-    expect(
-      section('run-service-tokens')!.querySelector('[data-field-list="services.dashboard.runServiceTokens"]'),
-    ).not.toBeNull()
-
-    const advancedLeaves = CONFIG_SCHEMA_LEAVES.filter(
-      (pattern) => pattern.startsWith('services.mcp.') || pattern.startsWith('services.dashboard.runServiceTokens'),
-    )
-    expect(advancedLeaves.length, 'the witness: the filter found the MCP and run-service leaves').toBeGreaterThanOrEqual(13)
-    for (const pattern of advancedLeaves) {
-      const owner = configLeafOwner(pattern)
-      expect(panel.querySelector(`[data-field-path="${owner}"], [data-field-list="${owner}"]`), pattern).not.toBeNull()
+      'services.mcp.port',
+      'services.mcp.transport',
+    ])
+    for (const pattern of mcpLeaves) {
+      expect(section('mcp')!.querySelector(`[data-field-path="${pattern}"]`), pattern).not.toBeNull()
     }
     const buttonNames = Array.from(panel.querySelectorAll('button')).map((button) => button.textContent?.trim())
     expect(buttonNames).not.toContain('Save Changes')
+  })
+
+  it('C432-NO-TOKEN-CONTROLS: no tab renders a token section, token list, token row or the stdio switch', async () => {
+    await renderAt('/config/advanced')
+
+    const panel = container!.querySelector('[data-config-panel="advanced"]') as HTMLElement
+    expect(Array.from(panel.querySelectorAll('[data-config-section]')).map((element) => element.getAttribute('data-config-section')))
+      .toEqual(['mcp', 'eval', 'config-file'])
+    expect(section('run-service-tokens' as never)).toBeNull()
+    expect(panel.querySelector('[data-field-list]')).toBeNull()
+    expect(panel.querySelector('[data-token-row], [data-token-draft]')).toBeNull()
+    expect(panel.querySelector('[data-field-path*="stdio"], [data-field-path*="tokens"]')).toBeNull()
+    const buttonNames = Array.from(panel.querySelectorAll('button')).map((button) => button.textContent?.trim())
+    expect(buttonNames).not.toContain('Add token')
+    expect(CONFIG_SCHEMA_LEAVES.filter((pattern) => /tokens|stdio|trustScope|^safety\./.test(pattern))).toEqual([])
   })
 
   it('exposes vision and context window per model while the shared screenshot budget stays out of the model row', async () => {

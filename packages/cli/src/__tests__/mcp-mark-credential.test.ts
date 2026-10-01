@@ -1,5 +1,6 @@
 // 419 D-20: actual HTTP MCP listener, catalog and invokeFunction over durable mark fixtures.
-// No provider calls. The mark runs local-headless with trustMode FALSE and TRUE alike.
+// No provider calls. The mark runs local-headless. 2026-10-01 (432-22, D-15/D-22): `safety.trustMode`
+// is deleted from the config schema, so the former trustMode FALSE/TRUE variants are one case.
 // 2026-10-01 (432-20, D-12): the listing no longer hides the mark tool and the function layer reads
 // no scope, so every caller lists every tool and reaches every op.
 // 2026-10-01 (432-21, D-12/D-13): RE-SPELLED to tokenless parity. The bearer rung, the declared
@@ -36,7 +37,7 @@ afterEach(async () => {
   for (const close of cleanups.splice(0).reverse()) await close()
 })
 
-async function harness(trustMode: boolean) {
+async function harness() {
   const fixture = markFixture()
   cleanups.push(async () => { rmSync(fixture.root, { recursive: true, force: true }) })
   const config = AgentQaConfigSchema.parse({
@@ -45,7 +46,6 @@ async function harness(trustMode: boolean) {
       hooksFile: 'hooks.yaml', envFile: '.env', secretsFile: '.env.secrets.local',
     },
     use: { mobile: { appState: 'preserve' } },
-    safety: { trustMode },
   })
   writeFileSync(fixture.configPath, JSON.stringify(config))
   const host = composeCliLocalAgent({
@@ -122,9 +122,10 @@ async function harness(trustMode: boolean) {
 describe('419 MCP sovereign mark bearer differential', () => {
   // RE-SPELLED 2026-10-01 (432-21, D-12) from 'anonymous/reader list the mark tool and its handler
   // refuses them when trustMode=%s'. The handler's credential refusal is deleted: a tokenless
-  // caller lists the mark tool and lands the mark in the call, whatever trustMode says.
-  it.each([false, true])('C432-TOKENLESS-MCP-MARK: a tokenless caller lists and lands a mark when trustMode=%s', async trustMode => {
-    const h = await harness(trustMode)
+  // caller lists the mark tool and lands the mark in the call. 432-22: the trustMode variants are
+  // one case, because the key that varied them is deleted.
+  it('C432-TOKENLESS-MCP-MARK: a tokenless caller lists and lands a mark', async () => {
+    const h = await harness()
     const tokenless = await h.connect()
     const names = await h.list(tokenless)
     expect(names).toContain(MARK_TOOL)
@@ -149,7 +150,7 @@ describe('419 MCP sovereign mark bearer differential', () => {
   // carry: a client sending a legacy bearer and a client sending none are the same caller, their
   // concurrent listings are identical, and two concurrent marks of one address land one receipt.
   it('EDGE-17: concurrent tokenless requests share no credential authority, and a legacy bearer changes nothing', async () => {
-    const h = await harness(false)
+    const h = await harness()
     const legacy = await h.connect({ authorization: `Bearer ${LEGACY_BEARER}` })
     const tokenless = await h.connect()
     const lists = await Promise.all(Array.from({ length: 8 }, (_, index) => h.list(index % 2 ? legacy : tokenless)))
@@ -170,7 +171,7 @@ describe('419 MCP sovereign mark bearer differential', () => {
   // every tool, scopes gating nothing'. No credential exists; the one tokenless caller lists and
   // reaches every tool, and the function layer reads no field of it.
   it('C432-ALL-OPS-AVAILABLE: the tokenless caller lists and reaches every tool, nothing gating it', async () => {
-    const h = await harness(false)
+    const h = await harness()
     const client = await h.connect()
     const names = await h.list(client)
     for (const name of [MARK_TOOL, 'agent_qa_change_config', 'agent_qa_write_test', 'agent_qa_start_run']) {
@@ -196,7 +197,7 @@ describe('419 MCP sovereign mark bearer differential', () => {
 // and each before any body takes effect: a refused mark writes nothing to the ledger.
 describe('C432-RETAINED-MCP-HOST-ORIGIN: the MCP HTTP listener keeps its Host and Origin guards', () => {
   it('C432-RETAINED-HOST: a non-localhost Host is refused before any server is built, with a localhost Origin', async () => {
-    const h = await harness(false)
+    const h = await harness()
     const before = h.ledgerBytes()
     const refused = await h.rawMark({ host: 'evil.example', origin: `http://127.0.0.1:${h.port}` })
     expect(refused.status).toBe(403)
@@ -210,7 +211,7 @@ describe('C432-RETAINED-MCP-HOST-ORIGIN: the MCP HTTP listener keeps its Host an
   })
 
   it('C432-RETAINED-ORIGIN: a non-localhost Origin is refused before any server is built, with a localhost Host', async () => {
-    const h = await harness(false)
+    const h = await harness()
     const before = h.ledgerBytes()
     const refused = await h.rawMark({ host: `127.0.0.1:${h.port}`, origin: 'https://evil.example' })
     expect(refused.status).toBe(403)
@@ -226,7 +227,7 @@ describe('C432-RETAINED-MCP-HOST-ORIGIN: the MCP HTTP listener keeps its Host an
   })
 
   it('C432-RETAINED-MCP-HOST-ORIGIN: a legacy bearer opens neither guard, and the refusal echoes nothing sent', async () => {
-    const h = await harness(false)
+    const h = await harness()
     const before = h.ledgerBytes()
     await expect(h.connect({ authorization: `Bearer ${LEGACY_BEARER}`, origin: 'https://evil.example' }))
       .rejects.toThrow()

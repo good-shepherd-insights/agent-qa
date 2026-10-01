@@ -77,18 +77,19 @@ describe('config schema leaves', () => {
   it('CONFIG-SCHEMA-LEAVES-PINNED', () => {
     const walked = schemaLeaves()
     expect(walked).toEqual([...CONFIG_SCHEMA_LEAVES])
+    // 2026-10-01 (432-22): the env-var-name witness (`services.mcp.tokens[].tokenEnvVar`) left with
+    // the token list; `workspace.secretsFile` keeps a classified non-plain witness in the set.
     for (const witness of [
       'use.timeout.step',
       'registry.llms[].name',
-      'services.mcp.tokens[].tokenEnvVar',
+      'workspace.secretsFile',
       'plugins.auth[].package',
     ]) {
       expect(walked).toContain(witness)
     }
   })
 
-  // 432-02: the additive step of the D-18 cutover. The interim count is measured from the live
-  // schema (100 before plus allowProduction); 432-22 re-pins 92 when the retired leaves leave.
+  // 432-02 added allowProduction (101 leaves, interim); 432-22 removes the nine retired leaves.
   it('C432-PRODUCTION-CONFIG: allowProduction is one plain top-level leaf of the walked schema', () => {
     const walked = schemaLeaves()
     expect(walked).toContain('allowProduction')
@@ -96,6 +97,50 @@ describe('config schema leaves', () => {
     expect(walked.filter((leaf) => leaf.split('.')[0] === 'allowProduction')).toEqual(['allowProduction'])
     expect(CONFIG_MASKING_MAP.allowProduction).toBe('plain')
     expect(classifyConfigPath(['allowProduction'])).toBe('plain')
-    expect(walked).toHaveLength(101)
+  })
+
+  // 432-22 (D-12/D-18/D-22): the final strict leaf set. The count and the removed set are spelled
+  // by hand; the map/schema equality above is what makes a leaf without a masking class red here.
+  it('C432-CONFIG-LEAVES-92: exactly 92 strict leaves, each classified, none of them retired', () => {
+    const walked = schemaLeaves()
+    expect(walked).toHaveLength(92)
+    expect(CONFIG_SCHEMA_LEAVES).toHaveLength(92)
+    expect(Object.keys(CONFIG_MASKING_MAP).sort()).toEqual(walked)
+    for (const leaf of walked) {
+      expect(CONFIG_MASKING_MAP[leaf as keyof typeof CONFIG_MASKING_MAP], leaf).toBeDefined()
+    }
+    const retired = [
+      'safety.trustMode',
+      'services.dashboard.runServiceTokens[].name',
+      'services.dashboard.runServiceTokens[].tokenEnvVar',
+      'services.dashboard.runServiceTokens[].trustScope.org',
+      'services.dashboard.runServiceTokens[].trustScope.project',
+      'services.mcp.stdio.grantConfigWrite',
+      'services.mcp.tokens[].name',
+      'services.mcp.tokens[].scopes[]',
+      'services.mcp.tokens[].tokenEnvVar',
+    ]
+    expect(retired.filter(leaf => walked.includes(leaf))).toEqual([])
+    expect(retired.filter(leaf => leaf in CONFIG_MASKING_MAP)).toEqual([])
+    expect(walked.filter(leaf => leaf.split('.')[0] === 'safety')).toEqual([])
+    expect(walked.filter(leaf => /^services\.(mcp|dashboard)\./.test(leaf)).sort()).toEqual([
+      'services.dashboard.artifactsDir',
+      'services.dashboard.baseUrl',
+      'services.dashboard.dbPath',
+      'services.dashboard.host',
+      'services.dashboard.port',
+      'services.dashboard.workspace',
+      'services.mcp.enabled',
+      'services.mcp.host',
+      'services.mcp.path',
+      'services.mcp.port',
+      'services.mcp.transport',
+    ])
+    expect(walked.filter(leaf => leaf.split('.')[0] === 'plugins')).toEqual([
+      'plugins.auth[].package',
+      'plugins.auth[].path',
+      'plugins.providers[].package',
+      'plugins.providers[].path',
+    ])
   })
 })

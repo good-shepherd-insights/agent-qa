@@ -23,8 +23,11 @@ export const MASKING_CLASSES = [
 /**
  * Every config leaf and its class, one line per leaf in sorted order. Open-ended containers
  * (provider headers, device-farm provider settings, device `match` values, pass-rate
- * attributes) are secret wholesale, as is every leaf today's CLI masker already hid, except
- * the two env-var names.
+ * attributes) are secret wholesale, as is every leaf today's CLI masker already hid.
+ * 2026-10-01 (432-22, D-12/D-18/D-22): `safety.trustMode`, the MCP and run-service token lists and
+ * the stdio config-write switch are deleted with their keys, so no schema leaf is classed
+ * `env-var-name` today (the class stays in the shared vocabulary, which the dashboard and the CLI
+ * masker still handle); 92 leaves remain.
  */
 export const CONFIG_MASKING_MAP = Object.freeze({
   'allowProduction': 'plain',
@@ -71,7 +74,6 @@ export const CONFIG_MASKING_MAP = Object.freeze({
   'registry.targets.*.platform': 'plain',
   'registry.targets.*.product': 'plain',
   'registry.targets.*.url': 'plain',
-  'safety.trustMode': 'plain',
   'services.accessibility.disableRules[]': 'plain',
   'services.accessibility.enabled': 'plain',
   'services.accessibility.exclude[]': 'plain',
@@ -86,20 +88,12 @@ export const CONFIG_MASKING_MAP = Object.freeze({
   'services.dashboard.dbPath': 'plain',
   'services.dashboard.host': 'plain',
   'services.dashboard.port': 'plain',
-  'services.dashboard.runServiceTokens[].name': 'plain',
-  'services.dashboard.runServiceTokens[].tokenEnvVar': 'env-var-name',
-  'services.dashboard.runServiceTokens[].trustScope.org': 'plain',
-  'services.dashboard.runServiceTokens[].trustScope.project': 'plain',
   'services.dashboard.workspace': 'plain',
   'services.logging.level': 'plain',
   'services.mcp.enabled': 'plain',
   'services.mcp.host': 'plain',
   'services.mcp.path': 'plain',
   'services.mcp.port': 'plain',
-  'services.mcp.stdio.grantConfigWrite': 'plain',
-  'services.mcp.tokens[].name': 'plain',
-  'services.mcp.tokens[].scopes[]': 'plain',
-  'services.mcp.tokens[].tokenEnvVar': 'env-var-name',
   'services.mcp.transport': 'plain',
   'services.recording.enabled': 'plain',
   'services.recording.keepFailuresOnly': 'plain',

@@ -40,7 +40,6 @@ export type ConfigSectionId =
   | 'logging'
   | 'pass-rate-scope'
   | 'mcp'
-  | 'run-service-tokens'
   | 'eval'
   | 'config-file'
 // prettier-ignore
@@ -67,7 +66,6 @@ export const CONFIG_SECTION_IDS = [
   'logging',
   'pass-rate-scope',
   'mcp',
-  'run-service-tokens',
   'eval',
   'config-file',
 ] as const satisfies readonly ConfigSectionId[]
@@ -77,7 +75,7 @@ export const CONFIG_SECTIONS = {
   targets: ['targets', 'devices', 'device-farms', 'login-states', 'mobile-app-state'],
   execution: ['browser', 'timeouts', 'runs', 'cache', 'recording', 'accessibility', 'log-capture'],
   project: ['test-discovery', 'files', 'knowledge', 'dashboard', 'logging', 'pass-rate-scope'],
-  advanced: ['mcp', 'run-service-tokens', 'eval', 'config-file'],
+  advanced: ['mcp', 'eval', 'config-file'],
 } as const satisfies Record<ConfigTab, readonly ConfigSectionId[]>
 
 /** Palette words beside each section label, re-homed from the retired bucket map: no bucket names, no dotted paths. */
@@ -92,7 +90,7 @@ export const CONFIG_SECTION_ALIASES = {
   'mobile-app-state': ['mobile', 'app state', 'app data', 'reset app data', 'preserve app data'],
   browser: ['viewport', 'headless', 'browser headless', 'engine'],
   timeouts: ['timeout', 'navigation timeout', 'step timeout'],
-  runs: ['parallel', 'workers', 'build tag'],
+  runs: ['parallel', 'workers', 'build tag', 'production', 'allow production'],
   cache: ['cache dir', 'cache directory', 'ttl'],
   recording: ['record', 'video'],
   accessibility: ['a11y', 'wcag'],
@@ -103,8 +101,7 @@ export const CONFIG_SECTION_ALIASES = {
   dashboard: ['port', 'db path', 'database', 'artifacts', 'artifacts dir', 'runs db'],
   logging: ['log level'],
   'pass-rate-scope': ['pass rate', 'scope', 'attributes', 'flakiness'],
-  mcp: ['mcp tokens', 'access tokens', 'mcp host'],
-  'run-service-tokens': ['run service', 'service tokens'],
+  mcp: ['mcp host', 'mcp port', 'mcp path'],
   eval: ['eval', 'judge', 'judges', 'gate', 'adversarial', 'seeding', 'canary'],
   'config-file': ['yaml', 'config file path', 'raw config'],
 } as const satisfies Record<ConfigSectionId, readonly string[]>
@@ -247,8 +244,6 @@ export type ExplicitActionKind =
   | 'delete-target'
   | 'delete-device'
   | 'delete-device-farm'
-  | 'delete-mcp-token'
-  | 'delete-run-service-token'
   | 'sign-out'
   | 'remove-key'
   | 'change-knowledge-dir'
@@ -260,8 +255,6 @@ export const EXPLICIT_ACTION_KINDS = [
   'delete-target',
   'delete-device',
   'delete-device-farm',
-  'delete-mcp-token',
-  'delete-run-service-token',
   'sign-out',
   'remove-key',
   'change-knowledge-dir',

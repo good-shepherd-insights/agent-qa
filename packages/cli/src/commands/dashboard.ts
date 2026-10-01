@@ -818,13 +818,12 @@ export const RUN_SERVICE_FUNCTION_CALLER: FunctionCaller = Object.freeze({
  * Exported rather than inlined into `composeRunServicePorts` because `/ok` is not the only place
  * this question is asked: the local door's preflight (402-05) serves the SAME answer, and D-15's
  * whole content is that there is one readiness spelling rather than two that agree today. A second
- * copy of these four facts is how the remote door and the dashboard start disagreeing about
+ * copy of these three facts is how the remote door and the dashboard start disagreeing about
  * whether this process can run anything.
  *
  * EVERY FIELD IS MEASURED, AND NOTHING IS PREDICTED. `hostComposed` reads the SAME box the run
  * starter's guard throws on — not a parallel flag — so `/ok` cannot say yes where `POST /run` says
- * no. `authConfigured` is `false`, always: since 432-21 (D-12) no credential can be configured, and
- * the key stays on the wire DTO until the permission fields retire together (432-39).
+ * no. 2026-10-01 (432-22, D-12): there is no `authConfigured` fact; no credential can be configured.
  * `contractVersion` is a constant, which is the point of it: a caller learns which route set it is
  * talking to without this process guessing anything.
  *
@@ -840,7 +839,6 @@ export function createRunServiceReadiness(input: {
   return () => ({
     service: 'up',
     hostComposed: input.resolveHost() !== undefined,
-    authConfigured: false,
     contractVersion: RUN_SERVICE_CONTRACT_VERSION,
   })
 }
@@ -1318,7 +1316,7 @@ async function startDashboardBackedServices(
     //
     // 2026-10-01 (432-21, D-12/D-13): MOUNTED UNCONDITIONALLY, AND TOKENLESS. It used to mount only
     // when `services.dashboard.runServiceTokens` declared a credential, and an unset declared
-    // variable refused startup here. That key is no longer read: the door asks for no credential,
+    // variable refused startup here. That key is deleted (432-22): the door asks for no credential,
     // and what guards it is the same-site check above its route table and the loopback bind every
     // door in this process shares.
     const configuredHost = typeof servicesConfig.host === 'string' && servicesConfig.host.trim() !== ''
@@ -1339,7 +1337,7 @@ async function startDashboardBackedServices(
       // as a security decision rather than a config-shape error.
       ...(configuredHost === undefined ? {} : { host: configuredHost }),
       // 402-05 (D-15): the LOCAL readiness door — the identical function object the run service's
-      // `/ok` serves. What is deliberately NOT here is a second copy of these four facts.
+      // `/ok` serves. What is deliberately NOT here is a second copy of these three facts.
       runServiceReadiness: runService.readiness,
       // 403 D-14 (WINDOWS #264): the session lookup, read off the hoisted registry so the local
       // run-stream door and the frame socket can attach to a run this process is executing.

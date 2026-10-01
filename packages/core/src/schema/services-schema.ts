@@ -1,9 +1,4 @@
 import { z } from 'zod'
-import {
-  McpStdioGrantSchema,
-  McpTokenEntrySchema,
-  RunServiceTokenEntrySchema,
-} from '@vostride/agent-qa-schema'
 import { DurationString, SizeString } from './primitives.js'
 
 /**
@@ -63,30 +58,9 @@ export const DashboardConfigSchema = z.object({
     { message: 'services.dashboard.baseUrl must be an absolute http(s) URL' },
   ).optional(),
   workspace: z.string().optional(),
-  // Phase 402 D-05/D-06 (INVK-03): the authed run service's credential declarations, on the
-  // EXISTING `services.dashboard` block for the reason stated above — this project already has one
-  // dashboard configuration home, and the run service is mounted in the dashboard's own process
-  // (D-02). The DTO is minted in `@vostride/agent-qa-schema` (384 D-16) and imported here.
-  //
-  // Default `[]` and not optional-undefined, on `services.mcp.tokens`'s own reasoning: "no tokens
-  // declared" and "the key is absent" are the same fact, and a host that had to spell both would
-  // be a host with a branch nobody tests. Absent means today's behavior exactly — no service
-  // routes are mounted, and the dashboard runs as it does now.
-  //
-  // 2026-08-25 (Phase 403 D-14, WINDOWS #264): WHAT THIS FIELD GATES, EXACTLY — AND WHAT IT DOES
-  // NOT. These entries authenticate the REMOTE run service and nothing else: `POST /run`,
-  // `GET /run/:id/events`, `GET /run/:id/live-url` and `/ok`. Every LOCAL dashboard door is
-  // credential-free by design and is kept local by the loopback bind guard below rather than by a
-  // token — `GET /api/run-stream/:runId`, `GET /api/run-readiness`,
-  // `GET /api/runs/:runId/live-url` and the `/live/` embed page all answer on a zero-token
-  // dashboard, and 403 measured each of them there on the shipped binary.
-  //
-  // THE FAILURE THAT MAKES THIS WORTH WRITING DOWN: the local doors' session registry used to be
-  // DERIVED off this field, so a default project with no credential declared answered 503 about
-  // runs the very same process was executing (#264). `startServer` now takes `runServiceAttach`
-  // as a first-class option supplied on BOTH arms. A local surface must never need a remote
-  // credential, and a derivation is how one quietly starts to.
-  runServiceTokens: z.array(RunServiceTokenEntrySchema).default([]),
+  // 2026-10-01 (432-22, D-12/D-22): `runServiceTokens` is deleted. The run service is tokenless
+  // since 432-21, and a file that still declares the key gets the normal strict unrecognized-key
+  // error, with no migration and no special message. The local doors never needed a credential.
   // Phase 402 D-07: the interface this server binds. Consumed by 402-05's pre-listen bind guard,
   // which REFUSES any non-loopback value — unconditionally since the phase-402 verification round
   // (a declared run-service credential authenticates the three run-service paths and nothing else,
@@ -120,25 +94,16 @@ const LoopbackHostSchema = z.string().trim().min(1).refine(
   { message: 'MCP host must be localhost, 127.0.0.1, or ::1 in local-only mode' },
 )
 
-// Phase 396 D-06/D-07: the per-caller credential declarations and the stdio grant opt-in land on
-// the EXISTING `services.mcp` block rather than on a new top-level `mcp` key, for exactly the
-// reason `services.dashboard` states two blocks above: this project already has one MCP
-// configuration home, and a second one would be two places an operator could reasonably write the
-// same fact. The DTOs themselves are minted in `@vostride/agent-qa-schema` (384 D-16) and imported
-// here — the refs-only shape of a token entry is not re-declared in this package.
+// 2026-10-01 (432-22, D-12/D-22): the per-caller credential declarations (`tokens`) and the stdio
+// config-write opt-in (`stdio.grantConfigWrite`, and with it the whole `stdio` object) are deleted.
+// MCP is tokenless since 432-21; a file that still declares either key gets the normal strict
+// unrecognized-key error, with no migration and no special message.
 export const McpConfigSchema = z.object({
   enabled: z.boolean().optional(),
   transport: z.enum(['http', 'stdio']).optional(),
   host: LoopbackHostSchema.optional(),
   port: z.number().int().min(1).max(65535).optional(),
   path: z.string().trim().min(1).regex(/^\//, 'MCP path must start with /').optional(),
-  // Default `[]` and not optional-undefined: "no tokens declared" and "tokens key absent" are the
-  // same fact, and a host that had to spell both would be a host with a branch nobody tests.
-  tokens: z.array(McpTokenEntrySchema).default([]),
-  // `.prefault({})` rather than `.default({})` so the inner `grantConfigWrite: false` actually
-  // materialises on an absent block — zod 4's `.default()` short-circuits without parsing, which is
-  // the same trap the knowledge block above documents.
-  stdio: McpStdioGrantSchema.prefault({}),
 }).strict()
 
 export const CacheConfigSchema = z.object({

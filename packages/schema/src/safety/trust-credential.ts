@@ -19,11 +19,11 @@ export interface TrustScope {
  *
  * RETUNE NOTE: real scope issuance belongs to M5's cloud-auth model. A key added to {@link
  * TrustScope} above is added HERE, and the key-union pin below fails the build until it is — in
- * BOTH directions, so a key added here and not to the DTO fails too. The wire projection needs no
- * edit at all: `TrustScopeSchema` BUILDS its shape from this constant (391-11), rather than
- * restating the key set as a second literal that a compile-time pin over an all-optional object
- * type could not actually hold to. What that pin covers, stated negatively: it holds this constant
- * against the DTO declared above it and says nothing about any other file.
+ * BOTH directions, so a key added here and not to the DTO fails too. What that pin covers, stated
+ * negatively: it holds this constant against the DTO declared above it and says nothing about any
+ * other file. 2026-10-01 (432-22, D-12): the strict wire projection that BUILT its shape from this
+ * constant (`TrustScopeSchema`, 391-11) is deleted with the run-service token entry that parsed
+ * through it; this type and the constant stay until 432-39 removes the optional caller fields.
  */
 export const TRUST_SCOPE_KEYS = ['project', 'org'] as const
 

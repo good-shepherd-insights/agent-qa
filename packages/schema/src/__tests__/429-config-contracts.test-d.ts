@@ -33,7 +33,7 @@ test('C429-CONFIG-WRITE-OPS-EXACT', () => {
 })
 
 test('C429-CONFIG-WRITE-DENIED-ROOTS-EXACT', () => {
-  type Expected = 'plugins' | 'safety'
+  type Expected = 'plugins'
   expectTypeOf<ConfigWriteDeniedRoot>().toEqualTypeOf<Expected>()
   expectTypeOf<(typeof CONFIG_WRITE_DENIED_ROOTS)[number]>().toEqualTypeOf<Expected>()
   expectTypeOf<Exclude<ConfigWriteDeniedRoot, Expected>>().toEqualTypeOf<never>()
@@ -57,7 +57,7 @@ test('C429-CONFIG-WRITE-REFUSALS-EXACT', () => {
 })
 
 test('C429-CONFIG-NAMED-ARRAYS-EXACT', () => {
-  type Expected = 'registry.llms' | 'services.mcp.tokens' | 'services.dashboard.runServiceTokens'
+  type Expected = 'registry.llms'
   expectTypeOf<ConfigNamedArray>().toEqualTypeOf<Expected>()
   expectTypeOf<(typeof CONFIG_NAMED_ARRAYS)[number]>().toEqualTypeOf<Expected>()
   expectTypeOf<Exclude<ConfigNamedArray, Expected>>().toEqualTypeOf<never>()

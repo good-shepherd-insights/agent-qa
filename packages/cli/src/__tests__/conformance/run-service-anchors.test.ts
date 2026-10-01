@@ -515,8 +515,8 @@ describe('the run-service wire anchors (402-07 · criterion 4)', () => {
       ).toBe(200)
       const readiness = RunServiceReadinessSchema.parse(JSON.parse(await response.text()))
       expect(readiness.hostComposed).toBe(true)
-      // Honest about what it is: composed, and not authed.
-      expect(readiness.authConfigured).toBe(false)
+      // Honest about what it is: composed, and (432-22) no credential fact at all.
+      expect(Object.keys(readiness).sort()).toEqual(['contractVersion', 'hostComposed', 'service'])
     } finally {
       await child.stop()
     }
@@ -610,8 +610,8 @@ describe('the run-service wire anchors (402-07 · criterion 4)', () => {
       const okBytes = await ok.text()
       const readiness = RunServiceReadinessSchema.parse(JSON.parse(okBytes))
       expect(readiness.hostComposed).toBe(true)
-      // 432-21 (D-12): no credential can be configured.
-      expect(readiness.authConfigured).toBe(false)
+      // 432-21/432-22 (D-12): no credential can be configured, and the answer carries no such fact.
+      expect(Object.keys(readiness).sort()).toEqual(['contractVersion', 'hostComposed', 'service'])
       sweepWireDocument('readiness', okBytes, 'the readiness body must be pure JSON')
 
       // (3) THE STREAM. `subscribe(1, …)` replays from the first seq, so the frames are the whole

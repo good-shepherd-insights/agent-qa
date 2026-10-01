@@ -16,7 +16,7 @@ export function markFixture() {
   const agentQaRoot = join(root, '.agent-qa')
   const knowledgeRoot = join(root, 'agent-qa-knowledge')
   const configPath = join(root, 'agent-qa.config.yaml')
-  writeFileSync(configPath, 'workspace:\n  testMatch: [tests/**/*.yaml]\n  suiteMatch: [suites/**/*.suite.yaml]\n  hooksFile: hooks.yaml\n  envFile: .env\n  secretsFile: .env.secrets.local\nsafety:\n  trustMode: true\nuse:\n  mobile:\n    appState: preserve\n')
+  writeFileSync(configPath, 'workspace:\n  testMatch: [tests/**/*.yaml]\n  suiteMatch: [suites/**/*.suite.yaml]\n  hooksFile: hooks.yaml\n  envFile: .env\n  secretsFile: .env.secrets.local\nuse:\n  mobile:\n    appState: preserve\n')
   const fixture = createPromotionFloorFixture({ knowledgeRoot, auditBaseDir: agentQaRoot })
   const { published } = fixture.publishHeldCandidate('marked')
   const handoff: CompletedRunHandoff = makeLocalV2Handoff({ runId: asRunId(generateRunId()) })

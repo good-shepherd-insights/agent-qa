@@ -186,10 +186,10 @@ export type RunServiceStartRequest = z.infer<typeof RunServiceStartRequestSchema
  * What `/ok` reports (D-15): measured facts, and no prediction.
  *
  * SHALLOW BUT HONEST. Each field is something this process can observe about ITSELF right now —
- * the service answered, a host is composed, whether a credential is configured, and which contract
- * version these routes implement. 2026-10-01 (432-21, D-12): no credential can be configured any
- * more, so `authConfigured` is always `false`; the key stays on this wire DTO until the permission
- * fields are retired together (432-39). There is no `ready: true`, because a run's success depends on a
+ * the service answered, a host is composed, and which contract version these routes implement.
+ * 2026-10-01 (432-22, D-12): `authConfigured` is deleted with `services.dashboard.runServiceTokens`.
+ * No credential can be configured, so it had read `false` on every answer since 432-21, and a
+ * fact that cannot vary is not a measurement. There is no `ready: true`, because a run's success depends on a
  * browser, a model, a network and a target, none of which this route touched. Deep diagnostics
  * (knowledge rungs, embedder health) belong to 407's `doctor` and are deliberately absent.
  *
@@ -199,7 +199,6 @@ export type RunServiceStartRequest = z.infer<typeof RunServiceStartRequestSchema
 export const RunServiceReadinessSchema = z.object({
   service: z.literal('up'),
   hostComposed: z.boolean(),
-  authConfigured: z.boolean(),
   contractVersion: z.number().int().positive(),
 }).strict()
 

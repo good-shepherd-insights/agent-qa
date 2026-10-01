@@ -433,10 +433,10 @@ export interface RunPorts {
   timer?: RunTimerPort
   /**
    * The D-10 run-budget half: a monotonic supplier returning the TOTAL milliseconds this run
-   * has spent awaiting human confirms so far. Human decision time is never attributed to the
-   * app under test — so when the run-budget timer fires, the shell credits the accrued pause
-   * and re-arms for the un-credited delta instead of aborting. The CLI's timed `ConfirmPort`
-   * decorator feeds this (plan 362-06); absent ⇒ budget expiry aborts exactly as before.
+   * has spent paused outside the app under test. When the run-budget timer fires, the shell
+   * credits the accrued pause and re-arms for the un-credited delta instead of aborting; absent ⇒
+   * budget expiry aborts exactly as before. 2026-10-01 (432-14/19/22, D-14): no confirm pauses a
+   * run any more, so the hooks that supply this answer 0 and nothing waits on a person.
    */
   confirmPausedMs?: () => number
   /**

@@ -443,19 +443,18 @@ describe('GET /ok on the mounted door', () => {
       // MEASURED, not asserted from this cell's own knowledge: the composition bound a host above,
       // and this is the same box the run starter's guard reads.
       hostComposed: true,
-      // 432-21 (D-12): no credential can be configured.
-      authConfigured: false,
+      // 432-22 (D-12): the readiness answer carries no credential fact.
       contractVersion: RUN_SERVICE_CONTRACT_VERSION,
     })
   })
 
-  it('reports authConfigured FALSE when no credential resolved', async () => {
+  // 432-22: re-spelled from 'reports authConfigured FALSE when no credential resolved'; the key is gone.
+  it('reports no credential fact when no credential can be configured', async () => {
     // Measured through the ONE predicate: since 432-21 it takes no credential count at all.
     const readiness = createRunServiceReadiness({ resolveHost: () => undefined })
     expect(readiness()).toEqual({
       service: 'up',
       hostComposed: false,
-      authConfigured: false,
       contractVersion: RUN_SERVICE_CONTRACT_VERSION,
     })
   })
@@ -494,7 +493,7 @@ describe('one readiness predicate, two doors (402-05, D-15)', () => {
     expect(localBody).toEqual(authedBody)
     // Both are the MEASURED facts, on the shipped composition — `hostComposed` is true here
     // because this fixture bound a host, which is the same box `POST /run`'s guard throws on.
-    expect(localBody).toMatchObject({ service: 'up', hostComposed: true, authConfigured: false })
+    expect(localBody).toEqual({ service: 'up', hostComposed: true, contractVersion: RUN_SERVICE_CONTRACT_VERSION })
   })
 
   // RE-SPELLED 2026-10-01 (432-21, D-12): neither door reads a token now; both serve a garbage one.

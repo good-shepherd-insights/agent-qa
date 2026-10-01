@@ -215,7 +215,6 @@ function freshMint(seed: string): (runId: string, handle: number) => Promise<Run
 const READINESS: RunServiceReadiness = {
   service: 'up',
   hostComposed: true,
-  authConfigured: false,
   contractVersion: RUN_SERVICE_CONTRACT_VERSION,
 }
 

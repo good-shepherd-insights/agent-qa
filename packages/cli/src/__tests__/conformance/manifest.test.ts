@@ -510,6 +510,9 @@ describe('the agent manifest (D-16, XPLN-01)', () => {
 
       const serialized = JSON.stringify(manifest, null, 2)
 
+      // 432-22 (D-22): the legacy block is a deleted key, so the config does not resolve.
+      expect(manifest.posture.configuration, 'a legacy token block must fail strict validation')
+        .toBe('unresolved')
       // 432-21 (D-12): no ref is reported — the legacy block is read by nothing. The non-vacuity
       // control is the rows: the manifest is whole, so the absence below is about a real document.
       expect(manifest.posture.tokenEnvRefs, 'the manifest reported a legacy token declaration')

@@ -98,9 +98,10 @@ export type {
   FunnelSideCounters,
 } from './funnel'
 
-// 394-08 (WTST-08, D-03/D-10): the ONE fan-out arithmetic. The dispatch confirm and the proposal's
-// report both read it, so the number a person consents on and the number they are shown afterwards
-// cannot be two answers.
+// 394-08 (WTST-08, D-03/D-10): the ONE fan-out arithmetic. The preview and the written report both
+// read it, so the number announced before the runs and the number shown afterwards cannot be two
+// answers. 2026-10-01 (432-22, D-06/D-14): no confirm reads it and no proposal arm is exported; an
+// authored test is written in its own call.
 export {
   ConsumedRunSchema,
   FAN_OUT_PHRASES,

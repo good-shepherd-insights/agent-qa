@@ -15,12 +15,10 @@
 //    with a capturing class and the constructed URL asserted — including `handle=0`, which every
 //    `if (opts.handle)` spelling silently drops.
 //
-// WHAT THE GATE READS, AND WHY IT IS NOT `authConfigured`. `authConfigured` is a fact about the
-// REMOTE door: whether any run-service credential resolved. The shipped default for a project that
-// declared none is `authConfigured: false` — and that project's dashboard must still start runs,
-// because the local door needs no credential (402-05). Gating on it would refuse every default
-// install. The facts that decide whether THIS process can run something are `service` and
-// `hostComposed`, and there is a cell below that fails if the gate ever widens to the other one.
+// WHAT THE GATE READS. The facts that decide whether THIS process can run something are `service`
+// and `hostComposed`. 2026-10-01 (432-22, D-12): the readiness answer no longer carries
+// `authConfigured` (no run-service credential can be declared); a cell below keeps an older server's
+// answer, which still carries it, from being read as unready.
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -35,7 +33,6 @@ import {
 const READY = {
   service: 'up',
   hostComposed: true,
-  authConfigured: true,
   contractVersion: 1,
 }
 
@@ -146,9 +143,10 @@ describe('triggerRun preflights readiness at the ONE choke point', () => {
     expect(notReady.readiness).toMatchObject({ hostComposed: false })
   })
 
-  it('PROCEEDS with authConfigured false — the shipped default, not an unready door', async () => {
-    // A project that declared no run-service credential gets today's dashboard, and its local door
-    // needs no credential. A gate that read this field would refuse every default install.
+  // 432-22: re-spelled from 'PROCEEDS with authConfigured false — the shipped default'. The field is
+  // gone from the answer; the claim that survives is that the gate reads only service and
+  // hostComposed, so neither the shipped answer nor an older server's extra member stops a run.
+  it('PROCEEDS on the shipped answer and on an older answer that still carries authConfigured', async () => {
     stubFetch({ status: 200, body: { ...READY, authConfigured: false } })
 
     await expect(triggerRun({ file: 'tests/a.yaml' })).resolves.toMatchObject({ runId: 'run_1' })

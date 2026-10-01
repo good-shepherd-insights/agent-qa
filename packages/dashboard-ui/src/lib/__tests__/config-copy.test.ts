@@ -53,7 +53,6 @@ function functionOutputs(): string[] {
     copy.connectedSavedText('gpt'),
     copy.applyActionName('knowledge folder'),
     copy.keepPathName('knowledge folder'),
-    copy.tokenEnvLine('AGENT_QA_MCP_TOKEN'),
     copy.showValueName('Authorization'),
     copy.hideValueName('Authorization'),
     copy.replaceValueName('Authorization'),
@@ -62,7 +61,6 @@ function functionOutputs(): string[] {
     copy.attributeValueLabel('git.branch'),
     copy.removeAttributeName('git.branch'),
     copy.targetNameTakenError('staging'),
-    copy.tokenNameTakenError('ci'),
     copy.deviceNameTakenError('pixel'),
     copy.deviceMatchKeysHelp('iOS', ['udid', 'bundleId']),
     copy.deviceMatchSettingLabel('pixel', 'serial'),
@@ -120,7 +118,6 @@ describe('COPY-429: the Config strings of record (429-12 Task 2)', () => {
     expect(copy.undoLine('delete-model', 'gpt')).toBe('Deleted gpt')
     expect(copy.undoLine('delete-model', 'gpt', { judge: true })).toBe('Deleted gpt, an eval judge')
     expect(copy.undoLine('delete-target', 'staging')).toBe('Deleted target staging')
-    expect(copy.undoLine('delete-run-service-token', 'ci')).toBe('Deleted token ci')
     expect(copy.undoLine('sign-out', 'gpt')).toBe('Signed out of gpt')
     expect(copy.undoLine('remove-key', 'gpt')).toBe('Removed the key for gpt')
     expect(copy.undoLine('change-db-path', 'ignored')).toBe('Changed the database')

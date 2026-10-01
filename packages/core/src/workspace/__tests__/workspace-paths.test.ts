@@ -41,10 +41,7 @@ export async function createSampleWorkspaceConfigFixture(): Promise<SampleWorksp
       dashboard: {
         port: 3470,
         artifactsDir: '.agent-qa/custom-artifacts',
-        // 402-01: `runServiceTokens` defaults to `[]` in the schema, so the PARSED config type
-        // carries it. This fixture builds the parsed shape by hand, which is why it is spelled
-        // here — an empty list is "no run-service credential declared", the default posture.
-        runServiceTokens: [],
+        // 432-22: `runServiceTokens` is deleted, so the parsed shape no longer carries it.
       },
       cache: {
         dir: '.agent-qa/custom-cache',

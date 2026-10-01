@@ -54,13 +54,8 @@ export type { BrowserConfig } from './browser'
 export { appStateSchema, browserConfigSchema, viewportSchema } from './browser'
 export type { DeviceConfig } from './device'
 export { deviceConfigSchema } from './device'
-export type { McpStdioGrant, McpTokenEntry } from './mcp'
-export { McpStdioGrantSchema, McpTokenEntrySchema } from './mcp'
-// 402-01 D-05/D-06: the run service's credential declaration. Same refs-only idiom as the MCP
-// entry above; what an entry grants is a TrustScope rather than a FunctionScope set, because the
-// remote door's capability is fixed at composition and only the trust varies per holder.
-export type { RunServiceTokenEntry } from './run-service'
-export { RunServiceTokenEntrySchema } from './run-service'
+// 2026-10-01 (432-22, D-12/D-22): the MCP token entry, the stdio config-write switch and the
+// run-service token entry are deleted with the config keys that declared them.
 export type { RemoteDeviceConfig } from './remote-device'
 export { remoteDeviceSchema } from './remote-device'
 export type {

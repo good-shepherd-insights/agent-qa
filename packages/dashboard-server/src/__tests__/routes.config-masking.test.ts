@@ -147,11 +147,8 @@ const secretConfig = [
   `  secretsFile: ${SENTINELS.secretsFile}`,
   'services:',
   '  mcp:',
-  '    tokens:',
-  '      - name: ci',
-  '        tokenEnvVar: AGENT_QA_MCP_TOKEN',
-  '        scopes:',
-  '          - read',
+  '    enabled: true',
+  '    port: 3471',
   'registry:',
   '  llms:',
   '    - name: gpt',
@@ -251,18 +248,18 @@ describe('GET /api/config masked by the one map (429-06)', () => {
     )
   })
 
-  it('ENV-VAR-NAME-IN-CLEAR: an MCP token env-var name reads in clear in the payload and the file view', async () => {
+  // 432-22 (D-12): re-spelled. The two env-var-name leaves were the MCP and run-service token
+  // variables, deleted with their lists; the surviving claim is that a non-secret leaf reads in clear
+  // in both the payload and the file view, and no line is tagged as an env-var name any more.
+  it('ENV-VAR-NAME-IN-CLEAR: a plain MCP leaf reads in clear in the payload and the file view, and no line is an env-var name', async () => {
     await useConfigWorkspace()
 
     const { body } = await getConfig()
 
-    expect(body.config.services.mcp.tokens[0].tokenEnvVar).toBe('AGENT_QA_MCP_TOKEN')
-    const line = lineHolding(body.file.lines, 'tokenEnvVar:')
-    expect(line).toEqual({
-      n: line.n,
-      text: '        tokenEnvVar: AGENT_QA_MCP_TOKEN',
-      class: 'env-var-name',
-    })
+    expect(body.config.services.mcp.port).toBe(3471)
+    const line = lineHolding(body.file.lines, 'port: 3471')
+    expect(line).toEqual({ n: line.n, text: '    port: 3471' })
+    expect((body.file.lines as { class?: string }[]).filter(entry => entry.class === 'env-var-name')).toEqual([])
   })
 
   it('GET-HAS-REVISION-AND-FILE: config and provider stay, revision and the file view are added', async () => {

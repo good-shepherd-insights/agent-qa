@@ -1186,27 +1186,97 @@ describe('TargetSchema — product key validation', () => {
   })
 })
 
-// D-15 config half: an explicit opt-in `safety.trustMode` boolean. Strict object rejects
-// unknown subkeys and non-boolean values; the key is optional so pre-362 configs still parse.
-describe('AgentQaConfigSchema — safety.trustMode (D-15)', () => {
-  it('accepts safety.trustMode: true', () => {
-    const result = AgentQaConfigSchema.safeParse(withWorkspace({ safety: { trustMode: true } }))
-    expect(result.success).toBe(true)
-  })
+// 2026-10-01 (432-22, D-12/D-15/D-18/D-22): the retired keys are deleted, not migrated. The four
+// `safety.trustMode` cells this block held (accept, non-boolean, strict subkeys, optional) asserted
+// a key that no longer exists; their surviving claim is that a config without it parses, kept below.
+// A file that still declares a retired key gets zod's ordinary unrecognized-key issue at the owning
+// object, naming exactly that key, with no retired-key message, migration or notice.
+describe('AgentQaConfigSchema — retired keys are strictly unknown (432 D-22)', () => {
+  const RETIRED: readonly [string, Record<string, unknown>, string, string][] = [
+    ['safety.trustMode', { safety: { trustMode: true } }, '', 'safety'],
+    ['safety (empty)', { safety: {} }, '', 'safety'],
+    [
+      'services.mcp.tokens',
+      { services: { mcp: { enabled: true, tokens: [{ name: 'ci', tokenEnvVar: 'AGENT_QA_MCP_CI', scopes: ['read'] }] } } },
+      'services.mcp',
+      'tokens',
+    ],
+    ['services.mcp.tokens (empty)', { services: { mcp: { tokens: [] } } }, 'services.mcp', 'tokens'],
+    ['services.mcp.stdio.grantConfigWrite', { services: { mcp: { stdio: { grantConfigWrite: true } } } }, 'services.mcp', 'stdio'],
+    ['services.mcp.stdio (empty)', { services: { mcp: { stdio: {} } } }, 'services.mcp', 'stdio'],
+    [
+      'services.dashboard.runServiceTokens',
+      { services: { dashboard: { runServiceTokens: [{ name: 'ci', tokenEnvVar: 'AGENT_QA_RUN_CI', trustScope: { project: 'p' } }] } } },
+      'services.dashboard',
+      'runServiceTokens',
+    ],
+  ]
 
-  it('rejects a non-boolean trustMode', () => {
-    const result = AgentQaConfigSchema.safeParse(withWorkspace({ safety: { trustMode: 'yes' } }))
+  for (const [label, config, path, key] of RETIRED) {
+    it(`C432-OLD-KEYS-STRICT: ${label} gets the normal unrecognized-key error and nothing else`, () => {
+      const result = AgentQaConfigSchema.safeParse(withWorkspace(config))
+      expect(result.success).toBe(false)
+      if (result.success) return
+      expect(result.error.issues).toHaveLength(1)
+      const [issue] = result.error.issues as unknown as [{ code: string; path: unknown[]; keys: string[]; message: string }]
+      expect(issue.code).toBe('unrecognized_keys')
+      expect(issue.path.join('.')).toBe(path)
+      expect(issue.keys).toEqual([key])
+      expect(issue.message, 'no retired-key message').toBe(`Unrecognized key: "${key}"`)
+    })
+  }
+
+  it('C432-OLD-KEYS-STRICT: every retired key at once is refused key by key, each at its own owner', () => {
+    const result = AgentQaConfigSchema.safeParse(withWorkspace({
+      safety: { trustMode: false },
+      services: {
+        mcp: { tokens: [], stdio: { grantConfigWrite: false } },
+        dashboard: { runServiceTokens: [] },
+      },
+    }))
     expect(result.success).toBe(false)
+    if (result.success) return
+    const found = result.error.issues.map(issue => {
+      expect(issue.code).toBe('unrecognized_keys')
+      return `${issue.path.join('.')}:${[...(issue as unknown as { keys: string[] }).keys].sort().join(',')}`
+    })
+    expect(found.sort()).toEqual([':safety', 'services.dashboard:runServiceTokens', 'services.mcp:stdio,tokens'])
   })
 
-  it('rejects unknown safety subkeys (strict)', () => {
-    const result = AgentQaConfigSchema.safeParse(withWorkspace({ safety: { trustMode: true, bypass: true } }))
-    expect(result.success).toBe(false)
+  it('C432-OLD-KEYS-STRICT: minimal empty service objects parse and materialize no retired member', () => {
+    for (const services of [{}, { mcp: {} }, { dashboard: {} }, { mcp: {}, dashboard: {} }]) {
+      const result = AgentQaConfigSchema.safeParse(withWorkspace({ services }))
+      expect(result.success, JSON.stringify(services)).toBe(true)
+      if (!result.success) continue
+      expect(result.data.services?.mcp ?? {}, JSON.stringify(services)).toEqual({})
+      expect(result.data.services?.dashboard ?? {}, JSON.stringify(services)).toEqual({})
+      expect(Object.keys(result.data)).not.toContain('safety')
+    }
+    expect(McpConfigSchema.parse({})).toEqual({})
+    expect(DashboardConfigSchema.parse({})).toEqual({})
   })
 
-  it('parses a config WITHOUT the safety key (optional, additive)', () => {
+  it('C432-OLD-KEYS-STRICT: a config without any retired key parses (the surviving optional claim)', () => {
     const result = AgentQaConfigSchema.safeParse(withWorkspace({}))
     expect(result.success).toBe(true)
+  })
+
+  it('C432-OLD-KEYS-STRICT: the retained guardrail settings keep their contracts', () => {
+    const kept = AgentQaConfigSchema.safeParse(withWorkspace({
+      allowProduction: true,
+      services: {
+        mcp: { enabled: true, transport: 'http', host: '127.0.0.1', port: 3471, path: '/mcp' },
+        dashboard: { port: 3470, host: '127.0.0.1', baseUrl: 'http://127.0.0.1:3470' },
+      },
+    }))
+    expect(kept.success).toBe(true)
+    if (kept.success) {
+      expect(kept.data.services?.mcp).toEqual({ enabled: true, transport: 'http', host: '127.0.0.1', port: 3471, path: '/mcp' })
+      expect(kept.data.allowProduction).toBe(true)
+    }
+    expect(McpConfigSchema.safeParse({ host: '0.0.0.0' }).success, 'MCP stays loopback-only').toBe(false)
+    expect(DashboardConfigSchema.safeParse({ baseUrl: 'javascript:alert(1)' }).success, 'the live-link base stays http(s)').toBe(false)
+    expect(DashboardConfigSchema.safeParse({ host: '0.0.0.0' }).success, 'the bind refusal stays a runtime guard').toBe(true)
   })
 })
 

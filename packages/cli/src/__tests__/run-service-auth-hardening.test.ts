@@ -304,7 +304,8 @@ describe('the refusal census: every route on the table, every failure class (D-0
     }
     // Byte-identical answers: nothing about the header reached the door's decision or its body.
     expect(new Set(answers).size).toBe(1)
-    expect(JSON.parse(answers[0]!)).toMatchObject({ service: 'up', authConfigured: false })
+    expect(JSON.parse(answers[0]!)).toMatchObject({ service: 'up' })
+    expect(Object.keys(JSON.parse(answers[0]!)).sort()).toEqual(['contractVersion', 'hostComposed', 'service'])
     expect(answers.join('\n')).not.toContain(TOKEN)
   }, 30_000)
 

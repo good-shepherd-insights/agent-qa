@@ -60,3 +60,11 @@ expectTypeOf(mutatedToolCall.action).toEqualTypeOf<'mutate'>()
 expectTypeOf(deniedToolCall.action).toEqualTypeOf<'deny'>()
 expectTypeOf<ToolResultHookResult<string>>().toEqualTypeOf<{ result: string }>()
 expectTypeOf<ContextHookResult<readonly string[]>>().toEqualTypeOf<{ context: readonly string[] }>()
+
+// 2026-10-01 (432-22, D-03/D-12): C432-NO-TRUST-CONTRACT. The trust-scope wire projection leaves with
+// the run-service token DTO it parsed for; the caller types and their key set stay until 432-39.
+// @ts-expect-error C432-NO-TRUST-CONTRACT: the trust-scope projection is deleted from the safety barrel
+export type RetiredSafetyTrustScopeSchema = typeof import('../index').TrustScopeSchema
+// @ts-expect-error C432-NO-TRUST-CONTRACT: and from the root barrel
+export type RetiredRootTrustScopeSchema = typeof import('../../index').TrustScopeSchema
+expectTypeOf<import('../../index').TrustScopeKey>().toEqualTypeOf<'project' | 'org'>()

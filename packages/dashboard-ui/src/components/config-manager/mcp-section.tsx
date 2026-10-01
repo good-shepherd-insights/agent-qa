@@ -1,10 +1,10 @@
 // MCP ACCESS (429-27 · D-05, D-06 · UI-SPEC S7 "MCP access").
 //
-// Every services.mcp leaf as one ConfigField, then the access tokens list. The fields edit what
-// the file declares and nothing else.
+// Every services.mcp leaf as one ConfigField. The fields edit what the file declares and nothing
+// else. 2026-10-01 (432-22, D-12): MCP is tokenless, so the access tokens list and the stdio
+// config-write switch are gone with their keys; enablement, transport, host, port and path remain.
 
 import { ConfigField } from "@/components/config-manager/config-field"
-import { TokenList } from "@/components/config-manager/token-list"
 import type { ConfigFieldParse } from "@/hooks/use-config-autosave"
 import {
   MCP_FIELD_HELP,
@@ -14,10 +14,6 @@ import {
   MCP_TRANSPORT_LABELS,
   MCP_TRANSPORT_PLACEHOLDER,
 } from "@/lib/config-copy"
-
-interface McpSectionProps {
-  config: Record<string, unknown>
-}
 
 const LOOPBACK_HOSTS = ["localhost", "127.0.0.1", "::1"]
 const UNSET: ConfigFieldParse = { valid: true, unset: true }
@@ -43,7 +39,7 @@ function mcpField(...rest: string[]) {
   return { segments: ["services", "mcp", ...rest], tab: "advanced" as const, pattern: ["services", "mcp", ...rest].join(".") }
 }
 
-export function McpSection({ config }: McpSectionProps) {
+export function McpSection() {
   return (
     <>
       <ConfigField
@@ -76,13 +72,6 @@ export function McpSection({ config }: McpSectionProps) {
         number={{ min: 1, max: 65535, integer: true }}
       />
       <ConfigField field={mcpField("path")} label={MCP_FIELD_LABELS.path} kind="text" parse={parsePath} />
-      <ConfigField
-        field={mcpField("stdio", "grantConfigWrite")}
-        label={MCP_FIELD_LABELS.grantConfigWrite}
-        kind="switch"
-        help={MCP_FIELD_HELP.grantConfigWrite}
-      />
-      <TokenList kind="mcp" config={config} />
     </>
   )
 }

@@ -42,12 +42,13 @@ describe('the tabs and their sections (429-12 Task 1)', () => {
       targets: ['targets', 'devices', 'device-farms', 'login-states', 'mobile-app-state'],
       execution: ['browser', 'timeouts', 'runs', 'cache', 'recording', 'accessibility', 'log-capture'],
       project: ['test-discovery', 'files', 'knowledge', 'dashboard', 'logging', 'pass-rate-scope'],
-      advanced: ['mcp', 'run-service-tokens', 'eval', 'config-file'],
+      advanced: ['mcp', 'eval', 'config-file'],
     })
     expect(Object.keys(CONFIG_SECTIONS)).toEqual([...CONFIG_TABS])
     expect(CONFIG_SECTION_IDS).toEqual(CONFIG_TABS.flatMap((tab) => CONFIG_SECTIONS[tab]))
-    expect(CONFIG_SECTION_IDS).toHaveLength(25)
-    expect(new Set(CONFIG_SECTION_IDS).size).toBe(25)
+    // 2026-10-01 (432-22, D-12): the run-service tokens section left with its key (25 -> 24).
+    expect(CONFIG_SECTION_IDS).toHaveLength(24)
+    expect(new Set(CONFIG_SECTION_IDS).size).toBe(24)
   })
 
   it('the palette aliases carry no storage vocabulary: no bucket word and no dotted path', () => {
@@ -166,7 +167,9 @@ describe('tab URLs and the section search (429-12 Task 1)', () => {
     expect(sectionsOf('time')).toEqual(['timeouts'])
     expect(sectionsOf('TIME')).toEqual(['timeouts'])
     expect(sectionsOf('device')).toEqual(['devices', 'device-farms'])
-    expect(sectionsOf('tokens')).toEqual(['mcp', 'run-service-tokens'])
+    // 432-22: no section is about tokens any more; production finds the Runs section.
+    expect(sectionsOf('tokens')).toEqual([])
+    expect(sectionsOf('production')).toEqual(['runs'])
     for (const entry of searchConfigSections('')) {
       expect(CONFIG_SECTIONS[entry.tab] as readonly string[]).toContain(entry.section)
     }
@@ -226,14 +229,13 @@ describe('the UI closed sets (429-12 Task 1)', () => {
     expect(TEST_RESULTS).toEqual(['testing', 'connected', 'connected-without-key', 'failed'])
   })
 
-  it('C429-EXPLICIT-ACTION-KINDS-EXACT: the eleven kinds of S6', () => {
+  // 432-22 (D-12): the two token deletes left with the token lists (eleven -> nine).
+  it('C429-EXPLICIT-ACTION-KINDS-EXACT: the nine kinds of S6', () => {
     expect(EXPLICIT_ACTION_KINDS).toEqual([
       'delete-model',
       'delete-target',
       'delete-device',
       'delete-device-farm',
-      'delete-mcp-token',
-      'delete-run-service-token',
       'sign-out',
       'remove-key',
       'change-knowledge-dir',

@@ -18,9 +18,7 @@ import type {
 
 import type {
   ConfigWriteRefusal,
-  FunctionScope,
   LlmSetupRefusal,
-  TrustScopeKey,
 } from '@vostride/agent-qa-schema'
 
 import { providerErrorSentence } from '@vostride/agent-qa-schema'
@@ -78,7 +76,6 @@ export const CONFIG_SECTION_LABELS = {
   logging: 'Logging',
   'pass-rate-scope': 'Pass-rate scope',
   mcp: 'MCP access',
-  'run-service-tokens': 'Run-service tokens',
   eval: 'Evaluation',
   'config-file': 'Config file',
 } as const satisfies Record<ConfigSectionId, string>
@@ -128,9 +125,6 @@ export function undoLine(kind: ExplicitActionKind, name: string, opts: { judge?:
       return `Deleted device ${name}`
     case 'delete-device-farm':
       return `Deleted device farm ${name}`
-    case 'delete-mcp-token':
-    case 'delete-run-service-token':
-      return `Deleted token ${name}`
     case 'sign-out':
       return `Signed out of ${name}`
     case 'remove-key':
@@ -157,9 +151,6 @@ export function deleteActionName(kind: DeleteActionKind, name: string): string {
       return `Delete device ${name}`
     case 'delete-device-farm':
       return `Delete device farm ${name}`
-    case 'delete-mcp-token':
-    case 'delete-run-service-token':
-      return `Delete token ${name}`
   }
 }
 
@@ -610,12 +601,14 @@ export const RUNS_FIELD_LABELS = {
   parallel: 'Run tests in parallel',
   workers: 'Parallel workers',
   buildTag: 'Build tag',
+  allowProduction: 'Allow production runs',
 } as const
 
 export const RUNS_FIELD_HELP = {
   parallel: 'Run the tests of one run at the same time.',
   workers: 'The most tests that run at once.',
   buildTag: 'Names the app build under test.',
+  allowProduction: 'Lets runs reach targets marked Production. When off, those runs are refused.',
 } as const
 
 export const CACHE_FIELD_LABELS = {
@@ -799,13 +792,11 @@ export const MCP_FIELD_LABELS = {
   host: 'Host',
   port: 'Port',
   path: 'Path',
-  grantConfigWrite: 'Config edits over stdio',
 } as const satisfies Record<string, string>
 
 export const MCP_FIELD_HELP = {
-  enabled: "When off, the dashboard doesn't host the MCP endpoint. Declared tokens stay in the file.",
+  enabled: "When off, the dashboard doesn't host the MCP endpoint.",
   host: 'Only localhost, 127.0.0.1 or ::1.',
-  grantConfigWrite: 'Lets an editor that starts agent-qa over stdio change this config.',
 } as const satisfies Record<string, string>
 
 export const MCP_TRANSPORT_LABELS = {
@@ -817,49 +808,8 @@ export const MCP_TRANSPORT_PLACEHOLDER = 'Not set'
 export const MCP_HOST_ERROR = 'Use localhost, 127.0.0.1 or ::1.'
 export const MCP_PATH_ERROR = 'Start the path with /.'
 
-export const ACCESS_TOKENS_HEADING = 'Access tokens'
-export const ADD_TOKEN_LABEL = 'Add token'
-export const NO_TOKENS_TEXT = 'No access tokens yet.'
-
-export function tokenEnvLine(envVar: string): string {
-  return `Token from ${envVar}`
-}
-
-export const TOKEN_FIELD_LABELS = {
-  name: 'Name',
-  envVar: 'Environment variable',
-} as const satisfies Record<string, string>
-
-export const DISCARD_TOKEN_LABEL = 'Discard token'
-export const TOKEN_NAME_REQUIRED_ERROR = 'Add a name for the token.'
-export const TOKEN_ENV_VAR_REQUIRED_ERROR = 'Add the environment variable that holds the token.'
-
-export function tokenNameTakenError(name: string): string {
-  return `A token named ${name} already exists.`
-}
-
-/** The MCP add row's scope group: what a caller holding the token may do. */
-export const SCOPES_LABEL = 'Token scopes'
-
-export const FUNCTION_SCOPE_LABELS = {
-  read: 'Read',
-  run: 'Run tests',
-  'config-write': 'Edit config',
-  'knowledge-write': 'Edit knowledge',
-  'approval-write': 'Manage approvals',
-  'test-write': 'Write tests',
-} as const satisfies Record<FunctionScope, string>
-
-export const SCOPE_REQUIRED_ERROR = 'Choose at least one scope.'
-
-/** The run-service add row's optional trust scope: whose project or org the token acts for. */
-export const TRUST_SCOPE_LEGEND = 'Trust scope'
-export const TRUST_SCOPE_HELP = 'Optional. Leave both empty for a token that acts for no project or org.'
-
-export const TRUST_SCOPE_LABELS = {
-  project: 'Project',
-  org: 'Org',
-} as const satisfies Record<TrustScopeKey, string>
+// 2026-10-01 (432-22, D-12): the access-token and run-service-token rows, their scope and trust-scope
+// labels and their errors are deleted with the token keys. MCP and the run service are tokenless.
 
 export const EVAL_GROUP_LABELS = {
   judge: 'Judge',

@@ -42,7 +42,8 @@ afterEach(() => {
  *
  * `legacyTokens` (432-21, D-12/D-22) writes the pre-432 MCP credential block: one declared token
  * whose variable is set nowhere, and the stdio config-write switch off. Before 432-21 the unset
- * variable refused startup by name; now nothing reads the block.
+ * variable refused startup by name; now nothing reads the block, and since 432-22 both keys are
+ * unknown to the strict schema.
  */
 function fixtureProject(legacyTokens = false): string {
   const root = mkdtempSync(join(tmpdir(), 'agent-qa-396-01-stdio-'))
@@ -153,7 +154,8 @@ describe('agent-qa mcp over spawned stdio', () => {
 
   // 432-21 (D-12/D-22): the legacy credential block is left on disk and never read. Before 432-21 a
   // declared token whose variable was unset refused startup naming the variable; now the binary
-  // starts and lists exactly what it lists for a project with no block at all.
+  // starts and lists exactly what it lists for a project with no block at all. 432-22: the keys are
+  // deleted, so the file fails strict validation; `agent-qa mcp`'s tolerant read serves anyway.
   it('C432-TOKENLESS-MCP: a legacy token block with an unset variable refuses nothing and changes no listing', async () => {
     expect(existsSync(CLI_ENTRY), `the built CLI entry is missing at ${CLI_ENTRY}`).toBe(true)
     const plain = await listOverStdio(fixtureProject())

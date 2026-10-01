@@ -84,7 +84,6 @@ function stubRunServicePorts(readiness: Readiness): ServicePorts {
 const INERT_READINESS: Readiness = () => ({
   service: 'up',
   hostComposed: false,
-  authConfigured: false,
   contractVersion: 1,
 })
 
@@ -247,7 +246,6 @@ describe('the local readiness door (D-15)', () => {
       fn: () => ({
         service: 'up' as const,
         hostComposed,
-        authConfigured: false,
         contractVersion: 7,
       }),
       flip: () => { hostComposed = true },
@@ -277,7 +275,6 @@ describe('the local readiness door (D-15)', () => {
     expect(before[0].body).toEqual({
       service: 'up',
       hostComposed: false,
-      authConfigured: false,
       contractVersion: 7,
     })
 
@@ -313,14 +310,13 @@ describe('the local readiness door (D-15)', () => {
       readiness: () => ({
         service: 'up',
         hostComposed: true,
-        authConfigured: false,
         contractVersion: 7,
       }),
     })
     const port = (server.address() as AddressInfo).port
     const local = await get(port, '/api/run-readiness')
     expect(local.status).toBe(200)
-    expect(local.body).toMatchObject({ authConfigured: false })
+    expect(local.body).toEqual({ service: 'up', hostComposed: true, contractVersion: 7 })
     // …and the authed door genuinely is not mounted on this arm.
     await expect(get(port, '/ok')).resolves.toMatchObject({ status: 404 })
   })

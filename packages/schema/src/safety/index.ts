@@ -20,8 +20,8 @@ export {
 export { TRUST_SCOPE_KEYS } from './trust-credential'
 export type { TrustCredential, TrustScope, TrustScopeKey } from './trust-credential'
 // 432-18 (D-14/D-15): the grant ledger, the protected-class set and the grant op contracts are
-// deleted. The trust-scope projection stays for `config/run-service.ts` until 432-22.
-export { TrustScopeSchema } from './grant-ops'
+// deleted. 432-22 (D-12): the trust-scope wire projection (`grant-ops.ts`) is deleted with the
+// run-service token DTO, its last consumer.
 export type { ScanAction, ScanResult } from './scan'
 export type { ContentOrigin } from './content-origin'
 export type { MaskingContext } from './masking'

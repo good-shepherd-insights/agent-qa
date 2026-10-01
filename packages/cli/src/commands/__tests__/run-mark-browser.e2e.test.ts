@@ -91,7 +91,9 @@ async function wire(page: Page): Promise<Wire> {
 async function scene() {
   const fixture = markFixture()
   const config = parse(readFileSync(fixture.configPath, 'utf8'))
-  delete config.safety.trustMode
+  // 432-22 (D-15/D-22): the fixture declares no `safety` block (the key is deleted), so there is no
+  // trust mode to remove; the config is re-serialized unchanged.
+  expect(config.safety).toBeUndefined()
   writeFileSync(fixture.configPath, stringify(config))
   const db = new DashboardDatabase({ dbPath: ':memory:' })
   const { handoff } = fixture

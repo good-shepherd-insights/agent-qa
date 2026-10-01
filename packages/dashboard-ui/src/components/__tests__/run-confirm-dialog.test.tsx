@@ -72,7 +72,7 @@ vi.mock("@/components/command-palette", () => ({ CommandPalette: () => null }))
 vi.mock("@/components/ui/sonner", () => ({ Toaster: () => null }))
 vi.mock("@/components/error-boundary", () => ({ RouteErrorBoundary: () => null }))
 
-const READY = { service: "up", hostComposed: true, authConfigured: false, contractVersion: 1 }
+const READY = { service: "up", hostComposed: true, contractVersion: 1 }
 
 let container: HTMLDivElement | null = null
 let root: Root | null = null

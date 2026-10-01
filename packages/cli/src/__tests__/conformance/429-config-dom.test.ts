@@ -74,7 +74,9 @@ const COMMENT_SENTINELS = {
   above: 'zz-429-41-COMMENTED-HEADER-SENTINEL-5e0a',
   trailing: 'zz-429-41-TRAILING-COMMENT-SENTINEL-a3d8',
 } as const
-const MCP_TOKEN_ENV_VAR = 'AGENT_QA_MCP_TOKEN'
+// 432-22 (D-12): the MCP token list is deleted, so the file view's env-var-name witness is gone;
+// a plain MCP leaf stands in and must read in clear, untagged.
+const MCP_PORT = '3471'
 const PLUGIN_PACKAGE = '@example/agent-qa-auth'
 const LONG_TARGET = 'checkout-staging-with-a-deliberately-long-target-name'
 
@@ -92,11 +94,8 @@ const TASK1_CONFIG = [
   '  commitArtifacts: none',
   'services:',
   '  mcp:',
-  '    tokens:',
-  '      - name: ci',
-  `        tokenEnvVar: ${MCP_TOKEN_ENV_VAR}`,
-  '        scopes:',
-  '          - read',
+  '    enabled: false',
+  `    port: ${MCP_PORT}`,
   'registry:',
   '  llms:',
   '    - name: gpt',
@@ -496,7 +495,8 @@ describe('Config tabs, links, geometry, masking and names on the shipped bundle 
       masking: item.getAttribute('data-masking-class'),
     })))
     const lineWith = (fragment: string) => lines.find((line) => line.text.includes(fragment))
-    expect(lineWith('tokenEnvVar:'), JSON.stringify(lines)).toEqual({ text: `tokenEnvVar: ${MCP_TOKEN_ENV_VAR}`, masking: 'env-var-name' })
+    expect(lineWith(`port: ${MCP_PORT}`), JSON.stringify(lines)).toEqual({ text: `port: ${MCP_PORT}`, masking: 'plain' })
+    expect(lines.filter((line) => line.masking === 'env-var-name'), 'no leaf is an env-var name since 432-22').toEqual([])
     expect(lineWith('x-org-route:')?.masking).toBe('secret')
     expect(lineWith('x-org-route:')?.text).toContain(CONFIG_MASK_PLACEHOLDER)
     expect(lineWith('accessKey:')?.masking).toBe('secret')

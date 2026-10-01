@@ -18,12 +18,9 @@ test('C429-CONFIG-WRITE-REFUSALS-EXACT', () => {
   ])
 })
 
+// 2026-10-01 (432-22, D-12): the two token lists left with their keys; the model list remains.
 test('C429-CONFIG-NAMED-ARRAYS-EXACT', () => {
-  expect(api.CONFIG_NAMED_ARRAYS).toEqual([
-    'registry.llms',
-    'services.mcp.tokens',
-    'services.dashboard.runServiceTokens',
-  ])
+  expect(api.CONFIG_NAMED_ARRAYS).toEqual(['registry.llms'])
 })
 
 test('C429-CONFIG-CHANGE-STRICT', () => {
@@ -81,8 +78,44 @@ test('C429-CONFIG-CHANGE-STRICT', () => {
   }
 })
 
+// 2026-10-01 (432-22, D-18/D-22): `safety` left the schema, so it left the denied roots too.
 test('C429-CONFIG-WRITE-DENIED-ROOTS-EXACT', () => {
-  expect(api.CONFIG_WRITE_DENIED_ROOTS).toEqual(['plugins', 'safety'])
+  expect(api.CONFIG_WRITE_DENIED_ROOTS).toEqual(['plugins'])
+})
+
+// 432-22: the page write door admits exactly the 88 page-owned leaves, including the new plain root
+// `allowProduction`, and refuses every retired key's path as an unknown path.
+test('C432-CONFIG-WRITE-POLICY: the write policy admits allowProduction and refuses the retired paths', () => {
+  const writable = api.CONFIG_SCHEMA_LEAVES.filter(pattern => api.isPageWritableConfigPath(concreteLeafPath(pattern, true)))
+  expect(api.CONFIG_SCHEMA_LEAVES).toHaveLength(92)
+  expect(writable).toHaveLength(88)
+  expect(api.CONFIG_SCHEMA_LEAVES.filter(pattern => !writable.includes(pattern))).toEqual([
+    'plugins.auth[].package',
+    'plugins.auth[].path',
+    'plugins.providers[].package',
+    'plugins.providers[].path',
+  ])
+  expect(api.isPageWritableConfigPath(['allowProduction'])).toBe(true)
+  expect(api.classifyConfigPath(['allowProduction'])).toBe('plain')
+  const retired: api.ConfigPathSegment[][] = [
+    ['safety'],
+    ['safety', 'trustMode'],
+    ['services', 'mcp', 'tokens'],
+    ['services', 'mcp', 'tokens', { name: 'ci' }],
+    ['services', 'mcp', 'tokens', 0, 'tokenEnvVar'],
+    ['services', 'mcp', 'stdio'],
+    ['services', 'mcp', 'stdio', 'grantConfigWrite'],
+    ['services', 'dashboard', 'runServiceTokens'],
+    ['services', 'dashboard', 'runServiceTokens', { name: 'ci' }, 'trustScope', 'project'],
+  ]
+  for (const path of retired) {
+    expect({ path, writable: api.isPageWritableConfigPath(path) }).toEqual({ path, writable: false })
+    expect(api.isConfigSchemaPath(path.map(s => (typeof s === 'object' ? 0 : s)))).toBe(false)
+  }
+  // The retained neighbours of each retired key are still writable.
+  for (const path of [['services', 'mcp', 'port'], ['services', 'dashboard', 'host'], ['registry', 'llms', { name: 'k' }, 'model']]) {
+    expect({ path, writable: api.isPageWritableConfigPath(path) }).toEqual({ path, writable: true })
+  }
 })
 
 function concreteLeafPath(pattern: string, named: boolean): api.ConfigPathSegment[] {
@@ -133,6 +166,7 @@ test('PAGE-WRITABLE-EVERY-RENDERED-LEAF', () => {
     ['use', 'bogus'],
     ['plugins'],
     ['plugins', 'auth', 0, 'path'],
+    // 432-22: a retired root is refused as an unknown path, not as a denied root.
     ['safety', 'trustMode'],
     ['registry', 'llms', { name: 'k' }, 'nope'],
     ['registry', 'llms', '[]', 'model'],
@@ -155,8 +189,10 @@ test('C429-MASKING-CLASSES-EXACT', () => {
 
 test('CLASSIFY-KNOWN-ANSWERS', () => {
   const cases: readonly [readonly (string | number)[], api.MaskingClass][] = [
-    [['services', 'mcp', 'tokens', 0, 'tokenEnvVar'], 'env-var-name'],
-    [['services', 'dashboard', 'runServiceTokens', 0, 'tokenEnvVar'], 'env-var-name'],
+    // 432-22: the two env-var-name leaves left with the token lists; an unknown path fails closed.
+    [['services', 'mcp', 'tokens', 0, 'tokenEnvVar'], 'secret'],
+    [['services', 'dashboard', 'runServiceTokens', 0, 'tokenEnvVar'], 'secret'],
+    [['allowProduction'], 'plain'],
     [['registry', 'llms', 0, 'providerHeaders', 'Authorization'], 'secret'],
     [['registry', 'llms', 0, 'providerHeaders', 'x-trace'], 'secret'],
     [['registry', 'providers', 'farm', 'accessKey'], 'secret'],

@@ -751,7 +751,6 @@ async function rollCallServicePorts(): Promise<unknown> {
     readiness: () => ({
       service: 'up',
       hostComposed: true,
-      authConfigured: false,
       contractVersion: RUN_SERVICE_CONTRACT_VERSION,
     }),
     mintLiveUrl: () => Promise.reject(

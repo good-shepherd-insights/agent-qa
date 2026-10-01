@@ -15,7 +15,9 @@ import { buildMaskedResolvedConfig } from '../masked-config.js'
 
 /**
  * Every leaf the pre-429 masker masked, measured on 2026-09-26 by running it over each leaf's
- * representative path.
+ * representative path. 2026-10-01 (432-22, D-12): the two token env-var names on this list (the only
+ * leaves the map made visible, as env-var names) left the schema with their token lists; they are
+ * kept in RETIRED_SINCE_429 and must now be masked again, as undeclared paths.
  */
 const MASKED_BEFORE_429 = [
   'analytics.passRateScope.attributes.*',
@@ -23,15 +25,15 @@ const MASKED_BEFORE_429 = [
   'registry.devices.*.match.*',
   'registry.llms[].providerHeaders.*',
   'registry.providers.*.*',
-  'services.dashboard.runServiceTokens[].tokenEnvVar',
-  'services.mcp.tokens[].tokenEnvVar',
   'workspace.secretsFile',
 ]
 
-const ENV_VAR_NAME_LEAVES = [
+const RETIRED_SINCE_429 = [
   'services.dashboard.runServiceTokens[].tokenEnvVar',
   'services.mcp.tokens[].tokenEnvVar',
 ]
+
+const ENV_VAR_NAME_LEAVES: readonly string[] = []
 
 const oracle = buildConfigVisibilityOracle(AgentQaConfigSchema)
 
@@ -105,6 +107,13 @@ describe('429 masking parity', () => {
   })
 
   it('MASKING-PARITY-NOTHING-NEWLY-VISIBLE', () => {
+    for (const pattern of RETIRED_SINCE_429) {
+      expect(CONFIG_SCHEMA_LEAVES as readonly string[]).not.toContain(pattern)
+      expect({ pattern, class: classifyConfigPath(representativeSegments(pattern)) }).toEqual({
+        pattern,
+        class: 'secret',
+      })
+    }
     for (const pattern of MASKED_BEFORE_429) {
       const expected = ENV_VAR_NAME_LEAVES.includes(pattern) ? 'env-var-name' : 'secret'
       expect({ pattern, class: classifyConfigPath(representativeSegments(pattern)) }).toEqual({

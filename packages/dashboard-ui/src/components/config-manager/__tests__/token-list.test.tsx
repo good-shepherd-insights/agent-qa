@@ -1,32 +1,36 @@
 // @vitest-environment jsdom
 
-// ACCESS TOKENS AS IN-PAGE LISTS (429-27 Task 1 · D-05, D-06, D-08, D-23, D-24 · research A7 · UI-SPEC S7, E9).
+// NO ACCESS TOKENS ON THE CONFIG PAGE (432-22 · D-12/D-18/D-22), re-spelled from 429-27 Task 1.
 //
-// MCP access tokens and run-service tokens list by name with the environment variable's NAME in
-// clear, never a value. Add token asks for what the schema requires (a scope for an MCP token, an
-// optional trust scope for a run-service token) and writes one append once the row is valid; a
-// delete acts at once with Undo.
+// This file pinned the MCP and run-service token lists: rows by name with the env-var name in clear,
+// the scope and trust-scope add rows, and the undoable delete. 432 deletes `services.mcp.tokens`,
+// `services.mcp.stdio.grantConfigWrite` and `services.dashboard.runServiceTokens`, so the lists, the
+// stdio switch and their copy are gone. What survives is pinned here: the remaining MCP and dashboard
+// controls still save through the page's autosave transaction, and `allowProduction` is an ordinary
+// switch on that same transaction. The undoable unset-by-name claim of TOKEN-DELETE-UNDO lives on in
+// model-row's DELETE-MODEL-UNDO (`registry.llms`, the one named array left).
+
+import { existsSync } from 'node:fs'
+import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
-import { FunctionScopeSchema } from '@vostride/agent-qa-schema'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { TokenList } from '@/components/config-manager/token-list'
-import { ConfigAutosaveProvider, useConfigAutosave, type ConfigAutosave } from '@/hooks/use-config-autosave'
-import { applyConfigChanges, fetchConfig, fetchConfigRevision, undoConfigAction } from '@/lib/api'
+import { DashboardSection } from '@/components/config-manager/dashboard-section'
+import { McpSection } from '@/components/config-manager/mcp-section'
+import { RunsSection } from '@/components/config-manager/runs-section'
 import {
-  ACCESS_TOKENS_HEADING,
-  ADD_TOKEN_LABEL,
-  FUNCTION_SCOPE_LABELS,
-  NO_TOKENS_TEXT,
-  SCOPE_REQUIRED_ERROR,
-  TOKEN_NAME_REQUIRED_ERROR,
-  TRUST_SCOPE_LABELS,
-  deleteActionName,
-  tokenEnvLine,
-  undoLine,
-} from '@/lib/config-copy'
+  ConfigAutosaveProvider,
+  configFieldControlId,
+  configFieldKeyOf,
+  useConfigAutosave,
+  type ConfigAutosave,
+} from '@/hooks/use-config-autosave'
+import { ApiError, applyConfigChanges, fetchConfig, fetchConfigRevision } from '@/lib/api'
+import * as copy from '@/lib/config-copy'
+import { CONFIG_SECTION_IDS, EXPLICIT_ACTION_KINDS } from '@/lib/config-tabs'
 
 vi.mock('@/lib/api', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/lib/api')>()),
@@ -40,18 +44,12 @@ vi.mock('@/lib/api', async (importOriginal) => ({
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
 const CONFIG_PATH = '/work/agent-qa.config.yaml'
+const HERE = dirname(fileURLToPath(import.meta.url))
 
 const records = {
   services: {
-    mcp: {
-      tokens: [
-        { name: 'ci', tokenEnvVar: 'AGENT_QA_MCP_TOKEN', scopes: ['read'] },
-        { name: 'desktop', tokenEnvVar: 'AGENT_QA_DESKTOP_TOKEN', scopes: ['read', 'run'] },
-      ],
-    },
-    dashboard: {
-      runServiceTokens: [{ name: 'teammate', tokenEnvVar: 'AGENT_QA_RUN_TOKEN', trustScope: { project: 'acme-web' } }],
-    },
+    mcp: { enabled: true, transport: 'http', host: '127.0.0.1', port: 3471, path: '/mcp' },
+    dashboard: { port: 3470 },
   },
 }
 
@@ -65,14 +63,16 @@ function Harness() {
   const autosave = useConfigAutosave()
   hook = autosave
   if (autosave.load.kind !== 'ready') return null
-  const config = autosave.load.answer.config
   return (
     <ConfigAutosaveProvider value={autosave}>
       <section data-config-section="mcp">
-        <TokenList kind="mcp" config={config} />
+        <McpSection />
       </section>
-      <section data-config-section="run-service-tokens">
-        <TokenList kind="run-service" config={config} />
+      <section data-config-section="dashboard">
+        <DashboardSection />
+      </section>
+      <section data-config-section="runs">
+        <RunsSection />
       </section>
     </ConfigAutosaveProvider>
   )
@@ -107,23 +107,17 @@ async function unmount() {
   hook = undefined
 }
 
-function section(id: 'mcp' | 'run-service-tokens') {
+function section(id: 'mcp' | 'dashboard' | 'runs') {
   return container?.querySelector(`[data-config-section="${id}"]`) as HTMLElement | null
 }
 
-function tokenRow(scope: HTMLElement | null, name: string) {
-  return (Array.from(scope?.querySelectorAll('[data-token-row]') ?? []) as HTMLElement[]).find(
-    (row) => row.getAttribute('data-token-name') === name,
-  ) ?? null
+function fieldPaths(scope: HTMLElement | null): string[] {
+  return (Array.from(scope?.querySelectorAll('[data-field-path]') ?? []) as HTMLElement[])
+    .map((element) => element.getAttribute('data-field-path')!)
 }
 
-function buttonIn(scope: ParentNode | null | undefined, text: string) {
-  const buttons = Array.from(scope?.querySelectorAll('button') ?? []) as HTMLButtonElement[]
-  return buttons.find((button) => button.textContent?.trim() === text || button.getAttribute('aria-label') === text) ?? null
-}
-
-function labelOf(control: Element): string | undefined {
-  return control.ownerDocument.querySelector(`label[for="${control.id}"]`)?.textContent?.trim()
+function control<T extends HTMLElement = HTMLInputElement>(segments: readonly string[]) {
+  return document.getElementById(configFieldControlId(configFieldKeyOf(segments))) as T | null
 }
 
 async function click(element: HTMLElement | null) {
@@ -135,7 +129,7 @@ async function click(element: HTMLElement | null) {
   await flush()
 }
 
-async function type(input: HTMLInputElement | null, value: string) {
+async function typeAndBlur(input: HTMLInputElement | null, value: string) {
   expect(input).not.toBeNull()
   await act(async () => {
     input!.focus()
@@ -144,46 +138,14 @@ async function type(input: HTMLInputElement | null, value: string) {
     input!.dispatchEvent(new Event('input', { bubbles: true }))
   })
   await flush()
-}
-
-async function pressEnter(input: HTMLInputElement | null) {
-  expect(input).not.toBeNull()
   await act(async () => {
-    input!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }))
+    input!.blur()
   })
   await flush()
 }
 
-function draftIn(scope: HTMLElement | null) {
-  return scope?.querySelector('[data-token-draft]') as HTMLElement | null
-}
-
-function draftInput(draft: HTMLElement | null, name: string) {
-  return draft?.querySelector(`input[name="${name}"]`) as HTMLInputElement | null
-}
-
-function scopeBox(draft: HTMLElement | null, scope: string) {
-  return draft?.querySelector(`[role="checkbox"][data-scope="${scope}"]`) as HTMLElement | null
-}
-
-async function leaveRow(draft: HTMLElement | null, next: HTMLElement | null) {
-  expect(draft).not.toBeNull()
-  expect(next).not.toBeNull()
-  expect(draft!.contains(next)).toBe(false)
-  await act(async () => {
-    next!.focus()
-  })
-  await flush()
-}
-
-function deferred<T>() {
-  let resolve!: (value: T) => void
-  let reject!: (reason: unknown) => void
-  const promise = new Promise<T>((res, rej) => {
-    resolve = res
-    reject = rej
-  })
-  return { promise, resolve, reject }
+function writeCalls() {
+  return vi.mocked(applyConfigChanges).mock.calls.map((call) => call[0])
 }
 
 beforeEach(() => {
@@ -201,233 +163,109 @@ afterEach(async () => {
   localStorage.clear()
 })
 
-describe('TokenList (429-27 Task 1)', () => {
-  it('TOKEN-ENV-NAME-IN-CLEAR: a token row shows its name and Token from {ENV_VAR}, the variable in clear and mono', async () => {
+describe('no token controls (432-22, re-spelled from 429-27 Task 1)', () => {
+  it('C432-NO-TOKEN-CONTROLS: the MCP and dashboard sections render their fields and no token list, row, add row or stdio switch', async () => {
     await mount()
 
-    const mcp = section('mcp')
-    expect(mcp!.querySelector('h3')?.textContent).toBe(ACCESS_TOKENS_HEADING)
-    expect(mcp!.querySelector('[data-field-list="services.mcp.tokens"]')).not.toBeNull()
-    expect(section('run-service-tokens')!.querySelector('[data-field-list="services.dashboard.runServiceTokens"]')).not.toBeNull()
-    expect(section('run-service-tokens')!.querySelector('h3')).toBeNull()
-
-    const row = tokenRow(mcp, 'ci')
-    expect(row).not.toBeNull()
-    expect(row!.textContent).toContain('ci')
-    expect(row!.textContent).toContain(tokenEnvLine('AGENT_QA_MCP_TOKEN'))
-    const mono = Array.from(row!.querySelectorAll('.font-mono')).map((element) => element.textContent)
-    expect(mono).toContain('ci')
-    expect(mono).toContain('AGENT_QA_MCP_TOKEN')
-    const variable = Array.from(row!.querySelectorAll('.font-mono')).find((element) => element.textContent === 'AGENT_QA_MCP_TOKEN')
-    expect(variable?.className).toContain('wrap-anywhere')
-    expect(row!.textContent).not.toContain('[masked]')
-    expect(row!.textContent).not.toContain('•')
-    expect(row!.querySelector('input[type="password"]')).toBeNull()
-
-    const teammate = tokenRow(section('run-service-tokens'), 'teammate')
-    expect(teammate!.textContent).toContain(tokenEnvLine('AGENT_QA_RUN_TOKEN'))
-  })
-
-  it('ADD-MCP-TOKEN-NEEDS-SCOPE: the MCP add row offers the six scopes and writes one append only once a scope is checked and the row settles', async () => {
-    await mount()
-    const mcp = section('mcp')
-
-    await click(buttonIn(mcp, ADD_TOKEN_LABEL))
-    const draft = draftIn(mcp)
-    expect(draft).not.toBeNull()
-    expect(document.body.querySelector('[role="dialog"]')).toBeNull()
-
-    const boxes = Array.from(draft!.querySelectorAll('[role="checkbox"]'))
-    expect(boxes.map((box) => labelOf(box))).toEqual(FunctionScopeSchema.options.map((scope) => FUNCTION_SCOPE_LABELS[scope]))
-    expect(draftInput(draft, 'project')).toBeNull()
-
-    const name = draftInput(draft, 'name')
-    expect(document.activeElement).toBe(name)
-    await pressEnter(name)
-    expect(draft!.textContent).toContain(TOKEN_NAME_REQUIRED_ERROR)
-
-    await type(name, 'agent')
-    await type(draftInput(draft, 'tokenEnvVar'), 'AGENT_QA_AGENT_TOKEN')
-    await pressEnter(draftInput(draft, 'tokenEnvVar'))
-
-    expect(applyConfigChanges).not.toHaveBeenCalled()
-    expect(draft!.textContent).toContain(SCOPE_REQUIRED_ERROR)
-    expect(hook!.status.state).toBe('draft')
-    expect(hook!.draftTabs.has('advanced')).toBe(true)
-
-    const read = boxes.find((box) => labelOf(box) === FUNCTION_SCOPE_LABELS.read) as HTMLElement
-    await click(read)
-    expect(applyConfigChanges).not.toHaveBeenCalled()
-    expect(draftIn(mcp)).not.toBeNull()
-
-    await pressEnter(draftInput(draft, 'tokenEnvVar'))
-
-    expect(vi.mocked(applyConfigChanges).mock.calls).toEqual([
-      [[{ op: 'append', path: ['services', 'mcp', 'tokens'], value: { name: 'agent', tokenEnvVar: 'AGENT_QA_AGENT_TOKEN', scopes: ['read'] } }]],
+    expect(fieldPaths(section('mcp'))).toEqual([
+      'services.mcp.enabled',
+      'services.mcp.transport',
+      'services.mcp.host',
+      'services.mcp.port',
+      'services.mcp.path',
     ])
-    expect(draftIn(mcp)).toBeNull()
-    expect(tokenRow(mcp, 'agent')).not.toBeNull()
-    expect(hook!.draftTabs.has('advanced')).toBe(false)
-  })
-
-  it('ADD-MCP-TOKEN-KEEPS-EVERY-SCOPE: checking scopes writes nothing; leaving the row appends one entry with every checked scope in order', async () => {
-    await mount()
-    const mcp = section('mcp')
-
-    await click(buttonIn(mcp, ADD_TOKEN_LABEL))
-    const draft = draftIn(mcp)
-    await type(draftInput(draft, 'name'), 'agent')
-    await type(draftInput(draft, 'tokenEnvVar'), 'AGENT_QA_AGENT_TOKEN')
-    await click(scopeBox(draft, 'config-write'))
-    expect(applyConfigChanges).not.toHaveBeenCalled()
-    await click(scopeBox(draft, 'read'))
-    expect(applyConfigChanges).not.toHaveBeenCalled()
-
-    await click(scopeBox(draft, 'run'))
-    await click(scopeBox(draft, 'run'))
-    expect(applyConfigChanges).not.toHaveBeenCalled()
-    expect(draftIn(mcp)).not.toBeNull()
-
-    await leaveRow(draft, buttonIn(tokenRow(mcp, 'ci'), deleteActionName('delete-mcp-token', 'ci')))
-
-    expect(vi.mocked(applyConfigChanges).mock.calls).toEqual([
-      [[{ op: 'append', path: ['services', 'mcp', 'tokens'], value: { name: 'agent', tokenEnvVar: 'AGENT_QA_AGENT_TOKEN', scopes: ['read', 'config-write'] } }]],
+    expect(fieldPaths(section('dashboard'))).toEqual([
+      'services.dashboard.port',
+      'services.dashboard.host',
+      'services.dashboard.dbPath',
+      'services.dashboard.artifactsDir',
+      'services.dashboard.baseUrl',
+      'services.dashboard.workspace',
     ])
-    expect(draftIn(mcp)).toBeNull()
-    expect(tokenRow(mcp, 'agent')).not.toBeNull()
-  })
-
-  it('ADD-TOKEN-SCOPES-LOCKED-WHILE-SAVING: the scope checkboxes are disabled while the append is in flight, and a refused append keeps every checked scope', async () => {
-    await mount()
-    const mcp = section('mcp')
-    const write = deferred<never>()
-    vi.mocked(applyConfigChanges).mockReturnValueOnce(write.promise as never)
-
-    await click(buttonIn(mcp, ADD_TOKEN_LABEL))
-    const draft = draftIn(mcp)
-    await type(draftInput(draft, 'name'), 'agent')
-    await type(draftInput(draft, 'tokenEnvVar'), 'AGENT_QA_AGENT_TOKEN')
-    await click(scopeBox(draft, 'read'))
-    expect(applyConfigChanges).not.toHaveBeenCalled()
-    await click(scopeBox(draft, 'config-write'))
-    await pressEnter(draftInput(draft, 'tokenEnvVar'))
-
-    expect(applyConfigChanges).toHaveBeenCalledTimes(1)
-    const boxes = Array.from(draft!.querySelectorAll('[role="checkbox"]')) as HTMLElement[]
-    for (const box of boxes) {
-      expect(box.hasAttribute('data-disabled') || box.getAttribute('aria-disabled') === 'true').toBe(true)
-    }
-    await click(scopeBox(draft, 'run'))
-    expect(scopeBox(draft, 'run')!.getAttribute('aria-checked')).toBe('false')
-    expect(draftInput(draft, 'name')!.disabled).toBe(false)
-
-    await act(async () => {
-      write.reject(new Error('refused'))
-    })
-    await flush()
-
-    expect(applyConfigChanges).toHaveBeenCalledTimes(1)
-    expect(draftIn(mcp)).toBe(draft)
-    expect(scopeBox(draft, 'read')!.getAttribute('aria-checked')).toBe('true')
-    expect(scopeBox(draft, 'config-write')!.getAttribute('aria-checked')).toBe('true')
-    for (const box of Array.from(draft!.querySelectorAll('[role="checkbox"]'))) {
-      expect(box.hasAttribute('data-disabled')).toBe(false)
-      expect((box as HTMLButtonElement).disabled).toBe(false)
+    for (const id of ['mcp', 'dashboard', 'runs'] as const) {
+      const scope = section(id)!
+      expect(scope.querySelector('[data-token-row]'), id).toBeNull()
+      expect(scope.querySelector('[data-token-draft]'), id).toBeNull()
+      expect(scope.querySelector('[data-field-list]'), id).toBeNull()
+      expect(scope.querySelector('[data-field-path*="tokens"]'), id).toBeNull()
+      expect(scope.querySelector('[data-field-path*="stdio"]'), id).toBeNull()
+      expect(scope.querySelector('[data-field-path*="trustScope"]'), id).toBeNull()
+      expect(Array.from(scope.querySelectorAll('button')).map((b) => b.textContent?.trim()), id).not.toContain('Add token')
+      expect(scope.textContent, id).not.toMatch(/access tokens|token scopes|trust scope/i)
     }
   })
 
-  it('ADD-RUN-SERVICE-TOKEN: the run-service add row takes an optional Project and Org and never writes an empty one', async () => {
-    await mount()
-    const service = section('run-service-tokens')
-
-    await click(buttonIn(service, ADD_TOKEN_LABEL))
-    let draft = draftIn(service)
-    expect(draft!.querySelector('[role="checkbox"]')).toBeNull()
-    expect(labelOf(draftInput(draft, 'project')!)).toBe(TRUST_SCOPE_LABELS.project)
-    expect(labelOf(draftInput(draft, 'org')!)).toBe(TRUST_SCOPE_LABELS.org)
-
-    await type(draftInput(draft, 'name'), 'ci-bot')
-    await type(draftInput(draft, 'tokenEnvVar'), 'AGENT_QA_CI_TOKEN')
-    await pressEnter(draftInput(draft, 'tokenEnvVar'))
-
-    expect(vi.mocked(applyConfigChanges).mock.calls).toEqual([
-      [[{ op: 'append', path: ['services', 'dashboard', 'runServiceTokens'], value: { name: 'ci-bot', tokenEnvVar: 'AGENT_QA_CI_TOKEN', trustScope: {} } }]],
-    ])
-    expect(tokenRow(service, 'ci-bot')).not.toBeNull()
-
-    await click(buttonIn(service, ADD_TOKEN_LABEL))
-    draft = draftIn(service)
-    await type(draftInput(draft, 'name'), 'acme')
-    await type(draftInput(draft, 'tokenEnvVar'), 'AGENT_QA_ACME_TOKEN')
-    await type(draftInput(draft, 'project'), 'acme-web')
-    await pressEnter(draftInput(draft, 'project'))
-
-    const [changes] = vi.mocked(applyConfigChanges).mock.calls[1]!
-    expect(changes).toEqual([
-      { op: 'append', path: ['services', 'dashboard', 'runServiceTokens'], value: { name: 'acme', tokenEnvVar: 'AGENT_QA_ACME_TOKEN', trustScope: { project: 'acme-web' } } },
-    ])
-    const value = (changes[0] as { value: { trustScope: Record<string, unknown> } }).value
-    expect(Object.keys(value.trustScope)).toEqual(['project'])
+  it('C432-NO-TOKEN-CONTROLS: the token list module, its copy, its section and its delete actions are gone', () => {
+    expect(existsSync(join(HERE, '..', 'token-list.tsx'))).toBe(false)
+    const retiredCopy = [
+      'ACCESS_TOKENS_HEADING', 'ADD_TOKEN_LABEL', 'NO_TOKENS_TEXT', 'tokenEnvLine', 'TOKEN_FIELD_LABELS',
+      'DISCARD_TOKEN_LABEL', 'TOKEN_NAME_REQUIRED_ERROR', 'TOKEN_ENV_VAR_REQUIRED_ERROR', 'tokenNameTakenError',
+      'SCOPES_LABEL', 'FUNCTION_SCOPE_LABELS', 'SCOPE_REQUIRED_ERROR', 'TRUST_SCOPE_LEGEND', 'TRUST_SCOPE_HELP',
+      'TRUST_SCOPE_LABELS',
+    ]
+    expect(retiredCopy.filter((name) => name in copy)).toEqual([])
+    expect(Object.keys(copy.MCP_FIELD_LABELS)).toEqual(['enabled', 'transport', 'host', 'port', 'path'])
+    expect(Object.keys(copy.MCP_FIELD_HELP)).toEqual(['enabled', 'host'])
+    expect(copy.MCP_FIELD_HELP.enabled).not.toMatch(/token/i)
+    expect(CONFIG_SECTION_IDS as readonly string[]).not.toContain('run-service-tokens')
+    expect(EXPLICIT_ACTION_KINDS as readonly string[]).not.toContain('delete-mcp-token')
+    expect(EXPLICIT_ACTION_KINDS as readonly string[]).not.toContain('delete-run-service-token')
   })
 
-  it('TOKEN-DELETE-UNDO: deleting a token removes its row at once with one undoable unset by name, and Undo restores it', async () => {
+  it('C432-NO-TOKEN-CONTROLS: a retained MCP control still saves through the autosave transaction', async () => {
     await mount()
-    const mcp = section('mcp')
-    const write = deferred<{ revision: string; undo: { token: string; expiresAt: number } }>()
-    vi.mocked(applyConfigChanges).mockReturnValueOnce(write.promise as never)
 
-    const remove = buttonIn(tokenRow(mcp, 'ci'), deleteActionName('delete-mcp-token', 'ci'))
-    expect(remove?.getAttribute('aria-label')).toBe('Delete token ci')
-    expect(remove?.querySelector('svg')?.getAttribute('class')).toContain('lucide-trash')
-    await click(remove)
+    await typeAndBlur(control(['services', 'mcp', 'port']), '4000')
+    await typeAndBlur(control(['services', 'dashboard', 'port']), '4100')
 
-    expect(tokenRow(mcp, 'ci')).toBeNull()
-    expect(vi.mocked(applyConfigChanges).mock.calls).toEqual([
-      [[{ op: 'unset', path: ['services', 'mcp', 'tokens', { name: 'ci' }] }], { undoable: true }],
+    expect(writeCalls()).toEqual([
+      [{ op: 'set', path: ['services', 'mcp', 'port'], value: 4000 }],
+      [{ op: 'set', path: ['services', 'dashboard', 'port'], value: 4100 }],
     ])
-    expect(document.activeElement).toBe(buttonIn(tokenRow(mcp, 'desktop'), deleteActionName('delete-mcp-token', 'desktop')))
-
-    await act(async () => {
-      write.resolve({ revision: 'rev-2', undo: { token: 'tok-mcp', expiresAt: Date.now() + 30_000 } })
-    })
-    await flush()
-    expect(tokenRow(mcp, 'ci')).toBeNull()
-    expect(hook!.status.state).toBe('undo')
-    expect(hook!.status.undo?.line).toBe(undoLine('delete-mcp-token', 'ci'))
-
-    vi.mocked(undoConfigAction).mockResolvedValueOnce({ restored: true, revision: 'rev-3' })
-    await act(async () => {
-      await hook!.undo()
-    })
-    await flush()
-    expect(undoConfigAction).toHaveBeenCalledWith('tok-mcp')
-    expect(tokenRow(mcp, 'ci')).not.toBeNull()
-
-    vi.mocked(applyConfigChanges).mockClear()
-    vi.mocked(applyConfigChanges).mockResolvedValueOnce({
-      revision: 'rev-4',
-      undo: { token: 'tok-service', expiresAt: Date.now() + 30_000 },
-    } as never)
-    const service = section('run-service-tokens')
-    await click(buttonIn(tokenRow(service, 'teammate'), deleteActionName('delete-run-service-token', 'teammate')))
-
-    expect(tokenRow(service, 'teammate')).toBeNull()
-    expect(vi.mocked(applyConfigChanges).mock.calls).toEqual([
-      [[{ op: 'unset', path: ['services', 'dashboard', 'runServiceTokens', { name: 'teammate' }] }], { undoable: true }],
-    ])
-    expect(hook!.status.undo?.line).toBe(undoLine('delete-run-service-token', 'teammate'))
-    expect(document.activeElement).toBe(buttonIn(service, ADD_TOKEN_LABEL))
   })
 
-  it('NO-TOKENS-EMPTY-STATE: a list with no tokens shows NO_TOKENS_TEXT beside Add token', async () => {
-    vi.mocked(fetchConfig).mockResolvedValue(answer({}) as never)
+  it('ALLOW-PRODUCTION-SWITCH: allowProduction is an ordinary Runs switch, off by default, saved by the autosave transaction', async () => {
     await mount()
 
-    for (const id of ['mcp', 'run-service-tokens'] as const) {
-      const add = buttonIn(section(id), ADD_TOKEN_LABEL)
-      expect(add).not.toBeNull()
-      expect(section(id)!.querySelector('[data-token-row]')).toBeNull()
-      expect(add!.parentElement?.textContent).toContain(NO_TOKENS_TEXT)
-    }
+    expect(fieldPaths(section('runs'))).toEqual(['use.parallel', 'use.workers', 'use.buildTag', 'allowProduction'])
+    const toggle = control<HTMLButtonElement>(['allowProduction'])
+    expect(toggle?.getAttribute('role')).toBe('switch')
+    expect(toggle?.getAttribute('aria-checked')).toBe('false')
+    const row = section('runs')!.querySelector('[data-field-path="allowProduction"]')!
+    expect(row.textContent).toContain(copy.RUNS_FIELD_LABELS.allowProduction)
+    expect(row.textContent).toContain(copy.RUNS_FIELD_HELP.allowProduction)
+
+    await click(toggle)
+    expect(writeCalls()).toEqual([[{ op: 'set', path: ['allowProduction'], value: true }]])
+    expect(toggle?.getAttribute('aria-checked')).toBe('true')
+
+    await click(toggle)
+    expect(writeCalls()).toEqual([
+      [{ op: 'set', path: ['allowProduction'], value: true }],
+      [{ op: 'set', path: ['allowProduction'], value: false }],
+    ])
+  })
+
+  it('ALLOW-PRODUCTION-SWITCH: a refused allowProduction write fails like any field, and Retry sends it again', async () => {
+    vi.mocked(fetchConfig).mockResolvedValue(answer({ ...records, allowProduction: false }) as never)
+    vi.mocked(applyConfigChanges).mockRejectedValueOnce(
+      new ApiError(422, 'Unprocessable', { error: 'validation_failed', issues: [] }),
+    )
+    await mount()
+
+    const toggle = control<HTMLButtonElement>(['allowProduction'])
+    expect(toggle?.getAttribute('aria-checked')).toBe('false')
+    await click(toggle)
+    expect(hook!.status.state).toBe('failed')
+
+    await act(async () => {
+      hook!.retry()
+    })
+    await flush()
+    expect(writeCalls()).toEqual([
+      [{ op: 'set', path: ['allowProduction'], value: true }],
+      [{ op: 'set', path: ['allowProduction'], value: true }],
+    ])
+    expect(hook!.status.state).not.toBe('failed')
   })
 })

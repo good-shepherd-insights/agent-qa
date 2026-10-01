@@ -36,15 +36,13 @@ const { fullConfig } = vi.hoisted(() => ({
       envFile: '.env.local',
       secretsFile: '.env.secrets.local',
     },
+    allowProduction: true,
     knowledge: { dir: 'agent-qa-knowledge', commitArtifacts: 'none', contextBudgetTokens: 4000 },
     services: {
       dashboard: {
         port: 4173,
         dbPath: '.agent-qa/runs.db',
         artifactsDir: '.agent-qa/artifacts',
-        runServiceTokens: [
-          { name: 'teammate', tokenEnvVar: 'AGENT_QA_RUN_TOKEN', trustScope: { org: 'acme', project: 'acme-web' } },
-        ],
       },
       cache: { dir: '.agent-qa/cache', ttl: '7d' },
       logging: { level: 'info' },
@@ -62,7 +60,6 @@ const { fullConfig } = vi.hoisted(() => ({
         enabled: true,
         transport: 'http',
         port: 4174,
-        tokens: [{ name: 'ci', tokenEnvVar: 'AGENT_QA_MCP_TOKEN', scopes: ['read'] }],
       },
     },
     registry: {

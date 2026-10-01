@@ -17,9 +17,10 @@
 // caller lists and calls what this manifest lists. The emitted `$note` says so in the document
 // itself, so a reader who never opens this source still learns it.
 //
-// NO SECRET PATH, STRUCTURALLY (395 D-11, T-398-17). 2026-10-01 (432-21, D-12): the posture no
-// longer reports declared MCP credentials at all — `services.mcp.tokens` is not read, and the
-// resolver that once turned a declared name into a credential is deleted — so `tokenEnvRefs` is
+// NO SECRET PATH, STRUCTURALLY (395 D-11, T-398-17). 2026-10-01 (432-21/432-22, D-12): the posture
+// no longer reports declared MCP credentials at all — `services.mcp.tokens` is a deleted config key
+// (a file declaring it does not resolve), and the resolver that once turned a declared name into a
+// credential is deleted — so `tokenEnvRefs` is
 // always empty. The sentinel-absence cell in `conformance/manifest.test.ts` keeps that true as the
 // file changes.
 

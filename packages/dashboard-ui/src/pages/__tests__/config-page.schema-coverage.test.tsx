@@ -93,9 +93,6 @@ const { sampleConfig, fullConfig, page } = vi.hoisted(() => ({
         dbPath: '.agent-qa/runs.db',
         artifactsDir: '.agent-qa/artifacts',
         workspace: '.',
-        runServiceTokens: [
-          { name: 'teammate', tokenEnvVar: 'AGENT_QA_RUN_TOKEN', trustScope: { org: 'acme', project: 'acme-web' } },
-        ],
       },
       authState: { dir: '.agent-qa/auth' },
       cache: { dir: '.agent-qa/cache', ttl: '7d' },
@@ -116,8 +113,6 @@ const { sampleConfig, fullConfig, page } = vi.hoisted(() => ({
         host: '127.0.0.1',
         port: 4174,
         path: '/mcp',
-        stdio: { grantConfigWrite: false },
-        tokens: [{ name: 'ci', tokenEnvVar: 'AGENT_QA_MCP_TOKEN', scopes: ['read'] }],
       },
     },
     registry: {
@@ -157,6 +152,7 @@ const { sampleConfig, fullConfig, page } = vi.hoisted(() => ({
       buildTag: 'nightly',
       cache: true,
     },
+    allowProduction: true,
     analytics: {
       privacy: true,
       passRateScope: { attributes: { 'git.branch': 'master', 'user.email': { regex: '^ci@' } } },
@@ -453,14 +449,13 @@ async function assertConfigSectionShells(destinations: string[]) {
   }
 }
 
-// plugins.* is a file edit by decision and safety.* is deleted by Phase 432; every other leaf of
-// the published schema has a field on the page (D-06). 429-44: the page's write door refuses the
-// same roots, so both read one constant.
+// plugins.* is a file edit by decision; every other leaf of the published schema has a field on
+// the page (D-06). 429-44: the page's write door refuses the same roots, so both read one constant.
+// 2026-10-01 (432-22): safety.* left the schema and the denied roots; allowProduction has its owner.
 const DENIED_ROOTS: readonly string[] = CONFIG_WRITE_DENIED_ROOTS
 const PAGE_LEAVES = CONFIG_SCHEMA_LEAVES.filter(
   (pattern) => !DENIED_ROOTS.includes(pattern.split('.')[0]!),
 )
-const PENDING_PAGE_OWNER: readonly string[] = ['allowProduction']
 
 /** A concrete path for a leaf pattern or list owner: each '*' becomes 'k' and each '[]' index 0. */
 function concretePath(pattern: string): ConfigPathSegment[] {
@@ -542,19 +537,41 @@ afterEach(() => {
 })
 
 describe('ConfigPage schema coverage', () => {
-  it('SCHEMA-COVERAGE-EVERY-LEAF: every schema leaf but plugins and safety has a field or list owner on some tab', async () => {
+  it('SCHEMA-COVERAGE-EVERY-LEAF: every schema leaf but plugins has a field or list owner on some tab', async () => {
     page.config = fullConfig
     await renderAt('/config/models')
 
-    expect(PAGE_LEAVES.length, 'the witness: the schema walk found the leaves').toBeGreaterThanOrEqual(95)
+    expect(PAGE_LEAVES.length, 'the witness: the schema walk found the leaves').toBeGreaterThanOrEqual(88)
     const marks = await collectFieldMarks()
     const uncovered = PAGE_LEAVES.filter((pattern) => !marks.some((mark) => coversLeaf(mark, pattern)))
-    // 432-02 adds the allowProduction leaf ahead of its page owner; 432-22 adds the owner and
-    // pins this back to empty. Any other uncovered leaf still reds.
-    expect(uncovered, `schema leaves with no field on the page: ${uncovered.join(', ')}`).toEqual(PENDING_PAGE_OWNER)
-    for (const pattern of ['use.workers', 'use.buildTag', 'eval.gate2.canaryHorizonBuilds']) {
+    // 432-02 left allowProduction awaiting its owner; 432-22 adds it, so no leaf is pending.
+    expect(uncovered, `schema leaves with no field on the page: ${uncovered.join(', ')}`).toEqual([])
+    for (const pattern of ['use.workers', 'use.buildTag', 'eval.gate2.canaryHorizonBuilds', 'allowProduction']) {
       expect(marks.some((mark) => mark.kind === 'path' && mark.value === pattern), pattern).toBe(true)
     }
+  })
+
+  // 432-22 (D-12/D-18/D-22): the final page-writable count, spelled by hand. 92 strict leaves less
+  // the four plugin leaves; each has exactly one rendered owner and the write door admits it.
+  it('C432-CONFIG-WRITABLE-88: exactly 88 page-writable leaves, each owned on the page, and only the four plugin leaves excluded', async () => {
+    page.config = fullConfig
+    await renderAt('/config/models')
+
+    expect(CONFIG_SCHEMA_LEAVES).toHaveLength(92)
+    expect(PAGE_LEAVES).toHaveLength(88)
+    expect(CONFIG_WRITE_DENIED_ROOTS).toEqual(['plugins'])
+    expect(CONFIG_SCHEMA_LEAVES.filter((pattern) => !PAGE_LEAVES.includes(pattern))).toEqual([
+      'plugins.auth[].package',
+      'plugins.auth[].path',
+      'plugins.providers[].package',
+      'plugins.providers[].path',
+    ])
+    const marks = await collectFieldMarks()
+    const owned = PAGE_LEAVES.filter((pattern) => marks.some((mark) => coversLeaf(mark, pattern)))
+    expect(owned).toHaveLength(88)
+    expect(owned.filter((pattern) => !isPageWritableConfigPath(concretePath(pattern)))).toEqual([])
+    const production = marks.filter((mark) => mark.kind === 'path' && mark.value === 'allowProduction')
+    expect(production.map((mark) => mark.where)).toEqual(['execution/runs'])
   })
 
   it('SCHEMA-COVERAGE-EXACTLY-ONCE: each leaf is owned by exactly one section, and no field or list renders in two sections', async () => {
@@ -588,7 +605,7 @@ describe('ConfigPage schema coverage', () => {
     expect(refused, `fields the page renders but its door refuses: ${refused.join(', ')}`).toEqual([])
 
     const excluded = CONFIG_SCHEMA_LEAVES.filter((pattern) => !PAGE_LEAVES.includes(pattern))
-    expect(excluded.length, 'the witness: plugins and safety leaves exist').toBeGreaterThan(0)
+    expect(excluded.length, 'the witness: plugins leaves exist').toBeGreaterThan(0)
     const admitted = excluded.filter((pattern) => isPageWritableConfigPath(concretePath(pattern)))
     expect(admitted, `leaves without a field that the door still admits: ${admitted.join(', ')}`).toEqual([])
   })

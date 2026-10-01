@@ -90,7 +90,10 @@ describe('432-09 applied output key sets', () => {
 // below now asserts their absence. TrustScopeSchema stays until 432-22. `STANDING_APPROVAL_SCOPE` was the scope the MCP bearer credential carried
 // (`cli/src/composition/mcp-token-resolution.ts`), so it moved beside `TrustScope` and stayed until the
 // token owner removed that credential. 2026-10-01, 432-21 (D-12): the resolver and the bearer credential
-// are deleted, so the constant joins the absence set below. No later absence is asserted here early.
+// are deleted, so the constant joins the absence set below. 2026-10-01, 432-22 (D-03/D-12): the
+// run-service token DTO, `TrustScopeSchema`'s last consumer, is deleted with its config key, so the
+// projection, its module and its barrel exports join the absence set too. The `TrustScope` and
+// `TrustCredential` caller types stay until 432-39. No later absence is asserted here early.
 const SRC = join(dirname(fileURLToPath(import.meta.url)), '..')
 
 const RETIRED_GRANT_RUNTIME_EXPORTS = [
@@ -113,6 +116,8 @@ const RETIRED_GRANT_RUNTIME_EXPORTS = [
   'pinDenies',
   // 432-21: the scope the MCP bearer credential carried, deleted with that credential.
   'STANDING_APPROVAL_SCOPE',
+  // 432-22: the trust-scope wire projection, deleted with the run-service token DTO.
+  'TrustScopeSchema',
 ] as const
 
 const RETIRED_GRANT_MODULES = [
@@ -121,6 +126,8 @@ const RETIRED_GRANT_MODULES = [
   'chat/pin-overlay.ts',
   // 432-19: the last grant-shaped contract, with the safety ports that read it.
   'safety/standing-approval.ts',
+  // 432-22: the projection module, with its last consumer.
+  'safety/grant-ops.ts',
 ] as const
 
 describe('C432-NO-GRANT-CONTRACTS: the grant ledger, grant op, protected-class and pin contracts are gone', () => {
@@ -156,16 +163,100 @@ describe('C432-NO-GRANT-CONTRACTS: the grant ledger, grant op, protected-class a
   })
 
   it('C432-NO-GRANT-CONTRACTS: the interim members stay until their own owners remove them', () => {
-    // Not vacuous: the census above would pass over an empty barrel, so the retained members are
-    // named and found.
-    expect(exported('TrustScopeSchema'), 'TrustScopeSchema stays for config/run-service.ts until 432-22')
-      .toBeDefined()
+    // Not vacuous: the census above would pass over an empty barrel, so the retained member is
+    // named and found. 432-22 removed `TrustScopeSchema`; the key set stays with the caller types.
     expect(exported('TRUST_SCOPE_KEYS')).toEqual(['project', 'org'])
+    expect((safety as Record<string, unknown>).TRUST_SCOPE_KEYS).toEqual(['project', 'org'])
   })
 
-  it('C432-NO-GRANT-CONTRACTS: grant-ops.ts holds only the trust-scope projection', async () => {
-    const module = await import('../safety/grant-ops') as Record<string, unknown>
-    expect(Object.keys(module).sort()).toEqual(['TrustScopeSchema'])
+  it('C432-NO-GRANT-CONTRACTS: no schema source imports the deleted projection module', () => {
+    // Replaces "grant-ops.ts holds only the trust-scope projection" (432-18): the module is gone.
+    const offenders: string[] = []
+    const walk = (dir: string): void => {
+      for (const entry of readdirSync(dir, { withFileTypes: true })) {
+        const path = join(dir, entry.name)
+        if (entry.isDirectory()) walk(path)
+        else if (entry.name.endsWith('.ts') && /from '(\.\.?\/)+(safety\/)?grant-ops'/.test(readFileSync(path, 'utf8'))) {
+          offenders.push(path)
+        }
+      }
+    }
+    walk(SRC)
+    expect(offenders).toEqual([])
+  })
+})
+
+// 2026-10-01, 432-22 (D-03/D-12/D-22): the token declaration DTOs leave with their config keys, and
+// with them the trust-scope projection. Spelled by hand; no member is derived from a production value.
+const RETIRED_TOKEN_CONFIG_EXPORTS = [
+  'McpTokenEntrySchema',
+  'McpStdioGrantSchema',
+  'RunServiceTokenEntrySchema',
+  'TrustScopeSchema',
+] as const
+
+describe('C432-NO-TRUST-CONTRACT: token declarations and the trust-scope projection are gone', () => {
+  it('C432-NO-TRUST-CONTRACT: neither barrel exports a token DTO or the projection, and the modules are deleted', () => {
+    const root = new Set(Object.keys(schema))
+    const safetyBarrel = new Set(Object.keys(safety))
+    expect(RETIRED_TOKEN_CONFIG_EXPORTS.filter(name => root.has(name)), 'root barrel').toEqual([])
+    expect(RETIRED_TOKEN_CONFIG_EXPORTS.filter(name => safetyBarrel.has(name)), 'safety barrel').toEqual([])
+    expect(['config/mcp.ts', 'config/run-service.ts', 'safety/grant-ops.ts'].filter(path => existsSync(join(SRC, path))))
+      .toEqual([])
+  })
+
+  it('C432-NO-TRUST-CONTRACT: the run-service readiness answer carries no credential fact', () => {
+    const readiness = exported('RunServiceReadinessSchema')
+    expect(keysOf(readiness)).toEqual(sorted(['service', 'hostComposed', 'contractVersion']))
+    const parse = (value: unknown) => (readiness as { safeParse(value: unknown): { success: boolean } }).safeParse(value)
+    expect(parse({ service: 'up', hostComposed: true, contractVersion: 1 }).success).toBe(true)
+    expect(parse({ service: 'up', hostComposed: true, authConfigured: false, contractVersion: 1 }).success,
+      'the retired member is refused by the strict wire contract').toBe(false)
+  })
+
+  it('C432-NO-TRUST-CONTRACT: the config write door names no token list and no safety root', () => {
+    expect(exported('CONFIG_NAMED_ARRAYS')).toEqual(['registry.llms'])
+    expect(exported('CONFIG_WRITE_DENIED_ROOTS')).toEqual(['plugins'])
+  })
+})
+
+// 2026-10-01, 432-22 (D-14/D-15/D-22): an ask turn answers no approval or trust refusal. The only
+// target policy sentence is the plain production refusal; an old session's recorded approval
+// decision stays readable and nothing writes a new one.
+describe('C432-ASK-PLAIN-REFUSAL: the ask contract carries no approval or trust refusal', () => {
+  it('C432-ASK-PLAIN-REFUSAL: a turn result has no denial, remedy or approval member', () => {
+    expect(keysOf(exported('AgentAskResultSchema'))).toEqual(sorted([
+      'sessionId', 'turnId', 'status', 'answer', 'receipts', 'results', 'unhandled', 'refusedLineCount',
+    ]))
+    expect(keysOf(exported('AgentAskInputSchema'))).toEqual(sorted(['message', 'sessionId']))
+    const turn = exported('AgentAskResultSchema') as { safeParse(value: unknown): { success: boolean; data?: unknown } }
+    const failClosed = {
+      sessionId: 's', turnId: 't', status: 'fail_closed', receipts: [], results: [],
+      unhandled: { clause: 'delete the run', reason: 'no capability matched' },
+    }
+    const parsed = turn.safeParse({ ...failClosed, denials: [{ remedies: [] }] })
+    expect(parsed.success).toBe(true)
+    expect(Object.keys(parsed.data as object)).not.toContain('denials')
+  })
+
+  it('C432-ASK-PLAIN-REFUSAL: the production refusal is one plain sentence naming the target and the opt-in line', () => {
+    const build = exported('buildProductionRefusal') as (names: readonly string[]) => string
+    const optIn = exported('ALLOW_PRODUCTION_OPT_IN') as string
+    const message = build(['shop'])
+    expect(message).toContain('shop')
+    expect(message).toContain(optIn)
+    expect(message).not.toMatch(/approv|confirm|grant|trust|--yes|\[y\/N\]|remed/i)
+  })
+
+  it('C432-ASK-PLAIN-REFUSAL: an old recorded approval_decision event stays readable by the session reader', () => {
+    expect(exported('CHAT_SESSION_EVENT_KINDS') as readonly string[]).toContain('approval_decision')
+    const guard = exported('guardChatSessionEvent') as (value: unknown, version: number) => { kind: string }
+    const version = exported('CURRENT_CHAT_SESSION_SCHEMA_VERSION') as number
+    const recorded = {
+      kind: 'approval_decision', turnId: 't-1', at: '2026-09-01T00:00:00.000Z',
+      actionClass: 'fn:knowledge.accept', decision: 'approved', source: 'gate',
+    }
+    expect(guard(recorded, version).kind).toBe('approval_decision')
   })
 })
 
@@ -190,5 +281,15 @@ export type RetiredChatPinOverlay = import('../index').ChatPinOverlay
 export type RetiredStandingApprovalGrant = import('../index').StandingApprovalGrant
 // @ts-expect-error 432-19: and it is gone from the safety barrel too
 export type RetiredSafetyStandingApprovalGrant = import('../safety/index').StandingApprovalGrant
-// The interim member is still a type a consumer can name (432-22 removes it).
+// The caller types stay until 432-39 removes the optional caller fields.
 export type RetainedTrustScope = import('../index').TrustScope
+export type RetainedTrustCredential = import('../index').TrustCredential
+// C432-NO-TRUST-CONTRACT, type level (432-22).
+// @ts-expect-error the MCP token entry is deleted with services.mcp.tokens
+export type RetiredMcpTokenEntry = import('../index').McpTokenEntry
+// @ts-expect-error the stdio grant is deleted with services.mcp.stdio.grantConfigWrite
+export type RetiredMcpStdioGrant = import('../index').McpStdioGrant
+// @ts-expect-error the run-service token entry is deleted with services.dashboard.runServiceTokens
+export type RetiredRunServiceTokenEntry = import('../index').RunServiceTokenEntry
+// @ts-expect-error the readiness answer has no credential fact
+export type RetiredAuthConfigured = import('../index').RunServiceReadiness['authConfigured']

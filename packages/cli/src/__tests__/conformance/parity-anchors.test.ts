@@ -564,6 +564,10 @@ describe('the built-binary anchors (D-02)', () => {
 
       const manifest = AgentManifestSchema.parse(JSON.parse(outcome.stdout) as unknown)
 
+      // 2026-10-01 (432-22, D-22): the legacy token block is a deleted key, so the project's config
+      // does not resolve (the ordinary strict error) and the manifest still answers, whole.
+      expect(manifest.posture.configuration, 'a legacy token block must fail strict validation')
+        .toBe('unresolved')
       // 2026-10-01 (432-21, D-12): NO REF IS REPORTED — the legacy token block is read by nothing.
       // The non-vacuity control is the whole document and the echo cell below: the binary ran, the
       // value was readable in its environment, and it printed it nowhere.

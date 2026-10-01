@@ -103,7 +103,6 @@ function fakePorts(overrides: Partial<RunServicePorts> = {}): RunServicePorts {
     readiness: () => ({
       service: 'up',
       hostComposed: true,
-      authConfigured: false,
       contractVersion: RUN_SERVICE_CONTRACT_VERSION,
     }),
     // The DEFAULT is the honest absence, not a stub that mints: a fixture that composed no live
@@ -281,17 +280,16 @@ describe('GET /ok is a service route like every other one', () => {
     expect(response.status).toBe(200)
     expect(response.headers.get('content-type')).toContain('application/json')
     const body = RunServiceReadinessSchema.parse(await response.json())
-    // 432-21 (D-12): a local caller with no token is served; `authConfigured` is always false.
+    // 432-21 (D-12): a local caller with no token is served; 432-22 removed `authConfigured`.
     expect(body).toEqual({
       service: 'up',
       hostComposed: true,
-      authConfigured: false,
       contractVersion: RUN_SERVICE_CONTRACT_VERSION,
     })
     // It never claims a run will succeed: there is no `ready`, no verdict prediction, and no
     // knowledge/embedder rung — those are 407's `doctor`.
     expect(Object.keys(body).sort()).toEqual(
-      ['authConfigured', 'contractVersion', 'hostComposed', 'service'],
+      ['contractVersion', 'hostComposed', 'service'],
     )
   })
 
@@ -300,7 +298,6 @@ describe('GET /ok is a service route like every other one', () => {
       readiness: () => ({
         service: 'up',
         hostComposed: false,
-        authConfigured: true,
         contractVersion: RUN_SERVICE_CONTRACT_VERSION,
       }),
     }))
@@ -488,11 +485,11 @@ describe('the readiness predicate has ONE declaration site, and it is not here',
       'utf8',
     )
     // A SOURCE ASSERTION, because the claim is about where a rule LIVES rather than about what a
-    // response contains: a second copy of these four facts would agree with the first on the day
+    // response contains: a second copy of these three facts would agree with the first on the day
     // it was written and drift on some later one, and a response-shape cell cannot see the
     // difference. The composition owns `createRunServiceReadiness`; this module owns the route.
     expect(source).toContain('ports.readiness()')
-    for (const spelling of ['hostComposed:', 'authConfigured:', "service: 'up'"]) {
+    for (const spelling of ['hostComposed:', "service: 'up'"]) {
       expect(source, spelling).not.toContain(spelling)
     }
     // And it never spells the version either — the constant is schema's, read by the composition.

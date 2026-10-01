@@ -725,11 +725,9 @@ export class RunNotReadyError extends Error {
  * invoke path's guard throws on, so a readiness that says yes and a start that says no cannot
  * disagree.
  *
- * `authConfigured` is NOT read, and that is a decision rather than an omission. It reports whether
- * any run-service CREDENTIAL resolved, which is a fact about the remote door; the shipped default
- * for a project that declared none is `false`, and that project's dashboard starts runs through
- * the local door, which needs no credential (402-05). A gate that read it would refuse every
- * default install.
+ * 2026-10-01 (432-22, D-12): the readiness answer has no `authConfigured` member. It reported
+ * whether a run-service credential resolved, which no project can declare any more, and the gate
+ * never read it.
  */
 function notReadyReason(readiness: RunServiceReadiness): string | undefined {
   if (readiness.service !== 'up') return 'the run service is not up'
@@ -743,7 +741,6 @@ function isReadiness(value: unknown): value is RunServiceReadiness {
   const candidate = value as Record<string, unknown>
   return typeof candidate.service === 'string'
     && typeof candidate.hostComposed === 'boolean'
-    && typeof candidate.authConfigured === 'boolean'
 }
 
 /**
@@ -757,8 +754,8 @@ function isReadiness(value: unknown): value is RunServiceReadiness {
  * nobody measured, which is a worse failure than the race the preflight removes.
  *
  * THE COST OF THIS CARVE-OUT IS NAMED RATHER THAN HIDDEN: against such a door the gate is a no-op.
- * `agent-qa dashboard` ALWAYS supplies the predicate — with `authConfigured: false` when nothing is
- * declared, precisely so the browser gets an honest answer either way — so in the shipped product
+ * `agent-qa dashboard` ALWAYS supplies the predicate, precisely so the browser gets an honest
+ * answer — so in the shipped product
  * the gate is always live. What no cell in this plan pins is that the shipped command still
  * supplies it; if that threading were ever removed the gate would silently become a no-op.
  */

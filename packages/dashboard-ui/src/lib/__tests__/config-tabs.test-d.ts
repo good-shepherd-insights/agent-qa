@@ -65,7 +65,6 @@ test('C429-CONFIG-SECTIONS-EXACT', () => {
     | 'logging'
     | 'pass-rate-scope'
     | 'mcp'
-    | 'run-service-tokens'
     | 'eval'
     | 'config-file'
   type Listed = (typeof CONFIG_SECTIONS)[ConfigTab][number]
@@ -161,8 +160,6 @@ test('C429-EXPLICIT-ACTION-KINDS-EXACT', () => {
     | 'delete-target'
     | 'delete-device'
     | 'delete-device-farm'
-    | 'delete-mcp-token'
-    | 'delete-run-service-token'
     | 'sign-out'
     | 'remove-key'
     | 'change-knowledge-dir'

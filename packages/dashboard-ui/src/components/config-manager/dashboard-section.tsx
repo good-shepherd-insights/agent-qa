@@ -2,7 +2,7 @@ import { ConfigField } from "@/components/config-manager/config-field"
 import { DataPathField } from "@/components/config-manager/data-path-field"
 import { DASHBOARD_FIELD_HELP, DASHBOARD_FIELD_LABELS, PORT_RESTART_HELP } from "@/lib/config-copy"
 
-// Run-service tokens are the other services.dashboard leaf; the Advanced tab owns them.
+// Every services.dashboard leaf. 2026-10-01 (432-22, D-12): run-service tokens are deleted with their key.
 export function DashboardSection() {
   return (
     <>

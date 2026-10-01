@@ -636,6 +636,8 @@ describe('contextual feedback on the shipped bundle (426-16, 426-17)', () => {
       // The ask tier for fn:runs.mark is the default gate. failure-view-dom's fixture carries no
       // safety block and asks; run-mark-browser's scene deletes safety.trustMode. Mirror both: the
       // config must reach the cold reader with no trustMode, and what it held is recorded.
+      // 2026-10-01 (432-22, D-15/D-22): `safety` is a deleted key, so no fixture can carry one and
+      // the branch below is a guard that records an unexpected block rather than a live path.
       const config = JSON.parse(readFileSync(fixture.project.configPath, 'utf8')) as { safety?: { trustMode?: unknown } }
       const gate = { safety: config.safety ?? null, trustModeRemoved: config.safety?.trustMode !== undefined }
       if (gate.trustModeRemoved) {

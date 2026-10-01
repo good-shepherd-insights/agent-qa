@@ -1,6 +1,6 @@
 // The `agent.ask` op's input and output contracts (Phase 392, D-24).
 //
-// D-24 is why these are here at all: the turn entry is a REGISTERED, gated function-layer op, and
+// D-24 is why these are here at all: the turn entry is a REGISTERED function-layer op, and
 // the REPL, the one-shot `ask` verb, 396's MCP projection and 397's parity suite are all clients of
 // it. An op needs declared contracts, and a contract several surfaces render needs one spelling.
 //

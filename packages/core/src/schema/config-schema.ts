@@ -47,9 +47,9 @@ const AgentQaConfigSchemaInner = z.object({
   // 432 D-18: the one production opt-in. Optional with no default: its consumer reads absence as
   // false, so only an explicit `true` in the validated config authorizes a production target.
   allowProduction: z.boolean().optional(),
-  // D-15 config half: explicit opt-in trusted-ask mode (the CLI flag half is plan 362-06).
-  // Strict so unknown safety subkeys are rejected — no implicit/unscoped trust channel (§2.3).
-  safety: z.object({ trustMode: z.boolean().optional() }).strict().optional(),
+  // 2026-10-01 (432-22, D-15/D-18/D-22): the `safety` section (`safety.trustMode`) is deleted with
+  // trust mode. `allowProduction` above is the only production opt-in, and a file that still
+  // declares `safety` gets the normal strict unrecognized-key error.
   // D-03 (Phase 372): eval substrate params. `judge` references a NAMED registry.llms entry;
   // strict so unknown eval subkeys are rejected.
   eval: z.object({

@@ -71,9 +71,6 @@ export type {
   EffectiveWorkersInput,
   IosPlatformConfig,
   MaskingClass,
-  McpStdioGrant,
-  McpTokenEntry,
-  RunServiceTokenEntry,
   PlatformBase,
   PlatformConfig,
   RemoteDeviceConfig,
@@ -115,9 +112,6 @@ export {
   isConfigSchemaPath,
   isPageWritableConfigPath,
   MASKING_CLASSES,
-  McpStdioGrantSchema,
-  McpTokenEntrySchema,
-  RunServiceTokenEntrySchema,
   platformBase,
   platformConfigSchema,
   remoteDeviceSchema,
@@ -1453,8 +1447,9 @@ export {
 // 2026-10-01 (432-19, D-15): the remedy vocabulary, the execution-policy verdict and result, and the
 // standing-approval contract are deleted with the gate. A refusal is a plain reason.
 // 2026-10-01 (432-18): the grant verbs' contracts, the protected-class set and the standing-grants
-// port are deleted. The trust-scope projection stays for `config/run-service.ts` until 432-22.
-export { TrustScopeSchema } from './safety/index'
+// port are deleted. 2026-10-01 (432-22, D-12): the trust-scope wire projection leaves with its last
+// consumer, the run-service token DTO; the `TrustScope` and `TrustCredential` caller types stay
+// until 432-39 removes the optional caller fields.
 export type {
   RiskActionDescriptor,
   RiskTier,

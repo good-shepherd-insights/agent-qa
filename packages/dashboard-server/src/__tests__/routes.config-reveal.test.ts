@@ -135,11 +135,8 @@ const revealConfig = [
   '  secretsFile: .env.secrets.local',
   'services:',
   '  mcp:',
-  '    tokens:',
-  '      - name: ci',
-  '        tokenEnvVar: AGENT_QA_MCP_TOKEN',
-  '        scopes:',
-  '          - read',
+  '    enabled: true',
+  '    port: 3471',
   'registry:',
   '  llms:',
   '    - name: gpt',
@@ -239,13 +236,15 @@ describe('POST /api/config/reveal (429-06)', () => {
     expect(JSON.parse(notJson.body)).toEqual({ error: 'invalid_write_input' })
   })
 
-  it('REVEAL-SECRET-PATHS-ONLY: a plain path and an env-var-name path are refused', async () => {
+  // 432-22 (D-12): the env-var-name witness was the MCP token variable, deleted with the token list;
+  // a plain MCP leaf stands in beside the plain timeout.
+  it('REVEAL-SECRET-PATHS-ONLY: plain paths are refused (no leaf is an env-var name since 432-22)', async () => {
     await useConfigWorkspace()
     process.env.AGENT_QA_MCP_TOKEN = ENV_TOKEN
 
     for (const path of [
       ['use', 'timeout', 'step'],
-      ['services', 'mcp', 'tokens', { name: 'ci' }, 'tokenEnvVar'],
+      ['services', 'mcp', 'port'],
     ]) {
       const answer = await reveal(path)
       expect(answer.status, JSON.stringify(path)).toBe(422)

@@ -154,9 +154,10 @@ function discoveryProject(mcpPort: number) {
   writeFileSync(f.configPath, [
     'workspace:', '  testMatch: [tests/**/*.yaml]', '  suiteMatch: [suites/**/*.suite.yaml]',
     '  hooksFile: hooks.yaml', '  envFile: .env', '  secretsFile: .env.secrets.local',
-    'safety:', '  trustMode: true', 'use:', '  mobile:', '    appState: preserve',
-    'services:', '  mcp:', `    port: ${String(mcpPort)}`, '    tokens:',
-    '      - name: reader', '        tokenEnvVar: AGENT_QA_431_06_READER', '        scopes: [read]', '',
+    // 432-22 (D-12/D-22): no `safety` block and no MCP token list; both keys are deleted, and the
+    // co-hosted endpoint mounts for a declared `services.mcp` block alone (432-21).
+    'use:', '  mobile:', '    appState: preserve',
+    'services:', '  mcp:', `    port: ${String(mcpPort)}`, '',
   ].join('\n'))
   writeFileSync(join(f.root, 'hooks.yaml'), 'hooks: []\n')
   writeFileSync(join(f.root, '.env'), '')

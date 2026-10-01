@@ -9,9 +9,9 @@
 | **Mounted** | always | always (since 2026-10-01) |
 | **Reachable from** | loopback only | loopback only |
 
-**2026-10-01: the run-service tokens are gone.** `services.dashboard.runServiceTokens` is no longer
-read, no route asks for an `Authorization` header, and an `Authorization` header you still send is
-ignored. Every caller can call every operation (432 D-12). What still stops other machines and
+**2026-10-01: the run-service tokens are gone.** `services.dashboard.runServiceTokens` is deleted: a
+config that still declares it fails validation with the ordinary unrecognized-key error. No route
+asks for an `Authorization` header, and an `Authorization` header you still send is ignored. Every caller can call every operation (432 D-12). What still stops other machines and
 websites (432 D-13) is the loopback bind, the Host check and the same-site check described below.
 
 ## The dashboard binds `127.0.0.1`, and only loopback

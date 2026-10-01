@@ -1846,8 +1846,7 @@ interface RouterDeps {
    * process can run anything.
    *
    * ABSENT IS THE LEGACY MOUNT, NOT AN UNCONFIGURED SERVICE. `agent-qa dashboard` ALWAYS supplies
-   * this — with `authConfigured: false`, always since 432-21 (D-12: no credential can be declared),
-   * because the browser preflight needs an honest answer and a 404 is not one. A router built the legacy
+   * this, because the browser preflight needs an honest answer and a 404 is not one. A router built the legacy
    * two-argument way has none, and that arm answers 503 by name on `agentHost`'s idiom.
    */
   runServiceReadiness?: () => RunServiceReadiness

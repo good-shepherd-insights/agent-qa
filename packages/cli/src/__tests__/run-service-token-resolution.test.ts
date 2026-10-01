@@ -12,10 +12,11 @@
 //   * the two-arm verdict with no permissive third -> the door reads no `Authorization` header, and
 //     what it refuses first is a cross-site request (`run-service-auth-hardening.test.ts`);
 //   * the masker seeded by declared name -> the composer binds no store at all;
-//   * `/ok`'s `authConfigured` from a resolved count -> always `false`.
+//   * `/ok`'s `authConfigured` from a resolved count -> always `false`, and since 432-22 absent.
 //
-// The refs-only config cells stay unchanged below: `services.dashboard.runServiceTokens` is still
-// declared, unread, until 432-22 deletes the key.
+// 2026-10-01 (432-22, D-12/D-22): the refs-only config cells that followed are re-spelled too.
+// `services.dashboard.runServiceTokens` is deleted, so a declared block is refused by the strict
+// parser with the normal unrecognized-key error.
 
 import { existsSync, readFileSync, readdirSync } from 'node:fs'
 import { dirname, join } from 'node:path'
@@ -75,13 +76,14 @@ describe('C432-TOKENLESS-RUN-SERVICE: the run-service bearer resolver is deleted
   })
 
   // RE-SPELLED from 'the verdict has TWO arms and no permissive third (D-06)': there is no verdict.
-  // Readiness reports `authConfigured: false` always — no credential can be configured.
+  // Readiness carries no credential fact at all (432-22) — no credential can be configured.
   it('C432-TOKENLESS-RUN-SERVICE: readiness reports no credential configured, whatever the environment holds', () => {
     const previous = process.env[PLANTED_VAR]
     process.env[PLANTED_VAR] = PLANTED
     try {
       const readiness = createRunServiceReadiness({ resolveHost: () => undefined })()
-      expect(readiness).toMatchObject({ service: 'up', hostComposed: false, authConfigured: false })
+      expect(Object.keys(readiness).sort()).toEqual(['contractVersion', 'hostComposed', 'service'])
+      expect(readiness).toMatchObject({ service: 'up', hostComposed: false })
       expect(JSON.stringify(readiness)).not.toContain(PLANTED)
     } finally {
       if (previous === undefined) delete process.env[PLANTED_VAR]
@@ -90,7 +92,9 @@ describe('C432-TOKENLESS-RUN-SERVICE: the run-service bearer resolver is deleted
   })
 })
 
-describe('the config block accepts a declaration and refuses an inline value', () => {
+// 432-22: re-spelled from 'the config block accepts a declaration and refuses an inline value'. The
+// declaration and its default are gone; refusing a value is now refusing the whole key.
+describe('C432-OLD-KEYS-STRICT: services.dashboard declares no run-service token', () => {
   const base = {
     workspace: {
       testMatch: ['tests/**/*.yaml'],
@@ -103,40 +107,25 @@ describe('the config block accepts a declaration and refuses an inline value', (
     use: { mobile: { appState: 'preserve' } },
   }
 
-  it('parses a declared entry under services.dashboard.runServiceTokens', () => {
-    const parsed = AgentQaConfigSchema.parse({
-      ...base,
-      services: {
-        dashboard: {
-          runServiceTokens: [{ name: 'ci', tokenEnvVar: PLANTED_VAR, trustScope: { org: 'acme' } }],
-        },
-      },
-    })
-    expect(parsed.services?.dashboard?.runServiceTokens).toEqual([
+  it('C432-OLD-KEYS-STRICT: a declared entry, with or without an inline value, is refused by name', () => {
+    for (const entry of [
       { name: 'ci', tokenEnvVar: PLANTED_VAR, trustScope: { org: 'acme' } },
-    ])
+      { name: 'ci', tokenEnvVar: PLANTED_VAR, trustScope: {}, token: PLANTED },
+    ]) {
+      const refused = AgentQaConfigSchema.safeParse({
+        ...base,
+        services: { dashboard: { runServiceTokens: [entry] } },
+      })
+      expect(refused.success).toBe(false)
+      if (refused.success) continue
+      expect(refused.error.issues.map(issue => issue.code)).toEqual(['unrecognized_keys'])
+      expect(refused.error.issues[0]!.path).toEqual(['services', 'dashboard'])
+      expect(JSON.stringify(refused.error.issues)).not.toContain(PLANTED)
+    }
   })
 
-  it('REFUSES an entry carrying a token value beside the reference', () => {
-    // `.strict()` is the mechanism, not a convention: this is somebody who found the indirection
-    // inconvenient, and the schema has to say no rather than ignore the key.
-    expect(() => AgentQaConfigSchema.parse({
-      ...base,
-      services: {
-        dashboard: {
-          runServiceTokens: [{
-            name: 'ci',
-            tokenEnvVar: PLANTED_VAR,
-            trustScope: {},
-            token: PLANTED,
-          }],
-        },
-      },
-    })).toThrow()
-  })
-
-  it('defaults to an empty list when the key is absent', () => {
+  it('C432-OLD-KEYS-STRICT: a dashboard block without the key parses and materialises no token list', () => {
     const parsed = AgentQaConfigSchema.parse({ ...base, services: { dashboard: { port: 3470 } } })
-    expect(parsed.services?.dashboard?.runServiceTokens).toEqual([])
+    expect(parsed.services?.dashboard).toEqual({ port: 3470 })
   })
 })

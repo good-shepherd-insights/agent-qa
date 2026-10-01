@@ -15,8 +15,9 @@
 //   * the declared values seeded into the masker -> the masker is seeded from the environment, and
 //     a suffix-recognised secret is still masked (D-13).
 //
-// The refs-only config cells stay unchanged below: `services.mcp.tokens` and
-// `services.mcp.stdio.grantConfigWrite` are still declared, unread, until 432-22 deletes the keys.
+// 2026-10-01 (432-22, D-12/D-22): the refs-only config cells that followed are re-spelled too.
+// `services.mcp.tokens`, `services.mcp.stdio.grantConfigWrite` and the token entry DTO are deleted,
+// so a declared block is refused by the strict parser with the normal unrecognized-key error.
 
 import { existsSync, readFileSync, readdirSync } from 'node:fs'
 import { createServer, type Server } from 'node:http'
@@ -26,7 +27,7 @@ import { fileURLToPath } from 'node:url'
 import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client'
 import { createFunctionRegistry } from '@vostride/agent-qa-agent'
 import type { CreateFunctionRegistryOptions, FunctionDeps } from '@vostride/agent-qa-agent'
-import { McpTokenEntrySchema } from '@vostride/agent-qa-schema'
+import * as schemaApi from '@vostride/agent-qa-schema'
 import { AgentQaConfigSchema } from '@vostride/agent-qa-core'
 import { afterEach, describe, expect, it } from 'vitest'
 
@@ -149,46 +150,10 @@ describe('the MCP masker is seeded from the environment alone', () => {
   })
 })
 
-describe('the token entry vocabulary speaks names, never values (D-06 refs-only)', () => {
-  it('accepts an entry declaring an env-var NAME and a scope set', () => {
-    const parsed = McpTokenEntrySchema.parse({
-      name: 'ci',
-      tokenEnvVar: PLANTED_VAR,
-      scopes: ['read', 'run'],
-    })
-    expect(parsed.tokenEnvVar).toBe(PLANTED_VAR)
-  })
-
-  it('REFUSES an entry that carries a token value beside the reference', () => {
-    // The other side of the same line. `.strict()` is the mechanism, and this is the input it
-    // exists for: somebody who found the indirection inconvenient and wrote the secret down.
-    const refused = McpTokenEntrySchema.safeParse({
-      name: 'ci',
-      tokenEnvVar: PLANTED_VAR,
-      token: PLANTED,
-      scopes: ['read'],
-    })
-    expect(refused.success).toBe(false)
-  })
-
-  it('refuses an entry with no scopes at all', () => {
-    expect(
-      McpTokenEntrySchema.safeParse({ name: 'ci', tokenEnvVar: PLANTED_VAR, scopes: [] }).success,
-    ).toBe(false)
-  })
-
-  it('refuses a scope the closed union does not declare', () => {
-    expect(
-      McpTokenEntrySchema.safeParse({
-        name: 'ci',
-        tokenEnvVar: PLANTED_VAR,
-        scopes: ['everything'],
-      }).success,
-    ).toBe(false)
-  })
-})
-
-describe('the config block lands on services.mcp and defaults safely', () => {
+// 432-22: re-spelled from 'the token entry vocabulary speaks names, never values (D-06 refs-only)'
+// and 'the config block lands on services.mcp and defaults safely'. The vocabulary is deleted; the
+// claim that survives is that a token VALUE never reaches anything, now because no token block parses.
+describe('C432-OLD-KEYS-STRICT: services.mcp declares no token or stdio grant', () => {
   const base = {
     workspace: {
       testMatch: ['tests/**/*.yaml'],
@@ -201,35 +166,28 @@ describe('the config block lands on services.mcp and defaults safely', () => {
     use: { mobile: { appState: 'preserve' } },
   }
 
-  it('materialises an empty token list and a false stdio grant when nothing is declared', () => {
+  it('C432-OLD-KEYS-STRICT: the token entry and stdio grant vocabulary is gone from the schema package', () => {
+    const names = Object.keys(schemaApi)
+    expect(names.filter(name => /^McpTokenEntry|^McpStdioGrant/.test(name))).toEqual([])
+  })
+
+  it('C432-OLD-KEYS-STRICT: an empty services.mcp block parses and materialises nothing', () => {
     const parsed = AgentQaConfigSchema.parse({ ...base, services: { mcp: {} } })
-    expect(parsed.services?.mcp?.tokens).toEqual([])
-    // `.prefault({})` and not `.default({})` — the inner default has to actually run.
-    expect(parsed.services?.mcp?.stdio?.grantConfigWrite).toBe(false)
+    expect(parsed.services?.mcp).toEqual({})
   })
 
-  it('carries declared entries through the whole config parse', () => {
-    const parsed = AgentQaConfigSchema.parse({
-      ...base,
-      services: {
-        mcp: {
-          tokens: [{ name: 'ci', tokenEnvVar: PLANTED_VAR, scopes: ['read', 'config-write'] }],
-          stdio: { grantConfigWrite: true },
-        },
-      },
-    })
-    expect(parsed.services?.mcp?.tokens).toHaveLength(1)
-    expect(parsed.services?.mcp?.tokens?.[0]?.scopes).toEqual(['read', 'config-write'])
-    expect(parsed.services?.mcp?.stdio?.grantConfigWrite).toBe(true)
-  })
-
-  it('refuses a token value written into the config file', () => {
-    const refused = AgentQaConfigSchema.safeParse({
-      ...base,
-      services: {
-        mcp: { tokens: [{ name: 'ci', tokenEnvVar: PLANTED_VAR, token: PLANTED, scopes: ['read'] }] },
-      },
-    })
-    expect(refused.success).toBe(false)
+  it('C432-OLD-KEYS-STRICT: a declared token block or stdio grant is refused by name, never echoing a value', () => {
+    for (const mcp of [
+      { tokens: [{ name: 'ci', tokenEnvVar: PLANTED_VAR, scopes: ['read', 'config-write'] }] },
+      { tokens: [{ name: 'ci', tokenEnvVar: PLANTED_VAR, token: PLANTED, scopes: ['read'] }] },
+      { stdio: { grantConfigWrite: true } },
+    ]) {
+      const refused = AgentQaConfigSchema.safeParse({ ...base, services: { mcp } })
+      expect(refused.success).toBe(false)
+      if (refused.success) continue
+      expect(refused.error.issues.map(issue => issue.code)).toEqual(['unrecognized_keys'])
+      expect(refused.error.issues[0]!.path).toEqual(['services', 'mcp'])
+      expect(JSON.stringify(refused.error.issues)).not.toContain(PLANTED)
+    }
   })
 })

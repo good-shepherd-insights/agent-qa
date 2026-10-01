@@ -21,7 +21,6 @@ function fixture() {
     workspace: { testMatch: ['tests/**/*.test.yaml'], suiteMatch: ['suites/**/*.suite.yaml'], hooksFile: 'hooks.yaml', envFile: '.env', secretsFile: '.env.secrets.local' },
     use: { mobile: { appState: 'reset' } },
     registry: { targets: { conformance: { platform: 'web', url: 'https://conformance.invalid' } } },
-    safety: { trustMode: true },
   }))
   const door = composeDashboardDoor({ agentQaRoot: join(root, '.agent-qa'), configPath, boundOrigin: () => undefined })
   closers.push(async () => { await door.host.close(); rmSync(root, { recursive: true, force: true }) })

@@ -522,13 +522,13 @@ const policyConfig = baseConfig.replace('registry: {}', [
   'plugins:',
   '  auth:',
   '    - path: ./auth-plugin.mjs',
-  'safety:',
-  '  trustMode: false',
   '',
 ].join('\n')
 
 describe('PATCH /api/config path policy (429-44)', () => {
-  it('WRITE-DOOR-REFUSES-DENIED-ROOTS: plugins and safety are refused 422 before anything is read or written', async () => {
+  // 432-22 (D-18/D-22): `safety` left the schema and the denied roots; its paths are still refused,
+  // now as paths the published schema does not describe.
+  it('WRITE-DOOR-REFUSES-DENIED-ROOTS: plugins and the retired safety root are refused 422 before anything is read or written', async () => {
     const configPath = await useConfigWorkspace(policyConfig)
     const before = await readFile(configPath)
     mockRename.mockClear()
@@ -568,16 +568,15 @@ describe('PATCH /api/config path policy (429-44)', () => {
     expect(mockRename).not.toHaveBeenCalled()
   })
 
+  // 432-22: re-spelled. The stdio grant switch and the MCP token append were two of the security-
+  // relevant writes; both keys are deleted, so the claim is carried by the retained ones and by the
+  // new production opt-in.
   it('WRITE-DOOR-ADMITS-PAGE-WRITES: fields the page renders, security-relevant ones included, still land', async () => {
     const configPath = await useConfigWorkspace(policyConfig)
     const admitted = [
-      { op: 'set', path: ['services', 'mcp', 'stdio', 'grantConfigWrite'], value: true },
+      { op: 'set', path: ['allowProduction'], value: true },
       { op: 'set', path: ['registry', 'llms', { name: 'gpt' }, 'providerHeaders', 'X-Org'], value: 'org-1' },
-      {
-        op: 'append',
-        path: ['services', 'mcp', 'tokens'],
-        value: { name: 'ci', tokenEnvVar: 'AGENT_QA_MCP_CI_TOKEN', scopes: ['read'] },
-      },
+      { op: 'set', path: ['services', 'mcp', 'host'], value: '127.0.0.1' },
     ]
 
     for (const change of admitted) {
@@ -585,14 +584,53 @@ describe('PATCH /api/config path policy (429-44)', () => {
       expect([change, response.status], response.body).toEqual([change, 200])
     }
     const parsed = parseYaml(await readFile(configPath, 'utf-8')) as {
-      services: { mcp: { stdio: unknown; tokens: unknown } }
+      allowProduction: unknown
+      services: { mcp: unknown }
       registry: { llms: Array<{ providerHeaders?: unknown }> }
     }
-    expect(parsed.services.mcp.stdio).toEqual({ grantConfigWrite: true })
+    expect(parsed.allowProduction).toBe(true)
+    expect(parsed.services.mcp).toEqual({ host: '127.0.0.1' })
     expect(parsed.registry.llms[0]!.providerHeaders).toEqual({ 'X-Org': 'org-1' })
-    expect(parsed.services.mcp.tokens).toEqual([
-      { name: 'ci', tokenEnvVar: 'AGENT_QA_MCP_CI_TOKEN', scopes: ['read'] },
-    ])
+  })
+
+  it('C432-CONFIG-WRITE-POLICY: allowProduction is an ordinary write with Undo, and every retired key path is refused before a write', async () => {
+    const configPath = await useConfigWorkspace(policyConfig)
+    const before = await readFile(configPath)
+    mockRename.mockClear()
+    const retired = [
+      { op: 'append', path: ['services', 'mcp', 'tokens'], value: { name: 'ci', tokenEnvVar: 'AGENT_QA_MCP_CI_TOKEN', scopes: ['read'] } },
+      { op: 'set', path: ['services', 'mcp', 'stdio', 'grantConfigWrite'], value: true },
+      { op: 'set', path: ['services', 'mcp', 'stdio'], value: {} },
+      { op: 'append', path: ['services', 'dashboard', 'runServiceTokens'], value: { name: 'ci', tokenEnvVar: 'X', trustScope: {} } },
+      { op: 'unset', path: ['services', 'mcp', 'tokens', { name: 'ci' }] },
+      { op: 'set', path: ['safety'], value: { trustMode: true } },
+    ]
+    for (const change of retired) {
+      const response = await patchConfig({ changes: [change] })
+      expect([change, response.status]).toEqual([change, 422])
+      expect(JSON.parse(response.body)).toEqual({ error: 'path_not_writable' })
+    }
+    expect(Buffer.compare(await readFile(configPath), before)).toBe(0)
+    expect(mockRename).not.toHaveBeenCalled()
+
+    // A cross-site caller is refused before the body is read, for the new field as for any other.
+    const crossSite = await patchConfig(
+      { changes: [{ op: 'set', path: ['allowProduction'], value: true }] },
+      { origin: 'https://evil.example' },
+    )
+    expect(crossSite.status).toBe(403)
+    expect(JSON.parse(crossSite.body)).toEqual({ error: 'cross_site_refused' })
+    expect(Buffer.compare(await readFile(configPath), before)).toBe(0)
+
+    // The plain root boolean lands through the same field merge, and only a boolean validates.
+    const wrong = await patchConfig({ changes: [{ op: 'set', path: ['allowProduction'], value: 'yes' }] })
+    expect(wrong.status).toBe(422)
+    expect(JSON.parse(wrong.body).error).toBe('validation_failed')
+    const landed = await patchConfig({ changes: [{ op: 'set', path: ['allowProduction'], value: true }], undoable: true })
+    expect(landed.status, landed.body).toBe(200)
+    const answer = JSON.parse(landed.body) as { undo?: { token: string } }
+    expect(answer.undo?.token).toEqual(expect.any(String))
+    expect((parseYaml(await readFile(configPath, 'utf-8')) as { allowProduction?: unknown }).allowProduction).toBe(true)
   })
 })
 

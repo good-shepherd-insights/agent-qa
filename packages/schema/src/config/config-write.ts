@@ -64,12 +64,10 @@ export const CONFIG_WRITE_REFUSALS = [
  * The only arrays a `{ name }` segment may select inside. Selecting by name rather than index
  * keeps a change on its entry when an outside edit reorders the list.
  */
-export type ConfigNamedArray = 'registry.llms' | 'services.mcp.tokens' | 'services.dashboard.runServiceTokens'
+export type ConfigNamedArray = 'registry.llms'
 // prettier-ignore
 export const CONFIG_NAMED_ARRAYS = [
   'registry.llms',
-  'services.mcp.tokens',
-  'services.dashboard.runServiceTokens',
 ] as const satisfies readonly ConfigNamedArray[]
 
 /** A mapping key, an array index, or a `{ name }` selector inside a named array. */
@@ -89,13 +87,15 @@ const ConfigPathSchema = z.array(ConfigPathSegmentSchema).min(1)
 /**
  * Roots the page's write door never writes.
  * - `plugins`: names code the CLI loads, so it stays a file edit (D-06).
- * - `safety`: deleted by Phase 432; the page has no field for it.
+ *
+ * 2026-10-01 (432-22, D-18/D-22): `safety` left this list with the schema root it named; a path
+ * under it is not a schema path, so the door refuses it like any unknown path. The new root leaf
+ * `allowProduction` is not denied: the page owns it.
  */
-export type ConfigWriteDeniedRoot = 'plugins' | 'safety'
+export type ConfigWriteDeniedRoot = 'plugins'
 // prettier-ignore
 export const CONFIG_WRITE_DENIED_ROOTS = [
   'plugins',
-  'safety',
 ] as const satisfies readonly ConfigWriteDeniedRoot[]
 
 /**
