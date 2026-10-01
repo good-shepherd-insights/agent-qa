@@ -6,7 +6,7 @@
 // automatic exits conservative: a rule that has to be the ONLY way out has to be tuned for the
 // impatient case, and this verb is why it does not.
 //
-// A DIRECT GATED WRITE, NOT A PROPOSE+APPLY PAIR (D-13). The two-step KREV idiom exists for
+// A DIRECT WRITE, NOT A PROPOSE+APPLY PAIR (D-13). The two-step KREV idiom exists for
 // LEARNED-knowledge mutations, where the deltas a verb would commit are computed, reviewed and
 // then applied by id. This is operational state: the caller already knows exactly which test it
 // means, the change is one append to an event log, and the counterpart verb reverses it. 391
@@ -18,8 +18,8 @@
 // human to it, a second click — and a rejected promise would report it as a failure of the
 // system rather than as a fact about the ledger.
 //
-// The write scope this verb declares is adjudicated once, in `quarantine-add.ts`; both verbs
-// carry the same one for the same reason.
+// 2026-10-01 (432-25, D-12): this verb no longer declares a write scope; `quarantine-add.ts` says
+// why both verbs once carried `knowledge-write` and what bounds them now.
 
 import {
   QuarantineReleaseInputSchema,
@@ -39,7 +39,6 @@ export const quarantineReleaseSpec: FunctionSpec<
 > = {
   id: QUARANTINE_RELEASE_FUNCTION_ID,
   summary: 'Release one test from quarantine — the manual half of the exit path.',
-  requiredScopes: ['knowledge-write'],
   resultKind: 'unary',
   boundThrough: 'quarantine',
   input: QuarantineReleaseInputSchema,

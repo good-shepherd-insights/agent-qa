@@ -14,35 +14,17 @@
 // into their own verbs would have forced every caller to read the ledger's current state before
 // it could choose a verb — a read whose answer can change between the two calls.
 //
-// A DIRECT GATED WRITE, NOT A PROPOSE+APPLY PAIR (D-13): see `quarantine-release.ts`. 391 may
-// wrap both verbs in the proposal engine; this plan mints the direct form the engine would wrap.
+// A DIRECT WRITE, NOT A PROPOSE+APPLY PAIR (D-13): see `quarantine-release.ts`. 391 may wrap both
+// verbs in the proposal engine; this plan mints the direct form the engine would wrap.
 //
-// ---- WHY `knowledge-write` AND NOT A NEW SCOPE MEMBER --------------------------------------
+// ---- NO SCOPE (2026-10-01, 432-25, D-12) ------------------------------------------------------
 //
-// The question is real rather than clerical, because `knowledge-write` was itself minted (387,
-// KREV-01) to avoid spending `config-write` on knowledge verbs — a PRIVILEGE CONFLATION, where
-// one grant reaches a power it was never issued for. Asking the same question one level down:
-// does "can edit knowledge records" belong with "can stop a failing test from failing builds"?
-//
-// It does, on the axis that argument turns on. The 387 split separated two powers that differ
-// in KIND and in RECOVERABILITY — editing a config file back is not the §7.7 tombstone a forget
-// leaves. Quarantine writes differ from knowledge writes on neither: both append to committed,
-// human-reviewable text under the same knowledge root, both appear in PRs, and each of these
-// two verbs REVERSES the other — which makes them strictly less consequential than the forget
-// the same scope already covers. D-13's own words for them are deterministic, reversible, and
-// low-risk. Suppression is additionally bounded by the D-11 expiry and loud in reporter output
-// (D-15), so the power this scope licenses cannot become silent or permanent.
-//
-// Against that, minting a fifth member would have widened a closed union whose own dated note
-// reserves further extension to 397 (the scope-lattice phase), and would have withheld nothing
-// today: every shipped host — the CLI caller record and the daemon's — grants the full set, and
-// says in writing that the scope's job locally is to make a capability's cost legible in the
-// catalogue and the audit row rather than to withhold it. A new member would have been a
-// cross-surface commitment made for a distinction no host currently draws.
-//
-// So: `knowledge-write`, deliberately, and 397 inherits the question with this reasoning
-// attached rather than a pattern-match. The moment a host grants scopes selectively, splitting
-// quarantine out becomes a real decision with a real consequence, and that is when to make it.
+// Both quarantine writes once declared `knowledge-write` rather than a new scope member, on the
+// reasoning that quarantine writes differ from knowledge writes neither in kind nor in
+// recoverability. Every door can call every operation now, so neither verb declares a scope. What
+// keeps the power bounded is unchanged and was never the scope: both verbs append to committed,
+// human-reviewable text under the knowledge root, each REVERSES the other, suppression expires
+// (D-11) and is loud in reporter output (D-15), and the risk descriptor still says the verb writes.
 
 import {
   QuarantineAddInputSchema,
@@ -59,7 +41,6 @@ export const QUARANTINE_ADD_FUNCTION_ID = 'quarantine.add'
 export const quarantineAddSpec: FunctionSpec<QuarantineAddInput, QuarantineAddOutput> = {
   id: QUARANTINE_ADD_FUNCTION_ID,
   summary: 'Quarantine one test by hand, renewing and claiming an existing entry.',
-  requiredScopes: ['knowledge-write'],
   resultKind: 'unary',
   boundThrough: 'quarantine',
   input: QuarantineAddInputSchema,

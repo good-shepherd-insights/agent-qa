@@ -38,7 +38,6 @@ export class EntityNotFoundError extends Error {
 export const entitiesGetSpec: FunctionSpec<EntitiesGetInput, EntityCard> = {
   id: ENTITIES_GET_FUNCTION_ID,
   summary: 'Render the entity card for one exact short-ID or agentqa:// URI.',
-  requiredScopes: ['read'],
   resultKind: 'unary',
   input: EntitiesGetInputSchema,
   output: EntityCardSchema as FunctionSpec<EntitiesGetInput, EntityCard>['output'],

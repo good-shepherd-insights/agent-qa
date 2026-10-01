@@ -25,21 +25,30 @@ import { authoringFunnelGetSpec } from '../functions/ops/authoring-funnel-get.js
 import { authoringVerifyDraftSpec } from '../functions/ops/authoring-verify-draft.js'
 import { configFieldSetSpec } from '../functions/ops/config-field-set.js'
 import { configGetSpec } from '../functions/ops/config-get.js'
+import { configHookAddSpec } from '../functions/ops/config-hook-add.js'
+import { configProjectScaffoldSpec } from '../functions/ops/config-project-scaffold.js'
 import { configTargetEditSpec } from '../functions/ops/config-target-edit.js'
+import { editorLiveUrlSpec } from '../functions/ops/editor-live-url.js'
+import { entitiesGetSpec } from '../functions/ops/entities-get.js'
 import { entitiesResolveSpec } from '../functions/ops/entities-resolve.js'
 import { knowledgeBriefWhySpec } from '../functions/ops/knowledge-brief-why.js'
 import { knowledgeBundlesListSpec } from '../functions/ops/knowledge-bundles-list.js'
 import { knowledgeForgetSpec } from '../functions/ops/knowledge-forget-propose.js'
 import { knowledgeGatesListSpec, KnowledgeGatesUnboundError } from '../functions/ops/knowledge-gates-list.js'
 import { knowledgeRecordsDiffSpec } from '../functions/ops/knowledge-records-diff.js'
+import { quarantineAddSpec } from '../functions/ops/quarantine-add.js'
+import { quarantineListSpec } from '../functions/ops/quarantine-list.js'
+import { quarantineReleaseSpec } from '../functions/ops/quarantine-release.js'
 import { runsArtifactSpec } from '../functions/ops/runs-artifact.js'
 import { runsDigestSpec } from '../functions/ops/runs-digest.js'
+import { runsEvidenceSpec } from '../functions/ops/runs-evidence.js'
 import { runsEventsSpec } from '../functions/ops/runs-events.js'
 import { RunNotFoundError, runsGetSpec } from '../functions/ops/runs-get.js'
 import { runsListSpec } from '../functions/ops/runs-list.js'
 import { runsLiveUrlSpec } from '../functions/ops/runs-live-url.js'
 import { runsMarkSpec } from '../functions/ops/runs-mark.js'
 import { runsMarkPreviewSpec } from '../functions/ops/runs-mark-preview.js'
+import { runsMarksHistorySpec } from '../functions/ops/runs-marks-history.js'
 import { runsStartSpec } from '../functions/ops/runs-start.js'
 import type { FunctionDeps } from '../functions/spec.js'
 
@@ -252,7 +261,9 @@ describe('runs.get', () => {
 describe('knowledge.bundles.list', () => {
   it('declares a read-only unary contract bound in this composition', () => {
     expect(knowledgeBundlesListSpec.id).toBe('knowledge.bundles.list')
-    expect(knowledgeBundlesListSpec.requiredScopes).toEqual(['read'])
+    // RE-SPELLED 2026-10-01 (432-25, D-12) from `requiredScopes` equal to ['read']: the op
+    // declares no scope; read-only stays on its risk descriptor below.
+    expect(knowledgeBundlesListSpec).not.toHaveProperty('requiredScopes')
     expect(knowledgeBundlesListSpec.resultKind).toBe('unary')
     expect(knowledgeBundlesListSpec.boundThrough).toBeUndefined()
     expect(knowledgeBundlesListSpec.risk).toEqual({
@@ -482,5 +493,68 @@ describe('C432-DECLARATION-KEYS: the 432-24 op specs carry no permission metadat
     }
     // None of the ten discloses; the metadata removal added no disclosure either.
     expect(migrated.filter(({ spec }) => 'disclose' in spec).map(({ spec }) => spec.id)).toEqual([])
+  })
+})
+
+// ---- C432-DECLARATION-KEYS (432-25, D-10/D-12) --------------------------------------------------
+//
+// The third group of ten, pinned as 432-23's and 432-24's are. Four of them are writers (the two
+// config writers and the two quarantine writes), so the risk descriptor beside the absence is what
+// still states that they write; runs.evidence also keeps its declared output representation.
+describe('C432-DECLARATION-KEYS: the 432-25 op specs carry no permission metadata', () => {
+  const migrated = [
+    { spec: configHookAddSpec, resultKind: 'unary', boundThrough: 'configWrite',
+      risk: { name: 'fn:config.hook.add', recognized: true, readOnly: false } },
+    { spec: knowledgeBundlesListSpec, resultKind: 'unary', boundThrough: undefined,
+      risk: { name: 'fn:knowledge.bundles.list', recognized: true, readOnly: true } },
+    { spec: configProjectScaffoldSpec, resultKind: 'unary', boundThrough: 'scaffoldContent',
+      risk: { name: 'fn:config.project.scaffold', recognized: true, readOnly: false } },
+    { spec: editorLiveUrlSpec, resultKind: 'unary', boundThrough: 'liveView',
+      risk: { name: 'fn:editor.liveurl', recognized: true, readOnly: true } },
+    { spec: runsEvidenceSpec, resultKind: 'unary', boundThrough: 'runDetail',
+      risk: { name: 'fn:runs.evidence', recognized: true, readOnly: true } },
+    { spec: entitiesGetSpec, resultKind: 'unary', boundThrough: undefined,
+      risk: { name: 'fn:entities.get', recognized: true, readOnly: true } },
+    { spec: runsMarksHistorySpec, resultKind: 'unary', boundThrough: 'feedbackReads',
+      risk: { name: 'fn:runs.marks.history', recognized: true, readOnly: true } },
+    { spec: quarantineAddSpec, resultKind: 'unary', boundThrough: 'quarantine',
+      risk: { name: 'fn:quarantine.add', recognized: true, readOnly: false } },
+    { spec: quarantineListSpec, resultKind: 'unary', boundThrough: 'quarantine',
+      risk: { name: 'fn:quarantine.list', recognized: true, readOnly: true } },
+    { spec: quarantineReleaseSpec, resultKind: 'unary', boundThrough: 'quarantine',
+      risk: { name: 'fn:quarantine.release', recognized: true, readOnly: false } },
+  ] as const
+
+  it('spells neither retired permission key on any of the ten specs', () => {
+    expect(migrated.map(({ spec }) => spec.id)).toEqual([
+      'config.hook.add',
+      'knowledge.bundles.list',
+      'config.project.scaffold',
+      'editor.liveurl',
+      'runs.evidence',
+      'entities.get',
+      'runs.marks.history',
+      'quarantine.add',
+      'quarantine.list',
+      'quarantine.release',
+    ])
+    for (const { spec } of migrated) {
+      expect(Object.keys(spec), spec.id).not.toContain('requiredScopes')
+      expect(Object.keys(spec), spec.id).not.toContain('requiresHumanOrigin')
+    }
+  })
+
+  it('keeps each spec\'s result kind, binding need, risk descriptor and classify fold', () => {
+    for (const { spec, resultKind, boundThrough, risk } of migrated) {
+      expect(spec.resultKind, spec.id).toBe(resultKind)
+      expect(spec.boundThrough, spec.id).toBe(boundThrough)
+      expect(spec.risk, spec.id).toEqual(risk)
+      expect(typeof spec.classify, spec.id).toBe('function')
+      expect(typeof spec.invoke, spec.id).toBe('function')
+    }
+    // None of the ten discloses, and only runs.evidence declares an output representation.
+    expect(migrated.filter(({ spec }) => 'disclose' in spec).map(({ spec }) => spec.id)).toEqual([])
+    expect(migrated.filter(({ spec }) => 'outputRepresentation' in spec).map(({ spec }) => spec.id))
+      .toEqual(['runs.evidence'])
   })
 })

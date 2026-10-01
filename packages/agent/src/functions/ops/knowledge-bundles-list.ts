@@ -21,7 +21,6 @@ export const knowledgeBundlesListSpec: FunctionSpec<
 > = {
   id: KNOWLEDGE_BUNDLES_LIST_FUNCTION_ID,
   summary: 'List the committed knowledge bundles with their derived trust state.',
-  requiredScopes: ['read'],
   resultKind: 'unary',
   input: KnowledgeBundlesListInputSchema,
   output: KnowledgeBundlesListOutputSchema,

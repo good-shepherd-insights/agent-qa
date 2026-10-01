@@ -28,7 +28,6 @@ export class UnknownLiveEditorSessionError extends Error {
 export const editorLiveUrlSpec: FunctionSpec<EditorLiveUrlInput, EditorLiveUrlResult> = {
   id: EDITOR_LIVE_URL_FUNCTION_ID,
   summary: 'Mint a short-lived, view-scoped live-view URL for one live editor session.',
-  requiredScopes: ['read'],
   resultKind: 'unary',
   boundThrough: 'liveView',
   input: EditorLiveUrlInputSchema,

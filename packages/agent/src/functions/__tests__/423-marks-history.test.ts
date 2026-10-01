@@ -214,7 +214,9 @@ describe('423-36 runs.marks.history contract (D-19)', () => {
   it('HISTORY-READ-TIER: read scope, read-only risk and a feedbackReads binding separate from the mark writer', async () => {
     const op = historySpec()
     expect(op.id).toBe('runs.marks.history')
-    expect(op.requiredScopes).toEqual(['read'])
+    // RE-SPELLED 2026-10-01 (432-25, D-12) from `requiredScopes` equal to ['read']: the op declares
+    // no scope; the read tier is the read-only risk pinned on the next lines.
+    expect(op).not.toHaveProperty('requiredScopes')
     expect(op.resultKind).toBe('unary')
     expect(op.risk).toEqual({ name: 'fn:runs.marks.history', recognized: true, readOnly: true })
     expect(op.requiresHumanOrigin).toBeUndefined()

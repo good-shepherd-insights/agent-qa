@@ -15,11 +15,11 @@
 //  2. THE OP ADDS NO ORDERING. D-12's triage-queue order is the implementation's law. The
 //     list op forwards the port's entries verbatim, so a second sort here could not disagree
 //     with the one that is pinned where it is implemented.
-//  3. SCOPE AND RISK ARE THE ENFORCEMENT, STATED ON THE SPEC. `list` is read-tier and
-//     `readOnly: true`; `release` and `add` carry a write scope and `readOnly: false`, which
-//     is what makes them drop out of safe-mode listings and cross the gate as mutations.
+//  3. RISK IS STATED ON THE SPEC. `list` is `readOnly: true`; `release` and `add` are
+//     `readOnly: false`. (2026-10-01, 432-25, D-12: no verb declares a scope any more, and every
+//     caller reaches all three. The scopes once hid the writes from safe-mode listings and sent
+//     them through the deleted gate as mutations; the risk descriptor still says they write.)
 
-import { FunctionScopeSchema } from '@vostride/agent-qa-schema'
 import type {
   FunctionCaller,
   QuarantineAddInput,
@@ -46,10 +46,10 @@ import {
 } from '../ops/quarantine-release.js'
 import type { FunctionDeps } from '../spec.js'
 
+// 2026-10-01 (432-25, D-12): the retired `grantedScopes` and `safeMode` fields are dropped; nothing
+// read them.
 const CALLER: FunctionCaller = {
   surface: 'test',
-  grantedScopes: [...FunctionScopeSchema.options],
-  safeMode: false,
   origin: 'agent',
 }
 
@@ -131,7 +131,6 @@ function deps(quarantine?: QuarantineOperationsPort): FunctionDeps {
 function registryWith(quarantine?: QuarantineOperationsPort) {
   return createFunctionRegistry({
     deps: deps(quarantine),
-    resolveExecutionContext: () => 'local-headless',
     auditSink: { appendGuardrailAudit() {} },
   })
 }
@@ -160,19 +159,25 @@ describe('the three quarantine verbs are registered under the locked taxonomy', 
   })
 })
 
-// ---- Scope and risk: the enforcement the gate reads ---------------------
+// ---- Risk classification -----------------------------------------------
+//
+// RE-SPELLED 2026-10-01 (432-25, D-12). This block was 'scope and risk classification (D-13)' and
+// asserted `['read']` on list and `['knowledge-write']` on release and add. No verb declares a
+// scope now; the read/write split it pinned survives on the risk descriptor, asserted unchanged.
 
-describe('scope and risk classification (D-13)', () => {
+describe('risk classification (D-13)', () => {
   it('declares list read-tier and read-only', () => {
-    expect(quarantineListSpec.requiredScopes).toEqual(['read'])
+    expect(quarantineListSpec).not.toHaveProperty('requiredScopes')
     expect(quarantineListSpec.risk.readOnly).toBe(true)
     expect(quarantineListSpec.risk.name).toBe('fn:quarantine.list')
     expect(quarantineListSpec.risk.recognized).toBe(true)
   })
 
-  it('declares release and add as WRITES — the same scope family the shipped write op uses', () => {
+  // Renamed from 'declares release and add as WRITES — the same scope family the shipped write op
+  // uses' (432-25): the write claim survives on `readOnly: false`; the scope family does not.
+  it('declares release and add as WRITES, with no scope', () => {
     for (const spec of [quarantineReleaseSpec, quarantineAddSpec]) {
-      expect(spec.requiredScopes, spec.id).toEqual(['knowledge-write'])
+      expect(spec, spec.id).not.toHaveProperty('requiredScopes')
       expect(spec.risk.readOnly, spec.id).toBe(false)
       expect(spec.risk.recognized, spec.id).toBe(true)
       expect(spec.risk.name, spec.id).toBe(`fn:${spec.id}`)

@@ -46,7 +46,6 @@ function maskDocument(document: EvidenceDocument, mask: MaskFn): EvidenceDocumen
 export const runsEvidenceSpec: FunctionSpec<RunsEvidenceInput, RunsEvidenceResult> = {
   id: RUNS_EVIDENCE_FUNCTION_ID,
   summary: 'Read validated evidence recorded on one run step or ARIA sub-action.',
-  requiredScopes: ['read'],
   resultKind: 'unary',
   boundThrough: 'runDetail',
   input: RunsEvidenceInputSchema,

@@ -23,9 +23,12 @@
 // have to catch, so the product declines to flip it.
 //
 // IT COMMITS NOTHING, WHICH IS WHY IT CARRIES NO `declaredTier`, on `config.field.set`'s stated
-// reasoning. The RAISE lives on `config.proposal.apply`, where git history changes — and 395-07's
-// two-sided enforcement makes a scaffold, which is always cross-boundary, unsatisfiable by any
-// standing grant from either side.
+// reasoning. A scaffold is always cross-boundary, and the change report says so.
+//
+// NO SCOPE (2026-10-01, 432-25, D-12). This op once declared `config-write`, and 395-07's two-sided
+// grant enforcement made a scaffold unsatisfiable by any standing grant. Both are deleted: every
+// door can call every operation, and what guards the write is the construction, the whole-new-file
+// scan and the whole-set validation below.
 
 import { ConfigChangeOutputSchema, ConfigProjectScaffoldInputSchema } from '@vostride/agent-qa-schema'
 import type { ConfigChangeOutput, ConfigProjectScaffoldInput } from '@vostride/agent-qa-schema'
@@ -45,7 +48,6 @@ export const configProjectScaffoldSpec: FunctionSpec<
   summary:
     'Configure this project for a site from zero — config, hooks and gitignore, written in this '
     + 'call.',
-  requiredScopes: ['config-write'],
   resultKind: 'unary',
   input: ConfigProjectScaffoldInputSchema,
   output: ConfigChangeOutputSchema,

@@ -73,9 +73,9 @@ describe('C423-FEEDBACK-BINDINGS-EXACT', () => {
       ['runs.mark.preview', 'feedbackReads'],
     ])
     // RE-SPELLED 2026-10-01 (432-24, D-12): runs.mark.preview declares no scope now; both reads
-    // keep their read-only risk. runs.marks.history keeps ['read'] until its own owner.
+    // keep their read-only risk. 2026-10-01 (432-25, D-12): runs.marks.history's ['read'] goes too.
     expect([runsMarksHistorySpec, runsMarkPreviewSpec].map(op => op.risk.readOnly)).toEqual([true, true])
-    expect(runsMarksHistorySpec.requiredScopes).toEqual(['read'])
+    expect(runsMarksHistorySpec).not.toHaveProperty('requiredScopes')
     expect(runsMarkPreviewSpec).not.toHaveProperty('requiredScopes')
   })
 })

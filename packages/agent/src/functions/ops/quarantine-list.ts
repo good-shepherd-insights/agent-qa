@@ -44,7 +44,6 @@ export const QUARANTINE_LIST_FUNCTION_ID = 'quarantine.list'
 export const quarantineListSpec: FunctionSpec<QuarantineListInput, QuarantineListOutput> = {
   id: QUARANTINE_LIST_FUNCTION_ID,
   summary: 'List every quarantined test with its owner, expiry and lifecycle state.',
-  requiredScopes: ['read'],
   resultKind: 'unary',
   // Bound exactly where a composition supplies the quarantine port. Listing quarantine state
   // is not something a host can approximate: an unbound host answering `[]` would say "nothing

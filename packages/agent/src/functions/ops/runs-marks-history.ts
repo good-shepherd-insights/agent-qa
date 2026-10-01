@@ -55,7 +55,6 @@ function projectEntry(receipt: MarkReceipt, changedRecords: readonly MarkHistory
 export const runsMarksHistorySpec: FunctionSpec<RunsMarksHistoryInput, RunsMarksHistoryResult> = {
   id: RUNS_MARKS_HISTORY_FUNCTION_ID,
   summary: 'Read every mark on a run in ordinal order with supersession and what each applied fix changed.',
-  requiredScopes: ['read'],
   resultKind: 'unary',
   boundThrough: 'feedbackReads',
   input: RunsMarksHistoryInputSchema,

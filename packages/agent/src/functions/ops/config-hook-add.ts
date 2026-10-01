@@ -6,8 +6,12 @@
 // fields it changed, a blocked change is answered with its report and nothing is kept, and no git
 // runs. Where the paragraphs below say "proposal", read the change this call writes.
 //
-// `config-field-set.ts`'s header carries the arguments for the tier, the scope and the one-op-per-
-// action shape; they are not restated. Two things are different about this one.
+// `config-field-set.ts`'s header carries the arguments for the tier and the one-op-per-action
+// shape; they are not restated. Two things are different about this one.
+//
+// NO SCOPE (2026-10-01, 432-25, D-12). This op once declared `config-write`. Every door can call
+// every operation now; what guards the write is the construction, scan and whole-set validation
+// below, not who asked.
 //
 // IT IS THE ONLY ACTION THAT WRITES A FILE OTHER THAN THE CONFIG YAML. The hooks file is the second
 // member of the pinned config set, and it has its own schema — `core`'s `HooksFileSchema`, with the
@@ -17,11 +21,10 @@
 // is D-03's whole-input law satisfied on paper and violated in fact.
 //
 // EVERY HOOK ADDITION IS CROSS-BOUNDARY, UNCONDITIONALLY (D-02). A hook is code this project will
-// EXECUTE, and that is a different kind of change from a setting: a standing approval a person gave
-// for configuration edits may not quietly also mean "and run whatever script it names". The fact is
-// STATED by the construction rather than inferred from the path it wrote, because inferring "a hook
-// was added" from a path is the per-op map D-02 refused — and 395-07's grant machinery refuses on
-// the flag, so a hook addition that arrived unflagged would be a hole with no second wall behind it.
+// EXECUTE, and that is a different kind of change from a setting. The fact is STATED by the
+// construction rather than inferred from the path it wrote, because inferring "a hook was added"
+// from a path is the per-op map D-02 refused. (2026-10-01, 432-25, D-12: the standing-approval and
+// grant machinery that once refused on this flag is deleted; the flag stays on the change report.)
 //
 // THE INPUT NAMES A FILE AND NEVER CARRIES A BODY. The script is a thing a person writes and reviews
 // in their editor; a proposal that carried executable text would be asking for approval of two
@@ -42,7 +45,6 @@ export const CONFIG_HOOK_ADD_FUNCTION_ID = 'config.hook.add'
 export const configHookAddSpec: FunctionSpec<ConfigHookAddInput, ConfigChangeOutput> = {
   id: CONFIG_HOOK_ADD_FUNCTION_ID,
   summary: 'Declare a hook in the hooks file, written in this call.',
-  requiredScopes: ['config-write'],
   resultKind: 'unary',
   input: ConfigHookAddInputSchema,
   output: ConfigChangeOutputSchema,
