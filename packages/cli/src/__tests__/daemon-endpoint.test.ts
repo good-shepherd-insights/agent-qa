@@ -216,7 +216,8 @@ async function registryFixture(
         auditRows.push(row)
       },
     },
-    resolveExecutionContext: () => 'local-headless',
+    // 2026-10-01 (432-32): no `resolveExecutionContext` registry option and no `requiredScopes`
+    // on the synthetic specs; the registry reads neither.
   })
   return { registry, auditRows }
 }
@@ -625,7 +626,6 @@ describe('daemon /invoke endpoint semantic parity', () => {
       {
         id: 'synthetic.frames',
         summary: 'Stable stream for exact SSE framing.',
-        requiredScopes: ['read'],
         resultKind: 'stream',
         input: streamInput,
         output: streamOutput,
@@ -641,7 +641,6 @@ describe('daemon /invoke endpoint semantic parity', () => {
       {
         id: 'synthetic.resume',
         summary: 'Interrupted stream for one reconnect with lastEventId.',
-        requiredScopes: ['read'],
         resultKind: 'stream',
         input: streamInput,
         output: streamOutput,
@@ -727,7 +726,6 @@ describe('daemon /invoke endpoint semantic parity', () => {
       {
         id: 'synthetic.clean-shutdown',
         summary: 'Clean shutdown between two stream events.',
-        requiredScopes: ['read'],
         resultKind: 'stream',
         input: streamInput,
         output: streamOutput,
@@ -780,7 +778,6 @@ describe('daemon /invoke endpoint semantic parity', () => {
       {
         id: 'synthetic.stream-error',
         summary: 'Named error after a delivered stream element.',
-        requiredScopes: ['read'],
         resultKind: 'stream',
         input: streamInput,
         output: streamOutput,
@@ -841,7 +838,6 @@ describe('daemon /invoke endpoint semantic parity', () => {
       {
         id: 'synthetic.input',
         summary: 'Input refusal fixture.',
-        requiredScopes: ['read'],
         resultKind: 'unary',
         input: z.object({ value: z.string() }).strict(),
         output,
@@ -851,7 +847,6 @@ describe('daemon /invoke endpoint semantic parity', () => {
       {
         id: 'synthetic.scope',
         summary: 'Scope refusal fixture.',
-        requiredScopes: ['fixture-scope'],
         resultKind: 'unary',
         input: emptyInput,
         output,
@@ -861,7 +856,6 @@ describe('daemon /invoke endpoint semantic parity', () => {
       {
         id: 'synthetic.unbound',
         summary: 'Binding refusal fixture.',
-        requiredScopes: ['read'],
         resultKind: 'unary',
         boundThrough: 'runInvocation',
         input: emptyInput,
@@ -872,7 +866,6 @@ describe('daemon /invoke endpoint semantic parity', () => {
       {
         id: 'synthetic.floor',
         summary: 'Replay-floor refusal fixture.',
-        requiredScopes: ['read'],
         resultKind: 'stream',
         input: emptyInput,
         output,
@@ -909,6 +902,8 @@ describe('daemon /invoke endpoint semantic parity', () => {
 
     // 432-20 (D-12): the scope refusal is deleted, so the op that declares a scope no caller holds
     // answers over the wire like any other; there is no scope class left to rehydrate.
+    // 2026-10-01 (432-32): the fixture no longer spells the retired `requiredScopes`
+    // ('fixture-scope'); the registry never read it, so the op answers by construction.
     await expect(semantic.invokeViaDaemon({
       agentQaRoot,
       functionId: 'synthetic.scope',
@@ -947,7 +942,6 @@ describe('daemon /invoke endpoint semantic parity', () => {
       {
         id: 'synthetic.ask',
         summary: 'Ask-tier fixture for the daemon local-headless posture.',
-        requiredScopes: ['read'],
         resultKind: 'unary',
         input: z.object({}).strict(),
         output: z.object({ ok: z.literal(true) }).strict(),
@@ -1053,7 +1047,6 @@ describe('agent-qa fn explicit daemon routing', () => {
       {
         id: 'synthetic.cli-interrupted',
         summary: 'CLI stream interrupted after its first element.',
-        requiredScopes: ['read'],
         resultKind: 'stream',
         input: z.object({ lastEventId: z.number().int().optional() }).strict(),
         output: z.object({ seq: z.number().int(), type: z.string() }).strict(),
