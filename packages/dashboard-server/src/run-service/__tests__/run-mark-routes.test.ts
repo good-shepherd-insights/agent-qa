@@ -31,9 +31,8 @@ function fixture() {
     feedback: { mark, marksFor: async () => [] },
   }
   // 432-13 (D-14): no confirm port — `invokeFunction` asks nobody. 432-14: no frame is entered
-  // around the call either, so the registry answers one context for every mark.
+  // around the call either. 2026-10-02 (432-39, D-12): and the registry is handed no context.
   const registry = createFunctionRegistry({ deps,
-    resolveExecutionContext: () => 'local-headless',
     auditSink: { appendGuardrailAudit() {} },
   })
   const host: AgentHost = {
@@ -44,7 +43,7 @@ function fixture() {
     runsKnowledgeFunctionId: 'test:knowledge',
     runsMarksHistoryFunctionId: 'test:marks-history', runsMarkPreviewFunctionId: 'test:mark-preview',
     registry, runsMarkFunctionId: RUNS_MARK_FUNCTION_ID,
-    caller: { surface: 'dashboard', grantedScopes: ['knowledge-write'], safeMode: false, origin: 'human' },
+    caller: { surface: 'dashboard', origin: 'human' },
     invokeFunction: (handle, id, input, caller) => invokeFunction(handle as FunctionRegistry, id, input, caller),
     unmaskForDisplay: (text: string) => text.replaceAll('<SECRET_0>', NOTE),
   }

@@ -2005,11 +2005,15 @@ export interface ComposeLocalAgentInput {
     | Promise<PostRunJobCapabilities['analysisTokenBudget']>
     | PostRunJobCapabilities['analysisTokenBudget']
   /**
-   * The context every policy decision in this composition's registry is taken in (400-01, D-05).
+   * The host's execution context for this composition (400-01, D-05).
+   *
+   * 2026-10-02 (432-39, D-12): it reaches the knowledge review, which records a direct change under
+   * it, and nothing else here; the registry option it was also forwarded to is deleted, because no
+   * op decides in a context. The history below explains why it is injected per composition.
    *
    * INJECTED RATHER THAN PINNED ON THE PROCESS, and that is the whole reason this field exists.
-   * The registry has accepted a `resolveExecutionContext` since 384; what it did NOT have was a
-   * way for a host to supply one, so the only lever a host had was
+   * The registry accepted a `resolveExecutionContext` from 384 until 432-39; what it did NOT have
+   * was a way for a host to supply one, so the only lever a host had was
    * `setActiveExecutionContextResolver` — a PROCESS GLOBAL. Reaching for it changes the answer
    * for everything composed in that process, including compositions the host does not own, and a
    * host that forgot to restore it leaks its posture into every later caller. The dashboard door
@@ -2017,7 +2021,7 @@ export interface ComposeLocalAgentInput {
    * (D-01/D-05: the browser confirm channel is what makes the context interactive, and it is a
    * property of a server, not of the machine), so the injected form is what it binds.
    *
-   * ABSENT MEANS THE SHIPPED AMBIENT RESOLVER, unchanged: the registry's own default reads
+   * ABSENT MEANS THE SHIPPED AMBIENT RESOLVER, unchanged: the knowledge review's own default reads
    * safety's process resolver, so every existing host composes exactly as it did before. This is
    * a passthrough and nothing here decides what a context MEANS. (432-19: `requiresFailClosed`, the
    * gate's reading of a context, is deleted; the four-member vocabulary stays.)
@@ -3097,8 +3101,8 @@ export function composeLocalAgent(input: ComposeLocalAgentInput): LocalAgentHost
         ...(input.resolveWriterAuthority === undefined
           ? {}
           : { resolveWriterAuthority: input.resolveWriterAuthority }),
-        // 432-12: the same context this composition's registry decides in, so a direct change is
-        // recorded under the context it was actually made in.
+        // 432-12: the host's own context, so a direct change is recorded under the context it was
+        // actually made in. (432-39: the registry no longer receives it; this is its one reader.)
         ...(input.resolveExecutionContext === undefined
           ? {}
           : { resolveExecutionContext: input.resolveExecutionContext }),
@@ -3417,14 +3421,9 @@ export function composeLocalAgent(input: ComposeLocalAgentInput): LocalAgentHost
     auditSink: new JsonlAuditSink(input.agentQaRoot),
     // 432-13 (D-14/D-15): no standing-approval reader, confirm port or session deny overlay reaches
     // the registry — `invokeFunction` asks nobody. 432-18 deleted the grant reader with the ledger.
-    // 400-01 (D-05): the host's own execution-context answer, forwarded UNTOUCHED to the option the
-    // registry has published since 384. Conditionally spread on this block's own house rule — an
-    // absent host answer must be an ABSENT field, never a present `undefined` — so the registry's
-    // `?? getActiveExecutionContext` default is what decides, in exactly one place, and every host
-    // that supplies nothing composes precisely as it did before this line existed.
-    ...(input.resolveExecutionContext === undefined
-      ? {}
-      : { resolveExecutionContext: input.resolveExecutionContext }),
+    // 2026-10-02 (432-39, D-12): the host's execution-context answer is no longer forwarded here.
+    // The registry's option was retired and unread since 432-13 and is deleted; the same answer
+    // still reaches the knowledge review above, which records a direct change under it.
   })
   // Closes the cycle the turn engine's dispatch binding was built against. It happens exactly
   // here, on the line after the registry exists, so there is no window in which a turn could run

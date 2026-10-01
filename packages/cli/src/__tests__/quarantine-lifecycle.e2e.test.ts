@@ -159,8 +159,6 @@ const EXPECTED_EXPIRY = '2026-09-04T12:00:00.000Z'
 
 const CALLER: FunctionCaller = {
   surface: 'cli',
-  grantedScopes: ['read'],
-  safeMode: false,
   origin: 'agent',
 }
 

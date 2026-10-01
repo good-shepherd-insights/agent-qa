@@ -182,7 +182,7 @@ describe('423-37 runs.mark.preview contract (D-16/D-17)', () => {
     expect(op).not.toHaveProperty('requiredScopes')
     expect(op.resultKind).toBe('unary')
     expect(op.risk).toEqual({ name: 'fn:runs.mark.preview', recognized: true, readOnly: true })
-    expect(op.requiresHumanOrigin).toBeUndefined()
+    expect(op).not.toHaveProperty('requiresHumanOrigin')
     expect(op.boundThrough).toBe('feedbackReads')
 
     const falsePass = consequences({ markKind: 'false-pass', resolvedStep: { stepIndex: 2, reason: 'passing-verdict' },
@@ -262,9 +262,8 @@ describe('423-37 runs.mark.preview contract (D-16/D-17)', () => {
 
     const reads = port(consequences())
     const { deps: bound, forbidden } = deps(reads)
-    const options = { deps: bound, resolveExecutionContext: () => 'local-headless' as const,
-      auditSink: { appendGuardrailAudit() {} } }
-    const caller: FunctionCaller = { surface: 'mcp', grantedScopes: ['read'], safeMode: true, origin: 'agent' }
+    const options = { deps: bound, auditSink: { appendGuardrailAudit() {} } }
+    const caller: FunctionCaller = { surface: 'mcp', origin: 'agent' }
     const registry = createRegistryFromSpecs([{ ...op }], options)
     expect(registry.list(caller).find(entry => entry.id === 'runs.mark.preview')?.bindingStatus).toBe('bound')
     const viaGate = await invokeFunction(registry, 'runs.mark.preview', input, caller) as Record<string, unknown>

@@ -31,7 +31,6 @@ import {
 import type { FunctionRegistry } from '@vostride/agent-qa-agent'
 import * as knowledgeLocal from '@vostride/agent-qa-knowledge-local'
 import {
-  FunctionScopeSchema,
   MASKED_RESOLVED_CONFIG_SCHEMA_VERSION,
   TRUST_SCOPE_KEYS,
 } from '@vostride/agent-qa-schema'
@@ -96,8 +95,6 @@ const MASKED_CONFIG: MaskedResolvedConfig = {
 /** A person holding every scope, so a refusal below can only ever be the layer's. */
 const HUMAN: FunctionCaller = {
   surface: 'test',
-  grantedScopes: [...FunctionScopeSchema.options],
-  safeMode: false,
   origin: 'human',
 }
 
@@ -133,7 +130,9 @@ describe('a grant ledger the build cannot fully read authorizes nothing, because
   })
 
   /** The composition under test: the real readers and the real direct change door, no grant port. */
-  function host(context: ExecutionContext): FunctionRegistry {
+  // 2026-10-02 (432-39, D-12): the registry takes no context; `_context` names the posture a cell
+  // describes and reaches nothing.
+  function host(_context: ExecutionContext): FunctionRegistry {
     return createFunctionRegistry({
       deps: {
         runs: createRunsReader(agentQaRoot),
@@ -149,7 +148,6 @@ describe('a grant ledger the build cannot fully read authorizes nothing, because
         }),
       },
       auditSink: sink,
-      resolveExecutionContext: () => context,
     })
   }
 

@@ -1,6 +1,3 @@
-import type { TrustCredential } from '../safety/trust-credential'
-import type { FunctionScope } from './function-scope'
-
 /**
  * WHO is acting, as opposed to WHERE from (391 D-06). Closed, and spelled once (388 C13).
  *
@@ -25,10 +22,11 @@ export type FunctionCallerOrigin = (typeof FUNCTION_CALLER_ORIGINS)[number]
  * 2026-10-01 (432-20, D-10/D-12): NO FIELD HERE IS A PERMISSION INPUT. Every door can call every
  * operation, so `invokeFunction` and the registry read nothing on this record. `surface` and
  * `origin` survive for the receipts and presentation that already consume them, and no new label
- * is written. `grantedScopes`, `safeMode`, `credential` and `sessionId` are retired: the first two
- * are optional and unread so the composition roots and fixtures that still spell them compile
- * while later 432 plans remove them, and 432-39 deletes all four. A branch on `surface` remains an
- * anti-pattern — it re-creates the per-surface private powers the function layer abolished.
+ * is written. 2026-10-02 (432-39, D-02/D-10/D-12): the retired `grantedScopes`, `safeMode`,
+ * `credential` and `sessionId` members are deleted, with the scope and trust-credential types they
+ * named. An old caller record that still carries one is not migrated and nothing reads it. A branch
+ * on `surface` remains an anti-pattern — it re-creates the per-surface private powers the function
+ * layer abolished.
  */
 export interface FunctionCaller {
   /**
@@ -36,11 +34,6 @@ export interface FunctionCaller {
    * never a permission input.
    */
   surface: string
-  /**
-   * RETIRED, UNREAD (432-20, D-12). The capability scopes a composition root once minted for this
-   * caller. Nothing checks them; optional until 432-39 deletes the field.
-   */
-  grantedScopes?: readonly FunctionScope[]
   /**
    * WHO this call is on behalf of, MINTED by the composition root (391 D-06). The CLI mints
    * `human` because a person typed the command, the daemon and MCP mint `agent` because nobody
@@ -52,21 +45,5 @@ export interface FunctionCaller {
    * default nobody decides.
    */
   origin: FunctionCallerOrigin
-  /**
-   * RETIRED, UNREAD (432-20, D-12). Once a cosmetic listing filter that hid ops whose scopes
-   * exceeded `read`. The registry lists every op for every caller; optional until 432-39 deletes
-   * the field.
-   */
-  safeMode?: boolean
-  /**
-   * RETIRED (432-20, D-12). The function layer never reads it. The MCP mark door's credential
-   * refusal is its last reader, and 432-21 removes that refusal with the bearer credential;
-   * 432-39 deletes the field.
-   */
-  credential?: TrustCredential
-  /**
-   * RETIRED, UNREAD. It scoped the chat session's deny overlay at the gate (392 plan 13), and the
-   * overlay is deleted with the gate (432-19). 432-39 deletes the field.
-   */
-  sessionId?: string
 }
+

@@ -82,7 +82,6 @@ import type { FunctionDeps } from '@vostride/agent-qa-agent'
 import { AgentQaConfigSchema } from '@vostride/agent-qa-core'
 import * as dashboard from '@vostride/agent-qa-dashboard'
 import {
-  FunctionScopeSchema,
   MASKED_RESOLVED_CONFIG_SCHEMA_VERSION,
   base64Decode,
   enumerateConfigFileSet,
@@ -111,8 +110,6 @@ import { HN_TOP_STORY_HOOK_ID, buildScaffoldFileSet } from '../../commands/scaff
 
 const HUMAN: FunctionCaller = {
   surface: 'test',
-  grantedScopes: [...FunctionScopeSchema.options],
-  safeMode: false,
   origin: 'human',
 }
 
@@ -253,7 +250,6 @@ function registryFor(options: { readonly confirm?: boolean } = {}) {
   return createFunctionRegistry({
     deps,
     auditSink: { appendGuardrailAudit() {} },
-    resolveExecutionContext: () => 'local-interactive',
     // A SPY, so "the confirm was reached" is a measurement rather than an inference from the turn
     // having completed (D-14). Omitted entirely for the fail-closed cell.
     ...(options.confirm === undefined
@@ -1068,7 +1064,6 @@ function directRegistry() {
   return createFunctionRegistry({
     deps,
     auditSink: { appendGuardrailAudit() {} },
-    resolveExecutionContext: () => 'local-interactive',
   })
 }
 

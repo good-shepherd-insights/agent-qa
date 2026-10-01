@@ -35,7 +35,7 @@ import {
   invokeFunction,
 } from '@vostride/agent-qa-agent'
 import type { FunctionDeps } from '@vostride/agent-qa-agent'
-import { FunctionScopeSchema } from '@vostride/agent-qa-schema'
+import * as schema from '@vostride/agent-qa-schema'
 import type {
   AuthoringDraftEditInput,
   AuthoringDraftWriteInput,
@@ -112,8 +112,9 @@ describe('CLI_FUNCTION_CALLER', () => {
   // op is reachable is C432-ALL-OPS-AVAILABLE's claim below, measured without any grant.
   it('grants the whole scope vocabulary, member for member', () => {
     expect(Object.keys(CLI_FUNCTION_CALLER).sort()).toEqual(['origin', 'surface'])
-    expect(CLI_FUNCTION_CALLER.grantedScopes).toBeUndefined()
-    expect(FunctionScopeSchema.options.length, 'the retired vocabulary still names its members').toBeGreaterThan(0)
+    expect(CLI_FUNCTION_CALLER).not.toHaveProperty('grantedScopes')
+    // 2026-10-02 (432-39, D-10/D-12): the retired vocabulary itself is deleted now, not only unused.
+    expect(Object.keys(schema), 'the retired vocabulary is still exported').not.toContain('FunctionScopeSchema')
   })
 
   // RE-SPELLED 2026-09-30 (432-13) from 'reaches the gate for authoring.draft.write — the refusal
@@ -148,7 +149,7 @@ describe('DAEMON_FUNCTION_CALLER', () => {
   // set; the claim that survives — the daemon reaches the test-write ops — is the next cell's.
   it('holds test-write', () => {
     expect(Object.keys(DAEMON_FUNCTION_CALLER).sort()).toEqual(['origin', 'surface'])
-    expect(DAEMON_FUNCTION_CALLER.grantedScopes).toBeUndefined()
+    expect(DAEMON_FUNCTION_CALLER).not.toHaveProperty('grantedScopes')
   })
 
   // RE-SPELLED 2026-09-30 (432-13, D-14/D-15) from 'is still refused for authoring.draft.write —

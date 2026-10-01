@@ -57,7 +57,6 @@ import {
 } from '@vostride/agent-qa-agent'
 import type {
   FunctionCaller,
-  FunctionScope,
   LiveUrlSigner,
   RunEventEnvelope,
 } from '@vostride/agent-qa-schema'
@@ -166,8 +165,8 @@ function fixtureRegistry(handles: readonly number[] = [0, 1]): {
 // 2026-10-02 (432-37, D-12): no `safeMode`, and no `['read']` default scope set; the server reads
 // neither (432-20). A scope set a cell passes EXPLICITLY is kept, cast past the type, as a
 // deliberate smuggle: the cell whose caller's scopes omit `read` hands `['run']` to prove the set
-// changes nothing. Goes with the field in 432-39.
-const caller = (grantedScopes?: readonly FunctionScope[]): FunctionCaller =>
+// changes nothing. 2026-10-02 (432-39): the field is deleted; the smuggle stays, typed as strings.
+const caller = (grantedScopes?: readonly string[]): FunctionCaller =>
   grantedScopes === undefined
     ? { surface: 'mcp', origin: 'agent' }
     : ({ surface: 'mcp', origin: 'agent', grantedScopes } as FunctionCaller)
@@ -356,7 +355,7 @@ describe('the negotiation envelope, measured against the shipped SDK (Open Quest
 
 async function serveAgentQa(
   handles?: readonly number[],
-  grantedScopes?: readonly FunctionScope[],
+  grantedScopes?: readonly string[],
 ): Promise<{
   readonly url: string
   readonly minted: string[]

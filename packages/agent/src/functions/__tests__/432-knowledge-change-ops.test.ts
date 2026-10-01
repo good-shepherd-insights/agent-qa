@@ -22,8 +22,6 @@ import type { FunctionDeps, KnowledgeReviewPort } from '../spec.js'
 /** A caller with no credential: the anonymous MCP caller a tokenless host will mint. */
 const TOKENLESS_CALLER: FunctionCaller = {
   surface: 'mcp',
-  grantedScopes: ['read', 'knowledge-write'],
-  safeMode: false,
   origin: 'agent',
 }
 
@@ -116,11 +114,12 @@ function deps(knowledgeReview: KnowledgeReviewPort): FunctionDeps {
 
 const SINK = { appendGuardrailAudit() {} } as unknown as AuditSink
 
-function registry(port: KnowledgeReviewPort, context: ExecutionContext = 'local-interactive') {
+// 2026-10-02 (432-39, D-12): the registry takes no context, so `_context` names the posture a cell
+// describes and reaches nothing; the cells varying it prove the outcome does not depend on it.
+function registry(port: KnowledgeReviewPort, _context: ExecutionContext = 'local-interactive') {
   return createFunctionRegistry({
     deps: deps(port),
     auditSink: SINK,
-    resolveExecutionContext: () => context,
   })
 }
 

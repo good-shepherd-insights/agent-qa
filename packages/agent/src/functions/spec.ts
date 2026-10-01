@@ -24,7 +24,6 @@ import type {
   ForgetReceiptV1,
   FeedbackPort,
   FeedbackReadsPort,
-  FunctionScope,
   InspectRecordView,
   JobStatus,
   KnowledgeAcceptInput,
@@ -229,20 +228,9 @@ export interface FunctionMetadata {
   id: string
   /** One-line human description; rendered by catalogs and `agent-qa fn --list`. */
   summary: string
-  /**
-   * RETIRED, UNREAD (2026-10-01, 432-20, D-12). The capability scopes a caller's grants once had
-   * to cover. `invokeFunction` no longer checks them, the registry no longer filters or projects
-   * them, and no door hides an op over them. Optional only so op specs and fixtures that still
-   * spell the key compile while 432-21/23–38 remove it; 432-39 deletes the member. There is no
-   * runtime reader and no compatibility branch.
-   */
-  requiredScopes?: readonly FunctionScope[]
-  /**
-   * RETIRED, UNREAD (2026-10-01, 432-20, D-10/D-12). Once marked an op as runnable only on behalf
-   * of a person (391 D-06). No registered op declares it since 432-18, the dispatch check is
-   * deleted, and declarations never carry it. 432-39 deletes the member.
-   */
-  requiresHumanOrigin?: true
+  // 2026-10-02 (432-39, D-10/D-12): no `requiredScopes` and no `requiresHumanOrigin`. Both were
+  // retired and unread since 432-20 and every op spec stopped spelling them by 432-27; the members
+  // are deleted with the capability-scope union, so no metadata, spec or declaration can carry either.
   resultKind: FunctionResultKind
   /** The descriptor this op projects into for the policy gate. */
   risk: RiskActionDescriptor
@@ -300,8 +288,7 @@ export interface ClauseVerdict {
  * declaration is data. `invokeFunction` reads the enforcing schema off the {@link
  * FunctionSpec} instead, which never leaves this directory.
  */
-export interface FunctionDeclaration
-  extends Omit<FunctionMetadata, 'requiredScopes' | 'requiresHumanOrigin'> {
+export interface FunctionDeclaration extends FunctionMetadata {
   /**
    * Whether THIS composition can run the op (D-09/D-16).
    *
@@ -331,9 +318,9 @@ export interface FunctionDeclaration
    * first time an op gains or loses a disclosure, silently, because nothing would compare it to
    * anything.
    *
-   * `true` is the only value, for `requiresHumanOrigin`'s reason: `false` and an absent key would
-   * be two spellings of one fact, and a present `undefined` would make a golden column that reads
-   * `null` for an op that simply discloses nothing.
+   * `true` is the only value, because `false` and an absent key would be two spellings of one
+   * fact, and a present `undefined` would make a golden column that reads `null` for an op that
+   * simply discloses nothing.
    */
   discloses?: true
   /**
@@ -1116,11 +1103,12 @@ export interface FunctionDeps {
    * `add` that no-opped would report a test as quarantined while it kept failing every build.
    *
    * ONE port for all three verbs rather than a reader/writer split, because the read/write
-   * asymmetry is already stated where it is ENFORCED — `quarantine.list` declares read scopes
-   * and a read-only descriptor, `release` and `add` declare a write scope and `readOnly: false`
-   * — so a second port would restate at the composition root a distinction the gate makes at
-   * every call. The port TYPE is minted in schema, so knowledge-local can implement it without
-   * depending on the function layer.
+   * asymmetry is already stated on each op's risk descriptor — `quarantine.list` declares a
+   * read-only descriptor, `release` and `add` declare `readOnly: false` — so a second port would
+   * restate at the composition root a distinction the descriptors already carry. 2026-10-02
+   * (432-39, D-12): no op declares a scope and no gate enforces the split at a call; it lives only
+   * on the descriptors. The port TYPE is minted in schema, so knowledge-local can implement it
+   * without depending on the function layer.
    */
   quarantine?: QuarantineOperationsPort
   /**

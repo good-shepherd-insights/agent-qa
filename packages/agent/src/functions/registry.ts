@@ -7,7 +7,7 @@
 // Since 432-13 that path asks nobody (no gate, confirm port, grant reader or deny overlay).
 
 import type { AuditSink } from '@vostride/agent-qa-safety'
-import type { ExecutionContext, FunctionCaller } from '@vostride/agent-qa-schema'
+import type { FunctionCaller } from '@vostride/agent-qa-schema'
 
 import { toOutputProjection, toSchemaProjection } from './declaration-projection.js'
 import type { FunctionBindingStatus } from './spec.js'
@@ -354,15 +354,10 @@ export interface CreateFunctionRegistryOptions {
    * since 432-19 there is no execution-audit writer to require.
    */
   auditSink: AuditSink
-  /**
-   * RETIRED, UNREAD (432-13; narrowed to transitional in 432-20). No op gate decides in an
-   * execution context any more, and nothing in this module reads the option. It stays OPTIONAL
-   * rather than deleted for the same bounded reason the permission metadata does: 84 fixture
-   * registries across about 60 test files still pass it, and those files belong to the fixture
-   * sweeps (432-23–38). 432-39 deletes it with the other transitional shapes. No runtime branch
-   * reads it, so passing it changes nothing.
-   */
-  resolveExecutionContext?: () => ExecutionContext
+  // 2026-10-02 (432-39, D-12): no `resolveExecutionContext` member. No op gate has decided in an
+  // execution context since 432-13, nothing here read the option, and the fixtures that passed it
+  // stopped by 432-39. A host's live context still reaches a run's record and the knowledge review
+  // through their own inputs, never through the registry.
 }
 
 export interface FunctionRegistry {
@@ -371,8 +366,9 @@ export interface FunctionRegistry {
    *
    * 2026-10-01 (432-20, D-12): the same list for every caller. The safe-mode filter that hid ops
    * whose scopes exceeded `read` is deleted with the scopes themselves, so the caller argument is
-   * not read; it stays in the signature so the doors keep one call shape while 432-39 narrows the
-   * caller contract.
+   * not read. 2026-10-02 (432-39): the caller contract is narrowed to `surface`/`origin`; the unread
+   * argument stays in the signature for now, because dropping it touches every listing call site in
+   * the workspace, and that is routed to the 432-42 census.
    */
   list(caller: FunctionCaller): readonly FunctionDeclaration[]
 }
@@ -461,8 +457,8 @@ function declarationView(spec: FunctionSpec, deps: FunctionDeps): FunctionDeclar
     summary: spec.summary,
     // 2026-10-01 (432-20, D-10/D-12): no `requiredScopes` and no `requiresHumanOrigin`. Both were
     // projected here so a listing and the dispatch checks read one field; the checks are deleted,
-    // and a spec that still carries either key (until 432-39 removes the metadata) does not pass
-    // it on. The view is built field by field, so an old key cannot ride through by accident.
+    // and 432-39 deleted both members from the metadata type. The view is built field by field, so
+    // an old key smuggled onto a spec object still cannot ride through by accident.
     // 397 D-05: the PRESENCE of a disclosure, projected as a conditional spread, so absent stays
     // absent. The method
     // itself never crosses: what a listing receives is the boolean fact that a confirm prompt

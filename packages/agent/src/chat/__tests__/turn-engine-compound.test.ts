@@ -72,15 +72,11 @@ const RUNS_DIGEST = 'runs.digest'
 
 const RESOLVER_CALLER: FunctionCaller = {
   surface: 'chat',
-  grantedScopes: ['read', 'run'],
-  safeMode: false,
   origin: 'human',
 }
 
 const PLANNER_CALLER: FunctionCaller = {
   surface: 'chat',
-  grantedScopes: ['read', 'run'],
-  safeMode: false,
   origin: 'agent',
 }
 
@@ -284,13 +280,11 @@ function harness(options: HarnessOptions = {}): Harness {
     reconcile: options.reconcile ?? deterministicOverrideStrategy,
     sessionLog: log,
     mint: {
-      // Session-stamped like production (392 plan 13): the gate's deny overlay is asked WHOSE pin,
-      // and a fixture minting a caller with no session would exercise a caller shape the composed
-      // engine never produces.
-      forStage: (stage: ChatBindingStage, sessionId: string): FunctionCaller => ({
-        ...(stage === 'resolver' ? RESOLVER_CALLER : PLANNER_CALLER),
-        sessionId,
-      }),
+      // 2026-10-02 (432-39, D-02/D-12): no session is stamped onto the caller. The production mint
+      // stopped stamping one when the deny overlay that read it was deleted, the port no longer
+      // takes the session, and `FunctionCaller.sessionId` is deleted.
+      forStage: (stage: ChatBindingStage): FunctionCaller =>
+        stage === 'resolver' ? RESOLVER_CALLER : PLANNER_CALLER,
     },
     invoke: (functionId, input, caller) => {
       ordering.push(`invoke:${functionId}`)

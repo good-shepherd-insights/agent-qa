@@ -180,11 +180,13 @@ describe('the door is composed once, and mounted where the server serves it', ()
     // rather than each spelled here. A literal list in this cell would be a third copy, agreeing
     // with both today and with neither the day a seventh scope lands.
     const { CLI_FUNCTION_CALLER } = await import('../composition/local-agent-host.js')
-    // 432-20 (D-12): `grantedScopes` is retired and optional; the two mints still agree on it.
-    expect([...(DASHBOARD_FUNCTION_CALLER.grantedScopes ?? [])].sort())
-      .toEqual([...(CLI_FUNCTION_CALLER.grantedScopes ?? [])].sort())
+    // 2026-10-02 (432-39, D-02/D-12): `grantedScopes` and `safeMode` are deleted from the caller, so
+    // the two mints are compared as KEY sets instead: they agree on every member but `surface`.
+    expect(Object.keys(DASHBOARD_FUNCTION_CALLER).sort())
+      .toEqual(Object.keys(CLI_FUNCTION_CALLER).sort())
     expect(DASHBOARD_FUNCTION_CALLER.origin).toBe(CLI_FUNCTION_CALLER.origin)
-    expect(DASHBOARD_FUNCTION_CALLER.safeMode).toBe(CLI_FUNCTION_CALLER.safeMode)
+    expect(DASHBOARD_FUNCTION_CALLER).not.toHaveProperty('safeMode')
+    expect(CLI_FUNCTION_CALLER).not.toHaveProperty('safeMode')
     // Attribution is the one difference, and it is the only legitimate one.
     expect(DASHBOARD_FUNCTION_CALLER.surface).toBe('dashboard')
   })

@@ -16,8 +16,6 @@ import type {
   ExecutionContext,
   RiskActionDescriptor,
   RiskTier,
-  TrustCredential,
-  TrustScope,
 } from '@vostride/agent-qa-schema'
 import { registerFirstPartySafetyHooks } from '../../hooks/first-party'
 import type { AuditSink, GuardrailAuditRow } from '../../ports/audit-sink'
@@ -34,7 +32,18 @@ class RecordingAuditSink implements AuditSink {
 const PROJECT_A = 'project-secret-alpha'
 const PROJECT_B = 'project-secret-beta'
 
-const matchingCredential: TrustCredential = {
+// 2026-10-02 (432-39, D-02/D-12): the trust-credential DTOs are deleted from the schema, so the
+// retired trust input a stale composition would still hand over is spelled here, by shape. It is
+// smuggled past the hook options (`as never`) exactly as before, and nothing reads it.
+interface RetiredTrustScope {
+  project?: string
+  org?: string
+}
+interface RetiredTrustCredential {
+  scope: RetiredTrustScope
+}
+
+const matchingCredential: RetiredTrustCredential = {
   scope: { project: PROJECT_A },
 }
 
@@ -44,8 +53,8 @@ interface ScenarioCase {
   ctx: ExecutionContext
   trust?: {
     trustMode?: boolean
-    credential?: TrustCredential
-    actionScope?: TrustScope
+    credential?: RetiredTrustCredential
+    actionScope?: RetiredTrustScope
   }
   expectedRiskTier: RiskTier
 }

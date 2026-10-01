@@ -1,70 +1,16 @@
-/**
- * Browser-safe scope carried by trust credentials and standing approvals.
- */
-export interface TrustScope {
-  /**
-   * Opaque project scope identifier.
-   * Format and granularity are deferred to the M5 cloud-auth model.
-   */
-  project?: string
-  /**
-   * Opaque organization scope identifier.
-   * Format and granularity are deferred to the M5 cloud-auth model.
-   */
-  org?: string
-}
+// 2026-10-02 (432-39, D-02/D-10/D-12): the `TrustScope` and `TrustCredential` caller types are
+// deleted with `FunctionCaller.credential`, their last consumer. No caller presents a credential and
+// nothing reads one; an old record that still carries one is not migrated.
 
 /**
- * The scope's key set, spelled ONCE (388 C13).
+ * The scope key set, spelled ONCE (388 C13), and the only member left in this module.
  *
- * RETUNE NOTE: real scope issuance belongs to M5's cloud-auth model. A key added to {@link
- * TrustScope} above is added HERE, and the key-union pin below fails the build until it is — in
- * BOTH directions, so a key added here and not to the DTO fails too. What that pin covers, stated
- * negatively: it holds this constant against the DTO declared above it and says nothing about any
- * other file. 2026-10-01 (432-22, D-12): the strict wire projection that BUILT its shape from this
- * constant (`TrustScopeSchema`, 391-11) is deleted with the run-service token entry that parsed
- * through it; this type and the constant stay until 432-39 removes the optional caller fields.
+ * 2026-10-02 (432-39): it no longer ranges a DTO here. The strict wire projection that built its
+ * shape from this constant (`TrustScopeSchema`, 391-11) was deleted by 432-22, and the caller types
+ * it was pinned against by 432-39, so the key-union pin went with them. The constant stays only
+ * because four retained cells outside 432-39's closure still assert it is published; its removal is
+ * routed to the 432-42 census.
  */
 export const TRUST_SCOPE_KEYS = ['project', 'org'] as const
 
 export type TrustScopeKey = (typeof TRUST_SCOPE_KEYS)[number]
-
-/** True only when the two types are mutually assignable — a real equality, not a subtype check. */
-type ExactlyEqual<A, B> = [A] extends [B] ? ([B] extends [A] ? true : false) : false
-
-const _trustScopeKeysCoverTheDto: ExactlyEqual<TrustScopeKey, keyof TrustScope> = true
-void _trustScopeKeysCoverTheDto
-
-// 2026-10-01 (432-21, D-12): `STANDING_APPROVAL_SCOPE` is deleted. 432-18 moved it here from the
-// deleted grant ledger because the MCP knowledge-write bearer still presented a credential carrying
-// it; that bearer credential and its resolver are deleted, so the constant left with its last
-// consumer.
-
-/**
- * Scoped trust credential presented to the policy gate.
- *
- * 2026-08-25 (Phase 403, D-01/D-03): PART OF THIS FAMILY NOW HAS A REAL ISSUER IN THIS
- * REPOSITORY, and the previous wording on this DTO — which deferred issuance, validation and the
- * signing internals wholesale to M5 — had started to read as though nothing here mints one. (The
- * two remarks on {@link TrustScope} above are a DIFFERENT and still-accurate claim: the format and
- * granularity of a project or org scope identifier are genuinely unsettled, and 403 did not touch
- * them.) The view-scoped `liveUrl` capability is minted and
- * parsed by exactly one module pair — `packages/agent/src/functions/live-url.ts`, reached only
- * through the `runs.liveurl` op — over a per-process ephemeral HMAC key that lives in
- * `packages/cli/src/composition/live-url-signer.ts` and in no other file. The resulting token is
- * short-lived, single-run, single-handle and `view`-scoped; a tamper, an expiry, a foreign run and
- * a wrong scope are each refused by name rather than by silence.
- *
- * WHAT STAYS DEFERRED, precisely, so the next reader does not have to re-derive it: the KEY
- * SOURCE (403 open Q5 — an ephemeral per-process key cannot survive a restart or be shared with a
- * second host, which is the cloud-auth model's job) and the `control` scope, which would let a
- * holder act on a run rather than watch one. Both are absent on purpose, not pending.
- *
- * This DTO still models only the credential SHAPE and its required scope. It is deliberately not
- * the liveUrl claims type: those live beside their own mint/validate pair, because a claims type
- * shared with the gate would be a second opinion about what a valid token is.
- */
-export interface TrustCredential {
-  /** Scope the credential is allowed to satisfy. */
-  scope: TrustScope
-}

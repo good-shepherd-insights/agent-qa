@@ -27,7 +27,6 @@ import type { FunctionRegistry } from '@vostride/agent-qa-agent'
 import { publishBundleForTest } from '@vostride/agent-qa-knowledge-local'
 import type { BundleStoreConfig } from '@vostride/agent-qa-knowledge-local'
 import {
-  FunctionScopeSchema,
   MASKED_RESOLVED_CONFIG_SCHEMA_VERSION,
 } from '@vostride/agent-qa-schema'
 import type {
@@ -65,8 +64,6 @@ const MASKED_CONFIG: MaskedResolvedConfig = {
 /** A person holding every scope, so a refusal below can only ever be origin's. */
 const HUMAN: FunctionCaller = {
   surface: 'test',
-  grantedScopes: [...FunctionScopeSchema.options],
-  safeMode: false,
   origin: 'human',
 }
 
@@ -151,7 +148,9 @@ describe('C432-NO-GRANT-OPS: the grant loop has no verbs left on the composed ho
   }
 
   /** The composition under test: the real readers and the real direct knowledge change door. */
-  function host(context: ExecutionContext): FunctionRegistry {
+  // 2026-10-02 (432-39, D-12): the registry takes no context; `_context` names the posture a cell
+  // describes and reaches nothing.
+  function host(_context: ExecutionContext): FunctionRegistry {
     return createFunctionRegistry({
       deps: {
         runs: createRunsReader(agentQaRoot),
@@ -168,7 +167,6 @@ describe('C432-NO-GRANT-OPS: the grant loop has no verbs left on the composed ho
       },
       auditSink: sink,
       // 432-13: no standing-approval reader and no confirm port — `invokeFunction` asks nobody.
-      resolveExecutionContext: () => context,
     })
   }
 

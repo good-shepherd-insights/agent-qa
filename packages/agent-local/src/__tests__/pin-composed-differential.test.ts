@@ -27,7 +27,6 @@ import {
 } from '@vostride/agent-qa-agent'
 import type { ChatLanguageModel, JobModelCapability } from '@vostride/agent-qa-agent'
 import {
-  FunctionScopeSchema,
   MASKED_RESOLVED_CONFIG_SCHEMA_VERSION,
 } from '@vostride/agent-qa-schema'
 import type {
@@ -57,8 +56,6 @@ const MASKED_CONFIG: MaskedResolvedConfig = {
 /** A person holding every scope, so a refusal below can only ever be the pin. */
 const HUMAN: FunctionCaller = {
   surface: 'test',
-  grantedScopes: [...FunctionScopeSchema.options],
-  safeMode: false,
   origin: 'human',
 }
 

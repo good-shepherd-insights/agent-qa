@@ -34,7 +34,6 @@ import * as dashboard from '@vostride/agent-qa-dashboard'
 import type { FunctionDeps } from '@vostride/agent-qa-agent'
 import { isCanonicalHookId } from '@vostride/agent-qa-ids'
 import {
-  FunctionScopeSchema,
   MASKED_RESOLVED_CONFIG_SCHEMA_VERSION,
 } from '@vostride/agent-qa-schema'
 import type {
@@ -56,8 +55,6 @@ import {
 
 const HUMAN: FunctionCaller = {
   surface: 'test',
-  grantedScopes: [...FunctionScopeSchema.options],
-  safeMode: false,
   origin: 'human',
 }
 
@@ -150,7 +147,6 @@ function registry() {
   return createFunctionRegistry({
     deps,
     auditSink: { appendGuardrailAudit() {} },
-    resolveExecutionContext: () => 'local-interactive',
   })
 }
 

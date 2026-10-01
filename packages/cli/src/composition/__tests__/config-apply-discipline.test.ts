@@ -33,7 +33,6 @@ import { join } from 'node:path'
 import { UnknownFunctionError, createFunctionRegistry, invokeFunction } from '@vostride/agent-qa-agent'
 import type { FunctionDeps } from '@vostride/agent-qa-agent'
 import {
-  FunctionScopeSchema,
   MASKED_RESOLVED_CONFIG_SCHEMA_VERSION,
   sha256hexBytes,
   utf8Encode,
@@ -56,8 +55,6 @@ import { filePre432ConfigProposal } from './pre-432-config-proposal.js'
 
 const HUMAN: FunctionCaller = {
   surface: 'test',
-  grantedScopes: [...FunctionScopeSchema.options],
-  safeMode: false,
   origin: 'human',
 }
 
@@ -209,7 +206,6 @@ function registryFor(overrides: Partial<FunctionDeps> = {}) {
   return createFunctionRegistry({
     deps,
     auditSink: { appendGuardrailAudit() {} },
-    resolveExecutionContext: () => 'local-interactive',
   })
 }
 

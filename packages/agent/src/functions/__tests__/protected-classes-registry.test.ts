@@ -11,7 +11,6 @@
 import { classifyRisk } from '@vostride/agent-qa-safety'
 import * as schema from '@vostride/agent-qa-schema'
 import {
-  FunctionScopeSchema,
   MASKED_RESOLVED_CONFIG_SCHEMA_VERSION,
 } from '@vostride/agent-qa-schema'
 import type { FunctionCaller } from '@vostride/agent-qa-schema'
@@ -67,8 +66,6 @@ function listingDeps(): FunctionDeps {
  */
 const FULLY_GRANTED: FunctionCaller = {
   surface: 'test',
-  grantedScopes: [...FunctionScopeSchema.options],
-  safeMode: false,
   origin: 'human',
 }
 

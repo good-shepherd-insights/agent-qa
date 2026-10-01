@@ -44,8 +44,7 @@ import {
   type FunctionDeps,
   type FunctionRegistry,
 } from '@vostride/agent-qa-agent'
-import { FunctionScopeSchema } from '@vostride/agent-qa-schema'
-import type { FunctionCaller, FunctionScope } from '@vostride/agent-qa-schema'
+import type { FunctionCaller } from '@vostride/agent-qa-schema'
 import { afterEach, describe, expect, it } from 'vitest'
 
 import { buildAgentQaMcpServer } from '../catalog.js'
@@ -89,12 +88,16 @@ function builtInRegistry(): FunctionRegistry {
   return createFunctionRegistry({ deps: {} as unknown as FunctionDeps, auditSink })
 }
 
-function callerWith(grantedScopes: readonly FunctionScope[]): FunctionCaller {
+function callerWith(grantedScopes: readonly string[]): FunctionCaller {
   // 432-21 (D-12): no credential rides the caller; the scope set is retired and unread (432-20).
-  return { surface: 'mcp', grantedScopes, safeMode: false, origin: 'agent' }
+  return { surface: 'mcp', grantedScopes, safeMode: false, origin: 'agent' } as FunctionCaller
 }
 
-const EVERY_SCOPE = [...FunctionScopeSchema.options] as readonly FunctionScope[]
+// 2026-10-02 (432-39, D-10/D-12): the scope union is deleted, so the retired names are spelled by
+// hand here and handed to the caller as a smuggle, cast past the deleted field; nothing reads them.
+const EVERY_SCOPE: readonly string[] = [
+  'read', 'run', 'config-write', 'knowledge-write', 'approval-write', 'test-write',
+]
 
 const openClients: Client[] = []
 
@@ -110,7 +113,7 @@ afterEach(async () => {
  * measuring this file's idea of the protocol rather than the protocol.
  */
 async function advertise(
-  grantedScopes: readonly FunctionScope[] = EVERY_SCOPE,
+  grantedScopes: readonly string[] = EVERY_SCOPE,
 ): Promise<readonly AdvertisedTool[]> {
   const handler = createMcpHandler(() =>
     buildAgentQaMcpServer({

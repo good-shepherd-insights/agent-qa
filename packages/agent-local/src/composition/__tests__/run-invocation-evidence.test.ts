@@ -56,8 +56,6 @@ import type { RunAssemblyContext, RunConfig } from '../run-invocation-core.js'
 
 const CALLER: FunctionCaller = {
   surface: 'cli',
-  grantedScopes: ['read', 'run'],
-  safeMode: false,
   origin: 'agent',
 }
 

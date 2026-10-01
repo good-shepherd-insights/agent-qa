@@ -197,20 +197,19 @@ export type ClauseSplitter = (utterance: string) => readonly ChatClause[]
  * Per-stage caller minting (RESEARCH Pitfall 1 / 391 D-06).
  *
  * `FunctionCaller.origin` is a per-CALL fact, not a per-surface one: a person typing a canonical
- * alias IS a human acting, and a model planning a call is not, and both happen inside one turn. A
- * uniform mint would be wrong in one direction or the other — `agent` everywhere kills the
- * deterministic `proposals` alias against every `requiresHumanOrigin` op, `human` everywhere hands
- * the planner the self-grant power 391 D-06 deliberately withholds.
+ * alias IS a human acting, and a model planning a call is not, and both happen inside one turn, so a
+ * receipt attributes each clause to the stage that bound it. 2026-10-02 (432-39, D-10/D-12): the
+ * origin is attribution only; no op withholds anything by it.
  */
 export interface CallerMint {
   /**
-   * The session is minted ONTO the caller (392 plan 13, W-03).
+   * The caller for one binding stage.
    *
-   * Origin says WHO is acting; the session says WHICH CONVERSATION they are acting in. Both are
-   * composition-minted: a caller that could name its own session could attribute its calls to a
-   * conversation it is not in. (432-13: the session deny overlay that also read it is gone.)
+   * 2026-10-02 (432-39, D-02/D-12): no `sessionId` parameter. It only ever stamped the retired
+   * `FunctionCaller.sessionId` (392 plan 13), which nothing read after the session deny overlay left
+   * (432-13/432-19); the production mint ignored it, and the caller member is deleted.
    */
-  forStage(stage: ChatBindingStage, sessionId: string): FunctionCaller
+  forStage(stage: ChatBindingStage): FunctionCaller
 }
 
 /**

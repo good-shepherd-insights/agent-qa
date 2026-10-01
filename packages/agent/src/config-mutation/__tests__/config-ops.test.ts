@@ -79,8 +79,6 @@ const INVALID_MARKER = 'seeded-invalid'
 
 const CALLER: FunctionCaller = {
   surface: 'test',
-  grantedScopes: ['config-write', 'read'],
-  safeMode: false,
   origin: 'human',
 }
 
@@ -361,7 +359,6 @@ function registryFor(test: Harness) {
   return createFunctionRegistry({
     deps: test.deps,
     auditSink: { appendGuardrailAudit() {} },
-    resolveExecutionContext: () => 'local-interactive',
   })
 }
 
@@ -938,7 +935,6 @@ describe('the config action class is CLOSED, and the registry is where that is l
     const registry = createFunctionRegistry({
       deps: withoutScan as unknown as FunctionDeps,
       auditSink: { appendGuardrailAudit() {} },
-      resolveExecutionContext: () => 'local-interactive',
     })
 
     const samples: readonly [string, unknown][] = [
@@ -964,7 +960,6 @@ describe('the config action class is CLOSED, and the registry is where that is l
     const registry = createFunctionRegistry({
       deps: withoutWriter as unknown as FunctionDeps,
       auditSink: { appendGuardrailAudit() {} },
-      resolveExecutionContext: () => 'local-interactive',
     })
     const status = new Map(registry.list(CALLER).map((entry) => [entry.id, entry.bindingStatus]))
     for (const id of [

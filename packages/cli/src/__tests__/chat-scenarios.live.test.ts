@@ -47,7 +47,6 @@ import { FsEventLog, HANDOFF_FILE, RUNS_SUBDIR, slugBranch } from '@vostride/age
 import {
   CURRENT_HANDOFF_SCHEMA_VERSION,
   CLAUSE_RECEIPT_STATUSES,
-  FunctionScopeSchema,
   asRunId,
   clauseReachedCapability,
 } from '@vostride/agent-qa-schema'
@@ -84,8 +83,6 @@ const SEEDED_RUN_ID = 'RUN-1'
 
 const HUMAN: FunctionCaller = {
   surface: 'test',
-  grantedScopes: [...FunctionScopeSchema.options],
-  safeMode: false,
   origin: 'human',
 }
 

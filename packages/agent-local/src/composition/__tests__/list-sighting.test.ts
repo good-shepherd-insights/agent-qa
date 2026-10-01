@@ -61,8 +61,6 @@ const PRODUCT = 'shop'
 
 const CALLER: FunctionCaller = {
   surface: 'cli',
-  grantedScopes: ['read'],
-  safeMode: false,
   origin: 'agent',
 }
 

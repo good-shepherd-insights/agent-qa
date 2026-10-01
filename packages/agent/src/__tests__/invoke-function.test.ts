@@ -5,6 +5,11 @@
 // `evaluate`, so nothing is classified, asked or audited at dispatch. The cells that measured the
 // gate's uniform audit are re-spelled as its absence (C432-INVOKE-DIRECT); the refusals that are
 // not approvals — unknown id, invalid input, scope, origin, binding — stay measured unchanged.
+//
+// 2026-10-02 (432-39, D-10/D-12): the caller's `grantedScopes`/`safeMode`, the metadata's
+// `requiredScopes` and the registry's `resolveExecutionContext` option are deleted. Where a cell
+// proves one of them is unread, the value is SMUGGLED past the type with a cast so the cell stays
+// non-vacuous; everywhere else the fixture simply stops passing it.
 
 import {
   CURRENT_HANDOFF_SCHEMA_VERSION,
@@ -12,9 +17,7 @@ import {
 } from '@vostride/agent-qa-schema'
 import type {
   CompletedRunHandoff,
-  ExecutionContext,
   FunctionCaller,
-  FunctionScope,
   RunSummary,
 } from '@vostride/agent-qa-schema'
 import type { AuditSink, GuardrailAuditRow } from '@vostride/agent-qa-safety'
@@ -35,8 +38,6 @@ import {
 } from '../functions/registry.js'
 import type { CreateFunctionRegistryOptions } from '../functions/registry.js'
 import type { FunctionDeps, FunctionSpec } from '../functions/spec.js'
-
-const FIXED_CONTEXT: () => ExecutionContext = () => 'local-interactive'
 
 describe('read invocation scope', () => {
   // RE-SPELLED 2026-09-30 (432-13): 'READ-SCOPE surrounds awaited read dispatch after the gate and
@@ -167,8 +168,9 @@ function capturingSink(): CapturedSink {
   }
 }
 
-function caller(grantedScopes: readonly FunctionScope[], safeMode = false): FunctionCaller {
-  return { surface: 'test', grantedScopes, safeMode, origin: 'agent' }
+/** A caller smuggling a retired scope set and safe-mode flag past the type (432-39): both unread. */
+function caller(grantedScopes: readonly string[], safeMode = false): FunctionCaller {
+  return { surface: 'test', grantedScopes, safeMode, origin: 'agent' } as FunctionCaller
 }
 
 /**
@@ -177,7 +179,7 @@ function caller(grantedScopes: readonly FunctionScope[], safeMode = false): Func
  * Deliberately a NON-REGISTERED id: `config.get` is a real read-only capability now, so
  * reusing that id here would have this file assert a false thing about a shipped op.
  */
-const configSetSpec: FunctionSpec<Record<string, never>, { ok: true }> = {
+const configSetSpec = {
   id: 'config.set',
   summary: 'Synthetic non-read capability used to exercise the listing filter.',
   requiredScopes: ['config-write'],
@@ -189,7 +191,7 @@ const configSetSpec: FunctionSpec<Record<string, never>, { ok: true }> = {
   // one — the shape has a single arm, so there is nothing to discriminate.
   classify: () => ({ status: 'executed' as const, outcome: '' }),
   invoke: () => Promise.resolve({ ok: true as const }),
-}
+} as FunctionSpec<Record<string, never>, { ok: true }>
 
 /**
  * A synthetic capability declaring 394's `test-write` beside the two scopes an authoring loop
@@ -201,7 +203,7 @@ const configSetSpec: FunctionSpec<Record<string, never>, { ok: true }> = {
  * `authoring.draft.write` lands later in this phase, and pinning it here would assert a false
  * thing about a shipped op.
  */
-const authoringDraftWriteSpec: FunctionSpec<Record<string, never>, { ok: true }> = {
+const authoringDraftWriteSpec = {
   id: 'authoring.draft.write.synthetic',
   summary: 'Synthetic test-write capability used to exercise the scope refusal by name.',
   requiredScopes: ['test-write', 'run', 'read'],
@@ -213,7 +215,7 @@ const authoringDraftWriteSpec: FunctionSpec<Record<string, never>, { ok: true }>
   // one — the shape has a single arm, so there is nothing to discriminate.
   classify: () => ({ status: 'executed' as const, outcome: '' }),
   invoke: () => Promise.resolve({ ok: true as const }),
-}
+} as FunctionSpec<Record<string, never>, { ok: true }>
 
 /** Discards every row. Cases that ASSERT on rows pass an explicit `capturingSink` instead. */
 function noOpSink(): AuditSink {
@@ -228,7 +230,6 @@ function registryOptions(
   return {
     deps: spyDeps().deps,
     auditSink: noOpSink(),
-    resolveExecutionContext: FIXED_CONTEXT,
     ...overrides,
   }
 }
@@ -244,7 +245,7 @@ function _sinklessCompositionIsATypeError(): void {
   createRegistryFromSpecs(
     [runsListSpec],
     // @ts-expect-error auditSink is REQUIRED (D-11) — a sinkless composition cannot exist.
-    { deps: spyDeps().deps, resolveExecutionContext: FIXED_CONTEXT },
+    { deps: spyDeps().deps },
   )
 }
 
@@ -352,6 +353,7 @@ describe('invokeFunction pipeline', () => {
  * the ask ladder: fail-closed in `ci` and `local-headless`, a confirm prompt in `local-interactive`.
  */
 function markLikeSpec(invocations: { count: number }): FunctionSpec<{ runId: string }, { ok: true }> {
+  // 432-39: the retired scope declaration is smuggled past the type; nothing reads it.
   return {
     id: 'runs.mark.synthetic',
     summary: 'Synthetic mutating-shared capability used to prove the op gate is gone.',
@@ -365,7 +367,7 @@ function markLikeSpec(invocations: { count: number }): FunctionSpec<{ runId: str
       invocations.count += 1
       return Promise.resolve({ ok: true as const })
     },
-  }
+  } as FunctionSpec<{ runId: string }, { ok: true }>
 }
 
 describe('C432-INVOKE-DIRECT — invokeFunction dispatches with no gate (432-13)', () => {
@@ -376,8 +378,9 @@ describe('C432-INVOKE-DIRECT — invokeFunction dispatches with no gate (432-13)
       const audit = capturingSink()
       const registry = createRegistryFromSpecs([markLikeSpec(invocations) as FunctionSpec], {
         ...registryOptions({ auditSink: audit.sink }),
+        // 432-39: the deleted context option, smuggled past the type; nothing reads a context.
         resolveExecutionContext: () => context,
-      })
+      } as CreateFunctionRegistryOptions)
 
       await expect(
         invokeFunction(registry, 'runs.mark.synthetic', { runId: 'run-1' }, caller(['run'])),
@@ -396,7 +399,7 @@ describe('C432-INVOKE-DIRECT — invokeFunction dispatches with no gate (432-13)
         markLikeSpec(invocations) as FunctionSpec,
         { ...markLikeSpec(invocations), id: 'runs.mark.unbound', boundThrough: 'liveView' } as FunctionSpec,
       ],
-      { ...registryOptions(), resolveExecutionContext: () => 'ci' },
+      { ...registryOptions(), resolveExecutionContext: () => 'ci' } as CreateFunctionRegistryOptions,
     )
 
     await expect(
@@ -469,7 +472,6 @@ describe('createRegistryFromSpecs', () => {
   it('refuses a sinkless construction at runtime, not only at the type level', () => {
     expect(() => createRegistryFromSpecs([runsListSpec], {
       deps: spyDeps().deps,
-      resolveExecutionContext: FIXED_CONTEXT,
       auditSink: undefined as unknown as AuditSink,
     })).toThrow(MissingAuditSinkError)
   })
@@ -477,7 +479,6 @@ describe('createRegistryFromSpecs', () => {
   it('refuses a hollow sink: a typed, attributable error rather than an opaque TypeError', () => {
     expect(() => createRegistryFromSpecs([runsListSpec], {
       deps: spyDeps().deps,
-      resolveExecutionContext: FIXED_CONTEXT,
       auditSink: {} as unknown as AuditSink,
     })).toThrow(MissingAuditSinkError)
   })
@@ -485,7 +486,6 @@ describe('createRegistryFromSpecs', () => {
   it('refuses a sink whose append methods are present but not callable', () => {
     expect(() => createRegistryFromSpecs([runsListSpec], {
       deps: spyDeps().deps,
-      resolveExecutionContext: FIXED_CONTEXT,
       auditSink: {
         appendGuardrailAudit: 'not a function',
       } as unknown as AuditSink,
@@ -498,12 +498,10 @@ describe('createRegistryFromSpecs', () => {
   it('C432-AUDIT-UNREAD: requires the guardrail append and nothing else', () => {
     expect(() => createRegistryFromSpecs([runsListSpec], {
       deps: spyDeps().deps,
-      resolveExecutionContext: FIXED_CONTEXT,
       auditSink: { appendExecutionAudit() {} } as unknown as AuditSink,
     })).toThrow(MissingAuditSinkError)
     expect(() => createRegistryFromSpecs([runsListSpec], {
       deps: spyDeps().deps,
-      resolveExecutionContext: FIXED_CONTEXT,
       auditSink: { appendGuardrailAudit() {} },
     })).not.toThrow()
   })

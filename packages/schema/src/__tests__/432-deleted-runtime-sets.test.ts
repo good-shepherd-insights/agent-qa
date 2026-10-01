@@ -93,7 +93,8 @@ describe('432-09 applied output key sets', () => {
 // are deleted, so the constant joins the absence set below. 2026-10-01, 432-22 (D-03/D-12): the
 // run-service token DTO, `TrustScopeSchema`'s last consumer, is deleted with its config key, so the
 // projection, its module and its barrel exports join the absence set too. The `TrustScope` and
-// `TrustCredential` caller types stay until 432-39. No later absence is asserted here early.
+// `TrustCredential` caller types stayed until 432-39, which deletes them (see the 432-39 block at the
+// end of this file). No later absence is asserted here early.
 const SRC = join(dirname(fileURLToPath(import.meta.url)), '..')
 
 const RETIRED_GRANT_RUNTIME_EXPORTS = [
@@ -164,7 +165,9 @@ describe('C432-NO-GRANT-CONTRACTS: the grant ledger, grant op, protected-class a
 
   it('C432-NO-GRANT-CONTRACTS: the interim members stay until their own owners remove them', () => {
     // Not vacuous: the census above would pass over an empty barrel, so the retained member is
-    // named and found. 432-22 removed `TrustScopeSchema`; the key set stays with the caller types.
+    // named and found. 432-22 removed `TrustScopeSchema`. 2026-10-02 (432-39): the caller types are
+    // deleted too; the key set stays only because retained cells outside 432-39 still assert it is
+    // published, and its removal is routed to the 432-42 census.
     expect(exported('TRUST_SCOPE_KEYS')).toEqual(['project', 'org'])
     expect((safety as Record<string, unknown>).TRUST_SCOPE_KEYS).toEqual(['project', 'org'])
   })
@@ -281,9 +284,11 @@ export type RetiredChatPinOverlay = import('../index').ChatPinOverlay
 export type RetiredStandingApprovalGrant = import('../index').StandingApprovalGrant
 // @ts-expect-error 432-19: and it is gone from the safety barrel too
 export type RetiredSafetyStandingApprovalGrant = import('../safety/index').StandingApprovalGrant
-// The caller types stay until 432-39 removes the optional caller fields.
-export type RetainedTrustScope = import('../index').TrustScope
-export type RetainedTrustCredential = import('../index').TrustCredential
+// 2026-10-02 (432-39, D-02/D-12): the caller types are deleted with the caller's `credential` member.
+// @ts-expect-error C432-NO-PERMISSION-TYPES: the trust scope is deleted
+export type RetiredTrustScope = import('../index').TrustScope
+// @ts-expect-error C432-NO-PERMISSION-TYPES: the trust credential is deleted
+export type RetiredTrustCredential = import('../index').TrustCredential
 // C432-NO-TRUST-CONTRACT, type level (432-22).
 // @ts-expect-error the MCP token entry is deleted with services.mcp.tokens
 export type RetiredMcpTokenEntry = import('../index').McpTokenEntry
@@ -293,3 +298,121 @@ export type RetiredMcpStdioGrant = import('../index').McpStdioGrant
 export type RetiredRunServiceTokenEntry = import('../index').RunServiceTokenEntry
 // @ts-expect-error the readiness answer has no credential fact
 export type RetiredAuthConfigured = import('../index').RunServiceReadiness['authConfigured']
+
+// 2026-10-02, 432-39 (D-02/D-10/D-12/D-22): the permission contracts leave the schema. The caller
+// record keeps `surface` and `origin`, which receipts consume; `grantedScopes`, `safeMode`,
+// `credential` and `sessionId` are deleted with the capability-scope union and the trust-credential
+// DTOs. The capability catalogue's scope column and the agent manifest's grant, safe-mode and token
+// members go with them. `ExecutionContext` stays (a run still records the context it ran in), and so
+// does the historical `approval_decision` reader (C432-ASK-PLAIN-REFUSAL above). Every expected set
+// is spelled by hand.
+type ExactKeys<T, K extends PropertyKey> = [keyof T] extends [K]
+  ? ([K] extends [keyof T] ? true : false)
+  : false
+type Caller = import('../index').FunctionCaller
+const CALLER_TYPE_IS_SURFACE_AND_ORIGIN: ExactKeys<Caller, 'surface' | 'origin'> = true
+type Context = import('../index').ExecutionContext
+const CONTEXT_TYPE_IS_RETAINED: [Context] extends [string] ? true : false = true
+
+const RETIRED_PERMISSION_RUNTIME_EXPORTS = [
+  'FunctionScopeSchema',
+  'AgentManifestTokenRefSchema',
+] as const
+
+describe('C432-RUNTIME-SETS: the caller, catalogue and manifest sets after the permission removal (432-39)', () => {
+  it('C432-RUNTIME-SETS: a caller record is exactly surface and origin, at the type and in a literal', () => {
+    expect(CALLER_TYPE_IS_SURFACE_AND_ORIGIN).toBe(true)
+    const caller: import('../index').FunctionCaller = { surface: 'cli', origin: 'human' }
+    expect(Object.keys(caller).sort()).toEqual(['origin', 'surface'])
+    expect(exported('FUNCTION_CALLER_ORIGINS')).toEqual(['human', 'agent'])
+  })
+
+  it('C432-RUNTIME-SETS: a catalogue op row has no scope column, and the strict row refuses one', () => {
+    expect(keysOf(exported('CatalogOpRowSchema'))).toEqual(sorted([
+      'kind', 'id', 'description', 'params', 'surfaces', 'mcpTool', 'mcpUnprojectedReasonKey',
+      'docPath', 'docAnchor', 'docAbsentReason', 'exampleCall', 'exampleCallAbsentReason',
+    ]))
+    const row = exported('CatalogOpRowSchema') as { safeParse(value: unknown): { success: boolean } }
+    const valid = {
+      kind: 'op', id: 'runs.list', description: 'List runs.', params: {}, surfaces: ['chat'],
+      docPath: null, exampleCall: { arguments: {} },
+    }
+    expect(row.safeParse(valid).success).toBe(true)
+    expect(row.safeParse({ ...valid, requiredScopes: ['read'] }).success, 'the retired column parsed').toBe(false)
+  })
+
+  it('C432-RUNTIME-SETS: the manifest posture is exactly its configuration answer', () => {
+    expect(keysOf(exported('AgentManifestPostureSchema'))).toEqual(['configuration'])
+    const posture = exported('AgentManifestPostureSchema') as { safeParse(value: unknown): { success: boolean } }
+    expect(posture.safeParse({ configuration: 'absent' }).success).toBe(true)
+    for (const retired of [
+      { defaultScopes: ['read'] }, { safeMode: false }, { tokenEnvRefs: [] },
+    ]) {
+      expect(posture.safeParse({ configuration: 'absent', ...retired }).success, JSON.stringify(retired))
+        .toBe(false)
+    }
+  })
+})
+
+describe('C432-NO-PERMISSION-TYPES: no scope or trust-credential contract is left (432-39)', () => {
+  it('C432-NO-PERMISSION-TYPES: the scope module is deleted and no schema source declares a permission type', () => {
+    expect(existsSync(join(SRC, 'functions/function-scope.ts')), 'functions/function-scope.ts').toBe(false)
+    const sources: string[] = []
+    const walk = (dir: string): void => {
+      for (const entry of readdirSync(dir, { withFileTypes: true })) {
+        const path = join(dir, entry.name)
+        if (entry.isDirectory()) {
+          if (entry.name !== '__tests__') walk(path)
+        } else if (entry.name.endsWith('.ts')) {
+          sources.push(readFileSync(path, 'utf8'))
+        }
+      }
+    }
+    walk(SRC)
+    expect(sources.length).toBeGreaterThan(50)
+    for (const declaration of [
+      'const FunctionScopeSchema', 'type FunctionScope ', 'interface TrustCredential',
+      'interface TrustScope ', 'const AgentManifestTokenRefSchema',
+    ]) {
+      expect(sources.filter(text => text.includes(declaration)), declaration).toEqual([])
+    }
+  })
+
+  it('C432-NO-PERMISSION-TYPES: the execution context and the historical reader vocabulary stay', () => {
+    expect(CONTEXT_TYPE_IS_RETAINED).toBe(true)
+    expect(exported('CHAT_SESSION_EVENT_KINDS') as readonly string[]).toContain('approval_decision')
+  })
+})
+
+describe('C432-NO-DEAD-BARREL-EXPORTS: neither barrel exports a deleted permission value (432-39)', () => {
+  it('C432-NO-DEAD-BARREL-EXPORTS: the root and safety barrels carry no retired permission value', () => {
+    const root = new Set(Object.keys(schema))
+    const safetyBarrel = new Set(Object.keys(safety))
+    expect(RETIRED_PERMISSION_RUNTIME_EXPORTS.filter(name => root.has(name)), 'root barrel').toEqual([])
+    expect(RETIRED_PERMISSION_RUNTIME_EXPORTS.filter(name => safetyBarrel.has(name)), 'safety barrel').toEqual([])
+    // Non-vacuity: the surviving neighbours of each deleted value are still exported.
+    expect(root.has('AgentManifestPostureSchema')).toBe(true)
+    expect(root.has('FUNCTION_CALLER_ORIGINS')).toBe(true)
+  })
+})
+
+// C432-NO-PERMISSION-TYPES / C432-NO-DEAD-BARREL-EXPORTS, type level (432-39): each line fails
+// `pnpm typecheck` the moment the type returns to a barrel.
+// @ts-expect-error the capability-scope type is deleted
+export type RetiredFunctionScope = import('../index').FunctionScope
+// @ts-expect-error and gone from the functions barrel too
+export type RetiredFunctionsBarrelScope = import('../functions/index').FunctionScope
+// @ts-expect-error the trust credential is gone from the safety barrel
+export type RetiredSafetyTrustCredential = import('../safety/index').TrustCredential
+// @ts-expect-error the trust scope is gone from the safety barrel
+export type RetiredSafetyTrustScope = import('../safety/index').TrustScope
+// @ts-expect-error the manifest token ref is deleted with the posture's token member
+export type RetiredAgentManifestTokenRef = import('../index').AgentManifestTokenRef
+// @ts-expect-error the caller's scope set is deleted
+export type RetiredCallerGrantedScopes = import('../index').FunctionCaller['grantedScopes']
+// @ts-expect-error the caller's safe-mode flag is deleted
+export type RetiredCallerSafeMode = import('../index').FunctionCaller['safeMode']
+// @ts-expect-error the caller's credential is deleted
+export type RetiredCallerCredential = import('../index').FunctionCaller['credential']
+// @ts-expect-error the caller's session id is deleted
+export type RetiredCallerSessionId = import('../index').FunctionCaller['sessionId']

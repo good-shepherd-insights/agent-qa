@@ -39,7 +39,6 @@ import type {
   ReconcileStrategy,
 } from '@vostride/agent-qa-agent'
 import {
-  FunctionScopeSchema,
   MASKED_RESOLVED_CONFIG_SCHEMA_VERSION,
   browserConfigSchema,
   deviceConfigSchema,
@@ -67,8 +66,6 @@ const MASKED_CONFIG: MaskedResolvedConfig = {
 /** A person holding every scope, so a refusal below can only ever be the axis under test. */
 const HUMAN: FunctionCaller = {
   surface: 'test',
-  grantedScopes: [...FunctionScopeSchema.options],
-  safeMode: false,
   origin: 'human',
 }
 

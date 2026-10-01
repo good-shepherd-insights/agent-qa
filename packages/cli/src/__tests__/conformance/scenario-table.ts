@@ -285,9 +285,10 @@ export interface ChatSurfaceExpectation {
  * directions, which a type that could only say `true` would make unsayable.
  *
  * All 42 rows say `true`, and that is a MEASURED fact about the shipped composition rather than a
- * property of this type: `agent-qa fn <id>` resolves every id through `invokeFunction` and the CLI
- * caller holds every member of `FunctionScopeSchema`, so the door's reach is the whole census.
- * `parity.test.ts` asserts it both ways, so the day the CLI narrows its grants this reads red.
+ * property of this type: `agent-qa fn <id>` resolves every id through `invokeFunction`, and since
+ * 432-20 (D-12) no caller is narrowed by a grant — 2026-10-02 (432-39): the caller carries no scope
+ * set at all — so the door's reach is the whole census. `parity.test.ts` asserts it both ways, so
+ * the day the CLI door stops reaching an op this reads red.
  */
 export interface FnSurfaceExpectation {
   readonly reachable: boolean

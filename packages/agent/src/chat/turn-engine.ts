@@ -857,7 +857,7 @@ async function runTurnThrough(
     // for any planner-produced call to an op the table also knows, and the receipt would then
     // record a model-originated call as a person's (391 D-06, T-392-23). 2026-10-01 (432-20/21,
     // D-12): no op withholds anything by origin any more; the origin is attribution.
-    const caller = deps.mint.forStage(step.source, sessionId)
+    const caller = deps.mint.forStage(step.source)
     let receipt: ClauseReceipt
     if (failed) {
       // `not-run` is a fact, not an absence: a person reading the receipt must be able to tell

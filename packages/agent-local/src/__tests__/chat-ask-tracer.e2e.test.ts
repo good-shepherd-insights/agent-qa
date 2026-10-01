@@ -32,7 +32,6 @@ import {
 import type { JobModelCapability } from '@vostride/agent-qa-agent'
 import {
   CURRENT_CHAT_SESSION_SCHEMA_VERSION,
-  FunctionScopeSchema,
   MASKED_RESOLVED_CONFIG_SCHEMA_VERSION,
 } from '@vostride/agent-qa-schema'
 import type {
@@ -57,8 +56,6 @@ const MASKED_CONFIG: MaskedResolvedConfig = {
 /** A person holding every scope, so a refusal below can only ever be the axis under test. */
 const HUMAN: FunctionCaller = {
   surface: 'test',
-  grantedScopes: [...FunctionScopeSchema.options],
-  safeMode: false,
   origin: 'human',
 }
 

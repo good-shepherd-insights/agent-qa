@@ -24,6 +24,12 @@
 // 2026-09-30 (432-13, D-14/D-15): there is no op gate. What a caller is refused for is decided by
 // the input contract, the scope and origin checks and the binding check; nothing else is asked and
 // no decision row is written. The credential axis below is re-spelled accordingly.
+//
+// 2026-10-02 (432-39, D-02/D-10/D-12): `grantedScopes`, `safeMode` and `credential` are deleted from
+// `FunctionCaller`, with the scope and trust-credential types. The records below still carry them,
+// SMUGGLED past the type with a cast, because that is the only way the premise stays non-vacuous:
+// two records that differ in fields nobody reads must still differ. A record that never carried them
+// would prove nothing about whether they are read.
 
 import * as safety from '@vostride/agent-qa-safety'
 import type { AuditSink, GuardrailAuditRow } from '@vostride/agent-qa-safety'
@@ -36,7 +42,6 @@ import type {
   FunctionCaller,
   RunId,
   RunSummary,
-  TrustCredential,
 } from '@vostride/agent-qa-schema'
 import { beforeEach, describe, expect, it } from 'vitest'
 import { z } from 'zod'
@@ -53,47 +58,47 @@ import type { FunctionDeps, FunctionSpec } from '../functions/spec.js'
 // 432-20: no execution context is supplied anywhere in this file. The registry's context option is
 // retired and unread, so a context could not change any outcome measured here.
 
-const CREDENTIAL: TrustCredential = { scope: { project: 'shop' } }
+const CREDENTIAL = { scope: { project: 'shop' } }
 
 /**
  * The two synthetic callers. `surface` is deliberately IDENTICAL: attribution is not a
  * permission input, and holding it constant is what lets the difference set below come out
  * as exactly the three permission-shaped fields.
  */
-const CALLER_A: FunctionCaller = {
+const CALLER_A = {
   surface: 'synthetic',
   grantedScopes: ['read', 'run', 'config-write'],
   safeMode: false,
   credential: CREDENTIAL,
   origin: 'human',
-}
+} as FunctionCaller
 
-const CALLER_B: FunctionCaller = {
+const CALLER_B = {
   surface: 'synthetic',
   grantedScopes: ['read'],
   safeMode: true,
   origin: 'agent',
-}
+} as FunctionCaller
 
 /** A differs from this one ONLY in `safeMode` — the isolate for "listing is cosmetic". */
-const CALLER_A_SAFE: FunctionCaller = { ...CALLER_A, safeMode: true }
+const CALLER_A_SAFE = { ...CALLER_A, safeMode: true } as FunctionCaller
 
 /** A differs from this one ONLY in `origin` — the isolate for the 391 D-06 refusal. */
 const CALLER_A_AGENT: FunctionCaller = { ...CALLER_A, origin: 'agent' }
 
 /** The would-be scope claimant: no `run` grant, and the record is the only thing read. */
-const CALLER_C: FunctionCaller = {
+const CALLER_C = {
   surface: 'synthetic',
   grantedScopes: ['read'],
   safeMode: false,
   origin: 'human',
-}
+} as FunctionCaller
 
 /** C plus the one grant it lacked — the counterfactual for what the subset check reads. */
-const CALLER_C_GRANTED: FunctionCaller = {
+const CALLER_C_GRANTED = {
   ...CALLER_C,
   grantedScopes: ['read', 'run'],
-}
+} as FunctionCaller
 
 function handoff(runId: string, buildOrdinal: number): CompletedRunHandoff {
   return {
@@ -409,7 +414,7 @@ describe('no caller field filters the listing or the dispatch (432-20, D-12)', (
   it('is the same list for a safe-mode caller holding every grant and one holding none', () => {
     expect(REGISTRY.list(CALLER_A_SAFE).map((declaration) => declaration.id))
       .toEqual(REGISTRY.list(CALLER_B).map((declaration) => declaration.id))
-    expect(REGISTRY.list({ ...CALLER_B, grantedScopes: [] }))
+    expect(REGISTRY.list({ ...CALLER_B, grantedScopes: [] } as FunctionCaller))
       .toEqual(REGISTRY.list(CALLER_A_SAFE))
   })
 
@@ -503,7 +508,6 @@ describe('a payload can claim nothing, and a record grants nothing (SC3 / 432-20
 const askTierSpec: FunctionSpec<Record<string, never>, { ok: true }> = {
   id: 'synthetic.ask',
   summary: 'Synthetic ask-tier capability that makes the credential axis observable.',
-  requiredScopes: ['read'],
   resultKind: 'unary',
   input: z.object({}).strict(),
   output: z.object({ ok: z.literal(true) }).strict(),
@@ -544,8 +548,8 @@ describe('the credential flows to the gate untouched (D-13)', () => {
     expect(rowsA).toEqual([])
     expect(rowsB).toEqual(rowsA)
     // And the object itself comes back out the way it went in — same reference, same value.
-    expect(CALLER_A.credential).toBe(CREDENTIAL)
-    expect(CALLER_A.credential).toEqual({ scope: { project: 'shop' } })
+    expect(field(CALLER_A, 'credential')).toBe(CREDENTIAL)
+    expect(field(CALLER_A, 'credential')).toEqual({ scope: { project: 'shop' } })
   })
 
   // RE-SPELLED 2026-10-01 (432-19, D-15) from 'is decisive at the gate once an action scope exists
@@ -558,7 +562,8 @@ describe('the credential flows to the gate untouched (D-13)', () => {
     expect(Object.keys(safety)).not.toContain('scopeMatches')
     // Served with and without the credential, in every context, with no row either way.
     await expect(invokeFunction(askRegistry, 'synthetic.ask', {}, CALLER_A)).resolves.toEqual({ ok: true })
-    await expect(invokeFunction(askRegistry, 'synthetic.ask', {}, { ...CALLER_A, credential: undefined }))
+    const uncredentialed = { ...CALLER_A, credential: undefined } as FunctionCaller
+    await expect(invokeFunction(askRegistry, 'synthetic.ask', {}, uncredentialed))
       .resolves.toEqual({ ok: true })
     expect(askAudit.take()).toEqual([])
   })
@@ -573,10 +578,11 @@ describe('the credential flows to the gate untouched (D-13)', () => {
  * Both are read-tier and inside the `read` scope every caller here holds, so neither the gate
  * nor the scope check can be what separates them.
  */
-const humanOnlySpec: FunctionSpec<Record<string, never>, { ok: true }> = {
+// 2026-10-02 (432-39, D-10): `requiresHumanOrigin` is deleted from the metadata type, so the
+// declaration is smuggled past it with a cast; the cells below still prove nothing reads it.
+const humanOnlySpec = {
   id: 'synthetic.human-only',
   summary: 'Synthetic capability that declares a human-origin requirement.',
-  requiredScopes: ['read'],
   resultKind: 'unary',
   requiresHumanOrigin: true,
   input: z.object({}).strict(),
@@ -586,13 +592,12 @@ const humanOnlySpec: FunctionSpec<Record<string, never>, { ok: true }> = {
   // one — the shape has a single arm, so there is nothing to discriminate.
   classify: () => ({ status: 'executed' as const, outcome: '' }),
   invoke: () => Promise.resolve({ ok: true as const }),
-}
+} as FunctionSpec<Record<string, never>, { ok: true }>
 
 /** The control: the same op minus the one field. */
 const anyOriginSpec: FunctionSpec<Record<string, never>, { ok: true }> = {
   id: 'synthetic.any-origin',
   summary: 'Synthetic capability that declares nothing about origin.',
-  requiredScopes: ['read'],
   resultKind: 'unary',
   input: z.object({}).strict(),
   output: z.object({ ok: z.literal(true) }).strict(),
@@ -605,7 +610,8 @@ const anyOriginSpec: FunctionSpec<Record<string, never>, { ok: true }> = {
 
 // RE-SPELLED 2026-10-01 (432-20, D-10/D-12) from 'a declared human-origin requirement is enforced
 // uniformly (391 D-06)'. The check and its refusal class are deleted; a spec that still declares
-// the key (until 432-39 deletes it) is served to an agent-origin caller exactly as to a person.
+// the key (smuggled past the type since 432-39 deleted it) is served to an agent-origin caller
+// exactly as to a person.
 describe('a declared human-origin requirement is read by nothing (432-20, D-10/D-12)', () => {
   const originAudit = capturingSink()
   let dispatches = 0
@@ -672,7 +678,7 @@ describe('a declared human-origin requirement is read by nothing (432-20, D-10/D
   // RE-SPELLED from 'refuses AFTER the scope check: a caller missing both is told about scopes
   // first'. A caller missing every scope and the human origin is served.
   it('serves a caller missing every scope and the human origin', async () => {
-    const scopeless: FunctionCaller = { ...CALLER_A_AGENT, grantedScopes: [] }
+    const scopeless = { ...CALLER_A_AGENT, grantedScopes: [] } as FunctionCaller
     await expect(invokeFunction(originRegistry, 'synthetic.human-only', {}, scopeless))
       .resolves.toEqual({ ok: true })
   })
@@ -735,13 +741,13 @@ async function outcomeOf(
 }
 
 /** The two callers differ in presentation (surface, origin) and in every retired permission field. */
-const PRESENTATION_HUMAN: FunctionCaller = {
+const PRESENTATION_HUMAN = {
   surface: 'cli',
   origin: 'human',
   grantedScopes: ['read', 'run', 'config-write', 'knowledge-write', 'approval-write', 'test-write'],
   safeMode: false,
   credential: CREDENTIAL,
-}
+} as FunctionCaller
 const PRESENTATION_AGENT: FunctionCaller = { surface: 'mcp', origin: 'agent' }
 
 describe('C432-ALL-OPS-AVAILABLE: every operation, every caller (432-20, D-12)', () => {

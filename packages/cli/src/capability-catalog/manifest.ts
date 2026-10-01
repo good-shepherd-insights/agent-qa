@@ -2,7 +2,7 @@
 //
 // WHAT AN EXTERNAL AGENT GETS FROM ONE READ. Every capability this product has, in the words a
 // person reads; the v1 tool names that no longer exist and what answers those needs instead; and
-// what THIS workspace grants, hides and would accept. Local, non-interactive, idempotent: it opens
+// whether THIS workspace has a configuration that reads. Local, non-interactive, idempotent: it opens
 // no prompt, writes no file and reaches no network.
 //
 // THE MANIFEST IS A LOAD, NOT A DERIVATION, and that is the whole of why SC-1's "the same manifest"
@@ -20,14 +20,13 @@
 // NO SECRET PATH, STRUCTURALLY (395 D-11, T-398-17). 2026-10-01 (432-21/432-22, D-12): the posture
 // no longer reports declared MCP credentials at all — `services.mcp.tokens` is a deleted config key
 // (a file declaring it does not resolve), and the resolver that once turned a declared name into a
-// credential is deleted — so `tokenEnvRefs` is
-// always empty. The sentinel-absence cell in `conformance/manifest.test.ts` keeps that true as the
-// file changes.
+// credential is deleted. 2026-10-02 (432-39, D-12): the posture's `tokenEnvRefs`, `defaultScopes`
+// and `safeMode` members are deleted, so the posture carries only `configuration`. The
+// sentinel-absence cell in `conformance/manifest.test.ts` keeps that true as the file changes.
 
 import { existsSync } from 'node:fs'
 import { resolve } from 'node:path'
 
-import { FunctionScopeSchema } from '@vostride/agent-qa-schema'
 import type { AgentManifest, AgentManifestPosture } from '@vostride/agent-qa-schema'
 
 import { WRITE_AGENT_INSTRUCTIONS_FLAG } from '../commands/knowledge-guide.js'
@@ -46,9 +45,8 @@ export const AGENT_MANIFEST_NOTE: readonly string[] = Object.freeze([
   'THIS MANIFEST IS UNFILTERED AND IT IS NOT A GRANT LIST (2026-08-17, D-16). Every capability',
   'is listed for every reader.',
   'Since 2026-10-01 (432 D-12) there are no permissions: every caller on every door may see and',
-  'call every capability listed here, MCP included, with no token. `posture.defaultScopes` lists',
-  'every scope name for that reason, and `posture.tokenEnvRefs` is always empty; both keys are',
-  'retired and leave with the remaining permission metadata.',
+  'call every capability listed here, MCP included, with no token. The posture reports only',
+  'whether this workspace has a configuration that reads; it names no scope and no token.',
 ])
 
 /** One dedicated CLI read verb: its Commander path, its long flags and the ops it invokes. */
@@ -133,17 +131,9 @@ export async function buildAgentManifest(
     rows: catalog.rows,
     migrationMap: catalog.migrationMap,
     posture: {
-      // 2026-10-01 (432-21, D-12): EVERY SCOPE NAME, read off the closed union. The MCP default
-      // grant this used to import (396 D-07: every scope except `config-write`) is deleted with the
-      // token resolver; every caller now reaches every operation, which is what the whole union
-      // says. The key is retired with the rest of the permission metadata (432-39).
-      defaultScopes: [...FunctionScopeSchema.options],
-      // 2026-10-01 (432-20, D-12): the registry's safe-mode listing filter is deleted, so no
-      // composition hides an op from a listing and the honest answer is a constant `false`. The
-      // posture key itself is permission metadata 432-39 retires with the catalogue's scope column.
-      safeMode: false,
-      // 2026-10-01 (432-21, D-12): always empty — no MCP token declaration is read.
-      tokenEnvRefs: [],
+      // 2026-10-02 (432-39, D-12): no `defaultScopes`, `safeMode` or `tokenEnvRefs`. Each reported a
+      // constant since 432-20/21 (every scope name, `false`, empty) and leaves with the permission
+      // metadata it described.
       configuration,
     },
   }

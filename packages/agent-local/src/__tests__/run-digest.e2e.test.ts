@@ -34,7 +34,6 @@ import { HANDOFF_FILE, RUNS_SUBDIR, slugBranch } from '@vostride/agent-qa-runner
 import {
   asRunId,
   CURRENT_HANDOFF_SCHEMA_VERSION,
-  FunctionScopeSchema,
   MarkReceiptSchema,
   MASKED_RESOLVED_CONFIG_SCHEMA_VERSION,
 } from '@vostride/agent-qa-schema'
@@ -91,8 +90,6 @@ const MODEL: JobModelCapability = {
 /** A person holding every scope, so nothing below can be refused for the wrong reason. */
 const HUMAN: FunctionCaller = {
   surface: 'test',
-  grantedScopes: [...FunctionScopeSchema.options],
-  safeMode: false,
   origin: 'human',
 }
 

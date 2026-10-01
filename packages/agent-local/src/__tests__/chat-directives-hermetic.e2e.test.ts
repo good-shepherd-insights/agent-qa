@@ -39,7 +39,6 @@ import {
 } from '@vostride/agent-qa-agent'
 import type { ChatLanguageModel, JobModelCapability } from '@vostride/agent-qa-agent'
 import {
-  FunctionScopeSchema,
   MASKED_RESOLVED_CONFIG_SCHEMA_VERSION,
 } from '@vostride/agent-qa-schema'
 import type {
@@ -65,8 +64,6 @@ const MASKED_CONFIG: MaskedResolvedConfig = {
 /** A person holding every scope, so a refusal below can only ever be the axis under test. */
 const HUMAN: FunctionCaller = {
   surface: 'test',
-  grantedScopes: [...FunctionScopeSchema.options],
-  safeMode: false,
   origin: 'human',
 }
 
@@ -157,7 +154,9 @@ describe('the composed session directives reach something (D-04 / D-21 / RESEARC
       async () => {
         const host = compose()
         const opened = await ask(host, '/fn quarantine.list')
-        const inSession: FunctionCaller = { ...HUMAN, sessionId: opened.sessionId }
+        // 432-39 (D-02/D-12): `FunctionCaller.sessionId` is deleted; the session id is smuggled past
+        // the type so "in the same session" stays a distinct caller, and nothing reads it.
+        const inSession = { ...HUMAN, sessionId: opened.sessionId } as FunctionCaller
 
         await expect(
           invokeFunction(host.registry, QUARANTINE_LIST_FUNCTION_ID, {}, inSession),

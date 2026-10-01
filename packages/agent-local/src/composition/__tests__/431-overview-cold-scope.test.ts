@@ -37,8 +37,6 @@ const REDACTED = maskedMarker('secret')
 
 const READER: FunctionCaller = {
   surface: 'test',
-  grantedScopes: ['read'],
-  safeMode: false,
   origin: 'agent',
 }
 

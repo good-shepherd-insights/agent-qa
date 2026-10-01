@@ -60,7 +60,7 @@ import type {
   ClauseReceipt,
   ClauseResult,
   ExecutionContext,
-  FunctionScope,
+  FunctionCaller,
 } from '@vostride/agent-qa-schema'
 import { Command } from 'commander'
 import { vi } from 'vitest'
@@ -422,7 +422,7 @@ export interface McpCallRefused {
 export type McpCallOutcome = McpCallAnswered | McpCallRefused
 
 /**
- * Call ONE tool on a real server built for ONE grant, and report what came back.
+ * Call ONE tool on a real server built for ONE caller, and report what came back.
  *
  * The server is the shipped factory's, driven over the SDK's own in-process handler through
  * `withMcpClient` — the same wiring every enumeration leg reads `tools/list` through, so an
@@ -438,12 +438,12 @@ export async function driveMcpCall(input: {
   readonly toolName: string
   readonly args: Record<string, unknown>
   /**
-   * 2026-10-02 (432-36, D-12): optional, and nothing decides on it. The retired scope set is only
-   * handed through to the server's caller as a deliberate smuggle, so a cell that passes `[]` still
-   * calls as a grantless caller and proves the scope set is unread (C432-TOKENLESS-CATALOG). Absent,
-   * the server's caller takes the enumeration's default. Goes with the field in 432-39.
+   * 2026-10-02 (432-39, D-12): the server's caller. Absent, the shipped tokenless
+   * `MCP_FUNCTION_CALLER`. Replaces the retired `grantedScopes` member (432-36), which only ever
+   * handed a scope set through as a smuggle: a cell proving a retired field is unread now builds its
+   * own smuggled caller and passes it here (C432-TOKENLESS-CATALOG).
    */
-  readonly grantedScopes?: readonly FunctionScope[]
+  readonly caller?: FunctionCaller
   // 2026-10-02 (432-36, D-12): no `executionContext` input. It fed only the registry's retired
   // `resolveExecutionContext` option, which reads no context since 432-20, and no cell passed it.
 }): Promise<McpCallOutcome> {
@@ -469,5 +469,5 @@ export async function driveMcpCall(input: {
       }
     }
   // Dispatch policy cells measure the anonymous ask/refusal, not the credentialed census.
-  }, input.grantedScopes, {}, false)
+  }, input.caller)
 }

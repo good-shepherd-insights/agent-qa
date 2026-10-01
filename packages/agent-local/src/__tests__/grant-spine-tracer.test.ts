@@ -63,7 +63,6 @@ import {
   type BundleStoreConfig,
 } from '@vostride/agent-qa-knowledge-local'
 import {
-  FunctionScopeSchema,
   MASKED_RESOLVED_CONFIG_SCHEMA_VERSION,
 } from '@vostride/agent-qa-schema'
 import type {
@@ -99,8 +98,6 @@ const MASKED_CONFIG: MaskedResolvedConfig = {
 /** Granted EVERY scope, so a refusal below can only ever be the policy gate's. */
 const CALLER: FunctionCaller = {
   surface: 'test',
-  grantedScopes: [...FunctionScopeSchema.options],
-  safeMode: false,
   origin: 'agent',
 }
 
@@ -193,7 +190,6 @@ describe('a committed standing grant is consumed by nothing (432-13)', () => {
         }),
       },
       auditSink: sink,
-      resolveExecutionContext: () => 'local-headless',
     })
   }
 

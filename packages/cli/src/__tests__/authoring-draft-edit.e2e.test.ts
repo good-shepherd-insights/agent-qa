@@ -44,8 +44,6 @@ import { createDraftAuthoringPort } from '../composition/local-agent-host.js'
  */
 const EDITOR: FunctionCaller = {
   surface: 'test',
-  grantedScopes: ['test-write', 'read'],
-  safeMode: false,
   origin: 'human',
 }
 
@@ -183,7 +181,6 @@ function harness(emission: string, options: { readonly beforeAnswer?: () => void
   return {
     registry: createFunctionRegistry({
       deps,
-      resolveExecutionContext: () => 'local-interactive',
       auditSink: { appendGuardrailAudit() {} },
     }),
     runStarts: () => runStarts,

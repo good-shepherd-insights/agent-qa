@@ -39,18 +39,37 @@ import {
   withoutLegacyResultWrap,
 } from '@vostride/agent-qa-mcp'
 import type { JsonDocument, ToolProjection } from '@vostride/agent-qa-mcp'
-import { committedFileText, FunctionScopeSchema } from '@vostride/agent-qa-schema'
+import { committedFileText } from '@vostride/agent-qa-schema'
+import type { FunctionCaller } from '@vostride/agent-qa-schema'
 import { beforeAll, describe, expect, it } from 'vitest'
 import { z } from 'zod'
 
 import { MCP_FUNCTION_CALLER } from '../../commands/mcp.js'
 
 /**
+ * 2026-10-02 (432-39, D-10/D-12): the six names of the deleted capability-scope union, spelled by
+ * hand because the union is gone. Used only as legacy data a caller record may still carry.
+ */
+const RETIRED_SCOPE_NAMES: readonly string[] = [
+  'read', 'run', 'config-write', 'knowledge-write', 'approval-write', 'test-write',
+]
+
+/**
  * 2026-10-01 (432-21, D-12): the retired MCP default grant — every scope but `config-write` —
  * spelled here as the legacy scope set a caller may still carry. The token resolver that minted it
  * is deleted; nothing reads the field, and the cells below use it to show exactly that.
  */
-const LEGACY_DEFAULT_GRANT = FunctionScopeSchema.options.filter((scope) => scope !== 'config-write')
+const LEGACY_DEFAULT_GRANT = RETIRED_SCOPE_NAMES.filter((scope) => scope !== 'config-write')
+
+/**
+ * The shipped tokenless MCP caller carrying a legacy scope set, SMUGGLED past the type: 432-39
+ * deleted `FunctionCaller.grantedScopes`, so the set rides a cast. The C432-TOKENLESS-CATALOG cells
+ * hand these to the MCP helpers so they still compare DIFFERENT callers — a helper that only ever
+ * built the shipped caller would compare one caller with itself, and pass vacuously.
+ */
+function smuggledMcpCaller(grantedScopes: readonly string[]): FunctionCaller {
+  return { ...MCP_FUNCTION_CALLER, grantedScopes } as FunctionCaller
+}
 
 // 2026-10-01 (432-31, D-12): `legacyMcpCaller`, which stamped a legacy scope set onto the tokenless
 // MCP caller as the retired `grantedScopes` field, is deleted; the root-host listings below use the
@@ -210,8 +229,9 @@ beforeAll(async () => {
   await withGoldenRootRegistry((registry) => {
     rootDeclarations = registry.list(CONFORMANCE_CENSUS_CALLER)
     // The callers each shipped surface host actually lists under — the chat host's two stage mints
-    // (392) and the MCP host's two grants (396's default, which withholds `config-write`, and the
-    // every-scope grant an operator can start the server with). Read off the SAME registry object
+    // (392) and the MCP host's caller, under the two keys its two retired grants used to have (396's
+    // default, which withheld `config-write`, and the every-scope grant; 2026-10-02, 432-39: no grant
+    // exists, so both keys are the one tokenless caller). Read off the SAME registry object
     // the shipped commands hand their surface, which is what makes a disagreement here a fact about
     // the product rather than about this file's assembly.
     rootHostListings.set('chat:planner', registry.list(CHAT_PLANNER_CALLER))
@@ -637,8 +657,8 @@ describe('the parity suite ranges the registry census over every rostered surfac
   // now EMPTY, in both directions, and the two grants list the same surface.
   it('C432-TOKENLESS-CATALOG: pins an EMPTY listing delta between the every-scope and the default MCP grant', async () => {
     const everyScope = enumerationOf('mcp')
-    const defaultGrant = await enumerateMcpOpIds(LEGACY_DEFAULT_GRANT)
-    const nothing = await enumerateMcpOpIds([])
+    const defaultGrant = await enumerateMcpOpIds(smuggledMcpCaller(LEGACY_DEFAULT_GRANT))
+    const nothing = await enumerateMcpOpIds(smuggledMcpCaller([]))
     expect(
       defaultGrant.strays,
       'mcp under the default grant: an uncatalogued door in the listing',
@@ -1319,7 +1339,7 @@ describe('the parity suite ranges the registry census over every rostered surfac
     // …and the sweep is over the real file rather than an empty string.
     expect(code, 'the policy fixtures source read back empty').toContain('deriveAskCapableOpIds')
     // The covering and refusing callers are DERIVED: no scope literal appears in the file at all.
-    for (const scope of FunctionScopeSchema.options) {
+    for (const scope of RETIRED_SCOPE_NAMES) {
       expect(code, `policy-fixtures.ts spells the ${scope} scope instead of reading it off the `
         + 'declaration').not.toContain(`'${scope}'`)
     }
@@ -1425,7 +1445,6 @@ describe('the parity suite ranges the registry census over every rostered surfac
     const answered = await driveMcpCall({
       toolName: 'agent_qa_list_knowledge_bundles',
       args: {},
-      grantedScopes: [...FunctionScopeSchema.options],
     })
     expect(
       answered.answered,
@@ -1436,7 +1455,6 @@ describe('the parity suite ranges the registry census over every rostered surfac
     const absent = await driveMcpCall({
       toolName: plausibleMcpToolSpelling(SYNTHETIC_DRIVER_ABSENT_OP_ID),
       args: {},
-      grantedScopes: [...FunctionScopeSchema.options],
     })
     expect(
       absent.answered,
@@ -1575,8 +1593,8 @@ describe('the parity suite ranges the registry census over every rostered surfac
   // in band rather than refused by the protocol. 2026-10-01 (432-21, D-12): the mark door's
   // credential refusal, the one in-band permission answer that was left, is deleted too.
   it('C432-TOKENLESS-CATALOG: refuses at the MCP SURFACE WALL for no projected capability', async () => {
-    const listedUnderEveryScope = await listMcpToolNames([...FunctionScopeSchema.options])
-    const listedUnderNothing = await listMcpToolNames([])
+    const listedUnderEveryScope = await listMcpToolNames(smuggledMcpCaller(RETIRED_SCOPE_NAMES))
+    const listedUnderNothing = await listMcpToolNames(smuggledMcpCaller([]))
     expect(sorted(listedUnderNothing), 'a caller granted nothing lists a different catalogue')
       .toEqual(sorted(listedUnderEveryScope))
     for (const row of SCENARIO_TABLE) {
@@ -1586,7 +1604,7 @@ describe('the parity suite ranges the registry census over every rostered surfac
         listedUnderNothing,
         `${row.opId} on mcp (surface wall): the tool is not listed to a caller granted nothing`,
       ).toContain(tool)
-      const called = await driveMcpCall({ toolName: tool, args: {}, grantedScopes: [] })
+      const called = await driveMcpCall({ toolName: tool, args: {}, caller: smuggledMcpCaller([]) })
       expect(
         called.answered,
         `${row.opId} on mcp (surface wall): a grantless caller's call was refused by the protocol `
@@ -1651,7 +1669,7 @@ describe('the parity suite ranges the registry census over every rostered surfac
     // And no scope is spelled anywhere the refuse legs could have hand-typed one: the withheld
     // grant is derived per op or it is not derived at all.
     for (const wallBody of bodies.filter((body) => body.includes('(gate wall)'))) {
-      for (const scope of FunctionScopeSchema.options) {
+      for (const scope of RETIRED_SCOPE_NAMES) {
         expect(wallBody, `the gate-wall leg spells the ${scope} scope instead of deriving it from `
           + 'the declaration').not.toContain(`'${scope}'`)
       }
@@ -1741,7 +1759,7 @@ describe('the parity suite ranges the registry census over every rostered surfac
     // unprojected ask-capable op, the human-origin `grants.revoke`, left in 432-18, so every
     // ask-capable op is projected. Every projected tool still gets the
     // gate's own answer back in band, and none executes on a blind first call.
-    const everyScope = [...FunctionScopeSchema.options]
+    // 2026-10-02 (432-39): no scope set is handed in; the call is made as the shipped MCP caller.
     let bandRefusals = 0
     for (const opId of ASK_CAPABLE_OP_IDS) {
       const projection = AGENT_QA_TOOL_PROJECTIONS.find((candidate) => candidate.ops.includes(opId))
@@ -1763,7 +1781,6 @@ describe('the parity suite ranges the registry census over every rostered surfac
       const answered = await driveMcpCall({
         toolName: projection.name,
         args: row!.input as Record<string, unknown>,
-        grantedScopes: everyScope,
       })
       expect(answered.answered, `${opId} on mcp (ask): the protocol refused the call outright`)
         .toBe(true)
@@ -2095,7 +2112,8 @@ describe('the parity suite ranges the registry census over every rostered surfac
     // D-08's DIVERGENCE ASSERTION: "lists bound here, refuses there" is the disagreement
     // `resolveBindingStatus` exists to prevent, and the only way it can arise is a surface host that
     // composes a registry of its own. Each shipped host's listing — the chat host's two stage mints,
-    // the MCP host's default and every-scope grants — is compared to the root's answer per
+    // the MCP host's one tokenless caller under its two legacy keys (432-31/432-39) — is compared to
+    // the root's answer per
     // capability. The cell below pins the structural reason this holds.
     const rootStatus = new Map(
       rootDeclarations.map((declaration) => [declaration.id, declaration.bindingStatus]),

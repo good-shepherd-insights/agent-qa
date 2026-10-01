@@ -27,10 +27,9 @@ import { join } from 'node:path'
 
 import { V1_TOOL_MIGRATION_MAP } from '@vostride/agent-qa-mcp'
 import {
+  AgentManifestPostureSchema,
   AgentManifestSchema,
-  AgentManifestTokenRefSchema,
   CatalogMigrationArmSchema,
-  FunctionScopeSchema,
   canonicalJson,
   type CapabilityCatalog,
   type CatalogOpRow,
@@ -515,8 +514,9 @@ describe('the agent manifest (D-16, XPLN-01)', () => {
         .toBe('unresolved')
       // 432-21 (D-12): no ref is reported — the legacy block is read by nothing. The non-vacuity
       // control is the rows: the manifest is whole, so the absence below is about a real document.
-      expect(manifest.posture.tokenEnvRefs, 'the manifest reported a legacy token declaration')
-        .toEqual([])
+      // 2026-10-02 (432-39, D-12): the posture has no ref member at all now.
+      expect(manifest.posture, 'the manifest reported a legacy token declaration')
+        .not.toHaveProperty('tokenEnvRefs')
       expect(manifest.rows.length, 'the manifest carried no rows').toBeGreaterThan(0)
 
       // …and the VALUE is nowhere in it. The environment variable was SET while the manifest was
@@ -532,38 +532,46 @@ describe('the agent manifest (D-16, XPLN-01)', () => {
     }
   })
 
+  // RE-SPELLED 2026-10-02 (432-39, D-12): `AgentManifestTokenRefSchema` is deleted with the posture's
+  // `tokenEnvRefs`. The structural half survives one level up: the posture is `.strict()`, so a
+  // token ref — with a value or without — cannot be added by accident; it stops parsing.
   it('refuses a token ref carrying a value, rather than passing one through', () => {
-    // THE STRUCTURAL HALF of the law above: `AgentManifestTokenRefSchema` is `.strict()`, so a
-    // member a value could occupy cannot be added by accident — it stops parsing. Driven with the
-    // input somebody in a hurry would write.
-    const refused = AgentManifestTokenRefSchema.safeParse({
-      name: 'ci',
-      tokenEnvVar: 'AGENT_QA_TOKEN',
-      scopes: ['read'],
-      token: 'sk-live-nobody-should-be-able-to-write-this',
+    const refused = AgentManifestPostureSchema.safeParse({
+      configuration: 'resolved',
+      tokenEnvRefs: [{
+        name: 'ci',
+        tokenEnvVar: 'AGENT_QA_TOKEN',
+        scopes: ['read'],
+        token: 'sk-live-nobody-should-be-able-to-write-this',
+      }],
     })
     expect(refused.success, 'a token ref carrying a value parsed').toBe(false)
-    // …and the same object without it is accepted, so the refusal is about the extra member.
     expect(
-      AgentManifestTokenRefSchema.safeParse({
-        name: 'ci', tokenEnvVar: 'AGENT_QA_TOKEN', scopes: ['read'],
+      AgentManifestPostureSchema.safeParse({
+        configuration: 'resolved',
+        tokenEnvRefs: [{ name: 'ci', tokenEnvVar: 'AGENT_QA_TOKEN', scopes: ['read'] }],
       }).success,
-    ).toBe(true)
+      'a posture carrying a value-free token ref parsed — the member is back',
+    ).toBe(false)
+    // …and the posture without it is accepted, so the refusal is about the extra member.
+    expect(AgentManifestPostureSchema.safeParse({ configuration: 'resolved' }).success).toBe(true)
   })
 
   // RE-SPELLED 2026-10-01 (432-21, D-12): the MCP default grant (every scope but `config-write`)
   // is deleted with the token resolver. Every caller reaches every op, so the posture reports the
   // WHOLE closed scope union, read off the union rather than restated, and safe mode is off.
+  // RE-SPELLED 2026-10-02 (432-39, D-12): the union, the grant and the safe-mode member are deleted,
+  // so there is nothing left to restate: the posture carries neither member, and the CLI mint no flag.
   it('reads the shipped default grant and safe-mode state rather than restating them', async () => {
     const manifest = await buildAgentManifest({
       configPath: join(fixtureProject('posture'), 'agent-qa.config.yaml'),
     })
-    expect(manifest.posture.defaultScopes, 'the manifest\'s default grant is not the whole union')
-      .toEqual([...FunctionScopeSchema.options])
-    expect(manifest.posture.defaultScopes, 'the local default grant withholds nothing')
-      .toContain('config-write')
-    expect(manifest.posture.safeMode, 'no composition hides an op from a listing').toBe(false)
-    expect(CLI_FUNCTION_CALLER.safeMode, 'the CLI mint carries no safe-mode flag').toBeUndefined()
+    expect(manifest.posture, 'the manifest still reports a default grant')
+      .not.toHaveProperty('defaultScopes')
+    expect(Object.keys(manifest.posture), 'the local posture carries a retired permission member')
+      .toEqual(['configuration'])
+    expect(manifest.posture, 'no composition hides an op from a listing').not.toHaveProperty('safeMode')
+    expect(CLI_FUNCTION_CALLER, 'the CLI mint carries no safe-mode flag').not.toHaveProperty('safeMode')
     expect(manifest.posture.configuration, 'a resolvable config was reported unresolved')
       .toBe('resolved')
   })
@@ -580,8 +588,8 @@ describe('the agent manifest (D-16, XPLN-01)', () => {
     const absent = await buildAgentManifest({ configPath: join(bare, 'agent-qa.config.yaml') })
     expect(absent.posture.configuration, 'a directory with no config did not report `absent`')
       .toBe('absent')
-    expect(absent.posture.tokenEnvRefs, 'a directory with no config reported credentials')
-      .toEqual([])
+    expect(absent.posture, 'a directory with no config reported credentials')
+      .not.toHaveProperty('tokenEnvRefs')
     // The capability half is workspace-independent and must still be whole.
     expect(absent.rows.length, 'a directory with no config produced no rows').toBeGreaterThan(0)
 
@@ -594,7 +602,7 @@ describe('the agent manifest (D-16, XPLN-01)', () => {
     const unresolved = await buildAgentManifest({ configPath: brokenPath })
     expect(unresolved.posture.configuration, 'an unreadable config did not report `unresolved`')
       .toBe('unresolved')
-    expect(unresolved.posture.tokenEnvRefs, 'an unreadable config reported credentials').toEqual([])
+    expect(unresolved.posture, 'an unreadable config reported credentials').not.toHaveProperty('tokenEnvRefs')
     // The refusal carries no text out of the file it refused, which is the whole reason the arm is
     // a bare enum member.
     expect(JSON.stringify(unresolved)).not.toContain('testMatch')

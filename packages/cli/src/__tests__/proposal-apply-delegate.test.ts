@@ -26,7 +26,6 @@ import { invokeFunction } from '@vostride/agent-qa-agent'
 import type { ConfigReaderPort, JobModelCapability } from '@vostride/agent-qa-agent'
 import { composeLocalAgent } from '@vostride/agent-qa-agent-local'
 import type { LocalAgentHost } from '@vostride/agent-qa-agent-local'
-import { FunctionScopeSchema } from '@vostride/agent-qa-schema'
 import type { FunctionCaller, KnowledgeChangeOutput } from '@vostride/agent-qa-schema'
 import { afterEach, describe, expect, it } from 'vitest'
 
@@ -62,8 +61,6 @@ const MODEL: JobModelCapability = {
 
 const CALLER: FunctionCaller = {
   surface: 'test',
-  grantedScopes: [...FunctionScopeSchema.options],
-  safeMode: false,
   origin: 'agent',
 }
 

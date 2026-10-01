@@ -64,7 +64,6 @@ import {
   AuthoringDraftWriteOutputSchema,
   CURRENT_HANDOFF_SCHEMA_VERSION,
   DRAFT_STABILITY_RUNS_N,
-  FunctionScopeSchema,
   MASKED_RESOLVED_CONFIG_SCHEMA_VERSION,
   asRunId,
   authoredSuiteTargetPath,
@@ -120,8 +119,6 @@ const MASKED_CONFIG: MaskedResolvedConfig = {
 /** A person holding every scope, so a refusal below can only ever be the axis under test. */
 const HUMAN: FunctionCaller = {
   surface: 'test',
-  grantedScopes: [...FunctionScopeSchema.options],
-  safeMode: false,
   origin: 'human',
 }
 
@@ -131,8 +128,6 @@ const HUMAN: FunctionCaller = {
  */
 const RUN_AND_READ_ONLY: FunctionCaller = {
   surface: 'test',
-  grantedScopes: ['run', 'read'],
-  safeMode: false,
   origin: 'human',
 }
 

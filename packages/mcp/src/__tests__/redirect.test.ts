@@ -53,7 +53,7 @@ import { Client } from '@modelcontextprotocol/client'
 import { InMemoryTransport } from '@modelcontextprotocol/server'
 import type { McpServer } from '@modelcontextprotocol/server'
 import type { FunctionDeclaration, FunctionRegistry } from '@vostride/agent-qa-agent'
-import type { FunctionCaller, FunctionScope } from '@vostride/agent-qa-schema'
+import type { FunctionCaller } from '@vostride/agent-qa-schema'
 import { describe, expect, it } from 'vitest'
 
 import { buildAgentQaMcpServer, v1RedirectFor, v1RedirectMessage } from '../catalog.js'
@@ -103,8 +103,9 @@ const FIXTURE_REGISTRY: FunctionRegistry = fixtureRegistry()
 /** Identity masking: the cells assert on exact bytes, so a masker must not be in the way. */
 const identity = (text: string): string => text
 
-function caller(grantedScopes: readonly FunctionScope[]): FunctionCaller {
-  return { surface: 'mcp', origin: 'agent', grantedScopes, safeMode: false }
+/** 432-39: a legacy scope set smuggled past the deleted caller field (cast); nothing reads it. */
+function caller(grantedScopes: readonly string[]): FunctionCaller {
+  return { surface: 'mcp', origin: 'agent', grantedScopes, safeMode: false } as FunctionCaller
 }
 
 /**

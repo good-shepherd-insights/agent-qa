@@ -49,12 +49,10 @@ import { readFileSync } from 'node:fs'
 
 import {
   CURRENT_HANDOFF_SCHEMA_VERSION,
-  FunctionScopeSchema,
   MASKED_RESOLVED_CONFIG_SCHEMA_VERSION,
 } from '@vostride/agent-qa-schema'
 import type {
   CompletedRunHandoff,
-  ExecutionContext,
   FunctionCaller,
 } from '@vostride/agent-qa-schema'
 import type { AuditSink } from '@vostride/agent-qa-safety'
@@ -220,8 +218,10 @@ const RETIREMENT_REGISTER: readonly RetirementRow[] = Object.freeze([
   Object.freeze({
     block: 'FIXED_CONTEXT',
     kind: 'constant',
-    destination: 'retained here',
-    reason: 'the fixture\'s execution context, never the ambient one',
+    destination: 'retired → subject deleted',
+    reason:
+      'the fixture\'s execution context, never the ambient one — retained here until 432-39, which '
+      + 'deleted the registry option it was handed to; no op decides in a context',
   }),
   Object.freeze({
     block: 'handoff',
@@ -242,8 +242,8 @@ const RETIREMENT_REGISTER: readonly RetirementRow[] = Object.freeze([
     kind: 'constant',
     destination: 'retained here',
     reason:
-      'scopes derived off `FunctionScopeSchema` and a human origin, so a refusal here can never be '
-      + 'a missing grant wearing a binding refusal\'s clothes',
+      'a human-origin caller, so a refusal here can never be a missing grant wearing a binding '
+      + 'refusal\'s clothes; 432-39 deleted the scope set it once derived off the scope union',
   }),
   Object.freeze({
     block: 'noOpSink',
@@ -347,8 +347,6 @@ const BOUND_OP_INPUTS: Readonly<Record<string, unknown>> = {
   'runs.list': {},
 }
 
-const FIXED_CONTEXT: () => ExecutionContext = () => 'local-interactive'
-
 function handoff(runId: string): CompletedRunHandoff {
   return {
     schemaVersion: CURRENT_HANDOFF_SCHEMA_VERSION,
@@ -409,17 +407,14 @@ function fakeDeps(): FunctionDeps {
 }
 
 /**
- * Every scope the layer knows, so a refusal here can never be a missing grant.
+ * A caller no refusal here can be about, so a refusal can never be a missing grant.
  *
- * Derived from `FunctionScopeSchema` rather than listed: a hand-written list that fell one member
- * behind the union would turn a new capability's "this host cannot run it" into "this caller was
- * not granted it" — a green-looking assertion certifying the wrong refusal. 387-08 measured exactly
- * that. `origin` is `human` for the same reason on a second axis (391 D-06).
+ * Until 432-39 it held every scope, derived from the scope union rather than listed (387-08). The
+ * union and the caller's scope set are deleted (432-39, D-10/D-12), so nothing is left to hold;
+ * `origin` is `human` for the same reason on the second axis (391 D-06).
  */
 const FULLY_GRANTED: FunctionCaller = {
   surface: 'conformance',
-  grantedScopes: [...FunctionScopeSchema.options],
-  safeMode: false,
   origin: 'human',
 }
 
@@ -434,7 +429,6 @@ function registry() {
   return createFunctionRegistry({
     deps: fakeDeps(),
     auditSink: noOpSink(),
-    resolveExecutionContext: FIXED_CONTEXT,
   })
 }
 

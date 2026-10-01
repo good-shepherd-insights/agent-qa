@@ -26,8 +26,6 @@
 
 import { z } from 'zod'
 
-import { FunctionScopeSchema } from './functions/function-scope'
-
 /**
  * The surface vocabulary IS the pinned roster (D-06), not a superset of it.
  *
@@ -118,12 +116,8 @@ export const CatalogOpRowSchema = z.object({
   docAnchor: z.string().min(1).optional(),
   /** Present iff `docPath` is null — the dated reason there is no doc yet. */
   docAbsentReason: z.string().min(1).optional(),
-  /**
-   * RETIRED (2026-10-01, 432-20, D-12). The op's capability scopes, once copied off its
-   * declaration. Declarations carry no scopes and the generator writes none; optional only for the
-   * bounded transition, and 432-39 deletes the column.
-   */
-  requiredScopes: z.array(FunctionScopeSchema).optional(),
+  // 2026-10-02 (432-39, D-12): no `requiredScopes` column. Declarations carry no scopes, the
+  // generator has written none since 432-20, and the strict row now refuses one.
   /**
    * A call an agent can copy, derived from `params` — or an explicit null (spec §3.3, D-08).
    *
@@ -214,41 +208,25 @@ export const CapabilityCatalogSchema = z.object({
 // produced by LOADING the committed artifact rather than by re-deriving anything, `manifest ≡
 // catalog` is a cell rather than a promise.
 //
-// IT IS NOT A GRANT LIST, AND THE SHAPE SAYS SO. The rows are every row, for every caller: per-caller
-// filtering is enforced live at the MCP `tools/list` seam and nowhere else (D-16, prohibition P1). A
-// manifest that filtered would be a second, quieter place the visibility law lived, and the two would
-// agree until the day one of them was improved.
+// IT IS NOT A GRANT LIST, AND THE SHAPE SAYS SO. The rows are every row, for every caller. 2026-10-02
+// (432-39, D-12): no door filters a listing per caller any more (432-20 deleted the MCP `tools/list`
+// visibility law), so there is no grant for a manifest to report either.
+
+// 2026-10-02 (432-39, D-02/D-12): `AgentManifestTokenRefSchema` is deleted with the posture's
+// `tokenEnvRefs`, `defaultScopes` and `safeMode` members. No MCP credential is declared or read
+// (432-21/22), no scope is granted and no composition hides an op, so each member could only ever
+// report the same constant. The strict posture now refuses all three.
 
 /**
- * One declared MCP credential, as the posture reports it: NAMES ONLY (395 D-11, D-16).
- *
- * `.strict()` is the mechanism, not the manners. There is deliberately no `value`, no `token` and no
- * `secret` member, and strict parsing is what turns "please don't add one" into a refusal — the same
- * argument `McpTokenEntrySchema` makes about the config file it mirrors. The values themselves are
- * dereferenced in exactly one place in this product (`resolveMcpTokens`, in the composition layer)
- * and the manifest builder has no path to that function, so refs-only here is structural rather than
- * remembered.
- */
-export const AgentManifestTokenRefSchema = z.object({
-  /** The operator's label for the entry. Not a secret and not matched against anything. */
-  name: z.string().min(1),
-  /** The NAME of the environment variable the credential lives under. Never its contents. */
-  tokenEnvVar: z.string().min(1),
-  /** What presenting that credential unlocks — the half of the posture that is actionable. */
-  scopes: z.array(FunctionScopeSchema).min(1),
-}).strict()
-export type AgentManifestTokenRef = z.infer<typeof AgentManifestTokenRefSchema>
-
-/**
- * What THIS workspace grants, hides and would accept — the local half of the manifest (D-16).
+ * Whether THIS workspace has a configuration, and whether it read — the local half of the
+ * manifest (D-16).
  *
  * `configuration` has THREE arms and they are three different things to tell a person. `init --agent`
  * is the command an agent runs in a directory that may not be a project yet — that is what `init` is
  * for — so `absent` (no configuration file here) is an ordinary answer and not an error. `unresolved`
  * is the other one: a file IS here and it did not parse or validate, which is a thing to FIX rather
  * than a thing to run `init` for. Folding those two together would have an agent recommend the wrong
- * action; folding either into `resolved` with an empty `tokenEnvRefs` would have it report "this
- * workspace declares no credentials" about a workspace nobody could read.
+ * action.
  *
  * NO ARM CARRIES A REASON STRING, deliberately. A validation message quotes the input that failed to
  * validate, and the input here is the file an operator's credentials are declared beside (395-16:
@@ -256,12 +234,6 @@ export type AgentManifestTokenRef = z.infer<typeof AgentManifestTokenRefSchema>
  * once reached a terminal). The FACT is reportable; the text is not.
  */
 export const AgentManifestPostureSchema = z.object({
-  /** The 396 D-07 grant a local unauthenticated caller gets, read from the shipped constant. */
-  defaultScopes: z.array(FunctionScopeSchema),
-  /** Whether a composition here hides above-`read` ops from a listing. */
-  safeMode: z.boolean(),
-  /** Declared credentials, by env-ref NAME. Never a value — see {@link AgentManifestTokenRefSchema}. */
-  tokenEnvRefs: z.array(AgentManifestTokenRefSchema),
   /** Whether this workspace has a configuration, and whether it read. */
   configuration: z.enum(['resolved', 'absent', 'unresolved']),
 }).strict()

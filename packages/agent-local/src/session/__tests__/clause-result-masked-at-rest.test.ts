@@ -97,7 +97,8 @@ describe('clause_result persists the MASKED payload, on the real file (399.1-05)
         split: splitClauses,
         reconcile: deterministicOverrideStrategy,
         sessionLog,
-        mint: { forStage: (_stage, sessionId) => ({ ...HUMAN, sessionId }) },
+        // 432-39 (D-02/D-12): the mint takes no session and stamps none, as production's does.
+        mint: { forStage: () => HUMAN },
         // THE OP ANSWERS WITH THE MASKED PAYLOAD. This is the one fixture fact; everything after it
         // is the shipped engine and the shipped adapter.
         invoke: () => Promise.resolve({
@@ -157,7 +158,8 @@ describe('clause_result persists the MASKED payload, on the real file (399.1-05)
         split: splitClauses,
         reconcile: deterministicOverrideStrategy,
         sessionLog,
-        mint: { forStage: (_stage, sessionId) => ({ ...HUMAN, sessionId }) },
+        // 432-39 (D-02/D-12): the mint takes no session and stamps none, as production's does.
+        mint: { forStage: () => HUMAN },
         invoke: () => Promise.resolve({
           payload: { entries: [] },
           verdict: { status: 'executed' as const, outcome: '0 quarantine entries' },

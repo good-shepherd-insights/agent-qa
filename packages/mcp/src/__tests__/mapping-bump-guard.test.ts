@@ -100,7 +100,6 @@ import {
   type FunctionRegistry,
 } from '@vostride/agent-qa-agent'
 import {
-  FunctionScopeSchema,
   RunsMarkInputSchema,
   RunsMarkPreviewResultSchema,
   RunsMarksHistoryInputSchema,
@@ -140,8 +139,6 @@ function builtInRegistry(): FunctionRegistry {
 /** Every scope, and not safe mode: this suite asks what the CATALOGUE holds, not what a caller sees. */
 const EVERY_SCOPE_CALLER: FunctionCaller = {
   surface: 'mcp',
-  grantedScopes: [...FunctionScopeSchema.options],
-  safeMode: false,
   origin: 'agent',
 }
 
@@ -414,7 +411,8 @@ describe('the projection resolves against the registry, produced not literal', (
     // RE-SPELLED 2026-10-01 (432-18, D-15): the integrity check was `humanOnly.length > 0`. The last
     // op declaring `requiresHumanOrigin` (`grants.revoke`) is deleted, so the set is empty now and
     // the rule holds over the whole projection; the filter is still measured over a non-empty
-    // census, and the field is still read (432-39 deletes it).
+    // census. 2026-10-02 (432-39, D-10): the field is deleted from the metadata type, so the key
+    // census is the only way it could come back.
     expect(declarations().length).toBeGreaterThan(0)
     expect(projected.size).toBeGreaterThan(0)
     expect(humanOnly, 'an op declares requiresHumanOrigin again; it must stay unprojected').toEqual([])

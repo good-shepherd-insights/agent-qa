@@ -77,11 +77,10 @@ import {
   type FunctionRegistry,
   type LiveViewPort,
 } from '@vostride/agent-qa-agent'
-import { asRunId, FunctionScopeSchema } from '@vostride/agent-qa-schema'
+import { asRunId } from '@vostride/agent-qa-schema'
 import type {
   CompletedRunHandoff,
   FunctionCaller,
-  FunctionScope,
   LiveUrlSigner,
   RunEventEnvelope,
 } from '@vostride/agent-qa-schema'
@@ -106,14 +105,18 @@ const SIGNING_KEY = 'zz-408-04-app-census-signing-key'
 const DASHBOARD_BASE = 'http://localhost:4108'
 const HANDLES: readonly number[] = [0]
 
-const EVERY_SCOPE = [...FunctionScopeSchema.options] as readonly FunctionScope[]
+// 2026-10-02 (432-39, D-10/D-12): the scope union is deleted, so the retired names are spelled by
+// hand here and handed to the caller as a smuggle, cast past the deleted field; nothing reads them.
+const EVERY_SCOPE: readonly string[] = [
+  'read', 'run', 'config-write', 'knowledge-write', 'approval-write', 'test-write',
+]
 
-const callerWith = (grantedScopes: readonly FunctionScope[]): FunctionCaller => ({
+const callerWith = (grantedScopes: readonly string[]): FunctionCaller => ({
   surface: 'mcp',
   grantedScopes,
   safeMode: false,
   origin: 'agent',
-})
+}) as FunctionCaller
 
 const identity = (text: string): string => text
 

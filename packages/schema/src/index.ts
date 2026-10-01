@@ -1014,11 +1014,11 @@ export {
   isCredentialValueField,
 } from './action/credential-fields'
 
-// 384 function-layer contract vocabulary (D-13/D-16): capability scopes, the caller
-// record, and the seed op DTOs surfaces type against under the import firewall.
+// 384 function-layer contract vocabulary (D-13/D-16): the caller record and the seed op DTOs
+// surfaces type against under the import firewall. 2026-10-02 (432-39, D-10/D-12): the
+// capability-scope union is deleted.
 export {
   FUNCTION_CALLER_ORIGINS,
-  FunctionScopeSchema,
   RUN_SUMMARY_SCHEMA_VERSION,
   RUN_DETAIL_SCHEMA_VERSION,
   RunSummarySchema,
@@ -1124,7 +1124,6 @@ export {
 export type {
   FunctionCaller,
   FunctionCallerOrigin,
-  FunctionScope,
   RunSummary,
   RunDetail,
   RunTestDetail,
@@ -1448,13 +1447,11 @@ export {
 // standing-approval contract are deleted with the gate. A refusal is a plain reason.
 // 2026-10-01 (432-18): the grant verbs' contracts, the protected-class set and the standing-grants
 // port are deleted. 2026-10-01 (432-22, D-12): the trust-scope wire projection leaves with its last
-// consumer, the run-service token DTO; the `TrustScope` and `TrustCredential` caller types stay
-// until 432-39 removes the optional caller fields.
+// consumer, the run-service token DTO. 2026-10-02 (432-39, D-12): the `TrustScope` and
+// `TrustCredential` caller types are deleted with the caller's `credential` member.
 export type {
   RiskActionDescriptor,
   RiskTier,
-  TrustCredential,
-  TrustScope,
   TrustScopeKey,
   ScanAction,
   ScanResult,
@@ -1573,7 +1570,6 @@ export type {
 export {
   AgentManifestPostureSchema,
   AgentManifestSchema,
-  AgentManifestTokenRefSchema,
   CapabilityCatalogSchema,
   CatalogAliasRowSchema,
   CatalogExampleCallSchema,
@@ -1588,7 +1584,6 @@ export {
 export type {
   AgentManifest,
   AgentManifestPosture,
-  AgentManifestTokenRef,
   CapabilityCatalog,
   CatalogAliasRow,
   CatalogExampleCall,

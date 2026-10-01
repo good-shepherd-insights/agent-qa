@@ -76,7 +76,6 @@ import { FsEventLog, HANDOFF_FILE, RUNS_SUBDIR, slugBranch } from '@vostride/age
 import {
   CLAUSE_RECEIPT_STATUSES,
   CURRENT_HANDOFF_SCHEMA_VERSION,
-  FunctionScopeSchema,
   MASKED_RESOLVED_CONFIG_SCHEMA_VERSION,
   asRunId,
   clauseReachedCapability,
@@ -116,8 +115,6 @@ const MASKED_CONFIG: MaskedResolvedConfig = {
 /** A person holding every scope, so a refusal below can only ever be the axis under test. */
 const HUMAN: FunctionCaller = {
   surface: 'test',
-  grantedScopes: [...FunctionScopeSchema.options],
-  safeMode: false,
   origin: 'human',
 }
 

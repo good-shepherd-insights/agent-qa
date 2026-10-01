@@ -29,8 +29,8 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import { invokeFunction, RUNS_MARK_FUNCTION_ID } from '@vostride/agent-qa-agent'
-import type { FunctionCaller, FunctionScope } from '@vostride/agent-qa-schema'
-import { FunctionScopeSchema, RunsMarkOutcomeSchema } from '@vostride/agent-qa-schema'
+import type { FunctionCaller } from '@vostride/agent-qa-schema'
+import { RunsMarkOutcomeSchema } from '@vostride/agent-qa-schema'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { composeDashboardDoor } from '../commands/dashboard.js'
@@ -136,9 +136,6 @@ function repositoryState(workspace: Workspace): Record<string, string> {
   }
 }
 
-/** Every caller that can change configuration, spelled as its door spells itself. */
-const ALL_SCOPES = [...FunctionScopeSchema.options] as readonly FunctionScope[]
-
 interface Door {
   readonly name: string
   readonly caller: FunctionCaller
@@ -172,8 +169,9 @@ const DOORS: readonly Door[] = [
   },
   {
     name: 'mcp',
-    // 432-21 (D-12): the one tokenless MCP caller, carrying the legacy full scope set nothing reads.
-    caller: { ...MCP_FUNCTION_CALLER, grantedScopes: ALL_SCOPES },
+    // 432-21 (D-12): the one tokenless MCP caller. 2026-10-02 (432-39): the legacy full scope set it
+    // carried is deleted with the caller field; nothing read it.
+    caller: MCP_FUNCTION_CALLER,
     compose: (workspace) => composeCliLocalAgent({
       agentQaRoot: workspace.agentQaRoot,
       configPath: workspace.configPath,
@@ -181,8 +179,9 @@ const DOORS: readonly Door[] = [
   },
   {
     name: 'co-hosted mcp',
-    // 432-21 (D-12): the one tokenless MCP caller, carrying the legacy full scope set nothing reads.
-    caller: { ...MCP_FUNCTION_CALLER, grantedScopes: ALL_SCOPES },
+    // 432-21 (D-12): the one tokenless MCP caller. 2026-10-02 (432-39): the legacy full scope set it
+    // carried is deleted with the caller field; nothing read it.
+    caller: MCP_FUNCTION_CALLER,
     compose: (workspace) => composeDashboardDoor({
       agentQaRoot: workspace.agentQaRoot,
       configPath: workspace.configPath,

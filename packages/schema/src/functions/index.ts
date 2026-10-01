@@ -1,5 +1,5 @@
-export { FunctionScopeSchema } from './function-scope'
-export type { FunctionScope } from './function-scope'
+// 2026-10-02 (432-39, D-10/D-12): the capability-scope union (`FunctionScopeSchema`,
+// `FunctionScope`) is deleted with every field that named it. Nothing gates on a scope.
 // 391 D-06: the actor-origin axis. The vocabulary is a VALUE so a composition root can iterate
 // it and a test can pin its closure; the caller record's `origin` field is required.
 export { FUNCTION_CALLER_ORIGINS } from './function-caller'

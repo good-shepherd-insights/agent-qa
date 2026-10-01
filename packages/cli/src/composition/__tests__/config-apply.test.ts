@@ -30,7 +30,6 @@ import { join } from 'node:path'
 import { UnknownFunctionError, createFunctionRegistry, invokeFunction } from '@vostride/agent-qa-agent'
 import type { FunctionDeps } from '@vostride/agent-qa-agent'
 import {
-  FunctionScopeSchema,
   MASKED_RESOLVED_CONFIG_SCHEMA_VERSION,
   base64Decode,
   sha256hexBytes,
@@ -53,8 +52,6 @@ import { filePre432ConfigProposal } from './pre-432-config-proposal.js'
 
 const HUMAN: FunctionCaller = {
   surface: 'test',
-  grantedScopes: [...FunctionScopeSchema.options],
-  safeMode: false,
   origin: 'human',
 }
 
@@ -196,9 +193,8 @@ function registryFor() {
   return createFunctionRegistry({
     deps,
     auditSink: { appendGuardrailAudit() {} },
-    // The production door for an accept: `mutating-shared` asks in every context, and this is the
-    // arm the CLI host binds. Without it every cell below would pass while measuring nothing.
-    resolveExecutionContext: () => 'local-interactive',
+    // 2026-10-02 (432-39, D-12): no confirm port and no execution-context option. An accept
+    // dispatches directly in every context; the registry takes neither seam any more.
   })
 }
 

@@ -28,12 +28,12 @@
 // redundant-mechanism trap: two registers over one universe, free to diverge. This file asserts the
 // JOIN — that each entry names a real projected tool and op — and nothing more.
 
-import { readFileSync } from 'node:fs'
+import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import { AGENT_QA_TOOL_PROJECTIONS, DEGRADED_OUTPUT_CONTRACTS } from '@vostride/agent-qa-mcp'
-import { FunctionScopeSchema } from '@vostride/agent-qa-schema'
+import * as schema from '@vostride/agent-qa-schema'
 import { describe, expect, it } from 'vitest'
 
 import { registryDeclarations } from './adapters.js'
@@ -57,7 +57,7 @@ const readSource = (path: string): string => readFileSync(path, 'utf8')
  * ranging every declaration's scopes against it. D-12 deletes the scope union's purpose, its growth
  * rule and the census rows that range it; what this block pins now is that retirement.
  */
-const RETIREMENT_ANCHOR = 'RETIRED (2026-10-01, 432-20'
+// 2026-10-02 (432-39): the retirement anchor's module is deleted; nothing reads it now.
 const DELETED_GROWTH_RULE_CLAUSES: readonly string[] = [
   'GROWTH RULE. A seventh member requires',
   'the census cell reds on an op whose `requiredScopes` names',
@@ -78,6 +78,23 @@ function permissionBearingFindings(declarations: readonly KeyBearing[]): readonl
     ['requiredScopes', 'requiresHumanOrigin']
       .filter((key) => Object.keys(declaration).includes(key))
       .map((key) => `${declaration.id} carries ${key}`))
+}
+
+/** Every non-test schema source, read once (432-39: the scope module is deleted). */
+function schemaSources(): readonly string[] {
+  const texts: string[] = []
+  const walk = (dir: string): void => {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      const path = join(dir, entry.name)
+      if (entry.isDirectory()) {
+        if (entry.name !== '__tests__') walk(path)
+      } else if (entry.name.endsWith('.ts')) {
+        texts.push(readFileSync(path, 'utf8'))
+      }
+    }
+  }
+  walk(join(REPO_ROOT, 'packages/schema/src'))
+  return texts
 }
 
 // ---- D-17 / D-20: the deletion inventory's disposition column -----------------------------------
@@ -239,34 +256,31 @@ describe('Phase 397 — the inherited adjudications, discharged at their artifac
   // RE-SPELLED 2026-10-01 (432-20, D-12) from 'D-16: the capability-scope union closes at six,
   // dated'. The union no longer gates anything; its growth rule and census are deleted.
   describe('D-16 retired: the capability-scope union gates nothing (432-20, D-12)', () => {
-    // Kept: the union still holds the six members it carried, frozen until 432-39 deletes it, so a
-    // retired vocabulary cannot quietly grow a seventh member nothing reads.
+    // RE-SPELLED 2026-10-02 (432-39, D-10/D-12): the union is DELETED, so the six members it held
+    // until now are held nowhere. Title kept; the claim it guarded — a retired vocabulary cannot
+    // quietly grow a member nothing reads — now holds because there is no vocabulary to grow.
     it('holds exactly the six members the closure note ratifies', () => {
-      expect(FunctionScopeSchema.options.length, 'the scope union grew or shrank').toBe(6)
-      expect([...FunctionScopeSchema.options]).toEqual([
-        'read',
-        'run',
-        'config-write',
-        'knowledge-write',
-        'approval-write',
-        'test-write',
-      ])
+      expect(Object.keys(schema), 'the scope union is still exported').not.toContain('FunctionScopeSchema')
+      expect(Object.keys(schema).filter((name) => /FunctionScope/.test(name))).toEqual([])
+      // Non-vacuity: this is the real barrel.
+      expect(Object.keys(schema)).toContain('FUNCTION_CALLER_ORIGINS')
     })
 
     // RE-SPELLED from 'carries the dated closure note, and no longer carries the reservation it
-    // replaced' and 'states the growth rule and carries its three lineage dates'.
+    // replaced' and 'states the growth rule and carries its three lineage dates'. RE-SPELLED again
+    // 2026-10-02 (432-39, D-10/D-12): the module that carried the retirement note is deleted with
+    // the union, and no schema source states the growth rule or declares the union again. The
+    // lineage notes live in the repository history with the file.
     it('carries the dated retirement note, and no longer states the growth rule', () => {
-      const source = readSource(SCOPE_SOURCE_PATH)
-      expect(source, 'function-scope.ts read back empty').toContain('FunctionScopeSchema')
-      expect(source, 'the dated 432-20 retirement anchor is gone from function-scope.ts')
-        .toContain(RETIREMENT_ANCHOR)
+      expect(existsSync(SCOPE_SOURCE_PATH), 'function-scope.ts is still present').toBe(false)
+      const sources = schemaSources()
+      expect(sources.length, 'the schema source census read nothing').toBeGreaterThan(50)
       for (const clause of DELETED_GROWTH_RULE_CLAUSES) {
-        expect(source, `the deleted growth rule is back: ${clause}`).not.toContain(clause)
+        expect(sources.filter((text) => text.includes(clause)), `the deleted growth rule is back: ${clause}`)
+          .toEqual([])
       }
-      // The lineage stays as history, so the record of why each member existed is not lost.
-      for (const date of ['2026-08-02', '2026-08-07', '2026-08-11']) {
-        expect(source, `the ${date} counter-note has left the file`).toContain(date)
-      }
+      expect(sources.filter((text) => text.includes('FunctionScopeSchema =')), 'the union is declared again')
+        .toEqual([])
     })
 
     // RE-SPELLED from 'is a union every declared capability can be measured against'.

@@ -499,7 +499,7 @@ describe('423-18 marks history registration and host binding (D-19)', () => {
     expect(existsSync(join(s.agentQaRoot, 'runs', template.runSlug, 'mark-intent.json'))).toBe(false)
 
     // The mark writer is not a history binding; an absent read port is refused by name.
-    const writerOnly = agent.createFunctionRegistry({ auditSink: auditless, resolveExecutionContext: () => 'local-headless',
+    const writerOnly = agent.createFunctionRegistry({ auditSink: auditless,
       deps: { feedback: { mark: refuse('feedback.mark'), marksFor: refuse('feedback.marksFor') } } as never })
     expect(writerOnly.list(host.CLI_FUNCTION_CALLER).find(entry => entry.id === HISTORY)?.bindingStatus).toBe('unbound')
     await expect(agent.invokeFunction(writerOnly, HISTORY, { runId: template.runId }, host.CLI_FUNCTION_CALLER))
@@ -913,10 +913,10 @@ describe('423-19 runs.mark.preview registration and composed invocation (D-16)',
     // The exact input is still refused before the port: a preview basis is not an input field.
     await expect(agent.invokeFunction(composed.registry, PREVIEW, { ...input(), basis: { ledgerOrdinal: 3 } }, host.CLI_FUNCTION_CALLER)).rejects.toThrow()
 
-    const historyOnly = agent.createFunctionRegistry({ auditSink: auditless, resolveExecutionContext: () => 'local-headless',
+    const historyOnly = agent.createFunctionRegistry({ auditSink: auditless,
       deps: { feedbackReads: createFeedbackReadsPortForHost({ agentQaRoot: s.agentQaRoot }) } as never })
     await expect(agent.invokeFunction(historyOnly, PREVIEW, input(), host.CLI_FUNCTION_CALLER)).rejects.toBeInstanceOf(agent.FunctionNotBoundError)
-    const writerOnly = agent.createFunctionRegistry({ auditSink: auditless, resolveExecutionContext: () => 'local-headless',
+    const writerOnly = agent.createFunctionRegistry({ auditSink: auditless,
       deps: { feedback: { mark: refuse('feedback.mark'), marksFor: refuse('feedback.marksFor') } } as never })
     expect(writerOnly.list(host.CLI_FUNCTION_CALLER).find(entry => entry.id === PREVIEW)?.bindingStatus).toBe('unbound')
     await expect(agent.invokeFunction(writerOnly, PREVIEW, input(), host.CLI_FUNCTION_CALLER)).rejects.toBeInstanceOf(agent.FunctionNotBoundError)

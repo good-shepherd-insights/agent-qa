@@ -5,9 +5,9 @@ import {
   CURRENT_CHAT_SESSION_SCHEMA_VERSION,
   ClauseReceiptSchema,
   FUNCTION_CALLER_ORIGINS,
-  FunctionScopeSchema,
   guardChatSessionEvent,
 } from '../index'
+import * as schema from '../index'
 import type { FunctionCaller } from '../index'
 
 describe('the actor-origin axis (391 D-06)', () => {
@@ -28,11 +28,9 @@ describe('the actor-origin axis (391 D-06)', () => {
     // `tsc`, which is the only authority here; vitest's own typecheck line has printed
     // "no errors" beside real tsc failures in this repo.
     // @ts-expect-error a caller record with no origin does not type
-    const withoutOrigin: FunctionCaller = { surface: 'cli', grantedScopes: [], safeMode: false }
+    const withoutOrigin: FunctionCaller = { surface: 'cli' }
     const invented: FunctionCaller = {
       surface: 'cli',
-      grantedScopes: [],
-      safeMode: false,
       // @ts-expect-error the union admits nothing but its two members
       origin: 'system',
     }
@@ -44,9 +42,12 @@ describe('the actor-origin axis (391 D-06)', () => {
 describe('C432-DECLARATION-KEYS: the caller record after the permission wave (432-20, D-10/D-12)', () => {
   it('types a tokenless caller with surface and origin alone — every permission field is optional', () => {
     // Compile-checked: until 432-20 `grantedScopes` and `safeMode` were required, so this literal
-    // did not type. The retired fields stay optional and unread until 432-39 deletes them.
+    // did not type. 2026-10-02 (432-39, D-02/D-10): the retired fields are deleted, so the record
+    // is exactly these two keys at the type level too (C432-NO-PERMISSION-TYPES below).
     const tokenless: FunctionCaller = { surface: 'mcp', origin: 'agent' }
     expect(Object.keys(tokenless).sort()).toEqual(['origin', 'surface'])
+    const CALLER_TYPE_KEYS: ExactKeys<FunctionCaller, 'surface' | 'origin'> = true
+    expect(CALLER_TYPE_KEYS).toBe(true)
   })
 
   it('keeps origin as presentation data only, with no new label', () => {
@@ -58,51 +59,67 @@ describe('C432-DECLARATION-KEYS: the caller record after the permission wave (43
   })
 })
 
+// 2026-10-02 (432-39, D-10/D-12): the capability-scope union is DELETED, with every field that
+// named it. The two cells that pinned its members and its parser keep their titles and are
+// re-spelled as its absence (C432-NO-PERMISSION-TYPES); the two distinctness cells keep their claim
+// on a smuggled record, the way an old caller record would still carry the retired field, and
+// nothing reads it.
+type ExactKeys<T, K extends PropertyKey> = [keyof T] extends [K]
+  ? ([K] extends [keyof T] ? true : false)
+  : false
+const RETIRED_SCOPE_NAMES = [
+  'read', 'run', 'config-write', 'knowledge-write', 'approval-write', 'test-write',
+]
+
+/** An old caller record that still carries the retired scope set, smuggled past the deleted type. */
+function legacyRecord(
+  origin: FunctionCaller['origin'],
+  grantedScopes: readonly string[],
+): FunctionCaller {
+  return { surface: 'synthetic', grantedScopes, safeMode: false, origin } as FunctionCaller
+}
+const grantsOf = (caller: FunctionCaller): readonly string[] =>
+  (caller as unknown as { grantedScopes: readonly string[] }).grantedScopes
+
 describe('the capability-scope union', () => {
+  // RE-SPELLED 2026-10-02 (432-39, D-10/D-12, C432-NO-PERMISSION-TYPES). The union and its six
+  // members are deleted, test-write with them; no barrel exports a scope schema.
   it('carries test-write as a sixth, distinct member (394 WTST-01)', () => {
-    expect(FunctionScopeSchema.options).toEqual([
-      'read',
-      'run',
-      'config-write',
-      'knowledge-write',
-      'approval-write',
-      'test-write',
-    ])
-    expect(FunctionScopeSchema.options).toHaveLength(6)
+    expect(Object.keys(schema)).not.toContain('FunctionScopeSchema')
+    expect(Object.keys(schema).filter((name) => /FunctionScope/.test(name))).toEqual([])
+    // Non-vacuity: the barrel is the real one, and the caller vocabulary that survives is in it.
+    expect(Object.keys(schema)).toContain('FUNCTION_CALLER_ORIGINS')
   })
 
+  // RE-SPELLED 2026-10-02 (432-39, D-10/D-12, C432-NO-PERMISSION-TYPES). With no union there is no
+  // parser for a scope name to pass or fail: no exported enum carries the old members.
   it('refuses anything off the union', () => {
-    expect(FunctionScopeSchema.safeParse('approval-write').success).toBe(true)
-    expect(FunctionScopeSchema.safeParse('test-write').success).toBe(true)
-    expect(FunctionScopeSchema.safeParse('approvals-write').success).toBe(false)
-    expect(FunctionScopeSchema.safeParse('tests-write').success).toBe(false)
-    expect(FunctionScopeSchema.safeParse('write').success).toBe(false)
+    const enums = Object.entries(schema).filter(([, value]) =>
+      typeof (value as { safeParse?: unknown } | undefined)?.safeParse === 'function'
+      && Array.isArray((value as { options?: unknown }).options))
+    // Non-vacuity: the barrel does export enum parsers, so the census below ranges something.
+    expect(enums.length).toBeGreaterThan(5)
+    const carrying = enums
+      .filter(([, value]) => RETIRED_SCOPE_NAMES
+        .every((name) => ((value as { options: unknown[] }).options).includes(name)))
+      .map(([name]) => name)
+    expect(carrying).toEqual([])
   })
 
   it('keeps approval-write distinct from knowledge-write', () => {
     // The privilege-conflation counter-note, made checkable: changing what the system LEARNED
     // and changing what it may do WITHOUT ASKING are two grants, so a caller can hold either
-    // without the other.
-    const knowledgeOnly: FunctionCaller = {
-      surface: 'synthetic',
-      grantedScopes: ['knowledge-write'],
-      safeMode: false,
-      origin: 'human',
-    }
-    expect(knowledgeOnly.grantedScopes).not.toContain('approval-write')
+    // without the other. 432-39: on a legacy record, smuggled; nothing reads either.
+    const knowledgeOnly = legacyRecord('human', ['knowledge-write'])
+    expect(grantsOf(knowledgeOnly)).not.toContain('approval-write')
   })
 
   it('keeps test-write distinct from run', () => {
     // 394's counter-note, made checkable on the same pattern: executing this project's tests and
     // authoring new ones into the repository are two grants, so a caller can hold either without
-    // the other.
-    const runOnly: FunctionCaller = {
-      surface: 'synthetic',
-      grantedScopes: ['run', 'read'],
-      safeMode: false,
-      origin: 'agent',
-    }
-    expect(runOnly.grantedScopes).not.toContain('test-write')
+    // the other. 432-39: on a legacy record, smuggled; nothing reads either.
+    const runOnly = legacyRecord('agent', ['run', 'read'])
+    expect(grantsOf(runOnly)).not.toContain('test-write')
   })
 })
 

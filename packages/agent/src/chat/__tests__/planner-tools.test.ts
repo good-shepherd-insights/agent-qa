@@ -16,7 +16,7 @@
 //      one measurement shape that can miss it (Pitfall 8 / T-392-15).
 
 import { asSchema } from 'ai'
-import { FunctionScopeSchema, MASKED_RESOLVED_CONFIG_SCHEMA_VERSION } from '@vostride/agent-qa-schema'
+import { MASKED_RESOLVED_CONFIG_SCHEMA_VERSION } from '@vostride/agent-qa-schema'
 import type { FunctionCaller } from '@vostride/agent-qa-schema'
 import type { AuditSink } from '@vostride/agent-qa-safety'
 import { describe, expect, it } from 'vitest'
@@ -99,8 +99,6 @@ function emptyDeps(): FunctionDeps {
  */
 const PLANNER_CALLER: FunctionCaller = {
   surface: 'chat',
-  grantedScopes: [...FunctionScopeSchema.options],
-  safeMode: false,
   origin: 'agent',
 }
 

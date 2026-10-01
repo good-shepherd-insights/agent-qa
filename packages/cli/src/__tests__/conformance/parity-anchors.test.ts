@@ -45,14 +45,14 @@ import { Client } from '@modelcontextprotocol/client'
 import { StdioClientTransport } from '@modelcontextprotocol/client/stdio'
 import { EXPLAIN_FUNCTION_ID } from '@vostride/agent-qa-agent'
 import { AGENT_QA_TOOL_PROJECTIONS } from '@vostride/agent-qa-mcp'
-import { AgentManifestSchema, FunctionScopeSchema, catalogRowKey } from '@vostride/agent-qa-schema'
+import { AgentManifestSchema, catalogRowKey } from '@vostride/agent-qa-schema'
 import { Command } from 'commander'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { loadCapabilityCatalog } from '../../capability-catalog/loader.js'
 import { createChatCommand } from '../../commands/chat.js'
 import { MCP_STDIO_STARTUP_MESSAGE } from '../../commands/mcp.js'
-import { MCP_ENUMERATION_SCOPES, enumerateMcpOpIds, expandMcpListedTools } from './adapters.js'
+import { enumerateMcpOpIds, expandMcpListedTools } from './adapters.js'
 import {
   ANCHORED_BUILDS,
   CHAT_ANCHOR_UTTERANCE,
@@ -282,10 +282,11 @@ describe('the built-binary anchors (D-02)', () => {
       )
 
       const spawned = expandMcpListedTools(spawnedToolNames, AGENT_QA_TOOL_PROJECTIONS)
-      // 419 D-20: stdio has no request bearer. Compare the SAME credential posture.
+      // 419 D-20: stdio has no request bearer. Compare the SAME caller posture.
       // 432-20 (D-12): no tool is hidden from a bearer-less caller any more, so the binary lists
-      // every projected tool, the credential-required mark door included.
-      const inProcess = await enumerateMcpOpIds(MCP_ENUMERATION_SCOPES, false)
+      // every projected tool, the credential-required mark door included. 2026-10-02 (432-39): the
+      // in-process side lists under the shipped `MCP_FUNCTION_CALLER` too — the binary's own caller.
+      const inProcess = await enumerateMcpOpIds()
       expect([...spawnedToolNames].sort()).toEqual(AGENT_QA_TOOL_PROJECTIONS
         .map(projection => projection.name).sort())
 
@@ -521,13 +522,15 @@ describe('the built-binary anchors (D-02)', () => {
       // about the workspace the binary ran in — a temporary directory here — so pinning its bytes
       // would pin the fixture. What must hold is that the section is WHOLE and reports the shipped
       // default grant rather than a list this cell wrote down. 2026-10-01 (432-21, D-12): that grant
-      // is the whole closed scope union — no caller is withheld anything.
-      expect(manifest.posture.defaultScopes, 'the shipped posture is not the whole scope union')
-        .toEqual([...FunctionScopeSchema.options])
+      // is the whole closed scope union — no caller is withheld anything. 2026-10-02 (432-39, D-12):
+      // the posture's grant and safe-mode members are deleted, so WHOLE now means exactly the one
+      // member that is left, and no retired member rides along.
+      expect(Object.keys(manifest.posture), 'the shipped posture still reports a scope grant')
+        .not.toContain('defaultScopes')
       expect(manifest.posture.configuration, 'the fixture project\'s config did not resolve')
         .toBe('resolved')
-      expect(typeof manifest.posture.safeMode, 'the shipped posture has no safe-mode state')
-        .toBe('boolean')
+      expect(Object.keys(manifest.posture), 'the shipped posture still has a safe-mode state')
+        .toEqual(['configuration'])
     }, 120_000)
 
   // RE-SPELLED 2026-10-01 (432-21, D-12): the NAME half is retired (no token declaration is read);
@@ -571,8 +574,9 @@ describe('the built-binary anchors (D-02)', () => {
       // 2026-10-01 (432-21, D-12): NO REF IS REPORTED — the legacy token block is read by nothing.
       // The non-vacuity control is the whole document and the echo cell below: the binary ran, the
       // value was readable in its environment, and it printed it nowhere.
-      expect(manifest.posture.tokenEnvRefs, 'the shipped manifest reported a legacy token declaration')
-        .toEqual([])
+      // 2026-10-02 (432-39, D-12): the posture has no ref member at all now.
+      expect(manifest.posture, 'the shipped manifest reported a legacy token declaration')
+        .not.toHaveProperty('tokenEnvRefs')
       expect(manifest.rows.length, 'the shipped manifest carried no rows').toBeGreaterThan(0)
 
       // …and the VALUE is on neither stream. The variable was set in the child's environment, so a

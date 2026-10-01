@@ -34,8 +34,6 @@ const __dirname = dirname(fileURLToPath(import.meta.url))
 
 const CALLER: FunctionCaller = {
   surface: 'chat',
-  grantedScopes: ['read'],
-  safeMode: false,
   origin: 'human',
 }
 

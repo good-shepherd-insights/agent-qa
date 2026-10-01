@@ -436,7 +436,8 @@ function harness(options: {
     reconcile: deterministicOverrideStrategy,
     sessionLog,
     mint: {
-      forStage: (_stage: ChatBindingStage, _sessionId: string): FunctionCaller => PLANNER_CALLER,
+      // 432-39 (D-02/D-12): the port takes no session; the caller carries none.
+      forStage: (_stage: ChatBindingStage): FunctionCaller => PLANNER_CALLER,
     },
     invoke: async (functionId, input) => {
       ordering.push(functionId)

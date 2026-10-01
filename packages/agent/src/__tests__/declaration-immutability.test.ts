@@ -20,6 +20,12 @@
 // registry omits `requiredScopes` and `requiresHumanOrigin` even while an old spec still spells
 // them), and `invokeFunction` reads none. The freezing claims survive on the risk descriptor and
 // the spec singleton, and C432-DECLARATION-KEYS pins the exact runtime key set beside its type.
+//
+// 2026-10-02 (432-39, D-10/D-12): the two members are DELETED from `FunctionMetadata`, and with
+// them from every type that extends it. C432-DECLARATION-KEYS now pins the exact key set of
+// `FunctionMetadata`, `FunctionSpec` and `FunctionDeclaration` at compile time, beside the exact
+// runtime key set of every real declaration. Where a cell proves an old key is not passed on, the
+// key is smuggled onto a spec object with a cast — the only way an old spec could still carry it.
 
 import type {
   FunctionCaller,
@@ -40,7 +46,12 @@ import {
   createRegistryFromSpecs,
   registryInternals,
 } from '../functions/registry.js'
-import type { FunctionDeclaration, FunctionDeps, FunctionSpec } from '../functions/spec.js'
+import type {
+  FunctionDeclaration,
+  FunctionDeps,
+  FunctionMetadata,
+  FunctionSpec,
+} from '../functions/spec.js'
 import { CONTRACTS_BY_ID, expectProjectionDerivedFrom } from './projection-relation.js'
 
 /**
@@ -93,19 +104,22 @@ function buildRegistry() {
   })
 }
 
-const ZERO_SCOPE_CALLER: FunctionCaller = {
+// 2026-10-02 (432-39, D-02/D-12): the scope set and safe-mode flag are deleted from the caller; the
+// two records keep them as smuggles (cast) so "zero scope" and "fully granted" stay different
+// records, and every cell below still shows neither is read.
+const ZERO_SCOPE_CALLER = {
   surface: 'test',
   grantedScopes: [],
   safeMode: false,
   origin: 'agent',
-}
+} as FunctionCaller
 
-const FULLY_GRANTED: FunctionCaller = {
+const FULLY_GRANTED = {
   surface: 'test',
   grantedScopes: ['read', 'run', 'config-write'],
   safeMode: false,
   origin: 'agent',
-}
+} as FunctionCaller
 
 function byId(declarations: readonly FunctionDeclaration[], id: string): FunctionDeclaration {
   const declaration = declarations.find((candidate) => candidate.id === id)
@@ -397,6 +411,33 @@ type DeclarationCarries<Key extends string> = Key extends keyof FunctionDeclarat
 const DECLARATION_TYPE_HAS_SCOPES: DeclarationCarries<'requiredScopes'> = false
 const DECLARATION_TYPE_HAS_HUMAN_ORIGIN: DeclarationCarries<'requiresHumanOrigin'> = false
 
+/**
+ * 2026-10-02 (432-39, D-10/D-12): the EXACT key sets of the three metadata types, compile-checked.
+ *
+ * `ExactKeys` is a mutual-assignability equality over `keyof`, so a key added to a type without
+ * being added here — or listed here without the type carrying it — fails `pnpm typecheck`. The two
+ * retired keys are therefore absent from all three types by construction, not only by a negative.
+ */
+type ExactKeys<T, K extends PropertyKey> = [keyof T] extends [K]
+  ? ([K] extends [keyof T] ? true : false)
+  : false
+const METADATA_KEYS = ['id', 'summary', 'resultKind', 'risk'] as const
+const SPEC_KEYS = [
+  ...METADATA_KEYS,
+  'boundThrough', 'input', 'output', 'outputRepresentation', 'disclose', 'classify', 'renderResult',
+  'invoke',
+] as const
+const DECLARATION_TYPE_KEYS = [
+  ...METADATA_KEYS,
+  'bindingStatus', 'discloses', 'classifies', 'rendersResult', 'input', 'output',
+] as const
+const METADATA_TYPE_IS_EXACT: ExactKeys<FunctionMetadata, (typeof METADATA_KEYS)[number]> = true
+const SPEC_TYPE_IS_EXACT: ExactKeys<FunctionSpec, (typeof SPEC_KEYS)[number]> = true
+const DECLARATION_TYPE_IS_EXACT: ExactKeys<
+  FunctionDeclaration,
+  (typeof DECLARATION_TYPE_KEYS)[number]
+> = true
+
 /** Every key a runtime declaration always carries, and the presence-only flags it may carry. */
 const REQUIRED_DECLARATION_KEYS = [
   'bindingStatus',
@@ -413,6 +454,17 @@ describe('C432-DECLARATION-KEYS: runtime declarations carry no permission metada
   it('pins the exact key set of every real declaration, and no scope or origin key', () => {
     expect(DECLARATION_TYPE_HAS_SCOPES).toBe(false)
     expect(DECLARATION_TYPE_HAS_HUMAN_ORIGIN).toBe(false)
+    // 432-39: the three metadata types' exact key sets (compile-checked above), and neither retired
+    // key in any of them.
+    expect([METADATA_TYPE_IS_EXACT, SPEC_TYPE_IS_EXACT, DECLARATION_TYPE_IS_EXACT])
+      .toEqual([true, true, true])
+    for (const keys of [METADATA_KEYS, SPEC_KEYS, DECLARATION_TYPE_KEYS] as const) {
+      expect(keys as readonly string[]).not.toContain('requiredScopes')
+      expect(keys as readonly string[]).not.toContain('requiresHumanOrigin')
+    }
+    // The runtime set is the type's set: every key a real declaration carries is a declared key.
+    expect([...REQUIRED_DECLARATION_KEYS, ...OPTIONAL_DECLARATION_FLAGS].sort())
+      .toEqual([...DECLARATION_TYPE_KEYS].sort())
 
     const declarations = buildRegistry().list(ZERO_SCOPE_CALLER)
     expect(declarations.length).toBeGreaterThan(40)
@@ -428,12 +480,14 @@ describe('C432-DECLARATION-KEYS: runtime declarations carry no permission metada
   })
 
   it('omits the retired keys even where the registered spec still spells them', () => {
-    // Op specs still spell `requiredScopes` until their op-spec owners (432-21/23–38) remove it;
-    // the registry does not pass it on, so the declaration shape never depends on spec migration.
-    // The synthetic spec below keeps this cell meaningful after the last real spec has migrated.
+    // 2026-10-02 (432-39, D-10/D-12): no registered spec spells either key — the last left by 432-27
+    // — and the metadata type no longer declares them, so the real registry half is an ordinary
+    // absence check. The synthetic spec below SMUGGLES both keys past the type with a cast, the only
+    // way an old spec object could still carry them, and is what keeps this cell meaningful: the
+    // registry builds the view field by field and passes neither on.
     expect(Object.keys(configGet(buildRegistry().list(FULLY_GRANTED)))).not.toContain('requiredScopes')
 
-    const legacy: FunctionSpec<Record<string, never>, { ok: true }> = {
+    const legacy = {
       id: 'synthetic.legacy-permissions',
       summary: 'A spec that still spells both retired permission keys.',
       requiredScopes: ['config-write'],
@@ -444,7 +498,7 @@ describe('C432-DECLARATION-KEYS: runtime declarations carry no permission metada
       risk: { name: 'fn:synthetic.legacy-permissions', recognized: true, readOnly: true },
       classify: () => ({ status: 'executed' as const, outcome: '' }),
       invoke: () => Promise.resolve({ ok: true as const }),
-    }
+    } as FunctionSpec<Record<string, never>, { ok: true }>
     const registry = createRegistryFromSpecs([legacy as FunctionSpec], {
       deps: fakeDeps(),
       auditSink: noOpSink(),

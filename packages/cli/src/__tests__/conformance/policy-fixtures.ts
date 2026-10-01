@@ -45,9 +45,8 @@ import { MCP_FUNCTION_CALLER } from '../../commands/mcp.js'
  */
 export const CONFORMANCE_EXECUTION_CONTEXT: ExecutionContext = 'local-interactive'
 
-/** The injected resolver form, for the seams that take a resolver rather than a value. */
-export const conformanceResolveExecutionContext = (): ExecutionContext =>
-  CONFORMANCE_EXECUTION_CONTEXT
+// 2026-10-02 (432-39, D-12): `conformanceResolveExecutionContext`, the injected resolver form, is
+// deleted. Its only consumer was the registry's retired context option, deleted here too.
 
 /** A caller record in the suite's own surface, so an audit row can never be mistaken for a host's. */
 function conformanceCaller(): FunctionCaller {
@@ -123,12 +122,16 @@ export function surfaceInertCallers(): SurfaceShapedCallers {
 /**
  * The two surfaces' callers stripped of every grant — the shortest caller each surface could hand
  * the function layer. Used by the retired refuse legs to show nothing refuses them (432-20).
+ *
+ * 2026-10-02 (432-39, D-12): the caller's `grantedScopes` member is deleted, so the explicit empty
+ * grant set is smuggled past the type with a cast — the refuse legs still hand a caller that SAYS it
+ * holds nothing, and still prove nothing reads it.
  */
 export function grantlessSurfaceCallers(): SurfaceShapedCallers {
   const inert = surfaceInertCallers()
   return {
-    chat: Object.freeze({ ...inert.chat, grantedScopes: [] }),
-    mcp: Object.freeze({ ...inert.mcp, grantedScopes: [] }),
+    chat: Object.freeze({ ...inert.chat, grantedScopes: [] } as FunctionCaller),
+    mcp: Object.freeze({ ...inert.mcp, grantedScopes: [] } as FunctionCaller),
   }
 }
 

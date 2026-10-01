@@ -66,17 +66,18 @@ import { invokeFunction } from '@vostride/agent-qa-agent'
 import { AGENT_QA_TOOL_PROJECTIONS, buildAgentQaMcpServer } from '@vostride/agent-qa-mcp'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 
-import type { FunctionCaller, FunctionScope } from '@vostride/agent-qa-schema'
+import type { FunctionCaller } from '@vostride/agent-qa-schema'
 
 import { composeMcpMasking, createMcpHttpRequestListener, MCP_FUNCTION_CALLER } from '../commands/mcp.js'
 import { composeCliLocalAgent } from '../composition/local-agent-host.js'
 
 /**
  * A caller carrying a LEGACY scope set — the fields 432-20 made optional and unread. Built from the
- * one caller the MCP host mints, so the only difference is fields nothing reads.
+ * one caller the MCP host mints, so the only difference is fields nothing reads. 2026-10-02 (432-39):
+ * the fields are deleted from the type, so they are smuggled past it with a cast.
  */
 function legacyCaller(scopes: readonly string[]): FunctionCaller {
-  return { ...MCP_FUNCTION_CALLER, grantedScopes: scopes as readonly FunctionScope[], safeMode: false }
+  return { ...MCP_FUNCTION_CALLER, grantedScopes: scopes, safeMode: false } as FunctionCaller
 }
 
 /**

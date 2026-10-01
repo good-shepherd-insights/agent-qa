@@ -27,7 +27,6 @@ export const OP_RUNS_START: CatalogRow = row({
   mcpTool: 'agent_qa_start_run',
   docPath: 'README.md',
   docAnchor: 'CLI',
-  requiredScopes: ['read'],
   // 398-08: the column the producer derives from `params`. Spelled here to match what that
   // derivation answers for the schema above — a required string becomes its own name in angle
   // brackets — because this file's contract is that a fixture is something the producer could
@@ -44,7 +43,6 @@ export const OP_RUNS_LIST: CatalogRow = row({
   mcpTool: 'agent_qa_list_runs',
   docPath: null,
   docAbsentReason: 'D-07 (dated 2026-08-17): no canonical doc ships for this capability yet.',
-  requiredScopes: ['read'],
   // No required property, so the honest example is the empty call — which is a real call, not an
   // absence. The null arm means the derivation REFUSED (398-08).
   exampleCall: { arguments: {} },

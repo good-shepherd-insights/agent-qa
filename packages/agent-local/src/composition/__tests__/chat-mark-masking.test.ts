@@ -8,7 +8,7 @@ import {
   setActiveMaskingContextResolver,
   unmaskForHumanOutput,
 } from '@vostride/agent-qa-safety'
-import { asRef, asRunId, FunctionScopeSchema } from '@vostride/agent-qa-schema'
+import { asRef, asRunId } from '@vostride/agent-qa-schema'
 import type {
   AgentAskResult,
   ChatSessionEvent,
@@ -62,7 +62,7 @@ it.each([true, false])('projects real mark chat with active masking=%s and prese
   try {
     const message = `/fn runs.mark ${JSON.stringify(input)}`
     const result = await invokeFunction(host.registry, 'agent.ask', { message }, {
-      surface: 'cli', origin: 'human', grantedScopes: [...FunctionScopeSchema.options], safeMode: false,
+      surface: 'cli', origin: 'human',
     }) as AgentAskResult
     expect(result.status).toBe('completed')
     expect(mark).toHaveBeenCalledExactlyOnceWith(input)
@@ -110,7 +110,7 @@ it.each([true, false])('projects real mark chat with active masking=%s and prese
     // must not feed a persisted placeholder back to the mark operation as authored input.
     const next = await invokeFunction(host.registry, 'agent.ask', {
       message: '/help', sessionId: result.sessionId,
-    }, { surface: 'cli', origin: 'human', grantedScopes: [...FunctionScopeSchema.options], safeMode: false }) as AgentAskResult
+    }, { surface: 'cli', origin: 'human' }) as AgentAskResult
     expect(next.status).toBe('completed')
     expect(mark).toHaveBeenCalledExactlyOnceWith(input)
     expect(model).not.toHaveBeenCalled()

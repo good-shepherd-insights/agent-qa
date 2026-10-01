@@ -219,16 +219,15 @@ describe('423-36 runs.marks.history contract (D-19)', () => {
     expect(op).not.toHaveProperty('requiredScopes')
     expect(op.resultKind).toBe('unary')
     expect(op.risk).toEqual({ name: 'fn:runs.marks.history', recognized: true, readOnly: true })
-    expect(op.requiresHumanOrigin).toBeUndefined()
+    expect(op).not.toHaveProperty('requiresHumanOrigin')
     expect(op.boundThrough).toBe('feedbackReads')
     expect(spec.OPTIONAL_FUNCTION_DEP_KEYS).toContain('feedbackReads')
     expect(spec.OPTIONAL_FUNCTION_DEP_KEYS).toContain('feedback')
 
     const reads = port({ kind: 'history', entries: sequenceB() })
     const { deps: bound, forbidden } = deps(reads)
-    const options = { deps: bound, resolveExecutionContext: () => 'local-headless' as const,
-      auditSink: { appendGuardrailAudit() {} } }
-    const caller: FunctionCaller = { surface: 'mcp', grantedScopes: ['read'], safeMode: true, origin: 'agent' }
+    const options = { deps: bound, auditSink: { appendGuardrailAudit() {} } }
+    const caller: FunctionCaller = { surface: 'mcp', origin: 'agent' }
     const registry = createRegistryFromSpecs([{ ...op } as FunctionSpec], options)
     expect(registry.list(caller).find(entry => entry.id === 'runs.marks.history')?.bindingStatus).toBe('bound')
     const result = await invokeFunction(registry, 'runs.marks.history', { runId }, caller) as { entries: unknown[] }

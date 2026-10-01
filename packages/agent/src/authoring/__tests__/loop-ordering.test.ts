@@ -464,8 +464,6 @@ describe('the document schema rides the stable tier, not the exemplar block (WIN
 
 const LISTING_CALLER: FunctionCaller = {
   surface: 'test',
-  grantedScopes: ['read', 'run', 'test-write', 'knowledge-write', 'approval-write'],
-  safeMode: false,
   origin: 'human',
 }
 
@@ -538,7 +536,6 @@ describe('the loop has exactly one public entry', () => {
   it('registers no authoring op besides the evaluator and the loop', () => {
     const registry = createFunctionRegistry({
       deps: minimalDeps(),
-      resolveExecutionContext: () => 'local-interactive',
       auditSink: { appendGuardrailAudit() {} },
     })
 

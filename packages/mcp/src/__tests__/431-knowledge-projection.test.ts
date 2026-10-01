@@ -35,7 +35,6 @@ import * as schema from '@vostride/agent-qa-schema'
 import type {
   CompletedRunHandoff,
   FunctionCaller,
-  FunctionScope,
   KnowledgeBundleSummary,
 } from '@vostride/agent-qa-schema'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -249,8 +248,9 @@ afterEach(async () => {
 // 2026-10-01 (432-34, D-12): the retired `safeMode` field is dropped. The scope set stays, smuggled
 // past the type on purpose: the READ-SCOPE-ONLY and HIDDEN-NAME-INVOCATION cells below hand this
 // helper a read, a no-read and an empty set to prove nothing reads it, and that witness has to
-// survive 432-39 deleting the field.
-function callerWith(grantedScopes: readonly FunctionScope[]): FunctionCaller {
+// survive 432-39 deleting the field. 2026-10-02 (432-39): it does — the field is deleted and the set
+// is typed as plain strings.
+function callerWith(grantedScopes: readonly string[]): FunctionCaller {
   return { surface: 'mcp', origin: 'agent', grantedScopes } as FunctionCaller
 }
 
@@ -547,7 +547,10 @@ describe('RULING-ADDENDA (D-10)', () => {
 // ---- Task 3: narrow read authority and the search census (D-03 / D-09 · T-431-08) --------------
 
 const NEW_TOOL_NAMES = Object.keys(CANONICAL_CONTRACTS)
-const EVERY_SCOPE = [...schema.FunctionScopeSchema.options] as readonly FunctionScope[]
+// 2026-10-02 (432-39, D-10/D-12): the scope union is deleted; the retired names are spelled by hand.
+const EVERY_SCOPE: readonly string[] = [
+  'read', 'run', 'config-write', 'knowledge-write', 'approval-write', 'test-write',
+]
 const NO_READ_SCOPES = EVERY_SCOPE.filter((scope) => scope !== 'read')
 
 /** Registry op ids and tool names that name a search capability. */

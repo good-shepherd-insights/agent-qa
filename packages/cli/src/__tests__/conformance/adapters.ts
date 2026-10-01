@@ -76,7 +76,6 @@ import {
   RUN_SERVICE_START_ROUTE,
 } from '@vostride/agent-qa-dashboard'
 import {
-  FunctionScopeSchema,
   RunServiceReadinessSchema,
   RunsEvidenceResultSchema,
   RunsLiveUrlResultSchema,
@@ -84,7 +83,7 @@ import {
   RunsMarksHistoryResultSchema,
   RunStartAcknowledgementSchema,
 } from '@vostride/agent-qa-schema'
-import type { FunctionCaller, FunctionScope } from '@vostride/agent-qa-schema'
+import type { FunctionCaller } from '@vostride/agent-qa-schema'
 import { Command } from 'commander'
 import { vi } from 'vitest'
 
@@ -185,33 +184,11 @@ export const CONFORMANCE_CENSUS_CALLER: FunctionCaller = Object.freeze({
   origin: 'human',
 })
 
-/**
- * Every scope, as a legacy scope set a cell may still hand the MCP helpers below.
- *
- * DERIVED FROM THE ENUM RATHER THAN LISTED (387-08). 2026-10-02 (432-37, D-12): no longer anybody's
- * default — it is only handed through when a cell passes it (see {@link mcpServerCaller}). Goes with
- * the scope type in 432-39.
- */
-export const MCP_ENUMERATION_SCOPES: readonly FunctionScope[] = Object.freeze([
-  ...FunctionScopeSchema.options,
-])
-
-/**
- * The caller the MCP server in this suite is built over: the shipped tokenless MCP caller.
- *
- * 2026-10-02 (432-37, D-12): stamps no retired field by default. Until now a declared-bearer caller
- * was stamped with the retired `credential` shape and every caller with a scope set (the
- * every-scope default when a cell passed none). Nothing reads either field (432-20/432-21), so
- * neither is stamped. A scope set a cell passes EXPLICITLY is still handed through, cast past the
- * type, as a deliberate smuggle: the C432-TOKENLESS-CATALOG cells pass `[]` and the legacy default
- * grant to prove the field is unread, and a helper that dropped their value would compare one caller
- * with itself. Goes with the field in 432-39.
- */
-function mcpServerCaller(smuggledScopes: readonly FunctionScope[] | undefined): FunctionCaller {
-  if (smuggledScopes === undefined) return MCP_FUNCTION_CALLER
-  return { ...MCP_FUNCTION_CALLER, grantedScopes: smuggledScopes } as FunctionCaller
-}
-export const MCP_ENUMERATION_CALLER: FunctionCaller = MCP_FUNCTION_CALLER
+// 2026-10-02 (432-39, D-10/D-12): `MCP_ENUMERATION_SCOPES`, `mcpServerCaller` and the
+// `MCP_ENUMERATION_CALLER` alias are deleted with the caller's `grantedScopes` member. The MCP
+// helpers below take a whole CALLER instead of a scope set: absent, the server's caller is the
+// shipped `MCP_FUNCTION_CALLER`; a cell that must show a retired field is unread builds its own
+// smuggled caller (a cast) and hands it in, so the smuggle is visible where the claim is made.
 
 /**
  * The gate-facing seams a verdict leg supplies, and the whole of them (397-04).
@@ -321,21 +298,17 @@ export function expandMcpListedTools(
  */
 export async function withMcpClient<Answer>(
   body: (client: Client) => Promise<Answer>,
-  // 2026-10-02 (432-37, D-12): decides nothing and has no default. A scope set passed here is only
-  // handed through as the smuggle {@link mcpServerCaller} describes; absent, the server's caller is
-  // the shipped `MCP_FUNCTION_CALLER` with no scope set at all.
-  grantedScopes?: readonly FunctionScope[],
+  // 2026-10-02 (432-39, D-12): the caller the server is built over. Absent, the shipped tokenless
+  // `MCP_FUNCTION_CALLER`; a cell proving a retired field is unread passes its own smuggled caller.
+  caller: FunctionCaller = MCP_FUNCTION_CALLER,
   // The ports of the registry this server is built over (397-04). 2026-10-02 (432-37): only the
   // audit sink is left; no member states a context, because the registry reads none (432-20).
   registryOptions: ConformanceRegistryOptions = {},
-  // 2026-10-02 (432-37, D-12): unread. It chose whether the caller carried the retired bearer
-  // `credential` stamp, which is gone; kept so existing positional callers compile until 432-39.
-  _declaredBearer?: boolean,
 ): Promise<Answer> {
   const handler = createMcpHandler(() =>
     buildAgentQaMcpServer({
       registry: conformanceRegistry(registryOptions),
-      caller: mcpServerCaller(grantedScopes),
+      caller,
       maskText: (text: string) => text,
     }),
   )
@@ -354,17 +327,14 @@ export async function withMcpClient<Answer>(
 }
 
 /**
- * A real `tools/list`, off a real server. 2026-10-02 (432-37, D-12): both parameters are handed
- * through to {@link withMcpClient} unread; see there.
+ * A real `tools/list`, off a real server. 2026-10-02 (432-39, D-12): the caller is handed through
+ * to {@link withMcpClient}; see there.
  */
-export async function listMcpToolNames(
-  grantedScopes?: readonly FunctionScope[],
-  declaredBearer?: boolean,
-): Promise<readonly string[]> {
+export async function listMcpToolNames(caller?: FunctionCaller): Promise<readonly string[]> {
   return withMcpClient(async (client) => {
     const listed = await client.listTools()
     return listed.tools.map((tool) => tool.name)
-  }, grantedScopes, {}, declaredBearer)
+  }, caller)
 }
 
 /**
@@ -385,13 +355,10 @@ export function plausibleMcpToolSpelling(opId: string): string {
 
 /**
  * The MCP surface's op-id reach, read off the wire and folded through the mapping. 2026-10-02
- * (432-37, D-12): both parameters are handed through unread; see {@link withMcpClient}.
+ * (432-39, D-12): the caller is handed through; see {@link withMcpClient}.
  */
-export async function enumerateMcpOpIds(
-  grantedScopes?: readonly FunctionScope[],
-  declaredBearer?: boolean,
-): Promise<SurfaceEnumeration> {
-  const listedToolNames = await listMcpToolNames(grantedScopes, declaredBearer)
+export async function enumerateMcpOpIds(caller?: FunctionCaller): Promise<SurfaceEnumeration> {
+  const listedToolNames = await listMcpToolNames(caller)
   const expansion = expandMcpListedTools(listedToolNames, AGENT_QA_TOOL_PROJECTIONS)
   return {
     opIds: expansion.opIds,
@@ -633,14 +600,13 @@ function fnListingFixture(): { root: string; configPath: string } {
  * table-against-itself shape `adapters.ts`'s header refuses by name: it would pass on a door that
  * had stopped listing half the registry, because both sides would have shrunk together.
  *
- * THE CALLER IS THE DOOR'S OWN (`CLI_FUNCTION_CALLER`) and is deliberately not overridden. That is
- * the opposite move from {@link MCP_ENUMERATION_CALLER}, which exists because the MCP host's DEFAULT
- * grant withholds `config-write` and an enumeration under it would under-report the surface. The CLI
- * caller holds every member of `FunctionScopeSchema` and mints `origin: 'human'`, so the door's own
- * posture is already the widest one — and a narrowing of it is a fact about the product this
- * enumeration should report rather than paper over. 2026-10-02 (432-37, D-12): no grant narrows a
- * listing since 432-20, and the MCP enumeration now lists under the shipped `MCP_FUNCTION_CALLER`
- * too, so both doors are enumerated under their own callers.
+ * THE CALLER IS THE DOOR'S OWN (`CLI_FUNCTION_CALLER`) and is deliberately not overridden — a
+ * narrowing of the door's posture is a fact about the product this enumeration should report rather
+ * than paper over. Until 432-37 the MCP side was the opposite move: it enumerated under an every-scope
+ * caller because the MCP host's default grant withheld `config-write`. 2026-10-02 (432-37/432-39,
+ * D-12): no grant narrows a listing since 432-20, the caller carries no scope set since 432-39, and
+ * the MCP enumeration lists under the shipped `MCP_FUNCTION_CALLER`, so both doors are enumerated
+ * under their own callers.
  *
  * STDOUT IS THE READ SURFACE. `--json` is the machine channel the command already publishes, so what
  * is parsed here is bytes the door emitted, not an object this file was handed.

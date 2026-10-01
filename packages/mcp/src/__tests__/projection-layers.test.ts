@@ -83,13 +83,17 @@ function realRegistry(): FunctionRegistry {
 const DOOR_CALLERS: Readonly<Record<string, FunctionCaller>> = {
   'tokenless stdio': { surface: 'mcp', origin: 'agent' },
   'tokenless http': { surface: 'mcp', origin: 'agent' },
+  // 2026-10-02 (432-39, D-10/D-12): the retired fields are deleted from the type, so the two legacy
+  // records smuggle them past it with a cast — an old record still carries them, and nothing reads.
   'legacy every-scope': {
     surface: 'mcp',
     origin: 'agent',
     grantedScopes: ['read', 'run', 'config-write', 'knowledge-write', 'approval-write', 'test-write'],
     safeMode: false,
-  },
-  'legacy nothing, safe mode': { surface: 'mcp', origin: 'agent', grantedScopes: [], safeMode: true },
+  } as FunctionCaller,
+  'legacy nothing, safe mode': {
+    surface: 'mcp', origin: 'agent', grantedScopes: [], safeMode: true,
+  } as FunctionCaller,
 }
 
 async function withClient<Answer>(

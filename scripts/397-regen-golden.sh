@@ -4,9 +4,10 @@
 #
 # WHAT THIS IS FOR, IN ONE LINE: a capability ledger must not be one keystroke from silently
 # blessed. `packages/cli/src/__tests__/conformance/golden-registry.json` records every registered
-# capability's scopes, risk class, disclosure flag, binding status at the composition root, schema
-# digests and MCP partition. A widened scope or a lowered risk tier is a one-line diff in that file
-# — which is worth exactly as much as the discipline around changing it. So:
+# capability's risk class, disclosure flag, binding status at the composition root, schema digests
+# and MCP partition (2026-10-02, 432-39: the scope column left with the permission metadata in
+# 432-20, and the type it was spelled in is deleted). A lowered risk tier is a one-line diff in that
+# file — which is worth exactly as much as the discipline around changing it. So:
 #
 #   * NO TEST-RUNNER UPDATE PATH REACHES IT. There is no snapshot, no `-u`, no `--update`. Nothing
 #     under `src/__tests__/conformance/` opens the ledger for writing at all, and `parity.test.ts`

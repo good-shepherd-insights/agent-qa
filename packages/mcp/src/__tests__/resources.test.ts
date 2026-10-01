@@ -43,7 +43,7 @@ import {
   ENTITY_KINDS,
   ENTITY_URI_SEGMENTS,
 } from '@vostride/agent-qa-schema'
-import type { FunctionCaller, FunctionScope } from '@vostride/agent-qa-schema'
+import type { FunctionCaller } from '@vostride/agent-qa-schema'
 import type { FunctionDeclaration, FunctionRegistry } from '@vostride/agent-qa-agent'
 import { describe, expect, it } from 'vitest'
 
@@ -94,8 +94,9 @@ function recordingServer(): {
   }
 }
 
-function caller(grantedScopes: readonly FunctionScope[]): FunctionCaller {
-  return { surface: 'mcp', origin: 'agent', grantedScopes, safeMode: false }
+/** 432-39: a legacy scope set smuggled past the deleted caller field (cast); nothing reads it. */
+function caller(grantedScopes: readonly string[]): FunctionCaller {
+  return { surface: 'mcp', origin: 'agent', grantedScopes, safeMode: false } as FunctionCaller
 }
 
 /** The declaration a composition that registered `entities.get` publishes for it. */
@@ -333,7 +334,7 @@ describe('registration is a fact about the composition, never the caller (432-20
       { surface: 'mcp', origin: 'agent' },
       caller([]),
       caller(['read']),
-      { surface: 'cli', origin: 'human', grantedScopes: ['read', 'run', 'config-write'], safeMode: true },
+      { surface: 'cli', origin: 'human', grantedScopes: ['read', 'run', 'config-write'], safeMode: true } as FunctionCaller,
     ]
     const answers = callers.map((each) => {
       const server = recordingServer()

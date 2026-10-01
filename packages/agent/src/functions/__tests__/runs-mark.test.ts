@@ -1,5 +1,4 @@
 import {
-  FunctionScopeSchema,
   asRunId,
   RunDetailProjectionSchema,
 } from '@vostride/agent-qa-schema'
@@ -23,13 +22,13 @@ const RUN_ID = asRunId('run-alpha')
 const INPUT: RunsMarkInput = { runId: RUN_ID, kind: 'false-fail', note: 'private note' }
 const CALLER: FunctionCaller = {
   surface: 'mcp',
-  grantedScopes: [...FunctionScopeSchema.options],
-  safeMode: false,
   origin: 'agent',
 }
 // 2026-10-01 (432-21, D-12): `STANDING_APPROVAL_SCOPE` is deleted with the MCP bearer credential, so
 // the legacy credential a pre-432 bearer carried is spelled as its bytes. Nothing reads it.
-const TRUSTED: FunctionCaller = { ...CALLER, credential: { scope: { project: 'local-workspace' } } }
+// 2026-10-02 (432-39, D-02/D-12): the caller's `credential` member is deleted, so the legacy bytes
+// are smuggled past the type with a cast; the cells below still prove nothing consults them.
+const TRUSTED = { ...CALLER, credential: { scope: { project: 'local-workspace' } } } as FunctionCaller
 
 function receipt(overrides: Partial<MarkReceipt> = {}): MarkReceipt {
   return {
@@ -69,7 +68,6 @@ function deps(feedback?: FeedbackPort): FunctionDeps {
 function host(feedback?: FeedbackPort) {
   return createFunctionRegistry({
     deps: deps(feedback),
-    resolveExecutionContext: () => 'local-headless',
     auditSink: { appendGuardrailAudit() {} },
   })
 }
@@ -91,14 +89,14 @@ describe('runs.mark registration and binding (419 GATE3-01)', () => {
     expect(runsMarkSpec).not.toHaveProperty('requiredScopes')
     expect(runsMarkSpec.risk.declaredTier).toBe('mutating-shared')
     expect(runsMarkSpec.risk.readOnly).toBe(false)
-    expect(runsMarkSpec.requiresHumanOrigin).toBeUndefined()
+    expect(runsMarkSpec).not.toHaveProperty('requiresHumanOrigin')
     expect(runsMarkSpec.boundThrough).toBe('feedback')
   })
 
   it('lists an unbound host by name and refuses through the registry and body', async () => {
     const registry = host()
     expect(registry.list(CALLER).find(({ id }) => id === RUNS_MARK_FUNCTION_ID)?.bindingStatus).toBe('unbound')
-    // The gate precedes binding checks: an authorized caller can observe the named absence.
+    // 2026-10-02 (432-39): no gate precedes the binding check; any caller observes the named absence.
     await expect(invokeFunction(registry, RUNS_MARK_FUNCTION_ID, INPUT, TRUSTED)).rejects.toBeInstanceOf(FunctionNotBoundError)
     await expect(runsMarkSpec.invoke(INPUT, {} as FunctionDeps)).rejects.toBeInstanceOf(FunctionNotBoundError)
   })
@@ -114,7 +112,8 @@ describe('runs.mark registration and binding (419 GATE3-01)', () => {
   // a standing credential'. No scope is required: a read-only caller's mark reaches the port once.
   it('marks for a caller holding only read, reaching the port once', async () => {
     const { port, mark, outcome } = stub()
-    await expect(invokeFunction(host(port), RUNS_MARK_FUNCTION_ID, INPUT, { ...TRUSTED, grantedScopes: ['read'] }))
+    const readOnly = { ...TRUSTED, grantedScopes: ['read'] } as FunctionCaller
+    await expect(invokeFunction(host(port), RUNS_MARK_FUNCTION_ID, INPUT, readOnly))
       .resolves.toEqual(outcome)
     expect(mark.mock.calls).toEqual([[INPUT]])
   })
@@ -140,7 +139,7 @@ describe('C432-INVOKE-DIRECT — the mark op reaches its port in one call (432-1
     const { port, mark, outcome } = stub()
     expect(await invokeFunction(host(port), RUNS_MARK_FUNCTION_ID, INPUT, {
       ...CALLER, credential: { scope: { project: 'another-workspace' } },
-    })).toEqual(outcome)
+    } as FunctionCaller)).toEqual(outcome)
     expect(mark.mock.calls).toEqual([[INPUT]])
   })
 })
