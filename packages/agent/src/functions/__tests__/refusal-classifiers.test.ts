@@ -593,7 +593,9 @@ describe('399.1 D-01 — no classifier pattern-matches a value', () => {
     // 2026-10-01 (432-17 D-05/D-09): 40. Six folds leave with their ops: proposals.list, .show,
     // .accept and .reject, knowledge.proposal.apply and config.proposal.apply (config.undo.propose
     // delegated to the shared fold and had no body of its own).
-    expect(bodiesScanned, 'no classify bodies were extracted — this scan ranges nothing').toBe(40)
+    // 2026-10-01 (432-18 D-14/D-15): 38. `grants.list` and `grants.revoke` leave with the grant
+    // ledger, and each carried one classify body.
+    expect(bodiesScanned, 'no classify bodies were extracted — this scan ranges nothing').toBe(38)
   })
 
   it('control: the body extractor and the scan both FIRE on a fold that sniffs', () => {
