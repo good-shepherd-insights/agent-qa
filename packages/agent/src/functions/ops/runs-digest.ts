@@ -19,8 +19,9 @@
 // `runs.postprocessing` serves. That is 389 D-05/D-10 and 388 D-14 honoured by CALLING them
 // rather than by a comment promising not to diverge. The specs are module-internal — nothing
 // outside this package can reach them — so this is composition inside the layer, not a
-// dispatch path around `invokeFunction`'s gate (T-384-01): every EXTERNAL caller still arrives
-// through the pipeline, and this op declares its own read-only descriptor and read scopes.
+// dispatch path around `invokeFunction` (T-384-01): every EXTERNAL caller still arrives through
+// the pipeline, and this op declares its own read-only descriptor. 2026-10-01 (432-24, D-12): the
+// read scope it also declared is gone; no op declares one now.
 //
 // REFS AND COUNTS ONLY (D-18, T-391-17). No delta content, no forget-receipt tombstones, no
 // rationale prose, no masked bytes. A mark change is its mark id, its fix and the record ids or
@@ -147,7 +148,6 @@ function renderDigestLines(digest: Omit<RunDigest, 'lines'>): string[] {
 export const runsDigestSpec: FunctionSpec<RunsDigestInput, RunDigest> = {
   id: RUNS_DIGEST_FUNCTION_ID,
   summary: "Compose one run's digest: verdicts, chain, the changes its marks applied, counts.",
-  requiredScopes: ['read'],
   resultKind: 'unary',
   input: RunsDigestInputSchema,
   output: RunDigestSchema,

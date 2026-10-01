@@ -1,4 +1,5 @@
-// 419 GATE3-01: every mark door invokes this spec through the function gate.
+// 419 GATE3-01: every mark door invokes this spec through the function pipeline (`invokeFunction`;
+// its permission gate is deleted, 432-19).
 import { RunsMarkInputSchema, RunsMarkOutcomeSchema } from '@vostride/agent-qa-schema'
 import type { RunsMarkInput, RunsMarkOutcome } from '@vostride/agent-qa-schema'
 
@@ -10,7 +11,6 @@ export const RUNS_MARK_FUNCTION_ID = 'runs.mark'
 export const runsMarkSpec: FunctionSpec<RunsMarkInput, RunsMarkOutcome> = {
   id: RUNS_MARK_FUNCTION_ID,
   summary: 'Mark a run or step false-fail / false-pass / confirmed-bug: freeze the marked decision as gold, triage, and apply the fix (a knowledge change or a test edit) in the call.',
-  requiredScopes: ['knowledge-write'],
   resultKind: 'unary',
   boundThrough: 'feedback',
   input: RunsMarkInputSchema,
@@ -18,6 +18,7 @@ export const runsMarkSpec: FunctionSpec<RunsMarkInput, RunsMarkOutcome> = {
   // D-13: a mark writes the committed eval root and, since 432-09, applies its fix to knowledge or
   // a test file. mutating-local would understate its risk.
   // No requiresHumanOrigin and, since 432-21 (D-12), no bearer: every caller on every door reaches it.
+  // 2026-10-01 (432-24, D-12): the `knowledge-write` scope it declared is gone too.
   risk: {
     name: `fn:${RUNS_MARK_FUNCTION_ID}`,
     recognized: true,

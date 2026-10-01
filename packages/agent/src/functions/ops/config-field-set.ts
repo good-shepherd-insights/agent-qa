@@ -11,11 +11,10 @@
 // blocked change is answered with its report and nothing is kept. No git runs; the change is a
 // plain edit a person sees in `git diff` and reverts with `git restore`.
 //
-// `requiredScopes: ['config-write']` — already a member of the closed `FunctionScopeSchema` union,
-// so this costs no vocabulary extension and gives 396's safe-mode hard tool filter the key it
-// wants. A propose op carries the write scope because the scope describes what the CAPABILITY is
-// about, not what one call happens to reach: a caller holding only `read` has no business drafting
-// changes to the project's configuration.
+// NO SCOPE (2026-10-01, 432-24, D-12). This op once declared `config-write`, so 396's safe-mode
+// filter could hide it and a caller holding only `read` could not reach it. Every door can call
+// every operation now; what guards a config write is the construction, scan and whole-config
+// validation below, not who asked.
 //
 // ANY SCHEMA-ADDRESSABLE PATH (D-03). There is no settable-field whitelist, and the absence is the
 // decision: a rule that can only refuse what it can NAME cannot be driven to zero by naming more
@@ -35,7 +34,6 @@ export const CONFIG_FIELD_SET_FUNCTION_ID = 'config.field.set'
 export const configFieldSetSpec: FunctionSpec<ConfigFieldSetInput, ConfigChangeOutput> = {
   id: CONFIG_FIELD_SET_FUNCTION_ID,
   summary: 'Set one configuration field, written in this call.',
-  requiredScopes: ['config-write'],
   resultKind: 'unary',
   input: ConfigFieldSetInputSchema,
   output: ConfigChangeOutputSchema,
@@ -58,7 +56,7 @@ export const configFieldSetSpec: FunctionSpec<ConfigFieldSetInput, ConfigChangeO
   async invoke(input, deps): Promise<ConfigChangeOutput> {
     // FOUR DEPS, ONE `boundThrough`. The declared name is the direct writer (432-11): a host that
     // cannot publish a config change cannot run this op. The other three are checked here, by
-    // name, so an in-layer caller holding the spec gets the same refusal a gate caller would.
+    // name, so an in-layer caller holding the spec gets the same refusal a pipeline caller would.
     //
     // `configScan` IS IN THAT LIST AND ITS ABSENCE REFUSES (395-04, CFGM-02). A construction that
     // cannot scan must not write: the alternative is a guardrail that silently stops existing

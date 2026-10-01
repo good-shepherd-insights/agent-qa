@@ -178,7 +178,8 @@ describe('423-37 runs.mark.preview contract (D-16/D-17)', () => {
 
   it('PREVIEW-PROSPECTIVE: a read-tier op that reports what runs.mark would do, never a write, receipt or minted id', async () => {
     const op = previewSpec()
-    expect(op.requiredScopes).toEqual(['read'])
+    // RE-SPELLED 2026-10-01 (432-24, D-12) from `requiredScopes` equal to ['read'].
+    expect(op).not.toHaveProperty('requiredScopes')
     expect(op.resultKind).toBe('unary')
     expect(op.risk).toEqual({ name: 'fn:runs.mark.preview', recognized: true, readOnly: true })
     expect(op.requiresHumanOrigin).toBeUndefined()

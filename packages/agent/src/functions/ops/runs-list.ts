@@ -81,7 +81,6 @@ export const runsListSpec: FunctionSpec<RunsListInput, RunSummary[]> = {
   summary:
     'List completed runs, newest finished first (20 by default, at most 200), each naming its '
     + 'tests; filter by verdict, test id or title, recorded target, or completion time.',
-  requiredScopes: ['read'],
   resultKind: 'unary',
   input: RunsListInputSchema,
   // 2026-08-16 (396-04, D-16): the NAMED array schema, not `z.array(RunSummarySchema)` composed

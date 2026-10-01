@@ -25,12 +25,10 @@
 // has no place in the six-stage order, and invoking it before, during or after a loop invocation
 // answers the same question. It widens the domain without widening the loop's entry surface.
 //
-// TWO SCOPES, AND `run` IS ABSENT ON PURPOSE. This op edits a committed test and starts no run at
-// all. Declaring `run` would be padding, and padding on a verb is how a caller reaches an execution
-// power through an editing one: a grant issued for "let it edit my tests" would carry the power to
-// spend this machine on child processes (T-394-37). `test-write` is the power it actually exercises
-// — 394-01 minted that scope for precisely this class of verb — and `read` covers resolving the
-// target through the entity directory, which is the same read `entities.resolve` itself requires.
+// NO SCOPES (2026-10-01, 432-24, D-12). This op once declared `test-write` and `read`, and left
+// `run` out on purpose so a grant issued for "let it edit my tests" could not also buy child runs
+// (T-394-37). Grants and scopes are gone; every door can call every operation. What survives of
+// T-394-37 is the behaviour itself: this op edits a committed test and starts no run at all.
 //
 // IT DOES NOT RE-RUN THE GATES, and CONTEXT leaves that call to this plan, so it is made here and
 // written down. An edit to an already-committed test does not automatically re-verify: the
@@ -172,10 +170,6 @@ export const authoringDraftEditSpec: FunctionSpec<
 > = {
   id: AUTHORING_DRAFT_EDIT_FUNCTION_ID,
   summary: 'Apply a requested change to an existing test and write it, answering the diff it applied.',
-  // See the header for why `run` is absent and why that absence is the mitigation rather than an
-  // economy: this op starts zero runs, and a verb that declared the power to would be a grant a
-  // person issued for editing that also bought execution.
-  requiredScopes: ['test-write', 'read'],
   resultKind: 'unary',
   // The WRITE half — a host with no model and no shelf cannot express an edit at all. The read
   // half (`draftEvaluation`, which resolves and parses the committed target) is checked by the same
@@ -187,10 +181,10 @@ export const authoringDraftEditSpec: FunctionSpec<
   output: AuthoringDraftEditOutputSchema,
   // `mutating-local`, and the contrast with `authoring.draft.write` is deliberate. That op declares
   // `mutating-shared` because it spends up to nine child `agent-qa run` processes of a person's
-  // compute (D-10), which is a cost only a person can consent to — so an ask nobody can answer is
-  // the right answer for an unattended host. This op takes ONE model call, starts zero runs, and
-  // writes one file — the test it edited, over the exact bytes it read (432 D-06). Raising it to the
-  // ask tier would deny every edit in CI and the daemon for a change `git diff` already shows.
+  // compute (D-10). This op takes ONE model call, starts zero runs, and writes one file — the test
+  // it edited, over the exact bytes it read (432 D-06). 2026-10-01 (432-19/432-24, D-12/D-15): the
+  // tiers once decided who was asked and where an unanswerable ask denied; nothing asks or denies
+  // on a tier now, and the tier stays the honest classification of what the op touches.
   //
   // The mechanics: `recognized: true` with no `readOnly` puts the classifier's floor at
   // mutating-local, `declaredTier` states that tier rather than relying on the floor, and the name

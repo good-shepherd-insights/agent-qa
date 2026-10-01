@@ -46,7 +46,6 @@ export class UnknownRunError extends Error {
 export const runsLiveUrlSpec: FunctionSpec<RunsLiveUrlInput, RunsLiveUrlResult> = {
   id: RUNS_LIVE_URL_FUNCTION_ID,
   summary: 'Mint a short-lived, view-scoped live-view URL for one handle of a running run.',
-  requiredScopes: ['read'],
   resultKind: 'unary',
   boundThrough: 'liveView',
   input: RunsLiveUrlInputSchema,

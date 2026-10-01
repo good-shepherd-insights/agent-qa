@@ -142,7 +142,6 @@ function encodeBase64(bytes: Uint8Array): string {
 export const runsArtifactSpec: FunctionSpec<RunsArtifactInput, RunsArtifactResult> = {
   id: RUNS_ARTIFACT_FUNCTION_ID,
   summary: "Read one run's content-addressed evidence blob by its sha, with a sniffed content type.",
-  requiredScopes: ['read'],
   resultKind: 'unary',
   // Bound exactly where a composition owns a runtime root (every local host does). A host that
   // holds no run directories lists this by name as `unbound` rather than answering `blob_absent`

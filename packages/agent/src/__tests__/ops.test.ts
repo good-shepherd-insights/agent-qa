@@ -19,19 +19,27 @@ import {
 } from '@vostride/agent-qa-schema'
 import { describe, expect, it } from 'vitest'
 
+import { authoringDraftEditSpec } from '../functions/ops/authoring-draft-edit.js'
 import { authoringDraftWriteSpec } from '../functions/ops/authoring-draft-write.js'
 import { authoringFunnelGetSpec } from '../functions/ops/authoring-funnel-get.js'
 import { authoringVerifyDraftSpec } from '../functions/ops/authoring-verify-draft.js'
+import { configFieldSetSpec } from '../functions/ops/config-field-set.js'
 import { configGetSpec } from '../functions/ops/config-get.js'
 import { configTargetEditSpec } from '../functions/ops/config-target-edit.js'
 import { entitiesResolveSpec } from '../functions/ops/entities-resolve.js'
+import { knowledgeBriefWhySpec } from '../functions/ops/knowledge-brief-why.js'
 import { knowledgeBundlesListSpec } from '../functions/ops/knowledge-bundles-list.js'
 import { knowledgeForgetSpec } from '../functions/ops/knowledge-forget-propose.js'
 import { knowledgeGatesListSpec, KnowledgeGatesUnboundError } from '../functions/ops/knowledge-gates-list.js'
 import { knowledgeRecordsDiffSpec } from '../functions/ops/knowledge-records-diff.js'
+import { runsArtifactSpec } from '../functions/ops/runs-artifact.js'
+import { runsDigestSpec } from '../functions/ops/runs-digest.js'
 import { runsEventsSpec } from '../functions/ops/runs-events.js'
 import { RunNotFoundError, runsGetSpec } from '../functions/ops/runs-get.js'
 import { runsListSpec } from '../functions/ops/runs-list.js'
+import { runsLiveUrlSpec } from '../functions/ops/runs-live-url.js'
+import { runsMarkSpec } from '../functions/ops/runs-mark.js'
+import { runsMarkPreviewSpec } from '../functions/ops/runs-mark-preview.js'
 import { runsStartSpec } from '../functions/ops/runs-start.js'
 import type { FunctionDeps } from '../functions/spec.js'
 
@@ -282,7 +290,9 @@ describe('knowledge.bundles.list', () => {
 describe('config.get', () => {
   it('declares a read-only unary contract bound in this composition', () => {
     expect(configGetSpec.id).toBe('config.get')
-    expect(configGetSpec.requiredScopes).toEqual(['read'])
+    // RE-SPELLED 2026-10-01 (432-24, D-12) from `requiredScopes` equal to ['read']: the op
+    // declares no scope, because no caller is checked for one.
+    expect(configGetSpec).not.toHaveProperty('requiredScopes')
     expect(configGetSpec.resultKind).toBe('unary')
     expect(configGetSpec.boundThrough).toBeUndefined()
     expect(configGetSpec.risk).toEqual({
@@ -411,5 +421,66 @@ describe('C432-DECLARATION-KEYS: the 432-23 op specs carry no permission metadat
     // The one disclosure among the ten is untouched by the metadata removal.
     expect(migrated.filter(({ spec }) => 'disclose' in spec).map(({ spec }) => spec.id))
       .toEqual(['authoring.draft.write'])
+  })
+})
+
+// ---- C432-DECLARATION-KEYS (432-24, D-10/D-12) --------------------------------------------------
+//
+// The second group of ten, pinned the same way as 432-23's above: absence at the SPEC, and an exact
+// pin beside it of what must not move with the metadata. Kept as its own block so each op-spec owner
+// extends a list it owns rather than one shared expectation.
+describe('C432-DECLARATION-KEYS: the 432-24 op specs carry no permission metadata', () => {
+  const migrated = [
+    { spec: runsArtifactSpec, resultKind: 'unary', boundThrough: 'evidenceBlobs',
+      risk: { name: 'fn:runs.artifact', recognized: true, readOnly: true } },
+    { spec: runsListSpec, resultKind: 'unary', boundThrough: undefined,
+      risk: { name: 'fn:runs.list', recognized: true, readOnly: true } },
+    { spec: configGetSpec, resultKind: 'unary', boundThrough: undefined,
+      risk: { name: 'fn:config.get', recognized: true, readOnly: true } },
+    { spec: runsDigestSpec, resultKind: 'unary', boundThrough: undefined,
+      risk: { name: 'fn:runs.digest', recognized: true, readOnly: true } },
+    { spec: configFieldSetSpec, resultKind: 'unary', boundThrough: 'configWrite',
+      risk: { name: 'fn:config.field.set', recognized: true, readOnly: false } },
+    { spec: authoringDraftEditSpec, resultKind: 'unary', boundThrough: 'draftShelf',
+      risk: { name: 'fn:authoring.draft.edit', recognized: true, declaredTier: 'mutating-local' } },
+    { spec: knowledgeBriefWhySpec, resultKind: 'unary', boundThrough: undefined,
+      risk: { name: 'fn:knowledge.brief.why', recognized: true, readOnly: true } },
+    { spec: runsLiveUrlSpec, resultKind: 'unary', boundThrough: 'liveView',
+      risk: { name: 'fn:runs.liveurl', recognized: true, readOnly: true } },
+    { spec: runsMarkPreviewSpec, resultKind: 'unary', boundThrough: 'feedbackReads',
+      risk: { name: 'fn:runs.mark.preview', recognized: true, readOnly: true } },
+    { spec: runsMarkSpec, resultKind: 'unary', boundThrough: 'feedback',
+      risk: { name: 'fn:runs.mark', recognized: true, readOnly: false, declaredTier: 'mutating-shared' } },
+  ] as const
+
+  it('spells neither retired permission key on any of the ten specs', () => {
+    expect(migrated.map(({ spec }) => spec.id)).toEqual([
+      'runs.artifact',
+      'runs.list',
+      'config.get',
+      'runs.digest',
+      'config.field.set',
+      'authoring.draft.edit',
+      'knowledge.brief.why',
+      'runs.liveurl',
+      'runs.mark.preview',
+      'runs.mark',
+    ])
+    for (const { spec } of migrated) {
+      expect(Object.keys(spec), spec.id).not.toContain('requiredScopes')
+      expect(Object.keys(spec), spec.id).not.toContain('requiresHumanOrigin')
+    }
+  })
+
+  it('keeps each spec\'s result kind, binding need, risk descriptor and classify fold', () => {
+    for (const { spec, resultKind, boundThrough, risk } of migrated) {
+      expect(spec.resultKind, spec.id).toBe(resultKind)
+      expect(spec.boundThrough, spec.id).toBe(boundThrough)
+      expect(spec.risk, spec.id).toEqual(risk)
+      expect(typeof spec.classify, spec.id).toBe('function')
+      expect(typeof spec.invoke, spec.id).toBe('function')
+    }
+    // None of the ten discloses; the metadata removal added no disclosure either.
+    expect(migrated.filter(({ spec }) => 'disclose' in spec).map(({ spec }) => spec.id)).toEqual([])
   })
 })

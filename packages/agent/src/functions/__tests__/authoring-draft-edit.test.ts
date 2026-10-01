@@ -146,12 +146,12 @@ async function edit(
 }
 
 describe('the declared surface', () => {
-  it('declares test-write and read, and NOT run', () => {
-    // The absence is the mitigation (T-394-37). A grant a person issued so the agent could edit
-    // their tests must not also buy the power to spend their machine on child processes, and
-    // `requiredScopes` is the whole of what a grant matches on.
-    expect(authoringDraftEditSpec.requiredScopes).toEqual(['test-write', 'read'])
-    expect(authoringDraftEditSpec.requiredScopes).not.toContain('run')
+  // RE-SPELLED 2026-10-01 (432-24, D-12) from 'declares test-write and read, and NOT run'. The
+  // scopes were what a grant matched on (T-394-37); grants and scopes are gone, so the op declares
+  // none. That it starts no run stays pinned below by 'starts zero runs on the happy path'.
+  it('declares no scope, and keeps its identity', () => {
+    expect(authoringDraftEditSpec).not.toHaveProperty('requiredScopes')
+    expect(authoringDraftEditSpec).not.toHaveProperty('requiresHumanOrigin')
     expect(authoringDraftEditSpec.id).toBe(AUTHORING_DRAFT_EDIT_FUNCTION_ID)
     expect(AUTHORING_DRAFT_EDIT_FUNCTION_ID).toBe('authoring.draft.edit')
     // The dot taxonomy the whole catalogue is checked against, asserted here too so the id's own

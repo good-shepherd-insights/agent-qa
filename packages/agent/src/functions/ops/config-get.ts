@@ -15,7 +15,6 @@ export const CONFIG_GET_FUNCTION_ID = 'config.get'
 export const configGetSpec: FunctionSpec<ConfigGetInput, MaskedResolvedConfig> = {
   id: CONFIG_GET_FUNCTION_ID,
   summary: 'Read the resolved project configuration with secret-bearing values masked.',
-  requiredScopes: ['read'],
   resultKind: 'unary',
   input: ConfigGetInputSchema,
   output: MaskedResolvedConfigSchema,

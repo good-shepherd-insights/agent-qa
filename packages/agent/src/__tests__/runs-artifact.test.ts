@@ -182,7 +182,9 @@ describe('the spec is a member of this catalogue in good standing', () => {
     expect(runsArtifactSpec.id).toBe(RUNS_ARTIFACT_FUNCTION_ID)
     expect(runsArtifactSpec.id).toMatch(/^[a-z]+(?:\.[a-z]+)+$/)
     expect(runsArtifactSpec.risk.readOnly).toBe(true)
-    expect(runsArtifactSpec.requiredScopes).toEqual(['read'])
+    // RE-SPELLED 2026-10-01 (432-24, D-12) from `requiredScopes` equal to ['read']: the op
+    // declares no scope; read-only is the risk descriptor above.
+    expect(runsArtifactSpec).not.toHaveProperty('requiredScopes')
     expect(runsArtifactSpec.resultKind).toBe('unary')
     expect(runsArtifactSpec.boundThrough).toBe('evidenceBlobs')
   })

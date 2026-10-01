@@ -125,7 +125,6 @@ export function mapStepEvidenceToWhy(
 export const knowledgeBriefWhySpec: FunctionSpec<BriefWhyInput, BriefWhyResult> = {
   id: KNOWLEDGE_BRIEF_WHY_FUNCTION_ID,
   summary: 'Explain why a served brief said what it said, from the trace written at serve time.',
-  requiredScopes: ['read'],
   resultKind: 'unary',
   input: BriefWhyInputSchema,
   output: BriefWhyResultSchema,

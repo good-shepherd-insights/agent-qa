@@ -86,7 +86,9 @@ describe('runs.mark registration and binding (419 GATE3-01)', () => {
     expect(RUNS_MARK_FUNCTION_ID).toBe('runs.mark')
     expect(RUNS_MARK_FUNCTION_ID).toMatch(/^[a-z]+(?:\.[a-z]+)+$/)
     expect(runsMarkSpec.id).toBe(RUNS_MARK_FUNCTION_ID)
-    expect(runsMarkSpec.requiredScopes).toEqual(['knowledge-write'])
+    // RE-SPELLED 2026-10-01 (432-24, D-12) from `requiredScopes` equal to ['knowledge-write']: the
+    // op declares no scope; its write is stated by the shared-tier risk below.
+    expect(runsMarkSpec).not.toHaveProperty('requiredScopes')
     expect(runsMarkSpec.risk.declaredTier).toBe('mutating-shared')
     expect(runsMarkSpec.risk.readOnly).toBe(false)
     expect(runsMarkSpec.requiresHumanOrigin).toBeUndefined()

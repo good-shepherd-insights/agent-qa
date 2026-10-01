@@ -602,9 +602,10 @@ describe('the spec declares a read-tier, everywhere-bound contract (D-05)', () =
 
   // RE-SPELLED 2026-10-01 (432-23, D-12): the claim compared each sibling's `requiredScopes` with
   // this op's, so a composed sibling could not need more scope than a `read` caller was granted.
-  // Scopes are gone (`knowledge.records.diff` declares none now). What survives is the half a
-  // scope stood for: a sibling this read composes must itself be a recognized read-only op, so the
-  // composition never performs a mutation the caller did not ask for and no receipt records.
+  // Scopes are gone (`knowledge.records.diff` declares none now, and `runs.digest` none since
+  // 432-24). What survives is the half a scope stood for: a sibling this read composes must itself
+  // be a recognized read-only op, so the composition never performs a mutation the caller did not
+  // ask for and no receipt records.
   it('composes only siblings that declare the same read tier it does (407-12, WR-08)', () => {
     expect(runsKnowledgeSpec.risk.readOnly).toBe(true)
     for (const spec of [runsPostProcessingSpec, knowledgeRecordsDiffSpec, runsDigestSpec]) {

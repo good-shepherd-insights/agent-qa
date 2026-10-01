@@ -39,7 +39,6 @@ function maskResult(result: RunsMarkPreviewResult, mask: MaskFn): RunsMarkPrevie
 export const runsMarkPreviewSpec: FunctionSpec<RunsMarkInput, RunsMarkPreviewResult> = {
   id: RUNS_MARK_PREVIEW_FUNCTION_ID,
   summary: 'Preview what runs.mark would do for this exact input: its refusals, resolved step, labels, the knowledge records it reaches with their content and evidence effects, and the fix it would apply, without writing.',
-  requiredScopes: ['read'],
   resultKind: 'unary',
   boundThrough: 'feedbackReads',
   input: RunsMarkInputSchema,
