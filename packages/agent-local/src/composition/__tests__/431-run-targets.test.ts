@@ -31,10 +31,10 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import { createRunsReader } from '../compose-local-agent.js'
 
+// 2026-10-02 (432-38, D-12): no `grantedScopes` or `safeMode` on the caller; the registry reads
+// neither (432-20).
 const READER: FunctionCaller = {
   surface: 'test',
-  grantedScopes: ['read'],
-  safeMode: false,
   origin: 'agent',
 }
 
@@ -272,7 +272,8 @@ describe('RUN-TARGET-HISTORY: runs.list filters on recorded targets, not current
         },
       } as never,
       auditSink: { appendGuardrailAudit() {} } as never,
-      resolveExecutionContext: () => 'local-interactive',
+      // 2026-10-02 (432-38, D-12): no `resolveExecutionContext` registry option; the registry reads
+      // no context (432-20).
     })
   }
 

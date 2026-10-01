@@ -81,10 +81,10 @@ const TRUNCATING_FIXTURE = [
   'Golf', 'Hotel', 'India', 'Juliett', 'Kilo', 'Lima',
 ] as const
 
+// 2026-10-02 (432-38, D-12): no `grantedScopes` or `safeMode` on the caller; the registry reads
+// neither (432-20).
 const CALLER: FunctionCaller = {
   surface: 'cli',
-  grantedScopes: ['read'],
-  safeMode: false,
   origin: 'agent',
 }
 
@@ -249,7 +249,8 @@ describe('knowledge.brief.why answers from the persisted trace (387-06)', () => 
       auditSink: {
         appendGuardrailAudit() {},
       } as never,
-      resolveExecutionContext: () => 'local-headless',
+      // 2026-10-02 (432-38, D-12): no `resolveExecutionContext` registry option; the registry reads
+      // no context (432-20).
     })
   }
 
