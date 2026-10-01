@@ -634,6 +634,45 @@ describe('PATCH /api/config path policy (429-44)', () => {
   })
 })
 
+// 432-22 (D-18): the production opt-in under the field merge's retry and concurrency rules, the
+// same rules every other page-owned leaf follows.
+describe('PATCH /api/config allowProduction under retry and concurrency (432-22)', () => {
+  it('C432-CONFIG-WRITE-POLICY: a stale expect on allowProduction is refused field_changed, and a fresh one lands', async () => {
+    const configPath = await useConfigWorkspace(baseConfig.replace('registry: {}', 'registry: {}\nallowProduction: false'))
+    const outside = (await readFile(configPath, 'utf-8')).replace('allowProduction: false', 'allowProduction: true')
+    await writeFile(configPath, outside, 'utf-8')
+    const before = await readFile(configPath)
+
+    const stale = await patchConfig({ changes: [
+      { op: 'expect', path: ['allowProduction'], value: false },
+      { op: 'set', path: ['allowProduction'], value: false },
+    ] })
+    expect(stale.status).toBe(409)
+    expect(JSON.parse(stale.body)).toMatchObject({ error: 'field_changed' })
+    expect(Buffer.compare(await readFile(configPath), before)).toBe(0)
+
+    const fresh = await patchConfig({ changes: [
+      { op: 'expect', path: ['allowProduction'], value: true },
+      { op: 'set', path: ['allowProduction'], value: false },
+    ] })
+    expect(fresh.status, fresh.body).toBe(200)
+    expect((parseYaml(await readFile(configPath, 'utf-8')) as { allowProduction?: unknown }).allowProduction).toBe(false)
+  })
+
+  it('C432-CONFIG-WRITE-POLICY: concurrent writes of allowProduction and an MCP field both land, each field merged', async () => {
+    const configPath = await useConfigWorkspace()
+    const answers = await Promise.all([
+      patchConfig({ changes: [{ op: 'set', path: ['allowProduction'], value: true }] }),
+      patchConfig({ changes: [{ op: 'set', path: ['services', 'mcp', 'port'], value: 4100 }] }),
+    ])
+    expect(answers.map(answer => answer.status)).toEqual([200, 200])
+    const parsed = parseYaml(await readFile(configPath, 'utf-8')) as { allowProduction?: unknown; services?: { mcp?: unknown } }
+    expect(parsed.allowProduction).toBe(true)
+    expect(parsed.services?.mcp).toEqual({ port: 4100 })
+    expect(await readFile(configPath, 'utf-8')).toContain('# owner notes: keep the step timeout generous on CI')
+  })
+})
+
 // 429-52 (deferred 429-24, server half): a header rename re-keys the value inside the server.
 const HEADER_SECRET = 'sk-header-secret-1'
 const headerConfig = baseConfig.replace('registry: {}', [

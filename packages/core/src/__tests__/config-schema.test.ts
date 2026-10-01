@@ -1261,6 +1261,31 @@ describe('AgentQaConfigSchema — retired keys are strictly unknown (432 D-22)',
     expect(result.success).toBe(true)
   })
 
+  // EDGE-13: the removal is exact. The retired spellings stay legal where a free-form record owns
+  // the key, and an unrelated strict object refuses them exactly as it always did.
+  it('C432-OLD-KEYS-STRICT: strict removal rejects exactly the retired keys and nothing that merely shares a name', () => {
+    const shared = AgentQaConfigSchema.safeParse(withWorkspace({
+      registry: { providers: { farm: { tokens: 'x', stdio: 'y', trustMode: 'z', runServiceTokens: 'w' } } },
+      services: { mcp: { enabled: false } },
+      knowledge: { contextBudgetTokens: 4000 },
+    }))
+    expect(shared.success, JSON.stringify(shared.error?.issues)).toBe(true)
+    if (shared.success) {
+      expect(shared.data.registry?.providers?.farm).toEqual({ tokens: 'x', stdio: 'y', trustMode: 'z', runServiceTokens: 'w' })
+      expect(shared.data.services?.mcp).toEqual({ enabled: false })
+    }
+    const elsewhere = AgentQaConfigSchema.safeParse(withWorkspace({ services: { cache: { dir: '.c', ttl: '1d', tokens: [] } } }))
+    expect(elsewhere.success).toBe(false)
+    if (!elsewhere.success) {
+      expect(elsewhere.error.issues.map(issue => [issue.code, issue.path.join('.')])).toEqual([['unrecognized_keys', 'services.cache']])
+    }
+    for (const nested of [{ services: { mcp: { stdio: { grantConfigWrite: false } } } }, { eval: { safety: {} } }]) {
+      const result = AgentQaConfigSchema.safeParse(withWorkspace(nested))
+      expect(result.success, JSON.stringify(nested)).toBe(false)
+      if (!result.success) expect(result.error.issues.every(issue => issue.code === 'unrecognized_keys')).toBe(true)
+    }
+  })
+
   it('C432-OLD-KEYS-STRICT: the retained guardrail settings keep their contracts', () => {
     const kept = AgentQaConfigSchema.safeParse(withWorkspace({
       allowProduction: true,
