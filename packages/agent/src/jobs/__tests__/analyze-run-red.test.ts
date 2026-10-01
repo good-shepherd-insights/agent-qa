@@ -23,7 +23,6 @@ import { fileURLToPath } from 'node:url'
 import {
   canonicalJson,
   CURRENT_HANDOFF_SCHEMA_VERSION,
-  FunctionScopeSchema,
   guardCompletedRunHandoff,
   sha256hex,
 } from '@vostride/agent-qa-schema'
@@ -49,10 +48,10 @@ import { buildSyntheticHandoff } from './fixtures/synthetic-handoff.js'
 
 const EVIDENCE_TEXT = 'Error: element "Submit" not found'
 
+// 2026-10-01 (432-35, D-12): no `grantedScopes` or `safeMode` on the caller; the registry reads
+// neither (432-20).
 const CALLER: FunctionCaller = {
   surface: 'test',
-  grantedScopes: [...FunctionScopeSchema.options],
-  safeMode: false,
   origin: 'agent',
 }
 
@@ -197,7 +196,8 @@ async function readThroughTheOp(
       },
       analysis: { getArtifact: () => artifact },
     } as FunctionDeps,
-    resolveExecutionContext: () => 'local-headless',
+    // 2026-10-01 (432-35, D-12): no `resolveExecutionContext` registry option; the registry reads
+    // no context (432-20).
     auditSink: { appendGuardrailAudit() {} },
   })
   return (await invokeFunction(

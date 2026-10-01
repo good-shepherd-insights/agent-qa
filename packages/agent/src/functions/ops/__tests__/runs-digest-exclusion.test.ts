@@ -17,7 +17,6 @@
 
 import {
   CURRENT_HANDOFF_SCHEMA_VERSION,
-  FunctionScopeSchema,
 } from '@vostride/agent-qa-schema'
 import type {
   CompletedRunHandoff,
@@ -35,10 +34,10 @@ import { RUNS_DIGEST_FUNCTION_ID } from '../runs-digest.js'
 
 const RUN_ID = 'run-425-07-digest'
 
+// 2026-10-01 (432-35, D-12): no `grantedScopes` or `safeMode` on the caller; the registry reads
+// neither (432-20).
 const CALLER: FunctionCaller = {
   surface: 'test',
-  grantedScopes: [...FunctionScopeSchema.options],
-  safeMode: false,
   origin: 'agent',
 }
 
@@ -120,7 +119,8 @@ async function digestOver(scene: {
 
   const registry = createFunctionRegistry({
     deps,
-    resolveExecutionContext: () => 'local-headless',
+    // 2026-10-01 (432-35, D-12): no `resolveExecutionContext` registry option; the registry reads
+    // no context (432-20).
     auditSink: { appendGuardrailAudit() {} },
   })
   return await invokeFunction(

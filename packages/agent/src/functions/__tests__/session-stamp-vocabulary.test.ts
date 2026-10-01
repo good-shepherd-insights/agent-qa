@@ -25,7 +25,6 @@
 // the receipt's own contract turns on.
 
 import {
-  FunctionScopeSchema,
   MASKED_RESOLVED_CONFIG_SCHEMA_VERSION,
 } from '@vostride/agent-qa-schema'
 import type { FunctionCaller } from '@vostride/agent-qa-schema'
@@ -39,11 +38,11 @@ import {
 import { createFunctionRegistry } from '../registry.js'
 import type { FunctionDeclaration, FunctionDeps } from '../spec.js'
 
-/** Every scope, human origin — a listing must be the whole catalogue, not one caller's slice. */
+// 2026-10-01 (432-35, D-12): no `grantedScopes` or `safeMode` on the caller. Every caller lists the
+// whole catalogue since 432-20, so the name's "granted" no longer narrows anything.
+/** Human origin — a listing must be the whole catalogue, not one caller's slice. */
 const FULLY_GRANTED: FunctionCaller = {
   surface: 'test',
-  grantedScopes: [...FunctionScopeSchema.options],
-  safeMode: false,
   origin: 'human',
 }
 
