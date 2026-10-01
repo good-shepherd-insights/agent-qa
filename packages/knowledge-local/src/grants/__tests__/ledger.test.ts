@@ -24,7 +24,7 @@
 // so "no recorded path" cannot be a recorder that records nothing.
 
 import { createHash } from 'node:crypto'
-import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -305,6 +305,59 @@ describe('C432-GRANTS-UNREAD-WRITER-ABSENT: an old grants.jsonl is never read, w
     expect(touchedLedger()).toEqual([])
     expect(digest(ledger)).toBe(before)
   })
+
+  // 432-18 task 2: the retry, unreadable-file and absent-file edges.
+  it('C432-GRANTS-UNREAD-WRITER-ABSENT: a retried explicit change answers its first outcome and still never opens it', async () => {
+    const before = digest(ledger)
+    const recordId = publish('retry')
+    recorder.paths.length = 0
+    const input = {
+      agentQaRoot, knowledgeRoot, executionContext: 'local-headless' as const, opId: 'knowledge.accept',
+      operationId: 'grants-unread-retry-1',
+      request: { verb: 'accept' as const, input: { target: { grain: 'record' as const, recordId } } },
+    }
+
+    const first = await applyExplicitReview(input)
+    const retried = await applyExplicitReview(input)
+
+    expect(first).toMatchObject({ outcome: 'applied', recordIds: [recordId] })
+    expect(retried).toMatchObject({ outcome: 'applied', recordIds: [recordId] })
+    expect(recorder.paths.length).toBeGreaterThan(0)
+    expect(touchedLedger(), 'a retry looked for a grant to dedupe against').toEqual([])
+    expect(digest(ledger)).toBe(before)
+  }, 120_000)
+
+  it('C432-GRANTS-UNREAD-WRITER-ABSENT: the direct writers work while the old ledger cannot be read at all', async () => {
+    const recordId = publish('unreadable')
+    chmodSync(ledger, 0o000)
+    try {
+      expect(await applyExplicitReview({
+        agentQaRoot, knowledgeRoot, executionContext: 'ci', opId: 'knowledge.reject',
+        operationId: 'grants-unread-locked-1',
+        request: { verb: 'reject', input: { target: { grain: 'record', recordId }, reason: 'wrong' } },
+      })).toMatchObject({ outcome: 'applied', recordIds: [recordId] })
+      expect(await quarantine().add({ product: 'grants-unread', filePath: 'tests/d.yaml', testName: 'delta' }))
+        .toMatchObject({ kind: 'entered' })
+    } finally {
+      chmodSync(ledger, 0o600)
+    }
+    expect(readFileSync(ledger, 'utf8')).toBe(LEGACY_BYTES)
+  }, 120_000)
+
+  it('C432-GRANTS-UNREAD-WRITER-ABSENT: with no old ledger, no direct writer creates one in any context', async () => {
+    rmSync(ledger)
+    const targets = CONTEXTS.map((context) => ({ context, recordId: publish(`absent ${context}`) }))
+    for (const [index, { context, recordId }] of targets.entries()) {
+      expect(await applyExplicitReview({
+        agentQaRoot, knowledgeRoot, executionContext: context, opId: 'knowledge.forget',
+        operationId: `grants-unread-absent-${index}1`,
+        request: { verb: 'forget', input: { target: { grain: 'record', recordId } } },
+      }), context).toMatchObject({ outcome: 'applied' })
+    }
+    await quarantine().add({ product: 'grants-unread', filePath: 'tests/e.yaml', testName: 'epsilon' })
+    expect(existsSync(ledger), 'a direct writer created a grant ledger').toBe(false)
+    expect(readdirSync(knowledgeRoot).filter((name) => /grant/i.test(name))).toEqual([])
+  }, 120_000)
 
   it('C432-GRANTS-UNREAD-WRITER-ABSENT: no grant reader, writer or verb is exported or present', () => {
     const exported = new Set(Object.keys(knowledgeLocal))

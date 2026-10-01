@@ -338,6 +338,44 @@ describe('a typed /pin reaches no conversation (W-03; /pin retired 432-13)', () 
     expect(afterB.receipts.map((receipt) => receipt.status)).toEqual(['executed'])
   })
 
+  // 432-18 task 2 (C432-PIN-ABSENT): independent session concurrency and clause receipt ordering
+  // survive the pin overlay's deletion. Two sessions take overlapping turns that mix a typed `/pin`
+  // with an op; each turn answers for itself, the op clause still executes in order, and no session
+  // state carries a pin field.
+  it('C432-PIN-ABSENT: overlapping sessions mixing /pin and an op keep their own receipts, in clause order', async () => {
+    const host = compose()
+    const a = await ask(host, '/fn quarantine.list')
+    const b = await ask(host, '/fn quarantine.list')
+    expect(a.sessionId).not.toBe(b.sessionId)
+
+    // One writer per session (`ChatSessionBusyError`), so the overlap is ACROSS sessions: two
+    // rounds, each pairing one session's `/pin` turn with the other session's op turn.
+    const [pinA, opB] = await Promise.all([
+      ask(host, `/pin ${QUARANTINE_LIST_FUNCTION_ID}`, a.sessionId),
+      ask(host, '/fn quarantine.list', b.sessionId),
+    ])
+    const [opA, pinB] = await Promise.all([
+      ask(host, '/fn quarantine.list', a.sessionId),
+      ask(host, `/pin ${PINNED_CLASS}`, b.sessionId),
+    ])
+
+    expect([pinA.sessionId, opA.sessionId]).toEqual([a.sessionId, a.sessionId])
+    expect([opB.sessionId, pinB.sessionId]).toEqual([b.sessionId, b.sessionId])
+    for (const pinned of [pinA, pinB]) {
+      expect(pinned.status).toBe('fail_closed')
+      expect(pinned.receipts).toEqual([])
+      expect(pinned.unhandled?.clause.startsWith('/pin ')).toBe(true)
+    }
+    for (const ran of [opA, opB]) {
+      expect(ran.receipts.map((receipt) => receipt.status)).toEqual(['executed'])
+    }
+    for (const sessionId of [a.sessionId, b.sessionId]) {
+      const state = host.chat.stateFor(sessionId)
+      expect(state, sessionId).toBeDefined()
+      expect(Object.keys(state!)).not.toContain('pinnedActionClasses')
+    }
+  })
+
   it('does not deny a caller carrying no session at all', async () => {
     // Every non-chat invocation in the system — a typed CLI verb, an MCP call, a background job —
     // reaches the same registry through the same gate with a caller that names no chat session. A

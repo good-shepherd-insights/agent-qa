@@ -73,6 +73,14 @@ describe('C432-PIN-ABSENT: the session pin overlay is gone', () => {
     }
   })
 
+  // 432-18 task 2: spelling edges. None of them is a near-miss for a pin any more — each is the
+  // same unresolved clause a directive nobody declared is.
+  it('C432-PIN-ABSENT: case, whitespace and suffix variants of /pin resolve as unknown directives too', () => {
+    for (const clause of ['/PIN fn:runs.start', '/Pin runs.list', '/pin\tfn:runs.start', '  /pin  fn:runs.list  ', '/pinned fn:runs.start', '/pin/fn:runs.start']) {
+      expect(resolveClause(CHAT_RESOLVER_TABLE, clause), JSON.stringify(clause)).toEqual({ kind: 'unresolved' })
+    }
+  })
+
   it('C432-PIN-ABSENT: no resolver row is keyed on a pin', () => {
     const aliases = CHAT_RESOLVER_TABLE.map((row) => row.alias)
     expect(aliases.length, 'the resolver table is empty, so the absence would be vacuous').toBeGreaterThan(0)
