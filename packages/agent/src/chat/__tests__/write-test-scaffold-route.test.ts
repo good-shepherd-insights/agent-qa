@@ -97,10 +97,10 @@ import type { TurnEngineDeps } from '../turn-engine.js'
 import { toToolName } from '../tool-names.js'
 import type { ChatBindingStage, PlannerStagePort } from '../ports.js'
 
+// 2026-10-01 (432-28, D-12): the retired `grantedScopes`, `safeMode` and `sessionId` caller fields
+// are dropped; nothing read them.
 const PLANNER_CALLER: FunctionCaller = {
   surface: 'chat',
-  grantedScopes: ['read', 'run', 'config-write', 'test-write'],
-  safeMode: false,
   origin: 'agent',
 }
 
@@ -436,8 +436,7 @@ function harness(options: {
     reconcile: deterministicOverrideStrategy,
     sessionLog,
     mint: {
-      forStage: (_stage: ChatBindingStage, sessionId: string): FunctionCaller =>
-        ({ ...PLANNER_CALLER, sessionId }),
+      forStage: (_stage: ChatBindingStage, _sessionId: string): FunctionCaller => PLANNER_CALLER,
     },
     invoke: async (functionId, input) => {
       ordering.push(functionId)

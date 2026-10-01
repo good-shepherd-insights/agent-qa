@@ -22,7 +22,6 @@ import { ANSWER_ONLY_TOOL_NAME, MARK_UNHANDLED_TOOL_NAME } from '../tool-names.j
 import { projectPlannerTools } from '../planner-tools.js'
 import type { PlannerToolSource } from '../planner-tools.js'
 import type { ChatClause } from '../ports.js'
-import { FunctionScopeSchema } from '@vostride/agent-qa-schema'
 import type { FunctionCaller } from '@vostride/agent-qa-schema'
 import type { FunctionDeclaration, FunctionSchemaProjection } from '../../functions/spec.js'
 
@@ -38,10 +37,10 @@ type StubLanguageModel = Extract<ChatLanguageModel, { specificationVersion: 'v3'
 type StubCallOptions = Parameters<StubLanguageModel['doGenerate']>[0]
 type StubGenerateResult = Awaited<ReturnType<StubLanguageModel['doGenerate']>>
 
+// 2026-10-01 (432-28, D-12): the retired `grantedScopes` and `safeMode` fields are dropped; nothing
+// read them.
 const CALLER: FunctionCaller = {
   surface: 'chat',
-  grantedScopes: [...FunctionScopeSchema.options],
-  safeMode: false,
   origin: 'agent',
 }
 
