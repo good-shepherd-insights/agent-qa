@@ -14,6 +14,8 @@
 //   P1 runs.overview folded into agent_qa_get_run_knowledge                        -> MCP-OPS-EXACT, MCP-PARTITION
 //   S1 agent_qa_list_knowledge_bundles renamed agent_qa_search_knowledge_bundles   -> REGISTRY-NO-SEARCH, MCP-NAMES-EXACT
 //   V1 the visibleToCaller filter removed from catalog.ts                          -> READ-SCOPE-ONLY, HIDDEN-NAME-INVOCATION
+//      (2026-10-01, 432-20, D-12: V1 is now the shipped behaviour; both blocks are re-spelled to
+//      pin that every caller lists and reaches all eight tools.)
 //   H1 the evidence tool's maxResultSizeChars removed                              -> the result-hint cell
 //   K1 runs.knowledge's advertised input swapped for BriefWhyInputSchema           -> RUN-KNOWLEDGE-WHOLE
 
@@ -207,9 +209,10 @@ describe('the canonical contract table (D-04)', () => {
     for (const opId of ops) {
       const declaration = declared.get(opId)
       expect(declaration, `${opId} is not registered`).toBeDefined()
-      expect(declaration!.requiredScopes, opId).toEqual(['read'])
+      // 432-20 (D-10/D-12): no scope or origin key on a declaration; the read claim is the risk's.
+      expect(Object.keys(declaration!), opId).not.toContain('requiredScopes')
       expect(declaration!.risk.readOnly, opId).toBe(true)
-      expect(declaration!.requiresHumanOrigin, opId).not.toBe(true)
+      expect(Object.keys(declaration!), opId).not.toContain('requiresHumanOrigin')
     }
   })
 
@@ -360,7 +363,6 @@ describe('MCP-TOOLS-ADVERTISED on a real tools/list', () => {
     const config = toRegisterToolConfig(hinted, [{
       id: 'runs.digest',
       summary: declaration.summary,
-      requiredScopes: declaration.requiredScopes,
       risk: declaration.risk,
       input: contracts.input,
       output: contracts.output,
@@ -576,51 +578,63 @@ describe('REGISTRY-NO-SEARCH (D-09)', () => {
   })
 })
 
-describe('READ-SCOPE-ONLY (T-431-08)', () => {
-  it('requires exactly the read scope and no credential for every new tool', () => {
+// RE-SPELLED 2026-10-01 (432-20, D-12) from 'READ-SCOPE-ONLY (T-431-08)'. The read scope gated the
+// eight tools until the permission wave; now nothing about the caller does.
+describe('READ-SCOPE-ONLY (T-431-08) — retired: every caller sees the eight (432-20)', () => {
+  // RE-SPELLED from 'requires exactly the read scope and no credential for every new tool'.
+  it('declares every new tool as a plain read over read-only ops, with no credential', () => {
     const declared = new Map(allDeclarations().map((declaration) => [declaration.id, declaration]))
     for (const name of NEW_TOOL_NAMES) {
       const projection = projectionNamed(name)!
-      const scopes = new Set(projection.ops.flatMap((opId) => [...declared.get(opId)!.requiredScopes]))
-      expect([...scopes], name).toEqual(['read'])
+      for (const opId of projection.ops) {
+        expect(declared.get(opId)!.risk.readOnly, `${name} -> ${opId}`).toBe(true)
+        expect(Object.keys(declared.get(opId)!), `${name} -> ${opId}`).not.toContain('requiredScopes')
+      }
       expect(projection.credential, name).toBeUndefined()
       expect(projection.ui, name).toBeUndefined()
       expect(projection.kind, name).toBe('read')
     }
   })
 
-  it('lists all eight to a read-only caller and none to a caller holding every scope but read', async () => {
+  // RE-SPELLED from 'lists all eight to a read-only caller and none to a caller holding every scope
+  // but read'.
+  it('lists all eight to a read-only caller, a no-read caller and a caller granted nothing', async () => {
     const readOnly = await listed(registryWith(), callerWith(['read']))
-    for (const name of NEW_TOOL_NAMES) expect(readOnly.has(name), name).toBe(true)
-
     const noRead = await listed(registryWith(), callerWith(NO_READ_SCOPES))
-    for (const name of NEW_TOOL_NAMES) expect(noRead.has(name), name).toBe(false)
-    expect(noRead.size, 'the no-read caller still sees its write tools').toBeGreaterThan(0)
-
     const nothing = await listed(registryWith(), callerWith([]))
-    for (const name of NEW_TOOL_NAMES) expect(nothing.has(name), name).toBe(false)
+    for (const name of NEW_TOOL_NAMES) {
+      expect(readOnly.has(name), name).toBe(true)
+      expect(noRead.has(name), name).toBe(true)
+      expect(nothing.has(name), name).toBe(true)
+    }
+    expect([...noRead.keys()].sort()).toEqual([...readOnly.keys()].sort())
+    expect([...nothing.keys()].sort()).toEqual([...readOnly.keys()].sort())
   })
 })
 
-describe('HIDDEN-NAME-INVOCATION (T-431-08)', () => {
-  it('refuses a no-read caller that calls a hidden tool by name, before any op runs', async () => {
+// RE-SPELLED 2026-10-01 (432-20, D-12) from 'HIDDEN-NAME-INVOCATION (T-431-08)'. No tool is hidden,
+// so the by-name call that used to be refused now reaches its op for every caller.
+describe('HIDDEN-NAME-INVOCATION (T-431-08) — retired: no name is hidden (432-20)', () => {
+  // RE-SPELLED from 'refuses a no-read caller that calls a hidden tool by name, before any op runs'.
+  it('answers a no-read caller that calls each tool by name, reaching each op', async () => {
     const audited: string[] = []
     const rows = [bundle('b_hidden')]
     const registry = auditedRegistry(audited, { knowledge: { listBundles: () => Promise.resolve(rows) } })
     const client = await connect(registry, callerWith(NO_READ_SCOPES))
+    const result = await client.callTool({ name: 'agent_qa_list_knowledge_bundles', arguments: {} })
+    expect(result.isError).not.toBe(true)
+    const structured = result.structuredContent as { result?: unknown } | unknown[]
+    expect(Array.isArray(structured) ? structured : (structured as { result?: unknown }).result).toEqual(rows)
+    expect(audited).toEqual(['fn:knowledge.bundles.list'])
     for (const [tool, args] of DISPATCH_CALLS) {
-      let refused: string | undefined
+      let notFound = false
       try {
-        const result = await client.callTool({ name: tool, arguments: args })
-        if (result.isError === true) refused = JSON.stringify(result.content)
-        expect(result.structuredContent, tool).toBeUndefined()
+        await client.callTool({ name: tool, arguments: args })
       } catch (err) {
-        refused = err instanceof Error ? err.message : String(err)
+        notFound = (err instanceof Error ? err.message : String(err)).includes('not found')
       }
-      expect(refused, `${tool} answered a no-read caller`).toBeDefined()
-      expect(refused, tool).toContain('not found')
+      expect(notFound, `${tool} is hidden from a no-read caller`).toBe(false)
     }
-    expect(audited, 'a hidden name reached an op').toEqual([])
   })
 
   it('answers the same call for a read caller', async () => {
@@ -635,11 +649,14 @@ describe('HIDDEN-NAME-INVOCATION (T-431-08)', () => {
     expect(audited).toEqual(['fn:knowledge.bundles.list'])
   })
 
-  it('refuses the same op at the function layer for a no-read caller, with no audit row', async () => {
+  // RE-SPELLED from 'refuses the same op at the function layer for a no-read caller, with no audit
+  // row'. The function layer serves it, once, and writes no audit row.
+  it('serves the same op at the function layer for a no-read caller, with no audit row', async () => {
     const audited: string[] = []
     const registry = auditedRegistry(audited, { knowledge: { listBundles: () => Promise.resolve([]) } })
     await expect(invokeFunction(registry, 'knowledge.bundles.list', {}, callerWith(NO_READ_SCOPES)))
-      .rejects.toThrow()
-    expect(audited).toEqual([])
+      .resolves.toEqual([])
+    expect(audited).toEqual(['fn:knowledge.bundles.list'])
+    expect(audited.filter((entry) => entry.startsWith('audit:'))).toEqual([])
   })
 })

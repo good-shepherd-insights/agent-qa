@@ -214,7 +214,8 @@ describe('the mutating review verbs bind, refuse and commit by name', () => {
       // LISTED, not omitted: a capability absent from a catalogue is indistinguishable from one
       // that never existed, and the two are different facts about a host (D-09).
       expect(byId.get(id)?.bindingStatus, `${id} must be listed unbound`).toBe('unbound')
-      expect(byId.get(id)?.requiredScopes).toEqual(['knowledge-write'])
+      // 432-20 (D-12): no `knowledge-write` scope column; the write claim is the risk's.
+      expect(Object.keys(byId.get(id) ?? {})).not.toContain('requiredScopes')
       expect(byId.get(id)?.risk.readOnly).toBe(false)
     }
 

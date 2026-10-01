@@ -916,15 +916,15 @@ describe('the config action class is CLOSED, and the registry is where that is l
 
     // AND THE SHAPE OF THE CLASS, not only its membership: every one of these is a registry op in
     // its own right — which is what makes the planner able to pick an action by tool name and 396
-    // able to project each as its own MCP tool — and every writing member carries `config-write`.
+    // able to project each as its own MCP tool — and every writing member declares itself a write.
+    // 432-20 (D-12): the `config-write` scope column is gone; the risk descriptor carries the claim.
     for (const id of EXPECTED_CONFIG_FAMILY) {
       const declaration = declarations.find((entry) => entry.id === id)
       expect(declaration, id).toBeDefined()
       if (id === 'config.get') {
-        expect(declaration?.requiredScopes, id).toEqual(['read'])
+        expect(declaration?.risk.readOnly, id).toBe(true)
         continue
       }
-      expect(declaration?.requiredScopes, id).toEqual(['config-write'])
       expect(declaration?.risk.readOnly, id).toBe(false)
     }
   })

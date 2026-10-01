@@ -5,7 +5,14 @@
 // forward, never an invocation — but that the error carries the ruling, and that the `renamed-to`
 // arm's v2 tool name passes the SAME visibility law as `tools/list` before it is spoken. That is
 // three claims and each one is an ABSENCE or an EQUALITY, which are the two easiest kinds of claim
-// to fake. So every cell below drives a REAL client over a REAL transport against the shipped
+// to fake.
+//
+// 2026-10-01 (432-20, D-12): THE VISIBILITY LAW IS DELETED. Every caller of a composition sees the
+// same catalogue, so "the SAME visibility law as `tools/list`" now means one thing: the v2 name is
+// spoken exactly when THIS INSTANCE registers the tool, which is a fact about the composition and
+// never about the caller. The walls below keep their claims and re-derive "sighted" from what the
+// fixture composition registers; the caller-invariance cells now range over three caller records
+// that differ in every retired permission field. So every cell below drives a REAL client over a REAL transport against the shipped
 // `buildAgentQaMcpServer`, and asserts on the bytes that reach the caller.
 //
 // TODAY'S ANSWER IS MEASURED, NOT DOCUMENTED (2026-08-17). The whole of D-15's containment argument
@@ -34,12 +41,11 @@
 //   * It has to live in `buildAgentQaMcpServer`, not in `http.ts`. Both hosts reach that one factory
 //     (`serveStdio(() => buildAgentQaMcpServer(...))` and
 //     `createMcpHandler((ctx) => buildAgentQaMcpServer(...))`), so a redirect installed anywhere
-//     else would answer on one transport and not the other. SEP-2567's per-request factory model is
-//     what makes that placement per-CALLER as well: the wrapper closes over the scope verdicts this
-//     instance was built with, never over connection state.
+//     else would answer on one transport and not the other. The wrapper closes over the tool set
+//     this instance registered, never over connection state.
 //
-// Protocol grounding: SEP-2567 (no per-connection variance — the variance is per caller, resolved
-// when the factory runs), SEP-2575 (stateless; there is no handshake in which the old vocabulary
+// Protocol grounding: SEP-2567 (no per-connection variance, and since 432-20 no per-caller
+// variance either), SEP-2575 (stateless; there is no handshake in which the old vocabulary
 // could have been negotiated, so the only place a v1 caller's name can be answered is at the call),
 // SEP-2106 (the advertised contracts a sighted caller is pointed back at).
 
@@ -55,61 +61,10 @@ import { AGENT_QA_TOOL_PROJECTIONS } from '../mapping.js'
 import type { ToolProjection } from '../mapping.js'
 import { V1_TOOL_MIGRATION_MAP } from '../migration-map.js'
 import type { V1ToolMigrationEntry } from '../migration-map.js'
-import { visibleToCaller } from '../visibility.js'
 
 // ---------------------------------------------------------------------------------------------
 // The fixture composition
 // ---------------------------------------------------------------------------------------------
-
-/**
- * What each projected op requires, IN THIS FIXTURE.
- *
- * Stated here rather than read from a live registry because this package cannot compose one — the
- * scopes a real host declares live in `packages/agent`, behind deps this package is forbidden to
- * acquire. What the cells below are about is the WIRING (does the redirect ask the same question
- * the listing asked?), and the wiring is observable with any honest scope assignment.
- *
- * `config.project.scaffold` deliberately requires TWO scopes. It is an arm of the config fold, so
- * the fold's required set is a UNION with two members, and a caller granted `config-write` alone
- * can reach some arms and not the tool. A fixture where every arm needed exactly one scope could
- * not tell a union from an intersection, or from reading the first arm and stopping.
- */
-const FIXTURE_OP_SCOPES: Readonly<Record<string, readonly FunctionScope[]>> = Object.freeze({
-  'authoring.draft.write': ['test-write'],
-  'authoring.draft.edit': ['test-write'],
-  'authoring.draft.verify': ['test-write'],
-  'runs.start': ['run'],
-  'runs.mark': ['knowledge-write'],
-  // 2026-09-15, 423-21 D-18: the two feedback reads are read-tier.
-  'runs.marks.history': ['read'],
-  'runs.mark.preview': ['read'],
-  'knowledge.gates.list': ['read'],
-  'config.field.set': ['config-write'],
-  'config.target.create': ['config-write'],
-  'config.target.edit': ['config-write'],
-  'config.auth.set': ['config-write'],
-  'config.hook.add': ['config-write'],
-  'config.project.scaffold': ['config-write', 'run'],
-  // 2026-09-30, 432-12 D-05: the three knowledge changes apply in the call; the undo arm and the
-  // two apply ops left the catalogue with their tools.
-  'knowledge.accept': ['knowledge-write'],
-  'knowledge.reject': ['knowledge-write'],
-  'knowledge.forget': ['knowledge-write'],
-  'entities.resolve': ['read'],
-  'entities.get': ['read'],
-  'runs.list': ['read'],
-  'runs.digest': ['read'],
-  // 2026-09-28, 431-04 D-04: the eight discovery reads are read-tier.
-  'knowledge.bundles.list': ['read'],
-  'knowledge.records.inspect': ['read'],
-  'knowledge.records.diff': ['read'],
-  'knowledge.record.show': ['read'],
-  'knowledge.brief.why': ['read'],
-  'runs.knowledge': ['read'],
-  'runs.overview': ['read'],
-  'runs.evidence': ['read'],
-  'runs.artifact': ['read'],
-})
 
 /** Every op any shipped projection names — the fixture's own denominator, read from the mapping. */
 const PROJECTED_OP_IDS: readonly string[] = [
@@ -117,19 +72,19 @@ const PROJECTED_OP_IDS: readonly string[] = [
 ]
 
 /**
- * The declarations a composition serving every projected op would publish.
+ * The declarations a composition serving every projected op — minus `omitted` — would publish.
  *
- * `FunctionDeclaration` carries more than this package reads (`catalog.ts` takes `id`, `summary`,
- * `requiredScopes` and `risk`), so the unread fields are filled with the shape a real declaration
- * has rather than left off.
+ * Stated here rather than read from a live registry because this package cannot compose one. No
+ * declaration carries a scope (432-20, D-12): the only thing that decides whether a tool exists on
+ * an instance is whether the composition registers its ops, so `omitted` is how a cell builds a
+ * composition that genuinely cannot serve a target.
  */
-function fixtureDeclarations(): readonly FunctionDeclaration[] {
-  return PROJECTED_OP_IDS.map(
+function fixtureDeclarations(omitted: ReadonlySet<string> = new Set()): readonly FunctionDeclaration[] {
+  return PROJECTED_OP_IDS.filter((id) => !omitted.has(id)).map(
     (id) =>
       ({
         id,
         summary: `The fixture declaration for ${id}.`,
-        requiredScopes: FIXTURE_OP_SCOPES[id] ?? [],
         resultKind: 'unary',
         risk: { name: `fn:${id}`, recognized: true, readOnly: id.startsWith('entities.') },
         bindingStatus: 'bound',
@@ -139,7 +94,11 @@ function fixtureDeclarations(): readonly FunctionDeclaration[] {
   )
 }
 
-const FIXTURE_REGISTRY: FunctionRegistry = { list: () => fixtureDeclarations() }
+function fixtureRegistry(omitted: ReadonlySet<string> = new Set()): FunctionRegistry {
+  return { list: () => fixtureDeclarations(omitted) }
+}
+
+const FIXTURE_REGISTRY: FunctionRegistry = fixtureRegistry()
 
 /** Identity masking: the cells assert on exact bytes, so a masker must not be in the way. */
 const identity = (text: string): string => text
@@ -148,10 +107,16 @@ function caller(grantedScopes: readonly FunctionScope[]): FunctionCaller {
   return { surface: 'mcp', origin: 'agent', grantedScopes, safeMode: false }
 }
 
-/** Every scope this fixture uses — the "sees everything" caller, derived rather than typed. */
-const ALL_FIXTURE_SCOPES: readonly FunctionScope[] = [
-  ...new Set(Object.values(FIXTURE_OP_SCOPES).flat()),
-]
+/**
+ * Three caller records that differ in every retired permission field — every scope, read only,
+ * and a tokenless record carrying none. Since 432-20 they must all be answered alike.
+ */
+const EVERY_SCOPE_CALLER: FunctionCaller = caller([
+  'read', 'run', 'config-write', 'knowledge-write', 'approval-write', 'test-write',
+])
+const READ_ONLY_CALLER: FunctionCaller = caller(['read'])
+const TOKENLESS_CALLER: FunctionCaller = { surface: 'mcp', origin: 'agent' }
+const CALLERS: readonly FunctionCaller[] = [EVERY_SCOPE_CALLER, READ_ONLY_CALLER, TOKENLESS_CALLER]
 
 /** A driven server plus the client talking to it, over the SDK's own in-memory transport pair. */
 interface DrivenServer {
@@ -160,10 +125,13 @@ interface DrivenServer {
   close(): Promise<void>
 }
 
-async function drive(grantedScopes: readonly FunctionScope[]): Promise<DrivenServer> {
+async function drive(
+  who: FunctionCaller = TOKENLESS_CALLER,
+  registry: FunctionRegistry = FIXTURE_REGISTRY,
+): Promise<DrivenServer> {
   const server = buildAgentQaMcpServer({
-    registry: FIXTURE_REGISTRY,
-    caller: caller(grantedScopes),
+    registry,
+    caller: who,
     maskText: identity,
   })
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair()
@@ -246,21 +214,30 @@ const LIVE_TOOL_NAMES: readonly string[] = AGENT_QA_TOOL_PROJECTIONS.map(
 )
 
 describe('the fixture can answer the question it is asked', () => {
-  // Without this cell every scope assertion below could be vacuous: `visibleToCaller` admits an
-  // EMPTY required set, so an op with no fixture entry would fall through `?? []` and be visible to
-  // a caller granted nothing. A new projected op must arrive with a scope or this reds.
-  it('assigns a non-empty scope set to every op the shipped mapping projects', () => {
-    const unscoped = PROJECTED_OP_IDS.filter(
-      (id) => (FIXTURE_OP_SCOPES[id] ?? []).length === 0,
-    ).sort()
-    expect(unscoped).toEqual([])
+  // RE-SPELLED 2026-10-01 (432-20, D-12) from 'assigns a non-empty scope set to every op the
+  // shipped mapping projects' and 'declares no scope the fixture does not also grant to the
+  // everything caller'. The fixture carries no scopes; what keeps the cells below non-vacuous now is
+  // that it serves every projected op, and that an omission really removes a tool.
+  it('serves every op the shipped mapping projects, with no permission key', () => {
+    const declared = fixtureDeclarations().map((declaration) => declaration.id)
+    expect([...declared].sort()).toEqual([...PROJECTED_OP_IDS].sort())
+    for (const declaration of fixtureDeclarations()) {
+      expect(Object.keys(declaration), declaration.id).not.toContain('requiredScopes')
+    }
   })
 
-  it('declares no scope the fixture does not also grant to the everything caller', () => {
-    const missing = PROJECTED_OP_IDS.flatMap((id) => FIXTURE_OP_SCOPES[id] ?? []).filter(
-      (scope) => !ALL_FIXTURE_SCOPES.includes(scope),
-    )
-    expect(missing).toEqual([])
+  it('removes a tool from the instance when its op is omitted from the composition', async () => {
+    const entry = RENAMED_ENTRIES[0]!
+    const full = await drive()
+    const partial = await drive(TOKENLESS_CALLER, fixtureRegistry(targetOps(entry)))
+    try {
+      expect((await full.client.listTools()).tools.map((tool) => tool.name)).toContain(entry.v2Tool!)
+      expect((await partial.client.listTools()).tools.map((tool) => tool.name))
+        .not.toContain(entry.v2Tool!)
+    } finally {
+      await full.close()
+      await partial.close()
+    }
   })
 
   // The probe name has to be a non-member of BOTH closed sets or the baseline cell is asserting
@@ -273,7 +250,7 @@ describe('the fixture can answer the question it is asked', () => {
 
 describe("the non-member wall: today's unknown-tool answer, pinned (D-15)", () => {
   it('answers a name nothing serves with the measured InvalidParams error', async () => {
-    const driven = await drive(ALL_FIXTURE_SCOPES)
+    const driven = await drive(EVERY_SCOPE_CALLER)
     try {
       const outcome = await callOutcome(driven.client, NON_MEMBER_NAME)
 
@@ -288,10 +265,10 @@ describe("the non-member wall: today's unknown-tool answer, pinned (D-15)", () =
   })
 
   // The same answer for a caller granted nothing. An unknown name must not become distinguishable
-  // by scope set — that would make the seam an oracle over what a caller cannot see (D-08).
+  // by caller record.
   it('answers identically for a caller granted nothing at all', async () => {
-    const sighted = await drive(ALL_FIXTURE_SCOPES)
-    const unsighted = await drive([])
+    const sighted = await drive(EVERY_SCOPE_CALLER)
+    const unsighted = await drive(TOKENLESS_CALLER)
     try {
       const a = await callOutcome(sighted.client, NON_MEMBER_NAME)
       const b = await callOutcome(unsighted.client, NON_MEMBER_NAME)
@@ -324,7 +301,7 @@ describe('membership is exact byte equality (edge XPLN-03/encoding)', () => {
   })
 
   it('answers a case-variant of a member on the non-member path', async () => {
-    const driven = await drive(ALL_FIXTURE_SCOPES)
+    const driven = await drive(EVERY_SCOPE_CALLER)
     try {
       const outcome = await callOutcome(driven.client, caseVariant)
 
@@ -349,52 +326,42 @@ function targetProjection(entry: V1ToolMigrationEntry): ToolProjection | undefin
   return AGENT_QA_TOOL_PROJECTIONS.find((projection) => projection.name === entry.v2Tool)
 }
 
-/**
- * The scope set the target tool requires IN THIS FIXTURE — the union across the fold's arms.
- *
- * Computed here the same way `catalog.ts` computes it, so the cells below can re-derive the
- * visibility verdict independently of the server and compare the two. That comparison is what says
- * the redirect is asking the LISTING's question rather than a question of its own.
- */
-function targetScopeUnion(entry: V1ToolMigrationEntry): readonly FunctionScope[] {
-  const projection = targetProjection(entry)
-  if (projection === undefined) return []
-  return [...new Set(projection.ops.flatMap((op) => FIXTURE_OP_SCOPES[op] ?? []))]
+/** The ops a renamed-to entry's target tool dispatches over — what a composition must omit to hide it. */
+function targetOps(entry: V1ToolMigrationEntry): ReadonlySet<string> {
+  return new Set(targetProjection(entry)?.ops ?? [])
 }
 
-const READ_ONLY: readonly FunctionScope[] = ['read']
-
-/** A renamed-to entry whose target a read-only caller MAY see, and one it may not. Derived. */
-const SIGHTED_FOR_READER = RENAMED_ENTRIES.find((entry) =>
-  visibleToCaller(targetScopeUnion(entry), READ_ONLY),
+/**
+ * Two renamed-to entries whose targets share no op, so ONE composition can serve the first and not
+ * the second. Derived from the shipped tables, never typed.
+ */
+const SIGHTED_ENTRY = RENAMED_ENTRIES[0]
+const HIDDEN_ENTRY = RENAMED_ENTRIES.find((entry) =>
+  SIGHTED_ENTRY !== undefined
+  && entry.v2Tool !== SIGHTED_ENTRY.v2Tool
+  && [...targetOps(entry)].every((op) => !targetOps(SIGHTED_ENTRY).has(op)),
 )
-const HIDDEN_FROM_READER = RENAMED_ENTRIES.find(
-  (entry) => !visibleToCaller(targetScopeUnion(entry), READ_ONLY),
+const PARTIAL_REGISTRY: FunctionRegistry = fixtureRegistry(
+  HIDDEN_ENTRY === undefined ? new Set() : targetOps(HIDDEN_ENTRY),
 )
 
 describe('the redirect fires on exact members, and only errors (D-15 · T-398-12)', () => {
-  // Complete set, both callers: all thirty-three, never a hand-picked example of each arm. A
-  // one-per-arm corpus cannot see an entry whose own text or arm is wrong.
+  // Complete set, three caller records: all thirty-three, never a hand-picked example of each arm.
   it.each(V1_TOOL_MIGRATION_MAP.map((entry) => [entry.v1Name, entry] as const))(
     'answers %s with a teaching error and never a result',
     async (_name, entry) => {
-      for (const grants of [ALL_FIXTURE_SCOPES, READ_ONLY, [] as readonly FunctionScope[]]) {
-        const driven = await drive(grants)
+      for (const who of CALLERS) {
+        const driven = await drive(who)
         try {
           const outcome = await callOutcome(driven.client, entry.v1Name)
 
           // THREW, not returned. A handler reached — the only way an op could be invoked — answers
-          // with a CallToolResult, so this single assertion is also the no-invocation wall: there
-          // is no path from a v1 name to `invokeFunction` that could produce a thrown error here.
+          // with a CallToolResult, so this single assertion is also the no-invocation wall.
           expect(outcome.threw).toBe(true)
           expect(outcome.name).toBe('ProtocolError')
-          // The same error CLASS the SDK gives an unknown name. Only the sentence differs, and a
-          // sentence is history.
           expect(outcome.code).toBe(MEASURED_UNKNOWN_TOOL_CODE)
           expect(outcome.message).not.toBe(measuredUnknownToolMessage(entry.v1Name))
           expect(outcome.message).toContain(entry.v1Name)
-          // Nothing from the function layer: `invokeFunction` over this fixture registry answers
-          // `Unknown function: <op>`, so its absence says no op was reached.
           expect(outcome.serialized).not.toContain('Unknown function')
         } finally {
           await driven.close()
@@ -404,42 +371,46 @@ describe('the redirect fires on exact members, and only errors (D-15 · T-398-12
   )
 })
 
-describe('the sighted wall: the v2 name is spoken to a caller who may see it', () => {
-  it('has a renamed-to entry on each side of the read-only caller, so the split is measurable', () => {
+describe('the sighted wall: the v2 name is spoken where the instance serves it', () => {
+  // RE-SPELLED 2026-10-01 (432-20, D-12) from 'has a renamed-to entry on each side of the read-only
+  // caller, so the split is measurable'. The split is now one composition serving one target and
+  // not the other.
+  it('has a renamed-to entry on each side of one composition, so the split is measurable', () => {
     expect(RENAMED_ENTRIES.length).toBeGreaterThan(0)
-    expect(SIGHTED_FOR_READER).toBeDefined()
-    expect(HIDDEN_FROM_READER).toBeDefined()
+    expect(SIGHTED_ENTRY).toBeDefined()
+    expect(HIDDEN_ENTRY).toBeDefined()
   })
 
+  // RE-SPELLED from 'names the v2 tool for %s when the caller is granted its scope union'.
   it.each(RENAMED_ENTRIES.map((entry) => [entry.v1Name, entry] as const))(
-    'names the v2 tool for %s when the caller is granted its scope union',
+    'names the v2 tool for %s to every caller of a composition serving it',
     async (_name, entry) => {
-      const driven = await drive(ALL_FIXTURE_SCOPES)
-      try {
-        const outcome = await callOutcome(driven.client, entry.v1Name)
-        const target = targetProjection(entry)
+      for (const who of CALLERS) {
+        const driven = await drive(who)
+        try {
+          const outcome = await callOutcome(driven.client, entry.v1Name)
+          const target = targetProjection(entry)
 
-        expect(target).toBeDefined()
-        expect(outcome.message).toContain(`\`${entry.v2Tool!}\``)
-        // The input-shape note, which is the half a rename alone does not carry: v1's tool and v2's
-        // take different arguments, and a caller told only the new name will call it wrong.
-        expect(outcome.message).toContain('input shape')
-        expect(outcome.message).toContain('tools/list')
-      } finally {
-        await driven.close()
+          expect(target).toBeDefined()
+          expect(outcome.message).toContain(`\`${entry.v2Tool!}\``)
+          expect(outcome.message).toContain('input shape')
+          expect(outcome.message).toContain('tools/list')
+        } finally {
+          await driven.close()
+        }
       }
     },
   )
 })
 
 describe('the unsighted wall: the v2 name is withheld (T-398-11)', () => {
-  // The complete set under a caller granted nothing: every renamed-to target is unsighted, and the
-  // scan is over the WHOLE serialized answer rather than the message field somebody remembered to
-  // look at. 395 round 2 is the reason: ten cells passed while the leak travelled a sibling channel.
+  // RE-SPELLED 2026-10-01 (432-20, D-12) from 'leaks no tool name for %s to a caller granted
+  // nothing'. No caller is unsighted any more; a composition that does not serve the target is, and
+  // the scan is still over the WHOLE serialized answer.
   it.each(RENAMED_ENTRIES.map((entry) => [entry.v1Name, entry] as const))(
-    'leaks no tool name for %s to a caller granted nothing',
+    'leaks no tool name for %s from a composition that does not serve it',
     async (_name, entry) => {
-      const driven = await drive([])
+      const driven = await drive(TOKENLESS_CALLER, fixtureRegistry(targetOps(entry)))
       try {
         const outcome = await callOutcome(driven.client, entry.v1Name)
 
@@ -452,14 +423,12 @@ describe('the unsighted wall: the v2 name is withheld (T-398-11)', () => {
     },
   )
 
-  // THE SHARP ONE. Same caller, same arm, two entries: the split is a property of the TARGET's
-  // scopes, not of the caller being poor. A redirect that answered "sighted" whenever the caller
-  // had any grant at all, or "unsighted" whenever it lacked any, passes every cell above and reds
-  // here — one of these two answers would be wrong.
-  it('names one target and withholds another for the SAME read-only caller', async () => {
-    const sighted = SIGHTED_FOR_READER!
-    const hidden = HIDDEN_FROM_READER!
-    const driven = await drive(READ_ONLY)
+  // THE SHARP ONE, re-spelled from 'names one target and withholds another for the SAME read-only
+  // caller': same composition, same caller, same arm, two entries.
+  it('names one target and withholds another for the SAME composition and caller', async () => {
+    const sighted = SIGHTED_ENTRY!
+    const hidden = HIDDEN_ENTRY!
+    const driven = await drive(TOKENLESS_CALLER, PARTIAL_REGISTRY)
     try {
       const named = await callOutcome(driven.client, sighted.v1Name)
       const withheld = await callOutcome(driven.client, hidden.v1Name)
@@ -471,23 +440,24 @@ describe('the unsighted wall: the v2 name is withheld (T-398-11)', () => {
     }
   })
 
-  // The redirect's verdict IS the listing's verdict, re-derived through the one predicate and
-  // compared. If these ever disagreed, one of `tools/list` and the redirect would be lying.
+  // RE-SPELLED from 'speaks the target for %s exactly when visibleToCaller admits it and it is
+  // listed'. The redirect's verdict IS the listing's verdict, for every caller and composition.
   it.each(RENAMED_ENTRIES.map((entry) => [entry.v1Name, entry] as const))(
-    'speaks the target for %s exactly when visibleToCaller admits it and it is listed',
+    'speaks the target for %s exactly when it is listed, for every caller',
     async (_name, entry) => {
-      for (const grants of [ALL_FIXTURE_SCOPES, READ_ONLY, [] as readonly FunctionScope[]]) {
-        const driven = await drive(grants)
-        try {
-          const predicate = visibleToCaller(targetScopeUnion(entry), grants)
-          const listed = (await driven.client.listTools()).tools.map((tool) => tool.name)
-          const outcome = await callOutcome(driven.client, entry.v1Name)
-          const spoken = outcome.serialized.includes(entry.v2Tool!)
+      for (const registry of [FIXTURE_REGISTRY, fixtureRegistry(targetOps(entry))]) {
+        for (const who of CALLERS) {
+          const driven = await drive(who, registry)
+          try {
+            const listed = (await driven.client.listTools()).tools.map((tool) => tool.name)
+            const outcome = await callOutcome(driven.client, entry.v1Name)
+            const spoken = outcome.serialized.includes(entry.v2Tool!)
 
-          expect(spoken).toBe(predicate)
-          expect(spoken).toBe(listed.includes(entry.v2Tool!))
-        } finally {
-          await driven.close()
+            expect(spoken).toBe(listed.includes(entry.v2Tool!))
+            expect(spoken).toBe(registry === FIXTURE_REGISTRY)
+          } finally {
+            await driven.close()
+          }
         }
       }
     },
@@ -499,11 +469,11 @@ describe('caller-invariance on the retired and pending arms (T-398-13 · Pitfall
   // HISTORY; a scope-dependent word in either would make the seam an oracle in the one place it is
   // supposed to be a constant.
   it.each(RETIRED_OR_PENDING.map((entry) => [entry.v1Name, entry] as const))(
-    'answers %s identically under three different scope sets',
+    'answers %s identically under three different caller records',
     async (_name, entry) => {
       const answers: string[] = []
-      for (const grants of [ALL_FIXTURE_SCOPES, READ_ONLY, [] as readonly FunctionScope[]]) {
-        const driven = await drive(grants)
+      for (const who of CALLERS) {
+        const driven = await drive(who)
         try {
           answers.push((await callOutcome(driven.client, entry.v1Name)).serialized)
         } finally {
@@ -611,7 +581,7 @@ describe('the listing is what it was (D-15: no v1 name is resurrected)', () => {
   // The redirect answers a name; it must never make one appear. This cell is the standing guard
   // that a later "just register the v1 names and refuse in the handler" implementation reds on.
   it('lists no migration-map member to a caller granted everything', async () => {
-    const driven = await drive(ALL_FIXTURE_SCOPES)
+    const driven = await drive(EVERY_SCOPE_CALLER)
     try {
       const listed = (await driven.client.listTools()).tools.map((tool) => tool.name)
 

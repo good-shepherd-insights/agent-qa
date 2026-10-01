@@ -1,5 +1,12 @@
 // MCPS-04: safe mode proven by ABSENCE, with two independent walls (Phase 396 plan 05, D-05/D-08).
 //
+// 2026-10-01 (432-20, D-12): BOTH WALLS ARE DELETED. `visibleToCaller` (wall one) and
+// `invokeFunction`'s scope refusal (wall two) are gone: every caller of this server lists the same
+// catalogue and reaches every op. Groups 1-5, 7 and the first cell of 8 are re-spelled in place to
+// pin that sameness — W1 and W2 below are now the shipped behaviour. The bearer token still
+// authenticates on this door until 432-21 removes it, so group 9's guards and masking cells are
+// unchanged and still measured.
+//
 // WHAT THIS SUITE IS AND WHY IT IS DRIVEN. Every cell below speaks to a REAL loopback socket, over
 // a REAL `Authorization` header, against the production `createMcpHttpRequestListener` composed
 // over the production `composeCliLocalAgent`. Nothing here hand-assembles a tool list or a caller.
@@ -51,7 +58,7 @@ import { join } from 'node:path'
 
 import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client'
 import { createMcpHandler } from '@modelcontextprotocol/server'
-import { FunctionScopeError, invokeFunction } from '@vostride/agent-qa-agent'
+import { invokeFunction } from '@vostride/agent-qa-agent'
 import { AGENT_QA_TOOL_PROJECTIONS, buildAgentQaMcpServer } from '@vostride/agent-qa-mcp'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 
@@ -299,143 +306,104 @@ function lastPayload(frames: readonly Frame[]): unknown {
 // CELL 1 — ABSENCE, both sides (MCPS-04, D-05)
 // ---------------------------------------------------------------------------------------------
 
-describe('1 · the config tools are ABSENT from a caller without config-write', () => {
-  it('names the config tool in the shipped mapping, so the absence below is about something', () => {
-    // The integrity assertion that keeps every cell in this group from being a statement about the
-    // empty set. Without it, deleting the config tools from the catalogue would make cell 1 pass.
-    // 2026-09-30 (432-12 D-05): the apply tool is gone and the change tool writes in the call, so
-    // the config-write door is ONE tool; the two-sided claims below hold over it unchanged.
+// RE-SPELLED 2026-10-01 (432-20, D-12) from '1 · the config tools are ABSENT from a caller without
+// config-write'. The listing filter is deleted: every token lists the same catalogue.
+describe('1 · the config tools are PRESENT for every caller (432-20)', () => {
+  it('names the config tool in the shipped mapping, so the presence below is about something', () => {
     expect(CONFIG_TOOL_NAMES).toEqual(['agent_qa_change_config'])
   })
 
-  it('a read-only caller sees NEITHER config tool', async () => {
+  // RE-SPELLED from 'a read-only caller sees NEITHER config tool'.
+  it('a read-only caller sees the config tool', async () => {
     const names = await toolNamesFor(PLANTED_RO)
-    for (const tool of CONFIG_TOOL_NAMES) {
-      expect(names, `${tool} leaked into a read-only caller's listing`).not.toContain(tool)
-    }
-    // And it sees SOMETHING — an empty list would satisfy the assertion above for free.
-    expect(names.length).toBeGreaterThan(0)
+    for (const tool of CONFIG_TOOL_NAMES) expect(names).toContain(tool)
   })
 
-  it('a config-write caller sees BOTH — the same machinery, answering the other way', async () => {
+  it('a config-write caller sees BOTH — the same machinery, answering the same way', async () => {
     const names = await toolNamesFor(PLANTED_CFG)
     for (const tool of CONFIG_TOOL_NAMES) {
       expect(names, `${tool} is missing from a config-write caller's listing`).toContain(tool)
     }
   })
 
-  it('the two listings differ in EXACTLY the config tools and nothing else', async () => {
-    // The sharpest form of the two-sided claim: a filter that dropped an unrelated tool from the
-    // read-only listing would satisfy both cells above and fail this one.
+  // RE-SPELLED from 'the two listings differ in EXACTLY the config tools and nothing else'.
+  it('the two listings are identical', async () => {
     const [ro, cfg] = await Promise.all([toolNamesFor(PLANTED_RO), toolNamesFor(PLANTED_CFG)])
-    const extra = cfg.filter((name) => !ro.includes(name))
-    // `agent_qa_start_run` is in the difference too: the cfg token holds `run` and the ro token
-    // does not. That is the same law, and stating the whole difference is what makes this an
-    // equality rather than a containment.
-    expect(extra.sort()).toEqual([...CONFIG_TOOL_NAMES, 'agent_qa_start_run'].sort())
-    expect(ro.filter((name) => !cfg.includes(name))).toEqual([])
+    expect(ro).toEqual(cfg)
+    expect(ro.length).toBeGreaterThan(0)
   })
 })
 
-// ---------------------------------------------------------------------------------------------
-// CELL 2 — a hidden tool answers exactly as a tool that never existed (D-08, Pitfall 6)
-// ---------------------------------------------------------------------------------------------
-
-describe('2 · calling a hidden tool is indistinguishable from calling a nonexistent one', () => {
-  it('produces two refusal payloads identical everywhere but the name the caller itself sent', async () => {
-    const hiddenName = CONFIG_TOOL_NAMES[0]!
+// RE-SPELLED 2026-10-01 (432-20, D-12) from '2 · calling a hidden tool is indistinguishable from
+// calling a nonexistent one'. No tool is hidden: the config tool is answered IN BAND, and a ghost
+// name still answers the SDK's unknown-tool shape.
+describe('2 · no tool is hidden, so a formerly hidden tool answers unlike a nonexistent one', () => {
+  it('answers the config tool in band for a read-only caller, and a ghost as not found', async () => {
+    const formerlyHidden = CONFIG_TOOL_NAMES[0]!
     const ghostName = 'agent_qa_a_tool_that_was_never_declared'
 
     const { client, frames } = await connectAs(PLANTED_RO)
     try {
-      await client
-        .callTool({ name: hiddenName, arguments: { action: 'config.field.set' } })
-        .catch(() => undefined)
-      const hidden = lastPayload(frames)
+      const answered = await client
+        .callTool({ name: formerlyHidden, arguments: { action: 'config.field.set' } })
+        .then((result) => JSON.stringify(result), (error: unknown) => String(error))
       await client.callTool({ name: ghostName, arguments: {} }).catch(() => undefined)
       const ghost = lastPayload(frames)
 
-      // STRUCTURAL equality over the full payloads, not a substring check. The only permitted
-      // differences are the JSON-RPC id (transport bookkeeping) and the tool name — which the
-      // CALLER supplied, so an answer that did not contain it would be answering a different
-      // question. Both are normalised to a constant and everything else must match byte for byte.
-      const normalise = (payload: unknown, name: string): string =>
-        JSON.stringify(payload)
-          .split(name).join('<NAME>')
-          .replace(/"id":\s*\d+/g, '"id":<ID>')
-
-      expect(normalise(hidden, hiddenName)).toBe(normalise(ghost, ghostName))
-
-      // And the shared answer is the UNKNOWN-tool shape rather than a scope refusal: an answer
-      // that said "you lack config-write" would be identical between the two only if the server had
-      // invented that reason for the ghost too, which is the enumeration oracle D-08 forbids.
-      expect(JSON.stringify(hidden)).toContain('not found')
-      expect(JSON.stringify(hidden)).not.toContain('config-write')
-      expect(JSON.stringify(hidden)).not.toContain('scope')
+      expect(answered).not.toContain('not found')
+      expect(answered).not.toContain('scope')
+      expect(JSON.stringify(ghost)).toContain('not found')
     } finally {
       await client.close().catch(() => {})
     }
   })
 })
 
-// ---------------------------------------------------------------------------------------------
-// CELL 3 — THE SECOND WALL, reached with the listing bypassed entirely (D-08, T-396-14)
-// ---------------------------------------------------------------------------------------------
-
-describe('3 · the function layer refuses independently of anything a surface listed', () => {
-  it('refuses a config op for a caller without the scope, naming the missing scope', async () => {
-    // No MCP server is involved in this cell AT ALL. That is the point: this wall is reached by
-    // going around the listing rather than through it, so a listing filter torn to always-true
-    // cannot change this answer — and the W1 mutation leg measures exactly that.
-    const caller = mcpFunctionCaller(['read'])
-    let thrown: unknown
+// RE-SPELLED 2026-10-01 (432-20, D-12) from '3 · the function layer refuses independently of
+// anything a surface listed'. The second wall is deleted too: the function layer serves the op to
+// a caller holding no `config-write`, exactly as to one that holds it.
+describe('3 · the function layer reads no grant (432-20)', () => {
+  async function outcomeFor(caller: ReturnType<typeof mcpFunctionCaller>): Promise<string> {
     try {
-      await invokeFunction(harness.registry, 'config.field.set', { path: 'a.b', value: 1 }, caller)
-    } catch (err) {
-      thrown = err
+      return JSON.stringify(await invokeFunction(
+        harness.registry,
+        'config.field.set',
+        { path: 'a.b', value: 1 },
+        caller,
+      ))
+    } catch (error) {
+      return `${(error as Error).name}`
     }
-    expect(thrown).toBeInstanceOf(FunctionScopeError)
-    expect((thrown as FunctionScopeError).missingScopes).toEqual(['config-write'])
-    expect((thrown as FunctionScopeError).functionId).toBe('config.field.set')
+  }
+
+  // RE-SPELLED from 'refuses a config op for a caller without the scope, naming the missing scope'.
+  it('serves a config op to a caller without the scope, with no scope refusal', async () => {
+    const outcome = await outcomeFor(mcpFunctionCaller(['read']))
+    expect(outcome).not.toBe('FunctionScopeError')
   })
 
-  it('admits the same op for a caller that holds the scope — the wall opens, it does not just close', async () => {
-    // The other side. A wall that refused everything would satisfy the cell above.
-    const caller = mcpFunctionCaller(['read', 'config-write'])
-    let thrown: unknown
-    try {
-      await invokeFunction(harness.registry, 'config.field.set', { path: 'a.b', value: 1 }, caller)
-    } catch (err) {
-      thrown = err
-    }
-    expect(thrown).not.toBeInstanceOf(FunctionScopeError)
+  it('admits the same op for a caller that holds the scope — the same answer either way', async () => {
+    const withScope = await outcomeFor(mcpFunctionCaller(['read', 'config-write']))
+    expect(withScope).not.toBe('FunctionScopeError')
+    expect(await outcomeFor(mcpFunctionCaller(['read']))).toBe(withScope)
   })
 
-  it('refuses even when the SERVER was built for a caller that holds the scope', async () => {
-    // The "claimed scope" case, as close to a forge as this surface allows. The instance is built
-    // with a config-write caller so the config tools ARE registered on it — the listing wall is
-    // wide open — and the invoke is then made with a caller that lacks the scope. The refusal is
-    // the second wall answering with the first one bypassed by construction.
+  // RE-SPELLED from 'refuses even when the SERVER was built for a caller that holds the scope'.
+  it('serves the op whatever caller the SERVER was built for', async () => {
     const openServer = buildAgentQaMcpServer({
       registry: harness.registry,
       caller: mcpFunctionCaller(['read', 'run', 'config-write']),
       maskText: (text: string) => text,
     })
     expect(openServer).toBeDefined()
-
-    const impoverished = mcpFunctionCaller(['read', 'run'])
-    await expect(
-      invokeFunction(harness.registry, 'config.field.set', { path: 'a.b', value: 1 }, impoverished),
-    ).rejects.toBeInstanceOf(FunctionScopeError)
+    expect(await outcomeFor(mcpFunctionCaller(['read', 'run']))).not.toBe('FunctionScopeError')
   })
 })
 
-// ---------------------------------------------------------------------------------------------
-// CELL 4 — the equality boundary, one step either side (MCPS-04 adjacency row)
-// ---------------------------------------------------------------------------------------------
-
-describe('4 · a caller granted EXACTLY a tool\'s required set sees it; minus any one member, it does not', () => {
-  it('names a three-scope tool, so the boundary below has three sides to test', () => {
+// RE-SPELLED 2026-10-01 (432-20, D-12) from '4 · a caller granted EXACTLY a tool's required set
+// sees it; minus any one member, it does not'. There is no boundary: every grant set sees the tool.
+describe('4 · every grant set sees a three-scope tool, with no adjacency boundary (432-20)', () => {
+  it('names a three-scope tool, so the cells below have three sides to test', () => {
     const projection = AGENT_QA_TOOL_PROJECTIONS.find((entry) => entry.name === AUTHORING_TOOL)
     expect(projection, `${AUTHORING_TOOL} is not in the shipped mapping`).toBeDefined()
     expect(AUTHORING_SCOPES).toHaveLength(3)
@@ -445,33 +413,23 @@ describe('4 · a caller granted EXACTLY a tool\'s required set sees it; minus an
     expect(await toolNamesFor(PLANTED_AUTHORING)).toContain(AUTHORING_TOOL)
   })
 
-  it('the exact set minus test-write does not', async () => {
-    expect(await toolNamesFor(TOKEN_ENV.AGENT_QA_396_AUTHORING_MINUS_TEST_WRITE)).not.toContain(
-      AUTHORING_TOOL,
-    )
+  it('the exact set minus test-write sees it too', async () => {
+    expect(await toolNamesFor(TOKEN_ENV.AGENT_QA_396_AUTHORING_MINUS_TEST_WRITE))
+      .toContain(AUTHORING_TOOL)
   })
 
-  it('the exact set minus run does not', async () => {
-    expect(await toolNamesFor(TOKEN_ENV.AGENT_QA_396_AUTHORING_MINUS_RUN)).not.toContain(
-      AUTHORING_TOOL,
-    )
+  it('the exact set minus run sees it too', async () => {
+    expect(await toolNamesFor(TOKEN_ENV.AGENT_QA_396_AUTHORING_MINUS_RUN)).toContain(AUTHORING_TOOL)
   })
 
-  it('the exact set minus read does not', async () => {
-    expect(await toolNamesFor(TOKEN_ENV.AGENT_QA_396_AUTHORING_MINUS_READ)).not.toContain(
-      AUTHORING_TOOL,
-    )
+  it('the exact set minus read sees it too', async () => {
+    expect(await toolNamesFor(TOKEN_ENV.AGENT_QA_396_AUTHORING_MINUS_READ)).toContain(AUTHORING_TOOL)
   })
 
-  it('the config tools need config-write ALONE — a read grant is not adjacent to it', async () => {
-    // The other adjacency the plan names: `config-write` by itself is the config tools' whole
-    // required set, so a caller holding only that sees them, and a caller holding only `read` does
-    // not. Driven at the factory because config forbids declaring a single-scope credential with
-    // no read — which is itself worth stating rather than working around silently.
+  it('a config-write-only grant and a read-only grant list the same tools', async () => {
     const onlyConfigWrite = await namesFromFactory(['config-write'])
     for (const tool of CONFIG_TOOL_NAMES) expect(onlyConfigWrite).toContain(tool)
-    const onlyRead = await namesFromFactory(['read'])
-    for (const tool of CONFIG_TOOL_NAMES) expect(onlyRead).not.toContain(tool)
+    expect(await namesFromFactory(['read'])).toEqual(onlyConfigWrite)
   })
 })
 
@@ -505,21 +463,13 @@ async function namesFromFactory(scopes: readonly string[]): Promise<string[]> {
   }
 }
 
-// ---------------------------------------------------------------------------------------------
-// CELL 5 — the floor of the law (MCPS-04 empty row)
-// ---------------------------------------------------------------------------------------------
-
-describe('5 · a caller granted NOTHING is served an empty catalogue', () => {
-  it('lists zero tools', async () => {
-    // Reachability, stated rather than assumed: this state is NOT reachable through a config token,
-    // because `McpTokenEntrySchema` requires a non-empty scope set (a zero-scope credential is
-    // indistinguishable from a typo). It is the floor of D-05's law and it is driven through the
-    // production factory. If 397 ever admits a zero-scope credential, this cell already covers it.
-    expect(await namesFromFactory([])).toEqual([])
-  })
-
-  it('and the same factory with one scope lists more than zero — the empty answer is a filter, not a break', async () => {
-    expect((await namesFromFactory(['read'])).length).toBeGreaterThan(0)
+// RE-SPELLED 2026-10-01 (432-20, D-12) from '5 · a caller granted NOTHING is served an empty
+// catalogue'. The floor of the deleted law is gone: a caller granted nothing is served everything.
+describe('5 · a caller granted NOTHING is served the full catalogue (432-20)', () => {
+  it('lists every tool a read caller lists', async () => {
+    const nothing = await namesFromFactory([])
+    expect(nothing.length).toBeGreaterThan(0)
+    expect(nothing).toEqual(await namesFromFactory(['read']))
   })
 })
 
@@ -533,7 +483,7 @@ describe('6 · tools/list order is stable and derived from the mapping', () => {
     expect(first).toEqual(second)
   })
 
-  it('equals the mapping\'s DECLARED order, filtered to what this caller may see', async () => {
+  it('equals the mapping\'s DECLARED order, filtered to what this composition serves', async () => {
     const names = await toolNamesFor(PLANTED_CFG)
     expect(names).toEqual(DECLARED_TOOL_ORDER.filter((name) => names.includes(name)))
   })
@@ -551,11 +501,10 @@ describe('6 · tools/list order is stable and derived from the mapping', () => {
 // CELL 7 — concurrency (MCPS-02 concurrency row, SEP-2575)
 // ---------------------------------------------------------------------------------------------
 
-describe('7 · interleaved requests bearing different tokens each get their own catalogue', () => {
-  it('answers four simultaneous connections by their own credentials', async () => {
-    // Fired together on ONE socket-bound server. A factory that memoised an instance, or a module
-    // holding the last caller it saw, answers this wrong — and per-request construction is the only
-    // reason it can answer it right.
+// RE-SPELLED 2026-10-01 (432-20, D-12) from '7 · interleaved requests bearing different tokens
+// each get their own catalogue'. Every token now gets the same catalogue, concurrently too.
+describe('7 · interleaved requests bearing different tokens all get the same catalogue', () => {
+  it('answers four simultaneous connections identically', async () => {
     const [cfgA, roA, cfgB, roB] = await Promise.all([
       toolNamesFor(PLANTED_CFG),
       toolNamesFor(PLANTED_RO),
@@ -564,11 +513,8 @@ describe('7 · interleaved requests bearing different tokens each get their own 
     ])
     expect(cfgA).toEqual(cfgB)
     expect(roA).toEqual(roB)
-    for (const tool of CONFIG_TOOL_NAMES) {
-      expect(cfgA).toContain(tool)
-      expect(roA).not.toContain(tool)
-      expect(roB).not.toContain(tool)
-    }
+    expect(roA).toEqual(cfgA)
+    for (const tool of CONFIG_TOOL_NAMES) expect(roA).toContain(tool)
   })
 })
 
@@ -590,8 +536,8 @@ describe('8 · two callers\' listings never share a cacheable identity', () => {
       expect(roList.cacheScope).toBe('private')
       expect(cfgList.ttlMs).toBe(0)
       expect(roList.ttlMs).toBe(0)
-      // And the two are genuinely different documents, so "private" is protecting something.
-      expect((cfgList.tools as unknown[]).length).not.toBe((roList.tools as unknown[]).length)
+      // 432-20 (D-12): the two documents are now the same; the private stamp is kept by the SDK.
+      expect((cfgList.tools as unknown[]).length).toBe((roList.tools as unknown[]).length)
     } finally {
       await cfg.client.close().catch(() => {})
       await ro.client.close().catch(() => {})
@@ -705,7 +651,7 @@ describe('9 · the walls in front of the handler refuse without becoming a chann
     expect(wrong.status).toBe(malformed.status)
   })
 
-  it('a valid credential presented to a REFUSED tool still does not leak it into the answer', async () => {
+  it('a valid credential presented to a formerly REFUSED tool still does not leak it into the answer', async () => {
     // The refusal path a caller reaches with a good credential: a hidden tool. Every byte of the
     // answer is checked for the credential the caller presented, because a server that echoed the
     // Authorization header into a tool error would be exactly T-395-R5-10 arriving on this surface.

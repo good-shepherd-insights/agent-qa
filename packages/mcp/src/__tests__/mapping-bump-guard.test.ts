@@ -405,8 +405,10 @@ describe('the projection resolves against the registry, produced not literal', (
   // every caller's call finding out it has none.
   it('projects no op that requires a human origin', () => {
     const projected = new Set(projectedOpIds())
+    // 432-20 (D-10): declarations no longer carry the key at all, so a declaration that grew it back
+    // would show up here as a key rather than as a `true` value.
     const humanOnly = declarations()
-      .filter((declaration) => declaration.requiresHumanOrigin === true)
+      .filter((declaration) => Object.keys(declaration).includes('requiresHumanOrigin'))
       .map((declaration) => declaration.id)
 
     // RE-SPELLED 2026-10-01 (432-18, D-15): the integrity check was `humanOnly.length > 0`. The last
@@ -720,22 +722,23 @@ describe('423-21 feedback read tools (D-18)', () => {
       expect(AGENT_QA_OP_CONTRACTS[opId]?.output, `${opId} output`).toBe(output)
       expect(AGENT_QA_COMPOSED_CONTRACTS[tool], `${tool} inherits its op contract`).toBeUndefined()
       const declaration = declarationsById.get(opId)
-      expect(declaration?.requiredScopes, `${opId} scopes`).toEqual(['read'])
+      // 432-20 (D-10/D-12): no scope or origin key on a declaration; the read claim is the risk's.
+      expect(Object.keys(declaration ?? {}), `${opId} scopes`).not.toContain('requiredScopes')
       expect(declaration?.risk.readOnly, `${opId} risk`).toBe(true)
-      expect(declaration?.requiresHumanOrigin, `${opId} origin`).not.toBe(true)
+      expect(Object.keys(declaration ?? {}), `${opId} origin`).not.toContain('requiresHumanOrigin')
       const config = toRegisterToolConfig(projection!, [{ id: opId, summary: declaration!.summary,
-        requiredScopes: declaration!.requiredScopes, risk: declaration!.risk, input, output }], { input, output }, (text) => text)
+        risk: declaration!.risk, input, output }], { input, output }, (text) => text)
       expect(config.annotations, `${tool} annotations`).toEqual({ readOnlyHint: true, destructiveHint: false, idempotentHint: true })
       expect(config.outputSchema, `${tool} advertises its strict output`).toBeDefined()
     }
     // The preview is the mark writer's exact input, read-tier: it adds no credential and no apply door.
     expect(byName.get('agent_qa_preview_run_mark')?.credential).toBeUndefined()
     expect(byName.get('agent_qa_mark_run')).toMatchObject({ kind: 'apply', credential: 'required', ops: ['runs.mark'] })
-    expect(declarationsById.get('runs.mark')?.requiredScopes).toEqual(['knowledge-write'])
+    expect(declarationsById.get('runs.mark')?.risk.readOnly).toBe(false)
 
     expect(UNPROJECTED_OPS.find((entry) => entry.opId === 'runs.evidence')).toBeUndefined()
     expect(byName.get('agent_qa_get_run_evidence')?.ops).toEqual(['runs.evidence', 'runs.artifact'])
-    expect(declarationsById.get('runs.evidence')?.requiredScopes).toEqual(['read'])
+    expect(declarationsById.get('runs.evidence')?.risk.readOnly).toBe(true)
   })
 })
 

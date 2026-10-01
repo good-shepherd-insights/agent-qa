@@ -22,12 +22,13 @@ export type FunctionCallerOrigin = (typeof FUNCTION_CALLER_ORIGINS)[number]
 /**
  * The caller record every function invocation carries (Phase 384, FUNC-03).
  *
- * Caller differences are DATA, never control flow: the only legitimate reads of this
- * record are the scope subset check in `invokeFunction`, the origin check beside it,
- * the safe-mode listing filter in the registry, audit attribution, and the
- * session-overlay scoping at the gate (392 plan 13 — see {@link FunctionCaller.sessionId}).
- * A branch on `surface` is an anti-pattern — it re-creates the per-surface private
- * powers the function layer exists to abolish.
+ * 2026-10-01 (432-20, D-10/D-12): NO FIELD HERE IS A PERMISSION INPUT. Every door can call every
+ * operation, so `invokeFunction` and the registry read nothing on this record. `surface` and
+ * `origin` survive for the receipts and presentation that already consume them, and no new label
+ * is written. `grantedScopes`, `safeMode`, `credential` and `sessionId` are retired: the first two
+ * are optional and unread so the composition roots and fixtures that still spell them compile
+ * while later 432 plans remove them, and 432-39 deletes all four. A branch on `surface` remains an
+ * anti-pattern — it re-creates the per-surface private powers the function layer abolished.
  */
 export interface FunctionCaller {
   /**
@@ -36,60 +37,36 @@ export interface FunctionCaller {
    */
   surface: string
   /**
-   * Capability scopes the composition root MINTED for this caller. Callers never
-   * assert their own grants — a surface hands the layer whatever the composition
-   * gave it, and enforcement stays server-side in `invokeFunction`.
-   *
-   * Issuance (who may mint which grants, and how they are proven) is deferred to
-   * the M5 cloud-auth model; today every local composition root mints them directly.
+   * RETIRED, UNREAD (432-20, D-12). The capability scopes a composition root once minted for this
+   * caller. Nothing checks them; optional until 432-39 deletes the field.
    */
-  grantedScopes: readonly FunctionScope[]
+  grantedScopes?: readonly FunctionScope[]
   /**
-   * WHO this call is on behalf of, MINTED by the composition root (391 D-06).
+   * WHO this call is on behalf of, MINTED by the composition root (391 D-06). The CLI mints
+   * `human` because a person typed the command, the daemon and MCP mint `agent` because nobody
+   * did.
    *
-   * The same rule the scopes above are under, for the same reason: callers never assert
-   * their own grants, and an origin a caller could choose is an origin every caller
-   * chooses `human`. A surface hands the layer whatever the composition gave it; the CLI
-   * mints `human` because a person typed the command, the daemon mints `agent` because
-   * nobody did.
-   *
-   * REQUIRED, and that is the fail-closed decision rather than a style choice. An optional
-   * field needs a default, and every default is wrong in one direction: defaulting to
-   * `agent` would refuse real people at ops nobody had got round to minting an origin for,
-   * and defaulting to `human` would hand an unaudited mint the exact power the self-grant
-   * rule exists to withhold. Required means a new composition root cannot acquire that
-   * power by omission — it has to say which it is, in a diff someone reads.
+   * 2026-10-01 (432-20, D-10/D-12): presentation and receipts only. No dispatch check reads it
+   * (the human-origin check is deleted), so it grants and withholds nothing. It stays required
+   * because the existing receipt and planner consumers read it, and an optional field would need a
+   * default nobody decides.
    */
   origin: FunctionCallerOrigin
   /**
-   * Cosmetic listing filter (FUNC-03): when true the registry hides ops whose
-   * required scopes exceed `read`. Safe mode NEVER enforces — an op hidden from a
-   * listing is still refused server-side by the scope subset check if invoked.
+   * RETIRED, UNREAD (432-20, D-12). Once a cosmetic listing filter that hid ops whose scopes
+   * exceeded `read`. The registry lists every op for every caller; optional until 432-39 deletes
+   * the field.
    */
-  safeMode: boolean
+  safeMode?: boolean
   /**
-   * The v48 trust credential presented to the policy gate, passed through untouched.
-   * The function layer never inspects or rewrites it; `evaluate()` owns ask-tier
-   * resolution against it.
+   * RETIRED (432-20, D-12). The function layer never reads it. The MCP mark door's credential
+   * refusal is its last reader, and 432-21 removes that refusal with the bearer credential;
+   * 432-39 deletes the field.
    */
   credential?: TrustCredential
   /**
-   * The chat session this call belongs to, MINTED by the composition root (392 plan 13, W-03).
-   *
-   * ONE LEGITIMATE READ, and the doc above names it: scoping the session DENY overlay at the
-   * gate, so a `/pin` typed in one conversation denies that action class for that conversation
-   * and for no other. Without it the overlay is one set per composition and a pin outlives the
-   * session that typed it — on a daemon, for every caller until the process restarts.
-   *
-   * TIGHTEN-ONLY, WHICH IS WHY IT MAY BE OPTIONAL WHERE `origin` MAY NOT. The overlay this
-   * scopes is deny-only by three independent constructions (no unpin, a DTO with no allow list,
-   * a hook whose only true branch writes a deny), so an ABSENT or FOREIGN id can produce fewer
-   * chat-pin denials and never a grant. It satisfies no scope check, no origin check and no
-   * standing approval, and nothing below the overlay reads it. That asymmetry is the whole
-   * reason a defaulted value is safe here and would be a self-grant on `origin`.
-   *
-   * Attribution and scoping only; never an identity claim. A caller naming a session it does
-   * not own gains nothing it did not already have — at most it inherits that session's denials.
+   * RETIRED, UNREAD. It scoped the chat session's deny overlay at the gate (392 plan 13), and the
+   * overlay is deleted with the gate (432-19). 432-39 deletes the field.
    */
   sessionId?: string
 }

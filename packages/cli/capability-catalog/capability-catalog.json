@@ -284,9 +284,6 @@
         ],
         "type": "object"
       },
-      "requiredScopes": [
-        "read"
-      ],
       "surfaces": [
         "chat"
       ]
@@ -317,9 +314,6 @@
         ],
         "type": "object"
       },
-      "requiredScopes": [
-        "read"
-      ],
       "surfaces": [
         "chat"
       ]
@@ -349,9 +343,6 @@
         ],
         "type": "object"
       },
-      "requiredScopes": [
-        "read"
-      ],
       "surfaces": [
         "chat"
       ]
@@ -388,10 +379,6 @@
         ],
         "type": "object"
       },
-      "requiredScopes": [
-        "read",
-        "test-write"
-      ],
       "surfaces": [
         "chat",
         "mcp"
@@ -435,10 +422,6 @@
         ],
         "type": "object"
       },
-      "requiredScopes": [
-        "read",
-        "run"
-      ],
       "surfaces": [
         "chat",
         "mcp"
@@ -502,11 +485,6 @@
         ],
         "type": "object"
       },
-      "requiredScopes": [
-        "read",
-        "run",
-        "test-write"
-      ],
       "surfaces": [
         "chat",
         "mcp"
@@ -592,9 +570,6 @@
         ],
         "type": "object"
       },
-      "requiredScopes": [
-        "read"
-      ],
       "surfaces": [
         "chat"
       ]
@@ -637,9 +612,6 @@
         ],
         "type": "object"
       },
-      "requiredScopes": [
-        "config-write"
-      ],
       "surfaces": [
         "chat",
         "mcp"
@@ -686,9 +658,6 @@
         ],
         "type": "object"
       },
-      "requiredScopes": [
-        "config-write"
-      ],
       "surfaces": [
         "chat",
         "mcp"
@@ -710,9 +679,6 @@
         "properties": {},
         "type": "object"
       },
-      "requiredScopes": [
-        "read"
-      ],
       "surfaces": [
         "chat"
       ]
@@ -767,9 +733,6 @@
         ],
         "type": "object"
       },
-      "requiredScopes": [
-        "config-write"
-      ],
       "surfaces": [
         "chat",
         "mcp"
@@ -801,9 +764,6 @@
         ],
         "type": "object"
       },
-      "requiredScopes": [
-        "config-write"
-      ],
       "surfaces": [
         "chat",
         "mcp"
@@ -859,9 +819,6 @@
         ],
         "type": "object"
       },
-      "requiredScopes": [
-        "config-write"
-      ],
       "surfaces": [
         "chat",
         "mcp"
@@ -909,9 +866,6 @@
         ],
         "type": "object"
       },
-      "requiredScopes": [
-        "config-write"
-      ],
       "surfaces": [
         "chat",
         "mcp"
@@ -943,9 +897,6 @@
         ],
         "type": "object"
       },
-      "requiredScopes": [
-        "read"
-      ],
       "surfaces": [
         "chat"
       ]
@@ -976,9 +927,6 @@
         ],
         "type": "object"
       },
-      "requiredScopes": [
-        "read"
-      ],
       "surfaces": [
         "chat",
         "mcp"
@@ -1010,9 +958,6 @@
         ],
         "type": "object"
       },
-      "requiredScopes": [
-        "read"
-      ],
       "surfaces": [
         "chat",
         "mcp"
@@ -1088,9 +1033,6 @@
         ],
         "type": "object"
       },
-      "requiredScopes": [
-        "knowledge-write"
-      ],
       "surfaces": [
         "chat",
         "mcp"
@@ -1137,9 +1079,6 @@
         ],
         "type": "object"
       },
-      "requiredScopes": [
-        "read"
-      ],
       "surfaces": [
         "chat",
         "mcp"
@@ -1161,9 +1100,6 @@
         "properties": {},
         "type": "object"
       },
-      "requiredScopes": [
-        "read"
-      ],
       "surfaces": [
         "chat",
         "mcp"
@@ -1239,9 +1175,6 @@
         ],
         "type": "object"
       },
-      "requiredScopes": [
-        "knowledge-write"
-      ],
       "surfaces": [
         "chat",
         "mcp"
@@ -1273,9 +1206,6 @@
         ],
         "type": "object"
       },
-      "requiredScopes": [
-        "read"
-      ],
       "surfaces": [
         "chat",
         "mcp"
@@ -1307,9 +1237,6 @@
         ],
         "type": "object"
       },
-      "requiredScopes": [
-        "read"
-      ],
       "surfaces": [
         "chat",
         "mcp"
@@ -1342,9 +1269,6 @@
         ],
         "type": "object"
       },
-      "requiredScopes": [
-        "read"
-      ],
       "surfaces": [
         "chat",
         "mcp"
@@ -1417,9 +1341,6 @@
         ],
         "type": "object"
       },
-      "requiredScopes": [
-        "read"
-      ],
       "surfaces": [
         "chat",
         "mcp"
@@ -1501,9 +1422,6 @@
         ],
         "type": "object"
       },
-      "requiredScopes": [
-        "knowledge-write"
-      ],
       "surfaces": [
         "chat",
         "mcp"
@@ -1555,9 +1473,6 @@
         ],
         "type": "object"
       },
-      "requiredScopes": [
-        "knowledge-write"
-      ],
       "surfaces": [
         "chat"
       ]
@@ -1578,9 +1493,6 @@
         "properties": {},
         "type": "object"
       },
-      "requiredScopes": [
-        "read"
-      ],
       "surfaces": [
         "chat"
       ]
@@ -1623,9 +1535,6 @@
         ],
         "type": "object"
       },
-      "requiredScopes": [
-        "knowledge-write"
-      ],
       "surfaces": [
         "chat"
       ]
@@ -1676,9 +1585,6 @@
         ],
         "type": "object"
       },
-      "requiredScopes": [
-        "read"
-      ],
       "surfaces": [
         "chat",
         "mcp"
@@ -1709,9 +1615,6 @@
         ],
         "type": "object"
       },
-      "requiredScopes": [
-        "read"
-      ],
       "surfaces": [
         "chat"
       ]
@@ -1741,9 +1644,6 @@
         ],
         "type": "object"
       },
-      "requiredScopes": [
-        "read"
-      ],
       "surfaces": [
         "chat",
         "mcp"
@@ -1779,9 +1679,6 @@
         ],
         "type": "object"
       },
-      "requiredScopes": [
-        "read"
-      ],
       "surfaces": [
         "chat"
       ]
@@ -1842,9 +1739,6 @@
         ],
         "type": "object"
       },
-      "requiredScopes": [
-        "read"
-      ],
       "surfaces": [
         "chat",
         "mcp"
@@ -1875,9 +1769,6 @@
         ],
         "type": "object"
       },
-      "requiredScopes": [
-        "read"
-      ],
       "surfaces": [
         "chat"
       ]
@@ -1907,9 +1798,6 @@
         ],
         "type": "object"
       },
-      "requiredScopes": [
-        "read"
-      ],
       "surfaces": [
         "chat",
         "mcp"
@@ -1958,9 +1846,6 @@
         },
         "type": "object"
       },
-      "requiredScopes": [
-        "read"
-      ],
       "surfaces": [
         "chat",
         "mcp"
@@ -1996,9 +1881,6 @@
         ],
         "type": "object"
       },
-      "requiredScopes": [
-        "read"
-      ],
       "surfaces": [
         "chat"
       ]
@@ -2068,9 +1950,6 @@
         ],
         "type": "object"
       },
-      "requiredScopes": [
-        "knowledge-write"
-      ],
       "surfaces": [
         "chat",
         "mcp"
@@ -2141,9 +2020,6 @@
         ],
         "type": "object"
       },
-      "requiredScopes": [
-        "read"
-      ],
       "surfaces": [
         "chat",
         "mcp"
@@ -2174,9 +2050,6 @@
         ],
         "type": "object"
       },
-      "requiredScopes": [
-        "read"
-      ],
       "surfaces": [
         "chat",
         "mcp"
@@ -2207,9 +2080,6 @@
         ],
         "type": "object"
       },
-      "requiredScopes": [
-        "read"
-      ],
       "surfaces": [
         "chat",
         "mcp"
@@ -2240,9 +2110,6 @@
         ],
         "type": "object"
       },
-      "requiredScopes": [
-        "read"
-      ],
       "surfaces": [
         "chat"
       ]
@@ -2315,9 +2182,6 @@
         },
         "type": "object"
       },
-      "requiredScopes": [
-        "run"
-      ],
       "surfaces": [
         "chat",
         "mcp"
@@ -2352,5 +2216,5 @@
       "shortDescription": "Triage agent-qa run failures"
     }
   ],
-  "rowsDigest": "605aaf5b7a9b98f13528f3fc0ae4c043a66a6be46d139cedb6b82e2a9b3435d6"
+  "rowsDigest": "db4d80e3a22ee5936d87c36edba7da81d1f0bafd86facbe450f57c3e0e8f1ff1"
 }

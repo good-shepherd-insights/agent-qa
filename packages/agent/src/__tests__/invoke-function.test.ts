@@ -24,7 +24,6 @@ import { z } from 'zod'
 import {
   FunctionInputError,
   FunctionNotBoundError,
-  FunctionScopeError,
   UnknownFunctionError,
   invokeFunction,
 } from '../functions/invoke.js'
@@ -76,7 +75,9 @@ describe('read invocation scope', () => {
         return invoke()
       },
     })
-    await expect(invokeFunction(registry, 'runs.list', {}, caller([]))).rejects.toBeInstanceOf(FunctionScopeError)
+    // 432-20 (D-12): the denied call is now an input refusal — no caller is refused for its grants.
+    await expect(invokeFunction(registry, 'runs.list', { unexpected: true }, caller([])))
+      .rejects.toBeInstanceOf(FunctionInputError)
     await invokeFunction(registry, 'config.set', {}, caller(['config-write']))
     expect(scopes).toBe(0)
   })
@@ -268,7 +269,9 @@ describe('invokeFunction pipeline', () => {
     expect(deps.listCalls()).toBe(0)
   })
 
-  it('refuses a caller whose grants do not cover the required scopes', async () => {
+  // RE-SPELLED 2026-10-01 (432-20, D-12) from 'refuses a caller whose grants do not cover the
+  // required scopes'. The scope check is deleted: the same caller is served, exactly once.
+  it('serves a caller whose grants do not cover the declared scopes, dispatching once', async () => {
     const deps = spyDeps()
     const audit = capturingSink()
     const registry = createRegistryFromSpecs(
@@ -276,16 +279,14 @@ describe('invokeFunction pipeline', () => {
       registryOptions({ deps: deps.deps, auditSink: audit.sink }),
     )
 
-    const refusal = invokeFunction(registry, 'runs.list', {}, caller([]))
-
-    await expect(refusal).rejects.toBeInstanceOf(FunctionScopeError)
-    await expect(refusal).rejects.toMatchObject({ missingScopes: ['read'] })
-    // The scope check precedes dispatch, so nothing dispatched and nothing was audited.
-    expect(deps.listCalls()).toBe(0)
+    await expect(invokeFunction(registry, 'runs.list', {}, caller([]))).resolves.toEqual([])
+    expect(deps.listCalls()).toBe(1)
     expect(audit.auditRows()).toHaveLength(0)
   })
 
-  it('refuses a run+read caller at a test-write op, naming the missing scope (394 T-394-01)', async () => {
+  // RE-SPELLED 2026-10-01 (432-20, D-12) from 'refuses a run+read caller at a test-write op, naming
+  // the missing scope (394 T-394-01)'. No scope is named because none is read.
+  it('serves a run+read caller at a test-write op — the declared scopes are not read', async () => {
     const deps = spyDeps()
     const audit = capturingSink()
     const registry = createRegistryFromSpecs(
@@ -293,18 +294,12 @@ describe('invokeFunction pipeline', () => {
       registryOptions({ deps: deps.deps, auditSink: audit.sink }),
     )
 
-    const refusal = invokeFunction(
+    await expect(invokeFunction(
       registry,
       'authoring.draft.write.synthetic',
       {},
       caller(['run', 'read']),
-    )
-
-    await expect(refusal).rejects.toBeInstanceOf(FunctionScopeError)
-    // BY NAME, and by exactly one name: the caller holds two of the three declared scopes, so a
-    // refusal listing anything else would mean the gate is not reading the declaration.
-    await expect(refusal).rejects.toMatchObject({ missingScopes: ['test-write'] })
-    await expect(refusal).rejects.toThrow(/test-write/)
+    )).resolves.toEqual({ ok: true })
     expect(audit.auditRows()).toHaveLength(0)
   })
 
@@ -493,19 +488,21 @@ describe('createRegistryFromSpecs', () => {
     )).not.toThrow()
   })
 
-  it('hides non-read capabilities from a safe-mode listing without enforcing anything', async () => {
+  // RE-SPELLED 2026-10-01 (432-20, D-12) from 'hides non-read capabilities from a safe-mode
+  // listing without enforcing anything'. The filter is deleted: a safe-mode caller lists and is
+  // served exactly what any other caller is.
+  it('lists every capability to a safe-mode caller and serves it like any other', async () => {
     const deps = spyDeps()
     const registry = createRegistryFromSpecs(
       [runsListSpec, configSetSpec],
       registryOptions({ deps: deps.deps }),
     )
 
-    const safeModeCaller = caller(['read', 'config-write'], true)
+    const safeModeCaller = caller(['read'], true)
     expect(registry.list(safeModeCaller).map((declaration) => declaration.id))
-      .toEqual(['runs.list'])
+      .toEqual(['config.set', 'runs.list'])
+    expect(registry.list(safeModeCaller)).toEqual(registry.list(caller([])))
 
-    // Safe mode is cosmetic: the hidden op still resolves when invoked with the grants
-    // for it, because enforcement lives server-side in invokeFunction, not in the listing.
     await expect(invokeFunction(registry, 'config.set', {}, safeModeCaller))
       .resolves.toEqual({ ok: true })
   })

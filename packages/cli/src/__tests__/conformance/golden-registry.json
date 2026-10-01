@@ -1,7 +1,7 @@
 {
   "$note": [
     "GENERATED — the capability ledger for Phase 397 (FUNC-05 leg 6, D-05/D-07).",
-    "One row per registered capability. A widened scope, a lowered risk tier, a changed schema",
+    "One row per registered capability. A lowered risk tier, a changed schema",
     "digest or a moved MCP partition lands here as a one-line reviewable diff.",
     "DO NOT EDIT BY HAND: regenerate with \"bash scripts/397-regen-golden.sh --write\" and commit the result",
     "as a deliberate, reviewed change. The script refuses to run while any other leg of the",
@@ -20,9 +20,6 @@
         "kind": "unprojected",
         "reason": "agent-ask-delegation-deferral"
       },
-      "requiredScopes": [
-        "read"
-      ],
       "resultKind": "unary",
       "risk": {
         "name": "fn:agent.ask",
@@ -41,9 +38,6 @@
         "reason": "discovery-answered-by-protocol"
       },
       "rendersResult": true,
-      "requiredScopes": [
-        "read"
-      ],
       "resultKind": "unary",
       "risk": {
         "name": "fn:agent.explain",
@@ -61,9 +55,6 @@
         "kind": "unprojected",
         "reason": "not-mid-flight-read"
       },
-      "requiredScopes": [
-        "read"
-      ],
       "resultKind": "unary",
       "risk": {
         "name": "fn:analysis.get",
@@ -81,10 +72,6 @@
         "kind": "projected",
         "tool": "agent_qa_refine_test"
       },
-      "requiredScopes": [
-        "read",
-        "test-write"
-      ],
       "resultKind": "unary",
       "risk": {
         "declaredTier": "mutating-local",
@@ -102,10 +89,6 @@
         "kind": "projected",
         "tool": "agent_qa_refine_test"
       },
-      "requiredScopes": [
-        "read",
-        "run"
-      ],
       "resultKind": "unary",
       "risk": {
         "declaredTier": "mutating-local",
@@ -124,11 +107,6 @@
         "kind": "projected",
         "tool": "agent_qa_write_test"
       },
-      "requiredScopes": [
-        "read",
-        "run",
-        "test-write"
-      ],
       "resultKind": "unary",
       "risk": {
         "declaredTier": "mutating-shared",
@@ -146,9 +124,6 @@
         "kind": "unprojected",
         "reason": "not-mid-flight-read"
       },
-      "requiredScopes": [
-        "read"
-      ],
       "resultKind": "unary",
       "risk": {
         "name": "fn:authoring.funnel.get",
@@ -166,9 +141,6 @@
         "kind": "projected",
         "tool": "agent_qa_change_config"
       },
-      "requiredScopes": [
-        "config-write"
-      ],
       "resultKind": "unary",
       "risk": {
         "name": "fn:config.auth.set",
@@ -186,9 +158,6 @@
         "kind": "projected",
         "tool": "agent_qa_change_config"
       },
-      "requiredScopes": [
-        "config-write"
-      ],
       "resultKind": "unary",
       "risk": {
         "name": "fn:config.field.set",
@@ -206,9 +175,6 @@
         "kind": "unprojected",
         "reason": "not-mid-flight-read"
       },
-      "requiredScopes": [
-        "read"
-      ],
       "resultKind": "unary",
       "risk": {
         "name": "fn:config.get",
@@ -226,9 +192,6 @@
         "kind": "projected",
         "tool": "agent_qa_change_config"
       },
-      "requiredScopes": [
-        "config-write"
-      ],
       "resultKind": "unary",
       "risk": {
         "name": "fn:config.hook.add",
@@ -246,9 +209,6 @@
         "kind": "projected",
         "tool": "agent_qa_change_config"
       },
-      "requiredScopes": [
-        "config-write"
-      ],
       "resultKind": "unary",
       "risk": {
         "name": "fn:config.project.scaffold",
@@ -266,9 +226,6 @@
         "kind": "projected",
         "tool": "agent_qa_change_config"
       },
-      "requiredScopes": [
-        "config-write"
-      ],
       "resultKind": "unary",
       "risk": {
         "name": "fn:config.target.create",
@@ -286,9 +243,6 @@
         "kind": "projected",
         "tool": "agent_qa_change_config"
       },
-      "requiredScopes": [
-        "config-write"
-      ],
       "resultKind": "unary",
       "risk": {
         "name": "fn:config.target.edit",
@@ -306,9 +260,6 @@
         "kind": "unprojected",
         "reason": "credential-mint-deferral"
       },
-      "requiredScopes": [
-        "read"
-      ],
       "resultKind": "unary",
       "risk": {
         "name": "fn:editor.liveurl",
@@ -326,9 +277,6 @@
         "kind": "projected",
         "tool": "agent_qa_get_entity"
       },
-      "requiredScopes": [
-        "read"
-      ],
       "resultKind": "unary",
       "risk": {
         "name": "fn:entities.get",
@@ -346,9 +294,6 @@
         "kind": "projected",
         "tool": "agent_qa_get_entity"
       },
-      "requiredScopes": [
-        "read"
-      ],
       "resultKind": "unary",
       "risk": {
         "name": "fn:entities.resolve",
@@ -366,9 +311,6 @@
         "kind": "projected",
         "tool": "agent_qa_change_knowledge"
       },
-      "requiredScopes": [
-        "knowledge-write"
-      ],
       "resultKind": "unary",
       "risk": {
         "name": "fn:knowledge.accept",
@@ -386,9 +328,6 @@
         "kind": "projected",
         "tool": "agent_qa_explain_brief"
       },
-      "requiredScopes": [
-        "read"
-      ],
       "resultKind": "unary",
       "risk": {
         "name": "fn:knowledge.brief.why",
@@ -406,9 +345,6 @@
         "kind": "projected",
         "tool": "agent_qa_list_knowledge_bundles"
       },
-      "requiredScopes": [
-        "read"
-      ],
       "resultKind": "unary",
       "risk": {
         "name": "fn:knowledge.bundles.list",
@@ -426,9 +362,6 @@
         "kind": "projected",
         "tool": "agent_qa_change_knowledge"
       },
-      "requiredScopes": [
-        "knowledge-write"
-      ],
       "resultKind": "unary",
       "risk": {
         "name": "fn:knowledge.forget",
@@ -446,9 +379,6 @@
         "kind": "projected",
         "tool": "agent_qa_list_knowledge_gates"
       },
-      "requiredScopes": [
-        "read"
-      ],
       "resultKind": "unary",
       "risk": {
         "name": "fn:knowledge.gates.list",
@@ -466,9 +396,6 @@
         "kind": "projected",
         "tool": "agent_qa_show_knowledge_record"
       },
-      "requiredScopes": [
-        "read"
-      ],
       "resultKind": "unary",
       "risk": {
         "name": "fn:knowledge.record.show",
@@ -486,9 +413,6 @@
         "kind": "projected",
         "tool": "agent_qa_diff_knowledge_records"
       },
-      "requiredScopes": [
-        "read"
-      ],
       "resultKind": "unary",
       "risk": {
         "name": "fn:knowledge.records.diff",
@@ -506,9 +430,6 @@
         "kind": "projected",
         "tool": "agent_qa_inspect_knowledge_records"
       },
-      "requiredScopes": [
-        "read"
-      ],
       "resultKind": "unary",
       "risk": {
         "name": "fn:knowledge.records.inspect",
@@ -526,9 +447,6 @@
         "kind": "projected",
         "tool": "agent_qa_change_knowledge"
       },
-      "requiredScopes": [
-        "knowledge-write"
-      ],
       "resultKind": "unary",
       "risk": {
         "name": "fn:knowledge.reject",
@@ -546,9 +464,6 @@
         "kind": "unprojected",
         "reason": "not-mid-flight-write"
       },
-      "requiredScopes": [
-        "knowledge-write"
-      ],
       "resultKind": "unary",
       "risk": {
         "name": "fn:quarantine.add",
@@ -566,9 +481,6 @@
         "kind": "unprojected",
         "reason": "not-mid-flight-read"
       },
-      "requiredScopes": [
-        "read"
-      ],
       "resultKind": "unary",
       "risk": {
         "name": "fn:quarantine.list",
@@ -586,9 +498,6 @@
         "kind": "unprojected",
         "reason": "not-mid-flight-write"
       },
-      "requiredScopes": [
-        "knowledge-write"
-      ],
       "resultKind": "unary",
       "risk": {
         "name": "fn:quarantine.release",
@@ -606,9 +515,6 @@
         "kind": "projected",
         "tool": "agent_qa_get_run_evidence"
       },
-      "requiredScopes": [
-        "read"
-      ],
       "resultKind": "unary",
       "risk": {
         "name": "fn:runs.artifact",
@@ -626,9 +532,6 @@
         "kind": "unprojected",
         "reason": "not-mid-flight-read"
       },
-      "requiredScopes": [
-        "read"
-      ],
       "resultKind": "unary",
       "risk": {
         "name": "fn:runs.detail",
@@ -646,9 +549,6 @@
         "kind": "projected",
         "tool": "agent_qa_get_run_digest"
       },
-      "requiredScopes": [
-        "read"
-      ],
       "resultKind": "unary",
       "risk": {
         "name": "fn:runs.digest",
@@ -666,9 +566,6 @@
         "kind": "unprojected",
         "reason": "not-mid-flight-read"
       },
-      "requiredScopes": [
-        "read"
-      ],
       "resultKind": "stream",
       "risk": {
         "name": "fn:runs.events",
@@ -686,9 +583,6 @@
         "kind": "projected",
         "tool": "agent_qa_get_run_evidence"
       },
-      "requiredScopes": [
-        "read"
-      ],
       "resultKind": "unary",
       "risk": {
         "name": "fn:runs.evidence",
@@ -706,9 +600,6 @@
         "kind": "unprojected",
         "reason": "not-mid-flight-read"
       },
-      "requiredScopes": [
-        "read"
-      ],
       "resultKind": "unary",
       "risk": {
         "name": "fn:runs.get",
@@ -726,9 +617,6 @@
         "kind": "projected",
         "tool": "agent_qa_get_run_knowledge"
       },
-      "requiredScopes": [
-        "read"
-      ],
       "resultKind": "unary",
       "risk": {
         "name": "fn:runs.knowledge",
@@ -746,9 +634,6 @@
         "kind": "projected",
         "tool": "agent_qa_list_runs"
       },
-      "requiredScopes": [
-        "read"
-      ],
       "resultKind": "unary",
       "risk": {
         "name": "fn:runs.list",
@@ -766,9 +651,6 @@
         "kind": "unprojected",
         "reason": "credential-mint-deferral"
       },
-      "requiredScopes": [
-        "read"
-      ],
       "resultKind": "unary",
       "risk": {
         "name": "fn:runs.liveurl",
@@ -786,9 +668,6 @@
         "kind": "projected",
         "tool": "agent_qa_mark_run"
       },
-      "requiredScopes": [
-        "knowledge-write"
-      ],
       "resultKind": "unary",
       "risk": {
         "declaredTier": "mutating-shared",
@@ -807,9 +686,6 @@
         "kind": "projected",
         "tool": "agent_qa_preview_run_mark"
       },
-      "requiredScopes": [
-        "read"
-      ],
       "resultKind": "unary",
       "risk": {
         "name": "fn:runs.mark.preview",
@@ -827,9 +703,6 @@
         "kind": "projected",
         "tool": "agent_qa_get_run_marks"
       },
-      "requiredScopes": [
-        "read"
-      ],
       "resultKind": "unary",
       "risk": {
         "name": "fn:runs.marks.history",
@@ -847,9 +720,6 @@
         "kind": "projected",
         "tool": "agent_qa_get_run_overview"
       },
-      "requiredScopes": [
-        "read"
-      ],
       "resultKind": "unary",
       "risk": {
         "name": "fn:runs.overview",
@@ -867,9 +737,6 @@
         "kind": "unprojected",
         "reason": "not-mid-flight-read"
       },
-      "requiredScopes": [
-        "read"
-      ],
       "resultKind": "unary",
       "risk": {
         "name": "fn:runs.postprocessing",
@@ -887,9 +754,6 @@
         "kind": "projected",
         "tool": "agent_qa_start_run"
       },
-      "requiredScopes": [
-        "run"
-      ],
       "resultKind": "unary",
       "risk": {
         "declaredTier": "mutating-local",

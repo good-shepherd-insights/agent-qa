@@ -1,11 +1,14 @@
 // 419 D-20: actual HTTP bearer resolution, catalog and invokeFunction over durable mark fixtures.
 // No provider calls. The positive case explicitly runs local-headless with trustMode FALSE.
+// 2026-10-01 (432-20, D-12): the listing no longer hides the mark tool and the function layer reads
+// no scope, so every token lists every tool and reaches every op. The mark door's own credential
+// refusal is unchanged until 432-21 removes the bearer credential; the cells are re-spelled in place.
 import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { createServer, type Server } from 'node:http'
 import { join } from 'node:path'
 import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client'
 import { AgentQaConfigSchema } from '@vostride/agent-qa-core'
-import { FunctionScopeError, invokeFunction } from '@vostride/agent-qa-agent'
+import { invokeFunction } from '@vostride/agent-qa-agent'
 import { KnowledgeGatesListResultSchema, RunsMarkOutcomeSchema } from '@vostride/agent-qa-schema'
 import { afterEach, describe, expect, it } from 'vitest'
 
@@ -87,7 +90,9 @@ async function harness(trustMode: boolean) {
 }
 
 describe('419 MCP sovereign mark bearer differential', () => {
-  it.each([false, true])('anonymous/reader remain excluded and refused when trustMode=%s', async trustMode => {
+  // RE-SPELLED 2026-10-01 (432-20) from 'anonymous/reader remain excluded and refused when
+  // trustMode=%s': they now LIST the mark tool, and its handler still refuses them until 432-21.
+  it.each([false, true])('anonymous/reader list the mark tool and its handler refuses them when trustMode=%s', async trustMode => {
     const h = await harness(trustMode)
     const anonymous = await h.connect()
     const reader = await h.connect(READER)
@@ -97,7 +102,7 @@ describe('419 MCP sovereign mark bearer differential', () => {
     expect(anonymousNames).toContain('agent_qa_change_knowledge')
     expect(anonymousNames).toContain(GATES_TOOL)
     for (const client of [anonymous, reader]) {
-      expect(await h.list(client)).not.toContain(MARK_TOOL)
+      expect(await h.list(client)).toContain(MARK_TOOL)
       const result = await h.mark(client)
       expect(result.isError).toBe(true)
       expect(result.structuredContent).toMatchObject({ status: 'credential-required', applied: false })
@@ -128,10 +133,11 @@ describe('419 MCP sovereign mark bearer differential', () => {
     expect(KnowledgeGatesListResultSchema.parse(gates.structuredContent).kind).toBe('found')
 
     const anonymous = await h.connect()
-    expect(await h.list(anonymous)).not.toContain(MARK_TOOL)
+    expect(await h.list(anonymous)).toContain(MARK_TOOL)
     expect((await h.mark(anonymous)).isError).toBe(true)
+    // 432-20 (D-12): the listing is the same for both, concurrently too.
     const lists = await Promise.all(Array.from({ length: 8 }, (_, index) => h.list(index % 2 ? writer : anonymous)))
-    lists.forEach((names, index) => expect(names.includes(MARK_TOOL)).toBe(index % 2 === 1))
+    lists.forEach((names) => expect(names).toEqual(lists[0]))
     expect((await h.mark(anonymous)).structuredContent).toMatchObject({ status: 'credential-required' })
     expect(h.ledgerBytes()).toBe(written)
     await expect(h.connect(INVALID)).rejects.toThrow()
@@ -140,30 +146,34 @@ describe('419 MCP sovereign mark bearer differential', () => {
     for (const secret of [WRITER, READER, INVALID, MARK_ONLY]) expect(h.frames.join('\n')).not.toContain(secret)
   })
 
-  it('a knowledge-write-only credential never grants missing config, authoring or run scopes', async () => {
+  // RE-SPELLED 2026-10-01 (432-20, D-12) from 'a knowledge-write-only credential never grants
+  // missing config, authoring or run scopes'. No scope gates anything, so the same credential lists
+  // and reaches every tool; the mark write itself is unaffected.
+  it('a knowledge-write-only credential lists and reaches every tool, scopes gating nothing', async () => {
     const h = await harness(false)
     const writer = await h.connect(MARK_ONLY)
     const names = await h.list(writer)
     expect(names).toContain(MARK_TOOL)
-    expect(names).not.toContain('agent_qa_change_config')
-    expect(names).not.toContain('agent_qa_write_test')
-    expect(names).not.toContain('agent_qa_start_run')
+    expect(names).toContain('agent_qa_change_config')
+    expect(names).toContain('agent_qa_write_test')
+    expect(names).toContain('agent_qa_start_run')
     expect((await h.mark(writer)).structuredContent).toMatchObject({ kind: 'marked' })
     const written = h.ledgerBytes()
     await writer.callTool({ name: 'agent_qa_change_config', arguments: {
       action: 'config.field.set', path: 'use.timeout.step', value: '45s',
     } }).catch(() => undefined)
-    expect(h.frames.at(-1)).toContain('not found')
-    // Bypass listing to prove the independent op-required-scope guard still refuses.
+    expect(h.frames.at(-1)).not.toContain('not found')
+    // Bypass listing: the function layer reads no scope either.
     const verdict = matchBearer(`Bearer ${MARK_ONLY}`, h.tokens)
     if (verdict.kind !== 'token') throw new Error('declared writer did not resolve')
     const caller = mcpFunctionCaller(verdict.scopes, credentialForBearer(verdict))
     expect(caller.credential).toBeDefined()
     // 2026-10-01 (432-17): `config.proposal.apply` was the subject until it was deleted; the
     // config-write field op is the same scope boundary.
-    await expect(invokeFunction(h.registry, 'config.field.set', {
+    const served = await invokeFunction(h.registry, 'config.field.set', {
       path: 'use.timeout.step', value: '45s',
-    }, caller)).rejects.toBeInstanceOf(FunctionScopeError)
+    }, caller).then(() => 'served', (error: unknown) => (error as Error).name)
+    expect(served).not.toBe('FunctionScopeError')
     expect(h.ledgerBytes()).toBe(written)
     for (const secret of [WRITER, READER, INVALID, MARK_ONLY]) expect(h.frames.join('\n')).not.toContain(secret)
   })

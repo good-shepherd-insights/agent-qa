@@ -470,7 +470,9 @@ describe('composeLocalAgent (D-15)', () => {
     // daemon before it wires one), and the catalog says so instead of hiding the capability.
     const declaration = host.registry.list(CALLER).find((entry) => entry.id === 'runs.start')
 
-    expect(declaration).toMatchObject({ requiredScopes: ['run'], bindingStatus: 'unbound' })
+    // 432-20 (D-12): no scope column on a declaration.
+    expect(declaration).toMatchObject({ bindingStatus: 'unbound' })
+    expect(Object.keys(declaration ?? {})).not.toContain('requiredScopes')
     await expect(invokeFunction(host.registry, 'runs.start', {}, CALLER))
       .rejects.toMatchObject({ name: 'FunctionNotBoundError' })
   })

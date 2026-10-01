@@ -7,7 +7,7 @@
 // Since 432-13 that path asks nobody (no gate, confirm port, grant reader or deny overlay).
 
 import type { AuditSink } from '@vostride/agent-qa-safety'
-import type { ExecutionContext, FunctionCaller, FunctionScope } from '@vostride/agent-qa-schema'
+import type { ExecutionContext, FunctionCaller } from '@vostride/agent-qa-schema'
 
 import { toOutputProjection, toSchemaProjection } from './declaration-projection.js'
 import type { FunctionBindingStatus } from './spec.js'
@@ -100,9 +100,6 @@ export class MissingAuditSinkError extends Error {
     this.name = 'MissingAuditSinkError'
   }
 }
-
-/** The scopes safe mode is willing to list. Cosmetic only — see `FunctionCaller`. */
-const SAFE_MODE_SCOPES: readonly FunctionScope[] = ['read']
 
 /** The capabilities every composition of this layer registers. */
 const BUILT_IN_FUNCTION_SPECS: readonly FunctionSpec[] = [
@@ -358,17 +355,24 @@ export interface CreateFunctionRegistryOptions {
    */
   auditSink: AuditSink
   /**
-   * The host's execution-context answer. Unread since 432-13 — no op gate decides in a context any
-   * more — and kept so hosts keep one spelling of it until the permission wave narrows this type.
+   * RETIRED, UNREAD (432-13; narrowed to transitional in 432-20). No op gate decides in an
+   * execution context any more, and nothing in this module reads the option. It stays OPTIONAL
+   * rather than deleted for the same bounded reason the permission metadata does: 84 fixture
+   * registries across about 60 test files still pass it, and those files belong to the fixture
+   * sweeps (432-23–38). 432-39 deletes it with the other transitional shapes. No runtime branch
+   * reads it, so passing it changes nothing.
    */
   resolveExecutionContext?: () => ExecutionContext
 }
 
 export interface FunctionRegistry {
   /**
-   * Declaration views, sorted lexicographically by id. When `caller.safeMode` is true
-   * the listing hides ops whose required scopes exceed `read` — a COSMETIC filter;
-   * enforcement stays server-side in `invokeFunction` (FUNC-03).
+   * Declaration views of every registered op, sorted lexicographically by id.
+   *
+   * 2026-10-01 (432-20, D-12): the same list for every caller. The safe-mode filter that hid ops
+   * whose scopes exceeded `read` is deleted with the scopes themselves, so the caller argument is
+   * not read; it stays in the signature so the doors keep one call shape while 432-39 narrows the
+   * caller contract.
    */
   list(caller: FunctionCaller): readonly FunctionDeclaration[]
 }
@@ -408,7 +412,6 @@ export function registryInternals(registry: FunctionRegistry): RegistryInternals
  * a fresh object if the caller needs a mutable one afterwards.
  */
 function freezeSpec(spec: FunctionSpec): FunctionSpec {
-  Object.freeze(spec.requiredScopes)
   Object.freeze(spec.risk)
   return Object.freeze(spec)
 }
@@ -456,14 +459,12 @@ function declarationView(spec: FunctionSpec, deps: FunctionDeps): FunctionDeclar
   return Object.freeze({
     id: spec.id,
     summary: spec.summary,
-    requiredScopes: Object.freeze([...spec.requiredScopes]),
-    // 391 D-06: carried onto the declaration for the reason `requiredScopes` is — what a caller
-    // was SHOWN and what the gate enforces read the same field, so a chat toolset that filters
-    // the verb out of its listing and `invokeFunction` refusing it cannot disagree (D-16). The
-    // filter is UX; this field's enforcement is one check in the dispatch path.
-    ...(spec.requiresHumanOrigin === undefined ? {} : { requiresHumanOrigin: true as const }),
-    // 397 D-05: the PRESENCE of a disclosure, projected the way the line above projects the
-    // origin requirement — the same conditional spread, so absent stays absent. The method
+    // 2026-10-01 (432-20, D-10/D-12): no `requiredScopes` and no `requiresHumanOrigin`. Both were
+    // projected here so a listing and the dispatch checks read one field; the checks are deleted,
+    // and a spec that still carries either key (until 432-39 removes the metadata) does not pass
+    // it on. The view is built field by field, so an old key cannot ride through by accident.
+    // 397 D-05: the PRESENCE of a disclosure, projected as a conditional spread, so absent stays
+    // absent. The method
     // itself never crosses: what a listing receives is the boolean fact that a confirm prompt
     // for this op will say what the invocation costs, and the golden capability snapshot reads
     // that column off here instead of off somebody's reading of the op source.
@@ -538,13 +539,8 @@ export function createRegistryFromSpecs(
   ))
 
   const registry: FunctionRegistry = {
-    list(caller) {
-      return sorted
-        .filter((spec) => (
-          !caller.safeMode ||
-          spec.requiredScopes.every((scope) => SAFE_MODE_SCOPES.includes(scope))
-        ))
-        .map((spec) => declarationView(spec, options.deps))
+    list() {
+      return sorted.map((spec) => declarationView(spec, options.deps))
     },
   }
 

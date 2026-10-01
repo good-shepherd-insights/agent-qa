@@ -168,7 +168,7 @@ describe('analysis.get — binding and refusal (D-09/D-11)', () => {
     const registry = registryWith({ handoff })
 
     expect(registry.list(CALLER).find((entry) => entry.id === ANALYSIS_GET_FUNCTION_ID))
-      .toMatchObject({ requiredScopes: ['read'], resultKind: 'unary', bindingStatus: 'unbound' })
+      .toMatchObject({ resultKind: 'unary', bindingStatus: 'unbound' })
 
     const refusal = analysisOf(registry, String(handoff.runId))
     await expect(refusal).rejects.toBeInstanceOf(FunctionNotBoundError)

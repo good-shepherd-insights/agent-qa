@@ -37,7 +37,6 @@ import type {
 
 import { WRITE_AGENT_INSTRUCTIONS_FLAG } from '../commands/knowledge-guide.js'
 import { resolveConfig } from '../config.js'
-import { CLI_FUNCTION_CALLER } from '../composition/local-agent-host.js'
 import { DEFAULT_MCP_SCOPES } from '../composition/mcp-token-resolution.js'
 import { loadCapabilityCatalog } from './loader.js'
 
@@ -162,11 +161,10 @@ export async function buildAgentManifest(
       // set is DERIVED from the closed scope union by excluding `config-write`, so a scope minted
       // tomorrow joins it there and would not join a copy.
       defaultScopes: [...DEFAULT_MCP_SCOPES],
-      // Likewise read from the composition that mints it rather than restated. Every local
-      // composition root in this product mints `false` — safe mode is a listing filter a HOST turns
-      // on, and no local host does — and reading the constant is what keeps this line honest on the
-      // day one of them starts.
-      safeMode: CLI_FUNCTION_CALLER.safeMode,
+      // 2026-10-01 (432-20, D-12): the registry's safe-mode listing filter is deleted, so no
+      // composition hides an op from a listing and the honest answer is a constant `false`. The
+      // posture key itself is permission metadata 432-39 retires with the catalogue's scope column.
+      safeMode: false,
       tokenEnvRefs: [...tokenEnvRefs],
       configuration,
     },

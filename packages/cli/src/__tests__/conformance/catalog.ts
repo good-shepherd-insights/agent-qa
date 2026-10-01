@@ -763,7 +763,7 @@ export function catalogOpRowOf(declaration: FunctionDeclaration): CatalogOpRow {
     docPath: doc.docPath,
     ...(doc.docAnchor === undefined ? {} : { docAnchor: doc.docAnchor }),
     ...(doc.docAbsentReason === undefined ? {} : { docAbsentReason: doc.docAbsentReason }),
-    requiredScopes: [...declaration.requiredScopes].sort(),
+    // 2026-10-01 (432-20, D-12): no `requiredScopes` column; declarations carry no scopes.
     // DERIVED FROM `declaration.input`, which is the same value `params` above carries — so the
     // example and the contract it exemplifies are one document read twice, never two.
     exampleCall: example.exampleCall,

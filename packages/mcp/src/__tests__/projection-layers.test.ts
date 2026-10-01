@@ -1,5 +1,11 @@
 // The two predicates the projection is built out of, driven directly (Phase 396 plan 01).
 //
+// 2026-10-01 (432-20, D-12): ONE PREDICATE NOW. `visibleToCaller` — the per-caller visibility law —
+// is deleted with the scopes it compared, so its cells are re-spelled as C432-TOKENLESS-CATALOG
+// below: real servers built for tokenless stdio- and HTTP-shaped callers (and for records still
+// carrying retired grants) list the same tools and resource templates and dispatch identically,
+// while a malformed request still fails through the ordinary schema for each of them.
+//
 // WHY THIS FILE EXISTS BESIDE THE TRACER. `mcp-tracer.test.ts` over in the CLI package proves the
 // whole path end to end through a real client against a real composed registry — that is the
 // architectural claim, and it is the right shape for it. What an end-to-end cell cannot do is show
@@ -10,6 +16,15 @@
 // Each cell names the mutation it is the bar for. A cell that no plausible wrong implementation
 // reds is decoration, and this project has measured that lesson more than once.
 
+import { Client } from '@modelcontextprotocol/client'
+import { InMemoryTransport } from '@modelcontextprotocol/server'
+import { createFunctionRegistry } from '@vostride/agent-qa-agent'
+import type {
+  CreateFunctionRegistryOptions,
+  FunctionDeps,
+  FunctionRegistry,
+} from '@vostride/agent-qa-agent'
+import type { FunctionCaller } from '@vostride/agent-qa-schema'
 import { describe, expect, it } from 'vitest'
 
 // 2026-09-30 (432-12 D-05): the read fixture was `agent_qa_list_proposals` over `proposals.list`,
@@ -23,9 +38,9 @@ import {
   compositionOf,
 } from '../mapping.js'
 import type { ToolOpContracts, ToolProjection } from '../mapping.js'
+import { buildAgentQaMcpServer } from '../catalog.js'
 import { McpProjectionError, toRegisterToolConfig } from '../projection.js'
 import type { ProjectedOpSpec } from '../projection.js'
-import { visibleToCaller } from '../visibility.js'
 
 const READ_PROJECTION: ToolProjection = {
   name: 'agent_qa_get_run_marks',
@@ -37,7 +52,6 @@ function spec(overrides: Partial<ProjectedOpSpec> = {}): ProjectedOpSpec {
   return {
     id: 'runs.marks.history',
     summary: 'Read the marks recorded against one run, and what each applied.',
-    requiredScopes: ['read'],
     risk: { name: 'fn:runs.marks.history', recognized: true, readOnly: true },
     input: AGENT_QA_OP_CONTRACTS['runs.marks.history']!.input,
     output: AGENT_QA_OP_CONTRACTS['runs.marks.history']!.output,
@@ -45,34 +59,112 @@ function spec(overrides: Partial<ProjectedOpSpec> = {}): ProjectedOpSpec {
   }
 }
 
-describe('visibleToCaller (D-05)', () => {
-  it('admits a caller granted every required scope', () => {
-    expect(visibleToCaller(['read'], ['read', 'run'])).toBe(true)
+// ---- C432-TOKENLESS-CATALOG (432-20, D-12) — re-spelled from 'visibleToCaller (D-05)' ----------
+
+const auditSink = {
+  appendGuardrailAudit() {},
+} as unknown as CreateFunctionRegistryOptions['auditSink']
+
+/** A real registry over every built-in op, with a knowledge reader that answers an empty list. */
+function realRegistry(): FunctionRegistry {
+  return createFunctionRegistry({
+    deps: {
+      knowledge: { listBundles: () => Promise.resolve([]) },
+    } as unknown as FunctionDeps,
+    auditSink,
+  })
+}
+
+/**
+ * The caller records the doors mint, and records still carrying retired grants. The stdio and HTTP
+ * doors mint the same tokenless shape since D-12; the other two differ from it in every retired
+ * permission field, so an identical answer for all four is the whole claim.
+ */
+const DOOR_CALLERS: Readonly<Record<string, FunctionCaller>> = {
+  'tokenless stdio': { surface: 'mcp', origin: 'agent' },
+  'tokenless http': { surface: 'mcp', origin: 'agent' },
+  'legacy every-scope': {
+    surface: 'mcp',
+    origin: 'agent',
+    grantedScopes: ['read', 'run', 'config-write', 'knowledge-write', 'approval-write', 'test-write'],
+    safeMode: false,
+  },
+  'legacy nothing, safe mode': { surface: 'mcp', origin: 'agent', grantedScopes: [], safeMode: true },
+}
+
+async function withClient<Answer>(
+  caller: FunctionCaller,
+  body: (client: Client) => Promise<Answer>,
+): Promise<Answer> {
+  const server = buildAgentQaMcpServer({ registry: realRegistry(), caller, maskText: (text) => text })
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair()
+  await server.connect(serverTransport)
+  const client = new Client({ name: 'c432-tokenless', version: '0.0.0' })
+  await client.connect(clientTransport)
+  try {
+    return await body(client)
+  } finally {
+    await client.close()
+    await server.close()
+  }
+}
+
+/** Everything discovery tells a caller: tools (name, schemas, annotations) and resource templates. */
+async function discovery(caller: FunctionCaller): Promise<string> {
+  return withClient(caller, async (client) => JSON.stringify({
+    tools: (await client.listTools()).tools,
+    templates: (await client.listResourceTemplates()).resourceTemplates,
+  }))
+}
+
+describe('C432-TOKENLESS-CATALOG: identical discovery and dispatch for every caller (432-20, D-12)', () => {
+  it('lists the same tools and resource templates to every door caller', async () => {
+    const answers = await Promise.all(Object.values(DOOR_CALLERS).map(discovery))
+    const parsed = JSON.parse(answers[0]!) as { tools: { name: string }[]; templates: unknown[] }
+    // Non-vacuity: the catalogue is the full projected set this composition registers.
+    expect(parsed.tools.length).toBeGreaterThan(10)
+    expect(parsed.templates.length).toBeGreaterThan(0)
+    for (const [label, answer] of Object.entries(DOOR_CALLERS).map(
+      ([name], index) => [name, answers[index]!] as const,
+    )) {
+      expect(answer, label).toBe(answers[0])
+    }
   })
 
-  // THE BAR: an implementation using `some` instead of `every` — the single most natural way to get
-  // this wrong — passes the cell above and reds here, because one of the two required scopes is
-  // granted. A predicate that only ever saw single-scope ops could not tell the two apart.
-  it('refuses a caller missing ONE of several required scopes', () => {
-    expect(visibleToCaller(['test-write', 'run'], ['run'])).toBe(false)
+  it('lists every projected tool whose ops the composition registers, to a tokenless caller', async () => {
+    const listed = await withClient(DOOR_CALLERS['tokenless stdio']!, async (client) =>
+      (await client.listTools()).tools.map((tool) => tool.name))
+    const registered = new Set(realRegistry().list(DOOR_CALLERS['tokenless stdio']!).map((row) => row.id))
+    const servable = AGENT_QA_TOOL_PROJECTIONS
+      .filter((projection) => projection.ops.every((op) => registered.has(op)))
+      .map((projection) => projection.name)
+    expect([...listed].sort()).toEqual([...servable].sort())
   })
 
-  it('refuses a caller granted nothing at all', () => {
-    expect(visibleToCaller(['read'], [])).toBe(false)
+  it('dispatches a read identically for every door caller', async () => {
+    const answers = await Promise.all(Object.values(DOOR_CALLERS).map((caller) =>
+      withClient(caller, async (client) => JSON.stringify(
+        await client.callTool({ name: 'agent_qa_list_knowledge_bundles', arguments: {} }),
+      ))))
+    expect(JSON.parse(answers[0]!)).not.toHaveProperty('isError', true)
+    for (const answer of answers) expect(answer).toBe(answers[0])
   })
 
-  // The safe-mode instance of the law, stated as the law rather than as a carve-out: granting only
-  // `read` is exactly what the registry's own `SAFE_MODE_SCOPES` filter does, so a config-write op
-  // is invisible without either side knowing the phrase "safe mode".
-  it('is the safe-mode filter when the only granted scope is read', () => {
-    expect(visibleToCaller(['read'], ['read'])).toBe(true)
-    expect(visibleToCaller(['config-write'], ['read'])).toBe(false)
-  })
-
-  // An op declaring no scopes has said it needs no grant. Asserted because the opposite reading —
-  // an implicit floor — is a tempting "safe" default that would silently contradict the op.
-  it('admits an op that requires no scope at all', () => {
-    expect(visibleToCaller([], [])).toBe(true)
+  it('refuses a malformed request through the ordinary schema, identically for every caller', async () => {
+    const answers = await Promise.all(Object.values(DOOR_CALLERS).map((caller) =>
+      withClient(caller, async (client) => {
+        try {
+          return JSON.stringify(await client.callTool({
+            name: 'agent_qa_list_knowledge_bundles',
+            arguments: { unexpected: true },
+          }))
+        } catch (error: unknown) {
+          return JSON.stringify({ thrown: (error as Error).message })
+        }
+      })))
+    expect(answers[0]).toMatch(/unexpected|Unrecognized|Invalid/i)
+    expect(answers[0]).not.toMatch(/scope|credential|not found/i)
+    for (const answer of answers) expect(answer).toBe(answers[0])
   })
 })
 
@@ -110,12 +202,11 @@ describe('toRegisterToolConfig (D-16)', () => {
   })
 
   // THE BAR: a derivation hard-coding `readOnlyHint: true` (plausible while the only projected tool
-  // is a read) passes every cell above and reds here. The op below declares neither `readOnly` nor
-  // a read-only scope set, so both signals must be consulted and both must answer no.
+  // is a read) passes every cell above and reds here. The op below does not declare `readOnly`, and
+  // since 432-20 that declaration is the only signal consulted.
   it('refuses readOnlyHint for an op that writes, and carries its destructive declaration', () => {
     const writing = spec({
       id: 'config.field.set',
-      requiredScopes: ['config-write'],
       risk: { name: 'fn:config.field.set', recognized: true, destructive: true },
     })
     const projection: ToolProjection = {
@@ -194,7 +285,7 @@ describe('toRegisterToolConfig (D-16)', () => {
     }
     const config = toRegisterToolConfig(
       projection,
-      [spec({ id: 'runs.start', requiredScopes: ['run'], risk: { name: 'fn:runs.start', recognized: true } })],
+      [spec({ id: 'runs.start', risk: { name: 'fn:runs.start', recognized: true } })],
       advertised(projection),
       identity,
     )

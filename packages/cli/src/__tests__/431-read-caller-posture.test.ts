@@ -24,7 +24,7 @@ import { fileURLToPath } from 'node:url'
 
 import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client'
 import { StdioClientTransport } from '@modelcontextprotocol/client/stdio'
-import { FunctionScopeError, invokeFunction } from '@vostride/agent-qa-agent'
+import { invokeFunction } from '@vostride/agent-qa-agent'
 import { AgentQaConfigSchema } from '@vostride/agent-qa-core'
 import { generateRunId } from '@vostride/agent-qa-ids'
 import { FsEvidenceArtifactStore } from '@vostride/agent-qa-runner-local'
@@ -154,27 +154,21 @@ describe('READ-CALLER-MATRIX (D-07 · T-431-11)', () => {
     for (const secret of [READER, NO_READ, WRITER]) expect(h.frames.join('\n')).not.toContain(secret)
   })
 
-  it('a no-read bearer neither lists nor reaches the tool, even by its hidden name', async () => {
+  // RE-SPELLED 2026-10-01 (432-20, D-12) from 'a no-read bearer neither lists nor reaches the tool,
+  // even by its hidden name'. No scope gates the listing or the op, so the no-read bearer reads the
+  // screenshot like every other caller; the evidence masking and decoding claims are unchanged.
+  it('a no-read bearer lists and reaches the tool like every caller', async () => {
     const h = await httpHost()
     const client = await h.connect(NO_READ)
-    expect(await listNames(client)).not.toContain(TOOL)
-
-    let refused: string | undefined
-    try {
-      const result = await fetchScreenshot(client, h.runId, h.sha)
-      expect(result.isError).toBe(true)
-      expect(result.structuredContent).toBeUndefined()
-      refused = JSON.stringify(result.content)
-    } catch (err) {
-      refused = err instanceof Error ? err.message : String(err)
-    }
-    expect(refused).toContain(TOOL)
-    expect(h.frames.join('\n')).not.toContain(PNG_BASE64.slice(0, 16))
+    expect(await listNames(client)).toContain(TOOL)
+    expectScreenshot(await fetchScreenshot(client, h.runId, h.sha))
 
     const verdict = matchBearer(`Bearer ${NO_READ}`, h.tokens)
     if (verdict.kind !== 'token') throw new Error('the no-read bearer did not resolve')
-    await expect(invokeFunction(h.registry, 'runs.artifact', { runId: h.runId, sha: h.sha },
-      mcpFunctionCaller(verdict.scopes, credentialForBearer(verdict)))).rejects.toBeInstanceOf(FunctionScopeError)
+    const served = await invokeFunction(h.registry, 'runs.artifact', { runId: h.runId, sha: h.sha },
+      mcpFunctionCaller(verdict.scopes, credentialForBearer(verdict)))
+      .then(() => 'served', (error: unknown) => (error as Error).name)
+    expect(served).toBe('served')
     for (const secret of [READER, NO_READ, WRITER]) expect(h.frames.join('\n')).not.toContain(secret)
   })
 

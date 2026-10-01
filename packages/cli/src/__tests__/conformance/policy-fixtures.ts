@@ -6,11 +6,11 @@
 // scenario table owns which points each row declares. Splitting it that way is what keeps the
 // fixtures from quietly encoding the answer they are supposed to be measuring.
 //
-// EVERY CALLER IS DERIVED FROM THE OP'S OWN DECLARATION. `coveringCallerFor` reads
-// `declaration.requiredScopes`; `refusingCallerFor` withholds one of them, by name, and says which.
-// Neither spells a scope. A fixture that listed scopes per op would be a second copy of the
-// declaration's scope list — one that falls behind the day a scope is widened, and then passes
-// forever on the smaller world, which is the exact failure 387-08 measured.
+// NO CALLER HOLDS A GRANT (2026-10-01, 432-20, D-12). Until the permission wave the covering caller
+// held exactly an op's declared scopes and the refusing caller withheld one. Declarations carry no
+// scopes and `invokeFunction` reads none, so the covering caller is the tokenless record every door
+// now mints, and the refuse point is retired — there is no grant left to withhold. No scope is
+// spelled here, and none is read.
 //
 // THE EXECUTION CONTEXT IS INJECTED AND NEVER READ FROM THE AMBIENT PROCESS (Pitfall 3). The shipped
 // resolver answers `ci` whenever CI markers are present, so anything computed against the ambient
@@ -31,10 +31,10 @@
 import type { FunctionDeclaration } from '@vostride/agent-qa-agent'
 import { CHAT_RESOLVER_CALLER } from '@vostride/agent-qa-agent-local'
 import { classifyRisk } from '@vostride/agent-qa-safety'
-import type { ExecutionContext, FunctionCaller, FunctionScope } from '@vostride/agent-qa-schema'
+import type { ExecutionContext, FunctionCaller } from '@vostride/agent-qa-schema'
 import type { RiskActionDescriptor } from '@vostride/agent-qa-schema'
 
-import { mcpFunctionCaller } from '../../commands/mcp.js'
+import { MCP_DEFAULT_GRANTED_SCOPES, mcpFunctionCaller } from '../../commands/mcp.js'
 
 /**
  * The one execution context every conformance policy decision is taken in.
@@ -50,73 +50,40 @@ export const conformanceResolveExecutionContext = (): ExecutionContext =>
   CONFORMANCE_EXECUTION_CONTEXT
 
 /** A caller record in the suite's own surface, so an audit row can never be mistaken for a host's. */
-function conformanceCaller(grantedScopes: readonly FunctionScope[]): FunctionCaller {
+function conformanceCaller(): FunctionCaller {
   return Object.freeze({
     surface: 'conformance',
-    grantedScopes: [...grantedScopes],
-    safeMode: false,
-    // `human`, deliberately. Two ops declare `requiresHumanOrigin` and an agent-origin caller is
-    // refused BEFORE the scope check — so a covering caller minted as an agent would produce a
-    // refusal on the wrong axis while looking like it had measured the grant point.
+    // `human`, as before: since 432-20 the origin decides nothing, and keeping the value the suite
+    // always used means a re-spelled cell differs from its old self only in the grants.
     origin: 'human',
   })
 }
 
 /**
- * The GRANT point's caller: exactly the scopes this op declares it needs, and nothing else.
+ * The covering caller for an op: the tokenless record, holding no grant at all (432-20, D-12).
  *
- * Exactly, not the full union: a caller holding every scope would pass the grant point for an op
- * whose `requiredScopes` had silently emptied, and "this op needs nothing" is a claim the suite
- * should be able to notice rather than to satisfy.
+ * Until 432-20 this held exactly the op's declared scopes, so a caller holding every scope could not
+ * mask an op whose scopes had silently emptied. With no scopes declared or read, a caller holding
+ * NOTHING is the strongest covering caller there is: anything it reaches, every caller reaches.
  */
-export function coveringCallerFor(declaration: FunctionDeclaration): FunctionCaller {
-  return conformanceCaller(declaration.requiredScopes)
+export function coveringCallerFor(_declaration: FunctionDeclaration): FunctionCaller {
+  return conformanceCaller()
 }
 
-/** The refusing caller, and the grant that was deliberately withheld to make it refuse. */
-export interface RefusingCallerFixture {
-  readonly caller: FunctionCaller
-  readonly withheldScope: FunctionScope
-}
-
-/**
- * The REFUSE point's caller: the covering grant minus one scope, named.
- *
- * The withheld scope is RETURNED rather than merely omitted, because the refusal a leg asserts has
- * to be attributable — "refused" is a fact about a caller and an op together, and a leg that could
- * not say which grant was missing would report the same green whether the refusal came from the
- * scope wall, the origin wall or an input error.
- *
- * The scopes are sorted before the first is dropped, so which one is withheld is a function of the
- * declaration and not of the order a spec happened to list them in — a reordering must not silently
- * change what this suite measures.
- */
-export function refusingCallerFor(declaration: FunctionDeclaration): RefusingCallerFixture {
-  const ordered = [...declaration.requiredScopes].sort()
-  const withheldScope = ordered[0]
-  if (withheldScope === undefined) {
-    throw new Error(
-      `${declaration.id}: declares no required scope, so no caller can be made to lack one — `
-        + 'the refuse point is unstateable for this op and that is a defect in the declaration',
-    )
-  }
-  return {
-    caller: conformanceCaller(ordered.slice(1)),
-    withheldScope,
-  }
-}
+// 2026-10-01 (432-20, D-12): `refusingCallerFor` and `RefusingCallerFixture` are deleted. The refuse
+// point was "the covering grant minus one scope, named"; no grant is read, so there is nothing to
+// withhold and no refusal on that axis to attribute.
 
 // ---- The two surfaces' own caller mints (397-04, legs 3 and 4) ---------------------------------
 
 /**
- * One capability's caller, as each rostered surface would mint it for the same grant.
+ * One capability's caller, as each rostered surface would mint it.
  *
  * BOTH SIDES ARE PRODUCED BY THE SURFACE THAT OWNS THEM, and that is the whole point of this type
  * existing rather than a `surface` argument on one builder. `CHAT_RESOLVER_CALLER` is the frozen
  * record `composeLocalAgent` spreads at its own `mint.forStage`; `mcpFunctionCaller` is the function
  * `commands/mcp.ts` composes its server with. A parity assertion whose two comparands came out of
- * ONE builder with a different string is a value compared to itself: it passes whatever the product
- * does, which is precisely the vacuity 397-02 measured and handed forward.
+ * ONE builder with a different string is a value compared to itself.
  */
 export interface SurfaceShapedCallers {
   readonly chat: FunctionCaller
@@ -124,45 +91,45 @@ export interface SurfaceShapedCallers {
 }
 
 /**
- * The two surfaces' callers for one grant, each minted the way its own surface mints.
+ * The two surfaces' callers, each minted the way its own surface mints today: the chat resolver's
+ * record verbatim, and the MCP door's anonymous mint over its default grant.
  *
- * They differ in TWO fields, and both differences are real product facts rather than fixture noise:
- * `surface` (attribution, which nothing in the function layer may branch on — FUNC-03) and `origin`
- * (`human` for the deterministic chat route, `agent` for MCP — 391 D-06, the self-grant rule). The
- * origin difference is DATA the gate is entitled to answer differently on, so a cell that asserted
- * these two must always agree would be asserting the product wrong. See
- * {@link surfaceInertCallers} for the comparison that isolates `surface`.
+ * They differ in `surface`, `origin` and the retired grant fields. Since 432-20 (D-10/D-12) none of
+ * those is read by the function layer, so the two must answer alike for every capability.
  */
-export function surfaceShapedCallers(
-  grantedScopes: readonly FunctionScope[],
-): SurfaceShapedCallers {
+export function surfaceShapedCallers(): SurfaceShapedCallers {
   return {
-    chat: Object.freeze({ ...CHAT_RESOLVER_CALLER, grantedScopes: [...grantedScopes] }),
-    mcp: Object.freeze(mcpFunctionCaller([...grantedScopes])),
+    chat: Object.freeze({ ...CHAT_RESOLVER_CALLER }),
+    mcp: Object.freeze(mcpFunctionCaller([...MCP_DEFAULT_GRANTED_SCOPES])),
   }
 }
 
 /**
- * The same two callers with every field but `surface` harmonised.
- *
- * THIS IS FUNC-03's CLAIM, stated so it can be measured: a caller is DATA, and `surface` is
- * attribution only. Two records that agree on grants, origin and safe mode and disagree only on
- * which surface minted them must produce the same verdict for every capability — `if
- * (caller.surface === 'chat')` is the anti-pattern `invoke.ts` names at its head, and this is the
- * cell that would red on it.
- *
- * The harmonised origin is the CHAT mint's, taken off the shipped record rather than written here,
- * because it is the one under which every capability is reachable: three ops declare
- * `requiresHumanOrigin` and would refuse an agent-origin caller BEFORE the gate, which would leave
- * the surface question unasked on exactly the capabilities that most need it answered.
+ * The same two callers with every field but `surface` harmonised — FUNC-03's claim, isolated: two
+ * records that agree on everything else and disagree only on which surface minted them.
  */
-export function surfaceInertCallers(
-  grantedScopes: readonly FunctionScope[],
-): SurfaceShapedCallers {
-  const shaped = surfaceShapedCallers(grantedScopes)
+export function surfaceInertCallers(): SurfaceShapedCallers {
+  const shaped = surfaceShapedCallers()
   return {
     chat: shaped.chat,
-    mcp: Object.freeze({ ...shaped.mcp, origin: shaped.chat.origin, safeMode: shaped.chat.safeMode }),
+    mcp: Object.freeze({
+      ...shaped.mcp,
+      origin: shaped.chat.origin,
+      grantedScopes: shaped.chat.grantedScopes,
+      safeMode: shaped.chat.safeMode,
+    }),
+  }
+}
+
+/**
+ * The two surfaces' callers stripped of every grant — the shortest caller each surface could hand
+ * the function layer. Used by the retired refuse legs to show nothing refuses them (432-20).
+ */
+export function grantlessSurfaceCallers(): SurfaceShapedCallers {
+  const inert = surfaceInertCallers()
+  return {
+    chat: Object.freeze({ ...inert.chat, grantedScopes: [] }),
+    mcp: Object.freeze({ ...inert.mcp, grantedScopes: [] }),
   }
 }
 

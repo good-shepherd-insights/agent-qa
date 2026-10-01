@@ -504,16 +504,18 @@ describe('agent-qa fn (generic function invoker)', () => {
     expect(first).toEqual(second)
   })
 
-  it('lists every registered function id with its scopes, result kind and binding', async () => {
+  // RE-SPELLED 2026-10-01 (432-20, D-12) from 'lists every registered function id with its scopes,
+  // result kind and binding'. Declarations carry no scopes, so the listing has no scope column.
+  it('lists every registered function id with its result kind and binding, and no scope column', async () => {
     const workspace = fixtureWorkspace(roots)
 
     const result = await invoke(workspace, ['--list', '--json'])
 
     expect(result.stderr).toBe('')
     expect(result.exitCode).toBeUndefined()
+    expect(result.stdout).not.toContain('requiredScopes')
     const declarations = JSON.parse(result.stdout) as {
       id: string
-      requiredScopes: string[]
       resultKind: string
       bindingStatus: string
     }[]
@@ -525,7 +527,6 @@ describe('agent-qa fn (generic function invoker)', () => {
     // drift direction this case exists to catch. Every phase that adds an op repins it here on
     // purpose; 387-06 and 387-08 each add more and will each have to.
     expect(Object.fromEntries(declarations.map((declaration) => [declaration.id, {
-      requiredScopes: declaration.requiredScopes,
       resultKind: declaration.resultKind,
       bindingStatus: declaration.bindingStatus,
     }]))).toEqual({
@@ -533,18 +534,18 @@ describe('agent-qa fn (generic function invoker)', () => {
       // turn engine in every local composition. Its presence in the CLI's own catalog is the L10
       // claim made observable: `agent-qa ask` reaches the turn through the same registry listing
       // this test reads, so the REPL holds no capability the catalogue does not declare.
-      'agent.ask': { requiredScopes: ['read'], resultKind: 'unary', bindingStatus: 'bound' },
+      'agent.ask': { resultKind: 'unary', bindingStatus: 'bound' },
       // 398 D-09: the catalog explainer. BOUND on this host, and — like `runs.start` below — not
       // because a literal was flipped: `composeCliLocalAgent` constructs the catalog port
       // unconditionally, because a CLI always ships beside the committed capability catalog. It
       // read `unbound` between 398-07's Task 1 and Task 2, which is the whole point of computing
       // the column: the capability was registered before this host could run it, and the ledger
       // said so for exactly that long.
-      'agent.explain': { requiredScopes: ['read'], resultKind: 'unary', bindingStatus: 'bound' },
+      'agent.explain': { resultKind: 'unary', bindingStatus: 'bound' },
       // 389 D-11: THE analysis read — verdicts + sentences + clusters. BOUND since plan 06:
       // the composition root binds the artifact reader over `agentQaRoot` in every local
       // composition, so an artifact-less run answers the floor rather than a refusal.
-      'analysis.get': { requiredScopes: ['read'], resultKind: 'unary', bindingStatus: 'bound' },
+      'analysis.get': { resultKind: 'unary', bindingStatus: 'bound' },
       // 393 D-01: the keep-gate evaluator. BOUND on this host, and — like `runs.start` below — not
       // because a literal was flipped: this composition supplies BOTH halves the binding needs, a
       // run executor and the draft-authoring port over `parseTestFile`, and `bindingStatus` reports
@@ -555,7 +556,6 @@ describe('agent-qa fn (generic function invoker)', () => {
       // records back through the sibling ops (D-02, op-calls-op), which also makes it non-read and
       // therefore filtered out of safe mode with `runs.start`.
       'authoring.draft.verify': {
-        requiredScopes: ['run', 'read'],
         resultKind: 'unary',
         bindingStatus: 'bound',
       },
@@ -566,7 +566,6 @@ describe('agent-qa fn (generic function invoker)', () => {
       // that scope for exactly this declaration, and it is what a listing shows a person who asks
       // what authoring a test costs them.
       'authoring.draft.write': {
-        requiredScopes: ['test-write', 'run', 'read'],
         resultKind: 'unary',
         bindingStatus: 'bound',
       },
@@ -576,7 +575,6 @@ describe('agent-qa fn (generic function invoker)', () => {
       // starts nothing, so a listing shows a person that letting the agent edit their tests does
       // not also buy it the power to spend their machine on runs.
       'authoring.draft.edit': {
-        requiredScopes: ['test-write', 'read'],
         resultKind: 'unary',
         bindingStatus: 'bound',
       },
@@ -587,7 +585,6 @@ describe('agent-qa fn (generic function invoker)', () => {
       // a person who asks what reading their own authoring history costs them; the exposure it
       // implies is stated in the op's own header so a reviewer can object to the tier.
       'authoring.funnel.get': {
-        requiredScopes: ['read'],
         resultKind: 'unary',
         bindingStatus: 'bound',
       },
@@ -598,26 +595,22 @@ describe('agent-qa fn (generic function invoker)', () => {
       // propose op carries the write scope because the scope describes what the CAPABILITY is
       // about, not what one call happens to reach.
       'config.auth.set': {
-        requiredScopes: ['config-write'],
         resultKind: 'unary',
         bindingStatus: 'bound',
       },
       'config.field.set': {
-        requiredScopes: ['config-write'],
         resultKind: 'unary',
         bindingStatus: 'bound',
       },
       'config.hook.add': {
-        requiredScopes: ['config-write'],
         resultKind: 'unary',
         bindingStatus: 'bound',
       },
-      'config.get': { requiredScopes: ['read'], resultKind: 'unary', bindingStatus: 'bound' },
+      'config.get': { resultKind: 'unary', bindingStatus: 'bound' },
       // 395-08 D-04: BOUND, because `scaffoldContent` needs no filesystem and no repository — it is
       // a pure render of the one producer `agent-qa init` writes from, so there is no CLI posture
       // in which the scaffold is unavailable.
       'config.project.scaffold': {
-        requiredScopes: ['config-write'],
         resultKind: 'unary',
         bindingStatus: 'bound',
       },
@@ -628,32 +621,27 @@ describe('agent-qa fn (generic function invoker)', () => {
       // nothing else, which is what a listing shows a person who asks what letting the agent edit
       // their configuration costs them.
       'config.target.create': {
-        requiredScopes: ['config-write'],
         resultKind: 'unary',
         bindingStatus: 'bound',
       },
       'config.target.edit': {
-        requiredScopes: ['config-write'],
         resultKind: 'unary',
         bindingStatus: 'bound',
       },
       // BOUND because `entities` is a REQUIRED FunctionDeps port (387-01 D-4): this
       // composition supplies an entity directory, so both read at the `read` tier.
-      'entities.get': { requiredScopes: ['read'], resultKind: 'unary', bindingStatus: 'bound' },
+      'entities.get': { resultKind: 'unary', bindingStatus: 'bound' },
       'entities.resolve': {
-        requiredScopes: ['read'],
         resultKind: 'unary',
         bindingStatus: 'bound',
       },
       // 391 PROP-01 / D-03's `grants.list` and `grants.revoke` rows left with the ops (432-18).
       'knowledge.bundles.list': {
-        requiredScopes: ['read'],
         resultKind: 'unary',
         bindingStatus: 'bound',
       },
       // 416 D-10: gate receipts are a read over the same bound knowledge reader.
       'knowledge.gates.list': {
-        requiredScopes: ['read'],
         resultKind: 'unary',
         bindingStatus: 'bound',
       },
@@ -662,22 +650,18 @@ describe('agent-qa fn (generic function invoker)', () => {
       // composition lists them and then refuses. 387-08's mutating verbs go through the
       // OPTIONAL `knowledgeReview` dep and are the first rows here that can read `unbound`.
       'knowledge.brief.why': {
-        requiredScopes: ['read'],
         resultKind: 'unary',
         bindingStatus: 'bound',
       },
       'knowledge.record.show': {
-        requiredScopes: ['read'],
         resultKind: 'unary',
         bindingStatus: 'bound',
       },
       'knowledge.records.diff': {
-        requiredScopes: ['read'],
         resultKind: 'unary',
         bindingStatus: 'bound',
       },
       'knowledge.records.inspect': {
-        requiredScopes: ['read'],
         resultKind: 'unary',
         bindingStatus: 'bound',
       },
@@ -688,17 +672,14 @@ describe('agent-qa fn (generic function invoker)', () => {
       // asserted directly in agent-local's `review-verbs.test.ts`.
       // 2026-09-30, 432-12 (D-05): the three changes apply in the call and lose `.propose`.
       'knowledge.accept': {
-        requiredScopes: ['knowledge-write'],
         resultKind: 'unary',
         bindingStatus: 'bound',
       },
       'knowledge.forget': {
-        requiredScopes: ['knowledge-write'],
         resultKind: 'unary',
         bindingStatus: 'bound',
       },
       'knowledge.reject': {
-        requiredScopes: ['knowledge-write'],
         resultKind: 'unary',
         bindingStatus: 'bound',
       },
@@ -709,17 +690,14 @@ describe('agent-qa fn (generic function invoker)', () => {
       // composition supplying no quarantine port still lists all three `unbound` and refuses
       // them by name, which is what agent's `parity-coverage.test.ts` asserts.
       'quarantine.add': {
-        requiredScopes: ['knowledge-write'],
         resultKind: 'unary',
         bindingStatus: 'bound',
       },
       'quarantine.list': {
-        requiredScopes: ['read'],
         resultKind: 'unary',
         bindingStatus: 'bound',
       },
       'quarantine.release': {
-        requiredScopes: ['knowledge-write'],
         resultKind: 'unary',
         bindingStatus: 'bound',
       },
@@ -727,39 +705,38 @@ describe('agent-qa fn (generic function invoker)', () => {
       // was deleted in 432-17; the digest never read it after 432-09.)
       // 405-05 D-12/D-13: BOUND here: a run's evidence blobs live under the runtime root EVERY
       // local host has.
-      'runs.artifact': { requiredScopes: ['read'], resultKind: 'unary', bindingStatus: 'bound' },
+      'runs.artifact': { resultKind: 'unary', bindingStatus: 'bound' },
       // 431-15: bound — this host binds a reader over the configured or default runs database path whenever the config parses; a read before that file exists answers not recorded in it.
-      'runs.detail': { requiredScopes: ['read'], resultKind: 'unary', bindingStatus: 'bound' },
-      'runs.digest': { requiredScopes: ['read'], resultKind: 'unary', bindingStatus: 'bound' },
-      'runs.events': { requiredScopes: ['read'], resultKind: 'stream', bindingStatus: 'bound' },
+      'runs.detail': { resultKind: 'unary', bindingStatus: 'bound' },
+      'runs.digest': { resultKind: 'unary', bindingStatus: 'bound' },
+      'runs.events': { resultKind: 'stream', bindingStatus: 'bound' },
       // 431-15: bound — this host binds a reader over the configured or default runs database path whenever the config parses; a read before that file exists answers not recorded in it.
-      'runs.evidence': { requiredScopes: ['read'], resultKind: 'unary', bindingStatus: 'bound' },
-      'runs.get': { requiredScopes: ['read'], resultKind: 'unary', bindingStatus: 'bound' },
+      'runs.evidence': { resultKind: 'unary', bindingStatus: 'bound' },
+      'runs.get': { resultKind: 'unary', bindingStatus: 'bound' },
       // 407-01 D-05: `bound` rather than `unbound`, and that is the row worth reading. The op
       // declares no optional-dep binding key — its substrate is the REQUIRED runs port — so unlike
       // `runs.detail` beside it there is no composition that lists this verb and then refuses it.
-      'runs.knowledge': { requiredScopes: ['read'], resultKind: 'unary', bindingStatus: 'bound' },
-      'runs.list': { requiredScopes: ['read'], resultKind: 'unary', bindingStatus: 'bound' },
-      'runs.mark': { requiredScopes: ['knowledge-write'], resultKind: 'unary', bindingStatus: 'bound' },
+      'runs.knowledge': { resultKind: 'unary', bindingStatus: 'bound' },
+      'runs.list': { resultKind: 'unary', bindingStatus: 'bound' },
+      'runs.mark': { resultKind: 'unary', bindingStatus: 'bound' },
       // 423 D-16: the consequence preview binds through the same read host, read-tier beside the writer.
-      'runs.mark.preview': { requiredScopes: ['read'], resultKind: 'unary', bindingStatus: 'bound' },
+      'runs.mark.preview': { resultKind: 'unary', bindingStatus: 'bound' },
       // 423 D-19: bound through the CLI's dedicated read host, read-tier beside the writer.
-      'runs.marks.history': { requiredScopes: ['read'], resultKind: 'unary', bindingStatus: 'bound' },
+      'runs.marks.history': { resultKind: 'unary', bindingStatus: 'bound' },
       // 431-15: bound — this host binds a reader over the configured or default runs database path whenever the config parses; a read before that file exists answers not recorded in it.
-      'runs.overview': { requiredScopes: ['read'], resultKind: 'unary', bindingStatus: 'bound' },
+      'runs.overview': { resultKind: 'unary', bindingStatus: 'bound' },
       // 403 D-03: UNBOUND from this composition, and that is the honest answer rather than an
       // oversight. `runs.liveurl` mints a viewing credential for a LIVE run, so it binds only where
       // a live-view port exists — `agent-qa dashboard`'s `composeLiveView`. A CLI host with no
       // server to serve the embed page from has nothing to mint a link TO, and says so.
-      'runs.liveurl': { requiredScopes: ['read'], resultKind: 'unary', bindingStatus: 'unbound' },
+      'runs.liveurl': { resultKind: 'unary', bindingStatus: 'unbound' },
       // 428 D-07: UNBOUND here on runs.liveurl's reasoning. A live editor binds only where the
       // dashboard serves one, so a plain CLI host has no editor session to mint a link for.
-      'editor.liveurl': { requiredScopes: ['read'], resultKind: 'unary', bindingStatus: 'unbound' },
+      'editor.liveurl': { resultKind: 'unary', bindingStatus: 'unbound' },
       // 388 D-14: BOUND on every local host, and NOT gated on whether this one drains the
       // chain — the two are different questions, and a host that only ever reads is exactly
       // the caller that most needs durable chip truth. Read-tier, so it survives safe mode.
       'runs.postprocessing': {
-        requiredScopes: ['read'],
         resultKind: 'unary',
         bindingStatus: 'bound',
       },
@@ -767,7 +744,7 @@ describe('agent-qa fn (generic function invoker)', () => {
       // composition supplies a run executor, and `bindingStatus` reports what THIS host can
       // do. The same capability still lists `unbound` from a composition without one, which
       // is what compose-local-agent.test.ts and the agent-layer suites assert.
-      'runs.start': { requiredScopes: ['run'], resultKind: 'unary', bindingStatus: 'bound' },
+      'runs.start': { resultKind: 'unary', bindingStatus: 'bound' },
     })
     // Sorted lexicographically by id, so a catalog projection is deterministic.
     expect(declarations.map((declaration) => declaration.id)).toEqual(

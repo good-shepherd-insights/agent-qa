@@ -221,13 +221,14 @@ describe('which tools carry the App is census-pinned DATA (408 D-05 / D-14, T-40
       expect(declaration, `${projection.name} names an op the registry does not declare`)
         .toBeDefined()
 
-      // THE RULE, DERIVED RATHER THAN TABULATED. An op that MAKES a run (it needs the `run` scope
-      // to do it) cannot have been told the run id — the run did not exist when the caller called,
-      // so the only honest source is the op's own OUTPUT. An op that merely READS about a run was
-      // told which one, so its source is the validated INPUT. Plan 03's decoration trusts exactly
-      // this datum to find the concrete runId, so a swapped source decorates a result with a
-      // reference to a run nobody asked about.
-      const makesTheRun = declaration!.requiredScopes.includes('run')
+      // THE RULE, DERIVED RATHER THAN TABULATED. An op that MAKES a run cannot have been told the run
+      // id — the run did not exist when the caller called, so the only honest source is the op's own
+      // OUTPUT. An op that merely READS about a run was told which one, so its source is the
+      // validated INPUT. Plan 03's decoration trusts exactly this datum to find the concrete runId,
+      // so a swapped source decorates a result with a reference to a run nobody asked about.
+      // 432-20 (D-12): "makes the run" was read off the `run` scope; declarations carry no scopes,
+      // so it is read off the risk descriptor — a carrier that is not a declared read made the run.
+      const makesTheRun = declaration!.risk.readOnly !== true
       expect(projection.ui?.runIdFrom, `${projection.name} reads its runId off the wrong source`)
         .toBe(makesTheRun ? 'output' : 'input')
 

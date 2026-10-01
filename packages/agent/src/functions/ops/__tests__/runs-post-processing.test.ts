@@ -355,7 +355,7 @@ describe('the runs.postProcessing op (D-14/D-15)', () => {
     const registry = registryWith(undefined)
 
     expect(registry.list(CALLER).find((entry) => entry.id === RUNS_POST_PROCESSING_FUNCTION_ID))
-      .toMatchObject({ requiredScopes: ['read'], bindingStatus: 'unbound' })
+      .toMatchObject({ bindingStatus: 'unbound' })
     await expect(
       invokeFunction(registry, RUNS_POST_PROCESSING_FUNCTION_ID, { runId: RUN_ID }, CALLER),
     ).rejects.toBeInstanceOf(FunctionNotBoundError)

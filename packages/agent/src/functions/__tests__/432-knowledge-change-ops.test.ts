@@ -290,7 +290,8 @@ describe('C432-KNOWLEDGE-CHANGE-OPS: the three knowledge changes apply in the ca
       expect(declaration?.bindingStatus, id).toBe('bound')
       expect(declaration?.risk, id).toMatchObject({ name: `fn:${id}`, recognized: true, readOnly: false })
       expect(declaration?.risk.declaredTier, `${id} is not raised to a shared mutation`).toBeUndefined()
-      expect(declaration?.requiresHumanOrigin, id).not.toBe(true)
+      // 432-20 (D-10): declarations carry no origin requirement at all.
+      expect(Object.keys(declaration ?? {}), id).not.toContain('requiresHumanOrigin')
       expect(declaration?.summary, id).not.toMatch(/propos|commit(s|ting)? nothing|removing nothing/i)
     }
   })

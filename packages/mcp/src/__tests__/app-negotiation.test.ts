@@ -548,24 +548,16 @@ describe('who may obtain a live-view credential (408-12; the 2026-09-01 ruling, 
     ).toBe(true)
   })
 
-  // THE BOUNDARY THIS SERVER CAN ACTUALLY VERIFY (header clause 5, D-02): the operator-granted
-  // `read` scope, checked by `visibleToCaller` over the REGISTRY'S own declared scopes, plus
-  // `bindingStatus === 'bound'`. Until this cell there was no negative pairing a DECLARING caller
-  // with a scope set that omits `read`.
+  // THE BOUNDARY THIS SERVER COULD VERIFY (header clause 5, D-02) was the operator-granted `read`
+  // scope, checked by `visibleToCaller`, plus `bindingStatus === 'bound'`. 408-12 measured the
+  // scope half with a mutation control (removing both `visibleToCaller` conditions red this cell).
   //
-  // MUTATION CONTROL — APPLIED AND ITS RED OBSERVED (408-12 task 1 step 3, 2026-09-01, then
-  // restored immediately). Removing the `visibleToCaller` conditions from `registerAppResources`
-  // reds this cell. MEASURED, and the measurement corrected the expectation: removing the MINT
-  // op's condition ALONE does NOT red it, because `runs.events` declares the same `read` scope and
-  // its own `visibleToCaller` line still refuses — the boundary is the PAIR. With both conditions
-  // removed the cell reds, on the registration half first:
-  //   AssertionError: no template for a caller the operator did not grant `read`
-  //   - Expected: []   + Received: [ 'ui://agent-qa/live-run/{runId}' ]
-  // A boundary cell that has never been seen to fail is the class this whole round is closing, so
-  // the leg is recorded here with what it actually costs to break it.
-  it('a DECLARING caller whose granted scopes omit `read` obtains NO App at all — no template, an unreadable address, and zero mints', async () => {
-    // Half one, at the registration seam: the template is never built, so for this caller the
-    // address does not exist rather than existing and refusing.
+  // RE-SPELLED 2026-10-01 (432-20, D-12/D-13) from 'a DECLARING caller whose granted scopes omit
+  // `read` obtains NO App at all — no template, an unreadable address, and zero mints'. The scope
+  // half is deleted with every per-caller permission, so that mutation is now the shipped code: a
+  // declaring caller with no `read` obtains exactly what any declaring caller obtains. What bounds
+  // the credential is the bound-mint floor and the local network controls D-13 keeps.
+  it('a DECLARING caller whose granted scopes omit `read` obtains the same App as any caller — a template, a readable address, one mint', async () => {
     const offered: string[] = []
     const { registry, minted } = fixtureRegistry([0, 1])
     const templates = registerAppResources(
@@ -577,24 +569,15 @@ describe('who may obtain a live-view credential (408-12; the 2026-09-01 ruling, 
       },
       { registry, caller: caller(['run']), maskText: identity },
     )
-    expect(templates, 'no template for a caller the operator did not grant `read`').toEqual([])
-    expect(offered, 'and nothing was handed to the server to register').toEqual([])
+    expect(templates, 'the template exists for every caller of a bound composition').toHaveLength(1)
+    expect(offered).toHaveLength(1)
     expect(minted, 'registration mints nothing either way').toHaveLength(0)
 
-    // Half two, over the wire, with a caller that DECLARES the extension — so the ONE fact that
-    // differs from the cell above is the scope set, and the refusal cannot be read as a refusal
-    // about negotiation.
-    const { url, minted: wireMinted } = await serveAgentQa([0, 1], ['run'])
+    const { url, minted: wireMinted } = await serveAgentQa([0], ['run'])
     const declarer = await connect(url, { apps: true })
-    const error = await declarer.readResource({ uri: APP_URI }).then(
-      () => undefined,
-      (err: unknown) => err,
-    )
-    expect(error, 'the ui:// address is readable by a caller with no `read` scope').toBeDefined()
-    expect(
-      wireMinted,
-      'a caller without the operator-granted `read` scope minted a live-view credential',
-    ).toHaveLength(0)
+    const result = await declarer.readResource({ uri: APP_URI })
+    expect((result.contents as readonly { text?: string }[])[0]?.text ?? '').toContain('<')
+    expect(wireMinted, 'one credential per handle, as for a read-scoped caller').toHaveLength(1)
   })
 })
 

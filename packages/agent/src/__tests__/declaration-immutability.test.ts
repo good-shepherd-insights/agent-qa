@@ -14,11 +14,15 @@
 // functions directory. The sweeps below are written from the SHAPE of the view rather than
 // a list of field names, because a guard generated out of the implementation's own
 // vocabulary is exactly what left the previous round blind to its own open half (WR-05).
+//
+// 2026-10-01 (432-20, D-10/D-12): the escalation CR-04 closed — vacating `requiredScopes` through
+// a listing — has nothing left to reach. Declarations carry no permission metadata at all (the
+// registry omits `requiredScopes` and `requiresHumanOrigin` even while an old spec still spells
+// them), and `invokeFunction` reads none. The freezing claims survive on the risk descriptor and
+// the spec singleton, and C432-DECLARATION-KEYS pins the exact runtime key set beside its type.
 
 import type {
-  ExecutionContext,
   FunctionCaller,
-  FunctionScope,
   RiskActionDescriptor,
 } from '@vostride/agent-qa-schema'
 import type { AuditSink } from '@vostride/agent-qa-safety'
@@ -27,19 +31,21 @@ import {
   RunsGetInputSchema,
 } from '@vostride/agent-qa-schema'
 import { describe, expect, it } from 'vitest'
+import { z } from 'zod'
 
-import { FunctionInputError, FunctionScopeError, invokeFunction } from '../functions/invoke.js'
+import { FunctionInputError, invokeFunction } from '../functions/invoke.js'
 import { configGetSpec } from '../functions/ops/config-get.js'
-import { createFunctionRegistry, registryInternals } from '../functions/registry.js'
+import {
+  createFunctionRegistry,
+  createRegistryFromSpecs,
+  registryInternals,
+} from '../functions/registry.js'
 import type { FunctionDeclaration, FunctionDeps, FunctionSpec } from '../functions/spec.js'
 import { CONTRACTS_BY_ID, expectProjectionDerivedFrom } from './projection-relation.js'
 
-const FIXED_CONTEXT: () => ExecutionContext = () => 'local-interactive'
-
 /**
- * Every port resolves, nothing reaches a host API. The scope refusal several cases turn on
- * precedes dispatch, so no port is ever touched — the record exists because `FunctionDeps`
- * is required and non-partial (D-09), not because a case needs it.
+ * Every port resolves, nothing reaches a host API. The record exists because `FunctionDeps` is
+ * required and non-partial (D-09).
  */
 function fakeDeps(): FunctionDeps {
   return {
@@ -84,7 +90,6 @@ function buildRegistry() {
   return createFunctionRegistry({
     deps: fakeDeps(),
     auditSink: noOpSink(),
-    resolveExecutionContext: FIXED_CONTEXT,
   })
 }
 
@@ -317,32 +322,33 @@ describe('the disclose presence flag is projected from the spec (D-05)', () => {
 })
 
 describe('declaration views are deeply frozen (CR-04)', () => {
-  it('freezes every listed declaration, its requiredScopes, and its risk descriptor', () => {
+  // RE-SPELLED 2026-10-01 (432-20, D-12) from 'freezes every listed declaration, its
+  // requiredScopes, and its risk descriptor'. Declarations carry no `requiredScopes`.
+  it('freezes every listed declaration and its risk descriptor', () => {
     const declarations = buildRegistry().list(FULLY_GRANTED)
 
     expect(declarations.length).toBeGreaterThan(0)
     for (const declaration of declarations) {
       expect(Object.isFrozen(declaration), declaration.id).toBe(true)
-      expect(Object.isFrozen(declaration.requiredScopes), `${declaration.id}.requiredScopes`)
-        .toBe(true)
       expect(Object.isFrozen(declaration.risk), `${declaration.id}.risk`).toBe(true)
     }
   })
 
-  it('kills the CR-04 escalation: the repro write throws and the caller is still refused', async () => {
+  // RE-SPELLED 2026-10-01 (432-20, D-12) from 'kills the CR-04 escalation: the repro write throws
+  // and the caller is still refused'. There is no scope requirement on a listing to vacate and no
+  // refusal to survive it: the write throws because the view is frozen, and config.get is served.
+  it('kills the CR-04 escalation: the repro write throws and there is no requirement to vacate', async () => {
     const registry = buildRegistry()
     const declaration = configGet(registry.list(ZERO_SCOPE_CALLER))
 
-    // The exploit, verbatim: vacate the scope requirement the gate reads. In strict-mode ESM
-    // a write to a frozen array THROWS — a silent no-op is not the shipped behaviour.
+    expect(Object.keys(declaration)).not.toContain('requiredScopes')
     expect(() => {
-      ;(declaration.requiredScopes as FunctionScope[]).length = 0
+      ;(declaration as unknown as Record<string, unknown>)['requiredScopes'] = []
     }).toThrow(TypeError)
 
-    // Both halves. The throw alone would not prove enforcement survived the attempt.
     await expect(
       invokeFunction(registry, 'config.get', {}, ZERO_SCOPE_CALLER),
-    ).rejects.toBeInstanceOf(FunctionScopeError)
+    ).resolves.toMatchObject({ configPath: 'agent-qa.config.yaml' })
   })
 
   it('refuses a forged risk name: the gate classification cannot be rewritten through a listing', () => {
@@ -354,36 +360,105 @@ describe('declaration views are deeply frozen (CR-04)', () => {
     expect(declaration.risk.name).toBe('fn:config.get')
   })
 
+  // RE-SPELLED 2026-10-01 (432-20, D-12): the singleton's retired `requiredScopes` is no longer
+  // frozen or read; the spec object and its risk descriptor still are.
   it('freezes the REGISTERED singleton spec, not only the copied view', () => {
-    // The copy in `declarationView` already denies the listing route. This case covers the
-    // "any other route" clause: after registration the module-level singleton itself is
-    // frozen, so code holding the spec directly cannot rewrite what the gate enforces.
     buildRegistry()
 
     expect(Object.isFrozen(configGetSpec)).toBe(true)
-    expect(Object.isFrozen(configGetSpec.requiredScopes)).toBe(true)
     expect(Object.isFrozen(configGetSpec.risk)).toBe(true)
     expect(() => {
-      ;(configGetSpec.requiredScopes as FunctionScope[]).length = 0
+      ;(configGetSpec as unknown as Record<string, unknown>)['risk'] = { name: 'fn:forged' }
     }).toThrow(TypeError)
   })
 
-  it('contains the attempt to nothing: a second registry still lists the real requirement', async () => {
+  // RE-SPELLED 2026-10-01 (432-20, D-12) from 'contains the attempt to nothing: a second registry
+  // still lists the real requirement'. A second registry lists the same permission-free view.
+  it('contains the attempt to nothing: a second registry lists the same permission-free view', async () => {
     const attacked = buildRegistry()
     const declaration = configGet(attacked.list(ZERO_SCOPE_CALLER))
 
     expect(() => {
-      ;(declaration.requiredScopes as FunctionScope[]).length = 0
-    }).toThrow(TypeError)
-    expect(() => {
-      ;(declaration.requiredScopes as FunctionScope[]).push('read')
+      ;(declaration as unknown as Record<string, unknown>)['requiresHumanOrigin'] = true
     }).toThrow(TypeError)
 
-    // A registry built AFTER the attempt — the singleton specs the exploit reached for.
     const fresh = buildRegistry()
-    expect(configGet(fresh.list(ZERO_SCOPE_CALLER)).requiredScopes).toEqual(['read'])
+    expect(configGet(fresh.list(ZERO_SCOPE_CALLER))).toEqual(declaration)
     await expect(
       invokeFunction(fresh, 'config.get', {}, ZERO_SCOPE_CALLER),
-    ).rejects.toBeInstanceOf(FunctionScopeError)
+    ).resolves.toMatchObject({ configPath: 'agent-qa.config.yaml' })
+  })
+})
+
+// ---- C432-DECLARATION-KEYS (432-20, D-10/D-12) --------------------------------------------------
+
+/** Compile-time half: the declaration TYPE cannot carry either retired key. Checked by typecheck. */
+type DeclarationCarries<Key extends string> = Key extends keyof FunctionDeclaration ? true : false
+const DECLARATION_TYPE_HAS_SCOPES: DeclarationCarries<'requiredScopes'> = false
+const DECLARATION_TYPE_HAS_HUMAN_ORIGIN: DeclarationCarries<'requiresHumanOrigin'> = false
+
+/** Every key a runtime declaration always carries, and the presence-only flags it may carry. */
+const REQUIRED_DECLARATION_KEYS = [
+  'bindingStatus',
+  'id',
+  'input',
+  'output',
+  'resultKind',
+  'risk',
+  'summary',
+] as const
+const OPTIONAL_DECLARATION_FLAGS = ['classifies', 'discloses', 'rendersResult'] as const
+
+describe('C432-DECLARATION-KEYS: runtime declarations carry no permission metadata', () => {
+  it('pins the exact key set of every real declaration, and no scope or origin key', () => {
+    expect(DECLARATION_TYPE_HAS_SCOPES).toBe(false)
+    expect(DECLARATION_TYPE_HAS_HUMAN_ORIGIN).toBe(false)
+
+    const declarations = buildRegistry().list(ZERO_SCOPE_CALLER)
+    expect(declarations.length).toBeGreaterThan(40)
+    for (const declaration of declarations) {
+      const keys = Object.keys(declaration).sort()
+      const optional = keys.filter((key) => !(REQUIRED_DECLARATION_KEYS as readonly string[]).includes(key))
+      expect(keys, declaration.id).toEqual(expect.arrayContaining([...REQUIRED_DECLARATION_KEYS]))
+      expect(optional.every((key) => (OPTIONAL_DECLARATION_FLAGS as readonly string[]).includes(key)),
+        `${declaration.id} carries ${optional.join(', ')}`).toBe(true)
+      expect(keys, declaration.id).not.toContain('requiredScopes')
+      expect(keys, declaration.id).not.toContain('requiresHumanOrigin')
+    }
+  })
+
+  it('omits the retired keys even where the registered spec still spells them', () => {
+    // Op specs still spell `requiredScopes` until their op-spec owners (432-21/23–38) remove it;
+    // the registry does not pass it on, so the declaration shape never depends on spec migration.
+    // The synthetic spec below keeps this cell meaningful after the last real spec has migrated.
+    expect(Object.keys(configGet(buildRegistry().list(FULLY_GRANTED)))).not.toContain('requiredScopes')
+
+    const legacy: FunctionSpec<Record<string, never>, { ok: true }> = {
+      id: 'synthetic.legacy-permissions',
+      summary: 'A spec that still spells both retired permission keys.',
+      requiredScopes: ['config-write'],
+      requiresHumanOrigin: true,
+      resultKind: 'unary',
+      input: z.object({}).strict(),
+      output: z.object({ ok: z.literal(true) }).strict(),
+      risk: { name: 'fn:synthetic.legacy-permissions', recognized: true, readOnly: true },
+      classify: () => ({ status: 'executed' as const, outcome: '' }),
+      invoke: () => Promise.resolve({ ok: true as const }),
+    }
+    const registry = createRegistryFromSpecs([legacy as FunctionSpec], {
+      deps: fakeDeps(),
+      auditSink: noOpSink(),
+    })
+    const [declaration] = registry.list(ZERO_SCOPE_CALLER)
+    expect(Object.keys(declaration!).sort())
+      .toEqual([...REQUIRED_DECLARATION_KEYS, 'classifies'].sort())
+  })
+
+  it('freezes every risk descriptor as a copy, never the spec\'s own object', () => {
+    for (const declaration of buildRegistry().list(ZERO_SCOPE_CALLER)) {
+      expect(Object.isFrozen(declaration.risk), declaration.id).toBe(true)
+    }
+    expect(configGet(buildRegistry().list(ZERO_SCOPE_CALLER)).risk).not.toBe(configGetSpec.risk)
+    expect(configGet(buildRegistry().list(ZERO_SCOPE_CALLER)).risk).toEqual(configGetSpec.risk)
   })
 })

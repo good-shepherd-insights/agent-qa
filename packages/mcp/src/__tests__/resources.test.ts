@@ -23,6 +23,9 @@
 //   R1  the codec replaced by a local `agentqa://` regex that splits segment and id      RED (3)
 //   R2  a seventh template planted in the derived list                                   RED (4)
 //   R3  the D-05 visibility gate removed (register unconditionally)                      RED (2)
+//       2026-10-01 (432-20, D-12): R3 is now the SHIPPED behaviour — the gate is deleted and every
+//       caller of a composition carrying entities.get gets the five templates
+//       (C432-RESOURCES-ALL-CALLERS below).
 //   R4  `maskText` dropped from the contents text                                        RED (1)
 //   R5  the raw URI passed to the op as `ref` instead of the parsed canonical short-ID   RED (1)
 //   R6  `maskText` dropped from the OP-refusal path                                      RED (1)
@@ -96,13 +99,10 @@ function caller(grantedScopes: readonly FunctionScope[]): FunctionCaller {
 }
 
 /** The declaration a composition that registered `entities.get` publishes for it. */
-function entitiesGetDeclaration(
-  requiredScopes: readonly FunctionScope[] = ['read'],
-): FunctionDeclaration {
+function entitiesGetDeclaration(): FunctionDeclaration {
   return {
     id: ENTITIES_GET_OP_ID,
     summary: 'Render the entity card for one exact short-ID or agentqa:// URI.',
-    requiredScopes,
     resultKind: 'unary',
     risk: { name: `fn:${ENTITIES_GET_OP_ID}`, recognized: true, readOnly: true },
     bindingStatus: 'bound',
@@ -307,10 +307,11 @@ describe('the codec is the only parser (D-13 · T-396-08)', () => {
   })
 })
 
-describe('registration is gated by the visibility law (D-05)', () => {
-  // THE BAR: R3. Entity reads are `['read']`-scoped, so they survive safe mode — but a caller
-  // granted nothing at all must not see the templates, for the same reason it must not see the
-  // tools: a listed door that answers refusals is worse than an absent one (D-08).
+// RE-SPELLED 2026-10-01 (432-20, D-12) from 'registration is gated by the visibility law (D-05)'.
+// The scope gate is deleted: whether the templates exist is a fact about the composition (does it
+// register entities.get?) and never about the caller. The URI codec still refuses every bad address
+// for every caller (the block above).
+describe('registration is a fact about the composition, never the caller (432-20, D-12)', () => {
   it('registers all five templates for a caller granted read', () => {
     const server = recordingServer()
 
@@ -326,32 +327,45 @@ describe('registration is gated by the visibility law (D-05)', () => {
     )
   })
 
-  it('registers nothing for a caller granted nothing', () => {
+  // RE-SPELLED from 'registers nothing for a caller granted nothing'.
+  it('C432-RESOURCES-ALL-CALLERS: registers the same five templates for every caller', () => {
+    const callers: readonly FunctionCaller[] = [
+      { surface: 'mcp', origin: 'agent' },
+      caller([]),
+      caller(['read']),
+      { surface: 'cli', origin: 'human', grantedScopes: ['read', 'run', 'config-write'], safeMode: true },
+    ]
+    const answers = callers.map((each) => {
+      const server = recordingServer()
+      const registered = registerEntityResources(server, {
+        registry: registryListing([entitiesGetDeclaration()]),
+        caller: each,
+        maskText: identity,
+      })
+      return { registered, uris: server.calls.map((call) => call.uriTemplate) }
+    })
+    for (const answer of answers) {
+      expect(answer.registered).toHaveLength(5)
+      expect(answer).toEqual(answers[0])
+    }
+  })
+
+  // RE-SPELLED from 'reads the required scopes off the declaration, not off a constant'. A legacy
+  // declaration that still carried a scope list gates nothing either.
+  it('ignores any scope a legacy declaration might still carry', () => {
     const server = recordingServer()
+    const legacy = {
+      ...entitiesGetDeclaration(),
+      requiredScopes: ['read', 'config-write'],
+    } as unknown as FunctionDeclaration
 
     const registered = registerEntityResources(server, {
-      registry: registryListing([entitiesGetDeclaration()]),
+      registry: registryListing([legacy]),
       caller: caller([]),
       maskText: identity,
     })
 
-    expect(registered).toEqual([])
-    expect(server.calls).toEqual([])
-  })
-
-  // The scope set is read off the REGISTRY's own declaration rather than hard-coded here, so a
-  // composition that declared entity reads more narrowly is honoured instead of contradicted.
-  it('reads the required scopes off the declaration, not off a constant', () => {
-    const server = recordingServer()
-
-    const registered = registerEntityResources(server, {
-      registry: registryListing([entitiesGetDeclaration(['read', 'config-write'])]),
-      caller: caller(['read']),
-      maskText: identity,
-    })
-
-    expect(registered).toEqual([])
-    expect(server.calls).toEqual([])
+    expect(registered).toHaveLength(5)
   })
 
   // A composition that never registered `entities.get` genuinely cannot serve entity resources.

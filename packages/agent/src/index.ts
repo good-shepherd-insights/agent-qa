@@ -31,8 +31,6 @@ export {
   invokeFunction,
   FunctionInputError,
   FunctionNotBoundError,
-  FunctionOriginError,
-  FunctionScopeError,
   UnknownFunctionError,
 } from './functions/invoke.js'
 // 388 D-14 adds `PostProcessingChainState`, `PostProcessingJobRow` and

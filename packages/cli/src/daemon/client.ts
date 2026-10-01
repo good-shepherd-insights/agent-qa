@@ -4,11 +4,9 @@ import { dirname, join } from 'node:path'
 import {
   FunctionInputError,
   FunctionNotBoundError,
-  FunctionScopeError,
   StreamReplayFloorError,
   UnknownFunctionError,
 } from '@vostride/agent-qa-agent'
-import type { FunctionScope } from '@vostride/agent-qa-schema'
 
 import {
   classifyDaemonRegistration,
@@ -71,7 +69,6 @@ interface WireError {
   readonly message?: unknown
   readonly functionId?: unknown
   readonly issues?: unknown
-  readonly missingScopes?: unknown
   readonly runId?: unknown
   readonly requestedSeq?: unknown
   readonly earliestAvailableSeq?: unknown
@@ -155,14 +152,9 @@ export function rehydrateFunctionError(value: unknown, statusCode: number): Erro
   ) {
     return new FunctionInputError(functionId, wire.issues)
   }
-  if (
-    wire?.name === 'FunctionScopeError' &&
-    functionId !== undefined &&
-    Array.isArray(wire.missingScopes) &&
-    wire.missingScopes.every((scope) => typeof scope === 'string')
-  ) {
-    return new FunctionScopeError(functionId, wire.missingScopes as FunctionScope[])
-  }
+  // 2026-10-01 (432-20, D-12): no `FunctionScopeError` arm. The scope check that raised it is
+  // deleted; a wire error naming it from an older daemon falls through to the generic error below
+  // with its message intact.
   // 2026-10-01 (432-19, D-15): no `FunctionDeniedError` arm. The execution gate that raised it is
   // deleted, and a wire error naming it from an older daemon falls through to the generic error
   // below with its message intact.

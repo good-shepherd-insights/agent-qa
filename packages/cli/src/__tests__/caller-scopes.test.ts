@@ -7,6 +7,11 @@
 // constructs its own caller, so a composition that withholds a grant is invisible to all of them.
 // The refusal that reached a person named a scope and said nothing about authoring at all.
 //
+// 2026-10-01 (432-20, D-12): THERE IS NO SCOPE CHECK EITHER. The grants these records carry are
+// retired and unread (432-21 removes them from the mints), so no caller here can be refused for its
+// grants: every cell below reaches the same binding check, and C432-ALL-OPS-AVAILABLE adds a caller
+// holding nothing at all to prove it.
+//
 // 2026-09-30 (432-13, D-14/D-15): THERE IS NO OP GATE. Cells 2 and 4 are re-spelled: the scope
 // check still passes for both holders of `test-write`, and the invocation now reaches the BINDING
 // check (this registry binds nothing) instead of a confirm or a fail-closed refusal.
@@ -27,7 +32,6 @@ import {
   AUTHORING_DRAFT_WRITE_FUNCTION_ID,
   createFunctionRegistry,
   FunctionNotBoundError,
-  FunctionScopeError,
   invokeFunction,
 } from '@vostride/agent-qa-agent'
 import type { FunctionDeps } from '@vostride/agent-qa-agent'
@@ -64,13 +68,20 @@ const EDIT_BRIEF: AuthoringDraftEditInput = {
   intent: 'also assert the cart badge reads 1',
 }
 
-/** A registry over NO dependencies, at a chosen execution context (432-13: nothing asks). */
-function benchAt(ctx: ExecutionContext) {
+/**
+ * A registry over NO dependencies. The execution context is named per cell for the record only:
+ * since 432-13 nothing asks, and since 432-20 the registry takes no context it reads.
+ */
+function benchAt(_ctx: ExecutionContext) {
   return createFunctionRegistry({
     deps: {} as unknown as FunctionDeps,
-    resolveExecutionContext: () => ctx,
     auditSink: { appendGuardrailAudit() {} },
   })
+}
+
+/** The refusal class the scope check raised until 432-20, compared by name since it is deleted. */
+function isScopeRefusal(error: unknown): boolean {
+  return (error as { name?: unknown } | undefined)?.name === 'FunctionScopeError'
 }
 
 async function errorFrom(
@@ -101,7 +112,8 @@ describe('CLI_FUNCTION_CALLER', () => {
     // every power the CLI can exercise, so a withheld scope is theatre. A hand-extended list
     // re-rots the next time a scope is minted; equality with the vocabulary is that rule made
     // mechanical, and it reds on the omission rather than on the six names anyone thought to type.
-    expect([...CLI_FUNCTION_CALLER.grantedScopes].sort()).toEqual(
+    // 432-20: the field is retired and unread; the mint still carries it until 432-21.
+    expect([...(CLI_FUNCTION_CALLER.grantedScopes ?? [])].sort()).toEqual(
       [...FunctionScopeSchema.options].sort(),
     )
   })
@@ -112,8 +124,24 @@ describe('CLI_FUNCTION_CALLER', () => {
   it('reaches the binding check for authoring.draft.write — the scope list passes, nothing asks', async () => {
     const error = await refusalFrom('local-interactive', CLI_FUNCTION_CALLER)
 
-    expect(error).not.toBeInstanceOf(FunctionScopeError)
+    expect(isScopeRefusal(error)).toBe(false)
     expect(error).toBeInstanceOf(FunctionNotBoundError)
+  })
+})
+
+describe('C432-ALL-OPS-AVAILABLE: a caller holding no grant (432-20, D-12)', () => {
+  it('reaches the same binding checks as the CLI and daemon records, for both test-write ops', async () => {
+    const grantless = { surface: 'cli', origin: 'human' } as const
+    for (const [functionId, input] of [
+      [AUTHORING_DRAFT_WRITE_FUNCTION_ID, BRIEF],
+      [AUTHORING_DRAFT_EDIT_FUNCTION_ID, EDIT_BRIEF],
+    ] as const) {
+      const none = await errorFrom('local-headless', grantless, functionId, input)
+      const cli = await errorFrom('local-interactive', CLI_FUNCTION_CALLER, functionId, input)
+      expect(none, functionId).toBeInstanceOf(FunctionNotBoundError)
+      expect((none as Error).message).toBe((cli as Error).message)
+      expect(isScopeRefusal(none)).toBe(false)
+    }
   })
 })
 
@@ -131,7 +159,7 @@ describe('DAEMON_FUNCTION_CALLER', () => {
   it('C432-INVOKE-DIRECT: reaches the binding check for authoring.draft.write from local-headless', async () => {
     const error = await refusalFrom('local-headless', DAEMON_FUNCTION_CALLER)
 
-    expect(error).not.toBeInstanceOf(FunctionScopeError)
+    expect(isScopeRefusal(error)).toBe(false)
     expect(error).toBeInstanceOf(FunctionNotBoundError)
   })
 
@@ -152,7 +180,7 @@ describe('DAEMON_FUNCTION_CALLER', () => {
       EDIT_BRIEF,
     )
 
-    expect(error).not.toBeInstanceOf(FunctionScopeError)
+    expect(isScopeRefusal(error)).toBe(false)
     expect(error).toBeInstanceOf(FunctionNotBoundError)
   })
 })

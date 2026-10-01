@@ -21,11 +21,11 @@
 // address. A local regex in this file would be a second, weaker reading of the same string — this
 // module therefore contains no `agentqa://` pattern of its own, and an acceptance grep pins that.
 //
-// THE VISIBILITY LAW COVERS RESOURCES TOO (D-05). The same predicate the tool catalogue uses, over
-// the scope set the REGISTRY declares for `entities.get` rather than a constant restated here.
-// Entity reads are `['read']`-scoped, so they survive safe mode; a caller granted nothing sees no
-// templates at all, because absence is structural — a template this caller may not use was never
-// registered on this instance (D-08).
+// EVERY CALLER SEES THE SAME TEMPLATES (2026-10-01, 432-20, D-12). The scope-based visibility law
+// that once withheld these from a caller granted nothing is deleted: the templates are registered
+// whenever the composition registers `entities.get`, which is a fact about the host and never
+// about the caller. Subject validation is unchanged — the codec below still refuses every address
+// it cannot parse, for every caller.
 //
 // MASKING IS REQUIRED, NOT OPTIONAL, AND FOR A MEASURED REASON. Resource contents are composed from
 // STORED DATA, and this handler is registered directly rather than through `catalog.ts`'s one
@@ -56,7 +56,6 @@ import {
 import type { EntityKind, FunctionCaller } from '@vostride/agent-qa-schema'
 
 import { maskJsonDocument } from './masked-result.js'
-import { visibleToCaller } from './visibility.js'
 
 /**
  * The ONE op this surface reads through.
@@ -244,12 +243,11 @@ export function registerEntityResources(
     .list(deps.caller)
     .find((candidate) => candidate.id === ENTITIES_GET_OP_ID)
   if (declaration === undefined) return []
-  if (!visibleToCaller(declaration.requiredScopes, deps.caller.grantedScopes)) return []
 
   const read = createEntityResourceReadHandler({
     // The wall, bound once: every template's read crosses `invokeFunction` with this host's
-    // registry and this caller, so the scope check, the origin check and the policy gate under it
-    // all run exactly as they do for a tool call.
+    // registry and this caller, so input validation and the binding check run exactly as they do
+    // for a tool call.
     invoke: (opId, input) => invokeFunction(deps.registry, opId, input, deps.caller),
     maskText: deps.maskText,
   })

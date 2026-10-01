@@ -493,7 +493,7 @@ describe('423-18 marks history registration and host binding (D-19)', () => {
       resolveExecutionContext: () => 'local-headless' })
     closers.push(() => composed.close())
     expect(composed.registry.list(host.CLI_FUNCTION_CALLER).find(entry => entry.id === HISTORY)).toMatchObject({
-      bindingStatus: 'bound', requiredScopes: ['read'], resultKind: 'unary', risk: { readOnly: true } })
+      bindingStatus: 'bound', resultKind: 'unary', risk: { readOnly: true } })
     const before = storeMaps(s.stores)
     expectMaskedOrdinalHistory(await agent.invokeFunction(composed.registry, HISTORY, { runId: template.runId }, host.CLI_FUNCTION_CALLER))
     expect(storeMaps(s.stores)).toEqual(before)
@@ -900,10 +900,10 @@ describe('423-19 runs.mark.preview registration and composed invocation (D-16)',
       resolveExecutionContext: () => 'local-headless' })
     closers.push(() => composed.close())
     expect(composed.registry.list(host.CLI_FUNCTION_CALLER).find(entry => entry.id === PREVIEW)).toMatchObject({
-      bindingStatus: 'bound', requiredScopes: ['read'], resultKind: 'unary', risk: { readOnly: true } })
+      bindingStatus: 'bound', resultKind: 'unary', risk: { readOnly: true } })
     // runs.mark keeps its own tier and binding beside the read.
     expect(composed.registry.list(host.CLI_FUNCTION_CALLER).find(entry => entry.id === 'runs.mark'))
-      .toMatchObject({ bindingStatus: 'bound', requiredScopes: ['knowledge-write'] })
+      .toMatchObject({ bindingStatus: 'bound', risk: { readOnly: false } })
     const before = storeMaps(s.stores)
     const expected = await expectedColdPreview(s)
     const composedResult = await agent.invokeFunction(composed.registry, PREVIEW, input(), host.CLI_FUNCTION_CALLER)
@@ -1251,16 +1251,17 @@ describe('423-21 read-op adjudication (D-04/D-18)', () => {
 
   it('READ-POLICY-POINTS: the new reads carry read policy points and read-tier declarations; runs.mark keeps its ask', () => {
     const readPoints = scenarioRowFor('runs.postprocessing')!.policyPoints
-    expect(readPoints).toEqual({ grant: 'allow', refuse: 'deny' })
+    // 432-20 (D-12): the refuse point is `allow` — nothing is refused for its grants.
+    expect(readPoints).toEqual({ grant: 'allow', refuse: 'allow' })
     for (const opId of NEW_READS) {
       expect(scenarioRowFor(opId)?.policyPoints, opId).toEqual(readPoints)
       const declaration = declarationOf(opId)
-      expect(declaration.requiredScopes, opId).toEqual(['read'])
+      expect(Object.keys(declaration), opId).not.toContain('requiredScopes')
       expect(declaration.risk, opId).toMatchObject({ readOnly: true })
-      expect(declaration.requiresHumanOrigin, opId).not.toBe(true)
+      expect(Object.keys(declaration), opId).not.toContain('requiresHumanOrigin')
     }
     // 432-13: the ask point's value is `direct` — the classifier would ask, the door does not.
-    expect(scenarioRowFor('runs.mark')?.policyPoints).toEqual({ grant: 'allow', refuse: 'deny', ask: 'direct' })
-    expect(declarationOf('runs.mark').requiredScopes).toEqual(['knowledge-write'])
+    expect(scenarioRowFor('runs.mark')?.policyPoints).toEqual({ grant: 'allow', refuse: 'allow', ask: 'direct' })
+    expect(declarationOf('runs.mark').risk.readOnly).toBe(false)
   })
 })

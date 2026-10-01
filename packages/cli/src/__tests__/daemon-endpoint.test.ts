@@ -15,7 +15,6 @@ import { join } from 'node:path'
 import {
   FunctionInputError,
   FunctionNotBoundError,
-  FunctionScopeError,
   StreamReplayFloorError,
   UnknownFunctionError,
   invokeFunction,
@@ -132,7 +131,6 @@ interface FnInvocationResult {
 interface SemanticEndpointModules {
   readonly FunctionInputError: typeof FunctionInputError
   readonly FunctionNotBoundError: typeof FunctionNotBoundError
-  readonly FunctionScopeError: typeof FunctionScopeError
   readonly StreamReplayFloorError: typeof StreamReplayFloorError
   readonly UnknownFunctionError: typeof UnknownFunctionError
   readonly invokeFunction: typeof invokeFunction
@@ -164,7 +162,6 @@ function semanticModules(): Promise<SemanticEndpointModules> {
     return {
       FunctionInputError: invokeModule.FunctionInputError,
       FunctionNotBoundError: invokeModule.FunctionNotBoundError,
-      FunctionScopeError: invokeModule.FunctionScopeError,
       StreamReplayFloorError: streamModule.StreamReplayFloorError,
       UnknownFunctionError: invokeModule.UnknownFunctionError,
       invokeFunction: invokeModule.invokeFunction,
@@ -910,16 +907,13 @@ describe('daemon /invoke endpoint semantic parity', () => {
       issues: expect.stringContaining('value'),
     })
 
-    const scope = await capturedRejection(semantic.invokeViaDaemon({
+    // 432-20 (D-12): the scope refusal is deleted, so the op that declares a scope no caller holds
+    // answers over the wire like any other; there is no scope class left to rehydrate.
+    await expect(semantic.invokeViaDaemon({
       agentQaRoot,
       functionId: 'synthetic.scope',
       input: {},
-    }))
-    expect(scope).toBeInstanceOf(semantic.FunctionScopeError)
-    expect(scope).toMatchObject({
-      functionId: 'synthetic.scope',
-      missingScopes: ['fixture-scope'],
-    })
+    })).resolves.toEqual({ ok: true })
 
     const unbound = await capturedRejection(semantic.invokeViaDaemon({
       agentQaRoot,

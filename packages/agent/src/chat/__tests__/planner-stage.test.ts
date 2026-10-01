@@ -128,7 +128,6 @@ function declaration(id: string): FunctionDeclaration {
   return {
     id,
     summary: `the ${id} capability`,
-    requiredScopes: ['read'],
     resultKind: 'unary',
     risk: { name: `fn:${id}`, recognized: true, readOnly: true },
     bindingStatus: 'bound',

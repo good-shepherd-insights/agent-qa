@@ -61,7 +61,7 @@ it('EVIDENCE-REGISTRY-BOUND invokes the composed reader over exact stored eviden
   const f = fixture()
   try {
     expect(f.host.registry.list(caller).find(item => item.id === op)).toMatchObject({
-      bindingStatus: 'bound', requiredScopes: ['read'], resultKind: 'unary', risk: { readOnly: true },
+      bindingStatus: 'bound', resultKind: 'unary', risk: { readOnly: true },
     })
     expect(Reflect.get(agent, 'RUNS_EVIDENCE_FUNCTION_ID')).toBe(op)
     expect(Reflect.get(agent, 'runsEvidenceSpec')).toBeUndefined()

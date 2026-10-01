@@ -234,12 +234,9 @@ export const MCP_ENUMERATION_CALLER: FunctionCaller = declaredMcpCaller(MCP_ENUM
  */
 export interface ConformanceRegistryOptions {
   /**
-   * The context every policy decision in this registry is taken in (Pitfall 3).
-   *
-   * ABSENT MEANS THE SHIPPED AMBIENT RESOLVER, which is right for an enumeration — a listing does
-   * not consult the gate — and wrong for a verdict: `requiresFailClosed` is true for every context
-   * but `local-interactive`, so a verdict computed against the ambient resolver is one answer on a
-   * laptop and another on a runner, in cells whose entire job is to state what the verdict IS.
+   * Forwarded to the registry's retired, unread option (see `CreateFunctionRegistryOptions`). No op
+   * gate decides in a context since 432-13, so a verdict leg's context changes nothing; kept until
+   * 432-39 deletes the registry option.
    */
   readonly resolveExecutionContext?: CreateFunctionRegistryOptions['resolveExecutionContext']
   // 432-13 (D-14/D-15): no standing-approval reader and no confirm — `invokeFunction` asks nobody,
@@ -269,7 +266,7 @@ export function conformanceRegistry(options: ConformanceRegistryOptions = {}): F
     deps: {} as unknown as FunctionDeps,
     auditSink,
     // Conditionally spread, on the house rule an absent dependency is an ABSENT field and never a
-    // present `undefined` one — a defaulted port here would be a second place the default lives.
+    // present `undefined` one.
     ...(options.resolveExecutionContext === undefined
       ? {}
       : { resolveExecutionContext: options.resolveExecutionContext }),

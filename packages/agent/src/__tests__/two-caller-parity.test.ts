@@ -1,16 +1,16 @@
 // FUNC-03's one-shared-path claim, proven with data (Phase 384, Plan 05 — D-13 / SC3).
 //
 // The claim under test is that caller differences are DATA, never control flow: two callers
-// hit ONE registry instance and ONE dispatch path, and every difference in what happens to
-// them is fully explained by four fields on their records — `grantedScopes`, `safeMode`,
-// `credential`, and (391 D-06) `origin`.
+// hit ONE registry instance and ONE dispatch path. Until 432-20 every difference in what
+// happened to them was explained by four permission-shaped fields on their records —
+// `grantedScopes`, `safeMode`, `credential` and (391 D-06) `origin`.
 //
-// `origin` joined as the FOURTH permission-shaped field rather than as a special case, and
-// that is the whole point of it. The self-grant rule it enforces could have been written as
-// `if (caller.surface === 'chat')`, which is the anti-pattern this file exists to refute; it
-// is instead an op-declared requirement checked against a composition-minted field, so it
-// reads exactly like the scope check one line above it and separates callers for a reason
-// that is on the record rather than in the code.
+// 2026-10-01 (432-20, D-10/D-12): EVERY DOOR CAN CALL EVERY OPERATION. The scope check, the
+// human-origin check and the safe-mode listing filter are deleted, so the same four fields now
+// explain NOTHING: two records that differ in all of them list the same catalogue and reach the
+// same outcome for every op — success, or the ordinary input/binding refusal. `origin` and
+// `surface` survive only as presentation data. The cells below keep their premise and measure
+// the absence.
 //
 // Two things make this a proof rather than an illustration:
 //
@@ -33,7 +33,6 @@ import {
 } from '@vostride/agent-qa-schema'
 import type {
   CompletedRunHandoff,
-  ExecutionContext,
   FunctionCaller,
   RunId,
   RunSummary,
@@ -42,22 +41,17 @@ import type {
 import { beforeEach, describe, expect, it } from 'vitest'
 import { z } from 'zod'
 
+import * as invokeModule from '../functions/invoke.js'
 import {
   FunctionInputError,
   FunctionNotBoundError,
-  FunctionOriginError,
-  FunctionScopeError,
   invokeFunction,
 } from '../functions/invoke.js'
 import { createFunctionRegistry, createRegistryFromSpecs } from '../functions/registry.js'
 import type { FunctionDeps, FunctionSpec } from '../functions/spec.js'
 
-/**
- * `local-interactive` is the ONE context the shipped ladder does not treat as fail-closed,
- * so an ask-tier refusal below is the confirm path being declined rather than a context
- * short-circuit. Every read op allows in every context, so this choice cannot flatter them.
- */
-const CONTEXT: () => ExecutionContext = () => 'local-interactive'
+// 432-20: no execution context is supplied anywhere in this file. The registry's context option is
+// retired and unread, so a context could not change any outcome measured here.
 
 const CREDENTIAL: TrustCredential = { scope: { project: 'shop' } }
 
@@ -185,7 +179,6 @@ const audit = capturingSink()
 const REGISTRY = createFunctionRegistry({
   deps: DEPS,
   auditSink: audit.sink,
-  resolveExecutionContext: CONTEXT,
 })
 
 /** The shipped capability set, as both callers' listings are measured against it. */
@@ -330,17 +323,6 @@ const ALL_FUNCTION_IDS = [
   'runs.start',
 ] as const
 
-/**
- * The ids whose required scopes exceed `read`, derived from the REGISTRY rather than restated.
- *
- * Deriving it is the point: a hand-written list would be a second declaration of which
- * capabilities are non-read, free to agree with the specs today and drift tomorrow — and the
- * assertion it feeds is precisely the one that would then stop noticing.
- */
-const NON_READ_FUNCTION_IDS = REGISTRY.list(CALLER_A)
-  .filter((declaration) => declaration.requiredScopes.some((scope) => scope !== 'read'))
-  .map((declaration) => declaration.id)
-
 beforeEach(() => {
   audit.take()
 })
@@ -403,32 +385,36 @@ describe('one shared path: the same op, the same dispatch, for both callers', ()
   })
 })
 
-describe('safe mode filters the listing and enforces nothing (FUNC-03)', () => {
-  it('lists every capability for A and omits the non-read one for B', () => {
+// RE-SPELLED 2026-10-01 (432-20, D-12) from 'safe mode filters the listing and enforces nothing
+// (FUNC-03)'. The listing filter is deleted with the scopes; the claim that survives is that a
+// caller record decides neither what is listed nor what is served.
+describe('no caller field filters the listing or the dispatch (432-20, D-12)', () => {
+  it('lists every capability for A and for B — the same list, with no permission keys', () => {
     expect(REGISTRY.list(CALLER_A).map((declaration) => declaration.id))
       .toEqual([...ALL_FUNCTION_IDS])
-    // Exactly the ids whose required scopes exceed `read` drop out — no more, no fewer. The
-    // set is five now (`runs.start` plus 387-08's four knowledge-write verbs) and the assertion
-    // is about the rule, so a sixth arrives already covered.
-    expect(NON_READ_FUNCTION_IDS.length).toBeGreaterThan(1)
     expect(REGISTRY.list(CALLER_B).map((declaration) => declaration.id))
-      .toEqual(ALL_FUNCTION_IDS.filter((id) => !NON_READ_FUNCTION_IDS.includes(id)))
+      .toEqual([...ALL_FUNCTION_IDS])
+    expect(REGISTRY.list(CALLER_B)).toEqual(REGISTRY.list(CALLER_A))
 
-    // A's listing carries runs.start as covered-but-UNBOUND, never as absent (D-09).
+    // A's listing carries runs.start as UNBOUND, never as absent (D-09), and no declaration
+    // carries a scope or an origin requirement.
     const runsStart = REGISTRY.list(CALLER_A).find((declaration) => declaration.id === 'runs.start')
-    expect(runsStart).toMatchObject({ requiredScopes: ['run'], bindingStatus: 'unbound' })
+    expect(runsStart).toMatchObject({ bindingStatus: 'unbound' })
+    for (const declaration of REGISTRY.list(CALLER_B)) {
+      expect(Object.keys(declaration), declaration.id).not.toContain('requiredScopes')
+      expect(Object.keys(declaration), declaration.id).not.toContain('requiresHumanOrigin')
+    }
   })
 
-  it('is decided by the op required scopes, not by what the caller was granted', () => {
-    // B was granted `read` only; A_SAFE holds every grant. Both listings hide the same id,
-    // so the filter is reading the DECLARATION, not the caller's grants.
+  it('is the same list for a safe-mode caller holding every grant and one holding none', () => {
     expect(REGISTRY.list(CALLER_A_SAFE).map((declaration) => declaration.id))
       .toEqual(REGISTRY.list(CALLER_B).map((declaration) => declaration.id))
+    expect(REGISTRY.list({ ...CALLER_B, grantedScopes: [] }))
+      .toEqual(REGISTRY.list(CALLER_A_SAFE))
   })
 
   it('changes nothing about enforcement: safe mode alone alters no invocation outcome', async () => {
-    // A_SAFE differs from A ONLY in safeMode, and runs.start is hidden from its listing.
-    // It nonetheless reaches exactly A's refusal — the binding check.
+    // A_SAFE differs from A ONLY in safeMode. Both reach exactly the same refusal — the binding check.
     await expect(invokeFunction(REGISTRY, 'runs.start', {}, CALLER_A))
       .rejects.toBeInstanceOf(FunctionNotBoundError)
     const rowsA = audit.take()
@@ -441,34 +427,37 @@ describe('safe mode filters the listing and enforces nothing (FUNC-03)', () => {
     expect(rowsSafe).toEqual(rowsA)
   })
 
-  it('refuses B server-side for the scope it lacks — the hidden op is still enforced', async () => {
+  // RE-SPELLED 2026-10-01 (432-20, D-12) from 'refuses B server-side for the scope it lacks — the
+  // hidden op is still enforced'. Nothing is hidden and no scope is checked: B reaches the same
+  // binding check A does.
+  it('serves B exactly as A — the formerly hidden op reaches its binding check', async () => {
     const refusal = invokeFunction(REGISTRY, 'runs.start', {}, CALLER_B)
 
-    // Not "unknown", not "hidden": the scope subset check, computed server-side.
-    await expect(refusal).rejects.toBeInstanceOf(FunctionScopeError)
-    await expect(refusal).rejects.toMatchObject({ missingScopes: ['run'] })
-    // The scope check precedes dispatch, so a refused caller leaves no audit row — the
-    // same ordering the pipeline suite pins, observed here from the caller's side.
+    await expect(refusal).rejects.toBeInstanceOf(FunctionNotBoundError)
+    await expect(refusal).rejects.not.toHaveProperty('missingScopes')
     expect(audit.take()).toEqual([])
   })
 
-  it('gives A and B DIFFERENT refusals for the same id, explained by grants alone', async () => {
-    // Same registry, same id, same input. A gets as far as the binding check; B never
-    // clears the subset check. Nothing but `grantedScopes` differs on that path.
+  // RE-SPELLED 2026-10-01 (432-20, D-12) from 'gives A and B DIFFERENT refusals for the same id,
+  // explained by grants alone'.
+  it('gives A and B the SAME refusal for the same id — grants explain nothing', async () => {
     await expect(invokeFunction(REGISTRY, 'runs.start', {}, CALLER_A))
       .rejects.toBeInstanceOf(FunctionNotBoundError)
     audit.take()
     await expect(invokeFunction(REGISTRY, 'runs.start', {}, CALLER_B))
-      .rejects.toBeInstanceOf(FunctionScopeError)
+      .rejects.toBeInstanceOf(FunctionNotBoundError)
   })
 })
 
-describe('a claimed scope is not a held scope (SC3 / T-384-13)', () => {
-  it('refuses a caller whose record lacks the scope, whatever the payload says', async () => {
-    const refusal = invokeFunction(REGISTRY, 'runs.start', {}, CALLER_C)
+// RE-SPELLED 2026-10-01 (432-20, D-12) from 'a claimed scope is not a held scope (SC3 / T-384-13)'.
+// No scope is held or checked any more; what survives is that the strict input contract is still
+// the only thing a payload meets, so a payload can claim nothing.
+describe('a payload can claim nothing, and a record grants nothing (SC3 / 432-20)', () => {
+  it('serves a caller whose record lacks the scope like any other caller', async () => {
+    const outcome = invokeFunction(REGISTRY, 'runs.start', {}, CALLER_C)
 
-    await expect(refusal).rejects.toBeInstanceOf(FunctionScopeError)
-    await expect(refusal).rejects.toMatchObject({ missingScopes: ['run'] })
+    await expect(outcome).rejects.toBeInstanceOf(FunctionNotBoundError)
+    await expect(outcome).rejects.not.toHaveProperty('missingScopes')
   })
 
   it('rejects every attempt to smuggle a grant through the input payload', async () => {
@@ -487,16 +476,18 @@ describe('a claimed scope is not a held scope (SC3 / T-384-13)', () => {
       await expect(invokeFunction(REGISTRY, 'runs.start', payload, CALLER_C))
         .rejects.toBeInstanceOf(FunctionInputError)
     }
-    // Input validation precedes the subset check, so none of these attempts is auditable as
-    // an execution at all.
+    // Input validation precedes dispatch, so none of these attempts is auditable as an
+    // execution at all.
     expect(audit.take()).toEqual([])
   })
 
-  it('reads the composition-minted grants and nothing else', async () => {
-    // The counterfactual that makes the refusals above non-vacuous: the ONLY edit that
-    // gets a caller past the subset check is an edit to the record's own grantedScopes,
-    // which a caller cannot perform — the composition root mints it.
+  // RE-SPELLED 2026-10-01 (432-20, D-12) from 'reads the composition-minted grants and nothing
+  // else'. The counterfactual now shows the grants are not read: adding the missing grant moves
+  // nothing.
+  it('reads no grant: adding the missing one moves no outcome', async () => {
     await expect(invokeFunction(REGISTRY, 'runs.start', {}, CALLER_C_GRANTED))
+      .rejects.toBeInstanceOf(FunctionNotBoundError)
+    await expect(invokeFunction(REGISTRY, 'runs.start', {}, CALLER_C))
       .rejects.toBeInstanceOf(FunctionNotBoundError)
   })
 })
@@ -532,7 +523,6 @@ describe('the credential flows to the gate untouched (D-13)', () => {
   const askRegistry = createRegistryFromSpecs([askTierSpec as FunctionSpec], {
     deps: DEPS,
     auditSink: askAudit.sink,
-    resolveExecutionContext: CONTEXT,
   })
 
   beforeEach(() => {
@@ -613,88 +603,215 @@ const anyOriginSpec: FunctionSpec<Record<string, never>, { ok: true }> = {
   invoke: () => Promise.resolve({ ok: true as const }),
 }
 
-describe('a declared human-origin requirement is enforced uniformly (391 D-06)', () => {
+// RE-SPELLED 2026-10-01 (432-20, D-10/D-12) from 'a declared human-origin requirement is enforced
+// uniformly (391 D-06)'. The check and its refusal class are deleted; a spec that still declares
+// the key (until 432-39 deletes it) is served to an agent-origin caller exactly as to a person.
+describe('a declared human-origin requirement is read by nothing (432-20, D-10/D-12)', () => {
   const originAudit = capturingSink()
+  let dispatches = 0
+  const countedHumanOnly: FunctionSpec<Record<string, never>, { ok: true }> = {
+    ...humanOnlySpec,
+    id: 'synthetic.human-only.counted',
+    risk: { ...humanOnlySpec.risk },
+    invoke: () => {
+      dispatches += 1
+      return Promise.resolve({ ok: true as const })
+    },
+  }
   const originRegistry = createRegistryFromSpecs(
-    [humanOnlySpec as FunctionSpec, anyOriginSpec as FunctionSpec],
-    { deps: DEPS, auditSink: originAudit.sink, resolveExecutionContext: CONTEXT },
+    [humanOnlySpec as FunctionSpec, anyOriginSpec as FunctionSpec, countedHumanOnly as FunctionSpec],
+    { deps: DEPS, auditSink: originAudit.sink },
   )
 
   beforeEach(() => {
     originAudit.take()
+    dispatches = 0
   })
 
-  it('refuses an agent-origin caller at a declaring op, with a typed error', async () => {
+  // RE-SPELLED from 'refuses an agent-origin caller at a declaring op, with a typed error'.
+  it('serves an agent-origin caller at a still-declaring op', async () => {
     await expect(invokeFunction(originRegistry, 'synthetic.human-only', {}, CALLER_A_AGENT))
-      .rejects.toBeInstanceOf(FunctionOriginError)
+      .resolves.toEqual({ ok: true })
   })
 
-  it('names the op and the required origin, the way the scope refusal names its scopes', async () => {
-    let thrown: unknown
-    try {
-      await invokeFunction(originRegistry, 'synthetic.human-only', {}, CALLER_A_AGENT)
-    } catch (caught: unknown) {
-      thrown = caught
-    }
-
-    expect(thrown).toBeInstanceOf(FunctionOriginError)
-    const error = thrown as FunctionOriginError
-    expect(error.functionId).toBe('synthetic.human-only')
-    expect(error.requiredOrigin).toBe('human')
-    expect(error.message).toContain('synthetic.human-only')
-    expect(error.message).toContain('human')
+  // RE-SPELLED from 'names the op and the required origin, the way the scope refusal names its
+  // scopes'. Neither refusal exists, and the dispatch module exports neither class.
+  it('has no origin or scope refusal class to name', () => {
+    expect(Object.keys(invokeModule)).not.toContain('FunctionOriginError')
+    expect(Object.keys(invokeModule)).not.toContain('FunctionScopeError')
+    // The declaration a listing renders does not carry the retired key either.
+    const listed = originRegistry.list(CALLER_A_AGENT)
+      .find((declaration) => declaration.id === 'synthetic.human-only')
+    expect(listed).toBeDefined()
+    expect(Object.keys(listed!)).not.toContain('requiresHumanOrigin')
   })
 
   it('admits the SAME op for a human-origin caller — the other corpus side', async () => {
-    // Without this the refusal above is consistent with the op being broken for everyone.
-    // A_AGENT differs from A in `origin` and in nothing else, so this pair isolates the field.
     await expect(invokeFunction(originRegistry, 'synthetic.human-only', {}, CALLER_A))
       .resolves.toEqual({ ok: true })
   })
 
   it('leaves an op WITHOUT the declaration unaffected by origin', async () => {
-    // Load-bearing that the driver is agent-origin: an assertion that nothing happened is
-    // only worth having when the input could have made it happen.
     await expect(invokeFunction(originRegistry, 'synthetic.any-origin', {}, CALLER_A_AGENT))
       .resolves.toEqual({ ok: true })
     await expect(invokeFunction(originRegistry, 'synthetic.any-origin', {}, CALLER_A))
       .resolves.toEqual({ ok: true })
   })
 
-  // RE-SPELLED 2026-09-30 (432-13) from 'refuses BEFORE the gate: an origin-refused caller leaves
-  // no audit row'. The refusal still precedes dispatch; with no op gate the admitted side writes no
-  // row either, and it is the dispatch count that tells the two apart.
-  it('refuses BEFORE dispatch: an origin-refused caller leaves no audit row and runs nothing', async () => {
-    await expect(invokeFunction(originRegistry, 'synthetic.human-only', {}, CALLER_A_AGENT))
-      .rejects.toBeInstanceOf(FunctionOriginError)
-    expect(originAudit.take()).toEqual([])
-
-    await expect(invokeFunction(originRegistry, 'synthetic.human-only', {}, CALLER_A))
+  // RE-SPELLED from 'refuses BEFORE dispatch: an origin-refused caller leaves no audit row and runs
+  // nothing'. Both origins now dispatch exactly once each, and neither writes a row.
+  it('dispatches once per call for either origin and writes no audit row', async () => {
+    await expect(invokeFunction(originRegistry, 'synthetic.human-only.counted', {}, CALLER_A_AGENT))
       .resolves.toEqual({ ok: true })
+    await expect(invokeFunction(originRegistry, 'synthetic.human-only.counted', {}, CALLER_A))
+      .resolves.toEqual({ ok: true })
+    expect(dispatches).toBe(2)
     expect(originAudit.take()).toEqual([])
   })
 
-  it('refuses AFTER the scope check: a caller missing both is told about scopes first', async () => {
-    // Order is the contract, and the order is the one the file's other refusals follow: the
-    // cheaper, more specific refusal wins. A caller told "you lack read" and a caller told
-    // "this needs a human" have different things to do next.
+  // RE-SPELLED from 'refuses AFTER the scope check: a caller missing both is told about scopes
+  // first'. A caller missing every scope and the human origin is served.
+  it('serves a caller missing every scope and the human origin', async () => {
     const scopeless: FunctionCaller = { ...CALLER_A_AGENT, grantedScopes: [] }
     await expect(invokeFunction(originRegistry, 'synthetic.human-only', {}, scopeless))
-      .rejects.toBeInstanceOf(FunctionScopeError)
+      .resolves.toEqual({ ok: true })
   })
 
-  it('never branches on surface: the refusal follows origin across every surface name', async () => {
-    // The anti-pattern check, driven rather than reviewed. If the rule were a surface branch,
-    // renaming the surface would move the outcome; it does not.
+  it('never branches on surface: the outcome follows neither origin nor surface', async () => {
     for (const surface of ['cli', 'daemon', 'mcp', 'chat', 'synthetic']) {
       await expect(invokeFunction(originRegistry, 'synthetic.human-only', {}, {
         ...CALLER_A_AGENT,
         surface,
-      })).rejects.toBeInstanceOf(FunctionOriginError)
+      })).resolves.toEqual({ ok: true })
       await expect(invokeFunction(originRegistry, 'synthetic.human-only', {}, {
         ...CALLER_A,
         surface,
       })).resolves.toEqual({ ok: true })
+    }
+  })
+})
+
+// ---- 432-20 (D-10/D-12): the whole registry, for callers differing only in presentation ---------
+
+/** A deps record whose every port method counts its calls, so "zero effects" is measured. */
+function countingDeps(): { readonly deps: FunctionDeps; readonly calls: () => number } {
+  let calls = 0
+  const wrap = <Port extends object>(port: Port): Port => {
+    const wrapped: Record<string, unknown> = {}
+    for (const [key, value] of Object.entries(port)) {
+      wrapped[key] = typeof value === 'function'
+        ? (...args: unknown[]) => {
+          calls += 1
+          return (value as (...inner: unknown[]) => unknown)(...args)
+        }
+        : value
+    }
+    return wrapped as Port
+  }
+  const deps: FunctionDeps = {
+    runs: wrap(DEPS.runs),
+    knowledge: wrap(DEPS.knowledge),
+    entities: wrap(DEPS.entities),
+    config: wrap(DEPS.config),
+  }
+  return { deps, calls: () => calls }
+}
+
+/** One invocation's observable outcome, as comparable data. */
+async function outcomeOf(
+  registry: ReturnType<typeof createFunctionRegistry>,
+  opId: string,
+  input: unknown,
+  caller: FunctionCaller,
+): Promise<{ readonly settled: 'resolved' | 'rejected'; readonly detail: string }> {
+  try {
+    const value = await invokeFunction(registry, opId, input, caller)
+    const isStream = typeof value === 'object' && value !== null && Symbol.asyncIterator in value
+    return { settled: 'resolved', detail: isStream ? 'stream' : JSON.stringify(value) }
+  } catch (error: unknown) {
+    const named = error as { name?: unknown; message?: unknown }
+    return { settled: 'rejected', detail: `${String(named.name)}: ${String(named.message)}` }
+  }
+}
+
+/** The two callers differ in presentation (surface, origin) and in every retired permission field. */
+const PRESENTATION_HUMAN: FunctionCaller = {
+  surface: 'cli',
+  origin: 'human',
+  grantedScopes: ['read', 'run', 'config-write', 'knowledge-write', 'approval-write', 'test-write'],
+  safeMode: false,
+  credential: CREDENTIAL,
+}
+const PRESENTATION_AGENT: FunctionCaller = { surface: 'mcp', origin: 'agent' }
+
+describe('C432-ALL-OPS-AVAILABLE: every operation, every caller (432-20, D-12)', () => {
+  it('reaches the same outcome for every registered op whoever calls, and never a permission refusal', async () => {
+    const counted = countingDeps()
+    const registry = createFunctionRegistry({ deps: counted.deps, auditSink: audit.sink })
+    const ids = registry.list(PRESENTATION_AGENT).map((declaration) => declaration.id)
+    expect(ids).toEqual([...ALL_FUNCTION_IDS])
+
+    const permissionRefusals: string[] = []
+    for (const opId of ids) {
+      const asHuman = await outcomeOf(registry, opId, {}, PRESENTATION_HUMAN)
+      const asAgent = await outcomeOf(registry, opId, {}, PRESENTATION_AGENT)
+      expect(asAgent, opId).toEqual(asHuman)
+      if (/FunctionScopeError|FunctionOriginError|requires a human-origin|lacks required scopes/
+        .test(asAgent.detail)) {
+        permissionRefusals.push(`${opId}: ${asAgent.detail}`)
+      }
+      if (asAgent.settled === 'rejected') {
+        // The ordinary refusals: the strict input contract, the binding check, or the op's own
+        // dependency answering. Never a refusal about who is calling.
+        expect(asAgent.detail, opId).not.toMatch(/scope|origin/i)
+      }
+    }
+    expect(permissionRefusals).toEqual([])
+    expect(audit.take()).toEqual([])
+  })
+
+  it('serves a bound read to both callers with identical results', async () => {
+    const asHuman = await invokeFunction(REGISTRY, 'runs.list', {}, PRESENTATION_HUMAN)
+    const asAgent = await invokeFunction(REGISTRY, 'runs.list', {}, PRESENTATION_AGENT)
+    expect(asAgent).toEqual(asHuman)
+    expect((asAgent as RunSummary[]).map((summary) => summary.runId)).toEqual(['run-beta', 'run-alpha'])
+  })
+})
+
+describe('EDGE-02 PXH-SAFE-01/empty: empty and null input (432-20)', () => {
+  it('refuses a null input to every op through its strict schema, with zero dependency calls', async () => {
+    const counted = countingDeps()
+    const registry = createFunctionRegistry({ deps: counted.deps, auditSink: audit.sink })
+    for (const declaration of registry.list(PRESENTATION_AGENT)) {
+      await expect(invokeFunction(registry, declaration.id, null, PRESENTATION_AGENT), declaration.id)
+        .rejects.toBeInstanceOf(FunctionInputError)
+      await expect(invokeFunction(registry, declaration.id, null, PRESENTATION_HUMAN), declaration.id)
+        .rejects.toBeInstanceOf(FunctionInputError)
+    }
+    // Zero reads, writes or starts: no port method was reached, and no audit row was written.
+    expect(counted.calls()).toBe(0)
+    expect(audit.take()).toEqual([])
+  })
+
+  it('refuses an empty input to an op with a required field with zero starts', async () => {
+    const counted = countingDeps()
+    const registry = createFunctionRegistry({ deps: counted.deps, auditSink: audit.sink })
+    await expect(invokeFunction(registry, 'runs.get', {}, PRESENTATION_AGENT))
+      .rejects.toBeInstanceOf(FunctionInputError)
+    await expect(invokeFunction(registry, 'runs.start', null, PRESENTATION_AGENT))
+      .rejects.toBeInstanceOf(FunctionInputError)
+    expect(counted.calls()).toBe(0)
+  })
+
+  it('answers an optional empty read with its typed empty shape for every caller', async () => {
+    const emptyRegistry = createFunctionRegistry({
+      deps: { ...DEPS, runs: { ...DEPS.runs, list: () => Promise.resolve([]) } },
+      auditSink: audit.sink,
+    })
+    for (const caller of [PRESENTATION_HUMAN, PRESENTATION_AGENT]) {
+      await expect(invokeFunction(emptyRegistry, 'runs.list', {}, caller)).resolves.toEqual([])
+      await expect(invokeFunction(emptyRegistry, 'knowledge.bundles.list', {}, caller))
+        .resolves.toEqual([])
     }
   })
 })

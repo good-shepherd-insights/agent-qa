@@ -2,12 +2,14 @@
 //
 // WHY THIS FILE EXISTS. `buildAgentQaMcpServer(deps)` is the only thing this package hands a host:
 // give it a composed registry, the caller that host minted, and a masker, and it returns an
-// `McpServer` carrying exactly the tools and resource templates that caller may see, each of which
+// `McpServer` carrying the tools and resource templates this composition can serve, each of which
 // does nothing but validate and call `invokeFunction`. Every serving entry in the v2 SDK takes a
-// FACTORY and runs it once per serving unit — once per HTTP request, once per stdio connection — so
-// a per-caller build is the official idiom rather than a trick, and it is what makes absence
-// STRUCTURAL: a tool this caller may not see was never registered on this instance, so there is
-// nothing to leak on a torn filter and nothing to distinguish from a tool that never existed (D-08).
+// FACTORY and runs it once per serving unit — once per HTTP request, once per stdio connection.
+//
+// 2026-10-01 (432-20, D-12): THE SAME CATALOGUE FOR EVERY CALLER. The per-caller visibility law
+// (`visibleToCaller` over required and granted scopes) and the mark tool's credential hiding are
+// deleted, so a tool is absent only when this composition does not register its op — a fact about
+// the host, identical for a tokenless stdio caller and a tokenless HTTP one.
 //
 // THE HANDLERS DO NOTHING. That is D-01's "pure projection" spelled as code, and it is the whole
 // architectural claim of the phase: no MCP-local business logic, no second data path, no reaching
@@ -34,16 +36,15 @@
 // that took the JobQueue contract would make every queue change an MCP change. `task-seam.ts` is
 // published on the barrel for a later consumer and reached by nothing in this build.
 //
-// Protocol grounding: SEP-2567 (no per-connection list variance — the variance here is per CALLER,
-// keyed on the credential the host resolved, which is what the SDK's own `authInfo` factory example
-// does), SEP-2549 (list results carry cache hints; a caller-varying listing must never be served
-// from a shared cache entry), SEP-2106 (full JSON Schema 2020-12 for the advertised contracts).
+// Protocol grounding: SEP-2567 (no per-connection list variance — and since 432-20 no per-caller
+// variance either), SEP-2549 (list results carry cache hints), SEP-2106 (full JSON Schema 2020-12
+// for the advertised contracts).
 
 import { McpServer, ProtocolError, ProtocolErrorCode } from '@modelcontextprotocol/server'
 import type { CallToolResult } from '@modelcontextprotocol/server'
 import { invokeFunction, RUNS_ARTIFACT_FUNCTION_ID } from '@vostride/agent-qa-agent'
 import type { FunctionRegistry } from '@vostride/agent-qa-agent'
-import type { FunctionCaller, FunctionScope } from '@vostride/agent-qa-schema'
+import type { FunctionCaller } from '@vostride/agent-qa-schema'
 
 import { MCP_APPS_EXTENSION_ID, appResourceUriFor, registerAppResources } from './app-resource.js'
 import { liveLinkLineFor } from './live-link.js'
@@ -57,7 +58,6 @@ import {
 import type { ToolProjection } from './mapping.js'
 import {
   createMarkToolHandler,
-  credentialRequiredRefusal,
   decorateRunEvidenceImage,
   maskedToolError,
   maskedToolResult,
@@ -67,7 +67,6 @@ import type { V1ToolMigrationEntry } from './migration-map.js'
 import { McpProjectionError, toRegisterToolConfig } from './projection.js'
 import type { ProjectedOpSpec } from './projection.js'
 import { registerEntityResources } from './resources.js'
-import { visibleToCaller } from './visibility.js'
 
 /**
  * The version this server reports.
@@ -84,9 +83,10 @@ export interface AgentQaMcpServerDeps {
   /** The composed function registry. Built by the HOST, never by this package (D-09). */
   readonly registry: FunctionRegistry
   /**
-   * WHO this server answers as. Minted by the composition root and passed through untouched — the
-   * self-grant rule (391 D-06) is that a caller never asserts its own grants, and an MCP request
-   * is the least trustworthy place in the system to start.
+   * WHO this server answers as. Minted by the composition root and passed through untouched to
+   * `invokeFunction`. Since 432-20 (D-12) nothing here reads it to decide what to list or serve;
+   * its `surface` and `origin` reach only the receipts that already consume them, and the mark
+   * door's credential refusal reads `credential` until 432-21 removes it.
    */
   readonly caller: FunctionCaller
   /**
@@ -115,22 +115,6 @@ export interface AgentQaMcpServerDeps {
 
 /** The host-bound `(registry, caller)` closure over `invokeFunction`. */
 type BoundInvoke = (opId: string, input: unknown) => Promise<unknown>
-
-/**
- * The scope set a tool needs — for a fold, the UNION across its arms.
- *
- * The union and not the intersection: a tool that can reach any of several ops must be withheld
- * from a caller who may reach only some of them, because listing it would advertise a door that
- * answers refusals. The union is computed HERE, once, and handed to the predicate, so the predicate
- * stays a statement about two scope sets and never learns what a fold is.
- */
-function requiredScopeUnion(specs: readonly ProjectedOpSpec[]): readonly FunctionScope[] {
-  const union = new Set<FunctionScope>()
-  for (const spec of specs) {
-    for (const scope of spec.requiredScopes) union.add(scope)
-  }
-  return [...union]
-}
 
 /**
  * Join the mapping's declared contracts with this host's registry declarations.
@@ -277,10 +261,9 @@ function carrierRunIdOf(
  *      unauthenticated, so it is a host-capability signal and not an authorization control
  *      (`app-resource.ts`'s header, THE 2026-09-01 GAP-ROUND RULING, road `demote`). The clause is
  *      struck as a ground. What DOES bound the acting channel, and what this ground is replaced
- *      by: the `ui://` read is reachable only by a caller an operator granted the `read` scope —
- *      checked by `visibleToCaller` over the registry's OWN declared scopes in
- *      `registerAppResources` — and only in a composition where the mint is BOUND
- *      (`bindingStatus === 'bound'`, D-03's floor). Both are facts this server verifies.
+ *      by: the `ui://` read is reachable only in a composition where the mint is BOUND
+ *      (`bindingStatus === 'bound'`, D-03's floor), a fact this server verifies. (Until 432-20
+ *      it was also scope-gated by `visibleToCaller`; D-12 deletes that gate for every caller.)
  *
  * THE RULING, dated 2026-09-01 (408-08 task 1, question 2 — the USER'S answer at that plan's
  * checkpoint, `d09-retain`, quoted verbatim in `408-08-SUMMARY.md`). The deviation from D-09's
@@ -523,17 +506,12 @@ export function v1RedirectMessage(
 /** What the redirect needs to know about the instance it is being installed on. */
 interface V1RedirectDeps {
   /**
-   * The tool names registered on THIS instance — i.e. exactly what this caller's `tools/list`
-   * answers.
+   * The tool names registered on THIS instance — i.e. exactly what `tools/list` answers.
    *
-   * This set IS `visibleToCaller`'s verdict: the loop in `buildAgentQaMcpServer` adds a name only
-   * after `visibleToCaller(requiredScopeUnion(specs), grantedScopes)` admitted it. Consulting the
-   * recorded verdict rather than re-running the predicate is deliberate and is one step stronger
-   * than asking the question twice: "named by the redirect" and "listed by `tools/list`" become the
-   * SAME fact rather than two computations that agree today. It also picks up the other reason a
-   * tool is absent — an op this composition does not register — which a scope comparison alone
-   * cannot see, and naming a tool this host cannot serve would be a worse answer than saying
-   * nothing.
+   * Consulting the recorded set rather than recomputing it is deliberate: "named by the redirect"
+   * and "listed by `tools/list`" are the SAME fact rather than two computations that agree today.
+   * Since 432-20 (D-12) the only reason a tool is absent is an op this composition does not
+   * register, and naming a tool this host cannot serve would be a worse answer than saying nothing.
    */
   readonly registered: ReadonlySet<string>
   readonly maskText: (text: string) => string
@@ -552,7 +530,7 @@ interface V1RedirectDeps {
  *     is the sentence — which is history, not a grant. Throwing before any dispatch is also what
  *     makes "never invokes anything" structural (T-398-12).
  */
-function installV1NameRedirect(server: McpServer, deps: V1RedirectDeps, caller: FunctionCaller): void {
+function installV1NameRedirect(server: McpServer, deps: V1RedirectDeps): void {
   const dispatch = server.server as unknown as LowLevelDispatch
   const sdkHandler = dispatch._requestHandlers?.get(TOOLS_CALL_METHOD)
   if (typeof sdkHandler !== 'function') {
@@ -570,10 +548,8 @@ function installV1NameRedirect(server: McpServer, deps: V1RedirectDeps, caller: 
   dispatch.removeRequestHandler(TOOLS_CALL_METHOD)
   dispatch.setRequestHandler(TOOLS_CALL_METHOD, (request: unknown, ctx: unknown) => {
     const name = callToolName(request)
-    // D-20: hidden tools still refuse a direct call by name, before SDK unknown-tool dispatch.
-    if (caller.credential === undefined && AGENT_QA_TOOL_PROJECTIONS.some(
-      projection => projection.name === name && projection.credential === 'required',
-    )) return credentialRequiredRefusal(deps.maskText)
+    // 432-20 (D-12): no tool is hidden from a caller any more, so there is no hidden-tool refusal
+    // to answer here. The mark tool is registered for every caller and its own handler answers.
     const entry = name === undefined ? undefined : v1RedirectFor(name, deps.registered)
     if (entry === undefined) return sdkHandler(request, ctx)
 
@@ -596,8 +572,9 @@ function installV1NameRedirect(server: McpServer, deps: V1RedirectDeps, caller: 
  * Build the server this caller sees.
  *
  * The listing is read through `registry.list(deps.caller)` — the registry's own view of itself for
- * this host — so `summary`, `requiredScopes` and `risk` describe the composition in front of the
- * caller rather than a table in this package that could describe a different one.
+ * this host — so `summary` and `risk` describe the composition in front of the caller rather than a
+ * table in this package that could describe a different one. The view is the same for every caller
+ * (432-20, D-12).
  */
 export function buildAgentQaMcpServer(deps: AgentQaMcpServerDeps): McpServer {
   const server = new McpServer(
@@ -627,7 +604,6 @@ export function buildAgentQaMcpServer(deps: AgentQaMcpServerDeps): McpServer {
     declarations.set(declaration.id, {
       id: declaration.id,
       summary: declaration.summary,
-      requiredScopes: declaration.requiredScopes,
       risk: declaration.risk,
       input: contracts.input,
       output: contracts.output,
@@ -665,17 +641,15 @@ export function buildAgentQaMcpServer(deps: AgentQaMcpServerDeps): McpServer {
 
     const specs = resolveSpecs(projection, declarations)
     if (specs === undefined) continue
-    if (!visibleToCaller(requiredScopeUnion(specs), deps.caller.grantedScopes)) continue
-    // D-20 / Pitfall 8: anonymous knowledge-write is not a declared bearer credential.
-    if (projection.credential === 'required' && deps.caller.credential === undefined) continue
 
     registered.add(projection.name)
     const config = toRegisterToolConfig(projection, specs, advertised, deps.maskText)
 
-    // 419 D-20: the sovereign mark door keeps its credential check until the permission wave
-    // (D-12). 432-12 (D-05/D-14): it is the only `apply` entry left, and there is no confirmation
-    // round on any door — every other change tool goes through the generic handler below and
-    // answers its receipt on the one call.
+    // 419 D-20: the sovereign mark door's handler keeps its credential refusal until 432-21 removes
+    // the bearer credential (D-12); since 432-20 the tool itself is listed for every caller.
+    // 432-12 (D-05/D-14): it is the only `apply` entry left, and there is no confirmation round on
+    // any door — every other change tool goes through the generic handler below and answers its
+    // receipt on the one call.
     if (projection.kind === 'apply' && projection.credential === 'required') {
       server.registerTool(projection.name, config, createMarkToolHandler({
         caller: deps.caller, invoke, maskText: deps.maskText,
@@ -691,11 +665,10 @@ export function buildAgentQaMcpServer(deps: AgentQaMcpServerDeps): McpServer {
   }
 
   // D-15: the retired v1 names, answered at the dispatch edge with `registered` — the set the loop
-  // above just built out of `visibleToCaller`'s verdicts — as the authority on what may be named.
-  installV1NameRedirect(server, { registered, maskText: deps.maskText }, deps.caller)
+  // above just built — as the authority on what may be named.
+  installV1NameRedirect(server, { registered, maskText: deps.maskText })
 
-  // D-13: the six entity Resource Templates, gated by the SAME visibility law and resolving through
-  // the SAME wall. Registered here rather than by the host so a `resource_link` in any tool result
+  // D-13: the six entity Resource Templates, resolving through the SAME wall. Registered here rather than by the host so a `resource_link` in any tool result
   // above is dereferenceable on the instance that produced it.
   registerEntityResources(server, {
     registry: deps.registry,
@@ -705,10 +678,9 @@ export function buildAgentQaMcpServer(deps: AgentQaMcpServerDeps): McpServer {
 
   // 408 D-01/D-02/D-04: the App template for a live run, registered HERE for the reason the entity
   // templates are — a `_meta.ui.resourceUri` on any carrier tool above is only a decoration unless
-  // it is dereferenceable on the very instance that advertised it. It crosses the SAME wall, is
-  // gated by the SAME visibility law over the registry's own declarations, and registers NOTHING on
-  // a composition that cannot honestly mint (D-03's floor), so a host without a live view is told
-  // by structural absence rather than by a read that always fails.
+  // it is dereferenceable on the very instance that advertised it. It crosses the SAME wall and
+  // registers NOTHING on a composition that cannot honestly mint (D-03's floor), so a host without
+  // a live view is told by structural absence rather than by a read that always fails.
   registerAppResources(server, {
     registry: deps.registry,
     caller: deps.caller,

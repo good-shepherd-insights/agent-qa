@@ -14,7 +14,7 @@ import type {
 } from '@vostride/agent-qa-schema'
 import { describe, expect, it, vi } from 'vitest'
 
-import { FunctionNotBoundError, FunctionScopeError, invokeFunction } from '../invoke.js'
+import { FunctionNotBoundError, invokeFunction } from '../invoke.js'
 import { RUNS_MARK_FUNCTION_ID, runsMarkSpec } from '../ops/runs-mark.js'
 import { runsDetailSpec } from '../ops/runs-detail.js'
 import { createFunctionRegistry } from '../registry.js'
@@ -107,11 +107,13 @@ describe('runs.mark registration and binding (419 GATE3-01)', () => {
     expect(mark.mock.calls).toEqual([[INPUT], [INPUT]])
   })
 
-  it('requires knowledge-write even when the caller holds a standing credential', async () => {
-    const { port, mark } = stub()
+  // RE-SPELLED 2026-10-01 (432-20, D-12) from 'requires knowledge-write even when the caller holds
+  // a standing credential'. No scope is required: a read-only caller's mark reaches the port once.
+  it('marks for a caller holding only read, reaching the port once', async () => {
+    const { port, mark, outcome } = stub()
     await expect(invokeFunction(host(port), RUNS_MARK_FUNCTION_ID, INPUT, { ...TRUSTED, grantedScopes: ['read'] }))
-      .rejects.toBeInstanceOf(FunctionScopeError)
-    expect(mark).not.toHaveBeenCalled()
+      .resolves.toEqual(outcome)
+    expect(mark.mock.calls).toEqual([[INPUT]])
   })
 })
 

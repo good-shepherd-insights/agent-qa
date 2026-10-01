@@ -1,31 +1,22 @@
 import { z } from 'zod'
 
 /**
- * Closed capability-scope union for the function layer (Phase 384, D-13).
+ * Capability-scope union for the function layer (Phase 384, D-13) — RETIRED (2026-10-01, 432-20,
+ * D-12: "every door can call every operation").
  *
- * This is a CAPABILITY scope — what a caller is allowed to do. It is deliberately
- * distinct from `TrustScope` (`{project?, org?}`), which is a tenancy scope carried
- * by credentials and standing approvals; the two axes never merge.
+ * THE UNION GATES NOTHING. `invokeFunction` no longer checks a caller's grants against an op's
+ * scopes, the registry no longer filters a listing by them, and no declaration carries them. The
+ * type survives only for the optional, unread `FunctionMetadata.requiredScopes` and
+ * `FunctionCaller.grantedScopes` fields that op specs and fixtures still spell while later 432 plans
+ * remove them; 432-39 deletes this union, its six members and every import of it. A future
+ * permission model is a new design, not a restore.
  *
- * SCOPE UNION CLOSED (2026-08-16 · Phase 397 · D-16). The union below is ratified COMPLETE at its
- * six members for v2 — `read`, `run`, `config-write`, `knowledge-write`, `approval-write`,
- * `test-write` — and this note replaces the open reservation dated 2026-07-28, which reserved the
- * union's extension to this phase. That reservation was true of its moment and is exactly what let
- * three later phases each add a member while pointing here to finish the argument. 397 finishes it
- * by closing the door rather than by walking through it: two real surfaces now resolve through the
- * registry and one conformance suite ranges the whole of it, so a scope no declaration can name is
- * a scope no surface can be checked against.
- *
- * GROWTH RULE. A seventh member requires BOTH of the following, and neither substitutes for the
- * other:
- *   (a) a dated note IN THIS FILE arguing the PRIVILEGE CONFLATION that spending an existing member
- *       would commit — the exact shape of the three notes below, made where the cost is enforced;
- *   (b) a scenario-table row and a golden-registry update in 397's conformance suite
- *       (`packages/cli/src/__tests__/conformance/`), so a new power is measured on every rostered
- *       surface before it is granted on any.
- * Clause (b) cannot be skipped silently: the census cell reds on an op whose `requiredScopes` names
- * a scope this union does not hold, so the ledger enforces itself in that direction. Clause (a) is
- * a discipline a reviewer enforces, and this sentence is where the reviewer is told so.
+ * THE GROWTH RULE IS DELETED with the union's purpose (D-12). It required a dated
+ * privilege-conflation note here and a conformance row before a seventh member could join, and the
+ * census cell that ranged every declaration's scopes against this union is retired with it. The
+ * closure note it carried (2026-08-16 · Phase 397 · D-16, which replaced the 2026-07-28
+ * reservation) is history now; the three dated counter-notes below are kept as the record of why
+ * each member existed, not as precedent for adding a fourth.
  *
  * 2026-09-02 (Phase 412): the anticipated first extension left with the Issue-slot cleanup — see
  * `DELETION-INVENTORY.md`. Nothing is anticipated now; the growth rule above is the whole door.

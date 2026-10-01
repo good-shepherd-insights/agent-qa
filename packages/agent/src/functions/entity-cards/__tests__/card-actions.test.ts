@@ -178,14 +178,14 @@ describe('cards advertise only what the registry contains (D-11)', () => {
     }
   })
 
+  // RE-SPELLED 2026-10-01 (432-20, D-12): the registry's safe-mode filter is deleted, so the listing
+  // no longer hides `runs.start` from anyone. The claim that survives: the card decides nothing
+  // about callers, and the listing it is checked against is the same for every caller.
   it('leaves the safe-mode decision to the LISTING, not to the card', () => {
-    // D-11's "safe-mode listing filters apply automatically". The producer receives no
-    // caller, so it cannot and must not decide this: a TST card advertises `runs.start`
-    // either way, and it is the registry listing that hides it from a safe-mode caller.
     const safe = defaultRegistryIds(SAFE_CALLER)
     const full = defaultRegistryIds(FULL_CALLER)
     expect(full.has('runs.start')).toBe(true)
-    expect(safe.has('runs.start')).toBe(false)
+    expect(safe).toEqual(full)
     expect(actionsForKind(descriptorFor('TST')).map((action) => action.functionId))
       .toContain('runs.start')
   })

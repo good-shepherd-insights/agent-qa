@@ -521,7 +521,9 @@ describe('registry invariants that need in-package access', () => {
     for (const declaration of declarations()) {
       const label = declaration.id
       expect(declaration.summary.trim(), label).not.toEqual('')
-      expect(declaration.requiredScopes.length, label).toBeGreaterThan(0)
+      // 432-20 (D-12): no scope column — a declaration carries no permission metadata.
+      expect(Object.keys(declaration), label).not.toContain('requiredScopes')
+      expect(Object.keys(declaration), label).not.toContain('requiresHumanOrigin')
       expect(['unary', 'stream'], label).toContain(declaration.resultKind)
       expect(['bound', 'unbound'], label).toContain(declaration.bindingStatus)
       expect(declaration.risk.name, label).toEqual(`fn:${declaration.id}`)

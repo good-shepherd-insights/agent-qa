@@ -208,7 +208,6 @@ describe('OVERVIEW-REGISTRY: runs.overview is a registered read over one complet
       .find((entry) => entry.id === OVERVIEW)
     expect(declaration).toMatchObject({
       id: OVERVIEW,
-      requiredScopes: ['read'],
       resultKind: 'unary',
       bindingStatus: 'bound',
       risk: { name: `fn:${OVERVIEW}`, recognized: true, readOnly: true },

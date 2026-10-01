@@ -390,16 +390,22 @@ describe('registerAppResources — the D-02/D-03 gate', () => {
     expect(server.calls[0]!.listCallback).toBeUndefined()
   })
 
-  it('registers NOTHING for a caller granted no read scope (D-02)', () => {
+  // RE-SPELLED 2026-10-01 (432-20, D-12) from 'registers NOTHING for a caller granted no read scope
+  // (D-02)'. The scope gate is deleted: a caller granted nothing gets the same one template, and the
+  // D-03 floor below (no mint op, or an unbound one) is what still registers nothing.
+  it('registers the same template for a caller granted no read scope (432-20, D-12)', () => {
     const { registry } = fixtureRegistry()
-    const server = recordingServer()
-    const registered = registerAppResources(server as never, {
+    const granted = recordingServer()
+    const ungranted = recordingServer()
+    const forReader = registerAppResources(granted as never, { registry, caller: caller(), maskText: identity })
+    const forNobody = registerAppResources(ungranted as never, {
       registry,
       caller: caller([]),
       maskText: identity,
     })
-    expect(registered).toEqual([])
-    expect(server.calls).toEqual([])
+    expect(forNobody).toEqual(forReader)
+    expect(forNobody).toHaveLength(1)
+    expect(ungranted.calls.map((call) => call.name)).toEqual(granted.calls.map((call) => call.name))
   })
 
   it('registers NOTHING on a registry that declares no mint op (D-03 floor)', () => {

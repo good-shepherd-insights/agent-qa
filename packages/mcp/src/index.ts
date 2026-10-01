@@ -154,7 +154,8 @@ export type { LiveLinkSupplier } from './live-link.js'
 export { McpProjectionError, toRegisterToolConfig } from './projection.js'
 export type { ProjectedOpSpec, RegisterToolConfig } from './projection.js'
 
-export { visibleToCaller } from './visibility.js'
+// 2026-10-01 (432-20, D-12): `visibleToCaller` is deleted with the per-caller visibility law; every
+// caller sees the same catalogue.
 
 // The dormant task seam (plan 03, D-12). Published on the barrel and reached by NOTHING in the
 // server build — the two facts are not in tension: a later phase registering the tasks extension is

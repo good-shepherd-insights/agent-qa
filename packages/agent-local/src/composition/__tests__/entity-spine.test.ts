@@ -317,7 +317,6 @@ describe('the entity spine through composeLocalAgent (387-01)', () => {
     for (const entry of host.registry.list(CALLER)) {
       if (entry.id !== 'entities.resolve' && entry.id !== 'entities.get') continue
       expect(entry).toMatchObject({
-        requiredScopes: ['read'],
         bindingStatus: 'bound',
         risk: { readOnly: true },
       })

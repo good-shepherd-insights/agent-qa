@@ -139,7 +139,6 @@ function probeSpecs(): readonly ProjectedOpSpec[] {
     return {
       id: declaration.id,
       summary: declaration.summary,
-      requiredScopes: declaration.requiredScopes,
       risk: declaration.risk,
       input: schema.RunsEvidenceFoldInputSchema,
       output: schema.RunsEvidenceFoldOutputContract,

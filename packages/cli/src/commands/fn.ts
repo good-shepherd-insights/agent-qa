@@ -172,18 +172,19 @@ function emitHuman(maskedText: string): void {
   }
 }
 
-/** The listing projection: identity and contract metadata only, never zod internals. */
+/**
+ * The listing projection: identity and contract metadata only, never zod internals. No scope
+ * column since 432-20 (D-12): declarations carry no permission metadata.
+ */
 function declarationRow(declaration: FunctionDeclaration): {
   id: string
   summary: string
-  requiredScopes: string[]
   resultKind: string
   bindingStatus: string
 } {
   return {
     id: declaration.id,
     summary: declaration.summary,
-    requiredScopes: [...declaration.requiredScopes],
     resultKind: declaration.resultKind,
     bindingStatus: declaration.bindingStatus,
   }
@@ -199,7 +200,6 @@ function renderListing(declarations: readonly FunctionDeclaration[]): string {
     ...declarations.flatMap((declaration) => [
       pc.bold(declaration.id),
       `  summary: ${declaration.summary}`,
-      `  required scopes: ${declaration.requiredScopes.join(', ')}`,
       `  result kind: ${declaration.resultKind}`,
       `  binding: ${declaration.bindingStatus}`,
     ]),

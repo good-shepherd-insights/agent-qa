@@ -6,19 +6,15 @@
 // invoke runs once, in every execution context, and no execution-audit row is written for it.
 //
 // What stays is everything that is not an approval: the unknown-id refusal, input validation, the
-// declared scope and origin checks (retired with the permission wave, 432-20/39), the binding
-// check, the host's read scope, dispatch, and output validation for unary results.
+// binding check, the host's read scope, dispatch, and output validation for unary results.
 //
-// Caller-as-data (FUNC-03): the caller record is read in exactly two places in this file — the
-// scope subset check and the actor-origin check beside it (391 D-06) — plus the registry's safe-mode
-// listing filter. `if (caller.surface === 'cli')` is the anti-pattern this layer exists to make
-// impossible, and the origin check is what keeps the self-grant rule from being written that way.
+// 2026-10-01 (432-20, D-10/D-12): THERE ARE NO PERMISSIONS EITHER. The scope subset check, the
+// human-origin check and their two refusal classes are deleted, and so is the registry's safe-mode
+// listing filter: every door can call every operation. The caller record is not read here at all.
+// Its `surface` and `origin` survive only for the receipts and presentation that already consume
+// them; a branch on either in this path would re-create the per-door powers this layer abolished.
 
-import type {
-  FunctionCaller,
-  FunctionCallerOrigin,
-  FunctionScope,
-} from '@vostride/agent-qa-schema'
+import type { FunctionCaller } from '@vostride/agent-qa-schema'
 
 import { registryInternals, resolveBindingStatus } from './registry.js'
 import type { FunctionRegistry } from './registry.js'
@@ -47,39 +43,8 @@ export class FunctionInputError extends Error {
   }
 }
 
-/** The caller's minted grants do not cover the op's required scopes (FUNC-03). */
-export class FunctionScopeError extends Error {
-  constructor(
-    readonly functionId: string,
-    readonly missingScopes: readonly FunctionScope[],
-  ) {
-    super(`Caller lacks required scopes for ${functionId}: ${missingScopes.join(', ')}`)
-    this.name = 'FunctionScopeError'
-  }
-}
-
-/**
- * The op declares a human-origin requirement and this caller is agent-origin (391 D-06).
- *
- * Mirrors {@link FunctionScopeError} deliberately, because it is the same KIND of refusal: a
- * caller-capability check against a composition-minted field, decided from op-declared data
- * before anything is dispatched. What a caller does next differs though, which is why it is a
- * distinct class rather than a scope error with a different message — a missing scope is
- * something a composition could grant, and a missing human is not.
- */
-export class FunctionOriginError extends Error {
-  readonly requiredOrigin: FunctionCallerOrigin = 'human'
-
-  constructor(
-    readonly functionId: string,
-    readonly callerOrigin: FunctionCallerOrigin,
-  ) {
-    super(
-      `${functionId} requires a human-origin caller; this call is ${callerOrigin}-origin`,
-    )
-    this.name = 'FunctionOriginError'
-  }
-}
+// 2026-10-01 (432-20, D-12): `FunctionScopeError` and `FunctionOriginError` are deleted with the
+// scope and human-origin checks that raised them. Nothing refuses a caller for who it is.
 
 // 2026-10-01 (432-19, D-15): `FunctionDeniedError` is deleted. It was the execution gate's
 // refusal, carrying the gate's reason and remedies; no gate raises it since 432-13, and the doors
@@ -100,20 +65,19 @@ function issueSummary(issues: readonly { path: PropertyKey[]; message: string }[
  * Order is load-bearing and asserted by tests:
  *   1. resolve the spec        — unknown id fails before any dependency is touched
  *   2. validate the input      — malformed input never reaches an implementation
- *   3. scope subset check      — computed here from composition-minted grants
- *   4. actor-origin check      — op-declared, against the composition-minted origin (391 D-06)
- *   5. binding check           — a declared-but-unbound op refuses by name
- *   6. dispatch                — the only place a spec implementation ever runs
- *   7. validate the output     — unary results honour their declared contract
+ *   3. binding check           — a declared-but-unbound op refuses by name
+ *   4. dispatch                — the only place a spec implementation ever runs
+ *   5. validate the output     — unary results honour their declared contract
  *
  * Stream ops (D-08) run through the SAME steps. Nothing between the refusals and dispatch asks
- * anybody anything (432-13).
+ * anybody anything (432-13), and nothing reads who is calling (432-20): `caller` is accepted so
+ * every door keeps one call shape, and the record it carries is presentation data only.
  */
 export async function invokeFunction(
   registry: FunctionRegistry,
   functionId: string,
   input: unknown,
-  caller: FunctionCaller,
+  _caller: FunctionCaller,
 ): Promise<unknown> {
   const internals = registryInternals(registry)
   const spec = internals?.specs.get(functionId)
@@ -124,25 +88,6 @@ export async function invokeFunction(
   const parsed = spec.input.safeParse(input)
   if (!parsed.success) {
     throw new FunctionInputError(functionId, issueSummary(parsed.error.issues))
-  }
-
-  const missingScopes = spec.requiredScopes.filter(
-    (scope) => !caller.grantedScopes.includes(scope),
-  )
-  if (missingScopes.length > 0) {
-    throw new FunctionScopeError(functionId, missingScopes)
-  }
-
-  // 391 D-06: the actor-origin check, beside the scope check because it is the same kind of thing:
-  // a caller-capability question answered from op-declared data and a composition-minted field,
-  // with no dependency touched and no implementation reachable. It comes AFTER the scope check so
-  // the cheaper, more actionable refusal wins.
-  //
-  // Two fields are read and neither is `surface`. `if (caller.surface === 'chat')` would have
-  // been the same behaviour today and the wrong mechanism forever: it makes the rule a property
-  // of where a call came from rather than of what the op is.
-  if (spec.requiresHumanOrigin === true && caller.origin !== 'human') {
-    throw new FunctionOriginError(functionId, caller.origin)
   }
 
   // The DECLARATION is authoritative — an op this composition reports as `unbound` never

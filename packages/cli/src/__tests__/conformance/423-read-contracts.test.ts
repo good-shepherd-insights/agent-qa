@@ -594,9 +594,9 @@ describe('423-38 all-door read contracts (D-04/D-18)', () => {
 
       // Registry descriptors: read tier, bound here, and the scenario row's MCP claim is the mapping's.
       const declaration = doors.registry.list(CLI_FUNCTION_CALLER).find(entry => entry.id === scenario.opId)
-      expect(declaration).toMatchObject({ bindingStatus: 'bound', requiredScopes: ['read'], resultKind: 'unary', risk: { readOnly: true } })
+      expect(declaration).toMatchObject({ bindingStatus: 'bound', resultKind: 'unary', risk: { readOnly: true } })
       const row = scenarioRowFor(scenario.opId)
-      expect(row?.policyPoints).toEqual({ grant: 'allow', refuse: 'deny' })
+      expect(row?.policyPoints).toEqual({ grant: 'allow', refuse: 'allow' })
       const tool = toolFor(scenario.opId)
       const tools = await doors.mcpTools()
       if (row?.perSurface.mcp !== undefined && 'reachable' in row.perSurface.mcp) {

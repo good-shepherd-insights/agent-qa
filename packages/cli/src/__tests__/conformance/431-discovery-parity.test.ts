@@ -394,7 +394,9 @@ describe('DISCOVERY-FOUR-DOOR: the discovery reads on the four rostered doors (4
       expect(AGENT_QA_OP_CONTRACTS[opId]?.input, opId).toBe(contract)
       const declaration = declarations.find((entry) => entry.id === opId)
       expect(declaration, `${opId} is not declared`).toBeDefined()
-      expect(declaration!.requiredScopes, opId).toEqual(['read'])
+      // 432-20 (D-12): no scope on a declaration; the read claim is the risk descriptor's.
+      expect(Object.keys(declaration!), opId).not.toContain('requiredScopes')
+      expect(declaration!.risk.readOnly, opId).toBe(true)
       const row = scenarioRowFor(opId)
       expect(row, `${opId} has no scenario row`).toBeDefined()
       expect(row!.perSurface, opId).toEqual({

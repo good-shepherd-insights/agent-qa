@@ -39,7 +39,7 @@
 // per call.
 
 import type { StandardSchemaWithJSON, ToolAnnotations } from '@modelcontextprotocol/server'
-import type { FunctionScope, RiskActionDescriptor } from '@vostride/agent-qa-schema'
+import type { RiskActionDescriptor } from '@vostride/agent-qa-schema'
 
 // ONE authoritative spelling of the App address: the module that publishes the template is the
 // module that parses it, and this derivation imports it rather than restating the string.
@@ -59,7 +59,7 @@ const JSON_SCHEMA_CONVERSION_TARGET = 'draft-2020-12'
 /**
  * Everything the derivation reads about ONE op, assembled by `catalog.ts`.
  *
- * The two halves come from two places on purpose. `summary`, `requiredScopes` and `risk` are read
+ * The two halves come from two places on purpose. `summary` and `risk` are read
  * off the registry's own declaration for this host, so they describe the composition a caller is
  * actually talking to; `input` and `output` are the live contracts named by the mapping table,
  * because the registry deliberately publishes only inert projections of those (T-384-14). Nothing
@@ -68,7 +68,6 @@ const JSON_SCHEMA_CONVERSION_TARGET = 'draft-2020-12'
 export interface ProjectedOpSpec {
   readonly id: string
   readonly summary: string
-  readonly requiredScopes: readonly FunctionScope[]
   readonly risk: RiskActionDescriptor
   readonly input: StandardSchemaWithJSON
   readonly output: StandardSchemaWithJSON
@@ -106,21 +105,15 @@ export interface RegisterToolConfig {
 }
 
 /**
- * A tool is read-only when every arm is.
+ * A tool is read-only when every arm is: the risk descriptor's explicit `readOnly`, the op's own
+ * word. A fold containing one write is not read-only.
  *
- * TWO SIGNALS, EITHER SUFFICIENT, and both are the op's own words: the risk descriptor's explicit
- * `readOnly`, and the structural fact that the op asks for no scope beyond `read`. They are kept
- * together rather than one being picked because they fail in different directions — an op can
- * declare `readOnly` and be wrong, and an op can be a genuine read while its author never filled in
- * the descriptor. Requiring BOTH would hide honest reads; accepting EITHER over the whole arm set
- * still needs every arm to qualify, so a fold containing one write is not read-only.
+ * 2026-10-01 (432-20, D-12): the second signal — "the op asks for no scope beyond `read`" — left
+ * with the scopes, which declarations no longer carry. Every projected read op declares
+ * `readOnly: true` and every projected write op does not, so the annotation set is unchanged.
  */
 function isReadOnly(specs: readonly ProjectedOpSpec[]): boolean {
-  return specs.every(
-    (spec) =>
-      spec.risk.readOnly === true ||
-      spec.requiredScopes.every((scope) => scope === 'read'),
-  )
+  return specs.every((spec) => spec.risk.readOnly === true)
 }
 
 /**

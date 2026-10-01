@@ -121,7 +121,8 @@ function registryWith(authoringFunnel?: AuthoringFunnelPortLike) {
 describe(`${AUTHORING_FUNNEL_GET_FUNCTION_ID} — the honesty funnel's one read`, () => {
   it('declares `read` alone and a read-only risk descriptor', () => {
     expect(authoringFunnelGetSpec.id).toBe('authoring.funnel.get')
-    expect([...authoringFunnelGetSpec.requiredScopes]).toEqual(['read'])
+    // Raw op-spec metadata, retired and unread since 432-20; its op-spec owner removes it.
+    expect([...(authoringFunnelGetSpec.requiredScopes ?? [])]).toEqual(['read'])
     expect(authoringFunnelGetSpec.risk.readOnly).toBe(true)
     expect(authoringFunnelGetSpec.risk.recognized).toBe(true)
     expect(authoringFunnelGetSpec.boundThrough).toBe('authoringFunnel')

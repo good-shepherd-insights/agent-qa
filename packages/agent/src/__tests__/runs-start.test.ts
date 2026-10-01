@@ -196,7 +196,9 @@ describe('runs.start is visibly unbound, never silently missing', () => {
     expect(audit.auditRows()).toEqual([])
   })
 
-  it('refuses a caller lacking the run scope before it ever reaches the binding check', async () => {
+  // RE-SPELLED 2026-10-01 (432-20, D-12) from 'refuses a caller lacking the run scope before it ever
+  // reaches the binding check'. No scope is checked: the same caller reaches the binding check.
+  it('serves a caller lacking the run scope up to the same binding check', async () => {
     const audit = capturingSink()
     const readOnlyCaller: FunctionCaller = {
       surface: 'test',
@@ -212,8 +214,8 @@ describe('runs.start is visibly unbound, never silently missing', () => {
       readOnlyCaller,
     ).catch((error: unknown) => error)
 
-    expect(thrown).not.toBeInstanceOf(FunctionNotBoundError)
-    expect((thrown as Error).name).toBe('FunctionScopeError')
+    expect(thrown).toBeInstanceOf(FunctionNotBoundError)
+    expect((thrown as Error).name).not.toBe('FunctionScopeError')
     expect(audit.auditRows()).toHaveLength(0)
   })
 

@@ -184,12 +184,8 @@ export const EXPECTED_AGENT_BARREL_VALUE_EXPORTS: readonly string[] = [
   // 2026-10-01 (432-19, D-15): 'FunctionDeniedError' left with the execution gate that raised it.
   'FunctionInputError',
   'FunctionNotBoundError',
-  // 391 D-06. A caller-facing refusal a surface legitimately catches and reports, on exactly
-  // the footing of its four siblings here: it is an error CLASS, not a dispatch path, so a
-  // surface holding it can run nothing. It lands in SORT position rather than appended,
-  // because this list is compared by exact equality against the barrel's own order.
-  'FunctionOriginError',
-  'FunctionScopeError',
+  // 2026-10-01 (432-20, D-12): 'FunctionOriginError' and 'FunctionScopeError' left with the scope
+  // and human-origin checks that raised them.
   // 422 D-14: the Gate-1 acknowledgement refusal. An error CLASS, in ASCII sort position, and
   // it opens no path around the dispatch for the same reason every other refusal here does not:
   // it carries a candidate id and the writer's own word for the refusal, and nothing callable.

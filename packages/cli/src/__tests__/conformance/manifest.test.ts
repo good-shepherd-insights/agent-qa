@@ -40,6 +40,7 @@ import { loadCapabilityCatalog } from '../../capability-catalog/loader.js'
 import { buildAgentManifest } from '../../capability-catalog/manifest.js'
 import { CLI_FUNCTION_CALLER } from '../../composition/local-agent-host.js'
 import { DEFAULT_MCP_SCOPES } from '../../composition/mcp-token-resolution.js'
+import { registryOpIds } from './adapters.js'
 import {
   CATALOG_PATH,
   CATALOG_REGEN_INSTRUCTION,
@@ -468,16 +469,16 @@ describe('the agent manifest (D-16, XPLN-01)', () => {
     const manifest = await buildAgentManifest({
       configPath: join(fixtureProject('unfiltered'), 'agent-qa.config.yaml'),
     })
-    const withheld = manifest.rows.filter(
-      (row): row is CatalogOpRow =>
-        row.kind === 'op'
-        && row.requiredScopes.some((scope) => !manifest.posture.defaultScopes.includes(scope)),
-    )
+    // 432-20 (D-12): rows carry no scope column any more, so "outside the default grant" is no
+    // longer a property a row has. The claim survives as completeness: every registered op is a row,
+    // including every config write the old default grant withheld.
+    const opRows = manifest.rows.filter((row): row is CatalogOpRow => row.kind === 'op')
     expect(
-      withheld.length,
-      'the manifest lists no capability outside the local default grant — either the grant widened '
-      + 'or the manifest has started filtering, and only one of those is allowed',
-    ).toBeGreaterThan(0)
+      opRows.map((row) => row.id).sort(),
+      'the manifest dropped a registered capability — it has started filtering',
+    ).toEqual([...registryOpIds()].sort())
+    expect(opRows.filter((row) => row.id.startsWith('config.') && row.id !== 'config.get').length)
+      .toBeGreaterThan(0)
     // …and the note a reader gets says so, in the document rather than in a source file.
     expect(manifest.$note.join(' ')).toContain('NOT A GRANT LIST')
   })

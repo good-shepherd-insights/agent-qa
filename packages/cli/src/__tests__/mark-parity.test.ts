@@ -164,7 +164,9 @@ describe('419 mark receipt parity across the four sovereign doors', () => {
     } finally { spy.mockRestore(); output.mockRestore(); errors.mockRestore() }
 
     const mcp = await mcpDoor(scenes[2])
-    expect((await mcp.anonymous.listTools()).tools.map(tool => tool.name)).not.toContain('agent_qa_mark_run')
+    // 432-20 (D-12): the mark tool is listed for every caller; its handler still refuses an
+    // anonymous one until 432-21 removes the bearer credential.
+    expect((await mcp.anonymous.listTools()).tools.map(tool => tool.name)).toContain('agent_qa_mark_run')
     const refused = await mcp.anonymous.callTool({ name: 'agent_qa_mark_run', arguments: input })
     expect(refused.isError).toBe(true)
     expect(JSON.stringify(refused.content)).toContain('present a bearer whose scopes include `knowledge-write`')

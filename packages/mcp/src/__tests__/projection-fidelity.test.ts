@@ -150,16 +150,15 @@ describe('the advertised catalogue is what the mapping declares', () => {
     )
   })
 
-  // D-05 at the SERVER level rather than at the predicate: a caller granted only `read` receives a
-  // listing containing no write door at all, because a tool it may not use was never registered on
-  // its instance. Absence is structural, so there is nothing to leak.
-  it('advertises only the read tools to a caller granted only read', async () => {
+  // RE-SPELLED 2026-10-01 (432-20, D-12) from 'advertises only the read tools to a caller granted
+  // only read'. The D-05 visibility law is deleted, so a read-only caller receives every declared
+  // tool, in the declared order — the same listing a caller granted everything receives.
+  it('advertises every declared tool to a caller granted only read, as to every caller', async () => {
     const advertised = await advertise(['read'])
     expect(advertised.map((tool) => tool.name)).toEqual(
-      AGENT_QA_TOOL_PROJECTIONS.filter((projection) => projection.kind === 'read').map(
-        (projection) => projection.name,
-      ),
+      AGENT_QA_TOOL_PROJECTIONS.map((projection) => projection.name),
     )
+    expect(JSON.stringify(advertised)).toBe(JSON.stringify(await advertise()))
   })
 })
 
@@ -420,7 +419,6 @@ describe('the App carrier declaration is registry data (408 D-05)', () => {
       return {
         id: declaration.id,
         summary: declaration.summary,
-        requiredScopes: declaration.requiredScopes,
         risk: declaration.risk,
         input: contracts.input,
         output: contracts.output,

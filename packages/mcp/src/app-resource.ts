@@ -80,6 +80,12 @@
 //      App rides the existing `read` scope… no new scope in the token vocabulary" — and a
 //      composition failing any condition registers no template at all, so for such a caller this
 //      address does not exist. Clause 3's check is a filter ON TOP of this; it is not this.
+//      SUPERSEDED, 2026-10-01 (432-20, D-12/D-13): the scope half is deleted with every per-caller
+//      permission — "every door can call every operation" — so the template registers for every
+//      caller of a composition whose mint is bound. What bounds the credential now is what D-13
+//      keeps: the loopback-only endpoint, its Host/Origin guards, the bound-mint floor, the
+//      five-minute view-scoped token and the unlisted address. Retained here rather than
+//      rewritten, on this file's own rule.
 //
 // THE 2026-09-01 GAP-ROUND RULING — ROAD `demote` (408-08 task 1: the user's checkpoint answer,
 // quoted verbatim in `408-08-SUMMARY.md`). `408-VERIFICATION.md` gaps[2] and `408-REVIEW.md` CR-01
@@ -187,7 +193,6 @@ import { renderAppWrapperPage } from './app-wrapper.js'
 import type { AppWrapperMint } from './app-wrapper.js'
 import { liveRunLinkOf } from './live-link.js'
 import type { LiveLinkSupplier } from './live-link.js'
-import { visibleToCaller } from './visibility.js'
 
 /**
  * The official MCP Apps extension id (spec revision 2026-01-26).
@@ -311,9 +316,9 @@ export interface AppReadContext {
  * caller in its own per-request `_meta` and forwarded by the SDK unauthenticated
  * (`_inputRequestCapabilityView` returns it verbatim; `checkInboundEnvelope` checks shape only),
  * so a `false` answer means "this caller did not SAY it can render an App" — a host-capability
- * fact — and never "this caller is not authorized to hold a live-view credential". The thing
- * that bounds the credential is the operator-granted `read` scope checked by `visibleToCaller` in
- * `registerAppResources`, together with `bindingStatus === 'bound'`; see header clause 5.
+ * fact — and never "this caller is not authorized to hold a live-view credential". What bounds
+ * the credential is `bindingStatus === 'bound'` and the local network controls D-13 keeps; the
+ * scope check that once sat beside it is deleted (432-20, D-12). See header clause 5.
  *
  * `RequestMetaEnvelope` is an intentionally EMPTY augmentable type in the shipped d.mts, so the
  * envelope is read through one narrow cast at this single seam rather than by widening the SDK's
@@ -500,11 +505,9 @@ export function createAppResourceReadHandler(
     // What this line asks is whether the caller SAID it can render an MCP App. A caller that did
     // not say so is turned away before anything below runs, so this path has no token to withhold
     // rather than a token it remembered not to print — and that ordering is still worth keeping.
-    // It is not, however, where authorization happened. Authorization happened at REGISTRATION
-    // time: `registerAppResources` only registered this template because `visibleToCaller` found
-    // the operator-granted scopes on this caller cover the mint's and the roster's declared
-    // `read`, and because the mint is `bound` in this composition. A caller without those never
-    // reaches this handler at all, because the address was never registered for it.
+    // It is not, however, an authorization check. Since 432-20 (D-12) no per-caller permission
+    // exists: `registerAppResources` registered this template because the mint is `bound` in this
+    // composition, and a composition without that never reaches this handler at all.
     if (!negotiatedAppsExtension(ctx)) throw new AppResourceNegotiationError()
 
     const parsed = parseAppUri(uri.href)
@@ -754,14 +757,12 @@ export interface AppResourceDeps {
  * none" and "registered one" are the two halves of the claim, and a caller that had to inspect a
  * server to tell them apart could only ever test one of them.
  *
- * THREE CONDITIONS, ALL READ OFF THE REGISTRY'S OWN DECLARATIONS (D-02/D-03):
+ * TWO CONDITIONS, BOTH READ OFF THE REGISTRY'S OWN DECLARATIONS (D-02/D-03), AND NEITHER ABOUT THE
+ * CALLER (432-20, D-12 deleted the third, a `visibleToCaller` scope check):
  *
  *  1. Both ops this surface reads through — the mint and the roster read — are declared here. A
  *     composition that registered neither has no App to offer.
- *  2. This caller may see them. `visibleToCaller` over the scopes the REGISTRY declares, never a
- *     constant restated in this file; watching a run is a `read` (D-02), so the App survives safe
- *     mode exactly as the entity templates do.
- *  3. The mint is BOUND in this composition. This is D-03's floor made structural: the standalone
+ *  2. The mint is BOUND in this composition. This is D-03's floor made structural: the standalone
  *     `agent-qa mcp` process composes no `liveView` port, so its `runs.liveurl` is declared-and-
  *     unbound and every mint there would refuse by name. Registering an App on that host would
  *     advertise an address whose every read is honestly empty — so it registers nothing at all,
@@ -780,14 +781,12 @@ export function registerAppResources(
   const mint = declared.find((candidate) => candidate.id === RUNS_LIVE_URL_FUNCTION_ID)
   const roster = declared.find((candidate) => candidate.id === RUNS_EVENTS_FUNCTION_ID)
   if (mint === undefined || roster === undefined) return []
-  if (!visibleToCaller(mint.requiredScopes, deps.caller.grantedScopes)) return []
-  if (!visibleToCaller(roster.requiredScopes, deps.caller.grantedScopes)) return []
   if (mint.bindingStatus !== 'bound') return []
 
   const read = createAppResourceReadHandler({
     // The wall, bound once: every mint crosses `invokeFunction` with this host's registry and this
-    // caller, so the scope check, the origin check and the policy gate under it all run exactly as
-    // they do for a tool call. There is no store, no cache and no second data path.
+    // caller, so input validation and the binding check run exactly as they do for a tool call.
+    // There is no store, no cache and no second data path.
     invoke: (opId, input) => invokeFunction(deps.registry, opId, input, deps.caller),
     maskText: deps.maskText,
     // Absent stays ABSENT rather than becoming a present `undefined` supplier: the house rule for

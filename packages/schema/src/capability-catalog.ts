@@ -118,7 +118,12 @@ export const CatalogOpRowSchema = z.object({
   docAnchor: z.string().min(1).optional(),
   /** Present iff `docPath` is null — the dated reason there is no doc yet. */
   docAbsentReason: z.string().min(1).optional(),
-  requiredScopes: z.array(FunctionScopeSchema),
+  /**
+   * RETIRED (2026-10-01, 432-20, D-12). The op's capability scopes, once copied off its
+   * declaration. Declarations carry no scopes and the generator writes none; optional only for the
+   * bounded transition, and 432-39 deletes the column.
+   */
+  requiredScopes: z.array(FunctionScopeSchema).optional(),
   /**
    * A call an agent can copy, derived from `params` — or an explicit null (spec §3.3, D-08).
    *

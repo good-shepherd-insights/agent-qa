@@ -48,49 +48,36 @@ const MAPPING_SOURCE_PATH = join(REPO_ROOT, 'packages/mcp/src/mapping.ts')
 
 const readSource = (path: string): string => readFileSync(path, 'utf8')
 
-// ---- D-16: the scope union, closed at six ------------------------------------------------------
+// ---- D-16: the scope union — RETIRED by 432-20 (D-12) ------------------------------------------
 
 /**
- * The closure note's anchor, and the reservation it replaced.
+ * The dated retirement note's anchor, and the two strings of the deleted growth rule.
  *
- * TWO STRINGS RATHER THAN ONE, because the two failure modes are different. A missing anchor is the
- * note having been deleted or re-dated; a REAPPEARING reservation is the union being re-opened by
- * someone restoring the sentence that let three phases extend it. Only asserting the first would
- * pass a file that carried both.
+ * Until 432-20 this block pinned the union CLOSED at six members, its growth rule, and a census
+ * ranging every declaration's scopes against it. D-12 deletes the scope union's purpose, its growth
+ * rule and the census rows that range it; what this block pins now is that retirement.
  */
-const CLOSURE_ANCHOR = 'SCOPE UNION CLOSED (2026-08-16 · Phase 397 · D-16)'
-const RETIRED_RESERVATION = 'Phase 397 extends this closed union'
-
-/** The union, restated once. Adding or renaming a member reds the first cell below. */
-const PINNED_SCOPES: readonly string[] = [
-  'read',
-  'run',
-  'config-write',
-  'knowledge-write',
-  'approval-write',
-  'test-write',
+const RETIREMENT_ANCHOR = 'RETIRED (2026-10-01, 432-20'
+const DELETED_GROWTH_RULE_CLAUSES: readonly string[] = [
+  'GROWTH RULE. A seventh member requires',
+  'the census cell reds on an op whose `requiredScopes` names',
 ]
 
-/** Just enough of a declaration to ask the census question, so the control can be a literal. */
-interface ScopeBearing {
+/** Just enough of a declaration to ask whether it carries a permission key. */
+interface KeyBearing {
   readonly id: string
-  readonly requiredScopes: readonly string[]
 }
 
 /**
- * Scopes named by a declaration that the union does not hold — the census red D-16 leans on.
+ * Declarations that still carry a scope or origin requirement — empty since 432-20.
  *
- * A PURE FUNCTION over declarations rather than an inline loop, so the same code that reads the
- * real registry can be driven with a declaration carrying a scope the union does not hold. Without
- * that control the cell would assert that a set the type system already constrains is what the type
- * system says it is, which is a tautology wearing a test's clothes.
+ * A PURE FUNCTION over declarations so the control below can drive it with one that does.
  */
-function unknownScopeFindings(declarations: readonly ScopeBearing[]): readonly string[] {
-  const union = new Set<string>(FunctionScopeSchema.options)
+function permissionBearingFindings(declarations: readonly KeyBearing[]): readonly string[] {
   return declarations.flatMap((declaration) =>
-    declaration.requiredScopes
-      .filter((scope) => !union.has(scope))
-      .map((scope) => `${declaration.id} requires '${scope}', which the scope union does not hold`))
+    ['requiredScopes', 'requiresHumanOrigin']
+      .filter((key) => Object.keys(declaration).includes(key))
+      .map((key) => `${declaration.id} carries ${key}`))
 }
 
 // ---- D-17 / D-20: the deletion inventory's disposition column -----------------------------------
@@ -249,51 +236,51 @@ function degradedDispositionFindings(
 // ================================================================================================
 
 describe('Phase 397 — the inherited adjudications, discharged at their artifacts', () => {
-  describe('D-16: the capability-scope union closes at six, dated', () => {
+  // RE-SPELLED 2026-10-01 (432-20, D-12) from 'D-16: the capability-scope union closes at six,
+  // dated'. The union no longer gates anything; its growth rule and census are deleted.
+  describe('D-16 retired: the capability-scope union gates nothing (432-20, D-12)', () => {
+    // Kept: the union still holds the six members it carried, frozen until 432-39 deletes it, so a
+    // retired vocabulary cannot quietly grow a seventh member nothing reads.
     it('holds exactly the six members the closure note ratifies', () => {
       expect(FunctionScopeSchema.options.length, 'the scope union grew or shrank').toBe(6)
-      expect([...FunctionScopeSchema.options]).toEqual(PINNED_SCOPES)
+      expect([...FunctionScopeSchema.options]).toEqual([
+        'read',
+        'run',
+        'config-write',
+        'knowledge-write',
+        'approval-write',
+        'test-write',
+      ])
     })
 
-    it('carries the dated closure note, and no longer carries the reservation it replaced', () => {
+    // RE-SPELLED from 'carries the dated closure note, and no longer carries the reservation it
+    // replaced' and 'states the growth rule and carries its three lineage dates'.
+    it('carries the dated retirement note, and no longer states the growth rule', () => {
       const source = readSource(SCOPE_SOURCE_PATH)
       expect(source, 'function-scope.ts read back empty').toContain('FunctionScopeSchema')
-      expect(source, 'the dated D-16 closure anchor is gone from function-scope.ts')
-        .toContain(CLOSURE_ANCHOR)
-      expect(source, 'the 2026-07-28 reservation is back — the union has been re-opened un-dated')
-        .not.toContain(RETIRED_RESERVATION)
-    })
-
-    it('states the growth rule and carries its three lineage dates', () => {
-      const source = readSource(SCOPE_SOURCE_PATH)
-      // Both halves of the rule, and the lineage. A note that kept the anchor while losing
-      // the rule would be a date with nothing under it.
-      expect(source, 'the closure note no longer demands a privilege-conflation argument')
-        .toContain('PRIVILEGE CONFLATION')
-      expect(source, 'the closure note no longer demands a scenario-table row')
-        .toContain('scenario-table row')
-      expect(source, 'the closure note no longer demands a golden-registry update')
-        .toContain('golden-registry update')
-      // The lineage, so the three inherited counter-notes cannot be summarised away undated.
+      expect(source, 'the dated 432-20 retirement anchor is gone from function-scope.ts')
+        .toContain(RETIREMENT_ANCHOR)
+      for (const clause of DELETED_GROWTH_RULE_CLAUSES) {
+        expect(source, `the deleted growth rule is back: ${clause}`).not.toContain(clause)
+      }
+      // The lineage stays as history, so the record of why each member existed is not lost.
       for (const date of ['2026-08-02', '2026-08-07', '2026-08-11']) {
-        expect(source, `the ${date} extension's date has left the file`).toContain(date)
+        expect(source, `the ${date} counter-note has left the file`).toContain(date)
       }
     })
 
-    it('is a union every declared capability can be measured against', () => {
-      expect(unknownScopeFindings(registryDeclarations())).toEqual([])
+    // RE-SPELLED from 'is a union every declared capability can be measured against'.
+    it('is ranged by no declared capability: no declaration carries a scope or an origin requirement', () => {
+      expect(registryDeclarations().length).toBeGreaterThan(0)
+      expect(permissionBearingFindings(registryDeclarations())).toEqual([])
     })
 
-    it('would name an op that minted a scope outside the union', () => {
-      // The control, and the reason the cell above is not a tautology. `zzz-write` is scope-shaped
-      // and outside the union BY CONSTRUCTION (the 410 D-06 `ZZZ-7` idiom): it was never a member
-      // and never will be, which is what keeps the control from being a rehearsal of any door.
-      const findings = unknownScopeFindings([
-        { id: 'control.scope.397.05', requiredScopes: ['read', 'zzz-write'] },
+    // RE-SPELLED from 'would name an op that minted a scope outside the union'.
+    it('would name a declaration that carried a scope again', () => {
+      const findings = permissionBearingFindings([
+        { id: 'control.scope.432.20', requiredScopes: ['read'] } as KeyBearing,
       ])
-      expect(findings.length).toBe(1)
-      expect(findings[0]).toContain('control.scope.397.05')
-      expect(findings[0]).toContain('zzz-write')
+      expect(findings).toEqual(['control.scope.432.20 carries requiredScopes'])
     })
   })
 

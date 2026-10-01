@@ -431,11 +431,12 @@ const EVERY_ENTITY_CARD_KIND: EntityCardRenderExpectation = { kinds: ENTITY_KIND
 /**
  * The policy points every row declares (D-11), as expected VERDICTS.
  *
- * The callers themselves are not spelled here and must not be: `policy-fixtures.ts` derives the
- * covering caller from the op's own `requiredScopes` and the refusing caller by withholding one of
- * them, so a scope widening changes the fixtures without anyone editing 41 rows — and, more to the
- * point, a row that spelled its own scopes would be a second copy of the declaration's scope list,
- * free to fall behind it.
+ * The callers themselves are not spelled here and must not be: `policy-fixtures.ts` mints them.
+ *
+ * `refuse` is `allow` since 432-20 (D-12). It named the verdict for a caller holding the covering
+ * grant minus one scope, which was `deny`; no scope is declared or read any more, so the formerly
+ * refused caller is allowed exactly as the covering one is. The point is kept as a column so the
+ * retired claim reads as its direct replacement rather than vanishing.
  *
  * `ask` is present on exactly the ops the shipped classifier can produce an `ask` verdict for, and
  * that set is DERIVED (`policy-fixtures.ts`) and asserted set-equal to the rows carrying the key in
@@ -447,7 +448,7 @@ const EVERY_ENTITY_CARD_KIND: EntityCardRenderExpectation = { kinds: ENTITY_KIND
  */
 export interface PolicyPointExpectations {
   readonly grant: 'allow'
-  readonly refuse: 'deny'
+  readonly refuse: 'allow'
   readonly ask?: 'direct'
 }
 
@@ -516,7 +517,7 @@ export const SCENARIO_TABLE = Object.freeze([
       fn: { reachable: true },
     },
     renderExpect: { markers: ['receipts', 'results', 'sessionId', 'status', 'turnId'] },
-    policyPoints: { grant: 'allow', refuse: 'deny' },
+    policyPoints: { grant: 'allow', refuse: 'allow' },
   }),
   // 398 D-09: `query` is the whole input and it must be non-empty, so `{}` would report an INPUT
   // error exactly where a binding refusal is wanted. The question is a real one a person asks and
@@ -532,7 +533,7 @@ export const SCENARIO_TABLE = Object.freeze([
       fn: { reachable: true },
     },
     renderExpect: { markers: ['citations', 'kind', 'renderedLines'] },
-    policyPoints: { grant: 'allow', refuse: 'deny' },
+    policyPoints: { grant: 'allow', refuse: 'allow' },
   }),
   // 389 D-11: a PARSING input for a capability most compositions cannot run — validation precedes
   // the binding check, so a sample that failed the contract would make an unbound-refusal leg report
@@ -554,7 +555,7 @@ export const SCENARIO_TABLE = Object.freeze([
       fn: { reachable: true },
     },
     renderExpect: { markers: ['clusters', 'runId', 'sentences', 'verdicts'] },
-    policyPoints: { grant: 'allow', refuse: 'deny' },
+    policyPoints: { grant: 'allow', refuse: 'allow' },
   }),
   // 394-09 D-21: BOTH fields are non-empty and required, so `{}` would report an input error where
   // a binding refusal is wanted. The ref is deliberately the exact-address spelling: free text would
@@ -575,7 +576,7 @@ export const SCENARIO_TABLE = Object.freeze([
     renderExpect: {
       markers: ['draftRef', 'editedFrom', 'patches', 'thoughts', 'written'],
     },
-    policyPoints: { grant: 'allow', refuse: 'deny' },
+    policyPoints: { grant: 'allow', refuse: 'allow' },
   }),
   // 393 D-01: the path is well-formed, carries the extension the op requires, and names nothing in
   // any fixture; `draftMode` is optional and omitted.
@@ -601,7 +602,7 @@ export const SCENARIO_TABLE = Object.freeze([
         'stepTable',
       ],
     },
-    policyPoints: { grant: 'allow', refuse: 'deny' },
+    policyPoints: { grant: 'allow', refuse: 'allow' },
   }),
   // 394 D-01: non-empty intent and a well-formed scope are the contract's two requirements.
   scenario({
@@ -616,7 +617,7 @@ export const SCENARIO_TABLE = Object.freeze([
       fn: { reachable: true },
     },
     renderExpect: { markers: ['fanOut', 'outcome'] },
-    policyPoints: { grant: 'allow', refuse: 'deny', ask: 'direct' },
+    policyPoints: { grant: 'allow', refuse: 'allow', ask: 'direct' },
   }),
   // 394-07 D-12: the window is REQUIRED and closed, so `{}` would report an input error.
   // `all-time` is the arm with no further field, which is the honest sample for a fixture that has
@@ -639,7 +640,7 @@ export const SCENARIO_TABLE = Object.freeze([
         'undercounted',
       ],
     },
-    policyPoints: { grant: 'allow', refuse: 'deny' },
+    policyPoints: { grant: 'allow', refuse: 'allow' },
   }),
   // 395 D-03: PARSING inputs for the config write half, on the reasoning every unbound row shares.
   scenario({
@@ -662,7 +663,7 @@ export const SCENARIO_TABLE = Object.freeze([
         'summaryLine',
       ],
     },
-    policyPoints: { grant: 'allow', refuse: 'deny' },
+    policyPoints: { grant: 'allow', refuse: 'allow' },
   }),
   scenario({
     opId: 'config.field.set',
@@ -684,7 +685,7 @@ export const SCENARIO_TABLE = Object.freeze([
         'summaryLine',
       ],
     },
-    policyPoints: { grant: 'allow', refuse: 'deny' },
+    policyPoints: { grant: 'allow', refuse: 'allow' },
   }),
   scenario({
     opId: 'config.get',
@@ -695,7 +696,7 @@ export const SCENARIO_TABLE = Object.freeze([
       fn: { reachable: true },
     },
     renderExpect: { markers: ['configPath', 'entries', 'schemaVersion'] },
-    policyPoints: { grant: 'allow', refuse: 'deny' },
+    policyPoints: { grant: 'allow', refuse: 'allow' },
   }),
   scenario({
     opId: 'config.hook.add',
@@ -717,7 +718,7 @@ export const SCENARIO_TABLE = Object.freeze([
         'summaryLine',
       ],
     },
-    policyPoints: { grant: 'allow', refuse: 'deny' },
+    policyPoints: { grant: 'allow', refuse: 'allow' },
   }),
   // 395-08 D-13: the ONE field the model fills, hostname-shaped — the gate is the first thing the op
   // runs and a non-hostname would make this a refusal sample instead.
@@ -741,7 +742,7 @@ export const SCENARIO_TABLE = Object.freeze([
         'summaryLine',
       ],
     },
-    policyPoints: { grant: 'allow', refuse: 'deny' },
+    policyPoints: { grant: 'allow', refuse: 'allow' },
   }),
   // 395-05 D-01: PARSING inputs on the rows above reasoning.
   scenario({
@@ -764,7 +765,7 @@ export const SCENARIO_TABLE = Object.freeze([
         'summaryLine',
       ],
     },
-    policyPoints: { grant: 'allow', refuse: 'deny' },
+    policyPoints: { grant: 'allow', refuse: 'allow' },
   }),
   scenario({
     opId: 'config.target.edit',
@@ -786,7 +787,7 @@ export const SCENARIO_TABLE = Object.freeze([
         'summaryLine',
       ],
     },
-    policyPoints: { grant: 'allow', refuse: 'deny' },
+    policyPoints: { grant: 'allow', refuse: 'allow' },
   }),
   // 2026-09-25 (428 D-07): the editor subject's mint, mirroring runs.liveurl's row, in SORT
   // position (the render matrix derives its cell names from this order). Unprojected on MCP by
@@ -801,7 +802,7 @@ export const SCENARIO_TABLE = Object.freeze([
       fn: { reachable: true },
     },
     renderExpect: { markers: ['expiresAt', 'liveUrl', 'stream'] },
-    policyPoints: { grant: 'allow', refuse: 'deny' },
+    policyPoints: { grant: 'allow', refuse: 'allow' },
   }),
   // 387: `get` takes an exact address; the fixture entity directory is what stands behind it.
   scenario({
@@ -814,7 +815,7 @@ export const SCENARIO_TABLE = Object.freeze([
     },
     renderExpect: { markers: ['actions', 'id', 'keyFacts', 'kind', 'status', 'title', 'uri'] },
     entityCardExpect: EVERY_ENTITY_CARD_KIND,
-    policyPoints: { grant: 'allow', refuse: 'deny' },
+    policyPoints: { grant: 'allow', refuse: 'allow' },
   }),
   // 387: `resolve` takes any reference at all, so the sample is free text that matches nothing — an
   // empty directory's honest answer is the none arm.
@@ -828,7 +829,7 @@ export const SCENARIO_TABLE = Object.freeze([
     },
     renderExpect: { markers: ['card', 'kind', 'score'] },
     entityCardExpect: EVERY_ENTITY_CARD_KIND,
-    policyPoints: { grant: 'allow', refuse: 'deny' },
+    policyPoints: { grant: 'allow', refuse: 'allow' },
   }),
   // 391 PROP-01 / D-03's `grants.list` and `grants.revoke` rows left with the ops (432-18).
   // 387-08: valid INPUTS for capabilities most compositions cannot run — `invokeFunction` validates
@@ -844,7 +845,7 @@ export const SCENARIO_TABLE = Object.freeze([
       fn: { reachable: true },
     },
     renderExpect: { markers: ['operationId', 'outcome', 'recordIds', 'verb'] },
-    policyPoints: { grant: 'allow', refuse: 'deny' },
+    policyPoints: { grant: 'allow', refuse: 'allow' },
   }),
   // 387 KREV-02: the fixture runs port records no run, so the honest answer is the typed no-trace
   // arm — the arm this verb exists to be able to give.
@@ -858,7 +859,7 @@ export const SCENARIO_TABLE = Object.freeze([
       fn: { reachable: true },
     },
     renderExpect: { markers: ['kind', 'trace'] },
-    policyPoints: { grant: 'allow', refuse: 'deny' },
+    policyPoints: { grant: 'allow', refuse: 'allow' },
   }),
   scenario({
     opId: 'knowledge.bundles.list',
@@ -885,7 +886,7 @@ export const SCENARIO_TABLE = Object.freeze([
         'trust',
       ],
     },
-    policyPoints: { grant: 'allow', refuse: 'deny' },
+    policyPoints: { grant: 'allow', refuse: 'allow' },
   }),
   scenario({
     opId: 'knowledge.forget',
@@ -896,7 +897,7 @@ export const SCENARIO_TABLE = Object.freeze([
       fn: { reachable: true },
     },
     renderExpect: { markers: ['operationId', 'outcome', 'recordIds', 'verb'] },
-    policyPoints: { grant: 'allow', refuse: 'deny' },
+    policyPoints: { grant: 'allow', refuse: 'allow' },
   }),
   scenario({
     // 416 D-17: keep the existing lexicographic scenario order (forget precedes gates).
@@ -909,7 +910,7 @@ export const SCENARIO_TABLE = Object.freeze([
       fn: { reachable: true },
     },
     renderExpect: { markers: ['recordId', 'kind'] },
-    policyPoints: { grant: 'allow', refuse: 'deny' },
+    policyPoints: { grant: 'allow', refuse: 'allow' },
   }),
   // 387: the record id names nothing in this fixture and the typed miss is the correct answer.
   scenario({
@@ -931,7 +932,7 @@ export const SCENARIO_TABLE = Object.freeze([
         'summary',
       ],
     },
-    policyPoints: { grant: 'allow', refuse: 'deny' },
+    policyPoints: { grant: 'allow', refuse: 'allow' },
   }),
   // 387: the diff baseline is 0 — a first-ever diff.
   scenario({
@@ -944,7 +945,7 @@ export const SCENARIO_TABLE = Object.freeze([
       fn: { reachable: true },
     },
     renderExpect: { markers: ['changes', 'schemaVersion', 'sinceOrdinal'] },
-    policyPoints: { grant: 'allow', refuse: 'deny' },
+    policyPoints: { grant: 'allow', refuse: 'allow' },
   }),
   // 387: the filter is closed and every member optional, so an empty filter is the honest
   // 'everything' query.
@@ -958,7 +959,7 @@ export const SCENARIO_TABLE = Object.freeze([
       fn: { reachable: true },
     },
     renderExpect: { markers: ['records', 'schemaVersion'] },
-    policyPoints: { grant: 'allow', refuse: 'deny' },
+    policyPoints: { grant: 'allow', refuse: 'allow' },
   }),
   scenario({
     opId: 'knowledge.reject',
@@ -972,7 +973,7 @@ export const SCENARIO_TABLE = Object.freeze([
       fn: { reachable: true },
     },
     renderExpect: { markers: ['operationId', 'outcome', 'recordIds', 'verb'] },
-    policyPoints: { grant: 'allow', refuse: 'deny' },
+    policyPoints: { grant: 'allow', refuse: 'allow' },
   }),
   // 390 D-13: the two write verbs take the three legs of stable test identity — a partial address
   // would report an input error where a binding refusal is wanted. The test named here exists in no
@@ -990,7 +991,7 @@ export const SCENARIO_TABLE = Object.freeze([
       fn: { reachable: true },
     },
     renderExpect: { markers: ['entry', 'kind'] },
-    policyPoints: { grant: 'allow', refuse: 'deny' },
+    policyPoints: { grant: 'allow', refuse: 'allow' },
   }),
   // 390 D-13: `list` genuinely takes the empty query — enumeration is the verb.
   scenario({
@@ -1002,7 +1003,7 @@ export const SCENARIO_TABLE = Object.freeze([
       fn: { reachable: true },
     },
     renderExpect: { markers: ['entries'] },
-    policyPoints: { grant: 'allow', refuse: 'deny' },
+    policyPoints: { grant: 'allow', refuse: 'allow' },
   }),
   scenario({
     opId: 'quarantine.release',
@@ -1017,7 +1018,7 @@ export const SCENARIO_TABLE = Object.freeze([
       fn: { reachable: true },
     },
     renderExpect: { markers: ['entry', 'kind'] },
-    policyPoints: { grant: 'allow', refuse: 'deny' },
+    policyPoints: { grant: 'allow', refuse: 'allow' },
   }),
   // 391 D-16: a PARSING input for a capability most compositions cannot run.
   // 405-01 D-03: THE durable run-detail read. Unprojected on MCP for the reason its `runs.` read
@@ -1039,7 +1040,7 @@ export const SCENARIO_TABLE = Object.freeze([
       fn: { reachable: true },
     },
     renderExpect: { markers: ['bytesBase64', 'byteLength', 'contentType', 'runId', 'sha'] },
-    policyPoints: { grant: 'allow', refuse: 'deny' },
+    policyPoints: { grant: 'allow', refuse: 'allow' },
   }),
   scenario({
     opId: 'runs.detail',
@@ -1050,7 +1051,7 @@ export const SCENARIO_TABLE = Object.freeze([
       fn: { reachable: true },
     },
     renderExpect: { markers: ['members', 'runId', 'steps', 'subActions', 'tokens'] },
-    policyPoints: { grant: 'allow', refuse: 'deny' },
+    policyPoints: { grant: 'allow', refuse: 'allow' },
   }),
   scenario({
     opId: 'runs.digest',
@@ -1072,7 +1073,7 @@ export const SCENARIO_TABLE = Object.freeze([
         'verdictClusters',
       ],
     },
-    policyPoints: { grant: 'allow', refuse: 'deny' },
+    policyPoints: { grant: 'allow', refuse: 'allow' },
   }),
   // The one STREAM op in the census. Unprojected because a `tools/call` is one round trip and has no
   // shape for a resumable event feed — the reason the mapping gives, and the reason its verdict
@@ -1086,7 +1087,7 @@ export const SCENARIO_TABLE = Object.freeze([
       fn: { reachable: true },
     },
     renderExpect: { markers: ['payload', 'runId', 'seq', 'ts', 'type'] },
-    policyPoints: { grant: 'allow', refuse: 'deny' },
+    policyPoints: { grant: 'allow', refuse: 'allow' },
   }),
   // 2026-09-15, 423-21 D-04: the typed evidence read. In SORT position after `runs.events`.
   // Unprojected over MCP on `runs.detail`'s completed-run footing, with read policy points. Its
@@ -1102,7 +1103,7 @@ export const SCENARIO_TABLE = Object.freeze([
       fn: { reachable: true },
     },
     renderExpect: { markers: ['address', 'document', 'evidence', 'outcome'] },
-    policyPoints: { grant: 'allow', refuse: 'deny' },
+    policyPoints: { grant: 'allow', refuse: 'allow' },
   }),
   scenario({
     opId: 'runs.get',
@@ -1125,7 +1126,7 @@ export const SCENARIO_TABLE = Object.freeze([
         'tests',
       ],
     },
-    policyPoints: { grant: 'allow', refuse: 'deny' },
+    policyPoints: { grant: 'allow', refuse: 'allow' },
   }),
   // 407 D-05: the Knowledge panel's ONE read. In SORT position after `runs.get` — this table is
   // compared against its own committed sorted order, so a row placed where it reads well rather
@@ -1147,7 +1148,7 @@ export const SCENARIO_TABLE = Object.freeze([
       fn: { reachable: true },
     },
     renderExpect: { markers: ['kind', 'runId'] },
-    policyPoints: { grant: 'allow', refuse: 'deny' },
+    policyPoints: { grant: 'allow', refuse: 'allow' },
   }),
   scenario({
     opId: 'runs.list',
@@ -1169,7 +1170,7 @@ export const SCENARIO_TABLE = Object.freeze([
         'testCount',
       ],
     },
-    policyPoints: { grant: 'allow', refuse: 'deny' },
+    policyPoints: { grant: 'allow', refuse: 'allow' },
   }),
   // 388 D-14: a PARSING input for a capability most compositions cannot run.
   // 403-01 (D-03): the mint. Unprojected on MCP because handing an agent-origin caller a live-view
@@ -1199,7 +1200,7 @@ export const SCENARIO_TABLE = Object.freeze([
       fn: { reachable: true },
     },
     renderExpect: { markers: ['expiresAt', 'handle', 'liveUrl', 'stream'] },
-    policyPoints: { grant: 'allow', refuse: 'deny' },
+    policyPoints: { grant: 'allow', refuse: 'allow' },
   }),
   scenario({
     opId: 'runs.mark',
@@ -1210,7 +1211,7 @@ export const SCENARIO_TABLE = Object.freeze([
       fn: { reachable: true },
     },
     renderExpect: { markers: ['receipt', 'kind'] },
-    policyPoints: { grant: 'allow', refuse: 'deny', ask: 'direct' },
+    policyPoints: { grant: 'allow', refuse: 'allow', ask: 'direct' },
   }),
   // 2026-09-15, 423-21 D-16/D-18: the consequence preview. runs.mark's exact input, answered
   // read-tier: READ policy points (the postprocessing row's), never the writer's ask. Its markers
@@ -1240,7 +1241,7 @@ export const SCENARIO_TABLE = Object.freeze([
         'runId',
       ],
     },
-    policyPoints: { grant: 'allow', refuse: 'deny' },
+    policyPoints: { grant: 'allow', refuse: 'allow' },
   }),
   // 2026-09-15, 423-21 D-18/D-19: marks history, a read tool with read policy points.
   scenario({
@@ -1252,7 +1253,7 @@ export const SCENARIO_TABLE = Object.freeze([
       fn: { reachable: true },
     },
     renderExpect: { markers: ['entries', 'kind', 'runId'] },
-    policyPoints: { grant: 'allow', refuse: 'deny' },
+    policyPoints: { grant: 'allow', refuse: 'allow' },
   }),
   // 2026-09-29 (431-08, D-06): the overview, projected as agent_qa_get_run_overview, with read
   // policy points. The fixture records no run under `FIXTURE_RUN_ID`, so every door refuses it as
@@ -1279,7 +1280,7 @@ export const SCENARIO_TABLE = Object.freeze([
         'tests',
       ],
     },
-    policyPoints: { grant: 'allow', refuse: 'deny' },
+    policyPoints: { grant: 'allow', refuse: 'allow' },
   }),
   scenario({
     opId: 'runs.postprocessing',
@@ -1290,7 +1291,7 @@ export const SCENARIO_TABLE = Object.freeze([
       fn: { reachable: true },
     },
     renderExpect: { markers: ['chips', 'runId'] },
-    policyPoints: { grant: 'allow', refuse: 'deny' },
+    policyPoints: { grant: 'allow', refuse: 'allow' },
   }),
   // D-09: declared in full; every field is optional, so the empty object is the whole input.
   scenario({
@@ -1311,7 +1312,7 @@ export const SCENARIO_TABLE = Object.freeze([
         'testCount',
       ],
     },
-    policyPoints: { grant: 'allow', refuse: 'deny' },
+    policyPoints: { grant: 'allow', refuse: 'allow' },
   }),
 ] as const)
 

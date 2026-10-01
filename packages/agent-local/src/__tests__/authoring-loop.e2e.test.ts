@@ -42,7 +42,6 @@ import {
   AUTHORING_FUNNEL_GET_FUNCTION_ID,
   RUNS_DIGEST_FUNCTION_ID,
   FunctionNotBoundError,
-  FunctionScopeError,
   authoringFanOutBound,
   invokeFunction,
 } from '@vostride/agent-qa-agent'
@@ -1080,28 +1079,32 @@ describe('authoring.draft.write end to end through the composition root', () => 
     // underscore for the chat tool-name projection to trip on (T-394-07).
     expect(declared?.id).toMatch(/^[a-z]+(?:\.[a-z]+)+$/)
     expect(declared?.id).not.toContain('_')
-    // THREE scopes, and the third is the one 394-01 minted for exactly this declaration.
-    expect(declared?.requiredScopes).toEqual(['test-write', 'run', 'read'])
+    // 432-20 (D-12): the declaration carries no scopes — `test-write` gates nothing any more.
+    expect(Object.keys(declared ?? {})).not.toContain('requiredScopes')
   })
 
-  it('refuses a run+read caller BY NAME on the missing test-write scope', async () => {
+  // RE-SPELLED 2026-10-01 (432-20, D-12) from 'refuses a run+read caller BY NAME on the missing
+  // test-write scope'. No scope is read: the same caller authors exactly as a full caller does.
+  it('serves a run+read caller exactly as a full caller — no test-write scope is read', async () => {
     const executor = fixtureExecutor(agentQaRoot)
-    const host = compose({ executor: executor.port, authoring: draftAuthoring(workspace) })
+    const model = scriptedModel()
+    const host = compose({
+      executor: executor.port,
+      authoring: draftAuthoring(workspace),
+      model: model.capability,
+    })
 
-    const failure = await invokeFunction(
+    const result = (await invokeFunction(
       host.registry,
       AUTHORING_DRAFT_WRITE_FUNCTION_ID,
       { intent: INTENT, scope: SCOPE },
       RUN_AND_READ_ONLY,
-    ).then(() => undefined, (error: unknown) => error as FunctionScopeError)
+    )) as AuthoringDraftWriteOutput
 
-    expect(failure).toBeInstanceOf(FunctionScopeError)
-    expect(failure?.missingScopes).toEqual(['test-write'])
-    // A refusal, not a run — and nothing was authored on the way to it.
-    expect(executor.startInputs).toHaveLength(0)
+    expect(AuthoringDraftWriteOutputSchema.safeParse(result).success).toBe(true)
+    expect(result.outcome).toBe('drafted')
 
-    // The positive half, so this cell is not "the gate refuses everything": the SAME caller is
-    // enough for the evaluator, which declares only the two scopes it holds.
+    // The same caller reaches the evaluator too, as it always did.
     const stillAllowed = await invokeFunction(
       host.registry,
       AUTHORING_DRAFT_VERIFY_FUNCTION_ID,

@@ -3,15 +3,16 @@
 //
 // WHAT THE GOLDEN IS FOR. Every other leg in this suite answers a question about TODAY: is this
 // capability reachable, does this surface refuse it, do the two schemas agree. None of them can see
-// a change — a scope quietly widened, a risk tier quietly lowered, a capability quietly moved out of
+// a change — a risk tier quietly lowered, a capability quietly moved out of
 // the MCP partition — because each of those leaves a tree that is entirely self-consistent. The
 // golden is the only artifact here that compares the product against its own past, and it does it
 // the way a reviewer can read: one committed JSON file, one row per capability, one line per field.
-// A widened scope is a one-line diff in a pull request. That is the whole mechanism.
+// A lowered tier is a one-line diff in a pull request. That is the whole mechanism. (Until 432-20
+// a widened scope was too; D-12 deleted the scopes, and the ledger lost both permission columns.)
 //
 // PRODUCED, NEVER AUTHORED. Every value in a row comes out of a real registry — the declarations of
 // a REAL `composeLocalAgent()` composition (through the CLI's own `composeCliLocalAgent`), joined to
-// the shipped `mapping.ts` partition. Nothing below states an op id, a scope, a tier or a tool name.
+// the shipped `mapping.ts` partition. Nothing below states an op id, a tier or a tool name.
 // A hand-written golden can encode a value the producer cannot produce, and the diff leg then reds
 // only on that impossible row while agreeing with the code about everything real.
 //
@@ -39,7 +40,6 @@ import {
   committedFileText,
   sha256hex,
 } from '@vostride/agent-qa-schema'
-import type { FunctionScope } from '@vostride/agent-qa-schema'
 
 import { composeCliLocalAgent } from '../../composition/local-agent-host.js'
 import { CONFORMANCE_CENSUS_CALLER } from './adapters.js'
@@ -109,10 +109,8 @@ export interface GoldenRiskProjection {
 /** One capability, as the ledger records it. */
 export interface GoldenRow {
   readonly id: string
-  /** Sorted: the grants are a SET, and a spec reordering its own list is not a capability change. */
-  readonly requiredScopes: readonly FunctionScope[]
-  /** Present only when the op declares it — the declaration's own presence rule, carried through. */
-  readonly requiresHumanOrigin?: true
+  // 2026-10-01 (432-20, D-10/D-12): the `requiredScopes` and `requiresHumanOrigin` columns are
+  // gone. Declarations carry no permission metadata, so the ledger has none to record.
   /** Present only when the op composes a confirm-time disclosure (397-02's projected fact). */
   readonly discloses?: true
   /**
@@ -159,7 +157,7 @@ export interface GoldenFile {
  */
 export const GOLDEN_NOTE: readonly string[] = Object.freeze([
   'GENERATED — the capability ledger for Phase 397 (FUNC-05 leg 6, D-05/D-07).',
-  'One row per registered capability. A widened scope, a lowered risk tier, a changed schema',
+  'One row per registered capability. A lowered risk tier, a changed schema',
   'digest or a moved MCP partition lands here as a one-line reviewable diff.',
   `DO NOT EDIT BY HAND: regenerate with "bash ${GOLDEN_REGEN_SCRIPT} --write" and commit the result`,
   'as a deliberate, reviewed change. The script refuses to run while any other leg of the',
@@ -172,8 +170,6 @@ export const GOLDEN_NOTE: readonly string[] = Object.freeze([
 /** Every declaration key this projection consumes. The register in `parity.test.ts` uses it. */
 export const GOLDEN_PROJECTED_DECLARATION_KEYS: readonly string[] = Object.freeze([
   'id',
-  'requiredScopes',
-  'requiresHumanOrigin',
   'discloses',
   'classifies',
   'rendersResult',
@@ -318,8 +314,6 @@ export function goldenRowOf(
   const risk = declaration.risk as unknown as Record<string, unknown>
   return {
     id: declaration.id,
-    requiredScopes: [...declaration.requiredScopes].sort(),
-    ...(declaration.requiresHumanOrigin === undefined ? {} : { requiresHumanOrigin: true as const }),
     ...(declaration.discloses === undefined ? {} : { discloses: true as const }),
     ...(declaration.classifies === undefined ? {} : { classifies: true as const }),
     ...(declaration.rendersResult === undefined ? {} : { rendersResult: true as const }),
@@ -422,7 +416,7 @@ export async function withGoldenRootRegistry<Answer>(
 }
 
 /**
- * The root's own listing, under the every-scope census caller.
+ * The root's own listing, under the census caller (every caller sees the same list since 432-20).
  *
  * The declarations are inert frozen data, so carrying them out past the host's lifetime carries no
  * handle on the composition — which is what lets a `beforeAll` take the census once.
@@ -449,8 +443,6 @@ export interface GoldenFinding {
 }
 
 const ROW_FIELDS: readonly string[] = Object.freeze([
-  'requiredScopes',
-  'requiresHumanOrigin',
   'discloses',
   'classifies',
   'rendersResult',

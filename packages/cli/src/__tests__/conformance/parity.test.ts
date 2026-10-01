@@ -62,13 +62,14 @@ import {
   type ResolverOpTarget,
   type SurfaceEnumeration,
 } from './adapters.js'
+import * as policyFixtures from './policy-fixtures.js'
 import {
   ASK_CAPABLE_OP_IDS,
   CONFORMANCE_EXECUTION_CONTEXT,
   conformanceResolveExecutionContext,
   coveringCallerFor,
   deriveAskCapableOpIds,
-  refusingCallerFor,
+  grantlessSurfaceCallers,
   surfaceInertCallers,
   surfaceShapedCallers,
   type RiskClassifiable,
@@ -624,47 +625,26 @@ describe('the parity suite ranges the registry census over every rostered surfac
     ).toBe(true)
   })
 
-  it('pins the config-write listing delta between the every-scope and the default MCP grant', async () => {
-    // The surface-absence wall, measured. MCP visibility is a scope-union subset check, so a tool
-    // whose fold touches an op requiring `config-write` is not registered at all on a default
-    // caller's instance — the door is absent rather than refusing. This is the foundation the D-11
-    // refuse points build on in 397-04, and it is pinned here as a PRODUCED set: the expectation is
-    // the mapping's rows joined to the declarations' own `requiredScopes`, never a pair of tool
-    // names typed into this cell.
-    const declarationsById = new Map(
-      registryDeclarations().map((declaration) => [declaration.id, declaration]),
-    )
-    const expectedDelta = sorted(
-      AGENT_QA_TOOL_PROJECTIONS.filter((projection) =>
-        projection.ops.some((opId) =>
-          (declarationsById.get(opId)?.requiredScopes ?? []).includes('config-write'),
-        ),
-      ).flatMap((projection) => [...projection.ops]),
-    )
-    expect(
-      expectedDelta.length,
-      'no declared tool touches config-write, so this cell would assert nothing',
-    ).toBeGreaterThan(0)
-
+  // RE-SPELLED 2026-10-01 (432-20, D-12) from 'pins the config-write listing delta between the
+  // every-scope and the default MCP grant'. MCP visibility was a scope-union subset check, so the
+  // config folds were absent from a default caller's instance. The check is deleted: the delta is
+  // now EMPTY, in both directions, and the two grants list the same surface.
+  it('C432-TOKENLESS-CATALOG: pins an EMPTY listing delta between the every-scope and the default MCP grant', async () => {
     const everyScope = enumerationOf('mcp')
     const defaultGrant = await enumerateMcpOpIds(MCP_DEFAULT_GRANTED_SCOPES)
+    const nothing = await enumerateMcpOpIds([])
     expect(
       defaultGrant.strays,
-      'mcp under the default grant: an uncatalogued door in the reduced listing',
+      'mcp under the default grant: an uncatalogued door in the listing',
     ).toEqual([])
-
-    const delta = sorted([...everyScope.opIds].filter((opId) => !defaultGrant.opIds.has(opId)))
+    expect(everyScope.opIds.size, 'the every-scope enumeration found nothing').toBeGreaterThan(0)
     expect(
-      delta,
-      'the ops the default MCP grant cannot see — exactly the config-write folds, derived from the '
-        + 'mapping joined to the declarations',
-    ).toEqual(expectedDelta)
-    // The other direction: the reduced grant reaches nothing the full grant does not, so the delta
-    // is a subtraction rather than two different surfaces.
-    expect(
-      sorted([...defaultGrant.opIds].filter((opId) => !everyScope.opIds.has(opId))),
-      'ops visible ONLY to the reduced grant, which no scope filter can produce',
+      sorted([...everyScope.opIds].filter((opId) => !defaultGrant.opIds.has(opId))),
+      'ops a default-grant MCP caller cannot see — a per-caller listing filter survived',
     ).toEqual([])
+    expect(sorted([...defaultGrant.opIds])).toEqual(sorted([...everyScope.opIds]))
+    expect(sorted([...nothing.opIds]), 'a caller granted nothing lists a different surface')
+      .toEqual(sorted([...everyScope.opIds]))
   })
 
   // ---- The census: ONE denominator, asserted in both directions (397-03, D-10 / D-15) ----------
@@ -918,10 +898,9 @@ describe('the parity suite ranges the registry census over every rostered surfac
     // scenario table is the ONE place those live now. Restating them agent-side would have rebuilt
     // the second denominator this plan just retired.
     //
-    // The caller is minted per declaration off its own `requiredScopes` with a human origin, so
-    // nothing here can be refused on an axis that precedes the binding check and be mistaken for a
-    // binding refusal (the 387-08 measurement). 432-13: no standing approval is needed any more —
-    // no ask stands between the scope check and the binding check.
+    // 432-20 (D-12): the covering caller holds no grant at all, and no scope or origin check stands
+    // before the binding check, so nothing here can be refused on an axis that precedes it and be
+    // mistaken for a binding refusal (the 387-08 measurement).
     const registry = conformanceRegistry({
       resolveExecutionContext: conformanceResolveExecutionContext,
     })
@@ -1341,29 +1320,18 @@ describe('the parity suite ranges the registry census over every rostered surfac
     }
   })
 
-  it('derives a covering and a refusing caller for every capability, from its own declaration', () => {
+  // RE-SPELLED 2026-10-01 (432-20, D-12) from 'derives a covering and a refusing caller for every
+  // capability, from its own declaration'. The covering caller holds no grant and the refusing one is
+  // retired with the grants it withheld.
+  it('derives one grantless covering caller for every capability, and no refusing caller', () => {
     for (const declaration of registryDeclarations()) {
       const covering = coveringCallerFor(declaration)
-      expect(
-        [...covering.grantedScopes].sort(),
-        `${declaration.id}: the covering caller must hold exactly this op's declared scopes`,
-      ).toEqual([...declaration.requiredScopes].sort())
-
-      const refusing = refusingCallerFor(declaration)
-      expect(
-        declaration.requiredScopes,
-        `${declaration.id}: the withheld scope must be one this op actually requires`,
-      ).toContain(refusing.withheldScope)
-      expect(
-        refusing.caller.grantedScopes,
-        `${declaration.id}: the refusing caller still holds ${refusing.withheldScope}`,
-      ).not.toContain(refusing.withheldScope)
-      expect(
-        [...refusing.caller.grantedScopes, refusing.withheldScope].sort(),
-        `${declaration.id}: the refusing caller must differ from the covering one by exactly the `
-          + 'one withheld grant — a wider gap would refuse on an axis nobody named',
-      ).toEqual([...declaration.requiredScopes].sort())
+      expect(Object.keys(covering), `${declaration.id}: the covering caller holds a grant`)
+        .not.toContain('grantedScopes')
+      expect(Object.keys(declaration), `${declaration.id}: a declaration carries scopes again`)
+        .not.toContain('requiredScopes')
     }
+    expect(Object.keys(policyFixtures)).not.toContain('refusingCallerFor')
   })
 
   // ---- Plan 04: the surface drivers (FUNC-05 legs 3 and 4) --------------------------------------
@@ -1488,17 +1456,17 @@ describe('the parity suite ranges the registry census over every rostered surfac
     const divergent: string[] = []
     for (const declaration of registryDeclarations()) {
       const row = scenarioRowFor(declaration.id as ScenarioOpId)
-      const callers = surfaceInertCallers(declaration.requiredScopes)
+      const callers = surfaceInertCallers()
       const onChat = await gateAnswerFor(declaration.id, row!.input, callers.chat)
       const onMcp = await gateAnswerFor(declaration.id, row!.input, callers.mcp)
 
       if (onChat.kind !== onMcp.kind) divergent.push(`${declaration.id}: ${onChat.kind}/${onMcp.kind}`)
       // NON-VACUITY, in the same loop rather than in a cell somebody could delete: an identity that
       // held over two identical INPUT errors would be two callers agreeing about a fixture. Under
-      // its own declared grants every capability must reach the gate band.
+      // its surface's own mint every capability must reach the gate band.
       expect(
         REACHED_THE_GATE,
-        `${declaration.id}: under its own declared scopes the call stopped at ${onChat.kind}, `
+        `${declaration.id}: under the surface's own mint the call stopped at ${onChat.kind}, `
           + 'before any verdict was taken — the grant point measured the pre-gate band',
       ).toContain(onChat.kind)
     }
@@ -1523,10 +1491,11 @@ describe('the parity suite ranges the registry census over every rostered surfac
     const declaredHumanOrigin: string[] = []
     for (const declaration of registryDeclarations()) {
       const row = scenarioRowFor(declaration.id as ScenarioOpId)
-      const callers = surfaceShapedCallers(declaration.requiredScopes)
+      const callers = surfaceShapedCallers()
       const onChat = await gateAnswerFor(declaration.id, row!.input, callers.chat)
       const onMcp = await gateAnswerFor(declaration.id, row!.input, callers.mcp)
-      if (declaration.requiresHumanOrigin === true) declaredHumanOrigin.push(declaration.id)
+      // 432-20 (D-10): the key itself, since declarations no longer carry it at all.
+      if (Object.keys(declaration).includes('requiresHumanOrigin')) declaredHumanOrigin.push(declaration.id)
       if (onChat.kind === onMcp.kind) continue
       divergent.push(declaration.id)
       expect(
@@ -1548,33 +1517,23 @@ describe('the parity suite ranges the registry census over every rostered surfac
 
   // ---- LEG 4: the refuse direction, two independent walls (D-11) --------------------------------
 
-  it('refuses at the GATE WALL for every capability, naming the one withheld grant', async () => {
-    // WALL ONE of two, and it is asserted alone: `invokeFunction` refuses a caller short of a
-    // required scope whatever surface that caller came from, and it says which scope.
-    //
-    // The withheld grant is DERIVED per op by `refusingCallerFor` off the declaration's own
-    // `requiredScopes` — no scope is named in this leg — so the day an op's scope set changes, the
-    // refusal this cell demands changes with it.
+  // RE-SPELLED 2026-10-01 (432-20, D-12) from 'refuses at the GATE WALL for every capability,
+  // naming the one withheld grant'. The scope check is deleted: a caller holding no grant at all, on
+  // either surface's mint, reaches the gate band for every capability, and no refusal names a scope.
+  it('C432-ALL-OPS-AVAILABLE: refuses at the GATE WALL for no capability, on either surface (gate wall)', async () => {
+    const callers = grantlessSurfaceCallers()
     for (const declaration of registryDeclarations()) {
       const row = scenarioRowFor(declaration.id as ScenarioOpId)
-      const refusing = refusingCallerFor(declaration)
-      const callers = surfaceInertCallers(refusing.caller.grantedScopes)
       const onChat = await gateAnswerFor(declaration.id, row!.input, callers.chat)
       const onMcp = await gateAnswerFor(declaration.id, row!.input, callers.mcp)
 
-      expect(onChat.kind, `${declaration.id} on chat (gate wall): a caller without `
-        + `${refusing.withheldScope} was not refused for want of it`).toBe('refused-scope')
-      expect(onMcp.kind, `${declaration.id} on mcp (gate wall): a caller without `
-        + `${refusing.withheldScope} was not refused for want of it`).toBe('refused-scope')
-      expect(
-        onChat.missingScopes,
-        `${declaration.id} on chat (gate wall): the refusal must name the grant that was withheld, `
-          + 'or a refusal on another axis would read as this one',
-      ).toEqual([refusing.withheldScope])
-      expect(
-        onMcp.missingScopes,
-        `${declaration.id} on mcp (gate wall): the refusal must name the grant that was withheld`,
-      ).toEqual([refusing.withheldScope])
+      expect(row!.policyPoints.refuse, `${declaration.id} (gate wall): the refuse point`).toBe('allow')
+      expect(REACHED_THE_GATE, `${declaration.id} on chat (gate wall): a grantless caller stopped `
+        + `at ${onChat.kind}`).toContain(onChat.kind)
+      expect(onMcp.kind, `${declaration.id} on mcp (gate wall): the surfaces land differently`)
+        .toBe(onChat.kind)
+      expect(onChat.missingScopes, `${declaration.id} on chat (gate wall)`).toEqual([])
+      expect(onMcp.missingScopes, `${declaration.id} on mcp (gate wall)`).toEqual([])
     }
   }, 120_000)
 
@@ -1605,53 +1564,36 @@ describe('the parity suite ranges the registry census over every rostered surfac
     ).toEqual([])
   }, 120_000)
 
-  it('refuses at the MCP SURFACE WALL for every projected capability: no door under the short grant', async () => {
-    // WALL TWO of two for MCP, over its own producer. The MCP surface CAN be handed a caller short
-    // of a scope, and its visibility law is a scope-union subset check — so the refusal this
-    // surface produces is the DOOR NOT BEING THERE, asserted in both directions: the tool is listed
-    // under a grant that covers it, and absent under the grant this op's own refusing caller holds,
-    // and a direct call on it is refused by the protocol rather than answered in band.
-    const everyScope = [...FunctionScopeSchema.options]
-    const listedUnderEveryScope = await listMcpToolNames(everyScope)
+  // RE-SPELLED 2026-10-01 (432-20, D-12) from 'refuses at the MCP SURFACE WALL for every projected
+  // capability: no door under the short grant'. The visibility law is deleted, so the surface wall is
+  // gone: every projected tool is listed to a caller granted nothing, and a direct call is answered
+  // in band rather than refused by the protocol. The mark door's credential refusal is the one
+  // in-band permission answer left, and 432-21 removes it with the bearer credential.
+  it('C432-TOKENLESS-CATALOG: refuses at the MCP SURFACE WALL for no projected capability', async () => {
+    const listedUnderEveryScope = await listMcpToolNames([...FunctionScopeSchema.options])
+    const listedUnderNothing = await listMcpToolNames([])
+    expect(sorted(listedUnderNothing), 'a caller granted nothing lists a different catalogue')
+      .toEqual(sorted(listedUnderEveryScope))
     for (const row of SCENARIO_TABLE) {
       if (!('reachable' in row.perSurface.mcp)) continue
       const tool = row.perSurface.mcp.reachable.tool
-      const declaration = registryDeclarations().find((candidate) => candidate.id === row.opId)
-      const refusing = refusingCallerFor(declaration!)
-
       expect(
-        listedUnderEveryScope,
-        `${row.opId} on mcp (surface wall): the tool that projects it is not listed even under a `
-          + 'grant holding every scope, so its absence below would say nothing',
+        listedUnderNothing,
+        `${row.opId} on mcp (surface wall): the tool is not listed to a caller granted nothing`,
       ).toContain(tool)
-      const listedUnderShortGrant = await listMcpToolNames(refusing.caller.grantedScopes)
-      expect(
-        listedUnderShortGrant,
-        `${row.opId} on mcp (surface wall): the tool is still listed to a caller without `
-          + `${refusing.withheldScope} — the surface advertises a capability it must refuse`,
-      ).not.toContain(tool)
-      const called = await driveMcpCall({
-        toolName: tool,
-        args: {},
-        grantedScopes: refusing.caller.grantedScopes,
-      })
-      // 419 D-20: the declared credential wall refuses direct anonymous calls in-band,
-      // before input parsing. Preserve the protocol wall for every scope-only projection.
-      const projection = AGENT_QA_TOOL_PROJECTIONS.find(candidate => candidate.name === tool)!
-      if (projection.credential === 'required') {
-        expect(called.answered, `${row.opId}: the credential wall must give its typed remedy`).toBe(true)
-        if (!called.answered) throw new Error('missing credential refusal')
-        expect(called.isError).toBe(true)
-        expect(called.structured?.['status']).toBe('credential-required')
-        expect(called.structured?.['applied']).toBe(false)
-        expect(called.text).toContain('present a bearer whose scopes include `knowledge-write`')
-        continue
-      }
+      const called = await driveMcpCall({ toolName: tool, args: {}, grantedScopes: [] })
       expect(
         called.answered,
-        `${row.opId} on mcp (surface wall): a caller without ${refusing.withheldScope} reached the `
-          + 'tool in band — a door that is not advertised is still a door',
-      ).toBe(false)
+        `${row.opId} on mcp (surface wall): a grantless caller's call was refused by the protocol `
+          + 'rather than answered in band — the door is still hidden',
+      ).toBe(true)
+      const projection = AGENT_QA_TOOL_PROJECTIONS.find(candidate => candidate.name === tool)!
+      if (projection.credential === 'required' && called.answered) {
+        // Until 432-21 the mark door's handler still refuses a bearer-less call in band. With the
+        // hidden-tool pre-refusal gone the SDK validates the input first, so this empty-argument
+        // call is answered by the ordinary schema refusal — in band either way, never a hidden door.
+        expect(called.isError).toBe(true)
+      }
     }
   }, 300_000)
 
@@ -1725,7 +1667,7 @@ describe('the parity suite ranges the registry census over every rostered surfac
     const askCapable = new Set(ASK_CAPABLE_OP_IDS)
     for (const declaration of registryDeclarations()) {
       const row = scenarioRowFor(declaration.id as ScenarioOpId)
-      const callers = surfaceInertCallers(declaration.requiredScopes)
+      const callers = surfaceInertCallers()
       const onChat = await gateAnswerFor(declaration.id, row!.input, callers.chat)
       const onMcp = await gateAnswerFor(declaration.id, row!.input, callers.mcp)
       expect(
@@ -1751,7 +1693,8 @@ describe('the parity suite ranges the registry census over every rostered surfac
     for (const opId of ASK_CAPABLE_OP_IDS) {
       const declaration = registryDeclarations().find((candidate) => candidate.id === opId)
       const row = scenarioRowFor(opId as ScenarioOpId)
-      const callers = surfaceInertCallers(declaration!.requiredScopes)
+      expect(declaration, `${opId} is not declared`).toBeDefined()
+      const callers = surfaceInertCallers()
       const interactive = await gateAnswerFor(opId, row!.input, callers.chat)
       const failClosed = await gateAnswerFor(opId, row!.input, callers.chat, {
         resolveExecutionContext: () => 'ci',
@@ -2021,20 +1964,22 @@ describe('the parity suite ranges the registry census over every rostered surfac
   it('control: the ledger comparator names the op and the field that moved', () => {
     // THE NAMED-RED REQUIREMENT, DRIVEN. D-06/D-07 ask that a mismatch identify the capability and
     // the field rather than announce that two hashes differ. Proving that by breaking the committed
-    // file would be a mutation of a shipped artifact; the comparator is pure, so the three changes
-    // D-05 exists to make visible — a widened scope, a lowered tier, a moved partition — are driven
-    // over real rows here, plus the two presence columns and the two digests.
+    // file would be a mutation of a shipped artifact; the comparator is pure, so the changes D-05
+    // exists to make visible — a lowered tier, a moved partition — are driven over real rows here,
+    // plus the presence columns, the result kind, a digest and the binding.
     const rows = buildGoldenRows(rootDeclarations)
     expect(goldenFindings(rows, rows), 'a ledger compared against itself must report nothing')
       .toEqual([])
 
     const subject = rows[0] as GoldenRow
+    // 432-20 (D-10/D-12): the `requiredScopes` and `requiresHumanOrigin` columns are gone, so their
+    // two mutations left this list; `classifies` and `resultKind` take their places.
     const mutations: readonly (readonly [string, GoldenRow])[] = [
-      ['requiredScopes', { ...subject, requiredScopes: [...subject.requiredScopes, 'config-write'] }],
       ['risk', { ...subject, risk: { ...subject.risk, declaredTier: 'readOnly' } }],
       ['partition', { ...subject, partition: { kind: 'unprojected', reason: 'not-mid-flight-read' } }],
       ['discloses', { ...subject, discloses: true }],
-      ['requiresHumanOrigin', { ...subject, requiresHumanOrigin: true }],
+      ['classifies', { ...subject, classifies: subject.classifies === true ? undefined : true }],
+      ['resultKind', { ...subject, resultKind: subject.resultKind === 'unary' ? 'stream' : 'unary' }],
       ['inputSchemaDigest', { ...subject, inputSchemaDigest: 'f'.repeat(64) }],
       ['bindingStatusAtRoot', { ...subject, bindingStatusAtRoot: 'unbound' }],
     ]
