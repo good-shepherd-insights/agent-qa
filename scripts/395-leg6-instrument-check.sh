@@ -9,29 +9,37 @@
 # exited — a hang that read as SKIP, which does not set the lane's return code. A leg that reports a
 # hang as green is a false-green generator.
 #
-# WHAT IT PROVES, IN SECONDS AND WITHOUT A PLANNER. Seven probes, in two halves:
+# 2026-10-02 (Phase 432 plan 41, D-14/D-23): the ask road has no prompt, so the driver never writes
+# to the pty and the grade reads the child's exit status where it read a decline. D4 is new (the
+# driver does not answer a retired prompt), G3 now plants a retired prompt instead of declined=0,
+# and G5 is new (a full render with a non-zero exit).
 #
-#   DRIVER HALF (3) — the real `395-ask-road-pty.py`, against tiny fake CLI entries:
+# WHAT IT PROVES, IN SECONDS AND WITHOUT A PLANNER. Nine probes, in two halves:
+#
+#   DRIVER HALF (4) — the real `395-ask-road-pty.py`, against tiny fake CLI entries:
 #     D1  a child that never exits, and that IGNORES SIGHUP so the pty master's close cannot take it
 #         down  -> timedout=1, a SIGKILL status, and NO SURVIVING PROCESS
 #     D2  a child that exits 3                     -> timedout=0, status=3 (not the raw 768)
 #     D3  an exec that cannot launch (empty PATH)  -> status=126, verdict line present, no traceback
+#     D4  a child that renders the retired approval prompt and waits for an answer
+#                                                  -> prompt>=0, and the child receives NOTHING
 #
-#   GRADING HALF (4) — the real `leg6_grade`, sourced from `395-leg6-grade.sh`, driven with
+#   GRADING HALF (5) — the real `leg6_grade`, sourced from `395-leg6-grade.sh`, driven with
 #   INJECTED measurements. The lane sources the same file, so what is proven falsifiable here is
 #   what the lane grades with, never a re-typed sibling:
 #     G1  a healthy set                            -> PASS
 #     G2  the same set with the commit counts differing -> RED
-#     G3  the same set with declined=0             -> RED
+#     G3  the same set with a retired prompt at byte 500 -> RED
 #     G4  the same set with timedout=1             -> RED
+#     G5  the same set with status=2               -> RED
 #
 # EVERY EXPECTATION IS ASSERTED, NOT PRINTED. The script exits non-zero if any probe's reading is
 # not the expected one, and the failure names the probe.
 #
-# HOW IT IS ITSELF PROVEN FALSIFIABLE (395-28): each of the three refusals `leg6_grade` gained was
-# removed in turn and the corresponding probe observed RED — G2 for the repository comparison, G3
-# for the decline, G4 for the timeout. Recorded in 395-28-SUMMARY.md. Re-run that mutation whenever
-# the grading changes; a check that has never been seen to fail has not been checked.
+# HOW IT IS ITSELF PROVEN FALSIFIABLE (395-28): each refusal `leg6_grade` carries was removed in
+# turn and the corresponding probe observed RED. Recorded in 395-28-SUMMARY.md for the 395 set and
+# in 432-41-SUMMARY.md for the 432 re-spelling. Re-run that mutation whenever the grading changes; a
+# check that has never been seen to fail has not been checked.
 #
 #   usage:  bash scripts/395-leg6-instrument-check.sh
 #           L6_CHECK_DRIVER=/path/to/other-driver.py bash scripts/395-leg6-instrument-check.sh
@@ -140,6 +148,33 @@ else
   pass D3 'the transcript carries no interpreter traceback'
 fi
 
+# ---- D4: a child that renders the retired approval prompt and waits for an answer ------------
+# The child records anything it receives. The driver must report the prompt's offset and send it
+# nothing; the child then exits on its own after a short wait. The driver runs
+# `node <entry> ask <utterance>`, so the utterance slot (argv[3]) carries the record path.
+cat > "$WORK/prompt.js" <<'EOF'
+const { appendFileSync } = require('node:fs')
+const received = process.argv[3]
+process.stdout.write('agent-qa: fn:config.project.scaffold needs your approval. Proceed? [y/N] ')
+process.stdin.on('data', (chunk) => appendFileSync(received, String(chunk)))
+setTimeout(() => process.exit(0), 1200)
+EOF
+D4_LINE="$(python3 "$DRIVER" "$WORK" "$WORK/prompt.js" "$WORK/d4.received" "$WORK/d4.txt" \
+  "$PROBE_TIMEOUT" 2>&1 | grep '^L6-VERDICT' || true)"
+printf '  read  D4   %s\n' "${D4_LINE:-<no verdict line>}"
+D4_PROMPT="$(field "$D4_LINE" prompt)"
+if [ -n "$D4_PROMPT" ] && [ "$D4_PROMPT" -ge 0 ]; then
+  pass D4 "the retired prompt is reported by offset (prompt=$D4_PROMPT)"
+else
+  fail D4 "the retired prompt was not reported: prompt='${D4_PROMPT}'"
+fi
+if [ -s "$WORK/d4.received" ]; then
+  fail D4 "the driver ANSWERED the retired prompt: the child received '$(cat "$WORK/d4.received")'"
+else
+  pass D4 'the driver sent the child nothing'
+fi
+expect_eq D4 'the child finished on its own' "$(field "$D4_LINE" timedout)" '0'
+
 # ---- GRADING HALF -----------------------------------------------------------------------------
 printf '\n=== GRADING HALF — %s\n' "$GRADER"
 # shellcheck source=./395-leg6-grade.sh
@@ -147,7 +182,7 @@ printf '\n=== GRADING HALF — %s\n' "$GRADER"
 
 # A HEALTHY SET, and every other probe is this set with ONE measurement changed — so a RED can only
 # be attributed to that one measurement.
-#   verdict-line  prompt summary files diff  declined timedout  before after  transcript known-cause
+#   verdict-line  prompt summary files diff  status timedout  before after  transcript known-cause
 grade_probe() { # <probe> <expected-verdict> <args...>
   local probe="$1" expected="$2"; shift 2
   leg6_grade "$@"
@@ -158,17 +193,18 @@ grade_probe() { # <probe> <expected-verdict> <args...>
   fi
 }
 
-HEALTHY_LINE='L6-VERDICT prompt=500 declined=1 timedout=0 status=0 pid=1 bytes=900 summary=10 files=20 diff=30'
+HEALTHY_LINE='L6-VERDICT prompt=-1 timedout=0 status=0 pid=1 bytes=900 summary=10 files=20 diff=30'
 T='/tmp/leg6-check-transcript.txt'
 printf '  base  G*   %s\n' "$HEALTHY_LINE"
 
-grade_probe G1 PASS "$HEALTHY_LINE" 500 10 20 30 1 0 7 7 "$T" 0
-grade_probe G2 RED  "$HEALTHY_LINE" 500 10 20 30 1 0 7 8 "$T" 0
+grade_probe G1 PASS "$HEALTHY_LINE" -1  10 20 30 0 0 7 7 "$T" 0
+grade_probe G2 RED  "$HEALTHY_LINE" -1  10 20 30 0 0 7 8 "$T" 0
 grade_probe G3 RED  "$HEALTHY_LINE" 500 10 20 30 0 0 7 7 "$T" 0
-grade_probe G4 RED  "$HEALTHY_LINE" 500 10 20 30 1 1 7 7 "$T" 0
+grade_probe G4 RED  "$HEALTHY_LINE" -1  10 20 30 0 1 7 7 "$T" 0
+grade_probe G5 RED  "$HEALTHY_LINE" -1  10 20 30 2 0 7 7 "$T" 0
 
 # THE SENTENCE MUST NAME WHAT IT REFUSED, or a RED verdict is an unactionable one.
-leg6_grade "$HEALTHY_LINE" 500 10 20 30 1 0 7 8 "$T" 0
+leg6_grade "$HEALTHY_LINE" -1 10 20 30 0 0 7 8 "$T" 0
 case "$L6_GRADE_WHY" in
   *'commits 7 -> 8'*) pass G2 'the refusal names both commit counts' ;;
   *) fail G2 "the mutation refusal does not name the counts: $L6_GRADE_WHY" ;;

@@ -45,6 +45,12 @@
 # real producer rather than asserting it, and it is a SEPARATE rung from the pincer: opening the
 # pincer would not make D-16's "scaffold the local demo app" expressible.
 #
+# 2026-10-02 (Phase 432 plan 41): RUNG 1 IS CLOSED. 432-05 (#134) admits the local spellings with
+# scheme and port kept, so LEG 1 is re-authored to measure that; see its header. 432-11/13 also
+# removed every approval: the scaffold writes in its own call and nothing asks, so LEG 5's driver
+# answers no confirm and LEG 6 grades a prompt-free ask road. Legs 2-4 are not re-authored here:
+# their proposal-era expectations are recorded as an open item for the phase's script owner.
+#
 # ================================================================================================
 # SO WHAT THIS SCRIPT IS
 # ================================================================================================
@@ -287,8 +293,33 @@ switch (process.argv[2]) {
 commit_count() { git -C "$1" rev-list --count HEAD; }
 
 # ------------------------------------------------------------------------------------------------
-# LEG 1 — the local app is not expressible through the shipped hostname gate (D-13/D-15)
+# LEG 1 — the local app IS expressible through the shipped hostname gate (D-13/D-15, #134)
 # ------------------------------------------------------------------------------------------------
+#
+# 2026-10-02 (Phase 432 plan 41): RUNG 1 IS CLOSED, AND THIS LEG IS RE-AUTHORED IN THE DIRECTION OF
+# THE FIX, as it was written to be. Until 432-05 every spelling of the local demo app came back
+# `not-a-hostname`. 432-05 (#134, C432-LOCALHOST-ORIGIN) parses origins instead: `localhost`, IPv4
+# loopback and `[::1]` are admitted as typed, an explicit http/https scheme and a non-default port
+# are kept, and loopback target names start with a letter (`ip-127-0-0-1`, `localhost`) with the
+# port appended. 432-11 then made the scaffold WRITE in its own call: a served probe answers
+# `applied`, not `proposed`, and the config file changes on disk with no Git commit.
+#
+# ONE FRESH `no-targets` PROJECT PER PROBE (432-41). A served probe now WRITES a target into its
+# project, and the scaffold refuses a project that already declares one (`already-configured`), so
+# probes sharing one project would grade each other. Each probe seeds its own.
+#
+# THE CONTROL IS STILL BUILT INTO THE MECHANISM. A non-loopback IP literal and a spelling the URL
+# parser would rewrite into loopback stay refused `not-a-hostname` (`192.168.0.1`,
+# `http://127.1:8931`), while every local spelling and both real domains are served. A gate that
+# stopped refusing collapses the two sets, and a gate that refused everything collapses them the
+# other way. Every served answer is checked for its whole `for <base URL> as target <name>` clause,
+# so the derivation — scheme and port included — is read out of the product's own summary line.
+#
+# WHAT MAKES THIS LEG RED (432-41): a local spelling refused again (#134 regressed), a refused
+# spelling served (the loopback rule widened), a derivation naming a different base URL or target,
+# or a Git commit appearing (the scaffold writes files and commits nothing).
+#
+# THE TEXT BELOW, UP TO THE BANNER, IS THE 395 RECORD OF THE RUNG BEFORE IT CLOSED.
 #
 # THROUGH THE REAL REGISTERED OP ON THE SHIPPED CLI SURFACE, not through a copy of the rule and not
 # through the predicate in isolation. `parseHostnameToken` is deliberately NOT on `packages/agent`'s
@@ -323,20 +354,23 @@ commit_count() { git -C "$1" rev-list --count HEAD; }
 
 banner 'LEG 1 — is the local demo app expressible through the D-15 gate?'
 
-P1="$(new_project gate-probe)"
-write_config "$P1" no-targets
-seal_project "$P1"
 LEG1_OUT="$WORK/leg1.txt"
 : >"$LEG1_OUT"
 LEG1_RC=0
+LEG1_PROBES=0
 
-probe_gate() { # $1 = domain token, $2 = expected reason, $3 = optional substring the detail must carry
-  local answer reason
-  answer="$( cd "$P1" && timeout 300 node "$CLI_ENTRY" fn config.project.scaffold \
+probe_gate() { # $1 = domain token, $2 = expected reason or outcome, $3 = optional substring the answer must carry
+  local answer reason project before after
+  LEG1_PROBES=$((LEG1_PROBES + 1))
+  project="$(new_project "gate-probe-$LEG1_PROBES")"
+  write_config "$project" no-targets
+  seal_project "$project"
+  before="$(commit_count "$project")"
+  answer="$( cd "$project" && timeout 300 node "$CLI_ENTRY" fn config.project.scaffold \
     --input "$(node -e 'process.stdout.write(JSON.stringify({ domain: process.argv[1] }))' "$1")" 2>&1 )"
+  after="$(commit_count "$project")"
   # THE VERDICT IS `reason` WHEN THERE IS ONE AND `outcome` OTHERWISE (395-12). A refusal carries
-  # both; a PROPOSAL carries only `outcome: proposed`, and the control arms have answered that since
-  # the narrowing. Reading `reason` alone would have made every control arm read `<unparsable>`.
+  # both; a served scaffold carries only `outcome: applied` (432-11; `proposed` before it).
   reason="$(printf '%s' "$answer" | node -e '
 const chunks = []
 process.stdin.on("data", (chunk) => chunks.push(chunk))
@@ -349,8 +383,12 @@ process.stdin.on("end", () => {
   } catch { process.stdout.write("") }
 })' )"
   printf '  %-38s -> %s\n' "$1" "${reason:-<unparsable>}" | tee -a "$LEG1_OUT"
+  if [ "$after" != "$before" ]; then
+    printf '    UNEXPECTED: a Git commit appeared (commits %s -> %s)\n' "$before" "$after" | tee -a "$LEG1_OUT"
+    LEG1_RC=1
+  fi
   if [ "$reason" != "$2" ]; then
-    printf '    UNEXPECTED: expected reason %s\n' "$2" | tee -a "$LEG1_OUT"
+    printf '    UNEXPECTED: expected %s\n' "$2" | tee -a "$LEG1_OUT"
     LEG1_RC=1
     return
   fi
@@ -362,24 +400,26 @@ process.stdin.on("end", () => {
   fi
 }
 
-# The four spellings of the local demo app a person could reasonably type.
-probe_gate '127.0.0.1:8931' not-a-hostname
-probe_gate '127.0.0.1' not-a-hostname
-probe_gate 'localhost:8931' not-a-hostname
-probe_gate 'localhost' not-a-hostname
-probe_gate 'http://127.0.0.1:8931/form.html' not-a-hostname
-# The controls: real hostnames get PAST the gate and are SERVED, with the D-13 derivation named in
-# the proposal's own summary line. Re-pinned by 395-12 from `already-configured` — see the note
-# above; this project declares no targets, and that class is now merged rather than refused.
-probe_gate 'booking.com' proposed 'booking-com'
-probe_gate 'agent-qa.test' proposed 'agent-qa-test'
+# The five spellings of the local demo app a person could reasonably type: all served, as typed.
+probe_gate '127.0.0.1:8931' applied 'for https://127.0.0.1:8931 as target ip-127-0-0-1-8931'
+probe_gate '127.0.0.1' applied 'for https://127.0.0.1 as target ip-127-0-0-1'
+probe_gate 'localhost:8931' applied 'for https://localhost:8931 as target localhost-8931'
+probe_gate 'localhost' applied 'for https://localhost as target localhost'
+probe_gate 'http://127.0.0.1:8931/form.html' applied 'for http://127.0.0.1:8931 as target ip-127-0-0-1-8931'
+# The refusals that keep the gate a gate: a non-loopback IP, and a spelling the URL parser would
+# rewrite into loopback.
+probe_gate '192.168.0.1' not-a-hostname
+probe_gate 'http://127.1:8931' not-a-hostname
+# The controls: real hostnames are served as before, with the D-13 derivation in the summary line.
+probe_gate 'booking.com' applied 'for https://booking.com as target booking-com'
+probe_gate 'agent-qa.test' applied 'for https://agent-qa.test as target agent-qa-test'
 
 if [ "$LEG1_RC" -eq 0 ]; then
   record_leg 'L1 local-app expressibility' 'PASS' \
-    'RUNG 1 HOLDS AS MEASURED, THROUGH THE REGISTERED OP: every spelling of the local demo app is refused `not-a-hostname` (an IPv4 literal fails the alphabetic-TLD rule; bare `localhost` has no dot; the URL form parses down to the same IPv4 host), while both control domains get PAST the gate and are SERVED — `proposed`, with the D-13 target name in the proposal`s own summary line (395-12 re-pin: this zero-target project is merged rather than refused). D-16 asks the live leg to scaffold the LOCAL app, and the shipped derivation still cannot express it — it is pinned to `https://<domain>` with no port and no scheme choice at all.'
+    'RUNG 1 IS CLOSED, AS MEASURED THROUGH THE REGISTERED OP (432-05 #134, 432-11): every spelling of the local demo app is served `applied`, with its scheme and port kept and the derived target named in the product`s own summary line (`ip-127-0-0-1-8931`, `localhost-8931`, ...); `192.168.0.1` and the rewritten `http://127.1:8931` stay refused `not-a-hostname`; both control domains are served; and no probe made a Git commit. D-16`s "scaffold the LOCAL app" is expressible.'
 else
   record_leg 'L1 local-app expressibility' 'RED' \
-    "the gate's answers moved — see $LEG1_OUT. If a local address is now ACCEPTED, rung 1 has been closed and this leg is the thing that must be re-authored (it is written to red in the direction of the fix). If a control domain stopped deriving, the D-13 pin regressed."
+    "the gate's answers moved — see $LEG1_OUT. A local spelling refused again means #134 regressed; a refused spelling served means the loopback rule widened; a different summary line means the derivation moved; a Git commit means the scaffold started committing."
 fi
 
 # ------------------------------------------------------------------------------------------------
@@ -657,8 +697,10 @@ fi
 # it is opt-in — AND THE SKIP IS ANNOUNCED, because a credential-or-cost guard that degrades to a
 # silent no-op has produced green runs measuring nothing in this codebase before.
 #
-# A REAL PTY, on 394's measured precedent: vitest workers and pipes both resolve `local-headless`, and
-# `authoring.draft.write` is `mutating-shared`, so the gate denies before routing is exercised at all.
+# A REAL PTY, on 394's measured precedent: vitest workers and pipes both resolved `local-headless`,
+# and the gate denied `authoring.draft.write` before routing. 2026-10-02 (432-41): that gate is
+# deleted; the pty stays because a person drives chat at a terminal, and the driver answers nothing
+# (a retired approval prompt makes it exit 86 rather than be answered).
 
 banner 'LEG 5 — authoring against the local app (optional)'
 
@@ -691,7 +733,7 @@ else
     case "$L5_RECEIPTS" in
       *authoring.draft.write:executed*)
         record_leg 'L5 authoring (local app)' 'PASS' \
-          "AUTHORING PROCEEDED AGAINST THE LOCAL APP: the session's own clause receipt records \`authoring.draft.write\` EXECUTED in a project whose only target is $FORM_URL, with the approval answered on a real terminal. status='$L5_STATUS'"
+          "AUTHORING PROCEEDED AGAINST THE LOCAL APP: the session's own clause receipt records \`authoring.draft.write\` EXECUTED in a project whose only target is $FORM_URL, driven on a real terminal with nothing asked. status='$L5_STATUS'"
         ;;
       *)
         # THE RUNG IS NAMED OUT OF THE TRANSCRIPT, not guessed. The CLI prints an op's failure class
@@ -699,15 +741,22 @@ else
         L5_CLASS="$(LC_ALL=C sed $'s/\033\[[0-9;]*m//g' "$TRANSCRIPTS/leg5-authoring.txt" \
           | grep -oE '[A-Za-z]+Error' | head -1)"
         record_leg 'L5 authoring (local app)' 'RED' \
-          "THE LADDER'S NEXT RUNG, RECORDED RATHER THAN SMOOTHED OVER: the approval was rendered and answered on a real terminal and the authoring op still did not execute. receipts='$L5_RECEIPTS' status='$L5_STATUS' failure class='${L5_CLASS:-unclassified}' reason='$L5_REASON' (drive rc $L5_RC). Transcript: $TRANSCRIPTS/leg5-authoring.txt"
+          "THE LADDER'S NEXT RUNG, RECORDED RATHER THAN SMOOTHED OVER: the session was driven on a real terminal and the authoring op still did not execute (a drive rc of 86 means a retired approval prompt rendered and was not answered). receipts='$L5_RECEIPTS' status='$L5_STATUS' failure class='${L5_CLASS:-unclassified}' reason='$L5_REASON' (drive rc $L5_RC). Transcript: $TRANSCRIPTS/leg5-authoring.txt"
         ;;
     esac
   fi
 fi
 
 # ------------------------------------------------------------------------------------------------
-# LEG 6 — THE ASK ROAD, UNDER A REAL PTY: is the proposal SHOWN before the approval prompt?
+# LEG 6 — THE ASK ROAD, UNDER A REAL PTY: is the change SHOWN, with nothing asked?
 # ------------------------------------------------------------------------------------------------
+#
+# 2026-10-02 (Phase 432 plan 41, D-14): THERE IS NO PROMPT ON THIS ROAD ANY MORE. `agent-qa ask`
+# writes the scaffold in its own call and shows the change it made. The driver never writes to the
+# pty and no longer declines; the grade (`395-leg6-grade.sh`) reads the child's exit status where
+# it read the decline. PASS is the summary, file and diff render with no prompt, exit 0 and no Git
+# commit; ANY retired approval prompt is RED; SKIP is unchanged in kind (no render at all, k=1). The
+# text below, to the banner, is the 395 record of the road when it had a prompt.
 #
 # THE BOUND ROUND 4 STATED, CLOSED HERE AT k=1. 395-VERIFICATION drove `agent.ask` through the
 # production composition with a STUB planner and measured the complete set of bytes reaching the
@@ -732,7 +781,7 @@ fi
 # with. A skip states the residual bound and names the hermetic cells that hold the ground
 # ((A1)/(A2) in `packages/cli/src/composition/__tests__/ask-present-road.test.ts`), never silence.
 
-banner 'LEG 6 — the ask road under a real pty: render before the approval prompt?'
+banner 'LEG 6 — the ask road under a real pty: the change shown, nothing asked?'
 
 ASK_PTY="$REPO_ROOT/scripts/395-ask-road-pty.py"
 # ONE PRODUCER, TWO CALLERS (395-28 · CR-04). The other caller is
@@ -742,7 +791,7 @@ ASK_PTY="$REPO_ROOT/scripts/395-ask-road-pty.py"
 . "$REPO_ROOT/scripts/395-leg6-grade.sh"
 if ! command -v python3 >/dev/null || [ ! -f "$ASK_PTY" ]; then
   record_leg 'L6 ask road (pty)' 'SKIP' \
-    "NOT RUN, AND SAYING SO: python3 or $ASK_PTY is absent, and this leg needs a real pty. The standing hermetic evidence on the identical route is (A1)/(A2) in packages/cli/src/composition/__tests__/ask-present-road.test.ts, which drive the same production composition with the confirm as a spy."
+    "NOT RUN, AND SAYING SO: python3 or $ASK_PTY is absent, and this leg needs a real pty. The standing hermetic evidence on the identical route is (A1)/(A2) in packages/cli/src/composition/__tests__/ask-present-road.test.ts, which drive the same production composition with nothing asked."
 else
   P6="$(new_project ask-road)"
   write_config "$P6" no-targets
@@ -756,15 +805,14 @@ else
   L6_SUMMARY="$(printf '%s' "$L6_VERDICT" | sed -n 's/.*summary=\([-0-9]*\).*/\1/p')"
   L6_FILES="$(printf '%s' "$L6_VERDICT" | sed -n 's/.*files=\([-0-9]*\).*/\1/p')"
   L6_DIFF="$(printf '%s' "$L6_VERDICT" | sed -n 's/.*diff=\([-0-9]*\).*/\1/p')"
-  # THE TWO FIELDS THE LEG USED TO EMIT AND NEVER READ (395-28 · CR-04). `declined` has been on the
-  # verdict line since the driver was written; `timedout` is new, because until this round the driver
-  # could not tell a hang from an exit at all.
-  L6_DECLINED="$(printf '%s' "$L6_VERDICT" | sed -n 's/.*declined=\([-0-9]*\).*/\1/p')"
+  # `timedout` (395-28 · CR-04) tells a hang from an exit; `status` is the child's real exit code,
+  # graded in place of the `declined` field the driver no longer emits (432-41).
+  L6_STATUS="$(printf '%s' "$L6_VERDICT" | sed -n 's/.*status=\([-0-9]*\).*/\1/p')"
   L6_TIMEDOUT="$(printf '%s' "$L6_VERDICT" | sed -n 's/.*timedout=\([-0-9]*\).*/\1/p')"
   L6_COMMITS_AFTER="$(commit_count "$P6")"
-  printf '  verdict   %s\n  commits   %s -> %s\n  declined  %s\n  timedout  %s\n  transcript %s\n' \
+  printf '  verdict   %s\n  commits   %s -> %s\n  status    %s\n  timedout  %s\n  transcript %s\n' \
     "${L6_VERDICT:-<none>}" "$L6_COMMITS_BEFORE" "$L6_COMMITS_AFTER" \
-    "${L6_DECLINED:-<none>}" "${L6_TIMEDOUT:-<none>}" "$TRANSCRIPTS/leg6-ask-road.txt"
+    "${L6_STATUS:-<none>}" "${L6_TIMEDOUT:-<none>}" "$TRANSCRIPTS/leg6-ask-road.txt"
 
   # THE GRADING IS NOT HERE (395-28 · CR-04). It lives in `scripts/395-leg6-grade.sh`, sourced above,
   # because `scripts/395-leg6-instrument-check.sh` drives THAT function with injected measurements to
@@ -778,7 +826,7 @@ else
     && L6_KNOWN_CAUSE=1
 
   leg6_grade "$L6_VERDICT" "${L6_PROMPT:--1}" "${L6_SUMMARY:--1}" "${L6_FILES:--1}" \
-    "${L6_DIFF:--1}" "${L6_DECLINED:-0}" "${L6_TIMEDOUT:-0}" \
+    "${L6_DIFF:--1}" "${L6_STATUS:--1}" "${L6_TIMEDOUT:-0}" \
     "$L6_COMMITS_BEFORE" "$L6_COMMITS_AFTER" \
     "$TRANSCRIPTS/leg6-ask-road.txt" "$L6_KNOWN_CAUSE"
   record_leg 'L6 ask road (pty)' "$L6_GRADE_VERDICT" "$L6_GRADE_WHY"
@@ -795,7 +843,7 @@ fi
 if [ "$SELFTEST" = 'neutered' ]; then
   banner 'SELF-TEST — the lane is asked to grade a control it must refuse'
   # `booking.com` IS a hostname and this lane's LEG 1 knows it: the control arm asserts it reaches
-  # `proposed` (395-12 re-pin). Asking the SAME `probe_gate` to expect `not-a-hostname` for it is the
+  # `applied` (432-41 re-pin; `proposed` before 432-11). Asking the SAME `probe_gate` to expect `not-a-hostname` for it is the
   # measurement a lane that had stopped working would make, and it must not be able to report PASS.
   # Driven through the real helper rather than a re-typed copy, so what is proven falsifiable is the
   # instrument LEG 1 actually uses.
@@ -828,7 +876,7 @@ if [ "$LANE_RC" -eq 0 ]; then
   printf 'declares no targets, the utterance reaches the real scaffold, merges one target entry,\n'
   printf 'and the turn reaches the gated in-turn apply. Rung 2 is UNCHANGED and is not this phase\n'
   printf 'to close: a project with no model anywhere still cannot chat (WINDOWS 130/133). Rung 1 is\n'
-  printf 'unchanged: the local demo app is still not expressible through the D-15 hostname gate.\n'
+  printf 'CLOSED (432-05 #134): the local demo app is expressible through the D-15 hostname gate.\n'
   printf 'Green here means the LADDER is exactly where legs 1-3 say it is, and nothing more.\n'
 else
   printf 'LANE RED — at least one leg moved. Read its WHY: each is written to name which rung changed.\n'

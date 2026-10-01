@@ -4,14 +4,18 @@
 The round-4 verification's stated bound was that it never drove `agent-qa ask` against a live
 planner — it substituted a stub model. This closes that inch, k=1, on the shipped `dist/cli.js`.
 
-WHY A PTY AND NOT A PIPE. `createTtyConfirmPort` returns a real prompt only when BOTH streams are
-TTYs; under pipes the execution context resolves `local-headless`, the gate denies before any prompt
-exists, and the ordering this leg is about is unmeasurable. A pipe would produce a green that
-measures nothing — the exact failure class this phase keeps finding.
+2026-10-02 (Phase 432 plan 41, D-14/D-23): NOTHING TO DECLINE. `createTtyConfirmPort` and the gate
+behind it are deleted; `agent-qa ask` writes a scaffold in its own call and shows the change it made
+(C432-CLI-ONE-CALL; `ask-present-road.test.ts` (A1)/(A2)). This driver therefore never writes to the
+pty. It still watches for the retired approval prompt, so that a prompt that renders again is a
+reading (`prompt=<offset>`, graded RED by `395-leg6-grade.sh`) rather than a question it answers.
+The `declined` field is gone from the verdict line with the decline it reported. A real pty is kept
+because a person runs `ask` at a terminal and the leg reads what that terminal shows.
 
 WHAT IT PRINTS. The whole pty stream to the transcript path given, plus one machine-readable verdict
-line on stdout naming, by byte offset, where the render markers and the approval prompt fell, plus
-`timedout`, the child's REAL exit code, and the child's pid so a caller can assert nothing survived.
+line on stdout naming, by byte offset, where the render markers and any retired approval prompt
+fell, plus `timedout`, the child's REAL exit code, and the child's pid so a caller can assert nothing
+survived.
 
 A HANG IS A FAILED MEASUREMENT, NOT AN ABSENT ONE (395-28 · CR-04). Until this round the wait was
 non-blocking — `os.waitpid` with the don't-hang flag, which returns `(0, 0)` for a child that has
@@ -37,6 +41,7 @@ import sys
 import time
 
 ANSI = re.compile(rb'\x1b\[[0-9;]*[A-Za-z]')
+# The RETIRED approval prompt (D-14): recorded by offset if it ever renders again, never answered.
 PROMPT = re.compile(rb'needs your approval\. Proceed\? \[y/')
 
 # THE CHILD COULD NOT BE LAUNCHED AT ALL — distinct from any exit code `agent-qa` itself produces.
@@ -63,7 +68,6 @@ def main() -> int:
         os._exit(LAUNCH_FAILED)
 
     buf = bytearray()
-    declined = False
     # TRACKED, NOT INFERRED. `time.time() >= deadline` after the loop would also be true for a child
     # that exited during the final `select`, which would report a healthy drive as a hang. This flag
     # is cleared only on the two ways the loop ends because the CHILD ended.
@@ -82,12 +86,8 @@ def main() -> int:
             timed_out = False
             break
         buf.extend(chunk)
-        # DECLINE, ONCE. This leg measures what was on the terminal BEFORE the decision; answering
-        # yes would apply a configuration change and turn a read into a write.
-        if not declined and PROMPT.search(ANSI.sub(b'', bytes(buf))):
-            time.sleep(0.2)
-            os.write(fd, b'n\n')
-            declined = True
+        # NOTHING IS WRITTEN BACK (432-41, D-14). A retired prompt is recorded by its offset below;
+        # it is never answered, so the child either finishes on its own or meets the deadline.
 
     # KILL BEFORE CLOSING, AND KILL RATHER THAN HANG UP. Closing the pty master delivers SIGHUP to
     # the child's foreground process group, which is enough for a child with default handlers and is
@@ -124,7 +124,7 @@ def main() -> int:
         'diff': clean.find(b'@@'),
     }
     print('L6-VERDICT ' + ' '.join(
-        [f'prompt={prompt_at}', f'declined={int(declined)}', f'timedout={int(timed_out)}',
+        [f'prompt={prompt_at}', f'timedout={int(timed_out)}',
          f'status={status}', f'pid={pid}', f'bytes={len(clean)}']
         + [f'{name}={offset}' for name, offset in markers.items()]))
     return 0
