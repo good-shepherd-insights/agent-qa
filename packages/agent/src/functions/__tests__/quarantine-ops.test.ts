@@ -318,3 +318,40 @@ describe('with a port bound, each op forwards and adds nothing of its own', () =
     }
   })
 })
+
+// ---- C432-ALL-OPS-AVAILABLE (432-25, D-12) ------------------------------
+//
+// The two writes once required `knowledge-write`. Retried from three callers that differ in surface
+// and origin, and that carry no scope at all, each write is served every time: the port is reached
+// once per attempt, every caller gets the same answer, and no audit row is written.
+describe('C432-ALL-OPS-AVAILABLE: the quarantine writes serve every caller', () => {
+  it('C432-ALL-OPS-AVAILABLE: a retried add and release are served alike to every caller', async () => {
+    const { port, added, released } = stubPort([])
+    const auditRows: unknown[] = []
+    const registry = createFunctionRegistry({
+      deps: deps(port),
+      auditSink: { appendGuardrailAudit(row: unknown) { auditRows.push(row) } },
+    })
+    const callers: readonly FunctionCaller[] = [
+      CALLER,
+      { surface: 'cli', origin: 'human' },
+      { surface: 'mcp', origin: 'agent' },
+    ]
+
+    const answers: unknown[] = []
+    for (const caller of callers) {
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        answers.push(await invokeFunction(registry, QUARANTINE_ADD_FUNCTION_ID, { ...IDENTITY }, caller))
+        answers.push(await invokeFunction(registry, QUARANTINE_RELEASE_FUNCTION_ID, { ...IDENTITY }, caller))
+      }
+    }
+
+    expect(added).toEqual(Array.from({ length: 6 }, () => IDENTITY))
+    expect(released).toEqual(Array.from({ length: 6 }, () => IDENTITY))
+    expect(answers).toEqual(Array.from({ length: 6 }, () => [
+      { kind: 'renewed', entry: entryState() },
+      { kind: 'no-entry' },
+    ]).flat())
+    expect(auditRows).toEqual([])
+  })
+})
