@@ -264,6 +264,22 @@ describe('C432-DIRECT-CONTRACTS: the direct change contracts live in knowledge/c
     }
   })
 
+  it('C432-DIRECT-CONTRACTS: a config change file is the direct writer\'s, and a pre-432 config payload parses as no change', () => {
+    // `ConfigProposalFile` moved into config-mutation/actions.ts as `ConfigChangeFile`; the shape is
+    // the direct writer's file set, and nothing that reads old proposal bytes remains.
+    const file = { path: 'agent-qa.config.yaml', changeKind: 'modify', baseDigest: 'a'.repeat(64), newContentBase64: 'eDox' }
+    expect(schema.ConfigChangeFileSchema.safeParse(file).success).toBe(true)
+    expect([...schema.CONFIG_FILE_CHANGE_KINDS]).toEqual(['add', 'modify', 'delete'])
+    expect(schema.ConfigChangeFileSchema.safeParse({ ...file, proposalId: 'prop_aaaaaaaa-bbbb' }).success).toBe(false)
+    const oldConfigPayload = {
+      schemaVersion: 1, action: 'config.field.set', summaryLine: 'set use.timeout.step', baseDigest: 'a'.repeat(64),
+      files: [file], fields: ['use.timeout.step'], crossBoundary: false, crossBoundaryReasons: [], shownDiff: '-a\n+b',
+    }
+    expect(schema.ConfigChangeOutputSchema.safeParse(oldConfigPayload).success).toBe(false)
+    expect(schema.ConfigChangeOutputSchema.safeParse({ outcome: 'filed', proposalId: 'prop_aaaaaaaa-bbbb' }).success)
+      .toBe(false)
+  })
+
   it('C432-DIRECT-CONTRACTS: an authored test edit answers the file it wrote, with no test-draft arm', () => {
     const keys = Object.keys(schema.AuthoringDraftEditOutputSchema.shape).sort()
     expect(keys).toContain('written')

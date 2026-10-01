@@ -23,7 +23,7 @@
 // last cell keeps them measured beside the absence.
 
 import { createHash } from 'node:crypto'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -252,6 +252,57 @@ describe('C432-PROPOSAL-FILES-UNREAD: old proposal files are never opened, claim
     expect(touchedInbox(), 'an explicit change opened, listed or renamed an old proposal file').toEqual([])
     expect(digestDirectory(inbox), 'an old proposal file was claimed, published, cleaned up or migrated')
       .toEqual(before)
+  }, 120_000)
+
+  it('C432-PROPOSAL-FILES-UNREAD: a retried explicit change answers its first outcome and still opens no old proposal file', async () => {
+    const before = digestDirectory(inbox)
+    const recordId = publish('retry')
+    recorder.paths.length = 0
+    const input = {
+      agentQaRoot, knowledgeRoot, executionContext: 'local-headless' as const, opId: 'knowledge.accept',
+      operationId: 'unread-retry-1',
+      request: { verb: 'accept' as const, input: { target: { grain: 'record' as const, recordId } } },
+    }
+
+    const first = await applyExplicitReview(input)
+    const retried = await applyExplicitReview(input)
+
+    expect(first).toMatchObject({ outcome: 'applied', recordIds: [recordId] })
+    expect(retried).toMatchObject({ outcome: 'applied', recordIds: [recordId] })
+    expect(recorder.paths.length).toBeGreaterThan(0)
+    expect(touchedInbox(), 'a retry looked for an old proposal file to dedupe against').toEqual([])
+    expect(digestDirectory(inbox)).toEqual(before)
+  }, 120_000)
+
+  it('C432-PROPOSAL-FILES-UNREAD: an old proposal id is not a change target, and naming one opens nothing', async () => {
+    const before = digestDirectory(inbox)
+    recorder.paths.length = 0
+
+    const outcome = await applyExplicitReview({
+      agentQaRoot, knowledgeRoot, executionContext: 'local-headless', opId: 'knowledge.forget',
+      operationId: 'unread-old-id-1',
+      request: { verb: 'forget', input: { target: { grain: 'record', recordId: 'prop_0123456789ab' } } },
+    })
+
+    expect(outcome).toMatchObject({ outcome: 'target-not-found' })
+    expect(touchedInbox(), 'naming an old proposal id reached its file').toEqual([])
+    expect(digestDirectory(inbox)).toEqual(before)
+  })
+
+  it('C432-PROPOSAL-FILES-UNREAD: a change applies while the old proposals directory cannot be read at all', async () => {
+    const recordId = publish('unreadable')
+    chmodSync(inbox, 0o000)
+    try {
+      const outcome = await applyExplicitReview({
+        agentQaRoot, knowledgeRoot, executionContext: 'local-headless', opId: 'knowledge.reject',
+        operationId: 'unread-locked-1',
+        request: { verb: 'reject', input: { target: { grain: 'record', recordId }, reason: 'wrong' } },
+      })
+      expect(outcome).toMatchObject({ outcome: 'applied', recordIds: [recordId] })
+    } finally {
+      chmodSync(inbox, 0o700)
+    }
+    expect(Object.keys(digestDirectory(inbox)).sort()).toEqual(Object.keys(LEGACY_FILES).sort())
   }, 120_000)
 
   it('C432-PROPOSAL-FILES-UNREAD: the knowledge reads answer with old and malformed proposal files present and never open one', () => {
