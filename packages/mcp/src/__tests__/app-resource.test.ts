@@ -33,7 +33,6 @@ import {
 } from '@vostride/agent-qa-agent'
 import type {
   FunctionCaller,
-  FunctionScope,
   LiveUrlSigner,
   RunEventEnvelope,
 } from '@vostride/agent-qa-schema'
@@ -174,8 +173,14 @@ function fixtureRegistry(options: FixtureOptions = {}): {
   }
 }
 
-function caller(grantedScopes: readonly FunctionScope[] = ['read']): FunctionCaller {
-  return { surface: 'mcp', origin: 'agent', grantedScopes, safeMode: false }
+// 2026-10-02 (432-38, D-12): no `safeMode`, and no `['read']` default scope set; registration and
+// the read handler read neither (432-20). A scope set a cell passes EXPLICITLY is kept, cast past
+// the type, as a deliberate smuggle: the cell for a caller granted nothing hands `[]` to prove the
+// set changes nothing. Goes with the field in 432-39.
+function caller(smuggledScopes?: readonly string[]): FunctionCaller {
+  return smuggledScopes === undefined
+    ? { surface: 'mcp', origin: 'agent' }
+    : ({ surface: 'mcp', origin: 'agent', grantedScopes: smuggledScopes } as FunctionCaller)
 }
 
 const identity = (text: string): string => text
@@ -247,8 +252,13 @@ const asNegotiated =
   (uri: URL) =>
     read(uri, {}, negotiatedContext)
 
-/** Register against the fixture and hand back the ONE read the registration captured. */
-function registerAndCapture(options: FixtureOptions = {}, scopes?: readonly FunctionScope[]): {
+/**
+ * Register against the fixture and hand back the ONE read the registration captured.
+ *
+ * 2026-10-02 (432-38, D-12): no scope-set parameter; no cell passed one, and the caller it fed is
+ * unread (432-20).
+ */
+function registerAndCapture(options: FixtureOptions = {}): {
   readonly registered: readonly string[]
   readonly read: NegotiatedRead
   readonly clock: { now: () => number; at: () => number }
@@ -257,7 +267,7 @@ function registerAndCapture(options: FixtureOptions = {}, scopes?: readonly Func
   const server = recordingServer()
   const registered = registerAppResources(server as never, {
     registry,
-    caller: caller(scopes),
+    caller: caller(),
     maskText: identity,
   })
   expect(server.calls.length, 'exactly one app template is registered').toBe(1)

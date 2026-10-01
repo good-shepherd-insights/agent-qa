@@ -37,7 +37,7 @@ import {
   type FunctionRegistry,
 } from '@vostride/agent-qa-agent'
 import { asRunId } from '@vostride/agent-qa-schema'
-import type { CompletedRunHandoff, FunctionCaller, FunctionScope } from '@vostride/agent-qa-schema'
+import type { CompletedRunHandoff, FunctionCaller } from '@vostride/agent-qa-schema'
 import { afterEach, describe, expect, it } from 'vitest'
 
 import { appResourceUriFor } from '../app-resource.js'
@@ -118,12 +118,11 @@ function fixtureRegistry(): FunctionRegistry {
   return createFunctionRegistry({ deps, auditSink })
 }
 
-const CALLER_SCOPES: readonly FunctionScope[] = ['read', 'run']
-
+// 2026-10-02 (432-38, D-12): no `grantedScopes` (the former `CALLER_SCOPES`) or `safeMode` on the
+// caller; the registry and the MCP server read neither (432-20), so `runs.start` and the link and
+// App-address cells no longer depend on them.
 const caller: FunctionCaller = {
   surface: 'mcp',
-  grantedScopes: CALLER_SCOPES,
-  safeMode: false,
   origin: 'agent',
 }
 

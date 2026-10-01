@@ -46,7 +46,6 @@ import {
   asRunId,
   canonicalJson,
   CURRENT_HANDOFF_SCHEMA_VERSION,
-  FunctionScopeSchema,
   sha256hex,
 } from '@vostride/agent-qa-schema'
 import type {
@@ -69,10 +68,10 @@ const MINT_IDENTITY = (filePath: string): string => filePath
 
 const RUN_ID = 'run-388-alpha'
 
+// 2026-10-02 (432-38, D-12): no `grantedScopes` or `safeMode` on the caller; the registry reads
+// neither (432-20).
 const CALLER: FunctionCaller = {
   surface: 'test',
-  grantedScopes: [...FunctionScopeSchema.options],
-  safeMode: false,
   origin: 'agent',
 }
 

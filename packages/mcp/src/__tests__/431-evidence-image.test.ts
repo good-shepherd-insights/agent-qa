@@ -103,7 +103,9 @@ function registryOver(blobs: Blobs): FunctionRegistry {
   return createFunctionRegistry({ deps: { evidenceBlobs, runs } as unknown as FunctionDeps, auditSink })
 }
 
-const reader: FunctionCaller = { surface: 'mcp', grantedScopes: ['read'], safeMode: false, origin: 'agent' }
+// 2026-10-02 (432-38, D-12): no `grantedScopes` or `safeMode` on the caller; the registry and the
+// MCP server read neither (432-20).
+const reader: FunctionCaller = { surface: 'mcp', origin: 'agent' }
 const identity = (text: string): string => text
 
 const openClients: Client[] = []

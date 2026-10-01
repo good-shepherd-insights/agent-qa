@@ -42,7 +42,7 @@ import {
   splitClauses,
 } from '@vostride/agent-qa-agent'
 import type { JobModelCapability, SessionReplay } from '@vostride/agent-qa-agent'
-import { FunctionScopeSchema, MASKED_RESOLVED_CONFIG_SCHEMA_VERSION } from '@vostride/agent-qa-schema'
+import { MASKED_RESOLVED_CONFIG_SCHEMA_VERSION } from '@vostride/agent-qa-schema'
 import type {
   AgentAskResult,
   ChatSessionEvent,
@@ -61,11 +61,14 @@ const MASKED_CONFIG: MaskedResolvedConfig = {
   entries: [],
 }
 
-/** A person holding every scope, so a refusal below can only ever be the axis under test. */
+/**
+ * A person, so a refusal below can only ever be the axis under test.
+ *
+ * 2026-10-02 (432-38, D-12): no `grantedScopes` (formerly every scope) or `safeMode`; the registry
+ * reads neither (432-20), so there is no scope left to refuse.
+ */
 const HUMAN: FunctionCaller = {
   surface: 'test',
-  grantedScopes: [...FunctionScopeSchema.options],
-  safeMode: false,
   origin: 'human',
 }
 
