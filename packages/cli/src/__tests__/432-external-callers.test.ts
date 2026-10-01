@@ -128,6 +128,67 @@ function shippedHelp(): { run: string; global: string } {
   return helpCache
 }
 
+/**
+ * A fake `agent-qa chat` behind an `npx` shim, for `394-chat-arrival.exp`. Modes: `clean` answers
+ * both turns, `retired` renders the retired approval prompt on turn 1, `redraw` re-renders the REPL
+ * prompt on turn 1 with nothing before it. Every line the fake receives is logged.
+ */
+function chatFixture(): (mode: 'clean' | 'retired' | 'redraw') => { result: SpawnSyncReturns<string>; lines: string[] } {
+  const expectBin = binary('expect')
+  const dir = scratch('chat')
+  const bin = join(dir, 'bin')
+  mkdirSync(bin)
+  const fake = join(dir, 'fake-chat.mjs')
+  writeFileSync(fake, [
+    "import { appendFileSync } from 'node:fs'",
+    'const mode = process.env.FAKE_MODE',
+    'const log = process.env.FAKE_LOG',
+    "const PROMPT = '\\x1b[1G\\x1b[0J> \\x1b[3G'",
+    'process.stdout.write(PROMPT)',
+    "let turn = 0, buffered = ''",
+    "process.stdin.on('data', (chunk) => {",
+    '  buffered += String(chunk)',
+    '  let at',
+    '  while ((at = buffered.search(/[\\r\\n]/)) >= 0) {',
+    '    const line = buffered.slice(0, at)',
+    '    buffered = buffered.slice(at + 1)',
+    "    if (line === '') continue",
+    "    appendFileSync(log, line + '\\n')",
+    "    if (line === '/quit') process.exit(0)",
+    '    turn += 1',
+    "    if (turn === 1 && mode === 'retired') {",
+    `      process.stdout.write('\\x1b[1G\\x1b[0J' + ${JSON.stringify(RETIRED_PROMPT_TEXT)})`,
+    '      continue',
+    '    }',
+    "    if (turn === 1 && mode === 'redraw') {",
+    '      process.stdout.write(PROMPT)',
+    '      continue',
+    '    }',
+    '    setTimeout(() => {',
+    "      if (turn === 1) process.stdout.write('agent-qa: This authoring invocation will execute up to 7 runs.\\r\\nRuns consumed: 0 (previewed up to 7)\\r\\n')",
+    "      else process.stdout.write('answer two\\r\\n')",
+    '      process.stdout.write(PROMPT)',
+    '    }, 100)',
+    '  }',
+    '})',
+    '',
+  ].join('\n'))
+  const npx = join(bin, 'npx')
+  writeFileSync(npx, `#!/bin/sh\nexec "${process.execPath}" "${fake}"\n`)
+  chmodSync(npx, 0o755)
+
+  return (mode) => {
+    const log = join(dir, `${mode}.log`)
+    writeFileSync(log, '')
+    const result = run(
+      expectBin,
+      ['-f', CALLERS.chatDriver, '30', '/dev/null', 'write a test', 'how am I doing'],
+      { env: { PATH: `${bin}:${process.env.PATH ?? ''}`, FAKE_MODE: mode, FAKE_LOG: log } },
+    )
+    return { result, lines: readFileSync(log, 'utf8').split('\n').filter(Boolean) }
+  }
+}
+
 function verdictField(line: string, name: string): number | undefined {
   const match = new RegExp(`(?:^|\\s)${name}=(-?\\d+)`).exec(line)
   return match === null ? undefined : Number(match[1])
@@ -284,55 +345,7 @@ describe('C432-LIVE-CALLERS — the nine named live callers carry no retired fla
   })
 
   it('C432-LIVE-CALLERS: the chat driver drives a prompt-free session to exit 0 and refuses a retired prompt unanswered', () => {
-    const expectBin = binary('expect')
-    const dir = scratch('chat')
-    const bin = join(dir, 'bin')
-    mkdirSync(bin)
-    const fake = join(dir, 'fake-chat.mjs')
-    writeFileSync(fake, [
-      "import { appendFileSync } from 'node:fs'",
-      'const mode = process.env.FAKE_MODE',
-      'const log = process.env.FAKE_LOG',
-      "const PROMPT = '\\x1b[1G\\x1b[0J> \\x1b[3G'",
-      'process.stdout.write(PROMPT)',
-      "let turn = 0, buffered = ''",
-      "process.stdin.on('data', (chunk) => {",
-      '  buffered += String(chunk)',
-      '  let at',
-      '  while ((at = buffered.search(/[\\r\\n]/)) >= 0) {',
-      '    const line = buffered.slice(0, at)',
-      '    buffered = buffered.slice(at + 1)',
-      "    if (line === '') continue",
-      "    appendFileSync(log, line + '\\n')",
-      "    if (line === '/quit') process.exit(0)",
-      '    turn += 1',
-      "    if (turn === 1 && mode === 'retired') {",
-      `      process.stdout.write('\\x1b[1G\\x1b[0J' + ${JSON.stringify(RETIRED_PROMPT_TEXT)})`,
-      '      continue',
-      '    }',
-      '    setTimeout(() => {',
-      "      if (turn === 1) process.stdout.write('agent-qa: This authoring invocation will execute up to 7 runs.\\r\\nRuns consumed: 0 (previewed up to 7)\\r\\n')",
-      "      else process.stdout.write('answer two\\r\\n')",
-      '      process.stdout.write(PROMPT)',
-      '    }, 100)',
-      '  }',
-      '})',
-      '',
-    ].join('\n'))
-    const npx = join(bin, 'npx')
-    writeFileSync(npx, `#!/bin/sh\nexec "${process.execPath}" "${fake}"\n`)
-    chmodSync(npx, 0o755)
-
-    const drive = (mode: string): { result: SpawnSyncReturns<string>; lines: string[] } => {
-      const log = join(dir, `${mode}.log`)
-      writeFileSync(log, '')
-      const result = run(
-        expectBin,
-        ['-f', CALLERS.chatDriver, '30', '/dev/null', 'write a test', 'how am I doing'],
-        { env: { PATH: `${bin}:${process.env.PATH ?? ''}`, FAKE_MODE: mode, FAKE_LOG: log } },
-      )
-      return { result, lines: readFileSync(log, 'utf8').split('\n').filter(Boolean) }
-    }
+    const drive = chatFixture()
 
     const clean = drive('clean')
     expect(clean.result.status, clean.result.stdout).toBe(0)
@@ -384,6 +397,25 @@ describe('C432-LIVE-CALLERS — the nine named live callers carry no retired fla
     expect(verdictField(asked, 'prompt')).toBeGreaterThanOrEqual(0)
     expect(verdictField(asked, 'timedout')).toBe(0)
     expect(existsSync(received)).toBe(false)
+  })
+
+  it('C432-LIVE-CALLERS: the chat driver keeps its CR-03 refusal of a boundary that crossed nothing', () => {
+    const redraw = chatFixture()('redraw')
+    expect(redraw.result.status, redraw.result.stdout).toBe(89)
+    expect(redraw.result.stdout).toContain("REFUSING turn 1's boundary")
+    expect(redraw.lines).toEqual(['write a test'])
+  })
+
+  it('C432-LIVE-CALLERS: the fn driver keeps its no-command and timeout exits', () => {
+    const expectBin = binary('expect')
+    const dir = scratch('fn-retained')
+    const hangs = join(dir, 'hangs.js')
+    writeFileSync(hangs, 'setTimeout(() => process.exit(0), 30000)\n')
+
+    expect(run(expectBin, ['-f', CALLERS.fnDriver, '30']).status).toBe(96)
+    const timedOut = run(expectBin, ['-f', CALLERS.fnDriver, '2', process.execPath, hangs])
+    expect(timedOut.status, timedOut.stdout).toBe(97)
+    expect(timedOut.stdout).toContain('TIMEOUT after 2 second(s)')
   })
 
   it('C432-LIVE-CALLERS: the 399 runbook gate asks the live CLI instead of reading the deleted gate source', () => {
