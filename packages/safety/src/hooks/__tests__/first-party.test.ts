@@ -199,6 +199,25 @@ describe('registerFirstPartySafetyHooks invocation-time sink + trust forwarding 
     expect(auditSink.guardrailRows[0]).toMatchObject({ action: 'redact', detector: 'bearer' })
   })
 
+  // 432-19, task 2: the retry edge. The same request sent twice through the run's registrar is
+  // masked identically both times (one placeholder, minted once) and trips the guardrail neither
+  // time, so a retried provider call cannot leak on its second attempt or double-count a row.
+  it('C432-RETAINED-SAFETY: a retried request is masked identically and writes no guardrail row on either attempt', () => {
+    const auditSink = new InMemoryAuditSink()
+    const ctx = createMaskingContext()
+    ctx.register('abcdefghijklmno12345')
+    setActiveMaskingContextResolver(() => ctx)
+    const { registry } = registerFirstPartySafetyHooks({ auditSink })
+
+    const first = JSON.stringify(registry.runProviderRequest(bearerParams()))
+    const second = JSON.stringify(registry.runProviderRequest(bearerParams()))
+
+    expect(second).toBe(first)
+    expect(first).toContain('<SECRET_0>')
+    expect(first).not.toContain('<SECRET_1>')
+    expect(auditSink.guardrailRows).toEqual([])
+  })
+
   it('keeps getActiveAuditSink undefined once the default resolver is restored', () => {
     expect(getActiveAuditSink()).toBeUndefined()
   })

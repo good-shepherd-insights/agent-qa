@@ -217,3 +217,22 @@ describe('C432-EVAL-RISK-PARITY: name-based risk scores are unchanged by the com
     }
   })
 })
+
+// 432-19, task 2: the boundary edge of the name signal. The lexicon's tokenizer is unchanged by the
+// command-pattern deletion, so these follow its rule: lower-cased, split on anything that is not a
+// letter, digit or hyphen, matched whole. An empty or punctuation-only name proposes nothing from
+// the lexicon and falls to the recognized floor or the unrecognized fail-safe.
+describe('C432-EVAL-RISK-PARITY: boundary names classify by the unchanged name rule', () => {
+  it.each([
+    [{ name: '', recognized: true }, 'mutating-local'],
+    [{ name: '', recognized: false }, 'restricted'],
+    [{ name: '...///', recognized: true }, 'mutating-local'],
+    [{ name: 'DELETE_RECORD', recognized: true }, 'destructive'],
+    [{ name: 'Sudo.Reboot', recognized: true }, 'restricted'],
+    [{ name: 'undeleted', recognized: true }, 'mutating-local'],
+    [{ name: 'kill-switch-view', recognized: true }, 'mutating-local'],
+    [{ name: 'kill switch', recognized: true, readOnly: true }, 'restricted'],
+  ] as const)('%o classifies %s', (action, tier) => {
+    expect(classifyRisk(action).riskTier).toBe(tier)
+  })
+})

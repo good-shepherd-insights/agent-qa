@@ -157,4 +157,16 @@ describe('DenialBlock renders its reason only (D-06)', () => {
     expect(dom.textContent).not.toMatch(/--trust-session|\[y\/N\]|approve|grant/i)
     expect(dom.querySelectorAll('button, a, [data-remedy-kind]')).toHaveLength(0)
   })
+
+  // 432-19, task 2: a denial reason STORED by a pre-432 build (a run row settled while the gate
+  // existed) still reads back. The block renders the stored sentence verbatim — the masked
+  // placeholder the server stored stays a placeholder — and adds nothing to it.
+  it('C432-HISTORICAL-READER: a stored pre-432 denial reason renders verbatim, masked placeholder included', () => {
+    const stored =
+      'fail-closed (ci): declared tier: mutating-shared for <SECRET_0>: this action needs an approval this context has not established'
+    const dom = mount(<DenialBlock neutralReason={stored} />)
+    expect(dom.querySelector('[data-entry="denial"]')?.textContent).toBe(stored)
+    expect(dom.textContent).toContain('<SECRET_0>')
+    expect(dom.querySelectorAll('[data-entry="denial"] *')).toHaveLength(1)
+  })
 })

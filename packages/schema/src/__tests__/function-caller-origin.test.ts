@@ -146,3 +146,27 @@ describe('the origin axis after the gate (432-19)', () => {
     }
   })
 })
+
+// 432-19, task 2: the historical reader over a WHOLE pre-432 turn, in file order, read twice. A
+// session an older build wrote interleaves the approval record with the kinds this build still
+// writes; every line reads back, and reading the same bytes again answers the same events.
+describe('C432-HISTORICAL-READER: a pre-432 turn reads back in order, and re-reading is stable', () => {
+  const at = '2026-09-01T10:00:00.000Z'
+  const turn = [
+    { kind: 'user_message', turnId: 't_0007', at, text: 'write a test for the login page' },
+    { kind: 'approval_decision', turnId: 't_0007', at, actionClass: 'fn:authoring.draft.write', decision: 'accept', source: 'gate' },
+    { kind: 'clause_receipt', turnId: 't_0007', at, clause: 'write a test', functionId: 'authoring.draft.write', origin: 'human', status: 'executed', outcome: 'drafted' },
+    { kind: 'approval_decision', turnId: 't_0007', at, actionClass: 'fn:runs.mark', decision: 'deny', source: 'verb' },
+    { kind: 'turn_complete', turnId: 't_0007', at, status: 'completed' },
+  ]
+
+  it('C432-HISTORICAL-READER: every line of the historical turn parses, in its written order', () => {
+    const lines = turn.map((line) => JSON.parse(JSON.stringify(line)) as unknown)
+    const read = lines.map((line) => guardChatSessionEvent(line, CURRENT_CHAT_SESSION_SCHEMA_VERSION))
+    expect(read.map((event) => event.kind)).toEqual([
+      'user_message', 'approval_decision', 'clause_receipt', 'approval_decision', 'turn_complete',
+    ])
+    const again = lines.map((line) => guardChatSessionEvent(line, CURRENT_CHAT_SESSION_SCHEMA_VERSION))
+    expect(again).toEqual(read)
+  })
+})

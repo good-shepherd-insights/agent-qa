@@ -1,3 +1,7 @@
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+
 import { describe, expect, it } from 'vitest'
 
 import {
@@ -144,5 +148,42 @@ describe('runSafetyScope', () => {
 
   it('is exported from the safety-local barrel (reachability)', () => {
     expect(surface.runSafetyScope).toBe(runSafetyScope)
+  })
+
+  // 432-19 (D-17/D-22), task 2: the concurrency edge of the guardrail-only sink. Two runs resolve
+  // their own durable sinks through the ambient resolver at once; each run directory holds a legacy
+  // execution trail an older build left. Each run's guardrail rows land in its own directory, nothing
+  // crosses, and neither legacy trail is read, rewritten or joined by a new one.
+  it('C432-AUDIT-UNREAD: interleaved runs append their own guardrail rows and leave each legacy execution trail untouched', async () => {
+    const runDirs = [mkdtempSync(join(tmpdir(), 'scope-run-a-')), mkdtempSync(join(tmpdir(), 'scope-run-b-'))]
+    const legacy = runDirs.map((dir, index) => {
+      const bytes = `{"ts":"2026-09-01T10:00:0${String(index)}.000Z","verdict":"deny","outcome":"blocked"}\n`
+      writeFileSync(join(dir, 'execution_audit.jsonl'), bytes)
+      return bytes
+    })
+
+    await Promise.all(runDirs.map((dir, index) => runSafetyScope(
+      { auditSink: new JsonlAuditSink(dir), executionContext: index === 0 ? 'ci' : 'local-headless' },
+      async () => {
+        for (let attempt = 0; attempt < 3; attempt += 1) {
+          await Promise.resolve()
+          getActiveAuditSink()?.appendGuardrailAudit({ runId: `run-${String(index)}`, action: 'pass' })
+        }
+      },
+    )))
+
+    runDirs.forEach((dir, index) => {
+      expect(readFileSync(join(dir, 'execution_audit.jsonl'), 'utf8')).toBe(legacy[index])
+      const rows = readFileSync(join(dir, 'guardrail_audit.jsonl'), 'utf8').trim().split('\n')
+        .map((line) => JSON.parse(line) as Record<string, unknown>)
+      expect(rows).toHaveLength(3)
+      expect(rows.every((row) => row.runId === `run-${String(index)}`)).toBe(true)
+    })
+    // And a run directory that had no legacy trail never gets one.
+    const fresh = mkdtempSync(join(tmpdir(), 'scope-run-c-'))
+    runSafetyScope({ auditSink: new JsonlAuditSink(fresh) }, () => {
+      getActiveAuditSink()?.appendGuardrailAudit({ action: 'pass' })
+    })
+    expect(existsSync(join(fresh, 'execution_audit.jsonl'))).toBe(false)
   })
 })
