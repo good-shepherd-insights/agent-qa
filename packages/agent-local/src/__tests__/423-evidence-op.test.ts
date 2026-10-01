@@ -11,7 +11,10 @@ import type { FunctionCaller, RunDetailRows } from '@vostride/agent-qa-schema'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { composeLocalAgent } from '../composition/compose-local-agent.js'
 
-const caller: FunctionCaller = { surface: 'test', grantedScopes: ['read'], safeMode: true, origin: 'agent' }
+// 2026-10-01 (432-30, D-12): the retired `grantedScopes` and `safeMode` caller fields and the
+// retired `resolveExecutionContext` registry option are dropped; nothing read them. The composed
+// host's own `resolveExecutionContext` input is not the registry option and stays.
+const caller: FunctionCaller = { surface: 'test', origin: 'agent' }
 const op = 'runs.evidence'
 let temporary: string
 beforeEach(() => {
@@ -90,8 +93,7 @@ it.each(['both', 'runDetail', 'evidenceBlobs'] as const)(
       ...(missing === 'both' || missing === 'evidenceBlobs' ? {} : { evidenceBlobs: { read: f.forbidden } }),
     } as unknown as FunctionDeps
     const registry = agent.createFunctionRegistry({ deps,
-      auditSink: { appendGuardrailAudit() {} },
-      resolveExecutionContext: () => 'local-headless' })
+      auditSink: { appendGuardrailAudit() {} } })
     try {
       expect(registry.list(caller).find(item => item.id === op)?.bindingStatus).toBe('unbound')
       expect(registry.list(caller).find(item => item.id === 'runs.detail')?.bindingStatus)

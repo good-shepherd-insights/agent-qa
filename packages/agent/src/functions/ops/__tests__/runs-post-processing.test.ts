@@ -16,7 +16,6 @@
 import {
   asJobId,
   CURRENT_HANDOFF_SCHEMA_VERSION,
-  FunctionScopeSchema,
   POST_PROCESSING_CHIP_STATUSES,
 } from '@vostride/agent-qa-schema'
 import type {
@@ -50,10 +49,10 @@ import {
 
 const RUN_ID = 'run-388-chips'
 
+// 2026-10-01 (432-30, D-12): the retired `grantedScopes` and `safeMode` caller fields and the
+// retired `resolveExecutionContext` registry option are dropped; nothing read them.
 const CALLER: FunctionCaller = {
   surface: 'test',
-  grantedScopes: [...FunctionScopeSchema.options],
-  safeMode: false,
   origin: 'agent',
 }
 
@@ -136,7 +135,6 @@ function deps(overrides: Partial<FunctionDeps> = {}): FunctionDeps {
 function registryWith(postProcessing: PostProcessingReaderPort | undefined) {
   return createFunctionRegistry({
     deps: deps(postProcessing === undefined ? {} : { postProcessing }),
-    resolveExecutionContext: () => 'local-headless',
     auditSink: { appendGuardrailAudit() {} },
   })
 }
@@ -404,7 +402,6 @@ async function statusWithHandoff(
         readStepEvidence: () => Promise.resolve({ kind: 'run-not-recorded' } as const),
       },
     }),
-    resolveExecutionContext: () => 'local-headless',
     auditSink: { appendGuardrailAudit() {} },
   })
   const status = await invokeFunction(
