@@ -19,7 +19,7 @@ import {
   type FunctionRegistry,
 } from '@vostride/agent-qa-agent'
 import * as schema from '@vostride/agent-qa-schema'
-import type { CompletedRunHandoff, FunctionCaller, FunctionScope } from '@vostride/agent-qa-schema'
+import type { CompletedRunHandoff, FunctionCaller } from '@vostride/agent-qa-schema'
 import { afterEach, describe, expect, it } from 'vitest'
 
 import { buildAgentQaMcpServer } from '../catalog.js'
@@ -33,10 +33,10 @@ import type { ProjectedOpSpec } from '../projection.js'
 type Json = Record<string, unknown>
 
 const TARGET = { target: 'draft-2020-12' } as const
-const EVERY_SCOPE = [...schema.FunctionScopeSchema.options] as readonly FunctionScope[]
 const caller: FunctionCaller = {
-  surface: 'mcp', grantedScopes: EVERY_SCOPE, safeMode: false, origin: 'agent',
+  surface: 'mcp', origin: 'agent',
   // 432-21 (D-12): no credential; the mark tool's handler reads none.
+  // 2026-10-01 (432-34, D-12): no `grantedScopes` or `safeMode` either; nothing reads them (432-20).
 }
 const auditSink = { appendGuardrailAudit() {} } as unknown as CreateFunctionRegistryOptions['auditSink']
 

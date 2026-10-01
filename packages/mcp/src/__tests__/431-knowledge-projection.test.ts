@@ -113,10 +113,10 @@ function registryWith(deps: Record<string, unknown> = {}): FunctionRegistry {
   return createFunctionRegistry({ deps: deps as unknown as FunctionDeps, auditSink })
 }
 
+// 2026-10-01 (432-34, D-12): the retired `grantedScopes` and `safeMode` caller fields are dropped;
+// nothing reads them (432-20).
 const READ_CALLER: FunctionCaller = {
   surface: 'mcp',
-  grantedScopes: ['read'],
-  safeMode: false,
   origin: 'agent',
 }
 
@@ -246,8 +246,12 @@ afterEach(async () => {
   for (const client of openClients.splice(0)) await client.close().catch(() => {})
 })
 
+// 2026-10-01 (432-34, D-12): the retired `safeMode` field is dropped. The scope set stays, smuggled
+// past the type on purpose: the READ-SCOPE-ONLY and HIDDEN-NAME-INVOCATION cells below hand this
+// helper a read, a no-read and an empty set to prove nothing reads it, and that witness has to
+// survive 432-39 deleting the field.
 function callerWith(grantedScopes: readonly FunctionScope[]): FunctionCaller {
-  return { surface: 'mcp', grantedScopes, safeMode: false, origin: 'agent' }
+  return { surface: 'mcp', origin: 'agent', grantedScopes } as FunctionCaller
 }
 
 async function connect(registry: FunctionRegistry, caller: FunctionCaller): Promise<Client> {
