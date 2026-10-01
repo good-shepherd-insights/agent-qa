@@ -55,12 +55,12 @@ const RUN_ID = 'r_tracer-406-alpha-bravo-charlie-delta-echo-foxtrot-golf-hotel'
 /** The producer text the floor sentence quotes — the one string this file traces end to end. */
 const STEP_ERROR = 'Error: element "Submit" not found on the checkout screen'
 
+// 2026-10-01 (432-35, D-12): no `grantedScopes` or `safeMode` on the caller; the registry reads
+// neither (432-20).
 const REGISTRY_CALLER: FunctionCaller = {
   surface: 'dashboard',
-  grantedScopes: ['read'],
-  safeMode: false,
   origin: 'human',
-} as unknown as FunctionCaller
+}
 
 /**
  * ONE failed member with ONE captured step, typed against `CompletedRunHandoff`.
@@ -191,7 +191,8 @@ function composeRegistry(options: { readonly withAnalysis: boolean }): FunctionR
     deps: depsWith(options),
     // Discards every row: this file asserts on the path, never on the audit trail.
     auditSink: { appendGuardrailAudit() {} },
-    resolveExecutionContext: () => 'local-interactive',
+    // 2026-10-01 (432-35, D-12): no `resolveExecutionContext` registry option; the registry reads
+    // no context (432-20).
   })
 }
 

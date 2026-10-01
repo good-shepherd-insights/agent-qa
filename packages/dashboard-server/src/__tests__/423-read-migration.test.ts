@@ -9,7 +9,7 @@ import { createDashboardRunIngest } from '../reporter/dashboard-subscriber.js'
 import { createDashboardRunDetailReader } from '../run-service/run-detail-reader.js'
 import { createFunctionRegistry, invokeFunction, RUNS_DETAIL_FUNCTION_ID, type FunctionDeps } from '@vostride/agent-qa-agent'
 import { asRunId, EvidenceArtifactRefSchema, RunDetailProjectionSchema } from '@vostride/agent-qa-schema'
-import type { FunctionCaller, RunEventEnvelope, StepFinalizedPayload, SubActionRecordedPayload } from '@vostride/agent-qa-schema'
+import type { RunEventEnvelope, StepFinalizedPayload, SubActionRecordedPayload } from '@vostride/agent-qa-schema'
 import type { ModelProfile } from '@vostride/agent-qa-schema'
 import { generateRunId, generateTestId } from '@vostride/agent-qa-ids'
 import { createModel, createTokenAccounting } from '@vostride/agent-qa-model'
@@ -413,11 +413,12 @@ async function detail(db: DashboardDatabase, runId: string) {
       runs: { get: forbidden }, config: { getMasked: forbidden },
     } as unknown as FunctionDeps,
     auditSink: { appendGuardrailAudit() {} },
-    resolveExecutionContext: () => 'local-interactive',
   })
+  // 2026-10-01 (432-35, D-12): no `resolveExecutionContext` registry option and no `grantedScopes`
+  // or `safeMode` on the caller; the registry reads none of them (432-20).
   return RunDetailProjectionSchema.parse(await invokeFunction(
     registry, RUNS_DETAIL_FUNCTION_ID, { runId: asRunId(runId) },
-    { surface: 'dashboard', grantedScopes: ['read'], safeMode: false, origin: 'human' } as FunctionCaller,
+    { surface: 'dashboard', origin: 'human' },
   ))
 }
 
