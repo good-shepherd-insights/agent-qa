@@ -6,8 +6,9 @@
 // fields it changed, a blocked change is answered with its report and nothing is kept, and no git
 // runs. Where the paragraphs below say "proposal", read the change this call writes.
 //
-// `config-field-set.ts`'s header carries the arguments for the tier, the scope and the one-op-per-
-// action shape; they are not restated. What is different about this one is its refusal.
+// `config-field-set.ts`'s header carries the arguments for the tier and the one-op-per-action
+// shape; they are not restated. 2026-10-01 (432-23, D-12): the op declares no scope, because no
+// caller is checked for one. What is different about this one is its refusal.
 //
 // AN ABSENT TARGET IS A NAMED REFUSAL THAT LISTS THE CONFIGURED NAMES, which is 387's disambiguation
 // posture and D-15's never-guess line arriving in the write half. The failure this prevents is not
@@ -35,7 +36,6 @@ export const CONFIG_TARGET_EDIT_FUNCTION_ID = 'config.target.edit'
 export const configTargetEditSpec: FunctionSpec<ConfigTargetEditInput, ConfigChangeOutput> = {
   id: CONFIG_TARGET_EDIT_FUNCTION_ID,
   summary: 'Change a configured target\'s URL or auth binding, written in this call.',
-  requiredScopes: ['config-write'],
   resultKind: 'unary',
   input: ConfigTargetEditInputSchema,
   output: ConfigChangeOutputSchema,

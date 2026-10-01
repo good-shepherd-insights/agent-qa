@@ -1,9 +1,11 @@
 // `runs.start` — the first unbound→bound transition of 384's binding vocabulary (D-16).
 //
 // Everything declared here in 384 is unchanged: the input contract (including the D-10
-// `gateRun` carrier), the acknowledgment it resolves, the scope it costs, and the risk
-// descriptor the gate classifies. What arrived in 385 is the implementation, and with it the
-// one line that says what the implementation NEEDS — `boundThrough: 'runInvocation'`.
+// `gateRun` carrier), the acknowledgment it resolves, and the risk descriptor the classifier
+// reads. What arrived in 385 is the implementation, and with it the one line that says what the
+// implementation NEEDS — `boundThrough: 'runInvocation'`. 2026-10-01 (432-23, D-12): the `run`
+// scope it once cost is gone; every door can start a run, and the run core refuses only a
+// production target the config has not opted into (432-03, D-18).
 //
 // That is the whole of this module's say in whether it is bound. The ANSWER belongs to a
 // composition: a host that supplies a run-invocation port lists this op as `bound` and can
@@ -74,7 +76,6 @@ function toAcknowledgement(document: CompletedRunHandoff): RunStartAcknowledgeme
 export const runsStartSpec: FunctionSpec<RunsStartInput, RunStartAcknowledgement> = {
   id: RUNS_START_FUNCTION_ID,
   summary: 'Start a test run and acknowledge the run a caller can then read or stream.',
-  requiredScopes: ['run'],
   resultKind: 'unary',
   boundThrough: 'runInvocation',
   input: RunsStartInputSchema,
@@ -84,11 +85,11 @@ export const runsStartSpec: FunctionSpec<RunsStartInput, RunStartAcknowledgement
   //   `declaredTier` states that tier explicitly rather than relying on the floor alone;
   //   the name tokens (fn · runs · start) hit neither destructive lexicon, so nothing
   //   raises the tier above what is declared.
-  // The tier is the whole point: `mutating-local` allows in EVERY execution context by
-  // ratified spec, while `mutating-shared` would ask — and an ask in a fail-closed context
-  // is a deny, which would leave the future authoring loop unable to start a run in CI.
-  // Starting a run really is local: it spends this machine's resources and writes into
-  // this project's run directory. It touches nothing another party shares.
+  // The tier was chosen when `mutating-shared` would have asked, and an ask in a fail-closed
+  // context denied, leaving the authoring loop unable to start a run in CI. 2026-10-01 (432-19/
+  // 432-23, D-12/D-15): nothing asks or denies on a tier any more; the tier stays the honest
+  // classification. Starting a run really is local: it spends this machine's resources and
+  // writes into this project's run directory. It touches nothing another party shares.
   risk: {
     name: `fn:${RUNS_START_FUNCTION_ID}`,
     recognized: true,

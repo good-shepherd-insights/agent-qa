@@ -124,13 +124,10 @@ function hasDraftExtension(draftPath: string): boolean {
 export const authoringVerifyDraftSpec: FunctionSpec<AuthoringVerifyDraftInput, DraftReceipt> = {
   id: AUTHORING_DRAFT_VERIFY_FUNCTION_ID,
   summary: 'Evaluate a draft test against the four keep-gates and return its receipt.',
-  // BOTH scopes, and the second is not padding. The evaluation STARTS runs (`run`) and READS the
-  // completed records back (`read`), and the composition invokes those sibling ops on a caller it
-  // mints (D-02, op-calls-op). Declaring only `run` — the `runs.start` posture — would let a
-  // caller holding `run` alone reach a read this layer would otherwise have refused them, which is
-  // a widening performed by a nested call rather than by a grant. Declaring both makes the outer
-  // check the honest one.
-  requiredScopes: ['run', 'read'],
+  // 2026-10-01 (432-23, D-12): no scopes. The evaluation STARTS runs and READS the completed
+  // records back, and the composition invokes those sibling ops on a caller it mints (D-02,
+  // op-calls-op). The `run` + `read` pair once declared here kept a nested call from widening a
+  // grant; with no grants to widen, every door can call this op and its siblings alike.
   resultKind: 'unary',
   boundThrough: 'draftEvaluation',
   input: AuthoringVerifyDraftInputSchema,
@@ -141,13 +138,14 @@ export const authoringVerifyDraftSpec: FunctionSpec<AuthoringVerifyDraftInput, D
   //   `declaredTier` states that tier explicitly rather than relying on the floor alone;
   //   the name tokens (fn · authoring · draft · verify) hit neither destructive lexicon, so
   //   nothing raises the tier above what is declared.
-  // The tier is the whole point: `mutating-local` allows in EVERY execution context by ratified
-  // spec, while `mutating-shared` would ASK — and an ask in a fail-closed context is a deny, which
-  // would leave 394's authoring loop unable to verify a draft in CI, the one context where the
-  // keep-filter most needs to be able to run unattended. Verifying a draft really is local: it
-  // spends this machine's resources, writes into this project's run directory and its gitignored
-  // receipts store, and — because every gate-run is flagged `excludedFromOutcomes` (WTST-06) —
-  // deliberately leaves no trace in the shared signals a colleague reads.
+  // The tier was chosen when `mutating-shared` would have ASKED, and an ask in a fail-closed
+  // context denied, leaving 394's authoring loop unable to verify a draft in CI, the one context
+  // where the keep-filter most needs to run unattended. 2026-10-01 (432-19/432-23, D-12/D-15):
+  // nothing asks or denies on a tier any more; the tier stays the honest classification.
+  // Verifying a draft really is local: it spends this machine's resources, writes into this
+  // project's run directory and its gitignored receipts store, and — because every gate-run is
+  // flagged `excludedFromOutcomes` (WTST-06) — deliberately leaves no trace in the shared signals
+  // a colleague reads.
   risk: {
     name: `fn:${AUTHORING_DRAFT_VERIFY_FUNCTION_ID}`,
     recognized: true,

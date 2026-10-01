@@ -1,8 +1,8 @@
 // `authoring.funnel.get` — the honesty funnel as a catalogued capability (394-07, D-12 · WTST-05).
 //
 // ONE READ OP, AND ITS CALLERS RENDER ITS ANSWER (388 D-14's one-read-op law). What consumes it
-// TODAY is a read-scoped function caller — the chat/MCP tool surface, and the CLI's generic `fn`
-// dispatch, which reaches the registered op rather than a render of its own. There is no CLI
+// TODAY is a function caller — the chat/MCP tool surface, and the CLI's generic `fn` dispatch,
+// which reaches the registered op rather than a render of its own. There is no CLI
 // funnel command and no per-run-digest funnel section; when one is written it is a client of this
 // projection, so "how many drafts did this session keep, and did the loop actually filter any of
 // them" has ONE answer by construction rather than by renderers agreeing. The op derives nothing:
@@ -24,14 +24,15 @@
 // question WTST-05 asks. The divergence is recorded here and in the input schema's own doc block
 // so it reads as a decision on the record rather than as an erosion of the rule.
 //
-// IT EXPOSES PER-SESSION AUTHORING HISTORY BEHIND `['read']` (T-394-26). How many drafts a user
-// produced and how many were kept is a fact about that person's work, and any read-scoped caller
-// can ask for it. That is stated HERE, in the header, so a reviewer can object to the tier now
-// rather than discover the exposure later. The disposition is ACCEPT, and the argument is: the
-// funnel reads a gitignored local store scoped to the caller's own project, the `read` scope
-// already reaches run history and the quarantine ledger, and a narrower scope would make the
-// funnel unreachable from the read-scoped caller asking "how is this session doing" — which is
-// precisely where D-12 puts it.
+// IT EXPOSES PER-SESSION AUTHORING HISTORY TO ANY CALLER (T-394-26). How many drafts a user
+// produced and how many were kept is a fact about that person's work, and any caller can ask for
+// it. That is stated HERE, in the header, so a reviewer can object now rather than discover the
+// exposure later. The disposition is ACCEPT, and the argument is: the funnel reads a gitignored
+// local store of the caller's own project, the same callers already reach run history and the
+// quarantine ledger, and hiding it would make "how is this session doing" unanswerable from the
+// surfaces that ask it — which is precisely where 394 D-12 puts it. 2026-10-01 (432-23, 432
+// D-12): it was once declared behind the `read` scope; no scope is declared or checked now, and
+// every door can call every operation.
 
 import {
   AuthoringFunnelGetInputSchema,
@@ -71,7 +72,6 @@ export const authoringFunnelGetSpec: FunctionSpec<
   summary:
     'Report the authoring funnel for a window — built, passed stably, added value, accepted — '
     + 'and flag a keep rate above the ceiling as the loop failing to filter.',
-  requiredScopes: ['read'],
   resultKind: 'unary',
   // Bound exactly where a composition supplies the receipts store and the proposals inbox.
   // An unbound host answering an all-zero funnel would say "this session authored nothing" about

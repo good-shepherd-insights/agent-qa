@@ -106,7 +106,6 @@ export function toRunDetail(
 export const runsGetSpec: FunctionSpec<RunsGetInput, RunDetail> = {
   id: RUNS_GET_FUNCTION_ID,
   summary: 'Read one completed run in full, including its member-test outcomes.',
-  requiredScopes: ['read'],
   resultKind: 'unary',
   input: RunsGetInputSchema,
   output: RunDetailSchema,

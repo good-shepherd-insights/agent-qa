@@ -43,7 +43,6 @@ export const knowledgeRecordsDiffSpec: FunctionSpec<
 > = {
   id: KNOWLEDGE_RECORDS_DIFF_FUNCTION_ID,
   summary: 'List every committed knowledge record change since a build ordinal.',
-  requiredScopes: ['read'],
   resultKind: 'unary',
   input: KnowledgeRecordsDiffInputSchema,
   output: KnowledgeRecordsDiffOutputSchema,

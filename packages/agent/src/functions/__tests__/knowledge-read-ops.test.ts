@@ -108,8 +108,13 @@ describe('the three read verbs declare read-only unary contracts', () => {
       'knowledge.records.diff',
       'knowledge.record.show',
     ])
+    // RE-SPELLED 2026-10-01 (432-23, D-12): `knowledge.records.diff` declares no scope. Its two
+    // siblings still spell the retired, unread `['read']` until their op-spec owner (432-26)
+    // removes it, so each is pinned by name rather than in the loop.
+    expect(knowledgeRecordsDiffSpec).not.toHaveProperty('requiredScopes')
+    expect(knowledgeRecordsInspectSpec.requiredScopes).toEqual(['read'])
+    expect(knowledgeRecordShowSpec.requiredScopes).toEqual(['read'])
     for (const spec of specs) {
-      expect(spec.requiredScopes, spec.id).toEqual(['read'])
       expect(spec.resultKind, spec.id).toBe('unary')
       // Bound wherever registered: `knowledge` is a REQUIRED dep, so unlike the mutating half
       // there is no host that lists these and then refuses them.

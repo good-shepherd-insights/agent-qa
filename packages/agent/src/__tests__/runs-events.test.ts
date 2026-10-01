@@ -6,14 +6,13 @@
 // `lastEventId: N` and receives N+1 onward. Connection-independent by construction, so
 // 386's live attach is contract-identical to this completed-run replay.
 //
-// The gate is NOT stubbed in the pipeline case: `invokeFunction` calls the real `evaluate`,
-// so "the execution-audit row exists before the first event is yielded" is proven against
-// the shipped classifier rather than against a fake gate.
+// 2026-10-01 (432-23): the pipeline cases dispatch through the real `invokeFunction` with no op
+// gate (deleted by 432-19, D-15) and no permission check (D-12), so they prove the one dispatch
+// path a stream takes, not an audit row; none is written.
 
 import { ReplayIncompleteError } from '@vostride/agent-qa-runner'
 import { MASKED_RESOLVED_CONFIG_SCHEMA_VERSION } from '@vostride/agent-qa-schema'
 import type {
-  ExecutionContext,
   FunctionCaller,
   RunEventEnvelope,
   RunEventType,
@@ -32,7 +31,6 @@ import { createRegistryFromSpecs } from '../functions/registry.js'
 import type { FunctionDeps, FunctionStream } from '../functions/spec.js'
 
 const RUN_ID = 'run-alpha' as RunId
-const FIXED_CONTEXT: () => ExecutionContext = () => 'local-interactive'
 
 function envelope(seq: number, type: RunEventType = 'heartbeat'): RunEventEnvelope {
   return { seq, ts: 1_000 + seq, runId: RUN_ID, type, payload: {} }
@@ -130,10 +128,10 @@ function noOpSink(): AuditSink {
   }
 }
 
+// 2026-10-01 (432-23, D-12): a caller is attribution only, a surface and an origin. The name is
+// kept for the cells below; it reads nothing and is granted nothing.
 const READ_CALLER: FunctionCaller = {
   surface: 'test',
-  grantedScopes: ['read'],
-  safeMode: false,
   origin: 'agent',
 }
 
@@ -149,7 +147,8 @@ describe('runs.events declaration', () => {
   it('declares a read-only STREAM contract bound in this composition', () => {
     expect(runsEventsSpec.id).toBe(RUNS_EVENTS_FUNCTION_ID)
     expect(runsEventsSpec.id).toBe('runs.events')
-    expect(runsEventsSpec.requiredScopes).toEqual(['read'])
+    // RE-SPELLED 2026-10-01 (432-23, D-12) from `requiredScopes` equal to ['read'].
+    expect(runsEventsSpec).not.toHaveProperty('requiredScopes')
     expect(runsEventsSpec.resultKind).toBe('stream')
     // Bound in EVERY composition — it names no optional dep to be withheld (D-16).
     expect(runsEventsSpec.boundThrough).toBeUndefined()
@@ -224,7 +223,6 @@ describe('runs.events through invokeFunction (D-11 one dispatch path)', () => {
     const registry = createRegistryFromSpecs([runsEventsSpec], {
       deps: spy.deps,
       auditSink: audit.sink,
-      resolveExecutionContext: FIXED_CONTEXT,
     })
 
     const result = await invokeFunction(registry, 'runs.events', { runId: RUN_ID }, READ_CALLER)
@@ -240,7 +238,6 @@ describe('runs.events through invokeFunction (D-11 one dispatch path)', () => {
     const registry = createRegistryFromSpecs([runsEventsSpec], {
       deps: spy.deps,
       auditSink: noOpSink(),
-      resolveExecutionContext: FIXED_CONTEXT,
     })
 
     const result = await invokeFunction(registry, 'runs.events', { runId: RUN_ID }, READ_CALLER)
@@ -255,7 +252,6 @@ describe('runs.events through invokeFunction (D-11 one dispatch path)', () => {
     const registry = createRegistryFromSpecs([runsEventsSpec], {
       deps: spy.deps,
       auditSink: noOpSink(),
-      resolveExecutionContext: FIXED_CONTEXT,
     })
 
     await expect(

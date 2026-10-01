@@ -530,10 +530,9 @@ describe('423 current content and fixed historical sections', () => {
   it('JOIN-NOT-BOUND: actual registry retains the read with typed enrichment absence and no unary fallback', async () => {
     const unary = vi.fn(async () => { throw new Error('unary fallback forbidden') })
     const registry = createFunctionRegistry({ deps: deps({ knowledge: { showRecord: unary } }),
-      auditSink: { appendGuardrailAudit() {} },
-      resolveExecutionContext: () => 'local-headless' })
+      auditSink: { appendGuardrailAudit() {} } })
     const result = await invokeFunction(registry, 'runs.knowledge', { runId: RUN_ID },
-      { surface: 'cli', origin: 'human', grantedScopes: ['read'], safeMode: false })
+      { surface: 'cli', origin: 'human' })
     expect(result).toHaveProperty('steps.0.served.channel2.0.contentAbsence', { reason: 'not-bound' })
     expect(unary).not.toHaveBeenCalled()
   })
@@ -601,13 +600,16 @@ describe('the spec declares a read-tier, everywhere-bound contract (D-05)', () =
     expect(runsKnowledgeSpec.boundThrough).toBeUndefined()
   })
 
+  // RE-SPELLED 2026-10-01 (432-23, D-12): the claim compared each sibling's `requiredScopes` with
+  // this op's, so a composed sibling could not need more scope than a `read` caller was granted.
+  // Scopes are gone (`knowledge.records.diff` declares none now). What survives is the half a
+  // scope stood for: a sibling this read composes must itself be a recognized read-only op, so the
+  // composition never performs a mutation the caller did not ask for and no receipt records.
   it('composes only siblings that declare the same read tier it does (407-12, WR-08)', () => {
-    // The header's "composition inside the layer, not a dispatch path around the gate" argument
-    // holds ONLY while every sibling this op calls directly needs no more scope than this call
-    // was granted. Nothing else enforces that; a widened sibling would silently exercise a
-    // capability a `read` caller never asked for, and emit no receipt for it. It reds HERE.
+    expect(runsKnowledgeSpec.risk.readOnly).toBe(true)
     for (const spec of [runsPostProcessingSpec, knowledgeRecordsDiffSpec, runsDigestSpec]) {
-      expect(spec.requiredScopes).toEqual(runsKnowledgeSpec.requiredScopes)
+      expect(spec.risk.readOnly, spec.id).toBe(runsKnowledgeSpec.risk.readOnly)
+      expect(spec.risk.recognized, spec.id).toBe(true)
     }
   })
 })

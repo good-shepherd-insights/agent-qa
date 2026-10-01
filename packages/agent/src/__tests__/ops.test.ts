@@ -117,7 +117,9 @@ function fakeDeps(overrides: Partial<FunctionDeps> = {}): FunctionDeps {
 describe('runs.get', () => {
   it('declares a read-only unary contract bound in this composition', () => {
     expect(runsGetSpec.id).toBe('runs.get')
-    expect(runsGetSpec.requiredScopes).toEqual(['read'])
+    // RE-SPELLED 2026-10-01 (432-23, D-12) from `requiredScopes` equal to ['read']: the op
+    // declares no scope, because no caller is checked for one.
+    expect(runsGetSpec).not.toHaveProperty('requiredScopes')
     expect(runsGetSpec.resultKind).toBe('unary')
     // Bound in EVERY composition: the implementation names no optional dep, so there is
     // nothing a host could withhold that would leave it unbound (D-16).

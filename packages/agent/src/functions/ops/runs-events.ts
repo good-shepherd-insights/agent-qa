@@ -56,7 +56,6 @@ async function* replay(
 export const runsEventsSpec: FunctionStreamSpec<RunsEventsInput, RunEventEnvelope> = {
   id: RUNS_EVENTS_FUNCTION_ID,
   summary: "Stream one run's recorded events in seq order, resuming after lastEventId.",
-  requiredScopes: ['read'],
   resultKind: 'stream',
   input: RunsEventsInputSchema,
   output: RunEventEnvelopeSchema,

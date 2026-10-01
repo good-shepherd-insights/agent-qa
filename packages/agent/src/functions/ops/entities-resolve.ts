@@ -81,7 +81,6 @@ function descriptorsOf(resolution: EntityResolution): readonly EntityDescriptor[
 export const entitiesResolveSpec: FunctionSpec<EntitiesResolveInput, EntityCardResolution> = {
   id: ENTITIES_RESOLVE_FUNCTION_ID,
   summary: 'Resolve any entity reference to a card, a disambiguation set, or an honest miss.',
-  requiredScopes: ['read'],
   resultKind: 'unary',
   input: EntitiesResolveInputSchema,
   output: EntityCardResolutionSchema,

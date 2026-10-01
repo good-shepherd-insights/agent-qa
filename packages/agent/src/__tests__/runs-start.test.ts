@@ -4,8 +4,9 @@
 // The point of this suite is unchanged and every case in it still holds: "declared but not
 // bound in THIS composition" is a first-class, observable state. It must be distinguishable
 // from a capability that does not exist (`UnknownFunctionError`) and from one that silently
-// does nothing, and the attempt must still be gated and audited like every other invocation
-// (D-11).
+// does nothing, and the attempt takes the same one dispatch path as every other invocation
+// (D-11). 2026-10-01 (432-23): that path has no op gate (432-19) and no permission check (432
+// D-12), so it writes no audit row and checks no caller.
 //
 // What changed in 385 is WHY the registry below reports `unbound`, and it is the reason this
 // file needed almost no edit. `runs.start` now has an implementation; what it needs is a
@@ -16,7 +17,7 @@
 // from the same spec.
 
 import { MASKED_RESOLVED_CONFIG_SCHEMA_VERSION } from '@vostride/agent-qa-schema'
-import type { ExecutionContext, FunctionCaller } from '@vostride/agent-qa-schema'
+import type { FunctionCaller } from '@vostride/agent-qa-schema'
 import type { AuditSink, GuardrailAuditRow } from '@vostride/agent-qa-safety'
 import { describe, expect, it } from 'vitest'
 
@@ -26,8 +27,6 @@ import { RUNS_START_FUNCTION_ID, runsStartSpec } from '../functions/ops/runs-sta
 import { runsListSpec } from '../functions/ops/runs-list.js'
 import { createRegistryFromSpecs } from '../functions/registry.js'
 import type { FunctionDeps } from '../functions/spec.js'
-
-const FIXED_CONTEXT: () => ExecutionContext = () => 'local-interactive'
 
 function fakeDeps(): FunctionDeps {
   return {
@@ -81,10 +80,9 @@ function capturingSink(): CapturedSink {
   }
 }
 
+// 2026-10-01 (432-23, D-12): attribution only — a surface and an origin, no grant.
 const RUN_CALLER: FunctionCaller = {
   surface: 'test',
-  grantedScopes: ['read', 'run'],
-  safeMode: false,
   origin: 'agent',
 }
 
@@ -98,7 +96,6 @@ function noOpSink(): AuditSink {
 function registryWithRunsStart(auditSink?: AuditSink) {
   return createRegistryFromSpecs([runsListSpec, runsEventsSpec, runsStartSpec], {
     deps: fakeDeps(),
-    resolveExecutionContext: FIXED_CONTEXT,
     auditSink: auditSink ?? noOpSink(),
   })
 }
@@ -107,7 +104,9 @@ describe('runs.start declaration', () => {
   it('declares its FULL contract and states what a composition must supply to run it', () => {
     expect(runsStartSpec.id).toBe(RUNS_START_FUNCTION_ID)
     expect(runsStartSpec.id).toBe('runs.start')
-    expect(runsStartSpec.requiredScopes).toEqual(['run'])
+    // RE-SPELLED 2026-10-01 (432-23, D-12) from `requiredScopes` equal to ['run']: starting a run
+    // costs no scope, so the spec declares none.
+    expect(runsStartSpec).not.toHaveProperty('requiredScopes')
     expect(runsStartSpec.resultKind).toBe('unary')
     // The spec's entire say in whether it is bound. It names a NEED; the composition's
     // answer to that need is what a declaration reports (D-16).
@@ -198,13 +197,13 @@ describe('runs.start is visibly unbound, never silently missing', () => {
 
   // RE-SPELLED 2026-10-01 (432-20, D-12) from 'refuses a caller lacking the run scope before it ever
   // reaches the binding check'. No scope is checked: the same caller reaches the binding check.
+  // 2026-10-01 (432-23): no caller carries a scope at all, so the "lacking" caller is one that
+  // differs from RUN_CALLER in every field a caller still has, and it meets the same answer.
   it('serves a caller lacking the run scope up to the same binding check', async () => {
     const audit = capturingSink()
     const readOnlyCaller: FunctionCaller = {
-      surface: 'test',
-      grantedScopes: ['read'],
-      safeMode: false,
-      origin: 'agent',
+      surface: 'mcp',
+      origin: 'human',
     }
 
     const thrown = await invokeFunction(

@@ -23,19 +23,14 @@
 // `draft` is the subject and `write` is the verb, so the pair reads `authoring.draft.{write,
 // verify}` and 394's edit op joins as `authoring.draft.edit` (plan 09) with no renaming.
 //
-// THREE SCOPES, AND THE THIRD IS THE POINT. `authoring.draft.verify` declares `run` and `read`
-// because its whole effect is the gate-runs it takes. This op does all of that AND writes a file
-// into the user's workspace, so it declares `test-write` as well — the power declared where it is
-// enforced (384's law), on the same reasoning the evaluator's own comment gives for refusing to
-// declare only `run`: a caller holding `run` + `read` must not reach a file write through a nested
-// call that this layer would otherwise have refused them. 394-01 minted `test-write` for exactly
-// this declaration and proved the refusal by name; this is the op that spends it.
+// NO SCOPES (2026-10-01, 432-23, D-12). This op once declared `test-write`, `run` and `read`, so a
+// caller holding only `run` + `read` could not reach a file write through a nested call (394-01
+// minted `test-write` for it). Every door can call every operation now, so there is nothing to
+// declare and nothing for a nested call to widen.
 //
-// THE MINTED CALLER NARROWS, NEVER WIDENS (T-394-05). Stage 4 dispatches
-// `authoring.draft.verify` on a caller the composition mints with EXACTLY that op's two declared
-// scopes — a subset of this op's three. The outer invocation has already been checked for all
-// three, so nothing reachable through the inner caller was unreachable to whoever asked for the
-// draft, and the inner call cannot reach anything `authoring.draft.verify` itself could not.
+// THE MINTED CALLER IS ATTRIBUTION ONLY (T-394-05, re-spelled by 432-20/432-23). Stage 4 dispatches
+// `authoring.draft.verify` on a caller the composition mints with a surface and an origin; it
+// carries no grant, and the inner call reaches exactly what `authoring.draft.verify` itself does.
 //
 // INPUT REFUSAL IS THE FIRST HALF OF `invoke`, for the reason the evaluator states and one more:
 // `intent` is free text from an arbitrary caller that reaches an LLM and then becomes bytes on
@@ -118,7 +113,6 @@ export const authoringDraftWriteSpec: FunctionSpec<
 > = {
   id: AUTHORING_DRAFT_WRITE_FUNCTION_ID,
   summary: 'Author a test for an intent, verify it against the keep-gates, and return its receipt.',
-  requiredScopes: ['test-write', 'run', 'read'],
   resultKind: 'unary',
   // The WRITE half, which is the half that makes this op mutating: a host with no model and no
   // shelf cannot author at all. The read half is bound with it or not at all — see the invoke's
@@ -141,26 +135,18 @@ export const authoringDraftWriteSpec: FunctionSpec<
   // THIS OP IS GENUINELY DIFFERENT, and it differs in the two ways that decide a tier. It SPENDS a
   // person's compute and model budget on their own machine — up to nine full child `agent-qa run`
   // processes against their application (D-10) — and since 432 D-06 the artifact it produces is
-  // written straight into their suite. So here the ask is the POINT rather than an obstacle:
-  // WTST-08's owner decision was preview and honest reporting with NO enforced budget, which makes
-  // the disclosure at this confirm the only control there is. An op that asked nobody would be an
-  // unbounded fan-out with a comment about how expensive it is.
+  // written straight into their suite.
   //
-  // WHAT THE RAISE COSTS, STATED RATHER THAN DISCOVERED. A fail-closed context — CI, the daemon,
-  // any non-interactive host — now DENIES this op by name, and the gate's own reason line names the
-  // ways out (`--trust-session`, a trust credential, a standing approval). That is the ratified
-  // posture and not an oversight: an unattended host authoring nine child runs against an
-  // application with nobody watching is the case the preview exists to prevent, and the disclosure
-  // cannot do its job where there is nobody to read it.
+  // 2026-10-01 (432-19/432-23, 432 D-12/D-14/D-15): THE TIER NO LONGER ASKS. It was raised so a
+  // dispatch confirm would show the fan-out before the loop started, and so a fail-closed context
+  // (CI, the daemon) denied it with the gate's ways out (`--trust-session`, a trust credential, a
+  // standing approval). The gate, its confirm and those ways out are deleted: every door runs this
+  // op without a prompt, and WTST-08's honest report on the verdict below is the control that
+  // remains. One call starts a loop that runs to its end; there is no mid-loop approval state and
+  // no approval token threaded through the stages.
   //
-  // TWO DECISION POINTS AND NO MORE (D-03). This confirm, and 391's inbox accept. One approval here
-  // starts a loop that then runs unattended, however many runs it consumes — there is no suspended
-  // mid-loop approval state, no second confirm inside the loop, and no approval token threaded
-  // through the stages for a later caller to replay.
-  //
-  // DO NOT HARMONISE THE TWO TIERS. They are different answers because the ops differ, and a later
-  // edit making them match would either put the evaluator behind a prompt it cannot answer in CI or
-  // remove the only consent this phase has.
+  // DO NOT HARMONISE THE TWO TIERS. They are different classifications because the ops differ;
+  // the tier still says honestly which one shares more.
   risk: {
     name: `fn:${AUTHORING_DRAFT_WRITE_FUNCTION_ID}`,
     recognized: true,
@@ -177,6 +163,11 @@ export const authoringDraftWriteSpec: FunctionSpec<
   // NO CALLER TEXT REACHES THE PROMPT. Only `draftMode` is read: `intent` is free text from an
   // arbitrary caller (T-394-06), and a confirm message it could write would let the asker dress up
   // what they are asking a person to approve, at the one moment the person is deciding.
+  //
+  // 2026-10-01 (432-23): the dispatch confirm that rendered this preview is deleted (432-19, D-14/
+  // D-15), so no production path calls it; the method and the declaration's `discloses` column stay
+  // until their own owner retires them. The fan-out report on the verdict below is what a caller
+  // reads now.
   disclose(input: AuthoringDraftWriteInput): string {
     return renderFanOutPreview(authoringFanOutBound(input))
   },

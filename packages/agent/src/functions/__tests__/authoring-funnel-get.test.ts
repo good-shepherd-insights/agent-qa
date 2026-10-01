@@ -2,10 +2,11 @@
 //
 // WHAT THESE CASES PIN, AND WHY EACH ONE:
 //
-//  1. THE TIER IS THE ENFORCEMENT, STATED ON THE SPEC. `['read']` and `readOnly: true` are what
-//     make this op safe-mode-visible and gate-cheap, and they are also the claim a reviewer
-//     objects to if per-session authoring history behind `read` is the wrong call (T-394-26). A
-//     comment saying "this is read-only" is worth nothing; the descriptor is what the gate reads.
+//  1. THE TIER IS STATED ON THE SPEC. `readOnly: true` is the claim a reviewer objects to if
+//     per-session authoring history read by any caller is the wrong call (T-394-26). A comment
+//     saying "this is read-only" is worth nothing; the descriptor is what the classifier reads.
+//     2026-10-01 (432-23, D-12): the `['read']` scope that stood beside it is gone with every
+//     scope; no caller is checked for one.
 //  2. REFUSAL BY NAME, AT BOTH LAYERS. `invokeFunction` refuses on the DECLARATION, and the op
 //     body guards too, so a direct in-layer call cannot slip past. An unbound host answering an
 //     all-zero funnel would say "this session authored nothing" about a store it has never been
@@ -15,7 +16,7 @@
 //     receipts. A second computation anywhere would be a second answer to the question the
 //     one-read-op law exists to make singular.
 
-import { FunctionScopeSchema, computeAuthoringFunnel } from '@vostride/agent-qa-schema'
+import { computeAuthoringFunnel } from '@vostride/agent-qa-schema'
 import type {
   AuthoringFunnel,
   DraftReceipt,
@@ -33,10 +34,9 @@ import {
 import type { AuthoringFunnelPortLike } from '../../authoring/funnel.js'
 import type { FunctionDeps } from '../spec.js'
 
+// 2026-10-01 (432-23, D-12): attribution only. It once held every scope; there are none to hold.
 const CALLER: FunctionCaller = {
   surface: 'test',
-  grantedScopes: [...FunctionScopeSchema.options],
-  safeMode: false,
   origin: 'agent',
 }
 
@@ -113,16 +113,16 @@ function deps(authoringFunnel?: AuthoringFunnelPortLike): FunctionDeps {
 function registryWith(authoringFunnel?: AuthoringFunnelPortLike) {
   return createFunctionRegistry({
     deps: deps(authoringFunnel),
-    resolveExecutionContext: () => 'local-headless',
     auditSink: { appendGuardrailAudit() {} },
   })
 }
 
 describe(`${AUTHORING_FUNNEL_GET_FUNCTION_ID} — the honesty funnel's one read`, () => {
-  it('declares `read` alone and a read-only risk descriptor', () => {
+  // RE-SPELLED 2026-10-01 (432-23, D-12) from 'declares `read` alone and a read-only risk
+  // descriptor': the op-spec owner removed the retired scope, so the spec now declares none.
+  it('declares no scope and a read-only risk descriptor', () => {
     expect(authoringFunnelGetSpec.id).toBe('authoring.funnel.get')
-    // Raw op-spec metadata, retired and unread since 432-20; its op-spec owner removes it.
-    expect([...(authoringFunnelGetSpec.requiredScopes ?? [])]).toEqual(['read'])
+    expect(authoringFunnelGetSpec).not.toHaveProperty('requiredScopes')
     expect(authoringFunnelGetSpec.risk.readOnly).toBe(true)
     expect(authoringFunnelGetSpec.risk.recognized).toBe(true)
     expect(authoringFunnelGetSpec.boundThrough).toBe('authoringFunnel')
