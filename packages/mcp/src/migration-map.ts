@@ -19,12 +19,12 @@
 // asserted rather than assumed.
 //
 // PROTOCOL GROUNDING. SEP-2567 removed per-connection list variance, so the tool names a caller can
-// see are a property of the caller's grants and of `mapping.ts` — never of a session. That is what
-// makes a RETIRED name a permanent fact rather than a per-connection one: no listing on any
-// connection will ever carry these thirty-three names again, which is precisely why the history is
-// worth keeping as data. SEP-2575's stateless posture is the other half — there is no handshake in
-// which a server could once have negotiated the old vocabulary, so the only place a v1 caller's name
-// can be answered is at the call itself.
+// see are a property of `mapping.ts` — never of a session, and since 432-20 (D-12) never of the
+// caller either. That is what makes a RETIRED name a permanent fact rather than a per-connection
+// one: no listing on any connection will ever carry these thirty-three names again, which is
+// precisely why the history is worth keeping as data. SEP-2575's stateless posture is the other
+// half — there is no handshake in which a server could once have negotiated the old vocabulary, so
+// the only place a v1 caller's name can be answered is at the call itself.
 //
 // THREE ARMS AND NO FOURTH (D-13). The arms mirror the inventory's `Disposition (397, 2026-08-16)`
 // column exactly:
@@ -180,7 +180,9 @@ export const V1_TOOL_MIGRATION_MAP: readonly V1ToolMigrationEntry[] = Object.fre
     v2Tool: 'agent_qa_write_test',
     note:
       'projected by 396 (inventory row 10, 2026-08-16): `authoring.draft.write` is workflow-coarse '
-      + 'and files a proposal rather than performing v1\'s blind write, so the input shape differs.',
+      + 'and verifies a draft rather than performing v1\'s blind write, so the input shape differs. '
+      + 'Since 2026-10-02 (432-40, D-06) it writes the test file in the call unless a keep-gate '
+      + 'rejected the draft.',
   }),
   // 11
   Object.freeze({
@@ -239,17 +241,20 @@ export const V1_TOOL_MIGRATION_MAP: readonly V1ToolMigrationEntry[] = Object.fre
     arm: 'retired',
     note:
       'not-a-gap (397, 2026-08-16): a suite is a committed file the authoring funnel writes. A '
-      + 'blind create is the v1 write the propose-then-apply path replaced.',
+      + 'blind create is the v1 write the verified authoring funnel replaced (re-spelled '
+      + '2026-10-02, 432-40, D-06: the funnel writes in the call).',
     route:
-      '`agent_qa_write_test` names the suite file a draft joins, and the change arrives as a '
-      + 'reviewable proposal rather than a written file.',
+      '`agent_qa_write_test` names the suite file a draft joins and writes it in the call, unless a '
+      + 'keep-gate rejected the draft.',
   }),
   // 17
   Object.freeze({
     v1Name: 'agent_qa_update_suite',
     arm: 'retired',
-    note: 'not-a-gap (397, 2026-08-16): row 16\'s ruling, through the edit arm instead of the write.',
-    route: '`agent_qa_refine_test` edits the draft; the suite file changes as a reviewed proposal.',
+    note:
+      'not-a-gap (397, 2026-08-16): row 16\'s ruling, through the edit arm instead of the write '
+      + '(re-spelled 2026-10-02, 432-40, D-06: the edit lands in the call).',
+    route: '`agent_qa_refine_test` edits the written test; the suite file changes in the call.',
   }),
   // 18
   Object.freeze({

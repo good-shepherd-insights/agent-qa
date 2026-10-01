@@ -18,9 +18,22 @@
 // than about a fresh one that might differ — which would make a disagreement between two cells
 // unattributable.
 
-import { existsSync, readFileSync, readdirSync } from 'node:fs'
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs'
+import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+
+import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client'
+import { createMcpHandler } from '@modelcontextprotocol/server'
 
 import { invokeFunction, CHAT_RESOLVER_TABLE } from '@vostride/agent-qa-agent'
 import type { FunctionDeclaration } from '@vostride/agent-qa-agent'
@@ -32,6 +45,7 @@ import {
   AGENT_QA_OP_CONTRACTS,
   AGENT_QA_TOOL_PROJECTIONS,
   armWithoutDiscriminant,
+  buildAgentQaMcpServer,
   compositionOf,
   DEGRADED_OUTPUT_CONTRACTS,
   UNPROJECTED_OPS,
@@ -39,12 +53,15 @@ import {
   withoutLegacyResultWrap,
 } from '@vostride/agent-qa-mcp'
 import type { JsonDocument, ToolProjection } from '@vostride/agent-qa-mcp'
-import { committedFileText } from '@vostride/agent-qa-schema'
+import { generateTestId } from '@vostride/agent-qa-ids'
+import { runSafetyScope } from '@vostride/agent-qa-safety-local'
+import { buildProductionRefusal, committedFileText } from '@vostride/agent-qa-schema'
 import type { FunctionCaller } from '@vostride/agent-qa-schema'
 import { beforeAll, describe, expect, it } from 'vitest'
 import { z } from 'zod'
 
-import { MCP_FUNCTION_CALLER } from '../../commands/mcp.js'
+import { composeMcpMasking, MCP_FUNCTION_CALLER } from '../../commands/mcp.js'
+import { composeCliLocalAgent } from '../../composition/local-agent-host.js'
 
 /**
  * 2026-10-02 (432-39, D-10/D-12): the six names of the deleted capability-scope union, spelled by
@@ -111,6 +128,7 @@ import {
   GOLDEN_REGEN_SCRIPT,
   goldenEmitRequested,
   goldenFieldsThatMoved,
+  goldenFileFromRoot,
   goldenFileOf,
   goldenFileText,
   goldenFindings,
@@ -130,6 +148,7 @@ import {
 import { SURFACE_ROSTER } from './roster.js'
 import {
   driveChatDispatch,
+  driveChatLines,
   driveMcpCall,
   genericFnClause,
   pinClassFor,
@@ -2404,5 +2423,245 @@ describe('the parity suite ranges the registry census over every rostered surfac
     // own file, so a token written out here is the sweep finding its own prohibition.
     expect(code, 'the lens must be reached through the barrel, never by a path into its module')
       .not.toContain(['conformance', '-support.js'].join(''))
+  })
+})
+
+// ---- 432-40 (D-02 / D-03 / D-05 / D-12 / D-18): the conformance rows at the guidance cutover ------
+//
+// The cells above were re-spelled one deletion at a time (432-13 through 432-39): no ask, no grant
+// wall, no human-origin divergence, no credential refusal. These two blocks state what replaced
+// them, as behaviour on the shipped doors, and pin the live partition the rows, the golden and the
+// catalogue range: a non-production change lands in its one call on the chat and MCP doors of one
+// project, and a declared production run is refused, plainly and identically, on both.
+
+/** The run-refusal sentence both doors must show, spelled by the shipped producer. */
+const PARITY_PRODUCTION_TARGET = 'prod-site'
+
+interface ParityProject {
+  readonly root: string
+  readonly configPath: string
+  readonly agentQaRoot: string
+  readonly productionTest: string
+}
+
+/** One project with one production target, one local target and no `allowProduction`. */
+function parityProject(): ParityProject {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), 'agent-qa-432-40-parity-')))
+  mkdirSync(join(root, 'tests'), { recursive: true })
+  writeFileSync(join(root, 'agent-qa.config.yaml'), [
+    'workspace:',
+    '  testMatch:',
+    "    - 'tests/**/*.yaml'",
+    '  suiteMatch:',
+    "    - 'suites/**/*.suite.yaml'",
+    '  hooksFile: hooks.yaml',
+    '  envFile: .env',
+    '  secretsFile: .env.secrets.local',
+    'registry:',
+    '  targets:',
+    `    ${PARITY_PRODUCTION_TARGET}:`,
+    '      platform: web',
+    '      url: http://127.0.0.1:9/app',
+    '      environment: production',
+    '    local-site:',
+    '      platform: web',
+    '      url: http://127.0.0.1:9/local',
+    '      environment: local',
+    'use:',
+    '  timeout:',
+    '    step: 30s',
+    '    test: 90m',
+    '    navigation: 2m',
+    '  mobile:',
+    '    appState: reset',
+    '',
+  ].join('\n'))
+  writeFileSync(join(root, 'hooks.yaml'), 'hooks: []\n')
+  writeFileSync(join(root, '.env'), '')
+  writeFileSync(join(root, '.env.secrets.local'), '')
+  writeFileSync(join(root, 'tests', 'prod.yaml'), [
+    `test-id: ${generateTestId()}`,
+    'name: the production test',
+    `target: ${PARITY_PRODUCTION_TARGET}`,
+    'steps:',
+    '  - Verify the page says "Example"',
+    '',
+  ].join('\n'))
+  return {
+    root,
+    configPath: join(root, 'agent-qa.config.yaml'),
+    agentQaRoot: join(root, '.agent-qa'),
+    productionTest: 'tests/prod.yaml',
+  }
+}
+
+/** What a refused run must not have left behind, and what a direct change must not have filed. */
+function runDirectories(project: ParityProject): readonly string[] {
+  const runs = join(project.agentQaRoot, 'runs')
+  return existsSync(runs) ? readdirSync(runs) : []
+}
+
+interface ParityToolAnswer {
+  readonly isError: boolean
+  readonly text: string
+  readonly structured: Record<string, unknown> | undefined
+}
+
+/** One call on the shipped MCP server, over the shipped composition of THIS project. */
+async function callOnProjectMcp(
+  project: ParityProject,
+  toolName: string,
+  args: Record<string, unknown>,
+): Promise<ParityToolAnswer> {
+  const host = composeCliLocalAgent({ agentQaRoot: project.agentQaRoot, configPath: project.configPath })
+  const masking = composeMcpMasking({ env: {} })
+  const handler = createMcpHandler(() => buildAgentQaMcpServer({
+    registry: host.registry,
+    caller: MCP_FUNCTION_CALLER,
+    maskText: (text: string) => masking.mask(text),
+  }))
+  const client = new Client({ name: 'agent-qa-432-40-parity', version: '0.0.0' })
+  try {
+    return await runSafetyScope({ executionContext: 'local-headless' }, async () => {
+      await client.connect(new StreamableHTTPClientTransport(new URL('http://parity.local/mcp'), {
+        fetch: ((url: URL | string, init?: RequestInit) =>
+          handler.fetch(new Request(url, init))) as typeof fetch,
+      }))
+      const result = await client.callTool({ name: toolName, arguments: args }) as {
+        content?: readonly { type: string; text?: string }[]
+        structuredContent?: Record<string, unknown>
+        isError?: boolean
+      }
+      return {
+        isError: result.isError === true,
+        text: (result.content ?? []).map((entry) => entry.text ?? '').join('\n'),
+        structured: result.structuredContent,
+      }
+    })
+  } finally {
+    await client.close().catch(() => {})
+    await handler.close().catch(() => {})
+    await host.close().catch(() => {})
+    masking.dispose()
+  }
+}
+
+describe('C432-CONFORMANCE-PARITY: one call on the chat and MCP doors, and production refused alike', () => {
+  // MEASURED 2026-10-02 (432-40): the MCP door answers the shipped sentence in band, while the CLI
+  // chat door's receipt carries the refusal's NAME only (`failed runs.start RunDeniedError`) — the
+  // 399.1 receipt charter prints no error message — so a chat user is not shown the target or the
+  // `allowProduction: true` line. Recorded as a product defect (432-40 deferred #1); this cell pins
+  // the refusal on both doors and the absence of effects, and asserts the sentence where it ships.
+  it('C432-CONFORMANCE-PARITY: a declared production run is refused on the chat and MCP doors before anything runs', async () => {
+    const project = parityProject()
+    try {
+      const sentence = buildProductionRefusal([PARITY_PRODUCTION_TARGET])
+      expect(sentence, 'the shipped refusal no longer names the one line to add').toContain('allowProduction: true')
+
+      const onMcp = await callOnProjectMcp(project, 'agent_qa_start_run', { patterns: [project.productionTest] })
+      expect(onMcp.isError, `mcp answered a production run without refusing it: ${onMcp.text}`).toBe(true)
+      expect(onMcp.text, 'mcp: the refusal is not the shipped production sentence').toContain(sentence)
+
+      const onChat = await driveChatLines(
+        [genericFnClause('runs.start', { patterns: [project.productionTest] })],
+        'local-interactive',
+        { configPath: project.configPath },
+      )
+      const receipt = onChat.receipts.find((candidate) => candidate.functionId === 'runs.start')
+      expect(onChat.unhandled, 'chat: the /fn clause did not route').toEqual([])
+      expect(receipt, 'chat: runs.start filed no receipt').toBeDefined()
+      expect(receipt?.status, 'chat: a production run was executed').toBe('failed')
+      expect(receipt?.outcome, 'chat: the refusal is not the run core\'s production refusal')
+        .toBe('RunDeniedError')
+
+      // Refused before effects on both doors, and nothing asked anybody anything.
+      expect(runDirectories(project), 'a refused production run left a run directory').toEqual([])
+      expect(onChat.auditRows, 'chat: an approval row was written').toEqual([])
+      expect(`${onMcp.text}\n${onChat.stdout}`).not.toMatch(/\bconfirm|\bapprov|\bgrant|--yes\b/iu)
+    } finally {
+      rmSync(project.root, { recursive: true, force: true })
+    }
+  }, 120_000)
+
+  it('C432-CONFORMANCE-PARITY: a non-production config change lands in its one call on the chat and MCP doors, with nothing filed for later', async () => {
+    const project = parityProject()
+    try {
+      const onMcp = await callOnProjectMcp(project, 'agent_qa_change_config', {
+        action: 'config.field.set', path: 'use.timeout.step', value: '45s',
+      })
+      expect(onMcp.isError, `mcp refused a non-production change: ${onMcp.text}`).toBe(false)
+      expect(onMcp.structured?.['outcome'], 'mcp: the answer is not the applied change').toBe('applied')
+      expect(readFileSync(project.configPath, 'utf8'), 'mcp: the change is not on disk after one call')
+        .toContain('step: 45s')
+
+      const onChat = await driveChatLines(
+        [genericFnClause('config.field.set', { path: 'use.timeout.navigation', value: '3m' })],
+        'local-interactive',
+        { configPath: project.configPath },
+      )
+      const receipt = onChat.receipts.find((candidate) => candidate.functionId === 'config.field.set')
+      expect(onChat.unhandled, 'chat: the /fn clause did not route').toEqual([])
+      expect(receipt?.status, `chat: the change did not execute: ${receipt?.outcome ?? 'no receipt'}`)
+        .toBe('executed')
+      const written = readFileSync(project.configPath, 'utf8')
+      expect(written, 'chat: the change is not on disk after one call').toContain('navigation: 3m')
+      expect(written, 'chat: the MCP change was lost').toContain('step: 45s')
+
+      // One call each: no proposal store, no pending file and no second step anywhere.
+      expect(existsSync(join(project.agentQaRoot, 'proposals')), 'a proposal store was created').toBe(false)
+      expect(onChat.auditRows, 'chat: an approval row was written').toEqual([])
+      expect(`${onMcp.text}\n${onChat.stdout}`).not.toMatch(/\bpropos|\bapprov|\bpending\b|\bconfirm/iu)
+    } finally {
+      rmSync(project.root, { recursive: true, force: true })
+    }
+  }, 120_000)
+})
+
+/** Op ids the approval and permission waves deleted (432-12/17/18). */
+const RETIRED_OP_ID = /^(?:proposals\.|grants\.|knowledge\.proposal\.|config\.proposal\.|config\.undo\.)/u
+
+describe('C432-REGISTRY-GOLDEN: the registry, the twenty-tool mapping, the rows and the ledger agree', () => {
+  it('C432-REGISTRY-GOLDEN: 44 ops partition into 30 projected behind 20 tools and 14 unprojected, and the rows say the same', async () => {
+    // Measured 2026-10-02 (432-40) after 432-39 removed the permission types: unchanged since 432-18.
+    const ids = registryOpIds()
+    const projected = new Set(AGENT_QA_TOOL_PROJECTIONS.flatMap((projection) => [...projection.ops]))
+    const unprojected = UNPROJECTED_OPS.map((entry) => entry.opId)
+    expect(ids.length, 'registry op count').toBe(44)
+    expect(AGENT_QA_TOOL_PROJECTIONS.length, 'MCP tool count').toBe(20)
+    expect(projected.size, 'projected op count').toBe(30)
+    expect(unprojected.length, 'unprojected op count').toBe(14)
+    expect(unprojected.filter((opId) => projected.has(opId)), 'an op is both projected and not').toEqual([])
+    expect(sorted([...projected, ...unprojected]), 'the partition is the registry, exactly').toEqual(sorted(ids))
+    expect(ids.filter((id) => RETIRED_OP_ID.test(id)), 'a retired op is registered again').toEqual([])
+
+    const toolOf = new Map(AGENT_QA_TOOL_PROJECTIONS.flatMap((projection) =>
+      projection.ops.map((opId) => [opId, projection.name] as const)))
+    for (const row of SCENARIO_TABLE) {
+      const mcp = row.perSurface.mcp
+      if ('reachable' in mcp) expect(mcp.reachable.tool, row.opId).toBe(toolOf.get(row.opId))
+      else expect(projected.has(row.opId), `${row.opId}: the row says unprojected`).toBe(false)
+      expect(row.policyPoints.refuse, row.opId).toBe('allow')
+      expect(row.policyPoints.ask ?? 'direct', row.opId).toBe('direct')
+    }
+
+    // The live ledger, minted from the one shipped composition root: 42 bound and 2 unbound there.
+    const live = await goldenFileFromRoot()
+    expect(sorted(live.rows.map((row) => row.id))).toEqual(sorted(ids))
+    expect(live.rows.filter((row) => row.bindingStatusAtRoot === 'bound').length, 'bound at the root').toBe(42)
+    expect(live.rows.filter((row) => row.bindingStatusAtRoot === 'unbound').map((row) => row.id).length).toBe(2)
+    for (const row of live.rows) {
+      expect(row.partition.kind, row.id).toBe(projected.has(row.id) ? 'projected' : 'unprojected')
+    }
+  }, 120_000)
+
+  it('C432-REGISTRY-GOLDEN: the committed ledger carries no permission column and no retired op', () => {
+    const committed = JSON.parse(readFileSync(GOLDEN_PATH, 'utf8')) as GoldenFile
+    const keys = new Set(committed.rows.flatMap((row) => Object.keys(row)))
+    for (const retired of ['requiredScopes', 'requiresHumanOrigin', 'credential', 'grantedScopes']) {
+      expect(keys, `the ledger carries a ${retired} column`).not.toContain(retired)
+    }
+    expect(committed.rows.map((row) => row.id).filter((id) => RETIRED_OP_ID.test(id))).toEqual([])
+    expect(committed.opCount).toBe(committed.rows.length)
+    expect(committed.rows.length, 'the ledger read back empty').toBeGreaterThan(0)
   })
 })

@@ -1952,4 +1952,59 @@ skills/.staging/
       actualFs.rmSync(dir, { recursive: true, force: true })
     }
   }, 60_000)
+
+  // ---- 432-40 (D-24 / D-21): the scaffolded knowledge README and guide say the direct rule ------
+  //
+  // A REAL init into a fresh temporary directory, read back from disk: the README and the generated
+  // guide a person and a coding agent open first both say knowledge changes only through agent-qa,
+  // applies at once, and is corrected by new feedback or forget. The README no longer tells anyone
+  // to edit a fact or its evidence and no longer cites a design-doc path a user does not have. The
+  // init samples and the policy file are unchanged (M7 owns them, D-21).
+  it('C432-INIT-KNOWLEDGE-GUIDE: the scaffolded README and guide state the direct change rule, and the samples are unchanged', async () => {
+    vi.resetModules()
+    vi.doUnmock('node:fs')
+    vi.doUnmock('node:child_process')
+    vi.doUnmock('../commands/init-filesystem.js')
+
+    const actualFs = await vi.importActual<typeof import('node:fs')>('node:fs')
+    const actualInit =
+      await vi.importActual<typeof import('../commands/init.js')>('../commands/init.js')
+    const actualGuide =
+      await vi.importActual<typeof import('../commands/knowledge-guide.js')>('../commands/knowledge-guide.js')
+
+    const dir = actualFs.mkdtempSync(join(tmpdir(), 'agent-qa-432-40-init-'))
+    try {
+      const parent = new Command()
+      parent.addCommand(actualInit.createInitCommand())
+      await parent.parseAsync(['node', 'test', 'init', '--dir', dir, '--platform', 'web', '--skip-install'])
+
+      const readme = actualFs.readFileSync(join(dir, 'agent-qa-knowledge', 'README.md'), 'utf8')
+      const guide = actualFs.readFileSync(join(dir, 'agent-qa-knowledge', 'AGENTS.md'), 'utf8')
+      expect(readme, 'the README on disk is the builder\'s').toBe(actualInit.buildKnowledgeReadme())
+      expect(guide, 'the guide on disk is the builder\'s').toBe(actualGuide.buildKnowledgeAgentGuide())
+
+      for (const [name, body] of [['README.md', readme], ['AGENTS.md', guide]] as const) {
+        expect(body, `${name}: knowledge changes only through agent-qa`).toMatch(/changes only\s+through agent-qa/u)
+        expect(body, `${name}: a change applies at once`).toMatch(/appl(?:y|ies) at once/u)
+        expect(body, `${name}: wrong knowledge is corrected by new feedback`).toMatch(/corrected by\s+new feedback/u)
+        expect(body, `${name}: or by forgetting the record`).toMatch(/forgetting the\s+record/u)
+        expect(body, `${name}: the change tool`).toContain('agent_qa_change_knowledge')
+        expect(body, `${name}: approval-model wording`)
+          .not.toMatch(/\bapprov|\bpropos|\bpending\b|\bawaiting\b|\bgrant/iu)
+        expect(body, `${name}: a design-doc path a user does not have`).not.toMatch(/\bspec\/v\d/u)
+      }
+      expect(readme, 'the README still tells a reader to edit a fact or its evidence')
+        .not.toMatch(/\bedit the fact\b|\bedit the evidence\b/iu)
+      expect(readme, 'the README points at the generated guide').toContain('`AGENTS.md` in this directory')
+      // People still write policies by hand, and the README still says where.
+      expect(readme).toContain('policies/global.md')
+
+      // D-21: the samples and the policy template are still scaffolded as before.
+      for (const sample of ['tests/example-pass.yaml', 'tests/example-fail.yaml', 'agent-qa-knowledge/policies/global.md']) {
+        expect(actualFs.existsSync(join(dir, sample)), `${sample} is no longer scaffolded`).toBe(true)
+      }
+    } finally {
+      actualFs.rmSync(dir, { recursive: true, force: true })
+    }
+  }, 60_000)
 })

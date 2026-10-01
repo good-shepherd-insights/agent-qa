@@ -31,6 +31,12 @@
 // by object identity against `AGENT_QA_OP_CONTRACTS` for the 22 ops the MCP surface publishes a
 // handle for, and, for all 41, by comparing each paired schema's projection to the projection the
 // registry itself published on the declaration.
+//
+// DATED RECONCILIATION, 2026-10-02 (432-40, D-02/D-05/D-12). The counts above are the 397
+// originals and stay as written. Measured at the guidance cutover: 44 registry ops and 44 rows, 30
+// projected onto MCP behind 20 tools and 14 unprojected, 42 bound at the composition root and 2
+// unbound (C432-REGISTRY-GOLDEN pins these). The proposal and grant ops left in 432-17/18, and no
+// row's policy points refuse or ask: `refuse` is `allow` and `ask` is `direct` wherever it remains.
 
 import {
   AgentAskInputSchema,

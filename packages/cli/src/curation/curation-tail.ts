@@ -37,6 +37,7 @@ import {
 } from '@vostride/agent-qa-safety'
 import { JsonlAuditSink, runSafetyScope } from '@vostride/agent-qa-safety-local'
 import type {
+  ExecutionContext,
   GuardrailPolicy,
   CurationSnapshot,
   MaskingContext,
@@ -420,6 +421,29 @@ function misdirectionHarmLine(
     + `${refused === 0 ? '' : `; ${refused} refused by the queue`}.`
 }
 
+/**
+ * Where this fold's learned changes went, in one line (432-40, D-08 / D-24).
+ *
+ * A local run applies what curation learned to the knowledge root in the fold; a `ci` or `cloud`
+ * run keeps it as a proposed candidate (the disposition profile downgrades it), and a change that
+ * delta validation refused is downgraded the same way anywhere. `committed` counts both, so the
+ * applied share is `committed - downgraded`. Silent when the fold committed nothing, and it never
+ * points at a review step: there is none.
+ */
+export function curationOutcomeLine(input: {
+  readonly executionContext: ExecutionContext | undefined
+  readonly committed: number
+  readonly downgraded: number
+}): string | undefined {
+  if (input.committed <= 0) return undefined
+  const proposed = Math.min(Math.max(input.downgraded, 0), input.committed)
+  const applied = input.committed - proposed
+  const posture = input.executionContext === 'ci' || input.executionContext === 'cloud'
+    ? `${input.executionContext} runs keep learned knowledge proposed`
+    : 'local runs apply learned knowledge to the knowledge root'
+  return `curation: ${applied} learned change(s) applied, ${proposed} kept proposed (${posture})`
+}
+
 /** Fixed text: the warning names no row content. */
 const SNAPSHOT_NOT_RECORDED_WARNING =
   'curation snapshot could not be validated and was not recorded; committed bundles are unaffected'
@@ -791,6 +815,12 @@ export async function curateCompletedRun(
       }
       // 2026-09-30, 432-10 D-05: a gate-inconsistent hold is its held line; nothing is filed.
       for (const entry of drain.promotions ?? []) input.log.info?.(renderPromotionLine(entry))
+      const outcomeLine = curationOutcomeLine({
+        executionContext: input.handoff.executionContext,
+        committed: drain.committed,
+        downgraded: drain.downgraded,
+      })
+      if (outcomeLine !== undefined) input.log.info?.(outcomeLine)
       // A commit noop is visible but never fatal (G-381-1): legitimate reasons such as
       // evidence-token dedup would otherwise wedge a healthy tail into the retry loop.
       // The complete predicate below is deliberately unchanged.

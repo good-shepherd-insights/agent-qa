@@ -62,6 +62,7 @@ import {
   DEDICATED_READ_VERBS,
   INIT_AGENT_INSTRUCTIONS_VERB,
 } from '../../capability-catalog/manifest.js'
+import { buildKnowledgeReadme } from '../../commands/init.js'
 import {
   AGENT_QUESTION_MAP,
   buildAgentInstructionPointer,
@@ -69,7 +70,9 @@ import {
   KNOWLEDGE_SKILL_NAME,
 } from '../../commands/knowledge-guide.js'
 import { resolveAgentQaSkillsDirectory } from '../../commands/skills.js'
+import { curationOutcomeLine } from '../../curation/curation-tail.js'
 import { createAgentQaProgram } from '../../program.js'
+import { registryOpIds } from './adapters.js'
 import { agentQaRoot, buildCatalogSkillRows, CHAT_ALIAS_PROBES } from './catalog.js'
 import { SURFACE_ROSTER } from './roster.js'
 
@@ -978,6 +981,322 @@ describe('C432-NO-PROPOSAL-CLI: there is no proposals verb', () => {
       )
       expect(refused?.code, argv.join(' ')).toBe('commander.unknownCommand')
       expect(written, argv.join(' ')).toMatch(/unknown command 'proposals'/u)
+    }
+  })
+})
+
+// ---- 432-40 (D-02 / D-05 / D-09 / D-24): the direct model, said with live names only ----------
+//
+// The LIVE-GUIDANCE cells above prove every NAME the guidance quotes is live. These prove what the
+// guidance SAYS: knowledge and config change through agent-qa and apply in the call, wrong knowledge
+// is corrected by new feedback or forget, and no current text describes a proposal, an approval, a
+// grant, a confirm round or a permission. Old recorded argv and dated history notes in source are
+// not guidance and are not read here; the subjects are the generated guide, the root pointer, the
+// scaffolded knowledge README, every source and packaged skill file, and the committed catalogue.
+
+/** The six MCP names the proposal round had; none is projected since 432-12. */
+const RETIRED_CHANGE_TOOLS: readonly string[] = Object.freeze([
+  'agent_qa_propose_knowledge_change',
+  'agent_qa_propose_config_change',
+  'agent_qa_apply_proposal',
+  'agent_qa_apply_config_proposal',
+  'agent_qa_list_proposals',
+  'agent_qa_show_proposal',
+])
+
+/** The approval model's vocabulary, by the claim each word would make (432 D-24). */
+const APPROVAL_VOCABULARY: readonly (readonly [string, RegExp])[] = Object.freeze([
+  ['a proposal', /\bpropos(?:al|als|e|ed|es|ing)\b/iu],
+  ['an approval', /\bapprov(?:al|als|e|ed|es|ing)\b/iu],
+  ['a grant', /\bgrant(?:s|ed|ing)?\b/iu],
+  ['a permission', /\bpermissions?\b/iu],
+  ['an inbox', /\binbox\b/iu],
+  ['a pending review', /\b(?:pending|awaiting)\b/iu],
+  ['a confirm step', /\bconfirm(?:ation)?\s+(?:round|prompt|step|dialog)\b|--yes\b/iu],
+  ['a caller credential', /\bbearer\b|\bsafe[- ]mode\b|\bdefault scopes?\b/iu],
+  ['a design-doc path', /\bspec\/v\d/iu],
+])
+
+function approvalFindings(subjects: readonly GuidanceSubject[]): readonly string[] {
+  const findings: string[] = []
+  for (const subject of subjects) {
+    for (const [claim, pattern] of APPROVAL_VOCABULARY) {
+      const hit = subject.body.match(pattern)
+      if (hit !== null) findings.push(`${subject.name}: "${hit[0]}" describes ${claim}`)
+    }
+    for (const tool of toolTokensIn(subject.body)) {
+      if (RETIRED_CHANGE_TOOLS.includes(tool)) findings.push(`${subject.name}: names the retired ${tool}`)
+    }
+  }
+  return findings
+}
+
+/** The D-24 rule, as the four facts a knowledge text must state. */
+const KNOWLEDGE_RULE: readonly (readonly [string, RegExp])[] = Object.freeze([
+  ['changes only through agent-qa', /changes only\s+through agent-qa/u],
+  ['applies at once', /appl(?:y|ies) at once/u],
+  ['wrong knowledge is corrected by new feedback', /corrected by\s+new feedback/u],
+  ['or by forgetting the record', /forgetting the\s+record/u],
+])
+
+function knowledgeRuleFindings(subject: GuidanceSubject): readonly string[] {
+  return KNOWLEDGE_RULE.flatMap(([fact, pattern]) =>
+    pattern.test(subject.body) ? [] : [`${subject.name}: does not say knowledge ${fact}`])
+}
+
+function directGuidanceSubjects(): readonly GuidanceSubject[] {
+  return [
+    ...liveGuidanceInputs().subjects,
+    { name: 'knowledge README', body: buildKnowledgeReadme() },
+  ]
+}
+
+describe('C432-GUIDANCE-DIRECT: current guidance describes changes that apply in the call', () => {
+  it('C432-GUIDANCE-DIRECT: no guide, README, pointer or skill file uses approval-model words or retired change tools', () => {
+    const subjects = directGuidanceSubjects()
+    expect(subjects.length, 'fewer guidance subjects than the guide, pointer, README and one skill')
+      .toBeGreaterThan(4)
+    expect(approvalFindings(subjects), 'current guidance still describes the approval model').toEqual([])
+
+    // The census fires: each word class, and a retired change tool, is named when planted.
+    const planted = approvalFindings([{
+      name: 'planted',
+      body: 'File a proposal, wait for approval in the inbox, then grant it. '
+        + 'Call agent_qa_apply_proposal; see spec/v2/knowledge-store.md.',
+    }])
+    expect(planted).toEqual([
+      'planted: "proposal" describes a proposal',
+      'planted: "approval" describes an approval',
+      'planted: "grant" describes a grant',
+      'planted: "inbox" describes an inbox',
+      'planted: "spec/v2" describes a design-doc path',
+      'planted: names the retired agent_qa_apply_proposal',
+    ])
+  })
+
+  it('C432-GUIDANCE-DIRECT: the guide, the knowledge skill and its reference, and the README each state the change rule', () => {
+    const subjects = directGuidanceSubjects()
+    const ruleBearing = subjects.filter((subject) =>
+      subject.name === 'generated guide'
+      || subject.name === 'knowledge README'
+      || (subject.name.includes(`/${KNOWLEDGE_SKILL_NAME}/`) && subject.name.endsWith('.md')))
+    // guide + README + (SKILL.md + knowledge-reads.md) in both the source and the packaged tree.
+    expect(ruleBearing.map((subject) => subject.name).length).toBe(6)
+    expect(ruleBearing.flatMap(knowledgeRuleFindings), 'a knowledge text omits part of the D-24 rule')
+      .toEqual([])
+    for (const subject of ruleBearing.filter((candidate) => candidate.name !== 'knowledge README')) {
+      expect(toolTokensIn(subject.body), `${subject.name}: the change tool`).toContain('agent_qa_change_knowledge')
+    }
+    expect(knowledgeRuleFindings({ name: 'planted', body: 'Edit the fact or the evidence.' })).toHaveLength(4)
+  })
+
+  it('C432-GUIDANCE-DIRECT: the authoring skill names the change tools and the written-test receipt, and no review step', () => {
+    const authoring = directGuidanceSubjects().filter((subject) =>
+      subject.name.endsWith('/agent-qa-authoring/SKILL.md'))
+    expect(authoring.map((subject) => subject.name).sort()).toEqual([
+      'packages/cli/skills/agent-qa-authoring/SKILL.md',
+      'skills/agent-qa-authoring/SKILL.md',
+    ])
+    for (const subject of authoring) {
+      for (const tool of ['agent_qa_write_test', 'agent_qa_refine_test', 'agent_qa_change_config']) {
+        expect(toolTokensIn(subject.body), `${subject.name}: ${tool}`).toContain(tool)
+      }
+      expect(subject.body, `${subject.name}: the written-test receipt`).toMatch(/`written` receipt/u)
+      expect(subject.body, `${subject.name}: the disposition`).toMatch(/disposition/u)
+      expect(subject.body, `${subject.name}: changes apply in the call`).toMatch(/apply in the call/u)
+      expect(subject.body, `${subject.name}: the production refusal`).toContain('allowProduction: true')
+      expect(subject.body, `${subject.name}: a review instruction`).not.toMatch(/\breview/iu)
+    }
+  })
+})
+
+/** Every file under one tree, as tree-relative POSIX paths. */
+function treeFiles(root: string): readonly string[] {
+  if (!existsSync(root)) return []
+  return skillDirectoriesIn(root)
+    .flatMap((skill) => filesUnderSkill(join(root, skill)).map((file) => relative(root, file)))
+    .sort()
+}
+
+/** Where a packaged mirror differs from its source tree, file by file and byte by byte. */
+function mirrorFindings(sourceRoot: string, packagedRoot: string): readonly string[] {
+  const source = treeFiles(sourceRoot)
+  const packaged = treeFiles(packagedRoot)
+  const findings: string[] = []
+  for (const file of source) {
+    if (!packaged.includes(file)) {
+      findings.push(`${file}: missing from the packaged mirror`)
+      continue
+    }
+    if (!readFileSync(join(sourceRoot, file)).equals(readFileSync(join(packagedRoot, file)))) {
+      findings.push(`${file}: the packaged copy differs from the source`)
+    }
+  }
+  for (const file of packaged) {
+    if (!source.includes(file)) findings.push(`${file}: in the packaged mirror with no source`)
+  }
+  if (source.length === 0) findings.push('no source skill file was read')
+  return findings
+}
+
+describe('C432-PACKAGED-SKILLS: the packaged skills are the source skills, byte for byte', () => {
+  it('C432-PACKAGED-SKILLS: every source skill file has a byte-identical packaged copy, and nothing else is packaged', () => {
+    const sourceRoot = join(agentQaRoot(), SKILLS_SOURCE_DIR)
+    const packagedRoot = join(agentQaRoot(), 'packages', 'cli', 'skills')
+    expect(mirrorFindings(sourceRoot, packagedRoot), 'run pnpm --filter agent-qa copy:skills').toEqual([])
+    const files = treeFiles(sourceRoot)
+    for (const rewritten of [
+      'agent-qa-knowledge/SKILL.md',
+      'agent-qa-knowledge/references/knowledge-reads.md',
+      'agent-qa-authoring/SKILL.md',
+      'agent-qa-result-triage/SKILL.md',
+    ]) {
+      expect(files, `${rewritten} is not a shipped skill file`).toContain(rewritten)
+    }
+  })
+
+  it('C432-PACKAGED-SKILLS: a one-byte drift, a missing copy and a stray copy are each named', () => {
+    const root = mkdtempSync(join(tmpdir(), 'agent-qa-432-40-mirror-'))
+    try {
+      const sourceRoot = join(root, 'source')
+      const packagedRoot = join(root, 'packaged')
+      cpSync(join(agentQaRoot(), SKILLS_SOURCE_DIR, KNOWLEDGE_SKILL_NAME), join(sourceRoot, KNOWLEDGE_SKILL_NAME), { recursive: true })
+      cpSync(sourceRoot, packagedRoot, { recursive: true })
+      expect(mirrorFindings(sourceRoot, packagedRoot)).toEqual([])
+
+      const skill = join(packagedRoot, KNOWLEDGE_SKILL_NAME, 'SKILL.md')
+      writeFileSync(skill, `${readFileSync(skill, 'utf8')} `)
+      const reference = join(packagedRoot, KNOWLEDGE_SKILL_NAME, 'references', 'knowledge-reads.md')
+      rmSync(reference)
+      writeFileSync(join(packagedRoot, KNOWLEDGE_SKILL_NAME, 'stray.md'), 'stray\n')
+      expect(mirrorFindings(sourceRoot, packagedRoot)).toEqual([
+        `${KNOWLEDGE_SKILL_NAME}/SKILL.md: the packaged copy differs from the source`,
+        `${KNOWLEDGE_SKILL_NAME}/references/knowledge-reads.md: missing from the packaged mirror`,
+        `${KNOWLEDGE_SKILL_NAME}/stray.md: in the packaged mirror with no source`,
+      ])
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+})
+
+/** Retired op ids and tool names, as whole tokens (432-12/17/18 deleted them). */
+const RETIRED_CAPABILITY = /\bproposals\.(?:list|show|accept|reject)\b|\bgrants\.(?:list|revoke)\b|\b(?:knowledge|config)\.proposal\.apply\b|\bconfig\.undo\.propose\b|\bagent_qa_(?:propose_[a-z_]+|apply_[a-z_]*proposal|list_proposals|show_proposal)\b/u
+
+/** Permission-shaped keys a catalogue row could carry. */
+const PERMISSION_KEYS: readonly string[] = Object.freeze([
+  'requiredScopes', 'requiresHumanOrigin', 'credential', 'defaultScopes', 'safeMode', 'grantedScopes',
+])
+
+function keysDeep(value: unknown): readonly string[] {
+  if (Array.isArray(value)) return value.flatMap(keysDeep)
+  if (value === null || typeof value !== 'object') return []
+  return Object.entries(value as Record<string, unknown>).flatMap(([key, child]) => [key, ...keysDeep(child)])
+}
+
+describe('C432-CATALOG-CURRENT: the committed catalogue describes only the live tree', () => {
+  it('C432-CATALOG-CURRENT: op rows are the live registry, tools are the twenty projected tools, and no row names a retired capability or a permission', () => {
+    const catalog = loadCapabilityCatalog()
+    const opRows = catalog.rows.flatMap((row) => (row.kind === 'op' ? [row] : []))
+    expect(sorted(opRows.map((row) => row.id)), 'op rows against the live registry census')
+      .toEqual(sorted(registryOpIds()))
+
+    const toolOf = new Map<string, string>()
+    for (const projection of AGENT_QA_TOOL_PROJECTIONS) {
+      for (const op of projection.ops) toolOf.set(op, projection.name)
+    }
+    for (const row of opRows) {
+      expect(row.mcpTool, `${row.id}: the row's MCP tool against the live mapping`).toBe(toolOf.get(row.id))
+      expect(row.mcpTool === undefined, `${row.id}: a door, or the visible-absence key, never both`)
+        .toBe(row.mcpUnprojectedReasonKey !== undefined)
+    }
+    const tools = sorted(opRows.flatMap((row) => (row.mcpTool === undefined ? [] : [row.mcpTool])))
+    expect(tools, 'the catalogue tools against the live projections').toEqual(
+      sorted(AGENT_QA_TOOL_PROJECTIONS.map((projection) => projection.name)),
+    )
+    expect(tools.length, 'the MCP tool count').toBe(20)
+    expect(tools).toEqual(expect.arrayContaining(['agent_qa_change_knowledge', 'agent_qa_change_config']))
+
+    const skillRows = catalog.rows.flatMap((row) => (row.kind === 'skill' ? [row.name] : []))
+    expect(skillRows, 'skill rows against the shipped skills')
+      .toEqual([...skillDirectoriesIn(join(agentQaRoot(), SKILLS_SOURCE_DIR))])
+    expect(catalog.rowCount).toBe(catalog.rows.length)
+
+    for (const row of catalog.rows) {
+      const name = row.kind === 'op' ? row.id : row.kind === 'alias' ? row.alias : row.name
+      expect(JSON.stringify(row).match(RETIRED_CAPABILITY), `${name}: names a retired capability`).toBeNull()
+      expect(keysDeep(row).filter((key) => PERMISSION_KEYS.includes(key)), `${name}: a permission key`).toEqual([])
+    }
+    expect(catalog.$note.join(' '), 'the note still describes per-caller filtering or a grant')
+      .not.toMatch(/per-caller|\bgrants?\b/iu)
+  })
+
+  it('C432-CATALOG-CURRENT: every migration route answers with a live tool and no proposal', () => {
+    const catalog = loadCapabilityCatalog()
+    const live = new Set(AGENT_QA_TOOL_PROJECTIONS.map((projection) => projection.name))
+    expect(catalog.migrationMap.length).toBe(catalog.migrationCount)
+    expect(catalog.migrationMap.length).toBe(V1_TOOL_MIGRATION_MAP.length)
+    for (const entry of catalog.migrationMap) {
+      if (entry.v2Tool !== undefined) expect(live.has(entry.v2Tool), `${entry.v1Name}: ${entry.v2Tool}`).toBe(true)
+      for (const text of [entry.route ?? '', entry.v2Tool ?? '']) {
+        expect(text, `${entry.v1Name}: the current answer describes the approval model`)
+          .not.toMatch(/\bpropos|\bapprov|\binbox\b/iu)
+      }
+      for (const tool of toolTokensIn(entry.route ?? '')) {
+        expect(live.has(tool), `${entry.v1Name}: the route names ${tool}, which is not projected`).toBe(true)
+      }
+    }
+    for (const v1Name of ['agent_qa_create_test', 'agent_qa_create_suite', 'agent_qa_update_suite']) {
+      const entry = catalog.migrationMap.find((candidate) => candidate.v1Name === v1Name)
+      expect(entry, v1Name).toBeDefined()
+      expect(`${entry!.note} ${entry!.route ?? ''}`, `${v1Name}: the dated direct-write answer`)
+        .toMatch(/in the call/u)
+    }
+  })
+})
+
+/** Source with block comments and whole-line `//` comments removed: what a reader is shown. */
+function codeOf(relativePath: string): string {
+  return readFileSync(join(agentQaRoot(), relativePath), 'utf8')
+    .replace(/\/\*[\s\S]*?\*\//gu, '')
+    .split('\n')
+    .filter((line) => !line.trimStart().startsWith('//'))
+    .join('\n')
+}
+
+describe('C432-CURATION-COPY: curation and chat say where a change went, and point at no review', () => {
+  it('C432-CURATION-COPY: a local fold reports what it applied; ci and cloud report what they kept proposed', () => {
+    expect(curationOutcomeLine({ executionContext: 'local-interactive', committed: 3, downgraded: 0 }))
+      .toBe('curation: 3 learned change(s) applied, 0 kept proposed (local runs apply learned knowledge to the knowledge root)')
+    expect(curationOutcomeLine({ executionContext: 'local-headless', committed: 3, downgraded: 1 }))
+      .toBe('curation: 2 learned change(s) applied, 1 kept proposed (local runs apply learned knowledge to the knowledge root)')
+    expect(curationOutcomeLine({ executionContext: 'ci', committed: 2, downgraded: 2 }))
+      .toBe('curation: 0 learned change(s) applied, 2 kept proposed (ci runs keep learned knowledge proposed)')
+    expect(curationOutcomeLine({ executionContext: 'cloud', committed: 1, downgraded: 1 }))
+      .toBe('curation: 0 learned change(s) applied, 1 kept proposed (cloud runs keep learned knowledge proposed)')
+    // A fold that committed nothing says nothing, so the one-line drained hint stays one line.
+    expect(curationOutcomeLine({ executionContext: 'ci', committed: 0, downgraded: 0 })).toBeUndefined()
+    expect(curationOutcomeLine({ executionContext: undefined, committed: 1, downgraded: 5 }))
+      .toBe('curation: 0 learned change(s) applied, 1 kept proposed (local runs apply learned knowledge to the knowledge root)')
+  })
+
+  it('C432-CURATION-COPY: the curation tail and the chat turn engine show no review command and no waiting step', () => {
+    for (const file of [
+      'packages/cli/src/curation/curation-tail.ts',
+      'packages/cli/src/curation/promotion-posture.ts',
+      'packages/agent/src/chat/turn-engine.ts',
+    ]) {
+      const code = codeOf(file)
+      expect(code.length, `${file} read back empty`).toBeGreaterThan(1000)
+      for (const pattern of [
+        /agent-qa proposals/u,
+        /review (?:with|it|them)\b/iu,
+        /\b(?:pending|awaiting) (?:review|approval|acceptance)\b/iu,
+        /\bproposals? (?:pending|waiting)\b/iu,
+        /\bapprove\b/iu,
+      ]) {
+        expect(code.match(pattern), `${file} shows ${String(pattern)}`).toBeNull()
+      }
     }
   })
 })

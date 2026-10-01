@@ -568,7 +568,11 @@ an empty policy. Add rules below this comment block to activate them.
 }
 
 // D-14: the substantive human entry point for the committed knowledge root.
-function buildKnowledgeReadme(): string {
+// 2026-10-02 (432-40, D-24): the README states the guide's rule — knowledge changes only through
+// agent-qa, applies at once, and wrong knowledge is corrected by new feedback or forget — and no
+// longer cites a design-doc path a user's checkout does not have (431 D7 friction). Its other D7
+// items (policies/global.md's wording, CLI/MCP setup, `<build>`/`--kind`) stay with M7 (D-21).
+export function buildKnowledgeReadme(): string {
   return `# agent-qa-knowledge
 
 The committed knowledge root for this project's QA agent. Everything the agent
@@ -581,20 +585,26 @@ learns and everything you author for it lives under this one directory.
   Each record is a self-sufficient bundle directory: the fact, its evidence,
   and its provenance travel together.
 - **Authored shelf** (\`policies/\` now; \`skills/\` arrives with its feature):
-  content humans write or approve — QA rules, agent skills.
+  content people write — QA rules, agent skills.
 
 Only \`policies/\` exists after init; the other directories are created on
 first use.
 
-## How to review a knowledge PR
+## How to read a knowledge change
 
-- \`record.md\` is the fact: what the agent now believes, in reviewable prose.
+- \`record.md\` is the fact: what the agent now believes, in plain prose.
 - \`evidence/outcomes.jsonl\` is the evidence: the append-only outcome log the
   belief rests on.
-- Trust is derived by code from the outcome log — never hand-edit trust
-  counters or status fields, the fact or the evidence. Knowledge changes only
-  through agent-qa: a run mark, or \`agent_qa_change_knowledge\` to accept,
-  reject or forget a record. Each change applies at once and shows up here.
+- Trust is derived by code from the outcome log.
+
+## Changing knowledge
+
+Never edit the learned shelf by hand — not the fact, the evidence, trust
+counters or status fields. Learned knowledge changes only through agent-qa: a
+run mark, or \`agent_qa_change_knowledge\` to accept, reject or forget a
+record. Each change applies at once and shows up here. Wrong knowledge is
+corrected by new feedback (a run mark) or by forgetting the record. The one
+shelf people write by hand is \`policies/\` (below).
 
 ## Committed vs. gitignored
 
@@ -606,10 +616,10 @@ directory enforces the split:
 - \`**/artifacts/\` — binary blobs (screenshots, DOM snapshots, HAR). Excluded
   from git by default; artifact *inventories* are text, live outside
   \`artifacts/\`, and are committed.
-- \`skills/.staging/\` — pending skill writes awaiting approval.
+- \`skills/.staging/\` — machine-local scratch space for skill writes, never committed.
 
 Everything else — every \`*.md\` and \`*.json\`/\`*.jsonl\` of distilled or
-authored text — is committed and PR-reviewable.
+authored text — is committed, so \`git diff\` and \`git log\` show it.
 
 ## How to write policies
 
@@ -618,10 +628,11 @@ imperative English. Start with \`policies/global.md\` (its header comment
 teaches the format); add \`policies/<product>.md\` siblings for product-scoped
 rules. Policies are sovereign: served to the agent verbatim on every run.
 
-## Spec pointers
+## Reading knowledge
 
-The layout, the committed/derived split, and the config surface are specified
-in the agent-qa design docs: \`spec/v2/knowledge-store.md\` §3–§6.
+\`AGENTS.md\` in this directory lists the agent-qa commands and MCP tools that
+answer questions about runs and records. Answer from them rather than from a raw
+\`record.md\`: trust, validity and supersession are worked out when you ask.
 `
 }
 

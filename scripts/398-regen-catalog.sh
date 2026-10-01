@@ -89,6 +89,14 @@ CATALOG="$ROOT/$CATALOG_REL"
 # The help-census cells that measure the TREE (help vs the live table, the rendered text, the
 # second-list sweep) are deliberately NOT listed.
 #
+# THE SEVENTH AND EIGHTH NAMES (2026-10-02, 432-40) are admitted on the same rule: both
+# C432-CATALOG-CURRENT cells' subject is the COMMITTED catalogue agreeing with the live tree (op rows
+# against the registry, tools against the twenty projections, migration routes against the shipped
+# map). A guidance cutover that re-spells a migration route rewrites `packages/mcp` and the
+# catalogue in one change, so these cells are red exactly while this script's write is owed. The
+# C432-GUIDANCE-DIRECT and C432-PACKAGED-SKILLS cells measure the TREE and are deliberately NOT
+# listed.
+#
 # A PLAIN MULTI-LINE STRING, not a heredoc inside a command substitution. Measured 2026-08-17 on the
 # bash 3.2 macOS ships: `VAR="$(cat <<'X' ... X )"` mis-parses there and the script dies at an
 # unrelated line with `arg: unbound variable`, which is the least helpful diagnosis available for
@@ -98,7 +106,9 @@ the catalog's migration map projection (D-14, XPLN-03) lands in the COMMITTED ar
 423-38 committed artifacts carry the reviewed read contracts GOLDEN-CATALOG-COMPLETE: the committed golden ledger and capability catalog carry every addressed read op as the live tree declares it
 LIVE-GUIDANCE: the guide, pointer and every source and packaged skill quote only live names LIVE-GUIDANCE-TOOLS: every agent_qa_* name is a projected tool whose ops the catalog carries
 the /help census — one list of what chat understands set-equals the committed catalog's aliases plus the directives plus the passthrough
-the chat host's discovery UX is a projection of the catalog offers every alias row in the form the shipped resolver actually answers"
+the chat host's discovery UX is a projection of the catalog offers every alias row in the form the shipped resolver actually answers
+C432-CATALOG-CURRENT: the committed catalogue describes only the live tree C432-CATALOG-CURRENT: op rows are the live registry, tools are the twenty projected tools, and no row names a retired capability or a permission
+C432-CATALOG-CURRENT: the committed catalogue describes only the live tree C432-CATALOG-CURRENT: every migration route answers with a live tool and no proposal"
 # Vacuity floor. A gate that passed because the suite collected nothing is the CI-shaped version of
 # the failure this artifact exists to prevent. Measured 2026-08-16: 88 tests in the directory;
 # 2026-08-17 (398-08): 115, after the manifest legs, the `init --agent` cells and the two shipped-
@@ -129,6 +139,8 @@ FROZEN_MIN_TESTS=129
 # Lowered 2026-10-01 (432-18, D-14/D-15): 54 -> 52. `grants.list` and `grants.revoke` are deleted
 # with the grant ledger, so the measured mint is 44 registry ops + 4 chat op-aliases + 4 shipped
 # skills. The floor is the exact observed baseline; the argument is the two deleted ops.
+# Confirmed 2026-10-02 (432-40): 52, measured again at the guidance cutover — 44 registry ops + 4
+# chat op-aliases + 4 shipped skills. No row moved; only migration-map route text changed.
 FROZEN_MIN_ROWS=52
 # The migration section's floor (398-08, D-14). It is SEPARATE from the row floor because it is a
 # separate section with a separate source: a mint that folded every capability correctly and dropped

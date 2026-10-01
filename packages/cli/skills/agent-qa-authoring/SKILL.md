@@ -9,12 +9,12 @@ metadata:
 
 ## Workflow
 
-1. Discover the surface from the protocol itself: `tools/list` names every tool your grants let you
-   see. For the full picture — the capability catalog, the v1 to v2 tool-name migration map, and
-   this workspace's posture — run `agent-qa init --agent`, which prints one JSON document and
-   writes nothing.
-2. Read the workspace posture from that same manifest: default scopes, safe-mode state, and
-   declared credentials by environment-variable NAME. No MCP tool reads configuration.
+1. Discover the surface from the protocol itself: `tools/list` names every tool, and every caller
+   sees and may call the same set. For the full picture — the capability catalog, the v1 to v2
+   tool-name migration map, and this workspace's posture — run `agent-qa init --agent`, which
+   prints one JSON document and writes nothing.
+2. Read the workspace posture from that same manifest: whether this workspace has a configuration
+   that reads. No MCP tool reads configuration.
 3. Load `references/agent-qa-contracts.json` when you need exact schema fields or ID contracts.
 4. Never mint an ID and never hand-write one. IDs are minted host-side where the entity is written:
    name what you want, then read the id back off the entity card `agent_qa_get_entity` returns.
@@ -26,14 +26,16 @@ metadata:
    validator can disagree with the one that gates.
 7. Authoring changes apply in the call, and each answer names what it wrote:
    - A new test or suite file: `agent_qa_write_test`, which names the suite file the draft joins and
-     writes it unless a keep-gate rejected it.
+     writes it unless a keep-gate rejected it. Its `written` receipt names the file it wrote, or why
+     none was written, with the draft's disposition and the four keep-gate results: that is how well
+     the written test was verified.
    - An edit to a test: `agent_qa_refine_test`.
    - A new hook or another configuration change: `agent_qa_change_config`, which writes the change
      and answers the files and fields it changed.
-   - Nothing waits for a second call: there is no apply step and no review inbox. `git status` and
-     `git diff` show what changed, and `git restore` reverts a file.
+   - Each change is on disk when the call answers; nothing waits for a second call. `git status`
+     and `git diff` show what changed, and `git restore` reverts a file.
 8. There is no delete verb on any surface, by rule rather than by omission. Removing a test, a suite
-   or a hook is a repository edit a person makes and reviews.
+   or a hook is a repository edit a person makes.
 9. Editing an existing hook has no tool yet: it is an edit to `workspace.hooksFile` in the workspace
    until the owning milestone rules on the verb.
 10. Keep file paths matched by `workspace.testMatch` or `workspace.suiteMatch`.
@@ -51,6 +53,9 @@ metadata:
 - Verify the draft first (step 6).
 - Start runs with `agent_qa_start_run` rather than shelling out. The test-or-suite scope is an
   argument to it, not a second tool.
+- A run starts in the call, with no prompt. A run that drives a target declared
+  `environment: production` is refused, naming the target, unless `agent-qa.config.yaml` has
+  `allowProduction: true` at the top level. No argument or flag allows it.
 - `agent_qa_list_runs` enumerates recent runs; `agent_qa_get_run_digest` reports one.
 
 ## Do Not

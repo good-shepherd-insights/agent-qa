@@ -131,7 +131,8 @@ export interface TurnEngineDeps {
    *
    * A THUNK for `config`'s reason: a scaffold applied earlier in this very turn changes the answer,
    * and a value captured at composition would send the authoring dispatch that follows it against
-   * the vocabulary as it stood before the person approved anything.
+   * the vocabulary as it stood before the scaffold wrote anything (2026-10-02, 432-40: re-spelled
+   * from "before the person approved anything" — the scaffold writes in the call, D-05/D-14).
    *
    * BOUND FROM THE SAME PORT THE AUTHORING LOOP READS (`AuthoringReadPortLike.configuredTargetNames`),
    * so "which targets does this project declare" has one answer on both sides of the dispatch. Two
@@ -257,18 +258,18 @@ function refusalMessage(error: unknown): string {
 /**
  * The boundary verdict, ABOVE the change it is a verdict about (399.1, RC-2, criterion 4).
  *
- * WHAT WAS WRONG. The pre-confirm render answered "what does this change do" — summary line, file
- * list, the true diff — and never answered "does this change cross a trust boundary". The proposed
- * arm files that verdict as two required fields, the grant machinery REFUSES a covering standing
- * approval on it (395-07's two-sided enforcement), and the one surface where a person is asked to
- * authorise the write showed them neither. `demo/acceptance/399/ACCEPTANCE.md` §9 item 2 is the
- * witness: a chat-minted `config.target.create` proposal filed `crossBoundary: true` on disk and
- * the person approving it was never told.
+ * WHAT WAS WRONG (history, 399.1). The pre-confirm render answered "what does this change do" —
+ * summary line, file list, the true diff — and never answered "does this change cross a trust
+ * boundary". The proposed arm filed that verdict as two required fields, and the one surface where
+ * a person was asked to authorise the write showed them neither (`demo/acceptance/399/
+ * ACCEPTANCE.md` §9 item 2). 2026-10-02 (432-40, D-05/D-14/D-15): there is no confirm, no proposal
+ * and no grant machinery any more; the change is written in the call, and these lines disclose the
+ * crossing on the applied answer the person reads.
  *
  * VERBATIM, NEVER A PARAPHRASE. Each reason is one of `CROSS_BOUNDARY_REASONS`' four closed words
  * and it is printed as filed. A hand-written sentence per reason would be a SECOND answer to "why
- * is this crossing", free to disagree with the record the grant machinery reads — which is the
- * drop-site lesson (D-04) applied to the field that decides whether a fresh ask is owed.
+ * is this crossing", free to disagree with the record the change answers with — which is the
+ * drop-site lesson (D-04) applied to the field a person reads to see what crossed.
  *
  * THE FIELD NAMES ARE IN THE BYTES, deliberately. A person who reads `crossBoundary: true` here can
  * find the same field on the applied answer `agent-qa fn` and the MCP change tool return, and knows

@@ -58,8 +58,9 @@
 //
 // WHAT IS AND IS NOT ON THE ROW (397 D-03, unchanged). The row is the REGISTRY-DRIVEN `fn` path —
 // `--list` and `fn <id>`, which own no capability of their own and resolve everything through
-// `invokeFunction`. The bespoke per-capability CLI command handlers (`agent-qa run`, `proposals
-// show`, …) stay OFF the roster exactly as 397 D-03 ruled: rostering them would mint a new parity
+// `invokeFunction`. The bespoke per-capability CLI command handlers (`agent-qa run`, `knowledge
+// rollback`, …; 2026-10-02, 432-40: `proposals show` left with the inbox in 432-17) stay OFF the
+// roster exactly as 397 D-03 ruled: rostering them would mint a new parity
 // claim over hand-written handlers this suite has never measured, which is a widening dressed as a
 // completion. So D-04's rule reads unchanged for the third time: adding a surface adds a ROW and an
 // ADAPTER, in the change that ships it.
