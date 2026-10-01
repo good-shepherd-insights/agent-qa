@@ -21,7 +21,6 @@ import {
   exercisedAnchors,
   failingStepOf,
   failureFingerprint,
-  FunctionScopeSchema,
   resolveRunVerdicts,
   slugBranch,
 } from '@vostride/agent-qa-schema'
@@ -50,10 +49,10 @@ import type {
 import { ANALYSIS_GET_FUNCTION_ID } from '../ops/analysis-get.js'
 import { RUNS_GET_FUNCTION_ID } from '../ops/runs-get.js'
 
+// 2026-10-01 (432-29, D-12): the retired `grantedScopes` and `safeMode` caller fields and the
+// retired `resolveExecutionContext` registry option are dropped; nothing read them.
 const CALLER: FunctionCaller = {
   surface: 'test',
-  grantedScopes: [...FunctionScopeSchema.options],
-  safeMode: false,
   origin: 'agent',
 }
 
@@ -141,7 +140,6 @@ function registryWith(options: {
       ...(options.recurrence === undefined ? {} : { recurrence: options.recurrence }),
       ...(options.evidenceBlobs === undefined ? {} : { evidenceBlobs: options.evidenceBlobs }),
     }),
-    resolveExecutionContext: () => 'local-headless',
     auditSink: { appendGuardrailAudit() {} },
   })
 }

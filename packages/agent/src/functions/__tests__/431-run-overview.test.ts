@@ -51,10 +51,10 @@ import type {
 const OVERVIEW = 'runs.overview'
 const RUN_ID = 'run-431-overview'
 
+// 2026-10-01 (432-29, D-12): the retired `grantedScopes` and `safeMode` caller fields and the
+// retired `resolveExecutionContext` registry option are dropped; nothing read them.
 const READER: FunctionCaller = {
   surface: 'test',
-  grantedScopes: ['read'],
-  safeMode: false,
   origin: 'agent',
 }
 
@@ -190,7 +190,6 @@ function harness(scene: Scene) {
   const registry = createFunctionRegistry({
     deps,
     auditSink: NO_AUDIT,
-    resolveExecutionContext: () => 'local-interactive',
   })
   return {
     registry,
@@ -510,7 +509,6 @@ function multiHarness(scene: Multi, options: MultiOptions = {}) {
   const registry = createFunctionRegistry({
     deps,
     auditSink: NO_AUDIT,
-    resolveExecutionContext: () => 'local-interactive',
   })
   const call = (id: string, input: unknown) => invokeFunction(registry, id, input, READER)
   return {

@@ -8,7 +8,6 @@ import {
   RunsListInputSchema,
   RunsListOutputContract,
   RunsListOutputSchema,
-  FunctionScopeSchema,
   createOutputContract,
 } from '@vostride/agent-qa-schema'
 import type { FunctionCaller } from '@vostride/agent-qa-schema'
@@ -27,15 +26,16 @@ const TARGET = { target: 'draft-2020-12' } as const
 
 const auditSink: AuditSink = { appendGuardrailAudit() {} }
 
+// 2026-10-01 (432-29, D-12): the retired `resolveExecutionContext` option and the retired
+// `grantedScopes`/`safeMode` caller fields are dropped; nothing read them.
 function options(deps: unknown = {}): CreateFunctionRegistryOptions {
   return {
     deps: deps as FunctionDeps,
     auditSink,
-    resolveExecutionContext: () => 'local-interactive',
   }
 }
 
-const reader: FunctionCaller = { surface: 'test', grantedScopes: ['read'], safeMode: false, origin: 'agent' }
+const reader: FunctionCaller = { surface: 'test', origin: 'agent' }
 
 const handoff = (runId: string, endedAt: number) => ({
   runId,
@@ -61,7 +61,6 @@ const numbered = z.strictObject({ count: z.string().transform((value) => Number(
 const numberedSpec: FunctionSpec<Record<string, never>, { count: number }> = {
   id: 'synthetic.numbered',
   summary: 'Synthetic op whose output transform changes the wire type.',
-  requiredScopes: ['read'],
   resultKind: 'unary',
   input: z.strictObject({}),
   output: numbered,
@@ -106,7 +105,7 @@ describe('OUTPUT-DECLARATION-IDENTITY', () => {
   })
 
   it('leaves every op without a companion on its established projection', () => {
-    const declared = createFunctionRegistry(options()).list({ ...reader, grantedScopes: FunctionScopeSchema.options })
+    const declared = createFunctionRegistry(options()).list(reader)
     for (const declaration of declared) {
       if (declaration.id === 'runs.list') continue
       expect(declaration.output.$schema, declaration.id).toBe('https://json-schema.org/draft/2020-12/schema')
