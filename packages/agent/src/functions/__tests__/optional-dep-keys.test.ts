@@ -3,7 +3,9 @@ import { describe, expect, it } from 'vitest'
 import { runsMarkPreviewSpec } from '../ops/runs-mark-preview'
 import { runsMarkSpec } from '../ops/runs-mark'
 import { runsMarksHistorySpec } from '../ops/runs-marks-history'
+import * as agent from '../../index.js'
 import { OPTIONAL_FUNCTION_DEP_KEYS } from '../spec'
+import type { FunctionDeps, OptionalFunctionDepKey } from '../spec'
 
 describe('optional function dep keys (419 GATE3-01)', () => {
   it('pins every host binding by name and declaration order', () => {
@@ -89,5 +91,41 @@ describe('C432-GRANT-DEPS-ABSENT', () => {
     expect(roster.filter(key => /grant/i.test(key)), 'a grant-shaped binding replaced it').toEqual([])
     expect(roster).toHaveLength(23)
     expect(EXPECTED_BINDINGS).toHaveLength(23)
+  })
+})
+
+// 2026-10-02, 432-39 (D-03/D-10/D-12/D-15): C432-OPTIONAL-DEPS-EXACT. The optional roster, the
+// `FunctionDeps` interface and the agent barrel agree EXACTLY — compile-checked against the type and
+// measured against the real runtime object — and no binding is a permission, proposal, confirm or
+// undo port. The four required ports are spelled by hand beside the 23 optional ones.
+type ExactKeys<T, K extends PropertyKey> = [keyof T] extends [K]
+  ? ([K] extends [keyof T] ? true : false)
+  : false
+type OptionalKeysOf<T> = { [K in keyof T]-?: undefined extends T[K] ? K : never }[keyof T]
+type Same<A, B> = [A] extends [B] ? ([B] extends [A] ? true : false) : false
+
+const REQUIRED_DEP_KEYS = ['runs', 'knowledge', 'config', 'entities'] as const
+const DEPS_TYPE_IS_EXACT: ExactKeys<
+  FunctionDeps,
+  (typeof REQUIRED_DEP_KEYS)[number] | (typeof OPTIONAL_FUNCTION_DEP_KEYS)[number]
+> = true
+const OPTIONAL_TYPE_IS_ROSTER: Same<OptionalKeysOf<FunctionDeps>, OptionalFunctionDepKey> = true
+
+describe('C432-OPTIONAL-DEPS-EXACT', () => {
+  it('C432-OPTIONAL-DEPS-EXACT: the roster, the deps type and the agent barrel agree exactly', () => {
+    expect([DEPS_TYPE_IS_EXACT, OPTIONAL_TYPE_IS_ROSTER]).toEqual([true, true])
+    expect([...OPTIONAL_FUNCTION_DEP_KEYS]).toEqual(EXPECTED_BINDINGS)
+    // The barrel publishes the SAME runtime object, not a copy that could drift.
+    expect(agent.OPTIONAL_FUNCTION_DEP_KEYS).toBe(OPTIONAL_FUNCTION_DEP_KEYS)
+  })
+
+  it('C432-OPTIONAL-DEPS-EXACT: no binding is a permission, proposal, confirm or undo port', () => {
+    const roster: readonly string[] = [...REQUIRED_DEP_KEYS, ...OPTIONAL_FUNCTION_DEP_KEYS]
+    expect(roster).toHaveLength(27)
+    // `authoringScope` is the authored-product scope port, not a permission scope, so the census
+    // names the permission words rather than every `scope`.
+    expect(roster.filter(key =>
+      /grant|requiredScope|credential|approv|proposal|confirm|undo|apply|trust|safeMode/i.test(key)))
+      .toEqual([])
   })
 })
