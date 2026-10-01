@@ -99,7 +99,8 @@ async function startFixture(
       ...extraDeps?.(runId),
     } as FunctionDeps,
     auditSink: { appendGuardrailAudit() {} },
-    resolveExecutionContext: () => 'local-interactive',
+    // 2026-10-02 (432-36, D-12): no `resolveExecutionContext` registry option; the registry reads
+    // no context (432-20).
   })
   const unmask = createDisplayUnmasker({
     agentQaRoot: root, secretStores: () => [store], env: () => ({}), authStatePayloads: () => [],

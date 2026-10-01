@@ -12,7 +12,6 @@ import { DashboardDatabase, createDashboardRunDetailReader, createDashboardRunIn
 import { asRunId, AriaEvidenceDocumentSchema, ConsoleEvidenceDocumentSchema, screenStateHash } from '@vostride/agent-qa-schema'
 import { RunDetailProjectionSchema } from '@vostride/agent-qa-schema'
 import { createFunctionRegistry, invokeFunction, RUNS_DETAIL_FUNCTION_ID, type FunctionDeps } from '@vostride/agent-qa-agent'
-import type { FunctionCaller } from '@vostride/agent-qa-schema'
 import type { RunEventEnvelope, StepFinalizedPayload } from '@vostride/agent-qa-schema'
 import { produceDirectRunMembers, produceSuiteRunMembers } from '../commands/run.js'
 import type { RunInvocationInputs, SuiteRunMemberProductionInput } from '../commands/run.js'
@@ -198,11 +197,13 @@ for (const path of ['COMPOSED', 'DIRECT'] as const) {
         const registry = createFunctionRegistry({
           deps: { runDetail: createDashboardRunDetailReader(coldDb) } as FunctionDeps,
           auditSink: { appendGuardrailAudit() {} },
-          resolveExecutionContext: () => 'local-interactive',
+          // 2026-10-02 (432-36, D-12): no `resolveExecutionContext` registry option, and the caller
+          // carries no `grantedScopes`/`safeMode` (or the cast that carried them); the registry
+          // reads neither (432-20).
         })
         const detail = RunDetailProjectionSchema.parse(await invokeFunction(
           registry, RUNS_DETAIL_FUNCTION_ID, { runId: asRunId(runId) },
-          { surface: 'cli', grantedScopes: ['read'], safeMode: false, origin: 'human' } as FunctionCaller,
+          { surface: 'cli', origin: 'human' },
         ))
         const coldEntry = detail.steps[0]?.evidence?.console
         expect(coldEntry).toEqual(entry)
@@ -318,11 +319,13 @@ async function ariaReadback(mode: 'two' | 'empty' | 'missing' | 'mobile' | 'chil
         evidenceBlobs: { read: blobRead, has: async (_runId: unknown, sha: string) => reopened.hasBlob(sha) ? 'found' : 'blob_absent' },
       } as unknown as FunctionDeps,
       auditSink: { appendGuardrailAudit() {} },
-      resolveExecutionContext: () => 'local-interactive',
+      // 2026-10-02 (432-36, D-12): no `resolveExecutionContext` registry option, and the caller
+      // carries no `grantedScopes`/`safeMode` (or the cast that carried them); the registry reads
+      // neither (432-20).
     })
     const detail = RunDetailProjectionSchema.parse(await invokeFunction(
       registry, RUNS_DETAIL_FUNCTION_ID, { runId: asRunId(runId) },
-      { surface: 'cli', grantedScopes: ['read'], safeMode: false, origin: 'human' } as FunctionCaller,
+      { surface: 'cli', origin: 'human' },
     ))
     expect(forbidden).not.toHaveBeenCalled()
     expect(blobRead).not.toHaveBeenCalled()

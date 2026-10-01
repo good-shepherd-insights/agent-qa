@@ -437,11 +437,16 @@ export type McpCallOutcome = McpCallAnswered | McpCallRefused
 export async function driveMcpCall(input: {
   readonly toolName: string
   readonly args: Record<string, unknown>
-  readonly grantedScopes: readonly FunctionScope[]
-  /** The context this call's policy decision is taken in. Injected, never ambient (Pitfall 3). */
-  readonly executionContext?: ExecutionContext
+  /**
+   * 2026-10-02 (432-36, D-12): optional, and nothing decides on it. The retired scope set is only
+   * handed through to the server's caller as a deliberate smuggle, so a cell that passes `[]` still
+   * calls as a grantless caller and proves the scope set is unread (C432-TOKENLESS-CATALOG). Absent,
+   * the server's caller takes the enumeration's default. Goes with the field in 432-39.
+   */
+  readonly grantedScopes?: readonly FunctionScope[]
+  // 2026-10-02 (432-36, D-12): no `executionContext` input. It fed only the registry's retired
+  // `resolveExecutionContext` option, which reads no context since 432-20, and no cell passed it.
 }): Promise<McpCallOutcome> {
-  const executionContext = input.executionContext ?? CONFORMANCE_EXECUTION_CONTEXT
   return withMcpClient(async (client: Client): Promise<McpCallOutcome> => {
     try {
       const result = await client.callTool({ name: input.toolName, arguments: input.args })
@@ -464,5 +469,5 @@ export async function driveMcpCall(input: {
       }
     }
   // Dispatch policy cells measure the anonymous ask/refusal, not the credentialed census.
-  }, input.grantedScopes, { resolveExecutionContext: () => executionContext }, false)
+  }, input.grantedScopes, {}, false)
 }

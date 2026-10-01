@@ -29,10 +29,10 @@ import { describe, expect, it } from 'vitest'
 
 import { createMaskedConfigReader } from '../local-agent-host.js'
 
+// 2026-10-02 (432-36, D-12): no `grantedScopes` or `safeMode` on the caller; the registry reads
+// neither (432-20).
 const CALLER: FunctionCaller = {
   surface: 'cli',
-  grantedScopes: ['read'],
-  safeMode: false,
   origin: 'agent',
 }
 
@@ -102,7 +102,8 @@ async function cardFor(dashboard: Record<string, unknown>): Promise<EntityCard> 
   const registry = createFunctionRegistry({
     deps: depsFor(writeConfig(dashboard)),
     auditSink: AUDIT_SINK,
-    resolveExecutionContext: () => 'local-headless',
+    // 2026-10-02 (432-36, D-12): no `resolveExecutionContext` registry option; the registry reads
+    // no context (432-20).
   })
   const result = await invokeFunction(
     registry,
