@@ -9,20 +9,29 @@
 // port and nothing to await can have an exhaustive table written over it for the cost of a test
 // file rather than a store.
 
+import { createMaskingContext, setActiveMaskingContextResolver } from '@vostride/agent-qa-safety'
+import {
+  CURRENT_HANDOFF_SCHEMA_VERSION,
+  MASKED_RESOLVED_CONFIG_SCHEMA_VERSION,
+} from '@vostride/agent-qa-schema'
 import type {
+  CompletedRunHandoff,
   EvidenceBlobPresence,
+  FunctionCaller,
   RunDetailRows,
   RunDetailStep,
   RunDetailSubAction,
   RunId,
 } from '@vostride/agent-qa-schema'
-import { describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
+import { invokeFunction } from '../functions/invoke.js'
 import {
   RUNS_DETAIL_FUNCTION_ID,
   projectRunTokenTotals,
   runsDetailSpec,
 } from '../functions/ops/runs-detail.js'
+import { createFunctionRegistry } from '../functions/registry.js'
 import type { FunctionDeps } from '../functions/spec.js'
 
 const RUN_ID = 'run-alpha' as RunId
@@ -332,5 +341,128 @@ describe('runs.detail — presence per artifact ref (D-17)', () => {
       { id: `decision-screenshot:${SHA_B}`, sha: SHA_B, evidenceIncomplete: true, present: false },
     ])
     expect(seen.sort()).toEqual([SHA_A, SHA_B])
+  })
+})
+
+// ---- C432-ALL-OPS-AVAILABLE (432-27, D-12) ------------------------------------------------------
+//
+// `runs.detail` and `runs.overview` once required `read`. Through a real registry and
+// `invokeFunction`, retried from three callers that differ in surface and origin and carry no
+// scope, each is served every time: every attempt reads the same ports the same number of times,
+// every caller gets the same projection, and no audit row is written.
+describe('C432-ALL-OPS-AVAILABLE: the 432-27 run reads serve every caller', () => {
+  beforeEach(() => setActiveMaskingContextResolver(() => createMaskingContext()))
+  afterEach(() => setActiveMaskingContextResolver(() => undefined))
+
+  it('C432-ALL-OPS-AVAILABLE: a retried runs.detail and runs.overview are served alike to every caller', async () => {
+    const document: CompletedRunHandoff = {
+      schemaVersion: CURRENT_HANDOFF_SCHEMA_VERSION,
+      runId: RUN_ID,
+      scope: { tier: 'product', key: 'shop' },
+      buildOrdinal: 5,
+      executionContext: 'local-headless',
+      aggregateVerdict: 'passed',
+      configDigests: { suiteConfigDigest: 'suite', testConfigDigest: 'test' },
+      startedAt: 1_000,
+      endedAt: 9_000,
+      tests: [{
+        testId: 'test-checkout', testName: 'Checkout smoke', filePath: 'tests/checkout.yaml',
+        testIndex: 0, outcome: 'passed',
+        steps: [{
+          stepIndex: 0, stepText: 'Open the home page', cacheStatus: 'miss',
+          servedBrief: {
+            scope: { tier: 'product', key: 'shop' }, asOfBuild: 5, budget: 400, truncation: '',
+            channel1: [], channel2: [], channel3: [], briefDigest: 'brief-0',
+          },
+          subActions: [],
+          verifierVerdict: { pass: true, reasoning: 'ok' },
+        }],
+      }],
+    }
+    const rows: RunDetailRows = {
+      runId: RUN_ID,
+      members: [{ testIndex: 0, testId: 'test-checkout', name: 'Checkout smoke', attempts: 1,
+        outcome: 'passed' }],
+      steps: [step({ stepText: 'Open the home page', status: 'passed',
+        tokenUsage: { promptTokens: 10, completionTokens: 2, totalTokens: 12 } })],
+      subActions: [],
+    }
+    const reads = { detail: 0, handoff: 0 }
+    const deps: FunctionDeps = {
+      runs: {
+        list: () => Promise.resolve([document]),
+        get: (runId) => {
+          reads.handoff += 1
+          return Promise.resolve(runId === RUN_ID ? document : undefined)
+        },
+        readEvents: () => Promise.resolve([]),
+        readStepEvidence: () => Promise.resolve({ kind: 'run-not-recorded' } as const),
+      },
+      knowledge: {
+        listBundles: () => Promise.resolve([]),
+        inspectRecords: () => Promise.resolve([]),
+        diffSince: () => Promise.resolve([]),
+        showRecord: ({ recordId }) =>
+          Promise.resolve({ kind: 'not-found', schemaVersion: 1, recordId }),
+      },
+      entities: {
+        resolve: () => Promise.resolve({ kind: 'none' as const, reason: 'no-match' as const }),
+        get: () => Promise.resolve(undefined),
+      },
+      config: {
+        getMasked: () => Promise.resolve({
+          schemaVersion: MASKED_RESOLVED_CONFIG_SCHEMA_VERSION,
+          configPath: 'agent-qa.config.yaml',
+          entries: [],
+        }),
+      },
+      runDetail: {
+        read: (runId) => {
+          reads.detail += 1
+          return Promise.resolve(runId === RUN_ID ? rows : undefined)
+        },
+      },
+    }
+    const auditRows: unknown[] = []
+    const registry = createFunctionRegistry({
+      deps,
+      auditSink: { appendGuardrailAudit(row: unknown) { auditRows.push(row) } },
+    })
+    const callers: readonly FunctionCaller[] = [
+      { surface: 'test', origin: 'agent' },
+      { surface: 'cli', origin: 'human' },
+      { surface: 'mcp', origin: 'agent' },
+    ]
+
+    const answers: unknown[] = []
+    const perAttempt: { detail: number; handoff: number }[] = []
+    for (const caller of callers) {
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        const before = { ...reads }
+        answers.push(await invokeFunction(registry, 'runs.detail', { runId: RUN_ID }, caller))
+        answers.push(await invokeFunction(registry, 'runs.overview', { runId: RUN_ID }, caller))
+        perAttempt.push({
+          detail: reads.detail - before.detail,
+          handoff: reads.handoff - before.handoff,
+        })
+      }
+    }
+
+    expect(perAttempt[0]!.detail).toBe(2)
+    expect(perAttempt[0]!.handoff).toBeGreaterThan(0)
+    expect(perAttempt).toEqual(Array.from({ length: 6 }, () => perAttempt[0]))
+    expect(answers).toEqual(Array.from({ length: 6 }, () => answers.slice(0, 2)).flat())
+    expect(answers[0]).toMatchObject({
+      runId: RUN_ID,
+      members: [{ testIndex: 0, testId: 'test-checkout' }],
+      tokens: { measuredSteps: 1, unmeasuredSteps: 0, totalTokens: 12 },
+    })
+    expect(answers[1]).toMatchObject({
+      runId: RUN_ID,
+      aggregateVerdict: 'passed',
+      tests: [{ testIndex: 0, testId: 'test-checkout', name: { text: 'Checkout smoke' },
+        steps: [{ stepIndex: 0, label: { text: 'Open the home page' }, status: 'passed' }] }],
+    })
+    expect(auditRows).toEqual([])
   })
 })

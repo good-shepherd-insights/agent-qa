@@ -4,8 +4,12 @@
 // directly against fake ports so the projection logic is pinned independently of the gate,
 // the registry, and any host access — `invoke-function.test.ts` owns the pipeline itself.
 
+import { scanConstructedArtifact } from '@vostride/agent-qa-safety'
 import type {
   CompletedRunHandoff,
+  ConfigChange,
+  ConfigChangeOutput,
+  FunctionCaller,
   KnowledgeBundleSummary,
   KnowledgeGatesListResult,
   MaskedResolvedConfig,
@@ -19,6 +23,7 @@ import {
 } from '@vostride/agent-qa-schema'
 import { describe, expect, it } from 'vitest'
 
+import { invokeFunction } from '../functions/invoke.js'
 import { authoringDraftEditSpec } from '../functions/ops/authoring-draft-edit.js'
 import { authoringDraftWriteSpec } from '../functions/ops/authoring-draft-write.js'
 import { authoringFunnelGetSpec } from '../functions/ops/authoring-funnel-get.js'
@@ -53,6 +58,7 @@ import { runsMarkPreviewSpec } from '../functions/ops/runs-mark-preview.js'
 import { runsMarksHistorySpec } from '../functions/ops/runs-marks-history.js'
 import { runsOverviewSpec } from '../functions/ops/runs-overview.js'
 import { runsStartSpec } from '../functions/ops/runs-start.js'
+import { createFunctionRegistry } from '../functions/registry.js'
 import type { FunctionDeps } from '../functions/spec.js'
 
 function bundle(overrides: Partial<KnowledgeBundleSummary> = {}): KnowledgeBundleSummary {
@@ -607,5 +613,124 @@ describe('C432-DECLARATION-KEYS: the 432-27 op specs carry no permission metadat
     expect(migrated.filter(({ spec }) => 'disclose' in spec).map(({ spec }) => spec.id)).toEqual([])
     expect(migrated.filter(({ spec }) => 'outputRepresentation' in spec).map(({ spec }) => spec.id))
       .toEqual([])
+  })
+})
+
+// ---- C432-ALL-OPS-AVAILABLE (432-27, D-12) ------------------------------------------------------
+//
+// Unlike the cells above, these go through a real registry and `invokeFunction`, because the claim
+// is about who may call. `knowledge.gates.list` once required `read` and `config.auth.set`
+// `config-write`. Retried from three callers that differ in surface and origin and carry no scope,
+// both are served every time: each port is reached once per attempt with what the caller sent,
+// every caller gets the same answer, and no audit row is written. config.auth.set's reference law
+// still refuses a value that is not a name, for every caller alike, before the writer is reached.
+describe('C432-ALL-OPS-AVAILABLE: the 432-27 gate read and auth writer serve every caller', () => {
+  it('C432-ALL-OPS-AVAILABLE: a retried knowledge.gates.list and config.auth.set are served alike to every caller', async () => {
+    const encoder = new TextEncoder()
+    const decoder = new TextDecoder()
+    const configFile = 'agent-qa.config.yaml'
+    const committed = 'registry:\n  targets:\n    shop:\n      platform: web\n'
+    const found: KnowledgeGatesListResult = {
+      kind: 'found', recordId: 'rec-1', product: 'shop', recordKind: 'fact', status: 'candidate',
+      strongestPromotionPath: 'deterministic-verdict-floor',
+      lines: [stampReceiptDigest({ schemaVersion: 1, kind: 'promotion',
+        candidateId: 'rec-1', promotionPath: 'deterministic-verdict-floor',
+        citedReceiptDigests: [], producedAtOrdinal: 43, producedBy: { opId: 'promote' } })],
+      standing: [], live: { verdict: 'promote', promotionPath: 'deterministic-verdict-floor',
+        citedReceiptDigests: [] }, posture: 'absent',
+    }
+    const candidates: string[] = []
+    const fieldsSet: { path: string; value: unknown }[] = []
+    const written: (readonly ConfigChange[])[] = []
+    let validations = 0
+    const configPorts = {
+      configFiles: {
+        read: () => Promise.resolve({
+          configFile, hooksFile: 'agent-qa.hooks.yaml',
+          files: [{ path: configFile, bytes: encoder.encode(committed) }],
+        }),
+        inspect: ({ paths }: { paths: readonly string[] }) => Promise.resolve(paths.map((path) =>
+          path.startsWith('registry.targets')
+            ? { path, present: true, kind: 'map', keys: ['shop'] }
+            : { path, present: false })),
+        setField: (
+          { bytes, path, value }: { bytes?: Uint8Array; path: string; value: unknown },
+        ) => {
+          fieldsSet.push({ path, value })
+          const before = bytes === undefined ? '' : decoder.decode(bytes)
+          const after = `${before}use:\n  authState: ${String(value)}\n`
+          return Promise.resolve({ bytes: encoder.encode(after) })
+        },
+        mintHookId: () => 'h_unused',
+      },
+      configValidate: {
+        validate: () => {
+          validations += 1
+          return Promise.resolve({ ok: true as const })
+        },
+      },
+      configScan: { scan: (parts: Parameters<typeof scanConstructedArtifact>[0]) =>
+        scanConstructedArtifact(parts, {}) },
+      configWrite: {
+        applyFields: ({ changes }: { changes: readonly ConfigChange[] }) => {
+          written.push(changes)
+          return Promise.resolve({ kind: 'applied' as const, file: configFile,
+            revision: 'revision-after', baseRevision: 'revision-before' })
+        },
+        publishFiles: () =>
+          Promise.reject(new Error('config.auth.set publishes field changes only')),
+      },
+    } as unknown as Partial<FunctionDeps>
+    const auditRows: unknown[] = []
+    const registry = createFunctionRegistry({
+      deps: fakeDeps({
+        knowledge: fakeKnowledge({
+          gateReceipts: ({ candidateId }) => {
+            candidates.push(candidateId)
+            return Promise.resolve(candidateId === 'rec-1'
+              ? found
+              : { kind: 'not-found', recordId: candidateId })
+          },
+        }),
+        ...configPorts,
+      }),
+      auditSink: { appendGuardrailAudit(row: unknown) { auditRows.push(row) } },
+    })
+    const callers: readonly FunctionCaller[] = [
+      { surface: 'test', origin: 'agent' },
+      { surface: 'cli', origin: 'human' },
+      { surface: 'mcp', origin: 'agent' },
+    ]
+
+    const answers: unknown[] = []
+    for (const caller of callers) {
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        answers.push(await invokeFunction(registry, 'knowledge.gates.list',
+          { recordId: 'rec-1' }, caller))
+        answers.push(await invokeFunction(registry, 'knowledge.gates.list',
+          { recordId: 'rec-9' }, caller))
+        answers.push(await invokeFunction(registry, 'config.auth.set',
+          { target: 'shop', authStateName: 'shop-default' }, caller))
+        answers.push(await invokeFunction(registry, 'config.auth.set',
+          { target: 'shop', authStateName: 'not a name; rm -rf' }, caller))
+      }
+    }
+
+    expect(candidates).toEqual(Array.from({ length: 6 }, () => ['rec-1', 'rec-9']).flat())
+    expect(answers).toEqual(Array.from({ length: 6 }, () => answers.slice(0, 4)).flat())
+    expect(answers[0]).toEqual(found)
+    expect(answers[1]).toEqual({ kind: 'not-found', recordId: 'rec-9' })
+    const applied = answers[2] as ConfigChangeOutput
+    expect(applied).toMatchObject({
+      outcome: 'applied', files: [configFile], fields: ['use.authState'],
+    })
+    expect(answers[3]).toMatchObject({ outcome: 'refused', reason: 'refs-only' })
+    // Only the named reference reaches construction, validation and the writer, once per attempt.
+    expect(fieldsSet).toEqual(Array.from({ length: 6 }, () =>
+      ({ path: 'use.authState', value: 'shop-default' })))
+    expect(validations).toBe(6)
+    expect(written).toEqual(Array.from({ length: 6 }, () =>
+      [{ op: 'set', path: ['use', 'authState'], value: 'shop-default' }]))
+    expect(auditRows).toEqual([])
   })
 })
