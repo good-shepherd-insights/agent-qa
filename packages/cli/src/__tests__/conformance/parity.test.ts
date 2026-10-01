@@ -2442,6 +2442,7 @@ interface ParityProject {
   readonly configPath: string
   readonly agentQaRoot: string
   readonly productionTest: string
+  readonly localTest: string
 }
 
 /** One project with one production target, one local target and no `allowProduction`. */
@@ -2462,10 +2463,12 @@ function parityProject(): ParityProject {
     `    ${PARITY_PRODUCTION_TARGET}:`,
     '      platform: web',
     '      url: http://127.0.0.1:9/app',
+    '      product: parity-product',
     '      environment: production',
     '    local-site:',
     '      platform: web',
     '      url: http://127.0.0.1:9/local',
+    '      product: parity-product',
     '      environment: local',
     'use:',
     '  timeout:',
@@ -2487,11 +2490,20 @@ function parityProject(): ParityProject {
     '  - Verify the page says "Example"',
     '',
   ].join('\n'))
+  writeFileSync(join(root, 'tests', 'local.yaml'), [
+    `test-id: ${generateTestId()}`,
+    'name: the local test',
+    'target: local-site',
+    'steps:',
+    '  - Verify the page says "Example"',
+    '',
+  ].join('\n'))
   return {
     root,
     configPath: join(root, 'agent-qa.config.yaml'),
     agentQaRoot: join(root, '.agent-qa'),
     productionTest: 'tests/prod.yaml',
+    localTest: 'tests/local.yaml',
   }
 }
 
@@ -2578,6 +2590,31 @@ describe('C432-CONFORMANCE-PARITY: one call on the chat and MCP doors, and produ
       expect(runDirectories(project), 'a refused production run left a run directory').toEqual([])
       expect(onChat.auditRows, 'chat: an approval row was written').toEqual([])
       expect(`${onMcp.text}\n${onChat.stdout}`).not.toMatch(/\bconfirm|\bapprov|\bgrant|--yes\b/iu)
+    } finally {
+      rmSync(project.root, { recursive: true, force: true })
+    }
+  }, 120_000)
+
+  // EDGE-04 at the two doors (432-40 task 2): a request that mixes a local and a production member
+  // is refused whole, before the local member runs, and the sentence names only the production one.
+  it('C432-CONFORMANCE-PARITY: a run mixing a local and a production member is refused whole on both doors, naming only the production target', async () => {
+    const project = parityProject()
+    try {
+      const patterns = [project.localTest, project.productionTest]
+      const onMcp = await callOnProjectMcp(project, 'agent_qa_start_run', { patterns })
+      expect(onMcp.isError, `mcp ran a mixed request: ${onMcp.text}`).toBe(true)
+      expect(onMcp.text).toContain(buildProductionRefusal([PARITY_PRODUCTION_TARGET]))
+      expect(onMcp.text, 'mcp: the local member is named as production').not.toContain('"local-site"')
+
+      const onChat = await driveChatLines(
+        [genericFnClause('runs.start', { patterns })],
+        'local-interactive',
+        { configPath: project.configPath },
+      )
+      const receipt = onChat.receipts.find((candidate) => candidate.functionId === 'runs.start')
+      expect(receipt?.status, 'chat: a mixed request was executed').toBe('failed')
+      expect(receipt?.outcome).toBe('RunDeniedError')
+      expect(runDirectories(project), 'the local member of a refused request ran').toEqual([])
     } finally {
       rmSync(project.root, { recursive: true, force: true })
     }

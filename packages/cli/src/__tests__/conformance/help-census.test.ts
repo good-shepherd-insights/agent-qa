@@ -1090,6 +1090,31 @@ describe('C432-GUIDANCE-DIRECT: current guidance describes changes that apply in
     expect(knowledgeRuleFindings({ name: 'planted', body: 'Edit the fact or the evidence.' })).toHaveLength(4)
   })
 
+  // The texts 432-40 replaced, as a historical witness: each sentence the census would have to
+  // miss for the old wording to return is named by it. Assembled from fragments so this file's own
+  // body is not a guidance subject that carries them.
+  it('C432-GUIDANCE-DIRECT: the replaced README and authoring wording is named by the census', () => {
+    const replaced = approvalFindings([
+      { name: 'old README', body: ['content humans write or ', 'approve', ' — QA rules.'].join('') },
+      { name: 'old README staging', body: ['pending skill writes awaiting ', 'approval', '.'].join('') },
+      { name: 'old README pointer', body: ['the agent-qa design docs: `', 'spec/v2', '/knowledge-store.md`'].join('') },
+      { name: 'old authoring', body: ['`tools/list` names every tool your ', 'grants', ' let you see'].join('') },
+      { name: 'old authoring posture', body: ['default scopes, ', 'safe-mode', ' state'].join('') },
+      { name: 'old authoring inbox', body: ['there is no apply step and no review ', 'inbox'].join('') },
+      { name: 'old migration route', body: ['the change arrives as a reviewable ', 'proposal'].join('') },
+    ])
+    expect(replaced).toEqual([
+      'old README: "approve" describes an approval',
+      'old README staging: "approval" describes an approval',
+      'old README staging: "pending" describes a pending review',
+      'old README pointer: "spec/v2" describes a design-doc path',
+      'old authoring: "grants" describes a grant',
+      'old authoring posture: "default scopes" describes a caller credential',
+      'old authoring inbox: "inbox" describes an inbox',
+      'old migration route: "proposal" describes a proposal',
+    ])
+  })
+
   it('C432-GUIDANCE-DIRECT: the authoring skill names the change tools and the written-test receipt, and no review step', () => {
     const authoring = directGuidanceSubjects().filter((subject) =>
       subject.name.endsWith('/agent-qa-authoring/SKILL.md'))
