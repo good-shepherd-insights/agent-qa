@@ -297,7 +297,8 @@ describe('C432-KNOWLEDGE-CHANGE-OPS: the three knowledge changes apply in the ca
 })
 
 describe('C432-RUNTIME-SETS: the registry carries the direct knowledge ids and not the retired ones', () => {
-  it('C432-RUNTIME-SETS: knowledge ids registered are exactly the reads, the three changes and the pre-432 apply', () => {
+  // 2026-10-01 (432-17, D-05): the pre-432 apply is deleted with the inbox, and leaves the set.
+  it('C432-RUNTIME-SETS: knowledge ids registered are exactly the reads and the three changes', () => {
     const ids = registry(recordingPort().port).list(TOKENLESS_CALLER).map((row) => row.id)
     const knowledge = ids.filter((id) => id.startsWith('knowledge.')).sort()
     expect(knowledge).toEqual([
@@ -306,12 +307,12 @@ describe('C432-RUNTIME-SETS: the registry carries the direct knowledge ids and n
       'knowledge.bundles.list',
       'knowledge.forget',
       'knowledge.gates.list',
-      'knowledge.proposal.apply',
       'knowledge.record.show',
       'knowledge.records.diff',
       'knowledge.records.inspect',
       'knowledge.reject',
     ])
     for (const retired of RETIRED_IDS) expect(ids, retired).not.toContain(retired)
+    expect(ids).not.toContain('knowledge.proposal.apply')
   })
 })

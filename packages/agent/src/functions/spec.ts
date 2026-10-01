@@ -34,8 +34,6 @@ import type {
   KnowledgeGatesListResult,
   KnowledgeForgetInput,
   KnowledgeMarkInput,
-  KnowledgeApplyOutcomeKind,
-  KnowledgeProposalV1,
   KnowledgeRecordShowInput,
   KnowledgeRecordShowResult,
   KnowledgeTargetRef,
@@ -48,7 +46,6 @@ import type {
   EvidenceBlobPresence,
   MaskedResolvedConfig,
   PostProcessingStageDetail,
-  ProposalsInboxPort,
   QuarantineOperationsPort,
   RecordChange,
   RecordedTargets,
@@ -64,22 +61,17 @@ import type {
 
 import type { AuthoringFunnelPortLike } from '../authoring/funnel.js'
 import type {
-  ConfigApplyPortLike,
   ConfigFilesPortLike,
-  ConfigProposalsWritePortLike,
   ConfigScanPortLike,
   ConfigScaffoldContentPortLike,
-  ConfigUndoSourcePortLike,
   ConfigValidatePortLike,
   ConfigWritePortLike,
 } from '../config-mutation/ports.js'
 import type { CapabilityCatalogPort } from '../explain/port.js'
 import type { EvaluateDraftPorts } from '../authoring/verify-draft.js'
 import type {
-  AuthoringProposalsWritePortLike,
   AuthoringReadPortLike,
   AuthoringScopePortLike,
-  DraftApplyPortLike,
   DraftShelfPortLike,
   ParsedDraftLike,
 } from '../authoring/ports.js'
@@ -144,7 +136,6 @@ export type OptionalFunctionDepKey =
   | 'analysis'
   | 'recurrence'
   | 'quarantine'
-  | 'proposalsInbox'
   | 'standingGrants'
   | 'chatTurn'
   | 'draftEvaluation'
@@ -152,14 +143,9 @@ export type OptionalFunctionDepKey =
   | 'authoringScope'
   | 'draftShelf'
   | 'authoringFunnel'
-  | 'draftApply'
-  | 'authoringProposals'
   | 'configFiles'
   | 'configValidate'
-  | 'configApply'
-  | 'configProposals'
   | 'configScan'
-  | 'configUndoSource'
   | 'scaffoldContent'
   | 'capabilityCatalog'
   | 'feedback' // 2026-09-08, 419 GATE3-01: the Gate-3 mark port
@@ -180,7 +166,6 @@ export const OPTIONAL_FUNCTION_DEP_KEYS = [
   'analysis',
   'recurrence',
   'quarantine',
-  'proposalsInbox',
   'standingGrants',
   'chatTurn',
   'draftEvaluation',
@@ -188,14 +173,9 @@ export const OPTIONAL_FUNCTION_DEP_KEYS = [
   'authoringScope',
   'draftShelf',
   'authoringFunnel',
-  'draftApply',
-  'authoringProposals',
   'configFiles',
   'configValidate',
-  'configApply',
-  'configProposals',
   'configScan',
-  'configUndoSource',
   'scaffoldContent',
   'capabilityCatalog',
   'feedback',
@@ -769,9 +749,8 @@ export interface KnowledgeReaderPort {
  *
  * 2026-09-30, 432-12 (D-04/D-05/D-09): `change` applies an explicit accept, reject or forget in the
  * call, through the explicit writer, in every execution context, under the writer lease. It is the
- * member every change op reaches. `propose` and `apply` remain only for the pre-432 records already
- * on disk (`knowledge.proposal.apply` and the inbox's accept); no op reaches `propose`, and 432-17
- * deletes both with the inbox.
+ * member every change op reaches. 2026-10-01 (432-17): `propose` and `apply` are deleted with the
+ * proposal inbox; old proposal files are never read again (D-22).
  */
 export interface KnowledgeReviewPort {
   /**
@@ -782,26 +761,6 @@ export interface KnowledgeReviewPort {
    * A repeated `operationId` is the same change and lands once; an absent one is minted.
    */
   change(request: KnowledgeChangeRequest): Promise<KnowledgeChangeOutput>
-  /**
-   * Compute what a verb WOULD change and mint a proposal for it. Commits nothing.
-   *
-   * Pre-432 only: no op reaches it since 432-12, and 432-17 deletes it with the inbox.
-   */
-  propose(
-    request: KnowledgeProposalRequest,
-    /**
-     * WHO is proposing (391 D-08 / D-15) — the emitting op's id, and the run when the caller has
-     * one. Optional so a host that genuinely does not know an emitter writes the bare 387
-     * document instead of a fabricated attribution.
-     */
-    origin?: ProposalMintOrigin,
-  ): Promise<KnowledgeProposeOutcome>
-  /**
-   * Apply a minted proposal by id, routing its deltas through the one commit path (D-18).
-   *
-   * Serves the pre-432 records already on disk until 432-17 deletes the inbox.
-   */
-  apply(proposalId: string): Promise<KnowledgeApplyOutcome>
 }
 
 /**
@@ -816,62 +775,6 @@ export type KnowledgeChangeRequest = (
   | { readonly verb: 'reject'; readonly input: KnowledgeRejectInput }
   | { readonly verb: 'forget'; readonly input: KnowledgeForgetInput }
 ) & { readonly operationId?: string }
-
-/**
- * Which review verb is being proposed, with the input that verb takes.
- *
- * Discriminated rather than a widened single input, so `reject`'s required reason cannot be
- * omitted by asking for an accept — the arms carry genuinely different obligations and a
- * union is where a type system can enforce that.
- */
-/**
- * What proposing produced, or the named absence (387-08).
- *
- * 387-06 declared `propose` as returning a proposal outright. A target ref that names nothing is
- * an ordinary reviewer mistake rather than a broken store — an id pasted out of a stale issue, a
- * record forgotten between two reads — and the plan's own contract is "a typed not-found, never
- * a throw". A bare proposal cannot carry that answer, so the port returns this union instead, on
- * exactly the reasoning D-1 applied to `showRecord`.
- */
-export type KnowledgeProposeOutcome =
-  | { readonly kind: 'proposed'; readonly proposal: KnowledgeProposalV1 }
-  | { readonly kind: 'target-not-found'; readonly target: KnowledgeTargetRef }
-
-/** The attribution a propose carries into the envelope. `at` is the store's to stamp, not ours. */
-export interface ProposalMintOrigin {
-  readonly emittedBy: string
-  readonly runId?: string
-}
-
-export type KnowledgeProposalRequest =
-  | { readonly verb: 'accept'; readonly input: KnowledgeAcceptInput }
-  | { readonly verb: 'reject'; readonly input: KnowledgeRejectInput }
-  | { readonly verb: 'forget'; readonly input: KnowledgeForgetInput }
-  | { readonly verb: 'mark'; readonly input: KnowledgeMarkInput }
-
-/**
- * What an apply reports: the proposal in its applied state, and — for a forget — the receipt.
- *
- * The receipt is a separate field rather than the whole return value because D-04 gives it a
- * second life as the permanent card content a forgotten entity's address resolves to. A value
- * that had to be dug out of a proposal wrapper to serve that use would have been designed for
- * one use plus an unwrapping step.
- */
-export interface KnowledgeApplyOutcome {
-  /**
-   * Whether THIS call is the one that committed (387-08).
-   *
-   * Not decoration, and not on the interface 387-06 declared. Applying a proposal twice is an
-   * ordinary thing for a retrying surface to do, and the second call has to be able to say
-   * "already applied, here is what it did" — which an outcome with no discriminant cannot say,
-   * and which a throw would say while discarding the receipt the caller asked for.
-   */
-  readonly outcome: KnowledgeApplyOutcomeKind
-  readonly proposal: KnowledgeProposalV1
-  /** Present exactly when the applied verb was `forget` (D-19). */
-  readonly forgetReceipt?: ForgetReceiptV1
-  readonly commitReceipt?: CommitReceipt
-}
 
 /**
  * Injected read port over the entity directory (Phase 387, ENTY-01 / D-09).
@@ -1241,23 +1144,6 @@ export interface FunctionDeps {
    */
   feedbackReads?: FeedbackReadsPort
   /**
-   * 391 PROP-03 / D-15: the proposals inbox's three verbs — list, show, reject.
-   *
-   * OPTIONAL for the reason `knowledgeReview` and `quarantine` are, and the stakes here sit on
-   * the READ side rather than the write side for once. A host with no agent-qa runtime root
-   * genuinely cannot enumerate proposals, and the alternative to saying so by name is answering
-   * an empty inbox about a directory it has never been able to open — which reads exactly like
-   * "nothing is waiting on you" and is the one wrong answer that makes a person stop looking.
-   *
-   * ONE port for all three verbs, on the quarantine port's stated reasoning: the read/write
-   * asymmetry is declared where it is ENFORCED — `list`/`show` take read scopes and read-only
-   * descriptors, `reject` takes `approval-write`, `readOnly: false` and `requiresHumanOrigin` —
-   * so a second port would restate at the composition root a distinction the gate makes at every
-   * call. The port TYPE is minted in schema, so knowledge-local can implement it without
-   * depending on the function layer.
-   */
-  proposalsInbox?: ProposalsInboxPort
-  /**
    * 391 PROP-01 / D-03: the committed standing-grant ledger's three verbs — list, record, revoke.
    *
    * OPTIONAL for the reason `quarantine` is, and the stakes are the phase's whole subject. A host
@@ -1350,48 +1236,16 @@ export interface FunctionDeps {
    */
   draftShelf?: DraftShelfPortLike
   /**
-   * 394-07 D-12 / WTST-05: the honesty funnel's reads — the receipts store, the proposals inbox,
-   * and (optionally within the bundle) the outcome projection and quarantine ledger D-14 consults.
+   * 394-07 D-12 / WTST-05: the honesty funnel's reads — the receipts store and (optionally within
+   * the bundle) the outcome projection and quarantine ledger D-14 consults. 2026-10-01 (432-17): the
+   * proposals inbox the `accepted` stage read is deleted (see `projectAuthoringFunnel`).
    *
-   * OPTIONAL for the reason `proposalsInbox` is, and the stakes sit on the READ side in the same
-   * way. A host with no agent-qa runtime root cannot list draft receipts, and the alternative to
+   * OPTIONAL, and the stakes sit on the READ side. A host with no agent-qa runtime root cannot list draft receipts, and the alternative to
    * saying so by name is answering an all-zero funnel — which does not merely under-report, it
    * reports a loop that filtered everything, the one reading of a zero funnel that FLATTERS the
    * loop this measurement exists to keep honest.
-   *
-   * ONE bundle rather than separate deps, on the `draftEvaluation` reasoning: a host that could
-   * list receipts and not read the inbox would answer a funnel whose `accepted` stage is
-   * permanently zero, which would make the acceptance-failure flag structurally unable to fire.
    */
   authoringFunnel?: AuthoringFunnelPortLike
-  /**
-   * 394-10 D-06 / WTST-01: the one-commit apply an accepted `test-draft` reaches.
-   *
-   * OPTIONAL for the reason `knowledgeReview` is, and the stakes are this phase's whole subject. A
-   * host with no checkout root genuinely cannot write a file into a suite or make a commit, and the
-   * alternative to saying so BY NAME is an accept that answers `applied` for a write that did not
-   * happen — a receipt for a file that is not on disk, handed to a person at the one verb whose
-   * whole job is to be the honest record of what their decision did.
-   *
-   * Bound wherever `draftAuthoring` is, and NOT gated on the run executor beside it: applying an
-   * already-decided draft needs a checkout root and nothing else. A host that cannot start runs can
-   * still hold a person's accept.
-   */
-  draftApply?: DraftApplyPortLike
-  /**
-   * 394-18 D-05/D-11 · WTST-05: where a finished loop outcome BECOMES a proposal a person can find.
-   *
-   * OPTIONAL as a type and REQUIRED in practice for the one op that holds it, which is the same
-   * arrangement `authoringRead` is under and for the same reason: `authoring.draft.write` refuses
-   * at the invoke if this is absent, because an invocation that spent up to nine child runs and
-   * then discarded the artifact it produced would answer `drafted` about a draft nobody can ever
-   * decide on. `composeLocalAgent()` binds it beside the shelf, so a host that can author can file.
-   *
-   * SEPARATE FROM `authoringFunnel`, which reads the same store. That bundle is structurally unable
-   * to write — the property D-12's nothing-new-is-persisted claim rests on — and folding a write
-   * verb into it would hand the projection a capability to overwrite the records it reports on.
-   */
-  authoringProposals?: AuthoringProposalsWritePortLike
   /**
    * 395 D-03/D-17 · CFGM-01/04: the pinned config file SET as RAW BYTES, plus the comment-preserving
    * field edit over them.
@@ -1408,31 +1262,13 @@ export interface FunctionDeps {
    */
   configFiles?: ConfigFilesPortLike
   /**
-   * 395 CFGM-01: whole-config validation, which runs BEFORE a proposal surfaces.
+   * 395 CFGM-01: whole-config validation, which runs BEFORE a change is written.
    *
    * A PORT because `AgentQaConfigSchema` and `validateProject` live in `@vostride/agent-qa-core`
    * and this package does not depend on it — `validate:arch` reds that edge with no legal repair.
-   * The `draftApply` idiom exactly: the capability is declared here and bound in `cli`.
+   * The capability is declared here and bound in `cli`.
    */
   configValidate?: ConfigValidatePortLike
-  /**
-   * 395 CFGM-03: the ONE commit an accepted config proposal makes in a person's own history.
-   *
-   * OPTIONAL for the reason `draftApply` is, and the stakes are the same. A host with no checkout
-   * root genuinely cannot commit, and the alternative to saying so BY NAME is an apply that answers
-   * `applied` for a commit that does not exist — a receipt for history the repository never
-   * received.
-   */
-  configApply?: ConfigApplyPortLike
-  /**
-   * 395 CFGM-01: where a constructed config proposal becomes something a person can find.
-   *
-   * SEPARATE FROM `authoringProposals`, which writes the same store, and the separation is not
-   * ceremony: that member is bound inside the authoring bundle's own conditional spread, so folding
-   * config writes into it would make a host that cannot author a test unable to propose a config
-   * change — two unrelated capabilities failing together for no reason either of them names.
-   */
-  configProposals?: ConfigProposalsWritePortLike
   /**
    * 395 D-09/D-12 · CFGM-02: the construction-time secret scan, bound to the host's masking seeds.
    *
@@ -1442,28 +1278,17 @@ export interface FunctionDeps {
    * composition root is what makes the values this scan knows and the values the masker hides one
    * set by construction (D-09) rather than two lists that happen to agree.
    *
-   * BOUND UNCONDITIONALLY BY `composeLocalAgent`, like `configProposals` and unlike its other three
-   * neighbours: there is no host that legitimately cannot scan, because the capability needs nothing
+   * BOUND UNCONDITIONALLY BY `composeLocalAgent`, unlike its neighbours: there is no host that legitimately cannot scan, because the capability needs nothing
    * but the process it is already running in. It is optional here only so the deps record stays one
-   * shape, and the propose ops refuse BY NAME when it is missing — a construction that cannot scan
-   * must not surface a diff.
+   * shape, and the change ops refuse BY NAME when it is missing — a construction that cannot scan
+   * must not write.
    */
   configScan?: ConfigScanPortLike
   /**
-   * 395-06 D-07 · CFGM-03: the repository's own account of the last agent configuration commit.
-   *
-   * THE ONE DEP `config.undo.propose` HAS AND THE OTHER SIX PROPOSE OPS DO NOT. It is git — a host
-   * fact by definition — and it is a port of its own rather than a verb on `configApply` because
-   * the two answer opposite questions: that one writes a commit a person accepted, this one reads a
-   * commit somebody already made. Its absence makes exactly one op unavailable, and it says so by
-   * name.
-   */
-  configUndoSource?: ConfigUndoSourcePortLike
-  /**
    * 395-08 D-04 · CFGM-05: the shared scaffold CONTENT, rendered by the host that owns it.
    *
-   * THE ONE DEP `config.project.scaffold` HAS AND THE OTHER SEVEN PROPOSE OPS DO NOT. D-04's claim
-   * is that `agent-qa init` and the scaffold proposal write one substance; that substance lives
+   * THE ONE DEP `config.project.scaffold` HAS AND THE OTHER FIVE CHANGE OPS DO NOT. D-04's claim
+   * is that `agent-qa init` and the scaffold change write one substance; that substance lives
    * beside `init`'s filesystem machinery in `packages/cli`, which this package may not import. Its
    * absence makes exactly one op unavailable, and it says so by name.
    */

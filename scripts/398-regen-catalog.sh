@@ -122,7 +122,11 @@ FROZEN_MIN_TESTS=129
 # resolver table with the inbox route (its op stays reachable through `/fn proposals.list`), so the
 # measured mint is 53 registry ops + 4 chat op-aliases + 4 shipped skills. The floor is the exact
 # observed baseline; the argument for lowering it is the removed alias, not a truncated mint.
-FROZEN_MIN_ROWS=61
+# Lowered 2026-10-01 (432-17, D-05): 61 -> 54. The inbox is deleted with its seven ops —
+# `proposals.list/show/accept/reject`, `knowledge.proposal.apply`, `config.proposal.apply` and
+# `config.undo.propose` — so the measured mint is 46 registry ops + 4 chat op-aliases + 4 shipped
+# skills. The floor is the exact observed baseline; the argument is the seven deleted ops.
+FROZEN_MIN_ROWS=54
 # The migration section's floor (398-08, D-14). It is SEPARATE from the row floor because it is a
 # separate section with a separate source: a mint that folded every capability correctly and dropped
 # the projected map would clear FROZEN_MIN_ROWS and write a manifest that answers no v1 caller.

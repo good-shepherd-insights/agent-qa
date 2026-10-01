@@ -18,7 +18,7 @@
 // real published records, precisely so every cell can assert they appear in NO digest: a digest
 // that still listed or counted them would red here, and a sealed legacy tree changes nothing.
 
-import { chmodSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
+import { chmodSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -390,13 +390,17 @@ describe('the per-run digest, over the composed host (PROP-04 / D-16 / D-18)', (
     async () => {
       const declined = await proposeForRun(RUN_A, 'checkout button')
       await proposeForRun(RUN_A, 'payment button')
-      const outcome = (await invokeFunction(
-        host.registry, 'proposals.reject', { proposalId: declined, reason: 'not this one' }, HUMAN,
-      )) as { outcome: string }
-      expect(outcome.outcome).toBe('rejected')
+      // 2026-10-01 (432-17): `proposals.reject` is deleted, so the decided record is planted as the
+      // bytes the retired reject left: the same wrapped record with its status moved to `rejected`.
+      const proposals = join(agentQaRoot, 'proposals')
+      const declinedPath = join(proposals, `${declined}.json`)
+      const record = JSON.parse(readFileSync(declinedPath, 'utf8')) as {
+        payload: Record<string, unknown>
+      }
+      record.payload = { ...record.payload, status: 'rejected', reason: 'not this one', decidedAt: 1_700_000_000_001 }
+      writeFileSync(declinedPath, `${JSON.stringify(record, undefined, 2)}\n`, 'utf8')
       const expected = await digest(RUN_A)
 
-      const proposals = join(agentQaRoot, 'proposals')
       const before = readdirSync(proposals).sort()
       chmodSync(proposals, 0o000)
       try {

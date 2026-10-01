@@ -86,7 +86,9 @@ function actionNamed(riskName: string): RiskActionDescriptor {
 // One real, registered op, taken off the walk rather than typed here. `PROTECTED_ACTION_CLASSES`
 // is a schema constant already pinned to name real registered ops, which makes it a stable
 // choice; its first member's bare form is the thing a person would type.
-const SAMPLE_CLASS = PROTECTED_ACTION_CLASSES[0]
+// 2026-10-01 (432-17, D-05): its first member, `fn:proposals.accept`, names an op deleted with the
+// inbox, so the sample is the first member the registry still answers to (`fn:grants.revoke`).
+const SAMPLE_CLASS = PROTECTED_ACTION_CLASSES.find((member) => member !== 'fn:proposals.accept')!
 const SAMPLE_BARE = SAMPLE_CLASS.slice(PIN_ACTION_CLASS_PREFIX.length)
 
 describe('the corpus is not vacuous', () => {

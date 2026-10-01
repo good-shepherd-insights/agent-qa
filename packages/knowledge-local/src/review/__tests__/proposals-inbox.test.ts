@@ -219,6 +219,8 @@ describe('C432-PROPOSAL-FILES-UNREAD: old proposal files are never opened, claim
     expect(touchedInbox()).toEqual([inbox])
   })
 
+  // Twelve real fsync'd writes across four contexts: 2.1 s alone, past vitest's 15 s default in
+  // 432-17 gate run 5 at load average 18. Same budget as C432-EXPLICIT-ALL-CONTEXTS (432-14).
   it('C432-PROPOSAL-FILES-UNREAD: explicit accept, reject and forget apply in every context and never open an old proposal file', async () => {
     const before = digestDirectory(inbox)
     // Fixture publication is not under measurement; only the door and the reads are.
@@ -250,7 +252,7 @@ describe('C432-PROPOSAL-FILES-UNREAD: old proposal files are never opened, claim
     expect(touchedInbox(), 'an explicit change opened, listed or renamed an old proposal file').toEqual([])
     expect(digestDirectory(inbox), 'an old proposal file was claimed, published, cleaned up or migrated')
       .toEqual(before)
-  })
+  }, 120_000)
 
   it('C432-PROPOSAL-FILES-UNREAD: the knowledge reads answer with old and malformed proposal files present and never open one', () => {
     const before = digestDirectory(inbox)

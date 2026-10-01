@@ -27,15 +27,9 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'no
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import { createFunctionRegistry, invokeFunction } from '@vostride/agent-qa-agent'
+import { UnknownFunctionError, createFunctionRegistry, invokeFunction } from '@vostride/agent-qa-agent'
 import type { FunctionDeps } from '@vostride/agent-qa-agent'
 import {
-  createProposalsInbox,
-  mintProposalId,
-  writePendingProposalRecord,
-} from '@vostride/agent-qa-knowledge-local'
-import {
-  CURRENT_PROPOSAL_RECORD_SCHEMA_VERSION,
   FunctionScopeSchema,
   MASKED_RESOLVED_CONFIG_SCHEMA_VERSION,
   base64Decode,
@@ -45,7 +39,6 @@ import {
 import type {
   ConfigChangeOutput,
   FunctionCaller,
-  ProposalRecord,
 } from '@vostride/agent-qa-schema'
 import { scanConstructedArtifact } from '@vostride/agent-qa-safety'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
@@ -132,9 +125,20 @@ function pendingProposalPath(proposalId: string): string {
   return join(agentQaRoot, 'proposals', `${proposalId}.json`)
 }
 
-/** The stored record, read back OFF DISK — never the object the test handed the store. */
-function storedRecord(proposalId: string): ProposalRecord {
-  return JSON.parse(readFileSync(pendingProposalPath(proposalId), 'utf8')) as ProposalRecord
+/**
+ * The stored record, read back OFF DISK — never the object the test handed the store. 2026-10-01
+ * (432-17): the record schema is deleted, so the planted bytes are read as the plain JSON they are.
+ */
+interface StoredPre432Record {
+  readonly kind: string
+  readonly payload: {
+    readonly payloadKind: string
+    readonly files: readonly { readonly newContentBase64: string }[]
+  }
+}
+
+function storedRecord(proposalId: string): StoredPre432Record {
+  return JSON.parse(readFileSync(pendingProposalPath(proposalId), 'utf8')) as StoredPre432Record
 }
 
 function storedConfigPayload(proposalId: string) {
@@ -144,13 +148,11 @@ function storedConfigPayload(proposalId: string) {
   return record.payload
 }
 
-/** The registry, with the REAL config ports and the REAL proposals store, and no apply port. */
+/**
+ * The registry, with the REAL config ports and no apply port. 2026-10-01 (432-17): the proposals
+ * store, its inbox and the config proposal filer are deleted, so neither is bound.
+ */
 function registryFor() {
-  const inbox = createProposalsInbox({
-    resolveAgentQaRoot: () => agentQaRoot,
-    now: () => Date.now(),
-  })
-
   const deps: FunctionDeps = {
     runs: {
       list: () => Promise.resolve([]),
@@ -176,7 +178,6 @@ function registryFor() {
         entries: [],
       }),
     },
-    proposalsInbox: inbox,
     // THE REAL THREE, over the real workspace and the real repository.
     configFiles: createConfigFilesPort(configPath),
     configValidate: createConfigValidatePort(),
@@ -190,21 +191,6 @@ function registryFor() {
     configScan: { scan: (parts) => scanConstructedArtifact(parts, {}) },
     // 432-11: the direct writer the config operations publish through.
     configWrite: createConfigWritePort(configPath),
-    // The REAL store write, through the same two verbs `composeLocalAgent` binds — so the envelope
-    // this path files is one the inbox below really reads back off disk.
-    configProposals: {
-      put: (record) => {
-        const proposalId = mintProposalId(() => `${Date.now()}-${Math.floor(performance.now())}`)
-        writePendingProposalRecord(agentQaRoot, {
-          schemaVersion: CURRENT_PROPOSAL_RECORD_SCHEMA_VERSION,
-          id: proposalId,
-          kind: record.kind,
-          origin: { emittedBy: record.emittedBy, at: Date.now() },
-          payload: record.payload,
-        } as ProposalRecord)
-        return Promise.resolve({ proposalId })
-      },
-    },
   }
 
   return createFunctionRegistry({
@@ -307,6 +293,7 @@ describe('the config tracer: propose, accept, ONE byte-matched commit', () => {
 
   // RE-SPELLED 2026-10-01 (432-16): was '(b) accepting adds exactly ONE commit of exactly the
   // config file, byte-matched'. No apply port is bound; the direct change's byte equality is (a).
+  // RE-SPELLED 2026-10-01 (432-17): the accept op is deleted, so the refusal is an unknown function.
   it('(b) accepting a pre-432 record is refused unbound: no commit, and the file keeps its bytes', async () => {
     const registry = registryFor()
     const id = await pre432Proposal()
@@ -314,7 +301,7 @@ describe('the config tracer: propose, accept, ONE byte-matched commit', () => {
     expect(base64Decode(storedConfigPayload(id).files[0]!.newContentBase64).length).toBeGreaterThan(0)
 
     await expect(invokeFunction(registry, 'proposals.accept', { proposalId: id }, HUMAN))
-      .rejects.toMatchObject({ name: 'FunctionNotBoundError' })
+      .rejects.toBeInstanceOf(UnknownFunctionError)
 
     expect(readFileSync(configPath, 'utf8')).toBe(SEEDED_CONFIG)
     expect(commitCount()).toBe(1)
@@ -389,12 +376,12 @@ describe('the config tracer: propose, accept, ONE byte-matched commit', () => {
     expect(commitCount()).toBe(1)
   })
 
+  // RE-SPELLED 2026-10-01 (432-17): the apply op is deleted, so it is refused as an unknown function.
   it('(g) an unbound apply refuses BY NAME and leaves the repository untouched', async () => {
     const id = await pre432Proposal()
 
-    // 432-16: the production-shaped registry binds no apply port, so this is the default arm.
     await expect(invokeFunction(registryFor(), 'config.proposal.apply', { proposalId: id }, HUMAN))
-      .rejects.toThrow(/declared but not bound/)
+      .rejects.toBeInstanceOf(UnknownFunctionError)
 
     expect(readFileSync(configPath, 'utf8')).toBe(SEEDED_CONFIG)
     expect(commitCount()).toBe(1)

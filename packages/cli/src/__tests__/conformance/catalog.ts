@@ -210,12 +210,10 @@ export const CATALOG_DOC_PATHS: readonly (readonly [string, CatalogDocAdjudicati
     Object.freeze(['config.get', Object.freeze({ absentReason: CATALOG_DOC_ABSENT_REASON })] as const),
     Object.freeze(['config.hook.add', Object.freeze({ absentReason: CATALOG_DOC_ABSENT_REASON })] as const),
     Object.freeze(['config.project.scaffold', Object.freeze({ absentReason: CATALOG_DOC_ABSENT_REASON })] as const),
-    Object.freeze(['config.proposal.apply', Object.freeze({ absentReason: CATALOG_DOC_ABSENT_REASON })] as const),
     Object.freeze(['config.target.create', Object.freeze({ absentReason: CATALOG_DOC_ABSENT_REASON })] as const),
     Object.freeze(['config.target.edit', Object.freeze({ absentReason: CATALOG_DOC_ABSENT_REASON })] as const),
-    Object.freeze(['config.undo.propose', Object.freeze({ absentReason: CATALOG_DOC_ABSENT_REASON })] as const),
-    // 2026-09-25 (428, D-07): in SORT position after `config.undo.propose`, an explicit dated
-    // absence on `runs.liveurl`'s idiom.
+    // 2026-09-25 (428, D-07): in SORT position after `config.undo.propose` (deleted 2026-10-01,
+    // 432-17), an explicit dated absence on `runs.liveurl`'s idiom.
     Object.freeze([
       'editor.liveurl',
       Object.freeze({
@@ -234,15 +232,10 @@ export const CATALOG_DOC_PATHS: readonly (readonly [string, CatalogDocAdjudicati
     // 2026-09-06, 416 D-17: the new history read has no shipped documentation page yet.
     Object.freeze(['knowledge.gates.list', Object.freeze({ absentReason: CATALOG_DOC_ABSENT_REASON })] as const),
     Object.freeze(['knowledge.forget', Object.freeze({ absentReason: CATALOG_DOC_ABSENT_REASON })] as const),
-    Object.freeze(['knowledge.proposal.apply', Object.freeze({ absentReason: CATALOG_DOC_ABSENT_REASON })] as const),
     Object.freeze(['knowledge.record.show', Object.freeze({ absentReason: CATALOG_DOC_ABSENT_REASON })] as const),
     Object.freeze(['knowledge.records.diff', Object.freeze({ absentReason: CATALOG_DOC_ABSENT_REASON })] as const),
     Object.freeze(['knowledge.records.inspect', Object.freeze({ absentReason: CATALOG_DOC_ABSENT_REASON })] as const),
     Object.freeze(['knowledge.reject', Object.freeze({ absentReason: CATALOG_DOC_ABSENT_REASON })] as const),
-    Object.freeze(['proposals.accept', Object.freeze({ absentReason: CATALOG_DOC_ABSENT_REASON })] as const),
-    Object.freeze(['proposals.list', Object.freeze({ absentReason: CATALOG_DOC_ABSENT_REASON })] as const),
-    Object.freeze(['proposals.reject', Object.freeze({ absentReason: CATALOG_DOC_ABSENT_REASON })] as const),
-    Object.freeze(['proposals.show', Object.freeze({ absentReason: CATALOG_DOC_ABSENT_REASON })] as const),
     Object.freeze(['quarantine.add', Object.freeze({ absentReason: CATALOG_DOC_ABSENT_REASON })] as const),
     Object.freeze(['quarantine.list', Object.freeze({ absentReason: CATALOG_DOC_ABSENT_REASON })] as const),
     Object.freeze(['quarantine.release', Object.freeze({ absentReason: CATALOG_DOC_ABSENT_REASON })] as const),
@@ -670,7 +663,8 @@ export interface ChatAliasProbe {
  * differ prove the binding TRACKS THE INPUT — the producer asserts the two answers differ, so the
  * passthrough is recognised by its behaviour rather than by its name.
  */
-const PASSTHROUGH_PROBE_ALTERNATE = '/fn proposals.list'
+// 2026-10-01 (432-17): `proposals.list` was the alternate until it was deleted with the inbox.
+const PASSTHROUGH_PROBE_ALTERNATE = '/fn quarantine.list'
 
 export const CHAT_ALIAS_PROBES: readonly ChatAliasProbe[] = Object.freeze([
   Object.freeze({ alias: 'run', clause: 'run tests/checkout.test.yaml', expects: 'op' } as const),

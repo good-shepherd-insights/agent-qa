@@ -21,7 +21,6 @@ export { createAskCommand } from './ask.js'
 export { createChatCommand } from './chat.js'
 export { createFnCommand } from './fn.js'
 // 391 D-17: the inbox/grants decision surface and the on-demand per-run digest.
-export { createProposalsCommand } from './proposals.js'
 export { createDigestCommand } from './digest.js'
 export { createDaemonCommand } from './daemon.js'
 // 413 D-06: the agent job queue's operator verbs — list, the kind-filtered pump, cancel.

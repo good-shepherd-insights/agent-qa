@@ -14,8 +14,10 @@
 //                 publication refuses before any write, names the file, and a direct change after
 //                 it lands on the person's bytes.
 //   (8)           an interrupted publication says what it wrote and never touches the index.
-//   (9), (9b)     a repeated change answers `no-change`; the pre-432 retry is refused unbound.
-//   (10)-(16)     C432-NO-CONFIG-UNDO-PORT: `config.undo.propose` answers unbound, the host reads
+//   (9), (9b)     a repeated change answers `no-change`; the pre-432 retry is refused (unbound
+//                 until 432-17, an unknown function since).
+//   (10)-(16)     C432-NO-CONFIG-UNDO-PORT: `config.undo.propose` is refused (unbound until 432-17,
+//                 an unknown function since 2026-10-01, when the op is deleted), the host reads
 //                 no git history, and a change is undone with git itself, byte-exactly, at the
 //                 repository root and at `sub/dir`. There is still no revert verb (14).
 //
@@ -28,15 +30,9 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, wr
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import { createFunctionRegistry, invokeFunction } from '@vostride/agent-qa-agent'
+import { UnknownFunctionError, createFunctionRegistry, invokeFunction } from '@vostride/agent-qa-agent'
 import type { FunctionDeps } from '@vostride/agent-qa-agent'
 import {
-  createProposalsInbox,
-  mintProposalId,
-  writePendingProposalRecord,
-} from '@vostride/agent-qa-knowledge-local'
-import {
-  CURRENT_PROPOSAL_RECORD_SCHEMA_VERSION,
   FunctionScopeSchema,
   MASKED_RESOLVED_CONFIG_SCHEMA_VERSION,
   sha256hexBytes,
@@ -44,9 +40,7 @@ import {
 } from '@vostride/agent-qa-schema'
 import type {
   ConfigChangeOutput,
-  ConfigProposeOutput,
   FunctionCaller,
-  ProposalRecord,
 } from '@vostride/agent-qa-schema'
 import { scanConstructedArtifact } from '@vostride/agent-qa-safety'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
@@ -170,12 +164,9 @@ function trackedPaths(): string[] {
   return git('ls-files').stdout.split('\n').map((line) => line.trim()).filter((l) => l.length > 0)
 }
 
+// 2026-10-01 (432-17): the proposals store, its inbox and the config proposal filer are deleted, so
+// this registry binds neither; the production host binds neither either.
 function registryFor(overrides: Partial<FunctionDeps> = {}) {
-  const inbox = createProposalsInbox({
-    resolveAgentQaRoot: () => agentQaRoot,
-    now: () => Date.now(),
-  })
-
   const deps: FunctionDeps = {
     runs: {
       list: () => Promise.resolve([]),
@@ -201,7 +192,6 @@ function registryFor(overrides: Partial<FunctionDeps> = {}) {
         entries: [],
       }),
     },
-    proposalsInbox: inbox,
     configFiles: createConfigFilesPort(configPath),
     configValidate: createConfigValidatePort(),
     // The REAL scan with EMPTY seeds, on `config-apply.test.ts`'s stated reasoning: the function is
@@ -211,19 +201,6 @@ function registryFor(overrides: Partial<FunctionDeps> = {}) {
     // 432-16 (D-07): no config apply port and no undo source — the production host binds neither.
     // 432-11: the direct writer the config operations publish through.
     configWrite: createConfigWritePort(configPath),
-    configProposals: {
-      put: (record) => {
-        const proposalId = mintProposalId(() => `${Date.now()}-${Math.floor(performance.now())}`)
-        writePendingProposalRecord(agentQaRoot, {
-          schemaVersion: CURRENT_PROPOSAL_RECORD_SCHEMA_VERSION,
-          id: proposalId,
-          kind: record.kind,
-          origin: { emittedBy: record.emittedBy, at: Date.now() },
-          payload: record.payload,
-        } as ProposalRecord)
-        return Promise.resolve({ proposalId })
-      },
-    },
     // 395-11: the ONE seam a cell may replace, spread last and empty for every cell but the
     // rejected-case one. Every other dependency above stays production's.
     ...overrides,
@@ -242,8 +219,8 @@ async function call(
   registry: Registry,
   id: string,
   input: unknown,
-): Promise<ConfigProposeOutput> {
-  return await invokeFunction(registry, id, input, HUMAN) as ConfigProposeOutput
+): Promise<unknown> {
+  return await invokeFunction(registry, id, input, HUMAN)
 }
 
 /**
@@ -333,7 +310,7 @@ describe('D-05: the human commits first, and the agent commits only what was app
     writeFileSync(configPath, humanEdit)
     const before = repositoryState()
 
-    await expect(accept(registryFor(), id)).rejects.toMatchObject({ name: 'FunctionNotBoundError' })
+    await expect(accept(registryFor(), id)).rejects.toBeInstanceOf(UnknownFunctionError)
 
     expect(readFileSync(configPath, 'utf8')).toBe(humanEdit)
     expect(repositoryState()).toEqual(before)
@@ -511,7 +488,7 @@ describe('CFGM-03 idempotency: the retry gets the ORIGINAL receipt, both commits
     const registry = registryFor()
     for (let attempt = 0; attempt < 2; attempt += 1) {
       await expect(invokeFunction(registry, 'config.proposal.apply', { proposalId: id }, HUMAN))
-        .rejects.toMatchObject({ name: 'FunctionNotBoundError' })
+        .rejects.toBeInstanceOf(UnknownFunctionError)
     }
     expect(readFileSync(configPath, 'utf8')).toBe(SEEDED_CONFIG)
     expect(commitCount()).toBe(1)
@@ -526,7 +503,7 @@ describe('D-07: undo is a proposal, and it rides the one gated write path', () =
     const before = repositoryState()
 
     await expect(call(registryFor(), 'config.undo.propose', {}))
-      .rejects.toMatchObject({ name: 'FunctionNotBoundError' })
+      .rejects.toBeInstanceOf(UnknownFunctionError)
 
     expect(existsSync(join(agentQaRoot, 'proposals'))).toBe(false)
     expect(repositoryState()).toEqual(before)
@@ -572,13 +549,15 @@ describe('D-07: undo is a proposal, and it rides the one gated write path', () =
     expect(commitCount()).toBe(1)
   })
 
+  // RE-SPELLED 2026-10-01 (432-17, D-09): `config.undo.propose` and `config.proposal.apply` are
+  // deleted, so the registry publishes no undo and no apply; a revert is `git restore` (11).
   it('(14) there is no revert VERB — the registry publishes a propose op and nothing else (L10)', async () => {
-    // The checkable half of "one write path". A person or a catalogue consumer reading the registry
-    // sees `config.undo.propose` and `config.proposal.apply` (both unbound since 432-16, deleted by
-    // 432-17); if a direct-revert op is ever added, this cell is where it shows up.
+    // The checkable half of "one write path". If a direct-revert op is ever added, this cell is
+    // where it shows up.
     const ids = registryFor().list(HUMAN).map((entry) => entry.id).filter((id) => id.startsWith('config.'))
-    expect(ids).toContain('config.undo.propose')
-    expect(ids.filter((id) => id.endsWith('.apply'))).toEqual(['config.proposal.apply'])
+    expect(ids.length).toBeGreaterThan(0)
+    expect(ids).not.toContain('config.undo.propose')
+    expect(ids.filter((id) => id.endsWith('.apply'))).toEqual([])
     expect(ids.filter((id) => id.includes('revert'))).toEqual([])
     expect(ids.filter((id) => id === 'config.undo' || id === 'config.undo.apply')).toEqual([])
   })
@@ -595,7 +574,7 @@ describe('the config dir is NOT the repository root (395-11 · CR-03)', () => {
     expect(porcelain()).toEqual(['M sub/dir/agent-qa.config.yaml'])
 
     await expect(call(registryFor(), 'config.undo.propose', {}))
-      .rejects.toMatchObject({ name: 'FunctionNotBoundError' })
+      .rejects.toBeInstanceOf(UnknownFunctionError)
     git('restore', '--', 'sub/dir/agent-qa.config.yaml')
 
     expect(readFileSync(configPath).equals(seeded)).toBe(true)

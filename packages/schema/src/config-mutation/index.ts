@@ -36,38 +36,32 @@ export {
 export {
   CONFIG_BLOCKED_REASONS,
   CONFIG_CHANGE_REFUSAL_REASONS,
+  CONFIG_FILE_CHANGE_KINDS,
   CONFIG_HOOK_RUNTIMES,
-  ConfigApplyCommitSchema,
-  ConfigApplyOutcomeSchema,
-  ConfigApplyReceiptsSchema,
   ConfigAuthSetInputSchema,
+  ConfigChangeFileSchema,
   ConfigChangeOutputSchema,
   ConfigFieldSetInputSchema,
   ConfigHookAddInputSchema,
   ConfigProjectScaffoldInputSchema,
-  ConfigProposalApplyInputSchema,
   ConfigScanFindingSchema,
   ConfigTargetCreateInputSchema,
   ConfigTargetEditInputSchema,
-  ConfigUndoProposeInputSchema,
 } from './actions'
 export type {
-  ConfigApplyCommit,
-  ConfigApplyOutcome,
-  ConfigApplyReceipts,
   ConfigAuthSetInput,
   ConfigBlockedReason,
+  ConfigChangeFile,
   ConfigChangeOutput,
   ConfigChangeRefusalReason,
   ConfigFieldSetInput,
+  ConfigFileChangeKind,
   ConfigHookAddInput,
   ConfigHookRuntime,
   ConfigProjectScaffoldInput,
-  ConfigProposalApplyInput,
   ConfigScanFinding,
   ConfigTargetCreateInput,
   ConfigTargetEditInput,
-  ConfigUndoProposeInput,
 } from './actions'
 export {
   CONFIG_REFERENCE_KINDS,
@@ -75,22 +69,3 @@ export {
   isLegalConfigReference,
 } from './references'
 export type { ConfigReferenceKind } from './references'
-export {
-  CONFIG_FILE_CHANGE_KINDS,
-  CONFIG_REFUSAL_REASONS,
-  CURRENT_CONFIG_PROPOSAL_SCHEMA_VERSION,
-  ConfigProposalApplyableV1Schema,
-  ConfigProposalBlockedV1Schema,
-  ConfigProposalFileSchema,
-  ConfigProposalV1Schema,
-  ConfigProposeOutputSchema,
-} from './proposal'
-export type {
-  ConfigFileChangeKind,
-  ConfigProposalApplyableV1,
-  ConfigProposalBlockedV1,
-  ConfigProposalFile,
-  ConfigProposalV1,
-  ConfigProposeOutput,
-  ConfigRefusalReason,
-} from './proposal'

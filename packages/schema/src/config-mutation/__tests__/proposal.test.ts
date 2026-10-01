@@ -27,20 +27,17 @@
 
 import { describe, expect, it } from 'vitest'
 
+import * as actions from '../actions'
 import {
   CONFIG_HOOK_RUNTIMES,
-  ConfigApplyCommitSchema,
-  ConfigApplyOutcomeSchema,
-  ConfigApplyReceiptsSchema,
   ConfigAuthSetInputSchema,
+  ConfigChangeFileSchema,
   ConfigChangeOutputSchema,
   ConfigFieldSetInputSchema,
   ConfigHookAddInputSchema,
   ConfigProjectScaffoldInputSchema,
-  ConfigProposalApplyInputSchema,
   ConfigTargetCreateInputSchema,
   ConfigTargetEditInputSchema,
-  ConfigUndoProposeInputSchema,
   // 2026-09-30, 432-11: the blocked vocabulary moved beside the direct answer that also carries it.
   CONFIG_BLOCKED_REASONS,
 } from '../actions'
@@ -52,13 +49,25 @@ import {
 } from '../constants'
 import { renderConfigDiff } from '../diff-digest'
 import { ConfigChangeFoldInputSchema, ConfigChangeFoldOutputSchema } from '../../functions/tool-folds'
-import {
-  CURRENT_CONFIG_PROPOSAL_SCHEMA_VERSION,
-  ConfigProposalApplyableV1Schema,
-  ConfigProposalBlockedV1Schema,
-  ConfigProposalV1Schema,
-  ConfigProposeOutputSchema,
-} from '../proposal'
+
+// RE-SPELLED 2026-10-01 (432-17, D-05/D-07/D-09). The config proposal payloads, the propose union,
+// the apply and undo inputs and the git-commit apply receipts are deleted with the inbox. Each claim
+// below that survives moves onto the direct change answer (`ConfigChangeOutputSchema`) or the change
+// file (`ConfigChangeFileSchema`) under its old name; the apply/undo cells become absence cells.
+const RETIRED_ACTION_EXPORTS = [
+  'ConfigUndoProposeInputSchema',
+  'ConfigProposalApplyInputSchema',
+  'ConfigApplyCommitSchema',
+  'ConfigApplyReceiptsSchema',
+  'ConfigApplyOutcomeSchema',
+] as const
+
+type ChangeArm = (typeof ConfigChangeOutputSchema.options)[number]
+function changeArm(outcome: string): ChangeArm {
+  const arm = ConfigChangeOutputSchema.options.find((option) => option.shape.outcome.value === outcome)
+  if (arm === undefined) throw new TypeError(`no ${outcome} arm`)
+  return arm
+}
 import { utf8Encode } from '../utf8'
 
 /**
@@ -78,14 +87,11 @@ const STRICT_SCHEMAS = [
     { name: 'seed', runtime: 'node', file: 'scripts/seed.mjs' }],
   ['ConfigFieldSetInputSchema', ConfigFieldSetInputSchema, { path: 'use.parallel', value: true }],
   ['ConfigProjectScaffoldInputSchema', ConfigProjectScaffoldInputSchema, { domain: 'booking.com' }],
-  ['ConfigUndoProposeInputSchema', ConfigUndoProposeInputSchema, {}],
-  ['ConfigProposalApplyInputSchema', ConfigProposalApplyInputSchema, { proposalId: 'p_1' }],
-  ['ConfigApplyCommitSchema', ConfigApplyCommitSchema, { role: 'agent', hash: 'abc1234' }],
-  ['ConfigApplyReceiptsSchema', ConfigApplyReceiptsSchema,
-    { commits: [{ role: 'agent', hash: 'abc1234' }], files: ['agent-qa.config.yaml'] }],
+  ['ConfigChangeFileSchema', ConfigChangeFileSchema,
+    { path: 'agent-qa.config.yaml', changeKind: 'modify', newContentBase64: '' }],
 ] as const
 
-describe('the seven action inputs and the apply receipts', () => {
+describe('the six action inputs and the change file', () => {
   it('parses every listed value — the census is not passing because nothing parses', () => {
     for (const [name, schema, value] of STRICT_SCHEMAS) {
       expect({ name, ok: schema.safeParse(value).success }).toEqual({ name, ok: true })
@@ -107,10 +113,7 @@ describe('the seven action inputs and the apply receipts', () => {
       'ConfigHookAddInputSchema',
       'ConfigFieldSetInputSchema',
       'ConfigProjectScaffoldInputSchema',
-      'ConfigUndoProposeInputSchema',
-      'ConfigProposalApplyInputSchema',
-      'ConfigApplyCommitSchema',
-      'ConfigApplyReceiptsSchema',
+      'ConfigChangeFileSchema',
     ])
   })
 
@@ -121,23 +124,14 @@ describe('the seven action inputs and the apply receipts', () => {
     }).success).toBe(false)
   })
 
-  it('the undo input takes nothing at all — the reverse diff is computed host-side (D-07)', () => {
-    expect(Object.keys(ConfigUndoProposeInputSchema.shape)).toEqual([])
-    expect(ConfigUndoProposeInputSchema.safeParse({ commit: 'HEAD~1' }).success).toBe(false)
+  it('the undo and apply inputs and the apply receipts are deleted with their ops (D-07, D-09)', () => {
+    expect(RETIRED_ACTION_EXPORTS.filter((name) => name in actions)).toEqual([])
   })
 
   it('the scaffold input carries the domain and nothing a model could invent (D-13)', () => {
     expect(Object.keys(ConfigProjectScaffoldInputSchema.shape)).toEqual(['domain'])
   })
 
-  it('both apply outcome arms carry the SAME receipt shape', () => {
-    const receipts = { commits: [{ role: 'agent', hash: 'abc1234' }], files: ['agent-qa.config.yaml'] }
-    for (const outcome of ['applied', 'already-applied'] as const) {
-      expect(ConfigApplyOutcomeSchema.safeParse({ ...receipts, outcome }).success).toBe(true)
-      expect(ConfigApplyOutcomeSchema.safeParse({ ...receipts, outcome, extra: 1 }).success)
-        .toBe(false)
-    }
-  })
 })
 
 /**
@@ -177,9 +171,7 @@ describe('set_auth is refs-only by shape, not by discipline (D-11)', () => {
 
 describe('the blocked arm cannot carry the payload it blocked (D-10)', () => {
   const blocked = {
-    schemaVersion: CURRENT_CONFIG_PROPOSAL_SCHEMA_VERSION,
-    payloadKind: 'blocked' as const,
-    action: 'config.field.set',
+    outcome: 'blocked' as const,
     summaryLine: 'set plugins.auth.0.package to an internal build',
     blockedReason: 'guardrail-hit' as const,
     paths: ['agent-qa.config.yaml'],
@@ -192,39 +184,37 @@ describe('the blocked arm cannot carry the payload it blocked (D-10)', () => {
   }
 
   it('parses as a config payload, and narrows to the blocked arm', () => {
-    const parsed = ConfigProposalV1Schema.parse(blocked)
-    expect(parsed.payloadKind).toBe('blocked')
+    const parsed = ConfigChangeOutputSchema.parse(blocked)
+    expect(parsed.outcome).toBe('blocked')
   })
 
   it('refuses a payload carrying the rendered diff bytes', () => {
-    expect(ConfigProposalBlockedV1Schema.safeParse({
+    expect(ConfigChangeOutputSchema.safeParse({
       ...blocked,
       shownDiffBase64: base64Encode(utf8Encode('--- a/agent-qa.config.yaml\n')),
     }).success).toBe(false)
-    expect(ConfigProposalBlockedV1Schema.safeParse({
+    expect(ConfigChangeOutputSchema.safeParse({
       ...blocked,
       shownDiffDigest: 'deadbeef',
     }).success).toBe(false)
   })
 
   it('refuses a payload carrying file content', () => {
-    expect(ConfigProposalBlockedV1Schema.safeParse({
+    expect(ConfigChangeOutputSchema.safeParse({
       ...blocked,
       newContentBase64: base64Encode(utf8Encode('use:\n  parallel: true\n')),
     }).success).toBe(false)
-    expect(ConfigProposalBlockedV1Schema.safeParse({
+    expect(ConfigChangeOutputSchema.safeParse({
       ...blocked,
       files: [{ path: 'agent-qa.config.yaml', changeKind: 'modify', newContentBase64: '' }],
     }).success).toBe(false)
   })
 
   it('has no diff or content field in its declared shape at all', () => {
-    const shape = Object.keys(ConfigProposalBlockedV1Schema.shape)
+    const shape = Object.keys(changeArm('blocked').shape)
     expect(shape.filter((key) => /diff|content|bytes|base64/i.test(key))).toEqual([])
     expect(shape).toEqual([
-      'schemaVersion',
-      'payloadKind',
-      'action',
+      'outcome',
       'summaryLine',
       'blockedReason',
       'paths',
@@ -235,13 +225,13 @@ describe('the blocked arm cannot carry the payload it blocked (D-10)', () => {
 
   it('names one posture and two reasons (CFGM-01)', () => {
     expect([...CONFIG_BLOCKED_REASONS]).toEqual(['schema-fail', 'guardrail-hit'])
-    expect(ConfigProposalBlockedV1Schema.safeParse({ ...blocked, blockedReason: 'other' }).success)
+    expect(ConfigChangeOutputSchema.safeParse({ ...blocked, blockedReason: 'other' }).success)
       .toBe(false)
   })
 
   it('a schema-fail carries validation issues and no scan findings', () => {
     const { scanFindings: _dropped, ...withoutFindings } = blocked
-    expect(ConfigProposalBlockedV1Schema.safeParse({
+    expect(ConfigChangeOutputSchema.safeParse({
       ...withoutFindings,
       blockedReason: 'schema-fail',
       validationIssues: ['use.parallel: expected boolean, received string'],
@@ -258,30 +248,24 @@ describe('a produced applyable payload round-trips through its own schema', () =
   if (rendered.outcome !== 'changed') throw new TypeError('the corpus produced no change')
   const digests = rendered.perFileDigests[0]!
 
-  const payload = {
-    schemaVersion: CURRENT_CONFIG_PROPOSAL_SCHEMA_VERSION,
-    payloadKind: 'applyable' as const,
-    action: 'config.field.set',
-    summaryLine: 'set use.parallel to true',
-    files: [{
-      path: 'agent-qa.config.yaml',
-      changeKind: 'modify' as const,
-      baseDigest: digests.oldDigest!,
-      newContentBase64: base64Encode(newBytes),
-    }],
-    shownDiffBase64: base64Encode(rendered.diffBytes),
-    shownDiffDigest: rendered.diffDigest,
-    crossBoundary: false,
-    crossBoundaryReasons: [],
+  const file = {
+    path: 'agent-qa.config.yaml',
+    changeKind: 'modify' as const,
+    baseDigest: digests.oldDigest!,
+    newContentBase64: base64Encode(newBytes),
   }
 
   it('parses, and parsing changes nothing about it', () => {
-    expect(ConfigProposalApplyableV1Schema.parse(payload)).toEqual(payload)
+    expect(ConfigChangeFileSchema.parse(file)).toEqual(file)
   })
 
   it('narrows to the applyable arm through the union', () => {
-    const parsed = ConfigProposalV1Schema.parse(payload)
-    expect(parsed.payloadKind).toBe('applyable')
+    const parsed = ConfigChangeOutputSchema.parse({
+      outcome: 'applied', summaryLine: 'set use.parallel to true', files: [file.path],
+      fields: ['use.parallel'], crossBoundary: false, crossBoundaryReasons: [],
+      shownDiff: new TextDecoder().decode(rendered.diffBytes),
+    })
+    expect(parsed.outcome).toBe('applied')
   })
 })
 
@@ -297,41 +281,27 @@ describe('(S1) the proposed arm cannot carry an EMPTY rendered diff (395-22 · C
   // engine check covers hosts and futures rather than today's one op. Two independent closures on
   // one road, which is why the mutation leg that tears out the engine's half leaves this green.
   const proposed = {
-    outcome: 'proposed' as const,
-    proposalId: 'prop-scaffold',
+    outcome: 'applied' as const,
     summaryLine: 'configure this project for https://booking.com as target booking-com',
     crossBoundary: true,
     crossBoundaryReasons: ['new-origin' as const],
     files: ['agent-qa.config.yaml'],
+    fields: ['registry.targets.booking-com'],
   }
 
   it('refuses an empty shownDiff', () => {
-    expect(ConfigProposeOutputSchema.safeParse({ ...proposed, shownDiff: '' }).success).toBe(false)
+    expect(ConfigChangeOutputSchema.safeParse({ ...proposed, shownDiff: '' }).success).toBe(false)
   })
 
   it('accepts a one-character shownDiff — the boundary control', () => {
     // THE CONTROL IS THE POINT OF THE PAIR: `.min(1)` and a rejection of everything are the same
     // cell without it, and a proposed arm nothing could satisfy would be a worse defect than the
     // one being closed.
-    expect(ConfigProposeOutputSchema.safeParse({ ...proposed, shownDiff: '-' }).success).toBe(true)
+    expect(ConfigChangeOutputSchema.safeParse({ ...proposed, shownDiff: '-' }).success).toBe(true)
   })
 
-  it('matches the stored payload\'s own bound, which has always been .min(1)', () => {
-    // ASSERTED AS A RELATION rather than as two independent facts: the text a surface prints and the
-    // bytes the record keeps are the same diff, so one accepting what the other rejects is the drift
-    // this cell exists to notice.
-    expect(ConfigProposalApplyableV1Schema.safeParse({
-      schemaVersion: CURRENT_CONFIG_PROPOSAL_SCHEMA_VERSION,
-      payloadKind: 'applyable',
-      action: 'config.project.scaffold',
-      summaryLine: 'configure this project',
-      files: [{ path: 'agent-qa.config.yaml', changeKind: 'modify', newContentBase64: '' }],
-      shownDiffBase64: '',
-      shownDiffDigest: 'abc',
-      crossBoundary: true,
-      crossBoundaryReasons: [],
-    }).success).toBe(false)
-  })
+  // RE-SPELLED 2026-10-01 (432-17): the relation to the stored payload's `.min(1)` left with the
+  // stored payload; the applied arm's own bound above is the one surface that prints the diff.
 })
 
 describe('the cross-boundary reason vocabulary is closed (D-02)', () => {
@@ -342,30 +312,26 @@ describe('the cross-boundary reason vocabulary is closed (D-02)', () => {
 
   it('the payload accepts every member of it', () => {
     const base = {
-      schemaVersion: CURRENT_CONFIG_PROPOSAL_SCHEMA_VERSION,
-      payloadKind: 'applyable' as const,
-      action: 'config.target.create',
+      outcome: 'applied' as const,
       summaryLine: 'add target shop',
-      files: [{ path: 'agent-qa.config.yaml', changeKind: 'modify' as const, newContentBase64: '' }],
-      shownDiffBase64: 'eA==',
-      shownDiffDigest: 'abc',
+      files: ['agent-qa.config.yaml'],
+      fields: ['registry.targets.shop'],
+      shownDiff: 'x',
       crossBoundary: true,
     }
-    expect(ConfigProposalApplyableV1Schema.safeParse({
+    expect(ConfigChangeOutputSchema.safeParse({
       ...base,
       crossBoundaryReasons: [...CROSS_BOUNDARY_REASONS],
     }).success).toBe(true)
   })
 
   it('refuses a reason nobody can enforce on', () => {
-    expect(ConfigProposalApplyableV1Schema.safeParse({
-      schemaVersion: CURRENT_CONFIG_PROPOSAL_SCHEMA_VERSION,
-      payloadKind: 'applyable',
-      action: 'config.target.create',
+    expect(ConfigChangeOutputSchema.safeParse({
+      outcome: 'applied',
       summaryLine: 'add target shop',
-      files: [{ path: 'agent-qa.config.yaml', changeKind: 'modify', newContentBase64: '' }],
-      shownDiffBase64: 'eA==',
-      shownDiffDigest: 'abc',
+      files: ['agent-qa.config.yaml'],
+      fields: ['registry.targets.shop'],
+      shownDiff: 'x',
       crossBoundary: true,
       crossBoundaryReasons: ['feels-risky'],
     }).success).toBe(false)
@@ -457,7 +423,7 @@ describe('the secret-adjacent field set is roots, and matching is by subtree (D-
 
 // 2026-09-30, 432-12 (D-05/D-09): the config change tool folds the six direct actions only. The undo
 // arm left with the proposal round, so the fold answers the one change contract and an undo call is
-// not an arm of it. The undo input itself stays parseable until 432-17 deletes the op.
+// not an arm of it. 432-17 deleted the undo op and its input.
 describe('C432-MCP-TWENTY-TOOLS: the config change fold has six arms and no undo arm', () => {
   it('C432-MCP-TWENTY-TOOLS: advertises the direct change contract alone and refuses the undo arm', () => {
     expect(ConfigChangeFoldOutputSchema).toBe(ConfigChangeOutputSchema)
@@ -468,6 +434,7 @@ describe('C432-MCP-TWENTY-TOOLS: the config change fold has six arms and no undo
     expect(ConfigChangeFoldInputSchema.safeParse({
       action: 'config.field.set', path: 'use.timeout.step', value: '45s', confirmed: true,
     }).success).toBe(false)
-    expect(ConfigUndoProposeInputSchema.safeParse({}).success).toBe(true)
+    // 2026-10-01 (432-17): the undo input is deleted with its op.
+    expect('ConfigUndoProposeInputSchema' in actions).toBe(false)
   })
 })

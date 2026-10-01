@@ -176,7 +176,7 @@ describe('agent-qa chat (the REPL over one turn engine)', () => {
         resolveIdentity: async () => ({ distinctId: 'u_chat-cell', runtimeContext: 'user' }),
       })
 
-    await runChat(configPath, [], ['/fn proposals.list', 'nonsense that routes nowhere', '/quit'], {
+    await runChat(configPath, [], ['/fn runs.list', 'nonsense that routes nowhere', '/quit'], {
       composeAnalytics: compose,
     })
 
@@ -196,7 +196,7 @@ describe('agent-qa chat (the REPL over one turn engine)', () => {
     // anywhere in the emitted payloads.
     const wire = JSON.stringify(sent)
     expect(wire).not.toContain('nonsense that routes nowhere')
-    expect(wire).not.toContain('proposals')
+    expect(wire).not.toContain('runs.list')
 
     // Every property is a count, a boolean, or a value from a closed vocabulary.
     for (const event of sent) {
@@ -210,12 +210,12 @@ describe('agent-qa chat (the REPL over one turn engine)', () => {
 
   it('runs one turn end to end and closes on /quit', async () => {
     const configPath = fixtureWorkspace(roots)
-    const result = await runChat(configPath, [], ['/fn proposals.list', '/quit'])
+    const result = await runChat(configPath, [], ['/fn runs.list', '/quit'])
 
     expect(result.stderr).toBe('')
     // The receipt line names the op that actually ran, which is the visible difference between a
     // turn and a chatbot: the surface reports a capability invocation, not prose.
-    expect(result.stdout).toContain('proposals.list')
+    expect(result.stdout).toContain('runs.list')
     expect(result.stdout).toContain('executed')
     // ONE session, opened by default (D-17). The id is printed once so a person can `--session` it.
     expect(sessionFiles(configPath)).toHaveLength(1)
@@ -236,13 +236,14 @@ describe('agent-qa chat (the REPL over one turn engine)', () => {
     // classifier now — `classify` is a REQUIRED member of `FunctionSpec` as of plan 04 — so the
     // engine's `${functionId} completed` fallback is not what this op reports any more. The op's
     // own one-line map is, and the string below is it for an EMPTY inbox, which is what this
-    // fixture workspace has. It is still a contiguous string the shipped line renders only by
+    // fixture workspace has. 2026-10-01 (432-17): `proposals.list` is deleted; `runs.list` is the
+    // subject now, and the string is its own map for a workspace with no completed run. It is still a contiguous string the shipped line renders only by
     // printing `outcome`: the functionId and the clause are separate fields, and neither of them
     // is this sentence.
     const configPath = fixtureWorkspace(roots)
-    const result = await runChat(configPath, [], ['/fn proposals.list', '/quit'])
+    const result = await runChat(configPath, [], ['/fn runs.list', '/quit'])
 
-    expect(result.stdout).toContain('0 proposal(s) in the inbox')
+    expect(result.stdout).toContain('0 completed run(s)')
   })
 
   it('prints the banner at most once, on open', async () => {
@@ -283,7 +284,7 @@ describe('agent-qa chat (the REPL over one turn engine)', () => {
 
   it('--list reports the sessions and the files it could not read', async () => {
     const configPath = fixtureWorkspace(roots)
-    await runChat(configPath, [], ['/fn proposals.list', '/quit'])
+    await runChat(configPath, [], ['/fn runs.list', '/quit'])
 
     const listed = await runChat(configPath, ['--list'])
 
@@ -371,10 +372,10 @@ describe('agent-qa chat (the REPL over one turn engine)', () => {
 
   it('--continue reopens the most recent session rather than opening a new one', async () => {
     const configPath = fixtureWorkspace(roots)
-    await runChat(configPath, [], ['/fn proposals.list', '/quit'])
+    await runChat(configPath, [], ['/fn runs.list', '/quit'])
     expect(sessionFiles(configPath)).toHaveLength(1)
 
-    await runChat(configPath, ['--continue'], ['/fn proposals.list', '/quit'])
+    await runChat(configPath, ['--continue'], ['/fn runs.list', '/quit'])
 
     expect(sessionFiles(configPath)).toHaveLength(1)
   })

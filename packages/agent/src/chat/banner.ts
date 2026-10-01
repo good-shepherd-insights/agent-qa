@@ -10,25 +10,23 @@
 // idle case is SILENCE rather than a reassuring sentence.
 //
 // EVERY READ DEGRADES TO SILENCE. A banner may never block chat open, and it may never turn an
-// unbound or refused op into a failure the person has to deal with before they can type. The
-// halves degrade independently, so a project whose digest cannot be produced still hears about the
-// decisions waiting for it.
+// unbound or refused op into a failure the person has to deal with before they can type.
+//
+// 2026-10-01 (432-17, D-05/D-22): the pending-proposals half is deleted with the inbox. Nothing is
+// filed for a person to decide, and old proposal files are never read, so the banner is the latest
+// run's digest headline or silence.
 //
 // IT COMPOSES REGISTERED OPS AND NOTHING ELSE. Every fact here is read through the same
 // `invokeFunction` binding a turn dispatches through, with the session's own caller — the read is
-// user-initiated, so it is gated exactly as the person typing `proposals` would be. This file
+// user-initiated, so it is read exactly as the person typing `digest` would read it. This file
 // reaches no store, holds no reader, and widens no DTO: `RunDigest.lines` is carried across
 // verbatim, which is the one-renderer law applied to a greeting.
 
 import type { FunctionCaller } from '@vostride/agent-qa-schema'
 
-import { PROPOSALS_LIST_FUNCTION_ID } from '../functions/ops/proposals-list.js'
 import { RUNS_DIGEST_FUNCTION_ID } from '../functions/ops/runs-digest.js'
 import { RUNS_LIST_FUNCTION_ID } from '../functions/ops/runs-list.js'
 import type { ChatInvokeBinding } from './ports.js'
-
-/** The separator that keeps two facts on ONE line. A newline here would be a second banner. */
-const BANNER_JOIN = ' · '
 
 /**
  * One read, or nothing.
@@ -52,16 +50,6 @@ async function readOrNothing(
   } catch {
     return undefined
   }
-}
-
-/** The pending-decision half: a count and the alias that acts on it. */
-function proposalsFragment(answer: unknown): string | undefined {
-  const entries = (answer as { entries?: readonly unknown[] } | undefined)?.entries
-  if (entries === undefined || entries.length === 0) return undefined
-  const plural = entries.length === 1 ? 'proposal' : 'proposals'
-  // The route back is the canon alias, spelled as a person types it — a count with no door is a
-  // notification rather than a banner (391 D-16's inbox, reached the way chat reaches it).
-  return `${entries.length} ${plural} pending — type \`proposals\` to review`
 }
 
 /**
@@ -94,16 +82,12 @@ function digestFragment(answer: unknown): string | undefined {
  *
  * Sequential rather than concurrent, deliberately: the digest read is CONDITIONAL on the run list
  * having produced a run, and a project with no runs must not issue a `runs.digest` call against an
- * id it invented. Three reads at open is already the ceiling; a fourth would need a decision.
+ * id it invented. Two reads at open is the ceiling; a third would need a decision.
  */
 export async function composeBanner(
   invoke: ChatInvokeBinding,
   caller: FunctionCaller,
 ): Promise<string | undefined> {
-  const proposals = proposalsFragment(
-    await readOrNothing(invoke, PROPOSALS_LIST_FUNCTION_ID, { status: 'pending' }, caller),
-  )
-
   const runId = latestRunId(
     await readOrNothing(invoke, RUNS_LIST_FUNCTION_ID, { limit: 1 }, caller),
   )
@@ -112,8 +96,5 @@ export async function composeBanner(
       ? undefined
       : digestFragment(await readOrNothing(invoke, RUNS_DIGEST_FUNCTION_ID, { runId }, caller))
 
-  const fragments = [proposals, digest].filter(
-    (fragment): fragment is string => fragment !== undefined,
-  )
-  return fragments.length === 0 ? undefined : fragments.join(BANNER_JOIN)
+  return digest
 }

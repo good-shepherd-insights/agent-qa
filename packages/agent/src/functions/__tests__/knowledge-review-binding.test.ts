@@ -28,14 +28,17 @@ import { z } from 'zod'
 import { FunctionNotBoundError, invokeFunction } from '../invoke.js'
 import { createFunctionRegistry, createRegistryFromSpecs, resolveBindingStatus } from '../registry.js'
 import type { FunctionDeps, FunctionSpec, KnowledgeReviewPort } from '../spec.js'
-import { knowledgeProposalApplySpec } from '../ops/knowledge-proposal-apply.js'
+import { knowledgeAcceptSpec } from '../ops/knowledge-accept-propose.js'
 
+// RE-SPELLED 2026-10-01 (432-17, D-05): this cell classified `knowledge.proposal.apply`'s policy
+// refusal, and that op is deleted with the inbox. The same refusal reaches a caller through the
+// direct accept's `refused` arm, and is still a refusal rather than an execution.
 it('419 policy materialization refusal is classified as refused rather than executed', () => {
-  const verdict = knowledgeProposalApplySpec.classify({ outcome: 'policy-materialize-refused',
-    proposal: { schemaVersion: 1, proposalId: 'proposal-fixture', verb: 'accept',
-      targetRef: { grain: 'record', recordId: 'policy-fixture' }, deltas: [], status: 'pending', proposedAt: 1 } })
+  const verdict = knowledgeAcceptSpec.classify({ outcome: 'refused', verb: 'accept',
+    operationId: 'policy-fixture-op', reason: 'policy-materialize-refused' })
   expect(verdict.status).toBe('refused')
-  expect(verdict.outcome).toContain('proposal remains pending')
+  expect(verdict.outcome).toContain('policy-materialize-refused')
+  expect(verdict.outcome).toContain('nothing was changed')
 })
 
 const CALLER: FunctionCaller = {
@@ -183,6 +186,8 @@ describe('the knowledgeReview optional dep', () => {
   it('C432-KNOWLEDGE-DIRECT-BINDING: the three changes are unbound without the port and reach its direct change with it', async () => {
     const reached: unknown[] = []
     const directPort = {
+      // 2026-10-01 (432-17): `propose` and `apply` are deleted from the port; kept here as excess
+      // members so "a direct change never reaches them" stays measured.
       propose: () => Promise.reject(new Error('a direct change never proposes')),
       apply: () => Promise.reject(new Error('a direct change never applies a proposal')),
       change: (request: { verb: string }) => {

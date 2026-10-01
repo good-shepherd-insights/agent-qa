@@ -82,12 +82,6 @@ import type { FunctionDeps } from '@vostride/agent-qa-agent'
 import { AgentQaConfigSchema } from '@vostride/agent-qa-core'
 import * as dashboard from '@vostride/agent-qa-dashboard'
 import {
-  createProposalsInbox,
-  mintProposalId,
-  writePendingProposalRecord,
-} from '@vostride/agent-qa-knowledge-local'
-import {
-  CURRENT_PROPOSAL_RECORD_SCHEMA_VERSION,
   FunctionScopeSchema,
   MASKED_RESOLVED_CONFIG_SCHEMA_VERSION,
   base64Decode,
@@ -97,7 +91,6 @@ import {
 import type {
   ConfigChangeOutput,
   FunctionCaller,
-  ProposalRecord,
 } from '@vostride/agent-qa-schema'
 import { scanConstructedArtifact } from '@vostride/agent-qa-safety'
 import { runSafetyScope } from '@vostride/agent-qa-safety-local'
@@ -198,23 +191,6 @@ function commitCount(): number {
   return Number(git('rev-list', '--count', 'HEAD').stdout.trim())
 }
 
-function storedRecord(proposalId: string): ProposalRecord {
-  return JSON.parse(
-    readFileSync(join(agentQaRoot, 'proposals', `${proposalId}.json`), 'utf8'),
-  ) as ProposalRecord
-}
-
-function storedApplyable(proposalId: string) {
-  const record = storedRecord(proposalId)
-  if (record.kind !== 'config') throw new Error(`stored ${proposalId} is a ${record.kind} proposal`)
-  if (record.payload.payloadKind !== 'applyable') {
-    throw new Error(
-      `stored payload is ${record.payload.payloadKind}: ${record.payload.summaryLine}`,
-    )
-  }
-  return record.payload
-}
-
 /**
  * The golden, compared or written.
  *
@@ -233,12 +209,9 @@ function golden(name: string, actual: string): void {
   expect(actual).toBe(readFileSync(path, 'utf8'))
 }
 
+// 2026-10-01 (432-17): the proposals store, its inbox and the config proposal filer are deleted, so
+// this registry binds neither.
 function registryFor(options: { readonly confirm?: boolean } = {}) {
-  const inbox = createProposalsInbox({
-    resolveAgentQaRoot: () => agentQaRoot,
-    now: () => Date.now(),
-  })
-
   const deps: FunctionDeps = {
     runs: {
       list: () => Promise.resolve([]),
@@ -264,7 +237,6 @@ function registryFor(options: { readonly confirm?: boolean } = {}) {
         entries: [],
       }),
     },
-    proposalsInbox: inbox,
     configFiles: createConfigFilesPort(configPath),
     configValidate: createConfigValidatePort(),
     // 432-16 (D-07): no config apply port and no undo source — the production host binds neither.
@@ -276,19 +248,6 @@ function registryFor(options: { readonly confirm?: boolean } = {}) {
     // function is production's, the seeds are not, because a cell whose verdict depends on the
     // developer's exported variables measures the machine.
     configScan: { scan: (parts) => scanConstructedArtifact(parts, {}) },
-    configProposals: {
-      put: (record) => {
-        const proposalId = mintProposalId(() => `${Date.now()}-${Math.floor(performance.now())}`)
-        writePendingProposalRecord(agentQaRoot, {
-          schemaVersion: CURRENT_PROPOSAL_RECORD_SCHEMA_VERSION,
-          id: proposalId,
-          kind: record.kind,
-          origin: { emittedBy: record.emittedBy, at: Date.now() },
-          payload: record.payload,
-        } as ProposalRecord)
-        return Promise.resolve({ proposalId })
-      },
-    },
   }
 
   return createFunctionRegistry({
@@ -527,8 +486,9 @@ describe('undoing a scaffold is WINDOWS 128\'s case, measured (D-07 · 395-06)',
     const written = readFileSync(configPath, 'utf8')
 
     const before = commitCount()
+    // RE-SPELLED 2026-10-01 (432-17, D-09): the undo op is deleted, so it is an unknown function.
     await expect(invokeFunction(registry, 'config.undo.propose', {}, HUMAN))
-      .rejects.toMatchObject({ name: 'FunctionNotBoundError' })
+      .rejects.toMatchObject({ name: 'UnknownFunctionError' })
 
     expect(commitCount()).toBe(before)
     expect(readFileSync(configPath, 'utf8')).toBe(written)
@@ -717,6 +677,9 @@ async function composedScaffoldId(): Promise<string> {
   })).proposalId
 }
 
+// RE-SPELLED 2026-10-01 (432-17, D-05): `config.proposal.apply` is deleted, so each cell below is now
+// refused as an unknown function — still before any record or config is read, still never by the
+// pre-fix `Config file not found`, and still without consulting a confirm.
 describe('config.proposal.apply reaches its own answer from ZERO (395-12 · SC-5\'s third arm)', () => {
   // RE-SPELLED 2026-09-30 (432-13, D-14/D-15): was '... with the confirm OBSERVED asked'.
   // RE-SPELLED 2026-10-01 (432-16, D-07): was '(14) applies a from-zero scaffold as ONE commit, with
@@ -731,7 +694,7 @@ describe('config.proposal.apply reaches its own answer from ZERO (395-12 · SC-5
       payload: { proposalId: id },
       confirmAnswer: true,
     })
-    expect(error?.name).toBe('FunctionNotBoundError')
+    expect(error?.name).toBe('UnknownFunctionError')
     expect(error?.message).not.toContain('Config file not found')
     expect(confirmCalls).toBe(0)
 
@@ -750,7 +713,7 @@ describe('config.proposal.apply reaches its own answer from ZERO (395-12 · SC-5
       payload: { proposalId: 'prop_00000000-0000-4000-8000-000000000000' },
       confirmAnswer: true,
     })
-    expect(error?.name).toBe('FunctionNotBoundError')
+    expect(error?.name).toBe('UnknownFunctionError')
     expect(error?.message).not.toContain('Config file not found')
     expect(commitCount()).toBe(before)
     expect(existsSync(configPath)).toBe(false)
@@ -768,7 +731,7 @@ describe('config.proposal.apply reaches its own answer from ZERO (395-12 · SC-5
       payload: { proposalId: id },
       confirmAnswer: false,
     })
-    expect(error?.name).toBe('FunctionNotBoundError')
+    expect(error?.name).toBe('UnknownFunctionError')
     expect(confirmCalls).toBe(0)
     expect(commitCount()).toBe(before)
     expect(existsSync(configPath)).toBe(false)

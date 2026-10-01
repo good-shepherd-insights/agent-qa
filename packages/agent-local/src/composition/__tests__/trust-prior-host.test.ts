@@ -13,7 +13,10 @@ vi.mock('@vostride/agent-qa-knowledge-local/reader', async importOriginal => ({
 }))
 vi.mock('@vostride/agent-qa-knowledge-local', async importOriginal => ({
   ...await importOriginal<object>(),
-  applyReview: vi.fn(async () => ({ outcome: 'already-applied' })),
+  // 2026-10-01 (432-17): the review port's only member is the direct change, so the writer the
+  // host's prior must reach is `applyExplicitReview` (the proposal door `applyReview` is deleted).
+  applyExplicitReview: vi.fn(async () => ({ outcome: 'target-not-found', verb: 'forget',
+    changeId: 'prop_missing-0001', target: { grain: 'record', recordId: 'missing' } })),
   createLocalKnowledgeStore: vi.fn(() => ({ recordGateReceipt: vi.fn(), promote: vi.fn() })),
 }))
 vi.mock('@vostride/agent-qa-agent', async importOriginal => {
@@ -51,8 +54,8 @@ describe('neutral host prior passthrough', () => {
         expect(vi.mocked(method).mock.calls.at(-1)![0]).toMatchObject({ priors })
       }
       expect(vi.mocked(reader.listBundles).mock.calls.at(-1)![1]).toBe(priors)
-      await deps.knowledgeReview!.apply('missing')
-      expect(vi.mocked(writer.applyReview).mock.calls.at(-1)![0].resolveTrustPriors?.()).toBe(priors)
+      await deps.knowledgeReview!.change({ verb: 'forget', input: { target: { grain: 'record', recordId: 'missing' } } })
+      expect(vi.mocked(writer.applyExplicitReview).mock.calls.at(-1)![0].resolveTrustPriors?.()).toBe(priors)
     } finally { await host.close() }
   })
 
@@ -79,11 +82,12 @@ describe('neutral host prior passthrough', () => {
 
   it('absence remains optional at reader, review and writer boundaries', async () => {
     await createKnowledgeReader(() => root).inspectRecords({ filter: {} })
-    await createKnowledgeReview({ agentQaRoot: root, resolveKnowledgeRoot: () => root }).apply('missing')
+    await createKnowledgeReview({ agentQaRoot: root, resolveKnowledgeRoot: () => root })
+      .change({ verb: 'forget', input: { target: { grain: 'record', recordId: 'missing' } } })
     await LOCAL_CURATION_CAPABILITIES.recordGateReceipt({ knowledgeRoot: root, auditBaseDir: root,
       executionContext: 'local-interactive', lease: { leaseId: 'fixture', epoch: 1 }, receipt: {} as never })
     expect(vi.mocked(reader.inspectRecords).mock.calls[0]![0]).not.toHaveProperty('priors')
-    expect(vi.mocked(writer.applyReview).mock.calls[0]![0]).not.toHaveProperty('resolveTrustPriors')
+    expect(vi.mocked(writer.applyExplicitReview).mock.calls[0]![0]).not.toHaveProperty('resolveTrustPriors')
     expect(vi.mocked(writer.createLocalKnowledgeStore).mock.calls[0]![0]).not.toHaveProperty('resolveTrustPriors')
   })
 })

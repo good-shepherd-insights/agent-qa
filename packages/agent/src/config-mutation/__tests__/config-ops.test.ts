@@ -45,7 +45,6 @@ import { isSecretAdjacentConfigField, utf8Decode, utf8Encode } from '@vostride/a
 import type {
   ConfigChange,
   ConfigChangeOutput,
-  ConfigProposalV1,
   FunctionCaller,
 } from '@vostride/agent-qa-schema'
 import { scanConstructedArtifact } from '@vostride/agent-qa-safety'
@@ -120,10 +119,12 @@ const HOOKS = `hooks:
     network: true
 `
 
+// 2026-10-01 (432-17): the config proposal payload type and the `configProposals` port are deleted.
+// The spy below is kept as an excess member so "nothing was filed" stays a measurement.
 interface Filed {
   readonly kind: string
   readonly emittedBy: string
-  readonly payload: ConfigProposalV1
+  readonly payload: unknown
 }
 
 interface Validated {
@@ -273,7 +274,7 @@ function harness(options: {
       },
     },
     configProposals: {
-      put: (record: { kind: string; emittedBy: string; payload: ConfigProposalV1 }) => {
+      put: (record: Filed) => {
         filed.push(record)
         return Promise.resolve({ proposalId: `prop-${filed.length}` })
       },
@@ -897,10 +898,9 @@ const EXPECTED_CONFIG_FAMILY = [
   'config.get',
   'config.hook.add',
   'config.project.scaffold',
-  'config.proposal.apply',
   'config.target.create',
   'config.target.edit',
-  'config.undo.propose',
+  // 2026-10-01 (432-17, D-05/D-09): `config.proposal.apply` and `config.undo.propose` are deleted.
 ] as const
 
 describe('the config action class is CLOSED, and the registry is where that is legible (D-01)', () => {

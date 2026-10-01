@@ -38,10 +38,17 @@ import { routeRepairOrStop } from '../../authoring/router.js'
 import type { AuthoringLoopInput } from '../../authoring/loop.js'
 import type { FunctionDeps } from '../spec.js'
 import type {
-  AuthoringProposalWrite,
   DraftStageOutcome,
   ParsedDraftLike,
 } from '../../authoring/ports.js'
+
+// 2026-10-01 (432-17, D-06): the authoring proposal writer and its record type are deleted. The spy
+// stays as an excess dependency so "nothing was filed" remains a measurement rather than a type.
+interface AuthoringProposalWrite {
+  readonly kind: string
+  readonly emittedBy: string
+  readonly payload: unknown
+}
 
 const DRAFT_PATH = 'tests/.agent-qa-drafts/stop-fixture.yaml'
 const DRAFT_NAME = 'Submit the local account form'

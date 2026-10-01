@@ -44,7 +44,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { CHAT_SESSIONS_SUBDIR, createJsonlSessionLog } from '../jsonl-session-log.js'
 
 const NOW = '2026-08-20T00:00:00.000Z'
-const PROPOSALS_LIST = 'proposals.list'
+const QUARANTINE_LIST = 'quarantine.list'
 
 /**
  * The credential a person's project holds and an op's result can carry back.
@@ -102,14 +102,14 @@ describe('clause_result persists the MASKED payload, on the real file (399.1-05)
         // is the shipped engine and the shipped adapter.
         invoke: () => Promise.resolve({
           payload: maskedPayload,
-          verdict: { status: 'executed' as const, outcome: 'listed 1 proposal' },
+          verdict: { status: 'executed' as const, outcome: '1 quarantine entry' },
           foldLines: [],
         }),
         now: () => NOW,
         mintTurnId: () => 'turn-1',
       })
 
-      const result = await engine.runTurn({ message: '/fn proposals.list' })
+      const result = await engine.runTurn({ message: '/fn quarantine.list' })
       expect(result.status).toBe('completed')
       expect(result.results).toHaveLength(1)
 
@@ -126,7 +126,7 @@ describe('clause_result persists the MASKED payload, on the real file (399.1-05)
         .map((line) => JSON.parse(line) as { kind: string; functionId?: string; payload?: unknown })
       const persisted = events.filter((event) => event.kind === 'clause_result')
       expect(persisted).toHaveLength(1)
-      expect(persisted[0]?.functionId).toBe(PROPOSALS_LIST)
+      expect(persisted[0]?.functionId).toBe(QUARANTINE_LIST)
       expect(persisted[0]?.payload).toEqual(maskedPayload)
 
       // THE CLAIM. Not one byte of the credential is on this disk — anywhere in the file, not
@@ -160,14 +160,14 @@ describe('clause_result persists the MASKED payload, on the real file (399.1-05)
         mint: { forStage: (_stage, sessionId) => ({ ...HUMAN, sessionId }) },
         invoke: () => Promise.resolve({
           payload: { entries: [] },
-          verdict: { status: 'executed' as const, outcome: 'listed 0 proposals' },
+          verdict: { status: 'executed' as const, outcome: '0 quarantine entries' },
           foldLines: [],
         }),
         now: () => NOW,
         mintTurnId: () => 'turn-1',
       })
 
-      const result = await engine.runTurn({ message: '/fn proposals.list' })
+      const result = await engine.runTurn({ message: '/fn quarantine.list' })
       const sessionId = String((result as { sessionId?: string }).sessionId)
 
       const reopened = await sessionLog.open(sessionId)

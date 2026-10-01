@@ -179,9 +179,10 @@ describe('the declared surface', () => {
     // The run port throws, so reaching this line at all is the claim. The schema parse beside it
     // is what makes the answer a contract rather than an object shaped like one.
     expect(AuthoringDraftEditOutputSchema.safeParse(result).success).toBe(true)
-    expect(result.proposal.runsPreviewed).toBe(0)
-    expect(result.proposal.runsConsumed).toBe(0)
-    // …and the pair is genuinely zero rather than accidentally equal to the pinned N.
+    // RE-SPELLED 2026-10-01 (432-17, D-06): the `runsPreviewed`/`runsConsumed` pair rode the deleted
+    // test-draft arm. The answer carries no run count now, and the run port above throws on a start,
+    // so zero runs is measured by reaching this line; the pinned N is still a real bound.
+    expect(result).not.toHaveProperty('proposal')
     expect(DRAFT_STABILITY_RUNS_N).toBeGreaterThan(0)
   })
 
@@ -202,9 +203,9 @@ describe('the declared surface', () => {
       testName: TARGET.testName,
       boundBy: 'exact-ref',
     })
-    // `unverified` is the honest disposition: this op runs no gates, and any other value would be
-    // a verdict about gates that never happened.
-    expect(result.proposal.disposition).toBe('unverified')
+    // RE-SPELLED 2026-10-01 (432-17, D-06): the `unverified` disposition rode the deleted test-draft
+    // arm. This op still runs no gates; what it answers is the file it wrote.
+    expect(result.written.kind).toBe('written')
     expect(result.draftRef.contentDigest).toBe('digest-edited')
   })
 })

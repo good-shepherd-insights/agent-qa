@@ -7,13 +7,11 @@
 // in one direction.
 //
 // 2026-09-30, 432-12 (D-02/D-05): the three verbs apply in the call. The `.propose` ids are gone
-// with no alias; `knowledge.proposal.apply` stays only for the pre-432 records already on disk,
-// until 432-17 deletes the inbox.
+// with no alias. 2026-10-01, 432-17 (D-05/D-22): `knowledge.proposal.apply` is deleted with the
+// inbox, and its id with it.
 
 export const KNOWLEDGE_ACCEPT_FUNCTION_ID = 'knowledge.accept'
 
 export const KNOWLEDGE_REJECT_FUNCTION_ID = 'knowledge.reject'
 
 export const KNOWLEDGE_FORGET_FUNCTION_ID = 'knowledge.forget'
-
-export const KNOWLEDGE_PROPOSAL_APPLY_FUNCTION_ID = 'knowledge.proposal.apply'

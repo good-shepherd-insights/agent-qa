@@ -1,5 +1,13 @@
 // Apply routes through the ONE commit path, race-safely and idempotently (387-08, KREV-01).
 //
+// RE-SPELLED 2026-10-01 (432-17, D-05/D-22). The proposal door this corpus drove is deleted with the
+// inbox. Every case now stages its change in memory (`stage`, below) and applies it through
+// `applyExplicitReview` under a stable operation identity; the receipt id is `prop_<identity>`, the
+// shape receipts already carried, so the receipt assertions are unchanged. What each door-specific
+// claim became is stated at its case: "already-applied" is the same-identity retry, "the proposal
+// stays applicable" is "the change stays retryable", and the four CR-03 claim-window cases left with
+// the claim/rename machinery they measured (C432-PROPOSAL-FILES-UNREAD pins its absence).
+//
 // The zero-recall case is the one that had to be built carefully rather than merely written. A
 // "the record is gone from search" assertion is worthless unless the record was FINDABLE first, on
 // BOTH legs, so each leg is asserted present before the forget and absent after. The vec leg in
@@ -30,7 +38,7 @@ import {
   strongestPromotionPath,
   stampReceiptDigest,
 } from '@vostride/agent-qa-schema'
-import type { Anchor, KnowledgeReviewVerb, RecordId } from '@vostride/agent-qa-schema'
+import type { Anchor, CommitReceipt, ForgetReceiptV1, KnowledgeReviewVerb, RecordId } from '@vostride/agent-qa-schema'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import * as knowledgeStore from '../../curator/knowledge-store.js'
 import { loadBundle, readGateReceipts } from '../../bundle-read.js'
@@ -54,24 +62,67 @@ import {
 import { makeFakeEmbedder } from '../../__tests__/fixtures/fake-embedder.js'
 import {
   APPLY_DELEGATE_TIMEOUT_MS,
-  APPLY_IN_FLIGHT_WAIT_MS,
   ApplyDelegateTimeoutError,
   ApplyDelegateUnavailableError,
-  ProposalApplyInFlightError,
-  applyReview,
+  applyExplicitReview,
 } from '../apply-review.js'
-import { FORGET_SCRUBBED_PROJECTIONS, proposeReview } from '../propose-review.js'
-import {
-  ProposalNotFoundError,
-  claimPendingProposal,
-  proposalsDir,
-  publishAppliedProposal,
-  readAppliedProposal,
-  readPendingProposal,
-  restorePendingProposal,
-} from '../proposals-store.js'
+import type { ExplicitReviewDelegate, ExplicitReviewRequest } from '../apply-review.js'
+import { FORGET_SCRUBBED_PROJECTIONS } from '../propose-review.js'
 
 const ANCHOR: Anchor = { t: 'el', role: 'Button', name: 'Checkout' }
+
+/** Changes staged by the cases, keyed by the receipt id each will land under. */
+const staged = new Map<string, ExplicitReviewRequest>()
+let stagedCount = 0
+
+/** Stage a change and answer the id it will be recorded under (`prop_<operation identity>`). */
+function stage(request: ExplicitReviewRequest): string {
+  stagedCount += 1
+  const changeId = `prop_apply-review-${stagedCount}`
+  staged.set(changeId, request)
+  return changeId
+}
+
+/** The op a verb's change is made by, as it is stamped on Gate-3 receipts. */
+function opIdFor(verb: KnowledgeReviewVerb): string {
+  return verb === 'mark' ? 'runs.mark' : `knowledge.${verb}`
+}
+
+interface ApplyInput {
+  readonly agentQaRoot: string
+  readonly knowledgeRoot: string
+  readonly proposalId: string
+  readonly executionContext?: 'local-interactive' | 'local-headless' | 'ci' | 'cloud'
+  readonly now?: () => number
+  readonly delegate?: ExplicitReviewDelegate
+  readonly delegateTimeoutMs?: number
+  readonly writerAuthority?: { readonly leaseId: string; readonly epoch: number }
+}
+
+interface Applied {
+  readonly outcome: string
+  readonly recordIds?: readonly string[]
+  readonly commitReceipt?: CommitReceipt
+  readonly forgetReceipt?: ForgetReceiptV1
+}
+
+/** Apply a staged change directly, under the identity its receipt id names. */
+async function applyReview(input: ApplyInput): Promise<Applied> {
+  const request = staged.get(input.proposalId)
+  if (request === undefined) throw new Error(`nothing staged under ${input.proposalId}`)
+  return await applyExplicitReview({
+    agentQaRoot: input.agentQaRoot,
+    knowledgeRoot: input.knowledgeRoot,
+    operationId: input.proposalId.slice('prop_'.length),
+    opId: opIdFor(request.verb),
+    executionContext: input.executionContext ?? 'local-interactive',
+    request,
+    ...(input.now === undefined ? {} : { now: input.now }),
+    ...(input.delegate === undefined ? {} : { delegate: input.delegate }),
+    ...(input.delegateTimeoutMs === undefined ? {} : { delegateTimeoutMs: input.delegateTimeoutMs }),
+    ...(input.writerAuthority === undefined ? {} : { writerAuthority: input.writerAuthority }),
+  })
+}
 
 /**
  * A content hash of every regular file under a directory tree, path-relative and sorted.
@@ -240,33 +291,15 @@ describe('apply — one commit path, receipts at the boundary, race-safe consump
   }
 
   function proposeForget(recordId: string): string {
-    const outcome = proposeReview({
-      agentQaRoot,
-      knowledgeRoot,
-      request: { verb: 'forget', input: { target: { grain: 'record', recordId } } },
-    })
-    if (outcome.kind !== 'proposed') throw new Error('expected a forget proposal')
-    return outcome.proposal.proposalId
+    return stage({ verb: 'forget', input: { target: { grain: 'record', recordId } } })
   }
 
   function proposeReject(recordId: string, reason: string): string {
-    const outcome = proposeReview({
-      agentQaRoot,
-      knowledgeRoot,
-      request: { verb: 'reject', input: { target: { grain: 'record', recordId }, reason } },
-    })
-    if (outcome.kind !== 'proposed') throw new Error('expected a reject proposal')
-    return outcome.proposal.proposalId
+    return stage({ verb: 'reject', input: { target: { grain: 'record', recordId }, reason } })
   }
 
   function proposeAccept(recordId: string): string {
-    const outcome = proposeReview({
-      agentQaRoot,
-      knowledgeRoot,
-      request: { verb: 'accept', input: { target: { grain: 'record', recordId } } },
-    })
-    if (outcome.kind !== 'proposed') throw new Error('expected an accept proposal')
-    return outcome.proposal.proposalId
+    return stage({ verb: 'accept', input: { target: { grain: 'record', recordId } } })
   }
 
   function proposeMark(recordId: string, kind: 'fact' | 'caution' = 'fact', add = false, confirm = false) {
@@ -280,7 +313,7 @@ describe('apply — one commit path, receipts at the boundary, race-safe consump
       summary: kind === 'fact' ? 'Navigational fact: open the checkout panel first' : 'Avoid stale checkout state' })
     const shared = { origin: 'user' as const, scope, citedIds: [asRecordId(recordId)],
       evidenceToken: asEvidenceToken(`mark:${mark.markId}`) }
-    const outcome = proposeReview({ agentQaRoot, knowledgeRoot, request: { verb: 'mark', input: {
+    return stage({ verb: 'mark', input: {
       target, mark, plan: { schemaVersion: 1, markId: mark.markId, kind: 'knowledge', fix: kind,
         target, wording: 'floor', feedbackSource: { runId, testIndex: 2, stepIndex: 3, kind: mark.kind },
         runTraceRef: { runId, runSlug: runId }, deltas: [confirm
@@ -289,9 +322,7 @@ describe('apply — one commit path, receipts at the boundary, race-safe consump
           ? { ...shared, kind: 'Add', bundle: draft }
           : { ...shared, kind: 'Supersede', victimId: asRecordId(recordId), newBundle: draft }],
       },
-    } } })
-    if (outcome.kind !== 'proposed') throw new Error('expected mark proposal')
-    return outcome.proposal.proposalId
+    } })
   }
 
   it.each(['fact', 'caution'] as const)('419 confirmed %s fix commits user content and one sovereign Gate-3 receipt', async kind => {
@@ -316,25 +347,39 @@ describe('apply — one commit path, receipts at the boundary, race-safe consump
       const lines = readGateReceipts(entry.dir, id)!
       expect(lines.filter(line => 'gate' in line && line.gate === 3)).toEqual([
         expect.objectContaining({ gate: 3, verdict: 'pass', candidateId: id,
-          producedBy: { opId: 'knowledge.proposal.apply' }, stepId: '2:3', mark: 'false-fail' }),
+          producedBy: { opId: 'runs.mark' }, stepId: '2:3', mark: 'false-fail' }),
       ])
       expect(strongestPromotionPath(lines)).toBe('user-sovereign')
       expect(rowsFor(id)[0]?.status).toBe('active')
       expect(result.commitReceipt?.promoted).toEqual([{ candidateId: id, promotionPath: 'user-sovereign' }])
-      const before = hashTree(knowledgeRoot)
+      // The same-identity retry (formerly `already-applied`) lands nothing and answers the same
+      // receipt. Measured over the canonical files: taking the writer lease bumps `.epoch` and the
+      // authority row, and the derived index is re-projected; neither is an effect of the change.
+      const canonical = () => treeEntries(knowledgeRoot).filter(entry =>
+        !/^F:(\.epoch|\.writer-authority\.sqlite|memory\/index\/)/u.test(entry))
+      const before = canonical()
       const repeated = await applyReview({ agentQaRoot, knowledgeRoot, proposalId })
-      expect(repeated.outcome).toBe('already-applied')
+      expect(repeated.outcome).toBe('applied')
       expect(repeated.commitReceipt).toEqual(result.commitReceipt)
-      expect(hashTree(knowledgeRoot)).toBe(before)
+      expect(canonical()).toEqual(before)
     } finally { create.mockRestore() }
   })
 
   it('419 concurrent mark applies answer the same durable receipt and commit once', async () => {
+    // RE-SPELLED (432-17): without a claim, the overlapping call meets the first one's writer lease
+    // and is refused by name with no host delegate; its retry under the same identity answers the
+    // first call's receipt and commits nothing more. The composed port serializes its own calls.
     const proposalId = proposeMark(publish('concurrent checkout'))
-    const results = await Promise.all([1, 2].map(() => applyReview({ agentQaRoot, knowledgeRoot, proposalId })))
-    expect(results.map(result => result.outcome).sort()).toEqual(['already-applied', 'applied'])
-    expect(results[0]!.commitReceipt).toEqual(results[1]!.commitReceipt)
-    expect(results[0]!.commitReceipt?.gate3).toHaveLength(1)
+    const settled = await Promise.allSettled([1, 2].map(() => applyReview({ agentQaRoot, knowledgeRoot, proposalId })))
+    const applied = settled.filter(entry => entry.status === 'fulfilled')
+      .map(entry => (entry as PromiseFulfilledResult<Applied>).value)
+    expect(applied).toHaveLength(1)
+    for (const entry of settled) {
+      if (entry.status === 'rejected') expect(entry.reason).toBeInstanceOf(ApplyDelegateUnavailableError)
+    }
+    const retried = await applyReview({ agentQaRoot, knowledgeRoot, proposalId })
+    expect(retried.commitReceipt).toEqual(applied[0]!.commitReceipt)
+    expect(retried.commitReceipt?.gate3).toHaveLength(1)
   })
 
   it('419 Confirm readback names only its target and advances beyond earlier gate-only ordinals', async () => {
@@ -377,7 +422,9 @@ describe('apply — one commit path, receipts at the boundary, race-safe consump
     const entry = enumerateBundleDirs(knowledgeRoot).map(found => loadBundle(found.dir))
       .find(loaded => loaded.kind === 'loaded' && loaded.bundle.manifest.id === id)
     expect(entry?.kind === 'loaded' && entry.bundle.provenance).toMatchObject({ authorship: { executionContext: 'ci' } })
-    expect(readAppliedProposal(agentQaRoot, proposalId)?.commitReceipt).toEqual(receipt)
+    // RE-SPELLED (432-17): no applied record is written; the same-identity retry answers the receipt.
+    expect((await applyReview({ agentQaRoot, knowledgeRoot, proposalId, executionContext: 'ci' })).commitReceipt)
+      .toEqual(receipt)
   })
 
   function publishPolicy(body = 'Dismiss the cookie banner before checkout') {
@@ -409,19 +456,21 @@ describe('apply — one commit path, receipts at the boundary, race-safe consump
     const original = bundles.find(entry => entry.loaded.kind === 'loaded' && entry.loaded.bundle.manifest.id === recordId)!
     const receipts = readGateReceipts(original.dir, recordId)!
     expect(receipts).toEqual([expect.objectContaining({ gate: 3, verdict: 'pass',
-      producedBy: { opId: 'knowledge.proposal.apply' }, policyApproval: { proposalId, recordId } })])
+      producedBy: { opId: 'knowledge.accept' }, policyApproval: { proposalId, recordId } })])
     expect(receipts[0]).not.toHaveProperty('runId')
     expect(receipts[0]).not.toHaveProperty('mark')
     for (const { loaded } of bundles) if (loaded.kind === 'loaded') {
       expect(loaded.bundle.events.some(event => event.type === 'promoted')).toBe(false)
     }
     expect(result.commitReceipt?.promoted).toEqual([])
+    // The same-identity retry lands nothing; this call wrote nothing to the shelf.
     const repeated = await applyReview({ agentQaRoot, knowledgeRoot, proposalId })
-    expect(repeated.outcome).toBe('already-applied')
-    expect(repeated.commitReceipt).toEqual(result.commitReceipt)
+    expect(repeated.outcome).toBe('applied')
+    expect(repeated.commitReceipt).toEqual({ ...result.commitReceipt,
+      policy: { ...result.commitReceipt?.policy, outcome: 'unchanged' } })
   })
 
-  it('419 policy marker refusal commits nothing and restores its pending proposal', async () => {
+  it('419 policy marker refusal commits nothing and files nothing', async () => {
     const recordId = publishPolicy('This rule contains --> and cannot be materialized')
     const proposalId = proposeAccept(recordId)
     const before = hashTree(join(knowledgeRoot, 'memory'))
@@ -430,7 +479,9 @@ describe('apply — one commit path, receipts at the boundary, race-safe consump
     expect(result).not.toHaveProperty('commitReceipt')
     expect(hashTree(join(knowledgeRoot, 'memory'))).toBe(before)
     expect(existsSync(join(knowledgeRoot, 'policies'))).toBe(false)
-    expect(readPendingProposal(agentQaRoot, proposalId)).toBeDefined()
+    // RE-SPELLED (432-17): nothing was filed to restore; a retry refuses the same way.
+    expect(existsSync(join(agentQaRoot, 'proposals'))).toBe(false)
+    expect((await applyReview({ agentQaRoot, knowledgeRoot, proposalId })).outcome).toBe('policy-materialize-refused')
   })
 
   /**
@@ -527,7 +578,6 @@ describe('apply — one commit path, receipts at the boundary, race-safe consump
     const result = await applyReview({ agentQaRoot, knowledgeRoot, proposalId, now: () => 1234 })
 
     expect(result.outcome).toBe('applied')
-    expect(result.proposal.status).toBe('applied')
     const receipt = result.forgetReceipt
     if (receipt === undefined) throw new Error('a forget must produce a receipt')
     expect(receipt.tombstonedRecords.map((row) => row.recordId)).toEqual([recordId])
@@ -566,7 +616,11 @@ describe('apply — one commit path, receipts at the boundary, race-safe consump
     expect(receipt.projectionsScrubbed).not.toContain('exemplar')
   })
 
-  it('is idempotent: a second apply returns the FIRST receipt and commits nothing', async () => {
+  it('is idempotent: a same-identity retry commits nothing', async () => {
+    // RE-SPELLED (432-17): the proposal door answered the FIRST receipt verbatim off its applied
+    // record. The direct door keeps no such record: a retried forget lands nothing and answers the
+    // same records, and re-mints its receipt (deferred-items 432-16 #3). What is asserted is the
+    // half that survives — nothing is committed twice.
     const recordId = publish('checkout button')
     await projectIndex()
     const proposalId = proposeForget(recordId)
@@ -576,89 +630,36 @@ describe('apply — one commit path, receipts at the boundary, race-safe consump
 
     const second = await applyReview({ agentQaRoot, knowledgeRoot, proposalId, now: () => 222 })
 
-    expect(second.outcome).toBe('already-applied')
-    // The FIRST receipt, verbatim — a recomputed one would carry `222` and would be an answer
-    // about now rather than about what happened.
-    expect(second.forgetReceipt).toEqual(first.forgetReceipt)
-    expect(second.forgetReceipt?.forgottenAt).toBe(111)
+    expect(second.outcome).toBe('applied')
+    expect(second.recordIds).toEqual(first.recordIds)
+    expect(second.forgetReceipt?.tombstonedRecords).toEqual(first.forgetReceipt?.tombstonedRecords)
     expect(listBundles(knowledgeRoot)).toEqual(storeAfterFirst)
   })
 
   it('records exactly one application even when two applies overlap', async () => {
+    // RE-SPELLED (432-17): both calls are started before either is awaited. With no claim to race
+    // for, the first acquires the writer lease synchronously and the overlapping call meets it held
+    // and, with no delegate on this host, is refused BY TYPE. Exactly one call commits, and the
+    // store shows one application.
     const recordId = publish('checkout button')
     await projectIndex()
     const proposalId = proposeForget(recordId)
 
-    // Both applies are STARTED before either is awaited, so the claim, the lease acquisition and
-    // the commit interleave on one event loop. This is genuine overlap of the async work; it is
-    // NOT two OS processes contending on the rename, and that limit is stated rather than
-    // implied — the atomic-rename property under real multi-process contention is asserted at
-    // the kernel and is not what this case measures.
     const settled = await Promise.allSettled([
       applyReview({ agentQaRoot, knowledgeRoot, proposalId, now: () => 1 }),
       applyReview({ agentQaRoot, knowledgeRoot, proposalId, now: () => 2 }),
     ])
 
-    // EVERY settled entry is inspected, and that is the change this case exists to make. It used
-    // to filter `settled` to `fulfilled` before asserting, so a REJECTED loser was silently
-    // dropped and `1 applied + 0 already-applied === 1 outcome` passed over an untyped throw. The
-    // verifier's judgement is the right one: a concurrent case that exists and is blind is worse
-    // than one that does not exist, because it reads as coverage.
-    //
-    // RED BASELINE, observed against unmodified apply-review.ts (bare `throw new Error(...)` at
-    // :248) before the fix landed:
-    //
-    //   × records exactly one application even when two applies overlap
-    //     → AssertionError: the loser must not receive an untyped no-such-proposal Error …
-    //       expected true to be false
-    //   and, in the same run, the loser's reason printed as:
-    //       Error: No knowledge proposal is stored under id prop_…
-    //
-    // The LOSER PATH is path A — claim loss — and it is deterministic in this harness, not a
-    // coin flip. `claimPendingProposal` is fully synchronous (`renameSync`) and `applyReview` runs
-    // synchronously to its first `await` inside `commitAndPublish`, so in a
-    // `Promise.allSettled([a, b])` the first call claims AND acquires the writer lease before the
-    // second call begins. The OTHER loser path — winning the claim and then losing the LEASE,
-    // which refuses with `ApplyDelegateUnavailableError` at apply-review.ts:265 — is therefore
-    // unreachable here. That limit is stated rather than implied, exactly as the interleaving
-    // limit above is: were the two calls in separate OS processes, the lease-loss shape would be
-    // legitimate too and this assertion would have to admit it BY TYPE rather than relax.
     const committed = settled.filter(
       (entry) => entry.status === 'fulfilled' && entry.value.outcome === 'applied',
-    ) as PromiseFulfilledResult<Awaited<ReturnType<typeof applyReview>>>[]
+    )
     expect(committed, 'exactly one call may commit').toHaveLength(1)
-    const winner = committed[0]!.value
-
     for (const entry of settled) {
-      if (entry.status === 'fulfilled' && entry.value === winner) continue
-      if (entry.status === 'fulfilled') {
-        // The loser that arrives after the publish is told what the WINNER did, verbatim.
-        expect(entry.value.outcome).toBe('already-applied')
-        expect(entry.value.forgetReceipt).toEqual(winner.forgetReceipt)
-        continue
-      }
-      const reason = entry.reason as Error
-      expect(
-        reason.name === 'Error'
-          && /No knowledge proposal is stored under id/.test(reason.message),
-        'the loser must not receive an untyped no-such-proposal Error: the proposal exists, it '
-          + 'is mid-apply, and telling the caller it names nothing is the exact confusion '
-          + 'restorePendingProposal exists to prevent',
-      ).toBe(false)
-      expect(reason).toBeInstanceOf(ProposalApplyInFlightError)
-      expect(reason.name).toBe('ProposalApplyInFlightError')
+      if (entry.status === 'fulfilled') continue
+      expect(entry.reason).toBeInstanceOf(ApplyDelegateUnavailableError)
     }
 
-    // POST-FIX NOTE, so the case is not read as asserting something it does not observe: with the
-    // apply-in-flight arm in place the loser no longer REJECTS on this schedule at all — it waits
-    // out the winner's commit and resolves `already-applied` with the winner's receipt. The
-    // rejection branch above is therefore a live guard rather than the observed path, which is
-    // why the directed in-flight case below parks a claim that nobody ever finishes: that is the
-    // only way to make the refusal itself the observed outcome.
-
     // The store shows ONE application: a second Deprecate would append a second event.
-    const applied = readAppliedProposal(agentQaRoot, proposalId)
-    expect(applied?.proposal.proposalId).toBe(proposalId)
     expect(listBundles(knowledgeRoot).filter((row) => row.status === 'deprecated')).toHaveLength(1)
   })
 
@@ -698,156 +699,10 @@ describe('apply — one commit path, receipts at the boundary, race-safe consump
     expect(listBundles(knowledgeRoot)).toEqual(afterFirst)
   })
 
-  // ── CR-03: the claim window is VISIBLE, and every arm of it is answered by type ─────────────
-  //
-  // Four arms, four directed cases. The window these open is the one the race case above cannot
-  // hold still: `claimPendingProposal` renames the pending name away and `publishAppliedProposal`
-  // writes the applied name last, so between them neither name exists — and the duration of that
-  // gap is the duration of a commit, not an instant. Parking a claim directly is how a test gets
-  // to stand inside it.
-  //
-  // EVERY case overrides `inFlightWaitMs`. None of them may depend on the production bound: a
-  // directed case that sat out `APPLY_IN_FLIGHT_WAIT_MS` under turbo contention would be a flake
-  // dressed as coverage, and one that RELIED on the production value would fail the day it is
-  // retuned for a real reason.
-
-  it('refuses a claimed-but-unfinished apply by TYPE, not as a missing proposal (CR-03)', async () => {
-    const recordId = publish('checkout button')
-    const proposalId = proposeForget(recordId)
-
-    // A winner, parked mid-commit: claimed, nothing published yet.
-    expect(claimPendingProposal(agentQaRoot, proposalId).kind).toBe('consumed')
-
-    const refusal = await applyReview({
-      agentQaRoot,
-      knowledgeRoot,
-      proposalId,
-      inFlightWaitMs: 40,
-    }).catch((error: unknown) => error)
-
-    expect(refusal).toBeInstanceOf(ProposalApplyInFlightError)
-    expect((refusal as Error).name).toBe('ProposalApplyInFlightError')
-    expect((refusal as ProposalApplyInFlightError).proposalId).toBe(proposalId)
-    expect((refusal as ProposalApplyInFlightError).waitedMs).toBe(40)
-
-    // WR-06: THE REFUSAL NAMES THE PARKED FILE. An orphaned claim is disclosed-by-design until
-    // Phase 391's reaper exists (D-17, WR-03), and until then the only recovery is an operator
-    // renaming the claim back by hand — which they cannot do if the refusal makes them derive the
-    // naming scheme from the source. The expected filename is written out in full rather than
-    // read off the error, because an assertion that compared the error to itself would pass over
-    // any path at all. The test parked the claim in THIS process, so it knows the pid.
-    const parked = join(proposalsDir(agentQaRoot), `${proposalId}.json.claimed.${process.pid}`)
-    expect(existsSync(parked), 'the fixture must really have parked a claim to name').toBe(true)
-    expect((refusal as ProposalApplyInFlightError).claimPath).toBe(parked)
-
-    // IN-02, 387-17: THIS SUPERSEDES 387-16's `message).toContain(parked)`, deliberately and with
-    // its contract preserved. 387-16 pinned the absolute path INTO the message because an
-    // operator who cannot see the filename cannot rename it back. That reason is unchanged — but
-    // this message is what crosses `knowledge.proposal.apply`'s function boundary uncaught, which
-    // means it can land in a tool result a model provider reads, carrying the host's home
-    // directory with it. So the two requirements are split rather than traded: the MESSAGE names
-    // the claim relative to `agentQaRoot` (same filename, same recovery instruction), and the
-    // absolute path stays on the `claimPath` FIELD above, byte-identical to what 387-16 pinned,
-    // for the operator's own tooling. The not-contains arm is the half that reds a regression.
-    const parkedRelative = relative(agentQaRoot, parked)
-    expect(parkedRelative, 'the relative form must still name the file, not just a suffix')
-      .toBe(join('proposals', `${proposalId}.json.claimed.${process.pid}`))
-    expect((refusal as Error).message).toContain(parkedRelative)
-    expect(
-      (refusal as Error).message,
-      'the host filesystem layout may not cross the function boundary inside an error message',
-    ).not.toContain(agentQaRoot)
-
-    // …and the refusal changed nothing: no commit, and the winner's claim is untouched, so the
-    // winner can still finish. A waiter that "recovered" by restoring the claim would have stolen
-    // the proposal out from under a live commit.
-    expect(readAppliedProposal(agentQaRoot, proposalId)).toBeUndefined()
-    expect(listBundles(knowledgeRoot).every((row) => row.status !== 'deprecated')).toBe(true)
-    // The bound is pinned well above the poll interval, so the production wait is a wait and not
-    // a single glance.
-    expect(APPLY_IN_FLIGHT_WAIT_MS).toBeGreaterThan(1_000)
-  })
-
-  it('resolves already-applied when the winner PUBLISHES during the wait (CR-03)', async () => {
-    const recordId = publish('checkout button')
-    await projectIndex()
-    const proposalId = proposeForget(recordId)
-
-    const claimed = claimPendingProposal(agentQaRoot, proposalId)
-    if (claimed.kind !== 'consumed') throw new Error('the fixture must win the claim')
-    // The winner finishes mid-wait. Scheduled rather than awaited so the waiter is genuinely
-    // inside its poll loop when the applied file appears.
-    const previewed = claimed.proposal.receiptPreview?.tombstonedRecords
-    if (previewed === undefined) throw new Error('a forget proposal must carry a preview')
-    const winnersReceipt = {
-      schemaVersion: 1 as const,
-      proposalId,
-      tombstonedRecords: previewed.map((row) => ({ ...row })),
-      projectionsScrubbed: [...FORGET_SCRUBBED_PROJECTIONS],
-      resultingBundleStatus: 'tombstoned' as const,
-      forgottenAt: 99,
-    }
-    setTimeout(() => {
-      publishAppliedProposal(agentQaRoot, {
-        proposal: claimed.proposal,
-        forgetReceipt: winnersReceipt,
-      })
-    }, 30)
-
-    const waiter = await applyReview({
-      agentQaRoot,
-      knowledgeRoot,
-      proposalId,
-      inFlightWaitMs: 2_000,
-    })
-
-    expect(waiter.outcome).toBe('already-applied')
-    // The WINNER'S receipt, verbatim — not one recomputed by the waiter over a store that has
-    // since moved on.
-    expect(waiter.forgetReceipt).toEqual(winnersReceipt)
-    expect(waiter.forgetReceipt?.forgottenAt).toBe(99)
-  })
-
-  it('proceeds and commits when the winner RESTORES during the wait (CR-03)', async () => {
-    const recordId = publish('checkout button')
-    await projectIndex()
-    const proposalId = proposeForget(recordId)
-
-    expect(claimPendingProposal(agentQaRoot, proposalId).kind).toBe('consumed')
-    // The winner REFUSED — a held lease, a gate hold — and put the proposal back. The waiter now
-    // legitimately inherits the work: this is the first commit, not a second one.
-    setTimeout(() => { restorePendingProposal(agentQaRoot, proposalId) }, 30)
-
-    const waiter = await applyReview({
-      agentQaRoot,
-      knowledgeRoot,
-      proposalId,
-      inFlightWaitMs: 2_000,
-      now: () => 777,
-    })
-
-    expect(waiter.outcome).toBe('applied')
-    expect(waiter.forgetReceipt?.forgottenAt).toBe(777)
-    expect(listBundles(knowledgeRoot).filter((row) => row.status === 'deprecated')).toHaveLength(1)
-  })
-
-  it('refuses an id this store never minted with the typed not-found (CR-03)', async () => {
-    publish('checkout button')
-
-    const refusal = await applyReview({
-      agentQaRoot,
-      knowledgeRoot,
-      proposalId: 'prop_00000000-0000-4000-8000-000000000000',
-      inFlightWaitMs: 40,
-    }).catch((error: unknown) => error)
-
-    // The store's OWN error, not a bare `Error` a caller would have to read a message to identify.
-    expect(refusal).toBeInstanceOf(ProposalNotFoundError)
-    expect((refusal as Error).name).toBe('ProposalNotFoundError')
-    // …and it is NOT the in-flight refusal: an unknown id and a claimed id are different facts,
-    // and a caller that retried an unknown id forever would be the cost of merging them.
-    expect(refusal).not.toBeInstanceOf(ProposalApplyInFlightError)
-  })
+  // ── CR-03: deleted 2026-10-01 (432-17). The four claim-window cases (a parked claim refused by
+  // type, a winner publishing or restoring during the wait, an id never minted) measured the
+  // claim/rename machinery the inbox owned. A change is no longer claimed: the identity is the
+  // caller's, and a live writer is met through the lease (see the overlap case above).
 
   // ── CR-02: the complete {reject, forget} × {deprecated, superseded} matrix ──────────────────
   //
@@ -1048,12 +903,13 @@ describe('apply — one commit path, receipts at the boundary, race-safe consump
     expect(listBundles(knowledgeRoot)).not.toEqual(before)
   })
 
-  it('leaves the proposal APPLICABLE when the commit refuses', async () => {
+  it('leaves the change RETRYABLE when the commit refuses', async () => {
+    // RE-SPELLED (432-17): there is no pending proposal to keep applicable. A held lease refuses the
+    // change before anything is written, and the same identity applies once the lease is free.
     const recordId = publish('checkout button')
     const proposalId = proposeForget(recordId)
+    const before = listBundles(knowledgeRoot)
 
-    // A held lease is the realistic refusal, and it exercises the failure path end to end: the
-    // claim is taken, the acquisition fails, and the proposal must come back.
     const holder = acquireWriterLease(knowledgeRoot)
     if (holder.kind !== 'acquired') throw new Error('fixture could not take the lease')
     try {
@@ -1063,10 +919,7 @@ describe('apply — one commit path, receipts at the boundary, race-safe consump
       releaseLease({ knowledgeRoot, leaseId: holder.leaseId })
     }
 
-    // Exactly as applicable as before the attempt — never half-consumed.
-    expect(readPendingProposal(agentQaRoot, proposalId)?.proposalId).toBe(proposalId)
-    expect(readAppliedProposal(agentQaRoot, proposalId)).toBeUndefined()
-
+    expect(listBundles(knowledgeRoot)).toEqual(before)
     const retried = await applyReview({ agentQaRoot, knowledgeRoot, proposalId })
     expect(retried.outcome).toBe('applied')
   })
@@ -1078,16 +931,16 @@ describe('apply — one commit path, receipts at the boundary, race-safe consump
     const holder = acquireWriterLease(knowledgeRoot)
     if (holder.kind !== 'acquired') throw new Error('fixture could not take the lease')
     try {
-      // The delegate is handed the SAME proposal id and nothing else — no lease, no epoch, no
-      // store handle. There is nothing here it could steal with.
+      // The delegate is handed the SAME request and identity and nothing else — no lease, no
+      // epoch, no store handle. There is nothing here it could steal with.
       const seen: string[] = []
       const delegated = await applyReview({
         agentQaRoot,
         knowledgeRoot,
         proposalId,
-        delegate: async (id) => {
-          seen.push(id)
-          return { outcome: 'applied', proposal: { ...readPendingProposal(agentQaRoot, id)!, status: 'applied' } }
+        delegate: async ({ request, operationId }) => {
+          seen.push(`prop_${operationId}`)
+          return { outcome: 'applied', verb: request.verb, changeId: `prop_${operationId}`, recordIds: [recordId] }
         },
       })
       expect(seen).toEqual([proposalId])
@@ -1106,9 +959,9 @@ describe('apply — one commit path, receipts at the boundary, race-safe consump
         delegate: () => new Promise(() => {}),
       })).rejects.toBeInstanceOf(ApplyDelegateTimeoutError)
 
-      // Still not stolen, and the proposal is still pending for the holder to find.
+      // Still not stolen, and nothing was filed for the holder to find.
       expect(acquireWriterLease(knowledgeRoot).kind).toBe('held')
-      expect(readPendingProposal(agentQaRoot, proposalId)?.proposalId).toBe(proposalId)
+      expect(existsSync(join(agentQaRoot, 'proposals'))).toBe(false)
     } finally {
       releaseLease({ knowledgeRoot, leaseId: holder.leaseId })
     }
@@ -1198,7 +1051,7 @@ describe('apply — one commit path, receipts at the boundary, race-safe consump
         const mark = { markId: 'mark_0123456789ab', runId, testIndex: 0,
           kind: 'false-fail' as const, fix: 'fact' as const }
         const scope = { tier: 'product' as const, key: 'apply-storefront' }
-        const outcome = proposeReview({ agentQaRoot, knowledgeRoot, request: { verb: 'mark', input: {
+        return stage({ verb: 'mark', input: {
           target, mark, plan: { schemaVersion: 1, markId: mark.markId, kind: 'knowledge', fix: 'fact',
             target, wording: 'floor', feedbackSource: { runId, testIndex: 0, kind: mark.kind },
             runTraceRef: { runId, runSlug: runId }, deltas: [{ kind: 'Supersede', origin: 'user', scope,
@@ -1206,9 +1059,7 @@ describe('apply — one commit path, receipts at the boundary, race-safe consump
               evidenceToken: asEvidenceToken(`mark:${mark.markId}`),
               newBundle: makeBundleDraftFixture({ scope, anchors: [ANCHOR] }),
             }] },
-        } } })
-        if (outcome.kind !== 'proposed') throw new Error('expected a mark proposal')
-        return outcome.proposal.proposalId
+        } })
       }
     }
   }
@@ -1253,13 +1104,9 @@ describe('apply — one commit path, receipts at the boundary, race-safe consump
             expect(error).toBeInstanceOf(UserDeltaCitationIntegrityError)
             expect(error?.name).toBe('UserDeltaCitationIntegrityError')
             expect((error as UserDeltaCitationIntegrityError | undefined)?.recordId).toBe(recordId)
-            // NOTHING was published as applied: the caller is never told `applied` for a
-            // confirmation that confirmed nothing.
-            expect(readAppliedProposal(agentQaRoot, proposalId)).toBeUndefined()
-            // …and the proposal is back under its PENDING name, so a retry finds it applicable
-            // rather than vanished. A refusal that consumed the proposal would be the
-            // half-consumed data loss `restorePendingProposal` exists to prevent.
-            expect(readPendingProposal(agentQaRoot, proposalId)?.proposalId).toBe(proposalId)
+            // NOTHING was filed or published: the caller is never told `applied` for a
+            // confirmation that confirmed nothing (432-17: there is no proposal to restore).
+            expect(existsSync(join(agentQaRoot, 'proposals'))).toBe(false)
           } else {
             expect(settled.kind).toBe('resolved')
             expect(settled.kind === 'resolved' ? settled.value.outcome : undefined).toBe('applied')
@@ -1516,11 +1363,10 @@ describe('apply — one commit path, receipts at the boundary, race-safe consump
     })).rejects.toBeInstanceOf(TypeError)
 
     // The refusal is STRUCTURAL and happens before anything is touched: the delegate was never
-    // called, and — the half that matters — the proposal was never claimed, so a caller that
-    // fixes its input finds the proposal exactly as applicable as before.
+    // called and nothing was written, so a caller that fixes its input applies the same change.
     expect(delegateCalls).toBe(0)
-    expect(readPendingProposal(agentQaRoot, proposalId)?.proposalId).toBe(proposalId)
-    expect(readAppliedProposal(agentQaRoot, proposalId)).toBeUndefined()
+    expect(existsSync(join(agentQaRoot, 'proposals'))).toBe(false)
+    expect((await applyReview({ agentQaRoot, knowledgeRoot, proposalId })).outcome).toBe('applied')
 
     // EACH FIELD ALONE still works, and neither half is duplicated here: `delegate` alone is
     // covered by 'delegates instead of stealing when a live holder exists, and waits BOUNDED'

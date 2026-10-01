@@ -1,28 +1,23 @@
-// Propose: compute everything, commit nothing (Phase 387, KREV-01 / D-17 · D-19).
+// Resolve a review target and compute the deltas a change writes (Phase 387, KREV-01 / D-17 · D-19).
 //
-// Every function in this module is a READ of the knowledge store plus a write to the PROPOSALS
-// directory, and that division is the module's whole safety claim. Nothing here imports the
-// curator, `commit`, `publishBundle`, `appendOutcomeEvent`, the index, or the writer lease —
-// there is no handle in this file through which a byte of the knowledge store could change. The
-// claim is asserted as a source scan in this module's suite with a planted-violation control,
-// and measured behaviourally by hashing the whole knowledge root across a propose.
+// Every function in this module is a READ of the knowledge store. Nothing here imports the curator,
+// `commit`, `publishBundle`, `appendOutcomeEvent`, the index, or the writer lease — there is no
+// handle in this file through which a byte of the knowledge store could change. `apply-review.ts`
+// holds the one write path and calls in here for the target and the deltas.
 //
-// Why a separate module from `apply-review.ts`: the two halves have opposite powers. Keeping
-// them in one file would have put the one legal `commit` import in the same scope as the code
-// whose contract is that it cannot reach one.
-
-import { randomUUID } from 'node:crypto'
+// 2026-10-01 (432-17, D-05/D-22): the propose half that minted proposal files into
+// `<agentQaRoot>/proposals/` is deleted with the inbox. A change applies in the call through
+// `applyExplicitReview`; old proposal files are never read again. The module keeps its name so its
+// history stays addressable.
 
 import { asRecordId, canonicalJson, KnowledgeMarkInputSchema } from '@vostride/agent-qa-schema'
 import type {
   BundleProvenance,
   Delta,
-  ForgetPreview,
   KnowledgeAcceptInput,
   KnowledgeForgetInput,
   KnowledgeMarkInput,
   KnowledgeProjection,
-  KnowledgeProposalV1,
   KnowledgeRejectInput,
   KnowledgeTargetRef,
   ScopeKey,
@@ -30,7 +25,6 @@ import type {
 
 import { deriveBundleTrust, loadBundle } from '../bundle-read.js'
 import { enumerateBundleDirs } from '../bundle-scan.js'
-import { mintProposalId, readProposal, writePendingProposal } from './proposals-store.js'
 
 /**
  * The §7.7 projections a forget in THIS store actually scrubs, enumerated honestly.
@@ -53,7 +47,8 @@ export const FORGET_SCRUBBED_PROJECTIONS: readonly KnowledgeProjection[] = ['fts
 /** Resolves a `MEM-` short-ID to the machine id it addresses, or `undefined` (D-01/D-04). */
 export type ResolveBundleShortId = (shortId: string) => string | undefined
 
-export interface ProposeReviewRequest {
+/** A validated mark, accept, reject or forget, in the shape the review verbs take. */
+export interface ReviewChangeRequest {
   readonly verb: 'accept' | 'reject' | 'forget' | 'mark'
   readonly input: KnowledgeAcceptInput | KnowledgeRejectInput | KnowledgeForgetInput | KnowledgeMarkInput
 }
@@ -64,47 +59,6 @@ export class MarkPlanIntegrityError extends Error {
     this.name = 'MarkPlanIntegrityError'
   }
 }
-
-export interface ProposeReviewInput {
-  /** Where proposals are durable — `<configDir>/.agent-qa`. */
-  readonly agentQaRoot: string
-  readonly knowledgeRoot: string
-  readonly request: ProposeReviewRequest
-  /**
-   * Injected rather than opened here, exactly as the D-01 sighting hook is: the addressing
-   * ledger belongs to the composition root, and a review module that opened it would be a
-   * second owner of the one durable store this system never rebuilds.
-   */
-  readonly resolveBundleShortId?: ResolveBundleShortId
-  readonly now?: () => number
-  readonly randomUuid?: () => string
-  /**
-   * WHO is emitting this proposal (391 D-08) — the function-op id, and the run when there is one.
-   *
-   * OPTIONAL, and the `at` field is deliberately NOT on it: this function already stamps
-   * `proposedAt`, and a caller that could supply a second instant could make the envelope's
-   * attribution disagree with the proposal's own timestamp about when the same act happened.
-   * Absent means the mint writes the bare 387 document, which is what every direct caller of
-   * this module did before the function layer had an id to name.
-   */
-  readonly origin?: {
-    readonly emittedBy: string
-    readonly runId?: string
-  }
-}
-
-/**
- * What proposing produced, or the named absence.
- *
- * A target ref that names nothing is an ORDINARY reviewer mistake — an id pasted out of a stale
- * issue, a bundle forgotten between two reads — so it is a result arm rather than a throw, on
- * exactly the reasoning 387-06 D-1 applied to the show verb. The plan's own behaviour requires
- * "a typed not-found, never a throw"; the port signature 387-06 declared could not say it, so
- * this union is what the port now returns.
- */
-export type ProposeReviewOutcome =
-  | { readonly kind: 'proposed'; readonly proposal: KnowledgeProposalV1 }
-  | { readonly kind: 'target-not-found'; readonly target: KnowledgeTargetRef }
 
 export interface ResolvedReviewTarget {
   readonly recordId: string
@@ -153,7 +107,7 @@ export function resolveReviewTarget(
 }
 
 /**
- * The deltas a verb WOULD commit.
+ * The deltas a change commits.
  *
  * `origin: 'user'` on all three, and it is the load-bearing field rather than boilerplate: a
  * review verb exists because a PERSON decided something about a record, and `agent` origin is
@@ -166,8 +120,7 @@ export function resolveReviewTarget(
  * REFUSED for `Deprecate` by `assertRestrictedFallbackDelta`, whose job is to stop model judgment
  * masquerading as deterministic authorship; measured, not assumed (`restricted-fallback`, both
  * mutating verbs). So the deltas carry no authorship and the bridge's own default applies, and
- * the human attribution lives where it is actually true: `origin: 'user'` plus the durable,
- * addressable proposal that records who decided what. Widening the authorship vocabulary is a
+ * the human attribution lives where it is actually true: `origin: 'user'` on the committed delta. Widening the authorship vocabulary is a
  * curator-contract change with a trust-fold blast radius; 391, which owns the review engine and
  * the standing-grant model, is where a `human` path belongs. Recorded in `.planning/WINDOWS.md`.
  *
@@ -179,12 +132,12 @@ export function resolveReviewTarget(
  * machinery — and the destructive verb, `purgeRecord`, is D-14's true-delete exemption which
  * forget is explicitly not (D-19).
  *
- * `changeId` is the stable identity of the change: a proposal id on the proposal path, the id
- * derived from the caller's operation identity on the direct path (432-06). Accept's evidence
+ * `changeId` is the stable identity of the change, derived from the caller's operation identity
+ * (432-06). Accept's evidence
  * token and forget's reason are derived from it, so a retried change is the same change.
  */
 export function reviewDeltasFor(
-  request: ProposeReviewRequest,
+  request: ReviewChangeRequest,
   resolved: ResolvedReviewTarget,
   changeId: string,
 ): Delta[] {
@@ -235,59 +188,4 @@ export function reviewDeltasFor(
         reason: `forget:${changeId}`,
       } as Delta]
   }
-}
-
-function forgetPreview(resolved: ResolvedReviewTarget): ForgetPreview {
-  return {
-    tombstonedRecords: [{ recordId: resolved.recordId, provenance: resolved.provenance }],
-    projectionsToScrub: [...FORGET_SCRUBBED_PROJECTIONS],
-  }
-}
-
-/**
- * Compute a proposal, persist it, and return it — changing nothing in the knowledge store.
- */
-export function proposeReview(input: ProposeReviewInput): ProposeReviewOutcome {
-  const target = 'target' in input.request.input
-    ? input.request.input.target
-    : undefined
-  if (target === undefined) {
-    throw new TypeError('a knowledge review request must carry a target ref')
-  }
-
-  const resolved = resolveReviewTarget(input.knowledgeRoot, target, input.resolveBundleShortId)
-  if (resolved === undefined) return { kind: 'target-not-found', target }
-
-  const proposalId = mintProposalId(input.randomUuid ?? randomUUID)
-  const proposedAt = (input.now ?? Date.now)()
-  const proposal: KnowledgeProposalV1 = {
-    schemaVersion: 1,
-    proposalId,
-    verb: input.request.verb,
-    targetRef: target,
-    deltas: reviewDeltasFor(input.request, resolved, proposalId),
-    ...(input.request.verb === 'mark' ? { mark: (input.request.input as KnowledgeMarkInput).mark,
-      wording: (input.request.input as KnowledgeMarkInput).plan.wording } : {}),
-    ...(input.request.verb === 'forget' ? { receiptPreview: forgetPreview(resolved) } : {}),
-    proposedAt,
-    status: 'pending',
-  }
-  if (proposal.verb === 'mark') {
-    const existing = readProposal(input.agentQaRoot, proposalId)
-    if (existing !== undefined) {
-      if (canonicalJson({ ...existing, status: 'pending' }) !== canonicalJson(proposal)) {
-        throw new MarkPlanIntegrityError(resolved.recordId)
-      }
-      return { kind: 'proposed', proposal: existing }
-    }
-  }
-
-  // The envelope's `at` IS the proposal's `proposedAt`, read off the same value rather than
-  // sampled a second time: two clock reads for one act is two answers to when it happened.
-  writePendingProposal(
-    input.agentQaRoot,
-    proposal,
-    input.origin === undefined ? undefined : { ...input.origin, at: proposedAt },
-  )
-  return { kind: 'proposed', proposal }
 }

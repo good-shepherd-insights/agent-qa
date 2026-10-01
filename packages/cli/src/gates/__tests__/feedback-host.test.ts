@@ -40,9 +40,9 @@ function testBugFixture() {
 function writtenEdit(filePath: string, testName: string, testId: string, text = 'steps:\n  - naïve café ✓ — 日本\n'): AuthoringDraftEditOutput {
   const contentDigest = createHash('sha256').update(Buffer.from(text, 'utf8')).digest('hex')
   const draftRef = { filePath, testId, testName, contentDigest }
-  return { draftRef, editedFrom: { filePath, testName, boundBy: 'exact-ref' }, patches: [], thoughts: 'Correct assertion', proposal: {
-    schemaVersion: 1, draftRef, targetPath: filePath, sourceDigest: 'original-digest', disposition: 'unverified', runsPreviewed: 0, runsConsumed: 0, repairIterations: 0, summaryLine: 'Correct assertion',
-  }, written: { kind: 'written', filePath, contentDigest } }
+  // 2026-10-01 (432-17, D-06): the edit answer carries no test-draft proposal arm.
+  return { draftRef, editedFrom: { filePath, testName, boundBy: 'exact-ref' }, patches: [], thoughts: 'Correct assertion',
+    written: { kind: 'written', filePath, contentDigest } }
 }
 
 /** Blocks the ledger's one atomic append, so the mark fails after every effect and before its receipt. */

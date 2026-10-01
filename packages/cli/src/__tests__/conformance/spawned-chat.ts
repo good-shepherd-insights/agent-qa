@@ -304,9 +304,10 @@ export async function spawnCollecting(
 
 /**
  * The utterance both halves type: the deterministic resolver route, which reaches no model.
- * 432-13: the bare `proposals` alias is gone (C432-CHAT-DIRECT); the passthrough reaches the same op.
+ * 432-13: the bare `proposals` alias is gone (C432-CHAT-DIRECT). 432-17 deleted `proposals.list`
+ * itself, so the passthrough now reaches `quarantine.list`, another read-only empty-input listing.
  */
-export const CHAT_ANCHOR_UTTERANCE = '/fn proposals.list'
+export const CHAT_ANCHOR_UTTERANCE = '/fn quarantine.list'
 
 /**
  * Drive the SHIPPED binary's chat command over a real pipe, and wait for it to exit.

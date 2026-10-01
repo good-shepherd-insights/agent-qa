@@ -4,8 +4,7 @@ import type { Action } from '../action/index'
 import { actionWireSchema } from '../action/wire-schema'
 
 import { MARKS } from '../knowledge/gate-receipt'
-import { PROMOTION_PATHS } from '../knowledge/promotion-path'
-import { DeltaSchema, KnowledgeTargetRefSchema, ProposalIdSchema } from '../knowledge/proposal'
+import { DeltaSchema, KnowledgeChangeIdSchema, KnowledgeTargetRefSchema } from '../knowledge/change'
 import { runIdSchema as runIdCodec, type RunId } from '../run/run-id'
 import { VERDICT_CLASSES, type VerdictClass } from '../verdict/verdict'
 import { oneJoinArm, recordJoinShape } from './record-join'
@@ -41,7 +40,7 @@ export const MARK_APPLIED_CHANGE_KINDS = ['knowledge', 'test-file'] as const
 export const MarkAppliedChangeSchema = z.discriminatedUnion('kind', [
   z.object({
     kind: z.literal('knowledge'),
-    changeId: ProposalIdSchema,
+    changeId: KnowledgeChangeIdSchema,
     recordIds: z.array(z.string().min(1)),
   }).strict(),
   z.object({
@@ -188,22 +187,10 @@ export const ImprovementPlanSchema = z.discriminatedUnion('kind', [
 ])
 export type ImprovementPlan = z.infer<typeof ImprovementPlanSchema>
 
-export const COMMIT_RECEIPT_SCHEMA_VERSION = 1
-export const CommitReceiptSchema = z.object({
-  schemaVersion: z.literal(COMMIT_RECEIPT_SCHEMA_VERSION),
-  proposalId: ProposalIdSchema,
-  markId: z.string().optional(),
-  committedAtOrdinal: indexSchema,
-  recordIds: z.array(z.string().min(1)),
-  gate3: z.array(z.object({ candidateId: z.string().min(1), receiptDigest: z.string().min(1) }).strict()),
-  promoted: z.array(z.object({ candidateId: z.string().min(1), promotionPath: z.enum(PROMOTION_PATHS) }).strict()),
-  held: z.array(z.object({ candidateId: z.string().min(1), reason: z.string().min(1) }).strict()),
-  policy: z.object({
-    recordId: z.string().min(1), scope: z.string().min(1), relPath: z.string().min(1),
-    outcome: z.enum(['written', 'unchanged']),
-  }).strict().optional(),
-}).strict()
-export type CommitReceipt = z.infer<typeof CommitReceiptSchema>
+// 2026-10-01, 432-17: the commit receipt is a direct change receipt and lives with the change
+// contracts; it is re-exported here so every existing import keeps its path.
+export { COMMIT_RECEIPT_SCHEMA_VERSION, CommitReceiptSchema } from '../knowledge/change'
+export type { CommitReceipt } from '../knowledge/change'
 
 export const RunDetailMemberMarkSchema = z.object({
   markId: markIdSchema,

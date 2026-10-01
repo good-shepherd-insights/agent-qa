@@ -1,45 +1,32 @@
-// PROP-03's user journey — enumerate, understand, decide — over the REAL composition (Phase 391).
+// The proposals inbox over the composed host — RE-SPELLED 2026-10-01 (432-17, D-02/D-05/D-22).
 //
-// The store's own corpus (`knowledge-local/src/review/__tests__/proposals-inbox.test.ts`) proves
-// the lifecycle against the module that owns the bytes. This file proves something the store
-// cannot: that a person sitting at a composed host can actually reach it. Every hop below goes
-// through `composeLocalAgent()` and `invokeFunction` — the one composition root and the one
-// dispatch pipeline — so what is measured is the whole spine: the op is registered, the dep is
-// bound at the root, the gate lets a read through, the origin check refuses an agent, and the
-// answer comes back parsed against the declared output contract.
-//
-// D-15's FIRST CLIENT, driven as such. Every proposal in this file is minted by invoking
-// `knowledge.forget.propose` — the shipped KREV verb — never by writing a file. The point of
-// absorbing the KREV verbs into the envelope is that their proposals show up in the inbox, and a
-// fixture that hand-placed JSON would prove the inbox can read JSON somebody typed rather than
-// that the two halves of the phase meet.
-//
-// THE CLOCK IS THE EXPIRY SEAM, and it is the composition's clock rather than a backdated file.
-// `ClockPort` is what the whole host reads time through, so composing a second host whose clock
-// sits a month later drives the real expiry rule down the real path — and it also measures the
-// binding's own conversion, which a backdated `proposedAt` would have skipped entirely.
+// This file was PROP-03's user journey over the real composition: list, show and reject pre-432
+// proposals through `composeLocalAgent()` and `invokeFunction`, with the origin check refusing an
+// agent and the composition clock driving expiry. 432-17 deletes the inbox's ops, the store and the
+// envelope, so every one of those claims lost its subject (list ordering, the receipts shown before
+// a decision, the named absence, the permanent rejection, the origin refusal, expiry at read, the
+// status filter, the empty listing and the bound listing). What survives is the composed-host half
+// of C432-NO-PROPOSAL-OPS and C432-PROPOSAL-FILES-UNREAD: a pre-432 proposal file in the workspace is
+// left exactly as it was, the retired ids are not capabilities of the composed host, and a direct
+// change made beside the file neither reads nor rewrites it.
 
-import { mkdirSync, mkdtempSync, rmSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import { FunctionOriginError, invokeFunction } from '@vostride/agent-qa-agent'
+import { UnknownFunctionError, invokeFunction } from '@vostride/agent-qa-agent'
 import type { JobModelCapability } from '@vostride/agent-qa-agent'
 import { publishBundleForTest } from '@vostride/agent-qa-knowledge-local'
 import type { BundleStoreConfig } from '@vostride/agent-qa-knowledge-local'
 import {
   FunctionScopeSchema,
   MASKED_RESOLVED_CONFIG_SCHEMA_VERSION,
-  PROPOSAL_EXPIRY_MS,
 } from '@vostride/agent-qa-schema'
 import type {
-  ProposalInboxEntryDto,
   Anchor,
   FunctionCaller,
+  KnowledgeChangeOutput,
   MaskedResolvedConfig,
-  ProposalsListOutput,
-  ProposalsRejectOutput,
-  ProposalsShowOutput,
 } from '@vostride/agent-qa-schema'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
@@ -47,29 +34,16 @@ import { composeLocalAgent } from '../composition/compose-local-agent.js'
 import type { LocalAgentHost } from '../composition/compose-local-agent.js'
 import { filePre432KnowledgeProposal } from './pre-432-knowledge-proposal.js'
 
-/**
- * The KNOWLEDGE payload off an envelope this store produced (394-06).
- *
- * `ProposalEnvelope` became a discriminated union when 394 added the test-draft and finding arms,
- * and this file drives the knowledge inbox end to end. Narrowing through an ASSERTION rather than
- * a cast means a future envelope of another kind reaching this store reds here by name instead of
- * being read as a knowledge proposal — which is precisely the confusion the discriminated form
- * exists to prevent.
- */
-function knowledgePayloadOf(
-  envelope: ProposalInboxEntryDto['envelope'],
-): Extract<ProposalInboxEntryDto['envelope'], { kind: 'knowledge' }>['payload'] {
-  expect(envelope.kind).toBe('knowledge')
-  if (envelope.kind !== 'knowledge') throw new Error('unreachable: asserted above')
-  return envelope.payload
-}
-
-
-const LIST_ID = 'proposals.list'
-const SHOW_ID = 'proposals.show'
-const REJECT_ID = 'proposals.reject'
-/** The retired op a pre-432 forget proposal names as its emitter (432-12). */
-const PROPOSE_ID = 'knowledge.forget.propose'
+/** The seven ids deleted with the inbox, as a caller would spell them. */
+const RETIRED_IDS = [
+  'proposals.list',
+  'proposals.show',
+  'proposals.accept',
+  'proposals.reject',
+  'knowledge.proposal.apply',
+  'config.proposal.apply',
+  'config.undo.propose',
+] as const
 
 const ANCHOR: Anchor = { t: 'el', role: 'Button', name: 'Checkout' }
 
@@ -79,22 +53,12 @@ const MASKED_CONFIG: MaskedResolvedConfig = {
   entries: [],
 }
 
-/**
- * A person, holding every scope.
- *
- * Every scope so that a refusal below can only ever be the ORIGIN check — the axis this file
- * measures — and never a scope refusal wearing its clothes. `invokeFunction` checks scopes first,
- * so a caller short one member would turn the origin assertion into a test of the scope check.
- */
 const HUMAN: FunctionCaller = {
   surface: 'test',
   grantedScopes: [...FunctionScopeSchema.options],
   safeMode: false,
   origin: 'human',
 }
-
-/** The same person's permissions, on behalf of the agent. ONLY `origin` differs. */
-const AGENT: FunctionCaller = { ...HUMAN, origin: 'agent' }
 
 const MINT_IDENTITY = (filePath: string): string => filePath
 
@@ -103,7 +67,13 @@ const MODEL: JobModelCapability = {
   generate: () => Promise.resolve({ text: 'unused' }),
 }
 
-describe('the proposals inbox, end to end over the composed host (PROP-03)', () => {
+function snapshot(dir: string): Readonly<Record<string, string>> {
+  const out: Record<string, string> = {}
+  for (const name of readdirSync(dir).sort()) out[name] = readFileSync(join(dir, name), 'utf8')
+  return out
+}
+
+describe('C432-PROPOSAL-FILES-UNREAD: the composed host leaves pre-432 proposal files alone', () => {
   let root: string
   let agentQaRoot: string
   let knowledgeRoot: string
@@ -175,199 +145,37 @@ describe('the proposals inbox, end to end over the composed host (PROP-03)', () 
     return outcome.id
   }
 
-  /**
-   * One pre-432 proposal on disk, filed as the retired forget-propose op filed it (432-12: the
-   * change ops apply in the call and file nothing, so the inbox this file measures reads records
-   * that already exist until 432-17 deletes it).
-   */
-  async function propose(summary: string, ordinal: number): Promise<string> {
+  async function propose(summary: string, ordinal: number): Promise<{ recordId: string; proposalId: string }> {
     const recordId = publish(summary, ordinal)
-    return await filePre432KnowledgeProposal({
+    const proposalId = await filePre432KnowledgeProposal({
       agentQaRoot, knowledgeRoot, verb: 'forget', target: { grain: 'record', recordId },
     })
+    return { recordId, proposalId }
   }
 
-  async function list(
-    on: LocalAgentHost = host,
-    input: Record<string, unknown> = {},
-    caller: FunctionCaller = HUMAN,
-  ): Promise<ProposalsListOutput> {
-    return (await invokeFunction(on.registry, LIST_ID, input, caller)) as ProposalsListOutput
-  }
-
-  it('lists proposals minted through the KREV verb as pending, in deterministic order', async () => {
-    const first = await propose('checkout button', 11)
-    const second = await propose('payment button', 12)
-
-    const listed = await list()
-
-    expect(listed.entries.map((entry) => entry.envelope.id).sort())
-      .toEqual([first, second].sort())
-    expect(listed.entries.every((entry) => entry.envelope.status === 'pending')).toBe(true)
-    expect(listed.entries.every((entry) => entry.applyInFlight === false)).toBe(true)
-    // The ORDER is stable across calls, which is what a surface rendering a table depends on.
-    expect((await list()).entries.map((entry) => entry.envelope.id))
-      .toEqual(listed.entries.map((entry) => entry.envelope.id))
-    // …and it is the store's law, not the readdir order: minted-at ascending.
-    const instants = listed.entries.map((entry) => knowledgePayloadOf(entry.envelope).proposedAt)
-    expect([...instants].sort((left, right) => left - right)).toEqual(instants)
-  })
-
-  it('renders the receipts and the attribution BEFORE any decision is made', async () => {
-    const proposalId = await propose('checkout button', 11)
-
-    const shown = (await invokeFunction(
-      host.registry,
-      SHOW_ID,
-      { proposalId },
-      HUMAN,
-    )) as ProposalsShowOutput
-
-    expect(shown.kind).toBe('found')
-    if (shown.kind !== 'found') throw new Error('unreachable')
-    const { envelope } = shown.entry
-    expect(envelope.status).toBe('pending')
-    // NO DECISION HAS BEEN MADE and the trail says so, which is what makes the rest of this
-    // assertion a claim about reading BEFORE deciding rather than after.
-    expect(envelope.decision).toBeUndefined()
-    // The forget receipt PREVIEW — "show me what would be removed" — answerable while pending.
-    expect(knowledgePayloadOf(envelope).verb).toBe('forget')
-    expect(knowledgePayloadOf(envelope).receiptPreview?.tombstonedRecords.length).toBeGreaterThan(0)
-    expect(knowledgePayloadOf(envelope).receiptPreview?.projectionsToScrub.length).toBeGreaterThan(0)
-    // Where to go and look, and who proposed it — the op id the KREV verb carried in itself.
-    expect(envelope.evidenceRefs.some((ref) => ref.grain === 'record')).toBe(true)
-    expect(envelope.origin?.emittedBy).toBe(PROPOSE_ID)
-  })
-
-  it('answers a named absence for an id nothing was ever minted under', async () => {
+  it('C432-NO-PROPOSAL-OPS: the composed host lists none of the retired ids and refuses each as unknown', async () => {
     await propose('checkout button', 11)
-
-    const shown = (await invokeFunction(
-      host.registry,
-      SHOW_ID,
-      { proposalId: 'prop_00000000-0000-4000-8000-000000000000' },
-      HUMAN,
-    )) as ProposalsShowOutput
-
-    expect(shown.kind).toBe('not-found')
-  })
-
-  it('records a rejection as a permanent decision, and reports the SECOND one as already decided',
-    async () => {
-      const proposalId = await propose('checkout button', 11)
-
-      const rejected = (await invokeFunction(
-        host.registry,
-        REJECT_ID,
-        { proposalId, reason: 'the evidence is a month old' },
-        HUMAN,
-      )) as ProposalsRejectOutput
-
-      expect(rejected.outcome).toBe('rejected')
-      if (rejected.outcome !== 'rejected') throw new Error('unreachable')
-      expect(rejected.entry.envelope.status).toBe('rejected')
-      expect(rejected.entry.envelope.decision?.decision).toBe('rejected')
-      expect(rejected.entry.envelope.decision?.reason).toBe('the evidence is a month old')
-      // RETAINED, not deleted: the proposal is still readable under the same id.
-      expect(knowledgePayloadOf(rejected.entry.envelope).proposalId).toBe(proposalId)
-
-      const second = (await invokeFunction(
-        host.registry,
-        REJECT_ID,
-        { proposalId, reason: 'a second opinion' },
-        HUMAN,
-      )) as ProposalsRejectOutput
-
-      expect(second.outcome).toBe('already-rejected')
-      if (second.outcome !== 'already-rejected') throw new Error('unreachable')
-      // The FIRST decision is what survives, and the second caller is told about it rather than
-      // about its own — which is the whole difference between a decision and a last write.
-      expect(second.entry.envelope.decision?.reason).toBe('the evidence is a month old')
-
-      // …and the inbox agrees: exactly one rejected row, nothing pending.
-      const listed = await list()
-      expect(listed.entries.map((entry) => entry.envelope.status)).toEqual(['rejected'])
-    })
-
-  it('refuses an AGENT-origin reject by name while list and show stay origin-agnostic', async () => {
-    const proposalId = await propose('checkout button', 11)
-
-    await expect(
-      invokeFunction(host.registry, REJECT_ID, { proposalId }, AGENT),
-    ).rejects.toBeInstanceOf(FunctionOriginError)
-
-    // NOTHING HAPPENED. The refusal is pre-dispatch, so the proposal is exactly as pending as it
-    // was — an agent cannot quietly retire what a person has not seen yet.
-    const listed = await list()
-    expect(listed.entries.map((entry) => entry.envelope.status)).toEqual(['pending'])
-
-    // The reads are unaffected, which is what makes the refusal a claim about THIS OP rather than
-    // about agent callers: the same caller reaches both read verbs on the same host.
-    expect((await list(host, {}, AGENT)).entries).toHaveLength(1)
-    const shown = (await invokeFunction(
-      host.registry, SHOW_ID, { proposalId }, AGENT,
-    )) as ProposalsShowOutput
-    expect(shown.kind).toBe('found')
-
-    // CONTROL: the same call from a human is admitted, so the refusal above is the origin check
-    // doing its job rather than something else refusing everything.
-    const rejected = (await invokeFunction(
-      host.registry, REJECT_ID, { proposalId }, HUMAN,
-    )) as ProposalsRejectOutput
-    expect(rejected.outcome).toBe('rejected')
-  })
-
-  it('reports a pending proposal as expired once the window has passed, file untouched', async () => {
-    const proposalId = await propose('checkout button', 11)
-    const proposedAt = knowledgePayloadOf((await list()).entries[0]!.envelope).proposedAt
-
-    // A SECOND host over the SAME root, whose only difference is the clock the whole composition
-    // reads. Nothing on disk moves; the question is asked from a month later.
-    const later = compose(() => new Date(proposedAt + PROPOSAL_EXPIRY_MS + 1).toISOString())
-
-    expect((await list(later)).entries.map((entry) => entry.envelope.status)).toEqual(['expired'])
-    // The proposal is intact — no reaper ran, nothing was deleted, and the original host still
-    // reads it as pending because expiry is a fact about when you look.
-    expect((await list()).entries.map((entry) => entry.envelope.id)).toEqual([proposalId])
-    expect((await list()).entries.map((entry) => entry.envelope.status)).toEqual(['pending'])
-
-    // A DECISION OUTLIVES THE WINDOW: rejecting it now leaves it rejected from the later host's
-    // point of view too, rather than reverting to expired.
-    await invokeFunction(host.registry, REJECT_ID, { proposalId }, HUMAN)
-    expect((await list(later)).entries.map((entry) => entry.envelope.status)).toEqual(['rejected'])
-  })
-
-  it('filters by status without hiding anything from a caller that did not ask', async () => {
-    const kept = await propose('checkout button', 11)
-    const declined = await propose('payment button', 12)
-    await invokeFunction(host.registry, REJECT_ID, { proposalId: declined }, HUMAN)
-
-    expect((await list(host, { status: 'pending' })).entries.map((entry) => entry.envelope.id))
-      .toEqual([kept])
-    expect((await list(host, { status: 'rejected' })).entries.map((entry) => entry.envelope.id))
-      .toEqual([declined])
-    // The unfiltered question still answers everything — the filter narrows, it does not become
-    // the default view of a store that retains its decisions forever.
-    expect((await list()).entries).toHaveLength(2)
-  })
-
-  it('yields an empty listing as a RESULT on a host that has never proposed anything', async () => {
-    const listed = await list()
-
-    expect(listed.entries).toEqual([])
-    // …and it is a RESULT rather than an absence: the op dispatched, the contract parsed, and the
-    // answer is the honest one for a project with nothing waiting on anybody.
-    expect(Array.isArray(listed.entries)).toBe(true)
-  })
-
-  it('lists all three verbs as BOUND on this composition, refusing nothing by name', () => {
-    const listed = host.registry.list(HUMAN)
-    for (const id of [LIST_ID, SHOW_ID, REJECT_ID]) {
-      expect(listed.find((entry) => entry.id === id)?.bindingStatus, id).toBe('bound')
+    const ids = host.registry.list(HUMAN).map((declaration) => declaration.id)
+    expect(ids.length).toBeGreaterThan(0)
+    expect(RETIRED_IDS.filter((id) => ids.includes(id))).toEqual([])
+    for (const id of RETIRED_IDS) {
+      await expect(invokeFunction(host.registry, id, {}, HUMAN), id).rejects.toBeInstanceOf(UnknownFunctionError)
     }
-    // The origin requirement is visible ON THE DECLARATION, which is what lets a listing filter
-    // and the enforcement read the same field (D-16).
-    expect(listed.find((entry) => entry.id === REJECT_ID)?.requiresHumanOrigin).toBe(true)
-    expect(listed.find((entry) => entry.id === LIST_ID)?.requiresHumanOrigin).toBeUndefined()
+  })
+
+  it('C432-PROPOSAL-FILES-UNREAD: a direct change beside a pre-432 proposal neither reads nor rewrites it', async () => {
+    const { recordId } = await propose('checkout button', 11)
+    await propose('payment button', 12)
+    const inbox = join(agentQaRoot, 'proposals')
+    const before = snapshot(inbox)
+    expect(Object.keys(before)).toHaveLength(2)
+
+    const changed = await invokeFunction(host.registry, 'knowledge.forget',
+      { target: { grain: 'record', recordId } }, HUMAN) as KnowledgeChangeOutput
+    expect(changed).toMatchObject({ outcome: 'applied', verb: 'forget', recordIds: [recordId] })
+
+    // A second host composed over the same workspace finds the files exactly as they were.
+    compose()
+    expect(snapshot(inbox)).toEqual(before)
   })
 })

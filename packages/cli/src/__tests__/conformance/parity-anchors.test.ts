@@ -344,7 +344,7 @@ describe('the built-binary anchors (D-02)', () => {
     expect(
       outcome.stdout,
       `the spawned chat binary never reported a capability for "${CHAT_ANCHOR_UTTERANCE}"`,
-    ).toContain('proposals.list')
+    ).toContain('quarantine.list')
 
     await driveChatInProcess(inProcessFixture.configPath)
 
@@ -597,7 +597,7 @@ describe('the built-binary anchors (D-02)', () => {
     // about whether they COULD fail; this drives the comparator's disagreeing branches with
     // synthetic sets. The stray id carries this plan's number so 397-09's mutation script can tell
     // a deliberate control fixture from a planted one.
-    const shared = new Set(['runs.list', 'proposals.list'])
+    const shared = new Set(['runs.list', 'quarantine.list'])
     const binaryOnly = new Set([...shared, 'control.stray.397.07'])
     const inProcessOnly = new Set([...shared, 'control.absent.397.07'])
 

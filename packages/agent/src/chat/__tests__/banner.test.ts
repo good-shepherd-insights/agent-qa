@@ -6,16 +6,21 @@
 // polled would pass every wording assertion in this file and fail the whole point of the feature.
 //
 // AND IT MAY NEVER BLOCK CHAT OPEN. Each read degrades to silence on refusal, which is why the
-// refused-read case is here beside the happy one: a project whose proposals inbox cannot be read
-// still gets a REPL, and the read it could not do is not the person's problem at the moment they
-// typed `agent-qa chat`.
+// refused-read case is here beside the happy one: a project whose runs cannot be read still gets a
+// REPL, and the read it could not do is not the person's problem at the moment they typed
+// `agent-qa chat`.
+//
+// RE-SPELLED 2026-10-01 (432-17, D-05/D-22): the pending-proposals half of the banner is deleted
+// with the inbox. The cells that named pending proposals now pin that the banner never reads the
+// retired `proposals.list` id and never mentions proposals; the one-read and silence claims keep
+// their names over the digest half.
+const RETIRED_PROPOSALS_LIST = 'proposals.list'
 
 import { readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import {
-  PROPOSALS_LIST_FUNCTION_ID,
   RUNS_DIGEST_FUNCTION_ID,
   RUNS_LIST_FUNCTION_ID,
 } from '../../index.js'
@@ -69,21 +74,18 @@ async function run(
 }
 
 describe('the chat banner reads once and says at most one thing', () => {
-  it('names the pending proposals when there are some', async () => {
-    const { line } = await run({
-      [PROPOSALS_LIST_FUNCTION_ID]: () => ({ entries: [{}, {}, {}] }),
+  it('names no pending proposals and never reads the retired inbox op', async () => {
+    const { line, calls } = await run({
+      [RETIRED_PROPOSALS_LIST]: () => ({ entries: [{}, {}, {}] }),
       [RUNS_LIST_FUNCTION_ID]: () => [],
     })
 
-    expect(line).toContain('3 proposals pending')
-    // The route back, named the way the resolver table spells it — a banner that reported a count
-    // without the verb that acts on it would be a notification with no door.
-    expect(line).toContain('proposals')
+    expect(calls).not.toContain(RETIRED_PROPOSALS_LIST)
+    expect(line).toBeUndefined()
   })
 
   it('says nothing at all when the project is idle', async () => {
     const { line } = await run({
-      [PROPOSALS_LIST_FUNCTION_ID]: () => ({ entries: [] }),
       [RUNS_LIST_FUNCTION_ID]: () => [],
     })
 
@@ -92,16 +94,15 @@ describe('the chat banner reads once and says at most one thing', () => {
     expect(line).toBeUndefined()
   })
 
-  it('is ONE line even when both reads have something to say', async () => {
+  it('is ONE line when the digest has something to say', async () => {
     const { line } = await run({
-      [PROPOSALS_LIST_FUNCTION_ID]: () => ({ entries: [{}] }),
       [RUNS_LIST_FUNCTION_ID]: () => [RUN_SUMMARY],
       [RUNS_DIGEST_FUNCTION_ID]: () => ({ lines: ['RUN-1: 2 failed, 1 passed'], runId: 'RUN-1' }),
     })
 
     expect(line).toBeDefined()
     expect(line).not.toContain('\n')
-    expect(line).toContain('1 proposal pending')
+    expect(line).not.toMatch(/proposal/u)
     // The digest's OWN rendered line, carried across rather than re-derived. One renderer law:
     // the banner and `agent-qa digest` must not be two spellings of the same sentence.
     expect(line).toContain('RUN-1: 2 failed, 1 passed')
@@ -109,7 +110,6 @@ describe('the chat banner reads once and says at most one thing', () => {
 
   it('reads each composed op AT MOST ONCE per chat open', async () => {
     const { calls } = await run({
-      [PROPOSALS_LIST_FUNCTION_ID]: () => ({ entries: [{}] }),
       [RUNS_LIST_FUNCTION_ID]: () => [RUN_SUMMARY],
       [RUNS_DIGEST_FUNCTION_ID]: () => ({ lines: ['RUN-1: green'], runId: 'RUN-1' }),
     })
@@ -120,7 +120,6 @@ describe('the chat banner reads once and says at most one thing', () => {
       expect(calls.filter((call) => call === id), id).toHaveLength(1)
     }
     expect(calls).toEqual([
-      PROPOSALS_LIST_FUNCTION_ID,
       RUNS_LIST_FUNCTION_ID,
       RUNS_DIGEST_FUNCTION_ID,
     ])
@@ -132,15 +131,13 @@ describe('the chat banner reads once and says at most one thing', () => {
     expect(line).toBeUndefined()
   })
 
-  it('still names the proposals when only the digest half is refused', async () => {
-    // The halves degrade INDEPENDENTLY. A banner that dropped everything because one of two reads
-    // refused would make a routine unbound op hide the pending decisions a person needs to see.
+  it('says nothing when only the digest half is refused', async () => {
+    // RE-SPELLED (432-17): there is no second half left to name, so a refused digest is silence.
     const { line } = await run({
-      [PROPOSALS_LIST_FUNCTION_ID]: () => ({ entries: [{}, {}] }),
       [RUNS_LIST_FUNCTION_ID]: () => [RUN_SUMMARY],
     })
 
-    expect(line).toContain('2 proposals pending')
+    expect(line).toBeUndefined()
   })
 
   it('holds no timer of any kind — a source pin, because a poll passes every case above', () => {
@@ -156,7 +153,6 @@ describe('the chat banner reads once and says at most one thing', () => {
 
   it('skips the digest entirely when there is no run to digest', async () => {
     const { calls } = await run({
-      [PROPOSALS_LIST_FUNCTION_ID]: () => ({ entries: [] }),
       [RUNS_LIST_FUNCTION_ID]: () => [],
     })
 

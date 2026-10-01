@@ -236,7 +236,9 @@ describe.skipIf(SKIP_REASON !== undefined)(
         agentQaRoot,
         configPath: String(LIVE_CONFIG),
         runExecution,
-        applyDelegate: () => Promise.reject(new Error('no apply delegation in the live gate')),
+        // 2026-10-01 (432-17): the proposal apply delegate is deleted; the live gate still opens no
+        // socket to a daemon that may be running.
+        knowledgeChangeDelegate: () => Promise.reject(new Error('no change delegation in the live gate')),
         ...(capabilities === undefined
           ? {}
           : {

@@ -22,7 +22,7 @@ import {
 } from '../authoring/draft-receipt'
 import { FanOutReportSchema } from '../authoring/fan-out'
 import { PatchOpSchema } from '../authoring/patch-ops'
-import { RunEvidenceRefSchema, TestDraftProposalV1Schema } from '../authoring/proposal-arms'
+import { RunEvidenceRefSchema } from '../authoring/proposal-arms'
 import type { ScopeTier } from '../identity/scope-key'
 
 export const AuthoringVerifyDraftInputSchema = z.object({
@@ -541,15 +541,11 @@ export const AuthoringDraftEditInputSchema = z.object({
 export type AuthoringDraftEditInput = z.infer<typeof AuthoringDraftEditInputSchema>
 
 /**
- * What one edit answers: the proposal, the draft it points at, and the diff that produced it.
+ * What one edit answers: the draft it points at, the diff that produced it, and what it wrote.
  *
- * THE DIFF RIDES THE OUTPUT AND NOT THE PROPOSAL ARM, which is a decision rather than an oversight.
- * `TestDraftProposalV1` is 394-06's arm and it describes EVERY test draft this phase produces —
- * including the ones the loop authors whole, which have no diff at all, because a new file has no
- * untouched lines to have preserved (D-02). A `patches` field on the arm would therefore be absent
- * or empty for the majority of the artifacts it appears on, and an inbox reader would have to learn
- * that an empty diff means two different things. The patch set is a fact about THIS invocation, and
- * this is the shape that invocation's caller reads.
+ * THE DIFF RIDES THE OUTPUT. The patch set is a fact about THIS invocation, and this is the shape
+ * that invocation's caller reads. 2026-10-01 (432-17, D-06): the `test-draft` proposal arm this output
+ * used to carry is deleted with the inbox; `written` says which file the edit wrote.
  *
  * The ops are the diff in the contract's own vocabulary, and they are more precise than a line
  * range: a JSON Pointer names a node, and the guarantee that the rendered bytes changed only where
@@ -574,11 +570,6 @@ export const AuthoringDraftEditOutputSchema = z.object({
   patches: z.array(PatchOpSchema),
   /** The model's own account of the change, stored as prose so nothing downstream parses it. */
   thoughts: z.string(),
-  /**
-   * The `test-draft` arm describing this edit. 432-17 retires the arm with the envelope; the edit
-   * itself is already written (see `written`) and waits for nobody.
-   */
-  proposal: TestDraftProposalV1Schema,
   /**
    * What the edit did to the file it edited (432 D-06): written over the exact bytes it read, or
    * not written because that file changed, left the workspace, or could not be written.

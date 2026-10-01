@@ -101,8 +101,8 @@ export const CANONICAL_ID_DOMAINS: readonly CanonicalDomain[] = Object.freeze([
   Object.freeze({
     domain: 'config',
     charter:
-      'the project configuration document: reading the masked resolution, and every proposal-'
-      + 'mediated write to it, including scaffolding and undo (395)',
+      'the project configuration document: reading the masked resolution, and every write to it, '
+      + 'including scaffolding (395; direct since 432)',
   }),
   Object.freeze({
     domain: 'editor',
@@ -145,8 +145,8 @@ export const CANONICAL_ID_DOMAINS: readonly CanonicalDomain[] = Object.freeze([
   Object.freeze({
     domain: 'knowledge',
     charter:
-      'the learned record: bundles, records, diffs, the why-brief, and every proposal-mediated '
-      + 'write to them (386 D-06, 387 KREV-01)',
+      'the learned record: bundles, records, diffs, the why-brief, and every write to them '
+      + '(386 D-06, 387 KREV-01; direct since 432)',
   }),
   Object.freeze({
     domain: 'memory',
@@ -164,6 +164,10 @@ export const CANONICAL_ID_DOMAINS: readonly CanonicalDomain[] = Object.freeze([
     charter:
       'the kind-generic decision inbox — list, show, accept, reject over every `ProposalKind`; '
       + 'each kind\'s APPLY door stays in the domain that owns the artifact (391 D-15)',
+    reserved:
+      '2026-10-01: retired by 432-17 (D-05), not unshipped. Changes apply in the call, so the inbox '
+      + 'and its four verbs are deleted; the name stays held so a revived id must argue for it '
+      + 'against this sentence rather than land in an empty domain unnoticed.',
   }),
   Object.freeze({
     domain: 'quarantine',

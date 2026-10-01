@@ -237,10 +237,9 @@ export async function deriveAskCapableOpIds(
  */
 export const ASK_CAPABLE_OP_IDS: readonly string[] = Object.freeze([
   'authoring.draft.write',
-  'config.proposal.apply',
+  // 2026-10-01 (432-17): `config.proposal.apply`, `knowledge.proposal.apply` and `proposals.accept`
+  // left the registry with the inbox, and so left this set.
   'grants.revoke',
-  'knowledge.proposal.apply',
-  'proposals.accept',
   // 2026-09-08, 419 D-13/D-20: measured by the same shipped ask derivation.
   'runs.mark',
 ])

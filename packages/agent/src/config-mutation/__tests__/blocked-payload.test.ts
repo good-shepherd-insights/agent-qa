@@ -1,77 +1,18 @@
-// The one funnel every config apply passes through, and what it does with a blocked record
-// (Phase 395-02, D-10 · T-395-04).
+// What a blocked config change answers (Phase 395-02, D-10 · T-395-04; 432-11, 432-17).
 //
-// WHAT MAKES THESE CELLS RED: `applyablePayload` widened back to a pass-through — either by
-// returning the union, by casting, or by adding a `default` arm that let a blocked record past. Any
-// of the three compiles fine and is exactly the widening 395-01 wrote this function to prevent, and
-// each one fails the first cell below.
-//
-// AND WHY THE SECOND CELL EXISTS: an applyable payload must still travel. A refusal that refused
-// everything would pass a "blocked is refused" assertion just as happily as a correct one, so the
-// positive half is measured beside it rather than assumed.
-
 import { describe, expect, it } from 'vitest'
 
-import { CURRENT_CONFIG_PROPOSAL_SCHEMA_VERSION } from '@vostride/agent-qa-schema'
-import type { ConfigProposalV1 } from '@vostride/agent-qa-schema'
+import * as construct from '../construct.js'
 
-import { BlockedConfigProposalError, applyablePayload } from '../construct.js'
-
-const blocked: ConfigProposalV1 = {
-  schemaVersion: CURRENT_CONFIG_PROPOSAL_SCHEMA_VERSION,
-  payloadKind: 'blocked',
-  action: 'config.field.set',
-  summaryLine: 'set registry.providers.farm.accessKey',
-  blockedReason: 'guardrail-hit',
-  paths: ['agent-qa.config.yaml'],
-  scanFindings: [{
-    path: 'agent-qa.config.yaml',
-    field: 'registry.providers.farm.accessKey',
-    detector: 'generic-secret-shape',
-    redactedFingerprint: 'sha256:9f86…0a08',
-  }],
-}
-
-const applyable: ConfigProposalV1 = {
-  schemaVersion: CURRENT_CONFIG_PROPOSAL_SCHEMA_VERSION,
-  payloadKind: 'applyable',
-  action: 'config.field.set',
-  summaryLine: 'set use.parallel to true',
-  files: [{
-    path: 'agent-qa.config.yaml',
-    changeKind: 'modify',
-    baseDigest: 'abc',
-    newContentBase64: 'dXNlOgo=',
-  }],
-  shownDiffBase64: 'eA==',
-  shownDiffDigest: 'def',
-  crossBoundary: false,
-  crossBoundaryReasons: [],
-}
-
+// RE-SPELLED 2026-10-01 (432-17, D-05/D-10). The three `applyablePayload` cells measured the one
+// funnel every config apply passed through: a blocked record refused by name, the refusal quoting
+// nothing the scan found, an applyable payload passed through unchanged. The apply ops, the stored
+// payloads and the funnel are deleted with the inbox; a blocked change is answered in its own call
+// and kept nowhere (C432-CONFIG-BLOCKED-NO-WRITE below). The claim that survives is the absence.
 describe('applyablePayload — the funnel every config apply passes through', () => {
-  it('refuses a blocked record BY NAME, and names the reason', () => {
-    expect(() => applyablePayload(blocked)).toThrow(BlockedConfigProposalError)
-    expect(() => applyablePayload(blocked)).toThrow(/guardrail-hit/)
-  })
-
-  it('the refusal message quotes nothing the scan found', () => {
-    let message = ''
-    try {
-      applyablePayload(blocked)
-    } catch (error) {
-      message = (error as Error).message
-    }
-    // The channel CAN carry a fingerprint — it is in the payload this call was handed — so the
-    // absence below is a fact about the message rather than about a channel that never had one.
-    expect(blocked.payloadKind === 'blocked' && blocked.scanFindings?.[0]?.redactedFingerprint)
-      .toBe('sha256:9f86…0a08')
-    expect(message).not.toContain('9f86')
-    expect(message).not.toContain('accessKey')
-  })
-
-  it('still passes an applyable payload straight through, unchanged', () => {
-    expect(applyablePayload(applyable)).toBe(applyable)
+  it('is deleted with the apply ops, and no blocked-record refusal type remains', () => {
+    expect('applyablePayload' in construct).toBe(false)
+    expect('BlockedConfigProposalError' in construct).toBe(false)
   })
 })
 
@@ -95,13 +36,23 @@ describe('C432-CONFIG-BLOCKED-NO-WRITE: the direct answer names no record', () =
       summaryLine: 'set registry.providers.farm.accessKey — blocked: the proposed change would write a secret',
       blockedReason: 'guardrail-hit',
       paths: ['agent-qa.config.yaml'],
-      scanFindings: blocked.payloadKind === 'blocked' ? blocked.scanFindings : [],
+      scanFindings: [{
+        path: 'agent-qa.config.yaml',
+        field: 'registry.providers.farm.accessKey',
+        detector: 'generic-secret-shape',
+        redactedFingerprint: 'sha256:9f86…0a08',
+      }],
     }
     expect(contract.safeParse(report).success).toBe(true)
     expect(contract.safeParse({ ...report, proposalId: 'prop-1' }).success).toBe(false)
-    // A stored payload of either arm is not an answer an operation can give.
-    expect(contract.safeParse(blocked).success).toBe(false)
-    expect(contract.safeParse(applyable).success).toBe(false)
+    // A pre-432 stored payload of either arm is not an answer an operation can give.
+    const { outcome: _outcome, ...stored } = report
+    void _outcome
+    expect(contract.safeParse({ ...stored, schemaVersion: 1, payloadKind: 'blocked', action: 'config.field.set' }).success)
+      .toBe(false)
+    expect(contract.safeParse({ schemaVersion: 1, payloadKind: 'applyable', action: 'config.field.set',
+      summaryLine: 'set use.parallel to true', files: [], shownDiffBase64: 'eA==', shownDiffDigest: 'def',
+      crossBoundary: false, crossBoundaryReasons: [] }).success).toBe(false)
   })
 })
 

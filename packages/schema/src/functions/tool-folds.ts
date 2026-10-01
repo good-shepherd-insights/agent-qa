@@ -41,7 +41,7 @@ import {
   KnowledgeChangeOutputSchema,
   KnowledgeForgetChangeInputSchema,
   KnowledgeRejectChangeInputSchema,
-} from '../knowledge/review-verbs'
+} from '../knowledge/change'
 import {
   AuthoringDraftEditInputSchema,
   AuthoringDraftEditOutputSchema,

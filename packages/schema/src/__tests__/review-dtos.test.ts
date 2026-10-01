@@ -15,25 +15,25 @@ import {
   BRIEF_WHY_RESULT_KINDS,
   BriefWhyInputSchema,
   BriefWhyResultSchema,
-  ForgetTargetRefSchema,
-  KnowledgeAcceptInputSchema,
-  KnowledgeApplyOutcomeSchema,
   KnowledgeMarkInputSchema,
-  KnowledgeForgetInputSchema,
-  KnowledgeProposalApplyInputSchema,
   KnowledgeRecordShowOutputSchema,
   KnowledgeRecordsDiffOutputSchema,
   KnowledgeRecordsInspectOutputSchema,
-  KnowledgeRejectInputSchema,
 } from '../knowledge/review-verbs'
 import {
+  DeltaSchema,
   ForgetReceiptV1Schema,
+  ForgetTargetRefSchema,
   KNOWLEDGE_PROJECTIONS,
-  KNOWLEDGE_PROPOSAL_STATUSES,
   KNOWLEDGE_REVIEW_VERBS,
-  KnowledgeProposalV1Schema,
+  KnowledgeAcceptInputSchema,
+  KnowledgeChangeIdSchema,
+  KnowledgeChangeOutputSchema,
+  KnowledgeForgetInputSchema,
+  KnowledgeRejectInputSchema,
   KnowledgeTargetRefSchema,
-} from '../knowledge/proposal'
+  MarkChangeStampSchema,
+} from '../knowledge/change'
 import { DELTA_KINDS } from '../delta/delta'
 import { DELTA_ORIGINS } from '../delta/envelope'
 
@@ -62,19 +62,6 @@ const provenance = {
   stepIndex: 2,
 } as const
 
-function proposal(overrides: Record<string, unknown> = {}): Record<string, unknown> {
-  return {
-    schemaVersion: 1,
-    proposalId: 'prop_alpha-bravo-charlie',
-    verb: 'accept',
-    targetRef: { grain: 'record', recordId: 'rec-checkout-1' },
-    deltas: [confirmDelta],
-    proposedAt: 1_700_000_000_000,
-    status: 'pending',
-    ...overrides,
-  }
-}
-
 function receipt(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
     schemaVersion: 1,
@@ -87,7 +74,15 @@ function receipt(overrides: Record<string, unknown> = {}): Record<string, unknow
   }
 }
 
-describe('mark proposals/*.json verb and stamp (419 D-01)', () => {
+// RE-SPELLED 2026-10-01 (432-17, D-05/D-22). The knowledge proposal payload these cells parsed is
+// deleted with the inbox, and old proposal files are never parsed again. Each surviving claim moves
+// onto the direct change contract it now belongs to, under its old name where the claim is the same;
+// the payload-only cells (the pending/applied status axis, the forget preview and its missing
+// `forgottenAt`, the empty-delta Noop proposal) left with their subject and are carried by
+// C432-NO-ENVELOPE-EXPORTS in `432-direct-contracts.test.ts`.
+const changeDeltas = z.array(DeltaSchema)
+
+describe('the mark change stamp and the mark review input (419 D-01)', () => {
   const plan = {
     schemaVersion: 1, kind: 'knowledge', markId: markStamp.markId,
     feedbackSource: { runId: 'run-1', testIndex: 0, kind: 'false-fail' },
@@ -96,23 +91,20 @@ describe('mark proposals/*.json verb and stamp (419 D-01)', () => {
     deltas: [confirmDelta], wording: 'floor',
   }
 
-  it('admits a mark stamp exactly when the persisted verb is mark', () => {
-    const marked = proposal({ verb: 'mark', mark: markStamp })
-    expect(KnowledgeProposalV1Schema.parse(marked)).toEqual(marked)
-    for (const invalid of [proposal({ verb: 'mark' }), proposal({ mark: markStamp })]) {
-      const parsed = KnowledgeProposalV1Schema.safeParse(invalid)
-      expect(parsed.success).toBe(false)
-      if (!parsed.success) expect(parsed.error.issues[0]?.path).toEqual(['mark'])
+  it('admits a mark stamp exactly when it names a mark', () => {
+    expect(MarkChangeStampSchema.parse(markStamp)).toEqual(markStamp)
+    for (const invalid of [{ ...markStamp, markId: 'mark-1' }, { ...markStamp, verb: 'mark' }, { ...markStamp, fix: 'test-edit' }]) {
+      expect(MarkChangeStampSchema.safeParse(invalid).success, JSON.stringify(invalid)).toBe(false)
     }
   })
 
-  it('persists optional floor/model wording only on mark proposals', () => {
+  it('carries floor/model wording on the mark plan and refuses an invented one', () => {
     for (const wording of ['floor', 'model'] as const) {
-      const marked = proposal({ verb: 'mark', mark: markStamp, wording })
-      expect(KnowledgeProposalV1Schema.parse(marked)).toEqual(marked)
-      expect(KnowledgeProposalV1Schema.safeParse(proposal({ wording })).success).toBe(false)
+      const input = { target: plan.target, mark: markStamp, plan: { ...plan, wording } }
+      expect(KnowledgeMarkInputSchema.parse(input)).toEqual(input)
     }
-    expect(KnowledgeProposalV1Schema.safeParse(proposal({ verb: 'mark', mark: markStamp, wording: 'invented' })).success).toBe(false)
+    expect(KnowledgeMarkInputSchema.safeParse({ target: plan.target, mark: markStamp,
+      plan: { ...plan, wording: 'invented' } }).success).toBe(false)
   })
 
   it('accepts only a non-empty knowledge plan for the mark review input', () => {
@@ -123,100 +115,52 @@ describe('mark proposals/*.json verb and stamp (419 D-01)', () => {
     expect(() => z.toJSONSchema(KnowledgeMarkInputSchema)).not.toThrow()
   })
 
-  it('round-trips the apply outcome with a commit receipt', () => {
+  it('round-trips the change outcome with a commit receipt', () => {
     const outcome = {
-      outcome: 'applied', proposal: proposal({ verb: 'mark', mark: markStamp }),
+      outcome: 'applied', verb: 'accept', operationId: 'alpha-bravo-charlie', recordIds: ['rec-checkout-1'],
       commitReceipt: {
         schemaVersion: 1, proposalId: 'prop_alpha-bravo-charlie', markId: markStamp.markId,
         committedAtOrdinal: 1, recordIds: ['rec-checkout-1'], gate3: [], promoted: [], held: [],
       },
     }
-    expect(KnowledgeApplyOutcomeSchema.parse(outcome)).toEqual(outcome)
-    expect(() => z.toJSONSchema(KnowledgeApplyOutcomeSchema)).not.toThrow()
+    expect(KnowledgeChangeOutputSchema.parse(outcome)).toEqual(outcome)
+    expect(() => z.toJSONSchema(KnowledgeChangeOutputSchema)).not.toThrow()
   })
 })
 
-describe('KnowledgeProposalV1 (D-17, 391-shaped)', () => {
-  it('accepts a well-formed pending proposal', () => {
-    const parsed = KnowledgeProposalV1Schema.parse(proposal())
-
-    expect(parsed.schemaVersion).toBe(1)
-    expect(parsed.verb).toBe('accept')
-    expect(parsed.status).toBe('pending')
-    expect(parsed.deltas).toHaveLength(1)
-  })
-
-  it('pins the verb and status vocabularies as exact closed sets', () => {
+describe('the review vocabulary and the change id (D-17)', () => {
+  it('pins the verb vocabulary as an exact closed set', () => {
     expect(KNOWLEDGE_REVIEW_VERBS).toEqual(['accept', 'reject', 'forget', 'mark'])
-    expect([...KNOWLEDGE_PROPOSAL_STATUSES]).toEqual(['pending', 'applied'])
   })
 
-  it('admits every declared verb and refuses one outside the union', () => {
-    for (const verb of KNOWLEDGE_REVIEW_VERBS) {
-      expect(KnowledgeProposalV1Schema.parse(proposal({
-        verb, ...(verb === 'mark' ? { mark: markStamp } : {}),
-      })).verb).toBe(verb)
+  it('admits every change verb and refuses one outside the union', () => {
+    for (const verb of ['accept', 'reject', 'forget'] as const) {
+      expect(KnowledgeChangeOutputSchema.parse({ outcome: 'applied', verb, operationId: 'op-1x',
+        recordIds: [] }).verb).toBe(verb)
     }
-    // `purge` is a real verb elsewhere in this store, which is exactly why it must be
-    // refused HERE: the review family is accept/reject/forget/mark and nothing else.
-    expect(() => KnowledgeProposalV1Schema.parse(proposal({ verb: 'purge' }))).toThrow()
+    // `purge` is a real verb elsewhere in this store, which is exactly why it must be refused HERE;
+    // a mark is applied through `runs.mark`, never as a direct change.
+    for (const verb of ['purge', 'mark']) {
+      expect(KnowledgeChangeOutputSchema.safeParse({ outcome: 'applied', verb, operationId: 'op-1x',
+        recordIds: [] }).success, verb).toBe(false)
+    }
   })
 
-  it('refuses a malformed proposalId', () => {
+  it('refuses a malformed change id', () => {
     const bad = ['', 'prop_', 'abc', 'prop_Has Space', 'prop_../etc/passwd', 'PROP_alpha-bravo']
-    for (const proposalId of bad) {
-      expect(() => KnowledgeProposalV1Schema.parse(proposal({ proposalId }))).toThrow()
+    for (const changeId of bad) {
+      expect(KnowledgeChangeIdSchema.safeParse(changeId).success, changeId).toBe(false)
     }
+    expect(KnowledgeChangeIdSchema.parse('prop_alpha-bravo-charlie')).toBe('prop_alpha-bravo-charlie')
   })
 
   it('refuses an unknown key and a schemaVersion other than the literal 1', () => {
-    expect(() => KnowledgeProposalV1Schema.parse(proposal({ inbox: 'default' }))).toThrow()
-    expect(() => KnowledgeProposalV1Schema.parse(proposal({ schemaVersion: 2 }))).toThrow()
-  })
-
-  it('previews tombstones only on a forget proposal', () => {
-    const receiptPreview = {
-      tombstonedRecords: [{ recordId: 'rec-checkout-1', provenance }],
-      projectionsToScrub: ['fts', 'vec'],
-    }
-
-    expect(
-      KnowledgeProposalV1Schema.parse(
-        proposal({
-          verb: 'forget',
-          targetRef: { grain: 'bundle', shortId: 'MEM-001' },
-          receiptPreview,
-        }),
-      ).receiptPreview?.tombstonedRecords,
-    ).toHaveLength(1)
-
-    // An accept that claims it would tombstone something is a proposal whose preview
-    // contradicts its verb — refused here rather than surfaced to a human to notice.
-    for (const verb of ['accept', 'reject']) {
-      expect(() =>
-        KnowledgeProposalV1Schema.parse(proposal({ verb, receiptPreview })),
-      ).toThrow()
-    }
-  })
-
-  it('gives the preview no forgottenAt — a preview has no moment it happened', () => {
-    expect(() =>
-      KnowledgeProposalV1Schema.parse(
-        proposal({
-          verb: 'forget',
-          targetRef: { grain: 'bundle', shortId: 'MEM-001' },
-          receiptPreview: {
-            tombstonedRecords: [{ recordId: 'rec-checkout-1', provenance }],
-            projectionsToScrub: ['fts'],
-            forgottenAt: 1_700_000_100_000,
-          },
-        }),
-      ),
-    ).toThrow()
+    expect(() => ForgetReceiptV1Schema.parse(receipt({ inbox: 'default' }))).toThrow()
+    expect(() => ForgetReceiptV1Schema.parse(receipt({ schemaVersion: 2 }))).toThrow()
   })
 })
 
-describe('proposal deltas (§7.3 vocabulary, imported not re-minted)', () => {
+describe('change deltas (§7.3 vocabulary, imported not re-minted)', () => {
   it('pins the delta kind and origin vocabularies against the type union', () => {
     expect([...DELTA_KINDS]).toEqual([
       'Add',
@@ -231,19 +175,15 @@ describe('proposal deltas (§7.3 vocabulary, imported not re-minted)', () => {
 
   it('admits a delta of every declared kind', () => {
     for (const kind of DELTA_KINDS) {
-      const parsed = KnowledgeProposalV1Schema.parse(
-        proposal({ deltas: [{ ...confirmDelta, kind }] }),
-      )
-      expect(parsed.deltas[0].kind).toBe(kind)
+      const parsed = changeDeltas.parse([{ ...confirmDelta, kind }])
+      expect(parsed[0]?.kind).toBe(kind)
     }
   })
 
   it('refuses a delta whose kind is outside the §7.3 vocabulary', () => {
-    // `Forget` is the obvious invention for this phase's forget verb — and it is NOT a
-    // §7.3 kind. Forgetting is expressed as Deprecate/Supersede through commit().
-    expect(() =>
-      KnowledgeProposalV1Schema.parse(proposal({ deltas: [{ ...confirmDelta, kind: 'Forget' }] })),
-    ).toThrow()
+    // `Forget` is the obvious invention for the forget verb — and it is NOT a §7.3 kind.
+    // Forgetting is expressed as Deprecate/Supersede through commit().
+    expect(() => changeDeltas.parse([{ ...confirmDelta, kind: 'Forget' }])).toThrow()
   })
 
   it('refuses a delta missing the envelope every arm carries', () => {
@@ -255,12 +195,8 @@ describe('proposal deltas (§7.3 vocabulary, imported not re-minted)', () => {
     void _c
 
     for (const delta of [noOrigin, noScope, noCited, { ...confirmDelta, origin: 'daemon' }]) {
-      expect(() => KnowledgeProposalV1Schema.parse(proposal({ deltas: [delta] }))).toThrow()
+      expect(() => changeDeltas.parse([delta])).toThrow()
     }
-  })
-
-  it('admits an empty delta list — a Noop proposal is a legal proposal', () => {
-    expect(KnowledgeProposalV1Schema.parse(proposal({ deltas: [] })).deltas).toEqual([])
   })
 })
 
@@ -356,7 +292,7 @@ describe('ForgetTargetRef (D-19 record-or-bundle grain)', () => {
     ).toThrow()
   })
 
-  it('is the SAME union the proposal addresses its target with', () => {
+  it('is the SAME union a change addresses its target with', () => {
     const value = { grain: 'bundle', shortId: 'MEM-001' }
 
     expect(KnowledgeTargetRefSchema.parse(value)).toEqual(ForgetTargetRefSchema.parse(value))
@@ -495,16 +431,12 @@ describe('review-verb input and output DTOs (KREV-01 wiring contracts)', () => {
     expect(() => KnowledgeRejectInputSchema.parse({ target, reason: '' })).toThrow()
   })
 
-  it('forget addresses either grain and apply addresses a proposal', () => {
+  it('forget addresses either grain', () => {
+    // RE-SPELLED 2026-10-01 (432-17): the proposal apply input is deleted; a change applies in the call.
     expect(
       KnowledgeForgetInputSchema.parse({ target: { grain: 'bundle', shortId: 'MEM-001' } })
         .target.grain,
     ).toBe('bundle')
-    expect(
-      KnowledgeProposalApplyInputSchema.parse({ proposalId: 'prop_alpha-bravo-charlie' })
-        .proposalId,
-    ).toBe('prop_alpha-bravo-charlie')
-    expect(() => KnowledgeProposalApplyInputSchema.parse({ proposalId: 'nope' })).toThrow()
   })
 
   it('projects the reader return shapes faithfully rather than re-minting them', () => {

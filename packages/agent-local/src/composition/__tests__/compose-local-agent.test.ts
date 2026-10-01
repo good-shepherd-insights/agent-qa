@@ -32,9 +32,6 @@ import {
   createLocalKnowledgeStore,
   readGateReceipts,
   indexDbPath,
-  mintProposalId,
-  writePendingProposalRecord,
-  showProposalEnvelope,
   projectRunOutcomes,
 } from '@vostride/agent-qa-knowledge-local'
 import {
@@ -191,23 +188,27 @@ describe('composeLocalAgent (D-15)', () => {
     host = compose()
   })
 
+  // RE-SPELLED 2026-10-01 (432-17, D-05/D-22) from '419 review apply forwards persisted commitReceipt
+  // with strict absence (%s)': the review port's `apply` is deleted with the inbox, so a pre-432
+  // applied record with or without its receipt is never read back; the port's only member is the
+  // direct change, and the planted file is left exactly as it was.
   it.each([true, false])('419 review apply forwards persisted commitReceipt with strict absence (%s)', async present => {
-    const proposalId = mintProposalId(randomUUID)
+    const proposalId = `prop_${randomUUID()}`
     const commitReceipt = { schemaVersion: 1 as const, proposalId, committedAtOrdinal: 12,
       recordIds: ['fact-confirmed'], gate3: [{ candidateId: 'fact-confirmed', receiptDigest: 'a'.repeat(64) }],
       promoted: [{ candidateId: 'fact-confirmed', promotionPath: 'user-sovereign' as const }], held: [] }
     mkdirSync(join(agentQaRoot, 'proposals'), { recursive: true })
-    writeFileSync(join(agentQaRoot, 'proposals', `${proposalId}.applied.json`), JSON.stringify({
+    const planted = join(agentQaRoot, 'proposals', `${proposalId}.applied.json`)
+    writeFileSync(planted, JSON.stringify({
       proposal: { schemaVersion: 1, proposalId, verb: 'accept',
         targetRef: { grain: 'record', recordId: 'fact-confirmed' }, deltas: [],
         proposedAt: 1, status: 'applied' },
       ...(present ? { commitReceipt } : {}),
     }))
+    const before = readFileSync(planted, 'utf8')
     const review = createKnowledgeReview({ agentQaRoot, resolveKnowledgeRoot: () => join(root, 'knowledge') })
-    const answer = await review.apply(proposalId)
-    expect(answer.outcome).toBe('already-applied')
-    if (present) expect(answer.commitReceipt).toEqual(commitReceipt)
-    else expect(answer).not.toHaveProperty('commitReceipt')
+    expect(Object.keys(review)).toEqual(['change'])
+    expect(readFileSync(planted, 'utf8')).toBe(before)
   })
 
   it('416 exposes only the existing writer edge for receipt and promotion capabilities', () => {
@@ -233,17 +234,21 @@ describe('composeLocalAgent (D-15)', () => {
     const capabilities = LOCAL_CURATION_CAPABILITIES as unknown as Record<string, unknown>
     expect(capabilities.withdrawPendingProposal).toBeUndefined()
     expect(capabilities.fileMarkTestDraft).toBeUndefined()
-    const proposalId = mintProposalId(randomUUID)
+    const proposalId = `prop_${randomUUID()}`
     const payload = proposalKind === 'knowledge' ? {
       schemaVersion: 1, proposalId, verb: 'accept', targetRef: { grain: 'record', recordId: 'record-fixture' }, deltas: [], proposedAt: Date.now(), status: 'pending',
     } : {
       schemaVersion: 1, draftRef: { filePath: 'tests/draft.yaml', testId: 'fixture', testName: 'Checkout', contentDigest: 'digest' }, targetPath: 'tests/checkout.yaml', disposition: 'unverified', runsPreviewed: 0, runsConsumed: 0, repairIterations: 0, summaryLine: 'Checkout edit',
     }
-    writePendingProposalRecord(agentQaRoot, { schemaVersion: 1, id: proposalId, kind: proposalKind,
-      origin: { emittedBy: 'runs.mark', at: Date.now() }, payload } as Parameters<typeof writePendingProposalRecord>[1])
+    // 2026-10-01 (432-17): the store that wrote and read these records is deleted, so the legacy
+    // record is planted as the bytes it wrote and asserted untouched by the composed host.
+    mkdirSync(join(agentQaRoot, 'proposals'), { recursive: true })
+    writeFileSync(join(agentQaRoot, 'proposals', `${proposalId}.json`), `${JSON.stringify({
+      schemaVersion: 1, id: proposalId, kind: proposalKind,
+      origin: { emittedBy: 'runs.mark', at: Date.now() }, payload }, undefined, 2)}\n`)
     const before = readFileSync(join(agentQaRoot, 'proposals', `${proposalId}.json`), 'utf8')
-    expect(showProposalEnvelope(agentQaRoot, proposalId, { now: Date.now() })?.envelope)
-      .toMatchObject({ id: proposalId, kind: proposalKind, status: 'pending' })
+    await host.close()
+    host = compose()
     expect(readFileSync(join(agentQaRoot, 'proposals', `${proposalId}.json`), 'utf8')).toBe(before)
   })
 

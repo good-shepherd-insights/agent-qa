@@ -717,76 +717,28 @@ export { showRecord } from './show-record.js'
 export type { ShowRecordOptions } from './show-record.js'
 
 // 387-08 KREV-01 D-17/D-18/D-19: the knowledge review write path. Published through the WRITER
-// entry and deliberately not through `/reader` — proposing commits nothing, but the module it
-// sits beside commits everything, and a read-only surface that could name this directory would
-// be one import away from the one path bytes change through.
-export {
-  FORGET_SCRUBBED_PROJECTIONS,
-  proposeReview,
-} from './review/propose-review.js'
-export type {
-  ProposeReviewInput,
-  ProposeReviewOutcome,
-  ProposeReviewRequest,
-  ResolveBundleShortId,
-} from './review/propose-review.js'
+// entry and deliberately not through `/reader`: this is the one path a change's bytes take.
+// 2026-10-01 (432-17, D-05/D-22): the propose half, the proposals store, its claim/rename machinery
+// and the inbox are deleted; a change applies in the call and old proposal files are never read.
+export { FORGET_SCRUBBED_PROJECTIONS } from './review/propose-review.js'
+export type { ResolveBundleShortId, ReviewChangeRequest } from './review/propose-review.js'
 export {
   APPLY_DELEGATE_TIMEOUT_MS,
-  APPLY_IN_FLIGHT_POLL_MS,
-  APPLY_IN_FLIGHT_WAIT_MS,
   ApplyDelegateTimeoutError,
   ApplyDelegateUnavailableError,
-  // On the barrel because a surface has to be able to NAME the refusal it renders: "somebody
-  // else is applying this right now" and "no such proposal" call for different words to a
-  // person, and a surface that could only catch `Error` would have to guess from a message.
-  ProposalApplyInFlightError,
-  ProposalRejectedError,
-  ProposalTargetVanishedError,
-  applyReview,
+  ReviewTargetVanishedError,
   // 432-06 D-04/D-05: the direct door — a validated explicit change applied in the call, with
   // no envelope, in every execution context. The explicit store entry beneath it stays internal.
   applyExplicitReview,
 } from './review/apply-review.js'
 export type {
-  ApplyDelegate,
   ApplyExplicitReviewInput,
-  ApplyOutcomeKind,
-  ApplyReviewInput,
-  ApplyReviewResult,
   ExplicitReviewDelegate,
   ExplicitReviewDelegation,
   ExplicitReviewRequest,
   ExplicitReviewResult,
 } from './review/apply-review.js'
-export {
-  PROPOSALS_DIR_NAME,
-  ProposalNotFoundError,
-  // 394-18: the kind-generic half — the write verb every kind rides, the decision verb the two
-  // authoring kinds are closed by, and the extraction narrowed to the knowledge commit path.
-  decidePendingProposal,
-  extractStoredKnowledgeProposal,
-  extractStoredProposal,
-  isProcessAlive,
-  listProposalEnvelopes,
-  mintProposalId,
-  // 423 D-19: the non-reaping single-proposal observation marks history joins through.
-  observeProposalEnvelope,
-  pendingProposalExists,
-  proposalsDir,
-  readAppliedProposal,
-  readPendingProposal,
-  readProposal,
-  readRejectedProposal,
-  rejectPendingProposal,
-  showProposalEnvelope,
-  writePendingProposalRecord,
-} from './review/proposals-store.js'
-// 391 PROP-03: the inbox port the composition root binds. The port TYPE lives in schema (both
-// `agent` and this package consume it and neither may import the other); what is published here
-// is the factory, on the `createQuarantineOperations` precedent.
-export { createProposalsInbox } from './review/proposals-inbox.js'
-export type { ProposalsInboxOptions } from './review/proposals-inbox.js'
-// 393 D-19 WTST-02 — the draft-receipts store: the proposals-store idiom applied to keep-gate
+// 393 D-19 WTST-02 — the draft-receipts store: the atomic-file store idiom applied to keep-gate
 // receipts. One schema-versioned `<contentDigest>.json` per draft under the gitignored
 // `<agentQaRoot>/draft-receipts/`, written atomically, refs never run payloads.
 export {
@@ -800,17 +752,6 @@ export type {
   DraftReceiptsStore,
   DraftReceiptsStoreOptions,
 } from './authoring/draft-receipts-store.js'
-export type {
-  AppliedProposalRecord,
-  DecideProposalOutcome,
-  DecidedProposalRecord,
-  ProposalInboxEntry,
-  ProposalInboxReadOptions,
-  RejectProposalOutcome,
-  RejectedProposalRecord,
-  StoredKnowledgeProposal,
-  StoredProposal,
-} from './review/proposals-store.js'
 export { KnowledgeMaintenanceScanError } from './maintenance-scan.js'
 export type { KnowledgeMaintenanceScanIssue } from './maintenance-scan.js'
 export {

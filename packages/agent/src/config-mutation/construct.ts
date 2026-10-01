@@ -4,8 +4,9 @@
 // 2026-09-30, 432-11 D-05/D-07: THE SIX CONFIG OPERATIONS WRITE IN THE CALL. Step 7 below is now a
 // publication through the direct writer (`configWrite`): field changes through the config
 // transaction, whole files over the digest they were built from. A blocked change is answered as a
-// refusal carrying its report, and nothing is filed or written. Only `config.undo.propose` still
-// files a proposal, until 432-17 deletes it. Nothing here runs git.
+// refusal carrying its report, and nothing is filed or written. Nothing here runs git.
+// 2026-10-01, 432-17 D-05/D-09: `config.undo.propose` and the proposal filing it alone still used
+// are deleted with the proposal inbox; a written change is reverted with git (D-07).
 //
 // SEVEN STEPS IN ONE ORDER, AND THE ORDER IS THE CONTRACT:
 //
@@ -29,17 +30,16 @@
 //      the config yaml alone: `config.hook.add` changes only the hooks file, and a validator that
 //      never saw it would have declared valid the one artifact that proposal wrote.
 //   6. CLASSIFY cross-boundary-ness from the actual VALUES (D-02), through `computeCrossBoundary`.
-//   7. PUBLISH through the direct writer and answer what it wrote (432-11). The undo alone still
-//      mints an envelope and files it through the 391 store.
+//   7. PUBLISH through the direct writer and answer what it wrote (432-11).
 //
-// FIVE OPS, ONE PIPELINE, AND THE SPLIT BETWEEN THEM IS THE POINT (395-05, D-01). Steps 3 to 7 are
-// `fileConfigProposal` and every action reaches them: what a `config.target.create` and a
+// SIX OPS, ONE PIPELINE, AND THE SPLIT BETWEEN THEM IS THE POINT (395-05, D-01). Steps 3 to 7 are
+// `checkConfigCandidate` plus `publishConfigChange` and every action reaches them: what a `config.target.create` and a
 // `config.field.set` do differently is which bytes they hand it, never what happens to those bytes
 // afterwards. A per-action pipeline would be five places for the scan to be forgotten. What the ops
 // DO own is steps 1 and 2 plus their own REQUEST refusals — a create against a name that exists, an
 // edit against one that does not — because those are facts about the ask rather than about the
-// resulting configuration, and the two dispositions are deliberately different artifacts (see
-// `CONFIG_REFUSAL_REASONS`: a blocked record is filed and findable, a refusal is answered and gone).
+// resulting configuration, and the two dispositions are deliberately different answers (see
+// `CONFIG_CHANGE_REFUSAL_REASONS`).
 //
 // WHY THE SCAN RUNS BEFORE VALIDATION, WHICH IS 395-04's ONE REORDERING OF 395-01's SEQUENCE. Both
 // orders satisfy CFGM-01 — validation still runs before any applyable proposal exists — and this one
@@ -94,20 +94,17 @@ import type {
   ConfigDiffChanged,
   ConfigDiffFileInput,
   ConfigHookAddInput,
-  ConfigProposalApplyableV1,
-  ConfigProposalBlockedV1,
-  ConfigProposalFile,
+  ConfigBlockedReason,
+  ConfigChangeFile,
   ConfigProjectScaffoldInput,
-  ConfigProposeOutput,
-  ConfigProposalV1,
   ConfigReferenceKind,
   ConfigScanFinding,
   ConfigTargetCreateInput,
   ConfigTargetEditInput,
+  CrossBoundaryReason,
 } from '@vostride/agent-qa-schema'
 import type { ConstructionScanPart } from '@vostride/agent-qa-safety'
 
-import { CURRENT_CONFIG_PROPOSAL_SCHEMA_VERSION } from '@vostride/agent-qa-schema'
 import { computeCrossBoundary } from './cross-boundary.js'
 import type { CrossBoundaryFieldEdit } from './cross-boundary.js'
 import { HOSTNAME_GATE_REFUSAL_DETAIL, parseHostnameToken } from './hostname-gate.js'
@@ -119,10 +116,8 @@ import type {
   ConfigFileSet,
   ConfigFilesPortLike,
   ConfigScaffoldContentPortLike,
-  ConfigProposalsWritePortLike,
   ConfigScanPortLike,
   ConfigStructuredValue,
-  ConfigUndoSourcePortLike,
   ConfigValidatePortLike,
   ConfigWritePortLike,
 } from './ports.js'
@@ -161,14 +156,6 @@ export interface ConstructConfigChangeDeps {
    */
   readonly configScan: ConfigScanPortLike
   readonly configWrite: ConfigWritePortLike
-}
-
-/** What `config.undo.propose` still needs until 432-17 deletes it: the store instead of the writer. */
-export interface ConstructConfigProposalDeps {
-  readonly configFiles: ConfigFilesPortLike
-  readonly configValidate: ConfigValidatePortLike
-  readonly configProposals: ConfigProposalsWritePortLike
-  readonly configScan: ConfigScanPortLike
 }
 
 /**
@@ -810,137 +797,6 @@ export async function scaffoldConfigProject(
 }
 
 /**
- * Everything `config.undo.propose` needs beyond what every other action needs (395-06, D-07).
- *
- * A SEPARATE TYPE RATHER THAN A SIXTH MEMBER OF `ConstructConfigProposalDeps`. The undo is the only
- * action that reads git history; widening the shared bundle would have made the other five ops bind
- * a port none of them can reach, and a required dep nobody supplies is a refusal by name at five
- * call sites for a capability four of them never wanted.
- */
-export interface ConstructConfigUndoDeps extends ConstructConfigProposalDeps {
-  readonly configUndoSource: ConfigUndoSourcePortLike
-}
-
-/**
- * Construct the reverse of the last agent configuration commit, as an ORDINARY proposal (D-07).
- *
- * UNDO IS A PROPOSAL, AND THAT IS L10 RATHER THAN A STYLE CHOICE. There is no `config.undo.apply`
- * and there must not be: a direct-revert verb would be a SECOND channel through which committed
- * configuration changes, and every argument this phase makes about review, freshness, scanning and
- * attribution would have to be made again for it, or silently not made. What this op emits is a
- * `ConfigProposal` like any other — freshness-bound, scanned, classified, filed, and applied through
- * `config.proposal.apply`. Undo-of-undo therefore needs no special case at all: this op's own apply
- * commit carries the trailer, so it becomes the next undo's source by construction.
- *
- * THE DIFF IS CURRENT → PARENT, NOT COMMIT → PARENT, and the difference is the whole of D-07's
- * concurrency claim. `fileConfigProposal` diffs the candidate against the files as they stand RIGHT
- * NOW (CFGM-04's proposal-time re-read), so a human commit that landed after the agent's SURFACES
- * inside the revert diff — the person sees their own line in the change they are being asked to
- * approve — instead of the undo colliding with it blind or quietly reverting it too.
- *
- * `addsHook` IS MEASURED, NOT ASSUMED. Reverting a `config.hook.add` removes a hook and reverting an
- * undo of one puts it back, so "an undo never adds a hook" is false in exactly the case that
- * matters. The fact is read STRUCTURALLY through the same `inspect` port `config.hook.add` uses —
- * the length of the hooks sequence on each side — because that is a shape question, which is the
- * only kind this layer may ask about a document it cannot parse.
- *
- * WHAT THE CLASSIFIER CANNOT SEE HERE, STATED RATHER THAN PAPERED OVER. `fieldEdits` is EMPTY: D-02's
- * per-value rules — secret-adjacent fields, new origins — compare the scalar an edit writes against
- * the one it replaced, and an undo writes whole FILES whose scalars this package cannot enumerate
- * (`packages/agent` may not parse yaml, and `inspect` answers shape and deliberately never content).
- * So an undo that restores an auth binding or an older base URL is not flagged for those two
- * reasons. What still holds unconditionally: the guardrail scan runs over the whole reverted
- * artifact, whole-config validation runs over the whole candidate set, `hook-added` is measured
- * above, and `out-of-set-path` is computed from the files touched. The residue is recorded as a
- * known bound and belongs to 395-07, which owns two-sided grant enforcement and is where the
- * question "may a standing grant cover this?" is actually answered.
- */
-export async function constructConfigUndoProposal(
-  input: { readonly action: string },
-  deps: ConstructConfigUndoDeps,
-): Promise<ConfigProposeOutput> {
-  const source = await deps.configUndoSource.read()
-  if (source.kind === 'none') {
-    return {
-      outcome: 'refused',
-      reason: 'no-agent-commit',
-      detail:
-        'there is no agent-qa configuration commit in this repository to undo. Every commit this '
-        + 'product makes to your configuration carries a machine-readable marker, and history '
-        + 'carries none — so there is nothing to reverse.',
-    }
-  }
-
-  // A FILE THE AGENT COMMIT CREATED CANNOT BE UNDONE BY THIS WRITE PATH. Refused whole rather than
-  // applied by halves: a proposal that reverted three files and left a fourth behind would report
-  // an undo that did not happen, and the file left behind is the one a person is least likely to
-  // notice — the hooks file a `config.hook.add` created on a project that had none.
-  const created = source.files.filter((file) => file.parentBytes === undefined)
-  if (created.length > 0) {
-    return {
-      outcome: 'refused',
-      reason: 'undo-needs-delete',
-      detail:
-        `undoing ${source.commit} would delete ${created.map((file) => file.path).join(', ')}, `
-        + 'which agent-qa created in that commit. This write path proposes file CONTENT and has no '
-        + 'way to propose a deletion, so the undo is refused whole rather than applied in part. '
-        + 'Delete the file yourself if that is what you want.',
-    }
-  }
-
-  // (1) CFGM-04: the re-read, exactly as every other action does it. The bytes below are the ones
-  // the digests will be taken over and the ones the apply will re-check.
-  const set = await deps.configFiles.read()
-
-  const reverted = source.files.flatMap((file) =>
-    file.parentBytes === undefined ? [] : [{ path: file.path, bytes: file.parentBytes }])
-  const candidate = candidateSet(set, reverted)
-
-  const addsHook = await revertAddsHook(deps, set, candidate)
-
-  return await fileConfigProposal({
-    action: input.action,
-    subject: `undo ${source.commit}`,
-    // THE SOURCE COMMIT'S SUBJECT, QUOTED. It is a line this product wrote — `config: <the
-    // proposal's own one-liner>` — so quoting it here discloses nothing that is not already in the
-    // person's `git log`, and it is the one fact that makes an inbox row say WHICH change is being
-    // taken back.
-    summaryLine: `revert agent-qa configuration commit ${source.commit} — ${source.subject}`,
-    fieldEdits: [],
-    addsHook,
-    candidate,
-  }, set, deps)
-}
-
-/**
- * Does reverting to this candidate ADD a hook? A SHAPE question, asked of the shape port (D-02).
- *
- * TWO INSPECTS OF THE HOOKS FILE, one per side, compared on sequence LENGTH. Length is the most
- * this layer can honestly read: `inspect` answers `keys` and `length` and never values, because a
- * port that answered "what is at this path" would be the unmasked config reader the ownership
- * contract forbids, reached through a mutation helper. A longer sequence on the candidate side is a
- * hook this proposal would put back, which is code the project would then run — exactly what the
- * `hook-added` flag exists to make a person re-approve.
- */
-async function revertAddsHook(
-  deps: ConstructConfigProposalDeps,
-  set: ConfigFileSet,
-  candidate: readonly ConfigFileBytes[],
-): Promise<boolean> {
-  const before = set.files.find((file) => file.path === set.hooksFile)
-  const after = candidate.find((file) => file.path === set.hooksFile)
-  if (after === undefined) return false
-
-  const lengthOf = async (member: ConfigFileBytes | undefined): Promise<number> => {
-    if (member?.bytes === undefined) return 0
-    const facts = await deps.configFiles.inspect({ bytes: member.bytes, paths: [HOOKS_PATH] })
-    return factsFor(facts, HOOKS_PATH).length ?? 0
-  }
-
-  return await lengthOf(after) > await lengthOf(before)
-}
-
-/**
  * What a hook's timeout is when the caller does not say.
  *
  * PINNED, WITH A RETUNE NOTE (386 D-15). `HookDefinitionSchema` makes `timeout` REQUIRED — there is
@@ -1028,7 +884,7 @@ const REFS_ONLY_LAW =
 
 /** What the blocked report says, before it is answered (direct) or filed (the undo). */
 interface BlockedReport {
-  readonly blockedReason: ConfigProposalBlockedV1['blockedReason']
+  readonly blockedReason: ConfigBlockedReason
   readonly detail: string
   readonly paths: readonly string[]
   readonly scanFindings?: readonly ConfigScanFinding[]
@@ -1038,9 +894,9 @@ interface BlockedReport {
 /** A candidate that passed the scan and validation, with everything publication and filing need. */
 interface CheckedCandidate {
   readonly rendered: ConfigDiffChanged
-  readonly files: readonly (ConfigProposalFile & { readonly bytes: Uint8Array })[]
+  readonly files: readonly (ConfigChangeFile & { readonly bytes: Uint8Array })[]
   readonly crossBoundary: boolean
-  readonly crossBoundaryReasons: readonly ConfigProposalApplyableV1['crossBoundaryReasons'][number][]
+  readonly crossBoundaryReasons: readonly CrossBoundaryReason[]
 }
 
 type CandidateCheck =
@@ -1355,48 +1211,6 @@ function interruptedAnswer(
 }
 
 /**
- * Step 7 for `config.undo.propose` until 432-17 deletes it: file the proposal it constructed.
- */
-async function fileConfigProposal(
-  plan: ConfigMutationPlan,
-  set: ConfigFileSet,
-  deps: ConstructConfigProposalDeps,
-): Promise<ConfigProposeOutput> {
-  const check = await checkConfigCandidate(plan, set, deps)
-  if (check.kind === 'no-change') return { outcome: 'no-change', path: plan.subject }
-  if (check.kind === 'blocked') return await fileBlocked(deps, plan, check.report)
-
-  const { checked } = check
-  const payload: ConfigProposalApplyableV1 = {
-    schemaVersion: CURRENT_CONFIG_PROPOSAL_SCHEMA_VERSION,
-    payloadKind: 'applyable',
-    action: plan.action,
-    summaryLine: plan.summaryLine,
-    files: checked.files.map(({ bytes: _bytes, ...file }) => file),
-    shownDiffBase64: base64Encode(checked.rendered.diffBytes),
-    shownDiffDigest: checked.rendered.diffDigest,
-    crossBoundary: checked.crossBoundary,
-    crossBoundaryReasons: [...checked.crossBoundaryReasons],
-  }
-
-  const { proposalId } = await deps.configProposals.put({
-    kind: 'config',
-    emittedBy: plan.action,
-    payload,
-  })
-
-  return {
-    outcome: 'proposed',
-    proposalId,
-    summaryLine: payload.summaryLine,
-    crossBoundary: payload.crossBoundary,
-    crossBoundaryReasons: [...payload.crossBoundaryReasons],
-    files: payload.files.map((file) => file.path),
-    shownDiff: utf8Decode(checked.rendered.diffBytes),
-  }
-}
-
-/**
  * The artifact as it would be surfaced, cut into the sections a finding can be attributed to (D-12).
  *
  * CONTEXT LINES ARE IN, AND THAT IS THE WHOLE POINT. A hunk's lines are the rendered section
@@ -1447,51 +1261,6 @@ function scanParts(
     parts.push({ label: member.path, text: utf8Decode(member.bytes) })
   }
   return parts
-}
-
-/**
- * File a blocked record and answer with its reference.
- *
- * THE DIFF BYTES AND THE NEW CONTENT DO NOT TRAVEL HERE, and they structurally cannot: the blocked
- * payload schema has no field for either and is `.strict()` (395-02). This function therefore cannot
- * leak them by forgetting to leave them out, which is the property D-10 asked for rather than a rule
- * a producer has to remember.
- */
-async function fileBlocked(
-  deps: ConstructConfigProposalDeps,
-  plan: ConfigMutationPlan,
-  report: BlockedReport,
-): Promise<ConfigProposeOutput> {
-  const payload: ConfigProposalBlockedV1 = {
-    schemaVersion: CURRENT_CONFIG_PROPOSAL_SCHEMA_VERSION,
-    payloadKind: 'blocked',
-    action: plan.action,
-    summaryLine: configBlockedSummaryLine(plan.subject, report.detail),
-    blockedReason: report.blockedReason,
-    paths: [...report.paths],
-    ...(report.scanFindings === undefined ? {} : { scanFindings: [...report.scanFindings] }),
-    ...(report.validationIssues === undefined
-      ? {}
-      : { validationIssues: [...report.validationIssues] }),
-  }
-
-  const { proposalId } = await deps.configProposals.put({
-    kind: 'config',
-    emittedBy: plan.action,
-    payload,
-  })
-
-  return {
-    outcome: 'blocked',
-    proposalId,
-    summaryLine: payload.summaryLine,
-    blockedReason: payload.blockedReason,
-    paths: [...payload.paths],
-    ...(payload.scanFindings === undefined ? {} : { scanFindings: [...payload.scanFindings] }),
-    ...(payload.validationIssues === undefined
-      ? {}
-      : { validationIssues: [...payload.validationIssues] }),
-  }
 }
 
 /** The config yaml, or the one refusal a set that cannot see its own config file deserves. */
@@ -1611,53 +1380,6 @@ function dedupeFindings(findings: readonly ConfigScanFinding[]): ConfigScanFindi
     kept.push(finding)
   }
   return kept
-}
-
-/**
- * There is nothing here to apply, and saying so is the whole job.
- *
- * A NAMED REFUSAL RATHER THAN A CAST. This error exists because 395-01 predicted the compile break
- * below and said what routing it must produce; a `as ConfigProposalApplyableV1` at that line would
- * have satisfied the compiler and handed a blocked record — which by construction has no diff bytes
- * and no file content — to an apply port that would then read `undefined` where a person's
- * configuration should be. The reason is named because a person reading this in a terminal is being
- * told their change was refused BEFORE it was ever offered, which is not an error they caused.
- *
- * 395-04: `proposals.accept` no longer lets this reach a surface. It narrows the payload itself and
- * answers `not-applyable` as DATA beside the id and the reason, because an accept on a blocked
- * proposal is an ordinary thing for a person to try. This stays as the invariant guarding the PORT —
- * the funnel every apply path passes through, including ones no surface mediates.
- */
-export class BlockedConfigProposalError extends TypeError {
-  constructor(readonly proposalReason: string) {
-    super(
-      'this configuration proposal was blocked when it was constructed '
-      + `(${proposalReason}), so there is nothing to apply: a blocked proposal records the report `
-      + 'and deliberately never records the change. Read the report, fix what it names, and ask '
-      + 'for the change again.',
-    )
-    this.name = 'BlockedConfigProposalError'
-  }
-}
-
-/**
- * Narrow a stored config payload to the arm an apply can act on.
- *
- * THE FUNCTION 395-01 WROTE FOR THIS EXACT DAY, and it was paid. `ConfigProposalV1` had one arm
- * then, so the assignment compiled; the moment 395-02 added the `blocked` arm the type became a
- * real union and this line stopped compiling — at the one place every apply path funnels through,
- * naming both callers (`proposals.accept`'s config route and `config.proposal.apply`) with one
- * error. The alternative, each caller handing `envelope.payload` straight to its port, would have
- * widened silently: a blocked proposal would reach an apply as an object with the right field names
- * and be committed.
- *
- * D-10 IS WHAT MAKES THE REFUSAL SAFE TO STATE. The blocked record carries the scan report and no
- * payload, so refusing here cannot be routed around by a caller willing to reconstruct the change —
- * there is nothing stored to reconstruct it from.
- */
-export function applyablePayload(payload: ConfigProposalV1): ConfigProposalApplyableV1 {
-  if (payload.payloadKind === 'blocked') throw new BlockedConfigProposalError(payload.blockedReason)
-  return payload
 }
 
 function bytesEqual(left: Uint8Array, right: Uint8Array): boolean {

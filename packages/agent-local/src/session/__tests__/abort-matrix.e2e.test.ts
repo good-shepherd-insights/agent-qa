@@ -141,7 +141,7 @@ describe('the abort matrix: one session, both arms, then it carries on', () => {
 
   it('CHAT-05/D-19: graceful Ctrl+C then hard kill, both repaired, and the session continues', async () => {
     // ---- Turn 1: an ordinary completed turn, so the file starts life healthy.
-    const first = await ask('/fn proposals.list')
+    const first = await ask('/fn quarantine.list')
     const sessionId = first.sessionId
     expect(first.status).toBe('completed')
 
@@ -158,7 +158,7 @@ describe('the abort matrix: one session, both arms, then it carries on', () => {
 
     // The next turn REOPENS the session — and must add nothing of its own to a turn that already
     // said how it ended.
-    const afterGraceful = await ask('/fn proposals.list', sessionId)
+    const afterGraceful = await ask('/fn quarantine.list', sessionId)
     expect(afterGraceful.status).toBe('completed')
     expect(afterGraceful.sessionId).toBe(sessionId)
 
@@ -194,7 +194,7 @@ describe('the abort matrix: one session, both arms, then it carries on', () => {
     expect(beforeKillRepair.length).toBeLessThan(intactBytes + Buffer.byteLength(finalLine))
 
     // ---- The next turn repairs, then does its own work.
-    const afterKill = await ask('/fn proposals.list', sessionId)
+    const afterKill = await ask('/fn quarantine.list', sessionId)
     expect(afterKill.status).toBe('completed')
 
     const events = eventsOn(sessionId)
@@ -233,7 +233,7 @@ describe('the abort matrix: one session, both arms, then it carries on', () => {
   // poisoned every time it is resumed. One newline, appended before anything else, is the whole
   // fix; the fragment survives verbatim as its own line for anyone auditing the file.
   it('CHAT-05: repair terminates the torn fragment instead of writing onto it', async () => {
-    const first = await ask('/fn proposals.list')
+    const first = await ask('/fn quarantine.list')
     const sessionId = first.sessionId
     const path = pathOf(sessionId)
 
@@ -286,12 +286,12 @@ describe('the abort matrix: one session, both arms, then it carries on', () => {
   // damage: a torn HEADER is refused outright. A build that guessed at an unreadable header would
   // append to a file whose grammar it does not know, in the one direction no later read can undo.
   it('CHAT-05: a torn header refuses to open by name, and never becomes a silent new session', async () => {
-    const first = await ask('/fn proposals.list')
+    const first = await ask('/fn quarantine.list')
     const path = pathOf(first.sessionId)
     const bytes = readFileSync(path, 'utf8')
     truncateSync(path, 20)
 
-    const error = await ask('/fn proposals.list', first.sessionId).then(
+    const error = await ask('/fn quarantine.list', first.sessionId).then(
       () => undefined,
       (thrown: unknown) => thrown,
     )
@@ -373,7 +373,7 @@ describe('CHAT-05: the compaction pass is handed an already-repaired conversatio
     // that kept its handle would be refused rather than silently interleaved with the turn.
     await seeded.close()
 
-    await engine.runTurn({ message: '/fn proposals.list', sessionId })
+    await engine.runTurn({ message: '/fn quarantine.list', sessionId })
 
     expect(seen).toHaveLength(1)
     expect(seen[0]?.abortedTurnIds).toEqual(['turn-dead'])

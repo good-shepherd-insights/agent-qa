@@ -1,3 +1,6 @@
+// RE-SPELLED 2026-10-01 (432-17, D-05): `proposals.list` is deleted with the inbox. The read these
+// cells drive through the composed host is now `quarantine.list`, another allow-tier read that
+// answers honestly (an empty listing) in a bare temp project, so every claim keeps its subject.
 // Two conversations at once, through one composition (Phase 392 plan 12, CHAT-05 / CR-01).
 //
 // "A SESSION IS RECONSTRUCTABLE AND CANNOT WEDGE" is a claim about a session, and every scenario
@@ -31,7 +34,7 @@ import { join } from 'node:path'
 
 import {
   AGENT_ASK_FUNCTION_ID,
-  PROPOSALS_LIST_FUNCTION_ID,
+  QUARANTINE_LIST_FUNCTION_ID,
   invokeFunction,
 } from '@vostride/agent-qa-agent'
 import type { ChatLanguageModel, JobModelCapability } from '@vostride/agent-qa-agent'
@@ -81,7 +84,7 @@ const MINT_IDENTITY = (filePath: string): string => filePath
  * whether they ran. Two different ops rather than one alias twice, so a receipt that crossed files
  * is legible as the wrong op in the wrong conversation.
  */
-const UTTERANCE_A = '/fn proposals.list'
+const UTTERANCE_A = '/fn quarantine.list'
 const UTTERANCE_B = 'status'
 
 describe('two sessions, overlapping turns, two intact files (CHAT-05 / CR-01)', () => {
@@ -270,7 +273,7 @@ describe('two sessions, overlapping turns, two intact files (CHAT-05 / CR-01)', 
 // ---------------------------------------------------------------------------------------
 
 /** The class a person pins, in the NORMALISED spelling the holder records and the gate compares. */
-const PINNED_CLASS = `fn:${PROPOSALS_LIST_FUNCTION_ID}`
+const PINNED_CLASS = `fn:${QUARANTINE_LIST_FUNCTION_ID}`
 
 describe('a typed /pin reaches no conversation (W-03; /pin retired 432-13)', () => {
   let root: string
@@ -318,20 +321,20 @@ describe('a typed /pin reaches no conversation (W-03; /pin retired 432-13)', () 
    */
   it('C432-CHAT-DIRECT: a typed /pin denies nothing, in the session that typed it or in a second one', async () => {
     const host = compose()
-    const a = await ask(host, '/fn proposals.list')
-    const b = await ask(host, '/fn proposals.list')
+    const a = await ask(host, '/fn quarantine.list')
+    const b = await ask(host, '/fn quarantine.list')
     expect(a.sessionId).not.toBe(b.sessionId)
     expect(a.receipts[0]?.status).toBe('executed')
     expect(b.receipts[0]?.status).toBe('executed')
 
-    const pinned = await ask(host, `/pin ${PROPOSALS_LIST_FUNCTION_ID}`, a.sessionId)
+    const pinned = await ask(host, `/pin ${QUARANTINE_LIST_FUNCTION_ID}`, a.sessionId)
     expect(pinned.status).toBe('fail_closed')
     expect(pinned.answer ?? '').not.toContain(PINNED_CLASS)
-    expect(pinned.unhandled?.clause).toBe(`/pin ${PROPOSALS_LIST_FUNCTION_ID}`)
+    expect(pinned.unhandled?.clause).toBe(`/pin ${QUARANTINE_LIST_FUNCTION_ID}`)
 
-    const afterA = await ask(host, '/fn proposals.list', a.sessionId)
+    const afterA = await ask(host, '/fn quarantine.list', a.sessionId)
     expect(afterA.receipts.map((receipt) => receipt.status)).toEqual(['executed'])
-    const afterB = await ask(host, '/fn proposals.list', b.sessionId)
+    const afterB = await ask(host, '/fn quarantine.list', b.sessionId)
     expect(afterB.receipts.map((receipt) => receipt.status)).toEqual(['executed'])
   })
 
@@ -340,11 +343,11 @@ describe('a typed /pin reaches no conversation (W-03; /pin retired 432-13)', () 
     // reaches the same registry through the same gate with a caller that names no chat session. A
     // chat pin that could refuse those would be a conversation reconfiguring the host.
     const host = compose()
-    const opened = await ask(host, '/fn proposals.list')
-    await ask(host, `/pin ${PROPOSALS_LIST_FUNCTION_ID}`, opened.sessionId)
+    const opened = await ask(host, '/fn quarantine.list')
+    await ask(host, `/pin ${QUARANTINE_LIST_FUNCTION_ID}`, opened.sessionId)
 
     await expect(
-      invokeFunction(host.registry, PROPOSALS_LIST_FUNCTION_ID, {}, HUMAN),
+      invokeFunction(host.registry, QUARANTINE_LIST_FUNCTION_ID, {}, HUMAN),
     ).resolves.toBeDefined()
   })
 })

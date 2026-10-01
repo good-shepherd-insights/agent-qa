@@ -46,7 +46,9 @@ import { canaryOutcomeObservationId } from '../disposition.js'
 import { createLocalKnowledgeStore } from '../knowledge-store.js'
 import { assemblePromotionGateInput } from '../commit.js'
 import { appendGateReceipt, appendOutcomeEvent } from '../../bundle-append.js'
-import { proposalsDir } from '../../review/proposals-store.js'
+// 2026-10-01 (432-17): the proposals store is deleted; its directory name is spelled here so the
+// absence cells keep naming the path an old store wrote to.
+const proposalsDir = (agentQaRoot: string): string => join(agentQaRoot, 'proposals')
 import { rebuildIndex } from '../../index-rebuild.js'
 import { openKnowledgeReader } from '../../index-reader.js'
 import { completeGate1Receipt, resolvedPromotionPosture } from './fixtures/promotion-floor-fixture.js'

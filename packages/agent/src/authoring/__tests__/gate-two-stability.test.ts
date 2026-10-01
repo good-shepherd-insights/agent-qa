@@ -125,7 +125,6 @@ function outcomesForFileOnly(
 function funnelPort(outcomes?: SuiteOutcomeHistoryPortLike): AuthoringFunnelPortLike {
   return {
     receipts: { async list() { return [] } },
-    async proposals() { return [] },
     ...(outcomes === undefined ? {} : { outcomes }),
   }
 }

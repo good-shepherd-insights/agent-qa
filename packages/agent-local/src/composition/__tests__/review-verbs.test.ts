@@ -11,29 +11,27 @@
 // the store is really re-read afterwards. No proposal is minted; the pre-432 apply is measured over
 // a record already on disk.
 
-import { existsSync, mkdtempSync, rmSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import {
   FunctionNotBoundError,
+  UnknownFunctionError,
   createFunctionRegistry,
   invokeFunction,
 } from '@vostride/agent-qa-agent'
 import type { EntityDirectoryPort, FunctionRegistry } from '@vostride/agent-qa-agent'
 import {
   acquireWriterLease,
-  appendGrantLedgerEvents,
   createStandingApprovalReader,
   releaseLease,
   publishBundleForTest,
   type BundleStoreConfig,
 } from '@vostride/agent-qa-knowledge-local'
 import {
-  CURRENT_GRANT_LEDGER_SCHEMA_VERSION,
   FunctionScopeSchema,
   MASKED_RESOLVED_CONFIG_SCHEMA_VERSION,
-  STANDING_APPROVAL_SCOPE,
 } from '@vostride/agent-qa-schema'
 import type {
   Anchor,
@@ -41,7 +39,6 @@ import type {
   EntityCardResolution,
   FunctionCaller,
   ForgetReceiptV1,
-  KnowledgeApplyOutcomeDto,
   KnowledgeChangeOutput,
   MaskedResolvedConfig,
   ResolvePromotionPosture,
@@ -59,13 +56,13 @@ import { filePre432KnowledgeProposal } from '../../__tests__/pre-432-knowledge-p
 
 
 /**
- * The four ids the write half owns. Written out so an id that stopped registering is visible.
- * 432-12 (D-05): the three changes apply in the call; the pre-432 apply serves records on disk.
+ * The ids the write half owns. Written out so an id that stopped registering is visible.
+ * 432-12 (D-05): the three changes apply in the call. 2026-10-01 (432-17, D-05/D-22): the pre-432
+ * `knowledge.proposal.apply` is deleted with the inbox, so the write half is these three.
  */
 const MUTATING_FUNCTION_IDS = [
   'knowledge.accept',
   'knowledge.forget',
-  'knowledge.proposal.apply',
   'knowledge.reject',
 ] as const
 
@@ -201,26 +198,13 @@ describe('the mutating review verbs bind, refuse and commit by name', () => {
    * claim under test. The approval puts that back, without stubbing the gate out.
    */
   function approveApply(host: FunctionRegistry): void {
-    const declaration = host
-      .list(CALLER)
-      .find((entry) => entry.id === 'knowledge.proposal.apply')
-    if (declaration === undefined) throw new Error('the apply op is not registered')
-    const outcome = appendGrantLedgerEvents(
-      knowledgeRoot,
-      [{
-        schemaVersion: CURRENT_GRANT_LEDGER_SCHEMA_VERSION,
-        kind: 'grant',
-        at: '2026-08-07T12:00:00.000Z',
-        grantId: 'grant_review_verbs_apply',
-        actionClass: declaration.risk.name,
-        scope: STANDING_APPROVAL_SCOPE,
-      }],
-      { auditBaseDir: agentQaRoot },
-    )
-    if (outcome.kind !== 'appended') throw new Error(`grant append refused: ${outcome.kind}`)
+    // RE-SPELLED 2026-10-01 (432-17): the ask-tier apply this approval was for is deleted, and since
+    // 432-13 no gate reads a standing approval. Nothing is recorded; the call sites keep their shape.
+    void host
   }
 
-  it('lists all four as UNBOUND by name and refuses each by name without a review port', async () => {
+  // RE-SPELLED 2026-10-01 (432-17): four became three with the pre-432 apply's deletion.
+  it('lists all three as UNBOUND by name and refuses each by name without a review port', async () => {
     const recordId = publish()
     const readOnly = registry(false)
     approveApply(readOnly)
@@ -239,7 +223,6 @@ describe('the mutating review verbs bind, refuse and commit by name', () => {
       ['knowledge.accept', { target: { grain: 'record', recordId } }],
       ['knowledge.reject', { target: { grain: 'record', recordId }, reason: 'no' }],
       ['knowledge.forget', { target: { grain: 'record', recordId } }],
-      ['knowledge.proposal.apply', { proposalId: 'prop_0123456789ab' }],
     ] as const) {
       // The inputs PARSE, so this refusal cannot be a contract refusal wearing a binding
       // refusal's clothes — `invokeFunction` validates before it consults the binding.
@@ -291,16 +274,19 @@ describe('the mutating review verbs bind, refuse and commit by name', () => {
     expect(again).toMatchObject({ outcome: 'applied', operationId, recordIds: applied.recordIds })
     expect(await statuses(host)).toEqual(['deprecated'])
 
-    // The pre-432 apply is still bound and still commits a record already on disk (432-17 deletes it).
+    // RE-SPELLED 2026-10-01 (432-17, D-05/D-22): a pre-432 forget on disk is no longer applicable.
+    // The apply op is an unknown function, the record it named stays as it was, and the file is
+    // left exactly as it was found.
     const pending = publish('Payment')
     const proposalId = await filePre432KnowledgeProposal({
       agentQaRoot, knowledgeRoot, verb: 'forget', target: { grain: 'record', recordId: pending },
     })
-    const old = await invokeFunction(host, 'knowledge.proposal.apply', { proposalId }, CALLER) as
-      KnowledgeApplyOutcomeDto
-    expect(old.outcome).toBe('applied')
-    expect(old.forgetReceipt?.tombstonedRecords.map((row) => row.recordId)).toEqual([pending])
-    expect(await statuses(host)).toEqual(['deprecated', 'deprecated'])
+    const planted = join(agentQaRoot, 'proposals', `${proposalId}.json`)
+    const bytes = readFileSync(planted)
+    await expect(invokeFunction(host, 'knowledge.proposal.apply', { proposalId }, CALLER))
+      .rejects.toBeInstanceOf(UnknownFunctionError)
+    expect(await statuses(host)).toEqual(['deprecated', 'candidate'])
+    expect(readFileSync(planted)).toEqual(bytes)
   })
 
   /**

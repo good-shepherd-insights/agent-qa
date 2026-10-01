@@ -1366,38 +1366,39 @@ describe('the parity suite ranges the registry census over every rostered surfac
   // ---- Plan 04: the surface drivers (FUNC-05 legs 3 and 4) --------------------------------------
 
   it('drives a capability through the chat surface\'s own composed dispatch, model-free', async () => {
-    // The plan-04 tracer. `proposals.list` is the safe subject: read-only, bound in this host, and
+    // The plan-04 tracer. `quarantine.list` is the safe subject: read-only, bound in this host, and
     // its declared input is the empty object, so nothing about the drive depends on a store having
-    // anything in it.
+    // anything in it. (2026-10-01, 432-17: `quarantine.list`, the subject until now, is deleted with
+    // the inbox; `quarantine.list` has the same three properties.)
     //
     // WHAT PRODUCES THIS ANSWER is the shipped REPL: a typed clause, split by the shipped splitter,
     // routed by the shipped resolver's `/fn` branch, minted a caller by the composition, and
     // dispatched through the composed `ChatInvokeBinding`. The receipt read back is the record the
     // printed line renders.
-    const row = scenarioRowFor('proposals.list')
-    expect(row, 'the scenario table no longer carries proposals.list').toBeDefined()
+    const row = scenarioRowFor('quarantine.list')
+    expect(row, 'the scenario table no longer carries quarantine.list').toBeDefined()
 
-    const outcome = await driveChatDispatch({ opId: 'proposals.list', input: row!.input })
+    const outcome = await driveChatDispatch({ opId: 'quarantine.list', input: row!.input })
 
     expect(
       outcome.unhandled,
       'the generic /fn route failed to resolve the clause the driver typed — the surface never '
         + 'reached a dispatch, so nothing below is a statement about a verdict',
     ).toEqual([])
-    expect(outcome.receipt?.status, 'proposals.list on chat: the surface reached a definitive '
+    expect(outcome.receipt?.status, 'quarantine.list on chat: the surface reached a definitive '
       + 'outcome').toBe('executed')
     // ORIGIN IS THE MODEL-FREE PROOF, and it is a fact the surface recorded rather than a promise
     // this file makes: the deterministic route mints `human` and the planner route mints `agent`
     // (391 D-06), so a receipt stamped `human` cannot have been planned by a model.
-    expect(outcome.receipt?.origin, 'proposals.list on chat: the receipt must come from the '
+    expect(outcome.receipt?.origin, 'quarantine.list on chat: the receipt must come from the '
       + 'deterministic route, or a model planned this call').toBe('human')
     // THIS CALL WAS DISPATCHED — a differential, not a presence check.
     //
-    // RE-SPELLED 2026-09-30 (432-13). This read the gate's `fn:proposals.list` rows against a
+    // RE-SPELLED 2026-09-30 (432-13). This read the gate's `fn:quarantine.list` rows against a
     // `config.get` baseline, because the banner's opening reads write rows of their own (397-09's
     // measured vacuity). No gate writes a row since 432-13, so the differential moves to the
     // clause's own RESULT record: the opening reads are not clauses and file none, so a drive of
-    // `config.get` files no `proposals.list` result and this drive files exactly one.
+    // `config.get` files no `quarantine.list` result and this drive files exactly one.
     const baselineRow = scenarioRowFor('config.get')
     expect(baselineRow, 'the scenario table no longer carries config.get').toBeDefined()
     const baselineDrive = await driveChatDispatch({
@@ -1405,14 +1406,14 @@ describe('the parity suite ranges the registry census over every rostered surfac
       input: baselineRow!.input,
     })
     const resultsFrom = (drive: typeof outcome): number =>
-      drive.results.filter((result) => result.functionId === 'proposals.list').length
-    expect(resultsFrom(baselineDrive), 'a config.get drive filed a proposals.list result').toBe(0)
+      drive.results.filter((result) => result.functionId === 'quarantine.list').length
+    expect(resultsFrom(baselineDrive), 'a config.get drive filed a quarantine.list result').toBe(0)
     expect(
       resultsFrom(outcome),
-      'proposals.list on chat: the clause filed no result of its own, so it did not dispatch',
+      'quarantine.list on chat: the clause filed no result of its own, so it did not dispatch',
     ).toBe(1)
     // …and no approval row was written for it (C432-CHAT-DIRECT).
-    expect(outcome.auditRows.filter((auditRow) => auditRow.action === pinClassFor('proposals.list')))
+    expect(outcome.auditRows.filter((auditRow) => auditRow.action === pinClassFor('quarantine.list')))
       .toEqual([])
   })
 
@@ -1429,10 +1430,10 @@ describe('the parity suite ranges the registry census over every rostered surfac
       }
     }
     try {
-      const outcome = await driveChatDispatch({ opId: 'proposals.list', input: {} })
+      const outcome = await driveChatDispatch({ opId: 'quarantine.list', input: {} })
       expect(
         outcome.receipt?.status,
-        `proposals.list on chat: the drive needed one of the ${removed.length} credential-shaped `
+        `quarantine.list on chat: the drive needed one of the ${removed.length} credential-shaped `
           + 'environment variables it was denied',
       ).toBe('executed')
     } finally {
@@ -1587,7 +1588,7 @@ describe('the parity suite ranges the registry census over every rostered surfac
   // is that absence, through the surface's own dispatch: `/pin fn:<id>` is not a directive, and the
   // capability typed after it is not refused by anything a pin could have set.
   it('refuses at the CHAT SURFACE WALL for no capability: /pin is unhandled and nothing is denied', async () => {
-    const opId = 'proposals.list'
+    const opId = 'quarantine.list'
     const row = scenarioRowFor(opId)
     const outcome = await driveChatDispatch({
       opId,
@@ -1790,11 +1791,11 @@ describe('the parity suite ranges the registry census over every rostered surfac
     // 2026-09-30 (432-12 D-05/D-14): the refuse-and-teach arm is GONE with the D-11 apply doors, and
     // its absence is asserted rather than skipped: no projected ask-capable op sits behind an
     // `apply` tool without the mark door's credential check, and the two apply ops that could ask
-    // are dispositioned with the removed proposal round. Every other projected tool still gets the
+    // were dispositioned with the removed proposal round until 432-17 deleted them, so every
+    // unprojected ask-capable op left is a human-origin one. Every other projected tool still gets the
     // gate's own answer back in band, and none executes on a blind first call.
     const everyScope = [...FunctionScopeSchema.options]
     let bandRefusals = 0
-    let unprojectedWithRound = 0
     for (const opId of ASK_CAPABLE_OP_IDS) {
       const projection = AGENT_QA_TOOL_PROJECTIONS.find((candidate) => candidate.ops.includes(opId))
       if (projection === undefined) {
@@ -1802,11 +1803,10 @@ describe('the parity suite ranges the registry census over every rostered surfac
         const entry = UNPROJECTED_OPS.find((candidate) => candidate.opId === opId)
         const reason = entry === undefined ? undefined : unprojectedReasonKeyOf(entry.reason)
         expect(
-          ['requires-human-origin', 'proposal-round-removed'],
+          reason,
           `${opId} on mcp (ask): it can ask, this surface does not project it, and the mapping `
             + 'gives no reason a reader can classify',
-        ).toContain(reason)
-        if (reason === 'proposal-round-removed') unprojectedWithRound += 1
+        ).toBe('requires-human-origin')
         continue
       }
       expect(
@@ -1836,9 +1836,6 @@ describe('the parity suite ranges the registry census over every rostered surfac
       }
     }
     expect(bandRefusals, 'no ask-capable op reached the in-band refusal arm').toBeGreaterThan(0)
-    // The two proposal apply ops are the ones that left with the round (432-17 deletes them).
-    expect(unprojectedWithRound, 'the apply ops that could ask are not dispositioned with the round')
-      .toBe(2)
   }, 300_000)
 
   it('observes each surface through its own dispatch, never through the gate directly', () => {

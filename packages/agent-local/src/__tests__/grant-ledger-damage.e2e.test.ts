@@ -26,7 +26,12 @@
 // stops it being satisfied by a fixture that never recorded an approval. Only with both does the
 // third case say something about the DAMAGE.
 //
-// THE GATED SUBJECT is `knowledge.proposal.apply`, whose action class is read off the registry's
+// 2026-10-01 (432-17, D-05): THE SUBJECT is `knowledge.accept` over a record that was never
+// published — `knowledge.proposal.apply` is deleted with the inbox. The accept answers a typed
+// `target-not-found` without writing, so an invocation that resolves is the dispatch this file asks
+// about, exactly as the apply's not-found complaint was before.
+//
+// THE GATED SUBJECT was `knowledge.proposal.apply`, whose action class is read off the registry's
 // own descriptor rather than typed here — a hand-spelled class is the silent miss the ledger's
 // module head names, and it would turn every negative below into a pass for the wrong reason. The
 // gate runs and writes its audit row BEFORE the op body, so the id the apply is handed does not
@@ -42,7 +47,6 @@ import {
 } from '@vostride/agent-qa-agent'
 import type { FunctionRegistry } from '@vostride/agent-qa-agent'
 import {
-  ProposalNotFoundError,
   createGrantOperations,
   createStandingApprovalReader,
   grantsLedgerPath,
@@ -70,7 +74,7 @@ import {
   createRunsReader,
 } from '../composition/compose-local-agent.js'
 
-const APPLY_ID = 'knowledge.proposal.apply'
+const APPLY_ID = 'knowledge.accept'
 /** A second registered, unprotected op — the intact sibling grant's class (391-10). */
 const SIBLING_ID = 'knowledge.forget'
 const GRANTS_LIST_ID = 'grants.list'
@@ -217,13 +221,9 @@ describe('a grant ledger the build cannot fully read authorizes nothing', () => 
    */
   async function headlessApply(registry: FunctionRegistry): Promise<'allowed' | 'denied'> {
     try {
-      await invokeFunction(registry, APPLY_ID, { proposalId: PROBE_PROPOSAL_ID }, HUMAN)
+      await invokeFunction(registry, APPLY_ID, { target: { grain: 'record', recordId: PROBE_PROPOSAL_ID } }, HUMAN)
       return 'allowed'
     } catch (error) {
-      // The op body ran, which is only reachable once the gate has ALLOWED — so this is the
-      // affirmative answer to the authorization question, arriving as the apply's own complaint
-      // about a target that was never minted.
-      if (error instanceof ProposalNotFoundError) return 'allowed'
       // Anything ELSE is rethrown rather than folded into an answer. A refusal raised before the
       // gate — an input the contract rejects, an unbound port — would otherwise read as a denial
       // and turn every negative case here into a pass for a reason that has nothing to do with

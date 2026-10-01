@@ -16,7 +16,6 @@ import {
   createAskCommand,
   createChatCommand,
   createFnCommand,
-  createProposalsCommand,
   createInitCommand,
   createInstallBrowsersCommand,
   createInstallMobileDriversCommand,
@@ -75,8 +74,8 @@ export function createAgentQaProgram(): Command {
   // the session and the loop and in nothing else, which is why a routing change cannot be right in
   // one of them and wrong in the other.
   program.addCommand(createChatCommand())
-  // 391 D-17: the proposals inbox + grants decision surface, and the per-run digest on demand.
-  program.addCommand(createProposalsCommand())
+  // 391 D-17: the per-run digest on demand. 2026-10-01 (432-17, D-02/D-05): `agent-qa proposals`
+  // (the inbox and its `grants list | revoke` subtree) is deleted with no alias.
   program.addCommand(createDigestCommand())
   program.addCommand(createDaemonCommand())
   // 413 D-06: the agent job queue's operator verbs, registered beside the daemon that is its

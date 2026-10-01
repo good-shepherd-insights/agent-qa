@@ -88,7 +88,6 @@ import type {
   RunExecutionPort,
   SuiteTextEntry,
 } from '@vostride/agent-qa-agent-local'
-import { KNOWLEDGE_PROPOSAL_APPLY_FUNCTION_ID } from '@vostride/agent-qa-agent'
 import {
   AgentQaConfigSchema,
   HooksFileSchema,
@@ -132,8 +131,6 @@ import { proposalStageCapabilities, resolveProposeGate1MaxPerJob } from './propo
 import { misdirectionPostureCapability } from './misdirection-posture-capability.js'
 import { misdirectionPreparationCapabilities } from '../curation/misdirection-tail.js'
 import type {
-  ApplyDelegate,
-  ApplyReviewResult,
   ExplicitReviewDelegate,
   ExplicitReviewResult,
 } from '@vostride/agent-qa-agent-local'
@@ -147,7 +144,6 @@ import { TARGET_GITIGNORE_ENTRIES } from '../commands/init-filesystem.js'
 import {
   CONFIG_REVISION_ABSENT,
   CONFIG_SET_DEFAULT_HOOKS_FILE,
-  KnowledgeApplyOutcomeSchema,
   KnowledgeChangeOutputSchema,
   enumerateConfigFileSet,
   sha256hexBytes,
@@ -604,15 +600,7 @@ export interface ComposeCliLocalAgentInput {
    * observer over the one log rather than a replaceable log.
    */
   observeSessionEvent?: ComposeLocalAgentInput['observeSessionEvent']
-  /**
-   * Which door this host MINTS PROPOSALS as (400-05), passed through untouched.
-   *
-   * Each door supplies its own `FunctionCaller.surface` — the same record it dispatches with, never
-   * a second spelling of the word. Absent records nothing, which is honest and is what the reader
-   * calls `unrecorded`; it can never mis-name a door, which is the property that makes an omission
-   * here safe. See the shared composition's own field for why this is the seam.
-   */
-  mintingSurface?: ComposeLocalAgentInput['mintingSurface']
+  // 2026-10-01 (432-17, D-05): `mintingSurface` is deleted with the proposal records it stamped.
   /**
    * How this host reads configuration, MASKED (400-01, D-16).
    *
@@ -745,17 +733,10 @@ export interface ComposeCliLocalAgentInput {
    */
   runDetail?: ComposeLocalAgentInput['runDetail']
   /**
-   * How an apply reaches the writer-lease holder when one is alive (387-08 D-18).
-   *
-   * Defaults to the 386 `/invoke` transport, VERBATIM — no new protocol, no new route, and no
-   * change on the daemon side, because `/invoke → invokeFunction` already reaches the op. A test
-   * substitutes it to exercise the routing without a socket.
-   */
-  applyDelegate?: ApplyDelegate
-  /**
-   * 432-12 (D-05): how a direct knowledge change reaches the writer-lease holder when one is alive.
-   * Defaults to the same `/invoke` transport as {@link applyDelegate}, invoking the change op on the
-   * daemon with the same operation identity. A test substitutes it to exercise the routing.
+   * 432-12 (D-05): how a direct knowledge change reaches the writer-lease holder when one is alive
+   * (387-08 D-18). Defaults to the 386 `/invoke` transport, VERBATIM — no new protocol and no change
+   * on the daemon side — invoking the change op on the daemon with the same operation identity. A
+   * test substitutes it to exercise the routing without a socket.
    */
   knowledgeChangeDelegate?: ExplicitReviewDelegate
   /**
@@ -2203,23 +2184,10 @@ export function composeCliLocalAgent(input: ComposeCliLocalAgentInput): LocalAge
     ...(input.observeSessionEvent === undefined
       ? {}
       : { observeSessionEvent: input.observeSessionEvent }),
-    ...(input.mintingSurface === undefined ? {} : { mintingSurface: input.mintingSurface }),
-    // D-18: when a live daemon holds the writer lease, this host hands it the SAME
-    // `knowledge.proposal.apply` envelope over the SAME 386 socket every other capability crosses,
-    // and waits bounded for the receipt. It is a closure over `invokeViaDaemon` rather than a new
-    // seam, so the daemon needs no new server code and the transport has one implementation.
+    // 2026-10-01 (432-17, D-05/D-22): the proposal apply's delegate is deleted with the op. The
+    // DAEMON's own composition supplies no delegate: it holds the lease, so its changes take the
+    // in-process branch, and delegation cannot recurse by construction rather than by a guard.
     //
-    // The DAEMON's own composition supplies none of this: it holds the lease, so its applies take
-    // the in-process branch, and delegation cannot recurse by construction rather than by a guard.
-    applyDelegate: input.applyDelegate ?? (async (proposalId) => {
-      const answer = await invokeViaDaemon({
-        agentQaRoot: input.agentQaRoot,
-        knowledgeRoot: await knowledgeRoot(),
-        functionId: KNOWLEDGE_PROPOSAL_APPLY_FUNCTION_ID,
-        input: { proposalId },
-      })
-      return KnowledgeApplyOutcomeSchema.parse(answer) as ApplyReviewResult
-    }),
     // 432-12 (D-05): a direct knowledge change made while a live daemon holds the writer lease is
     // handed to that daemon as the SAME change op with the SAME operation identity, over the same
     // socket, and its answer is read back. Nothing is filed or claimed on either side; the daemon

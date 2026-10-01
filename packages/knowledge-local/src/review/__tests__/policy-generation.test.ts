@@ -7,9 +7,11 @@ import { enumerateBundleDirs } from '../../bundle-scan.js'
 import { createLocalKnowledgeStore } from '../../curator/knowledge-store.js'
 import { acquireWriterLease, releaseLease } from '../../lease/writer-lease.js'
 import { readPolicyLadder } from '../../serving/policy-ladder.js'
-import { applyReview } from '../apply-review.js'
-import { proposeReview } from '../propose-review.js'
-import { readAppliedProposal } from '../proposals-store.js'
+import { applyExplicitReview } from '../apply-review.js'
+
+// RE-SPELLED 2026-10-01 (432-17, D-05): the accept is applied directly with a stable operation
+// identity instead of proposed and then applied by proposal id. The applied-record readback became a
+// same-identity retry, which writes nothing twice and reports the shelf `unchanged` for that call.
 
 it('materializes a production Add policy as a distinct replay-stable reference under a real lease', async () => {
   const root = mkdtempSync(join(tmpdir(), 'policy-generation-'))
@@ -32,12 +34,12 @@ it('materializes a production Add policy as a distinct replay-stable reference u
     })
     const original = bundles()[0]!
     const recordId = original.manifest.id
-    const proposed = proposeReview({ agentQaRoot, knowledgeRoot,
-      request: { verb: 'accept', input: { target: { grain: 'record', recordId } } } })
-    if (proposed.kind !== 'proposed') throw new Error('proposal unavailable')
-    const input = { agentQaRoot, knowledgeRoot, proposalId: proposed.proposal.proposalId,
+    const input = { agentQaRoot, knowledgeRoot, operationId: 'policy-generation-accept',
+      opId: 'knowledge.accept', executionContext: 'local-interactive' as const,
+      request: { verb: 'accept' as const, input: { target: { grain: 'record' as const, recordId } } },
       writerAuthority: { leaseId: lease.leaseId, epoch: lease.epoch } }
-    const applied = await applyReview(input)
+    const applied = await applyExplicitReview(input)
+    if (applied.outcome !== 'applied') throw new Error(`accept did not apply: ${applied.outcome}`)
     expect(applied.outcome).toBe('applied')
     expect(applied.commitReceipt?.promoted).toEqual([])
     expect(applied.commitReceipt?.policy?.relPath).toBe('policies/review.md')
@@ -53,13 +55,14 @@ it('materializes a production Add policy as a distinct replay-stable reference u
     expect(victim.body).toBe(original.body)
     const gates = readGateReceipts(victim.dir, recordId)!
     const approval = gates.find(receipt => 'gate' in receipt && receipt.gate === 3)
-    expect(approval).toMatchObject({ policyApproval: { proposalId: input.proposalId, recordId } })
+    expect(approval).toMatchObject({ policyApproval: { proposalId: applied.changeId, recordId } })
     expect(approval).not.toHaveProperty('mark')
     expect(approval).not.toHaveProperty('runId')
-    expect(readAppliedProposal(agentQaRoot, input.proposalId)?.commitReceipt).toEqual(applied.commitReceipt)
     expect(readPolicyLadder(knowledgeRoot, 'review').text).toContain('Dismiss the banner.')
     const shelf = readFileSync(join(knowledgeRoot, 'policies/review.md'))
-    expect(await applyReview(input)).toMatchObject({ outcome: 'already-applied', commitReceipt: applied.commitReceipt })
+    // The same-identity retry lands nothing: same records and Gate-3 receipt, shelf unchanged.
+    expect(await applyExplicitReview(input)).toMatchObject({ outcome: 'applied', commitReceipt: {
+      ...applied.commitReceipt, policy: { ...applied.commitReceipt?.policy, outcome: 'unchanged' } } })
     expect(readFileSync(join(knowledgeRoot, 'policies/review.md'))).toEqual(shelf)
     expect(bundles()).toHaveLength(2)
   } finally {

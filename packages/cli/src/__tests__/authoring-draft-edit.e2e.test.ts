@@ -261,7 +261,9 @@ describe('an edit changes only the lines its pointers address', () => {
     expect(diff.removed).toEqual([])
     expect(diff.added).toEqual([9])
     expect(result.patches).toHaveLength(1)
-    expect(result.proposal.runsConsumed).toBe(0)
+    // 2026-10-01 (432-17, D-06): the run count rode the deleted test-draft arm; the edit answers
+    // the file it wrote and carries no proposal.
+    expect(result).not.toHaveProperty('proposal')
   })
 
   it('refuses a retarget through the REAL applier as well as at the op fence', async () => {

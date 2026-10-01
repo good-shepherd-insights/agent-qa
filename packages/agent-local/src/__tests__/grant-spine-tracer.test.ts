@@ -1,5 +1,10 @@
 // The standing-grant spine, end to end through the real composition (Phase 391, PROP-01 / D-11).
 //
+// 2026-10-01 (432-17, D-05): the apply this spine was built around (`knowledge.proposal.apply`) is
+// deleted with the inbox, so the subject is the direct `knowledge.forget` that replaced it. Every
+// claim below keeps its shape: the change commits with no grant, and a grant or revoke changes
+// nothing about it.
+//
 // 2026-09-30 (432-13, D-14/D-15): THE SPINE HAS NO READER. `invokeFunction` has no gate, so no grant
 // is consulted: the headless apply commits with no grant, and appending a grant or a revoke changes
 // nothing about it. The two cells are re-spelled as that absence; the ledger's own append-only
@@ -64,7 +69,7 @@ import type {
   Anchor,
   FunctionCaller,
   GrantLedgerEvent,
-  KnowledgeApplyOutcomeDto,
+  KnowledgeChangeOutput,
   MaskedResolvedConfig,
 } from '@vostride/agent-qa-schema'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
@@ -74,9 +79,8 @@ import {
   createKnowledgeReview,
   createRunsReader,
 } from '../composition/compose-local-agent.js'
-import { filePre432KnowledgeProposal } from './pre-432-knowledge-proposal.js'
 
-const APPLY_FUNCTION_ID = 'knowledge.proposal.apply'
+const APPLY_FUNCTION_ID = 'knowledge.forget'
 const GRANT_ID = 'grant_tracer_proposal_apply'
 const GRANTED_AT = '2026-08-07T12:00:00.000Z'
 const REVOKED_AT = '2026-08-07T12:30:00.000Z'
@@ -210,12 +214,6 @@ describe('a committed standing grant is consumed by nothing (432-13)', () => {
     }
   }
 
-  /** 432-12: a pre-432 forget proposal on disk; the change ops apply in the call and file none. */
-  async function propose(_registry: FunctionRegistry, recordId: string): Promise<string> {
-    return await filePre432KnowledgeProposal({
-      agentQaRoot, knowledgeRoot, verb: 'forget', target: { grain: 'record', recordId },
-    })
-  }
 
   // RE-SPELLED 2026-09-30 (432-13) from 'refuses the apply with no grant, commits it with one, and
   // refuses it again after the revoke'. The apply commits with no grant at all, and the grant and
@@ -226,15 +224,15 @@ describe('a committed standing grant is consumed by nothing (432-13)', () => {
     const actionClass = coveredActionClass(registry)
     expect(actionClass).toBe(`fn:${APPLY_FUNCTION_ID}`)
 
-    const proposalId = await propose(registry, recordId)
+    const input = { target: { grain: 'record' as const, recordId } }
 
-    // ── LEG 1: no grant recorded, no ledger file — and the apply commits in the call.
+    // ── LEG 1: no grant recorded, no ledger file — and the change commits in the call.
     const applied = (await invokeFunction(
       registry,
       APPLY_FUNCTION_ID,
-      { proposalId },
+      input,
       CALLER,
-    )) as KnowledgeApplyOutcomeDto
+    )) as KnowledgeChangeOutput
     expect(applied.outcome).toBe('applied')
     expect(sink.rows).toEqual([])
 
@@ -247,7 +245,6 @@ describe('a committed standing grant is consumed by nothing (432-13)', () => {
         grantId: GRANT_ID,
         actionClass,
         scope: STANDING_APPROVAL_SCOPE,
-        proposalId,
       },
     ])
     append([
@@ -259,10 +256,10 @@ describe('a committed standing grant is consumed by nothing (432-13)', () => {
       },
     ])
 
-    // The proposal is applied now, so the same call answers its already-applied arm: the answer is
-    // dispatch's, and no gate row precedes it.
+    // The record is tombstoned now, so the same call answers the already-tombstoned state: the
+    // answer is dispatch's, and no gate row precedes it.
     await expect(
-      invokeFunction(registry, APPLY_FUNCTION_ID, { proposalId }, CALLER),
+      invokeFunction(registry, APPLY_FUNCTION_ID, input, CALLER),
     ).resolves.toBeDefined()
     expect(sink.rows).toEqual([])
 
@@ -281,15 +278,13 @@ describe('a committed standing grant is consumed by nothing (432-13)', () => {
   it('commits the apply whatever class a committed grant names', async () => {
     const recordId = publish()
     const registry = host()
-    const proposalId = await propose(registry, recordId)
-
     append([
       {
         schemaVersion: CURRENT_GRANT_LEDGER_SCHEMA_VERSION,
         kind: 'grant',
         at: GRANTED_AT,
         grantId: 'grant_tracer_neighbouring_class',
-        actionClass: 'fn:knowledge.forget',
+        actionClass: 'fn:knowledge.reject',
         scope: STANDING_APPROVAL_SCOPE,
       },
     ])
@@ -297,9 +292,9 @@ describe('a committed standing grant is consumed by nothing (432-13)', () => {
     const applied = (await invokeFunction(
       registry,
       APPLY_FUNCTION_ID,
-      { proposalId },
+      { target: { grain: 'record', recordId } },
       CALLER,
-    )) as KnowledgeApplyOutcomeDto
+    )) as KnowledgeChangeOutput
     expect(applied.outcome).toBe('applied')
     expect(sink.rows).toEqual([])
   }, 60_000)

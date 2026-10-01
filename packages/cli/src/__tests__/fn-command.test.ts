@@ -621,13 +621,8 @@ describe('agent-qa fn (generic function invoker)', () => {
         resultKind: 'unary',
         bindingStatus: 'bound',
       },
-      // 432-16 (D-07): UNBOUND. The CLI host binds no config apply port — agent-qa makes no git
-      // commits — so the pre-432 verb is listed by name and refuses unbound until 432-17 deletes it.
-      'config.proposal.apply': {
-        requiredScopes: ['config-write'],
-        resultKind: 'unary',
-        bindingStatus: 'unbound',
-      },
+      // 2026-10-01 (432-17 D-05): `config.proposal.apply`, `config.undo.propose`,
+      // `knowledge.proposal.apply` and the four `proposals.*` verbs are deleted, so they are not listed.
       // 395-05 D-01: the rest of the closed action class, BOUND on this composition for the reason
       // above — the CLI host binds the config ports unconditionally. Both carry `config-write` and
       // nothing else, which is what a listing shows a person who asks what letting the agent edit
@@ -641,13 +636,6 @@ describe('agent-qa fn (generic function invoker)', () => {
         requiredScopes: ['config-write'],
         resultKind: 'unary',
         bindingStatus: 'bound',
-      },
-      // 432-16 (D-07): UNBOUND. Its git-history source (`configUndoSource`) is deleted with the
-      // commits it read, so the verb is listed by name and refuses unbound until 432-17 deletes it.
-      'config.undo.propose': {
-        requiredScopes: ['config-write'],
-        resultKind: 'unary',
-        bindingStatus: 'unbound',
       },
       // BOUND because `entities` is a REQUIRED FunctionDeps port (387-01 D-4): this
       // composition supplies an entity directory, so both read at the `read` tier.
@@ -719,43 +707,8 @@ describe('agent-qa fn (generic function invoker)', () => {
         resultKind: 'unary',
         bindingStatus: 'bound',
       },
-      'knowledge.proposal.apply': {
-        requiredScopes: ['knowledge-write'],
-        resultKind: 'unary',
-        bindingStatus: 'bound',
-      },
       'knowledge.reject': {
         requiredScopes: ['knowledge-write'],
-        resultKind: 'unary',
-        bindingStatus: 'bound',
-      },
-      // 391 PROP-03: the three inbox verbs, BOUND here because `composeLocalAgent` binds the
-      // proposals-inbox port over this host's agent-qa runtime root — and the row is a statement
-      // about THIS host, exactly like its neighbours: a composition supplying no port lists all
-      // three `unbound` and refuses them by name (agent's `parity-coverage.test.ts` asserts it).
-      // `reject` is the phase's first shipped `requiresHumanOrigin` op; the origin requirement is
-      // not part of this projection's three fields, and the declaration-level pin for it lives in
-      // agent, where the enforcement does.
-      // 391 PROP-01: the DECISION verb, BOUND on this host — and the only entry in this catalogue
-      // carrying two write scopes, because one call can commit knowledge AND change what the
-      // system may do without asking.
-      'proposals.accept': {
-        requiredScopes: ['knowledge-write', 'approval-write'],
-        resultKind: 'unary',
-        bindingStatus: 'bound',
-      },
-      'proposals.list': {
-        requiredScopes: ['read'],
-        resultKind: 'unary',
-        bindingStatus: 'bound',
-      },
-      'proposals.reject': {
-        requiredScopes: ['approval-write'],
-        resultKind: 'unary',
-        bindingStatus: 'bound',
-      },
-      'proposals.show': {
-        requiredScopes: ['read'],
         resultKind: 'unary',
         bindingStatus: 'bound',
       },
@@ -780,8 +733,8 @@ describe('agent-qa fn (generic function invoker)', () => {
         resultKind: 'unary',
         bindingStatus: 'bound',
       },
-      // 391 D-16: BOUND on every local host, through the same proposals-inbox dep the four
-      // `proposals.` verbs use. Read-tier, so it survives safe mode.
+      // 391 D-16: BOUND on every local host. Read-tier, so it survives safe mode. (Its inbox dep
+      // was deleted in 432-17; the digest never read it after 432-09.)
       // 405-05 D-12/D-13: BOUND here: a run's evidence blobs live under the runtime root EVERY
       // local host has.
       'runs.artifact': { requiredScopes: ['read'], resultKind: 'unary', bindingStatus: 'bound' },

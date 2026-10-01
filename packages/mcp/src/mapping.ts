@@ -30,6 +30,12 @@
 // apply/list/show tools and the config undo arm are gone with no alias, and their five ops are
 // dispositioned below until 432-17 deletes them from the registry.
 //
+// 2026-10-01 (432-17 D-05/D-02): TWENTY tools over THIRTY registry ops; the other SIXTEEN stay in
+// `UNPROJECTED_OPS`, and the registry is forty-six. The seven proposal, apply and undo ops are
+// deleted from the registry, so their five '432' dispositions and the two 397 dispositions of
+// `proposals.accept` and `proposals.reject` leave the scoping note, and '432' leaves the adjudicator
+// vocabulary with no member left to rule on.
+//
 // 2026-08-17 (398 D-09): the unprojected side moved from nineteen to twenty when `agent.explain`
 // was registered. This sentence is prose and the guard is the mechanism — but the prose is updated
 // in the same change-set anyway, because a header that goes on stating a partition the code stopped
@@ -396,10 +402,10 @@ export const AGENT_QA_OP_CONTRACTS: Readonly<Record<string, ToolOpContracts>> = 
  * call. There is no apply tool, no `confirmed` input and no elicitation; the mark door is the one
  * `apply` entry, and only for its credential check.
  *
- * WHY THERE IS NO `agent_qa_reject_proposal`, and no proposal tool at all. `proposals.reject` and
- * `proposals.accept` declare `requiresHumanOrigin: true`, so a tool over either would have listed for
- * every caller and refused every call. The bump guard states the rule generally: no projected op may
- * declare `requiresHumanOrigin`. Since 432-12 the whole inbox is unprojected, and 432-17 deletes it.
+ * WHY THERE IS NO PROPOSAL TOOL AT ALL. The inbox's verbs declared `requiresHumanOrigin: true`, so a
+ * tool over either decision verb would have listed for every caller and refused every call; the
+ * bump guard states the rule generally (no projected op may declare `requiresHumanOrigin`). 432-12
+ * unprojected the whole inbox and 432-17 deleted it, ops and all.
  */
 export const AGENT_QA_TOOL_PROJECTIONS: readonly ToolProjection[] = Object.freeze([
   Object.freeze({
@@ -720,11 +726,13 @@ export interface UnprojectedOp {
   // `PROJECTED_RULING_ADDENDA`.
   // WIDENED on 2026-09-30 (432-12, D-05) for the five pre-432 proposal ops that leave the projected
   // side: the ruling that removed their tools is 432's, and 432-17 deletes the ops themselves.
+  // NARROWED on 2026-10-01 (432-17, D-05): the five ops are deleted from the registry, so `'432'`
+  // LEAVES with no member, on the 431-04 precedent above.
   readonly adjudication: UnprojectedAdjudication
 }
 
 /** The closed adjudicator vocabulary as a runtime tuple; the type above is derived from it. */
-export const UNPROJECTED_ADJUDICATIONS = Object.freeze(['397', '398', '405', '408', '428', '432'] as const)
+export const UNPROJECTED_ADJUDICATIONS = Object.freeze(['397', '398', '405', '408', '428'] as const)
 
 export type UnprojectedAdjudication = (typeof UNPROJECTED_ADJUDICATIONS)[number]
 
@@ -737,22 +745,8 @@ export const UNPROJECTED_OPS: readonly UnprojectedOp[] = Object.freeze([
       + 'asks for any of them. Deferred as its own seam, not omitted by oversight.',
     adjudication: '397',
   }),
-  Object.freeze({
-    opId: 'proposals.accept',
-    reason:
-      'declares requiresHumanOrigin, and this host mints origin: agent (391 D-06), so the tool '
-      + 'would refuse every call it ever received. The commit door for this surface is the gated '
-      + 'apply instead (D-11; RESEARCH Pitfall 7).',
-    adjudication: '397',
-  }),
-  Object.freeze({
-    opId: 'proposals.reject',
-    reason:
-      'declares requiresHumanOrigin for the same reason proposals.accept does — an agent that '
-      + 'could decline proposals could curate the inbox a human checks — so it is a door that '
-      + 'cannot open on this surface. Measured 2026-08-16 (396-04), not planned.',
-    adjudication: '397',
-  }),
+  // 2026-10-01 (432-17, D-05): `proposals.accept` and `proposals.reject` (397, requiresHumanOrigin)
+  // are deleted with the inbox and leave the scoping note.
   Object.freeze({
     opId: 'grants.revoke',
     reason:
@@ -880,52 +874,8 @@ export const UNPROJECTED_OPS: readonly UnprojectedOp[] = Object.freeze([
       + 'on exactly this reasoning; projecting the op would reinstate it under a new name.',
     adjudication: '398',
   }),
-  // 2026-09-30 (432-12 D-05): the five pre-432 proposal ops, off the catalogue with their tools.
-  Object.freeze({
-    opId: 'config.undo.propose',
-    reason:
-      'D-05/D-09 (dated 2026-09-30, 432-12): no Undo is built, and a direct config write makes '
-      + 'no agent commit for this op to reverse. It files a proposal, and the proposal round has '
-      + 'no MCP tool, so the undo arm left the config change tool with no alias (D-02). Files are '
-      + 'reverted with git. The op still reverses pre-432 agent commits until 432-17 deletes it.',
-    adjudication: '432',
-  }),
-  Object.freeze({
-    opId: 'config.proposal.apply',
-    reason:
-      'D-05 (dated 2026-09-30, 432-12): knowledge and config changes apply in the call, so the '
-      + 'proposal round this op belonged to has no MCP tool; its tool was removed with no alias '
-      + '(D-02). The op still serves the pre-432 records already on disk until 432-17 deletes it '
-      + 'with the inbox.',
-    adjudication: '432',
-  }),
-  Object.freeze({
-    opId: 'knowledge.proposal.apply',
-    reason:
-      'D-05 (dated 2026-09-30, 432-12): knowledge and config changes apply in the call, so the '
-      + 'proposal round this op belonged to has no MCP tool; its tool was removed with no alias '
-      + '(D-02). The op still serves the pre-432 records already on disk until 432-17 deletes it '
-      + 'with the inbox.',
-    adjudication: '432',
-  }),
-  Object.freeze({
-    opId: 'proposals.list',
-    reason:
-      'D-05 (dated 2026-09-30, 432-12): knowledge and config changes apply in the call, so the '
-      + 'proposal round this op belonged to has no MCP tool; its tool was removed with no alias '
-      + '(D-02). The op still serves the pre-432 records already on disk until 432-17 deletes it '
-      + 'with the inbox.',
-    adjudication: '432',
-  }),
-  Object.freeze({
-    opId: 'proposals.show',
-    reason:
-      'D-05 (dated 2026-09-30, 432-12): knowledge and config changes apply in the call, so the '
-      + 'proposal round this op belonged to has no MCP tool; its tool was removed with no alias '
-      + '(D-02). The op still serves the pre-432 records already on disk until 432-17 deletes it '
-      + 'with the inbox.',
-    adjudication: '432',
-  }),
+  // 2026-09-30 (432-12 D-05): the five pre-432 proposal ops went off the catalogue with their
+  // tools. 2026-10-01 (432-17 D-05): they are deleted from the registry and leave the scoping note.
 ] as const satisfies readonly UnprojectedOp[])
 
 /**

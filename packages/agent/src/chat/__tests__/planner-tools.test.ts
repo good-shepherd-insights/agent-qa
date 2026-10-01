@@ -511,12 +511,13 @@ describe('projectPlannerTools: the model is not shown what the host stamps (394-
   it('CONTROL: an op in neither stamped set is handed its projection untouched', async () => {
     const walked = registry().list(PLANNER_CALLER)
     const tools = projectPlannerTools({ list: () => walked }, PLANNER_CALLER)
-    const control = walked.find((entry) => entry.id === 'proposals.list')
+    // 2026-10-01 (432-17): `quarantine.list` replaces the deleted `proposals.list` as the control.
+    const control = walked.find((entry) => entry.id === 'quarantine.list')
     expect(control).toBeDefined()
-    expect(SESSION_STAMPED_FUNCTION_IDS.has('proposals.list')).toBe(false)
-    expect(WINDOW_STAMPED_FUNCTION_IDS.has('proposals.list')).toBe(false)
+    expect(SESSION_STAMPED_FUNCTION_IDS.has('quarantine.list')).toBe(false)
+    expect(WINDOW_STAMPED_FUNCTION_IDS.has('quarantine.list')).toBe(false)
 
-    const projected = tools[toToolName('proposals.list')]
+    const projected = tools[toToolName('quarantine.list')]
     expect(await schemaDocumentOf(projected?.inputSchema)).toEqual(control!.input)
     expect(projected?.description).toBe(control!.summary)
   })

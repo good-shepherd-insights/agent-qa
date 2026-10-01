@@ -71,6 +71,11 @@ export const AGENT_BARREL_FILE = 'packages/agent/src/index.ts'
  * nothing else; the two `entities.*` specs it belongs to stay inside `functions/`, so the two
  * new capabilities remain reachable only through `invokeFunction` and this addition opens no
  * dispatch path.
+ *
+ * 2026-10-01 (432-17, D-05): six values and eleven types left with the proposal inbox — the
+ * `proposals.accept`/`list`, `knowledge.proposal.apply`, `config.proposal.apply` and
+ * `config.undo.propose` ids, `ConfigProposalNotApplicableError`, and the apply, undo-source,
+ * proposal-write and propose/apply-outcome port types. Removed, not waived: nothing exports them.
  */
 export const EXPECTED_AGENT_BARREL_VALUE_EXPORTS: readonly string[] = [
   // 392 plan 01, D-24: the chat turn entry's id. It is here for the reason every op-id constant
@@ -151,25 +156,17 @@ export const EXPECTED_AGENT_BARREL_VALUE_EXPORTS: readonly string[] = [
   'CONFIG_AUTH_SET_FUNCTION_ID',
   'CONFIG_FIELD_SET_FUNCTION_ID',
   'CONFIG_HOOK_ADD_FUNCTION_ID',
-  'CONFIG_PROPOSAL_APPLY_FUNCTION_ID',
   // 395-05, D-01: the rest of the closed action class's op ids, in SORT position beside the two
   // above and published for the identical reason — `composeLocalAgent()` and this phase's composed
   // proofs put these names on the wire, and 387 D-11 forbids the literals each would spell.
   'CONFIG_TARGET_CREATE_FUNCTION_ID',
   'CONFIG_TARGET_EDIT_FUNCTION_ID',
-  // 395-06, D-07: the undo's id, in SORT position and published for the identical reason.
-  'CONFIG_UNDO_PROPOSE_FUNCTION_ID',
   // 392 plan 05, D-21: the `/pin` refusal a REPL catches to say which class matched nothing. An
   // error CLASS on the footing of its siblings below — holding it runs nothing — and it is here
   // rather than local to the chat subtree because the surface that renders the refusal is in
   // another package. In SORT position, like `FunctionOriginError` below: this list is compared
   // against the barrel's sorted export set by exact positional equality.
   'ChatPinError',
-  // 395-01, CFGM-03: the refusal a surface catches when an id names a proposal of another kind.
-  // An error CLASS on `ChatPinError`'s footing — holding it runs nothing — and it is here rather
-  // than local because the surface that renders the refusal is in another package. In SORT
-  // position: this list is compared against the barrel's sorted export set by exact equality.
-  'ConfigProposalNotApplicableError',
   'DuplicateFunctionIdError',
   'DuplicateJobKindError',
   // 428-07, D-07: the editor subject's minter, published beside runs.liveurl's — its id and its
@@ -204,11 +201,8 @@ export const EXPECTED_AGENT_BARREL_VALUE_EXPORTS: readonly string[] = [
   'InconsistentJobKindDeclarationError',
   'JobCancellationNotRequestedError',
   'JobCancelledError',
-  // 387 plan 08: the delegate transport must name the op it hands the leaseholder (D-18). A
-  // string, not a handle — see the barrel's own note beside the export.
   // 2026-09-06, 416 D-17: a read-op name and named refusal, never a dispatch handle.
   'KNOWLEDGE_GATES_LIST_FUNCTION_ID',
-  'KNOWLEDGE_PROPOSAL_APPLY_FUNCTION_ID',
   'KnowledgeGatesUnboundError',
   // 392 plan 09, CHAT-03 / D-15: the pinned rational ceiling. On this list because a SUMMARY, a
   // gate run and a field projection all have to quote the same pin — a ceiling re-spelled at a
@@ -227,14 +221,6 @@ export const EXPECTED_AGENT_BARREL_VALUE_EXPORTS: readonly string[] = [
   'MissingIdempotencyKeyError',
   // 2026-09-08, 419 GATE3-01: runtime dep vocabulary, DATA with no dispatch handle.
   'OPTIONAL_FUNCTION_DEP_KEYS',
-  // 394-18: the accept verb's id, on the same footing as its `list` sibling below and for the same
-  // reason — a composed cell drives the human decision through the SHIPPED verb, and comparing
-  // against the DECLARED id rather than a string the cell spelled itself is 387 D-11's rule. The
-  // SPEC stays off this list: it carries the implementation, the apply routes and the grant mint.
-  'PROPOSALS_ACCEPT_FUNCTION_ID',
-  // 392 plan 01: the id the tracer's one table entry resolves to, published so a cross-package
-  // assertion compares against the DECLARED id rather than a string it spelled itself (387 D-11).
-  'PROPOSALS_LIST_FUNCTION_ID',
   // 390 plan 04: the three quarantine verb ids, on the same footing as the op-id constants
   // above and below — strings a surface names on the wire, never dispatch handles. The three
   // SPECS are deliberately NOT here: a spec carries the implementation and the live
@@ -767,7 +753,6 @@ export const EXPECTED_AGENT_BARREL_TYPE_EXPORTS: readonly string[] = [
   // second parse to recover the old value would be free to disagree with the one that applied the
   // edit — and `ConfigScanPortLike`, the construction-time secret scan bound to the host's own
   // masking seeds (D-09: one seed set, not two lists that agree today).
-  'ConfigApplyPortLike',
   'ConfigFieldSetResult',
   'ConfigFieldValue',
   'ConfigFileBytes',
@@ -777,7 +762,6 @@ export const EXPECTED_AGENT_BARREL_TYPE_EXPORTS: readonly string[] = [
   // not overwrite, an edit that must not invent and an append that must not land on an existing
   // member are three questions about the document's SHAPE, and `packages/agent` cannot parse yaml.
   'ConfigPathFacts',
-  'ConfigProposalsWritePortLike',
   'ConfigReaderPort',
   // 395-08, D-04: the shared scaffold CONTENT port. Published because `composeLocalAgent()` takes
   // it and the CLI host implements it over `commands/scaffold-content.ts` — the one producer both
@@ -787,12 +771,6 @@ export const EXPECTED_AGENT_BARREL_TYPE_EXPORTS: readonly string[] = [
   // 395-05: the yaml FORMAT's value vocabulary — scalars, sequences and maps. A target entry and a
   // hook entry are written as one block each, so the port that writes them cannot be scalar-only.
   'ConfigStructuredValue',
-  // 395-06, D-07: the undo's source read — the repository's own account of the last agent config
-  // commit. A PORT plus its two payload types, published because `composeLocalAgent()` and the CLI
-  // host implement it and neither may name a type that lives only inside `functions/`.
-  'ConfigUndoSource',
-  'ConfigUndoSourceFile',
-  'ConfigUndoSourcePortLike',
   'ConfigValidatePortLike',
   'ConfigValidation',
   // 395-10 WR-11: one validation issue as a { path, message } PAIR. Published for the same reason
@@ -808,11 +786,6 @@ export const EXPECTED_AGENT_BARREL_TYPE_EXPORTS: readonly string[] = [
   // 394-07 plan 07, D-12: the READ half of the receipts store, mirrored narrowly. A separate type
   // from the write port on purpose — the funnel projection is structurally unable to persist
   // anything, which is how "nothing new is persisted" stays a property rather than a promise.
-  // 394-10 plan 10, D-06: the one-commit apply, and the request/result pair that crosses to it.
-  // Types only, and the port is deliberately NOT a member of `DraftShelfPortLike` — that bundle is
-  // the authoring LOOP's capabilities, and this one is exercised by a human's accept on a host
-  // that need not be able to author at all.
-  'DraftApplyPortLike',
   'DraftReceiptsReadPortLike',
   // 394 plan 02, D-01: the loop's write half and what staging one compiled draft answers. Types
   // only — the port is a shape a composition root fills, and the outcome is a two-arm union whose
@@ -868,12 +841,7 @@ export const EXPECTED_AGENT_BARREL_TYPE_EXPORTS: readonly string[] = [
   'JobStoreDumpRow',
   'JobStoreFence',
   'JobStorePort',
-  'KnowledgeApplyOutcome',
   'KnowledgePort',
-  'KnowledgeProposalRequest',
-  // 387 plan 08: `propose` answers a typed target-not-found rather than throwing, and a bare
-  // proposal could not carry that arm. Type-only, like every other member of this family.
-  'KnowledgeProposeOutcome',
   'KnowledgeReaderPort',
   'KnowledgeReviewPort',
   // 392 plan 09: the measurement pair, and its two-ness is the claim — a quotient stored beside
@@ -962,10 +930,6 @@ export const EXPECTED_AGENT_BARREL_TYPE_EXPORTS: readonly string[] = [
   'StepEvidenceLookup',
   // 394-07 plan 07, D-14: see the funnel note beside `AuthoringFunnelPortLike` above.
   'SuiteOutcomeHistoryPortLike',
-  // 394-10 plan 10, D-06: what an accepted `test-draft` asks a host to write, and what it answers.
-  // Inert record shapes; the capability itself is `DraftApplyPortLike` above.
-  'TestDraftApplyRequestLike',
-  'TestDraftApplyResultLike',
   'ToolsPort',
   'TurnEngine',
   'TurnEngineDeps',

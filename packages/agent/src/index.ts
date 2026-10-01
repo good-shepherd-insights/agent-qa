@@ -58,9 +58,6 @@ export type {
   FunctionDeps,
   FunctionResultKind,
   FunctionStream,
-  KnowledgeApplyOutcome,
-  KnowledgeProposalRequest,
-  KnowledgeProposeOutcome,
   KnowledgeReaderPort,
   KnowledgeReviewPort,
   OptionalFunctionDepKey,
@@ -144,7 +141,6 @@ export { AmbiguousStepAddressError } from './functions/ops/knowledge-brief-why.j
 // is a string literal in the CLI — a second declaration of a capability's name, free to drift from
 // the spec that answers to it. An ID is not a dispatch handle: naming a capability still buys
 // nothing without a registry, a caller and the gate.
-export { KNOWLEDGE_PROPOSAL_APPLY_FUNCTION_ID } from './functions/ops/knowledge-review-ids.js'
 // 388 D-14: the second op id a surface must be able to NAME, on exactly the footing above. The
 // CLI's exit summary line (plan 04) dispatches chip truth through the registry, and the
 // alternative is a string literal in the CLI — a second declaration of a capability's name,
@@ -222,13 +218,7 @@ export { QUARANTINE_RELEASE_FUNCTION_ID } from './functions/ops/quarantine-relea
 // `AGENT_ASK_FUNCTION_ID` is the one a production surface names: `agent-qa ask` and the REPL both
 // reach the turn engine through `invokeFunction` with this id, which is what makes chat a CLIENT of
 // the function layer rather than a holder of a private power (§3's L10 law).
-//
-// `PROPOSALS_LIST_FUNCTION_ID` is published for the resolver table's rule that ids are IMPORTED,
-// never literal (387 D-11): the tracer's cross-package assertion that the executed clause really
-// dispatched to the proposals listing must break when that op is renamed, and it cannot if it is
-// comparing against a string it spelled itself.
 export { AGENT_ASK_FUNCTION_ID } from './functions/ops/agent-ask.js'
-export { PROPOSALS_LIST_FUNCTION_ID } from './functions/ops/proposals-list.js'
 // 398 D-09/D-11: `explain`'s id, and the PORT TYPE a composition root must implement to bind it.
 //
 // The id is on the footing of every constant above — a name a caller puts on the wire. It is
@@ -292,31 +282,23 @@ export type {
 } from './authoring/loop.js'
 export type {
   AuthoringReadPortLike,
-  DraftApplyPortLike,
   DraftReceiptsReadPortLike,
   DraftShelfPortLike,
   DraftStageOutcome,
-  TestDraftApplyRequestLike,
-  TestDraftApplyResultLike,
 } from './authoring/ports.js'
 // 395 D-01/D-03/D-17 · CFGM-01/03/04: the config editor's four host ports, published for the
 // reason the authoring ports above are — `composeLocalAgent()` and the CLI host implement them
 // and neither may name a type that lives only inside `functions/`.
 export type {
-  ConfigApplyPortLike,
   ConfigFieldSetResult,
   ConfigFieldValue,
   ConfigFileBytes,
   ConfigFileSet,
   ConfigFilesPortLike,
   ConfigPathFacts,
-  ConfigProposalsWritePortLike,
   ConfigScaffoldContentPortLike,
   ConfigScanPortLike,
   ConfigStructuredValue,
-  ConfigUndoSource,
-  ConfigUndoSourceFile,
-  ConfigUndoSourcePortLike,
   ConfigValidatePortLike,
   ConfigValidation,
   ConfigValidationIssue,
@@ -336,21 +318,12 @@ export { CONFIG_AUTH_SET_FUNCTION_ID } from './functions/ops/config-auth-set.js'
 export { CONFIG_HOOK_ADD_FUNCTION_ID } from './functions/ops/config-hook-add.js'
 export { CONFIG_TARGET_CREATE_FUNCTION_ID } from './functions/ops/config-target-create.js'
 export { CONFIG_TARGET_EDIT_FUNCTION_ID } from './functions/ops/config-target-edit.js'
-// 395-06 D-07: the undo's id, on the same footing — a name a surface puts on the wire.
-export { CONFIG_UNDO_PROPOSE_FUNCTION_ID } from './functions/ops/config-undo-propose.js'
-export {
-  CONFIG_PROPOSAL_APPLY_FUNCTION_ID,
-  ConfigProposalNotApplicableError,
-} from './functions/ops/config-proposal-apply.js'
+// 2026-10-01 (432-17, D-05/D-09): the undo's and the config apply's ids are deleted with their ops.
 // 394-07 D-12/D-13 · WTST-05: the funnel read's id, on the exact footing of the op-id constants
 // above — a name a surface puts on the wire, never a dispatch handle. Published because
 // `composeLocalAgent()` has to name it when it binds the capability, and 387 D-11 forbids the
 // literal it would otherwise spell. The SPEC stays inside `functions/`.
 export { AUTHORING_FUNNEL_GET_FUNCTION_ID } from './functions/ops/authoring-funnel-get.js'
-// 394-18: published so a composed cell can drive the human decision through the SHIPPED verb
-// rather than writing a decision into the store itself — the difference between measuring the
-// accept flow and measuring a test's own arrangement of it.
-export { PROPOSALS_ACCEPT_FUNCTION_ID } from './functions/ops/proposals-accept.js'
 // 394-07 D-12/D-14: the projection and the mixed-verdict stability gather, plus the port bundle a
 // composition root fills. Both functions are PURE over injected reads — they reach no host API,
 // no registry and no run capability, which is D-14's zero-runs claim expressed as an absence in

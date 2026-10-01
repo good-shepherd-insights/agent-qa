@@ -12,13 +12,9 @@
 
 import { beforeAll, describe, expect, it } from 'vitest'
 
-import {
-  CURRENT_PROPOSAL_RECORD_SCHEMA_VERSION,
-  DraftReceiptSchema,
-} from '@vostride/agent-qa-schema'
+import { DraftReceiptSchema } from '@vostride/agent-qa-schema'
 import type {
   DraftReceipt,
-  ProposalEnvelope,
   QuarantineEntryState,
   RunsStartInput,
 } from '@vostride/agent-qa-schema'
@@ -122,56 +118,6 @@ function receipt(digest: string, evaluatedAt = 1_700_000_000_000): DraftReceipt 
   })
 }
 
-function testDraftEnvelope(digest: string, decision?: 'applied' | 'rejected'): ProposalEnvelope {
-  return {
-    id: `prop_${digest}`,
-    status: decision === undefined ? 'pending' : decision,
-    evidenceRefs: [],
-    kind: 'test-draft',
-    payload: {
-      schemaVersion: CURRENT_PROPOSAL_RECORD_SCHEMA_VERSION,
-      draftRef: {
-        filePath: `tests/.agent-qa-drafts/${digest}.yaml`,
-        testId: `t_${digest}`,
-        testName: `draft ${digest}`,
-        contentDigest: digest,
-      },
-      targetPath: `tests/draft-${digest}.yaml`,
-      disposition: 'keep-eligible',
-      runsPreviewed: 9,
-      runsConsumed: 3,
-      repairIterations: 0,
-      summaryLine: `draft ${digest}`,
-    },
-    ...(decision === undefined ? {} : { decision: { decision, at: 1_700_000_000_001 } }),
-  }
-}
-
-/**
- * An inbox envelope of a kind the fold must IGNORE — the two-sided control on the discriminant.
- *
- * A projection that folded every envelope would pass a suite driven on `test-draft` rows alone,
- * so the inbox always carries one row of another kind. It contributes no acceptance and no
- * counter beside the funnel; the only thing it may move is nothing.
- */
-function knowledgeEnvelope(digest: string): ProposalEnvelope {
-  return {
-    id: `prop_${digest}`,
-    status: 'pending',
-    evidenceRefs: [],
-    kind: 'knowledge',
-    payload: {
-      schemaVersion: CURRENT_PROPOSAL_RECORD_SCHEMA_VERSION,
-      proposalId: `prop_${digest}`,
-      verb: 'accept',
-      targetRef: { grain: 'record', recordId: `rec_${digest}` },
-      deltas: [],
-      proposedAt: 1_700_000_000_000,
-      status: 'pending',
-    },
-  }
-}
-
 /**
  * A run port the composition COULD reach, recording every start.
  *
@@ -195,17 +141,14 @@ function countingRunPort(): DraftRunPortLike & { starts: RunsStartInput[] } {
 
 interface PortFixture {
   receipts?: readonly DraftReceipt[]
-  envelopes?: readonly ProposalEnvelope[]
   outcomes?: AuthoringFunnelPortLike['outcomes']
   quarantine?: AuthoringFunnelPortLike['quarantine']
 }
 
 function port(overrides: PortFixture = {}): AuthoringFunnelPortLike {
   const receipts = overrides.receipts ?? []
-  const envelopes = overrides.envelopes ?? []
   return {
     receipts: { async list() { return [...receipts] } },
-    async proposals() { return envelopes },
     ...(overrides.outcomes === undefined ? {} : { outcomes: overrides.outcomes }),
     ...(overrides.quarantine === undefined ? {} : { quarantine: overrides.quarantine }),
   }
@@ -288,56 +231,42 @@ describe('projectAuthoringFunnel', () => {
 
     const funnel = await projectAuthoringFunnel(
       { scope: 'session', sessionRef: 'sess-alpha' },
-      port({
-        receipts,
-        envelopes: [
-          testDraftEnvelope('p-alpha-1', 'applied'),
-          testDraftEnvelope('p-beta-1', 'applied'),
-        ],
-      }),
+      port({ receipts }),
     )
 
     // Against the PRODUCER'S OWN TALLY, never a restated integer: if the mint stopped attributing,
     // `alpha.length` and `built` move apart rather than both matching a hard-coded 2.
     expect(funnel.stages.built).toBe(alpha.length)
-    // `p-beta-1` was applied and is NOT in this window, so it cannot reach `accepted` either.
-    expect(funnel.stages.accepted).toBe(1)
+    // RE-SPELLED 2026-10-01 (432-17, D-06): no acceptance is recorded anywhere, so none is counted.
+    expect(funnel.stages.accepted).toBe(0)
   })
 
-  it('reads `accepted` off applied decisions and nothing else', async () => {
+  it('reads `accepted` off recorded acceptances, and none are recorded since 432-17', async () => {
+    // RE-SPELLED 2026-10-01 (432-17, D-06): this cell read applied, rejected and pending decisions
+    // off test-draft envelopes. A draft a keep-gate did not reject is written in its own call, and
+    // the inbox the decisions lived in is deleted, so the projection hands the computation no
+    // acceptances and `accepted` is 0 whatever the receipts say.
     const funnel = await projectAuthoringFunnel(
       { scope: 'all-time' },
-      port({
-        receipts: [receipt('a'), receipt('b'), receipt('c')],
-        envelopes: [
-          testDraftEnvelope('a', 'applied'),
-          testDraftEnvelope('b', 'rejected'),
-          testDraftEnvelope('c'),
-        ],
-      }),
+      port({ receipts: [receipt('a'), receipt('b'), receipt('c')] }),
     )
 
-    expect(funnel.stages).toEqual({ built: 3, passedStably: 3, addedValue: 3, accepted: 1 })
+    expect(funnel.stages).toEqual({ built: 3, passedStably: 3, addedValue: 3, accepted: 0 })
+    expect(funnel.acceptanceFailure).toBe(false)
   })
 
-  it('leaves dedup refusals absent and folds no side counter from the inbox', async () => {
+  it('leaves dedup refusals absent and folds no side counter', async () => {
     const funnel = await projectAuthoringFunnel(
       { scope: 'all-time' },
-      port({
-        receipts: [receipt('a'), receipt('b')],
-        envelopes: [testDraftEnvelope('a', 'applied'), knowledgeEnvelope('b')],
-      }),
+      port({ receipts: [receipt('a'), receipt('b')] }),
     )
 
-    // NOTHING sits beside the funnel here. The inbox is read for `test-draft` acceptances alone,
-    // so the envelope of another kind moves no counter; and the refusal counter nothing on this
-    // host records stays honestly absent rather than reporting a 0 nothing counted.
+    // NOTHING sits beside the funnel here: the refusal counter nothing on this host records stays
+    // honestly absent rather than reporting a 0 nothing counted.
     expect(funnel.sideCounters).toEqual({})
     expect(funnel.sideCounters.dedupRefusals).toBeUndefined()
-    // Both drafts still count as `built` — they reached authoring — and only the applied one is
-    // accepted, so the second kind changed no stage either.
     expect(funnel.stages.built).toBe(2)
-    expect(funnel.stages.accepted).toBe(1)
+    expect(funnel.stages.accepted).toBe(0)
     expect(funnel.line).toContain('Beside the funnel: dedup refusals not recorded on this host.')
   })
 

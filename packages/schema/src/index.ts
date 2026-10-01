@@ -703,7 +703,7 @@ export type { AnalyzeRunPayload } from './job/index'
 export type { Patch, FileChange, Hunk, PatchStatus, PatchId } from './patch/index'
 export { asPatchId, patchSchema } from './patch/index'
 // 395 D-01/D-17 · CFGM-01/03/04: the config editor's DTOs, and THE diff/digest primitive both
-// halves of a config proposal call — construction in `agent`, apply in `cli`. The primitive is
+// halves of a config change call — construction in `agent`, the write in `cli`. The primitive is
 // exported from here and from nowhere else for the reason its own header states: two recipes for
 // one digest contract is 394's CR-02 defect class, and this phase's whole freshness guarantee is
 // the two halves agreeing byte for byte.
@@ -714,29 +714,18 @@ export {
   CONFIG_HOOK_RUNTIMES,
   CONFIG_CHANGE_REFUSAL_REASONS,
   CONFIG_REFERENCE_KINDS,
-  CONFIG_REFUSAL_REASONS,
   CONFIG_SET_DEFAULT_HOOKS_FILE,
   CONFIG_SET_GITIGNORE,
   CROSS_BOUNDARY_REASONS,
-  CURRENT_CONFIG_PROPOSAL_SCHEMA_VERSION,
-  ConfigApplyCommitSchema,
-  ConfigApplyOutcomeSchema,
-  ConfigApplyReceiptsSchema,
   ConfigAuthSetInputSchema,
+  ConfigChangeFileSchema,
   ConfigChangeOutputSchema,
   ConfigFieldSetInputSchema,
   ConfigHookAddInputSchema,
   ConfigProjectScaffoldInputSchema,
-  ConfigProposalApplyInputSchema,
-  ConfigProposalApplyableV1Schema,
-  ConfigProposalBlockedV1Schema,
-  ConfigProposalFileSchema,
-  ConfigProposalV1Schema,
-  ConfigProposeOutputSchema,
   ConfigScanFindingSchema,
   ConfigTargetCreateInputSchema,
   ConfigTargetEditInputSchema,
-  ConfigUndoProposeInputSchema,
   EmptyConfigDiffFileError,
   MAX_CONFIG_REFERENCE_LENGTH,
   SECRET_ADJACENT_CONFIG_FIELDS,
@@ -751,11 +740,9 @@ export {
   utf8Encode,
 } from './config-mutation/index'
 export type {
-  ConfigApplyCommit,
-  ConfigApplyOutcome,
-  ConfigApplyReceipts,
   ConfigAuthSetInput,
   ConfigBlockedReason,
+  ConfigChangeFile,
   ConfigChangeOutput,
   ConfigChangeRefusalReason,
   ConfigDiffChanged,
@@ -769,18 +756,10 @@ export type {
   ConfigHookAddInput,
   ConfigHookRuntime,
   ConfigProjectScaffoldInput,
-  ConfigProposalApplyInput,
-  ConfigProposalApplyableV1,
-  ConfigProposalBlockedV1,
-  ConfigProposalFile,
-  ConfigProposalV1,
-  ConfigProposeOutput,
   ConfigReferenceKind,
-  ConfigRefusalReason,
   ConfigScanFinding,
   ConfigTargetCreateInput,
   ConfigTargetEditInput,
-  ConfigUndoProposeInput,
   CrossBoundaryReason,
   SecretAdjacentConfigField,
 } from './config-mutation/index'
@@ -937,31 +916,28 @@ export {
 } from './knowledge/index'
 export type { RecordFrontmatter } from './knowledge/index'
 
-// 387 KREV-01 D-17/D-19: the propose+apply seam, the forget receipt, and the review-verb
-// input/output contracts every 387-06/387-08 op imports rather than re-minting.
+// 387 KREV-01 D-17/D-19: the review-verb read contracts every 387-06/387-08 op imports rather than
+// re-minting. 2026-10-01 (432-17, D-05): with the direct knowledge change contracts that replaced the
+// propose+apply seam (`knowledge/change.ts`); the proposal payload and its apply contracts are gone.
 export {
   BRIEF_WHY_NO_TRACE_REASONS,
   BRIEF_WHY_RESULT_KINDS,
   BriefWhyInputSchema,
   BriefWhyResultSchema,
-  ForgetPreviewSchema,
+  DeltaSchema,
   ForgetReceiptV1Schema,
   ForgetTargetRefSchema,
-  KNOWLEDGE_APPLY_OUTCOMES,
   KNOWLEDGE_CHANGE_VERBS,
   KNOWLEDGE_PROJECTIONS,
-  KNOWLEDGE_PROPOSAL_STATUSES,
   KNOWLEDGE_REVIEW_VERBS,
+  KnowledgeChangeIdSchema,
   KnowledgeChangeOperationIdSchema,
   KnowledgeAcceptInputSchema,
   KnowledgeAcceptChangeInputSchema,
-  KnowledgeApplyOutcomeSchema,
   KnowledgeChangeOutputSchema,
   KNOWLEDGE_CHANGE_REFUSAL_REASONS,
   KnowledgeForgetInputSchema,
   KnowledgeForgetChangeInputSchema,
-  KnowledgeProposalApplyInputSchema,
-  KnowledgeProposalV1Schema,
   KnowledgeRecordShowInputSchema,
   KnowledgeRecordShowOutputSchema,
   KnowledgeRecordShowResultSchema,
@@ -972,7 +948,7 @@ export {
   KnowledgeRejectInputSchema,
   KnowledgeRejectChangeInputSchema,
   KnowledgeTargetRefSchema,
-  ProposalIdSchema,
+  MarkChangeStampSchema,
   TombstonedRecordSchema,
 } from './knowledge/index'
 export type {
@@ -980,22 +956,16 @@ export type {
   BriefWhyNoTraceReason,
   BriefWhyResult,
   BriefWhyResultKind,
-  ForgetPreview,
   ForgetReceiptV1,
   ForgetTargetRef,
   KnowledgeAcceptInput,
   KnowledgeAcceptChangeInput,
-  KnowledgeApplyOutcomeDto,
-  KnowledgeApplyOutcomeKind,
   KnowledgeChangeVerb,
   KnowledgeChangeOutput,
   KnowledgeChangeRefusalReason,
   KnowledgeForgetInput,
   KnowledgeForgetChangeInput,
   KnowledgeProjection,
-  KnowledgeProposalApplyInput,
-  KnowledgeProposalStatus,
-  KnowledgeProposalV1,
   KnowledgeRecordShowInput,
   KnowledgeRecordShowOutput,
   KnowledgeRecordShowResult,
@@ -1007,6 +977,7 @@ export type {
   KnowledgeRejectChangeInput,
   KnowledgeReviewVerb,
   KnowledgeTargetRef,
+  MarkChangeStamp,
 } from './knowledge/index'
 
 // 381 procedure & guarded-replay contracts (D-03/D-04/D-06, Pitfall 6)
@@ -1311,16 +1282,13 @@ export type {
 // carries.
 export {
   AUTHORED_SUITE_SLUG_MAX_LENGTH,
-  CURRENT_AUTHORING_PROPOSAL_SCHEMA_VERSION,
   RUN_EVIDENCE_CHANNELS,
   RunEvidenceRefSchema,
-  TestDraftProposalV1Schema,
   authoredSuiteTargetPath,
 } from './authoring/index'
 export type {
   RunEvidenceChannel,
   RunEvidenceRef,
-  TestDraftProposalV1,
 } from './authoring/index'
 
 // 394-07 (WTST-05, D-13/D-15): the honesty funnel. `computeAuthoringFunnel` is the ONE
@@ -1544,66 +1512,6 @@ export type {
   StandingGrantDto,
   StandingGrantsPort,
 } from './safety/index'
-// 391 D-08/D-12: the generic kind-discriminated proposal envelope. The durable record, the
-// four-state lifecycle, the pinned expiry and the read-time DTO the inbox, the decision surfaces
-// and the per-run digest all range over. `KnowledgeProposalV1` rides inside as the `knowledge`
-// arm's payload, unforked.
-export {
-  CURRENT_PROPOSAL_RECORD_SCHEMA_VERSION,
-  PROPOSAL_DECISIONS,
-  PROPOSAL_DURABLE_STATES,
-  PROPOSAL_ENVELOPE_STATUSES,
-  PROPOSAL_EVIDENCE_GRAINS,
-  PROPOSAL_EXPIRY_MS,
-  PROPOSAL_KINDS,
-  ProposalDecisionRecordSchema,
-  ProposalEnvelopeSchema,
-  ProposalEvidenceRefSchema,
-  ProposalInboxEntrySchema,
-  ProposalOriginSchema,
-  ProposalRecordSchema,
-  ProposalsAcceptAppliedSchema,
-  ProposalsAcceptGrantOutcomeSchema,
-  ProposalsAcceptInputSchema,
-  ProposalsAcceptOutcomeSchema,
-  ProposalsAcceptOutputSchema,
-  ProposalsListInputSchema,
-  ProposalsListOutputSchema,
-  ProposalsRejectInputSchema,
-  ProposalsRejectOutputSchema,
-  ProposalsShowInputSchema,
-  ProposalsShowOutputSchema,
-  computeProposalEnvelopeStatus,
-  isProposalKind,
-} from './proposal/index'
-export type {
-  ProposalDecision,
-  ProposalDecisionRecord,
-  ProposalDurableState,
-  ProposalEnvelope,
-  ProposalEnvelopeCommon,
-  ProposalEnvelopeStatus,
-  ProposalEvidenceGrain,
-  ProposalEvidenceRef,
-  ProposalInboxEntryDto,
-  ProposalKind,
-  ProposalOrigin,
-  ProposalRecord,
-  ProposalsAcceptApplied,
-  ProposalsAcceptGrantOutcome,
-  ProposalsAcceptInput,
-  ProposalsAcceptOutcome,
-  ProposalsAcceptOutput,
-  ProposalsInboxPort,
-  ProposalsListInput,
-  ProposalsListOutput,
-  ProposalsRejectInput,
-  ProposalsRecordAppliedInput,
-  ProposalsRecordAppliedOutput,
-  ProposalsRejectOutput,
-  ProposalsShowInput,
-  ProposalsShowOutput,
-} from './proposal/index'
 export type {
   RiskActionDescriptor,
   RiskTier,
@@ -1848,8 +1756,6 @@ export type {
 // 2026-09-15, 423 D-20/D-17: the one read-time record join, shared by runs.knowledge and runs.mark.preview
 export { projectRecordContent, maskRecordContent } from './functions/record-join'
 export type { RunKnowledgeRecordContent, RunKnowledgeContentAbsence } from './functions/record-join'
-export { MarkProposalStampSchema } from './knowledge/proposal'
-export type { MarkProposalStamp } from './knowledge/proposal'
 export { KnowledgeMarkInputSchema } from './knowledge/review-verbs'
 export type { KnowledgeMarkInput } from './knowledge/review-verbs'
 export { OVERTURNED_EVENT_TYPE } from './knowledge/outcome-event'

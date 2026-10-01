@@ -1,7 +1,7 @@
 // The config editor's host ports (Phase 395, D-01/D-03/D-17 · CFGM-01/03/04).
 //
-// FOUR CAPABILITIES THIS PACKAGE CANNOT NAME, and each is a port for a reason that is measured
-// rather than stylistic:
+// CAPABILITIES THIS PACKAGE CANNOT NAME, and each is a port for a reason that is measured rather
+// than stylistic:
 //
 //   configFiles     — reads the pinned config file SET as RAW BYTES, and performs the typed field
 //                     mutation. Both are host facts. The read is `fs`, which this package may not
@@ -14,12 +14,13 @@
 //                     already owns the file format.
 //   configValidate  — whole-config validation (CFGM-01) is `core`'s `AgentQaConfigSchema` /
 //                     `validateProject`, and `agent` does not depend on `core` — `validate:arch`
-//                     reds that edge with no legal repair. The `draftApply` idiom exactly.
-//   configApply     — git, and the person's own history. A host fact by definition.
-//   configProposals — persisting the envelope is `knowledge-local`'s `writePendingProposalRecord`,
-//                     one package away, exactly as `AuthoringProposalsWritePortLike` is.
+//                     reds that edge with no legal repair.
 //   configWrite     — 2026-09-30, 432-07: the direct writer. Its transaction is the dashboard's
 //                     config file transaction, which this package cannot name either.
+//
+// 2026-10-01 (432-17, D-05/D-07/D-09): the git apply (`configApply`), the proposal filer
+// (`configProposals`) and the undo source (`configUndoSource`) are deleted with the proposal inbox.
+// A change is written in its own call and reverted with git; agent-qa makes no commit.
 //
 // THE READ IS RAW BYTES ON PURPOSE (D-17). A port that answered text would put a decode between the
 // file and the digest taken over it, which is 394's CR-02 defect class in its original form: two
@@ -38,11 +39,8 @@ import type {
 } from '@vostride/agent-qa-safety'
 
 import type {
-  ConfigApplyOutcome,
   ConfigChange,
   ConfigPathSegment,
-  ConfigProposalApplyableV1,
-  ConfigProposalV1,
   ConfigWriteIssue,
   ConfigWriteRefusal,
 } from '@vostride/agent-qa-schema'
@@ -278,60 +276,6 @@ export interface ConfigValidatePortLike {
 }
 
 /**
- * The one write to a person's git history this phase makes (CFGM-03).
- *
- * IT TAKES THE PAYLOAD, not an id, on the `draftApply` reasoning (proposals-accept.ts:128-134): the
- * caller has ALREADY read the envelope — that is how it knows this is a config proposal — so handing
- * over what it is holding is one read. An id would make the host read the same record again with a
- * window in between in which the two reads can disagree about the very `baseDigest` the apply
- * re-checks.
- */
-export interface ConfigApplyPortLike {
-  apply(request: {
-    readonly proposalId: string
-    readonly payload: ConfigProposalApplyableV1
-    /**
-     * The door that MINTED this proposal — `ProposalOrigin.surface`, read off the stored record
-     * (400-05).
-     *
-     * IT TRAVELS BESIDE THE PAYLOAD RATHER THAN INSIDE IT. Attribution is a fact about the envelope
-     * and not about the change, so putting it on the payload would have meant a copy on every
-     * payload arm and a `.strict()` schema change for each — and would have made a stored proposal's
-     * provenance mutable by whoever hands the port a payload.
-     *
-     * ABSENT MEANS NO SURFACE WAS RECORDED, which is every proposal minted before 400-05 and every
-     * mint by a composition that declares no door. The port must say so honestly; it must not
-     * substitute a surface, and it must still APPLY — refusing here would poison a store this
-     * product itself wrote.
-     */
-    readonly mintedSurface?: string
-  }): Promise<ConfigApplyOutcome>
-}
-
-/**
- * Where a constructed config proposal becomes something a person can find.
- *
- * The host mints the id and stamps the instant, for the reasons `AuthoringProposalsWritePortLike`'s
- * header states at length: `mintProposalId` is the durable store's recipe for a value that becomes
- * a filename, and nothing in `packages/agent` reads a clock.
- */
-export interface ConfigProposalsWritePortLike {
-  put(record: {
-    readonly kind: 'config'
-    /** The emitting op's bare id — provenance for a person reading an inbox, never a match key. */
-    readonly emittedBy: string
-    /**
-     * EITHER ARM (395-04). A blocked record is filed through the SAME store and the same envelope as
-     * an applyable one, because "one posture, two reasons" means a person finds a refusal where they
-     * find everything else — and because a refusal nobody can list is a refusal that leaves no trace
-     * of the agent having tried. The store needs no new verb; the payload's own discriminant is what
-     * every reader narrows on.
-     */
-    readonly payload: ConfigProposalV1
-  }): Promise<{ readonly proposalId: string }>
-}
-
-/**
  * What a direct field change did to the config yaml (2026-09-30, 432-07 D-05/D-07).
  *
  * `applied` names the revision the change merged onto, which is the file as it stood in the
@@ -404,66 +348,6 @@ export interface ConfigWritePortLike {
   publishFiles(request: {
     readonly files: readonly ConfigFilePublication[]
   }): Promise<ConfigFilePublishOutcome>
-}
-
-/**
- * One config file the located agent commit touched, and the bytes an undo would restore (D-07).
- *
- * `parentBytes` IS THE ONLY CONTENT HERE, AND ITS SIBLINGS' ABSENCE IS THE DESIGN. The plan for
- * this port named three byte payloads per file — the bytes at the agent commit, the bytes at its
- * parent, and the file's current committed bytes. Two of the three are answers to questions this
- * pipeline already has answers for and would then hold twice: the CURRENT bytes are exactly what
- * `ConfigFilesPortLike.read` returns, and CFGM-04's proposal-time law says the construction re-reads
- * them for itself, so a second copy arriving on this port is a second value free to disagree with
- * the one the digests are taken over. The bytes AT the agent commit never enter the undo at all —
- * the reverse diff is CURRENT → PARENT, whatever current happens to be, which is precisely what
- * makes an intervening human commit surface inside the diff instead of colliding with it.
- *
- * ABSENT `parentBytes` MEANS THE AGENT COMMIT CREATED THIS FILE, and it is a fact rather than an
- * empty payload: reversing that commit would DELETE the file, which this write path cannot express
- * (see `CONFIG_REFUSAL_REASONS`' `undo-needs-delete`).
- */
-export interface ConfigUndoSourceFile {
-  /** Workspace-relative, as the host's own identity mint spells it. */
-  readonly path: string
-  /** The file's bytes at the located commit's PARENT — what reversing it would restore. */
-  readonly parentBytes?: Uint8Array
-}
-
-/**
- * What history says about the last agent configuration commit (D-07).
- *
- * LOCATED BY THE TRAILER AND BY PATHSPEC, NEVER BY PROSE. The commit this describes is the most
- * recent one carrying `Agent-QA-Proposal` whose paths lie inside the pinned config set — the same
- * marker `findAppliedCommit` reads for CFGM-03's idempotency answer, so "which commits are ours"
- * has one definition in this product and the undo cannot drift from it.
- */
-export type ConfigUndoSource =
-  | {
-    readonly kind: 'none'
-  }
-  | {
-    readonly kind: 'found'
-    /** The commit being reversed, abbreviated as git prints it. */
-    readonly commit: string
-    /** The proposal that commit applied, read out of its own trailer. */
-    readonly proposalId: string
-    /** That commit's subject line, so the undo can say what it is undoing. */
-    readonly subject: string
-    readonly files: readonly ConfigUndoSourceFile[]
-  }
-
-/**
- * The repository's own account of what this product last changed (D-07).
- *
- * A HOST PORT FOR THE REASON `configApply` IS ONE: it is git, and git is a host fact. It is a
- * separate port rather than a verb on `configApply` because the two answer opposite questions — one
- * writes a commit a person accepted, the other reads a commit somebody already made — and folding
- * a read into the one port through which committed configuration changes would make the write
- * surface larger for no reason.
- */
-export interface ConfigUndoSourcePortLike {
-  read(): Promise<ConfigUndoSource>
 }
 
 /**

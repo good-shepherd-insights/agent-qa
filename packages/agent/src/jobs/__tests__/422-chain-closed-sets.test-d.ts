@@ -19,8 +19,7 @@
 
 import { describe, expectTypeOf, test } from 'vitest'
 
-import type { JobKind, ProposalKind } from '@vostride/agent-qa-schema'
-import { PROPOSAL_KINDS } from '@vostride/agent-qa-schema'
+import type { JobKind } from '@vostride/agent-qa-schema'
 
 import { CHAIN_JOB_ID_KEYS } from '../chain-identity.js'
 import type { ChainJobIds } from '../chain-identity.js'
@@ -103,23 +102,11 @@ describe('the job kind vocabulary', () => {
   })
 })
 
+// 2026-10-01 (432-17, D-05): the proposal-inbox kind vocabulary (`ProposalKind`, `PROPOSAL_KINDS`) is
+// deleted with the inbox, so the closed-set and no-shared-member pins it carried have no subject.
 describe('the proposal-inbox kind vocabulary', () => {
-  test('is exactly three kinds, hand-spelled and closed in both directions', () => {
-    expectTypeOf<ProposalKind>().toEqualTypeOf<'knowledge' | 'test-draft' | 'config'>()
-    expectTypeOf<Exclude<ProposalKind, (typeof PROPOSAL_KINDS)[number]>>().toEqualTypeOf<never>()
-    expectTypeOf<Exclude<(typeof PROPOSAL_KINDS)[number], ProposalKind>>().toEqualTypeOf<never>()
-  })
-
-  test('shares no member with the job kinds it is named beside', () => {
-    // The proposal STAGE is a job kind and the proposal INBOX entries are a different closed
-    // set that happens to share a word. A member in both would make one of them ambiguous at
-    // exactly the seam where the stage writes into the inbox.
-    expectTypeOf<Extract<ProposalKind, JobKind>>().toEqualTypeOf<never>()
-    expectTypeOf<Extract<JobKind, ProposalKind>>().toEqualTypeOf<never>()
-  })
-
-  test('negative control: the inbox set is non-empty', () => {
-    // @ts-expect-error — 'knowledge' is a real member, so extracting it is not never.
-    expectTypeOf<Extract<ProposalKind, 'knowledge'>>().toEqualTypeOf<never>()
+  test('is deleted with the inbox', () => {
+    // @ts-expect-error — `ProposalKind` is no longer exported.
+    expectTypeOf<import('@vostride/agent-qa-schema').ProposalKind>().toBeNever()
   })
 })

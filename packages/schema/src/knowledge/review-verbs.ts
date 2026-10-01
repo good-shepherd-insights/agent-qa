@@ -14,25 +14,10 @@ import { z } from 'zod'
 
 import { ServedRetrievalTraceV1Schema } from '../brief/retrieval-trace'
 import type { ServedBrief } from '../brief/served-brief'
-import { CommitReceiptSchema, ImprovementPlanKnowledgeSchema } from '../functions/feedback'
+import { ImprovementPlanKnowledgeSchema } from '../functions/feedback'
 import { InspectFilterSchema, InspectRecordViewSchema, RecordChangeSchema } from './maintenance-views'
 import { BundleProvenanceSchema } from './bundle-files'
-import {
-  ForgetReceiptV1Schema,
-  ForgetTargetRefSchema,
-  KNOWLEDGE_CHANGE_VERBS,
-  KnowledgeChangeOperationIdSchema,
-  KnowledgeProposalV1Schema,
-  KnowledgeTargetRefSchema,
-  MarkProposalStampSchema,
-  ProposalIdSchema,
-} from './proposal'
-
-export {
-  ForgetTargetRefSchema,
-  KnowledgeTargetRefSchema,
-} from './proposal'
-export type { ForgetTargetRef, KnowledgeTargetRef } from './proposal'
+import { KnowledgeTargetRefSchema, MarkChangeStampSchema } from './change'
 
 /**
  * WHY a why-question has no answer. Closed, and each member names a genuinely different
@@ -139,146 +124,17 @@ export const BriefWhyInputSchema = z.object({
 
 export type BriefWhyInput = z.infer<typeof BriefWhyInputSchema>
 
-/** Accept a candidate: promote what the store already holds. */
-export const KnowledgeAcceptInputSchema = z.object({
-  target: KnowledgeTargetRefSchema,
-}).strict()
-
-export type KnowledgeAcceptInput = z.infer<typeof KnowledgeAcceptInputSchema>
-
 /**
- * Reject a candidate. The reason is REQUIRED because the delta this becomes (`Deprecate`)
- * requires one — an input DTO that let it through empty would have handed the verb the job
- * of inventing a justification for a human decision.
+ * 419 D-01: the knowledge fix a recorded user mark applies. 2026-10-01 (432-17): the accept, reject
+ * and forget inputs and the direct change contracts live in `./change`; a mark is applied by
+ * `runs.mark` in the same call (D-04).
  */
-export const KnowledgeRejectInputSchema = z.object({
-  target: KnowledgeTargetRefSchema,
-  reason: z.string().min(1),
-}).strict()
-
-export type KnowledgeRejectInput = z.infer<typeof KnowledgeRejectInputSchema>
-
-/** Forget a record or a whole bundle (D-19). */
-export const KnowledgeForgetInputSchema = z.object({
-  target: ForgetTargetRefSchema,
-}).strict()
-
-export type KnowledgeForgetInput = z.infer<typeof KnowledgeForgetInputSchema>
-
-/** 419 D-01: draft a knowledge fix for a recorded user mark; apply remains the commit door. */
 export const KnowledgeMarkInputSchema = z.object({
   target: KnowledgeTargetRefSchema,
-  mark: MarkProposalStampSchema,
+  mark: MarkChangeStampSchema,
   plan: ImprovementPlanKnowledgeSchema,
 }).strict()
 export type KnowledgeMarkInput = z.infer<typeof KnowledgeMarkInputSchema>
-
-/**
- * 432-12 (D-05/D-09): what a CHANGE op takes on top of the verb it applies — an optional operation
- * identity. A caller that repeats the identity repeats the change, which lands once and answers the
- * same records; a caller that omits it gets a fresh identity back on the receipt.
- *
- * The 391-07 `runId` attribution is gone with the proposal it attributed: an applied change is
- * recorded by the records it changed, and nothing groups direct changes by run (D-10).
- */
-const CHANGE_IDENTITY = { operationId: KnowledgeChangeOperationIdSchema.optional() }
-
-/** {@link KnowledgeAcceptInputSchema} as `knowledge.accept` takes it. */
-export const KnowledgeAcceptChangeInputSchema = z.object({
-  ...KnowledgeAcceptInputSchema.shape,
-  ...CHANGE_IDENTITY,
-}).strict()
-
-export type KnowledgeAcceptChangeInput = z.infer<typeof KnowledgeAcceptChangeInputSchema>
-
-/** {@link KnowledgeRejectInputSchema} as `knowledge.reject` takes it. */
-export const KnowledgeRejectChangeInputSchema = z.object({
-  ...KnowledgeRejectInputSchema.shape,
-  ...CHANGE_IDENTITY,
-}).strict()
-
-export type KnowledgeRejectChangeInput = z.infer<typeof KnowledgeRejectChangeInputSchema>
-
-/** {@link KnowledgeForgetInputSchema} as `knowledge.forget` takes it. */
-export const KnowledgeForgetChangeInputSchema = z.object({
-  ...KnowledgeForgetInputSchema.shape,
-  ...CHANGE_IDENTITY,
-}).strict()
-
-export type KnowledgeForgetChangeInput = z.infer<typeof KnowledgeForgetChangeInputSchema>
-
-/** Why a direct change wrote nothing, when the store refused it by type rather than by absence. */
-export const KNOWLEDGE_CHANGE_REFUSAL_REASONS = ['policy-materialize-refused'] as const
-
-export type KnowledgeChangeRefusalReason = (typeof KNOWLEDGE_CHANGE_REFUSAL_REASONS)[number]
-
-/**
- * What a direct knowledge change DID (432-12, D-05): the records it changed, a typed absence, or a
- * typed refusal. Never a proposal: nothing waits for a second call.
- *
- * `recordIds` are read back after the write. A forget carries the existing tombstone receipt, and a
- * change that crossed a promotion gate carries its commit receipt. `operationId` is the identity the
- * change landed under, so a caller can retry it and land nothing twice.
- */
-export const KnowledgeChangeOutputSchema = z.discriminatedUnion('outcome', [
-  z.object({
-    outcome: z.literal('applied'),
-    verb: z.enum(KNOWLEDGE_CHANGE_VERBS),
-    operationId: KnowledgeChangeOperationIdSchema,
-    recordIds: z.array(z.string().min(1)),
-    /** Present exactly when the change was a forget (D-19). */
-    forgetReceipt: ForgetReceiptV1Schema.optional(),
-    /** Present when the change passed a promotion gate or wrote a policy record. */
-    commitReceipt: CommitReceiptSchema.optional(),
-  }).strict(),
-  z.object({
-    outcome: z.literal('target-not-found'),
-    verb: z.enum(KNOWLEDGE_CHANGE_VERBS),
-    operationId: KnowledgeChangeOperationIdSchema,
-    /** Echoed so an answer pasted into an issue still says what was asked about. */
-    target: KnowledgeTargetRefSchema,
-  }).strict(),
-  z.object({
-    outcome: z.literal('refused'),
-    verb: z.enum(KNOWLEDGE_CHANGE_VERBS),
-    operationId: KnowledgeChangeOperationIdSchema,
-    reason: z.enum(KNOWLEDGE_CHANGE_REFUSAL_REASONS),
-  }).strict(),
-])
-
-export type KnowledgeChangeOutput = z.infer<typeof KnowledgeChangeOutputSchema>
-
-/** Apply a proposal by id — the second half of the two-step (D-17). */
-export const KnowledgeProposalApplyInputSchema = z.object({
-  proposalId: ProposalIdSchema,
-}).strict()
-
-export type KnowledgeProposalApplyInput = z.infer<typeof KnowledgeProposalApplyInputSchema>
-
-/**
- * What an apply DID, and whether this call is the one that did it.
- *
- * `outcome` is not decoration. Applying a proposal twice is an ordinary thing for a retrying
- * surface to do (a dropped socket, a re-issued MCP tool call, an operator pressing the key
- * again), and the second call must be able to say "this was already applied, here is what it
- * did" without committing a second time. Reporting that as an ordinary success would make the
- * two indistinguishable, and reporting it as a throw would throw away the receipt — which is
- * the one thing the caller asked for. So it is an ARM, and the receipt rides on both arms.
- */
-export const KNOWLEDGE_APPLY_OUTCOMES = ['applied', 'already-applied', 'policy-materialize-refused'] as const
-
-export type KnowledgeApplyOutcomeKind = (typeof KNOWLEDGE_APPLY_OUTCOMES)[number]
-
-export const KnowledgeApplyOutcomeSchema = z.object({
-  outcome: z.enum(KNOWLEDGE_APPLY_OUTCOMES),
-  proposal: KnowledgeProposalV1Schema,
-  /** Present exactly when the applied verb was `forget` (D-19). */
-  forgetReceipt: ForgetReceiptV1Schema.optional(),
-  /** Present exactly when the applied verb was mark, or the target was a policy record (419 D-04/D-17). */
-  commitReceipt: CommitReceiptSchema.optional(),
-}).strict()
-
-export type KnowledgeApplyOutcomeDto = z.infer<typeof KnowledgeApplyOutcomeSchema>
 
 /** `inspectRecords`' structural filter, unchanged — the verb is a client, not a rewrite. */
 export const KnowledgeRecordsInspectInputSchema = z.object({

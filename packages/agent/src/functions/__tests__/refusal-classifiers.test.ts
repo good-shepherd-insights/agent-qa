@@ -20,9 +20,7 @@ import { join } from 'node:path'
 import {
   AuthoringDraftWriteOutputSchema,
   ConfigChangeOutputSchema,
-  ConfigProposeOutputSchema,
   KnowledgeChangeOutputSchema,
-  ProposalsAcceptOutputSchema,
   buildFanOutReport,
   computeFanOutBound,
   renderFanOutReport,
@@ -30,9 +28,7 @@ import {
 import type {
   AuthoringDraftWriteOutput,
   ConfigChangeOutput,
-  ConfigProposeOutput,
   KnowledgeChangeOutput,
-  ProposalsAcceptOutput,
 } from '@vostride/agent-qa-schema'
 import { describe, expect, it } from 'vitest'
 import { z } from 'zod'
@@ -45,11 +41,9 @@ import { configHookAddSpec } from '../ops/config-hook-add.js'
 import { configProjectScaffoldSpec } from '../ops/config-project-scaffold.js'
 import { configTargetCreateSpec } from '../ops/config-target-create.js'
 import { configTargetEditSpec } from '../ops/config-target-edit.js'
-import { configUndoProposeSpec } from '../ops/config-undo-propose.js'
 import { knowledgeAcceptSpec } from '../ops/knowledge-accept-propose.js'
 import { knowledgeForgetSpec } from '../ops/knowledge-forget-propose.js'
 import { knowledgeRejectSpec } from '../ops/knowledge-reject-propose.js'
-import { proposalsAcceptSpec } from '../ops/proposals-accept.js'
 import { createRegistryFromSpecs } from '../registry.js'
 import type { FunctionRegistry } from '../registry.js'
 import type { FunctionDeps, FunctionSpec } from '../spec.js'
@@ -57,51 +51,10 @@ import { classifyBodies, executableSource, scanFile, scanText } from './op-sourc
 
 // ---- fixtures, produced through the contracts ---------------------------------------------------
 
-const blockedByGuardrail: ConfigProposeOutput = ConfigProposeOutputSchema.parse({
-  outcome: 'blocked',
-  proposalId: 'prop_blocked-guardrail',
-  summaryLine: 'set use.buildTag — blocked: the proposed change would write a secret',
-  blockedReason: 'guardrail-hit',
-  paths: ['agent-qa.config.yaml'],
-  scanFindings: [
-    { path: 'agent-qa.config.yaml', detector: 'apiKey', redactedFingerprint: '6a8bb9dac7013904' },
-  ],
-})
-
-const blockedBySchema: ConfigProposeOutput = ConfigProposeOutputSchema.parse({
-  outcome: 'blocked',
-  proposalId: 'prop_blocked-schema',
-  summaryLine: 'set use.authState — blocked: the resulting configuration is invalid',
-  blockedReason: 'schema-fail',
-  paths: ['agent-qa.config.yaml'],
-  validationIssues: ['agent-qa.config.yaml: use: Unrecognized key: "authState"'],
-})
-
-const refusedOutright: ConfigProposeOutput = ConfigProposeOutputSchema.parse({
-  outcome: 'refused',
-  reason: 'target-not-found',
-  detail: 'no target named "staging" is configured',
-  candidates: ['local', 'ci'],
-})
-
-const proposed: ConfigProposeOutput = ConfigProposeOutputSchema.parse({
-  outcome: 'proposed',
-  proposalId: 'prop_proposed',
-  summaryLine: 'set use.buildTag to probe-build-tag-v1',
-  crossBoundary: false,
-  crossBoundaryReasons: [],
-  files: ['agent-qa.config.yaml'],
-  shownDiff: '--- a/agent-qa.config.yaml\n+++ b/agent-qa.config.yaml\n',
-})
-
-const noChange: ConfigProposeOutput = ConfigProposeOutputSchema.parse({
-  outcome: 'no-change',
-  path: 'use.buildTag',
-})
-
-// 2026-09-30, 432-11 D-05: six of the seven ops answer what they WROTE. Their blocked and refused
-// arms carry the same report with no record reference, and two arms are new: applied and
-// interrupted. `config.undo.propose` still answers the proposal union until 432-17 deletes it.
+// 2026-09-30, 432-11 D-05: the config ops answer what they WROTE. Their blocked and refused arms
+// carry the same report with no record reference, and two arms are new: applied and interrupted.
+// 2026-10-01, 432-17 D-05/D-09: `config.undo.propose` and the proposal union it alone still answered
+// are deleted, and with them the fixtures parsed through that union.
 
 const directBlockedByGuardrail: ConfigChangeOutput = ConfigChangeOutputSchema.parse({
   outcome: 'blocked',
@@ -189,45 +142,11 @@ const authoringDrafted: AuthoringDraftWriteOutput = AuthoringDraftWriteOutputSch
   fanOut: happyFanOut,
 })
 
-function acceptOutput(apply: unknown): ProposalsAcceptOutput {
-  return ProposalsAcceptOutputSchema.parse({ apply, grant: { kind: 'not-requested' } })
-}
-
-const EXPIRED_PROPOSAL_ID = 'prop_11111111-2222-3333-4444-555555555555'
-
-const acceptNotApplyable = acceptOutput({
-  outcome: 'not-applyable',
-  proposalId: 'prop_blocked-guardrail',
-  reason: 'guardrail-hit',
-})
-
-const acceptExpired = acceptOutput({
-  outcome: 'expired',
-  entry: {
-    applyInFlight: false,
-    envelope: {
-      id: EXPIRED_PROPOSAL_ID,
-      kind: 'knowledge',
-      status: 'expired',
-      evidenceRefs: [],
-      payload: {
-        schemaVersion: 1,
-        proposalId: EXPIRED_PROPOSAL_ID,
-        verb: 'accept',
-        targetRef: { grain: 'record', recordId: 'rec-1' },
-        deltas: [],
-        proposedAt: 1_000_000,
-        status: 'pending',
-      },
-    },
-  },
-})
-
-// ---- the config-mutation family: seven ops, two unions ------------------------------------------
+// ---- the config-mutation family: six ops, one union ---------------------------------------------
 
 /**
- * The six ops that answer with `ConfigChangeOutput` (432-11), and the one that still answers with
- * `ConfigProposeOutput` until 432-17.
+ * The six ops that answer with `ConfigChangeOutput` (432-11). 2026-10-01 (432-17): the seventh,
+ * `config.undo.propose`, is deleted with the proposal union it answered.
  *
  * SPELLED AS THE SPECS THEMSELVES rather than as ids looked up in a registry, so an op that stops
  * declaring a classifier is a compile-adjacent red here and not a row that quietly reports the
@@ -242,16 +161,13 @@ const CONFIG_CHANGE_OPS: readonly FunctionSpec<never, ConfigChangeOutput>[] = [
   configTargetEditSpec,
 ] as unknown as readonly FunctionSpec<never, ConfigChangeOutput>[]
 
-const CONFIG_PROPOSE_OPS: readonly FunctionSpec<never, ConfigProposeOutput>[] = [
-  configUndoProposeSpec,
-] as unknown as readonly FunctionSpec<never, ConfigProposeOutput>[]
-
 describe('399.1 D-01/D-02 — the config-mutation family folds its own refusal arms', () => {
-  it('declares a classifier on every one of the seven ops sharing the union', () => {
+  // RE-SPELLED 2026-10-01 (432-17): seven ops became six with the undo's deletion.
+  it('declares a classifier on every one of the six ops sharing the union', () => {
     // Non-vacuity for every cell below: a spec with no classifier reports the LEGACY verdict, and
     // `executed` is exactly what this phase exists to stop it saying over a refusal.
-    expect(CONFIG_CHANGE_OPS.length + CONFIG_PROPOSE_OPS.length).toBe(7)
-    for (const spec of [...CONFIG_CHANGE_OPS, ...CONFIG_PROPOSE_OPS]) {
+    expect(CONFIG_CHANGE_OPS.length).toBe(6)
+    for (const spec of CONFIG_CHANGE_OPS) {
       expect(spec.classify, `${spec.id} declares no classifier`).toBeTypeOf('function')
     }
   })
@@ -259,10 +175,6 @@ describe('399.1 D-01/D-02 — the config-mutation family folds its own refusal a
   it('folds the guardrail block to refused, carrying the guardrail’s own reason', () => {
     for (const spec of CONFIG_CHANGE_OPS) {
       expect(spec.classify?.(directBlockedByGuardrail as never), spec.id)
-        .toEqual({ status: 'refused', outcome: 'guardrail-hit' })
-    }
-    for (const spec of CONFIG_PROPOSE_OPS) {
-      expect(spec.classify?.(blockedByGuardrail as never), spec.id)
         .toEqual({ status: 'refused', outcome: 'guardrail-hit' })
     }
   })
@@ -274,10 +186,6 @@ describe('399.1 D-01/D-02 — the config-mutation family folds its own refusal a
       expect(spec.classify?.(directBlockedBySchema as never), spec.id)
         .toEqual({ status: 'refused', outcome: 'schema-fail' })
     }
-    for (const spec of CONFIG_PROPOSE_OPS) {
-      expect(spec.classify?.(blockedBySchema as never), spec.id)
-        .toEqual({ status: 'refused', outcome: 'schema-fail' })
-    }
   })
 
   it('folds the outright refusal to refused with the refusal’s own reason', () => {
@@ -285,19 +193,10 @@ describe('399.1 D-01/D-02 — the config-mutation family folds its own refusal a
       expect(spec.classify?.(directRefusedOutright as never), spec.id)
         .toEqual({ status: 'refused', outcome: 'target-not-found' })
     }
-    for (const spec of CONFIG_PROPOSE_OPS) {
-      expect(spec.classify?.(refusedOutright as never), spec.id)
-        .toEqual({ status: 'refused', outcome: 'target-not-found' })
-    }
   })
 
-  it('folds a filed proposal to executed, naming the id a person decides on', () => {
-    // 432-11: only the undo still files one.
-    for (const spec of CONFIG_PROPOSE_OPS) {
-      expect(spec.classify?.(proposed as never), spec.id)
-        .toEqual({ status: 'executed', outcome: 'proposed prop_proposed' })
-    }
-  })
+  // 2026-10-01 (432-17): 'folds a filed proposal to executed, naming the id a person decides on' is
+  // deleted with the one op that still filed a proposal.
 
   it('C432-CONFIG-APPLIED-OUTPUT: folds an applied change to executed, naming the files it wrote', () => {
     for (const spec of CONFIG_CHANGE_OPS) {
@@ -316,11 +215,6 @@ describe('399.1 D-01/D-02 — the config-mutation family folds its own refusal a
   it('folds no-change to executed — nothing failed and nothing was declined', () => {
     for (const spec of CONFIG_CHANGE_OPS) {
       const verdict = spec.classify?.(directNoChange as never)
-      expect(verdict?.status, spec.id).toBe('executed')
-      expect(verdict?.outcome, spec.id).toContain('use.buildTag')
-    }
-    for (const spec of CONFIG_PROPOSE_OPS) {
-      const verdict = spec.classify?.(noChange as never)
       expect(verdict?.status, spec.id).toBe('executed')
       expect(verdict?.outcome, spec.id).toContain('use.buildTag')
     }
@@ -390,21 +284,9 @@ describe('399.1 D-01/D-02 — authoring.draft.write folds its dedup refusal', ()
 
 // ---- proposals.accept: the census finding beyond the plan's floor -------------------------------
 
-describe('399.1 D-01/D-02 — proposals.accept folds the arms that applied NOTHING', () => {
-  it('reports refused when the record is a blocked one, in the blocked record’s own words', () => {
-    // `not-applyable` is a blocked config proposal reaching the inbox's commit verb. Reporting it as
-    // `executed` is the SAME defect one door over: the guardrail held, and the person was told the
-    // change went in. Its `reason` is the very `guardrail-hit`/`schema-fail` vocabulary above.
-    expect(proposalsAcceptSpec.classify?.(acceptNotApplyable))
-      .toEqual({ status: 'refused', outcome: 'not-applyable: guardrail-hit' })
-  })
-
-  it('reports refused when the lifecycle declined an expired proposal', () => {
-    const verdict = proposalsAcceptSpec.classify?.(acceptExpired)
-    expect(verdict?.status).toBe('refused')
-    expect(verdict?.outcome).toContain('expired')
-  })
-})
+// 2026-10-01 (432-17, D-05): the `proposals.accept` describe ('reports refused when the record is a
+// blocked one…', 'reports refused when the lifecycle declined an expired proposal') is deleted with
+// the op; C432-NO-PROPOSAL-OPS pins its absence from the registry.
 
 // ---- D-03: a result nobody can read is `failed`, never `executed` -------------------------------
 
@@ -445,7 +327,7 @@ describe('399.1 D-03 — the fail-closed wrapper, driven', () => {
   it('still reports the real verdict for a result it CAN read — the guard is not a blanket', () => {
     // The discrimination control. Without it the two cells above would pass against a wrapper that
     // answered `unclassifiable-result` for everything.
-    expect(foldFunctionResult(registry, configFieldSetSpec.id, blockedByGuardrail).verdict)
+    expect(foldFunctionResult(registry, configFieldSetSpec.id, directBlockedByGuardrail).verdict)
       .toEqual({ status: 'refused', outcome: 'guardrail-hit' })
   })
 })
@@ -583,7 +465,6 @@ describe('399.1 D-01 — no classifier pattern-matches a value', () => {
   const CLASSIFIER_SOURCES = [
     'src/functions/ops/config-propose-verdict.ts',
     'src/functions/ops/authoring-draft-write.ts',
-    'src/functions/ops/proposals-accept.ts',
   ] as const
 
   it.each(CLASSIFIER_SOURCES)('%s inspects no value content', (relative) => {
@@ -709,7 +590,10 @@ describe('399.1 D-01 — no classifier pattern-matches a value', () => {
     // may never interpolate.
     // 2026-09-28 (431 D-06): 46. runs.overview folds only its test and step counts; labels,
     // record summaries and addresses never reach a receipt.
-    expect(bodiesScanned, 'no classify bodies were extracted — this scan ranges nothing').toBe(46)
+    // 2026-10-01 (432-17 D-05/D-09): 40. Six folds leave with their ops: proposals.list, .show,
+    // .accept and .reject, knowledge.proposal.apply and config.proposal.apply (config.undo.propose
+    // delegated to the shared fold and had no body of its own).
+    expect(bodiesScanned, 'no classify bodies were extracted — this scan ranges nothing').toBe(40)
   })
 
   it('control: the body extractor and the scan both FIRE on a fold that sniffs', () => {

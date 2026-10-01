@@ -24,14 +24,14 @@ import type {
   ChatSessionHandle,
   ChatSessionHeader,
   FunctionCaller,
-  ProposalsListOutput,
+  QuarantineListOutput,
   SessionLogPort,
 } from '@vostride/agent-qa-schema'
 
 import {
   AuthoringDraftWriteOutputSchema,
   FAN_OUT_PHRASES,
-  ProposalsListOutputSchema,
+  QuarantineListOutputSchema,
   buildFanOutReport,
   computeFanOutBound,
   renderFanOutReport,
@@ -44,7 +44,7 @@ import {
 import { AUTHORING_DRAFT_VERIFY_FUNCTION_ID } from '../../functions/ops/authoring-verify-draft.js'
 import { AUTHORING_FUNNEL_GET_FUNCTION_ID } from '../../functions/ops/authoring-funnel-get.js'
 import { foldFunctionResult } from '../../functions/classify.js'
-import { proposalsListSpec } from '../../functions/ops/proposals-list.js'
+import { quarantineListSpec } from '../../functions/ops/quarantine-list.js'
 import { createRegistryFromSpecs } from '../../functions/registry.js'
 import type { FunctionDeps, FunctionSpec } from '../../functions/spec.js'
 import { CHAT_RESOLVER_TABLE } from '../resolver-table.js'
@@ -63,7 +63,10 @@ import type {
 } from '../ports.js'
 import type { ChatConfigState } from '../config-drift.js'
 
-const PROPOSALS_LIST = 'proposals.list'
+// RE-SPELLED 2026-10-01 (432-17): `proposals.list` is deleted with the inbox. `quarantine.list` is
+// the read op folded in its place: it declares the same kind of classifier (`output.entries.length`)
+// over the same `{ entries }` shape, so every claim below keeps its subject.
+const PROPOSALS_LIST = 'quarantine.list'
 const RUNS_LIST = 'runs.list'
 const RUNS_DIGEST = 'runs.digest'
 
@@ -191,7 +194,8 @@ interface HarnessOptions {
  * The ops this harness folds through the REAL composition-root fold (399.1-03).
  *
  * TWO SPECS, AND THE SECOND ONE IS THE MEASUREMENT. `authoring.draft.write` declares the fan-out
- * disclosure; `proposals.list` declares a classifier that says only how many proposals it listed,
+ * disclosure; `quarantine.list` (`proposals.list` until 432-17) declares a classifier that says only
+ * how many entries it listed,
  * and routing it through the SAME `foldFunctionResult` is what lets the blast-radius cell below see
  * a shared runner that started folding everybody's result with one op's rule. While the exception
  * was an id comparison inside `turn-engine.ts` that widening was one deleted line away and
@@ -210,7 +214,7 @@ interface HarnessOptions {
  * drifted.
  */
 const FOLD_REGISTRY = createRegistryFromSpecs(
-  [authoringDraftWriteSpec as FunctionSpec, proposalsListSpec as FunctionSpec],
+  [authoringDraftWriteSpec as FunctionSpec, quarantineListSpec as FunctionSpec],
   {
     // Never dispatched through: this harness calls the ops itself and hands the registry only the
     // RETURN path, which is where folds run. The sink exists because D-11 refuses a sinkless one.
@@ -227,7 +231,7 @@ const FOLD_IDS: ReadonlySet<string> = new Set(
 )
 
 /**
- * An EMPTY inbox, produced through `proposals.list`'s own output contract (399.1-04).
+ * An EMPTY listing, produced through the folded read op's own output contract (399.1-04).
  *
  * PRODUCED, NEVER TYPED. The op declares a classifier as of plan 04, and a classifier is run over
  * whatever this seat answers with — so a hand-written `{ ok: true }` would hand the shipped fold an
@@ -235,7 +239,7 @@ const FOLD_IDS: ReadonlySet<string> = new Set(
  * `failed/unclassifiable-result` for a cell whose subject is something else entirely. Parsing it
  * here means a fixture describing an impossible shape reds AT THIS LINE.
  */
-const PROPOSALS_LIST_RESULT: ProposalsListOutput = ProposalsListOutputSchema.parse({ entries: [] })
+const PROPOSALS_LIST_RESULT: QuarantineListOutput = QuarantineListOutputSchema.parse({ entries: [] })
 
 /**
  * What the invoke seat answers when a cell did not say — per op, because ops now read their results.
@@ -378,7 +382,7 @@ describe('turn engine stage 3/4: atomicity, ordered execution, receipts, per-sta
   describe('D-10 — a fail-closed verdict costs the turn everything and executes nothing', () => {
     it('performs ZERO invocations when a clause is unroutable', async () => {
       const run = harness()
-      const result = await run.runTurn({ message: '/fn proposals.list and write a test for two factor auth' })
+      const result = await run.runTurn({ message: '/fn quarantine.list and write a test for two factor auth' })
 
       expect(result.status).toBe('fail_closed')
       // The measurement D-10 is actually about. Not "the failing clause was skipped" — the
@@ -390,7 +394,7 @@ describe('turn engine stage 3/4: atomicity, ordered execution, receipts, per-sta
 
     it('appends a mark_unhandled event naming the clause (D-15/D-18)', async () => {
       const run = harness()
-      await run.runTurn({ message: '/fn proposals.list and write a test for two factor auth' })
+      await run.runTurn({ message: '/fn quarantine.list and write a test for two factor auth' })
 
       const unhandled = run.log.events.find((event) => event.kind === 'mark_unhandled')
       expect(unhandled).toBeDefined()
@@ -427,7 +431,7 @@ describe('turn engine stage 3/4: atomicity, ordered execution, receipts, per-sta
           ],
         },
       })
-      const result = await run.runTurn({ message: '/fn proposals.list and file an issue for it' })
+      const result = await run.runTurn({ message: '/fn quarantine.list and file an issue for it' })
 
       expect(result.status).toBe('fail_closed')
       expect(run.invocations).toHaveLength(0)
@@ -483,7 +487,7 @@ describe('turn engine stage 3/4: atomicity, ordered execution, receipts, per-sta
     // is reached through `/fn` now that the `proposals` alias is gone.
     it('still carries the directive out on the execute arm, and its line still leads', async () => {
       const run = harness({ directives: true })
-      const result = await run.runTurn({ message: '/model claude-fast and /fn proposals.list' })
+      const result = await run.runTurn({ message: '/model claude-fast and /fn quarantine.list' })
 
       expect(result.status).toBe('completed')
       expect(run.modelCalls).toEqual(['claude-fast'])
@@ -626,11 +630,11 @@ describe('turn engine stage 3/4: atomicity, ordered execution, receipts, per-sta
   describe('D-11 — utterance order, stop on failure, receipts for every clause', () => {
     it('executes table-bound clauses in utterance order', async () => {
       const run = harness()
-      const result = await run.runTurn({ message: '/fn proposals.list and status' })
+      const result = await run.runTurn({ message: '/fn quarantine.list and status' })
 
       expect(result.status).toBe('completed')
       expect(run.invocations.map((call) => call.functionId)).toEqual([PROPOSALS_LIST, RUNS_LIST])
-      expect(result.receipts.map((receipt) => receipt.clause)).toEqual(['/fn proposals.list', 'status'])
+      expect(result.receipts.map((receipt) => receipt.clause)).toEqual(['/fn quarantine.list', 'status'])
     })
 
     it('stops the chain on a runtime failure and reports executed/failed/not-run', async () => {
@@ -639,7 +643,7 @@ describe('turn engine stage 3/4: atomicity, ordered execution, receipts, per-sta
         planned: { toolCalls: [{ toolName: toToolName(RUNS_DIGEST), input: { runId: 'RUN-1' } }] },
       })
       const result = await run.runTurn({
-        message: '/fn proposals.list and status and summarise the last failure',
+        message: '/fn quarantine.list and status and summarise the last failure',
       })
 
       expect(result.status).toBe('failed')
@@ -654,7 +658,7 @@ describe('turn engine stage 3/4: atomicity, ordered execution, receipts, per-sta
 
     it('carries the function layer refusal NAME verbatim on the failed receipt', async () => {
       const run = harness({ failOn: RUNS_LIST })
-      const result = await run.runTurn({ message: '/fn proposals.list and status' })
+      const result = await run.runTurn({ message: '/fn quarantine.list and status' })
 
       expect(result.receipts[1]).toMatchObject({
         status: 'failed',
@@ -665,7 +669,7 @@ describe('turn engine stage 3/4: atomicity, ordered execution, receipts, per-sta
 
     it('logs a clause_receipt per clause, not only for the ones that ran', async () => {
       const run = harness({ failOn: PROPOSALS_LIST })
-      await run.runTurn({ message: '/fn proposals.list and status' })
+      await run.runTurn({ message: '/fn quarantine.list and status' })
 
       const receipts = run.log.events.filter((event) => event.kind === 'clause_receipt')
       expect(receipts.map((event) => event.status)).toEqual(['failed', 'not-run'])
@@ -689,12 +693,12 @@ describe('turn engine stage 3/4: atomicity, ordered execution, receipts, per-sta
     it('stops the chain and fails the turn on a RETURNED failed verdict', async () => {
       // PRODUCED THROUGH THE REAL FOLD, NEVER SCRIPTED. `results` here is the op's RESULT, and the
       // harness routes every `FOLD_IDS` result through `foldFunctionResult` — the same function the
-      // composition root runs. `proposals.list`'s declared classifier reads `output.entries.length`;
+      // composition root runs. `quarantine.list`'s declared classifier reads `output.entries.length`;
       // an object with no `entries` is a result its own fold cannot read, so D-03's fail-closed
       // wrapper answers `failed`/`unclassifiable-result` as a RETURN. Scripting a verdict literal
       // into the invoke seat would have pinned a verdict no producer can emit.
       const run = harness({ results: { [PROPOSALS_LIST]: { inbox: 'not the contract' } } })
-      const result = await run.runTurn({ message: '/fn proposals.list and status' })
+      const result = await run.runTurn({ message: '/fn quarantine.list and status' })
 
       // NON-VACUITY: the first clause really did come back with the fail-closed verdict rather than
       // dying on the way, so the three assertions below are about the STOP GATE and not about a
@@ -736,7 +740,7 @@ describe('turn engine stage 3/4: atomicity, ordered execution, receipts, per-sta
         },
         results: { [AUTHORING_DRAFT_WRITE_FUNCTION_ID]: AUTHORING_REFUSED_RESULT },
       })
-      const result = await run.runTurn({ message: `${AUTHORING_UTTERANCE} and /fn proposals.list` })
+      const result = await run.runTurn({ message: `${AUTHORING_UTTERANCE} and /fn quarantine.list` })
 
       // NON-VACUITY: the refusal arm really was reached, through the op's own declared classifier.
       expect(result.receipts[0]).toMatchObject({
@@ -768,7 +772,7 @@ describe('turn engine stage 3/4: atomicity, ordered execution, receipts, per-sta
 
     it('appends ONE clause_result per clause that RAN, carrying the payload verbatim', async () => {
       const run = harness()
-      const result = await run.runTurn({ message: '/fn proposals.list and status' })
+      const result = await run.runTurn({ message: '/fn quarantine.list and status' })
 
       expect(result.status).toBe('completed')
       const persisted = run.log.events.filter((event) => event.kind === 'clause_result')
@@ -793,7 +797,7 @@ describe('turn engine stage 3/4: atomicity, ordered execution, receipts, per-sta
         planned: { toolCalls: [{ toolName: toToolName(RUNS_DIGEST), input: { runId: 'RUN-1' } }] },
       })
       const result = await run.runTurn({
-        message: '/fn proposals.list and status and summarise the last failure',
+        message: '/fn quarantine.list and status and summarise the last failure',
       })
 
       expect(result.receipts.map((receipt) => receipt.status))
@@ -808,7 +812,7 @@ describe('turn engine stage 3/4: atomicity, ordered execution, receipts, per-sta
       // a sentence; the territory travels beside it. A payload that had leaked onto the receipt
       // would be the prohibition this whole vocabulary is built on, satisfied by a sibling kind.
       const run = harness()
-      await run.runTurn({ message: '/fn proposals.list and status' })
+      await run.runTurn({ message: '/fn quarantine.list and status' })
 
       for (const event of run.log.events.filter((row) => row.kind === 'clause_receipt')) {
         expect(Object.keys(event).sort()).toEqual([
@@ -823,7 +827,7 @@ describe('turn engine stage 3/4: atomicity, ordered execution, receipts, per-sta
       const run = harness({
         planned: { toolCalls: [{ toolName: toToolName(RUNS_DIGEST), input: { runId: 'RUN-1' } }] },
       })
-      const result = await run.runTurn({ message: '/fn proposals.list and summarise the last failure' })
+      const result = await run.runTurn({ message: '/fn quarantine.list and summarise the last failure' })
 
       expect(result.status).toBe('completed')
       expect(run.invocations.map((call) => call.caller.origin)).toEqual(['human', 'agent'])
@@ -834,7 +838,7 @@ describe('turn engine stage 3/4: atomicity, ordered execution, receipts, per-sta
       const run = harness({
         planned: { toolCalls: [{ toolName: toToolName(RUNS_DIGEST), input: { runId: 'RUN-1' } }] },
       })
-      await run.runTurn({ message: '/fn proposals.list and summarise the last failure' })
+      await run.runTurn({ message: '/fn quarantine.list and summarise the last failure' })
 
       const origins = run.log.events
         .filter((event) => event.kind === 'clause_receipt')
@@ -852,7 +856,7 @@ describe('turn engine stage 3/4: atomicity, ordered execution, receipts, per-sta
         plan: input.mapped.map((resolved) => ({ ...resolved, source: 'planner' as const })),
       })
       const run = harness({ reconcile: smuggling })
-      await run.runTurn({ message: '/fn proposals.list' })
+      await run.runTurn({ message: '/fn quarantine.list' })
 
       expect(run.invocations.map((call) => call.caller.origin)).toEqual(['agent'])
     })
@@ -937,14 +941,14 @@ describe('turn engine stage 3/4: atomicity, ordered execution, receipts, per-sta
 
     it('never consults the planner when stage 1 resolved every clause', async () => {
       const run = harness({ planned: { toolCalls: [] } })
-      await run.runTurn({ message: '/fn proposals.list and status' })
+      await run.runTurn({ message: '/fn quarantine.list and status' })
 
       expect(run.plannerCalls).toBe(0)
     })
 
     it('opens with the user message, closes with the boundary, and fsyncs once', async () => {
       const run = harness()
-      await run.runTurn({ message: '/fn proposals.list and status' })
+      await run.runTurn({ message: '/fn quarantine.list and status' })
 
       const kinds = kindsOf(run.log.events)
       expect(kinds[0]).toBe('user_message')
@@ -1110,14 +1114,14 @@ describe('D-18 exception — the authoring receipt carries the fan-out report (3
     // The D-18 blast radius, measured. The exception is a named branch, not "render whatever the
     // result carried": a fix that appended a report to every receipt would pass all three cells
     // above and red this one, which is what makes them a subset rather than restatements.
-    // The result carries a parsable report AND is a real `proposals.list` output, so the only
+    // The result carries a parsable report AND is a real `quarantine.list` output, so the only
     // reason its line could grow the disclosure is a runner that stopped asking whose rule it is.
     const run = harness({
       results: { [PROPOSALS_LIST]: { ...PROPOSALS_LIST_RESULT, fanOut: HAPPY_REPORT } },
     })
-    const result = await run.runTurn({ message: '/fn proposals.list' })
+    const result = await run.runTurn({ message: '/fn quarantine.list' })
 
-    expect(result.receipts[0]?.outcome).toBe('0 proposal(s) in the inbox')
+    expect(result.receipts[0]?.outcome).toBe('0 quarantine entries')
     expect(result.receipts[0]?.outcome).not.toContain(FAN_OUT_PHRASES.reportLead)
   })
 
@@ -1201,7 +1205,7 @@ describe('the authoring sessionRef stamp (394-17)', () => {
     // stamp applied to every invocation would pass both cells above and red this one.
     const run = harness({ results: { [PROPOSALS_LIST]: { ok: true } } })
 
-    await run.runTurn({ message: '/fn proposals.list' })
+    await run.runTurn({ message: '/fn quarantine.list' })
 
     expect(run.invocations[0]?.functionId).toBe(PROPOSALS_LIST)
     expect(run.invocations[0]?.input).not.toHaveProperty('sessionRef')
@@ -1305,7 +1309,7 @@ describe('the authoring funnel window stamp (394-19)', () => {
   it('stamps NO window onto any other op — the blast radius, both stamps', async () => {
     const run = harness({ results: { [PROPOSALS_LIST]: { ok: true } } })
 
-    await run.runTurn({ message: '/fn proposals.list' })
+    await run.runTurn({ message: '/fn quarantine.list' })
 
     expect(run.invocations[0]?.input).not.toHaveProperty('window')
     expect(run.invocations[0]?.input).not.toHaveProperty('sessionRef')

@@ -17,8 +17,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { deriveBundleTrust, readGateReceipts } from '../../bundle-read.js'
 import { acquireWriterLease } from '../../lease/writer-lease.js'
 import { enqueueCanaryOutcome } from '../../queue/canary-queue.js'
-import { applyReview } from '../../review/apply-review.js'
-import { proposeReview } from '../../review/propose-review.js'
+import { applyExplicitReview } from '../../review/apply-review.js'
 import { drainQueue } from '../drain.js'
 import * as knowledgeStore from '../knowledge-store.js'
 import { completeGate1Receipt, createPromotionFloorFixture, resolvedPromotionPosture } from './fixtures/promotion-floor-fixture.js'
@@ -216,12 +215,12 @@ describe('416 promotion doors share receipt authority', () => {
 
   it('D-13 apply-review passes its resolver to the in-process store', async () => {
     const seeded = fixture.publishHeldCandidate('review')
-    const proposal = proposeReview({ agentQaRoot: auditBaseDir, knowledgeRoot,
-      request: { verb: 'accept', input: { target: { grain: 'record', recordId: seeded.published.id } } } })
-    if (proposal.kind !== 'proposed') throw new Error('expected review proposal')
+    // RE-SPELLED 2026-10-01 (432-17): the accept applies directly instead of through a proposal.
     const factory = vi.spyOn(knowledgeStore, 'createExplicitReviewStore')
     const resolver = vi.fn(bound)
-    await applyReview({ agentQaRoot: auditBaseDir, knowledgeRoot, proposalId: proposal.proposal.proposalId,
+    await applyExplicitReview({ agentQaRoot: auditBaseDir, knowledgeRoot, operationId: 'promotion-doors-accept',
+      opId: 'knowledge.accept', executionContext: 'local-interactive',
+      request: { verb: 'accept', input: { target: { grain: 'record', recordId: seeded.published.id } } },
       resolvePromotionPosture: resolver })
     expect(factory).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ resolvePromotionPosture: resolver }))
   })

@@ -61,20 +61,18 @@ export type {
   TestEditPatchSet,
 } from './patch-ops'
 
-// 394-06 (WTST-01, D-05): the ONE envelope payload arm, and the ONE evidence-ref vocabulary the
-// router builds and the stop arm carries.
+// 394-06 (WTST-01, D-05): the ONE evidence-ref vocabulary the router builds and the stop arm
+// carries, and where an authored test is written. 2026-10-01 (432-17, D-06): the test-draft
+// envelope arm is deleted; an authored test is written in its own call.
 export {
   AUTHORED_SUITE_SLUG_MAX_LENGTH,
-  CURRENT_AUTHORING_PROPOSAL_SCHEMA_VERSION,
   authoredSuiteTargetPath,
   RUN_EVIDENCE_CHANNELS,
   RunEvidenceRefSchema,
-  TestDraftProposalV1Schema,
 } from './proposal-arms'
 export type {
   RunEvidenceChannel,
   RunEvidenceRef,
-  TestDraftProposalV1,
 } from './proposal-arms'
 
 // 394-07 (WTST-05, D-13/D-15): the honesty funnel — the frozen four stages, the pinned ceiling

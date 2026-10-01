@@ -109,6 +109,9 @@ const RETIRED_RUNTIME_EXPORTS = [
   // the config proposal payloads, the propose union and the apply/undo inputs
   'CONFIG_REFUSAL_REASONS',
   'CURRENT_CONFIG_PROPOSAL_SCHEMA_VERSION',
+  'ConfigApplyCommitSchema',
+  'ConfigApplyOutcomeSchema',
+  'ConfigApplyReceiptsSchema',
   'ConfigProposalApplyInputSchema',
   'ConfigProposalApplyableV1Schema',
   'ConfigProposalBlockedV1Schema',

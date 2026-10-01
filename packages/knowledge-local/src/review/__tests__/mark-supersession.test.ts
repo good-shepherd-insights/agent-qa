@@ -1,16 +1,33 @@
 import { existsSync, mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, expect, it } from 'vitest'
-import { asRecordId, asRunId, foldBundleTrust, stampReceiptDigest, type CompletedRunHandoff } from '@vostride/agent-qa-schema'
+import { afterEach, expect, it, vi } from 'vitest'
+import { asRecordId, asRunId, foldBundleTrust, stampReceiptDigest, type CompletedRunHandoff, type KnowledgeMarkInput } from '@vostride/agent-qa-schema'
 import { makeBundleDraftFixture, makeScreenStateFixture, scaffoldKnowledgeRoot } from '../../__tests__/fixtures/bundle-fixture.js'
 import { loadBundle, readGateReceipts } from '../../bundle-read.js'
 import { enumerateBundleDirs } from '../../bundle-scan.js'
 import { createLocalKnowledgeStore } from '../../curator/knowledge-store.js'
 import { applyFeedback } from '../../feedback/apply-feedback.js'
 import { acquireWriterLease, releaseLease } from '../../lease/writer-lease.js'
-import { applyExplicitReview, applyReview } from '../apply-review.js'
-import { proposeReview } from '../propose-review.js'
+import * as stores from '../../curator/knowledge-store.js'
+import { applyExplicitReview } from '../apply-review.js'
+import type { ApplyExplicitReviewInput } from '../apply-review.js'
+
+// RE-SPELLED 2026-10-01 (432-17, D-04/D-05): the first cell applied its mark through a filed
+// proposal and the proposal door. It now applies the same mark directly under a stable operation
+// identity (the mark intent's identity), the interruption is injected after the sovereign promotion
+// lands instead of at the deleted applied-record publication, and "already-applied" is the
+// same-identity retry answering the same commit receipt.
+async function applyMark(
+  agentQaRoot: string, knowledgeRoot: string, operationId: string,
+  input: KnowledgeMarkInput,
+) {
+  const request: ApplyExplicitReviewInput = { agentQaRoot, knowledgeRoot, operationId, opId: 'runs.mark',
+    executionContext: 'local-interactive', request: { verb: 'mark', input } }
+  const result = await applyExplicitReview(request)
+  if (result.outcome !== 'applied') throw new Error(`mark did not apply: ${result.outcome}`)
+  return result
+}
 
 const roots: string[] = []
 afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }) })
@@ -70,20 +87,27 @@ it.each([false, true])('commits a real same-kind same-anchor floor replacement b
   if (plan.kind !== 'knowledge') throw new Error('expected knowledge floor')
   expect(plan.deltas[0]).toMatchObject({ kind: 'Supersede', victimId: recordId,
     newBundle: { kind: draft.kind, subtype: draft.subtype, anchors: draft.anchors } })
-  const proposed = proposeReview({ agentQaRoot, knowledgeRoot, request: { verb: 'mark', input: {
+  const markInput = {
     target: plan.target, plan, mark: { markId: mark.markId, runId, testIndex: 0,
       stepIndex: 0, kind: mark.kind, fix: plan.fix },
-  } } })
-  if (proposed.kind !== 'proposed') throw new Error('expected a filed proposal')
-  const proposalId = proposed.proposal.proposalId
+  }
+  const operationId = 'mark-supersession-first'
   let beforeRetry: unknown
   if (interrupted) {
-    await expect(applyReview({ agentQaRoot, knowledgeRoot, proposalId,
-      now: () => { throw new Error('injected interrupted mark publication') } })).rejects.toThrow('injected')
+    const originalFactory = stores.createExplicitReviewStore
+    const spy = vi.spyOn(stores, 'createExplicitReviewStore').mockImplementation(config => {
+      const store = originalFactory(config)
+      return { ...store, async promote(...args: Parameters<typeof store.promote>) {
+        await store.promote(...args)
+        throw new Error('injected interrupted mark publication')
+      } }
+    })
+    await expect(applyMark(agentQaRoot, knowledgeRoot, operationId, markInput)).rejects.toThrow('injected')
+    spy.mockRestore()
     beforeRetry = bundles().map(row => ({ id: row.bundle.manifest.id, events: row.bundle.events,
       gates: readGateReceipts(row.dir, row.bundle.manifest.id) }))
   }
-  const result = await applyReview({ agentQaRoot, knowledgeRoot, proposalId })
+  const result = await applyMark(agentQaRoot, knowledgeRoot, operationId, markInput)
   if (interrupted) expect(bundles().map(row => ({ id: row.bundle.manifest.id, events: row.bundle.events,
     gates: readGateReceipts(row.dir, row.bundle.manifest.id) }))).toEqual(beforeRetry)
   expect(result.commitReceipt?.held).toEqual([])
@@ -107,8 +131,7 @@ it.each([false, true])('commits a real same-kind same-anchor floor replacement b
     expect.objectContaining({ type: 'superseded', byRecordId: replacementId }),
     expect.objectContaining({ type: 'window-close' }),
   ]))
-  const repeat = await applyReview({ agentQaRoot, knowledgeRoot, proposalId })
-  expect(repeat.outcome).toBe('already-applied')
+  const repeat = await applyMark(agentQaRoot, knowledgeRoot, operationId, markInput)
   expect(repeat.commitReceipt).toEqual(result.commitReceipt)
   expect(bundles()).toHaveLength(2)
   // A later actual correction of the same semantic fact gets its own generation.
@@ -116,12 +139,10 @@ it.each([false, true])('commits a real same-kind same-anchor floor replacement b
   const nextPlan = applyFeedback({ mark: nextMark, handoff, resolvedStepIndex: 0,
     served: [{ recordId: replacementId, ...delta.newBundle }] })
   if (nextPlan.kind !== 'knowledge') throw new Error('expected subsequent knowledge floor')
-  const next = proposeReview({ agentQaRoot, knowledgeRoot, request: { verb: 'mark', input: {
+  const corrected = await applyMark(agentQaRoot, knowledgeRoot, 'mark-supersession-next', {
     target: nextPlan.target, plan: nextPlan, mark: { markId: nextMark.markId, runId,
       testIndex: 0, stepIndex: 0, kind: nextMark.kind, fix: nextPlan.fix },
-  } } })
-  if (next.kind !== 'proposed') throw new Error('expected subsequent proposal')
-  const corrected = await applyReview({ agentQaRoot, knowledgeRoot, proposalId: next.proposal.proposalId })
+  })
   expect(corrected.commitReceipt?.held).toEqual([])
   const nextId = corrected.commitReceipt!.recordIds[0]!
   expect(new Set([recordId, replacementId, nextId]).size).toBe(3)

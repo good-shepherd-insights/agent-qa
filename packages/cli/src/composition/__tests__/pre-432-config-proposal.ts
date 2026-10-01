@@ -1,32 +1,46 @@
 // 2026-09-30, 432-11 D-05: a config proposal as the pre-432 pipeline filed it, written to disk.
 //
 // The six config operations now write in the call and file nothing. Proposal records written
-// before that still sit in `.agent-qa/proposals/`. Since 432-16 no host binds the config apply port
-// that applied them, so `proposals.accept` / `config.proposal.apply` refuse such a record by name;
-// the suites that measure that refusal start from a record this helper writes the way the old
-// pipeline did. 432-17 deletes the verbs, and this helper with them.
+// before that still sit in `.agent-qa/proposals/`.
+//
+// RE-SPELLED 2026-10-01 (432-17, D-05/D-22): the store, the payload schema and every verb that read
+// such a record are deleted, so nothing can produce one and nothing reads one. The suites that keep
+// a claim about a pre-432 record — that it is refused as an unknown function's input and left exactly
+// as it was — plant it here as the bytes the old pipeline wrote, in the temp workspace they own.
 
-import { mintProposalId, writePendingProposalRecord } from '@vostride/agent-qa-knowledge-local'
+import { mkdirSync, writeFileSync } from 'node:fs'
+import { join } from 'node:path'
+
 import type { ConfigStructuredValue } from '@vostride/agent-qa-agent'
 import {
-  CURRENT_CONFIG_PROPOSAL_SCHEMA_VERSION,
-  CURRENT_PROPOSAL_RECORD_SCHEMA_VERSION,
   base64Encode,
   renderConfigDiff,
   utf8Decode,
 } from '@vostride/agent-qa-schema'
 import type {
+  ConfigChangeFile,
   ConfigDiffFileInput,
-  ConfigProposalApplyableV1,
   CrossBoundaryReason,
-  ProposalRecord,
 } from '@vostride/agent-qa-schema'
 
 import { createConfigFilesPort } from '../local-agent-host.js'
 
+/** The pre-432 applyable payload's shape, spelled here now that its schema is deleted. */
+export interface Pre432ConfigPayload {
+  readonly schemaVersion: 1
+  readonly payloadKind: 'applyable'
+  readonly action: string
+  readonly summaryLine: string
+  readonly files: readonly ConfigChangeFile[]
+  readonly shownDiffBase64: string
+  readonly shownDiffDigest: string
+  readonly crossBoundary: boolean
+  readonly crossBoundaryReasons: readonly CrossBoundaryReason[]
+}
+
 export interface Pre432ConfigProposal {
   readonly proposalId: string
-  readonly payload: ConfigProposalApplyableV1
+  readonly payload: Pre432ConfigPayload
   readonly shownDiff: string
 }
 
@@ -84,8 +98,8 @@ export async function filePre432ConfigProposal(input: {
   const action = input.action ?? 'config.field.set'
   const firstEdit = input.edits?.[0]
   const reasons = [...(input.crossBoundaryReasons ?? [])]
-  const payload: ConfigProposalApplyableV1 = {
-    schemaVersion: CURRENT_CONFIG_PROPOSAL_SCHEMA_VERSION,
+  const payload: Pre432ConfigPayload = {
+    schemaVersion: 1,
     payloadKind: 'applyable',
     action,
     summaryLine: input.summaryLine
@@ -106,9 +120,9 @@ export async function filePre432ConfigProposal(input: {
   }
 
   const now = input.now ?? Date.now
-  const proposalId = mintProposalId(() => `${now()}-${Math.floor(performance.now())}`)
-  writePendingProposalRecord(input.agentQaRoot, {
-    schemaVersion: CURRENT_PROPOSAL_RECORD_SCHEMA_VERSION,
+  const proposalId = `prop_${now()}-${Math.floor(performance.now())}`
+  const record = {
+    schemaVersion: 1,
     id: proposalId,
     kind: 'config',
     origin: {
@@ -117,7 +131,10 @@ export async function filePre432ConfigProposal(input: {
       ...(input.surface === undefined ? {} : { surface: input.surface }),
     },
     payload,
-  } as ProposalRecord)
+  }
+  const dir = join(input.agentQaRoot, 'proposals')
+  mkdirSync(dir, { recursive: true })
+  writeFileSync(join(dir, `${proposalId}.json`), `${JSON.stringify(record, undefined, 2)}\n`, 'utf8')
 
   return { proposalId, payload, shownDiff: utf8Decode(rendered.diffBytes) }
 }

@@ -39,7 +39,6 @@ import {
 } from '@vostride/agent-qa-schema'
 import type {
   ConfigChangeOutput,
-  ConfigProposalV1,
   FunctionCaller,
 } from '@vostride/agent-qa-schema'
 import { scanConstructedArtifact } from '@vostride/agent-qa-safety'
@@ -101,7 +100,7 @@ const SEEDED_HOOKS = `hooks:
 
 let root: string
 let configPath: string
-let filed: { kind: string; emittedBy: string; payload: ConfigProposalV1 }[]
+let filed: { kind: string; emittedBy: string; payload: unknown }[]
 
 function registry() {
   const deps = {
@@ -141,7 +140,7 @@ function registry() {
     configWrite: createConfigWritePort(configPath),
     // Nothing should reach the store any more; it is still bound so a filing would be seen.
     configProposals: {
-      put: (record: { kind: string; emittedBy: string; payload: ConfigProposalV1 }) => {
+      put: (record: { kind: string; emittedBy: string; payload: unknown }) => {
         filed.push(record)
         return Promise.resolve({ proposalId: `prop-${filed.length}` })
       },
@@ -639,6 +638,7 @@ describe('C432-CONFIG-MULTIFILE-TRUTH: a whole-file write that meets an outside 
 // RE-SPELLED 2026-10-01 (432-16, D-07): the undo's git-history source is no longer bound on the CLI
 // host, so it refuses unbound by name instead of answering the proposal union's `no-agent-commit`
 // refusal. The claim it guarded — nothing is written, committed or filed — is unchanged.
+// RE-SPELLED 2026-10-01 (432-17, D-09): the undo op is deleted, so it is refused as an unknown function.
 describe('retained control: config.undo.propose still files its own proposal until 432-17', () => {
   it('the undo answers the proposal union and, with no agent commit, refuses by name and writes nothing', async () => {
     gitIn(root, 'init', '--quiet')
@@ -650,7 +650,7 @@ describe('retained control: config.undo.propose still files its own proposal unt
     // A direct change first: it makes no agent commit, so there is still nothing to undo.
     expect(await viaHost('config.field.set', { path: 'use.parallel', value: true }))
       .toMatchObject({ outcome: 'applied' })
-    await expect(viaHost('config.undo.propose', {})).rejects.toMatchObject({ name: 'FunctionNotBoundError' })
+    await expect(viaHost('config.undo.propose', {})).rejects.toMatchObject({ name: 'UnknownFunctionError' })
     expect(readFileSync(configPath, 'utf8')).toBe(SEEDED_CONFIG.replace('parallel: false', 'parallel: true'))
     expect(gitIn(root, 'rev-list', '--count', 'HEAD').trim()).toBe('1')
     expect(existsSync(join(root, '.agent-qa', 'proposals'))).toBe(false)

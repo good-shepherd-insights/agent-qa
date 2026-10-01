@@ -250,9 +250,7 @@ export {
 export { COLD_READ_SCOPE_FUNCTION_IDS } from './composition/compose-local-agent.js'
 
 export type {
-  ApplyDelegate,
   ApplyKnowledgeChangeInput,
-  ApplyReviewResult,
   CandidateProsePosture,
   ExplicitReviewDelegate,
   ExplicitReviewDelegation,

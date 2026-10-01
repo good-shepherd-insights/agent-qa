@@ -1,3 +1,6 @@
+// RE-SPELLED 2026-10-01 (432-17, D-05): `proposals.list` is deleted with the inbox. The read these
+// cells drive through the composed host is now `quarantine.list`, another allow-tier read that
+// answers honestly (an empty listing) in a bare temp project, so every claim keeps its subject.
 // THE COMPOSED `/pin` DIFFERENTIAL (Phase 392 plan 10, D-21), RE-SPELLED AS ITS ABSENCE (432-13).
 //
 // 392-05/392-10 proved that typing `/pin <class>` made the very next turn asking for that capability
@@ -18,7 +21,7 @@ import { fileURLToPath } from 'node:url'
 
 import {
   AGENT_ASK_FUNCTION_ID,
-  PROPOSALS_LIST_FUNCTION_ID,
+  QUARANTINE_LIST_FUNCTION_ID,
   RUNS_LIST_FUNCTION_ID,
   invokeFunction,
 } from '@vostride/agent-qa-agent'
@@ -40,7 +43,7 @@ import { composeLocalAgent } from '../composition/compose-local-agent.js'
 import type { LocalAgentHost } from '../composition/compose-local-agent.js'
 
 /** The class the person pins. The NORMALISED spelling the holder records and the gate compares. */
-const PINNED_CLASS = `fn:${PROPOSALS_LIST_FUNCTION_ID}`
+const PINNED_CLASS = `fn:${QUARANTINE_LIST_FUNCTION_ID}`
 
 /** The class the pin must NOT reach — the scope control's subject. */
 const UNPINNED_CLASS = `fn:${RUNS_LIST_FUNCTION_ID}`
@@ -151,15 +154,15 @@ describe('D-21 retired: a typed /pin reaches nothing through the composed stack 
   // scope control'.
   it('C432-CHAT-DIRECT: all three arms execute, before and after a typed /pin, with no audit row', async () => {
     // ---- ARM 1: no pin. The op executes; no gate records a decision.
-    const before = await ask('/fn proposals.list')
+    const before = await ask('/fn quarantine.list')
     expect(before.status).toBe('completed')
     expect(before.receipts.map((receipt) => receipt.functionId)).toEqual([
-      PROPOSALS_LIST_FUNCTION_ID,
+      QUARANTINE_LIST_FUNCTION_ID,
     ])
     expect(before.receipts[0]?.status).toBe('executed')
 
     // ---- The retired verb, typed into the SAME session: an unroutable clause, refused by name.
-    const pinned = await ask(`/pin ${PROPOSALS_LIST_FUNCTION_ID}`, before.sessionId)
+    const pinned = await ask(`/pin ${QUARANTINE_LIST_FUNCTION_ID}`, before.sessionId)
     expect(pinned.status).toBe('fail_closed')
     expect(pinned.receipts).toEqual([])
     expect(pinned.answer ?? '').not.toContain(PINNED_CLASS)
@@ -168,7 +171,7 @@ describe('D-21 retired: a typed /pin reaches nothing through the composed stack 
     ).toEqual([])
 
     // ---- ARM 2: the SAME utterance, same session, same composition. Still executes.
-    const after = await ask('/fn proposals.list', before.sessionId)
+    const after = await ask('/fn quarantine.list', before.sessionId)
     expect(after.status).toBe('completed')
     expect(after.receipts[0]?.status).toBe('executed')
 

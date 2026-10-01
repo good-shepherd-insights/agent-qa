@@ -1,3 +1,6 @@
+// RE-SPELLED 2026-10-01 (432-17, D-05): `proposals.list` is deleted with the inbox. The read these
+// cells drive through the composed host is now `quarantine.list`, another allow-tier read that
+// answers honestly (an empty listing) in a bare temp project, so every claim keeps its subject.
 // The 392 tracer: one deterministic utterance through every layer (CHAT-01 / CHAT-05 / D-24).
 //
 // What this file measures that no unit test can: that the WHOLE spine is joined. The op is
@@ -23,7 +26,7 @@ import { join } from 'node:path'
 
 import {
   AGENT_ASK_FUNCTION_ID,
-  PROPOSALS_LIST_FUNCTION_ID,
+  QUARANTINE_LIST_FUNCTION_ID,
   invokeFunction,
 } from '@vostride/agent-qa-agent'
 import type { JobModelCapability } from '@vostride/agent-qa-agent'
@@ -69,7 +72,7 @@ const MINT_IDENTITY = (filePath: string): string => filePath
 // 432-13 (D-05/D-14): the tracer's utterance was the bare `proposals` alias, which left chat
 // resolution with the inbox. The same op is reached through the one `/fn` branch, and every claim
 // below (table resolution, human origin, the durable JSONL shape, resume) is unchanged.
-describe('the 392 tracer: agent-qa ask "/fn proposals.list", end to end over the composed host', () => {
+describe('the 392 tracer: agent-qa ask "/fn quarantine.list", end to end over the composed host', () => {
   let root: string
   let agentQaRoot: string
   let host: LocalAgentHost
@@ -114,16 +117,16 @@ describe('the 392 tracer: agent-qa ask "/fn proposals.list", end to end over the
     return readFileSync(path, 'utf8').split('\n').filter((line) => line !== '')
   }
 
-  it('CHAT-01/D-06: the deterministic table resolves "/fn proposals.list" and the clause executes', async () => {
-    const result = await ask('/fn proposals.list')
+  it('CHAT-01/D-06: the deterministic table resolves "/fn quarantine.list" and the clause executes', async () => {
+    const result = await ask('/fn quarantine.list')
 
     expect(result.status).toBe('completed')
     expect(result.receipts).toHaveLength(1)
     // The id is IMPORTED, never a literal: an op renamed at its declaration must break this
     // assertion rather than leave it agreeing with a string nothing dispatches any more.
     expect(result.receipts[0]).toMatchObject({
-      clause: '/fn proposals.list',
-      functionId: PROPOSALS_LIST_FUNCTION_ID,
+      clause: '/fn quarantine.list',
+      functionId: QUARANTINE_LIST_FUNCTION_ID,
       status: 'executed',
       // RESEARCH Pitfall 1: a stage-1 table hit is a person typing, so the composition mints
       // `human` for it. An `agent` here would mean the deterministic aliases had quietly lost
@@ -134,7 +137,7 @@ describe('the 392 tracer: agent-qa ask "/fn proposals.list", end to end over the
   })
 
   it('CHAT-05/D-18: the turn is on disk as JSONL with a versioned header and a boundary marker', async () => {
-    const result = await ask('/fn proposals.list')
+    const result = await ask('/fn quarantine.list')
     const lines = sessionLines(result.sessionId)
 
     const header = JSON.parse(lines[0]!) as ChatSessionHeader
@@ -173,10 +176,11 @@ describe('the 392 tracer: agent-qa ask "/fn proposals.list", end to end over the
       turnId: result.turnId,
     })
     // D-18 map-not-territory: the receipt names the op and summarises; the op's own payload
-    // (the proposal rows) stays in the proposals store and appears nowhere in these bytes.
+    // (the ledger rows) stays in its store and appears nowhere in these bytes. The outcome sentence
+    // says "0 quarantine entries", so the payload KEY is what is asserted absent.
     const receipt = events.find((event) => event.kind === 'clause_receipt')
-    expect(receipt).toMatchObject({ functionId: PROPOSALS_LIST_FUNCTION_ID, origin: 'human' })
-    expect(JSON.stringify(receipt)).not.toContain('entries')
+    expect(receipt).toMatchObject({ functionId: QUARANTINE_LIST_FUNCTION_ID, origin: 'human' })
+    expect(JSON.stringify(receipt)).not.toContain('"entries":')
   })
 
   it('CHAT-01/D-08/D-10: an unroutable clause with no planner bound fails the turn closed', async () => {
@@ -192,10 +196,10 @@ describe('the 392 tracer: agent-qa ask "/fn proposals.list", end to end over the
   })
 
   it('CHAT-05/D-17: a second turn appends to the same session rather than rewriting it', async () => {
-    const first = await ask('/fn proposals.list')
+    const first = await ask('/fn quarantine.list')
     const afterFirst = sessionLines(first.sessionId)
 
-    const second = await ask('/fn proposals.list', first.sessionId)
+    const second = await ask('/fn quarantine.list', first.sessionId)
     expect(second.sessionId).toBe(first.sessionId)
 
     const afterSecond = sessionLines(first.sessionId)
@@ -206,7 +210,7 @@ describe('the 392 tracer: agent-qa ask "/fn proposals.list", end to end over the
   })
 
   it('D-17/T-392-01: an unknown session id is a typed refusal, never a fresh create', async () => {
-    await expect(ask('/fn proposals.list', 'chat-19700101-000000-zzzz')).rejects.toThrow(
+    await expect(ask('/fn quarantine.list', 'chat-19700101-000000-zzzz')).rejects.toThrow(
       /chat-19700101-000000-zzzz/,
     )
   })

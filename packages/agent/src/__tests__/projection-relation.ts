@@ -31,16 +31,13 @@ import { authoringFunnelGetSpec } from '../functions/ops/authoring-funnel-get.js
 import { authoringVerifyDraftSpec } from '../functions/ops/authoring-verify-draft.js'
 import { configFieldSetSpec } from '../functions/ops/config-field-set.js'
 import { configGetSpec } from '../functions/ops/config-get.js'
-import { configProposalApplySpec } from '../functions/ops/config-proposal-apply.js'
 import { configAuthSetSpec } from '../functions/ops/config-auth-set.js'
 import { configHookAddSpec } from '../functions/ops/config-hook-add.js'
 import { configTargetCreateSpec } from '../functions/ops/config-target-create.js'
 import { configTargetEditSpec } from '../functions/ops/config-target-edit.js'
 import { configProjectScaffoldSpec } from '../functions/ops/config-project-scaffold.js'
-import { configUndoProposeSpec } from '../functions/ops/config-undo-propose.js'
 import { entitiesGetSpec } from '../functions/ops/entities-get.js'
 import { grantsListSpec } from '../functions/ops/grants-list.js'
-import { proposalsAcceptSpec } from '../functions/ops/proposals-accept.js'
 import { grantsRevokeSpec } from '../functions/ops/grants-revoke.js'
 import { entitiesResolveSpec } from '../functions/ops/entities-resolve.js'
 import { knowledgeBriefWhySpec } from '../functions/ops/knowledge-brief-why.js'
@@ -48,14 +45,10 @@ import { knowledgeBundlesListSpec } from '../functions/ops/knowledge-bundles-lis
 import { knowledgeGatesListSpec } from '../functions/ops/knowledge-gates-list.js'
 import { knowledgeAcceptSpec } from '../functions/ops/knowledge-accept-propose.js'
 import { knowledgeForgetSpec } from '../functions/ops/knowledge-forget-propose.js'
-import { knowledgeProposalApplySpec } from '../functions/ops/knowledge-proposal-apply.js'
 import { knowledgeRecordShowSpec } from '../functions/ops/knowledge-record-show.js'
 import { knowledgeRecordsDiffSpec } from '../functions/ops/knowledge-records-diff.js'
 import { knowledgeRecordsInspectSpec } from '../functions/ops/knowledge-records-inspect.js'
 import { knowledgeRejectSpec } from '../functions/ops/knowledge-reject-propose.js'
-import { proposalsListSpec } from '../functions/ops/proposals-list.js'
-import { proposalsRejectSpec } from '../functions/ops/proposals-reject.js'
-import { proposalsShowSpec } from '../functions/ops/proposals-show.js'
 import { quarantineAddSpec } from '../functions/ops/quarantine-add.js'
 import { quarantineListSpec } from '../functions/ops/quarantine-list.js'
 import { quarantineReleaseSpec } from '../functions/ops/quarantine-release.js'
@@ -140,7 +133,6 @@ export const CONTRACTS_BY_ID: Readonly<Record<string, DeclaredContracts>> = {
   'config.auth.set': configAuthSetSpec,
   'config.get': configGetSpec,
   'config.hook.add': configHookAddSpec,
-  'config.proposal.apply': configProposalApplySpec,
   // 395-05 D-01. Paired the day they are registered. Both project the SAME three-arm propose union
   // as `config.field.set` plus the `refused` arm 395-05 adds, and that fourth arm is exactly what a
   // careless projection flattens: a catalogue that published it as one object would tell 396's
@@ -150,7 +142,6 @@ export const CONTRACTS_BY_ID: Readonly<Record<string, DeclaredContracts>> = {
   // 395-06 D-07. The undo projects the SAME four-arm propose union as its six siblings, which is
   // the point: a catalogue consumer needs no undo-shaped arm, because the undo is not a new kind
   // of answer — it is the same proposal a person decides on, built from a different set of bytes.
-  'config.undo.propose': configUndoProposeSpec,
   'config.project.scaffold': configProjectScaffoldSpec,
   'entities.get': entitiesGetSpec,
   'entities.resolve': entitiesResolveSpec,
@@ -164,7 +155,6 @@ export const CONTRACTS_BY_ID: Readonly<Record<string, DeclaredContracts>> = {
   'knowledge.bundles.list': knowledgeBundlesListSpec,
   'knowledge.brief.why': knowledgeBriefWhySpec,
   'knowledge.forget': knowledgeForgetSpec,
-  'knowledge.proposal.apply': knowledgeProposalApplySpec,
   'knowledge.record.show': knowledgeRecordShowSpec,
   'knowledge.records.diff': knowledgeRecordsDiffSpec,
   'knowledge.records.inspect': knowledgeRecordsInspectSpec,
@@ -178,10 +168,6 @@ export const CONTRACTS_BY_ID: Readonly<Record<string, DeclaredContracts>> = {
   // TWO independent unions in one object — the apply half and the mint half — which is exactly the
   // shape a careless projection flattens, and flattening it would leave a surface unable to say
   // that an apply committed while its escalation was refused.
-  'proposals.accept': proposalsAcceptSpec,
-  'proposals.list': proposalsListSpec,
-  'proposals.reject': proposalsRejectSpec,
-  'proposals.show': proposalsShowSpec,
   // 390 D-13. Paired the day they are registered, which is what the growth seam is for. The
   // two write verbs are the first contracts in this map whose OUTPUT is a discriminated union,
   // so an unchecked projection would be exactly where a published catalogue could lose an arm

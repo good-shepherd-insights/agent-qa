@@ -155,17 +155,17 @@ describe('agent-qa ask (the one-shot chat verb)', () => {
     for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true })
   })
 
-  // 432-13: the bare `proposals` alias left the resolver table with the inbox route (C432-CHAT-DIRECT);
-  // the same op is reached through the generic `/fn` passthrough, which is still deterministic.
+  // 432-13: the bare `proposals` alias left the resolver table with the inbox route (C432-CHAT-DIRECT).
+  // 432-17 deleted `proposals.list` too; the generic `/fn` passthrough reaches `runs.list` instead.
   it('D-24: routes a deterministic utterance through agent.ask and renders the receipt', async () => {
     const configPath = fixtureWorkspace(roots)
-    const result = await runAsk(configPath, ['/fn proposals.list'])
+    const result = await runAsk(configPath, ['/fn runs.list'])
 
     expect(result.stderr).toBe('')
     expect(result.exitCode).toBeUndefined()
     // The receipt line names the op that actually ran, which is the whole visible difference
     // between a turn and a chatbot: the surface reports a capability invocation, not prose.
-    expect(result.stdout).toContain('proposals.list')
+    expect(result.stdout).toContain('runs.list')
     expect(result.stdout).toContain('executed')
   })
 
@@ -181,13 +181,14 @@ describe('agent-qa ask (the one-shot chat verb)', () => {
     // classifier now — `classify` is a REQUIRED member of `FunctionSpec` as of plan 04 — so the
     // engine's `${functionId} completed` fallback is not what this op reports any more. The op's
     // own one-line map is, and the string below is it for an EMPTY inbox, which is what this
-    // fixture workspace has. It is still a contiguous string the shipped line renders only by
+    // fixture workspace has. 2026-10-01 (432-17): `proposals.list` is deleted; `runs.list` is the
+    // subject now, and the string is its own map for a workspace with no completed run. It is still a contiguous string the shipped line renders only by
     // printing `outcome`: the functionId and the clause are separate fields, and neither of them
     // is this sentence.
     const configPath = fixtureWorkspace(roots)
-    const result = await runAsk(configPath, ['/fn proposals.list'])
+    const result = await runAsk(configPath, ['/fn runs.list'])
 
-    expect(result.stdout).toContain('0 proposal(s) in the inbox')
+    expect(result.stdout).toContain('0 completed run(s)')
   })
 
   it('(A3) binds a presentation port on the SAME stream its confirm prompts on', async () => {
@@ -205,7 +206,7 @@ describe('agent-qa ask (the one-shot chat verb)', () => {
     // downstream is the shared composition's. So the cell asserts the argument, and then asserts
     // what the argument DOES — a binding present but inert would pass the first half alone.
     const configPath = fixtureWorkspace(roots)
-    await runAsk(configPath, ['/fn proposals.list'])
+    await runAsk(configPath, ['/fn runs.list'])
 
     expect(compositionInputs).toHaveLength(1)
     const chatPresent = compositionInputs[0]?.chatPresent

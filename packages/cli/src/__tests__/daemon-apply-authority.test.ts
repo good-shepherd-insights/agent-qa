@@ -25,21 +25,17 @@
 // hand the work to — so on any project with a daemon running, no accept, reject or forget could
 // be committed at all.
 
-import { mkdirSync, mkdtempSync, rmSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import type { ConfigReaderPort, JobModelCapability } from '@vostride/agent-qa-agent'
-import { KNOWLEDGE_PROPOSAL_APPLY_FUNCTION_ID } from '@vostride/agent-qa-agent'
 import { appendGrantLedgerEvents, readWriterLease } from '@vostride/agent-qa-knowledge-local'
 import {
   CURRENT_GRANT_LEDGER_SCHEMA_VERSION,
   STANDING_APPROVAL_SCOPE,
 } from '@vostride/agent-qa-schema'
-import type {
-  KnowledgeApplyOutcomeDto,
-  KnowledgeChangeOutput,
-} from '@vostride/agent-qa-schema'
+import type { KnowledgeChangeOutput } from '@vostride/agent-qa-schema'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { filePre432KnowledgeProposal } from '../composition/__tests__/pre-432-knowledge-proposal.js'
@@ -227,7 +223,9 @@ function grantApply(where: Paths): void {
       kind: 'grant',
       at: '2026-08-07T12:00:00.000Z',
       grantId: 'grant_daemon_apply_authority',
-      actionClass: `fn:${KNOWLEDGE_PROPOSAL_APPLY_FUNCTION_ID}`,
+      // 2026-10-01 (432-17): the class of the deleted `knowledge.proposal.apply`, spelled as the
+      // committed ledger line it was; no gate reads it since 432-13.
+      actionClass: 'fn:knowledge.proposal.apply',
       scope: STANDING_APPROVAL_SCOPE,
     }],
     { auditBaseDir: where.agentQaRoot },
@@ -312,28 +310,27 @@ describe('the daemon commits its own applies in process (CR-01, D-18)', () => {
     }
   }, 60_000)
 
-  it('still commits a pre-432 proposal already on disk through the daemon entry, in process', async () => {
+  // RE-SPELLED 2026-10-01 (432-17, D-05/D-22) from 'still commits a pre-432 proposal already on disk
+  // through the daemon entry, in process': the apply op is deleted with the inbox, so the daemon
+  // refuses it like any unknown function, the record it named is untouched and so is the file.
+  it('leaves a pre-432 proposal already on disk unapplied and unread through the daemon entry', async () => {
     const paths = makePaths('pre432')
     const recordId = await seedRecord(paths)
     grantApply(paths)
-    // 432-12: nothing files a knowledge proposal any more; this is a record the old propose op wrote.
     const proposalId = await filePre432KnowledgeProposal({
       agentQaRoot: paths.agentQaRoot,
       knowledgeRoot: paths.knowledgeRoot,
       verb: 'forget',
       target: { grain: 'record', recordId },
     })
+    const planted = join(paths.agentQaRoot, 'proposals', `${proposalId}.json`)
+    const bytes = readFileSync(planted)
     const daemon = await startDaemon(paths)
     try {
-      const applied = await callDaemon(
-        paths,
-        'knowledge.proposal.apply',
-        { proposalId },
-      ) as KnowledgeApplyOutcomeDto
-      expect(applied.outcome).toBe('applied')
-      expect(applied.forgetReceipt?.proposalId).toBe(proposalId)
+      await expect(callDaemon(paths, 'knowledge.proposal.apply', { proposalId })).rejects.toThrow()
       const rows = await callDaemon(paths, 'knowledge.bundles.list', {}) as { status: string }[]
-      expect(rows.map((row) => row.status)).toEqual(['deprecated'])
+      expect(rows.map((row) => row.status)).not.toContain('deprecated')
+      expect(readFileSync(planted)).toEqual(bytes)
     } finally {
       await daemon.stop()
     }

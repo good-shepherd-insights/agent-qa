@@ -243,17 +243,13 @@ const ALL_FUNCTION_IDS = [
   // joins the derived drop-out set with its siblings and the filter assertion stays a claim
   // about the RULE rather than about a list.
   'config.project.scaffold',
-  'config.proposal.apply',
+  // 2026-10-01 (432-17, D-05/D-09): `config.proposal.apply` and `config.undo.propose` are deleted.
   // 395-05 D-01: two more ids in SORT position — `target` follows `proposal` lexicographically, and
   // this list is compared against the registry's lexicographic listing, so a misplaced pair would
   // fail on ORDER while every member was present. Both declare `config-write` and NOT `read`, so
   // both join the derived drop-out set and the filter assertion stays a claim about the RULE.
   'config.target.create',
   'config.target.edit',
-  // 395-06 D-07: one more id in SORT position — `undo` follows `target` lexicographically. It
-  // declares `config-write` and NOT `read`, so it joins the derived drop-out set with its six
-  // siblings and the filter assertion stays a claim about the RULE.
-  'config.undo.propose',
   // 428 D-07: in SORT position (`editor.` falls between `config.` and `entities.`). Read-tier like
   // runs.liveurl, so it survives safe-mode filtering and the derived non-read set is unchanged.
   'editor.liveurl',
@@ -282,19 +278,12 @@ const ALL_FUNCTION_IDS = [
   'knowledge.forget',
   // 416 D-17: gate history is read-tier and remains visible in both caller listings.
   'knowledge.gates.list',
-  'knowledge.proposal.apply',
+  // 2026-10-01 (432-17, D-05): `knowledge.proposal.apply` is deleted with the inbox.
   'knowledge.record.show',
   'knowledge.records.diff',
   'knowledge.records.inspect',
   'knowledge.reject',
-  // 391 PROP-03: three more ids in SORT position (`proposals.` falls between `knowledge.` and
-  // `quarantine.`). `list` and `show` are read-tier and survive safe-mode filtering; `reject` is
-  // approval-write-tier and drops out with the other non-read verbs, so the derived non-read set
-  // grows from seven to eight and the filter assertion keeps testing the RULE.
-  'proposals.accept',
-  'proposals.list',
-  'proposals.reject',
-  'proposals.show',
+  // 2026-10-01 (432-17, D-05): the four `proposals.` ids (391 PROP-03) are deleted with the inbox.
   // 390 D-12/D-13: three more ids, and they land in SORT position rather than appended —
   // this list is compared against the registry's lexicographic listing, so an appended id
   // would fail on order while every member was present. `quarantine.list` is read-tier and

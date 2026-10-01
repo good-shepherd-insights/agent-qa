@@ -16,8 +16,7 @@ import type { CommitIntent } from '../../journal/intent-journal.js'
 import { acquireWriterLease, releaseLease } from '../../lease/writer-lease.js'
 import { listQueuedCandidates } from '../../queue/curation-queue.js'
 import { enqueueCanaryOutcome } from '../../queue/canary-queue.js'
-import { applyReview } from '../../review/apply-review.js'
-import { proposeReview } from '../../review/propose-review.js'
+import { applyExplicitReview } from '../../review/apply-review.js'
 import type { CuratorAuthor } from '../author-contract.js'
 import { commitCurationDelta } from '../commit.js'
 import { drainQueue, type DrainOperations } from '../drain.js'
@@ -127,17 +126,19 @@ describe('420 drain, review and maintenance prior snapshot', () => {
     const priors = hostSnapshot()
     await drainQueue({ ...f, priors })
     const before = persisted(f.knowledgeRoot)
-    const proposal = proposeReview({ agentQaRoot: f.agentQaRoot, knowledgeRoot: f.knowledgeRoot,
-      request: { verb: 'accept', input: { target: { grain: 'record', recordId: before.bundle.manifest.id } } } })
-    if (proposal.kind !== 'proposed') throw new Error('fixture proposal refused')
+    // RE-SPELLED 2026-10-01 (432-17): the accept applies directly under a stable operation identity;
+    // the second call is the same-identity retry (formerly `already-applied`) and lands nothing.
     const resolver = vi.fn().mockReturnValueOnce(priors).mockReturnValue({})
     const options = { agentQaRoot: f.agentQaRoot, knowledgeRoot: f.knowledgeRoot,
-      proposalId: proposal.proposal.proposalId, resolveTrustPriors: resolver }
-    expect(await applyReview(options)).toMatchObject({ outcome: 'applied' })
+      operationId: 'trust-prior-accept', opId: 'knowledge.accept', executionContext: 'local-interactive' as const,
+      request: { verb: 'accept' as const,
+        input: { target: { grain: 'record' as const, recordId: before.bundle.manifest.id } } },
+      resolveTrustPriors: resolver }
+    expect(await applyExplicitReview(options)).toMatchObject({ outcome: 'applied' })
     expect(resolver).toHaveBeenCalledTimes(1)
     expect(persisted(f.knowledgeRoot).row.trust).toBe((2.7 + 2) / 5)
     const bytes = readFileSync(join(before.entry.dir, 'evidence/outcomes.jsonl'), 'utf8')
-    expect(await applyReview(options)).toMatchObject({ outcome: 'already-applied' })
+    expect(await applyExplicitReview(options)).toMatchObject({ outcome: 'applied' })
     expect(readFileSync(join(before.entry.dir, 'evidence/outcomes.jsonl'), 'utf8')).toBe(bytes)
   })
 

@@ -82,7 +82,9 @@ import {
   CONFIG_PROJECT_SCAFFOLD_FUNCTION_ID,
   configProjectScaffoldSpec,
 } from '../../functions/ops/config-project-scaffold.js'
-import { CONFIG_PROPOSAL_APPLY_FUNCTION_ID } from '../../functions/ops/config-proposal-apply.js'
+// 2026-10-01 (432-17): the config apply op is deleted with the inbox; its retired id is spelled here
+// so the cells keep pinning that the scaffold route never dispatches it.
+const CONFIG_PROPOSAL_APPLY_FUNCTION_ID = 'config.proposal.apply'
 import {
   WRITE_TEST_UNCONFIGURED_DETAIL,
   resolveWriteTestRoute,

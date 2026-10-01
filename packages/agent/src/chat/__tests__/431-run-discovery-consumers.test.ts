@@ -14,7 +14,6 @@ import type { AuditSink } from '@vostride/agent-qa-safety'
 import { describe, expect, it } from 'vitest'
 
 import { invokeFunction } from '../../functions/invoke.js'
-import { PROPOSALS_LIST_FUNCTION_ID } from '../../functions/ops/proposals-list.js'
 import { RUNS_DIGEST_FUNCTION_ID } from '../../functions/ops/runs-digest.js'
 import { RUNS_LIST_FUNCTION_ID, runsListSpec } from '../../functions/ops/runs-list.js'
 import { createRegistryFromSpecs } from '../../functions/registry.js'
@@ -95,9 +94,6 @@ describe('CHAT-LATEST: the banner digests the newest completion', () => {
         const runId = (input as { runId: string }).runId
         digested.push(runId)
         return { payload: { lines: [`digest — ${runId}`] }, verdict: { status: 'executed', outcome: '' }, foldLines: [] }
-      }
-      if (functionId === PROPOSALS_LIST_FUNCTION_ID) {
-        return { payload: { entries: [] }, verdict: { status: 'executed', outcome: '' }, foldLines: [] }
       }
       throw new Error(`unexpected ${functionId}`)
     }

@@ -159,8 +159,10 @@ describe('419 MCP sovereign mark bearer differential', () => {
     if (verdict.kind !== 'token') throw new Error('declared writer did not resolve')
     const caller = mcpFunctionCaller(verdict.scopes, credentialForBearer(verdict))
     expect(caller.credential).toBeDefined()
-    await expect(invokeFunction(h.registry, 'config.proposal.apply', {
-      proposalId: 'prop_419-absent',
+    // 2026-10-01 (432-17): `config.proposal.apply` was the subject until it was deleted; the
+    // config-write field op is the same scope boundary.
+    await expect(invokeFunction(h.registry, 'config.field.set', {
+      path: 'use.timeout.step', value: '45s',
     }, caller)).rejects.toBeInstanceOf(FunctionScopeError)
     expect(h.ledgerBytes()).toBe(written)
     for (const secret of [WRITER, READER, INVALID, MARK_ONLY]) expect(h.frames.join('\n')).not.toContain(secret)

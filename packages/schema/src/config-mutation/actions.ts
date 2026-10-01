@@ -164,72 +164,29 @@ export const ConfigProjectScaffoldInputSchema = z.object({
 
 export type ConfigProjectScaffoldInput = z.infer<typeof ConfigProjectScaffoldInputSchema>
 
+// 2026-10-01, 432-17 (D-05/D-07/D-09): `config.undo.propose` and `config.proposal.apply` are deleted
+// with the proposal inbox, and so are their inputs and the git-commit apply receipts. A change is
+// written in its own call and reverted with git (D-07); there is no undo op (D-09).
+
+/** How one file of a config change is written: added, replaced, or removed. */
+export const CONFIG_FILE_CHANGE_KINDS = ['add', 'modify', 'delete'] as const
+
+export type ConfigFileChangeKind = (typeof CONFIG_FILE_CHANGE_KINDS)[number]
+
 /**
- * `config.undo.propose` — propose the reverse of the last agent config commit (D-07).
- *
- * DELIBERATELY EMPTY. The reverse diff is computed HOST-side from the repository's own history, so
- * an input field naming what to undo would be a second answer to a question git already answers —
- * and a wrong one is a revert of something nobody asked about. An empty `.strict()` object is not a
- * placeholder: it refuses the arguments a model would otherwise be tempted to supply.
+ * One file a config change writes: its workspace-relative path, the kind of write, the digest of
+ * the bytes the change was computed against (absent for an add), and the new bytes. The writer
+ * refuses when the file no longer holds the bytes `baseDigest` names, so a change never lands over
+ * an edit it did not see.
  */
-export const ConfigUndoProposeInputSchema = z.object({}).strict()
-
-export type ConfigUndoProposeInput = z.infer<typeof ConfigUndoProposeInputSchema>
-
-/** `config.proposal.apply`'s input: an ID, never a document (the knowledge apply's law). */
-export const ConfigProposalApplyInputSchema = z.object({
-  proposalId: z.string().min(1),
+export const ConfigChangeFileSchema = z.object({
+  path: z.string().min(1),
+  changeKind: z.enum(CONFIG_FILE_CHANGE_KINDS),
+  baseDigest: z.string().min(1).optional(),
+  newContentBase64: z.string(),
 }).strict()
 
-export type ConfigProposalApplyInput = z.infer<typeof ConfigProposalApplyInputSchema>
-
-/**
- * One commit an apply made, and whose bytes it carries.
- *
- * `human` IS ON THE ENUM BEFORE THE CODE THAT MAKES ONE EXISTS. D-05's dirty-tree discipline —
- * commit the human's bytes first, under a preserving message, then the agent's — lands in 395-06,
- * and putting the role here now means the receipts shape does not change on that day. A role added
- * later would have been a shape change reaching every surface that renders a receipt.
- */
-export const ConfigApplyCommitSchema = z.object({
-  role: z.enum(['agent', 'human']),
-  /** The commit hash, abbreviated as git prints it. */
-  hash: z.string().min(1),
-}).strict()
-
-export type ConfigApplyCommit = z.infer<typeof ConfigApplyCommitSchema>
-
-/**
- * The receipts an apply answers with: which commits it made, and which files they carry.
- *
- * ONE SHAPE, EXTENDED BY BOTH OUTCOME ARMS rather than restated in each. The `already-applied` arm
- * carries the ORIGINAL receipt, so the two arms must agree field for field or a retrying caller
- * would be reading a different record than the first caller did — and two spellings of one shape
- * agree only until somebody edits one of them.
- */
-export const ConfigApplyReceiptsSchema = z.object({
-  commits: z.array(ConfigApplyCommitSchema).min(1),
-  /** The workspace-relative paths this apply wrote, in the order the commit names them. */
-  files: z.array(z.string().min(1)).min(1),
-}).strict()
-
-export type ConfigApplyReceipts = z.infer<typeof ConfigApplyReceiptsSchema>
-
-/**
- * What a config apply COMMITTED, or what it found already committed.
- *
- * `already-applied` IS AN ARM, NEVER A THROW, and it carries the ORIGINAL receipt. The reasoning is
- * `knowledge.proposal.apply`'s, quoted from its own header: "a retrying surface — a dropped socket,
- * a re-issued MCP call, an operator pressing the key twice — must be able to learn that its apply
- * already happened AND what it did; a throw would say the first half while discarding the receipt,
- * which is the one thing the caller asked for." (CFGM-03's idempotency edge.)
- */
-export const ConfigApplyOutcomeSchema = z.discriminatedUnion('outcome', [
-  ConfigApplyReceiptsSchema.extend({ outcome: z.literal('applied') }).strict(),
-  ConfigApplyReceiptsSchema.extend({ outcome: z.literal('already-applied') }).strict(),
-])
-
-export type ConfigApplyOutcome = z.infer<typeof ConfigApplyOutcomeSchema>
+export type ConfigChangeFile = z.infer<typeof ConfigChangeFileSchema>
 
 // ---- 2026-09-30, 432-11 D-05/D-07: what a config change did, answered in the call ------------------
 //

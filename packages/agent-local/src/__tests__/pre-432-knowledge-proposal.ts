@@ -1,41 +1,58 @@
-// A pre-432 knowledge proposal on disk, filed the way the retired `knowledge.*.propose` ops filed
-// it (432-12, D-05).
+// A pre-432 knowledge proposal on disk, as the retired `knowledge.*.propose` ops left it (432-12;
+// re-spelled 2026-10-01, 432-17, D-05/D-22).
 //
-// Since 432-12 the three knowledge changes apply in the call and nothing files a knowledge
-// proposal. The inbox, `knowledge.proposal.apply` and `proposals.accept`/`reject` still read the
-// records already on disk until 432-17 deletes them, so the suites that measure that path start
-// from a record this helper writes through the same review port member the ops used to reach, with
-// the same attribution (`emittedBy` is the retired op id, `runId` the caller's run).
+// Since 432-12 the three knowledge changes apply in the call and nothing files a knowledge proposal.
+// 432-17 deletes the store, its inbox, `knowledge.proposal.apply` and `proposals.accept`/`reject`, so
+// nothing can produce one any more and nothing reads one. The suites that keep a claim about such a
+// file — that it is never read, claimed, published or migrated — plant it here as the bytes the
+// 391 store wrote (a wrapped record under `<agentQaRoot>/proposals/<id>.json`), in the temp workspace
+// they own.
+
+import { randomUUID } from 'node:crypto'
+import { mkdirSync, writeFileSync } from 'node:fs'
+import { join } from 'node:path'
 
 import type { KnowledgeTargetRef } from '@vostride/agent-qa-schema'
-
-import { createKnowledgeReview } from '../composition/compose-local-agent.js'
 
 export type Pre432KnowledgeVerb = 'accept' | 'reject' | 'forget'
 
 export interface FilePre432KnowledgeProposalInput {
   readonly agentQaRoot: string
-  readonly knowledgeRoot: string
+  /** Kept for the callers' shape; a planted file reads nothing from the knowledge root. */
+  readonly knowledgeRoot?: string
   readonly verb: Pre432KnowledgeVerb
   readonly target: KnowledgeTargetRef
-  /** Required by a reject, as the retired op's input contract required it. */
+  /** Recorded on a reject, as the retired op's input contract required it. */
   readonly reason?: string
   readonly runId?: string
 }
 
-/** File one pre-432 knowledge proposal and answer its id. Throws if the target names nothing. */
+/** Plant one pre-432 knowledge proposal file and answer its id. */
 export async function filePre432KnowledgeProposal(input: FilePre432KnowledgeProposalInput): Promise<string> {
-  const review = createKnowledgeReview({
-    agentQaRoot: input.agentQaRoot,
-    resolveKnowledgeRoot: () => input.knowledgeRoot,
-  })
-  const request = input.verb === 'reject'
-    ? { verb: 'reject' as const, input: { target: input.target, reason: input.reason ?? 'rejected' } }
-    : { verb: input.verb, input: { target: input.target } }
-  const outcome = await review.propose(request, {
-    emittedBy: `knowledge.${input.verb}.propose`,
-    ...(input.runId === undefined ? {} : { runId: input.runId }),
-  })
-  if (outcome.kind !== 'proposed') throw new Error(`fixture propose failed: ${outcome.kind}`)
-  return outcome.proposal.proposalId
+  const proposalId = `prop_${randomUUID()}`
+  const proposedAt = 1_700_000_000_000
+  const record = {
+    schemaVersion: 1,
+    id: proposalId,
+    kind: 'knowledge',
+    origin: {
+      emittedBy: `knowledge.${input.verb}.propose`,
+      ...(input.runId === undefined ? {} : { runId: input.runId }),
+      at: proposedAt,
+    },
+    payload: {
+      schemaVersion: 1,
+      proposalId,
+      verb: input.verb,
+      targetRef: input.target,
+      deltas: [],
+      ...(input.verb === 'reject' ? { reason: input.reason ?? 'rejected' } : {}),
+      proposedAt,
+      status: 'pending',
+    },
+  }
+  const dir = join(input.agentQaRoot, 'proposals')
+  mkdirSync(dir, { recursive: true })
+  writeFileSync(join(dir, `${proposalId}.json`), `${JSON.stringify(record, undefined, 2)}\n`, 'utf8')
+  return await Promise.resolve(proposalId)
 }

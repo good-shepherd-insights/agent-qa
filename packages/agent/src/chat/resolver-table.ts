@@ -203,8 +203,7 @@ export const CHAT_RESOLVER_TABLE: ChatResolverTable = Object.freeze([
     },
   }),
   // 432-13 (D-05/D-14): the `proposals` inbox alias is gone. Changes apply in the call, so there is
-  // no pending-decision inbox to route a bare word to; a pre-432 record stays readable through
-  // `/fn proposals.list` until the inbox is deleted.
+  // no pending-decision inbox to route a bare word to. 432-17 deleted the inbox and its ops too.
   rule({
     alias: 'model',
     resolve: (clause) => {

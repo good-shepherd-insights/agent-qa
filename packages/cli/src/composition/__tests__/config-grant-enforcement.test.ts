@@ -35,7 +35,13 @@ import { join } from 'node:path'
 import { invokeFunction } from '@vostride/agent-qa-agent'
 import { createGrantOperations, grantsLedgerPath } from '@vostride/agent-qa-knowledge-local'
 import { STANDING_APPROVAL_SCOPE } from '@vostride/agent-qa-schema'
-import type { ConfigChangeOutput, ProposalRecord } from '@vostride/agent-qa-schema'
+import type { ConfigChangeOutput } from '@vostride/agent-qa-schema'
+
+/** A planted pre-432 record, read as the plain JSON it is (432-17 deleted the record schema). */
+interface PlantedConfigRecord {
+  readonly kind: string
+  readonly payload: { payloadKind: string; crossBoundary: boolean; crossBoundaryReasons: string[] }
+}
 import { runSafetyScope } from '@vostride/agent-qa-safety-local'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
@@ -285,17 +291,19 @@ describe('C432-NO-CONFIG-UNDO-PORT: the pre-432 apply and undo verbs are unbound
     }
   })
 
+  // RE-SPELLED 2026-10-01 (432-17, D-05/D-09): both verbs are deleted, so they are not listed at all
+  // and each is refused as an unknown function; the undo still reads no history and files nothing.
   it('C432-NO-CONFIG-UNDO-PORT: both verbs are listed unbound, and the undo reads no history and files nothing', async () => {
     const host = composeCliLocalAgent({ agentQaRoot, configPath })
     try {
       const listed = new Map(host.registry.list(CLI_FUNCTION_CALLER).map((entry) => [entry.id, entry]))
-      expect(listed.get('config.undo.propose')?.bindingStatus).toBe('unbound')
-      expect(listed.get('config.proposal.apply')?.bindingStatus).toBe('unbound')
+      expect(listed.has('config.undo.propose')).toBe(false)
+      expect(listed.has('config.proposal.apply')).toBe(false)
       // The direct change ops are what is bound.
       expect(listed.get('config.field.set')?.bindingStatus).toBe('bound')
 
       await expect(invokeFunction(host.registry, 'config.undo.propose', {}, CLI_FUNCTION_CALLER))
-        .rejects.toMatchObject({ name: 'FunctionNotBoundError' })
+        .rejects.toMatchObject({ name: 'UnknownFunctionError' })
     } finally {
       await host.close()
     }
@@ -312,7 +320,7 @@ describe('C432-NO-CONFIG-UNDO-PORT: the pre-432 apply and undo verbs are unbound
       await expect(invokeFunction(
         host.registry, 'config.proposal.apply', { proposalId: 'prop_00000000-0000-4000-8000-000000000000' },
         CLI_FUNCTION_CALLER,
-      )).rejects.toMatchObject({ name: 'FunctionNotBoundError' })
+      )).rejects.toMatchObject({ name: 'UnknownFunctionError' })
     } finally {
       await host.close()
     }
@@ -321,6 +329,8 @@ describe('C432-NO-CONFIG-UNDO-PORT: the pre-432 apply and undo verbs are unbound
   })
 })
 
+// 2026-10-01 (432-17): "refused unbound" became "refused as an unknown function" with the apply's
+// deletion; the claims (nothing committed, the grant does not decide) are unchanged.
 describe('a pre-432 record is refused unbound, grant or no grant (D-07, D-22)', () => {
   // RE-SPELLED 2026-10-01 (432-16): (R3) with no grant the flagged apply applied directly after
   // 432-13; (R1) a covering grant did not match a flagged record; (R2) the same grant admitted an
@@ -338,7 +348,7 @@ describe('a pre-432 record is refused unbound, grant or no grant (D-07, D-22)', 
     if (grant) await mintGrant(CONFIG_APPLY_CLASS)
     const proposalId = await pre432Record(input)
     if (doctor) {
-      const record = JSON.parse(readFileSync(pendingProposalPath(proposalId), 'utf8')) as ProposalRecord
+      const record = JSON.parse(readFileSync(pendingProposalPath(proposalId), 'utf8')) as PlantedConfigRecord
       if (record.kind !== 'config' || record.payload.payloadKind !== 'applyable') {
         throw new Error('unreachable')
       }
@@ -348,7 +358,7 @@ describe('a pre-432 record is refused unbound, grant or no grant (D-07, D-22)', 
     }
     const before = readFileSync(configPath, 'utf8')
 
-    await expect(applyHeadless(proposalId)).rejects.toMatchObject({ name: 'FunctionNotBoundError' })
+    await expect(applyHeadless(proposalId)).rejects.toMatchObject({ name: 'UnknownFunctionError' })
 
     expect(readFileSync(configPath, 'utf8')).toBe(before)
     expect(commitCount()).toBe(1)

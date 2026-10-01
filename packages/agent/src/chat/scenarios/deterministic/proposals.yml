@@ -2,8 +2,8 @@
 #
 # Changes apply in the call, so there is no pending-decision inbox for a bare word to route to. The
 # table no longer resolves `proposals`; the hermetic lane's tripwire planner cannot route it either,
-# so the turn refuses by name with zero executions. A pre-432 record stays readable through
-# `/fn proposals.list` until the inbox is deleted. The id is kept so the retired route stays a
+# so the turn refuses by name with zero executions. 432-17 deleted the inbox and `proposals.list`
+# with it, so nothing reads a pre-432 record at all. The id is kept so the retired route stays a
 # committed, measured absence rather than a deleted file.
 id: proposals
 class: deterministic

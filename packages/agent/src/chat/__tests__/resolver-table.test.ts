@@ -12,7 +12,6 @@ import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 
 import { ENTITIES_RESOLVE_FUNCTION_ID } from '../../functions/ops/entities-ids.js'
-import { PROPOSALS_LIST_FUNCTION_ID } from '../../functions/ops/proposals-list.js'
 import { RUNS_DIGEST_FUNCTION_ID } from '../../functions/ops/runs-digest.js'
 import { RUNS_LIST_FUNCTION_ID } from '../../functions/ops/runs-list.js'
 import { RUNS_START_FUNCTION_ID } from '../../functions/ops/runs-start.js'
@@ -125,12 +124,13 @@ describe('resolveClause — the op-bound canon', () => {
   })
 
   // RE-SPELLED 2026-09-30 (432-13) from 'binds bare `proposals` to the whole inbox': the alias is
-  // gone, and a pre-432 record stays reachable through the one `/fn` branch.
+  // gone. 2026-10-01 (432-17): the inbox op is deleted too, so `/fn proposals.list` resolves to a
+  // passthrough naming an id the registry answers as an unknown function.
   it('binds no bare `proposals` alias; the inbox read is reached through /fn', () => {
     expect(resolve('proposals')).toBeUndefined()
     expect(resolve('/fn proposals.list')).toEqual({
       kind: 'op',
-      functionId: PROPOSALS_LIST_FUNCTION_ID,
+      functionId: 'proposals.list',
       input: {},
     })
   })

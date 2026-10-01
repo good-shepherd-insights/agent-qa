@@ -49,7 +49,6 @@
 import {
   AuthoringDraftEditInputSchema,
   AuthoringDraftEditOutputSchema,
-  CURRENT_AUTHORING_PROPOSAL_SCHEMA_VERSION,
   TestEditPatchSetSchema,
   isEditablePointer,
 } from '@vostride/agent-qa-schema'
@@ -172,7 +171,7 @@ export const authoringDraftEditSpec: FunctionSpec<
   AuthoringDraftEditOutput
 > = {
   id: AUTHORING_DRAFT_EDIT_FUNCTION_ID,
-  summary: 'Express a requested change to an existing test as a proposal carrying its diff.',
+  summary: 'Apply a requested change to an existing test and write it, answering the diff it applied.',
   // See the header for why `run` is absent and why that absence is the mitigation rather than an
   // economy: this op starts zero runs, and a verb that declared the power to would be a grant a
   // person issued for editing that also bought execution.
@@ -306,10 +305,9 @@ export const authoringDraftEditSpec: FunctionSpec<
     const staged = await shelf.applyPatches(resolution.draft, parsed.data)
     if (staged.kind === 'unparsable') throw new EditResultUnparsableError(staged.reason)
 
-    // 6. THE SAME CREDENTIAL GATE THE LOOP RUNS (394-10, T-394-43). This op is the SECOND producer
-    //    of a `test-draft` proposal, and its artifact reaches the same inbox and the same
-    //    one-commit apply — so a gate that ran only on the loop's path would leave the write path
-    //    reachable by the shorter route. A model asked to "add the API key" is exactly how a
+    // 6. THE SAME CREDENTIAL GATE THE LOOP RUNS (394-10, T-394-43). This op is the SECOND writer of
+    //    an authored test (432 D-06), so a gate that ran only on the loop's path would leave the
+    //    write path reachable by the shorter route. A model asked to "add the API key" is exactly how a
     //    literal arrives here.
     screenDraftForCredentials(staged.draft)
 
@@ -342,27 +340,6 @@ export const authoringDraftEditSpec: FunctionSpec<
       patches: parsed.data.patches,
       thoughts: parsed.data.thoughts,
       written,
-      proposal: {
-        schemaVersion: CURRENT_AUTHORING_PROPOSAL_SCHEMA_VERSION,
-        draftRef: stagedRef,
-        // THE EDIT'S TARGET IS THE FILE IT EDITED, and its digest is the bytes this op read out of
-        // that file moments ago (394-10, T-394-44). This is the arm's `sourceDigest`-PRESENT case
-        // and the loop's write path is the absent one — between them the apply's re-check has both
-        // directions exercised by real producers rather than by a fixture.
-        targetPath: identity.filePath,
-        sourceDigest: resolution.draft.contentDigest,
-        // `unverified` is the honest value and not a placeholder: it is what the disposition
-        // vocabulary means by a draft no gate has judged, and this op deliberately runs none. A
-        // `keep-eligible` here would be a verdict about gates that never ran.
-        disposition: 'unverified',
-        // ZERO AND ZERO. The pair is WTST-08's honesty contract and it holds trivially here,
-        // which is the point: an edit previews no runs because it takes none, and reporting a
-        // preview it never made would put a number in front of a person that describes nothing.
-        runsPreviewed: 0,
-        runsConsumed: 0,
-        repairIterations: 0,
-        summaryLine: `${identity.testName} — edited, ${parsed.data.patches.length} change(s)`,
-      },
     }
   },
 }

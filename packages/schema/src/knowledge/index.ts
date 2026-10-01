@@ -118,48 +118,54 @@ export type {
   InspectRecordView,
   RecordChange,
 } from './maintenance-views'
-// 387 KREV-01 D-17/D-19: the propose+apply seam and the forget receipt.
+// 2026-10-01, 432-17 (D-05): the direct knowledge change contracts — the review vocabulary, the
+// change identity, the target refs, the forget and commit receipts, the change inputs and the change
+// output. The proposal payload and its apply contracts are deleted with the inbox.
 export {
-  ForgetPreviewSchema,
+  DeltaSchema,
   ForgetReceiptV1Schema,
   ForgetTargetRefSchema,
+  KNOWLEDGE_CHANGE_REFUSAL_REASONS,
   KNOWLEDGE_CHANGE_VERBS,
   KNOWLEDGE_PROJECTIONS,
-  KNOWLEDGE_PROPOSAL_STATUSES,
   KNOWLEDGE_REVIEW_VERBS,
+  KnowledgeAcceptChangeInputSchema,
+  KnowledgeAcceptInputSchema,
+  KnowledgeChangeIdSchema,
   KnowledgeChangeOperationIdSchema,
-  KnowledgeProposalV1Schema,
+  KnowledgeChangeOutputSchema,
+  KnowledgeForgetChangeInputSchema,
+  KnowledgeForgetInputSchema,
+  KnowledgeRejectChangeInputSchema,
+  KnowledgeRejectInputSchema,
   KnowledgeTargetRefSchema,
-  ProposalIdSchema,
+  MarkChangeStampSchema,
   TombstonedRecordSchema,
-} from './proposal'
+} from './change'
 export type {
-  ForgetPreview,
   ForgetReceiptV1,
   ForgetTargetRef,
+  KnowledgeAcceptChangeInput,
+  KnowledgeAcceptInput,
+  KnowledgeChangeOutput,
+  KnowledgeChangeRefusalReason,
   KnowledgeChangeVerb,
+  KnowledgeForgetChangeInput,
+  KnowledgeForgetInput,
   KnowledgeProjection,
-  KnowledgeProposalStatus,
-  KnowledgeProposalV1,
+  KnowledgeRejectChangeInput,
+  KnowledgeRejectInput,
   KnowledgeReviewVerb,
   KnowledgeTargetRef,
+  MarkChangeStamp,
   TombstonedRecord,
-} from './proposal'
-// 387 KREV-01/KREV-02 D-15: the review-verb input/output contracts.
+} from './change'
+// 387 KREV-01/KREV-02 D-15: the review-verb read contracts.
 export {
   BRIEF_WHY_NO_TRACE_REASONS,
   BRIEF_WHY_RESULT_KINDS,
   BriefWhyInputSchema,
   BriefWhyResultSchema,
-  KNOWLEDGE_APPLY_OUTCOMES,
-  KnowledgeAcceptInputSchema,
-  KnowledgeAcceptChangeInputSchema,
-  KnowledgeApplyOutcomeSchema,
-  KnowledgeChangeOutputSchema,
-  KNOWLEDGE_CHANGE_REFUSAL_REASONS,
-  KnowledgeForgetInputSchema,
-  KnowledgeForgetChangeInputSchema,
-  KnowledgeProposalApplyInputSchema,
   KnowledgeRecordShowInputSchema,
   KnowledgeRecordShowOutputSchema,
   KnowledgeRecordShowResultSchema,
@@ -167,23 +173,12 @@ export {
   KnowledgeRecordsDiffOutputSchema,
   KnowledgeRecordsInspectInputSchema,
   KnowledgeRecordsInspectOutputSchema,
-  KnowledgeRejectInputSchema,
-  KnowledgeRejectChangeInputSchema,
 } from './review-verbs'
 export type {
   BriefWhyInput,
   BriefWhyNoTraceReason,
   BriefWhyResult,
   BriefWhyResultKind,
-  KnowledgeAcceptInput,
-  KnowledgeAcceptChangeInput,
-  KnowledgeApplyOutcomeDto,
-  KnowledgeApplyOutcomeKind,
-  KnowledgeChangeOutput,
-  KnowledgeChangeRefusalReason,
-  KnowledgeForgetInput,
-  KnowledgeForgetChangeInput,
-  KnowledgeProposalApplyInput,
   KnowledgeRecordShowInput,
   KnowledgeRecordShowOutput,
   KnowledgeRecordShowResult,
@@ -191,8 +186,6 @@ export type {
   KnowledgeRecordsDiffOutput,
   KnowledgeRecordsInspectInput,
   KnowledgeRecordsInspectOutput,
-  KnowledgeRejectInput,
-  KnowledgeRejectChangeInput,
 } from './review-verbs'
 // 416 receipt vocabulary and the promotion result seam.
 export { GATE_RECEIPT_SCHEMA_VERSION, GATE_NUMBERS, GATE_VERDICTS, GateReceiptSchema,

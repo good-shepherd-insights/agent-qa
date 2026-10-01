@@ -1,3 +1,6 @@
+// RE-SPELLED 2026-10-01 (432-17, D-05): `proposals.list` is deleted with the inbox. The read these
+// cells drive through the composed host is now `quarantine.list`, another allow-tier read that
+// answers honestly (an empty listing) in a bare temp project, so every claim keeps its subject.
 // The directives, measured through the REAL composition (Phase 392 plan 08, D-04/D-21/D-23).
 //
 // 2026-09-30 (432-13, D-14): `/pin` IS GONE. It was a session deny overlay over the op gate, and there
@@ -31,7 +34,7 @@ import { join } from 'node:path'
 
 import {
   AGENT_ASK_FUNCTION_ID,
-  PROPOSALS_LIST_FUNCTION_ID,
+  QUARANTINE_LIST_FUNCTION_ID,
   invokeFunction,
 } from '@vostride/agent-qa-agent'
 import type { ChatLanguageModel, JobModelCapability } from '@vostride/agent-qa-agent'
@@ -153,37 +156,37 @@ describe('the composed session directives reach something (D-04 / D-21 / RESEARC
     it('C432-CHAT-DIRECT: the op runs before and after a typed /pin, in the same session and outside it',
       async () => {
         const host = compose()
-        const opened = await ask(host, '/fn proposals.list')
+        const opened = await ask(host, '/fn quarantine.list')
         const inSession: FunctionCaller = { ...HUMAN, sessionId: opened.sessionId }
 
         await expect(
-          invokeFunction(host.registry, PROPOSALS_LIST_FUNCTION_ID, {}, inSession),
+          invokeFunction(host.registry, QUARANTINE_LIST_FUNCTION_ID, {}, inSession),
         ).resolves.toBeDefined()
 
-        const pinned = await ask(host, `/pin ${PROPOSALS_LIST_FUNCTION_ID}`, opened.sessionId)
+        const pinned = await ask(host, `/pin ${QUARANTINE_LIST_FUNCTION_ID}`, opened.sessionId)
         expect(pinned.status).toBe('fail_closed')
 
         await expect(
-          invokeFunction(host.registry, PROPOSALS_LIST_FUNCTION_ID, {}, inSession),
+          invokeFunction(host.registry, QUARANTINE_LIST_FUNCTION_ID, {}, inSession),
         ).resolves.toBeDefined()
         await expect(
-          invokeFunction(host.registry, PROPOSALS_LIST_FUNCTION_ID, {}, HUMAN),
+          invokeFunction(host.registry, QUARANTINE_LIST_FUNCTION_ID, {}, HUMAN),
         ).resolves.toBeDefined()
       })
 
     it('C432-CHAT-DIRECT: a typed /pin writes NO approval_decision row', async () => {
       const host = compose()
-      const result = await ask(host, `/pin ${PROPOSALS_LIST_FUNCTION_ID}`)
+      const result = await ask(host, `/pin ${QUARANTINE_LIST_FUNCTION_ID}`)
 
       expect(
         sessionEvents(result.sessionId).filter((event) => event.kind === 'approval_decision'),
       ).toEqual([])
-      expect(result.answer ?? '').not.toContain(`fn:${PROPOSALS_LIST_FUNCTION_ID}`)
+      expect(result.answer ?? '').not.toContain(`fn:${QUARANTINE_LIST_FUNCTION_ID}`)
     })
 
     it('C432-CHAT-DIRECT: executes NOTHING on a /pin turn, and publishes no pin to live state', async () => {
       const host = compose()
-      const result = await ask(host, `/pin ${PROPOSALS_LIST_FUNCTION_ID}`)
+      const result = await ask(host, `/pin ${QUARANTINE_LIST_FUNCTION_ID}`)
 
       expect(result.receipts).toEqual([])
       expect(host.chat.stateFor(result.sessionId)?.pinnedActionClasses ?? []).toEqual([])
@@ -289,7 +292,7 @@ describe('the composed session directives reach something (D-04 / D-21 / RESEARC
       const host = compose()
       // An ordinary turn FIRST, so the before-state is read off the same session the `/quit` turn
       // will move (392 plan 13: the state is per session, and an unopened session has none).
-      const opened = await ask(host, '/fn proposals.list')
+      const opened = await ask(host, '/fn quarantine.list')
       expect(host.chat.stateFor(opened.sessionId)?.closing).toBe(false)
 
       const result = await ask(host, '/quit', opened.sessionId)
@@ -300,7 +303,7 @@ describe('the composed session directives reach something (D-04 / D-21 / RESEARC
       expect(host.chat.stateFor(opened.sessionId)?.closing).toBe(true)
       // And it moved THAT conversation only: a second session on the same host is not closing
       // because somebody else typed `/quit`.
-      const other = await ask(host, '/fn proposals.list')
+      const other = await ask(host, '/fn quarantine.list')
       expect(host.chat.stateFor(other.sessionId)?.closing).toBe(false)
     })
   })
@@ -308,7 +311,7 @@ describe('the composed session directives reach something (D-04 / D-21 / RESEARC
   describe('the live turn state (RESEARCH Open Q2)', () => {
     it('carries the conversation forward across turns, and names no turn between them', async () => {
       const host = compose()
-      const first = await ask(host, '/fn proposals.list')
+      const first = await ask(host, '/fn quarantine.list')
 
       // Between turns there is nothing in flight, which is what makes an abort a no-op rather
       // than a row on a turn that already completed.
@@ -320,12 +323,12 @@ describe('the composed session directives reach something (D-04 / D-21 / RESEARC
       // The repaired replay, projected once. The first turn's utterance and its receipt line are
       // both in it by the second turn, oldest first.
       expect(conversation.length).toBeGreaterThan(0)
-      expect(JSON.stringify(conversation)).toContain('proposals')
+      expect(JSON.stringify(conversation)).toContain('quarantine')
     })
 
     it('abortActiveTurn is a no-op between turns', async () => {
       const host = compose()
-      const result = await ask(host, '/fn proposals.list')
+      const result = await ask(host, '/fn quarantine.list')
 
       await host.chat.abortActiveTurn()
 
@@ -351,7 +354,7 @@ describe('the composed session directives reach something (D-04 / D-21 / RESEARC
         },
       })
 
-      const opened = await ask(host, '/fn proposals.list')
+      const opened = await ask(host, '/fn quarantine.list')
       sessionId = opened.sessionId
       const result = await ask(host, '/model fixture:second-model', sessionId)
 
@@ -379,7 +382,7 @@ describe('the composed session directives reach something (D-04 / D-21 / RESEARC
         },
       })
 
-      const result = await ask(host, '/fn proposals.list')
+      const result = await ask(host, '/fn quarantine.list')
 
       expect(result.status).toBe('completed')
       expect(calls).toBe(0)

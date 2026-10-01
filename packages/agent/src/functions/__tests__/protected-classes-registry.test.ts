@@ -117,6 +117,11 @@ describe('the protected action classes name real registered ops', () => {
     expect(PROTECTED_ACTION_CLASSES.length).toBeGreaterThan(0)
   })
 
+  // RE-SPELLED 2026-10-01 (432-17, D-05): `proposals.accept` is deleted with the inbox, so its
+  // protected class names no registered op. The set itself is 432-18's to delete; until then the
+  // retired member is pinned as matching NOTHING rather than dropped from the check.
+  const RETIRED_BY_432_17 = new Set(['fn:proposals.accept'])
+
   it('each member is the risk.name of EXACTLY ONE registered op', () => {
     const listed = declarations()
 
@@ -126,7 +131,7 @@ describe('the protected action classes name real registered ops', () => {
       // count nobody can act on.
       expect({ member, ids: matching.map((declaration) => declaration.id) }).toEqual({
         member,
-        ids: [member.replace(/^fn:/, '')],
+        ids: RETIRED_BY_432_17.has(member) ? [] : [member.replace(/^fn:/, '')],
       })
     }
   })

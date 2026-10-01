@@ -45,10 +45,8 @@ import {
   ConfigGetInputSchema,
   ConfigHookAddInputSchema,
   ConfigProjectScaffoldInputSchema,
-  ConfigProposalApplyInputSchema,
   ConfigTargetCreateInputSchema,
   ConfigTargetEditInputSchema,
-  ConfigUndoProposeInputSchema,
   EditorLiveUrlInputSchema,
   ENTITY_DASHBOARD_ROUTES,
   ENTITY_KINDS,
@@ -61,15 +59,10 @@ import {
   KnowledgeBundlesListInputSchema,
   KnowledgeGatesListInputSchema,
   KnowledgeForgetChangeInputSchema,
-  KnowledgeProposalApplyInputSchema,
   KnowledgeRecordShowInputSchema,
   KnowledgeRecordsDiffInputSchema,
   KnowledgeRecordsInspectInputSchema,
   KnowledgeRejectChangeInputSchema,
-  ProposalsAcceptInputSchema,
-  ProposalsListInputSchema,
-  ProposalsRejectInputSchema,
-  ProposalsShowInputSchema,
   QuarantineAddInputSchema,
   QuarantineListInputSchema,
   QuarantineReleaseInputSchema,
@@ -117,10 +110,8 @@ export const OP_INPUT_CONTRACTS = {
   'config.get': ConfigGetInputSchema,
   'config.hook.add': ConfigHookAddInputSchema,
   'config.project.scaffold': ConfigProjectScaffoldInputSchema,
-  'config.proposal.apply': ConfigProposalApplyInputSchema,
   'config.target.create': ConfigTargetCreateInputSchema,
   'config.target.edit': ConfigTargetEditInputSchema,
-  'config.undo.propose': ConfigUndoProposeInputSchema,
   // 2026-09-25 (428 D-07): the editor subject's mint.
   'editor.liveurl': EditorLiveUrlInputSchema,
   'entities.get': EntitiesGetInputSchema,
@@ -132,15 +123,10 @@ export const OP_INPUT_CONTRACTS = {
   'knowledge.bundles.list': KnowledgeBundlesListInputSchema,
   'knowledge.gates.list': KnowledgeGatesListInputSchema,
   'knowledge.forget': KnowledgeForgetChangeInputSchema,
-  'knowledge.proposal.apply': KnowledgeProposalApplyInputSchema,
   'knowledge.record.show': KnowledgeRecordShowInputSchema,
   'knowledge.records.diff': KnowledgeRecordsDiffInputSchema,
   'knowledge.records.inspect': KnowledgeRecordsInspectInputSchema,
   'knowledge.reject': KnowledgeRejectChangeInputSchema,
-  'proposals.accept': ProposalsAcceptInputSchema,
-  'proposals.list': ProposalsListInputSchema,
-  'proposals.reject': ProposalsRejectInputSchema,
-  'proposals.show': ProposalsShowInputSchema,
   'quarantine.add': QuarantineAddInputSchema,
   'quarantine.list': QuarantineListInputSchema,
   'quarantine.release': QuarantineReleaseInputSchema,
@@ -224,10 +210,9 @@ export type UnprojectedReasonKey =
   // moves. Recorded here because a disposition that changes is dated on the record, never edited
   // away.
   | 'credential-mint-deferral'
-  // 2026-09-30 (432-12, D-05). The SIXTH class, admitted rather than folded: the five pre-432
-  // proposal ops are not scoped out of a workflow and are not doors that cannot open. Their MCP
-  // tools were removed with the proposal round, and 432-17 deletes the ops themselves.
-  | 'proposal-round-removed'
+  // 2026-09-30 (432-12, D-05) admitted a sixth class, `proposal-round-removed`, for the five pre-432
+  // proposal ops whose MCP tools left with the proposal round. 2026-10-01 (432-17, D-05): the ops are
+  // deleted from the registry, so the class has no member and leaves the vocabulary.
   | 'not-mid-flight-write'
   | 'not-mid-flight-read'
 
@@ -253,9 +238,6 @@ export const UNPROJECTED_REASON_SIGNATURES: readonly (readonly [UnprojectedReaso
     // whose issuance is deferred to a later phase is a stronger fact than a scoping line, and the
     // shipped prose for `runs.liveurl` deliberately contains neither mid-flight phrase.
     Object.freeze(['credential-mint-deferral', 'MINTS A CREDENTIAL'] as const),
-    // 432-12 D-05. Above the mid-flight lines on the same precedence rule; the shipped prose for
-    // the five ops contains neither mid-flight phrase.
-    Object.freeze(['proposal-round-removed', 'proposal round'] as const),
     Object.freeze(['not-mid-flight-write', 'mid-flight workflow write'] as const),
     Object.freeze(['not-mid-flight-read', 'mid-flight workflow read'] as const),
   ])
@@ -591,8 +573,9 @@ export const SCENARIO_TABLE = Object.freeze([
       fn: { reachable: true },
     },
     // 2026-09-30, 432 D-06: `written` — the edit lands in the file it edited, and says so.
+    // 2026-10-01 (432-17): `proposal` left the output with the authoring proposal record.
     renderExpect: {
-      markers: ['draftRef', 'editedFrom', 'patches', 'proposal', 'thoughts', 'written'],
+      markers: ['draftRef', 'editedFrom', 'patches', 'thoughts', 'written'],
     },
     policyPoints: { grant: 'allow', refuse: 'deny' },
   }),
@@ -762,18 +745,6 @@ export const SCENARIO_TABLE = Object.freeze([
     },
     policyPoints: { grant: 'allow', refuse: 'deny' },
   }),
-  scenario({
-    opId: 'config.proposal.apply',
-    input: { proposalId: 'prop_0123456789ab' },
-    perSurface: {
-      chat: { reachable: true },
-      // 2026-09-30 (432-12 D-05): the apply tool left with the proposal round; 432-17 deletes the op.
-      mcp: { unprojected: 'proposal-round-removed' },
-      fn: { reachable: true },
-    },
-    renderExpect: { markers: ['commits', 'files', 'outcome'] },
-    policyPoints: { grant: 'allow', refuse: 'deny', ask: 'direct' },
-  }),
   // 395-05 D-01: PARSING inputs on the rows above reasoning.
   scenario({
     opId: 'config.target.create',
@@ -813,30 +784,6 @@ export const SCENARIO_TABLE = Object.freeze([
         'fields',
         'files',
         'outcome',
-        'shownDiff',
-        'summaryLine',
-      ],
-    },
-    policyPoints: { grant: 'allow', refuse: 'deny' },
-  }),
-  // 395-06 D-07: the EMPTY object really is the whole input, and it parses. Which commit to reverse
-  // is read from git history, so there is no field here for a sample to fill.
-  scenario({
-    opId: 'config.undo.propose',
-    input: {},
-    perSurface: {
-      chat: { reachable: true },
-      // 2026-09-30 (432-12 D-05/D-09): the undo arm left the config change tool; 432-17 deletes it.
-      mcp: { unprojected: 'proposal-round-removed' },
-      fn: { reachable: true },
-    },
-    renderExpect: {
-      markers: [
-        'crossBoundary',
-        'crossBoundaryReasons',
-        'files',
-        'outcome',
-        'proposalId',
         'shownDiff',
         'summaryLine',
       ],
@@ -991,18 +938,6 @@ export const SCENARIO_TABLE = Object.freeze([
     renderExpect: { markers: ['recordId', 'kind'] },
     policyPoints: { grant: 'allow', refuse: 'deny' },
   }),
-  scenario({
-    opId: 'knowledge.proposal.apply',
-    input: { proposalId: 'prop_0123456789ab' },
-    perSurface: {
-      chat: { reachable: true },
-      // 2026-09-30 (432-12 D-05): the apply tool left with the proposal round; 432-17 deletes the op.
-      mcp: { unprojected: 'proposal-round-removed' },
-      fn: { reachable: true },
-    },
-    renderExpect: { markers: ['outcome', 'proposal'] },
-    policyPoints: { grant: 'allow', refuse: 'deny', ask: 'direct' },
-  }),
   // 387: the record id names nothing in this fixture and the typed miss is the correct answer.
   scenario({
     opId: 'knowledge.record.show',
@@ -1064,59 +999,6 @@ export const SCENARIO_TABLE = Object.freeze([
       fn: { reachable: true },
     },
     renderExpect: { markers: ['operationId', 'outcome', 'recordIds', 'verb'] },
-    policyPoints: { grant: 'allow', refuse: 'deny' },
-  }),
-  // 391 PROP-01: the accept takes the refined proposal id; `always` is optional and omitted.
-  // Unprojected because it declares `requiresHumanOrigin` and this host mints `origin: agent`, so
-  // the tool would refuse every call it ever received (396 D-11).
-  scenario({
-    opId: 'proposals.accept',
-    input: { proposalId: 'prop_0123456789ab' },
-    perSurface: {
-      chat: { reachable: true },
-      mcp: { unprojected: 'requires-human-origin' },
-      fn: { reachable: true },
-    },
-    renderExpect: { markers: ['apply', 'grant'] },
-    policyPoints: { grant: 'allow', refuse: 'deny', ask: 'direct' },
-  }),
-  // 391 PROP-03: `list` genuinely takes the empty query — both filters are optional and absent means
-  // everything.
-  scenario({
-    opId: 'proposals.list',
-    input: {},
-    perSurface: {
-      chat: { reachable: true },
-      // 2026-09-30 (432-12 D-05): the inbox read left with the proposal round; 432-17 deletes it.
-      mcp: { unprojected: 'proposal-round-removed' },
-      fn: { reachable: true },
-    },
-    renderExpect: { markers: ['entries'] },
-    policyPoints: { grant: 'allow', refuse: 'deny' },
-  }),
-  scenario({
-    opId: 'proposals.reject',
-    input: { proposalId: 'prop_0123456789ab', reason: 'not this one' },
-    perSurface: {
-      chat: { reachable: true },
-      mcp: { unprojected: 'requires-human-origin' },
-      fn: { reachable: true },
-    },
-    renderExpect: { markers: ['entry', 'outcome'] },
-    policyPoints: { grant: 'allow', refuse: 'deny' },
-  }),
-  // 391 PROP-03: `show` takes a `ProposalIdSchema` id, so a bare string would report an INPUT error
-  // exactly where a binding refusal is wanted.
-  scenario({
-    opId: 'proposals.show',
-    input: { proposalId: 'prop_0123456789ab' },
-    perSurface: {
-      chat: { reachable: true },
-      // 2026-09-30 (432-12 D-05): the inbox read left with the proposal round; 432-17 deletes it.
-      mcp: { unprojected: 'proposal-round-removed' },
-      fn: { reachable: true },
-    },
-    renderExpect: { markers: ['entry', 'kind'] },
     policyPoints: { grant: 'allow', refuse: 'deny' },
   }),
   // 390 D-13: the two write verbs take the three legs of stable test identity — a partial address

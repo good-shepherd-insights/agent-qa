@@ -21,7 +21,8 @@
  * The compile-time half lives in `422-chain-closed-sets.test-d.ts` and shares no fixture with
  * this file. Two oracles reading one fixture are one oracle.
  */
-import { asJobId, isJobKind, PROPOSAL_KINDS } from '@vostride/agent-qa-schema'
+import * as schema from '@vostride/agent-qa-schema'
+import { asJobId, isJobKind } from '@vostride/agent-qa-schema'
 import type { Job, JobKind } from '@vostride/agent-qa-schema'
 import { describe, expect, it } from 'vitest'
 
@@ -63,7 +64,6 @@ const EXPECTED_JOB_KINDS: readonly string[] = [
   'propose-improvements',
 ]
 
-const EXPECTED_PROPOSAL_KINDS: readonly string[] = ['knowledge', 'test-draft', 'config']
 
 /** The successor topology, hand-drawn: every kind, and exactly what it may chain to. */
 const EXPECTED_SUCCESSORS: readonly (readonly [string, readonly string[]])[] = [
@@ -226,12 +226,12 @@ describe('422-22 the vocabularies the chain widening did NOT move', () => {
     expect(isJobKind(undefined)).toBe(false)
   })
 
-  it('keeps exactly three proposal-inbox kinds', () => {
-    expect([...PROPOSAL_KINDS]).toEqual([...EXPECTED_PROPOSAL_KINDS])
-    expect([...PROPOSAL_KINDS].sort()).toEqual([...EXPECTED_PROPOSAL_KINDS].sort())
-    // The proposal STAGE and the proposal INBOX are different vocabularies that share a word.
-    // Neither may name a member of the other.
-    for (const kind of PROPOSAL_KINDS) expect(EXPECTED_JOB_KINDS).not.toContain(kind)
+  // RE-SPELLED 2026-10-01 (432-17, D-05): the proposal INBOX vocabulary (`PROPOSAL_KINDS`) is
+  // deleted with the inbox. The proposal STAGE is a job kind and stays; what this cell pinned — that
+  // the two vocabularies share no member — holds trivially now, so it pins that the inbox one is gone.
+  it('keeps the proposal stage and no proposal-inbox kind vocabulary', () => {
+    expect('PROPOSAL_KINDS' in schema).toBe(false)
+    expect(EXPECTED_JOB_KINDS).toContain('propose-improvements')
   })
 
   it('keeps the proposal stage terminal checkpoint last, behind its allowance charge', () => {

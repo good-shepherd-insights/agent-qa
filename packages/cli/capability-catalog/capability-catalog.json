@@ -222,7 +222,7 @@
       "v1Name": "agent_qa_validate_test"
     }
   ],
-  "rowCount": 61,
+  "rowCount": 54,
   "rows": [
     {
       "alias": "digest",
@@ -357,7 +357,7 @@
       ]
     },
     {
-      "description": "Express a requested change to an existing test as a proposal carrying its diff.",
+      "description": "Apply a requested change to an existing test and write it, answering the diff it applied.",
       "docAbsentReason": "D-07 (dated 2026-08-16): no canonical doc ships for this capability yet. The explicit absence is the honest state — a guessed path would existence-check green and mislead a reader — and the abstention coverage log is the demand signal for writing one.",
       "docPath": null,
       "exampleCall": {
@@ -810,39 +810,6 @@
       ]
     },
     {
-      "description": "Apply an accepted configuration proposal as one commit in this repository.",
-      "docAbsentReason": "D-07 (dated 2026-08-16): no canonical doc ships for this capability yet. The explicit absence is the honest state — a guessed path would existence-check green and mislead a reader — and the abstention coverage log is the demand signal for writing one.",
-      "docPath": null,
-      "exampleCall": {
-        "arguments": {
-          "proposalId": "<PROPOSALID>"
-        }
-      },
-      "id": "config.proposal.apply",
-      "kind": "op",
-      "mcpUnprojectedReasonKey": "proposal-round-removed",
-      "params": {
-        "$schema": "https://json-schema.org/draft/2020-12/schema",
-        "additionalProperties": false,
-        "properties": {
-          "proposalId": {
-            "minLength": 1,
-            "type": "string"
-          }
-        },
-        "required": [
-          "proposalId"
-        ],
-        "type": "object"
-      },
-      "requiredScopes": [
-        "config-write"
-      ],
-      "surfaces": [
-        "chat"
-      ]
-    },
-    {
       "description": "Add a web target to the registry, written in this call.",
       "docAbsentReason": "D-07 (dated 2026-08-16): no canonical doc ships for this capability yet. The explicit absence is the honest state — a guessed path would existence-check green and mislead a reader — and the abstention coverage log is the demand signal for writing one.",
       "docPath": null,
@@ -948,29 +915,6 @@
       "surfaces": [
         "chat",
         "mcp"
-      ]
-    },
-    {
-      "description": "Propose reversing the last agent-qa configuration commit, as a reviewable diff awaiting a decision.",
-      "docAbsentReason": "D-07 (dated 2026-08-16): no canonical doc ships for this capability yet. The explicit absence is the honest state — a guessed path would existence-check green and mislead a reader — and the abstention coverage log is the demand signal for writing one.",
-      "docPath": null,
-      "exampleCall": {
-        "arguments": {}
-      },
-      "id": "config.undo.propose",
-      "kind": "op",
-      "mcpUnprojectedReasonKey": "proposal-round-removed",
-      "params": {
-        "$schema": "https://json-schema.org/draft/2020-12/schema",
-        "additionalProperties": false,
-        "properties": {},
-        "type": "object"
-      },
-      "requiredScopes": [
-        "config-write"
-      ],
-      "surfaces": [
-        "chat"
       ]
     },
     {
@@ -1394,37 +1338,6 @@
       ]
     },
     {
-      "description": "Apply a minted knowledge proposal through the Curator's one commit path.",
-      "docAbsentReason": "D-07 (dated 2026-08-16): no canonical doc ships for this capability yet. The explicit absence is the honest state — a guessed path would existence-check green and mislead a reader — and the abstention coverage log is the demand signal for writing one.",
-      "docPath": null,
-      "exampleCall": null,
-      "exampleCallAbsentReason": "D-08 (dated 2026-08-17): no example call is derivable for knowledge.proposal.apply — params.proposalId constrains its value with the regular expression /^prop_[a-z0-9]+(?:-[a-z0-9]+)*$/, and a placeholder cannot be SHOWN to satisfy an arbitrary pattern — an example the shipped contract would reject teaches a caller a shape this product does not have. The explicit absence is the honest state; an example an agent copies and is refused for is worse than a column that says there is none.",
-      "id": "knowledge.proposal.apply",
-      "kind": "op",
-      "mcpUnprojectedReasonKey": "proposal-round-removed",
-      "params": {
-        "$schema": "https://json-schema.org/draft/2020-12/schema",
-        "additionalProperties": false,
-        "properties": {
-          "proposalId": {
-            "minLength": 10,
-            "pattern": "^prop_[a-z0-9]+(?:-[a-z0-9]+)*$",
-            "type": "string"
-          }
-        },
-        "required": [
-          "proposalId"
-        ],
-        "type": "object"
-      },
-      "requiredScopes": [
-        "knowledge-write"
-      ],
-      "surfaces": [
-        "chat"
-      ]
-    },
-    {
       "description": "Show one committed knowledge record with its provenance.",
       "docAbsentReason": "D-07 (dated 2026-08-16): no canonical doc ships for this capability yet. The explicit absence is the honest state — a guessed path would existence-check green and mislead a reader — and the abstention coverage log is the demand signal for writing one.",
       "docPath": null,
@@ -1650,149 +1563,6 @@
       "surfaces": [
         "chat",
         "mcp"
-      ]
-    },
-    {
-      "description": "Apply a pending proposal, optionally recording a standing approval for its kind.",
-      "docAbsentReason": "D-07 (dated 2026-08-16): no canonical doc ships for this capability yet. The explicit absence is the honest state — a guessed path would existence-check green and mislead a reader — and the abstention coverage log is the demand signal for writing one.",
-      "docPath": null,
-      "exampleCall": null,
-      "exampleCallAbsentReason": "D-08 (dated 2026-08-17): no example call is derivable for proposals.accept — params.proposalId constrains its value with the regular expression /^prop_[a-z0-9]+(?:-[a-z0-9]+)*$/, and a placeholder cannot be SHOWN to satisfy an arbitrary pattern — an example the shipped contract would reject teaches a caller a shape this product does not have. The explicit absence is the honest state; an example an agent copies and is refused for is worse than a column that says there is none.",
-      "id": "proposals.accept",
-      "kind": "op",
-      "mcpUnprojectedReasonKey": "requires-human-origin",
-      "params": {
-        "$schema": "https://json-schema.org/draft/2020-12/schema",
-        "additionalProperties": false,
-        "properties": {
-          "always": {
-            "const": true,
-            "type": "boolean"
-          },
-          "proposalId": {
-            "minLength": 10,
-            "pattern": "^prop_[a-z0-9]+(?:-[a-z0-9]+)*$",
-            "type": "string"
-          }
-        },
-        "required": [
-          "proposalId"
-        ],
-        "type": "object"
-      },
-      "requiredScopes": [
-        "approval-write",
-        "knowledge-write"
-      ],
-      "surfaces": [
-        "chat"
-      ]
-    },
-    {
-      "description": "List every proposal awaiting, or already carrying, a human decision.",
-      "docAbsentReason": "D-07 (dated 2026-08-16): no canonical doc ships for this capability yet. The explicit absence is the honest state — a guessed path would existence-check green and mislead a reader — and the abstention coverage log is the demand signal for writing one.",
-      "docPath": null,
-      "exampleCall": {
-        "arguments": {}
-      },
-      "id": "proposals.list",
-      "kind": "op",
-      "mcpUnprojectedReasonKey": "proposal-round-removed",
-      "params": {
-        "$schema": "https://json-schema.org/draft/2020-12/schema",
-        "additionalProperties": false,
-        "properties": {
-          "kind": {
-            "enum": [
-              "knowledge",
-              "test-draft",
-              "config"
-            ],
-            "type": "string"
-          },
-          "status": {
-            "enum": [
-              "pending",
-              "applied",
-              "rejected",
-              "expired"
-            ],
-            "type": "string"
-          }
-        },
-        "type": "object"
-      },
-      "requiredScopes": [
-        "read"
-      ],
-      "surfaces": [
-        "chat"
-      ]
-    },
-    {
-      "description": "Decline a pending proposal, recording the decision permanently.",
-      "docAbsentReason": "D-07 (dated 2026-08-16): no canonical doc ships for this capability yet. The explicit absence is the honest state — a guessed path would existence-check green and mislead a reader — and the abstention coverage log is the demand signal for writing one.",
-      "docPath": null,
-      "exampleCall": null,
-      "exampleCallAbsentReason": "D-08 (dated 2026-08-17): no example call is derivable for proposals.reject — params.proposalId constrains its value with the regular expression /^prop_[a-z0-9]+(?:-[a-z0-9]+)*$/, and a placeholder cannot be SHOWN to satisfy an arbitrary pattern — an example the shipped contract would reject teaches a caller a shape this product does not have. The explicit absence is the honest state; an example an agent copies and is refused for is worse than a column that says there is none.",
-      "id": "proposals.reject",
-      "kind": "op",
-      "mcpUnprojectedReasonKey": "requires-human-origin",
-      "params": {
-        "$schema": "https://json-schema.org/draft/2020-12/schema",
-        "additionalProperties": false,
-        "properties": {
-          "proposalId": {
-            "minLength": 10,
-            "pattern": "^prop_[a-z0-9]+(?:-[a-z0-9]+)*$",
-            "type": "string"
-          },
-          "reason": {
-            "minLength": 1,
-            "type": "string"
-          }
-        },
-        "required": [
-          "proposalId"
-        ],
-        "type": "object"
-      },
-      "requiredScopes": [
-        "approval-write"
-      ],
-      "surfaces": [
-        "chat"
-      ]
-    },
-    {
-      "description": "Show one proposal in full — its payload, evidence refs and decision trail.",
-      "docAbsentReason": "D-07 (dated 2026-08-16): no canonical doc ships for this capability yet. The explicit absence is the honest state — a guessed path would existence-check green and mislead a reader — and the abstention coverage log is the demand signal for writing one.",
-      "docPath": null,
-      "exampleCall": null,
-      "exampleCallAbsentReason": "D-08 (dated 2026-08-17): no example call is derivable for proposals.show — params.proposalId constrains its value with the regular expression /^prop_[a-z0-9]+(?:-[a-z0-9]+)*$/, and a placeholder cannot be SHOWN to satisfy an arbitrary pattern — an example the shipped contract would reject teaches a caller a shape this product does not have. The explicit absence is the honest state; an example an agent copies and is refused for is worse than a column that says there is none.",
-      "id": "proposals.show",
-      "kind": "op",
-      "mcpUnprojectedReasonKey": "proposal-round-removed",
-      "params": {
-        "$schema": "https://json-schema.org/draft/2020-12/schema",
-        "additionalProperties": false,
-        "properties": {
-          "proposalId": {
-            "minLength": 10,
-            "pattern": "^prop_[a-z0-9]+(?:-[a-z0-9]+)*$",
-            "type": "string"
-          }
-        },
-        "required": [
-          "proposalId"
-        ],
-        "type": "object"
-      },
-      "requiredScopes": [
-        "read"
-      ],
-      "surfaces": [
-        "chat"
       ]
     },
     {
@@ -2638,5 +2408,5 @@
       "shortDescription": "Triage agent-qa run failures"
     }
   ],
-  "rowsDigest": "91a13cb066cf9d0e3f8d0bdcb703f182e06b1ef4d2869696bc9c62ae606f29b9"
+  "rowsDigest": "63827fbcc7561d20a282689a4034fbf34ad9dcd02993fc5f40542b541c80d4ec"
 }

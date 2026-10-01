@@ -88,10 +88,7 @@ import {
   createMemorySightingSource,
   createLocalKnowledgeStore,
   createGrantOperations,
-  createProposalsInbox,
   createQuarantineOperations,
-  mintProposalId,
-  writePendingProposalRecord,
   createStandingApprovalReader,
   QUARANTINE_FLAG_FLOOR,
   describeAllEntities,
@@ -158,7 +155,6 @@ import {
   type OwnedEmbedderWorkerRegistration,
   type EntityIndexSweepReport,
   type ResolveEntityRefDeps,
-  applyReview,
   applyExplicitReview,
   appendMarkEvidence,
   triageMark,
@@ -170,15 +166,12 @@ import {
   verifyBundleIntegrity,
   createAuthoringReader,
   openAddressingLedger as openAddressingLedgerForReview,
-  proposeReview,
   resolveRetrievalRung,
 } from '@vostride/agent-qa-knowledge-local'
 import type {
-  ApplyDelegate,
   ExplicitReviewDelegate,
   ExplicitReviewRequest,
   ExplicitReviewResult,
-  ProposeReviewRequest,
   CreateLocalKnowledgeStoreConfig,
 } from '@vostride/agent-qa-knowledge-local'
 import type { KnowledgeReviewPort } from '@vostride/agent-qa-agent'
@@ -217,7 +210,6 @@ import {
   PLACEHOLDER_PATTERN,
   ANALYSIS_FILE,
   asJobId,
-  CURRENT_PROPOSAL_RECORD_SCHEMA_VERSION,
   DEFAULT_EMBEDDING_PROFILE,
   guardRunAnalysisArtifact,
   maskPayloadStrings,
@@ -241,7 +233,6 @@ import type {
   FunctionCaller,
   FunctionScope,
   JobKind,
-  ProposalRecord,
   QuarantineEntryStateName,
   QuarantineLadderState,
   RecordedTargets,
@@ -350,13 +341,10 @@ export type {
 } from '@vostride/agent-qa-knowledge-local'
 
 // 387-08 D-18: the delegate transport's own vocabulary, re-exported through the one edge that
-// names the writer entry — a surface builds an `ApplyDelegate` closure and returns an
-// `ApplyReviewResult`, and neither is a handle on anything.
+// names the writer entry. 2026-10-01 (432-17): the proposal door's `ApplyDelegate` and
+// `ApplyReviewResult` are deleted with it; a delegate receives the validated request and its stable
+// identity (432-09), never a proposal id to reload.
 export type {
-  ApplyDelegate,
-  ApplyReviewResult,
-  // 432-09: the direct change's vocabulary. A delegate receives the validated request and its stable
-  // identity, never a proposal id to reload.
   ExplicitReviewDelegate,
   ExplicitReviewDelegation,
   ExplicitReviewRequest,
@@ -847,32 +835,22 @@ export function createKnowledgeReader(
 
 export interface CreateKnowledgeReviewInput {
   readonly resolveTrustPriors?: CreateLocalKnowledgeStoreConfig['resolveTrustPriors']
-  /** Stable identity from the serialized mark intent, used only for resumable proposal publication. */
-  readonly proposalIdentity?: { uuid: string; at: number }
   readonly resolvePromotionPosture?: () => Promise<ResolvePromotionPosture | undefined>
   readonly agentQaRoot: string
   readonly resolveKnowledgeRoot: () => Promise<string> | string
   /**
-   * How this host reaches the writer-lease holder when one is alive (D-18). OPTIONAL, and the
-   * optionality is the whole routing rule rather than a convenience: a host that supplies it
-   * delegates an apply the leaseholder must perform, and a host that does not REFUSES by name.
-   * Neither ever takes a held lease. The daemon supplies none, which is why its own applies
-   * cannot recurse — it holds the lease, so it always takes the in-process branch.
-   */
-  readonly applyDelegate?: ApplyDelegate
-  /**
    * The writer lease this host ALREADY holds, when it is the holder (D-18).
    *
    * The daemon's half of the routing rule. A holder cannot acquire its own lease a second time, so
-   * it hands the authority it owns to the apply; supplying this is mutually exclusive with
+   * it hands the authority it owns to the change; supplying this is mutually exclusive with
    * supplying a delegate, and a host that supplies both is a host claiming to be two places.
    */
   readonly resolveWriterAuthority?: () => { readonly leaseId: string; readonly epoch: number } | undefined
   /**
    * 432-12 (D-05): how a direct change reaches a live writer-lease holder. The holder receives the
    * validated request and the change's stable identity, bounded; the lease is never taken. Absent,
-   * a held lease refuses the change by name. Exclusive with {@link resolveWriterAuthority}, for the
-   * reason {@link applyDelegate} is.
+   * a held lease refuses the change by name. Exclusive with {@link resolveWriterAuthority}: a holder
+   * never delegates. The daemon supplies none, which is why its own changes cannot recurse.
    */
   readonly knowledgeChangeDelegate?: ExplicitReviewDelegate
   /**
@@ -960,55 +938,11 @@ export function createKnowledgeReview(input: CreateKnowledgeReviewInput): Knowle
       })
       return knowledgeChangeOutput(request.verb, operationId, result)
     }),
-    async propose(request, origin) {
-      const { knowledgeRoot } = await roots()
-      const ledger = openAddressingLedgerForReview({
-        path: join(input.agentQaRoot, ADDRESSING_LEDGER_DB_FILE),
-      })
-      try {
-        return proposeReview({
-          agentQaRoot: input.agentQaRoot,
-          knowledgeRoot,
-          request: request as ProposeReviewRequest,
-          ...(input.proposalIdentity === undefined ? {} : {
-            randomUuid: () => input.proposalIdentity!.uuid, now: () => input.proposalIdentity!.at,
-          }),
-          // 391 D-08/D-15: handed straight through, unspread only when absent — the envelope's
-          // `at` is stamped by the mint from the SAME instant it writes `proposedAt`, so nothing
-          // here samples a clock and the two cannot disagree about when one act happened.
-          ...(origin === undefined ? {} : { origin }),
-          // READS the ledger and never mints: an apply is not a sighting, and minting an address
-          // for an id nobody surfaced would make every review call a write to the one durable
-          // store this system never rebuilds (D-01/D-02).
-          resolveBundleShortId: (shortId) => ledger.lookupByShortId(shortId)?.machineId,
-        })
-      } finally {
-        ledger.close()
-      }
-    },
-    async apply(proposalId) {
-      const { knowledgeRoot } = await roots()
-      const result = await applyReview({
-        ...(input.resolveTrustPriors === undefined ? {} : { resolveTrustPriors: input.resolveTrustPriors }),
-        resolvePromotionPosture: await input.resolvePromotionPosture?.(),
-        agentQaRoot: input.agentQaRoot,
-        knowledgeRoot,
-        proposalId,
-        ...(input.applyDelegate === undefined ? {} : { delegate: input.applyDelegate }),
-        ...(() => {
-          const authority = input.resolveWriterAuthority?.()
-          return authority === undefined ? {} : { writerAuthority: authority }
-        })(),
-      })
-      return {
-        outcome: result.outcome,
-        proposal: result.proposal,
-        ...(result.forgetReceipt === undefined ? {} : { forgetReceipt: result.forgetReceipt }),
-        ...(result.commitReceipt === undefined ? {} : { commitReceipt: result.commitReceipt }),
-      }
-    },
+    // 2026-10-01 (432-17, D-05/D-22): `propose` and `apply` are deleted with the proposal inbox.
   }
 }
+
+
 
 // ---- 432-09: an explicit knowledge change, applied in the call (D-04/D-11) ------------------------
 
@@ -2026,16 +1960,9 @@ export interface ComposeLocalAgentInput {
    */
   readonly configScanSeeds?: () => MaskingSeedSources
   /**
-   * How an apply reaches the writer-lease holder when one is alive (387-08 D-18).
-   *
-   * An OPTIONAL operation on the input bag rather than a new production seam (the 386-41 D-2
-   * idiom). `agent-local` cannot name a socket and does not: the CLI host injects a closure over
-   * `invokeViaDaemon`, and the daemon's own composition injects nothing.
-   */
-  readonly applyDelegate?: ApplyDelegate
-  /**
    * 432-12 (D-05): how a direct knowledge change reaches the writer-lease holder when one is alive,
-   * on the same optional-operation idiom as {@link applyDelegate}. The CLI host injects a closure
+   * as an OPTIONAL operation on the input bag rather than a new production seam (the 386-41 D-2
+   * idiom): `agent-local` cannot name a socket and does not. The CLI host injects a closure
    * over `invokeViaDaemon` that invokes the change op there with the same identity; the daemon's
    * own composition injects nothing, because it holds the lease.
    */
@@ -2184,32 +2111,8 @@ export interface ComposeLocalAgentInput {
    * needs is supplied beside the record rather than smuggled into it.
    */
   readonly observeSessionEvent?: (sessionId: string, event: ChatSessionEvent) => void
-  /**
-   * WHICH DOOR THIS COMPOSITION MINTS PROPOSALS AS (400-05) — attribution, never a permission.
-   *
-   * IT IS ABOUT PROPOSALS AND NOTHING ELSE. No composition tags the session header: the session
-   * log's own `surface` option has no writer here since 430 D-08, and the reader still accepts the
-   * dashboard-era headers that carry one. CLI chat and `ask` each have a true answer for which door
-   * minted a PROPOSAL, so this field stays.
-   *
-   * STAMPED AT MINT, READ AT APPLY. The value lands on `ProposalOrigin.surface` when the proposal is
-   * written and is read back off the stored record when somebody accepts it — which may be days
-   * later, from a different door. An apply that asked "which surface am I" would answer about the
-   * person accepting rather than about the agent that proposed, and would be wrong exactly when it
-   * matters (a dashboard proposal accepted from the CLI inbox).
-   *
-   * SUPPLIED BY THE DOOR FROM ITS OWN `FunctionCaller.surface`, never re-spelled: the record a door
-   * dispatches with and the word its proposals carry are one fact, and two spellings of one fact are
-   * free to disagree. The caller does not reach an op — `invokeFunction` dispatches
-   * `spec.invoke(input, deps)` and the caller record stops at the gate — so a composition input is
-   * the seam that exists, and it is the same one 400-01 used for the execution context.
-   *
-   * ABSENT ⇒ NOTHING RECORDED, and that degradation is FAIL-SAFE by design: a door that forgets to
-   * supply one produces a proposal whose reader says `unrecorded`, which is true. It can never
-   * produce a proposal attributed to a door that did not mint it, which is the failure this whole
-   * plan exists to close.
-   */
-  readonly mintingSurface?: string
+  // 2026-10-01 (432-17, D-05): `mintingSurface` — which door a composition minted proposals as
+  // (400-05) — is deleted with the proposal records it stamped. A direct change records no door.
   /**
    * The turn engine's reconciliation strategy (392 D-16).
    *
@@ -3172,10 +3075,6 @@ export function composeLocalAgent(input: ComposeLocalAgentInput): LocalAgentHost
   // one suite, which is the 385 D-15 rule this whole file is under.
   const authoringFunnel: AuthoringFunnelPortLike = {
     receipts: createDraftReceiptsStore({ resolveAgentQaRoot: () => input.agentQaRoot }),
-    proposals: async () => (await createProposalsInbox({
-      resolveAgentQaRoot: () => input.agentQaRoot,
-      now: () => Date.parse(clock.now()),
-    }).list()).map((entry) => entry.envelope),
     quarantine: {
       list: async () => (await createQuarantineOperations({
         resolveKnowledgeRoot: input.knowledgeRoot,
@@ -3308,7 +3207,6 @@ export function composeLocalAgent(input: ComposeLocalAgentInput): LocalAgentHost
         ...(input.resolvePromotionPosture === undefined ? {} : { resolvePromotionPosture: input.resolvePromotionPosture }),
         agentQaRoot: input.agentQaRoot,
         resolveKnowledgeRoot: input.knowledgeRoot,
-        ...(input.applyDelegate === undefined ? {} : { applyDelegate: input.applyDelegate }),
         ...(input.knowledgeChangeDelegate === undefined
           ? {}
           : { knowledgeChangeDelegate: input.knowledgeChangeDelegate }),
@@ -3427,11 +3325,8 @@ export function composeLocalAgent(input: ComposeLocalAgentInput): LocalAgentHost
       // structurally unable to write the records it reports on. Two narrow mirrors over one store
       // rather than one wide port.
       //
-      // `proposals()` maps the inbox's entries down to their envelopes. The inbox row carries
-      // `applyInFlight` beside the envelope — a fact about a decision being applied right now,
-      // which the funnel has no use for: `accepted` counts decisions that were TAKEN, and an
-      // in-flight apply is not one yet. Dropping it here rather than teaching the projection to
-      // ignore it keeps the funnel's input the envelopes it actually reasons about.
+      // 2026-10-01 (432-17, D-06): the bundle no longer reads the proposals inbox; `accepted`
+      // counts recorded acceptances, and none are recorded (see `projectAuthoringFunnel`).
       //
       // `outcomes` IS BOUND (394-17, step b): the port's two verbs now LEAD with `product`, so the
       // binding reads the run-outcome projection on its own primary key instead of guessing a
@@ -3441,33 +3336,8 @@ export function composeLocalAgent(input: ComposeLocalAgentInput): LocalAgentHost
       // bundle: one composition-level answer to "what does this project know about this suite",
       // reached by the funnel read op and by the evaluator's consultation alike.
       authoringFunnel,
-      // 391 PROP-03 / D-15: the enumerable inbox, bound HERE and therefore on BOTH hosts — the
-      // CLI and 386's daemon compose the same root, which is the whole point of 385 D-15 (a
-      // second binding site would be a second answer to "what is waiting on you").
-      //
-      // Bound over `agentQaRoot` rather than the knowledge root, and the difference is the
-      // proposals store's own placement rather than an oversight: D-10 makes proposals
-      // machine-local working state under the GITIGNORED runtime root, precisely because the
-      // human who can accept one is at this machine or its daemon. A proposal is not a committed
-      // artifact and a pull request has no business showing one.
-      //
-      // The root is a FACTORY and the clock is an argument, so this composition supplies both and
-      // the implementation reads neither of its own accord — the same shape its quarantine
-      // neighbour takes, for the same reason. Nothing opens here; the first byte is read when a
-      // verb is invoked, which is what lets this be unconditional: an empty inbox and an absent
-      // proposals directory are the same answer.
-      //
-      // THE SAME `clock`, converted at the one place the two representations meet. `ClockPort`
-      // answers the ISO string every store column and dump row in this host is written in, while
-      // the proposal lifecycle compares against `proposedAt`, which is epoch milliseconds because
-      // that is what `KnowledgeProposalV1` has recorded since 387. Binding `Date.now` here instead
-      // would have been shorter and would have quietly given the inbox a SECOND clock — so a host
-      // that pinned `clock` for a test would still have had its proposals expire against real
-      // wall time, which is the one thing a pinned clock exists to prevent.
-      proposalsInbox: createProposalsInbox({
-        resolveAgentQaRoot: () => input.agentQaRoot,
-        now: () => Date.parse(clock.now()),
-      }),
+      // 2026-10-01 (432-17, D-05/D-22): the proposals inbox (391 PROP-03) is not bound — it is deleted
+      // with its ops. Old files under `<agentQaRoot>/proposals/` are never opened again.
       ...(input.feedback === undefined ? {} : { feedback: input.feedback }),
       ...(input.feedbackReads === undefined ? {} : { feedbackReads: input.feedbackReads }),
       quarantine: createQuarantineOperations({
@@ -3658,44 +3528,8 @@ export function composeLocalAgent(input: ComposeLocalAgentInput): LocalAgentHost
             ) as DraftReceipt
           },
         },
-        // 394-18 D-05/D-11 · WTST-05: where a finished loop outcome became something a person could
-        // find. Since 432 D-06 `authoring.draft.write` writes the final draft itself and files
-        // nothing, so no op reaches this port; 432-17 deletes it with the proposal store.
-        //
-        // Inside the SAME conditional spread as the two loop halves, on their own stated
-        // reasoning: a host that can author a draft and cannot file it is not a degraded author, it
-        // is a host whose `authoring.draft.write` must say `unbound` by name — and the op refuses on
-        // this key at the invoke exactly as it refuses on the other two.
-        //
-        // THE HOST MINTS THE ID AND STAMPS THE INSTANT, because both are facts this composition
-        // owns and `agent` does not. The id goes through the store's own `mintProposalId` — one
-        // recipe for a value that becomes a filename — and `at` is read off the SAME `clock` the
-        // inbox's expiry is computed against, converted at the one place the two representations
-        // meet. `Date.now()` here would have given the mint a second clock, so a host that pinned
-        // its clock for a test would still stamp real wall time on the proposals it wrote.
-        //
-        // `origin.runId` IS CONDITIONALLY SPREAD, never defaulted: the op supplies the run its
-        // receipt already names and omits the field when the receipt names none, and an absent
-        // `runId` has to stay ABSENT rather than become a second spelling of it — `runs.digest`
-        // attributes its rows by `origin?.runId !== undefined`, so a present-`undefined` would be
-        // a proposal claiming a run called nothing.
-        authoringProposals: {
-          put: async (record) => {
-            const proposalId = mintProposalId(() => randomUUID())
-            writePendingProposalRecord(input.agentQaRoot, {
-              schemaVersion: CURRENT_PROPOSAL_RECORD_SCHEMA_VERSION,
-              id: proposalId,
-              kind: record.kind,
-              origin: {
-                emittedBy: record.emittedBy,
-                ...(record.runId === undefined ? {} : { runId: record.runId }),
-                at: Date.parse(clock.now()),
-              },
-              payload: record.payload,
-            } as ProposalRecord)
-            return await Promise.resolve({ proposalId })
-          },
-        },
+        // 2026-10-01 (432-17, D-06): no authoring proposal writer is bound; an authored test is
+        // written in its own call through the shelf's direct writer.
       }),
       // 432-16 (D-07): no test-draft or config commit port and no undo source is bound — agent-qa
       // makes no git commits. The final authored test is written through `draftShelf.publish`.
@@ -3708,15 +3542,6 @@ export function composeLocalAgent(input: ComposeLocalAgentInput): LocalAgentHost
         ? {}
         : { scaffoldContent: input.scaffoldContent }),
       ...(input.configWrite === undefined ? {} : { configWrite: input.configWrite }),
-      // THE PROPOSAL WRITE IS BOUND HERE AND NOT HANDED IN, unlike its three neighbours, because
-      // this composition already owns the durable proposals store — the same `mintProposalId` and
-      // `writePendingProposalRecord` the authoring arm above uses, over the same `agentQaRoot`. A
-      // host-supplied writer would have been a SECOND door into one store, free to mint an id by a
-      // second recipe for a value that becomes a filename.
-      //
-      // The host mints nothing and stamps nothing: `at` is read off the SAME `clock` the inbox's
-      // expiry is computed against, so a composition that pinned its clock for a test does not
-      // still stamp real wall time on the proposals it writes.
       // 395-04 D-09/D-12 · CFGM-02: the construction-time secret scan.
       //
       // THE FUNCTION IS BOUND HERE AND THE SEEDS ARE THE HOST'S, and that split was MEASURED rather
@@ -3731,7 +3556,7 @@ export function composeLocalAgent(input: ComposeLocalAgentInput): LocalAgentHost
       // the environment as it stood at composition time.
       //
       // CONDITIONALLY SPREAD, AND ITS ABSENCE REFUSES. A host that supplies no seed source cannot
-      // propose config changes at all: `config.field.set` names this dep and raises
+      // change the config at all: `config.field.set` names this dep and raises
       // `FunctionNotBoundError` without it. That is deliberately louder than degrading to a
       // pattern-only scan — a guardrail that quietly weakens when one composition line is missing is
       // the silent-permissive failure a security control may not have.
@@ -3741,28 +3566,8 @@ export function composeLocalAgent(input: ComposeLocalAgentInput): LocalAgentHost
           ? {}
           : { configScan: { scan: (parts) => scanConstructedArtifact(parts, seeds()) } }
       })(),
-      configProposals: {
-        put: async (record) => {
-          const proposalId = mintProposalId(() => randomUUID())
-          writePendingProposalRecord(input.agentQaRoot, {
-            schemaVersion: CURRENT_PROPOSAL_RECORD_SCHEMA_VERSION,
-            id: proposalId,
-            kind: record.kind,
-            // 400-05: the minting door, stamped here beside the clock and for the same reason the
-            // clock is stamped here — it is a fact about the COMPOSITION, which is what this
-            // function is, and not about the op, which is why the op does not carry it. Spread
-            // conditionally so a composition that declares no door writes the byte-identical
-            // record it wrote before this field existed.
-            origin: {
-              emittedBy: record.emittedBy,
-              ...(input.mintingSurface === undefined ? {} : { surface: input.mintingSurface }),
-              at: Date.parse(clock.now()),
-            },
-            payload: record.payload,
-          } as ProposalRecord)
-          return await Promise.resolve({ proposalId })
-        },
-      },
+      // 2026-10-01 (432-17, D-05): no config proposal filer is bound; the six config ops write in
+      // the call through `configWrite`.
     },
     auditSink: new JsonlAuditSink(input.agentQaRoot),
     // 432-13 (D-14/D-15): no standing-approval reader, confirm port or session deny overlay reaches

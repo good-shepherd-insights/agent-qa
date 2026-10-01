@@ -8,7 +8,7 @@
     "conformance suite is red, so a regeneration cannot launder an unrelated failure, and no",
     "test-runner update flag reaches this file."
   ],
-  "opCount": 53,
+  "opCount": 46,
   "rows": [
     {
       "bindingStatusAtRoot": "bound",
@@ -76,7 +76,7 @@
       "classifies": true,
       "id": "authoring.draft.edit",
       "inputSchemaDigest": "b5bc4308dc584cb69cd94b97ff8ff3bec0975bdbcc9004c7d96f28e5cd562c7a",
-      "outputSchemaDigest": "2bc17671581ba292c79d8fb0f5506a20e565d3acb6a1cef04238d58713086e22",
+      "outputSchemaDigest": "d6aa990ce2cf9d833d1b5a95b18d21bbab68604db588bfd6f1ecdd52969b7f13",
       "partition": {
         "kind": "projected",
         "tool": "agent_qa_refine_test"
@@ -257,27 +257,6 @@
       }
     },
     {
-      "bindingStatusAtRoot": "unbound",
-      "classifies": true,
-      "id": "config.proposal.apply",
-      "inputSchemaDigest": "cf1854b304be80b60d4100ea341a031fef65230ac16e9563eae88bd151cd0e7d",
-      "outputSchemaDigest": "fe3a678695929d1affd1156bd83522dc4949199a580c0698333b4efdd4ea6fb8",
-      "partition": {
-        "kind": "unprojected",
-        "reason": "proposal-round-removed"
-      },
-      "requiredScopes": [
-        "config-write"
-      ],
-      "resultKind": "unary",
-      "risk": {
-        "declaredTier": "mutating-shared",
-        "name": "fn:config.proposal.apply",
-        "readOnly": false,
-        "recognized": true
-      }
-    },
-    {
       "bindingStatusAtRoot": "bound",
       "classifies": true,
       "id": "config.target.create",
@@ -313,26 +292,6 @@
       "resultKind": "unary",
       "risk": {
         "name": "fn:config.target.edit",
-        "readOnly": false,
-        "recognized": true
-      }
-    },
-    {
-      "bindingStatusAtRoot": "unbound",
-      "classifies": true,
-      "id": "config.undo.propose",
-      "inputSchemaDigest": "71fc596a20f27da3dec80050e5d1f553eba34aea24c2853b853488a811e6b892",
-      "outputSchemaDigest": "7a8846c253dbbbc0db25847d005710df759dcd7d500f92d70889e7e13c02100d",
-      "partition": {
-        "kind": "unprojected",
-        "reason": "proposal-round-removed"
-      },
-      "requiredScopes": [
-        "config-write"
-      ],
-      "resultKind": "unary",
-      "risk": {
-        "name": "fn:config.undo.propose",
         "readOnly": false,
         "recognized": true
       }
@@ -542,27 +501,6 @@
     {
       "bindingStatusAtRoot": "bound",
       "classifies": true,
-      "id": "knowledge.proposal.apply",
-      "inputSchemaDigest": "22ab6f6276b4e60e27758f591e47bb2890bf8ee64c4a0e6e861a97d93e0ae980",
-      "outputSchemaDigest": "e4f72e90664eb610875c63ba32fbfb4982c0b3f673d7d2e7d983c1b3cd0bfa70",
-      "partition": {
-        "kind": "unprojected",
-        "reason": "proposal-round-removed"
-      },
-      "requiredScopes": [
-        "knowledge-write"
-      ],
-      "resultKind": "unary",
-      "risk": {
-        "declaredTier": "mutating-shared",
-        "name": "fn:knowledge.proposal.apply",
-        "readOnly": false,
-        "recognized": true
-      }
-    },
-    {
-      "bindingStatusAtRoot": "bound",
-      "classifies": true,
       "id": "knowledge.record.show",
       "inputSchemaDigest": "3d7f0e0bc33415cdda6cbc7996e50d2c130d39fdc01d75982faa529d72cf3a29",
       "outputSchemaDigest": "efef35363bba4c5deeafb0e82b45eeab7040246faac4154898bbb53e20309961",
@@ -637,90 +575,6 @@
       "risk": {
         "name": "fn:knowledge.reject",
         "readOnly": false,
-        "recognized": true
-      }
-    },
-    {
-      "bindingStatusAtRoot": "bound",
-      "classifies": true,
-      "id": "proposals.accept",
-      "inputSchemaDigest": "5b5b489fc085becee74396ff4acbd351c41986518402afe0e024f057ea45824a",
-      "outputSchemaDigest": "1c9d74ae7a155fcc133b8e937c58d821c7996968b3bc49da0baff0c13cbfaca0",
-      "partition": {
-        "kind": "unprojected",
-        "reason": "requires-human-origin"
-      },
-      "requiredScopes": [
-        "approval-write",
-        "knowledge-write"
-      ],
-      "requiresHumanOrigin": true,
-      "resultKind": "unary",
-      "risk": {
-        "declaredTier": "mutating-shared",
-        "name": "fn:proposals.accept",
-        "readOnly": false,
-        "recognized": true
-      }
-    },
-    {
-      "bindingStatusAtRoot": "bound",
-      "classifies": true,
-      "id": "proposals.list",
-      "inputSchemaDigest": "012cc84b061f0892ac1067e97d8135fcc4f5a59a1ecdb575383b8914719a4401",
-      "outputSchemaDigest": "6bd50afa895c6456c54a11c951695f18b701cb9c2900ff98702adf25ae578f0e",
-      "partition": {
-        "kind": "unprojected",
-        "reason": "proposal-round-removed"
-      },
-      "requiredScopes": [
-        "read"
-      ],
-      "resultKind": "unary",
-      "risk": {
-        "name": "fn:proposals.list",
-        "readOnly": true,
-        "recognized": true
-      }
-    },
-    {
-      "bindingStatusAtRoot": "bound",
-      "classifies": true,
-      "id": "proposals.reject",
-      "inputSchemaDigest": "f6ca5100a80ae14b0d11df3452fb0faf0ca7ac53e4da300bd06872a20809eda6",
-      "outputSchemaDigest": "cc090c0676b7d2fbdfc062373253592f7259c75cb4feaafbfe9b6f39edcacbe8",
-      "partition": {
-        "kind": "unprojected",
-        "reason": "requires-human-origin"
-      },
-      "requiredScopes": [
-        "approval-write"
-      ],
-      "requiresHumanOrigin": true,
-      "resultKind": "unary",
-      "risk": {
-        "name": "fn:proposals.reject",
-        "readOnly": false,
-        "recognized": true
-      }
-    },
-    {
-      "bindingStatusAtRoot": "bound",
-      "classifies": true,
-      "id": "proposals.show",
-      "inputSchemaDigest": "22ab6f6276b4e60e27758f591e47bb2890bf8ee64c4a0e6e861a97d93e0ae980",
-      "outputSchemaDigest": "e9fcdba4a54503708650a469c206b96c17f2fe5023f5d44c557a8171d144bb2c",
-      "partition": {
-        "kind": "unprojected",
-        "reason": "proposal-round-removed"
-      },
-      "requiredScopes": [
-        "read"
-      ],
-      "resultKind": "unary",
-      "risk": {
-        "name": "fn:proposals.show",
-        "readOnly": true,
         "recognized": true
       }
     },

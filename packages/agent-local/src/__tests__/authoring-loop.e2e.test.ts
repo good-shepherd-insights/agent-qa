@@ -67,7 +67,7 @@ import {
   exercisedAnchors,
   renderFanOutPreview,
 } from '@vostride/agent-qa-schema'
-import { foldRunOutcomes, listProposalEnvelopes } from '@vostride/agent-qa-knowledge-local'
+import { foldRunOutcomes } from '@vostride/agent-qa-knowledge-local'
 import type {
   Action,
   AuthoringDraftWriteOutput,
@@ -95,6 +95,16 @@ import type {
   LocalAgentHost,
   RunExecutionPort,
 } from '../composition/compose-local-agent.js'
+
+
+/**
+ * Whatever sits under the deleted proposals store's directory. 2026-10-01 (432-17): the store and
+ * its listing are deleted, so "nothing was filed" is read off the directory itself.
+ */
+function filedProposals(agentQaRoot: string): readonly string[] {
+  const dir = join(agentQaRoot, 'proposals')
+  return existsSync(dir) ? readdirSync(dir) : []
+}
 
 const MASKED_CONFIG: MaskedResolvedConfig = {
   schemaVersion: MASKED_RESOLVED_CONFIG_SCHEMA_VERSION,
@@ -937,7 +947,7 @@ describe('authoring.draft.write end to end through the composition root', () => 
         falsifiableAssertion: true,
       },
     })
-    expect(listProposalEnvelopes(agentQaRoot, { now: Date.now() })).toEqual([])
+    expect(filedProposals(agentQaRoot)).toEqual([])
   })
 
   it('C432-TEST-WRITE-DISPOSITION: writes an UNVERIFIED draft-mode draft, saying it is unverified', async () => {
@@ -1585,7 +1595,7 @@ describe('authoring.draft.write end to end through the composition root', () => 
     )) as AuthoringDraftWriteOutput
 
     expect(result.outcome).toBe('drafted')
-    expect(listProposalEnvelopes(agentQaRoot, { now: Date.now() })).toEqual([])
+    expect(filedProposals(agentQaRoot)).toEqual([])
     // The written bytes join the receipt the same invocation answered with: one artifact.
     const target = 'tests/confirm-the-local-account-form-page-heading.yaml'
     const written = readFileSync(join(workspace, target))
@@ -1655,7 +1665,7 @@ describe('authoring.draft.write end to end through the composition root', () => 
 
     expect(new Set(written).size).toBe(12)
     for (const path of written) expect(existsSync(join(workspace, path))).toBe(true)
-    expect(listProposalEnvelopes(agentQaRoot, { now: Date.now() })).toEqual([])
+    expect(filedProposals(agentQaRoot)).toEqual([])
 
     const funnel = (await invokeFunction(
       host.registry,
@@ -1687,7 +1697,7 @@ describe('authoring.draft.write end to end through the composition root', () => 
 
     expect(failure).toBeInstanceOf(FunctionNotBoundError)
     expect(executor.startInputs).toHaveLength(0)
-    expect(listProposalEnvelopes(agentQaRoot, { now: Date.now() })).toEqual([])
+    expect(filedProposals(agentQaRoot)).toEqual([])
     expect(readdirSync(workspace)).toEqual([])
   })
 

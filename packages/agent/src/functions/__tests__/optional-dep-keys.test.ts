@@ -17,7 +17,6 @@ describe('optional function dep keys (419 GATE3-01)', () => {
       'analysis',
       'recurrence',
       'quarantine',
-      'proposalsInbox',
       'standingGrants',
       'chatTurn',
       'draftEvaluation',
@@ -25,14 +24,9 @@ describe('optional function dep keys (419 GATE3-01)', () => {
       'authoringScope',
       'draftShelf',
       'authoringFunnel',
-      'draftApply',
-      'authoringProposals',
       'configFiles',
       'configValidate',
-      'configApply',
-      'configProposals',
       'configScan',
-      'configUndoSource',
       'scaffoldContent',
       'capabilityCatalog',
       'feedback',
@@ -42,19 +36,23 @@ describe('optional function dep keys (419 GATE3-01)', () => {
   })
 
   // 2026-09-30, 432-07: configWrite, the direct config writer, is the thirtieth binding.
-  it('has exactly 30 optional bindings', () => {
-    expect(OPTIONAL_FUNCTION_DEP_KEYS).toHaveLength(30)
+  // 2026-10-01, 432-17 (D-05/D-07/D-09): proposalsInbox, draftApply, authoringProposals,
+  // configApply, configProposals and configUndoSource leave with the inbox, the apply ops and the
+  // undo, so 30 - 6 = 24.
+  it('has exactly 24 optional bindings', () => {
+    expect(OPTIONAL_FUNCTION_DEP_KEYS).toHaveLength(24)
   })
 })
 
 // 2026-09-15, 423-37: an independent oracle for plan 423-23's mutation, spelled by hand again
 // rather than shared with the pin above.
+// 2026-10-01, 432-17: the six proposal, apply and undo bindings leave the hand-spelled roster too.
 const EXPECTED_BINDINGS = [
   'liveView', 'runInvocation', 'knowledgeReview', 'postProcessing', 'runDetail', 'evidenceBlobs',
-  'analysis', 'recurrence', 'quarantine', 'proposalsInbox', 'standingGrants', 'chatTurn',
-  'draftEvaluation', 'authoringRead', 'authoringScope', 'draftShelf', 'authoringFunnel', 'draftApply',
-  'authoringProposals', 'configFiles', 'configValidate', 'configApply', 'configProposals', 'configScan',
-  'configUndoSource', 'scaffoldContent', 'capabilityCatalog', 'feedback', 'feedbackReads',
+  'analysis', 'recurrence', 'quarantine', 'standingGrants', 'chatTurn',
+  'draftEvaluation', 'authoringRead', 'authoringScope', 'draftShelf', 'authoringFunnel',
+  'configFiles', 'configValidate', 'configScan',
+  'scaffoldContent', 'capabilityCatalog', 'feedback', 'feedbackReads',
   'configWrite',
 ]
 

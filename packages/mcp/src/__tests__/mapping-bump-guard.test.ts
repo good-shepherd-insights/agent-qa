@@ -805,11 +805,13 @@ describe('C432-MCP-TWENTY-TOOLS: twenty tools, the change tools renamed, no prop
 })
 
 describe('C432-RUNTIME-SETS: the actual registry partition after the cutover', () => {
-  it('C432-RUNTIME-SETS: 53 registered ops, 30 projected by twenty tools, 23 dispositioned', () => {
+  // 2026-10-01 (432-17 D-05): 53 -> 46 registered and 23 -> 16 dispositioned. The seven ops that
+  // sat here with the removed proposal round are deleted with the inbox; the projection is unmoved.
+  it('C432-RUNTIME-SETS: 46 registered ops, 30 projected by twenty tools, 16 dispositioned', () => {
     const registryIds = declarations().map((declaration) => declaration.id).sort()
     const projected = [...projectedOpIds()].sort()
     const unprojected = UNPROJECTED_OPS.map((entry) => entry.opId).sort()
-    expect(registryIds).toHaveLength(53)
+    expect(registryIds).toHaveLength(46)
     expect(projected).toHaveLength(30)
     expect(unprojected).toEqual([
       'agent.ask',
@@ -817,16 +819,9 @@ describe('C432-RUNTIME-SETS: the actual registry partition after the cutover', (
       'analysis.get',
       'authoring.funnel.get',
       'config.get',
-      'config.proposal.apply',
-      'config.undo.propose',
       'editor.liveurl',
       'grants.list',
       'grants.revoke',
-      'knowledge.proposal.apply',
-      'proposals.accept',
-      'proposals.list',
-      'proposals.reject',
-      'proposals.show',
       'quarantine.add',
       'quarantine.list',
       'quarantine.release',

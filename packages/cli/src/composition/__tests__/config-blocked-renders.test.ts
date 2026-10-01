@@ -3,12 +3,13 @@
 //
 // 2026-09-30, 432-11 D-05: a blocked change is ANSWERED and nothing is kept, so there is no record
 // for `proposals list` / `proposals show` to render. The surfaces a person reads are now the answer
-// itself and the runtime root, which must hold nothing about the block. The cells below keep their
+// itself and the runtime root, which must hold nothing about the block. 2026-10-01 (432-17): the
+// `proposals` verb itself is deleted, so the runtime root is read directly where the listing was. The cells below keep their
 // claims — the seeded half, context lines, range, position-only parse errors, the HOME control —
 // over those surfaces.
 //
 // CFGM-02's sentence is about what a person can SEE, so this file drives the surfaces a person
-// drives: `agent-qa proposals list` and `agent-qa proposals show`, through `createProposalsCommand`,
+// drove: `agent-qa proposals list` and `agent-qa proposals show`, through `createProposalsCommand`,
 // over a real workspace, with `composeCliLocalAgent` building the host. Nothing here is stubbed —
 // the scan, its SEEDS, the store, the registry and the renderers are all the shipped ones. That is
 // the difference between this file and `construct-blocked.test.ts`, which measures the pipeline with
@@ -65,10 +66,8 @@ import { join } from 'node:path'
 import { invokeFunction } from '@vostride/agent-qa-agent'
 import { renderConfigDiff, utf8Decode, utf8Encode } from '@vostride/agent-qa-schema'
 import type { ConfigChangeOutput } from '@vostride/agent-qa-schema'
-import { Command } from 'commander'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
-import { createProposalsCommand } from '../../commands/proposals.js'
 import { CLI_FUNCTION_CALLER, composeCliLocalAgent } from '../local-agent-host.js'
 
 /**
@@ -191,34 +190,6 @@ afterEach(() => {
   rmSync(root, { recursive: true, force: true })
 })
 
-/** Drive a verb exactly as a person does — the real command, the real composition it builds. */
-async function cli(args: readonly string[]): Promise<string> {
-  const stdout: string[] = []
-  const stderr: string[] = []
-  const log = vi.spyOn(console, 'log').mockImplementation((...values: unknown[]) => {
-    stdout.push(values.map(String).join(' '))
-  })
-  const error = vi.spyOn(console, 'error').mockImplementation((...values: unknown[]) => {
-    stderr.push(values.map(String).join(' '))
-  })
-  const priorExit = process.exitCode
-  process.exitCode = undefined
-  try {
-    const program = new Command()
-      .option('--config <path>', 'config file path')
-      .addCommand(createProposalsCommand())
-    program.exitOverride()
-    await program.parseAsync(['node', 'agent-qa', '--config', configPath, ...args])
-    // STDERR IS RETURNED BESIDE STDOUT, not swallowed: a verb that failed and printed its error to
-    // the other stream would otherwise satisfy an absence assertion by printing nothing at all.
-    return [...stdout, ...stderr].join('\n')
-  } finally {
-    process.exitCode = priorExit
-    log.mockRestore()
-    error.mockRestore()
-  }
-}
-
 /** Change through the PRODUCTION composition — the one that binds the scan's seeds. */
 async function propose(input: {
   readonly path: string
@@ -281,7 +252,8 @@ describe('CFGM-02 on the surfaces a person reads (D-10/D-12)', () => {
       const answer = await propose({ path: 'use.timeout.step', value: '45s' })
       if (answer.outcome !== 'blocked') throw new Error('expected a blocked answer')
       const returned = JSON.stringify(answer)
-      const listed = await cli(['proposals', 'list'])
+      // 2026-10-01 (432-17): the inbox listing is deleted; the runtime root is what a person can read.
+      const listed = persistedText(agentQaRoot)
 
       // THE CHANNEL DEMONSTRABLY WORKS: the answer names the reason, the file, the detector and the
       // field attempted, so the absence below is a fact about what it carries.
@@ -478,7 +450,6 @@ describe('C432-CONFIG-BLOCKED-NO-WRITE: a blocked change is refused in the call 
       expect(proposalFiles()).toEqual([])
       expect(persistedText(agentQaRoot)).not.toContain('guardrail-hit')
       expect(readFileSync(configPath, 'utf8')).toBe(configText({ note: SEEDED_SECRET }))
-      expect(await cli(['proposals', 'list'])).not.toContain('blocked')
     })
 
   it('C432-CONFIG-BLOCKED-NO-WRITE: a schema failure answers position-only issues and files nothing',

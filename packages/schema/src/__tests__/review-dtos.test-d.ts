@@ -9,8 +9,9 @@
 //   2. `BRIEF_WHY_RESULT_KINDS` is the complete arm set of the union, so the "there is no
 //      re-run arm" claim is checked against the union rather than against a list someone
 //      remembered to update.
-//   3. The proposal's `deltas` are typed as `Delta`, so the boundary's envelope-depth
-//      runtime check has not silently widened the static type to `unknown`.
+//   3. A change's `deltas` are typed as `Delta`, so the boundary's envelope-depth runtime
+//      check has not silently widened the static type to `unknown`. (RE-SPELLED 2026-10-01,
+//      432-17: the proposal payload is deleted; the mark plan carries the deltas a change writes.)
 import { expectTypeOf } from 'vitest'
 
 import { DELTA_KINDS } from '../delta/delta'
@@ -20,9 +21,11 @@ import type { DeltaEnvelope } from '../delta/envelope'
 import type {
   ForgetReceiptV1,
   ForgetTargetRef,
-  KnowledgeProposalV1,
+  KnowledgeChangeOutput,
+  KnowledgeReviewVerb,
   KnowledgeTargetRef,
-} from '../knowledge/proposal'
+} from '../knowledge/change'
+import type { ImprovementPlanKnowledge } from '../functions/feedback'
 import type { BriefWhyResult } from '../knowledge/review-verbs'
 import { BRIEF_WHY_RESULT_KINDS } from '../knowledge/review-verbs'
 import type { ServedRetrievalTraceV1 } from '../brief/retrieval-trace'
@@ -52,12 +55,13 @@ expectTypeOf<
   Extract<keyof Extract<BriefWhyResult, { kind: 'no-trace' }>, 'trace'>
 >().toEqualTypeOf<never>()
 
-// 3. The proposal's deltas keep their §7.3 static type through the boundary.
-expectTypeOf<KnowledgeProposalV1['deltas']>().toEqualTypeOf<Delta[]>()
+// 3. A change's deltas keep their §7.3 static type through the boundary.
+expectTypeOf<ImprovementPlanKnowledge['deltas']>().toEqualTypeOf<Delta[]>()
 
-// The forget target is the SAME type as the proposal's target, not a parallel one.
+// The forget target is the SAME type as a change's target, not a parallel one.
 expectTypeOf<ForgetTargetRef>().toEqualTypeOf<KnowledgeTargetRef>()
-expectTypeOf<KnowledgeProposalV1['targetRef']>().toEqualTypeOf<KnowledgeTargetRef>()
+expectTypeOf<Extract<KnowledgeChangeOutput, { outcome: 'target-not-found' }>['target']>()
+  .toEqualTypeOf<KnowledgeTargetRef>()
 
 // The receipt's resulting status is the MEM card's vocabulary — the fact that makes
 // "designed once for both uses" (D-04 + D-19) true rather than aspirational.
@@ -69,8 +73,8 @@ const target: KnowledgeTargetRef = { grain: 'bundle', shortId: 'MEM-001' }
 // @ts-expect-error the target grain is closed; a product-wide forget is not expressible.
 const wideTarget: KnowledgeTargetRef = { grain: 'product', product: 'shop' }
 
-// @ts-expect-error the review verb vocabulary is closed at accept/reject/forget.
-const purge: KnowledgeProposalV1['verb'] = 'purge'
+// @ts-expect-error the review verb vocabulary is closed at accept/reject/forget/mark.
+const purge: KnowledgeReviewVerb = 'purge'
 
 void target
 void wideTarget

@@ -438,7 +438,7 @@ describe('399.1 — the turn shape a person reads (E2E-02 empty/ordering edges)'
     // WHY ORDER IS A CLAIM AND NOT A DETAIL: two payload documents printed with no ordering
     // guarantee are two documents a reader has to tell apart by content, and the labels the render
     // adds for a compound turn are only useful if they sit above the payload they name.
-    const observed = await driveChatLines(['/fn proposals.list {} then /fn config.get {}'])
+    const observed = await driveChatLines(['/fn quarantine.list {} then /fn config.get {}'])
 
     expect(
       observed.receipts.map((receipt) => receipt.functionId),
@@ -498,10 +498,10 @@ describe('399.1 — the turn shape a person reads (E2E-02 empty/ordering edges)'
     // one executes and one fails. Both surfaces print ALL receipts and THEN all payloads, so the
     // receipt line standing nearest above the payload block belongs to the SECOND clause — the one
     // that failed — while the payload beneath it belongs to the FIRST. A person reads
-    // `{ "entries": [] }` as `runs.digest`'s answer when it is `proposals.list`'s. One op's output
+    // `{ "entries": [] }` as `runs.digest`'s answer when it is `quarantine.list`'s (`proposals.list` until 432-17). One op's output
     // read as another op's is the legibility class this phase exists to close (D-04, phase goal).
     const observed = await driveChatLines([
-      '/fn proposals.list {} then /fn runs.digest {"runId":"r_nope"}',
+      '/fn quarantine.list {} then /fn runs.digest {"runId":"r_nope"}',
     ])
 
     // NON-VACUITY FIRST, each naming what broke if it trips. The mixed shape is a property of the
@@ -571,7 +571,7 @@ describe('399.1 — the turn shape a person reads (E2E-02 empty/ordering edges)'
     // already names the op, so a label here would put the same word twice on two consecutive lines.
     // The third shape — receipts == results > 1 — is pinned by the ordering cell above, whose
     // comparand is the labelled compound render.
-    const observed = await driveChatLines(['/fn proposals.list {}'])
+    const observed = await driveChatLines(['/fn quarantine.list {}'])
 
     // NON-VACUITY FIRST: a drive that never reached the capability would satisfy "no label" trivially.
     expect(

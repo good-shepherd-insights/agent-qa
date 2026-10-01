@@ -211,11 +211,6 @@ const RUN_ID_FIELD_VERDICTS: Readonly<
     plainString: 1,
     verdict: 'reaches no path join — run attribution on a fan-out row.',
   },
-  'proposal/envelope.ts': {
-    hardened: 0,
-    plainString: 1,
-    verdict: 'reaches no path join — optional run attribution on a proposal envelope.',
-  },
   'knowledge/bundle-files.ts': {
     hardened: 0,
     plainString: 1,
@@ -267,14 +262,17 @@ const RUN_ID_FIELD_VERDICTS: Readonly<
       + '2026-09-15 (423-37): the mark preview adds two, the shared prospective arm shape and '
       + 'the already-marked arm; its five refusal arms are runs.mark\'s own objects, not new fields.',
   },
-  'knowledge/proposal.ts': {
+  'knowledge/change.ts': {
     hardened: 0,
     plainString: 1,
     verdict:
       '2026-09-08 (419-01): MarkProposalStamp.runId is persisted attribution on a '
       + 'knowledge proposal, not an unchecked path segment or a run-execution input. '
       + 'The mark input and plan address have already crossed the canonical codec; '
-      + 'the stamp preserves the originating run reference as evidence.',
+      + 'the stamp preserves the originating run reference as evidence. '
+      + '2026-10-01 (432-17): the stamp moved to knowledge/change.ts as MarkChangeStamp with '
+      + 'the direct change contracts, and proposal/envelope.ts (optional run attribution on a '
+      + 'proposal envelope) is deleted with the inbox.',
   },
   'knowledge/review-verbs.ts': {
     hardened: 0,

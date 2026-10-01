@@ -245,10 +245,8 @@ describe('the catalog\'s example calls (D-08)', () => {
       + 'params carry a construct the derivation will not guess at (today: a regular-expression '
       + '`pattern`). A new member is a deliberate decision, not a default.',
     ).toEqual([
-      'knowledge.proposal.apply',
-      'proposals.accept',
-      'proposals.reject',
-      'proposals.show',
+      // 2026-10-01 (432-17): `knowledge.proposal.apply` and `proposals.accept`/`reject`/`show` left
+      // with the inbox, so the set is down to its one 405-05 member.
       // 2026-08-27 (405-05 D-12/D-13): a FIFTH member, in sort position, and a deliberate one.
       // `runs.artifact` requires a `sha` constrained to 64 lowercase hex, and the derivation will
       // not guess at a regular-expression `pattern` — which is right: an invented sha would be a

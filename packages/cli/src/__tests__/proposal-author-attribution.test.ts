@@ -33,7 +33,6 @@ import type { FunctionCaller, FunctionScope } from '@vostride/agent-qa-schema'
 import { FunctionScopeSchema, RunsMarkOutcomeSchema } from '@vostride/agent-qa-schema'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { CHAT_DOOR_SURFACE } from '../commands/chat.js'
 import { composeDashboardDoor, RUN_SERVICE_GRANTED_SCOPES } from '../commands/dashboard.js'
 import { mcpFunctionCaller } from '../commands/mcp.js'
 import * as cliHost from '../composition/local-agent-host.js'
@@ -43,6 +42,9 @@ import { markFixture } from '../gates/__tests__/feedback-fixture.js'
 import { SURFACE_ROSTER } from './conformance/roster.js'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
+
+/** The chat door's caller surface (`CHAT_SURFACE` until 432-17 deleted it with `mintingSurface`). */
+const CHAT_SURFACE = 'chat'
 const PACKAGES_ROOT = join(HERE, '..', '..', '..')
 
 /**
@@ -158,16 +160,14 @@ const DOORS: readonly Door[] = [
     compose: (workspace) => composeCliLocalAgent({
       agentQaRoot: workspace.agentQaRoot,
       configPath: workspace.configPath,
-      mintingSurface: CLI_FUNCTION_CALLER.surface,
     }),
   },
   {
     name: 'chat',
-    caller: { ...CLI_FUNCTION_CALLER, surface: CHAT_DOOR_SURFACE },
+    caller: { ...CLI_FUNCTION_CALLER, surface: CHAT_SURFACE },
     compose: (workspace) => composeCliLocalAgent({
       agentQaRoot: workspace.agentQaRoot,
       configPath: workspace.configPath,
-      mintingSurface: CHAT_DOOR_SURFACE,
     }),
   },
   {
@@ -176,7 +176,6 @@ const DOORS: readonly Door[] = [
     compose: (workspace) => composeCliLocalAgent({
       agentQaRoot: workspace.agentQaRoot,
       configPath: workspace.configPath,
-      mintingSurface: 'mcp',
     }),
   },
   {
@@ -417,7 +416,8 @@ describe('a pre-432 config record is never applied or committed (D-07, D-22)', (
   // RE-SPELLED 2026-10-01 (432-16): cells (1)-(4) accepted a stored record and read its author off
   // `git log` — a dashboard-surfaced record (1), a chat-minted one (2), an unrecognised surface (4)
   // and a legacy record with none (3). The CLI host binds no config apply port now, so each of them
-  // is refused by name before any file or ref moves. 432-17 deletes the accept verb itself.
+  // is refused by name before any file or ref moves. 432-17 deleted the accept verb itself, so the
+  // refusal is now `UnknownFunctionError` rather than `FunctionNotBoundError`, and still nothing moves.
   const LEGACY_RECORD = JSON.parse(readFileSync(LEGACY_FIXTURE, 'utf8')) as {
     id: string
     origin: Record<string, unknown>
@@ -438,7 +438,7 @@ describe('a pre-432 config record is never applied or committed (D-07, D-22)', (
     ['(1) a dashboard-surfaced record', 'dashboard'],
     ['(3) a legacy record with no surface', undefined],
     ['(4) a record naming a surface this build does not know', 'voice> <someone-else@example.invalid'],
-  ] as const)('C432-NO-GIT-COMMIT: %s is refused unbound, and the file and history stay put',
+  ] as const)('C432-NO-GIT-COMMIT: %s is refused as unknown, and the file and history stay put',
     async (_label, surface) => {
       const workspace = seedWorkspace()
       const id = plantLegacy(workspace, surface)
@@ -448,7 +448,7 @@ describe('a pre-432 config record is never applied or committed (D-07, D-22)', (
 
       vi.useFakeTimers({ toFake: ['Date'], now: Number(LEGACY_RECORD.origin.at) + 1 })
       try {
-        await expect(acceptPre432(workspace, id)).rejects.toMatchObject({ name: 'FunctionNotBoundError' })
+        await expect(acceptPre432(workspace, id)).rejects.toMatchObject({ name: 'UnknownFunctionError' })
       } finally {
         vi.useRealTimers()
       }
@@ -458,35 +458,32 @@ describe('a pre-432 config record is never applied or committed (D-07, D-22)', (
       expect(workspace.git('status', '--porcelain').trim()).toBe('')
     })
 
-  it('C432-NO-GIT-COMMIT: (2) a chat-minted record is refused unbound, and the file and history stay put', async () => {
+  it('C432-NO-GIT-COMMIT: (2) a chat-minted record is refused as unknown, and the file and history stay put', async () => {
     const workspace = seedWorkspace()
     const { proposalId } = await filePre432ConfigProposal({
       configPath: workspace.configPath,
       agentQaRoot: workspace.agentQaRoot,
       edits: [{ path: 'use.timeout.step', value: '45s' }],
-      surface: CHAT_DOOR_SURFACE,
+      surface: CHAT_SURFACE,
     })
     const before = repositoryState(workspace)
 
-    await expect(acceptPre432(workspace, proposalId)).rejects.toMatchObject({ name: 'FunctionNotBoundError' })
+    await expect(acceptPre432(workspace, proposalId)).rejects.toMatchObject({ name: 'UnknownFunctionError' })
 
     expect(readFileSync(workspace.configPath, 'utf8')).toBe(SEEDED_CONFIG)
     expect(repositoryState(workspace)).toEqual(before)
   })
 })
 
-describe('every rostered door still supplies a minting surface', () => {
-  it('(5) every rostered door supplies a minting surface — the census, over the roster itself', () => {
-    // RETAINED 2026-10-01 (432-16): nothing reads the surface for attribution any more, but the
-    // doors still stamp it on the composition, and 432-17 removes it with the proposal record it
-    // lands on. The census stays until then so a door cannot silently stop supplying it.
+describe('no door supplies a minting surface (432-17, D-05)', () => {
+  it('(5) no rostered door supplies a minting surface — the census, over the roster itself', () => {
+    // RE-SPELLED 2026-10-01 (432-17): `mintingSurface` stamped the proposal records the inbox held,
+    // and is deleted with them. The census now proves no door module still supplies one.
     const MODULE_FOR_DOOR: Readonly<Record<string, string>> = {
       chat: 'chat.ts',
       mcp: 'mcp.ts',
       fn: 'fn.ts',
     }
-    // 402-07: the authed run service reaches `runs.start` and nothing else, so it cannot change
-    // configuration; the exemption is re-read off its shipped grant.
     const CANNOT_MINT: Readonly<Record<string, readonly FunctionScope[]>> = {
       'run-service': RUN_SERVICE_GRANTED_SCOPES,
     }
@@ -500,24 +497,14 @@ describe('every rostered door still supplies a minting surface', () => {
         .sort(),
     )
     for (const entry of SURFACE_ROSTER) {
-      const exemptGrant = CANNOT_MINT[entry.id]
-      if (exemptGrant !== undefined) {
-        expect(
-          [...exemptGrant],
-          `${entry.id}: exempt from the minting-surface census only while it cannot write config`,
-        ).not.toContain('config-write')
-        continue
-      }
+      if (CANNOT_MINT[entry.id] !== undefined) continue
       const module = MODULE_FOR_DOOR[entry.id]
       if (module === undefined) {
-        throw new Error(
-          `the roster carries a door this census has no module for: ${entry.id}. `
-          + 'Name its command module here, and check that it supplies a mintingSurface.',
-        )
+        throw new Error(`the roster carries a door this census has no module for: ${entry.id}.`)
       }
       const source = readFileSync(join(HERE, '..', 'commands', module), 'utf8')
-      expect(`${entry.id}: ${source.includes('mintingSurface:') ? 'supplies' : 'omits'}`)
-        .toBe(`${entry.id}: supplies`)
+      expect(`${entry.id}: ${source.includes('mintingSurface') ? 'supplies' : 'omits'}`)
+        .toBe(`${entry.id}: omits`)
     }
   })
 })

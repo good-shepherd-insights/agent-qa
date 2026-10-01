@@ -562,7 +562,8 @@ describe('REGISTRY-NO-SEARCH (D-09)', () => {
       AGENT_QA_TOOL_PROJECTIONS.map((projection) => projection.name),
     )
     expect(census).toEqual([])
-    expect(allDeclarations()).toHaveLength(53)
+    // 2026-10-01 (432-17 D-05): 53 -> 46, the seven proposal-inbox, apply and undo ops deleted.
+    expect(allDeclarations()).toHaveLength(46)
   })
 
   it('flags a planted knowledge.search declaration through the same census', () => {

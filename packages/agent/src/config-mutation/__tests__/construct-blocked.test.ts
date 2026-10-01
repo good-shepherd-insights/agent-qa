@@ -58,27 +58,21 @@
 //                           validator's output after letting it read unscanned bytes.
 
 import {
-  CURRENT_CONFIG_PROPOSAL_SCHEMA_VERSION,
   renderConfigDiff,
   utf8Decode,
   utf8Encode,
 } from '@vostride/agent-qa-schema'
 import type {
   ConfigChangeOutput,
-  ConfigProposalV1,
-  ProposalEnvelope,
-  ProposalsAcceptOutput,
 } from '@vostride/agent-qa-schema'
 import { scanConstructedArtifact } from '@vostride/agent-qa-safety'
 import { describe, expect, it } from 'vitest'
 
 import { configFieldSetSpec } from '../../functions/ops/config-field-set.js'
-import { proposalsAcceptSpec } from '../../functions/ops/proposals-accept.js'
 import { FunctionNotBoundError } from '../../functions/spec.js'
 import type { FunctionDeps } from '../../functions/spec.js'
+import * as construct from '../construct.js'
 import {
-  BlockedConfigProposalError,
-  applyablePayload,
   changeConfigField,
   configFieldSetSummaryLine,
 } from '../construct.js'
@@ -479,58 +473,13 @@ describe('the blocked posture: one posture, two reasons (CFGM-01 · D-10)', () =
     expect(unflagged.crossBoundaryReasons).toEqual([])
   })
 
-  it('(8) accepting a blocked proposal answers not-applyable, with the reason and the id', async () => {
-    const blocked: ConfigProposalV1 = {
-      schemaVersion: CURRENT_CONFIG_PROPOSAL_SCHEMA_VERSION,
-      payloadKind: 'blocked',
-      action: 'config.field.set',
-      summaryLine: 'set workspace.envFile — blocked: the proposed change would write a secret',
-      blockedReason: 'guardrail-hit',
-      paths: [CONFIG_FILE],
-      scanFindings: [{
-        path: CONFIG_FILE,
-        detector: 'awsKey',
-        redactedFingerprint: PLANTED_FINGERPRINT,
-      }],
-    }
-    const envelope: ProposalEnvelope = {
-      id: 'prop-blocked',
-      kind: 'config',
-      status: 'pending',
-      evidenceRefs: [],
-      payload: blocked,
-    }
-
-    const deps = {
-      proposalsInbox: {
-        list: () => Promise.resolve([]),
-        show: () => Promise.resolve({ kind: 'found' as const, entry: { envelope, applyInFlight: false } }),
-        reject: () => Promise.resolve({ outcome: 'not-found' as const, proposalId: 'prop-blocked' }),
-        recordApplied: () => {
-          throw new Error('a blocked proposal must never reach the decision recorder')
-        },
-      },
-      configApply: {
-        apply: () => {
-          throw new Error('a blocked proposal must never reach the apply port')
-        },
-      },
-    } as unknown as FunctionDeps
-
-    const answer = await proposalsAcceptSpec.invoke(
-      { proposalId: 'prop-blocked' },
-      deps,
-    ) as ProposalsAcceptOutput
-
-    expect(answer.apply.outcome).toBe('not-applyable')
-    if (answer.apply.outcome !== 'not-applyable') throw new Error('unreachable')
-    expect(answer.apply.proposalId).toBe('prop-blocked')
-    expect(answer.apply.reason).toBe('guardrail-hit')
-    // No standing approval is minted for an apply that did not happen.
-    expect(answer.grant.kind).toBe('not-requested')
-
-    // AND THE FUNNEL STILL REFUSES BY NAME one layer down, for every caller no surface mediates.
-    expect(() => applyablePayload(blocked)).toThrow(BlockedConfigProposalError)
+  // RE-SPELLED 2026-10-01 (432-17, D-05): this cell accepted a stored blocked proposal through
+  // `proposals.accept` and pinned the `applyablePayload` funnel one layer down. Nothing is filed any
+  // more (C432-CONFIG-BLOCKED-NO-WRITE below), the accept op is deleted with the inbox, and so is the
+  // funnel that guarded an apply port no host binds. What remains is the absence of both.
+  it('(8) no blocked record can be accepted: there is no apply funnel and no accept op', () => {
+    expect('applyablePayload' in construct).toBe(false)
+    expect('BlockedConfigProposalError' in construct).toBe(false)
   })
 
   it('(9) a composition with no scan bound cannot change the config at all', async () => {

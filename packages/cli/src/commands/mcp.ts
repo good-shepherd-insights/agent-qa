@@ -378,16 +378,14 @@ export function createMcpCommand(): Command {
           analytics,
           agentQaRoot,
           configPath,
-          // 400-05: READ OFF THIS DOOR'S OWN CALLER, never re-typed. An MCP client proposing a
-          // config change is a distinct door from the two interactive ones, and the person who
-          // later accepts it in their inbox is entitled to know which asked.
-          mintingSurface: MCP_FUNCTION_CALLER.surface,
+          // 2026-10-01 (432-17, D-05): no minting surface — a change is written in the call and
+          // nothing is filed for a later reader to attribute.
           // 432-16 (D-14): no confirm port exists to refuse. 396-01 D-09 passed `confirm: undefined`
           // here so the host would never write a prompt onto the JSON-RPC stdout; the host has no
           // prompt and no such field now.
-          // `applyDelegate` is deliberately NOT passed. The composition root's own default is
-          // already a closure over `invokeViaDaemon` — the same socket every other capability
-          // crosses — so an apply that needs a lease a running daemon holds is handed to that
+          // `knowledgeChangeDelegate` is deliberately NOT passed. The composition root's own default
+          // is already a closure over `invokeViaDaemon` — the same socket every other capability
+          // crosses — so a change that needs a lease a running daemon holds is handed to that
           // daemon. Supplying one here would be a second transport for one job (D-09).
         })
 

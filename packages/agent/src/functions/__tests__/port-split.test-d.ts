@@ -22,9 +22,7 @@ import { describe, expectTypeOf, test } from 'vitest'
 import type { mapStepEvidenceToWhy } from '../ops/knowledge-brief-why.js'
 import type {
   FunctionDeps,
-  KnowledgeApplyOutcome,
   KnowledgeChangeRequest,
-  KnowledgeProposalRequest,
   KnowledgeReaderPort,
   KnowledgeReviewPort,
   OptionalFunctionDepKey,
@@ -185,6 +183,8 @@ expectTypeOf<KnowledgeReaderPort>().not.toMatchTypeOf<KnowledgeReviewPort>()
 // 2026-09-08, 419 GATE3-01: feedback is the twenty-eighth member, pinned BY NAME.
 // 2026-09-15, 423 D-19: feedbackReads is the twenty-ninth, a read-only port beside the writer.
 // 2026-09-30, 432-07 D-05/D-07: configWrite is the thirtieth, the direct config writer.
+// 2026-10-01, 432-17 D-05/D-07/D-09: proposalsInbox, draftApply, authoringProposals, configApply,
+// configProposals and configUndoSource leave with the inbox, the apply ops and the undo (24 members).
 expectTypeOf<OptionalFunctionDepKey>()
   .toEqualTypeOf<
     | 'liveView'
@@ -196,7 +196,6 @@ expectTypeOf<OptionalFunctionDepKey>()
     | 'analysis'
     | 'recurrence'
     | 'quarantine'
-    | 'proposalsInbox'
     | 'standingGrants'
     | 'chatTurn'
     | 'draftEvaluation'
@@ -204,14 +203,9 @@ expectTypeOf<OptionalFunctionDepKey>()
     | 'authoringScope'
     | 'draftShelf'
     | 'authoringFunnel'
-    | 'draftApply'
-    | 'authoringProposals'
     | 'configFiles'
     | 'configValidate'
-    | 'configApply'
-    | 'configProposals'
     | 'configScan'
-    | 'configUndoSource'
     | 'scaffoldContent'
     | 'capabilityCatalog'
     | 'feedback'
@@ -237,12 +231,11 @@ expectTypeOf<keyof QuarantineOperationsPort>().toEqualTypeOf<'list' | 'release' 
 // implements against this and a third member arriving quietly would be a third power no host
 // declared.
 // 2026-09-30, 432-12 (D-05): `change` arrives BY NAME — the direct change every change op reaches.
-// `propose` and `apply` stay only for the pre-432 records on disk until 432-17 deletes them.
-expectTypeOf<keyof KnowledgeReviewPort>().toEqualTypeOf<'change' | 'propose' | 'apply'>()
+// 2026-10-01, 432-17 (D-05/D-22): `propose` and `apply` are deleted with the inbox; `change` is the
+// port's only member.
+expectTypeOf<keyof KnowledgeReviewPort>().toEqualTypeOf<'change'>()
 expectTypeOf<KnowledgeChangeRequest['verb']>().toEqualTypeOf<'accept' | 'reject' | 'forget'>()
 expectTypeOf<KnowledgeChangeRequest['operationId']>().toEqualTypeOf<string | undefined>()
-expectTypeOf<KnowledgeProposalRequest['verb']>().toEqualTypeOf<'accept' | 'reject' | 'forget' | 'mark'>()
-expectTypeOf<KnowledgeApplyOutcome['forgetReceipt']>().toBeNullable()
 
 // ---- 3. The step-evidence read distinguishes four situations, not two -------------------------
 //
@@ -278,12 +271,13 @@ expectTypeOf<Parameters<typeof mapStepEvidenceToWhy>>().toEqualTypeOf<
 // 2026-09-15, 423-37: an independent oracle for plan 423-23's mutation. The union below is spelled
 // by hand again rather than shared with section 2, and every assertion sits inside a `test` block
 // so vitest counts it; the top-level pins above typecheck but report no tests.
+// 2026-10-01 (432-17): the six proposal, apply and undo deps leave the hand-spelled union too.
 type HandSpelledOptionalDepKey =
   | 'liveView' | 'runInvocation' | 'knowledgeReview' | 'postProcessing' | 'runDetail'
-  | 'evidenceBlobs' | 'analysis' | 'recurrence' | 'quarantine' | 'proposalsInbox'
+  | 'evidenceBlobs' | 'analysis' | 'recurrence' | 'quarantine'
   | 'standingGrants' | 'chatTurn' | 'draftEvaluation' | 'authoringRead' | 'authoringScope'
-  | 'draftShelf' | 'authoringFunnel' | 'draftApply' | 'authoringProposals' | 'configFiles'
-  | 'configValidate' | 'configApply' | 'configProposals' | 'configScan' | 'configUndoSource'
+  | 'draftShelf' | 'authoringFunnel' | 'configFiles'
+  | 'configValidate' | 'configScan'
   | 'scaffoldContent' | 'capabilityCatalog' | 'feedback' | 'feedbackReads' | 'configWrite'
 
 describe('C423-FEEDBACK-BINDINGS-EXACT', () => {

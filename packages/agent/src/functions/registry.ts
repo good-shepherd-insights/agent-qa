@@ -21,10 +21,8 @@ import { configAuthSetSpec } from './ops/config-auth-set.js'
 import { configFieldSetSpec } from './ops/config-field-set.js'
 import { configHookAddSpec } from './ops/config-hook-add.js'
 import { configGetSpec } from './ops/config-get.js'
-import { configProposalApplySpec } from './ops/config-proposal-apply.js'
 import { configTargetCreateSpec } from './ops/config-target-create.js'
 import { configProjectScaffoldSpec } from './ops/config-project-scaffold.js'
-import { configUndoProposeSpec } from './ops/config-undo-propose.js'
 import { configTargetEditSpec } from './ops/config-target-edit.js'
 import { entitiesGetSpec } from './ops/entities-get.js'
 import { explainSpec } from './ops/explain.js'
@@ -36,15 +34,10 @@ import { knowledgeBriefWhySpec } from './ops/knowledge-brief-why.js'
 import { knowledgeBundlesListSpec } from './ops/knowledge-bundles-list.js'
 import { knowledgeGatesListSpec } from './ops/knowledge-gates-list.js'
 import { knowledgeForgetSpec } from './ops/knowledge-forget-propose.js'
-import { knowledgeProposalApplySpec } from './ops/knowledge-proposal-apply.js'
 import { knowledgeRecordShowSpec } from './ops/knowledge-record-show.js'
 import { knowledgeRecordsDiffSpec } from './ops/knowledge-records-diff.js'
 import { knowledgeRecordsInspectSpec } from './ops/knowledge-records-inspect.js'
 import { knowledgeRejectSpec } from './ops/knowledge-reject-propose.js'
-import { proposalsAcceptSpec } from './ops/proposals-accept.js'
-import { proposalsListSpec } from './ops/proposals-list.js'
-import { proposalsRejectSpec } from './ops/proposals-reject.js'
-import { proposalsShowSpec } from './ops/proposals-show.js'
 import { quarantineAddSpec } from './ops/quarantine-add.js'
 import { quarantineListSpec } from './ops/quarantine-list.js'
 import { quarantineReleaseSpec } from './ops/quarantine-release.js'
@@ -199,28 +192,24 @@ const BUILT_IN_FUNCTION_SPECS: readonly FunctionSpec[] = [
   // than omitting them: a capability that is absent from a catalogue is indistinguishable from one
   // that never existed, and D-09 requires the two to look different.
   // 2026-09-30, 432-12 (D-05): the three changes apply in the call; the `.propose` ids are gone
-  // with no alias. The pre-432 apply stays for the records already on disk until 432-17.
+  // with no alias. 2026-10-01, 432-17 (D-05/D-22): `knowledge.proposal.apply` is deleted with the
+  // inbox; old proposal files are never read again.
   knowledgeAcceptSpec as FunctionSpec,
   knowledgeRejectSpec as FunctionSpec,
   knowledgeForgetSpec as FunctionSpec,
-  knowledgeProposalApplySpec as FunctionSpec,
   configGetSpec as FunctionSpec,
-  // 395 D-01/D-03 · CFGM-01/CFGM-03: the config editor's first action and the ONE verb through
-  // which committed configuration changes. Registered as SIBLINGS of `config.get` rather than in a
-  // family of their own, because they are the write half of a story whose read half already ships
-  // here — and registering them is what makes them instantly chat-reachable (392 D-07), projectable
-  // over MCP (396) and walkable by the parity suite (397) with no harness change anywhere.
+  // 395 D-01/D-03 · CFGM-01: the config editor's first action. Registered as a SIBLING of
+  // `config.get` rather than in a family of its own, because it is the write half of a story whose
+  // read half already ships here — and registering it is what makes it chat-reachable (392 D-07),
+  // projectable over MCP (396) and walkable by the parity suite (397) with no harness change.
   //
-  // The propose op stays at the recognized-mutating floor: it commits nothing, so gating it would
-  // be asking about the request rather than the act. The apply carries `mutating-shared` — the
-  // person's git history is not this machine's business alone — and its class is GRANTABLE, which
-  // is D-02's design: the per-proposal `crossBoundary` flag is what protects a boundary-crossing
-  // change, not a blanket refusal of the class.
+  // 2026-09-30, 432-11 (D-05/D-07): the config ops write in the call through the direct writer.
+  // 2026-10-01, 432-17 (D-05/D-09): `config.proposal.apply` and `config.undo.propose` are deleted
+  // with the inbox; a written change is reverted with git.
   //
-  // Both bind through OPTIONAL deps, so a host with no config files lists them `unbound` BY NAME
-  // rather than answering an empty proposal about a project it cannot read.
+  // They bind through OPTIONAL deps, so a host with no config files lists them `unbound` BY NAME
+  // rather than answering about a project it cannot read.
   configFieldSetSpec as FunctionSpec,
-  configProposalApplySpec as FunctionSpec,
   // 395-05 D-01: the rest of the closed action class, registered as SIBLINGS on exactly the footing
   // above. One op per action is what makes the class legible in the registry itself — the planner
   // picks an action by tool name, 396 projects each one as its own MCP tool, and 397's parity walk
@@ -230,15 +219,7 @@ const BUILT_IN_FUNCTION_SPECS: readonly FunctionSpec[] = [
   configHookAddSpec as FunctionSpec,
   configTargetCreateSpec as FunctionSpec,
   configTargetEditSpec as FunctionSpec,
-  // 395-06 D-07: the SEVENTH propose op, and its being an op at all is the decision. Undo could
-  // have been an apply-side verb that reverted a commit directly; that would have been a second
-  // channel through which committed configuration changes, so it is a propose op on exactly the
-  // footing of the six above and reaches the same `config.proposal.apply`. Registering it here is
-  // what makes it chat-reachable (392 D-07), projectable over MCP (396) and walkable by the parity
-  // suite (397) with no harness change — and what makes "there is no revert verb" checkable by
-  // reading the registry rather than by trusting a sentence.
-  configUndoProposeSpec as FunctionSpec,
-  // 395-08 D-13/D-15 · CFGM-05: the EIGHTH config op, and the only one that configures a project
+  // 395-08 D-13/D-15 · CFGM-05: the sixth config op, and the only one that configures a project
   // that has no configuration. Registered rather than folded into `config.target.create` because
   // the two refuse each other's case by name — a create is never an upsert, and a scaffold is
   // never an overwrite — and because the planner picks actions by tool name.
@@ -252,22 +233,9 @@ const BUILT_IN_FUNCTION_SPECS: readonly FunctionSpec[] = [
   quarantineListSpec as FunctionSpec,
   quarantineReleaseSpec as FunctionSpec,
   quarantineAddSpec as FunctionSpec,
-  // 391 PROP-03 / D-15: a new `proposals.` domain — the inbox §3.3 said was missing. A taxonomy
-  // extension exactly as `quarantine.` was, and deliberately NOT filed under `knowledge.`: the
-  // envelope is kind-generic, so 393-396's test-draft, config and MCP proposals reach these same
-  // three verbs. All three bind through the OPTIONAL `proposalsInbox` dep, so a host with no
-  // runtime root lists them `unbound` BY NAME rather than answering an empty inbox about a
-  // directory it cannot open. `list` and `show` are read-tier; `reject` is the phase's first
-  // shipped `requiresHumanOrigin` op — an agent that could decline proposals could curate the
-  // inbox a human checks.
-  proposalsListSpec as FunctionSpec,
-  proposalsShowSpec as FunctionSpec,
-  proposalsRejectSpec as FunctionSpec,
-  // 391 PROP-01 / D-01: the DECISION verb, and the one door in this catalogue to a standing
-  // approval. It is registered beside its siblings and bound through the same inbox dep, but it
-  // is the only op here that carries BOTH `knowledge-write` and `approval-write` — because one
-  // call can commit knowledge AND change what the system may do without asking.
-  proposalsAcceptSpec as FunctionSpec,
+  // 391 PROP-03 / D-15 added a `proposals.` domain (list, show, reject, accept). 2026-10-01, 432-17
+  // (D-05/D-22): the domain is deleted with the inbox, with no alias and no hidden follow-up; old
+  // proposal files are never read again.
   // 391 PROP-01 / D-03: a new `grants.` domain — the standing approvals a person has given, and
   // the way back. A taxonomy extension exactly as `proposals.` was, and separate from it because
   // a grant outlives the proposal that minted it: a revoke is about what the agent may do, not
@@ -280,11 +248,9 @@ const BUILT_IN_FUNCTION_SPECS: readonly FunctionSpec[] = [
   grantsListSpec as FunctionSpec,
   grantsRevokeSpec as FunctionSpec,
   // 391 PROP-04 / D-16: the per-run digest. Filed under `runs.` beside `runs.postprocessing`
-  // because what it answers is a fact about a RUN, and bound through the same OPTIONAL
-  // `proposalsInbox` dep the four verbs above use — a host that cannot open the proposals
-  // directory lists it `unbound` BY NAME rather than composing a digest whose decision section
-  // says "nothing was minted" about a store it has never read. Read-tier, and it registers NO
-  // new dep: the projection composes from four capabilities this catalogue already had.
+  // because what it answers is a fact about a RUN. Read-tier, and it registers NO new dep: the
+  // projection composes from capabilities this catalogue already had (since 432-09 its substrate
+  // is the required runs port, and since 432-17 there is no proposals inbox to read).
   runsDigestSpec as FunctionSpec,
   // 387 D-09: a new `entities.` domain, a taxonomy extension exactly as `knowledge.` was.
   // Both read-tier, both bound in every composition — the directory is a REQUIRED dep, so

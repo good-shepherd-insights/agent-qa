@@ -41,7 +41,6 @@ import {
   managedBlockMarkers,
   renderManagedBlock,
 } from '../commands/managed-block.js'
-import { createProposalsCommand } from '../commands/proposals.js'
 import { createRunsCommand } from '../commands/runs.js'
 import { createSkillsCommand } from '../commands/skills.js'
 
@@ -81,7 +80,8 @@ function liveCommandPath(cli: string): string {
   const program = new Command()
     .addCommand(createRunsCommand())
     .addCommand(createKnowledgeCommand())
-    .addCommand(createProposalsCommand())
+    // 2026-10-01 (432-17, D-02/D-05): `agent-qa proposals` is deleted, so the guide can name no verb
+    // under it and this tree no longer carries it.
     .addCommand(createSkillsCommand())
     .addCommand(createInitCommand())
   const words = cli.split(' ').slice(1)

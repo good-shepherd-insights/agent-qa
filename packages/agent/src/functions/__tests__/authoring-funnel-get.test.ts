@@ -20,7 +20,6 @@ import type {
   AuthoringFunnel,
   DraftReceipt,
   FunctionCaller,
-  ProposalEnvelope,
 } from '@vostride/agent-qa-schema'
 import { DraftReceiptSchema } from '@vostride/agent-qa-schema'
 import { describe, expect, it } from 'vitest'
@@ -72,40 +71,12 @@ function receipt(digest: string, sessionRef?: string): DraftReceipt {
   })
 }
 
-function appliedEnvelope(digest: string): ProposalEnvelope {
-  return {
-    id: `prop_${digest}`,
-    status: 'applied',
-    evidenceRefs: [],
-    kind: 'test-draft',
-    decision: { decision: 'applied', at: 1_700_000_000_001 },
-    payload: {
-      schemaVersion: 1,
-      draftRef: {
-        filePath: `tests/.agent-qa-drafts/${digest}.yaml`,
-        testId: `t_${digest}`,
-        testName: `draft ${digest}`,
-        contentDigest: digest,
-      },
-      targetPath: `tests/draft-${digest}.yaml`,
-      disposition: 'keep-eligible',
-      runsPreviewed: 9,
-      runsConsumed: 3,
-      repairIterations: 0,
-      summaryLine: `draft ${digest}`,
-    },
-  }
-}
-
-/** 12 receipts, 11 applied — above the floor of 10 and above the 9/10 ceiling. */
+/** 12 receipts — above the floor of 10. 2026-10-01 (432-17): no acceptance is recorded for any. */
 const RECEIPTS = Array.from({ length: 12 }, (_unused, index) => receipt(`d${index}`, 'sess-alpha'))
-const ENVELOPES = RECEIPTS.slice(0, 11)
-  .map((row) => appliedEnvelope(row.draftRef.contentDigest))
 
 function funnelPort(): AuthoringFunnelPortLike {
   return {
     receipts: { async list() { return [...RECEIPTS] } },
-    async proposals() { return ENVELOPES },
   }
 }
 
@@ -187,24 +158,16 @@ describe(`${AUTHORING_FUNNEL_GET_FUNCTION_ID} — the honesty funnel's one read`
       CALLER,
     ) as AuthoringFunnel
 
-    const expected = computeAuthoringFunnel({
-      receipts: RECEIPTS,
-      acceptances: ENVELOPES.map((envelope) => ({
-        contentDigest: envelope.kind === 'test-draft'
-          ? envelope.payload.draftRef.contentDigest
-          : '',
-        decision: 'applied' as const,
-      })),
-      sideCounters: {},
-    })
+    const expected = computeAuthoringFunnel({ receipts: RECEIPTS, acceptances: [], sideCounters: {} })
 
     expect(answered).toEqual(expected)
   })
 
-  it('carries the ACCEPTANCE FAILURE through the op, not only through the derivation', async () => {
-    // 11 of 12 is 91.6% over a count above the floor — the flag's whole reason to exist, driven
-    // here through the REGISTERED entry point rather than the function behind it, because a
-    // report proven only against its own derivation is a report nobody proved a caller can see.
+  it('answers no acceptance and no ACCEPTANCE FAILURE through the op, since nothing records one', async () => {
+    // RE-SPELLED 2026-10-01 (432-17, D-06): this cell drove 11 applied test-draft envelopes through
+    // the op to raise the flag. A draft a keep-gate did not reject is written in its own call and
+    // the inbox the decisions lived in is deleted, so the op counts no acceptance over a population
+    // above the floor. The flag's own arithmetic stays pinned on `computeAuthoringFunnel` in schema.
     const answered = await invokeFunction(
       registryWith(funnelPort()),
       AUTHORING_FUNNEL_GET_FUNCTION_ID,
@@ -216,11 +179,10 @@ describe(`${AUTHORING_FUNNEL_GET_FUNCTION_ID} — the honesty funnel's one read`
       built: 12,
       passedStably: 12,
       addedValue: 12,
-      accepted: 11,
+      accepted: 0,
     })
-    expect(answered.acceptanceFailure).toBe(true)
-    expect(answered.line).toContain('ACCEPTANCE FAILURE')
-    expect(answered.line).toContain('the loop is not filtering')
+    expect(answered.acceptanceFailure).toBe(false)
+    expect(answered.line).not.toContain('ACCEPTANCE FAILURE')
   })
 
   it('scopes by session through the op, excluding a receipt with no ref', async () => {
@@ -230,7 +192,6 @@ describe(`${AUTHORING_FUNNEL_GET_FUNCTION_ID} — the honesty funnel's one read`
           return [receipt('with', 'sess-alpha'), receipt('without'), receipt('other', 'sess-beta')]
         },
       },
-      async proposals() { return [] },
     }
 
     const answered = await invokeFunction(

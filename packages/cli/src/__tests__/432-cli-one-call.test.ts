@@ -178,7 +178,10 @@ describe('C432-CLI-ONE-CALL — runs mark applies its fix in the one call (432-1
 
     expect(stdinReads).toEqual([])
     expect(printed.stdout).toMatch(/^marked false-fail on .* · applied fact: changed \S+ · receipt mark_/)
-    expect(printed.stdout).not.toMatch(/proposal|accept|apply it|--yes/i)
+    // The run id is minted from a word list, so it can spell `accept` by chance (432-17 gate run 4
+    // drew `r_usage-heat-accept-…`). The follow-up check reads the render with the id taken out.
+    expect(printed.stdout.split(fixture.handoff.runId).join('<run>'))
+      .not.toMatch(/proposal|accept|apply it|--yes/i)
   })
 })
 

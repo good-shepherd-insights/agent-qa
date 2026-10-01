@@ -1,7 +1,7 @@
 // The funnel projection and the mixed-verdict stability gather (394-07, D-12/D-14 · WTST-05).
 //
 // A PROJECTION AND NOTHING ELSE. Everything here reads durable records this project already keeps
-// — the draft receipts, the proposals inbox, the run-outcome projection, the quarantine ledger —
+// — the draft receipts, the run-outcome projection, the quarantine ledger —
 // scopes them to a window, and hands them to `computeAuthoringFunnel`, which owns every number.
 // NOTHING NEW IS PERSISTED (D-12): the receipts ARE the funnel's truth, so every caller of the one
 // read op — today, a read-scoped function caller; there is no CLI funnel command and no per-run
@@ -27,11 +27,9 @@ import {
   computeAuthoringFunnel,
 } from '@vostride/agent-qa-schema'
 import type {
-  AuthoringAcceptance,
   AuthoringFunnel,
   AuthoringFunnelWindow,
   DraftReceipt,
-  ProposalEnvelope,
   QuarantineEntryState,
   SuiteNeighbourRow,
   SuiteStabilityAssessment,
@@ -66,13 +64,12 @@ export interface SuiteOutcomeHistoryPortLike {
 }
 
 /**
- * The capability `authoring.funnel.get` binds through — the funnel's three reads, bundled.
+ * The capability `authoring.funnel.get` binds through — the funnel's reads, bundled.
  *
- * ONE BUNDLE rather than three deps, on the shipped `draftEvaluation` / `draftShelf` reasoning:
- * none of these is independently useful here. A host that can list receipts but not read the
- * inbox would answer a funnel whose `accepted` stage is permanently zero — "this session kept
- * nothing" about decisions it has never been able to see, which is the wrong answer that would
- * make the acceptance-failure flag structurally unable to fire.
+ * 2026-10-01 (432-17, D-06): the proposals inbox read is deleted with the inbox. An authored test
+ * that a keep-gate did not reject is written in its own call, so no person accepts it afterwards
+ * and nothing records such a decision. See {@link projectAuthoringFunnel} for what `accepted`
+ * reports now.
  *
  * THE STABILITY HALVES RIDE THE SAME BUNDLE for the same argument, and they are OPTIONAL within
  * it: a host may genuinely have receipts and no outcome projection, and D-14's whole point is
@@ -81,8 +78,6 @@ export interface SuiteOutcomeHistoryPortLike {
  */
 export interface AuthoringFunnelPortLike {
   readonly receipts: DraftReceiptsReadPortLike
-  /** Every proposal envelope this host can see; the `accepted` stage reads decisions off them. */
-  proposals(): Promise<readonly ProposalEnvelope[]>
   readonly outcomes?: SuiteOutcomeHistoryPortLike
   readonly quarantine?: { list(): Promise<readonly QuarantineEntryState[]> }
 }
@@ -119,36 +114,24 @@ export function scopeReceiptsToWindow(
 /**
  * Project the funnel over one window.
  *
- * The inbox is read for `test-draft` acceptances and for nothing else — no side counter is folded
- * out of it. `dedupRefusals` is deliberately left ABSENT: a stage-2 refusal ends the invocation
- * with nothing authored — no draft, no receipt, no gate-run and no envelope (D-04) — so nothing on
- * this host durably records one, and reporting `0` would say "no author was ever refused" about
- * something nothing counts. The render says so in words rather than printing a number it cannot
- * support.
+ * `dedupRefusals` is deliberately left ABSENT: a stage-2 refusal ends the invocation with nothing
+ * authored — no draft, no receipt and no gate-run (D-04) — so nothing on this host durably records
+ * one, and reporting `0` would say "no author was ever refused" about something nothing counts.
+ *
+ * `accepted` COUNTS RECORDED HUMAN ACCEPTANCES, AND NONE ARE RECORDED (2026-10-01, 432-17, D-06).
+ * It used to read applied decisions off `test-draft` proposal envelopes. Since 432-08 a draft a
+ * keep-gate did not reject is written to its test path in the call that authored it, nothing is
+ * filed, and 432-17 deletes the inbox the decisions lived in — so the projection hands the pure
+ * computation no acceptances, `accepted` reads 0 and the acceptance-failure flag cannot fire. The
+ * stage and flag stay in the published shape; whether the funnel keeps them is recorded for a later
+ * decision rather than changed here.
  */
 export async function projectAuthoringFunnel(
   window: AuthoringFunnelWindow,
   port: AuthoringFunnelPortLike,
 ): Promise<AuthoringFunnel> {
-  const [allReceipts, envelopes] = await Promise.all([port.receipts.list(), port.proposals()])
-  const receipts = scopeReceiptsToWindow(allReceipts, window)
-
-  // NARROWED THROUGH THE DISCRIMINANT, never through a `.filter` predicate. `ProposalEnvelope`
-  // correlates `kind` with `payload` (394-06), and a `filter` callback returning a boolean does
-  // not narrow the array's element type — so reading `payload.draftRef` off the result would need
-  // a cast, which is the second classification of one value that correlation exists to abolish.
-  const acceptances: AuthoringAcceptance[] = []
-  for (const envelope of envelopes) {
-    if (envelope.kind !== 'test-draft') continue
-    const decision = envelope.decision
-    if (decision === undefined) continue
-    acceptances.push({
-      contentDigest: envelope.payload.draftRef.contentDigest,
-      decision: decision.decision,
-    })
-  }
-
-  return computeAuthoringFunnel({ receipts, acceptances, sideCounters: {} })
+  const receipts = scopeReceiptsToWindow(await port.receipts.list(), window)
+  return computeAuthoringFunnel({ receipts, acceptances: [], sideCounters: {} })
 }
 
 /**
