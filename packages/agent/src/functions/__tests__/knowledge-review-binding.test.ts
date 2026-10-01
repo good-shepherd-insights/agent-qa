@@ -20,7 +20,7 @@
 // domain nothing ships under, so nobody can mistake it for a capability under construction.
 
 import { MASKED_RESOLVED_CONFIG_SCHEMA_VERSION } from '@vostride/agent-qa-schema'
-import type { ExecutionContext, FunctionCaller } from '@vostride/agent-qa-schema'
+import type { FunctionCaller } from '@vostride/agent-qa-schema'
 import type { AuditSink, GuardrailAuditRow } from '@vostride/agent-qa-safety'
 import { describe, expect, it } from 'vitest'
 import { z } from 'zod'
@@ -41,14 +41,13 @@ it('419 policy materialization refusal is classified as refused rather than exec
   expect(verdict.outcome).toContain('nothing was changed')
 })
 
+// 2026-10-01 (432-29, D-12): the retired `grantedScopes` and `safeMode` caller fields, the
+// fixture spec's `requiredScopes` and the retired `resolveExecutionContext` registry option are
+// dropped; nothing read them.
 const CALLER: FunctionCaller = {
   surface: 'test',
-  grantedScopes: ['read', 'config-write'],
-  safeMode: false,
   origin: 'agent',
 }
-
-const CONTEXT: () => ExecutionContext = () => 'local-interactive'
 
 const FIXTURE_ID = 'fixture.knowledge.review-binding'
 
@@ -63,7 +62,6 @@ const FIXTURE_ID = 'fixture.knowledge.review-binding'
 const reviewBoundSpec: FunctionSpec<Record<string, never>, string> = {
   id: FIXTURE_ID,
   summary: 'Fixture: a capability that can only run where knowledge review is bound.',
-  requiredScopes: ['config-write'],
   resultKind: 'unary',
   boundThrough: 'knowledgeReview',
   input: z.object({}).strict(),
@@ -134,7 +132,6 @@ function registryOver(functionDeps: FunctionDeps) {
   return createRegistryFromSpecs([reviewBoundSpec as FunctionSpec], {
     deps: functionDeps,
     auditSink: capturingSink(),
-    resolveExecutionContext: CONTEXT,
   })
 }
 
@@ -194,11 +191,11 @@ describe('the knowledgeReview optional dep', () => {
         })
       },
     } as unknown as KnowledgeReviewPort
-    const writer: FunctionCaller = { ...CALLER, grantedScopes: ['read', 'knowledge-write'] }
+    const writer: FunctionCaller = CALLER
     const sink = capturingSink()
-    const readOnly = createFunctionRegistry({ deps: deps(), auditSink: sink, resolveExecutionContext: CONTEXT })
+    const readOnly = createFunctionRegistry({ deps: deps(), auditSink: sink })
     const bound = createFunctionRegistry({
-      deps: deps({ knowledgeReview: directPort }), auditSink: sink, resolveExecutionContext: CONTEXT,
+      deps: deps({ knowledgeReview: directPort }), auditSink: sink,
     })
     const inputs = {
       'knowledge.accept': { target: { grain: 'record', recordId: 'rec-1' } },

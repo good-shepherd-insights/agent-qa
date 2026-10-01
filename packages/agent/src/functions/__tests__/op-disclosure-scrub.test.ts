@@ -13,7 +13,7 @@
 import { readFileSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
 
-import type { ExecutionContext, FunctionCaller } from '@vostride/agent-qa-schema'
+import type { FunctionCaller } from '@vostride/agent-qa-schema'
 import type { AuditSink } from '@vostride/agent-qa-safety'
 import { describe, expect, it } from 'vitest'
 import { z } from 'zod'
@@ -23,7 +23,9 @@ import { createFunctionRegistry, createRegistryFromSpecs } from '../registry.js'
 import type { FunctionDeps, FunctionSpec } from '../spec.js'
 import { executableSource } from './op-source-scan.js'
 
-const LOCAL_INTERACTIVE: () => ExecutionContext = () => 'local-interactive'
+// 2026-10-01 (432-29, D-12): the retired `resolveExecutionContext` registry option, the retired
+// `grantedScopes` and `safeMode` caller fields and the synthetic spec's `requiredScopes` are
+// dropped; nothing read them.
 
 /** C0 and C1 together — the whole control range a terminal or a browser acts on. */
 const CONTROL_BYTES = /[\u0000-\u001f\u007f-\u009f]/
@@ -33,7 +35,7 @@ function noOpSink(): AuditSink {
 }
 
 function caller(): FunctionCaller {
-  return { surface: 'test', grantedScopes: ['read'], safeMode: false, origin: 'human' }
+  return { surface: 'test', origin: 'human' }
 }
 
 /**
@@ -43,7 +45,6 @@ function echoDiscloseSpec(disclosed: string[]): FunctionSpec<{ label: string }, 
   return {
     id: 'test.echo.disclose',
     summary: 'Synthetic capability whose disclosure is composed from caller input.',
-    requiredScopes: ['read'],
     resultKind: 'unary',
     input: z.object({ label: z.string() }).strict(),
     output: z.object({ ok: z.literal(true) }).strict(),
@@ -73,7 +74,6 @@ describe('C432-INVOKE-DIRECT: dispatch composes no per-op disclosure (432-13)', 
       {
         deps: {} as unknown as FunctionDeps,
         auditSink: noOpSink(),
-        resolveExecutionContext: LOCAL_INTERACTIVE,
       },
     )
 
@@ -101,12 +101,9 @@ describe('the complete set of disclose implementors, from two independently shap
     const registry = createFunctionRegistry({
       deps: {} as unknown as FunctionDeps,
       auditSink: noOpSink(),
-      resolveExecutionContext: LOCAL_INTERACTIVE,
     })
     const declared = registry.list({
       surface: 'test',
-      grantedScopes: [],
-      safeMode: false,
       origin: 'human',
     })
 

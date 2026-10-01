@@ -21,7 +21,6 @@
 
 import {
   CURRENT_HANDOFF_SCHEMA_VERSION,
-  FunctionScopeSchema,
   MASKED_RESOLVED_CONFIG_SCHEMA_VERSION,
 } from '@vostride/agent-qa-schema'
 import type {
@@ -52,22 +51,16 @@ const EVERY_CONTEXT: readonly ExecutionContext[] = [
 ]
 
 /**
- * Granted EVERY scope the union declares, derived rather than listed.
+ * The caller every case here dispatches as.
  *
- * The parity case below distinguishes "refused because unbound" from everything else, and
- * `invokeFunction` checks scopes before binding — so a caller missing one member of the union
- * turns a new capability's unbound refusal into a scope refusal, which this case would then
- * read as `dispatched`. Measured on 387-08's four knowledge-write verbs.
+ * 2026-10-01 (432-29, D-12): it once held every scope in the union, because `invokeFunction`
+ * checked scopes and then human origin before binding, and a missing scope or an agent origin
+ * would have turned an unbound refusal into a different one. Both checks are deleted (432-20), so
+ * the retired `grantedScopes` and `safeMode` fields are dropped; nothing read them. `origin`
+ * stays `human` as attribution only.
  */
 const RUN_CALLER: FunctionCaller = {
   surface: 'test',
-  grantedScopes: [...FunctionScopeSchema.options],
-  safeMode: false,
-  // 391 D-06: `human` for the reason the scope note directly above gives, on a second axis.
-  // `invokeFunction` checks origin BEFORE binding, so an agent-origin caller turns a
-  // human-only capability's unbound refusal into an origin refusal — which the parity case
-  // below, distinguishing only `FunctionNotBoundError`, would read as `dispatched`. Measured on
-  // 391-03's `proposals.reject`, which is the first shipped op to declare the requirement.
   origin: 'human',
 }
 
@@ -316,13 +309,15 @@ function capturingSink(): CapturedSink {
 // 432-13: no standing-approval control is needed. The claims in this file are about BINDING, and
 // with no op gate an ask-tier capability reaches the binding check directly.
 
+// 2026-10-01 (432-29, D-12): the registries here no longer pass the retired
+// `resolveExecutionContext` option. Nothing in the registry or `invokeFunction` read it, so no
+// dispatch below ever depended on the context it named.
 function registryWith(
   runInvocation: RunInvocationPort | undefined,
-  options: { context?: ExecutionContext; auditSink?: AuditSink } = {},
+  options: { auditSink?: AuditSink } = {},
 ) {
   return createFunctionRegistry({
     deps: deps(runInvocation === undefined ? {} : { runInvocation }),
-    resolveExecutionContext: () => options.context ?? 'local-interactive',
     auditSink: options.auditSink ?? {
       appendGuardrailAudit() {},
     },
@@ -400,7 +395,6 @@ describe('bindingStatus is a fact about a COMPOSITION, computed (D-16)', () => {
     }
     const registry = createRegistryFromSpecs([eagerlyBound], {
       deps: deps(),
-      resolveExecutionContext: () => 'local-interactive',
       auditSink: { appendGuardrailAudit() {} },
     })
 
@@ -424,6 +418,10 @@ describe('bindingStatus is a fact about a COMPOSITION, computed (D-16)', () => {
 // ones included' keeps its claim (the op dispatches everywhere) and loses its audit-row half: no
 // gate decides it. 'would lose the DISPATCH on a mutating-shared descriptor — the counterfactual'
 // inverts: with no gate, even a mutating-shared descriptor dispatches in ci.
+// 2026-10-01 (432-29, D-12): neither cell hands the registry a context any more. The retired option
+// was unread, so dispatch takes no execution context at all, and "every context" and "in ci" hold
+// because there is no context input left to refuse on. Each context still gets its own dispatch,
+// recorder and sink below.
 describe('mutating-local, proven through a DISPATCH (Pitfall 10 / D-16)', () => {
   it('allows AND runs in every execution context, fail-closed ones included', async () => {
     for (const context of EVERY_CONTEXT) {
@@ -431,7 +429,7 @@ describe('mutating-local, proven through a DISPATCH (Pitfall 10 / D-16)', () => 
       const recorder = recordingInvocation()
 
       const acknowledgement = await invokeFunction(
-        registryWith(recorder.port, { context, auditSink: audit.sink }),
+        registryWith(recorder.port, { auditSink: audit.sink }),
         RUNS_START_FUNCTION_ID,
         {},
         RUN_CALLER,
@@ -452,7 +450,6 @@ describe('mutating-local, proven through a DISPATCH (Pitfall 10 / D-16)', () => 
     }
     const registry = createRegistryFromSpecs([shared], {
       deps: deps({ runInvocation: recorder.port }),
-      resolveExecutionContext: () => 'ci',
       auditSink: { appendGuardrailAudit() {} },
     })
 
