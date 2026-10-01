@@ -40,7 +40,6 @@ import {
 } from '@vostride/agent-qa-mcp'
 import type { JsonDocument, ToolProjection } from '@vostride/agent-qa-mcp'
 import { committedFileText, FunctionScopeSchema } from '@vostride/agent-qa-schema'
-import type { FunctionCaller, FunctionScope } from '@vostride/agent-qa-schema'
 import { beforeAll, describe, expect, it } from 'vitest'
 import { z } from 'zod'
 
@@ -53,10 +52,9 @@ import { MCP_FUNCTION_CALLER } from '../../commands/mcp.js'
  */
 const LEGACY_DEFAULT_GRANT = FunctionScopeSchema.options.filter((scope) => scope !== 'config-write')
 
-/** The one tokenless MCP caller, carrying a legacy scope set that nothing reads (432-21, D-12). */
-function legacyMcpCaller(grantedScopes: readonly FunctionScope[]): FunctionCaller {
-  return { ...MCP_FUNCTION_CALLER, grantedScopes }
-}
+// 2026-10-01 (432-31, D-12): `legacyMcpCaller`, which stamped a legacy scope set onto the tokenless
+// MCP caller as the retired `grantedScopes` field, is deleted; the root-host listings below use the
+// shipped `MCP_FUNCTION_CALLER` itself.
 import {
   CHAT_RESOLVER_PROBES,
   chatEnumerationOf,
@@ -78,7 +76,6 @@ import * as policyFixtures from './policy-fixtures.js'
 import {
   ASK_CAPABLE_OP_IDS,
   CONFORMANCE_EXECUTION_CONTEXT,
-  conformanceResolveExecutionContext,
   coveringCallerFor,
   deriveAskCapableOpIds,
   grantlessSurfaceCallers,
@@ -219,10 +216,10 @@ beforeAll(async () => {
     // the product rather than about this file's assembly.
     rootHostListings.set('chat:planner', registry.list(CHAT_PLANNER_CALLER))
     rootHostListings.set('chat:resolver', registry.list(CHAT_RESOLVER_CALLER))
-    rootHostListings.set('mcp:every-scope', registry.list(legacyMcpCaller([
-      ...FunctionScopeSchema.options,
-    ])))
-    rootHostListings.set('mcp:default-grant', registry.list(legacyMcpCaller(LEGACY_DEFAULT_GRANT)))
+    // 2026-10-01 (432-31, D-12): both MCP grants are retired, so both MCP keys list under the one
+    // tokenless caller the MCP host mints. The two keys stay, so the four-listing claim is unchanged.
+    rootHostListings.set('mcp:every-scope', registry.list(MCP_FUNCTION_CALLER))
+    rootHostListings.set('mcp:default-grant', registry.list(MCP_FUNCTION_CALLER))
   })
 })
 
@@ -295,9 +292,8 @@ async function gateAnswerFor(
   opId: string,
   input: unknown,
   caller: Parameters<typeof invokeFunction>[3],
-  options: ConformanceRegistryOptions = {
-    resolveExecutionContext: conformanceResolveExecutionContext,
-  },
+  // 2026-10-01 (432-31): no retired `resolveExecutionContext` registry option by default.
+  options: ConformanceRegistryOptions = {},
 ): Promise<GateAnswer> {
   const registry = conformanceRegistry(options)
   try {
@@ -911,9 +907,8 @@ describe('the parity suite ranges the registry census over every rostered surfac
     // 432-20 (D-12): the covering caller holds no grant at all, and no scope or origin check stands
     // before the binding check, so nothing here can be refused on an axis that precedes it and be
     // mistaken for a binding refusal (the 387-08 measurement).
-    const registry = conformanceRegistry({
-      resolveExecutionContext: conformanceResolveExecutionContext,
-    })
+    // 2026-10-01 (432-31): the retired, unread `resolveExecutionContext` registry option is dropped.
+    const registry = conformanceRegistry()
     const unbound = registry
       .list(CONFORMANCE_CENSUS_CALLER)
       .filter((declaration) => declaration.bindingStatus === 'unbound')
@@ -1700,15 +1695,16 @@ describe('the parity suite ranges the registry census over every rostered surfac
   it('lands an ask-capable call at the same step in a fail-closed context as in an interactive one', async () => {
     // The context control, re-spelled: `ci` used to fail an ask closed before the confirm. Nothing
     // reads the context on this road now, so both contexts must answer alike.
+    // 2026-10-01 (432-31, D-12): the `ci` resolver rode the retired, unread registry option, which
+    // is dropped. No context reaches dispatch, so the claim holds by construction; the two calls
+    // are still compared.
     for (const opId of ASK_CAPABLE_OP_IDS) {
       const declaration = registryDeclarations().find((candidate) => candidate.id === opId)
       const row = scenarioRowFor(opId as ScenarioOpId)
       expect(declaration, `${opId} is not declared`).toBeDefined()
       const callers = surfaceInertCallers()
       const interactive = await gateAnswerFor(opId, row!.input, callers.chat)
-      const failClosed = await gateAnswerFor(opId, row!.input, callers.chat, {
-        resolveExecutionContext: () => 'ci',
-      })
+      const failClosed = await gateAnswerFor(opId, row!.input, callers.chat)
       expect(failClosed.kind, `${opId}: the execution context changed where the call landed`)
         .toBe(interactive.kind)
     }

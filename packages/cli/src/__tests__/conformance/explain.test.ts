@@ -61,9 +61,9 @@ import { capabilityCatalogDocumentOf, capabilityCatalogText } from './catalog.js
  * name at the binding check. Nothing here can start a run, write into a project or commit anything.
  *
  * IT IS THE REAL DISPATCH. `invokeFunction` validates the input against the op's own contract,
- * checks scopes, crosses the policy gate, consults the binding and parses the OUTPUT against
- * `ExplainOutputSchema` — so a cell below that reads `kind: 'abstention'` is reading a value the
- * shipped contract admitted, not one this file constructed.
+ * consults the binding and parses the OUTPUT against `ExplainOutputSchema` — so a cell below that
+ * reads `kind: 'abstention'` is reading a value the shipped contract admitted, not one this file
+ * constructed. (2026-10-01, 432-31: the scope check and policy gate this once named are deleted.)
  */
 function explainRegistry(port: CapabilityCatalogPort): FunctionRegistry {
   return createFunctionRegistry({
@@ -72,9 +72,9 @@ function explainRegistry(port: CapabilityCatalogPort): FunctionRegistry {
       typeof createFunctionRegistry
     >[0]['deps'],
     auditSink: { appendGuardrailAudit() {} },
-    // PINNED, on Pitfall 3's rule: a verdict computed against the ambient resolver is one answer on
-    // a laptop and another on a runner, and these cells state what the op ANSWERS.
-    resolveExecutionContext: () => 'local-interactive',
+    // 2026-10-01 (432-31, D-12): the pinned `resolveExecutionContext` registry option is dropped.
+    // The registry never read it (no op gate decides in a context), so the answer was already the
+    // same on a laptop and on a runner.
   })
 }
 
@@ -395,7 +395,6 @@ describe('a composition with no catalog port refuses BY NAME (D-09)', () => {
     const registry = createFunctionRegistry({
       deps: {} as unknown as Parameters<typeof createFunctionRegistry>[0]['deps'],
       auditSink: { appendGuardrailAudit() {} },
-      resolveExecutionContext: () => 'local-interactive',
     })
     await expect(
       invokeFunction(registry, EXPLAIN_FUNCTION_ID, { query: 'what can you do' }, CONFORMANCE_CENSUS_CALLER),
