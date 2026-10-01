@@ -61,21 +61,17 @@ const AUDIT_SINK: AuditSink = {
   appendGuardrailAudit: () => undefined,
 }
 
-/**
- * A caller with EVERY scope and no safe mode.
- *
- * Deliberate: safe-mode listing hides ops whose scopes exceed `read`, so a safe-mode caller
- * would have made `runs.start` look unresolvable and the assertion below would have been
- * measuring the listing filter instead of the registry's contents.
- */
+// 2026-10-02 (432-36, D-12): no `grantedScopes` or `safeMode` on the caller; the registry reads
+// neither (432-20), so every caller lists the whole default registry.
 const FULL_CALLER: FunctionCaller = {
   surface: 'cli',
-  grantedScopes: ['read', 'run', 'config-write'],
-  safeMode: false,
   origin: 'agent',
 }
 
-const SAFE_CALLER: FunctionCaller = { ...FULL_CALLER, safeMode: true }
+// 2026-10-02 (432-36, D-12): a deliberate smuggle. The retired `safeMode: true` rides past the type
+// so the safe-mode cell below keeps proving the listing does not read it; the cast keeps this
+// witness compiling once the field is deleted (432-39).
+const SAFE_CALLER = { ...FULL_CALLER, safeMode: true } as FunctionCaller
 
 function deps(): FunctionDeps {
   return {
@@ -118,7 +114,8 @@ function defaultRegistryIds(caller: FunctionCaller = FULL_CALLER): Set<string> {
   const registry = createFunctionRegistry({
     deps: deps(),
     auditSink: AUDIT_SINK,
-    resolveExecutionContext: () => 'local-headless',
+    // 2026-10-02 (432-36, D-12): no `resolveExecutionContext` registry option; the registry reads
+    // no context (432-20).
   })
   return new Set(registry.list(caller).map((declaration) => declaration.id))
 }

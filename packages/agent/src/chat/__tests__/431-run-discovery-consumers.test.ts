@@ -22,10 +22,10 @@ import { composeBanner } from '../banner.js'
 import type { ChatInvokeBinding } from '../ports.js'
 import { CHAT_RESOLVER_TABLE, resolveClause } from '../resolver-table.js'
 
+// 2026-10-02 (432-36, D-12): no `grantedScopes` or `safeMode` on the caller; the registry reads
+// neither (432-20).
 const CALLER: FunctionCaller = {
   surface: 'chat',
-  grantedScopes: ['read'],
-  safeMode: false,
   origin: 'human',
 }
 
@@ -74,7 +74,8 @@ function listRegistry(documents: readonly CompletedRunHandoff[]) {
       },
     } as unknown as FunctionDeps,
     auditSink: NO_AUDIT,
-    resolveExecutionContext: () => 'local-interactive',
+    // 2026-10-02 (432-36, D-12): no `resolveExecutionContext` registry option; the registry reads
+    // no context (432-20).
   })
 }
 

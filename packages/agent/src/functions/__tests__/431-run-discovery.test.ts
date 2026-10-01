@@ -22,10 +22,10 @@ import { runsListSpec } from '../ops/runs-list.js'
 import { createRegistryFromSpecs } from '../registry.js'
 import type { FunctionDeps } from '../spec.js'
 
+// 2026-10-02 (432-36, D-12): no `grantedScopes` or `safeMode` on the caller; the registry reads
+// neither (432-20).
 const READER: FunctionCaller = {
   surface: 'test',
-  grantedScopes: ['read'],
-  safeMode: false,
   origin: 'agent',
 }
 
@@ -98,7 +98,8 @@ function harness(
   const registry = createRegistryFromSpecs([runsListSpec], {
     deps: { runs } as unknown as FunctionDeps,
     auditSink: NO_AUDIT,
-    resolveExecutionContext: () => 'local-interactive',
+    // 2026-10-02 (432-36, D-12): no `resolveExecutionContext` registry option; the registry reads
+    // no context (432-20).
   })
   return {
     list: async (input) => (await invokeFunction(registry, 'runs.list', input, READER)) as RunSummary[],

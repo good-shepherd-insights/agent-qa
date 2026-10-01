@@ -4,7 +4,7 @@
 // four different reasons is a validator whose surface can only ever render "something went wrong" —
 // and D-02's whole point is that a viewer of an expired link is TOLD the link expired.
 
-import { FunctionScopeSchema, LIVE_URL_SCOPE, RunsLiveUrlResultSchema } from '@vostride/agent-qa-schema'
+import { LIVE_URL_SCOPE, RunsLiveUrlResultSchema } from '@vostride/agent-qa-schema'
 import type {
   FunctionCaller,
   LiveStreamDeclaration,
@@ -57,10 +57,10 @@ function claims(overrides: Partial<LiveUrlClaims> = {}): LiveUrlClaims {
 
 const AT_RUN_ALPHA = { subject: { kind: 'run', id: 'run-alpha' }, now: NOW } as const
 
+// 2026-10-02 (432-36, D-12): no `grantedScopes` or `safeMode` on the caller; the registry reads
+// neither (432-20). `LIVE_URL_SCOPE` is the signed token's own claim, a live-link control, and stays.
 const CALLER: FunctionCaller = {
   surface: 'test',
-  grantedScopes: [...FunctionScopeSchema.options],
-  safeMode: false,
   origin: 'human',
 }
 
@@ -98,7 +98,8 @@ function registryWith(liveView: LiveViewPort | undefined): ReturnType<typeof cre
   } as FunctionDeps
   return createRegistryFromSpecs([runsLiveUrlSpec as FunctionSpec], {
     deps,
-    resolveExecutionContext: () => 'local-interactive',
+    // 2026-10-02 (432-36, D-12): no `resolveExecutionContext` registry option; the registry reads
+    // no context (432-20).
     auditSink,
   })
 }
