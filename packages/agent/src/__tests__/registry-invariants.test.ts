@@ -642,3 +642,34 @@ describe('C432-NO-PROPOSAL-OPS: the proposal, apply and undo ops are not capabil
     }
   })
 })
+
+// 2026-10-01, 432-18 (D-14/D-15/D-22): `grants.list` and `grants.revoke` are deleted with the
+// standing-grant ledger they read and wrote. No grant domain survives, no other op takes over the
+// revoke, and every door refuses both ids as unknown functions before any dependency is consulted.
+const RETIRED_GRANT_OP_IDS = ['grants.list', 'grants.revoke'] as const
+
+describe('C432-NO-GRANT-OPS: the standing-grant ops are not capabilities', () => {
+  it('C432-NO-GRANT-OPS: the registry lists neither grant op and no grants domain', () => {
+    const ids = declarations().map(declaration => declaration.id)
+    expect(ids.length, 'the listing is empty, so the absence below would be vacuous').toBeGreaterThan(0)
+    expect(RETIRED_GRANT_OP_IDS.filter(id => ids.includes(id)), 'a retired grant op is registered').toEqual([])
+    expect(ids.filter(id => id.startsWith('grants.')), 'the grants domain is still registered').toEqual([])
+    expect(
+      declarations().filter(declaration => /grant/i.test(declaration.risk.name)).map(declaration => declaration.id),
+      'an op still declares a grant-shaped action class',
+    ).toEqual([])
+  })
+
+  it('C432-NO-GRANT-OPS: invoking a retired grant id is refused as an unknown function', async () => {
+    const built = registry()
+    for (const id of RETIRED_GRANT_OP_IDS) {
+      for (const input of [{}, { grantId: 'grant_0123456789abcdef' }]) {
+        const refused = await invokeFunction(built, id, input, FULLY_GRANTED).then(
+          () => undefined,
+          (error: unknown) => error,
+        )
+        expect(refused, `${id} dispatched`).toBeInstanceOf(UnknownFunctionError)
+      }
+    }
+  })
+})

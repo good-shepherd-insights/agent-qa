@@ -1,468 +1,322 @@
-// The committed grant ledger's read, fold and append halves (Phase 391, D-04/D-11).
+// C432-GRANTS-UNREAD-WRITER-ABSENT: a workspace's old grants.jsonl stays on disk and nothing opens
+// it (432-18, D-14 / D-15 / D-22).
 //
-// This suite is a differential against the quarantine ledger's, because 391 D-11 chose that
-// precedent verbatim: whatever posture the sibling ledger holds, this one must hold too, and the
-// place to find out is a suite shaped like its suite. Four postures are load-bearing:
+// RE-SPELLED 2026-10-01 (432-18). This file was the corpus for the Phase 391 committed grant ledger:
+// the read and pure fold (ENOENT, empty, unparseable and structurally broken lines refused as data,
+// unknown scope keys, newer versions hard-failing, file-order folding, revoke-by-id) and the checked
+// append (canonical JSON, the two version legs, the shape leg, the committed-egress checkpoint,
+// all-or-nothing). 432-18 deletes the ledger, its reader, the grant verbs and every export, so each
+// of those claims lost its subject. What survives is what the ledger owes the file it leaves
+// behind: a workspace that still holds `grants.jsonl` is a fresh workspace (D-02), the file is
+// never read, written, renamed or cleaned up (D-22), and a damaged one cannot break anything because
+// nothing parses it. No grant-shaped store replaces it.
 //
-//  1. Refusal-as-data on malformed lines — a mangled line surfaces in `refusedLines` while its
-//     neighbours still fold. Healing to absence is worse here than it is next door: a dropped
-//     `revoke` line leaves an approval standing that a human already withdrew.
-//  2. A NEWER schemaVersion is a typed hard failure, not a skipped line. Committed truth.
-//  3. The fold is FILE ORDER and nothing else. No clock is read, at all.
-//  4. The append refuses on BOTH read legs before the egress checkpoint, and the checkpoint's
-//     refusal is DATA rather than a throw.
+// THE WRITER-LEASE AND EGRESS CLAIMS MOVE TO THE DIRECT WRITERS. The deleted grant verbs refused
+// typed while another writer held the lease and when the egress checkpoint refused their bytes
+// (`operations.test.ts`, deleted with them). The direct writers that remain carry the same two
+// refusals, and the cells below drive them beside a damaged legacy ledger: the explicit change door
+// refuses a held lease by name, the quarantine add refuses a held lease and a secret-bearing value by
+// name, and in every case the legacy file is byte-identical.
 //
-// Every fixture goes through the real API. Where a line has to be malformed on purpose it is
-// written as raw bytes — that is the hand-edit the read posture exists for, and it is the one thing
-// no producer can emit.
+// HOW "NEVER OPENED" IS MEASURED. `node:fs` and `node:fs/promises` are wrapped for this file's module
+// graph, so every path-taking call the knowledge-local sources under test make is recorded. A control
+// cell drives one call at the legacy file through the same wrapper and requires it to be recorded,
+// so "no recorded path" cannot be a recorder that records nothing.
 
-import { existsSync, readFileSync } from 'node:fs'
-import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { createHash } from 'node:crypto'
+import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import type { Anchor, ExecutionContext, ScopeKey } from '@vostride/agent-qa-schema'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import {
-  CURRENT_GRANT_LEDGER_SCHEMA_VERSION,
-  GrantLedgerVersionError,
-  STANDING_APPROVAL_SCOPE,
-  TRUST_SCOPE_KEYS,
-  canonicalJson,
-} from '@vostride/agent-qa-schema'
-import type { GrantLedgerEvent } from '@vostride/agent-qa-schema'
+const recorder = vi.hoisted(() => ({ paths: [] as string[] }))
 
-import {
-  GRANT_LEDGER_EGRESS_CHANNEL,
-  GRANT_LEDGER_FILENAME,
-  appendGrantLedgerEvents,
-  foldActiveGrants,
-  grantsLedgerPath,
-  readGrantLedger,
-} from '../ledger.js'
+/** Names of the path-taking calls a source could open, list, rename or write a file through. */
+const PATH_CALLS = vi.hoisted(() => [
+  'access', 'accessSync', 'appendFile', 'appendFileSync', 'copyFile', 'copyFileSync', 'cp', 'cpSync',
+  'createReadStream', 'createWriteStream', 'existsSync', 'lstat', 'lstatSync', 'mkdir', 'mkdirSync',
+  'open', 'openSync', 'opendir', 'opendirSync', 'readFile', 'readFileSync', 'readdir', 'readdirSync',
+  'readlink', 'readlinkSync', 'realpath', 'realpathSync', 'rename', 'renameSync', 'rm', 'rmSync',
+  'rmdir', 'rmdirSync', 'stat', 'statSync', 'unlink', 'unlinkSync', 'watch', 'writeFile',
+  'writeFileSync',
+])
 
-/**
- * A scope key OUTSIDE `TRUST_SCOPE_KEYS`, COMPUTED against the published constant rather than
- * typed. A hard-coded key becomes LEGAL the day the constant grows, and this case then reports
- * green while measuring nothing — 391-11 measured exactly that, reding this case under a mutation
- * that legalised the `'tenant'` it used to spell.
- */
-const UNKNOWN_SCOPE_KEY_CANDIDATES = ['tenant', 'workspace', 'region', 'cell'] as const
-
-function anUnknownScopeKey(): string {
-  const declared = TRUST_SCOPE_KEYS as readonly string[]
-  const found = UNKNOWN_SCOPE_KEY_CANDIDATES.find((candidate) => !declared.includes(candidate))
-  if (found === undefined) {
-    throw new Error(
-      `every candidate scope key (${UNKNOWN_SCOPE_KEY_CANDIDATES.join(', ')}) is now legal in ` +
-        `TRUST_SCOPE_KEYS (${declared.join(', ')}); this case can no longer measure a refusal — ` +
-        'add a candidate rather than letting it pass',
-    )
+const wrapPathCalls = vi.hoisted(() => (actual: Record<string, unknown>): Record<string, unknown> => {
+  const wrapped: Record<string, unknown> = { ...actual }
+  for (const name of PATH_CALLS) {
+    const original = actual[name]
+    if (typeof original !== 'function') continue
+    const call = function (this: unknown, ...args: unknown[]): unknown {
+      for (const arg of args.slice(0, 2)) {
+        if (typeof arg === 'string') recorder.paths.push(arg)
+        else if (arg instanceof URL) recorder.paths.push(arg.pathname)
+      }
+      return (original as (...rest: unknown[]) => unknown).apply(this, args)
+    }
+    wrapped[name] = Object.assign(call, original)
   }
-  return found
-}
-
-const UNKNOWN_SCOPE_KEY = anUnknownScopeKey()
-
-const ACTION_CLASS = 'fn:knowledge.proposal.apply'
-const GRANT_ID = 'grant_apply_alpha'
-const OTHER_GRANT_ID = 'grant_apply_beta'
-const GRANTED_AT = '2026-08-07T10:00:00.000Z'
-const REVOKED_AT = '2026-08-07T11:00:00.000Z'
-
-function grant(overrides: Partial<Record<string, unknown>> = {}): GrantLedgerEvent {
-  return {
-    schemaVersion: CURRENT_GRANT_LEDGER_SCHEMA_VERSION,
-    kind: 'grant',
-    at: GRANTED_AT,
-    grantId: GRANT_ID,
-    actionClass: ACTION_CLASS,
-    scope: STANDING_APPROVAL_SCOPE,
-    ...overrides,
-  } as GrantLedgerEvent
-}
-
-function revoke(overrides: Partial<Record<string, unknown>> = {}): GrantLedgerEvent {
-  return {
-    schemaVersion: CURRENT_GRANT_LEDGER_SCHEMA_VERSION,
-    kind: 'revoke',
-    at: REVOKED_AT,
-    grantId: GRANT_ID,
-    ...overrides,
-  } as GrantLedgerEvent
-}
-
-describe('grant ledger read and fold', () => {
-  let knowledgeRoot: string
-
-  beforeEach(async () => {
-    knowledgeRoot = await mkdtemp(join(tmpdir(), 'grant-ledger-'))
-  })
-
-  afterEach(async () => {
-    await rm(knowledgeRoot, { recursive: true, force: true })
-  })
-
-  async function writeLedger(lines: readonly string[]): Promise<void> {
-    await writeFile(grantsLedgerPath(knowledgeRoot), `${lines.join('\n')}\n`, 'utf8')
-  }
-
-  it('names the ledger as its own top-level artifact under the committed knowledge root', () => {
-    expect(GRANT_LEDGER_FILENAME).toBe('grants.jsonl')
-    // Root-relative and nothing else: the path is a join of the caller's root and this one name,
-    // so the same committed bytes are readable from any checkout that carries them.
-    expect(grantsLedgerPath(knowledgeRoot)).toBe(join(knowledgeRoot, GRANT_LEDGER_FILENAME))
-  })
-
-  it('reads a MISSING ledger as empty rather than throwing — the ENOENT edge', () => {
-    expect(existsSync(grantsLedgerPath(knowledgeRoot))).toBe(false)
-    expect(readGrantLedger(knowledgeRoot)).toEqual({ events: [], refusedLines: [] })
-    // …and the gate's question over that read answers no approvals, which is the fail-closed
-    // direction: an ask with no ledger is an ask nothing satisfies.
-    expect(foldActiveGrants(readGrantLedger(knowledgeRoot).events)).toEqual([])
-  })
-
-  it('reads an EMPTY file, and a whitespace-only file, as empty', async () => {
-    await writeFile(grantsLedgerPath(knowledgeRoot), '', 'utf8')
-    expect(readGrantLedger(knowledgeRoot)).toEqual({ events: [], refusedLines: [] })
-
-    await writeFile(grantsLedgerPath(knowledgeRoot), '\n\n   \n', 'utf8')
-    // Blank lines are whitespace, not damage: they are skipped silently rather than refused.
-    expect(readGrantLedger(knowledgeRoot)).toEqual({ events: [], refusedLines: [] })
-  })
-
-  it('refuses an UNPARSEABLE line as data while its neighbours still fold', async () => {
-    await writeLedger([canonicalJson(grant()), '{not json', canonicalJson(revoke({ grantId: OTHER_GRANT_ID }))])
-
-    const read = readGrantLedger(knowledgeRoot)
-    expect(read.events.map((event) => event.kind)).toEqual(['grant', 'revoke'])
-    expect(read.refusedLines).toHaveLength(1)
-    // 1-based, matching what an editor shows the human who has to fix the file.
-    expect(read.refusedLines[0]?.lineNumber).toBe(2)
-    expect(read.refusedLines[0]?.reason).toMatch(/unparseable line/)
-  })
-
-  it('refuses a STRUCTURALLY broken line as data — never healed to absence', async () => {
-    await writeLedger([
-      // A grant with no action class covers nothing and can never match; refusing it is what keeps
-      // the committed file free of approvals that only look like approvals.
-      canonicalJson({ ...grant(), actionClass: '' }),
-      // A grant whose scope has no populated key is the same failure in the other field: the gate
-      // refuses an empty scope on either side, so this line would list as authorization and satisfy
-      // nothing, forever.
-      canonicalJson({ ...grant(), grantId: OTHER_GRANT_ID, scope: {} }),
-      canonicalJson(grant()),
-    ])
-
-    const read = readGrantLedger(knowledgeRoot)
-    expect(read.refusedLines.map((line) => line.lineNumber)).toEqual([1, 2])
-    expect(read.events).toEqual([grant()])
-    // The surviving neighbour still folds — a damaged line is line-level damage, not file-level.
-    expect(foldActiveGrants(read.events).map((active) => active.grantId)).toEqual([GRANT_ID])
-  })
-
-  it('refuses a grant whose scope carries an UNKNOWN key, by line number', async () => {
-    // The structural guard refuses exactly what the strict wire contract refuses: a key that is NOT
-    // a member of TRUST_SCOPE_KEYS. The key is computed from that constant, so this case states the
-    // RELATION rather than naming a spelling that a later key addition could legalise. Authored as
-    // raw bytes BECAUSE the fixed mint refuses to produce it — the same sanctioned hand-written-line
-    // exception the forged-protected-line case relies on.
-    await writeLedger([
-      canonicalJson(grant()),
-      canonicalJson({
-        ...grant(),
-        grantId: OTHER_GRANT_ID,
-        scope: { ...STANDING_APPROVAL_SCOPE, [UNKNOWN_SCOPE_KEY]: 'smuggled' },
-      }),
-    ])
-
-    const read = readGrantLedger(knowledgeRoot)
-    expect(read.refusedLines.map((line) => line.lineNumber)).toEqual([2])
-    expect(read.events).toEqual([grant()])
-    expect(foldActiveGrants(read.events).map((active) => active.grantId)).toEqual([GRANT_ID])
-  })
-
-  it('ADMITS every legal scope key combination — org-only, project-only and both', async () => {
-    // The admit side of the guard above. Without it, "refuses an unknown key" would be
-    // indistinguishable from "refuses anything that is not the one canonical scope literal".
-    await writeLedger([
-      canonicalJson({ ...grant(), grantId: 'grant_scope_org', scope: { org: 'acme' } }),
-      canonicalJson({
-        ...grant(),
-        grantId: 'grant_scope_project',
-        scope: { project: 'local-workspace' },
-      }),
-      canonicalJson({
-        ...grant(),
-        grantId: 'grant_scope_both',
-        scope: { org: 'acme', project: 'local-workspace' },
-      }),
-    ])
-
-    const read = readGrantLedger(knowledgeRoot)
-    expect(read.refusedLines).toEqual([])
-    expect(foldActiveGrants(read.events).map((active) => active.grantId)).toEqual([
-      'grant_scope_org',
-      'grant_scope_project',
-      'grant_scope_both',
-    ])
-  })
-
-  it('PROPAGATES a newer-version line as a typed error — committed truth hard-fails', async () => {
-    await writeLedger([
-      canonicalJson(grant()),
-      canonicalJson({ ...grant(), schemaVersion: CURRENT_GRANT_LEDGER_SCHEMA_VERSION + 1 }),
-    ])
-
-    // The two-arm split: a structural problem is one refused LINE, a version this build cannot
-    // consume takes the whole file down. Skipping it would be the dangerous direction — a skipped
-    // revoke leaves a withdrawn approval standing.
-    expect(() => readGrantLedger(knowledgeRoot)).toThrow(GrantLedgerVersionError)
-  })
-
-  it('folds in FILE ORDER: a revoke after a grant leaves no active grant', () => {
-    expect(foldActiveGrants([grant(), revoke()])).toEqual([])
-  })
-
-  it('folds in FILE ORDER: the same two lines REVERSED leave the grant active', () => {
-    // The control for the case above. Without it, "revoke wins" would be indistinguishable from
-    // "revoke wins wherever it appears", which is a different and wrong rule.
-    const active = foldActiveGrants([revoke(), grant()])
-    expect(active).toEqual([
-      {
-        grantId: GRANT_ID,
-        actionClass: ACTION_CLASS,
-        scope: STANDING_APPROVAL_SCOPE,
-        grantedAt: GRANTED_AT,
-      },
-    ])
-  })
-
-  it('a revoke with NO matching grant is a no-op arm — nothing is invented', () => {
-    expect(foldActiveGrants([revoke({ grantId: 'grant_never_recorded' })])).toEqual([])
-    // …and it does not disturb an unrelated grant that IS recorded.
-    expect(
-      foldActiveGrants([grant(), revoke({ grantId: 'grant_never_recorded' })])
-        .map((active) => active.grantId),
-    ).toEqual([GRANT_ID])
-  })
-
-  it('revokes by ID ONLY — a revoke for another id leaves this grant standing', () => {
-    expect(
-      foldActiveGrants([grant(), revoke({ grantId: OTHER_GRANT_ID })]).map((a) => a.grantId),
-    ).toEqual([GRANT_ID])
-  })
-
-  it('carries provenance through the fold when the grant recorded one', () => {
-    const [active] = foldActiveGrants([grant({ proposalId: 'prop_0123456789ab' })])
-    expect(active?.proposalId).toBe('prop_0123456789ab')
-    // Absent provenance is an ABSENT field, not a present undefined one.
-    expect(Object.hasOwn(foldActiveGrants([grant()])[0] ?? {}, 'proposalId')).toBe(false)
-  })
-
-  it('is PURE — the same events fold identically however many times they are folded', () => {
-    const events = [grant(), grant({ grantId: OTHER_GRANT_ID }), revoke()]
-    expect(foldActiveGrants(events)).toEqual(foldActiveGrants(events))
-    expect(foldActiveGrants(events).map((active) => active.grantId)).toEqual([OTHER_GRANT_ID])
-  })
+  return wrapped
 })
 
-// ---- appendGrantLedgerEvents: egress-checkpointed committed writes (D-11) ----
+vi.mock('node:fs', async (importOriginal) => {
+  const actual = await importOriginal<Record<string, unknown>>()
+  const wrapped = wrapPathCalls(actual)
+  return {
+    ...wrapped,
+    promises: wrapPathCalls(actual['promises'] as Record<string, unknown>),
+    default: wrapped,
+  }
+})
 
-// AKIA + 16 uppercase alphanumerics is the exact detector-shaped key the committed-root proofs use.
-// An arbitrary random string would not exercise the refusal path at all.
+vi.mock('node:fs/promises', async (importOriginal) => {
+  const actual = await importOriginal<Record<string, unknown>>()
+  const wrapped = wrapPathCalls(actual)
+  return { ...wrapped, default: wrapped }
+})
+
+import { publishBundle, type BundleStoreConfig } from '../../bundle-publish.test-helper.js'
+import { diffSince } from '../../diff-since.js'
+import { inspectRecords } from '../../inspect.js'
+import { listBundles } from '../../list-bundles.js'
+import { acquireWriterLease, releaseLease } from '../../lease/writer-lease.js'
+import { createQuarantineOperations } from '../../quarantine/operations.js'
+import { ApplyDelegateUnavailableError, applyExplicitReview } from '../../review/apply-review.js'
+import { showRecord } from '../../show-record.js'
+import {
+  makeBundleDraftFixture,
+  makeScreenStateFixture,
+  scaffoldKnowledgeRoot,
+} from '../../__tests__/fixtures/bundle-fixture.js'
+import * as knowledgeLocal from '../../index.js'
+
+const ANCHOR: Anchor = { t: 'el', role: 'Button', name: 'Checkout' }
+const SCOPE: ScopeKey = { tier: 'product', key: 'grants-unread-storefront' }
+const CONTEXTS = ['local-interactive', 'local-headless', 'ci', 'cloud'] as const satisfies
+  readonly ExecutionContext[]
+const NOW = '2026-10-01T00:00:00.000Z'
+/** A live guardrail detector's own fixture shape — an AWS key the checkpoint must catch. */
 const AWS_KEY = 'AKIAIOSFODNN7EXAMPLE'
+const LEGACY_LEDGER = 'grants.jsonl'
 
-describe('appendGrantLedgerEvents (D-11)', () => {
+/**
+ * The exports the deleted ledger, reader and grant verbs published from this package. Each is named
+ * so a returning member reds by name rather than by a count.
+ */
+const RETIRED_EXPORTS = [
+  'GRANT_LEDGER_EGRESS_CHANNEL',
+  'GRANT_LEDGER_FILENAME',
+  'appendGrantLedgerEvents',
+  'foldActiveGrants',
+  'grantsLedgerPath',
+  'readGrantLedger',
+  'createStandingApprovalReader',
+  'GrantLeaseHeldError',
+  'GrantLedgerDamagedError',
+  'GrantWriteBlockedError',
+  'createGrantOperations',
+] as const
+
+/** The three modules the ledger was built from. */
+const RETIRED_MODULES = ['ledger.ts', 'reader.ts', 'operations.ts'] as const
+
+/**
+ * An old ledger as earlier versions left it, written as bytes: an intact grant, its revoke fused
+ * onto a git conflict marker, a line from a newer build, a grant with an unknown scope key, a
+ * truncated line and a non-JSON line. Nothing in this build can produce or parse any of them, which
+ * is why they are literals.
+ */
+const LEGACY_BYTES = [
+  '{"schemaVersion":1,"kind":"grant","at":"2026-08-07T12:00:00.000Z","grantId":"grant_legacy_a","actionClass":"fn:knowledge.forget","scope":{"project":"local-workspace"}}',
+  '<<<<<<< HEAD{"schemaVersion":1,"kind":"revoke","at":"2026-08-07T12:30:00.000Z","grantId":"grant_legacy_a"}',
+  '{"schemaVersion":9,"kind":"grant","at":"2026-08-08T00:00:00.000Z","grantId":"grant_from_the_future","actionClass":"fn:runs.start","scope":{"project":"local-workspace"}}',
+  '{"schemaVersion":1,"kind":"grant","at":"2026-08-08T00:00:00.000Z","grantId":"grant_tenant","actionClass":"fn:config.field.set","scope":{"tenant":"acme"}}',
+  '{"schemaVersion":1,"kind":"grant","at":"2026-08-08',
+  'not json at all',
+  '',
+].join('\n')
+
+function digest(path: string): string {
+  return createHash('sha256').update(readFileSync(path)).digest('hex')
+}
+
+describe('C432-GRANTS-UNREAD-WRITER-ABSENT: an old grants.jsonl is never read, written, renamed or cleaned up', () => {
+  let root: string
   let knowledgeRoot: string
-  let auditBaseDir: string
+  let agentQaRoot: string
+  let ledger: string
 
-  beforeEach(async () => {
-    knowledgeRoot = await mkdtemp(join(tmpdir(), 'grant-append-'))
-    auditBaseDir = await mkdtemp(join(tmpdir(), 'grant-audit-'))
+  beforeEach(() => {
+    root = mkdtempSync(join(tmpdir(), 'grants-unread-'))
+    knowledgeRoot = join(root, 'agent-qa-knowledge')
+    agentQaRoot = join(root, '.agent-qa')
+    ledger = join(knowledgeRoot, LEGACY_LEDGER)
+    scaffoldKnowledgeRoot(knowledgeRoot)
+    writeFileSync(ledger, LEGACY_BYTES, 'utf8')
+    recorder.paths.length = 0
   })
 
-  afterEach(async () => {
-    await rm(knowledgeRoot, { recursive: true, force: true })
-    await rm(auditBaseDir, { recursive: true, force: true })
+  afterEach(() => {
+    rmSync(root, { recursive: true, force: true })
   })
 
-  function ledgerText(): string {
-    return readFileSync(grantsLedgerPath(knowledgeRoot), 'utf8')
+  function storeConfig(): BundleStoreConfig {
+    return { knowledgeRoot, productKey: 'Grants Unread Product', auditBaseDir: agentQaRoot, commitArtifacts: 'none' }
   }
 
-  it('names its own committed-egress channel', () => {
-    // Distinct from the bundle and quarantine channels, so an audit row says which committed
-    // surface refused without anyone having to infer it.
-    expect(GRANT_LEDGER_EGRESS_CHANNEL).toBe('grant-ledger')
-  })
-
-  it('round-trips: append then read then fold reproduces the events identically', () => {
-    const events = [grant(), revoke()]
-    expect(appendGrantLedgerEvents(knowledgeRoot, events, { auditBaseDir })).toEqual({
-      kind: 'appended',
-      lines: 2,
+  function publish(summary: string): string {
+    const outcome = publishBundle(storeConfig(), {
+      draft: makeBundleDraftFixture({ kind: 'fact', anchors: [ANCHOR], scope: SCOPE, summary }),
+      discriminant: { kind: 'fact', subtype: 'selector', elementRef: { role: 'Button', name: summary } },
+      originClass: 'agent-verified',
+      createdAtOrdinal: 10,
+      screenStates: [makeScreenStateFixture()],
+      initialEvents: [],
+      relations: [],
+      provenance: { mode: 'run-linked', runId: `grants-unread-${summary}`, testId: 't', stepIndex: 0 },
+      artifacts: [],
     })
+    if (outcome.kind !== 'published') throw new Error(`fixture publish failed: ${outcome.kind}`)
+    return outcome.id
+  }
 
-    const read = readGrantLedger(knowledgeRoot)
-    expect(read.refusedLines).toEqual([])
-    expect(read.events).toEqual(events)
-    expect(foldActiveGrants(read.events)).toEqual(foldActiveGrants(events))
-  })
-
-  it('writes canonical JSON, one event per line, newline-terminated', () => {
-    appendGrantLedgerEvents(knowledgeRoot, [grant()], { auditBaseDir })
-    expect(ledgerText()).toBe(`${canonicalJson(grant())}\n`)
-  })
-
-  it('APPENDS — an existing ledger keeps every prior line', () => {
-    appendGrantLedgerEvents(knowledgeRoot, [grant()], { auditBaseDir })
-    appendGrantLedgerEvents(knowledgeRoot, [revoke()], { auditBaseDir })
-    expect(readGrantLedger(knowledgeRoot).events).toEqual([grant(), revoke()])
-    expect(ledgerText().trimEnd().split('\n')).toHaveLength(2)
-  })
-
-  it('creates the knowledge root when the first append lands', () => {
-    const freshRoot = join(knowledgeRoot, 'nested', 'root')
-    expect(existsSync(freshRoot)).toBe(false)
-    expect(appendGrantLedgerEvents(freshRoot, [grant()], { auditBaseDir })).toEqual({
-      kind: 'appended',
-      lines: 1,
+  function quarantine() {
+    return createQuarantineOperations({
+      resolveKnowledgeRoot: () => knowledgeRoot,
+      auditBaseDir: agentQaRoot,
+      now: () => NOW,
+      mintIdentityPath: (filePath) => filePath,
     })
-    expect(readGrantLedger(freshRoot).events).toEqual([grant()])
+  }
+
+  function touchedLedger(): readonly string[] {
+    return recorder.paths.filter((path) => path === ledger || path.endsWith(`/${LEGACY_LEDGER}`))
+  }
+
+  /** Every file at the knowledge root whose name could be a grant store, legacy file aside. */
+  function grantShapedSiblings(): readonly string[] {
+    return readdirSync(knowledgeRoot).filter((name) => /grant/i.test(name) && name !== LEGACY_LEDGER)
+  }
+
+  it('C432-GRANTS-UNREAD-WRITER-ABSENT: the recorder sees a call that does reach the legacy ledger', () => {
+    // The control. Without it, "no recorded path" could be a recorder that records nothing.
+    expect(existsSync(ledger)).toBe(true)
+    expect(touchedLedger()).toEqual([ledger])
   })
 
-  it('an empty event list is a no-op that writes no file', () => {
-    expect(appendGrantLedgerEvents(knowledgeRoot, [], { auditBaseDir })).toEqual({
-      kind: 'appended',
-      lines: 0,
-    })
-    expect(existsSync(grantsLedgerPath(knowledgeRoot))).toBe(false)
+  it('C432-GRANTS-UNREAD-WRITER-ABSENT: explicit accept, reject and forget apply in every context and never open it', async () => {
+    const before = digest(ledger)
+    const targets = CONTEXTS.map((context) => ({
+      context,
+      accept: publish(`accept ${context}`),
+      reject: publish(`reject ${context}`),
+      forget: publish(`forget ${context}`),
+    }))
+    recorder.paths.length = 0
+
+    for (const [index, { context, accept, reject, forget }] of targets.entries()) {
+      const base = { agentQaRoot, knowledgeRoot, executionContext: context }
+      const accepted = await applyExplicitReview({ ...base, opId: 'knowledge.accept',
+        operationId: `grants-unread-accept-${index}1`,
+        request: { verb: 'accept', input: { target: { grain: 'record', recordId: accept } } } })
+      expect(accepted, `${context} accept`).toMatchObject({ outcome: 'applied', recordIds: [accept] })
+      const rejected = await applyExplicitReview({ ...base, opId: 'knowledge.reject',
+        operationId: `grants-unread-reject-${index}2`,
+        request: { verb: 'reject', input: { target: { grain: 'record', recordId: reject }, reason: 'wrong' } } })
+      expect(rejected, `${context} reject`).toMatchObject({ outcome: 'applied', recordIds: [reject] })
+      const forgotten = await applyExplicitReview({ ...base, opId: 'knowledge.forget',
+        operationId: `grants-unread-forget-${index}3`,
+        request: { verb: 'forget', input: { target: { grain: 'record', recordId: forget } } } })
+      expect(forgotten, `${context} forget`).toMatchObject({ outcome: 'applied', recordIds: [forget] })
+    }
+
+    expect(recorder.paths.length, 'the door made no recorded filesystem call, so this cell measures nothing')
+      .toBeGreaterThan(0)
+    expect(touchedLedger(), 'an explicit change opened, wrote or renamed the legacy ledger').toEqual([])
+    expect(digest(ledger), 'the legacy ledger was rewritten, cleaned up or migrated').toBe(before)
+    expect(grantShapedSiblings(), 'a grant-shaped replacement store appeared').toEqual([])
+  }, 120_000)
+
+  it('C432-GRANTS-UNREAD-WRITER-ABSENT: quarantine add, list and release never open it', async () => {
+    const before = digest(ledger)
+    const ops = quarantine()
+    recorder.paths.length = 0
+    const who = { product: 'grants-unread', filePath: 'tests/a.yaml', testName: 'alpha' }
+
+    expect(await ops.add(who)).toMatchObject({ kind: 'entered' })
+    expect((await ops.list()).map((entry) => entry.testName)).toEqual(['alpha'])
+    expect(await ops.release(who)).toMatchObject({ kind: 'released' })
+
+    expect(recorder.paths.length).toBeGreaterThan(0)
+    expect(touchedLedger(), 'a quarantine verb opened the legacy grant ledger').toEqual([])
+    expect(digest(ledger)).toBe(before)
+    expect(grantShapedSiblings()).toEqual([])
+  }, 120_000)
+
+  it('C432-GRANTS-UNREAD-WRITER-ABSENT: the knowledge reads answer beside it and never open it', () => {
+    const before = digest(ledger)
+    const recordId = publish('read')
+    recorder.paths.length = 0
+
+    expect(listBundles(knowledgeRoot).map((row) => row.bundleId)).toContain(recordId)
+    expect(inspectRecords({ knowledgeRoot, filter: {} }).map((row) => row.recordId)).toContain(recordId)
+    expect(diffSince({ knowledgeRoot, sinceOrdinal: 0 }).length).toBeGreaterThan(0)
+    expect(showRecord({ knowledgeRoot, recordId })).toMatchObject({ kind: 'found' })
+
+    expect(recorder.paths.length).toBeGreaterThan(0)
+    expect(touchedLedger(), 'a knowledge read opened the legacy grant ledger').toEqual([])
+    expect(digest(ledger)).toBe(before)
   })
 
-  it('rejects a STALE hand-stamped version with an index-naming TypeError, writing nothing', () => {
-    // The version leg exists separately from the shape leg because the shape predicate asks only
-    // that `schemaVersion` be a NUMBER. Every other number would slip past a shape-only pre-check
-    // and land a line the reader then rejects.
-    expect(() =>
-      appendGrantLedgerEvents(
-        knowledgeRoot,
-        [grant({ schemaVersion: CURRENT_GRANT_LEDGER_SCHEMA_VERSION - 1 })],
-        { auditBaseDir },
-      ),
-    ).toThrow(TypeError)
-    expect(() =>
-      appendGrantLedgerEvents(
-        knowledgeRoot,
-        [grant({ schemaVersion: CURRENT_GRANT_LEDGER_SCHEMA_VERSION - 1 })],
-        { auditBaseDir },
-      ),
-    ).toThrow(/index 0.*is not the current version/s)
+  // Carried from the deleted grant verbs' "refuses typed when another writer holds the lease, leaving
+  // the ledger byte-unchanged": the direct writers refuse a held lease by name, and the legacy file is
+  // untouched either way.
+  it('C432-GRANTS-UNREAD-WRITER-ABSENT: a held writer lease refuses the direct writers by name and leaves it untouched', async () => {
+    const before = digest(ledger)
+    const recordId = publish('held')
+    const holder = acquireWriterLease(knowledgeRoot)
+    if (holder.kind !== 'acquired') throw new Error(`the fixture could not take the lease: ${holder.kind}`)
+    recorder.paths.length = 0
+    try {
+      await expect(applyExplicitReview({
+        agentQaRoot, knowledgeRoot, executionContext: 'local-headless', opId: 'knowledge.forget',
+        operationId: 'grants-unread-held-1',
+        request: { verb: 'forget', input: { target: { grain: 'record', recordId } } },
+      })).rejects.toBeInstanceOf(ApplyDelegateUnavailableError)
+      await expect(quarantine().add({ product: 'grants-unread', filePath: 'tests/b.yaml', testName: 'beta' }))
+        .rejects.toMatchObject({ name: 'QuarantineLeaseHeldError', holder: { leaseId: holder.leaseId } })
+    } finally {
+      releaseLease({ knowledgeRoot, leaseId: holder.leaseId })
+    }
+    expect(touchedLedger()).toEqual([])
+    expect(digest(ledger)).toBe(before)
+    expect(grantShapedSiblings()).toEqual([])
+  }, 120_000)
 
-    expect(existsSync(grantsLedgerPath(knowledgeRoot))).toBe(false)
+  // Carried from "surfaces a committed-egress refusal as a typed throw, with no byte written".
+  it('C432-GRANTS-UNREAD-WRITER-ABSENT: a committed-egress refusal on a direct writer throws typed and leaves it untouched', async () => {
+    const before = digest(ledger)
+    recorder.paths.length = 0
+    await expect(quarantine().add({
+      product: 'grants-unread', filePath: 'tests/c.yaml', testName: 'gamma', owner: `oncall-${AWS_KEY}`,
+    })).rejects.toMatchObject({ name: 'QuarantineWriteBlockedError' })
+    expect(touchedLedger()).toEqual([])
+    expect(digest(ledger)).toBe(before)
   })
 
-  it('rejects a NEWER hand-stamped version on the same leg', () => {
-    // `===`, not `<=`: both sides of the current version are equally unreadable while the migration
-    // registry is empty, and an ordering comparison would have admitted one of them.
-    expect(() =>
-      appendGrantLedgerEvents(
-        knowledgeRoot,
-        [grant({ schemaVersion: CURRENT_GRANT_LEDGER_SCHEMA_VERSION + 1 })],
-        { auditBaseDir },
-      ),
-    ).toThrow(/is not the current version/)
-    expect(existsSync(grantsLedgerPath(knowledgeRoot))).toBe(false)
-  })
-
-  it('rejects a MISSHAPEN event on the shape leg — throws, writes nothing', () => {
-    expect(() =>
-      appendGrantLedgerEvents(knowledgeRoot, [grant({ actionClass: '' })], { auditBaseDir }),
-    ).toThrow(TypeError)
-    // Named by INDEX, so a caller appending a batch knows which event it authored badly.
-    expect(() =>
-      appendGrantLedgerEvents(
-        knowledgeRoot,
-        [revoke(), grant({ scope: {} })],
-        { auditBaseDir },
-      ),
-    ).toThrow(/index 1/)
-
-    expect(existsSync(grantsLedgerPath(knowledgeRoot))).toBe(false)
-  })
-
-  it('refuses a secret-bearing append as DATA, writing no byte and throwing nothing', () => {
-    const outcome = appendGrantLedgerEvents(
-      knowledgeRoot,
-      [grant({ actionClass: `fn:knowledge.${AWS_KEY}` })],
-      { auditBaseDir },
-    )
-
-    expect(outcome.kind).toBe('egress-blocked')
-    if (outcome.kind !== 'egress-blocked') throw new Error('expected an egress refusal')
-    expect(outcome.detections.map((detection) => detection.detector)).toContain('awsKey')
-
-    // Fail-closed: the checkpoint runs BEFORE any byte reaches the committed file. This is the
-    // whole reason a grant ledger goes through it — the file is PR-visible by design.
-    expect(existsSync(grantsLedgerPath(knowledgeRoot))).toBe(false)
-
-    // And the refusal is audited under the caller-owned audit dir, on this channel.
-    const auditPath = join(auditBaseDir, 'guardrail_audit.jsonl')
-    expect(existsSync(auditPath)).toBe(true)
-    expect(readFileSync(auditPath, 'utf8')).toContain(GRANT_LEDGER_EGRESS_CHANNEL)
-  })
-
-  it('a blocked unit leaves an existing ledger byte-unchanged — all-or-nothing', () => {
-    appendGrantLedgerEvents(knowledgeRoot, [grant()], { auditBaseDir })
-    const before = ledgerText()
-
-    const outcome = appendGrantLedgerEvents(
-      knowledgeRoot,
-      [revoke(), grant({ grantId: OTHER_GRANT_ID, actionClass: `fn:knowledge.${AWS_KEY}` })],
-      { auditBaseDir },
-    )
-
-    expect(outcome.kind).toBe('egress-blocked')
-    // The CLEAN sibling in the same unit is withheld too: the checkpoint is one unit. A half-written
-    // approval record is what would leave a reviewer unable to tell what was actually authorized.
-    expect(ledgerText()).toBe(before)
-  })
-
-  it('the two pre-checks run BEFORE the egress checkpoint', () => {
-    // The secret is planted on `proposalId`, which rides in the serialized line exactly as the
-    // action class does. THE CONTROL RUNS FIRST, because "no audit row was written" says nothing
-    // unless the same bytes would otherwise have produced one: with a well-formed class, this event
-    // is refused by the checkpoint and audited.
-    const control = appendGrantLedgerEvents(
-      knowledgeRoot,
-      [grant({ proposalId: `prop.${AWS_KEY}` })],
-      { auditBaseDir },
-    )
-    expect(control.kind).toBe('egress-blocked')
-    expect(existsSync(join(auditBaseDir, 'guardrail_audit.jsonl'))).toBe(true)
-
-    // Now the same secret on an event that ALSO fails the shape leg, into a fresh audit dir. The
-    // structural refusal answers and the checkpoint never runs — which is only observable because
-    // the control above proved the checkpoint would have refused these bytes.
-    const secondAuditDir = join(auditBaseDir, 'second')
-    expect(() =>
-      appendGrantLedgerEvents(
-        knowledgeRoot,
-        [grant({ actionClass: '', proposalId: `prop.${AWS_KEY}` })],
-        { auditBaseDir: secondAuditDir },
-      ),
-    ).toThrow(TypeError)
-
-    expect(existsSync(join(secondAuditDir, 'guardrail_audit.jsonl'))).toBe(false)
-    expect(existsSync(grantsLedgerPath(knowledgeRoot))).toBe(false)
-  })
-
-  it('what the append writes is exactly what the read admits — the two halves range one guard', () => {
-    // The symmetry claim stated as a measurement rather than a comment: every event this function
-    // accepts round-trips through the reader with zero refused lines, and every event it refuses is
-    // one the reader would have refused too.
-    const accepted = [grant(), revoke(), grant({ grantId: OTHER_GRANT_ID, proposalId: 'prop_0123456789ab' })]
-    expect(appendGrantLedgerEvents(knowledgeRoot, accepted, { auditBaseDir }).kind).toBe('appended')
-    expect(readGrantLedger(knowledgeRoot)).toEqual({ events: accepted, refusedLines: [] })
+  it('C432-GRANTS-UNREAD-WRITER-ABSENT: no grant reader, writer or verb is exported or present', () => {
+    const exported = new Set(Object.keys(knowledgeLocal))
+    expect(exported.size, 'the barrel is empty, so the census would be vacuous').toBeGreaterThan(0)
+    expect(RETIRED_EXPORTS.filter((name) => exported.has(name)), 'a retired grant member is exported')
+      .toEqual([])
+    expect([...exported].filter((name) => /grant/i.test(name)), 'a grant-shaped member is exported').toEqual([])
+    const grantsDir = join(dirname(fileURLToPath(import.meta.url)), '..')
+    expect(RETIRED_MODULES.filter((name) => existsSync(join(grantsDir, name))), 'a retired grant module is present')
+      .toEqual([])
+    // The direct writers that carry the lease and egress claims are still the barrel's.
+    expect(typeof knowledgeLocal.applyExplicitReview).toBe('function')
+    expect(typeof knowledgeLocal.createQuarantineOperations).toBe('function')
   })
 })

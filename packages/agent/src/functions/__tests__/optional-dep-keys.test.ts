@@ -17,7 +17,6 @@ describe('optional function dep keys (419 GATE3-01)', () => {
       'analysis',
       'recurrence',
       'quarantine',
-      'standingGrants',
       'chatTurn',
       'draftEvaluation',
       'authoringRead',
@@ -39,17 +38,20 @@ describe('optional function dep keys (419 GATE3-01)', () => {
   // 2026-10-01, 432-17 (D-05/D-07/D-09): proposalsInbox, draftApply, authoringProposals,
   // configApply, configProposals and configUndoSource leave with the inbox, the apply ops and the
   // undo, so 30 - 6 = 24.
-  it('has exactly 24 optional bindings', () => {
-    expect(OPTIONAL_FUNCTION_DEP_KEYS).toHaveLength(24)
+  // 2026-10-01, 432-18 (D-03/D-15): standingGrants leaves with the grant ops and the ledger, so
+  // 24 - 1 = 23.
+  it('has exactly 23 optional bindings', () => {
+    expect(OPTIONAL_FUNCTION_DEP_KEYS).toHaveLength(23)
   })
 })
 
 // 2026-09-15, 423-37: an independent oracle for plan 423-23's mutation, spelled by hand again
 // rather than shared with the pin above.
 // 2026-10-01, 432-17: the six proposal, apply and undo bindings leave the hand-spelled roster too.
+// 2026-10-01, 432-18: standingGrants leaves it with the grant ops.
 const EXPECTED_BINDINGS = [
   'liveView', 'runInvocation', 'knowledgeReview', 'postProcessing', 'runDetail', 'evidenceBlobs',
-  'analysis', 'recurrence', 'quarantine', 'standingGrants', 'chatTurn',
+  'analysis', 'recurrence', 'quarantine', 'chatTurn',
   'draftEvaluation', 'authoringRead', 'authoringScope', 'draftShelf', 'authoringFunnel',
   'configFiles', 'configValidate', 'configScan',
   'scaffoldContent', 'capabilityCatalog', 'feedback', 'feedbackReads',
@@ -74,5 +76,17 @@ describe('C423-FEEDBACK-BINDINGS-EXACT', () => {
       [['read'], true],
       [['read'], true],
     ])
+  })
+})
+
+// 2026-10-01, 432-18 (D-03/D-15): the standing-grant port leaves FunctionDeps with both rosters. The
+// type half of this claim is the same-named block in port-split.test-d.ts; this is the runtime half.
+describe('C432-GRANT-DEPS-ABSENT', () => {
+  it('C432-GRANT-DEPS-ABSENT: no optional binding names a grant port, and the roster counts 23', () => {
+    const roster: readonly string[] = OPTIONAL_FUNCTION_DEP_KEYS
+    expect(roster.includes('standingGrants'), 'standingGrants is still an optional binding').toBe(false)
+    expect(roster.filter(key => /grant/i.test(key)), 'a grant-shaped binding replaced it').toEqual([])
+    expect(roster).toHaveLength(23)
+    expect(EXPECTED_BINDINGS).toHaveLength(23)
   })
 })

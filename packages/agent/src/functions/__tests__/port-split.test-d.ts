@@ -185,6 +185,7 @@ expectTypeOf<KnowledgeReaderPort>().not.toMatchTypeOf<KnowledgeReviewPort>()
 // 2026-09-30, 432-07 D-05/D-07: configWrite is the thirtieth, the direct config writer.
 // 2026-10-01, 432-17 D-05/D-07/D-09: proposalsInbox, draftApply, authoringProposals, configApply,
 // configProposals and configUndoSource leave with the inbox, the apply ops and the undo (24 members).
+// 2026-10-01, 432-18 D-03/D-15: standingGrants leaves with the grant ops and the ledger (23 members).
 expectTypeOf<OptionalFunctionDepKey>()
   .toEqualTypeOf<
     | 'liveView'
@@ -196,7 +197,6 @@ expectTypeOf<OptionalFunctionDepKey>()
     | 'analysis'
     | 'recurrence'
     | 'quarantine'
-    | 'standingGrants'
     | 'chatTurn'
     | 'draftEvaluation'
     | 'authoringRead'
@@ -272,10 +272,11 @@ expectTypeOf<Parameters<typeof mapStepEvidenceToWhy>>().toEqualTypeOf<
 // by hand again rather than shared with section 2, and every assertion sits inside a `test` block
 // so vitest counts it; the top-level pins above typecheck but report no tests.
 // 2026-10-01 (432-17): the six proposal, apply and undo deps leave the hand-spelled union too.
+// 2026-10-01 (432-18): standingGrants leaves it with the grant ops.
 type HandSpelledOptionalDepKey =
   | 'liveView' | 'runInvocation' | 'knowledgeReview' | 'postProcessing' | 'runDetail'
   | 'evidenceBlobs' | 'analysis' | 'recurrence' | 'quarantine'
-  | 'standingGrants' | 'chatTurn' | 'draftEvaluation' | 'authoringRead' | 'authoringScope'
+  | 'chatTurn' | 'draftEvaluation' | 'authoringRead' | 'authoringScope'
   | 'draftShelf' | 'authoringFunnel' | 'configFiles'
   | 'configValidate' | 'configScan'
   | 'scaffoldContent' | 'capabilityCatalog' | 'feedback' | 'feedbackReads' | 'configWrite'
@@ -299,5 +300,24 @@ describe('C423-FEEDBACK-BINDINGS-EXACT', () => {
     expectTypeOf<keyof FeedbackPort>().toEqualTypeOf<'mark' | 'marksFor'>()
     expectTypeOf<Extract<keyof FeedbackReadsPort, keyof FeedbackPort>>().toEqualTypeOf<never>()
     expectTypeOf<Parameters<NonNullable<FeedbackReadsPort['preview']>>>().toEqualTypeOf<[RunsMarkInput]>()
+  })
+})
+
+// ---- 6. C432-GRANT-DEPS-ABSENT: the standing-grant port leaves the deps record ------------------
+//
+// 2026-10-01, 432-18 (D-03/D-15). The type half of the claim whose runtime half is the same-named
+// block in optional-dep-keys.test.ts. Each assertion sits in a `test` block so vitest counts it.
+describe('C432-GRANT-DEPS-ABSENT', () => {
+  test('C432-GRANT-DEPS-ABSENT: FunctionDeps declares no standingGrants member', () => {
+    expectTypeOf<Extract<keyof FunctionDeps, 'standingGrants'>>().toEqualTypeOf<never>()
+  })
+
+  test('C432-GRANT-DEPS-ABSENT: OptionalFunctionDepKey has no standingGrants member', () => {
+    expectTypeOf<Extract<OptionalFunctionDepKey, 'standingGrants'>>().toEqualTypeOf<never>()
+    expectTypeOf<Extract<(typeof OPTIONAL_FUNCTION_DEP_KEYS)[number], 'standingGrants'>>().toEqualTypeOf<never>()
+  })
+
+  test('C432-GRANT-DEPS-ABSENT: the roster still counts 23 members, so the absence is not vacuous', () => {
+    expectTypeOf<(typeof OPTIONAL_FUNCTION_DEP_KEYS)['length']>().toEqualTypeOf<23>()
   })
 })
