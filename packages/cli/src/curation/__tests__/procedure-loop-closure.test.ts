@@ -890,12 +890,11 @@ describe('procedure loop closure (PROC-01/PROC-02/ABRF-01/ABRF-02, D-01..D-12)',
     const registry = createFunctionRegistry({
       deps,
       auditSink: { appendGuardrailAudit() {} },
-      resolveExecutionContext: () => 'local-interactive',
+      // 2026-10-02 (432-37, D-12): no `resolveExecutionContext` registry option, and the caller
+      // carries no `grantedScopes`/`safeMode`; the registry reads neither (432-20).
     })
     const caller: FunctionCaller = {
       surface: 'cli',
-      grantedScopes: ['read'],
-      safeMode: false,
       origin: 'human',
     }
 

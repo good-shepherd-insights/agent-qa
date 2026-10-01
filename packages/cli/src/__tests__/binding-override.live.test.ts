@@ -74,7 +74,6 @@ import type { LocalAgentHost, RunExecutionPort } from '@vostride/agent-qa-agent-
 import { HANDOFF_FILE, RUNS_SUBDIR, slugBranch } from '@vostride/agent-qa-runner-local'
 import {
   CURRENT_HANDOFF_SCHEMA_VERSION,
-  FunctionScopeSchema,
   asRunId,
 } from '@vostride/agent-qa-schema'
 import type {
@@ -110,10 +109,10 @@ const UTTERANCE = `digest ${SEEDED_RUN_ID} and also show me the digest for ${DEC
 /** The clause the table binds — the one whose executed binding flips between the two arms. */
 const CANONICAL_CLAUSE = `digest ${SEEDED_RUN_ID}`
 
+// 2026-10-02 (432-37, D-12): no `grantedScopes` or `safeMode` on the caller; the registry reads
+// neither (432-20).
 const HUMAN: FunctionCaller = {
   surface: 'test',
-  grantedScopes: [...FunctionScopeSchema.options],
-  safeMode: false,
   origin: 'human',
 }
 
