@@ -13,11 +13,14 @@
 import { MASKED_RESOLVED_CONFIG_SCHEMA_VERSION } from '@vostride/agent-qa-schema'
 import type {
   BundleProvenance,
+  FunctionCaller,
   InspectRecordView,
   RecordChange,
 } from '@vostride/agent-qa-schema'
 import { describe, expect, it } from 'vitest'
 
+import { invokeFunction } from '../invoke.js'
+import { createFunctionRegistry } from '../registry.js'
 import { agentAskSpec } from '../ops/agent-ask.js'
 import { analysisGetSpec } from '../ops/analysis-get.js'
 import { configTargetCreateSpec } from '../ops/config-target-create.js'
@@ -29,7 +32,12 @@ import { knowledgeRecordsInspectSpec } from '../ops/knowledge-records-inspect.js
 import { knowledgeRejectSpec } from '../ops/knowledge-reject-propose.js'
 import { runsKnowledgeSpec } from '../ops/runs-knowledge.js'
 import { runsPostProcessingSpec } from '../ops/runs-post-processing.js'
-import type { FunctionDeps, KnowledgeReaderPort } from '../spec.js'
+import type {
+  FunctionDeps,
+  KnowledgeChangeRequest,
+  KnowledgeReaderPort,
+  KnowledgeReviewPort,
+} from '../spec.js'
 
 function view(overrides: Partial<InspectRecordView> = {}): InspectRecordView {
   return {
@@ -427,5 +435,81 @@ describe('C432-DECLARATION-KEYS: the 432-26 op specs carry no permission metadat
     expect(migrated.filter(({ spec }) => 'disclose' in spec).map(({ spec }) => spec.id)).toEqual([])
     expect(migrated.filter(({ spec }) => 'outputRepresentation' in spec).map(({ spec }) => spec.id))
       .toEqual([])
+  })
+})
+
+// ---- C432-ALL-OPS-AVAILABLE (432-26, D-12) ------------------------------
+//
+// `knowledge.accept` and `knowledge.reject` once required `knowledge-write`, and the two reads
+// `read`. Retried from three callers that differ in surface and origin, and that carry no scope at
+// all, each verb is served every time: the port is reached once per attempt with exactly what the
+// caller sent, every caller gets the same answer, and no audit row is written.
+describe('C432-ALL-OPS-AVAILABLE: the 432-26 knowledge verbs serve every caller', () => {
+  it('C432-ALL-OPS-AVAILABLE: a retried accept, reject, inspect and show are served alike to every caller', async () => {
+    const changes: KnowledgeChangeRequest[] = []
+    const filters: unknown[] = []
+    const shown: string[] = []
+    const knowledgeReview: KnowledgeReviewPort = {
+      change(request) {
+        changes.push(request)
+        return Promise.resolve({
+          outcome: 'applied',
+          verb: request.verb,
+          operationId: request.operationId ?? 'minted-by-the-stub',
+          recordIds: ['rec-1'],
+        })
+      },
+    }
+    const auditRows: unknown[] = []
+    const registry = createFunctionRegistry({
+      deps: {
+        ...deps({
+          inspectRecords: (input) => {
+            filters.push(input.filter)
+            return Promise.resolve([view()])
+          },
+          showRecord: ({ recordId }) => {
+            shown.push(recordId)
+            return Promise.resolve({ kind: 'not-found', schemaVersion: 1, recordId })
+          },
+        }),
+        knowledgeReview,
+      },
+      auditSink: { appendGuardrailAudit(row: unknown) { auditRows.push(row) } },
+    })
+    const callers: readonly FunctionCaller[] = [
+      { surface: 'test', origin: 'agent' },
+      { surface: 'cli', origin: 'human' },
+      { surface: 'mcp', origin: 'agent' },
+    ]
+    const target = { grain: 'record', recordId: 'rec-1' } as const
+
+    const answers: unknown[] = []
+    for (const caller of callers) {
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        answers.push(await invokeFunction(registry, 'knowledge.accept',
+          { target, operationId: 'accept-op-1' }, caller))
+        answers.push(await invokeFunction(registry, 'knowledge.reject',
+          { target, reason: 'stale selector', operationId: 'reject-op-1' }, caller))
+        answers.push(await invokeFunction(registry, 'knowledge.records.inspect',
+          { filter: { product: 'shop' } }, caller))
+        answers.push(await invokeFunction(registry, 'knowledge.record.show',
+          { recordId: 'rec-9' }, caller))
+      }
+    }
+
+    // The retry keeps its operation id, so the writer behind the port can land it once.
+    expect(changes).toEqual(Array.from({ length: 6 }, () => [
+      { verb: 'accept', input: { target }, operationId: 'accept-op-1' },
+      { verb: 'reject', input: { target, reason: 'stale selector' }, operationId: 'reject-op-1' },
+    ]).flat())
+    expect(filters).toEqual(Array.from({ length: 6 }, () => ({ product: 'shop' })))
+    expect(shown).toEqual(Array.from({ length: 6 }, () => 'rec-9'))
+    expect(answers).toEqual(Array.from({ length: 6 }, () => answers.slice(0, 4)).flat())
+    expect(answers.slice(0, 2)).toEqual([
+      { outcome: 'applied', verb: 'accept', operationId: 'accept-op-1', recordIds: ['rec-1'] },
+      { outcome: 'applied', verb: 'reject', operationId: 'reject-op-1', recordIds: ['rec-1'] },
+    ])
+    expect(auditRows).toEqual([])
   })
 })

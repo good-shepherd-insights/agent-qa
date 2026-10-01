@@ -1234,3 +1234,62 @@ describe('423 recorded rung causes on runs.knowledge (D-22)', () => {
     })
   })
 })
+
+// ---- C432-ALL-OPS-AVAILABLE (432-26, D-12) ------------------------------
+//
+// `runs.knowledge` and the chip read it composes, `runs.postprocessing`, once required `read`.
+// Retried from three callers that differ in surface and origin, and that carry no scope at all,
+// both are served every time: each attempt reaches the same ports the same number of times, every
+// caller gets the same answer, and no audit row is written.
+describe('C432-ALL-OPS-AVAILABLE: the run knowledge reads serve every caller', () => {
+  it('C432-ALL-OPS-AVAILABLE: a retried runs.knowledge and runs.postprocessing are served alike to every caller', async () => {
+    const base = deps({
+      bindPostProcessing: true,
+      chain: {
+        curateMemory: { status: 'done', claimed: false },
+        notification: notification({ status: 'done', curated: 3, deprecated: 1 }),
+      },
+    })
+    const runReads = vi.fn(base.runs.get)
+    const chainReads = vi.fn(base.postProcessing!.readChain)
+    const auditRows: unknown[] = []
+    const registry = createFunctionRegistry({
+      deps: {
+        ...base,
+        runs: { ...base.runs, get: runReads },
+        postProcessing: { ...base.postProcessing!, readChain: chainReads },
+      },
+      auditSink: { appendGuardrailAudit(row: unknown) { auditRows.push(row) } },
+    })
+    const callers = [
+      { surface: 'test', origin: 'agent' },
+      { surface: 'cli', origin: 'human' },
+      { surface: 'mcp', origin: 'agent' },
+    ] as const
+
+    const knowledge: unknown[] = []
+    const chips: unknown[] = []
+    const reads: { runs: number; chain: number }[] = []
+    for (const caller of callers) {
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        const before = { runs: runReads.mock.calls.length, chain: chainReads.mock.calls.length }
+        knowledge.push(await invokeFunction(registry, 'runs.knowledge', { runId: RUN_ID }, caller))
+        chips.push(await invokeFunction(registry, 'runs.postprocessing', { runId: RUN_ID }, caller))
+        reads.push({
+          runs: runReads.mock.calls.length - before.runs,
+          chain: chainReads.mock.calls.length - before.chain,
+        })
+      }
+    }
+
+    expect(knowledge).toHaveLength(6)
+    expect(knowledge[0]).toHaveProperty('kind', 'ready')
+    expect(knowledge[0]).toHaveProperty('curation.counts', { curated: 3, deprecated: 1 })
+    expect(knowledge).toEqual(Array.from({ length: 6 }, () => knowledge[0]))
+    expect(chips).toEqual(Array.from({ length: 6 }, () => chips[0]))
+    expect(reads[0]!.runs).toBeGreaterThan(0)
+    expect(reads[0]!.chain).toBeGreaterThan(0)
+    expect(reads).toEqual(Array.from({ length: 6 }, () => reads[0]))
+    expect(auditRows).toEqual([])
+  })
+})
