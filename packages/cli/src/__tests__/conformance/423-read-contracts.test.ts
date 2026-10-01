@@ -62,8 +62,6 @@ import {
   RunsMarksHistoryResultSchema,
   type CatalogOpRow,
   type CompletedRunHandoff,
-  type FunctionCaller,
-  type FunctionScope,
   type RecordChange,
   type RunId,
 } from '@vostride/agent-qa-schema'
@@ -88,7 +86,6 @@ const AUTH_STATE = JSON.stringify({
   origins: [],
 })
 const ALLOWED = 'Restored 423-38 display label'
-const READ_SCOPES: readonly FunctionScope[] = ['read']
 
 /** Every path and byte under a root, directories included, so a created directory is visible. */
 function tree(root: string): [string, string][] {
@@ -99,13 +96,9 @@ function tree(root: string): [string, string][] {
   return walk(root)
 }
 
-/**
- * The MCP caller the socket path mints. 2026-10-01 (432-21, D-12): it is the one tokenless caller;
- * the legacy read-only scope set rides along unread, so the cells keep their read-only framing.
- */
-function declaredMcpCaller(scopes: readonly FunctionScope[]): FunctionCaller {
-  return { ...MCP_FUNCTION_CALLER, grantedScopes: scopes }
-}
+// 2026-10-01 (432-31, D-12): the MCP door runs under the caller the socket path mints, the one
+// tokenless `MCP_FUNCTION_CALLER`. The unread read-only `grantedScopes` it once carried is gone; the
+// cells' read-only claims rest on the reads themselves.
 
 // ---- Doors over one registry ----------------------------------------------------------------------
 
@@ -153,7 +146,7 @@ async function openDoors(input: {
   }
   const withClient = async <T>(body: (client: Client) => Promise<T>): Promise<T> => {
     const handler = createMcpHandler(() => buildAgentQaMcpServer({
-      registry: input.registry, caller: declaredMcpCaller(READ_SCOPES), maskText: input.maskText }))
+      registry: input.registry, caller: MCP_FUNCTION_CALLER, maskText: input.maskText }))
     const client = new Client({ name: 'agent-qa-423-38-read-contracts', version: '0.0.0' })
     try {
       await client.connect(new StreamableHTTPClientTransport(new URL('http://read-contracts.local/mcp'), {
@@ -322,8 +315,8 @@ async function openDurableScene() {
     runDetail: createDashboardRunDetailReader(db),
     evidenceBlobs: createEvidenceBlobReader({ agentQaRoot: root }),
   } as unknown as FunctionDeps
-  const registry = createFunctionRegistry({ deps, resolveExecutionContext: () => 'local-interactive',
-    auditSink: { appendGuardrailAudit() {} } })
+  // 2026-10-01 (432-31): the retired, unread `resolveExecutionContext` registry option is dropped.
+  const registry = createFunctionRegistry({ deps, auditSink: { appendGuardrailAudit() {} } })
   const unmask = createDisplayUnmasker({ agentQaRoot: root, secretStores: () => [store], env: () => ({}), authStatePayloads: () => [] })
   const agentHost = composeDashboardAgentHost({ registry } as LocalAgentHost, unmask)
   const doors = await openDoors({ registry, agentHost, db, maskText: text => mask.mask(text) })
