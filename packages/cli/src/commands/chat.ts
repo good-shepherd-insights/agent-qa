@@ -18,7 +18,8 @@
 // with the one that actually routes. `/quit` is observed through the live state the engine mutates.
 //
 // NOTHING ASKS (432-13, D-14). A typed line is carried out by its turn; there is no inline confirm
-// and no `[y/a/N]` decision prompt. The REPL reads only the lines a person types.
+// and no three-answer decision prompt. The REPL reads only the lines a person types. A refused
+// clause prints its refusal sentence beside its receipt (432-42, D-18).
 //
 // EVERYTHING PRINTED CROSSES THE MASKER. A turn result is composed from op results, and an op
 // result is exactly the kind of value a masked configuration read can put a credential into

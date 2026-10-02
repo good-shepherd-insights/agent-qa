@@ -1,4 +1,4 @@
-import { RUN_EVENT_TYPES, MarkRefusalSchema, RunsMarkPreviewResultSchema, RunsMarksHistoryResultSchema } from '@vostride/agent-qa-schema'
+import { RUN_EVENT_TYPES, RunsMarkPreviewResultSchema, RunsMarksHistoryResultSchema } from '@vostride/agent-qa-schema'
 import type {
   AnalysisGetOutput,
   PostProcessingDisposition,
@@ -392,32 +392,16 @@ export async function fetchRunEvidence(input: RunsEvidenceInput): Promise<RunEvi
   }
 }
 
-/** 432-09 (D-15): a refused mark is a plain reason, with nothing the reader must act on. */
-export class MarkDeniedError extends Error {
-  readonly reason: string
-  constructor(denial: { reason: string }) {
-    super(denial.reason)
-    this.name = 'MarkDeniedError'
-    this.reason = denial.reason
-  }
-}
+// 2026-10-02 (432-42, D-15): no typed mark denial. The `mark_denied` 403 it classified came from the
+// execution gate, which 432-19 deleted; no server path answers it. A failed mark is an ordinary
+// request failure, and the page says so in its own words.
 
 export async function markRun(
   runId: string,
   body: Omit<RunsMarkInput, 'runId'>,
 ): Promise<RunsMarkOutcome> {
-  try {
-    // 432-14 (D-14): the validated body, as written — one request, no scope, nothing to wait on.
-    return await postJson(`/api/runs/${encodeURIComponent(runId)}/mark`, body)
-  } catch (error) {
-    if (error instanceof ApiError && error.status === 403 && error.payload?.error === 'mark_denied') {
-      const refusal = MarkRefusalSchema.safeParse(error.payload)
-      throw new MarkDeniedError({
-        reason: refusal.success ? refusal.data.reason : 'The safety gate denied this mark.',
-      })
-    }
-    throw error
-  }
+  // 432-14 (D-14): the validated body, as written — one request, no scope, nothing to wait on.
+  return await postJson(`/api/runs/${encodeURIComponent(runId)}/mark`, body)
 }
 
 export type FeedbackReadFailure = 'network' | 'ledger-corrupt' | 'ledger-unavailable' | 'refused' | 'shape'

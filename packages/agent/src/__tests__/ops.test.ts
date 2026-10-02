@@ -440,9 +440,10 @@ describe('C432-DECLARATION-KEYS: the 432-23 op specs carry no permission metadat
       expect(typeof spec.classify, spec.id).toBe('function')
       expect(typeof spec.invoke, spec.id).toBe('function')
     }
-    // The one disclosure among the ten is untouched by the metadata removal.
+    // The one disclosure among the ten was untouched by the metadata removal. RE-SPELLED 2026-10-02
+    // (432-42, D-14): the per-op disclosure is deleted, so none of the ten carries one now.
     expect(migrated.filter(({ spec }) => 'disclose' in spec).map(({ spec }) => spec.id))
-      .toEqual(['authoring.draft.write'])
+      .toEqual([])
   })
 })
 

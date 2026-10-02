@@ -29,11 +29,11 @@
 # the receipt stops reading `executed` while the turn still completes), and on a planner that
 # stopped projecting registry ops as tools.
 #
-# THIS CELL NEEDS NO CREDENTIAL BEYOND THE LANE'S OWN. `agent.explain` declares `requiredScopes:
-# ['read']` and a read-only, recognized risk descriptor, so `baseVerdict` allows it in every
-# execution context — unlike `authoring.draft.write`, whose `mutating-shared` class fails closed
-# outside `local-interactive`. It starts nothing and writes nothing but one line into the lane's own
-# temp `.agent-qa/explain-coverage.jsonl`, which is removed with the temp root.
+# THIS CELL NEEDS NO CREDENTIAL BEYOND THE LANE'S OWN. `agent.explain` carries a read-only,
+# recognized risk descriptor, and since 432 (D-12/D-15) no op declares a scope and nothing gates a
+# call by execution context, so it runs in every context like every other op (re-spelled
+# 2026-10-02, 432-42). It starts nothing and writes nothing but one line into the lane's own temp
+# `.agent-qa/explain-coverage.jsonl`, which is removed with the temp root.
 #
 # UNRUN AT THE COMMIT THAT ADMITTED IT (398-07). The live lane is gated on
 # `AGENT_QA_LIVE_CHAT_CONFIG`, which was unset in that session, so this row is corpus-pinned and not

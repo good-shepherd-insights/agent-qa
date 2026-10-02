@@ -2,7 +2,8 @@ import { createServer } from 'node:http'
 import type { AddressInfo } from 'node:net'
 
 import { createFunctionRegistry, invokeFunction, RUNS_MARK_FUNCTION_ID, type FunctionDeps, type FunctionRegistry } from '@vostride/agent-qa-agent'
-import { asRunId, MarkRefusalSchema, type RunsMarkInput, type RunsMarkOutcome } from '@vostride/agent-qa-schema'
+import * as schema from '@vostride/agent-qa-schema'
+import { asRunId, type RunsMarkInput, type RunsMarkOutcome } from '@vostride/agent-qa-schema'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import type { AgentHost } from '../../chat/host.js'
@@ -75,8 +76,9 @@ describe('markRun delegates to the shared gate and feedback port', () => {
     expect(JSON.stringify(denied)).not.toContain(NOTE)
     expect(JSON.stringify(denied)).not.toContain('remedies')
     expect(JSON.stringify(denied)).not.toContain('mark_denied')
-    // The plain mark refusal contract itself is unchanged (C432-PLAIN-REFUSAL).
-    expect(MarkRefusalSchema.safeParse({ error: 'mark_denied', reason: 'The mark could not be recorded.' }).success).toBe(true)
+    // RE-SPELLED 2026-10-02 (432-42, D-15): the gate-era refusal body is deleted, not just unproduced
+    // (C432-PLAIN-REFUSAL); nothing on this route can answer it.
+    expect(Object.keys(schema)).not.toContain('MarkRefusalSchema')
     invokeFunction.mockImplementation(async () => { throw new Error(NOTE) })
     expect(await markRun({ ...f.host, invokeFunction }, RUN_ID, { kind: 'false-fail', note: NOTE })).toEqual({
       kind: 'refused', status: 500, body: { error: 'read_failed', reason: 'Error' },

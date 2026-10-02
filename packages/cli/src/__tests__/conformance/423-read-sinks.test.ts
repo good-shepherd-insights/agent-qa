@@ -358,9 +358,7 @@ function reviewDeps(runId: string): Partial<FunctionDeps> {
     },
     knowledge: { diffSince: async () => [] },
     // 432-09: a bound inbox with a pending proposal must not surface anywhere on the page.
-    proposalsInbox: {
-      list: async () => [{ envelope: { status: 'pending' } }, { envelope: { status: 'applied' } }],
-    },
+    // 2026-10-02 (432-42, D-05/D-22): the deleted inbox dep is no longer smuggled in; nothing reads it.
   } as unknown as Partial<FunctionDeps>
 }
 

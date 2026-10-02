@@ -1881,7 +1881,7 @@ async function executeSuites(
         onSession: (session) => {
           activeRunSession = session
         },
-        subscribers: ({ session, quarantined, maskingContext, live }) => {
+        subscribers: ({ session, quarantined, maskingContext }) => {
           // The run's masking context now exists; point the analytics send seam at it.
           analyticsHost?.bindMaskingContext(maskingContext)
           return attachRunSubscribers({
@@ -1890,7 +1890,6 @@ async function executeSuites(
             console: reporterSelection.console ? { verbose: false, logLevel: effectiveLogLevel } : false,
             junitOutputPath: reporterSelection.junit ? opts.junitOutput : undefined,
             extraSubscribers,
-            live,
             // 390 D-15: the SAME resolved set the run was assembled with, so the reporters and the
             // aggregate verdict rule describe one disposition rather than two.
             quarantined,
@@ -3588,12 +3587,12 @@ export interface ProducedCliRunMembers {
    * The DISTINCT declared target names, in first-appearance member order (401-14, W-1).
    *
    * BESIDE `targetClass` AND FROM THE SAME LOOP, never from a second `resolveTarget` pass: the
-   * names describe the very members whose classes were folded into the tier, and the disclosure a
-   * person approves on is built from both. Two passes would be free to disagree, which is the
-   * defect class this phase has hit more than once. Members declaring no target contribute
-   * nothing — an all-undeclared run arrives as `[]`, not as a list of invented names.
+   * names describe the very members whose classes were folded into the tier. Two passes would be
+   * free to disagree, which is the defect class this phase has hit more than once. Members
+   * declaring no target contribute nothing — an all-undeclared run arrives as `[]`, not as a list
+   * of invented names.
    *
-   * DISPLAY-ONLY. It reaches the gate through `RiskActionDescriptor.disclosure` and nowhere else.
+   * DISPLAY-ONLY. 2026-10-02 (432-42, D-14): the descriptor field it used to reach is deleted.
    */
   readonly targetNames: readonly string[]
   /**
@@ -4494,8 +4493,8 @@ export function createRunCommand(): Command {
     .option('--device <name>', 'Override the mobile test/suite device for this run')
     .option('--var <kv...>', 'set variable KEY=VALUE (repeatable)')
     .option('--run-attr <kv...>', 'attach run attribute KEY=VALUE; repeatable')
-    // 432-13 (D-14): `--trust-session` is gone — nothing asks, so there is nothing to trust past.
-    // Commander refuses it as an unknown option.
+    // 432-13 (D-14): the session trust flag is gone — nothing asks, so there is nothing to trust
+    // past. Commander refuses it as an unknown option.
     .option('--max-ablations <n>', 'maximum canary ablations per run', parseIntegerFlag('--max-ablations'))
     .option('--detach', 'skip the post-verdict knowledge curation tail')
     // 402-03 (D-12): the config knob's flag half. ORDINARY OVERRIDES — they ride the same
@@ -4956,7 +4955,7 @@ export function createRunCommand(): Command {
               onSession: (session) => {
                 activeRunSession = session
               },
-              subscribers: ({ session, quarantined, maskingContext, live }) => {
+              subscribers: ({ session, quarantined, maskingContext }) => {
                 singleAnalytics.bindMaskingContext(maskingContext)
                 // Attach the bus subscribers (console unmasks; junit + wire masked; dashboard
                 // ingest; analytics) — replay-then-live gives D-04 for free. `quarantined` is the
@@ -4967,7 +4966,6 @@ export function createRunCommand(): Command {
                   console: reporterSelection.console ? { verbose: false, logLevel: effectiveLogLevel } : false,
                   junitOutputPath: reporterSelection.junit ? opts.junitOutput : undefined,
                   extraSubscribers: singleExtraSubscribers,
-                  live,
                   quarantined,
                 })
               },

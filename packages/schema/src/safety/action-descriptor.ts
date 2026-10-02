@@ -16,49 +16,20 @@ export interface RiskActionDescriptor {
   destructive?: boolean
   /** Advisory read-only hint. */
   readOnly?: boolean
-  /** Explicit static command payload for shell-style wrappers. */
-  command?: string
   /** Explicit tier declaration; later classifier signals may raise this floor. */
   declaredTier?: RiskTier
-  /**
-   * A per-invocation DISCLOSURE for the person the confirm prompt reaches (394-08, D-03 · WTST-08).
-   *
-   * WHY THE DESCRIPTOR NEEDED A FIELD AT ALL. Every other member here is a static property of the
-   * action CLASS, and that is exactly right for classification. WTST-08's control is not a class
-   * property: it is what THIS invocation is about to cost, and a person asked to approve nine child
-   * processes needs to be told nine. There was no channel for that, so a confirm could only ever
-   * name the class — which is why the field exists rather than a friendlier prompt string.
-   *
-   * DISPLAY-ONLY, AND NEVER CLASSIFIED. `classifyRisk` reads `name`, `command`, `recognized`,
-   * `readOnly` and `declaredTier`, and it must never read this. A free-text field feeding the tier
-   * decision would be a channel through which whatever composed the disclosure could move an action
-   * up or down the ladder. It is likewise not part of the action CLASS: a standing grant matches on
-   * `name`, the audit row records `name`, and the session deny overlay keys on `name`, so two
-   * invocations with different disclosures are the same class to every one of them.
-   *
-   * COMPOSITION-DERIVED, NEVER CALLER INPUT. What a caller may put in front of a person at the
-   * moment they are deciding is a capability, not a convenience.
-   */
-  disclosure?: string
+  // 2026-10-02 (432-42, D-14/D-16): the `command` payload and the per-invocation `disclosure` are
+  // deleted. The classifier stopped reading a command when the command-pattern list went (432-19),
+  // and the disclosure was display text for the confirm prompt, which no door shows any more.
 }
 
 
-// ---- the field's ENFORCEMENT, beside the field's law (401-15, WR-01 / T-401-G5 / T-401-G6) -----
+// ---- the scrub, beside the descriptor it used to serve (401-15, WR-01 / T-401-G5 / T-401-G6) ----
 //
-// WHY IT LIVES HERE AND NOT AT A WRITER. The `disclosure` above states a rule — composition-derived,
-// never caller input — and until this plan the rule had no enforcement anywhere. Both compositions
-// that fill the field interpolate text they do not own: the run gate's preview carries a target
-// name straight out of a `.yaml` document (`TestDefinitionSchema.target` is a bare `z.string()`),
-// and `invoke.ts` hands the field whatever `FunctionSpec.disclose` composed from parsed caller
-// input. The string then lands on the line directly above a `[y/N]` prompt AND is rendered into a
-// browser as a confirm preview.
-//
-// THE WRITER IS THE WRONG PLACE, MEASURED. `writeDisclosure` is the TTY channel only; the browser
-// channel never passes through it. Hygiene at the writer would leave the second channel open, so
-// the scrub is applied where the string is BUILT and this module is where the rule it enforces is
-// written down. The 401 verifier also measured both production doors closed today by an unrelated
-// throw in the product preflight — an incidental guard that does not know it is one, and is
-// explicitly NOT ratified as the guard.
+// The scrub was written for the deleted per-invocation disclosure. It survives because the
+// production refusal (`config/production.ts`) interpolates target names out of a config document
+// into its one sentence, and those names are text this module does not own: control bytes are
+// replaced, length is capped and the cut is visible, on every channel the sentence reaches.
 //
 // PURE, SYNCHRONOUS, DEPENDENCY-FREE. `packages/schema` is browser-safe with zero internal
 // dependencies and may take none; everything below is string work.
@@ -87,12 +58,12 @@ export const DISCLOSURE_FRAGMENT_MAX_LENGTH = 48
  *
  * The four beyond the control ranges are line/paragraph separators and the bidi overrides: \u2028
  * and \u2029 break lines in a browser exactly as \u000A does in a terminal, and \u202A-\u202E /
- * \u2066-\u2069 reorder what a reader sees without changing a byte of what they are approving.
+ * \u2066-\u2069 reorder what a reader sees without changing a byte of what they are reading.
  */
 const DISCLOSURE_UNSAFE = /[\u0000-\u001f\u007f-\u009f\u2028\u2029\u202a-\u202e\u2066-\u2069]/g
 
 /**
- * Make one untrusted fragment safe to interpolate into a single line of a security prompt.
+ * Make one untrusted fragment safe to interpolate into a single line a person reads.
  *
  * THREE THINGS, AND EACH ONE IS A SEPARATE ATTACK CLOSED:
  * - control bytes replaced, so no fragment can add, erase or reorder a line;
@@ -119,7 +90,7 @@ export const DISCLOSURE_TEXT_MAX_LENGTH = 512
  *
  * SEPARATE FROM THE FRAGMENT FORM BECAUSE THE INPUT IS A DIFFERENT SHAPE. A fragment is a noun the
  * sentence interpolates and quoting it is exactly right; a `FunctionSpec.disclose` return is the
- * whole sentence, and wrapping it in quotes would render every op's prompt as a quotation. What
+ * whole sentence, and wrapping it in quotes would render every sentence as a quotation. What
  * both share is the rule that actually matters — no byte on this channel may act on the channel.
  *
  * THE CAP IS GENEROUS AND STILL A CAP. An op composes its own prose, so the realistic risk is an

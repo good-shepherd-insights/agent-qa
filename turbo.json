@@ -12,7 +12,7 @@
       "dependsOn": ["build"]
     },
     "@vostride/agent-qa-arch#test": {
-      "dependsOn": ["build"],
+      "dependsOn": ["build", "@vostride/agent-qa-core#build", "agent-qa#build"],
       "cache": false
     },
     "lint": {},

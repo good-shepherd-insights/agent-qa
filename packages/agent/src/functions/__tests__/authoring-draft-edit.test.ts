@@ -168,7 +168,8 @@ describe('the declared surface', () => {
     // NO `disclose`. 394-08 added that channel for an op whose per-invocation COST a person has to
     // consent to; this one previews nothing because it spends nothing, and a disclosure composed
     // for it would be a sentence about a fan-out that does not exist.
-    expect(authoringDraftEditSpec.disclose).toBeUndefined()
+    // 2026-10-02 (432-42, D-14): the spec member is deleted, so the absence is read off the object.
+    expect(authoringDraftEditSpec).not.toHaveProperty('disclose')
   })
 
   it('starts zero runs on the happy path', async () => {

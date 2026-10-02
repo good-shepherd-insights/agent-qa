@@ -67,4 +67,8 @@ expectTypeOf<ContextHookResult<readonly string[]>>().toEqualTypeOf<{ context: re
 export type RetiredSafetyTrustScopeSchema = typeof import('../index').TrustScopeSchema
 // @ts-expect-error C432-NO-TRUST-CONTRACT: and from the root barrel
 export type RetiredRootTrustScopeSchema = typeof import('../../index').TrustScopeSchema
-expectTypeOf<import('../../index').TrustScopeKey>().toEqualTypeOf<'project' | 'org'>()
+// RE-SPELLED 2026-10-02 (432-42, D-12): the scope key type is deleted with its key set.
+// @ts-expect-error C432-NO-TRUST-CONTRACT: no barrel exports the scope key type
+export type RetiredRootTrustScopeKey = import('../../index').TrustScopeKey
+// @ts-expect-error C432-NO-TRUST-CONTRACT: nor the safety barrel
+export type RetiredSafetyTrustScopeKey = import('../index').TrustScopeKey

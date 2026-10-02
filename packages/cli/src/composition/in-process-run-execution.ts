@@ -83,7 +83,7 @@ import {
   releaseUntakenPostVerdictLease,
   type PostVerdictHandoff,
 } from '../curation/post-verdict-step.js'
-import { attachRunSubscribers, buildRunSafetyHooks, createLivePauseController } from '../run-session-composition.js'
+import { attachRunSubscribers, buildRunSafetyHooks } from '../run-session-composition.js'
 import {
   isMintedCliRunId,
   mintCliRunId,
@@ -132,7 +132,6 @@ export interface RunSubscriberAttachInput {
   readonly session: RunSession
   readonly quarantined: readonly QuarantineAppliedEntry[]
   readonly maskingContext: RunMaskingContext
-  readonly live: ReturnType<typeof createLivePauseController>
 }
 
 /** What a door's post-verdict tail is handed, INSIDE the run's own safety scope. */
@@ -326,8 +325,8 @@ export interface InProcessCliRunExecutionOptions {
    * ticked that box a cached answer, which is worse than the box not existing.
    *
    * The wide type was refused on purpose: handing a door `RunOptions` would let it reach flags this
-   * seam has no business honouring (`--trust-session` above all), and every one of them would be a
-   * policy input arriving through a producer's back door. This grows one named field at a time, and
+   * seam has no business honouring (the since-deleted session trust flag above all), and every one
+   * of them would be a policy input arriving through a producer's back door. This grows one named field at a time, and
    * each addition is a decision somebody makes.
    *
    * The RIGHT long-term home is a field on `RunsStartInput` — the request is the contract, and a
@@ -539,10 +538,9 @@ export async function runInProcessCliRun(
     configDir: produced.configDir,
     runId,
   })
-  const live = createLivePauseController()
   // 432-13/432-14/432-19: nothing in a run asks and no gate is registered, so the registrar is
   // handed the run's audit sink and nothing else.
-  const { safetyHooks, confirmPausedMs } = buildRunSafetyHooks({
+  const { safetyHooks } = buildRunSafetyHooks({
     auditSink,
   })
   produced.bindRunContext({ maskingContext, safetyHooks })
@@ -611,7 +609,6 @@ export async function runInProcessCliRun(
         configDir: assemblyContext.configDir,
         knowledgeRoot: produced.knowledgeRoot,
         ports: assemblyContext.ports,
-        confirmPausedMs,
         maskingContext,
         members: produced.members,
         executor: produced.executor,
@@ -637,7 +634,7 @@ export async function runInProcessCliRun(
       persistMaskingDigests()
       produced.bindSession(session)
       options.onSession?.(session)
-      startedSubscribers = options.subscribers?.({ session, quarantined, maskingContext, live })
+      startedSubscribers = options.subscribers?.({ session, quarantined, maskingContext })
     },
     // 404 D-05/D-10: the post-verdict step, composed HERE and threaded by the core so no door can
     // forget it. It speaks writer-lease vocabulary `agent-local`'s runner seam may not name, which
@@ -852,7 +849,6 @@ export function cliRunSubscribers(input: {
     console: input.console ?? false,
     junitOutputPath: input.junitOutputPath,
     extraSubscribers: input.extraSubscribers,
-    live: attach.live,
     quarantined: attach.quarantined,
   })
 }

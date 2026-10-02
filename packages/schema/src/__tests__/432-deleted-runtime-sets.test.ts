@@ -71,13 +71,14 @@ describe('432-09 applied output key sets', () => {
     ]) expect(exported(name), `${name} is gone from the schema barrel`).toBeUndefined()
   })
 
+  // RE-SPELLED 2026-10-02 (432-42, D-15) under the same title: the 403 refusal body this pinned had
+  // one producer, the execution gate's denial (deleted by 432-19), so the DTO is deleted with the
+  // dashboard branch that read it. A failed mark is now an ordinary refusal of the request, and no
+  // mark contract carries anything a caller must act on.
   it('C432-PLAIN-REFUSAL: a refused mark answers a plain reason and nothing a caller must act on', () => {
-    const refusal = exported('MarkRefusalSchema')
-    expect(refusal, 'the plain mark refusal is a shared contract').toBeDefined()
-    expect(keysOf(refusal)).toEqual(sorted(['error', 'reason']))
-    const parse = (value: unknown) => (refusal as { safeParse(value: unknown): { success: boolean } }).safeParse(value)
-    expect(parse({ error: 'mark_denied', reason: 'The mark could not be recorded.' }).success).toBe(true)
-    expect(parse({ error: 'mark_denied', reason: 'x', remedies: [] }).success, 'no remedy list rides a refusal').toBe(false)
+    expect(exported('MarkRefusalSchema'), 'the gate-era mark refusal DTO is published again').toBeUndefined()
+    expect(Object.keys(schema).filter((name) => /Mark(Refusal|Denied|Denial)/u.test(name))).toEqual([])
+    expect(exported('RunsMarkOutcomeSchema'), 'non-vacuity: the mark outcome contract is the real one').toBeDefined()
   })
 })
 
@@ -164,12 +165,14 @@ describe('C432-NO-GRANT-CONTRACTS: the grant ledger, grant op, protected-class a
   })
 
   it('C432-NO-GRANT-CONTRACTS: the interim members stay until their own owners remove them', () => {
-    // Not vacuous: the census above would pass over an empty barrel, so the retained member is
-    // named and found. 432-22 removed `TrustScopeSchema`. 2026-10-02 (432-39): the caller types are
-    // deleted too; the key set stays only because retained cells outside 432-39 still assert it is
-    // published, and its removal is routed to the 432-42 census.
-    expect(exported('TRUST_SCOPE_KEYS')).toEqual(['project', 'org'])
-    expect((safety as Record<string, unknown>).TRUST_SCOPE_KEYS).toEqual(['project', 'org'])
+    // Not vacuous: the census above would pass over an empty barrel. 432-22 removed `TrustScopeSchema`
+    // and 432-39 the caller types. RE-SPELLED 2026-10-02 (432-42, D-12) under the same title: the last
+    // interim member, the key set, is deleted by its owner, so no interim member is left; the
+    // barrels are the real ones (each still publishes a surviving member).
+    expect(exported('TRUST_SCOPE_KEYS')).toBeUndefined()
+    expect(Object.keys(safety)).not.toContain('TRUST_SCOPE_KEYS')
+    expect(exported('FUNCTION_CALLER_ORIGINS')).toBeDefined()
+    expect(Object.keys(safety)).toContain('scrubDisclosureText')
   })
 
   it('C432-NO-GRANT-CONTRACTS: no schema source imports the deleted projection module', () => {
@@ -416,3 +419,53 @@ export type RetiredCallerSafeMode = import('../index').FunctionCaller['safeMode'
 export type RetiredCallerCredential = import('../index').FunctionCaller['credential']
 // @ts-expect-error the caller's session id is deleted
 export type RetiredCallerSessionId = import('../index').FunctionCaller['sessionId']
+
+// 2026-10-02 (432-42, D-12/D-14/D-15/D-22): the routed leftovers and the scope key set. Runtime sets
+// pinned beside their types: the descriptor's exact key set (compile-checked), the scrub that
+// survives it, the masking classes kept with a dated rationale, and the deleted runtime exports.
+const DESCRIPTOR_KEYS = ['name', 'recognized', 'surface', 'destructive', 'readOnly', 'declaredTier'] as const
+const DESCRIPTOR_TYPE_IS_EXACT: ExactKeys<import('../index').RiskActionDescriptor, (typeof DESCRIPTOR_KEYS)[number]> = true
+
+describe('C432-RUNTIME-SETS: the 432-42 leftovers are absent and the retained neighbours are exact', () => {
+  it('C432-RUNTIME-SETS: the risk descriptor carries exactly its six static keys (no command, no disclosure)', () => {
+    expect(DESCRIPTOR_TYPE_IS_EXACT).toBe(true)
+    expect([...DESCRIPTOR_KEYS].sort()).toEqual(['declaredTier', 'destructive', 'name', 'readOnly', 'recognized', 'surface'])
+    const source = readFileSync(join(SRC, 'safety', 'action-descriptor.ts'), 'utf8')
+    const declared = /export interface RiskActionDescriptor \{([\s\S]*?)\n\}/u.exec(source)?.[1] ?? ''
+    expect(declared, 'the descriptor declaration was not found').not.toBe('')
+    const members = [...declared.matchAll(/^\s{2}(\w+)\??:/gmu)].map((match) => match[1]).sort()
+    expect(members).toEqual([...DESCRIPTOR_KEYS].sort())
+    // The scrub outlives the field it was written for: the production refusal applies it.
+    expect(typeof exported('scrubDisclosureText')).toBe('function')
+    expect(typeof exported('buildProductionRefusal')).toBe('function')
+  })
+
+  it('C432-RUNTIME-SETS: the scope key set, the mark refusal body and their types are published by no barrel', () => {
+    for (const name of ['TRUST_SCOPE_KEYS', 'MarkRefusalSchema']) {
+      expect(exported(name), `${name} is back on the root barrel`).toBeUndefined()
+      expect(Object.keys(safety), `${name} is back on the safety barrel`).not.toContain(name)
+    }
+    expect(existsSync(join(SRC, 'safety', 'trust-credential.ts')), 'trust-credential.ts is back').toBe(false)
+  })
+
+  // KEPT, DATED 2026-10-02 (432-42 census decision): `env-var-name` has no schema leaf since 432-22,
+  // but it is a member of the shared display vocabulary the dashboard file view, `config show` and
+  // the config line tagger render, and a config-mutation reference kind. Deleting a member of a
+  // closed public set is a vocabulary change no D-decision asks for; it gates nothing (D-12 deletes
+  // permissions, not display classes), so it stays, pinned exactly.
+  it('C432-RUNTIME-SETS: the masking classes are exactly the three display classes, env-var-name kept', () => {
+    expect(exported('MASKING_CLASSES')).toEqual(['secret', 'env-var-name', 'plain'])
+    const map = exported('CONFIG_MASKING_MAP') as Record<string, string>
+    expect(Object.values(map).filter((maskingClass) => maskingClass === 'env-var-name')).toEqual([])
+    expect(Object.keys(map).length, 'non-vacuity: the leaf map is the real one').toBe(92)
+  })
+})
+
+// @ts-expect-error C432-RUNTIME-SETS (432-42): the scope key type is deleted
+export type RetiredTrustScopeKey = import('../index').TrustScopeKey
+// @ts-expect-error C432-RUNTIME-SETS (432-42): the mark refusal type is deleted
+export type RetiredMarkRefusal = import('../index').MarkRefusal
+// @ts-expect-error C432-RUNTIME-SETS (432-42): the descriptor has no command member
+export type RetiredDescriptorCommand = import('../index').RiskActionDescriptor['command']
+// @ts-expect-error C432-RUNTIME-SETS (432-42): the descriptor has no disclosure member
+export type RetiredDescriptorDisclosure = import('../index').RiskActionDescriptor['disclosure']

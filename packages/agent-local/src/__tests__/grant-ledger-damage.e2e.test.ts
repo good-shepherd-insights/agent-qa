@@ -32,7 +32,6 @@ import type { FunctionRegistry } from '@vostride/agent-qa-agent'
 import * as knowledgeLocal from '@vostride/agent-qa-knowledge-local'
 import {
   MASKED_RESOLVED_CONFIG_SCHEMA_VERSION,
-  TRUST_SCOPE_KEYS,
 } from '@vostride/agent-qa-schema'
 import type {
   ExecutionContext,
@@ -53,18 +52,20 @@ const APPLY_ID = 'knowledge.accept'
 const GRANTS_LIST_ID = 'grants.list'
 
 /**
- * A scope key OUTSIDE `TRUST_SCOPE_KEYS`. COMPUTED against the published constant rather than typed:
- * a hard-coded key becomes LEGAL the day the constant grows (391-11 measured exactly that).
+ * A scope key OUTSIDE the legacy key set. 2026-10-02 (432-42, D-12): the published constant is
+ * deleted, so the two legacy keys a pre-432 ledger line could carry are spelled here as the bytes
+ * such a line holds, and the candidate is still computed against them rather than typed.
  */
 const UNKNOWN_SCOPE_KEY_CANDIDATES = ['tenant', 'workspace', 'region', 'cell'] as const
+const LEGACY_SCOPE_KEYS: readonly string[] = ['project', 'org']
 
 function anUnknownScopeKey(): string {
-  const declared = TRUST_SCOPE_KEYS as readonly string[]
+  const declared = LEGACY_SCOPE_KEYS
   const found = UNKNOWN_SCOPE_KEY_CANDIDATES.find((candidate) => !declared.includes(candidate))
   if (found === undefined) {
     throw new Error(
       `every candidate scope key (${UNKNOWN_SCOPE_KEY_CANDIDATES.join(', ')}) is now legal in ` +
-        `TRUST_SCOPE_KEYS (${declared.join(', ')}); add a candidate rather than letting these cases pass`,
+        `the legacy key set (${declared.join(', ')}); add a candidate rather than letting these cases pass`,
     )
   }
   return found

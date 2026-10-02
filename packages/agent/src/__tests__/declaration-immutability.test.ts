@@ -273,65 +273,46 @@ describe('the disclose presence flag is projected from the spec (D-05)', () => {
     return internals.specs
   }
 
+  // RE-SPELLED 2026-10-02 (432-42, D-14/D-15) under the same title: the per-op `disclose` method and
+  // the declaration's `discloses` flag are deleted (the confirm prompt they fed is gone, 432-19), so
+  // the relation this cell pinned is now an absence on both sides: no registered spec defines the
+  // method, and no declaration lists the flag.
   it('lists discloses: true for exactly the ops whose spec defines disclose', () => {
     const registry = buildRegistry()
     const specs = specsOf(registry)
     const declarations = registry.list(FULLY_GRANTED)
 
-    // Both sides produced: the expectation is read off the spec table, never written out. An op-id
-    // list here would be the hand-typed literal this field exists to replace.
+    expect(declarations.length, 'the registry listed nothing — the census is vacuous').toBeGreaterThan(0)
     const definesDisclose = declarations
-      .filter((declaration) => typeof specs.get(declaration.id)?.disclose === 'function')
+      .filter((declaration) => typeof (specs.get(declaration.id) as Record<string, unknown> | undefined)?.['disclose'] === 'function')
       .map((declaration) => declaration.id)
     const flagged = declarations
-      .filter((declaration) => declaration.discloses === true)
+      .filter((declaration) => Object.hasOwn(declaration, 'discloses'))
       .map((declaration) => declaration.id)
-
-    // Non-vacuity, both directions: a registry where nothing disclosed, or where everything did,
-    // would let the cell above pass while measuring one branch.
-    expect(
-      definesDisclose.length,
-      'no registered spec defines disclose — the partition below is vacuous',
-    ).toBeGreaterThan(0)
-    expect(
-      definesDisclose.length,
-      'every registered spec defines disclose — the absent branch is unmeasured',
-    ).toBeLessThan(declarations.length)
-
-    expect(
-      flagged,
-      'the ops listing discloses: true are exactly the ops whose spec defines disclose',
-    ).toEqual(definesDisclose)
+    expect(definesDisclose, 'a registered spec defines the retired disclose method').toEqual([])
+    expect(flagged, 'a declaration lists the retired discloses flag').toEqual([])
   })
 
+  // RE-SPELLED 2026-10-02 (432-42, D-14) under the same title: a legacy spec object that still
+  // carries a `disclose` method (smuggled past the deleted member with a cast) yields a declaration
+  // with no `discloses` key at all — the registry builds the view field by field.
   it('omits the key entirely for an op with no disclose — absent, never false or undefined', () => {
-    const registry = buildRegistry()
-    const specs = specsOf(registry)
-    const declarations = registry.list(FULLY_GRANTED)
-
-    // `requiresHumanOrigin`'s rule, applied to the second presence field: `false` and an absent key
-    // would be two spellings of the same fact, and a present `undefined` would make a golden column
-    // that reads `null` for an op that simply discloses nothing.
-    let present = 0
-    let absent = 0
-    for (const declaration of declarations) {
-      const spec = specs.get(declaration.id)
-      expect(spec, `${declaration.id} is listed by a registry that registered no such spec`)
-        .toBeDefined()
-      const label = `${declaration.id}: the discloses presence field`
-      if (spec!.disclose === undefined) {
-        expect(Object.hasOwn(declaration, 'discloses'), `${label} must be ABSENT`).toBe(false)
-        absent += 1
-      } else {
-        expect(Object.hasOwn(declaration, 'discloses'), `${label} must be present`).toBe(true)
-        expect(declaration.discloses, `${label} carries true and nothing else`).toBe(true)
-        present += 1
-      }
-    }
-
-    expect(present, 'the present branch went unexercised').toBeGreaterThan(0)
-    expect(absent, 'the absent branch went unexercised').toBeGreaterThan(0)
-    expect(present + absent).toBe(declarations.length)
+    const legacy = {
+      id: 'synthetic.legacy-disclose',
+      summary: 'A spec that still carries the retired per-op disclosure.',
+      resultKind: 'unary',
+      input: z.object({}).strict(),
+      output: z.object({ ok: z.literal(true) }).strict(),
+      risk: { name: 'fn:synthetic.legacy-disclose', recognized: true, readOnly: true },
+      disclose: () => 'this invocation costs nothing',
+      classify: () => ({ status: 'executed' as const, outcome: '' }),
+      invoke: () => Promise.resolve({ ok: true as const }),
+    } as unknown as FunctionSpec
+    const registry = createRegistryFromSpecs([legacy], { deps: fakeDeps(), auditSink: noOpSink() })
+    const [declaration] = registry.list(FULLY_GRANTED)
+    expect(declaration, 'the legacy spec was not listed').toBeDefined()
+    expect(Object.hasOwn(declaration!, 'discloses'), 'the retired flag rode through').toBe(false)
+    expect(Object.keys(declaration!).sort()).toEqual([...REQUIRED_DECLARATION_KEYS, 'classifies'].sort())
   })
 })
 
@@ -424,12 +405,11 @@ type ExactKeys<T, K extends PropertyKey> = [keyof T] extends [K]
 const METADATA_KEYS = ['id', 'summary', 'resultKind', 'risk'] as const
 const SPEC_KEYS = [
   ...METADATA_KEYS,
-  'boundThrough', 'input', 'output', 'outputRepresentation', 'disclose', 'classify', 'renderResult',
-  'invoke',
+  'boundThrough', 'input', 'output', 'outputRepresentation', 'classify', 'renderResult', 'invoke',
 ] as const
 const DECLARATION_TYPE_KEYS = [
   ...METADATA_KEYS,
-  'bindingStatus', 'discloses', 'classifies', 'rendersResult', 'input', 'output',
+  'bindingStatus', 'classifies', 'rendersResult', 'input', 'output',
 ] as const
 const METADATA_TYPE_IS_EXACT: ExactKeys<FunctionMetadata, (typeof METADATA_KEYS)[number]> = true
 const SPEC_TYPE_IS_EXACT: ExactKeys<FunctionSpec, (typeof SPEC_KEYS)[number]> = true
@@ -448,7 +428,8 @@ const REQUIRED_DECLARATION_KEYS = [
   'risk',
   'summary',
 ] as const
-const OPTIONAL_DECLARATION_FLAGS = ['classifies', 'discloses', 'rendersResult'] as const
+// 2026-10-02 (432-42, D-14): `discloses` left the optional flags with the per-op disclosure.
+const OPTIONAL_DECLARATION_FLAGS = ['classifies', 'rendersResult'] as const
 
 describe('C432-DECLARATION-KEYS: runtime declarations carry no permission metadata', () => {
   it('pins the exact key set of every real declaration, and no scope or origin key', () => {

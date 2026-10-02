@@ -99,15 +99,17 @@ describe('a decorator forwards the surface of the port it wraps', () => {
       const calls: string[] = []
 
       const smuggled = { confirm: recording(surface, calls), trustMode: true, executionContext: 'local-interactive' }
-      const { safetyHooks, confirmPausedMs } = buildRunSafetyHooks({
+      const built = buildRunSafetyHooks({
         auditSink,
         ...smuggled,
       })
+      const { safetyHooks } = built
 
       await safetyHooks.runToolCallAsync({ ...ASK_TIER_ACTION })
 
       expect(calls).toEqual([])
-      expect(confirmPausedMs()).toBe(0)
+      // 2026-10-02 (432-42, D-14): no pause supplier is returned (it always answered 0).
+      expect(Object.keys(built)).toEqual(['safetyHooks'])
       const rows = auditRowsIfAny(join(resolve(configDir, '.agent-qa'), RUNS_SUBDIR, slugBranch(runId)))
       // 432-19: no row of any outcome lands, because nothing writes the execution-audit trail.
       expect(rows).toEqual([])

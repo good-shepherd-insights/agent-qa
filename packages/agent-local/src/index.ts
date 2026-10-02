@@ -62,7 +62,6 @@ export type {
 
 export type {
   AttachableRunSession,
-  LivePauseController,
   RunSubscriberHandle,
 } from './composition/presentation-ports.js'
 

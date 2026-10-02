@@ -431,14 +431,8 @@ export interface RunPorts {
    * budget timer is unambiguous — see the shell's timer note).
    */
   timer?: RunTimerPort
-  /**
-   * The D-10 run-budget half: a monotonic supplier returning the TOTAL milliseconds this run
-   * has spent paused outside the app under test. When the run-budget timer fires, the shell
-   * credits the accrued pause and re-arms for the un-credited delta instead of aborting; absent ⇒
-   * budget expiry aborts exactly as before. 2026-10-01 (432-14/19/22, D-14): no confirm pauses a
-   * run any more, so the hooks that supply this answer 0 and nothing waits on a person.
-   */
-  confirmPausedMs?: () => number
+  // 2026-10-02 (432-42, D-14): no pause supplier. It credited time a person spent at a confirm
+  // prompt back to the run budget; no run asks, its only supplier answered 0, and it is deleted.
   /**
    * The CASS-02 run-scoped decision-screenshot artifact store (Plan 11). The runner-local
    * `FsEvidenceArtifactStore` is constructed run-scoped at the CLI composition root and injected

@@ -2017,7 +2017,8 @@ describe('the parity suite ranges the registry census over every rostered surfac
     const mutations: readonly (readonly [string, GoldenRow])[] = [
       ['risk', { ...subject, risk: { ...subject.risk, declaredTier: 'readOnly' } }],
       ['partition', { ...subject, partition: { kind: 'unprojected', reason: 'not-mid-flight-read' } }],
-      ['discloses', { ...subject, discloses: true }],
+      // 2026-10-02 (432-42, D-14): the `discloses` column is deleted; `rendersResult` takes its place.
+      ['rendersResult', { ...subject, rendersResult: subject.rendersResult === true ? undefined : true }],
       ['classifies', { ...subject, classifies: subject.classifies === true ? undefined : true }],
       ['resultKind', { ...subject, resultKind: subject.resultKind === 'unary' ? 'stream' : 'unary' }],
       ['inputSchemaDigest', { ...subject, inputSchemaDigest: 'f'.repeat(64) }],
@@ -2559,11 +2560,11 @@ async function callOnProjectMcp(
 }
 
 describe('C432-CONFORMANCE-PARITY: one call on the chat and MCP doors, and production refused alike', () => {
-  // MEASURED 2026-10-02 (432-40): the MCP door answers the shipped sentence in band, while the CLI
-  // chat door's receipt carries the refusal's NAME only (`failed runs.start RunDeniedError`) — the
-  // 399.1 receipt charter prints no error message — so a chat user is not shown the target or the
-  // `allowProduction: true` line. Recorded as a product defect (432-40 deferred #1); this cell pins
-  // the refusal on both doors and the absence of effects, and asserts the sentence where it ships.
+  // MEASURED 2026-10-02 (432-40): the MCP door answered the shipped sentence in band, while the CLI
+  // chat door's receipt carried the refusal's NAME only (`failed runs.start RunDeniedError`), so a
+  // chat user was not shown the target or the `allowProduction: true` line (432-40 deferred #1).
+  // FIXED 2026-10-02 (432-42, D-18): a refused clause adds its refusal's own sentence to the turn's
+  // answer, beside the unchanged receipt; this cell now asserts the sentence on BOTH doors.
   it('C432-CONFORMANCE-PARITY: a declared production run is refused on the chat and MCP doors before anything runs', async () => {
     const project = parityProject()
     try {
@@ -2585,6 +2586,7 @@ describe('C432-CONFORMANCE-PARITY: one call on the chat and MCP doors, and produ
       expect(receipt?.status, 'chat: a production run was executed').toBe('failed')
       expect(receipt?.outcome, 'chat: the refusal is not the run core\'s production refusal')
         .toBe('RunDeniedError')
+      expect(onChat.stdout, 'chat: the person is not shown the refusal sentence').toContain(sentence)
 
       // Refused before effects on both doors, and nothing asked anybody anything.
       expect(runDirectories(project), 'a refused production run left a run directory').toEqual([])

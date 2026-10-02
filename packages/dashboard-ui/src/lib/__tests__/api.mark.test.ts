@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { markRun, MarkDeniedError } from '../api'
+import * as api from '../api'
+import { ApiError, markRun } from '../api'
 
 afterEach(() => { vi.unstubAllGlobals() })
 describe('419 mark API scope and outcomes', () => {
@@ -19,11 +20,16 @@ describe('419 mark API scope and outcomes', () => {
   })
   // RE-SPELLED 432-09 (D-15) from 'retains typed denial and canonical remedies on the real helper':
   // the denial is a plain reason, and the typed error carries nothing a reader must act on.
+  // RE-SPELLED 2026-10-02 (432-42, D-15) under the same title: no server produces the gate-era
+  // `mark_denied` 403, so the helper keeps no typed denial at all. A legacy body of that shape is an
+  // ordinary request failure, carrying neither a typed reason nor remedies.
   it('retains the typed denial as a plain reason on the real helper, and carries no remedies', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ error: 'mark_denied',
       reason: 'The mark could not be recorded here.' }), { status: 403 })))
     const denied = await markRun('run', { kind: 'false-fail' }).catch((error: unknown) => error)
-    expect(denied).toEqual(new MarkDeniedError({ reason: 'The mark could not be recorded here.' }))
+    expect(denied).toBeInstanceOf(ApiError)
+    expect(Object.keys(api)).not.toContain('MarkDeniedError')
+    expect(denied).not.toHaveProperty('reason')
     expect(denied).not.toHaveProperty('remedies')
   })
 })

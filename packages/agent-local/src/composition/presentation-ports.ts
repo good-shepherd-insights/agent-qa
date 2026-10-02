@@ -10,21 +10,10 @@
 // lives here while the construction stays in the host.
 //
 // Consequence worth naming: types cross into this package, constructions that only a terminal host
-// needs do not. `createLivePauseController` stays in the CLI for exactly that reason — a daemon
-// binds no live line.
+// needs do not. 2026-10-02 (432-42, D-14): the live-line pause seam a confirm prompt used is
+// deleted with its type; no run asks, so nothing pauses a reporter.
 
 import type { RunEventEnvelope } from '@vostride/agent-qa-schema'
-
-/**
- * The console pause/resume seam a host's live reporter binds. The composition only ever holds it
- * and passes it down; the implementation, and the decision to have one at all, is the host's.
- * Guards swallow their own errors so a reporter fault never blocks the run.
- */
-export interface LivePauseController {
-  pauseLive(): void
-  resumeLive(): void
-  bind(handle: { pauseLive(): void; resumeLive(): void } | undefined): void
-}
 
 /** A bus subscriber a host attaches: an envelope `handler` plus an optional post-run `flush`. */
 export interface RunSubscriberHandle {

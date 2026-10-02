@@ -99,7 +99,6 @@
     {
       "bindingStatusAtRoot": "bound",
       "classifies": true,
-      "discloses": true,
       "id": "authoring.draft.write",
       "inputSchemaDigest": "2d98bde1d977b1e9928d3613fa0fa97b7e3d765a6e9b1c43bf23214e8adf03ed",
       "outputSchemaDigest": "aaca3f5b3cd4fcc52cf378a1940c8a05ab87e5cdd3ed2ddd6b81d609b7c26f59",

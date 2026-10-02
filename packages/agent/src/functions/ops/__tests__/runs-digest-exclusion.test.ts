@@ -114,7 +114,6 @@ async function digestOver(scene: {
           },
         }
       : {}),
-    proposalsInbox: { list: () => Promise.resolve([]) },
   } as unknown as FunctionDeps
 
   const registry = createFunctionRegistry({

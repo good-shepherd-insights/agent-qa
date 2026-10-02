@@ -5,7 +5,6 @@ import type { IncomingMessage, ServerResponse } from 'node:http'
 
 import {
   RunsMarkInputSchema,
-  type MarkRefusal,
   type RunsMarkOutcome,
 } from '@vostride/agent-qa-schema'
 
@@ -15,15 +14,11 @@ import { readJsonBody } from '../server/body-parser.js'
 import { refuseCrossSiteRequest } from '../server/cross-site.js'
 import { refusalFor, respondJson, type RunDetailRefusal } from './run-detail-routes.js'
 
+// 2026-10-02 (432-42, D-15): no 403 refusal arm. It carried the `mark_denied` body the execution
+// gate's denial produced; nothing produces it since 432-19, and its DTO is deleted.
 export type RunMarkOutcome =
   | { readonly kind: 'ok'; readonly body: RunsMarkOutcome }
   | RunDetailRefusal
-  | {
-    readonly kind: 'refused'
-    readonly status: 403
-    /** 2026-09-30, 432-09 (D-15): a plain reason, and nothing a caller must act on. */
-    readonly body: MarkRefusal
-  }
 
 /**
  * Address comes from the route; the body may never replace it or claim a caller identity. The body

@@ -37,6 +37,12 @@
 // projected onto MCP behind 20 tools and 14 unprojected, 42 bound at the composition root and 2
 // unbound (C432-REGISTRY-GOLDEN pins these). The proposal and grant ops left in 432-17/18, and no
 // row's policy points refuse or ask: `refuse` is `allow` and `ask` is `direct` wherever it remains.
+//
+// KEPT, DATED 2026-10-02 (432-42 census decision): the `policyPoints` column stays under its name.
+// It is test-only (no shipped byte spells it), every value in it is the direct claim (`allow`,
+// `direct`), and it feeds retained cells outside this file (C432-ALL-OPS-AVAILABLE,
+// `423-read-contracts.test.ts`, the ask derivation's four retained cells). Renaming it would rename
+// those claims without changing one; C432-REGISTRY-GOLDEN pins that no point refuses or asks.
 
 import {
   AgentAskInputSchema,

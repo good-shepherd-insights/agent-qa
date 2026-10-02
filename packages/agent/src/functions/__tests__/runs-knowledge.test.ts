@@ -247,13 +247,8 @@ function deps(options: DepsOptions = {}): FunctionDeps {
       : {}),
     ...(options.bindProposalsInbox === true
       ? {
-          proposalsInbox: {
-            // 432-09: a bound inbox is never read by this projection.
-            list: () => Promise.reject(new Error('runs.knowledge must not list the proposals inbox')),
-            show: () => Promise.resolve({ kind: 'not-found' } as never),
-            reject: () => Promise.resolve({ outcome: 'not-found' } as never),
-            recordApplied: () => Promise.resolve({ outcome: 'not-found' } as never),
-          },
+          // 2026-10-02 (432-42, D-05/D-22): no inbox port is handed in. The dep key was deleted by
+          // 432-17 and nothing can read it; C432-LEFTOVERS-UNREAD pins that no source names it.
         }
       : {}),
   }

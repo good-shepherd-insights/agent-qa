@@ -206,15 +206,9 @@ export function deriveMarkStepId(testIndex: number, stepIndex: number): string {
   return `${testIndex}:${stepIndex}`
 }
 
-/**
- * 2026-09-30, 432-09 (D-15): a refused mark is a plain reason. Nothing on it asks the caller to act,
- * and no remedy list rides it. The browser door answers this body with a 403.
- */
-export const MarkRefusalSchema = z.object({
-  error: z.literal('mark_denied'),
-  reason: z.string().min(1),
-}).strict()
-export type MarkRefusal = z.infer<typeof MarkRefusalSchema>
+// 2026-10-02 (432-42, D-15): no mark refusal body. `MarkRefusalSchema` described the 403 the browser
+// door answered when the execution gate denied a mark; the gate is deleted (432-19), no route
+// answers that body, and the dashboard's branch that read it is deleted with it.
 
 /** Shared by runs.mark and runs.detail's ledger projection. */
 export interface FeedbackPort {

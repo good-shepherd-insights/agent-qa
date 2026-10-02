@@ -479,7 +479,11 @@ describe('the agent manifest (D-16, XPLN-01)', () => {
     expect(opRows.filter((row) => row.id.startsWith('config.') && row.id !== 'config.get').length)
       .toBeGreaterThan(0)
     // …and the note a reader gets says so, in the document rather than in a source file.
-    expect(manifest.$note.join(' ')).toContain('NOT A GRANT LIST')
+    // RE-SPELLED 2026-10-02 (432-42, D-12) from `NOT A GRANT LIST`: there is no grant to contrast
+    // with, so the note says the manifest is unfiltered and that nothing is permissioned.
+    expect(manifest.$note.join(' ')).toContain('THIS MANIFEST IS UNFILTERED')
+    expect(manifest.$note.join(' ')).toContain('there are no permissions')
+    expect(manifest.$note.join(' ')).not.toMatch(/grant list/iu)
   })
 
   // RE-SPELLED 2026-10-01 (432-21, D-12) from '… by env-ref NAME …'. The manifest reads no MCP token
@@ -535,7 +539,8 @@ describe('the agent manifest (D-16, XPLN-01)', () => {
   // RE-SPELLED 2026-10-02 (432-39, D-12): `AgentManifestTokenRefSchema` is deleted with the posture's
   // `tokenEnvRefs`. The structural half survives one level up: the posture is `.strict()`, so a
   // token ref — with a value or without — cannot be added by accident; it stops parsing.
-  it('refuses a token ref carrying a value, rather than passing one through', () => {
+  // RE-TITLED 2026-10-02 (432-42, 432-39 #5) from 'refuses a token ref carrying a value, rather than passing one through': the body asserts the absence, so the title does.
+  it('refuses a token ref on the strict posture, with a value or without one', () => {
     const refused = AgentManifestPostureSchema.safeParse({
       configuration: 'resolved',
       tokenEnvRefs: [{
@@ -562,7 +567,8 @@ describe('the agent manifest (D-16, XPLN-01)', () => {
   // WHOLE closed scope union, read off the union rather than restated, and safe mode is off.
   // RE-SPELLED 2026-10-02 (432-39, D-12): the union, the grant and the safe-mode member are deleted,
   // so there is nothing left to restate: the posture carries neither member, and the CLI mint no flag.
-  it('reads the shipped default grant and safe-mode state rather than restating them', async () => {
+  // RE-TITLED 2026-10-02 (432-42, 432-39 #5) from 'reads the shipped default grant and safe-mode state rather than restating them': the body asserts the absence, so the title does.
+  it('reports a posture of exactly { configuration }, with no default grant or safe-mode member', async () => {
     const manifest = await buildAgentManifest({
       configPath: join(fixtureProject('posture'), 'agent-qa.config.yaml'),
     })

@@ -30,7 +30,7 @@ import { PlayerLightbox } from '@/components/run-detail/player-lightbox'
 import { buildSuiteTimeline, suiteSeek, suiteProgress, suiteClock } from '@/lib/suite-timeline'
 import { Timeline } from '@/components/run-detail/timeline'
 import type { ReasoningPipelineHandle } from "@/components/reasoning-pipeline"
-import { fetchRun, fetchRunAnalysis, fetchRunDetail, fetchRunKnowledge, triggerRun, fetchExecutionLogs, fetchRunArtifact, watchPostProcessing, markRun, MarkDeniedError } from "@/lib/api"
+import { fetchRun, fetchRunAnalysis, fetchRunDetail, fetchRunKnowledge, triggerRun, fetchExecutionLogs, fetchRunArtifact, watchPostProcessing, markRun } from "@/lib/api"
 import type { RunRow, ExecutionLogEntry, RunArtifactResponse, KnowledgeRead, PostProcessingRead } from "@/lib/api"
 import type { AnalysisGetOutput, RunDetailProjection, RunDetailSubAction } from "@vostride/agent-qa-schema"
 import {
@@ -223,8 +223,7 @@ export default function RunDetailPage() {
       return 'retained'
     } catch (error) {
       if (!isCurrent()) return 'stale'
-      if (error instanceof MarkDeniedError) setMarkDenial({ ...address, reason: error.reason })
-      else setMarkDenial({ ...address, reason: 'Could not complete the mark or refresh its receipt. Reload this run before trying again.' })
+      setMarkDenial({ ...address, reason: 'Could not complete the mark or refresh its receipt. Reload this run before trying again.' })
       return 'retained'
     } finally {
       if (isCurrent()) {

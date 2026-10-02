@@ -41,7 +41,6 @@ import {
   AuthoringDraftWriteInputSchema,
   AuthoringDraftWriteOutputSchema,
   FanOutReportSchema,
-  renderFanOutPreview,
   renderFanOutReport,
 } from '@vostride/agent-qa-schema'
 import type {
@@ -139,8 +138,8 @@ export const authoringDraftWriteSpec: FunctionSpec<
   //
   // 2026-10-01 (432-19/432-23, 432 D-12/D-14/D-15): THE TIER NO LONGER ASKS. It was raised so a
   // dispatch confirm would show the fan-out before the loop started, and so a fail-closed context
-  // (CI, the daemon) denied it with the gate's ways out (`--trust-session`, a trust credential, a
-  // standing approval). The gate, its confirm and those ways out are deleted: every door runs this
+  // (CI, the daemon) denied it with the gate's ways out (the session trust flag, a trust credential,
+  // a standing approval). The gate, its confirm and those ways out are deleted: every door runs this
   // op without a prompt, and WTST-08's honest report on the verdict below is the control that
   // remains. One call starts a loop that runs to its end; there is no mid-loop approval state and
   // no approval token threaded through the stages.
@@ -152,25 +151,9 @@ export const authoringDraftWriteSpec: FunctionSpec<
     recognized: true,
     declaredTier: 'mutating-shared',
   },
-  // D-03's fan-out preview, rendered from the ONE bound function and from NOTHING ELSE.
-  //
-  // `authoringFanOutBound` is the single site that assembles the three terms, and
-  // `renderFanOutPreview` is the single site that turns them into words. A sum spelled here would
-  // be a second arithmetic for the same number, free to drift the moment `REPAIR_ITERATION_CAP` or
-  // `DRAFT_STABILITY_RUNS_N` moves — and the direction it would drift in is the one WTST-08 forbids,
-  // because the number a person already approved is the one that is too small.
-  //
-  // NO CALLER TEXT REACHES THE PROMPT. Only `draftMode` is read: `intent` is free text from an
-  // arbitrary caller (T-394-06), and a confirm message it could write would let the asker dress up
-  // what they are asking a person to approve, at the one moment the person is deciding.
-  //
-  // 2026-10-01 (432-23): the dispatch confirm that rendered this preview is deleted (432-19, D-14/
-  // D-15), so no production path calls it; the method and the declaration's `discloses` column stay
-  // until their own owner retires them. The fan-out report on the verdict below is what a caller
-  // reads now.
-  disclose(input: AuthoringDraftWriteInput): string {
-    return renderFanOutPreview(authoringFanOutBound(input))
-  },
+  // 2026-10-02 (432-42, D-14/D-15): the per-invocation `disclose` method is deleted. It rendered the
+  // fan-out preview for the dispatch confirm, which 432-19 deleted, and nothing called it since; the
+  // fan-out report on the verdict below is what a caller reads.
   /**
    * This op's own outcome enum, folded into a clause verdict (2026-08-20, Phase 399.1 D-01/D-02),
    * carrying the invocation's FAN-OUT REPORT (394-14 · WTST-08 · D-18's one exception).

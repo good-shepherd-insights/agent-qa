@@ -361,7 +361,7 @@ export async function startServer(opts: StartServerOptions): Promise<{
           // so it was the sentence a person read about every denied dashboard run.
           //
           // THE PROSE IS THE GATE'S NEUTRAL FORM, NOT ITS CANONICAL ONE. The canonical sentence
-          // names `--trust-session`, a flag declared on one CLI command, and this reader is in a
+          // named the session trust flag, declared on one CLI command, and this reader is in a
           // browser. Where the rejection carries no neutral form — an unrecognised request field, an
           // input error — its own message is used, which names no surface's affordance either.
           //

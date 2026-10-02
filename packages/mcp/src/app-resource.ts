@@ -64,8 +64,9 @@
 //      which names what the check is and what it is for. Retained here rather than rewritten,
 //      because an adjudication in this repository is re-grounded on the record, never edited away.
 //   4. THE CREDENTIAL STAYS SHORT-LIVED AND VIEW-SCOPED. 403's `LIVE_URL_TTL_MS` is five minutes
-//      and the token authorises watching pixels this caller's `read` scope already reaches — so
-//      even the negotiated channel hands out the narrowest thing that can render a live view.
+//      and the token authorises watching pixels this caller can already read — so even the
+//      negotiated channel hands out the narrowest thing that can render a live view (re-spelled
+//      2026-10-02, 432-42: no caller holds a `read` scope since 432-20).
 //   5. THE AUTHORIZATION BOUNDARY IS THE OPERATOR-GRANTED `read` SCOPE, CHECKED AT REGISTRATION
 //      (added 2026-09-01, 408 gap round; D-02). This clause names what THIS SERVER CAN VERIFY, as
 //      distinct from anything a caller says about itself. `registerAppResources` registers the
@@ -158,8 +159,9 @@
 // mint happens on the READ rather than once at registration: there is no session to hold a token
 // in, so freshness is the cheap path rather than a feature. SEP-2567 removed per-connection
 // variance from list endpoints, which is the other half of `{ list: undefined }` below — this
-// template's absence from listings is a property of the SERVER, identical for every caller granted
-// the same scopes, and not a capability-conditional listing smuggled in through a resolver.
+// template's absence from listings is a property of the SERVER, identical for every caller (no
+// caller holds scopes since 432-20, D-12), and not a capability-conditional listing smuggled in
+// through a resolver.
 // SEP-2549's cache hints are declined for the same reason the mint is per-read: a cacheable App
 // document would be a cacheable credential.
 

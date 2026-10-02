@@ -187,7 +187,7 @@ async function executePath(path: 'DIRECT' | 'SUITE' | 'COMPOSED', options: { mis
           members: produced.members,
           executor: options.missingRunId ? (member, ctx) => produced.executor(member, { ...ctx, runId: undefined }) : produced.executor,
           configDigests: produced.configDigests,
-          product: produced.product, confirmPausedMs: () => 0, warn: () => {} })
+          product: produced.product, warn: () => {} })
         produced.applyAssembly(assembly)
         produced.bindKnowledge?.(assembly.buildOrdinal)
         return assembly.config

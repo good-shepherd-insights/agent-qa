@@ -338,7 +338,6 @@ function liveRegistry(): FunctionRegistry {
       readStepEvidence: () => Promise.resolve({ kind: 'run-not-recorded' } as const),
     },
     runInvocation: { start: () => Promise.resolve({ runId: asRunId(FIXTURE_RUN_ID) }) },
-    proposalsInbox: { list: () => Promise.resolve([]) },
     liveView,
   } as unknown as FunctionDeps
 

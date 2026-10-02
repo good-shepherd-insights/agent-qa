@@ -1,5 +1,6 @@
-// `config.project.scaffold` — the from-zero configuration, as ONE reviewable proposal
-// (Phase 395-08, D-04 / D-13 / D-14 / D-15 · CFGM-05).
+// `config.project.scaffold` — the from-zero configuration, written as ONE change in the call
+// (Phase 395-08, D-04 / D-13 / D-14 / D-15 · CFGM-05; 2026-10-02, 432-42: re-spelled from the
+// proposal it used to file).
 //
 // 2026-09-30, 432-11 D-05/D-07: THIS OP WRITES IN THE CALL. It is constructed, scanned and validated
 // as described below and then published through the direct writer; the answer names the files and

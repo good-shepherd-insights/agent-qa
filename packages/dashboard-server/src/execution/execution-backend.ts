@@ -67,8 +67,8 @@ export interface RunSettledDetails {
   /**
    * The refusal said without naming any surface's affordance (401-18, G-401-16).
    *
-   * The gate composes two sentences per decision: the canonical one, which names `--trust-session` and lands in the
-   * execution-audit row, and the neutral one, which stops at the classification and the outcome.
+   * The gate composed two sentences per decision: the canonical one, which named the session trust
+   * flag and landed in the execution-audit row, and the neutral one, which stops at the classification and the outcome.
    * A browser reader was being handed the first, so the record's only account of why a run never
    * happened told them to pass a flag to a command they were not running.
    *

@@ -22,7 +22,6 @@ import type { QuarantineAppliedEntry } from '@vostride/agent-qa-schema'
 import { buildRunSessionSafetyHooks } from '@vostride/agent-qa-agent-local'
 import type {
   AttachableRunSession,
-  LivePauseController,
   RunMaskingContext,
   RunSubscriberHandle,
 } from '@vostride/agent-qa-agent-local'
@@ -44,32 +43,8 @@ import type {
 // and raise ReplayIncompleteError (bus.ts collectReplay/D-07). This is the full replay-then-live floor.
 const REPLAY_FROM_START = 1
 
-/**
- * The console pause/resume seam shared between the console reporter (attached at the startRun site)
- * and the D-11 confirm decorator. `bind` is called by `attachRunSubscribers` once the console
- * reporter exists; the confirm decorator reads through the live target at call time. Guards swallow
- * their own errors so a reporter fault never blocks a prompt.
- *
- * 2026-10-01 (432-19): the confirm decorator is deleted, so nothing reads through this seam today;
- * the binding stays with the console reporter that owns it.
- *
- * The TYPE is host-neutral vocabulary and lives in the composition package. This factory does not:
- * it exists to hold a console reporter handle, and a host with no console has nothing to bind.
- */
-export function createLivePauseController(): LivePauseController {
-  let active: { pauseLive(): void; resumeLive(): void } | undefined
-  return {
-    pauseLive() {
-      try { active?.pauseLive() } catch { /* a reporter fault must never block a live prompt */ }
-    },
-    resumeLive() {
-      try { active?.resumeLive() } catch { /* ditto */ }
-    },
-    bind(handle) {
-      active = handle ?? undefined
-    },
-  }
-}
+// 2026-10-02 (432-42, D-14): the console pause/resume seam is deleted. It let the confirm decorator
+// clear the live line before a prompt; 432-19 deleted the decorator and nothing read the seam since.
 
 // 2026-10-01 (432-19, D-14/D-15): `buildUnmaskingConfirm` is deleted with `ConfirmPort`. It
 // unmasked the action name on a confirm prompt for a person to read; nothing in a run asks any more,
@@ -86,7 +61,7 @@ export function createLivePauseController(): LivePauseController {
  */
 export function buildRunSafetyHooks(input: {
   auditSink: AuditSink
-}): { safetyHooks: SafetyHookRunner; confirmPausedMs: () => number } {
+}): { safetyHooks: SafetyHookRunner } {
   return buildRunSessionSafetyHooks({
     auditSink: input.auditSink,
   })
@@ -136,8 +111,6 @@ export interface AttachRunSubscribersInput {
   junitOutputPath?: string
   /** Prebuilt out-of-package subscribers (dashboard ingest, analytics) constructed by run.ts. */
   extraSubscribers?: readonly RunSubscriberHandle[]
-  /** Console pause/resume seam bound here so the D-11 confirm decorator can coordinate. */
-  live?: LivePauseController
   /**
    * The run-start quarantine snapshot (390 D-15/D-16) — the SAME resolved set `startRun` was given.
    *
@@ -152,8 +125,7 @@ export interface AttachRunSubscribersInput {
  * Attach the run's bus subscribers at a startRun site (used by BOTH sites — Pitfall 8). Constructs
  * the CLI-owned reporters (console unmasks; junit + wire stay masked, wire env-gated internally),
  * subscribes each via `session.subscribe(REPLAY_FROM_START, …)` alongside any `extraSubscribers`
- * (dashboard/analytics), binds the console pause/resume seam to the live controller, and returns a
- * single `flush()` awaiting every subscriber's flush (JUnit write, dashboard finalize, analytics
+ * (dashboard/analytics), and returns a single `flush()` awaiting every subscriber's flush (JUnit write, dashboard finalize, analytics
  * drain) — the CLI awaits this after `session.done` before mapping the verdict to the exit code.
  *
  * This is the clearest presentation symbol in the file: three of the four things it constructs
@@ -174,8 +146,6 @@ export function attachRunSubscribers(input: AttachRunSubscribersInput): { flush:
     input.session.subscribe(REPLAY_FROM_START, consoleHandle.handler)
     flushes.push(consoleHandle.flush)
   }
-  // Bind (or clear) the console pause/resume seam the D-11 confirm decorator reads through.
-  input.live?.bind(consoleHandle)
 
   if (input.junitOutputPath) {
     const junit: JunitReporterHandle = createJunitReporter({

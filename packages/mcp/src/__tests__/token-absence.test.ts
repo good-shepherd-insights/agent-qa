@@ -316,7 +316,6 @@ function fixtureRegistry(): { readonly registry: FunctionRegistry; readonly mint
       readStepEvidence: () => Promise.resolve({ kind: 'run-not-recorded' } as const),
     },
     runInvocation: { start: () => Promise.resolve({ runId: asRunId(FIXTURE_RUN_ID) }) },
-    proposalsInbox: { list: () => Promise.resolve([]) },
     entities: {
       get: (ref: string) =>
         Promise.resolve(

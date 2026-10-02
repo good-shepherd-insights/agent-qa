@@ -14,7 +14,7 @@ import type {
 import { RunsMarkPreviewResultSchema, RunsMarksHistoryResultSchema, asRef } from "@vostride/agent-qa-schema"
 
 import RunDetailPage from "@/pages/run-detail"
-import { MarkDeniedError, type MarksHistoryRead } from "@/lib/api"
+import { type MarksHistoryRead } from "@/lib/api"
 import { generateRunId, generateTestId } from "@vostride/agent-qa-ids"
 const RUN_ID = generateRunId()
 const TEST_ID = generateTestId()
@@ -465,6 +465,9 @@ async function navigateTo(id: string) {
   await click('[data-navigate]')
 }
 
+/** The page's own sentence for a failed mark (2026-10-02, 432-42: no typed denial is left). */
+const MARK_FAILED_TEXT = 'Could not complete the mark or refresh its receipt.'
+
 describe('419-15 scoped draft lifecycle', () => {
   beforeEach(() => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
@@ -504,7 +507,8 @@ describe('419-15 scoped draft lifecycle', () => {
       const base = failure === 'wrong-member'
         ? { ...initial, members: [...initial.members, member(8, { testId: generateTestId(), marks: [] })] }
         : initial
-      if (failure === 'denied' || failure === 'no-channel') markRunMock.mockRejectedValue(new MarkDeniedError({ reason: failure }))
+      // 2026-10-02 (432-42, D-15): no typed denial is left; both legacy denial shapes are failed requests.
+      if (failure === 'denied' || failure === 'no-channel') markRunMock.mockRejectedValue(new Error(failure))
       else if (failure === 'transport') markRunMock.mockRejectedValue(new Error('offline'))
       else if (failure === 'ambiguous-correction' || failure === 'run-not-found') markRunMock.mockResolvedValue({ kind: failure })
       else {
@@ -570,8 +574,10 @@ describe('419-15 scoped draft lifecycle', () => {
   it('keeps a second member draft and denial isolated across subsequent submissions', async () => {
     const secondId = generateTestId()
     fetchRunDetailMock.mockResolvedValue({ ...initial, members: [...initial.members, member(8, { testId: secondId, marks: [] })], steps: [...initial.steps, step(8, 2, 'Other cart')] })
-    markRunMock.mockRejectedValueOnce(new MarkDeniedError({ reason: 'First member denied' }))
-      .mockRejectedValueOnce(new MarkDeniedError({ reason: 'Second member denied' }))
+    // 2026-10-02 (432-42, D-15): no typed denial is left; each failed request is told apart by the
+    // address its denial renders at, not by a server-supplied reason.
+    markRunMock.mockRejectedValueOnce(new Error('First member denied'))
+      .mockRejectedValueOnce(new Error('Second member denied'))
     await renderAt(`/runs/${RUN_ID}`)
     const first = memberTarget(7)
     const second = memberTarget(8)
@@ -579,15 +585,15 @@ describe('419-15 scoped draft lifecycle', () => {
     await draft(second)
     await openComposer(first)
     await submitFeedback()
-    expect(inComposer('[data-feedback-denied]')?.textContent).toContain('First member denied')
+    expect(inComposer('[data-feedback-denied]')?.textContent).toContain(MARK_FAILED_TEXT)
     await openComposer(second)
     expect(inComposer('[data-feedback-denied]')).toBeNull()
     await submitFeedback()
     await expectDraft(second)
-    expect(inComposer('[data-feedback-denied]')?.textContent).toContain('Second member denied')
+    expect(inComposer('[data-feedback-denied]')?.textContent).toContain(MARK_FAILED_TEXT)
     await expectDraft(first)
     expect(statusText()).toBe(DRAFT_KEPT_STATUS)
-    expect(inComposer('[data-feedback-denied]')?.textContent).toContain('First member denied')
+    expect(inComposer('[data-feedback-denied]')?.textContent).toContain(MARK_FAILED_TEXT)
     expect(inComposer('[data-feedback-denied]')?.textContent).not.toContain('Second member denied')
     expect(markRunMock.mock.calls[0][1].testId).toBe(TEST_ID)
     expect(markRunMock.mock.calls[1][1].testId).toBe(secondId)
@@ -617,13 +623,13 @@ describe('419-15 scoped draft lifecycle', () => {
     await openComposer(STEP_TARGET)
     expect(statusText()).toBe('')
     await expectDraft(STEP_TARGET)
-    await act(async () => post.reject(new MarkDeniedError({ reason: 'Denied here' })))
+    await act(async () => post.reject(new Error('Denied here')))
     await flushRender()
     expect(inComposer('[data-feedback-denied]')).toBeNull()
     expect(statusText()).toBe('')
     await expectDraft(TEST_TARGET)
     expect(statusText()).toBe(DRAFT_KEPT_STATUS)
-    expect(inComposer('[data-feedback-denied]')?.textContent).toContain('Denied here')
+    expect(inComposer('[data-feedback-denied]')?.textContent).toContain(MARK_FAILED_TEXT)
     await type(inComposer('[data-feedback-note]'), 'Edited')
     expect(statusText()).toBe('')
     expect(inComposer('[data-feedback-denied]')).toBeNull()
@@ -753,14 +759,17 @@ describe('419 page mark post/refetch', () => {
     expect(statusText()).toBe(DRAFT_KEPT_STATUS)
     expect(container!.textContent).not.toContain(feedbackRecordedText(marked.disposition))
   })
-  it('renders a typed denial as its reason only, without a refetch or invented mark', async () => {
-    markRunMock.mockRejectedValue(new MarkDeniedError({ reason: 'The safety gate denied this mark.' }))
+  // RE-TITLED 2026-10-02 (432-42, D-15) from 'renders a typed denial as its reason only, without a
+  // refetch or invented mark': no typed denial is left, so a failed mark renders the page's sentence.
+  it('renders a failed mark as the page\'s one sentence, without a refetch or invented mark', async () => {
+    markRunMock.mockRejectedValue(new Error('The safety gate denied this mark.'))
     await renderAt(`/runs/${RUN_ID}`)
     await openComposer(TEST_TARGET)
     const reads = fetchRunDetailMock.mock.calls.length
     await send(TEST_TARGET, 'false-fail')
     const denied = inComposer('[data-feedback-denied]')
-    expect(denied?.textContent).toContain('The safety gate denied this mark.')
+    expect(denied?.textContent).toContain(MARK_FAILED_TEXT)
+    expect(denied?.textContent).not.toContain('safety gate')
     expect(denied?.querySelector('[data-remedy-kind]')).toBeNull()
     expect(fetchRunDetailMock).toHaveBeenCalledTimes(reads)
     expect(headerEntry()?.getAttribute('data-feedback-marked')).toBe('false')
@@ -778,7 +787,7 @@ describe('419 page mark post/refetch', () => {
     expect(headerEntry()?.getAttribute('data-feedback-marked')).toBe('false')
   })
   it('sends the durable step address and renders denial only at that step', async () => {
-    markRunMock.mockRejectedValue(new MarkDeniedError({ reason: 'Denied' }))
+    markRunMock.mockRejectedValue(new Error('Denied'))
     await renderAt(`/runs/${RUN_ID}`)
     await send(STEP_TARGET, 'confirmed-bug')
     expect(markRunMock).toHaveBeenCalledExactlyOnceWith(RUN_ID, { kind: 'confirmed-bug', testId: TEST_ID, stepIndex: 2 })

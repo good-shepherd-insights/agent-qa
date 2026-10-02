@@ -11,7 +11,6 @@ import * as runSessionComposition from '../run-session-composition.js'
 import {
   attachRunSubscribers,
   buildRunSafetyHooks,
-  createLivePauseController,
 } from '../run-session-composition.js'
 import { QUARANTINE_TEST_ANNOTATION } from '../reporters/console-reporter.js'
 import { JUNIT_QUARANTINE_MARKER_BLOCK } from '../reporters/junit-reporter.js'
@@ -32,7 +31,9 @@ describe('buildUnmaskingConfirm (D-11 / Pitfall 4)', () => {
   it('C432-NO-ASK-PORTS: the confirm decorator is not exported, so nothing can wrap a prompt any more', () => {
     expect(Object.keys(runSessionComposition)).not.toContain('buildUnmaskingConfirm')
     // Non-vacuity: the namespace is the real module, with its retained presentation symbols.
-    expect(typeof runSessionComposition.createLivePauseController).toBe('function')
+    // (2026-10-02, 432-42: the live pause controller left too; the subscriber helper is the anchor.)
+    expect(typeof runSessionComposition.attachRunSubscribers).toBe('function')
+    expect(Object.keys(runSessionComposition)).not.toContain('createLivePauseController')
   })
 })
 
@@ -47,14 +48,12 @@ describe('attachRunSubscribers (bus composition swap, 363-09)', () => {
     const extraFlush = vi.fn().mockResolvedValue(undefined)
     const extra: RunSubscriberHandle = { handler: vi.fn(), flush: extraFlush }
 
-    const live = createLivePauseController()
     const { flush } = attachRunSubscribers({
       session: session as never,
       maskingContext: ctx,
       console: { verbose: false, write: () => {} },
       junitOutputPath: join(tmpdir(), `agent-qa-junit-${Date.now()}.xml`),
       extraSubscribers: [extra],
-      live,
     })
 
     // console + junit + wire + one extra = 4 subscriptions, every one from seq 1 (D-04 full replay).
@@ -67,25 +66,24 @@ describe('attachRunSubscribers (bus composition swap, 363-09)', () => {
     expect(extraFlush).toHaveBeenCalledTimes(1)
   })
 
+  // 2026-10-02 (432-42, D-14): the live seam is deleted, so the second half of this title is now its
+  // absence — a legacy controller smuggled in is never bound (old title kept for the console half).
   it('skips the console subscriber and unbinds the live seam when console is false', async () => {
     const ctx = createMaskingContext()
     const session = fakeSession()
-    const live = createLivePauseController()
-    const bindSpy = vi.spyOn(live, 'bind')
+    const bind = vi.fn()
 
     attachRunSubscribers({
       session: session as never,
       maskingContext: ctx,
       console: false,
-      live,
+      ...({ live: { bind, pauseLive() {}, resumeLive() {} } } as object),
     })
 
     // only the wire subscriber attaches (console skipped, no junit, no extras).
     expect(session.subscribe).toHaveBeenCalledTimes(1)
-    // the live seam is cleared (no console handle to bind) so the confirm decorator no-ops safely.
-    expect(bindSpy).toHaveBeenCalledWith(undefined)
-    // pause/resume through an unbound controller must not throw.
-    expect(() => { live.pauseLive(); live.resumeLive() }).not.toThrow()
+    // nothing binds a live seam any more, so a smuggled legacy controller is never touched.
+    expect(bind).not.toHaveBeenCalled()
   })
 
   it('best-effort flush: a rejecting subscriber flush never rejects the combined flush (RUNX-03)', async () => {
@@ -193,7 +191,7 @@ describe('the CLI run-session module exports presentation ONLY (385-08 / D-13)',
       'buildAnalyticsRunSubscriber',
       'buildRunSafetyHooks',
       // 2026-10-01 (432-19): 'buildUnmaskingConfirm' left with the confirm port it decorated.
-      'createLivePauseController',
+      // 2026-10-02 (432-42, D-14): 'createLivePauseController' left with the pause seam it built.
     ].sort())
   })
 
@@ -212,20 +210,24 @@ describe('the CLI run-session module exports presentation ONLY (385-08 / D-13)',
 // RE-SPELLED 2026-09-30 (432-13): neither decorator is built any more — the run hooks read no
 // presentation confirm — so the host decoration never runs and nothing is ever timed. The claim that
 // survives is the one this cell guarded: host rendering never lands in `confirmPausedMs()`.
+// RE-SPELLED 2026-10-02 (432-42, D-14): the supplier is deleted, so nothing measures a pause at all;
+// the legacy live controller rides as a smuggle and its burn is never run.
 describe('human decoration composes OUTSIDE the pause timing (385-08 / D-10 / D-11)', () => {
   it('does not count the host prompt rendering against the measured human pause', async () => {
     const PAUSE_BURN_MS = 60
     const ctx = createMaskingContext()
     ctx.register('sk-live-NESTING-0987654321')
 
-    const live = createLivePauseController()
-    live.bind({
+    let burned = 0
+    const live = {
+      bind() {},
       pauseLive() {
+        burned += 1
         const until = Date.now() + PAUSE_BURN_MS
         while (Date.now() < until) { /* deliberate synchronous burn inside the host decoration */ }
       },
       resumeLive() { /* no-op */ },
-    })
+    }
 
     const auditSink = {
       appendGuardrailAudit() { /* no-op */ },
@@ -241,15 +243,16 @@ describe('human decoration composes OUTSIDE the pause timing (385-08 / D-10 / D-
       live,
       executionContext: 'local-interactive',
     }
-    const { safetyHooks, confirmPausedMs } = buildRunSafetyHooks({
+    const built = buildRunSafetyHooks({
       auditSink,
       ...smuggled,
     })
 
-    await safetyHooks.runToolCallAsync({ name: 'delete_record', recognized: true })
+    await built.safetyHooks.runToolCallAsync({ name: 'delete_record', recognized: true })
 
-    // The port was never asked, so no decoration ran and nothing was timed.
+    // The port was never asked, so no decoration ran, and no pause supplier exists to time anything.
     expect(asked).toBe(0)
-    expect(confirmPausedMs()).toBe(0)
+    expect(burned).toBe(0)
+    expect(Object.keys(built)).toEqual(['safetyHooks'])
   })
 })

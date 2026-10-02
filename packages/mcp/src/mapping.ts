@@ -144,6 +144,11 @@ import {
  * proposal and no tool asks for a confirmation, and `apply` names only the mark door, which lands a
  * mark's gold, evidence and fix in the call. Its credential check left with the MCP bearer
  * credential (432-21, D-12), so `apply` is now a name for that one door and gates nothing.
+ *
+ * KEPT, DATED 2026-10-02 (432-42 census decision): the member is not renamed. It is a published MCP
+ * contract value (`mapping-bump-guard.test.ts` pins `kind: 'apply'` on `agent_qa_mark_run`, and the
+ * projection derives annotations from it); no D-decision renames a published name here, and the
+ * word now means "the mark door applies its fix in the call", which is true. It asks nothing.
  */
 export type ToolProjectionKind = 'read' | 'workflow' | 'apply'
 
@@ -397,10 +402,10 @@ export const AGENT_QA_OP_CONTRACTS: Readonly<Record<string, ToolOpContracts>> = 
  * call. There is no apply tool, no `confirmed` input and no elicitation; the mark door is the one
  * `apply` entry, and since 432-21 (D-12) it checks no credential.
  *
- * WHY THERE IS NO PROPOSAL TOOL AT ALL. The inbox's verbs declared `requiresHumanOrigin: true`, so a
+ * WHY THERE IS NO PROPOSAL TOOL AT ALL. The inbox's verbs declared a human-origin requirement, so a
  * tool over either decision verb would have listed for every caller and refused every call; the
- * bump guard states the rule generally (no projected op may declare `requiresHumanOrigin`). 432-12
- * unprojected the whole inbox and 432-17 deleted it, ops and all.
+ * bump guard stated the rule generally until 432-39 deleted the field. 432-12 unprojected the whole
+ * inbox and 432-17 deleted it, ops and all (re-spelled 2026-10-02, 432-42).
  */
 export const AGENT_QA_TOOL_PROJECTIONS: readonly ToolProjection[] = Object.freeze([
   Object.freeze({

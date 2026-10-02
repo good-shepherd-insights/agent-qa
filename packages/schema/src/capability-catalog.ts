@@ -208,9 +208,9 @@ export const CapabilityCatalogSchema = z.object({
 // produced by LOADING the committed artifact rather than by re-deriving anything, `manifest ≡
 // catalog` is a cell rather than a promise.
 //
-// IT IS NOT A GRANT LIST, AND THE SHAPE SAYS SO. The rows are every row, for every caller. 2026-10-02
+// IT IS UNFILTERED, AND THE SHAPE SAYS SO. The rows are every row, for every caller. 2026-10-02
 // (432-39, D-12): no door filters a listing per caller any more (432-20 deleted the MCP `tools/list`
-// visibility law), so there is no grant for a manifest to report either.
+// visibility law), so there is no permission for a manifest to report either.
 
 // 2026-10-02 (432-39, D-02/D-12): `AgentManifestTokenRefSchema` is deleted with the posture's
 // `tokenEnvRefs`, `defaultScopes` and `safeMode` members. No MCP credential is declared or read

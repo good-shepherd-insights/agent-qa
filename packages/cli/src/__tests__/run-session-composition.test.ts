@@ -458,6 +458,9 @@ describe('buildRunSafetyHooks (D-01/D-15/D-10 — per-run registrar invocation)'
   // handed to the registrar, so the port is never asked and no time is ever paused.
   // 2026-10-01 (432-14, D-03): the CLI producer no longer declares a confirm either; a port can only
   // be smuggled in as an excess field, and it is still never asked.
+  // 2026-10-02 (432-42, D-14): the always-zero `confirmPausedMs` supplier is deleted, so the second
+  // half of the title is now its absence from the hooks' return (old title kept: the claim that no
+  // handed confirm is asked survives unchanged).
   it('never asks the confirm it is handed; confirmPausedMs() stays 0 (432-13)', async () => {
     const configDir = mkdtempSync(join(tmpdir(), 'run-hooks-'))
     const runId = 'r_hooks-pause'
@@ -472,15 +475,16 @@ describe('buildRunSafetyHooks (D-01/D-15/D-10 — per-run registrar invocation)'
       },
     }
     const smuggled = { confirm, trustMode: false, executionContext: 'local-interactive' }
-    const { safetyHooks, confirmPausedMs } = buildRunSafetyHooks({
+    const built = buildRunSafetyHooks({
       auditSink,
       ...smuggled,
     })
+    const { safetyHooks } = built
 
     await safetyHooks.runToolCallAsync({ name: 'delete_record', recognized: true })
     await safetyHooks.runToolCallAsync({ name: 'delete_record', recognized: true })
     expect(asked).toBe(0)
-    expect(confirmPausedMs()).toBe(0)
+    expect(Object.keys(built), 'the hooks still return a pause supplier').toEqual(['safetyHooks'])
   })
 })
 
@@ -552,7 +556,6 @@ describe('buildRunPorts — onSubscriberFault destination (403-13)', () => {
       configDir,
       knowledgeRoot: join(configDir, 'knowledge'),
       ports: buildRunPorts({ configDir, runId }),
-      confirmPausedMs: () => 0,
       maskingContext: {} as never,
       members: [],
       executor: (() => { throw new Error('unreachable in this cell') }) as never,

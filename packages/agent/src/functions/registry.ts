@@ -366,9 +366,13 @@ export interface FunctionRegistry {
    *
    * 2026-10-01 (432-20, D-12): the same list for every caller. The safe-mode filter that hid ops
    * whose scopes exceeded `read` is deleted with the scopes themselves, so the caller argument is
-   * not read. 2026-10-02 (432-39): the caller contract is narrowed to `surface`/`origin`; the unread
-   * argument stays in the signature for now, because dropping it touches every listing call site in
-   * the workspace, and that is routed to the 432-42 census.
+   * not read. 2026-10-02 (432-39): the caller contract is narrowed to `surface`/`origin`.
+   *
+   * KEPT, DATED 2026-10-02 (432-42 census decision): the argument stays and stays unread. Removing
+   * it changes no behaviour and touches every listing call site in the workspace (well over a
+   * hundred, most of them other plans' fixtures), so the churn buys nothing a reader can observe.
+   * It is not a permission seam: C432-TOKENLESS-CATALOG and C432-ALL-OPS-AVAILABLE pin that every
+   * caller lists the same set, so a filter returning here reds by name.
    */
   list(caller: FunctionCaller): readonly FunctionDeclaration[]
 }
@@ -459,14 +463,9 @@ function declarationView(spec: FunctionSpec, deps: FunctionDeps): FunctionDeclar
     // projected here so a listing and the dispatch checks read one field; the checks are deleted,
     // and 432-39 deleted both members from the metadata type. The view is built field by field, so
     // an old key smuggled onto a spec object still cannot ride through by accident.
-    // 397 D-05: the PRESENCE of a disclosure, projected as a conditional spread, so absent stays
-    // absent. The method
-    // itself never crosses: what a listing receives is the boolean fact that a confirm prompt
-    // for this op will say what the invocation costs, and the golden capability snapshot reads
-    // that column off here instead of off somebody's reading of the op source.
-    ...(spec.disclose === undefined ? {} : { discloses: true as const }),
-    // 399.1 D-01/D-04: the two 399.1 folds, projected the way the disclosure above is and for the
-    // identical reason — the callables stay on the spec, and what crosses to a listing is the
+    // 2026-10-02 (432-42, D-14): no `discloses` column; the per-op disclosure is deleted.
+    // 399.1 D-01/D-04: the two 399.1 folds, projected as conditional spreads so absent stays
+    // absent — the callables stay on the spec, and what crosses to a listing is the
     // boolean fact that this op folds its own result. The golden ledger reads both columns off
     // here, so "which ops classify their own refusals" is a census over produced facts rather than
     // over somebody's reading of forty-three op files.

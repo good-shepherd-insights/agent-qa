@@ -35,7 +35,9 @@ describe('the remedy memberships, exact (430 D-06)', () => {
     }
     // Non-vacuity: these are the real barrels.
     expect(typeof schema.buildProductionRefusal).toBe('function')
-    expect(typeof safety.TRUST_SCOPE_KEYS).toBe('object')
+    // RE-SPELLED 2026-10-02 (432-42): the safety barrel's non-vacuity anchor was the deleted scope
+    // key set; the disclosure scrub is a member it still publishes.
+    expect(typeof safety.scrubDisclosureText).toBe('function')
   })
 
   it('C432-REMEDY-TYPES-ABSENT: the remedy module and the policy-result DTO are deleted; the risk tier stays', () => {

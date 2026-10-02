@@ -168,7 +168,7 @@ for (const path of ['suite', 'direct'] as const) {
         const assembly = await assembleCliRun({
           ...context, knowledgeRoot: produced.knowledgeRoot, maskingContext: masking,
           members: produced.members, executor: produced.executor, configDigests: produced.configDigests,
-          product: produced.product, confirmPausedMs: () => 0, warn: () => {},
+          product: produced.product, warn: () => {},
         })
         produced.applyAssembly(assembly)
         produced.bindKnowledge?.(assembly.buildOrdinal)

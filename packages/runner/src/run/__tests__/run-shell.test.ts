@@ -305,49 +305,71 @@ describe('run-level cancel + budget (D-03)', () => {
   })
 })
 
-// ---- Pause-aware run-budget expiry (D-10, plan 362-04) -------------------
+// ---- Pause-aware run-budget expiry (D-10, plan 362-04) — RETIRED 2026-10-02 (432-42, D-14) ----
 //
-// D-10: human confirm time extends BOTH the step deadline (plan 362-03) and the run
-// wall-clock budget accounting. The shell owns the budget timer, so the pause credit
-// lives here: when the budget "expires" but the injected `confirmPausedMs` supplier
-// reports un-credited human-confirm time, the shell re-arms for exactly that delta
-// instead of aborting — a slow human never turns the budget into a fake timeout.
+// D-10 credited human confirm time back to the run budget: when the budget "expired" while an
+// injected `confirmPausedMs` supplier reported un-credited confirm time, the shell re-armed for that
+// delta. No run asks since 432-13/19, the supplier always answered 0, and 432-42 deletes it from
+// `RunPorts` with the re-arm. These four cells are re-spelled to the one-shot budget each title now
+// states (old titles in the notes). Where a cell hands a legacy supplier, it is smuggled past the
+// type and proven unread: it is never called and the budget is armed exactly once.
+
+/** A legacy pause supplier, smuggled past `RunPorts`; it counts every call it gets. */
+function smuggledPauseSupplier(pausedMs: number): { readonly calls: () => number; readonly ports: object } {
+  let calls = 0
+  return {
+    calls: () => calls,
+    ports: { confirmPausedMs: () => { calls += 1; return pausedMs } },
+  }
+}
 
 describe('pause-aware run-budget expiry (D-10)', () => {
-  it('Test 1: expiry re-arms for accrued confirm-pause instead of aborting; run completes normally', async () => {
+  // RE-TITLED 2026-10-02 (432-42) from 'Test 1: expiry re-arms for accrued confirm-pause instead of
+  // aborting; run completes normally'.
+  it('Test 1: a smuggled legacy pause supplier is never read; expiry aborts with budget-timeout semantics', async () => {
     const timer = makeFakeTimer()
-    let pausedMs = 0
+    const calls: string[] = []
+    const legacy = smuggledPauseSupplier(3_000)
     const session = startRun(
       baseConfig({
-        executor: scriptedExecutor({}, []),
+        executor: abortableExecutor(calls),
         runBudgetMs: 5_000,
-        ports: { handoffStore: makeFakeHandoffStore(), timer, confirmPausedMs: () => pausedMs },
+        ports: { handoffStore: makeFakeHandoffStore(), timer, ...legacy.ports },
       }),
     )
     drain(session)
-    pausedMs = 3_000 // 3s of human confirm accrued before the budget fired
-    timer.fireLatest() // budget "expiry" — must re-arm for the un-credited pause, not abort
+    timer.fireLatest()
     const { verdict } = await done(session)
-    expect(verdict).toBe('passed')
+    expect(verdict).toBe('timeout')
+    expect(legacy.calls(), 'the shell read the deleted pause supplier').toBe(0)
   })
 
-  it('Test 2: re-armed expiry with no further pause aborts with budget-timeout semantics', async () => {
-    const timer = makeFakeTimer()
-    let pausedMs = 0
+  // RE-TITLED 2026-10-02 (432-42) from 'Test 2: re-armed expiry with no further pause aborts with
+  // budget-timeout semantics'.
+  it('Test 2: the first expiry aborts; nothing re-arms the budget', async () => {
+    const base = makeFakeTimer()
+    const delays: number[] = []
+    const recordingTimer: FakeTimer = {
+      now: base.now,
+      fireLatest: base.fireLatest,
+      schedule(delayMs: number, fn: () => void) {
+        delays.push(delayMs)
+        return base.schedule(delayMs, fn)
+      },
+    }
     const calls: string[] = []
     const session = startRun(
       baseConfig({
         executor: abortableExecutor(calls),
         runBudgetMs: 5_000,
-        ports: { handoffStore: makeFakeHandoffStore(), timer, confirmPausedMs: () => pausedMs },
+        ports: { handoffStore: makeFakeHandoffStore(), timer: recordingTimer },
       }),
     )
     drain(session)
-    pausedMs = 3_000
-    timer.fireLatest() // re-arms (credits 3000)
-    timer.fireLatest() // fires again, no new pause accrued → abort with existing semantics
+    base.fireLatest()
     const { verdict } = await done(session)
     expect(verdict).toBe('timeout')
+    expect(delays).toEqual([5_000])
   })
 
   it('Test 3: no confirmPausedMs supplier bound — expiry aborts immediately (byte-identical to today)', async () => {
@@ -366,7 +388,9 @@ describe('pause-aware run-budget expiry (D-10)', () => {
     expect(verdict).toBe('timeout')
   })
 
-  it('Test 4: cumulative pause across multiple confirms re-arms for the un-credited delta only (never double-counts)', async () => {
+  // RE-TITLED 2026-10-02 (432-42) from 'Test 4: cumulative pause across multiple confirms re-arms
+  // for the un-credited delta only (never double-counts)'.
+  it('Test 4: the budget is armed once for runBudgetMs, whatever a legacy supplier would report', async () => {
     const base = makeFakeTimer()
     const delays: number[] = []
     const recordingTimer: FakeTimer = {
@@ -377,22 +401,21 @@ describe('pause-aware run-budget expiry (D-10)', () => {
         return base.schedule(delayMs, fn)
       },
     }
-    let pausedMs = 0
+    const calls: string[] = []
+    const legacy = smuggledPauseSupplier(5_000)
     const session = startRun(
       baseConfig({
-        executor: scriptedExecutor({}, []),
+        executor: abortableExecutor(calls),
         runBudgetMs: 5_000,
-        ports: { handoffStore: makeFakeHandoffStore(), timer: recordingTimer, confirmPausedMs: () => pausedMs },
+        ports: { handoffStore: makeFakeHandoffStore(), timer: recordingTimer, ...legacy.ports },
       }),
     )
     drain(session)
-    pausedMs = 3_000
-    base.fireLatest() // re-arm delta = 3000 - 0
-    pausedMs = 5_000
-    base.fireLatest() // re-arm delta = 5000 - 3000 = 2000, NOT 5000
+    base.fireLatest()
     const { verdict } = await done(session)
-    expect(verdict).toBe('passed')
-    expect(delays).toEqual([5_000, 3_000, 2_000])
+    expect(verdict).toBe('timeout')
+    expect(delays).toEqual([5_000])
+    expect(legacy.calls()).toBe(0)
   })
 })
 

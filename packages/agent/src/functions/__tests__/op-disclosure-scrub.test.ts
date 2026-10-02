@@ -5,10 +5,14 @@
 // confirm prompt or a browser preview printed above the question. There is no op gate and nothing
 // asks, so dispatch composes no disclosure at all. The cells that proved the scrub on that channel
 // are re-spelled as the channel's absence: hostile caller text reaches no preview because no
-// preview is built. The census below (which ops still declare `disclose`) is unchanged.
+// preview is built.
 //
-// THE OP HERE IS SYNTHETIC, DELIBERATELY. The one shipped `disclose` implementor
-// (`authoring.draft.write`) reads only `draftMode` and is caller-text-free by construction.
+// 2026-10-02 (432-42, D-14/D-15): the member itself is deleted from `FunctionSpec`, with the
+// declaration's `discloses` flag and the one shipped implementor (`authoring.draft.write`). The
+// synthetic op below smuggles a legacy `disclose` past the type, and the census cells are re-spelled
+// under their titles to the empty set.
+//
+// THE OP HERE IS SYNTHETIC, DELIBERATELY: no shipped op carries the method any more.
 
 import { readFileSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
@@ -42,6 +46,7 @@ function caller(): FunctionCaller {
  * A synthetic formerly-ask-tier op whose disclosure is BUILT FROM ITS INPUT, with a counter on it.
  */
 function echoDiscloseSpec(disclosed: string[]): FunctionSpec<{ label: string }, { ok: true }> {
+  // 2026-10-02 (432-42): `disclose` is no longer a spec member; the legacy method is cast past it.
   return {
     id: 'test.echo.disclose',
     summary: 'Synthetic capability whose disclosure is composed from caller input.',
@@ -50,13 +55,13 @@ function echoDiscloseSpec(disclosed: string[]): FunctionSpec<{ label: string }, 
     output: z.object({ ok: z.literal(true) }).strict(),
     risk: { name: 'fn:test.echo.disclose', recognized: true, declaredTier: 'mutating-shared' },
     classify: () => ({ status: 'executed' as const, outcome: '' }),
-    disclose: (input) => {
+    disclose: (input: { label: string }) => {
       const text = `About to echo ${input.label}.`
       disclosed.push(text)
       return text
     },
     invoke: () => Promise.resolve({ ok: true as const }),
-  }
+  } as FunctionSpec<{ label: string }, { ok: true }>
 }
 
 describe('C432-INVOKE-DIRECT: dispatch composes no per-op disclosure (432-13)', () => {
@@ -97,6 +102,8 @@ describe('C432-INVOKE-DIRECT: dispatch composes no per-op disclosure (432-13)', 
 const OPS_DIR = join(__dirname, '..', 'ops')
 
 describe('the complete set of disclose implementors, from two independently shaped predicates', () => {
+  // RE-SPELLED 2026-10-02 (432-42, D-14) under the same title: the one built-in implementor's
+  // method is deleted, so the registry lists no op carrying the flag.
   it('the REGISTRY says exactly one built-in op discloses', () => {
     const registry = createFunctionRegistry({
       deps: {} as unknown as FunctionDeps,
@@ -110,11 +117,11 @@ describe('the complete set of disclose implementors, from two independently shap
     // SELF-CHECK FIRST. A listing that filtered itself down to nothing would make the assertion
     // below trivially true, which is the shape of a census that certifies its own blind spot.
     expect(declared.length).toBeGreaterThan(30)
-    expect(declared.filter((entry) => entry.discloses === true).map((entry) => entry.id)).toEqual([
-      'authoring.draft.write',
-    ])
+    expect(declared.filter((entry) => Object.hasOwn(entry, 'discloses')).map((entry) => entry.id)).toEqual([])
+    expect(declared.map((entry) => entry.id), 'the former implementor is still registered').toContain('authoring.draft.write')
   })
 
+  // RE-SPELLED 2026-10-02 (432-42, D-14) under the same title: no op file declares the method.
   it('the SOURCE agrees, read a different way', () => {
     // A second predicate over a different artifact: the registry read RUNTIME objects, this reads
     // BYTES. An op file that declared `disclose` without reaching the built-in list, or a built-in
@@ -126,6 +133,6 @@ describe('the complete set of disclose implementors, from two independently shap
       /\bdisclose\s*[:(]/.test(executableSource(readFileSync(join(OPS_DIR, name), 'utf8')))
     ))
 
-    expect(implementors).toEqual(['authoring-draft-write.ts'])
+    expect(implementors).toEqual([])
   })
 })

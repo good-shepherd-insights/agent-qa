@@ -298,37 +298,14 @@ export interface FunctionDeclaration extends FunctionMetadata {
    * `unbound` from one that did not, and `invokeFunction` refuses on exactly that answer.
    */
   bindingStatus: FunctionBindingStatus
-  /**
-   * This op composes an invocation-specific disclosure for the gate (2026-08-16, Phase 397 D-05).
-   *
-   * PRESENCE, AS DATA — never the callable. {@link FunctionSpec.disclose} stays exactly where it
-   * is and why it is: a function-valued field on {@link FunctionMetadata} would put something
-   * runnable back on every listing, which BL-01 abolishes. What crosses to a listing here is one
-   * boolean fact about the op — whether a person confirming it will be shown what this particular
-   * invocation costs — and reading that fact tells a caller nothing it could run.
-   *
-   * IT IS ON THE DECLARATION AND NOT ON THE SHARED BASE, so it cannot be authored. A spec states
-   * `disclose`; the registry states `discloses`. Were it on the base, a spec could claim the flag
-   * without the method, or omit it while carrying one, and the golden registry snapshot that pins
-   * this column would be recording a claim rather than a fact.
-   *
-   * WHY IT EXISTS AT ALL: 397's conformance suite lives in `packages/cli`, where neither the spec
-   * type nor the internals seam is reachable by construction. Without this projection the golden's
-   * disclose column would be hand-typed from reading op source files — a literal that rots the
-   * first time an op gains or loses a disclosure, silently, because nothing would compare it to
-   * anything.
-   *
-   * `true` is the only value, because `false` and an absent key would be two spellings of one
-   * fact, and a present `undefined` would make a golden column that reads `null` for an op that
-   * simply discloses nothing.
-   */
-  discloses?: true
+  // 2026-10-02 (432-42, D-14): no `discloses` flag. It projected the presence of the per-op
+  // disclosure a confirm prompt showed; the prompt and the method are deleted, and so is the column.
   /**
    * This op folds its OWN result into a clause verdict (2026-08-20, Phase 399.1 D-01).
    *
-   * PRESENCE, AS DATA — never the callable, on `discloses`' reasoning above and for its reason:
-   * {@link FunctionSpec.classify} stays where it is, and a function-valued field on
-   * {@link FunctionMetadata} would put something runnable back on every listing (BL-01).
+   * PRESENCE, AS DATA — never the callable: {@link FunctionSpec.classify} stays where it is, and a
+   * function-valued field on {@link FunctionMetadata} would put something runnable back on every
+   * listing (BL-01).
    *
    * WHAT THE PROJECTION IS FOR, AND WHY IT IS NOT DECORATION. D-01 puts refusal knowledge in a
    * per-op fold rather than in a chat-side rule that pattern-matches values, because a rule that
@@ -338,8 +315,8 @@ export interface FunctionDeclaration extends FunctionMetadata {
    * `packages/cli` cannot reach a spec by construction, so without it the coverage question could
    * only be answered by somebody reading forty-three op files.
    *
-   * `true` is the only value, for the reason `discloses` gives: `false` and an absent key would be
-   * two spellings of one fact.
+   * `true` is the only value: `false` and an absent key would be two spellings of one fact, and a
+   * present `undefined` would make a golden column read `null` for an op that simply has no fold.
    */
   classifies?: true
   /**
@@ -405,26 +382,8 @@ export interface FunctionSpec<Input = unknown, Output = unknown> extends Functio
    * instead of the input-mode conversion.
    */
   outputRepresentation?: OutputContract<z.ZodType<Output>>
-  /**
-   * What THIS invocation is about to cost, in the words a person deciding needs (394-08, D-03).
-   *
-   * OPTIONAL, and absent on every op with nothing invocation-specific to disclose — which is almost
-   * all of them. Where it is present, `invokeFunction` calls it with the PARSED input and hands the
-   * string to the gate as `RiskActionDescriptor.disclosure`, so a confirm prompt can say what the
-   * approval will actually spend instead of only naming the action class.
-   *
-   * IT COMPOSES A MESSAGE; IT DECIDES NOTHING. The tier, the action class, the audit row and the
-   * standing-grant match are all read off `risk` and are untouched by whatever this returns, so a
-   * disclosure cannot widen, narrow or rename the thing being asked about.
-   *
-   * IT LIVES ON THE SPEC, NOT ON {@link FunctionMetadata}. A declaration is an INERT projection
-   * (BL-01) — nothing reachable through `registry.list()` is runnable — and a function-valued field
-   * on the shared base would have put a callable back on every listing.
-   *
-   * PURE BY CONTRACT: it runs inside the gate path on every ask-tier invocation, so a port reached
-   * from here would be I/O placed between a caller and its authorization decision.
-   */
-  disclose?(input: Input): string
+  // 2026-10-02 (432-42, D-14/D-15): no `disclose` method. It composed the per-invocation cost line
+  // a confirm prompt showed before a person approved; no door asks, so nothing calls it.
   /**
    * What this op's OWN result means, as a clause verdict (2026-08-20, Phase 399.1 D-01/D-02).
    *
@@ -437,13 +396,14 @@ export interface FunctionSpec<Input = unknown, Output = unknown> extends Functio
    * or field names, which can only ever refuse what somebody has already thought to name.
    *
    * IT LIVES ON THE SPEC, NOT ON {@link FunctionMetadata}, and its presence projects onto the
-   * declaration as {@link FunctionDeclaration.classifies} — `disclose`'s arrangement exactly.
+   * declaration as {@link FunctionDeclaration.classifies}: the callable stays here and only the
+   * boolean fact crosses to a listing.
    *
-   * PURE BY CONTRACT, like `disclose`: it runs on the composition root's return path with the op's
+   * PURE BY CONTRACT: it runs on the composition root's return path with the op's
    * own output in hand, and a port reached from here would be I/O between an act and the report of
    * what the act was.
    *
-   * IT DECIDES NOTHING AND CANNOT WIDEN ANYTHING. The gate has already run, the op has already run,
+   * IT DECIDES NOTHING AND CANNOT WIDEN ANYTHING. The op has already run,
    * and the audit row is already written when this is called. What it produces is the REPORT.
    *
    * REQUIRED AS OF 2026-08-20 (399.1 plan 04), AND ENFORCED IN TWO PLACES THAT SEE DIFFERENT

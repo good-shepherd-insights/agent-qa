@@ -64,8 +64,6 @@ export interface CliRunAssemblyInput {
   readonly knowledgeRoot: string
   /** The durable ports the core built under `<configDir>/.agent-qa` (Pitfall 5). */
   readonly ports: RunPersistencePorts
-  /** The D-10 confirm-pause supplier, so human decision time never charges the run budget. */
-  readonly confirmPausedMs: () => number
   readonly maskingContext: RunMaskingContext
   readonly members: readonly RunMemberDescriptor[]
   readonly executor: MemberTestExecutor
@@ -172,7 +170,7 @@ export async function assembleCliRun(
     members,
     executor: input.executor,
     masking: input.maskingContext,
-    ports: { ...input.ports, confirmPausedMs: input.confirmPausedMs },
+    ports: input.ports,
     ...(quarantined.length > 0 ? { quarantined } : {}),
     ...(input.workers !== undefined && input.workers > 1 ? { workers: input.workers } : {}),
   }

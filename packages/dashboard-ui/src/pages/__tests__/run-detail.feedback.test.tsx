@@ -15,7 +15,6 @@ import { generateRunId, generateTestId } from '@vostride/agent-qa-ids'
 
 import RunDetailPage from '@/pages/run-detail'
 import {
-  MarkDeniedError,
   type FeedbackReadFailure,
   type MarkPreviewRead,
   type MarksHistoryRead,
@@ -1016,6 +1015,9 @@ describe('426-05 focus in and out, and the page keys', () => {
   })
 })
 
+/** The page's own sentence for a mark that failed (2026-10-02, 432-42: no typed denial is left). */
+const MARK_FAILED_TEXT = 'Could not complete the mark or refresh its receipt.'
+
 describe('426-05 the retained draft, per address', () => {
   beforeEach(() => {
     fetchRunDetailMock.mockResolvedValue(fourSteps)
@@ -1025,7 +1027,9 @@ describe('426-05 the retained draft, per address', () => {
     await click('[data-feedback-entry="test"]')
     await pickFirstChoiceAndLandPreview(Promise.resolve({ kind: 'read', result: CONSEQUENCES }))
     await typeNote('keep this note')
-    markRunMock.mockRejectedValue(new MarkDeniedError({ reason }))
+    // 2026-10-02 (432-42, D-15): no typed denial exists; a refused mark is a failed request, and the
+    // page answers it in its own words (MARK_FAILED_TEXT), so `reason` is only the error's message.
+    markRunMock.mockRejectedValue(new Error(reason))
     await click('[data-feedback-submit]')
     await flushRender()
     expect(markRunMock).toHaveBeenCalledTimes(1)
@@ -1039,7 +1043,7 @@ describe('426-05 the retained draft, per address', () => {
     const denied = q('[data-feedback-denied]')
     expect(denied, 'no denial in the composer').not.toBeNull()
     expect(denied!.getAttribute('role')).toBe('alert')
-    expect(denied!.textContent).toContain('Confirmation was denied')
+    expect(denied!.textContent).toContain(MARK_FAILED_TEXT)
     expect(noteField()!.value).toBe('keep this note')
     expect(q(`[data-feedback-choice="${FEEDBACK_CHOICE_ORDER.failed[0]}"] [role="radio"]`)!.getAttribute('aria-checked')).toBe('true')
   })
@@ -1059,7 +1063,7 @@ describe('426-05 the retained draft, per address', () => {
     expect(composerTarget()).toBe('0:run')
     expect(q('[data-feedback-composer]')!.getAttribute('data-feedback-state')).toBe('retained')
     expect(q('[data-feedback-status]')!.textContent).toBe(DRAFT_KEPT_STATUS)
-    expect(q('[data-feedback-denied]')!.textContent).toContain('Denied on the whole test')
+    expect(q('[data-feedback-denied]')!.textContent).toContain(MARK_FAILED_TEXT)
   })
 })
 
@@ -1946,10 +1950,10 @@ describe('426-10 the mark approval is answered in the composer', () => {
 
   it('APPROVAL-DENIAL-LINE-STAYS: a refused mark keeps its denial and Send feedback, and no question line', async () => {
     const { sent } = await submitInFlight()
-    await act(async () => sent.reject(new MarkDeniedError({ reason: 'The mark could not be recorded here.' })))
+    await act(async () => sent.reject(new Error('The mark could not be recorded here.')))
     await flushRender()
     expect(state()).toBe('retained')
-    expect(q('[data-feedback-denied]')?.textContent).toContain('The mark could not be recorded here.')
+    expect(q('[data-feedback-denied]')?.textContent).toContain(MARK_FAILED_TEXT)
     expect(q('[data-confirm-outcome]')).toBeNull()
     expect(q('[data-feedback-submit]')).not.toBeNull()
   })

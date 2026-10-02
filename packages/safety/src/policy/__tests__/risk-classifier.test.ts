@@ -210,9 +210,11 @@ describe('C432-EVAL-RISK-PARITY: name-based risk scores are unchanged by the com
 
   it('C432-EVAL-RISK-PARITY: a command no longer moves a tier in either direction (D-16)', () => {
     // The only behaviour the deletion changes, stated: the command string is not read at all.
+    // 2026-10-02 (432-42): the descriptor's `command` member is deleted too, so a legacy payload is
+    // smuggled past the type; the classifier still answers exactly as without it.
     for (const [action] of MEASURED_CORPUS) {
       for (const command of ['rm -rf /', 'sudo dd', 'delete everything', 'echo ok']) {
-        expect(classifyRisk({ ...action, command }), `${action.name} + ${command}`).toEqual(classifyRisk(action))
+        expect(classifyRisk({ ...action, ...({ command } as object) }), `${action.name} + ${command}`).toEqual(classifyRisk(action))
       }
     }
   })

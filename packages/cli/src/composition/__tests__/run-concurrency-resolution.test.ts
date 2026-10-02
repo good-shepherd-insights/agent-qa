@@ -180,7 +180,6 @@ describe('the chain: the resolved count → the RunConfig the shell reads', () =
       configDir,
       knowledgeRoot: join(configDir, 'knowledge'),
       ports: {} as never,
-      confirmPausedMs: () => 0,
       maskingContext: {} as never,
       members: [],
       executor: (() => { throw new Error('unreachable in this cell') }) as never,

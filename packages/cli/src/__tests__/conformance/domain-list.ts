@@ -78,6 +78,9 @@ export interface CanonicalDomain {
 /**
  * The taxonomy. Fourteen members: D-15's eight, plus the six domains later phases argued for.
  * Fifteen since 2026-09-25 (428 D-07): `editor` joined when `editor.liveurl` landed.
+ * Thirteen since 2026-10-02 (432-42, D-02/D-05/D-15): `proposals` and `grants` are removed, not held.
+ * Their ops were deleted by 432-17/18 with no alias (D-02), and a held name would only argue for
+ * reviving an approval surface the phase deleted; nothing parses a persisted id by this list.
  *
  * Sorted by domain so a diff adding one is a single line in a predictable place.
  */
@@ -137,16 +140,6 @@ export const CANONICAL_ID_DOMAINS: readonly CanonicalDomain[] = Object.freeze([
       + 'future catalogue verb over policy belongs here.',
   }),
   Object.freeze({
-    domain: 'grants',
-    charter:
-      'standing approvals as durable facts about what the agent may do — list and revoke; the '
-      + 'MINT is a port member and deliberately no registry op (391 D-03/D-01)',
-    reserved:
-      '2026-10-01: retired by 432-18 (D-14/D-15/D-22), not unshipped. Nothing asks for approval, so '
-      + 'the ledger and its two verbs are deleted and an old `grants.jsonl` is never read; the name '
-      + 'stays held so a revived id must argue for it against this sentence.',
-  }),
-  Object.freeze({
     domain: 'knowledge',
     charter:
       'the learned record: bundles, records, diffs, the why-brief, and every write to them '
@@ -162,16 +155,6 @@ export const CANONICAL_ID_DOMAINS: readonly CanonicalDomain[] = Object.freeze([
       + 'in-process: `packages/runner`\'s loop exposes `memory.search`/`memory.read` to the model '
       + 'inside a run. Those are RUN-LOOP tools, not registry ops, and a future registry verb '
       + 'here must be named knowing the collision exists.',
-  }),
-  Object.freeze({
-    domain: 'proposals',
-    charter:
-      'the kind-generic decision inbox — list, show, accept, reject over every `ProposalKind`; '
-      + 'each kind\'s APPLY door stays in the domain that owns the artifact (391 D-15)',
-    reserved:
-      '2026-10-01: retired by 432-17 (D-05), not unshipped. Changes apply in the call, so the inbox '
-      + 'and its four verbs are deleted; the name stays held so a revived id must argue for it '
-      + 'against this sentence rather than land in an empty domain unnoticed.',
   }),
   Object.freeze({
     domain: 'quarantine',

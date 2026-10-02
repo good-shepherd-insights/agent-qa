@@ -65,15 +65,14 @@ export function renderQuarantineSummarySegment(count: number): string {
 
 /**
  * The reporter handle every subscriber factory returns. `handler` is attached to the run
- * session bus; `flush` is awaited by the CLI after `session.done`; `pauseLive`/`resumeLive`
- * are the Pitfall-4 coordination seam the Plan 09 confirm decorator uses to clear the live
- * TTY line before a readline prompt.
+ * session bus; `flush` is awaited by the CLI after `session.done`.
+ *
+ * 2026-10-02 (432-42, D-14): no `pauseLive`/`resumeLive`. They cleared the live TTY line for a
+ * confirm prompt; no run asks, so nothing pauses the line.
  */
 export interface ConsoleReporterHandle {
   handler: (envelope: RunEventEnvelope) => void
   flush: () => Promise<void>
-  pauseLive: () => void
-  resumeLive: () => void
 }
 
 interface TestMeta {
@@ -106,23 +105,14 @@ export function createConsoleReporter(
     sink(unmaskForHumanOutput(ctx, finalMasked))
   }
 
-  let livePaused = false
-  let lastWriteLen = 0
-
-  function stripAnsi(text: string): string {
-    return text.replace(/\x1B\[[0-9;]*m/g, '')
-  }
-
   function transient(text: string): void {
-    if (!canOverwrite || livePaused) return
+    if (!canOverwrite) return
     emit(CLEAR_LINE + text)
-    lastWriteLen = stripAnsi(text).length
   }
 
   function println(text: string): void {
-    if (canOverwrite && !livePaused) {
+    if (canOverwrite) {
       emit(CLEAR_LINE + text + '\n')
-      lastWriteLen = 0
     } else {
       emit(text + '\n')
     }
@@ -404,21 +394,9 @@ export function createConsoleReporter(
     }
   }
 
-  function pauseLive(): void {
-    if (canOverwrite && lastWriteLen > 0) {
-      emit('\n')
-      lastWriteLen = 0
-    }
-    livePaused = true
-  }
-
-  function resumeLive(): void {
-    livePaused = false
-  }
-
   async function flush(): Promise<void> {
     // Console does no buffered I/O; the seam exists for interface uniformity.
   }
 
-  return { handler, flush, pauseLive, resumeLive }
+  return { handler, flush }
 }

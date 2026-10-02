@@ -223,7 +223,6 @@ beforeAll(async () => {
           Promise.resolve(String(runId) === RUN_ID && fromSeq <= 1 ? [RUN_STARTED] : []),
         readStepEvidence: () => Promise.resolve({ kind: 'run-not-recorded' } as const),
       },
-      proposalsInbox: { list: () => Promise.resolve([]) },
       liveView: liveView.liveView,
     } as unknown as FunctionDeps,
     auditSink,

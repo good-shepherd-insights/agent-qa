@@ -1428,13 +1428,11 @@ export { guardrailPolicySchema } from './safety/index'
 // 2026-10-01 (432-18, D-14/D-15/D-22): the standing-grant ledger's event vocabulary and guards are
 // deleted with the ledger. `STANDING_APPROVAL_SCOPE` moved to `trust-credential.ts` (432-18) and was
 // deleted with the MCP bearer credential that carried it (432-21, D-12).
-// 391-11 (REVIEW WR-05): the scope key set, spelled ONCE. A test that wants a key OUTSIDE the set
-// must compute it against this value rather than hard-code one that a later key addition could
-// legalise.
-export { TRUST_SCOPE_KEYS } from './safety/index'
-// 401-15 (WR-01 / T-401-G5 / T-401-G6): the disclosure scrub, exported beside the field whose law
-// it enforces. Every composition that fills `RiskActionDescriptor.disclosure` applies it — the two
-// today are the run gate's preview and `invoke.ts`'s per-op `spec.disclose` result.
+// 2026-10-02 (432-42, D-12): the scope key set (391-11) is deleted with its module; no caller,
+// credential or projection ranges it any more.
+// 401-15 (WR-01 / T-401-G5 / T-401-G6): the disclosure scrub. 2026-10-02 (432-42, D-14): the
+// descriptor field it was written for and the per-op disclosure are deleted; the production refusal
+// sentence (`config/production.ts`) is the composition that applies it now.
 export {
   DISCLOSURE_FRAGMENT_MAX_LENGTH,
   DISCLOSURE_REPLACEMENT_CHARACTER,
@@ -1452,7 +1450,6 @@ export {
 export type {
   RiskActionDescriptor,
   RiskTier,
-  TrustScopeKey,
   ScanAction,
   ScanResult,
   ContentOrigin,
@@ -1653,7 +1650,7 @@ export { BriefLineSchema } from './brief/guard-lossless-served-brief'
 export {
   MARK_QUARANTINE_CLASSES, MARK_FIX_KINDS, MARK_DISPOSITIONS,
   // 2026-09-30, 432-09: the applied fix, the historical drafted receipt and the plain mark refusal
-  MARK_HISTORICAL_DISPOSITIONS, MARK_APPLIED_CHANGE_KINDS, MarkAppliedChangeSchema, MarkRefusalSchema,
+  MARK_HISTORICAL_DISPOSITIONS, MARK_APPLIED_CHANGE_KINDS, MarkAppliedChangeSchema,
   MARK_RECEIPT_SCHEMA_VERSION, IMPROVEMENT_PLAN_SCHEMA_VERSION, COMMIT_RECEIPT_SCHEMA_VERSION,
   NoDraftableFixCheckedSchema, MarkDispositionSchema, MarkAddressSchema, MarkReceiptSchema,
   RunsMarkInputSchema, RunsMarkOutcomeSchema, ImprovementPlanKnowledgeSchema,
@@ -1672,7 +1669,7 @@ export {
 export type {
   MarkQuarantineClass, MarkFixKind, MarkDisposition, NoDraftableFixChecked, MarkAddress,
   MarkReceipt, RunsMarkInput, RunsMarkOutcome, ImprovementPlanKnowledge, ImprovementPlan,
-  CommitReceipt, RunDetailMemberMark, FeedbackPort, MarkAppliedChange, MarkRefusal,
+  CommitReceipt, RunDetailMemberMark, FeedbackPort, MarkAppliedChange,
   MarkHistoryChangedRecord, RunsMarksHistoryInput, MarkHistoryEntry,
   RunsMarksHistoryResult, MarkHistoryReadEntry, MarkHistoryRead, FeedbackReadsPort,
   MarkPreviewBasis, MarkPreviewLatest, MarkPreviewGroundTruth, MarkPreviewLabel, MarkPreviewKnowledge,

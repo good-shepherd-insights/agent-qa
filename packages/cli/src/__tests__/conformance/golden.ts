@@ -89,10 +89,10 @@ export type GoldenPartition =
 /**
  * The risk descriptor's STATIC fields, and only those.
  *
- * `disclosure` is per-invocation and composition-derived (`action-descriptor.ts`), so it is not a
- * property of the capability and has no place in a change-control ledger. Every other member of the
- * descriptor is projected; `parity.test.ts` holds a register asserting that no descriptor in the
- * census carries a key this projection would silently drop.
+ * 2026-10-02 (432-42, D-14/D-16): the descriptor's per-invocation `disclosure` and shell `command`
+ * members are deleted, so every member left but the caller's `surface` is projected;
+ * `parity.test.ts` holds a register asserting that no descriptor in the census carries a key this
+ * projection would silently drop.
  *
  * Absence is preserved rather than defaulted, on the rule the declaration itself follows: `false`
  * and an absent key would be two spellings of one fact, and a defaulted column would make the
@@ -111,8 +111,7 @@ export interface GoldenRow {
   readonly id: string
   // 2026-10-01 (432-20, D-10/D-12): the `requiredScopes` and `requiresHumanOrigin` columns are
   // gone. Declarations carry no permission metadata, so the ledger has none to record.
-  /** Present only when the op composes a confirm-time disclosure (397-02's projected fact). */
-  readonly discloses?: true
+  // 2026-10-02 (432-42, D-14): the `discloses` column is gone with the per-op disclosure it recorded.
   /**
    * Present only when the op folds its own result into a clause verdict (399.1 D-01).
    *
@@ -170,7 +169,6 @@ export const GOLDEN_NOTE: readonly string[] = Object.freeze([
 /** Every declaration key this projection consumes. The register in `parity.test.ts` uses it. */
 export const GOLDEN_PROJECTED_DECLARATION_KEYS: readonly string[] = Object.freeze([
   'id',
-  'discloses',
   'classifies',
   'rendersResult',
   'resultKind',
@@ -208,19 +206,9 @@ export const GOLDEN_PROJECTED_RISK_KEYS: readonly string[] = Object.freeze([
 /** Risk-descriptor keys deliberately left out, with reasons. See the declaration list above. */
 export const GOLDEN_EXCLUDED_RISK_KEYS: readonly (readonly [string, string])[] = Object.freeze([
   Object.freeze([
-    'disclosure',
-    'a per-invocation string composed by the caller, never a property of the capability class '
-      + '(action-descriptor.ts); it is display-only and the classifier is forbidden to read it',
-  ] as const),
-  Object.freeze([
     'surface',
     'attribution of the CALLER, not a property of the op; nothing in the function layer branches '
       + 'on it',
-  ] as const),
-  Object.freeze([
-    'command',
-    'a shell-wrapper payload; no registered capability projects one, and one that did would be '
-      + 'stating an invocation rather than a class',
   ] as const),
 ])
 
@@ -314,7 +302,6 @@ export function goldenRowOf(
   const risk = declaration.risk as unknown as Record<string, unknown>
   return {
     id: declaration.id,
-    ...(declaration.discloses === undefined ? {} : { discloses: true as const }),
     ...(declaration.classifies === undefined ? {} : { classifies: true as const }),
     ...(declaration.rendersResult === undefined ? {} : { rendersResult: true as const }),
     resultKind: declaration.resultKind,
@@ -443,7 +430,6 @@ export interface GoldenFinding {
 }
 
 const ROW_FIELDS: readonly string[] = Object.freeze([
-  'discloses',
   'classifies',
   'rendersResult',
   'resultKind',

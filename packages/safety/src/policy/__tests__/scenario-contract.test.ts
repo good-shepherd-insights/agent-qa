@@ -89,7 +89,8 @@ describe('POLICY-05 scenario contract', () => {
     },
     {
       name: 'a shell command is not a risk signal: run_shell classifies by its name and proceeds (D-16)',
-      action: { name: 'run_shell', recognized: true, command: 'rm -rf /tmp/agent-qa' },
+      // 2026-10-02 (432-42): `command` left the descriptor type; the legacy payload rides a smuggle.
+      action: { name: 'run_shell', recognized: true, ...({ command: 'rm -rf /tmp/agent-qa' } as object) },
       ctx: 'local-interactive',
       expectedRiskTier: 'mutating-local',
     },
@@ -136,7 +137,8 @@ describe('POLICY-05 scenario contract', () => {
       },
       {
         name: 'a hard command is not a risk signal: run_shell with sudo classifies by its name (D-16)',
-        action: { name: 'run_shell', recognized: true, command: 'sudo rm -rf /tmp/agent-qa' },
+        // 2026-10-02 (432-42): `command` left the descriptor type; the legacy payload rides a smuggle.
+        action: { name: 'run_shell', recognized: true, ...({ command: 'sudo rm -rf /tmp/agent-qa' } as object) },
         ctx: 'local-interactive',
         trust: {
           trustMode: true,

@@ -867,8 +867,8 @@ export function runDirFor(input: { configDir: string; runId: string }): string {
 // the session trust flag are no longer read, and no confirm port is handed to the registrar — the
 // in-test tool actions it gates are allowed or restricted by their own class and never reach an ask.
 // 432-14 (D-03): the input narrows to what the registrar reads. The presentation contract and the
-// trust flag are deleted with their last producer; `confirmPausedMs` answers 0 because no run waits
-// on a person.
+// trust flag are deleted with their last producer. 2026-10-02 (432-42, D-14): the always-zero
+// `confirmPausedMs` supplier is deleted too, with the runner's pause credit it fed.
 //
 // 2026-10-01 (432-19, D-15): the registrar no longer registers the execution gate, so it reads no
 // execution context. The run still resolves the context and stamps it where it is a durable field
@@ -881,16 +881,16 @@ export interface BuildRunSessionSafetyHooksInput {
 /**
  * Perform the D-01 per-run `registerFirstPartySafetyHooks` invocation and return the loop's
  * `SafetyHookRunner`: masking before guardrail, both writing the run's own guardrail rows. No gate
- * is registered (432-19), so no in-run action can wait on a person; `confirmPausedMs` reports 0.
+ * is registered (432-19), so no in-run action can wait on a person.
  */
 export function buildRunSessionSafetyHooks(
   input: BuildRunSessionSafetyHooksInput,
-): { safetyHooks: SafetyHookRunner; confirmPausedMs: () => number } {
+): { safetyHooks: SafetyHookRunner } {
   const { registry } = registerFirstPartySafetyHooks({
     auditSink: input.auditSink,
   })
 
-  return { safetyHooks: registry, confirmPausedMs: () => 0 }
+  return { safetyHooks: registry }
 }
 
 // ---- (9) member-run-config builder — the D-05 cutover onto runMemberTest (363-11) ------------

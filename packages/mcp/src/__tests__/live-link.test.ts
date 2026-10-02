@@ -92,8 +92,8 @@ const RECORDED: ReadonlyMap<string, CompletedRunHandoff> = new Map([
 /**
  * The smallest registry in which BOTH carriers answer.
  *
- * `runInvocation` binds `runs.start`; `proposalsInbox` binds `runs.digest`; the required `runs`
- * port serves the two recorded documents both ops read back. Nothing here is a stand-in for the
+ * `runInvocation` binds `runs.start`; the required `runs` port serves the two recorded documents
+ * both ops read back (2026-10-02, 432-42: the deleted inbox dep is no longer handed in). Nothing here is a stand-in for the
  * decoration under test — the ops are the shipped ones and their outputs are the shipped shapes.
  */
 function fixtureRegistry(): FunctionRegistry {
@@ -112,7 +112,6 @@ function fixtureRegistry(): FunctionRegistry {
     // makes the `runIdFrom: 'output'` cell a statement about the source rather than an accident of
     // two ids that happened to match.
     runInvocation: { start: () => Promise.resolve({ runId: asRunId(STARTED_RUN_ID) }) },
-    proposalsInbox: { list: () => Promise.resolve([]) },
   } as unknown as FunctionDeps
 
   return createFunctionRegistry({ deps, auditSink })

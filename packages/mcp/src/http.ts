@@ -21,7 +21,8 @@
 //
 // Protocol grounding: SEP-2575 (stateless — the factory below runs once per REQUEST, holds nothing
 // between them, and there is no session id anywhere), SEP-2567 (list results no longer vary per
-// connection; the variance is per caller, resolved from `authInfo` in front of the handler).
+// connection). 2026-10-02 (432-42, D-12): no list varies by caller either — every caller sees and
+// calls the same twenty tools, with no token.
 
 import { createMcpHandler } from '@modelcontextprotocol/server'
 import type { McpRequestContext } from '@modelcontextprotocol/server'
@@ -31,13 +32,13 @@ import { buildAgentQaMcpServer } from './catalog.js'
 import type { AgentQaMcpServerDeps } from './catalog.js'
 
 /**
- * How a host answers "who is this request, and what may they see?" — once per request.
+ * How a host composes the server for one request.
  *
- * It takes the SDK's own construction context, so the two facts a per-caller server can vary on —
- * `authInfo` and `era` — arrive here rather than being read back out of a header inside a tool
- * handler. What it returns is the same `deps` a stdio host composes, which is what keeps ONE
- * `buildAgentQaMcpServer` shape across both transports: they differ in how scopes are resolved and
- * in nothing else.
+ * It takes the SDK's own construction context, so a per-request fact such as `era` arrives here
+ * rather than being read back out of a header inside a tool handler. What it returns is the same
+ * `deps` a stdio host composes, which is what keeps ONE `buildAgentQaMcpServer` shape across both
+ * transports. 2026-10-02 (432-42, D-12): nothing about the caller decides what it may see; the
+ * shipped host passes one fixed tokenless caller.
  */
 export type AgentQaMcpDepsResolver = (ctx: McpRequestContext) => AgentQaMcpServerDeps
 
@@ -48,15 +49,10 @@ export type AgentQaMcpDepsResolver = (ctx: McpRequestContext) => AgentQaMcpServe
  * around: a per-request instance is what makes a caller's tool set a property of that caller rather
  * than of whoever connected first, and it is why absence stays structural on this transport too.
  *
- * IT TAKES A RESOLVER AND NOT A FIXED `deps`, and the difference is the whole of plan 05. Bearer
- * verification happens in FRONT of this handler: the host reads the `Authorization` header, decides
- * a scope set, and attaches the verdict as `req.auth`, which `toNodeHandler` forwards as the
- * handler's pass-through `authInfo` (measured on `@modelcontextprotocol/node@2.0.0`, whose own doc
- * comment states it — no fetch-wrapper is needed on the Node path, resolving RESEARCH assumption
- * A3). This function then hands that context to the resolver and the resolver decides what the
- * instance is built with. Reading an `Authorization` header inside a tool handler would be a second
- * vocabulary for one question, and verifying a token twice in two places is how the two answers
- * start to differ.
+ * IT TAKES A RESOLVER AND NOT A FIXED `deps` (plan 05). 2026-10-02 (432-42, D-12/D-13): the
+ * bearer check that once sat in front of this handler is deleted with MCP tokens (432-21); what
+ * stays in front of it is the host's Host and Origin guard on the loopback listener. The resolver
+ * receives the SDK context and builds the instance; it reads no header and verifies nothing.
  *
  * A host with one fixed caller passes `() => deps` — the static case is the degenerate resolver,
  * not a second signature to keep in step.
