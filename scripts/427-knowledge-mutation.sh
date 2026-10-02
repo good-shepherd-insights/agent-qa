@@ -114,7 +114,8 @@ const DOM = 'src/__tests__/conformance/knowledge-tab-dom.test.ts'
 const instruments = {
   'ui-view': { pkg: 'packages/dashboard-ui', files: [USED_V, EFFECT_V, CHANGES_V, RETRIEVAL_V, VIEW_D], typecheck: true, count: 101 },
   'ui-parts': { pkg: 'packages/dashboard-ui', files: [USED_C, BODY_C, EFFECT_C, DETAILS_C, DEFAULT_C, STATEMENT_C, STEP_REF_C], typecheck: false, count: 60 },
-  'ui-tab': { pkg: 'packages/dashboard-ui', files: [TAB_C, LEARNED_C, STEP_C, BANNER_C], typecheck: false, count: 114 },
+  // 2026-10-02 (432-45): 114 -> 112, re-measured after 432-09/17 removed the proposals cells (D-25).
+  'ui-tab': { pkg: 'packages/dashboard-ui', files: [TAB_C, LEARNED_C, STEP_C, BANNER_C], typecheck: false, count: 112 },
   store: { pkg: 'packages/knowledge-local', files: [SNAPSHOT_T], typecheck: false, count: 20 },
   'knowledge-dom': { pkg: 'packages/cli', files: [DOM], typecheck: false, count: 24, env: { VITEST_MAX_WORKERS: '1' } },
 }
@@ -338,9 +339,11 @@ const legs = [
   {
     subject: TAB_SRC, instrument: 'ui-tab', claim: 'SECTIONS-IN-ORDER',
     operation: 'swap the Effect and Memory changes sections in the ready arm',
+    // 2026-10-02 (432-45): re-anchored — 432-09/17 (D-25) removed the `proposals` prop the Memory
+    // changes section took, so the swapped pair is spelled without it.
     edits: [{
-      from: '      <KnowledgeEffect view={view.effect} stepRefs={stepRefs} testNames={stepRefs?.testNames} />\n      <KnowledgeLearned view={view.learned} proposals={view.proposals} />\n',
-      to: '      <KnowledgeLearned view={view.learned} proposals={view.proposals} />\n      <KnowledgeEffect view={view.effect} stepRefs={stepRefs} testNames={stepRefs?.testNames} />\n',
+      from: '      <KnowledgeEffect view={view.effect} stepRefs={stepRefs} testNames={stepRefs?.testNames} />\n      <KnowledgeLearned view={view.learned} />\n',
+      to: '      <KnowledgeLearned view={view.learned} />\n      <KnowledgeEffect view={view.effect} stepRefs={stepRefs} testNames={stepRefs?.testNames} />\n',
     }],
     reds: [tab('SECTIONS-IN-ORDER')],
     // SECTION-ABSENCE-NOT-EMPTY reads each section's absence sentence in the published order.

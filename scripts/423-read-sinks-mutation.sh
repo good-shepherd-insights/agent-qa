@@ -22,9 +22,11 @@
 #   S03  the drawer paints an unconverted attribute key into the DOM           -> SINK-DOM
 #   S04  the human run-detail door restores without sanitizing auth state      -> C423-HUMAN-DETAIL-SANITIZED (T-405-38)
 #   S05  the human evidence door restores without sanitizing auth state        -> HTTP-EVIDENCE-HUMAN
-#   S06  the composer history's review control becomes a link to /chat         -> NO-CHAT-TARGET
-#   S07  the composer history's review control copies a Chat route              -> NO-CHAT-TARGET
-#   S08  the Knowledge proposals copy control becomes a link to /chat           -> NO-CHAT-TARGET
+#   S06  the mark history's applied-change line becomes a link to /chat         -> NO-CHAT-TARGET
+#   S07  the mark history offers a review control with a Chat route again       -> NO-CHAT-TARGET
+#   S08  the Memory changes heading row gains a review-proposals link to /chat  -> NO-CHAT-TARGET
+#        (S06-S08 carried 2026-10-02 by 432-45: the review controls they used to turn into Chat
+#        routes were removed by 432-09/432-17, D-25.)
 #   S09  a failed chain's learned half returns the early-empty arm              -> FAILED-CHAIN-ROWS-RETAINED (view)
 #   S10  the same early-empty arm on the built page over a real failed chain    -> knowledge-tab-dom (c4)
 #
@@ -69,7 +71,8 @@ const KTD = 'src/__tests__/conformance/knowledge-tab-dom.test.ts'
 
 const instruments = {
   'read-sinks': { pkg: 'packages/cli', files: [SINKS], typecheck: false, count: 10, env: { VITEST_MAX_WORKERS: '1' } },
-  'knowledge-views': { pkg: 'packages/dashboard-ui', files: [LEARNED_T, TAB_T], typecheck: false, count: 70 },
+  // 2026-10-02 (432-45): 70 -> 68, re-measured after 432-09/17 removed the proposals cells (D-25).
+  'knowledge-views': { pkg: 'packages/dashboard-ui', files: [LEARNED_T, TAB_T], typecheck: false, count: 68 },
   'knowledge-tab-dom': { pkg: 'packages/cli', files: [KTD], typecheck: false, count: 24, env: { VITEST_MAX_WORKERS: '1' } },
 }
 
@@ -135,18 +138,22 @@ const legs = [
     reds: [EVIDENCE_HUMAN], allowed: [],
     greens: [DETAIL, EVIDENCE_MACHINE, MACHINE_MASKED, CROSS_SITE, CLIPBOARD],
   },
-  chatLeg(HISTORY, 'history review control', 'chat423history',
-    '            <ReviewCommandButton\n              data-history-review\n              command={proposalReviewCommand(disposition.proposalId)}\n              label={COPY_REVIEW_COMMAND_LABEL}\n              className="font-mono text-xs text-muted-foreground hover:text-foreground"\n            />\n',
-    '            <a\n              data-history-review\n              data-chat423="chat423history"\n              href="/chat"\n              className="font-mono text-xs text-muted-foreground hover:text-foreground"\n            >{proposalReviewCommand(disposition.proposalId)}</a>\n'),
+  // 2026-10-02 (432-45): S06-S08 CARRIED. 432-09/432-17 (D-25) removed the three review controls these
+  // legs used to turn into Chat routes; the three places now show what changed and offer no review
+  // command, and NO-CHAT-TARGET was re-spelled to pin exactly that. Each leg now puts a Chat target or
+  // a review control back into the same component, and the same named cell must red.
+  chatLeg(HISTORY, 'applied-change line in the mark history', 'chat423history',
+    '        <p data-history-applied="knowledge" className="break-words">\n          {APPLIED_KNOWLEDGE_PREFIX}\n',
+    '        <p data-history-applied="knowledge" className="break-words">\n          <a href="/chat" data-chat423="chat423history">{APPLIED_KNOWLEDGE_PREFIX}</a>\n'),
   {
-    ...chatLeg(HISTORY, 'history review control', 'chat423route',
-      '              data-history-review\n              command={proposalReviewCommand(disposition.proposalId)}\n',
-      '              data-history-review\n              command={`/chat?proposal=${disposition.proposalId}&chat423=chat423route`}\n'),
-    operation: 'make the history review control copy a Chat route',
+    ...chatLeg(HISTORY, 'applied-change line in the mark history', 'chat423route',
+      '        <p data-history-applied="knowledge" className="break-words">\n',
+      '        <p data-history-applied="knowledge" data-history-review="/chat?chat423=chat423route" className="break-words">\n'),
+    operation: 'make the mark history offer a review control with a Chat route again',
   },
-  chatLeg(LEARNED, 'Knowledge proposals copy control', 'chat423proposals',
-    '            <ReviewCommandButton\n              data-review-proposals\n              variant="icon"\n              command={proposals.command}\n              label={proposals.copyLabel}\n            />\n',
-    '            <a\n              data-review-proposals\n              data-chat423="chat423proposals"\n              href="/chat"\n            >{proposals.copyLabel}</a>\n'),
+  chatLeg(LEARNED, 'Memory changes heading row', 'chat423proposals',
+    '        <h4 id={headingId} className={HEADING_CLASS}>{MEMORY_CHANGES_HEADING}</h4>\n',
+    '        <h4 id={headingId} className={HEADING_CLASS}>{MEMORY_CHANGES_HEADING}</h4>\n        <a data-review-proposals data-chat423="chat423proposals" href="/chat">Review proposals</a>\n'),
   {
     subject: VIEW, instrument: 'knowledge-views', claim: 'FAILED-CHAIN-ROWS-RETAINED', operation: "return a failed chain's early-empty arm even when rows were committed",
     edits: [{ from: "    return rows.length > 0\n      ? {\n          state: 'failed',\n          rows,\n          chainNote", to: "    return rows.length < 0\n      ? {\n          state: 'failed',\n          rows,\n          chainNote" }],

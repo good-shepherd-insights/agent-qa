@@ -1,317 +1,198 @@
 #!/usr/bin/env bash
 #
-# 396-06-mutation.sh — the acceptance bar for MCPS-03 at the wire (396-06).
+# 396-06-mutation.sh — the acceptance bar for MCPS-03 at the wire (396-06; rebuilt 2026-10-02 by
+# 432-45 on the shared 423 engine for D-05, D-12 and D-14).
 #
-# WHAT THIS PROVES, AND WHY A GREEN SUITE DOES NOT PROVE IT. `mcp-apply-differential.test.ts`
-# passing says the write path agrees with itself today. The claims it carries are NEGATIVE ones —
-# nothing commits unconfirmed, a replay commits nothing further, a caller that cannot answer a form
-# is never sent one — and a negative claim is the easiest kind to fake: it passes over a door that
-# never opens, over a gate nobody reaches, and over a repository nothing writes to. So each leg
-# below removes one mechanism and requires that the cells aimed at THAT mechanism go red.
+# WHAT THIS PROVES, AND WHY A GREEN SUITE DOES NOT PROVE IT. Until 432-12 this script tore the two MCP
+# apply doors' refuse-and-teach round (`apply-refusal.ts`): the first call refused, `confirmed: true`
+# applied once, and an elicitation form rode only where it could be answered. D-05/D-14 deleted that
+# round with the tools: a change tool writes on its one call and answers what it changed, `confirmed`
+# is not an input anywhere, no form is sent, and a refusal is a masked error. The suites were
+# re-spelled in place (`mcp-apply-differential.test.ts` at the wire over the shipped composition and a
+# real store, `apply-refusal.test.ts` hermetically), and each claim is carried here to its direct
+# form. Every leg must red its OWN named cell:
 #
-# THE LEGS
+#   A1  CARRIES A1 (the refusal branch severed). The confirmation round RETURNS: a change tool refuses
+#       its first, unconfirmed call (mcp dist rebuilt).
+#                    -> wire 2 · C432-MCP-DIRECT-RECEIPT: accept, reject and forget each change the
+#                       real store once
+#   A2  CARRIES A2 (the leg the wire could not see, measured hermetically). The same returned round on
+#       the hermetic suite.       -> unit C432-MCP-DIRECT-RECEIPT: the change tool applies once
+#   A3  CARRIES A3 (the form attached to every refusal). The deleted refuse-and-teach module returns,
+#       measured by the deletion census.   -> C432-DELETED-SYMBOLS: every deleted module file is absent
+#   A4  CARRIES A4 (the refusal's own arm on the output side). The retained error channel: a writer
+#       refusal stops being masked.
+#                    -> unit C432-MCP-DIRECT-RECEIPT: a typed absence is data and a writer refusal is
+#                       a masked error
+#   A5  NEW (432-45, "direct masked receipts"): the receipt's structured channel is answered from the
+#       unmasked output while the text stays masked.
+#                    -> unit C432-MCP-DIRECT-RECEIPT: the change tool applies once and masks both
+#                       result channels from one serialization
+#   A6  NEW (432-45, "actual tool mapping"): a retired apply door is projected again (mcp dist
+#       rebuilt).    -> wire 5 · lists none of the retired names
 #
-#   A1  the refusal branch severed: an unconfirmed first call applies directly. This is plan 02's
-#       mutation M2 restated at the WIRE, which is the only place it can be measured as a COMMIT in
-#       a person's repository rather than as a call count against a double.
-#   A2  `args.confirmed === true` widened to `if (args.confirmed)` — plan 02's M1. Its expected
-#       result here is ZERO reds, and that is a MEASUREMENT rather than a failure: at the wire the
-#       SDK validates the call against the advertised `inputSchema` before the handler runs, so the
-#       string `'true'` — the only input that distinguishes a boolean gate from a truthiness gate —
-#       cannot reach the handler at all. The leg therefore requires the HERMETIC suite to red in the
-#       same run, which is where that wall is reachable. Recorded rather than dropped, because "this
-#       suite cannot see that mutation" is a fact about this suite that a reader must be told.
-#   A3  the capability check inverted so the `input_required` form is attached to EVERY refusal —
-#       i.e. the behaviour that shipped before this plan measured it. The SDK then replaces the whole
-#       result with a capability error on a 2025-era connection, and fails the call with `-32021` on
-#       a 2026-era connection whose client did not declare `elicitation`. Group 6 must red.
-#   A4  the structured refusal deleted, leaving `content` alone. The advertised `outputSchema` then
-#       has nothing to validate and the SDK refuses to serve the result at all — the leg that shows
-#       why the refusal needed an arm of its own on the output side.
+# A GREEN SUITE UNDER ANY LEG IS A FAILURE OF THIS SCRIPT, NOT A PASS; so is a runner error, a load
+# failure, a different selected count or a red without its named cell. Co-reds were measured by
+# planting every leg once (432-45) and are listed per leg with the reason.
 #
-# A GREEN SUITE UNDER A1, A3 OR A4 IS A FAILURE OF THIS SCRIPT, NOT A PASS.
+# DIST REBUILDS: `packages/cli`'s vitest config declares no aliases, so the wire suite's import of
+# `@vostride/agent-qa-mcp` resolves through that package's BUILT dist. A1 and A6 rebuild it and find
+# their own string marker there; A2, A4 and A5 are measured by the hermetic suite in `packages/mcp`,
+# which vitest resolves from source; A3's census reads source text.
 #
-# DIST REBUILDS ARE MANDATORY AND ARE PERFORMED HERE. `packages/cli`'s vitest config declares no
-# aliases, so its import of `@vostride/agent-qa-mcp` resolves through that package's BUILT `dist`. A
-# leg that edited the source and skipped the build would measure the previous implementation and
-# report a confident green — the stale-dist trap, which is exactly how a mutation harness lies.
+# THE WIRING GREPS (re-spelled 2026-10-02, 432-45): `apply-refusal.ts` is deleted, so its capability
+# gate, strict boolean gate and accept-verb counts left with it; mapping.ts composes no apply output
+# union (`composeApplyToolOutput`, was two) and catalog.ts calls no apply primitive.
 #
-# EXIT CODES ARE READ FROM THE PROCESS, NEVER THROUGH A PIPE.
-#
-# THE SUBJECT IS RESTORED FROM A BYTE SNAPSHOT AND EVERY RESTORE IS PROVEN by sha256, because a
-# restore nobody checked is how a mutation survives into a commit.
-#
-# THE LEG BODIES ARE TYPESCRIPT AND LIVE IN THE PYTHON BLOCK, NEVER IN A SHELL STRING — 396-03's
-# harness learned that the hard way: shell quoting mangled `?? ''` into `?? ` and the leg then
-# measured an implementation nobody wrote. Anything containing a quote is data, and data goes
-# through the file.
+# Engine, arrival proof, counted selection, byte-exact restoration, rebuilds and positive controls:
+# scripts/423-mutation-engine.cjs.
 #
 # USAGE
 #   bash agent-qa/scripts/396-06-mutation.sh   # from the super-repository root
 #   bash scripts/396-06-mutation.sh            # from the agent-qa root
 #
-# KNOBS
-#   APPLY_MUTATION_SELFTEST=neutered
-#       apply a NO-OP edit in place of every mutation. The script must then FATAL — which is what
-#       proves this script itself can fail.
-#   SHOW_REDS=1
-#       print the name of every cell that red under each leg. The SUMMARY quotes this output rather
-#       than a hand-transcribed scrollback.
-
+# KNOBS — APPLY_MUTATION_SELFTEST (the knob this script always had)
+#   neutered  apply NO mutation; the run must FATAL with "<leg>: suite stayed green"
+#   fatal | SIGINT | SIGTERM | SIGHUP   own every subject, then interrupt; every byte is handed back
+# APPLY_MUTATION_LEG=A1..A6 runs one leg; APPLY_MUTATION_LIST=1 prints the inventory.
 set -euo pipefail
+cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-WIRE_SUITE="src/__tests__/mcp-apply-differential.test.ts"
-UNIT_SUITE="src/__tests__/apply-refusal.test.ts"
-SUBJECT="$ROOT/packages/mcp/src/apply-refusal.ts"
-SELFTEST="${APPLY_MUTATION_SELFTEST:-}"
+if [[ "${APPLY_MUTATION_LIST:-}" != "1" ]]; then
+  composed="$(grep -c 'composeApplyToolOutput(' packages/mcp/src/mapping.ts || true)"
+  apply_calls="$(grep -c 'createApplyToolHandler(' packages/mcp/src/catalog.ts || true)"
+  [[ ! -e packages/mcp/src/apply-refusal.ts ]] || { echo "FATAL: the refuse-and-teach module is back — D-05" >&2; exit 1; }
+  [[ "$composed" == "0" ]]    || { echo "FATAL: mapping.ts composes an apply output union again ($composed) — D-05" >&2; exit 1; }
+  [[ "$apply_calls" == "0" ]] || { echo "FATAL: catalog.ts calls the deleted apply primitive ($apply_calls) — D-05" >&2; exit 1; }
+  echo "wiring greps: apply-refusal.ts absent · composed apply output 0 · apply primitive 0"
+fi
 
-# Case lookups rather than associative arrays: macOS ships bash 3.2, where `declare -A` silently
-# becomes an indexed array and every named key reads as an unbound variable under `set -u`. A
-# harness that dies on the operator's default shell is a harness nobody runs.
+exec node --input-type=commonjs - <<'NODE'
+const path = require('node:path')
+const { runGate, cell } = require(path.join(process.cwd(), 'scripts/423-mutation-engine.cjs'))
 
-# How many cells of the WIRE suite this leg must red. `0` means the leg is deliberately invisible
-# there and the hermetic suite carries the bar instead (see A2).
-wire_reds_of() {
-  case "$1" in
-    A1) echo "${A1_REDS:-7}" ;;
-    A2) echo "${A2_REDS:-0}" ;;
-    A3) echo "${A3_REDS:-5}" ;;
-    A4) echo "${A4_REDS:-5}" ;;
-    *) return 1 ;;
-  esac
+const WIRE_T = 'src/__tests__/mcp-apply-differential.test.ts'
+const UNIT_T = 'src/__tests__/apply-refusal.test.ts'
+const CENSUS_T = 'src/__tests__/432-approval-permission-deleted.test.ts'
+const CATALOG = 'packages/mcp/src/catalog.ts'
+const MASKED = 'packages/mcp/src/masked-result.ts'
+const MAPPING = 'packages/mcp/src/mapping.ts'
+
+// Counts measured from a fresh Vitest JSON report of exactly these files (2026-10-02, 432-45).
+const instruments = {
+  wire: { pkg: 'packages/cli', files: [WIRE_T], typecheck: false, count: 8, env: { VITEST_MAX_WORKERS: '1' } },
+  unit: { pkg: 'packages/mcp', files: [UNIT_T], typecheck: false, count: 8 },
+  census: { pkg: 'packages/arch', files: [CENSUS_T], typecheck: false, count: 100, dist: true },
 }
 
-# Must the HERMETIC suite red under this leg? `yes` for the leg the wire cannot see.
-unit_must_red_of() {
-  case "$1" in
-    A2) echo "yes" ;;
-    *) echo "" ;;
-  esac
+const edit = (from, to) => ({ from, to })
+const wire = name => cell('wire', WIRE_T, name)
+const unit = name => cell('unit', UNIT_T, name)
+const census = (name, message) => cell('census', CENSUS_T, name, 1, message)
+const CENSUS_CONTROLS = [census('UNIVERSE-FLOORS'), census('LEXER-CONTROL'), census('PLANTED-POSITIVE'), census('SELF-MATCH')]
+
+const W_CONFIG = wire('1 · changing config writes in the call and commits nothing > writes the change on the first call, files nothing, and leaves history exactly where it was')
+const W_DIRECT = wire('2 · C432-MCP-DIRECT-RECEIPT: knowledge changes apply on their one call > C432-MCP-DIRECT-RECEIPT: accept, reject and forget each change the real store once and answer the records they changed')
+const W_ABSENCE = wire('2 · C432-MCP-DIRECT-RECEIPT: knowledge changes apply on their one call > C432-MCP-DIRECT-RECEIPT: a typed absence is data, and a malformed id is refused before any write')
+const W_RETRY = wire('3 · a repeated operation identity is the same change > answers the same records for a retried identity and lands the change once')
+const W_NO_FORM = wire('4 · C432-MCP-NO-ELICITATION: there is no confirmation round on either era > C432-MCP-NO-ELICITATION: a 2026 client that can answer a form is never asked, and its one call lands')
+const W_NO_CONFIRMED = wire('4 · C432-MCP-NO-ELICITATION: there is no confirmation round on either era > C432-MCP-NO-ELICITATION: `confirmed` is not an input — refused at the schema wall, and nothing changes')
+const W_RETIRED = wire('5 · the retired doors are unknown, and each change tool reaches only its own ops > lists none of the retired names and answers a call to one as an unknown tool, changing nothing')
+const W_CROSSED = wire('5 · the retired doors are unknown, and each change tool reaches only its own ops > the knowledge tool cannot reach a config op, nor the config tool a knowledge op')
+
+const U_TOKENLESS_MARK = unit('419 sovereign mark credential refusal > C432-TOKENLESS-MCP-MARK: a tokenless mark is invoked once with its input unchanged, and nothing refuses for a credential')
+const U_MARK_MASKED = unit('419 sovereign mark credential refusal > passes the mark input unchanged through the sole invoke and masks both result channels')
+const U_REMEDY = unit('419 sovereign mark credential refusal > C432-REMEDY-TYPES-ABSENT: renders every refusal as its own masked message, with no remedy appended')
+const U_RECEIPT = unit('C432-MCP-DIRECT-RECEIPT: a knowledge change answers its receipt on the first call > C432-MCP-DIRECT-RECEIPT: the change tool applies once and masks both result channels from one serialization')
+const U_ERROR = unit('C432-MCP-DIRECT-RECEIPT: a knowledge change answers its receipt on the first call > C432-MCP-DIRECT-RECEIPT: a typed absence is data and a writer refusal is a masked error, both after one call')
+const U_NO_FORM = unit('C432-MCP-NO-ELICITATION: no confirmation input, no elicitation, no apply round > C432-MCP-NO-ELICITATION: a client that can answer a form is never asked, and the change lands on its one call')
+const U_NO_CONFIRMED = unit('C432-MCP-NO-ELICITATION: no confirmation input, no elicitation, no apply round > C432-MCP-NO-ELICITATION: no listed tool takes a confirmation or a proposal id, and confirmed is refused at the schema wall')
+const U_MODULE_GONE = unit('C432-MCP-NO-ELICITATION: no confirmation input, no elicitation, no apply round > C432-MCP-NO-ELICITATION: the refuse-and-teach module is gone, and the op layer takes no confirmation')
+
+// The returned confirmation round: a change tool refuses its first, unconfirmed call and teaches the
+// re-call, as the deleted apply doors did.
+const HANDLER_TRY = '  return async (args: unknown): Promise<CallToolResult> => {\n    try {\n'
+const CONFIRM_ROUND = HANDLER_TRY
+  + "      if (projection.kind === 'workflow' && (args as { readonly confirmed?: unknown } | undefined)?.confirmed !== true) {\n"
+  + "        return maskedToolError(new Error('confirmLeg39606A1: call again with confirmed: true to apply this change'), maskText)\n"
+  + '      }\n'
+
+const APPLY_REFUSAL_MODULE = `// 432-45 A3: the deleted refuse-and-teach primitive, returned.
+export interface ApplyRefusal {
+  readonly confirmed: false
+  readonly recall: Readonly<Record<string, unknown>>
 }
 
-fatal() { echo "FATAL: $*" >&2; exit 1; }
-
-SNAP_DIR="$(mktemp -d)"
-cp "$SUBJECT" "$SNAP_DIR/subject"
-# THE LEGS SCRIPT LIVES INSIDE THE SNAPSHOT DIRECTORY (2026-08-16, UAT item 3 · CR-04). This was
-# `LEGS_PY="$(mktemp -t 396applylegs).py"` at the top of the file, which has two defects in one
-# expression. `mktemp -t <prefix>` is a BSD idiom that GNU coreutils REFUSES ("too few X's in
-# template"), and under `set -euo pipefail` the assignment aborts the script — so this harness
-# could not run on the ubuntu CI runner at all. And appending `.py` names a path `mktemp` never
-# created: the exclusively-created file leaked, and the `.py` path was a predictable name in a
-# world-writable directory that a local attacker could pre-place as a symlink, through which this
-# script then writes executable Python and runs it. The directory above is made by ONE atomic
-# `mktemp -d`, is already removed by the cleanup below, and holds the snapshots — so putting the
-# generated script in it fixes both defects and adds no second thing to clean up.
-LEGS_PY="$SNAP_DIR/legs.py"
-
-shasum -a 256 "$SNAP_DIR/subject" | cut -d' ' -f1 > "$SNAP_DIR/subject.sha"
-
-rebuild() {
-  (cd "$ROOT" && pnpm --filter @vostride/agent-qa-mcp build >/dev/null 2>&1)
+export function refuseAndTeach(args: Readonly<Record<string, unknown>>): ApplyRefusal {
+  return { confirmed: false, recall: { ...args, confirmed: true } }
 }
+`
 
-restore() {
-  local now
-  cp "$SNAP_DIR/subject" "$SUBJECT"
-  now="$(shasum -a 256 "$SUBJECT" | cut -d' ' -f1)"
-  [[ "$now" == "$(cat "$SNAP_DIR/subject.sha")" ]] \
-    || fatal "restore did not reproduce the subject byte-identically"
-  rebuild || fatal "rebuild after restore failed"
-}
+const legs = [
+  {
+    id: 'A1', claim: 'C432-MCP-DIRECT-RECEIPT', instrument: 'wire', subject: CATALOG,
+    operation: 'the confirmation round returns at the wire: a change tool refuses its first, unconfirmed call',
+    edits: [edit(HANDLER_TRY, CONFIRM_ROUND)],
+    crossing: { pkg: '@vostride/agent-qa-mcp', dir: 'packages/mcp', marker: 'confirmLeg39606A1' },
+    reds: [W_DIRECT],
+    // Every first call of a change tool is refused, on both eras and both tools (measured 2026-10-02).
+    allowed: [W_CONFIG, W_ABSENCE, W_RETRY, W_NO_FORM],
+    greens: [W_NO_CONFIRMED, W_RETIRED, W_CROSSED],
+  },
+  {
+    id: 'A2', claim: 'C432-MCP-DIRECT-RECEIPT', instrument: 'unit', subject: CATALOG,
+    operation: 'the same returned confirmation round, measured hermetically',
+    edits: [edit(HANDLER_TRY, CONFIRM_ROUND)],
+    reds: [U_RECEIPT],
+    // Every first change call is refused before the port (measured 2026-10-02).
+    allowed: [U_ERROR, U_NO_FORM],
+    greens: [U_TOKENLESS_MARK, U_MARK_MASKED, U_REMEDY, U_NO_CONFIRMED, U_MODULE_GONE],
+  },
+  {
+    id: 'A3', claim: 'C432-DELETED-SYMBOLS', instrument: 'census', subject: 'packages/mcp/src/apply-refusal.ts',
+    operation: 'the deleted refuse-and-teach module returns',
+    create: APPLY_REFUSAL_MODULE,
+    reds: [census('C432-DELETED-SYMBOLS: every deleted module file is absent', 'mcp/src/apply-refusal.ts')],
+    allowed: [],
+    greens: [...CENSUS_CONTROLS, census('C432-RETURN-A36'), census('C432-RETURN-A38')],
+  },
+  {
+    id: 'A4', claim: 'C432-MCP-DIRECT-RECEIPT', instrument: 'unit', subject: MASKED,
+    operation: 'the retained error channel stops masking: a writer refusal is answered raw',
+    edits: [edit('        text: maskText(message),\n', '        text: unmaskedLeg39606A4(message),\n'),
+      edit('  const message = err instanceof Error ? err.message : String(err)\n',
+        '  const message = err instanceof Error ? err.message : String(err)\n'
+        + '  const unmaskedLeg39606A4 = (text: string): string => maskText === undefined ? text : text\n')],
+    reds: [U_ERROR],
+    // The plain-refusal cell renders the same error channel (measured 2026-10-02).
+    allowed: [U_REMEDY],
+    greens: [U_RECEIPT, U_NO_FORM, U_NO_CONFIRMED, U_MODULE_GONE, U_TOKENLESS_MARK],
+  },
+  {
+    id: 'A5', claim: 'C432-MCP-DIRECT-RECEIPT', instrument: 'unit', subject: MASKED,
+    operation: "the receipt's structured channel is answered from the unmasked output",
+    edits: [edit("  return {\n    content: [{ type: 'text' as const, text: masked.text }],\n    structuredContent: masked.value as CallToolResult['structuredContent'],\n  }\n",
+      "  const rawChannelLeg39606A5 = output\n  return {\n    content: [{ type: 'text' as const, text: masked.text }],\n    structuredContent: rawChannelLeg39606A5 as CallToolResult['structuredContent'],\n  }\n")],
+    reds: [U_RECEIPT],
+    // The mark door answers through the same success path (measured 2026-10-02).
+    allowed: [U_MARK_MASKED],
+    greens: [U_ERROR, U_NO_FORM, U_NO_CONFIRMED, U_MODULE_GONE, U_TOKENLESS_MARK],
+  },
+  {
+    id: 'A6', claim: 'C432-MCP-RETIRED-DOORS', instrument: 'wire', subject: MAPPING,
+    operation: 'a retired apply door is projected again over the direct config writer',
+    edits: [edit('export const AGENT_QA_TOOL_PROJECTIONS: readonly ToolProjection[] = Object.freeze([\n',
+      'export const AGENT_QA_TOOL_PROJECTIONS: readonly ToolProjection[] = Object.freeze([\n'
+      + "  Object.freeze({\n    name: 'agent_qa_apply_config_proposal',\n    ops: Object.freeze(['config.field.set']),\n    kind: 'workflow',\n  }),\n")],
+    crossing: { pkg: '@vostride/agent-qa-mcp', dir: 'packages/mcp', marker: 'agent_qa_apply_config_proposal' },
+    reds: [W_RETIRED],
+    allowed: [],
+    greens: [W_CONFIG, W_DIRECT, W_NO_FORM, W_NO_CONFIRMED, W_CROSSED],
+  },
+]
 
-cleanup() {
-  [[ -f "$SNAP_DIR/subject" ]] && cp "$SNAP_DIR/subject" "$SUBJECT"
-  rm -rf "$SNAP_DIR"
-}
-trap cleanup EXIT
-
-cat > "$LEGS_PY" <<'PYLEGS'
-import re
-import sys
-
-LEGS = {
-    # The refusal branch severed: the first, unconfirmed call applies. Everything above it is left
-    # in place, which is the honest shape of this mistake — somebody removes the "extra" round trip.
-    "A1": (
-        "    return refuse(proposalId, mismatch, clientCanAnswerAForm(ctx))\n",
-        "    return apply(proposalId)\n",
-    ),
-    # The strict boolean gate widened to a truthiness gate.
-    "A2": (
-        "    if (args.confirmed === true) return apply(proposalId)\n",
-        "    if (args.confirmed) return apply(proposalId)\n",
-    ),
-    # The capability check inverted: the form is attached to every refusal, on every connection.
-    # This is the behaviour that shipped before 396-06 measured what the SDK does with it.
-    "A3": (
-        "  if (typeof declared !== 'object' || declared === null) return false\n"
-        "  return (declared as { elicitation?: unknown }).elicitation !== undefined\n",
-        "  return declared === declared\n",
-    ),
-}
-
-# A4 IS ANCHORED AS A REGION, NOT AS BYTES — and that is a repair, dated 2026-08-16 (CR-04 review,
-# UAT item 2). This leg used to spell its anchor as the seven literal lines of the object literal,
-# including `proposal_id: proposalId,`. Commit 13b584d7 masked that field and wrote a six-line
-# comment INSIDE the literal, so the anchor stopped occurring at all: the leg `sys.exit`ed, the
-# shell turned that into `fatal`, and the script exited 1 on A4 every run from that commit onward.
-# The `A4 RED(5)` figure in 396-06-SUMMARY.md was measured before it and did not reproduce.
-#
-# The lesson is the anchor's SHAPE, not the one edit that broke it: an anchor that quotes prose is
-# invalidated by editing prose, which is the one thing this repository does constantly. The region
-# below is delimited by the object's own opening and closing lines, so any body — fields, comments,
-# masking calls — is deleted whole and no comment edit can silence the leg.
-REGION_LEGS = {
-    # The structured refusal deleted. `content` still carries the whole teach, so a reader would
-    # call this a tidy-up — and the advertised outputSchema then has nothing to validate.
-    "A4": (
-        re.compile(r"\n      structuredContent: \{\n.*?\n      \},\n", re.DOTALL),
-        "\n",
-    ),
-}
-
-
-def mutate(leg, src, neutered):
-    """Return the mutated source, or exit naming the drift. Never silently edits nothing."""
-    if leg in REGION_LEGS:
-        pattern, replacement = REGION_LEGS[leg]
-        found = pattern.findall(src)
-        if len(found) != 1:
-            sys.exit("anchor for %s matches %d regions in the subject, expected exactly 1"
-                     % (leg, len(found)))
-        if neutered:
-            return src
-        return pattern.sub(lambda _match: replacement, src, count=1)
-
-    anchor, replacement = LEGS[leg]
-    if neutered:
-        replacement = anchor
-    # An anchor that no longer occurs exactly once FATALs rather than silently mutating nothing: a
-    # leg that edited no bytes and then saw a green suite would read as a passing measurement.
-    n = src.count(anchor)
-    if n != 1:
-        sys.exit("anchor for %s occurs %d times in the subject, expected exactly 1" % (leg, n))
-    return src.replace(anchor, replacement)
-
-
-# `--check <leg> <snapshot>` resolves the anchor and writes nothing. The pre-flight below runs it
-# for every leg BEFORE any mutation, so anchor rot reds at the top of the run rather than three legs
-# in — which is how CR-04 stayed invisible: A1..A3 passed and the script died on the fourth.
-if sys.argv[1] == "--check":
-    mutate(sys.argv[2], open(sys.argv[3]).read(), False)
-    sys.exit(0)
-
-leg, snapshot, subject, neutered = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4] == "neutered"
-open(subject, "w").write(mutate(leg, open(snapshot).read(), neutered))
-PYLEGS
-
-run_wire() {
-  local out status
-  out="$(cd "$ROOT/packages/cli" && npx vitest run "$WIRE_SUITE" --typecheck.enabled=false 2>&1)" \
-    && status=0 || status=$?
-  SUITE_OUT="$out"
-  SUITE_STATUS="$status"
-}
-
-run_unit() {
-  local out status
-  out="$(cd "$ROOT/packages/mcp" && npx vitest run "$UNIT_SUITE" 2>&1)" && status=0 || status=$?
-  UNIT_OUT="$out"
-  UNIT_STATUS="$status"
-}
-
-run_leg() {
-  local leg="$1" want reds unit_red
-  want="$(wire_reds_of "$leg")"
-  unit_red="$(unit_must_red_of "$leg")"
-
-  python3 "$LEGS_PY" "$leg" "$SNAP_DIR/subject" "$SUBJECT" "$SELFTEST" || fatal "$leg: anchor drift"
-  rebuild || { restore; fatal "$leg: rebuild under the mutation failed"; }
-
-  run_wire
-  reds="$(printf '%s\n' "$SUITE_OUT" | grep -c '^ FAIL ' || true)"
-
-  if [[ "$want" == "0" ]]; then
-    if [[ $SUITE_STATUS -ne 0 ]]; then
-      restore
-      fatal "$leg: the wire suite red ($reds), but this leg is recorded as invisible there"
-    fi
-  else
-    if [[ $SUITE_STATUS -eq 0 ]]; then
-      restore
-      fatal "$leg: the wire suite stayed green — the cells aimed at it are decoration"
-    fi
-    [[ "$reds" == "$want" ]] \
-      || { restore; fatal "$leg: expected $want failing wire cell(s), saw $reds"; }
-  fi
-
-  if [[ -n "${SHOW_REDS:-}" && "$reds" != "0" ]]; then
-    printf '%s\n' "$SUITE_OUT" | grep -E '^ FAIL |^AssertionError|^ProtocolError' | sed "s/^/    $leg| /"
-  fi
-
-  if [[ -n "$unit_red" ]]; then
-    run_unit
-    if [[ $UNIT_STATUS -eq 0 ]]; then
-      restore
-      fatal "$leg: the hermetic suite stayed green too — nothing anywhere bars this mutation"
-    fi
-    local ureds
-    ureds="$(printf '%s\n' "$UNIT_OUT" | grep -c '^ FAIL ' || true)"
-    if [[ -n "${SHOW_REDS:-}" ]]; then
-      printf '%s\n' "$UNIT_OUT" | grep -E '^ FAIL |^AssertionError' | sed "s/^/    $leg| unit: /"
-    fi
-    echo "  $leg wire GREEN by design (0) · hermetic RED ($ureds cell(s))"
-  else
-    echo "  $leg wire RED ($reds failing cell(s))"
-  fi
-
-  restore
-}
-
-echo "396-06 MCPS-03 apply-path mutation legs"
-
-# PRE-FLIGHT: every leg's anchor must resolve before any leg runs (2026-08-16, UAT item 2).
-# An anchor that stops matching is the same failure as a grep that cannot see what it forbids, and
-# it is silent in exactly the way that matters: the legs before it still pass and the run still
-# prints their numbers. Resolving all four first makes anchor rot the FIRST thing the run says.
-for leg in A1 A2 A3 A4; do
-  python3 "$LEGS_PY" --check "$leg" "$SNAP_DIR/subject" \
-    || fatal "$leg: anchor drift (pre-flight) — the leg cannot be applied to the live subject"
-done
-echo "  pre-flight: A1 A2 A3 A4 anchors each resolve exactly once"
-
-# APPLY_MUTATION_LEGS selects which legs run. The default is all four; the knob exists so the
-# `neutered` self-test can be pointed at ONE leg. Without it the self-test can only ever prove that
-# the FIRST leg fatals when it edits nothing, which is the same "measures one thing" trap the legs
-# themselves are here to catch (2026-08-16, UAT item 2).
-for leg in ${APPLY_MUTATION_LEGS:-A1 A2 A3 A4}; do
-  run_leg "$leg"
-done
-
-# THE WIRING GREPS, EACH MEASURED ON BOTH SIDES OF THE LINE IT DRAWS.
-#
-# None of these counts an IMPORT LINE. 396-04 measured that an import left behind by a deleted call
-# makes an import-count grep answer identically on both sides of its own line, and a check that
-# cannot tell "wired" from "unwired" is not a check.
-echo "wiring greps:"
-MAPPING="$ROOT/packages/mcp/src/mapping.ts"
-
-form_gate="$(grep -c 'clientCanAnswerAForm(ctx)' "$SUBJECT" || true)"
-strict_gate="$(grep -c 'args.confirmed === true' "$SUBJECT" || true)"
-composed_output="$(grep -c 'composeApplyToolOutput(' "$MAPPING" || true)"
-accept_verb="$(grep -c 'proposals.accept' "$SUBJECT" || true)"
-
-[[ "$form_gate" == "1" ]] \
-  || fatal "expected exactly one capability-gated refusal call site, saw $form_gate"
-[[ "$strict_gate" == "1" ]] \
-  || fatal "the confirmation gate is no longer a strict boolean identity ($strict_gate)"
-[[ "$composed_output" == "2" ]] \
-  || fatal "expected both apply doors to advertise the composed output union, saw $composed_output"
-[[ "$accept_verb" == "0" ]] \
-  || fatal "the human-origin accept verb is named in the apply module ($accept_verb) — T-396-06"
-
-echo "  form-gate 1 · strict-gate 1 · composed-output 2 · human-origin-accept 0"
-
-echo "OK — every leg measured, and the one the wire cannot see says so."
+runGate({
+  slug: '396-06-mutation', envPrefix: 'APPLY_MUTATION',
+  instruments, legs, expectedLegs: 6, explicitIds: true, parseCheck: true, banner: 'APPLY_MUTATION_OK',
+})
+NODE

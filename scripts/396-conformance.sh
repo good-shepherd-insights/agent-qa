@@ -7,8 +7,11 @@
 # complementary to — never a substitute for — 397's parity suite.
 #
 # WHAT IT DRIVES. The BUILT binary (`packages/cli/dist/cli.js mcp --http <port>`) serving loopback
-# HTTP against a hermetic temp-project fixture with a config and a token env-ref planted. Never the
-# developer's own project, never a hand-assembled server.
+# HTTP against a hermetic temp-project fixture with a config planted. Never the developer's own
+# project, never a hand-assembled server. (2026-10-02, 432-45: the fixture planted a
+# `services.mcp.tokens` env-ref until 432-21/22 deleted the bearer and the key, D-12; a fixture still
+# declaring it fails strict validation, so `mcp`'s tolerant read served it as an unresolved config
+# rather than the resolved one this script means to drive.)
 #
 #   D-17 DEVIATION, RECORDED RATHER THAN SILENT. D-17 as written says "a spawned stdio server". The
 #   conformance CLI's `server` mode takes `--url` and has NO `--command`: spawning a command is
@@ -106,9 +109,8 @@ SERVER_PID=""
 
 cleanup() {
   if [ -n "$SERVER_PID" ]; then kill "$SERVER_PID" 2>/dev/null || true; wait "$SERVER_PID" 2>/dev/null || true; fi
-  # The sandbox holds the fixture, the throwaway credential and the results tree. It is removed
-  # unconditionally: the credential is script-minted and worthless, and a results tree left behind
-  # in a CI workspace is an artifact nobody asked for.
+  # The sandbox holds the fixture and the results tree. It is removed unconditionally: a results
+  # tree left behind in a CI workspace is an artifact nobody asked for.
   if [ -n "${SANDBOX:-}" ] && [ -d "$SANDBOX" ]; then rm -rf "$SANDBOX"; fi
 }
 trap cleanup EXIT
@@ -240,15 +242,11 @@ REQUIRED_COUNT="$(grep -c '' "$SANDBOX/required.txt" || true)"
 [ "$REQUIRED_COUNT" -eq "$FROZEN_REQUIRED_SERVER_SCENARIOS" ] \
   || fatal "G1: requirements $REQUIREMENTS_REVISION lists $REQUIRED_COUNT server scenarios, the frozen denominator is $FROZEN_REQUIRED_SERVER_SCENARIOS. A pin bump changed the set — re-mint the baseline and update the frozen counts in a deliberate commit."
 
-# ── Step 3: the hermetic fixture. D-17's "config + tokens planted", in a mktemp sandbox that is
-# never the developer's own project.
+# ── Step 3: the hermetic fixture. D-17's "config planted", in a mktemp sandbox that is never the
+# developer's own project. 2026-10-02 (432-45, D-12): no token is planted — the listener reads no
+# credential, so every request the suite makes is the one caller and sees all twenty tools.
 FIXTURE="$SANDBOX/fixture"
 mkdir -p "$FIXTURE/.agent-qa"
-# A throwaway value minted here and thrown away with the sandbox. It is planted so the START-TIME
-# credential resolution path (D-06: a declared env-ref that is unset refuses to start) is the one
-# the suite drives, not a code path nobody exercised.
-AGENT_QA_CONFORMANCE_FIXTURE_TOKEN="zz-396-07-conformance-fixture-$(od -An -N12 -tx1 /dev/urandom | tr -d ' \n')"
-export AGENT_QA_CONFORMANCE_FIXTURE_TOKEN
 cat > "$FIXTURE/agent-qa.config.yaml" <<'FIXTURE_YAML'
 # Hermetic conformance fixture. Minted per run, thrown away with the sandbox.
 workspace:
@@ -261,19 +259,6 @@ workspace:
 use:
   mobile:
     appState: preserve
-services:
-  mcp:
-    tokens:
-      # BY REFERENCE, per D-06 / 395 D-11: the env-var NAME lives here, never a value.
-      #
-      # The conformance client sends no Authorization header and the CLI has no flag to make it
-      # send one, so every request the suite makes is served the D-07 DEFAULT GRANT — everything
-      # except `config-write`. The suite therefore sees 10 of the 12 tools; the two config tools are
-      # absent by the D-05 visibility law, and that absence is correct rather than a gap. The entry
-      # is still declared so the start-time resolution path is exercised on every run.
-      - name: conformance-fixture
-        tokenEnvVar: AGENT_QA_CONFORMANCE_FIXTURE_TOKEN
-        scopes: [read, run, test-write, knowledge-write, approval-write, config-write]
 FIXTURE_YAML
 
 start_fixture_server() {

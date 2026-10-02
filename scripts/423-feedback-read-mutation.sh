@@ -65,11 +65,14 @@ const RESULTS_D = 'src/__tests__/423-feedback-contracts.test-d.ts'
 const KEYS = 'src/functions/__tests__/optional-dep-keys.test.ts'
 const PORTS_D = 'src/functions/__tests__/port-split.test-d.ts'
 
+// 2026-10-02 (432-45): counts re-measured from a fresh Vitest JSON report after the 432 cells landed
+// (feedback-reads 27 -> 29: C432-MARK-HISTORY-APPLIED and C432-READS-INBOX-UNREAD; feedback-bindings
+// 7 -> 13: C432-GRANT-DEPS-ABSENT and C432-OPTIONAL-DEPS-EXACT beside the 419/423 walls).
 const instruments = {
-  'feedback-reads': { pkg: 'packages/cli', files: [READS], typecheck: false, count: 27 },
+  'feedback-reads': { pkg: 'packages/cli', files: [READS], typecheck: false, count: 29 },
   'evidence-planner': { pkg: 'packages/knowledge-local', files: [EVIDENCE], typecheck: false, count: 4 },
   'feedback-results': { pkg: 'packages/schema', files: [RESULTS, RESULTS_D], typecheck: true, count: 11 },
-  'feedback-bindings': { pkg: 'packages/agent', files: [KEYS, PORTS_D], typecheck: true, count: 7 },
+  'feedback-bindings': { pkg: 'packages/agent', files: [KEYS, PORTS_D], typecheck: true, count: 13 },
 }
 
 const reads = name => cell('feedback-reads', READS, name)
@@ -104,7 +107,9 @@ const legs = [
     ],
     reds: [reads('HISTORY-WRITES-NOTHING')],
     allowed: [],
-    greens: [reads('PROPOSAL-CURRENT/MISSING'), reads('HISTORY-CORRUPT'), reads('HISTORY-FN-PARITY'), reads('HTTP-MARKS-HISTORY'),
+    // 2026-10-02 (432-45): PROPOSAL-CURRENT/MISSING left with the inbox (432-17); its history half is
+    // C432-MARK-HISTORY-APPLIED.
+    greens: [reads('C432-MARK-HISTORY-APPLIED'), reads('HISTORY-CORRUPT'), reads('HISTORY-FN-PARITY'), reads('HTTP-MARKS-HISTORY'),
       reads('FEEDBACK-HTTP-WRITES-NOTHING'), reads('PREVIEW-WRITES-NOTHING')],
   },
   {
@@ -112,7 +117,9 @@ const legs = [
     edits: [{ from: '  return prior.kind === input.kind && prior.correctedExpectation === input.correctedExpectation\n',
       to: '  return prior.kind === input.kind && prior.note === input.note && prior.correctedExpectation === input.correctedExpectation\n' }],
     reds: [reads('NOTE-ONLY-REPEAT')],
-    allowed: [reads('PRIOR-WITHDRAWAL'), reads('PREVIEW-WRITES-NOTHING'), reads('BASIS-RACE')],
+    // 2026-10-02 (432-45): PRIOR-WITHDRAWAL was re-spelled PRIOR-FIX-STAYS when a superseding mark
+    // stopped withdrawing the prior applied fix (432-09).
+    allowed: [reads('PRIOR-FIX-STAYS'), reads('PREVIEW-WRITES-NOTHING'), reads('BASIS-RACE')],
     greens: [reads('PREVIEW-REFUSAL-PARITY'), reads('QUARANTINE-ORDER'), reads('MARK-PLAN-PARITY'), reads('CORRELATED-EVIDENCE'),
       reads('FALSE-PASS-TWO-LABELS')],
   },
@@ -125,15 +132,21 @@ const legs = [
     ],
     reds: [reads('QUARANTINE-ORDER')],
     allowed: [],
-    greens: [reads('PREVIEW-REFUSAL-PARITY'), reads('NOTE-ONLY-REPEAT'), reads('PRIOR-WITHDRAWAL'), reads('MARK-PLAN-PARITY'),
+    greens: [reads('PREVIEW-REFUSAL-PARITY'), reads('NOTE-ONLY-REPEAT'), reads('PRIOR-FIX-STAYS'), reads('MARK-PLAN-PARITY'),
       reads('PREVIEW-WRITES-NOTHING')],
   },
   {
     subject: PLAN, instrument: 'feedback-reads', claim: 'CORRELATED-EVIDENCE', operation: 'drop the correlated unserved records from the previewed knowledge',
-    edits: [{ from: '    const joinFor = await joinReachedRecords(reader, evidencePlan.targets.map(target => target.recordId))\n    const records = evidencePlan.targets.map(',
-      to: '    const joinFor = await joinReachedRecords(reader, evidencePlan.targets.map(target => target.recordId))\n    const records = evidencePlan.targets.filter(target => plan.knowledge.servedRecordIds.includes(target.recordId)).map(' }],
+    // 2026-10-02 (432-45): the drop now filters the plan the records AND the evidence counts are read
+    // from. Filtering the records alone left the counts disagreeing with them, so the preview failed
+    // its own result contract and the leg red by a parse error across eight cells, not by its claim.
+    edits: [{ from: '    const evidencePlan = curation.planMarkEvidence({ knowledgeRoot,', to: '    const evidencePlanAll = curation.planMarkEvidence({ knowledgeRoot,' },
+      { from: '    const joinFor = await joinReachedRecords(reader, evidencePlan.targets.map(target => target.recordId))\n',
+        to: '    const evidencePlan = { ...evidencePlanAll, targets: evidencePlanAll.targets.filter(target => plan.knowledge.servedRecordIds.includes(target.recordId)) }\n    const joinFor = await joinReachedRecords(reader, evidencePlan.targets.map(target => target.recordId))\n' }],
     reds: [reads('CORRELATED-EVIDENCE')],
-    allowed: [],
+    // The fn parity cell compares the preview with what the writer then lands, and the posture cell
+    // reads the preview's notes over the HTTP doors; both see the dropped records (measured 2026-10-02).
+    allowed: [reads('PREVIEW-FN-PARITY'), reads('HTTP-FEEDBACK-HUMAN-POSTURE')],
     greens: [reads('PREVIEW-CONTENT'), reads('FALSE-PASS-TWO-LABELS'), reads('MARK-PLAN-PARITY'), reads('PREVIEW-WRITES-NOTHING'),
       reads('HTTP-MARK-PREVIEW')],
   },
@@ -156,9 +169,10 @@ const legs = [
       resultsD('pins the four marks-history outcome arms in both directions')],
     allowed: [],
     greens: [results('pins the preview outcome arms: runtime list, schema arms and parser'),
-      results('pins the current proposal states: runtime list, schema arms and parser'),
+      // 2026-10-02 (432-45): the proposal-state walls became the applied-change walls (432-09/17).
+      results('pins the applied change kinds and the changed-record join: runtime list, schema arms and parser'),
       resultsD('pins the eight preview outcome arms in both directions'),
-      resultsD('pins the six current proposal states in both directions')],
+      resultsD('pins the applied change kinds, the written dispositions and the absent proposal state')],
   },
   {
     subject: FEEDBACK, instrument: 'feedback-results', claim: RESULTS_ID, operation: 'widen the preview result with an effects outcome arm and list member',
@@ -178,17 +192,24 @@ const legs = [
   },
   {
     subject: SPEC, instrument: 'feedback-bindings', claim: BINDINGS_ID, operation: 'add a feedbackDrafts binding to the dep-key union, roster and FunctionDeps together',
+    // 2026-10-02 (432-45): hunk 2 re-anchored — `configWrite` (432-07) follows `feedbackReads` in the
+    // roster, so the planted binding lands between them. The 419 roster is 23 since 432-18/432-39.
     edits: [
       { from: "  | 'feedbackReads' // 2026-09-15, 423 D-19/D-16: read-only mark history and preview, no writer authority\n",
         to: "  | 'feedbackReads' // 2026-09-15, 423 D-19/D-16: read-only mark history and preview, no writer authority\n  | 'feedbackDrafts'\n" },
-      { from: "  'feedbackReads',\n] as const satisfies readonly OptionalFunctionDepKey[]",
-        to: "  'feedbackReads',\n  'feedbackDrafts',\n] as const satisfies readonly OptionalFunctionDepKey[]" },
+      { from: "  'feedbackReads',\n  'configWrite',\n] as const satisfies readonly OptionalFunctionDepKey[]",
+        to: "  'feedbackReads',\n  'feedbackDrafts',\n  'configWrite',\n] as const satisfies readonly OptionalFunctionDepKey[]" },
       { from: '  feedbackReads?: FeedbackReadsPort\n', to: '  feedbackReads?: FeedbackReadsPort\n  feedbackDrafts?: FeedbackReadsPort\n' },
     ],
     reds: [keys(BINDINGS_ID, 'pins the runtime roster exactly, with no missing, extra or repeated binding'),
       portsD('pins the optional dep key union and its runtime roster in both directions'),
       portsD('binds the feedback writer and the read-only feedback observations as two optional deps')],
-    allowed: [keys(ROSTER_419, 'pins every host binding by name and declaration order'), keys(ROSTER_419, 'has exactly 29 optional bindings')],
+    // 2026-10-02 (432-45): the 432 roster walls count and name the same roster (measured).
+    allowed: [keys(ROSTER_419, 'pins every host binding by name and declaration order'), keys(ROSTER_419, 'has exactly 23 optional bindings'),
+      keys('C432-GRANT-DEPS-ABSENT', 'C432-GRANT-DEPS-ABSENT: no optional binding names a grant port, and the roster counts 23'),
+      keys('C432-OPTIONAL-DEPS-EXACT', 'C432-OPTIONAL-DEPS-EXACT: the roster, the deps type and the agent barrel agree exactly'),
+      keys('C432-OPTIONAL-DEPS-EXACT', 'C432-OPTIONAL-DEPS-EXACT: no binding is a permission, proposal, confirm or undo port'),
+      cell('feedback-bindings', PORTS_D, 'C432-GRANT-DEPS-ABSENT > C432-GRANT-DEPS-ABSENT: the roster still counts 23 members, so the absence is not vacuous')],
     greens: [keys(BINDINGS_ID, 'binds the mark writer through feedback and both feedback reads through feedbackReads'),
       portsD('pins the read binding to history and preview, with no writer verb')],
   },

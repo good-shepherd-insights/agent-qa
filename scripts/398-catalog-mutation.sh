@@ -12,7 +12,7 @@
 # forbade (398-07 leg M6, 398-09 leg M2, 398-10 legs M4–M7, 398-11's existsSync-guarded cross-check
 # reporting `18 passed` while asserting nothing).
 #
-# THE SIX LEGS, each an edit a careless commit could plausibly produce, chosen PER DETECTOR:
+# THE SEVEN LEGS (G added 2026-10-02 by 432-45), each an edit a careless commit could plausibly produce, chosen PER DETECTOR:
 #
 #   A  ONE HELP LINE RENAMED. `CHAT_HELP_ENTRIES` in `resolver-table.ts` is the list a person reads;
 #      `CHAT_RESOLVER_TABLE` beside it is the list that actually routes. Renaming the alias on the
@@ -34,6 +34,12 @@
 #   E  ONE OP ROW'S `surfaces` ARRAY HAND-EDITED IN THE COMMITTED ARTIFACT. C proves the freshness
 #      leg sees a row LEAVE; E proves it sees a FIELD MOVE inside a row that is still there, and
 #      that the red names the row AND the field rather than saying "the catalog is stale".
+#
+#   G  NEW 2026-10-02 (432-45, D-24): A RETIRED TOOL NAME HAND-WRITTEN INTO THE COMMITTED ARTIFACT.
+#      One op row's `mcpTool` is edited to the deleted `agent_qa_list_proposals`. The row still parses
+#      (the column is a string), so the only objections are the freshness leg and 432-40's
+#      C432-CATALOG-CURRENT census, whose subject is exactly this: the generated catalogue describing
+#      only the live twenty-tool tree and no retired capability.
 #
 #   F  THE EXPLAIN ANSWER CHANNEL REVERTED AT ONE LINE (398-13, D-21). `turn-engine.ts` collects
 #      `agent.explain`'s rendered lines onto the turn's `answer` field, which is the ONLY path by
@@ -147,12 +153,13 @@ SUBJECT_C="packages/cli/capability-catalog/capability-catalog.json"
 SUBJECT_D="packages/mcp/src/migration-map.ts"
 SUBJECT_E="packages/cli/capability-catalog/capability-catalog.json"
 SUBJECT_F="packages/agent/src/chat/turn-engine.ts"
+SUBJECT_G="packages/cli/capability-catalog/capability-catalog.json"
 
 # THE ONE LIST OF LEGS. `restore_all`, the preflight snapshot loop, the at-rest dist-marker loop and
 # the run loop all read it, so a leg that is added without being restored is not expressible (IN-04:
 # `restore_all` used to name SNAP_A..SNAP_D by hand and silently omitted SNAP_E, which was harmless
 # only because leg E's subject happened to equal leg C's).
-LEGS="A B C D E F"
+LEGS="A B C D E F G"
 
 DIST_AGENT="packages/agent/dist/index.js"
 DIST_MCP="packages/mcp/dist/index.js"
@@ -184,8 +191,13 @@ MARKER_F="398F-no-such-op"      # introduced: 0 before, >=1 under the mutation
 # 145 a future deletion of the three cells that plan added — the only guards on the explain answer
 # channel — would still clear the floor, and every leg would keep passing over a suite that no
 # longer collects them. A floor that does not follow the cells it exists to protect is not a floor.
-FROZEN_MIN_CLI_TESTS=148
-FROZEN_MIN_MCP_TESTS=267
+#
+# RE-MEASURED 2026-10-02 (432-45): the conformance directory now collects 652 cells and the whole of
+# `packages/mcp` 418, read off a fresh JSON report of each on the committed tree. The MCP floor is 415
+# because leg D still deletes its own three per-entry cells (the invariance cell's title now says
+# "caller records", re-spelled by 432-20 when the scope sets left).
+FROZEN_MIN_CLI_TESTS=652
+FROZEN_MIN_MCP_TESTS=415
 
 fatal() { echo "FATAL: $*" >&2; exit 1; }
 note() { echo "[398-catalog-mutation] $*"; }
@@ -200,6 +212,7 @@ SNAP_C="$WORK/capability-catalog.C.snapshot"
 SNAP_D="$WORK/migration-map.ts.snapshot"
 SNAP_E="$WORK/capability-catalog.E.snapshot"
 SNAP_F="$WORK/turn-engine.ts.snapshot"
+SNAP_G="$WORK/capability-catalog.G.snapshot"
 
 # DRIVEN FROM `$LEGS`, never from a hand-written list of snapshot names (IN-04). It reads only the
 # `SUBJECT_*` / `SNAP_*` variables above it, so it is safe on every exit path including one taken
@@ -284,9 +297,14 @@ ALLOWED_A
 # The census cell's two sides are SKILL.md frontmatter and the directory name — the one place in the
 # skills census where the two sources are genuinely different — so a frontmatter rename reds it,
 # while deleting the directory outright moves both sides together and reds only the freshness leg.
+# 2026-10-02 (432-45): RE-MEASURED at FOUR. The packaged SKILL.md is now byte-pinned to its source
+# (C432-PACKAGED-SKILLS, 432-40) and the live-guidance census reads the packaged skill names, so a
+# frontmatter rename in the packaged copy reds both beside the two cells this leg always named.
 cat > "$WORK/allowed.B" <<'ALLOWED_B'
 cli::the capability catalog regenerates byte-identically from the live seams into the committed artifact (D-03)
 cli::the capability catalog census carries exactly the skills the shipped skills directory holds (D-05)
+cli::LIVE-GUIDANCE: the guide, pointer and every source and packaged skill quote only live names keeps the dedicated verbs off the four-door roster and the knowledge skill in the catalog source
+cli::C432-PACKAGED-SKILLS: the packaged skills are the source skills, byte for byte C432-PACKAGED-SKILLS: every source skill file has a byte-identical packaged copy, and nothing else is packaged
 ALLOWED_B
 
 # C's fan-out is ONE, and the singleton is a finding rather than a disappointment. The census cell
@@ -296,16 +314,26 @@ ALLOWED_B
 # through the same loader on both sides and agrees with it. Exactly one cell in this repository
 # compares the committed artifact to the tree, and this is it — which is precisely why D-04 asks for
 # a standing proof that it works.
+# 2026-10-02 (432-45): RE-MEASURED at FOUR. Three later cells now read the COMMITTED artifact against
+# the tree: 431's live-guidance tool census (a guide name whose op the catalogue lost), 432-40's
+# C432-CATALOG-CURRENT (op rows against the live registry) and the manifest's unfiltered-rows cell.
+# The singleton finding above is history: the freshness leg is no longer the only such cell.
 cat > "$WORK/allowed.C" <<'ALLOWED_C'
 cli::the capability catalog regenerates byte-identically from the live seams into the committed artifact (D-03)
+cli::LIVE-GUIDANCE: the guide, pointer and every source and packaged skill quote only live names LIVE-GUIDANCE-TOOLS: every agent_qa_* name is a projected tool whose ops the catalog carries
+cli::C432-CATALOG-CURRENT: the committed catalogue describes only the live tree C432-CATALOG-CURRENT: op rows are the live registry, tools are the twenty projected tools, and no row names a retired capability or a permission
+cli::the agent manifest (D-16, XPLN-01) emits EVERY row, unfiltered — it documents, it does not grant (D-16, P1)
 ALLOWED_C
 
 # D's fan-out is SEVEN across BOTH packages, and it is the leg that justifies measuring two suites.
 # Three pins in the bump guard, two in the complete-set census (whose other side is the inventory
 # document — the only side the mutation cannot shrink), and two on the catalog side: the freshness
 # leg and the manifest's entry-for-entry projection.
+# 2026-10-02 (432-45): RE-MEASURED at EIGHT: the seven above plus 432-40's C432-CATALOG-CURRENT
+# migration cell, which compares the committed map's length with the shipped one.
 cat > "$WORK/allowed.D" <<'ALLOWED_D'
 cli::the capability catalog regenerates byte-identically from the live seams into the committed artifact (D-03)
+cli::C432-CATALOG-CURRENT: the committed catalogue describes only the live tree C432-CATALOG-CURRENT: every migration route answers with a live tool and no proposal
 cli::the catalog's migration map projection (D-14, XPLN-03) lands in the COMMITTED artifact, entry for entry, as the shipped map declares it
 mcp::the complete-set census (D-13), both directions covers every inventory tool row — a missing entry reds by name
 mcp::the complete-set census (D-13), both directions is exactly the inventory set, as sorted lists
@@ -330,11 +358,20 @@ ALLOWED_E
 # READ OUT OF THE HARNESS'S OWN JSON REPORT (`$WORK/names.*`), never hand-composed: `fullName` is
 # the describe and the test joined, and a hand-written name is how an allowed list becomes a
 # description of a different tree. `vanished.F` is empty — this mutation deletes no cell.
+# 2026-10-02 (432-45): RE-MEASURED at TWO with the re-anchored revert. The built-binary chat cell no
+# longer reds: its capability line now reaches the person through the fold the op itself declares
+# (399.1-03), which the receipt path prints whatever the answer field carries.
 cat > "$WORK/allowed.F" <<'ALLOWED_F'
-cli::the built-binary anchors (D-02) the shipped chat binary PRINTS a capability line quoted out of the committed catalog (398-13, D-21)
 cli::the grounded explain answer rides the turn a person reads (398-13, D-21) puts the cited row's OWN rendered line on the turn's answer field
 cli::the grounded explain answer rides the turn a person reads (398-13, D-21) leaves the receipt the MAP, and no model prose anywhere on the turn
 ALLOWED_F
+
+# G's list is MEASURED (2026-10-02, 432-45): the freshness leg and the one census whose subject is
+# the generated catalogue naming only live tools.
+cat > "$WORK/allowed.G" <<'ALLOWED_G'
+cli::the capability catalog regenerates byte-identically from the live seams into the committed artifact (D-03)
+cli::C432-CATALOG-CURRENT: the committed catalogue describes only the live tree C432-CATALOG-CURRENT: op rows are the live registry, tools are the twenty projected tools, and no row names a retired capability or a permission
+ALLOWED_G
 
 # ── The cells each leg may make VANISH ──────────────────────────────────────────────────────────
 #
@@ -346,11 +383,12 @@ ALLOWED_F
 : > "$WORK/vanished.C"
 cat > "$WORK/vanished.D" <<'VANISHED_D'
 mcp::the redirect fires on exact members, and only errors (D-15 · T-398-12) answers agent_qa_discover with a teaching error and never a result
-mcp::caller-invariance on the retired and pending arms (T-398-13 · Pitfall 8) answers agent_qa_discover identically under three different scope sets
+mcp::caller-invariance on the retired and pending arms (T-398-13 · Pitfall 8) answers agent_qa_discover identically under three different caller records
 mcp::v1RedirectMessage, driven directly carries agent_qa_discover’s own ruled note and route
 VANISHED_D
 : > "$WORK/vanished.E"
 : > "$WORK/vanished.F"
+: > "$WORK/vanished.G"
 
 # ── The mutations ───────────────────────────────────────────────────────────────────────────────
 #
@@ -382,31 +420,30 @@ B_REPLACEMENT = "name: agent-qa-triage-results\n"
 
 # C — one op row deleted from the COMMITTED artifact by hand. `rowCount` is deliberately left at its
 # old value, because that is what a hand edit leaves behind and the freshness leg pins it too.
-C_ANCHOR = '''    {
-      "description": "List the completed runs recorded for this project.",
-      "docAbsentReason": "D-07 (dated 2026-08-16): no canonical doc ships for this capability yet. The explicit absence is the honest state — a guessed path would existence-check green and mislead a reader — and the abstention coverage log is the demand signal for writing one.",
-      "docPath": null,
-      "exampleCall": {
-        "arguments": {}
-      },
-      "id": "runs.list",
-      "kind": "op",
-      "mcpTool": "agent_qa_list_runs",
-      "params": {
-        "$schema": "https://json-schema.org/draft/2020-12/schema",
-        "additionalProperties": false,
-        "properties": {},
-        "type": "object"
-      },
-      "requiredScopes": [
-        "read"
-      ],
-      "surfaces": [
-        "chat",
-        "mcp"
-      ]
-    },
-'''
+#
+# RE-ANCHORED 2026-10-02 (432-45). C and E used to spell the runs.list row as a frozen transcription;
+# 431 widened its params and 432-39 deleted the catalogue's `requiredScopes` column, so the literal
+# stopped matching. Both are now located by the row's own `"id": "runs.list"` line and bounded by the
+# row object's own opening and closing lines at the artifact's row indent, so the leg keeps deleting
+# (C) or editing (E) exactly that one row however its fields grow. The one-occurrence guard stays.
+ROW_ID = '      "id": "runs.list",\n'
+ROW_OPEN = '\n    {\n'
+ROW_CLOSE = '\n    },\n'
+E_FROM = '      "surfaces": [\n        "chat",\n        "mcp"\n      ]\n'
+E_TO = '      "surfaces": [\n        "chat"\n      ]\n'
+G_FROM = '      "mcpTool": "agent_qa_list_runs",\n'
+G_TO = '      "mcpTool": "agent_qa_list_proposals",\n'
+
+
+def runs_list_row(source):
+    """The exact text of the runs.list row object, opening brace line to closing line inclusive."""
+    if source.count(ROW_ID) != 1:
+        sys.exit('FATAL: the runs.list row id line occurs %d times, expected exactly 1' % source.count(ROW_ID))
+    at = source.index(ROW_ID)
+    opened = source.rindex(ROW_OPEN, 0, at) + 1
+    closed = source.index(ROW_CLOSE, at) + len(ROW_CLOSE)
+    return source[opened:closed]
+
 
 # D — one entry deleted from the shipped v1 -> v2 migration map. A frozen array literal one member
 # short: it compiles, it type-checks, and every other entry is still correct. Raw string, so the TS
@@ -424,62 +461,33 @@ D_ANCHOR = r'''  // 1
   }),
 '''
 
-# E — one op row's `surfaces` array hand-edited in the COMMITTED artifact. The row is still there and
-# still parses against the published contract; one field now claims a smaller reach than the tree
-# gives it. Anchored through the row's own `id` line so the edit cannot land on a different row.
-E_ANCHOR = '''      "id": "runs.list",
-      "kind": "op",
-      "mcpTool": "agent_qa_list_runs",
-      "params": {
-        "$schema": "https://json-schema.org/draft/2020-12/schema",
-        "additionalProperties": false,
-        "properties": {},
-        "type": "object"
-      },
-      "requiredScopes": [
-        "read"
-      ],
-      "surfaces": [
-        "chat",
-        "mcp"
-      ]
-'''
-E_REPLACEMENT = '''      "id": "runs.list",
-      "kind": "op",
-      "mcpTool": "agent_qa_list_runs",
-      "params": {
-        "$schema": "https://json-schema.org/draft/2020-12/schema",
-        "additionalProperties": false,
-        "properties": {},
-        "type": "object"
-      },
-      "requiredScopes": [
-        "read"
-      ],
-      "surfaces": [
-        "chat"
-      ]
-'''
 
 # F — the explain ANSWER CHANNEL reverted at one line (398-13, D-21). The collector is handed a
 # string literal naming an op that exists nowhere instead of the step's own function id, so it never
 # matches, no rendered lines are collected, and the turn's `answer` field goes back to what it was
 # before the channel existed. It compiles, it type-checks, it ships — and no person can read a
 # grounded capability answer again, which is exactly the state 398-12 measured and this leg guards.
+#
+# RE-ANCHORED 2026-10-02 (432-45). 399.1-03 moved line composition into each op's own declared
+# `renderResult`, so the engine now pushes the fold's lines (`answered.foldLines`) and calls no
+# `explainAnswerLines`; this anchor had not matched since that commit. The revert is the same one:
+# the collector is gated on an op id that exists nowhere, so no line is collected and the turn's
+# `answer` field goes back to what it was before the channel existed.
 F_ANCHOR = (
-    "        answerLines.push(...explainAnswerLines(step.functionId, answered))\n"
+    "        answerLines.push(...answered.foldLines)\n"
 )
 F_REPLACEMENT = (
-    "        answerLines.push(...explainAnswerLines('398F-no-such-op', answered))\n"
+    "        answerLines.push(...(step.functionId === '398F-no-such-op' ? answered.foldLines : []))\n"
 )
 
 MUTATIONS = {
     'A': ('packages/agent/src/chat/resolver-table.ts', [(A_ANCHOR, A_REPLACEMENT)]),
     'B': ('packages/cli/skills/agent-qa-result-triage/SKILL.md', [(B_ANCHOR, B_REPLACEMENT)]),
-    'C': ('packages/cli/capability-catalog/capability-catalog.json', [(C_ANCHOR, '')]),
+    'C': ('packages/cli/capability-catalog/capability-catalog.json', 'row-delete'),
     'D': ('packages/mcp/src/migration-map.ts', [(D_ANCHOR, '')]),
-    'E': ('packages/cli/capability-catalog/capability-catalog.json', [(E_ANCHOR, E_REPLACEMENT)]),
+    'E': ('packages/cli/capability-catalog/capability-catalog.json', 'row-surfaces'),
     'F': ('packages/agent/src/chat/turn-engine.ts', [(F_ANCHOR, F_REPLACEMENT)]),
+    'G': ('packages/cli/capability-catalog/capability-catalog.json', 'row-mcp-tool'),
 }
 
 if name not in MUTATIONS:
@@ -489,6 +497,18 @@ relative, edits = MUTATIONS[name]
 path = os.path.join(root, relative)
 with open(path, encoding='utf-8') as handle:
     source = handle.read()
+if edits == 'row-delete':
+    edits = [(runs_list_row(source), '')]
+elif edits == 'row-mcp-tool':
+    row = runs_list_row(source)
+    if row.count(G_FROM) != 1:
+        sys.exit('FATAL: the runs.list row names its MCP tool %d times, expected exactly 1' % row.count(G_FROM))
+    edits = [(row, row.replace(G_FROM, G_TO))]
+elif edits == 'row-surfaces':
+    row = runs_list_row(source)
+    if row.count(E_FROM) != 1:
+        sys.exit('FATAL: the runs.list row carries its surfaces array %d times, expected exactly 1' % row.count(E_FROM))
+    edits = [(row, row.replace(E_FROM, E_TO))]
 for index, (anchor, replacement) in enumerate(edits, start=1):
     found = source.count(anchor)
     if found != 1:
@@ -509,6 +529,7 @@ subject_of () {
     D) echo "$SUBJECT_D" ;;
     E) echo "$SUBJECT_E" ;;
     F) echo "$SUBJECT_F" ;;
+    G) echo "$SUBJECT_G" ;;
     *) fatal "unknown leg $1" ;;
   esac
 }
@@ -521,6 +542,7 @@ snapshot_of () {
     D) echo "$SNAP_D" ;;
     E) echo "$SNAP_E" ;;
     F) echo "$SNAP_F" ;;
+    G) echo "$SNAP_G" ;;
     *) fatal "unknown leg $1" ;;
   esac
 }
@@ -561,6 +583,7 @@ needle_of () {
     D) echo "agent_qa_discover" ;;
     E) echo "op:runs.list.surfaces" ;;
     F) echo "op:runs.start" ;;
+    G) echo "agent_qa_list_proposals" ;;
     *) fatal "unknown leg $1" ;;
   esac
 }
@@ -573,6 +596,7 @@ label_of () {
     D) echo "one entry deleted from the shipped v1 -> v2 migration map" ;;
     E) echo "one committed op row's surfaces array hand-edited" ;;
     F) echo "the explain answer channel reverted at one line (D-21)" ;;
+    G) echo "a retired tool name hand-written into a committed op row (432-45, D-24)" ;;
     *) fatal "unknown leg $1" ;;
   esac
 }
@@ -935,7 +959,7 @@ fi
 echo "=== RUN SUMMARY"
 cat "$SUMMARY"
 
-echo "PASS — six per-detector mutations, each RED on exactly its allowed cells in BOTH suites and"
+echo "PASS — seven per-detector mutations, each RED on exactly its allowed cells in BOTH suites and"
 echo "       on no others, each red NAMING the member that moved, each denominator change pinned by"
 echo "       name, every subject restored byte-identically by sha256, every rebuild proven by a dist"
 echo "       marker in the direction its leg moves it, and every revert returning both suites to"

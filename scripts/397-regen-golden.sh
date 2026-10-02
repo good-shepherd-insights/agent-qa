@@ -116,13 +116,18 @@ LIVE-GUIDANCE: the guide, pointer and every source and packaged skill quote only
 # 2026-08-17 (398-07): 133, after 398's manifest, catalog and explain cells joined the same suite.
 # Raised in the same diff that added the last of them, at this knob's own ~15% margin. A floor that
 # stayed at 60 while the suite tripled would pass a run that lost half the directory.
-FROZEN_MIN_TESTS=113
+# RE-MEASURED 2026-10-02 (432-45, final regeneration owner of phase 432): the directory collects 652
+# cells (fresh JSON report on the committed tree), so the floor moves to 554 at the same ~15% margin.
+FROZEN_MIN_TESTS=554
 # The ledger's own floor, so a mint that produced a truncated or empty file cannot be written.
 # Measured 2026-08-16: the registry census is 41 capabilities and is frozen for this phase (D-17).
 # Raised 2026-08-17 (398-07, D-09): 397's freeze was 397's — the census is 42 now that
 # `agent.explain` is registered, which is the first movement since the ledger was minted and is
 # exactly the movement this ledger exists to make a one-line reviewable diff.
-FROZEN_MIN_ROWS=42
+# RE-MEASURED 2026-10-02 (432-45): the registry is 44 operations after phase 432 (53 at 431's close;
+# 432-17 deleted seven proposal/apply/undo ops and 432-18 the two grant ops), and the committed
+# ledger carries 44 rows. The floor follows the measured registry, never an older freeze.
+FROZEN_MIN_ROWS=44
 
 EMIT_FLAG="AGENT_QA_397_GOLDEN_EMIT"
 EMIT_BEGIN="<<<397-06-GOLDEN-BEGIN>>>"

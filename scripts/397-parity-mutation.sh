@@ -31,6 +31,10 @@
 #       supplies. `invokeFunction` is never called, so no scope is checked, no ask is resolved, no
 #       session pin is consulted and no audit row is written — and the shipped types are all still
 #       satisfied. This is the class the whole "no private powers" claim is about.
+#       2026-10-02 (432-45): there is no gate, audit row, scope or session pin since 432-13/18/20
+#       (D-12); `invokeFunction` is still the one door (input validation, binding, read scope). The
+#       short-circuit now answers `config.get` (was `proposals.list`, deleted by 432-17), and the cell
+#       that names it is the chat render anchor reading the value the first turn wrote.
 #
 #   C   A CAPABILITY WITH NO SCENARIO ROW — SC-4's own rule, measured rather than assumed. One row
 #       deleted from the typed scenario table, which is the state a repository is in the moment a
@@ -169,7 +173,11 @@ controlreserved39708"
 
 # ── Vacuity floors. A leg that passed because the suite collected nothing is the CI-shaped version
 # of the very failure this phase exists to prevent. Measured 2026-08-16: 81 cells in the directory.
-FROZEN_MIN_TESTS=81
+#
+# RE-MEASURED 2026-10-02 (432-45): the directory now collects 652 cells, read off a fresh JSON report
+# on the committed tree; leg C legitimately collects 649 (three cells are generated per scenario row),
+# so the floor is 649.
+FROZEN_MIN_TESTS=649
 
 fatal() { echo "FATAL: $*" >&2; exit 1; }
 note() { echo "[397-parity-mutation] $*"; }
@@ -244,16 +252,24 @@ CLASSIFY_MJS
 # the visibility law runs inside the loop the plant sits after — so the uncatalogued door is served
 # to a caller holding the DEFAULT grant too, and this cell is the only one that asks that question.
 # The list follows the measurement, BY NAME. It was never widened to any-red.
+# 2026-10-02 (432-45): RE-MEASURED. The config-write listing-delta cell left with the scopes (432-20)
+# and its claim is C432-TOKENLESS-CATALOG, which still reds: the stray tool is listed under every
+# caller record and is not in the mapping. 431's DISCOVERY-FOUR-DOOR census reds too (an MCP door
+# outside the declared projection). Four names, read off the run.
 cat > "$WORK/allowed.A1" <<'ALLOWED_A1'
 the parity suite ranges the registry census over every rostered surface reaches, on every rostered surface, only capabilities the registry declares
-the parity suite ranges the registry census over every rostered surface pins the config-write listing delta between the every-scope and the default MCP grant
+the parity suite ranges the registry census over every rostered surface C432-TOKENLESS-CATALOG: pins an EMPTY listing delta between the every-scope and the default MCP grant
 the built-binary anchors (D-02) the shipped MCP binary lists exactly the op ids the in-process adapter does
+DISCOVERY-FOUR-DOOR: the discovery reads on the four rostered doors (431 D-03/D-06) reaches every discovery op on chat, mcp and fn; the run service reaches its routed reads and declares the rest
 ALLOWED_A1
 
+# 2026-10-02 (432-45): RE-MEASURED. 431's DISCOVERY-FOUR-DOOR census also walks the chat
+# enumeration, so the literal non-registry id reds it beside the three census cells.
 cat > "$WORK/allowed.A2" <<'ALLOWED_A2'
 the parity suite ranges the registry census over every rostered surface reaches, on every rostered surface, only capabilities the registry declares
 the parity suite ranges the registry census over every rostered surface enumerates over chat every capability the registry declares
 the parity suite ranges the registry census over every rostered surface joins every row chat expectation to the live chat enumeration, in both directions
+DISCOVERY-FOUR-DOOR: the discovery reads on the four rostered doors (431 D-03/D-06) reaches every discovery op on chat, mcp and fn; the run service reaches its routed reads and declares the rest
 ALLOWED_A2
 
 # B's fan-out is TWO, and the second entry is here because the RUN FOUND THE SUITE VACUOUS AND THE
@@ -285,11 +301,14 @@ ALLOWED_A2
 #
 # 2026-09-28 (430-05): the two DASHBOARD titles left with the roster's dashboard row (430 D-03), so
 # B's fan-out is four. Text only: this script is not registered in package.json and was not run.
+# 2026-10-02 (432-45): RE-MEASURED at ONE. The chat surface wall and the gate's audit rows that
+# caught this leg are deleted (432-13/20: no gate, no /pin), and the model-free tracer counts a filed
+# result, which the short-circuit still files. What still objects is the render anchor whose second
+# op reads the value the first turn wrote: an answer composed inside the engine is not the op's.
+# The per-surface render parity compares the binary with this process's own filed result, so it
+# agrees with the short-circuit and stays green.
 cat > "$WORK/allowed.B" <<'ALLOWED_B'
-the parity suite ranges the registry census over every rostered surface refuses at the CHAT SURFACE WALL for every capability, through its own composed dispatch
-the parity suite ranges the registry census over every rostered surface drives a capability through the chat surface's own composed dispatch, model-free
 the chat render anchors (399.1, G-399-2) renders a SECOND op's payload too, on the read door chat advertises itself
-the per-surface render anchors (399.1 D-08): in-process ≡ shipped chat: the shipped binary prints the bytes this process renders from its own filed result
 ALLOWED_B
 
 # C's list is MEASURED, and it is the list SC-4 rests on. 397-03 measured FOUR cells for this shape;
@@ -305,17 +324,22 @@ ALLOWED_B
 # rendered-output matrix — both range the SAME scenario table, so a capability the table stopped
 # carrying goes unasserted on their axes too. Each was checked for why it reds (a row missing from
 # the table it iterates), which is the same reason as the eight already here.
+# 2026-10-02 (432-45): RE-MEASURED at ELEVEN. The gate-wall, human-origin and ask cells were
+# re-spelled by 432-13/18/20 (C432-ALL-OPS-AVAILABLE, C432-NO-GRANT-OPS and the direct-dispatch ask
+# cell) and still range the scenario table; 431's DISCOVERY-FOUR-DOOR pairs each discovery op with
+# its scenario input. The run collects 649 cells: three per-row cells cease to exist with the row.
 cat > "$WORK/allowed.C" <<'ALLOWED_C'
+DISCOVERY-FOUR-DOOR: the discovery reads on the four rostered doors (431 D-03/D-06) pairs every discovery op with the input singleton its declaration and MCP contract use
 the parity suite ranges the registry census over every rostered surface carries exactly one scenario row per registered capability, in both directions
-the parity suite ranges the registry census over every rostered surface joins every row fn expectation to the live fn listing, in both directions
-399.1 D-08/D-09 — the rendered-output matrix: leg 8 produces a result document for every registered capability, from its own contract
 the parity suite ranges the registry census over every rostered surface joins every row MCP expectation to the declared mapping, in both directions
 the parity suite ranges the registry census over every rostered surface joins every row chat expectation to the live chat enumeration, in both directions
+the parity suite ranges the registry census over every rostered surface joins every row fn expectation to the live fn listing, in both directions
 the parity suite ranges the registry census over every rostered surface answers identically for two callers that differ only in which surface minted them
-the parity suite ranges the registry census over every rostered surface diverges between the surfaces' own mints on exactly the human-origin capabilities
-the parity suite ranges the registry census over every rostered surface refuses at the GATE WALL for every capability, naming the one withheld grant
-the parity suite ranges the registry census over every rostered surface reaches the ask for every ask-capable capability, identically on both surfaces' callers
+the parity suite ranges the registry census over every rostered surface C432-NO-GRANT-OPS: the surfaces' own mints diverge on no capability, because none declares requiresHumanOrigin
+the parity suite ranges the registry census over every rostered surface C432-ALL-OPS-AVAILABLE: refuses at the GATE WALL for no capability, on either surface (gate wall)
+the parity suite ranges the registry census over every rostered surface dispatches every ask-capable capability directly, identically on both surfaces' callers
 the parity suite ranges the registry census over every rostered surface matches the committed golden registry, op by op and field by field
+399.1 D-08/D-09 — the rendered-output matrix: leg 8 produces a result document for every registered capability, from its own contract
 ALLOWED_C
 
 # ── The mutations ───────────────────────────────────────────────────────────────────────────────
@@ -395,10 +419,16 @@ MUTATIONS = {
             # BEFORE reaching the detector proves nothing". Answering in the binding's own shape is
             # also the more faithful careless commit — it is what somebody short-circuiting an op
             # inside the engine writes to make the compiler stop complaining.
-            "        const answered = step.functionId === 'proposals.list'\n"
+            # 2026-10-02 (432-45): RE-AIMED from `proposals.list`, which 432-17 deleted with the inbox
+            # (the plant then short-circuited an op no clause can name and measured nothing). The
+            # subject follows the cell that caught it: 432-11 moved the chat render anchor's SECOND
+            # op from `proposals.list` to `config.get`, the read door that must print the value the
+            # first turn wrote. A `quarantine.list` short-circuit was probed first and red NOTHING
+            # (its drives only count a filed result, which the plant still files).
+            "        const answered = step.functionId === 'config.get'\n"
             "          ? {\n"
-            "            payload: { proposals: [], via: 'MUTATION_397_09_LEG_B_UNGATED' },\n"
-            "            verdict: { status: 'executed' as const, outcome: '0 proposal(s)' },\n"
+            "            payload: { config: {}, via: 'MUTATION_397_09_LEG_B_UNGATED' },\n"
+            "            verdict: { status: 'executed' as const, outcome: 'configuration read' },\n"
             "            foldLines: [] as readonly string[],\n"
             "          }\n"
             "          : await deps.invoke(\n"
@@ -778,7 +808,7 @@ esac
 
 run_leg A1 "uncatalogued capability, MCP: a live tool registered outside mapping.ts" "$MARKER_A1"
 run_leg A2 "uncatalogued capability, chat: a resolver row repointed at a literal non-registry id" "$MARKER_A2"
-run_leg B  "ungated capability: one op answered inside packages/agent, around invokeFunction" "proposals.list"
+run_leg B  "ungated capability: one op answered inside packages/agent, around invokeFunction" "config.get"
 run_leg C  "SC-4's own rule: a registered capability that no scenario row carries" "runs.list"
 
 # ── The close ───────────────────────────────────────────────────────────────────────────────────
@@ -793,8 +823,8 @@ fi
 echo "PASS — a capability registered outside the declared MCP catalogue is named by the reverse-"
 echo "       completeness cell AND by the shipped binary's own anchor; a resolver alias repointed at"
 echo "       a literal id no registry op declares is named on three independent axes; and ONE op"
-echo "       answered around invokeFunction inside packages/agent is named by the chat surface wall"
-echo "       and by the missing gate audit row; and a capability the registry declares that no"
+echo "       answered around invokeFunction inside packages/agent is named by the render anchor that"
+echo "       reads the op's own payload back; and a capability the registry declares that no"
 echo "       scenario row carries is named by the census leg CI runs on every PR (SC-4). Every leg"
 echo "       observed RED on exactly its allowed cells"
 echo "       and no others, every red NAMED the subject, every restore was byte-identical by"
