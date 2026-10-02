@@ -63,6 +63,23 @@ export class MarkWriterLeaseBusyError extends Error {
   }
 }
 
+/**
+ * 2026-10-02 (quick 261002-hyg): the knowledge-change sibling of {@link MarkWriterLeaseBusyError}.
+ * A change met the writer lease held by another agent-qa process that is not a daemon, so it was
+ * not handed anywhere and nothing was changed. `holderPid` is absent when the holder released
+ * between the lease check and this refusal.
+ */
+export class KnowledgeWriterLeaseBusyError extends Error {
+  constructor(readonly holderPid: number | undefined) {
+    super(holderPid === undefined
+      ? 'Another agent-qa process was writing to this knowledge store and has just finished; nothing was '
+        + 'changed. Retry the change.'
+      : `Another agent-qa process (pid ${holderPid}) is writing to this knowledge store; nothing was `
+        + 'changed. Retry the change when it finishes.')
+    this.name = 'KnowledgeWriterLeaseBusyError'
+  }
+}
+
 /** The fix's target left the store between planning and publication; gold and evidence stand, no receipt. */
 export class MarkFixNotAppliedError extends Error {
   constructor(readonly reason: string) {

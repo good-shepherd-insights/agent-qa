@@ -375,3 +375,105 @@ describe('a direct knowledge change routes by lease state (432-12)', () => {
     releaseLease({ knowledgeRoot: where.knowledgeRoot, leaseId: held.leaseId })
   })
 })
+
+// 2026-10-02 (quick 261002-hyg, the 432-13 #1 knowledge-change note): a change that meets a fresh
+// writer lease held by another agent-qa process that is NOT a registered daemon (a dashboard's
+// post-run curation, another terminal's change) used to answer `DaemonNotRunningError` ("Start
+// agent-qa daemon"). The holder is a process that is writing, not a missing daemon, so the CLI's
+// delegate now refuses by name with the holder's pid and the mark's wording. A registered daemon
+// nobody answers for keeps `DaemonNotRunningError`. Nothing is written in either case.
+describe('a knowledge change under a holder that is not a live daemon (quick 261002-hyg)', () => {
+  async function snapshot(where: Fixture): Promise<string> {
+    const { readdirSync, readFileSync, statSync } = await import('node:fs')
+    const lines: string[] = []
+    const walk = (dir: string): void => {
+      for (const name of readdirSync(dir).sort()) {
+        const path = join(dir, name)
+        if (statSync(path).isDirectory()) walk(path)
+        else lines.push(`${path}\t${readFileSync(path).toString('base64')}`)
+      }
+    }
+    walk(where.knowledgeRoot)
+    return lines.join('\n')
+  }
+
+  it('C-HYG-KNOWLEDGE-HOLDER-BUSY: refuses by name with the holder pid, changes nothing, and a retry after release applies', async () => {
+    const where = fixture('busy')
+    const recordId = await seedRecord(where)
+    const { acquireWriterLease, releaseLease, readWriterLease } =
+      await import('@vostride/agent-qa-knowledge-local')
+    const held = acquireWriterLease(where.knowledgeRoot)
+    if (held.kind !== 'acquired') throw new Error('fixture could not take the lease')
+
+    const caller = host(where, {
+      knowledgeChangeDelegate: delegateKnowledgeChangeViaDaemon({
+        agentQaRoot: where.agentQaRoot,
+        resolveKnowledgeRoot: () => where.knowledgeRoot,
+      }),
+    })
+    const operationId = '7d6c5b4a-3e2f-4a1b-9c8d-7e6f5a4b3c2d'
+    const before = await snapshot(where)
+    const leaseBefore = readWriterLease(where.knowledgeRoot)
+
+    const refusal = await invokeFunction(caller.registry, 'knowledge.forget', {
+      target: { grain: 'record', recordId }, operationId,
+    }, CALLER).then(() => undefined, (error: unknown) => error as Error & { holderPid?: number })
+
+    expect(refusal).toMatchObject({ name: 'KnowledgeWriterLeaseBusyError', holderPid: process.pid })
+    expect(refusal?.message).toContain(`Another agent-qa process (pid ${process.pid})`)
+    expect(refusal?.message).toContain('nothing was changed')
+    expect(refusal?.message).toContain('Retry the change when it finishes')
+    expect(refusal?.message).not.toContain('agent-qa daemon')
+    expect(await snapshot(where), 'nothing was written').toBe(before)
+    expect(readWriterLease(where.knowledgeRoot), 'the holder keeps its lease').toEqual(leaseBefore)
+
+    releaseLease({ knowledgeRoot: where.knowledgeRoot, leaseId: held.leaseId })
+    const applied = await invokeFunction(caller.registry, 'knowledge.forget', {
+      target: { grain: 'record', recordId }, operationId,
+    }, CALLER) as KnowledgeChangeOutput
+    expect(applied).toMatchObject({ outcome: 'applied', verb: 'forget', operationId, recordIds: [recordId] })
+  })
+
+  it('C-HYG-KNOWLEDGE-HOLDER-GONE: a holder that released before the delegate looked refuses with no pid', async () => {
+    const where = fixture('gone')
+    const delegate = delegateKnowledgeChangeViaDaemon({
+      agentQaRoot: where.agentQaRoot,
+      resolveKnowledgeRoot: () => where.knowledgeRoot,
+    })
+    const refusal = await delegate({
+      request: { verb: 'forget', input: { target: { grain: 'record', recordId: 'r' } } },
+      operationId: '1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d',
+    }).then(() => undefined, (error: unknown) => error as Error & { holderPid?: number })
+    expect(refusal).toMatchObject({ name: 'KnowledgeWriterLeaseBusyError', holderPid: undefined })
+    expect(refusal?.message).toContain('has just finished; nothing was changed. Retry the change.')
+  })
+
+  it('C-HYG-KNOWLEDGE-DAEMON-UNREACHABLE: a lease naming a registered daemon nobody answers for keeps DaemonNotRunningError', async () => {
+    const where = fixture('unreachable')
+    const recordId = await seedRecord(where)
+    const { acquireWriterLease, releaseLease } = await import('@vostride/agent-qa-knowledge-local')
+    const held = acquireWriterLease(where.knowledgeRoot)
+    if (held.kind !== 'acquired') throw new Error('fixture could not take the lease')
+    writeDaemonRegistration(where.agentQaRoot, {
+      schemaVersion: DAEMON_REGISTRATION_SCHEMA_VERSION,
+      instanceId: INSTANCE_ID,
+      pid: process.pid,
+      socketPath: join(where.root, 'gone.sock'),
+      startedAtMs: Date.now(),
+    })
+    const caller = host(where, {
+      knowledgeChangeDelegate: delegateKnowledgeChangeViaDaemon({
+        agentQaRoot: where.agentQaRoot,
+        resolveKnowledgeRoot: () => where.knowledgeRoot,
+      }),
+    })
+    const before = await snapshot(where)
+
+    await expect(invokeFunction(caller.registry, 'knowledge.forget', {
+      target: { grain: 'record', recordId },
+    }, CALLER)).rejects.toMatchObject({ name: 'DaemonNotRunningError' })
+    expect(await snapshot(where)).toBe(before)
+
+    releaseLease({ knowledgeRoot: where.knowledgeRoot, leaseId: held.leaseId })
+  })
+})

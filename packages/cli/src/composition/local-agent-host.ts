@@ -10,6 +10,7 @@ import type { FunctionRegistry } from '@vostride/agent-qa-agent'
 import { AuthoringDraftEditOutputSchema } from '@vostride/agent-qa-schema'
 import {
   createFeedbackPortForHost,
+  KnowledgeWriterLeaseBusyError,
   MarkWriterLeaseBusyError,
   type MarkWriterAuthority,
   type WholeMarkDelegate,
@@ -2263,6 +2264,12 @@ export function composeCliLocalAgent(input: ComposeCliLocalAgentInput): LocalAge
  * operation identity, and reads the daemon's answer back as the writer's result. The daemon holds
  * the lease and applies with its own authority; nothing is filed or claimed on either side. A mark
  * never reaches here: it changes knowledge through `runs.mark`.
+ *
+ * 2026-10-02 (quick 261002-hyg): the holder is classified first, as `delegateMarkViaDaemon` does.
+ * A live daemon is invoked; a lease naming a registered daemon nobody answers for refuses with
+ * `DaemonNotRunningError`; any other holder is another agent-qa process that is writing, and the
+ * change refuses at once with `KnowledgeWriterLeaseBusyError`. It does not wait: knowledge-local
+ * calls this from inside its held-lease branch, which cannot fall back to a local apply.
  */
 export function delegateKnowledgeChangeViaDaemon(input: {
   readonly agentQaRoot: string
@@ -2272,9 +2279,20 @@ export function delegateKnowledgeChangeViaDaemon(input: {
     if (request.verb === 'mark') {
       throw new TypeError('a mark changes knowledge through runs.mark, never through a change op')
     }
+    const knowledgeRoot = await input.resolveKnowledgeRoot()
+    const lease = LOCAL_DAEMON_CAPABILITIES.readWriterLease(knowledgeRoot)
+    const holderPid = lease.kind === 'parsed' ? lease.lease.pid : undefined
+    const daemon = await classifyDaemonRegistration({ agentQaRoot: input.agentQaRoot, knowledgeRoot })
+    if (daemon.kind !== 'live-confirmed') {
+      if ((daemon.kind === 'unreachable-lease-fresh' || daemon.kind === 'unreachable-lease-stale')
+        && daemon.registration.pid === holderPid) {
+        throw new DaemonNotRunningError(daemon.kind)
+      }
+      throw new KnowledgeWriterLeaseBusyError(holderPid)
+    }
     const answer = KnowledgeChangeOutputSchema.parse(await invokeViaDaemon({
       agentQaRoot: input.agentQaRoot,
-      knowledgeRoot: await input.resolveKnowledgeRoot(),
+      knowledgeRoot,
       // The verb's own change op: `knowledge.accept`, `knowledge.reject` or `knowledge.forget`.
       functionId: `knowledge.${request.verb}`,
       input: { ...request.input, operationId },
