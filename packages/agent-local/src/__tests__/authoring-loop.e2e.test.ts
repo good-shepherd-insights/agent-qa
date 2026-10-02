@@ -1678,11 +1678,13 @@ describe('authoring.draft.write end to end through the composition root', () => 
       HUMAN,
     )) as AuthoringFunnelGetOutput
 
-    // `built` is still the receipts this host minted. `accepted` counted human decisions on filed
-    // drafts; none is filed now, so it has nothing to count and the acceptance flag cannot fire.
+    // `built` is still the receipts this host minted. RE-SPELLED 2026-10-02 (quick 261002-ctr):
+    // `accepted` counted human decisions on filed drafts and was 0 here; `writeEligible` counts the
+    // receipts whose disposition the loop writes, so it measures the twelve written files, and
+    // twelve of twelve above the floor is a loop that did not filter: the flag fires.
     expect(funnel.stages.built).toBe(12)
-    expect(funnel.stages.accepted).toBe(0)
-    expect(funnel.acceptanceFailure).toBe(false)
+    expect(funnel.stages.writeEligible).toBe(written.length)
+    expect(funnel.acceptanceFailure).toBe(true)
   })
 
   it('refuses to author at all on a host that cannot WRITE what it authors', async () => {

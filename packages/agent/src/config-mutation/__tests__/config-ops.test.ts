@@ -52,7 +52,7 @@ import type { MaskingSeedSources } from '@vostride/agent-qa-safety'
 import { describe, expect, it } from 'vitest'
 import { Document as YamlDocument, isMap, isScalar, isSeq, parseDocument } from 'yaml'
 
-import { invokeFunction } from '../../functions/invoke.js'
+import { FunctionInputError, invokeFunction } from '../../functions/invoke.js'
 import { configProjectScaffoldSpec } from '../../functions/ops/config-project-scaffold.js'
 import { createFunctionRegistry } from '../../functions/registry.js'
 import type { FunctionDeps } from '../../functions/spec.js'
@@ -518,7 +518,10 @@ describe('config.target.create — a create is never an upsert (CFGM-01 adjacenc
     expect(content).toContain('# How runs behave by default.')
   })
 
-  it('a created target is a NEW ORIGIN, and binding an auth state is secret-adjacent too', async () => {
+  // RE-SPELLED 2026-10-02 (quick 261002-ctr): was '… and binding an auth state is secret-adjacent
+  // too'. A create can no longer bind an auth state (the input field is gone), so it is a new origin
+  // and nothing else; the input refuses the retired field before any file is read.
+  it('a created target is a NEW ORIGIN, and the retired auth-state field is refused on the input', async () => {
     const plain = harness()
     const first = await call(plain, 'config.target.create', {
       name: 'basket',
@@ -530,15 +533,13 @@ describe('config.target.create — a create is never an upsert (CFGM-01 adjacenc
     expect(first.crossBoundaryReasons).toEqual(['new-origin'])
 
     const bound = harness()
-    const second = await call(bound, 'config.target.create', {
+    await expect(call(bound, 'config.target.create', {
       name: 'basket',
       platform: 'web',
       url: 'https://basket.example.com',
       authStateName: 'basket-default',
-    })
-    if (second.outcome !== 'applied') throw new Error('unreachable')
-    // BOTH REASONS, in the pinned vocabulary's order rather than the order they were found.
-    expect(second.crossBoundaryReasons).toEqual(['secret-adjacent-field', 'new-origin'])
+    })).rejects.toBeInstanceOf(FunctionInputError)
+    expect(bound.written).toHaveLength(0)
   })
 })
 
@@ -615,11 +616,13 @@ describe('config.target.edit — never guess, and decide from the VALUE (D-02/D-
 })
 
 describe('config.auth.set — refs only, refused on the INPUT (D-11, ratified as law)', () => {
+  // RE-SPELLED 2026-10-02 (quick 261002-ctr): the reference this cell wrote was `authStateName`,
+  // which the op no longer takes; the claim moves to the plugin declaration it still writes.
   it('carries the diff, the receipts and the config kind, and is secret-adjacent', async () => {
     const test = harness()
     const answer = await call(test, 'config.auth.set', {
       target: 'shop',
-      authStateName: 'shop-default',
+      pluginPackage: '@acme/auth',
     })
     assertTheCfgm01Sentence(test, answer, {
       action: 'config.auth.set',
@@ -627,9 +630,22 @@ describe('config.auth.set — refs only, refused on the INPUT (D-11, ratified as
     })
     if (answer.outcome !== 'applied') throw new Error('unreachable')
     expect(answer.crossBoundaryReasons).toEqual(['secret-adjacent-field'])
-    // THE DIFF CONTAINS A REFERENCE AND NOTHING ELSE: a name, at the one path this configuration
-    // binds an auth state.
-    expect(answer.shownDiff).toContain('+  authState: shop-default')
+    // THE DIFF CONTAINS A REFERENCE AND NOTHING ELSE: a package name, at the one path this
+    // configuration declares an auth plugin.
+    expect(answer.shownDiff).toContain('@acme/auth')
+  })
+
+  it('C261002-CTR-NO-AUTH-STATE-FIELD: authStateName is refused on the input by all three ops, and nothing is written', async () => {
+    for (const [id, input] of [
+      ['config.auth.set', { target: 'shop', authStateName: 'shop-default' }],
+      ['config.target.create', { name: 'basket', platform: 'web', url: 'https://basket.example.com', authStateName: 'shop-default' }],
+      ['config.target.edit', { name: 'shop', changes: { authStateName: 'shop-default' } }],
+    ] as const) {
+      const test = harness()
+      await expect(call(test, id, input), id).rejects.toBeInstanceOf(FunctionInputError)
+      expect(test.written, id).toHaveLength(0)
+      expect(test.filed, id).toHaveLength(0)
+    }
   })
 
   it('lands blocked schema-fail when the candidate does not validate', async () => {
@@ -665,9 +681,10 @@ describe('config.auth.set — refs only, refused on the INPUT (D-11, ratified as
   it('THE EDGE: a recognised credential is REFUSED on the input, and nothing is filed', async () => {
     const secret = 'AKIAQWERTYUIOPASDFGH'
     const test = harness()
+    // 2026-10-02 (quick 261002-ctr): carried in `pluginPackage` (was `authStateName`, deleted).
     const answer = await call(test, 'config.auth.set', {
       target: 'shop',
-      authStateName: secret,
+      pluginPackage: secret,
     })
 
     expect(answer.outcome).toBe('refused')
@@ -675,7 +692,7 @@ describe('config.auth.set — refs only, refused on the INPUT (D-11, ratified as
     expect(answer.reason).toBe('refs-only')
     // NAMED, so the person is told what they pasted rather than only that it was wrong.
     expect(answer.detail).toContain('awsKey')
-    expect(answer.detail).toContain('authStateName')
+    expect(answer.detail).toContain('pluginPackage')
     expect(answer.detail).toContain('workspace.envFile')
 
     // ZERO STORE AND WRITE DELTA. The refusal is decided on the input, before anything is
@@ -685,7 +702,7 @@ describe('config.auth.set — refs only, refused on the INPUT (D-11, ratified as
 
     // THE ABSENCE, WINDOWED — and it is not vacuous, because the line below proves this codebase's
     // summary channel really does print values it is given.
-    expect(configFieldSetSummaryLine('use.authState', secret)).toContain(secret)
+    expect(configFieldSetSummaryLine('plugins.auth', secret)).toContain(secret)
     for (const window of windows(secret)) expect(answer.detail).not.toContain(window)
   })
 
@@ -698,11 +715,12 @@ describe('config.auth.set — refs only, refused on the INPUT (D-11, ratified as
     expect(scanConstructedArtifact([{ label: 'probe', text: unnamed }], {}).findings).toEqual([])
 
     const test = harness()
-    const answer = await call(test, 'config.auth.set', { target: 'shop', authStateName: unnamed })
+    // 2026-10-02 (quick 261002-ctr): carried in `pluginPackage` (was `authStateName`, deleted).
+    const answer = await call(test, 'config.auth.set', { target: 'shop', pluginPackage: unnamed })
     expect(answer.outcome).toBe('refused')
     if (answer.outcome !== 'refused') throw new Error('unreachable')
     expect(answer.reason).toBe('refs-only')
-    expect(answer.detail).toContain('auth-state-name')
+    expect(answer.detail).toContain('plugin-package')
     expect(test.filed).toHaveLength(0)
 
     // THE GUARD REJECTS SOMETHING ITS OWN ASSUMPTION ADMITS, in the other direction: a legal
@@ -710,7 +728,7 @@ describe('config.auth.set — refs only, refused on the INPUT (D-11, ratified as
     const legal = harness()
     const proposed = await call(legal, 'config.auth.set', {
       target: 'shop',
-      authStateName: 'shop-default',
+      pluginPackage: '@acme/auth',
     })
     expect(proposed.outcome).toBe('applied')
   })
@@ -718,14 +736,15 @@ describe('config.auth.set — refs only, refused on the INPUT (D-11, ratified as
   it('KNOWN BOUND: a credential that is ALSO a legal reference, unnamed and unseeded, is admitted',
     async () => {
       // THE HONEST RESIDUE, recorded as a passing cell rather than left unsaid. `hunter2` is a real
-      // password and a legal auth-state slug; no detector names it and nobody seeded it, so both
-      // gates admit it and it is written as a reference. The bound is a property of the design:
+      // password and a legal package name (2026-10-02, quick 261002-ctr: the cell used the deleted
+      // auth-state field); no detector names it and nobody seeded it, so both gates admit it and it
+      // is written as a reference. The bound is a property of the design:
       // a rule that admits by SHAPE cannot see inside a value that has the right shape.
       const password = 'hunter2'
       const admitted = harness()
       const answer = await call(admitted, 'config.auth.set', {
         target: 'shop',
-        authStateName: password,
+        pluginPackage: password,
       })
       expect(answer.outcome).toBe('applied')
 
@@ -734,7 +753,7 @@ describe('config.auth.set — refs only, refused on the INPUT (D-11, ratified as
       const seeded = harness({ seeds: { env: { APP_PASSWORD: password } } })
       const refused = await call(seeded, 'config.auth.set', {
         target: 'shop',
-        authStateName: password,
+        pluginPackage: password,
       })
       expect(refused.outcome).toBe('refused')
       if (refused.outcome !== 'refused') throw new Error('unreachable')
@@ -747,7 +766,7 @@ describe('config.auth.set — refs only, refused on the INPUT (D-11, ratified as
     const test = harness()
     const answer = await call(test, 'config.auth.set', {
       target: 'checkout',
-      authStateName: 'shop-default',
+      pluginPackage: '@acme/auth',
     })
     expect(answer.outcome).toBe('refused')
     if (answer.outcome !== 'refused') throw new Error('unreachable')
@@ -941,7 +960,7 @@ describe('the config action class is CLOSED, and the registry is where that is l
       ['config.field.set', { path: 'use.parallel', value: true }],
       ['config.target.create', { name: 'basket', platform: 'web', url: 'https://basket.example.com' }],
       ['config.target.edit', { name: 'shop', changes: { url: 'https://shop.example.com/x' } }],
-      ['config.auth.set', { target: 'shop', authStateName: 'shop-default' }],
+      ['config.auth.set', { target: 'shop', pluginPackage: '@acme/auth' }],
       ['config.hook.add', { name: 'Seed', runtime: 'node', file: 'scripts/seed.mjs' }],
     ]
     for (const [id, input] of samples) {
@@ -1026,9 +1045,9 @@ describe('C432-CONFIG-THREE-OPS: field, target create and target edit write in t
         platform: 'web',
         url: 'https://basket.example.com',
         environment: 'production',
-        authStateName: 'basket-default',
       })
 
+      // 2026-10-02 (quick 261002-ctr): no `use.authState` set rides along; the field is gone.
       expect(answer).toMatchObject({
         outcome: 'applied',
         files: [CONFIG_FILE],
@@ -1036,7 +1055,6 @@ describe('C432-CONFIG-THREE-OPS: field, target create and target edit write in t
           'registry.targets.basket.platform',
           'registry.targets.basket.url',
           'registry.targets.basket.environment',
-          'use.authState',
         ],
       })
       // The expect comes first, so a target someone else created meanwhile refuses the write
@@ -1050,7 +1068,6 @@ describe('C432-CONFIG-THREE-OPS: field, target create and target edit write in t
             path: ['registry', 'targets', 'basket'],
             value: { platform: 'web', url: 'https://basket.example.com', environment: 'production' },
           },
-          { op: 'set', path: ['use', 'authState'], value: 'basket-default' },
         ],
       }])
       expect(test.filed).toHaveLength(0)
@@ -1133,25 +1150,25 @@ describe('C432-CONFIG-THREE-OPS: field, target create and target edit write in t
 })
 
 describe('C432-CONFIG-SIX-OPS: auth, hook and scaffold write in the call as well', () => {
-  it('C432-CONFIG-SIX-OPS: config.auth.set binds the state and appends the plugin as field changes',
+  // RE-SPELLED 2026-10-02 (quick 261002-ctr): was '… binds the state and appends the plugin …'. The
+  // op binds no state now (the committed configuration has no key for one); it appends the plugin.
+  it('C432-CONFIG-SIX-OPS: config.auth.set appends the plugin as a field change',
     async () => {
       const test = harness()
       const answer = await change(test, 'config.auth.set', {
         target: 'shop',
-        authStateName: 'shop-default',
         pluginPackage: '@acme/auth',
       })
 
       expect(answer).toMatchObject({
         outcome: 'applied',
         files: [CONFIG_FILE],
-        fields: ['use.authState', 'plugins.auth.0.package'],
+        fields: ['plugins.auth.0.package'],
         crossBoundaryReasons: ['secret-adjacent-field'],
       })
       expect(test.written).toEqual([{
         kind: 'fields',
         changes: [
-          { op: 'set', path: ['use', 'authState'], value: 'shop-default' },
           { op: 'append', path: ['plugins', 'auth'], value: { package: '@acme/auth' } },
         ],
       }])
@@ -1162,7 +1179,7 @@ describe('C432-CONFIG-SIX-OPS: auth, hook and scaffold write in the call as well
     const test = harness()
     const answer = await change(test, 'config.auth.set', {
       target: 'shop',
-      authStateName: 'AKIAQWERTYUIOPASDFGH',
+      pluginPackage: 'AKIAQWERTYUIOPASDFGH',
     })
     expect(answer).toMatchObject({ outcome: 'refused', reason: 'refs-only' })
     expect(test.written).toEqual([])

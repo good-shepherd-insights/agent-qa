@@ -313,7 +313,7 @@ const BUILT_IN_FUNCTION_SPECS: readonly FunctionSpec[] = [
   // Bound through the OPTIONAL `authoringFunnel` bundle, whose binding site is
   // `composeLocalAgent()` in `@vostride/agent-qa-agent-local` (385 D-15 — therefore both the CLI
   // and the daemon). A host with no runtime root lists it `unbound` BY NAME rather than answering
-  // an all-zero funnel: zero built with zero accepted does not read as "nothing happened", it
+  // an all-zero funnel: zero built with zero write-eligible does not read as "nothing happened", it
   // reads as a loop that filtered everything, which is the one wrong answer that would make the
   // acceptance-failure flag unable to fire on the very hosts that most need it.
   authoringFunnelGetSpec as FunctionSpec,

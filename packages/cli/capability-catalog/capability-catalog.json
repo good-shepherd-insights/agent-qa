@@ -492,7 +492,7 @@
       ]
     },
     {
-      "description": "Report the authoring funnel for a window — built, passed stably, added value, accepted — and flag a keep rate above the ceiling as the loop failing to filter.",
+      "description": "Report the authoring funnel for a window — built, passed stably, added value, write-eligible — and flag a keep rate above the ceiling as the loop failing to filter.",
       "docAbsentReason": "D-07 (dated 2026-08-16): no canonical doc ships for this capability yet. The explicit absence is the honest state — a guessed path would existence-check green and mislead a reader — and the abstention coverage log is the demand signal for writing one.",
       "docPath": null,
       "exampleCall": {
@@ -576,7 +576,7 @@
       ]
     },
     {
-      "description": "Point a target at a stored auth state or auth plugin by NAME, written in this call.",
+      "description": "Declare an auth plugin for a configured target by package NAME, written in this call.",
       "docAbsentReason": "D-07 (dated 2026-08-16): no canonical doc ships for this capability yet. The explicit absence is the honest state — a guessed path would existence-check green and mislead a reader — and the abstention coverage log is the demand signal for writing one.",
       "docPath": null,
       "exampleCall": {
@@ -591,10 +591,6 @@
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "additionalProperties": false,
         "properties": {
-          "authStateName": {
-            "minLength": 1,
-            "type": "string"
-          },
           "envVarName": {
             "minLength": 1,
             "type": "string"
@@ -788,10 +784,6 @@
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "additionalProperties": false,
         "properties": {
-          "authStateName": {
-            "minLength": 1,
-            "type": "string"
-          },
           "environment": {
             "enum": [
               "local",
@@ -826,7 +818,7 @@
       ]
     },
     {
-      "description": "Change a configured target's URL or auth binding, written in this call.",
+      "description": "Change a configured target's URL, written in this call.",
       "docAbsentReason": "D-07 (dated 2026-08-16): no canonical doc ships for this capability yet. The explicit absence is the honest state — a guessed path would existence-check green and mislead a reader — and the abstention coverage log is the demand signal for writing one.",
       "docPath": null,
       "exampleCall": {
@@ -845,10 +837,6 @@
           "changes": {
             "additionalProperties": false,
             "properties": {
-              "authStateName": {
-                "minLength": 1,
-                "type": "string"
-              },
               "url": {
                 "minLength": 1,
                 "type": "string"
@@ -2217,5 +2205,5 @@
       "shortDescription": "Triage agent-qa run failures"
     }
   ],
-  "rowsDigest": "db4d80e3a22ee5936d87c36edba7da81d1f0bafd86facbe450f57c3e0e8f1ff1"
+  "rowsDigest": "d808fc68659403d6ee4d293c82dc70b15cbd6d673d75d4f79813702ce02262e8"
 }

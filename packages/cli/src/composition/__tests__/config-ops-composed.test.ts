@@ -29,7 +29,7 @@ import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSy
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import { createFunctionRegistry, invokeFunction } from '@vostride/agent-qa-agent'
+import { FunctionInputError, createFunctionRegistry, invokeFunction } from '@vostride/agent-qa-agent'
 import * as dashboard from '@vostride/agent-qa-dashboard'
 import type { FunctionDeps } from '@vostride/agent-qa-agent'
 import { isCanonicalHookId } from '@vostride/agent-qa-ids'
@@ -243,9 +243,10 @@ describe('the 395-05 actions over the real ports (D-01)', () => {
 
   it('(C5) a credential in an auth reference is refused, and the file is never opened for writing',
     async () => {
+      // 2026-10-02 (quick 261002-ctr): carried in `pluginPackage` (was `authStateName`, deleted).
       const answer = await call('config.auth.set', {
         target: 'local-form',
-        authStateName: 'AKIAQWERTYUIOPASDFGH',
+        pluginPackage: 'AKIAQWERTYUIOPASDFGH',
       })
       expect(answer.outcome).toBe('refused')
       if (answer.outcome !== 'refused') throw new Error('unreachable')
@@ -521,6 +522,57 @@ async function holdTurn(path: string): Promise<{ held: Promise<void>; release: (
 function settle(ms = 50): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
 }
+
+// 2026-10-02 (quick 261002-ctr): `authStateName` wrote `use.authState`, and the committed
+// configuration has no such key, so through real whole-config validation `config.auth.set`,
+// `config.target.create` and `config.target.edit` answered `blocked / schema-fail` on every call that
+// used it. The field is deleted from all three. These cells are the absence witness and the reason.
+describe('C261002-CTR-NO-AUTH-STATE-FIELD: the committed configuration binds no auth state, so no op takes one', () => {
+  it('the REAL whole-config validation refuses an auth-state binding at both places an op could write it', async () => {
+    const validate = createConfigValidatePort()
+    const candidate = (text: string) => validate.validate({
+      configFile: 'agent-qa.config.yaml',
+      hooksFile: 'hooks.yaml',
+      files: [{ path: 'agent-qa.config.yaml', bytes: new TextEncoder().encode(text) }],
+    })
+    // The seeded file is valid, so a refusal below is about the added key and nothing else.
+    expect(await candidate(SEEDED_CONFIG)).toEqual({ ok: true })
+
+    const underUse = await candidate(`${SEEDED_CONFIG}  authState: shop-default\n`)
+    expect(underUse.ok).toBe(false)
+    expect(JSON.stringify(underUse)).toContain('authState')
+
+    const underTarget = await candidate(SEEDED_CONFIG.replace(
+      '      url: http://127.0.0.1:8931/form.html\n',
+      '      url: http://127.0.0.1:8931/form.html\n      authState: shop-default\n',
+    ))
+    expect(underTarget.ok).toBe(false)
+    expect(JSON.stringify(underTarget)).toContain('authState')
+  })
+
+  it('all three ops refuse authStateName on the input, and the file is never written', async () => {
+    for (const [id, input] of [
+      ['config.auth.set', { target: 'local-form', authStateName: 'shop-default' }],
+      ['config.target.create', {
+        name: 'shop', platform: 'web', url: 'https://shop.example.com', authStateName: 'shop-default',
+      }],
+      ['config.target.edit', { name: 'local-form', changes: { authStateName: 'shop-default' } }],
+    ] as const) {
+      await expect(call(id, input), id).rejects.toBeInstanceOf(FunctionInputError)
+      expect(writtenText(), id).toBe(SEEDED_CONFIG)
+    }
+    expect(filed).toHaveLength(0)
+  })
+
+  it('config.auth.set still answers applied through the real validation for what the schema accepts', async () => {
+    const answer = await call('config.auth.set', { target: 'local-form', pluginPackage: '@acme/auth' })
+    expect(answer.outcome).toBe('applied')
+    if (answer.outcome !== 'applied') throw new Error('unreachable')
+    expect(answer.fields).toEqual(['plugins.auth.0.package'])
+    expect(writtenText()).toContain('@acme/auth')
+    expect(writtenText()).not.toContain('authState')
+  })
+})
 
 describe('C432-CONFIG-THREE-OPS: the direct write meets an outside edit in its own turn', () => {
   it('C432-CONFIG-THREE-OPS: a field set keeps an outside edit to another field, and its diff is its own',

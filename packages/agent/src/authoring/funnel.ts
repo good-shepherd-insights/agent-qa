@@ -68,8 +68,8 @@ export interface SuiteOutcomeHistoryPortLike {
  *
  * 2026-10-01 (432-17, D-06): the proposals inbox read is deleted with the inbox. An authored test
  * that a keep-gate did not reject is written in its own call, so no person accepts it afterwards
- * and nothing records such a decision. See {@link projectAuthoringFunnel} for what `accepted`
- * reports now.
+ * and nothing records such a decision. The terminal stage reads the receipts alone (see
+ * {@link projectAuthoringFunnel}).
  *
  * THE STABILITY HALVES RIDE THE SAME BUNDLE for the same argument, and they are OPTIONAL within
  * it: a host may genuinely have receipts and no outcome projection, and D-14's whole point is
@@ -118,20 +118,19 @@ export function scopeReceiptsToWindow(
  * authored — no draft, no receipt and no gate-run (D-04) — so nothing on this host durably records
  * one, and reporting `0` would say "no author was ever refused" about something nothing counts.
  *
- * `accepted` COUNTS RECORDED HUMAN ACCEPTANCES, AND NONE ARE RECORDED (2026-10-01, 432-17, D-06).
- * It used to read applied decisions off `test-draft` proposal envelopes. Since 432-08 a draft a
- * keep-gate did not reject is written to its test path in the call that authored it, nothing is
- * filed, and 432-17 deletes the inbox the decisions lived in — so the projection hands the pure
- * computation no acceptances, `accepted` reads 0 and the acceptance-failure flag cannot fire. The
- * stage and flag stay in the published shape; whether the funnel keeps them is recorded for a later
- * decision rather than changed here.
+ * THE TERMINAL STAGE IS READ OFF THE RECEIPTS (2026-10-02, quick 261002-ctr). It was `accepted`,
+ * applied decisions read off `test-draft` proposal envelopes. Since 432-08 a draft a keep-gate did
+ * not reject is written to its test path in the call that authored it and nothing is filed, and
+ * 432-17 deleted the inbox, so `accepted` read 0 on every host. `writeEligible` counts the receipts
+ * whose stored disposition D-06 writes, which `computeAuthoringFunnel` reads itself, so this
+ * projection hands it nothing but the window's receipts.
  */
 export async function projectAuthoringFunnel(
   window: AuthoringFunnelWindow,
   port: AuthoringFunnelPortLike,
 ): Promise<AuthoringFunnel> {
   const receipts = scopeReceiptsToWindow(await port.receipts.list(), window)
-  return computeAuthoringFunnel({ receipts, acceptances: [], sideCounters: {} })
+  return computeAuthoringFunnel({ receipts, sideCounters: {} })
 }
 
 /**

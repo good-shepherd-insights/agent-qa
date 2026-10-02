@@ -258,13 +258,15 @@ describe('C432-TARGET-CREATE-ENVIRONMENT: a target declares its class at creatio
     expect(writtenTarget(test, 'strasse')).toEqual({ platform: 'web', url: 'https://a.example' })
   })
 
-  it('C432-TARGET-CREATE-ENVIRONMENT: the class sits beside an auth binding and is named in the summary line', async () => {
+  // RE-SPELLED 2026-10-02 (quick 261002-ctr): was '… sits beside an auth binding …'. The create
+  // binds no auth state now (the committed configuration has no key for one), so the file gains no
+  // `use.authState` beside the class.
+  it('C432-TARGET-CREATE-ENVIRONMENT: the class is written and named in the summary line', async () => {
     const test = harness()
     const answer = await create(test, {
       name: 'checkout',
       platform: 'web',
       url: 'https://checkout.example.com',
-      authStateName: 'buyer',
       environment: 'production',
     })
 
@@ -274,7 +276,7 @@ describe('C432-TARGET-CREATE-ENVIRONMENT: a target declares its class at creatio
     const parsed = parseYaml(utf8Decode(test.bytes.get(CONFIG_FILE) as Uint8Array)) as {
       use?: { authState?: string }
     }
-    expect(parsed.use?.authState).toBe('buyer')
+    expect(parsed.use?.authState).toBeUndefined()
     // An undeclared create keeps the summary line it always had.
     const plain = harness()
     const undeclared = await create(plain, { name: 'checkout', platform: 'web', url: 'https://checkout.example.com' })

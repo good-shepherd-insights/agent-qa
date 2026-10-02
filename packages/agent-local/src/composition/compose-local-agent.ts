@@ -3207,8 +3207,9 @@ export function composeLocalAgent(input: ComposeLocalAgentInput): LocalAgentHost
       // structurally unable to write the records it reports on. Two narrow mirrors over one store
       // rather than one wide port.
       //
-      // 2026-10-01 (432-17, D-06): the bundle no longer reads the proposals inbox; `accepted`
-      // counts recorded acceptances, and none are recorded (see `projectAuthoringFunnel`).
+      // 2026-10-01 (432-17, D-06): the bundle no longer reads the proposals inbox. 2026-10-02
+      // (quick 261002-ctr): the terminal stage is `writeEligible`, read off the receipts this
+      // bundle lists (see `projectAuthoringFunnel`).
       //
       // `outcomes` IS BOUND (394-17, step b): the port's two verbs now LEAD with `product`, so the
       // binding reads the run-outcome projection on its own primary key instead of guessing a

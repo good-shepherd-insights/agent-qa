@@ -122,9 +122,6 @@ import type {
   ConfigWritePortLike,
 } from './ports.js'
 
-/** Where the committed configuration binds a stored auth state. See {@link AUTH_STATE_CONFIG_PATH}. */
-export const AUTH_STATE_CONFIG_PATH = 'use.authState'
-
 /** The registry map every target op addresses. */
 const TARGETS_PATH = 'registry.targets'
 
@@ -275,7 +272,7 @@ export async function changeConfigField(
  *
  * A CREATE IS NEVER AN UPSERT, and this is CFGM-01's adjacency edge. `setIn` at an occupied path
  * REPLACES what is there, silently and comment-destructively: a person who asked to add a target
- * would get a proposal that quietly deleted the `authState` binding, the `product` name and the
+ * would get a proposal that quietly deleted the `environment` class, the `product` name and the
  * mobile fields of the one they already had, rendered as a diff they would have to read line by line
  * to notice. The refusal names the existing target and points at the op that edits one.
  */
@@ -287,15 +284,9 @@ export async function createConfigTarget(
   const target = requireConfigFile(set)
   const entryPath = `${TARGETS_PATH}.${input.name}`
 
-  // D-11 FIRST, BEFORE THE DOCUMENT IS TOUCHED. `authStateName` reaches the same landing site
-  // `config.auth.set` writes, so it is the same reference and gets the same admission.
-  const refusal = refuseNonReferences(deps, input.action, [
-    ...(input.authStateName === undefined
-      ? []
-      : [{ field: 'authStateName', kind: 'auth-state-name' as const, value: input.authStateName }]),
-  ])
-  if (refusal !== undefined) return refusal
-
+  // 2026-10-02 (quick 261002-ctr): no auth-state reference to admit. The input carried
+  // `authStateName` and wrote it to `use.authState`, which the committed configuration has no key
+  // for, so every such create was blocked by whole-config validation; the field is gone.
   const facts = await deps.configFiles.inspect({
     ...(target.bytes === undefined ? {} : { bytes: target.bytes }),
     paths: [entryPath, TARGETS_PATH],
@@ -321,7 +312,7 @@ export async function createConfigTarget(
     url: input.url,
     ...(input.environment === undefined ? {} : { environment: input.environment }),
   }
-  let bytes = (await deps.configFiles.setField({
+  const bytes = (await deps.configFiles.setField({
     ...(target.bytes === undefined ? {} : { bytes: target.bytes }),
     path: entryPath,
     value: entry,
@@ -335,20 +326,6 @@ export async function createConfigTarget(
     { op: 'expect', path: configSegments(entryPath), value: null },
     { op: 'set', path: configSegments(entryPath), value: entry },
   ]
-  if (input.authStateName !== undefined) {
-    const bound = await deps.configFiles.setField({
-      bytes,
-      path: AUTH_STATE_CONFIG_PATH,
-      value: input.authStateName,
-    })
-    bytes = bound.bytes
-    fieldEdits.push({
-      configPath: AUTH_STATE_CONFIG_PATH,
-      ...(bound.previousValue === undefined ? {} : { oldValue: bound.previousValue }),
-      newValue: input.authStateName,
-    })
-    changes.push({ op: 'set', path: configSegments(AUTH_STATE_CONFIG_PATH), value: input.authStateName })
-  }
 
   return await publishConfigChange({
     action: input.action,
@@ -377,17 +354,8 @@ export async function editConfigTarget(
   const target = requireConfigFile(set)
   const entryPath = `${TARGETS_PATH}.${input.name}`
 
-  const refusal = refuseNonReferences(deps, input.action, [
-    ...(input.changes.authStateName === undefined
-      ? []
-      : [{
-        field: 'changes.authStateName',
-        kind: 'auth-state-name' as const,
-        value: input.changes.authStateName,
-      }]),
-  ])
-  if (refusal !== undefined) return refusal
-
+  // 2026-10-02 (quick 261002-ctr): `changes.authStateName` is gone with the other two ops' field;
+  // a url is the only change, and it is not a reference.
   const facts = await deps.configFiles.inspect({
     ...(target.bytes === undefined ? {} : { bytes: target.bytes }),
     paths: [entryPath, TARGETS_PATH],
@@ -411,7 +379,6 @@ export async function editConfigTarget(
   // model happened to serialise its arguments.
   for (const [path, value] of [
     [`${entryPath}.url`, input.changes.url],
-    [AUTH_STATE_CONFIG_PATH, input.changes.authStateName],
   ] as const) {
     if (value === undefined) continue
     const edited = await deps.configFiles.setField({
@@ -442,21 +409,23 @@ export async function editConfigTarget(
 }
 
 /**
- * Bind a target's auth in the call — references only, refused on the INPUT (D-11).
+ * Declare a target's auth plugin in the call — references only, refused on the INPUT (D-11).
  *
  * WHAT IT WRITES, AND WHERE, IS A FACT ABOUT THIS PRODUCT'S CONFIGURATION SCHEMA RATHER THAN A
- * CHOICE. The committed configuration has exactly one place that binds a stored auth state and it is
- * `use.authState` (`AuthStateUseSchema`: a name, or `{ name, load, capture }`). It has exactly one
- * place that declares an auth plugin and it is the `plugins.auth` sequence
- * (`AuthPluginDeclarationSchema`: `{ package }` or `{ path }`, `.strict()`). It has NO place at all
- * for an environment variable's name, which is why `envVarName` is refused rather than written —
- * see the `unsupported-reference` arm below.
+ * CHOICE. The committed configuration has exactly one place that declares an auth plugin and it is
+ * the `plugins.auth` sequence (`AuthPluginDeclarationSchema`: `{ package }` or `{ path }`,
+ * `.strict()`). It has NO place at all for an environment variable's name, which is why
+ * `envVarName` is refused rather than written — see the `unsupported-reference` arm below.
  *
- * THE `target` IS RESOLVED, NEVER WRITTEN, and that is deliberate. A stored auth state is captured
- * FOR a target (`AuthStateMetadata` carries both `target` and `name`), so which identity a run acts
- * as is the pair (the target the run uses, the name this configuration binds). Naming the target
- * here is what lets the op refuse a binding for a target nobody configured — a typed not-found with
- * the configured names, rather than a proposal that would bind an identity to nothing.
+ * 2026-10-02 (quick 261002-ctr): IT HAS NO PLACE FOR A STORED AUTH STATE'S BINDING EITHER. This op
+ * once wrote `authStateName` to `use.authState`; `core`'s committed `UseSchema` is `.strict()` with
+ * no such key (only a test's or a suite's own `use` has one), so whole-config validation answered
+ * every such call `blocked / schema-fail`. The input field is deleted rather than written somewhere
+ * the schema would also refuse.
+ *
+ * THE `target` IS RESOLVED, NEVER WRITTEN, and that is deliberate. Naming the target is what lets
+ * the op refuse a declaration for a target nobody configured — a typed not-found with the configured
+ * names, rather than a change that names nothing.
  */
 export async function setConfigAuth(
   input: ConfigAuthSetInput & { readonly action: string },
@@ -469,9 +438,6 @@ export async function setConfigAuth(
   // this list because it is never written: a credential arriving there resolves against the registry
   // and produces `target-not-found`, which discloses nothing and says something true.
   const refusal = refuseNonReferences(deps, input.action, [
-    ...(input.authStateName === undefined
-      ? []
-      : [{ field: 'authStateName', kind: 'auth-state-name' as const, value: input.authStateName }]),
     ...(input.pluginPackage === undefined
       ? []
       : [{ field: 'pluginPackage', kind: 'plugin-package' as const, value: input.pluginPackage }]),
@@ -515,21 +481,6 @@ export async function setConfigAuth(
   let bytes = target.bytes
   const fieldEdits: CrossBoundaryFieldEdit[] = []
   const changes: ConfigChange[] = []
-
-  if (input.authStateName !== undefined) {
-    const bound = await deps.configFiles.setField({
-      ...(bytes === undefined ? {} : { bytes }),
-      path: AUTH_STATE_CONFIG_PATH,
-      value: input.authStateName,
-    })
-    bytes = bound.bytes
-    fieldEdits.push({
-      configPath: AUTH_STATE_CONFIG_PATH,
-      ...(bound.previousValue === undefined ? {} : { oldValue: bound.previousValue }),
-      newValue: input.authStateName,
-    })
-    changes.push({ op: 'set', path: configSegments(AUTH_STATE_CONFIG_PATH), value: input.authStateName })
-  }
 
   if (input.pluginPackage !== undefined) {
     // APPENDED PAST THE END, AT A LENGTH THE DOCUMENT ITSELF REPORTED. Writing at a fixed index

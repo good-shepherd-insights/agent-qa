@@ -153,8 +153,10 @@ describe('set_auth is refs-only by shape, not by discipline (D-11)', () => {
     expect(namesAValueBearingField(['target', 'authStateSecret'])).toEqual(['authStateSecret'])
   })
 
-  it('the keyset is exactly the four references, in the order the shape declares them', () => {
-    expect(keys).toEqual(['target', 'authStateName', 'pluginPackage', 'envVarName'])
+  // RE-SPELLED 2026-10-02 (quick 261002-ctr): was '… exactly the four references …'. `authStateName`
+  // is gone: it wrote `use.authState`, a key the committed configuration refuses.
+  it('the keyset is exactly the three references, in the order the shape declares them', () => {
+    expect(keys).toEqual(['target', 'pluginPackage', 'envVarName'])
   })
 
   it('no field of it could carry a credential value', () => {

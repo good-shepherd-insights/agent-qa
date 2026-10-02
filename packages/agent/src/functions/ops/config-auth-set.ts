@@ -13,8 +13,10 @@
 // masking or the refusal of a literal credential changed with the scope.
 //
 // A LITERAL CREDENTIAL ARRIVING IN THE INPUT IS ITSELF THE FAILURE. D-11 ratified this action as
-// writing REFERENCES — the name of an auth state, the name of a plugin package, the name of an
-// environment variable — and never a value. 395-02 enforced the first half in the SHAPE of
+// writing REFERENCES — the name of a plugin package, the name of an environment variable — and
+// never a value. 2026-10-02 (quick 261002-ctr): it also named an auth state, written to
+// `use.authState`; the committed configuration has no such key, so that field is deleted (see
+// `setConfigAuth`). 395-02 enforced the first half in the SHAPE of
 // `ConfigAuthSetInputSchema`: there is no field a credential could be assigned to, which is a
 // property of the type rather than a rule anybody remembers. This op enforces the second half, on
 // the INPUT and before a single byte is mutated, because a law about what the configuration may hold
@@ -48,7 +50,7 @@ export const CONFIG_AUTH_SET_FUNCTION_ID = 'config.auth.set'
 
 export const configAuthSetSpec: FunctionSpec<ConfigAuthSetInput, ConfigChangeOutput> = {
   id: CONFIG_AUTH_SET_FUNCTION_ID,
-  summary: 'Point a target at a stored auth state or auth plugin by NAME, written in this call.',
+  summary: 'Declare an auth plugin for a configured target by package NAME, written in this call.',
   resultKind: 'unary',
   input: ConfigAuthSetInputSchema,
   output: ConfigChangeOutputSchema,

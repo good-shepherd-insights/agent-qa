@@ -658,7 +658,7 @@ export const SCENARIO_TABLE = Object.freeze([
   // 395 D-03: PARSING inputs for the config write half, on the reasoning every unbound row shares.
   scenario({
     opId: 'config.auth.set',
-    input: { target: 'shop', authStateName: 'shop-default' },
+    input: { target: 'shop', pluginPackage: '@acme/auth' },
     perSurface: {
       chat: { reachable: true },
       mcp: { reachable: { tool: 'agent_qa_change_config' } },

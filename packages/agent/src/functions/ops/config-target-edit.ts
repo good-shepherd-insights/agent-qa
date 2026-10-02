@@ -35,7 +35,7 @@ export const CONFIG_TARGET_EDIT_FUNCTION_ID = 'config.target.edit'
 
 export const configTargetEditSpec: FunctionSpec<ConfigTargetEditInput, ConfigChangeOutput> = {
   id: CONFIG_TARGET_EDIT_FUNCTION_ID,
-  summary: 'Change a configured target\'s URL or auth binding, written in this call.',
+  summary: 'Change a configured target\'s URL, written in this call.',
   resultKind: 'unary',
   input: ConfigTargetEditInputSchema,
   output: ConfigChangeOutputSchema,

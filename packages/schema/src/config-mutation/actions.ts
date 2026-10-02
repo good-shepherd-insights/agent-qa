@@ -61,8 +61,7 @@ export const ConfigTargetCreateInputSchema = z.object({
   platform: z.literal('web'),
   /** The base URL, absolute. D-15's hostname gate runs before this op is reached. */
   url: z.string().min(1),
-  /** A REFERENCE to a configured auth state by name (D-11). */
-  authStateName: z.string().min(1).optional(),
+  // 2026-10-02 (quick 261002-ctr): no `authStateName`. See `ConfigAuthSetInputSchema`.
   /** The target's class (432 D-19). Omitted means undeclared; production runs need allowProduction. */
   environment: z.enum(CONFIG_TARGET_ENVIRONMENTS).optional(),
 }).strict()
@@ -70,7 +69,7 @@ export const ConfigTargetCreateInputSchema = z.object({
 export type ConfigTargetCreateInput = z.infer<typeof ConfigTargetCreateInputSchema>
 
 /**
- * `config.target.edit` — change an existing target's URL or auth-state binding.
+ * `config.target.edit` — change an existing target's URL.
  *
  * THE CHANGES ARE NESTED rather than flattened beside `name`, so "which target" and "what about it"
  * cannot be confused by a model filling the shape, and so an empty `changes` object is a
@@ -81,25 +80,28 @@ export const ConfigTargetEditInputSchema = z.object({
   name: z.string().min(1),
   changes: z.object({
     url: z.string().min(1).optional(),
-    authStateName: z.string().min(1).optional(),
   }).strict(),
 }).strict()
 
 export type ConfigTargetEditInput = z.infer<typeof ConfigTargetEditInputSchema>
 
 /**
- * `config.auth.set` — point a target at an auth state, a plugin, or an environment variable.
+ * `config.auth.set` — declare an auth plugin for a target, or ask where an environment variable goes.
  *
  * REFS ONLY, AND THERE IS NO FIELD TO PUT A SECRET IN (D-11, ratified as law). Every field below
  * names WHERE a value lives; none of them holds one. The committed configuration therefore stays
  * secret-free by construction, which is what makes masking-at-resolution sound — a masker can only
  * mask values it can see, and the reason it can see all of them is that they never enter this file.
+ *
+ * 2026-10-02 (quick 261002-ctr): NO `authStateName`, here or on `config.target.create` /
+ * `config.target.edit`. The three ops wrote it to `use.authState`, and the committed configuration
+ * has no such key: `core`'s `UseSchema` and `TargetSchema` are both `.strict()` without one, so
+ * whole-config validation answered every such call `blocked / schema-fail`. An auth state is bound
+ * where the schema accepts it, in a test's or a suite's own `use.authState`.
  */
 export const ConfigAuthSetInputSchema = z.object({
   /** Which target this auth applies to, by registry name. */
   target: z.string().min(1),
-  /** The NAME of a stored auth state under the configured auth-state directory. */
-  authStateName: z.string().min(1).optional(),
   /** The NAME of an auth plugin package to declare under `plugins.auth`. */
   pluginPackage: z.string().min(1).optional(),
   /** The NAME of an environment variable the plugin reads. Never its value. */

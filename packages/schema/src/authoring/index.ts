@@ -90,7 +90,6 @@ export {
   successFramingViolations,
 } from './funnel'
 export type {
-  AuthoringAcceptance,
   AuthoringFunnel,
   AuthoringFunnelInput,
   AuthoringFunnelStage,

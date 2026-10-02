@@ -18,12 +18,12 @@ import type { AuthoringFunnel, AuthoringFunnelStage, FunnelSideCounters } from '
 
 // ---- 1. Exactly four stages, and exactly these four -------------------------------------------
 expectTypeOf<AuthoringFunnelStage>().toEqualTypeOf<
-  'built' | 'passedStably' | 'addedValue' | 'accepted'
+  'built' | 'passedStably' | 'addedValue' | 'writeEligible'
 >()
 
 // The value side of the same claim: a fifth member cannot be appended without editing this line.
 expectTypeOf<typeof AUTHORING_FUNNEL_STAGES>().toEqualTypeOf<
-  readonly ['built', 'passedStably', 'addedValue', 'accepted']
+  readonly ['built', 'passedStably', 'addedValue', 'writeEligible']
 >()
 
 // ---- 2. The stage record's keys ARE the vocabulary --------------------------------------------

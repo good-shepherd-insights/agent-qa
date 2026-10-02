@@ -13,8 +13,19 @@
 //                      schema-valid draft was produced and evaluated.
 //   2. `passedStably`  `gates.executesDefinitive.pass && gates.stableVerdict.pass` — gates 1+2.
 //   3. `addedValue`    `gates.addsValue.pass` — gate 3.
-//   4. `accepted`      an `applied` decision on a draft this window has a receipt for. The
-//                      human decision (D-05: keep-eligible never auto-writes).
+//   4. `writeEligible` a receipt whose stored disposition is one 432 D-06 writes to its test path
+//                      (`draftDispositionWritesTarget`: every disposition but `rejected`).
+//
+// 2026-10-02 (quick 261002-ctr): stage 4 was `accepted`, an `applied` human decision on a
+// test-draft proposal. 432 D-06 writes a final draft in the call that authored it and files no
+// proposal, and 432-17 deleted the inbox the decisions lived in, so `accepted` could only ever be
+// 0 and the flag below could never fire. The stage now counts what D-06 made the terminal step: a
+// draft the gates did not reject, which is a draft the authoring loop writes. It is named for the
+// disposition and not `written` because a receipt records the verification, not the file: a draft
+// verified on its own through `authoring.draft.verify` has a receipt and was never offered for a
+// write, and a write can still refuse at the target. Recorded comparisons against the reference
+// distribution's human `accepted` column are against a different measurement from here on. The
+// acceptance-failure flag keeps its name and is decided on `writeEligible`, so it can fire again.
 //
 // GATE 4 IS NOT A STAGE. There are four gates and four stages and they are not the same four:
 // `falsifiableAssertion` (gate 4) decides whether a draft asserts anything falsifiable, which is
@@ -41,7 +52,7 @@
 // rendered percentage is a display concern computed separately and deliberately downstream of the
 // decision: a keep rate of 90.4% displays as "90%" and MUST still flag, and reading the rounded
 // value back is precisely how that gets silently lost. The comparison is the cross-multiplied
-// integer one — `accepted * den > num * built` — on the shipped `ceilingExceeded` precedent.
+// integer one — `writeEligible * den > num * built` — on the shipped `ceilingExceeded` precedent.
 //
 // BOUNDARY DIRECTIONS, STATED AND PINNED. The ceiling comparison is STRICTLY GREATER: a rate
 // exactly at the ceiling does not flag. The floor comparison is GREATER-OR-EQUAL: a draft count
@@ -54,6 +65,7 @@
 
 import { z } from 'zod'
 
+import { draftDispositionWritesTarget } from './disposition'
 import type { DraftReceipt } from './draft-receipt'
 
 /**
@@ -66,7 +78,7 @@ export const AUTHORING_FUNNEL_STAGES = [
   'built',
   'passedStably',
   'addedValue',
-  'accepted',
+  'writeEligible',
 ] as const
 
 export type AuthoringFunnelStage = (typeof AUTHORING_FUNNEL_STAGES)[number]
@@ -81,7 +93,7 @@ export type AuthoringFunnelStage = (typeof AUTHORING_FUNNEL_STAGES)[number]
  *
  * RETUNE: moving this changes what "the loop is not filtering" MEANS, so a retune is a
  * measurement and not a preference. Before moving it, report: (a) the observed keep rate over at
- * least one full milestone of REAL sessions — not corpus runs, whose acceptances are scripted —
+ * least one full milestone of REAL sessions — not corpus runs, whose outcomes are scripted —
  * broken down by disposition, so a rate driven by `keep-eligible` drafts is distinguishable from
  * one driven by `proposal-only` ones; (b) that rate set beside the reference distribution's 73%
  * accepted (73 of 75 built), which is the number this ceiling was chosen against; and (c) which
@@ -114,7 +126,7 @@ export const FUNNEL_MIN_DRAFTS_FLOOR = 10
  *
  * NOTHING ELSE SITS BESIDE THE FUNNEL, and the keep rate stays honest without it. A draft the
  * loop stopped on because the application looks broken reached authoring, so it is a `built`;
- * nobody applied it, so it never reached `accepted`. It is already a built-but-not-kept draft in
+ * its gates rejected it, so it never reached `writeEligible`. It is already a built-but-not-kept draft in
  * the stages, over the same denominator — a second counter for it would describe the same event
  * twice and answer no question the stages do not.
  * 2026-09-02 (Phase 411): the proposal arm for a correctly-failing draft left with the Issue-slot
@@ -124,22 +136,12 @@ export interface FunnelSideCounters {
   readonly dedupRefusals?: number
 }
 
-/**
- * One human decision about one draft, addressed the way the receipts store addresses it.
- *
- * `contentDigest` and not a proposal id: the receipt's address IS `draftRef.contentDigest`, so
- * joining on anything else would need a second link to keep in step.
- */
-export interface AuthoringAcceptance {
-  readonly contentDigest: string
-  readonly decision: 'applied' | 'rejected'
-}
+// 2026-10-02 (quick 261002-ctr): `AuthoringAcceptance` and the `acceptances` input are deleted
+// with the `accepted` stage. `writeEligible` is read off each receipt's own stored disposition.
 
 export interface AuthoringFunnelInput {
   /** The receipts in the window. This IS the denominator. */
   readonly receipts: readonly DraftReceipt[]
-  /** Decisions taken on drafts; only `applied` ones for a digest in the window count. */
-  readonly acceptances: readonly AuthoringAcceptance[]
   readonly sideCounters: FunnelSideCounters
   /**
    * Loop invocations the window covers, where the caller can count them.
@@ -157,7 +159,7 @@ export const AuthoringFunnelSchema = z.object({
     built: z.number().int().nonnegative(),
     passedStably: z.number().int().nonnegative(),
     addedValue: z.number().int().nonnegative(),
-    accepted: z.number().int().nonnegative(),
+    writeEligible: z.number().int().nonnegative(),
   }).strict(),
   sideCounters: z.object({
     dedupRefusals: z.number().int().nonnegative().optional(),
@@ -243,7 +245,7 @@ export const FUNNEL_PHRASES = {
   built: 'built',
   passedStably: 'passed stably',
   addedValue: 'added value',
-  accepted: 'accepted',
+  writeEligible: 'write-eligible',
   noDrafts: 'No drafts reached authoring in this window, so there is no keep rate to report.',
   acceptanceFailure: 'ACCEPTANCE FAILURE',
   notFiltering: 'the loop is not filtering',
@@ -269,7 +271,7 @@ export function renderFunnelLine(parts: FunnelRenderParts): string {
     `${FUNNEL_PHRASES.heading} — ${stages.built} ${FUNNEL_PHRASES.built}`
     + ` · ${stages.passedStably} ${FUNNEL_PHRASES.passedStably}`
     + ` · ${stages.addedValue} ${FUNNEL_PHRASES.addedValue}`
-    + ` · ${stages.accepted} ${FUNNEL_PHRASES.accepted}.`,
+    + ` · ${stages.writeEligible} ${FUNNEL_PHRASES.writeEligible}.`,
   ]
 
   if (keepRate === undefined) {
@@ -310,31 +312,23 @@ export function renderFunnelLine(parts: FunnelRenderParts): string {
  * funnel any other way, and none is permitted to.
  */
 export function computeAuthoringFunnel(input: AuthoringFunnelInput): AuthoringFunnel {
-  const digests = new Set(input.receipts.map((receipt) => receipt.draftRef.contentDigest))
-
   let passedStably = 0
   let addedValue = 0
+  // Read off the receipt's STORED disposition, never recomputed from its gates: the stored value is
+  // the answer that was given, and the one the loop's write decision read.
+  let writeEligible = 0
   for (const receipt of input.receipts) {
     if (receipt.gates.executesDefinitive.pass && receipt.gates.stableVerdict.pass) passedStably += 1
     if (receipt.gates.addsValue.pass) addedValue += 1
+    if (draftDispositionWritesTarget(receipt.disposition)) writeEligible += 1
   }
 
-  // DISTINCT digests, and only ones this window has a receipt for. Two applied decisions about
-  // one draft is one accepted draft, and an applied decision about a draft outside the window is
-  // about a different denominator — either would let `accepted` exceed `built` and raise the flag
-  // for a reason that has nothing to do with the loop failing to filter.
-  const accepted = new Set(
-    input.acceptances
-      .filter((row) => row.decision === 'applied' && digests.has(row.contentDigest))
-      .map((row) => row.contentDigest),
-  ).size
-
   const built = input.receipts.length
-  const stages = { built, passedStably, addedValue, accepted }
+  const stages = { built, passedStably, addedValue, writeEligible }
 
   const smallSample = built < FUNNEL_MIN_DRAFTS_FLOOR
-  // INTEGERS. Never `accepted / built > 0.9`, and never the rounded percentage the line shows.
-  const aboveCeiling = accepted * KEEP_RATE_CEILING.den > KEEP_RATE_CEILING.num * built
+  // INTEGERS. Never `writeEligible / built > 0.9`, and never the rounded percentage the line shows.
+  const aboveCeiling = writeEligible * KEEP_RATE_CEILING.den > KEEP_RATE_CEILING.num * built
   const acceptanceFailure = aboveCeiling && built >= FUNNEL_MIN_DRAFTS_FLOOR
 
   const parts: FunnelRenderParts = {
@@ -345,7 +339,7 @@ export function computeAuthoringFunnel(input: AuthoringFunnelInput): AuthoringFu
         : { dedupRefusals: input.sideCounters.dedupRefusals }),
     },
     // ABSENT rather than 0 when nothing was built — see the header.
-    ...(built === 0 ? {} : { keepRate: accepted / built }),
+    ...(built === 0 ? {} : { keepRate: writeEligible / built }),
     acceptanceFailure,
     smallSample,
     undercounted: input.invocationCount !== undefined && input.invocationCount > built,

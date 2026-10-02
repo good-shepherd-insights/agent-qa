@@ -70,10 +70,10 @@ export const authoringFunnelGetSpec: FunctionSpec<
 > = {
   id: AUTHORING_FUNNEL_GET_FUNCTION_ID,
   summary:
-    'Report the authoring funnel for a window — built, passed stably, added value, accepted — '
+    'Report the authoring funnel for a window — built, passed stably, added value, write-eligible — '
     + 'and flag a keep rate above the ceiling as the loop failing to filter.',
   resultKind: 'unary',
-  // Bound exactly where a composition supplies the receipts store and the proposals inbox.
+  // Bound exactly where a composition supplies the receipts store (the proposals inbox left in 432-17).
   // An unbound host answering an all-zero funnel would say "this session authored nothing" about
   // a store it has never been able to read — and worse, it would say the loop filtered
   // everything, which is the one reading of a zero funnel that flatters the loop. So it refuses

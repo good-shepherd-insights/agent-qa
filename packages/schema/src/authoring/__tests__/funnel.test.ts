@@ -32,6 +32,8 @@ interface ReceiptFixture {
   readonly falsifiableAssertion?: boolean
   readonly sessionRef?: string
   readonly evaluatedAt?: number
+  /** Overrides the all-passed default; `unverified` and `proposal-only` set the run counts that earn them. */
+  readonly disposition?: 'keep-eligible' | 'proposal-only' | 'rejected' | 'unverified'
 }
 
 /**
@@ -45,6 +47,7 @@ function receipt(fixture: ReceiptFixture): DraftReceipt {
   const addsValue = fixture.addsValue ?? true
   const falsifiableAssertion = fixture.falsifiableAssertion ?? true
   const allPassed = executesDefinitive && stableVerdict && addsValue && falsifiableAssertion
+  const disposition = fixture.disposition ?? (allPassed ? 'keep-eligible' : 'rejected')
 
   return DraftReceiptSchema.parse({
     schemaVersion: 1,
@@ -72,27 +75,27 @@ function receipt(fixture: ReceiptFixture): DraftReceipt {
     stepTable: [],
     gateRuns: [{ runId: 'run-1', memberOutcome: 'passed', definitive: true, healed: false }],
     addsValueFinding: { novelElements: addsValue ? ['el:button:Save'] : [], comparedTests: [] },
-    stabilityRunsRequested: 3,
-    stabilityRunsCompleted: 3,
-    disposition: allPassed ? 'keep-eligible' : 'rejected',
+    stabilityRunsRequested: disposition === 'unverified' ? 1 : 3,
+    stabilityRunsCompleted: disposition === 'unverified' ? 1 : disposition === 'proposal-only' ? 2 : 3,
+    disposition,
     evaluatedAt: fixture.evaluatedAt ?? 1_700_000_000_000,
     ...(fixture.sessionRef === undefined ? {} : { sessionRef: fixture.sessionRef }),
   })
 }
 
-/** `count` all-gates-passing receipts, of which `accepted` carry an applied decision. */
-function corpus(count: number, accepted: number): {
-  receipts: readonly DraftReceipt[]
-  acceptances: readonly { contentDigest: string; decision: 'applied' | 'rejected' }[]
-} {
+/**
+ * `count` receipts, of which `kept` are keep-eligible and the rest rejected on gate 4 alone.
+ *
+ * Gate 4 is not a stage, so every receipt still counts at `passedStably` and `addedValue`, and the
+ * only stage the split moves is `writeEligible` (2026-10-02, quick 261002-ctr: was `accepted`,
+ * driven by applied decisions on proposals).
+ */
+function corpus(count: number, kept: number): { receipts: readonly DraftReceipt[] } {
   const receipts = Array.from({ length: count }, (_unused, index) => receipt({
     digest: `d${String(index).padStart(3, '0')}`,
+    ...(index < kept ? {} : { falsifiableAssertion: false }),
   }))
-  const acceptances = receipts.map((row, index) => ({
-    contentDigest: row.draftRef.contentDigest,
-    decision: (index < accepted ? 'applied' : 'rejected') as 'applied' | 'rejected',
-  }))
-  return { receipts, acceptances }
+  return { receipts }
 }
 
 const NO_SIDE_COUNTERS = {} as const
@@ -102,7 +105,6 @@ describe('the frozen four-stage funnel', () => {
     const { computeAuthoringFunnel } = await loadFunnel()
     const funnel = computeAuthoringFunnel({
       receipts: [receipt({ digest: 'a' }), receipt({ digest: 'b' }), receipt({ digest: 'c' })],
-      acceptances: [],
       sideCounters: NO_SIDE_COUNTERS,
     })
 
@@ -118,7 +120,6 @@ describe('the frozen four-stage funnel', () => {
         receipt({ digest: 'no-gate-2', stableVerdict: false }),
         receipt({ digest: 'neither', executesDefinitive: false, stableVerdict: false }),
       ],
-      acceptances: [],
       sideCounters: NO_SIDE_COUNTERS,
     })
 
@@ -136,7 +137,6 @@ describe('the frozen four-stage funnel', () => {
         receipt({ digest: 'value-no-stability', executesDefinitive: false }),
         receipt({ digest: 'no-value', addsValue: false }),
       ],
-      acceptances: [],
       sideCounters: NO_SIDE_COUNTERS,
     })
 
@@ -144,30 +144,35 @@ describe('the frozen four-stage funnel', () => {
     expect(funnel.stages.passedStably).toBe(1)
   })
 
-  it('counts `accepted` from applied decisions, and never from rejected ones', async () => {
-    const { computeAuthoringFunnel } = await loadFunnel()
-    const { receipts, acceptances } = corpus(4, 3)
-    const funnel = computeAuthoringFunnel({ receipts, acceptances, sideCounters: NO_SIDE_COUNTERS })
-
-    expect(funnel.stages.accepted).toBe(3)
-  })
-
-  it('cannot inflate `accepted` with an applied decision this window has no receipt for', async () => {
+  // 2026-10-02 (quick 261002-ctr): replaces the two `accepted` cells (applied decisions counted;
+  // decisions outside the window not counted). No decision is recorded since 432 D-06.
+  it('C261002-CTR-FUNNEL-WRITE-ELIGIBLE: counts every disposition D-06 writes, and never `rejected`', async () => {
     const { computeAuthoringFunnel } = await loadFunnel()
     const funnel = computeAuthoringFunnel({
-      receipts: [receipt({ digest: 'in-window' })],
-      acceptances: [
-        { contentDigest: 'in-window', decision: 'applied' },
-        { contentDigest: 'some-other-session', decision: 'applied' },
-        { contentDigest: 'in-window', decision: 'applied' },
+      receipts: [
+        receipt({ digest: 'keep', disposition: 'keep-eligible' }),
+        receipt({ digest: 'short', disposition: 'proposal-only' }),
+        receipt({ digest: 'draft-mode', disposition: 'unverified' }),
+        receipt({ digest: 'gate-four', falsifiableAssertion: false }),
       ],
       sideCounters: NO_SIDE_COUNTERS,
     })
 
-    // One built, so the honest ceiling on `accepted` is one — a keep rate above 100% would
-    // flag for a reason that has nothing to do with the loop failing to filter.
-    expect(funnel.stages.accepted).toBe(1)
-    expect(funnel.stages.built).toBe(1)
+    expect(funnel.stages).toEqual({ built: 4, passedStably: 4, addedValue: 4, writeEligible: 3 })
+    expect(funnel.line).toContain('· 3 write-eligible.')
+  })
+
+  it('C261002-CTR-FUNNEL-WRITE-ELIGIBLE: reads the STORED disposition, not one recomputed from the gates', async () => {
+    const { computeAuthoringFunnel } = await loadFunnel()
+    // All four gates passed and the stored answer is `rejected`: the stored value is the answer
+    // that was given, and the loop's write decision read it.
+    const funnel = computeAuthoringFunnel({
+      receipts: [receipt({ digest: 'stored-rejected', disposition: 'rejected' })],
+      sideCounters: NO_SIDE_COUNTERS,
+    })
+
+    expect(funnel.stages.writeEligible).toBe(0)
+    expect(funnel.stages.passedStably).toBe(1)
   })
 
   it('does not make gate 4 a stage — four gates and four stages are not the same four', async () => {
@@ -177,7 +182,7 @@ describe('the frozen four-stage funnel', () => {
       'built',
       'passedStably',
       'addedValue',
-      'accepted',
+      'writeEligible',
     ])
     expect(AUTHORING_FUNNEL_STAGES).not.toContain('falsifiableAssertion')
 
@@ -185,7 +190,6 @@ describe('the frozen four-stage funnel', () => {
     // none of them is gate 4. Folding it in would silently move the denominator.
     const funnel = computeAuthoringFunnel({
       receipts: [receipt({ digest: 'weak-assertion', falsifiableAssertion: false })],
-      acceptances: [],
       sideCounters: NO_SIDE_COUNTERS,
     })
     expect(funnel.stages.passedStably).toBe(1)
@@ -194,17 +198,16 @@ describe('the frozen four-stage funnel', () => {
 
   it('reports the dedup-refusal counter BESIDE the stages, never folded into one', async () => {
     const { computeAuthoringFunnel } = await loadFunnel()
-    const { receipts, acceptances } = corpus(4, 1)
+    const { receipts } = corpus(4, 1)
     const funnel = computeAuthoringFunnel({
       receipts,
-      acceptances,
       sideCounters: { dedupRefusals: 7 },
     })
 
     expect(funnel.sideCounters).toEqual({ dedupRefusals: 7 })
     // The stages are exactly the four receipts: the seven refusals authored nothing at all, so
     // not one of them moves a stage count.
-    expect(funnel.stages).toEqual({ built: 4, passedStably: 4, addedValue: 4, accepted: 1 })
+    expect(funnel.stages).toEqual({ built: 4, passedStably: 4, addedValue: 4, writeEligible: 1 })
     expect(funnel.line).toContain('Beside the funnel: 7 dedup refusals.')
   })
 
@@ -212,7 +215,6 @@ describe('the frozen four-stage funnel', () => {
     const { computeAuthoringFunnel } = await loadFunnel()
     const funnel = computeAuthoringFunnel({
       receipts: [receipt({ digest: 'a' })],
-      acceptances: [],
       sideCounters: {},
     })
 
@@ -228,8 +230,8 @@ describe('the acceptance-failure flag', () => {
   it('FIRES on the seeded high-keep corpus and says the loop is not filtering', async () => {
     const { computeAuthoringFunnel } = await loadFunnel()
     // D-13's own example: 22 of 23 kept — 95.65%, which displays as 96%.
-    const { receipts, acceptances } = corpus(23, 22)
-    const funnel = computeAuthoringFunnel({ receipts, acceptances, sideCounters: NO_SIDE_COUNTERS })
+    const { receipts } = corpus(23, 22)
+    const funnel = computeAuthoringFunnel({ receipts, sideCounters: NO_SIDE_COUNTERS })
 
     expect(funnel.acceptanceFailure).toBe(true)
     expect(funnel.smallSample).toBe(false)
@@ -241,10 +243,10 @@ describe('the acceptance-failure flag', () => {
   it('does NOT fire at a rate exactly equal to the ceiling — the comparison is strictly greater', async () => {
     const { computeAuthoringFunnel, KEEP_RATE_CEILING } = await loadFunnel()
     // 18/20 is exactly 9/10.
-    const { receipts, acceptances } = corpus(20, 18)
-    const funnel = computeAuthoringFunnel({ receipts, acceptances, sideCounters: NO_SIDE_COUNTERS })
+    const { receipts } = corpus(20, 18)
+    const funnel = computeAuthoringFunnel({ receipts, sideCounters: NO_SIDE_COUNTERS })
 
-    expect(funnel.stages.accepted * KEEP_RATE_CEILING.den)
+    expect(funnel.stages.writeEligible * KEEP_RATE_CEILING.den)
       .toBe(KEEP_RATE_CEILING.num * funnel.stages.built)
     expect(funnel.acceptanceFailure).toBe(false)
     expect(funnel.line).not.toContain('ACCEPTANCE FAILURE')
@@ -253,8 +255,8 @@ describe('the acceptance-failure flag', () => {
   it('fires one step ABOVE the ceiling', async () => {
     const { computeAuthoringFunnel } = await loadFunnel()
     // 19/20 = 0.95 — the smallest integer numerator above 9/10 at this denominator.
-    const { receipts, acceptances } = corpus(20, 19)
-    const funnel = computeAuthoringFunnel({ receipts, acceptances, sideCounters: NO_SIDE_COUNTERS })
+    const { receipts } = corpus(20, 19)
+    const funnel = computeAuthoringFunnel({ receipts, sideCounters: NO_SIDE_COUNTERS })
 
     expect(funnel.acceptanceFailure).toBe(true)
   })
@@ -262,8 +264,8 @@ describe('the acceptance-failure flag', () => {
   it('stays silent one step BELOW the ceiling', async () => {
     const { computeAuthoringFunnel } = await loadFunnel()
     // 17/20 = 0.85 — the largest integer numerator below 9/10 at this denominator.
-    const { receipts, acceptances } = corpus(20, 17)
-    const funnel = computeAuthoringFunnel({ receipts, acceptances, sideCounters: NO_SIDE_COUNTERS })
+    const { receipts } = corpus(20, 17)
+    const funnel = computeAuthoringFunnel({ receipts, sideCounters: NO_SIDE_COUNTERS })
 
     expect(funnel.acceptanceFailure).toBe(false)
     expect(funnel.smallSample).toBe(false)
@@ -272,8 +274,8 @@ describe('the acceptance-failure flag', () => {
 
   it('ADMITS the flag at a draft count exactly equal to the floor — the comparison is greater-or-equal', async () => {
     const { FUNNEL_MIN_DRAFTS_FLOOR, computeAuthoringFunnel } = await loadFunnel()
-    const { receipts, acceptances } = corpus(FUNNEL_MIN_DRAFTS_FLOOR, FUNNEL_MIN_DRAFTS_FLOOR)
-    const funnel = computeAuthoringFunnel({ receipts, acceptances, sideCounters: NO_SIDE_COUNTERS })
+    const { receipts } = corpus(FUNNEL_MIN_DRAFTS_FLOOR, FUNNEL_MIN_DRAFTS_FLOOR)
+    const funnel = computeAuthoringFunnel({ receipts, sideCounters: NO_SIDE_COUNTERS })
 
     expect(funnel.stages.built).toBe(FUNNEL_MIN_DRAFTS_FLOOR)
     expect(funnel.smallSample).toBe(false)
@@ -283,11 +285,11 @@ describe('the acceptance-failure flag', () => {
   it('refuses the flag one below the floor, and says so with the small-sample caveat', async () => {
     const { FUNNEL_MIN_DRAFTS_FLOOR, computeAuthoringFunnel } = await loadFunnel()
     const below = FUNNEL_MIN_DRAFTS_FLOOR - 1
-    const { receipts, acceptances } = corpus(below, below)
-    const funnel = computeAuthoringFunnel({ receipts, acceptances, sideCounters: NO_SIDE_COUNTERS })
+    const { receipts } = corpus(below, below)
+    const funnel = computeAuthoringFunnel({ receipts, sideCounters: NO_SIDE_COUNTERS })
 
     // A 100% keep rate — the most flag-worthy rate there is — and it still does not flag.
-    expect(funnel.stages.accepted).toBe(below)
+    expect(funnel.stages.writeEligible).toBe(below)
     expect(funnel.acceptanceFailure).toBe(false)
     expect(funnel.smallSample).toBe(true)
     expect(funnel.line).toContain('too few drafts')
@@ -297,8 +299,8 @@ describe('the acceptance-failure flag', () => {
   it('admits the flag one above the floor', async () => {
     const { FUNNEL_MIN_DRAFTS_FLOOR, computeAuthoringFunnel } = await loadFunnel()
     const above = FUNNEL_MIN_DRAFTS_FLOOR + 1
-    const { receipts, acceptances } = corpus(above, above)
-    const funnel = computeAuthoringFunnel({ receipts, acceptances, sideCounters: NO_SIDE_COUNTERS })
+    const { receipts } = corpus(above, above)
+    const funnel = computeAuthoringFunnel({ receipts, sideCounters: NO_SIDE_COUNTERS })
 
     expect(funnel.smallSample).toBe(false)
     expect(funnel.acceptanceFailure).toBe(true)
@@ -307,8 +309,8 @@ describe('the acceptance-failure flag', () => {
   it('flags a rate that DISPLAYS as 90% and is actually 90.4%', async () => {
     const { computeAuthoringFunnel } = await loadFunnel()
     // 113/125 = 0.904 → renders "90%", and 1130 > 1125 on the integers.
-    const { receipts, acceptances } = corpus(125, 113)
-    const funnel = computeAuthoringFunnel({ receipts, acceptances, sideCounters: NO_SIDE_COUNTERS })
+    const { receipts } = corpus(125, 113)
+    const funnel = computeAuthoringFunnel({ receipts, sideCounters: NO_SIDE_COUNTERS })
 
     expect(funnel.line).toContain('keep rate 90% over 125 drafts')
     expect(funnel.acceptanceFailure).toBe(true)
@@ -317,8 +319,8 @@ describe('the acceptance-failure flag', () => {
   it('does NOT flag a rate that displays as 90% and is actually 89.6%', async () => {
     const { computeAuthoringFunnel } = await loadFunnel()
     // 112/125 = 0.896 → also renders "90%", and 1120 < 1125 on the integers.
-    const { receipts, acceptances } = corpus(125, 112)
-    const funnel = computeAuthoringFunnel({ receipts, acceptances, sideCounters: NO_SIDE_COUNTERS })
+    const { receipts } = corpus(125, 112)
+    const funnel = computeAuthoringFunnel({ receipts, sideCounters: NO_SIDE_COUNTERS })
 
     expect(funnel.line).toContain('keep rate 90% over 125 drafts')
     expect(funnel.acceptanceFailure).toBe(false)
@@ -330,11 +332,10 @@ describe('the zero-receipts posture', () => {
     const { computeAuthoringFunnel } = await loadFunnel()
     const funnel = computeAuthoringFunnel({
       receipts: [],
-      acceptances: [],
       sideCounters: NO_SIDE_COUNTERS,
     })
 
-    expect(funnel.stages).toEqual({ built: 0, passedStably: 0, addedValue: 0, accepted: 0 })
+    expect(funnel.stages).toEqual({ built: 0, passedStably: 0, addedValue: 0, writeEligible: 0 })
     expect(funnel.keepRate).toBeUndefined()
     expect(funnel.smallSample).toBe(true)
     expect(funnel.acceptanceFailure).toBe(false)
@@ -351,14 +352,13 @@ describe('the no-success-framing prohibition', () => {
     const cells: readonly (readonly [number, number])[] = [
       [23, 22], [20, 18], [20, 17], [10, 10], [9, 9], [0, 0], [125, 113],
     ]
-    for (const [built, accepted] of cells) {
-      const { receipts, acceptances } = corpus(built, accepted)
+    for (const [built, kept] of cells) {
+      const { receipts } = corpus(built, kept)
       const funnel = computeAuthoringFunnel({
         receipts,
-        acceptances,
         sideCounters: { dedupRefusals: 1 },
       })
-      expect(successFramingViolations(funnel.line), `${built}/${accepted}`).toEqual([])
+      expect(successFramingViolations(funnel.line), `${built}/${kept}`).toEqual([])
     }
   })
 

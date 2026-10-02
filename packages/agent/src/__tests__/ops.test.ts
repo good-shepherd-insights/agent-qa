@@ -659,7 +659,7 @@ describe('C432-ALL-OPS-AVAILABLE: the 432-27 gate read and auth writer serve eve
         ) => {
           fieldsSet.push({ path, value })
           const before = bytes === undefined ? '' : decoder.decode(bytes)
-          const after = `${before}use:\n  authState: ${String(value)}\n`
+          const after = `${before}plugins:\n  auth: ${JSON.stringify(value)}\n`
           return Promise.resolve({ bytes: encoder.encode(after) })
         },
         mintHookId: () => 'h_unused',
@@ -710,10 +710,11 @@ describe('C432-ALL-OPS-AVAILABLE: the 432-27 gate read and auth writer serve eve
           { recordId: 'rec-1' }, caller))
         answers.push(await invokeFunction(registry, 'knowledge.gates.list',
           { recordId: 'rec-9' }, caller))
+        // 2026-10-02 (quick 261002-ctr): the reference is a plugin package (`authStateName` is gone).
         answers.push(await invokeFunction(registry, 'config.auth.set',
-          { target: 'shop', authStateName: 'shop-default' }, caller))
+          { target: 'shop', pluginPackage: '@acme/auth' }, caller))
         answers.push(await invokeFunction(registry, 'config.auth.set',
-          { target: 'shop', authStateName: 'not a name; rm -rf' }, caller))
+          { target: 'shop', pluginPackage: 'not a name; rm -rf' }, caller))
       }
     }
 
@@ -723,15 +724,15 @@ describe('C432-ALL-OPS-AVAILABLE: the 432-27 gate read and auth writer serve eve
     expect(answers[1]).toEqual({ kind: 'not-found', recordId: 'rec-9' })
     const applied = answers[2] as ConfigChangeOutput
     expect(applied).toMatchObject({
-      outcome: 'applied', files: [configFile], fields: ['use.authState'],
+      outcome: 'applied', files: [configFile], fields: ['plugins.auth.0.package'],
     })
     expect(answers[3]).toMatchObject({ outcome: 'refused', reason: 'refs-only' })
     // Only the named reference reaches construction, validation and the writer, once per attempt.
     expect(fieldsSet).toEqual(Array.from({ length: 6 }, () =>
-      ({ path: 'use.authState', value: 'shop-default' })))
+      ({ path: 'plugins.auth', value: [{ package: '@acme/auth' }] })))
     expect(validations).toBe(6)
     expect(written).toEqual(Array.from({ length: 6 }, () =>
-      [{ op: 'set', path: ['use', 'authState'], value: 'shop-default' }]))
+      [{ op: 'append', path: ['plugins', 'auth'], value: { package: '@acme/auth' } }]))
     expect(auditRows).toEqual([])
   })
 })

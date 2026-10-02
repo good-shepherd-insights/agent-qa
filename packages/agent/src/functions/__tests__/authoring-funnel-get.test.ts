@@ -159,16 +159,16 @@ describe(`${AUTHORING_FUNNEL_GET_FUNCTION_ID} — the honesty funnel's one read`
       CALLER,
     ) as AuthoringFunnel
 
-    const expected = computeAuthoringFunnel({ receipts: RECEIPTS, acceptances: [], sideCounters: {} })
+    const expected = computeAuthoringFunnel({ receipts: RECEIPTS, sideCounters: {} })
 
     expect(answered).toEqual(expected)
   })
 
-  it('answers no acceptance and no ACCEPTANCE FAILURE through the op, since nothing records one', async () => {
-    // RE-SPELLED 2026-10-01 (432-17, D-06): this cell drove 11 applied test-draft envelopes through
-    // the op to raise the flag. A draft a keep-gate did not reject is written in its own call and
-    // the inbox the decisions lived in is deleted, so the op counts no acceptance over a population
-    // above the floor. The flag's own arithmetic stays pinned on `computeAuthoringFunnel` in schema.
+  // RE-SPELLED 2026-10-02 (quick 261002-ctr): was 'answers no acceptance and no ACCEPTANCE FAILURE
+  // through the op, since nothing records one'. The terminal stage reads each receipt's stored
+  // disposition, so twelve keep-eligible receipts are twelve write-eligible drafts, above the floor
+  // and above the ceiling: the flag fires through the op again.
+  it('C261002-CTR-FUNNEL-WRITE-ELIGIBLE: raises ACCEPTANCE FAILURE through the op over twelve write-eligible receipts', async () => {
     const answered = await invokeFunction(
       registryWith(funnelPort()),
       AUTHORING_FUNNEL_GET_FUNCTION_ID,
@@ -180,10 +180,10 @@ describe(`${AUTHORING_FUNNEL_GET_FUNCTION_ID} — the honesty funnel's one read`
       built: 12,
       passedStably: 12,
       addedValue: 12,
-      accepted: 0,
+      writeEligible: 12,
     })
-    expect(answered.acceptanceFailure).toBe(false)
-    expect(answered.line).not.toContain('ACCEPTANCE FAILURE')
+    expect(answered.acceptanceFailure).toBe(true)
+    expect(answered.line).toContain('ACCEPTANCE FAILURE')
   })
 
   it('scopes by session through the op, excluding a receipt with no ref', async () => {

@@ -4,7 +4,7 @@
 // lives — an auth state, a plugin package, an environment variable — and never holds one. 395-02
 // enforced half of that with the SHAPE of the input DTO: `ConfigAuthSetInputSchema` has no field a
 // credential could be assigned to. This file is the other half, and it exists because the first half
-// is not enough: a model that wants to be helpful will put a bearer token in `authStateName`, and
+// is not enough: a model that wants to be helpful will put a bearer token in `pluginPackage`, and
 // the field it arrived in says nothing about what it holds.
 //
 // THE RULE IS PHRASED OVER WHAT IT ADMITS, NEVER OVER WHAT IT REFUSES, and that is the whole design.
@@ -39,6 +39,9 @@
  * a value was refused: the question a new member answers is "what does this reference look like",
  * and if the answer is "anything", the field is not a reference and D-11 does not cover it.
  */
+// 2026-10-02 (quick 261002-ctr): no op writes an `auth-state-name` today — the three that did lost
+// the field, because the committed configuration has no key for it. The kind and its shape stay: a
+// member of a closed public set, matching `core`'s auth-state slug, for the op that next binds one.
 export const CONFIG_REFERENCE_KINDS = [
   'auth-state-name',
   'plugin-package',
@@ -77,10 +80,9 @@ export const MAX_CONFIG_REFERENCE_LENGTH = 214
 /**
  * Is this value shaped like a reference of this kind?
  *
- * ONE FUNCTION, EVERY CALLER. The ops that write auth-state names — `config.auth.set`,
- * `config.target.create` and `config.target.edit` all reach the same landing site — ask this rather
- * than each carrying its own idea of the shape, because three spellings of one judgement is the
- * sibling-input failure this project keeps rediscovering. The check is keyed on the reference KIND,
+ * ONE FUNCTION, EVERY CALLER. The ops that write references ask this rather than each carrying its
+ * own idea of the shape, because three spellings of one judgement is the sibling-input failure this
+ * project keeps rediscovering. The check is keyed on the reference KIND,
  * so an op added later that writes an auth-state name inherits the refusal by naming the kind.
  */
 export function isLegalConfigReference(kind: ConfigReferenceKind, value: string): boolean {

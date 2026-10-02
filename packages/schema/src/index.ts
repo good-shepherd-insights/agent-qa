@@ -1299,7 +1299,6 @@ export {
   successFramingViolations,
 } from './authoring/index'
 export type {
-  AuthoringAcceptance,
   AuthoringFunnel,
   AuthoringFunnelInput,
   AuthoringFunnelStage,

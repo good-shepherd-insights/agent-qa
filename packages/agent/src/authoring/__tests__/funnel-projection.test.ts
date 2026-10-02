@@ -12,7 +12,7 @@
 
 import { beforeAll, describe, expect, it } from 'vitest'
 
-import { DraftReceiptSchema } from '@vostride/agent-qa-schema'
+import { DraftReceiptSchema, draftDispositionWritesTarget } from '@vostride/agent-qa-schema'
 import type {
   DraftReceipt,
   QuarantineEntryState,
@@ -237,22 +237,26 @@ describe('projectAuthoringFunnel', () => {
     // Against the PRODUCER'S OWN TALLY, never a restated integer: if the mint stopped attributing,
     // `alpha.length` and `built` move apart rather than both matching a hard-coded 2.
     expect(funnel.stages.built).toBe(alpha.length)
-    // RE-SPELLED 2026-10-01 (432-17, D-06): no acceptance is recorded anywhere, so none is counted.
-    expect(funnel.stages.accepted).toBe(0)
+    // RE-SPELLED 2026-10-02 (quick 261002-ctr): `writeEligible` replaces `accepted` (0 since
+    // 432-17), counted off the minted receipts' own stored dispositions — the producer's tally.
+    expect(funnel.stages.writeEligible)
+      .toBe(alpha.filter((row) => draftDispositionWritesTarget(row.disposition)).length)
+    expect(funnel.stages.writeEligible).toBeGreaterThan(0)
   })
 
-  it('reads `accepted` off recorded acceptances, and none are recorded since 432-17', async () => {
-    // RE-SPELLED 2026-10-01 (432-17, D-06): this cell read applied, rejected and pending decisions
-    // off test-draft envelopes. A draft a keep-gate did not reject is written in its own call, and
-    // the inbox the decisions lived in is deleted, so the projection hands the computation no
-    // acceptances and `accepted` is 0 whatever the receipts say.
+  // RE-SPELLED 2026-10-02 (quick 261002-ctr): was 'reads `accepted` off recorded acceptances, and
+  // none are recorded since 432-17' (0 whatever the receipts said). The terminal stage now reads
+  // the receipts' stored dispositions, so it counts what the loop writes.
+  it('C261002-CTR-FUNNEL-WRITE-ELIGIBLE: counts the write-eligible receipts the store holds', async () => {
     const funnel = await projectAuthoringFunnel(
       { scope: 'all-time' },
       port({ receipts: [receipt('a'), receipt('b'), receipt('c')] }),
     )
 
-    expect(funnel.stages).toEqual({ built: 3, passedStably: 3, addedValue: 3, accepted: 0 })
+    expect(funnel.stages).toEqual({ built: 3, passedStably: 3, addedValue: 3, writeEligible: 3 })
+    // Three is below the floor, so a 100% keep rate is reported with the caveat and never flagged.
     expect(funnel.acceptanceFailure).toBe(false)
+    expect(funnel.smallSample).toBe(true)
   })
 
   it('leaves dedup refusals absent and folds no side counter', async () => {
@@ -266,14 +270,14 @@ describe('projectAuthoringFunnel', () => {
     expect(funnel.sideCounters).toEqual({})
     expect(funnel.sideCounters.dedupRefusals).toBeUndefined()
     expect(funnel.stages.built).toBe(2)
-    expect(funnel.stages.accepted).toBe(0)
+    expect(funnel.stages.writeEligible).toBe(2)
     expect(funnel.line).toContain('Beside the funnel: dedup refusals not recorded on this host.')
   })
 
   it('answers the zero-receipts posture on an empty store', async () => {
     const funnel = await projectAuthoringFunnel({ scope: 'all-time' }, port())
 
-    expect(funnel.stages).toEqual({ built: 0, passedStably: 0, addedValue: 0, accepted: 0 })
+    expect(funnel.stages).toEqual({ built: 0, passedStably: 0, addedValue: 0, writeEligible: 0 })
     expect(funnel.keepRate).toBeUndefined()
     expect(funnel.acceptanceFailure).toBe(false)
   })

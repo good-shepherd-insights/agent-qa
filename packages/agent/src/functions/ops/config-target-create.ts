@@ -15,7 +15,7 @@
 //
 // A CREATE IS NEVER AN UPSERT, AND THAT IS THIS OP'S WHOLE EDGE. The yaml `setIn` that backs every
 // mutation in this phase REPLACES whatever is at the path it is given, so the natural implementation
-// of "add a target" quietly deletes the `product`, `appPackage` and `authState` a target of that
+// of "add a target" quietly deletes the `product`, `appPackage` and `environment` a target of that
 // name already carried, and renders it as a diff a person would have to read line by line to notice.
 // The pipeline refuses the collision by name and points at `config.target.edit`, which is the op
 // that exists for changing one.

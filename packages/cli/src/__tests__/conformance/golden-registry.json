@@ -118,7 +118,7 @@
       "classifies": true,
       "id": "authoring.funnel.get",
       "inputSchemaDigest": "cc347d50015ae652d1ee0c6b32e14745bff5afaab2ec7be8631d7d059baffb12",
-      "outputSchemaDigest": "f00b2b7f370fae1cc3241c655e0b8389a970f6c2051e597df0c474e48169454f",
+      "outputSchemaDigest": "a0a975ecb0003f48a0b8eff670c16bbafdfafc228cf376e94dad4eb4371cffa6",
       "partition": {
         "kind": "unprojected",
         "reason": "not-mid-flight-read"
@@ -134,7 +134,7 @@
       "bindingStatusAtRoot": "bound",
       "classifies": true,
       "id": "config.auth.set",
-      "inputSchemaDigest": "1b383ad8b7fc0341ff247714d8fc6a2d3d10205690f1b0772e1589c8edc31b7e",
+      "inputSchemaDigest": "22688bc1bc1e0b88762e2bb31d8e3dcd4fbc38b14b5b071a61fdb2147055b3d9",
       "outputSchemaDigest": "c640c09958203dd4ee4aa3da05d5a9eff3e58107657d554b055705859009d826",
       "partition": {
         "kind": "projected",
@@ -219,7 +219,7 @@
       "bindingStatusAtRoot": "bound",
       "classifies": true,
       "id": "config.target.create",
-      "inputSchemaDigest": "bea8916e07b1a61666cc9689dc86921d8ad8d5628057f2c142f33ea0c0096768",
+      "inputSchemaDigest": "f9c5267c9d204e262849352eef61957e89177eb9bdb6f2bc7c54e4ce890278d0",
       "outputSchemaDigest": "c640c09958203dd4ee4aa3da05d5a9eff3e58107657d554b055705859009d826",
       "partition": {
         "kind": "projected",
@@ -236,7 +236,7 @@
       "bindingStatusAtRoot": "bound",
       "classifies": true,
       "id": "config.target.edit",
-      "inputSchemaDigest": "d7dcd7c0cb6a84721a31edd1ef9858f34326f36a5b7542a55fda4ed596239a23",
+      "inputSchemaDigest": "0a578596cc17aaf8d76b0db8ec313cc885b5400b7f075b733f307f6f95a35090",
       "outputSchemaDigest": "c640c09958203dd4ee4aa3da05d5a9eff3e58107657d554b055705859009d826",
       "partition": {
         "kind": "projected",

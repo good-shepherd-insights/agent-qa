@@ -1159,7 +1159,8 @@ export interface FunctionDeps {
   /**
    * 394-07 D-12 / WTST-05: the honesty funnel's reads — the receipts store and (optionally within
    * the bundle) the outcome projection and quarantine ledger D-14 consults. 2026-10-01 (432-17): the
-   * proposals inbox the `accepted` stage read is deleted (see `projectAuthoringFunnel`).
+   * proposals inbox the `accepted` stage read is deleted; 2026-10-02 (quick 261002-ctr) that stage
+   * is `writeEligible`, read off the receipts (see `projectAuthoringFunnel`).
    *
    * OPTIONAL, and the stakes sit on the READ side. A host with no agent-qa runtime root cannot list draft receipts, and the alternative to
    * saying so by name is answering an all-zero funnel — which does not merely under-report, it
