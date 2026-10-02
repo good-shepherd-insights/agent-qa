@@ -41,7 +41,8 @@ function changedRecordIdsOf(receipt: MarkReceipt): readonly string[] | undefined
 export function createFeedbackReadsPortForHost(deps: FeedbackReadsHostDeps): FeedbackReadsPort {
   /**
    * One batch read over every record the ledger's applied fixes changed (423 D-20's join). A host
-   * with no config binds no read (`not-bound`); an unfinished scan is `scan-incomplete` for all.
+   * with no config, or one whose config does not load, binds no read (`not-bound`); an unfinished
+   * scan is `scan-incomplete` for all.
    */
   async function joinChangedRecords(recordIds: readonly string[]): Promise<(recordId: string) => MarkHistoryChangedRecord> {
     const absent = (reason: 'not-found' | 'scan-incomplete' | 'not-bound') => (recordId: string) =>
@@ -49,12 +50,20 @@ export function createFeedbackReadsPortForHost(deps: FeedbackReadsHostDeps): Fee
     if (deps.configPath === undefined) return absent('not-bound')
     if (recordIds.length === 0) return absent('not-found')
     const configPath = deps.configPath
-    const reader = deps.reader ?? await (async () => {
-      const session = await resolveEvalSession({ configPath, keyOnly: true })
-      const knowledgeRoot = resolveConfiguredKnowledgeRoot(session.config, dirname(resolve(configPath)))
-      return createKnowledgeReader(() => knowledgeRoot, undefined, undefined,
-        deps.resolveTrustPriors ?? trustPriorsForHost({ configPath }).resolve)
-    })()
+    let reader = deps.reader
+    if (reader === undefined) {
+      // 2026-10-03 (quick 261003-lgd, Phase 432 review WR-05): a config that does not load cannot
+      // locate the knowledge root, which is the same named absence as having no config at all. The
+      // history read never needed the config before the join, so it must not throw because of it.
+      try {
+        const session = await resolveEvalSession({ configPath, keyOnly: true })
+        const knowledgeRoot = resolveConfiguredKnowledgeRoot(session.config, dirname(resolve(configPath)))
+        reader = createKnowledgeReader(() => knowledgeRoot, undefined, undefined,
+          deps.resolveTrustPriors ?? trustPriorsForHost({ configPath }).resolve)
+      } catch {
+        return absent('not-bound')
+      }
+    }
     const showRecords = reader.showRecords
     if (showRecords === undefined) return absent('not-bound')
     let results: readonly KnowledgeRecordShowResult[]

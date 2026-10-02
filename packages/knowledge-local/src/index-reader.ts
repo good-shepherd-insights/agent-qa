@@ -14,7 +14,7 @@
  * the connection the ladder blessed and owns the marker write. The facade never closes what it is
  * about to reopen, so there is no window in which contention can degrade a healthy index.
  */
-import { existsSync } from 'node:fs'
+import { existsSync, statSync } from 'node:fs'
 import { basename, join } from 'node:path'
 import type { DatabaseSync } from 'node:sqlite'
 
@@ -906,9 +906,60 @@ export function classifyIndexFace(
   knowledgeRoot: string,
   opts: ClassifyIndexFaceOptions = {},
 ): IndexFace {
+  const inspectedImmutably = opts.inspectCheckpointedImmutably === true
+    ? indexFileFingerprint(knowledgeRoot)
+    : undefined
   const result = classifyIndexFaceWithConnection(knowledgeRoot, opts)
   if (result.connection !== undefined) closeBestEffort(result.connection)
+  if (
+    inspectedImmutably !== undefined
+    && !inspectedImmutably.walPresent
+    && result.face.source === 'scan'
+    && result.face.filePresent
+    && indexFileChangedSince(knowledgeRoot, inspectedImmutably)
+  ) {
+    return {
+      source: 'scan',
+      reason: 'locked',
+      detail: 'a writer opened the index while it was being inspected, so the inspection could '
+        + `not be trusted (it read: ${result.face.detail}); the index is busy, not known to be `
+        + 'corrupt. Check again when the writer finishes.',
+      filePresent: true,
+    }
+  }
   return result.face
+}
+
+interface IndexFileFingerprint {
+  readonly walPresent: boolean
+  readonly mtimeMs: number
+  readonly ctimeMs: number
+  readonly size: number
+  readonly ino: number
+}
+
+function indexFileFingerprint(knowledgeRoot: string): IndexFileFingerprint | undefined {
+  const path = indexDbPath(knowledgeRoot)
+  try {
+    const stat = statSync(path)
+    return { walPresent: existsSync(`${path}-wal`), mtimeMs: stat.mtimeMs, ctimeMs: stat.ctimeMs,
+      size: stat.size, ino: stat.ino }
+  } catch {
+    return undefined
+  }
+}
+
+/**
+ * 2026-10-03 (quick 261003-lgd, Phase 432 review IN-26): the immutable probe's check and its open
+ * are not one step. A writer that opened the index in between (its `-wal` is now there), or that
+ * checkpointed while the probe read (the main file changed), changed bytes under a connection
+ * SQLite was told cannot change, so a failure read that way is a busy index, not a corrupt one.
+ * Only `stat` and `existsSync` are used here: the probe still creates no `-wal`/`-shm`.
+ */
+function indexFileChangedSince(knowledgeRoot: string, before: IndexFileFingerprint): boolean {
+  const after = indexFileFingerprint(knowledgeRoot)
+  return after === undefined || after.walPresent || after.mtimeMs !== before.mtimeMs
+    || after.ctimeMs !== before.ctimeMs || after.size !== before.size || after.ino !== before.ino
 }
 
 /**
