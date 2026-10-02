@@ -216,6 +216,15 @@ describe('parseMobileSource → InterimNode[]', () => {
       expect('editable' in (byName('Heading').state ?? {})).toBe(false)
       expect('editable' in (byName('Locked').state ?? {})).toBe(false)
     })
+
+    it('decodes numeric character references so a multi-line value keeps its newlines', () => {
+      const xml = `<?xml version="1.0" encoding="UTF-8"?>
+<AppiumAUT>
+  <XCUIElementTypeTextView label="Body" value="Line one é&#10;Line two &#x2713; &amp;#10;" x="10" y="10" width="300" height="120" enabled="true" />
+</AppiumAUT>`
+      const { nodes } = parseMobileSource(xml, 'ios')
+      expect(nodes[0].value).toBe('Line one é\nLine two ✓ &#10;')
+    })
   })
 
   describe('Android editable signal', () => {

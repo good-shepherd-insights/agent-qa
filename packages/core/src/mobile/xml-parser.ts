@@ -229,11 +229,14 @@ export function parseMobileSource(
   platform: 'android' | 'ios',
   viewport?: { width: number; height: number },
 ): ParsedMobileSource {
+  // WDA writes a newline in an attribute as `&#10;`; numeric references are decoded on iOS
+  // only, so a multi-line value is observed as typed (Android parsing is left as it was).
   const parser = new XMLParser({
     ignoreAttributes: false,
     attributeNamePrefix: '@_',
     allowBooleanAttributes: true,
     preserveOrder: false,
+    htmlEntities: platform === 'ios',
   })
 
   const parsed = parser.parse(xml)
