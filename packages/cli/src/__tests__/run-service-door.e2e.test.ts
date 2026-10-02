@@ -494,6 +494,8 @@ describe('one readiness predicate, two doors (402-05, D-15)', () => {
     // Both are the MEASURED facts, on the shipped composition — `hostComposed` is true here
     // because this fixture bound a host, which is the same box `POST /run`'s guard throws on.
     expect(localBody).toEqual({ service: 'up', hostComposed: true, contractVersion: RUN_SERVICE_CONTRACT_VERSION })
+    // 2026-10-02 (quick 261002-ctr): the shipped composition serves version 2 on both doors.
+    expect((localBody as { contractVersion: number }).contractVersion).toBe(2)
   })
 
   // RE-SPELLED 2026-10-01 (432-21, D-12): neither door reads a token now; both serve a garbage one.

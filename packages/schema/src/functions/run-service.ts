@@ -21,8 +21,14 @@ import { z } from 'zod'
  * Two versions because two contracts move for different reasons: `RUN_EVENT_ENVELOPE_SCHEMA_VERSION`
  * describes the frozen event frame, and this describes what routes exist and what they answer. 403
  * adds the attach contract to this door and will bump THIS constant without touching an envelope.
+ *
+ * 2026-10-02 (quick 261002-ctr): 2. Version 1 answered readiness with `authConfigured` and refused a
+ * request with three bearer reasons; 432-21 deleted the bearer reasons (and added
+ * `cross_site_refused`) and 432-22 deleted `authConfigured`. Both changed what these routes answer,
+ * so the version moves once for the pair. The routes themselves, the start request and the stream
+ * are unchanged.
  */
-export const RUN_SERVICE_CONTRACT_VERSION = 1
+export const RUN_SERVICE_CONTRACT_VERSION = 2
 
 // 2026-10-01 (432-21, D-12): `SERVICE_BEARER_REFUSAL_REASONS`, `ServiceBearerRefusalReason` and the
 // two-arm `ServiceBearerVerdict` are deleted with `services.dashboard.runServiceTokens` and the door's

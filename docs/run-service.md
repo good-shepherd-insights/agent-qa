@@ -141,7 +141,7 @@ local dashboard door is `GET /api/runs/<runId>/live-url`; both apply the same sa
 composition, or is not serving on a known origin, so there is no link it could build that would
 resolve to anything.
 
-`GET /ok` reports only measured facts (the service answered, a host is composed, whether a
-credential is configured — always `false` now — and the contract version). It never predicts that a
-run will succeed. The same facts are served at `GET /api/run-readiness` on the local dashboard API —
-one readiness answer behind two doors.
+`GET /ok` reports only measured facts (the service answered, a host is composed, and the contract
+version, which is `2` since the readiness answer lost its credential fact and the door lost its
+bearer refusals). It never predicts that a run will succeed. The same facts are served at
+`GET /api/run-readiness` on the local dashboard API — one readiness answer behind two doors.

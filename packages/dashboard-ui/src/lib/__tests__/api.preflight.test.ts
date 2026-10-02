@@ -22,7 +22,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { RUN_EVENT_TYPES } from '@vostride/agent-qa-schema'
+import { RUN_EVENT_TYPES, RUN_SERVICE_CONTRACT_VERSION } from '@vostride/agent-qa-schema'
 
 import {
   RunNotReadyError,
@@ -33,7 +33,7 @@ import {
 const READY = {
   service: 'up',
   hostComposed: true,
-  contractVersion: 1,
+  contractVersion: RUN_SERVICE_CONTRACT_VERSION,
 }
 
 interface FetchCall {
@@ -151,6 +151,18 @@ describe('triggerRun preflights readiness at the ONE choke point', () => {
 
     await expect(triggerRun({ file: 'tests/a.yaml' })).resolves.toMatchObject({ runId: 'run_1' })
     expect(triggerCalls()).toHaveLength(1)
+  })
+
+  // 2026-10-02 (quick 261002-ctr): the contract moved to version 2 for a readiness member and refusal
+  // codes the preflight never read, so the gate accepts either version rather than gating on it.
+  it('C261002-CTR-PREFLIGHT-BOTH-VERSIONS: proceeds on a version 2 answer and on a version 1 answer', async () => {
+    expect(RUN_SERVICE_CONTRACT_VERSION).toBe(2)
+    stubFetch({ status: 200, body: { service: 'up', hostComposed: true, contractVersion: 2 } })
+    await expect(triggerRun({ file: 'tests/a.yaml' })).resolves.toMatchObject({ runId: 'run_1' })
+
+    stubFetch({ status: 200, body: { service: 'up', hostComposed: true, authConfigured: false, contractVersion: 1 } })
+    await expect(triggerRun({ file: 'tests/a.yaml' })).resolves.toMatchObject({ runId: 'run_1' })
+    expect(triggerCalls()).toHaveLength(2)
   })
 
   it.each([503, 404] as const)('PROCEEDS on %i — a door that answers no readiness never said "not ready"', async (status) => {

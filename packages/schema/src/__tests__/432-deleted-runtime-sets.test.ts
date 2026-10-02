@@ -220,6 +220,17 @@ describe('C432-NO-TRUST-CONTRACT: token declarations and the trust-scope project
       'the retired member is refused by the strict wire contract').toBe(false)
   })
 
+  // 2026-10-02 (quick 261002-ctr): the readiness and refusal changes above moved the door's version.
+  it('C261002-CTR-RUN-SERVICE-V2: the run-service contract is version 2, the shape version 1 lacked', () => {
+    expect(exported('RUN_SERVICE_CONTRACT_VERSION')).toBe(2)
+    const codes = exported('RUN_SERVICE_ERROR_CODES') as readonly string[]
+    expect(codes).toContain('cross_site_refused')
+    expect(codes.filter(code => /bearer|token|credential/u.test(code))).toEqual([])
+    const readiness = exported('RunServiceReadinessSchema') as { parse(value: unknown): unknown }
+    expect(readiness.parse({ service: 'up', hostComposed: true, contractVersion: 2 }))
+      .toEqual({ service: 'up', hostComposed: true, contractVersion: 2 })
+  })
+
   it('C432-NO-TRUST-CONTRACT: the config write door names no token list and no safety root', () => {
     expect(exported('CONFIG_NAMED_ARRAYS')).toEqual(['registry.llms'])
     expect(exported('CONFIG_WRITE_DENIED_ROOTS')).toEqual(['plugins'])

@@ -712,6 +712,11 @@ export class RunNotReadyError extends Error {
  * 2026-10-01 (432-22, D-12): the readiness answer has no `authConfigured` member. It reported
  * whether a run-service credential resolved, which no project can declare any more, and the gate
  * never read it.
+ *
+ * 2026-10-02 (quick 261002-ctr): `contractVersion` is 2 since that change, and the gate does not
+ * read it either. Version 2 removed a member and refusal codes this gate never read; the readiness
+ * and trigger routes it calls are the same on both versions. So a version-1 server still passes,
+ * and refusing one would stop a dashboard that can run tests.
  */
 function notReadyReason(readiness: RunServiceReadiness): string | undefined {
   if (readiness.service !== 'up') return 'the run service is not up'
