@@ -582,7 +582,9 @@ needle_of () {
     C) echo "op:runs.list.row" ;;
     D) echo "agent_qa_discover" ;;
     E) echo "op:runs.list.surfaces" ;;
-    F) echo "op:runs.start" ;;
+    # 2026-10-02 (432-45): the grounded-explain cells now cite `op:agent.ask` (their failure text
+    # names the cited row), so the needle follows the row the red actually names.
+    F) echo "op:agent.ask" ;;
     G) echo "agent_qa_list_proposals" ;;
     *) fatal "unknown leg $1" ;;
   esac
@@ -945,7 +947,12 @@ esac
 
 # ── The legs ────────────────────────────────────────────────────────────────────────────────────
 
-for leg in $LEGS; do run_leg "$leg"; done
+# CATALOG_MUTATION_LEGS (2026-10-02, 432-45) selects legs from $LEGS, in order; the default is all
+# seven. Snapshots, the at-rest marker proofs and the restore trap still range every leg.
+for leg in ${CATALOG_MUTATION_LEGS:-$LEGS}; do
+  case " $LEGS " in *" $leg "*) ;; *) fatal "unknown leg in CATALOG_MUTATION_LEGS: $leg" ;; esac
+  run_leg "$leg"
+done
 
 # ── The close ───────────────────────────────────────────────────────────────────────────────────
 
@@ -959,7 +966,7 @@ fi
 echo "=== RUN SUMMARY"
 cat "$SUMMARY"
 
-echo "PASS — seven per-detector mutations, each RED on exactly its allowed cells in BOTH suites and"
+echo "PASS (legs: ${CATALOG_MUTATION_LEGS:-$LEGS}) — per-detector mutations, each RED on exactly its allowed cells in BOTH suites and"
 echo "       on no others, each red NAMING the member that moved, each denominator change pinned by"
 echo "       name, every subject restored byte-identically by sha256, every rebuild proven by a dist"
 echo "       marker in the direction its leg moves it, and every revert returning both suites to"
