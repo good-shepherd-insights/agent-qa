@@ -21,6 +21,11 @@ import {
 } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join, sep } from 'node:path'
+import {
+  LEASE_GUARD_DIR,
+  acquireWriterLease,
+  heartbeatLease,
+} from '@vostride/agent-qa-knowledge-local'
 import { Command } from 'commander'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
@@ -357,6 +362,61 @@ describe('safe init filesystem primitives', () => {
     'skills/.staging/',
     '.*.agent-qa-init-*.tmp',
   ]
+
+  /**
+   * 2026-10-02 (quick 261002-lse follow-up): the writer-lease guard must sit under a rule every
+   * scaffolded knowledge repository already has. Existing `.gitignore` files are the user's and are
+   * never rewritten (D-22), so a guard outside them would show up as an untracked file. The path is
+   * caught from a REAL beat, mid-section, rather than spelled here, so a guard moved anywhere else
+   * reddens this cell.
+   */
+  it('keeps the writer-lease guard ignored by the scaffolded knowledge rules while a beat holds it', () => {
+    const root = tempRoot()
+    initializeGit(root)
+    writeFileSync(join(root, '.gitignore'), [...KNOWLEDGE_FUNCTIONAL_RULES, ''].join('\n'))
+    const acquired = acquireWriterLease(root)
+    if (acquired.kind !== 'acquired') throw new Error('expected an acquired writer lease')
+
+    const listFiles = (dir: string, prefix = ''): string[] => readdirSync(dir,
+      { withFileTypes: true })
+      .filter((entry) => entry.name !== '.git')
+      .flatMap((entry) => entry.isDirectory()
+        ? listFiles(join(dir, entry.name), `${prefix}${entry.name}/`)
+        : [`${prefix}${entry.name}`])
+    const before = new Set(listFiles(root))
+    let midSection: string[] | undefined
+    const realNow = Date.now.bind(Date)
+    const stamp = vi.spyOn(Date, 'now').mockImplementation(() => {
+      midSection ??= listFiles(root).filter((path) => !before.has(path))
+      return realNow()
+    })
+    try {
+      expect(heartbeatLease({ knowledgeRoot: root, leaseId: acquired.leaseId }))
+        .toMatchObject({ kind: 'heartbeated' })
+    } finally {
+      stamp.mockRestore()
+    }
+
+    expect(midSection, 'the beat holds a guard on disk while it writes').not.toEqual([])
+    const visible = (midSection ?? []).filter((path) => spawnSync(
+      'git', ['check-ignore', '-q', path], { cwd: root, stdio: 'pipe' },
+    ).status !== 0)
+    expect(visible, 'a guard path the scaffolded rules leave commit-visible').toEqual([])
+    expect(midSection?.every((path) => path.startsWith(`${LEASE_GUARD_DIR}/`))).toBe(true)
+
+    // And init's own git probe carries the guard, covered by the rule it already requires.
+    const guardProbes = KNOWLEDGE_GITIGNORE_PROBES
+      .filter((probe) => probe.path.startsWith(`${LEASE_GUARD_DIR}/`))
+    expect(guardProbes).toEqual([
+      expect.objectContaining({ expected: 'ignored', requiredRule: 'memory/queue/' }),
+    ])
+    materializeProbePaths(root, KNOWLEDGE_GITIGNORE_PROBES)
+    expect(verifyEffectiveGitignore({
+      cwd: root,
+      label: 'agent-qa-knowledge/.gitignore',
+      probes: KNOWLEDGE_GITIGNORE_PROBES,
+    })).toEqual({ checked: true })
+  })
 
   it('closes each refusal with what the run had actually written by then', () => {
     for (const [written, clause] of Object.entries(UNCHANGED_CLAUSES)) {

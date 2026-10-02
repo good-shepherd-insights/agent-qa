@@ -144,6 +144,13 @@ export const KNOWLEDGE_GITIGNORE_PROBES = [
     expected: 'ignored',
     requiredRule: 'memory/queue/',
   },
+  // 2026-10-02 (quick 261002-lse): the writer-lease guard lives under `memory/queue/` so that the
+  // rule every knowledge repository already has keeps it out of commits; init's probe proves it.
+  {
+    path: 'memory/queue/lease-guard/owner-00000000-0000-4000-8000-000000000000',
+    expected: 'ignored',
+    requiredRule: 'memory/queue/',
+  },
   { path: '.lease', expected: 'ignored', requiredRule: '.lease' },
   { path: '.epoch', expected: 'ignored', requiredRule: '.epoch' },
   {
