@@ -253,7 +253,10 @@ describe('the lease-file guard itself (261002-lse)', () => {
   })
 
   it.each([
-    ['a dead process', () => ({ pid: deadPid(), threadId: 0, claimedAtNs: process.hrtime.bigint() })],
+    [
+      'a dead process',
+      () => ({ pid: deadPid(), threadId: 0, claimedAtNs: process.hrtime.bigint() }),
+    ],
     [
       'a live process past the age bound',
       () => ({
@@ -295,7 +298,11 @@ describe('the lease-file guard itself (261002-lse)', () => {
   it('waits a live foreign section out for the busy window only, then refuses by name and writes nothing', () => {
     const acquired = acquireWriterLease(knowledgeRoot)
     if (acquired.kind !== 'acquired') throw new Error('expected an acquired writer lease')
-    plantGuard({ pid: process.pid, threadId: threadId + 1_000, claimedAtNs: process.hrtime.bigint() })
+    plantGuard({
+      pid: process.pid,
+      threadId: threadId + 1_000,
+      claimedAtNs: process.hrtime.bigint(),
+    })
     const leaseBefore = readFileSync(join(knowledgeRoot, LEASE_FILE))
     let contentions = 0
 
