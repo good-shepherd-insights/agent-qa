@@ -60,8 +60,16 @@ function stringsOf(text: string): string {
     while (k >= 0 && /\s/u.test(out[k]!)) k--
     if (k < 0) return true
     if ('(,=:[!&|?{};+-*%<>~^'.includes(out[k]!)) return true
-    const word = /([A-Za-z_$][\w$]*)$/u.exec(out.slice(0, k + 1))
-    return word !== null && ['return', 'typeof', 'case', 'yield', 'await', 'in', 'of', 'void'].includes(word[1]!)
+    // The identifier ending at k, read backwards: the regex `/([A-Za-z_$][\w$]*)$/u` over
+    // `out.slice(0, k + 1)` answered the same word but rescanned the whole output on every `/`.
+    // 2026-10-02 (quick 261002-tmo): lexing all 172 bundles (20.8 MB) took 15.3 s that way and
+    // 1.05 s this way, with byte-identical output (one sha256 over every lexed bundle); the first
+    // bundle cell, which pays for the lexing, outran 30 s at load 150-255.
+    if (!/[\w$]/u.test(out[k]!)) return false
+    let start = k
+    while (start > 0 && /[\w$]/u.test(out[start - 1]!)) start--
+    while (start <= k && !/[A-Za-z_$]/u.test(out[start]!)) start++
+    return start <= k && ['return', 'typeof', 'case', 'yield', 'await', 'in', 'of', 'void'].includes(out.slice(start, k + 1))
   }
   while (i < n) {
     const c = text[i]!
