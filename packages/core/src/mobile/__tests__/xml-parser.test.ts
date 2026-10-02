@@ -194,6 +194,39 @@ describe('parseMobileSource → InterimNode[]', () => {
       expect(picker.value).toBe('March')
       expect(picker.nativeType).toBe('XCUIElementTypePickerWheel')
     })
+
+    it('marks iOS text-entry types editable; a TextView keeps the text role', () => {
+      const xml = `<?xml version="1.0" encoding="UTF-8"?>
+<AppiumAUT>
+  <XCUIElementTypeTextView label="Body" x="10" y="10" width="300" height="120" enabled="true" />
+  <XCUIElementTypeTextField label="Title" x="10" y="140" width="300" height="40" enabled="true" />
+  <XCUIElementTypeSecureTextField label="Pin" x="10" y="190" width="300" height="40" enabled="true" />
+  <XCUIElementTypeSearchField label="Search" x="10" y="240" width="300" height="40" enabled="true" />
+  <XCUIElementTypeStaticText label="Heading" x="10" y="290" width="300" height="30" enabled="true" />
+  <XCUIElementTypeTextView label="Locked" x="10" y="330" width="300" height="120" enabled="false" />
+</AppiumAUT>`
+      const { nodes } = parseMobileSource(xml, 'ios')
+      const byName = (name: string) => nodes.find(n => n.name === name)!
+
+      expect(byName('Body').role).toBe('text')
+      expect(byName('Body').state?.editable).toBe(true)
+      expect(byName('Title').state?.editable).toBe(true)
+      expect(byName('Pin').state?.editable).toBe(true)
+      expect(byName('Search').state?.editable).toBe(true)
+      expect('editable' in (byName('Heading').state ?? {})).toBe(false)
+      expect('editable' in (byName('Locked').state ?? {})).toBe(false)
+    })
+  })
+
+  describe('Android editable signal', () => {
+    it('never marks an Android node editable (the iOS lift only)', () => {
+      const { nodes } = parseMobileSource(ANDROID_LOGIN_XML, 'android')
+      const email = nodes.find(n => n.name === 'Email')!
+      expect(email.nativeType).toBe('android.widget.EditText')
+      for (const node of nodes) {
+        expect('editable' in (node.state ?? {})).toBe(false)
+      }
+    })
   })
 
   describe('Cross-platform normalization', () => {
@@ -297,6 +330,43 @@ describe('buildRefEntries (execute-time lastRefs reconstruction)', () => {
 
     const cancelRef = state.elements.find(e => e.name === 'Cancel')!.ref
     expect(entries[cancelRef].nth).toBe(0)
+  })
+
+  it('carries editable onto iOS editable entries only', () => {
+    const xml = `<?xml version="1.0" encoding="UTF-8"?>
+<AppiumAUT>
+  <XCUIElementTypeTextView label="Body" x="10" y="10" width="300" height="120" enabled="true" />
+  <XCUIElementTypeStaticText label="Heading" x="10" y="140" width="300" height="30" enabled="true" />
+</AppiumAUT>`
+    const { nodes } = parseMobileSource(xml, 'ios')
+    const { state, binding } = buildScreenState({
+      platform: 'ios',
+      nodes,
+      viewport: { width: 390, height: 844 },
+      scroll: deriveMobileScroll(nodes, { width: 390, height: 844 }),
+      coordSpace: 'viewport',
+      timestamp: 0,
+    })
+
+    const entries = buildRefEntries(nodes, binding)
+    const bodyRef = state.elements.find(e => e.name === 'Body')!.ref
+    const headingRef = state.elements.find(e => e.name === 'Heading')!.ref
+    expect(entries[bodyRef].editable).toBe(true)
+    expect('editable' in entries[headingRef]).toBe(false)
+    expect(state.elements.find(e => e.name === 'Body')!.state.editable).toBe(true)
+
+    const android = parseMobileSource(ANDROID_LOGIN_XML, 'android')
+    const androidBuilt = buildScreenState({
+      platform: 'android',
+      nodes: android.nodes,
+      viewport: { width: 1080, height: 1920 },
+      scroll: deriveMobileScroll(android.nodes, { width: 1080, height: 1920 }),
+      coordSpace: 'viewport',
+      timestamp: 0,
+    })
+    for (const entry of Object.values(buildRefEntries(android.nodes, androidBuilt.binding))) {
+      expect('editable' in entry).toBe(false)
+    }
   })
 })
 

@@ -32,6 +32,7 @@ import {
   computePinch,
   computeSwipe,
   deriveMobileScroll,
+  IOS_EDITABLE_TYPES,
   parseMobileSource,
   warnIfOutOfBounds,
 } from '@vostride/agent-qa-core'
@@ -41,7 +42,6 @@ import { alignToWindow } from '@vostride/agent-qa-runner-local'
 import { createIOSSession } from './session.js'
 import type { IOSAdapterConfig } from './types.js'
 
-const IOS_FILLABLE_ROLES = new Set(['textbox', 'searchbox', 'textfield', 'securetextfield', 'searchfield', 'combobox'])
 const IOS_NATIVE_SELECT_TYPES = new Set([
   'XCUIElementTypePickerWheel',
   'XCUIElementTypePicker',
@@ -50,6 +50,22 @@ const IOS_NATIVE_SELECT_TYPES = new Set([
   'XCUIElementTypeComboBox',
 ])
 const IOS_NATIVE_SELECT_ROLES = new Set(['pickerwheel', 'spinbutton', 'combobox'])
+
+const W3C_ELEMENT_KEY = 'element-6066-11e4-a52e-4f735a1b0f2d'
+const FOCUS_POLLS = 3
+const FOCUS_POLL_PAUSE_MS = 300
+const RECT_TOLERANCE = 1
+
+type Rect = { x: number; y: number; width: number; height: number }
+type IOSTextElement = {
+  elementId: string
+  getAttribute: (name: string) => Promise<string | null>
+  setValue: (value: string) => Promise<void>
+  addValue: (value: string) => Promise<void>
+  clearValue: () => Promise<void>
+}
+type IOSTextTarget = { el: IOSTextElement; rect: Rect }
+type FocusOutcome = 'focused' | 'elsewhere' | 'none'
 
 // pressButton: schema button → XCUITest hardware name. Volume buttons are real-devices-only.
 const IOS_BUTTON_NAME: Record<'home' | 'volumeUp' | 'action', string> = {
@@ -103,6 +119,27 @@ function isIOSNativeSelectTarget(refData: MobileRefMap[string] | undefined): boo
     (role && IOS_NATIVE_SELECT_ROLES.has(role))
     || (refData?.nativeType && IOS_NATIVE_SELECT_TYPES.has(refData.nativeType))
   )
+}
+
+function rectMatches(a: Rect, b: Rect): boolean {
+  return Math.abs(a.x - b.x) <= RECT_TOLERANCE
+    && Math.abs(a.y - b.y) <= RECT_TOLERANCE
+    && Math.abs(a.width - b.width) <= RECT_TOLERANCE
+    && Math.abs(a.height - b.height) <= RECT_TOLERANCE
+}
+
+function rectWithin(inner: Rect, outer: Rect): boolean {
+  return inner.x >= outer.x - RECT_TOLERANCE
+    && inner.y >= outer.y - RECT_TOLERANCE
+    && inner.x + inner.width <= outer.x + outer.width + RECT_TOLERANCE
+    && inner.y + inner.height <= outer.y + outer.height + RECT_TOLERANCE
+}
+
+function elementIdOf(ref: unknown): string | undefined {
+  if (!ref || typeof ref !== 'object') return undefined
+  const record = ref as Record<string, unknown>
+  const id = record[W3C_ELEMENT_KEY] ?? record.ELEMENT
+  return typeof id === 'string' && id ? id : undefined
 }
 
 function normalizePickerValue(value: string): string {
@@ -489,6 +526,104 @@ export class IOSPlatformAdapter implements PlatformAdapter<'ios'> {
   // Compound behaviors (EXEC-01/02/03)
   // ---------------------------------------------------------------------------
 
+  private async tapAt(point: { x: number; y: number }): Promise<void> {
+    await safePerform(this.driver!.action('pointer', { parameters: { pointerType: 'touch' } })
+      .move({ x: Math.round(point.x), y: Math.round(point.y) })
+      .down({ button: 0 })
+      .up({ button: 0 })
+      )
+  }
+
+  private async readRect(elementId: string): Promise<Rect | undefined> {
+    try {
+      const rect = await this.driver!.getElementRect(elementId)
+      return rect && typeof rect.x === 'number' ? rect : undefined
+    } catch {
+      return undefined
+    }
+  }
+
+  /**
+   * The ref's own text-entry element: candidates of its XCUI type (selector built from the fixed
+   * type list only, never from app-supplied text), matched to the observed bounds, the
+   * same-type observed ordinal checked first. Ambiguous or absent ⇒ undefined.
+   */
+  private async locateIOSTextTarget(ref: string): Promise<IOSTextTarget | undefined> {
+    const refData = this.lastRefs[ref]
+    const nativeType = refData?.nativeType
+    const bounds = refData?.bounds
+    if (!nativeType || !IOS_EDITABLE_TYPES.has(nativeType) || !bounds) return undefined
+    let candidates: IOSTextElement[]
+    try {
+      candidates = Array.from(await this.driver!.$$(`-ios class chain:**/${nativeType}`) as unknown as IOSTextElement[])
+    } catch {
+      return undefined
+    }
+    const ordinal = Object.entries(this.lastRefs)
+      .filter(([, data]) => data.nativeType === nativeType)
+      .map(([observedRef]) => observedRef)
+      .indexOf(ref)
+    const order = candidates.map((_, i) => i)
+    if (ordinal > 0 && ordinal < candidates.length) {
+      order.splice(ordinal, 1)
+      order.unshift(ordinal)
+    }
+    const matches: IOSTextTarget[] = []
+    for (const i of order) {
+      const el = candidates[i]
+      if (!el?.elementId) continue
+      const rect = await this.readRect(el.elementId)
+      if (!rect || !rectMatches(rect, bounds)) continue
+      if (i === ordinal) return { el, rect }
+      matches.push({ el, rect })
+    }
+    return matches.length === 1 ? matches[0] : undefined
+  }
+
+  private async readIOSFocusedIds(): Promise<string[]> {
+    const driver = this.driver!
+    try {
+      const id = elementIdOf(await driver.getActiveElement())
+      if (id) return [id]
+    } catch {
+      // No element reports keyboard focus; fall through to the focus-engine flag.
+    }
+    const ids: string[] = []
+    for (const type of IOS_EDITABLE_TYPES) {
+      try {
+        const focused = Array.from(await driver.$$(`-ios class chain:**/${type}[\`hasFocus == 1\`]`) as unknown as IOSTextElement[])
+        for (const el of focused) if (el?.elementId) ids.push(el.elementId)
+      } catch {
+        // Try the next type.
+      }
+    }
+    return ids
+  }
+
+  /**
+   * WDA's typing taps an element that lacks keyboard focus and then sends keystrokes without
+   * re-checking focus, so they land wherever focus is. Text is typed only once the target (or
+   * a descendant) holds keyboard focus.
+   */
+  private async confirmIOSKeyboardFocus(target: IOSTextTarget): Promise<FocusOutcome> {
+    let outcome: FocusOutcome = 'none'
+    for (let poll = 0; poll < FOCUS_POLLS; poll++) {
+      if (poll > 0) await this.driver!.pause(FOCUS_POLL_PAUSE_MS)
+      const ids = await this.readIOSFocusedIds()
+      if (ids.length === 0) {
+        outcome = 'none'
+        continue
+      }
+      for (const id of ids) {
+        if (id === target.el.elementId) return 'focused'
+        const rect = await this.readRect(id)
+        if (rect && rectWithin(rect, target.rect)) return 'focused'
+      }
+      outcome = 'elsewhere'
+    }
+    return outcome
+  }
+
   /** Read a focused element's `value` attribute; undefined when nothing is readable. */
   private async readIOSValue(el: { getAttribute: (name: string) => Promise<string | null> }): Promise<string | undefined> {
     try {
@@ -810,51 +945,37 @@ export class IOSPlatformAdapter implements PlatformAdapter<'ios'> {
       }
 
       case 'fill': {
-        // EXEC-01 fill compound (D-05..D-08): tap-focus → clear/append → type → RE-READ the SAME
-        // focused handle via getAttribute('value') → (return/newline if submit). ONE ActionResult
-        // carrying fillReread metadata; a mismatch is an honest single-shot failure (no internal
-        // retry — the 358 ladder mediates). Secure is detected adapter-side from the refMap's
-        // nativeType (iOS is the one platform with secure evidence in lastRefs, Pitfall 6).
+        // EXEC-01 fill compound (D-05..D-08) over the ref's own element: gate on the observed
+        // editable signal, locate by XCUI type + bounds, tap, confirm keyboard focus, then
+        // clear/append → type → RE-READ the same handle. A mismatch is an honest single-shot
+        // failure (the 358 ladder mediates). Secure is detected from the refMap's nativeType.
         const { center, bounds } = resolver.resolve(action.ref)
         const refData = this.lastRefs[action.ref]
-        const role = refData?.role?.toLowerCase()
-        if (role && !IOS_FILLABLE_ROLES.has(role)) {
+        if (refData?.editable !== true) {
           return {
             success: false,
-            error: `Element ${action.ref} is not fillable (role: ${role}). Use a textbox or input element instead.`,
+            error: `Element ${action.ref} is not editable: the observation carries no editable signal for it.`,
           }
         }
-        const secure = refData?.nativeType === 'XCUIElementTypeSecureTextField'
-        const box = { coordinates: center, boundingBox: bounds }
-        // Tap to focus
-        await safePerform(driver.action('pointer', { parameters: { pointerType: 'touch' } })
-          .move({ x: Math.round(center.x), y: Math.round(center.y) })
-          .down({ button: 0 })
-          .up({ button: 0 })
-          )
-        // Find the input element — try focused first, then any matching type.
-        const selectors = [
-          // Focused element (most precise)
-          '-ios class chain:**/XCUIElementTypeTextField[`hasFocus == 1`]',
-          '-ios class chain:**/XCUIElementTypeSecureTextField[`hasFocus == 1`]',
-          '-ios class chain:**/XCUIElementTypeSearchField[`hasFocus == 1`]',
-          // Any visible element of the type (fallback — some apps don't report hasFocus)
-          '-ios class chain:**/XCUIElementTypeSearchField',
-          '-ios class chain:**/XCUIElementTypeTextField',
-          '-ios class chain:**/XCUIElementTypeSecureTextField',
-        ]
-        for (const sel of selectors) {
-          try {
-            const el = await driver.$(sel)
-            if (await el.isExisting()) {
-              return await this.fillIOSCompound(el, action, box, secure)
-            }
-          } catch { /* try next */ }
+        const target = await this.locateIOSTextTarget(action.ref)
+        if (!target) {
+          return {
+            success: false,
+            error: `Element ${action.ref} was not found at its observed position; the screen changed. Re-observe before typing.`,
+          }
         }
-        // Last resort — type via keyboard (pass whole string, not split chars). No focused handle
-        // to re-read; return success with NO fillReread block (signal-presence law — never fabricate).
-        await driver.keys([action.text])
-        return { success: true, ...box }
+        const secure = refData.nativeType === 'XCUIElementTypeSecureTextField'
+        const box = { coordinates: center, boundingBox: bounds }
+        await this.tapAt(center)
+        const focus = await this.confirmIOSKeyboardFocus(target)
+        if (focus !== 'focused') {
+          return {
+            success: false,
+            error: `Element ${action.ref} is not editable: it did not take keyboard focus when tapped.`,
+            ...box,
+          }
+        }
+        return await this.fillIOSCompound(target.el, action, box, secure)
       }
 
       case 'nativeSelect': {
@@ -1136,29 +1257,16 @@ export class IOSPlatformAdapter implements PlatformAdapter<'ios'> {
       case 'clearText': {
         const { center, bounds } = resolver.resolve(action.ref)
         const clearRefData = this.lastRefs[action.ref]
-        const clearRole = clearRefData?.role?.toLowerCase()
-        if (clearRole && !IOS_FILLABLE_ROLES.has(clearRole)) {
+        if (clearRefData?.editable !== true) {
           return {
             success: false,
-            error: `Element ${action.ref} is not fillable (role: ${clearRole}). clearText only works on text inputs. Use a textbox or input element instead.`,
+            error: `Element ${action.ref} is not editable: the observation carries no editable signal for it.`,
           }
         }
-        await safePerform(driver.action('pointer', { parameters: { pointerType: 'touch' } })
-          .move({ x: Math.round(center.x), y: Math.round(center.y) })
-          .down({ button: 0 })
-          .up({ button: 0 })
-          )
-        const clearSelectors = [
-          '-ios class chain:**/XCUIElementTypeTextField[`hasFocus == 1`]',
-          '-ios class chain:**/XCUIElementTypeSecureTextField[`hasFocus == 1`]',
-          '-ios class chain:**/XCUIElementTypeSearchField[`hasFocus == 1`]',
-          '-ios class chain:**/XCUIElementTypeSearchField',
-          '-ios class chain:**/XCUIElementTypeTextField',
-          '-ios class chain:**/XCUIElementTypeSecureTextField',
-        ]
-        for (const sel of clearSelectors) {
+        await this.tapAt(center)
+        for (const type of IOS_EDITABLE_TYPES) {
           try {
-            const el = await driver.$(sel)
+            const el = await driver.$(`-ios class chain:**/${type}[\`hasFocus == 1\`]`)
             if (await el.isExisting()) {
               await el.clearValue()
               break

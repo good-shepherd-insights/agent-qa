@@ -88,6 +88,13 @@ export const IOS_ROLE_MAP: Record<string, string> = {
   'XCUIElementTypeColorWell': 'button',
 }
 
+export const IOS_EDITABLE_TYPES: ReadonlySet<string> = new Set([
+  'XCUIElementTypeTextField',
+  'XCUIElementTypeSecureTextField',
+  'XCUIElementTypeSearchField',
+  'XCUIElementTypeTextView',
+])
+
 export function normalizeRole(type: string, platform: 'android' | 'ios'): string {
   const map = platform === 'android' ? ANDROID_ROLE_MAP : IOS_ROLE_MAP
   const mapped = map[type]

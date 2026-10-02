@@ -357,10 +357,16 @@ describe('IOSPlatformAdapter', () => {
       const emailEl = state.elements.find(e => e.name === 'Email')
       expect(emailEl).toBeDefined()
 
-      // Mock the $() element finder that the fill compound uses after tap-to-focus. It has no
-      // getAttribute, so the re-read degrades to undefined ⇒ honest success with no fillReread.
-      const mockElement = { isExisting: vi.fn().mockResolvedValue(true), clearValue: vi.fn(), setValue: vi.fn() }
-      mockDriver.$ = vi.fn().mockResolvedValue(mockElement)
+      // Mock the own-element lookup ($$ by type + rect) and the keyboard-focus read the fill
+      // compound uses after tap-to-focus. The element has no getAttribute, so the re-read
+      // degrades to undefined ⇒ honest success with no fillReread.
+      const mockElement = { elementId: 'email', isExisting: vi.fn().mockResolvedValue(true), clearValue: vi.fn(), setValue: vi.fn() }
+      mockDriver.$$ = vi.fn().mockImplementation((selector: string) =>
+        Promise.resolve(selector === '-ios class chain:**/XCUIElementTypeTextField' ? [mockElement] : []))
+      Object.assign(mockDriver, {
+        getElementRect: vi.fn().mockResolvedValue({ x: 50, y: 180, width: 290, height: 44 }),
+        getActiveElement: vi.fn().mockResolvedValue({ 'element-6066-11e4-a52e-4f735a1b0f2d': 'email' }),
+      })
 
       const result = await adapter.execute({ type: 'fill', ref: emailEl!.ref, text: 'user@test.com', clearMode: 'replace', submit: false })
       expect(result.success).toBe(true)

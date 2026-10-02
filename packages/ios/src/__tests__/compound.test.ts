@@ -30,9 +30,12 @@ const IOS_XML = `<?xml version="1.0" encoding="UTF-8"?>
 
 const SCREENSHOT_BASE64 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=='
 
+// Last tapped point: the mock keyboard focus goes to the field whose rect contains it.
+let lastTap: { x: number; y: number } | undefined
+
 function createMockPointerAction() {
   const chain: Record<string, any> = {}
-  chain.move = vi.fn().mockReturnValue(chain)
+  chain.move = vi.fn().mockImplementation((p: { x: number; y: number }) => { lastTap = p; return chain })
   chain.down = vi.fn().mockReturnValue(chain)
   chain.up = vi.fn().mockReturnValue(chain)
   chain.pause = vi.fn().mockReturnValue(chain)
@@ -45,8 +48,13 @@ let calls: string[] = []
 
 // Configurable re-read for the focused text-field element.
 let fieldValueReturn: string
-function createMockElement() {
+const FIELD_RECTS: Record<string, { x: number; y: number; width: number; height: number }> = {
+  email: { x: 50, y: 180, width: 290, height: 44 },
+  password: { x: 50, y: 240, width: 290, height: 44 },
+}
+function createMockElement(elementId: string) {
   return {
+    elementId,
     isExisting: vi.fn().mockResolvedValue(true),
     setValue: vi.fn().mockImplementation((v: string) => { calls.push(`setValue:${v}`); return Promise.resolve() }),
     addValue: vi.fn().mockImplementation((v: string) => { calls.push(`addValue:${v}`); return Promise.resolve() }),
@@ -59,6 +67,7 @@ function createMockElement() {
   }
 }
 let mockElement: ReturnType<typeof createMockElement>
+let mockSecureElement: ReturnType<typeof createMockElement>
 
 // `mobile: listApps` returns a bundleId-keyed map with CFBundleName labels.
 let listAppsReturn: Record<string, { CFBundleName?: string }>
@@ -90,7 +99,19 @@ function createMockDriver() {
     deepLink: vi.fn().mockResolvedValue(undefined),
     url: vi.fn().mockRejectedValue(new Error('not supported')),
     $: vi.fn().mockImplementation(() => Promise.resolve(mockElement)),
-    $$: vi.fn().mockResolvedValue([]),
+    $$: vi.fn().mockImplementation((selector: string) => {
+      if (selector === '-ios class chain:**/XCUIElementTypeTextField') return Promise.resolve([mockElement])
+      if (selector === '-ios class chain:**/XCUIElementTypeSecureTextField') return Promise.resolve([mockSecureElement])
+      return Promise.resolve([])
+    }),
+    getElementRect: vi.fn().mockImplementation((id: string) => Promise.resolve(FIELD_RECTS[id])),
+    getActiveElement: vi.fn().mockImplementation(() => {
+      const hit = Object.entries(FIELD_RECTS).find(([, r]) =>
+        lastTap && lastTap.x >= r.x && lastTap.x <= r.x + r.width && lastTap.y >= r.y && lastTap.y <= r.y + r.height)
+      return hit
+        ? Promise.resolve({ 'element-6066-11e4-a52e-4f735a1b0f2d': hit[0] })
+        : Promise.reject(new Error('no such element'))
+    }),
     _pointerAction: pointerAction,
   }
 }
@@ -112,7 +133,9 @@ describe('IOSPlatformAdapter compound behaviors (RED — Wave-0)', () => {
     listAppsReturn = {}
     listAppsThrows = false
     isAppInstalledReturn = false
-    mockElement = createMockElement()
+    lastTap = undefined
+    mockElement = createMockElement('email')
+    mockSecureElement = createMockElement('password')
     mockDriver = createMockDriver()
     const { remote } = await import('webdriverio')
     vi.mocked(remote).mockResolvedValue(mockDriver as any)

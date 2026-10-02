@@ -2,7 +2,7 @@ import { XMLParser } from 'fast-xml-parser'
 import type { InterimNode, RefBinding } from '@vostride/agent-qa-runner'
 import type { ElementLabels, ElementState } from '@vostride/agent-qa-schema'
 import type { ParsedMobileSource, RefEntry } from './types.js'
-import { normalizeRole } from './role-map.js'
+import { IOS_EDITABLE_TYPES, normalizeRole } from './role-map.js'
 
 const INTERACTIVE_ROLES = new Set([
   'button', 'link', 'textbox', 'checkbox', 'radio', 'combobox',
@@ -87,8 +87,14 @@ function extractValue(attrs: Record<string, any>, platform: 'android' | 'ios'): 
  * `scrollable`/`enabled`/`displayed`; iOS XCUITest uses `value`/`selected`/`enabled`/
  * `visible`. `scrollable` is retained in the raw attribute bag (consumed by
  * deriveMobileScroll), not lifted onto state.
+ *
+ * iOS `editable`: XCUITest exposes no editability attribute (WDA writes `focused` only on
+ * tvOS, and `traits` lists public UIKit traits only), so the XCUI text-entry type is the
+ * platform's editability signal. It is a candidate: the adapter confirms it by keyboard
+ * focus at execution, which is how a static UITextView is told apart.
  */
 function liftState(
+  tagName: string,
   attrs: Record<string, any>,
   platform: 'android' | 'ios',
   bounds: { x: number; y: number; width: number; height: number } | undefined,
@@ -125,6 +131,9 @@ function liftState(
       state.visible = false
     } else if (bounds && viewport && (bounds.y + bounds.height < 0 || bounds.y > viewport.height)) {
       state.visible = false
+    }
+    if (IOS_EDITABLE_TYPES.has(tagName) && state.enabled !== false) {
+      state.editable = true
     }
   }
 
@@ -177,7 +186,7 @@ function walkNode(node: any, tagName: string, parentIndex: number | undefined, c
       bounds = parseIosBounds(attrs)
     }
 
-    const state = liftState(attrs, ctx.platform, bounds, ctx.viewport)
+    const state = liftState(tagName, attrs, ctx.platform, bounds, ctx.viewport)
     const labels = liftLabels(attrs, ctx.platform)
 
     // Retain the raw platform attribute bag (prefix stripped, values stringified).
@@ -280,6 +289,7 @@ export function buildRefEntries(
       ...(node.bounds !== undefined ? { bounds: node.bounds } : {}),
       ...(node.nativeType !== undefined ? { nativeType: node.nativeType } : {}),
       ...(node.value !== undefined ? { value: node.value } : {}),
+      ...(node.state?.editable === true ? { editable: true } : {}),
     }
   }
   return entries

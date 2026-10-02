@@ -24,6 +24,7 @@ export interface RefEntry {
   bounds?: { x: number; y: number; width: number; height: number }
   nativeType?: string
   value?: string
+  editable?: boolean
 }
 
 /** Execute-time ref -> resolution record map (adapter-private `lastRefs`). */
