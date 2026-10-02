@@ -106,6 +106,10 @@ let page: LiveStreamFixturePage | undefined
 
 /** How long the tracer will keep asking the mint route for a handle that has not registered yet. */
 const MINT_RETRY_BUDGET_MS = 60_000
+// 2026-10-02 (quick 261002-tmo): every embed state here is pushed to the page over its socket (no
+// poll), so each wait is a condition with a hang ceiling. 10 s was outrun at load up to 132: (vi)'s
+// page had not yet shown `ended` after finishRun() (quick 261002-tmo forced gate 4).
+const EMBED_STATE_WAIT_MS = 60_000
 const MINT_RETRY_INTERVAL_MS = 250
 
 /** Every mint answer this file has observed, per call — the record of the race it no longer hides. */
@@ -300,7 +304,7 @@ describe('the tracer: one real CDP frame behind a function-layer-minted liveUrl'
     const embed = await held.browser.newPage()
     try {
       await embed.goto(result.liveUrl)
-      await embed.locator('[data-embed-state="live"]').waitFor({ state: 'attached', timeout: 10_000 })
+      await embed.locator('[data-embed-state="live"]').waitFor({ state: 'attached', timeout: EMBED_STATE_WAIT_MS })
       const frames = Number(await embed.locator('[data-embed-state]').getAttribute('data-embed-frames'))
       expect(frames, 'the page counts the frames it PAINTED, not the ones it received')
         .toBeGreaterThanOrEqual(1)
@@ -318,7 +322,7 @@ describe('the tracer: one real CDP frame behind a function-layer-minted liveUrl'
     const embed = await held.browser.newPage()
     try {
       await embed.goto(tampered)
-      await embed.locator('[data-embed-state="refused"]').waitFor({ state: 'attached', timeout: 10_000 })
+      await embed.locator('[data-embed-state="refused"]').waitFor({ state: 'attached', timeout: EMBED_STATE_WAIT_MS })
       expect(await embed.locator('[data-embed-state]').getAttribute('data-embed-state')).toBe('refused')
     } finally {
       await embed.close()
@@ -333,7 +337,7 @@ describe('the tracer: one real CDP frame behind a function-layer-minted liveUrl'
     const embed = await held.browser.newPage()
     try {
       await embed.goto(result.liveUrl)
-      await embed.locator('[data-embed-state="expired"]').waitFor({ state: 'attached', timeout: 10_000 })
+      await embed.locator('[data-embed-state="expired"]').waitFor({ state: 'attached', timeout: EMBED_STATE_WAIT_MS })
       expect(await embed.locator('[data-embed-message]').textContent()).toBe(LIVE_EMBED_EXPIRED_MESSAGE)
       expect(await embed.locator('[data-embed-state]').getAttribute('data-embed-state')).not.toBe('live')
     } finally {
@@ -385,7 +389,7 @@ describe('the tracer: one real CDP frame behind a function-layer-minted liveUrl'
     const embed = await held.browser.newPage()
     try {
       await embed.goto(result.liveUrl)
-      await embed.locator('[data-embed-state="live"]').waitFor({ state: 'attached', timeout: 10_000 })
+      await embed.locator('[data-embed-state="live"]').waitFor({ state: 'attached', timeout: EMBED_STATE_WAIT_MS })
     } finally {
       await embed.close()
       unsubscribe()
@@ -402,9 +406,9 @@ describe('the tracer: one real CDP frame behind a function-layer-minted liveUrl'
     const embed = await held.browser.newPage()
     try {
       await embed.goto(result.liveUrl)
-      await embed.locator('[data-embed-state="live"]').waitFor({ state: 'attached', timeout: 10_000 })
+      await embed.locator('[data-embed-state="live"]').waitFor({ state: 'attached', timeout: EMBED_STATE_WAIT_MS })
       held.finishRun()
-      await embed.locator('[data-embed-state="ended"]').waitFor({ state: 'attached', timeout: 10_000 })
+      await embed.locator('[data-embed-state="ended"]').waitFor({ state: 'attached', timeout: EMBED_STATE_WAIT_MS })
       await expect(held.session.done).resolves.toBeDefined()
     } finally {
       await embed.close()
@@ -458,7 +462,7 @@ async function watchEditor(origin: string, sessionId: string, token: string, unt
   const texts: string[] = []
   let frames = 0
   await new Promise<void>((settle, fail) => {
-    const budget = setTimeout(() => { fail(new Error(`no ended within budget; messages=${JSON.stringify(texts)}`)) }, 20_000)
+    const budget = setTimeout(() => { fail(new Error(`no ended within budget; messages=${JSON.stringify(texts)}`)) }, EMBED_STATE_WAIT_MS)
     socket.addEventListener('open', () => { socket.send(JSON.stringify({ type: 'hello', token })) })
     socket.addEventListener('message', (event: MessageEvent) => {
       if (typeof event.data !== 'string') { frames += 1; if (frames === 1) void until(); return }
@@ -533,5 +537,5 @@ describe('an editor token obeys every credential rule a run token does (428 D-07
       await harness.close()
       cleanupTempRoots()
     }
-  }, 60_000)
+  }, 2 * EMBED_STATE_WAIT_MS)
 })
