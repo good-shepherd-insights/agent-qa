@@ -1,4 +1,5 @@
-import { dirname, resolve } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
+import { RUNS_SUBDIR } from '@vostride/agent-qa-runner-local'
 import { trustPriorsForHost, type ResolveTrustPriors } from '../curation/trust-priors.js'
 import type { KnowledgeReaderPort } from '@vostride/agent-qa-agent'
 import type { FeedbackPort } from '@vostride/agent-qa-schema'
@@ -9,6 +10,7 @@ import { resolveConfiguredKnowledgeRoot } from '../config.js'
 import { wordImprovementPlan } from './feedback-wording.js'
 import { decideMarkDraft, loadMarkTarget, markEvidenceCurationJobIds, markFeedbackInput, planMarkFeedback, readMarkDraftFacts } from './feedback-plan.js'
 import { resolveEvalSession, resolveProductPartition, FsMarkLedger, freezeGoldenTrajectory, slugBranch } from '../eval-session-composition.js'
+import { answerRecordedMarkEdit, clearMarkEditRecord, MARK_EDIT_RECORD_FILE, withMarkEditScope } from './mark-edit-record.js'
 
 export { resolveMarkMember } from './feedback-plan.js'
 
@@ -131,6 +133,7 @@ export function createFeedbackPortForHost(deps: FeedbackHostDeps): FeedbackPort 
         if (intent.stage !== 'applied') {
         const session = await resolveEvalSession({ configPath: deps.configPath, keyOnly: true })
         const configDir = dirname(resolve(deps.configPath))
+        const editRecordPath = join(deps.agentQaRoot, RUNS_SUBDIR, slugBranch(input.runId), MARK_EDIT_RECORD_FILE)
         const knowledgeRoot = resolveConfiguredKnowledgeRoot(session.config, configDir)
         const held = heldAuthority(knowledgeRoot)
         const frozen = freezeGoldenTrajectory({ agentQaRoot: deps.agentQaRoot,
@@ -187,16 +190,22 @@ export function createFeedbackPortForHost(deps: FeedbackHostDeps): FeedbackPort 
               change: { kind: 'knowledge', changeId: applied.changeId, recordIds: [...applied.recordIds] } }
           } else if (draft.kind === 'test-edit') {
             // decideMarkDraft admits a test edit only when this host binds the authoring edit, which
-            // writes the edited file itself, guarded by the digest it read (432-08).
-            const edited = await deps.invokeAuthoringDraftEdit!({ testRef: draft.plan.testRef, intent: draft.plan.intent })
-            if (edited.written.kind !== 'written') throw new MarkFixNotAppliedError(edited.written.reason)
+            // writes the edited file itself, guarded by the digest it read (432-08). 261002-mrk: the
+            // write is recorded ahead under this intent's identity, so a retry after a crash inside
+            // the edit answers that write rather than asking the model and editing again.
+            const editScope = { recordPath: editRecordPath, operationId: intent.operationId }
+            const written = answerRecordedMarkEdit({ ...editScope, configDir })
+              ?? (await withMarkEditScope(editScope, () => deps.invokeAuthoringDraftEdit!({
+                testRef: draft.plan.testRef, intent: draft.plan.intent }))).written
+            if (written.kind !== 'written') throw new MarkFixNotAppliedError(written.reason)
             mark.disposition = { kind: 'applied', fix: 'test-edit',
-              change: { kind: 'test-file', filePath: edited.written.filePath, contentDigest: edited.written.contentDigest } }
+              change: { kind: 'test-file', filePath: written.filePath, contentDigest: written.contentDigest } }
           } else {
             mark.disposition = { kind: 'no-draftable-fix', checked: draft.checked }
           }
         }
         ledger.checkpointIntent({ ...intent, mark, stage: 'applied' })
+        clearMarkEditRecord(editRecordPath)
         }
         return mark
       })

@@ -13,6 +13,7 @@ import {
   type MarkWriterAuthority,
   type WholeMarkDelegate,
 } from '../gates/feedback-host.js'
+import { recordMarkEditAhead, type PendingTestWrite } from '../gates/mark-edit-record.js'
 import { createFeedbackReadsPortForHost } from '../gates/feedback-read-host.js'
 import { bindTrustPriorsToConfig, trustPriorsForHost, type ResolveTrustPriors, type TrustPriorDisclosure } from '../curation/trust-priors.js'
 // The CLI's half of the local host (Phase 384 plan 01, superseded in place by 385 plan 09, D-15).
@@ -1133,7 +1134,11 @@ export function createDraftAuthoringPort(configPath: string): DraftAuthoringPort
 
     /** 432 D-06/D-07: the direct final-test writer — see {@link publishAuthoredTest}. */
     publishDraft(request): Promise<TestFileWrite> {
-      return Promise.resolve(publishAuthoredTest({ configPath, request }))
+      // 261002-mrk: inside a mark's edit scope the write is recorded ahead, so a retry of that mark
+      // answers it instead of editing the file again. Outside one this records nothing.
+      return Promise.resolve(
+        publishAuthoredTest({ configPath, request, beforeWrite: recordMarkEditAhead }),
+      )
     },
 
     /**
@@ -1373,6 +1378,8 @@ export interface PublishAuthoredTestInput {
   }
   /** Injected for tests; defaults to {@link writeFileAtomically}. */
   readonly writeTarget?: (absolutePath: string, bytes: Buffer) => void
+  /** Runs after the digest guard and before the write; a throw refuses the write (261002-mrk). */
+  readonly beforeWrite?: (write: PendingTestWrite) => void
 }
 
 /**
@@ -1438,17 +1445,19 @@ export function publishAuthoredTest(input: PublishAuthoredTestInput): TestFileWr
     : createHash('sha256').update(existing).digest('hex')
   if (foundDigest !== request.sourceDigest) return refused('target-changed')
 
+  const contentDigest = createHash('sha256').update(draftBytes).digest('hex')
   try {
+    input.beforeWrite?.({
+      filePath: identityPath,
+      ...(foundDigest === undefined ? {} : { sourceDigest: foundDigest }),
+      contentDigest,
+    })
     mkdirSync(dirname(absoluteTarget), { recursive: true })
     writeTarget(absoluteTarget, draftBytes)
   } catch (error) {
     return refused('write-failed', errorText(error))
   }
-  return {
-    kind: 'written',
-    filePath: identityPath,
-    contentDigest: createHash('sha256').update(draftBytes).digest('hex'),
-  }
+  return { kind: 'written', filePath: identityPath, contentDigest }
 }
 
 export interface DraftShelf {
